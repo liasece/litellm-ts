@@ -1,0 +1,51 @@
+import { pgTable, text, real, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import type { CallType, SpendLogStatus } from "../../types/spend";
+
+export const liteLLM_SpendLogs = pgTable(
+	"LiteLLM_SpendLogs",
+	{
+		request_id: text("request_id").notNull().primaryKey(),
+		call_type: text("call_type").$type<CallType>().notNull(),
+		api_key: text("api_key").default(""),
+		spend: real("spend").default(0.0),
+		total_tokens: integer("total_tokens").default(0),
+		prompt_tokens: integer("prompt_tokens").default(0),
+		completion_tokens: integer("completion_tokens").default(0),
+		startTime: timestamp("startTime").notNull(),
+		endTime: timestamp("endTime").notNull(),
+		request_duration_ms: integer("request_duration_ms"),
+		completionStartTime: timestamp("completionStartTime"),
+		model: text("model").default(""),
+		model_id: text("model_id").default(""),
+		model_group: text("model_group").default(""),
+		custom_llm_provider: text("custom_llm_provider").default(""),
+		api_base: text("api_base").default(""),
+		user: text("user").default(""),
+		metadata: jsonb("metadata").default("{}"),
+		cache_hit: text("cache_hit").default(""),
+		cache_key: text("cache_key").default(""),
+		request_tags: jsonb("request_tags").default("[]"),
+		team_id: text("team_id"),
+		organization_id: text("organization_id"),
+		end_user: text("end_user"),
+		requester_ip_address: text("requester_ip_address"),
+		messages: jsonb("messages").default("{}"),
+		response: jsonb("response").default("{}"),
+		session_id: text("session_id"),
+		status: text("status").$type<SpendLogStatus>(),
+		mcp_namespaced_tool_name: text("mcp_namespaced_tool_name"),
+		agent_id: text("agent_id"),
+		proxy_server_request: jsonb("proxy_server_request").default("{}"),
+		// DIFF-SPEND-01: standard_logging_object JSONB 字段，对齐 PY
+		// `litellm/proxy/spend_tracking/spend_tracking_utils.py:283-446` 中构造的
+		// StandardLoggingPayload。下游消费方（如 analytics / evaluation pipeline）
+		// 直接 SELECT 该字段即可拿到完整请求快照，无需 join 多表。
+		standard_logging_object: jsonb("standard_logging_object").default("{}"),
+	},
+	(table) => ({
+		startTimeIdx: index("idx_spend_logs_start_time").on(table.startTime),
+		startTimeRequestIdIdx: index("idx_spend_logs_start_time_request_id").on(table.startTime, table.request_id),
+		endUserIdx: index("idx_spend_logs_end_user").on(table.end_user),
+		sessionIdIdx: index("idx_spend_logs_session_id").on(table.session_id),
+	}),
+);
