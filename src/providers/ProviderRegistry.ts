@@ -61,12 +61,13 @@ export class ProviderRegistry {
 	 * 根据模型名称获取对应的 Provider
 	 * @param model - 完整模型名，格式 "provider/model" 或纯模型名
 	 * @param customProvider - 可选的 provider 覆盖
-	 * @param params
+	 * @param params - deployment 的 litellm_params（Python 风格：含 api_base / api_key / custom_llm_provider 等）
 	 * @returns ProviderConfig 实例
 	 * @throws Error 当找不到对应的 Provider 时
 	 */
 	getProvider(model: string, customProvider?: string, params?: Record<string, unknown>): ProviderConfig {
-		const providerName = customProvider ?? this.parseProviderName(model);
+		// 优先使用 deployment.params.custom_llm_provider，其次解析模型名
+		const providerName = customProvider ?? (params?.["custom_llm_provider"] as string | undefined) ?? this.parseProviderName(model);
 
 		// 检查已注册实例
 		const registered = this._providers.get(providerName);
@@ -74,7 +75,7 @@ export class ProviderRegistry {
 			return registered;
 		}
 
-		// 动态创建
+		// 动态创建 — 传入 deployment params，让 provider 使用 deployment 的 api_base/api_key
 		const provider = this.createProvider(providerName, params);
 		if (provider) {
 			return provider;
@@ -130,33 +131,38 @@ export class ProviderRegistry {
 	/**
 	 * 动态创建 Provider 实例
 	 * @param providerName
-	 * @param params - Optional request params for detecting proxy-level headers
+	 * @param params - deployment 的 litellm_params（含 api_base / api_key）
+	 *
+	 * 优先级：deployment params.api_base → DEFAULT_API_BASES；
+	 * deployment params.api_key → proxy header api_key → ""
+	 * （deployment key 不会被 proxy header 覆盖）
 	 */
 	createProvider(providerName: string, params?: Record<string, unknown>): ProviderConfig | null {
-		// Proxy header detection: extract API key from proxy-level headers
+		// Proxy header detection: extract API key from proxy-level headers,
+		// but only as fallback — deployment's api_key has higher priority
 		const headerObj = params?.["headers"] as Record<string, string> | undefined;
 		const proxyApiKey = headerObj?.["x-litellm-api-key"] ?? headerObj?.["x-litellm-proxy-api-key"];
-		if (proxyApiKey && params) {
-			params["api_key"] = proxyApiKey;
-		}
-		// PY: support dynamic api_base from environment or params (transformation.py)
+		const deploymentApiKey = params?.["api_key"] as string | undefined;
+		const effectiveApiKey = deploymentApiKey && deploymentApiKey.length > 0 ? deploymentApiKey : (proxyApiKey ?? "");
+
+		// PY: support dynamic api_base from deployment params or environment (transformation.py)
 		const dynamicApiBase = params?.["api_base"] as string | undefined;
 		switch (providerName) {
 			case LlmProviders.OpenAI:
-				return new OpenAICompatProvider("", dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.OpenAI]!);
+				return new OpenAICompatProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.OpenAI]!);
 			case LlmProviders.Anthropic:
 				return new AnthropicProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.Anthropic]);
 			case LlmProviders.DeepSeek:
-				return new DeepSeekProvider("", dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.DeepSeek]!);
+				return new DeepSeekProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.DeepSeek]!);
 			case LlmProviders.GLM:
 				// DIFF-CFG-ZAI-02: 修正 GLMProvider 构造参数顺序 — GLMProvider(apiKey, apiBase)，
 				// 之前漏传 apiKey 让 dynamicApiBase 落到 apiKey 位置导致 base 失效。
-				return new GLMProvider("", dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.GLM]);
+				return new GLMProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.GLM]);
 			case LlmProviders.MiMo:
 				return new MiMoProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.MiMo]);
 			case LlmProviders.MiMoGlobal:
 				// DIFF-CFG-MIMO-01: 国际 region 走 OpenAI 兼容路径
-				return new MiMoOpenAIProvider("", dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.MiMoGlobal]!);
+				return new MiMoOpenAIProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.MiMoGlobal]!);
 			case LlmProviders.LLMux:
 				return new LLMuxProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.LLMux]);
 			default:

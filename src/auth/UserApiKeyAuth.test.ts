@@ -2,7 +2,7 @@
  * UserApiKeyAuth 认证中间件测试
  */
 import type { Request } from "express";
-import { extractApiKey } from "./UserApiKeyAuth";
+import { extractApiKey, parseCookieToken } from "./UserApiKeyAuth";
 import { hashApiKey } from "../core/utils/crypto";
 
 function mkReq(headers: Record<string, string>): Request {
@@ -10,6 +10,30 @@ function mkReq(headers: Record<string, string>): Request {
 }
 
 describe("UserApiKeyAuth", () => {
+	describe("parseCookieToken — 长度上限防止超长输入", () => {
+		it("正常 token 可解析", () => {
+			expect(parseCookieToken("token=abc.def.ghi")).toBe("abc.def.ghi");
+		});
+
+		it("空 cookie 头返回 null", () => {
+			expect(parseCookieToken(undefined)).toBeNull();
+			expect(parseCookieToken("")).toBeNull();
+		});
+
+		it("无 token 字段返回 null", () => {
+			expect(parseCookieToken("foo=bar; baz=qux")).toBeNull();
+		});
+
+		it("超长 token 值返回 null（避免超长输入进入鉴权路径）", () => {
+			const longValue = "a".repeat(5000);
+			expect(parseCookieToken(`token=${longValue}`)).toBeNull();
+		});
+
+		it("空 token 值返回 null", () => {
+			expect(parseCookieToken("token=")).toBeNull();
+		});
+	});
+
 	describe("extractApiKey", () => {
 		it("extracts from Bearer token", () => {
 			const req = mkReq({ authorization: "Bearer sk-test-key-123" });

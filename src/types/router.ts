@@ -83,6 +83,8 @@ export interface LitellmParams {
 		/** cache 读取单价（每 token） */
 		cache_read_input_token_cost?: number;
 	};
+	/** 索引签名 — 允许透传 Python 未知字段（如 anthropic_version / auth_token / thinking） */
+	[key: string]: unknown;
 }
 
 /** 某模型的一个部署实例（一个 API 端点/密钥） */

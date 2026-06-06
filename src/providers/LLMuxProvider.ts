@@ -59,6 +59,9 @@ export class LLMuxProvider implements ProviderConfig {
 	transformRequest(model: string, messages: Message[], optionalParams: Record<string, unknown>): ProviderRequest {
 		const protocol = detectProtocol(model);
 		const apiKey = (optionalParams.api_key as string) ?? "";
+		// Python LiteLLM 行为：optionalParams.api_base 优先于构造函数 _apiBase
+		const apiBaseRaw = optionalParams.api_base as string | undefined;
+		const apiBase = typeof apiBaseRaw === "string" && apiBaseRaw.length > 0 ? apiBaseRaw.replace(/\/$/, "") : this._apiBase;
 
 		// 构建消息体，透传所有参数
 		const body: Record<string, unknown> = {
@@ -98,7 +101,7 @@ export class LLMuxProvider implements ProviderConfig {
 		};
 
 		return {
-			url: `${this._apiBase}${endpointPath}`,
+			url: `${apiBase}${endpointPath}`,
 			method: "POST",
 			headers: headers,
 			body: body,

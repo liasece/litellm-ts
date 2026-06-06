@@ -81,4 +81,43 @@ describe("ProviderRegistry", () => {
 			expect(provider).toBeInstanceOf(OpenAICompatProvider);
 		});
 	});
+
+	describe("deployment litellm_params 透传", () => {
+		it("getProvider 传入 api_base 后，AnthropicProvider.transformRequest URL 使用该 base", () => {
+			const provider = registry.getProvider("anthropic/claude-sonnet-4-6", undefined, {
+				api_base: "http://upstream.test",
+				api_key: "sk-x",
+			});
+			expect(provider).toBeInstanceOf(AnthropicProvider);
+			const req = provider.transformRequest("claude-sonnet-4-6", [{ role: "user", content: "hi" }], {});
+			expect(req.url).toBe("http://upstream.test/v1/messages");
+		});
+
+		it("OpenAICompatProvider 接收 deployment api_base 后 URL 使用该 base", () => {
+			const provider = registry.getProvider("openai/gpt-5.5", undefined, {
+				api_base: "http://upstream.test",
+				api_key: "sk-x",
+			});
+			expect(provider).toBeInstanceOf(OpenAICompatProvider);
+			const req = provider.transformRequest("gpt-5.5", [{ role: "user", content: "hi" }], {});
+			expect(req.url).toBe("http://upstream.test/chat/completions");
+		});
+
+		it("deployment.api_key 优先于 proxy header api_key", () => {
+			const provider = registry.getProvider("openai/gpt-5", undefined, {
+				api_key: "sk-deployment",
+				headers: { "x-litellm-api-key": "sk-proxy" },
+			});
+			expect(provider).toBeInstanceOf(OpenAICompatProvider);
+			const req = provider.transformRequest("gpt-5", [{ role: "user", content: "hi" }], {});
+			expect(req.headers["Authorization"]).toBe("Bearer sk-deployment");
+		});
+
+		it("未传 api_base 时使用 provider 默认 base", () => {
+			const provider = registry.getProvider("anthropic/claude-sonnet-4-6");
+			expect(provider).toBeInstanceOf(AnthropicProvider);
+			const req = provider.transformRequest("claude-sonnet-4-6", [{ role: "user", content: "hi" }], {});
+			expect(req.url).toBe("https://api.anthropic.com/v1/messages");
+		});
+	});
 });

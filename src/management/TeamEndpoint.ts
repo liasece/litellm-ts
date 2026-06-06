@@ -296,12 +296,26 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 	);
 
 	// ─── GET /team/list ────────────────────────────────────────
+	// Python `/team/list` 返回纯数组（List[TeamListResponseObject]）。
+	// WebUI `teamListCall` 直接 `[...data]` spread。返回数组形式。
+	// 移至 stubRouter 注册（main.ts::_registerStubRoutes 之前调用）以覆盖此处的 GET 注册，
+	// 避免双重注册（managementRouter 优先匹配）。此处保留以提供完整 CRUD/列表能力。
+	//
+	// 与 `/v2/team/list` 的关系：
+	//   - `/team/list`        — 旧接口，返回纯数组；无分页/排序。
+	//   - `/v2/team/list`     — 新接口（v2TeamListCall），支持分页、过滤、排序；
+	//                            返回 TeamListResponse 对象 { teams, total, page,
+	//                            page_size, total_pages }。目前为 stub（见
+	//                            WebUiSupportEndpoints.ts::registerWebUiSupportPublicRoutes）。
+	// 两个端点由不同 WebUI 调用方使用，签名/响应不一致，暂不合并 — 合并会破坏
+	// 旧接口消费者。等 v2 接口实现完成后，再视情况决定是否下架 `/team/list`。
 	registerRoute(
 		router,
 		{ method: "get", path: "/team/list" },
 		authed(async () => {
 			const rows = await db.select().from(LiteLLM_TeamTable);
-			return { success: true, data: rows };
+			// 返回纯数组以匹配 Python LiteLLM 行为
+			return rows;
 		}),
 	);
 

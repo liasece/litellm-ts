@@ -252,7 +252,11 @@ export class Router {
 		if (!selected) {
 			return null;
 		}
-		const provider = this._providerRegistry.getProvider(selected.litellm_params.model, selected.litellm_params.custom_llm_provider);
+		const provider = this._providerRegistry.getProvider(
+			selected.litellm_params.model,
+			selected.litellm_params.custom_llm_provider,
+			selected.litellm_params,
+		);
 		return { deployment: selected, provider: provider };
 	}
 

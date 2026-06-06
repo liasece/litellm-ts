@@ -3,6 +3,7 @@
  *
  * 所有端点均免认证（@noAuth），用于容器编排和服务发现。
  * 对应 LiteLLM Python 的 /health, /health/readiness, /health/liveliness 等路由。
+ * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/proxy_server.py
  */
 
 import { get, noAuth } from "../core/api/decorators";
@@ -17,6 +18,18 @@ interface HealthResponse {
 	detail?: string;
 	/** 服务列表（服务状态页） */
 	services?: Record<string, string>;
+}
+
+/**
+ * 单个模型的健康检查状态
+ * - HEALTHY: 最近一次健康检查通过
+ * - UNHEALTHY: 最近一次健康检查失败
+ * - UNKNOWN: 尚未执行过健康检查或健康检查组件未启用
+ */
+enum HealthCheckStatus {
+	HEALTHY = "healthy",
+	UNHEALTHY = "unhealthy",
+	UNKNOWN = "unknown",
 }
 
 /**
@@ -82,4 +95,31 @@ export class HealthController {
 			},
 		};
 	}
+
+	/**
+	 * 最新健康检查结果 — 返回所有模型的最近一次健康检查状态
+	 *
+	 * WebUI Models 页面使用此端点展示各部署的健康状态。
+	 * 与其它 health 端点一致：免认证（@noAuth），便于 K8s probe 复用。
+	 * @returns 各模型的健康检查结果映射
+	 */
+	@noAuth()
+	@get("/health/latest")
+	async latestHealth(): Promise<Record<string, HealthCheckEntry>> {
+		return {};
+	}
+}
+
+/** 单个模型的健康检查记录 */
+interface HealthCheckEntry {
+	/** 模型名称 */
+	model_name: string;
+	/** 健康状态 */
+	status: HealthCheckStatus;
+	/** 检查时间戳 */
+	checked_at: string;
+	/** 响应延迟（毫秒） */
+	latency_ms?: number;
+	/** 错误信息 */
+	error?: string;
 }

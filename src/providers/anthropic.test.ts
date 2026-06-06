@@ -378,4 +378,37 @@ describe("AnthropicProvider", () => {
 			expect(withCitation).toBeDefined();
 		});
 	});
+
+	describe("model 名规范化 (Python get_llm_provider 语义)", () => {
+		it("发往 Anthropic Messages API 的 body.model 应剥离 provider 前缀", () => {
+			const req = provider.transformRequest("anthropic/gpt-5.5", [{ role: "user", content: "hi" } as Message], {
+				api_key: "k",
+			});
+			expect((req.body as Record<string, unknown>).model).toBe("gpt-5.5");
+		});
+	});
+
+	describe("api_base 优先级 (Python LiteLLM kwargs 语义)", () => {
+		it("optionalParams.api_base 优先于构造函数 _apiBase", () => {
+			const defaultProvider = new AnthropicProvider();
+			const req = defaultProvider.transformRequest("claude-sonnet-4-6", [{ role: "user", content: "hi" } as Message], {
+				api_base: "http://upstream.test",
+			});
+			expect(req.url).toBe("http://upstream.test/v1/messages");
+		});
+
+		it("未传 api_base 时使用构造函数 _apiBase", () => {
+			const customProvider = new AnthropicProvider("http://custom.test");
+			const req = customProvider.transformRequest("claude-sonnet-4-6", [{ role: "user", content: "hi" } as Message], {});
+			expect(req.url).toBe("http://custom.test/v1/messages");
+		});
+
+		it("api_base 为空字符串时回退到 _apiBase", () => {
+			const customProvider = new AnthropicProvider("http://custom.test");
+			const req = customProvider.transformRequest("claude-sonnet-4-6", [{ role: "user", content: "hi" } as Message], {
+				api_base: "",
+			});
+			expect(req.url).toBe("http://custom.test/v1/messages");
+		});
+	});
 });

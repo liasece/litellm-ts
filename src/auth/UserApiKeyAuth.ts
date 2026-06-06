@@ -4,6 +4,7 @@
  * 等效于 Python litellm-proxy 的 user_api_key_auth()。
  * 从请求头提取 API 密钥，哈希后在 LiteLLM_VerificationToken 表中查找，
  * 将认证元数据挂载到 req.auth 上供下游使用。
+ * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/auth/user_api_key_auth.py
  */
 
 import * as crypto from "node:crypto";
@@ -13,6 +14,7 @@ import { hashApiKey } from "../core/utils/crypto";
 import type { AuthRepository } from "./AuthRepository";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { JWTHandler } from "./JWTHandler";
+import { WEBUI_COOKIE_TOKEN_NAME, JWT_FALLBACK_USER_ID } from "../types/webUiSession";
 
 /**
  * Express Request 扩展 — 增加 auth 属性
@@ -37,6 +39,59 @@ const WS_SUBPROTOCOL_PREFIX = "litellm_";
 
 /** Authorization Header 前缀 */
 const BEARER_PREFIX = "Bearer ";
+
+/** cookie 头中单个 cookie 的最大字节数（防止超长输入进入鉴权路径） */
+const MAX_COOKIE_VALUE_LENGTH = 4096;
+
+/** cookie 名最大长度（远大于 `token`，仅作健壮性检查） */
+const MAX_COOKIE_NAME_LENGTH = 64;
+
+/**
+ * 安全写入 req.auth.metadata 的 JWT 字段白名单。
+ *
+ * 不要直接把 `jwtResult.claims as Record<string, unknown>` 透传——后续
+ * 任何 metadata 读取（spend log / 调试端点 / WebUI 错误回显）都可能
+ * 把未受控字段（如 iat/exp/iss/aud，或某些 IdP 注入的 org_* 字段）暴露
+ * 给客户端，甚至把 `api_key` 之类的高敏字段也带回响应。
+ *
+ * 白名单只覆盖"明确安全且 WebUI 实际读取"的字段。
+ */
+const SAFE_JWT_CLAIM_KEYS: readonly string[] = [
+	"user_id",
+	"user_role",
+	"user_email",
+	"login_method",
+	"key",
+	"auth_header_name",
+	"premium_user",
+	"disabled_non_admin_personal_key_creation",
+	"server_root_path",
+];
+
+/**
+ * 从 JWT claims 中挑出白名单字段，构造 req.auth.metadata。
+ * @param claims - JWT 验签后的 claims 对象
+ * @returns 仅含 SAFE_JWT_CLAIM_KEYS 中声明字段的子集
+ */
+function pickSafeJwtClaims(claims: Record<string, unknown>): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const key of SAFE_JWT_CLAIM_KEYS) {
+		if (claims[key] !== undefined) {
+			out[key] = claims[key];
+		}
+	}
+	return out;
+}
+
+/**
+ * 安全地从 JWT claims 读取字符串字段，类型不匹配时返回 undefined。
+ * @param claims
+ * @param key
+ */
+function pickStringClaim(claims: Record<string, unknown>, key: string): string | undefined {
+	const claimValue = claims[key];
+	return typeof claimValue === "string" ? claimValue : undefined;
+}
 
 /**
  * GAP 10: 从请求中提取 end_user_id — 对齐 PY get_end_user_id_for_cost_tracking。
@@ -175,6 +230,48 @@ export function extractApiKey(req: Request, customKeyHeaderName?: string): strin
 		return req.query.key.trim();
 	}
 
+	// PY: WebUI 登录后 `token` cookie 携带 JWT（user_api_key_auth.py:323-330）
+	// Python 使用 FastAPI Request.cookies；Node 需手动解析 Cookie 头
+	const cookieToken = parseCookieToken(req.headers.cookie);
+	if (cookieToken) {
+		return cookieToken;
+	}
+
+	return null;
+}
+
+/**
+ * 从 Cookie 头中提取 WebUI 登录 JWT cookie 字段。
+ * 不引入 cookie-parser 依赖，直接字符串解析（与 Python webui 行为一致）。
+ *
+ * 安全约束：token 字段长度不得超过 MAX_COOKIE_VALUE_LENGTH，避免超长/异常输入进入
+ * 后续的 JWT 验签或哈希路径。
+ * @param cookieHeader - req.headers.cookie 原始字符串
+ * @returns token 值或 null
+ */
+export function parseCookieToken(cookieHeader: string | undefined): string | null {
+	if (!cookieHeader) {
+		return null;
+	}
+	for (const part of cookieHeader.split(";")) {
+		const trimmed = part.trim();
+		if (trimmed.length === 0 || trimmed.length > MAX_COOKIE_NAME_LENGTH + 1 + MAX_COOKIE_VALUE_LENGTH) {
+			continue;
+		}
+		const eqIndex = trimmed.indexOf("=");
+		if (eqIndex <= 0 || eqIndex > MAX_COOKIE_NAME_LENGTH) {
+			continue;
+		}
+		const name = trimmed.slice(0, eqIndex);
+		if (name !== WEBUI_COOKIE_TOKEN_NAME) {
+			continue;
+		}
+		const rawValue = trimmed.slice(eqIndex + 1);
+		if (rawValue.length === 0 || rawValue.length > MAX_COOKIE_VALUE_LENGTH) {
+			return null;
+		}
+		return decodeURIComponent(rawValue);
+	}
 	return null;
 }
 
@@ -197,7 +294,7 @@ export function createApiKeyAuth(
 			const apiKey = extractApiKey(req, customKeyHeaderName);
 
 			if (!apiKey) {
-				throw ApiError.unauthorized("缺少 API 密钥");
+				throw ApiError.unauthorized("Missing API key");
 			}
 
 			// 超级管理员密钥检查（使用 timingSafeEqual 防止时序攻击）
@@ -232,16 +329,20 @@ export function createApiKeyAuth(
 				}
 			}
 			// PY: JWT verification (user_api_key_auth.py:680-720)
+			// WebUI 登录流程：cookie JWT 的 `key` 字段携带明文 `sk-*` virtual key，
+			// 浏览器把它挂到 `Authorization: Bearer <sk-…>`，因此走到此处时 `apiKey`
+			// 已经是 `sk-…` 形式的 virtual key 本身（不是 JWT）。JWT 分支仅处理
+			// 第三方 IdP 通用 JWT（claims.sub / claims.user_id），不再做 WEBUI 占位特判。
 			if (jwtHandler && JWTHandler.isJwt(apiKey)) {
 				const jwtResult = await jwtHandler.verifyJwt(apiKey);
 				if (!jwtResult) {
-					throw ApiError.unauthorized("JWT 令牌验证失败");
+					throw ApiError.unauthorized("JWT verification failed");
 				}
-				// JWT validated — construct auth context from claims
 				req.auth = {
 					api_key: apiKey,
-					user_id: (jwtResult.claims.sub as string) ?? (jwtResult.claims.user_id as string) ?? "jwt-user",
-					metadata: jwtResult.claims as Record<string, unknown>,
+					user_id:
+						pickStringClaim(jwtResult.claims, "sub") ?? pickStringClaim(jwtResult.claims, "user_id") ?? JWT_FALLBACK_USER_ID,
+					metadata: pickSafeJwtClaims(jwtResult.claims),
 				} satisfies UserAPIKeyAuth;
 				next();
 				return;
@@ -252,23 +353,26 @@ export function createApiKeyAuth(
 			const token = await repository.findVerificationTokenByHash(tokenHash);
 
 			if (!token) {
-				throw ApiError.unauthorized("API 密钥无效或已撤销");
+				throw ApiError.unauthorized("Invalid or revoked API key");
 			}
 			// TS type narrowing: token is guaranteed non-null after this check
 			const verifiedToken: NonNullable<typeof token> = token;
 
 			// 检查令牌是否过期
-			// DIFF-AUTH-02: 对齐 PY user_api_key_auth.py:1313-1334 — 用 `datetime.now(timezone.utc)`
-			// 做 UTC 显式转换。TS 端 `new Date(verifiedToken.expires).getTime()` 解析 ISO-8601
-			// 字符串会返回 epoch 毫秒（时区无关，统一 UTC），与 `Date.now()` 直接比较。
-			// 注意：Date.parse 与 Date.UTC 行为不同；本处并未使用 Date.UTC（注释已修正）。
-			// 之前注释错把"用 Date.UTC 显式构造 UTC 毫秒"当作实现，实际仍用 epoch 毫秒直接比较。
+			// DIFF-AUTH-02: 对齐 PY `litellm/proxy/auth/user_api_key_auth.py:1313-1334` —
+			// Python 用 `datetime.now(timezone.utc)` 取得 UTC 当前时间再与 expires 比较。
+			// TS 端使用 epoch 毫秒比较：`new Date(verifiedToken.expires).getTime()` 把 ISO-8601
+			// 时间解析为 epoch 毫秒（与时区无关，等价于 UTC 毫秒），与 `Date.now()`（UTC 毫秒）直接
+			// 数值比较即可，语义与 PY 的 `datetime.now(timezone.utc)` 一致。
+			// 注意：此处未使用 `Date.UTC(...)`（那是构造器，参数是字段分量而非 timestamp），
+			// 也不需要 `Date.parse` —— 直接用 `new Date(iso).getTime()` 即可。
+			// 之前注释把"用 Date.UTC 显式构造 UTC 毫秒"当作实现，与实际代码不一致，已重写。
 			if (verifiedToken.expires) {
 				const expiryMs = new Date(verifiedToken.expires).getTime();
 				const nowMs = Date.now();
 				// PY: 严格 < 视为过期。`expiryMs === nowMs` 也应判过期（边界条件）。
 				if (expiryMs <= nowMs) {
-					throw ApiError.unauthorized("API 密钥已过期");
+					throw ApiError.unauthorized("API key has expired");
 				}
 			}
 
@@ -281,7 +385,7 @@ export function createApiKeyAuth(
 			if (verifiedToken.teamId) {
 				const team = await repository.findTeamById(verifiedToken.teamId);
 				if (team?.blocked) {
-					throw ApiError.unauthorized("所属团队已被禁用");
+					throw ApiError.unauthorized("Associated team is disabled");
 				}
 				teamSpend = team?.spend ?? undefined;
 				teamMaxBudget = team?.maxBudget ?? undefined;

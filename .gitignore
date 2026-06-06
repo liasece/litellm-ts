@@ -4,3 +4,7 @@ dist/
 .env
 tsconfig.tsbuildinfo
 config.litellm.yaml
+ui/litellm-dashboard/node_modules/
+ui/litellm-dashboard/.next/
+ui/litellm-dashboard/out/
+ui/litellm-dashboard/tsconfig.tsbuildinfo

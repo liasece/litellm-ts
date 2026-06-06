@@ -38,8 +38,6 @@ export const LiteLLM_TeamTable = pgTable(
 		policies: text("policies").array().default([]),
 		modelId: integer("model_id"),
 		allowTeamGuardrailConfig: boolean("allow_team_guardrail_config").default(false),
-		/** PY: 团队模型别名映射（从 TeamTable 提取时供 canKeyAccessModel 展开） */
-		teamModelAliases: jsonb("team_model_aliases").default("{}"),
 	},
 	(table) => [
 		index("team_organization_idx").on(table.organizationId),

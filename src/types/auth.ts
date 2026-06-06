@@ -19,6 +19,12 @@ export interface UserAPIKeyAuth {
 	token?: string;
 	/** 关联的用户 ID */
 	user_id?: string;
+	/**
+	 * 关联的用户角色（proxy_admin / internal_user 等），对齐 PY UserAPIKeyAuth.user_role。
+	 * 主要由 WebUI 登录会话 JWT（cookie `token`）携带，由登录端点写入 claims.user_role。
+	 * 完整定义：BerriAI/litellm `litellm/proxy/_types.py::UserAPIKeyAuth.user_role`。
+	 */
+	user_role?: string;
 	/** 关联的团队 ID */
 	team_id?: string;
 	/** 关联的组织 ID */

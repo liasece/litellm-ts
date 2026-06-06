@@ -89,12 +89,22 @@ export class OpenAICompatProvider implements ProviderConfig {
 			}
 		}
 
+		// Python LiteLLM 行为：optionalParams.api_base 优先于构造函数 apiBase
+		const apiBaseRaw = optionalParams["api_base"];
+		const apiBase = typeof apiBaseRaw === "string" && apiBaseRaw.length > 0 ? apiBaseRaw : this.apiBase;
+		// 同步应用尾部斜杠 / chat/completions 归一化
+		const normalizedBase = apiBase.replace(/\/$/, "").replace(/\/chat\/completions$/, "");
+
+		// api_key 同理：deployment key 优先
+		const apiKeyRaw = optionalParams["api_key"];
+		const apiKey = typeof apiKeyRaw === "string" && apiKeyRaw.length > 0 ? apiKeyRaw : this.apiKey;
+
 		return {
-			url: `${this.apiBase}/chat/completions`,
+			url: `${normalizedBase}/chat/completions`,
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${apiKey}`,
 			},
 			body: body,
 			model: model,

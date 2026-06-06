@@ -101,6 +101,18 @@ export class AnthropicProvider implements ProviderConfig {
 	}
 
 	/**
+	 * PY: get_llm_provider("provider/model") 返回给 provider 的 model 会剥离 provider 前缀。
+	 * @param model
+	 */
+	private _stripProviderPrefix(model: string): string {
+		const slashIndex = model.indexOf("/");
+		if (slashIndex !== -1) {
+			return model.slice(slashIndex + 1);
+		}
+		return model;
+	}
+
+	/**
 	 * PY: Only Claude Opus 4.6, not Sonnet 4.6 (transformation.py:L179-L184)
 	 * @param model
 	 */
@@ -186,8 +198,14 @@ export class AnthropicProvider implements ProviderConfig {
 		const { system, anthropicMessages } = this._toAnthropicMessages(messages);
 		const modifyParams = optionalParams.modify_params === true || optionalParams["modify_params"] === true;
 
+		// Python LiteLLM 行为：optionalParams.api_base 优先于构造函数 _apiBase。
+		// Router 传入的 deployment.litellm_params.api_base 会覆盖默认 base。
+		const apiBaseRaw = optionalParams["api_base"];
+		const apiBase = typeof apiBaseRaw === "string" && apiBaseRaw.length > 0 ? apiBaseRaw : this._apiBase;
+
+		const providerModel = this._stripProviderPrefix(model);
 		const body: Record<string, unknown> = {
-			model: model,
+			model: providerModel,
 			messages: anthropicMessages,
 		};
 
@@ -636,7 +654,7 @@ export class AnthropicProvider implements ProviderConfig {
 		}
 
 		return {
-			url: `${this._apiBase}/v1/messages`,
+			url: `${apiBase}/v1/messages`,
 			method: "POST",
 			headers: headers,
 			body: body,
@@ -1026,7 +1044,7 @@ export class AnthropicProvider implements ProviderConfig {
 							created: state.created,
 							model: state.responseModel,
 							choices: [{ index: 0, delta: { content: (block.text as string) ?? "" }, finish_reason: null }],
-							// eslint-disable-next-line camelcase
+
 							provider_specific_fields: { citations_delta: citations },
 						},
 					];
@@ -1268,7 +1286,7 @@ export class AnthropicProvider implements ProviderConfig {
 						created: state.created,
 						model: state.responseModel,
 						choices: [{ index: 0, delta: { content: "" }, finish_reason: null }],
-						// eslint-disable-next-line camelcase
+
 						provider_specific_fields: { citations_delta: [citationObj] },
 					},
 				];

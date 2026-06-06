@@ -2,7 +2,7 @@
  * 服务配置管理模块
  * 从 YAML 文件读取配置，通过 zod schema 校验并提供类型安全的配置访问
  *
- * 支持的 YAML 结构（兼容 litellm 标准格式）：
+ * 严格对齐 Python LiteLLM 配置格式：
  * ```yaml
  * server:
  *   port: 4000
@@ -19,6 +19,9 @@
  *       model: anthropic/claude-opus-4-6
  *       api_base: http://...
  *       api_key: sk-...
+ *       custom_llm_provider: anthropic
+ *       extra_headers: {...}
+ *       extra_body: {...}
  * litellm_settings:
  *   skip_provider_token_counting: true
  * router_settings:
@@ -28,15 +31,22 @@
  * general_settings:
  *   master_key: sk-...
  *   store_model_in_db: true
+ *   database_url: postgresql://user:pass@host:port/db
+ *   port: 4000
+ *   host: 0.0.0.0
  *   model_group_alias:
  *     claude-opus: glm-latest-anthropic
  * ```
+ *
+ * Python snake_case (`general_settings` / `router_settings` / `litellm_settings` /
+ * `model_list`) 作为一等配置格式，camelCase 字段仅作为兼容回退。
  */
 
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 import * as path from "path";
 import { z } from "zod";
+import type { ModelInfo } from "../../types/config";
 
 // ============ Zod Schema 定义 ============
 
@@ -68,24 +78,41 @@ const LiteLLMSettingsSchema = z.object({
 	cacheModelConfig: z.boolean().default(true),
 });
 
-/** litellm_params schema for model_list entries */
-const ModelLitellmParamsSchema = z.object({
-	model: z.string(),
-	api_key: z.string().optional(),
-	api_base: z.string().optional(),
-	custom_llm_provider: z.string().optional(),
-	rpm: z.number().optional(),
-	tpm: z.number().optional(),
-	input_cost_per_token: z.number().optional(),
-	output_cost_per_token: z.number().optional(),
-	timeout: z.number().optional(),
-	max_retries: z.number().optional(),
-	stream_timeout: z.number().optional(),
-	temperature: z.number().optional(),
-	max_tokens: z.number().optional(),
-	extra_headers: z.record(z.string()).optional(),
-	extra_body: z.record(z.unknown()).optional(),
-});
+/**
+ * litellm_params schema for model_list entries
+ *
+ * 透传 Python LiteLLM 字段（api_base / api_key / custom_llm_provider /
+ * extra_headers / extra_body / stream_timeout / anthropic_version / 等）。
+ * `.passthrough()` 允许未来 Python 新增字段不被 schema 拒绝。
+ */
+const ModelLitellmParamsSchema = z
+	.object({
+		model: z.string(),
+		api_key: z.string().optional(),
+		api_base: z.string().optional(),
+		custom_llm_provider: z.string().optional(),
+		rpm: z.number().optional(),
+		tpm: z.number().optional(),
+		input_cost_per_token: z.number().optional(),
+		output_cost_per_token: z.number().optional(),
+		timeout: z.number().optional(),
+		max_retries: z.number().optional(),
+		stream_timeout: z.number().optional(),
+		temperature: z.number().optional(),
+		max_tokens: z.number().optional(),
+		max_completion_tokens: z.number().optional(),
+		extra_headers: z.record(z.string()).optional(),
+		extra_body: z.record(z.unknown()).optional(),
+		// Python: anthropic_version — 用户显式覆盖 anthropic-version header
+		anthropic_version: z.string().optional(),
+		// Python: auth_token — ANTHROPIC_AUTH_TOKEN 走 Bearer
+		auth_token: z.string().optional(),
+		// Python: speed / context_window / weight 等
+		speed: z.string().optional(),
+		context_window: z.number().optional(),
+		weight: z.number().optional(),
+	})
+	.passthrough();
 
 /** Model info schema */
 const ModelInfoSchema = z
@@ -165,21 +192,31 @@ const GeneralSettingsSchema = z.object({
 	disable_adding_master_key_hash_to_db: z.boolean().optional(),
 });
 
-/** 顶层配置 schema */
-const RawServiceConfigSchema = z.object({
-	server: ServerSchema.default({}),
-	logging: LoggingSchema.default({}),
-	database: DatabaseSchema.default({}),
-	litellmSettings: LiteLLMSettingsSchema.default({}),
-	routerSettings: RouterSettingsSchema.default({}),
-	generalSettings: GeneralSettingsSchema.default({}),
+/**
+ * 顶层配置 schema
+ *
+ * 严格对齐 Python LiteLLM 配置：snake_case 顶层字段（model_list / litellm_settings /
+ * router_settings / general_settings）作为主输入。
+ * 保留 camelCase 顶层字段（server / database / generalSettings / routerSettings / litellmSettings）
+ * 作为兼容回退，运行时通过 validateAndTransform 派生。
+ */
+const RawServiceConfigSchema = z
+	.object({
+		// TS 兼容回退字段（camelCase）
+		server: ServerSchema.default({}),
+		logging: LoggingSchema.default({}),
+		database: DatabaseSchema.default({}),
+		litellmSettings: LiteLLMSettingsSchema.default({}),
+		routerSettings: RouterSettingsSchema.default({}),
+		generalSettings: GeneralSettingsSchema.default({}),
 
-	// Litellm proxy top-level fields (snake_case)
-	model_list: z.array(ModelListItemSchema).default([]),
-	litellm_settings: z.record(z.unknown()).optional(),
-	router_settings: z.record(z.unknown()).optional(),
-	general_settings: z.record(z.unknown()).optional(),
-});
+		// Python LiteLLM 顶层 snake_case 字段 — 一等配置格式
+		model_list: z.array(ModelListItemSchema).default([]),
+		litellm_settings: z.record(z.unknown()).optional(),
+		router_settings: z.record(z.unknown()).optional(),
+		general_settings: z.record(z.unknown()).optional(),
+	})
+	.passthrough();
 
 // ============ Interface 类型定义 ============
 
@@ -223,7 +260,13 @@ export interface LiteLLMSettings {
 	readonly cacheModelConfig: boolean;
 }
 
-/** Model litellm_params type */
+/**
+ * Model litellm_params type
+ *
+ * 透传 Python LiteLLM 字段（api_base / api_key / custom_llm_provider /
+ * extra_headers / extra_body / stream_timeout / anthropic_version / 等）。
+ * 同时通过索引签名允许未知 Python 字段透传。
+ */
 export interface ModelLitellmParamsConfig {
 	/** 完整模型标识符（含 provider 前缀） */
 	readonly model: string;
@@ -251,10 +294,24 @@ export interface ModelLitellmParamsConfig {
 	readonly temperature?: number;
 	/** 最大输出 token 数 */
 	readonly max_tokens?: number;
+	/** 最大输出 token 数（OpenAI 命名） */
+	readonly max_completion_tokens?: number;
 	/** 额外请求头 */
 	readonly extra_headers?: Record<string, string>;
 	/** Provider-specific 额外参数 */
 	readonly extra_body?: Record<string, unknown>;
+	/** Anthropic API 版本 */
+	readonly anthropic_version?: string;
+	/** Anthropic OAuth Bearer token（sk-ant-oat*） */
+	readonly auth_token?: string;
+	/** Anthropic speed 选项 */
+	readonly speed?: string;
+	/** 模型 context window（1M context 模型检测） */
+	readonly context_window?: number;
+	/** 路由权重 */
+	readonly weight?: number;
+	/** 索引签名 — 允许透传 Python 未知字段（如 thinking / reasoning_effort） */
+	readonly [key: string]: unknown;
 }
 
 /** Model list item config */
@@ -264,7 +321,7 @@ export interface ModelListItemConfig {
 	/** 部署连接参数 */
 	readonly litellm_params: ModelLitellmParamsConfig;
 	/** 模型元信息 */
-	readonly model_info?: Record<string, unknown>;
+	readonly model_info?: ModelInfo;
 }
 
 /** 路由设置 */
@@ -353,24 +410,187 @@ export interface ServiceConfig {
 // ============ 解析逻辑 ============
 
 /**
+ * 从 `general_settings.database_url` 解析数据库连接配置。
+ * 支持 `postgresql://user:pass@host:port/database` 格式。
+ * @param url
+ */
+function parseDatabaseUrl(url: string): {
+	host: string;
+	port: number;
+	database: string;
+	user: string;
+	password: string;
+} | null {
+	try {
+		const parsed = new URL(url);
+		const host = parsed.hostname;
+		const portRaw = parsed.port;
+		const port = portRaw && portRaw.length > 0 ? Number(portRaw) : 5432;
+		if (Number.isNaN(port)) {
+			return null;
+		}
+		const database = parsed.pathname.replace(/^\//, "") || "litellm";
+		const user = parsed.username || "litellm";
+		const password = parsed.password || "litellm";
+		if (!host) {
+			return null;
+		}
+		return { host: host, port: port, database: database, user: user, password: password };
+	} catch {
+		return null;
+	}
+}
+
+/**
  * 验证并转换原始 YAML 数据为 ServiceConfig
+ *
+ * Python LiteLLM 风格 YAML（snake_case 顶层字段）作为一等输入：
+ * - server.port → server.port → general_settings.port → 默认 4000
+ * - server.host → server.host → general_settings.host → 默认 0.0.0.0
+ * - database 顶层 → general_settings.database_url 解析 → 默认 localhost:5432
+ * - generalSettings 派生自 general_settings（snake_case 优先，camelCase 仅作兼容回退）
+ * - routerSettings 派生自 router_settings（snake_case 优先，camelCase 仅作兼容回退）
+ * - litellmSettingsRaw/routerSettingsRaw/generalSettingsRaw 保留原始 Python 块
  * @param raw - 原始 YAML 对象
  * @throws 当配置不符合 schema 时抛出 ZodError
  */
 export function validateAndTransform(raw: unknown): ServiceConfig {
 	const config = RawServiceConfigSchema.parse(raw);
 
+	const generalSettingsRaw = (config.general_settings ?? {}) as Record<string, unknown>;
+	const routerSettingsRaw = (config.router_settings ?? {}) as Record<string, unknown>;
+	const litellmSettingsRaw = (config.litellm_settings ?? {}) as Record<string, unknown>;
+
+	// server.port: APP_PORT → server.port → general_settings.port → 默认 4000
+	let serverPort = config.server.port;
+	if (typeof generalSettingsRaw["port"] === "number") {
+		serverPort = generalSettingsRaw["port"];
+	} else if (typeof generalSettingsRaw["port"] === "string") {
+		const parsed = Number(generalSettingsRaw["port"]);
+		if (Number.isNaN(parsed)) {
+			throw new Error(`Invalid general_settings.port: expected number, got "${generalSettingsRaw["port"]}".`);
+		}
+		serverPort = parsed;
+	}
+	const envAppPort = process.env.APP_PORT;
+	if (typeof envAppPort === "string" && envAppPort.length > 0) {
+		const parsed = Number(envAppPort);
+		if (Number.isNaN(parsed)) {
+			throw new Error(`Invalid APP_PORT: expected number, got "${envAppPort}".`);
+		}
+		serverPort = parsed;
+	}
+	if (typeof serverPort !== "number" || Number.isNaN(serverPort)) {
+		throw new Error(`Invalid server.port: expected number.`);
+	}
+
+	// server.host: server.host → general_settings.host → 默认 0.0.0.0
+	let serverHost = config.server.host;
+	if (typeof generalSettingsRaw["host"] === "string" && generalSettingsRaw["host"].length > 0) {
+		serverHost = generalSettingsRaw["host"];
+	}
+
+	// database: 顶层 database → DATABASE_URL 环境变量 → general_settings.database_url → 默认值
+	// 环境变量优先级高于 YAML，用于部署脚本注入真实数据库连接
+	let databaseConfig = { ...config.database };
+	const envDatabaseUrl = process.env.DATABASE_URL;
+	const yamlDatabaseUrl = generalSettingsRaw["database_url"];
+	const envValid = typeof envDatabaseUrl === "string" && envDatabaseUrl.length > 0;
+	const yamlValid = typeof yamlDatabaseUrl === "string" && yamlDatabaseUrl.length > 0;
+	const databaseUrlRaw: string | undefined = envValid ? (envDatabaseUrl as string) : yamlValid ? (yamlDatabaseUrl as string) : undefined;
+	if (databaseUrlRaw !== undefined) {
+		const parsed = parseDatabaseUrl(databaseUrlRaw);
+		if (!parsed) {
+			const sourceLabel = envValid ? "DATABASE_URL" : "general_settings.database_url";
+			throw new Error(`Invalid ${sourceLabel}: expected postgresql:// connection string, got "${databaseUrlRaw}".`);
+		}
+		databaseConfig = { ...databaseConfig, ...parsed };
+	}
+
+	// generalSettings: snake_case general_settings 派生，camelCase 仅作兼容回退（冲突时 snake_case 优先）
+	// LITELLM_MASTER_KEY 环境变量优先于 YAML 与 camelCase 字段，供容器部署注入真实 master key
+	const envMasterKey = process.env.LITELLM_MASTER_KEY;
+	const envMasterKeyValid = typeof envMasterKey === "string" && envMasterKey.length > 0;
+	const generalSettings: GeneralSettings = {
+		...config.generalSettings,
+		master_key: envMasterKeyValid
+			? (envMasterKey as string)
+			: ((generalSettingsRaw["master_key"] as string | undefined) ?? config.generalSettings.master_key),
+		store_model_in_db:
+			typeof generalSettingsRaw["store_model_in_db"] === "boolean"
+				? (generalSettingsRaw["store_model_in_db"] as boolean)
+				: config.generalSettings.store_model_in_db,
+		model_group_alias:
+			Object.keys(generalSettingsRaw["model_group_alias"] ?? {}).length > 0
+				? (generalSettingsRaw["model_group_alias"] as Record<string, string>)
+				: config.generalSettings.model_group_alias,
+		websearch_override_target_model:
+			(generalSettingsRaw["websearch_override_target_model"] as string | undefined) ??
+			config.generalSettings.websearch_override_target_model,
+		skip_provider_token_counting:
+			typeof generalSettingsRaw["skip_provider_token_counting"] === "boolean"
+				? (generalSettingsRaw["skip_provider_token_counting"] as boolean)
+				: config.generalSettings.skip_provider_token_counting,
+		database_url: (databaseUrlRaw as string | undefined) ?? config.generalSettings.database_url,
+		disable_adding_master_key_hash_to_db:
+			typeof generalSettingsRaw["disable_adding_master_key_hash_to_db"] === "boolean"
+				? (generalSettingsRaw["disable_adding_master_key_hash_to_db"] as boolean)
+				: config.generalSettings.disable_adding_master_key_hash_to_db,
+	};
+
+	// routerSettings: snake_case router_settings 派生，camelCase 仅作兼容回退（冲突时 snake_case 优先）
+	const routerSettings: RouterSettings = {
+		...config.routerSettings,
+		allowed_fails:
+			typeof routerSettingsRaw["allowed_fails"] === "number"
+				? (routerSettingsRaw["allowed_fails"] as number)
+				: config.routerSettings.allowed_fails,
+		cooldown_time:
+			typeof routerSettingsRaw["cooldown_time"] === "number"
+				? (routerSettingsRaw["cooldown_time"] as number)
+				: config.routerSettings.cooldown_time,
+		num_retries:
+			typeof routerSettingsRaw["num_retries"] === "number"
+				? (routerSettingsRaw["num_retries"] as number)
+				: config.routerSettings.num_retries,
+		max_fallbacks:
+			typeof routerSettingsRaw["max_fallbacks"] === "number"
+				? (routerSettingsRaw["max_fallbacks"] as number)
+				: config.routerSettings.max_fallbacks,
+		routing_strategy: (routerSettingsRaw["routing_strategy"] as string | undefined) ?? config.routerSettings.routing_strategy,
+		fallbacks:
+			Array.isArray(routerSettingsRaw["fallbacks"]) && routerSettingsRaw["fallbacks"].length > 0
+				? (routerSettingsRaw["fallbacks"] as Record<string, string[]>[])
+				: config.routerSettings.fallbacks,
+		model_group_alias:
+			Object.keys(routerSettingsRaw["model_group_alias"] ?? {}).length > 0
+				? (routerSettingsRaw["model_group_alias"] as Record<string, string>)
+				: config.routerSettings.model_group_alias,
+		enable_pre_call_checks:
+			typeof routerSettingsRaw["enable_pre_call_checks"] === "boolean"
+				? (routerSettingsRaw["enable_pre_call_checks"] as boolean)
+				: config.routerSettings.enable_pre_call_checks,
+		redis_url: (routerSettingsRaw["redis_url"] as string | undefined) ?? config.routerSettings.redis_url,
+		request_timeout:
+			typeof routerSettingsRaw["request_timeout"] === "number"
+				? (routerSettingsRaw["request_timeout"] as number)
+				: config.routerSettings.request_timeout,
+	};
+
 	return {
-		server: config.server,
+		server: {
+			port: serverPort,
+			host: serverHost,
+		},
 		logging: config.logging,
-		database: config.database,
+		database: databaseConfig,
 		litellmSettings: config.litellmSettings,
-		routerSettings: config.routerSettings,
-		generalSettings: config.generalSettings,
+		routerSettings: routerSettings,
+		generalSettings: generalSettings,
 		modelList: config.model_list,
-		litellmSettingsRaw: config.litellm_settings,
-		routerSettingsRaw: config.router_settings,
-		generalSettingsRaw: config.general_settings,
+		litellmSettingsRaw: litellmSettingsRaw,
+		routerSettingsRaw: routerSettingsRaw,
+		generalSettingsRaw: generalSettingsRaw,
 	};
 }
 

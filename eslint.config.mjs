@@ -32,10 +32,17 @@ export default [
 			"tests/**",
 			"**/*.test.ts",
 			"src/db/schema/**/*.ts",
+			"ui/litellm-dashboard/tests/**",
+			"ui/litellm-dashboard/scripts/**",
+			"ui/litellm-dashboard/e2e_tests/**",
+			"ui/litellm-dashboard/coverage/**",
+			"ui/litellm-dashboard/tailwind.config.ts",
+			"ui/litellm-dashboard/next.config.mjs",
 		],
 	},
 	...compat.extends("eslint:recommended", "plugin:@typescript-eslint/recommended"),
 	{
+		files: ["src/**/*.ts"],
 		plugins: {
 			"@typescript-eslint": typescriptEslint,
 			import: importPlugin,
@@ -88,95 +95,6 @@ export default [
 			"no-self-compare": "error",
 			"no-template-curly-in-string": "error",
 			"no-unmodified-loop-condition": "error",
-			camelcase: [
-				"error",
-				{
-					properties: "always",
-					allow: [
-						"^_?tmp.*",
-						"^_temp.*",
-						"^m_.*",
-						"^duration_ms$",
-						"^cost_usd$",
-						"^num_turns$",
-						"^per_page$",
-						"^page_size$",
-						"^page_token$",
-						// Drizzle DB schema columns (snake_case)
-						"^team_id$", "^user_id$", "^organization_id$", "^model_id$",
-						"^api_key$", "^key_alias$", "^key_name$", "^tpm_limit$", "^rpm_limit$",
-						"^max_budget$", "^budget_id$", "^budget_reset_at$",
-						"^model_spend$", "^model_max_budget$", "^max_tokens$", "^max_completion_tokens$",
-						"^finish_reason$", "^allowed_routes$", "^tool_choice$", "^tool_calls$",
-						"^stop_reason$", "^stop_sequences$",
-						"^api_base$", "^request_id$", "^call_type$", "^model_group$", "^model_name$",
-						"^model_info$", "^custom_llm_provider$", "^cache_control$",
-						"^output_format$", "^output_config$", "^budget_tokens$",
-						"^end_user_id$", "^object_permission_id$", "^access_group_ids$",
-						"^created_at$", "^updated_at$", "^created_by$", "^updated_by$",
-						"^successful_requests$", "^failed_requests$", "^api_requests$",
-						"^mcp_namespaced_tool_name$", "^proxy_server_request$",
-						"^request_tags$", "^requester_ip_address$",
-						"^cache_read_input_tokens$", "^cache_creation_input_tokens$",
-						"^cache_creation_token_details$", "^completion_tokens_details$", "^prompt_tokens_details$",
-						"^soft_budget_cooldown$", "^max_parallel_requests$",
-						"^budget_duration$", "^request_duration_ms$",
-						"^rotation_count$", "^auto_rotate$", "^rotation_interval$",
-						"^last_rotation_at$", "^key_rotation_at$", "^last_active$",
-						"^team_alias$", "^user_alias$", "^organization_alias$", "^project_alias$",
-						"^user_email$", "^user_role$", "^sso_user_id$",
-						"^litellm_params$", "^model_aliases$",
-						"^credential_name$", "^credential_values$", "^credential_info$",
-						"^guardrail_name$", "^guardrail_info$",
-						"^prompt_id$", "^prompt_info$",
-						"^policy_name$", "^version_number$", "^version_status$", "^parent_version_id$",
-						"^guardrails_add$", "^guardrails_remove$",
-						"^search_tool_name$", "^search_tool_info$",
-						"^unified_file_id$", "^unified_object_id$", "^model_object_id$", "^unified_resource_id$",
-						"^index_name$", "^index_info$",
-						"^access_group_name$", "^agent_name$", "^agent_card_params$",
-						"^server_name$", "^mcp_access_groups$",
-						"^tool_name$", "^tool_type$", "^input_policy$", "^output_policy$",
-						"^skill_id$", "^display_title$", "^latest_version$",
-						"^cronjob_id$", "^health_check_id$",
-						"^param_name$", "^param_value$", "^config_type$", "^config_value$",
-						"^cache_settings$", "^ui_settings$", "^sso_settings$",
-						"^web_search_options$", "^context_management$", "^extra_headers$", "^parallel_tool_calls$",
-						"^input_tokens$", "^output_tokens$", "^prompt_tokens$", "^completion_tokens$", "^total_tokens$",
-						"^allowed_cache_controls$", "^allowed_model_region$", "^default_model$",
-						"^exception_type$", "^exception_string$", "^status_code$", "^litellm_model_name$",
-						// LiteLLM_* / liteLLM_* table names from Drizzle schemas
-						"^LiteLLM_", "^liteLLM_",
-						"^thinking_blocks$", "^reasoning_content$", "^input_schema$", "^tool_use_id$", "^tool_use$",
-						"^soft_budget$", "^owned_by$", "^output_cost_per_token$", "^json_mode$",
-						"^media_type$", "^disable_parallel_tool_use$", "^user_location$", "^max_uses$",
-						"^supported_text$", "^reasoning_tokens$", "^text_tokens$", "^cached_tokens$", "^cache_creation_tokens$",
-						"^hate_threatening$", "^harassment_threatening$", "^category_scores$",
-						"^total_spend$", "^total_prompt_tokens$", "^total_completion_tokens$",
-						"^input_cost_per_token$", "^max_retries$", "^stream_timeout$", "^extra_body$",
-						"^max_input_tokens$", "^max_output_tokens$", "^supports_function_calling$",
-						"^supports_parallel_function_calling$", "^supports_vision$", "^supports_system_messages$",
-						"^supports_tool_choice$", "^litellm_provider$",
-						"^allowed_fails$", "^cooldown_time$", "^num_retries$", "^max_fallbacks$", "^routing_strategy$",
-						"^model_group_alias$", "^enable_pre_call_checks$", "^search_tools$", "^redis_url$", "^request_timeout$",
-						"^master_key$", "^store_model_in_db$", "^websearch_override_target_model$",
-						"^skip_provider_token_counting$", "^database_url$", "^database_connection_pool_limit$",
-						"^proxy_logging_retry_min_delay$", "^max_log_files$",
-						"^disable_adding_master_key_hash_to_db$",
-						"^model_list$", "^litellm_settings$", "^router_settings$", "^general_settings$",
-						"^end_turn$", "^web_search$", "^tool_call_id$", "^top_p$",
-						"^anthropic_version$", "^content_block$", "^provider_specific_fields$",
-						"^_hidden_params$",
-						// Anthropic API response 字段（snake_case，非 TS 可控）
-						"^container_content$", "^code_interpreter_results$",
-						"^web_search_requests$", "^tool_search_requests$", "^inference_geo$",
-						"^defer_loading$", "^allowed_callers$", "^input_examples$",
-						// Anthropic streaming / responses API snake_case fields
-						"^compaction_blocks$", "^web_search_results$", "^tool_results$",
-						"^display_number$", "^container_id$",
-					],
-				},
-			],
 			"rest-spread-spacing": "error",
 			"object-property-newline": ["error", { allowAllPropertiesOnSameLine: true }],
 			"no-trailing-spaces": "error",
@@ -341,6 +259,90 @@ export default [
 			"jsdoc/sort-tags": "error",
 			"jsdoc/tag-lines": "error",
 			"jsdoc/valid-types": "error",
+		},
+	},
+	// UI (litellm-dashboard) 专用 ESLint 配置
+	{
+		files: ["ui/litellm-dashboard/**/*.{ts,tsx}"],
+		ignores: [
+			"ui/litellm-dashboard/node_modules/**",
+			"ui/litellm-dashboard/.next/**",
+			"ui/litellm-dashboard/out/**",
+			"ui/litellm-dashboard/coverage/**",
+			"ui/litellm-dashboard/e2e_tests/**",
+			"ui/litellm-dashboard/scripts/**",
+			"ui/litellm-dashboard/tests/**",
+		],
+		languageOptions: {
+			parser: tsParser,
+			ecmaVersion: "latest",
+			sourceType: "module",
+			parserOptions: {
+				project: "./ui/litellm-dashboard/tsconfig.json",
+				tsconfigRootDir: __dirname,
+				ecmaFeatures: {
+					jsx: true,
+				},
+			},
+		},
+		settings: {
+			"import/resolver": {
+				node: {
+					extensions: [".ts", ".tsx"],
+				},
+			},
+		},
+		plugins: {
+			"@typescript-eslint": typescriptEslint,
+			// 最小占位插件：仅为了让 UI 源码中已有的 eslint-disable 注释可解析
+			"react-hooks": {
+				rules: {
+					"exhaustive-deps": {
+						create() {
+							return {};
+						},
+					},
+				},
+			},
+			"@next/next": {
+				rules: {
+					"no-img-element": {
+						create() {
+							return {};
+						},
+					},
+				},
+			},
+			react: {
+				rules: {
+					"no-unescaped-entities": {
+						create() {
+							return {};
+						},
+					},
+				},
+			},
+		},
+		rules: {
+			"@typescript-eslint/no-explicit-any": "off",
+			"@typescript-eslint/no-unused-vars": "off",
+			"@typescript-eslint/no-unused-expressions": "off",
+			"@typescript-eslint/ban-ts-comment": "off",
+			"@typescript-eslint/no-require-imports": "off",
+			"prefer-const": "off",
+			"no-empty": "off",
+			"no-prototype-builtins": "off",
+			"no-useless-catch": "off",
+			"no-useless-escape": "off",
+			"no-self-assign": "off",
+			"no-constant-binary-expression": "off",
+			// 关闭后端强制的 strict 规则，UI 有自己的风格
+			"prefer-arrow-callback": "off",
+			"object-shorthand": "off",
+			camelcase: "off",
+			curly: "off",
+			"no-restricted-syntax": "off",
+			"jsdoc/require-jsdoc": "off",
 		},
 	},
 ];

@@ -15,6 +15,7 @@ import { registerController } from "./core/api/registerController";
 import { errorHandler } from "./middleware/ErrorHandler";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
 import { createModuleLogger } from "./core/utils/logger";
+import { registerStaticUiRoutes } from "./ui/StaticUiRoutes";
 // 核心代理端点
 import { HealthController } from "./proxy/HealthEndpoint";
 import { ModelsController } from "./proxy/ModelsEndpoint";
@@ -62,10 +63,15 @@ import { registerUtilRoutes } from "./proxy/UtilEndpoints";
 import { registerLoginRoutes } from "./proxy/LoginEndpoints";
 import { registerSSORoutes } from "./proxy/SSOEndpoints";
 import { registerSpendIntegrationRoutes } from "./proxy/SpendIntegrationEndpoints";
+import { registerConfigOverridesRoutes } from "./proxy/ConfigOverridesEndpoints";
+import { registerEmailEventsRoutes } from "./proxy/EmailEventsEndpoints";
+import { registerIpAllowlistRoutes } from "./proxy/IpAllowlistEndpoints";
 import { registerOCRVideoContainerRoutes } from "./proxy/OCRVideoContainerEndpoints";
 import { registerAnalyticsRoutes } from "./proxy/AnalyticsEndpoints";
 import { registerAlertingRoutes } from "./proxy/AlertingEndpoints";
 import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
+import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
+import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
 
 const logger = createModuleLogger("Server");
 
@@ -122,6 +128,9 @@ export class LiteLLMServer {
 
 		// 注册路由
 		this._registerHealthRoutes(app);
+		this._registerPublicProxyRoutes(app);
+		// WebUI 静态资源必须在鉴权 API 路由之前注册，避免被 API 路由抢先匹配
+		registerStaticUiRoutes(app);
 		this._registerCoreProxyRoutes(app, container);
 		this._registerManagementRoutes(app, container);
 		this._registerSpendRoutes(app, container);
@@ -135,6 +144,19 @@ export class LiteLLMServer {
 	private _registerHealthRoutes(app: express.Express): void {
 		registerController(app, new HealthController());
 		logger.info("健康检查路由已注册");
+	}
+
+	// ── 公开代理端点 ──
+	private _registerPublicProxyRoutes(app: express.Express): void {
+		const publicRouter = express.Router();
+		registerLoginRoutes(publicRouter, this._config, this._container!.db.db);
+		registerDiscoveryRoutes(publicRouter);
+		registerWebUiSupportPublicRoutes(publicRouter);
+		publicRouter.get("/", (_req, res) => {
+			res.redirect("/ui");
+		});
+		app.use(publicRouter);
+		logger.info("公开代理端点已注册");
 	}
 
 	// ── 核心代理端点 ──
@@ -193,6 +215,16 @@ export class LiteLLMServer {
 		const stubRouter = express.Router();
 		stubRouter.use(container.authMiddleware);
 
+		// Models 页面支撑（需鉴权）
+		// 必须传 container.router：Router deployments 是运行时真实模型源，
+		// 包含 config 重构过程中可能丢失的 model_info 字段与默认 deployment 元信息
+		// （如 custom_llm_provider、rpm/tpm、timeout 等）。如果只传 config.modelList，
+		// /v2/model/info 与 /model_group/info 拿不到 id / mode / cost 等关键字段。
+		registerModelsPageSupportRoutes(stubRouter, container.router, this._config);
+
+		// WebUI 鉴权支撑端点（/get/ui_settings、/config/list、/team/list 等）
+		registerWebUiSupportRoutes(stubRouter, this._config);
+
 		registerAssistantsRoutes(stubRouter);
 		registerBatchesRoutes(stubRouter);
 		registerFilesRoutes(stubRouter);
@@ -214,13 +246,14 @@ export class LiteLLMServer {
 		registerAnthropicSkillsRoutes(stubRouter);
 		registerClaudeCodeMarketplaceRoutes(stubRouter);
 		registerUtilRoutes(stubRouter);
-		registerLoginRoutes(stubRouter);
 		registerSSORoutes(stubRouter);
 		registerSpendIntegrationRoutes(stubRouter);
+		registerConfigOverridesRoutes(stubRouter);
+		registerEmailEventsRoutes(stubRouter);
+		registerIpAllowlistRoutes(stubRouter);
 		registerOCRVideoContainerRoutes(stubRouter);
 		registerAnalyticsRoutes(stubRouter);
 		registerAlertingRoutes(stubRouter);
-		registerDiscoveryRoutes(stubRouter);
 
 		app.use(stubRouter);
 		logger.info("Stub 端点已注册");

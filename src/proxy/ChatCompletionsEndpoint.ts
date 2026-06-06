@@ -195,6 +195,7 @@ async function handleStreamingResponse(
 		litellmRouter.trackActiveRequest(deployment.model_name, 1);
 
 		const providerReq = provider.transformRequest(deployment.litellm_params.model, messages, {
+			...deployment.litellm_params,
 			...optionalParams,
 			stream: true,
 		});
@@ -328,7 +329,7 @@ async function handleStreamingResponse(
 						team_id: auth.team_id,
 						cache_creation_input_tokens: totalCacheCreationTokens,
 						cache_read_input_tokens: totalCacheReadTokens,
-						// eslint-disable-next-line camelcase
+
 						cache_hit: totalCacheReadTokens > 0,
 						// GAP 10: 透传 end_user_id 到 spend log
 						end_user_id: auth.end_user_id,

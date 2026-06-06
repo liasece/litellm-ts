@@ -398,9 +398,16 @@ function _getProviderUpstream(
 		throw new ApiError(503, `No available deployment for model "${model}"`);
 	}
 	const { deployment, provider } = candidate;
-	const apiKey = deployment.litellm_params.api_key ?? requestApiKey ?? process.env["ANTHROPIC_API_KEY"] ?? "";
+	// deployment.litellm_params.api_key 优先，requestApiKey 兜底（用户请求头透传）
+	const apiKey = (deployment.litellm_params.api_key as string | undefined) ?? requestApiKey ?? process.env["ANTHROPIC_API_KEY"] ?? "";
 	const anthropicVersion = requestAnthropicVersion ?? "2023-06-01";
-	const providerReq = provider.transformRequest(model, [], { api_key: apiKey, anthropic_version: anthropicVersion });
+	// 把 deployment 的全部 litellm_params 透传给 provider.transformRequest，
+	// 让 deployment.litellm_params.api_base（自定义上游）能覆盖 provider 默认 base。
+	const providerReq = provider.transformRequest(deployment.litellm_params.model ?? model, [], {
+		...deployment.litellm_params,
+		api_key: apiKey,
+		anthropic_version: anthropicVersion,
+	});
 	return { upstreamUrl: providerReq.url, upstreamHeaders: providerReq.headers };
 }
 
@@ -546,7 +553,6 @@ export function registerAnthropicMessagesEndpoints(
 						cache_creation_input_tokens: streamInputTokens.cacheCreationInputTokens,
 						cache_read_input_tokens: streamInputTokens.cacheReadInputTokens,
 
-						// eslint-disable-next-line camelcase
 						cache_hit: streamInputTokens.cacheReadInputTokens > 0,
 						// GAP 10: 透传 end_user_id 到 spend log
 						end_user_id: req.auth.end_user_id,
@@ -609,7 +615,6 @@ export function registerAnthropicMessagesEndpoints(
 						normalized?.cache_creation_input_tokens ?? (usage["cache_creation_input_tokens"] as number) ?? 0,
 					cache_read_input_tokens: normalized?.cache_read_input_tokens ?? (usage["cache_read_input_tokens"] as number) ?? 0,
 
-					// eslint-disable-next-line camelcase
 					cache_hit: ((usage["cache_read_input_tokens"] as number) ?? 0) > 0,
 					startTime: nonStreamingStartTime.toISOString(),
 					endTime: new Date().toISOString(),
