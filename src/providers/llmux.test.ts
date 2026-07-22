@@ -108,6 +108,40 @@ describe("LLMuxProvider", () => {
 			expect(result.choices[0]!.message.content).toBe("Hello from GPT");
 			expect(result.choices).toHaveLength(1);
 		});
+
+		it("Anthropic 协议模型丢弃上游 msg_ id，重新生成 chatcmpl-<uuid>（PY anthropic 路径语义）", () => {
+			const rawResponse = {
+				id: "msg_1",
+				type: "message",
+				role: "assistant",
+				content: [{ type: "text", text: "Hello from Claude" }],
+				model: "claude-sonnet-4-6",
+				stop_reason: "end_turn",
+				usage: { input_tokens: 10, output_tokens: 5 },
+			};
+
+			const result = provider.transformResponse("claude-sonnet-4-6", rawResponse);
+			expect(result.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
+		});
+
+		it("OpenAI 协议模型透传上游 truthy id，缺省时回退 chatcmpl-<uuid>", () => {
+			const withId = provider.transformResponse("gpt-5.4", {
+				id: "chatcmpl-456",
+				object: "chat.completion",
+				created: 1_700_000_000,
+				model: "gpt-5.4",
+				choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+			});
+			expect(withId.id).toBe("chatcmpl-456");
+
+			const noId = provider.transformResponse("gpt-5.4", {
+				object: "chat.completion",
+				created: 1_700_000_000,
+				model: "gpt-5.4",
+				choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+			});
+			expect(noId.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
+		});
 	});
 
 	describe("getSupportedParams", () => {

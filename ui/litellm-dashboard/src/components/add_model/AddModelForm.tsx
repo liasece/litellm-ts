@@ -10,7 +10,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import TeamDropdown from "../common_components/team_dropdown";
 import type { Team } from "../key_team_helpers/key_list";
 import { type CredentialItem, type ProviderCreateInfo, modelAvailableCall } from "../networking";
-import { Providers, providerLogoMap } from "../provider_info_helpers";
+import { Providers } from "../provider_info_helpers";
 import { ProviderLogo } from "../molecules/models/ProviderLogo";
 import AdvancedSettings from "./advanced_settings";
 import ConditionalPublicModelName from "./conditional_public_model_name";
@@ -85,12 +85,31 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
     fetchModelAccessGroups();
   }, [accessToken]);
 
-  const sortedProviderMetadata: ProviderCreateInfo[] = useMemo(() => {
-    if (!providerMetadata) {
-      return [];
+  const providerGroups = useMemo(() => {
+    const uniqueProviders = new Map<string, ProviderCreateInfo>();
+    for (const providerInfo of providerMetadata ?? []) {
+      if (!uniqueProviders.has(providerInfo.provider)) {
+        uniqueProviders.set(providerInfo.provider, providerInfo);
+      }
     }
-    return [...providerMetadata].sort((a, b) => a.provider_display_name.localeCompare(b.provider_display_name));
+
+    const popularProviderKeys = ["Anthropic", "OpenAI"];
+    const popularProviders = popularProviderKeys.flatMap((providerKey) => {
+      const providerInfo = uniqueProviders.get(providerKey);
+      return providerInfo ? [providerInfo] : [];
+    });
+    const popularProviderSet = new Set(popularProviderKeys);
+    const allProviders = [...uniqueProviders.values()]
+      .filter((providerInfo) => !popularProviderSet.has(providerInfo.provider))
+      .sort((a, b) => a.provider_display_name.localeCompare(b.provider_display_name));
+
+    return [
+      { label: "Popular", providers: popularProviders },
+      { label: "All Providers", providers: allProviders },
+    ];
   }, [providerMetadata]);
+
+  const providerCount = providerGroups.reduce((count, group) => count + group.providers.length, 0);
 
   const providerMetadataErrorText = providerMetadataError
     ? providerMetadataError instanceof Error
@@ -175,25 +194,28 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
                       });
                     }}
                   >
-                    {providerMetadataErrorText && sortedProviderMetadata.length === 0 && (
+                    {providerMetadataErrorText && providerCount === 0 && (
                       <AntdSelect.Option key="__error" value="">
                         {providerMetadataErrorText}
                       </AntdSelect.Option>
                     )}
-                    {sortedProviderMetadata.map((providerInfo) => {
-                      const displayName = providerInfo.provider_display_name;
-                      const providerKey = providerInfo.provider;
-                      const logoSrc = providerLogoMap[displayName] ?? "";
+                    {providerGroups.map((group) => (
+                      <AntdSelect.OptGroup key={group.label} label={group.label}>
+                        {group.providers.map((providerInfo) => {
+                          const displayName = providerInfo.provider_display_name;
+                          const providerKey = providerInfo.provider;
 
-                      return (
-                        <AntdSelect.Option key={providerKey} value={providerKey} data-label={displayName}>
-                          <div className="flex items-center space-x-2">
-                            <ProviderLogo provider={providerKey} className="w-5 h-5" />
-                            <span>{displayName}</span>
-                          </div>
-                        </AntdSelect.Option>
-                      );
-                    })}
+                          return (
+                            <AntdSelect.Option key={providerKey} value={providerKey} data-label={displayName}>
+                              <div className="flex items-center space-x-2">
+                                <ProviderLogo provider={providerKey} className="w-5 h-5" />
+                                <span>{displayName}</span>
+                              </div>
+                            </AntdSelect.Option>
+                          );
+                        })}
+                      </AntdSelect.OptGroup>
+                    ))}
                   </AntdSelect>
                 </Form.Item>
                 <LiteLLMModelNameField

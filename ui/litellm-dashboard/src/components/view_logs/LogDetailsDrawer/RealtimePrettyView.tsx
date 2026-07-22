@@ -4,6 +4,7 @@
  * in a readable format instead of raw JSON.
  */
 
+import { formatNumberWithCommas } from '@/utils/dataUtils';
 import { useState } from 'react';
 import { Typography, Tag, Tooltip } from 'antd';
 import {
@@ -532,7 +533,7 @@ function TokenBreakdown({
           if (typeof value === 'number') {
             return (
               <Tag key={key} style={{ margin: 0 }}>
-                {formatTokenLabel(key)}: {value.toLocaleString()}
+                {formatTokenLabel(key)}: {formatNumberWithCommas(value, 0, false)}
               </Tag>
             );
           }

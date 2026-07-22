@@ -10,6 +10,8 @@ interface KeyModelUsageViewProps {
 }
 
 const VISIBLE_ROWS = 5;
+const CHART_ROW_HEIGHT = 40;
+const CHART_VERTICAL_PADDING = 34;
 // antd Table with size="small" has a row height of ~39px
 const ANTD_SMALL_TABLE_ROW_HEIGHT = 39;
 
@@ -27,6 +29,12 @@ const columns: ColumnsType<TopModelData> = [
     render: (value) => `$${formatNumberWithCommas(value, 2)}`,
   },
   {
+    title: "Requests",
+    dataIndex: "requests",
+    key: "requests",
+    render: (value) => value?.toLocaleString() || 0,
+  },
+  {
     title: "Successful",
     dataIndex: "successful_requests",
     key: "successful_requests",
@@ -42,14 +50,16 @@ const columns: ColumnsType<TopModelData> = [
     title: "Tokens",
     dataIndex: "tokens",
     key: "tokens",
-    render: (value) => value?.toLocaleString() || 0,
+    render: (value) => formatNumberWithCommas(value ?? 0, 0, false),
   },
 ];
 
 const KeyModelUsageView: React.FC<KeyModelUsageViewProps> = ({ topModels }) => {
-  const [viewMode, setViewMode] = useState<"chart" | "table">("table");
+  const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
+  const topModelsBySpend = [...topModels].sort((a, b) => b.spend - a.spend);
+  const topModelsByTokens = [...topModels].sort((a, b) => b.tokens - a.tokens);
 
-  if (topModels.length === 0) {
+  if (topModelsBySpend.length === 0) {
     return null;
   }
 
@@ -73,29 +83,51 @@ const KeyModelUsageView: React.FC<KeyModelUsageViewProps> = ({ topModels }) => {
         </div>
       </div>
       {viewMode === "chart" ? (
-        <div className="max-h-[234px] overflow-y-auto">
-          <BarChart
-            style={{ height: topModels.length * 40 }}
-            data={topModels.map((m) => ({ key: m.model, spend: m.spend }))}
-            index="key"
-            categories={["spend"]}
-            colors={["cyan"]}
-            valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
-            layout="vertical"
-            yAxisWidth={180}
-            tickGap={5}
-            showLegend={false}
-          />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="min-w-0">
+            <Title>Top Models by Spend</Title>
+            <div className="mt-3 max-h-[234px] overflow-y-auto">
+              <BarChart
+                style={{ height: topModelsBySpend.length * CHART_ROW_HEIGHT + CHART_VERTICAL_PADDING }}
+                data={topModelsBySpend.map((model) => ({ key: model.model, spend: model.spend }))}
+                index="key"
+                categories={["spend"]}
+                colors={["cyan"]}
+                valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
+                layout="vertical"
+                yAxisWidth={180}
+                tickGap={5}
+                showLegend={false}
+              />
+            </div>
+          </div>
+          <div className="min-w-0">
+            <Title>Top Models by Tokens</Title>
+            <div className="mt-3 max-h-[234px] overflow-y-auto">
+              <BarChart
+                style={{ height: topModelsByTokens.length * CHART_ROW_HEIGHT + CHART_VERTICAL_PADDING }}
+                data={topModelsByTokens.map((model) => ({ key: model.model, tokens: model.tokens }))}
+                index="key"
+                categories={["tokens"]}
+                colors={["indigo"]}
+                valueFormatter={(value) => formatNumberWithCommas(value, 0, false)}
+                layout="vertical"
+                yAxisWidth={180}
+                tickGap={5}
+                showLegend={false}
+              />
+            </div>
+          </div>
         </div>
       ) : (
         <Table
           columns={columns}
-          dataSource={topModels}
+          dataSource={topModelsBySpend}
           rowKey="model"
           size="small"
           pagination={false}
           scroll={
-            topModels.length > VISIBLE_ROWS
+            topModelsBySpend.length > VISIBLE_ROWS
               ? { y: VISIBLE_ROWS * ANTD_SMALL_TABLE_ROW_HEIGHT }
               : undefined
           }

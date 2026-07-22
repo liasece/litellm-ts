@@ -14,6 +14,7 @@
  */
 
 import { ContextWindowExceededError, ContentPolicyViolationError, InternalServerError, RouterRateLimitErrorBasic } from "./RouterErrors";
+import { ApiError, HTTP_STATUS, formatNoDeploymentsAvailableMessage } from "../core/api/ApiError";
 import { logger } from "../core/utils/logger";
 import {
 	categorizeProviderError,
@@ -26,8 +27,9 @@ import { getRetryPolicyOverride, shouldRetryThisError } from "./RouterRetryPolic
 import { getDeploymentKey, getModelGroupName } from "./RouterModelGroupCache";
 import { invokeRouterCallback } from "./RouterCallbacks";
 import { buildResponseHeaders } from "./RouterResponseHeaders";
+import { buildDeploymentSpendInfo } from "./RouterSpendInfo";
 import { maskCooldownEntries } from "./CooldownMasking";
-import type { RetryPolicy } from "../types/router";
+import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
 import type {
@@ -54,6 +56,62 @@ export type {
 	GetHealthyDeploymentsFn,
 	DispatchMockPreviousErrorFn,
 };
+
+/**
+ * PY route_llm_request 中 acompletion 的 route 名（litellm/proxy/route_llm_request.py
+ * ROUTE_ENDPOINT_MAPPING 映射），用于未知模型 400 消息——Router.completion 主循环
+ * 对应 PY acompletion 入口。
+ */
+export const CHAT_COMPLETIONS_ROUTE_NAME = "/chat/completions";
+
+/**
+ * PY ProxyException 对无 type/param 属性的异常以字符串 "None" 填充
+ * （getattr(e, "type", "None")，对齐 ApiError 的 PYTHON_NONE_FILL）。
+ */
+const PYTHON_NONE_FILL = "None";
+
+/**
+ * 构造 PY ProxyModelNotFoundError detail 的 dict repr 消息（litellm/proxy/route_llm_request.py:100）：
+ * `{'error': '<route>: Invalid model name passed in model=<model>. Call \`/v1/models\` to view available models for your key.'}`
+ * PY 实测为单引号 dict repr（HTTPException detail 经 ProxyException str() 序列化）。
+ * @param route - PY route 名（如 "/chat/completions" / "anthropic_messages"）
+ * @param model - 客户端请求的模型名
+ */
+export function formatInvalidModelMessage(route: string, model: string): string {
+	return `{'error': '${route}: Invalid model name passed in model=${model}. Call \`/v1/models\` to view available models for your key.'}`;
+}
+
+/**
+ * 构造未知模型 400 错误（PY ProxyModelNotFoundError 对齐）：
+ * HTTP 400 + type/param 均为 "None"。/v1/messages 路径的消息需再加 "400: " 前缀
+ * （PY anthropic_messages 端点 str(HTTPException) 包装），由调用方拼接。
+ * @param message - formatInvalidModelMessage 产出（或其加前缀变体）
+ */
+export function buildInvalidModelError(message: string): ApiError {
+	return new ApiError(HTTP_STATUS.BAD_REQUEST, message, PYTHON_NONE_FILL, PYTHON_NONE_FILL);
+}
+
+/**
+ * 模型存在性判定（忽略冷却状态），区分"模型不存在"（400）与"模型存在但全部署冷却"（429）。
+ * 对齐 PY route_llm_request 校验层（litellm/proxy/route_llm_request.py:477-498）：
+ * model_list pattern 命中（含 alias 解析、通配符、provider 前缀剥离）/
+ * deployment id 命中（PY has_model_id）/ litellm_params.model 命中（PY deployment_names）。
+ * fallback 命中不在此判定——主循环在有 fallback 时已递归，到达本判定点即无 fallback。
+ * @param deployments - 全部署列表
+ * @param matchDeploymentPattern - deployment 与模型名的 pattern 匹配函数
+ * @param resolvedModel - model_group_alias 解析后的模型名
+ * @param rawModel - 客户端请求的原始模型名（deployment id / deployment_names 匹配用）
+ */
+export function isKnownModel(
+	deployments: Deployment[],
+	matchDeploymentPattern: MatchDeploymentPatternFn,
+	resolvedModel: string,
+	rawModel: string,
+): boolean {
+	return deployments.some(
+		(dep) => matchDeploymentPattern(dep, resolvedModel) || dep.model_info?.id === rawModel || dep.litellm_params.model === rawModel,
+	);
+}
 
 /**
  * 主入口：执行带 fallback 的 completion。行为完全等价于 Router._executeWithFallback，
@@ -109,21 +167,45 @@ export async function executeWithFallback(
 	const candidate = getCandidate(resolvedModel, messages);
 
 	if (!candidate) {
-		const nextFallback = ctx.fallbackHandler.getNextFallback(model, fallbackDepth);
+		// 每个 model 查自身 fallback 链的链首（depth 恒为 0）；
+		// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
+		const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
 		if (nextFallback) {
 			return executeWithFallback(ctx, { ...req, fallbackDepth: fallbackDepth + 1, model: nextFallback }, helpers);
 		}
+		// 模型不存在（model_list/alias 无命中、非 deployment id、非 deployment_names，
+		// 且无 fallback——有 fallback 上面已递归）→ 400，对齐 PY route_llm_request
+		// ProxyModelNotFoundError；模型存在但全部署冷却 → 走下方 429 no-deployments。
+		if (!isKnownModel(ctx.deployments, matchDeploymentPattern, resolvedModel, model)) {
+			throw buildInvalidModelError(formatInvalidModelMessage(CHAT_COMPLETIONS_ROUTE_NAME, model));
+		}
 		// DIFF-RT-02 + DIFF-RT-04: healthy=0 且无 fallback 时，对齐 PY router.py:9445,9507
 		// 抛 RouterRateLimitErrorBasic 携带 cooldown_time + cooldown_list 字段。
+		// 消息文本对齐 PY RouterRateLimitError（types/router.py:688）实测格式。
 		const activeCooldowns = ctx.cooldownManager.getActiveCooldowns(candidateKeys);
 		const minCooldownMs = ctx.cooldownManager.getMinCooldown(candidateKeys);
 		const cooldownList = activeCooldowns.length > 0 ? maskCooldownEntries(activeCooldowns) : undefined;
-		throw new RouterRateLimitErrorBasic(`No available deployment for model "${model}" and no fallbacks remaining`, {
-			model: model,
-			cooldown_time: minCooldownMs > 0 ? minCooldownMs : undefined,
-			// eslint-disable-next-line camelcase
-			cooldown_list: cooldownList,
-		});
+		// PY cooldown_time 取 CooldownCacheValue.cooldown_time（配置时长）的最小值，无冷却条目时回退默认 cooldown_time
+		const cooldownSeconds =
+			(activeCooldowns.length > 0
+				? Math.min(...activeCooldowns.map(([, cacheValue]) => cacheValue.cooldown_time))
+				: ctx.cooldownTimeMs) / 1000;
+		// PY cooldown_list 为全模型组范围（cooldown_handlers.py _get_cooldown_deployments 遍历全部 model_ids）
+		const allDeploymentKeys = ctx.deployments.map((dep) => getDeploymentKey(dep));
+		const allActiveCooldownKeys = ctx.cooldownManager.getActiveCooldowns(allDeploymentKeys).map(([deploymentKey]) => deploymentKey);
+		throw new RouterRateLimitErrorBasic(
+			formatNoDeploymentsAvailableMessage(model, {
+				cooldownSeconds: cooldownSeconds,
+				cooldownList: allActiveCooldownKeys,
+				preCallChecks: ctx.preCallChecks,
+			}),
+			{
+				model: model,
+				cooldown_time: minCooldownMs > 0 ? minCooldownMs : undefined,
+
+				cooldown_list: cooldownList,
+			},
+		);
 	}
 
 	const { deployment, provider } = candidate;
@@ -157,7 +239,7 @@ export async function executeWithFallback(
 					logger.warn(
 						`Rate limit reached on ${deployment.model_name} (rpm=${usage.rpm}/${rpmLimit ?? "-"}, tpm=${usage.tpm}/${tpmLimit ?? "-"}), trying fallback`,
 					);
-					const nextFallback = ctx.fallbackHandler.getNextFallback(model, fallbackDepth);
+					const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
 					if (nextFallback) {
 						return executeWithFallback(ctx, { ...req, fallbackDepth: fallbackDepth + 1, model: nextFallback }, helpers);
 					}
@@ -175,11 +257,13 @@ export async function executeWithFallback(
 
 	const startTime = Date.now();
 	let retryAfterHeader: string | undefined;
+	let originalError: Error | null = null;
 
 	try {
 		let lastError: Error | null = null;
 		const deploymentRetries = deployment.litellm_params.num_retries ?? ctx.numRetries;
 		let maxRetries = deploymentRetries > 0 ? deploymentRetries : 0;
+		let maxRetriesForHeaders = maxRetries;
 
 		for (let attempt = 0; attempt <= maxRetries; attempt++) {
 			try {
@@ -210,9 +294,11 @@ export async function executeWithFallback(
 
 				if (!response.ok) {
 					const bodyStr = JSON.stringify(body);
-					lastError = new Error(`Provider returned ${response.status}: ${bodyStr}`);
-
 					const categorizedError = categorizeProviderError(response.status, bodyStr);
+					lastError = categorizedError;
+					if (originalError === null) {
+						originalError = categorizedError;
+					}
 					retryAfterHeader = extractRetryAfterFromResponse(response);
 
 					if (categorizedError instanceof ContextWindowExceededError || categorizedError instanceof ContentPolicyViolationError) {
@@ -262,6 +348,7 @@ export async function executeWithFallback(
 					}
 
 					const responseEffectiveMaxRetries = retryPolicyOverride !== undefined ? retryPolicyOverride : maxRetries;
+					maxRetriesForHeaders = responseEffectiveMaxRetries;
 					if (attempt < responseEffectiveMaxRetries) {
 						invokeRouterCallback(ctx.routerCallbacks, "onRetry", deployment, attempt, categorizedError);
 						const sleepSec = computeSleepBeforeRetry({
@@ -302,13 +389,21 @@ export async function executeWithFallback(
 
 				if (isStreamReq && stream) {
 					invokeRouterCallback(ctx.routerCallbacks, "onSuccess", deployment, body, Date.now() - startTime);
+					const providerHeaders = (response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders;
+					const responseHeaders = buildResponseHeaders(deployment, providerHeaders, {
+						attemptedFallbacks: fallbackDepth,
+						attemptedRetries: attempt,
+						maxRetries: maxRetriesForHeaders,
+					});
 					return {
 						_stream: true,
 						stream: stream,
 						_provider: deployment.model_name,
 						_fallbackDepth: fallbackDepth,
 						_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
-						_providerHeaders: (response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders,
+						// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
+						_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
+						_providerHeaders: responseHeaders,
 					};
 				}
 
@@ -316,17 +411,26 @@ export async function executeWithFallback(
 				invokeRouterCallback(ctx.routerCallbacks, "onSuccess", deployment, transformed, Date.now() - startTime);
 
 				const providerHeaders = (response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders;
-				const responseHeaders = buildResponseHeaders(deployment, providerHeaders);
+				const responseHeaders = buildResponseHeaders(deployment, providerHeaders, {
+					attemptedFallbacks: fallbackDepth,
+					attemptedRetries: attempt,
+					maxRetries: maxRetriesForHeaders,
+				});
 
 				return {
 					...transformed,
 					_provider: deployment.model_name,
 					_fallbackDepth: fallbackDepth,
 					_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
+					// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
+					_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
 					_providerHeaders: responseHeaders,
 				};
 			} catch (err) {
 				lastError = err instanceof Error ? err : new Error(String(err));
+				if (originalError === null) {
+					originalError = lastError;
+				}
 
 				const errWithRetries = lastError as unknown as { num_retries?: unknown };
 				const hasExceptionNumRetries =
@@ -364,13 +468,14 @@ export async function executeWithFallback(
 					effectiveRetryPolicyOverride,
 				);
 				const effectiveMaxRetries = policyOverride !== undefined ? policyOverride : maxRetries;
+				maxRetriesForHeaders = effectiveMaxRetries;
 
 				if (attempt >= effectiveMaxRetries) {
-					throw lastError;
+					throw originalError ?? lastError;
 				}
 
 				retryAfterHeader = extractRetryAfterFromError(lastError);
-				if (attempt < maxRetries) {
+				if (attempt < effectiveMaxRetries) {
 					invokeRouterCallback(ctx.routerCallbacks, "onRetry", deployment, attempt, lastError);
 					const sleepSec = computeSleepBeforeRetry({
 						error: lastError,
@@ -389,7 +494,7 @@ export async function executeWithFallback(
 			}
 		}
 
-		throw lastError ?? new Error("Unknown error during completion");
+		throw originalError ?? lastError ?? new Error("Unknown error during completion");
 	} catch (err) {
 		const error = err instanceof Error ? err : new Error(String(err));
 
@@ -418,7 +523,11 @@ export async function executeWithFallback(
 			error,
 			sameGroupCount,
 			retryAfterHeader,
-			ctx.retryAfter * 1000,
+			// PY deployment_callback_on_failure：缺省冷却时长取 router.cooldown_time
+			// （litellm/router.py:6176-6180 `_time_to_cooldown = self.cooldown_time`），
+			// 与 Router.recordDeploymentFailure 的直连路径一致；retry_after 仅是
+			// 重试退避下限，不能作为冷却缺省（未配置时为 0 导致冷却空操作）。
+			ctx.cooldownTimeMs,
 			ctx.cooldownManager,
 		);
 		if (decision.shouldCooldown) {
@@ -426,7 +535,7 @@ export async function executeWithFallback(
 			ctx.cooldownManager.recordFailure(depKey);
 		}
 
-		const nextFallback = ctx.fallbackHandler.getNextFallback(model, fallbackDepth);
+		const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
 		if (nextFallback) {
 			return executeWithFallback(
 				ctx,
@@ -444,7 +553,7 @@ export async function executeWithFallback(
 		};
 		augmented.max_retries = maxRetries;
 		augmented.num_retries = maxRetries + 1;
-		// eslint-disable-next-line camelcase
+
 		augmented.requested_model = model;
 		error.message = `${error.message}. Received Model Group=${model}\nAvailable Model Group Fallbacks=[${fallbacksList.join(", ")}]`;
 		logger.debug(`track_deployment_metrics: model=${model} total=${ctx.totalCalls.get(depKey)} fail=${ctx.failCalls.get(depKey)}`);

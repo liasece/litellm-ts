@@ -35,6 +35,10 @@ export interface ModelInfo {
 	input_cost_per_token?: number;
 	/** 输出 token 单价 */
 	output_cost_per_token?: number;
+	/** cache 写入单价（每 token，PY model_info.cache_creation_input_token_cost） */
+	cache_creation_input_token_cost?: number;
+	/** cache 读取单价（每 token，PY model_info.cache_read_input_token_cost） */
+	cache_read_input_token_cost?: number;
 	/** Provider 名称 */
 	litellm_provider?: string;
 	/** 每分钟 token 限制 */

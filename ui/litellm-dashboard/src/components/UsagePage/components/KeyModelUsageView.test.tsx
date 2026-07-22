@@ -1,8 +1,26 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import KeyModelUsageView from "./KeyModelUsageView";
 import { TopModelData } from "../types";
+
+vi.mock("@tremor/react", () => ({
+  Card: ({ children, className }: any) => <div className={className}>{children}</div>,
+  Title: ({ children }: any) => <h2>{children}</h2>,
+  BarChart: ({ data, index, categories, valueFormatter, style }: any) => {
+    const category = categories[0];
+    return (
+      <div data-testid="model-usage-chart" data-category={category} style={style}>
+        {data.map((item: any) => (
+          <div key={item[index]}>
+            <span>{item[index]}</span>
+            <span>{valueFormatter(item[category])}</span>
+          </div>
+        ))}
+      </div>
+    );
+  },
+}));
 
 describe("KeyModelUsageView", () => {
   const mockTopModels: TopModelData[] = [
@@ -23,6 +41,12 @@ describe("KeyModelUsageView", () => {
       tokens: 100000,
     },
   ];
+
+	const renderTableView = (models: TopModelData[]) => {
+		const result = render(<KeyModelUsageView topModels={models} />);
+		fireEvent.click(screen.getByRole("button", { name: "Table" }));
+		return result;
+	};
 
   it("should render", () => {
     render(<KeyModelUsageView topModels={mockTopModels} />);
@@ -49,23 +73,74 @@ describe("KeyModelUsageView", () => {
     expect(screen.getByRole("button", { name: "Chart" })).toBeInTheDocument();
   });
 
-  it("should default to table view", () => {
+	it("should default to chart view", () => {
     render(<KeyModelUsageView topModels={mockTopModels} />);
-    const tableButton = screen.getByRole("button", { name: "Table" });
-    expect(tableButton).toHaveClass("bg-blue-100");
+		const chartButton = screen.getByRole("button", { name: "Chart" });
+		expect(chartButton).toHaveClass("bg-blue-100");
+		expect(screen.queryByText("Spend (USD)")).not.toBeInTheDocument();
+	});
+
+	it("renders full spend and token model charts with independent sorting and responsive sizing", () => {
+		const unsortedModels = Array.from({ length: 6 }, (_, index) => ({
+			model: `model-${index + 1}`,
+			spend: index + 1,
+			requests: index + 1,
+			successful_requests: index + 1,
+			failed_requests: 0,
+			tokens: (6 - index) * 12345,
+		}));
+
+		const { container } = render(<KeyModelUsageView topModels={unsortedModels} />);
+		const spendChart = screen
+			.getAllByTestId("model-usage-chart")
+			.find((chart) => chart.dataset.category === "spend");
+		const tokenChart = screen
+			.getAllByTestId("model-usage-chart")
+			.find((chart) => chart.dataset.category === "tokens");
+		const spendText = spendChart?.textContent || "";
+		const tokenText = tokenChart?.textContent || "";
+
+		expect(screen.getByText("Top Models by Spend")).toBeInTheDocument();
+		expect(screen.getByText("Top Models by Tokens")).toBeInTheDocument();
+		expect(spendText.indexOf("model-6")).toBeLessThan(spendText.indexOf("model-1"));
+		expect(tokenText.indexOf("model-1")).toBeLessThan(tokenText.indexOf("model-6"));
+		expect(unsortedModels.every((model) => spendText.includes(model.model))).toBe(true);
+		expect(unsortedModels.every((model) => tokenText.includes(model.model))).toBe(true);
+		expect(tokenText).toContain("74,070");
+		expect(unsortedModels.map((model) => model.model)).toEqual([
+			"model-1",
+			"model-2",
+			"model-3",
+			"model-4",
+			"model-5",
+			"model-6",
+		]);
+		const chartGrid = container.querySelector(".grid.grid-cols-1.lg\\:grid-cols-2");
+		expect(chartGrid).toBeInTheDocument();
+		expect(chartGrid?.querySelectorAll(".min-w-0")).toHaveLength(2);
+	});
+
+  it("gives a single model enough chart height for axes and its bar", () => {
+    render(<KeyModelUsageView topModels={[mockTopModels[0]]} />);
+
+    expect(screen.getAllByTestId("model-usage-chart")).toHaveLength(2);
+    screen.getAllByTestId("model-usage-chart").forEach((chart) => {
+      expect(chart).toHaveStyle({ height: "74px" });
+    });
   });
 
   it("should display all table column headers", () => {
-    render(<KeyModelUsageView topModels={mockTopModels} />);
+		renderTableView(mockTopModels);
     expect(screen.getByText("Model")).toBeInTheDocument();
     expect(screen.getByText("Spend (USD)")).toBeInTheDocument();
+		expect(screen.getByText("Requests")).toBeInTheDocument();
     expect(screen.getByText("Successful")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText("Tokens")).toBeInTheDocument();
   });
 
   it("should display model data in table view", () => {
-    render(<KeyModelUsageView topModels={mockTopModels} />);
+		renderTableView(mockTopModels);
     expect(screen.getByText("gpt-4")).toBeInTheDocument();
     expect(screen.getByText("gpt-3.5-turbo")).toBeInTheDocument();
     expect(screen.getByText("$150.50")).toBeInTheDocument();
@@ -83,7 +158,7 @@ describe("KeyModelUsageView", () => {
         tokens: 1000,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithDecimalSpend} />);
+		renderTableView(modelsWithDecimalSpend);
     expect(screen.getByText("$123.46")).toBeInTheDocument();
   });
 
@@ -98,19 +173,19 @@ describe("KeyModelUsageView", () => {
         tokens: 1000,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithLargeSpend} />);
+		renderTableView(modelsWithLargeSpend);
     expect(screen.getByText("$1,234,567.89")).toBeInTheDocument();
   });
 
   it("should display successful requests with green styling", () => {
-    render(<KeyModelUsageView topModels={mockTopModels} />);
+		renderTableView(mockTopModels);
     const successfulElements = screen.getAllByText("100");
     const greenElement = successfulElements.find((el) => el.closest("span")?.classList.contains("text-green-600"));
     expect(greenElement).toBeDefined();
   });
 
   it("should display failed requests with red styling", () => {
-    render(<KeyModelUsageView topModels={mockTopModels} />);
+		renderTableView(mockTopModels);
     const failedElements = screen.getAllByText("5");
     const redElement = failedElements.find((el) => el.closest("span")?.classList.contains("text-red-600"));
     expect(redElement).toBeDefined();
@@ -127,7 +202,7 @@ describe("KeyModelUsageView", () => {
         tokens: 1234567,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithLargeTokens} />);
+		renderTableView(modelsWithLargeTokens);
     expect(screen.getByText("1,234,567")).toBeInTheDocument();
   });
 
@@ -142,7 +217,7 @@ describe("KeyModelUsageView", () => {
         tokens: 1000,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithMissingModel} />);
+		renderTableView(modelsWithMissingModel);
     expect(screen.getByText("-")).toBeInTheDocument();
   });
 
@@ -157,7 +232,7 @@ describe("KeyModelUsageView", () => {
         tokens: 0,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithZeros} />);
+		renderTableView(modelsWithZeros);
     expect(screen.getByText("$0.00")).toBeInTheDocument();
     expect(screen.getAllByText("0").length).toBeGreaterThan(0);
   });
@@ -199,7 +274,7 @@ describe("KeyModelUsageView", () => {
   });
 
   it("should display table when table view is selected", () => {
-    render(<KeyModelUsageView topModels={mockTopModels} />);
+		renderTableView(mockTopModels);
     expect(screen.getByText("Model")).toBeInTheDocument();
     expect(screen.getByText("gpt-4")).toBeInTheDocument();
   });
@@ -215,8 +290,8 @@ describe("KeyModelUsageView", () => {
     }));
 
     render(<KeyModelUsageView topModels={manyModels} />);
-    expect(screen.getByText("model-1")).toBeInTheDocument();
-    expect(screen.getByText("model-10")).toBeInTheDocument();
+    expect(screen.getAllByText("model-1")).toHaveLength(2);
+    expect(screen.getAllByText("model-10")).toHaveLength(2);
   });
 
   it("should format successful requests with toLocaleString", () => {
@@ -230,7 +305,7 @@ describe("KeyModelUsageView", () => {
         tokens: 1000,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithLargeNumbers} />);
+		renderTableView(modelsWithLargeNumbers);
     expect(screen.getByText("999,999")).toBeInTheDocument();
   });
 
@@ -245,7 +320,7 @@ describe("KeyModelUsageView", () => {
         tokens: 1000,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithLargeNumbers} />);
+		renderTableView(modelsWithLargeNumbers);
     expect(screen.getByText("999,999")).toBeInTheDocument();
   });
 
@@ -260,7 +335,7 @@ describe("KeyModelUsageView", () => {
         tokens: 1000,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithMissingFields} />);
+		renderTableView(modelsWithMissingFields);
     const zeroElements = screen.getAllByText("0");
     const successfulZero = zeroElements.find((el) => el.closest("span")?.classList.contains("text-green-600"));
     expect(successfulZero).toBeDefined();
@@ -277,7 +352,7 @@ describe("KeyModelUsageView", () => {
         tokens: 1000,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithMissingFields} />);
+		renderTableView(modelsWithMissingFields);
     expect(screen.getAllByText("0").length).toBeGreaterThan(0);
   });
 
@@ -292,7 +367,7 @@ describe("KeyModelUsageView", () => {
         tokens: undefined as any,
       },
     ];
-    render(<KeyModelUsageView topModels={modelsWithMissingFields} />);
+		renderTableView(modelsWithMissingFields);
     expect(screen.getAllByText("0").length).toBeGreaterThan(0);
   });
 });

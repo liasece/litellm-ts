@@ -317,23 +317,17 @@ export function costBasedRouting(deployments: Deployment[], ctx: RoutingContext)
 		}
 
 		const modelName = params.model;
-		// PY 等价层：先查内置 `litellm.model_cost`
-		const builtinCost = inputCost === undefined || outputCost === undefined ? lookupModelCostPerToken(modelName) : undefined;
+		// 显式 RouterConfig.model_cost_map 优先；未命中时读取当前服务快照。
+		const snapshotCost =
+			inputCost === undefined || outputCost === undefined ? lookupModelCostPerToken(modelName, ctx.modelCostMap) : undefined;
 		if (inputCost === undefined) {
-			inputCost = builtinCost?.input_cost_per_token;
+			inputCost = snapshotCost?.input_cost_per_token;
 		}
 		if (outputCost === undefined) {
-			outputCost = builtinCost?.output_cost_per_token;
+			outputCost = snapshotCost?.output_cost_per_token;
 		}
 
 		// TS 增强：用户 model_cost_map 覆盖（语义等价 PY 修改 litellm.model_cost）
-		const userGlobalCost = ctx.modelCostMap?.[modelName];
-		if (inputCost === undefined) {
-			inputCost = userGlobalCost?.input_cost_per_token;
-		}
-		if (outputCost === undefined) {
-			outputCost = userGlobalCost?.output_cost_per_token;
-		}
 
 		// 最后回退到 $5.0 缺省（与 PY 一致）
 		if (inputCost === undefined) {

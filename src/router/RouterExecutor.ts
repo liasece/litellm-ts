@@ -22,6 +22,7 @@ import {
 	RateLimitError,
 	AuthenticationError,
 	NotFoundError,
+	InternalServerError,
 } from "./RouterErrors";
 import { logger } from "../core/utils/logger";
 import { parseRetryAfterSeconds } from "./RouterRetryPolicy";
@@ -89,6 +90,9 @@ export function categorizeProviderError(statusCode: number, bodyStr: string): Er
 	}
 	if (statusCode === 429 || lower.includes("rate limit") || lower.includes("rate_limit")) {
 		return new RateLimitError(bodyStr);
+	}
+	if (statusCode >= 500) {
+		return new InternalServerError(bodyStr);
 	}
 	return new Error(bodyStr);
 }

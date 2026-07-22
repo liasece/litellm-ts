@@ -116,7 +116,7 @@ const SpendByProvider: React.FC<SpendByProviderProps> = ({ loading, isDateChangi
                     <TableCell className="text-red-600">
                       {provider.failed_requests.toLocaleString()}
                     </TableCell>
-                    <TableCell>{provider.tokens.toLocaleString()}</TableCell>
+                    <TableCell>{formatNumberWithCommas(provider.tokens, 0, false)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

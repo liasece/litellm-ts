@@ -5,12 +5,21 @@
  * 支持标准 OpenAI Embeddings API 格式的输入。
  */
 
-import type { Router } from "express";
+import type { Response, Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { EmbeddingResponse } from "../types/embedding";
 import { runCommonChecks } from "../auth/AuthChecks";
+import type { DrizzleDb } from "../core/db/Database";
+import { calculateAndSetCost, injectResponseCostHeader, buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
+import { extractDeploymentCustomCost } from "../router/RouterSpendInfo";
+import { CallType, SpendLogStatus } from "../types/spend";
+import type { ModelResponse } from "../types/openai";
+import { createModuleLogger } from "../core/utils/logger";
+import { executeProviderRequest } from "../router/ProviderRequestExecutor";
+
+const logger = createModuleLogger("Embeddings");
 
 /**
  * 注册 Embeddings 路由到 Express Router
@@ -20,21 +29,29 @@ import { runCommonChecks } from "../auth/AuthChecks";
  * - POST /embeddings（简写）
  * @param expressRouter - Express Router 实例
  * @param litellmRouter - LiteLLM Router 实例
+ * @param db - Drizzle 数据库实例；传入时记录 SpendLogs
  */
-export function registerEmbeddingsRoutes(expressRouter: Router, litellmRouter: LiteLLMRouter): void {
-	const handler = createEmbeddingsHandler(litellmRouter);
+export function registerEmbeddingsRoutes(expressRouter: Router, litellmRouter: LiteLLMRouter, db?: DrizzleDb): void {
+	const handler = createEmbeddingsHandler(litellmRouter, db);
 
 	registerRoute(expressRouter, { method: "post", path: "/v1/embeddings" }, handler);
 	registerRoute(expressRouter, { method: "post", path: "/embeddings" }, handler);
+	registerRoute(expressRouter, { method: "post", path: "/engines/*/embeddings" }, handler);
+	registerRoute(expressRouter, { method: "post", path: "/openai/deployments/*/embeddings" }, handler);
+}
+
+function getPathModel(req: import("express").Request): unknown {
+	return req.params.model ?? req.params[0];
 }
 
 /**
  * 创建 Embeddings 请求处理器
  * @param litellmRouter - LiteLLM Router 实例
+ * @param db - Drizzle 数据库实例；传入时记录 SpendLogs
  */
-function createEmbeddingsHandler(litellmRouter: LiteLLMRouter) {
-	return async (req: import("express").Request, _res: import("express").Response): Promise<EmbeddingResponse> => {
-		const model = req.body.model;
+function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | undefined) {
+	return async (req: import("express").Request, res: Response): Promise<EmbeddingResponse> => {
+		const model = getPathModel(req) ?? req.body.model;
 		if (!model || typeof model !== "string") {
 			throw ApiError.badRequest("model 字段缺失");
 		}
@@ -53,42 +70,86 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter) {
 		delete optionalParams.model;
 		delete optionalParams.input;
 
-		// 获取可用部署
-		const candidate = litellmRouter.getAvailableDeployment(model);
-		if (!candidate) {
-			throw ApiError.unavailable(`模型 "${model}" 当前无可用部署`);
+		const startTime = new Date();
+		try {
+			// 获取可用部署
+			const candidate = litellmRouter.getAvailableDeployment(model);
+			if (!candidate) {
+				// 对齐 PY RouterRateLimitError：HTTP 429 + "No deployments available for selected model, ..."
+				throw ApiError.noDeploymentsAvailable(model, litellmRouter.getNoAvailableDeploymentInfo(model));
+			}
+
+			const { deployment, provider } = candidate;
+
+			if (provider.transformEmbeddingRequest === undefined) {
+				throw ApiError.badRequest(
+					`Provider ${deployment.litellm_params.custom_llm_provider ?? "unknown"} does not support embeddings`,
+				);
+			}
+			const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...optionalParams };
+			const providerReq = provider.transformEmbeddingRequest(deployment.litellm_params.model, input, mergedParams);
+			const requestWithHeaders = {
+				...providerReq,
+				headers: { ...providerReq.headers, ...deployment.litellm_params.extra_headers },
+			};
+			const timeoutSec = deployment.litellm_params.timeout;
+			const execution = await executeProviderRequest(requestWithHeaders, {
+				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+				readJson: true,
+			});
+
+			if (!execution.response.ok) {
+				throw new ApiError(execution.response.status, `Provider 返回错误: ${JSON.stringify(execution.body ?? {})}`);
+			}
+
+			const rawBody = execution.body as EmbeddingResponse;
+			// 批次 9: deployment model_info/litellm_params 自定义价格优先于内置价格表
+			const customCost = extractDeploymentCustomCost(deployment);
+			calculateAndSetCost(rawBody as unknown as ModelResponse, model, customCost);
+			const usage = (rawBody as unknown as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
+			if (usage && usage["cost"] !== undefined) {
+				injectResponseCostHeader(res, usage["cost"] as number);
+			}
+			if (db && req.auth) {
+				const endTime = new Date();
+				const spendLog = buildSpendLogFromRequest({
+					req: req,
+					auth: req.auth,
+					callType: CallType.AEmbedding,
+					model: model,
+					modelGroup: deployment.model_name,
+					modelId: deployment.model_info?.id,
+					customLlmProvider: deployment.litellm_params.custom_llm_provider,
+					apiBase: deployment.litellm_params.api_base,
+					customCostPerToken: customCost,
+					deploymentModel: deployment.litellm_params.model,
+					startTime: startTime,
+					endTime: endTime,
+					messages: input,
+					response: rawBody,
+					usage: usage,
+					status: SpendLogStatus.Success,
+				});
+				trackSpendLog(db, spendLog).catch((err) => logger.error("Embeddings 花费追踪失败", { error: err }));
+			}
+			return rawBody;
+		} catch (error) {
+			if (db && req.auth) {
+				const endTime = new Date();
+				const failureSpendLog = buildSpendLogFromRequest({
+					req: req,
+					auth: req.auth,
+					callType: CallType.AEmbedding,
+					model: model,
+					startTime: startTime,
+					endTime: endTime,
+					messages: input,
+					error: error,
+					status: SpendLogStatus.Failure,
+				});
+				trackSpendLog(db, failureSpendLog).catch((err) => logger.error("Embeddings 失败花费追踪失败", { error: err }));
+			}
+			throw error;
 		}
-
-		const { deployment, provider } = candidate;
-
-		// 构造 Provider 请求 — 使用标准 OpenAI 格式
-		const providerReq = provider.transformRequest(deployment.litellm_params.model, [], optionalParams);
-
-		// 替换 /chat/completions 路径为 /embeddings
-		const url = providerReq.url.replace("/chat/completions", "/embeddings");
-
-		// 构造 embeddings 专用的请求体
-		const embedBody = {
-			model:
-				providerReq.body && typeof providerReq.body === "object"
-					? (providerReq.body as Record<string, unknown>).model
-					: deployment.litellm_params.model,
-			input: input,
-			...optionalParams,
-		};
-
-		const response = await fetch(url, {
-			method: "POST",
-			headers: providerReq.headers,
-			body: JSON.stringify(embedBody),
-		});
-
-		if (!response.ok) {
-			const errorBody = await response.json().catch(() => ({}));
-			throw new ApiError(response.status, `Provider 返回错误: ${JSON.stringify(errorBody)}`);
-		}
-
-		const rawBody = await response.json();
-		return rawBody as EmbeddingResponse;
 	};
 }

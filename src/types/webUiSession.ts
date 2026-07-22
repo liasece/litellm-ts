@@ -23,6 +23,12 @@ export const PROXY_ADMIN_USER_ID = "default_user_id";
 /** proxy_admin 角色字面量 */
 export const PROXY_ADMIN_ROLE = "proxy_admin";
 
+/** Python LiteLLM internal_user 角色字面量 */
+export const INTERNAL_USER_ROLE = "internal_user";
+
+/** Python LiteLLM internal_user_viewer 角色字面量 */
+export const INTERNAL_USER_VIEWER_ROLE = "internal_user_viewer";
+
 /** 通用 JWT 回退用户 ID（claims 中无 sub/user_id 时使用） */
 export const JWT_FALLBACK_USER_ID = "jwt-user";
 

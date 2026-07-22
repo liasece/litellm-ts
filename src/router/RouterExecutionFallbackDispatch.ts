@@ -62,7 +62,9 @@ export function tryRouteToFallbackForMock(args: {
 			return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: firstChain }, helpers);
 		}
 	}
-	const general = ctx.fallbackHandler.getNextFallback(model, req.fallbackDepth);
+	// 每个 model 查自身 fallback 链的链首（depth 恒为 0）；
+	// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
+	const general = ctx.fallbackHandler.getNextFallback(model, 0);
 	if (general) {
 		return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: general }, helpers);
 	}
@@ -110,7 +112,8 @@ export function tryRouteToFallback(args: {
 			return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: firstChain, previousError: error }, helpers);
 		}
 	}
-	const general = ctx.fallbackHandler.getNextFallback(model, req.fallbackDepth);
+	// 每个 model 查自身 fallback 链的链首（depth 恒为 0）
+	const general = ctx.fallbackHandler.getNextFallback(model, 0);
 	if (general) {
 		return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: general, previousError: error }, helpers);
 	}

@@ -30,7 +30,6 @@ export const pageDescriptions: Record<string, string> = {
   caching: "Configure response caching settings",
   "transform-request": "Set up request transformation rules",
   "cost-tracking": "Track and analyze API costs",
-  "ui-theme": "Customize dashboard appearance",
   "tag-management": "Organize resources with tags",
   prompts: "Manage and version prompt templates",
   "claude-code-plugins": "Configure Claude Code plugins",

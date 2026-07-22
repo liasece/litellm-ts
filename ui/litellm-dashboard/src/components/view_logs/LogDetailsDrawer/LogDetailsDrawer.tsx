@@ -15,7 +15,7 @@ import { useKeyboardNavigation } from "./useKeyboardNavigation";
 import { LogDetailContent, GuardrailJumpLink } from "./LogDetailContent";
 import { sessionSpendLogsCall } from "../../networking";
 import { useQuery } from "@tanstack/react-query";
-import { getSpendString } from "@/utils/dataUtils";
+import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import { normalizeGuardrailEntries } from "./utils";
 import { DRAWER_WIDTH } from "./constants";
 import { useLogDetails } from "@/app/(dashboard)/hooks/logDetails/useLogDetails";
@@ -85,7 +85,7 @@ function TraceEventRow({ row, isSelected, onClick }: TraceEventRowProps) {
         {row.total_tokens ? (
           <>
             <span>·</span>
-            <span>{row.total_tokens} tok</span>
+            <span>{formatNumberWithCommas(row.total_tokens, 0, false)} tok</span>
           </>
         ) : null}
       </div>

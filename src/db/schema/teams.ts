@@ -3,12 +3,12 @@
  * Prisma model: LiteLLM_TeamTable (uuid PK)
  */
 
-import { pgTable, text, uuid, real, integer, boolean, jsonb, timestamp, bigint, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, real, integer, boolean, jsonb, timestamp, bigint, uniqueIndex, index } from "drizzle-orm/pg-core";
 
 export const LiteLLM_TeamTable = pgTable(
 	"LiteLLM_TeamTable",
 	{
-		teamId: uuid("team_id").defaultRandom().primaryKey(),
+		teamId: text("team_id").primaryKey(),
 		teamAlias: text("team_alias"),
 		organizationId: text("organization_id"),
 		objectPermissionId: text("object_permission_id"),

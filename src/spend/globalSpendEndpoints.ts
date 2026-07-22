@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 /**
  * /global/activity 域端点（activity、activity/model）
  *
@@ -9,28 +8,53 @@
  */
 
 import type { Router } from "express";
-import { sql, and, desc } from "drizzle-orm";
+import { sql, and, asc } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
-import { createModuleLogger } from "../core/utils/logger";
-import { AGGREGATE_DEFAULT_LIMIT, GLOBAL_ACTIVITY_DAY_LIMIT, runWithFallback } from "./spendManagementHelpers";
-import { toFiniteNumber, toSafeString } from "./spendManagementFormatters";
+import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
+import type { UserAPIKeyAuth } from "../types/auth";
+import { INTERNAL_USER_ROLE, INTERNAL_USER_VIEWER_ROLE } from "../types/webUiSession";
+import { AGGREGATE_DEFAULT_LIMIT } from "./spendManagementHelpers";
+import { toFiniteNumber, toPythonMonthDayString, toSafeString } from "./spendManagementFormatters";
 import { registerGlobalSpendAggregationEndpoints } from "./globalSpendAggregationEndpoints";
 
-const logger = createModuleLogger("GlobalSpend");
+/**
+ * Python LiteLLM internal user / viewer 角色可见范围：只能看自己的 spend。
+ * @param auth
+ */
+function getInternalUserId(auth: UserAPIKeyAuth | undefined): string | undefined {
+	if (!auth || !auth.user_id) {
+		return undefined;
+	}
+	if (auth.user_role === INTERNAL_USER_ROLE || auth.user_role === INTERNAL_USER_VIEWER_ROLE) {
+		return auth.user_id;
+	}
+	return undefined;
+}
 
-/** /global/activity 空态兜底（sum_* 必须为 finite number，避免 Tremor BarChart y=NaN） */
-const EMPTY_ACTIVITY_RESPONSE = {
-	daily_data: [] as { date: string; api_requests: number; total_tokens: number; total_spend: number }[],
-	total_spend: 0,
-	total_tokens: 0,
-	api_requests: 0,
-	sum_api_requests: 0,
-	sum_total_tokens: 0,
-	sum_total_spend: 0,
-};
+function parseActivityDate(raw: unknown): Date {
+	if (typeof raw !== "string" || raw.length === 0) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Please provide start_date and end_date");
+	}
+	const parsed = new Date(`${raw}T00:00:00Z`);
+	if (!Number.isFinite(parsed.getTime())) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Invalid date format. Expected: YYYY-MM-DD");
+	}
+	return parsed;
+}
+
+function buildActivityDateWhere(startDate: Date, endDate: Date, auth: UserAPIKeyAuth | undefined): ReturnType<typeof and> {
+	const endExclusive = new Date(endDate.getTime());
+	endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+	const conditions = [sql`${liteLLM_SpendLogs.startTime} >= ${startDate}`, sql`${liteLLM_SpendLogs.startTime} < ${endExclusive}`];
+	const internalUserId = getInternalUserId(auth);
+	if (internalUserId !== undefined) {
+		conditions.push(sql`${liteLLM_SpendLogs.user} = ${internalUserId}`);
+	}
+	return and(...conditions);
+}
 
 /**
  * 注册 /global/* 端点（activity/activity/model + spend* 聚合端点）。
@@ -39,57 +63,47 @@ const EMPTY_ACTIVITY_RESPONSE = {
  */
 export function registerGlobalSpendEndpoints(router: Router, db: NodePgDatabase<typeof schema>): void {
 	// ========== /global/activity ==========
-	// WebUI usage.tsx fetchGlobalActivity 期望形状：
-	//   { daily_data: [...], total_spend, total_tokens, api_requests,
-	//     sum_api_requests, sum_total_tokens, sum_total_spend }
-	// daily_data 每项：{ date, api_requests, total_tokens, total_spend }
-	// 顶层 sum_* 用于 All Up 卡片标题（Tremor valueFormatter 直接取数），必须为 finite number，
-	// 避免 BarChart y=NaN 报错。
-	// 真实查询失败时兜底同形状，避免 .length/.toFixed 崩溃。
+	// WebUI usage.tsx fetchGlobalActivity 期望 Python 形状：
+	//   { daily_data: [...], sum_api_requests, sum_total_tokens }
+	// daily_data 每项：{ date, api_requests, total_tokens }
+	// 顶层 sum_* 用于 All Up 卡片标题（Tremor valueFormatter 直接取数），必须为 finite number。
 
-	registerRoute(router, { method: "get", path: "/global/activity" }, async () =>
-		runWithFallback(logger, "/global/activity", EMPTY_ACTIVITY_RESPONSE, async () => {
-			const result = await db
-				.select({
-					date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
-					api_requests: sql<number>`COUNT(*)`,
-					total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-					total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-				})
-				.from(liteLLM_SpendLogs)
-				.groupBy(sql`DATE(${liteLLM_SpendLogs.startTime})`)
-				.orderBy(desc(sql`DATE(${liteLLM_SpendLogs.startTime})`))
-				.limit(GLOBAL_ACTIVITY_DAY_LIMIT);
+	registerRoute(router, { method: "get", path: "/global/activity" }, async (req) => {
+		const startDate = parseActivityDate(req.query.start_date);
+		const endDate = parseActivityDate(req.query.end_date);
+		const whereClause = buildActivityDateWhere(startDate, endDate, req.auth);
 
-			let totalSpend = 0;
-			let totalTokens = 0;
-			let totalRequests = 0;
-			const dailyData = result.map((row) => {
-				const apiRequests = toFiniteNumber(row.api_requests);
-				const rowTotalTokens = toFiniteNumber(row.total_tokens);
-				const rowTotalSpend = toFiniteNumber(row.total_spend);
-				totalRequests += apiRequests;
-				totalTokens += rowTotalTokens;
-				totalSpend += rowTotalSpend;
-				return {
-					date: toSafeString(row.date),
-					api_requests: apiRequests,
-					total_tokens: rowTotalTokens,
-					total_spend: rowTotalSpend,
-				};
-			});
+		const result = await db
+			.select({
+				date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
+				api_requests: sql<number>`COUNT(*)`,
+				total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
+			})
+			.from(liteLLM_SpendLogs)
+			.where(whereClause)
+			.groupBy(sql`DATE(${liteLLM_SpendLogs.startTime})`)
+			.orderBy(asc(sql`DATE(${liteLLM_SpendLogs.startTime})`));
 
+		let totalTokens = 0;
+		let totalRequests = 0;
+		const dailyData = result.map((row) => {
+			const apiRequests = toFiniteNumber(row.api_requests);
+			const rowTotalTokens = toFiniteNumber(row.total_tokens);
+			totalRequests += apiRequests;
+			totalTokens += rowTotalTokens;
 			return {
-				daily_data: dailyData,
-				total_spend: toFiniteNumber(totalSpend),
-				total_tokens: toFiniteNumber(totalTokens),
-				api_requests: toFiniteNumber(totalRequests),
-				sum_api_requests: toFiniteNumber(totalRequests),
-				sum_total_tokens: toFiniteNumber(totalTokens),
-				sum_total_spend: toFiniteNumber(totalSpend),
+				date: toPythonMonthDayString(row.date),
+				api_requests: apiRequests,
+				total_tokens: rowTotalTokens,
 			};
-		}),
-	);
+		});
+
+		return {
+			daily_data: dailyData,
+			sum_api_requests: toFiniteNumber(totalRequests),
+			sum_total_tokens: toFiniteNumber(totalTokens),
+		};
+	});
 
 	// ========== /global/activity/model ==========
 	// WebUI usage.tsx fetchGlobalActivityPerModel 期望：
@@ -104,97 +118,62 @@ export function registerGlobalSpendEndpoints(router: Router, db: NodePgDatabase<
 	// 直接读取，否则 y=NaN。
 
 	registerRoute(router, { method: "get", path: "/global/activity/model" }, async (req) => {
-		const startDate = req.query.start_date as string | undefined;
-		const endDate = req.query.end_date as string | undefined;
+		const startDate = parseActivityDate(req.query.start_date);
+		const endDate = parseActivityDate(req.query.end_date);
+		const whereClause = buildActivityDateWhere(startDate, endDate, req.auth);
 
-		let whereClause: ReturnType<typeof sql> | ReturnType<typeof and> | undefined;
-		if (startDate && endDate) {
-			whereClause = and(
-				sql`${liteLLM_SpendLogs.startTime} >= ${new Date(startDate)}`,
-				sql`${liteLLM_SpendLogs.startTime} <= ${new Date(endDate)}`,
-			);
-		}
+		const rows = await db
+			.select({
+				model_group: liteLLM_SpendLogs.model_group,
+				date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
+				api_requests: sql<number>`COUNT(*)`,
+				total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
+			})
+			.from(liteLLM_SpendLogs)
+			.where(whereClause)
+			.groupBy(liteLLM_SpendLogs.model_group, sql`DATE(${liteLLM_SpendLogs.startTime})`)
+			.orderBy(asc(sql`DATE(${liteLLM_SpendLogs.startTime})`))
+			.limit(AGGREGATE_DEFAULT_LIMIT);
 
-		return runWithFallback(
-			logger,
-			"/global/activity/model",
-			[] as {
+		const grouped = new Map<
+			string,
+			{
 				model: string;
 				sum_api_requests: number;
 				sum_total_tokens: number;
-				sum_spend: number;
-				daily_data: { date: string; api_requests: number; total_tokens: number; spend: number }[];
-			}[],
-			async () => {
-				const rows = await db
-					.select({
-						model: liteLLM_SpendLogs.model,
-						date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
-						api_requests: sql<number>`COUNT(*)`,
-						total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-						spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-					})
-					.from(liteLLM_SpendLogs)
-					.where(whereClause)
-					.groupBy(liteLLM_SpendLogs.model, sql`DATE(${liteLLM_SpendLogs.startTime})`)
-					.orderBy(desc(sql`DATE(${liteLLM_SpendLogs.startTime})`))
-					.limit(AGGREGATE_DEFAULT_LIMIT);
+				daily_data: { model_group: string; date: string; api_requests: number; total_tokens: number }[];
+			}
+		>();
+		for (const row of rows) {
+			const modelKey = toSafeString(row.model_group);
+			const apiRequests = toFiniteNumber(row.api_requests);
+			const rowTotalTokens = toFiniteNumber(row.total_tokens);
+			const entry = grouped.get(modelKey) ?? {
+				model: modelKey,
+				sum_api_requests: 0,
+				sum_total_tokens: 0,
+				daily_data: [],
+			};
+			entry.daily_data.push({
+				model_group: modelKey,
+				date: toPythonMonthDayString(row.date),
+				api_requests: apiRequests,
+				total_tokens: rowTotalTokens,
+			});
+			entry.sum_api_requests += apiRequests;
+			entry.sum_total_tokens += rowTotalTokens;
+			grouped.set(modelKey, entry);
+		}
 
-				// 按 model 聚合，daily_data 数组
-				const grouped = new Map<
-					string,
-					{
-						model: string;
-						sum_api_requests: number;
-						sum_total_tokens: number;
-						sum_spend: number;
-						daily_data: {
-							date: string;
-							api_requests: number;
-							total_tokens: number;
-							spend: number;
-						}[];
-					}
-				>();
-				for (const row of rows) {
-					const modelKey = toSafeString(row.model);
-					const apiRequests = toFiniteNumber(row.api_requests);
-					const rowTotalTokens = toFiniteNumber(row.total_tokens);
-					const rowSpend = toFiniteNumber(row.spend);
-					const entry =
-						grouped.get(modelKey) ??
-						({
-							model: modelKey,
-							sum_api_requests: 0,
-							sum_total_tokens: 0,
-							sum_spend: 0,
-							daily_data: [],
-						} as {
-							model: string;
-							sum_api_requests: number;
-							sum_total_tokens: number;
-							sum_spend: number;
-							daily_data: {
-								date: string;
-								api_requests: number;
-								total_tokens: number;
-								spend: number;
-							}[];
-						});
-					entry.daily_data.push({
-						date: toSafeString(row.date),
-						api_requests: apiRequests,
-						total_tokens: rowTotalTokens,
-						spend: rowSpend,
-					});
-					entry.sum_api_requests += apiRequests;
-					entry.sum_total_tokens += rowTotalTokens;
-					entry.sum_spend += rowSpend;
-					grouped.set(modelKey, entry);
-				}
-				return Array.from(grouped.values());
-			},
-		);
+		return Array.from(grouped.values())
+			.sort((left, right) => right.sum_api_requests - left.sum_api_requests)
+			.slice(0, 10)
+			.map((entry) => ({
+				model: entry.model,
+				daily_data: entry.daily_data.sort((left, right) => left.date.localeCompare(right.date)),
+				sum_api_requests: entry.sum_api_requests,
+				sum_total_tokens: entry.sum_total_tokens,
+			}));
 	});
 
 	// 其余 /global/spend* 聚合端点已迁出到 globalSpendAggregationEndpoints.ts

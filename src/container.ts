@@ -11,8 +11,14 @@ import { RoutingStrategyName } from "./types/router";
 import { AuthRepository } from "./auth/AuthRepository";
 import { JWTHandler } from "./auth/JWTHandler";
 import { createApiKeyAuth } from "./auth/UserApiKeyAuth";
+import { LiteLLM_ProxyModelTable } from "./db/schema/proxyModels";
+import { proxyModelRowToDeployment } from "./router/ProxyModelDeployment";
+import { createModuleLogger } from "./core/utils/logger";
 import type { ServiceConfig } from "./core/config";
 import type { RequestHandler } from "express";
+import { modelCostMapService, type ModelCostMapService } from "./cost/ModelCostMapService";
+
+const logger = createModuleLogger("Container");
 
 /** WebUI 登录后 cookie 中 JWT 的有效期（与 LoginEndpoints 保持一致） */
 const LOGIN_TOKEN_TTL_MS = 5 * 60 * 1000;
@@ -25,6 +31,8 @@ export interface ServiceContainer {
 	readonly providerRegistry: ProviderRegistry;
 	/** 模型路由实例，处理请求分发 */
 	readonly router: LiteLLMRouter;
+	/** 运行时模型价格快照服务 */
+	readonly modelCostMapService: ModelCostMapService;
 	/** 认证仓库，提供 API 密钥和用户查询 */
 	readonly authRepository: AuthRepository;
 	/** Express 认证中间件 */
@@ -44,6 +52,19 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 1. 初始化数据库
 	const db = new Database(config.database);
 	await db.initialize();
+
+	// 1.1 价格快照初始化：远端异常由服务内部回退 bundled，不阻断代理启动。
+	await modelCostMapService.initialize();
+
+	// 1.5 加载 DB 配置覆盖（LiteLLM_Config 表：store_prompts/logo/callbacks 等
+	// WebUI 设置项，对齐 Python proxy_config.get_config() 的 DB 合并语义）
+	const { dbConfigProvider } = await import("./core/config/DbConfigProvider");
+	await dbConfigProvider.initialize(db.db);
+
+	// 1.6 批次 E2：yaml ↔ DB 配置差异检测（yaml 快照 hash 比对 + 全量 diff），
+	// 结果存内存 pending 列表，供 WebUI 差异对比窗口（/config/yaml_diff）消费。
+	const { yamlConfigDiffService } = await import("./core/config/YamlConfigDiffService");
+	await yamlConfigDiffService.initialize(db.db);
 
 	// 2. ProviderRegistry — 注册默认实例（ProviderRegistry 自身不维护静态注册表，
 	//    getProvider 动态创建；保留 defaultProviderRegistry 供已有使用者）
@@ -71,6 +92,11 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		cooldown_time: config.routerSettings.cooldown_time,
 		fallbacks: config.routerSettings.fallbacks.length > 0 ? config.routerSettings.fallbacks : undefined,
 		request_timeout: config.routerSettings.request_timeout,
+		// PY router_settings.enable_pre_call_checks → Router pre_call_checks：
+		// 启用 TPM/RPM pre-reserve + max_input_tokens 校验，且 no-deployments 消息
+		// 中 pre-call-checks=True（对齐 PY RouterRateLimitError 实测格式）
+		pre_call_checks: config.routerSettings.enable_pre_call_checks,
+		max_fallbacks: config.routerSettings.max_fallbacks,
 	};
 
 	const routerModelGroupAlias = {
@@ -79,6 +105,38 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	};
 
 	const router = new LiteLLMRouter(routerConfig, routerModelGroupAlias);
+
+	// 3.1 批次 C2：DB router_settings 覆盖 yaml（对齐 Python
+	// _add_router_settings_from_db_config：_update_dictionary DB 优先后调
+	// llm_router.update_settings，proxy_server.py:4023-4066）。
+	// yaml 值已在构造时应用，这里只需把 DB 段灌入 updateSettings（白名单键覆盖）。
+	const dbRouterSettings = dbConfigProvider.getParam("router_settings");
+	if (Object.keys(dbRouterSettings).length > 0) {
+		try {
+			router.updateSettings(dbRouterSettings);
+		} catch (error) {
+			// DB 中非法值（如未知 routing_strategy）不应阻断启动，保留 yaml 生效值
+			logger.warn("DB router_settings 应用失败，使用 yaml 配置", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	// 3.2 批次 C2：DB 模型回灌（对齐 Python store_model_in_db 启动加载，
+	// proxy_server.py add_deployment → llm_router.upsert_deployment）：
+	// LiteLLM_ProxyModelTable 全量与 yaml modelList 合并，同 model_id DB 优先。
+	try {
+		const dbModels = await db.db.select().from(LiteLLM_ProxyModelTable);
+		for (const row of dbModels) {
+			router.upsertDeployment(proxyModelRowToDeployment(row));
+		}
+		if (dbModels.length > 0) {
+			logger.info("DB 模型已回灌 Router", { count: dbModels.length });
+		}
+	} catch (error) {
+		// LiteLLM_ProxyModelTable 不存在（全新部署）或查询失败：仅 yaml 模型生效
+		logger.warn("DB 模型回灌失败，仅 yaml 模型生效", { error: error instanceof Error ? error.message : String(error) });
+	}
 
 	// 4. 创建 AuthRepository
 	const authRepository = new AuthRepository(db.db);
@@ -93,6 +151,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		db: db,
 		providerRegistry: providerRegistry,
 		router: router,
+		modelCostMapService: modelCostMapService,
 		authRepository: authRepository,
 		authMiddleware: authMiddleware,
 	};

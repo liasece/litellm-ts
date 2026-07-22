@@ -57,6 +57,10 @@ vi.mock("@/app/(dashboard)/hooks/useTeams", () => ({
   default: vi.fn(),
 }));
 
+vi.mock("../templates/key_info_view", () => ({
+  default: ({ keyId }: { keyId: string }) => <div data-testid="selected-key-id">{keyId}</div>,
+}));
+
 // Mock useOrganizations hook
 vi.mock("@/app/(dashboard)/hooks/organizations/useOrganizations", () => ({
   useOrganizations: vi.fn().mockReturnValue({
@@ -79,7 +83,7 @@ vi.mock("@/app/(dashboard)/networking", async (importOriginal) => {
 });
 
 const mockKey: KeyResponse = {
-  token: "sk-1234567890abcdef",
+  token: "f9f83579ca1af99f9dc10ec225324cd977f441ad3761c38355c4ed2d7e77be1d",
   token_id: "key-1",
   key_name: "test-key",
   key_alias: "Test Key Alias",
@@ -454,17 +458,14 @@ it("should open KeyInfoView when clicking on a key ID button", async () => {
   expect(screen.getByText(/Showing.*results/)).toBeInTheDocument();
 
   // Find the key ID button (it shows the full token value, truncation is CSS-only)
-  const keyIdButton = screen.getByText("sk-1234567890abcdef");
+  const keyIdButton = screen.getByText("f9f83579ca1af99f9dc10ec225324cd977f441ad3761c38355c4ed2d7e77be1d");
   expect(keyIdButton).toBeInTheDocument();
 
   // Click on the key ID button
   fireEvent.click(keyIdButton);
 
-  // Wait for KeyInfoView to appear - check for unique elements that only exist in KeyInfoView
   await waitFor(() => {
-    expect(screen.getByText("Back to Keys")).toBeInTheDocument();
-    // KeyInfoHeader shows "Created At" metadata label
-    expect(screen.getByText("Created At")).toBeInTheDocument();
+    expect(screen.getByTestId("selected-key-id")).toHaveTextContent("f9f83579ca1af99f9dc10ec225324cd977f441ad3761c38355c4ed2d7e77be1d");
   });
 
   // Verify that table-specific elements are no longer visible

@@ -36,11 +36,6 @@ export const liteLLM_SpendLogs = pgTable(
 		mcp_namespaced_tool_name: text("mcp_namespaced_tool_name"),
 		agent_id: text("agent_id"),
 		proxy_server_request: jsonb("proxy_server_request").default("{}"),
-		// DIFF-SPEND-01: standard_logging_object JSONB 字段，对齐 PY
-		// `litellm/proxy/spend_tracking/spend_tracking_utils.py:283-446` 中构造的
-		// StandardLoggingPayload。下游消费方（如 analytics / evaluation pipeline）
-		// 直接 SELECT 该字段即可拿到完整请求快照，无需 join 多表。
-		standard_logging_object: jsonb("standard_logging_object").default("{}"),
 	},
 	(table) => ({
 		startTimeIdx: index("idx_spend_logs_start_time").on(table.startTime),

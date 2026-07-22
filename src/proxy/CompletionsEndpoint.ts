@@ -20,6 +20,12 @@ export function registerCompletionsRoutes(expressRouter: Router, litellmRouter: 
 
 	registerRoute(expressRouter, { method: "post", path: "/v1/completions" }, handler);
 	registerRoute(expressRouter, { method: "post", path: "/completions" }, handler);
+	registerRoute(expressRouter, { method: "post", path: "/engines/*/completions" }, handler);
+	registerRoute(expressRouter, { method: "post", path: "/openai/deployments/*/completions" }, handler);
+}
+
+function getPathModel(req: import("express").Request): unknown {
+	return req.params.model ?? req.params[0];
 }
 
 /**
@@ -30,7 +36,7 @@ export function registerCompletionsRoutes(expressRouter: Router, litellmRouter: 
  */
 function createCompletionsHandler(litellmRouter: LiteLLMRouter) {
 	return async (req: import("express").Request): Promise<unknown> => {
-		const model = req.body.model;
+		const model = getPathModel(req) ?? req.body.model;
 		if (!model || typeof model !== "string") {
 			throw ApiError.badRequest("model 字段缺失");
 		}
@@ -40,13 +46,13 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter) {
 			throw ApiError.badRequest("prompt 字段缺失");
 		}
 
-		// 将 prompt 包装为 chat messages 再委托 Router
+		// Router 仍使用 chat message 作为统一入口；原始 prompt 保留给 provider 层对齐 text-completion 协议。
 		const promptText = Array.isArray(prompt) ? prompt.join("") : String(prompt);
 		const messages = [{ role: "user", content: promptText }];
 
 		const optionalParams: Record<string, unknown> = { ...req.body };
 		delete optionalParams.model;
-		delete optionalParams.prompt;
+		optionalParams["prompt"] = prompt;
 
 		return await litellmRouter.completion(model, messages, optionalParams);
 	};

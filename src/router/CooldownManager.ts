@@ -88,6 +88,14 @@ export class CooldownManager {
 	}
 
 	/**
+	 * 运行时更新 allowed_fails（对齐 PY Router.update_settings 的 allowed_fails 热更新）。
+	 * @param allowedFails - number 阈值 / AllowedFailsPolicy / null（不冷却）
+	 */
+	setAllowedFails(allowedFails: number | AllowedFailsPolicy | null): void {
+		this._allowedFails = allowedFails;
+	}
+
+	/**
 	 * DIFF-RT-01: 注册冷却事件回调（同步/异步均可，异常被吞不影响主路径）
 	 * @param callback
 	 */
@@ -116,7 +124,6 @@ export class CooldownManager {
 			return;
 		}
 		const value: CooldownCacheValue = {
-			// eslint-disable-next-line camelcase
 			exception_received: exceptionReceived,
 			status_code: statusCode,
 			timestamp: Date.now(),
@@ -436,11 +443,10 @@ export class CooldownManager {
 		const updatedFails = currentFails + 1;
 
 		// 计算 allowed 阈值（对齐 PY get_allowed_fails_from_policy + 回退到 router.allowed_fails）
+		// PY 语义：allowed_fails=0 表示"不允许任何失败"，首次失败即冷却
+		// （updated_fails(1) > 0 → True，cooldown_handlers.py should_cooldown_based_on_allowed_fails_policy）
 		let allowed: number;
 		if (typeof effectiveAllowedFails === "number") {
-			if (effectiveAllowedFails === 0) {
-				return false;
-			}
 			allowed = effectiveAllowedFails;
 		} else {
 			const policy = effectiveAllowedFails as AllowedFailsPolicy;
@@ -454,8 +460,8 @@ export class CooldownManager {
 			}
 		}
 
-		// allowed <= 0 没有限制，不记录也不冷却
-		if (allowed <= 0) {
+		// allowed < 0（policy 类别未设置）→ 不限制，不记录也不冷却
+		if (allowed < 0) {
 			return false;
 		}
 

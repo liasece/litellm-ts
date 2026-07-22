@@ -99,7 +99,7 @@ export type ExecuteRequestFn = (
 	deployment: Deployment,
 	messages: { role: string; content: string | null }[],
 	optionalParams: Record<string, unknown>,
-) => Promise<{ response: Response; body: unknown; ttft: number; stream?: AsyncGenerator<unknown> }>;
+) => Promise<{ response: Response; body: unknown; ttft: number; stream?: AsyncGenerator<unknown>; upstreamUrl: string }>;
 
 /** pattern match 抽象（用于 hydrateFromBackend 时过滤 candidate deployments） */
 export type MatchDeploymentPatternFn = (dep: Deployment, model: string) => boolean;

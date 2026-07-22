@@ -1,176 +1,177 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../../tests/test-utils";
-import Sidebar from "./leftnav";
+import Sidebar, { menuGroups } from "./leftnav";
 
 vi.mock("../utils/roles", () => {
-  return {
-    all_admin_roles: ["admin"],
-    internalUserRoles: ["internal"],
-    rolesWithWriteAccess: ["admin", "internal"],
-    isAdminRole: (role: string) => role === "admin",
-    isUserTeamAdminForAnyTeam: () => false,
-  };
+	return {
+		all_admin_roles: ["admin"],
+		internalUserRoles: ["internal"],
+		rolesWithWriteAccess: ["admin", "internal"],
+		isAdminRole: (role: string) => role === "admin",
+		isUserTeamAdminForAnyTeam: () => false,
+	};
 });
 
 const { mockUseAuthorized, mockUseOrganizations } = vi.hoisted(() => {
-  const mockUseAuthorized = vi.fn(() => ({
-    userId: "test-user-id",
-    accessToken: "test-access-token",
-    userRole: "admin",
-    token: "test-token",
-    userEmail: "test@example.com",
-    premiumUser: false,
-    disabledPersonalKeyCreation: false,
-    showSSOBanner: false,
-  }));
+	const mockUseAuthorized = vi.fn(() => ({
+		userId: "test-user-id",
+		accessToken: "test-access-token",
+		userRole: "admin",
+		token: "test-token",
+		userEmail: "test@example.com",
+		premiumUser: false,
+		disabledPersonalKeyCreation: false,
+		showSSOBanner: false,
+	}));
 
-  const mockUseOrganizations = vi.fn(() => ({
-    data: [],
-    isLoading: false,
-    error: null,
-  }));
+	const mockUseOrganizations = vi.fn(() => ({
+		data: [],
+		isLoading: false,
+		error: null,
+	}));
 
-  return { mockUseAuthorized, mockUseOrganizations };
+	return { mockUseAuthorized, mockUseOrganizations };
 });
 
 vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
-  default: mockUseAuthorized,
+	default: mockUseAuthorized,
 }));
 
 vi.mock("@/app/(dashboard)/hooks/organizations/useOrganizations", () => ({
-  useOrganizations: mockUseOrganizations,
+	useOrganizations: mockUseOrganizations,
 }));
 
 vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
-  useTeams: () => ({ data: [], isLoading: false, error: null }),
+	useTeams: () => ({ data: [], isLoading: false, error: null }),
 }));
 
 vi.mock("@/app/(dashboard)/hooks/uiConfig/useUIConfig", () => {
-  return {
-    useUIConfig: () => ({
-      data: { admin_ui_disabled: false },
-      isLoading: false,
-    }),
-  };
+	return {
+		useUIConfig: () => ({
+			data: { admin_ui_disabled: false },
+			isLoading: false,
+		}),
+	};
 });
 
 describe("Sidebar (leftnav)", () => {
-  const defaultProps = {
-    setPage: vi.fn(),
-    defaultSelectedKey: "api-keys",
-    collapsed: false,
-  };
+	const defaultProps = {
+		setPage: vi.fn(),
+		defaultSelectedKey: "api-keys",
+		collapsed: false,
+	};
 
-  it("renders all top-level (non-nested) tabs for admin", () => {
-    renderWithProviders(<Sidebar {...defaultProps} />);
+	it("renders all top-level (non-nested) tabs for admin", () => {
+		renderWithProviders(<Sidebar {...defaultProps} />);
 
-    const topLevelLabels = [
-      "Virtual Keys",
-      "Playground",
-      "Models + Endpoints",
-      "Agents",
-      "MCP Servers",
-      "Guardrails",
-      "Policies",
-      "Tools",
-      "Usage",
-      "Logs",
-      "Guardrails Monitor",
-      "Teams",
-      "Internal Users",
-      "Organizations",
-      "Access Groups",
-      "Budgets",
-      "API Reference",
-      "AI Hub",
-      "Learning Resources",
-      "Experimental",
-      "Settings",
-    ];
+		const topLevelLabels = [
+			"Virtual Keys",
+			"Playground",
+			"Models + Endpoints",
+			"MCP Servers",
+			"Search Tools",
+			"Usage",
+			"Logs",
+			"AI Hub",
+			"API Playground",
+			"Tag Management",
+			"Claude Code Plugins",
+			"Old Usage",
+			"Router Settings",
+			"Logging & Alerts",
+			"Admin Settings",
+			"Cost Tracking",
+		];
 
-    topLevelLabels.forEach((label) => {
-      expect(screen.getByText(label)).toBeInTheDocument();
-    });
-  });
+		topLevelLabels.forEach((label) => {
+			expect(screen.getByText(label)).toBeInTheDocument();
+		});
+	});
 
-  it("expands a nested tab to reveal its children (Tools > Search Tools)", async () => {
-    renderWithProviders(<Sidebar {...defaultProps} />);
+	it("renders former Tools, Experimental, and Settings children as top-level items", () => {
+		renderWithProviders(<Sidebar {...defaultProps} />);
 
-    expect(screen.queryByText("Search Tools")).not.toBeInTheDocument();
-    act(() => {
-      fireEvent.click(screen.getByText("Tools"));
-    });
-    await waitFor(() => {
-      expect(screen.getByText("Search Tools")).toBeInTheDocument();
-    });
-  });
-  it("has no duplicate keys among all menu items and their children", () => {
-    // Helper to recursively extract all keys from Ant Design Menu items
-    function getAllKeysFromMenu(wrapper: HTMLElement): string[] {
-      const allKeys: string[] = [];
-      // Ant Design renders key as data-menu-id or inside attributes, but for this case, we look for text as fallback.
-      // For a generic check, here we fetch ids from rendered list items, and also descend into submenus
-      const items = wrapper.querySelectorAll("[data-menu-id]");
-      items.forEach((item) => {
-        const dataMenuId = item.getAttribute("data-menu-id");
-        if (dataMenuId) {
-          allKeys.push(dataMenuId);
-        }
-      });
-      return allKeys;
-    }
+		expect(screen.queryByText("Tools")).not.toBeInTheDocument();
+		expect(screen.queryByText("Experimental")).not.toBeInTheDocument();
+		expect(screen.queryByText("Settings")).not.toBeInTheDocument();
+		expect(screen.getByText("Search Tools")).toBeInTheDocument();
+		expect(screen.getByText("API Playground")).toBeInTheDocument();
+		expect(screen.getByText("Admin Settings")).toBeInTheDocument();
+		expect(screen.queryByText("UI Theme")).not.toBeInTheDocument();
 
-    const { container } = renderWithProviders(<Sidebar {...defaultProps} />);
-    const allRenderedKeys = getAllKeysFromMenu(container);
+		const flatItems = menuGroups.flatMap((group) => group.items);
+		expect(flatItems.every((item) => item.children === undefined)).toBe(true);
+	});
+	it("has no duplicate keys among all menu items and their children", () => {
+		// Helper to recursively extract all keys from Ant Design Menu items
+		function getAllKeysFromMenu(wrapper: HTMLElement): string[] {
+			const allKeys: string[] = [];
+			// Ant Design renders key as data-menu-id or inside attributes, but for this case, we look for text as fallback.
+			// For a generic check, here we fetch ids from rendered list items, and also descend into submenus
+			const items = wrapper.querySelectorAll("[data-menu-id]");
+			items.forEach((item) => {
+				const dataMenuId = item.getAttribute("data-menu-id");
+				if (dataMenuId) {
+					allKeys.push(dataMenuId);
+				}
+			});
+			return allKeys;
+		}
 
-    const keySet = new Set<string>();
-    const duplicates: string[] = [];
-    for (const key of allRenderedKeys) {
-      if (keySet.has(key)) {
-        duplicates.push(key);
-      }
-      keySet.add(key);
-    }
-    expect(duplicates).toHaveLength(0);
-  });
+		const { container } = renderWithProviders(<Sidebar {...defaultProps} />);
+		const allRenderedKeys = getAllKeysFromMenu(container);
 
-  it("should show Organizations tab for organization admins", () => {
-    mockUseAuthorized.mockReturnValueOnce({
-      userId: "org-admin-user-id",
-      accessToken: "test-access-token",
-      userRole: "viewer",
-      token: "test-token",
-      userEmail: "orgadmin@example.com",
-      premiumUser: false,
-      disabledPersonalKeyCreation: false,
-      showSSOBanner: false,
-    });
+		const keySet = new Set<string>();
+		const duplicates: string[] = [];
+		for (const key of allRenderedKeys) {
+			if (keySet.has(key)) {
+				duplicates.push(key);
+			}
+			keySet.add(key);
+		}
+		expect(duplicates).toHaveLength(0);
+	});
 
-    mockUseOrganizations.mockReturnValueOnce({
-      data: [
-        {
-          organization_id: "org-1",
-          organization_name: "Test Organization",
-          spend: 0,
-          max_budget: null,
-          models: [],
-          tpm_limit: null,
-          rpm_limit: null,
-          members: [
-            {
-              user_id: "org-admin-user-id",
-              user_role: "org_admin",
-            },
-          ],
-        },
-      ],
-      isLoading: false,
-      error: null,
-    } as any);
+	it("should show Organizations tab for organization admins", async () => {
+		mockUseAuthorized.mockReturnValueOnce({
+			userId: "org-admin-user-id",
+			accessToken: "test-access-token",
+			userRole: "viewer",
+			token: "test-token",
+			userEmail: "orgadmin@example.com",
+			premiumUser: false,
+			disabledPersonalKeyCreation: false,
+			showSSOBanner: false,
+		});
 
-    renderWithProviders(<Sidebar {...defaultProps} />);
+		mockUseOrganizations.mockReturnValueOnce({
+			data: [
+				{
+					organization_id: "org-1",
+					organization_name: "Test Organization",
+					spend: 0,
+					max_budget: null,
+					models: [],
+					tpm_limit: null,
+					rpm_limit: null,
+					members: [
+						{
+							user_id: "org-admin-user-id",
+							user_role: "org_admin",
+						},
+					],
+				},
+			],
+			isLoading: false,
+			error: null,
+		} as any);
 
-    expect(screen.getByText("Organizations")).toBeInTheDocument();
-  });
+		renderWithProviders(<Sidebar {...defaultProps} />);
+		fireEvent.click(screen.getByText("ACCESS CONTROL"));
+
+		await waitFor(() => {
+			expect(screen.getByText("Organizations")).toBeInTheDocument();
+		});
+	});
 });

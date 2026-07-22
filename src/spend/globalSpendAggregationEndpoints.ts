@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 /**
  * /global/spend* 聚合端点（spend/keys/teams/models/providers/report/logs/provider/tags/all_tag_names/end_users）
  *
@@ -9,24 +8,32 @@
  */
 
 import type { Router } from "express";
-import { sql, and, desc } from "drizzle-orm";
+import { sql, and, asc, desc, eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
 import { createModuleLogger } from "../core/utils/logger";
+import type { UserAPIKeyAuth } from "../types/auth";
+import { INTERNAL_USER_ROLE, INTERNAL_USER_VIEWER_ROLE } from "../types/webUiSession";
 import { AGGREGATE_DEFAULT_LIMIT, DAILY_SPEND_MATRIX_LIMIT, parseAggregateLimitParam, runWithFallback } from "./spendManagementHelpers";
-import {
-	getCurrentMonthDateRange,
-	makeEmptyDailySpendRow,
-	mergeWithCurrentMonthPlaceholder,
-	normalizeTagSpendRow,
-	toDateString,
-	toFiniteNumber,
-	toSafeString,
-} from "./spendManagementFormatters";
+import { normalizeTagSpendRow, toDateString, toFiniteNumber, toSafeString } from "./spendManagementFormatters";
 
 const logger = createModuleLogger("GlobalSpendAggregation");
+
+/**
+ * Python LiteLLM internal user / viewer 角色可见范围：只能看自己的 spend。
+ * @param auth
+ */
+function getInternalUserId(auth: UserAPIKeyAuth | undefined): string | undefined {
+	if (!auth || !auth.user_id) {
+		return undefined;
+	}
+	if (auth.user_role === INTERNAL_USER_ROLE || auth.user_role === INTERNAL_USER_VIEWER_ROLE) {
+		return auth.user_id;
+	}
+	return undefined;
+}
 
 /**
  * 注册 /global/spend* 聚合端点（spend/keys/teams/models/providers/report/logs/provider/tags/all_tag_names/end_users）。
@@ -246,41 +253,85 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 	});
 
 	// ========== /global/spend/logs ==========
-	// WebUI adminSpendLogsCall 期望：数组（用于 fillMissingDates + Monthly Spend BarChart）
-	// 每项必须含 date 字符串（YYYY-MM-DD）和 finite number spend，避免 Tremor y=NaN。
+	// 对齐 Python global_spend_logs（spend_management_endpoints.py）：
+	// 从 "MonthlyGlobalSpend" 视图读取，视图定义（create_views.py）：
+	//   SELECT DATE("startTime") AS date, SUM("spend") AS spend
+	//   FROM "LiteLLM_SpendLogs"
+	//   WHERE "startTime" >= (CURRENT_DATE - INTERVAL '30 days')
+	//   GROUP BY DATE("startTime") ORDER BY "date";
 	// 行为契约：
-	//   - 按 DATE(startTime) 聚合本月每天的 spend / total_tokens
-	//   - 补齐本月 1 号到今天（含）所有日期，缺失日 spend=0
-	//   - DB 查询失败时返回本月每日 spend=0 的兜底数组，绝不返回 []
-	// 兜底原因：WebUI fetchOverallSpend 把结果丢给 fillMissingDates(data, firstDay, lastDay, [])，
-	// categories=[] 时 fill 出的每项缺 spend 字段，Tremor BarChart y=NaN 报错。
+	//   - 只返回近 30 天内有数据的日期，每项仅 {date, spend}，不做零填充
+	//   - api_key 过滤对齐 "MonthlyGlobalSpendPerKey"：行内补 api_key 字段
+	//   - internal_user 对齐 "MonthlyGlobalSpendPerUserPerKey"：行内补 api_key/user 字段
 
 	registerRoute(router, { method: "get", path: "/global/spend/logs" }, async (req) => {
-		const { firstDay, lastDay, dates } = getCurrentMonthDateRange();
-		const firstDayDate = new Date(`${firstDay}T00:00:00Z`);
-		const lastDayDate = new Date(`${lastDay}T23:59:59.999Z`);
+		const apiKey = typeof req.query.api_key === "string" ? req.query.api_key : undefined;
+		const internalUserId = getInternalUserId(req.auth);
 
-		return runWithFallback(logger, "/global/spend/logs", dates.map(makeEmptyDailySpendRow), async () => {
-			const data = await db
-				.select({
-					date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
-					spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-					total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-				})
-				.from(liteLLM_SpendLogs)
-				.where(and(sql`${liteLLM_SpendLogs.startTime} >= ${firstDayDate}`, sql`${liteLLM_SpendLogs.startTime} <= ${lastDayDate}`))
-				.groupBy(sql`DATE(${liteLLM_SpendLogs.startTime})`)
-				.orderBy(sql`DATE(${liteLLM_SpendLogs.startTime})`);
+		const conditions = [sql`${liteLLM_SpendLogs.startTime} >= (CURRENT_DATE - INTERVAL '30 days')`];
+		if (apiKey !== undefined) {
+			conditions.push(eq(liteLLM_SpendLogs.api_key, apiKey));
+		}
+		if (internalUserId !== undefined) {
+			conditions.push(eq(liteLLM_SpendLogs.user, internalUserId));
+		}
+		const whereClause = and(...conditions);
 
-			return mergeWithCurrentMonthPlaceholder(
-				data.map((row) => ({
+		const dateExpr = sql<string>`DATE(${liteLLM_SpendLogs.startTime})`;
+		const spendExpr = sql<number>`SUM(${liteLLM_SpendLogs.spend})`;
+
+		return runWithFallback(logger, "/global/spend/logs", [] as Array<Record<string, unknown>>, async () => {
+			if (internalUserId !== undefined) {
+				const rows = await db
+					.select({
+						date: dateExpr,
+						spend: spendExpr,
+						api_key: liteLLM_SpendLogs.api_key,
+						user: liteLLM_SpendLogs.user,
+					})
+					.from(liteLLM_SpendLogs)
+					.where(whereClause)
+					.groupBy(dateExpr, liteLLM_SpendLogs.api_key, liteLLM_SpendLogs.user)
+					.orderBy(asc(dateExpr));
+				return rows.map((row) => ({
 					date: toDateString(row.date),
 					spend: toFiniteNumber(row.spend),
-					total_tokens: toFiniteNumber(row.total_tokens),
-					startTime: new Date(`${toSafeString(row.date).slice(0, 10)}T00:00:00Z`),
-				})),
-				dates,
-			);
+					api_key: toSafeString(row.api_key),
+					user: toSafeString(row.user),
+				}));
+			}
+
+			if (apiKey !== undefined) {
+				const rows = await db
+					.select({
+						date: dateExpr,
+						spend: spendExpr,
+						api_key: liteLLM_SpendLogs.api_key,
+					})
+					.from(liteLLM_SpendLogs)
+					.where(whereClause)
+					.groupBy(dateExpr, liteLLM_SpendLogs.api_key)
+					.orderBy(asc(dateExpr));
+				return rows.map((row) => ({
+					date: toDateString(row.date),
+					spend: toFiniteNumber(row.spend),
+					api_key: toSafeString(row.api_key),
+				}));
+			}
+
+			const rows = await db
+				.select({
+					date: dateExpr,
+					spend: spendExpr,
+				})
+				.from(liteLLM_SpendLogs)
+				.where(whereClause)
+				.groupBy(dateExpr)
+				.orderBy(asc(dateExpr));
+			return rows.map((row) => ({
+				date: toDateString(row.date),
+				spend: toFiniteNumber(row.spend),
+			}));
 		});
 	});
 

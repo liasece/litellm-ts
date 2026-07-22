@@ -1,14 +1,16 @@
 /**
  * Express 全局错误处理中间件
  *
- * 集中处理所有未捕获的请求错误：
- * - ApiError → 对应状态码
- * - SyntaxError (JSON parse failure) → 400
+ * 集中处理所有未捕获的请求错误，响应体对齐 Python litellm ProxyException 格式：
+ * { error: { message, type, param, code } }（code 为状态码字符串）
+ * - ApiError / LitellmError → 经 mapToApiError 映射对应状态码
+ * - SyntaxError (JSON parse failure) → 400 invalid_request_error
  * - 其他错误 → 500 + 日志记录
  */
 
 import type { Request, Response, NextFunction } from "express";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
+import { mapToApiError } from "../core/api/ErrorResponseMapper";
 import { createModuleLogger } from "../core/utils/logger";
 
 const logger = createModuleLogger("ErrorHandler");
@@ -52,18 +54,18 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
 		return;
 	}
 
-	if (err instanceof ApiError) {
-		res.status(err.statusCode).json({
-			success: false,
-			message: err.message,
-		});
-	} else if (isJsonParseError) {
-		res.status(HTTP_STATUS.BAD_REQUEST).json({
-			error: "Bad Request: invalid JSON",
-		});
-	} else {
-		res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
-			error: "Internal Server Error",
-		});
+	if (isJsonParseError) {
+		// PY 实测：{ "error": { "message": "Invalid JSON payload: ...", "type": "invalid_request_error", "param": "request_body", "code": "400" } }
+		const invalidJsonError = new ApiError(
+			HTTP_STATUS.BAD_REQUEST,
+			`Invalid JSON payload: ${err.message}`,
+			"invalid_request_error",
+			"request_body",
+		);
+		res.status(invalidJsonError.statusCode).json(invalidJsonError.toErrorBody());
+		return;
 	}
+
+	const apiError = mapToApiError(err);
+	res.status(apiError.statusCode).json(apiError.toErrorBody());
 }

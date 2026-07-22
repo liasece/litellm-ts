@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import UsageIndicator from "./UsageIndicator";
 
@@ -17,6 +17,13 @@ import { getRemainingUsers } from "./networking";
 
 const mockGetRemainingUsers = vi.mocked(getRemainingUsers);
 
+const showUsageDetails = async () => {
+  fireEvent.click(screen.getByTitle("Show usage details"));
+  await waitFor(() => {
+    expect(screen.queryByTitle("Show usage details")).not.toBeInTheDocument();
+  });
+};
+
 const DEFAULT_USAGE_DATA = {
   total_users: 100,
   total_users_used: 1,
@@ -32,18 +39,19 @@ describe("UsageIndicator", () => {
     mockGetRemainingUsers.mockResolvedValue(DEFAULT_USAGE_DATA);
   });
 
-  it("should render when given access token and usage data loads", async () => {
+  it("should render collapsed by default", async () => {
     render(<UsageIndicator accessToken="token" width={220} />);
 
-    await screen.findByText("Usage");
-
-    expect(screen.getByText("Usage")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTitle("Show usage details")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Users")).not.toBeInTheDocument();
   });
 
   it("should not show Near limit when users usage is below 80% (1/100 -> 1%)", async () => {
     render(<UsageIndicator accessToken="token" width={220} />);
 
-    await screen.findByText("Usage");
+    await showUsageDetails();
 
     expect(screen.queryByText("Near limit")).not.toBeInTheDocument();
   });
@@ -78,7 +86,7 @@ describe("UsageIndicator", () => {
 
     render(<UsageIndicator accessToken="token" width={220} />);
 
-    await screen.findByText("Usage");
+    await showUsageDetails();
 
     expect(screen.getByText("Teams")).toBeInTheDocument();
     expect(screen.getByText("Near limit")).toBeInTheDocument();
@@ -96,7 +104,7 @@ describe("UsageIndicator", () => {
 
     render(<UsageIndicator accessToken="token" width={220} />);
 
-    await screen.findByText("Usage");
+    await showUsageDetails();
 
     expect(screen.getByText("Users")).toBeInTheDocument();
     expect(screen.getByText("Over limit")).toBeInTheDocument();
@@ -114,7 +122,7 @@ describe("UsageIndicator", () => {
 
     render(<UsageIndicator accessToken="token" width={220} />);
 
-    await screen.findByText("Usage");
+    await showUsageDetails();
 
     expect(screen.getByText("Teams")).toBeInTheDocument();
     expect(screen.getByText("Over limit")).toBeInTheDocument();
@@ -140,10 +148,11 @@ describe("UsageIndicator", () => {
     (useDisableUsageIndicator as ReturnType<typeof vi.fn>).mockReturnValue(false);
   });
 
-  it("should show Loading while fetching", () => {
+  it("should show Loading while fetching after expansion", async () => {
     mockGetRemainingUsers.mockImplementation(() => new Promise(() => {}));
 
     render(<UsageIndicator accessToken="token" width={220} />);
+    await showUsageDetails();
 
     expect(screen.getByText("Loading...")).toBeInTheDocument();
   });
@@ -153,6 +162,7 @@ describe("UsageIndicator", () => {
     mockGetRemainingUsers.mockRejectedValue(new Error("Network error"));
 
     render(<UsageIndicator accessToken="token" width={220} />);
+    await showUsageDetails();
 
     expect(await screen.findByText("Failed to load usage data")).toBeInTheDocument();
 
@@ -163,7 +173,7 @@ describe("UsageIndicator", () => {
     const user = userEvent.setup();
     render(<UsageIndicator accessToken="token" width={220} />);
 
-    await screen.findByText("Usage");
+    await showUsageDetails();
 
     const minimizeButton = screen.getByTitle("Minimize");
     await user.click(minimizeButton);
@@ -176,7 +186,7 @@ describe("UsageIndicator", () => {
     const user = userEvent.setup();
     render(<UsageIndicator accessToken="token" width={220} />);
 
-    await screen.findByText("Usage");
+    await showUsageDetails();
 
     await user.click(screen.getByTitle("Minimize"));
     await user.click(screen.getByTitle("Show usage details"));

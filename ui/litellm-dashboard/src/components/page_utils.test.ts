@@ -178,30 +178,10 @@ describe("Page Utils - LeftNav Sync", () => {
     ).toHaveLength(0);
   });
 
-  it("should have proper group hierarchy for nested pages", () => {
+  it("should expose every page directly under a navigation group", () => {
     const availablePages = getAvailablePages();
-    
-    // Find pages that should be nested (children of Tools, Experimental, Settings)
-    const nestedPages = availablePages.filter((page) => 
-      page.group.includes(" > ")
-    );
-    
-    // Each nested page should have parent > child format
-    nestedPages.forEach((page) => {
-      const parts = page.group.split(" > ");
-      expect(
-        parts.length,
-        `Nested page "${page.page}" should have exactly 2 parts in group hierarchy`
-      ).toBe(2);
-      
-      // Parent should be one of the group labels
-      const parentGroup = parts[0];
-      const groupLabels = menuGroups.map((g) => g.groupLabel);
-      expect(
-        groupLabels,
-        `Parent group "${parentGroup}" for page "${page.page}" should be a valid group label`
-      ).toContain(parentGroup);
-    });
+
+    expect(availablePages.every((page) => !page.group.includes(" > "))).toBe(true);
   });
 
   it("should have unique page keys", () => {

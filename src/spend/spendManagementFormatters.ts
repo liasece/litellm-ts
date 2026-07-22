@@ -65,23 +65,54 @@ export function normalizeSpendLogRow(row: Record<string, unknown>): Record<strin
 		total_tokens: toFiniteNumber(row.total_tokens),
 		prompt_tokens: toFiniteNumber(row.prompt_tokens),
 		completion_tokens: toFiniteNumber(row.completion_tokens),
+		request_duration_ms: toFiniteNumber(row.request_duration_ms),
+		metadata: parseJsonLikeValue(row.metadata),
+		request_tags: parseJsonLikeValue(row.request_tags),
 	};
 }
 
 /**
- * 构造一个空 spend row（spend=0、tokens=0），保留 date / startTime 字段，
- * 供补齐本月缺失日期使用。
- * @param dateStr - 'YYYY-MM-DD'
+ * 兼容历史 JSON string 与新 JSON object/array。
+ * @param value - 可能为 JSON 字符串或已解析对象的列值
  */
-export function makeEmptyDailySpendRow(dateStr: string): Record<string, unknown> {
-	return {
-		date: dateStr,
-		spend: 0,
-		total_tokens: 0,
-		prompt_tokens: 0,
-		completion_tokens: 0,
-		startTime: new Date(`${dateStr}T00:00:00Z`),
-	};
+function parseJsonLikeValue(value: unknown): unknown {
+	if (typeof value !== "string") {
+		return value;
+	}
+	try {
+		return JSON.parse(value) as unknown;
+	} catch {
+		return value;
+	}
+}
+
+/**
+ * UI 路径 `/spend/logs/ui` 行归一化。
+ *
+ * 行为对齐 Python `ui_view_spend_logs` 返回结构：
+ * - 复用 `normalizeSpendLogRow()` 的数值/日期规范化。
+ * - 保留 snake_case 字段名（WebUI Logs 表格依赖 `request_id` / `user` / `team_id` 等原始命名）。
+ * - 不引入重列 / 详情列。
+ * - 不在行内注入 `session_total_count`；该字段由 `handleUiSpendLogs()` 在
+ *   `enrichSessionCounts` 阶段聚合注入到每条 row。
+ * @param row
+ */
+export function normalizeUiSpendLogRow(row: Record<string, unknown>): Record<string, unknown> {
+	return normalizeSpendLogRow(row);
+}
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/**
+ * Format dates like Python `datetime.strftime("%b %d")` used by /global/activity endpoints.
+ * @param value - DB date value from date_trunc or DATE() projection
+ */
+export function toPythonMonthDayString(value: unknown): string {
+	const dateValue = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
+	if (dateValue === null || Number.isNaN(dateValue.getTime())) {
+		return toDateString(value);
+	}
+	return `${MONTH_LABELS[dateValue.getUTCMonth()]} ${String(dateValue.getUTCDate()).padStart(2, "0")}`;
 }
 
 /**
@@ -134,28 +165,6 @@ export function makeEmptyUiSpendLogsPage(
 	};
 }
 
-/**
- * 生成本月从 1 号到今天（含）的所有 'YYYY-MM-DD' 字符串数组。
- * 本月第一天 00:00 UTC ~ 今天 23:59:59.999 UTC。
- * 用于 /global/spend/logs 兜底：即便 DB 查不到任何行或查询失败，
- * 也要返回本月每日 spend=0 的行，让 WebUI Monthly Spend BarChart
- * 的 Tremor rect y 不会变 NaN。
- * @param now - 当前时间（默认 new Date()，便于测试注入）
- */
-export function getCurrentMonthDateRange(now: Date = new Date()): { firstDay: string; lastDay: string; dates: string[] } {
-	const year = now.getUTCFullYear();
-	const month = now.getUTCMonth();
-	const today = now.getUTCDate();
-	const monthPadded = String(month + 1).padStart(2, "0");
-	const firstDay = `${year}-${monthPadded}-01`;
-	const dates: string[] = [];
-	for (let d = 1; d <= today; d++) {
-		dates.push(`${year}-${monthPadded}-${String(d).padStart(2, "0")}`);
-	}
-	const lastDay = dates.at(-1) ?? firstDay;
-	return { firstDay: firstDay, lastDay: lastDay, dates: dates };
-}
-
 /** /spend/tags 与 /global/spend/tags 行投影的目标形状 */
 export interface TagSpendRow {
 	/** tag 字符串（同时作为 BarChart index） */
@@ -190,36 +199,4 @@ export function normalizeTagSpendRow(row: { tag?: unknown; total_spend?: unknown
 		total_spend: totalSpend,
 		total_tokens: totalTokens,
 	};
-}
-
-/**
- * 把从 DB 聚合并 normalize 后的 spend rows 与本月每日空 rows 合并：
- * - 用 DB 行覆盖对应日期的 spend / total_tokens
- * - 缺失日期补 spend=0 的空行
- * - 返回按 date 升序的数组
- * @param dbRows - 已 normalize 过的 spend_logs 行（含 date 'YYYY-MM-DD'）
- * @param dates - 本月每日 'YYYY-MM-DD' 列表
- */
-export function mergeWithCurrentMonthPlaceholder(dbRows: Record<string, unknown>[], dates: string[]): Record<string, unknown>[] {
-	const merged = new Map<string, Record<string, unknown>>();
-	for (const dateStr of dates) {
-		merged.set(dateStr, makeEmptyDailySpendRow(dateStr));
-	}
-	for (const row of dbRows) {
-		const dateStr = typeof row.date === "string" ? row.date : toDateString(row.startTime);
-		if (!dateStr || !merged.has(dateStr)) {
-			continue;
-		}
-		merged.set(dateStr, {
-			...merged.get(dateStr),
-			...row,
-			date: dateStr,
-			spend: toFiniteNumber(row.spend),
-			total_tokens: toFiniteNumber(row.total_tokens),
-			prompt_tokens: toFiniteNumber(row.prompt_tokens),
-			completion_tokens: toFiniteNumber(row.completion_tokens),
-			startTime: row.startTime instanceof Date ? row.startTime : new Date(`${dateStr}T00:00:00Z`),
-		});
-	}
-	return Array.from(merged.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }

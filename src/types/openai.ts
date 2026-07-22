@@ -5,6 +5,20 @@
  * 参考: LiteLLM Python litellm/types/utils.py
  */
 
+import { randomUUID } from "node:crypto";
+
+/**
+ * 生成 chat.completion / chat.completion.chunk 的响应 id，格式 "chatcmpl-<uuid>"。
+ * 对齐 PY litellm/types/utils.py `_generate_id()`：
+ * - Anthropic 路径：PY 始终重新生成（丢弃上游 msg_ 前缀 id，见
+ *   llms/anthropic/chat/handler.py:522 ModelResponseIterator.response_id）
+ * - OpenAI 兼容路径：上游返回 truthy id 时透传，否则回退到本函数
+ *   （litellm_core_utils/llm_response_utils/convert_dict_to_response.py:191-195）
+ */
+export function generateChatCompletionId(): string {
+	return `chatcmpl-${randomUUID()}`;
+}
+
 /** 思考块 — Anthropic 思考/加密思考内容 */
 export interface ThinkingBlock {
 	/** 思考块类型 */
@@ -135,6 +149,12 @@ export interface Message {
 	reasoning_content?: string;
 	/** 思考块（Anthropic） */
 	thinking_blocks?: ThinkingBlock[];
+	/**
+	 * Provider 特定字段（Anthropic 非流式路径恒为 { citations, thinking_blocks, ... }，
+	 * citations/thinking_blocks 缺省时为 null；对齐 PY anthropic transformation.py
+	 * _build_provider_specific_fields）
+	 */
+	provider_specific_fields?: Record<string, unknown>;
 }
 
 /** 非流式响应选择 */
@@ -207,4 +227,6 @@ export interface ModelResponseStream {
 	object: string;
 	/** 流式响应选择列表 */
 	choices: StreamingChoices[];
+	/** 仅供代理端点聚合与日志使用，不得透传客户端 */
+	_usage?: Usage;
 }

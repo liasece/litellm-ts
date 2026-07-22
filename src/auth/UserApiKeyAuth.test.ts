@@ -79,6 +79,48 @@ describe("UserApiKeyAuth", () => {
 		});
 	});
 
+	describe("master key 直通分支", () => {
+		/**
+		 * 对齐 PY user_api_key_auth.py:1073-1085 — master key 认证通过时
+		 * user_role=LitellmUserRoles.PROXY_ADMIN，使 /get/config/callbacks、
+		 * /model/cost_map/source 等 admin 端点对 master key 放行。
+		 */
+		it("master key 明文匹配 → req.auth.user_role = proxy_admin", async () => {
+			const { createApiKeyAuth } = await import("./UserApiKeyAuth");
+			const repo = {
+				findVerificationTokenByHash: jest.fn(),
+				findTeamById: jest.fn(),
+			} as unknown as Parameters<typeof createApiKeyAuth>[0];
+			const middleware = createApiKeyAuth(repo, "sk-master-key");
+			const req = mkReq({ "x-api-key": "sk-master-key" });
+			await new Promise<void>((resolve) => {
+				middleware(req, {} as never, () => resolve());
+			});
+			expect(req.auth?.user_role).toBe("proxy_admin");
+			expect(req.auth?.team_id).toBeUndefined();
+			// master key 直通分支不应触达 DB
+			expect(repo.findVerificationTokenByHash).not.toHaveBeenCalled();
+		});
+
+		it("master key 哈希匹配（传入哈希后的 master key）→ user_role = proxy_admin", async () => {
+			const { createApiKeyAuth } = await import("./UserApiKeyAuth");
+			const repo = {
+				findVerificationTokenByHash: jest.fn(),
+				findTeamById: jest.fn(),
+			} as unknown as Parameters<typeof createApiKeyAuth>[0];
+			// PY 第二分支：masterKey 配置为哈希值，明文 key 哈希后与之比较。
+			// 外层长度门槛要求 apiKey.length === masterKey.length（64），故明文 key 取 64 字符。
+			const plainKey = `sk-${"a".repeat(61)}`;
+			const hashedMaster = hashApiKey(plainKey);
+			const middleware = createApiKeyAuth(repo, hashedMaster);
+			const req = mkReq({ "x-api-key": plainKey });
+			await new Promise<void>((resolve) => {
+				middleware(req, {} as never, () => resolve());
+			});
+			expect(req.auth?.user_role).toBe("proxy_admin");
+		});
+	});
+
 	describe("DIFF-AUTH-02: 过期边界测试 (UTC 显式比较)", () => {
 		// 用 mock 构造 AuthRepository 验证 expiry 边界
 		it("expiryMs - nowMs === 0 → 判过期（严格 <）", async () => {
@@ -112,6 +154,7 @@ describe("UserApiKeyAuth", () => {
 			const repo = {
 				findVerificationTokenByHash: jest.fn().mockResolvedValue(token),
 				findTeamById: jest.fn(),
+				findUserById: jest.fn().mockResolvedValue(null),
 			} as unknown as Parameters<typeof createApiKeyAuth>[0];
 			const middleware = createApiKeyAuth(repo);
 			const req = mkReq({ "x-api-key": "sk-test" });
@@ -156,6 +199,7 @@ describe("UserApiKeyAuth", () => {
 			const repo = {
 				findVerificationTokenByHash: jest.fn().mockResolvedValue(token),
 				findTeamById: jest.fn(),
+				findUserById: jest.fn().mockResolvedValue(null),
 			} as unknown as Parameters<typeof createApiKeyAuth>[0];
 			const middleware = createApiKeyAuth(repo);
 			const req = mkReq({ "x-api-key": "sk-test" });
@@ -201,6 +245,7 @@ describe("UserApiKeyAuth", () => {
 			const repo = {
 				findVerificationTokenByHash: jest.fn().mockResolvedValue(token),
 				findTeamById: jest.fn(),
+				findUserById: jest.fn().mockResolvedValue(null),
 			} as unknown as Parameters<typeof createApiKeyAuth>[0];
 			const middleware = createApiKeyAuth(repo);
 			const req = mkReq({ "x-api-key": "sk-test" });

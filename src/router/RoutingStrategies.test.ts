@@ -1,7 +1,8 @@
 /**
  * RoutingStrategies 测试
  */
-import { simpleShuffle, leastBusy, usageBasedRouting, latencyBasedRouting, deploymentKey } from "./RoutingStrategies";
+import { simpleShuffle, leastBusy, usageBasedRouting, latencyBasedRouting, costBasedRouting, deploymentKey } from "./RoutingStrategies";
+import { modelCostMapService } from "../cost/ModelCostMapService";
 import type { Deployment } from "../types/router";
 
 function mkDeployment(name: string, tpm = 100000, rpm = 100): Deployment {
@@ -96,5 +97,37 @@ describe("latencyBasedRouting", () => {
 		const ctx = mkContext({}, {}, {});
 		const result = latencyBasedRouting(deps, ctx);
 		expect(result).not.toBeNull();
+	});
+});
+
+describe("costBasedRouting", () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("显式 model_cost_map 覆盖当前 service snapshot", () => {
+		jest.spyOn(modelCostMapService, "getSnapshot").mockReturnValue({
+			map: {
+				"dynamic-expensive": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
+				"dynamic-cheap": { input_cost_per_token: 2e-6, output_cost_per_token: 2e-6 },
+			},
+			rawJson: "{}",
+			source: "remote",
+			url: "https://prices.test",
+			isEnvForced: false,
+			fallbackReason: null,
+			modelCount: 2,
+			loadedAt: "2026-01-01T00:00:00.000Z",
+		});
+		const deployments = [mkDeployment("dynamic-expensive"), mkDeployment("dynamic-cheap")];
+		const ctx = {
+			...mkContext({}, {}, {}),
+			modelCostMap: {
+				"dynamic-expensive": { input_cost_per_token: 9e-6, output_cost_per_token: 9e-6 },
+				"dynamic-cheap": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
+			},
+		};
+
+		expect(costBasedRouting(deployments, ctx)?.model_name).toBe("dynamic-cheap");
 	});
 });

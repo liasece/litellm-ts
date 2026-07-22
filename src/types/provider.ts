@@ -68,6 +68,15 @@ export interface ProviderConfig {
 	transformRequest(model: string, messages: Message[], optionalParams: Record<string, unknown>): ProviderRequest;
 
 	/**
+	 * 将标准 embeddings 请求转换为该 Provider 的正式请求格式。
+	 * 未实现此能力的 Provider 不支持 embeddings。
+	 * @param model - 模型名称
+	 * @param input - 原始 embeddings 输入
+	 * @param optionalParams - 额外可选参数
+	 */
+	transformEmbeddingRequest?(model: string, input: unknown, optionalParams: Record<string, unknown>): ProviderRequest;
+
+	/**
 	 * 将 Provider 原始响应转换为标准 ModelResponse
 	 * @param model - 模型名称
 	 * @param rawResponse - Provider 原始响应数据

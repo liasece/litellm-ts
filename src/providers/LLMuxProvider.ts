@@ -12,6 +12,7 @@
  */
 import type { ProviderConfig, ProviderRequest } from "../types/provider";
 import type { Message, ModelResponse, ModelResponseStream, ToolCall } from "../types/openai";
+import { generateChatCompletionId } from "../types/openai";
 
 /**
  * 模型协议类型
@@ -125,7 +126,16 @@ export class LLMuxProvider implements ProviderConfig {
 		},
 	): ModelResponse {
 		const raw = rawResponse as Record<string, unknown>;
-		const id = (raw.id as string) ?? `llmux-${Date.now()}`;
+		// PY 对齐：Anthropic 协议模型在 PY 走 anthropic provider，响应 id 恒为重新生成的
+		// "chatcmpl-<uuid>"（丢弃上游 msg_ id）；OpenAI 协议模型透传上游 truthy id，
+		// 否则回退生成（convert_dict_to_response.py:191-195）
+		const upstreamId = raw.id;
+		const id =
+			detectProtocol(model) === Protocol.Anthropic
+				? generateChatCompletionId()
+				: typeof upstreamId === "string" && upstreamId.length > 0
+					? upstreamId
+					: generateChatCompletionId();
 		const respModel = (raw.model as string) ?? model;
 
 		// 从原始响应提取 usage
@@ -211,6 +221,10 @@ export class LLMuxProvider implements ProviderConfig {
 
 					try {
 						const parsed = JSON.parse(payload) as ModelResponseStream;
+						// PY ModelResponseStream(**chunk)：chunk 缺 id 时按 "chatcmpl-<uuid>" 重新生成
+						if (!parsed.id) {
+							parsed.id = generateChatCompletionId();
+						}
 						yield parsed;
 					} catch {
 						// ignore unparseable lines

@@ -411,4 +411,74 @@ describe("AnthropicProvider", () => {
 			expect(req.url).toBe("http://custom.test/v1/messages");
 		});
 	});
+
+	describe("transformResponse 响应 id 与 provider_specific_fields (PY _generate_id / _build_provider_specific_fields)", () => {
+		it("丢弃上游 msg_ 前缀 id，重新生成 chatcmpl-<uuid>", () => {
+			const result = provider.transformResponse("claude-sonnet-4-6", {
+				id: "msg_01ABC",
+				type: "message",
+				role: "assistant",
+				content: [{ type: "text", text: "hi" }],
+				model: "claude-sonnet-4-6",
+				stop_reason: "end_turn",
+				usage: { input_tokens: 3, output_tokens: 2 },
+			});
+			expect(result.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
+		});
+
+		it("message.provider_specific_fields 恒含 citations/thinking_blocks（无引用时为 null）", () => {
+			const thinkingBlock = { type: "thinking", thinking: "想", signature: "sig-1" };
+			const result = provider.transformResponse("claude-sonnet-4-6", {
+				id: "msg_02",
+				type: "message",
+				role: "assistant",
+				content: [thinkingBlock, { type: "text", text: "答" }],
+				model: "claude-sonnet-4-6",
+				stop_reason: "end_turn",
+				usage: { input_tokens: 3, output_tokens: 2 },
+			});
+			expect(result.choices[0]!.message.provider_specific_fields).toEqual({
+				citations: null,
+				thinking_blocks: [thinkingBlock],
+			});
+		});
+
+		it("无思考无引用时 provider_specific_fields 两键均为 null", () => {
+			const result = provider.transformResponse("claude-sonnet-4-6", {
+				id: "msg_03",
+				type: "message",
+				role: "assistant",
+				content: [{ type: "text", text: "plain" }],
+				model: "claude-sonnet-4-6",
+				stop_reason: "end_turn",
+				usage: { input_tokens: 1, output_tokens: 1 },
+			});
+			expect(result.choices[0]!.message.provider_specific_fields).toEqual({ citations: null, thinking_blocks: null });
+		});
+	});
+
+	describe("流式响应 id (PY handler.py:522 response_id = _generate_id())", () => {
+		it("全部 chunk 共享一个预生成 chatcmpl-<uuid>，不取上游 message_start 的 msg_ id", async () => {
+			const sseStream = [
+				`data: ${JSON.stringify({ type: "message_start", message: { id: "msg_upstream", model: "claude", usage: { input_tokens: 10 } } })}`,
+				"",
+				`data: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "he" } })}`,
+				"",
+				`data: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "llo" } })}`,
+				"",
+				`data: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } })}`,
+				"",
+			].join("\n");
+			const response = new Response(sseStream, { status: 200, headers: { "content-type": "text/event-stream" } });
+
+			const ids = new Set<string>();
+			for await (const chunk of provider.streamResponse(response)) {
+				ids.add(chunk.id);
+			}
+			expect(ids.size).toBe(1);
+			const [onlyId] = [...ids];
+			expect(onlyId).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
+			expect(onlyId).not.toBe("msg_upstream");
+		});
+	});
 });

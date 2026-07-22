@@ -14,26 +14,29 @@
  * - Patch 8: 访问日志过滤器（src/middleware/AccessLogFilter.ts）— 非 2xx 响应日志
  * - Patch 9: _ensureBlockForItem + tool_use 空名 guard
  * - Patch 10: count_tokens 转发到上游（替代本地估算）
- * - Patch 11: deferred responses stream
+ * - Patch 11: 流式先经 fallback 链建立连接（_openAnthropicStream + AnthropicUpstreamDispatch）
  * - Patch 12: SSE keep-alive ping
  * - Patch 13: Files API 转发（文件上传/列表/下载/删除）
  * - Patch 14: model_group_alias 解析回退（src/router/FallbackHandler.ts）
  * - Patch 16: Batches API 转发（批量消息创建/列表/查询/取消）
+ * - Patch 17: body.model 替换（deployment.litellm_params.model 剥离 provider 前缀）+
+ *   Router fallback 链重试 + 失败冷却（src/proxy/AnthropicUpstreamDispatch.ts）+
+ *   响应 model 改写回原请求 model（非流式 responseData.model / 流式合成 message_start）
  */
-import * as crypto from "node:crypto";
 import type { Router, Request, Response } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
 import { createModuleLogger } from "../core/utils/logger";
 import { cleanSurrogates } from "../core/utils/text";
 import { getConfig } from "../core/config";
-import { calculateAndSetCost, trackSpendLog, normalizeUsageForSpend } from "../spend/SpendTracker";
+import { calculateAndSetCost, trackSpendLog, buildSpendLogFromRequest } from "../spend/SpendTracker";
 import { runCommonChecks } from "../auth/AuthChecks";
-import type { SpendLog } from "../types/spend";
-import { CallType } from "../types/spend";
+import { CallType, SpendLogStatus } from "../types/spend";
 import type { DrizzleDb } from "../core/db/Database";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { ModelResponse } from "../types/openai";
+import { ProviderUpstreamError, executeWithFallbackChain, requireUpstreamAttempt, type UpstreamAttempt } from "./AnthropicUpstreamDispatch";
+import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
 
 const logger = createModuleLogger("AnthropicMsg");
 
@@ -211,42 +214,132 @@ function _ensureBlockForItem(
 	return idx;
 }
 
-// Token extraction from SSE chunks (extracted to reduce nesting depth)
-function _captureInputTokens(
-	chunk: string,
-	target: { value: number; cacheCreationInputTokens: number; cacheReadInputTokens: number },
-): void {
-	try {
-		const m = /data: (.+)/.exec(chunk);
-		if (m) {
-			const p = JSON.parse(m[1]!);
-			if (p.message?.usage?.input_tokens) {
-				target.value = p.message.usage.input_tokens;
-			}
-			// PY: capture cache_creation_input_tokens and cache_read_input_tokens (cost_calculator.py:1183-1196)
-			if (p.message?.usage?.cache_creation_input_tokens) {
-				target.cacheCreationInputTokens = p.message.usage.cache_creation_input_tokens;
-			}
-			if (p.message?.usage?.cache_read_input_tokens) {
-				target.cacheReadInputTokens = p.message.usage.cache_read_input_tokens;
-			}
-		}
-	} catch {
-		/* ignore */
+interface NativeStreamAccumulator {
+	id?: string;
+	type?: string;
+	role?: string;
+	model?: string;
+	content: Map<number, Record<string, unknown>>;
+	toolInputJson: Map<number, string>;
+	stopReason?: unknown;
+	stopSequence?: unknown;
+	usage: Record<string, number>;
+}
+
+function setNumberField(target: Record<string, number>, source: Record<string, unknown>, field: string): void {
+	if (typeof source[field] === "number") {
+		target[field] = source[field];
 	}
 }
-function _captureOutputTokens(chunk: string, target: { value: number }): void {
+
+function parseSsePayload(chunk: string): Record<string, unknown> | undefined {
+	const data = chunk
+		.split("\n")
+		.filter((line) => line.startsWith("data: "))
+		.map((line) => line.slice(6))
+		.join("\n");
+	if (!data) {
+		return undefined;
+	}
 	try {
-		const m = /data: (.+)/.exec(chunk);
-		if (m) {
-			const p = JSON.parse(m[1]!);
-			if (p.type === "message_delta" && p.usage?.output_tokens) {
-				target.value = p.usage.output_tokens;
+		const payload: unknown = JSON.parse(data);
+		return typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function accumulateNativeStreamEvent(state: NativeStreamAccumulator, payload: Record<string, unknown>): void {
+	const type = payload["type"];
+	if (type === "message_start") {
+		const message = payload["message"] as Record<string, unknown> | undefined;
+		if (!message) {
+			return;
+		}
+		for (const field of ["id", "type", "role", "model"] as const) {
+			if (typeof message[field] === "string") {
+				if (field === "id") {
+					state.id ??= message.id as string;
+				} else {
+					state[field] = message[field];
+				}
 			}
 		}
-	} catch {
-		/* ignore */
+		const usage = message["usage"] as Record<string, unknown> | undefined;
+		if (usage) {
+			for (const field of ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]) {
+				setNumberField(state.usage, usage, field);
+			}
+		}
+		return;
 	}
+	if (type === "content_block_start" && typeof payload["index"] === "number") {
+		const block = payload["content_block"];
+		if (typeof block === "object" && block !== null) {
+			state.content.set(payload["index"], { ...(block as Record<string, unknown>) });
+		}
+		return;
+	}
+	if (type === "content_block_delta" && typeof payload["index"] === "number") {
+		const index = payload["index"];
+		const delta = payload["delta"] as Record<string, unknown> | undefined;
+		const block = state.content.get(index);
+		if (!delta || !block) {
+			return;
+		}
+		if (delta["type"] === "text_delta" && typeof delta["text"] === "string") {
+			block["text"] = `${String(block["text"] ?? "")}${delta["text"]}`;
+		} else if (delta["type"] === "thinking_delta" && typeof delta["thinking"] === "string") {
+			block["thinking"] = `${String(block["thinking"] ?? "")}${delta["thinking"]}`;
+		} else if (delta["type"] === "signature_delta" && typeof delta["signature"] === "string") {
+			block["signature"] = `${String(block["signature"] ?? "")}${delta["signature"]}`;
+		} else if (delta["type"] === "input_json_delta" && typeof delta["partial_json"] === "string") {
+			state.toolInputJson.set(index, `${state.toolInputJson.get(index) ?? ""}${delta["partial_json"]}`);
+		}
+		return;
+	}
+	if (type === "content_block_stop" && typeof payload["index"] === "number") {
+		const index = payload["index"];
+		const partialJson = state.toolInputJson.get(index);
+		const block = state.content.get(index);
+		if (partialJson !== undefined && block) {
+			try {
+				block["input"] = JSON.parse(partialJson);
+			} catch {
+				block["input"] = partialJson;
+			}
+		}
+		return;
+	}
+	if (type === "message_delta") {
+		const delta = payload["delta"] as Record<string, unknown> | undefined;
+		if (delta) {
+			state.stopReason = delta["stop_reason"];
+			state.stopSequence = delta["stop_sequence"];
+		}
+		const usage = payload["usage"] as Record<string, unknown> | undefined;
+		if (usage) {
+			for (const field of ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]) {
+				setNumberField(state.usage, usage, field);
+			}
+		}
+	}
+}
+
+function buildNativeStreamResponse(state: NativeStreamAccumulator, requestedModel: string): Record<string, unknown> | undefined {
+	if (!state.id && state.content.size === 0) {
+		return undefined;
+	}
+	return {
+		id: state.id ?? "",
+		type: state.type ?? "message",
+		role: state.role ?? "assistant",
+		model: requestedModel,
+		content: [...state.content.entries()].sort(([left], [right]) => left - right).map(([, block]) => block),
+		stop_reason: state.stopReason,
+		stop_sequence: state.stopSequence,
+		usage: state.usage,
+	};
 }
 // ========== SSE 格式化 ==========
 
@@ -261,31 +354,12 @@ function sendPing(res: Response): void {
 // ========== Patch 11: deferred responses stream ==========
 
 /**
- * 延迟执行上游 API 调用后才返回 async generator。
- * 调用方拿到 generator 不触发任何网络请求，只有开始迭代时才真正调用 fetch。
- * @param upstreamUrl
- * @param providerHeaders
- * @param body
- * @param model
+ * 从已建立连接的上游 Response 读取 SSE 流的 async generator。
+ * 调用方需先通过 _openAnthropicStream 完成连接与状态检查。
+ * @param result - 上游 fetch Response（已确认 2xx）
  * @yields {string}
  */
-async function* _deferredAnthropicStream(
-	upstreamUrl: string,
-	providerHeaders: Record<string, string>,
-	body: Record<string, unknown>,
-	model: string,
-): AsyncGenerator<string> {
-	const result = await fetch(upstreamUrl, {
-		method: "POST",
-		headers: { ...providerHeaders, "Content-Type": "application/json" },
-		body: JSON.stringify(body),
-	});
-
-	if (!result.ok) {
-		const errBody = await result.text().catch(() => "");
-		throw new ApiError(result.status, `Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`);
-	}
-
+async function* _streamAnthropicSse(result: globalThis.Response): AsyncGenerator<string> {
 	const reader = result.body?.getReader();
 	if (!reader) {
 		return;
@@ -380,35 +454,29 @@ async function* _deferredAnthropicStream(
 }
 
 /**
- * Helper: get provider URL and headers for an Anthropic model via the Router.
- * @param litellmRouter
- * @param model
- * @param requestApiKey
- * @param requestAnthropicVersion
- * @throws {ApiError} 当上游 API 返回错误时
+ * 建立上游流式连接：fetch 并检查状态码，成功返回 SSE generator。
+ * 连接失败 / 非 2xx 抛 ProviderUpstreamError（供 fallback 链重试下一 deployment）。
+ * @param upstreamUrl - 上游完整 URL
+ * @param providerHeaders - 上游请求头
+ * @param body - 转发请求体（model 已替换为上游 model 名）
  */
-function _getProviderUpstream(
-	litellmRouter: LiteLLMRouter,
-	model: string,
-	requestApiKey?: string,
-	requestAnthropicVersion?: string,
-): { upstreamUrl: string; upstreamHeaders: Record<string, string> } {
-	const candidate = litellmRouter.getAvailableDeployment(model);
-	if (!candidate) {
-		throw new ApiError(503, `No available deployment for model "${model}"`);
-	}
-	const { deployment, provider } = candidate;
-	// deployment.litellm_params.api_key 优先，requestApiKey 兜底（用户请求头透传）
-	const apiKey = (deployment.litellm_params.api_key as string | undefined) ?? requestApiKey ?? process.env["ANTHROPIC_API_KEY"] ?? "";
-	const anthropicVersion = requestAnthropicVersion ?? "2023-06-01";
-	// 把 deployment 的全部 litellm_params 透传给 provider.transformRequest，
-	// 让 deployment.litellm_params.api_base（自定义上游）能覆盖 provider 默认 base。
-	const providerReq = provider.transformRequest(deployment.litellm_params.model ?? model, [], {
-		...deployment.litellm_params,
-		api_key: apiKey,
-		anthropic_version: anthropicVersion,
+async function _openAnthropicStream(
+	upstreamUrl: string,
+	providerHeaders: Record<string, string>,
+	body: Record<string, unknown>,
+): Promise<AsyncGenerator<string>> {
+	const result = await fetch(upstreamUrl, {
+		method: "POST",
+		headers: { ...providerHeaders, "Content-Type": "application/json" },
+		body: JSON.stringify(body),
 	});
-	return { upstreamUrl: providerReq.url, upstreamHeaders: providerReq.headers };
+
+	if (!result.ok) {
+		const errBody = await result.text().catch(() => "");
+		throw new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`);
+	}
+
+	return _streamAnthropicSse(result);
 }
 
 // ========== 端点注册 ==========
@@ -433,13 +501,16 @@ export function registerAnthropicMessagesEndpoints(
 			return;
 		}
 
+		// PY litellm_overhead_time_ms 基准：请求进入代理的时间
+		const requestArrivalTimeMs = Date.now();
+
 		const cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
 		if (!cleanBody) {
 			throw ApiError.badRequest("请求体为空");
 		}
 
-		const model = cleanBody.model as string | undefined;
-		if (!model) {
+		const requestedModel = cleanBody.model as string | undefined;
+		if (!requestedModel) {
 			throw ApiError.badRequest("缺少 model 字段");
 		}
 
@@ -447,8 +518,9 @@ export function registerAnthropicMessagesEndpoints(
 		// soft_budget/parallel/team model access），对齐 PY `user_api_key_auth()` 统一入口
 		// （user_api_key_auth.py:1354 `_virtual_key_soft_budget_check`）。
 		// ChatCompletions 端点已调用 runCommonChecks；此前 Anthropic 端点绕过整套检查。
+		// 授权检查用原请求 model（PY：auth 依赖注入先于 websearch override 执行）。
 		if (req.auth) {
-			runCommonChecks(req.auth, model);
+			runCommonChecks(req.auth, requestedModel);
 		}
 
 		// Patch 7: websearch override
@@ -463,9 +535,44 @@ export function registerAnthropicMessagesEndpoints(
 			}
 		}
 
+		// 路由 model：websearch override 之后（对齐 PY common_request_processing 顺序：
+		// override 改写 data["model"] 后才调 router）。spend / 响应 model 改写仍用 requestedModel。
+		const model = cleanBody.model as string;
 		const stream = cleanBody.stream === true;
+		const requestApiKey = cleanBody["api_key"] as string | undefined;
+		const requestAnthropicVersion = cleanBody["anthropic_version"] as string | undefined;
 
 		if (stream) {
+			const streamStartTime = new Date();
+			const streamAccumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
+			let streamError: unknown;
+			let completionStartTime: Date | undefined;
+			// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
+			let executedAttempt: UpstreamAttempt | undefined;
+			// metadata.attempted_retries 数据源：fallback 链跳数回写
+			const streamFallbackStats = { fallbackDepth: 0 };
+			// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
+			const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
+
+			// 先经 fallback 链建立上游连接：失败时响应头未发送，
+			// 由 registerRoute 返回标准 HTTP 错误（对齐 PY 全部 deployment 失败时的行为）；
+			// body.model 逐次替换为当前 deployment 剥离 provider 前缀后的上游 model 名。
+			const anthropicStream = await executeWithFallbackChain(
+				litellmRouter,
+				model,
+				requestApiKey,
+				requestAnthropicVersion,
+				(attempt) => {
+					const opened = _openAnthropicStream(attempt.upstreamUrl, attempt.upstreamHeaders, {
+						...cleanBody,
+						model: attempt.upstreamModel,
+					});
+					executedAttempt = attempt;
+					return opened;
+				},
+				streamFallbackStats,
+			);
+
 			// Patch 12: SSE keep-alive
 			res.writeHead(200, {
 				"Content-Type": "text/event-stream",
@@ -484,14 +591,11 @@ export function registerAnthropicMessagesEndpoints(
 
 			req.on("close", () => clearInterval(pingTimer));
 
-			// 流式 token 累加器
-			const streamStartTime = new Date();
-			const streamInputTokens = { value: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
-			const streamOutputTokens = { value: 0 };
-
 			try {
 				// Patch 6+15: 合成 message_start → 跳过上游首次纯 message_start
+				// （合成事件用原请求 model，上游透传的 message_start 被跳过，不泄露上游 model 名）
 				const syntheticMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+				streamAccumulator.id = syntheticMsgId;
 				res.write(
 					formatSSE(
 						"message_start",
@@ -501,7 +605,7 @@ export function registerAnthropicMessagesEndpoints(
 								id: syntheticMsgId,
 								type: "message",
 								role: "assistant",
-								model: model,
+								model: requestedModel,
 								content: [],
 								usage: { input_tokens: 0, output_tokens: 0 },
 							},
@@ -509,54 +613,60 @@ export function registerAnthropicMessagesEndpoints(
 					),
 				);
 
-				// Patch 11: deferred stream — 通过 Router 获取 provider URL
-				const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(
-					litellmRouter,
-					model,
-					cleanBody["api_key"] as string | undefined,
-					cleanBody["anthropic_version"] as string | undefined,
-				);
-
 				let firstChunk = true;
-				for await (const sseChunk of _deferredAnthropicStream(upstreamUrl, upstreamHeaders, cleanBody, model as string)) {
+				for await (const sseChunk of anthropicStream) {
+					const payload = parseSsePayload(sseChunk);
+					if (payload) {
+						accumulateNativeStreamEvent(streamAccumulator, payload);
+					}
 					if (firstChunk && _isPureMessageStartChunk(sseChunk)) {
 						firstChunk = false;
-						_captureInputTokens(sseChunk, streamInputTokens);
 						continue;
 					}
 					firstChunk = false;
-					_captureOutputTokens(sseChunk, streamOutputTokens);
+					completionStartTime ??= new Date();
 					res.write(sseChunk);
 				}
 			} catch (err) {
+				streamError = err;
 				res.write(formatSSE("error", JSON.stringify({ type: "error", error: { type: "api_error", message: String(err) } })));
 				logger.error("流式响应错误", { error: String(err) });
 			} finally {
 				clearInterval(pingTimer);
 				res.end();
 
-				// 流式 spend 追踪
-				if (db && req.auth && (streamInputTokens.value > 0 || streamOutputTokens.value > 0)) {
-					const spendLog: SpendLog = {
-						request_id: crypto.randomUUID(),
-						call_type: CallType.AMessages,
-						api_key: req.auth.api_key ?? "",
-						spend: 0,
-						total_tokens: streamInputTokens.value + streamOutputTokens.value,
-						prompt_tokens: streamInputTokens.value,
-						completion_tokens: streamOutputTokens.value,
-						startTime: streamStartTime.toISOString(),
-						endTime: new Date().toISOString(),
-						model: model,
-						user: req.auth.user_id,
-						team_id: req.auth.team_id,
-						cache_creation_input_tokens: streamInputTokens.cacheCreationInputTokens,
-						cache_read_input_tokens: streamInputTokens.cacheReadInputTokens,
-
-						cache_hit: streamInputTokens.cacheReadInputTokens > 0,
-						// GAP 10: 透传 end_user_id 到 spend log
-						end_user_id: req.auth.end_user_id,
-					};
+				// 流式 spend 追踪（model 记原请求 model，对齐 Python SpendLogs 行为）
+				if (db && req.auth && (Object.keys(streamAccumulator.usage).length > 0 || streamError !== undefined)) {
+					const streamEndTime = new Date();
+					const response = buildNativeStreamResponse(streamAccumulator, requestedModel);
+					// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
+					const spendInfo: DeploymentSpendInfo | undefined = executedAttempt
+						? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
+						: undefined;
+					const spendLog = buildSpendLogFromRequest({
+						req: req,
+						auth: req.auth,
+						callType: CallType.AMessages,
+						model: requestedModel,
+						// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
+						modelGroup: requestedModel,
+						modelId: spendInfo?.modelId,
+						customLlmProvider: spendInfo?.customLlmProvider,
+						apiBase: spendInfo?.apiBase,
+						customCostPerToken: spendInfo?.customCostPerToken,
+						deploymentModel: spendInfo?.deploymentModel,
+						litellmOverheadTimeMs: streamOverheadTimeMs,
+						attemptedRetries: streamFallbackStats.fallbackDepth,
+						maxRetries: litellmRouter.maxFallbacks,
+						startTime: streamStartTime,
+						endTime: streamEndTime,
+						completionStartTime: completionStartTime,
+						messages: cleanBody.messages,
+						response: response,
+						usage: streamAccumulator.usage,
+						error: streamError,
+						status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
+					});
 					trackSpendLog(db, spendLog).catch((err) => logger.error("Anthropic 流式花费追踪失败", { error: err }));
 				}
 			}
@@ -565,67 +675,83 @@ export function registerAnthropicMessagesEndpoints(
 
 		// PY: record startTime at request start for non-streaming
 		const nonStreamingStartTime = new Date();
-		// 非流式响应 — 通过 Router 获取 provider URL
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(
+		// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
+		let executedNsAttempt: UpstreamAttempt | undefined;
+		// PY 非流式 completionStartTime：上游响应返回（body 解析完成）的时间点，
+		// TTFT = completionStartTime - startTime（含输入处理与排队时长）
+		let nsCompletionStartTime: Date | undefined;
+		// 非流式响应 — 经 fallback 链直连上游；body.model 逐次替换为上游 model 名
+		// metadata.attempted_retries 数据源：fallback 链跳数回写
+		const nsFallbackStats = { fallbackDepth: 0 };
+		// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
+		const nsOverheadTimeMs = Date.now() - requestArrivalTimeMs;
+		const responseData = await executeWithFallbackChain(
 			litellmRouter,
 			model,
-			cleanBody["api_key"] as string | undefined,
-			cleanBody["anthropic_version"] as string | undefined,
+			requestApiKey,
+			requestAnthropicVersion,
+			async (attempt) => {
+				const result = await fetch(attempt.upstreamUrl, {
+					method: "POST",
+					headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+					body: JSON.stringify({ ...cleanBody, model: attempt.upstreamModel }),
+				});
+
+				if (!result.ok) {
+					const errBody = await result.text().catch(() => "");
+					throw new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`);
+				}
+
+				// PY 非流式 completionStartTime：上游响应头到达（开始响应）的时间点
+				nsCompletionStartTime = new Date();
+				const responseJson = (await result.json()) as Record<string, unknown>;
+				executedNsAttempt = attempt;
+				return responseJson;
+			},
+			nsFallbackStats,
 		);
-
-		const result = await fetch(upstreamUrl, {
-			method: "POST",
-			headers: { ...upstreamHeaders, "Content-Type": "application/json" },
-			body: JSON.stringify(cleanBody),
-		});
-
-		if (!result.ok) {
-			const errBody = await result.text().catch(() => "");
-			throw new ApiError(result.status, `Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`);
-		}
-
-		const responseData = await result.json();
-		calculateAndSetCost(responseData as ModelResponse, model);
+		const nonStreamingEndTime = new Date();
+		// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
+		const nsSpendInfo: DeploymentSpendInfo | undefined = executedNsAttempt
+			? buildDeploymentSpendInfo(executedNsAttempt.deployment, executedNsAttempt.upstreamUrl)
+			: undefined;
+		// 响应 model 改写回原请求 model（Python 实测：fallback 后响应 model 仍为客户端请求 model）
+		responseData["model"] = requestedModel;
+		calculateAndSetCost(responseData as unknown as ModelResponse, requestedModel, nsSpendInfo?.customCostPerToken);
 
 		// PY: inject x-litellm-response-cost header (PY logging middleware)
-		const nsUsage = (responseData as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
-		if (nsUsage && (nsUsage as unknown as Record<string, unknown>)["cost"] !== undefined) {
-			res.setHeader("x-litellm-response-cost", String((nsUsage as unknown as Record<string, unknown>)["cost"]));
+		const nsUsage = responseData["usage"] as Record<string, unknown> | undefined;
+		if (nsUsage && nsUsage["cost"] !== undefined) {
+			res.setHeader("x-litellm-response-cost", String(nsUsage["cost"]));
 		}
 
-		// 非流式 spend 追踪
+		// 非流式 spend 追踪（model 记原请求 model，对齐 Python SpendLogs 行为）
 		if (db && req.auth) {
-			const usage = (responseData as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
-			if (usage) {
-				// GAP 3: 走 normalizeUsageForSpend 统一处理 input_tokens/output_tokens
-				// vs prompt_tokens/completion_tokens 双字段（Anthropic 用 input/output，
-				// Responses API 同样用 input/output）。同时让 cost 漏算场景统一兜底。
-				const normalized = normalizeUsageForSpend(usage);
-				const inputTokens = normalized?.prompt_tokens ?? (usage["input_tokens"] as number) ?? 0;
-				const outputTokens = normalized?.completion_tokens ?? (usage["output_tokens"] as number) ?? 0;
-				const spendLog: SpendLog = {
-					request_id: crypto.randomUUID(),
-					call_type: CallType.AMessages,
-					api_key: req.auth.api_key ?? "",
-					spend: 0,
-					total_tokens: normalized?.total_tokens ?? inputTokens + outputTokens,
-					prompt_tokens: inputTokens,
-					completion_tokens: outputTokens,
-					cache_creation_input_tokens:
-						normalized?.cache_creation_input_tokens ?? (usage["cache_creation_input_tokens"] as number) ?? 0,
-					cache_read_input_tokens: normalized?.cache_read_input_tokens ?? (usage["cache_read_input_tokens"] as number) ?? 0,
-
-					cache_hit: ((usage["cache_read_input_tokens"] as number) ?? 0) > 0,
-					startTime: nonStreamingStartTime.toISOString(),
-					endTime: new Date().toISOString(),
-					model: model,
-					user: req.auth.user_id,
-					team_id: req.auth.team_id,
-					// GAP 10: 透传 end_user_id 到 spend log
-					end_user_id: req.auth.end_user_id,
-				};
-				trackSpendLog(db, spendLog).catch((err) => logger.error("Anthropic 花费追踪失败", { error: err }));
-			}
+			const usage = responseData["usage"] as Record<string, unknown> | undefined;
+			const spendLog = buildSpendLogFromRequest({
+				req: req,
+				auth: req.auth,
+				callType: CallType.AMessages,
+				model: requestedModel,
+				// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
+				modelGroup: requestedModel,
+				modelId: nsSpendInfo?.modelId,
+				customLlmProvider: nsSpendInfo?.customLlmProvider,
+				apiBase: nsSpendInfo?.apiBase,
+				customCostPerToken: nsSpendInfo?.customCostPerToken,
+				deploymentModel: nsSpendInfo?.deploymentModel,
+				litellmOverheadTimeMs: nsOverheadTimeMs,
+				attemptedRetries: nsFallbackStats.fallbackDepth,
+				maxRetries: litellmRouter.maxFallbacks,
+				startTime: nonStreamingStartTime,
+				endTime: nonStreamingEndTime,
+				completionStartTime: nsCompletionStartTime,
+				messages: cleanBody.messages,
+				response: responseData,
+				usage: usage,
+				status: SpendLogStatus.Success,
+			});
+			trackSpendLog(db, spendLog).catch((err) => logger.error("Anthropic 花费追踪失败", { error: err }));
 		}
 
 		return responseData;
@@ -642,21 +768,22 @@ export function registerAnthropicMessagesEndpoints(
 		if (req.auth) {
 			runCommonChecks(req.auth, model);
 		}
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(
+		const attempt = requireUpstreamAttempt(
 			litellmRouter,
 			model,
 			cleanBody["api_key"] as string | undefined,
 			cleanBody["anthropic_version"] as string | undefined,
 		);
-		const countUrl = upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens");
+		const countUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens");
 		const result = await fetch(countUrl, {
 			method: "POST",
 			headers: {
-				...upstreamHeaders,
+				...attempt.upstreamHeaders,
 				"Content-Type": "application/json",
 				"anthropic-beta": "token-counting-2024-11-01",
 			},
-			body: JSON.stringify(cleanBody),
+			// body.model 替换为剥离 provider 前缀后的上游 model 名
+			body: JSON.stringify({ ...cleanBody, model: attempt.upstreamModel }),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");
@@ -670,12 +797,13 @@ export function registerAnthropicMessagesEndpoints(
 	registerRoute(router, { method: "post", path: "/v1/files" }, async (req) => {
 		const body = sanitizeRequestBody(req.body) as Record<string, unknown>;
 		const model = (body.model as string) ?? "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const filesUrl = upstreamUrl.replace(/\/v1\/messages$/, "/v1/files");
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const filesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/files");
 		const result = await fetch(filesUrl, {
 			method: "POST",
-			headers: { ...upstreamHeaders, "Content-Type": "application/json" },
-			body: JSON.stringify(body),
+			headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+			// body.model 替换为剥离 provider 前缀后的上游 model 名
+			body: JSON.stringify({ ...body, model: attempt.upstreamModel }),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");
@@ -686,9 +814,9 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "get", path: "/v1/files" }, async (req) => {
 		const model = "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const filesUrl = upstreamUrl.replace(/\/v1\/messages$/, "/v1/files");
-		const result = await fetch(filesUrl, { headers: upstreamHeaders });
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const filesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/files");
+		const result = await fetch(filesUrl, { headers: attempt.upstreamHeaders });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 列表返回错误 (${result.status})`);
 		}
@@ -697,9 +825,9 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "get", path: "/v1/files/:id" }, async (req) => {
 		const model = "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const fileUrl = upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}`);
-		const result = await fetch(fileUrl, { headers: upstreamHeaders });
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const fileUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}`);
+		const result = await fetch(fileUrl, { headers: attempt.upstreamHeaders });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 查询返回错误 (${result.status})`);
 		}
@@ -708,9 +836,9 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "get", path: "/v1/files/:id/content" }, async (req, res) => {
 		const model = "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const contentUrl = upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}/content`);
-		const result = await fetch(contentUrl, { headers: upstreamHeaders });
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const contentUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}/content`);
+		const result = await fetch(contentUrl, { headers: attempt.upstreamHeaders });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 内容返回错误 (${result.status})`);
 		}
@@ -722,9 +850,9 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "delete", path: "/v1/files/:id" }, async (req) => {
 		const model = "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const fileUrl = upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}`);
-		const result = await fetch(fileUrl, { method: "DELETE", headers: upstreamHeaders });
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const fileUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}`);
+		const result = await fetch(fileUrl, { method: "DELETE", headers: attempt.upstreamHeaders });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 删除返回错误 (${result.status})`);
 		}
@@ -736,12 +864,13 @@ export function registerAnthropicMessagesEndpoints(
 	registerRoute(router, { method: "post", path: "/v1/messages/batches" }, async (req) => {
 		const cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
 		const model = (cleanBody.model as string) ?? "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const batchesUrl = upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/batches");
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const batchesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/batches");
 		const result = await fetch(batchesUrl, {
 			method: "POST",
-			headers: { ...upstreamHeaders, "Content-Type": "application/json" },
-			body: JSON.stringify(cleanBody),
+			headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+			// body.model 替换为剥离 provider 前缀后的上游 model 名
+			body: JSON.stringify({ ...cleanBody, model: attempt.upstreamModel }),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");
@@ -752,9 +881,9 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "get", path: "/v1/messages/batches" }, async (req) => {
 		const model = "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const batchesUrl = upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/batches");
-		const result = await fetch(batchesUrl, { headers: upstreamHeaders });
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const batchesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/batches");
+		const result = await fetch(batchesUrl, { headers: attempt.upstreamHeaders });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Batches 列表返回错误 (${result.status})`);
 		}
@@ -763,9 +892,9 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "get", path: "/v1/messages/batches/:id" }, async (req) => {
 		const model = "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const batchUrl = upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}`);
-		const result = await fetch(batchUrl, { headers: upstreamHeaders });
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const batchUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}`);
+		const result = await fetch(batchUrl, { headers: attempt.upstreamHeaders });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Batches 查询返回错误 (${result.status})`);
 		}
@@ -774,9 +903,9 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "post", path: "/v1/messages/batches/:id/cancel" }, async (req) => {
 		const model = "claude-sonnet-4-20250514";
-		const { upstreamUrl, upstreamHeaders } = _getProviderUpstream(litellmRouter, model);
-		const cancelUrl = upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}/cancel`);
-		const result = await fetch(cancelUrl, { method: "POST", headers: upstreamHeaders });
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const cancelUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}/cancel`);
+		const result = await fetch(cancelUrl, { method: "POST", headers: attempt.upstreamHeaders });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Batches 取消返回错误 (${result.status})`);
 		}
@@ -785,4 +914,4 @@ export function registerAnthropicMessagesEndpoints(
 }
 
 // ========== 导出测试用函数 ==========
-export { _isPureMessageStartChunk, _isWebSearchTool, _applyWebSearchOverrideTargetModel, _ensureBlockForItem, _deferredAnthropicStream };
+export { _isPureMessageStartChunk, _isWebSearchTool, _applyWebSearchOverrideTargetModel, _ensureBlockForItem, _openAnthropicStream };

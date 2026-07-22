@@ -1,3 +1,5 @@
+import { formatNumberWithCommas } from "@/utils/dataUtils";
+
 export function valueFormatter(number: number) {
   if (number >= 1000000) {
     return (number / 1000000).toFixed(2) + "M";
@@ -7,6 +9,8 @@ export function valueFormatter(number: number) {
   }
   return number.toString();
 }
+
+export const valueFormatterTokens = (value: number) => formatNumberWithCommas(value, 0, false);
 
 export function valueFormatterSpend(number: number) {
   if (number === 0) return "$0";

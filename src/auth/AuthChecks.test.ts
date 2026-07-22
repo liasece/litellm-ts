@@ -33,6 +33,10 @@ describe("canKeyAccessModel", () => {
 		expect(canKeyAccessModel("any-model", ["*"])).toBe(true);
 	});
 
+	it("allows Python all-team-models sentinel at key level", () => {
+		expect(canKeyAccessModel("gpt-5.5", ["all-team-models"])).toBe(true);
+	});
+
 	it("allows anthropic/* prefix wildcard", () => {
 		expect(canKeyAccessModel("anthropic/claude-sonnet", ["anthropic/*"])).toBe(true);
 	});

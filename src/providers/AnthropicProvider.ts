@@ -8,6 +8,7 @@
  */
 import type { ProviderConfig, ProviderRequest } from "../types/provider";
 import type { Message, ModelResponse, ModelResponseStream, TokenDetails, PromptTokenDetails, Usage } from "../types/openai";
+import { generateChatCompletionId } from "../types/openai";
 import type { AnthropicContentBlock, AnthropicSSEEvent } from "../types/anthropic";
 import { cleanSurrogates } from "../core/utils/text";
 
@@ -25,7 +26,7 @@ const DEFAULT_REASONING_EFFORT_MINIMAL_THINKING_BUDGET = 128;
 type StreamInternal = ModelResponseStream & {
 	_toolUseIndexOffset?: number;
 	_isFinal?: boolean;
-	usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+	usage?: Usage;
 	// DIFF-ANTH-01: 流式 yield provider_specific_fields (citations_delta, raw chunk)
 	provider_specific_fields?: Record<string, unknown>;
 };
@@ -47,6 +48,7 @@ interface StreamState {
 	serverToolInputs: Record<string, Record<string, unknown>>;
 	currentServerToolId: string | null;
 	containerId: string | null;
+	streamUsage: Usage;
 }
 
 type AnthropicToolChoice =
@@ -680,7 +682,10 @@ export class AnthropicProvider implements ProviderConfig {
 		},
 	): ModelResponse {
 		const raw = rawResponse as Record<string, unknown>;
-		const id = (raw.id as string) ?? `anthropic-${Date.now()}`;
+		// PY anthropic 路径丢弃上游 msg_ 前缀 id，始终重新生成 "chatcmpl-<uuid>"
+		// （transform_parsed_response 不写 model_response.id，保留 ModelResponse() 构造时
+		// _generate_id() 的缺省值，litellm/llms/anthropic/chat/transformation.py）
+		const id = generateChatCompletionId();
 		const respModel = (raw.model as string) ?? model;
 
 		const contentBlocks = (raw.content as AnthropicContentBlock[]) ?? [];
@@ -744,6 +749,26 @@ export class AnthropicProvider implements ProviderConfig {
 		// PY: context_management field passthrough (transformation.py:1063-1072)
 		if ((raw as Record<string, unknown>).context_management !== undefined) {
 			providerSpecificFields.context_management = (raw as Record<string, unknown>).context_management;
+		}
+
+		// PY _build_provider_specific_fields（transformation.py:1731-1778）挂到 message 上：
+		// citations/thinking_blocks 恒存在（无内容时为 null，实测序列化为 "citations":null），
+		// 其余字段按存在补充。
+		const messageProviderSpecificFields: Record<string, unknown> = {
+			citations: citations.length > 0 ? citations : null,
+			thinking_blocks: thinkingBlocks.length > 0 ? thinkingBlocks : null,
+		};
+		if ((raw as Record<string, unknown>).context_management !== undefined) {
+			messageProviderSpecificFields.context_management = (raw as Record<string, unknown>).context_management;
+		}
+		if (compactionBlocks.length > 0) {
+			messageProviderSpecificFields.compaction_blocks = compactionBlocks;
+		}
+		if (codeInterpreterResults.length > 0) {
+			messageProviderSpecificFields.code_interpreter_results = codeInterpreterResults;
+		}
+		if (rawContainer !== undefined) {
+			messageProviderSpecificFields.container = rawContainer;
 		}
 
 		const jsonMode = (raw as Record<string, unknown>).json_mode as boolean | undefined;
@@ -821,6 +846,7 @@ export class AnthropicProvider implements ProviderConfig {
 						...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
 						...(reasoningContent !== undefined ? { reasoning_content: reasoningContent } : {}),
 						...(thinkingBlocks.length > 0 ? { thinking_blocks: thinkingBlocks } : {}),
+						provider_specific_fields: messageProviderSpecificFields,
 					},
 				},
 			],
@@ -846,7 +872,9 @@ export class AnthropicProvider implements ProviderConfig {
 		const decoder = new TextDecoder();
 		let buffer = "";
 		const state: StreamState = {
-			responseId: "",
+			// PY handler.py:522：流式起始即生成一个 "chatcmpl-<uuid>" response_id，
+			// 全程复用（丢弃上游 message_start 的 msg_ 前缀 id）
+			responseId: generateChatCompletionId(),
 			responseModel: "",
 			created: Math.floor(Date.now() / 1000),
 			toolUseIndexOffset: 0,
@@ -860,6 +888,7 @@ export class AnthropicProvider implements ProviderConfig {
 			serverToolInputs: {},
 			currentServerToolId: null,
 			containerId: null,
+			streamUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
 		};
 
 		let hasMessageDelta = false;
@@ -960,7 +989,10 @@ export class AnthropicProvider implements ProviderConfig {
 								hasMessageDelta = true;
 							}
 
-							const { _toolUseIndexOffset, _isFinal, usage: _u, ...clean } = chunk as StreamInternal;
+							const { _toolUseIndexOffset, _isFinal, usage, ...clean } = chunk as StreamInternal;
+							if (usage) {
+								clean._usage = usage;
+							}
 							// Clean surrogates from delta content and reasoning_content
 							if (clean.choices?.[0]?.delta) {
 								const delta = clean.choices[0].delta;
@@ -1008,18 +1040,26 @@ export class AnthropicProvider implements ProviderConfig {
 			if (!msg) {
 				return [];
 			}
+			const rawUsage = (msg.usage as Record<string, unknown> | undefined) ?? {};
+			const promptTokens = typeof rawUsage["input_tokens"] === "number" ? rawUsage["input_tokens"] : 0;
+			const cacheCreation = typeof rawUsage["cache_creation_input_tokens"] === "number" ? rawUsage["cache_creation_input_tokens"] : 0;
+			const cacheRead = typeof rawUsage["cache_read_input_tokens"] === "number" ? rawUsage["cache_read_input_tokens"] : 0;
+			state.streamUsage = {
+				prompt_tokens: promptTokens,
+				completion_tokens: 0,
+				total_tokens: promptTokens,
+				cache_creation_input_tokens: cacheCreation,
+				cache_read_input_tokens: cacheRead,
+			};
 			return [
 				{
-					id: (msg.id as string) ?? "",
+					// PY：流式 chunk id 用 iterator 预生成的 chatcmpl-<uuid>，不取上游 msg.id
+					id: state.responseId,
 					object: "chat.completion.chunk",
 					created: Math.floor(Date.now() / 1000),
 					model: (msg.model as string) ?? "",
 					choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
-					usage: {
-						prompt_tokens: ((msg.usage as Record<string, number>)?.input_tokens ?? 0) as number,
-						completion_tokens: 0,
-						total_tokens: ((msg.usage as Record<string, number>)?.input_tokens ?? 0) as number,
-					},
+					usage: { ...state.streamUsage },
 				},
 			];
 		}
@@ -1244,18 +1284,10 @@ export class AnthropicProvider implements ProviderConfig {
 			}
 			if (deltaType === "thinking_delta") {
 				const thinkingText = (delta.thinking as string) ?? "";
-				return [
-					{
-						id: state.responseId,
-						object: "chat.completion.chunk",
-						created: state.created,
-						model: state.responseModel,
-						choices: [{ index: 0, delta: { reasoning_content: thinkingText }, finish_reason: null }],
-					},
-				];
-			}
-			if (deltaType === "signature_delta") {
-				const sigText = (delta.signature as string) ?? "";
+				// PY 对齐（handler.py _content_block_delta_helper + Delta 序列化）：
+				// thinking chunk 的 delta 恒含 content:""、reasoning_content、thinking_blocks，
+				// 且 provider_specific_fields.thinking_blocks 与 thinking_blocks 内容一致。
+				const thinkingBlocks = [{ type: "thinking" as const, thinking: thinkingText, signature: "" }];
 				return [
 					{
 						id: state.responseId,
@@ -1266,8 +1298,36 @@ export class AnthropicProvider implements ProviderConfig {
 							{
 								index: 0,
 								delta: {
+									content: "",
+									reasoning_content: thinkingText,
+									thinking_blocks: thinkingBlocks,
+									provider_specific_fields: { thinking_blocks: thinkingBlocks },
+								},
+								finish_reason: null,
+							},
+						],
+					},
+				];
+			}
+			if (deltaType === "signature_delta") {
+				const sigText = (delta.signature as string) ?? "";
+				// PY 对齐：signature chunk 的 delta 结构与 thinking chunk 一致
+				// （content:""、reasoning_content:""、thinking_blocks、provider_specific_fields）。
+				const thinkingBlocks = [{ type: "thinking" as const, thinking: "", signature: sigText }];
+				return [
+					{
+						id: state.responseId,
+						object: "chat.completion.chunk",
+						created: state.created,
+						model: state.responseModel,
+						choices: [
+							{
+								index: 0,
+								delta: {
+									content: "",
 									reasoning_content: "",
-									thinking_blocks: [{ type: "thinking" as const, thinking: "", signature: sigText }],
+									thinking_blocks: thinkingBlocks,
+									provider_specific_fields: { thinking_blocks: thinkingBlocks },
 								},
 								finish_reason: null,
 							},
@@ -1382,8 +1442,20 @@ export class AnthropicProvider implements ProviderConfig {
 				}
 			}
 
-			const promptTokens = ((event.message as Record<string, unknown>)?.usage as Record<string, number>)?.input_tokens ?? 0;
-			const outputTokens = usageInfo?.output_tokens ?? 0;
+			const messageUsage = (event.message as Record<string, unknown> | undefined)?.usage as Record<string, unknown> | undefined;
+			if (typeof messageUsage?.["input_tokens"] === "number") {
+				state.streamUsage.prompt_tokens = messageUsage["input_tokens"];
+			}
+			if (typeof messageUsage?.["cache_creation_input_tokens"] === "number") {
+				state.streamUsage.cache_creation_input_tokens = messageUsage["cache_creation_input_tokens"];
+			}
+			if (typeof messageUsage?.["cache_read_input_tokens"] === "number") {
+				state.streamUsage.cache_read_input_tokens = messageUsage["cache_read_input_tokens"];
+			}
+			if (typeof usageInfo?.output_tokens === "number") {
+				state.streamUsage.completion_tokens = usageInfo.output_tokens;
+			}
+			state.streamUsage.total_tokens = state.streamUsage.prompt_tokens + state.streamUsage.completion_tokens;
 
 			return [
 				{
@@ -1392,11 +1464,7 @@ export class AnthropicProvider implements ProviderConfig {
 					created: state.created,
 					model: state.responseModel,
 					choices: [{ index: 0, delta: {}, finish_reason: mapped }],
-					usage: {
-						prompt_tokens: promptTokens,
-						completion_tokens: outputTokens,
-						total_tokens: promptTokens + outputTokens,
-					},
+					usage: { ...state.streamUsage },
 				},
 			];
 		}

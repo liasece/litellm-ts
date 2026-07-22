@@ -2,7 +2,7 @@ import { renderHook, screen, waitFor, renderWithProviders } from "../../../tests
 import userEvent from "@testing-library/user-event";
 import { Form } from "antd";
 import type { UploadProps } from "antd/es/upload";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Team } from "../key_team_helpers/key_list";
 import type { CredentialItem } from "../networking";
 import { Providers } from "../provider_info_helpers";
@@ -10,9 +10,7 @@ import AddModelForm from "./AddModelForm";
 
 vi.mock("../molecules/models/ProviderLogo", () => ({
   ProviderLogo: ({ provider, className }: { provider: string; className?: string }) => (
-    <div className={className} data-testid={`provider-logo-${provider}`}>
-      {provider}
-    </div>
+    <div className={className} data-testid={`provider-logo-${provider}`} />
   ),
 }));
 
@@ -45,20 +43,10 @@ vi.mock("../networking", async () => {
   };
 });
 
+const mockUseProviderFields = vi.hoisted(() => vi.fn());
+
 vi.mock("@/app/(dashboard)/hooks/providers/useProviderFields", () => ({
-  useProviderFields: vi.fn().mockReturnValue({
-    data: [
-      {
-        provider: "OpenAI",
-        provider_display_name: "OpenAI",
-        litellm_provider: "openai",
-        default_model_placeholder: "gpt-3.5-turbo",
-        credential_fields: [],
-      },
-    ],
-    isLoading: false,
-    error: null,
-  }),
+  useProviderFields: mockUseProviderFields,
 }));
 
 vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
@@ -167,6 +155,22 @@ const createTestProps = (userRole = "proxy_admin", userId = "user-1", isTeamAdmi
 };
 
 describe("AddModelForm", () => {
+  beforeEach(() => {
+    mockUseProviderFields.mockReturnValue({
+      data: [
+        {
+          provider: "OpenAI",
+          provider_display_name: "OpenAI",
+          litellm_provider: "openai",
+          default_model_placeholder: "gpt-3.5-turbo",
+          credential_fields: [],
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+  });
+
   it("should render", async () => {
     const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
     mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
@@ -176,6 +180,62 @@ describe("AddModelForm", () => {
     renderWithProviders(<AddModelForm {...props} />);
 
     expect(await screen.findByRole("heading", { name: "Add Model" })).toBeInTheDocument();
+  });
+
+  it("groups popular providers first and sorts the remaining unique providers", async () => {
+    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+    mockUseProviderFields.mockReturnValue({
+      data: [
+        {
+          provider: "Zeta",
+          provider_display_name: "Zeta Provider",
+          litellm_provider: "zeta",
+          credential_fields: [],
+        },
+        {
+          provider: "OpenAI",
+          provider_display_name: "OpenAI",
+          litellm_provider: "openai",
+          credential_fields: [],
+        },
+        {
+          provider: "Anthropic",
+          provider_display_name: "Anthropic",
+          litellm_provider: "anthropic",
+          credential_fields: [],
+        },
+        {
+          provider: "Alpha",
+          provider_display_name: "Alpha Provider",
+          litellm_provider: "alpha",
+          credential_fields: [],
+        },
+        {
+          provider: "OpenAI",
+          provider_display_name: "OpenAI Duplicate",
+          litellm_provider: "openai",
+          credential_fields: [],
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+    const props = createTestProps();
+
+    renderWithProviders(<AddModelForm {...props} />);
+    await screen.findByText("Provider");
+    const providerSelect = screen.getAllByRole("combobox")[0];
+    await userEvent.click(providerSelect);
+
+    expect(screen.getByText("Popular")).toBeInTheDocument();
+    expect(screen.getByText("All Providers")).toBeInTheDocument();
+    const options = screen.getAllByRole("option").map((option) => option.textContent?.trim());
+    expect(options).toEqual(["Anthropic", "OpenAI", "Alpha Provider", "Zeta Provider"]);
+
+    await userEvent.type(providerSelect, "Anthropic");
+    await userEvent.click(screen.getByRole("option", { name: "Anthropic" }));
+    expect(props.setSelectedProvider).toHaveBeenCalledWith("Anthropic");
   });
 
   it("should show proxy admin only (not team admin) - should not see Select Team dropdown unless switch is toggled", async () => {

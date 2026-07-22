@@ -303,6 +303,43 @@ export class FallbackHandler {
 	}
 
 	/**
+	 * 运行时替换 fallback 映射（对齐 PY Router.update_settings 的 fallbacks 热更新）。
+	 * 接受 PY 风格 List[Dict]（first-match-wins 合并）或 Record；替换后失效链缓存。
+	 * @param fallbacks - 新的 fallback 配置
+	 */
+	setFallbacks(fallbacks?: Array<Record<string, string[]>> | Record<string, string[]>): void {
+		this._fallbacks = this._mergeFallbacks(fallbacks);
+		this.invalidateCache();
+	}
+
+	/**
+	 * 读取当前 fallback 配置（合并后的 Record 视图，等价 PY Router.fallbacks 运行时值）。
+	 * 供管理端点按 model_group 反查展示（PY get_all_fallbacks 的数据源）。
+	 * 返回深拷贝，避免外部改写内部状态。
+	 */
+	getFallbacks(): Record<string, string[]> {
+		return Object.fromEntries(Object.entries(this._fallbacks).map(([key, chain]) => [key, [...chain]]));
+	}
+
+	/**
+	 * 运行时替换 context window fallback 映射（PY update_settings 白名单项）。
+	 * @param fallbacks - 新的 context window fallback 配置
+	 */
+	setContextWindowFallbacks(fallbacks?: Record<string, string[]>): void {
+		this._contextWindowFallbacks = fallbacks ?? {};
+		this.invalidateCache();
+	}
+
+	/**
+	 * 运行时替换 model_group_alias（PY update_settings 白名单项）。
+	 * @param modelGroupAlias - 新的别名映射
+	 */
+	setModelGroupAlias(modelGroupAlias?: Record<string, string | string[] | { model: string; hidden?: boolean }>): void {
+		this._modelGroupAlias = modelGroupAlias ?? {};
+		this.invalidateCache();
+	}
+
+	/**
 	 * Check if there are more fallbacks available at the given depth
 	 * @param model - original model name
 	 * @param currentDepth - current position in the fallback chain

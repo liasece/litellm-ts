@@ -8,7 +8,14 @@
  * 抽到 RouterTestDelegates.ts；Router.ts 只保留公共 API 与 execute 主循环编排。
  */
 
-import type { Deployment, RouterConfig, RouterModelGroupAliasValue, RouterCallbacks } from "../types/router";
+import type {
+	Deployment,
+	RouterConfig,
+	RouterModelGroupAliasValue,
+	RouterCallbacks,
+	RetryPolicy,
+	AllowedFailsPolicy,
+} from "../types/router";
 import type { ProviderConfig as ProviderConfigType } from "../types/provider";
 import { ProviderRegistry } from "../providers/ProviderRegistry";
 import { CooldownManager } from "./CooldownManager";
@@ -28,10 +35,13 @@ import {
 import type { RoutingContext } from "./RoutingStrategies";
 import { logger } from "../core/utils/logger";
 import { RouterCompletionSyncRemovedError } from "./RouterErrors";
-import { getDeploymentKey } from "./RouterModelGroupCache";
+import { getDeploymentKey, getModelGroupName } from "./RouterModelGroupCache";
+import { buildCooldownDecision } from "./RouterExecutor";
+import type { NoDeploymentsErrorInfo } from "../core/api/ApiError";
 import { normalizeMockTestingParams, tryDispatchMockTestingExceptions, shouldDispatchMockRateLimit } from "./RouterMockTesting";
-import { executeWithFallback, type RouterExecContext } from "./RouterExecution";
+import { executeWithFallback, isKnownModel, type RouterExecContext } from "./RouterExecution";
 import { RoutingStrategyName } from "../types/router";
+import { executeProviderRequest } from "./ProviderRequestExecutor";
 
 type RouteFn = (deployments: Deployment[], ctx: RoutingContext) => Deployment | null;
 
@@ -45,11 +55,49 @@ interface ExecResult {
 	body: unknown;
 	ttft: number;
 	stream?: AsyncGenerator<unknown>;
+	/** 实际执行上游完整 URL（provider.transformRequest 产出），spend log api_base 用 */
+	upstreamUrl: string;
 }
 
 interface AvailDeployment {
 	deployment: Deployment;
 	provider: ProviderConfigType;
+}
+
+/** 精确 deployment ID 不存在。 */
+export class DeploymentNotFoundError extends Error {
+	constructor(readonly modelId: string) {
+		super(`Deployment not found: ${modelId}`);
+		this.name = "DeploymentNotFoundError";
+	}
+}
+
+/** 单个 deployment 的主动健康探测结果。 */
+export interface DeploymentProbeResult {
+	/**
+	 *
+	 */
+	readonly model_id: string;
+	/**
+	 *
+	 */
+	readonly model_name: string;
+	/**
+	 *
+	 */
+	readonly status: "healthy" | "unhealthy";
+	/**
+	 *
+	 */
+	readonly checked_at: string;
+	/**
+	 *
+	 */
+	readonly latency_ms: number;
+	/**
+	 *
+	 */
+	readonly error?: string;
 }
 
 const STRATEGY_MAP: Record<string, RouteFn> = {
@@ -84,19 +132,19 @@ export class Router {
 	private readonly _tpmRpmLimiter: TPMRPMLimiter;
 	private readonly _fallbackHandler: FallbackHandler;
 	private readonly _providerRegistry: ProviderRegistry;
-	private readonly _routeFn: RouteFn;
-	private readonly _cooldownTimeMs: number;
-	private readonly _numRetries: number;
+	private _routeFn: RouteFn;
+	private _cooldownTimeMs: number;
+	private _numRetries: number;
 	private readonly _modelGroupAlias: Record<string, RouterModelGroupAliasValue>;
 	private readonly _disableCooldowns: boolean;
 	private readonly _contextWindowFallbacks: Record<string, string[]>;
 	private readonly _contentPolicyFallbacks: Record<string, string[]>;
 	private readonly _retryPolicy;
-	private readonly _modelGroupRetryPolicy;
+	private _modelGroupRetryPolicy;
 	private readonly _maxFallbacks: number;
 	private readonly _preCallChecks: boolean;
 	private readonly _optionalPreCallChecks: Record<string, boolean> | undefined;
-	private readonly _retryAfter: number;
+	private _retryAfter: number;
 	private readonly _modelCostMap: Record<string, { input_cost_per_token: number; output_cost_per_token: number }> | undefined;
 	private readonly _routerCallbacks: RouterCallbacks | undefined;
 
@@ -112,7 +160,9 @@ export class Router {
 	constructor(config: RouterConfig, modelGroupAlias?: Record<string, RouterModelGroupAliasValue>) {
 		this._deployments = [...config.model_list];
 		this._cooldownTimeMs = (config.cooldown_time != null && config.cooldown_time > 0 ? config.cooldown_time : 5) * 1000;
-		this._numRetries = config.num_retries != null && config.num_retries > 0 ? config.num_retries : DEFAULT_MAX_RETRIES;
+		// PY router.py:497-502：`if num_retries is not None: self.num_retries = num_retries`——
+		// 显式传 0 表示不重试（0 次），仅缺省（undefined/null）才回退 DEFAULT_MAX_RETRIES。
+		this._numRetries = config.num_retries ?? DEFAULT_MAX_RETRIES;
 		this._modelGroupAlias = modelGroupAlias ?? config.model_group_alias ?? {};
 		this._disableCooldowns = config.disable_cooldowns ?? false;
 		this._contextWindowFallbacks = config.context_window_fallbacks ?? {};
@@ -167,6 +217,234 @@ export class Router {
 	/** 返回 Router 持有的 deployments 列表的拷贝 */
 	getDeployments(): Deployment[] {
 		return [...this._deployments];
+	}
+
+	/**
+	 * 读取当前 fallback 配置（对齐 PY Router.fallbacks 运行时值），
+	 * 供 /v2/model/info 按 model_group 反查展示（PY get_all_fallbacks 等价数据源）。
+	 * 运行时经 updateSettings 热更新后反映最新值。
+	 */
+	getFallbacks(): Record<string, string[]> {
+		return this._fallbackHandler.getFallbacks();
+	}
+
+	/**
+	 * 按 model_info.id 查找 deployment（对齐 PY Router.get_deployment）。
+	 * @param modelId - deployment model_info.id
+	 */
+	getDeployment(modelId: string): Deployment | null {
+		return this._deployments.find((dep) => dep.model_info?.id === modelId) ?? null;
+	}
+
+	/**
+	 * 按 model_info.id 精确探测一个 deployment，不经过路由、重试、fallback 或 cooldown。
+	 * @param modelId - deployment model_info.id
+	 */
+	async probeDeployment(modelId: string): Promise<DeploymentProbeResult> {
+		const deployment = this.getDeployment(modelId);
+		if (deployment === null) {
+			throw new DeploymentNotFoundError(modelId);
+		}
+
+		const checkedAt = new Date().toISOString();
+		const startedAt = Date.now();
+		const mode = deployment.model_info?.mode ?? "chat";
+		if (mode !== "chat" && mode !== "completion" && mode !== "embedding") {
+			return {
+				model_id: modelId,
+				model_name: deployment.model_name,
+				status: "unhealthy",
+				checked_at: checkedAt,
+				latency_ms: 0,
+				error: `Unsupported health check mode: ${mode}`,
+			};
+		}
+
+		try {
+			const provider = this._providerRegistry.getProvider(
+				deployment.litellm_params.model,
+				deployment.litellm_params.custom_llm_provider,
+				deployment.litellm_params,
+			);
+			const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, stream: false };
+			const providerRequest =
+				mode === "embedding"
+					? provider.transformEmbeddingRequest?.(deployment.litellm_params.model, "health-check", mergedParams)
+					: provider.transformRequest(deployment.litellm_params.model, [{ role: "user", content: "health-check" }], mergedParams);
+			if (providerRequest === undefined) {
+				return {
+					model_id: modelId,
+					model_name: deployment.model_name,
+					status: "unhealthy",
+					checked_at: checkedAt,
+					latency_ms: Date.now() - startedAt,
+					error: `Provider does not support ${mode} health checks`,
+				};
+			}
+			const requestWithHeaders = {
+				...providerRequest,
+				headers: { ...providerRequest.headers, ...deployment.litellm_params.extra_headers },
+			};
+			const configuredTimeout = deployment.litellm_params["health_check_timeout"] ?? deployment.litellm_params.timeout;
+			const timeoutSec = typeof configuredTimeout === "number" && configuredTimeout > 0 ? configuredTimeout : 10;
+			const execution = await executeProviderRequest(requestWithHeaders, { timeoutMs: timeoutSec * 1000, readJson: false });
+			if (!execution.response.ok) {
+				return {
+					model_id: modelId,
+					model_name: deployment.model_name,
+					status: "unhealthy",
+					checked_at: checkedAt,
+					latency_ms: execution.latencyMs,
+					error: `Provider returned HTTP ${execution.response.status}`,
+				};
+			}
+			return {
+				model_id: modelId,
+				model_name: deployment.model_name,
+				status: "healthy",
+				checked_at: checkedAt,
+				latency_ms: execution.latencyMs,
+			};
+		} catch (error) {
+			const errorName = error instanceof Error ? error.name : "Error";
+			const isAbort = error instanceof Error && (error.name === "AbortError" || /abort/i.test(error.message));
+			const safeMessage = isAbort ? "Health check timed out" : `Health check failed: ${errorName}`;
+			return {
+				model_id: modelId,
+				model_name: deployment.model_name,
+				status: "unhealthy",
+				checked_at: checkedAt,
+				latency_ms: Date.now() - startedAt,
+				error: safeMessage,
+			};
+		}
+	}
+
+	/**
+	 * 新增 deployment（对齐 PY Router.add_deployment）。
+	 * 同 model_info.id 已存在时的替换语义请用 upsertDeployment。
+	 * @param deployment - 待新增 deployment
+	 */
+	addDeployment(deployment: Deployment): void {
+		this._deployments.push(deployment);
+	}
+
+	/**
+	 * 新增或按 model_info.id 替换 deployment（对齐 PY Router.upsert_deployment）：
+	 * 同 id 且 litellm_params 相同 → no-op；同 id 参数不同 → 替换；无同 id → 追加。
+	 * @param deployment - 待 upsert 的 deployment（model_info.id 为匹配键）
+	 * @returns 是否发生了新增/替换
+	 */
+	upsertDeployment(deployment: Deployment): boolean {
+		const modelId = deployment.model_info?.id;
+		if (modelId) {
+			const existingIdx = this._deployments.findIndex((dep) => dep.model_info?.id === modelId);
+			if (existingIdx >= 0) {
+				const existing = this._deployments[existingIdx]!;
+				if (JSON.stringify(existing.litellm_params) === JSON.stringify(deployment.litellm_params)) {
+					return false;
+				}
+				this._deployments.splice(existingIdx, 1);
+			}
+		}
+		this._deployments.push(deployment);
+		return true;
+	}
+
+	/**
+	 * 按 model_info.id 移除 deployment（对齐 PY Router.delete_deployment）。
+	 * @param modelId - deployment model_info.id
+	 * @returns 是否找到并移除
+	 */
+	removeDeployment(modelId: string): boolean {
+		const existingIdx = this._deployments.findIndex((dep) => dep.model_info?.id === modelId);
+		if (existingIdx < 0) {
+			return false;
+		}
+		this._deployments.splice(existingIdx, 1);
+		return true;
+	}
+
+	/**
+	 * 运行时更新 router 设置（对齐 PY Router.update_settings，router.py:8491-8540）。
+	 * 白名单内才生效；fallbacks / context_window_fallbacks / model_group_alias 委托
+	 * FallbackHandler（链缓存随之失效）；allowed_fails 委托 CooldownManager；
+	 * 整型设置（timeout/num_retries/retry_after/allowed_fails/cooldown_time）按 PY 做 int 转换。
+	 * routing_strategy_args / timeout / max_retries 在白名单内但 TS 无运行时消费方，跳过；
+	 * 非白名单键忽略（PY 仅 debug 日志）。
+	 * @param settings - snake_case 设置键值（router_settings 段）
+	 * @throws 未知 routing_strategy 名称（对齐 PY routing_strategy_init 失败）
+	 */
+	updateSettings(settings: Record<string, unknown>): void {
+		for (const [key, value] of Object.entries(settings)) {
+			if (value === undefined || value === null) {
+				continue;
+			}
+			switch (key) {
+				case "fallbacks":
+					this._fallbackHandler.setFallbacks(value as Array<Record<string, string[]>> | Record<string, string[]>);
+					break;
+				case "context_window_fallbacks":
+					this._fallbackHandler.setContextWindowFallbacks(value as Record<string, string[]>);
+					break;
+				case "model_group_alias":
+					this._fallbackHandler.setModelGroupAlias(value as Record<string, RouterModelGroupAliasValue>);
+					break;
+				case "routing_strategy":
+					this._routeFn = this._selectStrategy(String(value));
+					break;
+				case "num_retries":
+					this._numRetries = Router._castIntSetting(key, value) ?? this._numRetries;
+					break;
+				case "cooldown_time": {
+					const cooldownSec = Router._castIntSetting(key, value);
+					if (cooldownSec !== null) {
+						this._cooldownTimeMs = cooldownSec * 1000;
+					}
+					break;
+				}
+				case "retry_after":
+					this._retryAfter = Router._castIntSetting(key, value) ?? this._retryAfter;
+					break;
+				case "allowed_fails": {
+					// number（PY _int_settings int 转换）或 AllowedFailsPolicy 分类阈值对象
+					if (typeof value === "object") {
+						this._cooldownManager.setAllowedFails(value as AllowedFailsPolicy);
+					} else {
+						const allowedFails = Router._castIntSetting(key, value);
+						if (allowedFails !== null) {
+							this._cooldownManager.setAllowedFails(allowedFails);
+						}
+					}
+					break;
+				}
+				case "model_group_retry_policy":
+					this._modelGroupRetryPolicy = value as Record<string, RetryPolicy>;
+					break;
+				case "routing_strategy_args":
+				case "timeout":
+				case "max_retries":
+					// PY 白名单内；TS Router 无对应运行时字段（超时走 deployment.litellm_params），跳过
+					break;
+				default:
+					logger.debug(`Router.updateSettings: 忽略非白名单设置 ${key}`);
+			}
+		}
+	}
+
+	/**
+	 * PY update_settings 的 _int_settings 转换：int(kwargs[var])。
+	 * @param key - 设置名（日志用）
+	 * @param value - 原始值
+	 * @returns 转换后的整数；不可转换时返回 null（调用方保留原值）
+	 */
+	private static _castIntSetting(key: string, value: unknown): number | null {
+		const num = Number(value);
+		if (!Number.isFinite(num)) {
+			logger.debug(`Router.updateSettings: ${key} 无法转换为整数，忽略`, { value: value });
+			return null;
+		}
+		return Math.trunc(num);
 	}
 
 	private _selectStrategy(name: string): RouteFn {
@@ -273,39 +551,31 @@ export class Router {
 		const timeoutSec = isStream
 			? (deployment.litellm_params.stream_timeout ?? deployment.litellm_params.timeout)
 			: deployment.litellm_params.timeout;
-		const abortController = new AbortController();
-		const timeoutHandle = timeoutSec !== undefined ? setTimeout(() => abortController.abort(), timeoutSec * 1000) : undefined;
-		const fetchStart = Date.now();
+		const execution = await executeProviderRequest(providerRequest, {
+			timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+			readJson: !isStream,
+		});
+		const response = execution.response;
 
-		try {
-			const response = await fetch(providerRequest.url, {
-				method: providerRequest.method,
-				headers: providerRequest.headers,
-				body: JSON.stringify(providerRequest.body),
-				signal: abortController.signal,
-			});
-
-			if (isStream) {
-				const { stream, body, ttft } = buildStreamWithTtft(response, fetchStart, provider);
-				const providerHeaders = extractProviderHeaders(response);
-				if (providerHeaders) {
-					(response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders = providerHeaders;
-				}
-				return { response: response, body: body, ttft: ttft, stream: stream };
-			}
-
-			const body = await response.json();
-			const ttft = Date.now() - fetchStart;
+		if (isStream) {
+			const { stream, body, ttft } = buildStreamWithTtft(response, execution.startedAtMs, provider);
 			const providerHeaders = extractProviderHeaders(response);
 			if (providerHeaders) {
 				(response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders = providerHeaders;
 			}
-			return { response: response, body: body, ttft: ttft };
-		} finally {
-			if (timeoutHandle !== undefined) {
-				clearTimeout(timeoutHandle);
-			}
+			return { response: response, body: body, ttft: ttft, stream: stream, upstreamUrl: providerRequest.url };
 		}
+
+		const providerHeaders = extractProviderHeaders(response);
+		if (providerHeaders) {
+			(response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders = providerHeaders;
+		}
+		return {
+			response: response,
+			body: execution.body,
+			ttft: execution.latencyMs,
+			upstreamUrl: providerRequest.url,
+		};
 	}
 
 	private _buildExecContext(): RouterExecContext {
@@ -450,12 +720,94 @@ export class Router {
 	}
 
 	/**
+	 * 直连端点（Anthropic Messages 手工 fetch 路径）单 deployment 调用成功后登记：
+	 * 清除冷却 + 连续失败计数清零。与 RouterExecution 成功路径同一套 CooldownManager
+	 * 调用（clearCooldown + recordSuccess），端侧不得自造重复逻辑。
+	 * @param deployment - 成功的 deployment（来自 getAvailableDeployment）
+	 */
+	recordDeploymentSuccess(deployment: Deployment): void {
+		const depKey = getDeploymentKey(deployment);
+		this._cooldownManager.clearCooldown(depKey);
+		this._cooldownManager.recordSuccess(depKey);
+	}
+
+	/**
+	 * 直连端点单 deployment 调用失败后登记冷却：
+	 * 复用 RouterExecution 失败路径的 buildCooldownDecision 判定（status code 白名单 /
+	 * same-group / allowed_fails），命中时 markFailed + recordFailure。
+	 * 冷却时长缺省取 router.cooldown_time（对齐 PY `_set_cooldown_deployments` 的
+	 * `time_to_cooldown or self.cooldown_time`；RouterExecution 主循环同位置同样传
+	 * cooldownTimeMs，两条冷却路径一致）。
+	 * 是否真正冷却由 CooldownManager 决定（APIConnectionError 豁免、400 非冷却目标等），
+	 * 调用方随后应沿 fallback 链重试下一 deployment。
+	 * @param deployment - 失败的 deployment（来自 getAvailableDeployment）
+	 * @param error - provider 返回的错误或网络错误
+	 */
+	recordDeploymentFailure(deployment: Deployment, error: Error): void {
+		const depKey = getDeploymentKey(deployment);
+		const targetGroup = getModelGroupName(deployment);
+		const sameGroupCount = this._deployments.filter((d) => getModelGroupName(d) === targetGroup).length;
+		const decision = buildCooldownDecision(deployment, error, sameGroupCount, undefined, this._cooldownTimeMs, this._cooldownManager);
+		if (decision.shouldCooldown) {
+			this._cooldownManager.markFailed(depKey, decision.cooldownDurationMs, decision.statusCode, error.message);
+			this._cooldownManager.recordFailure(depKey);
+		}
+	}
+
+	/**
 	 * 获取第 fallbackDepth 个 fallback model 名
 	 * @param model - 原始模型名
 	 * @param fallbackDepth - 回退深度
 	 */
 	getNextFallback(model: string, fallbackDepth: number): string | null {
 		return this._fallbackHandler.getNextFallback(model, fallbackDepth);
+	}
+
+	/** fallback 链最大跳数上限（max_fallbacks 配置，防环型配置死循环） */
+	get maxFallbacks(): number {
+		return this._maxFallbacks;
+	}
+
+	/**
+	 * 判断模型是否为已知模型（忽略冷却状态）。
+	 * 对齐 PY route_llm_request 的 model 校验层（model_list / has_model_id /
+	 * model_group_alias / deployment_names，litellm/proxy/route_llm_request.py:477-498）：
+	 * 未知模型应返回 400（PY ProxyModelNotFoundError），已知但全部署冷却返回 429。
+	 * 供端点层（AnthropicUpstreamDispatch 等）构造 400/429 响应。
+	 * @param model - 客户端请求的逻辑模型名
+	 */
+	hasModel(model: string): boolean {
+		const resolved = this._fallbackHandler.resolveModelGroup(model);
+		return isKnownModel(this._deployments, (dep, m) => this._matchDeploymentPattern(dep, m), resolved, model);
+	}
+
+	/**
+	 * 返回模型组的冷却上下文，供端点构造 Python 风格 no-deployments 错误
+	 * （对齐 PY router.py get_available_deployment 抛 RouterRateLimitError 的字段来源）：
+	 * - cooldownSeconds：组内冷却 deployment 的最小配置 cooldown_time（PY get_min_cooldown 取
+	 *   CooldownCacheValue.cooldown_time 配置时长而非剩余时间）；无冷却条目时为 Router 默认 cooldown_time
+	 * - cooldownList：当前全部冷却中的 deployment id（PY cooldown_list 为全模型组范围，
+	 *   见 cooldown_handlers.py _get_cooldown_deployments）
+	 * - preCallChecks：Router pre_call_checks 开关
+	 * @param model - 客户端请求的逻辑模型名
+	 */
+	getNoAvailableDeploymentInfo(model: string): NoDeploymentsErrorInfo {
+		const resolved = this._fallbackHandler.resolveModelGroup(model);
+		const groupKeys = this._deployments
+			.filter((dep) => this._matchDeploymentPattern(dep, resolved))
+			.map((dep) => getDeploymentKey(dep));
+		const allKeys = this._deployments.map((dep) => getDeploymentKey(dep));
+		const groupCooldowns = this._cooldownManager.getActiveCooldowns(groupKeys);
+		const allCooldowns = this._cooldownManager.getActiveCooldowns(allKeys);
+		const cooldownMs =
+			groupCooldowns.length > 0
+				? Math.min(...groupCooldowns.map(([, cacheValue]) => cacheValue.cooldown_time))
+				: this._cooldownTimeMs;
+		return {
+			cooldownSeconds: cooldownMs / 1000,
+			cooldownList: allCooldowns.map(([deploymentKey]) => deploymentKey),
+			preCallChecks: this._preCallChecks,
+		};
 	}
 
 	/**

@@ -14,6 +14,7 @@ import {
   TabPanels,
 } from "@tremor/react";
 import { Select, Tooltip } from "antd";
+import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { userAgentSummaryCall, tagDauCall, tagWauCall, tagMauCall, tagDistinctCall } from "./networking";
 import PerUserUsage from "./per_user_usage";
 import { DateRangePickerValue } from "@tremor/react";
@@ -430,7 +431,7 @@ const UserAgentActivity: React.FC<UserAgentActivityProps> = ({ accessToken, user
                       </div>
                       <div>
                         <Text className="text-sm text-gray-600">Total Tokens</Text>
-                        <Metric className="text-lg">{formatAbbreviatedNumber(tag.total_tokens)}</Metric>
+                        <Metric className="text-lg">{formatNumberWithCommas(tag.total_tokens, 0, false)}</Metric>
                       </div>
                       <div>
                         <Text className="text-sm text-gray-600">Total Cost</Text>

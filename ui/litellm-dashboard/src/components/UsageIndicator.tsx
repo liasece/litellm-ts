@@ -49,7 +49,7 @@ const formatExpirationDisplay = (daysRemaining: number | null): string => {
 export default function UsageIndicator({ accessToken, width = 220 }: UsageIndicatorProps) {
   const disableUsageIndicator = useDisableUsageIndicator();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(true);
   const [data, setData] = useState<UsageData | null>(null);
   const [licenseInfo, setLicenseInfo] = useState<LicenseInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);

@@ -11,6 +11,90 @@
  */
 import { validateAndTransform } from "./index";
 
+describe("validateAndTransform — deployment sha256 id 生成（PY _generate_model_id 对齐）", () => {
+	it("model_info.id 缺失时按 YAML 键序生成 sha256（回归 PY 实测向量）", () => {
+		// PY litellm/router.py:6550 _generate_model_id：model_group + 键值按声明顺序拼接取 sha256。
+		// 向量为 PY 实例（同参数）实测 deployment id：glm-4-7-anthropic → 5e49c98b…
+		const raw = {
+			model_list: [
+				{
+					model_name: "glm-4-7-anthropic",
+					litellm_params: {
+						model: "anthropic/glm-4.7",
+						api_base: "https://open.bigmodel.cn/api/anthropic",
+						api_key: "34365d9a2acc4ffc90a944b986bd2418.qFCAYvl1GnOmUXo3",
+					},
+				},
+			],
+		};
+		const config = validateAndTransform(raw);
+		expect(config.modelList[0]?.model_info?.id).toBe("5e49c98b2ca1d95217d90738a5778fd169efd1c24299c69d1e2419939ae92b78");
+	});
+
+	it("锚点合并场景保持 YAML 键序（api_base, api_key, model → 另一实测向量）", () => {
+		// 锚点先声明 api_base/api_key，model 覆盖后仍保持锚点位置（与 PY yaml 合并行为一致）。
+		// 向量为 PY 实例实测：gpt-5.5 → 88685ff9…
+		const raw = {
+			model_list: [
+				{
+					model_name: "gpt-5.5",
+					litellm_params: {
+						api_base: "http://192.168.1.220:8317",
+						api_key: "sk-3G6FLwfA1xF0oOi04",
+						model: "anthropic/gpt-5.5",
+					},
+				},
+			],
+		};
+		const config = validateAndTransform(raw);
+		expect(config.modelList[0]?.model_info?.id).toBe("88685ff91660f394c2d115693ecac1cc510d871f9d1a4f0f8d864c7ee15201be");
+	});
+
+	it("显式 model_info.id 保留不覆盖（PY 仅在缺失时生成）", () => {
+		const raw = {
+			model_list: [
+				{
+					model_name: "explicit-id-model",
+					litellm_params: { model: "openai/gpt-5", api_key: "sk-test" },
+					model_info: { id: "my-custom-id" },
+				},
+			],
+		};
+		const config = validateAndTransform(raw);
+		expect(config.modelList[0]?.model_info?.id).toBe("my-custom-id");
+	});
+
+	it("model_info 整体缺失时也能生成 id 并保留其它字段", () => {
+		const raw = {
+			model_list: [
+				{
+					model_name: "no-info-model",
+					litellm_params: { model: "openai/gpt-5", api_key: "sk-test" },
+				},
+				{
+					model_name: "with-cost-model",
+					litellm_params: { model: "openai/gpt-5", api_key: "sk-test" },
+					model_info: { input_cost_per_token: 0.1 },
+				},
+			],
+		};
+		const config = validateAndTransform(raw);
+		expect(config.modelList[0]?.model_info?.id).toMatch(/^[0-9a-f]{64}$/);
+		expect(config.modelList[1]?.model_info?.id).toMatch(/^[0-9a-f]{64}$/);
+		expect(config.modelList[1]?.model_info?.input_cost_per_token).toBe(0.1);
+		// 键序不同（同值不同序）→ 不同哈希：证明顺序参与计算
+		const reordered = validateAndTransform({
+			model_list: [
+				{
+					model_name: "no-info-model",
+					litellm_params: { api_key: "sk-test", model: "openai/gpt-5" },
+				},
+			],
+		});
+		expect(reordered.modelList[0]?.model_info?.id).not.toBe(config.modelList[0]?.model_info?.id);
+	});
+});
+
 describe("validateAndTransform — Python LiteLLM style", () => {
 	it("仅 Python 风格配置能正常派生 server/database/routerSettings/generalSettings", () => {
 		const raw = {

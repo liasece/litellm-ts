@@ -48,6 +48,11 @@ describe("ProviderRegistry", () => {
 			expect(provider).toBeInstanceOf(MiMoProvider);
 		});
 
+		it('解析 "vllm/llama-3" 返回 OpenAICompatProvider 实例', () => {
+			const provider = registry.getProvider("vllm/llama-3");
+			expect(provider).toBeInstanceOf(OpenAICompatProvider);
+		});
+
 		it('解析 "unknown-provider/model" 抛出错误', () => {
 			expect(() => registry.getProvider("unknown-provider/model")).toThrow(/unknown provider/i);
 		});

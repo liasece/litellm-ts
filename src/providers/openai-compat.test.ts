@@ -76,6 +76,41 @@ describe("OpenAICompatProvider", () => {
 		});
 	});
 
+	describe("transformEmbeddingRequest", () => {
+		it("builds an embeddings URL and only forwards supported embedding parameters", () => {
+			const req = provider.transformEmbeddingRequest("openai/text-embedding-3-small", ["hello"], {
+				api_base: "https://proxy.example/v1/chat/completions/",
+				api_key: "deployment-key",
+				encoding_format: "float",
+				dimensions: 256,
+				user: "user-1",
+				temperature: 0.7,
+				stream: true,
+				unknown: "drop-me",
+			});
+
+			expect(req.url).toBe("https://proxy.example/v1/embeddings");
+			expect(req.headers["Authorization"]).toBe("Bearer deployment-key");
+			expect(req.body).toEqual({
+				model: "text-embedding-3-small",
+				input: ["hello"],
+				encoding_format: "float",
+				dimensions: 256,
+				user: "user-1",
+			});
+			expect(req.stream).toBe(false);
+		});
+
+		it.each([
+			["https://api.example.com/v1/", "https://api.example.com/v1/embeddings"],
+			["https://api.example.com/v1/embeddings", "https://api.example.com/v1/embeddings"],
+			["https://api.example.com/v1/chat/completions", "https://api.example.com/v1/embeddings"],
+		])("normalizes %s", (base, expected) => {
+			const req = provider.transformEmbeddingRequest("embed", "hello", { api_base: base });
+			expect(req.url).toBe(expected);
+		});
+	});
+
 	describe("transformResponse", () => {
 		it("parses a standard chat completion response to ModelResponse", () => {
 			const rawResponse = {
@@ -107,6 +142,34 @@ describe("OpenAICompatProvider", () => {
 			expect(result.usage?.prompt_tokens).toBe(10);
 			expect(result.usage?.completion_tokens).toBe(5);
 			expect(result.usage?.total_tokens).toBe(15);
+		});
+
+		it("上游 id 缺省/空串时回退生成 chatcmpl-<uuid>（PY convert_dict_to_response id or 缺省）", () => {
+			const baseResponse = {
+				object: "chat.completion",
+				created: 1_677_652_288,
+				model: "gpt-3.5-turbo",
+				choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+				usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+			};
+
+			const noId = provider.transformResponse("gpt-3.5-turbo", baseResponse);
+			expect(noId.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
+
+			const emptyId = provider.transformResponse("gpt-3.5-turbo", { ...baseResponse, id: "" });
+			expect(emptyId.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
+		});
+
+		it("流式 chunk 缺 id 时补 chatcmpl-<uuid>", async () => {
+			const sseBody =
+				'data: {"object":"chat.completion.chunk","created":123,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n\ndata: [DONE]\n';
+			const response = new Response(sseBody, { status: 200, headers: { "content-type": "text/event-stream" } });
+			const chunks = [];
+			for await (const chunk of provider.streamResponse(response)) {
+				chunks.push(chunk);
+			}
+			expect(chunks).toHaveLength(1);
+			expect(chunks[0]!.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
 		});
 	});
 

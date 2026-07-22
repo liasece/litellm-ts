@@ -164,6 +164,8 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
   console.log("keys in usage", keys);
   console.log("premium user in usage", premiumUser);
 
+  const valueFormatterTokens = (value: number) => formatNumberWithCommas(value, 0, false);
+
   function valueFormatterNumbers(number: number) {
     const formatter = new Intl.NumberFormat("en-US", {
       maximumFractionDigits: 0,
@@ -695,12 +697,12 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
                         </Col>
                         <Col>
                           <Subtitle style={{ fontSize: "15px", fontWeight: "normal", color: "#535452" }}>
-                            Tokens {valueFormatterNumbers(globalActivity.sum_total_tokens)}
+                            Tokens {valueFormatterTokens(globalActivity.sum_total_tokens)}
                           </Subtitle>
                           <BarChart
                             className="h-40"
                             data={globalActivity.daily_data}
-                            valueFormatter={valueFormatterNumbers}
+                            valueFormatter={valueFormatterTokens}
                             index="date"
                             colors={["cyan"]}
                             categories={["total_tokens"]}
@@ -731,7 +733,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
                             </Col>
                             <Col>
                               <Subtitle style={{ fontSize: "15px", fontWeight: "normal", color: "#535452" }}>
-                                Tokens {valueFormatterNumbers(globalActivity.sum_total_tokens)}
+                                Tokens {valueFormatterTokens(globalActivity.sum_total_tokens)}
                               </Subtitle>
                               <BarChart
                                 className="h-40"
@@ -739,7 +741,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
                                 index="date"
                                 colors={["cyan"]}
                                 categories={["total_tokens"]}
-                                valueFormatter={valueFormatterNumbers}
+                                valueFormatter={valueFormatterTokens}
                                 onValueChange={(v) => console.log(v)}
                               />
                             </Col>

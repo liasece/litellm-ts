@@ -253,19 +253,25 @@ describe("Router execution chain", () => {
 		});
 	});
 	describe("DIFF-RT-02/RT-04: Router healthy=0 抛 RouterRateLimitErrorBasic 带 cooldown_time + cooldown_list", () => {
-		it("无 deployment + 无 fallback → 抛 RouterRateLimitErrorBasic 带 cooldown_time", async () => {
+		it("模型不存在（不在 model_list 且无 fallback）→ 400 Invalid model name（PY ProxyModelNotFoundError）", async () => {
 			const router = new Router({
 				model_list: [],
 				routing_strategy: RoutingStrategyName.SimpleShuffle,
 				num_retries: 0,
 			});
+			// 消息文本对齐 PY route_llm_request ProxyModelNotFoundError 实测格式（dict repr + 400: 状态码）
 			await expect(router.completion("nonexistent-model", [{ role: "user", content: "hi" }])).rejects.toMatchObject({
-				name: "RouterRateLimitErrorBasic",
-				model: "nonexistent-model",
+				name: "ApiError",
+				statusCode: 400,
+				errorType: "None",
+				param: "None",
+				message:
+					"{'error': '/chat/completions: Invalid model name passed in model=nonexistent-model. " +
+					"Call `/v1/models` to view available models for your key.'}",
 			});
 		});
 
-		it("全部 deployment 冷却 + 无 fallback → cooldown_time > 0 + cooldown_list 存在", async () => {
+		it("模型存在但全部署冷却 + 无 fallback → 429 cooldown_time > 0 + cooldown_list 存在", async () => {
 			// 用 cooldown_time=1s 让 deployment 全部冷却
 			const router = new Router({
 				model_list: [mkDeployment("only-model")],
@@ -284,11 +290,112 @@ describe("Router execution chain", () => {
 			try {
 				await router.completion("only-model", [{ role: "user", content: "hi" }]);
 			} catch (err) {
-				const e = err as { cooldown_time?: number; cooldown_list?: unknown[] };
+				const e = err as { cooldown_time?: number; cooldown_list?: unknown[]; message: string };
 				expect(e.cooldown_time).toBeGreaterThan(0);
 				expect(Array.isArray(e.cooldown_list)).toBe(true);
 				expect(e.cooldown_list!.length).toBeGreaterThan(0);
+				// 消息含冷却列表与配置冷却时长（markFailed 5000ms → 5 秒）
+				expect(e.message).toContain("Try again in 5 seconds. Passed model=only-model.");
+				expect(e.message).toContain("cooldown_list=['only-model']");
 			}
+		});
+	});
+	describe("冷却缺省时长：失败路径取 router.cooldown_time（而非 retry_after 的 0ms）", () => {
+		it("provider 500 失败后 deployment 按 cooldown_time 冷却，后续请求 429 不再打 fetch", async () => {
+			const router = new Router({
+				model_list: [mkDeployment("cool-model")],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				cooldown_time: 60,
+				// 生产配置同款：allowed_fails=0 首次失败即冷却；
+				// 未配置 retry_after：修复前冷却缺省时长为 retryAfter*1000=0ms（空操作），
+				// 修复后对齐 PY `_time_to_cooldown = self.cooldown_time`（60s）
+				allowed_fails: 0,
+			});
+			// Router 构造器将 num_retries=0 视为缺省（2 次重试），首次请求会打多次 fetch，
+			// 故断言第二次请求后 fetch 次数不再增长
+			mockFetch.mockImplementation(() => Promise.resolve(errorResponse(500, { error: "boom" })));
+			await expect(router.completion("cool-model", [{ role: "user", content: "hi" }])).rejects.toThrow();
+			const fetchCallsAfterFirstCompletion = mockFetch.mock.calls.length;
+			expect(fetchCallsAfterFirstCompletion).toBeGreaterThan(0);
+			// 第二次请求：deployment 在冷却中 → 429 no-deployments（模型存在但全冷却）
+			await expect(router.completion("cool-model", [{ role: "user", content: "hi" }])).rejects.toMatchObject({
+				name: "RouterRateLimitErrorBasic",
+			});
+			expect(mockFetch.mock.calls.length).toBe(fetchCallsAfterFirstCompletion);
+		});
+	});
+	describe("Router.hasModel", () => {
+		it("model_name 命中（含全部署冷却时仍已知）", () => {
+			const router = new Router({
+				model_list: [mkDeployment("gpt-4")],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+			});
+			expect(router.hasModel("gpt-4")).toBe(true);
+			expect(router.hasModel("nonexistent-xyz")).toBe(false);
+		});
+
+		it("model_group_alias 解析后命中", () => {
+			const router = new Router(
+				{
+					model_list: [mkDeployment("glm-latest-anthropic")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					num_retries: 0,
+				},
+				{ "claude-opus": "glm-latest-anthropic" },
+			);
+			expect(router.hasModel("claude-opus")).toBe(true);
+			expect(router.hasModel("claude-unknown")).toBe(false);
+		});
+
+		it("deployment id（PY has_model_id）与 litellm_params.model（PY deployment_names）命中", () => {
+			const router = new Router({
+				model_list: [
+					{ model_name: "glm", litellm_params: { model: "anthropic/glm-4.7", api_key: "k" }, model_info: { id: "dep-id-1" } },
+				],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+			});
+			expect(router.hasModel("dep-id-1")).toBe(true);
+			expect(router.hasModel("anthropic/glm-4.7")).toBe(true);
+		});
+	});
+	describe("Router.getNoAvailableDeploymentInfo", () => {
+		it("无冷却条目时回退 Router 默认 cooldown_time，cooldownList 为空", () => {
+			const router = new Router({
+				model_list: [mkDeployment("gpt-4")],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				cooldown_time: 7,
+				pre_call_checks: true,
+			});
+			expect(router.getNoAvailableDeploymentInfo("gpt-4")).toEqual({
+				cooldownSeconds: 7,
+				cooldownList: [],
+				preCallChecks: true,
+			});
+		});
+
+		it("有冷却条目时取组内最小配置冷却时长，cooldownList 含全部冷却 deployment", () => {
+			const router = new Router({
+				model_list: [mkDeployment("m1"), mkDeployment("m2")],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				cooldown_time: 1,
+			});
+			const cooldownManager = (router as unknown as { _cooldownManager: { markFailed: (k: string, t: number) => void } })
+				._cooldownManager;
+			cooldownManager.markFailed("m2", 8000);
+			const info = router.getNoAvailableDeploymentInfo("m1");
+			// m1 组内无冷却 → 回退默认；m2 的冷却出现在全局 cooldownList 中（PY 为全模型组范围）
+			expect(info.cooldownSeconds).toBe(1);
+			expect(info.cooldownList).toEqual(["m2"]);
+			expect(info.preCallChecks).toBe(false);
+
+			const m2Info = router.getNoAvailableDeploymentInfo("m2");
+			expect(m2Info.cooldownSeconds).toBe(8);
+			expect(m2Info.cooldownList).toEqual(["m2"]);
 		});
 	});
 	describe("DIFF-MOCK-01: mock_testing_* str-to-bool 转换", () => {
@@ -424,6 +531,73 @@ describe("Router execution chain", () => {
 			await expect(
 				router.acompletion("gpt-4", [{ role: "user", content: "hi" }], { mock_testing_fallbacks: true }),
 			).rejects.toBeInstanceOf(InternalServerError);
+		});
+
+		describe("Router retry 失败转成功", () => {
+			it("主模型 5xx 失败后重试同模型并成功", async () => {
+				mockFetch.mockResolvedValueOnce(errorResponse(500, { error: "forced primary failure" })).mockResolvedValueOnce(
+					okResponse({
+						id: "fallback-success",
+						object: "chat.completion",
+						created: 1,
+						model: "gpt-4-fb",
+						choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					}),
+				);
+
+				const router = new Router({
+					model_list: [mkDeployment("gpt-4"), mkDeployment("gpt-4-fb")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					// 本用例验证"重试同模型"路径：num_retries 必须显式 >0
+					// （显式 0 表示不重试，会走 fallback 而非同模型重试）
+					num_retries: 1,
+					fallbacks: [{ "gpt-4": ["gpt-4-fb"] }],
+				});
+
+				const result = await router.completion("gpt-4", [{ role: "user", content: "hi" }]);
+
+				expect(result.id).toBe("fallback-success");
+				expect((result as unknown as { _provider: string })._provider).toBe("gpt-4");
+				expect(mockFetch).toHaveBeenCalledTimes(2);
+			});
+		});
+
+		describe("链式多跳 fallback（每跳查自身链首，depth 恒 0）", () => {
+			it("A 冷却 → B 失败 → C 成功（fallbacks: A→[B], B→[C]）", async () => {
+				// B 的上游失败一次，C 成功
+				mockFetch.mockResolvedValueOnce(errorResponse(500, { error: "b failed" })).mockResolvedValueOnce(
+					okResponse({
+						id: "c-success",
+						object: "chat.completion",
+						created: 1,
+						model: "c",
+						choices: [{ index: 0, message: { role: "assistant", content: "c-ok" }, finish_reason: "stop" }],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					}),
+				);
+
+				const router = new Router({
+					model_list: [mkDeployment("a"), mkDeployment("b"), mkDeployment("c")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					num_retries: 0,
+					cooldown_time: 60,
+					fallbacks: [{ a: ["b"] }, { b: ["c"] }],
+				});
+
+				// A 全部署预冷却 → !candidate 路径查 A 自身链首得 B
+				router.markFailed("a");
+
+				const result = await router.completion("a", [{ role: "user", content: "hi" }]);
+
+				// B 失败（外层 catch）→ 查 B 自身链首得 C → C 成功
+				expect(result.id).toBe("c-success");
+				expect((result as unknown as { _provider: string })._provider).toBe("c");
+				// 跳数计数器：A→B→C 共 2 跳
+				expect((result as unknown as { _fallbackDepth: number })._fallbackDepth).toBe(2);
+				// B 打过一次、C 打过一次；A 冷却未打
+				expect(mockFetch).toHaveBeenCalledTimes(2);
+			});
 		});
 	});
 });

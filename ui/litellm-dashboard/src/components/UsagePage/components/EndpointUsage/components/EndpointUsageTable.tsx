@@ -106,7 +106,7 @@ const EndpointUsageTable: React.FC<EndpointUsageTableProps> = ({ endpointData })
       title: "Total Tokens",
       dataIndex: "total_tokens",
       key: "total_tokens",
-      render: (value: number) => value.toLocaleString(),
+      render: (value: number) => formatNumberWithCommas(value, 0, false),
     },
     {
       title: "Spend",

@@ -17,7 +17,7 @@ export const DEFAULT_PAGE = 1;
 export const DEFAULT_PAGE_SIZE = 50;
 
 /** 单页最大行数上限（防御性白名单：避免 ?pageSize=999999 把 DB 抽干） */
-export const MAX_PAGE_SIZE = 100;
+export const MAX_PAGE_SIZE = 1000;
 
 /** /spend/keys、/spend/users、/spend/tags 等聚合端点默认 group 数 */
 export const AGGREGATE_DEFAULT_LIMIT = 100;
@@ -86,6 +86,81 @@ export function parseAggregateLimitParam(raw: unknown, fallback: number = AGGREG
 	const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 	return Math.min(AGGREGATE_MAX_LIMIT, Math.max(1, safe));
 }
+
+/**
+ * Spend log 日期格式 — 对齐 Python LiteLLM ui_view_spend_logs。
+ *
+ * - UI 路径（`/spend/logs/ui`）只接受 `YYYY-MM-DD HH:MM:SS`。
+ * - v2 路径（`/spend/logs/v2`）额外接受 `YYYY-MM-DD`。
+ */
+const UI_DATE_FORMAT = "YYYY-MM-DD HH:MM:SS";
+const V2_DATE_FORMAT = "YYYY-MM-DD";
+const UI_DATE_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const V2_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 解析 spend log 起止日期。
+ *
+ * 对齐 Python `litellm/proxy/spend_tracking/spend_management_endpoints.py::ui_view_spend_logs`：
+ * - UI 模式：仅 `YYYY-MM-DD HH:MM:SS`；非法抛 400。
+ * - v2 模式：`YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM:SS`；非法抛 400。
+ *
+ * Date 构造按 UTC 处理，避免 `new Date("YYYY-MM-DD ...")` 由 Node 隐式按本地时区解析
+ * 引入与 Python `datetime.strptime(...).replace(tzinfo=timezone.utc)` 不一致。
+ * @param raw - 原始 query 字符串
+ * @param mode - "ui" 或 "v2"
+ * @throws ApiError.badRequest 格式非法
+ */
+export function parseSpendLogDate(raw: unknown, mode: "ui" | "v2"): Date {
+	const value = typeof raw === "string" ? raw.trim() : "";
+	if (mode === "ui") {
+		if (!UI_DATE_REGEX.test(value)) {
+			throw new Error(`Invalid date format: ${JSON.stringify(value)}. Expected: 'YYYY-MM-DD HH:MM:SS'`);
+		}
+	} else {
+		if (!UI_DATE_REGEX.test(value) && !V2_DATE_REGEX.test(value)) {
+			throw new Error(`Invalid date format: ${JSON.stringify(value)}. Expected: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'`);
+		}
+	}
+	const dateOnly = V2_DATE_REGEX.test(value);
+	const [datePart, timePart = "00:00:00"] = value.split(" ");
+	const [yearStr, monthStr, dayStr] = datePart!.split("-");
+	const [hourStr = "00", minuteStr = "00", secondStr = "00"] = timePart.split(":");
+	const year = Number(yearStr);
+	const month = Number(monthStr);
+	const day = Number(dayStr);
+	const hour = Number(hourStr);
+	const minute = Number(minuteStr);
+	const second = Number(secondStr);
+	// 仅 v2 的 date-only 模式按日期 00:00:00 UTC 构造；其余按时间精确构造。
+	if (dateOnly) {
+		return new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+	}
+	return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+}
+
+/**
+ * 解析 query 中的可选 float 字段（`min_spend` / `max_spend` 等）。
+ * 未传或空字符串返回 undefined；非数字返回 null（供调用方区分"未传"和"格式错误"）。
+ *
+ * 对齐 Python `ui_view_spend_logs` 中 `Optional[float]` 解析失败抛 400 的语义。
+ * @param raw - req.query.* 原始值
+ */
+export function parseOptionalFloatQueryParam(raw: unknown): number | undefined | null {
+	if (raw === undefined || raw === null || raw === "") {
+		return undefined;
+	}
+	if (typeof raw !== "string") {
+		return null;
+	}
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed)) {
+		return null;
+	}
+	return parsed;
+}
+
+export { UI_DATE_FORMAT, V2_DATE_FORMAT, UI_DATE_REGEX, V2_DATE_REGEX };
 
 /**
  * 把多查询端点通用的 `try { ... } catch (err) { logger.warn(...); return <fallback> }`

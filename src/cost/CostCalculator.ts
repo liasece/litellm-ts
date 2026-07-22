@@ -20,6 +20,7 @@
  */
 
 import { createModuleLogger } from "../core/utils/logger";
+import { modelCostMapService } from "./ModelCostMapService";
 
 const logger = createModuleLogger("Cost");
 
@@ -173,24 +174,41 @@ function _candidatesFor(model: string): string[] {
  * @param modelCostMap - 可选 litellm.model_cost 透传（PY: litellm.model_cost[model]）
  * @returns 匹配的价格，找不到时返回 undefined
  */
-function lookupPrice(
-	model: string,
-	modelCostMap?: Record<string, { input_cost_per_token: number; output_cost_per_token: number }>,
-): ModelPrice | undefined {
+function lookupCostMapEntry(model: string, modelCostMap?: Record<string, ModelCostMapEntry>): ModelCostMapEntry | undefined {
 	const candidates = _candidatesFor(model);
-	// DIFF-COST-02: 优先用 modelCostMap 透传（PY 优先顺序：model_cost 字典 → 内置 PRICE_TABLE）
 	if (modelCostMap) {
 		for (const candidate of candidates) {
 			const entry = modelCostMap[candidate];
-			if (entry) {
-				return {
-					inputPerMillion: entry.input_cost_per_token * PER_MILLION,
-					outputPerMillion: entry.output_cost_per_token * PER_MILLION,
-				};
+			if (entry !== undefined) {
+				return entry;
 			}
 		}
 	}
+	const snapshotMap = modelCostMapService.getSnapshot().map;
 	for (const candidate of candidates) {
+		const entry = snapshotMap[candidate];
+		if (entry !== undefined) {
+			return entry as ModelCostMapEntry;
+		}
+	}
+	return undefined;
+}
+
+function lookupPrice(model: string, modelCostMap?: Record<string, ModelCostMapEntry>): ModelPrice | undefined {
+	const costMapEntry = lookupCostMapEntry(model, modelCostMap);
+	if (costMapEntry !== undefined) {
+		return {
+			inputPerMillion: (costMapEntry.input_cost_per_token ?? 0) * PER_MILLION,
+			outputPerMillion: (costMapEntry.output_cost_per_token ?? 0) * PER_MILLION,
+			cacheCreationPerMillion:
+				costMapEntry.cache_creation_input_token_cost === undefined
+					? undefined
+					: costMapEntry.cache_creation_input_token_cost * PER_MILLION,
+			cacheReadPerMillion:
+				costMapEntry.cache_read_input_token_cost === undefined ? undefined : costMapEntry.cache_read_input_token_cost * PER_MILLION,
+		};
+	}
+	for (const candidate of _candidatesFor(model)) {
 		const lower = candidate.toLowerCase();
 		for (const entry of PRICE_TABLE) {
 			if (lower.includes(entry.pattern)) {
@@ -211,7 +229,7 @@ function lookupPrice(
  */
 export function lookupModelCostPerToken(
 	model: string,
-	modelCostMap?: Record<string, { input_cost_per_token: number; output_cost_per_token: number }>,
+	modelCostMap?: Record<string, ModelCostMapEntry>,
 ): { input_cost_per_token: number; output_cost_per_token: number } | undefined {
 	const price = lookupPrice(model, modelCostMap);
 	if (price === undefined) {
@@ -317,12 +335,9 @@ export function costPerToken(
 	const effectivePrompt = skipProviderTokenCounting ? Math.max(1, Math.round(promptTokens / 4)) : promptTokens;
 	const effectiveCompletion = skipProviderTokenCounting ? Math.max(1, Math.round(completionTokens / 4)) : completionTokens;
 
-	// llmux 模型不产生费用（即使设置了 customCostPerToken 也直接返回 0）
-	if (isLlmuxModel(model)) {
-		return { inputCost: 0, outputCost: 0, totalCost: 0 };
-	}
-
-	// GAP: 优先级 1 — customCostPerToken（部署级 per-token override）
+	// GAP: 优先级 1 — customCostPerToken（部署级 per-token override，含 model_info 价格）。
+	// 必须先于 llmux 零计费判定：PY 无 llmux 特判，配置显式价格（即使 0.0）即为真实计费
+	// （生产 model_info 给 gpt-5.6-* 等订阅模型也配置了价格，spend 需按价实算）。
 	if (
 		customCostPerToken?.input_cost_per_token !== undefined ||
 		customCostPerToken?.output_cost_per_token !== undefined ||
@@ -343,6 +358,8 @@ export function costPerToken(
 		const totalCost = inputCost + outputCost + cacheCreationCost + cacheReadCost;
 		return { inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
 	}
+
+	const costMapEntry = lookupCostMapEntry(model, modelCostMap);
 
 	// DIFF-COST-01: service_tier 联动 modelCostMap 字段
 	// tier=flex     → input_cost_per_token_flex     / output_cost_per_token_flex
@@ -367,23 +384,14 @@ export function costPerToken(
 	let cacheReadOverridePerMillion: number | undefined;
 	// DIFF-COST-01: 即使 modelCostMap 未提供，batch tier 也应使用 standard 单价作为兜底
 	// (PY: batch 走 output_cost_per_token_batches / 2，但缺省时仍走 standard)
-	if (tierSuffix && modelCostMap) {
-		const candidates = _candidatesFor(model);
-		for (const candidate of candidates) {
-			const entry = modelCostMap[candidate] as unknown as Record<string, number | undefined> | undefined;
-			if (!entry) {
-				continue;
-			}
-
-			const tierInput = entry[`input_cost_per_token_${tierSuffix}`];
-
-			const tierOutput = entry[`output_cost_per_token_${tierSuffix}`];
-			if (typeof tierInput === "number" || typeof tierOutput === "number") {
-				inputPerMillion = (tierInput ?? 0) * PER_MILLION;
-				outputPerMillion = (tierOutput ?? 0) * PER_MILLION;
-				usedTierKey = true;
-				break;
-			}
+	if (tierSuffix && costMapEntry) {
+		const entry = costMapEntry as Record<string, number | undefined>;
+		const tierInput = entry[`input_cost_per_token_${tierSuffix}`];
+		const tierOutput = entry[`output_cost_per_token_${tierSuffix}`];
+		if (typeof tierInput === "number" || typeof tierOutput === "number") {
+			inputPerMillion = (tierInput ?? 0) * PER_MILLION;
+			outputPerMillion = (tierOutput ?? 0) * PER_MILLION;
+			usedTierKey = true;
 		}
 	}
 	// DIFF-COST-01: batch tier 但 modelCostMap 未提供 batches 字段时，
@@ -392,37 +400,31 @@ export function costPerToken(
 	if (!usedTierKey) {
 		// DIFF-007: 优先尝试 above_200k tiered pricing（仅当 prompt_tokens > 阈值 且 modelCostMap 命中时）
 		let above200kHit = false;
-		if (useAbove200k && modelCostMap) {
-			const candidates = _candidatesFor(model);
-			for (const candidate of candidates) {
-				const entry = modelCostMap[candidate] as unknown as Record<string, number | undefined> | undefined;
-				if (!entry) {
-					continue;
+		if (useAbove200k && costMapEntry) {
+			const entry = costMapEntry as Record<string, number | undefined>;
+			const aboveInput = entry[`input_cost_per_token_${ABOVE_200K_FIELD_SUFFIX}`];
+			const aboveOutput = entry[`output_cost_per_token_${ABOVE_200K_FIELD_SUFFIX}`];
+			const aboveCacheCreation = entry[`cache_creation_input_token_cost_${ABOVE_200K_FIELD_SUFFIX}`];
+			const aboveCacheRead = entry[`cache_read_input_token_cost_${ABOVE_200K_FIELD_SUFFIX}`];
+			if (typeof aboveInput === "number" || typeof aboveOutput === "number") {
+				inputPerMillion = (aboveInput ?? entry["input_cost_per_token"] ?? 0) * PER_MILLION;
+				outputPerMillion = (aboveOutput ?? entry["output_cost_per_token"] ?? 0) * PER_MILLION;
+				if (typeof aboveCacheCreation === "number") {
+					cacheCreationOverridePerMillion = aboveCacheCreation * PER_MILLION;
 				}
-				const aboveInput = entry[`input_cost_per_token_${ABOVE_200K_FIELD_SUFFIX}`];
-				const aboveOutput = entry[`output_cost_per_token_${ABOVE_200K_FIELD_SUFFIX}`];
-				const aboveCacheCreation = entry[`cache_creation_input_token_cost_${ABOVE_200K_FIELD_SUFFIX}`];
-				const aboveCacheRead = entry[`cache_read_input_token_cost_${ABOVE_200K_FIELD_SUFFIX}`];
-				if (typeof aboveInput === "number" || typeof aboveOutput === "number") {
-					inputPerMillion = (aboveInput ?? entry["input_cost_per_token"] ?? 0) * PER_MILLION;
-					outputPerMillion = (aboveOutput ?? entry["output_cost_per_token"] ?? 0) * PER_MILLION;
-					if (typeof aboveCacheCreation === "number") {
-						cacheCreationOverridePerMillion = aboveCacheCreation * PER_MILLION;
-					}
-					if (typeof aboveCacheRead === "number") {
-						cacheReadOverridePerMillion = aboveCacheRead * PER_MILLION;
-					}
-					above200kHit = true;
-					break;
+				if (typeof aboveCacheRead === "number") {
+					cacheReadOverridePerMillion = aboveCacheRead * PER_MILLION;
 				}
+				above200kHit = true;
 			}
 		}
 		if (!above200kHit) {
-			const price = lookupPrice(
-				model,
-				modelCostMap as Record<string, { input_cost_per_token: number; output_cost_per_token: number }> | undefined,
-			);
+			const price = lookupPrice(model, modelCostMap);
 			if (price === undefined) {
+				// llmux 模型仅在统一 snapshot 与显式 override 都未命中时沿用订阅零计费兼容行为。
+				if (isLlmuxModel(model)) {
+					return { inputCost: 0, outputCost: 0, totalCost: 0 };
+				}
 				// GAP (COST-001): 对齐 PY cost_calculator.py:2076-2077 — 未知模型返回 0,0,0 静默处理
 				// 之前 throw 让 SpendTracker 等调用方手动 catch → 仍写 0；PY 直接 return 0,0,0。
 				// 现改为 return 0,0,0 + logger.warn 提示配置缺口，避免上游重复 try/catch 噪音。
@@ -456,8 +458,16 @@ export function costPerToken(
 	// 优先级（高→低）：above_200k 覆盖 → 模型表 cacheCreationPerMillion → 硬编码 flat rate
 	// 如需 deployment 级 override，请使用 customCostPerToken 参数（上面已处理）。
 	// DIFF-007: above_200k 命中时优先用 cacheCreationOverridePerMillion / cacheReadOverridePerMillion
-	const cacheCreationPerMillion = cacheCreationOverridePerMillion ?? CACHE_CREATION_INPUT_COST_PER_MILLION;
-	const cacheReadPerMillion = cacheReadOverridePerMillion ?? CACHE_READ_INPUT_COST_PER_MILLION;
+	const cacheCreationPerMillion =
+		cacheCreationOverridePerMillion ??
+		(costMapEntry?.cache_creation_input_token_cost === undefined
+			? CACHE_CREATION_INPUT_COST_PER_MILLION
+			: costMapEntry.cache_creation_input_token_cost * PER_MILLION);
+	const cacheReadPerMillion =
+		cacheReadOverridePerMillion ??
+		(costMapEntry?.cache_read_input_token_cost === undefined
+			? CACHE_READ_INPUT_COST_PER_MILLION
+			: costMapEntry.cache_read_input_token_cost * PER_MILLION);
 	const cacheCreationCost = (cacheCreationTokens / PER_MILLION) * cacheCreationPerMillion;
 	const cacheReadCost = (cacheReadTokens / PER_MILLION) * cacheReadPerMillion;
 
@@ -480,6 +490,12 @@ export interface ModelCostMapEntry {
 	readonly input_cost_per_token?: number;
 	/** 标准 tier 输出单价（每 token，PY litellm.model_cost[model].output_cost_per_token） */
 	readonly output_cost_per_token?: number;
+
+	/** 标准 cache write 单价（每 token） */
+	readonly cache_creation_input_token_cost?: number;
+
+	/** 标准 cache read 单价（每 token） */
+	readonly cache_read_input_token_cost?: number;
 
 	/** flex tier 输入单价（每 token，service_tier=flex 时优先使用） */
 	readonly input_cost_per_token_flex?: number;

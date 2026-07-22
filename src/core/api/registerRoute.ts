@@ -3,14 +3,16 @@
  *
  * 将 method + path + handler 映射为 Express 路由处理器，自动处理：
  * 1. handler return 数据 → res.json(result)
- * 2. handler throw ApiError → res.status(code).json({ success: false, message })
+ * 2. handler throw → mapToApiError 映射后序列化为 Python 风格 { error: { message, type, param, code } }
  * 3. 未知异常 → 500 + 日志记录
  * 4. handler 已手动调用 res.json() → 通过 headersSent 检测跳过
  */
 
 import type { Router, Request, Response, NextFunction } from "express";
-import { ApiError, HTTP_STATUS } from "./ApiError";
-import { createModuleLogger, toErrorMessage } from "../utils/logger";
+import { ApiError } from "./ApiError";
+import { mapToApiError } from "./ErrorResponseMapper";
+import { stripInternalFields } from "./stripInternalFields";
+import { createModuleLogger } from "../utils/logger";
 
 const logger = createModuleLogger("API:Route");
 
@@ -42,27 +44,19 @@ export function registerRoute(router: Router, endpoint: EndpointDef, handler: Ro
 	router[endpoint.method](endpoint.path, async (req: Request, res: Response, _next: NextFunction) => {
 		try {
 			const result = await handler(req, res);
-			// handler 已手动发送响应时跳过
+			// handler 已手动发送响应时跳过；序列化出口统一剥离顶层 `_` 前缀内部字段
 			if (result !== undefined && !res.headersSent) {
-				res.json(result);
+				res.json(stripInternalFields(result));
 			}
 		} catch (error) {
 			if (res.headersSent) {
 				return;
 			}
-			if (error instanceof ApiError) {
-				res.status(error.statusCode).json({
-					success: false,
-					message: error.message,
-				});
-			} else {
-				const message = toErrorMessage(error);
+			if (!(error instanceof ApiError)) {
 				logger.error(`路由处理异常: ${endpoint.method.toUpperCase()} ${endpoint.path}`, { error: error });
-				res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
-					success: false,
-					message: message,
-				});
 			}
+			const apiError = mapToApiError(error);
+			res.status(apiError.statusCode).json(apiError.toErrorBody());
 		}
 	});
 }

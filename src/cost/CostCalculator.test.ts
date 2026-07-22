@@ -2,18 +2,19 @@
  * CostCalculator 测试
  */
 import { costPerToken, lookupModelCostPerToken, ServiceTier } from "./CostCalculator";
+import { modelCostMapService } from "./ModelCostMapService";
 
 describe("costPerToken", () => {
 	it("calculates deepseek-v4-flash cost correctly", () => {
 		const result = costPerToken("deepseek/deepseek-v4-flash", 1000000, 1000000);
-		expect(result.inputCost).toBeCloseTo(0.5, 1);
-		expect(result.outputCost).toBeCloseTo(1.0, 1);
+		expect(result.inputCost).toBeCloseTo(0.14, 4);
+		expect(result.outputCost).toBeCloseTo(0.28, 4);
 	});
 
 	it("calculates deepseek-v4-pro cost correctly", () => {
 		const result = costPerToken("deepseek/deepseek-v4-pro", 1000000, 1000000);
-		expect(result.inputCost).toBeCloseTo(1.75, 2);
-		expect(result.outputCost).toBeCloseTo(3.5, 2);
+		expect(result.inputCost).toBeCloseTo(0.435, 4);
+		expect(result.outputCost).toBeCloseTo(0.87, 4);
 	});
 
 	it("calculates glm-5.1 cost correctly", () => {
@@ -28,13 +29,13 @@ describe("costPerToken", () => {
 		expect(result.outputCost).toBeCloseTo(3.06, 2);
 	});
 
-	it("returns 0 cost for llmux subscription models", () => {
+	it("snapshot 未命中时仍为 llmux subscription models 返回 0 cost", () => {
 		// bare format
-		const r1 = costPerToken("claude-sonnet-4-6", 1000000, 1000000);
+		const r1 = costPerToken("claude-subscription-local-only", 1000000, 1000000);
 		expect(r1.inputCost).toBe(0);
 		expect(r1.outputCost).toBe(0);
 		// provider-prefixed format
-		const r2 = costPerToken("anthropic/claude-sonnet-4-6", 1000000, 1000000);
+		const r2 = costPerToken("anthropic/claude-subscription-local-only", 1000000, 1000000);
 		expect(r2.inputCost).toBe(0);
 		expect(r2.outputCost).toBe(0);
 	});
@@ -104,9 +105,9 @@ describe("costPerToken", () => {
 				"deepseek/deepseek-v4-flash": {
 					input_cost_per_token: 0.0000005,
 					output_cost_per_token: 0.000001,
-					// eslint-disable-next-line camelcase
+
 					input_cost_per_token_flex: 0.0000001,
-					// eslint-disable-next-line camelcase
+
 					output_cost_per_token_flex: 0.0000002,
 				},
 			};
@@ -123,9 +124,9 @@ describe("costPerToken", () => {
 				"deepseek/deepseek-v4-flash": {
 					input_cost_per_token: 0.0000005,
 					output_cost_per_token: 0.000001,
-					// eslint-disable-next-line camelcase
+
 					input_cost_per_token_priority: 0.000001,
-					// eslint-disable-next-line camelcase
+
 					output_cost_per_token_priority: 0.000002,
 				},
 			};
@@ -185,9 +186,9 @@ describe("costPerToken", () => {
 			const r = costPerToken("deepseek/deepseek-v4-flash", 1000000, 1000000, 0, 0, {
 				modelCostMap: modelCostMap,
 			});
-			// 回退到内置 deepseek-v4-flash 价格
-			expect(r.inputCost).toBeCloseTo(0.5, 4);
-			expect(r.outputCost).toBeCloseTo(1.0, 4);
+			// 回退到当前 service snapshot 的 deepseek-v4-flash 价格
+			expect(r.inputCost).toBeCloseTo(0.14, 4);
+			expect(r.outputCost).toBeCloseTo(0.28, 4);
 		});
 	});
 
@@ -337,6 +338,56 @@ describe("costPerToken", () => {
 			});
 			expect(r.inputCost).toBeCloseTo(1.0, 4);
 			expect(r.outputCost).toBeCloseTo(2.0, 4);
+		});
+
+		describe("统一实时价格 snapshot", () => {
+			afterEach(() => {
+				jest.restoreAllMocks();
+			});
+
+			it("未显式传 map 时每次读取当前 service snapshot", () => {
+				const getSnapshot = jest.spyOn(modelCostMapService, "getSnapshot");
+				getSnapshot.mockReturnValue({
+					map: { dynamic: { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6 } },
+					rawJson: "{}",
+					source: "remote",
+					url: "https://prices.test",
+					isEnvForced: false,
+					fallbackReason: null,
+					modelCount: 1,
+					loadedAt: "2026-01-01T00:00:00.000Z",
+				});
+				expect(costPerToken("dynamic", 1_000_000, 1_000_000).totalCost).toBeCloseTo(3);
+
+				getSnapshot.mockReturnValue({
+					map: { dynamic: { input_cost_per_token: 3e-6, output_cost_per_token: 4e-6 } },
+					rawJson: "{}",
+					source: "remote",
+					url: "https://prices.test",
+					isEnvForced: false,
+					fallbackReason: null,
+					modelCount: 1,
+					loadedAt: "2026-01-01T01:00:00.000Z",
+				});
+				expect(costPerToken("dynamic", 1_000_000, 1_000_000).totalCost).toBeCloseTo(7);
+			});
+
+			it("显式 modelCostMap override 优先于 service snapshot", () => {
+				jest.spyOn(modelCostMapService, "getSnapshot").mockReturnValue({
+					map: { dynamic: { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6 } },
+					rawJson: "{}",
+					source: "remote",
+					url: "https://prices.test",
+					isEnvForced: false,
+					fallbackReason: null,
+					modelCount: 1,
+					loadedAt: "2026-01-01T00:00:00.000Z",
+				});
+				const result = costPerToken("dynamic", 1_000_000, 1_000_000, 0, 0, {
+					modelCostMap: { dynamic: { input_cost_per_token: 8e-6, output_cost_per_token: 9e-6 } },
+				});
+				expect(result.totalCost).toBeCloseTo(17);
+			});
 		});
 	});
 });

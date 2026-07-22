@@ -37,6 +37,26 @@ describe("prepareModelAddRequest", () => {
     expect(deployment.modelInfoObj.team_id).toBe("team-123");
   });
 
+  it("passes Anthropic api_base through to litellm_params", async () => {
+    const formValues = {
+      model_mappings: [
+        {
+          public_name: "Anthropic Model",
+          litellm_model: "anthropic/claude-sonnet-4-20250514",
+        },
+      ],
+      model_name: "anthropic/claude-sonnet-4-20250514",
+      custom_llm_provider: "Anthropic",
+      api_base: "https://anthropic.internal.example",
+      api_key: "sk-ant-test",
+    };
+
+    const deployments = await prepareModelAddRequest({ ...formValues }, "token", null);
+
+    expect(deployments).toHaveLength(1);
+    expect(deployments![0].litellmParamsObj.api_base).toBe("https://anthropic.internal.example");
+  });
+
   it("uses a lowercase fallback for unrecognized custom providers", async () => {
     const fallbackValues = {
       model_mappings: [

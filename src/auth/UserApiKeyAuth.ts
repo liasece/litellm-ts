@@ -14,7 +14,7 @@ import { hashApiKey } from "../core/utils/crypto";
 import type { AuthRepository } from "./AuthRepository";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { JWTHandler } from "./JWTHandler";
-import { WEBUI_COOKIE_TOKEN_NAME, JWT_FALLBACK_USER_ID } from "../types/webUiSession";
+import { WEBUI_COOKIE_TOKEN_NAME, JWT_FALLBACK_USER_ID, PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 
 /**
  * Express Request 扩展 — 增加 auth 属性
@@ -299,11 +299,20 @@ export function createApiKeyAuth(
 
 			// 超级管理员密钥检查（使用 timingSafeEqual 防止时序攻击）
 			// PY: 两个分支: 1) 直接比较 2) 哈希后比较 (user_api_key_auth.py:1055-1065)
+			// PY: master key 认证通过时 user_role=LitellmUserRoles.PROXY_ADMIN
+			// (user_api_key_auth.py:1073-1085)，使 /get/config/callbacks、
+			// /model/cost_map/source 等 admin 端点对 master key 放行。
 			if (masterKey && apiKey.length === masterKey.length) {
 				try {
 					if (crypto.timingSafeEqual(Buffer.from(apiKey), Buffer.from(masterKey))) {
+						// 批次 9: master key 请求 user_id=default_user_id，对齐 PY
+						// user_api_key_auth.py:1081 valid_token_dict user_id=litellm_proxy_admin_name
+						// （constants.py LITELLM_PROXY_ADMIN_NAME="default_user_id"），
+						// SpendLogs.user 与 Python 生产行一致。
 						req.auth = {
 							api_key: apiKey,
+							user_id: PROXY_ADMIN_USER_ID,
+							user_role: PROXY_ADMIN_ROLE,
 						} satisfies UserAPIKeyAuth;
 						next();
 						return;
@@ -320,6 +329,8 @@ export function createApiKeyAuth(
 					) {
 						req.auth = {
 							api_key: apiKey,
+							user_id: PROXY_ADMIN_USER_ID,
+							user_role: PROXY_ADMIN_ROLE,
 						} satisfies UserAPIKeyAuth;
 						next();
 						return;
@@ -382,6 +393,7 @@ export function createApiKeyAuth(
 			let teamMaxBudget: number | undefined;
 			let teamModelAliases: Record<string, string> | undefined;
 			let teamSoftBudget: number | undefined;
+			let teamAlias: string | undefined;
 			if (verifiedToken.teamId) {
 				const team = await repository.findTeamById(verifiedToken.teamId);
 				if (team?.blocked) {
@@ -389,10 +401,21 @@ export function createApiKeyAuth(
 				}
 				teamSpend = team?.spend ?? undefined;
 				teamMaxBudget = team?.maxBudget ?? undefined;
+				// SpendLogs metadata.user_api_key_team_alias（PY SpendLogsMetadata 键）
+				teamAlias = team?.teamAlias ?? undefined;
 				const meta = (team?.metadata as Record<string, unknown> | undefined) ?? {};
 				teamModelAliases = meta["model_group_alias"] as Record<string, string> | undefined;
 				// PY: soft_budget is a direct column on LiteLLM_TeamTable (types.py:1486, teams.ts:20)
 				teamSoftBudget = team?.softBudget ?? (meta["soft_budget"] as number | undefined);
+			}
+
+			// PY: user_role 来自 token.user_id 关联的 UserTable（user_api_key_auth.py:782-786），
+			// 缺省 internal_user（auth_checks.py _get_user_role）。WebUI virtual key 的
+			// user_id=default_user_id（proxy_admin），/admin 端点依赖该角色放行。
+			let userRole: string | undefined;
+			if (verifiedToken.userId) {
+				const userObject = await repository.findUserById(verifiedToken.userId);
+				userRole = userObject?.userRole ?? "internal_user";
 			}
 
 			// 构造认证上下文
@@ -400,7 +423,9 @@ export function createApiKeyAuth(
 				api_key: apiKey,
 				token: verifiedToken.token,
 				user_id: verifiedToken.userId ?? undefined,
+				user_role: userRole,
 				team_id: verifiedToken.teamId ?? undefined,
+				team_alias: teamAlias,
 				organization_id: verifiedToken.organizationId ?? undefined,
 				key_alias: verifiedToken.keyAlias ?? undefined,
 				models: verifiedToken.models,
@@ -422,7 +447,7 @@ export function createApiKeyAuth(
 				max_parallel_requests: verifiedToken.maxParallelRequests ?? undefined,
 				soft_budget:
 					((verifiedToken.metadata as Record<string, unknown> | null)?.soft_budget as number | undefined) ?? teamSoftBudget,
-				// eslint-disable-next-line camelcase
+
 				team_model_aliases: teamModelAliases,
 				// GAP 10: 从请求体 user / x-end-user-id header 提取 end_user_id，
 				// 对齐 PY get_end_user_id_for_cost_tracking(litellm_params) 路径。

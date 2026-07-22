@@ -48,7 +48,7 @@ export default function TopModelView({ topModels, topModelsLimit, setTopModelsLi
     {
       header: "Tokens",
       accessorKey: "tokens",
-      cell: (info: any) => info.getValue()?.toLocaleString() || 0,
+      cell: (info: any) => formatNumberWithCommas(info.getValue() ?? 0, 0, false),
     },
   ];
   const processedTopModels = topModels.slice(0, topModelsLimit);

@@ -16,6 +16,7 @@ import {
   Text,
 } from "@tremor/react";
 import React, { useEffect, useState } from "react";
+import { formatNumberWithCommas } from "@/utils/dataUtils";
 import NotificationsManager from "./molecules/notifications_manager";
 import UsageDatePicker from "./shared/usage_date_picker";
 
@@ -30,6 +31,8 @@ const formatDateWithoutTZ = (date: Date | undefined) => {
   if (!date) return undefined;
   return date.toISOString().split("T")[0];
 };
+
+const valueFormatterTokens = (value: number) => formatNumberWithCommas(value, 0, false);
 
 function valueFormatterNumbers(number: number) {
   const formatter = new Intl.NumberFormat("en-US", {
@@ -217,7 +220,7 @@ const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole
 
     // set header cache statistics
     setCachedResponses(valueFormatterNumbers(cache_hits));
-    setCachedTokens(valueFormatterNumbers(cached_tokens));
+    setCachedTokens(valueFormatterTokens(cached_tokens));
     let allRequests = cache_hits + llm_api_requests;
     if (allRequests > 0) {
       let cache_hit_ratio = ((cache_hits / allRequests) * 100).toFixed(2);
@@ -375,7 +378,7 @@ const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole
               data={filteredData}
               stack={true}
               index="name"
-              valueFormatter={valueFormatterNumbers}
+              valueFormatter={valueFormatterTokens}
               categories={["Generated Completion Tokens", "Cached Completion Tokens"]}
               colors={["sky", "teal"]}
               yAxisWidth={48}

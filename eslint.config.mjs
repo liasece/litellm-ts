@@ -36,6 +36,8 @@ export default [
 			"ui/litellm-dashboard/scripts/**",
 			"ui/litellm-dashboard/e2e_tests/**",
 			"ui/litellm-dashboard/coverage/**",
+			"ui/litellm-dashboard/.next/**",
+			"ui/litellm-dashboard/out/**",
 			"ui/litellm-dashboard/tailwind.config.ts",
 			"ui/litellm-dashboard/next.config.mjs",
 		],

@@ -201,7 +201,8 @@ describe("AnthropicProvider", () => {
 
 			const result = provider.transformResponse("claude-3-5-sonnet-20241022", rawResponse);
 
-			expect(result.id).toBe("msg_01abc123");
+			// PY anthropic 路径丢弃上游 msg_ 前缀 id，恒为重新生成的 chatcmpl-<uuid>
+			expect(result.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
 			expect(result.object).toBe("chat.completion");
 			expect(result.model).toBe("claude-3-5-sonnet-20241022");
 			expect(result.choices).toHaveLength(1);
@@ -344,11 +345,58 @@ describe("AnthropicProvider", () => {
 			}
 
 			expect(chunks).toHaveLength(1);
-			expect(chunks[0]!.id).toBe("msg_01stream");
+			// PY handler.py:522：流式 chunk id 为预生成的 chatcmpl-<uuid>，不取上游 msg_ id
+			expect(chunks[0]!.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
 			expect(chunks[0]!.object).toBe("chat.completion.chunk");
 			expect(chunks[0]!.choices[0]!.delta.role).toBe("assistant");
 			expect(chunks[0]!.choices[0]!.delta.content).toBe("");
 			expect(chunks[0]!.choices[0]!.finish_reason).toBeNull();
+		});
+
+		it("保留 message_start/message_delta 的内部 usage 与 cache usage", async () => {
+			const events = [
+				sseEvent("message_start", {
+					type: "message_start",
+					message: {
+						id: "msg_usage",
+						type: "message",
+						role: "assistant",
+						model: "claude-3-5-sonnet-20241022",
+						content: [],
+						usage: {
+							input_tokens: 4,
+							output_tokens: 0,
+							cache_creation_input_tokens: 2,
+							cache_read_input_tokens: 3,
+						},
+					},
+				}),
+				sseEvent("message_delta", {
+					type: "message_delta",
+					delta: { stop_reason: "end_turn", stop_sequence: null },
+					usage: { output_tokens: 6 },
+				}),
+			];
+
+			const chunks: ModelResponseStream[] = [];
+			for await (const chunk of provider.streamResponse(mockResponse(events))) {
+				chunks.push(chunk);
+			}
+
+			expect(chunks[0]!._usage).toEqual({
+				prompt_tokens: 4,
+				completion_tokens: 0,
+				total_tokens: 4,
+				cache_creation_input_tokens: 2,
+				cache_read_input_tokens: 3,
+			});
+			expect(chunks[1]!._usage).toEqual({
+				prompt_tokens: 4,
+				completion_tokens: 6,
+				total_tokens: 10,
+				cache_creation_input_tokens: 2,
+				cache_read_input_tokens: 3,
+			});
 		});
 
 		it("parses text_delta events in order", async () => {

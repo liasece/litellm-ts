@@ -24,6 +24,7 @@ const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
 	// DIFF-CFG-MIMO-01: 国际 region 走 OpenAI 兼容路径
 	[LlmProviders.MiMoGlobal]: "https://api.xiaomimimo.com/v1",
 	[LlmProviders.LLMux]: "http://192.168.1.220:18182",
+	[LlmProviders.VLLM]: "http://localhost:8000/v1",
 };
 
 /**
@@ -36,6 +37,7 @@ const PREFIX_TO_PROVIDER: ReadonlyArray<{ prefixes: readonly string[]; provider:
 	{ prefixes: ["deepseek/", "deepseek-"], provider: LlmProviders.DeepSeek },
 	{ prefixes: ["glm/", "glm-", "chatglm-"], provider: LlmProviders.GLM },
 	{ prefixes: ["mimo/", "mimo-"], provider: LlmProviders.MiMo },
+	{ prefixes: ["vllm/", "vllm-"], provider: LlmProviders.VLLM },
 	{ prefixes: ["gpt/", "gpt-", "o1/", "o1-", "o3/", "o3-"], provider: LlmProviders.OpenAI },
 ];
 
@@ -165,6 +167,8 @@ export class ProviderRegistry {
 				return new MiMoOpenAIProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.MiMoGlobal]!);
 			case LlmProviders.LLMux:
 				return new LLMuxProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.LLMux]);
+			case LlmProviders.VLLM:
+				return new OpenAICompatProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.VLLM]!);
 			default:
 				return null;
 		}

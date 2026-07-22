@@ -91,6 +91,11 @@ export function canKeyAccessModel(model: string, allowedModels: string[], teamMo
 	// 展开模型别名
 	const resolvedModel = teamModelAliases?.[model] ?? model;
 
+	// Python LiteLLM: all-team-models 是特殊哨兵，跳过 key 级模型检查，交给 team 级检查。
+	if (allowedModels.includes("all-team-models")) {
+		return true;
+	}
+
 	// 精确匹配
 	if (allowedModels.includes(resolvedModel)) {
 		return true;

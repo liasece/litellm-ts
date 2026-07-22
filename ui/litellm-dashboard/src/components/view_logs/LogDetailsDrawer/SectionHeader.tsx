@@ -2,6 +2,7 @@
  * SectionHeader - Datadog-style header with icon, label, metrics, and copy
  */
 
+import { formatNumberWithCommas } from '@/utils/dataUtils';
 import { Typography, Button, Tooltip } from 'antd';
 import { 
   MessageOutlined, 
@@ -72,7 +73,7 @@ export function SectionHeader({ type, tokens, cost, onCopy, isCollapsed, onToggl
         {/* Tokens */}
         {tokens !== undefined && (
           <Text type="secondary" style={{ fontSize: 12 }}>
-            Tokens: {tokens.toLocaleString()}
+            Tokens: {formatNumberWithCommas(tokens, 0, false)}
           </Text>
         )}
 

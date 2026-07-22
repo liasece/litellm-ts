@@ -7,8 +7,9 @@
  */
 
 import type { Router, Request, Response, NextFunction, RequestHandler } from "express";
-import { ApiError, HTTP_STATUS } from "./ApiError";
-import { createModuleLogger, toErrorMessage } from "../utils/logger";
+import { ApiError } from "./ApiError";
+import { mapToApiError } from "./ErrorResponseMapper";
+import { createModuleLogger } from "../utils/logger";
 import { getMethodMeta, getMiddleware, getParamMeta, isNoAuth, isRawResponse, ParamKind } from "./decorators";
 import type { ParamMeta } from "./decorators";
 
@@ -23,28 +24,18 @@ export interface RegisterControllerOptions {
 }
 
 /**
- * 统一路由错误处理 — ApiError 转对应状态码，unknown Error 转 500 并记录日志
- * 错误响应格式对齐 Python: { error: { type, message, code } }（OpenAI 兼容）
+ * 统一路由错误处理 — 经 mapToApiError 映射后序列化为 Python 风格
+ * { error: { message, type, param, code } }（对齐 litellm ProxyException）
  * @param error - 捕获的异常
  * @param res - Express 响应对象
  * @param methodName - 出错的方法名（用于日志）
  */
 function handleRouteError(error: unknown, res: Response, methodName: string): void {
-	if (error instanceof ApiError) {
-		res.status(error.statusCode).json({
-			error: {
-				type: error.errorType ?? error.constructor.name,
-				message: error.message,
-				code: error.statusCode,
-			},
-		});
-	} else {
-		const message = toErrorMessage(error);
+	if (!(error instanceof ApiError)) {
 		logger.error(`路由处理异常: ${methodName}`, { error: error });
-		res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
-			error: { type: "internal_server_error", message: message, code: 500 },
-		});
 	}
+	const apiError = mapToApiError(error);
+	res.status(apiError.statusCode).json(apiError.toErrorBody());
 }
 
 /**

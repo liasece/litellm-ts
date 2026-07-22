@@ -27,6 +27,12 @@ export interface UserAPIKeyAuth {
 	user_role?: string;
 	/** 关联的团队 ID */
 	team_id?: string;
+	/**
+	 * 关联的团队别名（LiteLLM_TeamTable.team_alias），由 UserApiKeyAuth 中间件
+	 * 在 DB 分支查询团队时带出，供 SpendLogs metadata.user_api_key_team_alias 使用。
+	 * 对齐 PY UserAPIKeyAuth.user_api_key_team_alias。
+	 */
+	team_alias?: string;
 	/** 关联的组织 ID */
 	organization_id?: string;
 	/** 密钥别名 */

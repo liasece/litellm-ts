@@ -75,6 +75,9 @@ import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoi
 
 const logger = createModuleLogger("Server");
 
+/** Claude Code 启动请求会携带较大的系统提示与工具定义，需对齐 LiteLLM 代理的大请求体入口。 */
+const REQUEST_BODY_LIMIT = "50mb";
+
 /**
  * LiteLLM TS Gateway 服务器
  *
@@ -123,7 +126,7 @@ export class LiteLLMServer {
 		const container = this._container!;
 
 		// 全局中间件
-		app.use(express.json());
+		app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 		app.use(accessLogFilter);
 
 		// 注册路由
@@ -142,7 +145,8 @@ export class LiteLLMServer {
 
 	// ── 健康检查 ──
 	private _registerHealthRoutes(app: express.Express): void {
-		registerController(app, new HealthController());
+		const container = this._container!;
+		registerController(app, new HealthController(container.router), { requireAuth: container.authMiddleware });
 		logger.info("健康检查路由已注册");
 	}
 
@@ -151,7 +155,7 @@ export class LiteLLMServer {
 		const publicRouter = express.Router();
 		registerLoginRoutes(publicRouter, this._config, this._container!.db.db);
 		registerDiscoveryRoutes(publicRouter);
-		registerWebUiSupportPublicRoutes(publicRouter);
+		registerWebUiSupportPublicRoutes(publicRouter, this._container!.modelCostMapService);
 		publicRouter.get("/", (_req, res) => {
 			res.redirect("/ui");
 		});
@@ -167,7 +171,7 @@ export class LiteLLMServer {
 		// Chat completions
 		registerChatCompletionsRoutes(proxyRouter, container.router, container.db.db);
 		// Embeddings
-		registerEmbeddingsRoutes(proxyRouter, container.router);
+		registerEmbeddingsRoutes(proxyRouter, container.router, container.db.db);
 		// Text completions
 		registerCompletionsRoutes(proxyRouter, container.router);
 		// Anthropic Messages
@@ -177,9 +181,9 @@ export class LiteLLMServer {
 		// Moderations
 		registerController(proxyRouter, new ModerationsController());
 		// Audio
-		registerController(proxyRouter, new AudioController());
+		registerController(proxyRouter, new AudioController(container.router, container.db.db));
 		// Image
-		registerController(proxyRouter, new ImageController());
+		registerController(proxyRouter, new ImageController(container.router, container.db.db));
 
 		app.use(proxyRouter);
 		logger.info("核心代理端点已注册");
@@ -195,7 +199,7 @@ export class LiteLLMServer {
 		createTeamRoutes(managementRouter, container.db.db, container.authMiddleware);
 		createOrganizationRoutes(managementRouter, container.db.db, container.authMiddleware);
 		createCustomerRoutes(managementRouter, container.db.db, container.authMiddleware);
-		createModelManagementRoutes(managementRouter, container.db.db, container.authMiddleware);
+		createModelManagementRoutes(managementRouter, container.db.db, container.authMiddleware, container.router);
 
 		app.use(managementRouter);
 		logger.info("管理端点已注册");
@@ -220,31 +224,31 @@ export class LiteLLMServer {
 		// 包含 config 重构过程中可能丢失的 model_info 字段与默认 deployment 元信息
 		// （如 custom_llm_provider、rpm/tpm、timeout 等）。如果只传 config.modelList，
 		// /v2/model/info 与 /model_group/info 拿不到 id / mode / cost 等关键字段。
-		registerModelsPageSupportRoutes(stubRouter, container.router, this._config);
+		registerModelsPageSupportRoutes(stubRouter, container.router, this._config, container.modelCostMapService);
 
-		// WebUI 鉴权支撑端点（/get/ui_settings、/config/list、/team/list 等）
-		registerWebUiSupportRoutes(stubRouter, this._config);
+		// WebUI 鉴权支撑端点（/get/ui_settings、/config/list、/config/update、/team/list 等）
+		registerWebUiSupportRoutes(stubRouter, this._config, container.db.db, container.router);
 
 		registerAssistantsRoutes(stubRouter);
 		registerBatchesRoutes(stubRouter);
 		registerFilesRoutes(stubRouter);
 		registerFineTuningRoutes(stubRouter);
 		registerVectorStoreRoutes(stubRouter);
-		registerResponsesApiRoutes(stubRouter);
+		registerResponsesApiRoutes(stubRouter, container.router, container.db.db);
 		registerRerankRoutes(stubRouter);
 		registerRealtimeRoutes(stubRouter);
 		registerAgentRoutes(stubRouter);
 		registerGoogleRoutes(stubRouter);
 		registerMCPRoutes(stubRouter);
 		registerSCIMRoutes(stubRouter);
-		registerSearchToolsRoutes(stubRouter);
+		registerSearchToolsRoutes(stubRouter, container.db.db);
 		registerPromptRoutes(stubRouter);
 		registerPolicyRoutes(stubRouter);
 		registerCredentialRoutes(stubRouter);
 		registerToolRoutes(stubRouter);
 		registerComplianceRoutes(stubRouter);
 		registerAnthropicSkillsRoutes(stubRouter);
-		registerClaudeCodeMarketplaceRoutes(stubRouter);
+		registerClaudeCodeMarketplaceRoutes(stubRouter, container.db.db);
 		registerUtilRoutes(stubRouter);
 		registerSSORoutes(stubRouter);
 		registerSpendIntegrationRoutes(stubRouter);

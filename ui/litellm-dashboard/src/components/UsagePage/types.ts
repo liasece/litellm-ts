@@ -39,6 +39,7 @@ export interface KeyMetricWithMetadata {
 
 export interface KeyMetadata {
   key_alias: string | null;
+	key_name?: string | null;
   team_id: string | null;
   tags?: { tag: string; usage: number }[];
 }
@@ -46,6 +47,7 @@ export interface KeyMetadata {
 export interface TopApiKeyData {
   api_key: string;
   key_alias: string | null;
+	key_name?: string | null;
   team_id: string | null;
   spend: number;
   requests: number;

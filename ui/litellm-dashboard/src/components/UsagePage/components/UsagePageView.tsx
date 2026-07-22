@@ -632,7 +632,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
                                 )}
                               </div>
                               <Text className="text-2xl font-bold mt-2">
-                                {userSpendData.metadata?.total_tokens?.toLocaleString() || 0}
+                                {formatNumberWithCommas(userSpendData.metadata?.total_tokens ?? 0, 0, false)}
                               </Text>
                             </Card>
                           </Grid>
@@ -641,25 +641,25 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
                               <Card>
                                 <Title>Input Tokens</Title>
                                 <Text className="text-2xl font-bold mt-2 text-blue-600">
-                                  {userSpendData.metadata?.total_prompt_tokens?.toLocaleString() || 0}
+                                  {formatNumberWithCommas(userSpendData.metadata?.total_prompt_tokens ?? 0, 0, false)}
                                 </Text>
                               </Card>
                               <Card>
                                 <Title>Output Tokens</Title>
                                 <Text className="text-2xl font-bold mt-2 text-cyan-600">
-                                  {userSpendData.metadata?.total_completion_tokens?.toLocaleString() || 0}
+                                  {formatNumberWithCommas(userSpendData.metadata?.total_completion_tokens ?? 0, 0, false)}
                                 </Text>
                               </Card>
                               <Card>
                                 <Title>Cache Read Tokens</Title>
                                 <Text className="text-2xl font-bold mt-2 text-green-600">
-                                  {userSpendData.metadata?.total_cache_read_input_tokens?.toLocaleString() || 0}
+                                  {formatNumberWithCommas(userSpendData.metadata?.total_cache_read_input_tokens ?? 0, 0, false)}
                                 </Text>
                               </Card>
                               <Card>
                                 <Title>Cache Write Tokens</Title>
                                 <Text className="text-2xl font-bold mt-2 text-purple-600">
-                                  {userSpendData.metadata?.total_cache_creation_input_tokens?.toLocaleString() || 0}
+                                  {formatNumberWithCommas(userSpendData.metadata?.total_cache_creation_input_tokens ?? 0, 0, false)}
                                 </Text>
                               </Card>
                             </Grid>
@@ -694,7 +694,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
                                     <p className="text-gray-600">Requests: {data.metrics.api_requests}</p>
                                     <p className="text-gray-600">Successful: {data.metrics.successful_requests}</p>
                                     <p className="text-gray-600">Failed: {data.metrics.failed_requests}</p>
-                                    <p className="text-gray-600">Tokens: {data.metrics.total_tokens}</p>
+                                    <p className="text-gray-600">Tokens: {formatNumberWithCommas(data.metrics.total_tokens, 0, false)}</p>
                                   </div>
                                 );
                               }}
@@ -789,7 +789,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
                                           <p className="text-red-600">
                                             Failed: {data.failed_requests.toLocaleString()}
                                           </p>
-                                          <p className="text-gray-600">Tokens: {data.tokens.toLocaleString()}</p>
+                                          <p className="text-gray-600">Tokens: {formatNumberWithCommas(data.tokens, 0, false)}</p>
                                         </div>
                                       );
                                     }}

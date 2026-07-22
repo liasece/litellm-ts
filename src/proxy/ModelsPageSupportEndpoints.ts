@@ -20,16 +20,530 @@ import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import { parsePositiveInt, firstQueryString } from "../core/api/queryParams";
 import type { ServiceConfig } from "../core/config";
+import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Deployment, LitellmParams } from "../types/router";
 import type { ModelInfo } from "../types/config";
 import type { Router } from "../router/Router";
-import { SUPPORTS_FLAGS, type SupportsFlag, buildModelGroupInfoResponse, pickRpm, pickTpm } from "./modelGroupBuilder";
+import type { UserAPIKeyAuth } from "../types/auth";
+import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
+import { modelCostMapService, type ModelCostMapService } from "../cost/ModelCostMapService";
+import { buildEnrichedModelInfo, buildModelGroupInfoResponse } from "./modelGroupBuilder";
 
 /** /v2/model/info 分页默认值与边界常量 */
 const DEFAULT_MODEL_INFO_PAGE = 1;
 const DEFAULT_MODEL_INFO_PAGE_SIZE = 50;
 const EMPTY_TOTAL_PAGES = 0;
 const MIN_TOTAL_PAGES = 1;
+
+const HTTP_FORBIDDEN = 403;
+
+const SENSITIVE_CONFIG_KEY_PATTERN = /(master_key|password|secret|api_key|token)/i;
+
+const CONFIG_FIELD_INFO_ALLOWED_FIELDS: ReadonlySet<string> = new Set<string>([
+	"environment",
+	"verboseErrors",
+	"tempDir",
+	"store_model_in_db",
+	"model_group_alias",
+	"websearch_override_target_model",
+	"skip_provider_token_counting",
+	"disable_adding_master_key_hash_to_db",
+	"enable_public_model_hub",
+	"strategy",
+	"healthCheckIntervalSec",
+	"maxConsecutiveFailures",
+	"allowed_fails",
+	"cooldown_time",
+	"num_retries",
+	"max_fallbacks",
+	"routing_strategy",
+	"fallbacks",
+	"enable_pre_call_checks",
+	"request_timeout",
+	"success_callback",
+	"failure_callback",
+	"callbacks",
+	"service_callbacks",
+	"cache",
+	"set_verbose",
+]);
+
+/** /router/settings 静态字段元数据（复刻 PY ROUTER_SETTINGS_FIELDS，litellm/types/management_endpoints/router_settings_endpoints.py） */
+const ROUTER_SETTINGS_FIELD_DEFS: ReadonlyArray<{
+	readonly field_name: string;
+	readonly field_type: string;
+	readonly field_description: string;
+	readonly field_default: unknown;
+	readonly ui_field_name: string;
+	readonly link?: string;
+}> = [
+	{
+		field_name: "routing_strategy",
+		field_type: "String",
+		field_description: "Routing strategy to use for load balancing across deployments",
+		field_default: "simple-shuffle",
+		ui_field_name: "Routing Strategy",
+	},
+	{
+		field_name: "routing_strategy_args",
+		field_type: "Dictionary",
+		field_description: "Arguments to pass to the routing strategy (e.g., ttl, lowest_latency_buffer for latency-based-routing)",
+		field_default: {},
+		ui_field_name: "Routing Strategy Args",
+	},
+	{
+		field_name: "num_retries",
+		field_type: "Integer",
+		field_description: "Number of retries for failed requests",
+		field_default: 0,
+		ui_field_name: "Number of Retries",
+	},
+	{
+		field_name: "timeout",
+		field_type: "Float",
+		field_description: "Timeout for requests in seconds",
+		field_default: null,
+		ui_field_name: "Timeout",
+	},
+	{
+		field_name: "stream_timeout",
+		field_type: "Float",
+		field_description: "Timeout for streaming requests in seconds",
+		field_default: null,
+		ui_field_name: "Stream Timeout",
+	},
+	{
+		field_name: "max_fallbacks",
+		field_type: "Integer",
+		field_description: "Maximum number of fallbacks to try before exiting the call",
+		field_default: 5,
+		ui_field_name: "Max Fallbacks",
+	},
+	{
+		field_name: "fallbacks",
+		field_type: "List",
+		field_description: "List of fallback model mappings",
+		field_default: [],
+		ui_field_name: "Fallbacks",
+	},
+	{
+		field_name: "context_window_fallbacks",
+		field_type: "List",
+		field_description: "List of fallback models for context window errors",
+		field_default: [],
+		ui_field_name: "Context Window Fallbacks",
+	},
+	{
+		field_name: "content_policy_fallbacks",
+		field_type: "List",
+		field_description: "List of fallback models for content policy errors",
+		field_default: [],
+		ui_field_name: "Content Policy Fallbacks",
+	},
+	{
+		field_name: "allowed_fails",
+		field_type: "Integer",
+		field_description: "Number of times a deployment can fail before being added to cooldown",
+		field_default: null,
+		ui_field_name: "Allowed Fails",
+	},
+	{
+		field_name: "cooldown_time",
+		field_type: "Float",
+		field_description: "Time in seconds to cooldown a deployment after failure",
+		field_default: null,
+		ui_field_name: "Cooldown Time",
+	},
+	{
+		field_name: "retry_after",
+		field_type: "Integer",
+		field_description: "Minimum time to wait before retrying a failed request in seconds",
+		field_default: 0,
+		ui_field_name: "Retry After",
+	},
+	{
+		field_name: "retry_policy",
+		field_type: "Dictionary",
+		field_description: "Custom retry policy for different exception types",
+		field_default: null,
+		ui_field_name: "Retry Policy",
+	},
+	{
+		field_name: "model_group_alias",
+		field_type: "Dictionary",
+		field_description: "Aliases for model groups",
+		field_default: {},
+		ui_field_name: "Model Group Alias",
+	},
+	{
+		field_name: "enable_pre_call_checks",
+		field_type: "Boolean",
+		field_description: "Enable pre-call checks before routing requests",
+		field_default: false,
+		ui_field_name: "Enable Pre-call Checks",
+	},
+	{
+		field_name: "default_litellm_params",
+		field_type: "Dictionary",
+		field_description: "Default parameters for Router.chat.completion.create",
+		field_default: null,
+		ui_field_name: "Default LiteLLM Params",
+	},
+	{
+		field_name: "set_verbose",
+		field_type: "Boolean",
+		field_description: "Enable verbose logging for router",
+		field_default: false,
+		ui_field_name: "Verbose Logging",
+	},
+	{
+		field_name: "default_max_parallel_requests",
+		field_type: "Integer",
+		field_description: "Default maximum parallel requests across all deployments",
+		field_default: null,
+		ui_field_name: "Max Parallel Requests",
+	},
+	{
+		field_name: "enable_tag_filtering",
+		field_type: "Boolean",
+		field_description: "Enable tag-based routing to route requests based on tags",
+		field_default: false,
+		ui_field_name: "Enable Tag Filtering",
+		link: "https://docs.litellm.ai/docs/proxy/tag_routing",
+	},
+	{
+		field_name: "tag_filtering_match_any",
+		field_type: "Boolean",
+		field_description: "Match any tag instead of all tags for tag-based routing",
+		field_default: true,
+		ui_field_name: "Tag Filtering Match Any",
+	},
+	{
+		field_name: "disable_cooldowns",
+		field_type: "Boolean",
+		field_description: "Disable cooldown mechanism for failed deployments",
+		field_default: null,
+		ui_field_name: "Disable Cooldowns",
+	},
+];
+
+/** 路由策略选项（对齐 PY Router.__init__ routing_strategy Literal 参数） */
+const ROUTING_STRATEGY_OPTIONS: readonly string[] = [
+	"simple-shuffle",
+	"least-busy",
+	"usage-based-routing",
+	"latency-based-routing",
+	"cost-based-routing",
+	"usage-based-routing-v2",
+];
+
+/** 路由策略描述（复刻 PY ROUTING_STRATEGY_DESCRIPTIONS） */
+const ROUTING_STRATEGY_DESCRIPTIONS: Readonly<Record<string, string>> = {
+	"simple-shuffle": "Randomly picks a deployment from the list. Simple and fast.",
+	"least-busy": "Routes to the deployment with the lowest number of ongoing requests.",
+	"latency-based-routing": "Routes to the deployment with the lowest latency over a sliding window.",
+	"cost-based-routing": "Routes to the deployment with the lowest cost per token.",
+	"usage-based-routing": "Routes to the deployment with the lowest TPM (Tokens Per Minute) usage. (deprecated)",
+	"usage-based-routing-v2": "Improved version of usage-based routing with better tracking.",
+};
+
+/**
+ * 构造 /router/settings 的 current_values（对齐 PY：llm_router 属性值 < config router_settings 覆盖）。
+ * TS 端以 config.routerSettings（camelCase 解析值）为底，routerSettingsRaw（snake_case 原文）覆盖；
+ * 批次 C4：DB router_settings（LiteLLM_Config 表）再覆盖一层（对齐 Python get_config 的 DB 优先语义）。
+ * @param config - 服务配置
+ */
+function buildRouterSettingsCurrentValues(config: ServiceConfig | undefined): Record<string, unknown> {
+	const values: Record<string, unknown> = {
+		routing_strategy: "simple-shuffle",
+		num_retries: 0,
+		max_fallbacks: 5,
+		enable_pre_call_checks: false,
+		set_verbose: false,
+		// PY Router 缺省 timeout=6000 秒（router.py __init__ 缺省值）
+		timeout: 6000,
+	};
+	if (!config) {
+		return values;
+	}
+	for (const [key, value] of Object.entries(config.routerSettings)) {
+		if (value !== undefined) {
+			values[key] = value;
+		}
+	}
+	const raw = config.routerSettingsRaw;
+	if (raw) {
+		for (const [key, value] of Object.entries(raw)) {
+			values[key] = value;
+		}
+	}
+	// DB 优先：DB 中出现的键覆盖 yaml 有效值
+	const dbRouterSettings = dbConfigProvider.getParam("router_settings");
+	for (const [key, value] of Object.entries(dbRouterSettings)) {
+		if (value !== null && value !== undefined) {
+			values[key] = value;
+		}
+	}
+	return values;
+}
+
+const AVAILABLE_CALLBACKS: Readonly<
+	Record<
+		string,
+		{
+			readonly litellm_callback_name: string;
+			readonly litellm_callback_params: readonly string[];
+			readonly ui_callback_name: string;
+		}
+	>
+> = {
+	langfuse: {
+		litellm_callback_name: "langfuse",
+		litellm_callback_params: ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"],
+		ui_callback_name: "Langfuse",
+	},
+	otel: {
+		litellm_callback_name: "otel",
+		litellm_callback_params: ["OTEL_EXPORTER", "OTEL_ENDPOINT", "OTEL_HEADERS"],
+		ui_callback_name: "OpenTelemetry",
+	},
+	s3: {
+		litellm_callback_name: "s3",
+		litellm_callback_params: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION_NAME"],
+		ui_callback_name: "s3 Bucket (AWS)",
+	},
+	openmeter: {
+		litellm_callback_name: "openmeter",
+		litellm_callback_params: ["OPENMETER_API_ENDPOINT", "OPENMETER_API_KEY"],
+		ui_callback_name: "OpenMeter",
+	},
+	custom_callback_api: {
+		litellm_callback_name: "custom_callback_api",
+		litellm_callback_params: ["GENERIC_LOGGER_ENDPOINT", "GENERIC_LOGGER_HEADERS"],
+		ui_callback_name: "Custom Callback API",
+	},
+	generic_api: {
+		litellm_callback_name: "generic_api",
+		litellm_callback_params: ["GENERIC_LOGGER_ENDPOINT", "GENERIC_LOGGER_HEADERS"],
+		ui_callback_name: "Custom Callback API",
+	},
+	datadog: {
+		litellm_callback_name: "datadog",
+		litellm_callback_params: ["DD_API_KEY", "DD_SITE"],
+		ui_callback_name: "Datadog",
+	},
+	braintrust: {
+		litellm_callback_name: "braintrust",
+		litellm_callback_params: ["BRAINTRUST_API_KEY", "BRAINTRUST_API_BASE"],
+		ui_callback_name: "Braintrust",
+	},
+	langsmith: {
+		litellm_callback_name: "langsmith",
+		litellm_callback_params: ["LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_DEFAULT_RUN_NAME"],
+		ui_callback_name: "Langsmith",
+	},
+	lago: {
+		litellm_callback_name: "lago",
+		litellm_callback_params: ["LAGO_API_BASE", "LAGO_API_KEY", "LAGO_API_EVENT_CODE", "LAGO_API_CHARGE_BY"],
+		ui_callback_name: "Lago Billing",
+	},
+	traceloop: {
+		litellm_callback_name: "traceloop",
+		litellm_callback_params: ["TRACELOOP_API_KEY"],
+		ui_callback_name: "Traceloop",
+	},
+};
+
+/** 单个已配置回调（PY get_config 的 _data_to_return 项：{name, variables, type}） */
+interface ConfiguredCallbackItem {
+	readonly name: string;
+	readonly variables: Record<string, unknown>;
+	readonly type: "success" | "failure" | "success_and_failure";
+}
+
+interface ConfigCallbacksResponse {
+	readonly status: "success";
+	readonly callbacks: readonly ConfiguredCallbackItem[];
+	readonly alerts: readonly unknown[];
+	readonly router_settings: Record<string, unknown>;
+	readonly available_callbacks: typeof AVAILABLE_CALLBACKS;
+}
+
+function assertProxyAdmin(req: { readonly auth?: UserAPIKeyAuth }): void {
+	const auth = req.auth;
+	if (!auth) {
+		throw ApiError.unauthorized("Missing admin auth");
+	}
+	// PY: 仅校验 user_role（proxy_server.py get_model_cost_map_source:
+	// `user_role != LitellmUserRoles.PROXY_ADMIN → 403`），不校验 team_id——
+	// WebUI 登录态 virtual key 属于 litellm-dashboard team 但角色为 proxy_admin。
+	if (auth.user_role !== PROXY_ADMIN_ROLE) {
+		throw new ApiError(HTTP_FORBIDDEN, "Proxy admin role required");
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeConfigValue(fieldName: string, value: unknown): unknown {
+	if (SENSITIVE_CONFIG_KEY_PATTERN.test(fieldName)) {
+		return null;
+	}
+	if (Array.isArray(value)) {
+		return value.map((item) => sanitizeConfigValue(fieldName, item));
+	}
+	if (!isRecord(value)) {
+		return value;
+	}
+	const out: Record<string, unknown> = {};
+	for (const [key, nestedValue] of Object.entries(value)) {
+		out[key] = sanitizeConfigValue(key, nestedValue);
+	}
+	return out;
+}
+
+function publicConfigRecord(value: unknown): Record<string, unknown> {
+	if (!isRecord(value)) {
+		return {};
+	}
+	return sanitizeConfigValue("", value) as Record<string, unknown>;
+}
+
+function pickStringArray(record: Record<string, unknown>, fieldName: string): string[] {
+	const value = record[fieldName];
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.filter((item): item is string => typeof item === "string");
+}
+
+/**
+ * PY get_config 的 process_callback：环境变量值缺省 null（不脱敏值，PY 解密后返回，TS 对齐缺省 null）
+ * @param litellmSettings - litellm_settings 配置块
+ */
+function buildConfiguredCallbacks(litellmSettings: Record<string, unknown>): ConfiguredCallbackItem[] {
+	const items: ConfiguredCallbackItem[] = [];
+	const pushAll = (names: readonly string[], type: ConfiguredCallbackItem["type"]): void => {
+		for (const name of names) {
+			const params = AVAILABLE_CALLBACKS[name as keyof typeof AVAILABLE_CALLBACKS]?.litellm_callback_params ?? [];
+			const variables: Record<string, unknown> = {};
+			for (const param of params) {
+				variables[param] = process.env[param] ?? null;
+			}
+			items.push({ name: name, variables: variables, type: type });
+		}
+	};
+	pushAll(pickStringArray(litellmSettings, "success_callback"), "success");
+	pushAll(pickStringArray(litellmSettings, "failure_callback"), "failure");
+	pushAll(pickStringArray(litellmSettings, "callbacks"), "success_and_failure");
+	// PY: websearch_interception_params 配置存在时自动注册 websearch_interception callback
+	// （callback_utils.py initialize_dynamic_callbacks）
+	if (isRecord(litellmSettings["websearch_interception_params"])) {
+		items.push({ name: "websearch_interception", variables: {}, type: "success_and_failure" });
+	}
+	return items;
+}
+
+/** PY get_config 的 alerting_data：email 变量集（缺省 null） */
+function buildAlertingData(): readonly unknown[] {
+	const emailVars: Record<string, unknown> = {};
+	for (const varName of [
+		"SMTP_HOST",
+		"SMTP_PORT",
+		"SMTP_USERNAME",
+		"SMTP_PASSWORD",
+		"SMTP_SENDER_EMAIL",
+		"TEST_EMAIL_ADDRESS",
+		"EMAIL_LOGO_URL",
+		"EMAIL_SUPPORT_CONTACT",
+	]) {
+		emailVars[varName] = process.env[varName] ?? null;
+	}
+	return [{ name: "email", variables: emailVars }];
+}
+
+/**
+ * PY llm_router.get_settings() 的键集与缺省值（router.py get_settings）。
+ * 批次 C4：DB router_settings（LiteLLM_Config 表）覆盖 yaml 值
+ * （对齐 Python get_config 的 DB 优先合并语义）。
+ * @param config - 服务配置
+ */
+function buildRouterSettingsForCallbacks(config: ServiceConfig | undefined): Record<string, unknown> {
+	const raw = config?.routerSettingsRaw ?? {};
+	const rs = config?.routerSettings;
+	const yamlValues: Record<string, unknown> = {
+		routing_strategy_args: {},
+		routing_strategy: raw["routing_strategy"] ?? rs?.routing_strategy ?? "simple-shuffle",
+		allowed_fails: raw["allowed_fails"] ?? rs?.allowed_fails ?? null,
+		cooldown_time: raw["cooldown_time"] ?? rs?.cooldown_time ?? null,
+		num_retries: raw["num_retries"] ?? rs?.num_retries ?? null,
+		// PY Router 缺省 timeout=6000 秒（router.py __init__ 缺省值）
+		timeout: raw["timeout"] ?? raw["request_timeout"] ?? rs?.request_timeout ?? 6000,
+		retry_after: raw["retry_after"] ?? 0,
+		fallbacks: raw["fallbacks"] ?? rs?.fallbacks ?? [],
+		context_window_fallbacks: raw["context_window_fallbacks"] ?? null,
+		model_group_retry_policy: raw["model_group_retry_policy"] ?? {},
+		retry_policy: raw["retry_policy"] ?? null,
+		model_group_alias: raw["model_group_alias"] ?? rs?.model_group_alias ?? {},
+	};
+	// DB 优先：DB 中出现的键覆盖 yaml 有效值（对齐 _update_dictionary DB 语义）
+	const dbRouterSettings = dbConfigProvider.getParam("router_settings");
+	for (const [key, value] of Object.entries(dbRouterSettings)) {
+		if (value !== null && value !== undefined) {
+			yamlValues[key] = value;
+		}
+	}
+	return yamlValues;
+}
+
+function buildConfigCallbacksResponse(config: ServiceConfig | undefined): ConfigCallbacksResponse {
+	// PY get_config 的 litellm_settings 源：DB（LiteLLM_Config 表，WebUI 设置项）优先，yaml 兜底
+	const dbLitellmSettings = dbConfigProvider.getParam("litellm_settings");
+	const litellmSettings =
+		Object.keys(dbLitellmSettings).length > 0
+			? publicConfigRecord(dbLitellmSettings)
+			: publicConfigRecord(
+					config?.litellmSettingsRaw ?? (config as unknown as { litellm_settings?: unknown } | undefined)?.litellm_settings,
+				);
+	return {
+		status: "success",
+		callbacks: buildConfiguredCallbacks(litellmSettings),
+		alerts: buildAlertingData(),
+		router_settings: buildRouterSettingsForCallbacks(config),
+		available_callbacks: AVAILABLE_CALLBACKS,
+	};
+}
+
+function resolveConfigFieldValue(config: ServiceConfig | undefined, fieldName: string): unknown {
+	if (SENSITIVE_CONFIG_KEY_PATTERN.test(fieldName)) {
+		return null;
+	}
+	if (!CONFIG_FIELD_INFO_ALLOWED_FIELDS.has(fieldName)) {
+		throw new ApiError(HTTP_FORBIDDEN, `Config field "${fieldName}" is not readable`);
+	}
+	const sources: readonly Record<string, unknown>[] = [
+		publicConfigRecord(config?.generalSettingsRaw),
+		publicConfigRecord(config?.routerSettingsRaw),
+		publicConfigRecord(config?.litellmSettingsRaw),
+		publicConfigRecord(config?.generalSettings),
+		publicConfigRecord(config?.routerSettings),
+		publicConfigRecord(config?.litellmSettings),
+	];
+	for (const source of sources) {
+		if (fieldName in source) {
+			return source[fieldName];
+		}
+	}
+	// PY 对未显式配置的布尔开关返回 False 而非 null（general_settings 缺省语义）
+	if (CONFIG_FIELD_INFO_BOOLEAN_DEFAULT_FALSE.has(fieldName)) {
+		return false;
+	}
+	return null;
+}
+
+/** /config/field/info 中缺省值为 false 的布尔字段（对齐 PY general_settings 缺省） */
+const CONFIG_FIELD_INFO_BOOLEAN_DEFAULT_FALSE: ReadonlySet<string> = new Set<string>(["enable_public_model_hub"]);
 
 /** 排序方向（对齐 Python LiteLLM 默认 asc） */
 const enum ModelInfoSortOrder {
@@ -52,6 +566,8 @@ const DEFAULT_MODEL_INFO_SORT_BY = ModelInfoSortField.MODEL_NAME;
 export interface RouterDeploymentsAccessor {
 	/** 返回 Router 当前持有的所有 deployments */
 	getDeployments(): Deployment[];
+	/** 可选：返回当前 fallback 配置（Router.getFallbacks）；缺省时 /v2/model/info 注入空 fallbacks */
+	getFallbacks?(): Record<string, string[]>;
 }
 
 /** /v2/model/info 接受的 query 形状。明确列出字段，禁止 Record<string, unknown>。 */
@@ -83,16 +599,13 @@ function parseModelInfoQuery(raw: Record<string, unknown>): V2ModelInfoQuery {
 	};
 }
 
-/** Python LiteLLM 兼容分页响应（提供 current_page/page 与 total_count/total 两套别名） */
+/** Python LiteLLM 分页响应（对齐 _paginate_models_response：data/total_count/current_page/total_pages/size） */
 interface PaginatedModelInfoResponse {
 	data: ModelInfoV2Item[];
 	total_count: number;
-	total: number;
 	current_page: number;
-	page: number;
 	total_pages: number;
 	size: number;
-	page_size: number;
 }
 
 /** Python LiteLLM 兼容的 /v2/model/info 单元素 */
@@ -155,6 +668,17 @@ function buildPublicLitellmParams(params: LitellmParams): Record<string, unknown
 }
 
 /**
+ * 读取 litellm_params 中的布尔开关（Python LiteLLM_Params 默认 false 的三个字段：
+ * merge_reasoning_content_in_choices / use_in_pass_through / use_litellm_proxy）。
+ * 未设置或非布尔时按 Python 默认值 false 返回。
+ * @param params - 内部 litellm_params
+ * @param fieldName - 字段名
+ */
+function pickBooleanParam(params: LitellmParams, fieldName: string): boolean {
+	return params[fieldName] === true;
+}
+
+/**
  * 构造模型唯一 id：优先使用 model_info.id，否则用 litellm_params.model + 序号稳定生成。
  * index 仅在大于 0 时附加 `-${index}`，避免 base-0 出现 `foo-0` 这样的非 Python 风格 id。
  * @param modelInfo - 模型元信息
@@ -170,57 +694,35 @@ function resolveModelId(modelInfo: ModelInfo | undefined, dep: Deployment, index
 }
 
 /**
- * 清理掉 undefined 字段：保持 missing/null 语义，避免 WebUI 端 `.id === undefined` 误判。
- * @template T - 对象类型
- * @param obj
- */
-function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
-	const out: Partial<T> = {};
-	for (const [infoKey, infoValue] of Object.entries(obj)) {
-		if (infoValue !== undefined) {
-			(out as Record<string, unknown>)[infoKey] = infoValue;
-		}
-	}
-	return out;
-}
-
-/**
  * 把一个 Deployment 投影为 /v2/model/info 单元素。
+ * model_info 对齐 Python `_enrich_model_info_with_litellm_data` 输出（73 键，缺省 null），
+ * 另注入 `fallbacks`（该 model_group 当前 fallback 链，WebUI Fallback 列数据源，
+ * 等价 PY get_all_fallbacks 按 model_group 反查 Router.fallbacks）。
+ * litellm_params 为白名单浅拷贝 + Python 默认 false 的三个布尔开关。
  * 严格不包含 api_key 等敏感字段。
  * @param dep - Router deployment
  * @param stableIndex - 同一 model_name 下的序号
  * @param modelInfo - 优先取自 dep.model_info；为空时使用兜底对象
+ * @param fallbacks - 该 model_group 的当前 fallback 链（无配置时传空数组）
+ * @param modelCostMap
  */
-function buildModelInfoV2Item(dep: Deployment, stableIndex: number, modelInfo: ModelInfo | undefined): ModelInfoV2Item {
-	const info: ModelInfo = modelInfo ?? {};
-	const id = resolveModelId(info, dep, stableIndex);
-	// 补齐 id / mode / model_name 等字段：WebUI 表格列与详情面板均依赖这些字段存在
-	// （直接读取 `model_info.id` / `model_info.mode` / `model_info.model_name`，
-	//  缺字段时表格渲染会显示 "undefined" 并触发排序/筛选异常）。
-	const supports: Partial<Record<SupportsFlag, boolean>> = {};
-	for (const flag of SUPPORTS_FLAGS) {
-		if (info[flag] === true) {
-			supports[flag] = true;
-		}
-	}
-	const publicModelInfo: Record<string, unknown> = stripUndefined({
-		id: id,
-		mode: info.mode,
-		model_name: info.model_name ?? dep.model_name,
-		input_cost_per_token: info.input_cost_per_token,
-		output_cost_per_token: info.output_cost_per_token,
-		max_input_tokens: info.max_input_tokens,
-		max_output_tokens: info.max_output_tokens,
-		litellm_provider: info.litellm_provider ?? dep.litellm_params.custom_llm_provider,
-		tpm: pickTpm(info, dep),
-		rpm: pickRpm(info, dep),
-		...supports,
-		region: info.region,
-	});
+function buildModelInfoV2Item(
+	dep: Deployment,
+	stableIndex: number,
+	modelInfo: ModelInfo | undefined,
+	fallbacks: readonly string[],
+	modelCostMap: ReturnType<ModelCostMapService["getSnapshot"]>["map"],
+): ModelInfoV2Item {
+	const fallbackId = resolveModelId(modelInfo, dep, stableIndex);
 	return {
 		model_name: dep.model_name,
-		litellm_params: buildPublicLitellmParams(dep.litellm_params),
-		model_info: publicModelInfo,
+		litellm_params: {
+			...buildPublicLitellmParams(dep.litellm_params),
+			merge_reasoning_content_in_choices: pickBooleanParam(dep.litellm_params, "merge_reasoning_content_in_choices"),
+			use_in_pass_through: pickBooleanParam(dep.litellm_params, "use_in_pass_through"),
+			use_litellm_proxy: pickBooleanParam(dep.litellm_params, "use_litellm_proxy"),
+		},
+		model_info: { ...buildEnrichedModelInfo(dep, fallbackId, modelCostMap), fallbacks: [...fallbacks] },
 	};
 }
 
@@ -289,8 +791,15 @@ function sortItems<T extends { model_name: string; model_info: { id?: string } }
  * 构造 /v2/model/info 分页响应
  * @param deployments - Router 全部 deployment
  * @param query - 原始 query
+ * @param fallbacksByGroup - model_group → fallback 链（Router 当前配置）
+ * @param modelCostMap
  */
-function buildV2ModelInfoResponse(deployments: Deployment[], query: V2ModelInfoQuery): PaginatedModelInfoResponse {
+function buildV2ModelInfoResponse(
+	deployments: Deployment[],
+	query: V2ModelInfoQuery,
+	fallbacksByGroup: Record<string, string[]>,
+	modelCostMap: ReturnType<ModelCostMapService["getSnapshot"]>["map"],
+): PaginatedModelInfoResponse {
 	const page = parsePositiveInt(query.page, DEFAULT_MODEL_INFO_PAGE);
 	const size = parsePositiveInt(query.size, DEFAULT_MODEL_INFO_PAGE_SIZE);
 	const search = (query.search ?? "").trim().toLowerCase();
@@ -313,9 +822,10 @@ function buildV2ModelInfoResponse(deployments: Deployment[], query: V2ModelInfoQ
 	}
 
 	let items: ModelInfoV2Item[] = [];
-	for (const [, group] of grouped) {
+	for (const [groupName, group] of grouped) {
+		const groupFallbacks = fallbacksByGroup[groupName] ?? [];
 		group.forEach((dep, idx) => {
-			items.push(buildModelInfoV2Item(dep, idx, dep.model_info));
+			items.push(buildModelInfoV2Item(dep, idx, dep.model_info, groupFallbacks, modelCostMap));
 		});
 	}
 
@@ -346,12 +856,9 @@ function buildV2ModelInfoResponse(deployments: Deployment[], query: V2ModelInfoQ
 	return {
 		data: pageData,
 		total_count: total,
-		total: total,
 		current_page: page,
-		page: page,
 		total_pages: totalPages,
 		size: size,
-		page_size: size,
 	};
 }
 
@@ -359,9 +866,8 @@ function buildV2ModelInfoResponse(deployments: Deployment[], query: V2ModelInfoQ
  * 构造 /model_group/info 响应：从 deployments 按 model_name 聚合
  * @param deployments - Router 全部 deployment
  */
-// buildModelGroupInfoResponse 移至 ./modelGroupBuilder.ts
-// 注意：SUPPORTS_FLAGS / SupportsFlag 类型仍在本文件 import，因为
-// buildModelInfoV2Item 也用同一白名单聚合 supports_* 字段。
+// buildModelGroupInfoResponse 与 model_info 推导（buildEnrichedModelInfo）
+// 均在 ./modelGroupBuilder.ts，对齐 Python cost map 推导逻辑。
 
 /**
  * 提取 deployments 列表：仅从 Router / RouterDeploymentsAccessor 注入获取。
@@ -384,15 +890,33 @@ function resolveDeployments(routerOrAccessor: Router | RouterDeploymentsAccessor
 }
 
 /**
+ * 提取当前 fallback 配置：仅当注入对象实现 getFallbacks（Router）时返回真实值，
+ * 否则返回空表（每项 model_info.fallbacks 注入空数组，WebUI Fallback 列显示 "-"）。
+ * @param routerOrAccessor
+ */
+function resolveFallbacks(routerOrAccessor: Router | RouterDeploymentsAccessor | undefined): Record<string, string[]> {
+	if (routerOrAccessor && typeof routerOrAccessor.getFallbacks === "function") {
+		try {
+			return routerOrAccessor.getFallbacks();
+		} catch {
+			return {};
+		}
+	}
+	return {};
+}
+
+/**
  * 注册 Models 页面支撑端点
  * @param router - Express Router 实例（需经过鉴权中间件）
  * @param routerOrAccessor - TS Router 或 deployments 访问器；用于构造 /v2/model/info 真实数据
  * @param config - 服务配置；用于 model_cost_map 暴露真实 model_count 等
+ * @param costMapService
  */
 export function registerModelsPageSupportRoutes(
 	router: ExpressRouter,
 	routerOrAccessor?: Router | RouterDeploymentsAccessor,
 	config?: ServiceConfig,
+	costMapService: ModelCostMapService = modelCostMapService,
 ): void {
 	// ── /v2/model/info ──────────────────────────────────────
 
@@ -401,7 +925,7 @@ export function registerModelsPageSupportRoutes(
 	 *
 	 * WebUI 通过 useModelsInfo hook 调用，期望 PaginatedModelInfoResponse：
 	 * { data: [...], total_count, current_page, total_pages, size }
-	 * 同时返回 Python 分页字段别名（total/page/page_size），避免某些消费方 .length 读取 undefined 崩溃。
+	 * （与 Python `_paginate_models_response` 键集完全一致）。
 	 *
 	 * 支持 query：
 	 *   - page, size: 分页
@@ -413,7 +937,12 @@ export function registerModelsPageSupportRoutes(
 	registerRoute(router, { method: "get", path: "/v2/model/info" }, (req) => {
 		const deployments = resolveDeployments(routerOrAccessor);
 		// 无部署时按 Python 空态返回 total_pages = 0
-		return buildV2ModelInfoResponse(deployments, parseModelInfoQuery(req.query as Record<string, unknown>));
+		return buildV2ModelInfoResponse(
+			deployments,
+			parseModelInfoQuery(req.query as Record<string, unknown>),
+			resolveFallbacks(routerOrAccessor),
+			costMapService.getSnapshot().map,
+		);
 	});
 
 	// ── /v1/model/info ──────────────────────────────────────
@@ -434,7 +963,8 @@ export function registerModelsPageSupportRoutes(
 		// 同一 model_name 内按出现顺序分配 stableIndex
 		const sameGroup = deployments.filter((d) => d.model_name === dep.model_name);
 		const idx = sameGroup.indexOf(dep);
-		return { data: [buildModelInfoV2Item(dep, idx, dep.model_info)] };
+		const fallbacks = resolveFallbacks(routerOrAccessor)[dep.model_name] ?? [];
+		return { data: [buildModelInfoV2Item(dep, idx, dep.model_info, fallbacks, costMapService.getSnapshot().map)] };
 	});
 
 	// ── /model_group/info ───────────────────────────────────
@@ -448,7 +978,7 @@ export function registerModelsPageSupportRoutes(
 	 */
 	registerRoute(router, { method: "get", path: "/model_group/info" }, () => {
 		const deployments = resolveDeployments(routerOrAccessor);
-		return buildModelGroupInfoResponse(deployments);
+		return buildModelGroupInfoResponse(deployments, costMapService.getSnapshot().map);
 	});
 
 	// ── /config/pass_through_endpoint ───────────────────────
@@ -494,8 +1024,45 @@ export function registerModelsPageSupportRoutes(
 	// ── /config/field/info ──────────────────────────────────
 
 	/** 获取指定配置字段信息 */
-	registerRoute(router, { method: "get", path: "/config/field/info" }, () => ({}));
+	registerRoute(router, { method: "get", path: "/config/field/info" }, (req) => {
+		assertProxyAdmin(req);
+		const fieldName = firstQueryString(req.query.field_name ?? req.query.field ?? req.query.param);
+		if (!fieldName) {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Missing field_name");
+		}
+		return {
+			field_name: fieldName,
+			field_value: resolveConfigFieldValue(config, fieldName),
+		};
+	});
 
+	// ── /router/settings ────────────────────────────────────
+
+	/**
+	 * 路由设置字段清单（Settings → Router Settings 页面数据源）。
+	 * 对齐 Python litellm/proxy/management_endpoints/router_settings_endpoints.py：
+	 * 静态字段元数据（ROUTER_SETTINGS_FIELDS）+ config 动态值 +
+	 * routing_strategy_descriptions。field_value 合并序：router 运行值 < config 覆盖。
+	 */
+	registerRoute(router, { method: "get", path: "/router/settings" }, (req) => {
+		assertProxyAdmin(req);
+		const currentValues = buildRouterSettingsCurrentValues(config);
+		const fields = ROUTER_SETTINGS_FIELD_DEFS.map((fieldDef) => ({
+			field_name: fieldDef.field_name,
+			field_type: fieldDef.field_type,
+			field_value: fieldDef.field_name in currentValues ? currentValues[fieldDef.field_name] : null,
+			field_description: fieldDef.field_description,
+			field_default: fieldDef.field_default,
+			options: fieldDef.field_name === "routing_strategy" ? [...ROUTING_STRATEGY_OPTIONS] : null,
+			ui_field_name: fieldDef.ui_field_name,
+			link: fieldDef.link ?? null,
+		}));
+		return {
+			fields: fields,
+			current_values: currentValues,
+			routing_strategy_descriptions: ROUTING_STRATEGY_DESCRIPTIONS,
+		};
+	});
 	// ── 配置回调（Models 页面 / 路由设置） ────────────────────
 
 	/**
@@ -506,13 +1073,10 @@ export function registerModelsPageSupportRoutes(
 	 * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/proxy_server.py
 	 * WebUI `getCallbacksCall` 直接 `response.json()`，必须返回 JSON 对象。
 	 */
-	registerRoute(router, { method: "get", path: "/get/config/callbacks" }, () => ({
-		status: "success",
-		callbacks: [],
-		alerts: [],
-		router_settings: {},
-		available_callbacks: {},
-	}));
+	registerRoute(router, { method: "get", path: "/get/config/callbacks" }, (req) => {
+		assertProxyAdmin(req);
+		return buildConfigCallbacksResponse(config);
+	});
 
 	// ── 成本映射相关 ─────────────────────────────────────────
 
@@ -525,32 +1089,53 @@ export function registerModelsPageSupportRoutes(
 	 * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/proxy_server.py
 	 * WebUI 渲染时会调用 `C.model_count.toLocaleString()`，所以 `model_count` 必须存在。
 	 */
-	registerRoute(router, { method: "get", path: "/model/cost_map/source" }, () => ({
-		source: "local",
-		url: null,
-		is_env_forced: false,
-		fallback_reason: null,
-		model_count: config?.modelList?.length ?? 0,
-	}));
+	registerRoute(router, { method: "get", path: "/model/cost_map/source" }, (req) => {
+		assertProxyAdmin(req);
+		const snapshot = costMapService.getSnapshot();
+		return {
+			source: snapshot.source,
+			url: snapshot.url,
+			is_env_forced: snapshot.isEnvForced,
+			fallback_reason: snapshot.fallbackReason,
+			model_count: snapshot.modelCount,
+		};
+	});
 
 	/** 获取模型成本映射定时重载状态 */
-	registerRoute(router, { method: "get", path: "/schedule/model_cost_map_reload/status" }, () => ({
-		scheduled: false,
-		next_reload_at: null,
-	}));
+	registerRoute(router, { method: "get", path: "/schedule/model_cost_map_reload/status" }, (req) => {
+		assertProxyAdmin(req);
+		const status = costMapService.getScheduleStatus();
+		return { scheduled: status.scheduled, hours: status.hours, next_reload_at: status.nextReloadAt };
+	});
 
 	/** 调度模型成本映射重载 */
-	registerRoute(router, { method: "post", path: "/schedule/model_cost_map_reload" }, () => ({
-		success: true,
-	}));
+	registerRoute(router, { method: "post", path: "/schedule/model_cost_map_reload" }, (req) => {
+		assertProxyAdmin(req);
+		const hours = Number(firstQueryString(req.query.hours));
+		if (!Number.isFinite(hours) || hours <= 0) {
+			throw ApiError.badRequest("hours must be a finite number greater than 0");
+		}
+		const status = costMapService.schedule(hours);
+		return { success: true, scheduled: status.scheduled, hours: status.hours, next_reload_at: status.nextReloadAt };
+	});
 
 	/** 取消模型成本映射重载调度 */
-	registerRoute(router, { method: "delete", path: "/schedule/model_cost_map_reload" }, () => ({
-		success: true,
-	}));
+	registerRoute(router, { method: "delete", path: "/schedule/model_cost_map_reload" }, (req) => {
+		assertProxyAdmin(req);
+		const status = costMapService.cancelSchedule();
+		return { success: true, scheduled: status.scheduled, hours: status.hours, next_reload_at: status.nextReloadAt };
+	});
 
 	/** 立即重载模型成本映射 */
-	registerRoute(router, { method: "post", path: "/reload/model_cost_map" }, () => ({
-		success: true,
-	}));
+	registerRoute(router, { method: "post", path: "/reload/model_cost_map" }, async (req) => {
+		assertProxyAdmin(req);
+		const snapshot = await costMapService.reload();
+		return {
+			status: "success",
+			models_count: snapshot.modelCount,
+			source: snapshot.source,
+			timestamp: snapshot.loadedAt,
+			fallback_reason: snapshot.fallbackReason,
+		};
+	});
 }

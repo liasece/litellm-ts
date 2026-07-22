@@ -17,6 +17,7 @@ import {
   TabPanel,
   TabPanels,
 } from "@tremor/react";
+import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { perUserAnalyticsCall } from "./networking";
 
 interface PerUserMetrics {
@@ -135,7 +136,7 @@ const PerUserUsage: React.FC<PerUserUsageProps> = ({ accessToken, selectedTags, 
                       <Text>{formatAbbreviatedNumber(item.successful_requests)}</Text>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Text>{formatAbbreviatedNumber(item.total_tokens)}</Text>
+                      <Text>{formatNumberWithCommas(item.total_tokens, 0, false)}</Text>
                     </TableCell>
                     <TableCell className="text-right">
                       <Text>{formatAbbreviatedNumber(item.failed_requests)}</Text>

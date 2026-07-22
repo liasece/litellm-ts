@@ -43,6 +43,7 @@
  */
 
 import * as fs from "fs";
+import * as crypto from "crypto";
 import * as yaml from "js-yaml";
 import * as path from "path";
 import { z } from "zod";
@@ -128,6 +129,9 @@ const ModelInfoSchema = z
 		supports_tool_choice: z.boolean().optional(),
 		input_cost_per_token: z.number().optional(),
 		output_cost_per_token: z.number().optional(),
+		// PY model_info cache 定价字段（生产配置主要价格来源）
+		cache_creation_input_token_cost: z.number().optional(),
+		cache_read_input_token_cost: z.number().optional(),
 		litellm_provider: z.string().optional(),
 	})
 	.passthrough();
@@ -190,6 +194,7 @@ const GeneralSettingsSchema = z.object({
 	 * 避免任何持久化（既无明文也无哈希）。
 	 */
 	disable_adding_master_key_hash_to_db: z.boolean().optional(),
+	store_prompts_in_spend_logs: z.boolean().optional(),
 });
 
 /**
@@ -349,6 +354,8 @@ export interface RouterSettings {
 	readonly model_group_alias: Record<string, string>;
 	/** 启用请求前预检 */
 	readonly enable_pre_call_checks?: boolean;
+	/** 搜索工具配置（websearch 拦截与 /v1/search/tools 清单） */
+	readonly search_tools?: Record<string, unknown>[];
 	/** Redis 连接 URL */
 	readonly redis_url?: string;
 	/** 请求超时时间（秒） */
@@ -381,6 +388,8 @@ export interface GeneralSettings {
 	 * true 时 SpendTracker 在检测到请求由 master key 发起时，会跳过 api_key 写入（避免任何持久化）。
 	 */
 	readonly disable_adding_master_key_hash_to_db?: boolean;
+	/** 是否在 SpendLogs 中存储 prompt/response/body，默认关闭 */
+	readonly store_prompts_in_spend_logs?: boolean;
 }
 
 /** 服务配置 */
@@ -408,6 +417,91 @@ export interface ServiceConfig {
 }
 
 // ============ 解析逻辑 ============
+
+/**
+ * PY json.dumps ensure_ascii 字符串序列化：JSON.stringify 后把非 ASCII 的
+ * UTF-16 码元转义为 \uXXXX（小写十六进制），与 CPython 输出逐字节一致
+ * （CPython 对 BMP 外字符同样按 surrogate pair 逐码元转义）。
+ * @param value - 待序列化字符串
+ */
+function dumpsStringAscii(value: string): string {
+	const json = JSON.stringify(value);
+	let out = "";
+	for (let i = 0; i < json.length; i++) {
+		const code = json.charCodeAt(i);
+		out += code > 0x7e ? `\\u${code.toString(16).padStart(4, "0")}` : json[i];
+	}
+	return out;
+}
+
+/**
+ * 复刻 PY json.dumps 默认输出（', '/': ' 分隔 + ensure_ascii），
+ * 供 generateModelId 对 dict 类型 litellm_params 值取字符串。
+ * 注：PY float repr 与 JS Number.toString 在极小浮点上有差异（1e-06 vs 0.000001），
+ * litellm_params 实践中数值均为整数，此处不对齐该边缘情形。
+ * @param value - JSON 兼容值
+ */
+function pythonJsonDumps(value: unknown): string {
+	if (value === null || value === undefined) {
+		return "null";
+	}
+	if (typeof value === "string") {
+		return dumpsStringAscii(value);
+	}
+	if (typeof value === "number" || typeof value === "boolean") {
+		return String(value);
+	}
+	if (Array.isArray(value)) {
+		return `[${value.map(pythonJsonDumps).join(", ")}]`;
+	}
+	const entries = Object.entries(value as Record<string, unknown>).map(
+		([key, val]) => `${dumpsStringAscii(key)}: ${pythonJsonDumps(val)}`,
+	);
+	return `{${entries.join(", ")}}`;
+}
+
+/**
+ * 复刻 PY `_generate_model_id` 对 litellm_params 值的字符串化规则
+ * （litellm/router.py:6560-6576）：string 原样；dict 走 json.dumps；
+ * 其余走 str()（True/False/None 首字母大写）。
+ * @param value - litellm_params 单个字段值
+ */
+function pythonParamValueToStr(value: unknown): string {
+	if (typeof value === "string") {
+		return value;
+	}
+	if (typeof value === "boolean") {
+		return value ? "True" : "False";
+	}
+	if (value === null || value === undefined) {
+		return "None";
+	}
+	if (typeof value === "number") {
+		return String(value);
+	}
+	if (Array.isArray(value)) {
+		// PY 走 str(list)（元素 repr 风格）；litellm_params 数组值实践中不存在，仅作兜底
+		return `[${value.map(pythonParamValueToStr).join(", ")}]`;
+	}
+	return pythonJsonDumps(value);
+}
+
+/**
+ * 复刻 PY Router._generate_model_id（litellm/router.py:6550-6580）：
+ * model_group 与 litellm_params 键值按 YAML 声明顺序拼接后取 sha256。
+ * 必须传入 js-yaml 原始解析结果——zod 校验会按 schema 形状重排键序，
+ * 重排后计算的哈希与 PY 不一致（实测 PY glm-4-7-anthropic → 5e49c98b…，可用其回归验证）。
+ * @param modelGroup - deployment 的 model_name
+ * @param litellmParams - js-yaml 解析出的 litellm_params（键序保持 YAML 声明顺序）
+ */
+export function generateModelId(modelGroup: string, litellmParams: Record<string, unknown>): string {
+	const parts: string[] = [modelGroup];
+	for (const [key, value] of Object.entries(litellmParams)) {
+		parts.push(key);
+		parts.push(pythonParamValueToStr(value));
+	}
+	return crypto.createHash("sha256").update(parts.join(""), "utf8").digest("hex");
+}
 
 /**
  * 从 `general_settings.database_url` 解析数据库连接配置。
@@ -536,6 +630,10 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 			typeof generalSettingsRaw["disable_adding_master_key_hash_to_db"] === "boolean"
 				? (generalSettingsRaw["disable_adding_master_key_hash_to_db"] as boolean)
 				: config.generalSettings.disable_adding_master_key_hash_to_db,
+		store_prompts_in_spend_logs:
+			typeof generalSettingsRaw["store_prompts_in_spend_logs"] === "boolean"
+				? (generalSettingsRaw["store_prompts_in_spend_logs"] as boolean)
+				: config.generalSettings.store_prompts_in_spend_logs,
 	};
 
 	// routerSettings: snake_case router_settings 派生，camelCase 仅作兼容回退（冲突时 snake_case 优先）
@@ -571,11 +669,29 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 				? (routerSettingsRaw["enable_pre_call_checks"] as boolean)
 				: config.routerSettings.enable_pre_call_checks,
 		redis_url: (routerSettingsRaw["redis_url"] as string | undefined) ?? config.routerSettings.redis_url,
+		search_tools: Array.isArray(routerSettingsRaw["search_tools"])
+			? (routerSettingsRaw["search_tools"] as Record<string, unknown>[])
+			: config.routerSettings.search_tools,
 		request_timeout:
 			typeof routerSettingsRaw["request_timeout"] === "number"
 				? (routerSettingsRaw["request_timeout"] as number)
 				: config.routerSettings.request_timeout,
 	};
+
+	// 为缺失 model_info.id 的 deployment 生成 sha256 id（对齐 PY Router._generate_model_id，
+	// PY 仅在 model_info.id 缺失时生成，见 litellm/router.py:6854-6857）。
+	// 必须基于 zod 校验前的 js-yaml 原始对象计算——zod 按 schema 形状重排 litellm_params
+	// 键序，重排后计算的哈希与 PY 不一致；zod 数组校验保持元素顺序且不丢项，索引对齐安全。
+	const rawModelList = (raw as { model_list?: unknown } | null)?.model_list;
+	const rawModelItems: unknown[] = Array.isArray(rawModelList) ? rawModelList : [];
+	const modelList: ModelListItemConfig[] = config.model_list.map((item, index) => {
+		if (typeof item.model_info?.id === "string" && item.model_info.id.length > 0) {
+			return item;
+		}
+		const rawItem = rawModelItems[index] as { litellm_params?: Record<string, unknown> } | undefined;
+		const generatedId = generateModelId(item.model_name, rawItem?.litellm_params ?? {});
+		return { ...item, model_info: { ...item.model_info, id: generatedId } };
+	});
 
 	return {
 		server: {
@@ -587,11 +703,22 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 		litellmSettings: config.litellmSettings,
 		routerSettings: routerSettings,
 		generalSettings: generalSettings,
-		modelList: config.model_list,
+		modelList: modelList,
 		litellmSettingsRaw: litellmSettingsRaw,
 		routerSettingsRaw: routerSettingsRaw,
 		generalSettingsRaw: generalSettingsRaw,
 	};
+}
+
+/** 最近一次 loadYamlConfig 的原始解析对象与文件内容（供 YamlConfigDiffService 启动差异检测） */
+let lastRawYaml: { readonly raw: unknown; readonly content: string } | null = null;
+
+/**
+ * 获取最近一次加载的原始 yaml 解析对象与文件内容（未加载时返回 null）。
+ * 原始对象未经 zod 校验重排，键序与 yaml 文件一致。
+ */
+export function getRawYamlConfig(): { readonly raw: unknown; readonly content: string } | null {
+	return lastRawYaml;
 }
 
 /**
@@ -602,6 +729,7 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 function loadYamlConfig(configPath: string): ServiceConfig {
 	const fileContents = fs.readFileSync(configPath, "utf8");
 	const raw = yaml.load(fileContents);
+	lastRawYaml = { raw: raw, content: fileContents };
 	return validateAndTransform(raw);
 }
 
@@ -634,4 +762,5 @@ export function getConfig(): ServiceConfig {
  */
 export function resetConfig(): void {
 	configInstance = null;
+	lastRawYaml = null;
 }

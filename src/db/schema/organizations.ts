@@ -3,10 +3,10 @@
  * Prisma model: LiteLLM_OrganizationTable (uuid PK)
  */
 
-import { pgTable, text, uuid, real, jsonb, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, real, jsonb, timestamp } from "drizzle-orm/pg-core";
 
 export const LiteLLM_OrganizationTable = pgTable("LiteLLM_OrganizationTable", {
-	organizationId: uuid("organization_id").defaultRandom().primaryKey(),
+	organizationId: text("organization_id").primaryKey(),
 	organizationAlias: text("organization_alias").notNull(),
 	budgetId: text("budget_id").notNull(),
 	metadata: jsonb("metadata").default("{}"),
@@ -20,8 +20,4 @@ export const LiteLLM_OrganizationTable = pgTable("LiteLLM_OrganizationTable", {
 	// @map("updated_at")
 	updatedAt: timestamp("updated_at").defaultNow(),
 	updatedBy: text("updated_by").notNull(),
-	/** PY: 组织级最大预算（auth_checks.checkOrganizationBudget 需要） */
-	maxBudget: real("max_budget"),
-	/** PY: 组织级软预算（auth_checks.checkOrganizationBudget 仅警告） */
-	softBudget: real("soft_budget"),
 });

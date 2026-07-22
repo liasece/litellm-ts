@@ -7,8 +7,11 @@
 
 import type { ProviderConfig, ProviderRequest } from "../types/provider";
 import type { ModelResponse, ModelResponseStream, ToolCall } from "../types/openai";
+import { generateChatCompletionId } from "../types/openai";
 
 /** 默认支持的 OpenAI 参数列表 */
+const EMBEDDING_SUPPORTED_PARAMS = ["encoding_format", "dimensions", "user"] as const;
+
 const SUPPORTED_PARAMS = [
 	"temperature",
 	"max_tokens",
@@ -52,7 +55,7 @@ export class OpenAICompatProvider implements ProviderConfig {
 
 	constructor(apiKey: string, apiBase: string) {
 		this.apiKey = apiKey;
-		this.apiBase = apiBase.replace(/\/$/, "").replace(/\/chat\/completions$/, "");
+		this.apiBase = this._normalizeApiBase(apiBase);
 	}
 
 	/**
@@ -92,8 +95,8 @@ export class OpenAICompatProvider implements ProviderConfig {
 		// Python LiteLLM 行为：optionalParams.api_base 优先于构造函数 apiBase
 		const apiBaseRaw = optionalParams["api_base"];
 		const apiBase = typeof apiBaseRaw === "string" && apiBaseRaw.length > 0 ? apiBaseRaw : this.apiBase;
-		// 同步应用尾部斜杠 / chat/completions 归一化
-		const normalizedBase = apiBase.replace(/\/$/, "").replace(/\/chat\/completions$/, "");
+		// 同步应用尾部斜杠 / 已知 operation path 归一化
+		const normalizedBase = this._normalizeApiBase(apiBase);
 
 		// api_key 同理：deployment key 优先
 		const apiKeyRaw = optionalParams["api_key"];
@@ -109,6 +112,42 @@ export class OpenAICompatProvider implements ProviderConfig {
 			body: body,
 			model: model,
 			stream: stream,
+		};
+	}
+
+	/**
+	 * 构造 OpenAI-compatible embeddings 请求。
+	 * 只透传正式 embeddings 参数，连接参数仅用于 URL 与 Header。
+	 * @param model - 模型名称
+	 * @param input - 原始 embeddings 输入
+	 * @param optionalParams - deployment 与请求参数
+	 */
+	transformEmbeddingRequest(model: string, input: unknown, optionalParams: Record<string, unknown>): ProviderRequest {
+		const body: Record<string, unknown> = {
+			model: this.stripProviderPrefix(model),
+			input: input,
+		};
+		for (const key of EMBEDDING_SUPPORTED_PARAMS) {
+			if (key in optionalParams) {
+				body[key] = optionalParams[key];
+			}
+		}
+
+		const apiBaseRaw = optionalParams["api_base"];
+		const apiBase = typeof apiBaseRaw === "string" && apiBaseRaw.length > 0 ? apiBaseRaw : this.apiBase;
+		const apiKeyRaw = optionalParams["api_key"];
+		const apiKey = typeof apiKeyRaw === "string" && apiKeyRaw.length > 0 ? apiKeyRaw : this.apiKey;
+
+		return {
+			url: `${this._normalizeApiBase(apiBase)}/embeddings`,
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${apiKey}`,
+			},
+			body: body,
+			model: model,
+			stream: false,
 		};
 	}
 
@@ -129,8 +168,13 @@ export class OpenAICompatProvider implements ProviderConfig {
 	): ModelResponse {
 		const raw = rawResponse as Record<string, unknown>;
 
+		// PY convert_dict_to_response.py:191-195：上游 id truthy 时透传，falsy（缺省/""/null）
+		// 时保留 ModelResponse 预生成的 "chatcmpl-<uuid>"
+		const upstreamId = raw.id;
+		const responseId = typeof upstreamId === "string" && upstreamId.length > 0 ? upstreamId : generateChatCompletionId();
+
 		return {
-			id: (raw.id as string) ?? "",
+			id: responseId,
 			object: (raw.object as string) ?? "chat.completion",
 			created: (raw.created as number) ?? Math.floor(Date.now() / 1000),
 			model: model,
@@ -214,6 +258,10 @@ export class OpenAICompatProvider implements ProviderConfig {
 
 					try {
 						const parsed = JSON.parse(payload) as ModelResponseStream;
+						// PY ModelResponseStream(**chunk)：chunk 缺 id 时按 "chatcmpl-<uuid>" 重新生成
+						if (!parsed.id) {
+							parsed.id = generateChatCompletionId();
+						}
 						yield parsed;
 					} catch {
 						// 忽略无法解析的行
@@ -223,6 +271,14 @@ export class OpenAICompatProvider implements ProviderConfig {
 		} finally {
 			reader.releaseLock();
 		}
+	}
+
+	/**
+	 * 将 API base 归一化为不含 operation path 的形式。
+	 * @param apiBase
+	 */
+	private _normalizeApiBase(apiBase: string): string {
+		return apiBase.replace(/\/+$/, "").replace(/\/(?:chat\/completions|embeddings)$/, "");
 	}
 
 	/**

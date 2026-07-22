@@ -20,6 +20,7 @@ import {
 	BadRequestError,
 	ContextWindowExceededError,
 	NotFoundError,
+	InternalServerError,
 } from "./RouterErrors";
 import type { FallbackHandler } from "./FallbackHandler";
 
@@ -159,6 +160,9 @@ export function getRetryPolicyOverride(
 	}
 	if (exception instanceof ContentPolicyViolationError) {
 		return policy.ContentPolicyViolationErrorRetries ?? undefined;
+	}
+	if (exception instanceof InternalServerError) {
+		return policy.InternalServerErrorRetries ?? undefined;
 	}
 	if (exception instanceof BadRequestError) {
 		return policy.BadRequestErrorRetries ?? undefined;

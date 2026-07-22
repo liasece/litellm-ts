@@ -1,10 +1,12 @@
-import { pgTable, text, timestamp, jsonb, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb } from "drizzle-orm/pg-core";
 
 /**
  * 代理模型表 - LiteLLM_ProxyModelTable
+ * model_id 为 text（对齐 Python Prisma String 类型）：/model/new 允许 model_info.id 传入任意字符串，
+ * 未提供时由端点生成 uuid。
  */
 export const LiteLLM_ProxyModelTable = pgTable("LiteLLM_ProxyModelTable", {
-	model_id: uuid("model_id").defaultRandom().primaryKey(),
+	model_id: text("model_id").primaryKey(),
 	model_name: text("model_name").notNull(),
 	litellm_params: jsonb("litellm_params").notNull(),
 	model_info: jsonb("model_info"),

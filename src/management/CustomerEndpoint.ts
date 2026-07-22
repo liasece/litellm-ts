@@ -6,14 +6,61 @@
  */
 
 import type { Router, Request, RequestHandler } from "express";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
-import { ApiError } from "../core/api/ApiError";
+import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import { LiteLLM_EndUserTable } from "../db/schema/end-users";
+import { LiteLLM_BudgetTable } from "../db/schema/budgets";
+import { LiteLLM_ObjectPermissionTable } from "../db/schema/object-permissions";
 import { createModuleLogger } from "../core/utils/logger";
+import { pythonListRepr, toPythonEndUserWriteRow, toPythonObjectPermission } from "./pythonRowSerializers";
 
 const logger = createModuleLogger("Management:Customer");
+
+type EndUserRow = typeof LiteLLM_EndUserTable.$inferSelect;
+type ObjectPermissionRow = typeof LiteLLM_ObjectPermissionTable.$inferSelect;
+
+/**
+ * 按 budget_id 加载关联预算行；budgetId 为 null 或行不存在时返回 null。
+ * @param db
+ * @param budgetId
+ */
+async function loadBudgetRow(db: DrizzleDb, budgetId: string | null): Promise<Record<string, unknown> | null> {
+	if (budgetId === null) {
+		return null;
+	}
+	const budgetRows = await db.select().from(LiteLLM_BudgetTable).where(eq(LiteLLM_BudgetTable.budget_id, budgetId)).limit(1);
+	return (budgetRows[0] as Record<string, unknown> | undefined) ?? null;
+}
+
+/**
+ * 端用户行 → Python /customer/list 实测响应字段（snake_case）。
+ * Python 端 find_many(include={litellm_budget_table, object_permission})，
+ * 无关联时对应字段为 null。协议源码：litellm/proxy/management_endpoints/customer_endpoints.py list_end_user。
+ * @param row
+ * @param budgetsById
+ * @param permissionsById
+ */
+function toPythonEndUserRow(
+	row: EndUserRow,
+	budgetsById: ReadonlyMap<string, Record<string, unknown>>,
+	permissionsById: ReadonlyMap<string, ObjectPermissionRow>,
+): Record<string, unknown> {
+	const budget = row.budgetId !== null ? (budgetsById.get(row.budgetId) ?? null) : null;
+	const permission = row.objectPermissionId !== null ? (permissionsById.get(row.objectPermissionId) ?? null) : null;
+	return {
+		user_id: row.userId,
+		blocked: row.blocked ?? false,
+		alias: row.alias,
+		spend: row.spend ?? 0,
+		allowed_model_region: row.allowedModelRegion,
+		default_model: row.defaultModel,
+		litellm_budget_table: budget,
+		object_permission_id: row.objectPermissionId,
+		object_permission: permission !== null ? toPythonObjectPermission(permission) : null,
+	};
+}
 
 /**
  * 创建端用户管理路由
@@ -40,6 +87,7 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 	}
 
 	// ─── POST /customer/new ─────────────────────────────────────
+	// 响应对齐 Python new_end_user 实测：完整端用户对象（10 键，无 success 包装）。
 	registerRoute(
 		router,
 		{ method: "post", path: "/customer/new" },
@@ -57,22 +105,27 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				throw ApiError.conflict(`端用户已存在: ${user_id}`);
 			}
 
-			await db.insert(LiteLLM_EndUserTable).values({
-				userId: user_id,
-				alias: alias ?? null,
-				allowedModelRegion: allowed_model_region ?? null,
-				defaultModel: default_model ?? null,
-				budgetId: budget_id ?? null,
-				blocked: blocked ?? false,
-			});
+			const inserted = await db
+				.insert(LiteLLM_EndUserTable)
+				.values({
+					userId: user_id,
+					alias: alias ?? null,
+					allowedModelRegion: allowed_model_region ?? null,
+					defaultModel: default_model ?? null,
+					budgetId: budget_id ?? null,
+					blocked: blocked ?? false,
+				})
+				.returning();
 
 			logger.info(`端用户已创建: ${user_id}`);
 
-			return { success: true, user_id: user_id };
+			const budgetRow = await loadBudgetRow(db, inserted[0]!.budgetId);
+			return toPythonEndUserWriteRow(inserted[0]!, { budgetRow: budgetRow });
 		}),
 	);
 
 	// ─── POST /customer/update ──────────────────────────────────
+	// 响应对齐 Python update_end_user 实测：更新后完整端用户对象（10 键）。
 	registerRoute(
 		router,
 		{ method: "post", path: "/customer/update" },
@@ -103,11 +156,58 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				updateFields.budgetId = updates.budget_id;
 			}
 
-			await db.update(LiteLLM_EndUserTable).set(updateFields).where(eq(LiteLLM_EndUserTable.userId, user_id));
+			const updated = await db
+				.update(LiteLLM_EndUserTable)
+				.set(updateFields)
+				.where(eq(LiteLLM_EndUserTable.userId, user_id))
+				.returning();
 
 			logger.info(`端用户已更新: ${user_id}`);
 
-			return { success: true };
+			const budgetRow = await loadBudgetRow(db, updated[0]!.budgetId);
+			return toPythonEndUserWriteRow(updated[0]!, { budgetRow: budgetRow });
+		}),
+	);
+
+	// ─── POST /customer/delete ──────────────────────────────────
+	// 对齐 Python delete_end_user：请求 { user_ids: [...] }，校验全部存在后删除，
+	// 响应 { deleted_customers: N, message: "Successfully deleted customers with ids: ['a']" }。
+	// 协议源码：litellm/proxy/management_endpoints/customer_endpoints.py delete_end_user
+	registerRoute(
+		router,
+		{ method: "post", path: "/customer/delete" },
+		authed(async (req) => {
+			const body = (req.body ?? {}) as { user_ids?: unknown };
+			const userIds = Array.isArray(body.user_ids)
+				? body.user_ids.filter((id): id is string => typeof id === "string" && id.length > 0)
+				: [];
+
+			if (userIds.length === 0) {
+				throw ApiError.badRequest(`user_id is required, passed user_id = ${body.user_ids}`);
+			}
+
+			// Python: 任一不存在即 404（type=not_found, param=user_ids）
+			const existingRows = await db.select().from(LiteLLM_EndUserTable).where(inArray(LiteLLM_EndUserTable.userId, userIds));
+			const existingIds = new Set(existingRows.map((row) => row.userId));
+			const missingIds = userIds.filter((id) => !existingIds.has(id));
+			if (missingIds.length > 0) {
+				throw new ApiError(
+					HTTP_STATUS.NOT_FOUND,
+					`End User Id(s)=${missingIds.join(", ")} do not exist in db`,
+					"not_found",
+					"user_ids",
+				);
+			}
+
+			const result = await db.delete(LiteLLM_EndUserTable).where(inArray(LiteLLM_EndUserTable.userId, userIds));
+			const deletedCount = result.rowCount ?? userIds.length;
+
+			logger.info(`端用户已删除: count=${deletedCount}`);
+
+			return {
+				deleted_customers: deletedCount,
+				message: `Successfully deleted customers with ids: ${pythonListRepr(userIds)}`,
+			};
 		}),
 	);
 
@@ -179,12 +279,19 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 	);
 
 	// ─── GET /customer/list ─────────────────────────────────────
+	// Python 实测：返回裸数组（无 {success,data} 包装），字段 snake_case。
 	registerRoute(
 		router,
 		{ method: "get", path: "/customer/list" },
 		authed(async () => {
-			const rows = await db.select().from(LiteLLM_EndUserTable);
-			return { success: true, data: rows };
+			const [rows, budgets, permissions] = await Promise.all([
+				db.select().from(LiteLLM_EndUserTable),
+				db.select().from(LiteLLM_BudgetTable),
+				db.select().from(LiteLLM_ObjectPermissionTable),
+			]);
+			const budgetsById = new Map<string, Record<string, unknown>>(budgets.map((row) => [row.budget_id, row]));
+			const permissionsById = new Map<string, ObjectPermissionRow>(permissions.map((row) => [row.objectPermissionId, row]));
+			return rows.map((row) => toPythonEndUserRow(row, budgetsById, permissionsById));
 		}),
 	);
 }

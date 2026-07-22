@@ -186,7 +186,8 @@ describe("MiMoProvider (composition over AnthropicProvider)", () => {
 
 			const result = provider.transformResponse("mimo-v2.5-pro", rawResponse);
 
-			expect(result.id).toBe("mimo_resp_1");
+			// PY anthropic 路径丢弃上游 id，恒为重新生成的 chatcmpl-<uuid>
+			expect(result.id).toMatch(/^chatcmpl-[0-9a-f-]{36}$/);
 			expect(result.model).toBe("mimo-v2.5-pro");
 			expect(result.choices[0]!.message.content).toBe("I am MiMo!");
 			expect(result.choices[0]!.finish_reason).toBe("stop");

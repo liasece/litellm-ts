@@ -524,7 +524,7 @@ const EntityUsage: React.FC<EntityUsageProps> = ({ accessToken, entityType, enti
                     <Card>
                       <Title>Total Tokens</Title>
                       <Text className="text-2xl font-bold mt-2">
-                        {spendData.metadata.total_tokens.toLocaleString()}
+                        {formatNumberWithCommas(spendData.metadata.total_tokens, 0, false)}
                       </Text>
                     </Card>
                   </Grid>
@@ -556,7 +556,7 @@ const EntityUsage: React.FC<EntityUsageProps> = ({ accessToken, entityType, enti
                           <p className="text-gray-600">Total Requests: {data.metrics.api_requests}</p>
                           <p className="text-gray-600">Successful: {data.metrics.successful_requests}</p>
                           <p className="text-gray-600">Failed: {data.metrics.failed_requests}</p>
-                          <p className="text-gray-600">Total Tokens: {data.metrics.total_tokens}</p>
+                          <p className="text-gray-600">Total Tokens: {formatNumberWithCommas(data.metrics.total_tokens, 0, false)}</p>
                           <p className="text-gray-600">
                             Total {capitalizedEntityLabel}s: {entityCount}
                           </p>
@@ -630,7 +630,7 @@ const EntityUsage: React.FC<EntityUsageProps> = ({ accessToken, entityType, enti
                                   Successful: {data.metrics.successful_requests.toLocaleString()}
                                 </p>
                                 <p className="text-red-600">Failed: {data.metrics.failed_requests.toLocaleString()}</p>
-                                <p className="text-gray-600">Tokens: {data.metrics.total_tokens.toLocaleString()}</p>
+                                <p className="text-gray-600">Tokens: {formatNumberWithCommas(data.metrics.total_tokens, 0, false)}</p>
                               </div>
                             );
                           }}
@@ -661,7 +661,7 @@ const EntityUsage: React.FC<EntityUsageProps> = ({ accessToken, entityType, enti
                                     <TableCell className="text-red-600">
                                       {entity.metrics.failed_requests.toLocaleString()}
                                     </TableCell>
-                                    <TableCell>{entity.metrics.total_tokens.toLocaleString()}</TableCell>
+                                    <TableCell>{formatNumberWithCommas(entity.metrics.total_tokens, 0, false)}</TableCell>
                                   </TableRow>
                                 ))}
                             </TableBody>
@@ -773,7 +773,7 @@ const EntityUsage: React.FC<EntityUsageProps> = ({ accessToken, entityType, enti
                                 <TableCell className="text-red-600">
                                   {provider.failed_requests.toLocaleString()}
                                 </TableCell>
-                                <TableCell>{provider.tokens.toLocaleString()}</TableCell>
+                                <TableCell>{formatNumberWithCommas(provider.tokens, 0, false)}</TableCell>
                               </TableRow>
                             ))}
                           </TableBody>

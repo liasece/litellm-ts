@@ -1,4 +1,5 @@
 import type { CustomTooltipProps } from "@tremor/react";
+import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { SpendMetrics } from "../UsagePage/types";
 
 interface ChartDataPoint {
@@ -45,11 +46,14 @@ export const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) =>
 
           const rawValue = getRawValue(item.payload, dataKey);
           const isSpend = dataKey.includes("spend");
+          const isToken = dataKey.includes("token");
           const formattedValue =
             rawValue !== undefined
               ? isSpend
                 ? `$${rawValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : rawValue.toLocaleString()
+                : isToken
+                  ? formatNumberWithCommas(rawValue, 0, false)
+                  : rawValue.toLocaleString()
               : "N/A";
 
           const colorName = item.color as keyof typeof colorNameToHex;

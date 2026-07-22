@@ -6,19 +6,20 @@
  * 流式响应包含 2 秒间隔的 keep-alive 心跳。
  */
 
-import * as crypto from "node:crypto";
 import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
+import { stripInternalFields } from "../core/api/stripInternalFields";
 import { ApiError } from "../core/api/ApiError";
+import { buildInvalidModelError, formatInvalidModelMessage, CHAT_COMPLETIONS_ROUTE_NAME } from "../router/RouterExecution";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { createModuleLogger } from "../core/utils/logger";
-import type { Message, ModelResponse, ModelResponseStream } from "../types/openai";
+import type { Message, ModelResponse, ModelResponseStream, ThinkingBlock, ToolCall, Usage } from "../types/openai";
 import type { ProviderConfig } from "../types/provider";
 import type { DrizzleDb } from "../core/db/Database";
-import { calculateAndSetCost, trackSpendLog, injectResponseCostHeader, normalizeUsageForSpend } from "../spend/SpendTracker";
+import { calculateAndSetCost, trackSpendLog, injectResponseCostHeader, buildSpendLogFromRequest } from "../spend/SpendTracker";
 import { runCommonChecks } from "../auth/AuthChecks";
-import type { SpendLog } from "../types/spend";
-import { CallType } from "../types/spend";
+import { CallType, SpendLogStatus } from "../types/spend";
+import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
 
 const logger = createModuleLogger("Proxy:ChatCompletions");
 
@@ -30,31 +31,171 @@ interface StreamingProvider extends ProviderConfig {
 /** 流式读取的 chunk 大小 */
 const SSE_KEEPALIVE_INTERVAL_MS = 2000;
 
+interface ToolCallAccumulator {
+	id: string;
+	type: "function";
+	name: string;
+	arguments: string;
+}
+
+interface ChoiceAccumulator {
+	index: number;
+	role: string;
+	content: string;
+	reasoningContent: string;
+	thinkingBlocks: ThinkingBlock[];
+	providerSpecificFields: Record<string, unknown>;
+	finishReason: string | null;
+	toolCalls: Map<number, ToolCallAccumulator>;
+}
+
+interface ChatStreamAccumulator {
+	id?: string;
+	created?: number;
+	model?: string;
+	choices: Map<number, ChoiceAccumulator>;
+	usage?: Usage;
+	estimatedCompletionTokens: number;
+}
+
+function mergeProviderSpecificFields(target: Record<string, unknown>, source: Record<string, unknown> | undefined): void {
+	if (!source) {
+		return;
+	}
+	for (const [key, value] of Object.entries(source)) {
+		const current = target[key];
+		if (Array.isArray(current) && Array.isArray(value)) {
+			target[key] = [...current, ...value];
+		} else {
+			target[key] = value;
+		}
+	}
+}
+
+function accumulateChatChunk(state: ChatStreamAccumulator, chunk: ModelResponseStream): void {
+	state.id ??= chunk.id;
+	state.created ??= chunk.created;
+	state.model ??= chunk.model;
+	const internalUsage = chunk._usage ?? (chunk as unknown as { usage?: Usage }).usage;
+	if (internalUsage) {
+		state.usage = { ...internalUsage };
+	}
+	for (const choice of chunk.choices ?? []) {
+		let accumulated = state.choices.get(choice.index);
+		if (!accumulated) {
+			accumulated = {
+				index: choice.index,
+				role: "assistant",
+				content: "",
+				reasoningContent: "",
+				thinkingBlocks: [],
+				providerSpecificFields: {},
+				finishReason: null,
+				toolCalls: new Map<number, ToolCallAccumulator>(),
+			};
+			state.choices.set(choice.index, accumulated);
+		}
+		const delta = choice.delta;
+		if (typeof delta?.role === "string") {
+			accumulated.role = delta.role;
+		}
+		if (typeof delta?.content === "string") {
+			accumulated.content += delta.content;
+			state.estimatedCompletionTokens += Math.ceil(delta.content.length / 4);
+		}
+		if (typeof delta?.reasoning_content === "string") {
+			accumulated.reasoningContent += delta.reasoning_content;
+		}
+		if (delta?.thinking_blocks) {
+			accumulated.thinkingBlocks.push(...delta.thinking_blocks);
+		}
+		mergeProviderSpecificFields(accumulated.providerSpecificFields, delta?.provider_specific_fields);
+		for (const toolCallDelta of delta?.tool_calls ?? []) {
+			const existing = accumulated.toolCalls.get(toolCallDelta.index) ?? {
+				id: "",
+				type: "function" as const,
+				name: "",
+				arguments: "",
+			};
+			if (toolCallDelta.id) {
+				existing.id += toolCallDelta.id;
+			}
+			if (toolCallDelta.function?.name) {
+				existing.name += toolCallDelta.function.name;
+			}
+			if (toolCallDelta.function?.arguments) {
+				existing.arguments += toolCallDelta.function.arguments;
+			}
+			accumulated.toolCalls.set(toolCallDelta.index, existing);
+		}
+		if (choice.finish_reason !== null) {
+			accumulated.finishReason = choice.finish_reason;
+		}
+	}
+}
+
+function buildAggregatedChatResponse(state: ChatStreamAccumulator, fallbackModel: string): ModelResponse | undefined {
+	if (!state.id && state.choices.size === 0) {
+		return undefined;
+	}
+	return {
+		id: state.id ?? "",
+		object: "chat.completion",
+		created: state.created ?? Math.floor(Date.now() / 1000),
+		model: state.model ?? fallbackModel,
+		choices: [...state.choices.values()]
+			.sort((left, right) => left.index - right.index)
+			.map((choice) => {
+				const toolCalls: ToolCall[] = [...choice.toolCalls.entries()]
+					.sort(([left], [right]) => left - right)
+					.map(([, toolCall]) => ({
+						id: toolCall.id,
+						type: toolCall.type,
+						function: { name: toolCall.name, arguments: toolCall.arguments },
+					}));
+				return {
+					index: choice.index,
+					finish_reason: choice.finishReason ?? "",
+					message: {
+						role: choice.role,
+						content: choice.content || toolCalls.length === 0 ? choice.content : null,
+						...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+						...(choice.reasoningContent ? { reasoning_content: choice.reasoningContent } : {}),
+						...(choice.thinkingBlocks.length > 0 ? { thinking_blocks: choice.thinkingBlocks } : {}),
+						...(Object.keys(choice.providerSpecificFields).length > 0
+							? { provider_specific_fields: choice.providerSpecificFields }
+							: {}),
+					},
+				};
+			}),
+		...(state.usage ? { usage: state.usage } : {}),
+	};
+}
+
 /**
  * 注册 Chat Completions 路由到 Express Router
  *
  * 覆盖以下路径：
  * - POST /v1/chat/completions（标准 OpenAI）
  * - POST /chat/completions（简写）
- * - POST /engines/:model/chat/completions（Azure 兼容）
- * - POST /openai/deployments/:model/chat/completions（Azure 兼容）
+ * - POST /engines/{model:path}/chat/completions（Azure 兼容）
+ * - POST /openai/deployments/{model:path}/chat/completions（Azure 兼容）
  * @param expressRouter - Express Router 实例
  * @param litellmRouter - LiteLLM Router 实例
  * @param db
  */
 export function registerChatCompletionsRoutes(expressRouter: Router, litellmRouter: LiteLLMRouter, db: DrizzleDb): void {
-	const paths = [
-		"/v1/chat/completions",
-		"/chat/completions",
-		"/engines/:model/chat/completions",
-		"/openai/deployments/:model/chat/completions",
-	];
+	const paths = ["/v1/chat/completions", "/chat/completions", "/engines/*/chat/completions", "/openai/deployments/*/chat/completions"];
 
 	const handler = createChatHandler(litellmRouter, db);
 
 	for (const path of paths) {
 		registerRoute(expressRouter, { method: "post", path: path }, handler);
 	}
+}
+
+function getPathModel(req: import("express").Request): unknown {
+	return req.params.model ?? req.params[0];
 }
 
 /**
@@ -64,7 +205,7 @@ export function registerChatCompletionsRoutes(expressRouter: Router, litellmRout
  */
 function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 	return async (req: import("express").Request, res: import("express").Response) => {
-		const model = req.params.model ?? req.body.model;
+		const model = getPathModel(req) ?? req.body.model;
 		if (!model || typeof model !== "string") {
 			throw ApiError.badRequest("model 字段缺失");
 		}
@@ -86,58 +227,79 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		// === 非流式：委托 Router.completion 处理重试和降级 ===
 		if (req.body.stream !== true) {
 			const startTime = new Date();
-			const result = await litellmRouter.completion(model, messages, optionalParams);
-			calculateAndSetCost(result as unknown as ModelResponse, model);
-			const usage = (result as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
-			if (req.auth && usage) {
-				// GAP 3: 非流式分支也走 normalizeUsageForSpend 统一处理 input_tokens/output_tokens
-				// vs prompt_tokens/completion_tokens 双字段，避免 Anthropic/Responses API 直接传回
-				// usage 字典（input_tokens/output_tokens）时导致 prompt_tokens=0、completion_tokens=0、
-				// cost 漏算。
-				const normalized = normalizeUsageForSpend(usage);
-				const endTime = new Date();
-				const spendLog: SpendLog = {
-					request_id: crypto.randomUUID(),
-					call_type: CallType.ACompletion,
-					api_key: req.auth.api_key ?? "",
-					spend: 0,
-					total_tokens: normalized?.total_tokens ?? (usage["total_tokens"] as number) ?? 0,
-					prompt_tokens: normalized?.prompt_tokens ?? (usage["prompt_tokens"] as number) ?? 0,
-					completion_tokens: normalized?.completion_tokens ?? (usage["completion_tokens"] as number) ?? 0,
-					startTime: startTime.toISOString(),
-					endTime: endTime.toISOString(),
-					model: model,
-					user: req.auth.user_id,
-					team_id: req.auth.team_id,
-					cache_creation_input_tokens: normalized?.cache_creation_input_tokens,
-					cache_read_input_tokens: normalized?.cache_read_input_tokens,
-					// GAP 10: 把 end_user_id 透传到 spend log（end_user 维度汇总依赖此字段）
-					end_user_id: req.auth.end_user_id,
-				};
-				trackSpendLog(db, spendLog).catch((err) => logger.error("记录花费日志失败", { error: err }));
-			}
-			// PY: inject x-litellm-response-cost header
-			if (usage && (usage as unknown as Record<string, unknown>)["cost"] !== undefined) {
-				injectResponseCostHeader(res, (usage as unknown as Record<string, unknown>)["cost"] as number);
-			}
-			// DIFF-RT-03 / DIFF-ROUTER-RESPHEADERS-01: 把 Router 注入的 _providerHeaders 透传到响应
-			// 对齐 PY `router.py:5715-5744 set_response_headers` —— 包含
-			//   x-request-id / x-ratelimit-*-{tokens,requests} / retry-after /
-			//   anthropic-ratelimit-* / x-litellm-model-id / x-litellm-model-group
-			const providerHeaders = (result as unknown as { _providerHeaders?: Record<string, string> })._providerHeaders;
-			if (providerHeaders) {
-				for (const [k, v] of Object.entries(providerHeaders)) {
-					// 避免覆盖已有同 key 的头（injectResponseCostHeader 已经设过 x-litellm-response-cost）
-					if (!res.getHeader(k)) {
-						res.setHeader(k, v);
+			try {
+				const result = await litellmRouter.completion(model, messages, optionalParams);
+				// PY 非流式 completionStartTime：上游响应返回（completion 解析完成）的时间点，
+				// TTFT = completionStartTime - startTime（含输入处理与排队时长）
+				const completionStartTime = new Date();
+				// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
+				const spendInfo = (result as unknown as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
+				calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
+				const usage = (result as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
+				if (req.auth) {
+					const endTime = new Date();
+					const spendLog = buildSpendLogFromRequest({
+						req: req,
+						auth: req.auth,
+						callType: CallType.ACompletion,
+						model: model,
+						// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
+						modelGroup: model,
+						modelId: spendInfo?.modelId,
+						customLlmProvider: spendInfo?.customLlmProvider,
+						apiBase: spendInfo?.apiBase,
+						customCostPerToken: spendInfo?.customCostPerToken,
+						deploymentModel: spendInfo?.deploymentModel,
+						startTime: startTime,
+						endTime: endTime,
+						completionStartTime: completionStartTime,
+						messages: messages,
+						response: result,
+						usage: usage,
+						status: SpendLogStatus.Success,
+					});
+					trackSpendLog(db, spendLog).catch((err) => logger.error("记录花费日志失败", { error: err }));
+				}
+				if (usage && (usage as unknown as Record<string, unknown>)["cost"] !== undefined) {
+					injectResponseCostHeader(res, (usage as unknown as Record<string, unknown>)["cost"] as number);
+				}
+				const providerHeaders = (result as unknown as { _providerHeaders?: Record<string, string> })._providerHeaders;
+				if (providerHeaders) {
+					for (const [k, v] of Object.entries(providerHeaders)) {
+						if (!res.getHeader(k)) {
+							res.setHeader(k, v);
+						}
 					}
 				}
+				// PY 对齐：直连（未发生 fallback）时响应 model 改写为请求的逻辑模型名；
+				// fallback（depth>0）时保持上游返回的模型名。
+				// 须在 registerRoute 出口剥离内部字段之前读取 _fallbackDepth。
+				if (result._fallbackDepth === 0) {
+					result.model = model;
+				}
+				return result;
+			} catch (error) {
+				if (req.auth) {
+					const endTime = new Date();
+					const failureSpendLog = buildSpendLogFromRequest({
+						req: req,
+						auth: req.auth,
+						callType: CallType.ACompletion,
+						model: model,
+						startTime: startTime,
+						endTime: endTime,
+						messages: messages,
+						error: error,
+						status: SpendLogStatus.Failure,
+					});
+					trackSpendLog(db, failureSpendLog).catch((err) => logger.error("记录失败花费日志失败", { error: err }));
+				}
+				throw error;
 			}
-			return result;
 		}
 
 		// === 流式响应 (SSE) ===
-		await handleStreamingResponse(litellmRouter, model, messages, optionalParams, res, { auth: req.auth, db: db });
+		await handleStreamingResponse(litellmRouter, model, messages, optionalParams, res, { req: req, db: db });
 		return undefined;
 	};
 }
@@ -152,7 +314,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
  * @param messages - 消息列表
  * @param optionalParams - 可选参数
  * @param res - Express 响应对象
- * @param options - 附加选项（auth, db）
+ * @param context - 完整请求与数据库上下文
  */
 async function handleStreamingResponse(
 	litellmRouter: LiteLLMRouter,
@@ -160,27 +322,18 @@ async function handleStreamingResponse(
 	messages: Message[],
 	optionalParams: Record<string, unknown>,
 	res: import("express").Response,
-	options?: { auth?: import("express").Request["auth"]; db?: DrizzleDb },
+	context: { req: import("express").Request; db: DrizzleDb },
 ): Promise<void> {
+	const { req, db } = context;
 	let fallbackDepth = 0;
-	const { auth, db } = options ?? {};
 	let currentModel = model;
 	let lastError: unknown;
-
 	const startTime = new Date();
-	let accumulatedTokens = 0;
-	let totalPromptTokens = 0;
-	let totalCacheCreationTokens = 0;
-	let totalCacheReadTokens = 0;
-	let totalCompletionTokens = 0;
-	let hasRealUsage = false;
 
 	while (true) {
-		// 获取可用部署（含 cooldown 检查）
 		const candidate = litellmRouter.getAvailableDeployment(currentModel);
 		if (!candidate) {
-			// 当前模型无可用部署 — 尝试 fallback
-			const nextFallback = litellmRouter.getNextFallback(model, fallbackDepth);
+			const nextFallback = litellmRouter.getNextFallback(currentModel, 0);
 			if (!nextFallback) {
 				break;
 			}
@@ -190,10 +343,7 @@ async function handleStreamingResponse(
 		}
 
 		const { deployment, provider } = candidate;
-
-		// Track active request
 		litellmRouter.trackActiveRequest(deployment.model_name, 1);
-
 		const providerReq = provider.transformRequest(deployment.litellm_params.model, messages, {
 			...deployment.litellm_params,
 			...optionalParams,
@@ -201,139 +351,134 @@ async function handleStreamingResponse(
 		});
 
 		try {
-			// 向后端发起流式请求
 			const response = await fetch(providerReq.url, {
 				method: providerReq.method,
 				headers: providerReq.headers,
 				body: JSON.stringify(providerReq.body),
 			});
-
 			if (!response.ok) {
 				const errorBody = await response.json().catch(() => ({}));
-				lastError = new ApiError(response.status, `Provider 返回错误: ${JSON.stringify(errorBody)}`);
-				litellmRouter.markFailed(deployment.model_name);
-				// 尝试下一个 fallback
-				const nextFallback = litellmRouter.getNextFallback(model, fallbackDepth);
-				if (!nextFallback) {
-					throw lastError;
-				}
-				fallbackDepth++;
-				currentModel = nextFallback;
-				continue;
+				throw new ApiError(response.status, `Provider 返回错误: ${JSON.stringify(errorBody)}`);
 			}
 
-			// Provider 不支持流式或无法获取 reader 时回退到非流式
+			const spendInfo = buildDeploymentSpendInfo(deployment, providerReq.url);
 			if (!provider.supportsStreaming() || !response.body) {
 				const rawBody = await response.json();
 				const transformed = provider.transformResponse(deployment.litellm_params.model, rawBody);
-				res.json(transformed);
+				const completionStartTime = new Date();
+				if (fallbackDepth === 0) {
+					transformed.model = model;
+				}
+				calculateAndSetCost(transformed, model, spendInfo.customCostPerToken);
+				if (req.auth) {
+					const spendLog = buildSpendLogFromRequest({
+						req: req,
+						auth: req.auth,
+						callType: CallType.ACompletion,
+						model: model,
+						modelGroup: model,
+						modelId: spendInfo.modelId,
+						customLlmProvider: spendInfo.customLlmProvider,
+						apiBase: spendInfo.apiBase,
+						customCostPerToken: spendInfo.customCostPerToken,
+						deploymentModel: spendInfo.deploymentModel,
+						startTime: startTime,
+						endTime: new Date(),
+						completionStartTime: completionStartTime,
+						messages: messages,
+						response: transformed,
+						usage: transformed.usage as unknown as Record<string, unknown> | undefined,
+						status: SpendLogStatus.Success,
+					});
+					trackSpendLog(db, spendLog).catch((err) => logger.error("流式 JSON fallback 花费追踪失败", { error: err }));
+				}
+				res.json(stripInternalFields(transformed));
 				return;
 			}
 
-			// 设置 SSE 响应头
 			res.setHeader("Content-Type", "text/event-stream");
 			res.setHeader("Cache-Control", "no-cache");
 			res.setHeader("Connection", "keep-alive");
 			res.setHeader("X-Accel-Buffering", "no");
-
-			// DIFF-RT-03 / DIFF-ROUTER-RESPHEADERS-01: 流式路径也透传上游 provider headers
-			// （含 x-request-id / x-ratelimit-* / retry-after / anthropic-ratelimit-* / x-litellm-model-{id,group}）
-			// 通过 response._providerHeaders 拿到 Router 在 _executeRequest 阶段提取的 headers。
 			const providerHeaders = (response as unknown as { _providerHeaders?: Record<string, string> })._providerHeaders;
-			if (providerHeaders) {
-				for (const [k, v] of Object.entries(providerHeaders)) {
-					if (!res.getHeader(k)) {
-						res.setHeader(k, v);
-					}
+			for (const [key, value] of Object.entries(providerHeaders ?? {})) {
+				if (!res.getHeader(key)) {
+					res.setHeader(key, value);
 				}
 			}
 
+			let clientDisconnected = false;
+			res.on("close", () => {
+				if (!res.writableEnded) {
+					clientDisconnected = true;
+				}
+			});
 			const keepAlive = setInterval(() => {
-				res.write(": keepalive\n\n");
+				if (!clientDisconnected) {
+					res.write(": keepalive\n\n");
+				}
 			}, SSE_KEEPALIVE_INTERVAL_MS);
+			const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
+			let streamError: unknown;
+			let completionStartTime: Date | undefined;
 
 			try {
-				const streamProvider = provider as unknown as StreamingProvider;
-				const stream = streamProvider.streamResponse(response);
-
+				const stream = (provider as unknown as StreamingProvider).streamResponse(response);
 				for await (const chunk of stream) {
-					// 累加流式 token（从 delta content 估算）
-					for (const choice of chunk.choices ?? []) {
-						const delta = choice.delta;
-						if (delta?.content && typeof delta.content === "string") {
-							accumulatedTokens += Math.ceil(delta.content.length / 4);
-						}
+					if (fallbackDepth === 0) {
+						chunk.model = model;
 					}
-					res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-					// 从流式 chunk 中提取实际 usage（部分 provider 在末尾 chunk 中返回）
-					if ((chunk as unknown as Record<string, unknown>).usage) {
-						const usage = (chunk as unknown as Record<string, unknown>).usage as Record<string, unknown>;
-						if (usage["prompt_tokens"] != null) {
-							totalPromptTokens = Number(usage["prompt_tokens"]);
-							hasRealUsage = true;
-						}
-						if (usage["completion_tokens"] != null) {
-							hasRealUsage = true;
-							totalCompletionTokens = Number(usage["completion_tokens"]);
-						}
-						if (usage["cache_creation_input_tokens"] != null) {
-							totalCacheCreationTokens = Number(usage["cache_creation_input_tokens"]);
-						}
-						if (usage["cache_read_input_tokens"] != null) {
-							totalCacheReadTokens = Number(usage["cache_read_input_tokens"]);
-						}
-
-						if (typeof usage["prompt_tokens_details"] === "object" && usage["prompt_tokens_details"] !== null) {
-							const ptd = usage["prompt_tokens_details"] as Record<string, unknown>;
-							// GAP: PY 流式末 chunk 统一覆盖式赋值 (不取 max)，对齐 _transform_response_api_usage_to_chat_usage。
-							//   原 TS 用 Math.max 累计导致：若中间 chunk 报过更大值，末 chunk 即便降到正确值也会被锁住。
-							// eslint-disable-next-line max-depth
-							if (ptd["cached_tokens"] != null) {
-								totalCacheReadTokens = Number(ptd["cached_tokens"]);
-							}
-							// eslint-disable-next-line max-depth
-							if (ptd["cache_creation_tokens"] != null) {
-								totalCacheCreationTokens = Number(ptd["cache_creation_tokens"]);
-							}
-						}
+					completionStartTime ??= new Date();
+					accumulateChatChunk(accumulator, chunk);
+					if (!clientDisconnected) {
+						res.write(`data: ${JSON.stringify(stripInternalFields(chunk))}\n\n`);
 					}
 				}
-
-				res.write("data: [DONE]\n\n");
+				if (!clientDisconnected) {
+					res.write("data: [DONE]\n\n");
+				}
 			} catch (err) {
+				streamError = err;
 				logger.error("流式响应处理异常", { error: err });
-				// 写入 SSE 错误事件让客户端感知
-				const errorPayload = JSON.stringify({
-					error: { message: String(err), type: "stream_error" },
-				});
-				res.write(`data: ${errorPayload}\n\n`);
+				if (!clientDisconnected) {
+					res.write(`data: ${JSON.stringify({ error: { message: String(err), type: "stream_error" } })}\n\n`);
+				}
 			} finally {
 				clearInterval(keepAlive);
-				res.end();
-
-				// 流式 spend 追踪
-				if (auth && db && (hasRealUsage || accumulatedTokens > 0)) {
-					const endTime = new Date();
-					const spendLog: SpendLog = {
-						request_id: crypto.randomUUID(),
-						call_type: CallType.ACompletion,
-						api_key: auth.api_key ?? "",
-						spend: 0,
-						total_tokens: totalPromptTokens + totalCompletionTokens,
-						prompt_tokens: totalPromptTokens,
-						completion_tokens: totalCompletionTokens,
-						startTime: startTime.toISOString(),
-						endTime: endTime.toISOString(),
-						model: currentModel,
-						user: auth.user_id,
-						team_id: auth.team_id,
-						cache_creation_input_tokens: totalCacheCreationTokens,
-						cache_read_input_tokens: totalCacheReadTokens,
-
-						cache_hit: totalCacheReadTokens > 0,
-						// GAP 10: 透传 end_user_id 到 spend log
-						end_user_id: auth.end_user_id,
-					};
+				if (!res.writableEnded) {
+					res.end();
+				}
+				if (req.auth) {
+					const responseForLog = buildAggregatedChatResponse(accumulator, fallbackDepth === 0 ? model : currentModel);
+					const usage =
+						accumulator.usage ??
+						(accumulator.estimatedCompletionTokens > 0
+							? {
+									prompt_tokens: 0,
+									completion_tokens: accumulator.estimatedCompletionTokens,
+									total_tokens: accumulator.estimatedCompletionTokens,
+								}
+							: undefined);
+					const spendLog = buildSpendLogFromRequest({
+						req: req,
+						auth: req.auth,
+						callType: CallType.ACompletion,
+						model: model,
+						modelGroup: model,
+						modelId: spendInfo.modelId,
+						customLlmProvider: spendInfo.customLlmProvider,
+						apiBase: spendInfo.apiBase,
+						customCostPerToken: spendInfo.customCostPerToken,
+						deploymentModel: spendInfo.deploymentModel,
+						startTime: startTime,
+						endTime: new Date(),
+						completionStartTime: completionStartTime,
+						messages: messages,
+						response: responseForLog,
+						usage: usage as unknown as Record<string, unknown> | undefined,
+						error: streamError,
+						status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
+					});
 					trackSpendLog(db, spendLog).catch((err) => logger.error("流式花费追踪失败", { error: err }));
 				}
 			}
@@ -341,8 +486,7 @@ async function handleStreamingResponse(
 		} catch (err) {
 			lastError = err;
 			litellmRouter.markFailed(deployment.model_name);
-			// 尝试下一个 fallback
-			const nextFallback = litellmRouter.getNextFallback(model, fallbackDepth);
+			const nextFallback = litellmRouter.getNextFallback(currentModel, 0);
 			if (!nextFallback) {
 				break;
 			}
@@ -353,6 +497,15 @@ async function handleStreamingResponse(
 		}
 	}
 
-	// 所有部署和 fallback 均失败
-	throw lastError ?? ApiError.unavailable(`模型 "${model}" 当前无可用部署`);
+	// 所有部署和 fallback 均失败；lastError 存在说明打到过 provider（透传其错误）。
+	// 无 lastError 说明连候选部署都没有，按模型存在性分流（对齐 PY route_llm_request
+	// 校验层与非流式 RouterExecution 的 hasModel 判定）：
+	// 模型不存在 → 400 ProxyModelNotFoundError；模型存在但全部署冷却 → 429 no-deployments。
+	if (lastError) {
+		throw lastError;
+	}
+	if (!litellmRouter.hasModel(model)) {
+		throw buildInvalidModelError(formatInvalidModelMessage(CHAT_COMPLETIONS_ROUTE_NAME, model));
+	}
+	throw ApiError.noDeploymentsAvailable(model, litellmRouter.getNoAvailableDeploymentInfo(model));
 }

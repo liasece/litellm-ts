@@ -54,21 +54,40 @@ export function extractProviderHeaders(response: Response): Record<string, strin
 	return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** Router 尝试次数相关响应头来源。 */
+export interface RouterAttemptHeaders {
+	/** 当前请求已经进入第几层 fallback，初始模型为 0 */
+	attemptedFallbacks?: number;
+	/** 当前请求已完成的 retry 次数，初始尝试为 0 */
+	attemptedRetries?: number;
+	/** 当前请求允许的最大 retry 次数 */
+	maxRetries?: number;
+}
+
 /**
- * 把命中 deployment 的 metadata 合并到响应头中，供下游 endpoint 透传给客户端。
- *
- * 注入的字段：
- *   - x-litellm-model-id: deployment.model_info.id（命中 deployment 标识）
- *   - x-litellm-model-group: deployment.model_name（模型组名）
- * @param deployment - 实际命中的 deployment
- * @param baseHeaders - 已有的 provider 透传头（来自 extractProviderHeaders）
+ * @param deployment
+ * @param baseHeaders
+ * @param attemptHeaders
  */
-export function buildResponseHeaders(deployment: Deployment, baseHeaders?: Record<string, string>): Record<string, string> {
+export function buildResponseHeaders(
+	deployment: Deployment,
+	baseHeaders?: Record<string, string>,
+	attemptHeaders?: RouterAttemptHeaders,
+): Record<string, string> {
 	const out: Record<string, string> = { ...(baseHeaders ?? {}) };
 	const modelId = deployment.model_info?.id;
 	if (typeof modelId === "string" && modelId.length > 0) {
 		out["x-litellm-model-id"] = modelId;
 	}
 	out["x-litellm-model-group"] = deployment.model_name;
+	if (attemptHeaders?.attemptedFallbacks !== undefined) {
+		out["x-litellm-attempted-fallbacks"] = String(attemptHeaders.attemptedFallbacks);
+	}
+	if (attemptHeaders?.attemptedRetries !== undefined) {
+		out["x-litellm-attempted-retries"] = String(attemptHeaders.attemptedRetries);
+	}
+	if (attemptHeaders?.maxRetries !== undefined) {
+		out["x-litellm-max-retries"] = String(attemptHeaders.maxRetries);
+	}
 	return out;
 }

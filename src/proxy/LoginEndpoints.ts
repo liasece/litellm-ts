@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 /**
  * Login 端点
  *
@@ -198,7 +197,8 @@ function createWebUiSessionClaims(config: ServiceConfig, plainKey: string): WebU
 		user_email: null,
 		user_role: PROXY_ADMIN_ROLE,
 		login_method: LOGIN_METHOD_USERNAME_PASSWORD,
-		premium_user: false,
+		// 定制：放开企业付费功能门禁，WebUI 全部功能可用
+		premium_user: true,
 		auth_header_name: authHeaderName,
 		disabled_non_admin_personal_key_creation: false,
 		server_root_path: "/",
