@@ -12,19 +12,13 @@ import request from "supertest";
 import { createKeyManagementRoutes } from "./KeyManagementEndpoint";
 import { hashApiKey } from "../core/utils/crypto";
 
-interface DeprecatedMockRow {
-	readonly id?: string;
-	readonly token: string;
-	readonly activeTokenId: string;
-	readonly revokeAt: Date;
-}
-
 interface MockDbState {
 	rows: Array<Record<string, unknown>>;
 	deletedTokens: string[];
-	deprecatedRows: DeprecatedMockRow[];
+	auditRows: Array<Record<string, unknown>>;
 	insertCalls: Array<{ values: Record<string, unknown> }>;
 	selectConditions: unknown[];
+	transactionCount: number;
 }
 
 function collectStrings(value: unknown, out: string[] = [], seen: WeakSet<object> = new WeakSet(), depth = 0): string[] {
@@ -69,12 +63,13 @@ function makeDeleteMockDb(initialRows: Array<Record<string, unknown>>): { db: un
 	const state: MockDbState = {
 		rows: initialRows.map((row) => ({ ...row })),
 		deletedTokens: [],
-		deprecatedRows: [],
+		auditRows: [],
 		insertCalls: [],
 		selectConditions: [],
+		transactionCount: 0,
 	};
 
-	const db = {
+	const db: Record<string, unknown> = {
 		select: () => ({
 			from: () => ({
 				where: (condition: unknown) => {
@@ -84,11 +79,11 @@ function makeDeleteMockDb(initialRows: Array<Record<string, unknown>>): { db: un
 			}),
 		}),
 		insert: () => ({
-			values: (values: DeprecatedMockRow | DeprecatedMockRow[]) => {
+			values: (values: Record<string, unknown> | Array<Record<string, unknown>>) => {
 				const rows = Array.isArray(values) ? values : [values];
 				for (const row of rows) {
-					state.insertCalls.push({ values: { ...row, revokeAt: row.revokeAt } });
-					state.deprecatedRows.push({ ...row });
+					state.insertCalls.push({ values: { ...row } });
+					state.auditRows.push({ ...row });
 				}
 				return Promise.resolve();
 			},
@@ -102,6 +97,10 @@ function makeDeleteMockDb(initialRows: Array<Record<string, unknown>>): { db: un
 				return Promise.resolve({ rowCount: matched.length });
 			},
 		}),
+	};
+	db.transaction = async (callback: (tx: unknown) => Promise<unknown>) => {
+		state.transactionCount += 1;
+		return callback(db);
 	};
 
 	return { db: db, state: state };
@@ -128,10 +127,11 @@ describe("KeyManagement /key/delete 契约", () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body).toEqual({ deleted_keys: [hashed] });
-		expect(state.deprecatedRows).toHaveLength(1);
-		expect(state.deprecatedRows[0]?.token).toBe(hashed);
-		expect(state.deprecatedRows[0]?.activeTokenId).toBe(hashed);
-		expect(state.deprecatedRows[0]?.id).toEqual(expect.any(String));
+		expect(state.auditRows).toHaveLength(1);
+		expect(state.auditRows[0]).toMatchObject({ token: hashed, keyAlias: "alias-1", keyName: "sk-...a" });
+		expect(state.auditRows[0]?.activeTokenId).toBeUndefined();
+		expect(state.auditRows[0]?.deletedAt).toBeInstanceOf(Date);
+		expect(state.transactionCount).toBe(1);
 		expect(state.deletedTokens).toContain(hashed);
 	});
 
@@ -152,7 +152,7 @@ describe("KeyManagement /key/delete 契约", () => {
 		expect(res.body).toEqual({ deleted_keys: [plain] });
 		expect(res.body.deleted_keys[0]).toBe(plain);
 		expect(res.body.deleted_keys[0]).not.toBe(hashed);
-		expect(state.deprecatedRows[0]?.token).toBe(hashed);
+		expect(state.auditRows[0]?.token).toBe(hashed);
 	});
 
 	it("POST /key/delete with { key_aliases: [alias] } 应按 alias 命中实际 token，响应回显 alias", async () => {
@@ -166,7 +166,7 @@ describe("KeyManagement /key/delete 契约", () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body).toEqual({ deleted_keys: ["my-alias"] });
-		expect(state.deprecatedRows[0]?.token).toBe(hashed);
+		expect(state.auditRows[0]?.token).toBe(hashed);
 		expect(state.deletedTokens).toContain(hashed);
 	});
 
@@ -181,7 +181,19 @@ describe("KeyManagement /key/delete 契约", () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body).toEqual({ deleted_keys: [hashed] });
-		expect(state.deprecatedRows[0]?.token).toBe(hashed);
+		expect(state.auditRows[0]?.token).toBe(hashed);
+	});
+
+	it("批量删除任一 key 不存在时不产生部分成功", async () => {
+		const { db, state } = makeDeleteMockDb([{ token: "existing", keyAlias: null }]);
+		const res = await request(makeApp(db))
+			.post("/key/delete")
+			.send({ keys: ["existing", "missing"] });
+
+		expect(res.status).toBe(404);
+		expect(state.auditRows).toHaveLength(0);
+		expect(state.deletedTokens).toHaveLength(0);
+		expect(state.rows).toHaveLength(1);
 	});
 
 	it("缺少 keys/key_aliases 或两者均为空数组时返回 400 与精确 message", async () => {
@@ -208,6 +220,99 @@ describe("KeyManagement /key/delete 契约", () => {
 		expect(res.body.error.message).toBe("No keys found");
 	});
 });
+describe("KeyManagement /key/regenerate 生命周期", () => {
+	function makeRegenerateMockDb(row: Record<string, unknown>) {
+		const state = {
+			row: { ...row },
+			deprecatedRows: [] as Array<Record<string, unknown>>,
+			transactionCount: 0,
+		};
+		const db: Record<string, unknown> = {
+			select: () => ({
+				from: () => ({
+					where: (condition: unknown) => ({
+						limit: () => {
+							const strings = new Set(collectStrings(condition));
+							return Promise.resolve(strings.has(String(state.row.token)) ? [state.row] : []);
+						},
+					}),
+				}),
+			}),
+			update: () => ({
+				set: (values: Record<string, unknown>) => ({
+					where: () => {
+						state.row = { ...state.row, ...values };
+						return Promise.resolve({ rowCount: 1 });
+					},
+				}),
+			}),
+			insert: () => ({
+				values: (values: Record<string, unknown>) => {
+					state.deprecatedRows.push({ ...values });
+					return Promise.resolve();
+				},
+			}),
+		};
+		db.transaction = async (callback: (tx: unknown) => Promise<unknown>) => {
+			state.transactionCount += 1;
+			return callback(db);
+		};
+		return { db: db, state: state };
+	}
+
+	it("在单事务内轮换主键并保留 project/agent/router/policy/access-group/预算字段", async () => {
+		const oldToken = "old-token";
+		const { db, state } = makeRegenerateMockDb({
+			token: oldToken,
+			keyName: "old-name",
+			userId: "user-a",
+			teamId: "team-a",
+			agentId: "agent-a",
+			projectId: "project-a",
+			organizationId: "org-a",
+			routerSettings: { strategy: "usage-based-routing" },
+			policies: ["policy-a"],
+			accessGroupIds: ["group-a"],
+			budgetId: "budget-a",
+			modelMaxBudget: { model: 10 },
+			models: ["model"],
+		});
+
+		const res = await request(makeApp(db)).post("/key/regenerate").send({ token: oldToken, grace_period: "1h" });
+
+		expect(res.status).toBe(200);
+		expect(state.transactionCount).toBe(1);
+		expect(state.row.token).toBe(res.body.token);
+		expect(state.row).toMatchObject({
+			agentId: "agent-a",
+			projectId: "project-a",
+			routerSettings: { strategy: "usage-based-routing" },
+			policies: ["policy-a"],
+			accessGroupIds: ["group-a"],
+			budgetId: "budget-a",
+			modelMaxBudget: { model: 10 },
+		});
+		expect(state.deprecatedRows).toHaveLength(1);
+		expect(state.deprecatedRows[0]).toMatchObject({ token: oldToken, activeTokenId: res.body.token });
+		expect(state.deprecatedRows[0]?.revokeAt).toBeInstanceOf(Date);
+	});
+
+	it("未配置 grace period 时立即撤销旧 key，不写 deprecated 映射", async () => {
+		const { db, state } = makeRegenerateMockDb({ token: "old-token", keyName: "old", models: [] });
+		const previous = process.env.LITELLM_KEY_ROTATION_GRACE_PERIOD;
+		delete process.env.LITELLM_KEY_ROTATION_GRACE_PERIOD;
+		try {
+			const res = await request(makeApp(db)).post("/key/regenerate").send({ token: "old-token" });
+			expect(res.status).toBe(200);
+			expect(state.deprecatedRows).toHaveLength(0);
+		} finally {
+			if (previous !== undefined) {
+				process.env.LITELLM_KEY_ROTATION_GRACE_PERIOD = previous;
+			}
+		}
+	});
+});
+
 describe("KeyManagement /key/info 与 /key/list parity", () => {
 	function makeKeyInfoMockDb(rows: Array<Record<string, unknown>>): unknown {
 		return {
@@ -347,6 +452,33 @@ describe("KeyManagement /key/info 与 /key/list parity", () => {
 		expect(fullObject.status).toBe(200);
 		expect(fullObject.body.keys).toEqual(expect.arrayContaining([expect.objectContaining({ token: hashedToken })]));
 		expect(JSON.stringify(fullObject.body)).not.toContain(plainKey);
+	});
+
+	it("/key/list?status=deleted 从审计表返回 hash token 与删除元数据，不返回明文 key", async () => {
+		const plain = "sk-deleted-plain-key";
+		const hashed = hashApiKey(plain);
+		const app = makeApp(
+			makeKeyListMockDb([
+				{
+					token: hashed,
+					keyAlias: "deleted-alias",
+					userId: "user-a",
+					teamId: null,
+					deletedAt: new Date("2026-07-01T00:00:00.000Z"),
+					deletedBy: "admin-a",
+				},
+			]),
+		);
+
+		const res = await request(app).get("/key/list?status=deleted&return_full_object=true");
+		expect(res.status).toBe(200);
+		expect(res.body.keys[0]).toMatchObject({
+			token: hashed,
+			key_alias: "deleted-alias",
+			deleted_at: "2026-07-01T00:00:00.000Z",
+			deleted_by: "admin-a",
+		});
+		expect(JSON.stringify(res.body)).not.toContain(plain);
 	});
 });
 

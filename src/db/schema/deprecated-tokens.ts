@@ -1,19 +1,20 @@
+import { uuidText } from "./uuidText";
 /**
  * LiteLLM_DeprecatedVerificationToken — Deprecated (rotated) tokens
  * Prisma model: LiteLLM_DeprecatedVerificationToken (UUID PK, unique token)
  */
 
-import { pgTable, text, uuid, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 
 export const liteLLM_DeprecatedVerificationToken = pgTable(
 	"LiteLLM_DeprecatedVerificationToken",
 	{
-		id: uuid("id").defaultRandom().primaryKey(),
+		id: uuidText("id").primaryKey().notNull(),
 		token: text("token").notNull(),
 		activeTokenId: text("active_token_id").notNull(),
-		revokeAt: timestamp("revoke_at").notNull(),
+		revokeAt: timestamp("revoke_at", { precision: 3 }).notNull(),
 		// @map("created_at")
-		createdAt: timestamp("created_at").defaultNow(),
+		createdAt: timestamp("created_at", { precision: 3 }).defaultNow().notNull(),
 	},
 	(table) => [
 		uniqueIndex("deprecated_verification_tokens_token_key").on(table.token),

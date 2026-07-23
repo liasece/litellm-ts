@@ -6,7 +6,7 @@ export const liteLLM_SpendLogGuardrailIndex = pgTable(
 		request_id: text("request_id").notNull(),
 		guardrail_id: text("guardrail_id").notNull(),
 		policy_id: text("policy_id"),
-		start_time: timestamp("start_time").notNull(),
+		start_time: timestamp("start_time", { precision: 3 }).notNull(),
 	},
 	(table) => ({
 		pk: primaryKey({ columns: [table.request_id, table.guardrail_id] }),

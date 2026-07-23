@@ -8,6 +8,7 @@
 
 import { get, noAuth, query } from "../core/api/decorators";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
+import type { DatabaseReadinessResult } from "../core/db/Database";
 import { DeploymentNotFoundError, type DeploymentProbeResult, type Router } from "../router/Router";
 
 /**
@@ -58,6 +59,12 @@ const HEALTH_CHECKABLE_SERVICES: readonly string[] = [
 const SERVICES_TYPE_REPR =
 	"typing.Union[typing.Literal['slack_budget_alerts', 'langfuse', 'langfuse_otel', 'slack', 'openmeter', 'webhook', 'email', 'braintrust', 'datadog', 'datadog_llm_observability', 'generic_api', 'arize', 'sqs'], str]";
 
+/** HealthController 需要的最小数据库 readiness 能力。 */
+export interface ReadinessDatabase {
+	/** 执行脱敏数据库就绪探测。 */
+	probeReadiness(): Promise<DatabaseReadinessResult>;
+}
+
 /** Readiness response compatible with Python LiteLLM. */
 interface ReadinessResponse {
 	/** Overall worker status. */
@@ -107,7 +114,10 @@ export class HealthController {
 	private static readonly _probeConcurrency = 5;
 	private readonly _latestHealthChecks = new Map<string, HealthCheckEntry>();
 
-	constructor(private readonly _router?: Router) {}
+	constructor(
+		private readonly _router?: Router,
+		private readonly _database?: ReadinessDatabase,
+	) {}
 
 	/**
 	 * 全量健康检查 — 返回各 deployment 的健康/不健康清单与计数
@@ -173,9 +183,21 @@ export class HealthController {
 	@noAuth()
 	@get("/health/readiness")
 	async readiness(): Promise<ReadinessResponse> {
+		try {
+			if (this._database === undefined || this._router === undefined) {
+				throw ApiError.unavailable("Service is not ready");
+			}
+			const databaseResult = await this._database.probeReadiness();
+			if (!databaseResult.ready || this._router.getDeployments().length === 0) {
+				throw ApiError.unavailable("Service is not ready");
+			}
+		} catch {
+			throw ApiError.unavailable("Service is not ready");
+		}
+
 		return {
 			status: "healthy",
-			db: "Not connected",
+			db: "connected",
 			cache: null,
 			litellm_version: process.env.npm_package_version ?? "unknown",
 			success_callbacks: [],

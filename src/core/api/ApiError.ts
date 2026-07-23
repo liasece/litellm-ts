@@ -10,6 +10,7 @@
 const HTTP_STATUS = {
 	BAD_REQUEST: 400,
 	UNAUTHORIZED: 401,
+	FORBIDDEN: 403,
 	NOT_FOUND: 404,
 	CONFLICT: 409,
 	UNPROCESSABLE_ENTITY: 422,
@@ -159,6 +160,14 @@ export class ApiError extends Error {
 	 */
 	static unauthorized(message: string): ApiError {
 		return new ApiError(HTTP_STATUS.UNAUTHORIZED, message);
+	}
+
+	/**
+	 * 403 Forbidden — 已认证但权限不足
+	 * @param message - 面向用户的错误描述
+	 */
+	static forbidden(message: string): ApiError {
+		return new ApiError(HTTP_STATUS.FORBIDDEN, message);
 	}
 
 	/**

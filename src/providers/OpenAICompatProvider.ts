@@ -172,6 +172,9 @@ export class OpenAICompatProvider implements ProviderConfig {
 		// 时保留 ModelResponse 预生成的 "chatcmpl-<uuid>"
 		const upstreamId = raw.id;
 		const responseId = typeof upstreamId === "string" && upstreamId.length > 0 ? upstreamId : generateChatCompletionId();
+		const rawUsage = (raw.usage as Record<string, unknown> | undefined) ?? {};
+		const promptTokenDetails = rawUsage["prompt_tokens_details"];
+		const completionTokenDetails = rawUsage["completion_tokens_details"];
 
 		return {
 			id: responseId,
@@ -189,6 +192,8 @@ export class OpenAICompatProvider implements ProviderConfig {
 						content: (msg?.content as string | null) ?? null,
 						tool_calls: msg?.tool_calls as ToolCall[] | undefined,
 						reasoning_content: msg?.reasoning_content as string | undefined,
+						thinking_blocks: msg?.thinking_blocks as ModelResponse["choices"][number]["message"]["thinking_blocks"],
+						provider_specific_fields: msg?.provider_specific_fields as Record<string, unknown> | undefined,
 					},
 				};
 			}),
@@ -196,6 +201,18 @@ export class OpenAICompatProvider implements ProviderConfig {
 				prompt_tokens: _extractNumber(usage?.prompt_tokens, raw.usage, "prompt_tokens"),
 				completion_tokens: _extractNumber(usage?.completion_tokens, raw.usage, "completion_tokens"),
 				total_tokens: _extractNumber(usage?.total_tokens, raw.usage, "total_tokens"),
+				...(typeof promptTokenDetails === "object" && promptTokenDetails !== null
+					? { prompt_tokens_details: promptTokenDetails }
+					: {}),
+				...(typeof completionTokenDetails === "object" && completionTokenDetails !== null
+					? { completion_tokens_details: completionTokenDetails }
+					: {}),
+				...(typeof rawUsage["cache_creation_input_tokens"] === "number"
+					? { cache_creation_input_tokens: rawUsage["cache_creation_input_tokens"] }
+					: {}),
+				...(typeof rawUsage["cache_read_input_tokens"] === "number"
+					? { cache_read_input_tokens: rawUsage["cache_read_input_tokens"] }
+					: {}),
 			},
 		};
 	}
@@ -236,6 +253,25 @@ export class OpenAICompatProvider implements ProviderConfig {
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) {
+					buffer += decoder.decode();
+					const residual = buffer.trim();
+					if (!residual.startsWith("data: ")) {
+						break;
+					}
+					const payload = residual.slice(6);
+					if (payload === "[DONE]") {
+						return;
+					}
+					let parsed: ModelResponseStream;
+					try {
+						parsed = JSON.parse(payload) as ModelResponseStream;
+					} catch {
+						throw new Error("Provider 返回 malformed SSE event");
+					}
+					if (!parsed.id) {
+						parsed.id = generateChatCompletionId();
+					}
+					yield parsed;
 					break;
 				}
 
@@ -256,16 +292,17 @@ export class OpenAICompatProvider implements ProviderConfig {
 						return;
 					}
 
+					let parsed: ModelResponseStream;
 					try {
-						const parsed = JSON.parse(payload) as ModelResponseStream;
-						// PY ModelResponseStream(**chunk)：chunk 缺 id 时按 "chatcmpl-<uuid>" 重新生成
-						if (!parsed.id) {
-							parsed.id = generateChatCompletionId();
-						}
-						yield parsed;
+						parsed = JSON.parse(payload) as ModelResponseStream;
 					} catch {
-						// 忽略无法解析的行
+						throw new Error("Provider 返回 malformed SSE event");
 					}
+					// PY ModelResponseStream(**chunk)：chunk 缺 id 时按 "chatcmpl-<uuid>" 重新生成
+					if (!parsed.id) {
+						parsed.id = generateChatCompletionId();
+					}
+					yield parsed;
 				}
 			}
 		} finally {

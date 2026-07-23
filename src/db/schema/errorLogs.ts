@@ -1,15 +1,16 @@
-import { pgTable, text, uuid, jsonb, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, jsonb, timestamp } from "drizzle-orm/pg-core";
 
+import { uuidText } from "./uuidText";
 export const liteLLM_ErrorLogs = pgTable("LiteLLM_ErrorLogs", {
-	request_id: uuid("request_id").defaultRandom().primaryKey(),
-	startTime: timestamp("startTime").notNull(),
-	endTime: timestamp("endTime").notNull(),
-	api_base: text("api_base").default(""),
-	model_group: text("model_group").default(""),
-	litellm_model_name: text("litellm_model_name").default(""),
-	model_id: text("model_id").default(""),
-	request_kwargs: jsonb("request_kwargs").default("{}"),
-	exception_type: text("exception_type").default(""),
-	exception_string: text("exception_string").default(""),
-	status_code: text("status_code").default(""),
+	request_id: uuidText("request_id").primaryKey().notNull(),
+	startTime: timestamp("startTime", { precision: 3 }).notNull(),
+	endTime: timestamp("endTime", { precision: 3 }).notNull(),
+	api_base: text("api_base").default("").notNull(),
+	model_group: text("model_group").default("").notNull(),
+	litellm_model_name: text("litellm_model_name").default("").notNull(),
+	model_id: text("model_id").default("").notNull(),
+	request_kwargs: jsonb("request_kwargs").default("{}").notNull(),
+	exception_type: text("exception_type").default("").notNull(),
+	exception_string: text("exception_string").default("").notNull(),
+	status_code: text("status_code").default("").notNull(),
 });

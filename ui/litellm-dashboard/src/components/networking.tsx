@@ -13,10 +13,9 @@ export const getCallbackConfigsCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/callbacks/configs` : `/callbacks/configs`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -43,10 +42,9 @@ export const getInProductNudgesCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/in_product_nudges` : `/in_product_nudges`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -69,13 +67,45 @@ export const getInProductNudgesCall = async (accessToken: string) => {
  * Helper file for calls being made to proxy
  */
 import MessageManager from "@/components/molecules/message_manager";
-import { clearTokenCookies } from "@/utils/cookieUtils";
+import { getCookie } from "@/utils/cookieUtils";
 import { TagNewRequest, TagUpdateRequest, TagListResponse, TagInfoResponse } from "./tag_management/types";
 import { Team } from "./key_team_helpers/key_list";
 import { UserInfo } from "./view_users/types";
 import { EmailEventSettingsResponse, EmailEventSettingsUpdateRequest } from "./email_events/types";
 import { jsonFields } from "./common_components/check_openapi_schema";
 import NotificationsManager from "./molecules/notifications_manager";
+
+const CSRF_COOKIE_NAME = "litellm_csrf_token";
+const CSRF_HEADER_NAME = "x-litellm-csrf-token";
+const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** Dashboard API client：仅发送 HttpOnly session cookie，写请求附带 CSRF token。 */
+export const dashboardFetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+	const method = (init.method ?? "GET").toUpperCase();
+	const headers = new Headers(init.headers);
+	if (!SAFE_HTTP_METHODS.has(method)) {
+		const csrfToken = getCookie(CSRF_COOKIE_NAME);
+		if (csrfToken) {
+			headers.set(CSRF_HEADER_NAME, csrfToken);
+		}
+	}
+	return globalThis.fetch(input, {
+		...init,
+		headers: headers,
+		credentials: "include",
+	});
+};
+
+export interface WebUiSessionInfo {
+	readonly authenticated: true;
+	readonly user_id: string;
+	readonly user_email: string | null;
+	readonly user_role: string;
+	readonly login_method: string;
+	readonly premium_user: boolean;
+	readonly disabled_non_admin_personal_key_creation: boolean;
+	readonly server_root_path: string;
+}
 
 const isLocal = process.env.NODE_ENV === "development";
 // In dev, if NEXT_PUBLIC_USE_REWRITES=true the Next.js dev server proxies API calls
@@ -153,6 +183,23 @@ export const getProxyBaseUrl = (): string => {
 	}
 	const browserLocation = getWindowLocation();
 	return browserLocation?.origin ?? "";
+};
+
+/** 查询服务端 WebUI session，不读取或解码 HttpOnly token cookie。 */
+export const getWebUiSession = async (): Promise<WebUiSessionInfo> => {
+	const response = await dashboardFetch(`${getProxyBaseUrl()}/auth/session`);
+	if (!response.ok) {
+		throw new Error("WebUI session is not authenticated");
+	}
+	return (await response.json()) as WebUiSessionInfo;
+};
+
+/** 注销并撤销服务端 WebUI session。 */
+export const logoutWebUiSession = async (): Promise<void> => {
+	const response = await dashboardFetch(`${getProxyBaseUrl()}/auth/logout`, { method: "POST" });
+	if (!response.ok) {
+		throw new Error("Failed to logout WebUI session");
+	}
 };
 
 /**
@@ -341,7 +388,7 @@ export const handleError = async (errorData: string | any) => {
 		if (errorString.includes("Authentication Error - Expired Key")) {
 			NotificationsManager.info("UI Session Expired. Logging out.");
 			lastErrorTime = currentTime;
-			clearTokenCookies();
+			await logoutWebUiSession().catch(() => undefined);
 			const browserLocation = getWindowLocation();
 			if (browserLocation) {
 				window.location.href = browserLocation.pathname;
@@ -359,7 +406,7 @@ export const getProviderCreateMetadata = async (): Promise<ProviderCreateInfo[]>
 	 * This is used by the UI to dynamically render provider-specific credential fields.
 	 */
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/providers/fields` : `/public/providers/fields`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 	});
 
@@ -379,7 +426,7 @@ export const getAgentCreateMetadata = async (): Promise<AgentCreateInfo[]> => {
 	 * This is used by the UI to dynamically render agent-specific credential fields.
 	 */
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/agents/fields` : `/public/agents/fields`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 	});
 
@@ -410,10 +457,9 @@ export function getGlobalLitellmHeaderName(): string {
 
 export const makeModelGroupPublic = async (accessToken: string, modelGroups: string[]) => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/model_group/make_public` : `/model_group/make_public`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({
@@ -429,7 +475,7 @@ export const getUiConfig = async () => {
 	const url = defaultProxyBaseUrl
 		? `${defaultProxyBaseUrl}/litellm/.well-known/litellm-ui-config`
 		: `/litellm/.well-known/litellm-ui-config`;
-	const response = await fetch(url);
+	const response = await dashboardFetch(url);
 	const jsonData: LiteLLMWellKnownUiConfig = await response.json();
 	/**
 	 * Update the proxy base url and server root path
@@ -441,14 +487,14 @@ export const getUiConfig = async () => {
 
 export const getPublicModelHubInfo = async () => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/model_hub/info` : `/public/model_hub/info`;
-	const response = await fetch(url);
+	const response = await dashboardFetch(url);
 	const jsonData: PublicModelHubInfo = await response.json();
 	return jsonData;
 };
 
 export const getOpenAPISchema = async () => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/openapi.json` : `/openapi.json`;
-	const response = await fetch(url);
+	const response = await dashboardFetch(url);
 	const jsonData = await response.json();
 	return jsonData;
 };
@@ -456,7 +502,7 @@ export const getOpenAPISchema = async () => {
 export const modelCostMap = async () => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/public/litellm_model_cost_map` : `/public/litellm_model_cost_map`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
 				"Content-Type": "application/json",
@@ -474,10 +520,9 @@ export const modelCostMap = async () => {
 export const reloadModelCostMap = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/reload/model_cost_map` : `/reload/model_cost_map`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -495,10 +540,9 @@ export const scheduleModelCostMapReload = async (accessToken: string, hours: num
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/schedule/model_cost_map_reload?hours=${hours}`
 			: `/schedule/model_cost_map_reload?hours=${hours}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -514,10 +558,9 @@ export const scheduleModelCostMapReload = async (accessToken: string, hours: num
 export const cancelModelCostMapReload = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/schedule/model_cost_map_reload` : `/schedule/model_cost_map_reload`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -533,10 +576,9 @@ export const cancelModelCostMapReload = async (accessToken: string) => {
 export const getModelCostMapSource = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/model/cost_map/source` : `/model/cost_map/source`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -561,10 +603,9 @@ export const getModelCostMapReloadStatus = async (accessToken: string) => {
 			? `${proxyBaseUrl}/schedule/model_cost_map_reload/status`
 			: `/schedule/model_cost_map_reload/status`;
 		console.log("Fetching status from URL:", url);
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -587,10 +628,9 @@ export const getModelCostMapReloadStatus = async (accessToken: string) => {
 export const modelCreateCall = async (accessToken: string, formValues: Model) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/model/new` : `/model/new`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -625,10 +665,9 @@ export const modelDeleteCall = async (accessToken: string, model_id: string) => 
 	console.log(`model_id in model delete call: ${model_id}`);
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/model/delete` : `/model/delete`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -661,10 +700,9 @@ export const budgetDeleteCall = async (accessToken: string | null, budget_id: st
 
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/budget/delete` : `/budget/delete`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -697,10 +735,9 @@ export const budgetCreateCall = async (
 
 		console.log("Form Values after check:", formValues);
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/budget/new` : `/budget/new`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -734,10 +771,9 @@ export const budgetUpdateCall = async (
 
 		console.log("Form Values after check:", formValues);
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/budget/update` : `/budget/update`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -768,10 +804,9 @@ export const invitationCreateCall = async (
 ) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/invitation/new` : `/invitation/new`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -804,10 +839,9 @@ export const alertingSettingsCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/alerting/settings` : `/alerting/settings`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -863,10 +897,9 @@ export const keyCreateServiceAccountCall = async (
 
 		console.log("Form Values after check:", formValues);
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/key/service-account/generate` : `/key/service-account/generate`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -926,10 +959,9 @@ export const keyCreateCall = async (
 
 		console.log("Form Values after check:", formValues);
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/key/generate` : `/key/generate`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -975,10 +1007,9 @@ export const keyCreateForAgentCall = async (
 	if (metadata && Object.keys(metadata).length > 0) {
 		body.metadata = metadata;
 	}
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(body),
@@ -1028,10 +1059,9 @@ export const userCreateCall = async (
 
 		console.log("Form Values after check:", formValues);
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/user/new` : `/user/new`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -1062,10 +1092,9 @@ export const keyDeleteCall = async (accessToken: string, user_key: string) => {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/key/delete` : `/key/delete`;
 		console.log("in keyDeleteCall:", user_key);
 		//NotificationsManager.info("Making key delete request");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -1096,10 +1125,9 @@ export const userDeleteCall = async (accessToken: string, userIds: string[]) => 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/user/delete` : `/user/delete`;
 		console.log("in userDeleteCall:", userIds);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -1128,10 +1156,9 @@ export const teamDeleteCall = async (accessToken: string, teamID: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/team/delete` : `/team/delete`;
 		console.log("in teamDeleteCall:", teamID);
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -1232,10 +1259,9 @@ export const userListCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1281,7 +1307,7 @@ export interface UserInfoV2Response {
  * Lightweight user info fetch from /v2/user/info.
  * Returns only the user object — no keys, no teams objects.
  *
- * @param accessToken - Bearer token for auth
+ * @param accessToken - 兼容现有调用方的会话就绪标记；认证由 HttpOnly cookie 完成
  * @param userId - Optional user ID to look up. If omitted, returns the caller's own info.
  */
 export const userGetInfoV2 = async (accessToken: string, userId?: string): Promise<UserInfoV2Response> => {
@@ -1291,10 +1317,9 @@ export const userGetInfoV2 = async (accessToken: string, userId?: string): Promi
 			url += `?user_id=${encodeURIComponent(userId)}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1344,10 +1369,9 @@ export const userInfoCall = async (
 		}
 
 		console.log("Requesting user data from:", url);
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1375,10 +1399,9 @@ export const teamInfoCall = async (accessToken: string, teamID: string | null) =
 			url = `${url}?team_id=${teamID}`;
 		}
 		console.log("in teamInfoCall");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1448,10 +1471,9 @@ export const v2TeamListCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1509,10 +1531,9 @@ export const teamListCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1541,10 +1562,9 @@ export const availableTeamListCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/team/available` : `/team/available`;
 		console.log("in availableTeamListCall");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1589,10 +1609,9 @@ export const organizationListCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1619,10 +1638,9 @@ export const organizationInfoCall = async (accessToken: string, organizationID: 
 			url = `${url}?organization_id=${organizationID}`;
 		}
 		console.log("in teamInfoCall");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -1663,10 +1681,9 @@ export const organizationCreateCall = async (
 		}
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/organization/new` : `/organization/new`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -1699,10 +1716,9 @@ export const organizationUpdateCall = async (
 		console.log("Form Values in organizationUpdateCall:", formValues); // Log the form values before making the API call
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/organization/update` : `/organization/update`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -1730,10 +1746,9 @@ export const organizationUpdateCall = async (
 export const organizationDeleteCall = async (accessToken: string, organizationID: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/organization/delete` : `/organization/delete`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -1763,10 +1778,9 @@ export const transformRequestCall = async (accessToken: string, request: object)
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/utils/transform_request` : `/utils/transform_request`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(request),
@@ -1854,10 +1868,9 @@ const fetchDailyActivity = async ({
 	try {
 		const url = buildDailyActivityUrl(endpoint, startTime, endTime, page, extraQueryParams);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2009,7 +2022,7 @@ export const getOnboardingCredentials = async (inviteUUID: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/onboarding/get_token` : `/onboarding/get_token`;
 		url += `?invite_link=${inviteUUID}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
 				"Content-Type": "application/json",
@@ -2040,10 +2053,9 @@ export const claimOnboardingToken = async (
 ) => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/onboarding/claim_token` : `/onboarding/claim_token`;
 	try {
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -2076,10 +2088,9 @@ export const regenerateKeyCall = async (accessToken: string, keyToRegenerate: st
 			? `${proxyBaseUrl}/key/${keyToRegenerate}/regenerate`
 			: `/key/${keyToRegenerate}/regenerate`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(formData),
@@ -2158,10 +2169,9 @@ export const modelInfoCall = async (
 		}
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2204,10 +2214,9 @@ export const modelInfoV1Call = async (accessToken: string, modelId: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/v1/model/info` : `/v1/model/info`;
 		url += `?litellm_model_id=${modelId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2230,7 +2239,7 @@ export const modelInfoV1Call = async (accessToken: string, modelId: string) => {
 
 export const modelHubPublicModelsCall = async () => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/model_hub` : `/public/model_hub`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 		headers: {
 			"Content-Type": "application/json",
@@ -2245,7 +2254,7 @@ export const modelHubPublicModelsCall = async () => {
 
 export const agentHubPublicModelsCall = async () => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/agent_hub` : `/public/agent_hub`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 		headers: {
 			"Content-Type": "application/json",
@@ -2260,7 +2269,7 @@ export const agentHubPublicModelsCall = async () => {
 
 export const mcpHubPublicServersCall = async () => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/mcp_hub` : `/public/mcp_hub`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 		headers: {
 			"Content-Type": "application/json",
@@ -2281,10 +2290,9 @@ export const modelHubCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/model_group/info` : `/model_group/info`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2312,10 +2320,9 @@ export const getAllowedIPs = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/get/allowed_ips` : `/get/allowed_ips`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2341,10 +2348,9 @@ export const addAllowedIP = async (accessToken: string, ip: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/add/allowed_ip` : `/add/allowed_ip`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ ip: ip }),
@@ -2371,10 +2377,9 @@ export const deleteAllowedIP = async (accessToken: string, ip: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/delete/allowed_ip` : `/delete/allowed_ip`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ ip: ip }),
@@ -2402,10 +2407,9 @@ export const updateUsefulLinksCall = async (
 ) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/model_hub/update_useful_links` : `/model_hub/update_useful_links`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ useful_links: useful_links }),
@@ -2459,10 +2463,9 @@ export const modelAvailableCall = async (
 		}
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2488,10 +2491,9 @@ export const teamSpendLogsCall = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/global/spend/teams` : `/global/spend/teams`;
 		console.log("in teamSpendLogsCall:", url);
-		const response = await fetch(`${url}`, {
+		const response = await dashboardFetch(`${url}`, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2530,10 +2532,9 @@ export const tagsSpendLogsCall = async (
 		}
 
 		console.log("in tagsSpendLogsCall:", url);
-		const response = await fetch(`${url}`, {
+		const response = await dashboardFetch(`${url}`, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2558,10 +2559,9 @@ export const allTagNamesCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/global/spend/all_tag_names` : `/global/spend/all_tag_names`;
 
 		console.log("in global/spend/all_tag_names call", url);
-		const response = await fetch(`${url}`, {
+		const response = await dashboardFetch(`${url}`, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2586,10 +2586,9 @@ export const allEndUsersCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/customer/list` : `/customer/list`;
 
 		console.log("in customer/list", url);
-		const response = await fetch(`${url}`, {
+		const response = await dashboardFetch(`${url}`, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2625,10 +2624,9 @@ export const userFilterUICall = async (accessToken: string, params: URLSearchPar
 		const qs = queryParams.toString();
 		const url = qs ? `${base}?${qs}` : base;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2711,10 +2709,9 @@ export const uiSpendLogsCall = async ({
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2740,10 +2737,9 @@ export const adminSpendLogsCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/global/spend/logs` : `/global/spend/logs`;
 
 		//NotificationsManager.info("Making spend logs request");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2769,10 +2765,9 @@ export const adminTopKeysCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/global/spend/keys?limit=5` : `/global/spend/keys?limit=5`;
 
 		//NotificationsManager.info("Making spend keys request");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -2819,13 +2814,12 @@ export const adminTopEndUsersCall = async (
 		const requestOptions = {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: body,
 		};
 
-		const response = await fetch(url, requestOptions);
+		const response = await dashboardFetch(url, requestOptions);
 		if (!response.ok) {
 			const errorData = await response.json();
 			const errorMessage = deriveErrorMessage(errorData);
@@ -2862,12 +2856,10 @@ export const adminspendByProvider = async (
 
 		const requestOptions = {
 			method: "GET",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		};
 
-		const response = await fetch(url, requestOptions);
+		const response = await dashboardFetch(url, requestOptions);
 
 		if (!response.ok) {
 			const errorData = await response.json();
@@ -2899,12 +2891,10 @@ export const adminGlobalActivity = async (
 
 		const requestOptions = {
 			method: "GET",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		};
 
-		const response = await fetch(url, requestOptions);
+		const response = await dashboardFetch(url, requestOptions);
 
 		if (!response.ok) {
 			const errorData = await response.json();
@@ -2936,12 +2926,10 @@ export const adminGlobalCacheActivity = async (
 
 		const requestOptions = {
 			method: "GET",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		};
 
-		const response = await fetch(url, requestOptions);
+		const response = await dashboardFetch(url, requestOptions);
 
 		if (!response.ok) {
 			const errorData = await response.json();
@@ -2973,12 +2961,10 @@ export const adminGlobalActivityPerModel = async (
 
 		const requestOptions = {
 			method: "GET",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		};
 
-		const response = await fetch(url, requestOptions);
+		const response = await dashboardFetch(url, requestOptions);
 
 		if (!response.ok) {
 			const errorData = await response.json();
@@ -3001,10 +2987,9 @@ export const adminTopModelsCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/global/spend/models?limit=5` : `/global/spend/models?limit=5`;
 
 		//NotificationsManager.info("Making top models request");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3029,10 +3014,9 @@ export const keyInfoCall = async (accessToken: string, keys: string[]) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/v2/key/info` : `/v2/key/info`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3070,11 +3054,10 @@ export const testConnectionRequest = async (
 		// Construct the URL based on environment
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/health/test_connection` : `/health/test_connection`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify({
 				litellm_params: litellm_params,
@@ -3123,10 +3106,9 @@ export const keyInfoV1Call = async (accessToken: string, key: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/key/info` : `/key/info`;
 		url = `${url}?key=${key}`; // Add key as query parameter
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			// Remove body since this is a GET request
@@ -3224,10 +3206,9 @@ export const keyListCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3277,10 +3258,9 @@ export const keyAliasesCall = async (
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/key/aliases` : `/key/aliases`;
 		url = `${url}?${params}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3332,10 +3312,9 @@ export const userDailyActivityAggregatedCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3358,10 +3337,9 @@ export const userDailyActivityAggregatedCall = async (
 export const getPossibleUserRoles = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/user/available_roles` : `/user/available_roles`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3399,10 +3377,9 @@ export const teamCreateCall = async (
 		}
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/team/new` : `/team/new`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3444,10 +3421,9 @@ export const credentialCreateCall = async (
 		}
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/credentials` : `/credentials`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3480,10 +3456,9 @@ export const credentialListCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/credentials` : `/credentials`;
 		console.log("in credentialListCall");
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3517,10 +3492,9 @@ export const credentialGetCall = async (accessToken: string, credentialName: str
 
 		console.log("in credentialListCall");
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3546,10 +3520,9 @@ export const credentialDeleteCall = async (accessToken: string, credentialName: 
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/credentials/${credentialName}` : `/credentials/${credentialName}`;
 		console.log("in credentialDeleteCall:", credentialName);
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -3589,10 +3562,9 @@ export const credentialUpdateCall = async (
 		}
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/credentials/${credentialName}` : `/credentials/${credentialName}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3644,10 +3616,9 @@ export const keyUpdateCall = async (
 			}
 		}
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/key/update` : `/key/update`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3679,10 +3650,9 @@ export const teamUpdateCall = async (
 		console.log("Form Values in teamUpateCall:", formValues); // Log the form values before making the API call
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/team/update` : `/team/update`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3723,10 +3693,9 @@ export const modelPatchUpdateCall = async (
 		console.log("Form Values in modelUpateCall:", formValues); // Log the form values before making the API call
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/model/${modelId}/update` : `/model/${modelId}/update`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3765,10 +3734,9 @@ export const teamMemberAddCall = async (accessToken: string, teamId: string, for
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/team/member_add` : `/team/member_add`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3829,10 +3797,9 @@ export const teamBulkMemberAddCall = async (
 			requestBody.max_budget_in_team = maxBudgetInTeam;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(requestBody),
@@ -3899,10 +3866,9 @@ export const teamMemberUpdateCall = async (
 
 		console.log("Final request body:", requestBody);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(requestBody),
@@ -3943,10 +3909,9 @@ export const teamMemberDeleteCall = async (
 		console.log("Form Values in teamMemberAddCall:", formValues); // Log the form values before making the API call
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/team/member_delete` : `/team/member_delete`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -3986,10 +3951,9 @@ export const organizationMemberAddCall = async (
 		console.log("Form Values in teamMemberAddCall:", formValues); // Log the form values before making the API call
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/organization/member_add` : `/organization/member_add`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4021,10 +3985,9 @@ export const organizationMemberDeleteCall = async (accessToken: string, organiza
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/organization/member_delete` : `/organization/member_delete`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4058,10 +4021,9 @@ export const organizationMemberUpdateCall = async (
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/organization/member_update` : `/organization/member_update`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4100,10 +4062,9 @@ export const userUpdateUserCall = async (
 			response_body["user_role"] = userRole;
 		}
 		response_body = JSON.stringify(response_body);
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: response_body,
@@ -4165,10 +4126,9 @@ export const userBulkUpdateUserCall = async (
 			throw new Error("Must provide either userIds or set allUsers=true");
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: request_body_json,
@@ -4211,10 +4171,9 @@ export const serviceHealthCheck = async (accessToken: string, service: string) =
 
 		console.log("Checking Slack Budget Alerts service health");
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4243,10 +4202,9 @@ export const getBudgetList = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/budget/list` : `/budget/list`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4275,10 +4233,9 @@ export const getCallbacksCall = async (accessToken: string, userID: string, user
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/get/config/callbacks` : `/get/config/callbacks`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4307,10 +4264,9 @@ export const getGeneralSettingsCall = async (accessToken: string) => {
 			: `/config/list?config_type=general_settings`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4336,10 +4292,9 @@ export const getRouterSettingsCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/router/settings` : `/router/settings`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4363,10 +4318,9 @@ export const getCacheSettingsCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/cache/settings` : `/cache/settings`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4390,10 +4344,9 @@ export const testCacheConnectionCall = async (accessToken: string, cacheSettings
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/cache/settings/test` : `/cache/settings/test`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4420,10 +4373,9 @@ export const updateCacheSettingsCall = async (accessToken: string, cacheSettings
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/cache/settings` : `/cache/settings`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4455,10 +4407,9 @@ export const getPassThroughEndpointsCall = async (accessToken: string, teamId?: 
 		}
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4487,10 +4438,9 @@ export const getConfigFieldSetting = async (accessToken: string, fieldName: stri
 			: `/config/field/info?field_name=${fieldName}`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4519,10 +4469,9 @@ export const createPassThroughEndpoint = async (accessToken: string, formValues:
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/config/pass_through_endpoint` : `/config/pass_through_endpoint`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4557,10 +4506,9 @@ export const updateConfigFieldSetting = async (accessToken: string, fieldName: s
 			config_type: "general_settings",
 		};
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(formData),
@@ -4593,10 +4541,9 @@ export const deleteConfigFieldSetting = async (accessToken: string, fieldName: s
 			config_type: "general_settings",
 		};
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(formData),
@@ -4626,10 +4573,9 @@ export const deletePassThroughEndpointsCall = async (accessToken: string, endpoi
 			: `/config/pass_through_endpoint?endpoint_id=${endpointId}`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4659,10 +4605,9 @@ export const setCallbacksCall = async (accessToken: string, formValues: Record<s
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/config/update` : `/config/update`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4696,10 +4641,9 @@ export const individualModelHealthCheckCall = async (accessToken: string, modelI
 			? `${proxyBaseUrl}/health?model_id=${encodeURIComponent(modelId)}`
 			: `/health?model_id=${encodeURIComponent(modelId)}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4722,10 +4666,9 @@ export const individualModelHealthCheckCall = async (accessToken: string, modelI
 export const allDeploymentHealthCheckCall = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/health` : "/health";
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4752,10 +4695,9 @@ export const cachingHealthCheckCall = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/cache/ping` : `/cache/ping`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4783,10 +4725,9 @@ export const latestHealthChecksCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/health/latest` : `/health/latest`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4815,10 +4756,9 @@ export const getProxyUISettings = async (accessToken: string) => {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/sso/get/ui_settings` : `/sso/get/ui_settings`;
 
 		//NotificationsManager.info("Requesting model data");
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4846,10 +4786,9 @@ export const getUISettings = async (accessToken: string) => {
 	 */
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/get/ui_settings` : `/get/ui_settings`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4875,10 +4814,9 @@ export const getMCPSemanticFilterSettings = async (accessToken: string) => {
 	 */
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/get/mcp_semantic_filter_settings` : `/get/mcp_semantic_filter_settings`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -4907,10 +4845,9 @@ export const updateMCPSemanticFilterSettings = async (accessToken: string, setti
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/update/mcp_semantic_filter_settings`
 			: `/update/mcp_semantic_filter_settings`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(settings),
@@ -4938,10 +4875,9 @@ export const testMCPSemanticFilter = async (accessToken: string, model: string, 
 	 */
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/responses` : `/v1/responses`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -4994,10 +4930,9 @@ export const testMCPSemanticFilter = async (accessToken: string, model: string, 
 export const getGuardrailsList = async (accessToken: string) => {
 	try {
 		const v2Url = proxyBaseUrl ? `${proxyBaseUrl}/v2/guardrails/list` : `/v2/guardrails/list`;
-		const response = await fetch(v2Url, {
+		const response = await dashboardFetch(v2Url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5012,10 +4947,9 @@ export const getGuardrailsList = async (accessToken: string) => {
 		console.log("v2/guardrails/list failed, falling back to v1:", error);
 		try {
 			const v1Url = proxyBaseUrl ? `${proxyBaseUrl}/guardrails/list` : `/guardrails/list`;
-			const fallbackResponse = await fetch(v1Url, {
+			const fallbackResponse = await dashboardFetch(v1Url, {
 				method: "GET",
 				headers: {
-					[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 					"Content-Type": "application/json",
 				},
 			});
@@ -5075,10 +5009,9 @@ export const listGuardrailSubmissions = async (
 	if (params?.team_guardrail !== undefined) searchParams.set("team_guardrail", String(params.team_guardrail));
 	if (params?.search) searchParams.set("search", params.search);
 	const fullUrl = searchParams.toString() ? `${url}?${searchParams.toString()}` : url;
-	const response = await fetch(fullUrl, {
+	const response = await dashboardFetch(fullUrl, {
 		method: "GET",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -5098,10 +5031,9 @@ export const approveGuardrailSubmission = async (
 	const url = proxyBaseUrl
 		? `${proxyBaseUrl}/guardrails/submissions/${encodeURIComponent(guardrailId)}/approve`
 		: `/guardrails/submissions/${encodeURIComponent(guardrailId)}/approve`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -5121,10 +5053,9 @@ export const rejectGuardrailSubmission = async (
 	const url = proxyBaseUrl
 		? `${proxyBaseUrl}/guardrails/submissions/${encodeURIComponent(guardrailId)}/reject`
 		: `/guardrails/submissions/${encodeURIComponent(guardrailId)}/reject`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -5145,10 +5076,9 @@ export const getGuardrailsUsageOverview = async (accessToken: string, startDate?
 		if (startDate) params.append("start_date", startDate);
 		if (endDate) params.append("end_date", endDate);
 		if (params.toString()) url += `?${params.toString()}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5177,10 +5107,9 @@ export const getGuardrailsUsageDetail = async (
 		if (startDate) params.append("start_date", startDate);
 		if (endDate) params.append("end_date", endDate);
 		if (params.toString()) url += `?${params.toString()}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5218,10 +5147,9 @@ export const getGuardrailsUsageLogs = async (
 		if (options.startDate) params.append("start_date", options.startDate);
 		if (options.endDate) params.append("end_date", options.endDate);
 		if (params.toString()) url += `?${params.toString()}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5243,10 +5171,9 @@ export const getGuardrailsUsageLogs = async (
 export const getPoliciesList = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/list` : `/policies/list`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5313,11 +5240,10 @@ export const testPoliciesAndGuardrails = async (
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/utils/test_policies_and_guardrails`
 			: `/utils/test_policies_and_guardrails`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			signal,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -5356,10 +5282,9 @@ export const testPoliciesAndGuardrails = async (
 export const getPolicyInfoWithGuardrails = async (accessToken: string, policyName: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policy/info/${policyName}` : `/policy/info/${policyName}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5382,10 +5307,9 @@ export const getPolicyInfoWithGuardrails = async (accessToken: string, policyNam
 export const getPolicyTemplates = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policy/templates` : `/policy/templates`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5417,10 +5341,9 @@ export const enrichPolicyTemplate = async (
 		const body: any = { template_id: templateId, parameters };
 		if (model) body.model = model;
 		if (competitors) body.competitors = competitors;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(body),
@@ -5449,10 +5372,9 @@ export const suggestPolicyTemplates = async (
 ) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policy/templates/suggest` : `/policy/templates/suggest`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -5479,10 +5401,9 @@ export const suggestPolicyTemplates = async (
 export const testPolicyTemplate = async (accessToken: string, guardrailDefinitions: any[], text: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policy/templates/test` : `/policy/templates/test`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -5525,10 +5446,9 @@ export const enrichPolicyTemplateStream = async (
 	if (options?.instruction) body.instruction = options.instruction;
 	if (options?.existingCompetitors) body.competitors = options.existingCompetitors;
 
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(body),
@@ -5547,7 +5467,6 @@ export const enrichPolicyTemplateStream = async (
 	const decoder = new TextDecoder();
 	let buffer = "";
 
-	 
 	while (true) {
 		const { done, value } = await reader.read();
 		if (done) break;
@@ -5597,10 +5516,9 @@ export const usageAiChatStream = async (
 ) => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/usage/ai/chat` : `/usage/ai/chat`;
 
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({ messages, model }),
@@ -5620,7 +5538,6 @@ export const usageAiChatStream = async (
 	const decoder = new TextDecoder();
 	let buffer = "";
 
-	 
 	while (true) {
 		const { done, value } = await reader.read();
 		if (done) break;
@@ -5654,10 +5571,9 @@ export const usageAiChatStream = async (
 export const createPolicyCall = async (accessToken: string, policyData: any) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies` : `/policies`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(policyData),
@@ -5681,10 +5597,9 @@ export const createPolicyCall = async (accessToken: string, policyData: any) => 
 export const updatePolicyCall = async (accessToken: string, policyId: string, policyData: any) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/${policyId}` : `/policies/${policyId}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PUT",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(policyData),
@@ -5714,10 +5629,9 @@ export const listPolicyVersions = async (
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/policies/name/${encodedName}/versions`
 			: `/policies/name/${encodedName}/versions`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5746,10 +5660,9 @@ export const createPolicyVersion = async (
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/policies/name/${encodedName}/versions`
 			: `/policies/name/${encodedName}/versions`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ source_policy_id: sourcePolicyId ?? undefined }),
@@ -5776,10 +5689,9 @@ export const updatePolicyVersionStatus = async (
 ): Promise<any> => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/${policyId}/status` : `/policies/${policyId}/status`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PUT",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ version_status: versionStatus }),
@@ -5802,10 +5714,9 @@ export const updatePolicyVersionStatus = async (
 export const deletePolicyCall = async (accessToken: string, policyId: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/${policyId}` : `/policies/${policyId}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5828,10 +5739,9 @@ export const deletePolicyCall = async (accessToken: string, policyId: string) =>
 export const getPolicyInfo = async (accessToken: string, policyId: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/${policyId}` : `/policies/${policyId}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5856,10 +5766,9 @@ export const getPolicyInfo = async (accessToken: string, policyId: string) => {
 export const getPolicyAttachmentsList = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/attachments/list` : `/policies/attachments/list`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5882,10 +5791,9 @@ export const getPolicyAttachmentsList = async (accessToken: string) => {
 export const createPolicyAttachmentCall = async (accessToken: string, attachmentData: any) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/attachments` : `/policies/attachments`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(attachmentData),
@@ -5911,10 +5819,9 @@ export const deletePolicyAttachmentCall = async (accessToken: string, attachment
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/policies/attachments/${attachmentId}`
 			: `/policies/attachments/${attachmentId}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5941,10 +5848,9 @@ export const testPipelineCall = async (
 ) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/test-pipeline` : `/policies/test-pipeline`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ pipeline, test_messages: testMessages }),
@@ -5970,10 +5876,9 @@ export const getResolvedGuardrails = async (accessToken: string, policyId: strin
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/policies/${policyId}/resolved-guardrails`
 			: `/policies/${policyId}/resolved-guardrails`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -5999,10 +5904,9 @@ export const resolvePoliciesCall = async (
 ) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/policies/resolve` : `/policies/resolve`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(context),
@@ -6027,10 +5931,9 @@ export const estimateAttachmentImpactCall = async (accessToken: string, attachme
 		const url = proxyBaseUrl
 			? `${proxyBaseUrl}/policies/attachments/estimate-impact`
 			: `/policies/attachments/estimate-impact`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(attachmentData),
@@ -6053,10 +5956,9 @@ export const estimateAttachmentImpactCall = async (accessToken: string, attachme
 export const getPromptsList = async (accessToken: string): Promise<ListPromptsResponse> => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/prompts/list` : `/prompts/list`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6079,10 +5981,9 @@ export const getPromptsList = async (accessToken: string): Promise<ListPromptsRe
 export const getPromptInfo = async (accessToken: string, promptId: string): Promise<PromptInfoResponse> => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/prompts/${promptId}/info` : `/prompts/${promptId}/info`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6105,10 +6006,9 @@ export const getPromptInfo = async (accessToken: string, promptId: string): Prom
 export const getPromptVersions = async (accessToken: string, promptId: string): Promise<ListPromptsResponse> => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/prompts/${promptId}/versions` : `/prompts/${promptId}/versions`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6135,10 +6035,9 @@ export const createPromptCall = async (accessToken: string, promptData: any) => 
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/prompts` : `/prompts`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(promptData),
@@ -6163,10 +6062,9 @@ export const updatePromptCall = async (accessToken: string, promptId: string, pr
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/prompts/${promptId}` : `/prompts/${promptId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PUT",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(promptData),
@@ -6191,10 +6089,9 @@ export const deletePromptCall = async (accessToken: string, promptId: string) =>
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/prompts/${promptId}` : `/prompts/${promptId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6224,11 +6121,9 @@ export const convertPromptFileToJson = async (
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/utils/dotprompt_json_converter` : `/utils/dotprompt_json_converter`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 			body: formData,
 		});
 
@@ -6250,10 +6145,9 @@ export const createAgentCall = async (accessToken: string, agentData: any) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/agents` : `/v1/agents`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -6280,10 +6174,9 @@ export const createGuardrailCall = async (accessToken: string, guardrailData: an
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/guardrails` : `/guardrails`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -6315,10 +6208,9 @@ export const uiSpendLogDetailsCall = async (accessToken: string, logId: string, 
 
 		console.log("Fetching log details from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6346,10 +6238,9 @@ export const getInternalUserSettings = async (accessToken: string) => {
 
 		console.log("Fetching SSO settings from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6377,10 +6268,9 @@ export const updateInternalUserSettings = async (accessToken: string, settings: 
 
 		console.log("Updating internal user settings:", settings);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(settings),
@@ -6406,10 +6296,9 @@ export const fetchOpenAPIRegistry = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/openapi-registry` : `/v1/mcp/openapi-registry`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6430,10 +6319,9 @@ export const fetchDiscoverableMCPServers = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/discover` : `/v1/mcp/discover`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6464,10 +6352,9 @@ export const fetchMCPServers = async (accessToken: string, teamId?: string | nul
 
 		console.log("Fetching MCP servers from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6502,10 +6389,9 @@ export const fetchMCPServerHealth = async (accessToken: string, serverIds?: stri
 
 		console.log("Fetching MCP server health from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6533,10 +6419,9 @@ export const fetchMCPAccessGroups = async (accessToken: string) => {
 
 		console.log("Fetching MCP access groups from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6561,11 +6446,9 @@ export const fetchMCPClientIp = async (accessToken: string): Promise<string | nu
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/network/client-ip` : `/v1/mcp/network/client-ip`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		});
 
 		if (!response.ok) {
@@ -6588,10 +6471,9 @@ export const createMCPServer = async (
 
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/server` : `/v1/mcp/server`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -6619,10 +6501,9 @@ export const createMCPServer = async (
 export const updateMCPServer = async (accessToken: string, formValues: Record<string, any>) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/server` : `/v1/mcp/server`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PUT",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(formValues),
@@ -6646,10 +6527,9 @@ export const deleteMCPServer = async (accessToken: string, serverId: string) => 
 	try {
 		const url = (proxyBaseUrl ? `${proxyBaseUrl}` : "") + `/v1/mcp/server/${serverId}`;
 		console.log("in deleteMCPServer:", serverId);
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.DELETE,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6669,10 +6549,9 @@ export const deleteMCPServer = async (accessToken: string, serverId: string) => 
 export const registerMCPServer = async (accessToken: string, formValues: Record<string, any>) => {
 	try {
 		const url = (proxyBaseUrl ? `${proxyBaseUrl}` : "") + `/v1/mcp/server/register`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.POST,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(formValues),
@@ -6693,10 +6572,9 @@ export const registerMCPServer = async (accessToken: string, formValues: Record<
 export const fetchMCPSubmissions = async (accessToken: string) => {
 	try {
 		const url = (proxyBaseUrl ? `${proxyBaseUrl}` : "") + `/v1/mcp/server/submissions`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6716,11 +6594,9 @@ export const fetchMCPSubmissions = async (accessToken: string) => {
 export const approveMCPServer = async (accessToken: string, serverId: string) => {
 	try {
 		const url = (proxyBaseUrl ? `${proxyBaseUrl}` : "") + `/v1/mcp/server/${encodeURIComponent(serverId)}/approve`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.PUT,
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		});
 		if (!response.ok) {
 			const errorData = await response.json().catch(() => ({}));
@@ -6738,10 +6614,9 @@ export const approveMCPServer = async (accessToken: string, serverId: string) =>
 export const rejectMCPServer = async (accessToken: string, serverId: string, reviewNotes?: string) => {
 	try {
 		const url = (proxyBaseUrl ? `${proxyBaseUrl}` : "") + `/v1/mcp/server/${encodeURIComponent(serverId)}/reject`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.PUT,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ review_notes: reviewNotes ?? null }),
@@ -6765,10 +6640,9 @@ export const fetchSearchTools = async (accessToken: string) => {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/search_tools/list` : `/search_tools/list`;
 		console.log("Fetching search tools from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6794,10 +6668,9 @@ export const createSearchTool = async (accessToken: string, formValues: Record<s
 		console.log("Creating search tool with values:", formValues);
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/search_tools` : `/search_tools`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.POST,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -6826,10 +6699,9 @@ export const updateSearchTool = async (accessToken: string, searchToolId: string
 		console.log("Updating search tool with ID:", searchToolId, "values:", formValues);
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/search_tools/${searchToolId}` : `/search_tools/${searchToolId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.PUT,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -6858,10 +6730,9 @@ export const deleteSearchTool = async (accessToken: string, searchToolId: string
 		const url = (proxyBaseUrl ? `${proxyBaseUrl}` : "") + `/search_tools/${searchToolId}`;
 		console.log("Deleting search tool:", searchToolId);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.DELETE,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6889,10 +6760,9 @@ export const fetchAvailableSearchProviders = async (accessToken: string) => {
 			: `/search_tools/ui/available_providers`;
 		console.log("Fetching available search providers from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.GET,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -6918,10 +6788,9 @@ export const testSearchToolConnection = async (accessToken: string, litellmParam
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/search_tools/test_connection` : `/search_tools/test_connection`;
 		console.log("Testing search tool connection:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: HTTP_REQUEST.POST,
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -6955,12 +6824,11 @@ export const listMCPTools = async (accessToken: string, serverId: string, custom
 		console.log("Fetching MCP tools from:", url);
 
 		const headers: Record<string, string> = {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 			...customHeaders, // Merge custom headers for passthrough auth
 		};
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers,
 		});
@@ -7010,7 +6878,6 @@ export const callMCPTool = async (
 		console.log("Calling MCP tool:", toolName, "with arguments:", toolArguments, "for server:", serverId);
 
 		const headers: Record<string, string> = {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 			...(options?.customHeaders || {}), // Merge custom headers for passthrough auth
 		};
@@ -7024,7 +6891,7 @@ export const callMCPTool = async (
 			body.litellm_metadata = { guardrails: options.guardrails };
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers,
 			body: JSON.stringify(body),
@@ -7087,11 +6954,10 @@ export const tagCreateCall = async (accessToken: string, formValues: TagNewReque
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/tag/new` : `/tag/new`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify(formValues),
 		});
@@ -7113,11 +6979,10 @@ export const tagUpdateCall = async (accessToken: string, formValues: TagUpdateRe
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/tag/update` : `/tag/update`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify(formValues),
 		});
@@ -7139,11 +7004,10 @@ export const tagInfoCall = async (accessToken: string, tagNames: string[]): Prom
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/tag/info` : `/tag/info`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify({ names: tagNames }),
 		});
@@ -7166,11 +7030,9 @@ export const tagListCall = async (accessToken: string): Promise<TagListResponse>
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/tag/list` : `/tag/list`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		});
 
 		if (!response.ok) {
@@ -7191,11 +7053,10 @@ export const tagDeleteCall = async (accessToken: string, tagName: string): Promi
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/tag/delete` : `/tag/delete`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify({ name: tagName }),
 		});
@@ -7220,10 +7081,9 @@ export const getDefaultTeamSettings = async (accessToken: string) => {
 
 		console.log("Fetching default team settings from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7251,10 +7111,9 @@ export const updateDefaultTeamSettings = async (accessToken: string, settings: R
 
 		console.log("Updating default team settings:", settings);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(settings),
@@ -7282,11 +7141,10 @@ export const getTeamPermissionsCall = async (accessToken: string, teamId: string
 			? `${proxyBaseUrl}/team/permissions_list?team_id=${teamId}`
 			: `/team/permissions_list?team_id=${teamId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 		});
 
@@ -7310,11 +7168,10 @@ export const teamPermissionsUpdateCall = async (accessToken: string, teamId: str
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/team/permissions_update` : `/team/permissions_update`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify({
 				team_id: teamId,
@@ -7347,10 +7204,9 @@ export const sessionSpendLogsCall = async (accessToken: string, session_id: stri
 			? `${proxyBaseUrl}/spend/logs/session/ui?session_id=${encodeURIComponent(session_id)}`
 			: `/spend/logs/session/ui?session_id=${encodeURIComponent(session_id)}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7374,11 +7230,10 @@ export const vectorStoreCreateCall = async (accessToken: string, formValues: Rec
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/vector_store/new` : `/vector_store/new`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify(formValues),
 		});
@@ -7403,11 +7258,10 @@ export const vectorStoreListCall = async (
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/vector_store/list` : `/vector_store/list`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 		});
 
@@ -7427,11 +7281,10 @@ export const vectorStoreDeleteCall = async (accessToken: string, vectorStoreId: 
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/vector_store/delete` : `/vector_store/delete`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify({ vector_store_id: vectorStoreId }),
 		});
@@ -7452,11 +7305,10 @@ export const vectorStoreInfoCall = async (accessToken: string, vectorStoreId: st
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/vector_store/info` : `/vector_store/info`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify({ vector_store_id: vectorStoreId }),
 		});
@@ -7477,11 +7329,10 @@ export const vectorStoreUpdateCall = async (accessToken: string, formValues: Rec
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/vector_store/update` : `/vector_store/update`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			},
 			body: JSON.stringify(formValues),
 		});
@@ -7536,11 +7387,9 @@ export const ragIngestCall = async (
 
 		formData.append("request", JSON.stringify(ingestOptions));
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 			body: formData,
 		});
 
@@ -7560,10 +7409,9 @@ export const getEmailEventSettings = async (accessToken: string): Promise<EmailE
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/email/event_settings` : `/email/event_settings`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7587,10 +7435,9 @@ export const updateEmailEventSettings = async (accessToken: string, settings: Em
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/email/event_settings` : `/email/event_settings`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(settings),
@@ -7615,10 +7462,9 @@ export const resetEmailEventSettings = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/email/event_settings/reset` : `/email/event_settings/reset`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7645,10 +7491,9 @@ export const deleteAgentCall = async (accessToken: string, agentId: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/agents/${agentId}` : `/v1/agents/${agentId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7672,10 +7517,9 @@ export const makeAgentsPublicCall = async (accessToken: string, agentIds: string
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/agents/make_public` : `/v1/agents/make_public`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -7702,10 +7546,9 @@ export const makeMCPPublicCall = async (accessToken: string, mcpServerIds: strin
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/make_public` : `/v1/mcp/make_public`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -7732,10 +7575,9 @@ export const deleteGuardrailCall = async (accessToken: string, guardrailId: stri
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/guardrails/${guardrailId}` : `/guardrails/${guardrailId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7761,10 +7603,9 @@ export const getGuardrailUISettings = async (accessToken: string) => {
 			? `${proxyBaseUrl}/guardrails/ui/add_guardrail_settings`
 			: `/guardrails/ui/add_guardrail_settings`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7790,10 +7631,9 @@ export const getGuardrailProviderSpecificParams = async (accessToken: string) =>
 			? `${proxyBaseUrl}/guardrails/ui/provider_specific_params`
 			: `/guardrails/ui/provider_specific_params`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7823,10 +7663,9 @@ export const getCategoryYaml = async (accessToken: string, categoryName: string)
 
 		console.log(`Fetching category YAML from: ${url}`);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7851,10 +7690,9 @@ export const getMajorAirlines = async (accessToken: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/guardrails/ui/major_airlines` : `/guardrails/ui/major_airlines`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7879,10 +7717,9 @@ export const getAgentsList = async (accessToken: string, healthCheck: boolean = 
 		const params = healthCheck ? "?health_check=true" : "";
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/agents${params}` : `/v1/agents${params}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7906,10 +7743,9 @@ export const getAgentInfo = async (accessToken: string, agentId: string) => {
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/agents/${agentId}` : `/v1/agents/${agentId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7933,10 +7769,9 @@ export const getGuardrailInfo = async (accessToken: string, guardrailId: string)
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/guardrails/${guardrailId}/info` : `/guardrails/${guardrailId}/info`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -7972,10 +7807,9 @@ export const patchAgentCall = async (
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/agents/${agentId}` : `/v1/agents/${agentId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(updateData),
@@ -8009,10 +7843,9 @@ export const updateGuardrailCall = async (
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/guardrails/${guardrailId}` : `/guardrails/${guardrailId}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(updateData),
@@ -8056,10 +7889,9 @@ export const applyGuardrail = async (
 			requestBody.entities = entities;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(requestBody),
@@ -8137,10 +7969,9 @@ export const testCustomCodeGuardrail = async (
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/guardrails/test_custom_code` : `/guardrails/test_custom_code`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(request),
@@ -8182,10 +8013,9 @@ export const validateBlockedWordsFile = async (accessToken: string, fileContent:
 			? `${proxyBaseUrl}/guardrails/validate_blocked_words_file`
 			: `/guardrails/validate_blocked_words_file`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ file_content: fileContent }),
@@ -8213,10 +8043,9 @@ export const getSSOSettings = async (accessToken: string) => {
 
 		console.log("Fetching SSO configuration from:", url);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -8244,10 +8073,9 @@ export const updateSSOSettings = async (accessToken: string, settings: Record<st
 
 		console.log("Updating SSO configuration:", settings);
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(settings),
@@ -8322,10 +8150,9 @@ export const uiAuditLogsCall = async ({
 
 		url += `?${queryParams.toString()}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -8357,11 +8184,9 @@ export const getRemainingUsers = async (
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/user/available_users` : `/user/available_users`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		});
 
 		if (!response.ok) {
@@ -8397,11 +8222,9 @@ export const getLicenseInfo = async (accessToken: string): Promise<LicenseInfo |
 	try {
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/health/license` : `/health/license`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
-			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-			},
+			headers: {},
 		});
 
 		if (!response.ok) {
@@ -8432,10 +8255,9 @@ export const updatePassThroughEndpoint = async (
 			? `${proxyBaseUrl}/config/pass_through_endpoint/${encodeURIComponent(endpointPath)}`
 			: `/config/pass_through_endpoint/${encodeURIComponent(endpointPath)}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(formValues),
@@ -8464,10 +8286,9 @@ export const deleteCallback = async (accessToken: string, callbackName: string) 
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/config/callback/delete` : `/config/callback/delete`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -8510,10 +8331,9 @@ export const testMCPToolsListRequest = async (
 		if (oauthAccessToken) {
 			headers["Authorization"] = `Bearer ${oauthAccessToken}`;
 		} else if (accessToken) {
-			headers[globalLitellmHeaderName] = `Bearer ${accessToken}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers,
 			body: JSON.stringify(mcpServerConfig),
@@ -8555,10 +8375,9 @@ export const testMCPToolsListRequest = async (
 
 export const cacheTemporaryMcpServer = async (accessToken: string, payload: Record<string, any>) => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/server/oauth/session` : `/v1/mcp/server/oauth/session`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(payload),
@@ -8588,10 +8407,9 @@ export const registerMcpOAuthClient = async (
 	const normalizedServerId = encodeURIComponent(serverId.trim());
 	const url = `${base}/v1/mcp/server/oauth/${normalizedServerId}/register`;
 
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 			Accept: "application/json, text/event-stream",
 		},
@@ -8675,7 +8493,7 @@ export const exchangeMcpOAuthToken = async ({
 	body.set("code_verifier", codeVerifier);
 	body.set("redirect_uri", redirectUri);
 
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/x-www-form-urlencoded",
@@ -8698,10 +8516,9 @@ export const vectorStoreSearchCall = async (
 ): Promise<any> => {
 	try {
 		const url = `${getProxyBaseUrl()}/v1/vector_stores/${vectorStoreId}/search`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -8731,10 +8548,9 @@ export const searchToolQueryCall = async (
 ): Promise<any> => {
 	try {
 		const url = `${getProxyBaseUrl()}/v1/search/${searchToolName}`;
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -8791,10 +8607,9 @@ export const tagDauCall = async (accessToken: string, endDate: Date, tagFilter?:
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -8847,10 +8662,9 @@ export const tagWauCall = async (accessToken: string, endDate: Date, tagFilter?:
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -8903,10 +8717,9 @@ export const tagMauCall = async (accessToken: string, endDate: Date, tagFilter?:
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -8933,10 +8746,9 @@ export const tagDistinctCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/tag/distinct` : `/tag/distinct`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -8993,10 +8805,9 @@ export const userAgentSummaryCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -9045,10 +8856,9 @@ export const perUserAnalyticsCall = async (
 			url += `?${queryString}`;
 		}
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -9107,7 +8917,7 @@ export const loginCall = async (username: string, password: string, useV3?: bool
 		password,
 	});
 
-	const response = await fetch(loginUrl, {
+	const response = await dashboardFetch(loginUrl, {
 		method: "POST",
 		body,
 		credentials: "include",
@@ -9128,7 +8938,7 @@ export const loginCall = async (username: string, password: string, useV3?: bool
 	if (useV3 && data.code) {
 		const exchangeUrl = proxyBaseUrl ? `${proxyBaseUrl}/v3/login/exchange` : "/v3/login/exchange";
 
-		const exchangeResponse = await fetch(exchangeUrl, {
+		const exchangeResponse = await dashboardFetch(exchangeUrl, {
 			method: "POST",
 			body: JSON.stringify({ code: data.code }),
 			credentials: "include",
@@ -9140,16 +8950,7 @@ export const loginCall = async (username: string, password: string, useV3?: bool
 			throw new Error(deriveErrorMessage(errorData));
 		}
 
-		const exchangeData: LoginResponse = await exchangeResponse.json();
-		if (exchangeData.token) {
-			document.cookie = `token=${exchangeData.token}; path=/; SameSite=Lax`;
-		}
-		return exchangeData;
-	}
-
-	// Backwards compatibility: v2 or old v3 returns token directly
-	if (data.token) {
-		document.cookie = `token=${data.token}; path=/; SameSite=Lax`;
+		return (await exchangeResponse.json()) as LoginResponse;
 	}
 
 	return data;
@@ -9159,9 +8960,9 @@ export const loginCall = async (username: string, password: string, useV3?: bool
  * Exchange a single-use login code for a JWT token.
  * Used by the SSO callback when the worker redirects back with ?code=.
  */
-export const exchangeLoginCode = async (code: string, workerBaseUrl?: string | null): Promise<string> => {
+export const exchangeLoginCode = async (code: string, workerBaseUrl?: string | null): Promise<void> => {
 	const base = workerBaseUrl || getProxyBaseUrl();
-	const response = await fetch(`${base}/v3/login/exchange`, {
+	const response = await dashboardFetch(`${base}/v3/login/exchange`, {
 		method: "POST",
 		body: JSON.stringify({ code }),
 		headers: { "Content-Type": "application/json" },
@@ -9172,17 +8973,13 @@ export const exchangeLoginCode = async (code: string, workerBaseUrl?: string | n
 		throw new Error(deriveErrorMessage(errorData));
 	}
 
-	const data = await response.json();
-	if (data.token) {
-		document.cookie = `token=${data.token}; path=/; SameSite=Lax`;
-	}
-	return data.token;
+	await response.json();
 };
 
 export const getUiSettings = async () => {
 	const proxyBaseUrl = getProxyBaseUrl();
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/get/ui_settings` : `/get/ui_settings`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 	});
 	if (!response.ok) {
@@ -9197,10 +8994,9 @@ export const getUiSettings = async () => {
 export const updateUiSettings = async (accessToken: string, settings: Record<string, any>) => {
 	const proxyBaseUrl = getProxyBaseUrl();
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/update/ui_settings` : `/update/ui_settings`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "PATCH",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(settings),
@@ -9225,7 +9021,7 @@ export const getClaudeCodeMarketplace = async () => {
 		const proxyBaseUrl = getProxyBaseUrl();
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/claude-code/marketplace.json` : `/claude-code/marketplace.json`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
 				"Content-Type": "application/json",
@@ -9259,10 +9055,9 @@ export const getClaudeCodePluginsList = async (accessToken: string, enabledOnly:
 			? `${proxyBaseUrl}/claude-code/plugins?enabled_only=${enabledOnly}`
 			: `/claude-code/plugins?enabled_only=${enabledOnly}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -9294,10 +9089,9 @@ export const getClaudeCodePluginDetails = async (accessToken: string, pluginName
 			? `${proxyBaseUrl}/claude-code/plugins/${pluginName}`
 			: `/claude-code/plugins/${pluginName}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "GET",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -9339,10 +9133,9 @@ export const registerClaudeCodePlugin = async (
 		const proxyBaseUrl = getProxyBaseUrl();
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/claude-code/plugins` : `/claude-code/plugins`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(pluginData),
@@ -9375,10 +9168,9 @@ export const enableClaudeCodePlugin = async (accessToken: string, pluginName: st
 			? `${proxyBaseUrl}/claude-code/plugins/${pluginName}/enable`
 			: `/claude-code/plugins/${pluginName}/enable`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -9410,10 +9202,9 @@ export const disableClaudeCodePlugin = async (accessToken: string, pluginName: s
 			? `${proxyBaseUrl}/claude-code/plugins/${pluginName}/disable`
 			: `/claude-code/plugins/${pluginName}/disable`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -9445,10 +9236,9 @@ export const deleteClaudeCodePlugin = async (accessToken: string, pluginName: st
 			? `${proxyBaseUrl}/claude-code/plugins/${pluginName}`
 			: `/claude-code/plugins/${pluginName}`;
 
-		const response = await fetch(url, {
+		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
-				[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 			},
 		});
@@ -9496,10 +9286,9 @@ export const checkEuAiActCompliance = async (
 	payload: ComplianceCheckRequest,
 ): Promise<ComplianceResponse> => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/compliance/eu-ai-act` : `/compliance/eu-ai-act`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(payload),
@@ -9516,10 +9305,9 @@ export const checkGdprCompliance = async (
 	payload: ComplianceCheckRequest,
 ): Promise<ComplianceResponse> => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/compliance/gdpr` : `/compliance/gdpr`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(payload),
@@ -9563,10 +9351,9 @@ export interface ToolPolicyOptionsResponse {
 
 export const fetchToolPolicyOptions = async (accessToken: string): Promise<ToolPolicyOptionsResponse> => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/tool/policy/options` : `/v1/tool/policy/options`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -9579,10 +9366,9 @@ export const fetchToolPolicyOptions = async (accessToken: string): Promise<ToolP
 
 export const fetchToolsList = async (accessToken: string): Promise<ToolRow[]> => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/tool/list` : `/v1/tool/list`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -9639,10 +9425,9 @@ export const getToolUsageLogs = async (
 	if (options.startDate) params.append("start_date", options.startDate);
 	if (options.endDate) params.append("end_date", options.endDate);
 	const fullUrl = params.toString() ? `${url}?${params.toString()}` : url;
-	const response = await fetch(fullUrl, {
+	const response = await dashboardFetch(fullUrl, {
 		method: "GET",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -9656,10 +9441,9 @@ export const getToolUsageLogs = async (
 export const fetchToolDetail = async (accessToken: string, toolName: string): Promise<ToolDetailResponse> => {
 	const encoded = encodeURIComponent(toolName);
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/tool/${encoded}/detail` : `/v1/tool/${encoded}/detail`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -9685,10 +9469,9 @@ export const updateToolPolicy = async (
 	if (options?.team_id != null) body.team_id = options.team_id || undefined;
 	if (options?.key_hash != null) body.key_hash = options.key_hash || undefined;
 	if (options?.key_alias != null) body.key_alias = options.key_alias || undefined;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(body),
@@ -9713,11 +9496,9 @@ export const deleteToolPolicyOverride = async (
 	const url = proxyBaseUrl
 		? `${proxyBaseUrl}/v1/tool/${encoded}/overrides${query ? `?${query}` : ""}`
 		: `/v1/tool/${encoded}/overrides${query ? `?${query}` : ""}`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "DELETE",
-		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
-		},
+		headers: {},
 	});
 	if (!response.ok) {
 		const errorData = await response.text();
@@ -9754,10 +9535,9 @@ export const storeMCPOAuthUserCredential = async (
 	const url = proxyBaseUrl
 		? `${proxyBaseUrl}/v1/mcp/server/${serverId}/oauth-user-credential`
 		: `/v1/mcp/server/${serverId}/oauth-user-credential`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(tokenResponse),
@@ -9789,9 +9569,9 @@ export const deleteMCPOAuthUserCredential = async (
 	const url = proxyBaseUrl
 		? `${proxyBaseUrl}/v1/mcp/server/${serverId}/oauth-user-credential`
 		: `/v1/mcp/server/${serverId}/oauth-user-credential`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "DELETE",
-		headers: { [globalLitellmHeaderName]: `Bearer ${accessToken}` },
+		headers: {},
 	});
 	if (!response.ok) {
 		const err = await response.json().catch(() => ({}));
@@ -9820,9 +9600,9 @@ export const getMCPOAuthUserCredentialStatus = async (
 	const url = proxyBaseUrl
 		? `${proxyBaseUrl}/v1/mcp/server/${serverId}/oauth-user-credential/status`
 		: `/v1/mcp/server/${serverId}/oauth-user-credential/status`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
-		headers: { [globalLitellmHeaderName]: `Bearer ${accessToken}` },
+		headers: {},
 	});
 	if (!response.ok) {
 		return { server_id: serverId, has_credential: false, is_expired: false };
@@ -9832,9 +9612,9 @@ export const getMCPOAuthUserCredentialStatus = async (
 
 export const listMCPUserCredentials = async (accessToken: string): Promise<MCPUserCredentialListItem[]> => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/mcp/user-credentials` : `/v1/mcp/user-credentials`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
-		headers: { [globalLitellmHeaderName]: `Bearer ${accessToken}` },
+		headers: {},
 	});
 	if (!response.ok) return [];
 	return response.json();
@@ -9859,10 +9639,9 @@ export interface YamlConfigDiffResponse {
 /** 查询启动时检测到的 yaml ↔ DB 配置差异（仅 proxy_admin） */
 export const getYamlConfigDiffCall = async (accessToken: string): Promise<YamlConfigDiffResponse> => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/config/yaml_diff` : `/config/yaml_diff`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "GET",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 	});
@@ -9877,10 +9656,9 @@ export const getYamlConfigDiffCall = async (accessToken: string): Promise<YamlCo
 /** 接受某项 yaml 差异（yaml 值覆盖 DB 并热应用） */
 export const acceptYamlConfigDiffCall = async (accessToken: string, section: string, key: string) => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/config/yaml_diff/accept` : `/config/yaml_diff/accept`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({ section, key }),
@@ -9897,10 +9675,9 @@ export const acceptYamlConfigDiffCall = async (accessToken: string, section: str
 /** 「处理冲突完成」：存储当前 yaml 快照并清空 pending */
 export const resolveYamlConfigDiffCall = async (accessToken: string) => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/config/yaml_diff/resolve` : `/config/yaml_diff/resolve`;
-	const response = await fetch(url, {
+	const response = await dashboardFetch(url, {
 		method: "POST",
 		headers: {
-			[globalLitellmHeaderName]: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({}),

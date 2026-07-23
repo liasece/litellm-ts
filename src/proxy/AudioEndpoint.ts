@@ -10,13 +10,15 @@ import { post, noAuth, body, req } from "../core/api/decorators";
 import { ApiError } from "../core/api/ApiError";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { DrizzleDb } from "../core/db/Database";
-import { calculateAndSetCost, buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
+import { runCommonChecks } from "../auth/AuthChecks";
+import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
+import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { createModuleLogger } from "../core/utils/logger";
 
-const logger = createModuleLogger("Audio");
+const logger = createModuleLogger("Proxy:Audio");
 
 /** 语音合成请求体 */
 interface SpeechRequest {
@@ -123,6 +125,9 @@ export class AudioController {
 		if (typeof input !== "string" || input.length === 0) {
 			throw ApiError.badRequest("input 字段缺失");
 		}
+		if (request.auth) {
+			runCommonChecks(request.auth, model);
+		}
 		const optionalParams: Record<string, unknown> = { ...reqBody };
 		delete optionalParams.model;
 		const messages = [{ role: "user", content: input }];
@@ -139,6 +144,9 @@ export class AudioController {
 			throw ApiError.badRequest("model 字段缺失");
 		}
 		const prompt = typeof reqBody.prompt === "string" ? reqBody.prompt : "";
+		if (request.auth) {
+			runCommonChecks(request.auth, model);
+		}
 		const optionalParams: Record<string, unknown> = { ...reqBody };
 		delete optionalParams.model;
 		const messages = [{ role: "user", content: prompt }];
@@ -158,53 +166,76 @@ export class AudioController {
 			throwSpeechUnavailable();
 		}
 		const startTime = new Date();
+		const db = this._db;
+		const auth = request.auth;
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, request, model, optionalParams, "audio");
+		const requestId = spendReservation?.requestId;
+		let providerCompleted = false;
 		try {
+			spendReservation?.heartbeat?.markProviderStarted();
 			const result = await litellmRouter.completion(model, messages, optionalParams);
-			// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
+			providerCompleted = true;
 			const spendInfo = (result as unknown as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 			calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 			const usage = (result as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
-			if (this._db && request.auth) {
-				const endTime = new Date();
-				const spendLog = buildSpendLogFromRequest({
-					req: request,
-					auth: request.auth,
-					callType: callType,
-					model: model,
-					// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
-					modelGroup: model,
-					modelId: spendInfo?.modelId,
-					customLlmProvider: spendInfo?.customLlmProvider,
-					apiBase: spendInfo?.apiBase,
-					customCostPerToken: spendInfo?.customCostPerToken,
-					deploymentModel: spendInfo?.deploymentModel,
-					startTime: startTime,
-					endTime: endTime,
-					messages: storedMessages,
-					response: result,
-					usage: usage,
-					status: SpendLogStatus.Success,
-				});
-				trackSpendLog(this._db, spendLog).catch((err) => logger.error("Audio 花费追踪失败", { error: err }));
+			if (db && auth && requestId) {
+				await trackSpendLog(
+					db,
+					buildSpendLogFromRequest({
+						req: request,
+						auth: auth,
+						requestId: requestId,
+						callType: callType,
+						model: model,
+						modelGroup: model,
+						modelId: spendInfo?.modelId,
+						customLlmProvider: spendInfo?.customLlmProvider,
+						apiBase: spendInfo?.apiBase,
+						customCostPerToken: spendInfo?.customCostPerToken,
+						deploymentModel: spendInfo?.deploymentModel,
+						startTime: startTime,
+						endTime: new Date(),
+						messages: storedMessages,
+						response: result,
+						usage: usage,
+						status: SpendLogStatus.Success,
+					}),
+				);
 			}
 			return result as Record<string, unknown>;
 		} catch (error) {
-			if (this._db && request.auth) {
-				const endTime = new Date();
-				const failureSpendLog = buildSpendLogFromRequest({
-					req: request,
-					auth: request.auth,
-					callType: callType,
-					model: model,
-					startTime: startTime,
-					endTime: endTime,
-					messages: storedMessages,
-					error: error,
-					status: SpendLogStatus.Failure,
-				});
-				trackSpendLog(this._db, failureSpendLog).catch((err) => logger.error("Audio 失败花费追踪失败", { error: err }));
+			if (providerCompleted) {
+				throw error;
+			}
+			if (db && auth && requestId) {
+				try {
+					await trackSpendLog(
+						db,
+						buildSpendLogFromRequest({
+							req: request,
+							auth: auth,
+							requestId: requestId,
+							callType: callType,
+							model: model,
+							startTime: startTime,
+							endTime: new Date(),
+							messages: storedMessages,
+							error: error,
+							status: SpendLogStatus.Failure,
+						}),
+					);
+				} catch (accountingError) {
+					logger.error("Provider 失败后的花费账务提交失败", { accountingError: accountingError, requestId: requestId });
+					try {
+						await releaseSpend(db, requestId);
+					} catch (releaseError) {
+						logger.error("Provider 失败后释放 reservation 失败", { error: releaseError, requestId: requestId });
+					}
+				}
 			}
 			throw error;
+		} finally {
+			spendReservation?.heartbeat?.stop();
 		}
 	}
 }

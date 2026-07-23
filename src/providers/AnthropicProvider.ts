@@ -895,7 +895,7 @@ export class AnthropicProvider implements ProviderConfig {
 		let hadRealContent = false;
 
 		try {
-			while (true) {
+			streamLoop: while (true) {
 				const { done, value } = await reader.read();
 				if (done) {
 					break;
@@ -1004,6 +1004,9 @@ export class AnthropicProvider implements ProviderConfig {
 								}
 							}
 							yield clean;
+						}
+						if (eventType === "message_stop") {
+							break streamLoop;
 						}
 					} catch (e) {
 						if (e instanceof AnthropicError) {

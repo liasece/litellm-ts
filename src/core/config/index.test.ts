@@ -256,9 +256,16 @@ describe("validateAndTransform — DATABASE_URL 环境变量覆盖", () => {
 		expect(config.generalSettings.database_url).toBe(TEST_ENV_URL);
 	});
 
-	it("DATABASE_URL 非法时抛出带 DATABASE_URL 提示的错误", () => {
-		process.env.DATABASE_URL = "not-a-url";
-		expect(() => validateAndTransform({})).toThrow(/Invalid DATABASE_URL/);
+	it("DATABASE_URL 非法时抛出脱敏错误", () => {
+		process.env.DATABASE_URL = "not-a-url-with-secret";
+		let message = "";
+		try {
+			validateAndTransform({});
+		} catch (error) {
+			message = String(error);
+		}
+		expect(message).toMatch(/Invalid DATABASE_URL/);
+		expect(message).not.toContain("secret");
 	});
 
 	it("无 DATABASE_URL 且 general_settings.database_url 非法时, 错误提示来源", () => {
@@ -284,6 +291,22 @@ describe("validateAndTransform — DATABASE_URL 环境变量覆盖", () => {
 		expect(config.database.host).toBe("envhost");
 		expect(config.database.port).toBe(6543);
 		expect(config.database.database).toBe("envdb");
+	});
+
+	it("保留 SSL、schema、timeout 与编码凭据连接串语义", () => {
+		const databaseUrl =
+			"postgresql://encoded%40user:p%2Fass@db.internal:5432/litellm?sslmode=require&schema=tenant_a&connect_timeout=12&options=-c%20statement_timeout%3D5000";
+		process.env.DATABASE_URL = databaseUrl;
+		const config = validateAndTransform({});
+		expect(config.database.connectionString).toBe(databaseUrl);
+		expect(config.database.user).toBe("encoded%40user");
+		expect(config.database.password).toBe("p%2Fass");
+	});
+
+	it("general_settings.database_connection_pool_limit 进入数据库连接配置", () => {
+		process.env.DATABASE_URL = TEST_ENV_URL;
+		const config = validateAndTransform({ general_settings: { database_connection_pool_limit: 17 } });
+		expect(config.database.maxConnections).toBe(17);
 	});
 });
 

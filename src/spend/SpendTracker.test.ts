@@ -15,21 +15,165 @@ import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { liteLLM_SpendReservations } from "../db/schema/spendReservations";
 import type { Request } from "express";
 import {
 	buildAdditionalUsageValues,
 	buildSpendLogFromRequest,
+	buildSpendReservationScopes,
+	estimateSpendReservation,
 	getDailyTable,
+	getOrCreateSpendRequestId,
 	getKeyColumn,
 	normalizeUsageForSpend,
 	reconstructModelName,
+	renewSpendReservation,
+	reserveSpend,
 	sanitizeSpendLogPayload,
+	settleSpend,
+	startSpendReservationHeartbeat,
 	trackSpendLog,
 } from "./SpendTracker";
+import { estimateRouterSpendReservation } from "./SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
-import { logger } from "../core/utils/logger";
+
+describe("Spend reservation 请求 helper", () => {
+	it("同 key 与幂等 header 生成稳定 request id，不同 key 隔离 namespace", () => {
+		const requestA = { headers: { "idempotency-key": "same" }, auth: { token: "key-a" } } as unknown as Request;
+		const requestB = { headers: { "idempotency-key": "same" }, auth: { token: "key-b" } } as unknown as Request;
+		expect(getOrCreateSpendRequestId(requestA)).toBe(getOrCreateSpendRequestId(requestA));
+		expect(getOrCreateSpendRequestId(requestA)).not.toBe(getOrCreateSpendRequestId(requestB));
+	});
+
+	it("无 header 时生成 UUID 并挂到 request", () => {
+		const request = { headers: {}, auth: { api_key: "key-a" } } as unknown as Request;
+		const requestId = getOrCreateSpendRequestId(request);
+		expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
+		expect((request as Request & { spendRequestId?: string }).spendRequestId).toBe(requestId);
+	});
+
+	it("从 auth 构造所有独立预算主体", () => {
+		expect(
+			buildSpendReservationScopes({
+				api_key: "raw",
+				token: "key-id",
+				user_id: "user-id",
+				team_id: "team-id",
+				organization_id: "org-id",
+				project_id: "project-id",
+				end_user_id: "end-id",
+				budget_snapshots: {
+					key: { id: "key-id", spend: 0, max_budget: 10 },
+					user: { id: "user-id", spend: 0, max_budget: 10 },
+					team: { id: "team-id", spend: 0, max_budget: 10 },
+					organization: { id: "org-id", spend: 0, max_budget: 10 },
+					project: { id: "project-id", spend: 0, max_budget: 10 },
+					team_member: { id: "user-id:team-id", spend: 0, max_budget: 10 },
+					end_user: { id: "end-id", spend: 0, max_budget: 10 },
+				},
+			}),
+		).toEqual([
+			{ kind: "key", id: "key-id" },
+			{ kind: "user", id: "user-id" },
+			{ kind: "team", id: "team-id" },
+			{ kind: "organization", id: "org-id" },
+			{ kind: "project", id: "project-id" },
+			{ kind: "team_member", userId: "user-id", teamId: "team-id" },
+			{ kind: "end_user", id: "end-id" },
+		]);
+	});
+
+	it("无已确认预算快照的 master/JWT auth 不构造 reservation scope", () => {
+		expect(buildSpendReservationScopes({ api_key: "master", user_id: "default_user_id" })).toEqual([]);
+	});
+
+	it("没有硬预算上限的快照不构造 reservation scope", () => {
+		expect(
+			buildSpendReservationScopes({
+				api_key: "raw",
+				budget_snapshots: {
+					key: { id: "key-id", spend: 0, max_budget: null },
+					team: { id: "team-id", spend: 0, max_budget: null },
+				},
+			}),
+		).toEqual([]);
+	});
+
+	it("按 tokenizer 估算输入 token，而不是把 UTF-8 字节数直接当 token", () => {
+		const body = { prompt: "你好，世界", max_tokens: 0 };
+		const estimated = estimateSpendReservation("unknown-model", body, { input_cost_per_token: 1 });
+		const utf8Bytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+
+		expect(estimated).toBeGreaterThan(0);
+		expect(estimated).toBeLessThan(utf8Bytes);
+	});
+
+	it("Responses API 的 max_output_tokens 参与 reservation 上界", () => {
+		const estimated = estimateSpendReservation(
+			"unknown-model",
+			{ input: "hello", max_output_tokens: 10_000 },
+			{ output_cost_per_token: 0.2 },
+		);
+		expect(estimated).toBeGreaterThanOrEqual(2_000);
+	});
+
+	it("多个输出 token 上限字段同时存在时取最大值", () => {
+		const estimated = estimateSpendReservation(
+			"unknown-model",
+			{ input: "hello", max_completion_tokens: 100, max_tokens: 1_000 },
+			{ output_cost_per_token: 1 },
+		);
+		expect(estimated).toBeGreaterThanOrEqual(1_000);
+	});
+});
+
+function sqlLiteralText(value: unknown): string {
+	if (typeof value === "string") {
+		return value;
+	}
+	if (Array.isArray(value)) {
+		return value.map(sqlLiteralText).join("");
+	}
+	if (value && typeof value === "object") {
+		const record = value as { queryChunks?: unknown[]; value?: unknown };
+		if (record.queryChunks) {
+			return record.queryChunks.map(sqlLiteralText).join("");
+		}
+		if (record.value !== undefined) {
+			return sqlLiteralText(record.value);
+		}
+	}
+	return "";
+}
+
+function withTransaction(db: Record<string, unknown>): Record<string, unknown> {
+	const insert = db["insert"] as (table: unknown) => { values: (values: Record<string, unknown>) => unknown };
+	db["transaction"] = jest.fn((callback: (tx: Record<string, unknown>) => Promise<unknown>) => callback(db));
+	db["select"] = () => ({ from: () => ({ where: () => Promise.resolve([]) }) });
+	db["update"] = () => ({ set: () => ({ where: () => Promise.resolve() }) });
+	db["insert"] = (table: unknown) => {
+		const builder = insert(table);
+		return {
+			values: (values: Record<string, unknown>) => {
+				const result = builder.values(values);
+				if (table !== liteLLM_SpendLogs) {
+					return result;
+				}
+				return {
+					onConflictDoNothing: () => ({ returning: () => Promise.resolve([{ requestId: values["request_id"] }]) }),
+				};
+			},
+		};
+	};
+	return db;
+}
 
 describe("SpendLogs schema parity", () => {
+	it("reservation 账本包含数据库 lease 到期时间", () => {
+		const reservationConfig = getTableConfig(liteLLM_SpendReservations);
+		expect(reservationConfig.columns.map((column) => column.name)).toContain("expires_at");
+	});
+
 	it("不包含 Python SpendLogs schema 不存在的 standard_logging_object 列", () => {
 		const spendLogsConfig = getTableConfig(liteLLM_SpendLogs);
 		const spendLogsColumnNames = spendLogsConfig.columns.map((column) => column.name);
@@ -225,6 +369,439 @@ describe("SpendTracker dimension mapping (DB-001)", () => {
 	});
 });
 
+describe("Spend reservation 候选成本上界", () => {
+	it("递归覆盖原模型组和 fallback deployment，并取 deployment model 自定义价格的最大值", () => {
+		const router = {
+			getDeployments: () => [
+				{
+					model_name: "primary",
+					litellm_params: { model: "provider/cheap" },
+					model_info: { input_cost_per_token: 0.01, output_cost_per_token: 0.02 },
+				},
+				{
+					model_name: "fallback-a",
+					litellm_params: { model: "provider/mid" },
+					model_info: { input_cost_per_token: 0.02, output_cost_per_token: 0.03 },
+				},
+				{
+					model_name: "fallback-b",
+					litellm_params: { model: "provider/expensive" },
+					model_info: { input_cost_per_token: 0.04, output_cost_per_token: 0.05 },
+				},
+			],
+			getFallbacks: () => ({ primary: ["fallback-a"], "fallback-a": ["fallback-b"] }),
+		};
+		const expensive = estimateSpendReservation(
+			"provider/expensive",
+			{ prompt: "hello", max_tokens: 10 },
+			{
+				input_cost_per_token: 0.04,
+				output_cost_per_token: 0.05,
+			},
+		);
+		expect(estimateRouterSpendReservation(router, "primary", { prompt: "hello", max_tokens: 10 })).toBe(expensive);
+	});
+
+	it("普通 fallback 已匹配时仍纳入未公开的专用 fallback 候选上界", () => {
+		const router = {
+			getDeployments: () => [
+				{
+					model_name: "primary",
+					litellm_params: { model: "provider/cheap", input_cost_per_token: 0.01, output_cost_per_token: 0.02 },
+				},
+				{
+					model_name: "regular-fallback",
+					litellm_params: { model: "provider/mid", input_cost_per_token: 0.02, output_cost_per_token: 0.03 },
+				},
+				{
+					model_name: "context-or-policy-fallback",
+					litellm_params: { model: "provider/expensive", input_cost_per_token: 0.4, output_cost_per_token: 0.5 },
+				},
+			],
+			getFallbacks: () => ({ primary: ["regular-fallback"] }),
+		};
+		const expensive = estimateSpendReservation(
+			"provider/expensive",
+			{ prompt: "hello", max_tokens: 10 },
+			{ input_cost_per_token: 0.4, output_cost_per_token: 0.5 },
+		);
+		expect(estimateRouterSpendReservation(router, "primary", { prompt: "hello", max_tokens: 10 })).toBe(expensive);
+	});
+
+	it("无法精确匹配模型组时保守包含全部 deployments", () => {
+		const router = {
+			getDeployments: () => [
+				{ model_name: "other", litellm_params: { model: "provider/expensive", input_cost_per_token: 1, output_cost_per_token: 2 } },
+			],
+			getFallbacks: () => ({ requested: ["missing"] }),
+		};
+		expect(estimateRouterSpendReservation(router, "requested", { prompt: "x", max_tokens: 1 })).toBeGreaterThan(2);
+	});
+
+	it("未知 deployment 价格拒绝按 0 预留", () => {
+		const router = {
+			getDeployments: () => [{ model_name: "unknown", litellm_params: { model: "provider/unpriced" } }],
+			getFallbacks: () => ({}),
+		};
+		expect(() => estimateRouterSpendReservation(router, "unknown", { prompt: "x", max_tokens: 1 })).toThrow(/价格/);
+	});
+});
+
+describe("Spend reservation 事务", () => {
+	it("过期 reservation 可由同 request_id 重新获取 lease", async () => {
+		const expired = {
+			request_id: "expired-request",
+			scope_ids: ["key:key-a"],
+			reserved: 3,
+			actual: null,
+			status: "reserved",
+			expires_at: new Date(Date.now() - 1_000),
+		};
+		const updateReturning = jest.fn().mockResolvedValue([{ ...expired, expires_at: new Date(Date.now() + 60_000) }]);
+		let db: Record<string, unknown>;
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([expired])) })) })),
+			execute: jest
+				.fn()
+				.mockResolvedValueOnce({ rows: [] })
+				.mockResolvedValueOnce({ rows: [] })
+				.mockResolvedValueOnce({ rows: [{ max_budget: 10, spend: 0, budget_id: null }] })
+				.mockResolvedValueOnce({ rows: [{ reserved: 0 }] }),
+			update: jest.fn(() => ({
+				set: jest.fn(() => ({ where: jest.fn(() => ({ returning: updateReturning })) })),
+			})),
+		};
+
+		await expect(
+			reserveSpend(db as unknown as Parameters<typeof reserveSpend>[0], {
+				requestId: "expired-request",
+				reserved: 3,
+				scopes: [{ kind: "key", id: "key-a" }],
+			}),
+		).resolves.toMatchObject({ status: "reserved", requestId: "expired-request" });
+		expect(updateReturning).toHaveBeenCalledTimes(1);
+	});
+
+	it("settle 实际费用超过预留时重新检查全部主体预算", async () => {
+		const reservation = {
+			request_id: "overage-request",
+			scope_ids: ["key:key-a"],
+			reserved: 5,
+			actual: null,
+			status: "reserved",
+			expires_at: new Date(Date.now() + 60_000),
+		};
+		let db: Record<string, unknown>;
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([reservation])) })) })),
+			execute: jest
+				.fn()
+				.mockResolvedValueOnce({ rows: [] })
+				.mockResolvedValueOnce({ rows: [{ max_budget: 10, spend: 4, budget_id: null }] })
+				.mockResolvedValueOnce({ rows: [{ reserved: 0 }] }),
+			update: jest.fn(() => ({
+				set: jest.fn(() => ({ where: jest.fn(() => ({ returning: jest.fn().mockResolvedValue([]) })) })),
+			})),
+		};
+
+		await expect(settleSpend(db as unknown as Parameters<typeof settleSpend>[0], "overage-request", 8)).rejects.toMatchObject({
+			statusCode: 429,
+		});
+	});
+
+	it("原子 renew 仅延长仍活跃且未过期的 reservation", async () => {
+		const returning = jest.fn().mockResolvedValue([{ reserved: 3, actual: null }]);
+		const db = {
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => ({ returning: returning })) })) })),
+		};
+		await expect(
+			renewSpendReservation(db as unknown as Parameters<typeof renewSpendReservation>[0], "renew-request"),
+		).resolves.toMatchObject({
+			status: "reserved",
+			requestId: "renew-request",
+		});
+		expect(returning).toHaveBeenCalledTimes(1);
+	});
+
+	it("heartbeat 在 provider 开始前续租失败返回 503，开始后只记录并交给最终结算", async () => {
+		const renewBeforeProvider = jest.fn().mockRejectedValue(new Error("database unavailable"));
+		const beforeProvider = startSpendReservationHeartbeat(
+			{} as Parameters<typeof startSpendReservationHeartbeat>[0],
+			"heartbeat-before-provider",
+			{ intervalMs: 60_000, renew: renewBeforeProvider },
+		);
+		await expect(beforeProvider.renewNow()).rejects.toMatchObject({ statusCode: 503 });
+		expect(() => beforeProvider.markProviderStarted()).toThrow(/续租失败/);
+		beforeProvider.stop();
+
+		const renewDuringProvider = jest.fn().mockRejectedValue(new Error("database unavailable"));
+		const duringProvider = startSpendReservationHeartbeat(
+			{} as Parameters<typeof startSpendReservationHeartbeat>[0],
+			"heartbeat-during-provider",
+			{ intervalMs: 60_000, renew: renewDuringProvider },
+		);
+		duringProvider.markProviderStarted();
+		await expect(duringProvider.renewNow()).resolves.toBe(false);
+		duringProvider.stop();
+	});
+});
+
+describe("trackSpendLog 原子提交", () => {
+	it("所有实体 spend 累计都以 COALESCE 兼容 NULL", async () => {
+		let db: Record<string, unknown>;
+		const spendExpressions: unknown[] = [];
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: jest.fn(() => ({
+				set: jest.fn((values: Record<string, unknown>) => {
+					if (values["spend"] !== undefined) {
+						spendExpressions.push(values["spend"]);
+					}
+					return { where: jest.fn(() => Promise.resolve()) };
+				}),
+			})),
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({
+					onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ requestId: "req-coalesce" }])) })),
+					onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+				})),
+			})),
+		};
+
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			agent_id: "agent-id",
+			api_key: "key-id",
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			endTime: "2026-01-01T00:00:01.000Z",
+			end_user_id: "end-user-id",
+			metadata: { user_api_key_project_id: "project-id" },
+			model: "unknown-model-cost-zero",
+			organization_id: "organization-id",
+			prompt_tokens: 1,
+			request_id: "req-coalesce",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			team_id: "team-id",
+			total_tokens: 2,
+			user: "user-id",
+		});
+
+		expect(spendExpressions).toHaveLength(8);
+		for (const expression of spendExpressions) {
+			expect(sqlLiteralText(expression)).toContain("COALESCE(");
+		}
+	});
+
+	it("首次 request_id 仅在整个事务提交后返回 committed", async () => {
+		let db: Record<string, unknown>;
+		const transaction = jest.fn((callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => callback(db));
+		db = {
+			transaction: transaction,
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => Promise.resolve()) })) })),
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({
+					onConflictDoNothing: jest.fn(() => ({
+						returning: jest.fn(() => Promise.resolve([{ request_id: "req-atomic-commit" }])),
+					})),
+				})),
+			})),
+		};
+
+		await expect(
+			trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+				api_key: "key",
+				call_type: CallType.ACompletion,
+				completion_tokens: 1,
+				endTime: "2026-01-01T00:00:01.000Z",
+				model: "unknown-model-cost-zero",
+				prompt_tokens: 1,
+				request_id: "req-atomic-commit",
+				spend: 0,
+				startTime: "2026-01-01T00:00:00.000Z",
+				total_tokens: 2,
+			}),
+		).resolves.toEqual({ status: "committed", requestId: "req-atomic-commit", spend: 0 });
+		expect(transaction).toHaveBeenCalledTimes(1);
+	});
+
+	it("成功日志在同一事务内把 reservation 结算为实际费用", async () => {
+		let db: Record<string, unknown>;
+		const reservationSets: Record<string, unknown>[] = [];
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: jest.fn((table: unknown) => ({
+				set: jest.fn((values: Record<string, unknown>) => {
+					if (table === liteLLM_SpendReservations) {
+						reservationSets.push(values);
+					}
+					return { where: jest.fn(() => Promise.resolve()) };
+				}),
+			})),
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({
+					onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ requestId: "req-settle" }])) })),
+				})),
+			})),
+		};
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			api_key: "key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			endTime: "2026-01-01T00:00:01.000Z",
+			model: "unknown-model-cost-zero",
+			prompt_tokens: 1,
+			request_id: "req-settle",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			total_tokens: 2,
+		});
+		expect(reservationSets).toContainEqual(expect.objectContaining({ status: "settled", actual: 0 }));
+	});
+
+	it("失败日志在同一事务内释放 reservation", async () => {
+		let db: Record<string, unknown>;
+		const reservationSets: Record<string, unknown>[] = [];
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: jest.fn((table: unknown) => ({
+				set: jest.fn((values: Record<string, unknown>) => {
+					if (table === liteLLM_SpendReservations) {
+						reservationSets.push(values);
+					}
+					return { where: jest.fn(() => Promise.resolve()) };
+				}),
+			})),
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({
+					onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ requestId: "req-release" }])) })),
+				})),
+			})),
+		};
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			api_key: "key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 0,
+			endTime: "2026-01-01T00:00:01.000Z",
+			model: "unknown-model-cost-zero",
+			prompt_tokens: 1,
+			request_id: "req-release",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			status: SpendLogStatus.Failure,
+			total_tokens: 1,
+		});
+		expect(reservationSets).toContainEqual(expect.objectContaining({ status: "released", actual: null }));
+	});
+
+	it("失败日志有部分费用时在同一事务内结算 reservation", async () => {
+		let db: Record<string, unknown>;
+		const reservationSets: Record<string, unknown>[] = [];
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: jest.fn((table: unknown) => ({
+				set: jest.fn((values: Record<string, unknown>) => {
+					if (table === liteLLM_SpendReservations) {
+						reservationSets.push(values);
+					}
+					return { where: jest.fn(() => Promise.resolve()) };
+				}),
+			})),
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({
+					onConflictDoNothing: jest.fn(() => ({
+						returning: jest.fn(() => Promise.resolve([{ requestId: "req-partial-failure" }])),
+					})),
+				})),
+			})),
+		};
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			api_key: "key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			endTime: "2026-01-01T00:00:01.000Z",
+			model: "unknown-model-cost-zero",
+			prompt_tokens: 1,
+			request_id: "req-partial-failure",
+			spend: 0,
+			custom_cost_per_token: { input_cost_per_token: 0.1, output_cost_per_token: 0.15 },
+			startTime: "2026-01-01T00:00:00.000Z",
+			status: SpendLogStatus.Failure,
+			total_tokens: 2,
+		});
+		expect(reservationSets).toContainEqual(expect.objectContaining({ status: "settled", actual: 0.25 }));
+	});
+
+	it("transaction 数据库错误转换为 ApiError 503，并尝试释放未决 reservation", async () => {
+		const releaseWhere = jest.fn(() => Promise.resolve());
+		const db = {
+			transaction: jest.fn(() => Promise.reject(new Error("connection lost"))),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: releaseWhere })) })),
+		};
+		await expect(
+			trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+				api_key: "key",
+				call_type: CallType.ACompletion,
+				completion_tokens: 1,
+				endTime: "2026-01-01T00:00:01.000Z",
+				model: "unknown-model-cost-zero",
+				prompt_tokens: 1,
+				request_id: "req-db-error",
+				spend: 0,
+				startTime: "2026-01-01T00:00:00.000Z",
+				total_tokens: 2,
+			}),
+		).rejects.toMatchObject({ name: "ApiError", statusCode: 503 });
+		expect(releaseWhere).toHaveBeenCalledTimes(1);
+	});
+
+	it("重复 SpendLog 不使用新 attempt 的 spend 终结 reservation", async () => {
+		let db: Record<string, unknown>;
+		const reservationSets: Record<string, unknown>[] = [];
+		const update = jest.fn((table: unknown) => ({
+			set: jest.fn((values: Record<string, unknown>) => {
+				if (table === liteLLM_SpendReservations) {
+					reservationSets.push(values);
+				}
+				return { where: jest.fn(() => Promise.resolve()) };
+			}),
+		}));
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: update,
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({
+					onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([])) })),
+				})),
+			})),
+		};
+		await expect(
+			trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+				api_key: "key",
+				call_type: CallType.ACompletion,
+				completion_tokens: 1,
+				endTime: "2026-01-01T00:00:01.000Z",
+				model: "unknown-model-cost-zero",
+				prompt_tokens: 1,
+				request_id: "req-duplicate",
+				spend: 0,
+				startTime: "2026-01-01T00:00:00.000Z",
+				total_tokens: 2,
+			}),
+		).resolves.toEqual({ status: "duplicate", requestId: "req-duplicate", spend: 0 });
+		expect(reservationSets).toEqual([]);
+		expect(update).not.toHaveBeenCalled();
+	});
+});
+
 describe("SpendTracker API key sanitization", () => {
 	const rawApiKey = "sk-test-plaintext-key-never-store";
 
@@ -255,18 +832,16 @@ describe("SpendTracker API key sanitization", () => {
 	}
 
 	function createMockDb(insertedSpendLogs: Record<string, unknown>[]): Parameters<typeof trackSpendLog>[0] {
-		return {
-			insert: jest.fn((table: unknown) => {
-				return {
-					values: jest.fn((insertValues: Record<string, unknown>) => {
-						if (table === liteLLM_SpendLogs) {
-							insertedSpendLogs.push(insertValues);
-						}
-						return Promise.resolve(undefined);
-					}),
-				};
-			}),
-		} as unknown as Parameters<typeof trackSpendLog>[0];
+		return withTransaction({
+			insert: jest.fn((table: unknown) => ({
+				values: jest.fn((insertValues: Record<string, unknown>) => {
+					if (table === liteLLM_SpendLogs) {
+						insertedSpendLogs.push(insertValues);
+					}
+					return Promise.resolve(undefined);
+				}),
+			})),
+		}) as unknown as Parameters<typeof trackSpendLog>[0];
 	}
 
 	it("buildSpendLogFromRequest 输出 hash key 且 proxy_server_request 不含明文 key", () => {
@@ -346,7 +921,7 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 			values: Record<string, unknown>;
 			conflict: Record<string, unknown>;
 		}> = [];
-		const mockDb = {
+		const mockDb = withTransaction({
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn((values: Record<string, unknown>) => {
 					if (table === liteLLM_SpendLogs) {
@@ -360,7 +935,7 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 					};
 				}),
 			})),
-		} as unknown as Parameters<typeof trackSpendLog>[0];
+		}) as unknown as Parameters<typeof trackSpendLog>[0];
 
 		await trackSpendLog(mockDb, {
 			api_key: "hashed-key",
@@ -404,7 +979,7 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 
 	it("缺失 MCP 工具名和 endpoint 时归一为空字符串", async () => {
 		const dailyValues: Record<string, unknown>[] = [];
-		const mockDb = {
+		const mockDb = withTransaction({
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn((values: Record<string, unknown>) => {
 					if (table === liteLLM_SpendLogs) {
@@ -416,7 +991,7 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 					};
 				}),
 			})),
-		} as unknown as Parameters<typeof trackSpendLog>[0];
+		}) as unknown as Parameters<typeof trackSpendLog>[0];
 
 		await trackSpendLog(mockDb, {
 			api_key: "hashed-key",
@@ -439,11 +1014,10 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 		});
 	});
 
-	it("记录 daily upsert rejection，同时保留其他维度成功写入", async () => {
+	it("每日汇总失败时拒绝提交整个事务", async () => {
 		const dailyFailure = new Error("daily-user-write-failed");
 		const successfulTables: unknown[] = [];
-		const errorSpy = jest.spyOn(logger, "error").mockImplementation(() => logger);
-		const mockDb = {
+		const mockDb = withTransaction({
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn(() => {
 					if (table === liteLLM_SpendLogs) {
@@ -460,10 +1034,10 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 					};
 				}),
 			})),
-		} as unknown as Parameters<typeof trackSpendLog>[0];
+		}) as unknown as Parameters<typeof trackSpendLog>[0];
 
-		try {
-			await trackSpendLog(mockDb, {
+		await expect(
+			trackSpendLog(mockDb, {
 				api_key: "hashed-key",
 				call_type: CallType.ACompletion,
 				completion_tokens: 1,
@@ -476,13 +1050,9 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 				team_id: "team-1",
 				total_tokens: 2,
 				user: "user-1",
-			});
-
-			expect(successfulTables).toContain(liteLLM_DailyTeamSpend);
-			expect(errorSpy).toHaveBeenCalledWith("DailySpend 聚合写入失败: dimension=user", { error: dailyFailure });
-		} finally {
-			errorSpy.mockRestore();
-		}
+			}),
+		).rejects.toMatchObject({ name: "ApiError", statusCode: 503 });
+		expect(successfulTables).toEqual([]);
 	});
 });
 
@@ -586,7 +1156,7 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 
 	it("metadata 键集对齐 Python：team_alias / model_map_information / null 占位键", () => {
 		const spendLog = buildSpendLogFromRequest({
-			auth: { api_key: "sk-test", team_id: "team-1", team_alias: "team-alpha" },
+			auth: { api_key: "sk-test", team_id: "team-1", team_alias: "team-alpha", project_id: "project-1" },
 			callType: CallType.AMessages,
 			endTime: new Date("2026-01-01T00:00:01.000Z"),
 			model: "glm",
@@ -608,7 +1178,7 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(metadata["max_retries"]).toBe(3);
 		// 未实现子系统的键就位、值恒 null（PY 以 None 落键）
 		expect(metadata["cost_breakdown"]).toBeNull();
-		expect(metadata["user_api_key_project_id"]).toBeNull();
+		expect(metadata["user_api_key_project_id"]).toBe("project-1");
 		expect(metadata["user_api_key_project_alias"]).toBeNull();
 		expect(metadata["applied_guardrails"]).toBeNull();
 		expect(metadata["mcp_tool_call_metadata"]).toBeNull();
@@ -618,6 +1188,7 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(metadata["cold_storage_object_key"]).toBeNull();
 		// A6: model 列按 reconstruct_model_name 重建为 deployment 完整名
 		expect(spendLog.model).toBe("anthropic/glm-4.7");
+		expect(spendLog.project_id).toBe("project-1");
 		// A1: Anthropic 风格 usage 折叠进列
 		expect(spendLog.prompt_tokens).toBe(140);
 		expect(spendLog.total_tokens).toBe(160);
@@ -652,7 +1223,7 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 
 describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bool)）", () => {
 	function createInsertCaptureDb(insertedSpendLogs: Record<string, unknown>[]): Parameters<typeof trackSpendLog>[0] {
-		return {
+		return withTransaction({
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn((insertValues: Record<string, unknown>) => {
 					if (table === liteLLM_SpendLogs) {
@@ -661,7 +1232,7 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 					return Promise.resolve(undefined);
 				}),
 			})),
-		} as unknown as Parameters<typeof trackSpendLog>[0];
+		}) as unknown as Parameters<typeof trackSpendLog>[0];
 	}
 
 	function createMinimalLogEntry(overrides: Record<string, unknown>): Parameters<typeof trackSpendLog>[1] {

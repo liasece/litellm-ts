@@ -1,25 +1,26 @@
+import { uuidText } from "./uuidText";
 /**
  * LiteLLM_MCPServerTable — MCP server configurations
  * Prisma model: LiteLLM_MCPServerTable (UUID PK)
  */
 
-import { pgTable, text, uuid, boolean, jsonb, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, jsonb, timestamp, integer } from "drizzle-orm/pg-core";
 
 export const liteLLM_MCPServerTable = pgTable("LiteLLM_MCPServerTable", {
-	serverId: uuid("server_id").defaultRandom().primaryKey(),
+	serverId: uuidText("server_id").primaryKey().notNull(),
 	serverName: text("server_name"),
 	alias: text("alias"),
 	description: text("description"),
 	url: text("url"),
 	specPath: text("spec_path"),
-	transport: text("transport").default("sse"),
+	transport: text("transport").default("sse").notNull(),
 	authType: text("auth_type"),
 	credentials: jsonb("credentials").default("{}"),
 	// @map("created_at")
-	createdAt: timestamp("created_at").defaultNow(),
+	createdAt: timestamp("created_at", { precision: 3 }).defaultNow(),
 	createdBy: text("created_by"),
 	// @map("updated_at")
-	updatedAt: timestamp("updated_at").defaultNow(),
+	updatedAt: timestamp("updated_at", { precision: 3 }).defaultNow(),
 	updatedBy: text("updated_by"),
 	mcpInfo: jsonb("mcp_info").default("{}"),
 	mcpAccessGroups: text("mcp_access_groups").array().notNull(),
@@ -29,7 +30,7 @@ export const liteLLM_MCPServerTable = pgTable("LiteLLM_MCPServerTable", {
 	extraHeaders: text("extra_headers").array().default([]),
 	staticHeaders: jsonb("static_headers").default("{}"),
 	status: text("status").default("unknown"),
-	lastHealthCheck: timestamp("last_health_check"),
+	lastHealthCheck: timestamp("last_health_check", { precision: 3 }),
 	healthCheckError: text("health_check_error"),
 	command: text("command"),
 	args: text("args").array().default([]),
@@ -37,9 +38,9 @@ export const liteLLM_MCPServerTable = pgTable("LiteLLM_MCPServerTable", {
 	authorizationUrl: text("authorization_url"),
 	tokenUrl: text("token_url"),
 	registrationUrl: text("registration_url"),
-	allowAllKeys: boolean("allow_all_keys").default(false),
-	availableOnPublicInternet: boolean("available_on_public_internet").default(true),
-	isByok: boolean("is_byok").default(false),
+	allowAllKeys: boolean("allow_all_keys").default(false).notNull(),
+	availableOnPublicInternet: boolean("available_on_public_internet").default(true).notNull(),
+	isByok: boolean("is_byok").default(false).notNull(),
 	byokDescription: text("byok_description").array().default([]),
 	byokApiKeyHelpUrl: text("byok_api_key_help_url"),
 });

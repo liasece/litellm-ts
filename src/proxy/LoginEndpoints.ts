@@ -1,56 +1,31 @@
-/**
- * Login 端点
- *
- * 对齐 Python LiteLLM `/v2/login`：用户名密码登录成功后设置 `token` cookie，
- * 返回 WebUI 跳转地址。这里不修改 WebUI 源码，只补齐它依赖的 Proxy API 表面。
- * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/proxy_server.py
- *
- * 协议要点（严格对齐 Python `authenticate_user` + `generate_key_helper_fn`）：
- * - 登录成功后通过 `generateApiKey()` 生成明文 `sk-*` virtual key；
- * - `hashApiKey(plainKey)` 写入 `LiteLLM_VerificationToken`（与 /key/generate 一致）；
- * - cookie JWT 的 `key` 字段携带**明文** `sk-*`，与 Python 行为一致；
- * - WebUI 通过 `jwtDecode(token)` 读取 `claims.key`，再以
- *   `Authorization: Bearer ${claims.key}` 发送后续请求；auth 层对该 Bearer 走
- *   hash → DB 查找路径识别身份。
- *
- * 安全契约（必须保留，避免误改）：
- * - 默认凭据：未设置 UI_USERNAME/UI_PASSWORD 时，UI 密码默认等于 master_key。
- *   因此持有 master key 等价持有 proxy_admin 登录凭据。
- * - cookie JWT 不携带 master key 明文；
- * - httpOnly=false：当前 WebUI 通过 `document.cookie` 读取 token 后挂在
- *   `Authorization` 头里再发请求。把 cookie 改成 httpOnly=true 会立即让
- *   复制来的 WebUI 全站 401，因此这里维持 httpOnly=false 作为临时 trade-off。
- *   后续应改造为 /auth/check/ 服务端 session 检查，再把 httpOnly 改回 true。
- * - secure：生产环境（HTTPS）下应设 true；本地开发 HTTP 站点（当前部署
- *   `http://192.168.1.220:18183`）下不应强制 secure，否则浏览器会丢弃 cookie
- *   导致登录失效。判定方式见 isProductionCookieSecure()。
- */
+/** WebUI username/password 登录与服务端 session 生命周期。 */
 import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
-import type { Response, Router } from "express";
-import { registerRoute } from "../core/api/registerRoute";
+import type { RequestHandler, Response, Router } from "express";
+import type { AuthRepository } from "../auth/AuthRepository";
 import { ApiError } from "../core/api/ApiError";
+import { registerRoute } from "../core/api/registerRoute";
 import type { ServiceConfig } from "../core/config";
 import type { DrizzleDb } from "../core/db/Database";
-import { generateApiKey, hashApiKey } from "../core/utils/crypto";
+import { hashApiKey } from "../core/utils/crypto";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import {
+	DEFAULT_WEBUI_SESSION_DURATION,
 	LOGIN_METHOD_USERNAME_PASSWORD,
 	PROXY_ADMIN_ROLE,
 	PROXY_ADMIN_USER_ID,
 	WEBUI_COOKIE_TOKEN_NAME,
+	WEBUI_CSRF_COOKIE_NAME,
 	WEBUI_LOGIN_TEAM_ID,
+	WEBUI_SESSION_DURATION_ENV_VAR,
+	type WebUiSessionClaims,
+	type WebUiSessionInfo,
 } from "../types/webUiSession";
 
 const DEFAULT_UI_USERNAME = "admin";
-/** 强制 cookie secure 的环境变量名；存在并解析为 true 即视为生产。 */
 const SECURE_COOKIE_ENV_VAR = "LITELLM_COOKIE_SECURE";
-
-/** 日志中明文 key 只展示固定长度前缀，避免泄露完整密钥材料。 */
-const TOKEN_LOG_PREFIX_LENGTH = 8;
-
-/** WebUI 登录时生成新 virtual key 的最大碰撞重试次数。 */
-const MAX_KEY_GEN_RETRIES = 3;
+const MAX_SESSION_GEN_RETRIES = 3;
+const DURATION_PATTERN = /^(\d+)(s|m|h|d)$/;
 
 interface LoginRequestBody {
 	readonly username?: unknown;
@@ -62,34 +37,45 @@ interface LoginResponse {
 }
 
 /**
- * cookie JWT payload 形状。
- * `key` 字段为登录时生成的明文 `sk-*` virtual key（与 Python 一致），
- * 后续请求通过 `Authorization: Bearer ${claims.key}` 携带该 key。
- */
-interface WebUiSessionClaims {
-	readonly user_id: string;
-	readonly key: string;
-	readonly user_email: string | null;
-	readonly user_role: string;
-	readonly login_method: typeof LOGIN_METHOD_USERNAME_PASSWORD;
-	readonly premium_user: boolean;
-	readonly auth_header_name: string;
-	readonly disabled_non_admin_personal_key_creation: boolean;
-	readonly server_root_path: string;
-}
-
-/**
+ * 注册公开登录路由，以及在依赖可用时注册 session 查询和注销路由。
  * @param router
- * @param config - 服务配置，用于读取 master_key 与原始 general_settings
- * @param db - Drizzle DB 实例，用于把登录会话对应的 virtual key 写入
- * LiteLLM_VerificationToken
+ * @param config
+ * @param db
+ * @param authMiddleware
+ * @param csrfMiddleware
+ * @param authRepository
  */
-export function registerLoginRoutes(router: Router, config: ServiceConfig, db: DrizzleDb): void {
+export function registerLoginRoutes(
+	router: Router,
+	config: ServiceConfig,
+	db: DrizzleDb,
+	authMiddleware?: RequestHandler,
+	csrfMiddleware?: RequestHandler,
+	authRepository?: AuthRepository,
+): void {
 	registerRoute(router, { method: "post", path: "/login" }, (req, res) => loginV2(req.body as LoginRequestBody, res, config, db));
 	registerRoute(router, { method: "post", path: "/v2/login" }, (req, res) => loginV2(req.body as LoginRequestBody, res, config, db));
 	registerRoute(router, { method: "post", path: "/v3/login" }, () => {
 		throw ApiError.unavailable("Login v3 not implemented");
 	});
+
+	if (authMiddleware && csrfMiddleware && authRepository) {
+		router.get("/auth/session", authMiddleware, (req, res) => {
+			res.json(createSessionInfo(req.auth?.metadata));
+		});
+		router.post("/auth/logout", authMiddleware, csrfMiddleware, async (req, res, next) => {
+			try {
+				if (!req.auth?.token || req.auth.metadata?.webui_session !== true) {
+					throw ApiError.unauthorized("WebUI session required");
+				}
+				await authRepository.revokeVerificationTokenByHash(req.auth.token);
+				clearSessionCookies(res);
+				res.json({ status: "success" });
+			} catch (error) {
+				next(error);
+			}
+		});
+	}
 }
 
 async function loginV2(body: LoginRequestBody, res: Response, config: ServiceConfig, db: DrizzleDb): Promise<LoginResponse> {
@@ -109,35 +95,34 @@ async function loginV2(body: LoginRequestBody, res: Response, config: ServiceCon
 		throw ApiError.unauthorized("Invalid username or password");
 	}
 
-	// 生成登录会话的 virtual key 并持久化 hash；与 /key/generate 一致，碰撞重试
-	const { plainKey } = await issueLoginVirtualKey(db);
-
-	const sessionClaims = createWebUiSessionClaims(config, plainKey);
+	const durationSeconds = parseSessionDuration(process.env[WEBUI_SESSION_DURATION_ENV_VAR] ?? DEFAULT_WEBUI_SESSION_DURATION);
+	const issuedAtSeconds = Math.floor(Date.now() / 1000);
+	const expiresAtSeconds = issuedAtSeconds + durationSeconds;
+	const expiresAt = new Date(expiresAtSeconds * 1000);
+	const jti = await issueWebUiSession(db, expiresAt);
+	const sessionClaims = createWebUiSessionClaims(config, jti, issuedAtSeconds, expiresAtSeconds);
 	const jwtToken = signHs256(sessionClaims, masterKey);
-	res.cookie(WEBUI_COOKIE_TOKEN_NAME, jwtToken, {
-		httpOnly: false,
+	const secure = isProductionCookieSecure();
+	const cookieOptions = {
+		httpOnly: true,
 		path: "/",
-		sameSite: "lax",
-		// 生产环境（HTTPS）下应设 secure: true；本地 HTTP 站点不可强制，
-		// 否则浏览器在 http 下不会回传 cookie，导致登录后所有请求 401。
-		// 当前部署 `http://192.168.1.220:18183` 默认 secure=false。
-		secure: isProductionCookieSecure(),
+		sameSite: "lax" as const,
+		secure: secure,
+		expires: expiresAt,
+	};
+	res.cookie(WEBUI_COOKIE_TOKEN_NAME, jwtToken, cookieOptions);
+	res.cookie(WEBUI_CSRF_COOKIE_NAME, crypto.randomBytes(32).toString("base64url"), {
+		...cookieOptions,
+		httpOnly: false,
 	});
 
 	return { redirect_url: "/ui/?login=success" };
 }
 
-/**
- * 生成登录会话的 virtual key 并写入 LiteLLM_VerificationToken。
- * 若 hash 与现有记录碰撞（SHA-256 极小概率），最多重试 MAX_KEY_GEN_RETRIES 次。
- * @param db - Drizzle DB 实例
- * @returns 明文 key 与对应 hash（hash 入库，明文回写 JWT claims）
- */
-async function issueLoginVirtualKey(db: DrizzleDb): Promise<{ plainKey: string; tokenHash: string }> {
-	for (let attempt = 0; attempt < MAX_KEY_GEN_RETRIES; attempt++) {
-		const plainKey = generateApiKey();
-		const tokenHash = hashApiKey(plainKey);
-
+async function issueWebUiSession(db: DrizzleDb, expiresAt: Date): Promise<string> {
+	for (let attempt = 0; attempt < MAX_SESSION_GEN_RETRIES; attempt++) {
+		const jti = crypto.randomBytes(32).toString("base64url");
+		const tokenHash = hashApiKey(jti);
 		const existing = await db
 			.select({ token: LiteLLM_VerificationToken.token })
 			.from(LiteLLM_VerificationToken)
@@ -146,82 +131,105 @@ async function issueLoginVirtualKey(db: DrizzleDb): Promise<{ plainKey: string; 
 		if (existing.length > 0) {
 			continue;
 		}
-
 		await db.insert(LiteLLM_VerificationToken).values({
 			token: tokenHash,
 			keyAlias: "webui-session",
 			keyName: "WebUI Session",
 			userId: PROXY_ADMIN_USER_ID,
 			teamId: WEBUI_LOGIN_TEAM_ID,
-			metadata: { login_method: LOGIN_METHOD_USERNAME_PASSWORD },
+			expires: expiresAt,
+			metadata: { login_method: LOGIN_METHOD_USERNAME_PASSWORD, webui_session: true },
 			models: [],
 			blocked: false,
 		});
-
-		// 日志仅展示前缀，不打印明文 key
-		const keyPrefix = plainKey.slice(0, TOKEN_LOG_PREFIX_LENGTH);
-		process.stdout.write(`[LoginEndpoints] issued webui virtual key prefix=${keyPrefix}…\n`);
-		return { plainKey: plainKey, tokenHash: tokenHash };
+		return jti;
 	}
-	throw ApiError.unavailable("Failed to issue login virtual key after retries");
+	throw ApiError.unavailable("Failed to issue WebUI session after retries");
 }
 
 /**
- * 是否应在 cookie 上设置 Secure 标志。
- * - LITELLM_COOKIE_SECURE=true → 强制 secure（生产 HTTPS 站点）
- * - LITELLM_COOKIE_SECURE=false → 强制 insecure（HTTP 开发站点）
- * - 未设置 → 默认 insecure（与历史上线部署兼容；如需生产默认 secure，可改为
- *   检测 NODE_ENV=production 或显式 HTTPS upstream）。
- * @returns 是否 secure
+ * 解析 LiteLLM duration：30s、30m、24h、7d。
+ * @param raw - duration 配置值
+ * @returns duration 秒数
+ * @throws {ApiError} 配置格式非法或数值非正数
  */
+export function parseSessionDuration(raw: string): number {
+	const match = DURATION_PATTERN.exec(raw.trim());
+	if (!match) {
+		throw ApiError.unavailable(`${WEBUI_SESSION_DURATION_ENV_VAR} must use 30s, 30m, 24h, or 7d format`);
+	}
+	const value = Number(match[1]);
+	if (!Number.isSafeInteger(value) || value <= 0) {
+		throw ApiError.unavailable(`${WEBUI_SESSION_DURATION_ENV_VAR} must be positive`);
+	}
+	const multipliers = { s: 1, m: 60, h: 3600, d: 86400 } as const;
+	return value * multipliers[match[2] as keyof typeof multipliers];
+}
+
 function isProductionCookieSecure(): boolean {
 	const raw = process.env[SECURE_COOKIE_ENV_VAR];
-	if (raw === undefined) {
-		return false;
-	}
-	return raw.toLowerCase() === "true" || raw === "1";
+	return raw?.toLowerCase() === "true" || raw === "1";
 }
 
-/**
- * 构造 cookie JWT payload —— `key` 字段为登录生成的明文 `sk-*` virtual key。
- * 后续请求通过 `Authorization: Bearer ${claims.key}` 携带；auth 层对该 Bearer
- * 走 hash → DB 查找路径识别身份。
- * @param config
- * @param plainKey - 登录时生成的明文 virtual key
- */
-function createWebUiSessionClaims(config: ServiceConfig, plainKey: string): WebUiSessionClaims {
-	const authHeaderName = getStringSetting(config.generalSettingsRaw, "litellm_key_header_name") ?? "Authorization";
+function createWebUiSessionClaims(
+	config: ServiceConfig,
+	jti: string,
+	issuedAtSeconds: number,
+	expiresAtSeconds: number,
+): WebUiSessionClaims {
 	return {
 		user_id: PROXY_ADMIN_USER_ID,
-		key: plainKey,
 		user_email: null,
 		user_role: PROXY_ADMIN_ROLE,
 		login_method: LOGIN_METHOD_USERNAME_PASSWORD,
-		// 定制：放开企业付费功能门禁，WebUI 全部功能可用
 		premium_user: true,
-		auth_header_name: authHeaderName,
 		disabled_non_admin_personal_key_creation: false,
-		server_root_path: "/",
+		server_root_path: getStringSetting(config.generalSettingsRaw, "server_root_path") ?? "/",
+		webui_session: true,
+		iat: issuedAtSeconds,
+		exp: expiresAtSeconds,
+		jti: jti,
 	};
 }
 
+function createSessionInfo(metadata: Record<string, unknown> | undefined): WebUiSessionInfo {
+	if (metadata?.webui_session !== true) {
+		throw ApiError.unauthorized("WebUI session required");
+	}
+	return {
+		authenticated: true,
+		user_id: asString(metadata.user_id) ?? PROXY_ADMIN_USER_ID,
+		user_email: asString(metadata.user_email) ?? null,
+		user_role: asString(metadata.user_role) ?? PROXY_ADMIN_ROLE,
+		login_method: asString(metadata.login_method) ?? LOGIN_METHOD_USERNAME_PASSWORD,
+		premium_user: metadata.premium_user === true,
+		disabled_non_admin_personal_key_creation: metadata.disabled_non_admin_personal_key_creation === true,
+		server_root_path: asString(metadata.server_root_path) ?? "/",
+	};
+}
+
+function clearSessionCookies(res: Response): void {
+	const options = { httpOnly: true, path: "/", sameSite: "lax" as const, secure: isProductionCookieSecure() };
+	res.clearCookie(WEBUI_COOKIE_TOKEN_NAME, options);
+	res.clearCookie(WEBUI_CSRF_COOKIE_NAME, { ...options, httpOnly: false });
+}
+
 function getStringSetting(settings: Record<string, unknown> | undefined, key: string): string | undefined {
-	const value = settings?.[key];
+	return asString(settings?.[key]);
+}
+
+function asString(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function timingSafeEqual(left: string, right: string): boolean {
 	const leftBuffer = Buffer.from(left, "utf8");
 	const rightBuffer = Buffer.from(right, "utf8");
-	if (leftBuffer.length !== rightBuffer.length) {
-		return false;
-	}
-	return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+	return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function signHs256(payload: WebUiSessionClaims, secret: string): string {
-	const header = { alg: "HS256", typ: "JWT" };
-	const encodedHeader = base64UrlEncode(JSON.stringify(header));
+	const encodedHeader = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
 	const encodedPayload = base64UrlEncode(JSON.stringify(payload));
 	const signedData = `${encodedHeader}.${encodedPayload}`;
 	const signature = crypto.createHmac("sha256", secret).update(signedData).digest("base64url");

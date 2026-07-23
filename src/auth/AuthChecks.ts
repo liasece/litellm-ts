@@ -390,8 +390,16 @@ export function runCommonChecks(auth: UserAPIKeyAuth, model: string, team?: Team
 		canTeamAccessModel(team, model);
 	}
 
-	// 7. 检查预算
-	if (auth.max_budget != null) {
+	// 7. 独立检查每个预算主体，禁止把 key/team 等 spend 合并后与单一上限比较。
+	const snapshots = auth.budget_snapshots;
+	if (snapshots) {
+		for (const snapshot of Object.values(snapshots)) {
+			if (snapshot) {
+				checkBudget(snapshot.spend, snapshot.max_budget);
+			}
+		}
+	} else if (auth.max_budget != null) {
+		// 兼容 master key/JWT 或旧调用方尚未提供快照的认证上下文。
 		checkBudget(auth.spend ?? 0, auth.max_budget);
 	}
 

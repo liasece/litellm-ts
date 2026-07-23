@@ -53,7 +53,7 @@ describe("native Anthropic streaming SpendLog", () => {
 	beforeEach(() => {
 		previousStorePrompts = process.env["STORE_PROMPTS_IN_SPEND_LOGS"];
 		process.env["STORE_PROMPTS_IN_SPEND_LOGS"] = "true";
-		spendSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue(undefined);
+		spendSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "request-1", spend: 0 });
 	});
 
 	afterEach(() => {
@@ -100,6 +100,10 @@ describe("native Anthropic streaming SpendLog", () => {
 			.expect(200);
 
 		expect(response.text).toContain("event: message_stop");
+		expect(global.fetch).toHaveBeenCalledWith(
+			"https://provider.example/v1/messages",
+			expect.objectContaining({ signal: expect.any(AbortSignal) }),
+		);
 		const syntheticId = /"id":"(msg_[^"]+)"/.exec(response.text)?.[1];
 		expect(syntheticId).toBeDefined();
 		expect(spendSpy).toHaveBeenCalledTimes(1);
@@ -164,6 +168,49 @@ describe("native Anthropic streaming SpendLog", () => {
 			}),
 			error_information: expect.objectContaining({ error_message: expect.stringContaining("native stream broke") }),
 		});
+	});
+
+	it("message_stop 是终态，忽略其后的残留事件", async () => {
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			new globalThis.Response(
+				[
+					`event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "upstream", type: "message", role: "assistant", model: "upstream", content: [], usage: { input_tokens: 1, output_tokens: 0 } } })}\n\n`,
+					`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } })}\n\n`,
+					`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+					"event: trailing\ndata: {not-json}\n\n",
+				].join(""),
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			),
+		);
+		const app = buildApp();
+
+		const response = await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+
+		expect(response.text).toContain("event: message_stop");
+		expect(response.text).not.toContain("event: error");
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Success });
+	});
+
+	it("malformed SSE event 进入唯一失败终结而非静默成功", async () => {
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			new globalThis.Response("event: message_start\ndata: {not-json}\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+		const app = buildApp();
+
+		const response = await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+
+		expect(response.text).toContain("event: error");
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Failure });
 	});
 
 	it("保留合法的零值 usage", async () => {

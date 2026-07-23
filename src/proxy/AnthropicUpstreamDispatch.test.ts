@@ -296,6 +296,24 @@ describe("executeWithFallbackChain", () => {
 		expect(facade.failures).toHaveLength(2);
 	});
 
+	it("客户端取消直接终止，不登记 deployment 失败或进入 fallback", async () => {
+		const facade = new MockRouterFacade({
+			deploymentsByModel: {
+				"glm-4-7-anthropic": [makeDeployment("glm-4-7-anthropic", "anthropic/glm-4.7")],
+				"deepseek-coder-anthropic": [makeDeployment("deepseek-coder-anthropic", "anthropic/deepseek-v4-flash")],
+			},
+			fallbackChains: { "glm-4-7-anthropic": ["deepseek-coder-anthropic"] },
+		});
+		const abortError = new DOMException("Aborted", "AbortError");
+
+		await expect(
+			executeWithFallbackChain(facade, "glm-4-7-anthropic", undefined, undefined, async () => {
+				throw abortError;
+			}),
+		).rejects.toBe(abortError);
+		expect(facade.failures).toHaveLength(0);
+	});
+
 	it("网络错误（非 ProviderUpstreamError）也可 fallback", async () => {
 		const facade = new MockRouterFacade({
 			deploymentsByModel: {

@@ -1,14 +1,15 @@
+import { uuidText } from "./uuidText";
 /**
  * LiteLLM_AccessGroupTable — access groups
  * Prisma model: LiteLLM_AccessGroupTable (uuid PK)
  */
 
-import { pgTable, text, uuid, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const LiteLLM_AccessGroupTable = pgTable(
 	"LiteLLM_AccessGroupTable",
 	{
-		accessGroupId: uuid("access_group_id").defaultRandom().primaryKey(),
+		accessGroupId: uuidText("access_group_id").primaryKey().notNull(),
 		accessGroupName: text("access_group_name").notNull(),
 		description: text("description"),
 		accessModelNames: text("access_model_names").array().default([]),
@@ -16,9 +17,9 @@ export const LiteLLM_AccessGroupTable = pgTable(
 		accessAgentIds: text("access_agent_ids").array().default([]),
 		assignedTeamIds: text("assigned_team_ids").array().default([]),
 		assignedKeyIds: text("assigned_key_ids").array().default([]),
-		createdAt: timestamp("created_at").defaultNow(),
+		createdAt: timestamp("created_at", { precision: 3 }).defaultNow().notNull(),
 		createdBy: text("created_by"),
-		updatedAt: timestamp("updated_at").defaultNow(),
+		updatedAt: timestamp("updated_at", { precision: 3 }).defaultNow().notNull(),
 		updatedBy: text("updated_by"),
 	},
 	(table) => [uniqueIndex("access_group_name_key").on(table.accessGroupName)],

@@ -53,9 +53,28 @@ describe("executeProviderRequest", () => {
 			});
 		});
 
-		const pending = expect(executeProviderRequest(request, { timeoutMs: 10 })).rejects.toMatchObject({ name: "AbortError" });
+		const pending = expect(executeProviderRequest(request, { timeoutMs: 10 })).rejects.toMatchObject({ name: "TimeoutError" });
 		await jest.advanceTimersByTimeAsync(10);
 
 		await pending;
+	});
+
+	it("combines client abort with provider timeout and aborts the upstream fetch", async () => {
+		const clientAbort = new AbortController();
+		let upstreamSignal: AbortSignal | undefined;
+		jest.spyOn(global, "fetch").mockImplementation((_url, init) => {
+			upstreamSignal = init?.signal ?? undefined;
+			return new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+			});
+		});
+
+		const pending = expect(executeProviderRequest(request, { signal: clientAbort.signal, timeoutMs: 60_000 })).rejects.toMatchObject({
+			name: "AbortError",
+		});
+		clientAbort.abort();
+
+		await pending;
+		expect(upstreamSignal?.aborted).toBe(true);
 	});
 });

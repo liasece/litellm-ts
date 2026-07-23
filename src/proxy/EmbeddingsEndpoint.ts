@@ -12,14 +12,21 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import type { EmbeddingResponse } from "../types/embedding";
 import { runCommonChecks } from "../auth/AuthChecks";
 import type { DrizzleDb } from "../core/db/Database";
-import { calculateAndSetCost, injectResponseCostHeader, buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
+import {
+	buildSpendLogFromRequest,
+	calculateAndSetCost,
+	injectResponseCostHeader,
+	releaseSpend,
+	trackSpendLog,
+} from "../spend/SpendTracker";
+import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { extractDeploymentCustomCost } from "../router/RouterSpendInfo";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
-import { createModuleLogger } from "../core/utils/logger";
 import { executeProviderRequest } from "../router/ProviderRequestExecutor";
+import { createModuleLogger } from "../core/utils/logger";
 
-const logger = createModuleLogger("Embeddings");
+const logger = createModuleLogger("Proxy:Embeddings");
 
 /**
  * 注册 Embeddings 路由到 Express Router
@@ -71,21 +78,23 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 		delete optionalParams.input;
 
 		const startTime = new Date();
+		const auth = req.auth;
+
+		// 部署选择不调用上游；reservation 随后覆盖当前组与所有 fallback deployment。
+		const candidate = litellmRouter.getAvailableDeployment(model);
+		if (!candidate) {
+			throw ApiError.noDeploymentsAvailable(model, litellmRouter.getNoAvailableDeploymentInfo(model));
+		}
+		const { deployment, provider } = candidate;
+		if (provider.transformEmbeddingRequest === undefined) {
+			throw ApiError.badRequest(`Provider ${deployment.litellm_params.custom_llm_provider ?? "unknown"} does not support embeddings`);
+		}
+		const customCost = extractDeploymentCustomCost(deployment);
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body);
+		const requestId = spendReservation?.requestId;
+
+		let providerCompleted = false;
 		try {
-			// 获取可用部署
-			const candidate = litellmRouter.getAvailableDeployment(model);
-			if (!candidate) {
-				// 对齐 PY RouterRateLimitError：HTTP 429 + "No deployments available for selected model, ..."
-				throw ApiError.noDeploymentsAvailable(model, litellmRouter.getNoAvailableDeploymentInfo(model));
-			}
-
-			const { deployment, provider } = candidate;
-
-			if (provider.transformEmbeddingRequest === undefined) {
-				throw ApiError.badRequest(
-					`Provider ${deployment.litellm_params.custom_llm_provider ?? "unknown"} does not support embeddings`,
-				);
-			}
 			const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...optionalParams };
 			const providerReq = provider.transformEmbeddingRequest(deployment.litellm_params.model, input, mergedParams);
 			const requestWithHeaders = {
@@ -93,63 +102,80 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 				headers: { ...providerReq.headers, ...deployment.litellm_params.extra_headers },
 			};
 			const timeoutSec = deployment.litellm_params.timeout;
+			spendReservation?.heartbeat?.markProviderStarted();
 			const execution = await executeProviderRequest(requestWithHeaders, {
 				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
 				readJson: true,
 			});
-
 			if (!execution.response.ok) {
 				throw new ApiError(execution.response.status, `Provider 返回错误: ${JSON.stringify(execution.body ?? {})}`);
 			}
+			providerCompleted = true;
 
 			const rawBody = execution.body as EmbeddingResponse;
-			// 批次 9: deployment model_info/litellm_params 自定义价格优先于内置价格表
-			const customCost = extractDeploymentCustomCost(deployment);
 			calculateAndSetCost(rawBody as unknown as ModelResponse, model, customCost);
 			const usage = (rawBody as unknown as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
 			if (usage && usage["cost"] !== undefined) {
 				injectResponseCostHeader(res, usage["cost"] as number);
 			}
-			if (db && req.auth) {
-				const endTime = new Date();
-				const spendLog = buildSpendLogFromRequest({
-					req: req,
-					auth: req.auth,
-					callType: CallType.AEmbedding,
-					model: model,
-					modelGroup: deployment.model_name,
-					modelId: deployment.model_info?.id,
-					customLlmProvider: deployment.litellm_params.custom_llm_provider,
-					apiBase: deployment.litellm_params.api_base,
-					customCostPerToken: customCost,
-					deploymentModel: deployment.litellm_params.model,
-					startTime: startTime,
-					endTime: endTime,
-					messages: input,
-					response: rawBody,
-					usage: usage,
-					status: SpendLogStatus.Success,
-				});
-				trackSpendLog(db, spendLog).catch((err) => logger.error("Embeddings 花费追踪失败", { error: err }));
+			if (db && auth && requestId) {
+				await trackSpendLog(
+					db,
+					buildSpendLogFromRequest({
+						req: req,
+						auth: auth,
+						requestId: requestId,
+						callType: CallType.AEmbedding,
+						model: model,
+						modelGroup: deployment.model_name,
+						modelId: deployment.model_info?.id,
+						customLlmProvider: deployment.litellm_params.custom_llm_provider,
+						apiBase: deployment.litellm_params.api_base,
+						customCostPerToken: customCost,
+						deploymentModel: deployment.litellm_params.model,
+						startTime: startTime,
+						endTime: new Date(),
+						messages: input,
+						response: rawBody,
+						usage: usage,
+						status: SpendLogStatus.Success,
+					}),
+				);
 			}
 			return rawBody;
 		} catch (error) {
-			if (db && req.auth) {
-				const endTime = new Date();
-				const failureSpendLog = buildSpendLogFromRequest({
-					req: req,
-					auth: req.auth,
-					callType: CallType.AEmbedding,
-					model: model,
-					startTime: startTime,
-					endTime: endTime,
-					messages: input,
-					error: error,
-					status: SpendLogStatus.Failure,
-				});
-				trackSpendLog(db, failureSpendLog).catch((err) => logger.error("Embeddings 失败花费追踪失败", { error: err }));
+			if (providerCompleted) {
+				throw error;
+			}
+			if (db && auth && requestId) {
+				try {
+					await trackSpendLog(
+						db,
+						buildSpendLogFromRequest({
+							req: req,
+							auth: auth,
+							requestId: requestId,
+							callType: CallType.AEmbedding,
+							model: model,
+							startTime: startTime,
+							endTime: new Date(),
+							messages: input,
+							error: error,
+							status: SpendLogStatus.Failure,
+						}),
+					);
+				} catch (accountingError) {
+					logger.error("Provider 失败后的花费账务提交失败", { accountingError: accountingError, requestId: requestId });
+					try {
+						await releaseSpend(db, requestId);
+					} catch (releaseError) {
+						logger.error("Provider 失败后释放 reservation 失败", { error: releaseError, requestId: requestId });
+					}
+				}
 			}
 			throw error;
+		} finally {
+			spendReservation?.heartbeat?.stop();
 		}
 	};
 }

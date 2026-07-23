@@ -13,8 +13,11 @@ export const liteLLM_ManagedVectorStoresTable = pgTable(
 		vectorStoreName: text("vector_store_name"),
 		vectorStoreDescription: text("vector_store_description"),
 		vectorStoreMetadata: jsonb("vector_store_metadata"),
-		createdAt: timestamp("created_at").defaultNow(),
-		updatedAt: timestamp("updated_at").defaultNow(),
+		createdAt: timestamp("created_at", { precision: 3 }).defaultNow().notNull(),
+		updatedAt: timestamp("updated_at", { precision: 3 })
+			.$defaultFn(() => new Date())
+			.$onUpdate(() => new Date())
+			.notNull(),
 		litellmCredentialName: text("litellm_credential_name"),
 		litellmParams: jsonb("litellm_params"),
 		teamId: text("team_id"),

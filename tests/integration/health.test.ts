@@ -6,7 +6,7 @@
 import express from "express";
 import request from "supertest";
 import { registerController } from "../../src/core/api/registerController";
-import { HealthController } from "../../src/proxy/HealthEndpoint";
+import { HealthController, type ReadinessDatabase } from "../../src/proxy/HealthEndpoint";
 import type { Router } from "../../src/router/Router";
 
 describe("Health Endpoints E2E", () => {
@@ -25,7 +25,8 @@ describe("Health Endpoints E2E", () => {
 				latency_ms: 8,
 			}),
 		} as unknown as Router;
-		registerController(app, new HealthController(router), {
+		const database: ReadinessDatabase = { probeReadiness: async () => ({ ready: true }) };
+		registerController(app, new HealthController(router, database), {
 			requireAuth: (req, res, next) => {
 				if (req.header("authorization") !== "Bearer test") {
 					res.status(401).json({ error: "unauthorized" });
@@ -49,7 +50,7 @@ describe("Health Endpoints E2E", () => {
 		const res = await request(app).get("/health/readiness");
 		expect(res.status).toBe(200);
 		expect(res.body.status).toBe("healthy");
-		expect(res.body.db).toBe("Not connected");
+		expect(res.body.db).toBe("connected");
 		expect(res.body.latest_health_checks).toBeUndefined();
 	});
 

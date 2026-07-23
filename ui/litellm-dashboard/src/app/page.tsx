@@ -21,9 +21,9 @@ import ModelHubTable from "@/components/AIHub/ModelHubTable";
 import Navbar from "@/components/navbar";
 import {
 	getUiConfig,
+	getWebUiSession,
 	Organization,
 	proxyBaseUrl,
-	setGlobalLitellmHeaderName,
 	getInProductNudgesCall,
 	getYamlConfigDiffCall,
 	acceptYamlConfigDiffCall,
@@ -53,7 +53,6 @@ import ToolPoliciesView from "@/components/ToolPoliciesView";
 import SpendLogsTable from "@/components/view_logs";
 import ViewUserDashboard from "@/components/view_users";
 import { ThemeProvider } from "@/contexts/ThemeContext";
-import { isJwtExpired } from "@/utils/jwtUtils";
 import {
 	buildLoginUrlWithReturn,
 	consumeReturnUrl,
@@ -62,27 +61,11 @@ import {
 } from "@/utils/returnUrlUtils";
 import { formatUserRole, isAdminRole, isProxyAdminRole } from "@/utils/roles";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { jwtDecode } from "jwt-decode";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ConfigProvider, theme } from "antd";
 
-function getCookie(name: string) {
-	// Safer cookie read + decoding; handles '=' inside values
-	const match = document.cookie.split("; ").find((row) => row.startsWith(name + "="));
-	if (!match) return null;
-	const value = match.slice(name.length + 1);
-	try {
-		return decodeURIComponent(value);
-	} catch {
-		return value;
-	}
-}
-
-function deleteCookie(name: string, path = "/") {
-	// Best-effort client-side clear (works for non-HttpOnly cookies without Domain)
-	document.cookie = `${name}=; Max-Age=0; Path=${path}`;
-}
+const COOKIE_SESSION_CREDENTIAL = "cookie-session";
 
 interface ProxySettings {
 	PROXY_BASE_URL: string;
@@ -227,25 +210,27 @@ function CreateKeyPageContent() {
 
 		(async () => {
 			try {
-				await getUiConfig(); // ensures proxyBaseUrl etc. are ready
+				await getUiConfig();
+				const session = await getWebUiSession();
+				if (cancelled) return;
+
+				setToken(COOKIE_SESSION_CREDENTIAL);
+				setAccessToken(COOKIE_SESSION_CREDENTIAL);
+				setDisabledPersonalKeyCreation(session.disabled_non_admin_personal_key_creation);
+				const formattedUserRole = formatUserRole(session.user_role);
+				setUserRole(formattedUserRole);
+				if (formattedUserRole === "Admin Viewer") setPage("usage");
+				setUserEmail(session.user_email);
+				setShowSSOBanner(session.login_method === "username_password");
+				setPremiumUser(session.premium_user);
+				setUserID(session.user_id);
 			} catch {
-				// proceed regardless; we still need to decide auth state
-			}
-
-			if (cancelled) return;
-
-			const raw = getCookie("token");
-			const valid = raw && !isJwtExpired(raw) ? raw : null;
-
-			// If token exists but is invalid/expired, clear it so downstream code
-			// doesn't keep trying to use it and cause redirect spasms.
-			if (raw && !valid) {
-				deleteCookie("token", "/");
-			}
-
-			if (!cancelled) {
-				setToken(valid);
-				setAuthLoading(false);
+				if (!cancelled) {
+					setToken(null);
+					setAccessToken(null);
+				}
+			} finally {
+				if (!cancelled) setAuthLoading(false);
 			}
 		})();
 
@@ -256,17 +241,12 @@ function CreateKeyPageContent() {
 
 	useEffect(() => {
 		if (redirectToLogin) {
-			// Store the current URL so we can redirect back after login
 			storeReturnUrl();
-			// Build login URL with return URL parameter
 			const baseLoginUrl = (proxyBaseUrl || "") + "/ui/login";
-			const dest = buildLoginUrlWithReturn(baseLoginUrl);
-			// Replace instead of assigning to avoid back-button loops
-			window.location.replace(dest);
+			window.location.replace(buildLoginUrlWithReturn(baseLoginUrl));
 		}
 	}, [redirectToLogin]);
 
-	// Redirect legacy query-param pages to their new path-based routes
 	const isLegacyRedirect = page in LEGACY_REDIRECTS;
 	useEffect(() => {
 		if (!authLoading && isLegacyRedirect) {
@@ -275,95 +255,17 @@ function CreateKeyPageContent() {
 		}
 	}, [authLoading, isLegacyRedirect, page, router]);
 
-	// Check for a stored return URL after successful authentication
-	// This handles the case where user comes back from SSO and we need to redirect to the original URL
 	useEffect(() => {
-		// Skip if still loading, no token, or we've already attempted a redirect
-		if (authLoading || !token || hasAttemptedReturnRedirectRef.current) {
-			return;
-		}
-
-		// Mark that we've attempted the redirect to prevent race conditions
-		// This prevents duplicate redirects if token changes (e.g., refresh)
+		if (authLoading || !token || hasAttemptedReturnRedirectRef.current) return;
 		hasAttemptedReturnRedirectRef.current = true;
-
-		// Check for a stored return URL
 		const returnUrl = consumeReturnUrl();
-		if (returnUrl) {
-			const currentUrl = window.location.href;
-			const normalizedReturnUrl = normalizeUrlForCompare(returnUrl);
-			const normalizedCurrentUrl = normalizeUrlForCompare(currentUrl);
-			// Only redirect if the return URL is different from the current URL
-			// This prevents infinite redirect loops
-			if (normalizedReturnUrl !== normalizedCurrentUrl) {
-				window.location.replace(returnUrl);
-			}
+		if (returnUrl && normalizeUrlForCompare(returnUrl) !== normalizeUrlForCompare(window.location.href)) {
+			window.location.replace(returnUrl);
 		}
 	}, [authLoading, token]);
 
 	useEffect(() => {
-		if (!token) {
-			hasAttemptedReturnRedirectRef.current = false;
-		}
-	}, [token]);
-
-	useEffect(() => {
-		if (!token) {
-			return;
-		}
-
-		// Defensive: re-check expiry in case cookie changed after mount
-		if (isJwtExpired(token)) {
-			deleteCookie("token", "/");
-			setToken(null);
-			return;
-		}
-
-		let decoded: any = null;
-		try {
-			decoded = jwtDecode(token);
-		} catch {
-			// Malformed token → treat as unauthenticated
-			deleteCookie("token", "/");
-			setToken(null);
-			return;
-		}
-
-		if (decoded) {
-			// set accessToken
-			setAccessToken(decoded.key);
-
-			setDisabledPersonalKeyCreation(decoded.disabled_non_admin_personal_key_creation);
-
-			// check if userRole is defined
-			if (decoded.user_role) {
-				const formattedUserRole = formatUserRole(decoded.user_role);
-				setUserRole(formattedUserRole);
-				if (formattedUserRole == "Admin Viewer") {
-					setPage("usage");
-				}
-			}
-
-			if (decoded.user_email) {
-				setUserEmail(decoded.user_email);
-			}
-
-			if (decoded.login_method) {
-				setShowSSOBanner(decoded.login_method == "username_password" ? true : false);
-			}
-
-			if (decoded.premium_user) {
-				setPremiumUser(decoded.premium_user);
-			}
-
-			if (decoded.auth_header_name) {
-				setGlobalLitellmHeaderName(decoded.auth_header_name);
-			}
-
-			if (decoded.user_id) {
-				setUserID(decoded.user_id);
-			}
-		}
+		if (!token) hasAttemptedReturnRedirectRef.current = false;
 	}, [token]);
 
 	useEffect(() => {

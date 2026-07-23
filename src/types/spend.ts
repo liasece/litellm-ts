@@ -9,6 +9,14 @@ import type { Request } from "express";
 import type { UserAPIKeyAuth } from "./auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
 
+declare global {
+	namespace Express {
+		interface Request {
+			spendRequestId?: string;
+		}
+	}
+}
+
 /**
  * 调用类型枚举（SpendLog.call_type）
  *
@@ -107,6 +115,8 @@ export interface SpendLog {
 	status?: SpendLogStatus;
 	/** 组织 ID */
 	organization_id?: string;
+	/** 项目 ID */
+	project_id?: string;
 	/** 标签（字符串数组，对齐 PY request_tags JSON.stringify） */
 	tags?: string[];
 	/** 端用户 ID */
@@ -256,6 +266,53 @@ export interface SpendLogBuildContext {
 	readonly cacheKey?: string;
 	/** 响应缓存命中标记（TS 无响应缓存子系统，恒 false） */
 	readonly cacheHit?: boolean;
+}
+
+/** 单次账务写入结果。duplicate 表示相同 request_id 已由此前事务提交。 */
+export interface SpendLogTrackResult {
+	/** 提交状态 */
+	readonly status: "committed" | "duplicate";
+	/** 请求幂等标识 */
+	readonly requestId: string;
+	/** 本次请求的实际花费 */
+	readonly spend: number;
+}
+
+/** 可参与费用预留的预算主体类型 */
+export type SpendReservationScopeKind = "key" | "user" | "team" | "organization" | "project" | "team_member" | "end_user";
+
+/** 一个独立预算主体；同一请求可同时预留多个主体。 */
+export type SpendReservationScope =
+	| {
+			readonly kind: Exclude<SpendReservationScopeKind, "team_member">;
+			readonly id: string;
+	  }
+	| {
+			readonly kind: "team_member";
+			readonly userId: string;
+			readonly teamId: string;
+	  };
+
+/** 单次费用预留请求 */
+export interface SpendReservationInput {
+	/** 请求幂等标识 */
+	readonly requestId: string;
+	/** 预留金额 */
+	readonly reserved: number;
+	/** 需要同时检查和预留的预算主体 */
+	readonly scopes: readonly SpendReservationScope[];
+}
+
+/** 费用预留账本结果 */
+export interface SpendReservationResult {
+	/** 当前账本状态 */
+	readonly status: "reserved" | "duplicate" | "released" | "settled";
+	/** 请求幂等标识 */
+	readonly requestId: string;
+	/** 预留金额 */
+	readonly reserved: number;
+	/** 结算金额；尚未结算时为 null */
+	readonly actual: number | null;
 }
 
 /** 每日花费汇总 */

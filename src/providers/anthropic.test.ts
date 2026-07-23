@@ -458,6 +458,32 @@ describe("AnthropicProvider", () => {
 	});
 
 	describe("流式响应 id (PY handler.py:522 response_id = _generate_id())", () => {
+		it("message_stop 是终态，忽略其后的残留事件", async () => {
+			const sseStream = [
+				`data: ${JSON.stringify({ type: "message_start", message: { id: "msg_upstream", model: "claude", usage: { input_tokens: 1 } } })}`,
+				"",
+				`data: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } })}`,
+				"",
+				`data: ${JSON.stringify({ type: "message_stop" })}`,
+				"",
+				"data: {trailing-malformed}",
+				"",
+			].join("\n");
+			const response = new Response(sseStream, { status: 200, headers: { "content-type": "text/event-stream" } });
+
+			const chunks = [];
+			for await (const chunk of provider.streamResponse(response)) {
+				chunks.push(chunk);
+			}
+
+			expect(
+				chunks.some(
+					(chunk) =>
+						(chunk as unknown as { provider_specific_fields?: { raw?: boolean } }).provider_specific_fields?.raw === true,
+				),
+			).toBe(false);
+		});
+
 		it("全部 chunk 共享一个预生成 chatcmpl-<uuid>，不取上游 message_start 的 msg_ id", async () => {
 			const sseStream = [
 				`data: ${JSON.stringify({ type: "message_start", message: { id: "msg_upstream", model: "claude", usage: { input_tokens: 10 } } })}`,

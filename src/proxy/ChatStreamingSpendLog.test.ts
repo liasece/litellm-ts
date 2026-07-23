@@ -52,7 +52,7 @@ describe("Chat streaming SpendLog", () => {
 	beforeEach(() => {
 		previousStorePrompts = process.env["STORE_PROMPTS_IN_SPEND_LOGS"];
 		process.env["STORE_PROMPTS_IN_SPEND_LOGS"] = "true";
-		spendSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue(undefined);
+		spendSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "request-1", spend: 0 });
 		jest.spyOn(global, "fetch").mockResolvedValue(new globalThis.Response("stream"));
 	});
 
@@ -125,6 +125,10 @@ describe("Chat streaming SpendLog", () => {
 			.expect(200);
 
 		expect(response.text).not.toContain("_usage");
+		expect(global.fetch).toHaveBeenCalledWith(
+			"https://provider.example/v1/messages",
+			expect.objectContaining({ signal: expect.any(AbortSignal) }),
+		);
 		expect(spendSpy).toHaveBeenCalledTimes(1);
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
 			status: SpendLogStatus.Success,
@@ -197,6 +201,38 @@ describe("Chat streaming SpendLog", () => {
 			completion_tokens: 2,
 			response: expect.objectContaining({ id: "chatcmpl-json", model: "chat-group" }),
 		});
+	});
+
+	it("provider 已完成后的 accounting failure 不追加 provider failure 账务", async () => {
+		spendSpy.mockRejectedValueOnce(new Error("accounting unavailable"));
+		const releaseSpy = jest.spyOn(SpendTracker, "releaseSpend").mockResolvedValue({
+			status: "released",
+			requestId: "request-1",
+			reserved: 0,
+			actual: null,
+		});
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				yield {
+					id: "chatcmpl-accounting",
+					object: "chat.completion.chunk",
+					created: 123,
+					model: "upstream-model",
+					choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }],
+					_usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+				};
+			},
+		});
+		const { app } = buildApp(provider);
+
+		await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Success });
+		expect(releaseSpy).not.toHaveBeenCalled();
 	});
 
 	it("partial failure 保存已聚合 response/usage，且已输出内容后不 fallback", async () => {

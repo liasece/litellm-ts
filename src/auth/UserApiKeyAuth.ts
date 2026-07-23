@@ -12,9 +12,17 @@ import type { Request, RequestHandler } from "express";
 import { ApiError } from "../core/api/ApiError";
 import { hashApiKey } from "../core/utils/crypto";
 import type { AuthRepository } from "./AuthRepository";
-import type { UserAPIKeyAuth } from "../types/auth";
+import type { BudgetSnapshots, UserAPIKeyAuth } from "../types/auth";
 import { JWTHandler } from "./JWTHandler";
-import { WEBUI_COOKIE_TOKEN_NAME, JWT_FALLBACK_USER_ID, PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
+import {
+	WEBUI_COOKIE_TOKEN_NAME,
+	WEBUI_CSRF_COOKIE_NAME,
+	WEBUI_CSRF_HEADER_NAME,
+	WEBUI_LOGIN_TEAM_ID,
+	JWT_FALLBACK_USER_ID,
+	PROXY_ADMIN_ROLE,
+	PROXY_ADMIN_USER_ID,
+} from "../types/webUiSession";
 
 /**
  * Express Request 扩展 — 增加 auth 属性
@@ -61,11 +69,10 @@ const SAFE_JWT_CLAIM_KEYS: readonly string[] = [
 	"user_role",
 	"user_email",
 	"login_method",
-	"key",
-	"auth_header_name",
 	"premium_user",
 	"disabled_non_admin_personal_key_creation",
 	"server_root_path",
+	"webui_session",
 ];
 
 /**
@@ -250,7 +257,16 @@ export function extractApiKey(req: Request, customKeyHeaderName?: string): strin
  * @returns token 值或 null
  */
 export function parseCookieToken(cookieHeader: string | undefined): string | null {
-	if (!cookieHeader) {
+	return parseCookieValue(cookieHeader, WEBUI_COOKIE_TOKEN_NAME);
+}
+
+/**
+ * 解析受长度限制的单个 cookie 值。
+ * @param cookieHeader
+ * @param cookieName
+ */
+export function parseCookieValue(cookieHeader: string | undefined, cookieName: string): string | null {
+	if (!cookieHeader || cookieName.length === 0 || cookieName.length > MAX_COOKIE_NAME_LENGTH) {
 		return null;
 	}
 	for (const part of cookieHeader.split(";")) {
@@ -259,18 +275,18 @@ export function parseCookieToken(cookieHeader: string | undefined): string | nul
 			continue;
 		}
 		const eqIndex = trimmed.indexOf("=");
-		if (eqIndex <= 0 || eqIndex > MAX_COOKIE_NAME_LENGTH) {
-			continue;
-		}
-		const name = trimmed.slice(0, eqIndex);
-		if (name !== WEBUI_COOKIE_TOKEN_NAME) {
+		if (eqIndex <= 0 || eqIndex > MAX_COOKIE_NAME_LENGTH || trimmed.slice(0, eqIndex) !== cookieName) {
 			continue;
 		}
 		const rawValue = trimmed.slice(eqIndex + 1);
 		if (rawValue.length === 0 || rawValue.length > MAX_COOKIE_VALUE_LENGTH) {
 			return null;
 		}
-		return decodeURIComponent(rawValue);
+		try {
+			return decodeURIComponent(rawValue);
+		} catch {
+			return null;
+		}
 	}
 	return null;
 }
@@ -291,7 +307,9 @@ export function createApiKeyAuth(
 ): RequestHandler {
 	return async (req, _res, next): Promise<void> => {
 		try {
+			const cookieToken = parseCookieToken(req.headers.cookie);
 			const apiKey = extractApiKey(req, customKeyHeaderName);
+			const isCookieCredential = cookieToken !== null && apiKey === cookieToken;
 
 			if (!apiKey) {
 				throw ApiError.unauthorized("Missing API key");
@@ -339,15 +357,49 @@ export function createApiKeyAuth(
 					// 类型不兼容时继续 DB 查找
 				}
 			}
-			// PY: JWT verification (user_api_key_auth.py:680-720)
-			// WebUI 登录流程：cookie JWT 的 `key` 字段携带明文 `sk-*` virtual key，
-			// 浏览器把它挂到 `Authorization: Bearer <sk-…>`，因此走到此处时 `apiKey`
-			// 已经是 `sk-…` 形式的 virtual key 本身（不是 JWT）。JWT 分支仅处理
-			// 第三方 IdP 通用 JWT（claims.sub / claims.user_id），不再做 WEBUI 占位特判。
+			// Cookie JWT 是服务端 session：验签后还必须用 jti hash 查询 DB，
+			// 从而让 expires、blocked 与 logout 可立即撤销浏览器会话。
 			if (jwtHandler && JWTHandler.isJwt(apiKey)) {
 				const jwtResult = await jwtHandler.verifyJwt(apiKey);
 				if (!jwtResult) {
 					throw ApiError.unauthorized("JWT verification failed");
+				}
+				if (isCookieCredential) {
+					const claims = jwtResult.claims;
+					const jti = pickStringClaim(claims, "jti");
+					if (
+						claims.webui_session !== true ||
+						!jti ||
+						typeof claims.iat !== "number" ||
+						typeof claims.exp !== "number" ||
+						claims.exp <= claims.iat
+					) {
+						throw ApiError.unauthorized("Invalid WebUI session claims");
+					}
+					const sessionHash = hashApiKey(jti);
+					const session = await repository.findVerificationTokenByHash(sessionHash);
+					const metadata = session?.metadata as Record<string, unknown> | null | undefined;
+					if (
+						!session ||
+						session.blocked ||
+						session.teamId !== WEBUI_LOGIN_TEAM_ID ||
+						metadata?.webui_session !== true ||
+						!session.expires ||
+						session.expires.getTime() <= Date.now()
+					) {
+						throw ApiError.unauthorized("Invalid or revoked WebUI session");
+					}
+					req.auth = {
+						api_key: session.token,
+						token: session.token,
+						user_id: pickStringClaim(claims, "user_id") ?? PROXY_ADMIN_USER_ID,
+						user_role: pickStringClaim(claims, "user_role") ?? PROXY_ADMIN_ROLE,
+						team_id: session.teamId,
+						expires: session.expires.toISOString(),
+						metadata: pickSafeJwtClaims(claims),
+					} satisfies UserAPIKeyAuth;
+					next();
+					return;
 				}
 				req.auth = {
 					api_key: apiKey,
@@ -361,13 +413,24 @@ export function createApiKeyAuth(
 
 			// 哈希密钥并在数据库中查找
 			const tokenHash = hashApiKey(apiKey);
-			const token = await repository.findVerificationTokenByHash(tokenHash);
+			let token = await repository.findVerificationTokenByHash(tokenHash);
 
+			if (!token) {
+				const deprecatedToken = await repository.findDeprecatedVerificationTokenByHash(tokenHash);
+				if (!deprecatedToken || deprecatedToken.revokeAt.getTime() <= Date.now()) {
+					throw ApiError.unauthorized("Invalid or revoked API key");
+				}
+				token = await repository.findVerificationTokenByHash(deprecatedToken.activeTokenId);
+			}
 			if (!token) {
 				throw ApiError.unauthorized("Invalid or revoked API key");
 			}
 			// TS type narrowing: token is guaranteed non-null after this check
 			const verifiedToken: NonNullable<typeof token> = token;
+
+			if (verifiedToken.blocked) {
+				throw ApiError.unauthorized("API key is blocked");
+			}
 
 			// 检查令牌是否过期
 			// DIFF-AUTH-02: 对齐 PY `litellm/proxy/auth/user_api_key_auth.py:1313-1334` —
@@ -389,8 +452,15 @@ export function createApiKeyAuth(
 
 			// 若关联了端用户，检查端用户是否被阻止
 			// 若关联了预算，根据预算设置限制
-			let teamSpend: number | undefined;
-			let teamMaxBudget: number | undefined;
+			const keyBudget = verifiedToken.budgetId ? await repository.findBudgetById(verifiedToken.budgetId) : null;
+			const budgetSnapshots: BudgetSnapshots = {
+				key: {
+					id: verifiedToken.token,
+					spend: verifiedToken.spend ?? 0,
+					max_budget: keyBudget?.max_budget ?? verifiedToken.maxBudget ?? null,
+					budget_id: verifiedToken.budgetId ?? undefined,
+				},
+			};
 			let teamModelAliases: Record<string, string> | undefined;
 			let teamSoftBudget: number | undefined;
 			let teamAlias: string | undefined;
@@ -399,23 +469,78 @@ export function createApiKeyAuth(
 				if (team?.blocked) {
 					throw ApiError.unauthorized("Associated team is disabled");
 				}
-				teamSpend = team?.spend ?? undefined;
-				teamMaxBudget = team?.maxBudget ?? undefined;
-				// SpendLogs metadata.user_api_key_team_alias（PY SpendLogsMetadata 键）
+				if (team) {
+					budgetSnapshots.team = { id: team.teamId, spend: team.spend ?? 0, max_budget: team.maxBudget ?? null };
+				}
 				teamAlias = team?.teamAlias ?? undefined;
 				const meta = (team?.metadata as Record<string, unknown> | undefined) ?? {};
 				teamModelAliases = meta["model_group_alias"] as Record<string, string> | undefined;
-				// PY: soft_budget is a direct column on LiteLLM_TeamTable (types.py:1486, teams.ts:20)
 				teamSoftBudget = team?.softBudget ?? (meta["soft_budget"] as number | undefined);
 			}
 
-			// PY: user_role 来自 token.user_id 关联的 UserTable（user_api_key_auth.py:782-786），
-			// 缺省 internal_user（auth_checks.py _get_user_role）。WebUI virtual key 的
-			// user_id=default_user_id（proxy_admin），/admin 端点依赖该角色放行。
 			let userRole: string | undefined;
 			if (verifiedToken.userId) {
-				const userObject = await repository.findUserById(verifiedToken.userId);
-				userRole = userObject?.userRole ?? "internal_user";
+				const user = await repository.findUserById(verifiedToken.userId);
+				userRole = user?.userRole ?? "internal_user";
+				if (user) {
+					budgetSnapshots.user = { id: user.userId, spend: user.spend ?? 0, max_budget: user.maxBudget ?? null };
+				}
+			}
+
+			if (verifiedToken.userId && verifiedToken.teamId && repository.findTeamMembership) {
+				const membership = await repository.findTeamMembership(verifiedToken.userId, verifiedToken.teamId);
+				if (membership) {
+					const budget = membership.budgetId ? await repository.findBudgetById(membership.budgetId) : null;
+					budgetSnapshots.team_member = {
+						id: `${membership.userId}:${membership.teamId}`,
+						spend: membership.spend ?? 0,
+						max_budget: budget?.max_budget ?? null,
+						budget_id: membership.budgetId ?? undefined,
+					};
+				}
+			}
+
+			if (verifiedToken.organizationId && repository.findOrganizationById) {
+				const organization = await repository.findOrganizationById(verifiedToken.organizationId);
+				if (organization) {
+					const budget = await repository.findBudgetById(organization.budgetId);
+					budgetSnapshots.organization = {
+						id: organization.organizationId,
+						spend: organization.spend ?? 0,
+						max_budget: budget?.max_budget ?? null,
+						budget_id: organization.budgetId,
+					};
+				}
+			}
+
+			if (verifiedToken.projectId && repository.findProjectById) {
+				const project = await repository.findProjectById(verifiedToken.projectId);
+				if (project) {
+					const budget = project.budgetId ? await repository.findBudgetById(project.budgetId) : null;
+					budgetSnapshots.project = {
+						id: project.projectId,
+						spend: project.spend ?? 0,
+						max_budget: budget?.max_budget ?? null,
+						budget_id: project.budgetId ?? undefined,
+					};
+				}
+			}
+
+			const endUserId = _extractEndUserId(req);
+			if (endUserId && repository.findEndUserById) {
+				const endUser = await repository.findEndUserById(endUserId);
+				if (endUser?.blocked) {
+					throw ApiError.forbidden("End user is blocked");
+				}
+				if (endUser) {
+					const budget = endUser.budgetId ? await repository.findBudgetById(endUser.budgetId) : null;
+					budgetSnapshots.end_user = {
+						id: endUser.userId,
+						spend: endUser.spend ?? 0,
+						max_budget: budget?.max_budget ?? endUser.maxBudget ?? null,
+						budget_id: endUser.budgetId ?? undefined,
+					};
+				}
 			}
 
 			// 构造认证上下文
@@ -427,10 +552,12 @@ export function createApiKeyAuth(
 				team_id: verifiedToken.teamId ?? undefined,
 				team_alias: teamAlias,
 				organization_id: verifiedToken.organizationId ?? undefined,
+				project_id: verifiedToken.projectId ?? undefined,
 				key_alias: verifiedToken.keyAlias ?? undefined,
 				models: verifiedToken.models,
-				spend: (verifiedToken.spend ?? 0) + (teamSpend ?? 0),
-				max_budget: verifiedToken.maxBudget ?? teamMaxBudget,
+				spend: verifiedToken.spend ?? 0,
+				max_budget: verifiedToken.maxBudget ?? undefined,
+				budget_snapshots: budgetSnapshots,
 				tpm_limit: verifiedToken.tpmLimit ?? undefined,
 				rpm_limit: verifiedToken.rpmLimit ?? undefined,
 				metadata: (verifiedToken.metadata as Record<string, unknown>) ?? undefined,
@@ -452,12 +579,43 @@ export function createApiKeyAuth(
 				// GAP 10: 从请求体 user / x-end-user-id header 提取 end_user_id，
 				// 对齐 PY get_end_user_id_for_cost_tracking(litellm_params) 路径。
 				// 优先级：x-end-user-id header > req.body.user
-				end_user_id: _extractEndUserId(req),
+				end_user_id: endUserId,
 			} satisfies UserAPIKeyAuth;
 
 			next();
 		} catch (error) {
-			next(error);
+			next(error instanceof ApiError ? error : ApiError.unavailable("认证账务数据暂不可用"));
 		}
 	};
+}
+
+/**
+ * 对 cookie-authenticated WebUI 写请求执行 double-submit CSRF 校验。
+ * 显式 API key / bearer 客户端没有 webui_session metadata，保持兼容。
+ * @param req
+ * @param _res
+ * @param next
+ */
+export const webUiCsrfProtection: RequestHandler = (req, _res, next): void => {
+	try {
+		if (req.auth?.metadata?.webui_session !== true || ["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+			next();
+			return;
+		}
+		const cookieToken = parseCookieValue(req.headers.cookie, WEBUI_CSRF_COOKIE_NAME);
+		const headerValue = req.headers[WEBUI_CSRF_HEADER_NAME];
+		const headerToken = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+		if (!cookieToken || typeof headerToken !== "string" || !timingSafeStringEqual(cookieToken, headerToken)) {
+			throw ApiError.forbidden("Invalid CSRF token");
+		}
+		next();
+	} catch (error) {
+		next(error);
+	}
+};
+
+function timingSafeStringEqual(left: string, right: string): boolean {
+	const leftBuffer = Buffer.from(left, "utf8");
+	const rightBuffer = Buffer.from(right, "utf8");
+	return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }

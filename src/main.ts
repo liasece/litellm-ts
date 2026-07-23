@@ -12,6 +12,7 @@ import express from "express";
 import { loadConfig, type ServiceConfig } from "./core/config";
 import { createServiceContainer, type ServiceContainer } from "./container";
 import { registerController } from "./core/api/registerController";
+import { jsonBigIntReplacer } from "./core/api/jsonBigInt";
 import { errorHandler } from "./middleware/ErrorHandler";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
 import { createModuleLogger } from "./core/utils/logger";
@@ -61,6 +62,7 @@ import { registerAnthropicSkillsRoutes } from "./proxy/AnthropicSkillsEndpoints"
 import { registerClaudeCodeMarketplaceRoutes } from "./proxy/ClaudeCodeMarketplaceEndpoints";
 import { registerUtilRoutes } from "./proxy/UtilEndpoints";
 import { registerLoginRoutes } from "./proxy/LoginEndpoints";
+import { webUiCsrfProtection } from "./auth/UserApiKeyAuth";
 import { registerSSORoutes } from "./proxy/SSOEndpoints";
 import { registerSpendIntegrationRoutes } from "./proxy/SpendIntegrationEndpoints";
 import { registerConfigOverridesRoutes } from "./proxy/ConfigOverridesEndpoints";
@@ -126,6 +128,7 @@ export class LiteLLMServer {
 		const container = this._container!;
 
 		// 全局中间件
+		app.set("json replacer", jsonBigIntReplacer);
 		app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 		app.use(accessLogFilter);
 
@@ -146,14 +149,22 @@ export class LiteLLMServer {
 	// ── 健康检查 ──
 	private _registerHealthRoutes(app: express.Express): void {
 		const container = this._container!;
-		registerController(app, new HealthController(container.router), { requireAuth: container.authMiddleware });
+		registerController(app, new HealthController(container.router, container.db), { requireAuth: container.authMiddleware });
 		logger.info("健康检查路由已注册");
 	}
 
 	// ── 公开代理端点 ──
 	private _registerPublicProxyRoutes(app: express.Express): void {
 		const publicRouter = express.Router();
-		registerLoginRoutes(publicRouter, this._config, this._container!.db.db);
+		const container = this._container!;
+		registerLoginRoutes(
+			publicRouter,
+			this._config,
+			container.db.db,
+			container.authMiddleware,
+			webUiCsrfProtection,
+			container.authRepository,
+		);
 		registerDiscoveryRoutes(publicRouter);
 		registerWebUiSupportPublicRoutes(publicRouter, this._container!.modelCostMapService);
 		publicRouter.get("/", (_req, res) => {
@@ -167,13 +178,15 @@ export class LiteLLMServer {
 	private _registerCoreProxyRoutes(app: express.Express, container: ServiceContainer): void {
 		const proxyRouter = express.Router();
 		proxyRouter.use(container.authMiddleware);
+		proxyRouter.use(webUiCsrfProtection);
+		proxyRouter.use(container.authorizationGuard.middleware("inference"));
 
 		// Chat completions
 		registerChatCompletionsRoutes(proxyRouter, container.router, container.db.db);
 		// Embeddings
 		registerEmbeddingsRoutes(proxyRouter, container.router, container.db.db);
 		// Text completions
-		registerCompletionsRoutes(proxyRouter, container.router);
+		registerCompletionsRoutes(proxyRouter, container.router, container.db.db);
 		// Anthropic Messages
 		registerAnthropicMessagesEndpoints(proxyRouter, container.router, undefined, container.db.db);
 		// Models (decorator controller)
@@ -193,13 +206,15 @@ export class LiteLLMServer {
 	private _registerManagementRoutes(app: express.Express, container: ServiceContainer): void {
 		const managementRouter = express.Router();
 		managementRouter.use(container.authMiddleware);
+		managementRouter.use(webUiCsrfProtection);
+		managementRouter.use(container.authorizationGuard.middleware("management"));
 
-		createKeyManagementRoutes(managementRouter, container.db.db, container.authMiddleware);
-		createInternalUserRoutes(managementRouter, container.db.db, container.authMiddleware);
-		createTeamRoutes(managementRouter, container.db.db, container.authMiddleware);
-		createOrganizationRoutes(managementRouter, container.db.db, container.authMiddleware);
-		createCustomerRoutes(managementRouter, container.db.db, container.authMiddleware);
-		createModelManagementRoutes(managementRouter, container.db.db, container.authMiddleware, container.router);
+		createKeyManagementRoutes(managementRouter, container.db.db, container.authorizationGuard);
+		createInternalUserRoutes(managementRouter, container.db.db, null);
+		createTeamRoutes(managementRouter, container.db.db, null);
+		createOrganizationRoutes(managementRouter, container.db.db, null);
+		createCustomerRoutes(managementRouter, container.db.db, null);
+		createModelManagementRoutes(managementRouter, container.db.db, null, container.router);
 
 		app.use(managementRouter);
 		logger.info("管理端点已注册");
@@ -209,6 +224,8 @@ export class LiteLLMServer {
 	private _registerSpendRoutes(app: express.Express, container: ServiceContainer): void {
 		const spendRouter = express.Router();
 		spendRouter.use(container.authMiddleware);
+		spendRouter.use(webUiCsrfProtection);
+		spendRouter.use(container.authorizationGuard.middleware("spend"));
 		registerSpendManagementEndpoints(spendRouter, container.db.db);
 		app.use(spendRouter);
 		logger.info("消费端点已注册");
@@ -218,6 +235,8 @@ export class LiteLLMServer {
 	private _registerStubRoutes(app: express.Express, container: ServiceContainer): void {
 		const stubRouter = express.Router();
 		stubRouter.use(container.authMiddleware);
+		stubRouter.use(webUiCsrfProtection);
+		stubRouter.use(container.authorizationGuard.middleware("authenticated"));
 
 		// Models 页面支撑（需鉴权）
 		// 必须传 container.router：Router deployments 是运行时真实模型源，

@@ -10,13 +10,15 @@ import { post, noAuth, body, req } from "../core/api/decorators";
 import { ApiError } from "../core/api/ApiError";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { DrizzleDb } from "../core/db/Database";
-import { calculateAndSetCost, buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
+import { runCommonChecks } from "../auth/AuthChecks";
+import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
+import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { createModuleLogger } from "../core/utils/logger";
 
-const logger = createModuleLogger("Image");
+const logger = createModuleLogger("Proxy:Image");
 
 /** 图片生成请求体 */
 interface ImageGenerationRequest {
@@ -91,57 +93,83 @@ export class ImageController {
 		if (typeof prompt !== "string" || prompt.length === 0) {
 			throw ApiError.badRequest("prompt 字段缺失");
 		}
+		if (request.auth) {
+			runCommonChecks(request.auth, model);
+		}
 		const optionalParams: Record<string, unknown> = { ...reqBody };
 		delete optionalParams.model;
 		const messages = [{ role: "user", content: prompt }];
 		const startTime = new Date();
+		const db = this._db;
+		const auth = request.auth;
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, request, model, reqBody, "image");
+		const requestId = spendReservation?.requestId;
+		let providerCompleted = false;
 		try {
+			spendReservation?.heartbeat?.markProviderStarted();
 			const result = await litellmRouter.completion(model, messages, optionalParams);
-			// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
+			providerCompleted = true;
 			const spendInfo = (result as unknown as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 			calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 			const usage = (result as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
-			if (this._db && request.auth) {
-				const endTime = new Date();
-				const spendLog = buildSpendLogFromRequest({
-					req: request,
-					auth: request.auth,
-					callType: CallType.AImageGeneration,
-					model: model,
-					// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
-					modelGroup: model,
-					modelId: spendInfo?.modelId,
-					customLlmProvider: spendInfo?.customLlmProvider,
-					apiBase: spendInfo?.apiBase,
-					customCostPerToken: spendInfo?.customCostPerToken,
-					deploymentModel: spendInfo?.deploymentModel,
-					startTime: startTime,
-					endTime: endTime,
-					messages: prompt,
-					response: result,
-					usage: usage,
-					status: SpendLogStatus.Success,
-				});
-				trackSpendLog(this._db, spendLog).catch((err) => logger.error("Image 花费追踪失败", { error: err }));
+			if (db && auth && requestId) {
+				await trackSpendLog(
+					db,
+					buildSpendLogFromRequest({
+						req: request,
+						auth: auth,
+						requestId: requestId,
+						callType: CallType.AImageGeneration,
+						model: model,
+						modelGroup: model,
+						modelId: spendInfo?.modelId,
+						customLlmProvider: spendInfo?.customLlmProvider,
+						apiBase: spendInfo?.apiBase,
+						customCostPerToken: spendInfo?.customCostPerToken,
+						deploymentModel: spendInfo?.deploymentModel,
+						startTime: startTime,
+						endTime: new Date(),
+						messages: prompt,
+						response: result,
+						usage: usage,
+						status: SpendLogStatus.Success,
+					}),
+				);
 			}
 			return result as Record<string, unknown>;
 		} catch (error) {
-			if (this._db && request.auth) {
-				const endTime = new Date();
-				const failureSpendLog = buildSpendLogFromRequest({
-					req: request,
-					auth: request.auth,
-					callType: CallType.AImageGeneration,
-					model: model,
-					startTime: startTime,
-					endTime: endTime,
-					messages: prompt,
-					error: error,
-					status: SpendLogStatus.Failure,
-				});
-				trackSpendLog(this._db, failureSpendLog).catch((err) => logger.error("Image 失败花费追踪失败", { error: err }));
+			if (providerCompleted) {
+				throw error;
+			}
+			if (db && auth && requestId) {
+				try {
+					await trackSpendLog(
+						db,
+						buildSpendLogFromRequest({
+							req: request,
+							auth: auth,
+							requestId: requestId,
+							callType: CallType.AImageGeneration,
+							model: model,
+							startTime: startTime,
+							endTime: new Date(),
+							messages: prompt,
+							error: error,
+							status: SpendLogStatus.Failure,
+						}),
+					);
+				} catch (accountingError) {
+					logger.error("Provider 失败后的花费账务提交失败", { accountingError: accountingError, requestId: requestId });
+					try {
+						await releaseSpend(db, requestId);
+					} catch (releaseError) {
+						logger.error("Provider 失败后释放 reservation 失败", { error: releaseError, requestId: requestId });
+					}
+				}
 			}
 			throw error;
+		} finally {
+			spendReservation?.heartbeat?.stop();
 		}
 	}
 }

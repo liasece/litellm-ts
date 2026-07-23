@@ -1,12 +1,13 @@
+import { uuidText } from "./uuidText";
 /**
  * LiteLLM_ObjectPermissionTable — object-level permissions
  * Prisma model: LiteLLM_ObjectPermissionTable (uuid PK)
  */
 
-import { pgTable, text, uuid, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, jsonb } from "drizzle-orm/pg-core";
 
 export const LiteLLM_ObjectPermissionTable = pgTable("LiteLLM_ObjectPermissionTable", {
-	objectPermissionId: uuid("object_permission_id").defaultRandom().primaryKey(),
+	objectPermissionId: uuidText("object_permission_id").primaryKey().notNull(),
 	mcpServers: text("mcp_servers").array().default([]),
 	mcpAccessGroups: text("mcp_access_groups").array().default([]),
 	mcpToolPermissions: jsonb("mcp_tool_permissions"),

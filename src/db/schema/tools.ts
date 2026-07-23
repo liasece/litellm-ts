@@ -1,28 +1,29 @@
+import { uuidText } from "./uuidText";
 /**
  * LiteLLM_ToolTable — Tool definitions
  * Prisma model: LiteLLM_ToolTable (UUID PK, unique tool_name)
  */
 
-import { pgTable, text, uuid, integer, jsonb, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, jsonb, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 
 export const liteLLM_ToolTable = pgTable(
 	"LiteLLM_ToolTable",
 	{
-		toolId: uuid("tool_id").defaultRandom().primaryKey(),
+		toolId: uuidText("tool_id").primaryKey().notNull(),
 		toolName: text("tool_name").notNull(),
 		origin: text("origin"),
-		inputPolicy: text("input_policy").default("untrusted"),
-		outputPolicy: text("output_policy").default("untrusted"),
-		callCount: integer("call_count").default(0),
+		inputPolicy: text("input_policy").default("untrusted").notNull(),
+		outputPolicy: text("output_policy").default("untrusted").notNull(),
+		callCount: integer("call_count").default(0).notNull(),
 		assignments: jsonb("assignments").default("{}"),
 		keyHash: text("key_hash"),
 		teamId: text("team_id"),
 		keyAlias: text("key_alias"),
 		userAgent: text("user_agent"),
-		lastUsedAt: timestamp("last_used_at"),
-		createdAt: timestamp("created_at").defaultNow(),
+		lastUsedAt: timestamp("last_used_at", { precision: 3 }),
+		createdAt: timestamp("created_at", { precision: 3 }).defaultNow().notNull(),
 		createdBy: text("created_by"),
-		updatedAt: timestamp("updated_at").defaultNow(),
+		updatedAt: timestamp("updated_at", { precision: 3 }).defaultNow().notNull(),
 		updatedBy: text("updated_by"),
 	},
 	(table) => [

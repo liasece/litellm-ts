@@ -1,0 +1,6269 @@
+{
+	"source": "LiteLLM schema.prisma with migrations through 20260318140652_add_index_to_team_table",
+	"tables": [
+		{
+			"name": "LiteLLM_AccessGroupTable",
+			"columns": [
+				{
+					"name": "access_group_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "access_group_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "access_mcp_server_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "access_agent_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "assigned_team_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "assigned_key_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "access_model_names",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"access_group_name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"access_group_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_AgentsTable",
+			"columns": [
+				{
+					"name": "agent_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "agent_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "litellm_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "agent_card_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "agent_access_groups",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "static_headers",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "extra_headers",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "tpm_limit",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rpm_limit",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "session_tpm_limit",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "session_rpm_limit",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"agent_name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"agent_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_AuditLog",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "changed_by",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "changed_by_api_key",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "action",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "table_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "object_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "before_value",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_values",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_BudgetTable",
+			"columns": [
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "max_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "soft_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "max_parallel_requests",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "tpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_max_budget",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_duration",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_reset_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"budget_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_CacheConfig",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": "'cache_config'::text",
+					"nullable": false
+				},
+				{
+					"name": "cache_settings",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ClaudeCodePluginTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "version",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "manifest_json",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "files_json",
+					"type": "text",
+					"default": "'{}'::text",
+					"nullable": true
+				},
+				{
+					"name": "enabled",
+					"type": "boolean",
+					"default": "true",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_Config",
+			"columns": [
+				{
+					"name": "param_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "param_value",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"param_name"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ConfigOverrides",
+			"columns": [
+				{
+					"name": "config_type",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "config_value",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"config_type"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_CredentialsTable",
+			"columns": [
+				{
+					"name": "credential_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "credential_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "credential_values",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "credential_info",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"credential_name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"credential_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_CronJob",
+			"columns": [
+				{
+					"name": "cronjob_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "pod_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "status",
+					"type": "\"JobStatus\"",
+					"default": "'INACTIVE'::\"JobStatus\"",
+					"nullable": false
+				},
+				{
+					"name": "last_updated",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "ttl",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"cronjob_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyAgentSpend",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "agent_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_key",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "mcp_namespaced_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "prompt_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "completion_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_read_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_creation_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "api_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "successful_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "failed_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "endpoint",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"agent_id",
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"api_key"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"mcp_namespaced_tool_name"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"agent_id",
+						"date",
+						"api_key",
+						"model",
+						"custom_llm_provider",
+						"mcp_namespaced_tool_name",
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyEndUserSpend",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "end_user_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_key",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "mcp_namespaced_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "prompt_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "completion_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_read_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_creation_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "api_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "successful_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "failed_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "endpoint",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"api_key"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"end_user_id",
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"mcp_namespaced_tool_name"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"end_user_id",
+						"date",
+						"api_key",
+						"model",
+						"custom_llm_provider",
+						"mcp_namespaced_tool_name",
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyGuardrailMetrics",
+			"columns": [
+				{
+					"name": "guardrail_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "requests_evaluated",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "passed_count",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "blocked_count",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "flagged_count",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "avg_score",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "avg_latency_ms",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"guardrail_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"guardrail_id",
+						"date"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyOrganizationSpend",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_key",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "mcp_namespaced_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "prompt_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "completion_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_read_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_creation_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "api_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "successful_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "failed_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "endpoint",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"api_key"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"mcp_namespaced_tool_name"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"organization_id",
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"organization_id",
+						"date",
+						"api_key",
+						"model",
+						"custom_llm_provider",
+						"mcp_namespaced_tool_name",
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyPolicyMetrics",
+			"columns": [
+				{
+					"name": "policy_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "requests_evaluated",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "passed_count",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "blocked_count",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "flagged_count",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "avg_score",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "avg_latency_ms",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"policy_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"policy_id",
+						"date"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyTagSpend",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "tag",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_key",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "prompt_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "completion_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_read_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_creation_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "api_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "successful_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "failed_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "mcp_namespaced_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "request_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "endpoint",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"api_key"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"mcp_namespaced_tool_name"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"tag",
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"tag",
+						"date",
+						"api_key",
+						"model",
+						"custom_llm_provider",
+						"mcp_namespaced_tool_name",
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyTeamSpend",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_key",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "prompt_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "completion_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "api_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "successful_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "failed_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "cache_creation_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_read_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "mcp_namespaced_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "endpoint",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"api_key"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"mcp_namespaced_tool_name"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_id",
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_id",
+						"date",
+						"api_key",
+						"model",
+						"custom_llm_provider",
+						"mcp_namespaced_tool_name",
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DailyUserSpend",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "date",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_key",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "prompt_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "completion_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "failed_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "successful_requests",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_creation_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "cache_read_input_tokens",
+					"type": "bigint",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "mcp_namespaced_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "endpoint",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"api_key"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"mcp_namespaced_tool_name"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"user_id",
+						"date"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"user_id",
+						"date",
+						"api_key",
+						"model",
+						"custom_llm_provider",
+						"mcp_namespaced_tool_name",
+						"endpoint"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DeletedTeamTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "team_alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "admins",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "members",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "members_with_roles",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "max_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "max_parallel_requests",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "tpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_duration",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_reset_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "blocked",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "model_spend",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "model_max_budget",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "team_member_permissions",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "model_id",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "deleted_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "deleted_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "deleted_by_api_key",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "litellm_changed_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "router_settings",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "policies",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "allow_team_guardrail_config",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "soft_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "access_group_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"created_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"deleted_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"organization_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_alias"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DeletedVerificationToken",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "token",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "key_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "key_alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "soft_budget_cooldown",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "expires",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "aliases",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "config",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "permissions",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "max_parallel_requests",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "blocked",
+					"type": "boolean",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "tpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "max_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_duration",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_reset_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "allowed_cache_controls",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "allowed_routes",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "model_spend",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "model_max_budget",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rotation_count",
+					"type": "integer",
+					"default": "0",
+					"nullable": true
+				},
+				{
+					"name": "auto_rotate",
+					"type": "boolean",
+					"default": "false",
+					"nullable": true
+				},
+				{
+					"name": "rotation_interval",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "last_rotation_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "key_rotation_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "deleted_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "deleted_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "deleted_by_api_key",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "litellm_changed_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "router_settings",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "policies",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "access_group_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "last_active",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "project_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "agent_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"created_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"deleted_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"key_alias"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"organization_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"token"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"user_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_DeprecatedVerificationToken",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "token",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "active_token_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "revoke_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"revoke_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"token",
+						"revoke_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"token"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_EndUserTable",
+			"columns": [
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "allowed_model_region",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "default_model",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "blocked",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"user_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ErrorLogs",
+			"columns": [
+				{
+					"name": "request_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "startTime",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "endTime",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_base",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "litellm_model_name",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "model_id",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "request_kwargs",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "exception_type",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "exception_string",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "status_code",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"request_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_GuardrailsTable",
+			"columns": [
+				{
+					"name": "guardrail_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "guardrail_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "litellm_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "guardrail_info",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "reviewed_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "status",
+					"type": "text",
+					"default": "'active'::text",
+					"nullable": false
+				},
+				{
+					"name": "submitted_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"status"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"guardrail_name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"guardrail_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_HealthCheckTable",
+			"columns": [
+				{
+					"name": "health_check_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "status",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "healthy_count",
+					"type": "integer",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "unhealthy_count",
+					"type": "integer",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "error_message",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "response_time_ms",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "details",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "checked_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "checked_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"checked_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model_name"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"status"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"health_check_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_InvitationLink",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "is_accepted",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "accepted_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "expires_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_JWTKeyMapping",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "jwt_claim_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "jwt_claim_value",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "token",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "is_active",
+					"type": "boolean",
+					"default": "true",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"jwt_claim_name",
+						"jwt_claim_value",
+						"is_active"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"jwt_claim_name",
+						"jwt_claim_value"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_MCPServerTable",
+			"columns": [
+				{
+					"name": "server_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "server_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "url",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "transport",
+					"type": "text",
+					"default": "'sse'::text",
+					"nullable": false
+				},
+				{
+					"name": "auth_type",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "status",
+					"type": "text",
+					"default": "'unknown'::text",
+					"nullable": true
+				},
+				{
+					"name": "last_health_check",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "health_check_error",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "mcp_info",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "args",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "command",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "env",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "mcp_access_groups",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "allowed_tools",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "extra_headers",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "static_headers",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "credentials",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "authorization_url",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "registration_url",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "token_url",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "allow_all_keys",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "available_on_public_internet",
+					"type": "boolean",
+					"default": "true",
+					"nullable": false
+				},
+				{
+					"name": "spec_path",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "byok_api_key_help_url",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "byok_description",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "is_byok",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "tool_name_to_description",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "tool_name_to_display_name",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"server_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_MCPUserCredentials",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "server_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "credential_b64",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"user_id",
+						"server_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ManagedFileTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "unified_file_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "file_object",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_mappings",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "flat_model_file_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "storage_backend",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "storage_url",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"unified_file_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"unified_file_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ManagedObjectTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "unified_object_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model_object_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "file_object",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "file_purpose",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "status",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "batch_processed",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"model_object_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"unified_object_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model_object_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"unified_object_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ManagedVectorStoreIndexTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "index_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "litellm_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "index_info",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"index_name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ManagedVectorStoreTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "unified_resource_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "resource_object",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_mappings",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "flat_model_resource_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "storage_backend",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "storage_url",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"unified_resource_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"unified_resource_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ManagedVectorStoresTable",
+			"columns": [
+				{
+					"name": "vector_store_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "vector_store_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "vector_store_description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "vector_store_metadata",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "litellm_credential_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "litellm_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"team_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"user_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"vector_store_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ModelTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "integer",
+					"default": "nextval('\"LiteLLM_ModelTable_id_seq\"'::regclass)",
+					"nullable": false
+				},
+				{
+					"name": "aliases",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ObjectPermissionTable",
+			"columns": [
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "mcp_servers",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "vector_stores",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "mcp_access_groups",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "mcp_tool_permissions",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "agents",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "agent_access_groups",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "blocked_tools",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"object_permission_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_OrganizationMembership",
+			"columns": [
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "user_role",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": true
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"user_id",
+						"organization_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"user_id",
+						"organization_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_OrganizationTable",
+			"columns": [
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "organization_alias",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "model_spend",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"organization_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_PolicyAttachmentTable",
+			"columns": [
+				{
+					"name": "attachment_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "policy_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "scope",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "teams",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "keys",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "tags",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"attachment_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_PolicyTable",
+			"columns": [
+				{
+					"name": "policy_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "policy_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "inherit",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "guardrails_add",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "guardrails_remove",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "condition",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "pipeline",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "is_latest",
+					"type": "boolean",
+					"default": "true",
+					"nullable": false
+				},
+				{
+					"name": "parent_version_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "production_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "published_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "version_number",
+					"type": "integer",
+					"default": "1",
+					"nullable": false
+				},
+				{
+					"name": "version_status",
+					"type": "text",
+					"default": "'production'::text",
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"policy_name",
+						"version_status"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"policy_name",
+						"version_number"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"policy_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ProjectTable",
+			"columns": [
+				{
+					"name": "project_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "project_alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "model_spend",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "blocked",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_rpm_limit",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "model_tpm_limit",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"project_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_PromptTable",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "prompt_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "litellm_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "prompt_info",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "version",
+					"type": "integer",
+					"default": "1",
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"prompt_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"prompt_id",
+						"version"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ProxyModelTable",
+			"columns": [
+				{
+					"name": "model_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "litellm_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "model_info",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"model_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_SSOConfig",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": "'sso_config'::text",
+					"nullable": false
+				},
+				{
+					"name": "sso_settings",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_SearchToolsTable",
+			"columns": [
+				{
+					"name": "search_tool_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "search_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "litellm_params",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "search_tool_info",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"search_tool_name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"search_tool_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_SkillsTable",
+			"columns": [
+				{
+					"name": "skill_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "display_title",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "instructions",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "source",
+					"type": "text",
+					"default": "'custom'::text",
+					"nullable": false
+				},
+				{
+					"name": "latest_version",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "file_content",
+					"type": "bytea",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "file_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "file_type",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"skill_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_SpendLogGuardrailIndex",
+			"columns": [
+				{
+					"name": "request_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "guardrail_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "policy_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "start_time",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"guardrail_id",
+						"start_time"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"policy_id",
+						"start_time"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"request_id",
+						"guardrail_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_SpendLogToolIndex",
+			"columns": [
+				{
+					"name": "request_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "start_time",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"tool_name",
+						"start_time"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"request_id",
+						"tool_name"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_SpendLogs",
+			"columns": [
+				{
+					"name": "request_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "call_type",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "api_key",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "total_tokens",
+					"type": "integer",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "prompt_tokens",
+					"type": "integer",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "completion_tokens",
+					"type": "integer",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "startTime",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "endTime",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "completionStartTime",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model",
+					"type": "text",
+					"default": "''::text",
+					"nullable": false
+				},
+				{
+					"name": "model_id",
+					"type": "text",
+					"default": "''::text",
+					"nullable": true
+				},
+				{
+					"name": "model_group",
+					"type": "text",
+					"default": "''::text",
+					"nullable": true
+				},
+				{
+					"name": "custom_llm_provider",
+					"type": "text",
+					"default": "''::text",
+					"nullable": true
+				},
+				{
+					"name": "api_base",
+					"type": "text",
+					"default": "''::text",
+					"nullable": true
+				},
+				{
+					"name": "user",
+					"type": "text",
+					"default": "''::text",
+					"nullable": true
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "cache_hit",
+					"type": "text",
+					"default": "''::text",
+					"nullable": true
+				},
+				{
+					"name": "cache_key",
+					"type": "text",
+					"default": "''::text",
+					"nullable": true
+				},
+				{
+					"name": "request_tags",
+					"type": "jsonb",
+					"default": "'[]'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "end_user",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "requester_ip_address",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "messages",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "response",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "proxy_server_request",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "session_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "status",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "mcp_namespaced_tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "agent_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "request_duration_ms",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"end_user"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"session_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"\"startTime\""
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"\"startTime\"",
+						"request_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"request_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_TagTable",
+			"columns": [
+				{
+					"name": "tag_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "description",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "model_info",
+					"type": "jsonb",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"tag_name"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_TeamMembership",
+			"columns": [
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"user_id",
+						"team_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_TeamTable",
+			"columns": [
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "team_alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "admins",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "members",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "members_with_roles",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "max_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "max_parallel_requests",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "tpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_duration",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_reset_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "blocked",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "model_spend",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "model_max_budget",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "model_id",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "team_member_permissions",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "router_settings",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "policies",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "allow_team_guardrail_config",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "soft_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "access_group_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"created_at"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"organization_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_alias"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"model_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"team_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_ToolTable",
+			"columns": [
+				{
+					"name": "tool_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "tool_name",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "origin",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "input_policy",
+					"type": "text",
+					"default": "'untrusted'::text",
+					"nullable": false
+				},
+				{
+					"name": "call_count",
+					"type": "integer",
+					"default": "0",
+					"nullable": false
+				},
+				{
+					"name": "assignments",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "key_hash",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "key_alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "output_policy",
+					"type": "text",
+					"default": "'untrusted'::text",
+					"nullable": false
+				},
+				{
+					"name": "user_agent",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "last_used_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"input_policy"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"output_policy"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"tool_name"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"tool_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_UISettings",
+			"columns": [
+				{
+					"name": "id",
+					"type": "text",
+					"default": "'ui_settings'::text",
+					"nullable": false
+				},
+				{
+					"name": "ui_settings",
+					"type": "jsonb",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": false
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_UserNotifications",
+			"columns": [
+				{
+					"name": "request_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "justification",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "status",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				}
+			],
+			"indexes": [],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"request_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_UserTable",
+			"columns": [
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "user_alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "sso_user_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "password",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "teams",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "user_role",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "max_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "user_email",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "max_parallel_requests",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "tpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_duration",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_reset_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "allowed_cache_controls",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "model_spend",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "model_max_budget",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "policies",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"lower(user_email)"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"sso_user_id"
+					],
+					"method": "btree",
+					"unique": true,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"user_id"
+					]
+				}
+			]
+		},
+		{
+			"name": "LiteLLM_VerificationToken",
+			"columns": [
+				{
+					"name": "token",
+					"type": "text",
+					"default": null,
+					"nullable": false
+				},
+				{
+					"name": "key_name",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "key_alias",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "soft_budget_cooldown",
+					"type": "boolean",
+					"default": "false",
+					"nullable": false
+				},
+				{
+					"name": "spend",
+					"type": "double precision",
+					"default": "0.0",
+					"nullable": false
+				},
+				{
+					"name": "expires",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "models",
+					"type": "text[]",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "aliases",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "config",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "user_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "team_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "permissions",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "max_parallel_requests",
+					"type": "integer",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "metadata",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "blocked",
+					"type": "boolean",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "tpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rpm_limit",
+					"type": "bigint",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "max_budget",
+					"type": "double precision",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_duration",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "budget_reset_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "allowed_cache_controls",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "model_spend",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "model_max_budget",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": false
+				},
+				{
+					"name": "budget_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "organization_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "created_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "created_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "updated_at",
+					"type": "timestamp(3) without time zone",
+					"default": "CURRENT_TIMESTAMP",
+					"nullable": true
+				},
+				{
+					"name": "updated_by",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "allowed_routes",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "object_permission_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "auto_rotate",
+					"type": "boolean",
+					"default": "false",
+					"nullable": true
+				},
+				{
+					"name": "key_rotation_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "last_rotation_at",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "rotation_count",
+					"type": "integer",
+					"default": "0",
+					"nullable": true
+				},
+				{
+					"name": "rotation_interval",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "project_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "router_settings",
+					"type": "jsonb",
+					"default": "'{}'::jsonb",
+					"nullable": true
+				},
+				{
+					"name": "policies",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "access_group_ids",
+					"type": "text[]",
+					"default": "ARRAY[]::text[]",
+					"nullable": true
+				},
+				{
+					"name": "last_active",
+					"type": "timestamp(3) without time zone",
+					"default": null,
+					"nullable": true
+				},
+				{
+					"name": "agent_id",
+					"type": "text",
+					"default": null,
+					"nullable": true
+				}
+			],
+			"indexes": [
+				{
+					"keys": [
+						"budget_reset_at",
+						"expires"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"team_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				},
+				{
+					"keys": [
+						"user_id",
+						"team_id"
+					],
+					"method": "btree",
+					"unique": false,
+					"predicate": null
+				}
+			],
+			"constraints": [
+				{
+					"kind": "primary",
+					"columns": [
+						"token"
+					]
+				}
+			]
+		}
+	]
+}

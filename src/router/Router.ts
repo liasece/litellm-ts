@@ -307,8 +307,8 @@ export class Router {
 			};
 		} catch (error) {
 			const errorName = error instanceof Error ? error.name : "Error";
-			const isAbort = error instanceof Error && (error.name === "AbortError" || /abort/i.test(error.message));
-			const safeMessage = isAbort ? "Health check timed out" : `Health check failed: ${errorName}`;
+			const isTimeout = error instanceof Error && error.name === "TimeoutError";
+			const safeMessage = isTimeout ? "Health check timed out" : `Health check failed: ${errorName}`;
 			return {
 				model_id: modelId,
 				model_name: deployment.model_name,

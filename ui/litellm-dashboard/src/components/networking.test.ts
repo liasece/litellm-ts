@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { clearTokenCookies } from "@/utils/cookieUtils";
 import * as Networking from "./networking";
 
 vi.mock("@/utils/cookieUtils", () => ({
-	clearTokenCookies: vi.fn(),
 	getCookie: vi.fn(),
 }));
 
@@ -27,26 +25,51 @@ describe("networking - expired session handling", () => {
 		global.fetch = originalFetch;
 	});
 
-	it("should call clearTokenCookies on expired session", async () => {
-		const errorData = "Authentication Error - Expired Key";
-		const { default: NotificationsManager } = await import("./molecules/notifications_manager");
+	it("dashboardFetch 应携带 cookie credentials，写请求附加 CSRF 且不注入 bearer key", async () => {
+		const cookieUtils = await import("@/utils/cookieUtils");
+		vi.mocked(cookieUtils.getCookie).mockReturnValue("csrf-value");
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true } as Response);
+		global.fetch = mockFetch as typeof global.fetch;
 
-		if (errorData.includes("Authentication Error - Expired Key")) {
-			NotificationsManager.info("UI Session Expired. Logging out.");
-			clearTokenCookies();
-		}
+		await Networking.dashboardFetch("/config/update", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+		});
 
-		expect(clearTokenCookies).toHaveBeenCalledOnce();
+		expect(mockFetch).toHaveBeenCalledOnce();
+		const [, init] = mockFetch.mock.calls[0]!;
+		expect(init.credentials).toBe("include");
+		const headers = new Headers(init.headers);
+		expect(headers.get("x-litellm-csrf-token")).toBe("csrf-value");
+		expect(headers.get("Authorization")).toBeNull();
 	});
 
-	it("should not clear cookies for non-authentication errors", () => {
-		const errorData = "Some other error";
+	it("session 查询与注销均使用 cookie，注销请求附加 CSRF", async () => {
+		const cookieUtils = await import("@/utils/cookieUtils");
+		vi.mocked(cookieUtils.getCookie).mockReturnValue("csrf-value");
+		const mockFetch = vi
+			.fn()
+			.mockResolvedValueOnce({
+				ok: true,
+				json: vi.fn().mockResolvedValue({ authenticated: true, user_id: "user-1" }),
+			} as any)
+			.mockResolvedValueOnce({ ok: true } as Response);
+		global.fetch = mockFetch as typeof global.fetch;
 
-		if (errorData.includes("Authentication Error - Expired Key")) {
-			clearTokenCookies();
-		}
+		await Networking.getWebUiSession();
+		await Networking.logoutWebUiSession();
 
-		expect(clearTokenCookies).not.toHaveBeenCalled();
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+		const [sessionUrl, sessionInit] = mockFetch.mock.calls[0]!;
+		expect(String(sessionUrl)).toContain("/auth/session");
+		expect(sessionInit.credentials).toBe("include");
+		expect(new Headers(sessionInit.headers).get("x-litellm-csrf-token")).toBeNull();
+
+		const [logoutUrl, logoutInit] = mockFetch.mock.calls[1]!;
+		expect(String(logoutUrl)).toContain("/auth/logout");
+		expect(logoutInit.credentials).toBe("include");
+		expect(new Headers(logoutInit.headers).get("x-litellm-csrf-token")).toBe("csrf-value");
+		expect(new Headers(logoutInit.headers).get("Authorization")).toBeNull();
 	});
 
 	it("should surface backend detail error when updateSSOSettings fails", async () => {

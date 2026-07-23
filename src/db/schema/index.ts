@@ -11,3 +11,4 @@ export { LiteLLM_HealthCheckTable } from "./healthCheck";
 export { LiteLLM_TagTable } from "./tags";
 export { LiteLLM_SearchToolsTable } from "./searchTools";
 export { LiteLLM_UserNotifications } from "./userNotifications";
+export { liteLLM_SpendReservations } from "./spendReservations";

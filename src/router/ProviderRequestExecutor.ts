@@ -1,4 +1,5 @@
 import type { ProviderRequest } from "../types/provider";
+import { TimeoutError } from "./RouterErrors";
 
 /** Provider 请求执行选项。 */
 export interface ProviderRequestExecutionOptions {
@@ -6,6 +7,8 @@ export interface ProviderRequestExecutionOptions {
 	readonly timeoutMs?: number;
 	/** 是否读取 JSON 响应体；流式请求应设为 false。 */
 	readonly readJson?: boolean;
+	/** 调用方取消信号；与 provider timeout 任一触发都会中止上游请求。 */
+	readonly signal?: AbortSignal;
 }
 
 /** Provider 请求执行结果。 */
@@ -40,6 +43,12 @@ export async function executeProviderRequest(
 ): Promise<ProviderRequestExecutionResult> {
 	const abortController = new AbortController();
 	let timedOut = false;
+	const abortFromCaller = (): void => abortController.abort(options.signal?.reason);
+	if (options.signal?.aborted === true) {
+		abortFromCaller();
+	} else {
+		options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+	}
 	const timeoutHandle =
 		options.timeoutMs !== undefined
 			? setTimeout(() => {
@@ -65,12 +74,11 @@ export async function executeProviderRequest(
 		};
 	} catch (error) {
 		if (timedOut) {
-			const timeoutError = new Error("Provider request timed out");
-			timeoutError.name = "AbortError";
-			throw timeoutError;
+			throw new TimeoutError("Provider request timed out");
 		}
 		throw error;
 	} finally {
+		options.signal?.removeEventListener("abort", abortFromCaller);
 		if (timeoutHandle !== undefined) {
 			clearTimeout(timeoutHandle);
 		}

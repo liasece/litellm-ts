@@ -11,6 +11,7 @@ import { RoutingStrategyName } from "./types/router";
 import { AuthRepository } from "./auth/AuthRepository";
 import { JWTHandler } from "./auth/JWTHandler";
 import { createApiKeyAuth } from "./auth/UserApiKeyAuth";
+import { AuthorizationGuard } from "./auth/AuthorizationGuard";
 import { LiteLLM_ProxyModelTable } from "./db/schema/proxyModels";
 import { proxyModelRowToDeployment } from "./router/ProxyModelDeployment";
 import { createModuleLogger } from "./core/utils/logger";
@@ -37,6 +38,8 @@ export interface ServiceContainer {
 	readonly authRepository: AuthRepository;
 	/** Express 认证中间件 */
 	readonly authMiddleware: RequestHandler;
+	/** 集中路由与对象授权边界 */
+	readonly authorizationGuard: AuthorizationGuard;
 }
 
 /**
@@ -146,6 +149,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 同步让 JWTHandler 以 master_key 作为 hmacSecret 验签（与 LoginEndpoints 一致）。
 	const jwtHandler = new JWTHandler(undefined, undefined, LOGIN_TOKEN_TTL_MS, config.generalSettings.master_key);
 	const authMiddleware = createApiKeyAuth(authRepository, config.generalSettings.master_key, jwtHandler);
+	const authorizationGuard = new AuthorizationGuard(authRepository);
 
 	return {
 		db: db,
@@ -154,5 +158,6 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		modelCostMapService: modelCostMapService,
 		authRepository: authRepository,
 		authMiddleware: authMiddleware,
+		authorizationGuard: authorizationGuard,
 	};
 }

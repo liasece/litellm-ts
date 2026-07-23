@@ -1,4 +1,4 @@
-import { pgTable, text, real, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import { doublePrecision, pgTable, text, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
 import type { CallType, SpendLogStatus } from "../../types/spend";
 
 export const liteLLM_SpendLogs = pgTable(
@@ -6,16 +6,16 @@ export const liteLLM_SpendLogs = pgTable(
 	{
 		request_id: text("request_id").notNull().primaryKey(),
 		call_type: text("call_type").$type<CallType>().notNull(),
-		api_key: text("api_key").default(""),
-		spend: real("spend").default(0.0),
-		total_tokens: integer("total_tokens").default(0),
-		prompt_tokens: integer("prompt_tokens").default(0),
-		completion_tokens: integer("completion_tokens").default(0),
-		startTime: timestamp("startTime").notNull(),
-		endTime: timestamp("endTime").notNull(),
+		api_key: text("api_key").default("").notNull(),
+		spend: doublePrecision("spend").default(0.0).notNull(),
+		total_tokens: integer("total_tokens").default(0).notNull(),
+		prompt_tokens: integer("prompt_tokens").default(0).notNull(),
+		completion_tokens: integer("completion_tokens").default(0).notNull(),
+		startTime: timestamp("startTime", { precision: 3 }).notNull(),
+		endTime: timestamp("endTime", { precision: 3 }).notNull(),
 		request_duration_ms: integer("request_duration_ms"),
-		completionStartTime: timestamp("completionStartTime"),
-		model: text("model").default(""),
+		completionStartTime: timestamp("completionStartTime", { precision: 3 }),
+		model: text("model").default("").notNull(),
 		model_id: text("model_id").default(""),
 		model_group: text("model_group").default(""),
 		custom_llm_provider: text("custom_llm_provider").default(""),

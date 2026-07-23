@@ -29,7 +29,8 @@ import { ApiError } from "../core/api/ApiError";
 import { createModuleLogger } from "../core/utils/logger";
 import { cleanSurrogates } from "../core/utils/text";
 import { getConfig } from "../core/config";
-import { calculateAndSetCost, trackSpendLog, buildSpendLogFromRequest } from "../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
+import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { DrizzleDb } from "../core/db/Database";
@@ -37,6 +38,14 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import type { ModelResponse } from "../types/openai";
 import { ProviderUpstreamError, executeWithFallbackChain, requireUpstreamAttempt, type UpstreamAttempt } from "./AnthropicUpstreamDispatch";
 import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import { executeProviderRequest } from "../router/ProviderRequestExecutor";
+import {
+	buildAnthropicSearchContinuation,
+	mergeAgenticLoopUsage,
+	executeWebSearchCalls,
+	extractAnthropicWebSearchCalls,
+	resolveGooglePseSearchConfig,
+} from "../websearch/WebSearchInterceptor";
 
 const logger = createModuleLogger("AnthropicMsg");
 
@@ -443,8 +452,11 @@ async function* _streamAnthropicSse(result: globalThis.Response): AsyncGenerator
 					// 重新序列化 — 保持 payload.type 作为 SSE event name
 					const eventType = typeof payload.type === "string" ? payload.type : "message";
 					yield formatSSE(eventType, JSON.stringify(payload));
-				} catch {
-					// 跳过无法解析的行
+					if (eventType === "message_stop") {
+						return;
+					}
+				} catch (error) {
+					throw new Error("Provider 返回 malformed SSE event", { cause: error });
 				}
 			}
 		}
@@ -456,20 +468,32 @@ async function* _streamAnthropicSse(result: globalThis.Response): AsyncGenerator
 /**
  * 建立上游流式连接：fetch 并检查状态码，成功返回 SSE generator。
  * 连接失败 / 非 2xx 抛 ProviderUpstreamError（供 fallback 链重试下一 deployment）。
- * @param upstreamUrl - 上游完整 URL
- * @param providerHeaders - 上游请求头
+ * @param attempt - 当前上游 deployment 与请求信息
  * @param body - 转发请求体（model 已替换为上游 model 名）
+ * @param signal - 客户端取消信号
  */
 async function _openAnthropicStream(
-	upstreamUrl: string,
-	providerHeaders: Record<string, string>,
+	attempt: UpstreamAttempt,
 	body: Record<string, unknown>,
+	signal: AbortSignal,
 ): Promise<AsyncGenerator<string>> {
-	const result = await fetch(upstreamUrl, {
-		method: "POST",
-		headers: { ...providerHeaders, "Content-Type": "application/json" },
-		body: JSON.stringify(body),
-	});
+	const timeoutSec = attempt.deployment.litellm_params.stream_timeout ?? attempt.deployment.litellm_params.timeout;
+	const execution = await executeProviderRequest(
+		{
+			url: attempt.upstreamUrl,
+			method: "POST",
+			headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+			body: body,
+			model: attempt.upstreamModel,
+			stream: true,
+		},
+		{
+			readJson: false,
+			signal: signal,
+			timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+		},
+	);
+	const result = execution.response;
 
 	if (!result.ok) {
 		const errBody = await result.text().catch(() => "");
@@ -541,220 +565,415 @@ export function registerAnthropicMessagesEndpoints(
 		const stream = cleanBody.stream === true;
 		const requestApiKey = cleanBody["api_key"] as string | undefined;
 		const requestAnthropicVersion = cleanBody["anthropic_version"] as string | undefined;
+		const auth = req.auth;
+		const webSearchAbortController = new AbortController();
+		const abortWebSearch = (): void => webSearchAbortController.abort();
+		req.once("aborted", abortWebSearch);
+		res.once("close", abortWebSearch);
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, cleanBody);
+		const spendRequestId = spendReservation?.requestId;
+		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 
-		if (stream) {
-			const streamStartTime = new Date();
-			const streamAccumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
-			let streamError: unknown;
-			let completionStartTime: Date | undefined;
-			// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
-			let executedAttempt: UpstreamAttempt | undefined;
-			// metadata.attempted_retries 数据源：fallback 链跳数回写
-			const streamFallbackStats = { fallbackDepth: 0 };
-			// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
-			const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
+		try {
+			spendLifecycle.markProviderStarted();
+			if (stream) {
+				const streamStartTime = new Date();
+				const streamAccumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
+				let streamError: unknown;
+				let completionStartTime: Date | undefined;
+				// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
+				let executedAttempt: UpstreamAttempt | undefined;
+				// metadata.attempted_retries 数据源：fallback 链跳数回写
+				const streamFallbackStats = { fallbackDepth: 0 };
+				// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
+				const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
 
-			// 先经 fallback 链建立上游连接：失败时响应头未发送，
-			// 由 registerRoute 返回标准 HTTP 错误（对齐 PY 全部 deployment 失败时的行为）；
-			// body.model 逐次替换为当前 deployment 剥离 provider 前缀后的上游 model 名。
-			const anthropicStream = await executeWithFallbackChain(
-				litellmRouter,
-				model,
-				requestApiKey,
-				requestAnthropicVersion,
-				(attempt) => {
-					const opened = _openAnthropicStream(attempt.upstreamUrl, attempt.upstreamHeaders, {
-						...cleanBody,
-						model: attempt.upstreamModel,
-					});
-					executedAttempt = attempt;
-					return opened;
-				},
-				streamFallbackStats,
-			);
-
-			// Patch 12: SSE keep-alive
-			res.writeHead(200, {
-				"Content-Type": "text/event-stream",
-				"Cache-Control": "no-cache",
-				Connection: "keep-alive",
-				"X-Accel-Buffering": "no",
-			});
-
-			const pingTimer = setInterval(() => {
+				// 先经 fallback 链建立上游连接：失败时响应头未发送，
+				// 由 registerRoute 返回标准 HTTP 错误（对齐 PY 全部 deployment 失败时的行为）；
+				// body.model 逐次替换为当前 deployment 剥离 provider 前缀后的上游 model 名。
+				let anthropicStream: AsyncGenerator<string>;
 				try {
-					sendPing(res);
-				} catch {
-					clearInterval(pingTimer);
-				}
-			}, KEEPALIVE_INTERVAL_MS);
-
-			req.on("close", () => clearInterval(pingTimer));
-
-			try {
-				// Patch 6+15: 合成 message_start → 跳过上游首次纯 message_start
-				// （合成事件用原请求 model，上游透传的 message_start 被跳过，不泄露上游 model 名）
-				const syntheticMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-				streamAccumulator.id = syntheticMsgId;
-				res.write(
-					formatSSE(
-						"message_start",
-						JSON.stringify({
-							type: "message_start",
-							message: {
-								id: syntheticMsgId,
-								type: "message",
-								role: "assistant",
-								model: requestedModel,
-								content: [],
-								usage: { input_tokens: 0, output_tokens: 0 },
-							},
-						}),
-					),
-				);
-
-				let firstChunk = true;
-				for await (const sseChunk of anthropicStream) {
-					const payload = parseSsePayload(sseChunk);
-					if (payload) {
-						accumulateNativeStreamEvent(streamAccumulator, payload);
+					anthropicStream = await executeWithFallbackChain(
+						litellmRouter,
+						model,
+						requestApiKey,
+						requestAnthropicVersion,
+						(attempt) => {
+							const opened = _openAnthropicStream(
+								attempt,
+								{
+									...cleanBody,
+									model: attempt.upstreamModel,
+								},
+								webSearchAbortController.signal,
+							);
+							executedAttempt = attempt;
+							return opened;
+						},
+						streamFallbackStats,
+					);
+				} catch (error) {
+					if (db && auth && spendRequestId) {
+						try {
+							await spendLifecycle.finalize(() =>
+								trackSpendLog(
+									db,
+									buildSpendLogFromRequest({
+										req: req,
+										auth: auth,
+										requestId: spendRequestId,
+										callType: CallType.AMessages,
+										model: requestedModel,
+										modelGroup: requestedModel,
+										startTime: streamStartTime,
+										endTime: new Date(),
+										messages: cleanBody.messages,
+										error: error,
+										status: SpendLogStatus.Failure,
+									}),
+								).then(() => undefined),
+							);
+						} catch (accountingError) {
+							logger.error("Anthropic 上游连接失败后的花费账务提交失败", {
+								accountingError: accountingError,
+								requestId: spendRequestId,
+							});
+							try {
+								await releaseSpend(db, spendRequestId);
+							} catch (releaseError) {
+								logger.error("Anthropic 上游连接失败后释放 reservation 失败", {
+									error: releaseError,
+									requestId: spendRequestId,
+								});
+							}
+						}
 					}
-					if (firstChunk && _isPureMessageStartChunk(sseChunk)) {
-						firstChunk = false;
-						continue;
-					}
-					firstChunk = false;
-					completionStartTime ??= new Date();
-					res.write(sseChunk);
+					throw error;
 				}
-			} catch (err) {
-				streamError = err;
-				res.write(formatSSE("error", JSON.stringify({ type: "error", error: { type: "api_error", message: String(err) } })));
-				logger.error("流式响应错误", { error: String(err) });
-			} finally {
-				clearInterval(pingTimer);
-				res.end();
 
-				// 流式 spend 追踪（model 记原请求 model，对齐 Python SpendLogs 行为）
-				if (db && req.auth && (Object.keys(streamAccumulator.usage).length > 0 || streamError !== undefined)) {
-					const streamEndTime = new Date();
-					const response = buildNativeStreamResponse(streamAccumulator, requestedModel);
-					// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
-					const spendInfo: DeploymentSpendInfo | undefined = executedAttempt
-						? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
-						: undefined;
-					const spendLog = buildSpendLogFromRequest({
-						req: req,
-						auth: req.auth,
-						callType: CallType.AMessages,
-						model: requestedModel,
-						// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
-						modelGroup: requestedModel,
-						modelId: spendInfo?.modelId,
-						customLlmProvider: spendInfo?.customLlmProvider,
-						apiBase: spendInfo?.apiBase,
-						customCostPerToken: spendInfo?.customCostPerToken,
-						deploymentModel: spendInfo?.deploymentModel,
-						litellmOverheadTimeMs: streamOverheadTimeMs,
-						attemptedRetries: streamFallbackStats.fallbackDepth,
-						maxRetries: litellmRouter.maxFallbacks,
-						startTime: streamStartTime,
-						endTime: streamEndTime,
-						completionStartTime: completionStartTime,
-						messages: cleanBody.messages,
-						response: response,
-						usage: streamAccumulator.usage,
-						error: streamError,
-						status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
-					});
-					trackSpendLog(db, spendLog).catch((err) => logger.error("Anthropic 流式花费追踪失败", { error: err }));
-				}
-			}
-			return;
-		}
-
-		// PY: record startTime at request start for non-streaming
-		const nonStreamingStartTime = new Date();
-		// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
-		let executedNsAttempt: UpstreamAttempt | undefined;
-		// PY 非流式 completionStartTime：上游响应返回（body 解析完成）的时间点，
-		// TTFT = completionStartTime - startTime（含输入处理与排队时长）
-		let nsCompletionStartTime: Date | undefined;
-		// 非流式响应 — 经 fallback 链直连上游；body.model 逐次替换为上游 model 名
-		// metadata.attempted_retries 数据源：fallback 链跳数回写
-		const nsFallbackStats = { fallbackDepth: 0 };
-		// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
-		const nsOverheadTimeMs = Date.now() - requestArrivalTimeMs;
-		const responseData = await executeWithFallbackChain(
-			litellmRouter,
-			model,
-			requestApiKey,
-			requestAnthropicVersion,
-			async (attempt) => {
-				const result = await fetch(attempt.upstreamUrl, {
-					method: "POST",
-					headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
-					body: JSON.stringify({ ...cleanBody, model: attempt.upstreamModel }),
+				// Patch 12: SSE keep-alive
+				res.writeHead(200, {
+					"Content-Type": "text/event-stream",
+					"Cache-Control": "no-cache",
+					Connection: "keep-alive",
+					"X-Accel-Buffering": "no",
 				});
 
-				if (!result.ok) {
-					const errBody = await result.text().catch(() => "");
-					throw new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`);
+				const pingTimer = setInterval(() => {
+					try {
+						sendPing(res);
+					} catch {
+						clearInterval(pingTimer);
+					}
+				}, KEEPALIVE_INTERVAL_MS);
+
+				req.on("close", () => clearInterval(pingTimer));
+
+				try {
+					// Patch 6+15: 合成 message_start → 跳过上游首次纯 message_start
+					// （合成事件用原请求 model，上游透传的 message_start 被跳过，不泄露上游 model 名）
+					const syntheticMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+					streamAccumulator.id = syntheticMsgId;
+					res.write(
+						formatSSE(
+							"message_start",
+							JSON.stringify({
+								type: "message_start",
+								message: {
+									id: syntheticMsgId,
+									type: "message",
+									role: "assistant",
+									model: requestedModel,
+									content: [],
+									usage: { input_tokens: 0, output_tokens: 0 },
+								},
+							}),
+						),
+					);
+
+					let firstChunk = true;
+					for await (const sseChunk of anthropicStream) {
+						const payload = parseSsePayload(sseChunk);
+						if (payload) {
+							accumulateNativeStreamEvent(streamAccumulator, payload);
+						}
+						if (firstChunk && _isPureMessageStartChunk(sseChunk)) {
+							firstChunk = false;
+							continue;
+						}
+						firstChunk = false;
+						completionStartTime ??= new Date();
+						res.write(sseChunk);
+					}
+				} catch (err) {
+					streamError = err;
+					res.write(formatSSE("error", JSON.stringify({ type: "error", error: { type: "api_error", message: String(err) } })));
+					logger.error("流式响应错误", { error: String(err) });
+				} finally {
+					clearInterval(pingTimer);
+					res.end();
+
+					// 即使无 usage 也提交零费用失败/成功日志，确保 reservation 不会遗留。
+					if (db && auth && spendRequestId) {
+						const streamEndTime = new Date();
+						const response = buildNativeStreamResponse(streamAccumulator, requestedModel);
+						// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
+						const spendInfo: DeploymentSpendInfo | undefined = executedAttempt
+							? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
+							: undefined;
+						const spendLog = buildSpendLogFromRequest({
+							req: req,
+							auth: auth,
+							requestId: spendRequestId,
+							callType: CallType.AMessages,
+							model: requestedModel,
+							// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
+							modelGroup: requestedModel,
+							modelId: spendInfo?.modelId,
+							customLlmProvider: spendInfo?.customLlmProvider,
+							apiBase: spendInfo?.apiBase,
+							customCostPerToken: spendInfo?.customCostPerToken,
+							deploymentModel: spendInfo?.deploymentModel,
+							litellmOverheadTimeMs: streamOverheadTimeMs,
+							attemptedRetries: streamFallbackStats.fallbackDepth,
+							maxRetries: litellmRouter.maxFallbacks,
+							startTime: streamStartTime,
+							endTime: streamEndTime,
+							completionStartTime: completionStartTime,
+							messages: cleanBody.messages,
+							response: response,
+							usage: streamAccumulator.usage,
+							error: streamError,
+							status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
+						});
+						try {
+							await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+						} catch (accountingError) {
+							// SSE headers 已发送，无法改写为 503；记录错误供账务补偿处理。
+							logger.error("Anthropic 流式花费账务提交失败", {
+								error: accountingError,
+								requestId: spendRequestId,
+							});
+							if (streamError !== undefined) {
+								await releaseSpend(db, spendRequestId).catch((releaseError: unknown) => {
+									logger.error("Anthropic 流式 Provider 失败后释放 reservation 失败", {
+										error: releaseError,
+										requestId: spendRequestId,
+									});
+								});
+							}
+						}
+					}
 				}
+				return;
+			}
 
-				// PY 非流式 completionStartTime：上游响应头到达（开始响应）的时间点
-				nsCompletionStartTime = new Date();
-				const responseJson = (await result.json()) as Record<string, unknown>;
-				executedNsAttempt = attempt;
-				return responseJson;
-			},
-			nsFallbackStats,
-		);
-		const nonStreamingEndTime = new Date();
-		// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
-		const nsSpendInfo: DeploymentSpendInfo | undefined = executedNsAttempt
-			? buildDeploymentSpendInfo(executedNsAttempt.deployment, executedNsAttempt.upstreamUrl)
-			: undefined;
-		// 响应 model 改写回原请求 model（Python 实测：fallback 后响应 model 仍为客户端请求 model）
-		responseData["model"] = requestedModel;
-		calculateAndSetCost(responseData as unknown as ModelResponse, requestedModel, nsSpendInfo?.customCostPerToken);
+			// PY: record startTime at request start for non-streaming
+			const nonStreamingStartTime = new Date();
+			// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
+			let executedNsAttempt: UpstreamAttempt | undefined;
+			// PY 非流式 completionStartTime：上游响应返回（body 解析完成）的时间点，
+			// TTFT = completionStartTime - startTime（含输入处理与排队时长）
+			let nsCompletionStartTime: Date | undefined;
+			// 非流式响应 — 经 fallback 链直连上游；body.model 逐次替换为上游 model 名
+			// metadata.attempted_retries 数据源：fallback 链跳数回写
+			const nsFallbackStats = { fallbackDepth: 0 };
+			// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
+			const nsOverheadTimeMs = Date.now() - requestArrivalTimeMs;
+			let responseData: Record<string, unknown>;
+			let initialNsResponse: Record<string, unknown> | undefined;
+			let usageCalculated = false;
+			try {
+				responseData = await executeWithFallbackChain(
+					litellmRouter,
+					model,
+					requestApiKey,
+					requestAnthropicVersion,
+					async (attempt) => {
+						const timeoutSec = attempt.deployment.litellm_params.timeout;
+						const execution = await executeProviderRequest(
+							{
+								url: attempt.upstreamUrl,
+								method: "POST",
+								headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+								body: { ...cleanBody, model: attempt.upstreamModel },
+								model: attempt.upstreamModel,
+							},
+							{
+								readJson: false,
+								signal: webSearchAbortController.signal,
+								timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+							},
+						);
+						const result = execution.response;
 
-		// PY: inject x-litellm-response-cost header (PY logging middleware)
-		const nsUsage = responseData["usage"] as Record<string, unknown> | undefined;
-		if (nsUsage && nsUsage["cost"] !== undefined) {
-			res.setHeader("x-litellm-response-cost", String(nsUsage["cost"]));
+						if (!result.ok) {
+							const errBody = await result.text().catch(() => "");
+							throw new ProviderUpstreamError(
+								result.status,
+								`Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`,
+							);
+						}
+
+						nsCompletionStartTime = new Date();
+						const responseJson = (await result.json()) as Record<string, unknown>;
+						executedNsAttempt = attempt;
+						return responseJson;
+					},
+					nsFallbackStats,
+				);
+				initialNsResponse = responseData;
+
+				const requestTools = Array.isArray(cleanBody["tools"]) ? cleanBody["tools"] : [];
+				const searchCalls = extractAnthropicWebSearchCalls(responseData, requestTools);
+				if (searchCalls.length > 0) {
+					const initialSpendInfo = executedNsAttempt
+						? buildDeploymentSpendInfo(executedNsAttempt.deployment, executedNsAttempt.upstreamUrl)
+						: undefined;
+					calculateAndSetCost(responseData as unknown as ModelResponse, requestedModel, initialSpendInfo?.customCostPerToken);
+					const searchConfig = resolveGooglePseSearchConfig(getConfig(), initialSpendInfo?.customLlmProvider);
+					if (searchConfig) {
+						const searchResults = await executeWebSearchCalls(searchCalls, searchConfig, webSearchAbortController.signal);
+						const continuation = buildAnthropicSearchContinuation(responseData, searchCalls, searchResults);
+						const originalMessages = Array.isArray(cleanBody["messages"]) ? cleanBody["messages"] : [];
+						const followUpStats = { fallbackDepth: 0 };
+						responseData = await executeWithFallbackChain(
+							litellmRouter,
+							model,
+							requestApiKey,
+							requestAnthropicVersion,
+							async (attempt) => {
+								const timeoutSec = attempt.deployment.litellm_params.timeout;
+								const execution = await executeProviderRequest(
+									{
+										url: attempt.upstreamUrl,
+										method: "POST",
+										headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+										body: {
+											...cleanBody,
+											model: attempt.upstreamModel,
+											messages: [...originalMessages, ...continuation],
+										},
+										model: attempt.upstreamModel,
+									},
+									{
+										readJson: false,
+										signal: webSearchAbortController.signal,
+										timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+									},
+								);
+								const result = execution.response;
+								if (!result.ok) {
+									throw new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status})`);
+								}
+								nsCompletionStartTime = new Date();
+								executedNsAttempt = attempt;
+								return (await result.json()) as Record<string, unknown>;
+							},
+							followUpStats,
+						);
+						nsFallbackStats.fallbackDepth += followUpStats.fallbackDepth;
+						const finalSpendInfo = executedNsAttempt
+							? buildDeploymentSpendInfo(executedNsAttempt.deployment, executedNsAttempt.upstreamUrl)
+							: undefined;
+						calculateAndSetCost(responseData as unknown as ModelResponse, requestedModel, finalSpendInfo?.customCostPerToken);
+						mergeAgenticLoopUsage(responseData, initialNsResponse, searchCalls.length);
+						usageCalculated = true;
+					}
+				}
+			} catch (error) {
+				if (db && auth && spendRequestId) {
+					try {
+						await spendLifecycle.finalize(() =>
+							trackSpendLog(
+								db,
+								buildSpendLogFromRequest({
+									req: req,
+									auth: auth,
+									requestId: spendRequestId,
+									callType: CallType.AMessages,
+									model: requestedModel,
+									modelGroup: requestedModel,
+									startTime: nonStreamingStartTime,
+									endTime: new Date(),
+									messages: cleanBody.messages,
+									response: initialNsResponse,
+									usage: initialNsResponse?.["usage"] as Record<string, unknown> | undefined,
+									error: error,
+									status: SpendLogStatus.Failure,
+								}),
+							).then(() => undefined),
+						);
+					} catch (accountingError) {
+						logger.error("Anthropic Provider 失败后的花费账务提交失败", {
+							accountingError: accountingError,
+							requestId: spendRequestId,
+						});
+						try {
+							await releaseSpend(db, spendRequestId);
+						} catch (releaseError) {
+							logger.error("Anthropic Provider 失败后释放 reservation 失败", {
+								error: releaseError,
+								requestId: spendRequestId,
+							});
+						}
+					}
+				}
+				throw error;
+			}
+			const nonStreamingEndTime = new Date();
+			// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
+			const nsSpendInfo: DeploymentSpendInfo | undefined = executedNsAttempt
+				? buildDeploymentSpendInfo(executedNsAttempt.deployment, executedNsAttempt.upstreamUrl)
+				: undefined;
+			// 响应 model 改写回原请求 model（Python 实测：fallback 后响应 model 仍为客户端请求 model）
+			responseData["model"] = requestedModel;
+			if (!usageCalculated) {
+				calculateAndSetCost(responseData as unknown as ModelResponse, requestedModel, nsSpendInfo?.customCostPerToken);
+			}
+
+			// PY: inject x-litellm-response-cost header (PY logging middleware)
+			const nsUsage = responseData["usage"] as Record<string, unknown> | undefined;
+			if (nsUsage && nsUsage["cost"] !== undefined) {
+				res.setHeader("x-litellm-response-cost", String(nsUsage["cost"]));
+			}
+
+			// 非流式 spend 追踪（model 记原请求 model，对齐 Python SpendLogs 行为）
+			if (db && auth && spendRequestId) {
+				const usage = responseData["usage"] as Record<string, unknown> | undefined;
+				const spendLog = buildSpendLogFromRequest({
+					req: req,
+					auth: auth,
+					requestId: spendRequestId,
+					callType: CallType.AMessages,
+					model: requestedModel,
+					// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
+					modelGroup: requestedModel,
+					modelId: nsSpendInfo?.modelId,
+					customLlmProvider: nsSpendInfo?.customLlmProvider,
+					apiBase: nsSpendInfo?.apiBase,
+					customCostPerToken: nsSpendInfo?.customCostPerToken,
+					deploymentModel: nsSpendInfo?.deploymentModel,
+					litellmOverheadTimeMs: nsOverheadTimeMs,
+					attemptedRetries: nsFallbackStats.fallbackDepth,
+					maxRetries: litellmRouter.maxFallbacks,
+					startTime: nonStreamingStartTime,
+					endTime: nonStreamingEndTime,
+					completionStartTime: nsCompletionStartTime,
+					messages: cleanBody.messages,
+					response: responseData,
+					usage: usage,
+					status: SpendLogStatus.Success,
+				});
+				await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+			}
+
+			return responseData;
+		} finally {
+			req.removeListener("aborted", abortWebSearch);
+			res.removeListener("close", abortWebSearch);
+			spendLifecycle.stop();
 		}
-
-		// 非流式 spend 追踪（model 记原请求 model，对齐 Python SpendLogs 行为）
-		if (db && req.auth) {
-			const usage = responseData["usage"] as Record<string, unknown> | undefined;
-			const spendLog = buildSpendLogFromRequest({
-				req: req,
-				auth: req.auth,
-				callType: CallType.AMessages,
-				model: requestedModel,
-				// PY: model_group=原请求逻辑模型名（fallback 时仍为原请求名）
-				modelGroup: requestedModel,
-				modelId: nsSpendInfo?.modelId,
-				customLlmProvider: nsSpendInfo?.customLlmProvider,
-				apiBase: nsSpendInfo?.apiBase,
-				customCostPerToken: nsSpendInfo?.customCostPerToken,
-				deploymentModel: nsSpendInfo?.deploymentModel,
-				litellmOverheadTimeMs: nsOverheadTimeMs,
-				attemptedRetries: nsFallbackStats.fallbackDepth,
-				maxRetries: litellmRouter.maxFallbacks,
-				startTime: nonStreamingStartTime,
-				endTime: nonStreamingEndTime,
-				completionStartTime: nsCompletionStartTime,
-				messages: cleanBody.messages,
-				response: responseData,
-				usage: usage,
-				status: SpendLogStatus.Success,
-			});
-			trackSpendLog(db, spendLog).catch((err) => logger.error("Anthropic 花费追踪失败", { error: err }));
-		}
-
-		return responseData;
 	});
 
 	// POST /v1/messages/count_tokens — Patch 10: 转发到上游

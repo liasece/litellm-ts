@@ -109,4 +109,16 @@ describe("runCommonChecks", () => {
 	it("throws when team is blocked", () => {
 		expect(() => runCommonChecks(mkAuth(), "claude-sonnet", { blocked: true })).toThrow(ApiError);
 	});
+
+	it("独立检查每个预算快照而不是合并 key 与 team spend", () => {
+		const auth = mkAuth({
+			spend: 1,
+			max_budget: 10,
+			budget_snapshots: {
+				key: { id: "key-1", spend: 1, max_budget: 10 },
+				team: { id: "team-1", spend: 20, max_budget: 20 },
+			},
+		});
+		expect(() => runCommonChecks(auth, "claude-sonnet", null)).toThrow(ApiError);
+	});
 });

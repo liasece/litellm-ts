@@ -1,9 +1,10 @@
-import { pgTable, text, uuid, real, bigint, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { doublePrecision, pgTable, text, bigint, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 
+import { uuidText } from "./uuidText";
 export const liteLLM_DailyEndUserSpend = pgTable(
 	"LiteLLM_DailyEndUserSpend",
 	{
-		id: uuid("id").defaultRandom().primaryKey(),
+		id: uuidText("id").primaryKey().notNull(),
 		end_user_id: text("end_user_id"),
 		date: text("date").notNull(),
 		api_key: text("api_key").notNull(),
@@ -12,16 +13,19 @@ export const liteLLM_DailyEndUserSpend = pgTable(
 		custom_llm_provider: text("custom_llm_provider"),
 		mcp_namespaced_tool_name: text("mcp_namespaced_tool_name"),
 		endpoint: text("endpoint"),
-		prompt_tokens: bigint("prompt_tokens", { mode: "number" }).default(0),
-		completion_tokens: bigint("completion_tokens", { mode: "number" }).default(0),
-		cache_read_input_tokens: bigint("cache_read_input_tokens", { mode: "number" }).default(0),
-		cache_creation_input_tokens: bigint("cache_creation_input_tokens", { mode: "number" }).default(0),
-		spend: real("spend").default(0.0),
-		api_requests: bigint("api_requests", { mode: "number" }).default(0),
-		successful_requests: bigint("successful_requests", { mode: "number" }).default(0),
-		failed_requests: bigint("failed_requests", { mode: "number" }).default(0),
-		created_at: timestamp("created_at").defaultNow(),
-		updated_at: timestamp("updated_at").defaultNow(),
+		prompt_tokens: bigint("prompt_tokens", { mode: "number" }).default(0).notNull(),
+		completion_tokens: bigint("completion_tokens", { mode: "number" }).default(0).notNull(),
+		cache_read_input_tokens: bigint("cache_read_input_tokens", { mode: "number" }).default(0).notNull(),
+		cache_creation_input_tokens: bigint("cache_creation_input_tokens", { mode: "number" }).default(0).notNull(),
+		spend: doublePrecision("spend").default(0.0).notNull(),
+		api_requests: bigint("api_requests", { mode: "number" }).default(0).notNull(),
+		successful_requests: bigint("successful_requests", { mode: "number" }).default(0).notNull(),
+		failed_requests: bigint("failed_requests", { mode: "number" }).default(0).notNull(),
+		created_at: timestamp("created_at", { precision: 3 }).defaultNow().notNull(),
+		updated_at: timestamp("updated_at", { precision: 3 })
+			.$defaultFn(() => new Date())
+			.$onUpdate(() => new Date())
+			.notNull(),
 	},
 	(table) => ({
 		unq: uniqueIndex("daily_end_user_spend_unique").on(

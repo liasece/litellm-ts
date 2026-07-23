@@ -5,7 +5,7 @@ export const liteLLM_SpendLogToolIndex = pgTable(
 	{
 		request_id: text("request_id").notNull(),
 		tool_name: text("tool_name").notNull(),
-		start_time: timestamp("start_time").notNull(),
+		start_time: timestamp("start_time", { precision: 3 }).notNull(),
 	},
 	(table) => ({
 		pk: primaryKey({ columns: [table.request_id, table.tool_name] }),

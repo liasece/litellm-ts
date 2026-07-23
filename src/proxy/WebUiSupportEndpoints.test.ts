@@ -12,6 +12,7 @@ import request from "supertest";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./ModelsPageSupportEndpoints";
 import { registerLoginRoutes } from "./LoginEndpoints";
+import { webUiCsrfProtection } from "../auth/UserApiKeyAuth";
 import { createKeyManagementRoutes } from "../management/KeyManagementEndpoint";
 import { createTeamRoutes } from "../management/TeamEndpoint";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
@@ -284,13 +285,21 @@ function buildPublicApp(config: ServiceConfig, costMapService?: ModelCostMapServ
 	registerWebUiSupportPublicRoutes(router, costMapService);
 	// LoginEndpoints 需要写入 LiteLLM_VerificationToken，提供最小 mock db：
 	// 仅实现 insert().values() 与按 token 列 select().from().where().limit(1)。
-	const inserted: Array<{ token: string }> = [];
+	const inserted: Array<Record<string, unknown>> = [];
 	const mockDb = {
 		insert: () => ({
-			values: (row: { token: string }) => {
-				inserted.push({ token: row.token });
+			values: (row: Record<string, unknown>) => {
+				inserted.push(row);
 				return Promise.resolve();
 			},
+		}),
+		update: () => ({
+			set: (values: Record<string, unknown>) => ({
+				where: () => {
+					Object.assign(inserted[0] ?? {}, values);
+					return Promise.resolve();
+				},
+			}),
 		}),
 		select: () => ({
 			from: () => ({
@@ -974,45 +983,80 @@ describe("WebUiSupport 契约", () => {
 			expect(res.status).toBe(401);
 		});
 
-		/**
-		 * 对齐 Python LiteLLM：cookie JWT payload.key 是登录时生成的明文 `sk-*` virtual key，
-		 * 且该 key 的 hash 被持久化到 LiteLLM_VerificationToken。
-		 * master key 明文不得出现在 payload 中。
-		 */
-		it("cookie JWT payload.key 应为 sk-* virtual key，DB 持久化 hash，master key 不外泄（DIFF-AUTH-WEBUI-SESSION）", async () => {
+		it("session 查询仅返回非敏感身份，logout 校验 CSRF 并撤销 DB session", async () => {
+			const app = express();
+			app.use(express.json());
+			const router = express.Router();
+			const authMiddleware: express.RequestHandler = (req, _res, next) => {
+				req.auth = {
+					api_key: "stored-session-hash",
+					token: "stored-session-hash",
+					user_id: "default_user_id",
+					user_role: "proxy_admin",
+					metadata: {
+						webui_session: true,
+						user_id: "default_user_id",
+						user_role: "proxy_admin",
+						login_method: "username_password",
+						premium_user: true,
+					},
+				};
+				next();
+			};
+			const authRepository = { revokeVerificationTokenByHash: jest.fn().mockResolvedValue(undefined) };
+			registerLoginRoutes(router, makeConfig(), {} as never, authMiddleware, webUiCsrfProtection, authRepository as never);
+			app.use(router);
+
+			const sessionResponse = await request(app).get("/auth/session");
+			expect(sessionResponse.status).toBe(200);
+			expect(sessionResponse.body).toMatchObject({ authenticated: true, user_role: "proxy_admin" });
+			expect(sessionResponse.body).not.toHaveProperty("key");
+			expect(sessionResponse.body).not.toHaveProperty("jti");
+
+			const logoutResponse = await request(app)
+				.post("/auth/logout")
+				.set("Cookie", "token=session; litellm_csrf_token=csrf-value")
+				.set("x-litellm-csrf-token", "csrf-value");
+			expect(logoutResponse.status).toBe(200);
+			expect(authRepository.revokeVerificationTokenByHash).toHaveBeenCalledWith("stored-session-hash");
+			const clearedCookies = logoutResponse.headers["set-cookie"] as unknown as string[];
+			expect(clearedCookies.some((cookie) => cookie.startsWith("token=;"))).toBe(true);
+			expect(clearedCookies.some((cookie) => cookie.startsWith("litellm_csrf_token=;"))).toBe(true);
+		});
+
+		it("cookie session 应为 HttpOnly，并让 JWT 与 DB 使用同一过期时间且不携带 API key", async () => {
+			process.env.LITELLM_UI_SESSION_DURATION = "30m";
 			const app = buildPublicApp(makeConfig());
+			const beforeLoginSeconds = Math.floor(Date.now() / 1000);
 			const res = await request(app).post("/v2/login").send({ username: "admin", password: "sk-test-master-key" });
+			delete process.env.LITELLM_UI_SESSION_DURATION;
+
 			expect(res.status).toBe(200);
 			const setCookie = res.headers["set-cookie"];
-			expect(setCookie).toBeDefined();
 			const cookies = Array.isArray(setCookie) ? setCookie : [String(setCookie)];
-			const tokenCookie = cookies.find((c) => c.startsWith("token="));
-			expect(tokenCookie).toBeDefined();
-			const [cookieValue] = (tokenCookie as string).split(";");
-			expect(cookieValue).toBeDefined();
-			const tokenValue = (cookieValue as string).slice("token=".length);
-			// JWT 三段：header.payload.signature
-			const parts = tokenValue.split(".");
-			expect(parts.length).toBe(3);
-			const payloadSegment = parts[1];
-			expect(payloadSegment).toBeDefined();
-			const payloadJson = Buffer.from(payloadSegment as string, "base64url").toString("utf8");
-			const payload = JSON.parse(payloadJson) as Record<string, unknown>;
-			// 关键断言 1：master key 明文不得出现在 payload 中
-			expect(JSON.stringify(payload)).not.toContain("sk-test-master-key");
-			// 关键断言 2：key 字段是 sk- 前缀的明文 virtual key
-			const payloadKey = payload.key;
-			expect(typeof payloadKey).toBe("string");
-			expect((payloadKey as string).startsWith("sk-")).toBe(true);
-			// 关键断言 3：最小身份信息仍保留
-			expect(payload.user_id).toBe("default_user_id");
-			expect(payload.user_role).toBe("proxy_admin");
-			// 关键断言 4：DB mock 收到的是 hash，不应等于明文
-			const inserted = (app as unknown as { __inserted: Array<{ token: string }> }).__inserted;
-			expect(inserted.length).toBe(1);
-			const storedHash = inserted[0]!.token;
-			expect(storedHash).not.toBe(payloadKey);
-			expect(storedHash).toMatch(/^[0-9a-f]{64}$/); // SHA-256 hex
+			const tokenCookie = cookies.find((cookie) => cookie.startsWith("token="));
+			expect(tokenCookie).toContain("HttpOnly");
+			expect(tokenCookie).toContain("SameSite=Lax");
+			const csrfCookie = cookies.find((cookie) => cookie.startsWith("litellm_csrf_token="));
+			expect(csrfCookie).toBeDefined();
+			expect(csrfCookie).not.toContain("HttpOnly");
+
+			const tokenValue = tokenCookie!.split(";")[0]!.slice("token=".length);
+			const payloadSegment = tokenValue.split(".")[1]!;
+			const payload = JSON.parse(Buffer.from(payloadSegment, "base64url").toString("utf8")) as Record<string, unknown>;
+			expect(payload.key).toBeUndefined();
+			expect(payload.iat).toEqual(expect.any(Number));
+			expect(payload.exp).toEqual(expect.any(Number));
+			expect(payload.jti).toEqual(expect.any(String));
+			expect(payload.webui_session).toBe(true);
+			expect((payload.exp as number) - (payload.iat as number)).toBe(30 * 60);
+			expect(payload.iat as number).toBeGreaterThanOrEqual(beforeLoginSeconds);
+
+			const inserted = (app as unknown as { __inserted: Array<Record<string, unknown>> }).__inserted;
+			expect(inserted).toHaveLength(1);
+			expect(inserted[0]!.token).toMatch(/^[0-9a-f]{64}$/);
+			expect(inserted[0]!.token).not.toBe(payload.jti);
+			expect((inserted[0]!.expires as Date).getTime()).toBe((payload.exp as number) * 1000);
 		});
 	});
 });

@@ -6,7 +6,7 @@ import { pgTable, text } from "drizzle-orm/pg-core";
 export const LiteLLM_UserNotifications = pgTable("LiteLLM_UserNotifications", {
 	request_id: text("request_id").notNull().primaryKey(),
 	user_id: text("user_id").notNull(),
-	models: text("models").array().notNull(),
+	models: text("models").array(),
 	justification: text("justification").notNull(),
 	status: text("status").notNull(),
 });

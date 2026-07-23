@@ -132,6 +132,8 @@ export interface LitellmSettings {
 		provider: string;
 		api_base: string;
 	}>;
+	/** 网页搜索拦截参数 */
+	websearch_interception_params?: WebSearchInterceptionParams;
 }
 
 /** router_settings 部分 */
@@ -154,10 +156,30 @@ export interface RouterSettings {
 
 /** 网页搜索拦截参数 */
 export interface WebSearchInterceptionParams {
+	/** 启用拦截的 LLM provider；缺省表示不限制 */
+	enabled_providers?: string[];
+	/** 指定 router search_tools 中的工具名 */
+	search_tool_name?: string;
 	/** Google PSE API 密钥 */
 	google_pse_api_key?: string;
 	/** Google PSE 引擎 ID */
 	google_pse_engine_id?: string;
+	/** 单次搜索超时（毫秒） */
+	timeout_ms?: number;
+	/** 单请求最大搜索次数 */
+	max_queries?: number;
+	/** 单查询最大字符数 */
+	max_query_length?: number;
+	/** 单查询最大结果数 */
+	max_results?: number;
+	/** 标题最大字符数 */
+	max_title_length?: number;
+	/** 链接最大字符数 */
+	max_link_length?: number;
+	/** 摘要最大字符数 */
+	max_snippet_length?: number;
+	/** 单请求注入上下文最大字符数 */
+	max_injected_chars?: number;
 }
 
 /** general_settings 部分 */
@@ -170,8 +192,6 @@ export interface GeneralSettings {
 	store_model_in_db?: boolean;
 	/** 是否跳过 provider 的 token 计数 */
 	skip_provider_token_counting?: boolean;
-	/** 网页搜索拦截参数 */
-	websearch_interception_params?: WebSearchInterceptionParams;
 	/** 网页搜索覆写目标模型 */
 	websearch_override_target_model?: string;
 	/** 模型组别名（支持 PY RouterModelGroupAliasItem 结构） */

@@ -3,21 +3,21 @@
  * Prisma model: LiteLLM_EndUserTable (natural key PK)
  */
 
-import { pgTable, text, real, boolean, jsonb } from "drizzle-orm/pg-core";
+import { doublePrecision, pgTable, text, boolean, jsonb } from "drizzle-orm/pg-core";
 
 export const LiteLLM_EndUserTable = pgTable("LiteLLM_EndUserTable", {
 	userId: text("user_id").notNull().primaryKey(),
 	alias: text("alias"),
-	spend: real("spend").default(0.0),
+	spend: doublePrecision("spend").default(0.0).notNull(),
 	allowedModelRegion: text("allowed_model_region"),
 	defaultModel: text("default_model"),
 	budgetId: text("budget_id"),
 	objectPermissionId: text("object_permission_id"),
-	blocked: boolean("blocked").default(false),
+	blocked: boolean("blocked").default(false).notNull(),
 	/** PY: 端用户最大预算（auth_checks.checkEndUserBudget） */
-	maxBudget: real("max_budget"),
+	maxBudget: doublePrecision("max_budget"),
 	/** PY: 端用户软预算（auth_checks.checkEndUserBudget 仅警告） */
-	softBudget: real("soft_budget"),
+	softBudget: doublePrecision("soft_budget"),
 	/** PY: 端用户元数据 */
 	metadata: jsonb("metadata").default("{}"),
 	/** PY: 端用户允许的路由列表 */

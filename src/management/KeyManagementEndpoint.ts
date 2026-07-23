@@ -6,8 +6,7 @@
  * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/proxy_server.py
  */
 
-import { randomUUID } from "crypto";
-import type { Router, Request, RequestHandler } from "express";
+import type { Router, Request } from "express";
 import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
@@ -15,7 +14,9 @@ import { ApiError } from "../core/api/ApiError";
 import { hashApiKey, generateApiKey } from "../core/utils/crypto";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_DeprecatedVerificationToken } from "../db/schema/deprecated-tokens";
+import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
 import { LiteLLM_BudgetTable } from "../db/schema/budgets";
+import type { AuthorizationGuard } from "../auth/AuthorizationGuard";
 import { createModuleLogger } from "../core/utils/logger";
 import { parsePositiveInt } from "../core/api/queryParams";
 import { buildGenerateKeyResponse, toPythonKeyManagementRow } from "./pythonRowSerializers";
@@ -40,7 +41,7 @@ const KEY_LIST_PAGINATION = {
  * VerificationToken 单行投影。
  * Drizzle 行对象是 TypeScript camelCase 字段；Python LiteLLM / WebUI 契约是 Prisma 字段名（snake_case）。
  */
-type VerificationTokenRowLike = { token: unknown } & Record<string, unknown>;
+type VerificationTokenRowLike = { token: string } & Record<string, unknown>;
 
 const VERIFICATION_TOKEN_FIELD_ALIASES: Readonly<Record<string, string>> = {
 	keyName: "key_name",
@@ -75,6 +76,10 @@ const VERIFICATION_TOKEN_FIELD_ALIASES: Readonly<Record<string, string>> = {
 	rotationInterval: "rotation_interval",
 	lastRotationAt: "last_rotation_at",
 	keyRotationAt: "key_rotation_at",
+	deletedAt: "deleted_at",
+	deletedBy: "deleted_by",
+	deletedByApiKey: "deleted_by_api_key",
+	litellmChangedBy: "litellm_changed_by",
 };
 
 /**
@@ -231,7 +236,7 @@ interface KeyListFilters {
 	readonly keyAlias?: string;
 	readonly projectId?: string;
 	readonly accessGroupId?: string;
-	readonly status?: "active" | "blocked" | "expired";
+	readonly status?: "active" | "blocked" | "expired" | "deleted";
 }
 
 function parseKeyListFilters(query: Request["query"]): KeyListFilters {
@@ -245,7 +250,7 @@ function parseKeyListFilters(query: Request["query"]): KeyListFilters {
 		keyAlias: firstString(query.key_alias),
 		projectId: firstString(query.project_id),
 		accessGroupId: firstString(query.access_group_id),
-		status: status === "active" || status === "blocked" || status === "expired" ? status : undefined,
+		status: status === "active" || status === "blocked" || status === "expired" || status === "deleted" ? status : undefined,
 	};
 }
 
@@ -274,6 +279,31 @@ function buildKeyListWhere(filters: KeyListFilters): ReturnType<typeof and> {
 	}
 	if (filters.status === "active") {
 		conditions.push(or(isNull(LiteLLM_VerificationToken.blocked), eq(LiteLLM_VerificationToken.blocked, false)));
+	}
+	return and(...conditions);
+}
+
+function buildDeletedKeyListWhere(filters: KeyListFilters): ReturnType<typeof and> {
+	const conditions = [
+		or(isNull(liteLLM_DeletedVerificationToken.teamId), ne(liteLLM_DeletedVerificationToken.teamId, WEBUI_LOGIN_TEAM_ID)),
+	];
+	if (filters.userId !== undefined) {
+		conditions.push(eq(liteLLM_DeletedVerificationToken.userId, filters.userId));
+	}
+	if (filters.teamId !== undefined) {
+		conditions.push(eq(liteLLM_DeletedVerificationToken.teamId, filters.teamId));
+	}
+	if (filters.organizationId !== undefined) {
+		conditions.push(eq(liteLLM_DeletedVerificationToken.organizationId, filters.organizationId));
+	}
+	if (filters.keyHash !== undefined) {
+		conditions.push(eq(liteLLM_DeletedVerificationToken.token, filters.keyHash));
+	}
+	if (filters.keyAlias !== undefined) {
+		conditions.push(eq(liteLLM_DeletedVerificationToken.keyAlias, filters.keyAlias));
+	}
+	if (filters.projectId !== undefined) {
+		conditions.push(eq(liteLLM_DeletedVerificationToken.projectId, filters.projectId));
 	}
 	return and(...conditions);
 }
@@ -365,43 +395,24 @@ function parseKeyDeleteRequest(body: unknown): ParsedKeyDeleteRequest {
 }
 
 /**
- * 构造 deprecated 表批量归档行。`activeTokenId` 与 `token` 同值（无轮换场景下）。
- * @param tokens - 已查到的 active token 列表
- * @param revokeAt - 计划彻底失效时间
+ * 解析请求或环境变量中的 key rotation grace period；空值表示立即撤销旧 key。
+ * @param body
+ * @param now
  */
-function toDeprecatedTokenRows(
-	tokens: readonly string[],
-	revokeAt: Date,
-): Array<{ id: string; token: string; activeTokenId: string; revokeAt: Date }> {
-	return tokens.map((token) => ({ id: randomUUID(), token: token, activeTokenId: token, revokeAt: revokeAt }));
+function resolveRotationRevokeAt(body: Record<string, unknown>, now: Date): Date | null {
+	const gracePeriod = firstString(body.grace_period) ?? firstString(process.env.LITELLM_KEY_ROTATION_GRACE_PERIOD);
+	return gracePeriod ? resolveExpiresFromDuration(gracePeriod, now) : null;
 }
 
 /**
  * 创建密钥管理路由
  * @param router - Express Router 实例
  * @param db - Drizzle 数据库实例
- * @param authMiddleware - 认证中间件（可选，null 表示不要求认证）
+ * @param authorizationGuard - 集中对象授权边界；测试可传 null
  */
-export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMiddleware: RequestHandler | null): void {
-	/**
-	 * 认证中间件包装 — 需要认证的端点自动加上 authMiddleware
-	 * @param handler
-	 */
+export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authorizationGuard: AuthorizationGuard | null): void {
 	function authed(handler: (req: Request) => unknown | Promise<unknown>): (req: Request) => unknown | Promise<unknown> {
-		return async (req: Request) => {
-			if (authMiddleware) {
-				await new Promise<void>((resolve, reject) => {
-					authMiddleware(req, {} as never, (err?: unknown) => {
-						if (err) {
-							reject(err);
-						} else {
-							resolve();
-						}
-					});
-				});
-			}
-			return handler(req);
-		};
+		return handler;
 	}
 
 	// ─── POST /key/generate ────────────────────────────────────
@@ -412,6 +423,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 		{ method: "post", path: "/key/generate" },
 		authed(async (req) => {
 			const body = (req.body ?? {}) as Record<string, unknown>;
+			await authorizationGuard?.assertCanCreateKey(req.auth, firstString(body.team_id));
 			const now = new Date();
 
 			// Python: duration 优先于 expires，expires = now + duration
@@ -514,6 +526,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 			if (existing.length === 0) {
 				throw ApiError.notFound("Key not found");
 			}
+			await authorizationGuard?.assertKeyAccess(req.auth, existing, "write");
 
 			// 构建可更新字段
 			const updateFields: Record<string, unknown> = {};
@@ -601,46 +614,44 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 		{ method: "post", path: "/key/delete" },
 		authed(async (req) => {
 			const parsed = parseKeyDeleteRequest(req.body ?? {});
-
-			// 7 天后彻底失效：与项目内其他删除/轮换逻辑保持一致。
-			const revokeAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-			if (parsed.kind === "keys") {
-				// 明文 sk-* 先 hash；hashed token 原样。
-				const tokens = parsed.tokens.map(hashTokenIfNeeded);
-
-				const matchedRows = await db
-					.select({ token: LiteLLM_VerificationToken.token })
+			const deletedAt = new Date();
+			await db.transaction(async (tx) => {
+				const requestedTokens = parsed.kind === "keys" ? [...new Set(parsed.tokens.map(hashTokenIfNeeded))] : undefined;
+				const requestedAliases = parsed.kind === "key_aliases" ? parsed.keyAliases : undefined;
+				const matchedRows = await tx
+					.select()
 					.from(LiteLLM_VerificationToken)
-					.where(inArray(LiteLLM_VerificationToken.token, tokens));
+					.where(
+						requestedTokens
+							? inArray(LiteLLM_VerificationToken.token, requestedTokens)
+							: inArray(LiteLLM_VerificationToken.keyAlias, requestedAliases!),
+					);
 
-				if (matchedRows.length === 0) {
+				const allTargetsExist = requestedTokens
+					? matchedRows.length === requestedTokens.length
+					: requestedAliases!.every((alias) => matchedRows.some((row) => row.keyAlias === alias));
+				if (!allTargetsExist || matchedRows.length === 0) {
 					throw ApiError.notFound("No keys found");
 				}
+				await authorizationGuard?.assertKeyAccess(req.auth, matchedRows, "write");
 
-				const matchedTokens = matchedRows.map((row) => row.token);
-				await db.insert(liteLLM_DeprecatedVerificationToken).values(toDeprecatedTokenRows(matchedTokens, revokeAt));
-				await db.delete(LiteLLM_VerificationToken).where(inArray(LiteLLM_VerificationToken.token, matchedTokens));
-
-				logger.info(`Keys deleted by token: count=${matchedTokens.length}`);
-				return { deleted_keys: parsed.requestedValues };
-			}
-
-			// key_aliases 路径
-			const matchedRows = await db
-				.select({ token: LiteLLM_VerificationToken.token })
-				.from(LiteLLM_VerificationToken)
-				.where(inArray(LiteLLM_VerificationToken.keyAlias, parsed.keyAliases));
-
-			if (matchedRows.length === 0) {
-				throw ApiError.notFound("No keys found");
-			}
-
-			const matchedTokens = matchedRows.map((row) => row.token);
-			await db.insert(liteLLM_DeprecatedVerificationToken).values(toDeprecatedTokenRows(matchedTokens, revokeAt));
-			await db.delete(LiteLLM_VerificationToken).where(inArray(LiteLLM_VerificationToken.token, matchedTokens));
-
-			logger.info(`Keys deleted by alias: count=${matchedTokens.length}`);
+				await tx.insert(liteLLM_DeletedVerificationToken).values(
+					matchedRows.map((row) => ({
+						...row,
+						deletedAt: deletedAt,
+						deletedBy: req.auth?.user_id ?? null,
+						deletedByApiKey: req.auth?.token ?? null,
+						litellmChangedBy: firstString(req.header("litellm-changed-by")) ?? null,
+					})),
+				);
+				await tx.delete(LiteLLM_VerificationToken).where(
+					inArray(
+						LiteLLM_VerificationToken.token,
+						matchedRows.map((row) => row.token),
+					),
+				);
+				logger.info(`Keys deleted: count=${matchedRows.length}`);
+			});
 			return { deleted_keys: parsed.requestedValues };
 		}),
 	);
@@ -659,6 +670,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 			if (rows.length === 0) {
 				throw ApiError.notFound("Key not found");
 			}
+			await authorizationGuard?.assertKeyAccess(req.auth, rows, "read");
 			return { key: lookup.requestKey, info: toPythonVerificationTokenRow(rows[0]!, false) };
 		}),
 	);
@@ -677,6 +689,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 			if (rows.length === 0) {
 				throw ApiError.notFound("Key not found");
 			}
+			await authorizationGuard?.assertKeyAccess(req.auth, rows, "read");
 			return { success: true, data: toPythonVerificationTokenRow(rows[0]!, false) };
 		}),
 	);
@@ -706,6 +719,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 			}
 
 			const rows = await db.select().from(LiteLLM_VerificationToken).where(inArray(LiteLLM_VerificationToken.token, tokens));
+			await authorizationGuard?.assertKeyAccess(req.auth, rows, "read");
 
 			const info = rows.map((row) => toPythonVerificationTokenRow(row, false));
 
@@ -726,10 +740,12 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 				Math.max(KEY_LIST_PAGINATION.minPageSize, parsePositiveInt(req.query.size, KEY_LIST_PAGINATION.defaultPageSize)),
 			);
 			const filters = parseKeyListFilters(req.query);
-			const whereClause = buildKeyListWhere(filters);
-
-			const rows = await db.select().from(LiteLLM_VerificationToken).where(whereClause);
-			const filteredRows = rows.filter((row) => matchesKeyListFilters(row, filters));
+			const rows: VerificationTokenRowLike[] =
+				filters.status === "deleted"
+					? await db.select().from(liteLLM_DeletedVerificationToken).where(buildDeletedKeyListWhere(filters))
+					: await db.select().from(LiteLLM_VerificationToken).where(buildKeyListWhere(filters));
+			const visibleRows = authorizationGuard ? await authorizationGuard.filterVisibleKeys(req.auth, rows) : rows;
+			const filteredRows = visibleRows.filter((row) => matchesKeyListFilters(row, filters));
 			const sortedRows = sortKeyListRows(filteredRows, firstString(req.query.sort_by), firstString(req.query.sort_order));
 			const totalCount = sortedRows.length;
 			const startIndex = (page - 1) * pageSize;
@@ -764,6 +780,15 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 			if (!tokenId) {
 				throw ApiError.badRequest("key or token is required");
 			}
+			const targetRows = await db
+				.select()
+				.from(LiteLLM_VerificationToken)
+				.where(eq(LiteLLM_VerificationToken.token, tokenId))
+				.limit(1);
+			if (targetRows.length === 0) {
+				throw ApiError.notFound("Key not found");
+			}
+			await authorizationGuard?.assertKeyAccess(req.auth, targetRows, "write");
 
 			const result = await db
 				.update(LiteLLM_VerificationToken)
@@ -791,6 +816,15 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 			if (!tokenId) {
 				throw ApiError.badRequest("key or token is required");
 			}
+			const targetRows = await db
+				.select()
+				.from(LiteLLM_VerificationToken)
+				.where(eq(LiteLLM_VerificationToken.token, tokenId))
+				.limit(1);
+			if (targetRows.length === 0) {
+				throw ApiError.notFound("Key not found");
+			}
+			await authorizationGuard?.assertKeyAccess(req.auth, targetRows, "write");
 
 			const result = await db
 				.update(LiteLLM_VerificationToken)
@@ -819,61 +853,52 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authMid
 				throw ApiError.badRequest("key or token is required");
 			}
 
-			const existing = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, oldTokenId))
-				.limit(1);
-			if (existing.length === 0) {
-				throw ApiError.notFound("Key not found");
-			}
-
-			const record = existing[0]!;
-
-			// 生成新密钥
-			const newPlainKey = generateApiKey();
+			const body = (req.body ?? {}) as Record<string, unknown>;
+			const now = new Date();
+			const newPlainKey = firstString(body.new_key) ?? generateApiKey();
 			const newTokenHash = hashApiKey(newPlainKey);
+			const revokeAt = resolveRotationRevokeAt(body, now);
 
-			// 检查新哈希碰撞
-			const collision = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, newTokenHash))
-				.limit(1);
-			if (collision.length > 0) {
-				throw ApiError.conflict("New key hash collision, please retry");
-			}
+			await db.transaction(async (tx) => {
+				const existing = await tx
+					.select()
+					.from(LiteLLM_VerificationToken)
+					.where(eq(LiteLLM_VerificationToken.token, oldTokenId))
+					.limit(1);
+				if (existing.length === 0) {
+					throw ApiError.notFound("Key not found");
+				}
+				await authorizationGuard?.assertKeyAccess(req.auth, existing, "write");
 
-			// 插入新密钥（复制旧密钥元数据）
-			await db.insert(LiteLLM_VerificationToken).values({
-				token: newTokenHash,
-				keyAlias: record.keyAlias,
-				keyName: record.keyName,
-				userId: record.userId,
-				teamId: record.teamId,
-				organizationId: record.organizationId,
-				budgetId: record.budgetId,
-				metadata: record.metadata ?? {},
-				models: record.models,
-				maxBudget: record.maxBudget,
-				tpmLimit: record.tpmLimit,
-				rpmLimit: record.rpmLimit,
-				expires: record.expires,
-				permissions: record.permissions ?? {},
-				allowedRoutes: record.allowedRoutes ?? [],
-				blocked: false,
-				createdBy: record.createdBy,
+				const collision = await tx
+					.select()
+					.from(LiteLLM_VerificationToken)
+					.where(eq(LiteLLM_VerificationToken.token, newTokenHash))
+					.limit(1);
+				if (collision.length > 0) {
+					throw ApiError.conflict("New key hash collision, please retry");
+				}
+
+				if (revokeAt) {
+					await tx.insert(liteLLM_DeprecatedVerificationToken).values({
+						token: oldTokenId,
+						activeTokenId: newTokenHash,
+						revokeAt: revokeAt,
+					});
+				}
+				const record = existing[0]!;
+				await tx
+					.update(LiteLLM_VerificationToken)
+					.set({
+						token: newTokenHash,
+						keyName: `sk-...${newPlainKey.slice(-4)}`,
+						rotationCount: (record.rotationCount ?? 0) + 1,
+						lastRotationAt: now,
+						updatedAt: now,
+						updatedBy: req.auth?.user_id ?? record.updatedBy,
+					})
+					.where(eq(LiteLLM_VerificationToken.token, oldTokenId));
 			});
-
-			// 旧密钥标记为已轮换
-			await db.insert(liteLLM_DeprecatedVerificationToken).values({
-				token: oldTokenId,
-				activeTokenId: newTokenHash,
-				revokeAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-			});
-
-			// 移除旧令牌
-			await db.delete(LiteLLM_VerificationToken).where(eq(LiteLLM_VerificationToken.token, oldTokenId));
 
 			logger.info(
 				`Key rotated: ${oldTokenId.slice(0, TOKEN_LOG_PREFIX_LENGTH)}... -> ${newTokenHash.slice(0, TOKEN_LOG_PREFIX_LENGTH)}...`,

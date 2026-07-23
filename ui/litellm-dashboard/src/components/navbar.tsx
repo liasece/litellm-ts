@@ -1,6 +1,5 @@
-import { getProxyBaseUrl } from "@/components/networking";
+import { getProxyBaseUrl, logoutWebUiSession } from "@/components/networking";
 import { useTheme } from "@/contexts/ThemeContext";
-import { clearTokenCookies } from "@/utils/cookieUtils";
 import { clearStoredReturnUrl } from "@/utils/returnUrlUtils";
 import { fetchProxySettings } from "@/utils/proxyUtils";
 import { MenuFoldOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined } from "@ant-design/icons";
@@ -64,15 +63,15 @@ const Navbar: React.FC<NavbarProps> = ({
 		setLogoutUrl(proxySettings?.PROXY_LOGOUT_URL || "");
 	}, [proxySettings]);
 
-	const handleLogout = () => {
-		clearTokenCookies();
+	const handleLogout = async () => {
+		await logoutWebUiSession();
 		localStorage.removeItem("litellm_selected_worker_id");
 		localStorage.removeItem("litellm_worker_url");
-		window.location.href = logoutUrl;
+		window.location.href = logoutUrl || "/ui/login";
 	};
 
-	const handleWorkerSwitch = (workerId: string) => {
-		clearTokenCookies();
+	const handleWorkerSwitch = async (workerId: string) => {
+		await logoutWebUiSession().catch(() => undefined);
 		clearStoredReturnUrl();
 		localStorage.removeItem("litellm_selected_worker_id");
 		localStorage.removeItem("litellm_worker_url");

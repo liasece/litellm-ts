@@ -238,6 +238,9 @@ export async function executeWithFallbackChain<T>(
 				}
 				return result;
 			} catch (err) {
+				if (err !== null && typeof err === "object" && "name" in err && err.name === "AbortError") {
+					throw err;
+				}
 				const failure = normalizeProviderFailure(err);
 				lastError = failure;
 				router.recordDeploymentFailure(attempt.deployment, failure);

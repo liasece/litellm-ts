@@ -237,6 +237,41 @@ describe("OpenAICompatProvider", () => {
 			expect(results).toHaveLength(0);
 		});
 
+		it("handles [DONE] sentinel at EOF without a trailing newline", async () => {
+			const response = createMockResponse(["data: [DONE]"]);
+
+			const results: ModelResponseStream[] = [];
+			for await (const chunk of provider.streamResponse(response)) {
+				results.push(chunk);
+			}
+
+			expect(results).toHaveLength(0);
+		});
+
+		it("parses the residual SSE data line at EOF", async () => {
+			const response = createMockResponse([
+				'data: {"id":"residual","object":"chat.completion.chunk","created":123,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"tail"},"finish_reason":null}]}',
+			]);
+
+			const results: ModelResponseStream[] = [];
+			for await (const chunk of provider.streamResponse(response)) {
+				results.push(chunk);
+			}
+
+			expect(results).toHaveLength(1);
+			expect(results[0]!.choices[0]!.delta.content).toBe("tail");
+		});
+
+		it("rejects malformed SSE data instead of silently dropping accounting-relevant events", async () => {
+			const response = createMockResponse(["data: {not-json}\n"]);
+
+			await expect(async () => {
+				for await (const _chunk of provider.streamResponse(response)) {
+					// consume stream
+				}
+			}).rejects.toThrow("Provider 返回 malformed SSE event");
+		});
+
 		it("handles multiple data lines in one chunk", async () => {
 			const response = createMockResponse([
 				'data: {"id":"1","object":"chat.completion.chunk","created":123,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}\n' +

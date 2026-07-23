@@ -12,6 +12,39 @@
  * 由认证中间件解析请求头中的 API 密钥，从 LiteLLM_VerificationToken 表中
  * 获取密钥元信息后构造该对象，挂载到请求上下文中。
  */
+/** 单个独立预算主体在认证时读取的快照。 */
+export interface BudgetSnapshot {
+	/** 主体稳定标识。 */
+	readonly id: string;
+	/** 已提交消费。 */
+	readonly spend: number;
+	/** 主体最大预算；null 表示未设置硬预算。 */
+	readonly max_budget: number | null;
+	/** 关联预算记录 ID（适用于组织、项目和团队成员）。 */
+	readonly budget_id?: string;
+}
+
+/** 请求涉及的独立预算主体快照。 */
+export interface BudgetSnapshots {
+	/** API key 预算。 */
+	key?: BudgetSnapshot;
+	/** 用户预算。 */
+	user?: BudgetSnapshot;
+	/** 团队预算。 */
+	team?: BudgetSnapshot;
+	/** 组织预算。 */
+	organization?: BudgetSnapshot;
+	/** 项目预算。 */
+	project?: BudgetSnapshot;
+	/** 团队成员预算。 */
+	team_member?: BudgetSnapshot;
+	/** 端用户预算。 */
+	end_user?: BudgetSnapshot;
+}
+
+/**
+ *
+ */
 export interface UserAPIKeyAuth {
 	/** 完整 API 密钥原文 */
 	api_key: string;
@@ -35,14 +68,18 @@ export interface UserAPIKeyAuth {
 	team_alias?: string;
 	/** 关联的组织 ID */
 	organization_id?: string;
+	/** 关联的项目 ID */
+	project_id?: string;
 	/** 密钥别名 */
 	key_alias?: string;
 	/** 允许使用的模型列表（空数组表示无限制） */
 	models?: string[];
-	/** 当前已花费金额 */
+	/** API key 主体当前已提交花费；不再与 team spend 合并。 */
 	spend?: number;
-	/** 最大预算金额 */
+	/** API key 主体最大预算；不再回退为 team budget。 */
 	max_budget?: number;
+	/** 请求涉及的各主体独立预算快照。 */
+	budget_snapshots?: BudgetSnapshots;
 	/** TPM 限制 */
 	tpm_limit?: number;
 	/** RPM 限制 */
@@ -100,6 +137,7 @@ export type TokenMetadata = Pick<
 	| "user_id"
 	| "team_id"
 	| "organization_id"
+	| "project_id"
 	| "budget_reset_at"
 	| "expires"
 	| "key_name"

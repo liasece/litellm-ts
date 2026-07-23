@@ -247,10 +247,14 @@ export interface DatabaseConfig {
 	readonly port: number;
 	/** 数据库名称 */
 	readonly database: string;
-	/** 数据库用户名 */
+	/** 数据库用户名；连接串来源时保留 URL 编码形式，仅用于兼容配置展示。 */
 	readonly user: string;
-	/** 数据库密码 */
+	/** 数据库密码；连接串来源时保留 URL 编码形式，仅用于兼容配置展示。 */
 	readonly password: string;
+	/** 原始 PostgreSQL 连接串，保留 SSL、options、schema 与编码凭据语义。 */
+	readonly connectionString?: string;
+	/** pg.Pool 最大连接数。 */
+	readonly maxConnections?: number;
 }
 
 /** LiteLLM 核心设置 */
@@ -508,15 +512,12 @@ export function generateModelId(modelGroup: string, litellmParams: Record<string
  * 支持 `postgresql://user:pass@host:port/database` 格式。
  * @param url
  */
-function parseDatabaseUrl(url: string): {
-	host: string;
-	port: number;
-	database: string;
-	user: string;
-	password: string;
-} | null {
+function parseDatabaseUrl(url: string): DatabaseConfig | null {
 	try {
 		const parsed = new URL(url);
+		if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
+			return null;
+		}
 		const host = parsed.hostname;
 		const portRaw = parsed.port;
 		const port = portRaw && portRaw.length > 0 ? Number(portRaw) : 5432;
@@ -529,7 +530,14 @@ function parseDatabaseUrl(url: string): {
 		if (!host) {
 			return null;
 		}
-		return { host: host, port: port, database: database, user: user, password: password };
+		return {
+			host: host,
+			port: port,
+			database: database,
+			user: user,
+			password: password,
+			connectionString: url,
+		};
 	} catch {
 		return null;
 	}
@@ -586,7 +594,7 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 
 	// database: 顶层 database → DATABASE_URL 环境变量 → general_settings.database_url → 默认值
 	// 环境变量优先级高于 YAML，用于部署脚本注入真实数据库连接
-	let databaseConfig = { ...config.database };
+	let databaseConfig: DatabaseConfig = { ...config.database };
 	const envDatabaseUrl = process.env.DATABASE_URL;
 	const yamlDatabaseUrl = generalSettingsRaw["database_url"];
 	const envValid = typeof envDatabaseUrl === "string" && envDatabaseUrl.length > 0;
@@ -596,9 +604,13 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 		const parsed = parseDatabaseUrl(databaseUrlRaw);
 		if (!parsed) {
 			const sourceLabel = envValid ? "DATABASE_URL" : "general_settings.database_url";
-			throw new Error(`Invalid ${sourceLabel}: expected postgresql:// connection string, got "${databaseUrlRaw}".`);
+			throw new Error(`Invalid ${sourceLabel}: expected postgresql:// connection string.`);
 		}
 		databaseConfig = { ...databaseConfig, ...parsed };
+	}
+	const poolLimit = generalSettingsRaw["database_connection_pool_limit"];
+	if (typeof poolLimit === "number") {
+		databaseConfig = { ...databaseConfig, maxConnections: poolLimit };
 	}
 
 	// generalSettings: snake_case general_settings 派生，camelCase 仅作兼容回退（冲突时 snake_case 优先）
