@@ -26,6 +26,47 @@ export type DatabaseReadinessResult =
 	| { readonly ready: true }
 	| { readonly ready: false; readonly reason: "not_initialized" | "query_failed" };
 
+/** 生产数据库只读接管门禁结果。 */
+export interface ReadOnlyPreflightResult {
+	/**
+	 *
+	 */
+	readonly status: "ok";
+	/**
+	 *
+	 */
+	readonly check: "production_database";
+	/**
+	 *
+	 */
+	readonly transaction: "read_only";
+	/**
+	 *
+	 */
+	readonly schema: string;
+	/**
+	 *
+	 */
+	readonly migrationState: "unadopted" | "managed";
+}
+
+/** 生产数据库只读接管门禁的脱敏错误。 */
+export class ReadOnlyPreflightError extends Error {
+	/**
+	 * @param stage - 失败阶段
+	 * @param code - 稳定错误码
+	 * @param message - 脱敏错误信息
+	 */
+	constructor(
+		readonly stage: "connect" | "transaction" | "schema" | "migrations",
+		readonly code: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "ReadOnlyPreflightError";
+	}
+}
+
 function positiveInteger(value: string | null): number | undefined {
 	if (value === null || !/^\d+$/.test(value)) {
 		return undefined;
@@ -111,6 +152,105 @@ async function adoptBaseline(client: PoolClient, migrationsFolder: string, migra
 	);
 	if (Number(latest.rows[0]?.created_at ?? 0) < baseline.folderMillis) {
 		await client.query(`INSERT INTO ${migrationTable} (hash, created_at) VALUES ($1, $2)`, [baseline.hash, baseline.folderMillis]);
+	}
+}
+
+interface MigrationRecord {
+	/** 已登记 migration hash。 */
+	readonly hash: string;
+	/** 已登记 migration 时间戳。 */
+	readonly created_at: string | null;
+}
+
+async function inspectMigrationState(
+	client: PoolClient,
+	schemaName: string,
+	migrationsFolder: string,
+): Promise<ReadOnlyPreflightResult["migrationState"]> {
+	const localMigrations = readMigrationFiles({ migrationsFolder: migrationsFolder });
+	if (localMigrations.length === 0) {
+		throw new ReadOnlyPreflightError("migrations", "LOCAL_MIGRATIONS_MISSING", "Local Drizzle migrations are unavailable");
+	}
+	const existence = await client.query<{ exists: boolean }>(
+		"SELECT to_regclass(format('%I.%I', current_schema(), '__drizzle_migrations')) IS NOT NULL AS exists",
+	);
+	if (existence.rows[0]?.exists !== true) {
+		return "unadopted";
+	}
+
+	const migrationTable = `${quoteIdentifier(schemaName)}."__drizzle_migrations"`;
+	const registered = await client.query<MigrationRecord>(`SELECT hash, created_at FROM ${migrationTable} ORDER BY id ASC`);
+	const localHashes = new Set(localMigrations.map((migration) => migration.hash));
+	for (const record of registered.rows) {
+		if (!localHashes.has(record.hash)) {
+			const timestampMatches = localMigrations.some((migration) => migration.folderMillis === Number(record.created_at));
+			throw new ReadOnlyPreflightError(
+				"migrations",
+				timestampMatches ? "MIGRATION_ARTIFACT_MISMATCH" : "UNKNOWN_MIGRATION",
+				timestampMatches ? "Registered migration does not match the local artifact" : "Unknown migration is registered",
+			);
+		}
+	}
+	if (registered.rows.length !== localMigrations.length) {
+		throw new ReadOnlyPreflightError("migrations", "PARTIAL_MIGRATION_STATE", "Registered migrations are incomplete");
+	}
+	for (const [index, migration] of localMigrations.entries()) {
+		const record = registered.rows[index];
+		if (record?.hash !== migration.hash || Number(record.created_at) !== migration.folderMillis) {
+			throw new ReadOnlyPreflightError("migrations", "MIGRATION_ORDER_MISMATCH", "Registered migration order is invalid");
+		}
+	}
+	return "managed";
+}
+
+/**
+ * 在短生命周期只读事务中验证生产数据库可由当前 TS 工件接管。
+ * @param config - 数据库连接配置
+ */
+export async function runReadOnlySchemaPreflight(config: DatabaseConfig): Promise<ReadOnlyPreflightResult> {
+	const pool = new pg.Pool(buildPoolConfig(config));
+	let client: PoolClient | undefined;
+	let transactionOpen = false;
+	let stage: ReadOnlyPreflightError["stage"] = "connect";
+	try {
+		client = await pool.connect();
+		stage = "transaction";
+		await client.query("BEGIN READ ONLY");
+		transactionOpen = true;
+		await client.query("SELECT 1");
+		stage = "schema";
+		const identity = await client.query<{ database_name: string; schema_name: string | null }>(
+			"SELECT current_database() AS database_name, current_schema() AS schema_name",
+		);
+		const databaseName = identity.rows[0]?.database_name;
+		const schemaName = identity.rows[0]?.schema_name;
+		if (!databaseName || !schemaName) {
+			throw new ReadOnlyPreflightError("schema", "DATABASE_IDENTITY_UNAVAILABLE", "Database identity is unavailable");
+		}
+		await runSchemaPreflight(client);
+		stage = "migrations";
+		const migrationsFolder = path.join(__dirname, "../../../drizzle");
+		const migrationState = await inspectMigrationState(client, schemaName, migrationsFolder);
+		await client.query("COMMIT");
+		transactionOpen = false;
+		return {
+			status: "ok",
+			check: "production_database",
+			transaction: "read_only",
+			schema: schemaName,
+			migrationState: migrationState,
+		};
+	} catch (error) {
+		if (client && transactionOpen) {
+			await client.query("ROLLBACK").catch(() => undefined);
+		}
+		if (error instanceof ReadOnlyPreflightError) {
+			throw error;
+		}
+		throw new ReadOnlyPreflightError(stage, "PREFLIGHT_FAILED", "PostgreSQL read-only preflight failed");
+	} finally {
+		client?.release();
+		await pool.end();
 	}
 }
 

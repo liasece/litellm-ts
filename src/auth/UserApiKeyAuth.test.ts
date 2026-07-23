@@ -545,9 +545,12 @@ describe("UserApiKeyAuth", () => {
 				findDeprecatedVerificationTokenByHash: jestMock.fn(),
 				findEndUserById: jestMock.fn().mockResolvedValue({
 					userId: "end-user",
+					alias: null,
 					spend: 2,
-					maxBudget: null,
+					allowedModelRegion: null,
+					defaultModel: null,
 					budgetId: "end-user-budget",
+					objectPermissionId: null,
 					blocked: false,
 				}),
 				findBudgetById: findBudgetById,
@@ -563,6 +566,36 @@ describe("UserApiKeyAuth", () => {
 			});
 			expect(findBudgetById).toHaveBeenCalledWith("key-budget");
 			expect(findBudgetById).toHaveBeenCalledWith("end-user-budget");
+		});
+
+		it("EndUser 无 budget_id 时按无限额认证", async () => {
+			const { createApiKeyAuth } = await import("./UserApiKeyAuth");
+			const repo = {
+				findVerificationTokenByHash: jestMock.fn().mockResolvedValue(makeToken({ token: "key-hash" })),
+				findDeprecatedVerificationTokenByHash: jestMock.fn(),
+				findEndUserById: jestMock.fn().mockResolvedValue({
+					userId: "end-user-no-budget",
+					alias: null,
+					spend: 2,
+					allowedModelRegion: null,
+					defaultModel: null,
+					budgetId: null,
+					objectPermissionId: null,
+					blocked: false,
+				}),
+				findBudgetById: jestMock.fn(),
+			} as unknown as Parameters<typeof createApiKeyAuth>[0];
+			const req = mkReq({ "x-api-key": "sk-no-end-user-budget", "x-end-user-id": "end-user-no-budget" });
+
+			const error = await runMiddleware(createApiKeyAuth(repo), req);
+
+			expect(error).toBeUndefined();
+			expect(req.auth?.budget_snapshots?.end_user).toMatchObject({
+				id: "end-user-no-budget",
+				spend: 2,
+				max_budget: null,
+			});
+			expect(repo.findBudgetById).not.toHaveBeenCalled();
 		});
 
 		it("key 与 team spend 不再合并，并保留各自预算", async () => {

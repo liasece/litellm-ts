@@ -60,10 +60,6 @@ function makeEndUser(overrides: Record<string, unknown> = {}): Record<string, un
 		budgetId: null,
 		objectPermissionId: null,
 		blocked: false,
-		maxBudget: null,
-		softBudget: null,
-		metadata: {},
-		allowedRoutes: null,
 		...overrides,
 	};
 }

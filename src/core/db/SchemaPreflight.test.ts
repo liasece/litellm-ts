@@ -1,5 +1,5 @@
 import baseline from "./python-schema-baseline.json";
-import { compareSchemaSnapshots, type SchemaSnapshot } from "./SchemaPreflight";
+import { compareSchemaSnapshots, validateRuntimeSchemaContract, type SchemaSnapshot } from "./SchemaPreflight";
 
 const compatible: SchemaSnapshot = {
 	source: "fixture",
@@ -101,5 +101,9 @@ describe("PostgreSQL schema preflight", () => {
 			nullable: false,
 			default: "0",
 		});
+	});
+
+	it("运行时 EndUser 映射与 Python 八列基线精确一致", () => {
+		expect(() => validateRuntimeSchemaContract()).not.toThrow();
 	});
 });

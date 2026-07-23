@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "../db/schema";
+import { AuthRepository } from "../auth/AuthRepository";
 import { CallType } from "../types/spend";
 import { releaseSpend, renewSpendReservation, reserveSpend, settleSpend, trackSpendLog } from "./SpendTracker";
 
@@ -26,6 +27,16 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 		await db.execute(
 			sql`CREATE TABLE "LiteLLM_UserTable" (user_id text PRIMARY KEY, max_budget double precision, spend double precision DEFAULT 0)`,
 		);
+		await db.execute(sql`CREATE TABLE "LiteLLM_EndUserTable" (
+			user_id text PRIMARY KEY,
+			alias text,
+			spend double precision NOT NULL DEFAULT 0,
+			allowed_model_region text,
+			default_model text,
+			budget_id text,
+			object_permission_id text,
+			blocked boolean NOT NULL DEFAULT false
+		)`);
 		const migrationSql = readFileSync(resolve(__dirname, "../../drizzle/0001_spend_reservations.sql"), "utf8");
 		for (const statement of migrationSql
 			.split("--> statement-breakpoint")
@@ -71,7 +82,7 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 
 	beforeEach(async () => {
 		await db.execute(
-			sql`TRUNCATE "LiteLLM_SpendLogs", "LiteLLM_SpendReservations", "LiteLLM_VerificationToken", "LiteLLM_UserTable", "LiteLLM_BudgetTable"`,
+			sql`TRUNCATE "LiteLLM_SpendLogs", "LiteLLM_SpendReservations", "LiteLLM_VerificationToken", "LiteLLM_UserTable", "LiteLLM_EndUserTable", "LiteLLM_BudgetTable"`,
 		);
 		await db.execute(sql`INSERT INTO "LiteLLM_VerificationToken" (token, max_budget, spend) VALUES ('key-a', 10, 0)`);
 	});
@@ -116,6 +127,35 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 		await expect(reserveSpend(db, { requestId: "budget-id", reserved: 6, scopes: [{ kind: "key", id: "key-a" }] })).rejects.toThrow(
 			"预算不足",
 		);
+	});
+
+	it("EndUser 全列查询不依赖虚构列", async () => {
+		await db.execute(
+			sql`INSERT INTO "LiteLLM_EndUserTable" (user_id, alias, spend, budget_id, blocked) VALUES ('end-user-read', 'reader', 1, NULL, false)`,
+		);
+		const repository = new AuthRepository(db as never);
+
+		await expect(repository.findEndUserById("end-user-read")).resolves.toMatchObject({
+			userId: "end-user-read",
+			alias: "reader",
+			spend: 1,
+			budgetId: null,
+			blocked: false,
+		});
+	});
+
+	it("EndUser reservation 只使用关联 BudgetTable 且并发不穿透", async () => {
+		await db.execute(sql`INSERT INTO "LiteLLM_BudgetTable" (budget_id, max_budget) VALUES ('end-budget', 10)`);
+		await db.execute(
+			sql`INSERT INTO "LiteLLM_EndUserTable" (user_id, spend, budget_id, blocked) VALUES ('end-user-budget', 0, 'end-budget', false)`,
+		);
+
+		const results = await Promise.allSettled([
+			reserveSpend(db, { requestId: "end-reserve-a", reserved: 6, scopes: [{ kind: "end_user", id: "end-user-budget" }] }),
+			reserveSpend(db, { requestId: "end-reserve-b", reserved: 6, scopes: [{ kind: "end_user", id: "end-user-budget" }] }),
+		]);
+
+		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
 	});
 
 	it("过期 reservation 可原子恢复", async () => {

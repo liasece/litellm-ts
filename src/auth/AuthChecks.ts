@@ -44,16 +44,6 @@ interface TagRow {
 	maxBudget?: number | null;
 }
 
-/** 端用户行类型 */
-interface EndUserRow {
-	blocked?: boolean | null;
-	spend?: number | null;
-	maxBudget?: number | null;
-	softBudget?: number | null;
-	metadata?: Record<string, unknown> | null;
-	allowedRoutes?: string[] | null;
-}
-
 /** 项目行类型，对齐 PY LiteLLM_ProjectTable */
 interface ProjectRow {
 	blocked?: boolean | null;
@@ -260,33 +250,6 @@ export function checkTagBudget(tag?: TagRow | null): void {
 	}
 	if (tag.maxBudget != null && (tag.spend ?? 0) >= tag.maxBudget) {
 		throw ApiError.tooManyRequests("标签预算已超限");
-	}
-}
-
-/**
- * PY: check end_user budget (auth_checks.py:535-545)
- * @param endUser - end_user record
- * @throws ApiError 429 if budget exceeded
- */
-export function checkEndUserBudget(endUser?: EndUserRow | null): void {
-	if (!endUser) {
-		return;
-	}
-	if (endUser.blocked) {
-		throw ApiError.unauthorized("端用户已被禁用");
-	}
-	if (endUser.maxBudget != null && (endUser.spend ?? 0) >= endUser.maxBudget) {
-		throw ApiError.tooManyRequests("端用户预算已超限");
-	}
-	if (endUser.softBudget != null && (endUser.spend ?? 0) >= endUser.softBudget) {
-		logger.warn(`端用户软预算已超限: spend=${endUser.spend}, softBudget=${endUser.softBudget}`);
-		// GAP: 触发预算报警 channels
-		void emitBudgetAlert({
-			type: BudgetAlertType.SoftBudgetExceeded,
-			entity: BudgetEntity.EndUser,
-			spend: endUser.spend ?? 0,
-			softBudget: endUser.softBudget,
-		});
 	}
 }
 

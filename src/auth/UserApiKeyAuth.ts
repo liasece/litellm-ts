@@ -14,6 +14,7 @@ import { hashApiKey } from "../core/utils/crypto";
 import type { AuthRepository } from "./AuthRepository";
 import type { BudgetSnapshots, UserAPIKeyAuth } from "../types/auth";
 import { JWTHandler } from "./JWTHandler";
+import { createModuleLogger } from "../core/utils/logger";
 import {
 	WEBUI_COOKIE_TOKEN_NAME,
 	WEBUI_CSRF_COOKIE_NAME,
@@ -23,6 +24,8 @@ import {
 	PROXY_ADMIN_ROLE,
 	PROXY_ADMIN_USER_ID,
 } from "../types/webUiSession";
+
+const logger = createModuleLogger("UserApiKeyAuth");
 
 /**
  * Express Request 扩展 — 增加 auth 属性
@@ -537,7 +540,7 @@ export function createApiKeyAuth(
 					budgetSnapshots.end_user = {
 						id: endUser.userId,
 						spend: endUser.spend ?? 0,
-						max_budget: budget?.max_budget ?? endUser.maxBudget ?? null,
+						max_budget: budget?.max_budget ?? null,
 						budget_id: endUser.budgetId ?? undefined,
 					};
 				}
@@ -584,6 +587,14 @@ export function createApiKeyAuth(
 
 			next();
 		} catch (error) {
+			if (!(error instanceof ApiError)) {
+				logger.error("认证中间件非预期异常", {
+					error: error instanceof Error ? error.message : String(error),
+					stack: error instanceof Error ? error.stack : undefined,
+					method: req.method,
+					url: req.originalUrl,
+				});
+			}
 			next(error instanceof ApiError ? error : ApiError.unavailable("认证账务数据暂不可用"));
 		}
 	};

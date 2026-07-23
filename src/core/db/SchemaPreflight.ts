@@ -1,4 +1,6 @@
+import { getTableColumns } from "drizzle-orm";
 import type { PoolClient } from "pg";
+import { LiteLLM_EndUserTable } from "../../db/schema/end-users";
 import baseline from "./python-schema-baseline.json";
 
 /**
@@ -216,10 +218,31 @@ export function compareSchemaSnapshots(expected: SchemaSnapshot, actual: SchemaS
 }
 
 /**
+ * 校验认证敏感运行时映射没有越过 Python 基线。
+ * @throws {Error} 运行时映射与基线不一致时抛出
+ */
+export function validateRuntimeSchemaContract(): void {
+	const endUserBaseline = (baseline as SchemaSnapshot).tables.find((table) => table.name === "LiteLLM_EndUserTable");
+	if (!endUserBaseline) {
+		throw new Error("Runtime schema contract unavailable: LiteLLM_EndUserTable baseline missing");
+	}
+	const expectedColumns = endUserBaseline.columns.map((column) => column.name).sort();
+	const runtimeColumns = Object.values(getTableColumns(LiteLLM_EndUserTable))
+		.map((column) => column.name)
+		.sort();
+	if (runtimeColumns.length !== expectedColumns.length || runtimeColumns.some((column, index) => column !== expectedColumns[index])) {
+		throw new Error(
+			`Runtime schema contract mismatch: LiteLLM_EndUserTable expected [${expectedColumns.join(", ")}], got [${runtimeColumns.join(", ")}]`,
+		);
+	}
+}
+
+/**
  * 对当前 search_path schema 执行只读 catalog inspection，并拒绝 Python LiteLLM 基线漂移。
  * @param client
  */
 export async function runSchemaPreflight(client: PoolClient): Promise<void> {
+	validateRuntimeSchemaContract();
 	const result = await client.query<{ snapshot: SchemaSnapshot }>(INSPECT_SCHEMA_SQL);
 	const actual = result.rows[0]?.snapshot;
 	if (!actual) {

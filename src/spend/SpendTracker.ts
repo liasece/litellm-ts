@@ -789,7 +789,7 @@ async function lockReservationBudget(
 			query = sql`SELECT NULL::real AS max_budget, budget_id, spend FROM "LiteLLM_TeamMembership" WHERE user_id = ${scope.userId} AND team_id = ${scope.teamId} FOR UPDATE`;
 			break;
 		case "end_user":
-			query = sql`SELECT max_budget, budget_id, spend FROM "LiteLLM_EndUserTable" WHERE user_id = ${scope.id} FOR UPDATE`;
+			query = sql`SELECT NULL::real AS max_budget, budget_id, spend FROM "LiteLLM_EndUserTable" WHERE user_id = ${scope.id} FOR UPDATE`;
 			break;
 		default:
 			throw ApiError.badRequest("不支持的预算主体类型");

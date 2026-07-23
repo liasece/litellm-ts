@@ -1,6 +1,7 @@
 import pg from "pg";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Database } from "./Database";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { Database, runReadOnlySchemaPreflight } from "./Database";
 import { runSchemaPreflight } from "./SchemaPreflight";
 
 const mockClientQuery = jest.fn();
@@ -121,5 +122,95 @@ describe("Database initialization takeover", () => {
 		const migrationFailed = new Database(config);
 		await expect(migrationFailed.initialize()).rejects.toThrow("migration failed");
 		await expect(migrationFailed.probeReadiness()).resolves.toEqual({ ready: false, reason: "not_initialized" });
+	});
+});
+
+describe("runReadOnlySchemaPreflight", () => {
+	const localMigrations = readMigrationFiles({ migrationsFolder: `${process.cwd()}/drizzle` });
+
+	beforeEach(() => {
+		jest.clearAllMocks();
+		jest.mocked(runSchemaPreflight).mockResolvedValue(undefined);
+		mockClientQuery.mockImplementation((query: unknown) => {
+			const text = sqlText(query);
+			if (text.includes("current_database() AS database_name")) {
+				return Promise.resolve({ rows: [{ database_name: "litellm", schema_name: "tenant_a" }] });
+			}
+			if (text.includes("to_regclass")) {
+				return Promise.resolve({ rows: [{ exists: true }] });
+			}
+			if (text.includes("SELECT hash, created_at")) {
+				return Promise.resolve({
+					rows: localMigrations.map((migration) => ({ hash: migration.hash, created_at: String(migration.folderMillis) })),
+				});
+			}
+			return Promise.resolve({ rows: [] });
+		});
+		mockPoolEnd.mockResolvedValue(undefined);
+	});
+
+	it("仅在只读事务中执行 schema 与完整 migration 检查后提交", async () => {
+		await expect(runReadOnlySchemaPreflight(config)).resolves.toEqual({
+			status: "ok",
+			check: "production_database",
+			transaction: "read_only",
+			schema: "tenant_a",
+			migrationState: "managed",
+		});
+		const calls = mockClientQuery.mock.calls.map(([query]) => sqlText(query));
+		expect(calls[0]).toBe("BEGIN READ ONLY");
+		expect(calls).toContain("COMMIT");
+		expect(runSchemaPreflight).toHaveBeenCalledTimes(1);
+		expect(mockClientRelease).toHaveBeenCalledTimes(1);
+		expect(mockPoolEnd).toHaveBeenCalledTimes(1);
+		expect(calls.join("\n")).not.toMatch(/pg_advisory|\b(?:INSERT|CREATE|ALTER|DROP|UPDATE|DELETE)\b/i);
+		expect(migrate).not.toHaveBeenCalled();
+	});
+
+	it("未 adoption 的 Python baseline 允许通过且不创建 migration 表", async () => {
+		mockClientQuery.mockImplementation((query: unknown) => {
+			const text = sqlText(query);
+			if (text.includes("current_database() AS database_name")) {
+				return Promise.resolve({ rows: [{ database_name: "litellm", schema_name: "tenant_a" }] });
+			}
+			if (text.includes("to_regclass")) {
+				return Promise.resolve({ rows: [{ exists: false }] });
+			}
+			return Promise.resolve({ rows: [] });
+		});
+		await expect(runReadOnlySchemaPreflight(config)).resolves.toMatchObject({ migrationState: "unadopted" });
+		expect(mockClientQuery.mock.calls.map(([query]) => sqlText(query)).join("\n")).not.toMatch(/\bCREATE\b/i);
+	});
+
+	it("未知或部分 migration 失败时 rollback 并清理连接", async () => {
+		mockClientQuery.mockImplementation((query: unknown) => {
+			const text = sqlText(query);
+			if (text.includes("current_database() AS database_name")) {
+				return Promise.resolve({ rows: [{ database_name: "litellm", schema_name: "tenant_a" }] });
+			}
+			if (text.includes("to_regclass")) {
+				return Promise.resolve({ rows: [{ exists: true }] });
+			}
+			if (text.includes("SELECT hash, created_at")) {
+				return Promise.resolve({ rows: [{ hash: "unknown", created_at: "1" }] });
+			}
+			return Promise.resolve({ rows: [] });
+		});
+		await expect(runReadOnlySchemaPreflight(config)).rejects.toMatchObject({ code: "UNKNOWN_MIGRATION" });
+		expect(mockClientQuery.mock.calls.map(([query]) => sqlText(query))).toContain("ROLLBACK");
+		expect(mockClientRelease).toHaveBeenCalledTimes(1);
+		expect(mockPoolEnd).toHaveBeenCalledTimes(1);
+	});
+
+	it("schema preflight 失败时 rollback 且不泄露原始错误", async () => {
+		jest.mocked(runSchemaPreflight).mockRejectedValueOnce(new Error("password=secret host=db.internal"));
+		await expect(runReadOnlySchemaPreflight(config)).rejects.toMatchObject({
+			stage: "schema",
+			code: "PREFLIGHT_FAILED",
+			message: "PostgreSQL read-only preflight failed",
+		});
+		expect(mockClientQuery.mock.calls.map(([query]) => sqlText(query))).toContain("ROLLBACK");
+		expect(mockClientRelease).toHaveBeenCalledTimes(1);
+		expect(mockPoolEnd).toHaveBeenCalledTimes(1);
 	});
 });

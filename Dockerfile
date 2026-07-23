@@ -1,24 +1,34 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:22-alpine AS ui-builder
+
+WORKDIR /app/ui
+
+COPY ui/litellm-dashboard/package.json ui/litellm-dashboard/package-lock.json ./
+RUN npm ci
+COPY ui/litellm-dashboard/ ./
+RUN npm run build && test -s /app/ui/out/index.html
+
 FROM node:22-alpine
+
+ARG APP_PORT=4000
+ENV APP_PORT=${APP_PORT}
 
 WORKDIR /app
 
-# 复制依赖文件
 COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
-# 安装生产依赖
-RUN npm ci --only=production && npm cache clean --force
-
-# 复制编译产物和配置文件
 COPY dist/ ./dist/
-COPY config.litellm.yaml ./config.yaml
-COPY drizzle ./drizzle
+COPY drizzle/ ./drizzle/
+COPY --from=ui-builder /app/ui/out ./ui/out
 
-# 暴露端口
-EXPOSE 4000
+RUN node -e "const { readMigrationFiles } = require('drizzle-orm/migrator'); const migrations = readMigrationFiles({ migrationsFolder: '/app/drizzle' }); if (migrations.length === 0) throw new Error('Drizzle migrations are missing from runtime image');" \
+    && test -s /app/ui/out/index.html
 
-# 健康检查
+EXPOSE ${APP_PORT}
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:4000/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${APP_PORT}/health/liveliness || exit 1
 
-# 启动
 CMD ["node", "dist/main.js"]
