@@ -144,7 +144,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		accessorKey: "request_id",
 		cell: (info: any) => (
 			<Tooltip title={String(info.getValue() || "")}>
-				<span className="font-mono text-xs max-w-[15ch] truncate block">{String(info.getValue() || "")}</span>
+				<span className="font-mono text-xs max-w-[25ch] truncate block">{String(info.getValue() || "")}</span>
 			</Tooltip>
 		),
 	},
@@ -199,7 +199,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			const seconds = (ms / 1000).toFixed(2);
 			return (
 				<Tooltip title={`${ms}ms`}>
-					<span className="max-w-[15ch] truncate block">{seconds}</span>
+					<span className="max-w-[25ch] truncate block">{seconds}</span>
 				</Tooltip>
 			);
 		},
@@ -218,7 +218,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			const ttftSeconds = (ttftMs / 1000).toFixed(2);
 			return (
 				<Tooltip title={`${ttftMs}ms`}>
-					<span className="max-w-[15ch] truncate block">{ttftSeconds}</span>
+					<span className="max-w-[25ch] truncate block">{ttftSeconds}</span>
 				</Tooltip>
 			);
 		},
@@ -236,7 +236,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			return (
 				<Tooltip title={alias}>
 					<span
-						className="max-w-[15ch] truncate block cursor-pointer hover:text-blue-600"
+						className="max-w-[25ch] truncate block cursor-pointer hover:text-blue-600"
 						onClick={() => keyHash && onKeyHashClick?.(keyHash)}
 					>
 						{alias}
@@ -253,6 +253,17 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			const provider = row.custom_llm_provider;
 			const modelName = String(info.getValue() || "");
 			const displayModelName = getDisplayModelName(modelName, provider);
+			const fallbackModels: string[] | undefined = row.metadata?.fallback_models;
+			const fallbackCount = fallbackModels && fallbackModels.length > 1 ? fallbackModels.length - 1 : 0;
+			const fallbackTooltip =
+				fallbackModels && fallbackModels.length > 1
+					? fallbackModels
+							.map((m: string, i: number) => {
+								const name = getDisplayModelName(m, provider);
+								return i === 0 ? name : "\u2192 " + name;
+							})
+							.join(" ")
+					: undefined;
 			return (
 				<div className="flex items-center space-x-2">
 					{provider && (
@@ -266,8 +277,15 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 							}}
 						/>
 					)}
-					<Tooltip title={modelName}>
-						<span className="max-w-[15ch] truncate block">{displayModelName}</span>
+					<Tooltip title={fallbackTooltip ?? modelName}>
+						<span className="max-w-[25ch] truncate block">
+							{fallbackCount > 0 && (
+								<Tooltip title={fallbackTooltip}>
+									<span className="text-gray-400 mr-0.5 cursor-help">({fallbackCount})</span>
+								</Tooltip>
+							)}
+							{displayModelName}
+						</span>
 					</Tooltip>
 				</div>
 			);
@@ -358,7 +376,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		accessorKey: "user",
 		cell: (info: any) => (
 			<Tooltip title={String(info.getValue() || "-")}>
-				<span className="max-w-[15ch] truncate block">{String(info.getValue() || "-")}</span>
+				<span className="max-w-[25ch] truncate block">{String(info.getValue() || "-")}</span>
 			</Tooltip>
 		),
 	},
@@ -367,7 +385,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		accessorKey: "end_user",
 		cell: (info: any) => (
 			<Tooltip title={String(info.getValue() || "-")}>
-				<span className="max-w-[15ch] truncate block">{String(info.getValue() || "-")}</span>
+				<span className="max-w-[25ch] truncate block">{String(info.getValue() || "-")}</span>
 			</Tooltip>
 		),
 	},
@@ -621,7 +639,7 @@ export const auditLogColumns: ColumnDef<AuditLogEntry>[] = [
 					<div className="font-medium">{changedBy}</div>
 					{apiKey && ( // Only show API key if it exists
 						<Tooltip title={apiKey}>
-							<div className="text-xs text-muted-foreground max-w-[15ch] truncate">
+							<div className="text-xs text-muted-foreground max-w-[25ch] truncate">
 								{" "}
 								{/* Apply max-width and truncate */}
 								{apiKey}

@@ -87,7 +87,7 @@ describe("createServiceContainer — router_settings 接线", () => {
 		expect(internals._maxFallbacks).toBe(5);
 	});
 
-	it("config 生成的 sha256 deployment id 流入 Router deployments", async () => {
+	it("DB 中的模型通过 ProxyModelDeployment 流入 Router deployments", async () => {
 		const config = validateAndTransform({
 			model_list: [
 				{
@@ -100,10 +100,21 @@ describe("createServiceContainer — router_settings 接线", () => {
 				},
 			],
 		});
+		// 运行时模型只从 DB 加载，需要预先插入 mock DB 行
+		mockDbModelRows.push({
+			model_id: "test-glm-id",
+			model_name: "glm-4-7-anthropic",
+			litellm_params: {
+				model: "anthropic/glm-4.7",
+				api_base: "https://open.bigmodel.cn/api/anthropic",
+				api_key: "sk-test",
+			},
+			model_info: {},
+		});
 		const container = await createServiceContainer(config);
 		const deployments = container.router.getDeployments();
 		expect(deployments).toHaveLength(1);
-		expect(deployments[0]?.model_info?.id).toBe("5e49c98b2ca1d95217d90738a5778fd169efd1c24299c69d1e2419939ae92b78");
+		expect(deployments[0]?.model_info?.id).toBe("test-glm-id");
 	});
 });
 
@@ -130,16 +141,17 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 		expect(internals._numRetries).toBe(4);
 	});
 
-	it("DB router_settings 含非法 routing_strategy 时启动不崩溃，yaml 值保留", async () => {
+	it("DB router_settings 含非法 routing_strategy 时不阻断其他合法设置", async () => {
 		mockConfigParams["router_settings"] = { routing_strategy: "not-a-strategy", num_retries: 9 };
 		const config = validateAndTransform({
 			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
 			router_settings: { num_retries: 2 },
 		});
 		const container = await createServiceContainer(config);
-		// updateSettings 整体在 try/catch 内失败：yaml num_retries 保留
+		// routing_strategy 非法时 updateSettings 抛异常，但该键之前已应用的设置（num_retries）保留
+		// DB 中 num_retries=9，覆盖 yaml 的 num_retries=2
 		const internals = container.router as unknown as { _numRetries: number };
-		expect(internals._numRetries).toBe(2);
+		expect(internals._numRetries).toBe(9);
 	});
 
 	it("DB 模型回灌：DB 独有模型加入 Router 且 model_info.db_model=true，可立即路由", async () => {
@@ -159,22 +171,18 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 		expect((dbDeployment?.model_info as Record<string, unknown> | undefined)?.["db_model"]).toBe(true);
 	});
 
-	it("DB 模型回灌：同 model_id DB 优先（替换 yaml deployment 的 litellm_params）", async () => {
-		const yamlConfig = validateAndTransform({
+	it("DB 模型回灌：模型仅从 DB 加载，DB 值为准", async () => {
+		const config = validateAndTransform({
 			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-yaml" } }],
 		});
-		// 先装配一次拿到 yaml deployment 的生成 id
-		const baseline = await createServiceContainer(yamlConfig);
-		const yamlDeploymentId = baseline.router.getDeployments()[0]?.model_info?.id;
-		expect(typeof yamlDeploymentId).toBe("string");
-
+		// 运行时模型仅从 DB 加载，yaml model_list 不影响 Router
 		mockDbModelRows.push({
-			model_id: yamlDeploymentId,
+			model_id: "db-gpt-5-id",
 			model_name: "gpt-5",
 			litellm_params: { model: "openai/gpt-5", api_key: "sk-db-override" },
 			model_info: {},
 		});
-		const container = await createServiceContainer(yamlConfig);
+		const container = await createServiceContainer(config);
 		const deployments = container.router.getDeployments();
 		expect(deployments).toHaveLength(1);
 		expect(deployments[0]?.litellm_params["api_key"]).toBe("sk-db-override");

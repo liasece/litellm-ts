@@ -218,11 +218,12 @@ export async function executeWithFallbackChain<T>(
 	requestApiKey: string | undefined,
 	requestAnthropicVersion: string | undefined,
 	execute: (attempt: UpstreamAttempt) => Promise<T>,
-	fallbackStats?: { fallbackDepth: number },
+	fallbackStats?: { fallbackDepth: number; fallbackModels?: string[] },
 ): Promise<T> {
 	const attemptedDeploymentKeys = new Set<string>();
 	let currentModel: string | null = model;
 	let fallbackDepth = 0;
+	const fallbackModels: string[] = [model];
 	let lastError: Error | null = null;
 
 	while (currentModel !== null) {
@@ -235,6 +236,7 @@ export async function executeWithFallbackChain<T>(
 				router.recordDeploymentSuccess(attempt.deployment);
 				if (fallbackStats) {
 					fallbackStats.fallbackDepth = fallbackDepth;
+					fallbackStats.fallbackModels = fallbackModels;
 				}
 				return result;
 			} catch (err) {
@@ -260,6 +262,9 @@ export async function executeWithFallbackChain<T>(
 			break;
 		}
 		currentModel = router.getNextFallback(currentModel, 0);
+		if (currentModel !== null) {
+			fallbackModels.push(currentModel);
+		}
 	}
 
 	if (lastError !== null) {

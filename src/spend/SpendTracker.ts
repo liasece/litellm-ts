@@ -606,6 +606,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		litellm_overhead_time_ms: ctx.litellmOverheadTimeMs ?? null,
 		attempted_retries: ctx.attemptedRetries ?? null,
 		max_retries: ctx.maxRetries ?? null,
+		fallback_models: ctx.fallbackModels ?? null,
 		// cost_breakdown 由 trackSpendLog 算完 cost 后注入（构建时 cost 尚未计算）
 		cost_breakdown: null,
 		status: ctx.status ?? (ctx.error ? SpendLogStatus.Failure : SpendLogStatus.Success),

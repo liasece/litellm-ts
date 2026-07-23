@@ -414,6 +414,7 @@ async function handleStreamingResponse(
 	const { req, db, spendRequestId, spendLifecycle } = context;
 	let fallbackDepth = 0;
 	let currentModel = model;
+	const fallbackModels: string[] = [model];
 	let lastError: unknown;
 	const startTime = new Date();
 	const upstreamAbortController = new AbortController();
@@ -430,6 +431,7 @@ async function handleStreamingResponse(
 			}
 			fallbackDepth++;
 			currentModel = nextFallback;
+			fallbackModels.push(nextFallback);
 			continue;
 		}
 
@@ -483,6 +485,8 @@ async function handleStreamingResponse(
 						response: transformed,
 						usage: transformed.usage as unknown as Record<string, unknown> | undefined,
 						status: SpendLogStatus.Success,
+						attemptedRetries: fallbackDepth,
+						fallbackModels: fallbackModels,
 					});
 					await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
 				}
@@ -573,6 +577,8 @@ async function handleStreamingResponse(
 						usage: usage as unknown as Record<string, unknown> | undefined,
 						error: streamError,
 						status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
+						attemptedRetries: fallbackDepth,
+						fallbackModels: fallbackModels,
 					});
 					try {
 						await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));

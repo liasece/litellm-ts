@@ -80,6 +80,8 @@ export interface ExecutionRequest {
 	optionalParams: Record<string, unknown>;
 	/** 当前回退深度（每次走 fallback chain +1） */
 	fallbackDepth: number;
+	/** fallback 链尝试过的模型名（按尝试顺序，首项为原始请求模型） */
+	fallbackModels: string[];
 	/** 上一轮执行的异常（mock 入口或 catch 块捕获） */
 	previousError?: Error;
 }

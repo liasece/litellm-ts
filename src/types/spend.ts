@@ -198,6 +198,8 @@ export interface SpendLogsMetadata {
 	readonly attempted_retries?: number | null;
 	/** 最大允许重试次数（max_fallbacks 配置） */
 	readonly max_retries?: number | null;
+	/** fallback 链经过的模型名列表（按尝试顺序：原始模型 → fallback1 → ... → 最终模型） */
+	readonly fallback_models?: string[] | null;
 	/**
 	 * 成本拆分明细（PY CostBreakdown，types/utils.py:2771）。
 	 * 由 trackSpendLog 算完 cost 后注入：{input_cost, output_cost, total_cost, tool_usage_cost}。
@@ -262,6 +264,8 @@ export interface SpendLogBuildContext {
 	readonly attemptedRetries?: number;
 	/** fallback 链最大跳数（Router max_fallbacks 配置） */
 	readonly maxRetries?: number;
+	/** fallback 链经过的模型名列表（按尝试顺序） */
+	readonly fallbackModels?: string[];
 	/** 响应缓存键（PY 键集对齐；TS 无响应缓存子系统，恒 null） */
 	readonly cacheKey?: string;
 	/** 响应缓存命中标记（TS 无响应缓存子系统，恒 false） */

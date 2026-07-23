@@ -28,7 +28,7 @@ export const TimeCell: React.FC<TimeCellProps> = ({ utcTime }) => {
 		<span
 			style={{
 				fontFamily: "monospace",
-				width: "180px",
+				width: "148px",
 				display: "inline-block",
 			}}
 		>

@@ -125,7 +125,9 @@ export async function executeWithFallback(
 	req: ExecutionRequest,
 	helpers: ExecutionHelpers,
 ): Promise<Record<string, unknown>> {
-	const { model, messages, optionalParams, fallbackDepth, previousError } = req;
+	const { model, messages, optionalParams, fallbackDepth, fallbackModels, previousError } = req;
+	const effectiveFallbackModels: string[] = fallbackModels.length > 0 ? fallbackModels : [model];
+
 	const { getCandidate, estimateInputTokens, executeRequest, matchDeploymentPattern, getHealthyDeployments } = helpers;
 
 	if (fallbackDepth >= ctx.maxFallbacks) {
@@ -171,7 +173,16 @@ export async function executeWithFallback(
 		// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
 		const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
 		if (nextFallback) {
-			return executeWithFallback(ctx, { ...req, fallbackDepth: fallbackDepth + 1, model: nextFallback }, helpers);
+			return executeWithFallback(
+				ctx,
+				{
+					...req,
+					fallbackDepth: fallbackDepth + 1,
+					model: nextFallback,
+					fallbackModels: [...effectiveFallbackModels, nextFallback],
+				},
+				helpers,
+			);
 		}
 		// 模型不存在（model_list/alias 无命中、非 deployment id、非 deployment_names，
 		// 且无 fallback——有 fallback 上面已递归）→ 400，对齐 PY route_llm_request
@@ -241,7 +252,16 @@ export async function executeWithFallback(
 					);
 					const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
 					if (nextFallback) {
-						return executeWithFallback(ctx, { ...req, fallbackDepth: fallbackDepth + 1, model: nextFallback }, helpers);
+						return executeWithFallback(
+							ctx,
+							{
+								...req,
+								fallbackDepth: fallbackDepth + 1,
+								model: nextFallback,
+								fallbackModels: [...effectiveFallbackModels, nextFallback],
+							},
+							helpers,
+						);
 					}
 					throw new Error(
 						`Rate limit exceeded on ${deployment.model_name} and no fallback available (rpm=${usage.rpm}/${rpmLimit ?? "-"}, tpm=${usage.tpm}/${tpmLimit ?? "-"})`,
@@ -400,6 +420,7 @@ export async function executeWithFallback(
 						stream: stream,
 						_provider: deployment.model_name,
 						_fallbackDepth: fallbackDepth,
+						_fallbackModels: effectiveFallbackModels,
 						_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
 						// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
 						_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
@@ -421,6 +442,7 @@ export async function executeWithFallback(
 					...transformed,
 					_provider: deployment.model_name,
 					_fallbackDepth: fallbackDepth,
+					_fallbackModels: effectiveFallbackModels,
 					_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
 					// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
 					_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
@@ -539,7 +561,13 @@ export async function executeWithFallback(
 		if (nextFallback) {
 			return executeWithFallback(
 				ctx,
-				{ ...req, fallbackDepth: fallbackDepth + 1, model: nextFallback, previousError: error },
+				{
+					...req,
+					fallbackDepth: fallbackDepth + 1,
+					model: nextFallback,
+					fallbackModels: [...effectiveFallbackModels, nextFallback],
+					previousError: error,
+				},
 				helpers,
 			);
 		}

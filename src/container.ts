@@ -74,71 +74,88 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	//    ProviderRegistry 各 provider 的默认 API base 已由类内置。
 	const providerRegistry = defaultProviderRegistry;
 
-	// 3. 构建 RouterConfig 并创建 Router
-	// 注意：必须把 config 中的 model_info 透传给每个 deployment，
-	// 否则 /v2/model/info、/model_group/info 等 WebUI 端点拿不到 id/mode/tpm/rpm/cost 等元信息。
-	// 同时把 deployment.litellm_params 全部 Python 字段透传（包括 api_base / api_key /
-	// custom_llm_provider / extra_headers / extra_body / anthropic_version / 等），
-	// 让 Router 在 getAvailableDeployment 时把 params 传给 ProviderRegistry，
-	// 进一步传给 provider.transformRequest 作为 api_base / api_key 优先来源。
-	const routerConfig = {
-		model_list: config.modelList.map((m) => ({
-			model_name: m.model_name,
-			// 透传全部 Python litellm_params 字段（model 必填，其它按 Python 标准）
-			litellm_params: { ...m.litellm_params },
-			// 透传 model_info；空值时不写入字段以避免覆盖 Router 默认
-			...(m.model_info && Object.keys(m.model_info).length > 0 ? { model_info: m.model_info } : {}),
-		})),
-		routing_strategy: (config.routerSettings.routing_strategy ?? RoutingStrategyName.LatencyBasedRouting) as RoutingStrategyName,
-		num_retries: config.routerSettings.num_retries ?? 2,
-		allowed_fails: config.routerSettings.allowed_fails,
-		cooldown_time: config.routerSettings.cooldown_time,
-		fallbacks: config.routerSettings.fallbacks.length > 0 ? config.routerSettings.fallbacks : undefined,
-		request_timeout: config.routerSettings.request_timeout,
-		// PY router_settings.enable_pre_call_checks → Router pre_call_checks：
-		// 启用 TPM/RPM pre-reserve + max_input_tokens 校验，且 no-deployments 消息
-		// 中 pre-call-checks=True（对齐 PY RouterRateLimitError 实测格式）
-		pre_call_checks: config.routerSettings.enable_pre_call_checks,
-		max_fallbacks: config.routerSettings.max_fallbacks,
-	};
+	// 3. 构建 Router 并创建 Router
+	// 运行时配置来源：DB 优先，yaml 仅作缺省回退。
+	// Router 构造时使用安全默认值，所有运行时设置通过 updateSettings 统一灌入。
+	// 模型配置仅来自数据库（LiteLLM_ProxyModelTable）。
+	const router = new LiteLLMRouter(
+		{
+			model_list: [],
+			routing_strategy: RoutingStrategyName.LatencyBasedRouting,
+			num_retries: 2,
+			pre_call_checks: false,
+		},
+		{}, // modelGroupAlias 通过 updateSettings 从 DB/yaml 注入
+	);
 
-	const routerModelGroupAlias = {
+	// 3.1 运行时设置：yaml 为基线，DB router_settings 覆盖（DB 优先）。
+	// 对齐 Python _add_router_settings_from_db_config（proxy_server.py:4023-4066）。
+	const yamlRouterSettings: Record<string, unknown> = {};
+	if (config.routerSettings.routing_strategy) {
+		yamlRouterSettings["routing_strategy"] = config.routerSettings.routing_strategy;
+	}
+	if (config.routerSettings.num_retries != null) {
+		yamlRouterSettings["num_retries"] = config.routerSettings.num_retries;
+	}
+	if (config.routerSettings.allowed_fails != null) {
+		yamlRouterSettings["allowed_fails"] = config.routerSettings.allowed_fails;
+	}
+	if (config.routerSettings.cooldown_time != null) {
+		yamlRouterSettings["cooldown_time"] = config.routerSettings.cooldown_time;
+	}
+	if (config.routerSettings.fallbacks.length > 0) {
+		yamlRouterSettings["fallbacks"] = config.routerSettings.fallbacks;
+	}
+	if (config.routerSettings.enable_pre_call_checks != null) {
+		yamlRouterSettings["enable_pre_call_checks"] = config.routerSettings.enable_pre_call_checks;
+	}
+	if (config.routerSettings.max_fallbacks != null) {
+		yamlRouterSettings["max_fallbacks"] = config.routerSettings.max_fallbacks;
+	}
+	// model_group_alias：合并 general_settings 与 router_settings 中的别名配置
+	const yamlModelGroupAlias = {
 		...config.generalSettings.model_group_alias,
 		...config.routerSettings.model_group_alias,
 	};
+	if (Object.keys(yamlModelGroupAlias).length > 0) {
+		yamlRouterSettings["model_group_alias"] = yamlModelGroupAlias;
+	}
 
-	const router = new LiteLLMRouter(routerConfig, routerModelGroupAlias);
-
-	// 3.1 批次 C2：DB router_settings 覆盖 yaml（对齐 Python
-	// _add_router_settings_from_db_config：_update_dictionary DB 优先后调
-	// llm_router.update_settings，proxy_server.py:4023-4066）。
-	// yaml 值已在构造时应用，这里只需把 DB 段灌入 updateSettings（白名单键覆盖）。
 	const dbRouterSettings = dbConfigProvider.getParam("router_settings");
-	if (Object.keys(dbRouterSettings).length > 0) {
+	// DB 优先覆盖 yaml
+	const mergedRouterSettings = { ...yamlRouterSettings, ...dbRouterSettings };
+	if (Object.keys(mergedRouterSettings).length > 0) {
 		try {
-			router.updateSettings(dbRouterSettings);
+			router.updateSettings(mergedRouterSettings);
+			logger.info("Router 运行时设置已加载", {
+				source: Object.keys(dbRouterSettings).length > 0 ? "DB" : "yaml",
+				keys: Object.keys(mergedRouterSettings),
+			});
 		} catch (error) {
-			// DB 中非法值（如未知 routing_strategy）不应阻断启动，保留 yaml 生效值
-			logger.warn("DB router_settings 应用失败，使用 yaml 配置", {
+			logger.error("Router 运行时设置应用失败", {
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}
 	}
 
-	// 3.2 批次 C2：DB 模型回灌（对齐 Python store_model_in_db 启动加载，
-	// proxy_server.py add_deployment → llm_router.upsert_deployment）：
-	// LiteLLM_ProxyModelTable 全量与 yaml modelList 合并，同 model_id DB 优先。
+	// 3.2 DB 模型加载：Router 运行时模型配置的唯一来源。
+	// 对齐 Python store_model_in_db 启动加载（proxy_server.py add_deployment →
+	// llm_router.upsert_deployment）。
 	try {
 		const dbModels = await db.db.select().from(LiteLLM_ProxyModelTable);
 		for (const row of dbModels) {
 			router.upsertDeployment(proxyModelRowToDeployment(row));
 		}
 		if (dbModels.length > 0) {
-			logger.info("DB 模型已回灌 Router", { count: dbModels.length });
+			logger.info("DB 模型已加载到 Router", { count: dbModels.length });
+		} else {
+			logger.warn("DB 中无模型配置，请通过 WebUI 设置或导入 yaml 模型");
 		}
 	} catch (error) {
-		// LiteLLM_ProxyModelTable 不存在（全新部署）或查询失败：仅 yaml 模型生效
-		logger.warn("DB 模型回灌失败，仅 yaml 模型生效", { error: error instanceof Error ? error.message : String(error) });
+		// DB 查询失败（全新部署表不存在等）：Router 无模型，所有请求将返回 no-deployments 错误
+		logger.error("DB 模型加载失败，Router 无可用模型", {
+			error: error instanceof Error ? error.message : String(error),
+		});
 	}
 
 	// 4. 创建 AuthRepository

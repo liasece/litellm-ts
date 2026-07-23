@@ -141,8 +141,8 @@ export class Router {
 	private readonly _contentPolicyFallbacks: Record<string, string[]>;
 	private readonly _retryPolicy;
 	private _modelGroupRetryPolicy;
-	private readonly _maxFallbacks: number;
-	private readonly _preCallChecks: boolean;
+	private _maxFallbacks: number;
+	private _preCallChecks: boolean;
 	private readonly _optionalPreCallChecks: Record<string, boolean> | undefined;
 	private _retryAfter: number;
 	private readonly _modelCostMap: Record<string, { input_cost_per_token: number; output_cost_per_token: number }> | undefined;
@@ -421,6 +421,16 @@ export class Router {
 				case "model_group_retry_policy":
 					this._modelGroupRetryPolicy = value as Record<string, RetryPolicy>;
 					break;
+				case "max_fallbacks": {
+					const maxFb = Router._castIntSetting(key, value);
+					if (maxFb !== null && maxFb > 0) {
+						this._maxFallbacks = maxFb;
+					}
+					break;
+				}
+				case "enable_pre_call_checks":
+					this._preCallChecks = Boolean(value);
+					break;
 				case "routing_strategy_args":
 				case "timeout":
 				case "max_retries":
@@ -621,6 +631,7 @@ export class Router {
 				messages: messages,
 				optionalParams: optionalParams,
 				fallbackDepth: fallbackDepth,
+				fallbackModels: [],
 				previousError: previousError,
 			},
 			{

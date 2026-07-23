@@ -584,7 +584,7 @@ export function registerAnthropicMessagesEndpoints(
 				// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
 				let executedAttempt: UpstreamAttempt | undefined;
 				// metadata.attempted_retries 数据源：fallback 链跳数回写
-				const streamFallbackStats = { fallbackDepth: 0 };
+				const streamFallbackStats = { fallbackDepth: 0, fallbackModels: [] as string[] };
 				// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 				const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
 
@@ -737,6 +737,7 @@ export function registerAnthropicMessagesEndpoints(
 							litellmOverheadTimeMs: streamOverheadTimeMs,
 							attemptedRetries: streamFallbackStats.fallbackDepth,
 							maxRetries: litellmRouter.maxFallbacks,
+							fallbackModels: streamFallbackStats.fallbackModels,
 							startTime: streamStartTime,
 							endTime: streamEndTime,
 							completionStartTime: completionStartTime,
@@ -777,7 +778,7 @@ export function registerAnthropicMessagesEndpoints(
 			let nsCompletionStartTime: Date | undefined;
 			// 非流式响应 — 经 fallback 链直连上游；body.model 逐次替换为上游 model 名
 			// metadata.attempted_retries 数据源：fallback 链跳数回写
-			const nsFallbackStats = { fallbackDepth: 0 };
+			const nsFallbackStats = { fallbackDepth: 0, fallbackModels: [] as string[] };
 			// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 			const nsOverheadTimeMs = Date.now() - requestArrivalTimeMs;
 			let responseData: Record<string, unknown>;
@@ -836,7 +837,7 @@ export function registerAnthropicMessagesEndpoints(
 						const searchResults = await executeWebSearchCalls(searchCalls, searchConfig, webSearchAbortController.signal);
 						const continuation = buildAnthropicSearchContinuation(responseData, searchCalls, searchResults);
 						const originalMessages = Array.isArray(cleanBody["messages"]) ? cleanBody["messages"] : [];
-						const followUpStats = { fallbackDepth: 0 };
+						const followUpStats = { fallbackDepth: 0, fallbackModels: [] as string[] };
 						responseData = await executeWithFallbackChain(
 							litellmRouter,
 							model,
@@ -873,6 +874,7 @@ export function registerAnthropicMessagesEndpoints(
 							followUpStats,
 						);
 						nsFallbackStats.fallbackDepth += followUpStats.fallbackDepth;
+						nsFallbackStats.fallbackModels.push(...followUpStats.fallbackModels);
 						const finalSpendInfo = executedNsAttempt
 							? buildDeploymentSpendInfo(executedNsAttempt.deployment, executedNsAttempt.upstreamUrl)
 							: undefined;
@@ -956,6 +958,7 @@ export function registerAnthropicMessagesEndpoints(
 					deploymentModel: nsSpendInfo?.deploymentModel,
 					litellmOverheadTimeMs: nsOverheadTimeMs,
 					attemptedRetries: nsFallbackStats.fallbackDepth,
+					fallbackModels: nsFallbackStats.fallbackModels,
 					maxRetries: litellmRouter.maxFallbacks,
 					startTime: nonStreamingStartTime,
 					endTime: nonStreamingEndTime,
