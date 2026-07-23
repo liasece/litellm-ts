@@ -85,7 +85,7 @@ interface UiSpendLogsPage {
  */
 export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<typeof schema>): void {
 	// ========== /spend/keys ==========
-	// WebUI adminTopKeysCall 通过 /global/spend/keys?limit=5 调用，期望 total_spend 必为 number 且 api_key 字符串
+	// WebUI adminTopKeysCall 通过 /global/spend/keys 调用，期望 total_spend 必为 number 且 api_key 字符串
 
 	registerRoute(router, { method: "get", path: "/spend/keys" }, async (req) => {
 		return runWithFallback(logger, "/spend/keys", [] as Array<Record<string, unknown>>, async () => {

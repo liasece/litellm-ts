@@ -59,8 +59,7 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 	// WebUI adminTopKeysCall 直接消费：k["api_key"].substring(0, 10); k["total_spend"].toFixed(2)
 	// 必须保证 api_key 字符串、total_spend 数字、key_alias 兜底空字符串
 
-	registerRoute(router, { method: "get", path: "/global/spend/keys" }, async (req) => {
-		const limit = parseAggregateLimitParam(req.query.limit);
+	registerRoute(router, { method: "get", path: "/global/spend/keys" }, async () => {
 		return runWithFallback(
 			logger,
 			"/global/spend/keys",
@@ -73,8 +72,7 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 						total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
 					})
 					.from(liteLLM_SpendLogs)
-					.groupBy(liteLLM_SpendLogs.api_key)
-					.limit(limit);
+					.groupBy(liteLLM_SpendLogs.api_key);
 
 				return result.map((row) => ({
 					api_key: toSafeString(row.api_key),

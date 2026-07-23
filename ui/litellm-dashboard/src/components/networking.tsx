@@ -2762,7 +2762,7 @@ export const adminSpendLogsCall = async (accessToken: string) => {
 
 export const adminTopKeysCall = async (accessToken: string) => {
 	try {
-		let url = proxyBaseUrl ? `${proxyBaseUrl}/global/spend/keys?limit=5` : `/global/spend/keys?limit=5`;
+		let url = proxyBaseUrl ? `${proxyBaseUrl}/global/spend/keys` : `/global/spend/keys`;
 
 		//NotificationsManager.info("Making spend keys request");
 		const response = await dashboardFetch(url, {

@@ -412,3 +412,21 @@ describe("individualModelHealthCheckCall", () => {
 		expect(parsed.searchParams.has("model_id")).toBe(false);
 	});
 });
+
+
+describe("adminTopKeysCall", () => {
+	const originalFetch = global.fetch;
+
+	afterEach(() => {
+		global.fetch = originalFetch;
+	});
+
+	it("requests all global spend keys without a limit query", async () => {
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue([]) } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+
+		await Networking.adminTopKeysCall("token");
+
+		expect(String(mockFetch.mock.calls[0]![0])).toMatch(/\/global\/spend\/keys$/);
+	});
+});

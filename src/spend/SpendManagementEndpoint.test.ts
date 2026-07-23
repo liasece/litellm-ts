@@ -365,6 +365,20 @@ const INTERNAL_USER_AUTH: UserAPIKeyAuth = {
 };
 
 describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart", () => {
+	describe("/global/spend/keys", () => {
+		it("returns every aggregated key without applying a SQL limit", async () => {
+			const { db, calls } = makeMockDb({
+				data: [
+					{ api_key: "sk-first", total_spend: 10, total_tokens: 100 },
+					{ api_key: "sk-last", total_spend: 1, total_tokens: 10 },
+				],
+			});
+			const res = await request(makeAppWithAuth(db)).get("/global/spend/keys?limit=1");
+			expect(res.status).toBe(200);
+			expect(res.body).toHaveLength(2);
+			expect(calls[0]?.limitN).toBeNull();
+		});
+	});
 	describe("/global/activity", () => {
 		it("顶层严格对齐 Python/WebUI shape，且 sum_api_requests / sum_total_tokens 为有限 number", async () => {
 			const { db } = makeMockDb({
