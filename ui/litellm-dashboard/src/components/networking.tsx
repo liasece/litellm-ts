@@ -4288,6 +4288,30 @@ export const getGeneralSettingsCall = async (accessToken: string) => {
 	}
 };
 
+export interface WebSearchOverrideTargetCandidate {
+	model_name: string;
+	type: "model" | "alias";
+}
+
+export const getWebSearchOverrideTargetCandidatesCall = async (
+	accessToken: string,
+): Promise<WebSearchOverrideTargetCandidate[]> => {
+	const url = proxyBaseUrl
+		? `${proxyBaseUrl}/config/websearch_override_target_model/options`
+		: `/config/websearch_override_target_model/options`;
+	const response = await dashboardFetch(url, { method: "GET", headers: { "Content-Type": "application/json" } });
+	if (!response.ok) {
+		const errorData = await response.json();
+		const errorMessage = deriveErrorMessage(errorData);
+		handleError(errorMessage);
+		throw new Error(errorMessage);
+	}
+	const data = (await response.json()) as
+		| WebSearchOverrideTargetCandidate[]
+		| { data?: WebSearchOverrideTargetCandidate[] };
+	return Array.isArray(data) ? data : data.data ?? [];
+};
+
 export const getRouterSettingsCall = async (accessToken: string) => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/router/settings` : `/router/settings`;

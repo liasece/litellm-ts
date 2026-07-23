@@ -29,7 +29,9 @@ export class FallbackHandler {
 		contentPolicyFallbacks?: Record<string, string[]>,
 	) {
 		this._fallbacks = this._mergeFallbacks(fallbacks);
-		this._modelGroupAlias = modelGroupAlias ?? {};
+		const aliases = modelGroupAlias ?? {};
+		this._validateModelGroupAlias(aliases);
+		this._modelGroupAlias = aliases;
 		this._contextWindowFallbacks = contextWindowFallbacks ?? {};
 		this._contentPolicyFallbacks = contentPolicyFallbacks ?? {};
 	}
@@ -223,24 +225,54 @@ export class FallbackHandler {
 	}
 
 	/**
-	 * Resolve model_group_alias before fallback lookup (Patch 14)
-	 * GAP: RouterModelGroupAliasValue 支持 string[] (types/router.ts:105) 但 Router 内部未采用
-	 * 现支持 string[] 多值：返回第一个 (与 PY RouterModelGroupAliasValue 行为一致)
-	 * @param model
+	 * 读取 alias 的单跳目标。string[] 只取首项，空数组没有下一跳。
+	 * @param model - 当前模型组
+	 * @param aliases - 待查询的 alias 映射
 	 */
-	private _resolveAlias(model: string): string {
-		const alias = this._modelGroupAlias[model];
+	private _getAliasTarget(
+		model: string,
+		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }>,
+	): string | undefined {
+		const alias = aliases[model];
 		if (typeof alias === "string") {
 			return alias;
 		}
 		if (Array.isArray(alias)) {
 			// PY: 多值别名取第一个
-			return alias[0] ?? model;
+			return alias[0];
 		}
 		if (alias && typeof alias === "object" && "model" in alias) {
 			return alias.model;
 		}
-		return model;
+		return undefined;
+	}
+
+	private _resolveAlias(
+		model: string,
+		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }> = this._modelGroupAlias,
+	): string {
+		const path = [model];
+		const seen = new Set(path);
+		let current = model;
+
+		while (true) {
+			const target = this._getAliasTarget(current, aliases);
+			if (target === undefined) {
+				return current;
+			}
+			if (seen.has(target)) {
+				throw new Error(`Model group alias cycle detected: ${[...path, target].join(" -> ")}`);
+			}
+			path.push(target);
+			seen.add(target);
+			current = target;
+		}
+	}
+
+	private _validateModelGroupAlias(aliases: Record<string, string | string[] | { model: string; hidden?: boolean }>): void {
+		for (const model of Object.keys(aliases)) {
+			this._resolveAlias(model, aliases);
+		}
 	}
 
 	/**
@@ -321,6 +353,11 @@ export class FallbackHandler {
 		return Object.fromEntries(Object.entries(this._fallbacks).map(([key, chain]) => [key, [...chain]]));
 	}
 
+	/** 返回当前 alias key，隐藏 alias target，避免管理端泄漏底层 provider 模型。 */
+	getModelGroupAliasKeys(): string[] {
+		return Object.keys(this._modelGroupAlias);
+	}
+
 	/**
 	 * 运行时替换 context window fallback 映射（PY update_settings 白名单项）。
 	 * @param fallbacks - 新的 context window fallback 配置
@@ -335,7 +372,9 @@ export class FallbackHandler {
 	 * @param modelGroupAlias - 新的别名映射
 	 */
 	setModelGroupAlias(modelGroupAlias?: Record<string, string | string[] | { model: string; hidden?: boolean }>): void {
-		this._modelGroupAlias = modelGroupAlias ?? {};
+		const aliases = modelGroupAlias ?? {};
+		this._validateModelGroupAlias(aliases);
+		this._modelGroupAlias = aliases;
 		this.invalidateCache();
 	}
 

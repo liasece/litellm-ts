@@ -219,6 +219,25 @@ export class Router {
 		return [...this._deployments];
 	}
 
+	/** 当前可供管理端选择的逻辑模型名与 alias key，不暴露 provider model 或 deployment id。 */
+	getAvailableModelNames(): Array<{ model_name: string; type: "model" | "alias" }> {
+		const names = new Map<string, "model" | "alias">();
+		for (const deployment of this._deployments) {
+			if (deployment.model_name) {
+				names.set(deployment.model_name, "model");
+			}
+		}
+		for (const alias of this._fallbackHandler.getModelGroupAliasKeys()) {
+			const resolvedModel = this._fallbackHandler.resolveModelGroup(alias);
+			if (this._deployments.some((deployment) => this._matchDeploymentPattern(deployment, resolvedModel))) {
+				names.set(alias, "alias");
+			}
+		}
+		return [...names.entries()]
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([model_name, type]) => ({ model_name: model_name, type: type }));
+	}
+
 	/**
 	 * 读取当前 fallback 配置（对齐 PY Router.fallbacks 运行时值），
 	 * 供 /v2/model/info 按 model_group 反查展示（PY get_all_fallbacks 等价数据源）。

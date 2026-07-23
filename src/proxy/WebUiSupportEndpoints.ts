@@ -210,6 +210,7 @@ const CONFIG_GENERAL_SETTINGS_FIELD_NAMES: ReadonlySet<string> = new Set([
 	"store_model_in_db",
 	"forward_client_headers_to_llm_api",
 	"mcp_required_fields",
+	"websearch_override_target_model",
 ]);
 
 /**
@@ -1168,6 +1169,12 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 			field_default_value: null,
 		},
 		{
+			field_name: "websearch_override_target_model",
+			field_type: ConfigFieldType.STRING,
+			field_description: "target model used for Anthropic requests with only a forced web_search tool",
+			field_default_value: null,
+		},
+		{
 			field_name: "mcp_internal_ip_ranges",
 			field_type: ConfigFieldType.LIST,
 			field_description: "internal IP ranges allowed to call MCP servers",
@@ -1230,6 +1237,14 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 			};
 		});
 	});
+
+	registerRoute(router, { method: "get", path: "/config/websearch_override_target_model/options" }, () => {
+		if (!litellmRouter) {
+			throw ApiError.httpException(HTTP_STATUS.BAD_REQUEST, { error: "Router is not available" });
+		}
+		return { data: litellmRouter.getAvailableModelNames() };
+	});
+
 	/**
 	 * 更新配置（对齐 Python update_config，proxy_server.py:11930）。
 	 * general_settings / litellm_settings / router_settings / environment_variables
@@ -1269,6 +1284,17 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		const fieldName = parseConfigFieldRequest(body);
 		if (!("field_value" in body)) {
 			throw ApiError.unprocessableEntity([{ loc: ["body", "field_value"], msg: "Field required", type: "missing" }]);
+		}
+		if (fieldName === "websearch_override_target_model") {
+			const candidates = litellmRouter?.getAvailableModelNames() ?? [];
+			const fieldValue = body.field_value;
+			if (
+				typeof fieldValue !== "string" ||
+				fieldValue.trim() === "" ||
+				!candidates.some((candidate) => candidate.model_name === fieldValue)
+			) {
+				throw ApiError.httpException(HTTP_STATUS.BAD_REQUEST, { error: "Invalid websearch override target model" });
+			}
 		}
 		const existing = (await configRepository.getParam("general_settings")) ?? {};
 		const next = { ...existing, [fieldName]: body.field_value };

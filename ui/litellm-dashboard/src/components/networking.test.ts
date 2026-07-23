@@ -100,6 +100,16 @@ describe("networking - expired session handling", () => {
 
 		expect(mockFetch).toHaveBeenCalledOnce();
 	});
+
+	it("解析 web-search override 候选数组", async () => {
+		const candidates = [
+			{ model_name: "logical-model", type: "model" as const },
+			{ model_name: "search-alias", type: "alias" as const },
+		];
+		global.fetch = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(candidates) } as any);
+
+		await expect(Networking.getWebSearchOverrideTargetCandidatesCall("token")).resolves.toEqual(candidates);
+	});
 });
 
 describe("daily activity helpers", () => {
@@ -412,7 +422,6 @@ describe("individualModelHealthCheckCall", () => {
 		expect(parsed.searchParams.has("model_id")).toBe(false);
 	});
 });
-
 
 describe("adminTopKeysCall", () => {
 	const originalFetch = global.fetch;

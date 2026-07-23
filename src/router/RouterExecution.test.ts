@@ -600,4 +600,33 @@ describe("Router execution chain", () => {
 			});
 		});
 	});
+
+	describe("web-search 可选逻辑名称", () => {
+		it("返回去重的 deployment model_name 与当前 alias key，不泄漏 provider model 或 deployment ID", () => {
+			const router = new Router({
+				model_list: [
+					{
+						model_name: "logical-model",
+						litellm_params: { model: "openai/provider-model" },
+						model_info: { id: "deployment-id" },
+					},
+					{ model_name: "logical-model", litellm_params: { model: "anthropic/another-provider-model" } },
+				],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				model_group_alias: { websearch_alias: "logical-model" },
+			});
+
+			expect(router.getAvailableModelNames()).toEqual([
+				{ model_name: "logical-model", type: "model" },
+				{ model_name: "websearch_alias", type: "alias" },
+			]);
+
+			router.updateSettings({ model_group_alias: { refreshed_alias: "logical-model" } });
+			expect(router.getAvailableModelNames()).toEqual([
+				{ model_name: "logical-model", type: "model" },
+				{ model_name: "refreshed_alias", type: "alias" },
+			]);
+		});
+	});
 });

@@ -1919,4 +1919,95 @@ describe("批次 D — /v2/model/info fallbacks 注入", () => {
 		expect(res.status).toBe(200);
 		expect(res.body.data[0].model_info.fallbacks).toEqual(["gpt-4o-mini", "claude-3-7-sonnet"]);
 	});
+
+	describe("websearch_override_target_model General Settings", () => {
+		const modelName = "websearch-model";
+		const aliasName = "websearch-alias";
+		const providerModel = "anthropic/provider-model";
+		const deploymentId = "websearch-deployment-id";
+		const buildWebSearchRouter = () =>
+			new LiteLLMRouter({
+				model_list: [{ model_name: modelName, litellm_params: { model: providerModel }, model_info: { id: deploymentId } }],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				model_group_alias: { [aliasName]: modelName },
+			});
+
+		afterEach(async () => {
+			await dbConfigProvider.initialize(makeMockConfigDb().db as never);
+		});
+
+		it("仅公开 Router 当前逻辑模型名和 alias key", async () => {
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, undefined, buildWebSearchRouter());
+			const res = await request(app).get("/config/websearch_override_target_model/options").expect(200);
+
+			expect(res.body).toEqual({
+				data: [
+					{ model_name: aliasName, type: "alias" },
+					{ model_name: modelName, type: "model" },
+				],
+			});
+			expect(JSON.stringify(res.body)).not.toContain(providerModel);
+			expect(JSON.stringify(res.body)).not.toContain(deploymentId);
+		});
+
+		it("只持久化候选模型或 alias，拒绝任意文本、provider model、deployment ID 和缺失 Router", async () => {
+			const { db, store } = makeMockConfigDb();
+			await dbConfigProvider.initialize(db as never);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db, buildWebSearchRouter());
+
+			for (const validValue of [modelName, aliasName]) {
+				await request(app)
+					.post("/config/field/update")
+					.send({ field_name: "websearch_override_target_model", field_value: validValue, config_type: "general_settings" })
+					.expect(200);
+				expect(store.get("general_settings")).toEqual({ websearch_override_target_model: validValue });
+			}
+
+			for (const invalidValue of ["arbitrary", providerModel, deploymentId, "", "   "]) {
+				await request(app)
+					.post("/config/field/update")
+					.send({ field_name: "websearch_override_target_model", field_value: invalidValue, config_type: "general_settings" })
+					.expect(400);
+				expect(store.get("general_settings")).toEqual({ websearch_override_target_model: aliasName });
+			}
+
+			const missingRouterApp = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			await request(missingRouterApp)
+				.post("/config/field/update")
+				.send({ field_name: "websearch_override_target_model", field_value: modelName, config_type: "general_settings" })
+				.expect(400);
+			expect(store.get("general_settings")).toEqual({ websearch_override_target_model: aliasName });
+		});
+
+		it("显示 YAML 值、持久化 DB 覆盖并在删除后回退 YAML", async () => {
+			const { db, store } = makeMockConfigDb();
+			await dbConfigProvider.initialize(db as never);
+			const app = buildAuthedApp(
+				makeConfig({}, { websearch_override_target_model: modelName }),
+				undefined,
+				undefined,
+				db,
+				buildWebSearchRouter(),
+			);
+
+			const initial = await request(app).get("/config/list?config_type=general_settings").expect(200);
+			const findField = (fields: Array<{ field_name: string; field_value: unknown; stored_in_db: boolean | null }>) =>
+				fields.find((field) => field.field_name === "websearch_override_target_model");
+			expect(findField(initial.body)).toMatchObject({ field_value: modelName, stored_in_db: false });
+
+			await request(app)
+				.post("/config/field/update")
+				.send({ field_name: "websearch_override_target_model", field_value: aliasName, config_type: "general_settings" })
+				.expect(200);
+			expect(store.get("general_settings")).toEqual({ websearch_override_target_model: aliasName });
+
+			await request(app)
+				.post("/config/field/delete")
+				.send({ field_name: "websearch_override_target_model", config_type: "general_settings" })
+				.expect(200);
+			const reset = await request(app).get("/config/list?config_type=general_settings").expect(200);
+			expect(findField(reset.body)).toMatchObject({ field_value: modelName, stored_in_db: false });
+		});
+	});
 });

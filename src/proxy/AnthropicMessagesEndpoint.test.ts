@@ -1,10 +1,13 @@
 import express from "express";
 import request from "supertest";
 import { registerAnthropicMessagesEndpoints } from "./AnthropicMessagesEndpoint";
+import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import * as SpendTracker from "../spend/SpendTracker";
 import { SpendLogStatus } from "../types/spend";
 
-jest.mock("../core/config", () => ({ getConfig: () => ({ generalSettings: {} }) }));
+const runtimeConfig = { generalSettings: {} };
+
+jest.mock("../core/config", () => ({ getConfig: () => runtimeConfig }));
 
 function sseResponse(events: Record<string, unknown>[]): Response {
 	const body = events.map((event) => `event: ${String(event["type"])}\ndata: ${JSON.stringify(event)}\n\n`).join("");
@@ -43,6 +46,7 @@ function buildApp() {
 	const expressRouter = express.Router();
 	registerAnthropicMessagesEndpoints(expressRouter, router as never, undefined, {} as never);
 	app.use(expressRouter);
+	(app as unknown as { __router: typeof router }).__router = router;
 	return app;
 }
 
@@ -245,5 +249,54 @@ describe("native Anthropic streaming SpendLog", () => {
 				usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
 			}),
 		});
+	});
+});
+
+describe("Anthropic web-search target model override", () => {
+	afterEach(() => {
+		runtimeConfig.generalSettings = {};
+		jest.restoreAllMocks();
+	});
+
+	it("DB 值优先于 YAML，仅在强制 web_search 请求时改写路由模型", async () => {
+		const app = buildApp();
+		const router = (app as unknown as { __router: { getAvailableDeployment: jest.Mock } }).__router;
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					id: "msg-1",
+					type: "message",
+					role: "assistant",
+					model: "upstream-model",
+					content: [{ type: "text", text: "ok" }],
+					stop_reason: "end_turn",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+				{ status: 200 },
+			),
+		);
+		runtimeConfig.generalSettings = { websearch_override_target_model: "yaml-target" };
+		const getParam = jest.spyOn(dbConfigProvider, "getParam").mockReturnValue({ websearch_override_target_model: "websearch-alias" });
+		const forcedWebSearchRequest = {
+			model: "requested-model",
+			max_tokens: 10,
+			stream: true,
+			messages: [{ role: "user", content: "hello" }],
+			tools: [{ name: "web_search", input_schema: { type: "object" } }],
+			tool_choice: { type: "tool", name: "web_search" },
+		};
+
+		await request(app).post("/v1/messages").send(forcedWebSearchRequest).expect(200);
+		expect(router.getAvailableDeployment).toHaveBeenLastCalledWith("websearch-alias");
+
+		getParam.mockReturnValue({});
+		await request(app).post("/v1/messages").send(forcedWebSearchRequest).expect(200);
+		expect(router.getAvailableDeployment).toHaveBeenLastCalledWith("yaml-target");
+
+		await request(app)
+			.post("/v1/messages")
+			.send({ ...forcedWebSearchRequest, tools: [{ name: "web_search" }, { name: "other_tool" }] })
+			.expect(200);
+		expect(router.getAvailableDeployment).toHaveBeenLastCalledWith("requested-model");
 	});
 });

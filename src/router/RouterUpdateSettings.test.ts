@@ -83,6 +83,26 @@ describe("Router.updateSettings — fallbacks 热更新", () => {
 	});
 });
 
+describe("Router web-search target candidates", () => {
+	it("仅返回去重的逻辑模型名和 alias key，并随 alias 热更新", () => {
+		const router = makeRouter({
+			model_list: [makeDeployment("gpt-4o", "dep-1"), makeDeployment("gpt-4o", "dep-2"), makeDeployment("claude", "dep-3")],
+			model_group_alias: { websearch_alias: "openai/gpt-4o", invalid_alias: "openai/provider-secret" },
+		});
+		expect(router.getAvailableModelNames()).toEqual([
+			{ model_name: "claude", type: "model" },
+			{ model_name: "gpt-4o", type: "model" },
+			{ model_name: "websearch_alias", type: "alias" },
+		]);
+		router.updateSettings({ model_group_alias: { refreshed_alias: "gpt-4o", invalid_alias: "provider-secret" } });
+		expect(router.getAvailableModelNames()).toEqual([
+			{ model_name: "claude", type: "model" },
+			{ model_name: "gpt-4o", type: "model" },
+			{ model_name: "refreshed_alias", type: "alias" },
+		]);
+	});
+});
+
 describe("Router.updateSettings — 标量与白名单语义", () => {
 	it("num_retries / cooldown_time / retry_after 按 PY _int_settings 做 int 转换", () => {
 		const router = makeRouter({ cooldown_time: 5, retry_after: 0 });

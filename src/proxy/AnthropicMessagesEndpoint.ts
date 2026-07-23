@@ -29,6 +29,7 @@ import { ApiError } from "../core/api/ApiError";
 import { createModuleLogger } from "../core/utils/logger";
 import { cleanSurrogates } from "../core/utils/text";
 import { getConfig } from "../core/config";
+import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
 import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
 import { runCommonChecks } from "../auth/AuthChecks";
@@ -547,8 +548,11 @@ export function registerAnthropicMessagesEndpoints(
 			runCommonChecks(req.auth, requestedModel);
 		}
 
-		// Patch 7: websearch override
-		const generalSettings = getConfig().generalSettings as unknown as Record<string, unknown>;
+		// Patch 7: websearch override。仅该读取路径叠加 DB 覆盖，避免改变其他静态配置消费者。
+		const generalSettings = {
+			...(getConfig().generalSettings as unknown as Record<string, unknown>),
+			...dbConfigProvider.getParam("general_settings"),
+		};
 		_applyWebSearchOverrideTargetModel(cleanBody, generalSettings);
 
 		// Patch 3: user_id 标准化

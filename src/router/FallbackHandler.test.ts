@@ -133,6 +133,45 @@ describe("FallbackHandler", () => {
 		});
 	});
 
+	describe("alias 级联解析与配置校验", () => {
+		it("任意深度 alias 解析为最终模型组", () => {
+			const fh = new FallbackHandler({}, { A: "B", B: "C" });
+			expect(fh.resolveModelGroup("A")).toBe("C");
+		});
+
+		it("最终 alias key 命中 fallback map", () => {
+			const fh = new FallbackHandler({ C: ["fallback-model"] }, { A: "B", B: "C" });
+			expect(fh.getNextFallback("A", 0)).toBe("fallback-model");
+		});
+
+		it("fallback 链中的 alias 归一为最终模型组", () => {
+			const fh = new FallbackHandler({ source: ["A"] }, { A: "B", B: "C" });
+			expect(fh.getFallbackChain("source")).toEqual(["C"]);
+		});
+
+		it("string[] 首项和对象 model 都继续级联", () => {
+			const fh = new FallbackHandler({}, { A: ["B", "ignored"], B: { model: "C" } });
+			expect(fh.resolveModelGroup("A")).toBe("C");
+		});
+
+		it.each([
+			["自环", { A: "A" }, "A -> A"],
+			["多节点环", { A: "B", B: "A" }, "A -> B -> A"],
+		])("构造阶段拒绝%s", (_name, aliases, cycle) => {
+			expect(() => new FallbackHandler({}, aliases)).toThrow(`Model group alias cycle detected: ${cycle}`);
+		});
+
+		it("运行时环配置失败后保留旧 alias 和缓存", () => {
+			const fh = new FallbackHandler({ A: ["fallback-model"] }, { A: "B" });
+			expect(fh.getFallbackChain("A")).toEqual(["fallback-model"]);
+
+			expect(() => fh.setModelGroupAlias({ A: "B", B: "A" })).toThrow("Model group alias cycle detected: A -> B -> A");
+
+			expect(fh.resolveModelGroup("A")).toBe("B");
+			expect(fh.getFallbackChain("A")).toEqual(["fallback-model"]);
+		});
+	});
+
 	describe("resolveModelGroup", () => {
 		it("无 alias 时原样返回", () => {
 			const fh = new FallbackHandler({}, {});
