@@ -5,6 +5,11 @@
  * Supports model_group_alias resolution (Patch 14).
  */
 
+import type { ModelGroupResolution } from "./ModelResolutionTrace";
+
+type ModelGroupAliasValue = string | string[] | { model: string; hidden?: boolean };
+type ModelGroupAliases = Record<string, ModelGroupAliasValue>;
+
 /**
  * Fallback Handler
  *
@@ -15,16 +20,16 @@ export class FallbackHandler {
 	private _fallbacks: Record<string, string[]>;
 	// DIFF-RT-ALIAS-01: alias 值类型扩展为 string | string[] | { model, hidden? }
 	// 之前只支持 string | object，string[] 多值数组报 TS 错。
-	private _modelGroupAlias: Record<string, string | string[] | { model: string; hidden?: boolean }>;
+	private _modelGroupAlias: ModelGroupAliases;
 	private _contextWindowFallbacks: Record<string, string[]>;
 	private _contentPolicyFallbacks: Record<string, string[]>;
 	/** 内部缓存：getFallbackChain 计算结果，避免重复计算 */
-	private _chainCache: Map<string, string[]> = new Map();
+	private _chainCache: Map<string, ModelGroupResolution[]> = new Map();
 
 	constructor(
 		/** PY 风格：fallbacks 是 List[Dict]，first-match-wins 合并 */
 		fallbacks?: Array<Record<string, string[]>> | Record<string, string[]>,
-		modelGroupAlias?: Record<string, string | string[] | { model: string; hidden?: boolean }>,
+		modelGroupAlias?: ModelGroupAliases,
 		contextWindowFallbacks?: Record<string, string[]>,
 		contentPolicyFallbacks?: Record<string, string[]>,
 	) {
@@ -229,10 +234,7 @@ export class FallbackHandler {
 	 * @param model - 当前模型组
 	 * @param aliases - 待查询的 alias 映射
 	 */
-	private _getAliasTarget(
-		model: string,
-		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }>,
-	): string | undefined {
+	private _getAliasTarget(model: string, aliases: ModelGroupAliases): string | undefined {
 		const alias = aliases[model];
 		if (typeof alias === "string") {
 			return alias;
@@ -247,10 +249,10 @@ export class FallbackHandler {
 		return undefined;
 	}
 
-	private _resolveAlias(
+	private _resolveAliasWithTrace(
 		model: string,
 		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }> = this._modelGroupAlias,
-	): string {
+	): ModelGroupResolution {
 		const path = [model];
 		const seen = new Set(path);
 		let current = model;
@@ -258,7 +260,7 @@ export class FallbackHandler {
 		while (true) {
 			const target = this._getAliasTarget(current, aliases);
 			if (target === undefined) {
-				return current;
+				return { inputModel: model, resolvedModel: current, resolutionPath: path };
 			}
 			if (seen.has(target)) {
 				throw new Error(`Model group alias cycle detected: ${[...path, target].join(" -> ")}`);
@@ -269,7 +271,14 @@ export class FallbackHandler {
 		}
 	}
 
-	private _validateModelGroupAlias(aliases: Record<string, string | string[] | { model: string; hidden?: boolean }>): void {
+	private _resolveAlias(
+		model: string,
+		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }> = this._modelGroupAlias,
+	): string {
+		return this._resolveAliasWithTrace(model, aliases).resolvedModel;
+	}
+
+	private _validateModelGroupAlias(aliases: ModelGroupAliases): void {
 		for (const model of Object.keys(aliases)) {
 			this._resolveAlias(model, aliases);
 		}
@@ -284,37 +293,30 @@ export class FallbackHandler {
 	 * @param model - original model name
 	 * @returns ordered fallback chain (excluding the original model)
 	 */
-	getFallbackChain(model: string): string[] {
+	getFallbackChainWithTrace(model: string): ModelGroupResolution[] {
 		const cached = this._chainCache.get(model);
 		if (cached) {
-			return cached;
+			return cached.map((entry) => ({ ...entry, resolutionPath: [...entry.resolutionPath] }));
 		}
-		// DIFF-RT-02: 对齐 PY `router.py:5842-5870` 的双层查找 + alias 解析
-		//   1) 先查 model 字面量 + provider 前缀剥离匹配
-		//   2) 未命中再回退到 alias 解析后的底层 group（_resolveModelGroup）
-		//   3) 再回退到 wildcard '*' 通配
-		// 复用 _lookupFallback 但把 alias 解析和 wildcard 路径都覆盖
 		const directFallbacks = this._lookupFallback(model, this._fallbacks);
-
-		if (directFallbacks.length === 0) {
-			this._chainCache.set(model, []);
-			return [];
-		}
-
-		// Resolve each fallback through aliases
-		const chain: string[] = [];
+		const chain: ModelGroupResolution[] = [];
 		const seen = new Set<string>([model]);
-
-		for (const fb of directFallbacks) {
-			const resolved = this._resolveAlias(fb);
-			if (!seen.has(resolved)) {
-				chain.push(resolved);
-				seen.add(resolved);
+		for (const fallback of directFallbacks) {
+			const resolution = this._resolveAliasWithTrace(fallback);
+			if (!seen.has(resolution.resolvedModel)) {
+				chain.push(resolution);
+				seen.add(resolution.resolvedModel);
 			}
 		}
-
 		this._chainCache.set(model, chain);
-		return chain;
+		return chain.map((entry) => ({ ...entry, resolutionPath: [...entry.resolutionPath] }));
+	}
+
+	/**
+	 * @param model
+	 */
+	getFallbackChain(model: string): string[] {
+		return this.getFallbackChainWithTrace(model).map((entry) => entry.resolvedModel);
 	}
 
 	/**
@@ -323,8 +325,15 @@ export class FallbackHandler {
 	 * 如果 `model` 已经是底层 group（无 alias），原样返回。
 	 * @param model
 	 */
+	resolveModelGroupWithTrace(model: string): ModelGroupResolution {
+		return this._resolveAliasWithTrace(model);
+	}
+
+	/**
+	 * @param model
+	 */
 	resolveModelGroup(model: string): string {
-		return this._resolveAlias(model);
+		return this.resolveModelGroupWithTrace(model).resolvedModel;
 	}
 
 	/**
@@ -371,7 +380,7 @@ export class FallbackHandler {
 	 * 运行时替换 model_group_alias（PY update_settings 白名单项）。
 	 * @param modelGroupAlias - 新的别名映射
 	 */
-	setModelGroupAlias(modelGroupAlias?: Record<string, string | string[] | { model: string; hidden?: boolean }>): void {
+	setModelGroupAlias(modelGroupAlias?: ModelGroupAliases): void {
 		const aliases = modelGroupAlias ?? {};
 		this._validateModelGroupAlias(aliases);
 		this._modelGroupAlias = aliases;
@@ -395,11 +404,15 @@ export class FallbackHandler {
 	 * @param currentDepth - current position in the fallback chain
 	 * @returns the next fallback model or null if none available
 	 */
+	getNextFallbackWithTrace(model: string, currentDepth: number): ModelGroupResolution | null {
+		return this.getFallbackChainWithTrace(model)[currentDepth] ?? null;
+	}
+
+	/**
+	 * @param model
+	 * @param currentDepth
+	 */
 	getNextFallback(model: string, currentDepth: number): string | null {
-		const chain = this.getFallbackChain(model);
-		if (currentDepth >= chain.length) {
-			return null;
-		}
-		return chain[currentDepth] ?? null;
+		return this.getNextFallbackWithTrace(model, currentDepth)?.resolvedModel ?? null;
 	}
 }

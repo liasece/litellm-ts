@@ -28,6 +28,12 @@ import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendL
 import { runCommonChecks } from "../auth/AuthChecks";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import {
+	appendModelResolutionTrace,
+	copyModelResolutionChain,
+	createModelResolutionTraceCollector,
+	type ModelResolutionTraceCollector,
+} from "../router/ModelResolutionTrace";
 import { getConfig } from "../core/config";
 import {
 	buildOpenAISearchContinuation,
@@ -246,6 +252,13 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body);
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
+		const modelResolutionTrace = createModelResolutionTraceCollector();
+		const completeWithResolutionTrace = (completionModel: string, completionMessages: Message[]) => {
+			if (typeof litellmRouter.resolveModelGroupWithTrace === "function") {
+				return litellmRouter.completion(completionModel, completionMessages, optionalParams, modelResolutionTrace);
+			}
+			return litellmRouter.completion(completionModel, completionMessages, optionalParams);
+		};
 		try {
 			spendLifecycle.markProviderStarted();
 
@@ -255,7 +268,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 				let initialResult: Record<string, unknown> | undefined;
 				let usageCalculated = false;
 				try {
-					let result = await litellmRouter.completion(model, messages, optionalParams);
+					let result = await completeWithResolutionTrace(model, messages);
 					initialResult = result;
 					const requestTools = Array.isArray(optionalParams["tools"]) ? optionalParams["tools"] : [];
 					const searchCalls = extractOpenAIWebSearchCalls(result, requestTools);
@@ -266,11 +279,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 						if (searchConfig) {
 							const searchResults = await executeWebSearchCalls(searchCalls, searchConfig, webSearchAbortController.signal);
 							const continuation = buildOpenAISearchContinuation(result, searchCalls, searchResults);
-							result = await litellmRouter.completion(
-								model,
-								[...messages, ...continuation] as unknown as Message[],
-								optionalParams,
-							);
+							result = await completeWithResolutionTrace(model, [...messages, ...continuation] as unknown as Message[]);
 							const finalSpendInfo = (result as unknown as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 							calculateAndSetCost(result as unknown as ModelResponse, model, finalSpendInfo?.customCostPerToken);
 							mergeAgenticLoopUsage(result, initialResult, searchCalls.length);
@@ -308,6 +317,10 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							response: result,
 							usage: usage,
 							status: SpendLogStatus.Success,
+							attemptedRetries: modelResolutionTrace.fallbackDepth,
+							maxRetries: litellmRouter.maxFallbacks,
+							fallbackModels: [...modelResolutionTrace.fallbackModels],
+							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 						});
 						await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
 					}
@@ -348,6 +361,10 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							usage: initialResult?.["usage"] as Record<string, unknown> | undefined,
 							error: error,
 							status: SpendLogStatus.Failure,
+							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							attemptedRetries: modelResolutionTrace.fallbackDepth,
+							maxRetries: litellmRouter.maxFallbacks,
+							fallbackModels: [...modelResolutionTrace.fallbackModels],
 						});
 						try {
 							await spendLifecycle.finalize(() => trackSpendLog(db, failureSpendLog).then(() => undefined));
@@ -376,6 +393,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 				db: db,
 				spendRequestId: spendRequestId,
 				spendLifecycle: spendLifecycle,
+				modelResolutionTrace: modelResolutionTrace,
 			});
 			return undefined;
 		} finally {
@@ -409,9 +427,10 @@ async function handleStreamingResponse(
 		db: DrizzleDb;
 		spendRequestId?: string;
 		spendLifecycle: EndpointSpendLifecycle;
+		modelResolutionTrace: ModelResolutionTraceCollector;
 	},
 ): Promise<void> {
-	const { req, db, spendRequestId, spendLifecycle } = context;
+	const { req, db, spendRequestId, spendLifecycle, modelResolutionTrace } = context;
 	let fallbackDepth = 0;
 	let currentModel = model;
 	const fallbackModels: string[] = [model];
@@ -423,15 +442,28 @@ async function handleStreamingResponse(
 	res.once("close", abortUpstream);
 
 	while (true) {
+		const resolution = litellmRouter.resolveModelGroupWithTrace?.(currentModel) ?? {
+			inputModel: currentModel,
+			resolvedModel: currentModel,
+			resolutionPath: [currentModel],
+		};
+		appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, resolution);
 		const candidate = litellmRouter.getAvailableDeployment(currentModel);
 		if (!candidate) {
-			const nextFallback = litellmRouter.getNextFallback(currentModel, 0);
+			const nextFallback =
+				litellmRouter.getNextFallbackWithTrace?.(currentModel, 0) ??
+				((fallbackModel) => {
+					if (fallbackModel === null) {
+						return null;
+					}
+					return { inputModel: fallbackModel, resolvedModel: fallbackModel, resolutionPath: [fallbackModel] };
+				})(litellmRouter.getNextFallback(currentModel, 0));
 			if (!nextFallback) {
 				break;
 			}
 			fallbackDepth++;
-			currentModel = nextFallback;
-			fallbackModels.push(nextFallback);
+			currentModel = nextFallback.inputModel;
+			fallbackModels.push(nextFallback.resolvedModel);
 			continue;
 		}
 
@@ -487,6 +519,7 @@ async function handleStreamingResponse(
 						status: SpendLogStatus.Success,
 						attemptedRetries: fallbackDepth,
 						fallbackModels: fallbackModels,
+						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 					});
 					await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
 				}
@@ -579,6 +612,7 @@ async function handleStreamingResponse(
 						status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
 						attemptedRetries: fallbackDepth,
 						fallbackModels: fallbackModels,
+						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 					});
 					try {
 						await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
@@ -606,12 +640,20 @@ async function handleStreamingResponse(
 			}
 			lastError = err;
 			litellmRouter.markFailed(deployment.model_name);
-			const nextFallback = litellmRouter.getNextFallback(currentModel, 0);
+			const nextFallback =
+				litellmRouter.getNextFallbackWithTrace?.(currentModel, 0) ??
+				((fallbackModel) => {
+					if (fallbackModel === null) {
+						return null;
+					}
+					return { inputModel: fallbackModel, resolvedModel: fallbackModel, resolutionPath: [fallbackModel] };
+				})(litellmRouter.getNextFallback(currentModel, 0));
 			if (!nextFallback) {
 				break;
 			}
 			fallbackDepth++;
-			currentModel = nextFallback;
+			currentModel = nextFallback.inputModel;
+			fallbackModels.push(nextFallback.resolvedModel);
 		} finally {
 			litellmRouter.trackActiveRequest(deployment.model_name, -1);
 		}
@@ -643,6 +685,10 @@ async function handleStreamingResponse(
 						messages: messages,
 						error: terminalError,
 						status: SpendLogStatus.Failure,
+						attemptedRetries: modelResolutionTrace.fallbackDepth,
+						maxRetries: litellmRouter.maxFallbacks,
+						fallbackModels: [...modelResolutionTrace.fallbackModels],
+						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 					}),
 				).then(() => undefined),
 			);

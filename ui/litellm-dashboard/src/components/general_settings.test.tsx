@@ -4,13 +4,13 @@ import GeneralSettings from "./general_settings";
 import {
 	deleteConfigFieldSetting,
 	getGeneralSettingsCall,
-	getWebSearchOverrideTargetCandidatesCall,
+	getRoutableModelCandidatesCall,
 	updateConfigFieldSetting,
 } from "./networking";
 
 vi.mock("./networking", () => ({
 	getGeneralSettingsCall: vi.fn(),
-	getWebSearchOverrideTargetCandidatesCall: vi.fn(),
+	getRoutableModelCandidatesCall: vi.fn(),
 	updateConfigFieldSetting: vi.fn(),
 	deleteConfigFieldSetting: vi.fn(),
 }));
@@ -37,7 +37,7 @@ describe("GeneralSettings web-search override", () => {
 				stored_in_db: false,
 			},
 		]);
-		vi.mocked(getWebSearchOverrideTargetCandidatesCall).mockResolvedValue([
+		vi.mocked(getRoutableModelCandidatesCall).mockResolvedValue([
 			{ model_name: "logical-model", type: "model" },
 			{ model_name: "search-alias", type: "alias" },
 		]);

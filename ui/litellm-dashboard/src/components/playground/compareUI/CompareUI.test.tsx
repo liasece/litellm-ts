@@ -1,15 +1,20 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CompareUI from "./CompareUI";
 import { makeOpenAIChatCompletionRequest } from "../llm_calls/chat_completion";
+import { fetchAvailableAgents } from "../llm_calls/fetch_agents";
 
 vi.mock("../llm_calls/fetch_models", () => ({
-  fetchAvailableModels: vi.fn().mockResolvedValue([{ model_group: "gpt-4" }, { model_group: "gpt-3.5-turbo" }]),
+  fetchRoutableModels: vi.fn().mockResolvedValue([{ model_group: "gpt-4" }, { model_group: "gpt-3.5-turbo" }]),
 }));
 
 vi.mock("../llm_calls/chat_completion", () => ({
   makeOpenAIChatCompletionRequest: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../llm_calls/fetch_agents", () => ({
+	fetchAvailableAgents: vi.fn().mockResolvedValue([]),
 }));
 
 let capturedOnImageUpload: ((file: File) => false) | null = null;
@@ -155,4 +160,28 @@ describe("CompareUI", () => {
       expect(makeOpenAIChatCompletionRequest).toHaveBeenCalled();
     });
   });
+
+	it("passes session PlaygroundAuth when loading A2A agents", async () => {
+		const { container } = render(<CompareUI accessToken="session-token" disabledPersonalKeyCreation={false} />);
+		fireEvent.mouseDown(container.querySelectorAll(".ant-select-selector")[1]!);
+		fireEvent.click(await screen.findByText("/a2a (Agents)"));
+
+		await waitFor(() => {
+			expect(fetchAvailableAgents).toHaveBeenCalledWith({ kind: "session" }, undefined);
+		});
+	});
+
+	it("passes trimmed virtual-key PlaygroundAuth when loading A2A agents", async () => {
+		const user = userEvent.setup();
+		const { container } = render(<CompareUI accessToken="session-token" disabledPersonalKeyCreation={false} />);
+		fireEvent.mouseDown(container.querySelectorAll(".ant-select-selector")[0]!);
+		fireEvent.click(await screen.findByText("Virtual Key"));
+		await user.type(screen.getByPlaceholderText("Enter Virtual Key"), "  virtual-key  ");
+		fireEvent.mouseDown(container.querySelectorAll(".ant-select-selector")[1]!);
+		fireEvent.click(await screen.findByText("/a2a (Agents)"));
+
+		await waitFor(() => {
+			expect(fetchAvailableAgents).toHaveBeenCalledWith({ kind: "virtual-key", apiKey: "virtual-key" }, undefined);
+		});
+	});
 });

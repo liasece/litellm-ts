@@ -1,6 +1,7 @@
 "use client";
 
 import NotificationsManager from "@/components/molecules/notifications_manager";
+import type { PlaygroundAuth } from "@/components/networking";
 import { ClearOutlined, DeleteOutlined, FilePdfOutlined, PlusOutlined } from "@ant-design/icons";
 import { Button, Input, Select, Tooltip } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -10,7 +11,7 @@ import { createChatDisplayMessage, createChatMultimodalMessage } from "../chat_u
 import type { TokenUsage } from "../chat_ui/ResponseMetrics";
 import type { MessageType, VectorStoreSearchResponse } from "../chat_ui/types";
 import { makeOpenAIChatCompletionRequest } from "../llm_calls/chat_completion";
-import { fetchAvailableModels } from "../llm_calls/fetch_models";
+import { fetchRoutableModels } from "../llm_calls/fetch_models";
 import { Agent, fetchAvailableAgents } from "../llm_calls/fetch_agents";
 import { makeA2AStreamMessageRequest } from "../llm_calls/a2a_send_message";
 import { ComparisonPanel } from "./components/ComparisonPanel";
@@ -106,9 +107,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
   );
   const [customApiKey, setCustomApiKey] = useState("");
   const [debouncedCustomApiKey, setDebouncedCustomApiKey] = useState("");
-  const [customProxyBaseUrl] = useState<string>(
-    () => sessionStorage.getItem("customProxyBaseUrl") || ""
-  );
+	const [customProxyBaseUrl] = useState<string>(() => sessionStorage.getItem("customProxyBaseUrl") || "");
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedCustomApiKey(customApiKey);
@@ -122,10 +121,12 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
       }
     };
   }, [uploadedFilePreviewUrl]);
-  const effectiveApiKey = useMemo(
-    () => (apiKeySource === "session" ? accessToken || "" : debouncedCustomApiKey.trim()),
-    [apiKeySource, accessToken, debouncedCustomApiKey],
+	const trimmedCustomApiKey = debouncedCustomApiKey.trim();
+	const playgroundAuth = useMemo<PlaygroundAuth>(
+		() => (apiKeySource === "session" ? { kind: "session" } : { kind: "virtual-key", apiKey: trimmedCustomApiKey }),
+		[apiKeySource, trimmedCustomApiKey],
   );
+	const hasPlaygroundAuth = apiKeySource === "session" || trimmedCustomApiKey.length > 0;
   const haveAllResponses = useMemo(
     () =>
       comparisons.length > 0 &&
@@ -137,13 +138,13 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
   useEffect(() => {
     let active = true;
     const loadModels = async () => {
-      if (!effectiveApiKey) {
+			if (!accessToken) {
         setModelOptions([]);
         return;
       }
       setIsLoadingModels(true);
       try {
-        const uniqueModels = await fetchAvailableModels(effectiveApiKey);
+				const uniqueModels = await fetchRoutableModels(accessToken);
         if (!active) return;
         const nextOptions = Array.from(new Set(uniqueModels.map((model) => model.model_group)));
         setModelOptions(nextOptions);
@@ -162,19 +163,19 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
     return () => {
       active = false;
     };
-  }, [effectiveApiKey]);
+	}, [accessToken]);
 
   // Fetch agents when A2A mode is selected
   useEffect(() => {
     let active = true;
     const loadAgents = async () => {
-      if (!effectiveApiKey || !isA2AMode) {
+			if (!hasPlaygroundAuth || !isA2AMode) {
         setAgentOptions([]);
         return;
       }
       setIsLoadingAgents(true);
       try {
-        const agents = await fetchAvailableAgents(effectiveApiKey, customProxyBaseUrl || undefined);
+				const agents = await fetchAvailableAgents(playgroundAuth, customProxyBaseUrl || undefined);
         if (!active) return;
         setAgentOptions(agents);
       } catch (error) {
@@ -192,7 +193,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
     return () => {
       active = false;
     };
-  }, [effectiveApiKey, isA2AMode]);
+	}, [playgroundAuth, hasPlaygroundAuth, isA2AMode, customProxyBaseUrl]);
 
   useEffect(() => {
     if (modelOptions.length === 0) {
@@ -484,7 +485,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
     if (!trimmed && !hasAttachment) {
       return;
     }
-    if (!effectiveApiKey) {
+		if (!hasPlaygroundAuth) {
       NotificationsManager.fromBackend("Please provide a Virtual Key or select Current UI Session");
       return;
     }
@@ -597,7 +598,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
                 }),
               );
             },
-            effectiveApiKey,
+						playgroundAuth,
             undefined,
             (time) => updateTimingDataForComparison(prepared.id, time),
             (latency) => updateTotalLatencyForComparison(prepared.id, latency),
@@ -608,7 +609,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
             prepared.apiChatHistory,
             (chunk, model) => appendAssistantChunk(prepared.id, chunk, model),
             prepared.model,
-            effectiveApiKey,
+						playgroundAuth,
             tags,
             undefined,
             (content) => appendReasoningContent(prepared.id, content),
@@ -724,10 +725,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
                 className="w-56"
               >
                 {getAvailableEndpoints().map((endpoint) => (
-                  <Select.Option 
-                    key={endpoint.value} 
-                    value={endpoint.value}
-                  >
+									<Select.Option key={endpoint.value} value={endpoint.value}>
                     {endpoint.label}
                   </Select.Option>
                 ))}
@@ -766,7 +764,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
               selectorOptions={selectorOptions}
               isLoadingOptions={isLoadingOptions}
               endpointConfig={endpointConfig}
-              apiKey={effectiveApiKey}
+							apiKey={accessToken || ""}
             />
           ))}
         </div>

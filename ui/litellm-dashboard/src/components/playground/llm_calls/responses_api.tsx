@@ -1,7 +1,7 @@
 import openai from "openai";
 import { MessageType } from "../chat_ui/types";
 import { TokenUsage } from "../chat_ui/ResponseMetrics";
-import { getProxyBaseUrl } from "@/components/networking";
+import { createPlaygroundFetch, getProxyBaseUrl, type PlaygroundAuth } from "../../networking";
 import NotificationManager from "@/components/molecules/notifications_manager";
 import type { MCPEvent } from "../../mcp_tools/types";
 import { MCPServer } from "../../mcp_tools/types";
@@ -18,7 +18,7 @@ export async function makeOpenAIResponsesRequest(
   messages: MessageType[],
   updateTextUI: (role: string, delta: string, model?: string) => void,
   selectedModel: string,
-  accessToken: string | null,
+  auth: PlaygroundAuth,
   tags: string[] = [],
   signal?: AbortSignal,
   onReasoningContent?: (content: string) => void,
@@ -38,10 +38,6 @@ export async function makeOpenAIResponsesRequest(
   mcpServers?: MCPServer[],
   mcpServerToolRestrictions?: Record<string, string[]>,
 ) {
-  if (!accessToken) {
-    throw new Error("Virtual Key is required");
-  }
-
   if (!selectedModel || selectedModel.trim() === "") {
     throw new Error("Model is required. Please select a model before sending a request.");
   }
@@ -60,9 +56,10 @@ export async function makeOpenAIResponsesRequest(
   }
 
   const client = new openai.OpenAI({
-    apiKey: accessToken,
+    apiKey: auth.kind === "virtual-key" ? auth.apiKey : "playground-session",
     baseURL: proxyBaseUrl,
     dangerouslyAllowBrowser: true,
+    fetch: createPlaygroundFetch(auth, "openai"),
     defaultHeaders: headers,
   });
 

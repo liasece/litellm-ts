@@ -1,7 +1,6 @@
-import { dashboardFetch } from "@/components/networking";
 // fetch_agents.tsx
 
-import { getProxyBaseUrl, modelInfoCall } from "../../networking";
+import { createPlaygroundFetch, getProxyBaseUrl, modelInfoCall, type PlaygroundAuth } from "../../networking";
 
 export interface Agent {
 	agent_id: string;
@@ -39,12 +38,12 @@ export interface AgentModel {
 /**
  * Fetches available A2A agents from /v1/agents endpoint.
  */
-export const fetchAvailableAgents = async (accessToken: string, customBaseUrl?: string): Promise<Agent[]> => {
+export const fetchAvailableAgents = async (auth: PlaygroundAuth, customBaseUrl?: string): Promise<Agent[]> => {
 	try {
 		const proxyBaseUrl = customBaseUrl || getProxyBaseUrl();
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/v1/agents` : `/v1/agents`;
 
-		const response = await dashboardFetch(url, {
+		const response = await createPlaygroundFetch(auth, "openai")(url, {
 			method: "GET",
 			headers: {
 				"Content-Type": "application/json",

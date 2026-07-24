@@ -1238,12 +1238,15 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		});
 	});
 
-	registerRoute(router, { method: "get", path: "/config/websearch_override_target_model/options" }, () => {
+	const getRoutableModelCandidates = () => {
 		if (!litellmRouter) {
 			throw ApiError.httpException(HTTP_STATUS.BAD_REQUEST, { error: "Router is not available" });
 		}
 		return { data: litellmRouter.getAvailableModelNames() };
-	});
+	};
+
+	registerRoute(router, { method: "get", path: "/config/routable_model/options" }, getRoutableModelCandidates);
+	registerRoute(router, { method: "get", path: "/config/websearch_override_target_model/options" }, getRoutableModelCandidates);
 
 	/**
 	 * 更新配置（对齐 Python update_config，proxy_server.py:11930）。

@@ -40,6 +40,7 @@ import { buildCooldownDecision } from "./RouterExecutor";
 import type { NoDeploymentsErrorInfo } from "../core/api/ApiError";
 import { normalizeMockTestingParams, tryDispatchMockTestingExceptions, shouldDispatchMockRateLimit } from "./RouterMockTesting";
 import { executeWithFallback, isKnownModel, type RouterExecContext } from "./RouterExecution";
+import { createModelResolutionTraceCollector, type ModelGroupResolution, type ModelResolutionTraceCollector } from "./ModelResolutionTrace";
 import { RoutingStrategyName } from "../types/router";
 import { executeProviderRequest } from "./ProviderRequestExecutor";
 
@@ -220,22 +221,23 @@ export class Router {
 	}
 
 	/** 当前可供管理端选择的逻辑模型名与 alias key，不暴露 provider model 或 deployment id。 */
-	getAvailableModelNames(): Array<{ model_name: string; type: "model" | "alias" }> {
-		const names = new Map<string, "model" | "alias">();
+	getAvailableModelNames(): Array<{ model_name: string; type: "model" | "alias"; mode: string }> {
+		const names = new Map<string, { type: "model" | "alias"; mode: string }>();
 		for (const deployment of this._deployments) {
 			if (deployment.model_name) {
-				names.set(deployment.model_name, "model");
+				names.set(deployment.model_name, { type: "model", mode: deployment.model_info?.mode ?? "chat" });
 			}
 		}
 		for (const alias of this._fallbackHandler.getModelGroupAliasKeys()) {
 			const resolvedModel = this._fallbackHandler.resolveModelGroup(alias);
-			if (this._deployments.some((deployment) => this._matchDeploymentPattern(deployment, resolvedModel))) {
-				names.set(alias, "alias");
+			const target = this._deployments.find((deployment) => this._matchDeploymentPattern(deployment, resolvedModel));
+			if (target) {
+				names.set(alias, { type: "alias", mode: target.model_info?.mode ?? "chat" });
 			}
 		}
 		return [...names.entries()]
 			.sort(([left], [right]) => left.localeCompare(right))
-			.map(([model_name, type]) => ({ model_name: model_name, type: type }));
+			.map(([model_name, candidate]) => ({ model_name: model_name, type: candidate.type, mode: candidate.mode }));
 	}
 
 	/**
@@ -641,6 +643,7 @@ export class Router {
 		optionalParams: Record<string, unknown>,
 		fallbackDepth: number,
 		previousError?: Error,
+		modelResolutionTrace: ModelResolutionTraceCollector = createModelResolutionTraceCollector(),
 	): Promise<Record<string, unknown>> {
 		const ctx = this._buildExecContext();
 		return executeWithFallback(
@@ -650,8 +653,9 @@ export class Router {
 				messages: messages,
 				optionalParams: optionalParams,
 				fallbackDepth: fallbackDepth,
-				fallbackModels: [],
+				fallbackModels: [model],
 				previousError: previousError,
+				modelResolutionTrace: modelResolutionTrace,
 			},
 			{
 				getCandidate: (m, msgs) => this.getAvailableDeployment(m, msgs),
@@ -668,8 +672,14 @@ export class Router {
 	 * @param model - 逻辑模型名
 	 * @param messages - 消息列表
 	 * @param optionalParams - 请求参数（含 stream/temperature/fallbacks/mock_testing_*）
+	 * @param modelResolutionTrace
 	 */
-	async completion(model: string, messages: Message[], optionalParams: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+	async completion(
+		model: string,
+		messages: Message[],
+		optionalParams: Record<string, unknown> = {},
+		modelResolutionTrace: ModelResolutionTraceCollector = createModelResolutionTraceCollector(),
+	): Promise<Record<string, unknown>> {
 		optionalParams = normalizeMockTestingParams(optionalParams);
 		if (Array.isArray(optionalParams["fallbacks"])) {
 			const seen = new Set<string>();
@@ -697,13 +707,13 @@ export class Router {
 		}
 		const silentModel = optionalParams["silent_model"];
 		if (typeof silentModel === "string" && silentModel.length > 0) {
-			const realResult = await this._executeWithFallback(model, messages, optionalParams, 0);
+			const realResult = await this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
 			this._executeWithFallback(silentModel, messages, { ...optionalParams, isSilentCall: true }, 0).catch(() => {
 				// silent_model 失败仅记录，不抛
 			});
 			return realResult;
 		}
-		return this._executeWithFallback(model, messages, optionalParams, 0);
+		return this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
 	}
 
 	/**
@@ -785,9 +795,24 @@ export class Router {
 	}
 
 	/**
-	 * 获取第 fallbackDepth 个 fallback model 名
+	 * 解析逻辑模型并返回完整 alias 路径。
 	 * @param model - 原始模型名
-	 * @param fallbackDepth - 回退深度
+	 */
+	resolveModelGroupWithTrace(model: string): ModelGroupResolution {
+		return this._fallbackHandler.resolveModelGroupWithTrace(model);
+	}
+
+	/**
+	 * @param model
+	 * @param fallbackDepth
+	 */
+	getNextFallbackWithTrace(model: string, fallbackDepth: number): ModelGroupResolution | null {
+		return this._fallbackHandler.getNextFallbackWithTrace(model, fallbackDepth);
+	}
+
+	/**
+	 * @param model
+	 * @param fallbackDepth
 	 */
 	getNextFallback(model: string, fallbackDepth: number): string | null {
 		return this._fallbackHandler.getNextFallback(model, fallbackDepth);

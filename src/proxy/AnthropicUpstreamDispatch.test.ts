@@ -24,6 +24,7 @@ import {
 	executeWithFallbackChain,
 	requireUpstreamAttempt,
 	stripProviderPrefix,
+	type FallbackExecutionStats,
 	type FallbackRouterFacade,
 	type UpstreamAttempt,
 } from "./AnthropicUpstreamDispatch";
@@ -64,6 +65,8 @@ interface MockFacadeOptions {
 	fallbackChains?: Record<string, string[]>;
 	/** recordDeploymentFailure 是否模拟冷却生效（true 时该 deployment 从可用列表移除） */
 	cooldownOnFailure?: boolean;
+	/** model → alias 解析结果 */
+	modelResolutions?: Record<string, { inputModel: string; resolvedModel: string; resolutionPath: readonly string[] }>;
 }
 
 class MockRouterFacade implements FallbackRouterFacade {
@@ -89,6 +92,10 @@ class MockRouterFacade implements FallbackRouterFacade {
 	getNextFallback(model: string, fallbackDepth: number): string | null {
 		const chain = this._options.fallbackChains?.[model] ?? [];
 		return chain[fallbackDepth] ?? null;
+	}
+
+	resolveModelGroupWithTrace(model: string) {
+		return this._options.modelResolutions?.[model] ?? { inputModel: model, resolvedModel: model, resolutionPath: [model] };
 	}
 
 	recordDeploymentSuccess(deployment: Deployment): void {
@@ -207,6 +214,61 @@ describe("executeWithFallbackChain", () => {
 		expect(seenModels).toEqual(["deepseek-v4-flash"]);
 		expect(facade.successes).toEqual(["deepseek-coder-anthropic"]);
 		expect(facade.failures).toEqual([]);
+	});
+
+	it("记录初始与 fallback alias 路径，同组 deployment 重试不重复追加", async () => {
+		const facade = new MockRouterFacade({
+			deploymentsByModel: {
+				"request-alias": [
+					makeDeployment("request-model", "anthropic/model-a", "dep-1"),
+					makeDeployment("request-model", "anthropic/model-a-backup", "dep-2"),
+				],
+				"fallback-alias": [makeDeployment("fallback-model", "anthropic/model-b")],
+			},
+			fallbackChains: { "request-alias": ["fallback-alias"] },
+			modelResolutions: {
+				"request-alias": {
+					inputModel: "request-alias",
+					resolvedModel: "request-model",
+					resolutionPath: ["request-alias", "request-model"],
+				},
+				"fallback-alias": {
+					inputModel: "fallback-alias",
+					resolvedModel: "fallback-model",
+					resolutionPath: ["fallback-alias", "fallback-model"],
+				},
+			},
+			cooldownOnFailure: true,
+		});
+		const stats: FallbackExecutionStats = { fallbackDepth: 0 };
+		const seen: string[] = [];
+		const result = await executeWithFallbackChain(
+			facade,
+			"request-alias",
+			undefined,
+			undefined,
+			async (attempt) => {
+				seen.push(attempt.deploymentKey);
+				throw new ProviderUpstreamError(500, "failed");
+			},
+			stats,
+		).catch(() => "failed");
+		expect(result).toBe("failed");
+		expect(stats.modelResolutionChain).toEqual([
+			{
+				fallback_index: 0,
+				input_model: "request-alias",
+				resolved_model: "request-model",
+				resolution_path: ["request-alias", "request-model"],
+			},
+			{
+				fallback_index: 1,
+				input_model: "fallback-alias",
+				resolved_model: "fallback-model",
+				resolution_path: ["fallback-alias", "fallback-model"],
+			},
+		]);
+		expect(seen).toEqual(["dep-1", "dep-2", "fallback-model"]);
 	});
 
 	it("provider 400 失败 → fallback 链下一跳成功（GLM 1211 场景）", async () => {

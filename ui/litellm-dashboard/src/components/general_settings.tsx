@@ -16,7 +16,7 @@ import {
 import { TabPanel, TabPanels, TabGroup, TabList, Tab } from "@tremor/react";
 import {
 	getGeneralSettingsCall,
-	getWebSearchOverrideTargetCandidatesCall,
+	getRoutableModelCandidatesCall,
 	updateConfigFieldSetting,
 	deleteConfigFieldSetting,
 } from "./networking";
@@ -43,7 +43,7 @@ interface generalSettingsItem {
 const GeneralSettings: React.FC<GeneralSettingsPageProps> = ({ accessToken, userRole, userID, modelData }) => {
 	const [generalSettings, setGeneralSettings] = useState<generalSettingsItem[]>([]);
 	const [webSearchCandidates, setWebSearchCandidates] = useState<
-		Awaited<ReturnType<typeof getWebSearchOverrideTargetCandidatesCall>>
+		Awaited<ReturnType<typeof getRoutableModelCandidatesCall>>
 	>([]);
 
 	useEffect(() => {
@@ -53,7 +53,7 @@ const GeneralSettings: React.FC<GeneralSettingsPageProps> = ({ accessToken, user
 		getGeneralSettingsCall(accessToken).then((data) => {
 			setGeneralSettings(data);
 		});
-		getWebSearchOverrideTargetCandidatesCall(accessToken)
+		getRoutableModelCandidatesCall(accessToken)
 			.then(setWebSearchCandidates)
 			.catch(() => setWebSearchCandidates([]));
 	}, [accessToken]);

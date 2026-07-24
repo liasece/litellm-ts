@@ -1,18 +1,14 @@
 import NotificationManager from "@/components/molecules/notifications_manager";
-import { getProxyBaseUrl, dashboardFetch } from "@/components/networking";
+import { createPlaygroundFetch, getProxyBaseUrl, type PlaygroundAuth } from "@/components/networking";
 
 export async function makeOpenAIEmbeddingsRequest(
 	input: string,
 	updateEmbeddingsUI: (embeddings: string, model?: string) => void,
 	selectedModel: string,
-	accessToken: string,
+	auth: PlaygroundAuth,
 	tags?: string[],
 	customBaseUrl?: string,
 ) {
-	if (!accessToken) {
-		throw new Error("Virtual Key is required");
-	}
-
 	// Base URL should be the current base_url
 	const isLocal = process.env.NODE_ENV === "development";
 	if (isLocal !== true) {
@@ -30,7 +26,7 @@ export async function makeOpenAIEmbeddingsRequest(
 		const normalizedBaseUrl = proxyBaseUrl.endsWith("/") ? proxyBaseUrl.slice(0, -1) : proxyBaseUrl;
 		const requestUrl = `${normalizedBaseUrl}/embeddings`;
 
-		const response = await dashboardFetch(requestUrl, {
+		const response = await createPlaygroundFetch(auth, "openai")(requestUrl, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",

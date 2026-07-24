@@ -31,6 +31,15 @@ function buildApp() {
 	const router = {
 		getAvailableDeployment: jest.fn().mockReturnValue({ deployment: deployment, provider: provider }),
 		getNextFallback: jest.fn().mockReturnValue(null),
+		resolveModelGroupWithTrace: jest.fn((model: string) =>
+			model === "native-group"
+				? {
+						inputModel: model,
+						resolvedModel: "resolved-native-group",
+						resolutionPath: [model, "nested-native-alias", "resolved-native-group"],
+					}
+				: { inputModel: model, resolvedModel: model, resolutionPath: [model] },
+		),
 		recordDeploymentSuccess: jest.fn(),
 		recordDeploymentFailure: jest.fn(),
 		hasModel: jest.fn().mockReturnValue(true),
@@ -117,6 +126,17 @@ describe("native Anthropic streaming SpendLog", () => {
 			completion_tokens: 6,
 			cache_creation_input_tokens: 2,
 			cache_read_input_tokens: 3,
+			metadata: {
+				fallback_models: ["native-group"],
+				model_resolution_chain: [
+					{
+						fallback_index: 0,
+						input_model: "native-group",
+						resolved_model: "resolved-native-group",
+						resolution_path: ["native-group", "nested-native-alias", "resolved-native-group"],
+					},
+				],
+			},
 			response: {
 				id: syntheticId,
 				type: "message",
@@ -130,6 +150,45 @@ describe("native Anthropic streaming SpendLog", () => {
 				stop_reason: "tool_use",
 				stop_sequence: null,
 				usage: { input_tokens: 4, output_tokens: 6, cache_creation_input_tokens: 2, cache_read_input_tokens: 3 },
+			},
+		});
+	});
+
+	it("非流式成功日志保存 alias 解析链并保留原始 fallback 首项", async () => {
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			new globalThis.Response(
+				JSON.stringify({
+					id: "msg-non-stream",
+					type: "message",
+					role: "assistant",
+					model: "upstream-model",
+					content: [{ type: "text", text: "hello" }],
+					stop_reason: "end_turn",
+					usage: { input_tokens: 2, output_tokens: 1 },
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		const app = buildApp();
+
+		await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }], stream: false })
+			.expect(200);
+
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: SpendLogStatus.Success,
+			metadata: {
+				fallback_models: ["native-group"],
+				model_resolution_chain: [
+					{
+						fallback_index: 0,
+						input_model: "native-group",
+						resolved_model: "resolved-native-group",
+						resolution_path: ["native-group", "nested-native-alias", "resolved-native-group"],
+					},
+				],
 			},
 		});
 	});

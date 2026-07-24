@@ -209,6 +209,30 @@ describe("Logs columns", () => {
 		expect(await screen.findByText("OpenAI/gpt-4o")).toBeInTheDocument();
 	});
 
+	it("shows alias resolution in the model tooltip without increasing fallback count", async () => {
+		const user = userEvent.setup();
+		renderColumnCell("Model", {
+			...baseLogEntry,
+			model: "alias-a",
+			metadata: {
+				fallback_models: ["alias-a", "fallback-model"],
+				model_resolution_chain: [
+					{
+						fallback_index: 0,
+						input_model: "alias-a",
+						resolved_model: "model-a",
+						resolution_path: ["alias-a", "alias-b", "model-a"],
+					},
+				],
+			},
+		});
+
+		expect(screen.getByText("(1)")).toBeInTheDocument();
+		const displayModel = screen.getByText("alias-a");
+		await user.hover(displayModel);
+		expect(await screen.findByText(/Request: alias-a → alias-b → model-a/)).toBeInTheDocument();
+	});
+
 	it("does not remove a non-matching or nested gateway prefix", () => {
 		const { rerender } = renderColumnCell("Model", {
 			...baseLogEntry,

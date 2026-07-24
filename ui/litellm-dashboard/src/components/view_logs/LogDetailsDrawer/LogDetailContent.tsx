@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Typography, Descriptions, Card, Tag, Tabs, Alert, Collapse, Radio, Space, Spin } from "antd";
 import moment from "moment";
-import { LogEntry } from "../columns";
+import { LogEntry, normalizeModelResolutionChain } from "../columns";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import GuardrailViewer from "../GuardrailViewer/GuardrailViewer";
 import { CostBreakdownViewer } from "../CostBreakdownViewer";
@@ -55,6 +55,7 @@ export function LogDetailContent({ logEntry, onOpenSettings, isLoadingDetails = 
   const metadata = logEntry.metadata || {};
   const hasError = metadata.status === "failure";
   const errorInfo = hasError ? metadata.error_information : null;
+  const modelResolutionChain = normalizeModelResolutionChain(metadata.model_resolution_chain);
 
   const hasMessages = checkHasMessages(logEntry.messages);
   const hasResponse = checkHasResponse(logEntry.response);
@@ -131,6 +132,8 @@ export function LogDetailContent({ logEntry, onOpenSettings, isLoadingDetails = 
           </Descriptions>
         </Card>
       </div>
+
+      {modelResolutionChain.length > 0 && <ModelResolutionSection entries={modelResolutionChain} />}
 
       {/* Metrics */}
       <MetricsSection logEntry={logEntry} metadata={metadata} />
@@ -254,6 +257,30 @@ function GuardrailLabel({ label, maskedCount }: { label: string; maskedCount: nu
         </Tag>
       )}
     </Space>
+  );
+}
+
+function ModelResolutionSection({ entries }: { entries: ReturnType<typeof normalizeModelResolutionChain> }) {
+  return (
+    <div className="bg-white rounded-lg shadow w-full max-w-full overflow-hidden mb-6">
+      <Card title="Model Resolution" size="small" style={{ marginBottom: 0 }}>
+        <Space direction="vertical" size={SPACING_MEDIUM}>
+          {entries.map((entry) => (
+            <div key={`${entry.fallback_index}:${entry.resolution_path.join("→")}`}>
+              <Text strong>{entry.fallback_index === 0 ? "Request" : `Fallback ${entry.fallback_index}`}</Text>
+              <div aria-label={entry.resolution_path.join(" → ")} style={{ fontFamily: FONT_FAMILY_MONO }}>
+                {entry.resolution_path.map((node, index) => (
+                  <span key={`${node}:${index}`}>
+                    {index > 0 && <Text type="secondary"> → </Text>}
+                    <Text strong={index === entry.resolution_path.length - 1}>{node}</Text>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </Space>
+      </Card>
+    </div>
   );
 }
 

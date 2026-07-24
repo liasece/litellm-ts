@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeOpenAIAudioSpeechRequest } from "./audio_speech";
 import OpenAI from "openai";
+import { createPlaygroundFetch } from "../../networking";
 
 vi.mock("openai");
+vi.mock("../../networking", () => ({
+  getProxyBaseUrl: vi.fn(() => "https://example.com"),
+  createPlaygroundFetch: vi.fn(() => vi.fn()),
+}));
 
 // Mock URL.createObjectURL
 global.URL.createObjectURL = vi.fn(() => "blob:mock-audio-url");
@@ -39,7 +44,10 @@ describe("audio_speech", () => {
   });
 
   it("should make a request to the audio speech API with basic parameters", async () => {
-    await makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", "sk-1234567890", []);
+    await makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", { kind: "session" }, []);
+
+    expect(createPlaygroundFetch).toHaveBeenCalledWith({ kind: "session" }, "openai");
+    expect(OpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "playground-session", fetch: expect.any(Function) }));
 
     expect(mockCreate).toHaveBeenCalledWith(
       {
@@ -61,7 +69,7 @@ describe("audio_speech", () => {
       "nova",
       mockUpdateUI,
       "tts-1-hd",
-      "sk-1234567890",
+      { kind: "session" },
       ["tag1", "tag2"],
       signal,
       "mp3",
@@ -86,7 +94,7 @@ describe("audio_speech", () => {
     mockCreate.mockRejectedValue(mockError);
 
     await expect(
-      makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", "sk-1234567890", []),
+      makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", { kind: "session" }, []),
     ).rejects.toThrow("API Error");
 
     expect(mockUpdateUI).not.toHaveBeenCalled();

@@ -40,6 +40,39 @@ describe("LogDetailContent", () => {
     expect(screen.getByText("Request Details")).toBeInTheDocument();
   });
 
+  it("shows valid nested alias resolution entries and filters invalid metadata", () => {
+    render(
+      <LogDetailContent
+        logEntry={createLogEntry({
+          metadata: {
+            status: "success",
+            model_resolution_chain: [
+              {
+                fallback_index: 0,
+                input_model: "alias-a",
+                resolved_model: "model-a",
+                resolution_path: ["alias-a", "alias-b", "model-a"],
+              },
+              { fallback_index: "bad", resolution_path: ["ignored"] },
+            ],
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Model Resolution")).toBeInTheDocument();
+    expect(screen.getByText("Request")).toBeInTheDocument();
+    expect(screen.getByLabelText("alias-a → alias-b → model-a")).toBeInTheDocument();
+    expect(screen.queryByText("ignored")).not.toBeInTheDocument();
+  });
+
+  it("does not show Model Resolution for old or invalid logs", () => {
+    render(
+      <LogDetailContent logEntry={createLogEntry({ metadata: { status: "success", model_resolution_chain: null } })} />,
+    );
+    expect(screen.queryByText("Model Resolution")).not.toBeInTheDocument();
+  });
+
   it("should display Request Details with model, provider, and call type", () => {
     render(
       <LogDetailContent

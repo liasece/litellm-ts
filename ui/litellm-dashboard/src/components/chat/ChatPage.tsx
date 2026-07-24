@@ -94,7 +94,6 @@ interface ComparisonExchange {
 async function streamToModel(
   model: string,
   messages: Array<{ role: "user" | "assistant"; content: string }>,
-  accessToken: string,
   mcpServers: string[],
   signal: AbortSignal,
   onChunk: (model: string, chunk: string) => void,
@@ -105,7 +104,7 @@ async function streamToModel(
       messages,
       (chunk: string) => onChunk(model, chunk),
       model,
-      accessToken,
+      { kind: "session" },
       undefined, // tags
       signal,
       undefined, // onReasoningContent
@@ -313,7 +312,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
             updateLastAssistantMessage(convId!, { content: accumulatedContent });
           },
           model,
-          accessToken,
+          { kind: "session" },
           undefined, // tags
           abortControllerRef.current.signal,
           (rc: string) => {
@@ -386,7 +385,6 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
           return streamToModel(
             model,
             history,
-            accessToken,
             selectedMCPServers,
             controllers[model].signal,
             (m, chunk) => setComparisonExchanges((prev) => {

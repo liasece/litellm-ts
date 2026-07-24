@@ -44,6 +44,63 @@ describe("networking - expired session handling", () => {
 		expect(headers.get("Authorization")).toBeNull();
 	});
 
+	it("Playground session 应在网络边界移除 SDK 鉴权头并保留请求语义", async () => {
+		const cookieUtils = await import("@/utils/cookieUtils");
+		vi.mocked(cookieUtils.getCookie).mockReturnValue("csrf-value");
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true } as Response);
+		global.fetch = mockFetch as typeof global.fetch;
+		const controller = new AbortController();
+		const request = new Request("https://example.com/v1/chat/completions", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer cookie-session",
+				"x-request-header": "request-value",
+			},
+		});
+
+		await Networking.createPlaygroundFetch({ kind: "session" }, "openai")(request, {
+			signal: controller.signal,
+			headers: {
+				"x-api-key": "cookie-session",
+				"x-init-header": "init-value",
+			},
+		});
+
+		expect(mockFetch).toHaveBeenCalledOnce();
+		const [input, init] = mockFetch.mock.calls[0]!;
+		expect(input).toBeInstanceOf(Request);
+		expect((input as Request).url).toBe("https://example.com/v1/chat/completions");
+		expect(init.credentials).toBe("include");
+		expect(init.signal).toBe(controller.signal);
+		const headers = new Headers(init.headers);
+		expect(headers.get("Authorization")).toBeNull();
+		expect(headers.get("x-api-key")).toBeNull();
+		expect(headers.get("x-request-header")).toBe("request-value");
+		expect(headers.get("x-init-header")).toBe("init-value");
+		expect(headers.get("x-litellm-csrf-token")).toBe("csrf-value");
+	});
+
+	it("Playground custom key 应只发送协议对应鉴权头", async () => {
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true } as Response);
+		global.fetch = mockFetch as typeof global.fetch;
+
+		await Networking.createPlaygroundFetch({ kind: "virtual-key", apiKey: "custom-key" }, "openai")(
+			"https://example.com/v1/chat/completions",
+			{ headers: { "x-api-key": "conflict" } },
+		);
+		await Networking.createPlaygroundFetch({ kind: "virtual-key", apiKey: "custom-key" }, "anthropic")(
+			"https://example.com/v1/messages",
+			{ headers: { Authorization: "Bearer conflict" } },
+		);
+
+		const openAIHeaders = new Headers(mockFetch.mock.calls[0]![1].headers);
+		expect(openAIHeaders.get("Authorization")).toBe("Bearer custom-key");
+		expect(openAIHeaders.get("x-api-key")).toBeNull();
+		const anthropicHeaders = new Headers(mockFetch.mock.calls[1]![1].headers);
+		expect(anthropicHeaders.get("x-api-key")).toBe("custom-key");
+		expect(anthropicHeaders.get("Authorization")).toBeNull();
+	});
+
 	it("session 查询与注销均使用 cookie，注销请求附加 CSRF", async () => {
 		const cookieUtils = await import("@/utils/cookieUtils");
 		vi.mocked(cookieUtils.getCookie).mockReturnValue("csrf-value");
@@ -108,7 +165,7 @@ describe("networking - expired session handling", () => {
 		];
 		global.fetch = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(candidates) } as any);
 
-		await expect(Networking.getWebSearchOverrideTargetCandidatesCall("token")).resolves.toEqual(candidates);
+		await expect(Networking.getRoutableModelCandidatesCall("token")).resolves.toEqual(candidates);
 	});
 });
 

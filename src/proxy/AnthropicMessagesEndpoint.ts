@@ -39,6 +39,7 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import type { ModelResponse } from "../types/openai";
 import { ProviderUpstreamError, executeWithFallbackChain, requireUpstreamAttempt, type UpstreamAttempt } from "./AnthropicUpstreamDispatch";
 import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import { copyModelResolutionChain, createModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
 import { executeProviderRequest } from "../router/ProviderRequestExecutor";
 import {
 	buildAnthropicSearchContinuation,
@@ -577,6 +578,7 @@ export function registerAnthropicMessagesEndpoints(
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, cleanBody);
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
+		const modelResolutionTrace = createModelResolutionTraceCollector();
 
 		try {
 			spendLifecycle.markProviderStarted();
@@ -588,7 +590,11 @@ export function registerAnthropicMessagesEndpoints(
 				// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
 				let executedAttempt: UpstreamAttempt | undefined;
 				// metadata.attempted_retries 数据源：fallback 链跳数回写
-				const streamFallbackStats = { fallbackDepth: 0, fallbackModels: [] as string[] };
+				const streamFallbackStats = {
+					fallbackDepth: 0,
+					fallbackModels: [] as string[],
+					modelResolutionTrace: modelResolutionTrace,
+				};
 				// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 				const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
 
@@ -634,6 +640,10 @@ export function registerAnthropicMessagesEndpoints(
 										messages: cleanBody.messages,
 										error: error,
 										status: SpendLogStatus.Failure,
+										modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+										attemptedRetries: streamFallbackStats.fallbackDepth,
+										maxRetries: litellmRouter.maxFallbacks,
+										fallbackModels: streamFallbackStats.fallbackModels,
 									}),
 								).then(() => undefined),
 							);
@@ -742,6 +752,7 @@ export function registerAnthropicMessagesEndpoints(
 							attemptedRetries: streamFallbackStats.fallbackDepth,
 							maxRetries: litellmRouter.maxFallbacks,
 							fallbackModels: streamFallbackStats.fallbackModels,
+							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 							startTime: streamStartTime,
 							endTime: streamEndTime,
 							completionStartTime: completionStartTime,
@@ -782,7 +793,7 @@ export function registerAnthropicMessagesEndpoints(
 			let nsCompletionStartTime: Date | undefined;
 			// 非流式响应 — 经 fallback 链直连上游；body.model 逐次替换为上游 model 名
 			// metadata.attempted_retries 数据源：fallback 链跳数回写
-			const nsFallbackStats = { fallbackDepth: 0, fallbackModels: [] as string[] };
+			const nsFallbackStats = { fallbackDepth: 0, fallbackModels: [] as string[], modelResolutionTrace: modelResolutionTrace };
 			// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 			const nsOverheadTimeMs = Date.now() - requestArrivalTimeMs;
 			let responseData: Record<string, unknown>;
@@ -841,7 +852,11 @@ export function registerAnthropicMessagesEndpoints(
 						const searchResults = await executeWebSearchCalls(searchCalls, searchConfig, webSearchAbortController.signal);
 						const continuation = buildAnthropicSearchContinuation(responseData, searchCalls, searchResults);
 						const originalMessages = Array.isArray(cleanBody["messages"]) ? cleanBody["messages"] : [];
-						const followUpStats = { fallbackDepth: 0, fallbackModels: [] as string[] };
+						const followUpStats = {
+							fallbackDepth: 0,
+							fallbackModels: [] as string[],
+							modelResolutionTrace: modelResolutionTrace,
+						};
 						responseData = await executeWithFallbackChain(
 							litellmRouter,
 							model,
@@ -907,6 +922,10 @@ export function registerAnthropicMessagesEndpoints(
 									usage: initialNsResponse?.["usage"] as Record<string, unknown> | undefined,
 									error: error,
 									status: SpendLogStatus.Failure,
+									modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+									attemptedRetries: nsFallbackStats.fallbackDepth,
+									maxRetries: litellmRouter.maxFallbacks,
+									fallbackModels: nsFallbackStats.fallbackModels,
 								}),
 							).then(() => undefined),
 						);
@@ -963,6 +982,7 @@ export function registerAnthropicMessagesEndpoints(
 					litellmOverheadTimeMs: nsOverheadTimeMs,
 					attemptedRetries: nsFallbackStats.fallbackDepth,
 					fallbackModels: nsFallbackStats.fallbackModels,
+					modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 					maxRetries: litellmRouter.maxFallbacks,
 					startTime: nonStreamingStartTime,
 					endTime: nonStreamingEndTime,

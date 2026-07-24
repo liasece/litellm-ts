@@ -32,6 +32,7 @@ import { maskCooldownEntries } from "./CooldownMasking";
 import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
+import { appendModelResolutionTrace, copyModelResolutionChain } from "./ModelResolutionTrace";
 import type {
 	RouterExecContext,
 	ExecutionRequest,
@@ -125,7 +126,7 @@ export async function executeWithFallback(
 	req: ExecutionRequest,
 	helpers: ExecutionHelpers,
 ): Promise<Record<string, unknown>> {
-	const { model, messages, optionalParams, fallbackDepth, fallbackModels, previousError } = req;
+	const { model, messages, optionalParams, fallbackDepth, fallbackModels, previousError, modelResolutionTrace } = req;
 	const effectiveFallbackModels: string[] = fallbackModels.length > 0 ? fallbackModels : [model];
 
 	const { getCandidate, estimateInputTokens, executeRequest, matchDeploymentPattern, getHealthyDeployments } = helpers;
@@ -133,6 +134,9 @@ export async function executeWithFallback(
 	if (fallbackDepth >= ctx.maxFallbacks) {
 		throw previousError ?? new Error(`Max fallback depth (${ctx.maxFallbacks}) reached for model "${model}"`);
 	}
+
+	const modelResolution = ctx.fallbackHandler.resolveModelGroupWithTrace(model);
+	appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, modelResolution);
 
 	// GAP (MOCK-001): 异步入口 mock_testing_* 钩子抛出的异常（previousError），
 	// 按异常类型路由到对应的专属 fallback chain（对齐 PY async_function_with_retries）。
@@ -160,7 +164,7 @@ export async function executeWithFallback(
 	const perRequestRetryPolicy = optionalParams["model_group_retry_policy"] as Record<string, RetryPolicy> | undefined;
 	const effectiveRetryPolicyOverride: Record<string, RetryPolicy> | undefined = perRequestRetryPolicy ?? ctx.modelGroupRetryPolicy;
 	// DIFF-RT-02: 优先用 FallbackHandler.resolveModelGroup 解析（合并 alias 路径）
-	const resolvedModel = ctx.fallbackHandler.resolveModelGroup(model);
+	const resolvedModel = modelResolution.resolvedModel;
 	// GAP 10: 从分布式 cache backend (Redis 等) warm 本地 cooldown 状态
 	const candidateKeys = ctx.deployments.filter((d) => matchDeploymentPattern(d, resolvedModel)).map((d) => getDeploymentKey(d));
 	if (candidateKeys.length > 0) {
@@ -171,15 +175,15 @@ export async function executeWithFallback(
 	if (!candidate) {
 		// 每个 model 查自身 fallback 链的链首（depth 恒为 0）；
 		// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
-		const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
+		const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 		if (nextFallback) {
 			return executeWithFallback(
 				ctx,
 				{
 					...req,
 					fallbackDepth: fallbackDepth + 1,
-					model: nextFallback,
-					fallbackModels: [...effectiveFallbackModels, nextFallback],
+					model: nextFallback.inputModel,
+					fallbackModels: [...effectiveFallbackModels, nextFallback.resolvedModel],
 				},
 				helpers,
 			);
@@ -250,15 +254,15 @@ export async function executeWithFallback(
 					logger.warn(
 						`Rate limit reached on ${deployment.model_name} (rpm=${usage.rpm}/${rpmLimit ?? "-"}, tpm=${usage.tpm}/${tpmLimit ?? "-"}), trying fallback`,
 					);
-					const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
+					const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 					if (nextFallback) {
 						return executeWithFallback(
 							ctx,
 							{
 								...req,
 								fallbackDepth: fallbackDepth + 1,
-								model: nextFallback,
-								fallbackModels: [...effectiveFallbackModels, nextFallback],
+								model: nextFallback.inputModel,
+								fallbackModels: [...effectiveFallbackModels, nextFallback.resolvedModel],
 							},
 							helpers,
 						);
@@ -421,6 +425,7 @@ export async function executeWithFallback(
 						_provider: deployment.model_name,
 						_fallbackDepth: fallbackDepth,
 						_fallbackModels: effectiveFallbackModels,
+						_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 						_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
 						// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
 						_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
@@ -443,6 +448,7 @@ export async function executeWithFallback(
 					_provider: deployment.model_name,
 					_fallbackDepth: fallbackDepth,
 					_fallbackModels: effectiveFallbackModels,
+					_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 					_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
 					// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
 					_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
@@ -557,15 +563,15 @@ export async function executeWithFallback(
 			ctx.cooldownManager.recordFailure(depKey);
 		}
 
-		const nextFallback = ctx.fallbackHandler.getNextFallback(model, 0);
+		const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 		if (nextFallback) {
 			return executeWithFallback(
 				ctx,
 				{
 					...req,
 					fallbackDepth: fallbackDepth + 1,
-					model: nextFallback,
-					fallbackModels: [...effectiveFallbackModels, nextFallback],
+					model: nextFallback.inputModel,
+					fallbackModels: [...effectiveFallbackModels, nextFallback.resolvedModel],
 					previousError: error,
 				},
 				helpers,

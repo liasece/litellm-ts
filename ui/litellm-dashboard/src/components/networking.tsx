@@ -79,6 +79,9 @@ const CSRF_COOKIE_NAME = "litellm_csrf_token";
 const CSRF_HEADER_NAME = "x-litellm-csrf-token";
 const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+export type PlaygroundAuth = { readonly kind: "session" } | { readonly kind: "virtual-key"; readonly apiKey: string };
+export type PlaygroundProtocol = "openai" | "anthropic";
+
 /** Dashboard API client：仅发送 HttpOnly session cookie，写请求附带 CSRF token。 */
 export const dashboardFetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
 	const method = (init.method ?? "GET").toUpperCase();
@@ -95,6 +98,33 @@ export const dashboardFetch = async (input: RequestInfo | URL, init: RequestInit
 		credentials: "include",
 	});
 };
+
+/** Playground 推理 transport：session 仅用 cookie，virtual key 只发送协议对应鉴权头。 */
+export const createPlaygroundFetch =
+	(auth: PlaygroundAuth, protocol: PlaygroundProtocol): typeof globalThis.fetch =>
+	async (input, init = {}) => {
+		const request = input instanceof Request ? input : null;
+		const headers = new Headers(request?.headers);
+		new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+
+		if (auth.kind === "session") {
+			headers.delete("Authorization");
+			headers.delete("x-api-key");
+		} else if (protocol === "openai") {
+			headers.set("Authorization", `Bearer ${auth.apiKey}`);
+			headers.delete("x-api-key");
+		} else {
+			headers.set("x-api-key", auth.apiKey);
+			headers.delete("Authorization");
+		}
+
+		return dashboardFetch(input, {
+			...init,
+			method: init.method ?? request?.method,
+			headers: headers,
+			signal: init.signal ?? request?.signal,
+		});
+	};
 
 export interface WebUiSessionInfo {
 	readonly authenticated: true;
@@ -4288,17 +4318,14 @@ export const getGeneralSettingsCall = async (accessToken: string) => {
 	}
 };
 
-export interface WebSearchOverrideTargetCandidate {
+export interface RoutableModelCandidate {
 	model_name: string;
 	type: "model" | "alias";
+	mode: string;
 }
 
-export const getWebSearchOverrideTargetCandidatesCall = async (
-	accessToken: string,
-): Promise<WebSearchOverrideTargetCandidate[]> => {
-	const url = proxyBaseUrl
-		? `${proxyBaseUrl}/config/websearch_override_target_model/options`
-		: `/config/websearch_override_target_model/options`;
+export const getRoutableModelCandidatesCall = async (accessToken: string): Promise<RoutableModelCandidate[]> => {
+	const url = proxyBaseUrl ? `${proxyBaseUrl}/config/routable_model/options` : `/config/routable_model/options`;
 	const response = await dashboardFetch(url, { method: "GET", headers: { "Content-Type": "application/json" } });
 	if (!response.ok) {
 		const errorData = await response.json();
@@ -4306,11 +4333,12 @@ export const getWebSearchOverrideTargetCandidatesCall = async (
 		handleError(errorMessage);
 		throw new Error(errorMessage);
 	}
-	const data = (await response.json()) as
-		| WebSearchOverrideTargetCandidate[]
-		| { data?: WebSearchOverrideTargetCandidate[] };
+	const data = (await response.json()) as RoutableModelCandidate[] | { data?: RoutableModelCandidate[] };
 	return Array.isArray(data) ? data : data.data ?? [];
 };
+
+/** 旧 Web Search 调用入口，保留以兼容已部署 Dashboard。 */
+export const getWebSearchOverrideTargetCandidatesCall = getRoutableModelCandidatesCall;
 
 export const getRouterSettingsCall = async (accessToken: string) => {
 	try {

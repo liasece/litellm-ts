@@ -1,15 +1,30 @@
 "use client";
 
-import { CommentOutlined, DeleteOutlined, ExperimentOutlined, LinkOutlined, PlusOutlined, RobotOutlined, SaveOutlined } from "@ant-design/icons";
+import {
+	CommentOutlined,
+	DeleteOutlined,
+	ExperimentOutlined,
+	LinkOutlined,
+	PlusOutlined,
+	RobotOutlined,
+	SaveOutlined,
+} from "@ant-design/icons";
 import { Button, Input, Modal, Select, Spin, Tabs } from "antd";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import CodeBlock from "@/app/(dashboard)/api-reference/components/CodeBlock";
 import NotificationsManager from "../../molecules/notifications_manager";
-import { keyCreateCall, modelCreateCall, modelDeleteCall, modelPatchUpdateCall, proxyBaseUrl } from "../../networking";
+import {
+	keyCreateCall,
+	modelCreateCall,
+	modelDeleteCall,
+	modelPatchUpdateCall,
+	proxyBaseUrl,
+	type PlaygroundAuth,
+} from "../../networking";
 import { fetchMCPServers } from "../../networking";
 import { MCPServer } from "../../mcp_tools/types";
 import { AgentModel, fetchAvailableAgentModels, MCPToolEntry } from "../llm_calls/fetch_agents";
-import { fetchAvailableModels, ModelGroup } from "../llm_calls/fetch_models";
+import { fetchRoutableModels, ModelGroup } from "../llm_calls/fetch_models";
 import ComplianceUI from "../complianceUI/ComplianceUI";
 import ChatUI from "./ChatUI";
 
@@ -64,9 +79,10 @@ function ConnectTabContent({
   onCreateKey,
 }: ConnectTabContentProps) {
   const baseUrl = proxyBaseUrl ?? getConnectTabBaseUrl(proxySettings, customProxyBaseUrl);
-  const apiKeyForCurl =
-    createdKeyValue ?
-      createdKeyValue.startsWith("Bearer ") ? createdKeyValue : `Bearer ${createdKeyValue}`
+	const apiKeyForCurl = createdKeyValue
+		? createdKeyValue.startsWith("Bearer ")
+			? createdKeyValue
+			: `Bearer ${createdKeyValue}`
     : "Bearer sk-1234";
   const curlExample = `curl -L -X POST '${baseUrl}/v1/chat/completions' \\
 -H 'x-litellm-api-key: ${apiKeyForCurl}' \\
@@ -101,12 +117,7 @@ function ConnectTabContent({
           Create a virtual key that can only call this agent. The key will be scoped to you (user_id) and restricted to
           the model <span className="font-mono text-gray-800">{agentName}</span>.
         </p>
-        <Button
-          type="primary"
-          onClick={onCreateKey}
-          loading={creatingKey}
-          disabled={disabledPersonalKeyCreation}
-        >
+				<Button type="primary" onClick={onCreateKey} loading={creatingKey} disabled={disabledPersonalKeyCreation}>
           Create key for this agent
         </Button>
         {disabledPersonalKeyCreation && (
@@ -190,8 +201,12 @@ export default function AgentBuilderView({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const effectiveApiKey = apiKey || accessToken || "";
-  const selectedAgent = selectedId === NEW_AGENT_ID ? null : agentModels.find((a) => a.model_name === selectedId) ?? null;
+	const inferenceAuth = useMemo<PlaygroundAuth>(
+		() => (apiKey?.trim() ? { kind: "virtual-key", apiKey: apiKey.trim() } : { kind: "session" }),
+		[apiKey],
+	);
+	const selectedAgent =
+		selectedId === NEW_AGENT_ID ? null : agentModels.find((a) => a.model_name === selectedId) ?? null;
   const isNewAgent = selectedId === NEW_AGENT_ID;
   const selectedAgentModelId = selectedAgent ? getAgentModelId(selectedAgent) : null;
 
@@ -213,9 +228,9 @@ export default function AgentBuilderView({
   }, [accessToken, userID, userRole]);
 
   const loadModels = useCallback(async () => {
-    if (!effectiveApiKey) return;
+		if (!accessToken) return;
     try {
-      const models = await fetchAvailableModels(effectiveApiKey);
+			const models = await fetchRoutableModels(accessToken);
       setModelGroups(models);
       if (!draftUnderlyingModel && models.length > 0) {
         setDraftUnderlyingModel(models[0].model_group);
@@ -223,7 +238,7 @@ export default function AgentBuilderView({
     } catch (e) {
       console.error(e);
     }
-  }, [effectiveApiKey]);
+	}, [accessToken]);
 
   useEffect(() => {
     loadAgents();
@@ -234,17 +249,17 @@ export default function AgentBuilderView({
   }, [loadModels]);
 
   const loadMCPServers = useCallback(async () => {
-    if (!effectiveApiKey) return;
+		if (!accessToken) return;
     setLoadingMCPServers(true);
     try {
-      const servers = await fetchMCPServers(effectiveApiKey);
+			const servers = await fetchMCPServers(accessToken);
       setMCPServers(Array.isArray(servers) ? servers : (servers as { data?: MCPServer[] })?.data ?? []);
     } catch (e) {
       console.error("Error fetching MCP servers:", e);
     } finally {
       setLoadingMCPServers(false);
     }
-  }, [effectiveApiKey]);
+	}, [accessToken]);
 
   useEffect(() => {
     loadMCPServers();
@@ -267,7 +282,13 @@ export default function AgentBuilderView({
       setDraftMaxTokens(typeof p?.max_tokens === "number" ? p.max_tokens : 4096);
       const rawTools = selectedAgent.litellm_params?.tools;
       const tools: MCPToolEntry[] = Array.isArray(rawTools)
-        ? rawTools.filter((t): t is MCPToolEntry => t && typeof t === "object" && (t as MCPToolEntry).type === "mcp" && typeof (t as MCPToolEntry).server_url === "string")
+				? rawTools.filter(
+						(t): t is MCPToolEntry =>
+							t &&
+							typeof t === "object" &&
+							(t as MCPToolEntry).type === "mcp" &&
+							typeof (t as MCPToolEntry).server_url === "string",
+					)
         : [];
       setDraftTools(tools);
     }
@@ -401,9 +422,7 @@ export default function AgentBuilderView({
 
   if (!accessToken || !userID || !userRole) {
     return (
-      <div className="flex h-full items-center justify-center p-8 text-gray-500">
-        Sign in to use Agent Builder.
-      </div>
+			<div className="flex h-full items-center justify-center p-8 text-gray-500">Sign in to use Agent Builder.</div>
     );
   }
 
@@ -429,7 +448,8 @@ export default function AgentBuilderView({
         <div className="flex items-center gap-2 border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
           <ExperimentOutlined className="flex-shrink-0 text-amber-600" />
           <span>
-            Agent Builder is experimental and may change or be removed without notice. We’d love your feedback—email us at{" "}
+						Agent Builder is experimental and may change or be removed without notice. We’d love your feedback—email us
+						at{" "}
             <a href="mailto:product@berri.ai" className="font-medium text-amber-900 underline hover:text-amber-700">
               product@berri.ai
             </a>
@@ -502,11 +522,12 @@ export default function AgentBuilderView({
                     ),
                     children: (
                       <div className="h-full overflow-y-auto p-6">
-                        {(isNewAgent || selectedAgent) ? (
+												{isNewAgent || selectedAgent ? (
                           <div className="mx-auto max-w-xl space-y-4">
                             {!selectedAgentModelId && selectedAgent && (
                               <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                This agent cannot be updated or deleted here (missing model id). Manage it from Models &amp; Endpoints.
+																This agent cannot be updated or deleted here (missing model id). Manage it from Models
+																&amp; Endpoints.
                               </div>
                             )}
                             <div>
@@ -577,7 +598,9 @@ export default function AgentBuilderView({
                               />
                               {selectedAgent && draftTools.length > 0 && (
                                 <p className="mt-1 text-xs text-gray-500">
-                                  {draftTools.length} MCP server{draftTools.length !== 1 ? "s" : ""} saved. Use the same <code className="rounded bg-gray-100 px-1">tools</code> array in chat completions when calling this agent.
+																	{draftTools.length} MCP server{draftTools.length !== 1 ? "s" : ""} saved. Use the same{" "}
+																	<code className="rounded bg-gray-100 px-1">tools</code> array in chat completions when
+																	calling this agent.
                                 </p>
                               )}
                             </div>

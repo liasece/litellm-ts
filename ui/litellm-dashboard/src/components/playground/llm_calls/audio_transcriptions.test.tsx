@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeOpenAIAudioTranscriptionRequest } from "./audio_transcriptions";
 import OpenAI from "openai";
+import { createPlaygroundFetch } from "../../networking";
 
 vi.mock("openai");
+vi.mock("../../networking", () => ({
+  getProxyBaseUrl: vi.fn(() => "https://example.com"),
+  createPlaygroundFetch: vi.fn(() => vi.fn()),
+}));
 
 describe("audio_transcription", () => {
   const mockCreate = vi.fn();
@@ -39,7 +44,10 @@ describe("audio_transcription", () => {
       type: "audio/wav",
     });
 
-    await makeOpenAIAudioTranscriptionRequest(mockFile, mockUpdateUI, "whisper-1", "sk-1234567890", []);
+    await makeOpenAIAudioTranscriptionRequest(mockFile, mockUpdateUI, "whisper-1", { kind: "session" }, []);
+
+    expect(createPlaygroundFetch).toHaveBeenCalledWith({ kind: "session" }, "openai");
+    expect(OpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "playground-session", fetch: expect.any(Function) }));
 
     expect(mockCreate).toHaveBeenCalledWith(
       {
@@ -62,7 +70,7 @@ describe("audio_transcription", () => {
       mockFile,
       mockUpdateUI,
       "whisper-1",
-      "sk-1234567890",
+      { kind: "session" },
       ["tag1", "tag2"],
       signal,
       "en",
@@ -93,7 +101,7 @@ describe("audio_transcription", () => {
     });
 
     await expect(
-      makeOpenAIAudioTranscriptionRequest(mockFile, mockUpdateUI, "whisper-1", "sk-1234567890", []),
+      makeOpenAIAudioTranscriptionRequest(mockFile, mockUpdateUI, "whisper-1", { kind: "session" }, []),
     ).rejects.toThrow("API Error");
 
     expect(mockUpdateUI).not.toHaveBeenCalled();
@@ -106,7 +114,7 @@ describe("audio_transcription", () => {
     });
 
     await expect(
-      makeOpenAIAudioTranscriptionRequest(mockFile, mockUpdateUI, "whisper-1", "sk-1234567890", []),
+      makeOpenAIAudioTranscriptionRequest(mockFile, mockUpdateUI, "whisper-1", { kind: "session" }, []),
     ).rejects.toThrow("No transcription text in response");
 
     expect(mockUpdateUI).not.toHaveBeenCalled();

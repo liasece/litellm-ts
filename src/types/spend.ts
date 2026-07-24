@@ -6,6 +6,7 @@
  */
 
 import type { Request } from "express";
+import type { ModelResolutionChainEntry } from "../router/ModelResolutionTrace";
 import type { UserAPIKeyAuth } from "./auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
 
@@ -200,6 +201,8 @@ export interface SpendLogsMetadata {
 	readonly max_retries?: number | null;
 	/** fallback 链经过的模型名列表（按尝试顺序：原始模型 → fallback1 → ... → 最终模型） */
 	readonly fallback_models?: string[] | null;
+	/** 实际进入 Router 的各逻辑模型位置对应的 alias 展开路径；无 alias 时为 null。 */
+	readonly model_resolution_chain?: ModelResolutionChainEntry[] | null;
 	/**
 	 * 成本拆分明细（PY CostBreakdown，types/utils.py:2771）。
 	 * 由 trackSpendLog 算完 cost 后注入：{input_cost, output_cost, total_cost, tool_usage_cost}。
@@ -266,6 +269,8 @@ export interface SpendLogBuildContext {
 	readonly maxRetries?: number;
 	/** fallback 链经过的模型名列表（按尝试顺序） */
 	readonly fallbackModels?: string[];
+	/** alias 解析轨迹；SpendTracker 会过滤无 alias/坏条目并防御性复制。 */
+	readonly modelResolutionChain?: readonly ModelResolutionChainEntry[];
 	/** 响应缓存键（PY 键集对齐；TS 无响应缓存子系统，恒 null） */
 	readonly cacheKey?: string;
 	/** 响应缓存命中标记（TS 无响应缓存子系统，恒 false） */

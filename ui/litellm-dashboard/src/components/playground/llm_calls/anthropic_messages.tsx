@@ -1,14 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { MessageType } from "../chat_ui/types";
 import { TokenUsage } from "../chat_ui/ResponseMetrics";
-import { getProxyBaseUrl } from "@/components/networking";
+import { createPlaygroundFetch, getProxyBaseUrl, type PlaygroundAuth } from "../../networking";
 import NotificationManager from "@/components/molecules/notifications_manager";
 
 export async function makeAnthropicMessagesRequest(
   messages: MessageType[],
   updateTextUI: (role: string, delta: string, model?: string) => void,
   selectedModel: string,
-  accessToken: string | null,
+  auth: PlaygroundAuth,
   tags: string[] = [],
   signal?: AbortSignal,
   onReasoningContent?: (content: string) => void,
@@ -21,10 +21,6 @@ export async function makeAnthropicMessagesRequest(
   selectedMCPTools?: string[],
   customBaseUrl?: string,
 ) {
-  if (!accessToken) {
-    throw new Error("Virtual Key is required");
-  }
-
   const isLocal = process.env.NODE_ENV === "development";
   if (isLocal !== true) {
     console.log = function () {};
@@ -39,9 +35,10 @@ export async function makeAnthropicMessagesRequest(
   }
 
   const client = new Anthropic({
-    apiKey: accessToken,
+    apiKey: auth.kind === "virtual-key" ? auth.apiKey : "playground-session",
     baseURL: proxyBaseUrl,
     dangerouslyAllowBrowser: true,
+    fetch: createPlaygroundFetch(auth, "anthropic"),
     defaultHeaders: headers,
   });
 

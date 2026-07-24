@@ -23,7 +23,7 @@ import {
 } from "@ant-design/icons";
 import { Card, Text, TextInput, Title, Button as TremorButton } from "@tremor/react";
 import { Button, Input, Modal, Popover, Select, Spin, Tooltip, Typography, Upload } from "antd";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { coy } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -34,7 +34,7 @@ import MCPToolArgumentsForm, { MCPToolArgumentsFormRef } from "../../mcp_tools/M
 import { MCPServer } from "../../mcp_tools/types";
 import { ByokCredentialModal } from "../../mcp_tools/ByokCredentialModal";
 import NotificationsManager from "../../molecules/notifications_manager";
-import { callMCPTool, fetchMCPServers, listMCPTools } from "../../networking";
+import { callMCPTool, fetchMCPServers, listMCPTools, type PlaygroundAuth } from "../../networking";
 import TagSelector from "../../tag_management/TagSelector";
 import VectorStoreSelector from "../../vector_store_management/VectorStoreSelector";
 import { makeA2ASendMessageRequest } from "../llm_calls/a2a_send_message";
@@ -44,7 +44,7 @@ import { makeOpenAIAudioTranscriptionRequest } from "../llm_calls/audio_transcri
 import { makeOpenAIChatCompletionRequest } from "../llm_calls/chat_completion";
 import { makeOpenAIEmbeddingsRequest } from "../llm_calls/embeddings_api";
 import { Agent, fetchAvailableAgents } from "../llm_calls/fetch_agents";
-import { fetchAvailableModels, ModelGroup } from "../llm_calls/fetch_models";
+import { fetchRoutableModels, ModelGroup } from "../llm_calls/fetch_models";
 import { makeOpenAIImageEditsRequest } from "../llm_calls/image_edits";
 import { makeOpenAIImageGenerationRequest } from "../llm_calls/image_generation";
 import { makeOpenAIResponsesRequest } from "../llm_calls/responses_api";
@@ -92,13 +92,11 @@ interface ChatUIProps {
   simplified?: boolean;
   /** When simplified is true, use this as the model and do not show model selector. */
   fixedModel?: string;
+	/** Auth supplied by an embedding view for inference only. */
+	inferenceAuth?: PlaygroundAuth;
 }
 
-const MCP_SUPPORTED_ENDPOINTS = new Set<EndpointType>([
-  EndpointType.CHAT,
-  EndpointType.RESPONSES,
-  EndpointType.MCP,
-]);
+const MCP_SUPPORTED_ENDPOINTS = new Set<EndpointType>([EndpointType.CHAT, EndpointType.RESPONSES, EndpointType.MCP]);
 
 const ChatUI: React.FC<ChatUIProps> = ({
   accessToken,
@@ -109,6 +107,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
   proxySettings,
   simplified = false,
   fixedModel,
+	inferenceAuth,
 }) => {
   const [mcpServers, setMCPServers] = useState<MCPServer[]>([]);
   const [byokModalServer, setByokModalServer] = useState<MCPServer | null>(null);
@@ -174,6 +173,13 @@ const ChatUI: React.FC<ChatUIProps> = ({
     return disabledPersonalKeyCreation ? "custom" : "session";
   });
   const [apiKey, setApiKey] = useState<string>(() => sessionStorage.getItem("apiKey") || "");
+	const trimmedApiKey = apiKey.trim();
+	const configuredPlaygroundAuth = useMemo<PlaygroundAuth>(
+		() => (apiKeySource === "session" ? { kind: "session" } : { kind: "virtual-key", apiKey: trimmedApiKey }),
+		[apiKeySource, trimmedApiKey],
+	);
+	const playgroundAuth = inferenceAuth ?? configuredPlaygroundAuth;
+	const hasPlaygroundAuth = inferenceAuth != null || apiKeySource === "session" || trimmedApiKey.length > 0;
   const [customProxyBaseUrl, setCustomProxyBaseUrl] = useState<string>(
     () => sessionStorage.getItem("customProxyBaseUrl") || "",
   );
@@ -255,14 +261,13 @@ const ChatUI: React.FC<ChatUIProps> = ({
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch MCP servers
+	// MCP administration always uses the current UI session.
   const loadMCPServers = async () => {
-    const userApiKey = apiKeySource === "session" ? accessToken : apiKey;
-    if (!userApiKey) return;
+		if (!accessToken) return;
 
     setIsLoadingMCPServers(true);
     try {
-      const servers = await fetchMCPServers(userApiKey);
+			const servers = await fetchMCPServers(accessToken);
       setMCPServers(Array.isArray(servers) ? servers : servers.data || []);
     } catch (error) {
       console.error("Error fetching MCP servers:", error);
@@ -279,13 +284,12 @@ const ChatUI: React.FC<ChatUIProps> = ({
     }
   }, [simplified, fixedModel]);
 
-  // Fetch tools for a specific server
+	// MCP administration always uses the current UI session.
   const loadServerTools = async (serverId: string) => {
-    const userApiKey = apiKeySource === "session" ? accessToken : apiKey;
-    if (!userApiKey || serverToolsMap[serverId]) return;
+		if (!accessToken || serverToolsMap[serverId]) return;
 
     try {
-      const response = await listMCPTools(userApiKey, serverId);
+			const response = await listMCPTools(accessToken, serverId);
       setServerToolsMap((prev) => ({
         ...prev,
         [serverId]: response.tools || [],
@@ -375,20 +379,14 @@ const ChatUI: React.FC<ChatUIProps> = ({
   ]);
 
   useEffect(() => {
-    let userApiKey = apiKeySource === "session" ? accessToken : apiKey;
-    if (!userApiKey || !token || !userRole || !userID) {
-      console.log("userApiKey or token or userRole or userID is missing = ", userApiKey, token, userRole, userID);
+		if (!accessToken || !token || !userRole || !userID) {
       return;
     }
 
-    // Fetch model info and set the default selected model (skip in simplified mode; we use fixedModel)
+		// Model discovery is a dashboard request and remains session-authenticated.
     const loadModels = async () => {
       try {
-        if (!userApiKey) {
-          console.log("userApiKey is missing");
-          return;
-        }
-        const uniqueModels = await fetchAvailableModels(userApiKey);
+				const uniqueModels = await fetchRoutableModels(accessToken);
 
         console.log("Fetched models:", uniqueModels);
 
@@ -410,7 +408,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
       loadModels();
     }
     loadMCPServers();
-  }, [accessToken, userID, userRole, apiKeySource, apiKey, token, simplified]);
+	}, [accessToken, userID, userRole, token, simplified]);
 
   // Load tools when MCP direct mode has a server selected
   useEffect(() => {
@@ -424,16 +422,15 @@ const ChatUI: React.FC<ChatUIProps> = ({
     }
   }, [endpointType, selectedMCPServers, serverToolsMap]);
 
-  // Fetch agents when A2A endpoint is selected
+	// Agent discovery is a Playground inference request.
   useEffect(() => {
-    const userApiKey = apiKeySource === "session" ? accessToken : apiKey;
-    if (!userApiKey || endpointType !== EndpointType.A2A_AGENTS) {
+		if (!hasPlaygroundAuth || endpointType !== EndpointType.A2A_AGENTS) {
       return;
     }
 
     const loadAgents = async () => {
       try {
-        const agents = await fetchAvailableAgents(userApiKey, customProxyBaseUrl || undefined);
+				const agents = await fetchAvailableAgents(playgroundAuth, customProxyBaseUrl || undefined);
         setAgentInfo(agents);
         // Clear selection if current agent not in list
         if (selectedAgent && !agents.some((a) => a.agent_name === selectedAgent)) {
@@ -445,7 +442,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
     };
 
     loadAgents();
-  }, [accessToken, apiKeySource, apiKey, endpointType, customProxyBaseUrl, selectedAgent]);
+	}, [playgroundAuth, hasPlaygroundAuth, endpointType, customProxyBaseUrl, selectedAgent]);
 
   useEffect(() => {
     // Scroll to the bottom of the chat whenever chatHistory updates
@@ -540,11 +537,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
   };
 
     const handleSendMessage = async () => {
-    if (
-      inputMessage.trim() === "" &&
-      endpointType !== EndpointType.TRANSCRIPTION &&
-      endpointType !== EndpointType.MCP
-    )
+		if (inputMessage.trim() === "" && endpointType !== EndpointType.TRANSCRIPTION && endpointType !== EndpointType.MCP)
       return;
 
     // For image edits, require both image and prompt
@@ -569,9 +562,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
     let mcpToolArguments: Record<string, any> = {};
     if (endpointType === EndpointType.MCP) {
       const mcpServerId =
-        selectedMCPServers.length === 1 && selectedMCPServers[0] !== "__all__"
-          ? selectedMCPServers[0]
-          : null;
+				selectedMCPServers.length === 1 && selectedMCPServers[0] !== "__all__" ? selectedMCPServers[0] : null;
       if (!mcpServerId) {
         NotificationsManager.fromBackend("Please select an MCP server to test");
         return;
@@ -580,9 +571,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
         NotificationsManager.fromBackend("Please select an MCP tool to call");
         return;
       }
-      const mcpTool = (serverToolsMap[selectedMCPServers[0]] || []).find(
-        (t: any) => t.name === selectedMCPDirectTool,
-      );
+			const mcpTool = (serverToolsMap[selectedMCPServers[0]] || []).find((t: any) => t.name === selectedMCPDirectTool);
       if (!mcpTool) {
         NotificationsManager.fromBackend("Please wait for tool schema to load");
         return;
@@ -590,9 +579,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
       try {
         mcpToolArguments = (await mcpToolArgsFormRef.current?.getSubmitValues()) ?? {};
       } catch (err) {
-        NotificationsManager.fromBackend(
-          err instanceof Error ? err.message : "Please fill in all required parameters",
-        );
+				NotificationsManager.fromBackend(err instanceof Error ? err.message : "Please fill in all required parameters");
         return;
       }
     }
@@ -618,9 +605,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
       return;
     }
 
-    const effectiveApiKey = simplified ? accessToken : apiKeySource === "session" ? accessToken : apiKey;
-
-    if (!effectiveApiKey) {
+		if (!hasPlaygroundAuth) {
       NotificationsManager.fromBackend("Please provide a Virtual Key or select Current UI Session");
       return;
     }
@@ -711,13 +696,13 @@ const ChatUI: React.FC<ChatUIProps> = ({
 
           const requestProxyBaseUrl =
             simplified && proxySettings
-              ? (proxySettings.LITELLM_UI_API_DOC_BASE_URL ?? proxySettings.PROXY_BASE_URL ?? undefined)
-              : (customProxyBaseUrl || undefined);
+							? proxySettings.LITELLM_UI_API_DOC_BASE_URL ?? proxySettings.PROXY_BASE_URL ?? undefined
+							: customProxyBaseUrl || undefined;
           await makeOpenAIChatCompletionRequest(
             apiChatHistory,
             (chunk, model) => updateTextUI("assistant", chunk, model),
             selectedModel,
-            effectiveApiKey,
+						playgroundAuth,
             selectedTags,
             signal,
             updateReasoningContent,
@@ -745,7 +730,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             inputMessage,
             (imageUrl, model) => updateImageUI(imageUrl, model),
             selectedModel,
-            effectiveApiKey,
+						playgroundAuth,
             selectedTags,
             signal,
             customProxyBaseUrl || undefined,
@@ -757,7 +742,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             selectedVoice,
             (audioUrl, model) => updateAudioUI(audioUrl, model),
             selectedModel || "",
-            effectiveApiKey,
+						playgroundAuth,
             selectedTags,
             signal,
             undefined, // responseFormat
@@ -772,7 +757,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
               inputMessage,
               (imageUrl, model) => updateImageUI(imageUrl, model),
               selectedModel,
-              effectiveApiKey,
+							playgroundAuth,
               selectedTags,
               signal,
               customProxyBaseUrl || undefined,
@@ -799,7 +784,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             apiChatHistory,
             (role, delta, model) => updateTextUI(role, delta, model),
             selectedModel,
-            effectiveApiKey,
+						playgroundAuth,
             selectedTags,
             signal,
             updateReasoningContent,
@@ -831,7 +816,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             apiChatHistory,
             (role, delta, model) => updateTextUI(role, delta, model),
             selectedModel,
-            effectiveApiKey,
+						playgroundAuth,
             selectedTags,
             signal,
             updateReasoningContent,
@@ -849,7 +834,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             inputMessage,
             (embeddings, model) => updateEmbeddingsUI(embeddings, model),
             selectedModel,
-            effectiveApiKey,
+						playgroundAuth,
             selectedTags,
             customProxyBaseUrl || undefined,
           );
@@ -860,7 +845,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
               uploadedAudio,
               (transcription, model) => updateTextUI("assistant", transcription, model),
               selectedModel,
-              effectiveApiKey,
+							playgroundAuth,
               selectedTags,
               signal,
               undefined, // language
@@ -876,12 +861,10 @@ const ChatUI: React.FC<ChatUIProps> = ({
       // Handle MCP direct tool calls (no chat completions)
       if (endpointType === EndpointType.MCP) {
         const mcpServerId =
-          selectedMCPServers.length === 1 && selectedMCPServers[0] !== "__all__"
-            ? selectedMCPServers[0]
-            : null;
-        if (mcpServerId && selectedMCPDirectTool) {
+					selectedMCPServers.length === 1 && selectedMCPServers[0] !== "__all__" ? selectedMCPServers[0] : null;
+				if (mcpServerId && selectedMCPDirectTool && accessToken) {
           const result = await callMCPTool(
-            effectiveApiKey,
+						accessToken,
             mcpServerId,
             selectedMCPDirectTool,
             mcpToolArguments,
@@ -905,7 +888,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
           selectedAgent,
           inputMessage,
           (chunk, model) => updateTextUI("assistant", chunk, model),
-          effectiveApiKey,
+					playgroundAuth,
           signal,
           updateTimingData,
           updateTotalLatency,
@@ -1087,9 +1070,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
                     setSelectedMCPDirectTool(undefined);
                     // For MCP direct mode, require single server (clear __all__ or multiple)
                     if (value === EndpointType.MCP) {
-                      setSelectedMCPServers((prev) =>
-                        prev.length === 1 && prev[0] !== "__all__" ? prev : [],
-                      );
+												setSelectedMCPServers((prev) => (prev.length === 1 && prev[0] !== "__all__" ? prev : []));
                     }
                     try {
                       sessionStorage.removeItem("selectedModel");
@@ -1307,9 +1288,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
                 <Select
                   mode={endpointType === EndpointType.MCP ? undefined : "multiple"}
                   style={{ width: "100%" }}
-                  placeholder={
-                    endpointType === EndpointType.MCP ? "Select MCP server" : "Select MCP servers"
-                  }
+										placeholder={endpointType === EndpointType.MCP ? "Select MCP server" : "Select MCP servers"}
                   value={
                     endpointType === EndpointType.MCP
                       ? selectedMCPServers[0] !== "__all__" && selectedMCPServers.length === 1
@@ -1359,12 +1338,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
                     }
                     const server = mcpServers.find((s) => s.server_id === option?.value);
                     if (!server) return false;
-                    const searchText = [
-                      server.server_name,
-                      server.alias,
-                      server.server_id,
-                      server.description,
-                    ]
+											const searchText = [server.server_name, server.alias, server.server_id, server.description]
                       .filter(Boolean)
                       .join(" ")
                       .toLowerCase();
@@ -1387,13 +1361,13 @@ const ChatUI: React.FC<ChatUIProps> = ({
                       key={server.server_id}
                       value={server.server_id}
                       label={server.alias || server.server_name || server.server_id}
-                      disabled={
-                        endpointType === EndpointType.MCP ? false : selectedMCPServers.includes("__all__")
-                      }
+												disabled={endpointType === EndpointType.MCP ? false : selectedMCPServers.includes("__all__")}
                     >
                       <div className="flex flex-col py-1">
                         <span className="font-medium">{server.alias || server.server_name || server.server_id}</span>
-                        {server.description && <span className="text-xs text-gray-500 mt-1">{server.description}</span>}
+													{server.description && (
+														<span className="text-xs text-gray-500 mt-1">{server.description}</span>
+													)}
                       </div>
                     </Select.Option>
                   ))}
@@ -1473,10 +1447,11 @@ const ChatUI: React.FC<ChatUIProps> = ({
                         if (!server?.is_byok) return null;
                         const serverName = server.alias || server.server_name || serverId;
                         return (
-                          <div key={serverId} className="border border-blue-100 rounded p-2 bg-blue-50 flex items-center justify-between">
-                            <Text className="text-xs text-blue-700">
-                              {serverName} requires your API key
-                            </Text>
+														<div
+															key={serverId}
+															className="border border-blue-100 rounded p-2 bg-blue-50 flex items-center justify-between"
+														>
+															<Text className="text-xs text-blue-700">{serverName} requires your API key</Text>
                             {server.has_user_credential ? (
                               <div className="flex items-center gap-2">
                                 <span className="text-green-600 text-xs font-medium flex items-center gap-1">
@@ -1563,7 +1538,8 @@ const ChatUI: React.FC<ChatUIProps> = ({
                     className="ml-1"
                     title={
                       <span>
-                        Select policy/policies to apply to this LLM API call. Policies define which guardrails are applied based on conditions. You can set up your policies{" "}
+													Select policy/policies to apply to this LLM API call. Policies define which guardrails are
+													applied based on conditions. You can set up your policies{" "}
                         <a href="?page=policies" style={{ color: "#1890ff" }}>
                           here
                         </a>
@@ -1603,7 +1579,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
           <div className={`flex flex-col bg-white ${simplified ? "flex-1 w-full" : "w-3/4"}`}>
             {endpointType === EndpointType.REALTIME ? (
               <RealtimePlayground
-                accessToken={apiKeySource === "session" ? accessToken || "" : apiKey}
+								auth={playgroundAuth}
                 selectedModel={selectedModel || ""}
                 customProxyBaseUrl={customProxyBaseUrl || undefined}
                 selectedGuardrails={selectedGuardrails.length > 0 ? selectedGuardrails : undefined}
@@ -1896,7 +1872,8 @@ const ChatUI: React.FC<ChatUIProps> = ({
                         }
                       >
                         <button
-                          className={`p-1.5 rounded-md transition-colors ${codeInterpreter.enabled
+															className={`p-1.5 rounded-md transition-colors ${
+																codeInterpreter.enabled
                             ? "bg-blue-100 text-blue-600"
                             : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
                             }`}
@@ -1924,11 +1901,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
                           (t: any) => t.name === selectedMCPDirectTool,
                         );
                         return mcpTool ? (
-                          <MCPToolArgumentsForm
-                            ref={mcpToolArgsFormRef}
-                            tool={mcpTool}
-                            className="space-y-2"
-                          />
+															<MCPToolArgumentsForm ref={mcpToolArgsFormRef} tool={mcpTool} className="space-y-2" />
                         ) : (
                           <div className="flex items-center justify-center h-10 text-sm text-gray-500">
                             Loading tool schema...

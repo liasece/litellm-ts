@@ -564,6 +564,33 @@ export function reconstructModelName(model: string, customLlmProvider: string | 
 	return model;
 }
 
+function normalizeModelResolutionChain(ctx: SpendLogBuildContext): SpendLogsMetadata["model_resolution_chain"] {
+	try {
+		const entries = ctx.modelResolutionChain;
+		if (!Array.isArray(entries)) {
+			return null;
+		}
+		const normalized = entries.flatMap((entry) => {
+			if (
+				!entry ||
+				!Number.isInteger(entry.fallback_index) ||
+				entry.fallback_index < 0 ||
+				typeof entry.input_model !== "string" ||
+				typeof entry.resolved_model !== "string" ||
+				!Array.isArray(entry.resolution_path) ||
+				entry.resolution_path.length <= 1 ||
+				!entry.resolution_path.every((node: unknown) => typeof node === "string")
+			) {
+				return [];
+			}
+			return [{ ...entry, resolution_path: [...entry.resolution_path] }];
+		});
+		return normalized.length > 0 ? normalized : null;
+	} catch {
+		return null;
+	}
+}
+
 /**
  * 构建 Python SpendLogs metadata JSON。
  * @param ctx - SpendLog 构建上下文
@@ -607,6 +634,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		attempted_retries: ctx.attemptedRetries ?? null,
 		max_retries: ctx.maxRetries ?? null,
 		fallback_models: ctx.fallbackModels ?? null,
+		model_resolution_chain: normalizeModelResolutionChain(ctx),
 		// cost_breakdown 由 trackSpendLog 算完 cost 后注入（构建时 cost 尚未计算）
 		cost_breakdown: null,
 		status: ctx.status ?? (ctx.error ? SpendLogStatus.Failure : SpendLogStatus.Success),

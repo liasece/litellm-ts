@@ -174,6 +174,39 @@ describe("Router execution chain", () => {
 			expect(choices[0]!.message.content).toBe("hi");
 		});
 
+		it("成功结果携带 alias 解析轨迹，deployment retry 不重复追加", async () => {
+			mockFetch.mockResolvedValueOnce(errorResponse(500, { error: "retry" })).mockResolvedValueOnce(
+				okResponse({
+					id: "chat-alias",
+					object: "chat.completion",
+					created: 1,
+					model: "model-a",
+					choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+					usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+				}),
+			);
+			const router = new Router(
+				{
+					model_list: [mkDeployment("model-a")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					num_retries: 1,
+				},
+				{ "alias-a": "alias-b", "alias-b": "model-a" },
+			);
+
+			const result = await router.completion("alias-a", [{ role: "user", content: "hi" }]);
+			expect(result._fallbackModels).toEqual(["alias-a"]);
+			expect(result._fallbackDepth).toBe(0);
+			expect(result._modelResolutionChain).toEqual([
+				{
+					fallback_index: 0,
+					input_model: "alias-a",
+					resolved_model: "model-a",
+					resolution_path: ["alias-a", "alias-b", "model-a"],
+				},
+			]);
+		});
+
 		it("mock_testing_fallbacks=true → 抛 InternalServerError 并触发 fallback chain", async () => {
 			const router = new Router({
 				model_list: [mkDeployment("gpt-4"), mkDeployment("gpt-4-fb")],
@@ -618,14 +651,14 @@ describe("Router execution chain", () => {
 			});
 
 			expect(router.getAvailableModelNames()).toEqual([
-				{ model_name: "logical-model", type: "model" },
-				{ model_name: "websearch_alias", type: "alias" },
+				{ model_name: "logical-model", type: "model", mode: "chat" },
+				{ model_name: "websearch_alias", type: "alias", mode: "chat" },
 			]);
 
 			router.updateSettings({ model_group_alias: { refreshed_alias: "logical-model" } });
 			expect(router.getAvailableModelNames()).toEqual([
-				{ model_name: "logical-model", type: "model" },
-				{ model_name: "refreshed_alias", type: "alias" },
+				{ model_name: "logical-model", type: "model", mode: "chat" },
+				{ model_name: "refreshed_alias", type: "alias", mode: "chat" },
 			]);
 		});
 	});

@@ -1203,6 +1203,38 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(spendLog.cache_hit).toBe(false);
 	});
 
+	it("规范化并防御性复制 model_resolution_chain，与 fallback_models 语义分离", () => {
+		const sourcePath = ["alias-a", "alias-b", "model-a"];
+		const spendLog = buildSpendLogFromRequest({
+			callType: CallType.AMessages,
+			endTime: new Date("2026-01-01T00:00:01.000Z"),
+			model: "alias-a",
+			req: createMinimalRequest(),
+			startTime: new Date("2026-01-01T00:00:00.000Z"),
+			fallbackModels: ["alias-a", "fallback-alias"],
+			modelResolutionChain: [
+				{ fallback_index: 0, input_model: "alias-a", resolved_model: "model-a", resolution_path: sourcePath },
+				{ fallback_index: 1, input_model: "plain-model", resolved_model: "plain-model", resolution_path: ["plain-model"] },
+			],
+		});
+		sourcePath.push("mutated");
+		expect(spendLog.metadata?.model_resolution_chain).toEqual([
+			{ fallback_index: 0, input_model: "alias-a", resolved_model: "model-a", resolution_path: ["alias-a", "alias-b", "model-a"] },
+		]);
+		expect(spendLog.metadata?.fallback_models).toEqual(["alias-a", "fallback-alias"]);
+	});
+
+	it("无有效 alias 时 model_resolution_chain 落 null", () => {
+		const spendLog = buildSpendLogFromRequest({
+			callType: CallType.AMessages,
+			endTime: new Date("2026-01-01T00:00:01.000Z"),
+			model: "plain-model",
+			req: createMinimalRequest(),
+			startTime: new Date("2026-01-01T00:00:00.000Z"),
+		});
+		expect(spendLog.metadata?.model_resolution_chain).toBeNull();
+	});
+
 	it("无 team_alias 时 user_api_key_team_alias 落 null", () => {
 		const spendLog = buildSpendLogFromRequest({
 			auth: { api_key: "sk-test" },

@@ -1937,14 +1937,16 @@ describe("批次 D — /v2/model/info fallbacks 注入", () => {
 			await dbConfigProvider.initialize(makeMockConfigDb().db as never);
 		});
 
-		it("仅公开 Router 当前逻辑模型名和 alias key", async () => {
+		it("新旧候选接口返回相同的 Router 逻辑模型、alias 和 mode", async () => {
 			const app = buildAuthedApp(makeConfig(), undefined, undefined, undefined, buildWebSearchRouter());
 			const res = await request(app).get("/config/websearch_override_target_model/options").expect(200);
+			const routableRes = await request(app).get("/config/routable_model/options").expect(200);
 
+			expect(routableRes.body).toEqual(res.body);
 			expect(res.body).toEqual({
 				data: [
-					{ model_name: aliasName, type: "alias" },
-					{ model_name: modelName, type: "model" },
+					{ model_name: aliasName, type: "alias", mode: "chat" },
+					{ model_name: modelName, type: "model", mode: "chat" },
 				],
 			});
 			expect(JSON.stringify(res.body)).not.toContain(providerModel);

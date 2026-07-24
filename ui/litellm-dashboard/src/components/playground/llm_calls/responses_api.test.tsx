@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPlaygroundFetch } from "../../networking";
+import OpenAI from "openai";
 import { makeOpenAIResponsesRequest } from "./responses_api";
 import { MessageType } from "../chat_ui/types";
 
 vi.mock("@/components/networking", () => ({
   getProxyBaseUrl: vi.fn(() => "https://example.com"),
+  createPlaygroundFetch: vi.fn(() => vi.fn()),
 }));
 
 const mockResponsesCreate = vi.fn();
@@ -49,7 +52,7 @@ describe("responses_api", () => {
   });
 
   it("should send a basic responses request", async () => {
-    await makeOpenAIResponsesRequest(messages, mockUpdateTextUI, "gpt-4", "test-token");
+    await makeOpenAIResponsesRequest(messages, mockUpdateTextUI, "gpt-4", { kind: "session" });
 
     expect(mockResponsesCreate).toHaveBeenCalledTimes(1);
     expect(mockResponsesCreate).toHaveBeenCalledWith(
@@ -101,7 +104,7 @@ describe("responses_api", () => {
       messages,
       mockUpdateTextUI,
       "gpt-4",
-      "test-token",
+      { kind: "session" },
       undefined, // tags
       undefined, // signal
       undefined, // onReasoningContent

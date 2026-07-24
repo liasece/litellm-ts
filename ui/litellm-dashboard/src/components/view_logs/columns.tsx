@@ -40,6 +40,38 @@ const getLogoUrl = (row: LogEntry, provider: string) => {
 	return provider ? getProviderLogoAndName(provider).logo : "";
 };
 
+export interface ModelResolutionChainEntry {
+	fallback_index: number;
+	input_model: string;
+	resolved_model: string;
+	resolution_path: string[];
+}
+
+export function normalizeModelResolutionChain(value: unknown): ModelResolutionChainEntry[] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((entry) => {
+		if (
+			typeof entry !== "object" ||
+			entry === null ||
+			!Number.isInteger((entry as any).fallback_index) ||
+			(entry as any).fallback_index < 0 ||
+			typeof (entry as any).input_model !== "string" ||
+			typeof (entry as any).resolved_model !== "string" ||
+			!Array.isArray((entry as any).resolution_path) ||
+			(entry as any).resolution_path.length <= 1 ||
+			!(entry as any).resolution_path.every((node: unknown) => typeof node === "string")
+		) {
+			return [];
+		}
+		return [
+			{
+				...(entry as ModelResolutionChainEntry),
+				resolution_path: [...(entry as ModelResolutionChainEntry).resolution_path],
+			},
+		];
+	});
+}
+
 export type LogEntry = {
 	request_id: string;
 	api_key: string;
@@ -264,6 +296,13 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 							})
 							.join(" ")
 					: undefined;
+			const resolutionTooltip = normalizeModelResolutionChain(row.metadata?.model_resolution_chain)
+				.map(
+					(entry) =>
+						`${entry.fallback_index === 0 ? "Request" : `Fallback ${entry.fallback_index}`}: ${entry.resolution_path.join(" → ")}`,
+				)
+				.join("\n");
+			const modelTooltip = [resolutionTooltip || undefined, fallbackTooltip].filter(Boolean).join("\n") || modelName;
 			return (
 				<div className="flex items-center space-x-2">
 					{provider && (
@@ -277,7 +316,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 							}}
 						/>
 					)}
-					<Tooltip title={fallbackTooltip ?? modelName}>
+					<Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{modelTooltip}</span>}>
 						<span className="max-w-[25ch] truncate block">
 							{fallbackCount > 0 && (
 								<Tooltip title={fallbackTooltip}>

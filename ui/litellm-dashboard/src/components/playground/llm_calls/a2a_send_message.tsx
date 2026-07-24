@@ -1,4 +1,4 @@
-import { dashboardFetch } from "@/components/networking";
+import { createPlaygroundFetch, type PlaygroundAuth } from "@/components/networking";
 // a2a_send_message.tsx
 // A2A Protocol (JSON-RPC 2.0) implementation for sending messages to agents
 
@@ -110,7 +110,7 @@ export const makeA2ASendMessageRequest = async (
 	agentId: string,
 	message: string,
 	onTextUpdate: (chunk: string, model?: string) => void,
-	accessToken: string,
+	auth: PlaygroundAuth,
 	signal?: AbortSignal,
 	onTimingData?: (timeToFirstToken: number) => void,
 	onTotalLatency?: (totalLatency: number) => void,
@@ -145,7 +145,7 @@ export const makeA2ASendMessageRequest = async (
 	const startTime = performance.now();
 
 	try {
-		const response = await dashboardFetch(url, {
+		const response = await createPlaygroundFetch(auth, "openai")(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -242,7 +242,7 @@ export const makeA2AStreamMessageRequest = async (
 	agentId: string,
 	message: string,
 	onTextUpdate: (chunk: string, model?: string) => void,
-	accessToken: string,
+	auth: PlaygroundAuth,
 	signal?: AbortSignal,
 	onTimingData?: (timeToFirstToken: number) => void,
 	onTotalLatency?: (totalLatency: number) => void,
@@ -275,7 +275,7 @@ export const makeA2AStreamMessageRequest = async (
 	let accumulatedText = "";
 
 	try {
-		const response = await dashboardFetch(url, {
+		const response = await createPlaygroundFetch(auth, "openai")(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",

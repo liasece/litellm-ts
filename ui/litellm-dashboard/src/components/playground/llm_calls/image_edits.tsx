@@ -1,5 +1,5 @@
 import openai from "openai";
-import { getProxyBaseUrl } from "@/components/networking";
+import { createPlaygroundFetch, getProxyBaseUrl, type PlaygroundAuth } from "../../networking";
 import NotificationManager from "@/components/molecules/notifications_manager";
 
 export async function makeOpenAIImageEditsRequest(
@@ -7,7 +7,7 @@ export async function makeOpenAIImageEditsRequest(
   prompt: string,
   updateUI: (imageUrl: string, model: string) => void,
   selectedModel: string,
-  accessToken: string,
+  auth: PlaygroundAuth,
   tags?: string[],
   signal?: AbortSignal,
   customBaseUrl?: string,
@@ -21,9 +21,10 @@ export async function makeOpenAIImageEditsRequest(
   const proxyBaseUrl = customBaseUrl || getProxyBaseUrl();
 
   const client = new openai.OpenAI({
-    apiKey: accessToken,
+    apiKey: auth.kind === "virtual-key" ? auth.apiKey : "playground-session",
     baseURL: proxyBaseUrl,
     dangerouslyAllowBrowser: true,
+    fetch: createPlaygroundFetch(auth, "openai"),
     defaultHeaders: tags && tags.length > 0 ? { "x-litellm-tags": tags.join(",") } : undefined,
   });
 

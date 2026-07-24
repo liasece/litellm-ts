@@ -9,6 +9,7 @@ import {
 import {
   getGuardrailsList,
   testPoliciesAndGuardrails,
+  type PlaygroundAuth,
 } from "@/components/networking";
 import PolicySelector, { getPolicyOptionEntries } from "@/components/policies/PolicySelector";
 import { Policy } from "@/components/policies/types";
@@ -117,6 +118,8 @@ interface ComplianceUIProps {
     PROXY_BASE_URL?: string;
     LITELLM_UI_API_DOC_BASE_URL?: string | null;
   };
+  /** Auth for embedded chat-completions inference. */
+  playgroundAuth?: PlaygroundAuth;
 }
 
 export default function ComplianceUI({
@@ -125,6 +128,7 @@ export default function ComplianceUI({
   backendMode = "policies",
   fixedModel,
   proxySettings,
+  playgroundAuth = { kind: "session" },
 }: ComplianceUIProps) {
   const frameworks = getFrameworks();
 
@@ -455,7 +459,7 @@ export default function ComplianceUI({
             fullResponse += chunk;
           },
           fixedModel,
-          accessToken,
+          playgroundAuth,
           undefined,
           undefined,
           undefined,
@@ -545,6 +549,7 @@ export default function ComplianceUI({
     backendMode,
     fixedModel,
     requestProxyBaseUrl,
+    playgroundAuth,
   ]);
 
   const handleQuickTestKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

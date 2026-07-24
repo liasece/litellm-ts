@@ -90,15 +90,15 @@ describe("Router web-search target candidates", () => {
 			model_group_alias: { websearch_alias: "openai/gpt-4o", invalid_alias: "openai/provider-secret" },
 		});
 		expect(router.getAvailableModelNames()).toEqual([
-			{ model_name: "claude", type: "model" },
-			{ model_name: "gpt-4o", type: "model" },
-			{ model_name: "websearch_alias", type: "alias" },
+			{ model_name: "claude", type: "model", mode: "chat" },
+			{ model_name: "gpt-4o", type: "model", mode: "chat" },
+			{ model_name: "websearch_alias", type: "alias", mode: "chat" },
 		]);
 		router.updateSettings({ model_group_alias: { refreshed_alias: "gpt-4o", invalid_alias: "provider-secret" } });
 		expect(router.getAvailableModelNames()).toEqual([
-			{ model_name: "claude", type: "model" },
-			{ model_name: "gpt-4o", type: "model" },
-			{ model_name: "refreshed_alias", type: "alias" },
+			{ model_name: "claude", type: "model", mode: "chat" },
+			{ model_name: "gpt-4o", type: "model", mode: "chat" },
+			{ model_name: "refreshed_alias", type: "alias", mode: "chat" },
 		]);
 	});
 });

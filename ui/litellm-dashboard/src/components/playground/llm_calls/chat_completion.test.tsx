@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPlaygroundFetch } from "../../networking";
+import openai from "openai";
 import { makeOpenAIChatCompletionRequest } from "./chat_completion";
 
 vi.mock("@/components/networking", () => ({
   getProxyBaseUrl: vi.fn(() => "https://example.com"),
+	createPlaygroundFetch: vi.fn(() => vi.fn()),
 }));
 
 // Mock the OpenAI client
@@ -63,8 +66,12 @@ describe("chat_completion", () => {
   });
 
   it("should make a basic chat completion request", async () => {
-    await makeOpenAIChatCompletionRequest(mockChatHistory, mockUpdateUI, "gpt-4", "test-token");
+		await makeOpenAIChatCompletionRequest(mockChatHistory, mockUpdateUI, "gpt-4", { kind: "session" });
 
+		expect(createPlaygroundFetch).toHaveBeenCalledWith({ kind: "session" }, "openai");
+		expect(openai.OpenAI).toHaveBeenCalledWith(
+			expect.objectContaining({ apiKey: "playground-session", fetch: expect.any(Function) }),
+		);
     expect(mockCreate).toHaveBeenCalledTimes(1);
     expect(mockCreate).toHaveBeenCalledWith(
       {
@@ -86,7 +93,7 @@ describe("chat_completion", () => {
       mockChatHistory,
       mockUpdateUI,
       "gpt-4",
-      "test-token",
+			{ kind: "session" },
       undefined, // tags
       undefined, // signal
       undefined, // onReasoningContent
@@ -149,7 +156,7 @@ describe("chat_completion", () => {
       mockChatHistory,
       mockUpdateUI,
       "gpt-4",
-      "test-token",
+			{ kind: "session" },
       undefined, // tags
       undefined, // signal
       undefined, // onReasoningContent
@@ -196,7 +203,7 @@ describe("chat_completion", () => {
       mockChatHistory,
       mockUpdateUI,
       "gpt-4",
-      "test-token",
+			{ kind: "session" },
       undefined, // tags
       undefined, // signal
       undefined, // onReasoningContent
@@ -229,7 +236,7 @@ describe("chat_completion", () => {
       mockChatHistory,
       mockUpdateUI,
       "gpt-4",
-      "test-token",
+			{ kind: "session" },
       undefined, // tags
       undefined, // signal
       undefined, // onReasoningContent

@@ -2,14 +2,14 @@ import openai from "openai";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { TokenUsage } from "../chat_ui/ResponseMetrics";
 import { VectorStoreSearchResponse } from "../chat_ui/types";
-import { getProxyBaseUrl } from "@/components/networking";
+import { createPlaygroundFetch, getProxyBaseUrl, type PlaygroundAuth } from "../../networking";
 import { MCPServer, type MCPEvent } from "../../mcp_tools/types";
 
 export async function makeOpenAIChatCompletionRequest(
   chatHistory: { role: string; content: string | any[] }[],
   updateUI: (chunk: string, model?: string) => void,
   selectedModel: string,
-  accessToken: string,
+  auth: PlaygroundAuth,
   tags?: string[],
   signal?: AbortSignal,
   onReasoningContent?: (content: string) => void,
@@ -45,9 +45,10 @@ export async function makeOpenAIChatCompletionRequest(
   }
 
   const client = new openai.OpenAI({
-    apiKey: accessToken,
+    apiKey: auth.kind === "virtual-key" ? auth.apiKey : "playground-session",
     baseURL: proxyBaseUrl,
     dangerouslyAllowBrowser: true,
+    fetch: createPlaygroundFetch(auth, "openai"),
     defaultHeaders: headers,
   });
 

@@ -25,6 +25,14 @@ import { createModuleLogger } from "../core/utils/logger";
 import { APIConnectionError } from "../router/RouterErrors";
 import { buildInvalidModelError, formatInvalidModelMessage } from "../router/RouterExecution";
 import { getDeploymentKey } from "../router/RouterModelGroupCache";
+import {
+	appendModelResolutionTrace,
+	copyModelResolutionChain,
+	createModelResolutionTraceCollector,
+	type ModelGroupResolution,
+	type ModelResolutionChainEntry,
+	type ModelResolutionTraceCollector,
+} from "../router/ModelResolutionTrace";
 import type { Deployment } from "../types/router";
 import type { ProviderConfig } from "../types/provider";
 
@@ -73,8 +81,12 @@ export interface UpstreamAttempt {
 export interface FallbackRouterFacade {
 	/** 选取一个可用 deployment（内部已解析 model_group_alias 并排除冷却中的实例） */
 	getAvailableDeployment(model: string): { deployment: Deployment; provider: ProviderConfig } | null;
+	/** 解析逻辑模型并返回完整 alias 路径。 */
+	resolveModelGroupWithTrace?(model: string): ModelGroupResolution;
 	/** 取该 model 自身 fallback 链上第 fallbackDepth 跳的 model 名，链耗尽返回 null（调用方恒传 0 取链首） */
 	getNextFallback(model: string, fallbackDepth: number): string | null;
+	/** 结构化 fallback 解析，保留 fallback 配置中的 alias 输入。 */
+	getNextFallbackWithTrace?(model: string, fallbackDepth: number): ModelGroupResolution | null;
 	/** 单 deployment 调用成功登记（清冷却 + 失败计数清零） */
 	recordDeploymentSuccess(deployment: Deployment): void;
 	/** 单 deployment 调用失败登记（buildCooldownDecision 判定后按决策冷却） */
@@ -190,6 +202,18 @@ function normalizeProviderFailure(err: unknown): Error {
 	return new APIConnectionError(message);
 }
 
+/** Anthropic 上游 fallback 执行过程中回写的统计与共享轨迹。 */
+export interface FallbackExecutionStats {
+	/** 已进入的 fallback 深度。 */
+	fallbackDepth: number;
+	/** 原始请求模型及实际 fallback 模型。 */
+	fallbackModels?: string[];
+	/** 已展开的 alias 解析链快照。 */
+	modelResolutionChain?: ModelResolutionChainEntry[];
+	/** 请求级共享 alias 解析轨迹。 */
+	modelResolutionTrace?: ModelResolutionTraceCollector;
+}
+
 /**
  * 带 fallback 链的上游执行：对当前 model 的可用 deployment 逐个直连，
  * 失败（provider 非 2xx / 网络错误）登记冷却后沿 Router fallback 链重试下一跳。
@@ -206,7 +230,7 @@ function normalizeProviderFailure(err: unknown): Error {
  * @param execute - 对单个 deployment 执行上游调用；provider 失败必须抛
  * ProviderUpstreamError，其余异常按连接错误处理（均可 fallback）
  * @param fallbackStats - 可选输出参数：回写最终 fallback 跳数
- * （SpendLogs metadata.attempted_retries 数据源）
+ * （SpendLogs metadata.attempted_retries 数据源），也可携带请求级 alias trace collector
  * @returns execute 的成功结果
  * @throws {ApiError} 链耗尽后抛最后一个 provider 错误（保留其 HTTP 状态码）；
  *   模型不存在抛 400（PY ProxyModelNotFoundError）；
@@ -218,8 +242,9 @@ export async function executeWithFallbackChain<T>(
 	requestApiKey: string | undefined,
 	requestAnthropicVersion: string | undefined,
 	execute: (attempt: UpstreamAttempt) => Promise<T>,
-	fallbackStats?: { fallbackDepth: number; fallbackModels?: string[] },
+	fallbackStats?: FallbackExecutionStats,
 ): Promise<T> {
+	const modelResolutionTrace = fallbackStats?.modelResolutionTrace ?? createModelResolutionTraceCollector();
 	const attemptedDeploymentKeys = new Set<string>();
 	let currentModel: string | null = model;
 	let fallbackDepth = 0;
@@ -227,6 +252,17 @@ export async function executeWithFallbackChain<T>(
 	let lastError: Error | null = null;
 
 	while (currentModel !== null) {
+		const resolution = router.resolveModelGroupWithTrace?.(currentModel) ?? {
+			inputModel: currentModel,
+			resolvedModel: currentModel,
+			resolutionPath: [currentModel],
+		};
+		appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, resolution);
+		if (fallbackStats) {
+			fallbackStats.fallbackDepth = fallbackDepth;
+			fallbackStats.fallbackModels = [...fallbackModels];
+			fallbackStats.modelResolutionChain = copyModelResolutionChain(modelResolutionTrace);
+		}
 		// 同模型组循环：失败 deployment 入冷却后，组内其余健康 deployment 继续承担
 		let attempt = buildUpstreamAttempt(router, currentModel, requestApiKey, requestAnthropicVersion);
 		while (attempt !== null && !attemptedDeploymentKeys.has(attempt.deploymentKey)) {
@@ -236,7 +272,8 @@ export async function executeWithFallbackChain<T>(
 				router.recordDeploymentSuccess(attempt.deployment);
 				if (fallbackStats) {
 					fallbackStats.fallbackDepth = fallbackDepth;
-					fallbackStats.fallbackModels = fallbackModels;
+					fallbackStats.fallbackModels = [...fallbackModels];
+					fallbackStats.modelResolutionChain = copyModelResolutionChain(modelResolutionTrace);
 				}
 				return result;
 			} catch (err) {
@@ -261,9 +298,15 @@ export async function executeWithFallbackChain<T>(
 			// 对齐 PY max_fallbacks 上限：防环型配置（A→B→A）死循环
 			break;
 		}
-		currentModel = router.getNextFallback(currentModel, 0);
-		if (currentModel !== null) {
-			fallbackModels.push(currentModel);
+		const fallbackResolution: ModelGroupResolution | null | undefined = router.getNextFallbackWithTrace?.(currentModel, 0);
+		if (fallbackResolution) {
+			currentModel = fallbackResolution.inputModel;
+			fallbackModels.push(fallbackResolution.resolvedModel);
+		} else {
+			currentModel = router.getNextFallback(currentModel, 0);
+			if (currentModel !== null) {
+				fallbackModels.push(currentModel);
+			}
 		}
 	}
 

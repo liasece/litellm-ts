@@ -53,20 +53,49 @@ export function tryRouteToFallbackForMock(args: {
 		const chain = ctx.fallbackHandler.getContextWindowFallbackChain(model);
 		const [firstChain] = chain;
 		if (firstChain !== undefined) {
-			return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: firstChain }, helpers);
+			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			return runExecution(
+				ctx,
+				{
+					...req,
+					fallbackDepth: req.fallbackDepth + 1,
+					model: resolution.inputModel,
+					fallbackModels: [...req.fallbackModels, resolution.resolvedModel],
+				},
+				helpers,
+			);
 		}
 	} else if (error instanceof ContentPolicyViolationError) {
 		const chain = ctx.fallbackHandler.getContentPolicyFallbackChain(model);
 		const [firstChain] = chain;
 		if (firstChain !== undefined) {
-			return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: firstChain }, helpers);
+			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			return runExecution(
+				ctx,
+				{
+					...req,
+					fallbackDepth: req.fallbackDepth + 1,
+					model: resolution.inputModel,
+					fallbackModels: [...req.fallbackModels, resolution.resolvedModel],
+				},
+				helpers,
+			);
 		}
 	}
 	// 每个 model 查自身 fallback 链的链首（depth 恒为 0）；
 	// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
-	const general = ctx.fallbackHandler.getNextFallback(model, 0);
+	const general = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 	if (general) {
-		return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: general }, helpers);
+		return runExecution(
+			ctx,
+			{
+				...req,
+				fallbackDepth: req.fallbackDepth + 1,
+				model: general.inputModel,
+				fallbackModels: [...req.fallbackModels, general.resolvedModel],
+			},
+			helpers,
+		);
 	}
 	return null;
 }
@@ -102,20 +131,52 @@ export function tryRouteToFallback(args: {
 		const [firstChain] = chain;
 		if (firstChain !== undefined) {
 			logger.warn(`Context window error on ${deployment.model_name}${suffix}, trying context window fallback`);
-			return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: firstChain, previousError: error }, helpers);
+			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			return runExecution(
+				ctx,
+				{
+					...req,
+					fallbackDepth: req.fallbackDepth + 1,
+					model: resolution.inputModel,
+					fallbackModels: [...req.fallbackModels, resolution.resolvedModel],
+					previousError: error,
+				},
+				helpers,
+			);
 		}
 	} else if (error instanceof ContentPolicyViolationError) {
 		const chain = ctx.fallbackHandler.getContentPolicyFallbackChain(model);
 		const [firstChain] = chain;
 		if (firstChain !== undefined) {
 			logger.warn(`Content policy error on ${deployment.model_name}${suffix}, trying content policy fallback`);
-			return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: firstChain, previousError: error }, helpers);
+			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			return runExecution(
+				ctx,
+				{
+					...req,
+					fallbackDepth: req.fallbackDepth + 1,
+					model: resolution.inputModel,
+					fallbackModels: [...req.fallbackModels, resolution.resolvedModel],
+					previousError: error,
+				},
+				helpers,
+			);
 		}
 	}
 	// 每个 model 查自身 fallback 链的链首（depth 恒为 0）
-	const general = ctx.fallbackHandler.getNextFallback(model, 0);
+	const general = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 	if (general) {
-		return runExecution(ctx, { ...req, fallbackDepth: req.fallbackDepth + 1, model: general, previousError: error }, helpers);
+		return runExecution(
+			ctx,
+			{
+				...req,
+				fallbackDepth: req.fallbackDepth + 1,
+				model: general.inputModel,
+				fallbackModels: [...req.fallbackModels, general.resolvedModel],
+				previousError: error,
+			},
+			helpers,
+		);
 	}
 	return null;
 }

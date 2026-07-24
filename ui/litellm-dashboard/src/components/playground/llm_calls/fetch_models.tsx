@@ -1,10 +1,11 @@
 // fetch_models.ts
 
-import { modelHubCall } from "../../networking";
+import { getRoutableModelCandidatesCall, modelHubCall } from "../../networking";
 
 export interface ModelGroup {
   model_group: string;
   mode?: string;
+  type?: "model" | "alias";
 }
 
 /**
@@ -30,4 +31,10 @@ export const fetchAvailableModels = async (accessToken: string): Promise<ModelGr
     console.error("Error fetching model info:", error);
     throw error;
   }
+};
+
+/** Playground 使用 Router 的可路由逻辑模型和 alias，而非 deployment 模型组详情。 */
+export const fetchRoutableModels = async (accessToken: string): Promise<ModelGroup[]> => {
+  const candidates = await getRoutableModelCandidatesCall(accessToken);
+  return candidates.map(({ model_name, mode, type }) => ({ model_group: model_name, mode, type }));
 };

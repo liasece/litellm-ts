@@ -172,6 +172,29 @@ describe("FallbackHandler", () => {
 		});
 	});
 
+	describe("resolveModelGroupWithTrace", () => {
+		it("返回嵌套 alias 的完整路径", () => {
+			const fh = new FallbackHandler({}, { A: "B", B: { model: "C" } });
+			expect(fh.resolveModelGroupWithTrace("A")).toEqual({
+				inputModel: "A",
+				resolvedModel: "C",
+				resolutionPath: ["A", "B", "C"],
+			});
+		});
+
+		it("fallback trace 保留配置中的 alias 输入", () => {
+			const fh = new FallbackHandler({ source: ["fallback-alias"] }, { "fallback-alias": "fallback-model" });
+			expect(fh.getFallbackChainWithTrace("source")).toEqual([
+				{
+					inputModel: "fallback-alias",
+					resolvedModel: "fallback-model",
+					resolutionPath: ["fallback-alias", "fallback-model"],
+				},
+			]);
+			expect(fh.getFallbackChain("source")).toEqual(["fallback-model"]);
+		});
+	});
+
 	describe("resolveModelGroup", () => {
 		it("无 alias 时原样返回", () => {
 			const fh = new FallbackHandler({}, {});

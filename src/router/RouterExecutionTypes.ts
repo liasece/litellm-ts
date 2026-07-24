@@ -11,6 +11,7 @@ import type { ProviderConfig } from "../types/provider";
 import type { CooldownManager } from "./CooldownManager";
 import type { TPMRPMLimiter } from "./TPMRPMLimiter";
 import type { FallbackHandler } from "./FallbackHandler";
+import type { ModelResolutionTraceCollector } from "./ModelResolutionTrace";
 
 /** Router 内部状态/方法的可注入视图，_executeWithFallback 唯一访问面 */
 export interface RouterExecContext {
@@ -84,6 +85,8 @@ export interface ExecutionRequest {
 	fallbackModels: string[];
 	/** 上一轮执行的异常（mock 入口或 catch 块捕获） */
 	previousError?: Error;
+	/** 请求级 alias 解析轨迹，由 endpoint 创建并跨递归复用。 */
+	modelResolutionTrace?: ModelResolutionTraceCollector;
 }
 
 /** getAvailableDeployment 抽象，Router 主类提供以复用 routingStrategy + provider 选择 */

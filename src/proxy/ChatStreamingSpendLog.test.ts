@@ -14,9 +14,19 @@ function buildApp(provider: Record<string, unknown>, getNextFallback = jest.fn()
 	};
 	const router = {
 		getAvailableDeployment: jest.fn().mockReturnValue({ deployment: deployment, provider: provider }),
+		resolveModelGroupWithTrace: jest.fn((model: string) => ({
+			inputModel: model,
+			resolvedModel: model,
+			resolutionPath: [model],
+		})),
 		getNextFallback: getNextFallback,
+		getNextFallbackWithTrace: jest.fn((model: string, fallbackDepth: number) => {
+			const fallback = getNextFallback(model, fallbackDepth) as string | null;
+			return fallback === null ? null : { inputModel: fallback, resolvedModel: fallback, resolutionPath: [fallback] };
+		}),
 		hasModel: jest.fn().mockReturnValue(true),
 		getNoAvailableDeploymentInfo: jest.fn().mockReturnValue({ cooldownSeconds: 60, cooldownList: [], preCallChecks: false }),
+		maxFallbacks: 3,
 		trackActiveRequest: jest.fn(),
 		markFailed: jest.fn(),
 	};
@@ -117,7 +127,12 @@ describe("Chat streaming SpendLog", () => {
 				};
 			},
 		});
-		const { app } = buildApp(provider);
+		const { app, router } = buildApp(provider);
+		router.resolveModelGroupWithTrace.mockReturnValue({
+			inputModel: "chat-group",
+			resolvedModel: "resolved-chat-group",
+			resolutionPath: ["chat-group", "nested-alias", "resolved-chat-group"],
+		});
 
 		const response = await request(app)
 			.post("/v1/chat/completions")
@@ -125,6 +140,7 @@ describe("Chat streaming SpendLog", () => {
 			.expect(200);
 
 		expect(response.text).not.toContain("_usage");
+		expect(response.text).not.toContain("_modelResolutionChain");
 		expect(global.fetch).toHaveBeenCalledWith(
 			"https://provider.example/v1/messages",
 			expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -137,6 +153,16 @@ describe("Chat streaming SpendLog", () => {
 			total_tokens: 18,
 			cache_creation_input_tokens: 3,
 			cache_read_input_tokens: 5,
+			metadata: {
+				model_resolution_chain: [
+					{
+						fallback_index: 0,
+						input_model: "chat-group",
+						resolved_model: "resolved-chat-group",
+						resolution_path: ["chat-group", "nested-alias", "resolved-chat-group"],
+					},
+				],
+			},
 			messages: [{ role: "user", content: "hello" }],
 			response: {
 				id: "chatcmpl-stream",
@@ -233,6 +259,40 @@ describe("Chat streaming SpendLog", () => {
 		expect(spendSpy).toHaveBeenCalledTimes(1);
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Success });
 		expect(releaseSpy).not.toHaveBeenCalled();
+	});
+
+	it("无可用 deployment 的终止失败日志保存初始 alias 轨迹和 fallback 统计", async () => {
+		const provider = baseProvider();
+		const { app, router } = buildApp(provider);
+		router.getAvailableDeployment.mockReturnValue(null);
+		router.resolveModelGroupWithTrace.mockReturnValue({
+			inputModel: "request-alias",
+			resolvedModel: "resolved-chat-group",
+			resolutionPath: ["request-alias", "nested-alias", "resolved-chat-group"],
+		});
+
+		await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "request-alias", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(429);
+
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: SpendLogStatus.Failure,
+			metadata: {
+				attempted_retries: 0,
+				max_retries: 3,
+				fallback_models: ["request-alias"],
+				model_resolution_chain: [
+					{
+						fallback_index: 0,
+						input_model: "request-alias",
+						resolved_model: "resolved-chat-group",
+						resolution_path: ["request-alias", "nested-alias", "resolved-chat-group"],
+					},
+				],
+			},
+		});
 	});
 
 	it("partial failure 保存已聚合 response/usage，且已输出内容后不 fallback", async () => {

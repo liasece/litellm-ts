@@ -2,10 +2,15 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ChatUI from "./ChatUI";
 import * as fetchModelsModule from "../llm_calls/fetch_models";
+import { fetchAvailableAgents } from "../llm_calls/fetch_agents";
 
-// Mock the fetchAvailableModels function
+// Mock the fetchRoutableModels function
 vi.mock("../llm_calls/fetch_models", () => ({
-  fetchAvailableModels: vi.fn(),
+  fetchRoutableModels: vi.fn(),
+}));
+
+vi.mock("../llm_calls/fetch_agents", () => ({
+	fetchAvailableAgents: vi.fn().mockResolvedValue([]),
 }));
 
 // Mock other networking functions that cause errors
@@ -30,8 +35,8 @@ describe("ChatUI", () => {
     // Mock scrollIntoView which is not available in JSDOM
     Element.prototype.scrollIntoView = vi.fn();
 
-    // Mock the fetchAvailableModels to return test models
-    (fetchModelsModule.fetchAvailableModels as any).mockResolvedValue([
+    // Mock the fetchRoutableModels to return test models
+    (fetchModelsModule.fetchRoutableModels as any).mockResolvedValue([
       { model_group: "Model 1", mode: "chat" },
       { model_group: "Model 2", mode: "chat" },
       { model_group: "Model 3", mode: "chat" },
@@ -133,7 +138,7 @@ describe("ChatUI", () => {
   });
 
   it("shows only chat-compatible models when chat endpoint is selected", async () => {
-    (fetchModelsModule.fetchAvailableModels as any).mockResolvedValueOnce([
+    (fetchModelsModule.fetchRoutableModels as any).mockResolvedValueOnce([
       { model_group: "ChatModel", mode: "chat" },
       { model_group: "SpeechModel", mode: "audio_speech" },
       { model_group: "ImageModel", mode: "image_generation" },
@@ -369,7 +374,9 @@ describe("ChatUI", () => {
       expect(screen.queryByText("Fill")).toBeNull();
     });
 
-    const customProxyInput = screen.getByPlaceholderText("Optional: Enter custom proxy URL (e.g., http://localhost:5000)");
+		const customProxyInput = screen.getByPlaceholderText(
+			"Optional: Enter custom proxy URL (e.g., http://localhost:5000)",
+		);
     expect(customProxyInput).toHaveValue(testProxyUrl);
   });
 
@@ -381,7 +388,7 @@ describe("ChatUI", () => {
         userRole="user"
         userID="1234567890"
         disabledPersonalKeyCreation={false}
-      />
+			/>,
     );
 
     await waitFor(() => {
@@ -411,4 +418,40 @@ describe("ChatUI", () => {
       }
     }
   });
+
+	it("passes session PlaygroundAuth when loading A2A agents", async () => {
+		sessionStorage.setItem("endpointType", "a2a_agents");
+		render(
+			<ChatUI
+				accessToken="session-token"
+				token="token"
+				userRole="user"
+				userID="user-id"
+				disabledPersonalKeyCreation={false}
+			/>,
+		);
+
+		await waitFor(() => {
+			expect(fetchAvailableAgents).toHaveBeenCalledWith({ kind: "session" }, undefined);
+		});
+	});
+
+	it("passes trimmed virtual-key PlaygroundAuth when loading A2A agents", async () => {
+		sessionStorage.setItem("endpointType", "a2a_agents");
+		sessionStorage.setItem("apiKeySource", JSON.stringify("custom"));
+		sessionStorage.setItem("apiKey", "  virtual-key  ");
+		render(
+			<ChatUI
+				accessToken="session-token"
+				token="token"
+				userRole="user"
+				userID="user-id"
+				disabledPersonalKeyCreation={false}
+			/>,
+		);
+
+		await waitFor(() => {
+			expect(fetchAvailableAgents).toHaveBeenCalledWith({ kind: "virtual-key", apiKey: "virtual-key" }, undefined);
+		});
+	});
 });

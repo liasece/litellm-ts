@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeOpenAIEmbeddingsRequest } from "./embeddings_api";
 
-vi.mock("@/components/networking", () => ({
-  getProxyBaseUrl: vi.fn(() => "https://example.com"),
-  getGlobalLitellmHeaderName: vi.fn(() => "Authorization"),
-}));
-
 describe("embeddings_api", () => {
   const mockUpdateEmbeddingsUI = vi.fn();
   const mockFetch = vi.fn();
@@ -14,20 +9,12 @@ describe("embeddings_api", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
-        data: [
-          {
-            embedding: [0.1, 0.2, 0.3, 0.4, 0.5],
-            index: 0,
-            object: "embedding",
-          },
-        ],
+				data: [{ embedding: [0.1, 0.2, 0.3, 0.4, 0.5], index: 0, object: "embedding" }],
         model: "text-embedding-3-small",
         object: "list",
       }),
       text: async () => "",
     } as Response);
-
-    // @ts-ignore - assigning to global for test environment
     global.fetch = mockFetch;
   });
 
@@ -35,43 +22,46 @@ describe("embeddings_api", () => {
     vi.clearAllMocks();
   });
 
-  it("should make a request to the embeddings endpoint", async () => {
+	it.each([
+		[{ kind: "session" } as const, null],
+		[{ kind: "virtual-key", apiKey: "custom-key" } as const, "Bearer custom-key"],
+	])("uses the final OpenAI auth header for %o", async (auth, expectedAuthorization) => {
     await makeOpenAIEmbeddingsRequest(
       "Hello, world!",
       mockUpdateEmbeddingsUI,
       "text-embedding-3-small",
-      "1234567890",
-      [],
+			auth,
+			["tag-a"],
+			"https://example.com",
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch).toHaveBeenCalledWith("https://example.com/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer 1234567890",
-      },
-      body: JSON.stringify({
-        model: "text-embedding-3-small",
-        input: "Hello, world!",
-      }),
-    });
+		const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(url).toBe("https://example.com/embeddings");
+		const headers = new Headers(options.headers);
+		expect(headers.get("Content-Type")).toBe("application/json");
+		expect(headers.get("x-litellm-tags")).toBe("tag-a");
+		expect(headers.get("Authorization")).toBe(expectedAuthorization);
+		expect(headers.get("x-api-key")).toBeNull();
+		expect(options.body).toBe(JSON.stringify({ model: "text-embedding-3-small", input: "Hello, world!" }));
     expect(mockUpdateEmbeddingsUI).toHaveBeenCalledWith(
       JSON.stringify([0.1, 0.2, 0.3, 0.4, 0.5]),
       "text-embedding-3-small",
     );
   });
 
-  it("should not include encoding_format when making the request", async () => {
-    await makeOpenAIEmbeddingsRequest("Sample text", mockUpdateEmbeddingsUI, "text-embedding-3-small", "abcdef", []);
+	it("does not include encoding_format in the payload", async () => {
+		await makeOpenAIEmbeddingsRequest(
+			"Sample text",
+			mockUpdateEmbeddingsUI,
+			"text-embedding-3-small",
+			{ kind: "session" },
+			[],
+			"https://example.com",
+		);
 
-    const fetchCall = mockFetch.mock.calls[0];
-    const options = fetchCall[1] as RequestInit;
-    const body = options.body as string;
-    const parsedBody = JSON.parse(body);
-
-    expect(parsedBody).not.toHaveProperty("encoding_format");
-    expect(parsedBody).toEqual({
+		const options = mockFetch.mock.calls[0][1] as RequestInit;
+		expect(JSON.parse(options.body as string)).toEqual({
       model: "text-embedding-3-small",
       input: "Sample text",
     });
