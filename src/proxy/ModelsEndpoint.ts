@@ -10,6 +10,7 @@ import { ApiError } from "../core/api/ApiError";
 import type { Router } from "../router/Router";
 import type { Request } from "express";
 import type { Deployment } from "../types/router";
+import { sanitizeSensitiveValues } from "../core/api/sanitizeSensitiveValues";
 
 /** OpenAI 兼容的模型对象定义 */
 interface OpenAIModel {
@@ -148,8 +149,8 @@ export class ModelsController {
 			id: modelId,
 			created: Math.floor(Date.now() / 1000),
 			owned_by: dep.litellm_params.custom_llm_provider ?? dep.litellm_params.model.split("/")[0] ?? "litellm",
-			model_info: dep.model_info,
-			litellm_params: dep.litellm_params,
+			model_info: sanitizeSensitiveValues(dep.model_info) as Deployment["model_info"],
+			litellm_params: sanitizeSensitiveValues(dep.litellm_params) as Deployment["litellm_params"],
 		};
 	}
 }

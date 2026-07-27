@@ -8,6 +8,33 @@ export interface ModelGroup {
   type?: "model" | "alias";
 }
 
+export interface ModelSelectOption {
+  value: string;
+  label: string;
+}
+
+/** 将模型候选转换为选择器选项：alias 前置、组内排序，并按原始名称去重。 */
+export const modelGroupsToSelectOptions = (models: ModelGroup[]): ModelSelectOption[] => {
+  const sortedModels = [...models].sort((left, right) => {
+    const typeOrder = Number(right.type === "alias") - Number(left.type === "alias");
+    return typeOrder || left.model_group.localeCompare(right.model_group);
+  });
+  const seenModelGroups = new Set<string>();
+
+  return sortedModels.flatMap((model) => {
+    if (seenModelGroups.has(model.model_group)) {
+      return [];
+    }
+    seenModelGroups.add(model.model_group);
+    return [
+      {
+        value: model.model_group,
+        label: model.type === "alias" ? `Alias: ${model.model_group}` : `模型: ${model.model_group}`,
+      },
+    ];
+  });
+};
+
 /**
  * Fetches available models using modelHubCall and formats them for the selection dropdown.
  */

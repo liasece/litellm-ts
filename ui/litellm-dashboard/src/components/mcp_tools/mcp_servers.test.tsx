@@ -1,5 +1,5 @@
 import React from "react";
-import { render, waitFor, screen, fireEvent, act } from "@testing-library/react";
+import { render, waitFor, screen, fireEvent, act, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MCPServers from "./mcp_servers";
@@ -127,6 +127,21 @@ describe("MCPServers", () => {
     // Verify the API was called
     // Note: useMCPServers uses useAuthorized() internally, which returns "123" from global mock
     expect(networking.fetchMCPServers).toHaveBeenCalledWith("123", undefined);
+  });
+
+
+  it("keeps the server list mounted while details are open in a Drawer", async () => {
+    vi.mocked(networking.fetchMCPServers).mockResolvedValue([
+      { server_id: "server-1", server_name: "Test Server 1", alias: "test-server-1", url: "https://example.com/mcp", transport: "http", auth_type: "none", created_at: "2024-01-01T00:00:00Z", created_by: "user-1", updated_at: "2024-01-01T00:00:00Z", updated_by: "user-1", teams: [], mcp_access_groups: [] },
+      { server_id: "server-2", server_name: "Test Server 2", alias: "test-server-2", url: "https://example2.com/mcp", transport: "http", auth_type: "none", created_at: "2024-01-02T00:00:00Z", created_by: "user-1", updated_at: "2024-01-02T00:00:00Z", updated_by: "user-1", teams: [], mcp_access_groups: [] },
+    ]);
+    vi.mocked(networking.fetchMCPServerHealth).mockResolvedValue([]);
+    render(<QueryClientProvider client={createQueryClient()}><MCPServers {...defaultProps} /></QueryClientProvider>);
+    await screen.findByText("Test Server 1");
+    fireEvent.click(screen.getAllByText("server-...")[0]!);
+    expect((await screen.findAllByText("MCP Tools")).length).toBeGreaterThan(0);
+    expect(within(screen.getByRole("table")).getByText("Test Server 2")).toBeInTheDocument();
+    expect(screen.queryByText("Back to All Servers")).not.toBeInTheDocument();
   });
 
   it("should fetch and merge health status for servers", async () => {

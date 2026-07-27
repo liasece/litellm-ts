@@ -178,3 +178,136 @@ describe("Router.probeDeployment", () => {
 		expect(mockFetch).not.toHaveBeenCalled();
 	});
 });
+
+describe("Router runtime credential resolution", () => {
+	function createAccessor(valuesByName: Record<string, Record<string, unknown>>) {
+		return {
+			getValues: (name: string) => {
+				const values = valuesByName[name];
+				return values === undefined ? undefined : { ...values };
+			},
+		};
+	}
+
+	function createCredentialRouter(
+		deployment = mkDeployment("credential-model", "openai/gpt-4", {
+			litellm_params: {
+				model: "openai/gpt-4",
+				api_key: "inline-secret",
+				api_base: "https://inline.example/v1",
+				litellm_credential_name: "production",
+			},
+		}),
+		credentials = createAccessor({
+			production: { api_key: "credential-secret", api_base: "https://credential.example/v1" },
+		}),
+	) {
+		return new Router(
+			{ model_list: [deployment], routing_strategy: RoutingStrategyName.SimpleShuffle, num_retries: 0 },
+			undefined,
+			credentials,
+		);
+	}
+
+	it("解析凭据覆盖 inline 参数、隐藏引用名且不修改原 deployment", async () => {
+		const deployment = mkDeployment("credential-model", "openai/gpt-4", {
+			litellm_params: {
+				model: "openai/gpt-4",
+				api_key: "inline-secret",
+				api_base: "https://inline.example/v1",
+				litellm_credential_name: "production",
+			},
+		});
+		const originalParams = { ...deployment.litellm_params };
+		const router = createCredentialRouter(deployment);
+		const available = router.getAvailableDeployment("credential-model");
+
+		expect(available?.deployment).not.toBe(deployment);
+		expect(available?.deployment.litellm_params).toEqual({
+			model: "openai/gpt-4",
+			api_key: "credential-secret",
+			api_base: "https://credential.example/v1",
+		});
+		expect(deployment.litellm_params).toEqual(originalParams);
+
+		mockFetch.mockResolvedValueOnce(okResponse({ choices: [], usage: { total_tokens: 1 } }));
+		await router.completion("credential-model", [{ role: "user", content: "hello" }]);
+		expect(mockFetch.mock.calls[0]?.[0]).toBe("https://credential.example/v1/chat/completions");
+		expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: "Bearer credential-secret" });
+		expect(JSON.stringify(mockFetch.mock.calls[0])).not.toContain("litellm_credential_name");
+	});
+
+	it("空 Credential 引用按未配置处理并且不发送给 Provider", () => {
+		const deployment = mkDeployment("credential-model", "openai/gpt-4", {
+			litellm_params: {
+				model: "openai/gpt-4",
+				api_key: "inline-secret",
+				api_base: "https://inline.example/v1",
+				litellm_credential_name: "  ",
+			},
+		});
+		const available = createCredentialRouter(deployment).getAvailableDeployment("credential-model");
+
+		expect(available?.deployment.litellm_params).toEqual({
+			model: "openai/gpt-4",
+			api_key: "inline-secret",
+			api_base: "https://inline.example/v1",
+		});
+	});
+
+	it("缺失凭据在出站前抛出脱敏配置错误", async () => {
+		const router = createCredentialRouter(undefined, createAccessor({}));
+		const error = await router.completion("credential-model", [{ role: "user", content: "hello" }]).catch((cause: unknown) => cause);
+
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe("Credential configuration is invalid");
+		expect(JSON.stringify(error)).not.toContain("production");
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it("fallback 和 stream 均使用各自的已解析凭据", async () => {
+		const primary = mkDeployment("primary", "openai/gpt-4", {
+			litellm_params: { model: "openai/gpt-4", litellm_credential_name: "primary-credential" },
+		});
+		const fallback = mkDeployment("fallback", "openai/gpt-4", {
+			litellm_params: { model: "openai/gpt-4", litellm_credential_name: "fallback-credential" },
+		});
+		const router = new Router(
+			{
+				model_list: [primary, fallback],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				fallbacks: [{ primary: ["fallback"] }],
+			},
+			undefined,
+			createAccessor({
+				"primary-credential": { api_key: "primary-secret", api_base: "https://primary.example/v1" },
+				"fallback-credential": { api_key: "fallback-secret", api_base: "https://fallback.example/v1" },
+			}),
+		);
+		mockFetch.mockResolvedValueOnce(errorResponse(500)).mockResolvedValueOnce(okResponse({ choices: [], usage: { total_tokens: 1 } }));
+		await router.completion("primary", [{ role: "user", content: "hello" }]);
+		expect(mockFetch.mock.calls.map((call) => call[1]?.headers.Authorization)).toEqual([
+			"Bearer primary-secret",
+			"Bearer fallback-secret",
+		]);
+
+		mockFetch.mockResolvedValueOnce(new Response("data: [DONE]\\n\\n", { status: 200 }));
+		const streamResult = await router.completion("fallback", [{ role: "user", content: "hello" }], { stream: true });
+		expect(streamResult._stream).toBe(true);
+		expect(mockFetch.mock.calls[2]?.[1]?.headers).toMatchObject({ Authorization: "Bearer fallback-secret" });
+	});
+
+	it("probeDeployment 使用解析后的凭据且不发送引用名", async () => {
+		const deployment = mkDeployment("credential-model", "openai/gpt-4", {
+			litellm_params: { model: "openai/gpt-4", litellm_credential_name: "production" },
+		});
+		mockFetch.mockResolvedValueOnce(okResponse({ choices: [] }));
+		const result = await createCredentialRouter(deployment).probeDeployment("credential-model");
+
+		expect(result.status).toBe("healthy");
+		expect(mockFetch.mock.calls[0]?.[0]).toBe("https://credential.example/v1/chat/completions");
+		expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: "Bearer credential-secret" });
+		expect(JSON.stringify(mockFetch.mock.calls[0])).not.toContain("litellm_credential_name");
+	});
+});

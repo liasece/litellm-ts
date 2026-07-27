@@ -1,30 +1,13 @@
 import React, { useState, useEffect } from "react";
-import {
-  Card,
-  Title,
-  Text,
-  Grid,
-  Badge,
-  Button as TremorButton,
-  Tab,
-  TabGroup,
-  TabList,
-  TabPanel,
-  TabPanels,
-} from "@tremor/react";
+import { Card, Title, Text, Grid, Badge, Tab, TabGroup, TabList, TabPanel, TabPanels } from "@tremor/react";
 import { Button, Modal } from "antd";
-import { ArrowLeftIcon, TrashIcon, PencilIcon } from "@heroicons/react/outline";
 import { getPromptInfo, PromptSpec, PromptTemplateBase, deletePromptCall } from "@/components/networking";
 import { copyToClipboard as utilCopyToClipboard } from "@/utils/dataUtils";
 import { CheckIcon, CopyIcon } from "lucide-react";
+import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 import NotificationsManager from "../molecules/notifications_manager";
 import PromptCodeSnippets from "./prompt_editor_view/PromptCodeSnippets";
-import { 
-  extractModel, 
-  extractTemplateVariables, 
-  getBasePromptId, 
-  getCurrentVersion 
-} from "./prompt_utils";
+import { extractModel, extractTemplateVariables, getBasePromptId, getCurrentVersion } from "./prompt_utils";
 
 export interface PromptInfoProps {
   promptId: string;
@@ -65,11 +48,19 @@ const PromptInfoView: React.FC<PromptInfoProps> = ({ promptId, onClose, accessTo
   }, [promptId, accessToken]);
 
   if (loading) {
-    return <div className="p-4">Loading...</div>;
+		return (
+			<ResourceDetailsDrawer open onClose={onClose} title="Prompt Details" loading>
+				<div />
+			</ResourceDetailsDrawer>
+		);
   }
 
   if (!promptData) {
-    return <div className="p-4">Prompt not found</div>;
+		return (
+			<ResourceDetailsDrawer open onClose={onClose} title="Prompt Details">
+				<div className="p-4">Prompt not found</div>
+			</ResourceDetailsDrawer>
+		);
   }
 
   // Format date helper function
@@ -121,30 +112,13 @@ const PromptInfoView: React.FC<PromptInfoProps> = ({ promptId, onClose, accessTo
   const currentVersion = getCurrentVersion(promptData);
 
   return (
-    <div className="p-4">
-      <div>
-        <TremorButton icon={ArrowLeftIcon} variant="light" onClick={onClose} className="mb-4">
-          Back to Prompts
-        </TremorButton>
-        <div className="flex justify-between items-start mb-4">
-          <div>
-            <Title>Prompt Details</Title>
-            <div className="flex items-center cursor-pointer">
-              <Text className="text-gray-500 font-mono">{basePromptId}</Text>
-              <Button
-                type="text"
-                size="small"
-                icon={copiedStates["prompt-id"] ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-                onClick={() => copyToClipboard(basePromptId, "prompt-id")}
-                className={`left-2 z-10 transition-all duration-200 ${
-                  copiedStates["prompt-id"]
-                    ? "text-green-600 bg-green-50 border-green-200"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                }`}
-              />
-            </div>
-          </div>
-          <div className="flex gap-2">
+		<ResourceDetailsDrawer
+			open
+			onClose={onClose}
+			title="Prompt Details"
+			subtitle={basePromptId}
+			actions={
+				<>
             <PromptCodeSnippets
               promptId={basePromptId}
               model={promptModel}
@@ -152,26 +126,24 @@ const PromptInfoView: React.FC<PromptInfoProps> = ({ promptId, onClose, accessTo
               accessToken={accessToken}
               version={currentVersion}
             />
-            <TremorButton
-              icon={PencilIcon}
-              variant="primary"
-              onClick={() => onEdit?.(rawApiResponse)}
-              className="flex items-center"
-            >
-              Prompt Studio
-            </TremorButton>
+					<Button onClick={() => onEdit?.(rawApiResponse)}>Edit</Button>
           {isAdmin && (
-            <TremorButton
-              icon={TrashIcon}
-              variant="secondary"
-              onClick={handleDeleteClick}
-              className="flex items-center"
-            >
-              Delete Prompt
-            </TremorButton>
+						<Button danger onClick={handleDeleteClick}>
+							Delete
+						</Button>
           )}
-          </div>
-        </div>
+				</>
+			}
+		>
+			<div className="p-4">
+				<div className="flex items-center cursor-pointer mb-4">
+					<Text className="text-gray-500 font-mono">{basePromptId}</Text>
+					<Button
+						type="text"
+						size="small"
+						icon={copiedStates["prompt-id"] ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+						onClick={() => copyToClipboard(basePromptId, "prompt-id")}
+					/>
       </div>
 
       <TabGroup>
@@ -377,6 +349,7 @@ const PromptInfoView: React.FC<PromptInfoProps> = ({ promptId, onClose, accessTo
         <p>This action cannot be undone.</p>
       </Modal>
     </div>
+		</ResourceDetailsDrawer>
   );
 };
 

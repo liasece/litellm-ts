@@ -56,6 +56,7 @@ export const columns = (
 	onDeleteClick?: (modelId: string) => void,
 	onEditFallbacksClick?: (model: any) => void,
 	deploymentHealthStatuses: Record<string, DeploymentHealthStatus> = {},
+	onRefreshHealth?: (modelId: string) => void,
 ): ColumnDef<ModelData>[] => [
 	{
 		header: () => <span className="text-sm font-semibold">Model ID</span>,
@@ -289,10 +290,26 @@ export const columns = (
 		size: 120,
 		minSize: 80,
 		cell: ({ row }) => {
-			const status = deploymentHealthStatuses[row.original.model_info.id] ?? { status: "none", loading: false };
-			if (status.loading) return <Badge color="blue">checking</Badge>;
+			const modelId = row.original.model_info.id;
+			const status = deploymentHealthStatuses[modelId] ?? { status: "none", loading: false };
 			const color = status.status === "healthy" ? "emerald" : status.status === "unhealthy" ? "red" : "gray";
-			return <Badge color={color}>{status.status}</Badge>;
+			return (
+				<div className="flex items-center gap-1">
+					<Badge color={status.loading ? "blue" : color}>{status.loading ? "checking" : status.status}</Badge>
+					<button
+						type="button"
+						aria-label="Refresh health status"
+						disabled={status.loading || !onRefreshHealth}
+						onClick={(event) => {
+							event.stopPropagation();
+							onRefreshHealth?.(modelId);
+						}}
+						className="text-gray-500 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+					>
+						<SyncOutlined spin={status.loading} />
+					</button>
+				</div>
+			);
 		},
 	},
 	{

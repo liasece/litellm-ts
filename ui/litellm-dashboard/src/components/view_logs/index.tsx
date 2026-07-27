@@ -18,7 +18,14 @@ import FilterComponent, { FilterOption } from "../molecules/filter";
 import { allEndUsersCall, keyInfoV1Call, uiSpendLogsCall } from "../networking";
 import KeyInfoView from "../templates/key_info_view";
 import AuditLogs from "./audit_logs";
-import { createColumns, LogEntry, type LogsSortField } from "./columns";
+import {
+	createColumns,
+	getSessionGroupKey,
+	getSessionGroupRef,
+	LogEntry,
+	type LogsSortField,
+	type SessionGroupRef,
+} from "./columns";
 import { ConfigInfoMessage } from "./ConfigInfoMessage";
 import { ERROR_CODE_OPTIONS, MCP_CALL_TYPES, QUICK_SELECT_OPTIONS } from "./constants";
 import { CostBreakdownViewer } from "./CostBreakdownViewer";
@@ -85,7 +92,7 @@ export default function SpendLogsTable({
 
 	const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+	const [selectedSessionGroup, setSelectedSessionGroup] = useState<SessionGroupRef | null>(null);
 	const [isSpendLogsSettingsModalVisible, setIsSpendLogsSettingsModalVisible] = useState(false);
 
 	const [sortBy, setSortBy] = useState<LogsSortField>("startTime");
@@ -309,15 +316,17 @@ export default function SpendLogsTable({
 		return matchesSearch;
 	});
 
-	// Build a single-pass map of session_id → representative request_id.
+	// Build a single-pass map of session group → representative request_id.
 	// Prefers an LLM row over an MCP row as the representative.
 	const sessionRepresentativeMap = new Map<string, { requestId: string; isMcp: boolean }>();
 	for (const log of searchedLogs) {
-		if (!log.session_id || (log.session_total_count || 1) <= 1) continue;
+		const sessionGroup = getSessionGroupRef(log);
+		if (!sessionGroup || (log.session_total_count || 1) <= 1) continue;
+		const sessionGroupKey = getSessionGroupKey(sessionGroup);
 		const isMcp = MCP_CALL_TYPES.includes(log.call_type);
-		const existing = sessionRepresentativeMap.get(log.session_id);
+		const existing = sessionRepresentativeMap.get(sessionGroupKey);
 		if (!existing || (existing.isMcp && !isMcp)) {
-			sessionRepresentativeMap.set(log.session_id, { requestId: log.request_id, isMcp });
+			sessionRepresentativeMap.set(sessionGroupKey, { requestId: log.request_id, isMcp });
 		}
 	}
 
@@ -328,19 +337,18 @@ export default function SpendLogsTable({
 					...log,
 					request_duration_ms: log.request_duration_ms,
 					onKeyHashClick: (keyHash: string) => setSelectedKeyIdInfoView(keyHash),
-					onSessionClick: (sessionId: string) => {
-						if (sessionId) {
-							setSelectedSessionId(sessionId);
-							setSelectedLog(log);
-							setIsDrawerOpen(true);
-						}
+					onSessionClick: (sessionGroup: SessionGroupRef) => {
+						setSelectedSessionGroup(sessionGroup);
+						setSelectedLog(log);
+						setIsDrawerOpen(true);
 					},
 				};
 			})
 			// Deduplicate multi-call sessions using the pre-built map (O(1) per row).
 			.filter((log) => {
-				if (!log.session_id || (log.session_total_count || 1) <= 1) return true;
-				return sessionRepresentativeMap.get(log.session_id)?.requestId === log.request_id;
+				const sessionGroup = getSessionGroupRef(log);
+				if (!sessionGroup || (log.session_total_count || 1) <= 1) return true;
+				return sessionRepresentativeMap.get(getSessionGroupKey(sessionGroup))?.requestId === log.request_id;
 			}) || [];
 
 	// Add this function to handle manual refresh
@@ -350,21 +358,22 @@ export default function SpendLogsTable({
 
 	const handleRowClick = (log: LogEntry) => {
 		// Multi-call session row: open in the same right-side drawer (session mode)
-		if (log.session_id && (log.session_total_count || 1) > 1) {
-			setSelectedSessionId(log.session_id);
+		const sessionGroup = getSessionGroupRef(log);
+		if (sessionGroup && (log.session_total_count || 1) > 1) {
+			setSelectedSessionGroup(sessionGroup);
 			setSelectedLog(log);
 			setIsDrawerOpen(true);
 			return;
 		}
 		// Single-call row: open the detail drawer
-		setSelectedSessionId(null);
+		setSelectedSessionGroup(null);
 		setSelectedLog(log);
 		setIsDrawerOpen(true);
 	};
 
 	const handleCloseDrawer = () => {
 		setIsDrawerOpen(false);
-		setSelectedSessionId(null);
+		setSelectedSessionGroup(null);
 	};
 
 	const handleSelectLog = (log: LogEntry) => {
@@ -734,7 +743,8 @@ export default function SpendLogsTable({
 				open={isDrawerOpen}
 				onClose={handleCloseDrawer}
 				logEntry={selectedLog}
-				sessionId={selectedSessionId}
+				sessionGroup={selectedSessionGroup}
+				teamId={selectedTeamId || undefined}
 				accessToken={accessToken}
 				onOpenSettings={() => setIsSpendLogsSettingsModalVisible(true)}
 				allLogs={filteredData}
@@ -894,8 +904,9 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 						<div className="flex">
 							<span className="font-medium w-1/3">Tokens:</span>
 							<span>
-								{formatNumberWithCommas(row.original.total_tokens, 0, false)} ({formatNumberWithCommas(row.original.prompt_tokens, 0, false)} prompt
-								tokens + {formatNumberWithCommas(row.original.completion_tokens, 0, false)} completion tokens)
+								{formatNumberWithCommas(row.original.total_tokens, 0, false)} (
+								{formatNumberWithCommas(row.original.prompt_tokens, 0, false)} prompt tokens +{" "}
+								{formatNumberWithCommas(row.original.completion_tokens, 0, false)} completion tokens)
 							</span>
 						</div>
 						<div className="flex">

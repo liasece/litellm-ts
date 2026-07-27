@@ -130,10 +130,11 @@ const AllModelsTab = ({
 				.filter((id: unknown): id is string => typeof id === "string"),
 		[modelData],
 	);
-	const { statuses: deploymentHealthStatuses, runAll: runAllHealthChecks } = useDeploymentHealth(
-		accessToken,
-		deploymentIds,
-	);
+	const {
+		statuses: deploymentHealthStatuses,
+		runOne: runOneHealthCheck,
+		runAll: runAllHealthChecks,
+	} = useDeploymentHealth(accessToken, deploymentIds);
 	const [isRunningAllHealthChecks, setIsRunningAllHealthChecks] = useState(false);
 
 	const [deleteModalModelId, setDeleteModalModelId] = useState<string | null>(null);
@@ -568,6 +569,7 @@ const AllModelsTab = ({
 								setDeleteModalModelId,
 								setFallbackEditModel,
 								deploymentHealthStatuses,
+								runOneHealthCheck,
 							)}
 							data={filteredData}
 							isLoading={isLoadingModelsInfo}

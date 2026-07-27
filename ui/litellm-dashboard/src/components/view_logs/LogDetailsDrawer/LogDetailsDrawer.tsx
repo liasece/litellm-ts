@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Drawer } from "antd";
+import { Alert, Button, Drawer } from "antd";
 import {
   CheckOutlined,
   CopyOutlined,
@@ -7,7 +7,7 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { Bot, Sparkles, Wrench } from "lucide-react";
-import { LogEntry } from "../columns";
+import { LogEntry, type SessionGroupRef } from "../columns";
 import { AGENT_CALL_TYPES, MCP_CALL_TYPES } from "../constants";
 import { getEventDisplayName } from "../utils";
 import { DrawerHeader } from "./DrawerHeader";
@@ -24,7 +24,8 @@ export interface LogDetailsDrawerProps {
   open: boolean;
   onClose: () => void;
   logEntry: LogEntry | null;
-  sessionId?: string | null;
+  sessionGroup?: SessionGroupRef | null;
+  teamId?: string;
   accessToken?: string | null;
   onOpenSettings?: () => void;
   allLogs?: LogEntry[];
@@ -33,6 +34,8 @@ export interface LogDetailsDrawerProps {
 }
 
 const SIDEBAR_WIDTH_PX = 224;
+const SESSION_LOG_PAGE_SIZE = 100;
+const MAX_SESSION_LOG_PAGES = 1000;
 
 /* ------------------------------------------------------------------ */
 /*  TraceEventRow — compact event row used in both session & non-     */
@@ -107,24 +110,70 @@ export function LogDetailsDrawer({
   open,
   onClose,
   logEntry,
-  sessionId,
+  sessionGroup,
+  teamId,
   accessToken,
   onOpenSettings,
   allLogs = [],
   onSelectLog,
   startTime,
 }: LogDetailsDrawerProps) {
-  const isSessionMode = Boolean(sessionId);
+  const isSessionMode = Boolean(sessionGroup);
   const [selectedSessionRequestId, setSelectedSessionRequestId] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [copiedLeftPanelId, setCopiedLeftPanelId] = useState(false);
 
-  const { data: sessionLogs = [] } = useQuery({
-    queryKey: ["sessionLogs", sessionId],
+  const {
+    data: loadedSessionLogs = [],
+    isError: isSessionError,
+    error: sessionError,
+    refetch: refetchSessionLogs,
+    isFetching: isFetchingSessionLogs,
+  } = useQuery({
+    queryKey: ["sessionLogs", sessionGroup?.type, sessionGroup?.id, teamId],
     queryFn: async () => {
-      if (!sessionId || !accessToken) return [];
-      const response = await sessionSpendLogsCall(accessToken, sessionId);
-      const allSessionLogs: LogEntry[] = response.data || response || [];
+      if (!sessionGroup || !accessToken) return [];
+      const firstPage = await sessionSpendLogsCall(accessToken, sessionGroup, {
+        pageSize: SESSION_LOG_PAGE_SIZE,
+        teamId,
+      });
+      const allSessionLogs: LogEntry[] = [...(firstPage.data || firstPage || [])];
+      if (!Array.isArray(firstPage) && firstPage.next_cursor) {
+        let snapshot = typeof firstPage.snapshot === "string" && firstPage.snapshot ? firstPage.snapshot : undefined;
+        let cursor = firstPage.next_cursor;
+        if (!snapshot) throw new Error("Session logs response contains invalid snapshot");
+        for (let pageCount = 1; cursor; pageCount += 1) {
+          if (pageCount >= MAX_SESSION_LOG_PAGES) {
+            throw new Error("Session logs response exceeds pagination limit");
+          }
+          const response = await sessionSpendLogsCall(accessToken, sessionGroup, {
+            pageSize: SESSION_LOG_PAGE_SIZE,
+            teamId,
+            snapshot,
+            cursor,
+          });
+          allSessionLogs.push(...(response.data || response || []));
+          snapshot = typeof response.snapshot === "string" && response.snapshot ? response.snapshot : snapshot;
+          cursor = typeof response.next_cursor === "string" ? response.next_cursor : "";
+        }
+      } else if (!Array.isArray(firstPage)) {
+        const totalPages = firstPage.total_pages ?? 1;
+        if (
+          !Number.isSafeInteger(totalPages) ||
+          totalPages < (allSessionLogs.length > 0 ? 1 : 0) ||
+          totalPages > MAX_SESSION_LOG_PAGES
+        ) {
+          throw new Error("Session logs response contains invalid total_pages");
+        }
+        for (let page = 2; page <= totalPages; page += 1) {
+          const response = await sessionSpendLogsCall(accessToken, sessionGroup, {
+            page,
+            pageSize: SESSION_LOG_PAGE_SIZE,
+            teamId,
+          });
+          allSessionLogs.push(...(response.data || response || []));
+        }
+      }
       return allSessionLogs
         .map((row) => ({
           ...row,
@@ -137,8 +186,13 @@ export function LogDetailsDrawer({
           return new Date(a.startTime).getTime() - new Date(b.startTime).getTime();
         });
     },
-    enabled: Boolean(open && isSessionMode && sessionId && accessToken),
+    enabled: Boolean(open && isSessionMode && sessionGroup && accessToken),
   });
+
+  const sessionLogs = useMemo(
+    () => (loadedSessionLogs.length > 0 ? loadedSessionLogs : logEntry ? [logEntry] : []),
+    [loadedSessionLogs, logEntry],
+  );
 
   const currentLog = useMemo(() => {
     if (!isSessionMode) return logEntry;
@@ -212,6 +266,10 @@ export function LogDetailsDrawer({
   const statusLabel = metadata.status === "failure" ? "Failure" : "Success";
   const statusColor = metadata.status === "failure" ? ("error" as const) : ("success" as const);
   const environment = metadata?.user_api_key_team_alias || "default";
+  const rawSessionErrorMessage = sessionError instanceof Error ? sessionError.message : "Unknown error";
+  const sessionErrorMessage = /^\s*(?:<!doctype\s+html|<html)\b/i.test(rawSessionErrorMessage)
+    ? "Session logs request failed"
+    : rawSessionErrorMessage.slice(0, 300);
 
   const totalSessionCost = sessionLogs.reduce((sum, row) => sum + (row.spend || 0), 0);
   const sessionStart = sessionLogs.length > 0
@@ -228,7 +286,7 @@ export function LogDetailsDrawer({
   const agentCount = sessionLogs.filter((row) => AGENT_CALL_TYPES.includes(row.call_type)).length;
   const mcpCount = sessionLogs.filter((row) => MCP_CALL_TYPES.includes(row.call_type)).length;
   const logsForList = isSessionMode ? sessionLogs : currentLog ? [currentLog] : [];
-  const leftPanelId = isSessionMode ? sessionId || "" : currentLog?.request_id || "";
+  const leftPanelId = isSessionMode ? sessionGroup?.id || "" : currentLog?.request_id || "";
   const leftPanelDisplayId =
     leftPanelId.length > 14 ? `${leftPanelId.slice(0, 11)}...` : leftPanelId;
 
@@ -396,6 +454,24 @@ export function LogDetailsDrawer({
               statusColor={statusColor}
               environment={environment}
             />
+            {isSessionMode && isSessionError ? (
+              <Alert
+                type="warning"
+                showIcon={true}
+                message="完整 Session 加载失败"
+                description={`当前仅显示单请求。${sessionErrorMessage}`}
+                action={
+                  <Button
+                    size="small"
+                    onClick={() => void refetchSessionLogs()}
+                    loading={isFetchingSessionLogs}
+                    disabled={isFetchingSessionLogs}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
+            ) : null}
             <div className="flex-1 overflow-y-auto">
               <LogDetailContent
                 logEntry={enrichedLog}

@@ -263,7 +263,7 @@ export class LiteLLMServer {
 		registerSearchToolsRoutes(stubRouter, container.db.db);
 		registerPromptRoutes(stubRouter);
 		registerPolicyRoutes(stubRouter);
-		registerCredentialRoutes(stubRouter);
+		registerCredentialRoutes(stubRouter, container.credentialService, container.router);
 		registerToolRoutes(stubRouter);
 		registerComplianceRoutes(stubRouter);
 		registerAnthropicSkillsRoutes(stubRouter);

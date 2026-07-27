@@ -84,4 +84,21 @@ describe("useDeploymentHealth", () => {
 		expect(result.current.statuses.one.status).toBe("none");
 		expect(result.current.error?.message).toBe("offline");
 	});
+
+	it("refreshes only the requested deployment", async () => {
+		mockIndividualModelHealthCheckCall.mockResolvedValue({
+			healthy_count: 1,
+			unhealthy_count: 0,
+			healthy_endpoints: [{ model_id: "two", status: "healthy" }],
+			unhealthy_endpoints: [],
+		});
+		const { result } = renderHook(() => useDeploymentHealth("token", ["one", "two"]));
+
+		await act(async () => result.current.runOne("two"));
+
+		expect(mockIndividualModelHealthCheckCall).toHaveBeenCalledWith("token", "two");
+		expect(mockAllDeploymentHealthCheckCall).not.toHaveBeenCalled();
+		expect(result.current.statuses.two.status).toBe("healthy");
+		expect(result.current.statuses.one.status).toBe("none");
+	});
 });

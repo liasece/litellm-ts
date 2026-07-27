@@ -74,6 +74,7 @@ import { UserInfo } from "./view_users/types";
 import { EmailEventSettingsResponse, EmailEventSettingsUpdateRequest } from "./email_events/types";
 import { jsonFields } from "./common_components/check_openapi_schema";
 import NotificationsManager from "./molecules/notifications_manager";
+import type { SessionGroupRef } from "./view_logs/columns";
 
 const CSRF_COOKIE_NAME = "litellm_csrf_token";
 const CSRF_HEADER_NAME = "x-litellm-csrf-token";
@@ -327,14 +328,38 @@ export interface Organization {
 	};
 }
 
+export type CredentialValue = string | number | boolean | null | CredentialValue[] | { [key: string]: CredentialValue };
+export type CredentialValues = Record<string, CredentialValue>;
+
+export interface CredentialInfo {
+	custom_llm_provider?: string;
+	description?: string;
+	required?: boolean;
+}
+
 export interface CredentialItem {
 	credential_name: string;
-	credential_values: any;
-	credential_info: {
-		custom_llm_provider?: string;
-		description?: string;
-		required?: boolean;
-	};
+	credential_values: CredentialValues;
+	credential_info: CredentialInfo;
+}
+
+export interface CredentialCreateRequest {
+	credential_name: string;
+	credential_values?: CredentialValues;
+	credential_info?: CredentialInfo;
+	model_id?: string;
+	attach_to_model?: boolean;
+}
+
+export interface CredentialPatchRequest {
+	credential_name?: string;
+	credential_values?: CredentialValues;
+	credential_info?: CredentialInfo;
+}
+
+export interface CredentialMutationResponse {
+	success?: boolean;
+	credential_name?: string;
 }
 
 export interface ProviderCredentialFieldMetadata {
@@ -1081,7 +1106,7 @@ export const userCreateCall = async (
 			console.log("formValues.metadata:", formValues.metadata);
 			// if there's an exception JSON.parse, show it in the message
 			try {
-				formValues.metadata = JSON.parse(formValues.metadata);
+				formValues = { ...formValues, metadata: JSON.parse(formValues.metadata) };
 			} catch (error) {
 				throw new Error("Failed to parse metadata: " + error);
 			}
@@ -1203,12 +1228,9 @@ export const teamDeleteCall = async (accessToken: string, teamID: string) => {
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		console.log(data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return await response.json();
 	} catch (error) {
-		console.error("Failed to delete key:", error);
+		console.error("Failed to delete credential:", error);
 		throw error;
 	}
 };
@@ -1703,7 +1725,7 @@ export const organizationCreateCall = async (
 			console.log("formValues.metadata:", formValues.metadata);
 			// if there's an exception JSON.parse, show it in the message
 			try {
-				formValues.metadata = JSON.parse(formValues.metadata);
+				formValues = { ...formValues, metadata: JSON.parse(formValues.metadata) };
 			} catch (error) {
 				console.error("Failed to parse metadata:", error);
 				throw new Error("Failed to parse metadata: " + error);
@@ -2102,12 +2124,9 @@ export const claimOnboardingToken = async (
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		console.log(data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return (await response.json()) as CredentialMutationResponse;
 	} catch (error) {
-		console.error("Failed to delete key:", error);
+		console.error("Failed to delete credential:", error);
 		throw error;
 	}
 };
@@ -2242,7 +2261,7 @@ export const modelInfoV1Call = async (accessToken: string, modelId: string) => {
 	 */
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/v1/model/info` : `/v1/model/info`;
-		url += `?litellm_model_id=${modelId}`;
+		url += `?model_id=${encodeURIComponent(modelId)}`;
 
 		const response = await dashboardFetch(url, {
 			method: "GET",
@@ -2259,10 +2278,9 @@ export const modelInfoV1Call = async (accessToken: string, modelId: string) => {
 		}
 
 		const data = await response.json();
-		console.log("modelInfoV1Call:", data);
 		return data;
 	} catch (error) {
-		console.error("Failed to create key:", error);
+		console.error("Failed to fetch model information:", error);
 		throw error;
 	}
 };
@@ -3074,13 +3092,11 @@ export const keyInfoCall = async (accessToken: string, keys: string[]) => {
 
 export const testConnectionRequest = async (
 	accessToken: string,
-	litellm_params: Record<string, any>,
-	model_info: Record<string, any>,
+	litellm_params: Record<string, unknown>,
+	model_info: Record<string, unknown>,
 	mode: string,
 ) => {
 	try {
-		console.log("Sending model connection test request:", JSON.stringify(litellm_params));
-
 		// Construct the URL based on environment
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/health/test_connection` : `/health/test_connection`;
 
@@ -3100,7 +3116,6 @@ export const testConnectionRequest = async (
 		const contentType = response.headers.get("content-type");
 		if (!contentType || !contentType.includes("application/json")) {
 			const text = await response.text();
-			console.error("Received non-JSON response:", text);
 			throw new Error(
 				`Received non-JSON response (${response.status}: ${response.statusText}). Check network tab for details.`,
 			);
@@ -3134,7 +3149,7 @@ export const keyInfoV1Call = async (accessToken: string, key: string) => {
 	try {
 		console.log("entering keyInfoV1Call");
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/key/info` : `/key/info`;
-		url = `${url}?key=${key}`; // Add key as query parameter
+		url = `${url}?key=${encodeURIComponent(key)}`; // Add key as query parameter
 
 		const response = await dashboardFetch(url, {
 			method: "GET",
@@ -3148,8 +3163,9 @@ export const keyInfoV1Call = async (accessToken: string, key: string) => {
 
 		if (!response.ok) {
 			const errorData = await response.text();
-			handleError(errorData);
+			await handleError(errorData);
 			NotificationsManager.fromBackend("Failed to fetch key info - " + errorData);
+			throw new Error(errorData);
 		}
 
 		const data = await response.json();
@@ -3434,22 +3450,23 @@ export const teamCreateCall = async (
 	}
 };
 
+const credentialErrorMessage = async (response: Response): Promise<string> => {
+	if (typeof response.text === "function") {
+		const errorText = await response.text();
+		try {
+			return deriveErrorMessage(JSON.parse(errorText));
+		} catch {
+			return errorText;
+		}
+	}
+	return deriveErrorMessage(await response.json());
+};
+
 export const credentialCreateCall = async (
 	accessToken: string,
-	formValues: Record<string, any>, // Assuming formValues is an object
-) => {
+	formValues: CredentialCreateRequest,
+): Promise<CredentialMutationResponse> => {
 	try {
-		console.log("Form Values in credentialCreateCall:", formValues); // Log the form values before making the API call
-		if (formValues.metadata) {
-			console.log("formValues.metadata:", formValues.metadata);
-			// if there's an exception JSON.parse, show it in the message
-			try {
-				formValues.metadata = JSON.parse(formValues.metadata);
-			} catch (error) {
-				throw new Error("Failed to parse metadata: " + error);
-			}
-		}
-
 		const url = proxyBaseUrl ? `${proxyBaseUrl}/credentials` : `/credentials`;
 		const response = await dashboardFetch(url, {
 			method: "POST",
@@ -3462,29 +3479,24 @@ export const credentialCreateCall = async (
 		});
 
 		if (!response.ok) {
-			const errorData = await response.json();
-			const errorMessage = deriveErrorMessage(errorData);
+			const errorMessage = await credentialErrorMessage(response);
 			handleError(errorMessage);
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		console.log("API Response:", data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return await response.json();
 	} catch (error) {
-		console.error("Failed to create key:", error);
+		console.error("Failed to create credential:", error);
 		throw error;
 	}
 };
 
-export const credentialListCall = async (accessToken: string) => {
+export const credentialListCall = async (accessToken: string): Promise<CredentialsResponse> => {
 	/**
 	 * Get all available teams on proxy
 	 */
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/credentials` : `/credentials`;
-		console.log("in credentialListCall");
 
 		const response = await dashboardFetch(url, {
 			method: "GET",
@@ -3494,33 +3506,31 @@ export const credentialListCall = async (accessToken: string) => {
 		});
 
 		if (!response.ok) {
-			const errorData = await response.json();
-			const errorMessage = deriveErrorMessage(errorData);
+			const errorMessage = await credentialErrorMessage(response);
 			handleError(errorMessage);
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		console.log("/credentials API Response:", data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return (await response.json()) as CredentialsResponse;
 	} catch (error) {
-		console.error("Failed to create key:", error);
+		console.error("Failed to get credential:", error);
 		throw error;
 	}
 };
 
-export const credentialGetCall = async (accessToken: string, credentialName: string | null, modelId: string | null) => {
+export const credentialGetCall = async (
+	accessToken: string,
+	credentialName: string | null,
+	modelId: string | null,
+): Promise<CredentialItem> => {
 	try {
 		let url = proxyBaseUrl ? `${proxyBaseUrl}/credentials` : `/credentials`;
 
 		if (credentialName) {
-			url += `/by_name/${credentialName}`;
+			url += `/by_name/${encodeURIComponent(credentialName)}`;
 		} else if (modelId) {
-			url += `/by_model/${modelId}`;
+			url += `/by_model/${encodeURIComponent(modelId)}`;
 		}
-
-		console.log("in credentialListCall");
 
 		const response = await dashboardFetch(url, {
 			method: "GET",
@@ -3530,26 +3540,24 @@ export const credentialGetCall = async (accessToken: string, credentialName: str
 		});
 
 		if (!response.ok) {
-			const errorData = await response.json();
-			const errorMessage = deriveErrorMessage(errorData);
+			const errorMessage = await credentialErrorMessage(response);
 			handleError(errorMessage);
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		console.log("/credentials API Response:", data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return (await response.json()) as CredentialItem;
 	} catch (error) {
-		console.error("Failed to create key:", error);
+		console.error("Failed to get credential:", error);
 		throw error;
 	}
 };
 
 export const credentialDeleteCall = async (accessToken: string, credentialName: string) => {
 	try {
-		const url = proxyBaseUrl ? `${proxyBaseUrl}/credentials/${credentialName}` : `/credentials/${credentialName}`;
-		console.log("in credentialDeleteCall:", credentialName);
+		const encodedCredentialName = encodeURIComponent(credentialName);
+		const url = proxyBaseUrl
+			? `${proxyBaseUrl}/credentials/${encodedCredentialName}`
+			: `/credentials/${encodedCredentialName}`;
 		const response = await dashboardFetch(url, {
 			method: "DELETE",
 			headers: {
@@ -3558,18 +3566,14 @@ export const credentialDeleteCall = async (accessToken: string, credentialName: 
 		});
 
 		if (!response.ok) {
-			const errorData = await response.json();
-			const errorMessage = deriveErrorMessage(errorData);
+			const errorMessage = await credentialErrorMessage(response);
 			handleError(errorMessage);
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		console.log(data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return (await response.json()) as CredentialMutationResponse;
 	} catch (error) {
-		console.error("Failed to delete key:", error);
+		console.error("Failed to delete credential:", error);
 		throw error;
 	}
 };
@@ -3577,21 +3581,13 @@ export const credentialDeleteCall = async (accessToken: string, credentialName: 
 export const credentialUpdateCall = async (
 	accessToken: string,
 	credentialName: string,
-	formValues: Record<string, any>, // Assuming formValues is an object
-) => {
+	formValues: CredentialPatchRequest,
+): Promise<CredentialMutationResponse> => {
 	try {
-		console.log("Form Values in credentialUpdateCall:", formValues); // Log the form values before making the API call
-		if (formValues.metadata) {
-			console.log("formValues.metadata:", formValues.metadata);
-			// if there's an exception JSON.parse, show it in the message
-			try {
-				formValues.metadata = JSON.parse(formValues.metadata);
-			} catch (error) {
-				throw new Error("Failed to parse metadata: " + error);
-			}
-		}
-
-		const url = proxyBaseUrl ? `${proxyBaseUrl}/credentials/${credentialName}` : `/credentials/${credentialName}`;
+		const encodedCredentialName = encodeURIComponent(credentialName);
+		const url = proxyBaseUrl
+			? `${proxyBaseUrl}/credentials/${encodedCredentialName}`
+			: `/credentials/${encodedCredentialName}`;
 		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
@@ -3603,18 +3599,14 @@ export const credentialUpdateCall = async (
 		});
 
 		if (!response.ok) {
-			const errorData = await response.json();
-			const errorMessage = deriveErrorMessage(errorData);
+			const errorMessage = await credentialErrorMessage(response);
 			handleError(errorMessage);
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		console.log("API Response:", data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return (await response.json()) as CredentialMutationResponse;
 	} catch (error) {
-		console.error("Failed to create key:", error);
+		console.error("Failed to update credential:", error);
 		throw error;
 	}
 };
@@ -3716,13 +3708,12 @@ export const teamUpdateCall = async (
  */
 export const modelPatchUpdateCall = async (
 	accessToken: string,
-	formValues: Record<string, any>, // Assuming formValues is an object
+	formValues: Record<string, unknown>,
 	modelId: string,
 ) => {
 	try {
-		console.log("Form Values in modelUpateCall:", formValues); // Log the form values before making the API call
-
-		const url = proxyBaseUrl ? `${proxyBaseUrl}/model/${modelId}/update` : `/model/${modelId}/update`;
+		const encodedModelId = encodeURIComponent(modelId);
+		const url = proxyBaseUrl ? `${proxyBaseUrl}/model/${encodedModelId}/update` : `/model/${encodedModelId}/update`;
 		const response = await dashboardFetch(url, {
 			method: "PATCH",
 			headers: {
@@ -3736,13 +3727,9 @@ export const modelPatchUpdateCall = async (
 		if (!response.ok) {
 			const errorData = await response.text();
 			handleError(errorData);
-			console.error("Error update from the server:", errorData);
-			throw new Error("Network response was not ok");
+			throw new Error(errorData || `Model update failed with HTTP ${response.status}`);
 		}
-		const data = await response.json();
-		console.log("Update model Response:", data);
-		return data;
-		// Handle success - you might want to update some state or UI based on the created key
+		return await response.json();
 	} catch (error) {
 		console.error("Failed to update model:", error);
 		throw error;
@@ -7247,14 +7234,50 @@ export const teamPermissionsUpdateCall = async (accessToken: string, teamId: str
 	}
 };
 
+export interface SessionSpendLogsOptions {
+	page?: number;
+	pageSize?: number;
+	teamId?: string;
+	snapshot?: string;
+	cursor?: string;
+}
+
 /**
  * Get all spend logs for a particular session
  */
-export const sessionSpendLogsCall = async (accessToken: string, session_id: string) => {
+export const sessionSpendLogsCall = async (
+	accessToken: string,
+	session: string | SessionGroupRef,
+	pageOrOptions?: number | SessionSpendLogsOptions,
+	legacyPageSize?: number,
+) => {
 	try {
-		let url = proxyBaseUrl
-			? `${proxyBaseUrl}/spend/logs/session/ui?session_id=${encodeURIComponent(session_id)}`
-			: `/spend/logs/session/ui?session_id=${encodeURIComponent(session_id)}`;
+		const options =
+			typeof pageOrOptions === "number" ? { page: pageOrOptions, pageSize: legacyPageSize } : pageOrOptions ?? {};
+		const searchParams = new URLSearchParams();
+		if (typeof session === "string") {
+			searchParams.set("session_id", session);
+		} else {
+			searchParams.set("session_group_type", session.type);
+			searchParams.set("session_group_id", session.id);
+		}
+		if (options.page !== undefined) {
+			searchParams.set("page", String(options.page));
+		}
+		if (options.pageSize !== undefined) {
+			searchParams.set("page_size", String(options.pageSize));
+		}
+		if (options.teamId) {
+			searchParams.set("team_id", options.teamId);
+		}
+		if (options.snapshot) {
+			searchParams.set("snapshot", options.snapshot);
+		}
+		if (options.cursor) {
+			searchParams.set("cursor", options.cursor);
+		}
+		const path = `/spend/logs/session/ui?${searchParams.toString().replace(/\+/g, "%20")}`;
+		let url = proxyBaseUrl ? `${proxyBaseUrl}${path}` : path;
 
 		const response = await dashboardFetch(url, {
 			method: "GET",
@@ -7264,16 +7287,23 @@ export const sessionSpendLogsCall = async (accessToken: string, session_id: stri
 		});
 
 		if (!response.ok) {
-			const errorData = await response.json();
-			const errorMessage = deriveErrorMessage(errorData);
-			handleError(errorMessage);
+			const responseBody = await response.text();
+			const isHtml = /^\s*(?:<!doctype\s+html|<html)\b/i.test(responseBody);
+			let errorMessage = `Session logs request failed with HTTP ${response.status}`;
+			if (responseBody.length > 0 && !isHtml) {
+				try {
+					errorMessage = deriveErrorMessage(JSON.parse(responseBody));
+				} catch {
+					errorMessage = responseBody;
+				}
+			}
+			await handleError(errorMessage);
 			throw new Error(errorMessage);
 		}
 
-		const data = await response.json();
-		return data;
+		return await response.json();
 	} catch (error) {
-		console.error("Failed to fetch session logs:", error);
+		console.error("Failed to fetch session logs");
 		throw error;
 	}
 };
@@ -8395,7 +8425,6 @@ export const testMCPToolsListRequest = async (
 		const contentType = response.headers.get("content-type");
 		if (!contentType || !contentType.includes("application/json")) {
 			const text = await response.text();
-			console.error("Received non-JSON response:", text);
 			throw new Error(
 				`Received non-JSON response (${response.status}: ${response.statusText}). Check network tab for details.`,
 			);

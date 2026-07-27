@@ -17,6 +17,7 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
 import { createModuleLogger } from "../core/utils/logger";
 import { PROXY_ADMIN_USER_ID } from "../types/webUiSession";
+import { sanitizeSensitiveValues } from "../core/api/sanitizeSensitiveValues";
 
 const logger = createModuleLogger("Management:Model");
 
@@ -51,8 +52,8 @@ function toPythonProxyModelRow(row: ProxyModelRow): Record<string, unknown> {
 	return {
 		model_id: row.model_id,
 		model_name: row.model_name,
-		litellm_params: row.litellm_params,
-		model_info: row.model_info,
+		litellm_params: sanitizeSensitiveValues(row.litellm_params),
+		model_info: sanitizeSensitiveValues(row.model_info),
 		created_at: row.created_at,
 		created_by: row.created_by,
 		updated_at: row.updated_at,
@@ -61,14 +62,31 @@ function toPythonProxyModelRow(row: ProxyModelRow): Record<string, unknown> {
 }
 
 /**
- * 按 Python update_model 语义合并 litellm_params：新值非 null 覆盖，null 回退到既有值。
- * @param existingParams - DB 既有 litellm_params
- * @param newParams - 请求传入的 litellm_params
+ * 深合并模型 JSON 字段。PATCH 中 null 删除；legacy POST 中 null 不覆盖。
+ * @param existing - DB 现有对象
+ * @param patch - 请求更新对象
+ * @param deleteNull - 是否将 null 解释为删除
  */
-function mergeLitellmParams(existingParams: Record<string, unknown>, newParams: Record<string, unknown>): Record<string, unknown> {
-	const merged: Record<string, unknown> = { ...existingParams };
-	for (const [name, value] of Object.entries(newParams)) {
-		if (value !== null && value !== undefined) {
+function mergeObjectPatch(existing: Record<string, unknown>, patch: Record<string, unknown>, deleteNull: boolean): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...existing };
+	for (const [name, value] of Object.entries(patch)) {
+		if (value === undefined || (value === null && !deleteNull)) {
+			continue;
+		}
+		if (value === null) {
+			delete merged[name];
+			continue;
+		}
+		const existingValue = merged[name];
+		if (
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			typeof existingValue === "object" &&
+			existingValue !== null &&
+			!Array.isArray(existingValue)
+		) {
+			merged[name] = mergeObjectPatch(existingValue as Record<string, unknown>, value as Record<string, unknown>, deleteNull);
+		} else {
 			merged[name] = value;
 		}
 	}
@@ -141,25 +159,112 @@ export function createModelManagementRoutes(
 				})
 				.returning();
 
+			const insertedRow = inserted.at(0);
+			if (insertedRow === undefined) {
+				throw new Error("Model insert did not return a row");
+			}
 			logger.info(`代理模型已创建: ${String(modelName)} (${modelId})`);
 
 			// 批次 C3：落库后同步热更新 Router，新模型无需重启即可路由
-			litellmRouter?.upsertDeployment(proxyModelRowToDeployment(inserted[0]!));
+			litellmRouter?.upsertDeployment(proxyModelRowToDeployment(insertedRow));
 
-			return toPythonProxyModelRow(inserted[0]!);
+			return toPythonProxyModelRow(insertedRow);
 		}),
 	);
 
+	async function updateModelById(
+		modelId: string,
+		body: Record<string, unknown>,
+		updatedBy: string,
+		deleteNull: boolean,
+	): Promise<Record<string, unknown>> {
+		const existingRows = await db.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1);
+		const existing = existingRows[0];
+		if (existing === undefined) {
+			if (deleteNull) {
+				throw ApiError.notFound("Model not found");
+			}
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Authentication Error, model not found", "auth_error", PYTHON_NONE_FILL);
+		}
+
+		if (
+			deleteNull &&
+			!["model_name", "litellm_params", "model_info"].some((fieldName) => Object.prototype.hasOwnProperty.call(body, fieldName))
+		) {
+			throw ApiError.badRequest("At least one model field must be provided");
+		}
+
+		const values: Record<string, unknown> = { updated_by: updatedBy, updated_at: new Date() };
+		const requestedModelName = body["model_name"];
+		if (requestedModelName !== undefined && !(requestedModelName === null && !deleteNull)) {
+			if (typeof requestedModelName !== "string" || requestedModelName.length === 0) {
+				throw ApiError.badRequest("model_name must be a non-empty string");
+			}
+			values["model_name"] = requestedModelName;
+		}
+
+		const paramsPatch = body["litellm_params"];
+		if (paramsPatch !== undefined) {
+			if (paramsPatch === null || typeof paramsPatch !== "object" || Array.isArray(paramsPatch)) {
+				throw ApiError.badRequest("litellm_params must be an object");
+			}
+			if (deleteNull && (paramsPatch as Record<string, unknown>)["model"] === null) {
+				throw ApiError.badRequest("litellm_params.model cannot be deleted");
+			}
+			const mergedParams = mergeObjectPatch(
+				(existing.litellm_params ?? {}) as Record<string, unknown>,
+				paramsPatch as Record<string, unknown>,
+				deleteNull,
+			);
+			if (typeof mergedParams["model"] !== "string" || mergedParams["model"].length === 0) {
+				throw ApiError.badRequest("litellm_params.model is required");
+			}
+			values["litellm_params"] = withLitellmParamsDefaults(mergedParams);
+		}
+
+		const modelInfoPatch = body["model_info"];
+		if (modelInfoPatch !== undefined) {
+			if (modelInfoPatch === null || typeof modelInfoPatch !== "object" || Array.isArray(modelInfoPatch)) {
+				throw ApiError.badRequest("model_info must be an object");
+			}
+			const requestedId = (modelInfoPatch as Record<string, unknown>)["id"];
+			if (requestedId === null || (requestedId !== undefined && requestedId !== modelId)) {
+				throw ApiError.badRequest("model_info.id must match modelId");
+			}
+			values["model_info"] = {
+				...mergeObjectPatch(
+					(existing.model_info ?? {}) as Record<string, unknown>,
+					modelInfoPatch as Record<string, unknown>,
+					deleteNull,
+				),
+				id: modelId,
+			};
+		}
+
+		const updated = await db
+			.update(LiteLLM_ProxyModelTable)
+			.set(values)
+			.where(eq(LiteLLM_ProxyModelTable.model_id, modelId))
+			.returning();
+		const updatedRow = updated.at(0);
+		if (updatedRow === undefined) {
+			if (deleteNull) {
+				throw ApiError.notFound("Model not found");
+			}
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Authentication Error, model not found", "auth_error", PYTHON_NONE_FILL);
+		}
+		logger.info(`代理模型已更新: ${modelId}`);
+		litellmRouter?.upsertDeployment(proxyModelRowToDeployment(updatedRow));
+		return toPythonProxyModelRow(updatedRow);
+	}
+
 	// ─── POST /model/update ─────────────────────────────────────
-	// 对齐 Python update_model：必须提供 model_info.id；仅合并更新 litellm_params（非 null 覆盖），
-	// 响应为更新后完整模型行（8 键）。
 	registerRoute(
 		router,
 		{ method: "post", path: "/model/update" },
 		authed(async (req) => {
 			const body = (req.body ?? {}) as Record<string, unknown>;
 			const modelInfo = body["model_info"];
-
 			if (modelInfo === undefined || modelInfo === null || typeof modelInfo !== "object") {
 				throw new ApiError(
 					HTTP_STATUS.BAD_REQUEST,
@@ -177,15 +282,7 @@ export function createModelManagementRoutes(
 					PYTHON_NONE_FILL,
 				);
 			}
-
-			const existing = await db.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1);
-
-			if (existing.length === 0) {
-				throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Authentication Error, model not found", "auth_error", PYTHON_NONE_FILL);
-			}
-
-			const newParams = body["litellm_params"];
-			if (newParams === undefined || newParams === null || typeof newParams !== "object") {
+			if (body["litellm_params"] === undefined || body["litellm_params"] === null || typeof body["litellm_params"] !== "object") {
 				throw new ApiError(
 					HTTP_STATUS.BAD_REQUEST,
 					"Authentication Error, litellm_params not provided",
@@ -193,22 +290,20 @@ export function createModelManagementRoutes(
 					PYTHON_NONE_FILL,
 				);
 			}
+			return updateModelById(modelId, body, req.auth?.user_id ?? PROXY_ADMIN_USER_ID, false);
+		}),
+	);
 
-			const existingParams = (existing[0]!.litellm_params ?? {}) as Record<string, unknown>;
-			const mergedParams = withLitellmParamsDefaults(mergeLitellmParams(existingParams, newParams as Record<string, unknown>));
-
-			const updated = await db
-				.update(LiteLLM_ProxyModelTable)
-				.set({ litellm_params: mergedParams, updated_by: req.auth?.user_id ?? PROXY_ADMIN_USER_ID, updated_at: new Date() })
-				.where(eq(LiteLLM_ProxyModelTable.model_id, modelId))
-				.returning();
-
-			logger.info(`代理模型已更新: ${modelId}`);
-
-			// 批次 C3：参数变更热更新 Router（同 model_id 替换 deployment）
-			litellmRouter?.upsertDeployment(proxyModelRowToDeployment(updated[0]!));
-
-			return toPythonProxyModelRow(updated[0]!);
+	// ─── PATCH /model/:modelId/update ───────────────────────────
+	registerRoute(
+		router,
+		{ method: "patch", path: "/model/:modelId/update" },
+		authed(async (req) => {
+			const modelId = req.params["modelId"];
+			if (typeof modelId !== "string" || modelId.length === 0) {
+				throw ApiError.badRequest("必须提供 modelId");
+			}
+			return updateModelById(modelId, (req.body ?? {}) as Record<string, unknown>, req.auth?.user_id ?? PROXY_ADMIN_USER_ID, true);
 		}),
 	);
 

@@ -127,6 +127,14 @@ function _extractEndUserId(req: Request): string | undefined {
 }
 
 /**
+ * Google generateContent 路由允许通过 query key 认证。
+ * @param route
+ */
+function isGenerateContentRoute(route: string | undefined): boolean {
+	return route?.includes("generateContent") === true || route?.includes("streamGenerateContent") === true;
+}
+
+/**
  * 从请求中提取 API 密钥
  * 优先级（PY user_api_key_auth.py:342-399）：
  *   X-LiteLLM-API-Key > Authorization (Bearer/Basic/AWS4) >
@@ -136,8 +144,9 @@ function _extractEndUserId(req: Request): string | undefined {
  *   WebSocket subprotocol > ?key query param
  * @param req
  * @param customKeyHeaderName - 可选的自定义密钥头名（PY general_settings.custom_litellm_key_header_name）
+ * @param route - 当前请求路径，仅 generateContent 路由允许 query key 认证
  */
-export function extractApiKey(req: Request, customKeyHeaderName?: string): string | null {
+export function extractApiKey(req: Request, customKeyHeaderName?: string, route?: string): string | null {
 	// PY: X-LiteLLM-API-Key 最高优先级 (get_api_key:345)
 	const xLiteLLMApiKey = req.headers["x-litellm-api-key"];
 	if (typeof xLiteLLMApiKey === "string" && xLiteLLMApiKey.length > 0) {
@@ -235,8 +244,8 @@ export function extractApiKey(req: Request, customKeyHeaderName?: string): strin
 		}
 	}
 
-	// PY: Google query param key (?key=) for Vertex AI routes
-	if (typeof req.query?.key === "string" && req.query.key.length > 0) {
+	// PY: Google query param key (?key=) 仅用于 generateContent 路由
+	if (isGenerateContentRoute(route) && typeof req.query?.key === "string" && req.query.key.length > 0) {
 		return req.query.key.trim();
 	}
 
@@ -311,7 +320,7 @@ export function createApiKeyAuth(
 	return async (req, _res, next): Promise<void> => {
 		try {
 			const cookieToken = parseCookieToken(req.headers.cookie);
-			const apiKey = extractApiKey(req, customKeyHeaderName);
+			const apiKey = extractApiKey(req, customKeyHeaderName, req.path);
 			const isCookieCredential = cookieToken !== null && apiKey === cookieToken;
 
 			if (!apiKey) {

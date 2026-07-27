@@ -1016,4 +1016,32 @@ describe("columns", () => {
 		expect(screen.getByText("Out: $0.03")).toBeInTheDocument();
 		expect(screen.queryByText(/In:/)).not.toBeInTheDocument();
 	});
+
+	it("refreshes only the clicked row health without selecting the model", async () => {
+		const onRefreshHealth = vi.fn();
+		const onSelect = vi.fn();
+		const cols = columns(
+			defaultProps.userRole,
+			defaultProps.userID,
+			defaultProps.premiumUser,
+			onSelect,
+			defaultProps.setSelectedTeamId,
+			defaultProps.getDisplayModelName,
+			defaultProps.handleEditClick,
+			defaultProps.handleRefreshClick,
+			defaultProps.expandedRows,
+			defaultProps.setExpandedRows,
+			undefined,
+			undefined,
+			{ "test-model-id": { status: "healthy", loading: false } },
+			onRefreshHealth,
+		);
+		render(<TestTable data={[createMockModel()]} columns={cols} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Refresh health status" }));
+
+		expect(onRefreshHealth).toHaveBeenCalledWith("test-model-id");
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
 });

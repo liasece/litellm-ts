@@ -1,11 +1,10 @@
 import React, { useState } from "react";
-import { ArrowLeftIcon, EyeIcon, EyeOffIcon } from "@heroicons/react/outline";
+import { EyeIcon, EyeOffIcon } from "@heroicons/react/outline";
 import { Title, Card, Button, Text, Grid, TabGroup, TabList, TabPanel, TabPanels, Tab, Icon } from "@tremor/react";
 
 import { MCPServer, handleTransport, handleAuth } from "./types";
 // TODO: Move Tools viewer from index file
 import { MCPToolsViewer } from ".";
-import MCPServerEdit from "./mcp_server_edit";
 import MCPServerCostDisplay from "./mcp_server_cost_display";
 import { getMaskedAndFullUrl } from "./utils";
 import { copyToClipboard as utilCopyToClipboard } from "@/utils/dataUtils";
@@ -14,34 +13,24 @@ import { Button as AntdButton } from "antd";
 
 interface MCPServerViewProps {
   mcpServer: MCPServer;
-  onBack: () => void;
   isProxyAdmin: boolean;
-  isEditing: boolean;
   accessToken: string | null;
   userRole: string | null;
   userID: string | null;
-  availableAccessGroups: string[];
+  onEdit: () => void;
 }
 
 export const MCPServerView: React.FC<MCPServerViewProps> = ({
   mcpServer,
-  onBack,
-  isEditing,
   isProxyAdmin,
   accessToken,
   userRole,
   userID,
-  availableAccessGroups,
+  onEdit,
 }) => {
-  const [editing, setEditing] = useState(isEditing);
   const [showFullUrl, setShowFullUrl] = useState(false);
   const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
-
-  const handleSuccess = (updated: MCPServer) => {
-    setEditing(false);
-    onBack();
-  };
 
   const urlValue = mcpServer.url ?? "";
   const { maskedUrl, hasToken } = urlValue ? getMaskedAndFullUrl(urlValue) : { maskedUrl: "—", hasToken: false };
@@ -74,9 +63,6 @@ export const MCPServerView: React.FC<MCPServerViewProps> = ({
   return (
     <div className="p-4 max-w-full">
       <div className="mb-6">
-        <Button icon={ArrowLeftIcon} variant="light" className="mb-4" onClick={onBack}>
-          Back to All Servers
-        </Button>
         <div className="flex items-center gap-2">
           <Title className="text-2xl">{mcpServer.server_name || mcpServer.alias || "Unnamed Server"}</Title>
           <AntdButton
@@ -181,21 +167,10 @@ export const MCPServerView: React.FC<MCPServerViewProps> = ({
             <Card>
               <div className="flex justify-between items-center mb-4">
                 <Title>MCP Server Settings</Title>
-                {editing ? null : (
-                  <Button variant="light" onClick={() => setEditing(true)}>
+                <Button variant="light" onClick={onEdit}>
                     Edit Settings
                   </Button>
-                )}
               </div>
-              {editing ? (
-                <MCPServerEdit
-                  mcpServer={mcpServer}
-                  accessToken={accessToken}
-                  onCancel={() => setEditing(false)}
-                  onSuccess={handleSuccess}
-                  availableAccessGroups={availableAccessGroups}
-                />
-              ) : (
                 <div className="divide-y divide-gray-100">
                   <div className="py-3 grid grid-cols-3 gap-4">
                     <Text className="text-sm font-medium text-gray-500">Server Name</Text>
@@ -306,7 +281,6 @@ export const MCPServerView: React.FC<MCPServerViewProps> = ({
                     </div>
                   </div>
                 </div>
-              )}
             </Card>
           </TabPanel>
         </TabPanels>

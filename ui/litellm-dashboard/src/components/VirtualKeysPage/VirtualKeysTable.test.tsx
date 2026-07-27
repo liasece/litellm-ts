@@ -468,9 +468,8 @@ it("should open KeyInfoView when clicking on a key ID button", async () => {
     expect(screen.getByTestId("selected-key-id")).toHaveTextContent("f9f83579ca1af99f9dc10ec225324cd977f441ad3761c38355c4ed2d7e77be1d");
   });
 
-  // Verify that table-specific elements are no longer visible
-  // The "Showing X of Y results" text should not be visible when KeyInfoView is open
-  expect(screen.queryByText(/Showing.*results/)).not.toBeInTheDocument();
+	// The table remains visible while the detail Drawer is open.
+	expect(screen.getByText(/Showing.*results/)).toBeInTheDocument();
 });
 
 it("should display 'Default Proxy Admin' for user_id when value is 'default_user_id'", async () => {

@@ -15,8 +15,7 @@ vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
 }));
 
 vi.mock("./ProjectModals/EditProjectModal", () => ({
-  EditProjectModal: ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <div data-testid="edit-modal" /> : null,
+	EditProjectModal: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <div data-testid="edit-modal" /> : null),
 }));
 
 vi.mock("@/components/common_components/DefaultProxyAdminTag", () => ({
@@ -86,9 +85,9 @@ describe("ProjectDetail", () => {
       expect(screen.getByText("My Project")).toBeInTheDocument();
     });
 
-    it("should display the project alias as the page title", () => {
+		it("should use the project alias as the drawer title", () => {
       renderWithProviders(<ProjectDetail projectId="proj-1" onBack={onBack} />);
-      expect(screen.getByRole("heading", { name: "My Project" })).toBeInTheDocument();
+			expect(screen.getByRole("dialog", { name: /My Project/ })).toBeInTheDocument();
     });
 
     it("should display 'Active' for a non-blocked project", () => {
@@ -105,10 +104,10 @@ describe("ProjectDetail", () => {
       expect(screen.getByText("Blocked")).toBeInTheDocument();
     });
 
-    it("should call onBack when the back button is clicked", async () => {
+		it("should call onBack when the drawer is closed", async () => {
       const user = userEvent.setup();
       renderWithProviders(<ProjectDetail projectId="proj-1" onBack={onBack} />);
-      await user.click(screen.getByRole("button", { name: "" }));
+			await user.click(screen.getByRole("button", { name: "Close" }));
       expect(onBack).toHaveBeenCalledOnce();
     });
 

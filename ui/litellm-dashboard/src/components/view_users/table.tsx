@@ -197,21 +197,8 @@ export function UserDataTable({
     }
   }, [currentSort]);
 
-  if (selectedUserId) {
-    return (
-      <UserInfoView
-        userId={selectedUserId}
-        onClose={handleCloseUserInfo}
-        accessToken={accessToken}
-        userRole={userRole}
-        possibleUIRoles={possibleUIRoles}
-        initialTab={openInEditMode ? 1 : 0}
-        startInEditMode={openInEditMode}
-      />
-    );
-  }
-
   return (
+		<>
     <div className="bg-white rounded-lg shadow">
       {/* Filter Section */}
       <div className="border-b px-6 py-4">
@@ -438,5 +425,17 @@ export function UserDataTable({
         </div>
       </div>
     </div>
+			{selectedUserId && (
+				<UserInfoView
+					userId={selectedUserId}
+					onClose={handleCloseUserInfo}
+					accessToken={accessToken}
+					userRole={userRole}
+					possibleUIRoles={possibleUIRoles}
+					initialTab={openInEditMode ? 1 : 0}
+					startInEditMode={openInEditMode}
+				/>
+			)}
+		</>
   );
 }

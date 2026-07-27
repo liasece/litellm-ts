@@ -115,24 +115,6 @@ const PromptsPanel: React.FC<PromptsProps> = ({ accessToken, userRole }) => {
 
   return (
     <div className="w-full mx-auto flex-auto overflow-y-auto m-8 p-2">
-      {showEditorView ? (
-        <PromptEditorView
-          onClose={handleCloseEditor}
-          onSuccess={handleSuccess}
-          accessToken={accessToken}
-          initialPromptData={editPromptData}
-        />
-      ) : selectedPromptId ? (
-        <PromptInfoView
-          promptId={selectedPromptId}
-          onClose={() => setSelectedPromptId(null)}
-          accessToken={accessToken}
-          isAdmin={isAdmin}
-          onDelete={fetchPrompts}
-          onEdit={handleEditPrompt}
-        />
-      ) : (
-        <>
           <div className="flex justify-between items-center mb-4">
             <div className="flex gap-2">
             <Button onClick={handleAddPrompt} disabled={!accessToken}>
@@ -152,8 +134,34 @@ const PromptsPanel: React.FC<PromptsProps> = ({ accessToken, userRole }) => {
             accessToken={accessToken}
             isAdmin={isAdmin}
           />
-        </>
+
+			{selectedPromptId && (
+				<PromptInfoView
+					promptId={selectedPromptId}
+					onClose={() => setSelectedPromptId(null)}
+					accessToken={accessToken}
+					isAdmin={isAdmin}
+					onDelete={fetchPrompts}
+					onEdit={handleEditPrompt}
+				/>
       )}
+
+			<Modal
+				open={showEditorView}
+				onCancel={handleCloseEditor}
+				footer={null}
+				destroyOnHidden
+				width="min(1440px, calc(100vw - 32px))"
+				style={{ top: 16 }}
+				styles={{ body: { height: "calc(100vh - 64px)", padding: 0, overflow: "hidden" } }}
+			>
+				<PromptEditorView
+					onClose={handleCloseEditor}
+					onSuccess={handleSuccess}
+					accessToken={accessToken}
+					initialPromptData={editPromptData}
+				/>
+			</Modal>
 
       <AddPromptForm
         visible={isAddModalVisible}

@@ -24,7 +24,7 @@ import {
 import { fetchMCPServers } from "../../networking";
 import { MCPServer } from "../../mcp_tools/types";
 import { AgentModel, fetchAvailableAgentModels, MCPToolEntry } from "../llm_calls/fetch_agents";
-import { fetchRoutableModels, ModelGroup } from "../llm_calls/fetch_models";
+import { fetchRoutableModels, ModelGroup, modelGroupsToSelectOptions } from "../llm_calls/fetch_models";
 import ComplianceUI from "../complianceUI/ComplianceUI";
 import ChatUI from "./ChatUI";
 
@@ -553,7 +553,7 @@ export default function AgentBuilderView({
                                 value={draftUnderlyingModel}
                                 onChange={setDraftUnderlyingModel}
                                 className="w-full"
-                                options={modelGroups.map((m) => ({ value: m.model_group, label: m.model_group }))}
+                                options={modelGroupsToSelectOptions(modelGroups)}
                                 placeholder="Select model"
                               />
                             </div>

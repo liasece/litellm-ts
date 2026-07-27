@@ -576,15 +576,17 @@ export function TeamVirtualKeysTable({ teamId, teamAlias, organization }: TeamVi
 
   return (
     <div className="w-full h-full overflow-hidden">
-      {selectedKey ? (
+			<>
+			{selectedKey && (
         <KeyInfoView
           keyId={selectedKey.token}
           onClose={() => setSelectedKey(null)}
           keyData={selectedKey}
           teams={[currentTeam]}
           onDelete={refetch}
+					onKeyDataUpdate={() => refetch()}
         />
-      ) : (
+			)}
         <div className="border-b py-4 flex-1 overflow-hidden">
           <div className="w-full mb-6">
             <FilterComponent
@@ -763,7 +765,7 @@ export function TeamVirtualKeysTable({ teamId, teamAlias, organization }: TeamVi
             </div>
           </div>
         </div>
-      )}
+			</>
     </div>
   );
 }

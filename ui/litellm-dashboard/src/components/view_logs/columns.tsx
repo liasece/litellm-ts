@@ -72,6 +72,13 @@ export function normalizeModelResolutionChain(value: unknown): ModelResolutionCh
 	});
 }
 
+export type SessionGroupType = "claude_code_user_id" | "session_id";
+
+export interface SessionGroupRef {
+	type: SessionGroupType;
+	id: string;
+}
+
 export type LogEntry = {
 	request_id: string;
 	api_key: string;
@@ -98,6 +105,8 @@ export type LogEntry = {
 	response: string | any[] | Record<string, any>;
 	proxy_server_request?: string | any[] | Record<string, any>;
 	session_id?: string;
+	session_group_type?: SessionGroupType;
+	session_group_id?: string;
 	status?: string;
 	completionStartTime?: string;
 	request_duration_ms?: number;
@@ -106,8 +115,28 @@ export type LogEntry = {
 	mcp_tool_call_count?: number;
 	mcp_tool_call_spend?: number;
 	onKeyHashClick?: (keyHash: string) => void;
-	onSessionClick?: (sessionId: string) => void;
+	onSessionClick?: (sessionGroup: SessionGroupRef) => void;
 };
+
+export function getSessionGroupRef(
+	log: Pick<LogEntry, "session_group_type" | "session_group_id" | "session_id">,
+): SessionGroupRef | null {
+	if (
+		(log.session_group_type === "session_id" || log.session_group_type === "claude_code_user_id") &&
+		typeof log.session_group_id === "string" &&
+		log.session_group_id.length > 0
+	) {
+		return { type: log.session_group_type, id: log.session_group_id };
+	}
+	if (typeof log.session_id === "string" && log.session_id.length > 0) {
+		return { type: "session_id", id: log.session_id };
+	}
+	return null;
+}
+
+export function getSessionGroupKey(group: SessionGroupRef): string {
+	return `${group.type}\u0000${group.id}`;
+}
 
 const SortableHeader = ({
 	label,

@@ -1,28 +1,15 @@
 import { useProjectDetails } from "@/app/(dashboard)/hooks/projects/useProjectDetails";
 import { useTeam } from "@/app/(dashboard)/hooks/teams/useTeams";
-import {
-  Button,
-  Card,
-  Col,
-  Descriptions,
-  Empty,
-  Flex,
-  Layout,
-  Progress,
-  Row,
-  Spin,
-  Tag,
-  theme,
-  Typography,
-} from "antd";
+import { Button, Card, Col, Descriptions, Empty, Flex, Layout, Progress, Row, Spin, Tag, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { BarChart } from "@tremor/react";
-import { ArrowLeftIcon, DollarSignIcon, EditIcon, KeyIcon, UsersIcon } from "lucide-react";
+import { DollarSignIcon, EditIcon, KeyIcon, UsersIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import DefaultProxyAdminTag from "../common_components/DefaultProxyAdminTag";
+import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 import { EditProjectModal } from "./ProjectModals/EditProjectModal";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { Content } = Layout;
 
 interface TeamInfoShape {
@@ -46,7 +33,6 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
   // teamInfoCall returns { team_id, team_info: {...}, keys, team_memberships }
   const teamInfo: TeamInfoShape | undefined = ((teamData as unknown as { team_info?: TeamInfoShape })?.team_info ??
     teamData) as TeamInfoShape | undefined;
-  const { token } = theme.useToken();
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
 
   const spend = project?.spend ?? 0;
@@ -64,62 +50,39 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
 
   if (isLoading) {
     return (
-      <Content
-        style={{
-          padding: token.paddingLG,
-          paddingInline: token.paddingLG * 2,
-        }}
-      >
-        <Flex justify="center" align="center" style={{ minHeight: 300 }}>
-          <Spin indicator={<LoadingOutlined spin />} size="large" />
-        </Flex>
-      </Content>
+			<ResourceDetailsDrawer open onClose={onBack} title="Project details" loading>
+				<div>Loading project details...</div>
+			</ResourceDetailsDrawer>
     );
   }
 
   if (!project) {
     return (
-      <Content
-        style={{
-          padding: token.paddingLG,
-          paddingInline: token.paddingLG * 2,
-        }}
-      >
-        <Button icon={<ArrowLeftIcon size={16} />} onClick={onBack} type="text" style={{ marginBottom: 16 }} />
-        <Empty description="Project not found" />
-      </Content>
+			<ResourceDetailsDrawer open onClose={onBack} title="Project details" error="Project not found">
+				<div>Project not found</div>
+			</ResourceDetailsDrawer>
     );
   }
 
   return (
-    <Content style={{ padding: token.paddingLG, paddingInline: token.paddingLG * 2 }}>
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 24,
-        }}
+		<ResourceDetailsDrawer
+			open
+			onClose={onBack}
+			title={project.project_alias ?? project.project_id}
+			subtitle={project.project_id}
+			actions={
+				<Button type="primary" icon={<EditIcon size={16} />} onClick={() => setIsEditModalVisible(true)}>
+					Edit Project
+				</Button>
+			}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Button icon={<ArrowLeftIcon size={16} />} onClick={onBack} type="text" />
-          <div>
-            <Flex align="center" gap={8}>
-              <Title level={2} style={{ margin: 0 }}>
-                {project.project_alias ?? project.project_id}
-              </Title>
+			<Content style={{ padding: 0 }}>
+				<Flex align="center" gap={8} style={{ marginBottom: 16 }}>
               <Tag color={project.blocked ? "red" : "green"}>{project.blocked ? "Blocked" : "Active"}</Tag>
-            </Flex>
             <Text type="secondary">
               ID: <Text copyable>{project.project_id}</Text>
             </Text>
-          </div>
-        </div>
-        <Button type="primary" icon={<EditIcon size={16} />} onClick={() => setIsEditModalVisible(true)}>
-          Edit Project
-        </Button>
-      </div>
+				</Flex>
 
       {/* Project Details */}
       <Row style={{ marginBottom: 24 }}>
@@ -320,7 +283,13 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
       </Row>
 
       {/* Edit Modal */}
-      <EditProjectModal isOpen={isEditModalVisible} project={project} onClose={() => setIsEditModalVisible(false)} />
+				<EditProjectModal
+					isOpen={isEditModalVisible}
+					project={project}
+					onClose={() => setIsEditModalVisible(false)}
+					onSuccess={onBack}
+				/>
     </Content>
+		</ResourceDetailsDrawer>
   );
 }

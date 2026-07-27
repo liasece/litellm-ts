@@ -2,6 +2,7 @@ import { isAdminRole } from "@/utils/roles";
 import { QuestionCircleOutlined } from "@ant-design/icons";
 import { Button, Tab, TabGroup, TabList, TabPanel, TabPanels, Text, Title } from "@tremor/react";
 import NewBadge from "../common_components/NewBadge";
+import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 import { Descriptions, Modal, Select, Tooltip, Typography } from "antd";
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { useMCPServers } from "../../app/(dashboard)/hooks/mcpServers/useMCPServers";
@@ -14,6 +15,7 @@ import CreateMCPServer from "./create_mcp_server";
 import MCPConnect from "./mcp_connect";
 import { mcpServerColumns } from "./mcp_server_columns";
 import { MCPServerView } from "./mcp_server_view";
+import MCPServerEdit from "./mcp_server_edit";
 import { DiscoverableMCPServer, MCPServer, MCPServerProps, Team } from "./types";
 import MCPSemanticFilterSettings from "../Settings/AdminSettings/MCPSemanticFilterSettings/MCPSemanticFilterSettings";
 import MCPNetworkSettings from "./MCPNetworkSettings";
@@ -54,6 +56,7 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [editServer, setEditServer] = useState(false);
+  const [pendingOAuthEditServerId, setPendingOAuthEditServerId] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<string>("all");
   const [selectedMcpAccessGroup, setSelectedMcpAccessGroup] = useState<string>("all");
   const [filteredServers, setFilteredServers] = useState<MCPServer[]>([]);
@@ -70,18 +73,25 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
     }
     try {
       const stored = window.sessionStorage.getItem(EDIT_OAUTH_UI_STATE_KEY);
-      if (!stored) {
-        return;
-      }
+      if (stored) {
       const parsed = JSON.parse(stored);
       if (parsed?.serverId) {
-        setSelectedServerId(parsed.serverId);
-        setEditServer(true);
+          setPendingOAuthEditServerId(parsed.serverId);
+        }
       }
     } catch (err) {
       console.error("Failed to restore MCP edit view state", err);
     }
   }, []);
+
+  useEffect(() => {
+    if (!pendingOAuthEditServerId || !mcpServers?.some((server) => server.server_id === pendingOAuthEditServerId)) {
+      return;
+    }
+    setSelectedServerId(pendingOAuthEditServerId);
+    setEditServer(true);
+    setPendingOAuthEditServerId(null);
+  }, [mcpServers, pendingOAuthEditServerId]);
 
   // Get unique teams from all servers
   const uniqueTeams = React.useMemo(() => {
@@ -214,28 +224,20 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
     refetch();
   };
 
-  // Memoize the selected server to prevent unnecessary re-renders
-  const selectedServer = React.useMemo(() => {
-    return filteredServers.find((server: MCPServer) => server.server_id === selectedServerId) || {
-      server_id: "",
-      server_name: "",
-      alias: "",
-      url: "",
-      transport: "",
-      auth_type: "",
-      created_at: "",
-      created_by: "",
-      updated_at: "",
-      updated_by: "",
-    };
-  }, [filteredServers, selectedServerId]);
+  const selectedServer = React.useMemo(
+    () => serversWithHealth.find((server) => server.server_id === selectedServerId),
+    [serversWithHealth, selectedServerId],
+  );
 
-  // Memoize the onBack callback to prevent unnecessary re-renders
-  const handleBack = React.useCallback(() => {
+  const closeDetailsDrawer = () => {
     setEditServer(false);
     setSelectedServerId(null);
+  };
+
+  const handleEditSuccess = () => {
+    setEditServer(false);
     refetch();
-  }, [refetch]);
+  };
 
   if (!accessToken || !userRole || !userID) {
     console.log("Missing required authentication parameters", { accessToken, userRole, userID });
@@ -356,19 +358,6 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
         </TabList>
         <TabPanels>
           <TabPanel>
-            {selectedServerId ? (
-              <MCPServerView
-                key={selectedServerId}
-                mcpServer={selectedServer}
-                onBack={handleBack}
-                isProxyAdmin={isAdminRole(userRole)}
-                isEditing={editServer}
-                accessToken={accessToken}
-                userID={userID}
-                userRole={userRole}
-                availableAccessGroups={uniqueMcpAccessGroups}
-              />
-            ) : (
               <div className="w-full h-full">
                 <div className="w-full">
                   <div className="flex flex-col space-y-4">
@@ -424,7 +413,6 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
                   />
                 </div>
               </div>
-            )}
           </TabPanel>
           <TabPanel>
             <MCPConnect />
@@ -443,6 +431,18 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
         </TabPanels>
       </TabGroup>
 
+      <ResourceDetailsDrawer
+        open={selectedServer !== undefined}
+        onClose={closeDetailsDrawer}
+        title={selectedServer?.server_name || selectedServer?.alias || "MCP Server details"}
+        subtitle={selectedServer?.server_id}
+        actions={selectedServer && isAdminRole(userRole) ? <Button variant="secondary" onClick={() => setEditServer(true)}>Edit</Button> : undefined}
+      >
+        {selectedServer && <MCPServerView mcpServer={selectedServer} isProxyAdmin={isAdminRole(userRole)} accessToken={accessToken} userID={userID} userRole={userRole} onEdit={() => setEditServer(true)} />}
+      </ResourceDetailsDrawer>
+      <Modal open={editServer && selectedServer !== undefined} title="Edit MCP Server" footer={null} width={960} destroyOnHidden onCancel={() => setEditServer(false)}>
+        {selectedServer && <MCPServerEdit mcpServer={selectedServer} accessToken={accessToken} onCancel={() => setEditServer(false)} onSuccess={handleEditSuccess} availableAccessGroups={uniqueMcpAccessGroups} />}
+      </Modal>
       {byokModalServer && (
         <ByokCredentialModal
           server={byokModalServer}

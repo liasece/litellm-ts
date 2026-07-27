@@ -1,0 +1,5 @@
+server:
+  host: 0.0.0.0
+  port: 4017
+general_settings:
+  store_model_in_db: true

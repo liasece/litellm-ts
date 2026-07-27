@@ -18,6 +18,7 @@
 import express from "express";
 import request from "supertest";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
+import { Pool } from "pg";
 import { registerSpendManagementEndpoints } from "./SpendManagementEndpoint";
 import type { UserAPIKeyAuth } from "../types/auth";
 
@@ -30,6 +31,7 @@ import type { UserAPIKeyAuth } from "../types/auth";
  */
 interface RecordedCall {
 	readonly projection: ReadonlyArray<string>;
+	readonly projectionSql: string | null;
 	readonly whereSql: string | null;
 	readonly orderSql: string | null;
 	readonly limitN: number | null;
@@ -42,17 +44,14 @@ function describeObject(value: unknown): string {
 	if (value === undefined) {
 		return "<undefined>";
 	}
-	// 优先尝试 JSON.stringify：Drizzle SQL / and() / eq() 对象含可枚举属性
-	// （queryChunks / 列名 / 字符串值），可被 JSON.stringify 序列化为含列名+字面量的字符串。
+	// JSON 序列化保留普通字段；手动遍历额外抽出 Drizzle StringChunk 中的 SQL 关键字。
+	let serialized = "";
 	try {
-		const serialized = JSON.stringify(value);
-		if (serialized !== undefined) {
-			return serialized;
-		}
+		serialized = JSON.stringify(value) ?? "";
 	} catch {
 		// fall through to manual walk
 	}
-	// 兜底：手动遍历 queryChunks 抽出字符串与列名。
+	// 手动遍历 queryChunks 抽出字符串与列名。
 	const visited = new WeakSet<object>();
 	const walk = (node: unknown, out: string[]): void => {
 		if (node === null || node === undefined) {
@@ -78,6 +77,8 @@ function describeObject(value: unknown): string {
 		}
 		if (typeof obj.value === "string" || typeof obj.value === "number") {
 			out.push(String(obj.value));
+		} else if (Array.isArray(obj.value)) {
+			walk(obj.value, out);
 		}
 		for (const [k, v] of Object.entries(obj)) {
 			if (k === "queryChunks" || k === "name" || k === "value" || k === "decoder") {
@@ -88,12 +89,13 @@ function describeObject(value: unknown): string {
 	};
 	const out: string[] = [];
 	walk(value, out);
-	return out.join(" | ") || String(value);
+	return [serialized, out.join(" | ")].filter((part) => part.length > 0).join(" | ") || String(value);
 }
 
 /** 单个 builder 的 state：select() 一次性确定 projection，后续链式调用不断累积。 */
 interface BuilderState {
 	projection: string[];
+	projectionSql: string | null;
 	whereSql: string | null;
 	orderSql: string | null;
 	limitN: number | null;
@@ -109,7 +111,11 @@ interface MockDbOptions {
 	readonly responses?: unknown[];
 	readonly data?: unknown[];
 	readonly count?: Array<{ count: number }>;
-	readonly sessionCounts?: Array<{ session_id: string; total: number }>;
+	readonly sessionCounts?: Array<{
+		session_id?: string;
+		session_group_id?: string;
+		total: number;
+	}>;
 	readonly teamRows?: Array<{ admins?: string[]; membersWithRoles?: Record<string, { role?: string }> }>;
 	readonly error?: Error;
 }
@@ -145,6 +151,7 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 
 	const reset = (state: BuilderState): void => {
 		state.projection = [];
+		state.projectionSql = null;
 		state.whereSql = null;
 		state.orderSql = null;
 		state.limitN = null;
@@ -152,8 +159,9 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 		state.groupByCols = [];
 	};
 
-	const newBuilder = (initialProjection: string[] = []): BuilderState => ({
+	const newBuilder = (initialProjection: string[] = [], projectionSql: string | null = null): BuilderState => ({
 		projection: initialProjection,
+		projectionSql: projectionSql,
 		whereSql: null,
 		orderSql: null,
 		limitN: null,
@@ -168,7 +176,7 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 		if (proj.length === 1 && proj[0] === "count") {
 			return "count";
 		}
-		if (proj.includes("session_id") && groupBy.length > 0) {
+		if ((proj.includes("session_id") || proj.includes("session_group_id")) && groupBy.length > 0) {
 			return "sessionCounts";
 		}
 		// 默认回落到 data 队列：覆盖以下生产端点
@@ -186,6 +194,7 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 		if (awaitCount >= failAt) {
 			calls.push({
 				projection: proj,
+				projectionSql: state.projectionSql,
 				whereSql: state.whereSql,
 				orderSql: state.orderSql,
 				limitN: state.limitN,
@@ -198,7 +207,9 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 			return;
 		}
 		let value: unknown;
-		if (fifo.length > 0) {
+		if (proj.includes("snapshotStartTime") && proj.includes("snapshotRequestId")) {
+			value = [{ snapshotStartTime: new Date("2025-02-10T00:00:00Z"), snapshotRequestId: "req-zzzz" }];
+		} else if (fifo.length > 0) {
 			value = fifo.shift();
 		} else {
 			const kind = classify(proj, groupBy);
@@ -220,6 +231,7 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 		}
 		calls.push({
 			projection: proj,
+			projectionSql: state.projectionSql,
 			whereSql: state.whereSql,
 			orderSql: state.orderSql,
 			limitN: state.limitN,
@@ -242,7 +254,7 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 				get: (_t, prop) => {
 					if (prop === "select") {
 						return (spec?: Record<string, unknown>) => {
-							const childState = newBuilder(spec ? Object.keys(spec) : []);
+							const childState = newBuilder(spec ? Object.keys(spec) : [], spec ? describeObject(spec) : null);
 							return buildProxy(childState);
 						};
 					}
@@ -316,6 +328,8 @@ const SAMPLE_UI_ROW = {
 	end_user: null,
 	requester_ip_address: null,
 	session_id: "session-A",
+	session_group_type: "session_id",
+	session_group_id: "session-A",
 	status: "success",
 	mcp_namespaced_tool_name: null,
 	agent_id: null,
@@ -363,6 +377,9 @@ const INTERNAL_USER_AUTH: UserAPIKeyAuth = {
 	user_id: "internal-user-1",
 	user_role: "internal_user",
 };
+
+const CLAUDE_CODE_SESSION_UUID = "123e4567-e89b-12d3-a456-426614174000";
+const CLAUDE_CODE_USER_ID = `user_device-1_account__session_${CLAUDE_CODE_SESSION_UUID}`;
 
 describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart", () => {
 	describe("/global/spend/keys", () => {
@@ -856,8 +873,98 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(data[0]?.session_total_count).toBe(4);
 			});
 
-			it("UI 路径无 session_id 行 session_total_count=1", async () => {
-				const rowWithoutSession = { ...SAMPLE_UI_ROW, session_id: null };
+			it("合法 Claude Code user ID 使用完整 trim 后 ID 跨顶层 session 聚合", async () => {
+				const claudeRow = {
+					...SAMPLE_UI_ROW,
+					session_id: "random-session-1",
+					metadata: { spend_logs_metadata: { user_id: `  ${CLAUDE_CODE_USER_ID}  ` } },
+					session_group_type: "claude_code_user_id",
+					session_group_id: CLAUDE_CODE_USER_ID,
+				};
+				const { db, calls } = makeMockDb({
+					responses: [
+						[{ count: 1 }],
+						[claudeRow],
+						Array.from({ length: 3 }, () => ({ metadata: claudeRow.metadata })),
+					],
+				});
+
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.data[0]).toMatchObject({
+					session_group_type: "claude_code_user_id",
+					session_group_id: CLAUDE_CODE_USER_ID,
+					session_total_count: 3,
+				});
+				const groupCall = calls.find((call) => call.projection.includes("session_group_id") && call.groupByCols.length > 0);
+				expect(groupCall?.whereSql).toContain(CLAUDE_CODE_USER_ID);
+				expect(groupCall?.whereSql).toMatch(/btrim/i);
+			});
+
+			it.each(["user_device_account_account_session_not-a-uuid", `${CLAUDE_CODE_USER_ID}_suffix`, "ordinary-user-id"])(
+				"非法 Claude Code user ID %s 回退顶层 session",
+				async (userId) => {
+					const fallbackRow = {
+						...SAMPLE_UI_ROW,
+						metadata: { spend_logs_metadata: { user_id: userId } },
+					};
+					const { db } = makeMockDb({
+						data: [fallbackRow],
+						count: [{ count: 1 }],
+						sessionCounts: [{ session_id: "session-A", total: 2 }],
+					});
+
+					const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+						"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+					);
+
+					expect(res.status).toBe(200);
+					expect(res.body.data[0]).toMatchObject({
+						session_group_type: "session_id",
+						session_group_id: "session-A",
+						session_total_count: 2,
+					});
+				},
+			);
+
+			it("不同类型的相同 group ID 不碰撞", async () => {
+				const rows = [
+					{ ...SAMPLE_UI_ROW, request_id: "req-session", session_group_id: CLAUDE_CODE_USER_ID },
+					{
+						...SAMPLE_UI_ROW,
+						request_id: "req-claude",
+						session_id: "random-session",
+						session_group_type: "claude_code_user_id",
+						session_group_id: CLAUDE_CODE_USER_ID,
+					},
+				];
+				const { db } = makeMockDb({
+					responses: [
+						[{ count: 2 }],
+						rows,
+						[{ session_id: CLAUDE_CODE_USER_ID, total: 2 }],
+						[{ session_group_id: CLAUDE_CODE_USER_ID, total: 5 }],
+					],
+				});
+
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.data.map((row: Record<string, unknown>) => row.session_total_count)).toEqual([2, 5]);
+			});
+
+			it("UI 路径无 session group 行 session_total_count=1", async () => {
+				const rowWithoutSession = {
+					...SAMPLE_UI_ROW,
+					session_id: null,
+					session_group_type: null,
+					session_group_id: null,
+				};
 				const { db } = makeMockDb({ data: [rowWithoutSession], count: [{ count: 1 }] });
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get("/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59");
@@ -936,6 +1043,51 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			});
 		});
 
+		describe("Session group 权限继承", () => {
+			it.each([
+				["internal-user-1", "team-1", 2],
+				["internal-user-2", "team-2", 3],
+			])("session count enrichment 只统计认证用户 %s 可见日志", async (userId, teamId, visibleCount) => {
+				const auth: UserAPIKeyAuth = {
+					api_key: `sk-${userId}`,
+					user_id: userId,
+					user_role: "internal_user",
+					team_id: teamId,
+				};
+				const { db, calls } = makeMockDb({
+					data: [SAMPLE_UI_ROW],
+					count: [{ count: 1 }],
+					sessionCounts: [{ session_id: "session-A", total: visibleCount }],
+				});
+
+				const res = await request(makeAppWithAuth(db, auth)).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.data[0]?.session_total_count).toBe(visibleCount);
+				const enrichmentCall = calls.find((call) => call.projection.includes("session_id") && call.groupByCols.length > 0);
+				expect(enrichmentCall?.whereSql).toContain(userId);
+				expect(enrichmentCall?.whereSql).not.toContain(userId === "internal-user-1" ? "internal-user-2" : "internal-user-1");
+			});
+
+			it("proxy_admin session count enrichment 不附加用户裁剪", async () => {
+				const { db, calls } = makeMockDb({
+					data: [SAMPLE_UI_ROW],
+					count: [{ count: 1 }],
+					sessionCounts: [{ session_id: "session-A", total: 5 }],
+				});
+
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+				);
+
+				expect(res.body.data[0]?.session_total_count).toBe(5);
+				const enrichmentCall = calls.find((call) => call.projection.includes("session_id") && call.groupByCols.length > 0);
+				expect(enrichmentCall?.whereSql).not.toContain(PROXY_ADMIN_AUTH.user_id);
+			});
+		});
+
 		describe("错误语义", () => {
 			it("DB 查询失败返回 500，不再伪装空分页", async () => {
 				const { db } = makeMockDb({
@@ -961,5 +1113,379 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(data[0]?.session_total_count).toBe(1);
 			});
 		});
+	});
+
+	describe("/spend/logs/session/ui — Python parity", () => {
+		it.each(["/spend/logs/session/ui", "/spend/logs/session/ui?session_id="])(
+			"缺失或空 session_id 返回 400 且不查询 DB: %s",
+			async (path) => {
+				const { db, calls } = makeMockDb();
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(path);
+
+				expect(res.status).toBe(400);
+				expect(calls).toHaveLength(0);
+			},
+		);
+
+		it.each([
+			"/spend/logs/session/ui?session_group_type=session_id",
+			"/spend/logs/session/ui?session_group_id=session-A",
+			"/spend/logs/session/ui?session_group_type=invalid&session_group_id=session-A",
+			"/spend/logs/session/ui?session_group_type=session_id&session_group_id=",
+			"/spend/logs/session/ui?session_id=session-A&session_group_type=session_id&session_group_id=session-A",
+		])("非法 session group 参数返回 400 且不查询 DB: %s", async (path) => {
+			const { db, calls } = makeMockDb();
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(path);
+
+			expect(res.status).toBe(400);
+			expect(calls).toHaveLength(0);
+		});
+
+		it("claude_code_user_id 使用 trim 后完整 ID 和严格 metadata 表达式查询", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH))
+				.get("/spend/logs/session/ui")
+				.query({ session_group_type: "claude_code_user_id", session_group_id: `  ${CLAUDE_CODE_USER_ID}  ` });
+
+			expect(res.status).toBe(200);
+			const countCall = calls.find((call) => call.hasCount);
+			const dataCall = calls.find((call) => call.projection.includes("request_id"));
+			for (const call of [countCall, dataCall]) {
+				expect(call?.whereSql).toContain(CLAUDE_CODE_USER_ID);
+				expect(call?.whereSql).toMatch(/btrim/i);
+				expect(call?.whereSql).toMatch(/session_/i);
+			}
+		});
+
+		it.each([
+			{
+				name: "object",
+				metadata: { spend_logs_metadata: { nested: { values: [1, { ok: true }] }, user_id: CLAUDE_CODE_USER_ID, tail: ["x"] } },
+			},
+			{
+				name: "serialized object with user_id after nested fields",
+				metadata: JSON.stringify({
+					spend_logs_metadata: { nested: { values: [1, { ok: true }] }, user_id: CLAUDE_CODE_USER_ID, tail: ["x"] },
+				}),
+			},
+			{
+				name: "serialized object with user_id before nested fields",
+				metadata: JSON.stringify({
+					spend_logs_metadata: { user_id: CLAUDE_CODE_USER_ID, nested: { values: [1, { ok: true }] }, tail: ["x"] },
+				}),
+			},
+		])("TypeScript 安全解析 $name metadata，不依赖字段顺序或嵌套", async ({ metadata }) => {
+			const row = {
+				...SAMPLE_UI_ROW,
+				metadata: metadata,
+				session_id: "fallback-session",
+				session_group_type: undefined,
+				session_group_id: undefined,
+			};
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [row], [row]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.data[0]).toMatchObject({
+				session_group_type: "claude_code_user_id",
+				session_group_id: CLAUDE_CODE_USER_ID,
+				session_total_count: 1,
+			});
+			const sqlText = calls.map((call) => `${call.projectionSql ?? ""} ${call.whereSql ?? ""}`).join("\n");
+			expect(sqlText).not.toMatch(/regexp_match/i);
+			expect(sqlText).not.toMatch(/is json/i);
+			expect(sqlText).not.toMatch(/::jsonb/i);
+		});
+
+		it("serialized metadata 非法时安全回退顶层 session_id", async () => {
+			const row = {
+				...SAMPLE_UI_ROW,
+				metadata: "{not-json",
+				session_id: "session-A",
+				session_group_type: undefined,
+				session_group_id: undefined,
+			};
+			const { db } = makeMockDb({ data: [row], count: [{ count: 1 }], sessionCounts: [{ session_id: "session-A", total: 2 }] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.data[0]).toMatchObject({
+				session_group_type: "session_id",
+				session_group_id: "session-A",
+				session_total_count: 2,
+			});
+		});
+
+		it.each([
+			"",
+			"   ",
+			`user__account__session_${CLAUDE_CODE_SESSION_UUID}`,
+			`user_device/account__session_${CLAUDE_CODE_SESSION_UUID}`,
+			`user_device?account__session_${CLAUDE_CODE_SESSION_UUID}`,
+			`user_device_!_account__session_${CLAUDE_CODE_SESSION_UUID}`,
+			`user_device_account_ac/count_session_${CLAUDE_CODE_SESSION_UUID}`,
+			"ordinary-user-id",
+			"user_device_account_account_session_not-a-uuid",
+			`${CLAUDE_CODE_USER_ID}_suffix`,
+		])("非法 claude_code_user_id 拒绝且不查询 DB: %s", async (groupId) => {
+			const { db, calls } = makeMockDb();
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH))
+				.get("/spend/logs/session/ui")
+				.query({ session_group_type: "claude_code_user_id", session_group_id: groupId });
+
+			expect(res.status).toBe(400);
+			expect(calls).toHaveLength(0);
+		});
+
+		it("新 session_id group 参数保持顶层列精确查询", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/ui?session_group_type=session_id&session_group_id=session-A",
+			);
+
+			expect(res.status).toBe(200);
+			expect(calls.find((call) => call.hasCount)?.whereSql).toContain("session-A");
+		});
+
+		it.each([
+			["internal-user-1", "team-1"],
+			["internal-user-2", "team-2"],
+		])("Claude group detail 只返回认证用户 %s 可见日志", async (userId, teamId) => {
+			const auth: UserAPIKeyAuth = {
+				api_key: `sk-${userId}`,
+				user_id: userId,
+				user_role: "internal_user",
+				team_id: teamId,
+			};
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+
+			const res = await request(makeAppWithAuth(db, auth))
+				.get("/spend/logs/session/ui")
+				.query({ session_group_type: "claude_code_user_id", session_group_id: CLAUDE_CODE_USER_ID });
+
+			expect(res.status).toBe(200);
+			for (const call of calls.filter((candidate) => candidate.hasCount || candidate.projection.includes("request_id"))) {
+				expect(call.whereSql).toContain(userId);
+				expect(call.whereSql).not.toContain(userId === "internal-user-1" ? "internal-user-2" : "internal-user-1");
+			}
+		});
+
+		it("proxy_admin Claude group detail 保持全部可见", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH))
+				.get("/spend/logs/session/ui")
+				.query({ session_group_type: "claude_code_user_id", session_group_id: CLAUDE_CODE_USER_ID });
+
+			expect(res.status).toBe(200);
+			expect(res.body.total).toBe(2);
+			for (const call of calls.filter((candidate) => candidate.hasCount || candidate.projection.includes("request_id"))) {
+				expect(call.whereSql).not.toContain(PROXY_ADMIN_AUTH.user_id);
+			}
+		});
+
+		it("旧 session_id detail 同样按认证用户裁剪", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get("/spend/logs/session/ui?session_id=session-A");
+
+			expect(res.status).toBe(200);
+			for (const call of calls.filter((candidate) => candidate.hasCount || candidate.projection.includes("request_id"))) {
+				expect(call.whereSql).toContain("session-A");
+				expect(call.whereSql).toContain(INTERNAL_USER_AUTH.user_id);
+			}
+		});
+
+		it("非管理员伪造无权限 team_id 返回 403，且不执行 count/detail", async () => {
+			const { db, calls } = makeMockDb({
+				teamRows: [{ admins: ["other-admin"], membersWithRoles: { "internal-user-1": { role: "member" } } }],
+			});
+			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get(
+				"/spend/logs/session/ui?session_id=session-A&team_id=forged-team",
+			);
+
+			expect(res.status).toBe(403);
+			expect(calls.filter((call) => call.hasCount || call.projection.includes("request_id"))).toHaveLength(0);
+		});
+
+		it("显式 team scope 同时约束 count/detail，管理员传 team 也过滤", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/ui?session_id=session-A&team_id=team-explicit",
+			);
+
+			expect(res.status).toBe(200);
+			for (const call of calls.filter((candidate) => candidate.hasCount || candidate.projection.includes("request_id"))) {
+				expect(call.whereSql).toContain("session-A");
+				expect(call.whereSql).toContain("team-explicit");
+			}
+		});
+
+		it("管理员不传 team 保持全量 scope", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get("/spend/logs/session/ui?session_id=session-A");
+
+			expect(res.status).toBe(200);
+			for (const call of calls.filter((candidate) => candidate.hasCount || candidate.projection.includes("request_id"))) {
+				expect(call.whereSql).not.toContain("team-explicit");
+			}
+		});
+
+		it("使用默认分页、精确 session 过滤、升序排序和轻量投影", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get("/spend/logs/session/ui?session_id=session-A");
+
+			expect(res.status).toBe(200);
+			expect(res.body).toMatchObject({ page: 1, page_size: 50, total: 2, total_pages: 1 });
+			const countCall = calls.find((call) => call.hasCount);
+			const dataCall = calls.find((call) => call.projection.includes("request_id"));
+			expect(countCall?.whereSql).toContain("session-A");
+			expect(dataCall?.whereSql).toContain("session-A");
+			expect(dataCall?.orderSql).toMatch(/asc/i);
+			expect(dataCall?.limitN).toBe(50);
+			expect(dataCall?.offsetN).toBe(0);
+			expect(dataCall?.projection).toEqual(expect.arrayContaining(["request_id", "startTime", "session_id", "status"]));
+			expect(dataCall?.projection).not.toEqual(
+				expect.arrayContaining(["messages", "response", "proxy_server_request", "standard_logging_object"]),
+			);
+			expect(res.body.data[0]).not.toHaveProperty("session_total_count");
+		});
+
+		it("page_size 最大 100，旧 page 输入保留但不使用 offset", async () => {
+			const rows = Array.from({ length: 201 }, (_, index) => ({
+				...SAMPLE_UI_ROW,
+				request_id: `req-${String(index).padStart(3, "0")}`,
+				startTime: new Date("2025-02-10T00:00:00Z"),
+			}));
+			const { db, calls } = makeMockDb({ responses: [[{ count: 201 }], rows] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/ui?session_id=session-A&page=2&page_size=101",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body).toMatchObject({ page: 2, page_size: 100, total: 201, total_pages: 3 });
+			const dataCall = calls.find((call) => call.projection.includes("request_id"));
+			expect(dataCall?.offsetN).toBeNull();
+			expect(dataCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
+		});
+
+		it("第一页生成固定 snapshot 和 next_cursor，复合 keyset 可区分相同 startTime", async () => {
+			const sameTime = new Date("2025-02-10T00:00:00Z");
+			const rows = [
+				{ ...SAMPLE_UI_ROW, request_id: "req-a", startTime: sameTime },
+				{ ...SAMPLE_UI_ROW, request_id: "req-b", startTime: sameTime },
+				{ ...SAMPLE_UI_ROW, request_id: "req-c", startTime: sameTime },
+			];
+			const { db, calls } = makeMockDb({ responses: [[{ count: 3 }], rows] });
+			const first = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/ui?session_id=session-A&page_size=2",
+			);
+
+			expect(first.status).toBe(200);
+			expect(typeof first.body.snapshot).toBe("string");
+			expect(typeof first.body.next_cursor).toBe("string");
+			expect(first.body.data.map((row: Record<string, unknown>) => row.request_id)).toEqual(["req-a", "req-b"]);
+			const dataCall = calls.find((call) => call.projection.includes("request_id"));
+			expect(dataCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
+			expect(dataCall?.offsetN).toBeNull();
+		});
+
+		it("空结果返回 total_pages=0", async () => {
+			const { db } = makeMockDb({ responses: [[{ count: 0 }], []] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get("/spend/logs/session/ui?session_id=session-A");
+
+			expect(res.status).toBe(200);
+			expect(res.body).toEqual({ data: [], total: 0, page: 1, page_size: 50, total_pages: 0 });
+		});
+
+		it.each([1, 2])("第 %i 次 DB 查询失败返回 500", async (failAt) => {
+			const { db, failAfter } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			failAfter(failAt);
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get("/spend/logs/session/ui?session_id=session-A");
+
+			expect(res.status).toBe(500);
+		});
+
+		it("internal_user 的新 group 路径按 user scope 裁剪 count/detail", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			const scopedAuth: UserAPIKeyAuth = { ...INTERNAL_USER_AUTH, user_id: "internal-user-1" };
+			const res = await request(makeAppWithAuth(db, scopedAuth)).get(
+				`/spend/logs/session/ui?session_group_type=session_id&session_group_id=session-A`,
+			);
+
+			expect(res.status).toBe(200);
+			expect(calls.find((call) => call.hasCount)?.whereSql).toContain("internal-user-1");
+			expect(calls.find((call) => call.projection.includes("request_id"))?.whereSql).toContain("internal-user-1");
+		});
+
+		it("internal_user 的旧 session_id 路径同样按 user scope 裁剪", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			const scopedAuth: UserAPIKeyAuth = { ...INTERNAL_USER_AUTH, user_id: "internal-user-1" };
+			const res = await request(makeAppWithAuth(db, scopedAuth)).get("/spend/logs/session/ui?session_id=session-A");
+
+			expect(res.status).toBe(200);
+			expect(calls.find((call) => call.hasCount)?.whereSql).toContain("internal-user-1");
+		});
+
+		it("管理员 group 路径不增加 user scope", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], [SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/ui?session_group_type=session_id&session_group_id=session-A",
+			);
+
+			expect(res.status).toBe(200);
+			expect(calls.find((call) => call.hasCount)?.whereSql).not.toContain("internal-user");
+		});
+
+		it("静态 session 路由不会被 request_id 详情路由捕获", async () => {
+			const { db, calls } = makeMockDb({ responses: [[{ count: 0 }], []] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get("/spend/logs/session/ui?session_id=session-A");
+
+			expect(res.status).toBe(200);
+			expect(calls.some((call) => call.hasCount)).toBe(true);
+			expect(calls.some((call) => call.projection.includes("messages"))).toBe(false);
+		});
+	});
+});
+
+const postgresCompatibilityUrl = process.env.TEST_DATABASE_URL;
+const describeWithPostgres = postgresCompatibilityUrl ? describe : describe.skip;
+
+describeWithPostgres("Claude Code session group PostgreSQL compatibility", () => {
+	let pool: Pool;
+
+	beforeAll(() => {
+		pool = new Pool({ connectionString: postgresCompatibilityUrl });
+	});
+
+	afterAll(async () => {
+		await pool.end();
+	});
+
+	it("PostgreSQL 14 支持 object、历史 serialized object 和任意非法 string 的安全提取", async () => {
+		const serializedPattern =
+			'"spend_logs_metadata"[[:space:]]*:[[:space:]]*\\{[^{}]*"user_id"[[:space:]]*:[[:space:]]*"[[:space:]]*(user_[A-Za-z0-9_-]+_account_[A-Za-z0-9_-]*_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[[:space:]]*"';
+		const strictPattern =
+			"^user_[A-Za-z0-9_-]+_account_[A-Za-z0-9_-]*_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+		const validObject = JSON.stringify({ spend_logs_metadata: { user_id: `  ${CLAUDE_CODE_USER_ID}  ` } });
+		const validSerializedObject = JSON.stringify(JSON.stringify({ spend_logs_metadata: { user_id: CLAUDE_CODE_USER_ID } }));
+		const invalidSerializedValue = JSON.stringify("legacy-value");
+
+		const result = await pool.query<{ user_id: string | null }>(
+			`WITH samples(metadata) AS (VALUES ($1::jsonb), ($2::jsonb), ($3::jsonb)), candidates AS (
+				SELECT CASE
+					WHEN jsonb_typeof(metadata) = 'object' THEN btrim(metadata #>> '{spend_logs_metadata,user_id}')
+					WHEN jsonb_typeof(metadata) = 'string' THEN (regexp_match(metadata #>> '{}', $4, 'i'))[1]
+					ELSE NULL
+				END AS candidate
+				FROM samples
+			)
+			SELECT CASE WHEN candidate ~* $5 THEN candidate ELSE NULL END AS user_id FROM candidates`,
+			[validObject, validSerializedObject, invalidSerializedValue, serializedPattern, strictPattern],
+		);
+
+		expect(result.rows).toEqual([{ user_id: CLAUDE_CODE_USER_ID }, { user_id: CLAUDE_CODE_USER_ID }, { user_id: null }]);
 	});
 });

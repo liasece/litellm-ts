@@ -1,7 +1,21 @@
 import React, { useState } from "react";
 import {
-  Card, Text, Button, Grid, Tab, TabList, TabGroup, TabPanel, TabPanels, Title,
-  Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
+	Card,
+	Text,
+	Button,
+	Grid,
+	Tab,
+	TabList,
+	TabGroup,
+	TabPanel,
+	TabPanels,
+	Title,
+	Table,
+	TableHead,
+	TableBody,
+	TableRow,
+	TableHeaderCell,
+	TableCell,
 } from "@tremor/react";
 import { ArrowLeftIcon, TrashIcon, RefreshIcon, PlusIcon } from "@heroicons/react/outline";
 import {
@@ -27,6 +41,7 @@ import { CopyIcon, CheckIcon } from "lucide-react";
 import NotificationsManager from "../molecules/notifications_manager";
 import { getBudgetDurationLabel } from "../common_components/budget_duration_dropdown";
 import DeleteResourceModal from "../common_components/DeleteResourceModal";
+import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 
 interface UserInfoViewProps {
   userId: string;
@@ -138,7 +153,7 @@ export default function UserInfoView({
         (teams || []).map((t: any) => ({
           team_id: t.team_id,
           team_alias: t.team_alias || t.team_id,
-        }))
+				})),
       );
     } catch (error) {
       console.error("Error fetching teams:", error);
@@ -235,9 +250,7 @@ export default function UserInfoView({
     setTeamToRemove(null);
   };
 
-  const availableTeamsForAdd = allTeams.filter(
-    (t) => !teamDetails.some((td) => td.team_id === t.team_id)
-  );
+	const availableTeamsForAdd = allTeams.filter((t) => !teamDetails.some((td) => td.team_id === t.team_id));
 
   const handleResetPassword = async () => {
     if (!accessToken) {
@@ -304,23 +317,17 @@ export default function UserInfoView({
 
   if (isLoading) {
     return (
-      <div className="p-4">
-        <Button icon={ArrowLeftIcon} variant="light" onClick={onClose} className="mb-4">
-          Back to Users
-        </Button>
-        <Text>Loading user data...</Text>
-      </div>
+			<ResourceDetailsDrawer open onClose={onClose} title="User details" loading>
+				<div>Loading user data...</div>
+			</ResourceDetailsDrawer>
     );
   }
 
   if (!userData) {
     return (
-      <div className="p-4">
-        <Button icon={ArrowLeftIcon} variant="light" onClick={onClose} className="mb-4">
-          Back to Users
-        </Button>
-        <Text>User not found</Text>
-      </div>
+			<ResourceDetailsDrawer open onClose={onClose} title="User details" error="User not found">
+				<div>User not found</div>
+			</ResourceDetailsDrawer>
     );
   }
 
@@ -349,6 +356,17 @@ export default function UserInfoView({
   };
 
   return (
+		<ResourceDetailsDrawer
+			open
+			onClose={onClose}
+			title={userData.user_email || "User"}
+			subtitle={userData.user_id}
+			actions={
+				userRole && rolesWithWriteAccess.includes(userRole) ? (
+					<Button onClick={() => setIsEditing(true)}>Edit</Button>
+				) : undefined
+			}
+		>
     <div className="p-4">
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -373,7 +391,12 @@ export default function UserInfoView({
         </div>
         {userRole && rolesWithWriteAccess.includes(userRole) && (
           <div className="flex items-center space-x-2">
-            <Button icon={RefreshIcon} variant="secondary" onClick={handleResetPassword} className="flex items-center">
+							<Button
+								icon={RefreshIcon}
+								variant="secondary"
+								onClick={handleResetPassword}
+								className="flex items-center"
+							>
               Reset Password
             </Button>
             <Button
@@ -399,16 +422,11 @@ export default function UserInfoView({
           {
             label: "Global Proxy Role",
             value:
-              (userData.user_role && possibleUIRoles?.[userData.user_role]?.ui_label) ||
-              userData.user_role ||
-              "-",
+								(userData.user_role && possibleUIRoles?.[userData.user_role]?.ui_label) || userData.user_role || "-",
           },
           {
             label: "Total Spend (USD)",
-            value:
-              userData.spend !== null && userData.spend !== undefined
-                ? userData.spend.toFixed(2)
-                : undefined,
+							value: userData.spend !== null && userData.spend !== undefined ? userData.spend.toFixed(2) : undefined,
           },
         ]}
         onCancel={cancelDelete}
@@ -443,12 +461,7 @@ export default function UserInfoView({
                 <div className="flex justify-between items-center mb-2">
                   <Text>Teams</Text>
                   {isProxyAdmin && (
-                    <Button
-                      icon={PlusIcon}
-                      variant="light"
-                      size="xs"
-                      onClick={handleOpenAddTeamModal}
-                    >
+											<Button icon={PlusIcon} variant="light" size="xs" onClick={handleOpenAddTeamModal}>
                       Add Team
                     </Button>
                   )}
@@ -487,22 +500,12 @@ export default function UserInfoView({
                     <Text>No teams</Text>
                   )}
                   {!isTeamsExpanded && teamDetails.length > 20 && (
-                    <Button
-                      variant="light"
-                      size="xs"
-                      className="mt-2"
-                      onClick={() => setIsTeamsExpanded(true)}
-                    >
+											<Button variant="light" size="xs" className="mt-2" onClick={() => setIsTeamsExpanded(true)}>
                       +{teamDetails.length - 20} more
                     </Button>
                   )}
                   {isTeamsExpanded && teamDetails.length > 20 && (
-                    <Button
-                      variant="light"
-                      size="xs"
-                      className="mt-2"
-                      onClick={() => setIsTeamsExpanded(false)}
-                    >
+											<Button variant="light" size="xs" className="mt-2" onClick={() => setIsTeamsExpanded(false)}>
                       Show Less
                     </Button>
                   )}
@@ -581,20 +584,12 @@ export default function UserInfoView({
 
                   <div>
                     <Text className="font-medium">Created</Text>
-                    <Text>
-                      {userData.created_at
-                        ? new Date(userData.created_at).toLocaleString()
-                        : "Unknown"}
-                    </Text>
+											<Text>{userData.created_at ? new Date(userData.created_at).toLocaleString() : "Unknown"}</Text>
                   </div>
 
                   <div>
                     <Text className="font-medium">Last Updated</Text>
-                    <Text>
-                      {userData.updated_at
-                        ? new Date(userData.updated_at).toLocaleString()
-                        : "Unknown"}
-                    </Text>
+											<Text>{userData.updated_at ? new Date(userData.updated_at).toLocaleString() : "Unknown"}</Text>
                   </div>
 
                   <div>
@@ -672,10 +667,7 @@ export default function UserInfoView({
         width={500}
         maskClosable={!isAddingTeam}
       >
-        <Form
-          layout="vertical"
-          onFinish={handleAddTeamSubmit}
-        >
+					<Form layout="vertical" onFinish={handleAddTeamSubmit}>
           <Form.Item label="Team" required>
             <AntdSelect
               showSearch
@@ -708,24 +700,22 @@ export default function UserInfoView({
               <AntdSelect.Option value="admin">
                 <Tooltip title="Can create team keys, add members, and manage settings">
                   <span className="font-medium">admin</span>
-                  <span className="ml-2 text-gray-500 text-sm">- Can create team keys, add members, and manage settings</span>
+										<span className="ml-2 text-gray-500 text-sm">
+											- Can create team keys, add members, and manage settings
+										</span>
                 </Tooltip>
               </AntdSelect.Option>
             </AntdSelect>
           </Form.Item>
 
           <div className="text-right mt-4">
-            <AntdButton
-              type="primary"
-              htmlType="submit"
-              loading={isAddingTeam}
-              disabled={!selectedTeamId}
-            >
+							<AntdButton type="primary" htmlType="submit" loading={isAddingTeam} disabled={!selectedTeamId}>
               {isAddingTeam ? "Adding..." : "Add to Team"}
             </AntdButton>
           </div>
         </Form>
       </Modal>
     </div>
+		</ResourceDetailsDrawer>
   );
 }

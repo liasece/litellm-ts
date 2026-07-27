@@ -18,6 +18,10 @@ import { createModuleLogger } from "./core/utils/logger";
 import type { ServiceConfig } from "./core/config";
 import type { RequestHandler } from "express";
 import { modelCostMapService, type ModelCostMapService } from "./cost/ModelCostMapService";
+import { CredentialRuntimeAccessor } from "./credentials/CredentialRuntimeAccessor";
+import { CredentialSecretBox } from "./credentials/CredentialSecretBox";
+import { CredentialService } from "./credentials/CredentialService";
+import { CredentialRepository } from "./repositories/CredentialRepository";
 
 const logger = createModuleLogger("Container");
 
@@ -40,6 +44,10 @@ export interface ServiceContainer {
 	readonly authMiddleware: RequestHandler;
 	/** 集中路由与对象授权边界 */
 	readonly authorizationGuard: AuthorizationGuard;
+	/** Credential 运行时明文读取边界 */
+	readonly credentialAccessor: CredentialRuntimeAccessor;
+	/** Credential 持久化与掩码服务 */
+	readonly credentialService: CredentialService;
 }
 
 /**
@@ -74,6 +82,15 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	//    ProviderRegistry 各 provider 的默认 API base 已由类内置。
 	const providerRegistry = defaultProviderRegistry;
 
+	// 2.1 Credential 必须先于 Router 和模型初始化，确保首次 Provider 请求即可解析命名凭据。
+	const credentialRepository = new CredentialRepository(db.db);
+	const credentialAccessor = new CredentialRuntimeAccessor();
+	const legacyEncryptionKey = process.env["LITELLM_SALT_KEY"] ?? config.generalSettings.master_key;
+	const legacySecretBox =
+		legacyEncryptionKey === undefined || legacyEncryptionKey.length === 0 ? null : new CredentialSecretBox(legacyEncryptionKey);
+	const credentialService = new CredentialService(credentialRepository, credentialAccessor, legacySecretBox);
+	await credentialService.load();
+
 	// 3. 构建 Router 并创建 Router
 	// 运行时配置来源：DB 优先，yaml 仅作缺省回退。
 	// Router 构造时使用安全默认值，所有运行时设置通过 updateSettings 统一灌入。
@@ -86,6 +103,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 			pre_call_checks: false,
 		},
 		{}, // modelGroupAlias 通过 updateSettings 从 DB/yaml 注入
+		credentialAccessor,
 	);
 
 	// 3.1 运行时设置：yaml 为基线，DB router_settings 覆盖（DB 优先）。
@@ -176,5 +194,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		authRepository: authRepository,
 		authMiddleware: authMiddleware,
 		authorizationGuard: authorizationGuard,
+		credentialAccessor: credentialAccessor,
+		credentialService: credentialService,
 	};
 }

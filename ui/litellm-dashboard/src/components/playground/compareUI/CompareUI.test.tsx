@@ -4,10 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import CompareUI from "./CompareUI";
 import { makeOpenAIChatCompletionRequest } from "../llm_calls/chat_completion";
 import { fetchAvailableAgents } from "../llm_calls/fetch_agents";
+import { fetchRoutableModels } from "../llm_calls/fetch_models";
 
-vi.mock("../llm_calls/fetch_models", () => ({
-  fetchRoutableModels: vi.fn().mockResolvedValue([{ model_group: "gpt-4" }, { model_group: "gpt-3.5-turbo" }]),
-}));
+vi.mock("../llm_calls/fetch_models", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../llm_calls/fetch_models")>();
+  return {
+    ...actual,
+    fetchRoutableModels: vi.fn().mockResolvedValue([{ model_group: "gpt-4" }, { model_group: "gpt-3.5-turbo" }]),
+  };
+});
 
 vi.mock("../llm_calls/chat_completion", () => ({
   makeOpenAIChatCompletionRequest: vi.fn().mockResolvedValue(undefined),
@@ -18,6 +23,8 @@ vi.mock("../llm_calls/fetch_agents", () => ({
 }));
 
 let capturedOnImageUpload: ((file: File) => false) | null = null;
+let capturedSelectorOptions: Array<{ value: string; label: string }> = [];
+let capturedComparisons: Array<{ id: string; model: string }> = [];
 
 vi.mock("../chat_ui/ChatImageUpload", () => ({
   default: ({ onImageUpload }: { onImageUpload: (file: File) => false }) => {
@@ -46,13 +53,20 @@ vi.mock("../chat_ui/ChatImageUtils", () => ({
 }));
 
 vi.mock("./components/ComparisonPanel", () => ({
-  ComparisonPanel: ({ comparison, onRemove }: { comparison: any; onRemove: () => void }) => (
-    <div data-testid={`comparison-panel-${comparison.id}`}>
-      <button data-testid={`remove-${comparison.id}`} onClick={onRemove}>
-        Remove
-      </button>
-    </div>
-  ),
+  ComparisonPanel: ({ comparison, selectorOptions, onRemove }: any) => {
+    capturedSelectorOptions = selectorOptions;
+    capturedComparisons = [
+      ...capturedComparisons.filter((item) => item.id !== comparison.id),
+      comparison,
+    ];
+    return (
+      <div data-testid={`comparison-panel-${comparison.id}`}>
+        <button data-testid={`remove-${comparison.id}`} onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock("./components/MessageInput", () => ({
@@ -90,6 +104,8 @@ beforeEach(() => {
   global.URL.createObjectURL = vi.fn().mockReturnValue("blob:test-url");
   global.URL.revokeObjectURL = vi.fn();
   capturedOnImageUpload = null;
+  capturedSelectorOptions = [];
+  capturedComparisons = [];
   vi.clearAllMocks();
 });
 
@@ -99,6 +115,23 @@ describe("CompareUI", () => {
     expect(getByTestId("comparison-panel-1")).toBeInTheDocument();
     expect(getByTestId("comparison-panel-2")).toBeInTheDocument();
     expect(getByTestId("message-input")).toBeInTheDocument();
+  });
+
+  it("keeps complete model candidates for labels and raw comparison values", async () => {
+    vi.mocked(fetchRoutableModels).mockResolvedValueOnce([
+      { model_group: "z-model", type: "model" },
+      { model_group: "fast", type: "alias" },
+    ]);
+
+    render(<CompareUI accessToken="test-token" disabledPersonalKeyCreation={false} />);
+
+    await waitFor(() => {
+      expect(capturedSelectorOptions).toEqual([
+        { value: "fast", label: "Alias: fast" },
+        { value: "z-model", label: "模型: z-model" },
+      ]);
+      expect(capturedComparisons.map((comparison) => comparison.model)).toEqual(["z-model", "fast"]);
+    });
   });
 
   it("adds a comparison when Add Comparison button is clicked", async () => {

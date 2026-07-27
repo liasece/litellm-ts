@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import GuardrailsPanel from "./guardrails";
 import { getGuardrailsList } from "./networking";
@@ -15,9 +15,14 @@ vi.mock("./guardrails/add_guardrail_form", () => ({
 
 vi.mock("./guardrails/guardrail_table", () => ({
   __esModule: true,
-  default: ({ guardrailsList, onDeleteClick }: any) => (
+	default: ({ guardrailsList, onDeleteClick, onGuardrailClick }: any) => (
     <div>
       <div>Mock Guardrail Table</div>
+			{guardrailsList.length > 0 && (
+				<button type="button" onClick={() => onGuardrailClick(guardrailsList[0].guardrail_id)}>
+					Open details
+				</button>
+			)}
       {guardrailsList.length > 0 && (
         <button
           data-testid="delete-button"
@@ -101,4 +106,14 @@ describe("GuardrailsPanel", () => {
     expect(screen.getByText("Guardrails")).toBeInTheDocument();
     expect(screen.getByText("+ Add New Guardrail")).toBeInTheDocument();
   });
+
+	it("keeps the table mounted while guardrail details are open", async () => {
+		render(<GuardrailsPanel {...defaultProps} />);
+
+		await waitFor(() => expect(screen.getByRole("button", { name: "Open details" })).toBeInTheDocument());
+		fireEvent.click(screen.getByRole("button", { name: "Open details" }));
+
+		expect(screen.getByText("Mock Guardrail Info View")).toBeInTheDocument();
+		expect(screen.getByText("Mock Guardrail Table")).toBeInTheDocument();
+	});
 });

@@ -5,9 +5,13 @@ import * as fetchModelsModule from "../llm_calls/fetch_models";
 import { fetchAvailableAgents } from "../llm_calls/fetch_agents";
 
 // Mock the fetchRoutableModels function
-vi.mock("../llm_calls/fetch_models", () => ({
-  fetchRoutableModels: vi.fn(),
-}));
+vi.mock("../llm_calls/fetch_models", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../llm_calls/fetch_models")>();
+  return {
+    ...actual,
+    fetchRoutableModels: vi.fn(),
+  };
+});
 
 vi.mock("../llm_calls/fetch_agents", () => ({
 	fetchAvailableAgents: vi.fn().mockResolvedValue([]),
@@ -132,9 +136,37 @@ describe("ChatUI", () => {
     fireEvent.mouseDown(modelSelect!);
 
     await waitFor(() => {
-      const model1Label = screen.getAllByText("Model 1");
+      const model1Label = screen.getAllByText("模型: Model 1");
       expect(model1Label.length).toBeGreaterThan(0);
     });
+  });
+
+  it("labels aliases and models, sorts aliases first, and selects the alias", async () => {
+    (fetchModelsModule.fetchRoutableModels as any).mockResolvedValueOnce([
+      { model_group: "z-model", mode: "chat", type: "model" },
+      { model_group: "fast", mode: "chat", type: "alias" },
+    ]);
+
+    const { getByText } = render(
+      <ChatUI
+        accessToken="1234567890"
+        token="1234567890"
+        userRole="user"
+        userID="1234567890"
+        disabledPersonalKeyCreation={false}
+      />,
+    );
+
+    await waitFor(() => expect(getByText("Test Key")).toBeInTheDocument());
+    const modelSelect = getByText("Select Model").closest("div")?.querySelector(".ant-select-selector");
+    fireEvent.mouseDown(modelSelect!);
+
+    await screen.findByText("Alias: fast");
+    const options = Array.from(document.querySelectorAll(".ant-select-item-option-content"));
+    expect(options.map((option) => option.textContent)).toEqual(["Enter custom model", "Alias: fast", "模型: z-model"]);
+
+    fireEvent.click(screen.getByText("Alias: fast"));
+    expect(modelSelect).toHaveTextContent("Alias: fast");
   });
 
   it("shows only chat-compatible models when chat endpoint is selected", async () => {
@@ -180,10 +212,10 @@ describe("ChatUI", () => {
 
     await waitFor(() => {
       // Chat-compatible: ChatModel should be visible
-      expect(screen.getAllByText("ChatModel").length).toBeGreaterThan(0);
-      expect(screen.queryByText("SpeechModel")).toBeNull();
-      expect(screen.queryByText("ImageModel")).toBeNull();
-      expect(screen.queryByText("ResponsesModel")).toBeNull();
+      expect(screen.getAllByText("模型: ChatModel").length).toBeGreaterThan(0);
+      expect(screen.queryByText("模型: SpeechModel")).toBeNull();
+      expect(screen.queryByText("模型: ImageModel")).toBeNull();
+      expect(screen.queryByText("模型: ResponsesModel")).toBeNull();
     });
   });
 
@@ -301,11 +333,11 @@ describe("ChatUI", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getAllByText("Model 1").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("模型: Model 1").length).toBeGreaterThan(0);
     });
 
     // Ant Design Select options may not have role="option"; click the dropdown option by text
-    const model1Options = screen.getAllByText("Model 1");
+    const model1Options = screen.getAllByText("模型: Model 1");
     await act(async () => {
       fireEvent.click(model1Options[model1Options.length - 1]);
     });

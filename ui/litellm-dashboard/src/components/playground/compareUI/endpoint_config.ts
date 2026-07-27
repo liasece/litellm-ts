@@ -4,6 +4,7 @@
  */
 
 import { Agent } from "../llm_calls/fetch_agents";
+import { ModelGroup, modelGroupsToSelectOptions } from "../llm_calls/fetch_models";
 
 // Endpoint identifiers
 export const EndpointId = {
@@ -80,8 +81,8 @@ export interface SelectorOption {
 }
 
 // Convert model options to unified format
-export const modelOptionsToSelectorOptions = (models: string[]): SelectorOption[] =>
-  models.map((model) => ({ value: model, label: model }));
+export const modelOptionsToSelectorOptions = (models: ModelGroup[]): SelectorOption[] =>
+  modelGroupsToSelectOptions(models);
 
 // Convert agent options to unified format
 export const agentOptionsToSelectorOptions = (agents: Agent[]): SelectorOption[] =>

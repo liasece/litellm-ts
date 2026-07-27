@@ -18,6 +18,8 @@ import { modelCostMapService } from "./cost/ModelCostMapService";
 const mockConfigParams: Record<string, Record<string, unknown>> = {};
 /** 测试可控的 LiteLLM_ProxyModelTable 行（Database mock 数据源），每个用例前重置 */
 const mockDbModelRows: Array<Record<string, unknown>> = [];
+/** 测试可控的 LiteLLM_CredentialsTable 行（Database mock 数据源），每个用例前重置 */
+const mockCredentialRows: Array<Record<string, unknown>> = [];
 
 jest.mock("./cost/ModelCostMapService", () => ({
 	modelCostMapService: {
@@ -42,7 +44,9 @@ jest.mock("./core/db/Database", () => ({
 		initialize: jest.fn().mockResolvedValue(undefined),
 		db: {
 			select: jest.fn(() => ({
-				from: jest.fn(() => Promise.resolve(mockDbModelRows)),
+				from: jest.fn((table: Record<string, unknown>) =>
+					Promise.resolve("credential_name" in table ? mockCredentialRows : mockDbModelRows),
+				),
 			})),
 		},
 	})),
@@ -53,6 +57,7 @@ beforeEach(() => {
 		delete mockConfigParams[key];
 	}
 	mockDbModelRows.length = 0;
+	mockCredentialRows.length = 0;
 });
 
 /**
@@ -115,6 +120,32 @@ describe("createServiceContainer — router_settings 接线", () => {
 		const deployments = container.router.getDeployments();
 		expect(deployments).toHaveLength(1);
 		expect(deployments[0]?.model_info?.id).toBe("test-glm-id");
+	});
+});
+
+describe("createServiceContainer — Credential 接线", () => {
+	it("启动时加载持久化明文凭据并暴露同一运行时 accessor/service", async () => {
+		mockCredentialRows.push({
+			credential_id: "credential-1",
+			credential_name: "openai-prod",
+			credential_values: { api_key: "sk-secret" },
+			credential_info: { custom_llm_provider: "openai" },
+			created_at: new Date(),
+			created_by: "user-a",
+			updated_at: new Date(),
+			updated_by: "user-a",
+		});
+		const config = validateAndTransform({});
+
+		const container = await createServiceContainer(config);
+
+		expect(container.credentialAccessor.getValues("openai-prod")).toEqual({ api_key: "sk-secret" });
+		expect(await container.credentialService.list()).toEqual([
+			expect.objectContaining({
+				credential_name: "openai-prod",
+				credential_values: { api_key: "********" },
+			}),
+		]);
 	});
 });
 

@@ -1246,6 +1246,8 @@ function makeTestDeployments(): Deployment[] {
 			litellm_params: {
 				model: "openai/gpt-4o",
 				api_key: "sk-secret-must-not-leak",
+				api_token: "token-secret-must-not-leak",
+				litellm_credential_name: "production-openai-credential",
 				api_base: "https://api.openai.com/v1",
 				custom_llm_provider: "openai",
 				rpm: 100,
@@ -1309,7 +1311,7 @@ describe("ModelsPageSupport 契约", () => {
 			expect(typeof res.body.size).toBe("number");
 		});
 
-		it("响应绝不泄露 api_key 敏感字段", async () => {
+		it("公开 litellm_credential_name，且绝不泄露秘密字段", async () => {
 			const config = makeConfig();
 			const app = buildAuthedApp(config, makeTestDeployments());
 			const res = await request(app).get("/v2/model/info");
@@ -1317,12 +1319,15 @@ describe("ModelsPageSupport 契约", () => {
 			// 整段 JSON 序列化后不得包含敏感字符串
 			const serialized = JSON.stringify(res.body);
 			expect(serialized).not.toContain("sk-secret-must-not-leak");
+			expect(serialized).not.toContain("token-secret-must-not-leak");
 			expect(serialized).not.toContain("sk-secret-2");
 			expect(serialized).not.toContain("sk-anthropic-secret");
-			// 显式断言 data[].litellm_params 不含 api_key 字段
+			const openAi = res.body.data.find((item: { model_info: { id: string } }) => item.model_info.id === "openai/gpt-4o-primary");
+			expect(openAi.litellm_params.litellm_credential_name).toBe("production-openai-credential");
 			for (const item of res.body.data) {
 				expect(item.litellm_params).toBeDefined();
 				expect(item.litellm_params).not.toHaveProperty("api_key");
+				expect(item.litellm_params).not.toHaveProperty("api_token");
 			}
 		});
 
@@ -1809,14 +1814,29 @@ describe("ModelsPageSupport 契约", () => {
 			expect(res.status).toBe(404);
 		});
 
-		it("modelId 存在时应返回包含敏感字段已剔除的 data", async () => {
+		it("litellm_model_id、model_id 和 modelId 查询别名均支持，且 deployment ID 优先匹配", async () => {
 			const config = makeConfig();
-			const app = buildAuthedApp(config, makeTestDeployments());
-			const res = await request(app).get("/v1/model/info?model_id=gpt-4o");
-			expect(res.status).toBe(200);
-			expect(Array.isArray(res.body.data)).toBe(true);
-			expect(res.body.data[0].model_name).toBe("gpt-4o");
-			expect(res.body.data[0].litellm_params).not.toHaveProperty("api_key");
+			const deployments: Deployment[] = [
+				{
+					model_name: "shared-model",
+					litellm_params: { model: "provider/first" },
+					model_info: { id: "first-deployment" },
+				},
+				{
+					model_name: "first-deployment",
+					litellm_params: { model: "provider/second" },
+					model_info: { id: "second-deployment" },
+				},
+			];
+			const app = buildAuthedApp(config, deployments);
+
+			for (const query of ["litellm_model_id=first-deployment", "model_id=first-deployment", "modelId=first-deployment"]) {
+				const res = await request(app).get(`/v1/model/info?${query}`);
+				expect(res.status).toBe(200);
+				expect(Array.isArray(res.body.data)).toBe(true);
+				expect(res.body.data[0].model_name).toBe("shared-model");
+				expect(res.body.data[0].litellm_params.model).toBe("provider/first");
+			}
 		});
 	});
 });

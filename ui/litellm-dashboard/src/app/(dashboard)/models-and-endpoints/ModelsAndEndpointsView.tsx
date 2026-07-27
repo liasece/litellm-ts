@@ -249,25 +249,6 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
   };
 
   Object.keys(Providers).find((key) => (Providers as { [index: string]: any })[key] === selectedProvider);
-  // If a team is selected, render TeamInfoView in full page layout
-  if (selectedTeamId) {
-    return (
-      <div className="w-full h-full">
-        <TeamInfoView
-          teamId={selectedTeamId}
-          onClose={() => setSelectedTeamId(null)}
-          accessToken={accessToken}
-          is_team_admin={userRole === "Admin"}
-          is_proxy_admin={userRole === "Proxy Admin"}
-          userModels={allModelsOnProxy}
-          editTeam={false}
-          onUpdate={handleRefreshClick}
-          premiumUser={premiumUser}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="w-full mx-4 h-[75vh]">
       <Grid numItems={1} className="gap-2 p-8 w-full mt-2">
@@ -292,22 +273,6 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
               Request Provider
             </a>
           </div>
-          {selectedModelId && !isLoading ? (
-            <ModelInfoView
-              modelId={selectedModelId}
-              onClose={() => {
-                setSelectedModelId(null);
-              }}
-              accessToken={accessToken}
-              userID={userID}
-              userRole={userRole}
-              onModelUpdate={(updatedModel) => {
-                queryClient.invalidateQueries({ queryKey: ["models", "list"] });
-                handleRefreshClick();
-              }}
-              modelAccessGroups={availableModelAccessGroups}
-            />
-          ) : (
             <TabGroup index={selectedTabIndex} onIndexChange={setSelectedTabIndex} className="gap-2 h-[75vh] w-full ">
               <TabList className="flex justify-between mt-2 w-full items-center">
                 <div className="flex">
@@ -404,6 +369,32 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
                 <PriceDataManagementTab />
               </TabPanels>
             </TabGroup>
+          {selectedModelId && !isLoading && (
+            <ModelInfoView
+              modelId={selectedModelId}
+              onClose={() => setSelectedModelId(null)}
+              accessToken={accessToken}
+              userID={userID}
+              userRole={userRole}
+              onModelUpdate={() => {
+                queryClient.invalidateQueries({ queryKey: ["models", "list"] });
+                handleRefreshClick();
+              }}
+              modelAccessGroups={availableModelAccessGroups}
+            />
+          )}
+          {selectedTeamId && (
+            <TeamInfoView
+              teamId={selectedTeamId}
+              onClose={() => setSelectedTeamId(null)}
+              accessToken={accessToken}
+              is_team_admin={userRole === "Admin"}
+              is_proxy_admin={userRole === "Proxy Admin"}
+              userModels={allModelsOnProxy}
+              editTeam={false}
+              onUpdate={handleRefreshClick}
+              premiumUser={premiumUser}
+            />
           )}
         </Col>
       </Grid>

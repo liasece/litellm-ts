@@ -75,10 +75,11 @@ describe("UserInfoView", () => {
     mockTeamMemberDeleteCall.mockResolvedValue({});
   });
 
-  it("should render the loading state", () => {
+	it("should render the loading state in the drawer", () => {
     render(<UserInfoView {...defaultProps} />);
 
-    expect(screen.getByText("Loading user data...")).toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: /user details/i })).toBeInTheDocument();
+		expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument();
   });
 
   it("should render the user email after loading", async () => {
@@ -209,11 +210,10 @@ describe("UserInfoView", () => {
     await user.click(deleteConfirmButton);
 
     await waitFor(() => {
-      expect(mockTeamMemberDeleteCall).toHaveBeenCalledWith(
-        "test-token",
-        "team-1",
-        { role: "user", user_id: "user-123" }
-      );
+			expect(mockTeamMemberDeleteCall).toHaveBeenCalledWith("test-token", "team-1", {
+				role: "user",
+				user_id: "user-123",
+			});
     });
   });
 });

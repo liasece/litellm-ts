@@ -41,6 +41,8 @@ function makeApp(
 		inserted?: Record<string, unknown>[];
 		deletedRowCount?: number;
 		litellmRouter?: LiteLLMRouter;
+		updated?: Record<string, unknown>[];
+		updateReturning?: Record<string, unknown>[];
 	} = {},
 ): express.Express {
 	const existing = options.existing ?? [];
@@ -71,11 +73,14 @@ function makeApp(
 			},
 		}),
 		update: () => ({
-			set: (values: Record<string, unknown>) => ({
-				where: () => ({
-					returning: () => Promise.resolve([{ ...MODEL_ROW, ...values }]),
-				}),
-			}),
+			set: (values: Record<string, unknown>) => {
+				options.updated?.push(values);
+				return {
+					where: () => ({
+						returning: () => Promise.resolve(options.updateReturning ?? [{ ...(existing[0] ?? MODEL_ROW), ...values }]),
+					}),
+				};
+			},
 		}),
 		delete: () => ({
 			where: () => Promise.resolve({ rowCount: options.deletedRowCount ?? 1 }),
@@ -106,6 +111,31 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 		expect(inserted[0]?.model_id).toBe("custom-id");
 	});
 
+	it("秘密字段仅在响应中固定掩码，落库与 Router 保留真实值", async () => {
+		const inserted: Record<string, unknown>[] = [];
+		const litellmRouter = new LiteLLMRouter({ model_list: [], routing_strategy: RoutingStrategyName.SimpleShuffle, num_retries: 0 });
+		const app = makeApp({ inserted: inserted, litellmRouter: litellmRouter });
+		const secret = "sk-new-secret";
+
+		const res = await request(app)
+			.post("/model/new")
+			.send({
+				model_name: "secure-model",
+				litellm_params: { model: "openai/gpt-4o", api_key: secret, extra_headers: { Authorization: "Bearer nested-secret" } },
+				model_info: { id: "secure-model-1", password: "model-info-secret" },
+			});
+
+		expect(res.status).toBe(200);
+		expect(JSON.stringify(res.body)).not.toContain(secret);
+		expect(JSON.stringify(res.body)).not.toContain("nested-secret");
+		expect(JSON.stringify(res.body)).not.toContain("model-info-secret");
+		expect(res.body.litellm_params.api_key).toBe("********");
+		expect(res.body.litellm_params.extra_headers.Authorization).toBe("********");
+		expect(res.body.model_info.password).toBe("********");
+		expect((inserted[0]?.litellm_params as Record<string, unknown>).api_key).toBe(secret);
+		expect(litellmRouter.getDeployment("secure-model-1")?.litellm_params.api_key).toBe(secret);
+	});
+
 	it("model_info 缺省时自动生成 uuid model_id", async () => {
 		const app = makeApp({});
 
@@ -120,33 +150,159 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 });
 
 describe("ModelManagementEndpoint /model/update 契约", () => {
-	it("合并更新 litellm_params 并返回 8 键完整模型行", async () => {
-		const app = makeApp({ existing: [MODEL_ROW] });
+	const NESTED_MODEL_ROW = {
+		...MODEL_ROW,
+		model_name: "old-name",
+		litellm_params: {
+			...MODEL_ROW.litellm_params,
+			api_base: "https://old.example",
+			extra_body: { keep: 1, remove: 2 },
+		},
+		model_info: { id: "model-1", db_model: false, description: "old", nested: { keep: 1, remove: 2 } },
+	};
 
-		const res = await request(app)
-			.post("/model/update")
-			.send({ model_info: { id: "model-1" }, litellm_params: { model: "gpt-4o" } });
+	it.each([
+		["POST", "/model/update", { model_info: { id: "model-1" }, litellm_params: { api_key: "sk-rotated-secret" } }],
+		["PATCH", "/model/model-1/update", { litellm_params: { api_key: "sk-rotated-secret" } }],
+	] as const)("%s 更新响应掩码秘密，但 DB 与 Router 使用真实值", async (method, path, body) => {
+		const updated: Record<string, unknown>[] = [];
+		const litellmRouter = new LiteLLMRouter({ model_list: [], routing_strategy: RoutingStrategyName.SimpleShuffle, num_retries: 0 });
+		const existing = {
+			...NESTED_MODEL_ROW,
+			litellm_params: {
+				...NESTED_MODEL_ROW.litellm_params,
+				api_key: "sk-old-secret",
+				input_cost_per_token: 0.000_002_5,
+				output_cost_per_token: 0.000_01,
+			},
+		};
+		litellmRouter.addDeployment({
+			model_name: existing.model_name,
+			litellm_params: existing.litellm_params,
+			model_info: existing.model_info as never,
+		});
+		const app = makeApp({ existing: [existing], updated: updated, litellmRouter: litellmRouter });
+		const res = method === "POST" ? await request(app).post(path).send(body) : await request(app).patch(path).send(body);
+
+		expect(res.status).toBe(200);
+		expect(JSON.stringify(res.body)).not.toContain("sk-rotated-secret");
+		expect(JSON.stringify(res.body)).not.toContain("sk-old-secret");
+		expect(res.body.litellm_params.api_key).toBe("********");
+		expect(res.body.litellm_params.input_cost_per_token).toBe(0.000_002_5);
+		expect(res.body.litellm_params.output_cost_per_token).toBe(0.000_01);
+		expect((updated[0]?.litellm_params as Record<string, unknown>).api_key).toBe("sk-rotated-secret");
+		expect(litellmRouter.getDeployment("model-1")?.litellm_params.api_key).toBe("sk-rotated-secret");
+	});
+
+	it.each([
+		["model_name", { model_name: "new-name" }],
+		["litellm_params", { litellm_params: { api_base: "https://new.example" } }],
+		["model_info", { model_info: { description: "new" } }],
+	] as const)("PATCH 可独立部分更新 %s，缺失字段保持不变", async (_field, patch) => {
+		const app = makeApp({ existing: [NESTED_MODEL_ROW] });
+		const res = await request(app).patch("/model/model-1/update").send(patch);
 
 		expect(res.status).toBe(200);
 		expect(Object.keys(res.body).sort()).toEqual([...PYTHON_MODEL_FIELDS].sort());
 		expect(res.body.model_id).toBe("model-1");
-		expect(res.body.litellm_params.model).toBe("gpt-4o");
-		// 既有缺省字段保留
-		expect(res.body.litellm_params.use_litellm_proxy).toBe(false);
+		expect(res.body.created_at).toBe(NESTED_MODEL_ROW.created_at.toISOString());
+		expect(res.body.created_by).toBe(NESTED_MODEL_ROW.created_by);
+		expect(res.body.model_info.id).toBe("model-1");
+		expect(res.body.litellm_params.model).toBe("gpt-4");
+		expect(res.body.updated_by).toBe("default_user_id");
+		expect(new Date(res.body.updated_at).getTime()).toBeGreaterThan(NESTED_MODEL_ROW.updated_at.getTime());
+		if (_field === "model_name") {
+			expect(res.body.model_name).toBe("new-name");
+			expect(res.body.litellm_params.api_base).toBe("https://old.example");
+		} else if (_field === "litellm_params") {
+			expect(res.body.model_name).toBe("old-name");
+			expect(res.body.litellm_params.api_base).toBe("https://new.example");
+		} else {
+			expect(res.body.model_info.description).toBe("new");
+			expect(res.body.model_name).toBe("old-name");
+		}
 	});
 
-	it("缺 model_info / model_info.id / 模型不存在时返回 Python 风格 400", async () => {
-		const app = makeApp({ existing: [] });
+	it("PATCH 嵌套 null 删除普通字段，但不得删除 litellm_params.model 或 model_info.id", async () => {
+		const app = makeApp({ existing: [NESTED_MODEL_ROW] });
+		const res = await request(app)
+			.patch("/model/model-1/update")
+			.send({ litellm_params: { extra_body: { remove: null } }, model_info: { nested: { remove: null } } });
+
+		expect(res.status).toBe(200);
+		expect(res.body.litellm_params.extra_body).toEqual({ keep: 1 });
+		expect(res.body.model_info.nested).toEqual({ keep: 1 });
+
+		for (const invalidPatch of [{ litellm_params: { model: null } }, { model_info: { id: null } }]) {
+			const invalid = await request(app).patch("/model/model-1/update").send(invalidPatch);
+			expect(invalid.status).toBe(400);
+		}
+	});
+
+	it("PATCH 拒绝 URL 与 body model_info.id 冲突，且不存在时返回无 DB 细节的 404", async () => {
+		const app = makeApp({ existing: [NESTED_MODEL_ROW] });
+		const conflict = await request(app)
+			.patch("/model/model-1/update")
+			.send({ model_info: { id: "other-id" } });
+		expect(conflict.status).toBe(400);
+		expect((await request(app).patch("/model/model-1/update").send({})).status).toBe(400);
+
+		const missing = await request(makeApp({ existing: [] }))
+			.patch("/model/ghost/update")
+			.send({ model_name: "x" });
+		expect(missing.status).toBe(404);
+		expect(missing.body.error.message).toBe("Model not found");
+		expect(JSON.stringify(missing.body)).not.toContain("LiteLLM_ProxyModelTable");
+	});
+
+	it("更新 returning 空行时显式返回未找到错误", async () => {
+		const patch = await request(makeApp({ existing: [NESTED_MODEL_ROW], updateReturning: [] }))
+			.patch("/model/model-1/update")
+			.send({ model_name: "new-name" });
+		expect(patch.status).toBe(404);
+		expect(patch.body.error.message).toBe("Model not found");
+
+		const legacy = await request(makeApp({ existing: [NESTED_MODEL_ROW], updateReturning: [] }))
+			.post("/model/update")
+			.send({ model_info: { id: "model-1" }, litellm_params: { model: "gpt-4o" } });
+		expect(legacy.status).toBe(400);
+		expect(legacy.body.error.message).toBe("Authentication Error, model not found");
+	});
+
+	it("旧 POST 可更新 model_name/model_info，null 不覆盖，并继续返回 Python 风格错误", async () => {
+		const app = makeApp({ existing: [NESTED_MODEL_ROW] });
+		const res = await request(app)
+			.post("/model/update")
+			.send({
+				model_name: "legacy-name",
+				model_info: { id: "model-1", description: "legacy", nested: { remove: null } },
+				litellm_params: { model: "gpt-4o", api_base: null },
+			});
+
+		expect(res.status).toBe(200);
+		expect(res.body.model_name).toBe("legacy-name");
+		expect(res.body.model_info).toMatchObject({ id: "model-1", description: "legacy", nested: { keep: 1, remove: 2 } });
+		expect(res.body.litellm_params).toMatchObject({ model: "gpt-4o", api_base: "https://old.example" });
+
+		const nulls = await request(app)
+			.post("/model/update")
+			.send({
+				model_name: null,
+				model_info: { id: "model-1", description: null },
+				litellm_params: { model: null, api_base: null },
+			});
+		expect(nulls.status).toBe(200);
+		expect(nulls.body.model_name).toBe("old-name");
+		expect(nulls.body.model_info.description).toBe("old");
+		expect(nulls.body.litellm_params).toMatchObject({ model: "gpt-4", api_base: "https://old.example" });
 
 		const noInfo = await request(app).post("/model/update").send({ litellm_params: {} });
 		expect(noInfo.status).toBe(400);
 		expect(noInfo.body.error.message).toBe("Authentication Error, model_info not provided");
-
 		const noId = await request(app).post("/model/update").send({ model_info: {}, litellm_params: {} });
 		expect(noId.status).toBe(400);
 		expect(noId.body.error.message).toBe("Authentication Error, model_info.id not provided");
-
-		const notFound = await request(app)
+		const notFound = await request(makeApp({ existing: [] }))
 			.post("/model/update")
 			.send({ model_info: { id: "ghost" }, litellm_params: { model: "x" } });
 		expect(notFound.status).toBe(400);
@@ -206,8 +362,8 @@ describe("ModelManagementEndpoint 批次 C3 — 写操作热更新 Router", () =
 		const app = makeApp({ existing: [MODEL_ROW], litellmRouter: litellmRouter });
 
 		const res = await request(app)
-			.post("/model/update")
-			.send({ model_info: { id: "model-1" }, litellm_params: { model: "gpt-4o" } });
+			.patch("/model/model-1/update")
+			.send({ litellm_params: { model: "gpt-4o" } });
 
 		expect(res.status).toBe(200);
 		expect(litellmRouter.getDeployment("model-1")?.litellm_params["model"]).toBe("gpt-4o");

@@ -44,6 +44,44 @@ describe("networking - expired session handling", () => {
 		expect(headers.get("Authorization")).toBeNull();
 	});
 
+	it("keyInfoV1Call 应编码 query、仅携带 cookie 并只解析一次 JSON", async () => {
+		const json = vi.fn().mockResolvedValue({ info: { key_alias: "logs-key" } });
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+		const key = "hash+/=?& value";
+
+		await expect(Networking.keyInfoV1Call("unused-access-token", key)).resolves.toEqual({
+			info: { key_alias: "logs-key" },
+		});
+
+		expect(mockFetch).toHaveBeenCalledOnce();
+		const [url, init] = mockFetch.mock.calls[0]!;
+		expect(String(url)).toContain(`?key=${encodeURIComponent(key)}`);
+		expect(init.credentials).toBe("include");
+		const headers = new Headers(init.headers);
+		expect(headers.get("Authorization")).toBeNull();
+		expect(headers.get("x-api-key")).toBeNull();
+		expect(headers.get("cookie-session")).toBeNull();
+		expect(json).toHaveBeenCalledOnce();
+	});
+
+	it("keyInfoV1Call 401 应通知错误正文、抛错且不再解析 JSON", async () => {
+		const NotificationsManager = (await import("./molecules/notifications_manager")).default;
+		const text = vi.fn().mockResolvedValue("Invalid or revoked WebUI session");
+		const json = vi.fn();
+		global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401, text: text, json: json } as any);
+
+		await expect(Networking.keyInfoV1Call("unused-access-token", "target-hash")).rejects.toThrow(
+			"Invalid or revoked WebUI session",
+		);
+
+		expect(text).toHaveBeenCalledOnce();
+		expect(NotificationsManager.fromBackend).toHaveBeenCalledWith(
+			"Failed to fetch key info - Invalid or revoked WebUI session",
+		);
+		expect(json).not.toHaveBeenCalled();
+	});
+
 	it("Playground session 应在网络边界移除 SDK 鉴权头并保留请求语义", async () => {
 		const cookieUtils = await import("@/utils/cookieUtils");
 		vi.mocked(cookieUtils.getCookie).mockReturnValue("csrf-value");
@@ -494,5 +532,227 @@ describe("adminTopKeysCall", () => {
 		await Networking.adminTopKeysCall("token");
 
 		expect(String(mockFetch.mock.calls[0]![0])).toMatch(/\/global\/spend\/keys$/);
+	});
+});
+
+describe("sessionSpendLogsCall", () => {
+	const originalFetch = global.fetch;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		global.fetch = originalFetch;
+	});
+
+	it("编码 session ID，仅携带 cookie，成功 JSON 只解析一次", async () => {
+		const json = vi.fn().mockResolvedValue({ data: [] });
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+		const sessionId = "trace+/=?& value";
+
+		await expect(Networking.sessionSpendLogsCall("unused-token", sessionId)).resolves.toEqual({ data: [] });
+
+		const [url, init] = mockFetch.mock.calls[0]!;
+		expect(String(url)).toContain(`session_id=${encodeURIComponent(sessionId)}`);
+		expect(init.credentials).toBe("include");
+		const headers = new Headers(init.headers);
+		expect(headers.get("Authorization")).toBeNull();
+		expect(headers.get("x-api-key")).toBeNull();
+		expect(headers.get("cookie-session")).toBeNull();
+		expect(json).toHaveBeenCalledOnce();
+	});
+
+	it("Session group 参数包含类型并完整 URL 编码 ID", async () => {
+		const json = vi.fn().mockResolvedValue({ data: [] });
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+		const groupId = "user_device_account__session_123e4567-e89b-12d3-a456-426614174000 +/&";
+
+		await Networking.sessionSpendLogsCall("unused-token", {
+			type: "claude_code_user_id",
+			id: groupId,
+		});
+
+		const parsed = new URL(String(mockFetch.mock.calls[0]![0]), "http://example.com");
+		expect(parsed.searchParams.get("session_group_type")).toBe("claude_code_user_id");
+		expect(parsed.searchParams.get("session_group_id")).toBe(groupId);
+		expect(parsed.searchParams.has("session_id")).toBe(false);
+	});
+
+	it("可选分页参数映射为 page 和 page_size，旧调用不附加分页参数", async () => {
+		const json = vi.fn().mockResolvedValue({ data: [] });
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+
+		await Networking.sessionSpendLogsCall("unused-token", "session-A");
+		await Networking.sessionSpendLogsCall("unused-token", "session-A", 2, 100);
+
+		const legacyUrl = new URL(String(mockFetch.mock.calls[0]![0]), "http://example.com");
+		expect(legacyUrl.searchParams.has("page")).toBe(false);
+		expect(legacyUrl.searchParams.has("page_size")).toBe(false);
+		const pagedUrl = new URL(String(mockFetch.mock.calls[1]![0]), "http://example.com");
+		expect(pagedUrl.searchParams.get("page")).toBe("2");
+		expect(pagedUrl.searchParams.get("page_size")).toBe("100");
+	});
+
+	it("options 参数透传显式 team scope、snapshot 和 cursor，且不破坏旧分页调用", async () => {
+		const json = vi.fn().mockResolvedValue({ data: [] });
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+
+		await Networking.sessionSpendLogsCall("unused-token", "session-A", {
+			pageSize: 100,
+			teamId: "team scope +/&",
+			snapshot: "snapshot +/&",
+			cursor: "cursor +/&",
+		});
+
+		const url = new URL(String(mockFetch.mock.calls[0]![0]), "http://example.com");
+		expect(url.searchParams.get("page_size")).toBe("100");
+		expect(url.searchParams.get("team_id")).toBe("team scope +/&");
+		expect(url.searchParams.get("snapshot")).toBe("snapshot +/&");
+		expect(url.searchParams.get("cursor")).toBe("cursor +/&");
+		expect(url.searchParams.has("page")).toBe(false);
+	});
+
+	it("失败日志不输出完整敏感 session ID", async () => {
+		const sessionId = "sensitive-session-id-that-must-not-be-logged";
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		global.fetch = vi.fn().mockRejectedValue(new Error(`network failure for ${sessionId}`));
+
+		await expect(Networking.sessionSpendLogsCall("unused-token", sessionId)).rejects.toThrow("network failure");
+		expect(consoleError.mock.calls.flat().map(String).join(" ")).not.toContain(sessionId);
+		consoleError.mockRestore();
+	});
+
+	it("JSON 错误正文提取后端 message，正文只读取一次", async () => {
+		const text = vi.fn().mockResolvedValue(JSON.stringify({ message: "Session lookup failed" }));
+		global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, text: text } as any);
+
+		await expect(Networking.sessionSpendLogsCall("unused-token", "session-A")).rejects.toThrow("Session lookup failed");
+		expect(text).toHaveBeenCalledOnce();
+	});
+
+	it("HTML 404 转为稳定 HTTP 错误，不泄露 HTML 或产生 JSON SyntaxError", async () => {
+		const html = "<!DOCTYPE html><html><body>Cannot GET /spend/logs/session/ui</body></html>";
+		const text = vi.fn().mockResolvedValue(html);
+		global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404, text: text } as any);
+
+		let thrown: Error | undefined;
+		try {
+			await Networking.sessionSpendLogsCall("unused-token", "session-A");
+		} catch (error) {
+			thrown = error as Error;
+		}
+
+		expect(thrown).toBeInstanceOf(Error);
+		expect(thrown?.message).toContain("404");
+		expect(thrown?.message).not.toContain("<!DOCTYPE html>");
+		expect(thrown?.message).not.toContain("Unexpected token");
+		expect(text).toHaveBeenCalledOnce();
+	});
+});
+
+describe("credential networking", () => {
+	const originalFetch = global.fetch;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		global.fetch = originalFetch;
+	});
+
+	it("uses the canonical encoded model_id query", async () => {
+		const json = vi.fn().mockResolvedValue({ data: [] });
+		global.fetch = vi.fn().mockResolvedValue({ ok: true, json } as any);
+		const modelId = "model/a?version=1&region=eu";
+
+		await Networking.modelInfoV1Call("unused-token", modelId);
+
+		const [url] = vi.mocked(global.fetch).mock.calls[0]!;
+		expect(String(url)).toContain(`model_id=${encodeURIComponent(modelId)}`);
+		expect(String(url)).not.toContain("litellm_model_id=");
+	});
+
+	it("encodes credential path segments", async () => {
+		const json = vi.fn().mockResolvedValue({ success: true });
+		global.fetch = vi.fn().mockResolvedValue({ ok: true, json } as any);
+		const credentialName = "team/a credential?";
+		const modelId = "model/a credential?";
+
+		await Networking.credentialGetCall("unused-token", credentialName, null);
+		await Networking.credentialGetCall("unused-token", null, modelId);
+		await Networking.credentialDeleteCall("unused-token", credentialName);
+		await Networking.credentialUpdateCall("unused-token", credentialName, { credential_values: {} });
+
+		const urls = vi.mocked(global.fetch).mock.calls.map(([url]) => String(url));
+		expect(urls.some((url) => url.endsWith(`/credentials/by_name/${encodeURIComponent(credentialName)}`))).toBe(true);
+		expect(urls.some((url) => url.endsWith(`/credentials/by_model/${encodeURIComponent(modelId)}`))).toBe(true);
+		expect(urls.some((url) => url.endsWith(`/credentials/${encodeURIComponent(credentialName)}`))).toBe(true);
+	});
+
+	it("never logs credential secrets and reports operation-specific errors", async () => {
+		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const secret = "super-secret-api-key";
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			json: vi.fn().mockResolvedValue({ error: { message: "Credential rejected" } }),
+		} as any);
+
+		await expect(
+			Networking.credentialCreateCall("unused-token", {
+				credential_name: "credential",
+				credential_values: { api_key: secret },
+			}),
+		).rejects.toThrow("Credential rejected");
+		await expect(
+			Networking.credentialUpdateCall("unused-token", "credential", { credential_values: { api_key: secret } }),
+		).rejects.toThrow("Credential rejected");
+
+		expect(consoleLog).not.toHaveBeenCalledWith(expect.stringContaining(secret), expect.anything());
+		expect(consoleError.mock.calls.flat().map(String).join(" ")).not.toContain("Failed to create key");
+		consoleLog.mockRestore();
+		consoleError.mockRestore();
+	});
+
+	it("preserves plain-text credential errors", async () => {
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 409,
+			text: vi.fn().mockResolvedValue("Credential already exists"),
+		} as any);
+
+		await expect(Networking.credentialCreateCall("unused-token", { credential_name: "duplicate" })).rejects.toThrow(
+			"Credential already exists",
+		);
+	});
+
+	it("does not log model patch payloads, responses, or connection secrets", async () => {
+		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+		const secret = "never-log-this-secret";
+		global.fetch = vi
+			.fn()
+			.mockResolvedValueOnce({
+				ok: true,
+				json: vi.fn().mockResolvedValue({ api_key: secret }),
+			} as any)
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				statusText: "OK",
+				headers: { get: vi.fn().mockReturnValue("application/json") },
+				json: vi.fn().mockResolvedValue({ status: "success" }),
+			} as any);
+
+		await Networking.modelPatchUpdateCall("unused-token", { litellm_params: { api_key: secret } }, "model/id");
+		await Networking.testConnectionRequest("unused-token", { api_key: secret }, {}, "chat");
+
+		expect(consoleLog.mock.calls.flat().map(String).join(" ")).not.toContain(secret);
+		consoleLog.mockRestore();
 	});
 });

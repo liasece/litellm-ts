@@ -1,15 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Modal, Form, Input, Select } from "antd";
 import MessageManager from "@/components/molecules/message_manager";
 import { Button } from "@tremor/react";
 import { registerClaudeCodePlugin } from "../networking";
-import {
-  validatePluginName,
-  isValidSemanticVersion,
-  isValidEmail,
-  isValidUrl,
-  parseKeywords,
-} from "./helpers";
+import { validatePluginName, isValidSemanticVersion, isValidEmail, isValidUrl, parseKeywords } from "./helpers";
+import { Plugin } from "./types";
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -19,6 +14,7 @@ interface AddPluginFormProps {
   onClose: () => void;
   accessToken: string | null;
   onSuccess: () => void;
+	initialPlugin?: Plugin;
 }
 
 const PREDEFINED_CATEGORIES = [
@@ -32,15 +28,34 @@ const PREDEFINED_CATEGORIES = [
   "Documentation",
 ];
 
-const AddPluginForm: React.FC<AddPluginFormProps> = ({
-  visible,
-  onClose,
-  accessToken,
-  onSuccess,
-}) => {
+const AddPluginForm: React.FC<AddPluginFormProps> = ({ visible, onClose, accessToken, onSuccess, initialPlugin }) => {
   const [form] = Form.useForm();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [sourceType, setSourceType] = useState<"github" | "url" | "git-subdir">("github");
+
+	useEffect(() => {
+		if (!visible) return;
+		const source = initialPlugin?.source;
+		const initialSourceType = source?.source === "github" ? "github" : "url";
+		setSourceType(initialSourceType);
+		form.setFieldsValue(
+			initialPlugin
+				? {
+						name: initialPlugin.name,
+						sourceType: initialSourceType,
+						repo: source?.repo,
+						url: source?.url,
+						version: initialPlugin.version,
+						description: initialPlugin.description,
+						category: initialPlugin.category,
+						keywords: initialPlugin.keywords?.join(", "),
+						authorName: initialPlugin.author?.name,
+						authorEmail: initialPlugin.author?.email,
+						homepage: initialPlugin.homepage,
+					}
+				: { sourceType: "github" },
+		);
+	}, [visible, initialPlugin, form]);
 
   const handleSubmit = async (values: any) => {
     if (!accessToken) {
@@ -50,17 +65,13 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
 
     // Validate plugin name
     if (!validatePluginName(values.name)) {
-      MessageManager.error(
-        "Plugin name must be kebab-case (lowercase letters, numbers, and hyphens only)"
-      );
+			MessageManager.error("Plugin name must be kebab-case (lowercase letters, numbers, and hyphens only)");
       return;
     }
 
     // Validate semantic version if provided
     if (values.version && !isValidSemanticVersion(values.version)) {
-      MessageManager.error(
-        "Version must be in semantic versioning format (e.g., 1.0.0)"
-      );
+			MessageManager.error("Version must be in semantic versioning format (e.g., 1.0.0)");
       return;
     }
 
@@ -159,19 +170,14 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
 
   return (
     <Modal
-      title="Add New Claude Code Plugin"
+			title={initialPlugin ? "Edit Claude Code Plugin" : "Add New Claude Code Plugin"}
       open={visible}
       onCancel={handleCancel}
       footer={null}
       width={700}
       className="top-8"
     >
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={handleSubmit}
-        className="mt-4"
-      >
+			<Form form={form} layout="vertical" onFinish={handleSubmit} className="mt-4">
         {/* Plugin Name */}
         <Form.Item
           label="Plugin Name"
@@ -180,8 +186,7 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
             { required: true, message: "Please enter plugin name" },
             {
               pattern: /^[a-z0-9-]+$/,
-              message:
-                "Name must be kebab-case (lowercase, numbers, hyphens only)",
+							message: "Name must be kebab-case (lowercase, numbers, hyphens only)",
             },
           ]}
           tooltip="Unique identifier in kebab-case format (e.g., my-awesome-plugin)"
@@ -229,11 +234,7 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
             rules={[{ required: true, message: "Please enter git URL" }]}
             tooltip="Full git URL to the repository"
           >
-            <Input
-              type="url"
-              placeholder="https://github.com/org/repo.git"
-              className="rounded-lg"
-            />
+						<Input type="url" placeholder="https://github.com/org/repo.git" className="rounded-lg" />
           </Form.Item>
         )}
 
@@ -252,19 +253,12 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
             ]}
             tooltip="Path to the plugin directory within the repository (e.g., plugins/plugin-name)"
           >
-            <Input
-              placeholder="plugins/plugin-name"
-              className="rounded-lg"
-            />
+						<Input placeholder="plugins/plugin-name" className="rounded-lg" />
           </Form.Item>
         )}
 
         {/* Version */}
-        <Form.Item
-          label="Version (Optional)"
-          name="version"
-          tooltip="Semantic version (e.g., 1.0.0)"
-        >
+				<Form.Item label="Version (Optional)" name="version" tooltip="Semantic version (e.g., 1.0.0)">
           <Input placeholder="1.0.0" className="rounded-lg" />
         </Form.Item>
 
@@ -274,20 +268,11 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
           name="description"
           tooltip="Brief description of what the plugin does"
         >
-          <TextArea
-            rows={3}
-            placeholder="A plugin that helps with..."
-            maxLength={500}
-            className="rounded-lg"
-          />
+					<TextArea rows={3} placeholder="A plugin that helps with..." maxLength={500} className="rounded-lg" />
         </Form.Item>
 
         {/* Category */}
-        <Form.Item
-          label="Category (Optional)"
-          name="category"
-          tooltip="Select a category or enter a custom one"
-        >
+				<Form.Item label="Category (Optional)" name="category" tooltip="Select a category or enter a custom one">
           <Select
             placeholder="Select or type a category"
             allowClear
@@ -304,20 +289,12 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
         </Form.Item>
 
         {/* Keywords */}
-        <Form.Item
-          label="Keywords (Optional)"
-          name="keywords"
-          tooltip="Comma-separated list of keywords for search"
-        >
+				<Form.Item label="Keywords (Optional)" name="keywords" tooltip="Comma-separated list of keywords for search">
           <Input placeholder="search, web, api" className="rounded-lg" />
         </Form.Item>
 
         {/* Author Name */}
-        <Form.Item
-          label="Author Name (Optional)"
-          name="authorName"
-          tooltip="Name of the plugin author or organization"
-        >
+				<Form.Item label="Author Name (Optional)" name="authorName" tooltip="Name of the plugin author or organization">
           <Input placeholder="Your Name or Organization" className="rounded-lg" />
         </Form.Item>
 
@@ -344,15 +321,17 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({
         {/* Submit Buttons */}
         <Form.Item className="mb-0 mt-6">
           <div className="flex justify-end gap-2">
-            <Button
-              variant="secondary"
-              onClick={handleCancel}
-              disabled={isSubmitting}
-            >
+						<Button variant="secondary" onClick={handleCancel} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button type="submit" loading={isSubmitting}>
-              {isSubmitting ? "Registering..." : "Register Plugin"}
+							{isSubmitting
+								? initialPlugin
+									? "Saving..."
+									: "Registering..."
+								: initialPlugin
+									? "Save Changes"
+									: "Register Plugin"}
             </Button>
           </div>
         </Form.Item>

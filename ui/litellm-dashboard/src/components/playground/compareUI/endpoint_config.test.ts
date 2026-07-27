@@ -57,13 +57,15 @@ describe("endpoint_config", () => {
     expect(isModelEndpoint(EndpointId.A2A_AGENTS)).toBe(false);
   });
 
-  it("should convert model options to selector options", () => {
-    const models = ["gpt-4", "gpt-3.5-turbo", "claude-3"];
-    const options = modelOptionsToSelectorOptions(models);
-    expect(options).toHaveLength(3);
-    expect(options[0]).toEqual({ value: "gpt-4", label: "gpt-4" });
-    expect(options[1]).toEqual({ value: "gpt-3.5-turbo", label: "gpt-3.5-turbo" });
-    expect(options[2]).toEqual({ value: "claude-3", label: "claude-3" });
+  it("should convert complete model candidates to labeled selector options", () => {
+    const options = modelOptionsToSelectorOptions([
+      { model_group: "z-model", type: "model" },
+      { model_group: "fast", type: "alias" },
+    ]);
+    expect(options).toEqual([
+      { value: "fast", label: "Alias: fast" },
+      { value: "z-model", label: "模型: z-model" },
+    ]);
   });
 
   it("should convert agent options to selector options", () => {

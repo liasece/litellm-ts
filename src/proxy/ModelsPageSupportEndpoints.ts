@@ -635,6 +635,7 @@ const PUBLIC_LITELLM_PARAM_KEYS: ReadonlySet<keyof LitellmParams> = new Set<keyo
 	"model",
 	"api_base",
 	"custom_llm_provider",
+	"litellm_credential_name",
 	"rpm",
 	"tpm",
 	"timeout",
@@ -949,14 +950,16 @@ export function registerModelsPageSupportRoutes(
 
 	/** 单个模型详情查询（WebUI 编辑模型时使用） */
 	registerRoute(router, { method: "get", path: "/v1/model/info" }, (req): ModelInfoV1Response => {
-		const modelIdRaw = req.query.model_id ?? req.query.modelId ?? "";
-		const modelId = typeof modelIdRaw === "string" ? modelIdRaw : "";
+		const modelId = firstQueryString(req.query.litellm_model_id ?? req.query.model_id ?? req.query.modelId) ?? "";
 		const deployments = resolveDeployments(routerOrAccessor);
 		if (!modelId) {
 			return { data: [] };
 		}
 		// 优先按 model_name 匹配；再按 litellm_params.model 匹配
-		const dep = deployments.find((d) => d.model_name === modelId) ?? deployments.find((d) => d.litellm_params.model === modelId);
+		const dep =
+			deployments.find((d) => d.model_info?.id === modelId) ??
+			deployments.find((d) => d.model_name === modelId) ??
+			deployments.find((d) => d.litellm_params.model === modelId);
 		if (!dep) {
 			throw new ApiError(HTTP_STATUS.NOT_FOUND, `Model "${modelId}" not found`);
 		}

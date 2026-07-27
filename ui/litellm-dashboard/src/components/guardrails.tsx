@@ -146,10 +146,7 @@ const GuardrailsPanel: React.FC<GuardrailsPanelProps> = ({ accessToken, userRole
         <TabPanels>
           {/* Guardrail Garden Tab */}
           <TabPanel>
-            <GuardrailGarden
-              accessToken={accessToken}
-              onGuardrailCreated={handleSuccess}
-            />
+						<GuardrailGarden accessToken={accessToken} onGuardrailCreated={handleSuccess} />
           </TabPanel>
 
           {/* Existing Guardrails Tab */}
@@ -181,14 +178,6 @@ const GuardrailsPanel: React.FC<GuardrailsPanelProps> = ({ accessToken, userRole
               </Dropdown>
             </div>
 
-            {selectedGuardrailId ? (
-              <GuardrailInfoView
-                guardrailId={selectedGuardrailId}
-                onClose={() => setSelectedGuardrailId(null)}
-                accessToken={accessToken}
-                isAdmin={isAdmin}
-              />
-            ) : (
               <GuardrailTable
                 guardrailsList={guardrailsList}
                 isLoading={isLoading}
@@ -198,6 +187,14 @@ const GuardrailsPanel: React.FC<GuardrailsPanelProps> = ({ accessToken, userRole
                 isAdmin={isAdmin}
                 onGuardrailClick={(id) => setSelectedGuardrailId(id)}
               />
+
+						{selectedGuardrailId && (
+							<GuardrailInfoView
+								guardrailId={selectedGuardrailId}
+								onClose={() => setSelectedGuardrailId(null)}
+								accessToken={accessToken}
+								isAdmin={isAdmin}
+							/>
             )}
 
             <AddGuardrailForm

@@ -56,7 +56,7 @@ describe("AddPluginForm", () => {
     });
 
     await waitFor(() => {
-      fireEvent.click(screen.getByText("Git URL"));
+			fireEvent.click(screen.getByRole("option", { name: "Git URL" }));
     });
 
     await waitFor(() => {
@@ -97,8 +97,8 @@ describe("AddPluginForm", () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          "Path must be relative segments (alphanumeric, dots, hyphens, underscores), e.g. plugins/plugin-name"
-        )
+					"Path must be relative segments (alphanumeric, dots, hyphens, underscores), e.g. plugins/plugin-name",
+				),
       ).toBeInTheDocument();
     });
   });

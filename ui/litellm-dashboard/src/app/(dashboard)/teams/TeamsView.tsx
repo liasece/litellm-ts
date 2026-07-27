@@ -250,7 +250,7 @@ const TeamsView: React.FC<TeamProps> = ({
               + Create New Team
             </Button>
           )}
-          {selectedTeamId ? (
+					{selectedTeamId && (
             <TeamInfoView
               teamId={selectedTeamId}
               onUpdate={(data) => {
@@ -288,7 +288,7 @@ const TeamsView: React.FC<TeamProps> = ({
               editTeam={editTeam}
               premiumUser={premiumUser}
             />
-          ) : (
+					)}
             <TeamsHeaderTabs lastRefreshed={lastRefreshed} onRefresh={handleRefreshClick} userRole={userRole}>
               <TabPanel>
                 <Text>
@@ -340,7 +340,6 @@ const TeamsView: React.FC<TeamProps> = ({
                 </TabPanel>
               )}
             </TeamsHeaderTabs>
-          )}
           {(userRole == "Admin" || userRole == "Org Admin") && (
             <CreateTeamModal
               isTeamModalVisible={isTeamModalVisible}

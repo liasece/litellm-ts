@@ -107,6 +107,23 @@ describe("UserApiKeyAuth", () => {
 			const req = mkReq({ "x-api-key": "" });
 			expect(extractApiKey(req)).toBeNull();
 		});
+
+		it.each(["/v1beta/models/gemini:generateContent", "/v1beta/models/gemini:streamGenerateContent"])(
+			"extracts query key for Google route %s",
+			(route) => {
+				const req = mkReq({});
+				req.query = { key: "google-query-key" };
+
+				expect(extractApiKey(req, undefined, route)).toBe("google-query-key");
+			},
+		);
+
+		it("does not use query key as authentication on ordinary routes", () => {
+			const req = mkReq({});
+			req.query = { key: "lookup-target-hash" };
+
+			expect(extractApiKey(req, undefined, "/key/info")).toBeNull();
+		});
 	});
 
 	describe("WebUI cookie session", () => {
@@ -149,6 +166,37 @@ describe("UserApiKeyAuth", () => {
 				team_id: "litellm-dashboard",
 			});
 			expect(req.auth?.api_key).toBe(hashApiKey("session-jti"));
+		});
+
+		it("/key/info query key 不应覆盖有效 cookie session", async () => {
+			const { createApiKeyAuth } = await import("./UserApiKeyAuth");
+			const repository = {
+				findVerificationTokenByHash: jestMock.fn().mockResolvedValue(
+					makeToken({
+						token: hashApiKey("session-jti"),
+						userId: "default_user_id",
+						teamId: "litellm-dashboard",
+						expires: new Date(Date.now() + 3600_000),
+						metadata: { webui_session: true },
+					}),
+				),
+			} as unknown as Parameters<typeof createApiKeyAuth>[0];
+			const verifyJwt = jestMock.fn().mockResolvedValue({ claims: sessionClaims });
+			const jwtHandler = { verifyJwt: verifyJwt } as unknown as NonNullable<Parameters<typeof createApiKeyAuth>[2]>;
+			const middleware = createApiKeyAuth(repository, "master-key", jwtHandler);
+			const req = {
+				headers: { cookie: "token=header.payload.signature" },
+				path: "/key/info",
+				query: { key: "spend-log-token-hash" },
+			} as unknown as Request;
+
+			const error = await runMiddleware(middleware, req);
+
+			expect(error).toBeUndefined();
+			expect(verifyJwt).toHaveBeenCalledWith("header.payload.signature");
+			expect(repository.findVerificationTokenByHash).toHaveBeenCalledTimes(1);
+			expect(repository.findVerificationTokenByHash).toHaveBeenCalledWith(hashApiKey("session-jti"));
+			expect(repository.findVerificationTokenByHash).not.toHaveBeenCalledWith(hashApiKey("spend-log-token-hash"));
 		});
 
 		it("缺少 DB session 的 cookie JWT 应被拒绝", async () => {

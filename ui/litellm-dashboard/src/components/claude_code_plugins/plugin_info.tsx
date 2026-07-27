@@ -1,27 +1,18 @@
-import { CopyOutlined } from "@ant-design/icons";
-import { ArrowLeftIcon, ExternalLinkIcon } from "@heroicons/react/outline";
-import {
-  Badge,
-  Button,
-  Card,
-  Grid,
-  Text,
-  Title,
-} from "@tremor/react";
-import { Spin, Switch, Tooltip } from "antd";
+import { CopyOutlined, EditOutlined } from "@ant-design/icons";
+import { ExternalLinkIcon } from "@heroicons/react/outline";
+import { Badge, Button, Card, Grid, Text, Title } from "@tremor/react";
+import { Switch, Tooltip } from "antd";
 import React, { useEffect, useState } from "react";
+import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 import NotificationsManager from "../molecules/notifications_manager";
-import {
-  disableClaudeCodePlugin,
-  enableClaudeCodePlugin,
-  getClaudeCodePluginDetails,
-} from "../networking";
+import { disableClaudeCodePlugin, enableClaudeCodePlugin, getClaudeCodePluginDetails } from "../networking";
+import AddPluginForm from "./add_plugin_form";
 import {
   formatDateString,
   formatInstallCommand,
   getCategoryBadgeColor,
   getSourceDisplayText,
-  getSourceLink
+	getSourceLink,
 } from "./helpers";
 import { Plugin } from "./types";
 
@@ -31,6 +22,7 @@ interface PluginInfoViewProps {
   accessToken: string | null;
   isAdmin: boolean;
   onPluginUpdated: () => void;
+	onDelete: (pluginName: string, displayName: string) => void;
 }
 
 const PluginInfoView: React.FC<PluginInfoViewProps> = ({
@@ -39,39 +31,40 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
   accessToken,
   isAdmin,
   onPluginUpdated,
+	onDelete,
 }) => {
   const [plugin, setPlugin] = useState<Plugin | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+	const [loadError, setLoadError] = useState<string | null>(null);
   const [isToggling, setIsToggling] = useState(false);
-
-  useEffect(() => {
-    fetchPluginInfo();
-  }, [pluginId, accessToken]);
+	const [isEditing, setIsEditing] = useState(false);
 
   const fetchPluginInfo = async () => {
-    if (!accessToken) return;
-
+		if (!accessToken) {
+			setLoadError("No access token available");
+			setIsLoading(false);
+			return;
+		}
     setIsLoading(true);
+		setLoadError(null);
     try {
-      // The backend expects plugin name, not ID
-      // We'll need to find the plugin by ID from the list
-      // For now, assume pluginId is actually the plugin name
-      const data = await getClaudeCodePluginDetails(
-        accessToken,
-        pluginId as string
-      );
+			const data = await getClaudeCodePluginDetails(accessToken, pluginId);
       setPlugin(data.plugin);
     } catch (error) {
       console.error("Error fetching plugin info:", error);
+			setLoadError("Failed to load plugin information");
       NotificationsManager.error("Failed to load plugin information");
     } finally {
       setIsLoading(false);
     }
   };
 
+	useEffect(() => {
+		void fetchPluginInfo();
+	}, [pluginId, accessToken]);
+
   const handleToggleEnabled = async () => {
     if (!accessToken || !plugin) return;
-
     setIsToggling(true);
     try {
       if (plugin.enabled) {
@@ -82,7 +75,7 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
         NotificationsManager.success(`Plugin "${plugin.name}" enabled`);
       }
       onPluginUpdated();
-      fetchPluginInfo();
+			await fetchPluginInfo();
     } catch (error) {
       NotificationsManager.error("Failed to toggle plugin status");
     } finally {
@@ -90,43 +83,45 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
     }
   };
 
+	const handleEditSuccess = async () => {
+		onPluginUpdated();
+		await fetchPluginInfo();
+	};
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     NotificationsManager.success("Copied to clipboard!");
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <Spin size="large" />
-      </div>
-    );
-  }
+	const sourceLink = plugin ? getSourceLink(plugin.source) : undefined;
+	const categoryBadgeColor = plugin?.category ? getCategoryBadgeColor(plugin.category) : "gray";
 
-  if (!plugin) {
     return (
-      <div className="p-8 text-center text-gray-500">
-        <p>Plugin not found</p>
-        <Button className="mt-4" onClick={onClose}>
-          Go Back
+		<ResourceDetailsDrawer
+			open
+			onClose={onClose}
+			title={plugin?.name || "Plugin details"}
+			subtitle={plugin?.id || pluginId}
+			loading={isLoading}
+			error={loadError || (!isLoading && !plugin ? "Plugin not found" : undefined)}
+			onRetry={() => void fetchPluginInfo()}
+			actions={
+				plugin && isAdmin ? (
+					<>
+						<Button icon={EditOutlined} onClick={() => setIsEditing(true)}>
+							Edit
         </Button>
-      </div>
-    );
+						<Button color="red" onClick={() => onDelete(plugin.name, plugin.name)}>
+							Delete
+						</Button>
+					</>
+				) : undefined
   }
-
-  const installCommand = formatInstallCommand(plugin);
-  const sourceLink = getSourceLink(plugin.source);
-  const categoryBadgeColor = getCategoryBadgeColor(plugin.category);
-
-  return (
-    <div className="space-y-4">
-      {/* Header with Back Button */}
-      <div className="flex items-center gap-3 mb-6">
-        <ArrowLeftIcon
-          className="h-5 w-5 cursor-pointer text-gray-500 hover:text-gray-700"
-          onClick={onClose}
-        />
-        <h2 className="text-2xl font-bold">{plugin.name}</h2>
+		>
+			{plugin && (
+				<div className="space-y-4 p-4">
+					<div className="flex items-center gap-3">
+						<Title>{plugin.name}</Title>
         {plugin.version && (
           <Badge color="blue" size="xs">
             v{plugin.version}
@@ -141,22 +136,18 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
           {plugin.enabled ? "Enabled" : "Disabled"}
         </Badge>
       </div>
-
-      {/* Install Command */}
       <Card>
         <div className="flex items-center justify-between">
           <div className="flex-1">
             <Text className="text-gray-600 text-xs mb-2">Install Command</Text>
-            <div className="font-mono bg-gray-100 px-3 py-2 rounded text-sm">
-              {installCommand}
-            </div>
+								<div className="font-mono bg-gray-100 px-3 py-2 rounded text-sm">{formatInstallCommand(plugin)}</div>
           </div>
           <Tooltip title="Copy install command">
             <Button
               size="xs"
               variant="secondary"
               icon={CopyOutlined}
-              onClick={() => copyToClipboard(installCommand)}
+									onClick={() => copyToClipboard(formatInstallCommand(plugin))}
               className="ml-4"
             >
               Copy
@@ -164,14 +155,9 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
           </Tooltip>
         </div>
       </Card>
-
-      {/* Plugin Details */}
       <Card>
         <Title>Plugin Details</Title>
-        <Grid
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-4"
-        >
-          {/* Plugin ID */}
+						<Grid className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-4">
           <div>
             <Text className="text-gray-600 text-xs">Plugin ID</Text>
             <div className="flex items-center gap-2 mt-1">
@@ -182,28 +168,18 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
               />
             </div>
           </div>
-
-          {/* Name */}
           <div>
             <Text className="text-gray-600 text-xs">Name</Text>
             <Text className="font-semibold mt-1">{plugin.name}</Text>
           </div>
-
-          {/* Version */}
           <div>
             <Text className="text-gray-600 text-xs">Version</Text>
-            <Text className="font-semibold mt-1">
-              {plugin.version || "N/A"}
-            </Text>
+								<Text className="font-semibold mt-1">{plugin.version || "N/A"}</Text>
           </div>
-
-          {/* Source */}
           <div className="col-span-2">
             <Text className="text-gray-600 text-xs">Source</Text>
             <div className="flex items-center gap-2 mt-1">
-              <Text className="font-semibold">
-                {getSourceDisplayText(plugin.source)}
-              </Text>
+									<Text className="font-semibold">{getSourceDisplayText(plugin.source)}</Text>
               {sourceLink && (
                 <a
                   href={sourceLink}
@@ -216,8 +192,6 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
               )}
             </div>
           </div>
-
-          {/* Category */}
           <div>
             <Text className="text-gray-600 text-xs">Category</Text>
             <div className="mt-1">
@@ -230,17 +204,11 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
               )}
             </div>
           </div>
-
-          {/* Enabled Status */}
           {isAdmin && (
             <div className="col-span-3">
               <Text className="text-gray-600 text-xs">Status</Text>
               <div className="flex items-center gap-3 mt-2">
-                <Switch
-                  checked={plugin.enabled}
-                  loading={isToggling}
-                  onChange={handleToggleEnabled}
-                />
+										<Switch checked={plugin.enabled} loading={isToggling} onChange={handleToggleEnabled} />
                 <Text className="text-sm">
                   {plugin.enabled
                     ? "Plugin is enabled and visible in marketplace"
@@ -251,30 +219,24 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
           )}
         </Grid>
       </Card>
-
-      {/* Description */}
       {plugin.description && (
         <Card>
           <Title>Description</Title>
           <Text className="mt-2">{plugin.description}</Text>
         </Card>
       )}
-
-      {/* Keywords */}
-      {plugin.keywords && plugin.keywords.length > 0 && (
+					{plugin.keywords?.length ? (
         <Card>
           <Title>Keywords</Title>
           <div className="flex flex-wrap gap-2 mt-2">
-            {plugin.keywords.map((keyword, index) => (
-              <Badge key={index} color="gray" size="xs">
+								{plugin.keywords.map((keyword) => (
+									<Badge key={keyword} color="gray" size="xs">
                 {keyword}
               </Badge>
             ))}
           </div>
         </Card>
-      )}
-
-      {/* Author Information */}
+					) : null}
       {plugin.author && (
         <Card>
           <Title>Author Information</Title>
@@ -282,29 +244,20 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
             {plugin.author.name && (
               <div>
                 <Text className="text-gray-600 text-xs">Name</Text>
-                <Text className="font-semibold mt-1">
-                  {plugin.author.name}
-                </Text>
+										<Text className="font-semibold mt-1">{plugin.author.name}</Text>
               </div>
             )}
             {plugin.author.email && (
               <div>
                 <Text className="text-gray-600 text-xs">Email</Text>
-                <Text className="font-semibold mt-1">
-                  <a
-                    href={`mailto:${plugin.author.email}`}
-                    className="text-blue-500 hover:text-blue-700"
-                  >
+										<a href={`mailto:${plugin.author.email}`} className="text-blue-500 hover:text-blue-700">
                     {plugin.author.email}
                   </a>
-                </Text>
               </div>
             )}
           </Grid>
         </Card>
       )}
-
-      {/* Additional Links */}
       {plugin.homepage && (
         <Card>
           <Title>Homepage</Title>
@@ -319,22 +272,16 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
           </a>
         </Card>
       )}
-
-      {/* Timestamps */}
       <Card>
         <Title>Metadata</Title>
         <Grid className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
           <div>
             <Text className="text-gray-600 text-xs">Created At</Text>
-            <Text className="font-semibold mt-1">
-              {formatDateString(plugin.created_at)}
-            </Text>
+								<Text className="font-semibold mt-1">{formatDateString(plugin.created_at)}</Text>
           </div>
           <div>
             <Text className="text-gray-600 text-xs">Updated At</Text>
-            <Text className="font-semibold mt-1">
-              {formatDateString(plugin.updated_at)}
-            </Text>
+								<Text className="font-semibold mt-1">{formatDateString(plugin.updated_at)}</Text>
           </div>
           {plugin.created_by && (
             <div className="col-span-2">
@@ -344,7 +291,16 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
           )}
         </Grid>
       </Card>
+					<AddPluginForm
+						visible={isEditing}
+						onClose={() => setIsEditing(false)}
+						accessToken={accessToken}
+						onSuccess={handleEditSuccess}
+						initialPlugin={plugin}
+					/>
     </div>
+			)}
+		</ResourceDetailsDrawer>
   );
 };
 

@@ -674,15 +674,17 @@ export function VirtualKeysTable({ teams, organizations, onSortChange, currentSo
   const rangeLabel = `${start} - ${end}`;
   return (
     <div className="w-full h-full overflow-hidden">
-      {selectedKey ? (
+			<>
+			{selectedKey && (
         <KeyInfoView
           keyId={selectedKey.token}
           onClose={() => setSelectedKey(null)}
           keyData={selectedKey}
           teams={allTeams}
           onDelete={refetch}
+					onKeyDataUpdate={() => refetch()}
         />
-      ) : (
+			)}
         <div className="border-b py-4 flex-1 overflow-hidden">
           <div className="w-full mb-6">
             <FilterComponent
@@ -867,7 +869,7 @@ export function VirtualKeysTable({ teams, organizations, onSortChange, currentSo
             </div>
           </div>
         </div>
-      )}
+			</>
     </div>
   );
 }

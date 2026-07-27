@@ -11,7 +11,7 @@ import { createChatDisplayMessage, createChatMultimodalMessage } from "../chat_u
 import type { TokenUsage } from "../chat_ui/ResponseMetrics";
 import type { MessageType, VectorStoreSearchResponse } from "../chat_ui/types";
 import { makeOpenAIChatCompletionRequest } from "../llm_calls/chat_completion";
-import { fetchRoutableModels } from "../llm_calls/fetch_models";
+import { fetchRoutableModels, ModelGroup } from "../llm_calls/fetch_models";
 import { Agent, fetchAvailableAgents } from "../llm_calls/fetch_agents";
 import { makeA2AStreamMessageRequest } from "../llm_calls/a2a_send_message";
 import { ComparisonPanel } from "./components/ComparisonPanel";
@@ -86,7 +86,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
       useAdvancedParams: false,
     },
   ]);
-  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [modelOptions, setModelOptions] = useState<ModelGroup[]>([]);
   const [agentOptions, setAgentOptions] = useState<Agent[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
@@ -144,10 +144,16 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
       }
       setIsLoadingModels(true);
       try {
-				const uniqueModels = await fetchRoutableModels(accessToken);
+				const models = await fetchRoutableModels(accessToken);
         if (!active) return;
-        const nextOptions = Array.from(new Set(uniqueModels.map((model) => model.model_group)));
-        setModelOptions(nextOptions);
+        const uniqueModels = new Map<string, ModelGroup>();
+        models.forEach((model) => {
+          const existing = uniqueModels.get(model.model_group);
+          if (!existing || model.type === "alias") {
+            uniqueModels.set(model.model_group, model);
+          }
+        });
+        setModelOptions(Array.from(uniqueModels.values()));
       } catch (error) {
         console.error("CompareUI: failed to fetch models", error);
         if (active) {
@@ -210,7 +216,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
           ...(comparison.model
             ? {}
             : {
-                model: modelOptions[index % modelOptions.length] ?? "",
+                model: modelOptions[index % modelOptions.length]?.model_group ?? "",
               }),
         };
       }),
@@ -221,7 +227,7 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
     if (comparisons.length >= maxComparisons) {
       return;
     }
-    const fallbackModel = modelOptions[comparisons.length % (modelOptions.length || 1)] ?? "";
+    const fallbackModel = modelOptions[comparisons.length % (modelOptions.length || 1)]?.model_group ?? "";
     const fallbackAgent = agentOptions[comparisons.length % (agentOptions.length || 1)]?.agent_name ?? "";
     const newComparison: ComparisonInstance = {
       id: Date.now().toString(),

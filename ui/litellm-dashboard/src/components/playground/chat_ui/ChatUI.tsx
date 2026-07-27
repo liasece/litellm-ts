@@ -44,7 +44,7 @@ import { makeOpenAIAudioTranscriptionRequest } from "../llm_calls/audio_transcri
 import { makeOpenAIChatCompletionRequest } from "../llm_calls/chat_completion";
 import { makeOpenAIEmbeddingsRequest } from "../llm_calls/embeddings_api";
 import { Agent, fetchAvailableAgents } from "../llm_calls/fetch_agents";
-import { fetchRoutableModels, ModelGroup } from "../llm_calls/fetch_models";
+import { fetchRoutableModels, ModelGroup, modelGroupsToSelectOptions } from "../llm_calls/fetch_models";
 import { makeOpenAIImageEditsRequest } from "../llm_calls/image_edits";
 import { makeOpenAIImageGenerationRequest } from "../llm_calls/image_generation";
 import { makeOpenAIResponsesRequest } from "../llm_calls/responses_api";
@@ -1161,10 +1161,8 @@ const ChatUI: React.FC<ChatUIProps> = ({
                     onChange={onModelChange}
                     options={[
                       { value: "custom", label: "Enter custom model", key: "custom" },
-                      ...Array.from(
-                        new Set(
-                          modelInfo
-                            .filter((option) => {
+                      ...modelGroupsToSelectOptions(
+                        modelInfo.filter((option) => {
                               if (!option.mode) {
                                 //If no mode, show all models
                                 return true;
@@ -1182,14 +1180,8 @@ const ChatUI: React.FC<ChatUIProps> = ({
                                 return optionEndpoint === endpointType || optionEndpoint === EndpointType.IMAGE;
                               }
                               return optionEndpoint === endpointType;
-                            })
-                            .map((option) => option.model_group),
-                        ),
-                      ).map((model_group, index) => ({
-                        value: model_group,
-                        label: model_group,
-                        key: index,
-                      })),
+                            }),
+                      ),
                     ]}
                     style={{ width: "100%" }}
                     showSearch={true}

@@ -30,6 +30,8 @@ export interface LitellmParams {
 	api_key?: string;
 	/** API 基础 URL */
 	api_base?: string;
+	/** 服务端运行期解析的命名 Credential 引用 */
+	litellm_credential_name?: string;
 	/** 自定义 LLM 提供商标识 */
 	custom_llm_provider?: string;
 	/** 每分钟请求数限制 */
@@ -85,6 +87,12 @@ export interface LitellmParams {
 	};
 	/** 索引签名 — 允许透传 Python 未知字段（如 anthropic_version / auth_token / thinking） */
 	[key: string]: unknown;
+}
+
+/** Router 运行期只读凭据值查询接口。 */
+export interface CredentialValuesAccessor {
+	/** 返回凭据值的副本；不存在时返回 undefined。 */
+	getValues(credentialName: string): Record<string, unknown> | undefined;
 }
 
 /** 某模型的一个部署实例（一个 API 端点/密钥） */

@@ -15,6 +15,8 @@ import type {
 	RouterCallbacks,
 	RetryPolicy,
 	AllowedFailsPolicy,
+	CredentialValuesAccessor,
+	LitellmParams,
 } from "../types/router";
 import type { ProviderConfig as ProviderConfigType } from "../types/provider";
 import { ProviderRegistry } from "../providers/ProviderRegistry";
@@ -148,6 +150,7 @@ export class Router {
 	private _retryAfter: number;
 	private readonly _modelCostMap: Record<string, { input_cost_per_token: number; output_cost_per_token: number }> | undefined;
 	private readonly _routerCallbacks: RouterCallbacks | undefined;
+	private readonly _credentialValues: CredentialValuesAccessor | undefined;
 
 	private readonly _activeRequests: Map<string, number> = new Map();
 	private readonly _latencies: Map<string, number> = new Map();
@@ -158,8 +161,13 @@ export class Router {
 	private readonly _ttft: Map<string, number> = new Map();
 	private readonly _latencySamples: Map<string, number[]> = new Map();
 
-	constructor(config: RouterConfig, modelGroupAlias?: Record<string, RouterModelGroupAliasValue>) {
+	constructor(
+		config: RouterConfig,
+		modelGroupAlias?: Record<string, RouterModelGroupAliasValue>,
+		credentialValues?: CredentialValuesAccessor,
+	) {
 		this._deployments = [...config.model_list];
+		this._credentialValues = credentialValues;
 		this._cooldownTimeMs = (config.cooldown_time != null && config.cooldown_time > 0 ? config.cooldown_time : 5) * 1000;
 		// PY router.py:497-502：`if num_retries is not None: self.num_retries = num_retries`——
 		// 显式传 0 表示不重试（0 次），仅缺省（undefined/null）才回退 DEFAULT_MAX_RETRIES。
@@ -262,10 +270,11 @@ export class Router {
 	 * @param modelId - deployment model_info.id
 	 */
 	async probeDeployment(modelId: string): Promise<DeploymentProbeResult> {
-		const deployment = this.getDeployment(modelId);
+		let deployment = this.getDeployment(modelId);
 		if (deployment === null) {
 			throw new DeploymentNotFoundError(modelId);
 		}
+		deployment = this._resolveDeploymentForExecution(deployment);
 
 		const checkedAt = new Date().toISOString();
 		const startedAt = Date.now();
@@ -546,6 +555,35 @@ export class Router {
 	}
 
 	/**
+	 * 将 deployment 复制为仅供本次出站使用的已解析副本。运行期凭据优先于 inline 参数，
+	 * 但引用名绝不传递给 provider；原 deployment 保持可供管理端展示的配置原样。
+	 * @param deployment
+	 * @throws Credential 引用无效或不存在时抛出脱敏配置错误。
+	 */
+	private _resolveDeploymentForExecution(deployment: Deployment): Deployment {
+		const inlineParams = deployment.litellm_params;
+		const credentialName = inlineParams["litellm_credential_name"];
+		if (credentialName === undefined) {
+			return { ...deployment, litellm_params: { ...inlineParams } };
+		}
+		if (credentialName === null || (typeof credentialName === "string" && credentialName.trim().length === 0)) {
+			const resolvedParams = { ...inlineParams };
+			delete resolvedParams["litellm_credential_name"];
+			return { ...deployment, litellm_params: resolvedParams };
+		}
+		if (typeof credentialName !== "string") {
+			throw new Error("Credential configuration is invalid");
+		}
+		const credentialValues = this._credentialValues?.getValues(credentialName);
+		if (credentialValues === undefined) {
+			throw new Error("Credential configuration is invalid");
+		}
+		const resolvedParams: Record<string, unknown> = { ...inlineParams, ...credentialValues };
+		delete resolvedParams["litellm_credential_name"];
+		return { ...deployment, litellm_params: resolvedParams as LitellmParams };
+	}
+
+	/**
 	 * 选取一个可用 deployment 并附上其 provider 配置。messages 可选用于 token 估算
 	 * @param model - 逻辑模型名（用户传入）
 	 * @param messages - 可选消息列表（用于 token 估算）
@@ -561,12 +599,13 @@ export class Router {
 		if (!selected) {
 			return null;
 		}
+		const deployment = this._resolveDeploymentForExecution(selected);
 		const provider = this._providerRegistry.getProvider(
-			selected.litellm_params.model,
-			selected.litellm_params.custom_llm_provider,
-			selected.litellm_params,
+			deployment.litellm_params.model,
+			deployment.litellm_params.custom_llm_provider,
+			deployment.litellm_params,
 		);
-		return { deployment: selected, provider: provider };
+		return { deployment: deployment, provider: provider };
 	}
 
 	private async _executeRequest(

@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@tremor/react";
 import { Modal } from "antd";
-import {
-  getClaudeCodePluginsList,
-  deleteClaudeCodePlugin,
-} from "./networking";
+import { getClaudeCodePluginsList, deleteClaudeCodePlugin } from "./networking";
 import AddPluginForm from "./claude_code_plugins/add_plugin_form";
 import PluginTable from "./claude_code_plugins/plugin_table";
 import { isAdminRole } from "@/utils/roles";
@@ -17,10 +14,7 @@ interface ClaudeCodePluginsPanelProps {
   userRole?: string;
 }
 
-const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
-  accessToken,
-  userRole,
-}) => {
+const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({ accessToken, userRole }) => {
   const [pluginsList, setPluginsList] = useState<Plugin[]>([]);
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -29,9 +23,7 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
     name: string;
     displayName: string;
   } | null>(null);
-  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(
-    null
-  );
+	const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
 
   const isAdmin = userRole ? isAdminRole(userRole) : false;
 
@@ -44,7 +36,7 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
     try {
       const response: ListPluginsResponse = await getClaudeCodePluginsList(
         accessToken,
-        false // Get all plugins (enabled and disabled)
+				false, // Get all plugins (enabled and disabled)
       );
       console.log(`Claude Code plugins: ${JSON.stringify(response)}`);
       setPluginsList(response.plugins);
@@ -84,9 +76,10 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
     setIsDeleting(true);
     try {
       await deleteClaudeCodePlugin(accessToken, pluginToDelete.name);
-      NotificationsManager.success(
-        `Plugin "${pluginToDelete.displayName}" deleted successfully`
-      );
+			NotificationsManager.success(`Plugin "${pluginToDelete.displayName}" deleted successfully`);
+			if (selectedPluginId === pluginToDelete.name) {
+				setSelectedPluginId(null);
+			}
       fetchPlugins();
     } catch (error) {
       console.error("Error deleting plugin:", error);
@@ -106,9 +99,8 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
       <div className="flex flex-col gap-2 mb-4">
         <h1 className="text-2xl font-bold">Claude Code Plugins</h1>
         <p className="text-sm text-gray-600">
-          Manage Claude Code marketplace plugins. Add, enable, disable, or
-          delete plugins that will be available in your marketplace catalog.
-          Enabled plugins will appear in the public marketplace at{" "}
+					Manage Claude Code marketplace plugins. Add, enable, disable, or delete plugins that will be available in your
+					marketplace catalog. Enabled plugins will appear in the public marketplace at{" "}
           <code className="bg-gray-100 px-1 rounded">/claude-code/marketplace.json</code>.
         </p>
         <div className="mt-2">
@@ -118,15 +110,6 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
         </div>
       </div>
 
-      {selectedPluginId ? (
-        <PluginInfoView
-          pluginId={selectedPluginId}
-          onClose={() => setSelectedPluginId(null)}
-          accessToken={accessToken}
-          isAdmin={isAdmin}
-          onPluginUpdated={fetchPlugins}
-        />
-      ) : (
         <PluginTable
           pluginsList={pluginsList}
           isLoading={isLoading}
@@ -136,6 +119,16 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
           isAdmin={isAdmin}
           onPluginClick={(id) => setSelectedPluginId(id)}
         />
+
+			{selectedPluginId && (
+				<PluginInfoView
+					pluginId={selectedPluginId}
+					onClose={() => setSelectedPluginId(null)}
+					accessToken={accessToken}
+					isAdmin={isAdmin}
+					onPluginUpdated={fetchPlugins}
+					onDelete={handleDeleteClick}
+				/>
       )}
 
       <AddPluginForm
@@ -156,8 +149,7 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({
           okButtonProps={{ danger: true }}
         >
           <p>
-            Are you sure you want to delete plugin:{" "}
-            <strong>{pluginToDelete.displayName}</strong>?
+						Are you sure you want to delete plugin: <strong>{pluginToDelete.displayName}</strong>?
           </p>
           <p>This action cannot be undone.</p>
         </Modal>

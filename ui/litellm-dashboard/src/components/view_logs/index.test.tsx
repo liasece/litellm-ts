@@ -2,17 +2,19 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SpendLogsTable, { RequestViewer } from "./index";
-import { createColumns, type LogEntry } from "./columns";
+import { createColumns, getSessionGroupKey, getSessionGroupRef, type LogEntry } from "./columns";
 import { uiSpendLogsCall } from "../networking";
 import type { Row } from "@tanstack/react-table";
 import type { Team } from "../key_team_helpers/key_list";
 import { renderWithProviders } from "../../../tests/test-utils";
 
 const mockHandleFilterResetFromHook = vi.fn();
+let mockFilters: Record<string, string> = {};
+let mockFilteredLogs = { data: [] as LogEntry[], total: 0, page: 1, page_size: 50, total_pages: 1 };
 vi.mock("./log_filter_logic", () => ({
 	useLogFilterLogic: vi.fn(() => ({
-		filters: {},
-		filteredLogs: { data: [], total: 0, page: 1, page_size: 50, total_pages: 1 },
+		filters: mockFilters,
+		filteredLogs: mockFilteredLogs,
 		allTeams: [],
 		handleFilterChange: vi.fn(),
 		handleFilterReset: mockHandleFilterResetFromHook,
@@ -38,6 +40,26 @@ vi.mock("../networking", async (importOriginal) => {
 
 vi.mock("../key_team_helpers/filter_helpers", () => ({
 	fetchAllTeams: vi.fn().mockResolvedValue([]),
+}));
+
+const mockDrawerProps = vi.hoisted(() => ({ current: null as any }));
+vi.mock("./LogDetailsDrawer", () => ({
+	LogDetailsDrawer: (props: any) => {
+		mockDrawerProps.current = props;
+		return props.open ? <div data-testid="log-details-drawer" /> : null;
+	},
+}));
+
+vi.mock("./table", () => ({
+	DataTable: ({ data, onRowClick }: { data: LogEntry[]; onRowClick?: (log: LogEntry) => void }) => (
+		<div>
+			{data.map((log) => (
+				<button key={log.request_id} onClick={() => onRowClick?.(log)}>
+					{log.request_id}
+				</button>
+			))}
+		</div>
+	),
 }));
 
 const baseLogEntry: LogEntry = {
@@ -174,6 +196,31 @@ describe("Request Viewer", () => {
 });
 
 describe("Logs columns", () => {
+	it("Claude Code group 使用 type + 完整 ID 生成 key", () => {
+		const group = getSessionGroupRef({
+			...baseLogEntry,
+			session_id: "random-session",
+			session_group_type: "claude_code_user_id",
+			session_group_id: "user_device_account__session_123e4567-e89b-12d3-a456-426614174000",
+		});
+
+		expect(group).toEqual({
+			type: "claude_code_user_id",
+			id: "user_device_account__session_123e4567-e89b-12d3-a456-426614174000",
+		});
+		expect(getSessionGroupKey(group)).toBe(
+			"claude_code_user_id\u0000user_device_account__session_123e4567-e89b-12d3-a456-426614174000",
+		);
+	});
+
+	it("旧响应缺少 group 字段时回退顶层 session_id", () => {
+		expect(getSessionGroupRef({ ...baseLogEntry, session_id: "legacy-session" })).toEqual({
+			type: "session_id",
+			id: "legacy-session",
+		});
+		expect(getSessionGroupRef(baseLogEntry)).toBeNull();
+	});
+
 	it("does not expose Session ID as a table column", () => {
 		const columns = createColumns();
 		expect(columns.some((column) => column.header === "Session ID")).toBe(false);
@@ -350,8 +397,73 @@ describe("SpendLogsTable", () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockFilters = {};
+		mockFilteredLogs = { data: [], total: 0, page: 1, page_size: 50, total_pages: 1 };
+		mockDrawerProps.current = null;
 		// Clear sessionStorage to avoid isLiveTail state from previous tests
 		sessionStorage.clear();
+	});
+
+	it("相同 Claude Code group 按 type + id 去重并向 Drawer 传完整 group", async () => {
+		const user = userEvent.setup();
+		const groupId = "user_device_account__session_123e4567-e89b-12d3-a456-426614174000";
+		mockFilteredLogs = {
+			data: [
+				{
+					...baseLogEntry,
+					request_id: "req-mcp",
+					call_type: "call_mcp_tool",
+					session_id: "random-1",
+					session_group_type: "claude_code_user_id",
+					session_group_id: groupId,
+					session_total_count: 2,
+				},
+				{
+					...baseLogEntry,
+					request_id: "req-llm",
+					session_id: "random-2",
+					session_group_type: "claude_code_user_id",
+					session_group_id: groupId,
+					session_total_count: 2,
+				},
+			],
+			total: 2,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		};
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		expect(screen.queryByText("req-mcp")).not.toBeInTheDocument();
+		await user.click(await screen.findByText("req-llm"));
+		expect(mockDrawerProps.current.sessionGroup).toEqual({ type: "claude_code_user_id", id: groupId });
+	});
+
+	it("Session Drawer 使用当前显式 Team ID filter scope，而非行自身 team_id", async () => {
+		const user = userEvent.setup();
+		mockFilters = { "Team ID": "scope-team" };
+		mockFilteredLogs = {
+			data: [
+				{
+					...baseLogEntry,
+					request_id: "req-scoped-session",
+					team_id: "row-team",
+					session_id: "session-scoped",
+					session_total_count: 2,
+				},
+			],
+			total: 1,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		};
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+		await user.click(await screen.findByText("req-scoped-session"));
+
+		await waitFor(() => expect(mockDrawerProps.current.teamId).toBe("scope-team"));
+		expect(mockDrawerProps.current.teamId).not.toBe("row-team");
 	});
 
 	it("should call handleFilterResetFromHook when Reset Filters is clicked", async () => {
