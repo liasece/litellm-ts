@@ -5,19 +5,19 @@ import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import useTeams from "@/app/(dashboard)/hooks/useTeams";
 
 const LogsPage = () => {
-  const { accessToken, token, userRole, userId, premiumUser } = useAuthorized();
-  const { teams } = useTeams();
+	const { accessToken, token, userRole, userId, premiumUser } = useAuthorized();
+	const { teams } = useTeams();
 
-  return (
-    <SpendLogsTable
-      accessToken={accessToken}
-      token={token}
-      userRole={userRole}
-      userID={userId}
-      allTeams={teams || []}
-      premiumUser={premiumUser}
-    />
-  );
+	return (
+		<SpendLogsTable
+			accessToken={accessToken}
+			token={token}
+			userRole={userRole}
+			userID={userId}
+			allTeams={teams || []}
+			premiumUser={premiumUser}
+		/>
+	);
 };
 
 export default LogsPage;

@@ -26,27 +26,17 @@ export default function OrganizationMembers({
 				title: "Spend (USD)",
 				key: "spend",
 				render: (_value, record) => {
-					const member = organization.members?.find(
-						(item) => item.user_id === record.user_id,
-					);
-					return (
-						<Typography.Text>
-							${formatNumberWithCommas(member?.spend ?? 0, 4)}
-						</Typography.Text>
-					);
+					const member = organization.members?.find((item) => item.user_id === record.user_id);
+					return <Typography.Text>${formatNumberWithCommas(member?.spend ?? 0, 4)}</Typography.Text>;
 				},
 			},
 			{
 				title: "Created At",
 				key: "created_at",
 				render: (_value, record) => {
-					const member = organization.members?.find(
-						(item) => item.user_id === record.user_id,
-					);
+					const member = organization.members?.find((item) => item.user_id === record.user_id);
 					return (
-						<Typography.Text>
-							{member?.created_at ? new Date(member.created_at).toLocaleString() : "-"}
-						</Typography.Text>
+						<Typography.Text>{member?.created_at ? new Date(member.created_at).toLocaleString() : "-"}</Typography.Text>
 					);
 				},
 			},
@@ -71,4 +61,3 @@ export default function OrganizationMembers({
 		/>
 	);
 }
-

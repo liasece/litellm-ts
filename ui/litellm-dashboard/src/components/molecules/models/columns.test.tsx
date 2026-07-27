@@ -1043,5 +1043,4 @@ describe("columns", () => {
 		expect(onRefreshHealth).toHaveBeenCalledWith("test-model-id");
 		expect(onSelect).not.toHaveBeenCalled();
 	});
-
 });

@@ -1,9 +1,4 @@
-import {
-	deletePromptCall,
-	getPromptInfo,
-	type PromptSpec,
-	type PromptTemplateBase,
-} from "@/components/networking";
+import { deletePromptCall, getPromptInfo, type PromptSpec, type PromptTemplateBase } from "@/components/networking";
 import { copyToClipboard as utilCopyToClipboard } from "@/utils/dataUtils";
 import { Tab, TabGroup, TabList, TabPanels } from "@tremor/react";
 import { Button } from "antd";
@@ -17,12 +12,7 @@ import PromptIdentifierBar from "./prompt_details/PromptIdentifierBar";
 import PromptOverviewPanel from "./prompt_details/PromptOverviewPanel";
 import PromptRawJsonPanel from "./prompt_details/PromptRawJsonPanel";
 import PromptTemplatePanel from "./prompt_details/PromptTemplatePanel";
-import {
-	extractModel,
-	extractTemplateVariables,
-	getBasePromptId,
-	getCurrentVersion,
-} from "./prompt_utils";
+import { extractModel, extractTemplateVariables, getBasePromptId, getCurrentVersion } from "./prompt_utils";
 
 export interface PromptInfoProps {
 	promptId: string;
@@ -35,14 +25,7 @@ export interface PromptInfoProps {
 
 type PromptInfoResponse = Awaited<ReturnType<typeof getPromptInfo>>;
 
-export default function PromptInfoView({
-	promptId,
-	onClose,
-	accessToken,
-	isAdmin,
-	onDelete,
-	onEdit,
-}: PromptInfoProps) {
+export default function PromptInfoView({ promptId, onClose, accessToken, isAdmin, onDelete, onEdit }: PromptInfoProps) {
 	const [promptData, setPromptData] = useState<PromptSpec | null>(null);
 	const [promptTemplate, setPromptTemplate] = useState<PromptTemplateBase | null>(null);
 	const [rawApiResponse, setRawApiResponse] = useState<PromptInfoResponse | null>(null);
@@ -81,10 +64,7 @@ export default function PromptInfoView({
 		void fetchPromptInfo();
 	}, [fetchPromptInfo]);
 
-	const copyToClipboard = async (
-		text: string | null | undefined,
-		key: string,
-	) => {
+	const copyToClipboard = async (text: string | null | undefined, key: string) => {
 		if (!(await utilCopyToClipboard(text))) return;
 
 		setCopiedStates((previous) => ({ ...previous, [key]: true }));
@@ -148,9 +128,7 @@ export default function PromptInfoView({
 					/>,
 				]
 			: []),
-		...(isAdmin
-			? [<PromptAdminDetailsPanel key="details" prompt={promptData} promptId={basePromptId} />]
-			: []),
+		...(isAdmin ? [<PromptAdminDetailsPanel key="details" prompt={promptData} promptId={basePromptId} />] : []),
 		<PromptRawJsonPanel
 			key="raw"
 			response={rawApiResponse}

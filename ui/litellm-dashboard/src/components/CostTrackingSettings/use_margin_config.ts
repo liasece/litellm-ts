@@ -54,7 +54,7 @@ export function useMarginConfig({ accessToken }: UseMarginConfigProps): UseMargi
 			console.error("Error fetching margin config:", error);
 			NotificationsManager.fromBackend("Failed to fetch margin configuration");
 		}
-	}, [accessToken]);
+	}, []);
 
 	const saveMarginConfig = useCallback(
 		async (config: MarginConfig) => {
@@ -83,7 +83,7 @@ export function useMarginConfig({ accessToken }: UseMarginConfigProps): UseMargi
 				NotificationsManager.fromBackend("Failed to update margin configuration");
 			}
 		},
-		[accessToken, fetchMarginConfig],
+		[fetchMarginConfig],
 	);
 
 	const handleAddMargin = useCallback(

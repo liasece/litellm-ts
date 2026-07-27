@@ -48,9 +48,7 @@ export default function TeamGeneralSettingsFields({
 						includeSpecialOptions: true,
 						includeUserModels: !resolvedOrganizationId,
 						showAllProxyModelsOverride:
-							mode === "create"
-								? !resolvedOrganizationId
-								: isProxyAdminRole(userRole || "") && !resolvedOrganizationId,
+							mode === "create" ? !resolvedOrganizationId : isProxyAdminRole(userRole || "") && !resolvedOrganizationId,
 					}}
 					context="team"
 					dataTestId={mode === "create" ? "create-team-models-select" : "models-select"}

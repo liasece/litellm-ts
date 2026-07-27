@@ -73,10 +73,7 @@ beforeEach(() => {
 	mockCredentialRows.length = 0;
 });
 
-async function withDatabaseSnapshot<T>(
-	container: Awaited<ReturnType<typeof createServiceContainer>>,
-	callback: () => T,
-): Promise<T> {
+async function withDatabaseSnapshot<T>(container: Awaited<ReturnType<typeof createServiceContainer>>, callback: () => T): Promise<T> {
 	const snapshot = await container.runtimeConfigService.loadSnapshot(container.router);
 	return container.router.runWithRuntimeSnapshot(snapshot, callback);
 }

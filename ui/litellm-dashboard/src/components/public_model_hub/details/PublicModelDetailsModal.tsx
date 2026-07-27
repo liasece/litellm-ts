@@ -21,12 +21,7 @@ function formatCost(cost: number) {
 	return `$${(cost * 1_000_000).toFixed(4)}`;
 }
 
-export default function PublicModelDetailsModal({
-	model,
-	open,
-	onClose,
-	onCopy,
-}: PublicModelDetailsModalProps) {
+export default function PublicModelDetailsModal({ model, open, onClose, onCopy }: PublicModelDetailsModalProps) {
 	const capabilities = model
 		? Object.entries(model)
 				.filter(([key, value]) => key.startsWith("supports_") && value === true)
@@ -38,9 +33,7 @@ export default function PublicModelDetailsModal({
 				accessToken: null,
 				apiKey: "your_api_key",
 				inputMessage: "Hello, how are you?",
-				chatHistory: [
-					{ role: "user", content: "Hello, how are you?", isImage: false } as MessageType,
-				],
+				chatHistory: [{ role: "user", content: "Hello, how are you?", isImage: false } as MessageType],
 				selectedTags: [],
 				selectedVectorStores: [],
 				selectedGuardrails: [],
@@ -116,8 +109,8 @@ export default function PublicModelDetailsModal({
 									<div>
 										<Text className="mb-2 font-medium text-blue-900">Wildcard Routing</Text>
 										<Text className="text-sm text-blue-800">
-											Replace <code className="rounded bg-blue-100 px-1 py-0.5 text-xs">*</code>{" "}
-											with any matching value, for example{" "}
+											Replace <code className="rounded bg-blue-100 px-1 py-0.5 text-xs">*</code> with any matching
+											value, for example{" "}
 											<code className="rounded bg-blue-100 px-1 py-0.5 text-xs">
 												{model.model_group.replace("*", "my-custom-value")}
 											</code>
@@ -142,19 +135,11 @@ export default function PublicModelDetailsModal({
 							</div>
 							<div>
 								<Text className="font-medium">Input Cost per 1M Tokens:</Text>
-								<Text>
-									{model.input_cost_per_token
-										? formatCost(model.input_cost_per_token)
-										: "Not specified"}
-								</Text>
+								<Text>{model.input_cost_per_token ? formatCost(model.input_cost_per_token) : "Not specified"}</Text>
 							</div>
 							<div>
 								<Text className="font-medium">Output Cost per 1M Tokens:</Text>
-								<Text>
-									{model.output_cost_per_token
-										? formatCost(model.output_cost_per_token)
-										: "Not specified"}
-								</Text>
+								<Text>{model.output_cost_per_token ? formatCost(model.output_cost_per_token) : "Not specified"}</Text>
 							</div>
 						</div>
 					</section>
@@ -202,4 +187,3 @@ export default function PublicModelDetailsModal({
 		</Modal>
 	);
 }
-

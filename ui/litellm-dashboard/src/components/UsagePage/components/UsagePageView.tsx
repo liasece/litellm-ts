@@ -631,7 +631,6 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 												</Card>
 											</Col>
 
-
 											{/* Top Models */}
 											<Col numColSpan={1}>
 												<UsageTopModelsCard

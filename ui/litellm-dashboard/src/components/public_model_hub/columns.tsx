@@ -5,11 +5,7 @@ import { Button, Text } from "@tremor/react";
 import { Tag, Tooltip } from "antd";
 import { Copy } from "lucide-react";
 import { formatCapabilityName } from "./filters";
-import type {
-	PublicAgentCard,
-	PublicMcpServer,
-	PublicModelInfo,
-} from "./types";
+import type { PublicAgentCard, PublicMcpServer, PublicModelInfo } from "./types";
 
 function formatCost(cost: number) {
 	return `$${(cost * 1_000_000).toFixed(4)}`;
@@ -40,15 +36,7 @@ function modeIcon(mode?: string) {
 	}
 }
 
-function OverflowTags({
-	values,
-	color,
-	label,
-}: {
-	values: string[];
-	color: "blue" | "purple";
-	label: string;
-}) {
+function OverflowTags({ values, color, label }: { values: string[]; color: "blue" | "purple"; label: string }) {
 	if (values.length === 0) return <Text className="text-gray-400">-</Text>;
 
 	return (
@@ -73,9 +61,7 @@ function OverflowTags({
 				>
 					<span
 						className={`cursor-pointer text-xs hover:underline ${
-							color === "blue"
-								? "text-blue-600 hover:text-blue-800"
-								: "text-purple-600 hover:text-purple-800"
+							color === "blue" ? "text-blue-600 hover:text-blue-800" : "text-purple-600 hover:text-purple-800"
 						}`}
 						onClick={(event) => event.stopPropagation()}
 					>
@@ -87,9 +73,7 @@ function OverflowTags({
 	);
 }
 
-export function getPublicModelColumns(
-	onSelect: (model: PublicModelInfo) => void,
-): ColumnDef<PublicModelInfo>[] {
+export function getPublicModelColumns(onSelect: (model: PublicModelInfo) => void): ColumnDef<PublicModelInfo>[] {
 	return [
 		{
 			header: "Model Name",
@@ -120,10 +104,7 @@ export function getPublicModelColumns(
 					{(row.original.providers ?? []).map((provider) => {
 						const { logo } = getProviderLogoAndName(provider);
 						return (
-							<div
-								key={provider}
-								className="flex items-center space-x-1 rounded bg-gray-100 px-2 py-1 text-xs"
-							>
+							<div key={provider} className="flex items-center space-x-1 rounded bg-gray-100 px-2 py-1 text-xs">
 								<ProviderLogo
 									provider={provider}
 									logo={logo}
@@ -154,9 +135,7 @@ export function getPublicModelColumns(
 			header: "Max Input",
 			accessorKey: "max_input_tokens",
 			enableSorting: true,
-			cell: ({ row }) => (
-				<Text className="text-center">{formatTokens(row.original.max_input_tokens)}</Text>
-			),
+			cell: ({ row }) => <Text className="text-center">{formatTokens(row.original.max_input_tokens)}</Text>,
 			size: 100,
 			meta: { className: "text-center" },
 		},
@@ -164,9 +143,7 @@ export function getPublicModelColumns(
 			header: "Max Output",
 			accessorKey: "max_output_tokens",
 			enableSorting: true,
-			cell: ({ row }) => (
-				<Text className="text-center">{formatTokens(row.original.max_output_tokens)}</Text>
-			),
+			cell: ({ row }) => <Text className="text-center">{formatTokens(row.original.max_output_tokens)}</Text>,
 			size: 100,
 			meta: { className: "text-center" },
 		},
@@ -176,9 +153,7 @@ export function getPublicModelColumns(
 			enableSorting: true,
 			cell: ({ row }) => (
 				<Text className="text-center">
-					{row.original.input_cost_per_token
-						? formatCost(row.original.input_cost_per_token)
-						: "Free"}
+					{row.original.input_cost_per_token ? formatCost(row.original.input_cost_per_token) : "Free"}
 				</Text>
 			),
 			size: 100,
@@ -190,9 +165,7 @@ export function getPublicModelColumns(
 			enableSorting: true,
 			cell: ({ row }) => (
 				<Text className="text-center">
-					{row.original.output_cost_per_token
-						? formatCost(row.original.output_cost_per_token)
-						: "Free"}
+					{row.original.output_cost_per_token ? formatCost(row.original.output_cost_per_token) : "Free"}
 				</Text>
 			),
 			size: 100,
@@ -220,11 +193,7 @@ export function getPublicModelColumns(
 			cell: ({ row }) => {
 				const model = row.original;
 				const tagColor =
-					model.health_status === "healthy"
-						? "green"
-						: model.health_status === "unhealthy"
-							? "red"
-							: "default";
+					model.health_status === "healthy" ? "green" : model.health_status === "unhealthy" ? "red" : "default";
 				return (
 					<Tooltip
 						title={
@@ -255,18 +224,14 @@ export function getPublicModelColumns(
 			accessorKey: "rpm",
 			enableSorting: true,
 			cell: ({ row }) => (
-				<Text className="text-xs text-gray-600">
-					{formatLimits(row.original.rpm, row.original.tpm)}
-				</Text>
+				<Text className="text-xs text-gray-600">{formatLimits(row.original.rpm, row.original.tpm)}</Text>
 			),
 			size: 150,
 		},
 	];
 }
 
-export function getPublicAgentColumns(
-	onSelect: (agent: PublicAgentCard) => void,
-): ColumnDef<PublicAgentCard>[] {
+export function getPublicAgentColumns(onSelect: (agent: PublicAgentCard) => void): ColumnDef<PublicAgentCard>[] {
 	return [
 		{
 			header: "Agent Name",
@@ -295,9 +260,7 @@ export function getPublicAgentColumns(
 				return (
 					<Tooltip title={description}>
 						<Text className="text-sm text-gray-700">
-							{description.length > 80
-								? `${description.substring(0, 80)}...`
-								: description}
+							{description.length > 80 ? `${description.substring(0, 80)}...` : description}
 						</Text>
 					</Tooltip>
 				);
@@ -317,9 +280,7 @@ export function getPublicAgentColumns(
 			enableSorting: false,
 			cell: ({ row }) =>
 				row.original.provider ? (
-					<Text className="text-sm font-medium">
-						{row.original.provider.organization}
-					</Text>
+					<Text className="text-sm font-medium">{row.original.provider.organization}</Text>
 				) : (
 					<Text className="text-gray-400">-</Text>
 				),
@@ -330,11 +291,7 @@ export function getPublicAgentColumns(
 			accessorKey: "skills",
 			enableSorting: false,
 			cell: ({ row }) => (
-				<OverflowTags
-					values={(row.original.skills ?? []).map((skill) => skill.name)}
-					color="purple"
-					label="Skills"
-				/>
+				<OverflowTags values={(row.original.skills ?? []).map((skill) => skill.name)} color="purple" label="Skills" />
 			),
 			size: 150,
 		},
@@ -395,9 +352,7 @@ export function getPublicMcpColumns(
 				return (
 					<Tooltip title={description}>
 						<Text className="text-sm text-gray-700">
-							{description.length > 80
-								? `${description.substring(0, 80)}...`
-								: description}
+							{description.length > 80 ? `${description.substring(0, 80)}...` : description}
 						</Text>
 					</Tooltip>
 				);
@@ -413,13 +368,8 @@ export function getPublicMcpColumns(
 				return (
 					<Tooltip title={url}>
 						<div className="flex items-center space-x-2">
-							<Text className="font-mono text-xs">
-								{url.length > 40 ? `${url.substring(0, 40)}...` : url}
-							</Text>
-							<Copy
-								onClick={() => onCopy(url)}
-								className="h-3 w-3 cursor-pointer text-gray-500 hover:text-blue-500"
-							/>
+							<Text className="font-mono text-xs">{url.length > 40 ? `${url.substring(0, 40)}...` : url}</Text>
+							<Copy onClick={() => onCopy(url)} className="h-3 w-3 cursor-pointer text-gray-500 hover:text-blue-500" />
 						</div>
 					</Tooltip>
 				);
@@ -442,10 +392,7 @@ export function getPublicMcpColumns(
 			accessorKey: "auth_type",
 			enableSorting: true,
 			cell: ({ row }) => (
-				<Tag
-					color={row.original.auth_type === "none" ? "gray" : "green"}
-					className="text-xs capitalize"
-				>
+				<Tag color={row.original.auth_type === "none" ? "gray" : "green"} className="text-xs capitalize">
 					{row.original.auth_type}
 				</Tag>
 			),
@@ -453,4 +400,3 @@ export function getPublicMcpColumns(
 		},
 	];
 }
-

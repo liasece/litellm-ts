@@ -5,35 +5,35 @@ import { createQueryKeys } from "../common/queryKeysFactory";
 
 const organizationKeys = createQueryKeys("organizations");
 export const useOrganizations = (): UseQueryResult<Organization[]> => {
-  const { accessToken, userId, userRole } = useAuthorized();
-  return useQuery<Organization[]>({
-    queryKey: organizationKeys.list({}),
-    queryFn: async () => await organizationListCall(accessToken!),
-    enabled: Boolean(accessToken && userId && userRole),
-  });
+	const { accessToken, userId, userRole } = useAuthorized();
+	return useQuery<Organization[]>({
+		queryKey: organizationKeys.list({}),
+		queryFn: async () => await organizationListCall(accessToken!),
+		enabled: Boolean(accessToken && userId && userRole),
+	});
 };
 
 export const useOrganization = (organizationID?: string) => {
-  const queryClient = useQueryClient();
-  const { accessToken } = useAuthorized();
-  return useQuery<Organization>({
-    queryKey: organizationKeys.detail(organizationID!),
-    enabled: Boolean(accessToken && organizationID),
+	const queryClient = useQueryClient();
+	const { accessToken } = useAuthorized();
+	return useQuery<Organization>({
+		queryKey: organizationKeys.detail(organizationID!),
+		enabled: Boolean(accessToken && organizationID),
 
-    queryFn: async () => {
-      if (!accessToken || !organizationID) {
-        throw new Error("Missing auth or teamId");
-      }
+		queryFn: async () => {
+			if (!accessToken || !organizationID) {
+				throw new Error("Missing auth or teamId");
+			}
 
-      return organizationInfoCall(accessToken, organizationID);
-    },
+			return organizationInfoCall(accessToken, organizationID);
+		},
 
-    initialData: () => {
-      if (!organizationID) return undefined;
+		initialData: () => {
+			if (!organizationID) return undefined;
 
-      const organizations = queryClient.getQueryData<Organization[]>(organizationKeys.list({}));
+			const organizations = queryClient.getQueryData<Organization[]>(organizationKeys.list({}));
 
-      return organizations?.find((organization: Organization) => organization.organization_id === organizationID);
-    },
-  });
+			return organizations?.find((organization: Organization) => organization.organization_id === organizationID);
+		},
+	});
 };

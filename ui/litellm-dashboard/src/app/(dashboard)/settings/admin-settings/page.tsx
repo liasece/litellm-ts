@@ -3,11 +3,7 @@
 import AdminPanel from "@/components/AdminPanel";
 
 const AdminSettings = () => {
-
-  return (
-    <AdminPanel
-    />
-  );
+	return <AdminPanel />;
 };
 
 export default AdminSettings;

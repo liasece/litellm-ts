@@ -15,4 +15,3 @@ export interface ModelGroupInfo {
 	is_public_model_group: boolean;
 	[key: string]: unknown;
 }
-

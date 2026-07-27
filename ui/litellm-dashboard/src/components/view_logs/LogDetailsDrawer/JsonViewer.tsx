@@ -6,8 +6,8 @@ import { JSON_MAX_HEIGHT, COLOR_BG_LIGHT, SPACING_LARGE } from "./constants";
 const { Text } = Typography;
 
 interface JsonViewerProps {
-  data: any;
-  mode: "formatted";
+	data: any;
+	mode: "formatted";
 }
 
 /**
@@ -15,21 +15,21 @@ interface JsonViewerProps {
  * Uses an interactive tree component for easy navigation.
  */
 export function JsonViewer({ data }: JsonViewerProps) {
-  if (!data) return <Text type="secondary">No data</Text>;
+	if (!data) return <Text type="secondary">No data</Text>;
 
-  return (
-    <div
-      style={{
-        maxHeight: JSON_MAX_HEIGHT,
-        overflow: "auto",
-        background: COLOR_BG_LIGHT,
-        padding: SPACING_LARGE,
-        borderRadius: 4,
-      }}
-    >
-      <div className="[&_[role='tree']]:bg-white [&_[role='tree']]:text-slate-900">
-        <JsonView data={data} style={defaultStyles} clickToExpandNode={true} />
-      </div>
-    </div>
-  );
+	return (
+		<div
+			style={{
+				maxHeight: JSON_MAX_HEIGHT,
+				overflow: "auto",
+				background: COLOR_BG_LIGHT,
+				padding: SPACING_LARGE,
+				borderRadius: 4,
+			}}
+		>
+			<div className="[&_[role='tree']]:bg-white [&_[role='tree']]:text-slate-900">
+				<JsonView data={data} style={defaultStyles} clickToExpandNode={true} />
+			</div>
+		</div>
+	);
 }

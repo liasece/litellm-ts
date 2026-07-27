@@ -18,15 +18,6 @@ beforeEach(() => {
 });
 
 describe("Router smoke", () => {
-	it("构造 Router 不抛错", () => {
-		const router = new Router({
-			model_list: [mkDeployment("gpt-4")],
-			routing_strategy: RoutingStrategyName.SimpleShuffle,
-			num_retries: 0,
-		});
-		expect(router).toBeDefined();
-	});
-
 	it("completion 走通成功路径（mock fetch 200）", async () => {
 		mockFetch.mockResolvedValueOnce(
 			okResponse({

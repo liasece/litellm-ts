@@ -182,26 +182,14 @@ export default function LegacyDashboardPageContent(props: LegacyDashboardPageCon
 		case "transform-request":
 			return <TransformRequestPanel accessToken={accessToken} />;
 		case "router-settings":
-			return (
-				<GeneralSettings
-					userID={userID}
-					userRole={userRole}
-					accessToken={accessToken}
-					modelData={modelData}
-				/>
-			);
+			return <GeneralSettings userID={userID} userRole={userRole} accessToken={accessToken} modelData={modelData} />;
 		case "ui-theme":
 			return <UIThemeSettings userID={userID} userRole={userRole} accessToken={accessToken} />;
 		case "cost-tracking":
 			return <CostTrackingSettings userID={userID} userRole={userRole} accessToken={accessToken} />;
 		case "model-hub-table":
 			return isAdminRole(userRole) ? (
-				<ModelHubTable
-					accessToken={accessToken}
-					publicPage={false}
-					premiumUser={premiumUser}
-					userRole={userRole}
-				/>
+				<ModelHubTable accessToken={accessToken} publicPage={false} premiumUser={premiumUser} userRole={userRole} />
 			) : (
 				<PublicModelHub accessToken={accessToken} isEmbedded />
 			);

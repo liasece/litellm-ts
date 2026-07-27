@@ -66,7 +66,9 @@ function ProjectTeamCard({ teamInfo, hasTeam }: ProjectResourcesSectionProps) {
 						</Text>
 					</Text>
 				</Flex>
-				{hasLimit && <Progress percent={Math.round(percent * 10) / 10} strokeColor={color} size="small" showInfo={false} />}
+				{hasLimit && (
+					<Progress percent={Math.round(percent * 10) / 10} strokeColor={color} size="small" showInfo={false} />
+				)}
 			</div>
 			<Flex justify="space-between">
 				<Text type="secondary" style={{ fontSize: 12 }}>

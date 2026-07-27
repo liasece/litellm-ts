@@ -43,12 +43,7 @@ function ResourceBadgeList({
 	);
 }
 
-export default function ModelHubMcpDetailsModal({
-	server,
-	open,
-	onClose,
-	onCopy,
-}: ModelHubMcpDetailsModalProps) {
+export default function ModelHubMcpDetailsModal({ server, open, onClose, onCopy }: ModelHubMcpDetailsModalProps) {
 	return (
 		<Modal
 			title={server?.server_name || "MCP Server Details"}
@@ -89,15 +84,11 @@ export default function ModelHubMcpDetailsModal({
 							</div>
 							<div>
 								<Text className="font-medium">Auth Type:</Text>
-								<Badge color={server.auth_type === "none" ? "gray" : "green"}>
-									{server.auth_type}
-								</Badge>
+								<Badge color={server.auth_type === "none" ? "gray" : "green"}>{server.auth_type}</Badge>
 							</div>
 							<div>
 								<Text className="font-medium">Status:</Text>
-								<Badge color={statusColor(server.status)}>
-									{server.status || "unknown"}
-								</Badge>
+								<Badge color={statusColor(server.status)}>{server.status || "unknown"}</Badge>
 							</div>
 						</div>
 						{server.description && (
@@ -114,9 +105,7 @@ export default function ModelHubMcpDetailsModal({
 							<div>
 								<Text className="font-medium">URL:</Text>
 								<div className="mt-1 flex items-center space-x-2">
-									<Text className="flex-1 break-all rounded bg-gray-100 p-2 text-sm">
-										{server.url}
-									</Text>
+									<Text className="flex-1 break-all rounded bg-gray-100 p-2 text-sm">{server.url}</Text>
 									<CopyOutlined
 										onClick={() => onCopy(server.url)}
 										className="flex-shrink-0 cursor-pointer text-gray-500 hover:text-blue-500"
@@ -126,9 +115,7 @@ export default function ModelHubMcpDetailsModal({
 							{server.command && (
 								<div>
 									<Text className="font-medium">Command:</Text>
-									<Text className="mt-1 rounded bg-gray-100 p-2 font-mono text-sm">
-										{server.command}
-									</Text>
+									<Text className="mt-1 rounded bg-gray-100 p-2 font-mono text-sm">{server.command}</Text>
 								</div>
 							)}
 						</div>
@@ -160,9 +147,7 @@ export default function ModelHubMcpDetailsModal({
 							{server.last_health_check && (
 								<div>
 									<Text className="font-medium">Last Health Check:</Text>
-									<Text className="text-sm">
-										{new Date(server.last_health_check).toLocaleString()}
-									</Text>
+									<Text className="text-sm">{new Date(server.last_health_check).toLocaleString()}</Text>
 								</div>
 							)}
 						</div>

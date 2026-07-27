@@ -383,9 +383,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			// 在同一 MVCC 快照内 UNION ALL 后统一排序。request_id 用作时间相同时的
 			// 稳定排序键，避免两表在分页边界处产生不确定顺序。
 			const mixedOrderExpr =
-				sortOrder === SpendSortOrder.ASC
-					? sql`"startTime" ASC, "request_id" ASC`
-					: sql`"startTime" DESC, "request_id" DESC`;
+				sortOrder === SpendSortOrder.ASC ? sql`"startTime" ASC, "request_id" ASC` : sql`"startTime" DESC, "request_id" DESC`;
 			const mixedRows = await db
 				.select(uiActiveRequestSelection())
 				.from(liteLLM_ActiveRequests)
@@ -395,9 +393,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 				.limit(pageSize)
 				.offset(pageOffset);
 			const normalizedRows = mixedRows.map((row) => normalizeUiSpendLogRow(row as Record<string, unknown>));
-			const completedRows = normalizedRows
-				.filter((row) => row.status !== "in_progress")
-				.map((row) => withSessionGroup(row));
+			const completedRows = normalizedRows.filter((row) => row.status !== "in_progress").map((row) => withSessionGroup(row));
 			const enrichedCompletedRows = await enrichSessionCounts(db, completedRows, visibilityClause);
 			let completedIndex = 0;
 			data = normalizedRows.map((row) => {
@@ -436,9 +432,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 				withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)),
 			);
 			// UI 路径 enrichment session_total_count；v2 路径不 enrichment。
-			const completedData = isV2
-				? normalizedCompletedRows
-				: await enrichSessionCounts(db, normalizedCompletedRows, visibilityClause);
+			const completedData = isV2 ? normalizedCompletedRows : await enrichSessionCounts(db, normalizedCompletedRows, visibilityClause);
 			const normalizedActiveRows = activeRows.map((row) => ({
 				...normalizeUiSpendLogRow(row as Record<string, unknown>),
 				session_total_count: 1,
@@ -504,9 +498,10 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const snapshot = parseSessionPosition(req.query.snapshot, "snapshot");
 		const cursor = parseSessionPosition(req.query.cursor, "cursor");
 
-		const groupClause = hasLegacySessionId
-			? eq(liteLLM_SpendLogs.session_id, group.id)
-			: eq(liteLLM_SpendLogs.session_group_key, sessionGroupKey(group));
+		// Legacy `session_id` is only an input alias. All detail reads must use the
+		// persisted group key so embedded stable session IDs and indexed lookups
+		// behave exactly like the explicit session group API.
+		const groupClause = eq(liteLLM_SpendLogs.session_group_key, sessionGroupKey(group));
 		const baseClause = and(groupClause, visibilityClause) as SQL;
 		let effectiveSnapshot = snapshot;
 		if (!effectiveSnapshot) {

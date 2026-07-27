@@ -66,14 +66,11 @@ export default function OrganizationSettings({
 						rpm_limit: budget.rpm_limit,
 						max_budget: budget.max_budget,
 						budget_duration: budget.budget_duration,
-						metadata: organization.metadata
-							? JSON.stringify(organization.metadata, null, 2)
-							: "",
+						metadata: organization.metadata ? JSON.stringify(organization.metadata, null, 2) : "",
 						vector_stores: organization.object_permission?.vector_stores || [],
 						mcp_servers_and_groups: {
 							servers: organization.object_permission?.mcp_servers || [],
-							accessGroups:
-								organization.object_permission?.mcp_access_groups || [],
+							accessGroups: organization.object_permission?.mcp_access_groups || [],
 						},
 					}}
 					layout="vertical"
@@ -125,9 +122,7 @@ export default function OrganizationSettings({
 					</Form.Item>
 					<Form.Item label="MCP Servers & Access Groups" name="mcp_servers_and_groups">
 						<MCPServerSelector
-							onChange={(values) =>
-								form.setFieldValue("mcp_servers_and_groups", values)
-							}
+							onChange={(values) => form.setFieldValue("mcp_servers_and_groups", values)}
 							value={form.getFieldValue("mcp_servers_and_groups")}
 							accessToken={accessToken || ""}
 							placeholder="Select MCP servers and access groups"
@@ -177,10 +172,7 @@ export default function OrganizationSettings({
 					<div>
 						<Text className="font-medium">Budget</Text>
 						<div>
-							Max:{" "}
-							{budget.max_budget !== null
-								? `$${formatNumberWithCommas(budget.max_budget, 4)}`
-								: "No Limit"}
+							Max: {budget.max_budget !== null ? `$${formatNumberWithCommas(budget.max_budget, 4)}` : "No Limit"}
 						</div>
 						<div>Reset: {budget.budget_duration || "Never"}</div>
 					</div>
@@ -195,4 +187,3 @@ export default function OrganizationSettings({
 		</Card>
 	);
 }
-

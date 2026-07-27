@@ -1,9 +1,9 @@
 // Query keys factory
 
 type ListParams = {
-  page?: number;
-  limit?: number;
-  filters?: Record<string, string | number>;
+	page?: number;
+	limit?: number;
+	filters?: Record<string, string | number>;
 };
 
 /**
@@ -23,13 +23,13 @@ type ListParams = {
  * ```
  */
 export function createQueryKeys<T extends string>(resource: T) {
-  const all = [resource] as const;
+	const all = [resource] as const;
 
-  return {
-    all,
-    lists: () => [...all, "list"] as const,
-    list: (params?: ListParams) => [...all, "list", { params }] as const,
-    details: () => [...all, "detail"] as const,
-    detail: (uid: string) => [...all, "detail", uid] as const,
-  };
+	return {
+		all,
+		lists: () => [...all, "list"] as const,
+		list: (params?: ListParams) => [...all, "list", { params }] as const,
+		details: () => [...all, "detail"] as const,
+		detail: (uid: string) => [...all, "detail", uid] as const,
+	};
 }

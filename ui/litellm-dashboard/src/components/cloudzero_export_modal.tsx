@@ -31,14 +31,7 @@ const CloudZeroExportModal: React.FC<CloudZeroExportModalProps> = ({ isOpen, onC
 	const [exportType, setExportType] = useState<ExportType>("cloudzero");
 	const [exportLoading, setExportLoading] = useState(false);
 
-	// Load existing settings when modal opens
-	useEffect(() => {
-		if (isOpen && accessToken) {
-			loadExistingSettings();
-		}
-	}, [isOpen, accessToken]);
-
-	const loadExistingSettings = async () => {
+	const loadExistingSettings = React.useCallback(async () => {
 		setSettingsLoading(true);
 		try {
 			const response = await dashboardFetch("/cloudzero/settings", {
@@ -66,7 +59,14 @@ const CloudZeroExportModal: React.FC<CloudZeroExportModalProps> = ({ isOpen, onC
 		} finally {
 			setSettingsLoading(false);
 		}
-	};
+	}, [form]);
+
+	// Load existing settings when modal opens
+	useEffect(() => {
+		if (isOpen && accessToken) {
+			void Promise.resolve().then(loadExistingSettings);
+		}
+	}, [accessToken, isOpen, loadExistingSettings]);
 
 	const handleSaveCloudZeroSettings = async (values: CloudZeroSettings) => {
 		if (!accessToken) {

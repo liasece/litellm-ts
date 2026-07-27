@@ -37,4 +37,3 @@ export default function AIHubHeader({ isAdmin, onCopy }: AIHubHeaderProps) {
 		</div>
 	);
 }
-

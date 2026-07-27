@@ -39,6 +39,9 @@ const CodeInterpreterOutput: React.FC<CodeInterpreterOutputProps> = ({
 
 	// Fetch images from container files API
 	useEffect(() => {
+		let disposed = false;
+		const createdUrls: string[] = [];
+
 		const fetchImages = async () => {
 			for (const annotation of annotations) {
 				const isImage =
@@ -62,7 +65,12 @@ const CodeInterpreterOutput: React.FC<CodeInterpreterOutputProps> = ({
 						if (response.ok) {
 							const blob = await response.blob();
 							const url = URL.createObjectURL(blob);
-							setImageUrls((prev) => ({ ...prev, [annotation.file_id]: url }));
+							if (disposed) {
+								URL.revokeObjectURL(url);
+							} else {
+								createdUrls.push(url);
+								setImageUrls((prev) => ({ ...prev, [annotation.file_id]: url }));
+							}
 						}
 					} catch (error) {
 						console.error("Error fetching image:", error);
@@ -79,9 +87,10 @@ const CodeInterpreterOutput: React.FC<CodeInterpreterOutputProps> = ({
 
 		// Cleanup URLs on unmount
 		return () => {
-			Object.values(imageUrls).forEach((url) => URL.revokeObjectURL(url));
+			disposed = true;
+			createdUrls.forEach((url) => URL.revokeObjectURL(url));
 		};
-	}, [annotations, accessToken, proxyBaseUrl]);
+	}, [accessToken, annotations, proxyBaseUrl]);
 
 	const handleDownload = async (annotation: ContainerFileCitation) => {
 		try {

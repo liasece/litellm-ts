@@ -42,11 +42,7 @@ describe("buildKeyUpdatePayload", () => {
 	});
 
 	it("preserves an already normalized budget duration", () => {
-		const payload = buildKeyUpdatePayload(
-			{ token: "token", metadata: {}, budget_duration: "24h" },
-			currentKey,
-			true,
-		);
+		const payload = buildKeyUpdatePayload({ token: "token", metadata: {}, budget_duration: "24h" }, currentKey, true);
 
 		expect(payload.budget_duration).toBe("24h");
 	});

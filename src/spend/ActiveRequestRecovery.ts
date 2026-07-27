@@ -13,10 +13,7 @@ export const ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART = "server_restart";
  * @param abortedAt - 本次恢复发生的时间
  * @returns 已回收的请求数量
  */
-export async function abortOrphanedActiveRequests(
-	db: NodePgDatabase<typeof schema>,
-	abortedAt: Date = new Date(),
-): Promise<number> {
+export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof schema>, abortedAt: Date = new Date()): Promise<number> {
 	return db.transaction(async (tx) => {
 		const result = await tx.execute(sql`
 			WITH orphaned AS MATERIALIZED (

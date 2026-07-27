@@ -5,98 +5,100 @@ import { createPlaygroundFetch } from "../../networking";
 
 vi.mock("openai");
 vi.mock("../../networking", () => ({
-  getProxyBaseUrl: vi.fn(() => "https://example.com"),
-  createPlaygroundFetch: vi.fn(() => vi.fn()),
+	getProxyBaseUrl: vi.fn(() => "https://example.com"),
+	createPlaygroundFetch: vi.fn(() => vi.fn()),
 }));
 
 // Mock URL.createObjectURL
 global.URL.createObjectURL = vi.fn(() => "blob:mock-audio-url");
 
 describe("audio_speech", () => {
-  const mockCreate = vi.fn();
-  const mockUpdateUI = vi.fn();
-  const mockBlob = new Blob(["mock audio data"], { type: "audio/mpeg" });
-  let abortController: AbortController | null = null;
+	const mockCreate = vi.fn();
+	const mockUpdateUI = vi.fn();
+	const mockBlob = new Blob(["mock audio data"], { type: "audio/mpeg" });
+	let abortController: AbortController | null = null;
 
-  beforeEach(() => {
-    // Mock the response structure from OpenAI audio speech API
-    mockCreate.mockResolvedValue({
-      blob: vi.fn().mockResolvedValue(mockBlob),
-    });
+	beforeEach(() => {
+		// Mock the response structure from OpenAI audio speech API
+		mockCreate.mockResolvedValue({
+			blob: vi.fn().mockResolvedValue(mockBlob),
+		});
 
-    // Mock the OpenAI constructor and its methods
-    (OpenAI as any).mockImplementation(() => ({
-      audio: {
-        speech: {
-          create: mockCreate,
-        },
-      },
-    }));
-  });
+		// Mock the OpenAI constructor and its methods
+		(OpenAI as any).mockImplementation(() => ({
+			audio: {
+				speech: {
+					create: mockCreate,
+				},
+			},
+		}));
+	});
 
-  afterEach(() => {
-    // Clean up abort controller if it exists
-    if (abortController) {
-      abortController.abort();
-      abortController = null;
-    }
-    vi.clearAllMocks();
-  });
+	afterEach(() => {
+		// Clean up abort controller if it exists
+		if (abortController) {
+			abortController.abort();
+			abortController = null;
+		}
+		vi.clearAllMocks();
+	});
 
-  it("should make a request to the audio speech API with basic parameters", async () => {
-    await makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", { kind: "session" }, []);
+	it("should make a request to the audio speech API with basic parameters", async () => {
+		await makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", { kind: "session" }, []);
 
-    expect(createPlaygroundFetch).toHaveBeenCalledWith({ kind: "session" }, "openai");
-    expect(OpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "playground-session", fetch: expect.any(Function) }));
+		expect(createPlaygroundFetch).toHaveBeenCalledWith({ kind: "session" }, "openai");
+		expect(OpenAI).toHaveBeenCalledWith(
+			expect.objectContaining({ apiKey: "playground-session", fetch: expect.any(Function) }),
+		);
 
-    expect(mockCreate).toHaveBeenCalledWith(
-      {
-        model: "tts-1",
-        input: "Hello, world!",
-        voice: "alloy",
-      },
-      { signal: undefined },
-    );
-    expect(mockUpdateUI).toHaveBeenCalledWith("blob:mock-audio-url", "tts-1");
-  });
+		expect(mockCreate).toHaveBeenCalledWith(
+			{
+				model: "tts-1",
+				input: "Hello, world!",
+				voice: "alloy",
+			},
+			{ signal: undefined },
+		);
+		expect(mockUpdateUI).toHaveBeenCalledWith("blob:mock-audio-url", "tts-1");
+	});
 
-  it("should include optional parameters when provided", async () => {
-    abortController = new AbortController();
-    const signal = abortController.signal;
+	it("should include optional parameters when provided", async () => {
+		abortController = new AbortController();
+		const signal = abortController.signal;
 
-    await makeOpenAIAudioSpeechRequest(
-      "Test input",
-      "nova",
-      mockUpdateUI,
-      "tts-1-hd",
-      { kind: "session" },
-      ["tag1", "tag2"],
-      signal,
-      "mp3",
-      1.5,
-    );
+		await makeOpenAIAudioSpeechRequest(
+			"Test input",
+			"nova",
+			mockUpdateUI,
+			"tts-1-hd",
+			{ kind: "session" },
+			["tag1", "tag2"],
+			signal,
+			"mp3",
+			1.5,
+		);
 
-    expect(mockCreate).toHaveBeenCalledWith(
-      {
-        model: "tts-1-hd",
-        input: "Test input",
-        voice: "nova",
-        response_format: "mp3",
-        speed: 1.5,
-      },
-      { signal },
-    );
-    expect(mockUpdateUI).toHaveBeenCalledWith("blob:mock-audio-url", "tts-1-hd");
-  });
+		expect(mockCreate).toHaveBeenCalledWith(
+			{
+				model: "tts-1-hd",
+				input: "Test input",
+				voice: "nova",
+				response_format: "mp3",
+				speed: 1.5,
+			},
+			{ signal },
+		);
+		expect(mockUpdateUI).toHaveBeenCalledWith("blob:mock-audio-url", "tts-1-hd");
+	});
 
-  it("should handle errors gracefully", async () => {
-    const mockError = new Error("API Error");
-    mockCreate.mockRejectedValue(mockError);
+	it("should handle errors gracefully", async () => {
+		const mockError = new Error("API Error");
+		mockCreate.mockRejectedValue(mockError);
 
-    await expect(
-      makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", { kind: "session" }, []),
-    ).rejects.toThrow("API Error");
+		await expect(
+			makeOpenAIAudioSpeechRequest("Hello, world!", "alloy", mockUpdateUI, "tts-1", { kind: "session" }, []),
+		).rejects.toThrow("API Error");
 
-    expect(mockUpdateUI).not.toHaveBeenCalled();
-  });
+		expect(mockUpdateUI).not.toHaveBeenCalled();
+	});
 });

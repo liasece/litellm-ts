@@ -8,11 +8,7 @@ interface OrganizationHeaderProps {
 	onBack: () => void;
 }
 
-export default function OrganizationHeader({
-	name,
-	organizationId,
-	onBack,
-}: OrganizationHeaderProps) {
+export default function OrganizationHeader({ name, organizationId, onBack }: OrganizationHeaderProps) {
 	return (
 		<div className="mb-6 flex items-center justify-between">
 			<div>
@@ -21,9 +17,7 @@ export default function OrganizationHeader({
 				</Button>
 				<Title>{name}</Title>
 				<Text className="font-mono text-gray-500">
-					<Typography.Text
-						copyable={{ text: organizationId, tooltips: ["Copy organization ID", "Copied!"] }}
-					>
+					<Typography.Text copyable={{ text: organizationId, tooltips: ["Copy organization ID", "Copied!"] }}>
 						{organizationId}
 					</Typography.Text>
 				</Text>
@@ -31,4 +25,3 @@ export default function OrganizationHeader({
 		</div>
 	);
 }
-

@@ -9,12 +9,7 @@ interface GuardrailDetailsHeaderProps {
 	onCopy: () => void;
 }
 
-export default function GuardrailDetailsHeader({
-	name,
-	id,
-	copied,
-	onCopy,
-}: GuardrailDetailsHeaderProps) {
+export default function GuardrailDetailsHeader({ name, id, copied, onCopy }: GuardrailDetailsHeaderProps) {
 	return (
 		<div>
 			<Title>{name || "Unnamed Guardrail"}</Title>

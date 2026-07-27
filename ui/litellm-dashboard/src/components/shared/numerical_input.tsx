@@ -2,13 +2,13 @@ import React from "react";
 import { NumberInput } from "@tremor/react";
 
 interface NumericalInputProps {
-  step?: number;
-  style?: React.CSSProperties;
-  placeholder?: string;
-  min?: number;
-  max?: number;
-  onChange?: any; // Using any to avoid type conflicts with Tremor's NumberInput
-  [key: string]: any;
+	step?: number;
+	style?: React.CSSProperties;
+	placeholder?: string;
+	min?: number;
+	max?: number;
+	onChange?: any; // Using any to avoid type conflicts with Tremor's NumberInput
+	[key: string]: any;
 }
 
 /**
@@ -23,26 +23,26 @@ interface NumericalInputProps {
  * @param {any} props.rest - Additional props passed to NumberInput
  */
 const NumericalInput: React.FC<NumericalInputProps> = ({
-  step = 0.01,
-  style = { width: "100%" },
-  placeholder = "Enter a numerical value",
-  min,
-  max,
-  onChange,
-  ...rest
+	step = 0.01,
+	style = { width: "100%" },
+	placeholder = "Enter a numerical value",
+	min,
+	max,
+	onChange,
+	...rest
 }) => {
-  return (
-    <NumberInput
-      onWheel={(event) => event.currentTarget.blur()}
-      step={step}
-      style={style}
-      placeholder={placeholder}
-      min={min}
-      max={max}
-      onChange={onChange}
-      {...rest}
-    />
-  );
+	return (
+		<NumberInput
+			onWheel={(event) => event.currentTarget.blur()}
+			step={step}
+			style={style}
+			placeholder={placeholder}
+			min={min}
+			max={max}
+			onChange={onChange}
+			{...rest}
+		/>
+	);
 };
 
 export default NumericalInput;

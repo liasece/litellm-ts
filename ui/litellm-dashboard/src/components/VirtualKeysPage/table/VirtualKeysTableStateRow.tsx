@@ -1,12 +1,6 @@
 import { TableCell, TableRow } from "@tremor/react";
 
-export default function VirtualKeysTableStateRow({
-	columnCount,
-	message,
-}: {
-	columnCount: number;
-	message: string;
-}) {
+export default function VirtualKeysTableStateRow({ columnCount, message }: { columnCount: number; message: string }) {
 	return (
 		<TableRow>
 			<TableCell colSpan={columnCount} className="h-8 text-center">
@@ -15,4 +9,3 @@ export default function VirtualKeysTableStateRow({
 		</TableRow>
 	);
 }
-

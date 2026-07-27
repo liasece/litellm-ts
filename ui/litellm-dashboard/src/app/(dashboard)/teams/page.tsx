@@ -8,24 +8,24 @@ import { Organization } from "@/components/networking";
 import { fetchOrganizations } from "@/components/organizations";
 
 const TeamsPage = () => {
-  const { accessToken, userId, userRole } = useAuthorized();
-  const { teams, setTeams } = useTeams();
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
+	const { accessToken, userId, userRole } = useAuthorized();
+	const { teams, setTeams } = useTeams();
+	const [organizations, setOrganizations] = useState<Organization[]>([]);
 
-  useEffect(() => {
-    fetchOrganizations(accessToken, setOrganizations).then(() => {});
-  }, [accessToken]);
+	useEffect(() => {
+		fetchOrganizations(accessToken, setOrganizations).then(() => {});
+	}, [accessToken]);
 
-  return (
-    <TeamsView
-      teams={teams}
-      accessToken={accessToken}
-      setTeams={setTeams}
-      userID={userId}
-      userRole={userRole}
-      organizations={organizations}
-    />
-  );
+	return (
+		<TeamsView
+			teams={teams}
+			accessToken={accessToken}
+			setTeams={setTeams}
+			userID={userId}
+			userRole={userRole}
+			organizations={organizations}
+		/>
+	);
 };
 
 export default TeamsPage;

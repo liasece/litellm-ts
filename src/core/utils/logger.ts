@@ -117,6 +117,9 @@ export const logger = winston.createLogger({
 	transports: [
 		new winston.transports.Console({
 			format: consoleFormat,
+			// Tests assert behavior and error mapping directly; emitting expected
+			// failure-path logs makes failures unreadable and obscures open handles.
+			silent: process.env.NODE_ENV === "test",
 		}),
 	],
 });

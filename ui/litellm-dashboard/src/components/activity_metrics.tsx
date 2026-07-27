@@ -71,7 +71,10 @@ const ModelSection = ({
 				<Card>
 					<Text>Total Tokens</Text>
 					<Title>{formatNumberWithCommas(metrics.total_tokens, 0, false)}</Title>
-					<Text>{formatNumberWithCommas(Math.round(metrics.total_tokens / metrics.total_successful_requests), 0, false)} avg per successful request</Text>
+					<Text>
+						{formatNumberWithCommas(Math.round(metrics.total_tokens / metrics.total_successful_requests), 0, false)} avg
+						per successful request
+					</Text>
 				</Card>
 				<Card>
 					<Text>Total Spend</Text>

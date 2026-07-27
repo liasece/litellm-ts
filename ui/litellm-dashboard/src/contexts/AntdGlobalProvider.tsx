@@ -6,23 +6,23 @@ import { setNotificationInstance } from "@/components/molecules/notifications_ma
 import { setMessageInstance } from "@/components/molecules/message_manager";
 
 export default function AntdGlobalProvider({ children }: { children: React.ReactNode }) {
-  const [notificationApi, notificationContextHolder] = notification.useNotification();
-  const [messageApi, messageContextHolder] = message.useMessage();
-  const initialized = useRef(false);
+	const [notificationApi, notificationContextHolder] = notification.useNotification();
+	const [messageApi, messageContextHolder] = message.useMessage();
+	const initialized = useRef(false);
 
-  useEffect(() => {
-    if (!initialized.current) {
-      setNotificationInstance(notificationApi);
-      setMessageInstance(messageApi);
-      initialized.current = true;
-    }
-  }, [notificationApi, messageApi]);
+	useEffect(() => {
+		if (!initialized.current) {
+			setNotificationInstance(notificationApi);
+			setMessageInstance(messageApi);
+			initialized.current = true;
+		}
+	}, [notificationApi, messageApi]);
 
-  return (
-    <>
-      {notificationContextHolder}
-      {messageContextHolder}
-      {children}
-    </>
-  );
+	return (
+		<>
+			{notificationContextHolder}
+			{messageContextHolder}
+			{children}
+		</>
+	);
 }

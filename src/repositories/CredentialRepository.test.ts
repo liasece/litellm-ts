@@ -55,17 +55,13 @@ describe("CredentialRepository", () => {
 	it("createAndAttachToModel 先锁定模型，模型 update 零行显式失败", async () => {
 		const tx = {
 			execute: jest.fn().mockResolvedValue({ rows: [{ model_id: "model-1" }] }),
-			select: jest
-				.fn()
-				.mockReturnValue({
-					from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([model]) }) }),
-				}),
+			select: jest.fn().mockReturnValue({
+				from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([model]) }) }),
+			}),
 			insert: jest.fn().mockReturnValue({ values: jest.fn().mockReturnValue({ returning: jest.fn().mockResolvedValue([stored]) }) }),
-			update: jest
-				.fn()
-				.mockReturnValue({
-					set: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ returning: jest.fn().mockResolvedValue([]) }) }),
-				}),
+			update: jest.fn().mockReturnValue({
+				set: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ returning: jest.fn().mockResolvedValue([]) }) }),
+			}),
 		};
 		const db = { transaction: jest.fn((callback) => callback(tx)) };
 		const repository = new CredentialRepository(db as never);

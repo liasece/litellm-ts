@@ -42,12 +42,7 @@ export default function GuardrailOverview({
 					<Text>Provider</Text>
 					<div className="mt-2 flex items-center space-x-2">
 						{logo && logoVisible && (
-							<img
-								src={logo}
-								alt={`${displayName} logo`}
-								className="h-6 w-6"
-								onError={() => setLogoVisible(false)}
-							/>
+							<img src={logo} alt={`${displayName} logo`} className="h-6 w-6" onError={() => setLogoVisible(false)} />
 						)}
 						<Title>{displayName}</Title>
 					</div>
@@ -89,10 +84,7 @@ export default function GuardrailOverview({
 						</div>
 						<div className="max-h-[400px] overflow-y-auto">
 							{Object.entries(piiConfig).map(([entity, action]) => (
-								<div
-									key={entity}
-									className="flex border-b px-5 py-3 transition-colors hover:bg-gray-50"
-								>
+								<div key={entity} className="flex border-b px-5 py-3 transition-colors hover:bg-gray-50">
 									<Text className="flex-1 font-medium text-gray-900">{entity}</Text>
 									<Text className="flex-1">
 										<span
@@ -117,30 +109,29 @@ export default function GuardrailOverview({
 				</Card>
 			)}
 
-			{guardrailData.litellm_params?.guardrail === "custom_code" &&
-				guardrailData.litellm_params?.custom_code && (
-					<Card className="mt-6">
-						<div className="mb-4 flex items-center justify-between">
-							<div className="flex items-center gap-2">
-								<CodeOutlined className="text-blue-500" />
-								<Text className="text-lg font-medium">Custom Code</Text>
-							</div>
-							{isAdmin && !isConfigGuardrail && (
-								<Button size="small" icon={<CodeOutlined />} onClick={onEditCode}>
-									Edit Code
-								</Button>
-							)}
+			{guardrailData.litellm_params?.guardrail === "custom_code" && guardrailData.litellm_params?.custom_code && (
+				<Card className="mt-6">
+					<div className="mb-4 flex items-center justify-between">
+						<div className="flex items-center gap-2">
+							<CodeOutlined className="text-blue-500" />
+							<Text className="text-lg font-medium">Custom Code</Text>
 						</div>
-						<div className="relative overflow-hidden rounded-lg border border-gray-700 bg-[#1e1e1e]">
-							<pre
-								className="overflow-x-auto p-4 text-sm text-gray-200"
-								style={{ fontFamily: "'Fira Code', 'Monaco', 'Consolas', monospace" }}
-							>
-								<code>{guardrailData.litellm_params.custom_code}</code>
-							</pre>
-						</div>
-					</Card>
-				)}
+						{isAdmin && !isConfigGuardrail && (
+							<Button size="small" icon={<CodeOutlined />} onClick={onEditCode}>
+								Edit Code
+							</Button>
+						)}
+					</div>
+					<div className="relative overflow-hidden rounded-lg border border-gray-700 bg-[#1e1e1e]">
+						<pre
+							className="overflow-x-auto p-4 text-sm text-gray-200"
+							style={{ fontFamily: "'Fira Code', 'Monaco', 'Consolas', monospace" }}
+						>
+							<code>{guardrailData.litellm_params.custom_code}</code>
+						</pre>
+					</div>
+				</Card>
+			)}
 
 			<ContentFilterManager
 				guardrailData={guardrailData}

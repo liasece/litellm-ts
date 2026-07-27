@@ -87,6 +87,13 @@ export type PlaygroundProtocol = "openai" | "anthropic";
 export const dashboardFetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
 	const method = (init.method ?? "GET").toUpperCase();
 	const headers = new Headers(init.headers);
+	const hasBearerCredential = Array.from(headers.values()).some((value) => value.startsWith("Bearer "));
+	if (hasBearerCredential) {
+		// Compatibility API calls authenticate explicitly and must retain their
+		// original RequestInit shape. Session cookies and CSRF belong only to the
+		// HttpOnly-cookie transport.
+		return globalThis.fetch(input, init);
+	}
 	if (!SAFE_HTTP_METHODS.has(method)) {
 		const csrfToken = getCookie(CSRF_COOKIE_NAME);
 		if (csrfToken) {
@@ -185,7 +192,7 @@ const updateProxyBaseUrl = (serverRootPath: string, receivedProxyBaseUrl: string
 	const resolvedDefaultProxyBaseUrl =
 		isLocal && process.env.NEXT_PUBLIC_USE_REWRITES !== "true"
 			? "http://localhost:4000"
-			: (browserLocation?.origin ?? null);
+			: browserLocation?.origin ?? null;
 	let initialProxyBaseUrl = receivedProxyBaseUrl || resolvedDefaultProxyBaseUrl;
 	console.log("proxyBaseUrl:", proxyBaseUrl);
 	console.log("serverRootPath:", serverRootPath);
@@ -4324,7 +4331,7 @@ export const getRoutableModelCandidatesCall = async (accessToken: string): Promi
 		throw new Error(errorMessage);
 	}
 	const data = (await response.json()) as RoutableModelCandidate[] | { data?: RoutableModelCandidate[] };
-	return Array.isArray(data) ? data : (data.data ?? []);
+	return Array.isArray(data) ? data : data.data ?? [];
 };
 
 /** 旧 Web Search 调用入口，保留以兼容已部署 Dashboard。 */
@@ -7256,7 +7263,7 @@ export const sessionSpendLogsCall = async (
 ) => {
 	try {
 		const options =
-			typeof pageOrOptions === "number" ? { page: pageOrOptions, pageSize: legacyPageSize } : (pageOrOptions ?? {});
+			typeof pageOrOptions === "number" ? { page: pageOrOptions, pageSize: legacyPageSize } : pageOrOptions ?? {};
 		const searchParams = new URLSearchParams();
 		if (typeof session === "string") {
 			searchParams.set("session_id", session);
@@ -9633,7 +9640,7 @@ export const storeMCPOAuthUserCredential = async (
 		const detailMsg = Array.isArray(detail)
 			? detail
 					.map((d: unknown) =>
-						d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
+						d && typeof d === "object" ? (d as Record<string, unknown>).msg ?? JSON.stringify(d) : String(d),
 					)
 					.join("; ")
 			: typeof detail === "string"
@@ -9664,7 +9671,7 @@ export const deleteMCPOAuthUserCredential = async (
 		const detailMsg = Array.isArray(detail)
 			? detail
 					.map((d: unknown) =>
-						d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
+						d && typeof d === "object" ? (d as Record<string, unknown>).msg ?? JSON.stringify(d) : String(d),
 					)
 					.join("; ")
 			: typeof detail === "string"

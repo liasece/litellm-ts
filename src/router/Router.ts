@@ -74,18 +74,31 @@ interface AvailDeployment {
  * 该对象只在 AsyncLocalStorage 请求上下文内存活，不是跨请求缓存。
  */
 export interface RouterRuntimeSnapshot {
+	/** 当前可路由的部署列表。 */
 	readonly deployments: Deployment[];
+	/** 当前请求使用的 fallback 处理器。 */
 	readonly fallbackHandler: FallbackHandler;
+	/** 当前请求使用的部署选择函数。 */
 	readonly routeFn: RouteFn;
+	/** 默认冷却时长（毫秒）。 */
 	readonly cooldownTimeMs: number;
+	/** 默认重试次数。 */
 	readonly numRetries: number;
+	/** 全局重试策略。 */
 	readonly retryPolicy: RetryPolicy | undefined;
+	/** 按模型组覆盖的重试策略。 */
 	readonly modelGroupRetryPolicy: Record<string, RetryPolicy> | undefined;
+	/** 最大 fallback 次数。 */
 	readonly maxFallbacks: number;
+	/** 是否启用调用前检查。 */
 	readonly preCallChecks: boolean;
+	/** 可选调用前检查开关。 */
 	readonly optionalPreCallChecks: Record<string, boolean> | undefined;
+	/** 默认重试等待时间。 */
 	readonly retryAfter: number;
+	/** Router 级允许失败次数。 */
 	readonly allowedFails: number | AllowedFailsPolicy | null;
+	/** 当前请求使用的凭证读取器。 */
 	readonly credentialValues: CredentialValuesAccessor | undefined;
 }
 
@@ -579,9 +592,7 @@ export class Router {
 				? (settings["content_policy_fallbacks"] as Record<string, string[]>)
 				: {};
 		const routingStrategy =
-			typeof settings["routing_strategy"] === "string"
-				? settings["routing_strategy"]
-				: RoutingStrategyName.LatencyBasedRouting;
+			typeof settings["routing_strategy"] === "string" ? settings["routing_strategy"] : RoutingStrategyName.LatencyBasedRouting;
 		const numRetries = Router._castIntSetting("num_retries", settings["num_retries"]) ?? DEFAULT_MAX_RETRIES;
 		const cooldownSeconds = Router._castIntSetting("cooldown_time", settings["cooldown_time"]);
 		const retryAfter = Router._castIntSetting("retry_after", settings["retry_after"]) ?? 0;
@@ -991,15 +1002,15 @@ export class Router {
 		const depKey = getDeploymentKey(deployment);
 		const targetGroup = getModelGroupName(deployment);
 		const sameGroupCount = runtime.deployments.filter((d) => getModelGroupName(d) === targetGroup).length;
-		const decision = buildCooldownDecision(
-			deployment,
-			error,
-			sameGroupCount,
-			undefined,
-			runtime.cooldownTimeMs,
-			this._cooldownManager,
-			runtime.allowedFails,
-		);
+		const decision = buildCooldownDecision({
+			deployment: deployment,
+			error: error,
+			sameGroupCount: sameGroupCount,
+			retryAfterHeader: undefined,
+			defaultCooldownTimeMs: runtime.cooldownTimeMs,
+			cooldownManager: this._cooldownManager,
+			routerAllowedFails: runtime.allowedFails,
+		});
 		if (decision.shouldCooldown) {
 			this._cooldownManager.markFailed(depKey, decision.cooldownDurationMs, decision.statusCode, error.message);
 			this._cooldownManager.recordFailure(depKey);

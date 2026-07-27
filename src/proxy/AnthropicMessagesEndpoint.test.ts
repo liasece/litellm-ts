@@ -360,9 +360,7 @@ describe("Anthropic web-search target model override", () => {
 			),
 		);
 		runtimeConfig.generalSettings = { websearch_override_target_model: "yaml-target" };
-		const getParam = jest
-			.spyOn(dbConfigProvider, "getParam")
-			.mockResolvedValue({ websearch_override_target_model: "websearch-alias" });
+		const getParam = jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({ websearch_override_target_model: "websearch-alias" });
 		const forcedWebSearchRequest = {
 			model: "requested-model",
 			max_tokens: 10,

@@ -60,7 +60,9 @@ describeWithDatabase("Database PostgreSQL bootstrap integration", () => {
 		expect(tables.rows.some((row) => row.table_name === "LiteLLM_VerificationToken")).toBe(true);
 		expect(tables.rows.some((row) => row.table_name === "LiteLLM_SpendReservations")).toBe(true);
 		const migrations = await schemaPool.query<{ count: string }>('SELECT count(*)::text AS count FROM "__drizzle_migrations"');
-		expect(Number(migrations.rows[0]?.count)).toBe(readMigrationFiles({ migrationsFolder: resolve(__dirname, "../../../drizzle") }).length);
+		expect(Number(migrations.rows[0]?.count)).toBe(
+			readMigrationFiles({ migrationsFolder: resolve(__dirname, "../../../drizzle") }).length,
+		);
 
 		const second = new Database(databaseConfig(connectionString));
 		await second.initialize();

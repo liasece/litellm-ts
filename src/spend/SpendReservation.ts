@@ -84,6 +84,7 @@ function combineSpendHeartbeats(...heartbeats: SpendReservationHeartbeat[]): Spe
  * 生产 Drizzle 实例始终具备这些能力。部分 endpoint 单元测试传入只覆盖旧 SpendLog
  * 查询面的轻量适配器；这类适配器不支持 ActiveRequests 时跳过实时列表登记，
  * 但仍保留原有 reservation / SpendLog 测试路径。
+ * @param db - 待检测的 Drizzle 数据库实例
  */
 function supportsActiveRequestTracking(db: DrizzleDb): boolean {
 	const candidate = db as unknown as Record<string, unknown>;
@@ -216,11 +217,7 @@ export async function reserveEndpointSpend(
 	req: Request,
 	model: string,
 	requestBody: Record<string, unknown>,
-	optionsOrCostMode:
-		| "token"
-		| "image"
-		| "audio"
-		| { costMode?: "token" | "image" | "audio"; callType?: CallType; startTime?: Date } = {},
+	optionsOrCostMode: "token" | "image" | "audio" | { costMode?: "token" | "image" | "audio"; callType?: CallType; startTime?: Date } = {},
 ): Promise<EndpointSpendReservation | undefined> {
 	if (!db || !req.auth) {
 		return undefined;

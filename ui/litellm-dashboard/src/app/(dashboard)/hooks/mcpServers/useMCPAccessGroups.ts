@@ -5,10 +5,10 @@ import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 const mcpAccessGroupsKeys = createQueryKeys("mcpAccessGroups");
 
 export const useMCPAccessGroups = () => {
-  const { accessToken } = useAuthorized();
-  return useQuery<string[]>({
-    queryKey: mcpAccessGroupsKeys.list({}),
-    queryFn: async () => await fetchMCPAccessGroups(accessToken!),
-    enabled: Boolean(accessToken),
-  });
+	const { accessToken } = useAuthorized();
+	return useQuery<string[]>({
+		queryKey: mcpAccessGroupsKeys.list({}),
+		queryFn: async () => await fetchMCPAccessGroups(accessToken!),
+		enabled: Boolean(accessToken),
+	});
 };

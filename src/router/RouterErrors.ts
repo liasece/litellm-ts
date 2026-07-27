@@ -21,10 +21,8 @@
  */
 
 /** 异常通用基础接口：对齐 PY litellm 异常字段 */
-// eslint-disable @typescript-eslint/naming-convention
-
 /**
- *
+ * 可由 LiteLLM 异常携带的标准上下文字段。
  */
 export interface LitellmErrorFields {
 	/** 关联模型名 */
@@ -66,18 +64,16 @@ export interface LitellmErrorFields {
 	requested_model?: string;
 }
 
-// eslint-enable @typescript-eslint/naming-convention
-
 /** 基础 litellm 异常类：所有 Router 异常继承自此类 */
 export class LitellmError extends Error implements LitellmErrorFields {
 	override readonly name: string;
 
 	model?: string;
-	// eslint-disable-next-line @typescript-eslint/naming-convention, camelcase
+	// eslint-disable-next-line @typescript-eslint/naming-convention
 	llm_provider?: string;
 	// eslint-disable-next-line @typescript-eslint/naming-convention
 	status_code?: number;
-	// eslint-disable-next-line @typescript-eslint/naming-convention, camelcase
+	// eslint-disable-next-line @typescript-eslint/naming-convention
 	litellm_response_headers?: Record<string, string>;
 	// eslint-disable-next-line @typescript-eslint/naming-convention
 	num_retries?: number;
@@ -88,21 +84,19 @@ export class LitellmError extends Error implements LitellmErrorFields {
 	// eslint-disable-next-line @typescript-eslint/naming-convention
 	cooldown_time?: number;
 	/** DIFF-RT-04: 当前活跃冷却部署列表（已 SensitiveDataMasker 处理） */
-	// eslint-disable-next-line @typescript-eslint/naming-convention, camelcase
+	// eslint-disable-next-line @typescript-eslint/naming-convention
 	cooldown_list?: Array<[string, string]>;
 	/** DIFF-RT-05: 请求的模型组名，对齐 PY `router.py:5935-5964 extra_info.requested_model` */
-	// eslint-disable-next-line @typescript-eslint/naming-convention, camelcase
+	// eslint-disable-next-line @typescript-eslint/naming-convention
 	requested_model?: string;
 	constructor(message: string, fields: LitellmErrorFields = {}, errorName = "LitellmError") {
 		super(message);
 		this.name = errorName;
 
 		this.model = fields.model;
-		// eslint-disable-next-line camelcase
 		this.llm_provider = fields.llm_provider;
 
 		this.status_code = fields.status_code;
-		// eslint-disable-next-line camelcase
 		this.litellm_response_headers = fields.litellm_response_headers;
 
 		this.num_retries = fields.num_retries;
@@ -111,9 +105,7 @@ export class LitellmError extends Error implements LitellmErrorFields {
 		this.response = fields.response;
 
 		this.cooldown_time = fields.cooldown_time;
-		// eslint-disable-next-line camelcase
 		this.cooldown_list = fields.cooldown_list;
-		// eslint-disable-next-line camelcase
 		this.requested_model = fields.requested_model;
 	}
 }

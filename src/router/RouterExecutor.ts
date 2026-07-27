@@ -171,25 +171,31 @@ export interface CooldownDecision {
 	statusCode: number;
 }
 
+/** 构建冷却决策所需的请求与 Router 上下文。 */
+export interface CooldownDecisionInput {
+	/** 失败的部署。 */
+	deployment: Deployment;
+	/** Provider 或网络错误。 */
+	error: Error;
+	/** 同模型组的部署数量。 */
+	sameGroupCount: number;
+	/** 上游 Retry-After header。 */
+	retryAfterHeader: string | undefined;
+	/** Router 默认冷却时间（毫秒）。 */
+	defaultCooldownTimeMs: number;
+	/** 保存和判断冷却状态的管理器。 */
+	cooldownManager: CooldownManager;
+	/** Router 级允许失败次数。 */
+	routerAllowedFails?: number | AllowedFailsPolicy | null;
+}
+
 /**
  * 冷却决策：聚合 status code / same group count / errorCategory → CooldownManager 判定。
  * 命中时给出最终 cooldown 持续时间（按 deployCooldown > retryAfter > default 顺序）。
- * @param deployment
- * @param error
- * @param sameGroupCount
- * @param retryAfterHeader
- * @param defaultCooldownTimeMs
- * @param cooldownManager
+ * @param input - 冷却判定所需的完整上下文
  */
-export function buildCooldownDecision(
-	deployment: Deployment,
-	error: Error,
-	sameGroupCount: number,
-	retryAfterHeader: string | undefined,
-	defaultCooldownTimeMs: number,
-	cooldownManager: CooldownManager,
-	routerAllowedFails?: number | AllowedFailsPolicy | null,
-): CooldownDecision {
+export function buildCooldownDecision(input: CooldownDecisionInput): CooldownDecision {
+	const { deployment, error, sameGroupCount, retryAfterHeader, defaultCooldownTimeMs, cooldownManager, routerAllowedFails } = input;
 	const exceptionStrForCooldown = error.name || error.message;
 	const errorCategory = categorizeErrorForCooldown(error);
 	const statusCode = castExceptionStatusToInt(error.message);

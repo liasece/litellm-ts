@@ -6,16 +6,7 @@ import { mcpHubColumns } from "@/components/mcp_hub_table_columns";
 import { ModelDataTable } from "@/components/model_dashboard/table";
 import ModelFilters from "@/components/model_filters";
 import { modelHubColumns } from "@/components/model_hub_table_columns";
-import {
-	Button,
-	Card,
-	Tab,
-	TabGroup,
-	TabList,
-	TabPanel,
-	TabPanels,
-	Text,
-} from "@tremor/react";
+import { Button, Card, Tab, TabGroup, TabList, TabPanel, TabPanels, Text } from "@tremor/react";
 import type { ModelGroupInfo } from "./types";
 
 interface AIHubTabsProps {
@@ -79,10 +70,7 @@ export default function AIHubTabs({
 								<Button onClick={onMakeModelsPublic}>Select Models to Make Public</Button>
 							</div>
 						)}
-						<ModelFilters
-							modelHubData={models}
-							onFilteredDataChange={onFilteredModelsChange}
-						/>
+						<ModelFilters modelHubData={models} onFilteredDataChange={onFilteredModelsChange} />
 						<ModelDataTable
 							columns={modelHubColumns(onModelClick, onCopy, false)}
 							data={filteredModels}
@@ -140,4 +128,3 @@ export default function AIHubTabs({
 		</TabGroup>
 	);
 }
-

@@ -98,14 +98,17 @@ export default function ModelInfoView({
 	const { data: modelHubData } = useModelHub();
 
 	// Transform the model data
-	const getProviderFromModel = useCallback((model: string) => {
-		if (modelCostMapData !== null && modelCostMapData !== undefined) {
-			if (typeof modelCostMapData == "object" && model in modelCostMapData) {
-				return modelCostMapData[model]["litellm_provider"];
+	const getProviderFromModel = useCallback(
+		(model: string) => {
+			if (modelCostMapData !== null && modelCostMapData !== undefined) {
+				if (typeof modelCostMapData == "object" && model in modelCostMapData) {
+					return modelCostMapData[model]["litellm_provider"];
+				}
 			}
-		}
-		return "openai";
-	}, [modelCostMapData]);
+			return "openai";
+		},
+		[modelCostMapData],
+	);
 
 	const transformedModelData = useMemo(() => {
 		if (!rawModelDataResponse?.data || rawModelDataResponse.data.length === 0) {
@@ -239,7 +242,13 @@ export default function ModelInfoView({
 
 	const handleReuseCredential = async (values: { credential_name: string }) => {
 		if (!accessToken) return;
-		const attached = await attachCredentialToModel(accessToken, modelId, currentModelData, values, credentialCreateCall);
+		const attached = await attachCredentialToModel(
+			accessToken,
+			modelId,
+			currentModelData,
+			values,
+			credentialCreateCall,
+		);
 		if (!attached) {
 			NotificationsManager.error("Model data is still loading. Please try again.");
 			return;

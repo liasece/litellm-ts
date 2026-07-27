@@ -47,12 +47,7 @@ request = SendMessageRequest(
 )
 response = await client.send_message(request)`;
 
-export default function PublicAgentDetailsModal({
-	agent,
-	open,
-	onClose,
-	onCopy,
-}: PublicAgentDetailsModalProps) {
+export default function PublicAgentDetailsModal({ agent, open, onClose, onCopy }: PublicAgentDetailsModalProps) {
 	const capabilities = agent
 		? Object.entries(agent.capabilities ?? {})
 				.filter(([, value]) => value === true)
@@ -186,16 +181,10 @@ export default function PublicAgentDetailsModal({
 							onCopy={onCopy}
 							compact
 						/>
-						<PublicCodeExample
-							title="Step 2: Call the Agent"
-							code={CALL_EXAMPLE}
-							onCopy={onCopy}
-							compact
-						/>
+						<PublicCodeExample title="Step 2: Call the Agent" code={CALL_EXAMPLE} onCopy={onCopy} compact />
 					</section>
 				</div>
 			)}
 		</Modal>
 	);
 }
-

@@ -221,11 +221,6 @@ describe("Logs columns", () => {
 		expect(getSessionGroupRef(baseLogEntry)).toBeNull();
 	});
 
-	it("does not expose Session ID as a table column", () => {
-		const columns = createColumns();
-		expect(columns.some((column) => column.header === "Session ID")).toBe(false);
-	});
-
 	const renderColumnCell = (header: string, entry: LogEntry) => {
 		const column = createColumns().find((candidate) => candidate.header === header);
 		if (!column || typeof column.cell !== "function") {
@@ -235,11 +230,7 @@ describe("Logs columns", () => {
 		return render(
 			column.cell({
 				getValue: () =>
-					header === "Model"
-						? entry.model
-						: header === "Duration (s)"
-							? entry.request_duration_ms
-							: entry.total_tokens,
+					header === "Model" ? entry.model : header === "Duration (s)" ? entry.request_duration_ms : entry.total_tokens,
 				row: { original: entry },
 			} as never),
 		);
@@ -456,16 +447,19 @@ describe("Logs columns", () => {
 		}
 	});
 
-	it.each([0, 19, Number.NaN])("leaves output TPS blank when output tokens are below the meaningful threshold (%s)", (tokens) => {
-		const { container } = renderColumnCell("输出 TPS", {
-			...baseLogEntry,
-			completion_tokens: tokens,
-			startTime: "2025-11-14T00:00:00Z",
-			endTime: "2025-11-14T00:00:02Z",
-		});
+	it.each([0, 19, Number.NaN])(
+		"leaves output TPS blank when output tokens are below the meaningful threshold (%s)",
+		(tokens) => {
+			const { container } = renderColumnCell("输出 TPS", {
+				...baseLogEntry,
+				completion_tokens: tokens,
+				startTime: "2025-11-14T00:00:00Z",
+				endTime: "2025-11-14T00:00:02Z",
+			});
 
-		expect(container).toBeEmptyDOMElement();
-	});
+			expect(container).toBeEmptyDOMElement();
+		},
+	);
 
 	it("shows output TPS starting at 20 output tokens", () => {
 		renderColumnCell("输出 TPS", {

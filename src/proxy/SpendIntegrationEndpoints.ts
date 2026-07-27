@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 /**
  * SpendIntegration 端点 — 桩实现
  *

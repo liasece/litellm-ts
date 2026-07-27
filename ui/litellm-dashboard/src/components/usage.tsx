@@ -176,7 +176,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 		return formatter.format(number);
 	}
 
-	const fetchProxySettings = async () => {
+	const fetchProxySettings = React.useCallback(async () => {
 		if (accessToken) {
 			try {
 				const proxy_settings: ProxySettings = await getProxyUISettings(accessToken);
@@ -186,11 +186,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 				console.error("Error fetching proxy settings:", error);
 			}
 		}
-	};
-
-	useEffect(() => {
-		updateTagSpendData(dateValue.from, dateValue.to);
-	}, [dateValue, selectedTags]);
+	}, [accessToken]);
 
 	const updateEndUserData = async (
 		startTime: Date | undefined,
@@ -213,27 +209,30 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 		setTopUsers(newTopUserData);
 	};
 
-	const updateTagSpendData = async (startTime: Date | undefined, endTime: Date | undefined) => {
-		if (!startTime || !endTime || !accessToken) {
-			return;
-		}
+	useEffect(() => {
+		const updateTagSpendData = async () => {
+			if (!dateValue.from || !dateValue.to || !accessToken) {
+				return;
+			}
 
-		// we refetch because the state variable can be None when the user refreshes the page
-		const proxy_settings: ProxySettings | undefined = await fetchProxySettings();
+			// Refetch because the state variable can be empty after a page refresh.
+			const proxySettings = await fetchProxySettings();
+			if (proxySettings?.DISABLE_EXPENSIVE_DB_QUERIES) {
+				return;
+			}
 
-		if (proxy_settings?.DISABLE_EXPENSIVE_DB_QUERIES) {
-			return; // Don't run expensive DB queries - return out when SpendLogs has more than 1M rows
-		}
+			const topTags = await tagsSpendLogsCall(
+				accessToken,
+				dateValue.from.toISOString(),
+				dateValue.to.toISOString(),
+				selectedTags.length === 0 ? undefined : selectedTags,
+			);
+			setTopTagsData(topTags.spend_per_tag);
+			console.log("Tag spend data updated successfully");
+		};
 
-		let top_tags = await tagsSpendLogsCall(
-			accessToken,
-			startTime.toISOString(),
-			endTime.toISOString(),
-			selectedTags.length === 0 ? undefined : selectedTags,
-		);
-		setTopTagsData(top_tags.spend_per_tag);
-		console.log("Tag spend data updated successfully");
-	};
+		void Promise.resolve().then(updateTagSpendData);
+	}, [accessToken, dateValue, fetchProxySettings, selectedTags]);
 
 	function formatDate(date: Date) {
 		const year = date.getFullYear();
@@ -333,7 +332,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 	};
 
 	// Update the fetchOverallSpend function
-	const fetchOverallSpend = async () => {
+	const fetchOverallSpend = React.useCallback(async () => {
 		if (!accessToken) {
 			return;
 		}
@@ -356,19 +355,22 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 		} catch (error) {
 			console.error("Error fetching overall spend:", error);
 		}
-	};
+	}, [accessToken]);
 
-	const fetchProviderSpend = () =>
-		fetchAndSetData(
-			() =>
-				accessToken && token
-					? adminspendByProvider(accessToken, token, startTime, endTime)
-					: Promise.reject("No access token or token"),
-			setSpendByProvider,
-			"Error fetching provider spend",
-		);
+	const fetchProviderSpend = React.useCallback(
+		() =>
+			fetchAndSetData(
+				() =>
+					accessToken && token
+						? adminspendByProvider(accessToken, token, startTime, endTime)
+						: Promise.reject("No access token or token"),
+				setSpendByProvider,
+				"Error fetching provider spend",
+			),
+		[accessToken, endTime, startTime, token],
+	);
 
-	const fetchTopKeys = async () => {
+	const fetchTopKeys = React.useCallback(async () => {
 		if (!accessToken) return;
 		await fetchAndSetData(
 			async () => {
@@ -383,9 +385,9 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 			setTopKeys,
 			"Error fetching top keys",
 		);
-	};
+	}, [accessToken]);
 
-	const fetchTopModels = async () => {
+	const fetchTopModels = React.useCallback(async () => {
 		if (!accessToken) return;
 		await fetchAndSetData(
 			async () => {
@@ -398,10 +400,10 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 			setTopModels,
 			"Error fetching top models",
 		);
-	};
+	}, [accessToken]);
 
 	// Update the fetchTeamSpend function
-	const fetchTeamSpend = async () => {
+	const fetchTeamSpend = React.useCallback(async () => {
 		if (!accessToken) return;
 		await fetchAndSetData(
 			async () => {
@@ -425,9 +427,9 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 			setTotalSpendPerTeam,
 			"Error fetching team spend",
 		);
-	};
+	}, [accessToken]);
 
-	const fetchTagNames = () => {
+	const fetchTagNames = React.useCallback(() => {
 		if (!accessToken) return;
 		fetchAndSetData(
 			async () => {
@@ -437,28 +439,28 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 			setAllTagNames,
 			"Error fetching tag names",
 		);
-	};
+	}, [accessToken]);
 
-	const fetchTopTags = () => {
+	const fetchTopTags = React.useCallback(() => {
 		if (!accessToken) return;
 		fetchAndSetData(
 			() => tagsSpendLogsCall(accessToken, dateValue.from?.toISOString(), dateValue.to?.toISOString(), undefined),
 			(data) => setTopTagsData(data.spend_per_tag),
 			"Error fetching top tags",
 		);
-	};
+	}, [accessToken, dateValue.from, dateValue.to]);
 
-	const fetchTopEndUsers = () => {
+	const fetchTopEndUsers = React.useCallback(() => {
 		if (!accessToken) return;
 		fetchAndSetData(
 			() => adminTopEndUsersCall(accessToken, null, undefined, undefined),
 			setTopUsers,
 			"Error fetching top end users",
 		);
-	};
+	}, [accessToken]);
 
 	// Update the fetchGlobalActivity function
-	const fetchGlobalActivity = async () => {
+	const fetchGlobalActivity = React.useCallback(async () => {
 		if (!accessToken) return;
 		try {
 			const data = await adminGlobalActivity(accessToken, startTime, endTime);
@@ -481,10 +483,10 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 		} catch (error) {
 			console.error("Error fetching global activity:", error);
 		}
-	};
+	}, [accessToken, endTime, startTime]);
 
 	// Update the fetchGlobalActivityPerModel function
-	const fetchGlobalActivityPerModel = async () => {
+	const fetchGlobalActivityPerModel = React.useCallback(async () => {
 		if (!accessToken) return;
 		try {
 			const data = await adminGlobalActivityPerModel(accessToken, startTime, endTime);
@@ -504,7 +506,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 		} catch (error) {
 			console.error("Error fetching global activity per model:", error);
 		}
-	};
+	}, [accessToken, endTime, startTime]);
 
 	useEffect(() => {
 		const initlizeUsageData = async () => {
@@ -517,7 +519,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 					}
 				}
 
-				console.log("fetching data - valiue of proxySettings", proxySettings);
+				console.log("fetching data - value of proxySettings", proxy_settings);
 
 				fetchOverallSpend();
 				fetchProviderSpend();
@@ -536,7 +538,25 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 		};
 
 		initlizeUsageData();
-	}, [accessToken, token, userRole, userID, startTime, endTime]);
+	}, [
+		accessToken,
+		token,
+		userRole,
+		userID,
+		startTime,
+		endTime,
+		fetchProxySettings,
+		fetchOverallSpend,
+		fetchProviderSpend,
+		fetchTopKeys,
+		fetchTopModels,
+		fetchGlobalActivity,
+		fetchGlobalActivityPerModel,
+		fetchTeamSpend,
+		fetchTagNames,
+		fetchTopTags,
+		fetchTopEndUsers,
+	]);
 
 	if (proxySettings?.DISABLE_EXPENSIVE_DB_QUERIES) {
 		return (
@@ -611,10 +631,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 										<Col numColSpan={1}>
 											<Card className="h-full">
 												<Title>Top Virtual Keys</Title>
-												<TopKeyView
-													topKeys={topKeys}
-													teams={null}
-												/>
+												<TopKeyView topKeys={topKeys} teams={null} />
 											</Card>
 										</Col>
 										<Col numColSpan={1}>
@@ -859,7 +876,6 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 									value={dateValue}
 									onValueChange={(value) => {
 										setDateValue(value);
-										updateTagSpendData(value.from, value.to);
 									}}
 								/>
 							</Col>

@@ -50,11 +50,7 @@ function mapAgentRecord(agent: AgentApiRecord): AgentHubData {
 	} as AgentHubData;
 }
 
-export default function ModelHubTable({
-	accessToken,
-	publicPage,
-	userRole,
-}: ModelHubTableProps) {
+export default function ModelHubTable({ accessToken, publicPage, userRole }: ModelHubTableProps) {
 	const [publicPageAllowed, setPublicPageAllowed] = useState(false);
 	const [models, setModels] = useState<ModelGroupInfo[]>([]);
 	const [filteredModels, setFilteredModels] = useState<ModelGroupInfo[]>([]);
@@ -106,10 +102,7 @@ export default function ModelHubTable({
 				if (accessToken) {
 					await refreshModels();
 					try {
-						const setting = await getConfigFieldSetting(
-							accessToken,
-							"enable_public_model_hub",
-						);
+						const setting = await getConfigFieldSetting(accessToken, "enable_public_model_hub");
 						setPublicPageAllowed(setting.field_value === true);
 					} catch {
 						setPublicPageAllowed(false);
@@ -141,7 +134,9 @@ export default function ModelHubTable({
 			setAgentLoading(true);
 			setMcpLoading(true);
 			await Promise.all([
-				refreshAgents().catch(() => setAgents([])).finally(() => setAgentLoading(false)),
+				refreshAgents()
+					.catch(() => setAgents([]))
+					.finally(() => setAgentLoading(false)),
 				refreshMcpServers()
 					.catch(() => setMcpServers([]))
 					.finally(() => setMcpLoading(false)),
@@ -163,12 +158,8 @@ export default function ModelHubTable({
 	if (publicPage) {
 		return (
 			<Card className="mx-auto mt-10 max-w-xl">
-				<Text className="mb-2 text-center text-xl text-black">
-					Public Model Hub not enabled.
-				</Text>
-				<p className="text-center text-base text-slate-800">
-					Ask your proxy admin to enable this on their Admin UI.
-				</p>
+				<Text className="mb-2 text-center text-xl text-black">Public Model Hub not enabled.</Text>
+				<p className="text-center text-base text-slate-800">Ask your proxy admin to enable this on their Admin UI.</p>
 			</Card>
 		);
 	}

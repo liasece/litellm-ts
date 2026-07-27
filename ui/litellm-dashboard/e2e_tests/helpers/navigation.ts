@@ -8,5 +8,5 @@ import { Page as PlaywrightPage } from "@playwright/test";
  * @param pageEnum - The page enum value to navigate to
  */
 export async function navigateToPage(page: PlaywrightPage, pageEnum: Page): Promise<void> {
-  await page.goto(`/ui?page=${pageEnum}`);
+	await page.goto(`/ui?page=${pageEnum}`);
 }

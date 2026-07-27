@@ -7,195 +7,195 @@ import { credentialListCall, CredentialsResponse, CredentialItem } from "@/compo
 
 // Mock the networking function
 vi.mock("@/components/networking", () => ({
-  credentialListCall: vi.fn(),
+	credentialListCall: vi.fn(),
 }));
 
 // Mock useAuthorized hook - we can override this in individual tests
 const mockUseAuthorized = vi.fn();
 vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
-  default: () => mockUseAuthorized(),
+	default: () => mockUseAuthorized(),
 }));
 
 // Mock data
 const mockCredentialItems: CredentialItem[] = [
-  {
-    credential_name: "openai-api-key",
-    credential_values: { api_key: "sk-test123" },
-    credential_info: {
-      custom_llm_provider: "openai",
-      description: "OpenAI API Key for GPT models",
-      required: true,
-    },
-  },
-  {
-    credential_name: "anthropic-api-key",
-    credential_values: { api_key: "sk-ant-test456" },
-    credential_info: {
-      custom_llm_provider: "anthropic",
-      description: "Anthropic API Key for Claude models",
-      required: true,
-    },
-  },
+	{
+		credential_name: "openai-api-key",
+		credential_values: { api_key: "sk-test123" },
+		credential_info: {
+			custom_llm_provider: "openai",
+			description: "OpenAI API Key for GPT models",
+			required: true,
+		},
+	},
+	{
+		credential_name: "anthropic-api-key",
+		credential_values: { api_key: "sk-ant-test456" },
+		credential_info: {
+			custom_llm_provider: "anthropic",
+			description: "Anthropic API Key for Claude models",
+			required: true,
+		},
+	},
 ];
 
 const mockCredentialsResponse: CredentialsResponse = {
-  credentials: mockCredentialItems,
+	credentials: mockCredentialItems,
 };
 
 describe("useCredentials", () => {
-  let queryClient: QueryClient;
+	let queryClient: QueryClient;
 
-  beforeEach(() => {
-    queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-        },
-      },
-    });
+	beforeEach(() => {
+		queryClient = new QueryClient({
+			defaultOptions: {
+				queries: {
+					retry: false,
+				},
+			},
+		});
 
-    // Reset all mocks
-    vi.clearAllMocks();
+		// Reset all mocks
+		vi.clearAllMocks();
 
-    // Set default mock for useAuthorized (enabled state)
-    mockUseAuthorized.mockReturnValue({
-      accessToken: "test-access-token",
-      userRole: "Admin",
-      userId: "test-user-id",
-      token: "test-token",
-      userEmail: "test@example.com",
-      premiumUser: false,
-      disabledPersonalKeyCreation: null,
-      showSSOBanner: false,
-    });
-  });
+		// Set default mock for useAuthorized (enabled state)
+		mockUseAuthorized.mockReturnValue({
+			accessToken: "test-access-token",
+			userRole: "Admin",
+			userId: "test-user-id",
+			token: "test-token",
+			userEmail: "test@example.com",
+			premiumUser: false,
+			disabledPersonalKeyCreation: null,
+			showSSOBanner: false,
+		});
+	});
 
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
+	const wrapper = ({ children }: { children: ReactNode }) =>
+		React.createElement(QueryClientProvider, { client: queryClient }, children);
 
-  it("should return credentials data when query is successful", async () => {
-    // Mock successful API call
-    (credentialListCall as any).mockResolvedValue(mockCredentialsResponse);
+	it("should return credentials data when query is successful", async () => {
+		// Mock successful API call
+		(credentialListCall as any).mockResolvedValue(mockCredentialsResponse);
 
-    const { result } = renderHook(() => useCredentials(), { wrapper });
+		const { result } = renderHook(() => useCredentials(), { wrapper });
 
-    // Initially loading
-    expect(result.current.isLoading).toBe(true);
-    expect(result.current.data).toBeUndefined();
+		// Initially loading
+		expect(result.current.isLoading).toBe(true);
+		expect(result.current.data).toBeUndefined();
 
-    // Wait for success
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.isSuccess).toBe(true);
-    });
+		// Wait for success
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    expect(result.current.data).toEqual(mockCredentialsResponse);
-    expect(result.current.error).toBeNull();
-    expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
-    expect(credentialListCall).toHaveBeenCalledTimes(1);
-  });
+		expect(result.current.data).toEqual(mockCredentialsResponse);
+		expect(result.current.error).toBeNull();
+		expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
+		expect(credentialListCall).toHaveBeenCalledTimes(1);
+	});
 
-  it("should handle error when credentialListCall fails", async () => {
-    const errorMessage = "Failed to fetch credentials";
-    const testError = new Error(errorMessage);
+	it("should handle error when credentialListCall fails", async () => {
+		const errorMessage = "Failed to fetch credentials";
+		const testError = new Error(errorMessage);
 
-    // Mock failed API call
-    (credentialListCall as any).mockRejectedValue(testError);
+		// Mock failed API call
+		(credentialListCall as any).mockRejectedValue(testError);
 
-    const { result } = renderHook(() => useCredentials(), { wrapper });
+		const { result } = renderHook(() => useCredentials(), { wrapper });
 
-    // Initially loading
-    expect(result.current.isLoading).toBe(true);
+		// Initially loading
+		expect(result.current.isLoading).toBe(true);
 
-    // Wait for error
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.isError).toBe(true);
-    });
+		// Wait for error
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+			expect(result.current.isError).toBe(true);
+		});
 
-    expect(result.current.error).toEqual(testError);
-    expect(result.current.data).toBeUndefined();
-    expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
-    expect(credentialListCall).toHaveBeenCalledTimes(1);
-  });
+		expect(result.current.error).toEqual(testError);
+		expect(result.current.data).toBeUndefined();
+		expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
+		expect(credentialListCall).toHaveBeenCalledTimes(1);
+	});
 
-  it("should not execute query when accessToken is missing", async () => {
-    // Mock missing accessToken
-    mockUseAuthorized.mockReturnValue({
-      accessToken: null,
-      userRole: "Admin",
-      userId: "test-user-id",
-      token: null,
-      userEmail: "test@example.com",
-      premiumUser: false,
-      disabledPersonalKeyCreation: null,
-      showSSOBanner: false,
-    });
+	it("should not execute query when accessToken is missing", async () => {
+		// Mock missing accessToken
+		mockUseAuthorized.mockReturnValue({
+			accessToken: null,
+			userRole: "Admin",
+			userId: "test-user-id",
+			token: null,
+			userEmail: "test@example.com",
+			premiumUser: false,
+			disabledPersonalKeyCreation: null,
+			showSSOBanner: false,
+		});
 
-    const { result } = renderHook(() => useCredentials(), { wrapper });
+		const { result } = renderHook(() => useCredentials(), { wrapper });
 
-    // Query should not execute
-    expect(result.current.isLoading).toBe(false);
-    expect(result.current.data).toBeUndefined();
-    expect(result.current.isFetched).toBe(false);
+		// Query should not execute
+		expect(result.current.isLoading).toBe(false);
+		expect(result.current.data).toBeUndefined();
+		expect(result.current.isFetched).toBe(false);
 
-    // API should not be called
-    expect(credentialListCall).not.toHaveBeenCalled();
-  });
+		// API should not be called
+		expect(credentialListCall).not.toHaveBeenCalled();
+	});
 
-  it("should return empty credentials array when API returns empty data", async () => {
-    // Mock API returning empty credentials array
-    (credentialListCall as any).mockResolvedValue({ credentials: [] });
+	it("should return empty credentials array when API returns empty data", async () => {
+		// Mock API returning empty credentials array
+		(credentialListCall as any).mockResolvedValue({ credentials: [] });
 
-    const { result } = renderHook(() => useCredentials(), { wrapper });
+		const { result } = renderHook(() => useCredentials(), { wrapper });
 
-    // Wait for success
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.isSuccess).toBe(true);
-    });
+		// Wait for success
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    expect(result.current.data).toEqual({ credentials: [] });
-    expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
-  });
+		expect(result.current.data).toEqual({ credentials: [] });
+		expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
+	});
 
-  it("should handle network timeout error", async () => {
-    const timeoutError = new Error("Network timeout");
+	it("should handle network timeout error", async () => {
+		const timeoutError = new Error("Network timeout");
 
-    // Mock network timeout
-    (credentialListCall as any).mockRejectedValue(timeoutError);
+		// Mock network timeout
+		(credentialListCall as any).mockRejectedValue(timeoutError);
 
-    const { result } = renderHook(() => useCredentials(), { wrapper });
+		const { result } = renderHook(() => useCredentials(), { wrapper });
 
-    // Wait for error
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+		// Wait for error
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    expect(result.current.error).toEqual(timeoutError);
-    expect(result.current.data).toBeUndefined();
-  });
+		expect(result.current.error).toEqual(timeoutError);
+		expect(result.current.data).toBeUndefined();
+	});
 
-  it("should execute query when accessToken is present", async () => {
-    // Mock successful API call
-    (credentialListCall as any).mockResolvedValue(mockCredentialsResponse);
+	it("should execute query when accessToken is present", async () => {
+		// Mock successful API call
+		(credentialListCall as any).mockResolvedValue(mockCredentialsResponse);
 
-    // Ensure auth values are set (already done in beforeEach)
-    const { result } = renderHook(() => useCredentials(), { wrapper });
+		// Ensure auth values are set (already done in beforeEach)
+		const { result } = renderHook(() => useCredentials(), { wrapper });
 
-    // Wait for query to execute
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-    });
+		// Wait for query to execute
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
 
-    expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
-    expect(credentialListCall).toHaveBeenCalledTimes(1);
-  });
+		expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
+		expect(credentialListCall).toHaveBeenCalledTimes(1);
+	});
 
-  it("should not execute query when explicitly disabled", () => {
-    const { result } = renderHook(() => useCredentials(false), { wrapper });
+	it("should not execute query when explicitly disabled", () => {
+		const { result } = renderHook(() => useCredentials(false), { wrapper });
 
-    expect(result.current.isFetched).toBe(false);
-    expect(credentialListCall).not.toHaveBeenCalled();
-  });
+		expect(result.current.isFetched).toBe(false);
+		expect(credentialListCall).not.toHaveBeenCalled();
+	});
 });

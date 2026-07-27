@@ -4,9 +4,9 @@ import BudgetPanel from "@/components/budgets/budget_panel";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 
 const BudgetsPage = () => {
-  const { accessToken } = useAuthorized();
+	const { accessToken } = useAuthorized();
 
-  return <BudgetPanel accessToken={accessToken} />;
+	return <BudgetPanel accessToken={accessToken} />;
 };
 
 export default BudgetsPage;

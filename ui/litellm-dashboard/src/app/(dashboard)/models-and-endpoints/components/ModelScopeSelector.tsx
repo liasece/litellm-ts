@@ -118,10 +118,7 @@ export default function ModelScopeSelector({
 					<div className="text-xs text-gray-500">
 						To access these models: Create a Virtual Key
 						{currentTeam !== "personal" && (
-							<>
-								{" "}
-								and select Team as &quot;{currentTeam.team_alias || currentTeam.team_id}&quot;
-							</>
+							<> and select Team as &quot;{currentTeam.team_alias || currentTeam.team_id}&quot;</>
 						)}{" "}
 						on the{" "}
 						<a href="/public?login=success&page=api-keys" className="text-gray-600 underline hover:text-gray-800">

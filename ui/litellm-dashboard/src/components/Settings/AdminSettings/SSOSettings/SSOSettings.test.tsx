@@ -5,33 +5,33 @@ import SSOSettings from "./SSOSettings";
 
 // Mock the useSSOSettings hook
 vi.mock("@/app/(dashboard)/hooks/sso/useSSOSettings", () => ({
-  useSSOSettings: () => ({
-    data: null,
-    refetch: vi.fn(),
-  }),
+	useSSOSettings: () => ({
+		data: null,
+		refetch: vi.fn(),
+	}),
 }));
 
 const createQueryClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-        gcTime: 0,
-      },
-    },
-  });
+	new QueryClient({
+		defaultOptions: {
+			queries: {
+				retry: false,
+				gcTime: 0,
+			},
+		},
+	});
 
 describe("SSOSettings", () => {
-  it("should render", () => {
-    const queryClient = createQueryClient();
+	it("should render", () => {
+		const queryClient = createQueryClient();
 
-    render(
-      <QueryClientProvider client={queryClient}>
-        <SSOSettings />
-      </QueryClientProvider>,
-    );
+		render(
+			<QueryClientProvider client={queryClient}>
+				<SSOSettings />
+			</QueryClientProvider>,
+		);
 
-    expect(screen.getByText("SSO Configuration")).toBeInTheDocument();
-    expect(screen.getByText("Manage Single Sign-On authentication settings")).toBeInTheDocument();
-  });
+		expect(screen.getByText("SSO Configuration")).toBeInTheDocument();
+		expect(screen.getByText("Manage Single Sign-On authentication settings")).toBeInTheDocument();
+	});
 });

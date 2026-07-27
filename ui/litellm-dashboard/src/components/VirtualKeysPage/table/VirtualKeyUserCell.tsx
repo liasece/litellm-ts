@@ -7,11 +7,7 @@ interface VirtualKeyUserCellProps {
 	userEmail?: string | null;
 }
 
-export default function VirtualKeyUserCell({
-	userId,
-	userAlias,
-	userEmail,
-}: VirtualKeyUserCellProps) {
+export default function VirtualKeyUserCell({ userId, userAlias, userEmail }: VirtualKeyUserCellProps) {
 	if (!userId && !userAlias && !userEmail) return <>-</>;
 
 	const displayValue = userAlias || userEmail || userId;
@@ -25,11 +21,7 @@ export default function VirtualKeyUserCell({
 				<div key={label} className="flex min-w-0 flex-col">
 					<span className="text-gray-400">{label}</span>
 					{value ? (
-						<Typography.Text
-							className="font-mono text-xs"
-							ellipsis={{ tooltip: value }}
-							copyable
-						>
+						<Typography.Text className="font-mono text-xs" ellipsis={{ tooltip: value }} copyable>
 							{value}
 						</Typography.Text>
 					) : (
@@ -52,4 +44,3 @@ export default function VirtualKeyUserCell({
 		</Popover>
 	);
 }
-

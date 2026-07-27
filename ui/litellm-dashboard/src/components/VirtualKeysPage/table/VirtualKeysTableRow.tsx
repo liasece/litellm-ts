@@ -7,8 +7,7 @@ export default function VirtualKeysTableRow({ row }: { row: Row<KeyResponse> }) 
 		<TableRow className="h-8">
 			{row.getVisibleCells().map((cell) => {
 				const value = cell.getValue();
-				const compactModels =
-					cell.column.id === "models" && Array.isArray(value) && value.length > 3;
+				const compactModels = cell.column.id === "models" && Array.isArray(value) && value.length > 3;
 				return (
 					<TableCell
 						key={cell.id}
@@ -18,9 +17,7 @@ export default function VirtualKeysTableRow({ row }: { row: Row<KeyResponse> }) 
 							whiteSpace: "pre-wrap",
 							overflow: "hidden",
 						}}
-						className={`max-h-8 overflow-hidden text-ellipsis whitespace-nowrap py-0.5 ${
-							compactModels ? "px-0" : ""
-						}`}
+						className={`max-h-8 overflow-hidden text-ellipsis whitespace-nowrap py-0.5 ${compactModels ? "px-0" : ""}`}
 					>
 						{flexRender(cell.column.columnDef.cell, cell.getContext())}
 					</TableCell>
@@ -29,4 +26,3 @@ export default function VirtualKeysTableRow({ row }: { row: Row<KeyResponse> }) 
 		</TableRow>
 	);
 }
-

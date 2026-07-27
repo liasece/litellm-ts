@@ -9,11 +9,7 @@ interface OrganizationOverviewProps {
 	accessToken: string | null;
 }
 
-export default function OrganizationOverview({
-	organization,
-	teamAliasMap,
-	accessToken,
-}: OrganizationOverviewProps) {
+export default function OrganizationOverview({ organization, teamAliasMap, accessToken }: OrganizationOverviewProps) {
 	const budget = organization.litellm_budget_table;
 
 	return (
@@ -31,14 +27,9 @@ export default function OrganizationOverview({
 				<div className="mt-2">
 					<Title>${formatNumberWithCommas(organization.spend, 4)}</Title>
 					<Text>
-						of{" "}
-						{budget.max_budget === null
-							? "Unlimited"
-							: `$${formatNumberWithCommas(budget.max_budget, 4)}`}
+						of {budget.max_budget === null ? "Unlimited" : `$${formatNumberWithCommas(budget.max_budget, 4)}`}
 					</Text>
-					{budget.budget_duration && (
-						<Text className="text-gray-500">Reset: {budget.budget_duration}</Text>
-					)}
+					{budget.budget_duration && <Text className="text-gray-500">Reset: {budget.budget_duration}</Text>}
 				</div>
 			</Card>
 			<Card>
@@ -46,9 +37,7 @@ export default function OrganizationOverview({
 				<div className="mt-2">
 					<Text>TPM: {budget.tpm_limit || "Unlimited"}</Text>
 					<Text>RPM: {budget.rpm_limit || "Unlimited"}</Text>
-					{budget.max_parallel_requests && (
-						<Text>Max Parallel Requests: {budget.max_parallel_requests}</Text>
-					)}
+					{budget.max_parallel_requests && <Text>Max Parallel Requests: {budget.max_parallel_requests}</Text>}
 				</div>
 			</Card>
 			<Card>
@@ -83,4 +72,3 @@ export default function OrganizationOverview({
 		</Grid>
 	);
 }
-

@@ -177,7 +177,6 @@ const EditGuardrailForm: React.FC<EditGuardrailFormProps> = ({
 				throw new Error("No access token available");
 			}
 
-
 			// Call the update endpoint
 			const url = `/guardrails/${guardrailId}`;
 			const response = await dashboardFetch(url, {

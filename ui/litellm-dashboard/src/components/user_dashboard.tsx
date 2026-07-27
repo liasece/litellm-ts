@@ -100,12 +100,13 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 
 	// 身份由父页面的 /auth/session 响应提供；浏览器不再解码 token。
 	useEffect(() => {
-		if (userID && accessToken && userRole && !userSpendData) {
+		if (userID && accessToken && userRole) {
+			const cachedUserSpendData = sessionStorage.getItem("userSpendData" + userID);
 			const cachedUserModels = sessionStorage.getItem("userModels" + userID);
-			if (cachedUserModels) {
+			if (cachedUserSpendData && cachedUserModels) {
+				setUserSpendData(JSON.parse(cachedUserSpendData));
 				setUserModels(JSON.parse(cachedUserModels));
 			} else {
-				console.log(`currentOrg: ${JSON.stringify(currentOrg)}`);
 				const fetchData = async () => {
 					try {
 						const proxy_settings: ProxySettings = await getProxyUISettings(accessToken);
@@ -123,8 +124,6 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 						console.log("available_model_names:", available_model_names);
 						setUserModels(available_model_names);
 
-						console.log("userModels:", userModels);
-
 						sessionStorage.setItem("userModels" + userID, JSON.stringify(available_model_names));
 					} catch (error: any) {
 						console.error("There was an error fetching the data", error);
@@ -135,10 +134,9 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 					}
 				};
 				fetchData();
-				fetchTeams(accessToken, userID, userRole, currentOrg, setTeams);
 			}
 		}
-	}, [userID, accessToken, userRole]);
+	}, [accessToken, userID, userRole]);
 
 	useEffect(() => {
 		console.log(
@@ -148,7 +146,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 			console.log(`fetching teams`);
 			fetchTeams(accessToken, userID, userRole, currentOrg, setTeams);
 		}
-	}, [currentOrg]);
+	}, [currentOrg, setTeams, userID, userRole]);
 
 	useEffect(() => {
 		// This code will run every time selectedTeam changes
@@ -170,7 +168,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 			}
 			setTeamSpend(sum);
 		}
-	}, [selectedTeam]);
+	}, [keys, selectedTeam]);
 
 	if (invitation_id != null) {
 		return <Onboarding></Onboarding>;

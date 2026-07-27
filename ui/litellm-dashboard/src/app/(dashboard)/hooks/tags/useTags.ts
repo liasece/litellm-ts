@@ -7,10 +7,10 @@ import { TagListResponse } from "@/components/tag_management/types";
 const tagKeys = createQueryKeys("tags");
 
 export const useTags = (): UseQueryResult<TagListResponse> => {
-  const { accessToken, userId, userRole } = useAuthorized();
-  return useQuery<TagListResponse>({
-    queryKey: tagKeys.list({}),
-    queryFn: async () => await tagListCall(accessToken!),
-    enabled: Boolean(accessToken && userId && userRole),
-  });
+	const { accessToken, userId, userRole } = useAuthorized();
+	return useQuery<TagListResponse>({
+		queryKey: tagKeys.list({}),
+		queryFn: async () => await tagListCall(accessToken!),
+		enabled: Boolean(accessToken && userId && userRole),
+	});
 };

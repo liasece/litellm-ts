@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 /**
  * Discovery 端点
  *

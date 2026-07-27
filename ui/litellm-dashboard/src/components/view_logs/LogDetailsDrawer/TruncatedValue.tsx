@@ -4,8 +4,8 @@ import { DEFAULT_MAX_WIDTH, FONT_FAMILY_MONO, FONT_SIZE_SMALL } from "./constant
 const { Text } = Typography;
 
 interface TruncatedValueProps {
-  value?: string;
-  maxWidth?: number;
+	value?: string;
+	maxWidth?: number;
 }
 
 /**
@@ -13,23 +13,23 @@ interface TruncatedValueProps {
  * Useful for displaying long IDs, URLs, or other text that may overflow.
  */
 export function TruncatedValue({ value, maxWidth = DEFAULT_MAX_WIDTH }: TruncatedValueProps) {
-  if (!value) return <Text type="secondary">-</Text>;
+	if (!value) return <Text type="secondary">-</Text>;
 
-  return (
-    <Tooltip title={value}>
-      <Text
-        copyable={{ text: value, tooltips: ["Copy", "Copied!"] }}
-        style={{
-          maxWidth,
-          display: "inline-block",
-          verticalAlign: "bottom",
-          fontFamily: FONT_FAMILY_MONO,
-          fontSize: FONT_SIZE_SMALL,
-        }}
-        ellipsis
-      >
-        {value}
-      </Text>
-    </Tooltip>
-  );
+	return (
+		<Tooltip title={value}>
+			<Text
+				copyable={{ text: value, tooltips: ["Copy", "Copied!"] }}
+				style={{
+					maxWidth,
+					display: "inline-block",
+					verticalAlign: "bottom",
+					fontFamily: FONT_FAMILY_MONO,
+					fontSize: FONT_SIZE_SMALL,
+				}}
+				ellipsis
+			>
+				{value}
+			</Text>
+		</Tooltip>
+	);
 }

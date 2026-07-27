@@ -14,12 +14,7 @@ interface KeyOverviewProps {
 	loadingPolicies: boolean;
 }
 
-export default function KeyOverview({
-	keyData,
-	accessToken,
-	policyGuardrails,
-	loadingPolicies,
-}: KeyOverviewProps) {
+export default function KeyOverview({ keyData, accessToken, policyGuardrails, loadingPolicies }: KeyOverviewProps) {
 	const guardrails = Array.isArray(keyData.metadata?.guardrails) ? keyData.metadata.guardrails : [];
 	const policies = Array.isArray(keyData.metadata?.policies) ? keyData.metadata.policies : [];
 
@@ -29,9 +24,7 @@ export default function KeyOverview({
 				<Text>Spend</Text>
 				<div className="mt-2">
 					<Title>${formatNumberWithCommas(keyData.spend, 4)}</Title>
-					<Text>
-						of {keyData.max_budget !== null ? `$${formatNumberWithCommas(keyData.max_budget)}` : "Unlimited"}
-					</Text>
+					<Text>of {keyData.max_budget !== null ? `$${formatNumberWithCommas(keyData.max_budget)}` : "Unlimited"}</Text>
 				</div>
 			</Card>
 
@@ -59,7 +52,11 @@ export default function KeyOverview({
 			</Card>
 
 			<Card>
-				<ObjectPermissionsView objectPermission={keyData.object_permission} variant="inline" accessToken={accessToken} />
+				<ObjectPermissionsView
+					objectPermission={keyData.object_permission}
+					variant="inline"
+					accessToken={accessToken}
+				/>
 			</Card>
 
 			<Card>

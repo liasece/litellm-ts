@@ -47,9 +47,7 @@ export default function UsageTopModelsCard({
 					</button>
 					<button
 						className={`px-3 py-1 text-sm rounded-md transition-colors ${
-							viewType === "individual"
-								? "bg-white shadow-sm text-gray-900"
-								: "text-gray-600 hover:text-gray-900"
+							viewType === "individual" ? "bg-white shadow-sm text-gray-900" : "text-gray-600 hover:text-gray-900"
 						}`}
 						onClick={() => onViewTypeChange("individual")}
 					>

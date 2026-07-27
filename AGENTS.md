@@ -47,6 +47,15 @@ npx jest --runInBand --silent --runTestsByPath \
 应以部署脚本执行的 Next.js production build 是否成功为准；改动的前端文件仍应单独执行
 ESLint。
 
+## 测试质量
+
+- 只新增能够验证可观察行为、业务契约、重要逻辑分支或明确回归风险的测试。
+- 不得为了形式上的“修改配测试”而添加仅重复静态配置或实现细节的断言，例如直接读取列定义，
+  再断言一个已删除的列名不存在。
+- 新增回归测试时，应能说明它在修复前为何失败、在修复后验证了什么真实行为；如果简单的展示配置
+  变更没有值得自动化验证的行为，可以只运行现有相关测试、类型检查、构建及必要的页面验证。
+- 不以测试数量或覆盖率数字代替测试价值；测试不应因无关重构或文案调整而频繁失败。
+
 ## 正式部署
 
 标准部署命令：
@@ -116,33 +125,3 @@ curl -sS -o /dev/null -w 'ui_status=%{http_code} ui_time=%{time_total}\n' \
 若迁移期间服务尚未监听 4000，可从容器内连接 PostgreSQL，检查 `pg_stat_activity`。
 只要容器仍为 running、没有 OOM，并且 migration SQL 仍为 active，就继续等待，不要打断
 事务。迁移提交后再等待 Docker 状态恢复为 `healthy`。
-
-## Logs 查询性能约束
-
-`LiteLLM_SpendLogs` 目前是大 JSON 表。2026-07-27 部署时约 11 GB、约 12 万行。
-禁止在 `/spend/logs/ui` 的刷新路径上读取或解析全表 `metadata`。
-
-会话聚合必须使用持久化的 `session_group_key`：
-
-- `c:<claude_code_user_id>`：Claude Code 会话。
-- `s:<session_id>`：普通会话；部分客户端会把稳定 `session_id` 放在
-  `metadata.spend_logs_metadata.user_id` 的 JSON 字符串中，此值优先于请求级顶层 `session_id`。
-- `r:<request_id>`：没有 session 的请求。
-
-数据库迁移 `drizzle/0002_session_group_key.sql` 创建生成列及
-`idx_spend_logs_session_group_time` 复合索引。列表 enrichment 和 session detail 都必须
-使用 `session_group_key` 等值查询。修改相关逻辑后，应使用
-`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` 确认计数查询为
-`Index Only Scan` 或等价索引计划，不能退化为全表扫描。
-
-Logs 页面仅在第一页且开启 live tail 时每 15 秒刷新，并且
-`refetchIntervalInBackground` 必须保持为 `false`，避免后台标签持续制造数据库负载。
-Request Logs 主列表必须逐条展示分页 API 返回的请求，不得按 Session 聚合、去重或折叠。
-Session 分组仅用于用户点击某条日志后，在详情 Drawer 中加载并展示该 Session 的全部日志。
-Session Drawer 会单独请求 `/spend/logs/session/ui`，必须消费 `snapshot + next_cursor` 拉完所有页，
-并校验加载后的唯一 `request_id` 数量等于服务端 `total`；列表按 `startTime` 倒序排列，最新日志
-始终显示在最上面。
-
-2026-07-27 上线后的生产参考值：24 小时窗口、`page_size=50`、约 6215 条日志时，
-首次请求约 100–153 ms，热查询约 14–17 ms；会话计数样本索引查询约 0.029 ms。
-这些数字仅作为回归参考，判断时还要结合当时数据量和缓存状态。

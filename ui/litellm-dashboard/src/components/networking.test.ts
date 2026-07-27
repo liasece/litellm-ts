@@ -44,6 +44,24 @@ describe("networking - expired session handling", () => {
 		expect(headers.get("Authorization")).toBeNull();
 	});
 
+	it("dashboardFetch 对显式 bearer 请求不混入 session cookie 或 CSRF", async () => {
+		const cookieUtils = await import("@/utils/cookieUtils");
+		vi.mocked(cookieUtils.getCookie).mockReturnValue("csrf-value");
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true } as Response);
+		global.fetch = mockFetch as typeof global.fetch;
+		const init = {
+			method: "POST",
+			headers: { Authorization: "Bearer test-key", "Content-Type": "application/json" },
+		};
+
+		await Networking.dashboardFetch("/compatibility-api", init);
+
+		expect(mockFetch).toHaveBeenCalledWith("/compatibility-api", init);
+		const [, forwardedInit] = mockFetch.mock.calls[0]!;
+		expect(forwardedInit.credentials).toBeUndefined();
+		expect(new Headers(forwardedInit.headers).get("x-litellm-csrf-token")).toBeNull();
+	});
+
 	it("keyInfoV1Call 应编码 query、仅携带 cookie 并只解析一次 JSON", async () => {
 		const json = vi.fn().mockResolvedValue({ info: { key_alias: "logs-key" } });
 		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);

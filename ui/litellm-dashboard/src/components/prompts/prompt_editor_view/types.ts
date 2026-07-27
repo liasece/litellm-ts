@@ -1,31 +1,30 @@
 export interface Message {
-  role: string;
-  content: string;
+	role: string;
+	content: string;
 }
 
 export interface Tool {
-  name: string;
-  description: string;
-  json: string;
+	name: string;
+	description: string;
+	json: string;
 }
 
 export interface PromptType {
-  name: string;
-  model: string;
-  config: {
-    temperature?: number;
-    max_tokens?: number;
-    top_p?: number;
-  };
-  tools: Tool[];
-  developerMessage: string;
-  messages: Message[];
+	name: string;
+	model: string;
+	config: {
+		temperature?: number;
+		max_tokens?: number;
+		top_p?: number;
+	};
+	tools: Tool[];
+	developerMessage: string;
+	messages: Message[];
 }
 
 export interface PromptEditorViewProps {
-  onClose: () => void;
-  onSuccess: () => void;
-  accessToken: string | null;
-  initialPromptData?: any;
+	onClose: () => void;
+	onSuccess: () => void;
+	accessToken: string | null;
+	initialPromptData?: any;
 }
-

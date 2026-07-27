@@ -115,12 +115,15 @@ const AllModelsTab = ({
 	);
 	const isLoading = isLoadingModelsInfo || isLoadingModelCostMap;
 
-	const getProviderFromModel = useCallback((model: string) => {
-		if (modelCostMapData && typeof modelCostMapData === "object" && model in modelCostMapData) {
-			return modelCostMapData[model]["litellm_provider"];
-		}
-		return "openai";
-	}, [modelCostMapData]);
+	const getProviderFromModel = useCallback(
+		(model: string) => {
+			if (modelCostMapData && typeof modelCostMapData === "object" && model in modelCostMapData) {
+				return modelCostMapData[model]["litellm_provider"];
+			}
+			return "openai";
+		},
+		[modelCostMapData],
+	);
 	const modelData = useMemo(() => {
 		if (!rawModelData) return { data: [] };
 		return transformModelData(rawModelData, getProviderFromModel);

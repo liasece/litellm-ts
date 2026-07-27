@@ -18,10 +18,10 @@ const RETURN_URL_PARAM = "redirect_to";
  * Returns null if running on server-side.
  */
 export function getCurrentUrl(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return window.location.href;
+	if (typeof window === "undefined") {
+		return null;
+	}
+	return window.location.href;
 }
 
 /**
@@ -29,43 +29,43 @@ export function getCurrentUrl(): string | null {
  * Automatically adds Secure flag when running over HTTPS.
  */
 function setCookie(name: string, value: string, maxAgeSeconds: number = 300): void {
-  if (typeof document === "undefined") {
-    return;
-  }
-  // Set cookie with path=/ so it's available across all paths
-  // Use SameSite=Lax to allow the cookie to be sent on navigation from external sites (SSO redirect)
-  // Add Secure flag when running over HTTPS to prevent cookie from being sent over unencrypted connections
-  const isSecure = typeof window !== "undefined" && window.location.protocol === "https:";
-  const secureFlag = isSecure ? "; Secure" : "";
-  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSeconds}; SameSite=Lax${secureFlag}`;
+	if (typeof document === "undefined") {
+		return;
+	}
+	// Set cookie with path=/ so it's available across all paths
+	// Use SameSite=Lax to allow the cookie to be sent on navigation from external sites (SSO redirect)
+	// Add Secure flag when running over HTTPS to prevent cookie from being sent over unencrypted connections
+	const isSecure = typeof window !== "undefined" && window.location.protocol === "https:";
+	const secureFlag = isSecure ? "; Secure" : "";
+	document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSeconds}; SameSite=Lax${secureFlag}`;
 }
 
 /**
  * Gets a cookie value by name.
  */
 function getCookie(name: string): string | null {
-  if (typeof document === "undefined") {
-    return null;
-  }
-  const match = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
-  if (match) {
-    try {
-      return decodeURIComponent(match[2]);
-    } catch {
-      return match[2];
-    }
-  }
-  return null;
+	if (typeof document === "undefined") {
+		return null;
+	}
+	const match = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
+	if (match) {
+		try {
+			return decodeURIComponent(match[2]);
+		} catch {
+			return match[2];
+		}
+	}
+	return null;
 }
 
 /**
  * Deletes a cookie by name.
  */
 function deleteCookie(name: string): void {
-  if (typeof document === "undefined") {
-    return;
-  }
-  document.cookie = `${name}=; path=/; max-age=0`;
+	if (typeof document === "undefined") {
+		return;
+	}
+	document.cookie = `${name}=; path=/; max-age=0`;
 }
 
 /**
@@ -74,14 +74,14 @@ function deleteCookie(name: string): void {
  * Cookie expires in 5 minutes (300 seconds).
  */
 export function storeReturnUrl(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
+	if (typeof window === "undefined") {
+		return;
+	}
 
-  const currentUrl = getCurrentUrl();
-  if (currentUrl) {
-    setCookie(RETURN_URL_COOKIE_NAME, currentUrl, 300);
-  }
+	const currentUrl = getCurrentUrl();
+	if (currentUrl) {
+		setCookie(RETURN_URL_COOKIE_NAME, currentUrl, 300);
+	}
 }
 
 /**
@@ -89,10 +89,10 @@ export function storeReturnUrl(): void {
  * Returns null if no return URL is stored or if running on server-side.
  */
 export function getStoredReturnUrl(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return getCookie(RETURN_URL_COOKIE_NAME);
+	if (typeof window === "undefined") {
+		return null;
+	}
+	return getCookie(RETURN_URL_COOKIE_NAME);
 }
 
 /**
@@ -100,15 +100,15 @@ export function getStoredReturnUrl(): string | null {
  * Should be called after redirecting to the return URL.
  */
 export function clearStoredReturnUrl(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
+	if (typeof window === "undefined") {
+		return;
+	}
 
-  try {
-    deleteCookie(RETURN_URL_COOKIE_NAME);
-  } catch (error) {
-    console.error("Failed to clear return URL cookie:", error);
-  }
+	try {
+		deleteCookie(RETURN_URL_COOKIE_NAME);
+	} catch (error) {
+		console.error("Failed to clear return URL cookie:", error);
+	}
 }
 
 /**
@@ -116,12 +116,12 @@ export function clearStoredReturnUrl(): void {
  * Used when the return URL is passed via query string to the login page.
  */
 export function getReturnUrlFromParams(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
+	if (typeof window === "undefined") {
+		return null;
+	}
 
-  const searchParams = new URLSearchParams(window.location.search);
-  return searchParams.get(RETURN_URL_PARAM);
+	const searchParams = new URLSearchParams(window.location.search);
+	return searchParams.get(RETURN_URL_PARAM);
 }
 
 /**
@@ -131,19 +131,19 @@ export function getReturnUrlFromParams(): string | null {
  * @param returnUrl - The URL to redirect to after login (defaults to current URL)
  */
 export function buildLoginUrlWithReturn(baseLoginUrl: string, returnUrl?: string): string {
-  const url = returnUrl || getCurrentUrl();
+	const url = returnUrl || getCurrentUrl();
 
-  if (!url) {
-    return baseLoginUrl;
-  }
+	if (!url) {
+		return baseLoginUrl;
+	}
 
-  // Don't add return URL if we're already on the login page
-  if (url.includes("/login")) {
-    return baseLoginUrl;
-  }
+	// Don't add return URL if we're already on the login page
+	if (url.includes("/login")) {
+		return baseLoginUrl;
+	}
 
-  const separator = baseLoginUrl.includes("?") ? "&" : "?";
-  return `${baseLoginUrl}${separator}${RETURN_URL_PARAM}=${encodeURIComponent(url)}`;
+	const separator = baseLoginUrl.includes("?") ? "&" : "?";
+	return `${baseLoginUrl}${separator}${RETURN_URL_PARAM}=${encodeURIComponent(url)}`;
 }
 
 /**
@@ -154,19 +154,19 @@ export function buildLoginUrlWithReturn(baseLoginUrl: string, returnUrl?: string
  * 3. null (caller should use default)
  */
 export function getReturnUrl(): string | null {
-  // First check URL params
-  const paramUrl = getReturnUrlFromParams();
-  if (paramUrl) {
-    return paramUrl;
-  }
+	// First check URL params
+	const paramUrl = getReturnUrlFromParams();
+	if (paramUrl) {
+		return paramUrl;
+	}
 
-  // Then check cookie
-  const storedUrl = getStoredReturnUrl();
-  if (storedUrl) {
-    return storedUrl;
-  }
+	// Then check cookie
+	const storedUrl = getStoredReturnUrl();
+	if (storedUrl) {
+		return storedUrl;
+	}
 
-  return null;
+	return null;
 }
 
 /**
@@ -175,17 +175,17 @@ export function getReturnUrl(): string | null {
  * This determines whether cross-port redirects are allowed (dev only).
  */
 function isDevEnvironment(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const hostname = window.location.hostname;
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname.startsWith("127.") || // Full IPv4 loopback range (127.0.0.0/8)
-    hostname.endsWith(".local") // Common dev domain suffix
-  );
+	if (typeof window === "undefined") {
+		return false;
+	}
+	const hostname = window.location.hostname;
+	return (
+		hostname === "localhost" ||
+		hostname === "127.0.0.1" ||
+		hostname === "::1" ||
+		hostname.startsWith("127.") || // Full IPv4 loopback range (127.0.0.0/8)
+		hostname.endsWith(".local") // Common dev domain suffix
+	);
 }
 
 /**
@@ -198,69 +198,69 @@ function isDevEnvironment(): boolean {
  * @returns true if the URL is safe to redirect to
  */
 export function isValidReturnUrl(url: string): boolean {
-  if (!url) {
-    return false;
-  }
+	if (!url) {
+		return false;
+	}
 
-  // Allow relative URLs
-  if (url.startsWith("/") && !url.startsWith("//")) {
-    return true;
-  }
+	// Allow relative URLs
+	if (url.startsWith("/") && !url.startsWith("//")) {
+		return true;
+	}
 
-  // For absolute URLs, validate against current origin
-  if (typeof window === "undefined") {
-    return false;
-  }
+	// For absolute URLs, validate against current origin
+	if (typeof window === "undefined") {
+		return false;
+	}
 
-  try {
-    const returnUrlObj = new URL(url);
-    const currentHostname = window.location.hostname;
+	try {
+		const returnUrlObj = new URL(url);
+		const currentHostname = window.location.hostname;
 
-    // Hostname must always match
-    if (returnUrlObj.hostname !== currentHostname) {
-      return false;
-    }
+		// Hostname must always match
+		if (returnUrlObj.hostname !== currentHostname) {
+			return false;
+		}
 
-    // In dev environments (localhost), allow any port on the same hostname
-    // This supports SSO flows that cross ports (e.g., localhost:3000 -> localhost:4000)
-    if (isDevEnvironment()) {
-      return true;
-    }
+		// In dev environments (localhost), allow any port on the same hostname
+		// This supports SSO flows that cross ports (e.g., localhost:3000 -> localhost:4000)
+		if (isDevEnvironment()) {
+			return true;
+		}
 
-    // In production, require exact origin match (protocol + hostname + port)
-    return returnUrlObj.origin === window.location.origin;
-  } catch {
-    // Invalid URL
-    return false;
-  }
+		// In production, require exact origin match (protocol + hostname + port)
+		return returnUrlObj.origin === window.location.origin;
+	} catch {
+		// Invalid URL
+		return false;
+	}
 }
 
 export function normalizeUrlForCompare(url: string): string {
-  if (typeof window === "undefined") {
-    return url;
-  }
+	if (typeof window === "undefined") {
+		return url;
+	}
 
-  try {
-    const parsed = new URL(url, window.location.origin);
-    let pathname = parsed.pathname;
-    if (pathname.length > 1 && pathname.endsWith("/")) {
-      pathname = pathname.slice(0, -1);
-    }
+	try {
+		const parsed = new URL(url, window.location.origin);
+		let pathname = parsed.pathname;
+		if (pathname.length > 1 && pathname.endsWith("/")) {
+			pathname = pathname.slice(0, -1);
+		}
 
-    const params = new URLSearchParams(parsed.search);
-    const sortedParams = new URLSearchParams();
-    Array.from(params.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .forEach(([key, value]) => {
-        sortedParams.append(key, value);
-      });
+		const params = new URLSearchParams(parsed.search);
+		const sortedParams = new URLSearchParams();
+		Array.from(params.entries())
+			.sort(([a], [b]) => a.localeCompare(b))
+			.forEach(([key, value]) => {
+				sortedParams.append(key, value);
+			});
 
-    const search = sortedParams.toString();
-    const hash = parsed.hash || "";
-    return `${parsed.origin}${pathname}${search ? `?${search}` : ""}${hash}`;
-  } catch {
-    return url;
-  }
+		const search = sortedParams.toString();
+		const hash = parsed.hash || "";
+		return `${parsed.origin}${pathname}${search ? `?${search}` : ""}${hash}`;
+	} catch {
+		return url;
+	}
 }
 
 /**
@@ -273,32 +273,32 @@ export function normalizeUrlForCompare(url: string): string {
  * 3. Only clear cookie when we have a valid URL to return
  */
 export function consumeReturnUrl(): string | null {
-  // Check URL param first
-  const paramUrl = getReturnUrlFromParams();
-  if (paramUrl) {
-    if (isValidReturnUrl(paramUrl)) {
-      clearStoredReturnUrl();
-      return paramUrl;
-    }
-    // Log rejected URLs in development for debugging
-    if (isDevEnvironment()) {
-      console.warn("[returnUrlUtils] Invalid return URL in params rejected:", paramUrl);
-    }
-  }
+	// Check URL param first
+	const paramUrl = getReturnUrlFromParams();
+	if (paramUrl) {
+		if (isValidReturnUrl(paramUrl)) {
+			clearStoredReturnUrl();
+			return paramUrl;
+		}
+		// Log rejected URLs in development for debugging
+		if (isDevEnvironment()) {
+			console.warn("[returnUrlUtils] Invalid return URL in params rejected:", paramUrl);
+		}
+	}
 
-  // Fall back to cookie
-  const storedUrl = getStoredReturnUrl();
-  if (storedUrl) {
-    if (isValidReturnUrl(storedUrl)) {
-      clearStoredReturnUrl();
-      return storedUrl;
-    }
-    // Log rejected URLs in development for debugging
-    if (isDevEnvironment()) {
-      console.warn("[returnUrlUtils] Invalid return URL in cookie rejected:", storedUrl);
-    }
-  }
+	// Fall back to cookie
+	const storedUrl = getStoredReturnUrl();
+	if (storedUrl) {
+		if (isValidReturnUrl(storedUrl)) {
+			clearStoredReturnUrl();
+			return storedUrl;
+		}
+		// Log rejected URLs in development for debugging
+		if (isDevEnvironment()) {
+			console.warn("[returnUrlUtils] Invalid return URL in cookie rejected:", storedUrl);
+		}
+	}
 
-  // No valid URL found - don't clear cookie (nothing to clear or already invalid)
-  return null;
+	// No valid URL found - don't clear cookie (nothing to clear or already invalid)
+	return null;
 }

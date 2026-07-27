@@ -9,14 +9,14 @@ import { EndpointType, getEndpointType } from "./mode_endpoint_mapping";
  * @returns The appropriate endpoint type
  */
 export const determineEndpointType = (selectedModel: string, modelInfo: ModelGroup[]): EndpointType => {
-  // Find the model information for the selected model
-  const selectedModelInfo = modelInfo.find((option) => option.model_group === selectedModel);
+	// Find the model information for the selected model
+	const selectedModelInfo = modelInfo.find((option) => option.model_group === selectedModel);
 
-  // If model info is found and it has a mode, determine the endpoint type
-  if (selectedModelInfo?.mode) {
-    return getEndpointType(selectedModelInfo.mode);
-  }
+	// If model info is found and it has a mode, determine the endpoint type
+	if (selectedModelInfo?.mode) {
+		return getEndpointType(selectedModelInfo.mode);
+	}
 
-  // Default to chat endpoint if no match is found
-  return EndpointType.CHAT;
+	// Default to chat endpoint if no match is found
+	return EndpointType.CHAT;
 };

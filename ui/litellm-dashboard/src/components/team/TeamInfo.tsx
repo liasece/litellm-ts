@@ -93,7 +93,7 @@ const TeamInfoView: React.FC<TeamInfoProps> = ({
 	const visibleTabs = useMemo(() => getTeamInfoVisibleTabs(canEditTeam), [canEditTeam]);
 	const defaultTabKey = useMemo(() => getTeamInfoDefaultTab(editTeam, canEditTeam), [editTeam, canEditTeam]);
 
-	const fetchTeamInfo = async () => {
+	const fetchTeamInfo = React.useCallback(async () => {
 		try {
 			setLoading(true);
 			if (!accessToken) return;
@@ -105,11 +105,11 @@ const TeamInfoView: React.FC<TeamInfoProps> = ({
 		} finally {
 			setLoading(false);
 		}
-	};
+	}, [accessToken, teamId]);
 
 	useEffect(() => {
 		fetchTeamInfo();
-	}, [teamId, accessToken]);
+	}, [teamId, accessToken, fetchTeamInfo]);
 
 	// Fetch organization data when team has organization_id
 	useEffect(() => {

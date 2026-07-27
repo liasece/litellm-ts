@@ -30,8 +30,7 @@ export default function PublicHubIntroSections({
 			{embedded ? (
 				<div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
 					<p className="text-sm text-gray-700">
-						These are models, agents, and MCP servers your proxy admin has indicated
-						are available in your company.
+						These are models, agents, and MCP servers your proxy admin has indicated are available in your company.
 					</p>
 				</div>
 			) : (
@@ -70,17 +69,12 @@ export default function PublicHubIntroSections({
 
 			{!embedded && (
 				<Card className="mb-10 rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
-					<Title className="mb-6 text-2xl font-semibold text-gray-900">
-						Health and Endpoint Status
-					</Title>
+					<Title className="mb-6 text-2xl font-semibold text-gray-900">Health and Endpoint Status</Title>
 					<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-						<Text className="text-sm font-medium text-green-600">
-							Service status: {serviceStatus}
-						</Text>
+						<Text className="text-sm font-medium text-green-600">Service status: {serviceStatus}</Text>
 					</div>
 				</Card>
 			)}
 		</>
 	);
 }
-

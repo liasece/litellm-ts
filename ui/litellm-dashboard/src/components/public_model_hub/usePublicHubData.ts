@@ -6,12 +6,7 @@ import {
 	modelHubPublicModelsCall,
 } from "@/components/networking";
 import { useEffect, useState } from "react";
-import type {
-	PublicAgentCard,
-	PublicMcpServer,
-	PublicModelInfo,
-	UsefulLinks,
-} from "./types";
+import type { PublicAgentCard, PublicMcpServer, PublicModelInfo, UsefulLinks } from "./types";
 
 export default function usePublicHubData() {
 	const [models, setModels] = useState<PublicModelInfo[]>([]);
@@ -99,4 +94,3 @@ export default function usePublicHubData() {
 		serviceStatus,
 	};
 }
-

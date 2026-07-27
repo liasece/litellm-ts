@@ -550,10 +550,10 @@ export function registerAnthropicMessagesEndpoints(
 		}
 
 		// Patch 7: websearch override。仅该读取路径叠加 DB 覆盖，避免改变其他静态配置消费者。
-			const generalSettings = {
-				...(getConfig().generalSettings as unknown as Record<string, unknown>),
-				...(await dbConfigProvider.getParam("general_settings")),
-			};
+		const generalSettings = {
+			...(getConfig().generalSettings as unknown as Record<string, unknown>),
+			...(await dbConfigProvider.getParam("general_settings")),
+		};
 		_applyWebSearchOverrideTargetModel(cleanBody, generalSettings);
 
 		// Patch 3: user_id 标准化

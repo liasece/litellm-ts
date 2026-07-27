@@ -126,7 +126,7 @@ const classify = (response: HealthCheckResponse): "healthy" | "unhealthy" => {
 
 export const useDeploymentHealth = (accessToken: string | null, deploymentIds: string[]) => {
 	const deploymentIdKey = deploymentIds.join("|");
-	const knownIds = useMemo(() => [...new Set(deploymentIds.filter(Boolean))], [deploymentIdKey]);
+	const knownIds = useMemo(() => [...new Set(deploymentIdKey.split("|").filter(Boolean))], [deploymentIdKey]);
 	const knownIdSet = useMemo(() => new Set(knownIds), [knownIds]);
 	const [statuses, setStatuses] = useState<Record<string, DeploymentHealthStatus>>({});
 	const [error, setError] = useState<Error | null>(null);

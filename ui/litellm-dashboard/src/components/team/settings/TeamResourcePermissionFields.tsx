@@ -54,8 +54,7 @@ export default function TeamResourcePermissionFields({
 			<Form.Item
 				noStyle
 				shouldUpdate={(previous, current) =>
-					previous[mcpField] !== current[mcpField] ||
-					previous.mcp_tool_permissions !== current.mcp_tool_permissions
+					previous[mcpField] !== current[mcpField] || previous.mcp_tool_permissions !== current.mcp_tool_permissions
 				}
 			>
 				{() => (

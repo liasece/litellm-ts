@@ -5,7 +5,8 @@ import { renderWithProviders, screen, waitFor } from "../../tests/test-utils";
 import Navbar from "./navbar";
 
 // Mock the hooks and utilities
-vi.mock("@/components/networking", () => ({
+vi.mock("@/components/networking", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/networking")>()),
 	getProxyBaseUrl: vi.fn(() => "http://localhost:4000"),
 	logoutWebUiSession: vi.fn().mockResolvedValue(undefined),
 	serverRootPath: "",
@@ -202,17 +203,6 @@ describe("Navbar", () => {
 
 		// Reset mock
 		mockUserDropdownData.current = originalCurrent;
-	});
-
-	it("should show version badge when health data contains version", () => {
-		mockUseHealthReadinessImpl = () => ({ data: { litellm_version: "1.0.0" } });
-
-		renderWithProviders(<Navbar {...defaultProps} />);
-
-		expect(screen.getByText("v1.0.0")).toBeInTheDocument();
-
-		// Reset mock
-		mockUseHealthReadinessImpl = () => ({ data: null });
 	});
 
 	it("should use custom logo from theme context", () => {

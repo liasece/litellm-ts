@@ -87,7 +87,7 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 
 	const primaryGuardrailLabel =
 		guardrailEntries.length === 1
-			? (guardrailEntries[0]?.guardrail_name ?? "-")
+			? guardrailEntries[0]?.guardrail_name ?? "-"
 			: guardrailEntries.length > 1
 				? `${guardrailEntries.length} guardrails`
 				: "-";
@@ -193,18 +193,18 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 										? "bg-amber-100 text-amber-800"
 										: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "aborted"
 											? "bg-orange-100 text-orange-800"
-										: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "failure"
-											? "bg-red-100 text-red-800"
-											: "bg-green-100 text-green-800"
+											: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "failure"
+												? "bg-red-100 text-red-800"
+												: "bg-green-100 text-green-800"
 								}`}
 							>
 								{(row.original.metadata?.status || row.original.status || "success").toLowerCase() === "in_progress"
 									? "In Progress"
 									: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "aborted"
 										? "Aborted"
-									: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "failure"
-										? "Failure"
-										: "Success"}
+										: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "failure"
+											? "Failure"
+											: "Success"}
 							</span>
 						</div>
 						<div className="flex">

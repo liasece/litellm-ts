@@ -9,16 +9,9 @@ import {
 	getUniqueModes,
 	getUniqueProviders,
 } from "./filters";
-import type {
-	PublicAgentCard,
-	PublicMcpServer,
-	PublicModelInfo,
-} from "./types";
+import type { PublicAgentCard, PublicMcpServer, PublicModelInfo } from "./types";
 
-const model = (
-	name: string,
-	overrides: Partial<PublicModelInfo> = {},
-): PublicModelInfo => ({
+const model = (name: string, overrides: Partial<PublicModelInfo> = {}): PublicModelInfo => ({
 	model_group: name,
 	providers: ["openai"],
 	mode: "chat",
@@ -28,11 +21,7 @@ const model = (
 	...overrides,
 });
 
-const agent = (
-	name: string,
-	description: string,
-	tags: string[],
-): PublicAgentCard => ({
+const agent = (name: string, description: string, tags: string[]): PublicAgentCard => ({
 	protocolVersion: "1",
 	name,
 	description,
@@ -43,11 +32,7 @@ const agent = (
 	skills: [{ id: name, name: "Skill", description: "", tags }],
 });
 
-const server = (
-	name: string,
-	transport: string,
-	description = "",
-): PublicMcpServer => ({
+const server = (name: string, transport: string, description = ""): PublicMcpServer => ({
 	server_id: name,
 	name,
 	server_name: name,
@@ -59,11 +44,7 @@ const server = (
 
 describe("public model hub filters", () => {
 	it("ranks exact and prefix model matches before looser matches", () => {
-		const models = [
-			model("vendor/gpt-4"),
-			model("gpt-4-turbo"),
-			model("gpt-4"),
-		];
+		const models = [model("vendor/gpt-4"), model("gpt-4-turbo"), model("gpt-4")];
 
 		expect(filterPublicModels(models, "gpt-4", [], [], []).map((item) => item.model_group)).toEqual([
 			"gpt-4",
@@ -78,9 +59,7 @@ describe("public model hub filters", () => {
 			model("embedding", { mode: "embedding" }),
 		];
 
-		expect(
-			filterPublicModels(models, "", ["azure"], ["chat"], ["Vision"]),
-		).toEqual([models[0]]);
+		expect(filterPublicModels(models, "", ["azure"], ["chat"], ["Vision"])).toEqual([models[0]]);
 	});
 
 	it("filters agents by description and skill tag", () => {
@@ -93,10 +72,7 @@ describe("public model hub filters", () => {
 	});
 
 	it("filters MCP servers by description and transport", () => {
-		const servers = [
-			server("github", "sse", "Repository tools"),
-			server("files", "stdio", "Local files"),
-		];
+		const servers = [server("github", "sse", "Repository tools"), server("files", "stdio", "Local files")];
 
 		expect(filterPublicMcpServers(servers, "repository", ["sse"])).toEqual([servers[0]]);
 	});
@@ -116,4 +92,3 @@ describe("public model hub filters", () => {
 		expect(getUniqueMcpTransports(servers)).toEqual(["sse", "stdio"]);
 	});
 });
-

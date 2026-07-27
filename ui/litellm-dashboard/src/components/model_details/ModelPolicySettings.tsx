@@ -13,15 +13,7 @@ interface ModelPolicySettingsProps {
 	tags: Record<string, Tag>;
 }
 
-function DocumentationLabel({
-	label,
-	tooltip,
-	href,
-}: {
-	label: string;
-	tooltip: string;
-	href: string;
-}) {
+function DocumentationLabel({ label, tooltip, href }: { label: string; tooltip: string; href: string }) {
 	return (
 		<>
 			{label}

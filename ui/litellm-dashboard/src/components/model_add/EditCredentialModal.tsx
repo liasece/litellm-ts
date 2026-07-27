@@ -93,7 +93,7 @@ export default function EditCredentialsModal({
 			});
 			setSelectedProvider(existingCredential.credential_info.custom_llm_provider as Providers);
 		}
-	}, [existingCredential]);
+	}, [existingCredential, form]);
 
 	return (
 		<Modal

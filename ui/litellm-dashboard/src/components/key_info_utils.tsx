@@ -11,13 +11,13 @@ const SENSITIVE_METADATA_FIELDS = ["logging"] as const;
  * @returns Filtered metadata object without sensitive fields
  */
 export const filterSensitiveMetadata = (metadata: Record<string, any> | null | undefined): Record<string, any> => {
-  if (!metadata || typeof metadata !== "object") {
-    return {};
-  }
+	if (!metadata || typeof metadata !== "object") {
+		return {};
+	}
 
-  return Object.fromEntries(
-    Object.entries(metadata).filter(([key]) => !SENSITIVE_METADATA_FIELDS.includes(key as any)),
-  );
+	return Object.fromEntries(
+		Object.entries(metadata).filter(([key]) => !SENSITIVE_METADATA_FIELDS.includes(key as any)),
+	);
 };
 
 /**
@@ -26,11 +26,11 @@ export const filterSensitiveMetadata = (metadata: Record<string, any> | null | u
  * @returns Array of logging configurations or empty array if not found
  */
 export const extractLoggingSettings = (metadata: Record<string, any> | null | undefined): any[] => {
-  if (!metadata || typeof metadata !== "object") {
-    return [];
-  }
+	if (!metadata || typeof metadata !== "object") {
+		return [];
+	}
 
-  return Array.isArray(metadata.logging) ? metadata.logging : [];
+	return Array.isArray(metadata.logging) ? metadata.logging : [];
 };
 
 /**
@@ -40,11 +40,11 @@ export const extractLoggingSettings = (metadata: Record<string, any> | null | un
  * @returns Formatted JSON string
  */
 export const formatMetadataForDisplay = (
-  metadata: Record<string, any> | null | undefined,
-  indent: number = 2,
+	metadata: Record<string, any> | null | undefined,
+	indent: number = 2,
 ): string => {
-  const filtered = filterSensitiveMetadata(metadata);
-  return JSON.stringify(filtered, null, indent);
+	const filtered = filterSensitiveMetadata(metadata);
+	return JSON.stringify(filtered, null, indent);
 };
 
 /**
@@ -54,10 +54,10 @@ export const formatMetadataForDisplay = (
  * @returns A shallow copy of the object without the "tags" key, or the original value for non-objects
  */
 export const stripTagsFromMetadata = (metadata: any) => {
-  if (!metadata || typeof metadata !== "object") {
-    return metadata;
-  }
-  // Remove tags key from metadata shown in textarea to avoid duplication
-  const { tags, ...rest } = metadata as Record<string, any>;
-  return rest;
+	if (!metadata || typeof metadata !== "object") {
+		return metadata;
+	}
+	// Remove tags key from metadata shown in textarea to avoid duplication
+	const { tags, ...rest } = metadata as Record<string, any>;
+	return rest;
 };

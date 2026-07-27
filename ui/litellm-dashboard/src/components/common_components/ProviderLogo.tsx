@@ -21,12 +21,7 @@ export default function ProviderLogo({
 
 	return (
 		// Provider logos are dynamic external URLs and need the stateful inline fallback above.
-		// eslint-disable-next-line @next/next/no-img-element
-		<img
-			src={logo}
-			alt={`${provider} logo`}
-			className={className}
-			onError={() => setFailed(true)}
-		/>
+
+		<img src={logo} alt={`${provider} logo`} className={className} onError={() => setFailed(true)} />
 	);
 }

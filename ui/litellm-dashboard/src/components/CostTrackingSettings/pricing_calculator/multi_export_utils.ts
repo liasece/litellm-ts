@@ -3,20 +3,20 @@ import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { MultiModelResult } from "./types";
 
 const formatCostForExport = (value: number | null | undefined): string => {
-  if (value === null || value === undefined) return "-";
-  if (value === 0) return "$0.00";
-  if (value < 0.01) return `$${value.toFixed(6)}`;
-  if (value < 1) return `$${value.toFixed(4)}`;
-  return `$${formatNumberWithCommas(value, 2)}`;
+	if (value === null || value === undefined) return "-";
+	if (value === 0) return "$0.00";
+	if (value < 0.01) return `$${value.toFixed(6)}`;
+	if (value < 1) return `$${value.toFixed(4)}`;
+	return `$${formatNumberWithCommas(value, 2)}`;
 };
 
 const formatRequestsForExport = (value: number | null | undefined): string => {
-  if (value === null || value === undefined) return "-";
-  return formatNumberWithCommas(value, 0);
+	if (value === null || value === undefined) return "-";
+	return formatNumberWithCommas(value, 0);
 };
 
 const generateModelSection = (result: CostEstimateResponse): string => {
-  return `
+	return `
     <div class="model-section">
       <h3>${result.model} ${result.provider ? `<span class="provider">(${result.provider})</span>` : ""}</h3>
       
@@ -64,16 +64,16 @@ const generateModelSection = (result: CostEstimateResponse): string => {
 };
 
 export const exportMultiToPDF = (multiResult: MultiModelResult): void => {
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) {
-    alert("Please allow popups to export PDF");
-    return;
-  }
+	const printWindow = window.open("", "_blank");
+	if (!printWindow) {
+		alert("Please allow popups to export PDF");
+		return;
+	}
 
-  const validEntries = multiResult.entries.filter((e) => e.result !== null);
-  const modelCount = validEntries.length;
+	const validEntries = multiResult.entries.filter((e) => e.result !== null);
+	const modelCount = validEntries.length;
 
-  const html = `
+	const html = `
     <!DOCTYPE html>
     <html>
     <head>
@@ -212,7 +212,9 @@ export const exportMultiToPDF = (multiResult: MultiModelResult): void => {
             <div class="value purple">${formatCostForExport(multiResult.totals.monthly_cost)}</div>
           </div>
         </div>
-        ${multiResult.totals.margin_per_request > 0 ? `
+        ${
+					multiResult.totals.margin_per_request > 0
+						? `
         <div class="summary-grid" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
           <div class="summary-item">
             <div class="label">Margin/Request</div>
@@ -227,7 +229,9 @@ export const exportMultiToPDF = (multiResult: MultiModelResult): void => {
             <div class="value" style="color: #faad14;">${formatCostForExport(multiResult.totals.monthly_margin)}</div>
           </div>
         </div>
-        ` : ""}
+        `
+						: ""
+				}
       </div>
 
       <h2>Model Breakdown</h2>
@@ -240,78 +244,73 @@ export const exportMultiToPDF = (multiResult: MultiModelResult): void => {
     </html>
   `;
 
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.onload = () => {
-    printWindow.print();
-  };
+	printWindow.document.write(html);
+	printWindow.document.close();
+	printWindow.onload = () => {
+		printWindow.print();
+	};
 };
 
 export const exportMultiToCSV = (multiResult: MultiModelResult): void => {
-  const validEntries = multiResult.entries.filter((e) => e.result !== null);
-  
-  const rows: string[][] = [
-    ["LLM Multi-Model Cost Estimate Report"],
-    ["Generated", new Date().toLocaleString()],
-    [""],
-  ];
+	const validEntries = multiResult.entries.filter((e) => e.result !== null);
 
-  // Summary section
-  rows.push(
-    ["COMBINED TOTALS"],
-    ["Total Per Request", multiResult.totals.cost_per_request.toString()],
-    ["Total Daily", multiResult.totals.daily_cost?.toString() || "-"],
-    ["Total Monthly", multiResult.totals.monthly_cost?.toString() || "-"],
-    ["Margin Per Request", multiResult.totals.margin_per_request.toString()],
-    ["Daily Margin", multiResult.totals.daily_margin?.toString() || "-"],
-    ["Monthly Margin", multiResult.totals.monthly_margin?.toString() || "-"],
-    [""]
-  );
+	const rows: string[][] = [["LLM Multi-Model Cost Estimate Report"], ["Generated", new Date().toLocaleString()], [""]];
 
-  // Summary table header
-  rows.push([
-    "Model",
-    "Provider",
-    "Input Tokens",
-    "Output Tokens",
-    "Requests/Day",
-    "Requests/Month",
-    "Cost/Request",
-    "Daily Cost",
-    "Monthly Cost",
-    "Input Cost/Req",
-    "Output Cost/Req",
-    "Margin/Req",
-  ]);
+	// Summary section
+	rows.push(
+		["COMBINED TOTALS"],
+		["Total Per Request", multiResult.totals.cost_per_request.toString()],
+		["Total Daily", multiResult.totals.daily_cost?.toString() || "-"],
+		["Total Monthly", multiResult.totals.monthly_cost?.toString() || "-"],
+		["Margin Per Request", multiResult.totals.margin_per_request.toString()],
+		["Daily Margin", multiResult.totals.daily_margin?.toString() || "-"],
+		["Monthly Margin", multiResult.totals.monthly_margin?.toString() || "-"],
+		[""],
+	);
 
-  // Add each model's data
-  for (const entry of validEntries) {
-    const r = entry.result!;
-    rows.push([
-      r.model,
-      r.provider || "-",
-      r.input_tokens.toString(),
-      r.output_tokens.toString(),
-      r.num_requests_per_day?.toString() || "-",
-      r.num_requests_per_month?.toString() || "-",
-      r.cost_per_request.toString(),
-      r.daily_cost?.toString() || "-",
-      r.monthly_cost?.toString() || "-",
-      r.input_cost_per_request.toString(),
-      r.output_cost_per_request.toString(),
-      r.margin_cost_per_request.toString(),
-    ]);
-  }
+	// Summary table header
+	rows.push([
+		"Model",
+		"Provider",
+		"Input Tokens",
+		"Output Tokens",
+		"Requests/Day",
+		"Requests/Month",
+		"Cost/Request",
+		"Daily Cost",
+		"Monthly Cost",
+		"Input Cost/Req",
+		"Output Cost/Req",
+		"Margin/Req",
+	]);
 
-  const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `cost_estimate_multi_model_${new Date().toISOString().split("T")[0]}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(url);
+	// Add each model's data
+	for (const entry of validEntries) {
+		const r = entry.result!;
+		rows.push([
+			r.model,
+			r.provider || "-",
+			r.input_tokens.toString(),
+			r.output_tokens.toString(),
+			r.num_requests_per_day?.toString() || "-",
+			r.num_requests_per_month?.toString() || "-",
+			r.cost_per_request.toString(),
+			r.daily_cost?.toString() || "-",
+			r.monthly_cost?.toString() || "-",
+			r.input_cost_per_request.toString(),
+			r.output_cost_per_request.toString(),
+			r.margin_cost_per_request.toString(),
+		]);
+	}
+
+	const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
+	const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+	const url = window.URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = `cost_estimate_multi_model_${new Date().toISOString().split("T")[0]}.csv`;
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	window.URL.revokeObjectURL(url);
 };
-

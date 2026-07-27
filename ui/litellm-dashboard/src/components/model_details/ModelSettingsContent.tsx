@@ -45,11 +45,7 @@ export default function ModelSettingsContent({
 	return (
 		<div className="space-y-4">
 			<div className="space-y-4">
-				<ModelBasicSettings
-					editing={editing}
-					modelData={modelData}
-					modelAccessGroups={modelAccessGroups}
-				/>
+				<ModelBasicSettings editing={editing} modelData={modelData} modelAccessGroups={modelAccessGroups} />
 				<ModelPolicySettings
 					editing={editing}
 					modelData={modelData}

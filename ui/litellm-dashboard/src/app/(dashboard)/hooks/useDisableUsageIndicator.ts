@@ -2,32 +2,32 @@ import { getLocalStorageItem, LOCAL_STORAGE_EVENT } from "@/utils/localStorageUt
 import { useSyncExternalStore } from "react";
 
 function subscribe(callback: () => void) {
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === "disableUsageIndicator") {
-      callback();
-    }
-  };
+	const onStorage = (e: StorageEvent) => {
+		if (e.key === "disableUsageIndicator") {
+			callback();
+		}
+	};
 
-  const onCustom = (e: Event) => {
-    const { key } = (e as CustomEvent).detail;
-    if (key === "disableUsageIndicator") {
-      callback();
-    }
-  };
+	const onCustom = (e: Event) => {
+		const { key } = (e as CustomEvent).detail;
+		if (key === "disableUsageIndicator") {
+			callback();
+		}
+	};
 
-  window.addEventListener("storage", onStorage);
-  window.addEventListener(LOCAL_STORAGE_EVENT, onCustom);
+	window.addEventListener("storage", onStorage);
+	window.addEventListener(LOCAL_STORAGE_EVENT, onCustom);
 
-  return () => {
-    window.removeEventListener("storage", onStorage);
-    window.removeEventListener(LOCAL_STORAGE_EVENT, onCustom);
-  };
+	return () => {
+		window.removeEventListener("storage", onStorage);
+		window.removeEventListener(LOCAL_STORAGE_EVENT, onCustom);
+	};
 }
 
 function getSnapshot() {
-  return getLocalStorageItem("disableUsageIndicator") === "true";
+	return getLocalStorageItem("disableUsageIndicator") === "true";
 }
 
 export function useDisableUsageIndicator() {
-  return useSyncExternalStore(subscribe, getSnapshot);
+	return useSyncExternalStore(subscribe, getSnapshot);
 }

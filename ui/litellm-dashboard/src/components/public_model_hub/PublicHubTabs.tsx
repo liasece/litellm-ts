@@ -6,11 +6,7 @@ import { Card, Text, Title } from "@tremor/react";
 import { Select, Tabs, Tooltip } from "antd";
 import { Info } from "lucide-react";
 import { useMemo, useState } from "react";
-import {
-	getPublicAgentColumns,
-	getPublicMcpColumns,
-	getPublicModelColumns,
-} from "./columns";
+import { getPublicAgentColumns, getPublicMcpColumns, getPublicModelColumns } from "./columns";
 import {
 	filterPublicAgents,
 	filterPublicMcpServers,
@@ -21,11 +17,7 @@ import {
 	getUniqueModes,
 	getUniqueProviders,
 } from "./filters";
-import type {
-	PublicAgentCard,
-	PublicMcpServer,
-	PublicModelInfo,
-} from "./types";
+import type { PublicAgentCard, PublicMcpServer, PublicModelInfo } from "./types";
 
 interface PublicHubTabsProps {
 	models: PublicModelInfo[];
@@ -162,10 +154,7 @@ export default function PublicHubTabs({
 	);
 	const modelColumns = useMemo(() => getPublicModelColumns(onModelSelect), [onModelSelect]);
 	const agentColumns = useMemo(() => getPublicAgentColumns(onAgentSelect), [onAgentSelect]);
-	const mcpColumns = useMemo(
-		() => getPublicMcpColumns(onMcpSelect, onCopy),
-		[onCopy, onMcpSelect],
-	);
+	const mcpColumns = useMemo(() => getPublicMcpColumns(onMcpSelect, onCopy), [onCopy, onMcpSelect]);
 
 	return (
 		<Card className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
@@ -180,9 +169,7 @@ export default function PublicHubTabs({
 						label: "Model Hub",
 						children: (
 							<>
-								<Title className="mb-8 text-2xl font-semibold text-gray-900">
-									Available Models
-								</Title>
+								<Title className="mb-8 text-2xl font-semibold text-gray-900">Available Models</Title>
 								<div className="mb-8 grid grid-cols-1 gap-6 rounded-lg border border-gray-200 bg-gray-50 p-6 md:grid-cols-2 lg:grid-cols-4">
 									<SearchField
 										label="Search Models:"
@@ -233,9 +220,7 @@ export default function PublicHubTabs({
 									label: "Agent Hub",
 									children: (
 										<>
-											<Title className="mb-8 text-2xl font-semibold text-gray-900">
-												Available Agents
-											</Title>
+											<Title className="mb-8 text-2xl font-semibold text-gray-900">Available Agents</Title>
 											<div className="mb-8 grid grid-cols-1 gap-6 rounded-lg border border-gray-200 bg-gray-50 p-6 md:grid-cols-2">
 												<SearchField
 													label="Search Agents:"
@@ -273,9 +258,7 @@ export default function PublicHubTabs({
 									label: "MCP Hub",
 									children: (
 										<>
-											<Title className="mb-8 text-2xl font-semibold text-gray-900">
-												Available MCP Servers
-											</Title>
+											<Title className="mb-8 text-2xl font-semibold text-gray-900">Available MCP Servers</Title>
 											<div className="mb-8 grid grid-cols-1 gap-6 rounded-lg border border-gray-200 bg-gray-50 p-6 md:grid-cols-2">
 												<SearchField
 													label="Search MCP Servers:"
@@ -311,4 +294,3 @@ export default function PublicHubTabs({
 		</Card>
 	);
 }
-

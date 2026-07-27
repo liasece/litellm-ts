@@ -40,12 +40,7 @@ if __name__ == "__main__":
     asyncio.run(main())`;
 }
 
-export default function PublicMcpDetailsModal({
-	server,
-	open,
-	onClose,
-	onCopy,
-}: PublicMcpDetailsModalProps) {
+export default function PublicMcpDetailsModal({ server, open, onClose, onCopy }: PublicMcpDetailsModalProps) {
 	return (
 		<Modal
 			title={
@@ -88,9 +83,7 @@ export default function PublicMcpDetailsModal({
 							)}
 							<div>
 								<Text className="font-medium">Auth Type:</Text>
-								<Tag color={server.auth_type === "none" ? "gray" : "green"}>
-									{server.auth_type}
-								</Tag>
+								<Tag color={server.auth_type === "none" ? "gray" : "green"}>{server.auth_type}</Tag>
 							</div>
 							<div className="col-span-2">
 								<Text className="font-medium">Description:</Text>
@@ -112,21 +105,14 @@ export default function PublicMcpDetailsModal({
 						<section>
 							<Text className="mb-4 text-lg font-semibold">Additional Information</Text>
 							<div className="rounded-lg bg-gray-50 p-4">
-								<pre className="overflow-x-auto text-xs">
-									{JSON.stringify(server.mcp_info, null, 2)}
-								</pre>
+								<pre className="overflow-x-auto text-xs">{JSON.stringify(server.mcp_info, null, 2)}</pre>
 							</div>
 						</section>
 					)}
 
-					<PublicCodeExample
-						title="Usage Example"
-						code={usageExample(server.server_name)}
-						onCopy={onCopy}
-					/>
+					<PublicCodeExample title="Usage Example" code={usageExample(server.server_name)} onCopy={onCopy} />
 				</div>
 			)}
 		</Modal>
 	);
 }
-

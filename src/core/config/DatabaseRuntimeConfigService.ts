@@ -64,7 +64,10 @@ export class DatabaseRuntimeConfigService {
 		this._yamlRouterSettings = buildYamlRouterSettings(config);
 	}
 
-	/** 在一致的数据库快照中读取一次完整运行时配置。 */
+	/**
+	 * 在一致的数据库快照中读取一次完整运行时配置。
+	 * @param router - 接收最新部署快照的 Router
+	 */
 	async loadSnapshot(router: Router): Promise<RouterRuntimeSnapshot> {
 		const result = await this._db.transaction(
 			async (tx) => {

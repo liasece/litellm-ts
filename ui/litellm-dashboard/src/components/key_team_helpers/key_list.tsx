@@ -158,35 +158,38 @@ const useKeyList = ({
 	const [error, setError] = useState<Error | null>(null);
 	const expandParam = expand.join(",");
 
-	const fetchKeys = useCallback(async (params: Record<string, unknown> = {}): Promise<void> => {
-		try {
-			if (!accessToken) return;
-			setIsLoading(true);
+	const fetchKeys = useCallback(
+		async (params: Record<string, unknown> = {}): Promise<void> => {
+			try {
+				if (!accessToken) return;
+				setIsLoading(true);
 
-			const page = typeof params.page === "number" ? params.page : 1;
-			const pageSize = typeof params.pageSize === "number" ? params.pageSize : 100;
+				const page = typeof params.page === "number" ? params.page : 1;
+				const pageSize = typeof params.pageSize === "number" ? params.pageSize : 100;
 
-			const data = await keyListCall(
-				accessToken,
-				null,
-				null,
-				null,
-				null,
-				null,
-				page,
-				pageSize,
-				null,
-				null,
-				expandParam,
-			);
-			setKeyData(data);
-			setError(null);
-		} catch (err) {
-			setError(err instanceof Error ? err : new Error("An error occurred"));
-		} finally {
-			setIsLoading(false);
-		}
-	}, [accessToken, expandParam]);
+				const data = await keyListCall(
+					accessToken,
+					null,
+					null,
+					null,
+					null,
+					null,
+					page,
+					pageSize,
+					null,
+					null,
+					expandParam,
+				);
+				setKeyData(data);
+				setError(null);
+			} catch (err) {
+				setError(err instanceof Error ? err : new Error("An error occurred"));
+			} finally {
+				setIsLoading(false);
+			}
+		},
+		[accessToken, expandParam],
+	);
 
 	useEffect(() => {
 		void fetchKeys();

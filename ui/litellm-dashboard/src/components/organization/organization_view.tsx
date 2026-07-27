@@ -13,14 +13,10 @@ import {
 	organizationUpdateCall,
 } from "../networking";
 import OrganizationHeader from "./details/OrganizationHeader";
-import OrganizationMemberDialogs, {
-	type OrganizationMemberFormValues,
-} from "./details/OrganizationMemberDialogs";
+import OrganizationMemberDialogs, { type OrganizationMemberFormValues } from "./details/OrganizationMemberDialogs";
 import OrganizationMembers from "./details/OrganizationMembers";
 import OrganizationOverview from "./details/OrganizationOverview";
-import OrganizationSettings, {
-	type OrganizationFormValues,
-} from "./details/OrganizationSettings";
+import OrganizationSettings, { type OrganizationFormValues } from "./details/OrganizationSettings";
 
 interface OrganizationInfoProps {
 	organizationId: string;
@@ -165,11 +161,7 @@ export default function OrganizationInfoView({
 						key: "overview",
 						label: "Overview",
 						children: (
-							<OrganizationOverview
-								organization={organization}
-								teamAliasMap={teamAliasMap}
-								accessToken={accessToken}
-							/>
+							<OrganizationOverview organization={organization} teamAliasMap={teamAliasMap} accessToken={accessToken} />
 						),
 					},
 					{

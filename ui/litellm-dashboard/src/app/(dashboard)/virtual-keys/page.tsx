@@ -8,40 +8,40 @@ import useTeams from "@/app/(dashboard)/hooks/useTeams";
 import { Organization } from "@/components/networking";
 
 const VirtualKeysPage = () => {
-  const { accessToken, userRole, userId, premiumUser, userEmail } = useAuthorized();
-  const { teams, setTeams } = useTeams();
-  const [createClicked, setCreateClicked] = useState<boolean>(false);
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
+	const { accessToken, userRole, userId, premiumUser, userEmail } = useAuthorized();
+	const { teams, setTeams } = useTeams();
+	const [createClicked, setCreateClicked] = useState<boolean>(false);
+	const [organizations, setOrganizations] = useState<Organization[]>([]);
 
-  const { keys, isLoading, error, pagination, refresh, setKeys } = useKeyList({
-    selectedKeyAlias: null,
-    currentOrg: null,
-    accessToken: accessToken || "",
-    createClicked,
-  });
+	const { keys, isLoading, error, pagination, refresh, setKeys } = useKeyList({
+		selectedKeyAlias: null,
+		currentOrg: null,
+		accessToken: accessToken || "",
+		createClicked,
+	});
 
-  const addKey = (data: any) => {
-    setKeys((prevData) => (prevData ? [...prevData, data] : [data]));
-    setCreateClicked(() => !createClicked);
-  };
+	const addKey = (data: any) => {
+		setKeys((prevData) => (prevData ? [...prevData, data] : [data]));
+		setCreateClicked(() => !createClicked);
+	};
 
-  return (
-    <UserDashboard
-      userID={userId}
-      userRole={userRole}
-      userEmail={userEmail}
-      teams={teams}
-      keys={keys}
-      setUserRole={() => {}}
-      setUserEmail={() => {}}
-      setTeams={setTeams}
-      setKeys={setKeys}
-      premiumUser={premiumUser}
-      organizations={organizations}
-      addKey={addKey}
-      createClicked={createClicked}
-    />
-  );
+	return (
+		<UserDashboard
+			userID={userId}
+			userRole={userRole}
+			userEmail={userEmail}
+			teams={teams}
+			keys={keys}
+			setUserRole={() => {}}
+			setUserEmail={() => {}}
+			setTeams={setTeams}
+			setKeys={setKeys}
+			premiumUser={premiumUser}
+			organizations={organizations}
+			addKey={addKey}
+			createClicked={createClicked}
+		/>
+	);
 };
 
 export default VirtualKeysPage;

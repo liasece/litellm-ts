@@ -44,7 +44,7 @@ export function useDiscountConfig({ accessToken }: UseDiscountConfigProps): UseD
 			console.error("Error fetching discount config:", error);
 			NotificationsManager.fromBackend("Failed to fetch discount configuration");
 		}
-	}, [accessToken]);
+	}, []);
 
 	const saveDiscountConfig = useCallback(
 		async (config: DiscountConfig) => {
@@ -73,7 +73,7 @@ export function useDiscountConfig({ accessToken }: UseDiscountConfigProps): UseD
 				NotificationsManager.fromBackend("Failed to update discount configuration");
 			}
 		},
-		[accessToken, fetchDiscountConfig],
+		[fetchDiscountConfig],
 	);
 
 	const handleAddProvider = useCallback(

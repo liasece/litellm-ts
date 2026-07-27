@@ -5,23 +5,23 @@ import AntdGlobalProvider from "@/contexts/AntdGlobalProvider";
 import ReactQueryProvider from "@/contexts/ReactQueryProvider";
 
 export const metadata: Metadata = {
-  title: "LiteLLM Dashboard",
-  description: "LiteLLM Proxy Admin UI",
-  icons: { icon: "./favicon.ico" },
+	title: "LiteLLM Dashboard",
+	description: "LiteLLM Proxy Admin UI",
+	icons: { icon: "./favicon.ico" },
 };
 
 export default function RootLayout({
-  children,
+	children,
 }: Readonly<{
-  children: React.ReactNode;
+	children: React.ReactNode;
 }>) {
-  return (
-    <html lang="en">
-      <body className="font-sans">
-        <ReactQueryProvider>
-          <AntdGlobalProvider>{children}</AntdGlobalProvider>
-        </ReactQueryProvider>
-      </body>
-    </html>
-  );
+	return (
+		<html lang="en">
+			<body className="font-sans">
+				<ReactQueryProvider>
+					<AntdGlobalProvider>{children}</AntdGlobalProvider>
+				</ReactQueryProvider>
+			</body>
+		</html>
+	);
 }

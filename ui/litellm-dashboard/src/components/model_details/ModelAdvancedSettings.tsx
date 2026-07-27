@@ -16,11 +16,7 @@ interface ModelAdvancedSettingsProps {
 }
 
 function JsonValue({ value }: { value: unknown }) {
-	return (
-		<pre className="mt-1 overflow-auto rounded bg-gray-100 p-2 text-xs">
-			{JSON.stringify(value, null, 2)}
-		</pre>
-	);
+	return <pre className="mt-1 overflow-auto rounded bg-gray-100 p-2 text-xs">{JSON.stringify(value, null, 2)}</pre>;
 }
 
 export default function ModelAdvancedSettings({

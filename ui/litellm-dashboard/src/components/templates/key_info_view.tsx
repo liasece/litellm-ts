@@ -146,9 +146,7 @@ export default function KeyInfoView({ onClose, keyData, teams, onKeyDataUpdate, 
 	};
 
 	const teamMembers = teamsData?.find((team) => team.team_id === currentKeyData.team_id)?.members_with_roles;
-	const isTeamAdmin = Boolean(
-		teamsData && isUserTeamAdminForSingleTeam(teamMembers ?? null, userID || ""),
-	);
+	const isTeamAdmin = Boolean(teamsData && isUserTeamAdminForSingleTeam(teamMembers ?? null, userID || ""));
 	const canModifyKey =
 		isProxyAdminRole(userRole || "") ||
 		isTeamAdmin ||

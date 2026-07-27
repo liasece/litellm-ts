@@ -207,24 +207,15 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 							? "bg-amber-100 text-amber-800"
 							: isAborted
 								? "bg-orange-100 text-orange-800"
-							: isFailure
-								? "bg-red-100 text-red-800"
-								: "bg-green-100 text-green-800"
+								: isFailure
+									? "bg-red-100 text-red-800"
+									: "bg-green-100 text-green-800"
 					}`}
 				>
 					{isInProgress ? "In Progress" : isAborted ? "Aborted" : isFailure ? "Failure" : "Success"}
 				</span>
 			);
 		},
-	},
-	{
-		header: "Request ID",
-		accessorKey: "request_id",
-		cell: (info: any) => (
-			<Tooltip title={String(info.getValue() || "")}>
-				<span className="font-mono text-xs max-w-[25ch] truncate block">{String(info.getValue() || "")}</span>
-			</Tooltip>
-		),
 	},
 	{
 		header: sortProps
@@ -358,9 +349,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			const modelTooltip = [resolutionTooltip || undefined, fallbackTooltip].filter(Boolean).join("\n") || modelName;
 			return (
 				<div className="flex items-center space-x-2">
-					{provider && (
-						<ProviderLogo provider={provider} logo={getLogoUrl(row, provider)} />
-					)}
+					{provider && <ProviderLogo provider={provider} logo={getLogoUrl(row, provider)} />}
 					<Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{modelTooltip}</span>}>
 						<span className="max-w-[25ch] truncate block">
 							{fallbackCount > 0 && (

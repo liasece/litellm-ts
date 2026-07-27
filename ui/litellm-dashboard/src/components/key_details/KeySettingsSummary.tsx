@@ -101,9 +101,7 @@ export default function KeySettingsSummary({
 					<Text>${formatNumberWithCommas(keyData.spend, 4)} USD</Text>
 				</KeySetting>
 				<KeySetting label="Budget">
-					<Text>
-						{keyData.max_budget !== null ? `$${formatNumberWithCommas(keyData.max_budget, 2)}` : "Unlimited"}
-					</Text>
+					<Text>{keyData.max_budget !== null ? `$${formatNumberWithCommas(keyData.max_budget, 2)}` : "Unlimited"}</Text>
 				</KeySetting>
 				<KeySetting label="Tags">
 					<KeyValueList values={keyData.metadata?.tags} empty="No tags specified" />
@@ -128,10 +126,7 @@ export default function KeySettingsSummary({
 					)}
 				</KeySetting>
 				<KeySetting label="Models">
-					<KeyValueList
-						values={keyData.models}
-						empty={<EmptyKeyValueList>No models specified</EmptyKeyValueList>}
-					/>
+					<KeyValueList values={keyData.models} empty={<EmptyKeyValueList>No models specified</EmptyKeyValueList>} />
 				</KeySetting>
 				<KeySetting label="Rate Limits">
 					<Text>TPM: {keyData.tpm_limit !== null ? keyData.tpm_limit : "Unlimited"}</Text>

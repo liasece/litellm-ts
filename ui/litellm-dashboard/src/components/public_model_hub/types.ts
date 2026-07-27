@@ -63,8 +63,4 @@ export interface PublicMcpServer {
 	[key: string]: unknown;
 }
 
-export type UsefulLinks = Record<
-	string,
-	string | { url: string; index: number }
->;
-
+export type UsefulLinks = Record<string, string | { url: string; index: number }>;

@@ -22,11 +22,7 @@ function formatCost(cost: number) {
 	return `$${(cost * 1_000_000).toFixed(2)}`;
 }
 
-export default function ModelHubModelDetailsModal({
-	model,
-	open,
-	onClose,
-}: ModelHubModelDetailsModalProps) {
+export default function ModelHubModelDetailsModal({ model, open, onClose }: ModelHubModelDetailsModalProps) {
 	const capabilities = model
 		? Object.entries(model)
 				.filter(([key, value]) => key.startsWith("supports_") && value === true)
@@ -82,19 +78,11 @@ export default function ModelHubModelDetailsModal({
 							</div>
 							<div>
 								<Text className="font-medium">Input Cost per 1M Tokens:</Text>
-								<Text>
-									{model.input_cost_per_token
-										? formatCost(model.input_cost_per_token)
-										: "Not specified"}
-								</Text>
+								<Text>{model.input_cost_per_token ? formatCost(model.input_cost_per_token) : "Not specified"}</Text>
 							</div>
 							<div>
 								<Text className="font-medium">Output Cost per 1M Tokens:</Text>
-								<Text>
-									{model.output_cost_per_token
-										? formatCost(model.output_cost_per_token)
-										: "Not specified"}
-								</Text>
+								<Text>{model.output_cost_per_token ? formatCost(model.output_cost_per_token) : "Not specified"}</Text>
 							</div>
 						</div>
 					</section>
@@ -170,4 +158,3 @@ print(response.choices[0].message.content)`}
 		</Modal>
 	);
 }
-

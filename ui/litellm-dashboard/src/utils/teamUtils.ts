@@ -6,14 +6,14 @@ import { Team } from "@/components/key_team_helpers/key_list";
  * @returns Record mapping team_id to team_alias
  */
 export const createTeamAliasMap = (teams: Team[] | null | undefined): Record<string, string> => {
-  if (!teams) return {};
-  return teams.reduce(
-    (acc, team) => {
-      acc[team.team_id] = team.team_alias;
-      return acc;
-    },
-    {} as Record<string, string>,
-  );
+	if (!teams) return {};
+	return teams.reduce(
+		(acc, team) => {
+			acc[team.team_id] = team.team_alias;
+			return acc;
+		},
+		{} as Record<string, string>,
+	);
 };
 
 /**
@@ -23,6 +23,6 @@ export const createTeamAliasMap = (teams: Team[] | null | undefined): Record<str
  * @returns The team alias if found, null otherwise
  */
 export const resolveTeamAliasFromTeamID = (teamID: string, teams: Team[]): string | null => {
-  const team = teams.find((team) => team.team_id === teamID);
-  return team ? team.team_alias : null;
+	const team = teams.find((team) => team.team_id === teamID);
+	return team ? team.team_alias : null;
 };

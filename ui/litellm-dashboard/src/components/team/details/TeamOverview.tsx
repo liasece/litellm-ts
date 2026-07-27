@@ -32,12 +32,7 @@ function BadgeList({
 	);
 }
 
-export default function TeamOverview({
-	teamData,
-	accessToken,
-	policyGuardrails,
-	loadingPolicies,
-}: TeamOverviewProps) {
+export default function TeamOverview({ teamData, accessToken, policyGuardrails, loadingPolicies }: TeamOverviewProps) {
 	const info = teamData.team_info;
 
 	return (
@@ -104,11 +99,7 @@ export default function TeamOverview({
 								{!loadingPolicies && policyGuardrails[policy]?.length > 0 && (
 									<div className="ml-4 border-l-2 border-gray-200 pl-3">
 										<Text className="mb-1 text-xs text-gray-500">Resolved Guardrails:</Text>
-										<BadgeList
-											values={policyGuardrails[policy]}
-											emptyLabel="No resolved guardrails"
-											color="blue"
-										/>
+										<BadgeList values={policyGuardrails[policy]} emptyLabel="No resolved guardrails" color="blue" />
 									</div>
 								)}
 							</div>

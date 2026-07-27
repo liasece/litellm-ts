@@ -1,8 +1,4 @@
-import type {
-	PublicAgentCard,
-	PublicMcpServer,
-	PublicModelInfo,
-} from "./types";
+import type { PublicAgentCard, PublicMcpServer, PublicModelInfo } from "./types";
 
 export function formatCapabilityName(key: string) {
 	return key
@@ -17,9 +13,7 @@ export function getUniqueProviders(models: PublicModelInfo[]) {
 }
 
 export function getUniqueModes(models: PublicModelInfo[]) {
-	return Array.from(
-		new Set(models.map((model) => model.mode).filter((mode): mode is string => Boolean(mode))),
-	);
+	return Array.from(new Set(models.map((model) => model.mode).filter((mode): mode is string => Boolean(mode))));
 }
 
 export function getUniqueFeatures(models: PublicModelInfo[]) {
@@ -36,37 +30,22 @@ export function getUniqueFeatures(models: PublicModelInfo[]) {
 
 export function getUniqueAgentSkills(agents: PublicAgentCard[]) {
 	return Array.from(
-		new Set(
-			agents.flatMap((agent) =>
-				(agent.skills ?? []).flatMap((skill) => skill.tags ?? []),
-			),
-		),
+		new Set(agents.flatMap((agent) => (agent.skills ?? []).flatMap((skill) => skill.tags ?? []))),
 	).sort();
 }
 
 export function getUniqueMcpTransports(servers: PublicMcpServer[]) {
 	return Array.from(
-		new Set(
-			servers
-				.map((server) => server.transport)
-				.filter((transport): transport is string => Boolean(transport)),
-		),
+		new Set(servers.map((server) => server.transport).filter((transport): transport is string => Boolean(transport))),
 	).sort();
 }
 
 function relevanceScore(name: string, query: string) {
-	return (
-		(name === query ? 1000 : 0) +
-		(name.startsWith(query) ? 100 : 0) +
-		(1000 - name.length)
-	);
+	return (name === query ? 1000 : 0) + (name.startsWith(query) ? 100 : 0) + (1000 - name.length);
 }
 
 function modelRelevanceScore(name: string, query: string) {
-	return (
-		relevanceScore(name, query) +
-		(query.split(/\s+/).every((word) => name.includes(word)) ? 50 : 0)
-	);
+	return relevanceScore(name, query) + (query.split(/\s+/).every((word) => name.includes(word)) ? 50 : 0);
 }
 
 export function filterPublicModels(
@@ -94,25 +73,17 @@ export function filterPublicModels(
 	}
 
 	return result.filter((model) => {
-		const matchesProvider =
-			providers.length === 0 ||
-			model.providers?.some((provider) => providers.includes(provider));
+		const matchesProvider = providers.length === 0 || model.providers?.some((provider) => providers.includes(provider));
 		const matchesMode = modes.length === 0 || modes.includes(model.mode || "");
 		const modelFeatures = Object.entries(model)
 			.filter(([key, value]) => key.startsWith("supports_") && value === true)
 			.map(([key]) => formatCapabilityName(key));
-		const matchesFeatures =
-			features.length === 0 ||
-			features.some((feature) => modelFeatures.includes(feature));
+		const matchesFeatures = features.length === 0 || features.some((feature) => modelFeatures.includes(feature));
 		return matchesProvider && matchesMode && matchesFeatures;
 	});
 }
 
-export function filterPublicAgents(
-	agents: PublicAgentCard[],
-	searchTerm: string,
-	skills: string[],
-) {
+export function filterPublicAgents(agents: PublicAgentCard[], searchTerm: string, skills: string[]) {
 	const query = searchTerm.trim().toLowerCase();
 	let result = agents;
 
@@ -128,27 +99,15 @@ export function filterPublicAgents(
 					words.every((word) => name.includes(word) || description.includes(word))
 				);
 			})
-			.sort(
-				(a, b) =>
-					relevanceScore(b.name.toLowerCase(), query) -
-					relevanceScore(a.name.toLowerCase(), query),
-			);
+			.sort((a, b) => relevanceScore(b.name.toLowerCase(), query) - relevanceScore(a.name.toLowerCase(), query));
 	}
 
 	return result.filter(
-		(agent) =>
-			skills.length === 0 ||
-			agent.skills?.some((skill) =>
-				skill.tags?.some((tag) => skills.includes(tag)),
-			),
+		(agent) => skills.length === 0 || agent.skills?.some((skill) => skill.tags?.some((tag) => skills.includes(tag))),
 	);
 }
 
-export function filterPublicMcpServers(
-	servers: PublicMcpServer[],
-	searchTerm: string,
-	transports: string[],
-) {
+export function filterPublicMcpServers(servers: PublicMcpServer[], searchTerm: string, transports: string[]) {
 	const query = searchTerm.trim().toLowerCase();
 	let result = servers;
 
@@ -166,13 +125,9 @@ export function filterPublicMcpServers(
 			})
 			.sort(
 				(a, b) =>
-					relevanceScore(b.server_name.toLowerCase(), query) -
-					relevanceScore(a.server_name.toLowerCase(), query),
+					relevanceScore(b.server_name.toLowerCase(), query) - relevanceScore(a.server_name.toLowerCase(), query),
 			);
 	}
 
-	return result.filter(
-		(server) =>
-			transports.length === 0 || transports.includes(server.transport),
-	);
+	return result.filter((server) => transports.length === 0 || transports.includes(server.transport));
 }

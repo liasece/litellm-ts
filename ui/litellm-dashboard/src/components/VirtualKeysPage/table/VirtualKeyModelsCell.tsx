@@ -58,4 +58,3 @@ export default function VirtualKeyModelsCell({ models }: { models: string[] }) {
 		</div>
 	);
 }
-

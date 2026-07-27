@@ -1,13 +1,13 @@
-import { useEffect } from "react";
+import React, { useEffect } from "react";
 import { LogEntry } from "../columns";
 import { KEY_ESCAPE, KEY_J_LOWER, KEY_J_UPPER, KEY_K_LOWER, KEY_K_UPPER } from "./constants";
 
 interface UseKeyboardNavigationProps {
-  isOpen: boolean;
-  currentLog: LogEntry | null;
-  allLogs: LogEntry[];
-  onClose: () => void;
-  onSelectLog?: (log: LogEntry) => void;
+	isOpen: boolean;
+	currentLog: LogEntry | null;
+	allLogs: LogEntry[];
+	onClose: () => void;
+	onSelectLog?: (log: LogEntry) => void;
 }
 
 /**
@@ -20,62 +20,62 @@ interface UseKeyboardNavigationProps {
  * - Escape: Close drawer
  */
 export function useKeyboardNavigation({
-  isOpen,
-  currentLog,
-  allLogs,
-  onClose,
-  onSelectLog,
+	isOpen,
+	currentLog,
+	allLogs,
+	onClose,
+	onSelectLog,
 }: UseKeyboardNavigationProps) {
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input
-      if (isUserTyping(e.target)) {
-        return;
-      }
+	const selectNextLog = React.useCallback(() => {
+		if (!currentLog || !allLogs.length || !onSelectLog) return;
 
-      if (!isOpen) return;
+		const currentIndex = allLogs.findIndex((l) => l.request_id === currentLog.request_id);
+		if (currentIndex < allLogs.length - 1) {
+			onSelectLog(allLogs[currentIndex + 1]);
+		}
+	}, [allLogs, currentLog, onSelectLog]);
 
-      switch (e.key) {
-        case KEY_ESCAPE:
-          onClose();
-          break;
-        case KEY_J_LOWER:
-        case KEY_J_UPPER:
-          selectNextLog();
-          break;
-        case KEY_K_LOWER:
-        case KEY_K_UPPER:
-          selectPreviousLog();
-          break;
-      }
-    };
+	const selectPreviousLog = React.useCallback(() => {
+		if (!currentLog || !allLogs.length || !onSelectLog) return;
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, currentLog, allLogs]);
+		const currentIndex = allLogs.findIndex((l) => l.request_id === currentLog.request_id);
+		if (currentIndex > 0) {
+			onSelectLog(allLogs[currentIndex - 1]);
+		}
+	}, [allLogs, currentLog, onSelectLog]);
 
-  const selectNextLog = () => {
-    if (!currentLog || !allLogs.length || !onSelectLog) return;
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			// Don't trigger if user is typing in an input
+			if (isUserTyping(e.target)) {
+				return;
+			}
 
-    const currentIndex = allLogs.findIndex((l) => l.request_id === currentLog.request_id);
-    if (currentIndex < allLogs.length - 1) {
-      onSelectLog(allLogs[currentIndex + 1]);
-    }
-  };
+			if (!isOpen) return;
 
-  const selectPreviousLog = () => {
-    if (!currentLog || !allLogs.length || !onSelectLog) return;
+			switch (e.key) {
+				case KEY_ESCAPE:
+					onClose();
+					break;
+				case KEY_J_LOWER:
+				case KEY_J_UPPER:
+					selectNextLog();
+					break;
+				case KEY_K_LOWER:
+				case KEY_K_UPPER:
+					selectPreviousLog();
+					break;
+			}
+		};
 
-    const currentIndex = allLogs.findIndex((l) => l.request_id === currentLog.request_id);
-    if (currentIndex > 0) {
-      onSelectLog(allLogs[currentIndex - 1]);
-    }
-  };
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [isOpen, onClose, selectNextLog, selectPreviousLog]);
 
-  return {
-    selectNextLog,
-    selectPreviousLog,
-  };
+	return {
+		selectNextLog,
+		selectPreviousLog,
+	};
 }
 
 /**
@@ -83,5 +83,5 @@ export function useKeyboardNavigation({
  * Used to prevent keyboard shortcuts from interfering with text input.
  */
 function isUserTyping(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+	return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
 }

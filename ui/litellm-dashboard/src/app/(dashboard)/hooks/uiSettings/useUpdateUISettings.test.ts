@@ -6,235 +6,227 @@ import { useUpdateUISettings } from "./useUpdateUISettings";
 import { updateUiSettings } from "@/components/networking";
 
 vi.mock("@/components/networking", () => ({
-  updateUiSettings: vi.fn(),
+	updateUiSettings: vi.fn(),
 }));
 
 const mockUpdateUiSettingsResponse = {
-  message: "UI settings updated successfully",
-  status: "success",
-  settings: {
-    disable_model_add_for_internal_users: true,
-    disable_team_admin_delete_team_user: false,
-  },
+	message: "UI settings updated successfully",
+	status: "success",
+	settings: {
+		disable_model_add_for_internal_users: true,
+		disable_team_admin_delete_team_user: false,
+	},
 };
 
 describe("useUpdateUISettings", () => {
-  let queryClient: QueryClient;
+	let queryClient: QueryClient;
 
-  beforeEach(() => {
-    queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-        },
-        mutations: {
-          retry: false,
-        },
-      },
-    });
+	beforeEach(() => {
+		queryClient = new QueryClient({
+			defaultOptions: {
+				queries: {
+					retry: false,
+				},
+				mutations: {
+					retry: false,
+				},
+			},
+		});
 
-    vi.clearAllMocks();
-  });
+		vi.clearAllMocks();
+	});
 
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
+	const wrapper = ({ children }: { children: ReactNode }) =>
+		React.createElement(QueryClientProvider, { client: queryClient }, children);
 
-  it("should render", () => {
-    (updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
+	it("should update UI settings when mutation is successful", async () => {
+		(updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
 
-    expect(result.current).toBeDefined();
-  });
+		const settings = {
+			disable_model_add_for_internal_users: true,
+		};
 
-  it("should update UI settings when mutation is successful", async () => {
-    (updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
+		result.current.mutate(settings);
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    const settings = {
-      disable_model_add_for_internal_users: true,
-    };
+		expect(result.current.data).toEqual(mockUpdateUiSettingsResponse);
+		expect(updateUiSettings).toHaveBeenCalledWith("test-access-token", settings);
+		expect(updateUiSettings).toHaveBeenCalledTimes(1);
+	});
 
-    result.current.mutate(settings);
+	it("should handle error when updateUiSettings fails", async () => {
+		const errorMessage = "Failed to update UI settings";
+		const testError = new Error(errorMessage);
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+		(updateUiSettings as any).mockRejectedValue(testError);
 
-    expect(result.current.data).toEqual(mockUpdateUiSettingsResponse);
-    expect(updateUiSettings).toHaveBeenCalledWith("test-access-token", settings);
-    expect(updateUiSettings).toHaveBeenCalledTimes(1);
-  });
+		const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
 
-  it("should handle error when updateUiSettings fails", async () => {
-    const errorMessage = "Failed to update UI settings";
-    const testError = new Error(errorMessage);
+		const settings = {
+			disable_model_add_for_internal_users: true,
+		};
 
-    (updateUiSettings as any).mockRejectedValue(testError);
+		result.current.mutate(settings);
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    const settings = {
-      disable_model_add_for_internal_users: true,
-    };
+		expect(result.current.error).toEqual(testError);
+		expect(updateUiSettings).toHaveBeenCalledWith("test-access-token", settings);
+		expect(updateUiSettings).toHaveBeenCalledTimes(1);
+	});
 
-    result.current.mutate(settings);
+	it("should throw error when accessToken is missing", async () => {
+		const { result } = renderHook(() => useUpdateUISettings(""), { wrapper });
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+		const settings = {
+			disable_model_add_for_internal_users: true,
+		};
 
-    expect(result.current.error).toEqual(testError);
-    expect(updateUiSettings).toHaveBeenCalledWith("test-access-token", settings);
-    expect(updateUiSettings).toHaveBeenCalledTimes(1);
-  });
+		result.current.mutate(settings);
 
-  it("should throw error when accessToken is missing", async () => {
-    const { result } = renderHook(() => useUpdateUISettings(""), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    const settings = {
-      disable_model_add_for_internal_users: true,
-    };
+		expect(result.current.error?.message).toBe("Access token is required");
+		expect(updateUiSettings).not.toHaveBeenCalled();
+	});
 
-    result.current.mutate(settings);
+	it("should throw error when accessToken is null", async () => {
+		const { result } = renderHook(() => useUpdateUISettings(null as any), { wrapper });
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+		const settings = {
+			disable_model_add_for_internal_users: true,
+		};
 
-    expect(result.current.error?.message).toBe("Access token is required");
-    expect(updateUiSettings).not.toHaveBeenCalled();
-  });
+		result.current.mutate(settings);
 
-  it("should throw error when accessToken is null", async () => {
-    const { result } = renderHook(() => useUpdateUISettings(null as any), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    const settings = {
-      disable_model_add_for_internal_users: true,
-    };
+		expect(result.current.error?.message).toBe("Access token is required");
+		expect(updateUiSettings).not.toHaveBeenCalled();
+	});
 
-    result.current.mutate(settings);
+	it("should invalidate uiSettings queries on success", async () => {
+		(updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+		queryClient.setQueryData(["uiSettings", "detail", "settings"], { values: {} });
 
-    expect(result.current.error?.message).toBe("Access token is required");
-    expect(updateUiSettings).not.toHaveBeenCalled();
-  });
+		const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
 
-  it("should invalidate uiSettings queries on success", async () => {
-    (updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
+		const settings = {
+			disable_model_add_for_internal_users: true,
+		};
 
-    queryClient.setQueryData(["uiSettings", "detail", "settings"], { values: {} });
+		result.current.mutate(settings);
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    const settings = {
-      disable_model_add_for_internal_users: true,
-    };
+		const queryCache = queryClient.getQueryCache();
+		const queries = queryCache.findAll({ queryKey: ["uiSettings"] });
+		expect(queries.length).toBeGreaterThan(0);
+	});
 
-    result.current.mutate(settings);
+	it("should handle multiple settings updates", async () => {
+		(updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+		const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
 
-    const queryCache = queryClient.getQueryCache();
-    const queries = queryCache.findAll({ queryKey: ["uiSettings"] });
-    expect(queries.length).toBeGreaterThan(0);
-  });
+		const settings1 = {
+			disable_model_add_for_internal_users: true,
+		};
 
-  it("should handle multiple settings updates", async () => {
-    (updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
+		const settings2 = {
+			disable_team_admin_delete_team_user: false,
+		};
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		result.current.mutate(settings1);
 
-    const settings1 = {
-      disable_model_add_for_internal_users: true,
-    };
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    const settings2 = {
-      disable_team_admin_delete_team_user: false,
-    };
+		result.current.mutate(settings2);
 
-    result.current.mutate(settings1);
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+		expect(updateUiSettings).toHaveBeenCalledTimes(2);
+		expect(updateUiSettings).toHaveBeenNthCalledWith(1, "test-access-token", settings1);
+		expect(updateUiSettings).toHaveBeenNthCalledWith(2, "test-access-token", settings2);
+	});
 
-    result.current.mutate(settings2);
+	it("should handle empty settings object", async () => {
+		(updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+		const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
 
-    expect(updateUiSettings).toHaveBeenCalledTimes(2);
-    expect(updateUiSettings).toHaveBeenNthCalledWith(1, "test-access-token", settings1);
-    expect(updateUiSettings).toHaveBeenNthCalledWith(2, "test-access-token", settings2);
-  });
+		result.current.mutate({});
 
-  it("should handle empty settings object", async () => {
-    (updateUiSettings as any).mockResolvedValue(mockUpdateUiSettingsResponse);
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		expect(updateUiSettings).toHaveBeenCalledWith("test-access-token", {});
+	});
 
-    result.current.mutate({});
+	it("should handle network timeout error", async () => {
+		const timeoutError = new Error("Network timeout");
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+		(updateUiSettings as any).mockRejectedValue(timeoutError);
 
-    expect(updateUiSettings).toHaveBeenCalledWith("test-access-token", {});
-  });
+		const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
 
-  it("should handle network timeout error", async () => {
-    const timeoutError = new Error("Network timeout");
+		const settings = {
+			disable_model_add_for_internal_users: true,
+		};
 
-    (updateUiSettings as any).mockRejectedValue(timeoutError);
+		result.current.mutate(settings);
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    const settings = {
-      disable_model_add_for_internal_users: true,
-    };
+		expect(result.current.error).toEqual(timeoutError);
+	});
 
-    result.current.mutate(settings);
+	it("should set isPending during mutation", async () => {
+		let resolvePromise: (value: any) => void;
+		const promise = new Promise((resolve) => {
+			resolvePromise = resolve;
+		});
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+		(updateUiSettings as any).mockReturnValue(promise);
 
-    expect(result.current.error).toEqual(timeoutError);
-  });
+		const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
 
-  it("should set isPending during mutation", async () => {
-    let resolvePromise: (value: any) => void;
-    const promise = new Promise((resolve) => {
-      resolvePromise = resolve;
-    });
+		const settings = {
+			disable_model_add_for_internal_users: true,
+		};
 
-    (updateUiSettings as any).mockReturnValue(promise);
+		result.current.mutate(settings);
 
-    const { result } = renderHook(() => useUpdateUISettings("test-access-token"), { wrapper });
+		// Wait for the mutation to start and isPending to become true
+		await waitFor(() => {
+			expect(result.current.isPending).toBe(true);
+		});
 
-    const settings = {
-      disable_model_add_for_internal_users: true,
-    };
+		resolvePromise!(mockUpdateUiSettingsResponse);
 
-    result.current.mutate(settings);
-
-    // Wait for the mutation to start and isPending to become true
-    await waitFor(() => {
-      expect(result.current.isPending).toBe(true);
-    });
-
-    resolvePromise!(mockUpdateUiSettingsResponse);
-
-    await waitFor(() => {
-      expect(result.current.isPending).toBe(false);
-    });
-  });
+		await waitFor(() => {
+			expect(result.current.isPending).toBe(false);
+		});
+	});
 });

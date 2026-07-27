@@ -8,6 +8,7 @@ export default {
 	modulePathIgnorePatterns: ["<rootDir>/dist/"],
 	watchPathIgnorePatterns: ["<rootDir>/dist/"],
 	cacheDirectory: ".cache/jest",
+	maxWorkers: 4,
 	moduleNameMapper: {
 		"^(\\.{1,2}/.*)\\.js$": "$1",
 	},

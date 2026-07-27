@@ -46,10 +46,6 @@ export const liteLLM_SpendLogs = pgTable(
 		startTimeRequestIdIdx: index("idx_spend_logs_start_time_request_id").on(table.startTime, table.request_id),
 		endUserIdx: index("idx_spend_logs_end_user").on(table.end_user),
 		sessionIdIdx: index("idx_spend_logs_session_id").on(table.session_id),
-		sessionGroupTimeIdx: index("idx_spend_logs_session_group_time").on(
-			table.session_group_key,
-			table.startTime,
-			table.request_id,
-		),
+		sessionGroupTimeIdx: index("idx_spend_logs_session_group_time").on(table.session_group_key, table.startTime, table.request_id),
 	}),
 );

@@ -1345,14 +1345,17 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(calls).toHaveLength(0);
 		});
 
-		it("新 session_id group 参数保持顶层列精确查询", async () => {
+		it("新 session_id group 参数使用持久化分组键查询", async () => {
 			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
 			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
 				"/spend/logs/session/ui?session_group_type=session_id&session_group_id=session-A",
 			);
 
 			expect(res.status).toBe(200);
-			expect(calls.find((call) => call.hasCount)?.whereSql).toContain("session-A");
+			const countCall = calls.find((call) => call.hasCount);
+			expect(countCall?.whereSql).toContain("session_group_key");
+			expect(countCall?.whereSql).toContain("s:");
+			expect(countCall?.whereSql).toContain("session-A");
 		});
 
 		it.each([
@@ -1397,6 +1400,8 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 
 			expect(res.status).toBe(200);
 			for (const call of calls.filter((candidate) => candidate.hasCount || candidate.projection.includes("request_id"))) {
+				expect(call.whereSql).toContain("session_group_key");
+				expect(call.whereSql).toContain("s:");
 				expect(call.whereSql).toContain("session-A");
 				expect(call.whereSql).toContain(INTERNAL_USER_AUTH.user_id);
 			}

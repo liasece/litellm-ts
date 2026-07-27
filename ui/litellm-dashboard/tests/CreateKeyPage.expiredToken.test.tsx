@@ -5,14 +5,14 @@ import { vi, describe, it, beforeEach, afterEach, expect } from "vitest";
 /** ----------------------------
  * Hoisted helpers for mocks (required by Vitest)
  * --------------------------- */
-const { stub, jwtDecodeMock, consumeReturnUrlMock } = vi.hoisted(() => {
-  const React = require("react");
-  const stub = (name: string) => () => React.createElement("div", { "data-testid": name });
-  return {
-    stub,
-    jwtDecodeMock: vi.fn(),
-    consumeReturnUrlMock: vi.fn(),
-  };
+const { stub, consumeReturnUrlMock, getWebUiSessionMock } = vi.hoisted(() => {
+	const React = require("react");
+	const stub = (name: string) => () => React.createElement("div", { "data-testid": name });
+	return {
+		stub,
+		consumeReturnUrlMock: vi.fn(),
+		getWebUiSessionMock: vi.fn(),
+	};
 });
 
 /** ----------------------------
@@ -20,85 +20,83 @@ const { stub, jwtDecodeMock, consumeReturnUrlMock } = vi.hoisted(() => {
  * --------------------------- */
 
 vi.mock("@/hooks/useFeatureFlags", () => {
-  const React = require("react");
+	const React = require("react");
 
-  // minimal context so useFeatureFlags() returns something stable
-  const FeatureFlagsCtx = React.createContext({ get: () => false, flags: {} });
+	// minimal context so useFeatureFlags() returns something stable
+	const FeatureFlagsCtx = React.createContext({ get: () => false, flags: {} });
 
-  // Defensive provider: handle undefined props and allow optional value override
-  const FeatureFlagsProvider = (props: any) => {
-    const p = props || {};
-    const value = p.value ?? { get: () => false, flags: {} };
-    return React.createElement(FeatureFlagsCtx.Provider, { value }, p.children);
-  };
+	// Defensive provider: handle undefined props and allow optional value override
+	const FeatureFlagsProvider = (props: any) => {
+		const p = props || {};
+		const value = p.value ?? { get: () => false, flags: {} };
+		return React.createElement(FeatureFlagsCtx.Provider, { value }, p.children);
+	};
 
-  const useFeatureFlags = () => React.useContext(FeatureFlagsCtx);
+	const useFeatureFlags = () => React.useContext(FeatureFlagsCtx);
 
-  return {
-    __esModule: true,
-    default: FeatureFlagsProvider, // supports default import
-    FeatureFlagsProvider, // supports named import
-    useFeatureFlags, // supports named import
-  };
+	return {
+		__esModule: true,
+		default: FeatureFlagsProvider, // supports default import
+		FeatureFlagsProvider, // supports named import
+		useFeatureFlags, // supports named import
+	};
 });
 
 // next/navigation mock: search params + router + pathname
 vi.mock("next/navigation", () => {
-  const router = {
-    push: vi.fn(),
-    replace: vi.fn(),
-    prefetch: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    refresh: vi.fn(),
-  };
+	const router = {
+		push: vi.fn(),
+		replace: vi.fn(),
+		prefetch: vi.fn(),
+		back: vi.fn(),
+		forward: vi.fn(),
+		refresh: vi.fn(),
+	};
 
-  return {
-    __esModule: true,
-    // what your tests already relied on
-    useSearchParams: () => new URLSearchParams(""),
-    // added: satisfies useAuthorized / SidebarProvider
-    useRouter: () => router,
-    // optional helpers some components often read
-    usePathname: () => "/",
-    // optional: noop versions if code calls them
-    redirect: vi.fn(), // App Router server action usually; safe noop here
-    notFound: vi.fn(),
-  };
+	return {
+		__esModule: true,
+		// what your tests already relied on
+		useSearchParams: () => new URLSearchParams(""),
+		// added: satisfies useAuthorized / SidebarProvider
+		useRouter: () => router,
+		// optional helpers some components often read
+		usePathname: () => "/",
+		// optional: noop versions if code calls them
+		redirect: vi.fn(), // App Router server action usually; safe noop here
+		notFound: vi.fn(),
+	};
 });
 
 // Networking layer
-vi.mock("@/components/networking", () => {
-  return {
-    // Called on mount; we don't care about its contents, only that it resolves
-    getUiConfig: vi.fn().mockResolvedValue({}),
-    // Used to build the redirect URL
-    proxyBaseUrl: "https://example.com",
-    // Called when decoding a valid token
-    setGlobalLitellmHeaderName: vi.fn(),
-    Organization: {},
-    // Daily activity calls used by UsagePage components in the render tree
-    tagDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
-    teamDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
-    organizationDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
-    customerDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
-    agentDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
-    userDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
-    userDailyActivityAggregatedCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
-  };
+vi.mock("@/components/networking", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/components/networking")>();
+	return {
+		...actual,
+		getWebUiSession: getWebUiSessionMock,
+		// Called on mount; we don't care about its contents, only that it resolves
+		getUiConfig: vi.fn().mockResolvedValue({}),
+		// Used to build the redirect URL
+		proxyBaseUrl: "https://example.com",
+		// Called when decoding a valid token
+		setGlobalLitellmHeaderName: vi.fn(),
+		Organization: {},
+		// Daily activity calls used by UsagePage components in the render tree
+		tagDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
+		teamDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
+		organizationDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
+		customerDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
+		agentDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
+		userDailyActivityCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
+		userDailyActivityAggregatedCall: vi.fn().mockResolvedValue({ results: [], metadata: {} }),
+	};
 });
 
-// jwt-decode: we’ll swap implementation per test via mockImplementation
-vi.mock("jwt-decode", () => ({
-  jwtDecode: (token: string) => jwtDecodeMock(token),
-}));
-
 vi.mock("@/utils/returnUrlUtils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/utils/returnUrlUtils")>();
-  return {
-    ...actual,
-    consumeReturnUrl: consumeReturnUrlMock,
-  };
+	const actual = await importOriginal<typeof import("@/utils/returnUrlUtils")>();
+	return {
+		...actual,
+		consumeReturnUrl: consumeReturnUrlMock,
+	};
 });
 
 // Super-light stubs for all heavy components so rendering doesn't explode
@@ -108,8 +106,8 @@ vi.mock("@/components/templates/model_dashboard", () => ({ default: stub("model-
 vi.mock("@/components/view_users", () => ({ default: stub("view-users") }));
 vi.mock("@/components/teams", () => ({ default: stub("teams") }));
 vi.mock("@/components/organizations", () => ({
-  default: stub("organizations"),
-  fetchOrganizations: vi.fn(), // consumed in effects
+	default: stub("organizations"),
+	fetchOrganizations: vi.fn(), // consumed in effects
 }));
 vi.mock("@/components/admins", () => ({ default: stub("admin-panel") }));
 vi.mock("@/components/settings", () => ({ default: stub("settings") }));
@@ -134,16 +132,16 @@ vi.mock("@/components/ui_theme_settings", () => ({ default: stub("ui-theme-setti
 vi.mock("@/components/organisms/create_key_button", () => ({ fetchUserModels: vi.fn() }));
 vi.mock("@/components/common_components/fetch_teams", () => ({ fetchTeams: vi.fn() }));
 vi.mock("@/components/ui/ui-loading-spinner", () => ({
-  UiLoadingSpinner: stub("spinner"),
+	UiLoadingSpinner: stub("spinner"),
 }));
 vi.mock("@/contexts/ThemeContext", () => {
-  const React = require("react");
-  return {
-    ThemeProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
-  };
+	const React = require("react");
+	return {
+		ThemeProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
+	};
 });
 vi.mock("@/lib/cva.config", () => ({
-  cx: (...args: string[]) => args.join(" "),
+	cx: (...args: string[]) => args.join(" "),
 }));
 
 import CreateKeyPage from "@/app/page";
@@ -152,40 +150,35 @@ import CreateKeyPage from "@/app/page";
  * Helpers
  * --------------------------- */
 
-function setCookie(raw: string) {
-  // JSDOM allows simple string assignment to document.cookie
-  document.cookie = raw;
-}
-
 function clearAllCookies() {
-  // JSDOM doesn't give an API to clear; overwrite with empty string
-  // plus ensure we wipe known names used by this app.
-  document.cookie = "token=; Max-Age=0; Path=/";
+	// JSDOM doesn't give an API to clear; overwrite with empty string
+	// plus ensure we wipe known names used by this app.
+	document.cookie = "token=; Max-Age=0; Path=/";
 }
 
 const originalLocation = window.location;
 
 beforeEach(() => {
-  // Fresh module state & DOM
-  vi.clearAllMocks();
-  clearAllCookies();
-  consumeReturnUrlMock.mockReturnValue(null);
+	// Fresh module state & DOM
+	vi.clearAllMocks();
+	clearAllCookies();
+	consumeReturnUrlMock.mockReturnValue(null);
 
-  // Make location.replace spy-able to validate redirect
-  delete (window as any).location;
-  // minimal location object with replace and assign stubs
-  (window as any).location = {
-    ...originalLocation,
-    href: "http://localhost/",
-    assign: vi.fn(),
-    replace: vi.fn(),
-  };
+	// Make location.replace spy-able to validate redirect
+	delete (window as any).location;
+	// minimal location object with replace and assign stubs
+	(window as any).location = {
+		...originalLocation,
+		href: "http://localhost/",
+		assign: vi.fn(),
+		replace: vi.fn(),
+	};
 });
 
 afterEach(() => {
-  // Restore location to avoid leaking across test envs
-  delete (window as any).location;
-  (window as any).location = originalLocation;
+	// Restore location to avoid leaking across test envs
+	delete (window as any).location;
+	(window as any).location = originalLocation;
 });
 
 /** ----------------------------
@@ -193,103 +186,62 @@ afterEach(() => {
  * --------------------------- */
 
 describe("CreateKeyPage auth behavior", () => {
-  it("redirects to SSO when cookie token is expired and clears it (no spasms)", async () => {
-    // Arrange: expired token in cookie
-    setCookie("token=expiredtoken");
+	it("redirects to login when the HttpOnly session is unavailable", async () => {
+		getWebUiSessionMock.mockRejectedValueOnce(new Error("Unauthorized"));
+		render(<CreateKeyPage />);
 
-    // jwtDecode returns past exp → expired
-    jwtDecodeMock.mockImplementation((tok: string) => {
-      expect(tok).toBe("expiredtoken");
-      return { exp: Math.floor(Date.now() / 1000) - 60 }; // expired 60s ago
-    });
+		await waitFor(() => {
+			expect(window.location.replace).toHaveBeenCalledWith(
+				expect.stringContaining("https://example.com/ui/login?redirect_to="),
+			);
+		});
+	});
 
-    // Spy on cookie writes to ensure we clear with Max-Age=0
-    const cookieSetSpy = vi.spyOn(document, "cookie", "set");
+	it("does not redirect when the HttpOnly session is valid and renders the app chrome", async () => {
+		getWebUiSessionMock.mockResolvedValueOnce({
+			user_role: "app_user",
+			user_email: "user@example.com",
+			login_method: "username_password",
+			premium_user: false,
+			user_id: "u_123",
+			disabled_non_admin_personal_key_creation: false,
+		});
 
-    // Act
-    render(<CreateKeyPage />);
+		render(<CreateKeyPage />);
 
-    // Assert: we eventually redirect to SSO login with return URL (single replace, not assign/href)
-    await waitFor(() => {
-      expect(window.location.replace).toHaveBeenCalledWith(
-        expect.stringContaining("https://example.com/ui/login?redirect_to=")
-      );
-    });
+		await waitFor(() => {
+			expect(screen.getByTestId("navbar")).toBeInTheDocument();
+		});
+		expect(window.location.replace).not.toHaveBeenCalled();
+	});
 
-    // And we attempted to clear the cookie (defensive deletion)
-    const wroteDeletion = cookieSetSpy.mock.calls.some(
-      (args) => typeof args[0] === "string" && args[0].includes("Max-Age=0") && args[0].startsWith("token="),
-    );
-    expect(wroteDeletion).toBe(true);
-  });
+	it("should not redirect when return URL only differs by query order", async () => {
+		getWebUiSessionMock.mockResolvedValueOnce({
+			user_role: "app_user",
+			user_email: "user@example.com",
+			login_method: "username_password",
+			premium_user: false,
+			user_id: "u_123",
+			disabled_non_admin_personal_key_creation: false,
+		});
 
-  it("does NOT redirect when token is valid and renders the app chrome", async () => {
-    // Arrange: valid token in cookie
-    setCookie("token=validtoken");
+		// Current URL has params in a different order
+		delete (window as any).location;
+		(window as any).location = {
+			...originalLocation,
+			href: "http://localhost/ui?b=2&a=1",
+			origin: "http://localhost",
+			assign: vi.fn(),
+			replace: vi.fn(),
+		};
 
-    // jwtDecode returns future exp and expected shape
-    jwtDecodeMock.mockImplementation((tok: string) => {
-      expect(tok).toBe("validtoken");
-      return {
-        exp: Math.floor(Date.now() / 1000) + 60 * 60, // 1h in the future
-        key: "accessKey-123",
-        user_role: "app_user",
-        user_email: "user@example.com",
-        login_method: "username_password",
-        premium_user: false,
-        auth_header_name: "x-litellm-auth",
-        user_id: "u_123",
-      };
-    });
+		// Return URL has the same params in a different order
+		consumeReturnUrlMock.mockReturnValue("http://localhost/ui?a=1&b=2");
 
-    // Act
-    render(<CreateKeyPage />);
+		render(<CreateKeyPage />);
 
-    // Assert: no redirect
-    await waitFor(() => {
-      expect(window.location.replace).not.toHaveBeenCalled();
-    });
-
-    // And some top-level UI appears (Navbar stub)
-    await waitFor(() => {
-      expect(screen.getByTestId("navbar")).toBeInTheDocument();
-    });
-  });
-
-  it("should not redirect when return URL only differs by query order", async () => {
-    setCookie("token=validtoken");
-
-    jwtDecodeMock.mockImplementation((tok: string) => {
-      expect(tok).toBe("validtoken");
-      return {
-        exp: Math.floor(Date.now() / 1000) + 60 * 60,
-        key: "accessKey-123",
-        user_role: "app_user",
-        user_email: "user@example.com",
-        login_method: "username_password",
-        premium_user: false,
-        auth_header_name: "x-litellm-auth",
-        user_id: "u_123",
-      };
-    });
-
-    // Current URL has params in a different order
-    delete (window as any).location;
-    (window as any).location = {
-      ...originalLocation,
-      href: "http://localhost/ui?b=2&a=1",
-      origin: "http://localhost",
-      assign: vi.fn(),
-      replace: vi.fn(),
-    };
-
-    // Return URL has the same params in a different order
-    consumeReturnUrlMock.mockReturnValue("http://localhost/ui?a=1&b=2");
-
-    render(<CreateKeyPage />);
-
-    await waitFor(() => {
-      expect(window.location.replace).not.toHaveBeenCalled();
-    });
-  });
+		await waitFor(() => {
+			expect(window.location.replace).not.toHaveBeenCalled();
+		});
+	});
 });

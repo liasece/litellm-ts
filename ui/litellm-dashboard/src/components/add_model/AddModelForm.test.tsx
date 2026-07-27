@@ -9,343 +9,348 @@ import { Providers } from "../provider_info_helpers";
 import AddModelForm from "./AddModelForm";
 
 vi.mock("../molecules/models/ProviderLogo", () => ({
-  ProviderLogo: ({ provider, className }: { provider: string; className?: string }) => (
-    <div className={className} data-testid={`provider-logo-${provider}`} />
-  ),
+	ProviderLogo: ({ provider, className }: { provider: string; className?: string }) => (
+		<div className={className} data-testid={`provider-logo-${provider}`} />
+	),
 }));
 
 vi.mock("../networking", async () => {
-  const actual = await vi.importActual("../networking");
-  return {
-    ...actual,
-    getGuardrailsList: vi.fn().mockResolvedValue({
-      guardrails: [{ guardrail_name: "test-guardrail-1" }, { guardrail_name: "test-guardrail-2" }],
-    }),
-    tagListCall: vi.fn().mockResolvedValue({}),
-    modelAvailableCall: vi.fn().mockResolvedValue({
-      data: [{ id: "model-group-1" }, { id: "model-group-2" }],
-    }),
-    modelHubCall: vi.fn().mockResolvedValue({
-      data: [
-        { model_group: "gpt-4", mode: "chat" },
-        { model_group: "gpt-3.5-turbo", mode: "chat" },
-      ],
-    }),
-    getProviderCreateMetadata: vi.fn().mockResolvedValue([
-      {
-        provider: "OpenAI",
-        provider_display_name: "OpenAI",
-        litellm_provider: "openai",
-        default_model_placeholder: "gpt-3.5-turbo",
-        credential_fields: [],
-      },
-    ]),
-  };
+	const actual = await vi.importActual("../networking");
+	return {
+		...actual,
+		getGuardrailsList: vi.fn().mockResolvedValue({
+			guardrails: [{ guardrail_name: "test-guardrail-1" }, { guardrail_name: "test-guardrail-2" }],
+		}),
+		tagListCall: vi.fn().mockResolvedValue({}),
+		modelAvailableCall: vi.fn().mockResolvedValue({
+			data: [{ id: "model-group-1" }, { id: "model-group-2" }],
+		}),
+		modelHubCall: vi.fn().mockResolvedValue({
+			data: [
+				{ model_group: "gpt-4", mode: "chat" },
+				{ model_group: "gpt-3.5-turbo", mode: "chat" },
+			],
+		}),
+		getProviderCreateMetadata: vi.fn().mockResolvedValue([
+			{
+				provider: "OpenAI",
+				provider_display_name: "OpenAI",
+				litellm_provider: "openai",
+				default_model_placeholder: "gpt-3.5-turbo",
+				credential_fields: [],
+			},
+		]),
+	};
 });
 
 const mockUseProviderFields = vi.hoisted(() => vi.fn());
 
 vi.mock("@/app/(dashboard)/hooks/providers/useProviderFields", () => ({
-  useProviderFields: mockUseProviderFields,
+	useProviderFields: mockUseProviderFields,
 }));
 
 vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
-  default: vi.fn(),
+	default: vi.fn(),
 }));
 
 vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
-  useInfiniteTeams: () => ({
-    data: {
-      pages: [{
-        teams: [{ team_id: "team-1", team_alias: "Test Team", organization_id: "org-1" }],
-        total: 1, page: 1, page_size: 20, total_pages: 1,
-      }],
-    },
-    fetchNextPage: vi.fn(),
-    hasNextPage: false,
-    isFetchingNextPage: false,
-    isLoading: false,
-  }),
+	useInfiniteTeams: () => ({
+		data: {
+			pages: [
+				{
+					teams: [{ team_id: "team-1", team_alias: "Test Team", organization_id: "org-1" }],
+					total: 1,
+					page: 1,
+					page_size: 20,
+					total_pages: 1,
+				},
+			],
+		},
+		fetchNextPage: vi.fn(),
+		hasNextPage: false,
+		isFetchingNextPage: false,
+		isLoading: false,
+	}),
 }));
 
 vi.mock("@/app/(dashboard)/hooks/guardrails/useGuardrails", () => ({
-  useGuardrails: vi.fn().mockReturnValue({
-    data: [{ guardrail_name: "test-guardrail" }],
-    isLoading: false,
-    error: null,
-  }),
+	useGuardrails: vi.fn().mockReturnValue({
+		data: [{ guardrail_name: "test-guardrail" }],
+		isLoading: false,
+		error: null,
+	}),
 }));
 
 vi.mock("@/app/(dashboard)/hooks/tags/useTags", () => ({
-  useTags: vi.fn().mockReturnValue({
-    data: { tag1: ["model1", "model2"] },
-    isLoading: false,
-    error: null,
-  }),
+	useTags: vi.fn().mockReturnValue({
+		data: { tag1: ["model1", "model2"] },
+		isLoading: false,
+		error: null,
+	}),
 }));
 
 const mockAuthorizedUser = (userRole: string, userId: string, premiumUser: boolean) => ({
-  token: "test-token",
-  accessToken: "test-access-token",
-  userId,
-  userEmail: "test@example.com",
-  userRole,
-  premiumUser,
-  disabledPersonalKeyCreation: false,
-  showSSOBanner: false,
+	token: "test-token",
+	accessToken: "test-access-token",
+	userId,
+	userEmail: "test@example.com",
+	userRole,
+	premiumUser,
+	disabledPersonalKeyCreation: false,
+	showSSOBanner: false,
 });
 
 const testTeam: Team = {
-  team_id: "team-1",
-  team_alias: "Test Team",
-  models: ["gpt-4"],
-  max_budget: 100,
-  budget_duration: "monthly",
-  tpm_limit: null,
-  rpm_limit: null,
-  organization_id: "org-1",
-  created_at: "2024-01-01T00:00:00Z",
-  keys: [],
-  members_with_roles: [],
+	team_id: "team-1",
+	team_alias: "Test Team",
+	models: ["gpt-4"],
+	max_budget: 100,
+	budget_duration: "monthly",
+	tpm_limit: null,
+	rpm_limit: null,
+	organization_id: "org-1",
+	created_at: "2024-01-01T00:00:00Z",
+	keys: [],
+	members_with_roles: [],
 };
 
 const createTestProps = (userRole = "proxy_admin", userId = "user-1", isTeamAdmin = false) => {
-  const { result } = renderHook(() => Form.useForm());
-  const [form] = result.current;
+	const { result } = renderHook(() => Form.useForm());
+	const [form] = result.current;
 
-  const teams = [
-    {
-      ...testTeam,
-      members_with_roles: isTeamAdmin ? [{ user_id: userId, role: "admin" }] : [],
-    },
-  ];
+	const teams = [
+		{
+			...testTeam,
+			members_with_roles: isTeamAdmin ? [{ user_id: userId, role: "admin" }] : [],
+		},
+	];
 
-  const credentials: CredentialItem[] = [
-    {
-      credential_name: "test-credential",
-      credential_values: {},
-      credential_info: {
-        custom_llm_provider: "openai",
-        description: "Test credential",
-      },
-    },
-  ];
+	const credentials: CredentialItem[] = [
+		{
+			credential_name: "test-credential",
+			credential_values: {},
+			credential_info: {
+				custom_llm_provider: "openai",
+				description: "Test credential",
+			},
+		},
+	];
 
-  const uploadProps: UploadProps = {
-    beforeUpload: () => false,
-    showUploadList: false,
-  };
+	const uploadProps: UploadProps = {
+		beforeUpload: () => false,
+		showUploadList: false,
+	};
 
-  return {
-    form,
-    handleOk: vi.fn(),
-    setSelectedProvider: vi.fn(),
-    setProviderModelsFn: vi.fn(),
-    getPlaceholder: vi.fn((provider: Providers) => `Enter ${provider} model name`),
-    setShowAdvancedSettings: vi.fn(),
-    selectedProvider: Providers.OpenAI,
-    providerModels: ["gpt-4", "gpt-3.5-turbo"],
-    showAdvancedSettings: false,
-    teams,
-    credentials,
-    uploadProps,
-    userRole,
-    userId,
-  };
+	return {
+		form,
+		handleOk: vi.fn(),
+		setSelectedProvider: vi.fn(),
+		setProviderModelsFn: vi.fn(),
+		getPlaceholder: vi.fn((provider: Providers) => `Enter ${provider} model name`),
+		setShowAdvancedSettings: vi.fn(),
+		selectedProvider: Providers.OpenAI,
+		providerModels: ["gpt-4", "gpt-3.5-turbo"],
+		showAdvancedSettings: false,
+		teams,
+		credentials,
+		uploadProps,
+		userRole,
+		userId,
+	};
 };
 
 describe("AddModelForm", () => {
-  beforeEach(() => {
-    mockUseProviderFields.mockReturnValue({
-      data: [
-        {
-          provider: "OpenAI",
-          provider_display_name: "OpenAI",
-          litellm_provider: "openai",
-          default_model_placeholder: "gpt-3.5-turbo",
-          credential_fields: [],
-        },
-      ],
-      isLoading: false,
-      error: null,
-    });
-  });
+	beforeEach(() => {
+		mockUseProviderFields.mockReturnValue({
+			data: [
+				{
+					provider: "OpenAI",
+					provider_display_name: "OpenAI",
+					litellm_provider: "openai",
+					default_model_placeholder: "gpt-3.5-turbo",
+					credential_fields: [],
+				},
+			],
+			isLoading: false,
+			error: null,
+		});
+	});
 
-  it("should render", async () => {
-    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+	it("should render", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
 
-    const props = createTestProps();
+		const props = createTestProps();
 
-    renderWithProviders(<AddModelForm {...props} />);
+		renderWithProviders(<AddModelForm {...props} />);
 
-    expect(await screen.findByRole("heading", { name: "Add Model" })).toBeInTheDocument();
-  });
+		expect(await screen.findByRole("heading", { name: "Add Model" })).toBeInTheDocument();
+	});
 
-  it("groups popular providers first and sorts the remaining unique providers", async () => {
-    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
-    mockUseProviderFields.mockReturnValue({
-      data: [
-        {
-          provider: "Zeta",
-          provider_display_name: "Zeta Provider",
-          litellm_provider: "zeta",
-          credential_fields: [],
-        },
-        {
-          provider: "OpenAI",
-          provider_display_name: "OpenAI",
-          litellm_provider: "openai",
-          credential_fields: [],
-        },
-        {
-          provider: "Anthropic",
-          provider_display_name: "Anthropic",
-          litellm_provider: "anthropic",
-          credential_fields: [],
-        },
-        {
-          provider: "Alpha",
-          provider_display_name: "Alpha Provider",
-          litellm_provider: "alpha",
-          credential_fields: [],
-        },
-        {
-          provider: "OpenAI",
-          provider_display_name: "OpenAI Duplicate",
-          litellm_provider: "openai",
-          credential_fields: [],
-        },
-      ],
-      isLoading: false,
-      error: null,
-    });
-    const props = createTestProps();
+	it("groups popular providers first and sorts the remaining unique providers", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+		mockUseProviderFields.mockReturnValue({
+			data: [
+				{
+					provider: "Zeta",
+					provider_display_name: "Zeta Provider",
+					litellm_provider: "zeta",
+					credential_fields: [],
+				},
+				{
+					provider: "OpenAI",
+					provider_display_name: "OpenAI",
+					litellm_provider: "openai",
+					credential_fields: [],
+				},
+				{
+					provider: "Anthropic",
+					provider_display_name: "Anthropic",
+					litellm_provider: "anthropic",
+					credential_fields: [],
+				},
+				{
+					provider: "Alpha",
+					provider_display_name: "Alpha Provider",
+					litellm_provider: "alpha",
+					credential_fields: [],
+				},
+				{
+					provider: "OpenAI",
+					provider_display_name: "OpenAI Duplicate",
+					litellm_provider: "openai",
+					credential_fields: [],
+				},
+			],
+			isLoading: false,
+			error: null,
+		});
+		const props = createTestProps();
 
-    renderWithProviders(<AddModelForm {...props} />);
-    await screen.findByText("Provider");
-    const providerSelect = screen.getAllByRole("combobox")[0];
-    await userEvent.click(providerSelect);
+		renderWithProviders(<AddModelForm {...props} />);
+		await screen.findByText("Provider");
+		const providerSelect = screen.getAllByRole("combobox")[0];
+		await userEvent.click(providerSelect);
 
-    expect(screen.getByText("Popular")).toBeInTheDocument();
-    expect(screen.getByText("All Providers")).toBeInTheDocument();
-    const options = screen.getAllByRole("option").map((option) => option.textContent?.trim());
-    expect(options).toEqual(["Anthropic", "OpenAI", "Alpha Provider", "Zeta Provider"]);
+		expect(screen.getByText("Popular")).toBeInTheDocument();
+		expect(screen.getByText("All Providers")).toBeInTheDocument();
+		const options = screen.getAllByRole("option").map((option) => option.textContent?.trim());
+		expect(options).toEqual(["Anthropic", "OpenAI", "Alpha Provider", "Zeta Provider"]);
 
-    await userEvent.type(providerSelect, "Anthropic");
-    await userEvent.click(screen.getByRole("option", { name: "Anthropic" }));
-    expect(props.setSelectedProvider).toHaveBeenCalledWith("Anthropic");
-  });
+		await userEvent.type(providerSelect, "Anthropic");
+		await userEvent.click(screen.getByRole("option", { name: "Anthropic" }));
+		expect(props.setSelectedProvider).toHaveBeenCalledWith("Anthropic");
+	});
 
-  it("should show proxy admin only (not team admin) - should not see Select Team dropdown unless switch is toggled", async () => {
-    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+	it("should show proxy admin only (not team admin) - should not see Select Team dropdown unless switch is toggled", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
 
-    const props = createTestProps("proxy_admin", "user-1", false);
+		const props = createTestProps("proxy_admin", "user-1", false);
 
-    renderWithProviders(<AddModelForm {...props} />);
+		renderWithProviders(<AddModelForm {...props} />);
 
-    await screen.findByText("Provider");
+		await screen.findByText("Provider");
 
-    expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
+		expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
+		expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
 
-    const teamSwitch = screen.getByRole("switch");
-    expect(teamSwitch).toBeInTheDocument();
+		const teamSwitch = screen.getByRole("switch");
+		expect(teamSwitch).toBeInTheDocument();
 
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
+		expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
 
-    await userEvent.click(teamSwitch);
+		await userEvent.click(teamSwitch);
 
-    expect(await screen.findByText("Select Team")).toBeInTheDocument();
-  });
+		expect(await screen.findByText("Select Team")).toBeInTheDocument();
+	});
 
-  it("should show proxy admin who is also team admin - should not see Select Team dropdown unless switch is toggled", async () => {
-    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+	it("should show proxy admin who is also team admin - should not see Select Team dropdown unless switch is toggled", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
 
-    const props = createTestProps("proxy_admin", "user-1", true);
+		const props = createTestProps("proxy_admin", "user-1", true);
 
-    renderWithProviders(<AddModelForm {...props} />);
+		renderWithProviders(<AddModelForm {...props} />);
 
-    await screen.findByText("Provider");
+		await screen.findByText("Provider");
 
-    expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
+		expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
+		expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
 
-    const teamSwitch = screen.getByRole("switch");
-    expect(teamSwitch).toBeInTheDocument();
+		const teamSwitch = screen.getByRole("switch");
+		expect(teamSwitch).toBeInTheDocument();
 
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
+		expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
 
-    await userEvent.click(teamSwitch);
+		await userEvent.click(teamSwitch);
 
-    expect(await screen.findByText("Select Team")).toBeInTheDocument();
-  });
+		expect(await screen.findByText("Select Team")).toBeInTheDocument();
+	});
 
-  it("should show team admin (not proxy admin) - should see alert and team select, must select team before seeing remaining fields", async () => {
-    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("team_member", "user-1", true));
+	it("should show team admin (not proxy admin) - should see alert and team select, must select team before seeing remaining fields", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("team_member", "user-1", true));
 
-    const props = createTestProps("team_member", "user-1", true);
+		const props = createTestProps("team_member", "user-1", true);
 
-    renderWithProviders(<AddModelForm {...props} />);
+		renderWithProviders(<AddModelForm {...props} />);
 
-    await screen.findByRole("heading", { name: "Add Model" });
+		await screen.findByRole("heading", { name: "Add Model" });
 
-    expect(screen.getByText("Team Selection Required")).toBeInTheDocument();
+		expect(screen.getByText("Team Selection Required")).toBeInTheDocument();
 
-    expect(screen.getByText("Select Team")).toBeInTheDocument();
+		expect(screen.getByText("Select Team")).toBeInTheDocument();
 
-    expect(screen.queryByText("Provider")).not.toBeInTheDocument();
+		expect(screen.queryByText("Provider")).not.toBeInTheDocument();
 
-    const teamSelect = screen.getByRole("combobox");
-    await userEvent.click(teamSelect);
-    await userEvent.click(screen.getByText("Test Team"));
+		const teamSelect = screen.getByRole("combobox");
+		await userEvent.click(teamSelect);
+		await userEvent.click(screen.getByText("Test Team"));
 
-    await waitFor(() => {
-      expect(screen.getByText("Provider")).toBeInTheDocument();
-    });
-  });
+		await waitFor(() => {
+			expect(screen.getByText("Provider")).toBeInTheDocument();
+		});
+	});
 
-  it("should show team admin (not proxy admin) - should not see team-BYOK switch", async () => {
-    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("team_member", "user-1", true));
+	it("should show team admin (not proxy admin) - should not see team-BYOK switch", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("team_member", "user-1", true));
 
-    const props = createTestProps("team_member", "user-1", true);
+		const props = createTestProps("team_member", "user-1", true);
 
-    renderWithProviders(<AddModelForm {...props} />);
+		renderWithProviders(<AddModelForm {...props} />);
 
-    await screen.findByText("Select Team");
+		await screen.findByText("Select Team");
 
-    const teamSelect = screen.getByRole("combobox");
-    await userEvent.click(teamSelect);
-    await userEvent.click(screen.getByText("Test Team"));
+		const teamSelect = screen.getByRole("combobox");
+		await userEvent.click(teamSelect);
+		await userEvent.click(screen.getByText("Test Team"));
 
-    await waitFor(() => {
-      expect(screen.getByText("Provider")).toBeInTheDocument();
-    });
+		await waitFor(() => {
+			expect(screen.getByText("Provider")).toBeInTheDocument();
+		});
 
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-  });
+		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+	});
 
-  it("should handle non-admin, non-team-admin users - should not see team selection or switch", async () => {
-    const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("user", "user-1", false));
+	it("should handle non-admin, non-team-admin users - should not see team selection or switch", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("user", "user-1", false));
 
-    const props = createTestProps("user", "user-1", false);
+		const props = createTestProps("user", "user-1", false);
 
-    renderWithProviders(<AddModelForm {...props} />);
+		renderWithProviders(<AddModelForm {...props} />);
 
-    await screen.findByRole("heading", { name: "Add Model" });
+		await screen.findByRole("heading", { name: "Add Model" });
 
-    expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
+		expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
 
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
+		expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
 
-    expect(screen.queryByText("Provider")).not.toBeInTheDocument();
+		expect(screen.queryByText("Provider")).not.toBeInTheDocument();
 
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-  });
+		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+	});
 });

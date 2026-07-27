@@ -546,19 +546,19 @@ export async function executeWithFallback(
 		const targetGroup = getModelGroupName(deployment);
 		const sameGroupCount = ctx.deployments.filter((d) => getModelGroupName(d) === targetGroup).length;
 
-		const decision = buildCooldownDecision(
-			deployment,
-			error,
-			sameGroupCount,
-			retryAfterHeader,
+		const decision = buildCooldownDecision({
+			deployment: deployment,
+			error: error,
+			sameGroupCount: sameGroupCount,
+			retryAfterHeader: retryAfterHeader,
 			// PY deployment_callback_on_failure：缺省冷却时长取 router.cooldown_time
 			// （litellm/router.py:6176-6180 `_time_to_cooldown = self.cooldown_time`），
 			// 与 Router.recordDeploymentFailure 的直连路径一致；retry_after 仅是
 			// 重试退避下限，不能作为冷却缺省（未配置时为 0 导致冷却空操作）。
-			ctx.cooldownTimeMs,
-			ctx.cooldownManager,
-			ctx.allowedFails,
-		);
+			defaultCooldownTimeMs: ctx.cooldownTimeMs,
+			cooldownManager: ctx.cooldownManager,
+			routerAllowedFails: ctx.allowedFails,
+		});
 		if (decision.shouldCooldown) {
 			ctx.cooldownManager.markFailed(depKey, decision.cooldownDurationMs, decision.statusCode, error.message);
 			ctx.cooldownManager.recordFailure(depKey);

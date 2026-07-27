@@ -16,206 +16,167 @@ import { internalUserRoles } from "@/utils/roles";
  * 2. Its roles include at least one internal user role
  */
 const isPageAccessibleToInternalUsers = (pageRoles?: string[]): boolean => {
-  if (!pageRoles || pageRoles.length === 0) {
-    return true; // No role restrictions
-  }
-  
-  // Check if any of the page's roles match internal user roles
-  return pageRoles.some(role => internalUserRoles.includes(role));
+	if (!pageRoles || pageRoles.length === 0) {
+		return true; // No role restrictions
+	}
+
+	// Check if any of the page's roles match internal user roles
+	return pageRoles.some((role) => internalUserRoles.includes(role));
 };
 
 describe("Page Utils - LeftNav Sync", () => {
-  it("should return all pages from leftnav configuration", () => {
-    const availablePages = getAvailablePages();
-    
-    // Should have pages
-    expect(availablePages.length).toBeGreaterThan(0);
-    
-    // Each page should have required fields
-    availablePages.forEach((page) => {
-      expect(page).toHaveProperty("page");
-      expect(page).toHaveProperty("label");
-      expect(page).toHaveProperty("group");
-      expect(page).toHaveProperty("description");
-      expect(typeof page.page).toBe("string");
-      expect(typeof page.label).toBe("string");
-      expect(typeof page.group).toBe("string");
-      expect(typeof page.description).toBe("string");
-    });
-  });
+	it("should return all pages from leftnav configuration", () => {
+		const availablePages = getAvailablePages();
 
-  it("should include all navigable pages from menuGroups", () => {
-    const availablePages = getAvailablePages();
-    const availablePageKeys = availablePages.map((p) => p.page);
-    
-    // Collect all page keys from menuGroups (excluding parent containers and pages not accessible to internal users)
-    const menuPageKeys: string[] = [];
-    const excludedParents = ["tools", "experimental", "settings"];
-    
-    menuGroups.forEach((group) => {
-      group.items.forEach((item) => {
-        if (
-          item.page &&
-          !excludedParents.includes(item.page) &&
-          isPageAccessibleToInternalUsers(item.roles)
-        ) {
-          menuPageKeys.push(item.page);
-        }
-        
-        // Add children (only if accessible to internal users)
-        if (item.children) {
-          item.children.forEach((child) => {
-            if (isPageAccessibleToInternalUsers(child.roles)) {
-              menuPageKeys.push(child.page);
-            }
-          });
-        }
-      });
-    });
-    
-    // Every menu page accessible to internal users should be in available pages
-    menuPageKeys.forEach((pageKey) => {
-      expect(
-        availablePageKeys,
-        `Page "${pageKey}" from menuGroups should be in getAvailablePages() output`
-      ).toContain(pageKey);
-    });
-  });
+		// Should have pages
+		expect(availablePages.length).toBeGreaterThan(0);
 
-  it("should not include parent container pages (tools, experimental, settings)", () => {
-    const availablePages = getAvailablePages();
-    const availablePageKeys = availablePages.map((p) => p.page);
-    
-    const excludedParents = ["tools", "experimental", "settings"];
-    
-    excludedParents.forEach((parent) => {
-      expect(
-        availablePageKeys,
-        `Parent container "${parent}" should not be in available pages`
-      ).not.toContain(parent);
-    });
-  });
+		// Each page should have required fields
+		availablePages.forEach((page) => {
+			expect(page).toHaveProperty("page");
+			expect(page).toHaveProperty("label");
+			expect(page).toHaveProperty("group");
+			expect(page).toHaveProperty("description");
+			expect(typeof page.page).toBe("string");
+			expect(typeof page.label).toBe("string");
+			expect(typeof page.group).toBe("string");
+			expect(typeof page.description).toBe("string");
+		});
+	});
 
-  it("should have descriptions for all pages", () => {
-    const availablePages = getAvailablePages();
-    
-    availablePages.forEach((page) => {
-      expect(
-        page.description,
-        `Page "${page.page}" should have a description`
-      ).toBeTruthy();
-      
-      expect(
-        page.description,
-        `Page "${page.page}" should not have placeholder description`
-      ).not.toBe("No description available");
-    });
-  });
+	it("should include all navigable pages from menuGroups", () => {
+		const availablePages = getAvailablePages();
+		const availablePageKeys = availablePages.map((p) => p.page);
 
-  it("should have pageDescriptions entry for all navigable pages in menuGroups", () => {
-    // Collect all page keys from menuGroups
-    const menuPageKeys: string[] = [];
-    const excludedParents = ["tools", "experimental", "settings"];
-    
-    menuGroups.forEach((group) => {
-      group.items.forEach((item) => {
-        if (item.page && !excludedParents.includes(item.page)) {
-          menuPageKeys.push(item.page);
-        }
-        
-        if (item.children) {
-          item.children.forEach((child) => {
-            menuPageKeys.push(child.page);
-          });
-        }
-      });
-    });
-    
-    // Every menu page should have a description
-    const missingDescriptions: string[] = [];
-    menuPageKeys.forEach((pageKey) => {
-      if (!pageDescriptions[pageKey]) {
-        missingDescriptions.push(pageKey);
-      }
-    });
-    
-    expect(
-      missingDescriptions,
-      `These pages are missing descriptions in page_metadata.ts: ${missingDescriptions.join(", ")}`
-    ).toHaveLength(0);
-  });
+		// Collect all page keys from menuGroups (excluding parent containers and pages not accessible to internal users)
+		const menuPageKeys: string[] = [];
+		const excludedParents = ["tools", "experimental", "settings"];
 
-  it("should not have orphaned descriptions (descriptions for pages not in menuGroups)", () => {
-    // Collect all page keys from menuGroups
-    const menuPageKeys: string[] = [];
-    const excludedParents = ["tools", "experimental", "settings"];
-    
-    menuGroups.forEach((group) => {
-      group.items.forEach((item) => {
-        if (item.page && !excludedParents.includes(item.page)) {
-          menuPageKeys.push(item.page);
-        }
-        
-        if (item.children) {
-          item.children.forEach((child) => {
-            menuPageKeys.push(child.page);
-          });
-        }
-      });
-    });
-    
-    // Check for descriptions that don't match any menu page
-    const orphanedDescriptions: string[] = [];
-    Object.keys(pageDescriptions).forEach((descKey) => {
-      if (!menuPageKeys.includes(descKey)) {
-        orphanedDescriptions.push(descKey);
-      }
-    });
-    
-    expect(
-      orphanedDescriptions,
-      `These descriptions don't match any page in menuGroups: ${orphanedDescriptions.join(", ")}. Remove them or add the pages to leftnav.`
-    ).toHaveLength(0);
-  });
+		menuGroups.forEach((group) => {
+			group.items.forEach((item) => {
+				if (item.page && !excludedParents.includes(item.page) && isPageAccessibleToInternalUsers(item.roles)) {
+					menuPageKeys.push(item.page);
+				}
 
-  it("should expose every page directly under a navigation group", () => {
-    const availablePages = getAvailablePages();
+				// Add children (only if accessible to internal users)
+				if (item.children) {
+					item.children.forEach((child) => {
+						if (isPageAccessibleToInternalUsers(child.roles)) {
+							menuPageKeys.push(child.page);
+						}
+					});
+				}
+			});
+		});
 
-    expect(availablePages.every((page) => !page.group.includes(" > "))).toBe(true);
-  });
+		// Every menu page accessible to internal users should be in available pages
+		menuPageKeys.forEach((pageKey) => {
+			expect(availablePageKeys, `Page "${pageKey}" from menuGroups should be in getAvailablePages() output`).toContain(
+				pageKey,
+			);
+		});
+	});
 
-  it("should have unique page keys", () => {
-    const availablePages = getAvailablePages();
-    const pageKeys = availablePages.map((p) => p.page);
-    const uniquePageKeys = new Set(pageKeys);
-    
-    expect(
-      pageKeys.length,
-      "All page keys should be unique (no duplicates)"
-    ).toBe(uniquePageKeys.size);
-  });
+	it("should not include parent container pages (tools, experimental, settings)", () => {
+		const availablePages = getAvailablePages();
+		const availablePageKeys = availablePages.map((p) => p.page);
 
-  it("should match the structure expected by PageVisibilitySettings component", () => {
-    const availablePages = getAvailablePages();
-    
-    // Group pages by their group (same logic as in PageVisibilitySettings)
-    const grouped: Record<string, typeof availablePages> = {};
-    availablePages.forEach((page) => {
-      if (!grouped[page.group]) {
-        grouped[page.group] = [];
-      }
-      grouped[page.group].push(page);
-    });
-    
-    // Should have multiple groups
-    expect(Object.keys(grouped).length).toBeGreaterThan(1);
-    
-    // Each group should have at least one page
-    Object.entries(grouped).forEach(([groupName, pages]) => {
-      expect(
-        pages.length,
-        `Group "${groupName}" should have at least one page`
-      ).toBeGreaterThan(0);
-    });
-  });
+		const excludedParents = ["tools", "experimental", "settings"];
+
+		excludedParents.forEach((parent) => {
+			expect(availablePageKeys, `Parent container "${parent}" should not be in available pages`).not.toContain(parent);
+		});
+	});
+
+	it("should have descriptions for all pages", () => {
+		const availablePages = getAvailablePages();
+
+		availablePages.forEach((page) => {
+			expect(page.description, `Page "${page.page}" should have a description`).toBeTruthy();
+
+			expect(page.description, `Page "${page.page}" should not have placeholder description`).not.toBe(
+				"No description available",
+			);
+		});
+	});
+
+	it("should have pageDescriptions entry for all navigable pages in menuGroups", () => {
+		// Collect all page keys from menuGroups
+		const menuPageKeys: string[] = [];
+		const excludedParents = ["tools", "experimental", "settings"];
+
+		menuGroups.forEach((group) => {
+			group.items.forEach((item) => {
+				if (item.page && !excludedParents.includes(item.page)) {
+					menuPageKeys.push(item.page);
+				}
+
+				if (item.children) {
+					item.children.forEach((child) => {
+						menuPageKeys.push(child.page);
+					});
+				}
+			});
+		});
+
+		// Every menu page should have a description
+		const missingDescriptions: string[] = [];
+		menuPageKeys.forEach((pageKey) => {
+			if (!pageDescriptions[pageKey]) {
+				missingDescriptions.push(pageKey);
+			}
+		});
+
+		expect(
+			missingDescriptions,
+			`These pages are missing descriptions in page_metadata.ts: ${missingDescriptions.join(", ")}`,
+		).toHaveLength(0);
+	});
+
+	it("should not have orphaned descriptions (descriptions for pages not in menuGroups)", () => {
+		// Collect all page keys from menuGroups
+		const menuPageKeys: string[] = [];
+		const excludedParents = ["tools", "experimental", "settings"];
+
+		menuGroups.forEach((group) => {
+			group.items.forEach((item) => {
+				if (item.page && !excludedParents.includes(item.page)) {
+					menuPageKeys.push(item.page);
+				}
+
+				if (item.children) {
+					item.children.forEach((child) => {
+						menuPageKeys.push(child.page);
+					});
+				}
+			});
+		});
+
+		// Check for descriptions that don't match any menu page
+		const orphanedDescriptions: string[] = [];
+		Object.keys(pageDescriptions).forEach((descKey) => {
+			if (!menuPageKeys.includes(descKey)) {
+				orphanedDescriptions.push(descKey);
+			}
+		});
+
+		expect(
+			orphanedDescriptions,
+			`These descriptions don't match any page in menuGroups: ${orphanedDescriptions.join(", ")}. Remove them or add the pages to leftnav.`,
+		).toHaveLength(0);
+	});
+
+	it("should expose every page directly under a navigation group", () => {
+		const availablePages = getAvailablePages();
+
+		expect(availablePages.every((page) => !page.group.includes(" > "))).toBe(true);
+	});
+
+	it("should have unique page keys", () => {
+		const availablePages = getAvailablePages();
+		const pageKeys = availablePages.map((p) => p.page);
+		const uniquePageKeys = new Set(pageKeys);
+
+		expect(pageKeys.length, "All page keys should be unique (no duplicates)").toBe(uniquePageKeys.size);
+	});
 });

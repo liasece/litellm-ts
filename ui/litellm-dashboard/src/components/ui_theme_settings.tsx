@@ -16,13 +16,7 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
 	const [faviconUrlInput, setFaviconUrlInput] = useState<string>("");
 	const [loading, setLoading] = useState(false);
 
-	useEffect(() => {
-		if (accessToken) {
-			fetchThemeSettings();
-		}
-	}, [accessToken]);
-
-	const fetchThemeSettings = async () => {
+	const fetchThemeSettings = React.useCallback(async () => {
 		try {
 			const proxyBaseUrl = getProxyBaseUrl();
 			const url = proxyBaseUrl ? `${proxyBaseUrl}/get/ui_theme_settings` : "/get/ui_theme_settings";
@@ -42,7 +36,13 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
 		} catch (error) {
 			console.error("Error fetching theme settings:", error);
 		}
-	};
+	}, [setFaviconUrl, setLogoUrl]);
+
+	useEffect(() => {
+		if (accessToken) {
+			void Promise.resolve().then(fetchThemeSettings);
+		}
+	}, [accessToken, fetchThemeSettings]);
 
 	const handleSave = async () => {
 		setLoading(true);

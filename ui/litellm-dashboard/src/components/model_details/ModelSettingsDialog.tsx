@@ -2,8 +2,7 @@ import { Form, Modal, type FormInstance } from "antd";
 import type { ModelSettingsContentProps } from "./ModelSettingsContent";
 import ModelSettingsContent from "./ModelSettingsContent";
 
-interface ModelSettingsDialogProps
-	extends Omit<ModelSettingsContentProps, "editing" | "onCancel"> {
+interface ModelSettingsDialogProps extends Omit<ModelSettingsContentProps, "editing" | "onCancel"> {
 	open: boolean;
 	onCancel: () => void;
 	onSave: (values: any) => void;

@@ -3,237 +3,224 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React, { ReactNode } from "react";
 import { useCloudZeroDryRun } from "./useCloudZeroDryRun";
+import { expectSessionFetchCall } from "../../../../../tests/fetchAssertions";
 
-const {
-  mockProxyBaseUrl,
-  mockAccessToken,
-  mockHeaderName,
-  mockGetProxyBaseUrl,
-  mockGetGlobalLitellmHeaderName,
-} = vi.hoisted(() => {
-  const mockProxyBaseUrl = "https://proxy.example.com";
-  const mockAccessToken = "test-access-token";
-  const mockHeaderName = "X-LiteLLM-API-Key";
-  const mockGetProxyBaseUrl = vi.fn(() => mockProxyBaseUrl);
-  const mockGetGlobalLitellmHeaderName = vi.fn(() => mockHeaderName);
+const { mockProxyBaseUrl, mockAccessToken, mockHeaderName, mockGetProxyBaseUrl, mockGetGlobalLitellmHeaderName } =
+	vi.hoisted(() => {
+		const mockProxyBaseUrl = "https://proxy.example.com";
+		const mockAccessToken = "test-access-token";
+		const mockHeaderName = "X-LiteLLM-API-Key";
+		const mockGetProxyBaseUrl = vi.fn(() => mockProxyBaseUrl);
+		const mockGetGlobalLitellmHeaderName = vi.fn(() => mockHeaderName);
 
-  return {
-    mockProxyBaseUrl,
-    mockAccessToken,
-    mockHeaderName,
-    mockGetProxyBaseUrl,
-    mockGetGlobalLitellmHeaderName,
-  };
-});
+		return {
+			mockProxyBaseUrl,
+			mockAccessToken,
+			mockHeaderName,
+			mockGetProxyBaseUrl,
+			mockGetGlobalLitellmHeaderName,
+		};
+	});
 
-vi.mock("@/components/networking", () => ({
-  getProxyBaseUrl: mockGetProxyBaseUrl,
-  getGlobalLitellmHeaderName: mockGetGlobalLitellmHeaderName,
+vi.mock("@/components/networking", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/networking")>()),
+	getProxyBaseUrl: mockGetProxyBaseUrl,
+	getGlobalLitellmHeaderName: mockGetGlobalLitellmHeaderName,
 }));
 
 describe("useCloudZeroDryRun", () => {
-  let queryClient: QueryClient;
-  let fetchSpy: ReturnType<typeof vi.fn>;
+	let queryClient: QueryClient;
+	let fetchSpy: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
-    queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-        },
-        mutations: {
-          retry: false,
-        },
-      },
-    });
+	beforeEach(() => {
+		queryClient = new QueryClient({
+			defaultOptions: {
+				queries: {
+					retry: false,
+				},
+				mutations: {
+					retry: false,
+				},
+			},
+		});
 
-    vi.clearAllMocks();
+		vi.clearAllMocks();
 
-    fetchSpy = vi.fn();
-    global.fetch = fetchSpy;
-  });
+		fetchSpy = vi.fn();
+		global.fetch = fetchSpy;
+	});
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
+	const wrapper = ({ children }: { children: ReactNode }) =>
+		React.createElement(QueryClientProvider, { client: queryClient }, children);
 
-  it("should render", () => {
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+	it("should successfully perform dry run with custom limit", async () => {
+		const mockResponse = { records_processed: 5, status: "success" };
+		(fetchSpy as any).mockResolvedValue({
+			ok: true,
+			json: async () => mockResponse,
+		});
 
-    expect(result.current).toBeDefined();
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should successfully perform dry run with custom limit", async () => {
-    const mockResponse = { records_processed: 5, status: "success" };
-    (fetchSpy as any).mockResolvedValue({
-      ok: true,
-      json: async () => mockResponse,
-    });
+		result.current.mutate({ limit: 20 });
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    result.current.mutate({ limit: 20 });
+		expect(result.current.data).toEqual(mockResponse);
+		expectSessionFetchCall(fetchSpy, `${mockProxyBaseUrl}/cloudzero/dry-run`, {
+			method: "POST",
+			body: JSON.stringify({
+				limit: 20,
+			}),
+		});
+	});
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+	it("should use default limit of 10 when limit is not provided", async () => {
+		const mockResponse = { records_processed: 10, status: "success" };
+		(fetchSpy as any).mockResolvedValue({
+			ok: true,
+			json: async () => mockResponse,
+		});
 
-    expect(result.current.data).toEqual(mockResponse);
-    expect(fetchSpy).toHaveBeenCalledWith(`${mockProxyBaseUrl}/cloudzero/dry-run`, {
-      method: "POST",
-      headers: {
-        [mockHeaderName]: `Bearer ${mockAccessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        limit: 20,
-      }),
-    });
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should use default limit of 10 when limit is not provided", async () => {
-    const mockResponse = { records_processed: 10, status: "success" };
-    (fetchSpy as any).mockResolvedValue({
-      ok: true,
-      json: async () => mockResponse,
-    });
+		result.current.mutate({});
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    result.current.mutate({});
+		expect(result.current.data).toEqual(mockResponse);
+		const callBody = JSON.parse((fetchSpy as any).mock.calls[0][1].body);
+		expect(callBody.limit).toBe(10);
+	});
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+	it("should handle error response with error.message", async () => {
+		const errorResponse = { error: { message: "Dry run failed" } };
+		(fetchSpy as any).mockResolvedValue({
+			ok: false,
+			json: async () => errorResponse,
+		});
 
-    expect(result.current.data).toEqual(mockResponse);
-    const callBody = JSON.parse((fetchSpy as any).mock.calls[0][1].body);
-    expect(callBody.limit).toBe(10);
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should handle error response with error.message", async () => {
-    const errorResponse = { error: { message: "Dry run failed" } };
-    (fetchSpy as any).mockResolvedValue({
-      ok: false,
-      json: async () => errorResponse,
-    });
+		result.current.mutate({ limit: 5 });
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    result.current.mutate({ limit: 5 });
+		expect(result.current.error?.message).toBe("Dry run failed");
+	});
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+	it("should handle error response with message field", async () => {
+		const errorResponse = { message: "Invalid configuration" };
+		(fetchSpy as any).mockResolvedValue({
+			ok: false,
+			json: async () => errorResponse,
+		});
 
-    expect(result.current.error?.message).toBe("Dry run failed");
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should handle error response with message field", async () => {
-    const errorResponse = { message: "Invalid configuration" };
-    (fetchSpy as any).mockResolvedValue({
-      ok: false,
-      json: async () => errorResponse,
-    });
+		result.current.mutate({ limit: 5 });
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    result.current.mutate({ limit: 5 });
+		expect(result.current.error?.message).toBe("Invalid configuration");
+	});
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+	it("should handle error response with detail field", async () => {
+		const errorResponse = { detail: "Server error" };
+		(fetchSpy as any).mockResolvedValue({
+			ok: false,
+			json: async () => errorResponse,
+		});
 
-    expect(result.current.error?.message).toBe("Invalid configuration");
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should handle error response with detail field", async () => {
-    const errorResponse = { detail: "Server error" };
-    (fetchSpy as any).mockResolvedValue({
-      ok: false,
-      json: async () => errorResponse,
-    });
+		result.current.mutate({ limit: 5 });
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    result.current.mutate({ limit: 5 });
+		expect(result.current.error?.message).toBe("Server error");
+	});
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+	it("should handle error response with invalid JSON", async () => {
+		(fetchSpy as any).mockResolvedValue({
+			ok: false,
+			json: async () => {
+				throw new Error("Invalid JSON");
+			},
+		});
 
-    expect(result.current.error?.message).toBe("Server error");
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should handle error response with invalid JSON", async () => {
-    (fetchSpy as any).mockResolvedValue({
-      ok: false,
-      json: async () => {
-        throw new Error("Invalid JSON");
-      },
-    });
+		result.current.mutate({ limit: 5 });
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    result.current.mutate({ limit: 5 });
+		expect(result.current.error?.message).toBe("Failed to perform dry run");
+	});
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+	it("should handle network error", async () => {
+		const networkError = new Error("Network request failed");
+		(fetchSpy as any).mockRejectedValue(networkError);
 
-    expect(result.current.error?.message).toBe("Failed to perform dry run");
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should handle network error", async () => {
-    const networkError = new Error("Network request failed");
-    (fetchSpy as any).mockRejectedValue(networkError);
+		result.current.mutate({ limit: 5 });
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    result.current.mutate({ limit: 5 });
+		expect(result.current.error).toEqual(networkError);
+	});
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+	it.each([
+		["empty string", ""],
+		["null", null],
+	])("should throw error when accessToken is %s", async (_, invalidToken) => {
+		const { result } = renderHook(() => useCloudZeroDryRun(invalidToken as any), { wrapper });
 
-    expect(result.current.error).toEqual(networkError);
-  });
+		result.current.mutate({ limit: 5 });
 
-  it.each([
-    ["empty string", ""],
-    ["null", null],
-  ])("should throw error when accessToken is %s", async (_, invalidToken) => {
-    const { result } = renderHook(() => useCloudZeroDryRun(invalidToken as any), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isError).toBe(true);
+		});
 
-    result.current.mutate({ limit: 5 });
+		expect(result.current.error?.message).toBe("Access token is required");
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+	it("should use relative URL when proxyBaseUrl is not set", async () => {
+		mockGetProxyBaseUrl.mockReturnValue("");
+		const mockResponse = { records_processed: 10 };
+		(fetchSpy as any).mockResolvedValue({
+			ok: true,
+			json: async () => mockResponse,
+		});
 
-    expect(result.current.error?.message).toBe("Access token is required");
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+		const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
 
-  it("should use relative URL when proxyBaseUrl is not set", async () => {
-    mockGetProxyBaseUrl.mockReturnValue("");
-    const mockResponse = { records_processed: 10 };
-    (fetchSpy as any).mockResolvedValue({
-      ok: true,
-      json: async () => mockResponse,
-    });
+		result.current.mutate({ limit: 5 });
 
-    const { result } = renderHook(() => useCloudZeroDryRun(mockAccessToken), { wrapper });
+		await waitFor(() => {
+			expect(result.current.isSuccess).toBe(true);
+		});
 
-    result.current.mutate({ limit: 5 });
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(fetchSpy).toHaveBeenCalledWith("/cloudzero/dry-run", expect.any(Object));
-  });
+		expect(fetchSpy).toHaveBeenCalledWith("/cloudzero/dry-run", expect.any(Object));
+	});
 });

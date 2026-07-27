@@ -10,11 +10,7 @@ interface ProjectSpendSectionProps {
 	modelSpendData: Array<{ model: string; spend: number }>;
 }
 
-export default function ProjectSpendSection({
-	spend,
-	maxBudget,
-	modelSpendData,
-}: ProjectSpendSectionProps) {
+export default function ProjectSpendSection({ spend, maxBudget, modelSpendData }: ProjectSpendSectionProps) {
 	const hasLimit = maxBudget != null && maxBudget > 0;
 	const spendPercent = hasLimit ? Math.min((spend / maxBudget) * 100, 100) : 0;
 	const spendColor = spendPercent >= 90 ? "#f5222d" : spendPercent >= 70 ? "#faad14" : "#52c41a";

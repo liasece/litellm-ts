@@ -10,12 +10,7 @@ interface ModelHubAgentDetailsModalProps {
 	onCopy: (value: string) => void;
 }
 
-export default function ModelHubAgentDetailsModal({
-	agent,
-	open,
-	onClose,
-	onCopy,
-}: ModelHubAgentDetailsModalProps) {
+export default function ModelHubAgentDetailsModal({ agent, open, onClose, onCopy }: ModelHubAgentDetailsModalProps) {
 	const capabilities = agent
 		? Object.entries(agent.capabilities ?? {})
 				.filter(([, value]) => value === true)
@@ -159,4 +154,3 @@ export default function ModelHubAgentDetailsModal({
 		</Modal>
 	);
 }
-

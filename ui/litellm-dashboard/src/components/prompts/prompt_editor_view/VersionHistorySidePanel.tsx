@@ -23,15 +23,9 @@ const VersionHistorySidePanel: React.FC<VersionHistorySidePanelProps> = ({
 	onSelectVersion,
 }) => {
 	const [versions, setVersions] = useState<PromptSpec[]>([]);
-	const [loading, setLoading] = useState(false);
+	const [loading, setLoading] = useState(isOpen && Boolean(accessToken && promptId));
 
-	useEffect(() => {
-		if (isOpen && accessToken && promptId) {
-			fetchVersions();
-		}
-	}, [isOpen, accessToken, promptId]);
-
-	const fetchVersions = async () => {
+	const fetchVersions = React.useCallback(async () => {
 		setLoading(true);
 		try {
 			// Strip .v suffix if present to get base ID for querying all versions
@@ -43,7 +37,13 @@ const VersionHistorySidePanel: React.FC<VersionHistorySidePanelProps> = ({
 		} finally {
 			setLoading(false);
 		}
-	};
+	}, [accessToken, promptId]);
+
+	useEffect(() => {
+		if (isOpen && accessToken && promptId) {
+			void Promise.resolve().then(fetchVersions);
+		}
+	}, [accessToken, fetchVersions, isOpen, promptId]);
 
 	const getVersionNumber = (prompt: PromptSpec) => {
 		// Use explicit version field if available, otherwise try to extract from litellm_params.prompt_id

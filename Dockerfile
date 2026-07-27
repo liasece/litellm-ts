@@ -1,20 +1,40 @@
 # syntax=docker/dockerfile:1.7
-# 前端 (ui/litellm-dashboard) 由 restart-litellm.sh 在本地预构建为 ui/out/，
-# Docker 构建仅负责 COPY + 生产依赖安装，无需额外构建阶段。
 
-FROM node:22-alpine
+FROM node:22-alpine AS backend-build
+
+WORKDIR /build
+
+COPY package*.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+COPY tsconfig.json ./
+COPY src/ ./src/
+RUN npm run build
+
+FROM node:22-alpine AS dashboard-build
+
+WORKDIR /build/ui/litellm-dashboard
+
+COPY ui/litellm-dashboard/package*.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+COPY ui/litellm-dashboard/ ./
+RUN npm run build
+
+FROM node:22-alpine AS runtime
 
 ARG APP_PORT=4000
 ENV APP_PORT=${APP_PORT}
+ENV NODE_ENV=production
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 
-COPY dist/ ./dist/
+COPY --from=backend-build /build/dist/ ./dist/
 COPY drizzle/ ./drizzle/
-COPY ui/out/ ./ui/out/
+COPY --from=dashboard-build /build/ui/litellm-dashboard/out/ ./ui/out/
 
 RUN node -e "const { readMigrationFiles } = require('drizzle-orm/migrator'); const migrations = readMigrationFiles({ migrationsFolder: '/app/drizzle' }); if (migrations.length === 0) throw new Error('Drizzle migrations are missing from runtime image');" \
     && test -s /app/ui/out/index.html

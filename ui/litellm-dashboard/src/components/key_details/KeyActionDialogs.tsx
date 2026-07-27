@@ -73,8 +73,8 @@ export default function KeyActionDialogs(props: KeyActionDialogsProps) {
 					<strong>$0</strong>?
 				</p>
 				<p className="mt-2 text-sm text-gray-500">
-					Current spend: <strong>${formatNumberWithCommas(props.keyData.spend, 4)}</strong>. Spend history is
-					preserved in logs. This resets the current period spend counter, the same as an automatic budget reset.
+					Current spend: <strong>${formatNumberWithCommas(props.keyData.spend, 4)}</strong>. Spend history is preserved
+					in logs. This resets the current period spend counter, the same as an automatic budget reset.
 				</p>
 			</Modal>
 

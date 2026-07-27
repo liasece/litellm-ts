@@ -681,11 +681,7 @@ const EntityUsage: React.FC<EntityUsageProps> = ({ accessToken, entityType, enti
 							<Col numColSpan={1}>
 								<Card>
 									<Title>Top Virtual Keys</Title>
-									<TopKeyView
-										topKeys={getTopAPIKeys()}
-										teams={null}
-										showTags={entityType === "tag"}
-									/>
+									<TopKeyView topKeys={getTopAPIKeys()} teams={null} showTags={entityType === "tag"} />
 								</Card>
 							</Col>
 

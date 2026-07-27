@@ -3,89 +3,89 @@ import { createPlaygroundFetch, getProxyBaseUrl, type PlaygroundAuth } from "../
 import NotificationManager from "@/components/molecules/notifications_manager";
 
 export async function makeOpenAIImageEditsRequest(
-  imageFiles: File | File[],
-  prompt: string,
-  updateUI: (imageUrl: string, model: string) => void,
-  selectedModel: string,
-  auth: PlaygroundAuth,
-  tags?: string[],
-  signal?: AbortSignal,
-  customBaseUrl?: string,
+	imageFiles: File | File[],
+	prompt: string,
+	updateUI: (imageUrl: string, model: string) => void,
+	selectedModel: string,
+	auth: PlaygroundAuth,
+	tags?: string[],
+	signal?: AbortSignal,
+	customBaseUrl?: string,
 ) {
-  // base url should be the current base_url
-  const isLocal = process.env.NODE_ENV === "development";
-  if (isLocal !== true) {
-    console.log = function () {};
-  }
-  console.log("isLocal:", isLocal);
-  const proxyBaseUrl = customBaseUrl || getProxyBaseUrl();
+	// base url should be the current base_url
+	const isLocal = process.env.NODE_ENV === "development";
+	if (isLocal !== true) {
+		console.log = function () {};
+	}
+	console.log("isLocal:", isLocal);
+	const proxyBaseUrl = customBaseUrl || getProxyBaseUrl();
 
-  const client = new openai.OpenAI({
-    apiKey: auth.kind === "virtual-key" ? auth.apiKey : "playground-session",
-    baseURL: proxyBaseUrl,
-    dangerouslyAllowBrowser: true,
-    fetch: createPlaygroundFetch(auth, "openai"),
-    defaultHeaders: tags && tags.length > 0 ? { "x-litellm-tags": tags.join(",") } : undefined,
-  });
+	const client = new openai.OpenAI({
+		apiKey: auth.kind === "virtual-key" ? auth.apiKey : "playground-session",
+		baseURL: proxyBaseUrl,
+		dangerouslyAllowBrowser: true,
+		fetch: createPlaygroundFetch(auth, "openai"),
+		defaultHeaders: tags && tags.length > 0 ? { "x-litellm-tags": tags.join(",") } : undefined,
+	});
 
-  try {
-    // handle single and multiple images
-    const imagesToProcess = Array.isArray(imageFiles) ? imageFiles : [imageFiles];
+	try {
+		// handle single and multiple images
+		const imagesToProcess = Array.isArray(imageFiles) ? imageFiles : [imageFiles];
 
-    // For multiple images, we'll make separate API calls for each image
-    // since OpenAI's edit endpoint processes one image at a time
-    const results = [];
+		// For multiple images, we'll make separate API calls for each image
+		// since OpenAI's edit endpoint processes one image at a time
+		const results = [];
 
-    for (let i = 0; i < imagesToProcess.length; i++) {
-      const image = imagesToProcess[i];
-      console.log(`Processing image ${i + 1} of ${imagesToProcess.length}`);
+		for (let i = 0; i < imagesToProcess.length; i++) {
+			const image = imagesToProcess[i];
+			console.log(`Processing image ${i + 1} of ${imagesToProcess.length}`);
 
-      const response = await client.images.edit(
-        {
-          model: selectedModel,
-          image: image,
-          prompt: prompt,
-        },
-        { signal },
-      );
+			const response = await client.images.edit(
+				{
+					model: selectedModel,
+					image: image,
+					prompt: prompt,
+				},
+				{ signal },
+			);
 
-      console.log(`Response for image ${i + 1}:`, response.data);
+			console.log(`Response for image ${i + 1}:`, response.data);
 
-      if (response.data && response.data[0]) {
-        // Handle either URL or base64 data from response
-        if (response.data[0].url) {
-          // Use the URL directly
-          updateUI(response.data[0].url, selectedModel);
-          results.push(response.data[0].url);
-        } else if (response.data[0].b64_json) {
-          // Convert base64 to data URL format
-          const base64Data = response.data[0].b64_json;
-          const dataUrl = `data:image/png;base64,${base64Data}`;
-          updateUI(dataUrl, selectedModel);
-          results.push(dataUrl);
-        }
-      }
-    }
+			if (response.data && response.data[0]) {
+				// Handle either URL or base64 data from response
+				if (response.data[0].url) {
+					// Use the URL directly
+					updateUI(response.data[0].url, selectedModel);
+					results.push(response.data[0].url);
+				} else if (response.data[0].b64_json) {
+					// Convert base64 to data URL format
+					const base64Data = response.data[0].b64_json;
+					const dataUrl = `data:image/png;base64,${base64Data}`;
+					updateUI(dataUrl, selectedModel);
+					results.push(dataUrl);
+				}
+			}
+		}
 
-    if (results.length > 1) {
-      NotificationManager.success(`Successfully processed ${results.length} images`);
-    }
-  } catch (error: any) {
-    console.error("Error making image edit request:", error);
+		if (results.length > 1) {
+			NotificationManager.success(`Successfully processed ${results.length} images`);
+		}
+	} catch (error: any) {
+		console.error("Error making image edit request:", error);
 
-    if (signal?.aborted) {
-      console.log("Image edits request was cancelled");
-    } else {
-      let errorMessage = "Failed to edit image(s)";
+		if (signal?.aborted) {
+			console.log("Image edits request was cancelled");
+		} else {
+			let errorMessage = "Failed to edit image(s)";
 
-      if (error?.error?.message) {
-        errorMessage = error.error.message;
-      } else if (error?.message) {
-        errorMessage = error.message;
-      }
+			if (error?.error?.message) {
+				errorMessage = error.error.message;
+			} else if (error?.message) {
+				errorMessage = error.message;
+			}
 
-      NotificationManager.fromBackend(`Image edit failed: ${errorMessage}`);
-    }
-    throw error; // Re-throw to allow the caller to handle the error
-  }
+			NotificationManager.fromBackend(`Image edit failed: ${errorMessage}`);
+		}
+		throw error; // Re-throw to allow the caller to handle the error
+	}
 }

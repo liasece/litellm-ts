@@ -4,44 +4,40 @@
  * Detects realtime API responses and renders a specialized view.
  */
 
-import { parseMessages } from './prettyMessagesUtils';
-import { InputCard } from './InputCard';
-import { OutputCard } from './OutputCard';
-import { isRealtimeResponse, RealtimePrettyView } from './RealtimePrettyView';
+import { parseMessages } from "./prettyMessagesUtils";
+import { InputCard } from "./InputCard";
+import { OutputCard } from "./OutputCard";
+import { isRealtimeResponse, RealtimePrettyView } from "./RealtimePrettyView";
 
 interface PrettyMessagesViewProps {
-  request: any;
-  response: any;
-  metrics?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    input_cost?: number;
-    output_cost?: number;
-  };
+	request: any;
+	response: any;
+	metrics?: {
+		prompt_tokens?: number;
+		completion_tokens?: number;
+		input_cost?: number;
+		output_cost?: number;
+	};
 }
 
 export function PrettyMessagesView({ request, response, metrics }: PrettyMessagesViewProps) {
-  if (isRealtimeResponse(response)) {
-    return <RealtimePrettyView response={response} metrics={metrics} />;
-  }
+	if (isRealtimeResponse(response)) {
+		return <RealtimePrettyView response={response} metrics={metrics} />;
+	}
 
-  const { requestMessages, responseMessage } = parseMessages(request, response);
+	const { requestMessages, responseMessage } = parseMessages(request, response);
 
-  return (
-    <div>
-      {/* Input Card */}
-      <InputCard
-        messages={requestMessages}
-        promptTokens={metrics?.prompt_tokens}
-        inputCost={metrics?.input_cost}
-      />
+	return (
+		<div>
+			{/* Input Card */}
+			<InputCard messages={requestMessages} promptTokens={metrics?.prompt_tokens} inputCost={metrics?.input_cost} />
 
-      {/* Output Card */}
-      <OutputCard
-        message={responseMessage}
-        completionTokens={metrics?.completion_tokens}
-        outputCost={metrics?.output_cost}
-      />
-    </div>
-  );
+			{/* Output Card */}
+			<OutputCard
+				message={responseMessage}
+				completionTokens={metrics?.completion_tokens}
+				outputCost={metrics?.output_cost}
+			/>
+		</div>
+	);
 }

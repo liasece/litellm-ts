@@ -9,131 +9,125 @@ const removeEventListenerSpy = vi.spyOn(window, "removeEventListener");
 
 // Mock next/navigation
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(),
+	useSearchParams: () => new URLSearchParams(),
 }));
 
 // Mock networking with importOriginal so all exports are available
 vi.mock("./networking", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./networking")>();
-  return {
-    ...actual,
-    getProxyBaseUrl: vi.fn().mockReturnValue("http://localhost:4000"),
-    getProxyUISettings: vi.fn().mockResolvedValue({}),
-    keyInfoCall: vi.fn().mockResolvedValue({}),
-    modelAvailableCall: vi.fn().mockResolvedValue({ data: [] }),
-    userGetInfoV2: vi.fn().mockResolvedValue({
-      user_id: "user-1",
-      user_email: "test@example.com",
-      spend: 0,
-      max_budget: null,
-      models: [],
-      teams: [],
-    }),
-  };
+	const actual = await importOriginal<typeof import("./networking")>();
+	return {
+		...actual,
+		getProxyBaseUrl: vi.fn().mockReturnValue("http://localhost:4000"),
+		getProxyUISettings: vi.fn().mockResolvedValue({}),
+		keyInfoCall: vi.fn().mockResolvedValue({}),
+		modelAvailableCall: vi.fn().mockResolvedValue({ data: [] }),
+		userGetInfoV2: vi.fn().mockResolvedValue({
+			user_id: "user-1",
+			user_email: "test@example.com",
+			spend: 0,
+			max_budget: null,
+			models: [],
+			teams: [],
+		}),
+	};
 });
 
 // Mock jwt-decode to return a valid token structure
 vi.mock("jwt-decode", () => ({
-  jwtDecode: vi.fn().mockReturnValue({
-    key: "test-access-token",
-    user_role: "proxy_admin",
-    user_email: "test@example.com",
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  }),
+	jwtDecode: vi.fn().mockReturnValue({
+		key: "test-access-token",
+		user_role: "proxy_admin",
+		user_email: "test@example.com",
+		exp: Math.floor(Date.now() / 1000) + 3600,
+	}),
 }));
 
 // Mock cookie utility
 vi.mock("@/utils/cookieUtils", () => ({
-  clearTokenCookies: vi.fn(),
+	clearTokenCookies: vi.fn(),
 }));
 
 // Mock fetchTeams
 vi.mock("./common_components/fetch_teams", () => ({
-  fetchTeams: vi.fn(),
+	fetchTeams: vi.fn(),
 }));
 
 // Mock heavy child components to isolate UserDashboard behavior
 vi.mock("./organisms/create_key_button", () => ({
-  default: () => <div data-testid="create-key-mock" />,
+	default: () => <div data-testid="create-key-mock" />,
 }));
 
 vi.mock("./VirtualKeysPage/VirtualKeysTable", () => ({
-  VirtualKeysTable: () => <div data-testid="virtual-keys-table-mock" />,
+	VirtualKeysTable: () => <div data-testid="virtual-keys-table-mock" />,
 }));
 
 vi.mock("../app/onboarding/page", () => ({
-  default: () => <div data-testid="onboarding-mock" />,
+	default: () => <div data-testid="onboarding-mock" />,
 }));
 
 // Provide a token cookie so the component doesn't redirect to login
 Object.defineProperty(document, "cookie", {
-  writable: true,
-  value: "token=fake-jwt-token",
+	writable: true,
+	value: "token=fake-jwt-token",
 });
 
 import UserDashboard from "./user_dashboard";
 
 const defaultProps = {
-  userID: "user-1",
-  userRole: "Admin",
-  userEmail: "test@example.com",
-  teams: [] as any[],
-  keys: [] as any[],
-  setUserRole: vi.fn(),
-  setUserEmail: vi.fn(),
-  setTeams: vi.fn(),
-  setKeys: vi.fn(),
-  premiumUser: false,
-  organizations: [] as any[],
-  addKey: vi.fn(),
-  createClicked: false,
+	userID: "user-1",
+	userRole: "Admin",
+	userEmail: "test@example.com",
+	teams: [] as any[],
+	keys: [] as any[],
+	setUserRole: vi.fn(),
+	setUserEmail: vi.fn(),
+	setTeams: vi.fn(),
+	setKeys: vi.fn(),
+	premiumUser: false,
+	organizations: [] as any[],
+	addKey: vi.fn(),
+	createClicked: false,
 };
 
 function renderDashboard(props = {}) {
-  return renderWithProviders(<UserDashboard {...defaultProps} {...props} />);
+	return renderWithProviders(<UserDashboard {...defaultProps} {...props} />);
 }
 
 describe("UserDashboard beforeunload listener", () => {
-  beforeEach(() => {
-    addEventListenerSpy.mockClear();
-    removeEventListenerSpy.mockClear();
-  });
+	beforeEach(() => {
+		addEventListenerSpy.mockClear();
+		removeEventListenerSpy.mockClear();
+	});
 
-  afterEach(() => {
-    cleanup();
-  });
+	afterEach(() => {
+		cleanup();
+	});
 
-  it("registers exactly one beforeunload listener on mount", () => {
-    renderDashboard();
+	it("registers exactly one beforeunload listener on mount", () => {
+		renderDashboard();
 
-    const beforeUnloadCalls = addEventListenerSpy.mock.calls.filter(
-      ([event]) => event === "beforeunload",
-    );
-    expect(beforeUnloadCalls).toHaveLength(1);
-  });
+		const beforeUnloadCalls = addEventListenerSpy.mock.calls.filter(([event]) => event === "beforeunload");
+		expect(beforeUnloadCalls).toHaveLength(1);
+	});
 
-  it("does not add duplicate listeners on re-render", () => {
-    const { rerender } = renderWithProviders(<UserDashboard {...defaultProps} />);
+	it("does not add duplicate listeners on re-render", () => {
+		const { rerender } = renderWithProviders(<UserDashboard {...defaultProps} />);
 
-    addEventListenerSpy.mockClear();
+		addEventListenerSpy.mockClear();
 
-    // Re-render with different props to trigger a render cycle
-    rerender(<UserDashboard {...defaultProps} userEmail="updated@example.com" />);
+		// Re-render with different props to trigger a render cycle
+		rerender(<UserDashboard {...defaultProps} userEmail="updated@example.com" />);
 
-    const beforeUnloadCalls = addEventListenerSpy.mock.calls.filter(
-      ([event]) => event === "beforeunload",
-    );
-    expect(beforeUnloadCalls).toHaveLength(0);
-  });
+		const beforeUnloadCalls = addEventListenerSpy.mock.calls.filter(([event]) => event === "beforeunload");
+		expect(beforeUnloadCalls).toHaveLength(0);
+	});
 
-  it("removes the beforeunload listener on unmount", () => {
-    const { unmount } = renderDashboard();
+	it("removes the beforeunload listener on unmount", () => {
+		const { unmount } = renderDashboard();
 
-    unmount();
+		unmount();
 
-    const removeCalls = removeEventListenerSpy.mock.calls.filter(
-      ([event]) => event === "beforeunload",
-    );
-    expect(removeCalls).toHaveLength(1);
-  });
+		const removeCalls = removeEventListenerSpy.mock.calls.filter(([event]) => event === "beforeunload");
+		expect(removeCalls).toHaveLength(1);
+	});
 });
