@@ -19,10 +19,11 @@
  */
 
 import type { Router } from "express";
-import { eq, sql, and, desc, inArray, type SQL } from "drizzle-orm";
+import { eq, sql, and, desc, gt, inArray, type SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { LiteLLM_TeamTable } from "../db/schema/teams";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
@@ -70,6 +71,7 @@ type SessionGroupType = "claude_code_user_id" | "session_id";
 
 const CLAUDE_CODE_USER_ID_PATTERN =
 	/^user_[A-Za-z0-9_-]+_account_[A-Za-z0-9_-]*_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * /spend/logs/ui 响应包络 — 对齐 Python `ui_view_spend_logs` 返回。
@@ -281,6 +283,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const modelIdFilter = typeof req.query.model_id === "string" ? req.query.model_id : undefined;
 		const endUserFilter = typeof req.query.end_user === "string" ? req.query.end_user : undefined;
 		const statusFilter = typeof req.query.status_filter === "string" ? req.query.status_filter : undefined;
+		const includeActive = !isV2 && req.query.include_active === "true";
 		const keyAliasFilter = typeof req.query.key_alias === "string" ? req.query.key_alias : undefined;
 		const errorCodeFilter = typeof req.query.error_code === "string" ? req.query.error_code : undefined;
 		const errorMessageFilter = typeof req.query.error_message === "string" ? req.query.error_message : undefined;
@@ -311,10 +314,8 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		// Drizzle 会把 NULL 暴露给调用方（前端无需补 0 即可展示）。
 		const visibilityClause = await resolveSpendVisibilityClause(db, auth, effectiveTeamId);
 
-		const dataQuery = db.select(uiSpendLogSelection()).from(liteLLM_SpendLogs);
-
 		// where 条件（一次构造复用于 count + select）
-		const whereClause = and(
+		const spendLogsWhereClause = and(
 			buildUiSpendLogsWhereConditions({
 				startDate: startDateObj,
 				endDate: endDateObj,
@@ -335,27 +336,115 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			visibilityClause,
 		);
 
-		// count 查询：使用同一 whereClause，避免总数与明细不一致
-		const countRow = await db
+		// count 查询：使用同一 whereClause，避免总数与明细不一致。
+		const completedCountRow = await db
 			.select({ count: sql<number>`COUNT(*)` })
 			.from(liteLLM_SpendLogs)
-			.where(whereClause);
-		const total = toFiniteNumber(countRow[0]?.count);
+			.where(spendLogsWhereClause);
+		const completedTotal = toFiniteNumber(completedCountRow[0]?.count);
+		const activeWhereClause = includeActive
+			? and(
+					buildActiveRequestsWhereConditions({
+						startDate: startDateObj,
+						endDate: endDateObj,
+						teamId: effectiveTeamId,
+						apiKey: effectiveApiKey,
+						user: effectiveUserId,
+						requestId: requestIdFilter,
+						model: modelFilter,
+						modelId: modelIdFilter,
+						endUser: endUserFilter,
+						statusFilter: statusFilter,
+						minSpend: minSpendFilter ?? undefined,
+						maxSpend: maxSpendFilter ?? undefined,
+						keyAlias: keyAliasFilter,
+						errorCode: errorCodeFilter,
+						errorMessage: errorMessageFilter,
+					}),
+					resolveActiveRequestVisibilityClause(auth, effectiveTeamId),
+				)
+			: undefined;
+		const activeCountRow = activeWhereClause
+			? await db
+					.select({ count: sql<number>`COUNT(*)` })
+					.from(liteLLM_ActiveRequests)
+					.where(activeWhereClause)
+			: [];
+		const activeTotal = toFiniteNumber(activeCountRow[0]?.count);
+		const total = completedTotal + activeTotal;
 		const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
 
 		const sortColumn: Column = resolveSortColumn(sortBy);
 		const orderExpr = sortOrder === SpendSortOrder.ASC ? sql`${sortColumn} ASC` : sql`${sortColumn} DESC`;
+		const pageOffset = (page - 1) * pageSize;
+		let data: Record<string, unknown>[];
+		if (activeWhereClause && sortBy === "startTime") {
+			// startTime 是 ActiveRequests 与 SpendLogs 共有的真实字段，交给 PostgreSQL
+			// 在同一 MVCC 快照内 UNION ALL 后统一排序。request_id 用作时间相同时的
+			// 稳定排序键，避免两表在分页边界处产生不确定顺序。
+			const mixedOrderExpr =
+				sortOrder === SpendSortOrder.ASC
+					? sql`"startTime" ASC, "request_id" ASC`
+					: sql`"startTime" DESC, "request_id" DESC`;
+			const mixedRows = await db
+				.select(uiActiveRequestSelection())
+				.from(liteLLM_ActiveRequests)
+				.where(activeWhereClause)
+				.unionAll(db.select(uiSpendLogSelection()).from(liteLLM_SpendLogs).where(spendLogsWhereClause))
+				.orderBy(mixedOrderExpr)
+				.limit(pageSize)
+				.offset(pageOffset);
+			const normalizedRows = mixedRows.map((row) => normalizeUiSpendLogRow(row as Record<string, unknown>));
+			const completedRows = normalizedRows
+				.filter((row) => row.status !== "in_progress")
+				.map((row) => withSessionGroup(row));
+			const enrichedCompletedRows = await enrichSessionCounts(db, completedRows, visibilityClause);
+			let completedIndex = 0;
+			data = normalizedRows.map((row) => {
+				return row.status === "in_progress"
+					? { ...row, session_total_count: 1 }
+					: (enrichedCompletedRows[completedIndex++] ?? { ...row, session_total_count: 1 });
+			});
+		} else {
+			// spend / tokens / endTime / duration 等字段在 ActiveRequests 中没有最终值。
+			// 选择这些排序字段时进行中请求固定置顶，已完成请求再按所选字段排序。
+			const activeOffset = Math.min(pageOffset, activeTotal);
+			const activeRows =
+				activeWhereClause && activeOffset < activeTotal
+					? await db
+							.select(uiActiveRequestSelection())
+							.from(liteLLM_ActiveRequests)
+							.where(activeWhereClause)
+							.orderBy(desc(liteLLM_ActiveRequests.startTime))
+							.limit(pageSize)
+							.offset(activeOffset)
+					: [];
+			const completedLimit = Math.max(0, pageSize - activeRows.length);
+			const completedOffset = Math.max(0, pageOffset - activeTotal);
+			const completedRows =
+				completedLimit > 0
+					? await db
+							.select(uiSpendLogSelection())
+							.from(liteLLM_SpendLogs)
+							.where(spendLogsWhereClause)
+							.orderBy(orderExpr)
+							.limit(completedLimit)
+							.offset(completedOffset)
+					: [];
 
-		const rows = await dataQuery
-			.where(whereClause)
-			.orderBy(orderExpr)
-			.limit(pageSize)
-			.offset((page - 1) * pageSize);
-
-		const normalizedRows = rows.map((row) => withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)));
-
-		// UI 路径 enrichment session_total_count；v2 路径不 enrichment
-		const data = isV2 ? normalizedRows : await enrichSessionCounts(db, normalizedRows, visibilityClause);
+			const normalizedCompletedRows = completedRows.map((row) =>
+				withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)),
+			);
+			// UI 路径 enrichment session_total_count；v2 路径不 enrichment。
+			const completedData = isV2
+				? normalizedCompletedRows
+				: await enrichSessionCounts(db, normalizedCompletedRows, visibilityClause);
+			const normalizedActiveRows = activeRows.map((row) => ({
+				...normalizeUiSpendLogRow(row as Record<string, unknown>),
+				session_total_count: 1,
+			}));
+			data = [...normalizedActiveRows, ...completedData];
+		}
 
 		const response: UiSpendLogsPage = {
 			data: data,
@@ -415,16 +504,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const snapshot = parseSessionPosition(req.query.snapshot, "snapshot");
 		const cursor = parseSessionPosition(req.query.cursor, "cursor");
 
-		if (group.type === "claude_code_user_id") {
-			const scopedRows = await db.select(uiSpendLogSelection()).from(liteLLM_SpendLogs).where(visibilityClause);
-			const groupedRows = scopedRows
-				.map((row) => withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)))
-				.filter((row) => readSessionGroup(row)?.type === group.type && readSessionGroup(row)?.id === group.id)
-				.sort(compareSessionRows);
-			return paginateSessionRows(groupedRows, page, pageSize, snapshot, cursor);
-		}
-
-		const groupClause = eq(liteLLM_SpendLogs.session_id, group.id);
+		const groupClause = hasLegacySessionId
+			? eq(liteLLM_SpendLogs.session_id, group.id)
+			: eq(liteLLM_SpendLogs.session_group_key, sessionGroupKey(group));
 		const baseClause = and(groupClause, visibilityClause) as SQL;
 		let effectiveSnapshot = snapshot;
 		if (!effectiveSnapshot) {
@@ -443,6 +525,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			.from(liteLLM_SpendLogs)
 			.where(boundedClause);
 		const total = toFiniteNumber(countRows[0]?.count);
+		if (total === 0) {
+			effectiveSnapshot = null;
+		}
 		const legacySkip = cursor ? 0 : (page - 1) * pageSize;
 		const detailClause = cursor ? and(boundedClause, sessionCursorClause(cursor)) : boundedClause;
 		const rows = await db
@@ -592,6 +677,31 @@ async function resolveSpendVisibilityClause(
 }
 
 /**
+ * ActiveRequests 使用与 SpendLogs 相同的可见性决策。requestedTeamId 的成员校验已由
+ * resolveSpendVisibilityClause 完成，此处只把同一决策映射到活跃表列。
+ * @param auth
+ * @param requestedTeamId
+ */
+function resolveActiveRequestVisibilityClause(auth: UserAPIKeyAuth | undefined, requestedTeamId?: string): SQL {
+	if (auth && (auth.user_role === PROXY_ADMIN_ROLE || auth.user_role === PROXY_ADMIN_VIEWER_ROLE)) {
+		return requestedTeamId === undefined ? sql`TRUE` : eq(liteLLM_ActiveRequests.team_id, requestedTeamId);
+	}
+	if (requestedTeamId !== undefined) {
+		return eq(liteLLM_ActiveRequests.team_id, requestedTeamId);
+	}
+	if (isInternalUserRole(auth) && auth?.user_id) {
+		return eq(liteLLM_ActiveRequests.user, auth.user_id);
+	}
+	if (auth?.team_id) {
+		return eq(liteLLM_ActiveRequests.team_id, auth.team_id);
+	}
+	if (auth?.user_id) {
+		return eq(liteLLM_ActiveRequests.user, auth.user_id);
+	}
+	return sql`FALSE`;
+}
+
+/**
  * Python `_can_team_member_view_log`：team 存在且用户在 team admins 列表中。
  * @param db
  * @param auth
@@ -638,22 +748,59 @@ function uiSpendLogSelection() {
 		model: liteLLM_SpendLogs.model,
 		model_id: liteLLM_SpendLogs.model_id,
 		model_group: liteLLM_SpendLogs.model_group,
-		custom_llm_provider: liteLLM_SpendLogs.custom_llm_provider,
-		api_base: liteLLM_SpendLogs.api_base,
+		custom_llm_provider: sql<string | null>`${liteLLM_SpendLogs.custom_llm_provider}`,
+		api_base: sql<string | null>`${liteLLM_SpendLogs.api_base}`,
 		user: liteLLM_SpendLogs.user,
-		metadata: liteLLM_SpendLogs.metadata,
-		cache_hit: liteLLM_SpendLogs.cache_hit,
+		metadata: sql<unknown | null>`${liteLLM_SpendLogs.metadata}`,
+		cache_hit: sql<string | null>`${liteLLM_SpendLogs.cache_hit}`,
 		cache_key: liteLLM_SpendLogs.cache_key,
-		request_tags: liteLLM_SpendLogs.request_tags,
+		request_tags: sql<unknown | null>`${liteLLM_SpendLogs.request_tags}`,
 		team_id: liteLLM_SpendLogs.team_id,
 		organization_id: liteLLM_SpendLogs.organization_id,
 		end_user: liteLLM_SpendLogs.end_user,
 		requester_ip_address: liteLLM_SpendLogs.requester_ip_address,
 		session_id: liteLLM_SpendLogs.session_id,
-		status: liteLLM_SpendLogs.status,
+		session_group_key: liteLLM_SpendLogs.session_group_key,
+		status: sql<string | null>`${liteLLM_SpendLogs.status}`,
 		mcp_namespaced_tool_name: liteLLM_SpendLogs.mcp_namespaced_tool_name,
 		agent_id: liteLLM_SpendLogs.agent_id,
 		request_duration_ms: spendLogDurationSql(),
+	};
+}
+
+/** 活跃请求转成与 UI SpendLog 列表兼容的轻量行。 */
+function uiActiveRequestSelection() {
+	return {
+		request_id: liteLLM_ActiveRequests.request_id,
+		call_type: liteLLM_ActiveRequests.call_type,
+		api_key: liteLLM_ActiveRequests.api_key,
+		spend: sql<number>`0`,
+		total_tokens: sql<number>`0`,
+		prompt_tokens: sql<number>`0`,
+		completion_tokens: sql<number>`0`,
+		startTime: liteLLM_ActiveRequests.startTime,
+		endTime: sql<Date>`CURRENT_TIMESTAMP`,
+		completionStartTime: sql<Date | null>`NULL`,
+		model: liteLLM_ActiveRequests.model,
+		model_id: liteLLM_ActiveRequests.model_id,
+		model_group: liteLLM_ActiveRequests.model_group,
+		custom_llm_provider: sql<string | null>`''`,
+		api_base: sql<string | null>`''`,
+		user: liteLLM_ActiveRequests.user,
+		metadata: sql<unknown | null>`${liteLLM_ActiveRequests.metadata}`,
+		cache_hit: sql<string | null>`'False'`,
+		cache_key: sql<string | null>`NULL`,
+		request_tags: sql<unknown | null>`${liteLLM_ActiveRequests.request_tags}`,
+		team_id: liteLLM_ActiveRequests.team_id,
+		organization_id: liteLLM_ActiveRequests.organization_id,
+		end_user: liteLLM_ActiveRequests.end_user,
+		requester_ip_address: liteLLM_ActiveRequests.requester_ip_address,
+		session_id: sql<string | null>`NULL`,
+		session_group_key: sql<string | null>`NULL`,
+		status: sql<string | null>`${liteLLM_ActiveRequests.status}`,
+		mcp_namespaced_tool_name: sql<string | null>`NULL`,
+		agent_id: sql<string | null>`NULL`,
+		request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
 	};
 }
 
@@ -705,13 +852,55 @@ function readClaudeCodeUserId(metadata: unknown): string | null {
 }
 
 /**
+ * 部分客户端把稳定 session_id 放在 spend_logs_metadata.user_id 的 JSON 字符串内，
+ * 同时把顶层 session_id 设为每次请求的随机 UUID。
+ * @param metadata
+ */
+function readEmbeddedUserSessionId(metadata: unknown): string | null {
+	const parsed = parseSpendLogMetadata(metadata);
+	const spendMetadata = parsed?.spend_logs_metadata;
+	if (spendMetadata === null || typeof spendMetadata !== "object" || Array.isArray(spendMetadata)) {
+		return null;
+	}
+	let userMetadata = (spendMetadata as Record<string, unknown>).user_id;
+	if (typeof userMetadata === "string") {
+		try {
+			userMetadata = JSON.parse(userMetadata) as unknown;
+		} catch {
+			return null;
+		}
+	}
+	if (userMetadata === null || typeof userMetadata !== "object" || Array.isArray(userMetadata)) {
+		return null;
+	}
+	const sessionId = (userMetadata as Record<string, unknown>).session_id;
+	if (typeof sessionId !== "string") {
+		return null;
+	}
+	const normalized = sessionId.trim();
+	return SESSION_UUID_PATTERN.test(normalized) ? normalized : null;
+}
+
+/**
  * 统一从原始/规范化 SpendLog 行派生 Session group。
  * @param row
  */
 function withSessionGroup(row: Record<string, unknown>): Record<string, unknown> {
+	const persistedGroup = parsePersistedSessionGroupKey(row.session_group_key);
+	if (persistedGroup) {
+		return {
+			...row,
+			session_group_type: persistedGroup.type,
+			session_group_id: persistedGroup.id,
+		};
+	}
 	const claudeCodeUserId = readClaudeCodeUserId(row.metadata);
 	if (claudeCodeUserId) {
 		return { ...row, session_group_type: "claude_code_user_id", session_group_id: claudeCodeUserId };
+	}
+	const embeddedUserSessionId = readEmbeddedUserSessionId(row.metadata);
+	if (embeddedUserSessionId) {
+		return { ...row, session_group_type: "session_id", session_group_id: embeddedUserSessionId };
 	}
 	const sessionId = typeof row.session_id === "string" ? row.session_id.trim() : "";
 	return sessionId.length > 0
@@ -777,48 +966,6 @@ function sessionSnapshotClause(snapshot: SessionPosition): SQL {
 
 function sessionCursorClause(cursor: SessionPosition): SQL {
 	return sql`(${liteLLM_SpendLogs.startTime} > ${cursor.startTime} OR (${liteLLM_SpendLogs.startTime} = ${cursor.startTime} AND ${liteLLM_SpendLogs.request_id} > ${cursor.requestId}))`;
-}
-
-function compareSessionRows(left: Record<string, unknown>, right: Record<string, unknown>): number {
-	const leftPosition = sessionPositionFromNormalizedRow(left);
-	const rightPosition = sessionPositionFromNormalizedRow(right);
-	if (!leftPosition || !rightPosition) {
-		return leftPosition ? -1 : rightPosition ? 1 : 0;
-	}
-	const timeComparison = leftPosition.startTime.getTime() - rightPosition.startTime.getTime();
-	return timeComparison !== 0 ? timeComparison : leftPosition.requestId.localeCompare(rightPosition.requestId);
-}
-
-function isPositionAfter(left: SessionPosition, right: SessionPosition): boolean {
-	const timeComparison = left.startTime.getTime() - right.startTime.getTime();
-	return timeComparison > 0 || (timeComparison === 0 && left.requestId > right.requestId);
-}
-
-function paginateSessionRows(
-	rows: Record<string, unknown>[],
-	page: number,
-	pageSize: number,
-	snapshot: SessionPosition | null,
-	cursor: SessionPosition | null,
-): UiSpendLogsPage {
-	const rowPositions = rows
-		.map((row) => ({ row: row, position: sessionPositionFromNormalizedRow(row) }))
-		.filter((entry): entry is { row: Record<string, unknown>; position: SessionPosition } => entry.position !== null);
-	const effectiveSnapshot = snapshot ?? rowPositions.at(-1)?.position ?? null;
-	const bounded = effectiveSnapshot ? rowPositions.filter((entry) => !isPositionAfter(entry.position, effectiveSnapshot)) : rowPositions;
-	const afterCursor = cursor ? bounded.filter((entry) => isPositionAfter(entry.position, cursor)) : bounded;
-	const legacySkip = cursor ? 0 : (page - 1) * pageSize;
-	const pageEntries = afterCursor.slice(legacySkip, legacySkip + pageSize);
-	const hasMore = afterCursor.length > legacySkip + pageSize;
-	const nextCursor = hasMore ? (pageEntries.at(-1)?.position ?? null) : null;
-	return makeSessionPage(
-		pageEntries.map((entry) => entry.row),
-		bounded.length,
-		page,
-		pageSize,
-		effectiveSnapshot,
-		nextCursor,
-	);
 }
 
 function makeSessionPage(
@@ -940,8 +1087,58 @@ function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
 }
 
 /**
- * UI 路径 enrichment：按派生 Session group 批量查询总行数。
- * 普通请求复用 session_id 索引；Claude Code 使用严格 metadata user ID 表达式。
+ * ActiveRequests 对齐 Logs 列表过滤；错误过滤必然排除尚无最终错误信息的请求。
+ * @param args
+ */
+function buildActiveRequestsWhereConditions(args: UiSpendLogsWhereArgs) {
+	const conditions = [
+		sql`${liteLLM_ActiveRequests.startTime} >= ${args.startDate}`,
+		sql`${liteLLM_ActiveRequests.startTime} <= ${args.endDate}`,
+		gt(liteLLM_ActiveRequests.expires_at, new Date()),
+		eq(liteLLM_ActiveRequests.status, "in_progress"),
+	];
+	if (args.teamId !== undefined) {
+		conditions.push(eq(liteLLM_ActiveRequests.team_id, args.teamId));
+	}
+	if (args.apiKey !== undefined) {
+		conditions.push(eq(liteLLM_ActiveRequests.api_key, args.apiKey));
+	}
+	if (args.user !== undefined) {
+		conditions.push(eq(liteLLM_ActiveRequests.user, args.user));
+	}
+	if (args.requestId !== undefined) {
+		conditions.push(eq(liteLLM_ActiveRequests.request_id, args.requestId));
+	}
+	if (args.model !== undefined) {
+		conditions.push(eq(liteLLM_ActiveRequests.model, args.model));
+	}
+	if (args.modelId !== undefined) {
+		conditions.push(eq(liteLLM_ActiveRequests.model_id, args.modelId));
+	}
+	if (args.endUser !== undefined) {
+		conditions.push(eq(liteLLM_ActiveRequests.end_user, args.endUser));
+	}
+	if (args.statusFilter !== undefined && args.statusFilter !== "in_progress") {
+		conditions.push(sql`FALSE`);
+	}
+	if (args.minSpend !== undefined && args.minSpend > 0) {
+		conditions.push(sql`FALSE`);
+	}
+	if (args.maxSpend !== undefined && args.maxSpend < 0) {
+		conditions.push(sql`FALSE`);
+	}
+	if (args.keyAlias !== undefined) {
+		conditions.push(sql`${liteLLM_ActiveRequests.metadata}->>'user_api_key_alias' LIKE ${"%" + args.keyAlias + "%"}`);
+	}
+	if (args.errorCode !== undefined || args.errorMessage !== undefined) {
+		conditions.push(sql`FALSE`);
+	}
+	return and(...conditions);
+}
+
+/**
+ * UI 路径 enrichment：按持久化 Session group key 批量查询总行数。
+ * 普通 session_id 与 Claude Code user ID 使用同一个复合索引，不读取 metadata 全表。
  * 失败时记 warn 日志并退化为 session_total_count=1。
  * @param db
  * @param rows
@@ -953,45 +1150,26 @@ async function enrichSessionCounts(
 	visibilityClause: SQL,
 ): Promise<Record<string, unknown>[]> {
 	const groups = rows.map(readSessionGroup);
-	const sessionIds = Array.from(
-		new Set(groups.filter((group): group is SessionGroupRef => group?.type === "session_id").map((group) => group.id)),
+	const groupKeys = Array.from(
+		new Set(groups.filter((group): group is SessionGroupRef => group !== null).map((group) => sessionGroupKey(group))),
 	);
-	const claudeCodeUserIds = Array.from(
-		new Set(groups.filter((group): group is SessionGroupRef => group?.type === "claude_code_user_id").map((group) => group.id)),
-	);
-	if (sessionIds.length === 0 && claudeCodeUserIds.length === 0) {
+	if (groupKeys.length === 0) {
 		return rows.map((row) => ({ ...row, session_total_count: 1 }));
 	}
 
 	const countMap = new Map<string, number>();
 	try {
-		if (sessionIds.length > 0) {
-			const sessionCounts = await db
-				.select({
-					session_id: liteLLM_SpendLogs.session_id,
-					total: sql<number>`COUNT(*)`,
-				})
-				.from(liteLLM_SpendLogs)
-				.where(and(inArray(liteLLM_SpendLogs.session_id, sessionIds), visibilityClause))
-				.groupBy(liteLLM_SpendLogs.session_id);
-			for (const row of sessionCounts) {
-				if (typeof row.session_id === "string" && row.session_id.length > 0) {
-					countMap.set(sessionGroupKey({ type: "session_id", id: row.session_id }), toFiniteNumber(row.total));
-				}
-			}
-		}
-
-		if (claudeCodeUserIds.length > 0) {
-			const scopedMetadataRows = await db
-				.select({ metadata: liteLLM_SpendLogs.metadata })
-				.from(liteLLM_SpendLogs)
-				.where(visibilityClause);
-			for (const row of scopedMetadataRows) {
-				const userId = readClaudeCodeUserId(row.metadata);
-				if (userId && claudeCodeUserIds.includes(userId)) {
-					const key = sessionGroupKey({ type: "claude_code_user_id", id: userId });
-					countMap.set(key, (countMap.get(key) ?? 0) + 1);
-				}
+		const sessionCounts = await db
+			.select({
+				session_group_key: liteLLM_SpendLogs.session_group_key,
+				total: sql<number>`COUNT(*)`,
+			})
+			.from(liteLLM_SpendLogs)
+			.where(and(inArray(liteLLM_SpendLogs.session_group_key, groupKeys), visibilityClause))
+			.groupBy(liteLLM_SpendLogs.session_group_key);
+		for (const row of sessionCounts) {
+			if (typeof row.session_group_key === "string" && row.session_group_key.length > 0) {
+				countMap.set(row.session_group_key, toFiniteNumber(row.total));
 			}
 		}
 	} catch (err) {
@@ -1020,5 +1198,20 @@ function readSessionGroup(row: Record<string, unknown>): SessionGroupRef | null 
 }
 
 function sessionGroupKey(group: SessionGroupRef): string {
-	return `${group.type}\u0000${group.id}`;
+	return `${group.type === "claude_code_user_id" ? "c" : "s"}:${group.id}`;
+}
+
+function parsePersistedSessionGroupKey(value: unknown): SessionGroupRef | null {
+	if (typeof value !== "string" || value.length < 3) {
+		return null;
+	}
+	if (value.startsWith("c:")) {
+		const id = value.slice(2);
+		return CLAUDE_CODE_USER_ID_PATTERN.test(id) ? { type: "claude_code_user_id", id: id } : null;
+	}
+	if (value.startsWith("s:")) {
+		const id = value.slice(2);
+		return id.length > 0 ? { type: "session_id", id: id } : null;
+	}
+	return null;
 }

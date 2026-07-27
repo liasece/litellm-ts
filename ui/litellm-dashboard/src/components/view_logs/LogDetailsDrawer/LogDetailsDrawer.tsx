@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Drawer } from "antd";
+import { Alert, Button } from "antd";
 import {
   CheckOutlined,
   CopyOutlined,
@@ -17,8 +17,8 @@ import { sessionSpendLogsCall } from "../../networking";
 import { useQuery } from "@tanstack/react-query";
 import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import { normalizeGuardrailEntries } from "./utils";
-import { DRAWER_WIDTH } from "./constants";
 import { useLogDetails } from "@/app/(dashboard)/hooks/logDetails/useLogDetails";
+import SidePanel from "../../common_components/SidePanel";
 
 export interface LogDetailsDrawerProps {
   open: boolean;
@@ -129,6 +129,7 @@ export function LogDetailsDrawer({
     error: sessionError,
     refetch: refetchSessionLogs,
     isFetching: isFetchingSessionLogs,
+    isLoading: isLoadingSessionLogs,
   } = useQuery({
     queryKey: ["sessionLogs", sessionGroup?.type, sessionGroup?.id, teamId],
     queryFn: async () => {
@@ -138,6 +139,10 @@ export function LogDetailsDrawer({
         teamId,
       });
       const allSessionLogs: LogEntry[] = [...(firstPage.data || firstPage || [])];
+      const expectedTotal =
+        !Array.isArray(firstPage) && Number.isSafeInteger(firstPage.total) && Number(firstPage.total) >= 0
+          ? Number(firstPage.total)
+          : null;
       if (!Array.isArray(firstPage) && firstPage.next_cursor) {
         let snapshot = typeof firstPage.snapshot === "string" && firstPage.snapshot ? firstPage.snapshot : undefined;
         let cursor = firstPage.next_cursor;
@@ -174,16 +179,20 @@ export function LogDetailsDrawer({
           allSessionLogs.push(...(response.data || response || []));
         }
       }
-      return allSessionLogs
+      const uniqueSessionLogs = Array.from(
+        new Map(allSessionLogs.map((row) => [row.request_id, row])).values(),
+      );
+      if (expectedTotal !== null && uniqueSessionLogs.length !== expectedTotal) {
+        throw new Error(`Session logs incomplete: loaded ${uniqueSessionLogs.length} of ${expectedTotal}`);
+      }
+      return uniqueSessionLogs
         .map((row) => ({
           ...row,
           request_duration_ms: row.request_duration_ms ?? (Date.parse(row.endTime) - Date.parse(row.startTime)),
         }))
         .sort((a, b) => {
-          const aIsMcp = MCP_CALL_TYPES.includes(a.call_type) ? 1 : 0;
-          const bIsMcp = MCP_CALL_TYPES.includes(b.call_type) ? 1 : 0;
-          if (aIsMcp !== bIsMcp) return aIsMcp - bIsMcp;
-          return new Date(a.startTime).getTime() - new Date(b.startTime).getTime();
+          const timeDifference = new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
+          return timeDifference !== 0 ? timeDifference : b.request_id.localeCompare(a.request_id);
         });
     },
     enabled: Boolean(open && isSessionMode && sessionGroup && accessToken),
@@ -302,12 +311,10 @@ export function LogDetailsDrawer({
   if (!currentLog || !enrichedLog) return null;
 
   return (
-    <Drawer
+    <SidePanel
       title={null}
-      placement="right"
       onClose={onClose}
       open={open}
-      width={DRAWER_WIDTH}
       closable={false}
       mask={true}
       maskClosable={true}
@@ -365,34 +372,40 @@ export function LogDetailsDrawer({
                 </div>
               </div>
               <div className="mt-1 text-[11px] text-slate-500 font-mono">
-                {logsForList.length} req
-                {[
-                  isSessionMode
-                    ? llmCount
-                    : logsForList.filter(
-                        (row) =>
-                          !MCP_CALL_TYPES.includes(row.call_type) && !AGENT_CALL_TYPES.includes(row.call_type),
-                      ).length,
-                  isSessionMode ? agentCount : logsForList.filter((row) => AGENT_CALL_TYPES.includes(row.call_type)).length,
-                  isSessionMode ? mcpCount : logsForList.filter((row) => MCP_CALL_TYPES.includes(row.call_type)).length,
-                ].map((count, i) => {
-                  const label = [" LLM", " Agent", " MCP"][i];
-                  return count > 0 ? (
-                    <span key={label}>
-                      <span className="mx-1.5">·</span>
-                      {count}
-                      {label}
-                    </span>
-                  ) : null;
-                })}
-                <span className="mx-1.5">·</span>
-                {isSessionMode
-                  ? getSpendString(totalSessionCost)
-                  : getSpendString(currentLog.spend || 0)}
-                {isSessionMode && (
+                {isSessionMode && isLoadingSessionLogs ? (
+                  <span>Loading all session logs…</span>
+                ) : (
                   <>
+                    {logsForList.length} req
+                    {[
+                      isSessionMode
+                        ? llmCount
+                        : logsForList.filter(
+                            (row) =>
+                              !MCP_CALL_TYPES.includes(row.call_type) && !AGENT_CALL_TYPES.includes(row.call_type),
+                          ).length,
+                      isSessionMode
+                        ? agentCount
+                        : logsForList.filter((row) => AGENT_CALL_TYPES.includes(row.call_type)).length,
+                      isSessionMode ? mcpCount : logsForList.filter((row) => MCP_CALL_TYPES.includes(row.call_type)).length,
+                    ].map((count, i) => {
+                      const label = [" LLM", " Agent", " MCP"][i];
+                      return count > 0 ? (
+                        <span key={label}>
+                          <span className="mx-1.5">·</span>
+                          {count}
+                          {label}
+                        </span>
+                      ) : null;
+                    })}
                     <span className="mx-1.5">·</span>
-                    {sessionDurationSeconds}s
+                    {isSessionMode ? getSpendString(totalSessionCost) : getSpendString(currentLog.spend || 0)}
+                    {isSessionMode && (
+                      <>
+                        <span className="mx-1.5">·</span>
+                        {sessionDurationSeconds}s
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -482,6 +495,6 @@ export function LogDetailsDrawer({
             </div>
           </div>
         </div>
-    </Drawer>
+    </SidePanel>
   );
 }

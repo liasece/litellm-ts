@@ -1,21 +1,21 @@
-import React, { useState, useEffect } from "react";
-
-import { Button } from "@tremor/react";
+import { useCallback, useEffect, useState } from "react";
 import { Modal } from "antd";
-import { getPromptsList, PromptSpec, ListPromptsResponse, deletePromptCall } from "./networking";
+import { deletePromptCall, getPromptsList, type PromptSpec } from "./networking";
 import PromptTable from "./prompts/prompt_table";
 import PromptInfoView from "./prompts/prompt_info";
 import AddPromptForm from "./prompts/add_prompt_form";
 import PromptEditorView from "./prompts/prompt_editor_view";
 import NotificationsManager from "./molecules/notifications_manager";
 import { isAdminRole } from "@/utils/roles";
+import PromptsToolbar from "./prompts/PromptsToolbar";
+import PromptDeleteModal from "./prompts/prompt_details/PromptDeleteModal";
 
 interface PromptsProps {
   accessToken: string | null;
   userRole?: string;
 }
 
-const PromptsPanel: React.FC<PromptsProps> = ({ accessToken, userRole }) => {
+const PromptsPanel = ({ accessToken, userRole }: PromptsProps) => {
   const [promptsList, setPromptsList] = useState<PromptSpec[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedPromptId, setSelectedPromptId] = useState<string | null>(null);
@@ -27,26 +27,26 @@ const PromptsPanel: React.FC<PromptsProps> = ({ accessToken, userRole }) => {
 
   const isAdmin = userRole ? isAdminRole(userRole) : false;
 
-  const fetchPrompts = async () => {
+  const fetchPrompts = useCallback(async () => {
     if (!accessToken) {
+      setPromptsList([]);
       return;
     }
 
     setIsLoading(true);
     try {
-      const response: ListPromptsResponse = await getPromptsList(accessToken);
-      console.log(`prompts: ${JSON.stringify(response)}`);
+      const response = await getPromptsList(accessToken);
       setPromptsList(response.prompts);
-    } catch (error) {
-      console.error("Error fetching prompts:", error);
+    } catch {
+      NotificationsManager.fromBackend("Failed to load prompts");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [accessToken]);
 
   useEffect(() => {
-    fetchPrompts();
-  }, [accessToken]);
+    void fetchPrompts();
+  }, [fetchPrompts]);
 
   const handlePromptClick = (promptId: string) => {
     setSelectedPromptId(promptId);
@@ -99,9 +99,8 @@ const PromptsPanel: React.FC<PromptsProps> = ({ accessToken, userRole }) => {
     try {
       await deletePromptCall(accessToken, promptToDelete.id);
       NotificationsManager.success(`Prompt "${promptToDelete.name}" deleted successfully`);
-      fetchPrompts(); // Refresh the list
-    } catch (error) {
-      console.error("Error deleting prompt:", error);
+      await fetchPrompts();
+    } catch {
       NotificationsManager.fromBackend("Failed to delete prompt");
     } finally {
       setIsDeleting(false);
@@ -115,16 +114,11 @@ const PromptsPanel: React.FC<PromptsProps> = ({ accessToken, userRole }) => {
 
   return (
     <div className="w-full mx-auto flex-auto overflow-y-auto m-8 p-2">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex gap-2">
-            <Button onClick={handleAddPrompt} disabled={!accessToken}>
-              + Add New Prompt
-            </Button>
-              <Button onClick={handleAddPromptFromFile} disabled={!accessToken} variant="secondary">
-                Upload .prompt File
-              </Button>
-            </div>
-          </div>
+      <PromptsToolbar
+        disabled={!accessToken}
+        onCreate={handleAddPrompt}
+        onUpload={handleAddPromptFromFile}
+      />
 
           <PromptTable
             promptsList={promptsList}
@@ -170,20 +164,13 @@ const PromptsPanel: React.FC<PromptsProps> = ({ accessToken, userRole }) => {
         onSuccess={handleSuccess}
       />
 
-      {promptToDelete && (
-        <Modal
-          title="Delete Prompt"
-          open={promptToDelete !== null}
-          onOk={handleDeleteConfirm}
-          onCancel={handleDeleteCancel}
-          confirmLoading={isDeleting}
-          okText="Delete"
-          okButtonProps={{ danger: true }}
-        >
-          <p>Are you sure you want to delete prompt: {promptToDelete.name} ?</p>
-          <p>This action cannot be undone.</p>
-        </Modal>
-      )}
+      <PromptDeleteModal
+        open={promptToDelete !== null}
+        promptId={promptToDelete?.name ?? ""}
+        deleting={isDeleting}
+        onConfirm={() => void handleDeleteConfirm()}
+        onCancel={handleDeleteCancel}
+      />
     </div>
   );
 };

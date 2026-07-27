@@ -1,9 +1,10 @@
-import { Drawer, Tag, Typography } from "antd";
+import { Tag, Typography } from "antd";
 import { CloseOutlined, CopyOutlined, CheckOutlined } from "@ant-design/icons";
 import { useState, useCallback } from "react";
 import moment from "moment";
 import { AuditLogEntry } from "../columns";
 import DefaultProxyAdminTag from "../../common_components/DefaultProxyAdminTag";
+import SidePanel from "../../common_components/SidePanel";
 
 const { Text } = Typography;
 
@@ -189,9 +190,7 @@ export function AuditLogDrawer({ open, onClose, log }: AuditLogDrawerProps) {
   const actionColor = ACTION_COLOR[log.action] ?? "default";
 
   return (
-    <Drawer
-      placement="right"
-      width="60%"
+    <SidePanel
       open={open}
       onClose={onClose}
       closable={false}
@@ -255,6 +254,6 @@ export function AuditLogDrawer({ open, onClose, log }: AuditLogDrawerProps) {
         {/* Diff */}
         <DiffSection log={log} />
       </div>
-    </Drawer>
+    </SidePanel>
   );
 }

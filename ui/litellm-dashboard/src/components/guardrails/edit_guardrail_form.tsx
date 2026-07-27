@@ -177,7 +177,6 @@ const EditGuardrailForm: React.FC<EditGuardrailFormProps> = ({
 				throw new Error("No access token available");
 			}
 
-			console.log("Sending guardrail update data:", JSON.stringify(guardrailData));
 
 			// Call the update endpoint
 			const url = `/guardrails/${guardrailId}`;

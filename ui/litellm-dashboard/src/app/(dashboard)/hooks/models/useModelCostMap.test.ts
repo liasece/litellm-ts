@@ -141,4 +141,11 @@ describe("useModelCostMap", () => {
     expect(result.current).toHaveProperty("isSuccess");
     expect(result.current).toHaveProperty("error");
   });
+
+  it("should not fetch the cost map when explicitly disabled", () => {
+    const { result } = renderHook(() => useModelCostMap(false), { wrapper });
+
+    expect(result.current.isFetched).toBe(false);
+    expect(modelCostMap).not.toHaveBeenCalled();
+  });
 });

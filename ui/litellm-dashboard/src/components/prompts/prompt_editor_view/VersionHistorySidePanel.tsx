@@ -1,6 +1,7 @@
-import { Drawer, List, Skeleton, Tag, Typography } from "antd";
+import { List, Skeleton, Tag, Typography } from "antd";
 import React, { useEffect, useState } from "react";
 import { getPromptVersions, PromptSpec } from "../../networking";
+import SidePanel from "../../common_components/SidePanel";
 
 const { Text } = Typography;
 
@@ -67,12 +68,10 @@ const VersionHistorySidePanel: React.FC<VersionHistorySidePanelProps> = ({
 	};
 
 	return (
-		<Drawer
+		<SidePanel
 			title="Version History"
-			placement="right"
 			onClose={onClose}
 			open={isOpen}
-			width={400}
 			zIndex={1100}
 			keyboard
 			mask={false} // Allow interacting with the main editor while drawer is open
@@ -137,7 +136,7 @@ const VersionHistorySidePanel: React.FC<VersionHistorySidePanelProps> = ({
 					}}
 				/>
 			)}
-		</Drawer>
+		</SidePanel>
 	);
 };
 

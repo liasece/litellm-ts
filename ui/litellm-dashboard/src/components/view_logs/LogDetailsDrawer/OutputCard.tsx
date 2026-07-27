@@ -96,10 +96,10 @@ export function OutputCard({ message, completionTokens, outputCost }: OutputCard
             label="ASSISTANT"
             content={message.content}
             toolCalls={message.toolCalls}
+            parts={message.parts}
           />
         </div>
       </div>
     </div>
   );
 }
-

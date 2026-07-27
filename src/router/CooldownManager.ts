@@ -359,7 +359,7 @@ export class CooldownManager {
 		sameGroupDeploymentCount = 2,
 		errorCategory?: CooldownErrorCategory | string,
 		originalException?: Error,
-		deploymentAllowedFails?: number | AllowedFailsPolicy,
+		deploymentAllowedFails?: number | AllowedFailsPolicy | null,
 	): boolean {
 		if (this._disableCooldowns) {
 			return false;
@@ -388,7 +388,7 @@ export class CooldownManager {
 			return true;
 		}
 		// GAP 3 — Stage 2: fallback 到 allowed_fails policy；DIFF-RT-03 支持 deployment-level override
-		const effectiveAllowedFails = deploymentAllowedFails ?? this._allowedFails;
+		const effectiveAllowedFails = deploymentAllowedFails === undefined ? this._allowedFails : deploymentAllowedFails;
 		// GAP 2: 优先传 originalException 让下游通过 instanceof 派发子类（如 CW → BadRequestError）
 		const errFromStr = originalException ?? (exceptionStr ? new Error(exceptionStr) : undefined);
 		return this.shouldCooldownByAllowedFails(deploymentName, errFromStr, errorCategory, effectiveAllowedFails);

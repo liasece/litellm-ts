@@ -186,16 +186,22 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		header: "Status",
 		accessorKey: "metadata.status",
 		cell: (info: any) => {
-			const status = info.getValue() || "Success";
-			const isSuccess = status.toLowerCase() !== "failure";
+			const rowStatus = info.row.original.status;
+			const status = String(info.getValue() || rowStatus || "success").toLowerCase();
+			const isInProgress = status === "in_progress";
+			const isFailure = status === "failure";
 
 			return (
 				<span
-					className={`px-2 py-1 rounded-md text-xs font-medium inline-block text-center w-16 ${
-						isSuccess ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+					className={`px-2 py-1 rounded-md text-xs font-medium inline-block text-center min-w-16 ${
+						isInProgress
+							? "bg-amber-100 text-amber-800"
+							: isFailure
+								? "bg-red-100 text-red-800"
+								: "bg-green-100 text-green-800"
 					}`}
 				>
-					{isSuccess ? "Success" : "Failure"}
+					{isInProgress ? "In Progress" : isFailure ? "Failure" : "Success"}
 				</span>
 			);
 		},

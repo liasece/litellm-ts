@@ -76,7 +76,10 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		optionalParams["prompt"] = prompt;
 
 		const startTime = new Date();
-		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body);
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body, {
+			callType: CallType.ACompletion,
+			startTime: startTime,
+		});
 		const requestId = spendReservation?.requestId;
 		try {
 			spendReservation?.heartbeat?.markProviderStarted();
@@ -102,7 +105,7 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 				if (req.auth && requestId) {
 					await trackSpendLog(
 						db,
-						buildSpendLogFromRequest({
+						await buildSpendLogFromRequest({
 							req: req,
 							auth: req.auth,
 							requestId: requestId,
@@ -213,7 +216,7 @@ async function handleStreamingCompletion(
 		try {
 			await trackSpendLog(
 				db,
-				buildSpendLogFromRequest({
+				await buildSpendLogFromRequest({
 					req: req,
 					auth: req.auth,
 					requestId: requestId,
@@ -257,7 +260,7 @@ async function recordProviderFailure(
 	try {
 		await trackSpendLog(
 			db,
-			buildSpendLogFromRequest({
+			await buildSpendLogFromRequest({
 				req: req,
 				auth: req.auth,
 				requestId: requestId,

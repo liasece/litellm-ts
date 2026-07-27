@@ -191,11 +191,14 @@ async function inspectMigrationState(
 			);
 		}
 	}
-	if (registered.rows.length !== localMigrations.length) {
-		throw new ReadOnlyPreflightError("migrations", "PARTIAL_MIGRATION_STATE", "Registered migrations are incomplete");
+	if (registered.rows.length > localMigrations.length) {
+		throw new ReadOnlyPreflightError("migrations", "PARTIAL_MIGRATION_STATE", "Database migrations are ahead of local artifacts");
 	}
 	for (const [index, migration] of localMigrations.entries()) {
 		const record = registered.rows[index];
+		if (!record) {
+			break;
+		}
 		if (record?.hash !== migration.hash || Number(record.created_at) !== migration.folderMillis) {
 			throw new ReadOnlyPreflightError("migrations", "MIGRATION_ORDER_MISMATCH", "Registered migration order is invalid");
 		}

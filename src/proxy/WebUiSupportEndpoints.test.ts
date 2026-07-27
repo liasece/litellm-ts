@@ -495,6 +495,26 @@ describe("WebUiSupport 契约", () => {
 			expect(stored["nested"]).toEqual({ keep: 1, drop: 2, add: 3 });
 		});
 
+		it("/config/update 对 model_group_alias 使用整体替换，允许删除旧 alias", async () => {
+			const { db, store } = makeMockConfigDb({
+				router_settings: {
+					num_retries: 2,
+					model_group_alias: { keep: "model-a", remove: "model-b" },
+				},
+			});
+			await dbConfigProvider.initialize(db as never);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+
+			const res = await request(app)
+				.post("/config/update")
+				.send({ router_settings: { model_group_alias: { keep: "model-c" } } });
+			expect(res.status).toBe(200);
+			expect(store.get("router_settings")).toEqual({
+				num_retries: 2,
+				model_group_alias: { keep: "model-c" },
+			});
+		});
+
 		it("/config/update 剔除 model_list 且写入 router_settings（对齐 Python save_config）", async () => {
 			const { db, store } = makeMockConfigDb();
 			await dbConfigProvider.initialize(db as never);
@@ -605,9 +625,9 @@ describe("WebUiSupport 契约", () => {
 				ui_theme_config: { logo_url: "https://example.com/logo.png" },
 			});
 			// 环境变量同步（对齐 Python）
-			expect(process.env.UI_LOGO_PATH).toBe("https://example.com/logo.png");
+			expect(process.env.UI_LOGO_PATH).toBeUndefined();
 
-			// 公开读端点经 dbConfigProvider 读取，写后 refreshNow 立即生效
+			// 公开读端点每次经 dbConfigProvider 直接读取数据库。
 			const publicApp = buildPublicApp(makeConfig());
 			const themeRes = await request(publicApp).get("/get/ui_theme_settings");
 			expect(themeRes.status).toBe(200);
@@ -1842,8 +1862,8 @@ describe("ModelsPageSupport 契约", () => {
 });
 
 describe("批次 C — DB 配置进运行时", () => {
-	it("/config/update 写 router_settings 后立即热应用 Router（fallback 链切换，批次 C1）", async () => {
-		const { db } = makeMockConfigDb();
+	it("/config/update 只写数据库，后续请求快照读取新 fallback", async () => {
+		const { db, store } = makeMockConfigDb();
 		await dbConfigProvider.initialize(db as never);
 		const litellmRouter = new LiteLLMRouter({
 			model_list: [{ model_name: "gpt-4o", litellm_params: { model: "openai/gpt-4o" } }],
@@ -1858,7 +1878,8 @@ describe("批次 C — DB 配置进运行时", () => {
 			.send({ router_settings: { fallbacks: [{ "gpt-4o": ["gpt-4o-mini"] }] } });
 
 		expect(res.status).toBe(200);
-		expect(litellmRouter.getNextFallback("gpt-4o", 0)).toBe("gpt-4o-mini");
+		expect(store.get("router_settings")).toEqual({ fallbacks: [{ "gpt-4o": ["gpt-4o-mini"] }] });
+		expect(litellmRouter.getNextFallback("gpt-4o", 0)).toBeNull();
 	});
 
 	it("/router/settings current_values 反映 DB router_settings 覆盖（批次 C4）", async () => {

@@ -11,9 +11,10 @@ const { Text } = Typography;
 interface SimpleToolCallBlockProps {
   tool: ToolCall;
   compact?: boolean;
+  badge?: string;
 }
 
-export function SimpleToolCallBlock({ tool, compact = false }: SimpleToolCallBlockProps) {
+export function SimpleToolCallBlock({ tool, compact = false, badge = "Function call" }: SimpleToolCallBlockProps) {
   return (
     <div
       style={{
@@ -41,7 +42,7 @@ export function SimpleToolCallBlock({ tool, compact = false }: SimpleToolCallBlo
           borderRadius: 3,
         }}
       >
-        function
+        {badge}
       </div>
 
       <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>

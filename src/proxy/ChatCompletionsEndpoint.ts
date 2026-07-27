@@ -249,7 +249,9 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		const abortWebSearch = (): void => webSearchAbortController.abort();
 		req.once("aborted", abortWebSearch);
 		res.once("close", abortWebSearch);
-		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body);
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body, {
+			callType: CallType.ACompletion,
+		});
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 		const modelResolutionTrace = createModelResolutionTraceCollector();
@@ -297,7 +299,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 					const usage = (result as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
 					if (req.auth) {
 						const endTime = new Date();
-						const spendLog = buildSpendLogFromRequest({
+						const spendLog = await buildSpendLogFromRequest({
 							req: req,
 							requestId: spendRequestId,
 							auth: req.auth,
@@ -348,7 +350,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 					}
 					if (req.auth) {
 						const endTime = new Date();
-						const failureSpendLog = buildSpendLogFromRequest({
+						const failureSpendLog = await buildSpendLogFromRequest({
 							req: req,
 							requestId: spendRequestId,
 							auth: req.auth,
@@ -498,7 +500,7 @@ async function handleStreamingResponse(
 				}
 				calculateAndSetCost(transformed, model, spendInfo.customCostPerToken);
 				if (req.auth) {
-					const spendLog = buildSpendLogFromRequest({
+					const spendLog = await buildSpendLogFromRequest({
 						req: req,
 						requestId: spendRequestId,
 						auth: req.auth,
@@ -590,7 +592,7 @@ async function handleStreamingResponse(
 									total_tokens: accumulator.estimatedCompletionTokens,
 								}
 							: undefined);
-					const spendLog = buildSpendLogFromRequest({
+					const spendLog = await buildSpendLogFromRequest({
 						req: req,
 						requestId: spendRequestId,
 						auth: req.auth,
@@ -670,10 +672,10 @@ async function handleStreamingResponse(
 			: ApiError.noDeploymentsAvailable(model, litellmRouter.getNoAvailableDeploymentInfo(model)));
 	if (req.auth && spendRequestId) {
 		try {
-			await spendLifecycle.finalize(() =>
+			await spendLifecycle.finalize(async () =>
 				trackSpendLog(
 					db,
-					buildSpendLogFromRequest({
+					await buildSpendLogFromRequest({
 						req: req,
 						auth: req.auth,
 						requestId: spendRequestId,

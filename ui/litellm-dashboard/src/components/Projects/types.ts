@@ -12,3 +12,13 @@ export interface Project {
   updatedAt: string;
   updatedBy: string;
 }
+
+export interface ProjectTeamInfo {
+  team_id: string;
+  team_alias?: string;
+  models?: string[];
+  max_budget?: number | null;
+  budget_duration?: string | null;
+  spend?: number;
+  members_with_roles?: { user_id: string; role: string }[];
+}

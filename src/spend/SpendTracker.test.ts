@@ -844,11 +844,11 @@ describe("SpendTracker API key sanitization", () => {
 		}) as unknown as Parameters<typeof trackSpendLog>[0];
 	}
 
-	it("buildSpendLogFromRequest 输出 hash key 且 proxy_server_request 不含明文 key", () => {
+	it("buildSpendLogFromRequest 输出 hash key 且 proxy_server_request 不含明文 key", async () => {
 		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
 		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";
 		try {
-			const spendLog = buildSpendLogFromRequest({
+			const spendLog = await buildSpendLogFromRequest({
 				auth: { api_key: rawApiKey },
 				callType: CallType.ACompletion,
 				endTime: new Date("2026-01-01T00:00:01.000Z"),
@@ -1154,8 +1154,8 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		} as unknown as Request;
 	}
 
-	it("metadata 键集对齐 Python：team_alias / model_map_information / null 占位键", () => {
-		const spendLog = buildSpendLogFromRequest({
+	it("metadata 键集对齐 Python：team_alias / model_map_information / null 占位键", async () => {
+		const spendLog = await buildSpendLogFromRequest({
 			auth: { api_key: "sk-test", team_id: "team-1", team_alias: "team-alpha", project_id: "project-1" },
 			callType: CallType.AMessages,
 			endTime: new Date("2026-01-01T00:00:01.000Z"),
@@ -1203,9 +1203,9 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(spendLog.cache_hit).toBe(false);
 	});
 
-	it("规范化并防御性复制 model_resolution_chain，与 fallback_models 语义分离", () => {
+	it("规范化并防御性复制 model_resolution_chain，与 fallback_models 语义分离", async () => {
 		const sourcePath = ["alias-a", "alias-b", "model-a"];
-		const spendLog = buildSpendLogFromRequest({
+		const spendLog = await buildSpendLogFromRequest({
 			callType: CallType.AMessages,
 			endTime: new Date("2026-01-01T00:00:01.000Z"),
 			model: "alias-a",
@@ -1224,8 +1224,8 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(spendLog.metadata?.fallback_models).toEqual(["alias-a", "fallback-alias"]);
 	});
 
-	it("无有效 alias 时 model_resolution_chain 落 null", () => {
-		const spendLog = buildSpendLogFromRequest({
+	it("无有效 alias 时 model_resolution_chain 落 null", async () => {
+		const spendLog = await buildSpendLogFromRequest({
 			callType: CallType.AMessages,
 			endTime: new Date("2026-01-01T00:00:01.000Z"),
 			model: "plain-model",
@@ -1235,8 +1235,8 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(spendLog.metadata?.model_resolution_chain).toBeNull();
 	});
 
-	it("无 team_alias 时 user_api_key_team_alias 落 null", () => {
-		const spendLog = buildSpendLogFromRequest({
+	it("无 team_alias 时 user_api_key_team_alias 落 null", async () => {
+		const spendLog = await buildSpendLogFromRequest({
 			auth: { api_key: "sk-test" },
 			callType: CallType.AMessages,
 			endTime: new Date("2026-01-01T00:00:01.000Z"),

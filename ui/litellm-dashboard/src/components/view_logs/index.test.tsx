@@ -240,6 +240,16 @@ describe("Logs columns", () => {
 		);
 	};
 
+	it("renders an explicit In Progress status instead of treating it as Success", () => {
+		renderColumnCell("Status", {
+			...baseLogEntry,
+			status: "in_progress",
+			metadata: { status: "in_progress" },
+		});
+
+		expect(screen.getByText("In Progress")).toHaveClass("bg-amber-100", "text-amber-800");
+	});
+
 	it("removes only the matching provider prefix while preserving the original model tooltip and provider icon", async () => {
 		const user = userEvent.setup();
 		renderColumnCell("Model", {
@@ -400,11 +410,55 @@ describe("SpendLogsTable", () => {
 		mockFilters = {};
 		mockFilteredLogs = { data: [], total: 0, page: 1, page_size: 50, total_pages: 1 };
 		mockDrawerProps.current = null;
-		// Clear sessionStorage to avoid isLiveTail state from previous tests
+		// Clear persisted Live Tail state from previous tests.
 		sessionStorage.clear();
 	});
 
-	it("相同 Claude Code group 按 type + id 去重并向 Drawer 传完整 group", async () => {
+	it("Live Tail 默认每 2 秒刷新，并提供全部刷新间隔", async () => {
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		const intervalSelect = await screen.findByLabelText("Live Tail refresh interval");
+		expect(intervalSelect).toHaveValue("2000");
+		expect(Array.from((intervalSelect as HTMLSelectElement).options).map((option) => option.text)).toEqual([
+			"关",
+			"2s",
+			"10s",
+			"30s",
+			"1m",
+			"5m",
+		]);
+		expect(screen.getByText("Auto-refreshing every 2s")).toBeInTheDocument();
+		await waitFor(() => expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("2000"));
+	});
+
+	it("Live Tail 可以切换刷新间隔或关闭", async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		const intervalSelect = await screen.findByLabelText("Live Tail refresh interval");
+		await user.selectOptions(intervalSelect, "10000");
+		expect(intervalSelect).toHaveValue("10000");
+		expect(screen.getByText("Auto-refreshing every 10s")).toBeInTheDocument();
+		await waitFor(() => expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("10000"));
+
+		await user.selectOptions(intervalSelect, "0");
+		expect(intervalSelect).toHaveValue("0");
+		expect(screen.queryByText(/Auto-refreshing every/)).not.toBeInTheDocument();
+		await waitFor(() => expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("0"));
+	});
+
+	it("旧 Live Tail 关闭状态会迁移为新的关闭间隔", async () => {
+		sessionStorage.setItem("isLiveTail", "false");
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		expect(await screen.findByLabelText("Live Tail refresh interval")).toHaveValue("0");
+		await waitFor(() => {
+			expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("0");
+			expect(sessionStorage.getItem("isLiveTail")).toBeNull();
+		});
+	});
+
+	it("相同 Claude Code group 的每条请求都显示，点击后向 Drawer 传完整 group", async () => {
 		const user = userEvent.setup();
 		const groupId = "user_device_account__session_123e4567-e89b-12d3-a456-426614174000";
 		mockFilteredLogs = {
@@ -435,9 +489,58 @@ describe("SpendLogsTable", () => {
 
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 
-		expect(screen.queryByText("req-mcp")).not.toBeInTheDocument();
+		expect(await screen.findByText("req-mcp")).toBeInTheDocument();
+		expect(await screen.findByText("req-llm")).toBeInTheDocument();
 		await user.click(await screen.findByText("req-llm"));
 		expect(mockDrawerProps.current.sessionGroup).toEqual({ type: "claude_code_user_id", id: groupId });
+	});
+
+	it("即使 session_total_count 为 1，点击带 session 的日志仍以 Session 模式打开 Drawer", async () => {
+		const user = userEvent.setup();
+		mockFilteredLogs = {
+			data: [
+				{
+					...baseLogEntry,
+					request_id: "req-single-session",
+					session_id: "session-single",
+					session_total_count: 1,
+				},
+			],
+			total: 1,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		};
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+		await user.click(await screen.findByText("req-single-session"));
+
+		expect(mockDrawerProps.current.sessionGroup).toEqual({ type: "session_id", id: "session-single" });
+	});
+
+	it("进行中的日志不可打开尚不存在的详情 Drawer", async () => {
+		const user = userEvent.setup();
+		mockFilteredLogs = {
+			data: [
+				{
+					...baseLogEntry,
+					request_id: "req-active",
+					status: "in_progress",
+					metadata: { status: "in_progress" },
+					session_id: undefined,
+				},
+			],
+			total: 1,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		};
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+		await user.click(await screen.findByText("req-active"));
+
+		expect(screen.queryByTestId("log-details-drawer")).not.toBeInTheDocument();
+		expect(mockDrawerProps.current.open).toBe(false);
 	});
 
 	it("Session Drawer 使用当前显式 Team ID filter scope，而非行自身 team_id", async () => {

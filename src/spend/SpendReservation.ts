@@ -12,11 +12,15 @@ import type { DrizzleDb } from "../core/db/Database";
 import { getModelGroupName } from "../router/RouterModelGroupCache";
 import { extractDeploymentCustomCost } from "../router/RouterSpendInfo";
 import type { Deployment } from "../types/router";
+import { CallType } from "../types/spend";
 import {
 	buildSpendReservationScopes,
 	estimateSpendReservation,
 	getOrCreateSpendRequestId,
+	registerActiveRequest,
+	removeActiveRequest,
 	reserveSpend,
+	startActiveRequestHeartbeat,
 	startSpendReservationHeartbeat,
 	type SpendReservationHeartbeat,
 } from "./SpendTracker";
@@ -55,6 +59,41 @@ export interface EndpointSpendLifecycle {
 	isFinalized(): boolean;
 	/** 停止 heartbeat；可重复调用。 */
 	stop(): void;
+}
+
+function combineSpendHeartbeats(...heartbeats: SpendReservationHeartbeat[]): SpendReservationHeartbeat {
+	return {
+		markProviderStarted: (): void => {
+			for (const heartbeat of heartbeats) {
+				heartbeat.markProviderStarted();
+			}
+		},
+		renewNow: async (): Promise<boolean> => {
+			const results = await Promise.all(heartbeats.map((heartbeat) => heartbeat.renewNow()));
+			return results.every(Boolean);
+		},
+		stop: (): void => {
+			for (const heartbeat of heartbeats) {
+				heartbeat.stop();
+			}
+		},
+	};
+}
+
+/**
+ * 生产 Drizzle 实例始终具备这些能力。部分 endpoint 单元测试传入只覆盖旧 SpendLog
+ * 查询面的轻量适配器；这类适配器不支持 ActiveRequests 时跳过实时列表登记，
+ * 但仍保留原有 reservation / SpendLog 测试路径。
+ */
+function supportsActiveRequestTracking(db: DrizzleDb): boolean {
+	const candidate = db as unknown as Record<string, unknown>;
+	return (
+		typeof candidate["transaction"] === "function" &&
+		typeof candidate["select"] === "function" &&
+		typeof candidate["insert"] === "function" &&
+		typeof candidate["delete"] === "function" &&
+		typeof candidate["update"] === "function"
+	);
 }
 
 /**
@@ -169,7 +208,7 @@ export function estimateRouterSpendReservation(
  * @param req
  * @param model
  * @param requestBody
- * @param costMode
+ * @param optionsOrCostMode
  */
 export async function reserveEndpointSpend(
 	db: DrizzleDb | undefined,
@@ -177,26 +216,58 @@ export async function reserveEndpointSpend(
 	req: Request,
 	model: string,
 	requestBody: Record<string, unknown>,
-	costMode: "token" | "image" | "audio" = "token",
+	optionsOrCostMode:
+		| "token"
+		| "image"
+		| "audio"
+		| { costMode?: "token" | "image" | "audio"; callType?: CallType; startTime?: Date } = {},
 ): Promise<EndpointSpendReservation | undefined> {
 	if (!db || !req.auth) {
 		return undefined;
 	}
+	const options = typeof optionsOrCostMode === "string" ? { costMode: optionsOrCostMode } : optionsOrCostMode;
+	const costMode = options.costMode ?? "token";
 	const requestId = getOrCreateSpendRequestId(req);
 	const scopes = buildSpendReservationScopes(req.auth);
+	const activeRequestTrackingSupported = supportsActiveRequestTracking(db);
+	const register = async (): Promise<SpendReservationHeartbeat | undefined> => {
+		if (!activeRequestTrackingSupported) {
+			return undefined;
+		}
+		await registerActiveRequest(db, {
+			req: req,
+			requestId: requestId,
+			model: model,
+			callType: options.callType ?? CallType.ACompletion,
+			startTime: options.startTime,
+		});
+		return startActiveRequestHeartbeat(db, requestId);
+	};
 	if (scopes.length === 0) {
-		return { requestId: requestId };
+		return { requestId: requestId, heartbeat: await register() };
 	}
 	if (costMode !== "token") {
 		throw ApiError.unavailable(`${costMode} endpoint 的实际费用无法由 token CostCalculator 可靠上界估算`);
 	}
 	const reserved = estimateRouterSpendReservation(router, model, requestBody);
-	const reservation = await reserveSpend(db, { requestId: requestId, reserved: reserved, scopes: scopes });
-	if (reservation.status === "duplicate") {
-		throw ApiError.conflict(`重复的 request_id: ${requestId}`);
+	const activeHeartbeat = await register();
+	try {
+		const reservation = await reserveSpend(db, { requestId: requestId, reserved: reserved, scopes: scopes });
+		if (reservation.status === "duplicate") {
+			throw ApiError.conflict(`重复的 request_id: ${requestId}`);
+		}
+		return {
+			requestId: requestId,
+			heartbeat: combineSpendHeartbeats(
+				startSpendReservationHeartbeat(db, requestId),
+				...(activeHeartbeat === undefined ? [] : [activeHeartbeat]),
+			),
+		};
+	} catch (error) {
+		activeHeartbeat?.stop();
+		if (activeRequestTrackingSupported) {
+			await removeActiveRequest(db, requestId).catch(() => undefined);
+		}
+		throw error;
 	}
-	return {
-		requestId: requestId,
-		heartbeat: startSpendReservationHeartbeat(db, requestId),
-	};
 }

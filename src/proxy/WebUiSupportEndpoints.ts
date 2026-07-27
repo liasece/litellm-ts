@@ -31,7 +31,6 @@ import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSp
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
 import { ConfigRepository } from "../repositories/ConfigRepository";
-import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
@@ -83,7 +82,7 @@ let cachedLogo: { readonly url: string; readonly body: Buffer } | null = null;
  * HTTP/HTTPS URL 下载成功即缓存，下载失败回退默认 logo。
  */
 async function resolveLogoImage(): Promise<Buffer> {
-	const litellmSettings = dbConfigProvider.getParam("litellm_settings");
+	const litellmSettings = await dbConfigProvider.getParam("litellm_settings");
 	const themeConfig = isRecord(litellmSettings["ui_theme_config"]) ? litellmSettings["ui_theme_config"] : {};
 	const dbLogoUrl = typeof themeConfig["logo_url"] === "string" ? themeConfig["logo_url"] : null;
 	const logoPath = process.env.UI_LOGO_PATH ?? dbLogoUrl;
@@ -155,12 +154,12 @@ function deepMergeConfigValue(base: unknown, override: unknown): unknown {
 
 /**
  * 有效 general_settings：yaml 原值为底，DB 值覆盖（对齐 Python get_config 的 DB 优先语义）。
- * 写路径落库后调用 dbConfigProvider.refreshNow()，读到的即是最新 DB 值。
+ * 每次调用都直接查询数据库，因此写入或外部 DB 修改会在下一次读取时生效。
  * @param config - 服务配置
  */
-function getEffectiveGeneralSettings(config: ServiceConfig): Record<string, unknown> {
+async function getEffectiveGeneralSettings(config: ServiceConfig): Promise<Record<string, unknown>> {
 	const fileSettings = config.generalSettingsRaw ?? {};
-	const dbSettings = dbConfigProvider.getParam("general_settings");
+	const dbSettings = await dbConfigProvider.getParam("general_settings");
 	return { ...fileSettings, ...dbSettings };
 }
 
@@ -1008,8 +1007,8 @@ export function registerWebUiSupportPublicRoutes(router: Router, costMapService:
 	 * 对齐 Python：数据源为 DB litellm_settings.ui_theme_config（LiteLLM_Config 表，
 	 * WebUI Theme 设置页写入），响应含 values + field_schema。
 	 */
-	registerRoute(router, { method: "get", path: "/get/ui_theme_settings" }, () => {
-		const litellmSettings = dbConfigProvider.getParam("litellm_settings");
+	registerRoute(router, { method: "get", path: "/get/ui_theme_settings" }, async () => {
+		const litellmSettings = await dbConfigProvider.getParam("litellm_settings");
 		const themeConfig = isRecord(litellmSettings["ui_theme_config"]) ? litellmSettings["ui_theme_config"] : {};
 		return {
 			values: {
@@ -1206,7 +1205,7 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		},
 	];
 
-	registerRoute(router, { method: "get", path: "/config/list" }, (req) => {
+	registerRoute(router, { method: "get", path: "/config/list" }, async (req) => {
 		// Python get_config_list 的 config_type 为必填 Literal["general_settings"]
 		// （litellm/proxy/proxy_server.py:12231-12232）：
 		// 缺省 → 422 missing；其他取值 → 422 literal_error（FastAPI 校验语义）。
@@ -1219,8 +1218,8 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 				{ loc: ["query", "config_type"], msg: "Input should be 'general_settings'", type: "literal_error" },
 			]);
 		}
-		const generalSettings = getEffectiveGeneralSettings(config);
-		const dbGeneralSettings = dbConfigProvider.getParam("general_settings");
+		const generalSettings = await getEffectiveGeneralSettings(config);
+		const dbGeneralSettings = await dbConfigProvider.getParam("general_settings");
 		return generalSettingsFields.map((field) => {
 			const fieldValue = field.field_name in generalSettings ? (generalSettings as Record<string, unknown>)[field.field_name] : null;
 			// stored_in_db：值来自 DB → true；来自 yaml → false；未配置 → null（对齐 Python get_config_list）
@@ -1253,34 +1252,33 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 	 * general_settings / litellm_settings / router_settings / environment_variables
 	 * 各段深合并进现有 DB 值后 upsert（合并不是整段替换）；model_list 剔除不入库
 	 * （对齐 Python save_config，模型走 ProxyModelTable）。
-	 * 写后刷新 dbConfigProvider 缓存，保证 /config/list 等读取路径立即看到新值。
+	 * 后续请求会直接查询数据库，不需要刷新或热写进程内 Router。
 	 */
 	registerRoute(router, { method: "post", path: "/config/update" }, async (req) => {
 		const body = (req.body ?? {}) as ConfigUpdateRequestBody;
-		let mergedRouterSettings: Record<string, unknown> | null = null;
 		for (const section of CONFIG_UPDATE_SECTIONS) {
 			const incoming = body[section];
 			if (incoming === undefined) {
 				continue;
 			}
 			const existing = (await configRepository.getParam(section)) ?? {};
-			const merged = deepMergeConfigValue(existing, incoming);
-			await configRepository.upsertParam(section, merged);
-			if (section === "router_settings") {
-				mergedRouterSettings = merged as Record<string, unknown>;
+			const merged = deepMergeConfigValue(existing, incoming) as Record<string, unknown>;
+			// model_group_alias 是完整映射，不是 patch。否则 UI 删除 alias 时，
+			// 被省略的旧 key 会被递归深合并保留。
+			if (
+				section === "router_settings" &&
+				Object.prototype.hasOwnProperty.call(incoming, "model_group_alias") &&
+				isRecord(incoming.model_group_alias)
+			) {
+				merged["model_group_alias"] = structuredClone(incoming.model_group_alias);
 			}
-		}
-		await dbConfigProvider.refreshNow();
-		// 批次 C1：router_settings 落库后立即热应用（对齐 Python update_config
-		// 末尾的 llm_router.update_settings(**router_settings)，proxy_server.py update_config）
-		if (mergedRouterSettings !== null && litellmRouter) {
-			litellmRouter.updateSettings(mergedRouterSettings);
+			await configRepository.upsertParam(section, merged);
 		}
 		return { message: "Config updated successfully" };
 	});
 	/**
 	 * 更新 general_settings 单个字段（对齐 Python /config/field/update，proxy_server.py:12085）。
-	 * 写 DB 并刷新缓存；响应为 LiteLLM_Config 行形状 {param_name, param_value}。
+	 * 响应为 LiteLLM_Config 行形状 {param_name, param_value}。
 	 */
 	registerRoute(router, { method: "post", path: "/config/field/update" }, async (req) => {
 		const body = (req.body ?? {}) as ConfigFieldRequestBody;
@@ -1302,7 +1300,6 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		const existing = (await configRepository.getParam("general_settings")) ?? {};
 		const next = { ...existing, [fieldName]: body.field_value };
 		await configRepository.upsertParam("general_settings", next);
-		await dbConfigProvider.refreshNow();
 		return { param_name: "general_settings", param_value: next };
 	});
 	/**
@@ -1316,14 +1313,13 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		if (next === null) {
 			throw ApiError.httpException(HTTP_STATUS.BAD_REQUEST, { error: `Field name=${fieldName} not in config` });
 		}
-		await dbConfigProvider.refreshNow();
 		return { param_name: "general_settings", param_value: next };
 	});
 	/**
 	 * 更新 UI 主题设置（对齐 Python update_ui_theme_settings，
 	 * ui_crud_endpoints/proxy_setting_endpoints.py:821）。
-	 * ui_theme_config 整体替换写入 litellm_settings；同步 UI_LOGO_PATH /
-	 * LITELLM_FAVICON_URL 环境变量（空值时删除，回退默认 logo/favicon）。
+	 * ui_theme_config 整体替换写入 litellm_settings。环境变量仍只作为部署时静态覆盖，
+	 * 不再用数据库值修改进程环境，否则后续直接修改数据库会被旧环境值遮蔽。
 	 */
 	registerRoute(router, { method: "patch", path: "/update/ui_theme_settings" }, async (req) => {
 		const body = (req.body ?? {}) as Record<string, unknown>;
@@ -1338,20 +1334,6 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		const existing = (await configRepository.getParam("litellm_settings")) ?? {};
 		const next = { ...existing, ui_theme_config: themeData };
 		await configRepository.upsertParam("litellm_settings", next);
-		await dbConfigProvider.refreshNow();
-
-		// 同步环境变量（对齐 Python：非空字符串设置，否则删除回退默认）
-		const envPairs: ReadonlyArray<readonly [string, unknown]> = [
-			["UI_LOGO_PATH", themeData["logo_url"]],
-			["LITELLM_FAVICON_URL", themeData["favicon_url"]],
-		];
-		for (const [envName, envValue] of envPairs) {
-			if (typeof envValue === "string" && envValue.trim().length > 0) {
-				process.env[envName] = envValue;
-			} else {
-				delete process.env[envName];
-			}
-		}
 		return {
 			message: "UI theme settings updated successfully.",
 			status: "success",
@@ -1576,10 +1558,9 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 
 	/**
 	 * 接受某项 yaml 差异（yaml 值覆盖 DB）：
-	 * - 设置段：yaml 值深合并进 DB 对应 param 并 upsert + 刷新 dbConfigProvider；
-	 *   router_settings 段额外热应用（Router.updateSettings）。
-	 * - model_list：该模型 upsert 进 LiteLLM_ProxyModelTable + Router.upsertDeployment
-	 *   热更新；DB 已有同名模型沿用其 model_id，否则按 yaml litellm_params 生成
+	 * - 设置段：yaml 值深合并进 DB 对应 param 并 upsert；
+	 * - model_list：该模型 upsert 进 LiteLLM_ProxyModelTable；
+	 *   DB 已有同名模型沿用其 model_id，否则按 yaml litellm_params 生成
 	 *   （与启动时 yaml deployment 的 id 一致，upsert 后运行时无变化）。
 	 * 接受后从 pending 列表移除该项。
 	 */
@@ -1631,17 +1612,10 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 						updated_at: new Date(),
 					},
 				});
-			litellmRouter?.upsertDeployment(
-				proxyModelRowToDeployment({ model_id: modelId, model_name: key, litellm_params: litellmParams, model_info: modelInfo }),
-			);
 		} else {
 			const existing = (await configRepository.getParam(section)) ?? {};
 			const next = { ...existing, [key]: deepMergeConfigValue(existing[key], item.yaml_value) };
 			await configRepository.upsertParam(section, next);
-			await dbConfigProvider.refreshNow();
-			if (section === "router_settings" && litellmRouter) {
-				litellmRouter.updateSettings({ [key]: next[key] });
-			}
 		}
 
 		yamlConfigDiffService.removePendingItem(section as YamlDiffSection, key);

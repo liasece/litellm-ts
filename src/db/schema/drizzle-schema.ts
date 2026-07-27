@@ -40,6 +40,7 @@ export { LiteLLM_SSOConfig } from "./sso-config";
 export { liteLLM_AuditLog } from "./auditLog";
 export { liteLLM_ErrorLogs } from "./errorLogs";
 export { liteLLM_SpendLogs } from "./spendLogs";
+export { liteLLM_ActiveRequests } from "./activeRequests";
 export { liteLLM_SpendLogGuardrailIndex } from "./spendLogGuardrailIndex";
 export { liteLLM_SpendLogToolIndex } from "./spendLogToolIndex";
 export { liteLLM_DailyUserSpend } from "./dailyUserSpend";

@@ -102,7 +102,11 @@ export class ImageController {
 		const startTime = new Date();
 		const db = this._db;
 		const auth = request.auth;
-		const spendReservation = await reserveEndpointSpend(db, litellmRouter, request, model, reqBody, "image");
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, request, model, reqBody, {
+			costMode: "image",
+			callType: CallType.AImageGeneration,
+			startTime: startTime,
+		});
 		const requestId = spendReservation?.requestId;
 		let providerCompleted = false;
 		try {
@@ -115,7 +119,7 @@ export class ImageController {
 			if (db && auth && requestId) {
 				await trackSpendLog(
 					db,
-					buildSpendLogFromRequest({
+					await buildSpendLogFromRequest({
 						req: request,
 						auth: auth,
 						requestId: requestId,
@@ -145,7 +149,7 @@ export class ImageController {
 				try {
 					await trackSpendLog(
 						db,
-						buildSpendLogFromRequest({
+						await buildSpendLogFromRequest({
 							req: request,
 							auth: auth,
 							requestId: requestId,

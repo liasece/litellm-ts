@@ -14,6 +14,7 @@ declare global {
 	namespace Express {
 		interface Request {
 			spendRequestId?: string;
+			spendSessionId?: string;
 		}
 	}
 }

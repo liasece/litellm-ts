@@ -19,7 +19,7 @@ import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSp
 import { liteLLM_DailyTagSpend } from "../db/schema/dailyTagSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { LiteLLM_UserTable } from "../db/schema/users";
 import { LiteLLM_TeamTable } from "../db/schema/teams";
@@ -29,6 +29,7 @@ import { LiteLLM_EndUserTable } from "../db/schema/end-users";
 import { liteLLM_AgentsTable } from "../db/schema/agents";
 import { LiteLLM_ProjectTable } from "../db/schema/projects";
 import { liteLLM_SpendReservations } from "../db/schema/spendReservations";
+import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type {
@@ -425,12 +426,12 @@ export function sanitizeSpendLogHeaders(headers: Record<string, unknown>): Recor
  * 配置优先级（对齐 PY spend_tracking_utils._should_store_prompts_and_responses_in_spend_logs）：
  * DB general_settings（LiteLLM_Config 表，WebUI 设置项）> yaml general_settings > env。
  */
-export function shouldStorePromptsAndResponsesInSpendLogs(): boolean {
+export async function shouldStorePromptsAndResponsesInSpendLogs(): Promise<boolean> {
 	if (process.env.STORE_PROMPTS_IN_SPEND_LOGS === "true") {
 		return true;
 	}
 	try {
-		const dbGeneral = dbConfigProvider.getParam("general_settings");
+		const dbGeneral = await dbConfigProvider.getParam("general_settings");
 		if ("store_prompts_in_spend_logs" in dbGeneral) {
 			return dbGeneral["store_prompts_in_spend_logs"] === true || dbGeneral["store_prompts_in_spend_logs"] === "true";
 		}
@@ -476,29 +477,43 @@ export function getFailureErrorInformation(error: unknown): Record<string, unkno
 }
 
 /**
+ * 为活跃记录与最终 SpendLog 返回同一个请求级 session_id。
+ * @param req
+ */
+function getOrCreateSpendSessionId(req: Request): string {
+	if (req.spendSessionId) {
+		return req.spendSessionId;
+	}
+	const requestBody = req.body as Record<string, unknown> | undefined;
+	const metadata = requestBody?.metadata as Record<string, unknown> | undefined;
+	const traceId = metadata?.trace_id ?? requestBody?.trace_id;
+	if (typeof traceId === "string" && traceId.length > 0) {
+		req.spendSessionId = traceId;
+		return req.spendSessionId;
+	}
+	const litellmTraceId = metadata?.litellm_trace_id ?? requestBody?.litellm_trace_id;
+	if (typeof litellmTraceId === "string" && litellmTraceId.length > 0) {
+		req.spendSessionId = litellmTraceId;
+		return req.spendSessionId;
+	}
+	req.spendSessionId = randomUUID();
+	return req.spendSessionId;
+}
+
+/**
  * session_id 对齐 Python：trace_id > litellm_trace_id > UUID。
  * @param ctx - SpendLog 构建上下文
  */
 export function getSessionIdForSpendLog(ctx: SpendLogBuildContext): string {
-	const requestBody = ctx.req.body as Record<string, unknown> | undefined;
-	const metadata = requestBody?.metadata as Record<string, unknown> | undefined;
-	const traceId = metadata?.trace_id ?? requestBody?.trace_id;
-	if (typeof traceId === "string" && traceId.length > 0) {
-		return traceId;
-	}
-	const litellmTraceId = metadata?.litellm_trace_id ?? requestBody?.litellm_trace_id;
-	if (typeof litellmTraceId === "string" && litellmTraceId.length > 0) {
-		return litellmTraceId;
-	}
-	return randomUUID();
+	return getOrCreateSpendSessionId(ctx.req);
 }
 
 /**
  * 构建 Python proxy_server_request JSON 形状。
  * @param ctx - SpendLog 构建上下文
  */
-export function buildProxyServerRequest(ctx: SpendLogBuildContext): Record<string, unknown> {
-	const shouldStoreBody = shouldStorePromptsAndResponsesInSpendLogs();
+export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promise<Record<string, unknown>> {
+	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
 	const requestShape: Record<string, unknown> = {
 		url: ctx.req.originalUrl ?? ctx.req.url,
 		method: ctx.req.method,
@@ -651,10 +666,10 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
  * 用单一入口从请求上下文构造 SpendLog，减少端点手写字段漂移。
  * @param ctx - SpendLog 构建上下文
  */
-export function buildSpendLogFromRequest(ctx: SpendLogBuildContext): SpendLog {
+export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promise<SpendLog> {
 	const usage = normalizeUsageForSpend(ctx.usage);
 	const status = ctx.status ?? (ctx.error ? SpendLogStatus.Failure : SpendLogStatus.Success);
-	const shouldStoreBody = shouldStorePromptsAndResponsesInSpendLogs();
+	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
 	const metadata = buildSpendLogsMetadata(ctx);
 	const requestDurationMs = Math.max(0, ctx.endTime.getTime() - ctx.startTime.getTime());
 	return {
@@ -687,7 +702,7 @@ export function buildSpendLogFromRequest(ctx: SpendLogBuildContext): SpendLog {
 		response: shouldStoreBody ? sanitizeSpendLogPayload(ctx.response) : {},
 		// 顶层列存完整 proxy_server_request（含 body）；metadata 内恒 null（对齐 Python），
 		// 详情端点 /spend/logs/ui/:request_id 从本列读取。
-		proxy_server_request: buildProxyServerRequest(ctx),
+		proxy_server_request: await buildProxyServerRequest(ctx),
 		session_id: getSessionIdForSpendLog(ctx),
 		request_duration_ms: requestDurationMs,
 		status: status,
@@ -725,6 +740,163 @@ export function getOrCreateSpendRequestId(req: Request): string {
 		req.spendRequestId = randomUUID();
 	}
 	return req.spendRequestId;
+}
+
+const ACTIVE_REQUEST_LEASE_MS = 15 * 60 * 1_000;
+
+/** 创建活跃请求列表行所需的轻量上下文。 */
+export interface ActiveRequestInput {
+	/** 当前 Express 请求。 */
+	readonly req: Request;
+	/** 与最终 SpendLog 共用的请求 ID。 */
+	readonly requestId: string;
+	/** 客户端请求的逻辑模型名。 */
+	readonly model: string;
+	/** LiteLLM 调用类型。 */
+	readonly callType: CallType;
+	/** 请求开始时间；缺省为登记时间。 */
+	readonly startTime?: Date;
+}
+
+/**
+ * 在调用 Provider 前登记活跃请求。request_id 同时与最终 SpendLogs 保持全局幂等。
+ * @param db
+ * @param input
+ */
+export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, input: ActiveRequestInput): Promise<void> {
+	const auth = input.req.auth;
+	if (!auth) {
+		return;
+	}
+	const now = new Date();
+	try {
+		await db.transaction(async (tx) => {
+			const completed = await tx
+				.select({ requestId: liteLLM_SpendLogs.request_id })
+				.from(liteLLM_SpendLogs)
+				.where(eq(liteLLM_SpendLogs.request_id, input.requestId))
+				.limit(1);
+			if (completed.length > 0) {
+				throw ApiError.conflict(`重复的 request_id: ${input.requestId}`);
+			}
+			await tx
+				.delete(liteLLM_ActiveRequests)
+				.where(and(eq(liteLLM_ActiveRequests.request_id, input.requestId), lte(liteLLM_ActiveRequests.expires_at, now)));
+			const inserted = await tx
+				.insert(liteLLM_ActiveRequests)
+				.values({
+					request_id: input.requestId,
+					call_type: input.callType,
+					api_key: auth.token ?? _protectApiKeyForDb(auth.api_key || ""),
+					startTime: input.startTime ?? now,
+					model: input.model,
+					model_group: input.model,
+					user: auth.user_id ?? "",
+					team_id: auth.team_id ?? null,
+					organization_id: auth.organization_id ?? null,
+					end_user: auth.end_user_id ?? null,
+					requester_ip_address: getRequesterIpAddress(input.req) ?? null,
+					session_id: getOrCreateSpendSessionId(input.req),
+					metadata: {
+						status: "in_progress",
+						user_api_key_alias: auth.key_alias ?? null,
+					},
+					request_tags: [],
+					status: "in_progress",
+					expires_at: new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS),
+					updated_at: now,
+				})
+				.onConflictDoNothing()
+				.returning({ requestId: liteLLM_ActiveRequests.request_id });
+			if (inserted.length === 0) {
+				throw ApiError.conflict(`重复的 request_id: ${input.requestId}`);
+			}
+		});
+	} catch (error) {
+		if (error instanceof ApiError) {
+			throw error;
+		}
+		throw ApiError.unavailable("活跃请求记录数据库暂不可用");
+	}
+}
+
+/**
+ * 延长仍在执行的活跃请求租约。
+ * @param db
+ * @param requestId
+ */
+export async function renewActiveRequest(db: NodePgDatabase<typeof schema>, requestId: string): Promise<boolean> {
+	const now = new Date();
+	const rows = await db
+		.update(liteLLM_ActiveRequests)
+		.set({
+			expires_at: new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS),
+			updated_at: now,
+		})
+		.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")))
+		.returning({ requestId: liteLLM_ActiveRequests.request_id });
+	return rows.length > 0;
+}
+
+/**
+ * 删除不再执行的活跃请求行。
+ * @param db
+ * @param requestId
+ */
+export async function removeActiveRequest(db: NodePgDatabase<typeof schema>, requestId: string): Promise<void> {
+	await db.delete(liteLLM_ActiveRequests).where(eq(liteLLM_ActiveRequests.request_id, requestId));
+}
+
+/**
+ * 兼容仅实现 SpendTracker 旧查询面的轻量测试/适配器；生产 Drizzle 实例始终提供 delete。
+ * @param db
+ * @param requestId
+ */
+async function removeActiveRequestIfSupported(db: NodePgDatabase<typeof schema>, requestId: string): Promise<void> {
+	const deleteMethod = (db as unknown as { delete?: NodePgDatabase<typeof schema>["delete"] }).delete;
+	if (typeof deleteMethod !== "function") {
+		return;
+	}
+	await deleteMethod.call(db, liteLLM_ActiveRequests).where(eq(liteLLM_ActiveRequests.request_id, requestId));
+}
+
+/**
+ * 活跃请求租约心跳；失败只影响实时展示，不阻断 Provider 请求。
+ * @param db
+ * @param requestId
+ * @param options
+ */
+export function startActiveRequestHeartbeat(
+	db: NodePgDatabase<typeof schema>,
+	requestId: string,
+	options: { intervalMs?: number } = {},
+): SpendReservationHeartbeat {
+	const intervalMs = options.intervalMs ?? Math.floor(ACTIVE_REQUEST_LEASE_MS / 3);
+	let stopped = false;
+	const renew = async (): Promise<boolean> => {
+		if (stopped) {
+			return false;
+		}
+		try {
+			return await renewActiveRequest(db, requestId);
+		} catch (error) {
+			logger.warn("活跃请求续租失败", { error: error, requestId: requestId });
+			return false;
+		}
+	};
+	const timer = setInterval(() => void renew(), intervalMs);
+	timer.unref?.();
+	return {
+		markProviderStarted: (): void => undefined,
+		renewNow: renew,
+		stop: (): void => {
+			if (stopped) {
+				return;
+			}
+			stopped = true;
+			clearInterval(timer);
+		},
+	};
 }
 
 /**
@@ -1112,6 +1284,10 @@ export async function releaseSpend(db: NodePgDatabase<typeof schema>, requestId:
 	}
 	try {
 		return await db.transaction(async (tx) => {
+			const removedActive = await tx
+				.delete(liteLLM_ActiveRequests)
+				.where(eq(liteLLM_ActiveRequests.request_id, requestId))
+				.returning({ requestId: liteLLM_ActiveRequests.request_id });
 			const rows = await tx
 				.update(liteLLM_SpendReservations)
 				.set({ status: "released", updated_at: new Date() })
@@ -1123,6 +1299,9 @@ export async function releaseSpend(db: NodePgDatabase<typeof schema>, requestId:
 			}
 			const existing = await tx.select().from(liteLLM_SpendReservations).where(eq(liteLLM_SpendReservations.request_id, requestId));
 			if (!existing[0]) {
+				if (removedActive.length > 0) {
+					return { status: "released", requestId: requestId, reserved: 0, actual: null };
+				}
 				throw ApiError.badRequest(`预留不存在: ${requestId}`);
 			}
 			return {
@@ -1398,6 +1577,7 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 			if (inserted.length === 0) {
 				// 历史 SpendLog 已经代表另一次已提交 attempt；不得用当前 attempt 的 spend
 				// 终结一个来源不明的 reservation。
+				await removeActiveRequestIfSupported(tx, logEntry.request_id);
 				return { status: "duplicate" as const, requestId: logEntry.request_id, spend: spend };
 			}
 
@@ -1437,6 +1617,7 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 				.where(
 					and(eq(liteLLM_SpendReservations.request_id, logEntry.request_id), eq(liteLLM_SpendReservations.status, "reserved")),
 				);
+			await removeActiveRequestIfSupported(tx, logEntry.request_id);
 			return { status: "committed" as const, requestId: logEntry.request_id, spend: spend };
 		});
 	} catch (error) {
@@ -1447,8 +1628,12 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 				.where(
 					and(eq(liteLLM_SpendReservations.request_id, logEntry.request_id), eq(liteLLM_SpendReservations.status, "reserved")),
 				);
+			await removeActiveRequestIfSupported(db, logEntry.request_id);
 		} catch (releaseError) {
-			logger.error("SpendLog 提交失败后释放 reservation 失败", { error: releaseError, requestId: logEntry.request_id });
+			logger.error("SpendLog 提交失败后清理活跃请求与 reservation 失败", {
+				error: releaseError,
+				requestId: logEntry.request_id,
+			});
 		}
 		if (error instanceof ApiError) {
 			throw error;

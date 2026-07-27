@@ -110,6 +110,7 @@ export function useLogFilterLogic({
             error_message: filters[FILTER_KEYS.ERROR_MESSAGE] || undefined,
             sort_by: sortBy,
             sort_order: sortOrder,
+            include_active: true,
           },
         });
 

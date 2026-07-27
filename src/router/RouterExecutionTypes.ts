@@ -6,7 +6,7 @@
  * 本模块仅声明类型，不持有任何运行时实现。
  */
 
-import type { Deployment, RetryPolicy, RouterCallbacks } from "../types/router";
+import type { AllowedFailsPolicy, Deployment, RetryPolicy, RouterCallbacks } from "../types/router";
 import type { ProviderConfig } from "../types/provider";
 import type { CooldownManager } from "./CooldownManager";
 import type { TPMRPMLimiter } from "./TPMRPMLimiter";
@@ -60,6 +60,8 @@ export interface RouterExecContext {
 	retryAfter: number;
 	/** 默认冷却时间（毫秒） */
 	cooldownTimeMs: number;
+	/** 请求快照中的 router allowed_fails。 */
+	allowedFails: number | AllowedFailsPolicy | null;
 	/** 滑动窗口大小（latencySamples 长度） */
 	recentLatencyCount: number;
 	/** 失败路径上的延迟惩罚（秒），对齐 PY 1000 */

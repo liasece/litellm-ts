@@ -1,117 +1,164 @@
-import React, { useState, useEffect } from "react";
-import { Card, Title, Text, Grid, Badge, Tab, TabGroup, TabList, TabPanel, TabPanels } from "@tremor/react";
-import { Button, Modal } from "antd";
-import { getPromptInfo, PromptSpec, PromptTemplateBase, deletePromptCall } from "@/components/networking";
+import {
+	deletePromptCall,
+	getPromptInfo,
+	type PromptSpec,
+	type PromptTemplateBase,
+} from "@/components/networking";
 import { copyToClipboard as utilCopyToClipboard } from "@/utils/dataUtils";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { Tab, TabGroup, TabList, TabPanels } from "@tremor/react";
+import { Button } from "antd";
+import { useCallback, useEffect, useState } from "react";
 import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 import NotificationsManager from "../molecules/notifications_manager";
 import PromptCodeSnippets from "./prompt_editor_view/PromptCodeSnippets";
-import { extractModel, extractTemplateVariables, getBasePromptId, getCurrentVersion } from "./prompt_utils";
+import PromptAdminDetailsPanel from "./prompt_details/PromptAdminDetailsPanel";
+import PromptDeleteModal from "./prompt_details/PromptDeleteModal";
+import PromptIdentifierBar from "./prompt_details/PromptIdentifierBar";
+import PromptOverviewPanel from "./prompt_details/PromptOverviewPanel";
+import PromptRawJsonPanel from "./prompt_details/PromptRawJsonPanel";
+import PromptTemplatePanel from "./prompt_details/PromptTemplatePanel";
+import {
+	extractModel,
+	extractTemplateVariables,
+	getBasePromptId,
+	getCurrentVersion,
+} from "./prompt_utils";
 
 export interface PromptInfoProps {
-  promptId: string;
-  onClose: () => void;
-  accessToken: string | null;
-  isAdmin: boolean;
-  onDelete?: () => void;
-  onEdit?: (promptData: any) => void;
+	promptId: string;
+	onClose: () => void;
+	accessToken: string | null;
+	isAdmin: boolean;
+	onDelete?: () => void;
+	onEdit?: (promptData: unknown) => void;
 }
 
-const PromptInfoView: React.FC<PromptInfoProps> = ({ promptId, onClose, accessToken, isAdmin, onDelete, onEdit }) => {
-  const [promptData, setPromptData] = useState<PromptSpec | null>(null);
-  const [promptTemplate, setPromptTemplate] = useState<PromptTemplateBase | null>(null);
-  const [rawApiResponse, setRawApiResponse] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+type PromptInfoResponse = Awaited<ReturnType<typeof getPromptInfo>>;
 
-  const fetchPromptInfo = async () => {
-    try {
-      setLoading(true);
-      if (!accessToken) return;
-      const response = await getPromptInfo(accessToken, promptId);
-      setPromptData(response.prompt_spec);
-      setPromptTemplate(response.raw_prompt_template);
-      setRawApiResponse(response); // Store the raw response for the Raw JSON tab
-    } catch (error) {
-      NotificationsManager.fromBackend("Failed to load prompt information");
-      console.error("Error fetching prompt info:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+export default function PromptInfoView({
+	promptId,
+	onClose,
+	accessToken,
+	isAdmin,
+	onDelete,
+	onEdit,
+}: PromptInfoProps) {
+	const [promptData, setPromptData] = useState<PromptSpec | null>(null);
+	const [promptTemplate, setPromptTemplate] = useState<PromptTemplateBase | null>(null);
+	const [rawApiResponse, setRawApiResponse] = useState<PromptInfoResponse | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
+	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+	const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
-    fetchPromptInfo();
-  }, [promptId, accessToken]);
+	const fetchPromptInfo = useCallback(async () => {
+		setLoading(true);
+		if (!accessToken) {
+			setPromptData(null);
+			setPromptTemplate(null);
+			setRawApiResponse(null);
+			setLoading(false);
+			return;
+		}
 
-  if (loading) {
+		try {
+			const response = await getPromptInfo(accessToken, promptId);
+			setPromptData(response.prompt_spec);
+			setPromptTemplate(response.raw_prompt_template);
+			setRawApiResponse(response);
+		} catch {
+			setPromptData(null);
+			setPromptTemplate(null);
+			setRawApiResponse(null);
+			NotificationsManager.fromBackend("Failed to load prompt information");
+		} finally {
+			setLoading(false);
+		}
+	}, [accessToken, promptId]);
+
+	useEffect(() => {
+		void fetchPromptInfo();
+	}, [fetchPromptInfo]);
+
+	const copyToClipboard = async (
+		text: string | null | undefined,
+		key: string,
+	) => {
+		if (!(await utilCopyToClipboard(text))) return;
+
+		setCopiedStates((previous) => ({ ...previous, [key]: true }));
+		window.setTimeout(() => {
+			setCopiedStates((previous) => ({ ...previous, [key]: false }));
+		}, 2000);
+	};
+
+	if (loading) {
 		return (
 			<ResourceDetailsDrawer open onClose={onClose} title="Prompt Details" loading>
 				<div />
 			</ResourceDetailsDrawer>
 		);
-  }
+	}
 
-  if (!promptData) {
+	if (!promptData) {
 		return (
 			<ResourceDetailsDrawer open onClose={onClose} title="Prompt Details">
 				<div className="p-4">Prompt not found</div>
 			</ResourceDetailsDrawer>
 		);
-  }
+	}
 
-  // Format date helper function
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return "-";
-    const date = new Date(dateString);
-    return date.toLocaleString();
-  };
+	const promptModel = extractModel(promptData) || "gpt-4o";
+	const basePromptId = getBasePromptId(promptData);
+	const currentVersion = getCurrentVersion(promptData);
 
-  const copyToClipboard = async (text: string | null | undefined, key: string) => {
-    const success = await utilCopyToClipboard(text);
-    if (success) {
-      setCopiedStates((prev) => ({ ...prev, [key]: true }));
-      setTimeout(() => {
-        setCopiedStates((prev) => ({ ...prev, [key]: false }));
-      }, 2000);
-    }
-  };
+	const handleDeleteConfirm = async () => {
+		if (!accessToken) return;
 
-  const handleDeleteClick = () => {
-    setShowDeleteConfirm(true);
-  };
+		setIsDeleting(true);
+		try {
+			await deletePromptCall(accessToken, basePromptId);
+			NotificationsManager.success(`Prompt "${basePromptId}" deleted successfully`);
+			onDelete?.();
+			onClose();
+		} catch {
+			NotificationsManager.fromBackend("Failed to delete prompt");
+		} finally {
+			setIsDeleting(false);
+			setShowDeleteConfirm(false);
+		}
+	};
 
-  const handleDeleteConfirm = async () => {
-    if (!accessToken || !promptData) return;
+	const tabs = [
+		<Tab key="overview">Overview</Tab>,
+		...(promptTemplate ? [<Tab key="template">Prompt Template</Tab>] : []),
+		...(isAdmin ? [<Tab key="details">Details</Tab>] : []),
+		<Tab key="raw">Raw JSON</Tab>,
+	];
+	const panels = [
+		<PromptOverviewPanel key="overview" prompt={promptData} promptId={basePromptId} version={currentVersion} />,
+		...(promptTemplate
+			? [
+					<PromptTemplatePanel
+						key="template"
+						template={promptTemplate}
+						copied={Boolean(copiedStates["prompt-content"])}
+						onCopy={copyToClipboard}
+					/>,
+				]
+			: []),
+		...(isAdmin
+			? [<PromptAdminDetailsPanel key="details" prompt={promptData} promptId={basePromptId} />]
+			: []),
+		<PromptRawJsonPanel
+			key="raw"
+			response={rawApiResponse}
+			copied={Boolean(copiedStates["raw-json"])}
+			onCopy={copyToClipboard}
+		/>,
+	];
 
-    setIsDeleting(true);
-    try {
-      await deletePromptCall(accessToken, basePromptId);
-      NotificationsManager.success(`Prompt "${basePromptId}" deleted successfully`);
-      onDelete?.(); // Call the callback to refresh the parent component
-      onClose(); // Close the info view
-    } catch (error) {
-      console.error("Error deleting prompt:", error);
-      NotificationsManager.fromBackend("Failed to delete prompt");
-    } finally {
-      setIsDeleting(false);
-      setShowDeleteConfirm(false);
-    }
-  };
-
-  const handleDeleteCancel = () => {
-    setShowDeleteConfirm(false);
-  };
-
-  // Use utility functions to extract prompt data
-  const promptModel = promptData ? extractModel(promptData) || "gpt-4o" : "gpt-4o";
-  const basePromptId = getBasePromptId(promptData);
-  const currentVersion = getCurrentVersion(promptData);
-
-  return (
+	return (
 		<ResourceDetailsDrawer
 			open
 			onClose={onClose}
@@ -119,238 +166,42 @@ const PromptInfoView: React.FC<PromptInfoProps> = ({ promptId, onClose, accessTo
 			subtitle={basePromptId}
 			actions={
 				<>
-            <PromptCodeSnippets
-              promptId={basePromptId}
-              model={promptModel}
-              promptVariables={extractTemplateVariables(promptTemplate?.content)}
-              accessToken={accessToken}
-              version={currentVersion}
-            />
+					<PromptCodeSnippets
+						promptId={basePromptId}
+						model={promptModel}
+						promptVariables={extractTemplateVariables(promptTemplate?.content)}
+						accessToken={accessToken}
+						version={currentVersion}
+					/>
 					<Button onClick={() => onEdit?.(rawApiResponse)}>Edit</Button>
-          {isAdmin && (
-						<Button danger onClick={handleDeleteClick}>
+					{isAdmin && (
+						<Button danger onClick={() => setShowDeleteConfirm(true)}>
 							Delete
 						</Button>
-          )}
+					)}
 				</>
 			}
 		>
 			<div className="p-4">
-				<div className="flex items-center cursor-pointer mb-4">
-					<Text className="text-gray-500 font-mono">{basePromptId}</Text>
-					<Button
-						type="text"
-						size="small"
-						icon={copiedStates["prompt-id"] ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-						onClick={() => copyToClipboard(basePromptId, "prompt-id")}
-					/>
-      </div>
+				<PromptIdentifierBar
+					promptId={basePromptId}
+					copied={Boolean(copiedStates["prompt-id"])}
+					onCopy={copyToClipboard}
+				/>
 
-      <TabGroup>
-        <TabList className="mb-4">
-          <Tab key="overview">Overview</Tab>
-          {promptTemplate ? <Tab key="prompt-template">Prompt Template</Tab> : <></>}
-          {isAdmin ? <Tab key="details">Details</Tab> : <></>}
-          <Tab key="raw-json">Raw JSON</Tab>
-        </TabList>
+				<TabGroup>
+					<TabList className="mb-4">{tabs}</TabList>
+					<TabPanels>{panels}</TabPanels>
+				</TabGroup>
 
-        <TabPanels>
-          {/* Overview Panel */}
-          <TabPanel>
-            <Grid numItems={1} numItemsSm={2} numItemsLg={3} className="gap-6">
-              <Card>
-                <Text>Prompt ID</Text>
-                <div className="mt-2">
-                  <Title className="font-mono text-sm">{basePromptId}</Title>
-                </div>
-              </Card>
-
-              <Card>
-                <Text>Version</Text>
-                <div className="mt-2">
-                  <Title>{currentVersion}</Title>
-                  <Badge color="blue" className="mt-1">
-                    v{currentVersion}
-                  </Badge>
-                </div>
-              </Card>
-
-              <Card>
-                <Text>Prompt Type</Text>
-                <div className="mt-2">
-                  <Title>{promptData.prompt_info?.prompt_type || "-"}</Title>
-                  <Badge color="blue" className="mt-1">
-                    {promptData.prompt_info?.prompt_type || "Unknown"}
-                  </Badge>
-                </div>
-              </Card>
-
-              <Card>
-                <Text>Created At</Text>
-                <div className="mt-2">
-                  <Title>{formatDate(promptData.created_at)}</Title>
-                  <Text>Last Updated: {formatDate(promptData.updated_at)}</Text>
-                </div>
-              </Card>
-            </Grid>
-
-            {promptData.litellm_params && Object.keys(promptData.litellm_params).length > 0 && (
-              <Card className="mt-6">
-                <Text className="font-medium">LiteLLM Parameters</Text>
-                <div className="mt-2 p-3 bg-gray-50 rounded-md">
-                  <pre className="text-xs text-gray-800 whitespace-pre-wrap">
-                    {JSON.stringify(promptData.litellm_params, null, 2)}
-                  </pre>
-                </div>
-              </Card>
-            )}
-          </TabPanel>
-
-          {/* Prompt Template Panel */}
-          {promptTemplate && (
-            <TabPanel>
-              <Card>
-                <div className="flex justify-between items-center mb-4">
-                  <Title>Prompt Template</Title>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={copiedStates["prompt-content"] ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-                    onClick={() => copyToClipboard(promptTemplate.content, "prompt-content")}
-                    className={`transition-all duration-200 ${
-                      copiedStates["prompt-content"]
-                        ? "text-green-600 bg-green-50 border-green-200"
-                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                    }`}
-                  >
-                    {copiedStates["prompt-content"] ? "Copied!" : "Copy Content"}
-                  </Button>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <Text className="font-medium">Template ID</Text>
-                    <div className="font-mono text-sm bg-gray-50 p-2 rounded">{promptTemplate.litellm_prompt_id}</div>
-                  </div>
-
-                  <div>
-                    <Text className="font-medium">Content</Text>
-                    <div className="mt-2 p-4 bg-gray-50 rounded-md border overflow-auto max-h-96">
-                      <pre className="text-sm text-gray-800 whitespace-pre-wrap">{promptTemplate.content}</pre>
-                    </div>
-                  </div>
-
-                  {promptTemplate.metadata && Object.keys(promptTemplate.metadata).length > 0 && (
-                    <div>
-                      <Text className="font-medium">Template Metadata</Text>
-                      <div className="mt-2 p-3 bg-gray-50 rounded-md border">
-                        <pre className="text-xs text-gray-800 whitespace-pre-wrap overflow-auto max-h-64">
-                          {JSON.stringify(promptTemplate.metadata, null, 2)}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            </TabPanel>
-          )}
-
-          {/* Details Panel (only for admins) */}
-          {isAdmin && (
-            <TabPanel>
-              <Card>
-                <Title className="mb-4">Prompt Details</Title>
-                <div className="space-y-4">
-                  <div>
-                    <Text className="font-medium">Prompt ID</Text>
-                    <div className="font-mono text-sm bg-gray-50 p-2 rounded">{basePromptId}</div>
-                  </div>
-
-                  <div>
-                    <Text className="font-medium">Prompt Type</Text>
-                    <div>{promptData.prompt_info?.prompt_type || "-"}</div>
-                  </div>
-
-                  <div>
-                    <Text className="font-medium">Created At</Text>
-                    <div>{formatDate(promptData.created_at)}</div>
-                  </div>
-
-                  <div>
-                    <Text className="font-medium">Last Updated</Text>
-                    <div>{formatDate(promptData.updated_at)}</div>
-                  </div>
-
-                  <div>
-                    <Text className="font-medium">LiteLLM Parameters</Text>
-                    <div className="mt-2 p-3 bg-gray-50 rounded-md border">
-                      <pre className="text-xs text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
-                        {JSON.stringify(promptData.litellm_params, null, 2)}
-                      </pre>
-                    </div>
-                  </div>
-
-                  <div>
-                    <Text className="font-medium">Prompt Info</Text>
-                    <div className="mt-2 p-3 bg-gray-50 rounded-md border">
-                      <pre className="text-xs text-gray-800 whitespace-pre-wrap">
-                        {JSON.stringify(promptData.prompt_info, null, 2)}
-                      </pre>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </TabPanel>
-          )}
-
-          {/* Raw JSON Panel */}
-          <TabPanel>
-            <Card>
-              <div className="flex justify-between items-center mb-4">
-                <Title>Raw API Response</Title>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={copiedStates["raw-json"] ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-                  onClick={() => copyToClipboard(JSON.stringify(rawApiResponse, null, 2), "raw-json")}
-                  className={`transition-all duration-200 ${
-                    copiedStates["raw-json"]
-                      ? "text-green-600 bg-green-50 border-green-200"
-                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  {copiedStates["raw-json"] ? "Copied!" : "Copy JSON"}
-                </Button>
-              </div>
-
-              <div className="p-4 bg-gray-50 rounded-md border overflow-auto">
-                <pre className="text-xs text-gray-800 whitespace-pre-wrap">
-                  {JSON.stringify(rawApiResponse, null, 2)}
-                </pre>
-              </div>
-            </Card>
-          </TabPanel>
-        </TabPanels>
-      </TabGroup>
-
-      {/* Delete Confirmation Modal */}
-      <Modal
-        title="Delete Prompt"
-        open={showDeleteConfirm}
-        onOk={handleDeleteConfirm}
-        onCancel={handleDeleteCancel}
-        confirmLoading={isDeleting}
-        okText="Delete"
-        okButtonProps={{ danger: true }}
-      >
-        <p>
-          Are you sure you want to delete prompt: <strong>{basePromptId}</strong>?
-        </p>
-        <p>This action cannot be undone.</p>
-      </Modal>
-    </div>
+				<PromptDeleteModal
+					open={showDeleteConfirm}
+					promptId={basePromptId}
+					deleting={isDeleting}
+					onConfirm={() => void handleDeleteConfirm()}
+					onCancel={() => setShowDeleteConfirm(false)}
+				/>
+			</div>
 		</ResourceDetailsDrawer>
-  );
-};
-
-export default PromptInfoView;
+	);
+}

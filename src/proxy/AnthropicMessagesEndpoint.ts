@@ -550,10 +550,10 @@ export function registerAnthropicMessagesEndpoints(
 		}
 
 		// Patch 7: websearch override。仅该读取路径叠加 DB 覆盖，避免改变其他静态配置消费者。
-		const generalSettings = {
-			...(getConfig().generalSettings as unknown as Record<string, unknown>),
-			...dbConfigProvider.getParam("general_settings"),
-		};
+			const generalSettings = {
+				...(getConfig().generalSettings as unknown as Record<string, unknown>),
+				...(await dbConfigProvider.getParam("general_settings")),
+			};
 		_applyWebSearchOverrideTargetModel(cleanBody, generalSettings);
 
 		// Patch 3: user_id 标准化
@@ -575,7 +575,9 @@ export function registerAnthropicMessagesEndpoints(
 		const abortWebSearch = (): void => webSearchAbortController.abort();
 		req.once("aborted", abortWebSearch);
 		res.once("close", abortWebSearch);
-		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, cleanBody);
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, cleanBody, {
+			callType: CallType.AMessages,
+		});
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 		const modelResolutionTrace = createModelResolutionTraceCollector();
@@ -625,10 +627,10 @@ export function registerAnthropicMessagesEndpoints(
 				} catch (error) {
 					if (db && auth && spendRequestId) {
 						try {
-							await spendLifecycle.finalize(() =>
+							await spendLifecycle.finalize(async () =>
 								trackSpendLog(
 									db,
-									buildSpendLogFromRequest({
+									await buildSpendLogFromRequest({
 										req: req,
 										auth: auth,
 										requestId: spendRequestId,
@@ -735,7 +737,7 @@ export function registerAnthropicMessagesEndpoints(
 						const spendInfo: DeploymentSpendInfo | undefined = executedAttempt
 							? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
 							: undefined;
-						const spendLog = buildSpendLogFromRequest({
+						const spendLog = await buildSpendLogFromRequest({
 							req: req,
 							auth: auth,
 							requestId: spendRequestId,
@@ -905,10 +907,10 @@ export function registerAnthropicMessagesEndpoints(
 			} catch (error) {
 				if (db && auth && spendRequestId) {
 					try {
-						await spendLifecycle.finalize(() =>
+						await spendLifecycle.finalize(async () =>
 							trackSpendLog(
 								db,
-								buildSpendLogFromRequest({
+								await buildSpendLogFromRequest({
 									req: req,
 									auth: auth,
 									requestId: spendRequestId,
@@ -966,7 +968,7 @@ export function registerAnthropicMessagesEndpoints(
 			// 非流式 spend 追踪（model 记原请求 model，对齐 Python SpendLogs 行为）
 			if (db && auth && spendRequestId) {
 				const usage = responseData["usage"] as Record<string, unknown> | undefined;
-				const spendLog = buildSpendLogFromRequest({
+				const spendLog = await buildSpendLogFromRequest({
 					req: req,
 					auth: auth,
 					requestId: spendRequestId,

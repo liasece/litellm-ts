@@ -181,7 +181,10 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		const messages = buildResponsesMessages(reqBody.input, reqBody.instructions);
 		const optionalParams = buildResponsesOptionalParams(reqBody);
 		const startTime = new Date();
-		const reservation = await reserveEndpointSpend(db, litellmRouter, req, model, reqBody);
+		const reservation = await reserveEndpointSpend(db, litellmRouter, req, model, reqBody, {
+			callType: CallType.ACompletion,
+			startTime: startTime,
+		});
 		const lifecycle = createEndpointSpendLifecycle(reservation);
 		const requestId = reservation?.requestId;
 		lifecycle.markProviderStarted();
@@ -887,7 +890,7 @@ async function recordSpend(
 	try {
 		await trackSpendLog(
 			db,
-			buildSpendLogFromRequest({
+			await buildSpendLogFromRequest({
 				req: req,
 				auth: req.auth,
 				requestId: requestId,

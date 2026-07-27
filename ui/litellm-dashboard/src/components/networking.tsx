@@ -185,7 +185,7 @@ const updateProxyBaseUrl = (serverRootPath: string, receivedProxyBaseUrl: string
 	const resolvedDefaultProxyBaseUrl =
 		isLocal && process.env.NEXT_PUBLIC_USE_REWRITES !== "true"
 			? "http://localhost:4000"
-			: browserLocation?.origin ?? null;
+			: (browserLocation?.origin ?? null);
 	let initialProxyBaseUrl = receivedProxyBaseUrl || resolvedDefaultProxyBaseUrl;
 	console.log("proxyBaseUrl:", proxyBaseUrl);
 	console.log("serverRootPath:", serverRootPath);
@@ -2713,6 +2713,7 @@ interface UiSpendLogsParams {
 	sort_order?: "asc" | "desc";
 	min_spend?: number;
 	max_spend?: number;
+	include_active?: boolean;
 }
 
 interface UiSpendLogsCallOptions {
@@ -2745,7 +2746,9 @@ export const uiSpendLogsCall = async ({
 		// Add optional params only when explicitly provided
 		for (const [key, value] of Object.entries(params)) {
 			if (value == null) continue;
-			if (key === "min_spend" || key === "max_spend") {
+			if (typeof value === "boolean") {
+				queryParams.append(key, value ? "true" : "false");
+			} else if (key === "min_spend" || key === "max_spend") {
 				queryParams.append(key, value.toString());
 			} else if (typeof value === "string" && value !== "") {
 				queryParams.append(key, String(value));
@@ -4321,7 +4324,7 @@ export const getRoutableModelCandidatesCall = async (accessToken: string): Promi
 		throw new Error(errorMessage);
 	}
 	const data = (await response.json()) as RoutableModelCandidate[] | { data?: RoutableModelCandidate[] };
-	return Array.isArray(data) ? data : data.data ?? [];
+	return Array.isArray(data) ? data : (data.data ?? []);
 };
 
 /** 旧 Web Search 调用入口，保留以兼容已部署 Dashboard。 */
@@ -7253,7 +7256,7 @@ export const sessionSpendLogsCall = async (
 ) => {
 	try {
 		const options =
-			typeof pageOrOptions === "number" ? { page: pageOrOptions, pageSize: legacyPageSize } : pageOrOptions ?? {};
+			typeof pageOrOptions === "number" ? { page: pageOrOptions, pageSize: legacyPageSize } : (pageOrOptions ?? {});
 		const searchParams = new URLSearchParams();
 		if (typeof session === "string") {
 			searchParams.set("session_id", session);
@@ -9630,7 +9633,7 @@ export const storeMCPOAuthUserCredential = async (
 		const detailMsg = Array.isArray(detail)
 			? detail
 					.map((d: unknown) =>
-						d && typeof d === "object" ? (d as Record<string, unknown>).msg ?? JSON.stringify(d) : String(d),
+						d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
 					)
 					.join("; ")
 			: typeof detail === "string"
@@ -9661,7 +9664,7 @@ export const deleteMCPOAuthUserCredential = async (
 		const detailMsg = Array.isArray(detail)
 			? detail
 					.map((d: unknown) =>
-						d && typeof d === "object" ? (d as Record<string, unknown>).msg ?? JSON.stringify(d) : String(d),
+						d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
 					)
 					.join("; ")
 			: typeof detail === "string"

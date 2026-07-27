@@ -12,3 +12,13 @@ export interface UserInfo {
   sso_user_id: string | null;
   budget_duration: string | null;
 }
+
+export interface TeamDisplayInfo {
+  team_id: string;
+  team_alias: string | null;
+}
+
+export interface TeamOption {
+  team_id: string;
+  team_alias: string;
+}

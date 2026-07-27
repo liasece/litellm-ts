@@ -28,7 +28,7 @@ const allProxyModelsKeys = createQueryKeys("allProxyModels");
 const selectedTeamModelsKeys = createQueryKeys("selectedTeamModels");
 const infiniteModelKeys = createQueryKeys("infiniteModels");
 
-export const useModelsInfo = (page: number = 1, size: number = 50, search?: string, modelId?: string, teamId?: string, sortBy?: string, sortOrder?: string) => {
+export const useModelsInfo = (page: number = 1, size: number = 50, search?: string, modelId?: string, teamId?: string, sortBy?: string, sortOrder?: string, enabled: boolean = true) => {
   const { accessToken, userId, userRole } = useAuthorized();
   return useQuery<PaginatedModelInfoResponse>({
     queryKey: modelKeys.list({
@@ -45,7 +45,7 @@ export const useModelsInfo = (page: number = 1, size: number = 50, search?: stri
       },
     }),
     queryFn: async () => await modelInfoCall(accessToken!, userId!, userRole!, page, size, search, modelId, teamId, sortBy, sortOrder),
-    enabled: Boolean(accessToken && userId && userRole),
+    enabled: Boolean(enabled && accessToken && userId && userRole),
   });
 };
 

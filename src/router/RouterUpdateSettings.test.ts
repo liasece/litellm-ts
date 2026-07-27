@@ -171,6 +171,20 @@ describe("Router deployment 增删改（upsert/remove，对齐 PY upsert_deploym
 		expect(router.getDeployments()).toHaveLength(1);
 	});
 
+	it("upsertDeployment：同 id、同参数但 model_name 改名时必须替换", () => {
+		const router = makeRouter();
+		const existing = router.getDeployments()[0]!;
+		const changed = router.upsertDeployment({
+			...existing,
+			model_name: "renamed-only",
+			litellm_params: { ...existing.litellm_params },
+		});
+		expect(changed).toBe(true);
+		expect(router.getDeployment("dep-1")?.model_name).toBe("renamed-only");
+		expect(router.hasModel("gpt-4o")).toBe(false);
+		expect(router.hasModel("renamed-only")).toBe(true);
+	});
+
 	it("removeDeployment：按 model_id 移除后不再可路由；未知 id 返回 false", () => {
 		const router = makeRouter();
 		expect(router.removeDeployment("dep-1")).toBe(true);

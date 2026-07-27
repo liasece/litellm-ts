@@ -17,6 +17,30 @@
 			"tag": "0001_spend_reservations",
 			"file": "0001_spend_reservations.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1785124582000,
+			"tag": "0002_session_group_key",
+			"file": "0002_session_group_key.sql",
+			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1785129900000,
+			"tag": "0003_embedded_session_id",
+			"file": "0003_embedded_session_id.sql",
+			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "7",
+			"when": 1785135600000,
+			"tag": "0004_active_requests",
+			"file": "0004_active_requests.sql",
+			"breakpoints": true
 		}
 	]
 }

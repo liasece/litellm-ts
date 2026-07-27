@@ -81,13 +81,12 @@ class FakeRepository implements CredentialRepositoryPort {
 function makeApp(): {
 	readonly app: express.Express;
 	readonly repository: FakeRepository;
-	readonly router: { getDeployment: jest.Mock<Deployment | null, [string]>; upsertDeployment: jest.Mock };
+	readonly router: { getDeployment: jest.Mock<Deployment | null, [string]> };
 } {
 	const repository = new FakeRepository();
 	const service = new CredentialService(repository, new CredentialRuntimeAccessor());
 	const litellmRouter = {
 		getDeployment: jest.fn<Deployment | null, [string]>(() => null),
-		upsertDeployment: jest.fn(),
 	};
 	const app = express();
 	app.use(express.json());
@@ -208,7 +207,7 @@ describe("CredentialEndpoints", () => {
 		expect((await request(app).get("/credentials/by_model/missing-fields")).status).toBe(409);
 	});
 
-	it("attach_to_model 创建凭据、移除 inline secret，并在提交后同步 Router，响应不含 secret", async () => {
+	it("attach_to_model 原子更新数据库模型，响应不含 secret", async () => {
 		const { app, repository, router } = makeApp();
 		repository.model = {
 			model_id: "model-1",
@@ -216,7 +215,6 @@ describe("CredentialEndpoints", () => {
 			litellm_params: { model: "openai/gpt-4o", api_key: "sk-inline", api_base: "https://api.example", timeout: 10 },
 			model_info: {},
 		};
-		router.getDeployment.mockReturnValue(deployment("model-1", { litellm_credential_name: "attached" }));
 		const response = await request(app)
 			.post("/credentials")
 			.send({
@@ -234,6 +232,5 @@ describe("CredentialEndpoints", () => {
 			timeout: 10,
 			litellm_credential_name: "attached",
 		});
-		expect(router.upsertDeployment).toHaveBeenCalledTimes(1);
 	});
 });

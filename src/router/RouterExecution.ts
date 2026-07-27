@@ -557,6 +557,7 @@ export async function executeWithFallback(
 			// 重试退避下限，不能作为冷却缺省（未配置时为 0 导致冷却空操作）。
 			ctx.cooldownTimeMs,
 			ctx.cooldownManager,
+			ctx.allowedFails,
 		);
 		if (decision.shouldCooldown) {
 			ctx.cooldownManager.markFailed(depKey, decision.cooldownDurationMs, decision.statusCode, error.message);

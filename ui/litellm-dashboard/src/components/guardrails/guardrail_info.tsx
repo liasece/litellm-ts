@@ -5,19 +5,21 @@ import {
   updateGuardrailCall,
 } from "@/components/networking";
 import { copyToClipboard as utilCopyToClipboard } from "@/utils/dataUtils";
-import { CodeOutlined, EyeInvisibleOutlined, InfoCircleOutlined, StopOutlined } from "@ant-design/icons";
-import { Badge, Card, Grid, Tab, TabGroup, TabList, TabPanel, TabPanels, Text, Title } from "@tremor/react";
+import { CodeOutlined, InfoCircleOutlined } from "@ant-design/icons";
+import { Card, Tab, TabGroup, TabList, TabPanel, TabPanels, Title } from "@tremor/react";
 import { Button, Divider, Form, Input, Modal, Select, Tooltip } from "antd";
-import { CheckIcon, CopyIcon } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 import NotificationsManager from "../molecules/notifications_manager";
 import ContentFilterManager, { formatContentFilterDataForAPI } from "./content_filter/ContentFilterManager";
 import CustomCodeModal, { EditGuardrailData } from "./custom_code/CustomCodeModal";
+import GuardrailDetailsHeader from "./details/GuardrailDetailsHeader";
+import GuardrailOverview from "./details/GuardrailOverview";
 import { getGuardrailLogoAndName, guardrail_provider_map } from "./guardrail_info_helpers";
 import GuardrailOptionalParams from "./guardrail_optional_params";
 import GuardrailProviderFields from "./guardrail_provider_fields";
 import PiiConfiguration from "./pii_configuration";
+import GuardrailSettingsSummary from "./settings/GuardrailSettingsSummary";
 import ToolPermissionRulesEditor, { ToolPermissionConfig } from "./tool_permission/ToolPermissionRulesEditor";
 
 export interface GuardrailInfoProps {
@@ -345,9 +347,6 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
         (key) => guardrail_provider_map[key] === guardrailData.litellm_params?.guardrail,
       );
 
-      console.log("values: ", JSON.stringify(values));
-      console.log("currentProvider: ", currentProvider);
-
       // Use pre-fetched provider params to copy recognised params
       const isToolPermissionGuardrail = guardrailData.litellm_params?.guardrail === "tool_permission";
       if (guardrailProviderSpecificParams && currentProvider && !isToolPermissionGuardrail) {
@@ -355,8 +354,6 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
         const providerSpecificParams = guardrailProviderSpecificParams[providerKey] || {};
 
         const allowedParams = new Set<string>();
-
-        console.log("providerSpecificParams: ", JSON.stringify(providerSpecificParams));
 
         // Add root-level parameters (like api_key, api_base, api_version)
         Object.keys(providerSpecificParams).forEach((paramName) => {
@@ -372,7 +369,6 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
           });
         }
 
-        console.log("allowedParams: ", allowedParams);
         allowedParams.forEach((paramName) => {
           if (paramName === "patterns" || paramName === "blocked_words" || paramName === "categories") {
             return;
@@ -441,13 +437,6 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
 		);
   }
 
-  // Format date helper function
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return "-";
-    const date = new Date(dateString);
-    return date.toLocaleString();
-  };
-
   // Format the provider display name and logo
   const { logo, displayName } = getGuardrailLogoAndName(guardrailData.litellm_params?.guardrail || "");
 
@@ -487,24 +476,12 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
 			}
 		>
     <div className="p-4">
-      <div>
-        <Title>{guardrailData.guardrail_name || "Unnamed Guardrail"}</Title>
-        <div className="flex items-center cursor-pointer">
-          <Text className="text-gray-500 font-mono">{guardrailData.guardrail_id}</Text>
-
-          <Button
-            type="text"
-            size="small"
-            icon={copiedStates["guardrail-id"] ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-            onClick={() => copyToClipboard(guardrailData.guardrail_id, "guardrail-id")}
-							className={`left-2 z-10 transition-all duration-200 ${
-								copiedStates["guardrail-id"]
-              ? "text-green-600 bg-green-50 border-green-200"
-              : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-              }`}
-          />
-        </div>
-      </div>
+      <GuardrailDetailsHeader
+        name={guardrailData.guardrail_name}
+        id={guardrailData.guardrail_id}
+        copied={Boolean(copiedStates["guardrail-id"])}
+        onCopy={() => copyToClipboard(guardrailData.guardrail_id, "guardrail-id")}
+      />
 
       <TabGroup>
         <TabList className="mb-4">
@@ -513,126 +490,17 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
         </TabList>
 
         <TabPanels>
-          {/* Overview Panel */}
           <TabPanel>
-            <Grid numItems={1} numItemsSm={2} numItemsLg={3} className="gap-6">
-              <Card>
-                <Text>Provider</Text>
-                <div className="mt-2 flex items-center space-x-2">
-                  {logo && (
-                    <img
-                      src={logo}
-                      alt={`${displayName} logo`}
-                      className="w-6 h-6"
-                      onError={(e) => {
-                        // Hide broken image
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  )}
-                  <Title>{displayName}</Title>
-                </div>
-              </Card>
-
-              <Card>
-                <Text>Mode</Text>
-                <div className="mt-2">
-                  <Title>{guardrailData.litellm_params?.mode || "-"}</Title>
-                  <Badge color={guardrailData.litellm_params?.default_on ? "green" : "gray"}>
-                    {guardrailData.litellm_params?.default_on ? "Default On" : "Default Off"}
-                  </Badge>
-                </div>
-              </Card>
-
-              <Card>
-                <Text>Created At</Text>
-                <div className="mt-2">
-                  <Title>{formatDate(guardrailData.created_at)}</Title>
-                  <Text>Last Updated: {formatDate(guardrailData.updated_at)}</Text>
-                </div>
-              </Card>
-            </Grid>
-
-            {guardrailData.litellm_params?.pii_entities_config &&
-              Object.keys(guardrailData.litellm_params.pii_entities_config).length > 0 && (
-                <Card className="mt-6">
-                  <div className="flex justify-between items-center">
-                    <Text className="font-medium">PII Protection</Text>
-                    <Badge color="blue">
-                      {Object.keys(guardrailData.litellm_params.pii_entities_config).length} PII entities configured
-                    </Badge>
-                  </div>
-                </Card>
-              )}
-
-            {guardrailData.litellm_params?.pii_entities_config &&
-              Object.keys(guardrailData.litellm_params.pii_entities_config).length > 0 && (
-                <Card className="mt-6">
-                  <Text className="mb-4 text-lg font-semibold">PII Entity Configuration</Text>
-                  <div className="border rounded-lg overflow-hidden shadow-sm">
-                    <div className="bg-gray-50 px-5 py-3 border-b flex">
-                      <Text className="flex-1 font-semibold text-gray-700">Entity Type</Text>
-                      <Text className="flex-1 font-semibold text-gray-700">Configuration</Text>
-                    </div>
-                    <div className="max-h-[400px] overflow-y-auto">
-                      {Object.entries(guardrailData.litellm_params?.pii_entities_config).map(([key, value]) => (
-                        <div key={key} className="px-5 py-3 flex border-b hover:bg-gray-50 transition-colors">
-                          <Text className="flex-1 font-medium text-gray-900">{key}</Text>
-                          <Text className="flex-1">
-                            <span
-																className={`inline-flex items-center gap-1.5 ${
-																	value === "MASK" ? "text-blue-600" : "text-red-600"
-                                }`}
-                            >
-                              {value === "MASK" ? <EyeInvisibleOutlined /> : <StopOutlined />}
-                              {String(value)}
-                            </span>
-                          </Text>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </Card>
-              )}
-
-            {guardrailData.litellm_params?.guardrail === "tool_permission" && (
-              <Card className="mt-6">
-                <ToolPermissionRulesEditor value={toolPermissionConfig} disabled />
-              </Card>
-            )}
-
-            {/* Custom Code Display */}
-							{guardrailData.litellm_params?.guardrail === "custom_code" &&
-								guardrailData.litellm_params?.custom_code && (
-              <Card className="mt-6">
-                <div className="flex justify-between items-center mb-4">
-                  <div className="flex items-center gap-2">
-                    <CodeOutlined className="text-blue-500" />
-                    <Text className="font-medium text-lg">Custom Code</Text>
-                  </div>
-                  {isAdmin && !isConfigGuardrail && (
-												<Button size="small" icon={<CodeOutlined />} onClick={() => setCustomCodeModalVisible(true)}>
-                      Edit Code
-                    </Button>
-                  )}
-                </div>
-                <div className="relative rounded-lg overflow-hidden border border-gray-700 bg-[#1e1e1e]">
-											<pre
-												className="p-4 text-sm text-gray-200 overflow-x-auto"
-												style={{ fontFamily: "'Fira Code', 'Monaco', 'Consolas', monospace" }}
-											>
-                    <code>{guardrailData.litellm_params.custom_code}</code>
-                  </pre>
-                </div>
-              </Card>
-            )}
-
-            {/* Content Filter Configuration Display */}
-            <ContentFilterManager
+            <GuardrailOverview
               guardrailData={guardrailData}
               guardrailSettings={guardrailSettings}
-              isEditing={false}
+              toolPermissionConfig={toolPermissionConfig}
               accessToken={accessToken}
+              isAdmin={isAdmin}
+              isConfigGuardrail={isConfigGuardrail}
+              logo={logo}
+              displayName={displayName}
+              onEditCode={() => setCustomCodeModalVisible(true)}
             />
           </TabPanel>
 
@@ -795,56 +663,11 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
                   </Form>
 										</Modal>
                 ) : (
-                  <div className="space-y-4">
-                    <div>
-                      <Text className="font-medium">Guardrail ID</Text>
-                      <div className="font-mono">{guardrailData.guardrail_id}</div>
-                    </div>
-                    <div>
-                      <Text className="font-medium">Guardrail Name</Text>
-                      <div>{guardrailData.guardrail_name || "Unnamed Guardrail"}</div>
-                    </div>
-                    <div>
-                      <Text className="font-medium">Provider</Text>
-                      <div>{displayName}</div>
-                    </div>
-                    <div>
-                      <Text className="font-medium">Mode</Text>
-                      <div>{guardrailData.litellm_params?.mode || "-"}</div>
-                    </div>
-                    <div>
-                      <Text className="font-medium">Default On</Text>
-                      <Badge color={guardrailData.litellm_params?.default_on ? "green" : "gray"}>
-                        {guardrailData.litellm_params?.default_on ? "Yes" : "No"}
-                      </Badge>
-                    </div>
-
-                    {guardrailData.litellm_params?.pii_entities_config &&
-                      Object.keys(guardrailData.litellm_params.pii_entities_config).length > 0 && (
-                        <div>
-                          <Text className="font-medium">PII Protection</Text>
-                          <div className="mt-2">
-                            <Badge color="blue">
-                              {Object.keys(guardrailData.litellm_params.pii_entities_config).length} PII entities
-                              configured
-                            </Badge>
-                          </div>
-                        </div>
-                      )}
-
-                    <div>
-                      <Text className="font-medium">Created At</Text>
-                      <div>{formatDate(guardrailData.created_at)}</div>
-                    </div>
-                    <div>
-                      <Text className="font-medium">Last Updated</Text>
-                      <div>{formatDate(guardrailData.updated_at)}</div>
-                    </div>
-
-                    {guardrailData.litellm_params?.guardrail === "tool_permission" && (
-                      <ToolPermissionRulesEditor value={toolPermissionConfig} disabled />
-                    )}
-                  </div>
+                  <GuardrailSettingsSummary
+                    guardrailData={guardrailData}
+                    displayName={displayName}
+                    toolPermissionConfig={toolPermissionConfig}
+                  />
                 )}
               </Card>
             </TabPanel>

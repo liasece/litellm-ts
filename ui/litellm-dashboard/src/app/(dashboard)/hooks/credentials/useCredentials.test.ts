@@ -191,4 +191,11 @@ describe("useCredentials", () => {
     expect(credentialListCall).toHaveBeenCalledWith("test-access-token");
     expect(credentialListCall).toHaveBeenCalledTimes(1);
   });
+
+  it("should not execute query when explicitly disabled", () => {
+    const { result } = renderHook(() => useCredentials(false), { wrapper });
+
+    expect(result.current.isFetched).toBe(false);
+    expect(credentialListCall).not.toHaveBeenCalled();
+  });
 });

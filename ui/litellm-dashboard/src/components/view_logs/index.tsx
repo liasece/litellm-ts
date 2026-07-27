@@ -1,13 +1,9 @@
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import moment from "moment";
-import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import GuardrailViewer from "@/components/view_logs/GuardrailViewer/GuardrailViewer";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
-import { truncateString } from "@/utils/textUtils";
-import { SettingOutlined, SyncOutlined } from "@ant-design/icons";
-import { Row } from "@tanstack/react-table";
-import { Switch, Tab, TabGroup, TabList, TabPanel, TabPanels } from "@tremor/react";
-import { Button, Tag, Tooltip } from "antd";
+import { useCallback, useDeferredValue, useEffect, useState } from "react";
+import { SettingOutlined } from "@ant-design/icons";
+import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "@tremor/react";
+import { Button } from "antd";
 import { internalUserRoles } from "../../utils/roles";
 import DeletedKeysPage from "../DeletedKeysPage/DeletedKeysPage";
 import DeletedTeamsPage from "../DeletedTeamsPage/DeletedTeamsPage";
@@ -18,25 +14,20 @@ import FilterComponent, { FilterOption } from "../molecules/filter";
 import { allEndUsersCall, keyInfoV1Call, uiSpendLogsCall } from "../networking";
 import KeyInfoView from "../templates/key_info_view";
 import AuditLogs from "./audit_logs";
+import { createColumns, getSessionGroupRef, LogEntry, type LogsSortField, type SessionGroupRef } from "./columns";
 import {
-	createColumns,
-	getSessionGroupKey,
-	getSessionGroupRef,
-	LogEntry,
-	type LogsSortField,
-	type SessionGroupRef,
-} from "./columns";
-import { ConfigInfoMessage } from "./ConfigInfoMessage";
-import { ERROR_CODE_OPTIONS, MCP_CALL_TYPES, QUICK_SELECT_OPTIONS } from "./constants";
-import { CostBreakdownViewer } from "./CostBreakdownViewer";
-import { ErrorViewer } from "./ErrorViewer";
+	DEFAULT_LIVE_TAIL_INTERVAL_MS,
+	ERROR_CODE_OPTIONS,
+	isLiveTailIntervalMs,
+	type LiveTailIntervalMs,
+} from "./constants";
 import { useLogFilterLogic } from "./log_filter_logic";
+import LiveTailBanner from "./LiveTailBanner";
 import { LogDetailsDrawer } from "./LogDetailsDrawer";
-import { getTimeRangeDisplay } from "./logs_utils";
-import { RequestResponsePanel } from "./RequestResponsePanel";
+import LogsPagination from "./LogsPagination";
+import LogsToolbar from "./LogsToolbar";
 import SpendLogsSettingsModal from "./SpendLogsSettingsModal/SpendLogsSettingsModal";
 import { DataTable } from "./table";
-import { VectorStoreViewer } from "./VectorStoreViewer";
 
 interface SpendLogsTableProps {
 	accessToken: string | null;
@@ -64,22 +55,14 @@ export default function SpendLogsTable({
 	premiumUser,
 }: SpendLogsTableProps) {
 	const [searchTerm, setSearchTerm] = useState("");
-	const [showFilters, setShowFilters] = useState(false);
-	const [showColumnDropdown, setShowColumnDropdown] = useState(false);
 	const [currentPage, setCurrentPage] = useState(1);
 	const [pageSize, setPageSize] = useState(50);
-	const dropdownRef = useRef<HTMLDivElement>(null);
-	const filtersRef = useRef<HTMLDivElement>(null);
-	const quickSelectRef = useRef<HTMLDivElement>(null);
 
 	// New state variables for Start and End Time
 	const [startTime, setStartTime] = useState<string>(moment().subtract(24, "hours").format("YYYY-MM-DDTHH:mm"));
 	const [endTime, setEndTime] = useState<string>(moment().format("YYYY-MM-DDTHH:mm"));
 
 	const [isCustomDate, setIsCustomDate] = useState(false);
-	const [quickSelectOpen, setQuickSelectOpen] = useState(false);
-	const [tempTeamId, setTempTeamId] = useState("");
-	const [tempKeyHash, setTempKeyHash] = useState("");
 	const [selectedTeamId, setSelectedTeamId] = useState("");
 	const [selectedKeyHash, setSelectedKeyHash] = useState("");
 	const [selectedModelId, setSelectedModelId] = useState("");
@@ -103,17 +86,30 @@ export default function SpendLogsTable({
 	// when time range / sort / page changes while a backend filter is in effect.
 	const [isMainQueryEnabled, setIsMainQueryEnabled] = useState(true);
 
-	const queryClient = useQueryClient();
+	const [liveTailIntervalMs, setLiveTailIntervalMs] = useState<LiveTailIntervalMs>(() => {
+		const storedInterval = sessionStorage.getItem("liveTailIntervalMs");
+		if (storedInterval !== null) {
+			const parsedInterval = Number(storedInterval);
+			if (isLiveTailIntervalMs(parsedInterval)) {
+				return parsedInterval;
+			}
+		}
 
-	const [isLiveTail, setIsLiveTail] = useState<boolean>(() => {
-		const storedValue = sessionStorage.getItem("isLiveTail");
-		// default to true if nothing is stored
-		return storedValue !== null ? JSON.parse(storedValue) : true;
+		const legacyLiveTail = sessionStorage.getItem("isLiveTail");
+		if (legacyLiveTail !== null) {
+			try {
+				return JSON.parse(legacyLiveTail) === false ? 0 : DEFAULT_LIVE_TAIL_INTERVAL_MS;
+			} catch {
+				// Ignore malformed legacy state and use the new default.
+			}
+		}
+		return DEFAULT_LIVE_TAIL_INTERVAL_MS;
 	});
 
 	useEffect(() => {
-		sessionStorage.setItem("isLiveTail", JSON.stringify(isLiveTail));
-	}, [isLiveTail]);
+		sessionStorage.setItem("liveTailIntervalMs", String(liveTailIntervalMs));
+		sessionStorage.removeItem("isLiveTail");
+	}, [liveTailIntervalMs]);
 
 	const [selectedTimeInterval, setSelectedTimeInterval] = useState<{ value: number; unit: string }>({
 		value: 24,
@@ -136,38 +132,11 @@ export default function SpendLogsTable({
 		fetchKeyInfo();
 	}, [selectedKeyIdInfoView, accessToken]);
 
-	// Close dropdown when clicking outside
-	useEffect(() => {
-		function handleClickOutside(event: MouseEvent) {
-			if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-				setShowColumnDropdown(false);
-			}
-			if (filtersRef.current && !filtersRef.current.contains(event.target as Node)) {
-				setShowFilters(false);
-			}
-			if (quickSelectRef.current && !quickSelectRef.current.contains(event.target as Node)) {
-				setQuickSelectOpen(false);
-			}
-		}
-
-		document.addEventListener("mousedown", handleClickOutside);
-		return () => document.removeEventListener("mousedown", handleClickOutside);
-	}, []);
-
 	useEffect(() => {
 		if (userRole && internalUserRoles.includes(userRole)) {
 			setFilterByCurrentUser(true);
 		}
 	}, [userRole]);
-
-	const LiveTailControls = () => {
-		return (
-			<div className="flex items-center gap-2">
-				<span className="text-sm font-medium text-gray-900">Live Tail</span>
-				<Switch color="green" checked={isLiveTail} defaultChecked={true} onChange={setIsLiveTail} />
-			</div>
-		);
-	};
 
 	const logs = useQuery<PaginatedResponse>({
 		queryKey: [
@@ -219,15 +188,16 @@ export default function SpendLogsTable({
 					model_id: selectedModelId || undefined,
 					sort_by: sortBy,
 					sort_order: sortOrder,
+					include_active: true,
 				},
 			});
 
 			return response;
 		},
 		enabled: !!accessToken && !!token && !!userRole && !!userID && activeTab === "request logs" && isMainQueryEnabled,
-		refetchInterval: isLiveTail && currentPage === 1 ? 15000 : false,
+		refetchInterval: liveTailIntervalMs > 0 && currentPage === 1 ? liveTailIntervalMs : false,
 		placeholderData: keepPreviousData,
-		refetchIntervalInBackground: true,
+		refetchIntervalInBackground: false,
 	});
 
 	// Defer the transition from "Fetching" to "Fetch" so the button stays loading until
@@ -248,7 +218,6 @@ export default function SpendLogsTable({
 		filters,
 		filteredLogs,
 		hasBackendFilters,
-		allTeams: hookAllTeams,
 		handleFilterChange,
 		handleFilterReset: handleFilterResetFromHook,
 	} = useLogFilterLogic({
@@ -316,40 +285,21 @@ export default function SpendLogsTable({
 		return matchesSearch;
 	});
 
-	// Build a single-pass map of session group → representative request_id.
-	// Prefers an LLM row over an MCP row as the representative.
-	const sessionRepresentativeMap = new Map<string, { requestId: string; isMcp: boolean }>();
-	for (const log of searchedLogs) {
-		const sessionGroup = getSessionGroupRef(log);
-		if (!sessionGroup || (log.session_total_count || 1) <= 1) continue;
-		const sessionGroupKey = getSessionGroupKey(sessionGroup);
-		const isMcp = MCP_CALL_TYPES.includes(log.call_type);
-		const existing = sessionRepresentativeMap.get(sessionGroupKey);
-		if (!existing || (existing.isMcp && !isMcp)) {
-			sessionRepresentativeMap.set(sessionGroupKey, { requestId: log.request_id, isMcp });
-		}
-	}
-
-	const filteredData =
-		searchedLogs
-			.map((log) => {
-				return {
-					...log,
-					request_duration_ms: log.request_duration_ms,
-					onKeyHashClick: (keyHash: string) => setSelectedKeyIdInfoView(keyHash),
-					onSessionClick: (sessionGroup: SessionGroupRef) => {
+	// Request Logs always renders every request returned by the paginated API.
+	// Session grouping is only used after a row is clicked to load the full session in the drawer.
+	const filteredData = searchedLogs.map((log) => ({
+		...log,
+		request_duration_ms: log.request_duration_ms,
+		onKeyHashClick: (keyHash: string) => setSelectedKeyIdInfoView(keyHash),
+		onSessionClick:
+			log.status === "in_progress"
+				? undefined
+				: (sessionGroup: SessionGroupRef) => {
 						setSelectedSessionGroup(sessionGroup);
 						setSelectedLog(log);
 						setIsDrawerOpen(true);
 					},
-				};
-			})
-			// Deduplicate multi-call sessions using the pre-built map (O(1) per row).
-			.filter((log) => {
-				const sessionGroup = getSessionGroupRef(log);
-				if (!sessionGroup || (log.session_total_count || 1) <= 1) return true;
-				return sessionRepresentativeMap.get(getSessionGroupKey(sessionGroup))?.requestId === log.request_id;
-			}) || [];
+	}));
 
 	// Add this function to handle manual refresh
 	const handleRefresh = () => {
@@ -357,9 +307,12 @@ export default function SpendLogsTable({
 	};
 
 	const handleRowClick = (log: LogEntry) => {
-		// Multi-call session row: open in the same right-side drawer (session mode)
+		if (log.status === "in_progress") {
+			return;
+		}
+		// A session-backed request opens the drawer in session mode and loads every log in that session.
 		const sessionGroup = getSessionGroupRef(log);
-		if (sessionGroup && (log.session_total_count || 1) > 1) {
+		if (sessionGroup) {
 			setSelectedSessionGroup(sessionGroup);
 			setSelectedLog(log);
 			setIsDrawerOpen(true);
@@ -404,6 +357,7 @@ export default function SpendLogsTable({
 			label: "Status",
 			isSearchable: false,
 			options: [
+				{ label: "In Progress", value: "in_progress" },
 				{ label: "Success", value: "success" },
 				{ label: "Failure", value: "failure" },
 			],
@@ -458,21 +412,6 @@ export default function SpendLogsTable({
 		},
 	];
 
-	const formatTimeUnit = (value: number, unit: string) => {
-		if (value === 1) {
-			if (unit === "minutes") return "minute";
-			if (unit === "hours") return "hour";
-			if (unit === "days") return "day";
-		}
-		return unit;
-	};
-
-	const selectedOption = QUICK_SELECT_OPTIONS.find(
-		(option) => option.value === selectedTimeInterval.value && option.unit === selectedTimeInterval.unit,
-	);
-
-	const displayLabel = isCustomDate ? getTimeRangeDisplay(isCustomDate, startTime, endTime) : selectedOption?.label;
-
 	return (
 		<div className="w-full max-w-screen p-6 overflow-x-hidden box-border">
 			<TabGroup defaultIndex={0} onIndexChange={(index) => setActiveTab(index === 0 ? "request logs" : "audit logs")}>
@@ -514,193 +453,43 @@ export default function SpendLogsTable({
 								/>
 								<div className="bg-white rounded-lg shadow w-full max-w-full box-border">
 									<div className="border-b px-6 py-4 w-full max-w-full box-border">
-										<div className="flex flex-col md:flex-row items-start md:items-center justify-between space-y-4 md:space-y-0 w-full max-w-full box-border">
-											<div className="flex flex-wrap items-center gap-3 w-full max-w-full box-border">
-												<div className="relative w-64 min-w-0 flex-shrink-0">
-													<input
-														type="text"
-														placeholder="Search by Request ID"
-														className="w-full px-3 py-2 pl-8 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-														value={searchTerm}
-														onChange={(e) => setSearchTerm(e.target.value)}
-													/>
-													<svg
-														className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500"
-														fill="none"
-														stroke="currentColor"
-														viewBox="0 0 24 24"
-													>
-														<path
-															strokeLinecap="round"
-															strokeLinejoin="round"
-															strokeWidth={2}
-															d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-														/>
-													</svg>
-												</div>
-
-												<div className="flex items-center gap-2 min-w-0 flex-shrink">
-													<div className="relative z-50" ref={quickSelectRef}>
-														<button
-															onClick={() => setQuickSelectOpen(!quickSelectOpen)}
-															className="px-3 py-2 text-sm border rounded-md hover:bg-gray-50 flex items-center gap-2"
-														>
-															<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																<path
-																	strokeLinecap="round"
-																	strokeLinejoin="round"
-																	strokeWidth={2}
-																	d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-																/>
-															</svg>
-															{displayLabel}
-														</button>
-
-														{quickSelectOpen && (
-															<div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border p-2 z-50">
-																<div className="space-y-1">
-																	{QUICK_SELECT_OPTIONS.map((option) => (
-																		<button
-																			key={option.label}
-																			className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 rounded-md ${
-																				displayLabel === option.label ? "bg-blue-50 text-blue-600" : ""
-																			}`}
-																			onClick={() => {
-																				setCurrentPage(1);
-																				setEndTime(moment().format("YYYY-MM-DDTHH:mm"));
-																				setStartTime(
-																					moment()
-																						.subtract(option.value, option.unit as any)
-																						.format("YYYY-MM-DDTHH:mm"),
-																				);
-																				setSelectedTimeInterval({ value: option.value, unit: option.unit });
-																				setIsCustomDate(false);
-																				setQuickSelectOpen(false);
-																			}}
-																		>
-																			{option.label}
-																		</button>
-																	))}
-																	<div className="border-t my-2" />
-																	<button
-																		className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 rounded-md ${
-																			isCustomDate ? "bg-blue-50 text-blue-600" : ""
-																		}`}
-																		onClick={() => setIsCustomDate(!isCustomDate)}
-																	>
-																		Custom Range
-																	</button>
-																</div>
-															</div>
-														)}
-													</div>
-
-													<LiveTailControls />
-
-													<Button
-														type="default"
-														icon={<SyncOutlined spin={isButtonLoading} />}
-														onClick={handleRefresh}
-														disabled={isButtonLoading}
-														title="Fetch data"
-													>
-														{isButtonLoading ? "Fetching" : "Fetch"}
-													</Button>
-												</div>
-
-												{isCustomDate && (
-													<div className="flex items-center gap-2">
-														<div>
-															<input
-																type="datetime-local"
-																value={startTime}
-																onChange={(e) => {
-																	setStartTime(e.target.value);
-																	setCurrentPage(1);
-																}}
-																className="px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-															/>
-														</div>
-														<span className="text-gray-500">to</span>
-														<div>
-															<input
-																type="datetime-local"
-																value={endTime}
-																onChange={(e) => {
-																	setEndTime(e.target.value);
-																	setCurrentPage(1);
-																}}
-																className="px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-															/>
-														</div>
-													</div>
-												)}
-											</div>
-
-											<div className="flex items-center space-x-4">
-												<span className="text-sm text-gray-700 whitespace-nowrap">
-													Showing {logs.isLoading ? "..." : filteredLogs ? (currentPage - 1) * pageSize + 1 : 0} -{" "}
-													{logs.isLoading
-														? "..."
-														: filteredLogs
-															? Math.min(currentPage * pageSize, filteredLogs.total)
-															: 0}{" "}
-													of {logs.isLoading ? "..." : filteredLogs ? filteredLogs.total : 0} results
-												</span>
-												<div className="flex items-center space-x-2">
-													<label className="text-sm text-gray-700" htmlFor="logs-page-size">
-														Logs per page
-													</label>
-													<select
-														id="logs-page-size"
-														value={pageSize}
-														onChange={(event) => {
-															setPageSize(Number(event.target.value));
-															setCurrentPage(1);
-														}}
-														className="rounded-md border px-2 py-1 text-sm"
-													>
-														{[50, 100, 200, 500, 1000].map((size) => (
-															<option key={size} value={size}>
-																{size}
-															</option>
-														))}
-													</select>
-													<span className="text-sm text-gray-700 min-w-[90px]">
-														Page {logs.isLoading ? "..." : currentPage} of{" "}
-														{logs.isLoading ? "..." : filteredLogs ? filteredLogs.total_pages : 1}
-													</span>
-													<button
-														onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-														disabled={logs.isLoading || currentPage === 1}
-														className="px-3 py-1 text-sm border rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-													>
-														Previous
-													</button>
-													<button
-														onClick={() => setCurrentPage((p) => Math.min(filteredLogs.total_pages || 1, p + 1))}
-														disabled={logs.isLoading || currentPage === (filteredLogs.total_pages || 1)}
-														className="px-3 py-1 text-sm border rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-													>
-														Next
-													</button>
-												</div>
-											</div>
+										<LogsToolbar
+											searchTerm={searchTerm}
+											startTime={startTime}
+											endTime={endTime}
+											customDate={isCustomDate}
+											selectedInterval={selectedTimeInterval}
+											liveTailIntervalMs={liveTailIntervalMs}
+											fetching={isButtonLoading}
+											onSearchTermChange={setSearchTerm}
+											onStartTimeChange={setStartTime}
+											onEndTimeChange={setEndTime}
+											onCustomDateChange={setIsCustomDate}
+											onSelectedIntervalChange={setSelectedTimeInterval}
+											onLiveTailIntervalChange={setLiveTailIntervalMs}
+											onRefresh={handleRefresh}
+											onPageReset={() => setCurrentPage(1)}
+										/>
+										<div className="mt-4 flex justify-end">
+											<LogsPagination
+												currentPage={currentPage}
+												pageSize={pageSize}
+												total={filteredLogs.total}
+												totalPages={filteredLogs.total_pages}
+												loading={logs.isLoading}
+												onPageChange={setCurrentPage}
+												onPageSizeChange={(size) => {
+													setPageSize(size);
+													setCurrentPage(1);
+												}}
+											/>
 										</div>
 									</div>
-									{isLiveTail && currentPage === 1 && isMainQueryEnabled && (
-										<div className="mb-4 px-4 py-2 bg-green-50 border border-greem-200 rounded-md flex items-center justify-between">
-											<div className="flex items-center gap-2">
-												<span className="text-sm text-green-700">Auto-refreshing every 15 seconds</span>
-											</div>
-											<button
-												onClick={() => setIsLiveTail(false)}
-												className="text-sm text-green-600 hover:text-green-800"
-											>
-												Stop
-											</button>
-										</div>
-									)}
+									<LiveTailBanner
+										visible={liveTailIntervalMs > 0 && currentPage === 1 && isMainQueryEnabled}
+										intervalMs={liveTailIntervalMs}
+										onStop={() => setLiveTailIntervalMs(0)}
+									/>
 									<DataTable
 										columns={createColumns({
 											sortBy,
@@ -755,320 +544,4 @@ export default function SpendLogsTable({
 	);
 }
 
-export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onOpenSettings?: () => void }) {
-	// Helper function to clean metadata by removing specific fields
-	const formatData = (input: any) => {
-		if (typeof input === "string") {
-			try {
-				return JSON.parse(input);
-			} catch {
-				return input;
-			}
-		}
-		return input;
-	};
-
-	// New helper function to get raw request
-	const getRawRequest = () => {
-		// First check if proxy_server_request exists in metadata
-		if (row.original?.proxy_server_request) {
-			return formatData(row.original.proxy_server_request);
-		}
-		// Fall back to messages if proxy_server_request is empty
-		return formatData(row.original.messages);
-	};
-
-	// Extract error information from metadata if available
-	const metadata = row.original.metadata || {};
-	const hasError = metadata.status === "failure";
-	const errorInfo = hasError ? metadata.error_information : null;
-
-	// Check if request/response data is missing
-	const hasMessages =
-		row.original.messages &&
-		(Array.isArray(row.original.messages)
-			? row.original.messages.length > 0
-			: Object.keys(row.original.messages).length > 0);
-	const hasResponse = row.original.response && Object.keys(formatData(row.original.response)).length > 0;
-	const missingData = !hasMessages && !hasResponse && !hasError;
-
-	// Format the response with error details if present
-	const formattedResponse = () => {
-		if (hasError && errorInfo) {
-			return {
-				error: {
-					message: errorInfo.error_message || "An error occurred",
-					type: errorInfo.error_class || "error",
-					code: errorInfo.error_code || "unknown",
-					param: null,
-				},
-			};
-		}
-		return formatData(row.original.response);
-	};
-
-	// Extract vector store request metadata if available
-	const hasVectorStoreData =
-		metadata.vector_store_request_metadata &&
-		Array.isArray(metadata.vector_store_request_metadata) &&
-		metadata.vector_store_request_metadata.length > 0;
-
-	// Extract guardrail information from metadata if available
-	const guardrailInfo = row.original.metadata?.guardrail_information;
-	const guardrailEntries = Array.isArray(guardrailInfo) ? guardrailInfo : guardrailInfo ? [guardrailInfo] : [];
-	const hasGuardrailData = guardrailEntries.length > 0;
-
-	// Calculate total masked entities if guardrail data exists
-	const totalMaskedEntities = guardrailEntries.reduce((sum, entry) => {
-		const maskedCounts = entry?.masked_entity_count;
-		if (!maskedCounts) {
-			return sum;
-		}
-		return (
-			sum +
-			Object.values(maskedCounts).reduce<number>((acc, count) => (typeof count === "number" ? acc + count : acc), 0)
-		);
-	}, 0);
-
-	const primaryGuardrailLabel =
-		guardrailEntries.length === 1
-			? guardrailEntries[0]?.guardrail_name ?? "-"
-			: guardrailEntries.length > 1
-				? `${guardrailEntries.length} guardrails`
-				: "-";
-
-	const truncatedRequestId = truncateString(row.original.request_id, 64);
-
-	return (
-		<div className="p-6 bg-gray-50 space-y-6 w-full max-w-full overflow-hidden box-border">
-			{/* Combined Info Card */}
-			<div className="bg-white rounded-lg shadow w-full max-w-full overflow-hidden">
-				<div className="p-4 border-b">
-					<h3 className="text-lg font-medium">Request Details</h3>
-				</div>
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 w-full max-w-full overflow-hidden">
-					<div className="space-y-2">
-						<div className="flex">
-							<span className="font-medium w-1/3">Request ID:</span>
-							{row.original.request_id.length > 64 ? (
-								<Tooltip title={row.original.request_id}>
-									<span className="font-mono text-sm">{truncatedRequestId}</span>
-								</Tooltip>
-							) : (
-								<span className="font-mono text-sm">{row.original.request_id}</span>
-							)}
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Model:</span>
-							<span>{row.original.model}</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Model ID:</span>
-							<span>{row.original.model_id}</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Call Type:</span>
-							<span>{row.original.call_type}</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Provider:</span>
-							<span>{row.original.custom_llm_provider || "-"}</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">API Base:</span>
-							<Tooltip title={row.original.api_base || "-"}>
-								<span className="max-w-[15ch] truncate block">{row.original.api_base || "-"}</span>
-							</Tooltip>
-						</div>
-						{row?.original?.requester_ip_address && (
-							<div className="flex">
-								<span className="font-medium w-1/3">IP Address:</span>
-								<span>{row?.original?.requester_ip_address}</span>
-							</div>
-						)}
-						{hasGuardrailData && (
-							<div className="flex">
-								<span className="font-medium w-1/3">Guardrail:</span>
-								<div>
-									<span className="font-mono">{primaryGuardrailLabel}</span>
-									{totalMaskedEntities > 0 && (
-										<span className="ml-2 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md text-xs font-medium">
-											{totalMaskedEntities} masked
-										</span>
-									)}
-								</div>
-							</div>
-						)}
-					</div>
-					<div className="space-y-2">
-						<div className="flex">
-							<span className="font-medium w-1/3">Tokens:</span>
-							<span>
-								{formatNumberWithCommas(row.original.total_tokens, 0, false)} (
-								{formatNumberWithCommas(row.original.prompt_tokens, 0, false)} prompt tokens +{" "}
-								{formatNumberWithCommas(row.original.completion_tokens, 0, false)} completion tokens)
-							</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Cache Read Tokens:</span>
-							<span>
-								{formatNumberWithCommas(row.original.metadata?.additional_usage_values?.cache_read_input_tokens || 0)}
-							</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Cache Creation Tokens:</span>
-							<span>
-								{formatNumberWithCommas(row.original.metadata?.additional_usage_values.cache_creation_input_tokens)}
-							</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Cost:</span>
-							<span>${formatNumberWithCommas(row.original.spend || 0, 6)}</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Cache Hit:</span>
-							<span>{row.original.cache_hit}</span>
-						</div>
-
-						<div className="flex">
-							<span className="font-medium w-1/3">Status:</span>
-							<span
-								className={`px-2 py-1 rounded-md text-xs font-medium inline-block text-center w-16 ${
-									(row.original.metadata?.status || "Success").toLowerCase() !== "failure"
-										? "bg-green-100 text-green-800"
-										: "bg-red-100 text-red-800"
-								}`}
-							>
-								{(row.original.metadata?.status || "Success").toLowerCase() !== "failure" ? "Success" : "Failure"}
-							</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Start Time:</span>
-							<span>{row.original.startTime}</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">End Time:</span>
-							<span>{row.original.endTime}</span>
-						</div>
-						<div className="flex">
-							<span className="font-medium w-1/3">Duration:</span>
-							<span>
-								{row.original.request_duration_ms != null ? (row.original.request_duration_ms / 1000).toFixed(3) : "-"}{" "}
-								s.
-							</span>
-						</div>
-						{row.original.metadata?.litellm_overhead_time_ms !== undefined && (
-							<div className="flex">
-								<span className="font-medium w-1/3">LiteLLM Overhead:</span>
-								<span>{row.original.metadata.litellm_overhead_time_ms} ms</span>
-							</div>
-						)}
-						<div className="flex">
-							<span className="font-medium w-1/3">Retries:</span>
-							<span>
-								{row.original.metadata?.attempted_retries !== undefined &&
-								row.original.metadata?.attempted_retries !== null ? (
-									row.original.metadata.attempted_retries > 0 ? (
-										`${row.original.metadata.attempted_retries}${row.original.metadata.max_retries !== undefined && row.original.metadata.max_retries !== null ? ` / ${row.original.metadata.max_retries}` : ""}`
-									) : (
-										<Tag color="green">None</Tag>
-									)
-								) : (
-									"-"
-								)}
-							</span>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			{/* Cost Breakdown - Show if cost breakdown data is available */}
-			<CostBreakdownViewer
-				costBreakdown={row.original.metadata?.cost_breakdown}
-				totalSpend={row.original.spend ?? 0}
-				promptTokens={row.original.prompt_tokens}
-				completionTokens={row.original.completion_tokens}
-				cacheHit={row.original.cache_hit}
-			/>
-
-			{/* Configuration Info Message - Show when data is missing */}
-			<ConfigInfoMessage show={missingData} onOpenSettings={onOpenSettings} />
-
-			{/* Request/Response Panel */}
-			<div className="w-full max-w-full overflow-hidden">
-				<RequestResponsePanel
-					row={row}
-					hasMessages={hasMessages}
-					hasResponse={hasResponse}
-					hasError={hasError}
-					errorInfo={errorInfo}
-					getRawRequest={getRawRequest}
-					formattedResponse={formattedResponse}
-				/>
-			</div>
-
-			{/* Guardrail Data - Show only if present */}
-			{hasGuardrailData && <GuardrailViewer data={guardrailInfo} />}
-
-			{/* Vector Store Request Data - Show only if present */}
-			{hasVectorStoreData && <VectorStoreViewer data={metadata.vector_store_request_metadata} />}
-
-			{/* Error Card - Only show for failures */}
-			{hasError && errorInfo && <ErrorViewer errorInfo={errorInfo} />}
-
-			{/* Tags Card - Only show if there are tags */}
-			{row.original.request_tags && Object.keys(row.original.request_tags).length > 0 && (
-				<div className="bg-white rounded-lg shadow">
-					<div className="flex justify-between items-center p-4 border-b">
-						<h3 className="text-lg font-medium">Request Tags</h3>
-					</div>
-					<div className="p-4">
-						<div className="flex flex-wrap gap-2">
-							{Object.entries(row.original.request_tags).map(([key, value]) => (
-								<span key={key} className="px-2 py-1 bg-gray-100 rounded-full text-xs">
-									{key}: {String(value)}
-								</span>
-							))}
-						</div>
-					</div>
-				</div>
-			)}
-
-			{/* Metadata Card - Only show if there's metadata */}
-			{row.original.metadata && Object.keys(row.original.metadata).length > 0 && (
-				<div className="bg-white rounded-lg shadow">
-					<div className="flex justify-between items-center p-4 border-b">
-						<h3 className="text-lg font-medium">Metadata</h3>
-						<button
-							onClick={() => {
-								navigator.clipboard.writeText(JSON.stringify(row.original.metadata, null, 2));
-							}}
-							className="p-1 hover:bg-gray-200 rounded"
-							title="Copy metadata"
-						>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								width="16"
-								height="16"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="2"
-								strokeLinecap="round"
-								strokeLinejoin="round"
-							>
-								<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-								<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-							</svg>
-						</button>
-					</div>
-					<div className="p-4 overflow-auto max-h-64">
-						<pre className="text-xs font-mono whitespace-pre-wrap break-all">
-							{JSON.stringify(row.original.metadata, null, 2)}
-						</pre>
-					</div>
-				</div>
-			)}
-		</div>
-	);
-}
+export { RequestViewer } from "./RequestViewer";

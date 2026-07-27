@@ -8,6 +8,8 @@
  * 抽到 RouterTestDelegates.ts；Router.ts 只保留公共 API 与 execute 主循环编排。
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import { isDeepStrictEqual } from "node:util";
 import type {
 	Deployment,
 	RouterConfig,
@@ -65,6 +67,26 @@ interface ExecResult {
 interface AvailDeployment {
 	deployment: Deployment;
 	provider: ProviderConfigType;
+}
+
+/**
+ * 单次 HTTP 请求使用的数据库配置快照。
+ * 该对象只在 AsyncLocalStorage 请求上下文内存活，不是跨请求缓存。
+ */
+export interface RouterRuntimeSnapshot {
+	readonly deployments: Deployment[];
+	readonly fallbackHandler: FallbackHandler;
+	readonly routeFn: RouteFn;
+	readonly cooldownTimeMs: number;
+	readonly numRetries: number;
+	readonly retryPolicy: RetryPolicy | undefined;
+	readonly modelGroupRetryPolicy: Record<string, RetryPolicy> | undefined;
+	readonly maxFallbacks: number;
+	readonly preCallChecks: boolean;
+	readonly optionalPreCallChecks: Record<string, boolean> | undefined;
+	readonly retryAfter: number;
+	readonly allowedFails: number | AllowedFailsPolicy | null;
+	readonly credentialValues: CredentialValuesAccessor | undefined;
 }
 
 /** 精确 deployment ID 不存在。 */
@@ -130,6 +152,7 @@ const DEFAULT_COMPLETION_SYNC_TIMEOUT_MS = 60_000;
  * 公共 API：getDeployments / getAvailableDeployment / completion / acompletion / completionSync。
  */
 export class Router {
+	private readonly _runtimeSnapshots = new AsyncLocalStorage<RouterRuntimeSnapshot>();
 	private readonly _deployments: Deployment[];
 	private readonly _cooldownManager: CooldownManager;
 	private readonly _tpmRpmLimiter: TPMRPMLimiter;
@@ -148,6 +171,7 @@ export class Router {
 	private _preCallChecks: boolean;
 	private readonly _optionalPreCallChecks: Record<string, boolean> | undefined;
 	private _retryAfter: number;
+	private _allowedFails: number | AllowedFailsPolicy | null;
 	private readonly _modelCostMap: Record<string, { input_cost_per_token: number; output_cost_per_token: number }> | undefined;
 	private readonly _routerCallbacks: RouterCallbacks | undefined;
 	private readonly _credentialValues: CredentialValuesAccessor | undefined;
@@ -182,6 +206,7 @@ export class Router {
 		this._preCallChecks = config.pre_call_checks ?? false;
 		this._optionalPreCallChecks = config.optional_pre_call_checks;
 		this._retryAfter = config.retry_after ?? 0;
+		this._allowedFails = config.allowed_fails ?? null;
 		this._modelCostMap = config.model_cost_map;
 		this._routerCallbacks = config.router_callbacks;
 
@@ -225,20 +250,21 @@ export class Router {
 
 	/** 返回 Router 持有的 deployments 列表的拷贝 */
 	getDeployments(): Deployment[] {
-		return [...this._deployments];
+		return [...this._runtimeState().deployments];
 	}
 
 	/** 当前可供管理端选择的逻辑模型名与 alias key，不暴露 provider model 或 deployment id。 */
 	getAvailableModelNames(): Array<{ model_name: string; type: "model" | "alias"; mode: string }> {
 		const names = new Map<string, { type: "model" | "alias"; mode: string }>();
-		for (const deployment of this._deployments) {
+		const runtime = this._runtimeState();
+		for (const deployment of runtime.deployments) {
 			if (deployment.model_name) {
 				names.set(deployment.model_name, { type: "model", mode: deployment.model_info?.mode ?? "chat" });
 			}
 		}
-		for (const alias of this._fallbackHandler.getModelGroupAliasKeys()) {
-			const resolvedModel = this._fallbackHandler.resolveModelGroup(alias);
-			const target = this._deployments.find((deployment) => this._matchDeploymentPattern(deployment, resolvedModel));
+		for (const alias of runtime.fallbackHandler.getModelGroupAliasKeys()) {
+			const resolvedModel = runtime.fallbackHandler.resolveModelGroup(alias);
+			const target = runtime.deployments.find((deployment) => this._matchDeploymentPattern(deployment, resolvedModel));
 			if (target) {
 				names.set(alias, { type: "alias", mode: target.model_info?.mode ?? "chat" });
 			}
@@ -254,7 +280,7 @@ export class Router {
 	 * 运行时经 updateSettings 热更新后反映最新值。
 	 */
 	getFallbacks(): Record<string, string[]> {
-		return this._fallbackHandler.getFallbacks();
+		return this._runtimeState().fallbackHandler.getFallbacks();
 	}
 
 	/**
@@ -262,7 +288,7 @@ export class Router {
 	 * @param modelId - deployment model_info.id
 	 */
 	getDeployment(modelId: string): Deployment | null {
-		return this._deployments.find((dep) => dep.model_info?.id === modelId) ?? null;
+		return this._runtimeState().deployments.find((dep) => dep.model_info?.id === modelId) ?? null;
 	}
 
 	/**
@@ -371,7 +397,7 @@ export class Router {
 			const existingIdx = this._deployments.findIndex((dep) => dep.model_info?.id === modelId);
 			if (existingIdx >= 0) {
 				const existing = this._deployments[existingIdx]!;
-				if (JSON.stringify(existing.litellm_params) === JSON.stringify(deployment.litellm_params)) {
+				if (isDeepStrictEqual(existing, deployment)) {
 					return false;
 				}
 				this._deployments.splice(existingIdx, 1);
@@ -439,11 +465,13 @@ export class Router {
 				case "allowed_fails": {
 					// number（PY _int_settings int 转换）或 AllowedFailsPolicy 分类阈值对象
 					if (typeof value === "object") {
-						this._cooldownManager.setAllowedFails(value as AllowedFailsPolicy);
+						this._allowedFails = value as AllowedFailsPolicy;
+						this._cooldownManager.setAllowedFails(this._allowedFails);
 					} else {
 						const allowedFails = Router._castIntSetting(key, value);
 						if (allowedFails !== null) {
-							this._cooldownManager.setAllowedFails(allowedFails);
+							this._allowedFails = allowedFails;
+							this._cooldownManager.setAllowedFails(this._allowedFails);
 						}
 					}
 					break;
@@ -495,6 +523,137 @@ export class Router {
 		throw new Error(`Unknown routing strategy: "${name}". Valid strategies: ${Object.keys(STRATEGY_MAP).join(", ")}`);
 	}
 
+	/**
+	 * 从数据库查询结果构造请求级运行时快照。所有可变配置均从传入 settings
+	 * 重新计算，避免继承上一请求或管理写路径留下的进程内状态。
+	 * @param deployments
+	 * @param settings
+	 * @param credentialValues
+	 */
+	createRuntimeSnapshot(
+		deployments: Deployment[],
+		settings: Record<string, unknown>,
+		credentialValues?: CredentialValuesAccessor,
+	): RouterRuntimeSnapshot {
+		const mergedFallbacks: Record<string, string[]> = {};
+		const configuredFallbacks = settings["fallbacks"];
+		if (Array.isArray(configuredFallbacks)) {
+			for (const entry of configuredFallbacks) {
+				if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+					continue;
+				}
+				for (const [model, targets] of Object.entries(entry)) {
+					if (!(model in mergedFallbacks) && Array.isArray(targets)) {
+						mergedFallbacks[model] = targets.filter((target): target is string => typeof target === "string");
+					}
+				}
+			}
+		} else if (typeof configuredFallbacks === "object" && configuredFallbacks !== null) {
+			for (const [model, targets] of Object.entries(configuredFallbacks)) {
+				if (Array.isArray(targets)) {
+					mergedFallbacks[model] = targets.filter((target): target is string => typeof target === "string");
+				}
+			}
+		}
+		const defaultFallbacks = settings["default_fallbacks"];
+		if (Array.isArray(defaultFallbacks)) {
+			mergedFallbacks["*"] = defaultFallbacks.filter((target): target is string => typeof target === "string");
+		}
+
+		const aliases =
+			typeof settings["model_group_alias"] === "object" &&
+			settings["model_group_alias"] !== null &&
+			!Array.isArray(settings["model_group_alias"])
+				? (settings["model_group_alias"] as Record<string, RouterModelGroupAliasValue>)
+				: {};
+		const contextWindowFallbacks =
+			typeof settings["context_window_fallbacks"] === "object" &&
+			settings["context_window_fallbacks"] !== null &&
+			!Array.isArray(settings["context_window_fallbacks"])
+				? (settings["context_window_fallbacks"] as Record<string, string[]>)
+				: {};
+		const contentPolicyFallbacks =
+			typeof settings["content_policy_fallbacks"] === "object" &&
+			settings["content_policy_fallbacks"] !== null &&
+			!Array.isArray(settings["content_policy_fallbacks"])
+				? (settings["content_policy_fallbacks"] as Record<string, string[]>)
+				: {};
+		const routingStrategy =
+			typeof settings["routing_strategy"] === "string"
+				? settings["routing_strategy"]
+				: RoutingStrategyName.LatencyBasedRouting;
+		const numRetries = Router._castIntSetting("num_retries", settings["num_retries"]) ?? DEFAULT_MAX_RETRIES;
+		const cooldownSeconds = Router._castIntSetting("cooldown_time", settings["cooldown_time"]);
+		const retryAfter = Router._castIntSetting("retry_after", settings["retry_after"]) ?? 0;
+		const maxFallbacks = Router._castIntSetting("max_fallbacks", settings["max_fallbacks"]);
+		const allowedFailsValue = settings["allowed_fails"];
+		const allowedFails =
+			typeof allowedFailsValue === "object" && allowedFailsValue !== null
+				? (allowedFailsValue as AllowedFailsPolicy)
+				: Router._castIntSetting("allowed_fails", allowedFailsValue);
+		const retryPolicy =
+			typeof settings["retry_policy"] === "object" && settings["retry_policy"] !== null
+				? (settings["retry_policy"] as RetryPolicy)
+				: undefined;
+		const modelGroupRetryPolicy =
+			typeof settings["model_group_retry_policy"] === "object" && settings["model_group_retry_policy"] !== null
+				? (settings["model_group_retry_policy"] as Record<string, RetryPolicy>)
+				: undefined;
+		const optionalPreCallChecks =
+			typeof settings["optional_pre_call_checks"] === "object" && settings["optional_pre_call_checks"] !== null
+				? (settings["optional_pre_call_checks"] as Record<string, boolean>)
+				: undefined;
+
+		return {
+			deployments: deployments.map((deployment) => ({
+				...deployment,
+				litellm_params: structuredClone(deployment.litellm_params),
+				model_info: deployment.model_info === undefined ? undefined : structuredClone(deployment.model_info),
+			})),
+			fallbackHandler: new FallbackHandler(mergedFallbacks, aliases, contextWindowFallbacks, contentPolicyFallbacks),
+			routeFn: this._selectStrategy(routingStrategy),
+			cooldownTimeMs: (cooldownSeconds !== null && cooldownSeconds > 0 ? cooldownSeconds : 5) * 1000,
+			numRetries: numRetries,
+			retryPolicy: retryPolicy,
+			modelGroupRetryPolicy: modelGroupRetryPolicy,
+			maxFallbacks: maxFallbacks !== null && maxFallbacks > 0 ? maxFallbacks : DEFAULT_MAX_FALLBACKS,
+			preCallChecks: Boolean(settings["enable_pre_call_checks"] ?? settings["pre_call_checks"] ?? false),
+			optionalPreCallChecks: optionalPreCallChecks,
+			retryAfter: retryAfter,
+			allowedFails: allowedFails,
+			credentialValues: credentialValues,
+		};
+	}
+
+	/**
+	 * 在请求级数据库快照中执行下游 Express 调用链。
+	 * @param snapshot
+	 * @param callback
+	 */
+	runWithRuntimeSnapshot<T>(snapshot: RouterRuntimeSnapshot, callback: () => T): T {
+		return this._runtimeSnapshots.run(snapshot, callback);
+	}
+
+	private _runtimeState(): RouterRuntimeSnapshot {
+		return (
+			this._runtimeSnapshots.getStore() ?? {
+				deployments: this._deployments,
+				fallbackHandler: this._fallbackHandler,
+				routeFn: this._routeFn,
+				cooldownTimeMs: this._cooldownTimeMs,
+				numRetries: this._numRetries,
+				retryPolicy: this._retryPolicy,
+				modelGroupRetryPolicy: this._modelGroupRetryPolicy,
+				maxFallbacks: this._maxFallbacks,
+				preCallChecks: this._preCallChecks,
+				optionalPreCallChecks: this._optionalPreCallChecks,
+				retryAfter: this._retryAfter,
+				allowedFails: this._allowedFails,
+				credentialValues: this._credentialValues,
+			}
+		);
+	}
+
 	private _estimateInputTokens(messages: Message[]): number {
 		const inputTextLength = messages.reduce((sum, m) => sum + (typeof m.content === "string" ? m.content.length : 0), 0);
 		return Math.ceil(inputTextLength / CHARS_PER_TOKEN) + ESTIMATED_TOKENS_OVERHEAD;
@@ -518,8 +677,9 @@ export class Router {
 	}
 
 	private _getDeploymentsForModel(model: string): Deployment[] {
-		const resolved = this._fallbackHandler.resolveModelGroup(model);
-		return this._deployments.filter(
+		const runtime = this._runtimeState();
+		const resolved = runtime.fallbackHandler.resolveModelGroup(model);
+		return runtime.deployments.filter(
 			(dep) => this._matchDeploymentPattern(dep, resolved) && !this._cooldownManager.isInCooldown(getDeploymentKey(dep)),
 		);
 	}
@@ -551,7 +711,9 @@ export class Router {
 	}
 
 	private _getHealthyDeploymentsForGroup(model: string): Deployment[] {
-		return this._deployments.filter((d) => d.model_name === model && !this._cooldownManager.isInCooldown(getDeploymentKey(d)));
+		return this._runtimeState().deployments.filter(
+			(d) => d.model_name === model && !this._cooldownManager.isInCooldown(getDeploymentKey(d)),
+		);
 	}
 
 	/**
@@ -574,7 +736,7 @@ export class Router {
 		if (typeof credentialName !== "string") {
 			throw new Error("Credential configuration is invalid");
 		}
-		const credentialValues = this._credentialValues?.getValues(credentialName);
+		const credentialValues = this._runtimeState().credentialValues?.getValues(credentialName);
 		if (credentialValues === undefined) {
 			throw new Error("Credential configuration is invalid");
 		}
@@ -595,7 +757,7 @@ export class Router {
 		}
 		const estimatedInputTokens = messages ? this._estimateInputTokens(messages) : undefined;
 		const ctx = this._buildRoutingContext(deployments, estimatedInputTokens);
-		const selected = this._routeFn(deployments, ctx);
+		const selected = this._runtimeState().routeFn(deployments, ctx);
 		if (!selected) {
 			return null;
 		}
@@ -649,11 +811,12 @@ export class Router {
 	}
 
 	private _buildExecContext(): RouterExecContext {
+		const runtime = this._runtimeState();
 		return {
-			deployments: this._deployments,
+			deployments: runtime.deployments,
 			cooldownManager: this._cooldownManager,
 			tpmRpmLimiter: this._tpmRpmLimiter,
-			fallbackHandler: this._fallbackHandler,
+			fallbackHandler: runtime.fallbackHandler,
 			providerRegistry: this._providerRegistry,
 			activeRequests: this._activeRequests,
 			latencies: this._latencies,
@@ -663,14 +826,15 @@ export class Router {
 			successCalls: this._successCalls,
 			failCalls: this._failCalls,
 			routerCallbacks: this._routerCallbacks,
-			retryPolicy: this._retryPolicy,
-			modelGroupRetryPolicy: this._modelGroupRetryPolicy,
-			numRetries: this._numRetries,
-			maxFallbacks: this._maxFallbacks,
-			preCallChecks: this._preCallChecks,
-			optionalPreCallChecks: this._optionalPreCallChecks,
-			retryAfter: this._retryAfter,
-			cooldownTimeMs: this._cooldownTimeMs,
+			retryPolicy: runtime.retryPolicy,
+			modelGroupRetryPolicy: runtime.modelGroupRetryPolicy,
+			numRetries: runtime.numRetries,
+			maxFallbacks: runtime.maxFallbacks,
+			preCallChecks: runtime.preCallChecks,
+			optionalPreCallChecks: runtime.optionalPreCallChecks,
+			retryAfter: runtime.retryAfter,
+			cooldownTimeMs: runtime.cooldownTimeMs,
+			allowedFails: runtime.allowedFails,
 			recentLatencyCount: RECENT_LATENCY_COUNT,
 			failureLatencyPenaltySec: FAILURE_LATENCY_PENALTY_SEC,
 		};
@@ -783,7 +947,7 @@ export class Router {
 	async acompletion(model: string, messages: Message[], optionalParams: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
 		optionalParams = normalizeMockTestingParams(optionalParams);
 		try {
-			tryDispatchMockTestingExceptions(optionalParams, model, this._fallbackHandler);
+			tryDispatchMockTestingExceptions(optionalParams, model, this._runtimeState().fallbackHandler);
 		} catch (mockErr) {
 			return this._executeWithFallback(model, messages, optionalParams, 0, mockErr as Error);
 		}
@@ -795,7 +959,7 @@ export class Router {
 	 * @param modelName - deployment model_name
 	 */
 	markFailed(modelName: string): void {
-		this._cooldownManager.markFailed(modelName, this._cooldownTimeMs);
+		this._cooldownManager.markFailed(modelName, this._runtimeState().cooldownTimeMs);
 	}
 
 	/**
@@ -823,10 +987,19 @@ export class Router {
 	 * @param error - provider 返回的错误或网络错误
 	 */
 	recordDeploymentFailure(deployment: Deployment, error: Error): void {
+		const runtime = this._runtimeState();
 		const depKey = getDeploymentKey(deployment);
 		const targetGroup = getModelGroupName(deployment);
-		const sameGroupCount = this._deployments.filter((d) => getModelGroupName(d) === targetGroup).length;
-		const decision = buildCooldownDecision(deployment, error, sameGroupCount, undefined, this._cooldownTimeMs, this._cooldownManager);
+		const sameGroupCount = runtime.deployments.filter((d) => getModelGroupName(d) === targetGroup).length;
+		const decision = buildCooldownDecision(
+			deployment,
+			error,
+			sameGroupCount,
+			undefined,
+			runtime.cooldownTimeMs,
+			this._cooldownManager,
+			runtime.allowedFails,
+		);
 		if (decision.shouldCooldown) {
 			this._cooldownManager.markFailed(depKey, decision.cooldownDurationMs, decision.statusCode, error.message);
 			this._cooldownManager.recordFailure(depKey);
@@ -838,7 +1011,7 @@ export class Router {
 	 * @param model - 原始模型名
 	 */
 	resolveModelGroupWithTrace(model: string): ModelGroupResolution {
-		return this._fallbackHandler.resolveModelGroupWithTrace(model);
+		return this._runtimeState().fallbackHandler.resolveModelGroupWithTrace(model);
 	}
 
 	/**
@@ -846,7 +1019,7 @@ export class Router {
 	 * @param fallbackDepth
 	 */
 	getNextFallbackWithTrace(model: string, fallbackDepth: number): ModelGroupResolution | null {
-		return this._fallbackHandler.getNextFallbackWithTrace(model, fallbackDepth);
+		return this._runtimeState().fallbackHandler.getNextFallbackWithTrace(model, fallbackDepth);
 	}
 
 	/**
@@ -854,12 +1027,12 @@ export class Router {
 	 * @param fallbackDepth
 	 */
 	getNextFallback(model: string, fallbackDepth: number): string | null {
-		return this._fallbackHandler.getNextFallback(model, fallbackDepth);
+		return this._runtimeState().fallbackHandler.getNextFallback(model, fallbackDepth);
 	}
 
 	/** fallback 链最大跳数上限（max_fallbacks 配置，防环型配置死循环） */
 	get maxFallbacks(): number {
-		return this._maxFallbacks;
+		return this._runtimeState().maxFallbacks;
 	}
 
 	/**
@@ -871,8 +1044,9 @@ export class Router {
 	 * @param model - 客户端请求的逻辑模型名
 	 */
 	hasModel(model: string): boolean {
-		const resolved = this._fallbackHandler.resolveModelGroup(model);
-		return isKnownModel(this._deployments, (dep, m) => this._matchDeploymentPattern(dep, m), resolved, model);
+		const runtime = this._runtimeState();
+		const resolved = runtime.fallbackHandler.resolveModelGroup(model);
+		return isKnownModel(runtime.deployments, (dep, m) => this._matchDeploymentPattern(dep, m), resolved, model);
 	}
 
 	/**
@@ -886,21 +1060,22 @@ export class Router {
 	 * @param model - 客户端请求的逻辑模型名
 	 */
 	getNoAvailableDeploymentInfo(model: string): NoDeploymentsErrorInfo {
-		const resolved = this._fallbackHandler.resolveModelGroup(model);
-		const groupKeys = this._deployments
+		const runtime = this._runtimeState();
+		const resolved = runtime.fallbackHandler.resolveModelGroup(model);
+		const groupKeys = runtime.deployments
 			.filter((dep) => this._matchDeploymentPattern(dep, resolved))
 			.map((dep) => getDeploymentKey(dep));
-		const allKeys = this._deployments.map((dep) => getDeploymentKey(dep));
+		const allKeys = runtime.deployments.map((dep) => getDeploymentKey(dep));
 		const groupCooldowns = this._cooldownManager.getActiveCooldowns(groupKeys);
 		const allCooldowns = this._cooldownManager.getActiveCooldowns(allKeys);
 		const cooldownMs =
 			groupCooldowns.length > 0
 				? Math.min(...groupCooldowns.map(([, cacheValue]) => cacheValue.cooldown_time))
-				: this._cooldownTimeMs;
+				: runtime.cooldownTimeMs;
 		return {
 			cooldownSeconds: cooldownMs / 1000,
 			cooldownList: allCooldowns.map(([deploymentKey]) => deploymentKey),
-			preCallChecks: this._preCallChecks,
+			preCallChecks: runtime.preCallChecks,
 		};
 	}
 

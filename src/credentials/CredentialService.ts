@@ -238,18 +238,22 @@ const LEGACY_NON_STRING_ENVELOPE = "__litellm_ts_encrypted_json";
 export class CredentialService {
 	constructor(
 		private readonly _repository: CredentialRepositoryPort,
-		private readonly _runtimeAccessor: CredentialRuntimeAccessor,
+		/**
+		 * 仅保留给独立单元测试和非数据库 Router 使用。生产容器不注入该参数，
+		 * 推理请求改由 DatabaseRuntimeConfigService 每请求读取数据库。
+		 */
+		private readonly _runtimeAccessor?: CredentialRuntimeAccessor,
 		private readonly _legacySecretBox: CredentialSecretBox | null = null,
 	) {}
 
-	/** 启动时将可识别的旧 SecretBox 值迁移为数据库明文，再加载运行时 Credential。 */
+	/** 启动时将可识别的旧 SecretBox 值迁移为数据库明文。 */
 	async load(): Promise<void> {
 		const storedCredentials = await this._repository.list();
 		const migratedCredentials: StoredCredential[] = [];
 		for (const credential of storedCredentials) {
 			migratedCredentials.push(await this._migrateLegacyCredential(credential));
 		}
-		this._runtimeAccessor.replaceAll(migratedCredentials.map((credential) => this._toRuntime(credential)));
+		this._runtimeAccessor?.replaceAll(migratedCredentials.map((credential) => this._toRuntime(credential)));
 	}
 
 	/**
@@ -270,7 +274,7 @@ export class CredentialService {
 				created_by: actorId,
 				updated_by: actorId,
 			});
-			this._runtimeAccessor.upsert(this._toRuntime(stored));
+			this._runtimeAccessor?.upsert(this._toRuntime(stored));
 		} catch (error) {
 			this._rethrowConflict(error);
 		}
@@ -312,7 +316,7 @@ export class CredentialService {
 			if (attachmentResult.credential === null) {
 				throw new CredentialModelResolutionError("Model has no recognized inline credential fields", 409);
 			}
-			this._runtimeAccessor.upsert(this._toRuntime(attachmentResult.credential));
+			this._runtimeAccessor?.upsert(this._toRuntime(attachmentResult.credential));
 			return attachmentResult.model;
 		} catch (error) {
 			this._rethrowConflict(error);
@@ -405,7 +409,7 @@ export class CredentialService {
 		if (updated === null) {
 			return false;
 		}
-		this._runtimeAccessor.upsert(this._toRuntime(updated));
+		this._runtimeAccessor?.upsert(this._toRuntime(updated));
 		return true;
 	}
 
@@ -420,7 +424,7 @@ export class CredentialService {
 				throw new CredentialReferencedError();
 			}
 			if (deleteResult === "deleted") {
-				this._runtimeAccessor.remove(credentialName);
+				this._runtimeAccessor?.remove(credentialName);
 				return true;
 			}
 			return false;
@@ -430,7 +434,7 @@ export class CredentialService {
 		}
 		const deleted = await this._repository.deleteByName(credentialName);
 		if (deleted) {
-			this._runtimeAccessor.remove(credentialName);
+			this._runtimeAccessor?.remove(credentialName);
 		}
 		return deleted;
 	}

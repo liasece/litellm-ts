@@ -174,7 +174,7 @@ describe("POST /config/yaml_diff/accept", () => {
 		expect(yamlConfigDiffService.hasPending()).toBe(false);
 	});
 
-	it("router_settings 段：落库后热应用 Router.updateSettings", async () => {
+	it("router_settings 段：只落库，Router 基础内存不作为动态真源", async () => {
 		loadYamlFromString("router_settings:\n  fallbacks:\n    - gpt-4o: [gpt-4o-mini]\n");
 		const { db, configStore } = makeMockDb({ [CONFIG_YAML_SNAPSHOT_PARAM]: { hash: "stale", content: "{}" } });
 		await yamlConfigDiffService.initialize(db as never);
@@ -185,10 +185,10 @@ describe("POST /config/yaml_diff/accept", () => {
 		const res = await request(app).post("/config/yaml_diff/accept").send({ section: "router_settings", key: "fallbacks" });
 		expect(res.status).toBe(200);
 		expect(configStore.get("router_settings")).toEqual({ fallbacks: [{ "gpt-4o": ["gpt-4o-mini"] }] });
-		expect(litellmRouter.getFallbacks()).toEqual({ "gpt-4o": ["gpt-4o-mini"] });
+		expect(litellmRouter.getFallbacks()).toEqual({});
 	});
 
-	it("model_list db_missing：生成 model_id 落库 + Router 热更新", async () => {
+	it("model_list db_missing：生成 model_id 落库，下一请求从数据库读取", async () => {
 		loadYamlFromString(
 			"model_list:\n  - model_name: claude-a\n    litellm_params:\n      model: anthropic/claude-a\n      api_key: sk-x\n",
 		);
@@ -204,8 +204,7 @@ describe("POST /config/yaml_diff/accept", () => {
 		expect(row["model_name"]).toBe("claude-a");
 		expect(row["litellm_params"]).toEqual({ model: "anthropic/claude-a", api_key: "sk-x" });
 		expect(typeof row["model_id"]).toBe("string");
-		// Router 热更新：deployment 可按 model_id 找到
-		expect(litellmRouter.getDeployment(row["model_id"] as string)?.model_name).toBe("claude-a");
+		expect(litellmRouter.getDeployment(row["model_id"] as string)).toBeNull();
 	});
 
 	it("model_list params_differ：沿用 DB model_id 替换参数", async () => {

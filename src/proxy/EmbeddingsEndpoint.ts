@@ -90,7 +90,10 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 			throw ApiError.badRequest(`Provider ${deployment.litellm_params.custom_llm_provider ?? "unknown"} does not support embeddings`);
 		}
 		const customCost = extractDeploymentCustomCost(deployment);
-		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body);
+		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body, {
+			callType: CallType.AEmbedding,
+			startTime: startTime,
+		});
 		const requestId = spendReservation?.requestId;
 
 		let providerCompleted = false;
@@ -121,7 +124,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 			if (db && auth && requestId) {
 				await trackSpendLog(
 					db,
-					buildSpendLogFromRequest({
+					await buildSpendLogFromRequest({
 						req: req,
 						auth: auth,
 						requestId: requestId,
@@ -151,7 +154,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 				try {
 					await trackSpendLog(
 						db,
-						buildSpendLogFromRequest({
+						await buildSpendLogFromRequest({
 							req: req,
 							auth: auth,
 							requestId: requestId,

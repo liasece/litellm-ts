@@ -13,13 +13,13 @@ describe("SimpleToolCallBlock", () => {
     expect(screen.getByText("get_weather")).toBeInTheDocument();
   });
 
-  it('should display "function" badge', () => {
+  it('should display "Function call" badge', () => {
     render(
       <SimpleToolCallBlock
         tool={{ id: "1", name: "get_weather", arguments: {} }}
       />
     );
-    expect(screen.getByText("function")).toBeInTheDocument();
+    expect(screen.getByText("Function call")).toBeInTheDocument();
   });
 
   it("should render arguments when present", () => {

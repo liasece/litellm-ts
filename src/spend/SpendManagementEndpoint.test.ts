@@ -112,8 +112,7 @@ interface MockDbOptions {
 	readonly data?: unknown[];
 	readonly count?: Array<{ count: number }>;
 	readonly sessionCounts?: Array<{
-		session_id?: string;
-		session_group_id?: string;
+		session_group_key?: string;
 		total: number;
 	}>;
 	readonly teamRows?: Array<{ admins?: string[]; membersWithRoles?: Record<string, { role?: string }> }>;
@@ -176,7 +175,7 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 		if (proj.length === 1 && proj[0] === "count") {
 			return "count";
 		}
-		if ((proj.includes("session_id") || proj.includes("session_group_id")) && groupBy.length > 0) {
+		if (proj.includes("session_group_key") && groupBy.length > 0) {
 			return "sessionCounts";
 		}
 		// 默认回落到 data 队列：覆盖以下生产端点
@@ -774,6 +773,71 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(res.status).toBe(200);
 			});
 
+			it("include_active=true 且按 startTime 排序时将两张表按请求开始时间混排", async () => {
+				const activeRow = {
+					...SAMPLE_UI_ROW,
+					request_id: "req-active",
+					spend: 0,
+					total_tokens: 0,
+					prompt_tokens: 0,
+					completion_tokens: 0,
+					endTime: new Date("2025-02-10T00:00:30Z"),
+					completionStartTime: null,
+					metadata: { status: "in_progress" },
+					session_id: null,
+					session_group_key: null,
+					status: "in_progress",
+					request_duration_ms: 30_000,
+				};
+				const { db } = makeMockDb({
+					responses: [[{ count: 1 }], [{ count: 1 }], [SAMPLE_UI_ROW, activeRow], []],
+				});
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&include_active=true",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.total).toBe(2);
+				expect(res.body.data).toHaveLength(2);
+				expect(res.body.data[0]).toMatchObject({ request_id: "req-1", status: "success" });
+				expect(res.body.data[1]).toMatchObject({
+					request_id: "req-active",
+					status: "in_progress",
+					session_total_count: 1,
+				});
+			});
+
+			it("include_active=true 且排序字段无进行中值时仍将进行中请求固定置顶", async () => {
+				const activeRow = {
+					...SAMPLE_UI_ROW,
+					request_id: "req-active",
+					spend: 0,
+					total_tokens: 0,
+					prompt_tokens: 0,
+					completion_tokens: 0,
+					endTime: new Date("2025-02-10T00:00:30Z"),
+					completionStartTime: null,
+					metadata: { status: "in_progress" },
+					session_id: null,
+					session_group_key: null,
+					status: "in_progress",
+					request_duration_ms: 30_000,
+				};
+				const { db } = makeMockDb({
+					responses: [[{ count: 1 }], [{ count: 1 }], [activeRow], [SAMPLE_UI_ROW], []],
+				});
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&include_active=true&sort_by=spend&sort_order=desc",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.data).toHaveLength(2);
+				expect(res.body.data[0]).toMatchObject({ request_id: "req-active", status: "in_progress" });
+				expect(res.body.data[1]).toMatchObject({ request_id: "req-1", status: "success" });
+			});
+
 			it.each([
 				["key_alias", "alias"],
 				["error_code", "404"],
@@ -863,7 +927,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				const { db } = makeMockDb({
 					data: [SAMPLE_UI_ROW],
 					count: [{ count: 1 }],
-					sessionCounts: [{ session_id: "session-A", total: 4 }],
+					sessionCounts: [{ session_group_key: "s:session-A", total: 4 }],
 				});
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get("/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59");
@@ -882,11 +946,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					session_group_id: CLAUDE_CODE_USER_ID,
 				};
 				const { db, calls } = makeMockDb({
-					responses: [
-						[{ count: 1 }],
-						[claudeRow],
-						Array.from({ length: 3 }, () => ({ metadata: claudeRow.metadata })),
-					],
+					responses: [[{ count: 1 }], [claudeRow], [{ session_group_key: `c:${CLAUDE_CODE_USER_ID}`, total: 3 }]],
 				});
 
 				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
@@ -899,9 +959,44 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					session_group_id: CLAUDE_CODE_USER_ID,
 					session_total_count: 3,
 				});
-				const groupCall = calls.find((call) => call.projection.includes("session_group_id") && call.groupByCols.length > 0);
+				const groupCall = calls.find((call) => call.projection.includes("session_group_key") && call.groupByCols.length > 0);
 				expect(groupCall?.whereSql).toContain(CLAUDE_CODE_USER_ID);
-				expect(groupCall?.whereSql).toMatch(/btrim/i);
+				expect(groupCall?.whereSql).toContain("session_group_key");
+			});
+
+			it("user_id JSON 内的稳定 session_id 优先于请求级顶层 session_id", async () => {
+				const embeddedSessionId = "63c6d8fc-3ca5-4f54-8cd9-aae8ca57dad9";
+				const row = {
+					...SAMPLE_UI_ROW,
+					session_id: "68d79373-9498-474b-8c42-593aa982d6fd",
+					session_group_type: undefined,
+					session_group_id: undefined,
+					metadata: {
+						spend_logs_metadata: {
+							user_id: JSON.stringify({
+								device_id: "device-1",
+								account_uuid: "",
+								session_id: embeddedSessionId,
+							}),
+						},
+					},
+				};
+				const { db, calls } = makeMockDb({
+					responses: [[{ count: 1 }], [row], [{ session_group_key: `s:${embeddedSessionId}`, total: 105 }]],
+				});
+
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.data[0]).toMatchObject({
+					session_group_type: "session_id",
+					session_group_id: embeddedSessionId,
+					session_total_count: 105,
+				});
+				const groupCall = calls.find((call) => call.projection.includes("session_group_key") && call.groupByCols.length > 0);
+				expect(groupCall?.whereSql).toContain(`s:${embeddedSessionId}`);
 			});
 
 			it.each(["user_device_account_account_session_not-a-uuid", `${CLAUDE_CODE_USER_ID}_suffix`, "ordinary-user-id"])(
@@ -914,7 +1009,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					const { db } = makeMockDb({
 						data: [fallbackRow],
 						count: [{ count: 1 }],
-						sessionCounts: [{ session_id: "session-A", total: 2 }],
+						sessionCounts: [{ session_group_key: "s:session-A", total: 2 }],
 					});
 
 					const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
@@ -932,21 +1027,26 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 
 			it("不同类型的相同 group ID 不碰撞", async () => {
 				const rows = [
-					{ ...SAMPLE_UI_ROW, request_id: "req-session", session_group_id: CLAUDE_CODE_USER_ID },
+					{
+						...SAMPLE_UI_ROW,
+						request_id: "req-session",
+						session_group_key: `s:${CLAUDE_CODE_USER_ID}`,
+					},
 					{
 						...SAMPLE_UI_ROW,
 						request_id: "req-claude",
 						session_id: "random-session",
-						session_group_type: "claude_code_user_id",
-						session_group_id: CLAUDE_CODE_USER_ID,
+						session_group_key: `c:${CLAUDE_CODE_USER_ID}`,
 					},
 				];
 				const { db } = makeMockDb({
 					responses: [
 						[{ count: 2 }],
 						rows,
-						[{ session_id: CLAUDE_CODE_USER_ID, total: 2 }],
-						[{ session_group_id: CLAUDE_CODE_USER_ID, total: 5 }],
+						[
+							{ session_group_key: `s:${CLAUDE_CODE_USER_ID}`, total: 2 },
+							{ session_group_key: `c:${CLAUDE_CODE_USER_ID}`, total: 5 },
+						],
 					],
 				});
 
@@ -978,7 +1078,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				const { db } = makeMockDb({
 					data: [SAMPLE_UI_ROW],
 					count: [{ count: 1 }],
-					sessionCounts: [{ session_id: "session-A", total: 4 }],
+					sessionCounts: [{ session_group_key: "s:session-A", total: 4 }],
 				});
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get("/spend/logs/v2?start_date=2025-02-01&end_date=2025-02-15");
@@ -1057,7 +1157,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				const { db, calls } = makeMockDb({
 					data: [SAMPLE_UI_ROW],
 					count: [{ count: 1 }],
-					sessionCounts: [{ session_id: "session-A", total: visibleCount }],
+					sessionCounts: [{ session_group_key: "s:session-A", total: visibleCount }],
 				});
 
 				const res = await request(makeAppWithAuth(db, auth)).get(
@@ -1066,7 +1166,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 
 				expect(res.status).toBe(200);
 				expect(res.body.data[0]?.session_total_count).toBe(visibleCount);
-				const enrichmentCall = calls.find((call) => call.projection.includes("session_id") && call.groupByCols.length > 0);
+				const enrichmentCall = calls.find((call) => call.projection.includes("session_group_key") && call.groupByCols.length > 0);
 				expect(enrichmentCall?.whereSql).toContain(userId);
 				expect(enrichmentCall?.whereSql).not.toContain(userId === "internal-user-1" ? "internal-user-2" : "internal-user-1");
 			});
@@ -1075,7 +1175,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				const { db, calls } = makeMockDb({
 					data: [SAMPLE_UI_ROW],
 					count: [{ count: 1 }],
-					sessionCounts: [{ session_id: "session-A", total: 5 }],
+					sessionCounts: [{ session_group_key: "s:session-A", total: 5 }],
 				});
 
 				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
@@ -1083,7 +1183,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				);
 
 				expect(res.body.data[0]?.session_total_count).toBe(5);
-				const enrichmentCall = calls.find((call) => call.projection.includes("session_id") && call.groupByCols.length > 0);
+				const enrichmentCall = calls.find((call) => call.projection.includes("session_group_key") && call.groupByCols.length > 0);
 				expect(enrichmentCall?.whereSql).not.toContain(PROXY_ADMIN_AUTH.user_id);
 			});
 		});
@@ -1141,7 +1241,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(calls).toHaveLength(0);
 		});
 
-		it("claude_code_user_id 使用 trim 后完整 ID 和严格 metadata 表达式查询", async () => {
+		it("claude_code_user_id 使用 trim 后完整 ID 和持久化分组键查询", async () => {
 			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], [SAMPLE_UI_ROW]] });
 			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH))
 				.get("/spend/logs/session/ui")
@@ -1152,8 +1252,8 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			const dataCall = calls.find((call) => call.projection.includes("request_id"));
 			for (const call of [countCall, dataCall]) {
 				expect(call?.whereSql).toContain(CLAUDE_CODE_USER_ID);
-				expect(call?.whereSql).toMatch(/btrim/i);
-				expect(call?.whereSql).toMatch(/session_/i);
+				expect(call?.whereSql).toContain("session_group_key");
+				expect(call?.whereSql).toContain("c:");
 			}
 		});
 
@@ -1207,7 +1307,11 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				session_group_type: undefined,
 				session_group_id: undefined,
 			};
-			const { db } = makeMockDb({ data: [row], count: [{ count: 1 }], sessionCounts: [{ session_id: "session-A", total: 2 }] });
+			const { db } = makeMockDb({
+				data: [row],
+				count: [{ count: 1 }],
+				sessionCounts: [{ session_group_key: "s:session-A", total: 2 }],
+			});
 			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
 				"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
 			);
@@ -1344,8 +1448,8 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(countCall?.whereSql).toContain("session-A");
 			expect(dataCall?.whereSql).toContain("session-A");
 			expect(dataCall?.orderSql).toMatch(/asc/i);
-			expect(dataCall?.limitN).toBe(50);
-			expect(dataCall?.offsetN).toBe(0);
+			expect(dataCall?.limitN).toBe(51);
+			expect(dataCall?.offsetN).toBeNull();
 			expect(dataCall?.projection).toEqual(expect.arrayContaining(["request_id", "startTime", "session_id", "status"]));
 			expect(dataCall?.projection).not.toEqual(
 				expect.arrayContaining(["messages", "response", "proxy_server_request", "standard_logging_object"]),

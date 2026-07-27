@@ -1,4 +1,5 @@
 import { doublePrecision, pgTable, text, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import type { CallType, SpendLogStatus } from "../../types/spend";
 
 export const liteLLM_SpendLogs = pgTable(
@@ -32,6 +33,9 @@ export const liteLLM_SpendLogs = pgTable(
 		messages: jsonb("messages").default("{}"),
 		response: jsonb("response").default("{}"),
 		session_id: text("session_id"),
+		session_group_key: text("session_group_key").generatedAlwaysAs(
+			() => sql`litellm_session_group_key(metadata, session_id, request_id)`,
+		),
 		status: text("status").$type<SpendLogStatus>(),
 		mcp_namespaced_tool_name: text("mcp_namespaced_tool_name"),
 		agent_id: text("agent_id"),
@@ -42,5 +46,10 @@ export const liteLLM_SpendLogs = pgTable(
 		startTimeRequestIdIdx: index("idx_spend_logs_start_time_request_id").on(table.startTime, table.request_id),
 		endUserIdx: index("idx_spend_logs_end_user").on(table.end_user),
 		sessionIdIdx: index("idx_spend_logs_session_id").on(table.session_id),
+		sessionGroupTimeIdx: index("idx_spend_logs_session_group_time").on(
+			table.session_group_key,
+			table.startTime,
+			table.request_id,
+		),
 	}),
 );

@@ -1,5 +1,3 @@
-// Drawer configuration constants
-export const DRAWER_WIDTH = "60%";
 export const DRAWER_HEADER_PADDING = "16px 24px";
 export const DRAWER_CONTENT_PADDING = "24px";
 

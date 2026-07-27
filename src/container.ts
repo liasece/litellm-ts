@@ -12,18 +12,13 @@ import { AuthRepository } from "./auth/AuthRepository";
 import { JWTHandler } from "./auth/JWTHandler";
 import { createApiKeyAuth } from "./auth/UserApiKeyAuth";
 import { AuthorizationGuard } from "./auth/AuthorizationGuard";
-import { LiteLLM_ProxyModelTable } from "./db/schema/proxyModels";
-import { proxyModelRowToDeployment } from "./router/ProxyModelDeployment";
-import { createModuleLogger } from "./core/utils/logger";
 import type { ServiceConfig } from "./core/config";
 import type { RequestHandler } from "express";
 import { modelCostMapService, type ModelCostMapService } from "./cost/ModelCostMapService";
-import { CredentialRuntimeAccessor } from "./credentials/CredentialRuntimeAccessor";
 import { CredentialSecretBox } from "./credentials/CredentialSecretBox";
 import { CredentialService } from "./credentials/CredentialService";
 import { CredentialRepository } from "./repositories/CredentialRepository";
-
-const logger = createModuleLogger("Container");
+import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfigService";
 
 /** WebUI 登录后 cookie 中 JWT 的有效期（与 LoginEndpoints 保持一致） */
 const LOGIN_TOKEN_TTL_MS = 5 * 60 * 1000;
@@ -44,10 +39,10 @@ export interface ServiceContainer {
 	readonly authMiddleware: RequestHandler;
 	/** 集中路由与对象授权边界 */
 	readonly authorizationGuard: AuthorizationGuard;
-	/** Credential 运行时明文读取边界 */
-	readonly credentialAccessor: CredentialRuntimeAccessor;
 	/** Credential 持久化与掩码服务 */
 	readonly credentialService: CredentialService;
+	/** 每请求从数据库读取 Router 配置的运行时服务 */
+	readonly runtimeConfigService: DatabaseRuntimeConfigService;
 }
 
 /**
@@ -84,11 +79,10 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 
 	// 2.1 Credential 必须先于 Router 和模型初始化，确保首次 Provider 请求即可解析命名凭据。
 	const credentialRepository = new CredentialRepository(db.db);
-	const credentialAccessor = new CredentialRuntimeAccessor();
 	const legacyEncryptionKey = process.env["LITELLM_SALT_KEY"] ?? config.generalSettings.master_key;
 	const legacySecretBox =
 		legacyEncryptionKey === undefined || legacyEncryptionKey.length === 0 ? null : new CredentialSecretBox(legacyEncryptionKey);
-	const credentialService = new CredentialService(credentialRepository, credentialAccessor, legacySecretBox);
+	const credentialService = new CredentialService(credentialRepository, undefined, legacySecretBox);
 	await credentialService.load();
 
 	// 3. 构建 Router 并创建 Router
@@ -103,78 +97,11 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 			pre_call_checks: false,
 		},
 		{}, // modelGroupAlias 通过 updateSettings 从 DB/yaml 注入
-		credentialAccessor,
 	);
 
-	// 3.1 运行时设置：yaml 为基线，DB router_settings 覆盖（DB 优先）。
-	// 对齐 Python _add_router_settings_from_db_config（proxy_server.py:4023-4066）。
-	const yamlRouterSettings: Record<string, unknown> = {};
-	if (config.routerSettings.routing_strategy) {
-		yamlRouterSettings["routing_strategy"] = config.routerSettings.routing_strategy;
-	}
-	if (config.routerSettings.num_retries != null) {
-		yamlRouterSettings["num_retries"] = config.routerSettings.num_retries;
-	}
-	if (config.routerSettings.allowed_fails != null) {
-		yamlRouterSettings["allowed_fails"] = config.routerSettings.allowed_fails;
-	}
-	if (config.routerSettings.cooldown_time != null) {
-		yamlRouterSettings["cooldown_time"] = config.routerSettings.cooldown_time;
-	}
-	if (config.routerSettings.fallbacks.length > 0) {
-		yamlRouterSettings["fallbacks"] = config.routerSettings.fallbacks;
-	}
-	if (config.routerSettings.enable_pre_call_checks != null) {
-		yamlRouterSettings["enable_pre_call_checks"] = config.routerSettings.enable_pre_call_checks;
-	}
-	if (config.routerSettings.max_fallbacks != null) {
-		yamlRouterSettings["max_fallbacks"] = config.routerSettings.max_fallbacks;
-	}
-	// model_group_alias：合并 general_settings 与 router_settings 中的别名配置
-	const yamlModelGroupAlias = {
-		...config.generalSettings.model_group_alias,
-		...config.routerSettings.model_group_alias,
-	};
-	if (Object.keys(yamlModelGroupAlias).length > 0) {
-		yamlRouterSettings["model_group_alias"] = yamlModelGroupAlias;
-	}
-
-	const dbRouterSettings = dbConfigProvider.getParam("router_settings");
-	// DB 优先覆盖 yaml
-	const mergedRouterSettings = { ...yamlRouterSettings, ...dbRouterSettings };
-	if (Object.keys(mergedRouterSettings).length > 0) {
-		try {
-			router.updateSettings(mergedRouterSettings);
-			logger.info("Router 运行时设置已加载", {
-				source: Object.keys(dbRouterSettings).length > 0 ? "DB" : "yaml",
-				keys: Object.keys(mergedRouterSettings),
-			});
-		} catch (error) {
-			logger.error("Router 运行时设置应用失败", {
-				error: error instanceof Error ? error.message : String(error),
-			});
-		}
-	}
-
-	// 3.2 DB 模型加载：Router 运行时模型配置的唯一来源。
-	// 对齐 Python store_model_in_db 启动加载（proxy_server.py add_deployment →
-	// llm_router.upsert_deployment）。
-	try {
-		const dbModels = await db.db.select().from(LiteLLM_ProxyModelTable);
-		for (const row of dbModels) {
-			router.upsertDeployment(proxyModelRowToDeployment(row));
-		}
-		if (dbModels.length > 0) {
-			logger.info("DB 模型已加载到 Router", { count: dbModels.length });
-		} else {
-			logger.warn("DB 中无模型配置，请通过 WebUI 设置或导入 yaml 模型");
-		}
-	} catch (error) {
-		// DB 查询失败（全新部署表不存在等）：Router 无模型，所有请求将返回 no-deployments 错误
-		logger.error("DB 模型加载失败，Router 无可用模型", {
-			error: error instanceof Error ? error.message : String(error),
-		});
-	}
+	// 3.1 模型、Router 设置与凭据不再跨请求加载到 Router。
+	// 每个需要 Router 的 HTTP 请求由 DatabaseRuntimeConfigService 建立一致的 DB 快照。
+	const runtimeConfigService = new DatabaseRuntimeConfigService(db.db, config);
 
 	// 4. 创建 AuthRepository
 	const authRepository = new AuthRepository(db.db);
@@ -194,7 +121,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		authRepository: authRepository,
 		authMiddleware: authMiddleware,
 		authorizationGuard: authorizationGuard,
-		credentialAccessor: credentialAccessor,
 		credentialService: credentialService,
+		runtimeConfigService: runtimeConfigService,
 	};
 }

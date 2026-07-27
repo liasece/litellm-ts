@@ -11,7 +11,6 @@
  */
 import { createServiceContainer } from "./container";
 import { validateAndTransform } from "./core/config";
-import type { Router } from "./router/Router";
 import { modelCostMapService } from "./cost/ModelCostMapService";
 
 /** 测试可控的 DB 配置参数（dbConfigProvider mock 数据源），每个用例前重置 */
@@ -37,19 +36,33 @@ jest.mock("./core/config/DbConfigProvider", () => ({
 	},
 }));
 
-// Database 初始化依赖真实 PostgreSQL，容器装配测试仅需验证 RouterConfig 接线，
-// mock 掉 Database 避免真实连接；select().from() 返回 mockDbModelRows（DB 模型回灌路径）
+// Database 初始化依赖真实 PostgreSQL，容器装配测试使用可控的请求级 DB 快照。
 jest.mock("./core/db/Database", () => ({
-	Database: jest.fn().mockImplementation(() => ({
-		initialize: jest.fn().mockResolvedValue(undefined),
-		db: {
+	Database: jest.fn().mockImplementation(() => {
+		const db: {
+			select: jest.Mock;
+			transaction: jest.Mock;
+		} = {
 			select: jest.fn(() => ({
-				from: jest.fn((table: Record<string, unknown>) =>
-					Promise.resolve("credential_name" in table ? mockCredentialRows : mockDbModelRows),
-				),
+				from: jest.fn((table: Record<string, unknown>) => {
+					if ("credential_name" in table) {
+						return Promise.resolve(mockCredentialRows);
+					}
+					if ("param_name" in table) {
+						return Promise.resolve(
+							Object.entries(mockConfigParams).map(([param_name, param_value]) => ({ param_name, param_value })),
+						);
+					}
+					return Promise.resolve(mockDbModelRows);
+				}),
 			})),
-		},
-	})),
+			transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => await callback(db)),
+		};
+		return {
+			initialize: jest.fn().mockResolvedValue(undefined),
+			db: db,
+		};
+	}),
 }));
 
 beforeEach(() => {
@@ -60,12 +73,12 @@ beforeEach(() => {
 	mockCredentialRows.length = 0;
 });
 
-/**
- * 读取 Router 私有字段（仅测试用，与 RouterExecution.test.ts 同模式）
- * @param router
- */
-function routerInternals(router: Router): { _preCallChecks: boolean; _maxFallbacks: number } {
-	return router as unknown as { _preCallChecks: boolean; _maxFallbacks: number };
+async function withDatabaseSnapshot<T>(
+	container: Awaited<ReturnType<typeof createServiceContainer>>,
+	callback: () => T,
+): Promise<T> {
+	const snapshot = await container.runtimeConfigService.loadSnapshot(container.router);
+	return container.router.runWithRuntimeSnapshot(snapshot, callback);
 }
 
 describe("createServiceContainer — router_settings 接线", () => {
@@ -77,9 +90,10 @@ describe("createServiceContainer — router_settings 接线", () => {
 		const container = await createServiceContainer(config);
 		expect(modelCostMapService.initialize).toHaveBeenCalled();
 		expect(container.modelCostMapService).toBe(modelCostMapService);
-		const internals = routerInternals(container.router);
-		expect(internals._preCallChecks).toBe(true);
-		expect(internals._maxFallbacks).toBe(10);
+		await withDatabaseSnapshot(container, () => {
+			expect(container.router.getNoAvailableDeploymentInfo("missing").preCallChecks).toBe(true);
+			expect(container.router.maxFallbacks).toBe(10);
+		});
 	});
 
 	it("缺省时走 Router 默认（preCallChecks=false / maxFallbacks=5）", async () => {
@@ -87,9 +101,10 @@ describe("createServiceContainer — router_settings 接线", () => {
 			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
 		});
 		const container = await createServiceContainer(config);
-		const internals = routerInternals(container.router);
-		expect(internals._preCallChecks).toBe(false);
-		expect(internals._maxFallbacks).toBe(5);
+		await withDatabaseSnapshot(container, () => {
+			expect(container.router.getNoAvailableDeploymentInfo("missing").preCallChecks).toBe(false);
+			expect(container.router.maxFallbacks).toBe(5);
+		});
 	});
 
 	it("DB 中的模型通过 ProxyModelDeployment 流入 Router deployments", async () => {
@@ -117,14 +132,16 @@ describe("createServiceContainer — router_settings 接线", () => {
 			model_info: {},
 		});
 		const container = await createServiceContainer(config);
-		const deployments = container.router.getDeployments();
-		expect(deployments).toHaveLength(1);
-		expect(deployments[0]?.model_info?.id).toBe("test-glm-id");
+		await withDatabaseSnapshot(container, () => {
+			const deployments = container.router.getDeployments();
+			expect(deployments).toHaveLength(1);
+			expect(deployments[0]?.model_info?.id).toBe("test-glm-id");
+		});
 	});
 });
 
 describe("createServiceContainer — Credential 接线", () => {
-	it("启动时加载持久化明文凭据并暴露同一运行时 accessor/service", async () => {
+	it("Credential 管理读取直接来自持久层，不暴露进程级明文 accessor", async () => {
 		mockCredentialRows.push({
 			credential_id: "credential-1",
 			credential_name: "openai-prod",
@@ -139,7 +156,6 @@ describe("createServiceContainer — Credential 接线", () => {
 
 		const container = await createServiceContainer(config);
 
-		expect(container.credentialAccessor.getValues("openai-prod")).toEqual({ api_key: "sk-secret" });
 		expect(await container.credentialService.list()).toEqual([
 			expect.objectContaining({
 				credential_name: "openai-prod",
@@ -157,9 +173,11 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 			router_settings: { num_retries: 2 },
 		});
 		const container = await createServiceContainer(config);
-		const internals = container.router as unknown as { _numRetries: number };
-		expect(internals._numRetries).toBe(7);
-		expect(container.router.getNextFallback("gpt-5", 0)).toBe("gpt-5-mini");
+		const snapshot = await container.runtimeConfigService.loadSnapshot(container.router);
+		expect(snapshot.numRetries).toBe(7);
+		container.router.runWithRuntimeSnapshot(snapshot, () => {
+			expect(container.router.getNextFallback("gpt-5", 0)).toBe("gpt-5-mini");
+		});
 	});
 
 	it("DB 无 router_settings 时 yaml 值保持生效", async () => {
@@ -168,21 +186,18 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 			router_settings: { num_retries: 4 },
 		});
 		const container = await createServiceContainer(config);
-		const internals = container.router as unknown as { _numRetries: number };
-		expect(internals._numRetries).toBe(4);
+		const snapshot = await container.runtimeConfigService.loadSnapshot(container.router);
+		expect(snapshot.numRetries).toBe(4);
 	});
 
-	it("DB router_settings 含非法 routing_strategy 时不阻断其他合法设置", async () => {
+	it("DB router_settings 含非法 routing_strategy 时请求快照 fail closed", async () => {
 		mockConfigParams["router_settings"] = { routing_strategy: "not-a-strategy", num_retries: 9 };
 		const config = validateAndTransform({
 			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
 			router_settings: { num_retries: 2 },
 		});
 		const container = await createServiceContainer(config);
-		// routing_strategy 非法时 updateSettings 抛异常，但该键之前已应用的设置（num_retries）保留
-		// DB 中 num_retries=9，覆盖 yaml 的 num_retries=2
-		const internals = container.router as unknown as { _numRetries: number };
-		expect(internals._numRetries).toBe(9);
+		await expect(container.runtimeConfigService.loadSnapshot(container.router)).rejects.toThrow("Unknown routing strategy");
 	});
 
 	it("DB 模型回灌：DB 独有模型加入 Router 且 model_info.db_model=true，可立即路由", async () => {
@@ -196,10 +211,12 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
 		});
 		const container = await createServiceContainer(config);
-		expect(container.router.hasModel("db-only-model")).toBe(true);
-		const dbDeployment = container.router.getDeployment("db-model-1");
-		expect(dbDeployment?.model_info?.id).toBe("db-model-1");
-		expect((dbDeployment?.model_info as Record<string, unknown> | undefined)?.["db_model"]).toBe(true);
+		await withDatabaseSnapshot(container, () => {
+			expect(container.router.hasModel("db-only-model")).toBe(true);
+			const dbDeployment = container.router.getDeployment("db-model-1");
+			expect(dbDeployment?.model_info?.id).toBe("db-model-1");
+			expect((dbDeployment?.model_info as Record<string, unknown> | undefined)?.["db_model"]).toBe(true);
+		});
 	});
 
 	it("DB 模型回灌：模型仅从 DB 加载，DB 值为准", async () => {
@@ -214,8 +231,10 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 			model_info: {},
 		});
 		const container = await createServiceContainer(config);
-		const deployments = container.router.getDeployments();
-		expect(deployments).toHaveLength(1);
-		expect(deployments[0]?.litellm_params["api_key"]).toBe("sk-db-override");
+		await withDatabaseSnapshot(container, () => {
+			const deployments = container.router.getDeployments();
+			expect(deployments).toHaveLength(1);
+			expect(deployments[0]?.litellm_params["api_key"]).toBe("sk-db-override");
+		});
 	});
 });

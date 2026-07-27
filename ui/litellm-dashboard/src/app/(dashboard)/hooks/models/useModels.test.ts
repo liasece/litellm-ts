@@ -234,6 +234,16 @@ describe("useModelsInfo", () => {
     expect(result.current.isFetched).toBe(false);
     expect(modelInfoCall).not.toHaveBeenCalled();
   });
+
+  it("should not execute query when explicitly disabled", () => {
+    const { result } = renderHook(
+      () => useModelsInfo(1, 50, undefined, undefined, undefined, undefined, undefined, false),
+      { wrapper },
+    );
+
+    expect(result.current.isFetched).toBe(false);
+    expect(modelInfoCall).not.toHaveBeenCalled();
+  });
 });
 
 describe("useModelHub", () => {

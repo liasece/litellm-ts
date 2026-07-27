@@ -253,7 +253,7 @@ const ROUTING_STRATEGY_DESCRIPTIONS: Readonly<Record<string, string>> = {
  * 批次 C4：DB router_settings（LiteLLM_Config 表）再覆盖一层（对齐 Python get_config 的 DB 优先语义）。
  * @param config - 服务配置
  */
-function buildRouterSettingsCurrentValues(config: ServiceConfig | undefined): Record<string, unknown> {
+async function buildRouterSettingsCurrentValues(config: ServiceConfig | undefined): Promise<Record<string, unknown>> {
 	const values: Record<string, unknown> = {
 		routing_strategy: "simple-shuffle",
 		num_retries: 0,
@@ -278,7 +278,7 @@ function buildRouterSettingsCurrentValues(config: ServiceConfig | undefined): Re
 		}
 	}
 	// DB 优先：DB 中出现的键覆盖 yaml 有效值
-	const dbRouterSettings = dbConfigProvider.getParam("router_settings");
+	const dbRouterSettings = await dbConfigProvider.getParam("router_settings");
 	for (const [key, value] of Object.entries(dbRouterSettings)) {
 		if (value !== null && value !== undefined) {
 			values[key] = value;
@@ -469,7 +469,7 @@ function buildAlertingData(): readonly unknown[] {
  * （对齐 Python get_config 的 DB 优先合并语义）。
  * @param config - 服务配置
  */
-function buildRouterSettingsForCallbacks(config: ServiceConfig | undefined): Record<string, unknown> {
+async function buildRouterSettingsForCallbacks(config: ServiceConfig | undefined): Promise<Record<string, unknown>> {
 	const raw = config?.routerSettingsRaw ?? {};
 	const rs = config?.routerSettings;
 	const yamlValues: Record<string, unknown> = {
@@ -488,7 +488,7 @@ function buildRouterSettingsForCallbacks(config: ServiceConfig | undefined): Rec
 		model_group_alias: raw["model_group_alias"] ?? rs?.model_group_alias ?? {},
 	};
 	// DB 优先：DB 中出现的键覆盖 yaml 有效值（对齐 _update_dictionary DB 语义）
-	const dbRouterSettings = dbConfigProvider.getParam("router_settings");
+	const dbRouterSettings = await dbConfigProvider.getParam("router_settings");
 	for (const [key, value] of Object.entries(dbRouterSettings)) {
 		if (value !== null && value !== undefined) {
 			yamlValues[key] = value;
@@ -497,9 +497,9 @@ function buildRouterSettingsForCallbacks(config: ServiceConfig | undefined): Rec
 	return yamlValues;
 }
 
-function buildConfigCallbacksResponse(config: ServiceConfig | undefined): ConfigCallbacksResponse {
+async function buildConfigCallbacksResponse(config: ServiceConfig | undefined): Promise<ConfigCallbacksResponse> {
 	// PY get_config 的 litellm_settings 源：DB（LiteLLM_Config 表，WebUI 设置项）优先，yaml 兜底
-	const dbLitellmSettings = dbConfigProvider.getParam("litellm_settings");
+	const dbLitellmSettings = await dbConfigProvider.getParam("litellm_settings");
 	const litellmSettings =
 		Object.keys(dbLitellmSettings).length > 0
 			? publicConfigRecord(dbLitellmSettings)
@@ -510,7 +510,7 @@ function buildConfigCallbacksResponse(config: ServiceConfig | undefined): Config
 		status: "success",
 		callbacks: buildConfiguredCallbacks(litellmSettings),
 		alerts: buildAlertingData(),
-		router_settings: buildRouterSettingsForCallbacks(config),
+		router_settings: await buildRouterSettingsForCallbacks(config),
 		available_callbacks: AVAILABLE_CALLBACKS,
 	};
 }
@@ -1047,9 +1047,9 @@ export function registerModelsPageSupportRoutes(
 	 * 静态字段元数据（ROUTER_SETTINGS_FIELDS）+ config 动态值 +
 	 * routing_strategy_descriptions。field_value 合并序：router 运行值 < config 覆盖。
 	 */
-	registerRoute(router, { method: "get", path: "/router/settings" }, (req) => {
+	registerRoute(router, { method: "get", path: "/router/settings" }, async (req) => {
 		assertProxyAdmin(req);
-		const currentValues = buildRouterSettingsCurrentValues(config);
+		const currentValues = await buildRouterSettingsCurrentValues(config);
 		const fields = ROUTER_SETTINGS_FIELD_DEFS.map((fieldDef) => ({
 			field_name: fieldDef.field_name,
 			field_type: fieldDef.field_type,
@@ -1076,9 +1076,9 @@ export function registerModelsPageSupportRoutes(
 	 * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/proxy_server.py
 	 * WebUI `getCallbacksCall` 直接 `response.json()`，必须返回 JSON 对象。
 	 */
-	registerRoute(router, { method: "get", path: "/get/config/callbacks" }, (req) => {
+	registerRoute(router, { method: "get", path: "/get/config/callbacks" }, async (req) => {
 		assertProxyAdmin(req);
-		return buildConfigCallbacksResponse(config);
+		return await buildConfigCallbacksResponse(config);
 	});
 
 	// ── 成本映射相关 ─────────────────────────────────────────

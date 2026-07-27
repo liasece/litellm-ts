@@ -149,7 +149,17 @@ export class LiteLLMServer {
 	// ── 健康检查 ──
 	private _registerHealthRoutes(app: express.Express): void {
 		const container = this._container!;
-		registerController(app, new HealthController(container.router, container.db), { requireAuth: container.authMiddleware });
+		const healthRouter = express.Router();
+		const runtimeConfigMiddleware = container.runtimeConfigService.middleware(container.router);
+		healthRouter.use((req, res, next) => {
+			if (req.path === "/health/liveliness" || req.path === "/health/liveness") {
+				next();
+				return;
+			}
+			runtimeConfigMiddleware(req, res, next);
+		});
+		registerController(healthRouter, new HealthController(container.router, container.db), { requireAuth: container.authMiddleware });
+		app.use(healthRouter);
 		logger.info("健康检查路由已注册");
 	}
 
@@ -180,6 +190,7 @@ export class LiteLLMServer {
 		proxyRouter.use(container.authMiddleware);
 		proxyRouter.use(webUiCsrfProtection);
 		proxyRouter.use(container.authorizationGuard.middleware("inference"));
+		proxyRouter.use(container.runtimeConfigService.middleware(container.router));
 
 		// Chat completions
 		registerChatCompletionsRoutes(proxyRouter, container.router, container.db.db);
@@ -214,7 +225,7 @@ export class LiteLLMServer {
 		createTeamRoutes(managementRouter, container.db.db, null);
 		createOrganizationRoutes(managementRouter, container.db.db, null);
 		createCustomerRoutes(managementRouter, container.db.db, null);
-		createModelManagementRoutes(managementRouter, container.db.db, null, container.router);
+		createModelManagementRoutes(managementRouter, container.db.db, null);
 
 		app.use(managementRouter);
 		logger.info("管理端点已注册");
@@ -237,6 +248,7 @@ export class LiteLLMServer {
 		stubRouter.use(container.authMiddleware);
 		stubRouter.use(webUiCsrfProtection);
 		stubRouter.use(container.authorizationGuard.middleware("authenticated"));
+		stubRouter.use(container.runtimeConfigService.middleware(container.router));
 
 		// Models 页面支撑（需鉴权）
 		// 必须传 container.router：Router deployments 是运行时真实模型源，

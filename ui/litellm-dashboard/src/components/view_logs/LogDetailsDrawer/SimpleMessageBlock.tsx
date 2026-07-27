@@ -4,8 +4,9 @@
  */
 
 import { Typography } from 'antd';
-import { ToolCall } from './prettyMessagesTypes';
+import { MessagePart, ToolCall } from './prettyMessagesTypes';
 import { SimpleToolCallBlock } from './SimpleToolCallBlock';
+import { MessagePartsView } from './MessagePartsView';
 
 const { Text } = Typography;
 
@@ -13,6 +14,7 @@ interface SimpleMessageBlockProps {
   label: string;
   content?: string;
   toolCalls?: ToolCall[];
+  parts?: MessagePart[];
   isCompact?: boolean;
 }
 
@@ -20,14 +22,16 @@ export function SimpleMessageBlock({
   label, 
   content, 
   toolCalls, 
+  parts,
   isCompact = false 
 }: SimpleMessageBlockProps) {
   // Don't show "null" for empty content
   const displayContent = content && content !== 'null' && content.length > 0 ? content : null;
   const hasToolCalls = toolCalls && toolCalls.length > 0;
+  const hasParts = parts && parts.length > 0;
 
   // If no content and no tool calls, don't render
-  if (!displayContent && !hasToolCalls) {
+  if (!displayContent && !hasToolCalls && !hasParts) {
     return null;
   }
 
@@ -46,7 +50,9 @@ export function SimpleMessageBlock({
         {label}
       </Text>
 
-      {displayContent && (
+      {hasParts ? (
+        <MessagePartsView parts={parts} compact={isCompact} />
+      ) : displayContent ? (
         <div
           style={{
             fontSize: 13,
@@ -59,10 +65,10 @@ export function SimpleMessageBlock({
         >
           {displayContent}
         </div>
-      )}
+      ) : null}
 
       {/* Inline tool calls for assistant messages in history */}
-      {hasToolCalls && (
+      {!hasParts && hasToolCalls && (
         <div>
           {toolCalls.map((tc, index) => (
             <SimpleToolCallBlock key={tc.id || index} tool={tc} compact={isCompact} />

@@ -1,11 +1,10 @@
-/** Credential 管理端点：HTTP 层负责输入校验和 Router 模型接线。 */
+/** Credential 管理端点：HTTP 层负责输入校验，动态数据以数据库为准。 */
 import type { Request, Router } from "express";
 import { ApiError } from "../core/api/ApiError";
 import { registerRoute } from "../core/api/registerRoute";
 import type { CredentialService, CredentialPatch } from "../credentials/CredentialService";
 import { CredentialServiceError } from "../credentials/CredentialService";
 import { CredentialRepositoryConflictError } from "../repositories/CredentialRepository";
-import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
 import type { Deployment } from "../types/router";
 import { PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 
@@ -19,7 +18,6 @@ interface CredentialCreateBody {
 
 interface CredentialModelRouter {
 	getDeployment(modelId: string): Deployment | null;
-	upsertDeployment(deployment: Deployment): boolean;
 }
 
 /**
@@ -53,7 +51,7 @@ export function registerCredentialRoutes(router: Router, credentialService: Cred
 		const actorId = getActorId(req);
 		if (body.attach_to_model === true) {
 			const modelId = requiredString(body.model_id, "model_id");
-			const updatedModel = await callService(() =>
+			await callService(() =>
 				credentialService.createFromModel(
 					{
 						credential_name: credentialName,
@@ -63,11 +61,6 @@ export function registerCredentialRoutes(router: Router, credentialService: Cred
 					actorId,
 				),
 			);
-			modelRouter.upsertDeployment(proxyModelRowToDeployment(updatedModel));
-			const synced = modelRouter.getDeployment(modelId);
-			if (synced === null || synced.litellm_params["litellm_credential_name"] !== credentialName) {
-				throw new ApiError(500, "Model router failed to synchronize the attached Credential");
-			}
 		} else {
 			await callService(() =>
 				credentialService.create(

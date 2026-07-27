@@ -83,6 +83,7 @@ export function InputCard({ messages, promptTokens, inputCost }: InputCardProps)
               label={lastMessage.role.toUpperCase()}
               content={lastMessage.content}
               toolCalls={lastMessage.toolCalls}
+              parts={lastMessage.parts}
             />
           )}
         </div>

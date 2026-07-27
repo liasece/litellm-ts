@@ -1,33 +1,30 @@
 import { useModelCostMap } from "@/app/(dashboard)/hooks/models/useModelCostMap";
 import { useModelHub, useModelsInfo } from "@/app/(dashboard)/hooks/models/useModels";
 import { transformModelData } from "@/app/(dashboard)/models-and-endpoints/utils/modelDataTransformer";
-import { InfoCircleOutlined } from "@ant-design/icons";
-import { KeyIcon, RefreshIcon, TrashIcon } from "@heroicons/react/outline";
 import {
 	Card,
-	Grid,
 	Tab,
 	TabGroup,
 	TabList,
 	TabPanel,
 	TabPanels,
 	Text,
-	TextInput,
 	Title,
 	Button as TremorButton,
 } from "@tremor/react";
-import { Button, Checkbox, Form, Input, Modal, Select, Tooltip } from "antd";
-import VectorStoreSelector from "./vector_store_management/VectorStoreSelector";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { Button, Form, Modal } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { copyToClipboard as utilCopyToClipboard } from "../utils/dataUtils";
-import { formItemValidateJSON, truncateString } from "../utils/textUtils";
-import CacheControlSettings from "./add_model/cache_control_settings";
+import { truncateString } from "../utils/textUtils";
 import DeleteResourceModal from "./common_components/DeleteResourceModal";
 import ResourceDetailsDrawer from "./common_components/ResourceDetailsDrawer";
 import EditAutoRouterModal from "./edit_auto_router/edit_auto_router_modal";
 import ReuseCredentialsModal from "./model_add/reuse_credentials";
 import NotificationsManager from "./molecules/notifications_manager";
+import ModelDetailsHeader from "./model_details/ModelDetailsHeader";
+import ModelOverview from "./model_details/ModelOverview";
+import ModelSettingsContent from "./model_details/ModelSettingsContent";
+import ModelSettingsDialog from "./model_details/ModelSettingsDialog";
 import {
 	CredentialItem,
 	credentialCreateCall,
@@ -40,8 +37,6 @@ import {
 	tagListCall,
 	testConnectionRequest,
 } from "./networking";
-import { getProviderLogoAndName } from "./provider_info_helpers";
-import NumericalInput from "./shared/numerical_input";
 import { Tag } from "./tag_management/types";
 import { getDisplayModelName } from "./view_model/model_name_display";
 
@@ -88,7 +83,6 @@ export default function ModelInfoView({
 	const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 	const [deleteLoading, setDeleteLoading] = useState(false);
 	const [isCredentialModalOpen, setIsCredentialModalOpen] = useState(false);
-	const [isDirty, setIsDirty] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
 	const [isEditing, setIsEditing] = useState(false);
 	const [existingCredential, setExistingCredential] = useState<CredentialItem | null>(null);
@@ -298,7 +292,6 @@ export default function ModelInfoView({
 			setLocalModelData(updatedModelData);
 			syncFormWithModel(updatedModelData);
 			onModelUpdate?.(updatedModelData);
-			setIsDirty(false);
 		}
 		NotificationsManager.success("Credential stored successfully");
 	};
@@ -427,7 +420,6 @@ export default function ModelInfoView({
 			onModelUpdate?.(updatedModelData);
 
 			NotificationsManager.success("Model settings updated successfully");
-			setIsDirty(false);
 			setIsEditing(false);
 		} catch (error) {
 			console.error("Error updating model:", error);
@@ -520,547 +512,6 @@ export default function ModelInfoView({
 	};
 	const isWildcardModel = modelData.litellm_model_name.includes("*");
 
-	const renderModelSettings = (editing: boolean) => (
-		<div className="space-y-4">
-			<div className="space-y-4">
-				<div>
-					<Text className="font-medium">Model Name</Text>
-					{editing ? (
-						<Form.Item name="model_name" className="mb-0">
-							<TextInput placeholder="Enter model name" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">{localModelData.model_name}</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">LiteLLM Model Name</Text>
-					{editing ? (
-						<Form.Item name="litellm_model_name" className="mb-0">
-							<TextInput placeholder="Enter LiteLLM model name" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">{localModelData.litellm_model_name}</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Input Cost (per 1M tokens)</Text>
-					{editing ? (
-						<Form.Item name="input_cost" className="mb-0">
-							<NumericalInput placeholder="Enter input cost" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData?.litellm_params?.input_cost_per_token
-								? (localModelData.litellm_params?.input_cost_per_token * 1_000_000).toFixed(4)
-								: localModelData?.model_info?.input_cost_per_token
-									? (localModelData.model_info.input_cost_per_token * 1_000_000).toFixed(4)
-									: "Not Set"}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Output Cost (per 1M tokens)</Text>
-					{editing ? (
-						<Form.Item name="output_cost" className="mb-0">
-							<NumericalInput placeholder="Enter output cost" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData?.litellm_params?.output_cost_per_token
-								? (localModelData.litellm_params.output_cost_per_token * 1_000_000).toFixed(4)
-								: localModelData?.model_info?.output_cost_per_token
-									? (localModelData.model_info.output_cost_per_token * 1_000_000).toFixed(4)
-									: "Not Set"}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">API Base</Text>
-					{editing ? (
-						<Form.Item name="api_base" className="mb-0">
-							<TextInput placeholder="Enter API base" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">{localModelData.litellm_params?.api_base || "Not Set"}</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Custom LLM Provider</Text>
-					{editing ? (
-						<Form.Item name="custom_llm_provider" className="mb-0">
-							<TextInput placeholder="Enter custom LLM provider" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.custom_llm_provider || "Not Set"}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Organization</Text>
-					{editing ? (
-						<Form.Item name="organization" className="mb-0">
-							<TextInput placeholder="Enter organization" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.organization || "Not Set"}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">TPM (Tokens per Minute)</Text>
-					{editing ? (
-						<Form.Item name="tpm" className="mb-0">
-							<NumericalInput placeholder="Enter TPM" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">{localModelData.litellm_params?.tpm || "Not Set"}</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">RPM (Requests per Minute)</Text>
-					{editing ? (
-						<Form.Item name="rpm" className="mb-0">
-							<NumericalInput placeholder="Enter RPM" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">{localModelData.litellm_params?.rpm || "Not Set"}</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Max Retries</Text>
-					{editing ? (
-						<Form.Item name="max_retries" className="mb-0">
-							<NumericalInput placeholder="Enter max retries" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">{localModelData.litellm_params?.max_retries || "Not Set"}</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Timeout (seconds)</Text>
-					{editing ? (
-						<Form.Item name="timeout" className="mb-0">
-							<NumericalInput placeholder="Enter timeout" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">{localModelData.litellm_params?.timeout || "Not Set"}</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Stream Timeout (seconds)</Text>
-					{editing ? (
-						<Form.Item name="stream_timeout" className="mb-0">
-							<NumericalInput placeholder="Enter stream timeout" />
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.stream_timeout || "Not Set"}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Model Access Groups</Text>
-					{editing ? (
-						<Form.Item name="model_access_group" className="mb-0">
-							<Select
-								mode="tags"
-								showSearch
-								placeholder="Select existing groups or type to create new ones"
-								optionFilterProp="children"
-								tokenSeparators={[","]}
-								maxTagCount="responsive"
-								allowClear
-								style={{ width: "100%" }}
-								options={modelAccessGroups?.map((group) => ({
-									value: group,
-									label: group,
-								}))}
-							/>
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.model_info?.access_groups ? (
-								Array.isArray(localModelData.model_info.access_groups) ? (
-									localModelData.model_info.access_groups.length > 0 ? (
-										<div className="flex flex-wrap gap-1">
-											{localModelData.model_info.access_groups.map((group: string, index: number) => (
-												<span
-													key={index}
-													className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-												>
-													{group}
-												</span>
-											))}
-										</div>
-									) : (
-										"No groups assigned"
-									)
-								) : (
-									localModelData.model_info.access_groups
-								)
-							) : (
-								"Not Set"
-							)}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">
-						Guardrails
-						<Tooltip title="Apply safety guardrails to this model to filter content or enforce policies">
-							<a
-								href="https://docs.litellm.ai/docs/proxy/guardrails/quick_start"
-								target="_blank"
-								rel="noopener noreferrer"
-								onClick={(e) => e.stopPropagation()}
-							>
-								<InfoCircleOutlined style={{ marginLeft: "4px" }} />
-							</a>
-						</Tooltip>
-					</Text>
-					{editing ? (
-						<Form.Item name="guardrails" className="mb-0">
-							<Select
-								mode="tags"
-								showSearch
-								placeholder="Select existing guardrails or type to create new ones"
-								optionFilterProp="children"
-								tokenSeparators={[","]}
-								maxTagCount="responsive"
-								allowClear
-								style={{ width: "100%" }}
-								options={guardrailsList.map((name) => ({
-									value: name,
-									label: name,
-								}))}
-							/>
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.guardrails ? (
-								Array.isArray(localModelData.litellm_params.guardrails) ? (
-									localModelData.litellm_params.guardrails.length > 0 ? (
-										<div className="flex flex-wrap gap-1">
-											{localModelData.litellm_params.guardrails.map((guardrail: string, index: number) => (
-												<span
-													key={index}
-													className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"
-												>
-													{guardrail}
-												</span>
-											))}
-										</div>
-									) : (
-										"No guardrails assigned"
-									)
-								) : (
-									localModelData.litellm_params.guardrails
-								)
-							) : (
-								"Not Set"
-							)}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">
-						Attached Knowledge Bases (RAG)
-						<Tooltip title="Vector stores used for RAG. Every request to this model will automatically retrieve context from these knowledge bases.">
-							<a
-								href="https://docs.litellm.ai/docs/completion/knowledgebase"
-								target="_blank"
-								rel="noopener noreferrer"
-								onClick={(e) => e.stopPropagation()}
-							>
-								<InfoCircleOutlined style={{ marginLeft: "4px" }} />
-							</a>
-						</Tooltip>
-					</Text>
-					{editing ? (
-						<Form.Item name="vector_store_ids" className="mb-0">
-							<VectorStoreSelector
-								onChange={() => {}}
-								accessToken={accessToken || ""}
-								placeholder="Select knowledge bases (optional)"
-							/>
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.vector_store_ids ? (
-								Array.isArray(localModelData.litellm_params.vector_store_ids) ? (
-									localModelData.litellm_params.vector_store_ids.length > 0 ? (
-										<div className="flex flex-wrap gap-1">
-											{localModelData.litellm_params.vector_store_ids.map((vsId: string, index: number) => (
-												<span
-													key={index}
-													className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-												>
-													{vsId}
-												</span>
-											))}
-										</div>
-									) : (
-										"No knowledge bases attached"
-									)
-								) : (
-									String(localModelData.litellm_params.vector_store_ids)
-								)
-							) : (
-								"Not Set"
-							)}
-						</div>
-					)}
-				</div>
-
-				<div>
-					<Text className="font-medium">Tags</Text>
-					{editing ? (
-						<Form.Item name="tags" className="mb-0">
-							<Select
-								mode="tags"
-								showSearch
-								placeholder="Select existing tags or type to create new ones"
-								optionFilterProp="children"
-								tokenSeparators={[","]}
-								maxTagCount="responsive"
-								allowClear
-								style={{ width: "100%" }}
-								options={Object.values(tagsList).map((tag: Tag) => ({
-									value: tag.name,
-									label: tag.name,
-									title: tag.description || tag.name,
-								}))}
-							/>
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.tags ? (
-								Array.isArray(localModelData.litellm_params.tags) ? (
-									localModelData.litellm_params.tags.length > 0 ? (
-										<div className="flex flex-wrap gap-1">
-											{localModelData.litellm_params.tags.map((tag: string, index: number) => (
-												<span
-													key={index}
-													className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800"
-												>
-													{tag}
-												</span>
-											))}
-										</div>
-									) : (
-										"No tags assigned"
-									)
-								) : (
-									localModelData.litellm_params.tags
-								)
-							) : (
-								"Not Set"
-							)}
-						</div>
-					)}
-				</div>
-				<div>
-					<Text className="font-medium">Existing Credentials</Text>
-					{editing ? (
-						<Form.Item name="litellm_credential_name" label="Credential Source" className="mb-0">
-							<Select
-								showSearch
-								placeholder="Select or search for existing credentials"
-								optionFilterProp="children"
-								filterOption={(input, option) => (option?.label ?? "").toLowerCase().includes(input.toLowerCase())}
-								options={[
-									{ value: "", label: "Manual" },
-									...credentialsList.map((credential) => ({
-										value: credential.credential_name,
-										label: credential.credential_name,
-									})),
-								]}
-								allowClear
-							/>
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.litellm_credential_name || "Manual"}
-						</div>
-					)}
-				</div>
-
-				{editing && !selectedCredentialName && (
-					<div>
-						<Form.Item name="api_key" label="Manual API Key" className="mb-2">
-							<Input.Password
-								placeholder="Leave blank to keep the currently stored manual API key"
-								autoComplete="new-password"
-							/>
-						</Form.Item>
-						<Form.Item name="delete_api_key" valuePropName="checked" className="mb-0">
-							<Checkbox>Delete stored manual API key</Checkbox>
-						</Form.Item>
-					</div>
-				)}
-
-				{isWildcardModel && (
-					<div>
-						<Text className="font-medium">Health Check Model</Text>
-						{editing ? (
-							<Form.Item name="health_check_model" className="mb-0">
-								<Select
-									showSearch
-									placeholder="Select existing health check model"
-									optionFilterProp="children"
-									allowClear
-									options={(() => {
-										const wildcardProvider = modelData.litellm_model_name.split("/")[0];
-										return (
-											modelHubData?.data
-												?.filter((model: any) => {
-													// Filter by provider to match the wildcard provider
-													return (
-														model.providers?.includes(wildcardProvider) &&
-														model.model_group !== modelData.litellm_model_name
-													);
-												})
-												.map((model: any) => ({
-													value: model.model_group,
-													label: model.model_group,
-												})) || []
-										);
-									})()}
-								/>
-							</Form.Item>
-						) : (
-							<div className="mt-1 p-2 bg-gray-50 rounded">
-								{localModelData.model_info?.health_check_model || "Not Set"}
-							</div>
-						)}
-					</div>
-				)}
-
-				{/* Cache Control Section */}
-				{editing ? (
-					<CacheControlSettings
-						form={form}
-						showCacheControl={showCacheControl}
-						onCacheControlChange={(checked) => setShowCacheControl(checked)}
-					/>
-				) : (
-					<div>
-						<Text className="font-medium">Cache Control</Text>
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							{localModelData.litellm_params?.cache_control_injection_points ? (
-								<div>
-									<p>Enabled</p>
-									<div className="mt-2">
-										{localModelData.litellm_params.cache_control_injection_points.map((point: any, i: number) => (
-											<div key={i} className="text-sm text-gray-600 mb-1">
-												Location: {point.location},{point.role && <span> Role: {point.role}</span>}
-												{point.index !== undefined && <span> Index: {point.index}</span>}
-											</div>
-										))}
-									</div>
-								</div>
-							) : (
-								"Disabled"
-							)}
-						</div>
-					</div>
-				)}
-
-				<div>
-					<Text className="font-medium">Model Info</Text>
-					{editing ? (
-						<Form.Item name="model_info" className="mb-0">
-							<Input.TextArea
-								rows={4}
-								placeholder='{"gpt-4": 100, "claude-v1": 200}'
-								defaultValue={JSON.stringify(modelData.model_info, null, 2)}
-							/>
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							<pre className="bg-gray-100 p-2 rounded text-xs overflow-auto mt-1">
-								{JSON.stringify(localModelData.model_info, null, 2)}
-							</pre>
-						</div>
-					)}
-				</div>
-				<div>
-					<Text className="font-medium">
-						LiteLLM Params
-						<Tooltip title="Optional litellm params used for making a litellm.completion() call. Some params are automatically added by LiteLLM.">
-							<a
-								href="https://docs.litellm.ai/docs/completion/input"
-								target="_blank"
-								rel="noopener noreferrer"
-								onClick={(e) => e.stopPropagation()}
-							>
-								<InfoCircleOutlined style={{ marginLeft: "4px" }} />
-							</a>
-						</Tooltip>
-					</Text>
-					{editing ? (
-						<Form.Item name="litellm_extra_params" rules={[{ validator: formItemValidateJSON }]}>
-							<Input.TextArea
-								rows={4}
-								placeholder='{
-		                  "rpm": 100,
-		                  "timeout": 0,
-		                  "stream_timeout": 0
-		                }'
-							/>
-						</Form.Item>
-					) : (
-						<div className="mt-1 p-2 bg-gray-50 rounded">
-							<pre className="bg-gray-100 p-2 rounded text-xs overflow-auto mt-1">
-								{JSON.stringify(localModelData.litellm_params, null, 2)}
-							</pre>
-						</div>
-					)}
-				</div>
-				<div>
-					<Text className="font-medium">Team ID</Text>
-					<div className="mt-1 p-2 bg-gray-50 rounded">{modelData.model_info.team_id || "Not Set"}</div>
-				</div>
-			</div>
-
-			{editing && (
-				<div className="mt-6 flex justify-end gap-2">
-					<TremorButton
-						variant="secondary"
-						onClick={() => {
-							form.resetFields();
-							setIsDirty(false);
-							setIsEditing(false);
-						}}
-						disabled={isSaving}
-					>
-						Cancel
-					</TremorButton>
-					<TremorButton variant="primary" onClick={() => form.submit()} loading={isSaving}>
-						Save Changes
-					</TremorButton>
-				</div>
-			)}
-		</div>
-	);
-
 	return (
 		<ResourceDetailsDrawer
 			open
@@ -1079,57 +530,17 @@ export default function ModelInfoView({
 			}
 		>
 			<div className="p-4">
-				<div className="flex justify-between items-center mb-6">
-					<div>
-						<Title>Public Model Name: {getDisplayModelName(modelData)}</Title>
-						<div className="flex items-center cursor-pointer">
-							<Text className="text-gray-500 font-mono">{modelData.model_info.id}</Text>
-							<Button
-								type="text"
-								size="small"
-								icon={copiedStates["model-id"] ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-								onClick={() => copyToClipboard(modelData.model_info.id, "model-id")}
-								className={`left-2 z-10 transition-all duration-200 ${
-									copiedStates["model-id"]
-										? "text-green-600 bg-green-50 border-green-200"
-										: "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-								}`}
-							/>
-						</div>
-					</div>
-					<div className="flex gap-2">
-						<TremorButton
-							variant="secondary"
-							icon={RefreshIcon}
-							onClick={handleTestConnection}
-							className="flex items-center gap-2"
-							data-testid="test-connection-button"
-						>
-							Test Connection
-						</TremorButton>
-
-						<TremorButton
-							icon={KeyIcon}
-							variant="secondary"
-							onClick={() => setIsCredentialModalOpen(true)}
-							className="flex items-center"
-							disabled={!isAdmin}
-							data-testid="reuse-credentials-button"
-						>
-							Re-use Credentials
-						</TremorButton>
-						<TremorButton
-							icon={TrashIcon}
-							variant="secondary"
-							onClick={() => setIsDeleteModalOpen(true)}
-							className="flex items-center text-red-500 border-red-500 hover:text-red-700"
-							disabled={!canEditModel}
-							data-testid="delete-model-button"
-						>
-							Delete Model
-						</TremorButton>
-					</div>
-				</div>
+				<ModelDetailsHeader
+					displayName={getDisplayModelName(modelData)}
+					modelId={modelData.model_info.id}
+					modelIdCopied={Boolean(copiedStates["model-id"])}
+					canEditModel={canEditModel}
+					isAdmin={isAdmin}
+					onCopyModelId={() => copyToClipboard(modelData.model_info.id, "model-id")}
+					onTestConnection={handleTestConnection}
+					onReuseCredentials={() => setIsCredentialModalOpen(true)}
+					onDeleteModel={() => setIsDeleteModalOpen(true)}
+				/>
 
 				<TabGroup>
 					<TabList className="mb-6">
@@ -1139,89 +550,7 @@ export default function ModelInfoView({
 
 					<TabPanels>
 						<TabPanel>
-							{/* Overview Grid */}
-							<Grid numItems={1} numItemsSm={2} numItemsLg={3} className="gap-6 mb-6">
-								<Card>
-									<Text>Provider</Text>
-									<div className="mt-2 flex items-center space-x-2">
-										{modelData.provider && (
-											<img
-												src={getProviderLogoAndName(modelData.provider).logo}
-												alt={`${modelData.provider} logo`}
-												className="w-4 h-4"
-												onError={(e) => {
-													const target = e.currentTarget as HTMLImageElement;
-													const parent = target.parentElement;
-													if (!parent || !parent.contains(target)) {
-														return;
-													}
-
-													try {
-														const fallbackDiv = document.createElement("div");
-														fallbackDiv.className =
-															"w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-xs";
-														fallbackDiv.textContent = modelData.provider?.charAt(0) || "-";
-														parent.replaceChild(fallbackDiv, target);
-													} catch (error) {
-														console.error("Failed to replace provider logo fallback:", error);
-													}
-												}}
-											/>
-										)}
-										<Title>{modelData.provider || "Not Set"}</Title>
-									</div>
-								</Card>
-								<Card>
-									<Text>LiteLLM Model</Text>
-									<div className="mt-2 overflow-hidden">
-										<Tooltip title={modelData.litellm_model_name || "Not Set"}>
-											<div className="break-all text-sm font-medium leading-relaxed cursor-pointer">
-												{modelData.litellm_model_name || "Not Set"}
-											</div>
-										</Tooltip>
-									</div>
-								</Card>
-								<Card>
-									<Text>Pricing</Text>
-									<div className="mt-2">
-										<Text>Input: ${modelData.input_cost}/1M tokens</Text>
-										<Text>Output: ${modelData.output_cost}/1M tokens</Text>
-									</div>
-								</Card>
-							</Grid>
-
-							{/* Audit info shown as a subtle banner below the overview */}
-							<div className="mb-6 text-sm text-gray-500 flex items-center gap-x-6">
-								<div className="flex items-center gap-x-2">
-									<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path
-											strokeLinecap="round"
-											strokeLinejoin="round"
-											strokeWidth="2"
-											d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-										/>
-									</svg>
-									Created At{" "}
-									{modelData.model_info.created_at
-										? new Date(modelData.model_info.created_at).toLocaleDateString("en-US", {
-												month: "short",
-												day: "numeric",
-												year: "numeric",
-											})
-										: "Not Set"}
-								</div>
-								<div className="flex items-center gap-x-2">
-									<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path
-											strokeLinecap="round"
-											strokeLinejoin="round"
-											strokeWidth="2"
-											d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-										/>
-									</svg>
-									Created By {modelData.model_info.created_by || "Not Set"}
-								</div>
-							</div>
+							<ModelOverview modelData={modelData} />
 
 							{/* Settings Card */}
 							<Card>
@@ -1233,77 +562,50 @@ export default function ModelInfoView({
 										</TremorButton>
 									)}
 								</div>
-								{localModelData ? renderModelSettings(false) : <Text>Loading...</Text>}
+								{localModelData ? (
+									<ModelSettingsContent
+										editing={false}
+										modelData={localModelData}
+										modelAccessGroups={modelAccessGroups}
+										accessToken={accessToken}
+										guardrails={guardrailsList}
+										tags={tagsList}
+										selectedCredentialName={selectedCredentialName}
+										credentials={credentialsList}
+										isWildcardModel={isWildcardModel}
+										modelHubData={modelHubData}
+										form={form}
+										showCacheControl={showCacheControl}
+										isSaving={isSaving}
+										onCacheControlChange={setShowCacheControl}
+										onCancel={() => undefined}
+									/>
+								) : (
+									<Text>Loading...</Text>
+								)}
 							</Card>
 
 							{localModelData && (
-								<Modal
+								<ModelSettingsDialog
 									open={isEditing}
-									title="Edit Model Settings"
-									footer={null}
-									width="min(960px, calc(100vw - 32px))"
-									destroyOnHidden
 									onCancel={() => {
-										form.resetFields();
-										setIsDirty(false);
 										setIsEditing(false);
 									}}
-								>
-									<Form
-										form={form}
-										onFinish={handleModelUpdate}
-										initialValues={{
-											model_name: localModelData.model_name,
-											litellm_model_name: localModelData.litellm_model_name,
-											api_base: localModelData.litellm_params.api_base,
-											custom_llm_provider: localModelData.litellm_params.custom_llm_provider,
-											organization: localModelData.litellm_params.organization,
-											tpm: localModelData.litellm_params.tpm,
-											rpm: localModelData.litellm_params.rpm,
-											max_retries: localModelData.litellm_params.max_retries,
-											timeout: localModelData.litellm_params.timeout,
-											stream_timeout: localModelData.litellm_params.stream_timeout,
-											input_cost: localModelData.litellm_params.input_cost_per_token
-												? localModelData.litellm_params.input_cost_per_token * 1_000_000
-												: localModelData.model_info?.input_cost_per_token * 1_000_000 || null,
-											output_cost: localModelData.litellm_params?.output_cost_per_token
-												? localModelData.litellm_params.output_cost_per_token * 1_000_000
-												: localModelData.model_info?.output_cost_per_token * 1_000_000 || null,
-											cache_control: localModelData.litellm_params?.cache_control_injection_points ? true : false,
-											cache_control_injection_points:
-												localModelData.litellm_params?.cache_control_injection_points || [],
-											model_access_group: Array.isArray(localModelData.model_info?.access_groups)
-												? localModelData.model_info.access_groups
-												: [],
-											guardrails: Array.isArray(localModelData.litellm_params?.guardrails)
-												? localModelData.litellm_params.guardrails
-												: [],
-											vector_store_ids: Array.isArray(localModelData.litellm_params?.vector_store_ids)
-												? localModelData.litellm_params.vector_store_ids
-												: [],
-											tags: Array.isArray(localModelData.litellm_params?.tags)
-												? localModelData.litellm_params.tags
-												: [],
-											health_check_model: isWildcardModel ? localModelData.model_info?.health_check_model : null,
-											litellm_credential_name: localModelData.litellm_params?.litellm_credential_name || "",
-											api_key: "",
-											delete_api_key: false,
-											litellm_extra_params: JSON.stringify(
-												Object.fromEntries(
-													Object.entries(localModelData.litellm_params || {}).filter(
-														([key]) => key !== "litellm_credential_name" && key !== "api_key",
-													),
-												),
-												null,
-												2,
-											),
-										}}
-										layout="vertical"
-										onValuesChange={() => setIsDirty(true)}
-									>
-										{renderModelSettings(true)}
-									</Form>
-								</Modal>
+									onSave={handleModelUpdate}
+									modelData={localModelData}
+									modelAccessGroups={modelAccessGroups}
+									accessToken={accessToken}
+									guardrails={guardrailsList}
+									tags={tagsList}
+									selectedCredentialName={selectedCredentialName}
+									credentials={credentialsList}
+									isWildcardModel={isWildcardModel}
+									modelHubData={modelHubData}
+									form={form}
+									showCacheControl={showCacheControl}
+									isSaving={isSaving}
+									onCacheControlChange={setShowCacheControl}
+								/>
 							)}
 						</TabPanel>
 

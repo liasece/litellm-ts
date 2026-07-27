@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React, { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SIDE_PANEL_WIDTH } from "./common_components/SidePanel";
 import ModelInfoView, { attachCredentialToModel } from "./model_info_view";
 import NotificationsManager from "./molecules/notifications_manager";
 import * as networking from "./networking";
@@ -209,6 +210,15 @@ describe("ModelInfoView", () => {
 		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
 		await waitFor(() => {
 			expect(screen.getByText(/Public Model Name:/)).toBeInTheDocument();
+		});
+	});
+
+	it("keeps the details Drawer between 50% and 80% of the viewport width", async () => {
+		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+		await screen.findByText("Model Settings");
+		expect(document.querySelector(".ant-drawer-content-wrapper")).toHaveStyle({
+			width: SIDE_PANEL_WIDTH,
 		});
 	});
 

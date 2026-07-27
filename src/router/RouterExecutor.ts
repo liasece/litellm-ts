@@ -12,7 +12,7 @@
  * 让 Router.ts 主类不再承载这些细节。
  */
 
-import type { Deployment } from "../types/router";
+import type { AllowedFailsPolicy, Deployment } from "../types/router";
 import type { FallbackHandler } from "./FallbackHandler";
 import type { CooldownManager } from "./CooldownManager";
 import {
@@ -188,6 +188,7 @@ export function buildCooldownDecision(
 	retryAfterHeader: string | undefined,
 	defaultCooldownTimeMs: number,
 	cooldownManager: CooldownManager,
+	routerAllowedFails?: number | AllowedFailsPolicy | null,
 ): CooldownDecision {
 	const exceptionStrForCooldown = error.name || error.message;
 	const errorCategory = categorizeErrorForCooldown(error);
@@ -199,7 +200,7 @@ export function buildCooldownDecision(
 		sameGroupCount,
 		errorCategory,
 		error,
-		deployment.litellm_params.cooldown_allowed_fails,
+		deployment.litellm_params.cooldown_allowed_fails ?? routerAllowedFails,
 	);
 	if (!shouldCooldown) {
 		return { shouldCooldown: false, cooldownDurationMs: 0, statusCode: statusCode };

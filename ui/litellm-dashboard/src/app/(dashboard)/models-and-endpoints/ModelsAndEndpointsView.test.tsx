@@ -4,6 +4,17 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ModelsAndEndpointsView from "./ModelsAndEndpointsView";
 
+const navigationMocks = vi.hoisted(() => ({
+  replace: vi.fn(),
+  search: "page=models",
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/ui/",
+  useRouter: () => ({ replace: navigationMocks.replace }),
+  useSearchParams: () => new URLSearchParams(navigationMocks.search),
+}));
+
 // Mock localStorage
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -64,7 +75,7 @@ vi.mock("@/app/(dashboard)/hooks/useTeams", () => ({
 
 const mockUseModelsInfo = vi.fn();
 vi.mock("@/app/(dashboard)/hooks/models/useModels", () => ({
-  useModelsInfo: () => mockUseModelsInfo(),
+  useModelsInfo: (...args: unknown[]) => mockUseModelsInfo(...args),
 }));
 
 const mockUseUISettings = vi.fn();
@@ -74,7 +85,13 @@ vi.mock("@/app/(dashboard)/hooks/uiSettings/useUISettings", () => ({
 
 const mockUseModelCostMap = vi.fn();
 vi.mock("@/app/(dashboard)/hooks/models/useModelCostMap", () => ({
-  useModelCostMap: () => mockUseModelCostMap(),
+  useModelCostMap: (enabled: boolean = true, refreshWhenEnabled: boolean = false) =>
+    mockUseModelCostMap(enabled, refreshWhenEnabled),
+}));
+
+const mockUseCredentials = vi.fn();
+vi.mock("@/app/(dashboard)/hooks/credentials/useCredentials", () => ({
+  useCredentials: (enabled: boolean = true) => mockUseCredentials(enabled),
 }));
 
 const mockUseAuthorized = vi.fn();
@@ -89,6 +106,11 @@ const createQueryClient = () =>
 
 describe("ModelsAndEndpointsView", () => {
   beforeEach(() => {
+    navigationMocks.search = "page=models";
+    navigationMocks.replace.mockReset();
+    navigationMocks.replace.mockImplementation((url: string) => {
+      navigationMocks.search = url.split("?")[1] || "";
+    });
     mockUseModelsInfo.mockReturnValue({
       data: { data: [] },
       isLoading: false,
@@ -101,6 +123,11 @@ describe("ModelsAndEndpointsView", () => {
       data: {},
       isLoading: false,
       error: null,
+    });
+    mockUseCredentials.mockReturnValue({
+      data: { credentials: [] },
+      isLoading: false,
+      refetch: vi.fn(),
     });
     mockUseAuthorized.mockReturnValue({
       accessToken: "123",
@@ -170,7 +197,7 @@ describe("ModelsAndEndpointsView", () => {
     });
 
     const queryClient = createQueryClient();
-    const { getByRole } = render(
+    const view = render(
       <QueryClientProvider client={queryClient}>
         <ModelsAndEndpointsView
           token="123"
@@ -183,14 +210,94 @@ describe("ModelsAndEndpointsView", () => {
       </QueryClientProvider>,
     );
 
-    const healthStatusTab = getByRole("tab", { name: "Health Status" });
+    const healthStatusTab = view.getByRole("tab", { name: "Health Status" });
     await act(async () => {
       healthStatusTab.click();
     });
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ModelsAndEndpointsView
+          token="123"
+          modelData={{ data: modelDataWithIds.data }}
+          keys={[]}
+          setModelData={() => {}}
+          premiumUser={false}
+          teams={[]}
+        />
+      </QueryClientProvider>,
+    );
 
     expect(mockHealthCheckComponent).toHaveBeenCalled();
     const healthCheckProps = mockHealthCheckComponent.mock.calls[0][0];
     expect(healthCheckProps.all_models_on_proxy).toEqual(["deployment-id-1", "deployment-id-2"]);
     expect(healthCheckProps.all_models_on_proxy).not.toContain("gpt-4");
+  });
+
+  it("stores the selected tab in the URL and only enables tab-specific queries after navigation", async () => {
+    const queryClient = createQueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ModelsAndEndpointsView
+          token="123"
+          modelData={{ data: [] }}
+          keys={[]}
+          setModelData={() => {}}
+          premiumUser={false}
+          teams={[]}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(mockUseCredentials).toHaveBeenLastCalledWith(false);
+
+    await act(async () => {
+      view.getByRole("tab", { name: "LLM Credentials" }).click();
+    });
+
+    expect(navigationMocks.replace).toHaveBeenCalledWith("/ui/?page=models&tab=credentials", { scroll: false });
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ModelsAndEndpointsView
+          token="123"
+          modelData={{ data: [] }}
+          keys={[]}
+          setModelData={() => {}}
+          premiumUser={false}
+          teams={[]}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(mockUseCredentials).toHaveBeenCalledWith(true);
+  });
+
+  it("restores the active tab from the URL on refresh", () => {
+    navigationMocks.search = "page=models&tab=health";
+    const modelDataWithIds = {
+      data: [{ model_name: "gpt-4", model_info: { id: "deployment-id-1" } }],
+    };
+    mockUseModelsInfo.mockReturnValue({
+      data: modelDataWithIds,
+      isLoading: false,
+      refetch: vi.fn(),
+    });
+
+    const queryClient = createQueryClient();
+    const { getByRole } = render(
+      <QueryClientProvider client={queryClient}>
+        <ModelsAndEndpointsView
+          token="123"
+          modelData={{ data: [] }}
+          keys={[]}
+          setModelData={() => {}}
+          premiumUser={false}
+          teams={[]}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(getByRole("tab", { name: "Health Status" })).toHaveAttribute("aria-selected", "true");
+    expect(mockHealthCheckComponent).toHaveBeenCalled();
   });
 });

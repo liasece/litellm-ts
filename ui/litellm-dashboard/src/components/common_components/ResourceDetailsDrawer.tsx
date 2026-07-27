@@ -1,5 +1,6 @@
-import { Alert, Button, Drawer, Spin } from "antd";
+import { Alert, Button, Spin } from "antd";
 import type { ReactNode } from "react";
+import SidePanel from "./SidePanel";
 
 interface ResourceDetailsDrawerProps {
 	open: boolean;
@@ -25,11 +26,10 @@ export default function ResourceDetailsDrawer({
 	children,
 }: ResourceDetailsDrawerProps) {
 	return (
-		<Drawer
+		<SidePanel
 			open={open}
 			onClose={onClose}
 			destroyOnHidden
-			width="min(720px, 100vw)"
 			title={
 				<div className="flex min-w-0 items-center justify-between gap-3 pr-6">
 					<div className="min-w-0">
@@ -61,6 +61,6 @@ export default function ResourceDetailsDrawer({
 			) : (
 				children
 			)}
-		</Drawer>
+		</SidePanel>
 	);
 }

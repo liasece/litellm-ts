@@ -127,6 +127,7 @@ describe("LogDetailsDrawer session fallback", () => {
 		renderDrawer();
 
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		expect(screen.getByText("Loading all session logs…")).toBeInTheDocument();
 		expect(screen.getByTestId("selected-request")).toHaveTextContent("req-clicked");
 		expect(screen.getByText("details:req-clicked")).toBeInTheDocument();
 	});
@@ -170,6 +171,37 @@ describe("LogDetailsDrawer session fallback", () => {
 		expect(screen.getAllByRole("button")).toHaveLength(4);
 	});
 
+	it("Session 日志按 startTime 倒序展示，最新请求在最上面", async () => {
+		vi.mocked(sessionSpendLogsCall).mockResolvedValue({
+			data: [clickedLog, secondLog],
+			total: 2,
+			page: 1,
+			page_size: 100,
+			total_pages: 1,
+		});
+
+		renderDrawer();
+
+		const newest = await screen.findByText("model-second");
+		const oldest = screen.getByText("model-a");
+		expect(newest.compareDocumentPosition(oldest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it("服务端 total 与实际加载数量不一致时明确报错，不静默展示残缺 Session", async () => {
+		vi.mocked(sessionSpendLogsCall).mockResolvedValue({
+			data: [clickedLog],
+			total: 2,
+			page: 1,
+			page_size: 100,
+			total_pages: 1,
+		});
+
+		renderDrawer();
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Session logs incomplete: loaded 1 of 2");
+		expect(screen.getByTestId("selected-request")).toHaveTextContent("req-clicked");
+	});
+
 	it("异常 total_pages 进入整体 fallback 且不继续请求", async () => {
 		vi.mocked(sessionSpendLogsCall).mockResolvedValue({
 			data: [clickedLog],
@@ -210,7 +242,15 @@ describe("LogDetailsDrawer session fallback", () => {
 			spend: 0.25,
 		};
 		vi.mocked(sessionSpendLogsCall)
-			.mockResolvedValueOnce({ data: firstPage, snapshot: "snapshot-fixed", next_cursor: "cursor-100" })
+			.mockResolvedValueOnce({
+				data: firstPage,
+				total: 102,
+				page: 1,
+				page_size: 100,
+				total_pages: 2,
+				snapshot: "snapshot-fixed",
+				next_cursor: "cursor-100",
+			})
 			.mockResolvedValueOnce({ data: [boundaryLog, stableTail], snapshot: "snapshot-fixed", next_cursor: null });
 
 		renderDrawer(claudeCodeGroup, "scope-team");

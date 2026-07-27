@@ -242,7 +242,7 @@ describe("LogDetailContent", () => {
     expect(screen.getByText("Response data not available")).toBeInTheDocument();
   });
 
-  it("should display Metadata section when metadata has keys", () => {
+  it("should display Metadata section collapsed by default", () => {
     render(
       <LogDetailContent
         logEntry={createLogEntry({
@@ -251,7 +251,9 @@ describe("LogDetailContent", () => {
       />,
     );
 
-    expect(screen.getByText("Metadata")).toBeInTheDocument();
+    const metadataHeading = screen.getByText("Metadata");
+    expect(metadataHeading).toBeInTheDocument();
+    expect(metadataHeading.closest('[role="button"]')).toHaveAttribute("aria-expanded", "false");
   });
 
   it("should display IP address when requester_ip_address is present", () => {

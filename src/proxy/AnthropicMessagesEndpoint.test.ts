@@ -53,7 +53,32 @@ function buildApp() {
 		next();
 	});
 	const expressRouter = express.Router();
-	registerAnthropicMessagesEndpoints(expressRouter, router as never, undefined, {} as never);
+	const db: {
+		transaction: jest.Mock;
+		select: jest.Mock;
+		delete: jest.Mock;
+		insert: jest.Mock;
+	} = {
+		transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => await callback(db)),
+		select: jest.fn(() => ({
+			from: jest.fn(() => ({
+				where: jest.fn(() => ({
+					limit: jest.fn().mockResolvedValue([]),
+				})),
+			})),
+		})),
+		delete: jest.fn(() => ({
+			where: jest.fn().mockResolvedValue(undefined),
+		})),
+		insert: jest.fn(() => ({
+			values: jest.fn(() => ({
+				onConflictDoNothing: jest.fn(() => ({
+					returning: jest.fn().mockResolvedValue([{ requestId: "active-request" }]),
+				})),
+			})),
+		})),
+	};
+	registerAnthropicMessagesEndpoints(expressRouter, router as never, undefined, db as never);
 	app.use(expressRouter);
 	(app as unknown as { __router: typeof router }).__router = router;
 	return app;
@@ -335,7 +360,9 @@ describe("Anthropic web-search target model override", () => {
 			),
 		);
 		runtimeConfig.generalSettings = { websearch_override_target_model: "yaml-target" };
-		const getParam = jest.spyOn(dbConfigProvider, "getParam").mockReturnValue({ websearch_override_target_model: "websearch-alias" });
+		const getParam = jest
+			.spyOn(dbConfigProvider, "getParam")
+			.mockResolvedValue({ websearch_override_target_model: "websearch-alias" });
 		const forcedWebSearchRequest = {
 			model: "requested-model",
 			max_tokens: 10,
@@ -348,7 +375,7 @@ describe("Anthropic web-search target model override", () => {
 		await request(app).post("/v1/messages").send(forcedWebSearchRequest).expect(200);
 		expect(router.getAvailableDeployment).toHaveBeenLastCalledWith("websearch-alias");
 
-		getParam.mockReturnValue({});
+		getParam.mockResolvedValue({});
 		await request(app).post("/v1/messages").send(forcedWebSearchRequest).expect(200);
 		expect(router.getAvailableDeployment).toHaveBeenLastCalledWith("yaml-target");
 

@@ -80,7 +80,7 @@ describe("PrettyMessagesView", () => {
 			},
 		);
 
-		expect(parsed.responseMessage).toEqual({
+		expect(parsed.responseMessage).toMatchObject({
 			role: "assistant",
 			content: "Calling a tool",
 			toolCalls: [
@@ -91,6 +91,7 @@ describe("PrettyMessagesView", () => {
 				},
 			],
 		});
+		expect(parsed.responseMessage?.parts?.map((part) => part.kind)).toEqual(["text", "tool_call"]);
 	});
 
 	it("should preserve multiple OpenAI Responses API output text blocks", () => {
@@ -122,7 +123,7 @@ describe("PrettyMessagesView", () => {
 				},
 				{},
 			).requestMessages,
-		).toEqual([{ role: "user", content: "Body message", toolCallId: undefined }]);
+		).toMatchObject([{ role: "user", content: "Body message", toolCallId: undefined }]);
 
 		expect(
 			parseMessages(
@@ -132,7 +133,7 @@ describe("PrettyMessagesView", () => {
 				},
 				{},
 			).requestMessages,
-		).toEqual([{ role: "user", content: "Top-level fallback", toolCallId: undefined }]);
+		).toMatchObject([{ role: "user", content: "Top-level fallback", toolCallId: undefined }]);
 	});
 
 	it("should safely aggregate Anthropic special and tool blocks", () => {
@@ -160,7 +161,7 @@ describe("PrettyMessagesView", () => {
 			},
 		);
 
-		expect(parsed.responseMessage).toEqual({
+		expect(parsed.responseMessage).toMatchObject({
 			role: "assistant",
 			content: "[Thinking]\nUse the weather tool\nChecking now.",
 			toolCalls: [
@@ -176,6 +177,12 @@ describe("PrettyMessagesView", () => {
 				},
 			],
 		});
+		expect(parsed.responseMessage?.parts?.map((part) => part.kind)).toEqual([
+			"thinking",
+			"text",
+			"tool_call",
+			"tool_call",
+		]);
 		expect(parsed.responseMessage?.content).not.toContain("thinking-secret");
 	});
 
@@ -225,7 +232,8 @@ describe("PrettyMessagesView", () => {
 		expect(JSON.stringify(parsed)).not.toMatch(/redacted-secret|signature-secret/);
 
 		render(<PrettyMessagesView request={request} response={response} />);
-		expect(screen.getAllByText("[Redacted thinking]")).toHaveLength(2);
+		expect(screen.getAllByText("Redacted thinking")).toHaveLength(2);
+		expect(screen.getAllByText("Content redacted by provider")).toHaveLength(2);
 		expect(screen.queryByText(/redacted-secret|signature-secret/)).not.toBeInTheDocument();
 	});
 
@@ -242,7 +250,86 @@ describe("PrettyMessagesView", () => {
 		expect(parsed.responseMessage?.content).toContain("[Unknown block: future_block]");
 		expect(parsed.responseMessage?.content).toContain('"payload":{"answer":42}');
 		expect(parsed.responseMessage?.content).toContain("[Unknown block: unknown]\nnull");
-		expect(parsed.responseMessage?.content).toContain('[Unknown block: unknown]\n"primitive"');
+		expect(parsed.responseMessage?.content).toContain("primitive");
+	});
+
+	it("should classify Anthropic tool_result blocks instead of rendering Unknown", () => {
+		const request = {
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "call_123",
+							content: "The file has been updated successfully.",
+							cache_control: { type: "ephemeral" },
+						},
+					],
+				},
+			],
+		};
+
+		render(<PrettyMessagesView request={request} response={{}} />);
+
+		expect(screen.getByText("Tool result")).toBeInTheDocument();
+		expect(screen.getByText("The file has been updated successfully.")).toBeInTheDocument();
+		expect(screen.queryByText(/Unknown block: tool_result/)).not.toBeInTheDocument();
+	});
+
+	it("should classify OpenAI Responses operations in output order", () => {
+		const parsed = parseMessages(
+			{},
+			{
+				output: [
+					{ type: "reasoning", summary: [{ type: "summary_text", text: "Check available data" }] },
+					{ type: "web_search_call", id: "ws_1", status: "completed", query: "weather" },
+					{ type: "function_call", call_id: "call_1", name: "save_result", arguments: '{"ok":true}' },
+					{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Done" }] },
+				],
+			},
+		);
+
+		expect(parsed.responseMessage?.parts?.map((part) => part.kind)).toEqual([
+			"thinking",
+			"web_search",
+			"tool_call",
+			"text",
+		]);
+		expect(parsed.responseMessage?.toolCalls?.[0]).toMatchObject({ name: "save_result", arguments: { ok: true } });
+	});
+
+	it("should classify Gemini thought, function call, function response and code execution parts", () => {
+		const parsed = parseMessages(
+			{
+				contents: [
+					{
+						role: "user",
+						parts: [
+							{ text: "Find the answer", thought: true },
+							{ functionResponse: { name: "lookup", response: { result: 42 } } },
+						],
+					},
+				],
+			},
+			{
+				candidates: [
+					{
+						content: {
+							role: "model",
+							parts: [
+								{ functionCall: { name: "lookup", args: { query: "answer" } } },
+								{ executableCode: { language: "PYTHON", code: "print(42)" } },
+								{ codeExecutionResult: { outcome: "OUTCOME_OK", output: "42" } },
+							],
+						},
+					},
+				],
+			},
+		);
+
+		expect(parsed.requestMessages[0]?.parts?.map((part) => part.kind)).toEqual(["thinking", "tool_result"]);
+		expect(parsed.responseMessage?.parts?.map((part) => part.kind)).toEqual(["tool_call", "code", "code_result"]);
 	});
 
 	it("should render the realtime pretty view for realtime API responses", () => {

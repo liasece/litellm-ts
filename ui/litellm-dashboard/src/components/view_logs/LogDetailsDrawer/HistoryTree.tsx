@@ -73,6 +73,7 @@ export function HistoryTree({ messages }: HistoryTreeProps) {
               label={msg.role.toUpperCase()}
               content={msg.content}
               toolCalls={msg.toolCalls}
+              parts={msg.parts}
               isCompact={true}
             />
           ))}

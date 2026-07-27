@@ -60,12 +60,33 @@ describeWithDatabase("Database PostgreSQL bootstrap integration", () => {
 		expect(tables.rows.some((row) => row.table_name === "LiteLLM_VerificationToken")).toBe(true);
 		expect(tables.rows.some((row) => row.table_name === "LiteLLM_SpendReservations")).toBe(true);
 		const migrations = await schemaPool.query<{ count: string }>('SELECT count(*)::text AS count FROM "__drizzle_migrations"');
-		expect(Number(migrations.rows[0]?.count)).toBe(2);
+		expect(Number(migrations.rows[0]?.count)).toBe(readMigrationFiles({ migrationsFolder: resolve(__dirname, "../../../drizzle") }).length);
 
 		const second = new Database(databaseConfig(connectionString));
 		await second.initialize();
 		await expect(second.probeReadiness()).resolves.toEqual({ ready: true });
 		await second.close();
+	});
+
+	it("session group function 优先识别 user_id JSON 内的稳定 session_id", async () => {
+		const database = new Database(databaseConfig(connectionString));
+		await database.initialize();
+		await database.close();
+		const embeddedSessionId = "63c6d8fc-3ca5-4f54-8cd9-aae8ca57dad9";
+		const metadata = {
+			spend_logs_metadata: {
+				user_id: JSON.stringify({
+					device_id: "device-1",
+					account_uuid: "",
+					session_id: embeddedSessionId,
+				}),
+			},
+		};
+		const result = await schemaPool.query<{ session_group_key: string }>(
+			"SELECT litellm_session_group_key($1::jsonb, $2::text, $3::text) AS session_group_key",
+			[JSON.stringify(metadata), "68d79373-9498-474b-8c42-593aa982d6fd", "req-1"],
+		);
+		expect(result.rows[0]?.session_group_key).toBe(`s:${embeddedSessionId}`);
 	});
 });
 
@@ -129,11 +150,11 @@ describeWithDatabase("Production database read-only takeover integration", () =>
 		await schemaPool.query('UPDATE "__drizzle_migrations" SET hash = $1 WHERE created_at = $2', [expected.hash, expected.folderMillis]);
 	});
 
-	it("拒绝只登记部分 migration", async () => {
-		const expected = localMigrations[1]!;
+	it("允许数据库落后于本地最新 migration，供停机部署预检后执行迁移", async () => {
+		const expected = localMigrations.at(-1)!;
 		await schemaPool.query('DELETE FROM "__drizzle_migrations" WHERE created_at = $1', [expected.folderMillis]);
-		await expect(runReadOnlySchemaPreflight(databaseConfig(connectionString))).rejects.toMatchObject({
-			code: "PARTIAL_MIGRATION_STATE",
+		await expect(runReadOnlySchemaPreflight(databaseConfig(connectionString))).resolves.toMatchObject({
+			migrationState: "managed",
 		});
 		await schemaPool.query('INSERT INTO "__drizzle_migrations" (hash, created_at) VALUES ($1, $2)', [
 			expected.hash,
