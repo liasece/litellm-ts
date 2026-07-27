@@ -50,6 +50,7 @@ export default function KeyInfoView({ onClose, keyData, teams, onKeyDataUpdate, 
 	const enableProjectsUI = Boolean(uiSettingsData?.values?.enable_projects_ui);
 
 	useEffect(() => {
+		// eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the editable local copy when the selected key changes.
 		if (keyData) setCurrentKeyData(keyData);
 	}, [keyData]);
 

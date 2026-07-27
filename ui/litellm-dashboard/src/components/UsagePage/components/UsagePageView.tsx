@@ -6,7 +6,7 @@
  * Works at 1m+ spend logs, by querying an aggregate table instead.
  */
 
-import { DownOutlined, ExportOutlined, InfoCircleOutlined, LoadingOutlined, RightOutlined } from "@ant-design/icons";
+import { ExportOutlined, LoadingOutlined } from "@ant-design/icons";
 import { useDebouncedState } from "@tanstack/react-pacer/debouncer";
 import {
 	BarChart,
@@ -22,7 +22,7 @@ import {
 	Text,
 	Title,
 } from "@tremor/react";
-import { Alert, Button, Segmented, Select, Tooltip, Typography } from "antd";
+import { Alert, Button, Select, Typography } from "antd";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 
 import { useAgents } from "@/app/(dashboard)/hooks/agents/useAgents";
@@ -49,8 +49,9 @@ import EndpointUsage from "./EndpointUsage/EndpointUsage";
 import EntityUsage, { EntityList } from "./EntityUsage/EntityUsage";
 import SpendByProvider from "./EntityUsage/SpendByProvider";
 import TopKeyView from "./EntityUsage/TopKeyView";
-import TopRankingBarChart from "./TopRankingBarChart";
 import UsageAIChatPanel from "./UsageAIChatPanel";
+import UsageMetricsCards from "./UsageMetricsCards";
+import UsageTopModelsCard from "./UsageTopModelsCard";
 import { UsageOption, UsageViewSelect } from "./UsageViewSelect/UsageViewSelect";
 
 interface UsagePageProps {
@@ -82,8 +83,6 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 	const { data: customers = [] } = useCustomers();
 	const { data: agentsResponse } = useAgents();
 	const { data: currentUser } = useCurrentUser();
-	console.log(`currentUser: ${JSON.stringify(currentUser)}`);
-	console.log(`currentUser max budget: ${currentUser?.max_budget}`);
 	const isAdmin = all_admin_roles.includes(userRole || "");
 
 	// Debounced search for user selector
@@ -144,7 +143,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 	const [usageView, setUsageView] = useState<UsageOption>("global");
 	const [showCredentialBanner, setShowCredentialBanner] = useState(true);
 	const [showTokenBreakdown, setShowTokenBreakdown] = useState(false);
-	const getAllTags = async () => {
+	const getAllTags = useCallback(async () => {
 		if (!accessToken) {
 			return;
 		}
@@ -155,11 +154,11 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 				value: tag.name,
 			})),
 		);
-	};
+	}, [accessToken]);
 
 	useEffect(() => {
-		getAllTags();
-	}, [accessToken]);
+		void getAllTags();
+	}, [getAllTags]);
 
 	// Sync selectedUserId when auth state settles (isAdmin/userID may be null on initial render)
 	useEffect(() => {
@@ -579,100 +578,12 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 											</Col>
 
 											<Col numColSpan={2}>
-												<Card>
-													<Title>Usage Metrics</Title>
-													<Grid numItems={5} className="gap-4 mt-4">
-														<Card>
-															<Title>Total Requests</Title>
-															<Text className="text-2xl font-bold mt-2">
-																{userSpendData.metadata?.total_api_requests?.toLocaleString() || 0}
-															</Text>
-														</Card>
-														<Card>
-															<Title>Successful Requests</Title>
-															<Text className="text-2xl font-bold mt-2 text-green-600">
-																{userSpendData.metadata?.total_successful_requests?.toLocaleString() || 0}
-															</Text>
-														</Card>
-														<Card>
-															<div className="flex items-center gap-2">
-																<Title>Failed Requests</Title>
-																<Tooltip title="Includes requests that failed to route to a provider, tool usage failures, and other request errors where the provider cannot be determined.">
-																	<InfoCircleOutlined className="text-gray-400 hover:text-gray-600" />
-																</Tooltip>
-															</div>
-															<Text className="text-2xl font-bold mt-2 text-red-600">
-																{userSpendData.metadata?.total_failed_requests?.toLocaleString() || 0}
-															</Text>
-														</Card>
-														<Card>
-															<Title>Average Cost per Request</Title>
-															<Text className="text-2xl font-bold mt-2">
-																$
-																{formatNumberWithCommas(
-																	(totalSpend || 0) / (userSpendData.metadata?.total_api_requests || 1),
-																	4,
-																)}
-															</Text>
-														</Card>
-														<Card
-															className="cursor-pointer hover:bg-gray-50 transition-colors"
-															onClick={() => setShowTokenBreakdown(!showTokenBreakdown)}
-														>
-															<div className="flex items-center gap-2">
-																<Title>Total Tokens</Title>
-																{showTokenBreakdown ? (
-																	<DownOutlined className="text-gray-400 text-xs" />
-																) : (
-																	<RightOutlined className="text-gray-400 text-xs" />
-																)}
-															</div>
-															<Text className="text-2xl font-bold mt-2">
-																{formatNumberWithCommas(userSpendData.metadata?.total_tokens ?? 0, 0, false)}
-															</Text>
-														</Card>
-													</Grid>
-													{showTokenBreakdown && (
-														<Grid numItems={4} className="gap-4 mt-4">
-															<Card>
-																<Title>Input Tokens</Title>
-																<Text className="text-2xl font-bold mt-2 text-blue-600">
-																	{formatNumberWithCommas(userSpendData.metadata?.total_prompt_tokens ?? 0, 0, false)}
-																</Text>
-															</Card>
-															<Card>
-																<Title>Output Tokens</Title>
-																<Text className="text-2xl font-bold mt-2 text-cyan-600">
-																	{formatNumberWithCommas(
-																		userSpendData.metadata?.total_completion_tokens ?? 0,
-																		0,
-																		false,
-																	)}
-																</Text>
-															</Card>
-															<Card>
-																<Title>Cache Read Tokens</Title>
-																<Text className="text-2xl font-bold mt-2 text-green-600">
-																	{formatNumberWithCommas(
-																		userSpendData.metadata?.total_cache_read_input_tokens ?? 0,
-																		0,
-																		false,
-																	)}
-																</Text>
-															</Card>
-															<Card>
-																<Title>Cache Write Tokens</Title>
-																<Text className="text-2xl font-bold mt-2 text-purple-600">
-																	{formatNumberWithCommas(
-																		userSpendData.metadata?.total_cache_creation_input_tokens ?? 0,
-																		0,
-																		false,
-																	)}
-																</Text>
-															</Card>
-														</Grid>
-													)}
-												</Card>
+												<UsageMetricsCards
+													metadata={userSpendData.metadata}
+													totalSpend={totalSpend}
+													showTokenBreakdown={showTokenBreakdown}
+													onToggleTokenBreakdown={() => setShowTokenBreakdown((visible) => !visible)}
+												/>
 											</Col>
 
 											{/* Daily Spend Chart */}
@@ -720,76 +631,17 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 												</Card>
 											</Col>
 
+
 											{/* Top Models */}
 											<Col numColSpan={1}>
-												<Card className="h-full">
-													<Title>{modelViewType === "groups" ? "Top Public Model Names" : "Top Litellm Models"}</Title>
-													<div className="flex justify-end items-center mb-4">
-														<div className="flex bg-gray-100 rounded-lg p-1">
-															<button
-																className={`px-3 py-1 text-sm rounded-md transition-colors ${
-																	modelViewType === "groups"
-																		? "bg-white shadow-sm text-gray-900"
-																		: "text-gray-600 hover:text-gray-900"
-																}`}
-																onClick={() => setModelViewType("groups")}
-															>
-																Public Model Name
-															</button>
-															<button
-																className={`px-3 py-1 text-sm rounded-md transition-colors ${
-																	modelViewType === "individual"
-																		? "bg-white shadow-sm text-gray-900"
-																		: "text-gray-600 hover:text-gray-900"
-																}`}
-																onClick={() => setModelViewType("individual")}
-															>
-																Litellm Model Name
-															</button>
-														</div>
-													</div>
-													{loading ? (
-														<ChartLoader isDateChanging={isDateChanging} />
-													) : (
-														<div className="relative max-h-[600px] overflow-y-auto">
-															{(() => {
-																const modelData = modelViewType === "groups" ? topModelGroups : topModels;
-																return (
-																	<TopRankingBarChart
-																		data={modelData}
-																		categoryKey="key"
-																		valueKey="spend"
-																		yAxisWidth={200}
-																		height={52}
-																		valueFormatter={valueFormatterSpend}
-																		renderTooltip={(data) =>
-																			data && (
-																				<div className="bg-white p-4 shadow-lg rounded-lg border">
-																					<p className="font-bold">{data.key}</p>
-																					<p className="text-cyan-500">
-																						Spend: ${formatNumberWithCommas(data.spend, 2)}
-																					</p>
-																					<p className="text-gray-600">
-																						Total Requests: {data.requests.toLocaleString()}
-																					</p>
-																					<p className="text-green-600">
-																						Successful: {data.successful_requests.toLocaleString()}
-																					</p>
-																					<p className="text-red-600">
-																						Failed: {data.failed_requests.toLocaleString()}
-																					</p>
-																					<p className="text-gray-600">
-																						Tokens: {formatNumberWithCommas(data.tokens, 0, false)}
-																					</p>
-																				</div>
-																			)
-																		}
-																	/>
-																);
-															})()}
-														</div>
-													)}
-												</Card>
+												<UsageTopModelsCard
+													viewType={modelViewType}
+													onViewTypeChange={setModelViewType}
+													groupModels={topModelGroups}
+													individualModels={topModels}
+													loading={loading}
+													isDateChanging={isDateChanging}
+												/>
 											</Col>
 
 											{/* Spend by Provider */}

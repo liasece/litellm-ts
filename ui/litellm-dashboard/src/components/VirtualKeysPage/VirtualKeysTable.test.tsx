@@ -402,7 +402,7 @@ it("should render table headers correctly", () => {
   expect(screen.getByText("Spend (USD)")).toBeInTheDocument();
 });
 
-it("should handle column resizing hover events", () => {
+it("should expose a CSS-driven column resize handle", () => {
   const mockProps = {
     teams: [mockTeam],
     organizations: [mockOrganization],
@@ -424,16 +424,9 @@ it("should handle column resizing hover events", () => {
   const resizer = headerCell?.querySelector(".resizer") as HTMLElement;
   expect(resizer).toBeInTheDocument();
 
-  // Initially, resizer should have opacity 0
-  expect(resizer.style.opacity).toBe("0");
-
-  // Simulate mouse enter using fireEvent - should set opacity to 0.5 (lines 612-616)
-  fireEvent.mouseEnter(headerCell);
-  expect(resizer.style.opacity).toBe("0.5");
-
-  // Simulate mouse leave using fireEvent - should set opacity back to 0 (lines 618-622)
-  fireEvent.mouseLeave(headerCell);
-  expect(resizer.style.opacity).toBe("0");
+  expect(headerCell).toHaveClass("group");
+  expect(resizer).toHaveClass("opacity-0");
+  expect(resizer).toHaveClass("group-hover:opacity-50");
 });
 
 it("should open KeyInfoView when clicking on a key ID button", async () => {

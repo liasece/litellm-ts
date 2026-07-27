@@ -1,32 +1,18 @@
 import type { PromptSpec } from "@/components/networking";
-import {
-	ChevronDownIcon,
-	ChevronUpIcon,
-	SwitchVerticalIcon,
-} from "@heroicons/react/outline";
+import { ChevronDownIcon, ChevronUpIcon, SwitchVerticalIcon } from "@heroicons/react/outline";
 import { TableHeaderCell, TableRow } from "@tremor/react";
 import { flexRender, type HeaderGroup } from "@tanstack/react-table";
 
-export default function PromptTableHeader({
-	headerGroup,
-}: {
-	headerGroup: HeaderGroup<PromptSpec>;
-}) {
+export default function PromptTableHeader({ headerGroup }: { headerGroup: HeaderGroup<PromptSpec> }) {
 	return (
 		<TableRow>
 			{headerGroup.headers.map((header) => {
 				const sorted = header.column.getIsSorted();
 				return (
-					<TableHeaderCell
-						key={header.id}
-						className="h-8 py-1"
-						onClick={header.column.getToggleSortingHandler()}
-					>
+					<TableHeaderCell key={header.id} className="h-8 py-1" onClick={header.column.getToggleSortingHandler()}>
 						<div className="flex items-center justify-between gap-2">
 							<div className="flex items-center">
-								{header.isPlaceholder
-									? null
-									: flexRender(header.column.columnDef.header, header.getContext())}
+								{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
 							</div>
 							<div className="w-4">
 								{sorted === "asc" ? (
@@ -44,4 +30,3 @@ export default function PromptTableHeader({
 		</TableRow>
 	);
 }
-

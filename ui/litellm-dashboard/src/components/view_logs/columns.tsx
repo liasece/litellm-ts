@@ -1,12 +1,12 @@
 import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Badge } from "@tremor/react";
 import { Tooltip } from "antd";
 import { ArrowDownToLine, ArrowUpFromLine, Database } from "lucide-react";
-import React, { useState } from "react";
 import { getProviderLogoAndName } from "../provider_info_helpers";
 import { TableHeaderSortDropdown } from "../common_components/TableHeaderSortDropdown/TableHeaderSortDropdown";
+import { MetricProgress, MetricProgressCell } from "./MetricProgressCell";
 import { TimeCell } from "./time_cell";
+import ProviderLogo from "../common_components/ProviderLogo";
 
 /** API sort field mapping for /spend/logs/ui endpoint */
 export const LOGS_SORT_FIELD_MAP = {
@@ -17,6 +17,14 @@ export const LOGS_SORT_FIELD_MAP = {
 } as const;
 
 export type LogsSortField = keyof typeof LOGS_SORT_FIELD_MAP;
+
+const MIN_OUTPUT_TOKENS_FOR_TPS = 20;
+const DURATION_PROGRESS_MAX_SECONDS = 30;
+const TOKEN_PROGRESS_MAX = {
+	cacheRead: 200_000,
+	input: 20_000,
+	output: 2_000,
+} as const;
 
 export interface LogsSortProps {
 	sortBy: LogsSortField;
@@ -190,18 +198,21 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			const status = String(info.getValue() || rowStatus || "success").toLowerCase();
 			const isInProgress = status === "in_progress";
 			const isFailure = status === "failure";
+			const isAborted = status === "aborted";
 
 			return (
 				<span
 					className={`px-2 py-1 rounded-md text-xs font-medium inline-block text-center min-w-16 ${
 						isInProgress
 							? "bg-amber-100 text-amber-800"
+							: isAborted
+								? "bg-orange-100 text-orange-800"
 							: isFailure
 								? "bg-red-100 text-red-800"
 								: "bg-green-100 text-green-800"
 					}`}
 				>
-					{isInProgress ? "In Progress" : isFailure ? "Failure" : "Success"}
+					{isInProgress ? "In Progress" : isAborted ? "Aborted" : isFailure ? "Failure" : "Success"}
 				</span>
 			);
 		},
@@ -263,11 +274,18 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		cell: (info: any) => {
 			const ms = info.getValue();
 			if (ms == null) return <span>-</span>;
-			const seconds = (ms / 1000).toFixed(2);
+			const durationSeconds = Number(ms) / 1000;
+			const seconds = durationSeconds.toFixed(2);
 			return (
-				<Tooltip title={`${ms}ms`}>
-					<span className="max-w-[25ch] truncate block">{seconds}</span>
-				</Tooltip>
+				<MetricProgressCell
+					ariaLabel={`Duration ${seconds} seconds`}
+					color="red"
+					displayValue={seconds}
+					maxValue={DURATION_PROGRESS_MAX_SECONDS}
+					progressTestId="duration-progress"
+					tooltip={`${ms}ms`}
+					value={durationSeconds}
+				/>
 			);
 		},
 	},
@@ -341,15 +359,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			return (
 				<div className="flex items-center space-x-2">
 					{provider && (
-						<img
-							src={getLogoUrl(row, provider)}
-							alt=""
-							className="w-4 h-4"
-							onError={(e) => {
-								const target = e.target as HTMLImageElement;
-								target.style.display = "none";
-							}}
-						/>
+						<ProviderLogo provider={provider} logo={getLogoUrl(row, provider)} />
 					)}
 					<Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{modelTooltip}</span>}>
 						<span className="max-w-[25ch] truncate block">
@@ -405,22 +415,43 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			return (
 				<Tooltip title={tooltip}>
 					<span
-						className="inline-grid min-w-56 grid-cols-3 gap-x-4 whitespace-nowrap text-left font-mono tabular-nums text-sm text-current"
+						className="grid w-72 grid-cols-3 whitespace-nowrap text-left font-mono tabular-nums text-sm text-current"
 						aria-label={`Cache read ${cacheReadTokens}, input ${inputTokens}, output ${outputTokens}`}
 						data-testid="tokens-three-column"
 					>
-						<span className="flex min-w-16 items-center gap-1 text-left" data-testid="token-column">
+						<MetricProgress
+							ariaLabel={`Cache read ${cacheReadTokens} tokens`}
+							className="flex min-w-0 w-full items-center overflow-hidden rounded px-1 text-left"
+							color="green"
+							maxValue={TOKEN_PROGRESS_MAX.cacheRead}
+							progressTestId="cache-tokens-progress"
+							value={cacheReadTokens}
+						>
 							<Database size={12} aria-hidden="true" />
 							{formattedCacheReadTokens}
-						</span>
-						<span className="flex min-w-16 items-center gap-1 text-left" data-testid="token-column">
+						</MetricProgress>
+						<MetricProgress
+							ariaLabel={`Input ${inputTokens} tokens`}
+							className="flex min-w-0 w-full items-center overflow-hidden rounded px-1 text-left"
+							color="green"
+							maxValue={TOKEN_PROGRESS_MAX.input}
+							progressTestId="input-tokens-progress"
+							value={inputTokens}
+						>
 							<ArrowDownToLine size={12} aria-hidden="true" />
 							{formattedInputTokens}
-						</span>
-						<span className="flex min-w-16 items-center gap-1 text-left" data-testid="token-column">
+						</MetricProgress>
+						<MetricProgress
+							ariaLabel={`Output ${outputTokens} tokens`}
+							className="flex min-w-0 w-full items-center overflow-hidden rounded px-1 text-left"
+							color="green"
+							maxValue={TOKEN_PROGRESS_MAX.output}
+							progressTestId="output-tokens-progress"
+							value={outputTokens}
+						>
 							<ArrowUpFromLine size={12} aria-hidden="true" />
 							{formattedOutputTokens}
-						</span>
+						</MetricProgress>
 					</span>
 				</Tooltip>
 			);
@@ -433,15 +464,22 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		cell: (info: any) => {
 			const row = info.row.original;
 			const completionTokens = Number(row.completion_tokens || 0);
+			if (!Number.isFinite(completionTokens) || completionTokens < MIN_OUTPUT_TOKENS_FOR_TPS) return null;
 			const startMs = row.startTime ? new Date(row.startTime).getTime() : NaN;
 			const endMs = row.endTime ? new Date(row.endTime).getTime() : NaN;
 			const durationSec = (endMs - startMs) / 1000;
-			if (!completionTokens || !Number.isFinite(durationSec) || durationSec <= 0) return <span>-</span>;
+			if (!Number.isFinite(durationSec) || durationSec <= 0) return <span>-</span>;
 			const tps = completionTokens / durationSec;
 			return (
-				<Tooltip title={`${completionTokens} tokens / ${durationSec.toFixed(2)}s`}>
-					<span className="text-sm">{tps.toFixed(1)}</span>
-				</Tooltip>
+				<MetricProgressCell
+					ariaLabel={`Output TPS ${tps.toFixed(1)}`}
+					color="blue"
+					displayValue={tps.toFixed(1)}
+					maxValue={100}
+					progressTestId="output-tps-progress"
+					tooltip={`${completionTokens} tokens / ${durationSec.toFixed(2)}s`}
+					value={tps}
+				/>
 			);
 		},
 	},
@@ -501,258 +539,3 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 
 /** Default columns without sort (for backward compatibility) */
 export const columns = createColumns();
-
-const formatMessage = (message: any): string => {
-	if (!message) return "N/A";
-	if (typeof message === "string") return message;
-	if (typeof message === "object") {
-		// Handle the {text, type} object specifically
-		if (message.text) return message.text;
-		if (message.content) return message.content;
-		return JSON.stringify(message);
-	}
-	return String(message);
-};
-
-// Add this new component for displaying request/response with copy buttons
-export const RequestResponsePanel = ({ request, response }: { request: any; response: any }) => {
-	const requestStr = typeof request === "object" ? JSON.stringify(request, null, 2) : String(request || "{}");
-	const responseStr = typeof response === "object" ? JSON.stringify(response, null, 2) : String(response || "{}");
-
-	const copyToClipboard = async (text: string) => {
-		try {
-			await navigator.clipboard.writeText(text);
-		} catch (err) {
-			console.error("Failed to copy text: ", err);
-		}
-	};
-
-	return (
-		<div className="grid grid-cols-2 gap-4 mt-4">
-			<div className="rounded-lg border border-gray-200 bg-gray-50">
-				<div className="flex justify-between items-center p-3 border-b border-gray-200">
-					<h3 className="text-sm font-medium">Request</h3>
-					<button
-						onClick={() => copyToClipboard(requestStr)}
-						className="p-1 hover:bg-gray-200 rounded"
-						title="Copy request"
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							width="16"
-							height="16"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-							<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-						</svg>
-					</button>
-				</div>
-				<pre className="p-4 overflow-auto text-xs font-mono h-64 whitespace-pre-wrap break-words">{requestStr}</pre>
-			</div>
-
-			<div className="rounded-lg border border-gray-200 bg-gray-50">
-				<div className="flex justify-between items-center p-3 border-b border-gray-200">
-					<h3 className="text-sm font-medium">Response</h3>
-					<button
-						onClick={() => copyToClipboard(responseStr)}
-						className="p-1 hover:bg-gray-200 rounded"
-						title="Copy response"
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							width="16"
-							height="16"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-							<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-						</svg>
-					</button>
-				</div>
-				<pre className="p-4 overflow-auto text-xs font-mono h-64 whitespace-pre-wrap break-words">{responseStr}</pre>
-			</div>
-		</div>
-	);
-};
-
-// New component for collapsible JSON display
-const CollapsibleJsonCell = ({ jsonData }: { jsonData: any }) => {
-	const [isExpanded, setIsExpanded] = React.useState(false);
-	const jsonString = JSON.stringify(jsonData, null, 2);
-
-	if (!jsonData || Object.keys(jsonData).length === 0) {
-		return <span>-</span>;
-	}
-
-	return (
-		<div>
-			<button onClick={() => setIsExpanded(!isExpanded)} className="text-blue-500 hover:text-blue-700 text-xs">
-				{isExpanded ? "Hide JSON" : "Show JSON"} ({Object.keys(jsonData).length} fields)
-			</button>
-			{isExpanded && (
-				<pre className="mt-2 p-2 bg-gray-50 border rounded text-xs overflow-auto max-h-60">{jsonString}</pre>
-			)}
-		</div>
-	);
-};
-
-export type AuditLogEntry = {
-	id: string;
-	updated_at: string;
-	changed_by: string;
-	changed_by_api_key: string;
-	action: string;
-	table_name: string;
-	object_id: string;
-	before_value: Record<string, any>;
-	updated_values: Record<string, any>;
-};
-
-const getActionBadge = (action: string) => {
-	return (
-		<Badge color="gray" className="flex items-center gap-1">
-			<span className="whitespace-nowrap text-xs">{action}</span>
-		</Badge>
-	);
-};
-
-export const auditLogColumns: ColumnDef<AuditLogEntry>[] = [
-	{
-		id: "expander",
-		header: () => null,
-		cell: ({ row }) => {
-			const ExpanderCell = () => {
-				const [localExpanded, setLocalExpanded] = React.useState(row.getIsExpanded());
-
-				const toggleHandler = React.useCallback(() => {
-					setLocalExpanded((prev) => !prev);
-					row.getToggleExpandedHandler()();
-				}, [row]);
-
-				return row.getCanExpand() ? (
-					<button
-						onClick={toggleHandler}
-						style={{ cursor: "pointer" }}
-						aria-label={localExpanded ? "Collapse row" : "Expand row"}
-						className="w-6 h-6 flex items-center justify-center focus:outline-none"
-					>
-						<svg
-							className={`w-4 h-4 transform transition-transform ${localExpanded ? "rotate-90" : ""}`}
-							fill="none"
-							stroke="currentColor"
-							viewBox="0 0 24 24"
-							xmlns="http://www.w3.org/2000/svg"
-						>
-							<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-						</svg>
-					</button>
-				) : (
-					<span className="w-6 h-6 flex items-center justify-center">●</span>
-				);
-			};
-			return <ExpanderCell />;
-		},
-	},
-	{
-		header: "Timestamp",
-		accessorKey: "updated_at",
-		cell: (info: any) => <TimeCell utcTime={info.getValue()} />,
-	},
-	{
-		header: "Table Name",
-		accessorKey: "table_name",
-		cell: (info: any) => {
-			const tableName = info.getValue();
-			let displayValue = tableName;
-			switch (tableName) {
-				case "LiteLLM_VerificationToken":
-					displayValue = "Keys";
-					break;
-				case "LiteLLM_TeamTable":
-					displayValue = "Teams";
-					break;
-				case "LiteLLM_OrganizationTable":
-					displayValue = "Organizations";
-					break;
-				case "LiteLLM_UserTable":
-					displayValue = "Users";
-					break;
-				case "LiteLLM_ProxyModelTable":
-					displayValue = "Models";
-					break;
-				default:
-					displayValue = tableName;
-			}
-			return <span>{displayValue}</span>;
-		},
-	},
-	{
-		header: "Action",
-		accessorKey: "action",
-		cell: (info: any) => <span>{getActionBadge(info.getValue())}</span>,
-	},
-	{
-		header: "Changed By",
-		accessorKey: "changed_by",
-		cell: (info: any) => {
-			const changedBy = info.row.original.changed_by;
-			const apiKey = info.row.original.changed_by_api_key;
-			return (
-				<div className="space-y-1">
-					<div className="font-medium">{changedBy}</div>
-					{apiKey && ( // Only show API key if it exists
-						<Tooltip title={apiKey}>
-							<div className="text-xs text-muted-foreground max-w-[25ch] truncate">
-								{" "}
-								{/* Apply max-width and truncate */}
-								{apiKey}
-							</div>
-						</Tooltip>
-					)}
-				</div>
-			);
-		},
-	},
-	{
-		header: "Affected Item ID",
-		accessorKey: "object_id",
-		cell: (props) => {
-			const ObjectIdDisplay = () => {
-				const objectId = props.getValue();
-				const [copied, setCopied] = useState(false);
-
-				if (!objectId) return <>-</>;
-
-				const handleCopy = async () => {
-					try {
-						await navigator.clipboard.writeText(String(objectId));
-						setCopied(true);
-						setTimeout(() => setCopied(false), 1500);
-					} catch (err) {
-						console.error("Failed to copy object ID: ", err);
-					}
-				};
-
-				return (
-					<Tooltip title={copied ? "Copied!" : String(objectId)}>
-						<span className="max-w-[20ch] truncate block cursor-pointer hover:text-blue-600" onClick={handleCopy}>
-							{String(objectId)}
-						</span>
-					</Tooltip>
-				);
-			};
-			return <ObjectIdDisplay />;
-		},
-	},
-];

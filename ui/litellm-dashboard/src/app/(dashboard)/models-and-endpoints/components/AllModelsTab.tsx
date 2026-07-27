@@ -13,9 +13,9 @@ import { modelDeleteCall } from "@/components/networking";
 import { getDisplayModelName } from "@/components/view_model/model_name_display";
 import { useQueryClient } from "@tanstack/react-query";
 import { PaginationState, SortingState } from "@tanstack/react-table";
-import { Grid, TabPanel } from "@tremor/react";
+import { Grid } from "@tremor/react";
 import debounce from "lodash/debounce";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useModelsInfo } from "../../hooks/models/useModels";
 import { transformModelData } from "../utils/modelDataTransformer";
 import ModelListToolbar from "./ModelListToolbar";
@@ -115,16 +115,16 @@ const AllModelsTab = ({
 	);
 	const isLoading = isLoadingModelsInfo || isLoadingModelCostMap;
 
-	const getProviderFromModel = (model: string) => {
+	const getProviderFromModel = useCallback((model: string) => {
 		if (modelCostMapData && typeof modelCostMapData === "object" && model in modelCostMapData) {
 			return modelCostMapData[model]["litellm_provider"];
 		}
 		return "openai";
-	};
+	}, [modelCostMapData]);
 	const modelData = useMemo(() => {
 		if (!rawModelData) return { data: [] };
 		return transformModelData(rawModelData, getProviderFromModel);
-	}, [rawModelData, modelCostMapData]);
+	}, [getProviderFromModel, rawModelData]);
 	const deploymentIds = useMemo(
 		() =>
 			modelData.data
@@ -167,8 +167,6 @@ const AllModelsTab = ({
 		return modelData.data.find((model: any) => model.model_info.id === deleteModalModelId);
 	}, [deleteModalModelId, modelData]);
 
-	useEffect(resetToFirstPage, [selectedModelGroup, selectedModelAccessGroupFilter, teamIdForQuery, sorting]);
-
 	const resetFilters = () => {
 		setModelNameSearch("");
 		setSelectedModelGroup("all");
@@ -209,7 +207,7 @@ const AllModelsTab = ({
 	};
 
 	return (
-		<TabPanel>
+		<>
 			<Grid>
 				<div className="flex flex-col space-y-4">
 					<div className="rounded-lg bg-white shadow">
@@ -240,8 +238,14 @@ const AllModelsTab = ({
 							onSearchChange={setModelNameSearch}
 							onToggleFilters={() => setShowFilters((visible) => !visible)}
 							onResetFilters={resetFilters}
-							onModelGroupChange={setSelectedModelGroup}
-							onAccessGroupChange={setSelectedModelAccessGroupFilter}
+							onModelGroupChange={(group) => {
+								setSelectedModelGroup(group);
+								resetToFirstPage();
+							}}
+							onAccessGroupChange={(group) => {
+								setSelectedModelAccessGroupFilter(group);
+								resetToFirstPage();
+							}}
 							onRunAllHealthChecks={handleRunAllHealthChecks}
 							onOpenModelSettings={() => setIsModelSettingsModalVisible(true)}
 							onPageChange={(page) => {
@@ -269,7 +273,10 @@ const AllModelsTab = ({
 							data={filteredData}
 							isLoading={isLoadingModelsInfo}
 							sorting={sorting}
-							onSortingChange={setSorting}
+							onSortingChange={(nextSorting) => {
+								setSorting(nextSorting);
+								resetToFirstPage();
+							}}
 							pagination={pagination}
 							onPaginationChange={setPagination}
 							enablePagination
@@ -321,7 +328,7 @@ const AllModelsTab = ({
 					refetchModels();
 				}}
 			/>
-		</TabPanel>
+		</>
 	);
 };
 

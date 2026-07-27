@@ -5,6 +5,7 @@ import AccessGroupSelector from "../../common_components/AccessGroupSelector";
 interface TeamPolicySettingsFieldsProps {
 	guardrails: string[];
 	policies: string[];
+	premiumUser?: boolean;
 }
 
 function DocumentationLabel({ label, tooltip, href }: { label: string; tooltip: string; href?: string }) {
@@ -25,7 +26,11 @@ function DocumentationLabel({ label, tooltip, href }: { label: string; tooltip: 
 	);
 }
 
-export default function TeamPolicySettingsFields({ guardrails, policies }: TeamPolicySettingsFieldsProps) {
+export default function TeamPolicySettingsFields({
+	guardrails,
+	policies,
+	premiumUser = true,
+}: TeamPolicySettingsFieldsProps) {
 	return (
 		<>
 			<Form.Item
@@ -56,7 +61,7 @@ export default function TeamPolicySettingsFields({ guardrails, policies }: TeamP
 				valuePropName="checked"
 				help="Bypass global guardrails for this team"
 			>
-				<Switch checkedChildren="Yes" unCheckedChildren="No" />
+				<Switch disabled={!premiumUser} checkedChildren="Yes" unCheckedChildren="No" />
 			</Form.Item>
 			<Form.Item
 				label={

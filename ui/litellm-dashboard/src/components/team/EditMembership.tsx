@@ -1,6 +1,7 @@
 import { Text, TextInput } from "@tremor/react";
 import { Button as AntButton, Form, Modal, Select } from "antd";
 import React, { useEffect, useState } from "react";
+import NotificationsManager from "../molecules/notifications_manager";
 import NumericalInput from "../shared/numerical_input";
 
 interface BaseMember {
@@ -50,8 +51,6 @@ const MemberModal = <T extends BaseMember>({
   const [form] = Form.useForm();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  console.log("Initial Data:", initialData);
-
   // Reset form and set initial values when modal becomes visible or initialData changes
   useEffect(() => {
     if (visible) {
@@ -66,7 +65,6 @@ const MemberModal = <T extends BaseMember>({
           tpm_limit: (initialData as any).tpm_limit || null,
           rpm_limit: (initialData as any).rpm_limit || null,
         };
-        console.log("Setting form values:", formValues);
         form.setFieldsValue(formValues);
       } else {
         // For add mode, reset to defaults
@@ -95,13 +93,10 @@ const MemberModal = <T extends BaseMember>({
         return { ...acc, [key]: value };
       }, {}) as T;
 
-      console.log("Submitting form data:", formData);
       await Promise.resolve(onSubmit(formData));
       form.resetFields();
-      // NotificationsManager.success(`Successfully ${mode === 'add' ? 'added' : 'updated'} member`);
-    } catch (error) {
-      // NotificationManager.fromBackend('Failed to submit form');
-      console.error("Form submission error:", error);
+    } catch {
+      NotificationsManager.fromBackend("Failed to submit member form");
     } finally {
       setIsSubmitting(false);
     }

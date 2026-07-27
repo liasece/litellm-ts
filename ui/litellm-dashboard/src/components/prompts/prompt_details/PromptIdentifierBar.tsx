@@ -9,11 +9,7 @@ interface PromptIdentifierBarProps {
 	onCopy: PromptCopyHandler;
 }
 
-export default function PromptIdentifierBar({
-	promptId,
-	copied,
-	onCopy,
-}: PromptIdentifierBarProps) {
+export default function PromptIdentifierBar({ promptId, copied, onCopy }: PromptIdentifierBarProps) {
 	return (
 		<div className="mb-4 flex cursor-pointer items-center">
 			<Text className="font-mono text-gray-500">{promptId}</Text>
@@ -27,4 +23,3 @@ export default function PromptIdentifierBar({
 		</div>
 	);
 }
-

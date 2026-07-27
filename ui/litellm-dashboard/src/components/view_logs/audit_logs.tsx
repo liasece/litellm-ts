@@ -5,7 +5,7 @@ import { ReloadOutlined, LoadingOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import moment from "moment";
 import { uiAuditLogsCall } from "../networking";
-import { AuditLogEntry } from "./columns";
+import type { AuditLogEntry } from "./auditLogTypes";
 import { AuditLogDrawer } from "./AuditLogDrawer/AuditLogDrawer";
 import DefaultProxyAdminTag from "../common_components/DefaultProxyAdminTag";
 
@@ -174,6 +174,8 @@ export default function AuditLogs({
         <p style={{ display: "block", marginBottom: "20px", fontStyle: "italic" }}>
           Here&apos;s a preview of what Audit Logs offer:
         </p>
+        {/* Runtime deployment asset with graceful onError fallback; Next Image cannot resolve it at build time. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={auditLogsPreviewImg}
           alt="Audit Logs Preview"

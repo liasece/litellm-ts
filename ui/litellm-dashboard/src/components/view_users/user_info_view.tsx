@@ -93,8 +93,7 @@ export default function UserInfoView({
         await refreshUser();
         const modelDataResponse = await modelAvailableCall(accessToken, userId, userRole || "");
         setUserModels(modelDataResponse.data.map((model: { id: string }) => model.id));
-      } catch (error) {
-        console.error("Error fetching user data:", error);
+      } catch {
         NotificationsManager.fromBackend("Failed to fetch user data");
       } finally {
         setIsLoading(false);
@@ -121,8 +120,8 @@ export default function UserInfoView({
           team_alias: team.team_alias || team.team_id,
         })),
       );
-    } catch (error) {
-      console.error("Error fetching teams:", error);
+    } catch {
+      NotificationsManager.fromBackend("Failed to fetch teams");
     } finally {
       setIsLoadingTeams(false);
     }
@@ -138,7 +137,6 @@ export default function UserInfoView({
       NotificationsManager.success("User added to team successfully");
       setIsAddTeamModalOpen(false);
     } catch (error: any) {
-      console.error("Error adding user to team:", error);
       NotificationsManager.fromBackend(error?.message || "Failed to add user to team");
     } finally {
       setIsAddingTeam(false);
@@ -161,7 +159,6 @@ export default function UserInfoView({
       setIsRemoveTeamModalOpen(false);
       setTeamToRemove(null);
     } catch (error: any) {
-      console.error("Error removing user from team:", error);
       NotificationsManager.fromBackend(error?.message || "Failed to remove user from team");
     } finally {
       setIsRemovingTeam(false);
@@ -190,8 +187,7 @@ export default function UserInfoView({
       NotificationsManager.success("User deleted successfully");
       onDelete?.();
       onClose();
-    } catch (error) {
-      console.error("Error deleting user:", error);
+    } catch {
       NotificationsManager.fromBackend("Failed to delete user");
     } finally {
       setIsDeleteModalOpen(false);
@@ -216,8 +212,7 @@ export default function UserInfoView({
       });
       NotificationsManager.success("User updated successfully");
       setIsEditing(false);
-    } catch (error) {
-      console.error("Error updating user:", error);
+    } catch {
       NotificationsManager.fromBackend("Failed to update user");
     }
   };

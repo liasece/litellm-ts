@@ -1,23 +1,10 @@
 "use client";
 
 import SidebarProvider from "@/app/(dashboard)/components/SidebarProvider";
-import OldModelDashboard from "@/app/(dashboard)/models-and-endpoints/ModelsAndEndpointsView";
-import PlaygroundPage from "@/app/(dashboard)/playground/page";
-import AdminPanel from "@/components/AdminPanel";
-import AgentsPanel from "@/components/agents";
-import BudgetPanel from "@/components/budgets/budget_panel";
-import CacheDashboard from "@/components/cache_dashboard";
-import ClaudeCodePluginsPanel from "@/components/claude_code_plugins";
+import LegacyDashboardPageContent from "@/app/(dashboard)/components/LegacyDashboardPageContent";
 import { teamListCall as v2TeamListCall } from "@/app/(dashboard)/hooks/teams/useTeams";
 import LoadingScreen from "@/components/common_components/LoadingScreen";
-import { CostTrackingSettings } from "@/components/CostTrackingSettings";
-import GeneralSettings from "@/components/general_settings";
-import GuardrailsMonitorView from "@/components/GuardrailsMonitor/GuardrailsMonitorView";
-import GuardrailsPanel from "@/components/guardrails";
-import PoliciesPanel from "@/components/policies";
 import { Team } from "@/components/key_team_helpers/key_list";
-import { MCPServers } from "@/components/mcp_tools";
-import ModelHubTable from "@/components/AIHub/ModelHubTable";
 import Navbar from "@/components/navbar";
 import {
 	getUiConfig,
@@ -30,28 +17,11 @@ import {
 	resolveYamlConfigDiffCall,
 	YamlConfigDiffItem,
 } from "@/components/networking";
-import NewUsagePage from "@/components/UsagePage/components/UsagePageView";
-import OldTeams from "@/components/OldTeams";
 import { fetchUserModels, CreateKeyPrefillData } from "@/components/organisms/create_key_button";
-import Organizations, { fetchOrganizations } from "@/components/organizations";
-import PassThroughSettings from "@/components/pass_through_settings";
-import PromptsPanel from "@/components/prompts";
-import PublicModelHub from "@/components/public_model_hub";
-import { SearchTools } from "@/components/SearchTools";
-import Settings from "@/components/settings";
+import { fetchOrganizations } from "@/components/organizations";
 import { ClaudeCodePrompt, ClaudeCodeModal } from "@/components/survey";
-import TagManagement from "@/components/tag_management";
-import TransformRequestPanel from "@/components/transform_request";
-import UIThemeSettings from "@/components/ui_theme_settings";
-import Usage from "@/components/usage";
 import UserDashboard from "@/components/user_dashboard";
 import YamlConfigDiffModal from "@/components/YamlConfigDiffModal";
-import { AccessGroupsPage } from "@/components/AccessGroups/AccessGroupsPage";
-import { ProjectsPage } from "@/components/Projects/ProjectsPage";
-import VectorStoreManagement from "@/components/vector_store_management";
-import ToolPoliciesView from "@/components/ToolPoliciesView";
-import SpendLogsTable from "@/components/view_logs";
-import ViewUserDashboard from "@/components/view_users";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import {
 	buildLoginUrlWithReturn,
@@ -59,8 +29,7 @@ import {
 	normalizeUrlForCompare,
 	storeReturnUrl,
 } from "@/utils/returnUrlUtils";
-import { formatUserRole, isAdminRole, isProxyAdminRole } from "@/utils/roles";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { formatUserRole, isProxyAdminRole } from "@/utils/roles";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ConfigProvider, theme } from "antd";
@@ -394,27 +363,33 @@ function CreateKeyPageContent() {
 							createClicked={createClicked}
 						/>
 					) : (
-						<div className="flex flex-col min-h-screen">
-							<Navbar
-								userID={userID}
-								userRole={userRole}
-								premiumUser={premiumUser}
-								userEmail={userEmail}
-								setProxySettings={setProxySettings}
-								proxySettings={proxySettings}
-								accessToken={accessToken}
-								isPublicPage={false}
-								sidebarCollapsed={sidebarCollapsed}
-								onToggleSidebar={toggleSidebar}
-								isDarkMode={isDarkMode}
-								toggleDarkMode={toggleDarkMode}
-							/>
-							<div className="flex flex-1">
-								<div className="mt-2">
+						<div data-testid="dashboard-shell" className="flex h-dvh min-h-0 flex-col overflow-hidden">
+							<div className="shrink-0">
+								<Navbar
+									userID={userID}
+									userRole={userRole}
+									premiumUser={premiumUser}
+									userEmail={userEmail}
+									setProxySettings={setProxySettings}
+									proxySettings={proxySettings}
+									accessToken={accessToken}
+									isPublicPage={false}
+									sidebarCollapsed={sidebarCollapsed}
+									onToggleSidebar={toggleSidebar}
+									isDarkMode={isDarkMode}
+									toggleDarkMode={toggleDarkMode}
+								/>
+							</div>
+							<div data-testid="dashboard-workspace" className="flex min-h-0 flex-1 overflow-hidden">
+								<aside
+									data-testid="dashboard-sidebar-scroll"
+									className="min-h-0 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain pt-2"
+								>
 									<SidebarProvider setPage={updatePage} defaultSelectedKey={page} sidebarCollapsed={sidebarCollapsed} />
-								</div>
-								{page == "api-keys" ? (
-									<UserDashboard
+								</aside>
+								<main data-testid="dashboard-main-scroll" className="min-w-0 flex-1 overflow-auto overscroll-contain">
+									<LegacyDashboardPageContent
+										page={page}
 										userID={userID}
 										userRole={userRole}
 										premiumUser={premiumUser}
@@ -426,148 +401,19 @@ function CreateKeyPageContent() {
 										setTeams={setTeams}
 										setKeys={setKeys}
 										organizations={organizations}
+										setOrganizations={setOrganizations}
 										addKey={addKey}
 										createClicked={createClicked}
 										autoOpenCreate={autoOpenCreate}
 										prefillData={prefillData}
-									/>
-								) : page == "models" ? (
-									<OldModelDashboard
 										token={token}
-										keys={keys}
 										modelData={modelData}
 										setModelData={setModelData}
-										premiumUser={premiumUser}
-										teams={teams}
-									/>
-								) : page == "llm-playground" ? (
-									<PlaygroundPage />
-								) : page == "users" ? (
-									<ViewUserDashboard
-										userID={userID}
-										userRole={userRole}
-										token={token}
-										keys={keys}
-										teams={teams}
 										accessToken={accessToken}
-										setKeys={setKeys}
-									/>
-								) : page == "teams" ? (
-									<OldTeams
-										teams={teams}
-										setTeams={setTeams}
-										accessToken={accessToken}
-										userID={userID}
-										userRole={userRole}
-										organizations={organizations}
-										premiumUser={premiumUser}
-										searchParams={searchParams}
-									/>
-								) : page == "organizations" ? (
-									<Organizations
-										organizations={organizations}
-										setOrganizations={setOrganizations}
+										proxySettings={proxySettings}
 										userModels={userModels}
-										accessToken={accessToken}
-										userRole={userRole}
-										premiumUser={premiumUser}
 									/>
-								) : page == "admin-panel" ? (
-									<AdminPanel proxySettings={proxySettings} />
-								) : page == "logging-and-alerts" ? (
-									<Settings userID={userID} userRole={userRole} accessToken={accessToken} premiumUser={premiumUser} />
-								) : page == "budgets" ? (
-									<BudgetPanel accessToken={accessToken} />
-								) : page == "guardrails" ? (
-									<GuardrailsPanel accessToken={accessToken} userRole={userRole} />
-								) : page == "policies" ? (
-									<PoliciesPanel accessToken={accessToken} userRole={userRole} />
-								) : page == "agents" ? (
-									<AgentsPanel accessToken={accessToken} userRole={userRole} teams={teams} />
-								) : page == "prompts" ? (
-									<PromptsPanel accessToken={accessToken} userRole={userRole} />
-								) : page == "transform-request" ? (
-									<TransformRequestPanel accessToken={accessToken} />
-								) : page == "router-settings" ? (
-									<GeneralSettings
-										userID={userID}
-										userRole={userRole}
-										accessToken={accessToken}
-										modelData={modelData}
-									/>
-								) : page == "ui-theme" ? (
-									<UIThemeSettings userID={userID} userRole={userRole} accessToken={accessToken} />
-								) : page == "cost-tracking" ? (
-									<CostTrackingSettings userID={userID} userRole={userRole} accessToken={accessToken} />
-								) : page == "model-hub-table" ? (
-									isAdminRole(userRole) ? (
-										<ModelHubTable
-											accessToken={accessToken}
-											publicPage={false}
-											premiumUser={premiumUser}
-											userRole={userRole}
-										/>
-									) : (
-										<PublicModelHub accessToken={accessToken} isEmbedded={true} />
-									)
-								) : page == "caching" ? (
-									<CacheDashboard
-										userID={userID}
-										userRole={userRole}
-										token={token}
-										accessToken={accessToken}
-										premiumUser={premiumUser}
-									/>
-								) : page == "pass-through-settings" ? (
-									<PassThroughSettings
-										userID={userID}
-										userRole={userRole}
-										accessToken={accessToken}
-										modelData={modelData}
-										premiumUser={premiumUser}
-									/>
-								) : page == "logs" ? (
-									<SpendLogsTable
-										userID={userID}
-										userRole={userRole}
-										token={token}
-										accessToken={accessToken}
-										allTeams={(teams as Team[]) ?? []}
-										premiumUser={premiumUser}
-									/>
-								) : page == "mcp-servers" ? (
-									<MCPServers accessToken={accessToken} userRole={userRole} userID={userID} />
-								) : page == "search-tools" ? (
-									<SearchTools accessToken={accessToken} userRole={userRole} userID={userID} />
-								) : page == "tag-management" ? (
-									<TagManagement accessToken={accessToken} userRole={userRole} userID={userID} />
-								) : page == "claude-code-plugins" ? (
-									<ClaudeCodePluginsPanel accessToken={accessToken} userRole={userRole} />
-								) : page == "access-groups" ? (
-									<AccessGroupsPage />
-								) : page == "projects" ? (
-									<ProjectsPage />
-								) : page == "vector-stores" ? (
-									<VectorStoreManagement accessToken={accessToken} userRole={userRole} userID={userID} />
-								) : page == "tool-policies" ? (
-									<ToolPoliciesView accessToken={accessToken} userRole={userRole} />
-								) : page == "guardrails-monitor" ? (
-									<GuardrailsMonitorView accessToken={accessToken} />
-								) : page == "new_usage" ? (
-									<NewUsagePage
-										teams={(teams as Team[]) ?? []}
-										organizations={(organizations as Organization[]) ?? []}
-									/>
-								) : (
-									<Usage
-										userID={userID}
-										userRole={userRole}
-										token={token}
-										accessToken={accessToken}
-										keys={keys}
-										premiumUser={premiumUser}
-									/>
-								)}
+								</main>
 							</div>
 
 							{/* Claude Code Components */}

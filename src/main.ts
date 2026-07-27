@@ -9,6 +9,7 @@
  * 5. 启动监听
  */
 import express from "express";
+import type { Server as HttpServer } from "node:http";
 import { loadConfig, type ServiceConfig } from "./core/config";
 import { createServiceContainer, type ServiceContainer } from "./container";
 import { registerController } from "./core/api/registerController";
@@ -74,6 +75,7 @@ import { registerAlertingRoutes } from "./proxy/AlertingEndpoints";
 import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
+import { abortOrphanedActiveRequests } from "./spend/ActiveRequestRecovery";
 
 const logger = createModuleLogger("Server");
 
@@ -89,6 +91,8 @@ export class LiteLLMServer {
 	private readonly _config: ServiceConfig;
 	private _container: ServiceContainer | null = null;
 	private readonly _app: express.Express;
+	private _httpServer: HttpServer | null = null;
+	private _stopPromise: Promise<void> | null = null;
 
 	constructor() {
 		this._config = loadConfig();
@@ -105,12 +109,49 @@ export class LiteLLMServer {
 		logger.info("LiteLLM TS Gateway 启动中...", { port: port, host: host, modelCount: this._config.modelList.length });
 
 		this._container = await createServiceContainer(this._config);
+		const abortedRequestCount = await abortOrphanedActiveRequests(this._container.db.db);
+		if (abortedRequestCount > 0) {
+			logger.warn("已将旧进程遗留的在途请求标记为 aborted", { requestCount: abortedRequestCount });
+		}
 		this._assemblyExpress();
-		const server = this._app.listen(port, host, () => {
-			logger.info(`LiteLLM TS Gateway 已启动: http://${host}:${port}`);
+		await new Promise<void>((resolve, reject) => {
+			const server = this._app.listen(port, host, () => {
+				server.off("error", reject);
+				this._httpServer = server;
+				logger.info(`LiteLLM TS Gateway 已启动: http://${host}:${port}`);
+				resolve();
+			});
+			server.once("error", reject);
+			server.keepAliveTimeout = 120_000;
+			server.headersTimeout = 121_000;
 		});
-		server.keepAliveTimeout = 120_000;
-		server.headersTimeout = 121_000;
+	}
+
+	/**
+	 * 停止接收新连接，等待现有 HTTP 请求结束后关闭数据库。
+	 * 未能在外部宽限期内结束的请求由下一进程启动扫描标记为 aborted。
+	 */
+	async stop(): Promise<void> {
+		if (this._stopPromise) {
+			return this._stopPromise;
+		}
+		this._stopPromise = (async () => {
+			const httpServer = this._httpServer;
+			this._httpServer = null;
+			if (httpServer) {
+				await new Promise<void>((resolve, reject) => {
+					httpServer.close((error) => {
+						if (error) {
+							reject(error);
+							return;
+						}
+						resolve();
+					});
+				});
+			}
+			await this._container?.db.close();
+		})();
+		return this._stopPromise;
 	}
 
 	/** 获取 Express 应用实例 */
@@ -298,6 +339,27 @@ export class LiteLLMServer {
 async function main(): Promise<void> {
 	const server = new LiteLLMServer();
 	await server.start();
+
+	let shuttingDown = false;
+	const shutdown = (signal: NodeJS.Signals): void => {
+		if (shuttingDown) {
+			return;
+		}
+		shuttingDown = true;
+		logger.info("收到退出信号，停止接收新请求并等待在途请求完成", { signal: signal });
+		void server
+			.stop()
+			.then(() => {
+				logger.info("LiteLLM TS Gateway 已安全停止", { signal: signal });
+				process.exit(0);
+			})
+			.catch((error: unknown) => {
+				logger.error("LiteLLM TS Gateway 停止失败", { error: error, signal: signal });
+				process.exit(1);
+			});
+	};
+	process.once("SIGTERM", () => shutdown("SIGTERM"));
+	process.once("SIGINT", () => shutdown("SIGINT"));
 }
 
 main().catch((err) => {

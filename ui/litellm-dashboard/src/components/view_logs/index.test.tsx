@@ -234,7 +234,12 @@ describe("Logs columns", () => {
 
 		return render(
 			column.cell({
-				getValue: () => (header === "Model" ? entry.model : entry.total_tokens),
+				getValue: () =>
+					header === "Model"
+						? entry.model
+						: header === "Duration (s)"
+							? entry.request_duration_ms
+							: entry.total_tokens,
 				row: { original: entry },
 			} as never),
 		);
@@ -248,6 +253,20 @@ describe("Logs columns", () => {
 		});
 
 		expect(screen.getByText("In Progress")).toHaveClass("bg-amber-100", "text-amber-800");
+	});
+
+	it("renders an explicit Aborted status for requests recovered after a server restart", () => {
+		renderColumnCell("Status", {
+			...baseLogEntry,
+			request_id: "req-aborted",
+			status: "aborted",
+			metadata: {
+				status: "aborted",
+				termination_reason: "server_restart",
+			},
+		});
+
+		expect(screen.getByText("Aborted")).toHaveClass("bg-orange-100", "text-orange-800");
 	});
 
 	it("removes only the matching provider prefix while preserving the original model tooltip and provider icon", async () => {
@@ -335,17 +354,19 @@ describe("Logs columns", () => {
 		const tokenSummary = screen.getByLabelText("Cache read 1299321, input 0, output 20");
 		expect(tokenSummary).toHaveTextContent("1,299,321020");
 		expect(tokenSummary).not.toHaveTextContent(/[+/]/);
-		expect(tokenSummary).toHaveClass("inline-grid", "min-w-56", "grid-cols-3", "text-left", "text-current");
+		expect(tokenSummary).toHaveClass("grid", "w-72", "grid-cols-3", "text-left", "text-current");
 		expect(screen.queryByText("120")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Input:/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Cache read:/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Cache creation:/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Output:/)).not.toBeInTheDocument();
 
-		const tokenColumns = screen.getAllByTestId("token-column");
-		expect(tokenColumns).toHaveLength(3);
-		for (const column of tokenColumns) {
-			expect(column).toHaveClass("flex", "min-w-16", "items-center", "text-left");
+		for (const column of [
+			screen.getByLabelText("Cache read 1299321 tokens"),
+			screen.getByLabelText("Input 0 tokens"),
+			screen.getByLabelText("Output 20 tokens"),
+		]) {
+			expect(column).toHaveClass("flex", "min-w-0", "w-full", "items-center", "text-left");
 			expect(column.className).not.toMatch(
 				/bg-violet|border-violet|text-violet|text-gray-700|text-blue-600|font-semibold/,
 			);
@@ -392,6 +413,118 @@ describe("Logs columns", () => {
 		});
 
 		expect(screen.getByLabelText("Cache read 130, input 0, output 20")).toHaveTextContent("130020");
+	});
+
+	it("uses independent green progress scales for cache, input, and output tokens", () => {
+		renderColumnCell("Tokens", {
+			...baseLogEntry,
+			prompt_tokens: 110_000,
+			completion_tokens: 1_000,
+			metadata: {
+				additional_usage_values: {
+					cache_read_input_tokens: 100_000,
+				},
+			},
+		});
+
+		for (const testId of ["cache-tokens-progress", "input-tokens-progress", "output-tokens-progress"]) {
+			expect(screen.getByTestId(testId)).toHaveStyle({ clipPath: "inset(0 50% 0 0)" });
+			expect(screen.getByTestId(testId)).toHaveClass(
+				"inset-0",
+				"bg-gradient-to-r",
+				"from-transparent",
+				"via-green-400/15",
+				"to-green-500/30",
+			);
+		}
+	});
+
+	it("caps each token progress bar at its own maximum", () => {
+		renderColumnCell("Tokens", {
+			...baseLogEntry,
+			prompt_tokens: 230_001,
+			completion_tokens: 2_001,
+			metadata: {
+				additional_usage_values: {
+					cache_read_input_tokens: 200_001,
+				},
+			},
+		});
+
+		for (const testId of ["cache-tokens-progress", "input-tokens-progress", "output-tokens-progress"]) {
+			expect(screen.getByTestId(testId)).toHaveStyle({ clipPath: "inset(0 0% 0 0)" });
+		}
+	});
+
+	it.each([0, 19, Number.NaN])("leaves output TPS blank when output tokens are below the meaningful threshold (%s)", (tokens) => {
+		const { container } = renderColumnCell("输出 TPS", {
+			...baseLogEntry,
+			completion_tokens: tokens,
+			startTime: "2025-11-14T00:00:00Z",
+			endTime: "2025-11-14T00:00:02Z",
+		});
+
+		expect(container).toBeEmptyDOMElement();
+	});
+
+	it("shows output TPS starting at 20 output tokens", () => {
+		renderColumnCell("输出 TPS", {
+			...baseLogEntry,
+			completion_tokens: 20,
+			startTime: "2025-11-14T00:00:00Z",
+			endTime: "2025-11-14T00:00:02Z",
+		});
+
+		expect(screen.getByText("10.0")).toBeInTheDocument();
+		expect(screen.getByLabelText("Output TPS 10.0")).toBeInTheDocument();
+		expect(screen.getByTestId("output-tps-progress")).toHaveStyle({ clipPath: "inset(0 90% 0 0)" });
+		expect(screen.getByTestId("output-tps-progress")).toHaveClass(
+			"inset-0",
+			"bg-gradient-to-r",
+			"from-transparent",
+			"via-blue-400/15",
+			"to-blue-500/30",
+		);
+	});
+
+	it("caps the output TPS progress bar at 100 TPS", () => {
+		renderColumnCell("输出 TPS", {
+			...baseLogEntry,
+			completion_tokens: 250,
+			startTime: "2025-11-14T00:00:00Z",
+			endTime: "2025-11-14T00:00:02Z",
+		});
+
+		expect(screen.getByText("125.0")).toBeInTheDocument();
+		expect(screen.getByTestId("output-tps-progress")).toHaveStyle({ clipPath: "inset(0 0% 0 0)" });
+	});
+
+	it("shows duration on a fixed red 30-second gradient scale", () => {
+		renderColumnCell("Duration (s)", {
+			...baseLogEntry,
+			request_duration_ms: 3000,
+		});
+
+		expect(screen.getByText("3.00")).toBeInTheDocument();
+		expect(screen.getByLabelText("Duration 3.00 seconds")).toBeInTheDocument();
+		expect(screen.getByTestId("duration-progress")).toHaveStyle({ clipPath: "inset(0 90% 0 0)" });
+		expect(screen.getByTestId("duration-progress")).toHaveClass(
+			"inset-0",
+			"bg-gradient-to-r",
+			"from-transparent",
+			"via-red-400/15",
+			"to-red-500/30",
+		);
+	});
+
+	it("caps the duration progress bar at 30 seconds", () => {
+		renderColumnCell("Duration (s)", {
+			...baseLogEntry,
+			request_duration_ms: 45000,
+		});
+
+		expect(screen.getByText("45.00")).toBeInTheDocument();
+		expect(screen.getByTestId("duration-progress")).toHaveStyle({ clipPath: "inset(0 0% 0 0)" });
 	});
 });
 
@@ -619,8 +752,21 @@ describe("SpendLogsTable", () => {
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 
 		const pageSizeSelect = screen.getByRole("combobox", { name: "Logs per page" });
-		expect(Array.from(pageSizeSelect.querySelectorAll("option"))).toHaveLength(5);
-		expect(pageSizeSelect).toHaveValue("50");
+		expect(Array.from(pageSizeSelect.querySelectorAll("option")).map((option) => option.textContent)).toEqual([
+			"100",
+			"200",
+			"500",
+			"1000",
+		]);
+		expect(pageSizeSelect).toHaveValue("100");
+		expect(pageSizeSelect).toHaveClass("w-24", "min-w-24", "pl-3", "pr-8");
+		expect(screen.getByTestId("logs-controls-row")).toHaveClass("xl:flex-row", "xl:items-center", "xl:justify-between");
+		const fetchButton = screen.getByTitle("Fetch data");
+		await waitFor(() => expect(fetchButton).toBeEnabled());
+		await user.click(fetchButton);
+		await waitFor(() => {
+			expect(uiSpendLogsCall).toHaveBeenCalledWith(expect.objectContaining({ page: 1, page_size: 100 }));
+		});
 		await user.selectOptions(pageSizeSelect, "500");
 
 		await waitFor(() => {

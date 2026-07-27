@@ -1,35 +1,32 @@
-import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "@tremor/react";
-import React, { useEffect, useState } from "react";
-
-import { Button } from "antd";
-import BulkEditUserModal from "./BulkEditUsers";
-import { CreateUserButton } from "./CreateUserButton";
-import EditUserModal from "./edit_user";
-import {
-  getPossibleUserRoles,
-  getProxyBaseUrl,
-  invitationCreateCall,
-  userListCall,
-  UserListResponse,
-  userUpdateUserCall,
-} from "./networking";
-import OnboardingModal, { InvitationLink } from "./onboarding_link";
-
 import { updateExistingKeys } from "@/utils/dataUtils";
 import { isAdminRole, isProxyAdminRole } from "@/utils/roles";
 import { useDebouncedState } from "@tanstack/react-pacer/debouncer";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Typography } from "antd";
-import DeleteResourceModal from "./common_components/DeleteResourceModal";
-import NotificationsManager from "./molecules/notifications_manager";
-import { modelAvailableCall, userDeleteCall } from "./networking";
-import DefaultUserSettings from "./DefaultUserSettings";
-import { columns } from "./view_users/columns";
-import { UserDataTable } from "./view_users/table";
-import { UserInfo } from "./view_users/types";
+import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "@tremor/react";
 import { Skeleton } from "antd";
-
-const { Text, Title } = Typography;
+import { useEffect, useState } from "react";
+import DefaultUserSettings from "./DefaultUserSettings";
+import NotificationsManager from "./molecules/notifications_manager";
+import {
+  getPossibleUserRoles,
+  getProxyBaseUrl,
+  invitationCreateCall,
+  modelAvailableCall,
+  userDeleteCall,
+  userListCall,
+  type UserListResponse,
+  userUpdateUserCall,
+} from "./networking";
+import type { InvitationLink } from "./onboarding_link";
+import UserListToolbar from "./view_users/UserListToolbar";
+import { columns } from "./view_users/columns";
+import UserListDialogs from "./view_users/dialogs/UserListDialogs";
+import { UserDataTable } from "./view_users/table";
+import {
+  initialUserFilters,
+  type UserFilterState,
+  type UserInfo,
+} from "./view_users/types";
 
 interface ViewUserDashboardProps {
   accessToken: string | null;
@@ -39,219 +36,70 @@ interface ViewUserDashboardProps {
   userID: string | null;
   teams: any[] | null;
   setKeys: React.Dispatch<React.SetStateAction<object[] | null>>;
-  orgAdminOrgIds?: Array<{organization_id: string, organization_alias: string}> | null;
+  orgAdminOrgIds?: Array<{ organization_id: string; organization_alias: string }> | null;
 }
 
-interface FilterState {
-  email: string;
-  user_id: string;
-  user_role: string;
-  sso_user_id: string;
-  team: string;
-  model: string;
-  min_spend: number | null;
-  max_spend: number | null;
-  sort_by: string;
-  sort_order: "asc" | "desc";
+interface UserEditValues extends Record<string, unknown> {
+  user_id?: string;
 }
 
 const DEFAULT_PAGE_SIZE = 25;
 
-const initialFilters: FilterState = {
-  email: "",
-  user_id: "",
-  user_role: "",
-  sso_user_id: "",
-  team: "",
-  model: "",
-  min_spend: null,
-  max_spend: null,
-  sort_by: "created_at",
-  sort_order: "desc",
-};
-
-const ViewUserDashboard: React.FC<ViewUserDashboardProps> = ({ accessToken, token, userRole, userID, teams, orgAdminOrgIds }) => {
-  const isProxyAdmin = userRole ? isProxyAdminRole(userRole) : false;
+export default function ViewUserDashboard({
+  accessToken,
+  token,
+  userRole,
+  userID,
+  teams,
+  orgAdminOrgIds,
+}: ViewUserDashboardProps) {
+  const isProxyAdmin = Boolean(userRole && isProxyAdminRole(userRole));
   const queryClient = useQueryClient();
   const [currentPage, setCurrentPage] = useState(1);
-  const [editModalVisible, setEditModalVisible] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserInfo | null>(null);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserInfo | null>(null);
-  const [activeTab, setActiveTab] = useState("users");
-  const [filters, setFilters] = useState<FilterState>(initialFilters);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [filters, setFilters] = useState<UserFilterState>(initialUserFilters);
   const [debouncedFilters, setDebouncedFilters, debouncer] = useDebouncedState(filters, { wait: 300 });
-  const [isInvitationLinkModalVisible, setIsInvitationLinkModalVisible] = useState(false);
-  const [invitationLinkData, setInvitationLinkData] = useState<InvitationLink | null>(null);
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [invitationOpen, setInvitationOpen] = useState(false);
+  const [invitationLink, setInvitationLink] = useState<InvitationLink | null>(null);
+  const [baseUrl] = useState(getProxyBaseUrl);
   const [selectedUsers, setSelectedUsers] = useState<UserInfo[]>([]);
-  const [isBulkEditModalVisible, setIsBulkEditModalVisible] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [userModels, setUserModels] = useState<string[]>([]);
 
-  const handleDelete = (user: UserInfo) => {
-    setUserToDelete(user);
-    setIsDeleteModalOpen(true);
-  };
-
-  useEffect(() => {
-    return () => {
-      debouncer.cancel();
-    };
-  }, [debouncer]);
-
-  useEffect(() => {
-    setBaseUrl(getProxyBaseUrl());
-  }, []);
-
-  // Fetch available models for bulk edit
+  useEffect(() => () => debouncer.cancel(), [debouncer]);
   useEffect(() => {
     const fetchUserModels = async () => {
-      try {
-        if (!userID || !userRole || !accessToken) {
-          return;
-        }
+      if (!userID || !userRole || !accessToken) return;
 
-        const model_available = await modelAvailableCall(accessToken, userID, userRole);
-        let available_model_names = model_available["data"].map((element: { id: string }) => element.id);
-        console.log("available_model_names:", available_model_names);
-        setUserModels(available_model_names);
-      } catch (error) {
-        console.error("Error fetching user models:", error);
+      try {
+        const availableModels = await modelAvailableCall(accessToken, userID, userRole);
+        setUserModels(availableModels.data.map((model: { id: string }) => model.id));
+      } catch {
+        NotificationsManager.fromBackend("Failed to load available user models");
       }
     };
 
-    fetchUserModels();
+    void fetchUserModels();
   }, [accessToken, userID, userRole]);
 
-  const updateFilters = (update: Partial<FilterState>) => {
+  const updateFilters = (update: Partial<UserFilterState>) => {
     setFilters((previousFilters) => {
-      const newFilters = { ...previousFilters, ...update };
-      setDebouncedFilters(newFilters);
-      return newFilters;
+      const nextFilters = { ...previousFilters, ...update };
+      setDebouncedFilters(nextFilters);
+      return nextFilters;
     });
-  };
-
-  const handleSortChange = (sortBy: string, sortOrder: "asc" | "desc") => {
-    updateFilters({ sort_by: sortBy, sort_order: sortOrder });
-  };
-
-  const handleResetPassword = async (userId: string) => {
-    if (!accessToken) {
-      NotificationsManager.fromBackend("Access token not found");
-      return;
-    }
-    try {
-      NotificationsManager.success("Generating password reset link...");
-      const data = await invitationCreateCall(accessToken, userId);
-      setInvitationLinkData(data);
-      setIsInvitationLinkModalVisible(true);
-    } catch (error) {
-      NotificationsManager.fromBackend("Failed to generate password reset link");
-    }
-  };
-
-  const confirmDelete = async () => {
-    if (userToDelete && accessToken) {
-      try {
-        setIsDeletingUser(true);
-        await userDeleteCall(accessToken, [userToDelete.user_id]);
-
-        // Update the user list after deletion
-        queryClient.setQueriesData<UserListResponse>({ queryKey: ["userList"] }, (previousData) => {
-          if (previousData === undefined) return previousData;
-          const updatedUsers = previousData.users.filter((user) => user.user_id !== userToDelete.user_id);
-          return { ...previousData, users: updatedUsers };
-        });
-
-        NotificationsManager.success("User deleted successfully");
-      } catch (error) {
-        console.error("Error deleting user:", error);
-        NotificationsManager.fromBackend("Failed to delete user");
-      } finally {
-        setIsDeleteModalOpen(false);
-        setUserToDelete(null);
-        setIsDeletingUser(false);
-      }
-    }
-  };
-
-  const cancelDelete = () => {
-    setIsDeleteModalOpen(false);
-    setUserToDelete(null);
-  };
-
-  const handleEditCancel = async () => {
-    setSelectedUser(null);
-    setEditModalVisible(false);
-  };
-
-  const handleEditSubmit = async (editedUser: any) => {
-    console.log("inside handleEditSubmit:", editedUser);
-
-    if (!accessToken || !token || !userRole || !userID) {
-      return;
-    }
-
-    try {
-      const response = await userUpdateUserCall(accessToken, editedUser, null);
-      queryClient.setQueriesData<UserListResponse>({ queryKey: ["userList"] }, (previousData) => {
-        if (previousData === undefined) return previousData;
-        const updatedUsers = previousData.users.map((user) => {
-          if (user.user_id === response.data.user_id) {
-            return updateExistingKeys(user, response.data);
-          }
-          return user;
-        });
-
-        return { ...previousData, users: updatedUsers };
-      });
-
-      NotificationsManager.success(`User ${editedUser.user_id} updated successfully`);
-    } catch (error) {
-      console.error("There was an error updating the user", error);
-    }
-    setSelectedUser(null);
-    setEditModalVisible(false);
-    // Close the modal
-  };
-
-  const handlePageChange = async (newPage: number) => {
-    setCurrentPage(newPage);
-  };
-
-  const handleToggleSelectionMode = () => {
-    setSelectionMode(!selectionMode);
-    setSelectedUsers([]);
-  };
-
-  const handleSelectionChange = (users: UserInfo[]) => {
-    setSelectedUsers(users);
-  };
-
-  const handleBulkEdit = () => {
-    if (selectedUsers.length === 0) {
-      NotificationsManager.fromBackend("Please select users to edit");
-      return;
-    }
-
-    setIsBulkEditModalVisible(true);
-  };
-
-  const handleBulkEditSuccess = () => {
-    // Refresh the user list
-    queryClient.invalidateQueries({ queryKey: ["userList"] });
-    setSelectedUsers([]);
-    setSelectionMode(false);
+    setCurrentPage(1);
   };
 
   const userListQuery = useQuery({
     queryKey: ["userList", { debouncedFilter: debouncedFilters, currentPage, orgAdminOrgIds }],
     queryFn: async () => {
       if (!accessToken) throw new Error("Access token required");
-
-      return await userListCall(
+      return userListCall(
         accessToken,
         debouncedFilters.user_id ? [debouncedFilters.user_id] : null,
         currentPage,
@@ -262,113 +110,168 @@ const ViewUserDashboard: React.FC<ViewUserDashboardProps> = ({ accessToken, toke
         debouncedFilters.sso_user_id || null,
         debouncedFilters.sort_by,
         debouncedFilters.sort_order,
-        orgAdminOrgIds ? orgAdminOrgIds.map((o) => o.organization_id) : null,
+        orgAdminOrgIds?.map((organization) => organization.organization_id) ?? null,
       );
     },
     enabled: Boolean(accessToken && token && userRole && userID),
     placeholderData: (previousData) => previousData,
   });
-  const userListResponse = userListQuery.data;
 
   const userRolesQuery = useQuery<Record<string, Record<string, string>>>({
     queryKey: ["userRoles"],
-    initialData: () => ({}),
+    initialData: {},
     queryFn: async () => {
       if (!accessToken) throw new Error("Access token required");
-      return await getPossibleUserRoles(accessToken);
+      return getPossibleUserRoles(accessToken);
     },
     enabled: Boolean(accessToken && token && userRole && userID),
   });
   const possibleUIRoles = userRolesQuery.data;
 
+  const openEditModal = (user: UserInfo) => {
+    setSelectedUser(user);
+    setEditModalOpen(true);
+  };
+
+  const handleResetPassword = async (userId: string) => {
+    if (!accessToken) {
+      NotificationsManager.fromBackend("Access token not found");
+      return;
+    }
+
+    try {
+      NotificationsManager.success("Generating password reset link...");
+      setInvitationLink(await invitationCreateCall(accessToken, userId));
+      setInvitationOpen(true);
+    } catch {
+      NotificationsManager.fromBackend("Failed to generate password reset link");
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!userToDelete || !accessToken) return;
+
+    try {
+      setIsDeletingUser(true);
+      await userDeleteCall(accessToken, [userToDelete.user_id]);
+      queryClient.setQueriesData<UserListResponse>({ queryKey: ["userList"] }, (previousData) => {
+        if (!previousData) return previousData;
+        return {
+          ...previousData,
+          users: previousData.users.filter((user) => user.user_id !== userToDelete.user_id),
+        };
+      });
+      NotificationsManager.success("User deleted successfully");
+    } catch {
+      NotificationsManager.fromBackend("Failed to delete user");
+    } finally {
+      setUserToDelete(null);
+      setIsDeletingUser(false);
+    }
+  };
+
+  const handleEditSubmit = async (editedUser: UserEditValues) => {
+    if (!accessToken || !token || !userRole || !userID) return;
+
+    try {
+      const response = await userUpdateUserCall(accessToken, editedUser, null);
+      queryClient.setQueriesData<UserListResponse>({ queryKey: ["userList"] }, (previousData) => {
+        if (!previousData) return previousData;
+        return {
+          ...previousData,
+          users: previousData.users.map((user) =>
+            user.user_id === response.data.user_id ? updateExistingKeys(user, response.data) : user,
+          ),
+        };
+      });
+      NotificationsManager.success(`User ${editedUser.user_id} updated successfully`);
+    } catch {
+      NotificationsManager.fromBackend("Failed to update user");
+    } finally {
+      setSelectedUser(null);
+      setEditModalOpen(false);
+    }
+  };
+
+  const handleBulkEdit = () => {
+    if (selectedUsers.length === 0) {
+      NotificationsManager.fromBackend("Please select users to edit");
+      return;
+    }
+    setBulkEditOpen(true);
+  };
+
+  const handleBulkEditSuccess = () => {
+    void queryClient.invalidateQueries({ queryKey: ["userList"] });
+    setSelectedUsers([]);
+    setSelectionMode(false);
+  };
+
   const tableColumns = columns(
     possibleUIRoles,
-    (user) => {
-      setSelectedUser(user);
-      setEditModalVisible(true);
-    },
-    handleDelete,
+    openEditModal,
+    setUserToDelete,
     handleResetPassword,
-    () => { }, // placeholder function, will be overridden in UserDataTable
+    () => {},
+  );
+
+  const userTable = (
+    <UserDataTable
+      data={userListQuery.data?.users || []}
+      columns={tableColumns}
+      isLoading={userListQuery.isLoading}
+      accessToken={accessToken}
+      userRole={userRole}
+      onSortChange={(sortBy, sortOrder) => updateFilters({ sort_by: sortBy, sort_order: sortOrder })}
+      currentSort={{ sortBy: filters.sort_by, sortOrder: filters.sort_order }}
+      possibleUIRoles={possibleUIRoles}
+      handleEdit={openEditModal}
+      handleDelete={setUserToDelete}
+      handleResetPassword={handleResetPassword}
+      enableSelection={isProxyAdmin && selectionMode}
+      selectedUsers={isProxyAdmin ? selectedUsers : []}
+      onSelectionChange={setSelectedUsers}
+      filters={filters}
+      updateFilters={updateFilters}
+      initialFilters={initialUserFilters}
+      teams={teams}
+      userListResponse={userListQuery.data}
+      currentPage={currentPage}
+      handlePageChange={setCurrentPage}
+    />
   );
 
   return (
-    <div className="w-full p-8 overflow-hidden">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex space-x-3">
-          {userListQuery.isLoading ? (
-            <>
-              <Skeleton.Button active size="default" shape="default" style={{ width: 110, height: 36 }} />
-              <Skeleton.Button active size="default" shape="default" style={{ width: 145, height: 36 }} />
-              <Skeleton.Button active size="default" shape="default" style={{ width: 110, height: 36 }} />
-            </>
-          ) : userID && accessToken ? (
-            <>
-              <CreateUserButton userID={userID} accessToken={accessToken} teams={teams} possibleUIRoles={possibleUIRoles} />
-
-              {isProxyAdmin && (
-                <Button
-                  onClick={handleToggleSelectionMode}
-                  type={selectionMode ? "primary" : "default"}
-                  className="flex items-center"
-                >
-                  {selectionMode ? "Cancel Selection" : "Select Users"}
-                </Button>
-              )}
-
-              {isProxyAdmin && selectionMode && (
-                <Button type="primary" onClick={handleBulkEdit} disabled={selectedUsers.length === 0} className="flex items-center">
-                  Bulk Edit ({selectedUsers.length} selected)
-                </Button>
-              )}
-            </>
-          ) : null}
-        </div>
+    <div className="w-full overflow-hidden p-8">
+      <div className="mb-4 flex items-center justify-between">
+        <UserListToolbar
+          loading={userListQuery.isLoading}
+          userId={userID}
+          accessToken={accessToken}
+          teams={teams}
+          possibleUIRoles={possibleUIRoles}
+          canBulkEdit={isProxyAdmin}
+          selectionMode={selectionMode}
+          selectedCount={selectedUsers.length}
+          onToggleSelection={() => {
+            setSelectionMode((enabled) => !enabled);
+            setSelectedUsers([]);
+          }}
+          onBulkEdit={handleBulkEdit}
+        />
       </div>
 
       {isProxyAdmin ? (
-        <TabGroup defaultIndex={0} onIndexChange={(index) => setActiveTab(index === 0 ? "users" : "settings")}>
+        <TabGroup>
           <TabList className="mb-4">
             <Tab>Users</Tab>
             <Tab>Default User Settings</Tab>
           </TabList>
-
           <TabPanels>
-            <TabPanel>
-              <UserDataTable
-                data={userListQuery.data?.users || []}
-                columns={tableColumns}
-                isLoading={userListQuery.isLoading}
-                accessToken={accessToken}
-                userRole={userRole}
-                onSortChange={handleSortChange}
-                currentSort={{
-                  sortBy: filters.sort_by,
-                  sortOrder: filters.sort_order,
-                }}
-                possibleUIRoles={possibleUIRoles}
-                handleEdit={(user) => {
-                  setSelectedUser(user);
-                  setEditModalVisible(true);
-                }}
-                handleDelete={handleDelete}
-                handleResetPassword={handleResetPassword}
-                enableSelection={selectionMode}
-                selectedUsers={selectedUsers}
-                onSelectionChange={handleSelectionChange}
-                filters={filters}
-                updateFilters={updateFilters}
-                initialFilters={initialFilters}
-                teams={teams}
-                userListResponse={userListResponse}
-                currentPage={currentPage}
-                handlePageChange={handlePageChange}
-              />
-            </TabPanel>
-
+            <TabPanel>{userTable}</TabPanel>
             <TabPanel>
               {!userID || !userRole || !accessToken ? (
-                <div className="flex justify-center items-center h-64">
+                <div className="flex h-64 items-center justify-center">
                   <Skeleton active paragraph={{ rows: 4 }} />
                 </div>
               ) : (
@@ -383,88 +286,37 @@ const ViewUserDashboard: React.FC<ViewUserDashboardProps> = ({ accessToken, toke
           </TabPanels>
         </TabGroup>
       ) : (
-        <UserDataTable
-          data={userListQuery.data?.users || []}
-          columns={tableColumns}
-          isLoading={userListQuery.isLoading}
-          accessToken={accessToken}
-          userRole={userRole}
-          onSortChange={handleSortChange}
-          currentSort={{
-            sortBy: filters.sort_by,
-            sortOrder: filters.sort_order,
-          }}
-          possibleUIRoles={possibleUIRoles}
-          handleEdit={(user) => {
-            setSelectedUser(user);
-            setEditModalVisible(true);
-          }}
-          handleDelete={handleDelete}
-          handleResetPassword={handleResetPassword}
-          enableSelection={false}
-          selectedUsers={[]}
-          onSelectionChange={handleSelectionChange}
-          filters={filters}
-          updateFilters={updateFilters}
-          initialFilters={initialFilters}
-          teams={teams}
-          userListResponse={userListResponse}
-          currentPage={currentPage}
-          handlePageChange={handlePageChange}
-        />
+        userTable
       )}
 
-      {/* Existing Modals */}
-      <EditUserModal
-        visible={editModalVisible}
-        possibleUIRoles={possibleUIRoles}
-        onCancel={handleEditCancel}
-        user={selectedUser}
-        onSubmit={handleEditSubmit}
-      />
-
-      <DeleteResourceModal
-        isOpen={isDeleteModalOpen}
-        title="Delete User?"
-        message="Are you sure you want to delete this user? This action cannot be undone."
-        resourceInformationTitle="User Information"
-        resourceInformation={[
-          { label: "Email", value: userToDelete?.user_email },
-          { label: "User ID", value: userToDelete?.user_id, code: true },
-          {
-            label: "Global Proxy Role",
-            value:
-              (userToDelete && possibleUIRoles?.[userToDelete.user_role]?.ui_label) || userToDelete?.user_role || "-",
-          },
-          { label: "Total Spend (USD)", value: userToDelete?.spend?.toFixed(2) },
-        ]}
-        onCancel={cancelDelete}
-        onOk={confirmDelete}
-        confirmLoading={isDeletingUser}
-      />
-
-      <OnboardingModal
-        isInvitationLinkModalVisible={isInvitationLinkModalVisible}
-        setIsInvitationLinkModalVisible={setIsInvitationLinkModalVisible}
-        baseUrl={baseUrl || ""}
-        invitationLinkData={invitationLinkData}
-        modalType="resetPassword"
-      />
-
-      <BulkEditUserModal
-        open={isBulkEditModalVisible}
-        onCancel={() => setIsBulkEditModalVisible(false)}
+      <UserListDialogs
+        editOpen={editModalOpen}
+        selectedUser={selectedUser}
+        deleteOpen={Boolean(userToDelete)}
+        deleting={isDeletingUser}
+        userToDelete={userToDelete}
+        invitationOpen={invitationOpen}
+        invitationLink={invitationLink}
+        baseUrl={baseUrl}
+        bulkEditOpen={bulkEditOpen}
         selectedUsers={selectedUsers}
         possibleUIRoles={possibleUIRoles}
         accessToken={accessToken}
-        onSuccess={handleBulkEditSuccess}
         teams={teams}
         userRole={userRole}
         userModels={userModels}
-        allowAllUsers={userRole ? isAdminRole(userRole) : false}
+        allowAllUsers={Boolean(userRole && isAdminRole(userRole))}
+        onEditCancel={() => {
+          setSelectedUser(null);
+          setEditModalOpen(false);
+        }}
+        onEditSubmit={handleEditSubmit}
+        onDeleteCancel={() => setUserToDelete(null)}
+        onDeleteConfirm={confirmDelete}
+        onInvitationOpenChange={setInvitationOpen}
+        onBulkEditCancel={() => setBulkEditOpen(false)}
+        onBulkEditSuccess={handleBulkEditSuccess}
       />
     </div>
   );
-};
-
-export default ViewUserDashboard;
+}

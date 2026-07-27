@@ -4,6 +4,8 @@ import EditLoggingSettings from "../EditLoggingSettings";
 interface TeamAdvancedSettingsFieldsProps {
 	form: FormInstance;
 	premiumUser: boolean;
+	mode?: "create" | "edit";
+	showLoggingSettings?: boolean;
 }
 
 const validateJson = async (_: unknown, value: string) => {
@@ -15,18 +17,30 @@ const validateJson = async (_: unknown, value: string) => {
 	}
 };
 
-export default function TeamAdvancedSettingsFields({ form, premiumUser }: TeamAdvancedSettingsFieldsProps) {
+export default function TeamAdvancedSettingsFields({
+	form,
+	premiumUser,
+	mode = "edit",
+	showLoggingSettings = true,
+}: TeamAdvancedSettingsFieldsProps) {
 	return (
 		<>
-			<Form.Item label="Organization ID" name="organization_id">
-				<Input disabled />
+			<Form.Item label="Team ID" name="team_id" hidden={mode === "edit"}>
+				<Input />
 			</Form.Item>
-			<Form.Item label="Logging Settings" name="logging_settings">
-				<EditLoggingSettings
-					value={form.getFieldValue("logging_settings")}
-					onChange={(values) => form.setFieldValue("logging_settings", values)}
-				/>
-			</Form.Item>
+			{mode === "edit" && (
+				<Form.Item label="Organization ID" name="organization_id">
+					<Input disabled />
+				</Form.Item>
+			)}
+			{showLoggingSettings && (
+				<Form.Item label="Logging Settings" name="logging_settings">
+					<EditLoggingSettings
+						value={form.getFieldValue("logging_settings")}
+						onChange={(values) => form.setFieldValue("logging_settings", values)}
+					/>
+				</Form.Item>
+			)}
 			<Form.Item
 				label="Secret Manager Settings"
 				name="secret_manager_settings"

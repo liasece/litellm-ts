@@ -8,13 +8,7 @@ interface PromptDeleteModalProps {
 	onCancel: () => void;
 }
 
-export default function PromptDeleteModal({
-	open,
-	promptId,
-	deleting,
-	onConfirm,
-	onCancel,
-}: PromptDeleteModalProps) {
+export default function PromptDeleteModal({ open, promptId, deleting, onConfirm, onCancel }: PromptDeleteModalProps) {
 	return (
 		<Modal
 			title="Delete Prompt"
@@ -33,4 +27,3 @@ export default function PromptDeleteModal({
 		</Modal>
 	);
 }
-

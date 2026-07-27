@@ -1,4 +1,5 @@
 import type { PromptSpec } from "@/components/networking";
+import ProviderLogo from "@/components/common_components/ProviderLogo";
 import { getProviderLogoAndName } from "@/components/provider_info_helpers";
 import { CopyOutlined } from "@ant-design/icons";
 import { TrashIcon } from "@heroicons/react/outline";
@@ -7,7 +8,6 @@ import { Tooltip } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { extractModel, getProviderFromModelHub } from "../prompt_utils";
-import PromptProviderLogo from "./PromptProviderLogo";
 import type { ModelGroupInfo } from "./types";
 
 interface UsePromptColumnsOptions {
@@ -34,8 +34,7 @@ export default function usePromptColumns({
 				accessorKey: "prompt_id",
 				cell: ({ getValue }) => {
 					const promptId = String(getValue() || "");
-					const displayId =
-						promptId.length > 25 ? `${promptId.slice(0, 25)}...` : promptId;
+					const displayId = promptId.length > 25 ? `${promptId.slice(0, 25)}...` : promptId;
 
 					return (
 						<div className="flex items-center gap-2">
@@ -77,7 +76,7 @@ export default function usePromptColumns({
 						<Tooltip title={model}>
 							<div className="flex items-center space-x-2">
 								<div className="flex-shrink-0">
-									<PromptProviderLogo provider={provider} logo={logo} />
+									<ProviderLogo provider={provider || ""} logo={logo} />
 								</div>
 								<span className="block max-w-[15ch] truncate">{model}</span>
 							</div>
@@ -108,9 +107,7 @@ export default function usePromptColumns({
 				accessorKey: "prompt_info.prompt_type",
 				cell: ({ row }) => (
 					<Tooltip title={row.original.prompt_info?.prompt_type}>
-						<span className="text-xs">
-							{row.original.prompt_info?.prompt_type || "-"}
-						</span>
+						<span className="text-xs">{row.original.prompt_info?.prompt_type || "-"}</span>
 					</Tooltip>
 				),
 			},
@@ -145,4 +142,3 @@ export default function usePromptColumns({
 		return columns;
 	}, [isAdmin, modelHubData, onDeleteClick, onPromptClick]);
 }
-

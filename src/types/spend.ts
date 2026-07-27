@@ -51,10 +51,12 @@ export enum CallType {
  * 对齐 PY `litellm/proxy/_types.py` SpendLogsMetadata.status：
  * - Success: 请求成功且 usage 已计费
  * - Failure: 请求失败（含上游错误、cancelled、timeout 等）
+ * - Aborted: 网关进程结束前未生成最终结果，usage 与费用未知
  */
 export enum SpendLogStatus {
 	Success = "success",
 	Failure = "failure",
+	Aborted = "aborted",
 }
 
 /** 单次请求花费日志 */
@@ -182,6 +184,10 @@ export interface SpendLogsMetadata {
 	readonly guardrail_information?: unknown;
 	/** 请求最终状态 */
 	readonly status?: SpendLogStatus;
+	/** 网关未获得最终结果时的稳定终止原因。 */
+	readonly termination_reason?: string;
+	/** 请求被判定为 aborted 的时间。 */
+	readonly aborted_at?: string;
 	/** Proxy 入口请求信息（PY _get_spend_logs_metadata: 恒 null，完整内容存顶层列） */
 	readonly proxy_server_request?: Record<string, unknown> | null;
 	/** Batch 请求涉及的模型列表 */

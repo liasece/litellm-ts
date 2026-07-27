@@ -16,4 +16,16 @@ describe("SidePanel", () => {
 			width: SIDE_PANEL_WIDTH,
 		});
 	});
+
+	it("allows a feature-specific responsive width", () => {
+		const width = "min(1800px, calc(100vw - 32px))";
+
+		render(
+			<SidePanel open onClose={() => undefined} width={width}>
+				<div>Wide panel content</div>
+			</SidePanel>,
+		);
+
+		expect(document.querySelector(".ant-drawer-content-wrapper")).toHaveStyle({ width });
+	});
 });

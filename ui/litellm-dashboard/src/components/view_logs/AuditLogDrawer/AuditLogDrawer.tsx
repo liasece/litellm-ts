@@ -2,7 +2,7 @@ import { Tag, Typography } from "antd";
 import { CloseOutlined, CopyOutlined, CheckOutlined } from "@ant-design/icons";
 import { useState, useCallback } from "react";
 import moment from "moment";
-import { AuditLogEntry } from "../columns";
+import type { AuditLogEntry } from "../auditLogTypes";
 import DefaultProxyAdminTag from "../../common_components/DefaultProxyAdminTag";
 import SidePanel from "../../common_components/SidePanel";
 

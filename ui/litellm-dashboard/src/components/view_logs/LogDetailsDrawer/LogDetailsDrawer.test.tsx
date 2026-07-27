@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionSpendLogsCall } from "../../networking";
 import type { LogEntry } from "../columns";
-import { LogDetailsDrawer } from "./LogDetailsDrawer";
+import { LOG_DETAILS_PANEL_WIDTH, LogDetailsDrawer } from "./LogDetailsDrawer";
 
 vi.mock("../../networking", () => ({
 	sessionSpendLogsCall: vi.fn(),
@@ -28,8 +28,12 @@ vi.mock("./LogDetailContent", () => ({
 }));
 
 vi.mock("antd", () => ({
-	Drawer: ({ open, children }: { open: boolean; children: ReactNode }) =>
-		open ? <div role="dialog">{children}</div> : null,
+	Drawer: ({ open, children, width }: { open: boolean; children: ReactNode; width?: string | number }) =>
+		open ? (
+			<div role="dialog" data-width={width}>
+				{children}
+			</div>
+		) : null,
 	Button: ({ children, onClick, disabled, loading, ...props }: any) => (
 		<button type="button" onClick={onClick} disabled={disabled || loading} {...props}>
 			{children}
@@ -101,6 +105,14 @@ function renderDrawer(sessionGroup = claudeCodeGroup, teamId?: string) {
 describe("LogDetailsDrawer session fallback", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	it("使用更宽且保留小屏边距的日志详情面板", async () => {
+		vi.mocked(sessionSpendLogsCall).mockResolvedValue({ data: [clickedLog], snapshot: "snap-1", next_cursor: null });
+
+		renderDrawer();
+
+		expect(await screen.findByRole("dialog")).toHaveAttribute("data-width", LOG_DETAILS_PANEL_WIDTH);
 	});
 
 	it("完整 group ref 与显式 team scope 透传，query key 隔离 scope", async () => {

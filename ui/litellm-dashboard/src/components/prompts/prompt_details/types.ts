@@ -1,5 +1,1 @@
-export type PromptCopyHandler = (
-	value: string | null | undefined,
-	stateKey: string,
-) => Promise<void>;
-
+export type PromptCopyHandler = (value: string | null | undefined, stateKey: string) => Promise<void>;

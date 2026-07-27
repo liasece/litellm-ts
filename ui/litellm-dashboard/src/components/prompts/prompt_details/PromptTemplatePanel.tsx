@@ -10,14 +10,8 @@ interface PromptTemplatePanelProps {
 	onCopy: PromptCopyHandler;
 }
 
-export default function PromptTemplatePanel({
-	template,
-	copied,
-	onCopy,
-}: PromptTemplatePanelProps) {
-	const hasMetadata = Boolean(
-		template.metadata && Object.keys(template.metadata).length > 0,
-	);
+export default function PromptTemplatePanel({ template, copied, onCopy }: PromptTemplatePanelProps) {
+	const hasMetadata = Boolean(template.metadata && Object.keys(template.metadata).length > 0);
 
 	return (
 		<TabPanel>
@@ -42,16 +36,12 @@ export default function PromptTemplatePanel({
 				<div className="space-y-4">
 					<div>
 						<Text className="font-medium">Template ID</Text>
-						<div className="rounded bg-gray-50 p-2 font-mono text-sm">
-							{template.litellm_prompt_id}
-						</div>
+						<div className="rounded bg-gray-50 p-2 font-mono text-sm">{template.litellm_prompt_id}</div>
 					</div>
 					<div>
 						<Text className="font-medium">Content</Text>
 						<div className="mt-2 max-h-96 overflow-auto rounded-md border bg-gray-50 p-4">
-							<pre className="whitespace-pre-wrap text-sm text-gray-800">
-								{template.content}
-							</pre>
+							<pre className="whitespace-pre-wrap text-sm text-gray-800">{template.content}</pre>
 						</div>
 					</div>
 					{hasMetadata && (
@@ -69,4 +59,3 @@ export default function PromptTemplatePanel({
 		</TabPanel>
 	);
 }
-

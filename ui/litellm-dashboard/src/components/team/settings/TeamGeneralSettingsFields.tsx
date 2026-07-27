@@ -8,9 +8,12 @@ import type { TeamData } from "../types";
 
 interface TeamGeneralSettingsFieldsProps {
 	form: FormInstance;
-	teamId: string;
-	info: TeamData["team_info"];
+	teamId?: string;
+	info?: TeamData["team_info"];
 	userRole: string | null;
+	organizationId?: string | null;
+	mode?: "create" | "edit";
+	showTeamName?: boolean;
 }
 
 export default function TeamGeneralSettingsFields({
@@ -18,40 +21,58 @@ export default function TeamGeneralSettingsFields({
 	teamId,
 	info,
 	userRole,
+	organizationId,
+	mode = "edit",
+	showTeamName = true,
 }: TeamGeneralSettingsFieldsProps) {
+	const resolvedOrganizationId = organizationId ?? info?.organization_id;
+
 	return (
 		<>
-			<Form.Item label="Team Name" name="team_alias" rules={[{ required: true, message: "Please input a team name" }]}>
-				<Input />
-			</Form.Item>
+			{showTeamName && (
+				<Form.Item
+					label="Team Name"
+					name="team_alias"
+					rules={[{ required: true, message: "Please input a team name" }]}
+				>
+					<Input />
+				</Form.Item>
+			)}
 			<Form.Item label="Models" name="models" rules={[{ required: true, message: "Please select at least one model" }]}>
 				<ModelSelect
 					value={form.getFieldValue("models") || []}
 					onChange={(values) => form.setFieldValue("models", values)}
 					teamID={teamId}
-					organizationID={info.organization_id || undefined}
+					organizationID={resolvedOrganizationId || undefined}
 					options={{
 						includeSpecialOptions: true,
-						includeUserModels: !info.organization_id,
-						showAllProxyModelsOverride: isProxyAdminRole(userRole || "") && !info.organization_id,
+						includeUserModels: !resolvedOrganizationId,
+						showAllProxyModelsOverride:
+							mode === "create"
+								? !resolvedOrganizationId
+								: isProxyAdminRole(userRole || "") && !resolvedOrganizationId,
 					}}
 					context="team"
-					dataTestId="models-select"
+					dataTestId={mode === "create" ? "create-team-models-select" : "models-select"}
 				/>
 			</Form.Item>
 			<Form.Item label="Max Budget (USD)" name="max_budget">
 				<NumericalInput step={0.01} precision={2} style={{ width: "100%" }} />
 			</Form.Item>
-			<Form.Item label="Soft Budget (USD)" name="soft_budget">
-				<NumericalInput step={0.01} precision={2} style={{ width: "100%" }} />
-			</Form.Item>
-			<Form.Item
-				label="Soft Budget Alerting Emails"
-				name="soft_budget_alerting_emails"
-				tooltip="Comma-separated email addresses to receive alerts when the soft budget is reached"
-			>
-				<Input placeholder="example1@test.com, example2@test.com" />
-			</Form.Item>
+			{mode === "edit" && (
+				<>
+					<Form.Item label="Soft Budget (USD)" name="soft_budget">
+						<NumericalInput step={0.01} precision={2} style={{ width: "100%" }} />
+					</Form.Item>
+					<Form.Item
+						label="Soft Budget Alerting Emails"
+						name="soft_budget_alerting_emails"
+						tooltip="Comma-separated email addresses to receive alerts when the soft budget is reached"
+					>
+						<Input placeholder="example1@test.com, example2@test.com" />
+					</Form.Item>
+				</>
+			)}
 			<Form.Item
 				label="Team Member Budget (USD)"
 				name="team_member_budget"
@@ -59,12 +80,14 @@ export default function TeamGeneralSettingsFields({
 			>
 				<NumericalInput step={0.01} precision={2} style={{ width: "100%" }} />
 			</Form.Item>
-			<Form.Item label="Team Member Budget Duration" name="team_member_budget_duration">
-				<DurationSelect
-					onChange={(value) => form.setFieldValue("team_member_budget_duration", value)}
-					value={form.getFieldValue("team_member_budget_duration")}
-				/>
-			</Form.Item>
+			{mode === "edit" && (
+				<Form.Item label="Team Member Budget Duration" name="team_member_budget_duration">
+					<DurationSelect
+						onChange={(value) => form.setFieldValue("team_member_budget_duration", value)}
+						value={form.getFieldValue("team_member_budget_duration")}
+					/>
+				</Form.Item>
+			)}
 			<Form.Item
 				label="Team Member Key Duration (eg: 1d, 1mo)"
 				name="team_member_key_duration"

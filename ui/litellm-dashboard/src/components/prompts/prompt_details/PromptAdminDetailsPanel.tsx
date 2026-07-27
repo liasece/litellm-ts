@@ -10,10 +10,7 @@ function formatPromptDate(value?: string) {
 	return value ? new Date(value).toLocaleString() : "-";
 }
 
-export default function PromptAdminDetailsPanel({
-	prompt,
-	promptId,
-}: PromptAdminDetailsPanelProps) {
+export default function PromptAdminDetailsPanel({ prompt, promptId }: PromptAdminDetailsPanelProps) {
 	return (
 		<TabPanel>
 			<Card>
@@ -56,4 +53,3 @@ export default function PromptAdminDetailsPanel({
 		</TabPanel>
 	);
 }
-

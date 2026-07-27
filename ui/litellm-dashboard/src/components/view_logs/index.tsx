@@ -17,6 +17,7 @@ import AuditLogs from "./audit_logs";
 import { createColumns, getSessionGroupRef, LogEntry, type LogsSortField, type SessionGroupRef } from "./columns";
 import {
 	DEFAULT_LIVE_TAIL_INTERVAL_MS,
+	DEFAULT_LOGS_PAGE_SIZE,
 	ERROR_CODE_OPTIONS,
 	isLiveTailIntervalMs,
 	type LiveTailIntervalMs,
@@ -56,7 +57,7 @@ export default function SpendLogsTable({
 }: SpendLogsTableProps) {
 	const [searchTerm, setSearchTerm] = useState("");
 	const [currentPage, setCurrentPage] = useState(1);
-	const [pageSize, setPageSize] = useState(50);
+	const [pageSize, setPageSize] = useState<number>(DEFAULT_LOGS_PAGE_SIZE);
 
 	// New state variables for Start and End Time
 	const [startTime, setStartTime] = useState<string>(moment().subtract(24, "hours").format("YYYY-MM-DDTHH:mm"));
@@ -134,6 +135,8 @@ export default function SpendLogsTable({
 
 	useEffect(() => {
 		if (userRole && internalUserRoles.includes(userRole)) {
+			// The asynchronously loaded role establishes the initial scope for internal users.
+			// eslint-disable-next-line react-hooks/set-state-in-effect
 			setFilterByCurrentUser(true);
 		}
 	}, [userRole]);
@@ -210,7 +213,7 @@ export default function SpendLogsTable({
 		data: [],
 		total: 0,
 		page: 1,
-		page_size: pageSize || 10,
+		page_size: pageSize,
 		total_pages: 1,
 	};
 
@@ -248,6 +251,8 @@ export default function SpendLogsTable({
 	// Disable the main query whenever backend filters are active so it doesn't fire
 	// redundant unfiltered requests when time range / sort / page changes.
 	useEffect(() => {
+		// The filtered-query lifecycle gates the otherwise redundant unfiltered query.
+		// eslint-disable-next-line react-hooks/set-state-in-effect
 		setIsMainQueryEnabled(!hasBackendFilters);
 	}, [hasBackendFilters]);
 
@@ -255,6 +260,7 @@ export default function SpendLogsTable({
 	useEffect(() => {
 		if (!accessToken) return;
 
+		/* eslint-disable react-hooks/set-state-in-effect -- Applied filters intentionally synchronize the query parameter state. */
 		if (filters["Team ID"]) {
 			setSelectedTeamId(filters["Team ID"]);
 		} else {
@@ -268,6 +274,7 @@ export default function SpendLogsTable({
 		// We intentionally do not translate the alias to a hash here to avoid firing a
 		// redundant main-query request (api_key=hash) alongside performSearch's key_alias request.
 		setSelectedKeyHash(filters["Key Hash"] || "");
+		/* eslint-enable react-hooks/set-state-in-effect */
 	}, [filters, accessToken]);
 
 	if (!accessToken || !token || !userRole || !userID) {
@@ -360,6 +367,7 @@ export default function SpendLogsTable({
 				{ label: "In Progress", value: "in_progress" },
 				{ label: "Success", value: "success" },
 				{ label: "Failure", value: "failure" },
+				{ label: "Aborted", value: "aborted" },
 			],
 		},
 		{
@@ -453,24 +461,29 @@ export default function SpendLogsTable({
 								/>
 								<div className="bg-white rounded-lg shadow w-full max-w-full box-border">
 									<div className="border-b px-6 py-4 w-full max-w-full box-border">
-										<LogsToolbar
-											searchTerm={searchTerm}
-											startTime={startTime}
-											endTime={endTime}
-											customDate={isCustomDate}
-											selectedInterval={selectedTimeInterval}
-											liveTailIntervalMs={liveTailIntervalMs}
-											fetching={isButtonLoading}
-											onSearchTermChange={setSearchTerm}
-											onStartTimeChange={setStartTime}
-											onEndTimeChange={setEndTime}
-											onCustomDateChange={setIsCustomDate}
-											onSelectedIntervalChange={setSelectedTimeInterval}
-											onLiveTailIntervalChange={setLiveTailIntervalMs}
-											onRefresh={handleRefresh}
-											onPageReset={() => setCurrentPage(1)}
-										/>
-										<div className="mt-4 flex justify-end">
+										<div
+											data-testid="logs-controls-row"
+											className="flex w-full min-w-0 flex-col gap-4 xl:flex-row xl:items-center xl:justify-between"
+										>
+											<div className="min-w-0 flex-1">
+												<LogsToolbar
+													searchTerm={searchTerm}
+													startTime={startTime}
+													endTime={endTime}
+													customDate={isCustomDate}
+													selectedInterval={selectedTimeInterval}
+													liveTailIntervalMs={liveTailIntervalMs}
+													fetching={isButtonLoading}
+													onSearchTermChange={setSearchTerm}
+													onStartTimeChange={setStartTime}
+													onEndTimeChange={setEndTime}
+													onCustomDateChange={setIsCustomDate}
+													onSelectedIntervalChange={setSelectedTimeInterval}
+													onLiveTailIntervalChange={setLiveTailIntervalMs}
+													onRefresh={handleRefresh}
+													onPageReset={() => setCurrentPage(1)}
+												/>
+											</div>
 											<LogsPagination
 												currentPage={currentPage}
 												pageSize={pageSize}

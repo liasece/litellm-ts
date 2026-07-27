@@ -5,7 +5,7 @@ import type { CallType } from "../../types/spend";
  * 尚未生成最终 SpendLog 的在途请求。
  *
  * 该表只保存 Logs 列表需要的轻量字段；请求结束后由 SpendTracker 在最终落账事务内删除。
- * expires_at + heartbeat 用于隐藏进程崩溃后遗留的孤儿记录。
+ * expires_at + heartbeat 提供存活性信息；进程启动时会将遗留行转为 aborted SpendLog。
  */
 export const liteLLM_ActiveRequests = pgTable(
 	"LiteLLM_ActiveRequests",

@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ModelsAndEndpointsView from "./ModelsAndEndpointsView";
 
@@ -135,7 +135,6 @@ describe("ModelsAndEndpointsView", () => {
       userRole: "Admin",
       userId: "123",
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (global as any).ResizeObserver = class {
       observe() {}
       unobserve() {}
@@ -299,5 +298,52 @@ describe("ModelsAndEndpointsView", () => {
 
     expect(getByRole("tab", { name: "Health Status" })).toHaveAttribute("aria-selected", "true");
     expect(mockHealthCheckComponent).toHaveBeenCalled();
+  });
+
+  it("preserves a requested tab while authorization is still loading", () => {
+    navigationMocks.search = "page=models&tab=health";
+    mockUseAuthorized.mockReturnValue({
+      accessToken: "",
+      token: null,
+      userRole: null,
+      userId: null,
+    });
+
+    const queryClient = createQueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ModelsAndEndpointsView
+          token={null}
+          modelData={{ data: [] }}
+          keys={[]}
+          setModelData={() => {}}
+          premiumUser={false}
+          teams={null}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(navigationMocks.replace).not.toHaveBeenCalled();
+
+    mockUseAuthorized.mockReturnValue({
+      accessToken: "123",
+      token: "123",
+      userRole: "Admin",
+      userId: "123",
+    });
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ModelsAndEndpointsView
+          token="123"
+          modelData={{ data: [] }}
+          keys={[]}
+          setModelData={() => {}}
+          premiumUser={false}
+          teams={[]}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(view.getByRole("tab", { name: "Health Status" })).toHaveAttribute("aria-selected", "true");
   });
 });

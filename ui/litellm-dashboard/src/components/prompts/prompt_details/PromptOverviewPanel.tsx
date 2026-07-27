@@ -11,11 +11,7 @@ function formatPromptDate(value?: string) {
 	return value ? new Date(value).toLocaleString() : "-";
 }
 
-export default function PromptOverviewPanel({
-	prompt,
-	promptId,
-	version,
-}: PromptOverviewPanelProps) {
+export default function PromptOverviewPanel({ prompt, promptId, version }: PromptOverviewPanelProps) {
 	const promptType = prompt.prompt_info?.prompt_type || "-";
 	const hasParameters = Object.keys(prompt.litellm_params ?? {}).length > 0;
 
@@ -68,4 +64,3 @@ export default function PromptOverviewPanel({
 		</TabPanel>
 	);
 }
-

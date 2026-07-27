@@ -1,4 +1,4 @@
-import { Button, Select, SelectItem, TabPanel, Text, Title } from "@tremor/react";
+import { Button, Select, SelectItem, Text, Title } from "@tremor/react";
 import { InputNumber } from "antd";
 import React from "react";
 
@@ -45,7 +45,7 @@ const ModelRetrySettingsTab = ({
   //  const [modelGroupRetryPolicy, setModelGroupRetryPolicy] = useState<RetryPolicyObject | null>(null);
 
   return (
-    <TabPanel>
+    <>
       <div className="flex items-center gap-4 mb-6">
         <div className="flex items-center">
           <Text>Retry Policy Scope:</Text>
@@ -147,7 +147,7 @@ const ModelRetrySettingsTab = ({
       <Button className="mt-6 mr-8" onClick={handleSaveRetrySettings}>
         Save
       </Button>
-    </TabPanel>
+    </>
   );
 };
 

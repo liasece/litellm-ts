@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import { teamDeleteCall, Organization } from "@/components/networking";
 import { fetchTeams } from "@/components/common_components/fetch_teams";
 import { Form } from "antd";
@@ -7,9 +7,9 @@ import TeamSSOSettings from "@/components/TeamSSOSettings";
 import { isAdminRole } from "@/utils/roles";
 import { Card, Button, Col, Text, Grid, TabPanel } from "@tremor/react";
 import AvailableTeamsPanel from "@/components/team/available_teams";
-import type { KeyResponse, Team } from "@/components/key_team_helpers/key_list";
+import type { Team } from "@/components/key_team_helpers/key_list";
 
-import { Member, v2TeamListCall } from "@/components/networking";
+import { v2TeamListCall } from "@/components/networking";
 import { updateExistingKeys } from "@/utils/dataUtils";
 import TeamsHeaderTabs from "@/app/(dashboard)/teams/components/TeamsHeaderTabs";
 import TeamsFilters from "@/app/(dashboard)/teams/components/TeamsFilters";
@@ -17,6 +17,7 @@ import useFetchTeams from "@/app/(dashboard)/teams/hooks/useFetchTeams";
 import TeamsTable from "@/app/(dashboard)/teams/components/TeamsTable/TeamsTable";
 import DeleteTeamModal from "@/app/(dashboard)/teams/components/modals/DeleteTeamModal";
 import CreateTeamModal from "@/app/(dashboard)/teams/components/modals/CreateTeamModal";
+import { derivePerTeamInfo } from "@/app/(dashboard)/teams/perTeamInfo";
 
 interface TeamProps {
   teams: Team[] | null;
@@ -34,15 +35,6 @@ interface FilterState {
   organization_id: string;
   sort_by: string;
   sort_order: "asc" | "desc";
-}
-
-interface TeamInfo {
-  members_with_roles: Member[];
-}
-
-interface PerTeamInfo {
-  keys: KeyResponse[];
-  team_info: TeamInfo;
 }
 
 const TeamsView: React.FC<TeamProps> = ({
@@ -76,34 +68,11 @@ const TeamsView: React.FC<TeamProps> = ({
   const [userModels, setUserModels] = useState<string[]>([]);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
-  const [perTeamInfo, setPerTeamInfo] = useState<Record<string, PerTeamInfo>>({});
+  const perTeamInfo = useMemo(() => derivePerTeamInfo(teams), [teams]);
 
   const [loggingSettings, setLoggingSettings] = useState<any[]>([]);
   const [modelAliases, setModelAliases] = useState<{ [key: string]: string }>({});
   const { lastRefreshed, onRefreshClick: handleRefreshClick } = useFetchTeams({ currentOrg, setTeams });
-
-  useEffect(() => {
-    const fetchTeamInfo = () => {
-      if (!teams) return;
-
-      const newPerTeamInfo = teams.reduce(
-        (acc, team) => {
-          acc[team.team_id] = {
-            keys: team.keys || [],
-            team_info: {
-              members_with_roles: team.members_with_roles || [],
-            },
-          };
-          return acc;
-        },
-        {} as Record<string, PerTeamInfo>,
-      );
-
-      setPerTeamInfo(newPerTeamInfo);
-    };
-
-    fetchTeamInfo();
-  }, [teams]);
 
   const handleOk = () => {
     setIsTeamModalVisible(false);

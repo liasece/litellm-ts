@@ -1,3 +1,5 @@
+import { LOGS_PAGE_SIZE_OPTIONS } from "./constants";
+
 interface LogsPaginationProps {
 	currentPage: number;
 	pageSize: number;
@@ -21,7 +23,7 @@ export default function LogsPagination({
 	const lastResult = Math.min(currentPage * pageSize, total);
 
 	return (
-		<div className="flex items-center space-x-4">
+		<div className="flex shrink-0 items-center gap-4 whitespace-nowrap">
 			<span className="whitespace-nowrap text-sm text-gray-700">
 				Showing {loading ? "..." : firstResult} - {loading ? "..." : lastResult} of {loading ? "..." : total} results
 			</span>
@@ -33,9 +35,9 @@ export default function LogsPagination({
 					id="logs-page-size"
 					value={pageSize}
 					onChange={(event) => onPageSizeChange(Number(event.target.value))}
-					className="rounded-md border px-2 py-1 text-sm"
+					className="w-24 min-w-24 rounded-md border bg-white py-1 pl-3 pr-8 text-sm"
 				>
-					{[50, 100, 200, 500, 1000].map((size) => (
+					{LOGS_PAGE_SIZE_OPTIONS.map((size) => (
 						<option key={size} value={size}>
 							{size}
 						</option>

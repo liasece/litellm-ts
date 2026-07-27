@@ -6,11 +6,7 @@ interface PromptsToolbarProps {
 	onUpload: () => void;
 }
 
-export default function PromptsToolbar({
-	disabled,
-	onCreate,
-	onUpload,
-}: PromptsToolbarProps) {
+export default function PromptsToolbar({ disabled, onCreate, onUpload }: PromptsToolbarProps) {
 	return (
 		<div className="mb-4 flex items-center justify-between">
 			<div className="flex gap-2">
@@ -24,4 +20,3 @@ export default function PromptsToolbar({
 		</div>
 	);
 }
-

@@ -77,6 +77,7 @@ export default function PromptInfoView({
 	}, [accessToken, promptId]);
 
 	useEffect(() => {
+		// eslint-disable-next-line react-hooks/set-state-in-effect -- The async loader owns the loading and result state.
 		void fetchPromptInfo();
 	}, [fetchPromptInfo]);
 

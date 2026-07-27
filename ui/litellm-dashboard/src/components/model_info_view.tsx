@@ -1,30 +1,16 @@
 import { useModelCostMap } from "@/app/(dashboard)/hooks/models/useModelCostMap";
 import { useModelHub, useModelsInfo } from "@/app/(dashboard)/hooks/models/useModels";
 import { transformModelData } from "@/app/(dashboard)/models-and-endpoints/utils/modelDataTransformer";
-import {
-	Card,
-	Tab,
-	TabGroup,
-	TabList,
-	TabPanel,
-	TabPanels,
-	Text,
-	Title,
-	Button as TremorButton,
-} from "@tremor/react";
-import { Button, Form, Modal } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { Text } from "@tremor/react";
+import { Button, Form } from "antd";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { copyToClipboard as utilCopyToClipboard } from "../utils/dataUtils";
 import { truncateString } from "../utils/textUtils";
-import DeleteResourceModal from "./common_components/DeleteResourceModal";
 import ResourceDetailsDrawer from "./common_components/ResourceDetailsDrawer";
-import EditAutoRouterModal from "./edit_auto_router/edit_auto_router_modal";
-import ReuseCredentialsModal from "./model_add/reuse_credentials";
 import NotificationsManager from "./molecules/notifications_manager";
 import ModelDetailsHeader from "./model_details/ModelDetailsHeader";
-import ModelOverview from "./model_details/ModelOverview";
-import ModelSettingsContent from "./model_details/ModelSettingsContent";
-import ModelSettingsDialog from "./model_details/ModelSettingsDialog";
+import ModelDetailsDialogs from "./model_details/ModelDetailsDialogs";
+import ModelDetailsTabs from "./model_details/ModelDetailsTabs";
 import {
 	CredentialItem,
 	credentialCreateCall,
@@ -49,6 +35,18 @@ interface ModelInfoViewProps {
 	onModelUpdate?: (updatedModel: any) => void;
 	modelAccessGroups: string[] | null;
 }
+
+const normalizeModelData = (modelData: any) => {
+	if (!modelData || modelData.litellm_model_name) return modelData;
+	return {
+		...modelData,
+		litellm_model_name:
+			modelData.litellm_params?.litellm_model_name ??
+			modelData.litellm_params?.model ??
+			modelData.model_info?.key ??
+			null,
+	};
+};
 
 export const attachCredentialToModel = async (
 	accessToken: string,
@@ -86,7 +84,7 @@ export default function ModelInfoView({
 	const [isSaving, setIsSaving] = useState(false);
 	const [isEditing, setIsEditing] = useState(false);
 	const [existingCredential, setExistingCredential] = useState<CredentialItem | null>(null);
-	const [showCacheControl, setShowCacheControl] = useState(false);
+	const [showCacheControl, setShowCacheControl] = useState<boolean | null>(null);
 	const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
 	const [isAutoRouterModalOpen, setIsAutoRouterModalOpen] = useState(false);
 	const [guardrailsList, setGuardrailsList] = useState<string[]>([]);
@@ -100,14 +98,14 @@ export default function ModelInfoView({
 	const { data: modelHubData } = useModelHub();
 
 	// Transform the model data
-	const getProviderFromModel = (model: string) => {
+	const getProviderFromModel = useCallback((model: string) => {
 		if (modelCostMapData !== null && modelCostMapData !== undefined) {
 			if (typeof modelCostMapData == "object" && model in modelCostMapData) {
 				return modelCostMapData[model]["litellm_provider"];
 			}
 		}
 		return "openai";
-	};
+	}, [modelCostMapData]);
 
 	const transformedModelData = useMemo(() => {
 		if (!rawModelDataResponse?.data || rawModelDataResponse.data.length === 0) {
@@ -115,10 +113,10 @@ export default function ModelInfoView({
 		}
 		const transformed = transformModelData(rawModelDataResponse, getProviderFromModel);
 		return transformed.data[0] || null;
-	}, [rawModelDataResponse, modelCostMapData]);
+	}, [rawModelDataResponse, getProviderFromModel]);
 
 	// Keep modelData variable name for backwards compatibility
-	const modelData = transformedModelData;
+	const modelData = useMemo(() => normalizeModelData(transformedModelData), [transformedModelData]);
 	const currentModelData = localModelData ?? modelData;
 
 	const syncFormWithModel = (updatedModel: any) => {
@@ -162,40 +160,18 @@ export default function ModelInfoView({
 	};
 
 	const canEditModel =
-		(userRole === "Admin" || modelData?.model_info?.created_by === userID) && modelData?.model_info?.db_model;
+		(userRole === "Admin" || currentModelData?.model_info?.created_by === userID) &&
+		currentModelData?.model_info?.db_model;
 	const isAdmin = userRole === "Admin";
-	const isAutoRouter = modelData?.litellm_params?.auto_router_config != null;
+	const isAutoRouter = currentModelData?.litellm_params?.auto_router_config != null;
 
 	const usingExistingCredential = Boolean(currentModelData?.litellm_params?.litellm_credential_name);
-
-	// Initialize localModelData from modelData when available
-	useEffect(() => {
-		if (modelData && !localModelData) {
-			let processedModelData = modelData;
-			if (!processedModelData.litellm_model_name) {
-				processedModelData = {
-					...processedModelData,
-					litellm_model_name:
-						processedModelData?.litellm_params?.litellm_model_name ??
-						processedModelData?.litellm_params?.model ??
-						processedModelData?.model_info?.key ??
-						null,
-				};
-			}
-			setLocalModelData(processedModelData);
-
-			// Check if cache control is enabled
-			if (processedModelData?.litellm_params?.cache_control_injection_points) {
-				setShowCacheControl(true);
-			}
-		}
-	}, [modelData, localModelData]);
 
 	useEffect(() => {
 		const getExistingCredential = async () => {
 			if (!accessToken) return;
 			if (usingExistingCredential) return;
-			let existingCredentialResponse = await credentialGetCall(accessToken, null, modelId);
+			const existingCredentialResponse = await credentialGetCall(accessToken, null, modelId);
 			setExistingCredential({
 				credential_name: existingCredentialResponse["credential_name"],
 				credential_values: existingCredentialResponse["credential_values"],
@@ -203,22 +179,16 @@ export default function ModelInfoView({
 			});
 		};
 
+		void getExistingCredential();
+	}, [accessToken, modelId, usingExistingCredential]);
+
+	useEffect(() => {
 		const getModelInfo = async () => {
 			if (!accessToken) return;
 			// Only fetch if we don't have modelData yet
 			if (modelData) return;
-			let modelInfoResponse = await modelInfoV1Call(accessToken, modelId);
-			let specificModelData = modelInfoResponse.data[0];
-			if (specificModelData && !specificModelData.litellm_model_name) {
-				specificModelData = {
-					...specificModelData,
-					litellm_model_name:
-						specificModelData?.litellm_params?.litellm_model_name ??
-						specificModelData?.litellm_params?.model ??
-						specificModelData?.model_info?.key ??
-						null,
-				};
-			}
+			const modelInfoResponse = await modelInfoV1Call(accessToken, modelId);
+			const specificModelData = normalizeModelData(modelInfoResponse.data[0]);
 			setLocalModelData(specificModelData);
 
 			// Check if cache control is enabled
@@ -227,14 +197,18 @@ export default function ModelInfoView({
 			}
 		};
 
+		void getModelInfo();
+	}, [accessToken, modelData, modelId]);
+
+	useEffect(() => {
 		const fetchGuardrails = async () => {
 			if (!accessToken) return;
 			try {
 				const response = await getGuardrailsList(accessToken);
 				const guardrailNames = response.guardrails.map((g: { guardrail_name: string }) => g.guardrail_name);
 				setGuardrailsList(guardrailNames);
-			} catch (error) {
-				console.error("Failed to fetch guardrails:", error);
+			} catch {
+				NotificationsManager.fromBackend("Failed to load guardrails");
 			}
 		};
 
@@ -243,8 +217,8 @@ export default function ModelInfoView({
 			try {
 				const response = await tagListCall(accessToken);
 				setTagsList(response);
-			} catch (error) {
-				console.error("Failed to fetch tags:", error);
+			} catch {
+				NotificationsManager.fromBackend("Failed to load tags");
 			}
 		};
 
@@ -253,21 +227,19 @@ export default function ModelInfoView({
 			try {
 				const response = await credentialListCall(accessToken);
 				setCredentialsList(response.credentials || []);
-			} catch (error) {
-				console.error("Failed to fetch credentials:", error);
+			} catch {
+				NotificationsManager.fromBackend("Failed to load credentials");
 			}
 		};
 
-		getExistingCredential();
-		getModelInfo();
-		fetchGuardrails();
-		fetchTags();
-		fetchCredentials();
-	}, [accessToken, modelId]);
+		void fetchGuardrails();
+		void fetchTags();
+		void fetchCredentials();
+	}, [accessToken]);
 
 	const handleReuseCredential = async (values: { credential_name: string }) => {
 		if (!accessToken) return;
-		const attached = await attachCredentialToModel(accessToken, modelId, localModelData, values, credentialCreateCall);
+		const attached = await attachCredentialToModel(accessToken, modelId, currentModelData, values, credentialCreateCall);
 		if (!attached) {
 			NotificationsManager.error("Model data is still loading. Please try again.");
 			return;
@@ -281,13 +253,13 @@ export default function ModelInfoView({
 		const refreshedModel = modelInfoResponse.data?.[0];
 		if (refreshedModel) {
 			const updatedModelData = {
-				...localModelData,
+				...currentModelData,
 				...refreshedModel,
 				litellm_model_name:
 					refreshedModel.litellm_model_name ??
 					refreshedModel.litellm_params?.litellm_model_name ??
 					refreshedModel.litellm_params?.model ??
-					localModelData.litellm_model_name,
+					currentModelData.litellm_model_name,
 			};
 			setLocalModelData(updatedModelData);
 			syncFormWithModel(updatedModelData);
@@ -396,19 +368,19 @@ export default function ModelInfoView({
 			const hasReturnedModelData = returnedModelData && Object.keys(returnedModelData).length > 0;
 			const updatedModelData = hasReturnedModelData
 				? {
-						...localModelData,
+						...currentModelData,
 						...returnedModelData,
 						litellm_params: {
-							...localModelData?.litellm_params,
+							...currentModelData?.litellm_params,
 							...returnedModelData.litellm_params,
 						},
 						model_info: {
-							...localModelData?.model_info,
+							...currentModelData?.model_info,
 							...returnedModelData.model_info,
 						},
 					}
 				: {
-						...localModelData,
+						...currentModelData,
 						model_name: values.model_name,
 						litellm_model_name: values.litellm_model_name,
 						litellm_params: updatedLitellmParams,
@@ -421,8 +393,7 @@ export default function ModelInfoView({
 
 			NotificationsManager.success("Model settings updated successfully");
 			setIsEditing(false);
-		} catch (error) {
-			console.error("Error updating model:", error);
+		} catch {
 			NotificationsManager.fromBackend("Failed to update model settings");
 		} finally {
 			setIsSaving(false);
@@ -435,7 +406,7 @@ export default function ModelInfoView({
 	}
 
 	// Show not found if model is not found
-	if (!modelData) {
+	if (!currentModelData) {
 		return <Text>Model not found</Text>;
 	}
 
@@ -446,14 +417,14 @@ export default function ModelInfoView({
 			const response = await testConnectionRequest(
 				accessToken,
 				{
-					custom_llm_provider: localModelData.litellm_params.custom_llm_provider,
-					litellm_credential_name: localModelData.litellm_params.litellm_credential_name,
-					model: localModelData.litellm_model_name,
+					custom_llm_provider: currentModelData.litellm_params.custom_llm_provider,
+					litellm_credential_name: currentModelData.litellm_params.litellm_credential_name,
+					model: currentModelData.litellm_model_name,
 				},
 				{
-					mode: localModelData.model_info?.mode,
+					mode: currentModelData.model_info?.mode,
 				},
-				localModelData.model_info?.mode,
+				currentModelData.model_info?.mode,
 			);
 
 			if (response.status === "success") {
@@ -485,8 +456,7 @@ export default function ModelInfoView({
 			}
 
 			onClose();
-		} catch (error) {
-			console.error("Error deleting the model:", error);
+		} catch {
 			NotificationsManager.fromBackend("Failed to delete model");
 		} finally {
 			setDeleteLoading(false);
@@ -510,7 +480,9 @@ export default function ModelInfoView({
 			onModelUpdate(updatedModel);
 		}
 	};
-	const isWildcardModel = modelData.litellm_model_name.includes("*");
+	const isWildcardModel = currentModelData.litellm_model_name.includes("*");
+	const cacheControlEnabled =
+		showCacheControl ?? Boolean(currentModelData.litellm_params?.cache_control_injection_points);
 
 	return (
 		<ResourceDetailsDrawer
@@ -519,8 +491,8 @@ export default function ModelInfoView({
 				setIsEditing(false);
 				onClose();
 			}}
-			title={`Model: ${getDisplayModelName(modelData)}`}
-			subtitle={modelData.model_info.id}
+			title={`Model: ${getDisplayModelName(currentModelData)}`}
+			subtitle={currentModelData.model_info.id}
 			actions={
 				canEditModel ? (
 					<Button type="primary" onClick={() => setIsEditing(true)}>
@@ -531,149 +503,57 @@ export default function ModelInfoView({
 		>
 			<div className="p-4">
 				<ModelDetailsHeader
-					displayName={getDisplayModelName(modelData)}
-					modelId={modelData.model_info.id}
+					displayName={getDisplayModelName(currentModelData)}
+					modelId={currentModelData.model_info.id}
 					modelIdCopied={Boolean(copiedStates["model-id"])}
 					canEditModel={canEditModel}
 					isAdmin={isAdmin}
-					onCopyModelId={() => copyToClipboard(modelData.model_info.id, "model-id")}
+					onCopyModelId={() => copyToClipboard(currentModelData.model_info.id, "model-id")}
 					onTestConnection={handleTestConnection}
 					onReuseCredentials={() => setIsCredentialModalOpen(true)}
 					onDeleteModel={() => setIsDeleteModalOpen(true)}
 				/>
 
-				<TabGroup>
-					<TabList className="mb-6">
-						<Tab>Overview</Tab>
-						<Tab>Raw JSON</Tab>
-					</TabList>
-
-					<TabPanels>
-						<TabPanel>
-							<ModelOverview modelData={modelData} />
-
-							{/* Settings Card */}
-							<Card>
-								<div className="flex justify-between items-center mb-4">
-									<Title>Model Settings</Title>
-									{isAutoRouter && canEditModel && (
-										<TremorButton onClick={() => setIsAutoRouterModalOpen(true)} className="flex items-center">
-											Edit Auto Router
-										</TremorButton>
-									)}
-								</div>
-								{localModelData ? (
-									<ModelSettingsContent
-										editing={false}
-										modelData={localModelData}
-										modelAccessGroups={modelAccessGroups}
-										accessToken={accessToken}
-										guardrails={guardrailsList}
-										tags={tagsList}
-										selectedCredentialName={selectedCredentialName}
-										credentials={credentialsList}
-										isWildcardModel={isWildcardModel}
-										modelHubData={modelHubData}
-										form={form}
-										showCacheControl={showCacheControl}
-										isSaving={isSaving}
-										onCacheControlChange={setShowCacheControl}
-										onCancel={() => undefined}
-									/>
-								) : (
-									<Text>Loading...</Text>
-								)}
-							</Card>
-
-							{localModelData && (
-								<ModelSettingsDialog
-									open={isEditing}
-									onCancel={() => {
-										setIsEditing(false);
-									}}
-									onSave={handleModelUpdate}
-									modelData={localModelData}
-									modelAccessGroups={modelAccessGroups}
-									accessToken={accessToken}
-									guardrails={guardrailsList}
-									tags={tagsList}
-									selectedCredentialName={selectedCredentialName}
-									credentials={credentialsList}
-									isWildcardModel={isWildcardModel}
-									modelHubData={modelHubData}
-									form={form}
-									showCacheControl={showCacheControl}
-									isSaving={isSaving}
-									onCacheControlChange={setShowCacheControl}
-								/>
-							)}
-						</TabPanel>
-
-						<TabPanel>
-							<Card>
-								<pre className="bg-gray-100 p-4 rounded text-xs overflow-auto">
-									{JSON.stringify(modelData, null, 2)}
-								</pre>
-							</Card>
-						</TabPanel>
-					</TabPanels>
-				</TabGroup>
-
-				<DeleteResourceModal
-					isOpen={isDeleteModalOpen}
-					title="Delete Model"
-					alertMessage="This action cannot be undone."
-					message="Are you sure you want to delete this model?"
-					resourceInformationTitle="Model Information"
-					resourceInformation={[
-						{
-							label: "Model Name",
-							value: modelData?.model_name || "Not Set",
-						},
-						{
-							label: "LiteLLM Model Name",
-							value: modelData?.litellm_model_name || "Not Set",
-						},
-						{
-							label: "Provider",
-							value: modelData?.provider || "Not Set",
-						},
-						{
-							label: "Created By",
-							value: modelData?.model_info?.created_by || "Not Set",
-						},
-					]}
-					onCancel={() => setIsDeleteModalOpen(false)}
-					onOk={handleDelete}
-					confirmLoading={deleteLoading}
+				<ModelDetailsTabs
+					modelData={currentModelData}
+					localModelData={currentModelData}
+					canEditModel={canEditModel}
+					isAutoRouter={isAutoRouter}
+					isEditing={isEditing}
+					modelAccessGroups={modelAccessGroups}
+					accessToken={accessToken}
+					guardrails={guardrailsList}
+					tags={tagsList}
+					selectedCredentialName={selectedCredentialName}
+					credentials={credentialsList}
+					isWildcardModel={isWildcardModel}
+					modelHubData={modelHubData}
+					form={form}
+					showCacheControl={cacheControlEnabled}
+					isSaving={isSaving}
+					onEditAutoRouter={() => setIsAutoRouterModalOpen(true)}
+					onEditingChange={setIsEditing}
+					onCacheControlChange={setShowCacheControl}
+					onSave={handleModelUpdate}
 				/>
 
-				{isCredentialModalOpen && !usingExistingCredential ? (
-					<ReuseCredentialsModal
-						isVisible={isCredentialModalOpen}
-						onCancel={() => setIsCredentialModalOpen(false)}
-						onAddCredential={handleReuseCredential}
-						existingCredential={existingCredential}
-						setIsCredentialModalOpen={setIsCredentialModalOpen}
-					/>
-				) : (
-					<Modal
-						open={isCredentialModalOpen}
-						onCancel={() => setIsCredentialModalOpen(false)}
-						title="Using Existing Credential"
-					>
-						<Text>{currentModelData?.litellm_params?.litellm_credential_name}</Text>
-					</Modal>
-				)}
-
-				{/* Edit Auto Router Modal */}
-				<EditAutoRouterModal
-					isVisible={isAutoRouterModalOpen}
-					onCancel={() => setIsAutoRouterModalOpen(false)}
-					onSuccess={handleAutoRouterUpdate}
-					modelData={localModelData || modelData}
-					accessToken={accessToken || ""}
-					userRole={userRole || ""}
+				<ModelDetailsDialogs
+					modelData={currentModelData}
+					localModelData={currentModelData}
+					accessToken={accessToken}
+					userRole={userRole}
+					deleteOpen={isDeleteModalOpen}
+					deleteLoading={deleteLoading}
+					credentialOpen={isCredentialModalOpen}
+					usingExistingCredential={usingExistingCredential}
+					existingCredential={existingCredential}
+					autoRouterOpen={isAutoRouterModalOpen}
+					onDeleteOpenChange={setIsDeleteModalOpen}
+					onDelete={handleDelete}
+					onCredentialOpenChange={setIsCredentialModalOpen}
+					onReuseCredential={handleReuseCredential}
+					onAutoRouterOpenChange={setIsAutoRouterModalOpen}
+					onAutoRouterUpdate={handleAutoRouterUpdate}
 				/>
 			</div>
 		</ResourceDetailsDrawer>

@@ -35,7 +35,7 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 
 	// Extract error information from metadata if available
 	const metadata = row.original.metadata || {};
-	const hasError = metadata.status === "failure";
+	const hasError = metadata.status === "failure" || metadata.status === "aborted";
 	const errorInfo = hasError ? metadata.error_information : null;
 
 	// Check if request/response data is missing
@@ -191,6 +191,8 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 								className={`px-2 py-1 rounded-md text-xs font-medium inline-block text-center min-w-16 ${
 									(row.original.metadata?.status || row.original.status || "success").toLowerCase() === "in_progress"
 										? "bg-amber-100 text-amber-800"
+										: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "aborted"
+											? "bg-orange-100 text-orange-800"
 										: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "failure"
 											? "bg-red-100 text-red-800"
 											: "bg-green-100 text-green-800"
@@ -198,6 +200,8 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 							>
 								{(row.original.metadata?.status || row.original.status || "success").toLowerCase() === "in_progress"
 									? "In Progress"
+									: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "aborted"
+										? "Aborted"
 									: (row.original.metadata?.status || row.original.status || "success").toLowerCase() === "failure"
 										? "Failure"
 										: "Success"}

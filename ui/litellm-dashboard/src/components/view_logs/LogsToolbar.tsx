@@ -50,7 +50,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 		: selectedOption?.label;
 
 	return (
-		<div className="flex w-full max-w-full flex-col items-start justify-between space-y-4 md:flex-row md:items-center md:space-y-0">
+		<div className="w-full min-w-0">
 			<div className="flex w-full max-w-full flex-wrap items-center gap-3">
 				<div className="relative w-64 min-w-0 flex-shrink-0">
 					<input
@@ -137,7 +137,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 						<select
 							id="live-tail-interval"
 							aria-label="Live Tail refresh interval"
-							className="rounded-md border border-gray-300 bg-white px-2.5 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+							className="min-w-20 rounded-md border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
 							value={props.liveTailIntervalMs}
 							onChange={(event) => props.onLiveTailIntervalChange(Number(event.target.value) as LiveTailIntervalMs)}
 						>

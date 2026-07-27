@@ -9,11 +9,7 @@ interface PromptRawJsonPanelProps {
 	onCopy: PromptCopyHandler;
 }
 
-export default function PromptRawJsonPanel({
-	response,
-	copied,
-	onCopy,
-}: PromptRawJsonPanelProps) {
+export default function PromptRawJsonPanel({ response, copied, onCopy }: PromptRawJsonPanelProps) {
 	const formattedResponse = JSON.stringify(response, null, 2);
 
 	return (
@@ -36,12 +32,9 @@ export default function PromptRawJsonPanel({
 					</Button>
 				</div>
 				<div className="overflow-auto rounded-md border bg-gray-50 p-4">
-					<pre className="whitespace-pre-wrap text-xs text-gray-800">
-						{formattedResponse}
-					</pre>
+					<pre className="whitespace-pre-wrap text-xs text-gray-800">{formattedResponse}</pre>
 				</div>
 			</Card>
 		</TabPanel>
 	);
 }
-

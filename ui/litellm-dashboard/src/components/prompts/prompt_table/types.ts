@@ -3,4 +3,3 @@ export interface ModelGroupInfo {
 	providers: string[];
 	[key: string]: unknown;
 }
-

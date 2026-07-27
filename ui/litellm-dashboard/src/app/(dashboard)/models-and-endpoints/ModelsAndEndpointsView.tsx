@@ -161,10 +161,13 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
   };
 
   useEffect(() => {
+    if (!userRole || isLoadingUISettings || teams === null) {
+      return;
+    }
     if (requestedTab && requestedTab !== selectedTabKey) {
       updateTabInUrl(selectedTabKey);
     }
-  }, [requestedTab, selectedTabKey, updateTabInUrl]);
+  }, [isLoadingUISettings, requestedTab, selectedTabKey, teams, updateTabInUrl, userRole]);
 
   const availableModelGroups = useMemo(() => {
     if (!modelDataResponse?.data) return [];
@@ -173,7 +176,7 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
       allModelGroups.add(model.model_name);
     }
     return Array.from(allModelGroups).sort();
-  }, [modelDataResponse?.data]);
+  }, [modelDataResponse]);
 
   const availableModelAccessGroups = useMemo(() => {
     if (!modelDataResponse?.data) return [];
@@ -187,33 +190,33 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
       }
     }
     return Array.from(allModelAccessGroups);
-  }, [modelDataResponse?.data]);
+  }, [modelDataResponse]);
 
   const allModelsOnProxy = useMemo<string[]>(() => {
     if (!modelDataResponse?.data) return [];
     return modelDataResponse.data.map((model: any) => model.model_name);
-  }, [modelDataResponse?.data]);
+  }, [modelDataResponse]);
 
   const allModelIdsOnProxy = useMemo<string[]>(() => {
     if (!modelDataResponse?.data) return [];
     return modelDataResponse.data
       .map((model: any) => model.model_info?.id)
       .filter((id: string | undefined): id is string => Boolean(id));
-  }, [modelDataResponse?.data]);
+  }, [modelDataResponse]);
 
-  const getProviderFromModel = (model: string) => {
+  const getProviderFromModel = useCallback((model: string) => {
     if (modelCostMapData !== null && modelCostMapData !== undefined) {
       if (typeof modelCostMapData == "object" && model in modelCostMapData) {
         return modelCostMapData[model]["litellm_provider"];
       }
     }
     return "openai";
-  };
+  }, [modelCostMapData]);
 
   const processedModelData = useMemo(() => {
     if (!modelDataResponse?.data) return { data: [] };
     return transformModelData(modelDataResponse, getProviderFromModel);
-  }, [modelDataResponse?.data, getProviderFromModel]);
+  }, [modelDataResponse, getProviderFromModel]);
 
   const setProviderModelsFn = (provider: Providers) => {
     const _providerModels = getProviderModels(provider, modelCostMapData);
@@ -384,18 +387,20 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
               </div>
             </TabList>
             <TabPanels>
-              {selectedTabKey === MODEL_TAB_KEYS.MODELS ? (
-                <AllModelsTab
-                  selectedModelGroup={selectedModelGroup}
-                  setSelectedModelGroup={setSelectedModelGroup}
-                  availableModelGroups={availableModelGroups}
-                  availableModelAccessGroups={availableModelAccessGroups}
-                  setSelectedModelId={setSelectedModelId}
-                  setSelectedTeamId={setSelectedTeamId}
-                />
-              ) : (
-                <TabPanel />
-              )}
+              {/* Keep every TabPanel mounted in a stable order. Headless UI otherwise
+                  normalizes the selected index back to 0 while async auth changes the tabs. */}
+              <TabPanel>
+                {selectedTabKey === MODEL_TAB_KEYS.MODELS && (
+                  <AllModelsTab
+                    selectedModelGroup={selectedModelGroup}
+                    setSelectedModelGroup={setSelectedModelGroup}
+                    availableModelGroups={availableModelGroups}
+                    availableModelAccessGroups={availableModelAccessGroups}
+                    setSelectedModelId={setSelectedModelId}
+                    setSelectedTeamId={setSelectedTeamId}
+                  />
+                )}
+              </TabPanel>
               {!shouldHideAddModelTab && (
                 <TabPanel className="h-full">
                   {selectedTabKey === MODEL_TAB_KEYS.ADD_MODEL && (
@@ -450,22 +455,23 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
                   )}
                 </TabPanel>
               )}
-              {isAdmin &&
-                (selectedTabKey === MODEL_TAB_KEYS.RETRIES ? (
-                  <ModelRetrySettingsTab
-                    selectedModelGroup={selectedModelGroup}
-                    setSelectedModelGroup={setSelectedModelGroup}
-                    availableModelGroups={availableModelGroups}
-                    globalRetryPolicy={globalRetryPolicy}
-                    setGlobalRetryPolicy={setGlobalRetryPolicy}
-                    defaultRetry={defaultRetry}
-                    modelGroupRetryPolicy={modelGroupRetryPolicy}
-                    setModelGroupRetryPolicy={setModelGroupRetryPolicy}
-                    handleSaveRetrySettings={handleSaveRetrySettings}
-                  />
-                ) : (
-                  <TabPanel />
-                ))}
+              {isAdmin && (
+                <TabPanel>
+                  {selectedTabKey === MODEL_TAB_KEYS.RETRIES && (
+                    <ModelRetrySettingsTab
+                      selectedModelGroup={selectedModelGroup}
+                      setSelectedModelGroup={setSelectedModelGroup}
+                      availableModelGroups={availableModelGroups}
+                      globalRetryPolicy={globalRetryPolicy}
+                      setGlobalRetryPolicy={setGlobalRetryPolicy}
+                      defaultRetry={defaultRetry}
+                      modelGroupRetryPolicy={modelGroupRetryPolicy}
+                      setModelGroupRetryPolicy={setModelGroupRetryPolicy}
+                      handleSaveRetrySettings={handleSaveRetrySettings}
+                    />
+                  )}
+                </TabPanel>
+              )}
               {isAdmin && (
                 <TabPanel>
                   {selectedTabKey === MODEL_TAB_KEYS.ALIASES && (
@@ -477,7 +483,11 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
                   )}
                 </TabPanel>
               )}
-              {isAdmin && (selectedTabKey === MODEL_TAB_KEYS.PRICE_DATA ? <PriceDataManagementTab /> : <TabPanel />)}
+              {isAdmin && (
+                <TabPanel>
+                  {selectedTabKey === MODEL_TAB_KEYS.PRICE_DATA && <PriceDataManagementTab />}
+                </TabPanel>
+              )}
             </TabPanels>
           </TabGroup>
           {selectedModelId && !isLoading && (

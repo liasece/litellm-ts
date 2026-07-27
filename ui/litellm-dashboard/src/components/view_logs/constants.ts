@@ -42,3 +42,6 @@ export const DEFAULT_LIVE_TAIL_INTERVAL_MS: LiveTailIntervalMs = 2_000;
 export function isLiveTailIntervalMs(value: number): value is LiveTailIntervalMs {
 	return LIVE_TAIL_INTERVAL_OPTIONS.some((option) => option.value === value);
 }
+
+export const LOGS_PAGE_SIZE_OPTIONS = [100, 200, 500, 1_000] as const;
+export const DEFAULT_LOGS_PAGE_SIZE = LOGS_PAGE_SIZE_OPTIONS[0];
