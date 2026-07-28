@@ -16,6 +16,7 @@ import { registerController } from "./core/api/registerController";
 import { jsonBigIntReplacer } from "./core/api/jsonBigInt";
 import { errorHandler } from "./middleware/ErrorHandler";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
+import { spendResponseCompression } from "./middleware/SpendResponseCompression";
 import { createModuleLogger } from "./core/utils/logger";
 import { registerStaticUiRoutes } from "./ui/StaticUiRoutes";
 // 核心代理端点
@@ -278,6 +279,7 @@ export class LiteLLMServer {
 		spendRouter.use(container.authMiddleware);
 		spendRouter.use(webUiCsrfProtection);
 		spendRouter.use(container.authorizationGuard.middleware("spend"));
+		spendRouter.use(spendResponseCompression);
 		registerSpendManagementEndpoints(spendRouter, container.db.db);
 		app.use(spendRouter);
 		logger.info("消费端点已注册");

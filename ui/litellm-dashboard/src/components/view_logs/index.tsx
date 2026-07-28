@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import moment from "moment";
-import { useCallback, useDeferredValue, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { SettingOutlined } from "@ant-design/icons";
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "@tremor/react";
 import { Button } from "antd";
@@ -24,7 +24,7 @@ import {
 } from "./constants";
 import { useLogFilterLogic } from "./log_filter_logic";
 import LiveTailBanner from "./LiveTailBanner";
-import { LogDetailsDrawer } from "./LogDetailsDrawer";
+import { LogDetailsDrawer, SessionSimulationDrawer } from "./LogDetailsDrawer";
 import LogsPagination from "./LogsPagination";
 import LogsToolbar from "./LogsToolbar";
 import SpendLogsSettingsModal from "./SpendLogsSettingsModal/SpendLogsSettingsModal";
@@ -77,10 +77,12 @@ export default function SpendLogsTable({
 	const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [selectedSessionGroup, setSelectedSessionGroup] = useState<SessionGroupRef | null>(null);
+	const [simulationSessionGroup, setSimulationSessionGroup] = useState<SessionGroupRef | null>(null);
 	const [isSpendLogsSettingsModalVisible, setIsSpendLogsSettingsModalVisible] = useState(false);
 
 	const [sortBy, setSortBy] = useState<LogsSortField>("startTime");
 	const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+	const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
 	// Tracks whether any filter that uses performSearch (backend) is active.
 	// Used to disable the main query so it doesn't fire redundant unfiltered requests
@@ -201,13 +203,11 @@ export default function SpendLogsTable({
 		refetchInterval: liveTailIntervalMs > 0 && currentPage === 1 ? liveTailIntervalMs : false,
 		placeholderData: keepPreviousData,
 		refetchIntervalInBackground: false,
+		structuralSharing: true,
+		// Polling transport state must not invalidate the whole Logs view.
+		// React Query's structural sharing preserves unchanged row references in `data`.
+		notifyOnChangeProps: ["data", "isLoading"],
 	});
-
-	// Defer the transition from "Fetching" to "Fetch" so the button stays loading until
-	// the table has rendered with the new data (avoids the visual gap where the button
-	// exits loading state before the table updates)
-	const isFetchingDeferred = useDeferredValue(logs.isFetching);
-	const isButtonLoading = logs.isFetching || isFetchingDeferred;
 
 	const logsData = logs.data || {
 		data: [],
@@ -277,43 +277,28 @@ export default function SpendLogsTable({
 		/* eslint-enable react-hooks/set-state-in-effect */
 	}, [filters, accessToken]);
 
-	if (!accessToken || !token || !userRole || !userID) {
-		return null;
-	}
+	const searchedLogs = useMemo(
+		() =>
+			filteredLogs.data.filter((log) => {
+				const matchesSearch =
+					!searchTerm ||
+					log.request_id.includes(searchTerm) ||
+					log.model.includes(searchTerm) ||
+					(log.user && log.user.includes(searchTerm));
 
-	const searchedLogs = filteredLogs.data.filter((log) => {
-		const matchesSearch =
-			!searchTerm ||
-			log.request_id.includes(searchTerm) ||
-			log.model.includes(searchTerm) ||
-			(log.user && log.user.includes(searchTerm));
-
-		// No need for additional filtering since we're now handling this in the API call
-		return matchesSearch;
-	});
-
-	// Request Logs always renders every request returned by the paginated API.
-	// Session grouping is only used after a row is clicked to load the full session in the drawer.
-	const filteredData = searchedLogs.map((log) => ({
-		...log,
-		request_duration_ms: log.request_duration_ms,
-		onKeyHashClick: (keyHash: string) => setSelectedKeyIdInfoView(keyHash),
-		onSessionClick:
-			log.status === "in_progress"
-				? undefined
-				: (sessionGroup: SessionGroupRef) => {
-						setSelectedSessionGroup(sessionGroup);
-						setSelectedLog(log);
-						setIsDrawerOpen(true);
-					},
-	}));
+				// No need for additional filtering since we're now handling this in the API call
+				return matchesSearch;
+			}),
+		[filteredLogs.data, searchTerm],
+	);
 
 	// Add this function to handle manual refresh
-	const handleRefresh = () => {
-		logs.refetch();
-	};
+	const handleRefresh = useCallback(() => {
+		setIsManualRefreshing(true);
+		void logs.refetch().finally(() => setIsManualRefreshing(false));
+	}, [logs.refetch]);
 
-	const handleRowClick = (log: LogEntry) => {
+	const handleRowClick = useCallback((log: LogEntry) => {
 		if (log.status === "in_progress") {
 			return;
 		}
@@ -329,16 +314,42 @@ export default function SpendLogsTable({
 		setSelectedSessionGroup(null);
 		setSelectedLog(log);
 		setIsDrawerOpen(true);
-	};
+	}, []);
 
-	const handleCloseDrawer = () => {
+	const handleCloseDrawer = useCallback(() => {
 		setIsDrawerOpen(false);
 		setSelectedSessionGroup(null);
-	};
+	}, []);
 
-	const handleSelectLog = (log: LogEntry) => {
+	const handleSelectLog = useCallback((log: LogEntry) => {
 		setSelectedLog(log);
-	};
+	}, []);
+
+	const handleKeyHashClick = useCallback((keyHash: string) => {
+		setSelectedKeyIdInfoView(keyHash);
+	}, []);
+
+	const handleSessionClick = useCallback((sessionGroup: SessionGroupRef) => {
+		setSimulationSessionGroup(sessionGroup);
+	}, []);
+
+	const handleSortChange = useCallback((newSortBy: LogsSortField, newSortOrder: "asc" | "desc") => {
+		setSortBy(newSortBy);
+		setSortOrder(newSortOrder);
+		setCurrentPage(1);
+	}, []);
+
+	const logColumns = useMemo(
+		() =>
+			createColumns({
+				sortBy,
+				sortOrder,
+				onSortChange: handleSortChange,
+				onKeyHashClick: handleKeyHashClick,
+				onSessionClick: handleSessionClick,
+			}),
+		[handleKeyHashClick, handleSessionClick, handleSortChange, sortBy, sortOrder],
+	);
 
 	const logFilterOptions: FilterOption[] = [
 		{
@@ -420,6 +431,10 @@ export default function SpendLogsTable({
 		},
 	];
 
+	if (!accessToken || !token || !userRole || !userID) {
+		return null;
+	}
+
 	return (
 		<div className="w-full max-w-screen p-6 overflow-x-hidden box-border">
 			<TabGroup defaultIndex={0} onIndexChange={(index) => setActiveTab(index === 0 ? "request logs" : "audit logs")}>
@@ -473,7 +488,7 @@ export default function SpendLogsTable({
 													customDate={isCustomDate}
 													selectedInterval={selectedTimeInterval}
 													liveTailIntervalMs={liveTailIntervalMs}
-													fetching={isButtonLoading}
+													fetching={isManualRefreshing}
 													onSearchTermChange={setSearchTerm}
 													onStartTimeChange={setStartTime}
 													onEndTimeChange={setEndTime}
@@ -504,16 +519,8 @@ export default function SpendLogsTable({
 										onStop={() => setLiveTailIntervalMs(0)}
 									/>
 									<DataTable
-										columns={createColumns({
-											sortBy,
-											sortOrder,
-											onSortChange: (newSortBy, newSortOrder) => {
-												setSortBy(newSortBy);
-												setSortOrder(newSortOrder);
-												setCurrentPage(1);
-											},
-										})}
-										data={filteredData}
+										columns={logColumns}
+										data={searchedLogs}
 										onRowClick={handleRowClick}
 										isLoading={logs.isLoading}
 									/>
@@ -549,10 +556,25 @@ export default function SpendLogsTable({
 				teamId={selectedTeamId || undefined}
 				accessToken={accessToken}
 				onOpenSettings={() => setIsSpendLogsSettingsModalVisible(true)}
-				allLogs={filteredData}
+				allLogs={searchedLogs}
 				onSelectLog={handleSelectLog}
 				startTime={moment(startTime).utc().format("YYYY-MM-DD HH:mm:ss")}
 			/>
+			{simulationSessionGroup ? (
+				<SessionSimulationDrawer
+					open={true}
+					onClose={() => setSimulationSessionGroup(null)}
+					onOpenLog={(log) => {
+						setSimulationSessionGroup(null);
+						setSelectedSessionGroup(getSessionGroupRef(log) ?? simulationSessionGroup);
+						setSelectedLog(log);
+						setIsDrawerOpen(true);
+					}}
+					sessionGroup={simulationSessionGroup}
+					teamId={selectedTeamId || undefined}
+					accessToken={accessToken}
+				/>
+			) : null}
 		</div>
 	);
 }

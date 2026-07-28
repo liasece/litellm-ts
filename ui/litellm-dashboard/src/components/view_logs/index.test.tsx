@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import SpendLogsTable, { RequestViewer } from "./index";
 import { createColumns, getSessionGroupKey, getSessionGroupRef, type LogEntry } from "./columns";
 import { uiSpendLogsCall } from "../networking";
-import type { Row } from "@tanstack/react-table";
+import type { ColumnDef, Row } from "@tanstack/react-table";
 import type { Team } from "../key_team_helpers/key_list";
 import { renderWithProviders } from "../../../tests/test-utils";
 
@@ -42,24 +42,60 @@ vi.mock("../key_team_helpers/filter_helpers", () => ({
 	fetchAllTeams: vi.fn().mockResolvedValue([]),
 }));
 
-const mockDrawerProps = vi.hoisted(() => ({ current: null as any }));
+const { mockDrawerProps, mockSimulationDrawerProps } = vi.hoisted(() => ({
+	mockDrawerProps: { current: null as any },
+	mockSimulationDrawerProps: { current: null as any },
+}));
 vi.mock("./LogDetailsDrawer", () => ({
 	LogDetailsDrawer: (props: any) => {
 		mockDrawerProps.current = props;
 		return props.open ? <div data-testid="log-details-drawer" /> : null;
 	},
+	SessionSimulationDrawer: (props: any) => {
+		mockSimulationDrawerProps.current = props;
+		return props.open ? (
+			<div data-testid="session-simulation-drawer">
+				<button
+					type="button"
+					onClick={() =>
+						props.onOpenLog?.({
+							request_id: "req-from-simulation",
+							session_group_type: "claude_code_user_id",
+							session_group_id: props.sessionGroup.id,
+						})
+					}
+				>
+					打开模拟日志
+				</button>
+			</div>
+		) : null;
+	},
 }));
 
 vi.mock("./table", () => ({
-	DataTable: ({ data, onRowClick }: { data: LogEntry[]; onRowClick?: (log: LogEntry) => void }) => (
-		<div>
-			{data.map((log) => (
-				<button key={log.request_id} onClick={() => onRowClick?.(log)}>
-					{log.request_id}
-				</button>
-			))}
-		</div>
-	),
+	DataTable: ({
+		columns,
+		data,
+		onRowClick,
+	}: {
+		columns: ColumnDef<LogEntry>[];
+		data: LogEntry[];
+		onRowClick?: (log: LogEntry) => void;
+	}) => {
+		const sessionColumn = columns.find((column) => column.header === "Session ID");
+		return (
+			<div>
+				{data.map((log) => (
+					<div key={log.request_id} onClick={() => onRowClick?.(log)}>
+						<span>{log.request_id}</span>
+						{sessionColumn && typeof sessionColumn.cell === "function"
+							? sessionColumn.cell({ row: { original: log } } as never)
+							: null}
+					</div>
+				))}
+			</div>
+		);
+	},
 }));
 
 const baseLogEntry: LogEntry = {
@@ -235,6 +271,37 @@ describe("Logs columns", () => {
 			} as never),
 		);
 	};
+
+	it("renders Session ID as a link that opens its complete session without bubbling to the row", async () => {
+		const user = userEvent.setup();
+		const onSessionClick = vi.fn();
+		const onRowClick = vi.fn();
+		const sessionId = "user_device_account__session_123e4567-e89b-12d3-a456-426614174000";
+		const sessionColumn = createColumns().find((candidate) => candidate.header === "Session ID");
+		if (!sessionColumn || typeof sessionColumn.cell !== "function") {
+			throw new Error("Missing Session ID cell renderer");
+		}
+		const entry = {
+			...baseLogEntry,
+			session_id: "random-session",
+			session_group_type: "claude_code_user_id" as const,
+			session_group_id: sessionId,
+			onSessionClick,
+		};
+
+		render(
+			<div onClick={onRowClick}>
+				{sessionColumn.cell({
+					getValue: () => sessionId,
+					row: { original: entry },
+				} as never)}
+			</div>,
+		);
+
+		await user.click(screen.getByRole("link", { name: sessionId }));
+		expect(onSessionClick).toHaveBeenCalledWith({ type: "claude_code_user_id", id: sessionId });
+		expect(onRowClick).not.toHaveBeenCalled();
+	});
 
 	it("renders an explicit In Progress status instead of treating it as Success", () => {
 		renderColumnCell("Status", {
@@ -537,6 +604,7 @@ describe("SpendLogsTable", () => {
 		mockFilters = {};
 		mockFilteredLogs = { data: [], total: 0, page: 1, page_size: 50, total_pages: 1 };
 		mockDrawerProps.current = null;
+		mockSimulationDrawerProps.current = null;
 		// Clear persisted Live Tail state from previous tests.
 		sessionStorage.clear();
 	});
@@ -619,6 +687,64 @@ describe("SpendLogsTable", () => {
 		expect(await screen.findByText("req-mcp")).toBeInTheDocument();
 		expect(await screen.findByText("req-llm")).toBeInTheDocument();
 		await user.click(await screen.findByText("req-llm"));
+		expect(mockDrawerProps.current.sessionGroup).toEqual({ type: "claude_code_user_id", id: groupId });
+	});
+
+	it("点击 Session ID 链接直接打开模拟窗口，不打开普通详情 Drawer", async () => {
+		const user = userEvent.setup();
+		const groupId = "user_device_account__session_123e4567-e89b-12d3-a456-426614174000";
+		mockFilteredLogs = {
+			data: [
+				{
+					...baseLogEntry,
+					request_id: "req-session-link",
+					session_id: "random-session",
+					session_group_type: "claude_code_user_id",
+					session_group_id: groupId,
+				},
+			],
+			total: 1,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		};
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+		await user.click(await screen.findByRole("link", { name: groupId }));
+
+		expect(mockSimulationDrawerProps.current.sessionGroup).toEqual({
+			type: "claude_code_user_id",
+			id: groupId,
+		});
+		expect(screen.getByTestId("session-simulation-drawer")).toBeInTheDocument();
+		expect(screen.queryByTestId("log-details-drawer")).not.toBeInTheDocument();
+	});
+
+	it("点击模拟时间线的 Log ID 后关闭模拟窗口并打开对应 Log 详情", async () => {
+		const user = userEvent.setup();
+		const groupId = "user_device_account__session_123e4567-e89b-12d3-a456-426614174000";
+		mockFilteredLogs = {
+			data: [
+				{
+					...baseLogEntry,
+					request_id: "req-session-link",
+					session_group_type: "claude_code_user_id",
+					session_group_id: groupId,
+				},
+			],
+			total: 1,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		};
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+		await user.click(await screen.findByRole("link", { name: groupId }));
+		await user.click(screen.getByRole("button", { name: "打开模拟日志" }));
+
+		expect(screen.queryByTestId("session-simulation-drawer")).not.toBeInTheDocument();
+		expect(screen.getByTestId("log-details-drawer")).toBeInTheDocument();
+		expect(mockDrawerProps.current.logEntry.request_id).toBe("req-from-simulation");
 		expect(mockDrawerProps.current.sessionGroup).toEqual({ type: "claude_code_user_id", id: groupId });
 	});
 

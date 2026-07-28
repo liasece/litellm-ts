@@ -1,9 +1,10 @@
-import { Fragment, useState } from "react";
+import { Fragment, memo, useState } from "react";
 import {
 	ColumnDef,
 	flexRender,
 	getCoreRowModel,
 	getExpandedRowModel,
+	HeaderGroup,
 	Row,
 	useReactTable,
 	getSortedRowModel,
@@ -28,7 +29,116 @@ interface DataTableProps<TData, TValue> {
 	enableSorting?: boolean;
 }
 
-export function DataTable<TData, TValue>({
+interface DataTableRowProps<TData, TValue> {
+	row: Row<TData>;
+	columns: ColumnDef<TData, TValue>[];
+	onRowClick?: (row: TData) => void;
+	renderSubComponent?: (props: { row: Row<TData> }) => React.ReactElement;
+	renderChildRows?: (props: { row: Row<TData> }) => React.ReactNode;
+	supportsExpansion: boolean;
+	isExpanded: boolean;
+}
+
+interface DataTableHeaderProps<TData, TValue> {
+	headerGroups: HeaderGroup<TData>[];
+	columns: ColumnDef<TData, TValue>[];
+	enableSorting: boolean;
+	sorting: SortingState;
+}
+
+function DataTableHeader<TData, TValue>({ headerGroups, enableSorting }: DataTableHeaderProps<TData, TValue>) {
+	return (
+		<TableHead>
+			{headerGroups.map((headerGroup) => (
+				<TableRow key={headerGroup.id}>
+					{headerGroup.headers.map((header) => {
+						const canSort = enableSorting && header.column.getCanSort();
+						const isSorted = header.column.getIsSorted();
+
+						return (
+							<TableHeaderCell
+								key={header.id}
+								className={`py-1 h-8 ${canSort ? "cursor-pointer select-none hover:bg-gray-50" : ""}`}
+								onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+							>
+								{header.isPlaceholder ? null : (
+									<div className="flex items-center gap-1">
+										{flexRender(header.column.columnDef.header, header.getContext())}
+										{canSort && (
+											<span className="text-gray-400">
+												{isSorted === "asc" ? "↑" : isSorted === "desc" ? "↓" : "⇅"}
+											</span>
+										)}
+									</div>
+								)}
+							</TableHeaderCell>
+						);
+					})}
+				</TableRow>
+			))}
+		</TableHead>
+	);
+}
+
+const MemoizedDataTableHeader = memo(
+	DataTableHeader,
+	(previous, next) =>
+		previous.headerGroups === next.headerGroups &&
+		previous.columns === next.columns &&
+		previous.enableSorting === next.enableSorting &&
+		previous.sorting === next.sorting,
+) as typeof DataTableHeader;
+
+function DataTableRow<TData, TValue>({
+	row,
+	onRowClick,
+	renderSubComponent,
+	renderChildRows,
+	supportsExpansion,
+	isExpanded,
+}: DataTableRowProps<TData, TValue>) {
+	return (
+		<Fragment>
+			<TableRow
+				className={`h-8 ${onRowClick ? "cursor-pointer hover:bg-gray-50" : ""}`}
+				onClick={() => onRowClick?.(row.original)}
+			>
+				{row.getVisibleCells().map((cell) => (
+					<TableCell key={cell.id} className="py-0.5 max-h-8 overflow-hidden text-ellipsis whitespace-nowrap">
+						{flexRender(cell.column.columnDef.cell, cell.getContext())}
+					</TableCell>
+				))}
+			</TableRow>
+
+			{/* Child rows rendered as real table rows (MCP children) */}
+			{supportsExpansion && isExpanded && renderChildRows && renderChildRows({ row })}
+
+			{/* Legacy sub-component in colspan cell (audit logs) */}
+			{supportsExpansion && isExpanded && renderSubComponent && !renderChildRows && (
+				<TableRow>
+					<TableCell colSpan={row.getVisibleCells().length} className="p-0">
+						<div className="w-full max-w-full overflow-hidden box-border">{renderSubComponent({ row })}</div>
+					</TableCell>
+				</TableRow>
+			)}
+		</Fragment>
+	);
+}
+
+const MemoizedDataTableRow = memo(
+	DataTableRow,
+	(previous, next) =>
+		previous.row.id === next.row.id &&
+		previous.row.original === next.row.original &&
+		previous.columns === next.columns &&
+		previous.onRowClick === next.onRowClick &&
+		previous.renderSubComponent === next.renderSubComponent &&
+		previous.renderChildRows === next.renderChildRows &&
+		previous.supportsExpansion === next.supportsExpansion &&
+		previous.isExpanded === next.isExpanded,
+) as typeof DataTableRow;
+
+function DataTableComponent<TData, TValue>({
 	data = [],
 	columns,
 	onRowClick,
@@ -62,39 +172,17 @@ export function DataTable<TData, TValue>({
 		...(enableSorting && { getSortedRowModel: getSortedRowModel() }),
 		...(supportsExpansion && { getExpandedRowModel: getExpandedRowModel() }),
 	});
+	const headerGroups = table.getHeaderGroups();
 
 	return (
 		<div className="rounded-lg custom-border overflow-x-auto w-full max-w-full box-border">
 			<Table className="[&_td]:py-0.5 [&_th]:py-1 table-fixed w-full box-border" style={{ minWidth: "400px" }}>
-				<TableHead>
-					{table.getHeaderGroups().map((headerGroup) => (
-						<TableRow key={headerGroup.id}>
-							{headerGroup.headers.map((header) => {
-								const canSort = enableSorting && header.column.getCanSort();
-								const isSorted = header.column.getIsSorted();
-
-								return (
-									<TableHeaderCell
-										key={header.id}
-										className={`py-1 h-8 ${canSort ? "cursor-pointer select-none hover:bg-gray-50" : ""}`}
-										onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
-									>
-										{header.isPlaceholder ? null : (
-											<div className="flex items-center gap-1">
-												{flexRender(header.column.columnDef.header, header.getContext())}
-												{canSort && (
-													<span className="text-gray-400">
-														{isSorted === "asc" ? "↑" : isSorted === "desc" ? "↓" : "⇅"}
-													</span>
-												)}
-											</div>
-										)}
-									</TableHeaderCell>
-								);
-							})}
-						</TableRow>
-					))}
-				</TableHead>
+				<MemoizedDataTableHeader
+					headerGroups={headerGroups}
+					columns={columns}
+					enableSorting={enableSorting}
+					sorting={sorting}
+				/>
 				<TableBody>
 					{isLoading ? (
 						<TableRow>
@@ -105,32 +193,20 @@ export function DataTable<TData, TValue>({
 							</TableCell>
 						</TableRow>
 					) : table.getRowModel().rows.length > 0 ? (
-						table.getRowModel().rows.map((row) => (
-							<Fragment key={row.id}>
-								<TableRow
-									className={`h-8 ${onRowClick ? "cursor-pointer hover:bg-gray-50" : ""}`}
-									onClick={() => onRowClick?.(row.original)}
-								>
-									{row.getVisibleCells().map((cell) => (
-										<TableCell key={cell.id} className="py-0.5 max-h-8 overflow-hidden text-ellipsis whitespace-nowrap">
-											{flexRender(cell.column.columnDef.cell, cell.getContext())}
-										</TableCell>
-									))}
-								</TableRow>
-
-								{/* Child rows rendered as real table rows (MCP children) */}
-								{supportsExpansion && row.getIsExpanded() && renderChildRows && renderChildRows({ row })}
-
-								{/* Legacy sub-component in colspan cell (audit logs) */}
-								{supportsExpansion && row.getIsExpanded() && renderSubComponent && !renderChildRows && (
-									<TableRow>
-										<TableCell colSpan={row.getVisibleCells().length} className="p-0">
-											<div className="w-full max-w-full overflow-hidden box-border">{renderSubComponent({ row })}</div>
-										</TableCell>
-									</TableRow>
-								)}
-							</Fragment>
-						))
+						table
+							.getRowModel()
+							.rows.map((row) => (
+								<MemoizedDataTableRow
+									key={row.id}
+									row={row}
+									columns={columns}
+									onRowClick={onRowClick}
+									renderSubComponent={renderSubComponent}
+									renderChildRows={renderChildRows}
+									supportsExpansion={supportsExpansion}
+									isExpanded={row.getIsExpanded()}
+								/>
+							))
 					) : (
 						<TableRow>
 							<TableCell colSpan={columns.length} className="h-8 text-center">
@@ -145,3 +221,5 @@ export function DataTable<TData, TValue>({
 		</div>
 	);
 }
+
+export const DataTable = memo(DataTableComponent) as typeof DataTableComponent;

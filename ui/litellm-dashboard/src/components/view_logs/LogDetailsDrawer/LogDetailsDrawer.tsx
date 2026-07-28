@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Button } from "antd";
-import { CheckOutlined, CopyOutlined, LeftOutlined, RightOutlined } from "@ant-design/icons";
+import { CheckOutlined, CopyOutlined, LeftOutlined, PlayCircleOutlined, RightOutlined } from "@ant-design/icons";
 import { Bot, Sparkles, Wrench } from "lucide-react";
 import { LogEntry, type SessionGroupRef } from "../columns";
 import { AGENT_CALL_TYPES, MCP_CALL_TYPES } from "../constants";
@@ -8,12 +8,13 @@ import { getEventDisplayName } from "../utils";
 import { DrawerHeader } from "./DrawerHeader";
 import { useKeyboardNavigation } from "./useKeyboardNavigation";
 import { LogDetailContent, GuardrailJumpLink } from "./LogDetailContent";
-import { sessionSpendLogsCall } from "../../networking";
 import { useQuery } from "@tanstack/react-query";
 import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import { normalizeGuardrailEntries } from "./utils";
 import { useLogDetails } from "@/app/(dashboard)/hooks/logDetails/useLogDetails";
 import SidePanel from "../../common_components/SidePanel";
+import { loadCompleteSessionLogs } from "./sessionLogs";
+import { SessionSimulationDrawer } from "./SessionSimulationDrawer";
 
 export interface LogDetailsDrawerProps {
 	open: boolean;
@@ -30,8 +31,6 @@ export interface LogDetailsDrawerProps {
 
 const SIDEBAR_WIDTH_PX = 224;
 export const LOG_DETAILS_PANEL_WIDTH = "min(1800px, calc(100vw - 32px))";
-const SESSION_LOG_PAGE_SIZE = 100;
-const MAX_SESSION_LOG_PAGES = 1000;
 
 /* ------------------------------------------------------------------ */
 /*  TraceEventRow — compact event row used in both session & non-     */
@@ -118,6 +117,7 @@ export function LogDetailsDrawer({
 	const [selectedSessionRequestId, setSelectedSessionRequestId] = useState<string | null>(null);
 	const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 	const [copiedLeftPanelId, setCopiedLeftPanelId] = useState(false);
+	const [isSimulationOpen, setIsSimulationOpen] = useState(false);
 
 	const {
 		data: loadedSessionLogs = [],
@@ -130,64 +130,11 @@ export function LogDetailsDrawer({
 		queryKey: ["sessionLogs", sessionGroup?.type, sessionGroup?.id, teamId],
 		queryFn: async () => {
 			if (!sessionGroup || !accessToken) return [];
-			const firstPage = await sessionSpendLogsCall(accessToken, sessionGroup, {
-				pageSize: SESSION_LOG_PAGE_SIZE,
+			return loadCompleteSessionLogs({
+				accessToken,
+				sessionGroup,
 				teamId,
 			});
-			const allSessionLogs: LogEntry[] = [...(firstPage.data || firstPage || [])];
-			const expectedTotal =
-				!Array.isArray(firstPage) && Number.isSafeInteger(firstPage.total) && Number(firstPage.total) >= 0
-					? Number(firstPage.total)
-					: null;
-			if (!Array.isArray(firstPage) && firstPage.next_cursor) {
-				let snapshot = typeof firstPage.snapshot === "string" && firstPage.snapshot ? firstPage.snapshot : undefined;
-				let cursor = firstPage.next_cursor;
-				if (!snapshot) throw new Error("Session logs response contains invalid snapshot");
-				for (let pageCount = 1; cursor; pageCount += 1) {
-					if (pageCount >= MAX_SESSION_LOG_PAGES) {
-						throw new Error("Session logs response exceeds pagination limit");
-					}
-					const response = await sessionSpendLogsCall(accessToken, sessionGroup, {
-						pageSize: SESSION_LOG_PAGE_SIZE,
-						teamId,
-						snapshot,
-						cursor,
-					});
-					allSessionLogs.push(...(response.data || response || []));
-					snapshot = typeof response.snapshot === "string" && response.snapshot ? response.snapshot : snapshot;
-					cursor = typeof response.next_cursor === "string" ? response.next_cursor : "";
-				}
-			} else if (!Array.isArray(firstPage)) {
-				const totalPages = firstPage.total_pages ?? 1;
-				if (
-					!Number.isSafeInteger(totalPages) ||
-					totalPages < (allSessionLogs.length > 0 ? 1 : 0) ||
-					totalPages > MAX_SESSION_LOG_PAGES
-				) {
-					throw new Error("Session logs response contains invalid total_pages");
-				}
-				for (let page = 2; page <= totalPages; page += 1) {
-					const response = await sessionSpendLogsCall(accessToken, sessionGroup, {
-						page,
-						pageSize: SESSION_LOG_PAGE_SIZE,
-						teamId,
-					});
-					allSessionLogs.push(...(response.data || response || []));
-				}
-			}
-			const uniqueSessionLogs = Array.from(new Map(allSessionLogs.map((row) => [row.request_id, row])).values());
-			if (expectedTotal !== null && uniqueSessionLogs.length !== expectedTotal) {
-				throw new Error(`Session logs incomplete: loaded ${uniqueSessionLogs.length} of ${expectedTotal}`);
-			}
-			return uniqueSessionLogs
-				.map((row) => ({
-					...row,
-					request_duration_ms: row.request_duration_ms ?? Date.parse(row.endTime) - Date.parse(row.startTime),
-				}))
-				.sort((a, b) => {
-					const timeDifference = new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
-					return timeDifference !== 0 ? timeDifference : b.request_id.localeCompare(a.request_id);
-				});
 		},
 		enabled: Boolean(open && isSessionMode && sessionGroup && accessToken),
 	});
@@ -228,12 +175,13 @@ export function LogDetailsDrawer({
 		} else {
 			if (isSessionMode) setSelectedSessionRequestId(null);
 			setCopiedLeftPanelId(false);
+			setIsSimulationOpen(false);
 		}
 	}, [open, isSessionMode]);
 
 	// Keyboard navigation
 	const { selectNextLog, selectPreviousLog } = useKeyboardNavigation({
-		isOpen: open,
+		isOpen: open && !isSimulationOpen,
 		currentLog,
 		allLogs: isSessionMode ? sessionLogs : allLogs,
 		onClose,
@@ -362,6 +310,19 @@ export function LogDetailsDrawer({
 										</button>
 									</div>
 								</div>
+								{isSessionMode ? (
+									<Button
+										size="small"
+										type="primary"
+										ghost={true}
+										icon={<PlayCircleOutlined />}
+										onClick={() => setIsSimulationOpen(true)}
+										className="!h-6 !px-1.5 !text-[11px] flex-shrink-0"
+										aria-label="模拟 Session"
+									>
+										模拟
+									</Button>
+								) : null}
 							</div>
 							<div className="mt-1 text-[11px] text-slate-500 font-mono">
 								{isSessionMode && isLoadingSessionLogs ? (
@@ -489,6 +450,19 @@ export function LogDetailsDrawer({
 					</div>
 				</div>
 			</div>
+			{isSessionMode && sessionGroup ? (
+				<SessionSimulationDrawer
+					open={isSimulationOpen}
+					onClose={() => setIsSimulationOpen(false)}
+					onOpenLog={(log) => {
+						setSelectedSessionRequestId(log.request_id);
+						setIsSimulationOpen(false);
+					}}
+					sessionGroup={sessionGroup}
+					teamId={teamId}
+					accessToken={accessToken ?? null}
+				/>
+			) : null}
 		</SidePanel>
 	);
 }

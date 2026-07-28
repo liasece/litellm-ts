@@ -4,7 +4,7 @@
  */
 
 import { Typography } from "antd";
-import { ToolCall } from "./prettyMessagesTypes";
+import { MessagePart, ToolCall } from "./prettyMessagesTypes";
 
 const { Text } = Typography;
 
@@ -12,9 +12,27 @@ interface SimpleToolCallBlockProps {
 	tool: ToolCall;
 	compact?: boolean;
 	badge?: string;
+	result?: MessagePart;
 }
 
-export function SimpleToolCallBlock({ tool, compact = false, badge = "Function call" }: SimpleToolCallBlockProps) {
+function formatToolResult(result: MessagePart): string {
+	if (result.text) return result.text;
+	if (result.data !== undefined) {
+		try {
+			return JSON.stringify(result.data, null, 2);
+		} catch {
+			return "[Unserializable tool output]";
+		}
+	}
+	return "（空输出）";
+}
+
+export function SimpleToolCallBlock({
+	tool,
+	compact = false,
+	badge = "Function call",
+	result,
+}: SimpleToolCallBlockProps) {
 	return (
 		<div
 			style={{
@@ -61,6 +79,49 @@ export function SimpleToolCallBlock({ tool, compact = false, badge = "Function c
 					))}
 				</div>
 			)}
+
+			{result ? (
+				<div
+					data-tool-output-for={tool.id}
+					style={{
+						marginTop: 10,
+						paddingTop: 9,
+						borderTop: `1px solid ${result.isError ? "#fecaca" : "#d1d5db"}`,
+					}}
+				>
+					<div
+						style={{
+							display: "flex",
+							alignItems: "center",
+							gap: 8,
+							marginBottom: 5,
+							color: result.isError ? "#b91c1c" : "#64748b",
+							fontFamily: "sans-serif",
+							fontSize: 10,
+							fontWeight: 600,
+							letterSpacing: "0.4px",
+						}}
+					>
+						<span>工具输出</span>
+						{result.status ? <span>{result.status}</span> : null}
+					</div>
+					<pre
+						style={{
+							margin: 0,
+							maxHeight: compact ? 180 : 320,
+							overflow: "auto",
+							whiteSpace: "pre-wrap",
+							wordBreak: "break-word",
+							color: result.isError ? "#b91c1c" : "#334155",
+							fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+							fontSize: 12,
+							lineHeight: 1.6,
+						}}
+					>
+						{formatToolResult(result)}
+					</pre>
+				</div>
+			) : null}
 		</div>
 	);
 }

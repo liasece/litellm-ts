@@ -128,28 +128,59 @@ function OperationPart({ part, compact }: { part: MessagePart; compact: boolean 
 }
 
 export function MessagePartsView({ parts, compact = false }: { parts: MessagePart[]; compact?: boolean }) {
+	const pairedResultIndexes = new Set<number>();
+	const toolResultsByCallIndex = new Map<number, MessagePart>();
+
+	parts.forEach((part, callIndex) => {
+		if (part.kind !== "tool_call" || !part.id) return;
+		const resultIndex = parts.findIndex(
+			(candidate, index) =>
+				!pairedResultIndexes.has(index) && candidate.kind === "tool_result" && candidate.id === part.id,
+		);
+		if (resultIndex < 0) return;
+		pairedResultIndexes.add(resultIndex);
+		toolResultsByCallIndex.set(callIndex, parts[resultIndex]);
+	});
+
 	return (
 		<div>
-			{parts.map((part, index) =>
-				part.kind === "text" ? (
-					<div
-						key={`${part.kind}-${index}`}
-						data-message-part="text"
-						style={{
-							fontSize: 13,
-							lineHeight: 1.7,
-							color: "#262626",
-							whiteSpace: "pre-wrap",
-							wordBreak: "break-word",
-							marginTop: index === 0 ? 0 : 8,
-						}}
-					>
-						<MarkdownText>{part.text || ""}</MarkdownText>
-					</div>
-				) : (
-					<OperationPart key={`${part.kind}-${part.id || index}`} part={part} compact={compact} />
-				),
-			)}
+			{parts.map((part, index) => {
+				if (pairedResultIndexes.has(index)) return null;
+				if (part.kind === "text") {
+					return (
+						<div
+							key={`${part.kind}-${index}`}
+							data-message-part="text"
+							style={{
+								fontSize: 13,
+								lineHeight: 1.7,
+								color: "#262626",
+								whiteSpace: "pre-wrap",
+								wordBreak: "break-word",
+								marginTop: index === 0 ? 0 : 8,
+							}}
+						>
+							<MarkdownText>{part.text || ""}</MarkdownText>
+						</div>
+					);
+				}
+				if (part.kind === "tool_call") {
+					return (
+						<SimpleToolCallBlock
+							key={`${part.kind}-${part.id || index}`}
+							tool={{
+								id: part.id || "",
+								name: part.name || "unknown",
+								arguments: part.data && typeof part.data === "object" ? part.data : { raw: part.data },
+							}}
+							compact={compact}
+							badge={part.label}
+							result={toolResultsByCallIndex.get(index)}
+						/>
+					);
+				}
+				return <OperationPart key={`${part.kind}-${part.id || index}`} part={part} compact={compact} />;
+			})}
 		</div>
 	);
 }

@@ -30,6 +30,8 @@ export interface LogsSortProps {
 	sortBy: LogsSortField;
 	sortOrder: "asc" | "desc";
 	onSortChange: (sortBy: LogsSortField, sortOrder: "asc" | "desc") => void;
+	onKeyHashClick?: (keyHash: string) => void;
+	onSessionClick?: (sessionGroup: SessionGroupRef) => void;
 }
 
 // Helper to get the appropriate logo URL
@@ -218,6 +220,41 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		},
 	},
 	{
+		header: "Session ID",
+		id: "session_id",
+		cell: (info: any) => {
+			const row = info.row.original as LogEntry;
+			const sessionGroup = getSessionGroupRef(row);
+			if (!sessionGroup) return <span>-</span>;
+
+			const sessionId = sessionGroup.id;
+			const onSessionClick = sortProps?.onSessionClick ?? row.onSessionClick;
+			if (!onSessionClick) {
+				return (
+					<Tooltip title={sessionId}>
+						<span className="block max-w-[24ch] truncate font-mono text-xs">{sessionId}</span>
+					</Tooltip>
+				);
+			}
+
+			return (
+				<Tooltip title={sessionId}>
+					<a
+						href={`#session-${encodeURIComponent(getSessionGroupKey(sessionGroup))}`}
+						className="block max-w-[24ch] truncate font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline"
+						onClick={(event) => {
+							event.preventDefault();
+							event.stopPropagation();
+							onSessionClick(sessionGroup);
+						}}
+					>
+						{sessionId}
+					</a>
+				</Tooltip>
+			);
+		},
+	},
+	{
 		header: sortProps
 			? () => (
 					<SortableHeader
@@ -307,7 +344,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			// 点击打开 key 详情页：复用原 Key Hash 列的 onKeyHashClick 行为，
 			// key 标识取 metadata.user_api_key（哈希值）
 			const keyHash = String(info.row.original?.metadata?.user_api_key || "");
-			const onKeyHashClick = info.row.original.onKeyHashClick;
+			const onKeyHashClick = sortProps?.onKeyHashClick ?? info.row.original.onKeyHashClick;
 
 			return (
 				<Tooltip title={alias}>

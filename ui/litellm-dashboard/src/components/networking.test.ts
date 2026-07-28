@@ -100,6 +100,33 @@ describe("networking - expired session handling", () => {
 		expect(json).not.toHaveBeenCalled();
 	});
 
+	it("regenerateKeyCall 应调用已注册路由并在请求体中传递目标 token", async () => {
+		const responseBody = { success: true, key: "sk-new", token: "new-token-hash" };
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: vi.fn().mockResolvedValue(responseBody),
+		} as any);
+		global.fetch = mockFetch as typeof global.fetch;
+
+		await expect(
+			Networking.regenerateKeyCall("unused-access-token", "old-token-hash", {
+				duration: "30d",
+				grace_period: "24h",
+			}),
+		).resolves.toEqual(responseBody);
+
+		expect(mockFetch).toHaveBeenCalledOnce();
+		const [url, init] = mockFetch.mock.calls[0]!;
+		expect(String(url)).toMatch(/\/key\/regenerate$/);
+		expect(String(url)).not.toContain("old-token-hash");
+		expect(JSON.parse(String(init.body))).toEqual({
+			duration: "30d",
+			grace_period: "24h",
+			token: "old-token-hash",
+		});
+		expect(init.credentials).toBe("include");
+	});
+
 	it("Playground session 应在网络边界移除 SDK 鉴权头并保留请求语义", async () => {
 		const cookieUtils = await import("@/utils/cookieUtils");
 		vi.mocked(cookieUtils.getCookie).mockReturnValue("csrf-value");
@@ -615,7 +642,7 @@ describe("sessionSpendLogsCall", () => {
 		expect(pagedUrl.searchParams.get("page_size")).toBe("100");
 	});
 
-	it("options 参数透传显式 team scope、snapshot 和 cursor，且不破坏旧分页调用", async () => {
+	it("options 参数透传显式 team scope、snapshot、cursor、首屏 total 和按需正文，且不破坏旧分页调用", async () => {
 		const json = vi.fn().mockResolvedValue({ data: [] });
 		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
 		global.fetch = mockFetch as typeof global.fetch;
@@ -625,6 +652,8 @@ describe("sessionSpendLogsCall", () => {
 			teamId: "team scope +/&",
 			snapshot: "snapshot +/&",
 			cursor: "cursor +/&",
+			knownTotal: 321,
+			includeContent: true,
 		});
 
 		const url = new URL(String(mockFetch.mock.calls[0]![0]), "http://example.com");
@@ -632,6 +661,8 @@ describe("sessionSpendLogsCall", () => {
 		expect(url.searchParams.get("team_id")).toBe("team scope +/&");
 		expect(url.searchParams.get("snapshot")).toBe("snapshot +/&");
 		expect(url.searchParams.get("cursor")).toBe("cursor +/&");
+		expect(url.searchParams.get("known_total")).toBe("321");
+		expect(url.searchParams.get("include_content")).toBe("true");
 		expect(url.searchParams.has("page")).toBe(false);
 	});
 
@@ -670,6 +701,42 @@ describe("sessionSpendLogsCall", () => {
 		expect(thrown?.message).not.toContain("<!DOCTYPE html>");
 		expect(thrown?.message).not.toContain("Unexpected token");
 		expect(text).toHaveBeenCalledOnce();
+	});
+});
+
+describe("uiSpendLogDetailsBatchCall", () => {
+	const originalFetch = global.fetch;
+
+	afterEach(() => {
+		global.fetch = originalFetch;
+	});
+
+	it("通过一次 POST 批量请求日志详情", async () => {
+		const json = vi.fn().mockResolvedValue({
+			data: [
+				{ request_id: "req-1", messages: ["first"] },
+				{ request_id: "req-2", messages: ["second"] },
+			],
+		});
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+		const requests = [
+			{ request_id: "req-1", start_date: "2026-07-28 08:00:00" },
+			{ request_id: "req-2", start_date: "2026-07-28 08:01:00" },
+		];
+
+		await expect(Networking.uiSpendLogDetailsBatchCall("unused-token", requests)).resolves.toEqual({
+			data: [
+				{ request_id: "req-1", messages: ["first"] },
+				{ request_id: "req-2", messages: ["second"] },
+			],
+		});
+
+		const [url, init] = mockFetch.mock.calls[0]!;
+		expect(String(url)).toMatch(/\/spend\/logs\/ui\/batch$/);
+		expect(init.method).toBe("POST");
+		expect(JSON.parse(String(init.body))).toEqual({ requests });
+		expect(json).toHaveBeenCalledOnce();
 	});
 });
 

@@ -2140,16 +2140,17 @@ export const claimOnboardingToken = async (
 
 export const regenerateKeyCall = async (accessToken: string, keyToRegenerate: string, formData: any) => {
 	try {
-		const url = proxyBaseUrl
-			? `${proxyBaseUrl}/key/${keyToRegenerate}/regenerate`
-			: `/key/${keyToRegenerate}/regenerate`;
+		const url = proxyBaseUrl ? `${proxyBaseUrl}/key/regenerate` : `/key/regenerate`;
 
 		const response = await dashboardFetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 			},
-			body: JSON.stringify(formData),
+			body: JSON.stringify({
+				...formData,
+				token: keyToRegenerate,
+			}),
 		});
 
 		if (!response.ok) {
@@ -6280,6 +6281,47 @@ export const uiSpendLogDetailsCall = async (accessToken: string, logId: string, 
 	}
 };
 
+export interface UiSpendLogDetailBatchRequest {
+	request_id: string;
+	start_date?: string;
+	end_date?: string;
+}
+
+export interface UiSpendLogDetailBatchItem {
+	request_id: string;
+	messages?: unknown;
+	response?: unknown;
+	proxy_server_request?: unknown;
+}
+
+export const uiSpendLogDetailsBatchCall = async (
+	accessToken: string,
+	requests: UiSpendLogDetailBatchRequest[],
+): Promise<{ data: UiSpendLogDetailBatchItem[] }> => {
+	try {
+		const url = proxyBaseUrl ? `${proxyBaseUrl}/spend/logs/ui/batch` : "/spend/logs/ui/batch";
+		const response = await dashboardFetch(url, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ requests }),
+		});
+
+		if (!response.ok) {
+			const errorData = await response.json();
+			const errorMessage = deriveErrorMessage(errorData);
+			handleError(errorMessage);
+			throw new Error(errorMessage);
+		}
+
+		return await response.json();
+	} catch (error) {
+		console.error("Failed to fetch batched log details");
+		throw error;
+	}
+};
+
 export const getInternalUserSettings = async (accessToken: string) => {
 	try {
 		// Construct base URL
@@ -7250,6 +7292,8 @@ export interface SessionSpendLogsOptions {
 	teamId?: string;
 	snapshot?: string;
 	cursor?: string;
+	knownTotal?: number;
+	includeContent?: boolean;
 }
 
 /**
@@ -7285,6 +7329,12 @@ export const sessionSpendLogsCall = async (
 		}
 		if (options.cursor) {
 			searchParams.set("cursor", options.cursor);
+		}
+		if (options.knownTotal !== undefined) {
+			searchParams.set("known_total", String(options.knownTotal));
+		}
+		if (options.includeContent) {
+			searchParams.set("include_content", "true");
 		}
 		const path = `/spend/logs/session/ui?${searchParams.toString().replace(/\+/g, "%20")}`;
 		let url = proxyBaseUrl ? `${proxyBaseUrl}${path}` : path;

@@ -27,6 +27,28 @@ vi.mock("./LogDetailContent", () => ({
 	GuardrailJumpLink: () => null,
 }));
 
+vi.mock("./SessionSimulationDrawer", () => ({
+	SessionSimulationDrawer: ({
+		open,
+		onClose,
+		onOpenLog,
+	}: {
+		open: boolean;
+		onClose: () => void;
+		onOpenLog?: (log: LogEntry) => void;
+	}) =>
+		open ? (
+			<div role="dialog" aria-label="Session 模拟">
+				<button type="button" onClick={onClose}>
+					关闭模拟
+				</button>
+				<button type="button" onClick={() => onOpenLog?.({ request_id: "req-second" } as LogEntry)}>
+					打开模拟日志
+				</button>
+			</div>
+		) : null,
+}));
+
 vi.mock("antd", () => ({
 	Drawer: ({ open, children, width }: { open: boolean; children: ReactNode; width?: string | number }) =>
 		open ? (
@@ -34,7 +56,7 @@ vi.mock("antd", () => ({
 				{children}
 			</div>
 		) : null,
-	Button: ({ children, onClick, disabled, loading, ...props }: any) => (
+	Button: ({ children, onClick, disabled, loading, ghost: _ghost, icon: _icon, ...props }: any) => (
 		<button type="button" onClick={onClick} disabled={disabled || loading} {...props}>
 			{children}
 		</button>
@@ -115,6 +137,32 @@ describe("LogDetailsDrawer session fallback", () => {
 		expect(await screen.findByRole("dialog")).toHaveAttribute("data-width", LOG_DETAILS_PANEL_WIDTH);
 	});
 
+	it("Session 左侧提供模拟按钮并打开独立侧边窗口", async () => {
+		vi.mocked(sessionSpendLogsCall).mockResolvedValue({ data: [clickedLog], snapshot: "snap-1", next_cursor: null });
+
+		renderDrawer();
+		fireEvent.click(await screen.findByRole("button", { name: "模拟 Session" }));
+
+		expect(screen.getByRole("dialog", { name: "Session 模拟" })).toBeInTheDocument();
+	});
+
+	it("从模拟窗口点击 Log ID 后关闭模拟层并选中对应请求", async () => {
+		vi.mocked(sessionSpendLogsCall).mockResolvedValue({
+			data: [clickedLog, secondLog],
+			total: 2,
+			page: 1,
+			page_size: 100,
+			total_pages: 1,
+		});
+
+		renderDrawer();
+		fireEvent.click(await screen.findByRole("button", { name: "模拟 Session" }));
+		fireEvent.click(screen.getByRole("button", { name: "打开模拟日志" }));
+
+		expect(screen.queryByRole("dialog", { name: "Session 模拟" })).not.toBeInTheDocument();
+		expect(screen.getByTestId("selected-request")).toHaveTextContent("req-second");
+	});
+
 	it("完整 group ref 与显式 team scope 透传，query key 隔离 scope", async () => {
 		vi.mocked(sessionSpendLogsCall).mockResolvedValue({ data: [clickedLog], snapshot: "snap-1", next_cursor: null });
 
@@ -164,7 +212,7 @@ describe("LogDetailsDrawer session fallback", () => {
 		fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
 
 		await waitFor(() => expect(screen.getByText("model-second")).toBeInTheDocument());
-		expect(screen.getAllByRole("button")).toHaveLength(4);
+		expect(screen.getAllByRole("button")).toHaveLength(5);
 		expect(screen.getByTestId("selected-request")).toHaveTextContent("req-clicked");
 	});
 
@@ -180,7 +228,7 @@ describe("LogDetailsDrawer session fallback", () => {
 		renderDrawer();
 
 		await waitFor(() => expect(screen.getByText("model-second")).toBeInTheDocument());
-		expect(screen.getAllByRole("button")).toHaveLength(4);
+		expect(screen.getAllByRole("button")).toHaveLength(5);
 	});
 
 	it("Session 日志按 startTime 倒序展示，最新请求在最上面", async () => {
@@ -278,6 +326,7 @@ describe("LogDetailsDrawer session fallback", () => {
 			teamId: "scope-team",
 			snapshot: "snapshot-fixed",
 			cursor: "cursor-100",
+			knownTotal: 102,
 		});
 		expect(screen.getByText(/102 req/)).toBeInTheDocument();
 		expect(screen.getByText(/\$1\.500000/)).toBeInTheDocument();

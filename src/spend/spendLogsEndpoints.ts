@@ -68,6 +68,8 @@ const INTERNAL_USER_ROLE = "internal_user";
 const INTERNAL_USER_VIEWER_ROLE = "internal_user_viewer";
 
 type SessionGroupType = "claude_code_user_id" | "session_id";
+const SPEND_LOG_DETAIL_BATCH_SIZE = 100;
+const COLD_STORAGE_BATCH_CONCURRENCY = 8;
 
 const CLAUDE_CODE_USER_ID_PATTERN =
 	/^user_[A-Za-z0-9_-]+_account_[A-Za-z0-9_-]*_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -491,12 +493,17 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			group = { type: sessionGroupType, id: normalizedGroupId };
 		}
 
-		const requestedTeamId = typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
-		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
 		const page = parsePageParam(req.query.page);
 		const pageSize = Math.min(parsePageSizeParam(req.query.page_size, undefined), 100);
 		const snapshot = parseSessionPosition(req.query.snapshot, "snapshot");
 		const cursor = parseSessionPosition(req.query.cursor, "cursor");
+		const knownTotal = parseKnownSessionTotal(req.query.known_total);
+		if (knownTotal !== null && (!snapshot || !cursor)) {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "known_total requires snapshot and cursor");
+		}
+		const includeContent = req.query.include_content === "true";
+		const requestedTeamId = typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
+		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
 
 		// Legacy `session_id` is only an input alias. All detail reads must use the
 		// persisted group key so embedded stable session IDs and indexed lookups
@@ -515,18 +522,21 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		}
 
 		const boundedClause = effectiveSnapshot ? and(baseClause, sessionSnapshotClause(effectiveSnapshot)) : baseClause;
-		const countRows = await db
-			.select({ count: sql<number>`COUNT(*)` })
-			.from(liteLLM_SpendLogs)
-			.where(boundedClause);
-		const total = toFiniteNumber(countRows[0]?.count);
+		let total = knownTotal;
+		if (total === null) {
+			const countRows = await db
+				.select({ count: sql<number>`COUNT(*)` })
+				.from(liteLLM_SpendLogs)
+				.where(boundedClause);
+			total = toFiniteNumber(countRows[0]?.count);
+		}
 		if (total === 0) {
 			effectiveSnapshot = null;
 		}
 		const legacySkip = cursor ? 0 : (page - 1) * pageSize;
 		const detailClause = cursor ? and(boundedClause, sessionCursorClause(cursor)) : boundedClause;
 		const rows = await db
-			.select(uiSpendLogSelection())
+			.select(includeContent ? uiSpendLogSelectionWithContent() : uiSpendLogSelection())
 			.from(liteLLM_SpendLogs)
 			.where(detailClause)
 			.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
@@ -537,6 +547,54 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const nextCursor = hasMore ? sessionPositionFromNormalizedRow(pageRows.at(-1)) : null;
 
 		return makeSessionPage(pageRows, total, page, pageSize, effectiveSnapshot, nextCursor);
+	});
+
+	// ========== /spend/logs/ui/batch ==========
+	// Session 模拟批量补齐重列：每批最多 100 条。逐条保留冷存储优先语义，
+	// 未命中的 request_id 合并成一次 DB 查询，避免大 Session 产生数百次 HTTP/SQL 往返。
+	registerRoute(router, { method: "post", path: "/spend/logs/ui/batch" }, async (req) => {
+		const requests = parseSpendLogDetailBatch(req.body);
+		const coldStoragePayloads = await mapWithConcurrency(
+			requests,
+			COLD_STORAGE_BATCH_CONCURRENCY,
+			async (detailRequest) => {
+				const payload = await getRequestResponsePayloadFromColdStorage(
+					detailRequest.request_id,
+					parseOptionalDetailDate(detailRequest.start_date),
+					parseOptionalDetailDate(detailRequest.end_date),
+					(_coldStorageLogger, error) =>
+						logger.warn(`/spend/logs/ui/batch 冷存储回查失败: ${(error as Error).message}`),
+				);
+				return [detailRequest.request_id, payload] as const;
+			},
+		);
+		const coldStorageByRequestId = new Map(coldStoragePayloads);
+		const databaseRequestIds = requests
+			.map((detailRequest) => detailRequest.request_id)
+			.filter((requestId) => coldStorageByRequestId.get(requestId) === null);
+
+		const databaseRows =
+			databaseRequestIds.length === 0
+				? []
+				: await db
+						.select({
+							request_id: liteLLM_SpendLogs.request_id,
+							messages: liteLLM_SpendLogs.messages,
+							response: liteLLM_SpendLogs.response,
+							proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
+						})
+						.from(liteLLM_SpendLogs)
+						.where(inArray(liteLLM_SpendLogs.request_id, databaseRequestIds));
+		const databaseByRequestId = new Map(databaseRows.map((row) => [row.request_id, row] as const));
+
+		return {
+			data: requests.map((detailRequest) => ({
+				...(coldStorageByRequestId.get(detailRequest.request_id) ??
+					databaseByRequestId.get(detailRequest.request_id) ??
+					{}),
+				request_id: detailRequest.request_id,
+			})),
+		};
 	});
 
 	// ========== /spend/logs/ui/:request_id ==========
@@ -626,6 +684,65 @@ function parseOptionalDetailDate(rawQueryValue: unknown): Date | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+interface SpendLogDetailBatchRequest {
+	readonly request_id: string;
+	readonly start_date?: string;
+	readonly end_date?: string;
+}
+
+function parseSpendLogDetailBatch(body: unknown): SpendLogDetailBatchRequest[] {
+	if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).requests)) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "requests must be an array");
+	}
+	const rawRequests = (body as Record<string, unknown>).requests as unknown[];
+	if (rawRequests.length === 0 || rawRequests.length > SPEND_LOG_DETAIL_BATCH_SIZE) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, `requests must contain 1-${SPEND_LOG_DETAIL_BATCH_SIZE} items`);
+	}
+
+	const uniqueRequests = new Map<string, SpendLogDetailBatchRequest>();
+	for (const rawRequest of rawRequests) {
+		if (typeof rawRequest !== "object" || rawRequest === null) {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid detail request");
+		}
+		const request = rawRequest as Record<string, unknown>;
+		if (
+			typeof request.request_id !== "string" ||
+			request.request_id.trim().length === 0 ||
+			request.request_id.length > 512 ||
+			(request.start_date !== undefined && typeof request.start_date !== "string") ||
+			(request.end_date !== undefined && typeof request.end_date !== "string")
+		) {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid detail request");
+		}
+		if (!uniqueRequests.has(request.request_id)) {
+			uniqueRequests.set(request.request_id, {
+				request_id: request.request_id,
+				...(request.start_date !== undefined ? { start_date: request.start_date } : {}),
+				...(request.end_date !== undefined ? { end_date: request.end_date } : {}),
+			});
+		}
+	}
+	return [...uniqueRequests.values()];
+}
+
+async function mapWithConcurrency<T, R>(
+	items: readonly T[],
+	concurrency: number,
+	mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let nextIndex = 0;
+	const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+		while (nextIndex < items.length) {
+			const index = nextIndex;
+			nextIndex += 1;
+			results[index] = await mapper(items[index]!);
+		}
+	});
+	await Promise.all(workers);
+	return results;
 }
 
 /**
@@ -760,6 +877,16 @@ function uiSpendLogSelection() {
 		mcp_namespaced_tool_name: liteLLM_SpendLogs.mcp_namespaced_tool_name,
 		agent_id: liteLLM_SpendLogs.agent_id,
 		request_duration_ms: spendLogDurationSql(),
+	};
+}
+
+/** Session 模拟专用投影，在轻量行上按需附带会话正文。 */
+function uiSpendLogSelectionWithContent() {
+	return {
+		...uiSpendLogSelection(),
+		messages: liteLLM_SpendLogs.messages,
+		response: liteLLM_SpendLogs.response,
+		proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
 	};
 }
 
@@ -928,6 +1055,20 @@ function parseSessionPosition(value: unknown, parameterName: string): SessionPos
 	}
 }
 
+function parseKnownSessionTotal(value: unknown): number | null {
+	if (value === undefined) {
+		return null;
+	}
+	if (typeof value !== "string" || !/^\d+$/.test(value)) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid known_total");
+	}
+	const total = Number(value);
+	if (!Number.isSafeInteger(total)) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid known_total");
+	}
+	return total;
+}
+
 function encodeSessionPosition(position: SessionPosition): string {
 	return Buffer.from(JSON.stringify({ startTime: position.startTime.toISOString(), requestId: position.requestId }), "utf8").toString(
 		"base64url",
@@ -956,11 +1097,11 @@ function sessionPositionFromNormalizedRow(row: Record<string, unknown> | undefin
 }
 
 function sessionSnapshotClause(snapshot: SessionPosition): SQL {
-	return sql`(${liteLLM_SpendLogs.startTime} < ${snapshot.startTime} OR (${liteLLM_SpendLogs.startTime} = ${snapshot.startTime} AND ${liteLLM_SpendLogs.request_id} <= ${snapshot.requestId}))`;
+	return sql`(${liteLLM_SpendLogs.startTime}, ${liteLLM_SpendLogs.request_id}) <= (${snapshot.startTime}, ${snapshot.requestId})`;
 }
 
 function sessionCursorClause(cursor: SessionPosition): SQL {
-	return sql`(${liteLLM_SpendLogs.startTime} > ${cursor.startTime} OR (${liteLLM_SpendLogs.startTime} = ${cursor.startTime} AND ${liteLLM_SpendLogs.request_id} > ${cursor.requestId}))`;
+	return sql`(${liteLLM_SpendLogs.startTime}, ${liteLLM_SpendLogs.request_id}) > (${cursor.startTime}, ${cursor.requestId})`;
 }
 
 function makeSessionPage(

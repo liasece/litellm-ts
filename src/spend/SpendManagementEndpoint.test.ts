@@ -920,6 +920,56 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(res.status).toBe(200);
 				expect(res.body).toEqual(detailRow);
 			});
+
+			it("/spend/logs/ui/batch 将多条详情合并为一次 DB 查询并保持请求顺序", async () => {
+				const { db, calls } = makeMockDb({
+					data: [
+						{
+							request_id: "req-2",
+							messages: [{ role: "user", content: "second" }],
+							response: { id: "response-2" },
+							proxy_server_request: { model: "model-2" },
+						},
+						{
+							request_id: "req-1",
+							messages: [{ role: "user", content: "first" }],
+							response: { id: "response-1" },
+							proxy_server_request: { model: "model-1" },
+						},
+					],
+				});
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH))
+					.post("/spend/logs/ui/batch")
+					.send({
+						requests: [
+							{ request_id: "req-1", start_date: "2025-02-01 00:00:00" },
+							{ request_id: "req-2", start_date: "2025-02-02 00:00:00" },
+						],
+					});
+
+				expect(res.status).toBe(200);
+				expect(res.body.data.map((row: Record<string, unknown>) => row.request_id)).toEqual(["req-1", "req-2"]);
+				expect(res.body.data[0]).toMatchObject({
+					messages: [{ role: "user", content: "first" }],
+					response: { id: "response-1" },
+				});
+				const detailCalls = calls.filter((call) => call.projection.includes("proxy_server_request"));
+				expect(detailCalls).toHaveLength(1);
+				expect(detailCalls[0]?.whereSql).toContain("req-1");
+				expect(detailCalls[0]?.whereSql).toContain("req-2");
+			});
+
+			it.each([
+				{ requests: [] },
+				{ requests: [{ request_id: "" }] },
+				{ requests: Array.from({ length: 101 }, (_, index) => ({ request_id: `req-${index}` })) },
+			])("/spend/logs/ui/batch 拒绝非法批次且不查询 DB", async (body) => {
+				const { db, calls } = makeMockDb();
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).post("/spend/logs/ui/batch").send(body);
+
+				expect(res.status).toBe(400);
+				expect(calls).toHaveLength(0);
+			});
 		});
 
 		describe("session_total_count enrichment", () => {
@@ -1462,6 +1512,27 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(res.body.data[0]).not.toHaveProperty("session_total_count");
 		});
 
+		it("Session 模拟显式请求时才投影会话正文", async () => {
+			const contentRow = {
+				...SAMPLE_UI_ROW,
+				messages: [{ role: "user", content: "hello" }],
+				response: { choices: [{ message: { role: "assistant", content: "hi" } }] },
+				proxy_server_request: { body: { messages: [{ role: "user", content: "hello" }] } },
+			};
+			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [contentRow]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/ui?session_id=session-A&include_content=true",
+			);
+
+			expect(res.status).toBe(200);
+			const dataCall = calls.find((call) => call.projection.includes("request_id"));
+			expect(dataCall?.projection).toEqual(expect.arrayContaining(["messages", "response", "proxy_server_request"]));
+			expect(res.body.data[0]).toMatchObject({
+				messages: [{ role: "user", content: "hello" }],
+				response: { choices: [{ message: { role: "assistant", content: "hi" } }] },
+			});
+		});
+
 		it("page_size 最大 100，旧 page 输入保留但不使用 offset", async () => {
 			const rows = Array.from({ length: 201 }, (_, index) => ({
 				...SAMPLE_UI_ROW,
@@ -1499,6 +1570,41 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			const dataCall = calls.find((call) => call.projection.includes("request_id"));
 			expect(dataCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
 			expect(dataCall?.offsetN).toBeNull();
+		});
+
+		it("游标页复用首屏 total，不重复执行 COUNT，并使用复合元组边界", async () => {
+			const snapshot = Buffer.from(JSON.stringify({ startTime: "2025-02-10T00:00:00.000Z", requestId: "req-z" }), "utf8").toString(
+				"base64url",
+			);
+			const cursor = Buffer.from(JSON.stringify({ startTime: "2025-02-09T00:00:00.000Z", requestId: "req-a" }), "utf8").toString(
+				"base64url",
+			);
+			const { db, calls } = makeMockDb({ responses: [[SAMPLE_UI_ROW]] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get("/spend/logs/session/ui").query({
+				session_id: "session-A",
+				page_size: 100,
+				snapshot: snapshot,
+				cursor: cursor,
+				known_total: 321,
+			});
+
+			expect(res.status).toBe(200);
+			expect(res.body.total).toBe(321);
+			expect(calls.some((call) => call.hasCount)).toBe(false);
+			const dataCall = calls.find((call) => call.projection.includes("request_id"));
+			expect(dataCall?.whereSql).toContain("<=");
+			expect(dataCall?.whereSql).toContain(">");
+			expect(dataCall?.whereSql).not.toMatch(/\bOR\b/i);
+		});
+
+		it("known_total 仅允许与 snapshot/cursor 一起使用", async () => {
+			const { db, calls } = makeMockDb();
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/ui?session_id=session-A&known_total=10",
+			);
+
+			expect(res.status).toBe(400);
+			expect(calls).toHaveLength(0);
 		});
 
 		it("空结果返回 total_pages=0", async () => {
