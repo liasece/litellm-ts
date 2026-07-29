@@ -7296,6 +7296,96 @@ export interface SessionSpendLogsOptions {
 	includeContent?: boolean;
 }
 
+export interface SessionTimelinePart {
+	kind:
+		| "text"
+		| "thinking"
+		| "redacted_thinking"
+		| "tool_call"
+		| "tool_result"
+		| "web_search"
+		| "file_search"
+		| "computer"
+		| "code"
+		| "code_result"
+		| "image"
+		| "document"
+		| "audio"
+		| "refusal"
+		| "unknown";
+	label: string;
+	sourceType?: string;
+	id?: string;
+	name?: string;
+	text?: string;
+	data?: unknown;
+	status?: string;
+	isError?: boolean;
+}
+
+export interface SessionTimelineEvent {
+	id: string;
+	request_id: string;
+	role: "system" | "user" | "assistant" | "tool" | "request" | "error";
+	label: string;
+	timestamp: string;
+	model: string;
+	content: string;
+	parts?: SessionTimelinePart[];
+	status?: string;
+}
+
+export interface SessionTimelineResponse {
+	data: SessionTimelineEvent[];
+	summary: {
+		request_count: number;
+		event_count: number;
+		total_spend: number;
+		total_tokens: number;
+		duration_seconds: number;
+		start_time: string | null;
+		end_time: string | null;
+	};
+}
+
+export const sessionTimelineCall = async (
+	accessToken: string,
+	sessionGroup: SessionGroupRef,
+	teamId?: string,
+): Promise<SessionTimelineResponse> => {
+	try {
+		const searchParams = new URLSearchParams({
+			session_group_type: sessionGroup.type,
+			session_group_id: sessionGroup.id,
+		});
+		if (teamId) searchParams.set("team_id", teamId);
+		const path = `/spend/logs/session/timeline?${searchParams.toString().replace(/\+/g, "%20")}`;
+		const url = proxyBaseUrl ? `${proxyBaseUrl}${path}` : path;
+		const response = await dashboardFetch(url, {
+			method: "GET",
+			headers: { "Content-Type": "application/json" },
+		});
+		if (!response.ok) {
+			const responseBody = await response.text();
+			const isHtml = /^\s*(?:<!doctype\s+html|<html)\b/i.test(responseBody);
+			let errorMessage = `Session timeline request failed with HTTP ${response.status}`;
+			if (responseBody.length > 0 && !isHtml) {
+				try {
+					errorMessage = deriveErrorMessage(JSON.parse(responseBody));
+				} catch {
+					errorMessage = responseBody;
+				}
+			}
+			await handleError(errorMessage);
+			throw new Error(errorMessage);
+		}
+		return (await response.json()) as SessionTimelineResponse;
+	} catch (error) {
+		console.error("Failed to fetch session timeline");
+		throw error;
+	}
+};
+
 /**
  * Get all spend logs for a particular session
  */

@@ -50,6 +50,7 @@ import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage"
 import type { Column } from "./spendManagementTypes";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
+import { SessionTimelineBuilder, type SessionTimelineSourceRow } from "./sessionTimeline";
 
 const logger = createModuleLogger("SpendLogs");
 
@@ -70,6 +71,7 @@ const INTERNAL_USER_VIEWER_ROLE = "internal_user_viewer";
 type SessionGroupType = "claude_code_user_id" | "session_id";
 const SPEND_LOG_DETAIL_BATCH_SIZE = 100;
 const COLD_STORAGE_BATCH_CONCURRENCY = 8;
+const SESSION_TIMELINE_DB_BATCH_SIZE = 100;
 
 const CLAUDE_CODE_USER_ID_PATTERN =
 	/^user_[A-Za-z0-9_-]+_account_[A-Za-z0-9_-]*_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -458,41 +460,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// ========== /spend/logs/session/ui ==========
 	// 固定 snapshot 边界并按 (startTime, request_id) 复合 keyset 分页；旧 page/page_size 输入继续兼容。
 	registerRoute(router, { method: "get", path: "/spend/logs/session/ui" }, async (req) => {
-		const legacySessionId = req.query.session_id;
-		const sessionGroupType = req.query.session_group_type;
-		const sessionGroupId = req.query.session_group_id;
-		const hasLegacySessionId = legacySessionId !== undefined;
-		const hasSessionGroupType = sessionGroupType !== undefined;
-		const hasSessionGroupId = sessionGroupId !== undefined;
-
-		if (hasLegacySessionId && (hasSessionGroupType || hasSessionGroupId)) {
-			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "session_id cannot be combined with session group parameters");
-		}
-
-		let group: SessionGroupRef;
-		if (hasLegacySessionId) {
-			if (typeof legacySessionId !== "string" || legacySessionId.length === 0) {
-				throw new ApiError(HTTP_STATUS.BAD_REQUEST, "session_id is required");
-			}
-			group = { type: "session_id", id: legacySessionId };
-		} else {
-			if (
-				!hasSessionGroupType ||
-				!hasSessionGroupId ||
-				typeof sessionGroupType !== "string" ||
-				typeof sessionGroupId !== "string" ||
-				sessionGroupId.length === 0 ||
-				(sessionGroupType !== "session_id" && sessionGroupType !== "claude_code_user_id")
-			) {
-				throw new ApiError(HTTP_STATUS.BAD_REQUEST, "valid session group parameters are required");
-			}
-			const normalizedGroupId = sessionGroupId.trim();
-			if (sessionGroupType === "claude_code_user_id" && !CLAUDE_CODE_USER_ID_PATTERN.test(normalizedGroupId)) {
-				throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid Claude Code session group");
-			}
-			group = { type: sessionGroupType, id: normalizedGroupId };
-		}
-
+		const group = parseSessionGroupQuery(req.query as Record<string, unknown>);
 		const page = parsePageParam(req.query.page);
 		const pageSize = Math.min(parsePageSizeParam(req.query.page_size, undefined), 100);
 		const snapshot = parseSessionPosition(req.query.snapshot, "snapshot");
@@ -547,6 +515,55 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const nextCursor = hasMore ? sessionPositionFromNormalizedRow(pageRows.at(-1)) : null;
 
 		return makeSessionPage(pageRows, total, page, pageSize, effectiveSnapshot, nextCursor);
+	});
+
+	// ========== /spend/logs/session/timeline ==========
+	// 独立的 Session 时间线读取路径。服务端按复合索引升序分批读取，并在内存中只保留
+	// 已去重的最终事件；请求快照、原始响应和 proxy_server_request 不会进入 HTTP 响应。
+	registerRoute(router, { method: "get", path: "/spend/logs/session/timeline" }, async (req) => {
+		const group = parseSessionGroupQuery(req.query as Record<string, unknown>);
+		const requestedTeamId = typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
+		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
+		const baseClause = and(
+			eq(liteLLM_SpendLogs.session_group_key, sessionGroupKey(group)),
+			visibilityClause,
+		) as SQL;
+		const snapshotRows = await db
+			.select({ snapshotStartTime: liteLLM_SpendLogs.startTime, snapshotRequestId: liteLLM_SpendLogs.request_id })
+			.from(liteLLM_SpendLogs)
+			.where(baseClause)
+			.orderBy(sql`${liteLLM_SpendLogs.startTime} DESC, ${liteLLM_SpendLogs.request_id} DESC`)
+			.limit(1);
+		const snapshot = sessionPositionFromRow(snapshotRows[0], "snapshotStartTime", "snapshotRequestId");
+		const builder = new SessionTimelineBuilder();
+		if (!snapshot) return builder.build();
+
+		const boundedClause = and(baseClause, sessionSnapshotClause(snapshot)) as SQL;
+		let cursor: SessionPosition | null = null;
+		let hasMore = true;
+		while (hasMore) {
+			const pageClause = cursor ? and(boundedClause, sessionCursorClause(cursor)) : boundedClause;
+			const rows = await db
+				.select(sessionTimelineSelection())
+				.from(liteLLM_SpendLogs)
+				.where(pageClause)
+				.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
+				.limit(SESSION_TIMELINE_DB_BATCH_SIZE + 1);
+			const pageRows = rows.slice(0, SESSION_TIMELINE_DB_BATCH_SIZE);
+			const hydratedRows = await hydrateTimelineRowsFromColdStorage(pageRows as SessionTimelineSourceRow[]);
+			for (const row of hydratedRows) builder.add(row);
+
+			hasMore = rows.length > SESSION_TIMELINE_DB_BATCH_SIZE;
+			cursor = sessionPositionFromRow(
+				pageRows.at(-1) as unknown as Record<string, unknown> | undefined,
+				"startTime",
+				"request_id",
+			);
+			if (hasMore && !cursor) {
+				throw new Error("Session timeline cursor could not be derived");
+			}
+		}
+		return builder.build();
 	});
 
 	// ========== /spend/logs/ui/batch ==========
@@ -745,6 +762,43 @@ async function mapWithConcurrency<T, R>(
 	return results;
 }
 
+function hasTimelinePayload(value: unknown): boolean {
+	if (value === null || value === undefined) return false;
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		return trimmed !== "" && trimmed !== "null" && trimmed !== "{}" && trimmed !== "[]";
+	}
+	if (Array.isArray(value)) return value.length > 0;
+	if (typeof value === "object") return Object.keys(value).length > 0;
+	return true;
+}
+
+async function hydrateTimelineRowsFromColdStorage(
+	rows: readonly SessionTimelineSourceRow[],
+): Promise<SessionTimelineSourceRow[]> {
+	return mapWithConcurrency(rows, COLD_STORAGE_BATCH_CONCURRENCY, async (row) => {
+		if (hasTimelinePayload(row.request_payload) && hasTimelinePayload(row.response_payload)) {
+			return row;
+		}
+		const payload = await getRequestResponsePayloadFromColdStorage(
+			row.request_id,
+			new Date(row.startTime),
+			new Date(row.endTime),
+			(_coldStorageLogger, error) =>
+				logger.warn(`/spend/logs/session/timeline 冷存储回查失败: ${(error as Error).message}`),
+		);
+		if (!payload) return row;
+		const coldRequestPayload = hasTimelinePayload(payload.proxy_server_request)
+			? payload.proxy_server_request
+			: payload.messages;
+		return {
+			...row,
+			request_payload: hasTimelinePayload(row.request_payload) ? row.request_payload : coldRequestPayload,
+			response_payload: hasTimelinePayload(row.response_payload) ? row.response_payload : payload.response,
+		};
+	});
+}
+
 /**
  * 判断用户角色是否为 internal_user / internal_user_viewer（Python `_can_user_view_spend_log`）。
  * @param auth
@@ -887,6 +941,45 @@ function uiSpendLogSelectionWithContent() {
 		messages: liteLLM_SpendLogs.messages,
 		response: liteLLM_SpendLogs.response,
 		proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
+	};
+}
+
+/**
+ * 时间线专用投影。正常路径直接读取已经标准化的 messages 列；仅在该列确实
+ * 没有正文时回退 proxy_server_request.body，避免对每条大 JSON 快照重复拆装。
+ */
+function sessionTimelineSelection() {
+	const proxy = liteLLM_SpendLogs.proxy_server_request;
+	const messages = liteLLM_SpendLogs.messages;
+	const metadata = liteLLM_SpendLogs.metadata;
+	return {
+		request_id: liteLLM_SpendLogs.request_id,
+		call_type: liteLLM_SpendLogs.call_type,
+		spend: liteLLM_SpendLogs.spend,
+		total_tokens: liteLLM_SpendLogs.total_tokens,
+		startTime: liteLLM_SpendLogs.startTime,
+		endTime: liteLLM_SpendLogs.endTime,
+		model: liteLLM_SpendLogs.model,
+		status: sql<string | null>`${liteLLM_SpendLogs.status}`,
+		metadata_status: sql<string | null>`
+			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'status' ELSE NULL END
+		`,
+		error_information: sql<unknown | null>`
+			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->'error_information' ELSE NULL END
+		`,
+		request_payload: sql<unknown>`
+			CASE
+				WHEN ${messages} IS NOT NULL
+					AND ${messages} <> 'null'::jsonb
+					AND ${messages} <> '{}'::jsonb
+					AND ${messages} <> '[]'::jsonb
+				THEN ${messages}
+				WHEN jsonb_typeof(${proxy}) = 'object' AND ${proxy}->'body' IS NOT NULL
+				THEN ${proxy}->'body'
+				ELSE ${proxy}
+			END
+		`,
+		response_payload: liteLLM_SpendLogs.response,
 	};
 }
 
@@ -1322,6 +1415,39 @@ async function enrichSessionCounts(
 interface SessionGroupRef {
 	readonly type: SessionGroupType;
 	readonly id: string;
+}
+
+function parseSessionGroupQuery(query: Record<string, unknown>): SessionGroupRef {
+	const legacySessionId = query.session_id;
+	const sessionGroupType = query.session_group_type;
+	const sessionGroupId = query.session_group_id;
+	const hasLegacySessionId = legacySessionId !== undefined;
+	const hasSessionGroupType = sessionGroupType !== undefined;
+	const hasSessionGroupId = sessionGroupId !== undefined;
+	if (hasLegacySessionId && (hasSessionGroupType || hasSessionGroupId)) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "session_id cannot be combined with session group parameters");
+	}
+	if (hasLegacySessionId) {
+		if (typeof legacySessionId !== "string" || legacySessionId.length === 0) {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "session_id is required");
+		}
+		return { type: "session_id", id: legacySessionId };
+	}
+	if (
+		!hasSessionGroupType ||
+		!hasSessionGroupId ||
+		typeof sessionGroupType !== "string" ||
+		typeof sessionGroupId !== "string" ||
+		sessionGroupId.length === 0 ||
+		(sessionGroupType !== "session_id" && sessionGroupType !== "claude_code_user_id")
+	) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "valid session group parameters are required");
+	}
+	const normalizedGroupId = sessionGroupId.trim();
+	if (sessionGroupType === "claude_code_user_id" && !CLAUDE_CODE_USER_ID_PATTERN.test(normalizedGroupId)) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid Claude Code session group");
+	}
+	return { type: sessionGroupType, id: normalizedGroupId };
 }
 
 function readSessionGroup(row: Record<string, unknown>): SessionGroupRef | null {

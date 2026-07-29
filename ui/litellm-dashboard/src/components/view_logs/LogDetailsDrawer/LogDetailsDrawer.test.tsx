@@ -35,14 +35,14 @@ vi.mock("./SessionSimulationDrawer", () => ({
 	}: {
 		open: boolean;
 		onClose: () => void;
-		onOpenLog?: (log: LogEntry) => void;
+		onOpenLog?: (event: { request_id: string }) => void;
 	}) =>
 		open ? (
 			<div role="dialog" aria-label="Session 模拟">
 				<button type="button" onClick={onClose}>
 					关闭模拟
 				</button>
-				<button type="button" onClick={() => onOpenLog?.({ request_id: "req-second" } as LogEntry)}>
+				<button type="button" onClick={() => onOpenLog?.({ request_id: "req-second" })}>
 					打开模拟日志
 				</button>
 			</div>

@@ -564,9 +564,32 @@ export default function SpendLogsTable({
 				<SessionSimulationDrawer
 					open={true}
 					onClose={() => setSimulationSessionGroup(null)}
-					onOpenLog={(log) => {
+					onOpenLog={(event) => {
+						const log =
+							searchedLogs.find((candidate) => candidate.request_id === event.request_id) ??
+							({
+								request_id: event.request_id,
+								api_key: "",
+								team_id: selectedTeamId,
+								model: event.model,
+								model_id: "",
+								call_type: "completion",
+								spend: 0,
+								total_tokens: 0,
+								prompt_tokens: 0,
+								completion_tokens: 0,
+								startTime: event.timestamp,
+								endTime: event.timestamp,
+								cache_hit: "",
+								messages: [],
+								response: {},
+								metadata: event.status ? { status: event.status } : {},
+								status: event.status,
+								session_group_type: simulationSessionGroup.type,
+								session_group_id: simulationSessionGroup.id,
+							} satisfies LogEntry);
 						setSimulationSessionGroup(null);
-						setSelectedSessionGroup(getSessionGroupRef(log) ?? simulationSessionGroup);
+						setSelectedSessionGroup(simulationSessionGroup);
 						setSelectedLog(log);
 						setIsDrawerOpen(true);
 					}}

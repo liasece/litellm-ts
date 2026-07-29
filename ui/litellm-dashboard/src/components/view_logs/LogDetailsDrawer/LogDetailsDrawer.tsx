@@ -454,8 +454,8 @@ export function LogDetailsDrawer({
 				<SessionSimulationDrawer
 					open={isSimulationOpen}
 					onClose={() => setIsSimulationOpen(false)}
-					onOpenLog={(log) => {
-						setSelectedSessionRequestId(log.request_id);
+					onOpenLog={(event) => {
+						setSelectedSessionRequestId(event.request_id);
 						setIsSimulationOpen(false);
 					}}
 					sessionGroup={sessionGroup}

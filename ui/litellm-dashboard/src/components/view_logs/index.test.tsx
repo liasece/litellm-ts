@@ -60,8 +60,9 @@ vi.mock("./LogDetailsDrawer", () => ({
 					onClick={() =>
 						props.onOpenLog?.({
 							request_id: "req-from-simulation",
-							session_group_type: "claude_code_user_id",
-							session_group_id: props.sessionGroup.id,
+							model: "claude",
+							timestamp: "2026-07-24T10:00:00.000Z",
+							status: "success",
 						})
 					}
 				>

@@ -704,6 +704,48 @@ describe("sessionSpendLogsCall", () => {
 	});
 });
 
+describe("sessionTimelineCall", () => {
+	const originalFetch = global.fetch;
+
+	afterEach(() => {
+		global.fetch = originalFetch;
+	});
+
+	it("只调用独立时间线接口，并完整编码 Session group 与 team scope", async () => {
+		const responseBody = {
+			data: [],
+			summary: {
+				request_count: 0,
+				event_count: 0,
+				total_spend: 0,
+				total_tokens: 0,
+				duration_seconds: 0,
+				start_time: null,
+				end_time: null,
+			},
+		};
+		const json = vi.fn().mockResolvedValue(responseBody);
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
+		global.fetch = mockFetch as typeof global.fetch;
+
+		await expect(
+			Networking.sessionTimelineCall(
+				"unused-token",
+				{ type: "session_id", id: "session +/&" },
+				"team +/&",
+			),
+		).resolves.toEqual(responseBody);
+
+		const url = new URL(String(mockFetch.mock.calls[0]![0]), "http://example.com");
+		expect(url.pathname).toBe("/spend/logs/session/timeline");
+		expect(url.searchParams.get("session_group_type")).toBe("session_id");
+		expect(url.searchParams.get("session_group_id")).toBe("session +/&");
+		expect(url.searchParams.get("team_id")).toBe("team +/&");
+		expect(url.searchParams.has("include_content")).toBe(false);
+		expect(json).toHaveBeenCalledOnce();
+	});
+});
+
 describe("uiSpendLogDetailsBatchCall", () => {
 	const originalFetch = global.fetch;
 

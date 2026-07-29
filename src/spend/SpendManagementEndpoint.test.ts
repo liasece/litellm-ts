@@ -1663,6 +1663,84 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(calls.some((call) => call.projection.includes("messages"))).toBe(false);
 		});
 	});
+
+	describe("/spend/logs/session/timeline", () => {
+		it("服务端返回去重后的渲染事件与汇总，不暴露原始重字段", async () => {
+			const rows = [
+				{
+					request_id: "req-1",
+					call_type: "completion",
+					spend: 0.01,
+					total_tokens: 10,
+					startTime: new Date("2026-07-24T10:00:00.000Z"),
+					endTime: new Date("2026-07-24T10:00:01.000Z"),
+					model: "claude",
+					status: "success",
+					metadata_status: null,
+					error_information: null,
+					request_payload: { messages: [{ role: "user", content: "第一问" }] },
+					response_payload: { choices: [{ message: { role: "assistant", content: "第一答" } }] },
+				},
+				{
+					request_id: "req-2",
+					call_type: "completion",
+					spend: 0.02,
+					total_tokens: 20,
+					startTime: new Date("2026-07-24T10:00:02.000Z"),
+					endTime: new Date("2026-07-24T10:00:03.000Z"),
+					model: "claude",
+					status: "success",
+					metadata_status: null,
+					error_information: null,
+					request_payload: {
+						messages: [
+							{ role: "user", content: "第一问" },
+							{ role: "assistant", content: "第一答" },
+							{ role: "user", content: "第二问" },
+						],
+					},
+					response_payload: { choices: [{ message: { role: "assistant", content: "第二答" } }] },
+				},
+			];
+			const { db, calls } = makeMockDb({ responses: [rows] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.data.map((item: Record<string, unknown>) => [item.role, item.content])).toEqual([
+				["user", "第一问"],
+				["assistant", "第一答"],
+				["user", "第二问"],
+				["assistant", "第二答"],
+			]);
+			expect(res.body.summary).toMatchObject({
+				request_count: 2,
+				event_count: 4,
+				total_spend: 0.03,
+				total_tokens: 30,
+				duration_seconds: 3,
+			});
+			expect(JSON.stringify(res.body)).not.toMatch(/proxy_server_request|"messages"|"response"/);
+			expect(calls.some((call) => call.hasCount)).toBe(false);
+			const dataCall = calls.find((call) => call.projection.includes("request_payload"));
+			expect(dataCall?.projection).not.toEqual(
+				expect.arrayContaining(["messages", "response", "proxy_server_request", "metadata"]),
+			);
+			expect(dataCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
+			expect(dataCall?.limitN).toBe(101);
+		});
+
+		it("沿用 Session 可见性边界，非法参数不查询 DB", async () => {
+			const { db, calls } = makeMockDb();
+			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get(
+				"/spend/logs/session/timeline?session_group_type=invalid&session_group_id=session-A",
+			);
+
+			expect(res.status).toBe(400);
+			expect(calls).toHaveLength(0);
+		});
+	});
 });
 
 const postgresCompatibilityUrl = process.env.TEST_DATABASE_URL;
