@@ -11,9 +11,10 @@
 
 ## 构建疑似卡住
 
-保留当前部署会话，在另一个只读 SSH 会话中检查：
+保留当前部署会话，在另一个只读 SSH 会话中进入 `cc-server-dc` 后检查部署进程：
 
 ```sh
+docker exec -it cc-server-dc sh
 pgrep -af "restart-litellm|npm run build|next build"
 ps -o pid,ppid,pgid,sid,etime,state,%cpu,%mem,command -p <已确认的 PID 列表>
 docker ps --filter name=litellm-prod --format "{{.Names}} {{.Status}}"

@@ -41,6 +41,13 @@ describe("AuthorizationGuard allowed_routes", () => {
 		const guard = new AuthorizationGuard(makeRepository());
 		const groupApp = makeApp(guard, makeAuth({ allowed_routes: ["llm_api_routes"] }), "inference");
 		expect((await request(groupApp).post("/v1/chat/completions")).status).toBe(200);
+		expect((await request(groupApp).post("/v1/messages/count_tokens?beta=true")).status).toBe(200);
+		expect((await request(groupApp).post("/v1/messages/batches/batch_1/cancel")).status).toBe(200);
+		expect((await request(groupApp).get("/v1/messages/batches/batch_1/results")).status).toBe(200);
+		expect((await request(groupApp).get("/v1/files/file_1/content")).status).toBe(200);
+		expect((await request(groupApp).get("/v1/responses/resp_1")).status).toBe(200);
+		expect((await request(groupApp).post("/openai/deployments/gpt-4/chat/completions")).status).toBe(200);
+		expect((await request(groupApp).get("/v1/models")).status).toBe(200);
 		expect((await request(groupApp).post("/key/delete")).status).toBe(403);
 
 		const wildcardApp = makeApp(guard, makeAuth({ allowed_routes: ["/key/*"] }), "inference");

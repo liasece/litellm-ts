@@ -98,6 +98,7 @@ interface StandardResponseObject extends Record<string, unknown> {
 	id: string;
 	object: "response";
 	created_at: number;
+	completed_at: number | null;
 	status: "in_progress" | "completed" | "incomplete" | "failed";
 	error: ResponseError | null;
 	incomplete_details: Record<string, unknown> | null;
@@ -125,8 +126,13 @@ interface ResponsesStreamState {
 	reasoningItem?: ResponseOutputItem;
 	tools: Map<number, StreamToolState>;
 	text: string;
+	refusal: string;
 	reasoning: string;
+	nextContentIndex: number;
+	textContentIndex?: number;
+	refusalContentIndex?: number;
 	usage?: Usage;
+	finishReason?: string;
 	sequence: number;
 	terminalSent: boolean;
 }
@@ -174,6 +180,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		if (reqBody.input === undefined) {
 			throw ApiError.badRequest("input 字段缺失");
 		}
+		validateResponsesPersistenceOptions(reqBody);
 		if (req.auth) {
 			runCommonChecks(req.auth, model);
 		}
@@ -252,6 +259,21 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 	};
 }
 
+function validateResponsesPersistenceOptions(body: ResponsesCreateRequest): void {
+	if (body["background"] === true) {
+		throw new ApiError(501, "Responses background mode 尚未实现", "not_implemented");
+	}
+	if (body["store"] === true) {
+		throw new ApiError(501, "Responses 持久化尚未实现；请设置 store=false", "not_implemented");
+	}
+	if (body["previous_response_id"] !== undefined && body["previous_response_id"] !== null) {
+		throw new ApiError(501, "previous_response_id 依赖 Responses 持久化，当前尚未实现", "not_implemented");
+	}
+	if (body["conversation"] !== undefined && body["conversation"] !== null) {
+		throw new ApiError(501, "Responses conversation 状态尚未实现", "not_implemented");
+	}
+}
+
 function buildResponsesMessages(input: string | ResponsesInputItem[], instructions: string | undefined): ChatMessage[] {
 	const messages: ChatMessage[] = [];
 	if (instructions) {
@@ -323,8 +345,16 @@ function responseContentToChatContent(content: unknown): unknown {
 			return { type: "text", text: part["text"] };
 		}
 		if (part["type"] === "input_image") {
-			const url = part["image_url"] ?? part["file_id"];
-			return { type: "image_url", image_url: { url: url, detail: part["detail"] } };
+			if (typeof part["image_url"] !== "string" || part["image_url"].length === 0) {
+				if (typeof part["file_id"] === "string") {
+					throw ApiError.badRequest("当前 Responses-to-Chat 兼容层不支持 input_image.file_id；请使用 image_url");
+				}
+				throw ApiError.badRequest("input_image.image_url 字段缺失");
+			}
+			return { type: "image_url", image_url: { url: part["image_url"], detail: part["detail"] } };
+		}
+		if (part["type"] === "input_file") {
+			throw ApiError.badRequest("当前 Responses-to-Chat 兼容层不支持 input_file");
 		}
 		return part;
 	});
@@ -375,8 +405,10 @@ function mapChatCompletionToResponse(result: Record<string, unknown>, request: R
 	if (reasoning) {
 		output.push(buildReasoningItem(responseId, output.length, reasoning));
 	}
-	if (typeof message["content"] === "string" && message["content"].length > 0) {
-		output.push(buildMessageItem(responseId, output.length, message["content"]));
+	const text = typeof message["content"] === "string" ? message["content"] : "";
+	const refusal = typeof message["refusal"] === "string" ? message["refusal"] : "";
+	if (text.length > 0 || refusal.length > 0) {
+		output.push(buildMessageItem(responseId, output.length, text, refusal));
 	}
 	for (const toolCall of (message["tool_calls"] as ToolCall[] | undefined) ?? []) {
 		output.push(buildFunctionCallItem(responseId, output.length, toolCall));
@@ -414,23 +446,27 @@ function buildResponseObject(input: {
 		id: input.id,
 		object: "response",
 		created_at: input.createdAt,
+		completed_at: input.status === "completed" ? Math.floor(Date.now() / 1000) : null,
 		status: input.status,
 		error: input.error,
 		incomplete_details: input.incompleteDetails ?? null,
 		instructions: input.instructions,
+		max_output_tokens: input.request.max_output_tokens ?? null,
 		model: input.model,
 		output: input.output,
 		parallel_tool_calls: input.request.parallel_tool_calls ?? true,
 		previous_response_id: input.request.previous_response_id ?? null,
-		reasoning: input.request.reasoning ?? null,
-		store: input.request.store ?? true,
-		temperature: input.request.temperature ?? null,
+		reasoning: input.request.reasoning ?? { effort: null, summary: null },
+		store: false,
+		temperature: input.request.temperature ?? 1,
 		text: input.request.text ?? { format: { type: "text" } },
 		tool_choice: input.request.tool_choice ?? "auto",
 		tools: input.request.tools ?? [],
-		top_p: input.request.top_p ?? null,
+		top_p: input.request.top_p ?? 1,
 		truncation: input.request.truncation ?? "disabled",
 		usage: input.usage,
+		user: input.request.user ?? null,
+		metadata: input.request.metadata ?? {},
 	};
 }
 
@@ -455,13 +491,20 @@ function buildReasoningItem(responseId: string, index: number, text: string): Re
 	};
 }
 
-function buildMessageItem(responseId: string, index: number, text: string): ResponseOutputItem {
+function buildMessageItem(responseId: string, index: number, text: string, refusal = ""): ResponseOutputItem {
+	const content: Array<Record<string, unknown>> = [];
+	if (text.length > 0) {
+		content.push({ type: "output_text", annotations: [], logprobs: [], text: text });
+	}
+	if (refusal.length > 0) {
+		content.push({ type: "refusal", refusal: refusal });
+	}
 	return {
 		id: `${responseId}_message_${index}`,
 		type: "message",
 		status: "completed",
 		role: "assistant",
-		content: [{ type: "output_text", annotations: [], logprobs: [], text: text }],
+		content: content,
 	};
 }
 
@@ -565,7 +608,9 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		output: [],
 		tools: new Map(),
 		text: "",
+		refusal: "",
 		reasoning: "",
+		nextContentIndex: 0,
 		sequence: 0,
 		terminalSent: false,
 	};
@@ -599,8 +644,21 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			consumeChatStreamChunk(current.value, state, res);
 		}
 		writeCompletedEvents(res, state);
-		const completed = buildStreamResponse(state, requestBody, "completed", null);
-		writeTerminalEvent(res, state, "response.completed", { response: completed });
+		const terminalStatus =
+			state.finishReason === "length" ? "incomplete" : state.finishReason === "content_filter" ? "failed" : "completed";
+		const terminalError =
+			terminalStatus === "failed" ? { code: "content_filter", message: "Response blocked by content filter" } : null;
+		const completed = buildStreamResponse(state, requestBody, terminalStatus, terminalError);
+		writeTerminalEvent(
+			res,
+			state,
+			terminalStatus === "incomplete"
+				? "response.incomplete"
+				: terminalStatus === "failed"
+					? "response.failed"
+					: "response.completed",
+			{ response: completed },
+		);
 		if (!res.writableEnded) {
 			res.end();
 		}
@@ -676,6 +734,10 @@ function consumeChatStreamChunk(chunk: unknown, state: ResponsesStreamState, res
 			throw ApiError.unavailable("Provider 返回 malformed stream choice");
 		}
 		const delta = (choice as Record<string, unknown>)["delta"] as Record<string, unknown> | undefined;
+		const finishReason = (choice as Record<string, unknown>)["finish_reason"];
+		if (typeof finishReason === "string") {
+			state.finishReason = finishReason;
+		}
 		if (!delta) {
 			continue;
 		}
@@ -694,14 +756,24 @@ function consumeChatStreamChunk(chunk: unknown, state: ResponsesStreamState, res
 			});
 		}
 		if (typeof delta["content"] === "string" && delta["content"].length > 0) {
-			openMessageItem(state, res);
+			openTextPart(state, res);
 			state.text += delta["content"];
 			writeEvent(res, state, "response.output_text.delta", {
 				item_id: state.messageItem!.id,
 				output_index: state.output.indexOf(state.messageItem!),
-				content_index: 0,
+				content_index: state.textContentIndex!,
 				delta: delta["content"],
 				logprobs: [],
+			});
+		}
+		if (typeof delta["refusal"] === "string" && delta["refusal"].length > 0) {
+			openRefusalPart(state, res);
+			state.refusal += delta["refusal"];
+			writeEvent(res, state, "response.refusal.delta", {
+				item_id: state.messageItem!.id,
+				output_index: state.output.indexOf(state.messageItem!),
+				content_index: state.refusalContentIndex!,
+				delta: delta["refusal"],
 			});
 		}
 		for (const toolDelta of (delta["tool_calls"] as Array<Record<string, unknown>> | undefined) ?? []) {
@@ -741,11 +813,34 @@ function openMessageItem(state: ResponsesStreamState, res: Response): void {
 	state.output.push(item);
 	const outputIndex = state.output.length - 1;
 	writeEvent(res, state, "response.output_item.added", { output_index: outputIndex, item: item });
+}
+
+function openTextPart(state: ResponsesStreamState, res: Response): void {
+	openMessageItem(state, res);
+	if (state.textContentIndex !== undefined) {
+		return;
+	}
+	state.textContentIndex = state.nextContentIndex++;
+	const outputIndex = state.output.indexOf(state.messageItem!);
 	writeEvent(res, state, "response.content_part.added", {
-		item_id: item.id,
+		item_id: state.messageItem!.id,
 		output_index: outputIndex,
-		content_index: 0,
+		content_index: state.textContentIndex,
 		part: { type: "output_text", annotations: [], logprobs: [], text: "" },
+	});
+}
+
+function openRefusalPart(state: ResponsesStreamState, res: Response): void {
+	openMessageItem(state, res);
+	if (state.refusalContentIndex !== undefined) {
+		return;
+	}
+	state.refusalContentIndex = state.nextContentIndex++;
+	writeEvent(res, state, "response.content_part.added", {
+		item_id: state.messageItem!.id,
+		output_index: state.output.indexOf(state.messageItem!),
+		content_index: state.refusalContentIndex,
+		part: { type: "refusal", refusal: "" },
 	});
 }
 
@@ -801,21 +896,37 @@ function writeCompletedEvents(res: Response, state: ResponsesStreamState): void 
 				text: state.reasoning,
 			});
 		} else if (item.type === "message") {
-			const part = { type: "output_text", annotations: [], logprobs: [], text: state.text };
-			item.content = [part];
-			writeEvent(res, state, "response.output_text.done", {
-				item_id: item.id,
-				output_index: outputIndex,
-				content_index: 0,
-				text: state.text,
-				logprobs: [],
-			});
-			writeEvent(res, state, "response.content_part.done", {
-				item_id: item.id,
-				output_index: outputIndex,
-				content_index: 0,
-				part: part,
-			});
+			const parts: Array<{ index: number; part: Record<string, unknown> }> = [];
+			if (state.textContentIndex !== undefined) {
+				const part = { type: "output_text", annotations: [], logprobs: [], text: state.text };
+				parts.push({ index: state.textContentIndex, part: part });
+				writeEvent(res, state, "response.output_text.done", {
+					item_id: item.id,
+					output_index: outputIndex,
+					content_index: state.textContentIndex,
+					text: state.text,
+					logprobs: [],
+				});
+			}
+			if (state.refusalContentIndex !== undefined) {
+				const part = { type: "refusal", refusal: state.refusal };
+				parts.push({ index: state.refusalContentIndex, part: part });
+				writeEvent(res, state, "response.refusal.done", {
+					item_id: item.id,
+					output_index: outputIndex,
+					content_index: state.refusalContentIndex,
+					refusal: state.refusal,
+				});
+			}
+			item.content = parts.sort((left, right) => left.index - right.index).map(({ part }) => part);
+			for (const { index, part } of parts) {
+				writeEvent(res, state, "response.content_part.done", {
+					item_id: item.id,
+					output_index: outputIndex,
+					content_index: index,
+					part: part,
+				});
+			}
 		} else {
 			const tool = [...state.tools.values()].find((candidate) => candidate.itemId === item.id)!;
 			item.name = tool.name;
@@ -824,6 +935,7 @@ function writeCompletedEvents(res: Response, state: ResponsesStreamState): void 
 				item_id: item.id,
 				output_index: outputIndex,
 				arguments: tool.arguments,
+				name: tool.name,
 			});
 		}
 		writeEvent(res, state, "response.output_item.done", { output_index: outputIndex, item: item });
@@ -846,6 +958,7 @@ function buildStreamResponse(
 		output: state.output,
 		usage: mapResponseUsage(state.usage as unknown as Record<string, unknown> | undefined),
 		request: request,
+		incompleteDetails: status === "incomplete" ? { reason: "max_output_tokens" } : null,
 	});
 }
 
@@ -859,7 +972,7 @@ function writeEvent(res: Response, state: ResponsesStreamState, type: string, pa
 function writeTerminalEvent(
 	res: Response,
 	state: ResponsesStreamState,
-	type: "response.completed" | "response.failed",
+	type: "response.completed" | "response.incomplete" | "response.failed",
 	payload: Record<string, unknown>,
 ): void {
 	if (state.terminalSent || res.writableEnded) {

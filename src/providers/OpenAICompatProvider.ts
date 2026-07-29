@@ -181,15 +181,27 @@ export class OpenAICompatProvider implements ProviderConfig {
 			object: (raw.object as string) ?? "chat.completion",
 			created: (raw.created as number) ?? Math.floor(Date.now() / 1000),
 			model: model,
+			...(typeof raw.system_fingerprint === "string" ? { system_fingerprint: raw.system_fingerprint } : {}),
+			...(typeof raw.service_tier === "string" ? { service_tier: raw.service_tier } : {}),
+			...(raw.moderation !== undefined ? { moderation: raw.moderation } : {}),
 			choices: ((raw.choices as unknown[]) ?? []).map((choice: unknown) => {
 				const c = choice as Record<string, unknown>;
 				const msg = c.message as Record<string, unknown> | undefined;
 				return {
 					index: (c.index as number) ?? 0,
 					finish_reason: (c.finish_reason as string) ?? "stop",
+					...(c.logprobs !== undefined ? { logprobs: c.logprobs } : {}),
 					message: {
 						role: (msg?.role as string) ?? "assistant",
 						content: (msg?.content as string | null) ?? null,
+						...(msg?.refusal !== undefined ? { refusal: msg.refusal as string | null } : {}),
+						...(Array.isArray(msg?.annotations) ? { annotations: msg.annotations } : {}),
+						...(typeof msg?.audio === "object" && msg.audio !== null
+							? { audio: msg.audio as Record<string, unknown> }
+							: {}),
+						...(typeof msg?.function_call === "object" && msg.function_call !== null
+							? { function_call: msg.function_call as ModelResponse["choices"][number]["message"]["function_call"] }
+							: {}),
 						tool_calls: msg?.tool_calls as ToolCall[] | undefined,
 						reasoning_content: msg?.reasoning_content as string | undefined,
 						thinking_blocks: msg?.thinking_blocks as ModelResponse["choices"][number]["message"]["thinking_blocks"],

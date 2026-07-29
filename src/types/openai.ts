@@ -145,6 +145,12 @@ export interface Message {
 	tool_calls?: ToolCall[];
 	/** 函数调用（已弃用） */
 	function_call?: FunctionCall;
+	/** 模型拒绝消息 */
+	refusal?: string | null;
+	/** Web 搜索等能力返回的标准注解 */
+	annotations?: unknown[];
+	/** 音频输出元数据 */
+	audio?: Record<string, unknown>;
 	/** 推理内容（如 DeepSeek R1 的思考过程） */
 	reasoning_content?: string;
 	/** 思考块（Anthropic） */
@@ -173,6 +179,8 @@ export interface Choices {
 export interface Delta {
 	/** 消息内容增量 */
 	content?: string | null;
+	/** 模型拒绝内容增量 */
+	refusal?: string | null;
 	/** 角色 */
 	role?: string;
 	/** 工具调用增量 */
@@ -207,6 +215,10 @@ export interface ModelResponse {
 	object: string;
 	/** 系统指纹 */
 	system_fingerprint?: string;
+	/** 实际使用的服务层级 */
+	service_tier?: string;
+	/** 可选的审核结果 */
+	moderation?: unknown;
 	/** 响应选择列表 */
 	choices: Choices[];
 	/** Token 用量统计 */
@@ -225,8 +237,14 @@ export interface ModelResponseStream {
 	model: string;
 	/** 对象类型，固定为 "chat.completion.chunk" */
 	object: string;
+	/** 系统指纹 */
+	system_fingerprint?: string;
+	/** 实际使用的服务层级 */
+	service_tier?: string;
 	/** 流式响应选择列表 */
 	choices: StreamingChoices[];
+	/** include_usage=true 时最终空 choices chunk 的用量 */
+	usage?: Usage | null;
 	/** 仅供代理端点聚合与日志使用，不得透传客户端 */
 	_usage?: Usage;
 }

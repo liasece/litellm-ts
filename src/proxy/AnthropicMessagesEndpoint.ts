@@ -54,6 +54,98 @@ const logger = createModuleLogger("AnthropicMsg");
 /** keep-alive ping 间隔（ms） */
 const KEEPALIVE_INTERVAL_MS = 2_000;
 
+function isAnthropicVersionRequest(req: Request): boolean {
+	return typeof req.headers["anthropic-version"] === "string";
+}
+
+function getAnthropicAuxiliaryModel(litellmRouter: LiteLLMRouter): string {
+	const deployment = litellmRouter
+		.getDeployments()
+		.find(
+			(candidate) =>
+				candidate.litellm_params.custom_llm_provider === "anthropic" ||
+				candidate.litellm_params.model.startsWith("anthropic/"),
+		);
+	if (!deployment) {
+		throw ApiError.unavailable("没有可用于 Anthropic 辅助 API 的 deployment");
+	}
+	return deployment.model_name;
+}
+
+function withForwardedQuery(upstreamUrl: string, req: Request): string {
+	const source = new URL(req.originalUrl, "http://localhost");
+	const target = new URL(upstreamUrl);
+	target.search = source.search;
+	return target.toString();
+}
+
+function getUniformBatchModel(body: Record<string, unknown>): string {
+	const requests = body["requests"];
+	if (!Array.isArray(requests) || requests.length === 0) {
+		throw ApiError.badRequest("requests 字段必须是非空数组");
+	}
+	const models = new Set<string>();
+	for (const item of requests) {
+		const params =
+			typeof item === "object" && item !== null && typeof item["params"] === "object" && item["params"] !== null
+				? (item["params"] as Record<string, unknown>)
+				: undefined;
+		if (!params || typeof params["model"] !== "string" || params["model"].length === 0) {
+			throw ApiError.badRequest("每个 batch request 的 params.model 都必须存在");
+		}
+		models.add(params["model"]);
+	}
+	if (models.size !== 1) {
+		throw ApiError.badRequest("当前代理要求同一 Message Batch 内所有 params.model 相同");
+	}
+	return [...models][0]!;
+}
+
+function rewriteBatchModels(body: Record<string, unknown>, upstreamModel: string): Record<string, unknown> {
+	return {
+		...body,
+		requests: (body["requests"] as Array<Record<string, unknown>>).map((item) => ({
+			...item,
+			params: { ...(item["params"] as Record<string, unknown>), model: upstreamModel },
+		})),
+	};
+}
+
+function buildAnthropicUpstreamHeaders(
+	baseHeaders: Record<string, string>,
+	req: Request,
+	requiredBetas: readonly string[] = [],
+): Record<string, string> {
+	const headers = { ...baseHeaders };
+	const version = req.headers["anthropic-version"];
+	if (typeof version === "string" && version.length > 0) {
+		headers["anthropic-version"] = version;
+	}
+	const betas = new Set<string>();
+	for (const source of [headers["anthropic-beta"], req.headers["anthropic-beta"], ...requiredBetas]) {
+		if (typeof source !== "string") {
+			continue;
+		}
+		for (const beta of source.split(",").map((value) => value.trim())) {
+			if (beta) {
+				betas.add(beta);
+			}
+		}
+	}
+	if (betas.size > 0) {
+		headers["anthropic-beta"] = [...betas].join(",");
+	}
+	return headers;
+}
+
+function buildAnthropicUpstreamBody(body: Record<string, unknown>, upstreamModel: string): Record<string, unknown> {
+	const result: Record<string, unknown> = { ...body, model: upstreamModel };
+	for (const internalKey of ["api_key", "api_base", "anthropic_version", "anthropic_beta", "custom_llm_provider"]) {
+		delete result[internalKey];
+	}
+	return result;
+}
+
 // ========== Patch 1: UTF-16 代理对清理 ==========
 
 function sanitizeRequestBody(body: unknown): unknown {
@@ -84,43 +176,6 @@ function normalizeUserId(userId: string): string {
 		return userId.slice(5);
 	}
 	return userId;
-}
-
-// ========== Patch 6+15: message_start 去重 ==========
-
-/**
- * 保守检测一个 chunk 是否"纯粹"的 message_start 事件。
- * 处理 bytes/str、单帧判定、JSON 解码、type==="message_start" 验证。
- * @param chunk
- */
-function _isPureMessageStartChunk(chunk: unknown): boolean {
-	if (typeof chunk !== "string" && !(chunk instanceof Uint8Array)) {
-		return false;
-	}
-	const chunkStr = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
-	const frames = chunkStr
-		.split("\n\n")
-		.filter((f) => f.trim().length > 0)
-		.map((f) => f.trim());
-	if (frames.length !== 1) {
-		return false;
-	}
-	const dataLines: string[] = [];
-	for (const line of frames[0]!.split("\n")) {
-		const trimmed = line.trim();
-		if (trimmed.startsWith("data:")) {
-			dataLines.push(trimmed.slice(5).trimStart());
-		}
-	}
-	if (dataLines.length === 0) {
-		return false;
-	}
-	try {
-		const payload = JSON.parse(dataLines.join("\n"));
-		return typeof payload === "object" && payload !== null && payload["type"] === "message_start";
-	} catch {
-		return false;
-	}
 }
 
 // ========== Patch 7: websearch_override_target_model ==========
@@ -358,8 +413,39 @@ function formatSSE(event: string, data: string): string {
 	return `event: ${event}\ndata: ${data}\n\n`;
 }
 
+/** Build a protocol-valid Anthropic keep-alive event. */
+export function formatAnthropicPingEvent(): string {
+	return formatSSE("ping", JSON.stringify({ type: "ping" }));
+}
+
 function sendPing(res: Response): void {
-	res.write(formatSSE("ping", "{}"));
+	res.write(formatAnthropicPingEvent());
+}
+
+/**
+ * 已经通过 Anthropic SSE 转发给客户端的上游错误。
+ *
+ * 这类错误发生在上游已经返回 HTTP 200 并开始流式响应之后。客户端可以根据
+ * `error.type` 决定是否重新发起完整请求；代理不得把随后的正常 EOF 再解释成
+ * `message_stop` 缺失，也不得因此触发 deployment 冷却。
+ */
+class ForwardedAnthropicStreamError extends Error {
+	override readonly name = "ForwardedAnthropicStreamError";
+
+	constructor(
+		readonly errorType: string,
+		message: string,
+	) {
+		super(`${errorType}: ${message}`);
+	}
+}
+
+function buildForwardedAnthropicStreamError(payload: Record<string, unknown>): ForwardedAnthropicStreamError {
+	const error = payload["error"];
+	const errorRecord = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : undefined;
+	const errorType = typeof errorRecord?.["type"] === "string" ? errorRecord["type"] : "api_error";
+	const message = typeof errorRecord?.["message"] === "string" ? errorRecord["message"] : "Upstream streaming request failed";
+	return new ForwardedAnthropicStreamError(errorType, message);
 }
 
 // ========== Patch 11: deferred responses stream ==========
@@ -373,7 +459,7 @@ function sendPing(res: Response): void {
 async function* _streamAnthropicSse(result: globalThis.Response): AsyncGenerator<string> {
 	const reader = result.body?.getReader();
 	if (!reader) {
-		return;
+		throw new Error("Provider stream body is missing");
 	}
 
 	const decoder = new TextDecoder();
@@ -385,7 +471,7 @@ async function* _streamAnthropicSse(result: globalThis.Response): AsyncGenerator
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) {
-				break;
+				throw new Error("Provider stream ended before message_stop");
 			}
 
 			buffer += decoder.decode(value, { stream: true });
@@ -454,7 +540,10 @@ async function* _streamAnthropicSse(result: globalThis.Response): AsyncGenerator
 					// 重新序列化 — 保持 payload.type 作为 SSE event name
 					const eventType = typeof payload.type === "string" ? payload.type : "message";
 					yield formatSSE(eventType, JSON.stringify(payload));
-					if (eventType === "message_stop") {
+					// Anthropic 允许在 HTTP 200 流中发送 error 事件。error 与
+					// message_stop 都是终态；error 后上游直接 EOF 是正常错误流结束，
+					// 不能再合成第二个 "ended before message_stop" 错误。
+					if (eventType === "message_stop" || eventType === "error") {
 						return;
 					}
 				} catch (error) {
@@ -612,10 +701,9 @@ export function registerAnthropicMessagesEndpoints(
 						requestAnthropicVersion,
 						(attempt) => {
 							const opened = _openAnthropicStream(
-								attempt,
+								{ ...attempt, upstreamHeaders: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req) },
 								{
-									...cleanBody,
-									model: attempt.upstreamModel,
+									...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel),
 								},
 								webSearchAbortController.signal,
 							);
@@ -675,9 +763,12 @@ export function registerAnthropicMessagesEndpoints(
 					"X-Accel-Buffering": "no",
 				});
 
+				let messageStarted = false;
 				const pingTimer = setInterval(() => {
 					try {
-						sendPing(res);
+						if (messageStarted) {
+							sendPing(res);
+						}
 					} catch {
 						clearInterval(pingTimer);
 					}
@@ -686,38 +777,42 @@ export function registerAnthropicMessagesEndpoints(
 				req.on("close", () => clearInterval(pingTimer));
 
 				try {
-					// Patch 6+15: 合成 message_start → 跳过上游首次纯 message_start
-					// （合成事件用原请求 model，上游透传的 message_start 被跳过，不泄露上游 model 名）
+					// 对外保留上游 message_start 的完整 usage，只改写 id/model，避免泄露
+					// deployment model，同时保证客户端看到真实 input_tokens。
 					const syntheticMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 					streamAccumulator.id = syntheticMsgId;
-					res.write(
-						formatSSE(
-							"message_start",
-							JSON.stringify({
-								type: "message_start",
-								message: {
-									id: syntheticMsgId,
-									type: "message",
-									role: "assistant",
-									model: requestedModel,
-									content: [],
-									usage: { input_tokens: 0, output_tokens: 0 },
-								},
-							}),
-						),
-					);
-
-					let firstChunk = true;
-					for await (const sseChunk of anthropicStream) {
+					for await (let sseChunk of anthropicStream) {
 						const payload = parseSsePayload(sseChunk);
+						if (payload?.["type"] === "error") {
+							// 原始 error 事件已经是客户端可观察到的终态。记录请求失败，
+							// 但不调用 recordDeploymentFailure：客户端可重试的流内错误
+							// 不应把 deployment 放入全局 cooldown。
+							const forwardedError = buildForwardedAnthropicStreamError(payload);
+							streamError = forwardedError;
+							logger.warn("上游返回 Anthropic 流式错误，已原样转发且未触发 deployment 冷却", {
+								errorType: forwardedError.errorType,
+							});
+						} else if (payload?.["type"] === "message_start") {
+							if (messageStarted) {
+								throw new Error("Provider stream emitted duplicate message_start");
+							}
+							const message = payload["message"];
+							if (typeof message !== "object" || message === null) {
+								throw new Error("Provider 返回 malformed message_start event");
+							}
+							const messageRecord = message as Record<string, unknown>;
+							messageRecord["id"] = syntheticMsgId;
+							messageRecord["model"] = requestedModel;
+							sseChunk = formatSSE("message_start", JSON.stringify(payload));
+							messageStarted = true;
+						} else if (!messageStarted && payload?.["type"] === "ping") {
+							continue;
+						} else if (!messageStarted) {
+							throw new Error("Provider stream did not begin with message_start");
+						}
 						if (payload) {
 							accumulateNativeStreamEvent(streamAccumulator, payload);
 						}
-						if (firstChunk && _isPureMessageStartChunk(sseChunk)) {
-							firstChunk = false;
-							continue;
-						}
-						firstChunk = false;
 						completionStartTime ??= new Date();
 						res.write(sseChunk);
 					}
@@ -813,8 +908,11 @@ export function registerAnthropicMessagesEndpoints(
 							{
 								url: attempt.upstreamUrl,
 								method: "POST",
-								headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
-								body: { ...cleanBody, model: attempt.upstreamModel },
+								headers: {
+									...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+									"Content-Type": "application/json",
+								},
+								body: buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel),
 								model: attempt.upstreamModel,
 							},
 							{
@@ -870,10 +968,12 @@ export function registerAnthropicMessagesEndpoints(
 									{
 										url: attempt.upstreamUrl,
 										method: "POST",
-										headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+										headers: {
+											...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+											"Content-Type": "application/json",
+										},
 										body: {
-											...cleanBody,
-											model: attempt.upstreamModel,
+											...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel),
 											messages: [...originalMessages, ...continuation],
 										},
 										model: attempt.upstreamModel,
@@ -1022,16 +1122,18 @@ export function registerAnthropicMessagesEndpoints(
 			cleanBody["api_key"] as string | undefined,
 			cleanBody["anthropic_version"] as string | undefined,
 		);
-		const countUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens");
+		const countUrl = withForwardedQuery(
+			attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens"),
+			req,
+		);
 		const result = await fetch(countUrl, {
 			method: "POST",
 			headers: {
-				...attempt.upstreamHeaders,
+				...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["token-counting-2024-11-01"]),
 				"Content-Type": "application/json",
-				"anthropic-beta": "token-counting-2024-11-01",
 			},
 			// body.model 替换为剥离 provider 前缀后的上游 model 名
-			body: JSON.stringify({ ...cleanBody, model: attempt.upstreamModel }),
+			body: JSON.stringify(buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel)),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");
@@ -1042,17 +1144,27 @@ export function registerAnthropicMessagesEndpoints(
 
 	// ========== Patch 13: Files API 转发 ==========
 
-	registerRoute(router, { method: "post", path: "/v1/files" }, async (req) => {
-		const body = sanitizeRequestBody(req.body) as Record<string, unknown>;
-		const model = (body.model as string) ?? "claude-sonnet-4-20250514";
+	registerRoute(router, { method: "post", path: "/v1/files", matches: isAnthropicVersionRequest }, async (req) => {
+		const contentType = req.headers["content-type"];
+		if (typeof contentType !== "string" || !contentType.toLowerCase().startsWith("multipart/form-data")) {
+			throw ApiError.badRequest("Anthropic Files 上传必须使用 multipart/form-data");
+		}
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
 		const filesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/files");
+		const headers: Record<string, string> = {
+			...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["files-api-2025-04-14"]),
+			"Content-Type": contentType,
+		};
+		if (typeof req.headers["content-length"] === "string") {
+			headers["Content-Length"] = req.headers["content-length"];
+		}
 		const result = await fetch(filesUrl, {
 			method: "POST",
-			headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
-			// body.model 替换为剥离 provider 前缀后的上游 model 名
-			body: JSON.stringify({ ...body, model: attempt.upstreamModel }),
-		});
+			headers: headers,
+			body: req as never,
+			duplex: "half",
+		} as RequestInit & { duplex: "half" });
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");
 			throw new ApiError(result.status, `Files 上传返回错误 (${result.status}): ${errBody.slice(0, 200)}`);
@@ -1060,33 +1172,39 @@ export function registerAnthropicMessagesEndpoints(
 		return await result.json();
 	});
 
-	registerRoute(router, { method: "get", path: "/v1/files" }, async (req) => {
-		const model = "claude-sonnet-4-20250514";
+	registerRoute(router, { method: "get", path: "/v1/files", matches: isAnthropicVersionRequest }, async (req) => {
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
-		const filesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/files");
-		const result = await fetch(filesUrl, { headers: attempt.upstreamHeaders });
+		const filesUrl = withForwardedQuery(attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/files"), req);
+		const result = await fetch(filesUrl, {
+			headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["files-api-2025-04-14"]),
+		});
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 列表返回错误 (${result.status})`);
 		}
 		return await result.json();
 	});
 
-	registerRoute(router, { method: "get", path: "/v1/files/:id" }, async (req) => {
-		const model = "claude-sonnet-4-20250514";
+	registerRoute(router, { method: "get", path: "/v1/files/:id", matches: isAnthropicVersionRequest }, async (req) => {
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
 		const fileUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}`);
-		const result = await fetch(fileUrl, { headers: attempt.upstreamHeaders });
+		const result = await fetch(fileUrl, {
+			headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["files-api-2025-04-14"]),
+		});
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 查询返回错误 (${result.status})`);
 		}
 		return await result.json();
 	});
 
-	registerRoute(router, { method: "get", path: "/v1/files/:id/content" }, async (req, res) => {
-		const model = "claude-sonnet-4-20250514";
+	registerRoute(router, { method: "get", path: "/v1/files/:id/content", matches: isAnthropicVersionRequest }, async (req, res) => {
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
 		const contentUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}/content`);
-		const result = await fetch(contentUrl, { headers: attempt.upstreamHeaders });
+		const result = await fetch(contentUrl, {
+			headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["files-api-2025-04-14"]),
+		});
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 内容返回错误 (${result.status})`);
 		}
@@ -1096,11 +1214,14 @@ export function registerAnthropicMessagesEndpoints(
 		res.send(Buffer.from(await blob.arrayBuffer()));
 	});
 
-	registerRoute(router, { method: "delete", path: "/v1/files/:id" }, async (req) => {
-		const model = "claude-sonnet-4-20250514";
+	registerRoute(router, { method: "delete", path: "/v1/files/:id", matches: isAnthropicVersionRequest }, async (req) => {
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
 		const fileUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/files/${req.params["id"]}`);
-		const result = await fetch(fileUrl, { method: "DELETE", headers: attempt.upstreamHeaders });
+		const result = await fetch(fileUrl, {
+			method: "DELETE",
+			headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["files-api-2025-04-14"]),
+		});
 		if (!result.ok) {
 			throw new ApiError(result.status, `Files 删除返回错误 (${result.status})`);
 		}
@@ -1111,14 +1232,13 @@ export function registerAnthropicMessagesEndpoints(
 
 	registerRoute(router, { method: "post", path: "/v1/messages/batches" }, async (req) => {
 		const cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
-		const model = (cleanBody.model as string) ?? "claude-sonnet-4-20250514";
+		const model = getUniformBatchModel(cleanBody);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
 		const batchesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/batches");
 		const result = await fetch(batchesUrl, {
 			method: "POST",
-			headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
-			// body.model 替换为剥离 provider 前缀后的上游 model 名
-			body: JSON.stringify({ ...cleanBody, model: attempt.upstreamModel }),
+			headers: { ...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req), "Content-Type": "application/json" },
+			body: JSON.stringify(rewriteBatchModels(cleanBody, attempt.upstreamModel)),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");
@@ -1128,10 +1248,10 @@ export function registerAnthropicMessagesEndpoints(
 	});
 
 	registerRoute(router, { method: "get", path: "/v1/messages/batches" }, async (req) => {
-		const model = "claude-sonnet-4-20250514";
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
-		const batchesUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/batches");
-		const result = await fetch(batchesUrl, { headers: attempt.upstreamHeaders });
+		const batchesUrl = withForwardedQuery(attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/batches"), req);
+		const result = await fetch(batchesUrl, { headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req) });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Batches 列表返回错误 (${result.status})`);
 		}
@@ -1139,10 +1259,10 @@ export function registerAnthropicMessagesEndpoints(
 	});
 
 	registerRoute(router, { method: "get", path: "/v1/messages/batches/:id" }, async (req) => {
-		const model = "claude-sonnet-4-20250514";
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
 		const batchUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}`);
-		const result = await fetch(batchUrl, { headers: attempt.upstreamHeaders });
+		const result = await fetch(batchUrl, { headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req) });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Batches 查询返回错误 (${result.status})`);
 		}
@@ -1150,16 +1270,49 @@ export function registerAnthropicMessagesEndpoints(
 	});
 
 	registerRoute(router, { method: "post", path: "/v1/messages/batches/:id/cancel" }, async (req) => {
-		const model = "claude-sonnet-4-20250514";
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
 		const cancelUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}/cancel`);
-		const result = await fetch(cancelUrl, { method: "POST", headers: attempt.upstreamHeaders });
+		const result = await fetch(cancelUrl, {
+			method: "POST",
+			headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+		});
 		if (!result.ok) {
 			throw new ApiError(result.status, `Batches 取消返回错误 (${result.status})`);
+		}
+		return await result.json();
+	});
+
+	registerRoute(router, { method: "get", path: "/v1/messages/batches/:id/results" }, async (req, res) => {
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const resultsUrl = attempt.upstreamUrl.replace(
+			/\/v1\/messages$/,
+			`/v1/messages/batches/${req.params["id"]}/results`,
+		);
+		const result = await fetch(resultsUrl, { headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req) });
+		if (!result.ok) {
+			throw new ApiError(result.status, `Batches 结果返回错误 (${result.status})`);
+		}
+		const bytes = await result.arrayBuffer();
+		res.setHeader("Content-Type", result.headers.get("content-type") ?? "application/x-jsonlines");
+		res.send(Buffer.from(bytes));
+	});
+
+	registerRoute(router, { method: "delete", path: "/v1/messages/batches/:id" }, async (req) => {
+		const model = getAnthropicAuxiliaryModel(litellmRouter);
+		const attempt = requireUpstreamAttempt(litellmRouter, model);
+		const batchUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}`);
+		const result = await fetch(batchUrl, {
+			method: "DELETE",
+			headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+		});
+		if (!result.ok) {
+			throw new ApiError(result.status, `Batches 删除返回错误 (${result.status})`);
 		}
 		return await result.json();
 	});
 }
 
 // ========== 导出测试用函数 ==========
-export { _isPureMessageStartChunk, _isWebSearchTool, _applyWebSearchOverrideTargetModel, _ensureBlockForItem, _openAnthropicStream };
+export { _isWebSearchTool, _applyWebSearchOverrideTargetModel, _ensureBlockForItem, _openAnthropicStream };

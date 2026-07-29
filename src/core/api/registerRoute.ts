@@ -11,6 +11,7 @@
 import type { Router, Request, Response, NextFunction } from "express";
 import { ApiError } from "./ApiError";
 import { mapToApiError } from "./ErrorResponseMapper";
+import { prepareProtocolResponse, sendProtocolError } from "./ProtocolErrorResponse";
 import { stripInternalFields } from "./stripInternalFields";
 import { createModuleLogger } from "../utils/logger";
 
@@ -25,6 +26,8 @@ export interface EndpointDef {
 	readonly method: HttpMethodLiteral;
 	/** 路由路径（如 "/api/keys/:id"） */
 	readonly path: string;
+	/** 可选的协议/内容协商条件；不匹配时继续寻找后续同路径路由。 */
+	readonly matches?: (req: Request) => boolean;
 }
 
 /** 路由处理器函数签名 */
@@ -42,6 +45,11 @@ export type RouteHandler = (req: Request, res: Response) => unknown | Promise<un
  */
 export function registerRoute(router: Router, endpoint: EndpointDef, handler: RouteHandler): void {
 	router[endpoint.method](endpoint.path, async (req: Request, res: Response, _next: NextFunction) => {
+		if (endpoint.matches && !endpoint.matches(req)) {
+			_next();
+			return;
+		}
+		prepareProtocolResponse(req, res);
 		try {
 			const result = await handler(req, res);
 			// handler 已手动发送响应时跳过；序列化出口统一剥离顶层 `_` 前缀内部字段
@@ -56,7 +64,7 @@ export function registerRoute(router: Router, endpoint: EndpointDef, handler: Ro
 				logger.error(`路由处理异常: ${endpoint.method.toUpperCase()} ${endpoint.path}`, { error: error });
 			}
 			const apiError = mapToApiError(error);
-			res.status(apiError.statusCode).json(apiError.toErrorBody());
+			sendProtocolError(req, res, apiError);
 		}
 	});
 }

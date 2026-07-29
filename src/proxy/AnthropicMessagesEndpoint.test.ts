@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { registerAnthropicMessagesEndpoints } from "./AnthropicMessagesEndpoint";
+import { formatAnthropicPingEvent, registerAnthropicMessagesEndpoints } from "./AnthropicMessagesEndpoint";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import * as SpendTracker from "../spend/SpendTracker";
 import { SpendLogStatus } from "../types/spend";
@@ -29,6 +29,7 @@ function buildApp() {
 		}),
 	};
 	const router = {
+		getDeployments: jest.fn().mockReturnValue([deployment]),
 		getAvailableDeployment: jest.fn().mockReturnValue({ deployment: deployment, provider: provider }),
 		getNextFallback: jest.fn().mockReturnValue(null),
 		resolveModelGroupWithTrace: jest.fn((model: string) =>
@@ -79,6 +80,7 @@ function buildApp() {
 		})),
 	};
 	registerAnthropicMessagesEndpoints(expressRouter, router as never, undefined, db as never);
+	expressRouter.get("/v1/files", (_req, res) => res.json({ object: "list", data: [] }));
 	app.use(expressRouter);
 	(app as unknown as { __router: typeof router }).__router = router;
 	return app;
@@ -138,6 +140,11 @@ describe("native Anthropic streaming SpendLog", () => {
 			.expect(200);
 
 		expect(response.text).toContain("event: message_stop");
+		expect(response.text).toContain('"model":"native-group"');
+		expect(response.text).toContain(
+			'"usage":{"input_tokens":4,"output_tokens":0,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}',
+		);
+		expect(response.text).not.toContain('"model":"upstream-model"');
 		expect(global.fetch).toHaveBeenCalledWith(
 			"https://provider.example/v1/messages",
 			expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -179,8 +186,12 @@ describe("native Anthropic streaming SpendLog", () => {
 		});
 	});
 
+	it("keep-alive ping 携带 Anthropic 事件 discriminator", async () => {
+		expect(formatAnthropicPingEvent()).toBe('event: ping\ndata: {"type":"ping"}\n\n');
+	});
+
 	it("非流式成功日志保存 alias 解析链并保留原始 fallback 首项", async () => {
-		jest.spyOn(global, "fetch").mockResolvedValue(
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
 			new globalThis.Response(
 				JSON.stringify({
 					id: "msg-non-stream",
@@ -198,9 +209,28 @@ describe("native Anthropic streaming SpendLog", () => {
 
 		await request(app)
 			.post("/v1/messages")
-			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }], stream: false })
+			.set("anthropic-version", "2025-01-01")
+			.set("anthropic-beta", "feature-a,feature-b")
+			.send({
+				model: "native-group",
+				messages: [{ role: "user", content: "hello" }],
+				stream: false,
+				api_key: "request-internal-key",
+				anthropic_version: "body-version-must-not-leak",
+			})
 			.expect(200);
 
+		const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+		expect(init?.headers).toEqual(
+			expect.objectContaining({
+				"anthropic-version": "2025-01-01",
+				"anthropic-beta": "feature-a,feature-b",
+			}),
+		);
+		const upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+		expect(upstreamBody).not.toHaveProperty("api_key");
+		expect(upstreamBody).not.toHaveProperty("anthropic_version");
+		expect(upstreamBody).toMatchObject({ model: "upstream-model" });
 		expect(spendSpy).toHaveBeenCalledTimes(1);
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
 			status: SpendLogStatus.Success,
@@ -282,6 +312,52 @@ describe("native Anthropic streaming SpendLog", () => {
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Success });
 	});
 
+	it("可重试的上游 error 是唯一终态，转发后不追加 EOF 错误也不冷却 deployment", async () => {
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			sseResponse([
+				{
+					type: "message_start",
+					message: {
+						id: "upstream-error",
+						type: "message",
+						role: "assistant",
+						model: "upstream-model",
+						content: [],
+						usage: { input_tokens: 20_000, output_tokens: 0 },
+					},
+				},
+				{
+					type: "error",
+					error: {
+						type: "service_unavailable_error",
+						message: "Upstream temporarily unavailable",
+					},
+				},
+			]),
+		);
+		const app = buildApp();
+		const router = (app as unknown as { __router: { recordDeploymentFailure: jest.Mock } }).__router;
+
+		const response = await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+
+		expect(response.text.match(/event: error/g)).toHaveLength(1);
+		expect(response.text).toContain('"type":"service_unavailable_error"');
+		expect(response.text).not.toContain("Provider stream ended before message_stop");
+		expect(response.text).not.toContain("event: message_stop");
+		expect(router.recordDeploymentFailure).not.toHaveBeenCalled();
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: SpendLogStatus.Failure,
+			error_information: {
+				error_type: "ForwardedAnthropicStreamError",
+				error_message: "service_unavailable_error: Upstream temporarily unavailable",
+			},
+		});
+	});
+
 	it("malformed SSE event 进入唯一失败终结而非静默成功", async () => {
 		jest.spyOn(global, "fetch").mockResolvedValue(
 			new globalThis.Response("event: message_start\ndata: {not-json}\n\n", {
@@ -298,6 +374,36 @@ describe("native Anthropic streaming SpendLog", () => {
 
 		expect(response.text).toContain("event: error");
 		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Failure });
+	});
+
+	it("上游在 message_stop 前 EOF 时发送协议 error 并记录失败", async () => {
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			sseResponse([
+				{
+					type: "message_start",
+					message: {
+						id: "truncated",
+						type: "message",
+						role: "assistant",
+						model: "upstream-model",
+						content: [],
+						usage: { input_tokens: 1, output_tokens: 0 },
+					},
+				},
+				{ type: "message_delta", delta: { stop_reason: null, stop_sequence: null }, usage: { output_tokens: 1 } },
+			]),
+		);
+		const app = buildApp();
+
+		const response = await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+
+		expect(response.text).toContain("event: error");
+		expect(response.text).toContain('"type":"error"');
+		expect(response.text).not.toContain("event: message_stop");
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Failure });
 	});
 
@@ -333,6 +439,153 @@ describe("native Anthropic streaming SpendLog", () => {
 				usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
 			}),
 		});
+	});
+});
+
+describe("Anthropic/OpenAI Files protocol routing", () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("不带 anthropic-version 的 /v1/files 继续匹配 OpenAI Files 路由", async () => {
+		const app = buildApp();
+		const response = await request(app).get("/v1/files").expect(200);
+		expect(response.body).toEqual({ object: "list", data: [] });
+	});
+
+	it("带 anthropic-version 的 /v1/files 使用 Anthropic 路由和 request-id", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ data: [], has_more: false }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const app = buildApp();
+		const response = await request(app).get("/v1/files?limit=20&after_id=file_1").set("anthropic-version", "2023-06-01").expect(200);
+		expect(response.body).toEqual({ data: [], has_more: false });
+		expect(response.headers["request-id"]).toMatch(/^req_/);
+		expect(fetchSpy).toHaveBeenCalledWith(
+			"https://provider.example/v1/files?limit=20&after_id=file_1",
+			expect.objectContaining({
+				headers: expect.objectContaining({ "anthropic-beta": expect.stringContaining("files-api-2025-04-14") }),
+			}),
+		);
+	});
+
+	it("Files 上传保留 multipart body 与 boundary，不伪装成 JSON", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ id: "file_1", type: "file" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const app = buildApp();
+
+		await request(app)
+			.post("/v1/files")
+			.set("anthropic-version", "2023-06-01")
+			.attach("file", Buffer.from("hello"), "hello.txt")
+			.expect(200);
+
+		const init = fetchSpy.mock.calls[0]?.[1] as (RequestInit & { duplex?: string }) | undefined;
+		expect(init?.headers).toEqual(expect.objectContaining({ "Content-Type": expect.stringContaining("multipart/form-data; boundary=") }));
+		expect(init?.body).toBeDefined();
+		expect(init?.duplex).toBe("half");
+	});
+
+	it("Message Batches 改写每个 params.model 且不注入顶层 model", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ id: "msgbatch_1", type: "message_batch" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const app = buildApp();
+
+		await request(app)
+			.post("/v1/messages/batches")
+			.send({
+				requests: [
+					{
+						custom_id: "request-1",
+						params: { model: "native-group", max_tokens: 32, messages: [{ role: "user", content: "hello" }] },
+					},
+				],
+			})
+			.expect(200);
+
+		const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+		const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+		expect(body).not.toHaveProperty("model");
+		expect(body).toMatchObject({
+			requests: [{ custom_id: "request-1", params: { model: "upstream-model", max_tokens: 32 } }],
+		});
+	});
+
+	it("count_tokens 保留 query/version/beta 且不向上游泄漏内部凭据字段", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ input_tokens: 7 }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const app = buildApp();
+
+		await request(app)
+			.post("/v1/messages/count_tokens?beta=true")
+			.set("anthropic-version", "2025-01-01")
+			.set("anthropic-beta", "client-feature")
+			.send({
+				model: "native-group",
+				messages: [{ role: "user", content: "hello" }],
+				api_key: "request-internal-key",
+			})
+			.expect(200);
+
+		expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://provider.example/v1/messages/count_tokens?beta=true");
+		const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+		expect(init?.headers).toEqual(
+			expect.objectContaining({
+				"anthropic-version": "2025-01-01",
+				"anthropic-beta": expect.stringContaining("client-feature"),
+			}),
+		);
+		expect(String((init?.headers as Record<string, string>)["anthropic-beta"])).toContain("token-counting-2024-11-01");
+		expect(JSON.parse(String(init?.body))).not.toHaveProperty("api_key");
+	});
+
+	it("Message Batches results 与 delete 路由保持官方方法和响应类型", async () => {
+		const fetchSpy = jest
+			.spyOn(global, "fetch")
+			.mockResolvedValueOnce(
+				new Response('{"custom_id":"request-1","result":{"type":"succeeded"}}\n', {
+					status: 200,
+					headers: { "content-type": "application/x-jsonlines" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ id: "msgbatch_1", type: "message_batch_deleted" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+			);
+		const app = buildApp();
+
+		const results = await request(app).get("/v1/messages/batches/msgbatch_1/results").expect(200);
+		expect(results.headers["content-type"]).toContain("application/x-jsonlines");
+		expect(results.text).toContain('"custom_id":"request-1"');
+		const deleted = await request(app).delete("/v1/messages/batches/msgbatch_1").expect(200);
+		expect(deleted.body).toEqual({ id: "msgbatch_1", type: "message_batch_deleted" });
+		expect(fetchSpy.mock.calls).toEqual([
+			[
+				"https://provider.example/v1/messages/batches/msgbatch_1/results",
+				expect.objectContaining({ headers: expect.any(Object) }),
+			],
+			[
+				"https://provider.example/v1/messages/batches/msgbatch_1",
+				expect.objectContaining({ method: "DELETE", headers: expect.any(Object) }),
+			],
+		]);
 	});
 });
 

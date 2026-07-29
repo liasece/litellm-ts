@@ -305,8 +305,15 @@ describe("Responses API contract matrix", () => {
 			id: "resp_provider",
 			object: "response",
 			status: "completed",
+			completed_at: expect.any(Number),
 			error: null,
+			max_output_tokens: 128,
 			model: "provider-fallback-model",
+			reasoning: { effort: "medium" },
+			temperature: 1,
+			top_p: 1,
+			user: null,
+			metadata: {},
 			usage: {
 				input_tokens: 12,
 				input_tokens_details: { cached_tokens: 4 },
@@ -316,6 +323,76 @@ describe("Responses API contract matrix", () => {
 			},
 		});
 		expect(response.body.output.map((item: { type: string }) => item.type)).toEqual(["reasoning", "message", "function_call"]);
+	});
+
+	test("不把 Responses input_image.file_id 伪装成 Chat image URL", async () => {
+		const completion = jest.fn();
+		const app = buildApp(buildRouter(completion));
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({
+				model: "responses-model",
+				input: [{ type: "message", role: "user", content: [{ type: "input_image", file_id: "file_123" }] }],
+			})
+			.expect(400);
+
+		expect(response.body.error).toMatchObject({
+			type: "invalid_request_error",
+			message: expect.stringContaining("input_image.file_id"),
+		});
+		expect(completion).not.toHaveBeenCalled();
+	});
+
+	test.each([
+		[{ store: true }, "store=false"],
+		[{ background: true }, "background"],
+		[{ previous_response_id: "resp_old" }, "previous_response_id"],
+		[{ conversation: "conv_1" }, "conversation"],
+	])("对未实现的持久化语义返回明确 501: %j", async (options, expectedMessage) => {
+		const completion = jest.fn();
+		const app = buildApp(buildRouter(completion));
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "hello", ...options })
+			.expect(501);
+
+		expect(response.body.error).toMatchObject({
+			type: "not_implemented",
+			message: expect.stringContaining(expectedMessage),
+		});
+		expect(completion).not.toHaveBeenCalled();
+	});
+
+	test("非流式 Chat refusal 映射为 Responses refusal content part", async () => {
+		const completion = jest.fn().mockResolvedValue({
+			id: "chatcmpl-refusal",
+			object: "chat.completion",
+			created: 123,
+			model: "provider-model",
+			choices: [
+				{
+					index: 0,
+					finish_reason: "stop",
+					message: { role: "assistant", content: null, refusal: "I cannot help with that." },
+				},
+			],
+			usage: { prompt_tokens: 2, completion_tokens: 5, total_tokens: 7 },
+		});
+		const app = buildApp(buildRouter(completion));
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "hello" })
+			.expect(200);
+
+		expect(response.body.output).toEqual([
+			expect.objectContaining({
+				type: "message",
+				content: [{ type: "refusal", refusal: "I cannot help with that." }],
+			}),
+		]);
 	});
 
 	test.each(["get", "delete"] as const)("%s response storage route is explicitly not implemented", async (method) => {
@@ -380,10 +457,18 @@ describe("Responses API contract matrix", () => {
 		const events = parseSseEvents(response.text);
 		const eventTypes = events.map((event) => event.type);
 		expect(eventTypes.slice(0, 2)).toEqual(["response.created", "response.in_progress"]);
+		expect((events[0]?.response as Record<string, unknown>).completed_at).toBeNull();
+		expect((events[0]?.response as Record<string, unknown>).max_output_tokens).toBeNull();
+		expect((events[0]?.response as Record<string, unknown>).metadata).toEqual({});
 		expect(eventTypes).toContain("response.reasoning_text.delta");
 		expect(eventTypes).toContain("response.output_text.delta");
 		expect(eventTypes).toContain("response.function_call_arguments.delta");
+		expect(events.find((event) => event.type === "response.function_call_arguments.done")).toMatchObject({
+			name: "weather",
+			arguments: '{"city":"Paris"}',
+		});
 		expect(eventTypes.at(-1)).toBe("response.completed");
+		expect((events.at(-1)?.response as Record<string, unknown>).completed_at).toEqual(expect.any(Number));
 		expect(eventTypes.filter((type) => type === "response.completed" || type === "response.failed")).toHaveLength(1);
 		expect(events.map((event) => event.sequence_number)).toEqual(events.map((_event, index) => index));
 		expect((events.at(-1)?.response as Record<string, unknown>).usage).toEqual({
@@ -393,6 +478,77 @@ describe("Responses API contract matrix", () => {
 			output_tokens_details: { reasoning_tokens: 1 },
 			total_tokens: 9,
 		});
+	});
+
+	test("stream finish_reason=length emits response.incomplete with max_output_tokens reason", async () => {
+		async function* stream() {
+			yield {
+				id: "chatcmpl-incomplete",
+				model: "provider-model",
+				choices: [{ index: 0, delta: { role: "assistant", content: "partial" }, finish_reason: "length" }],
+				usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+			};
+		}
+		const completion = jest.fn().mockResolvedValue({ _stream: true, stream: stream() });
+		const app = buildApp(buildRouter(completion));
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "hello", stream: true, max_output_tokens: 3 })
+			.expect(200);
+		const events = parseSseEvents(response.text);
+		const terminal = events.at(-1);
+		expect(terminal).toMatchObject({
+			type: "response.incomplete",
+			response: {
+				status: "incomplete",
+				completed_at: null,
+				incomplete_details: { reason: "max_output_tokens" },
+				max_output_tokens: 3,
+			},
+		});
+		expect(
+			events.filter(
+				(event) =>
+					typeof event.type === "string" &&
+					["response.completed", "response.incomplete", "response.failed"].includes(event.type),
+			),
+		).toHaveLength(1);
+	});
+
+	test("stream refusal emits discriminator-complete refusal delta/done events", async () => {
+		async function* stream() {
+			yield {
+				id: "chatcmpl-refusal",
+				model: "provider-model",
+				choices: [{ index: 0, delta: { role: "assistant", refusal: "Cannot" }, finish_reason: null }],
+			};
+			yield {
+				id: "chatcmpl-refusal",
+				model: "provider-model",
+				choices: [{ index: 0, delta: { refusal: " comply" }, finish_reason: "stop" }],
+			};
+		}
+		const completion = jest.fn().mockResolvedValue({ _stream: true, stream: stream() });
+		const app = buildApp(buildRouter(completion));
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "hello", stream: true })
+			.expect(200);
+		const events = parseSseEvents(response.text);
+
+		expect(events.filter((event) => event.type === "response.refusal.delta").map((event) => event.delta)).toEqual([
+			"Cannot",
+			" comply",
+		]);
+		expect(events.find((event) => event.type === "response.refusal.done")).toMatchObject({
+			content_index: 0,
+			refusal: "Cannot comply",
+		});
+		expect((events.at(-1)?.response as { output: unknown[] }).output).toEqual([
+			expect.objectContaining({ content: [{ type: "refusal", refusal: "Cannot comply" }] }),
+		]);
 	});
 
 	test.each([

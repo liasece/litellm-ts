@@ -144,6 +144,51 @@ describe("OpenAICompatProvider", () => {
 			expect(result.usage?.total_tokens).toBe(15);
 		});
 
+		it("保留 OpenAI 标准响应的可选协议字段", () => {
+			const result = provider.transformResponse("gpt-4o", {
+				id: "chatcmpl-fields",
+				object: "chat.completion",
+				created: 123,
+				model: "upstream-model",
+				system_fingerprint: "fp_123",
+				service_tier: "priority",
+				moderation: { input: { type: "moderation_results" } },
+				choices: [
+					{
+						index: 0,
+						finish_reason: "stop",
+						logprobs: { content: [], refusal: [] },
+						message: {
+							role: "assistant",
+							content: "",
+							refusal: null,
+							annotations: [{ type: "url_citation", url_citation: { url: "https://example.com" } }],
+							audio: { id: "audio_1", data: "AA==", expires_at: 456, transcript: "hello" },
+							function_call: { name: "legacy", arguments: "{}" },
+						},
+					},
+				],
+				usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+			});
+
+			expect(result).toMatchObject({
+				system_fingerprint: "fp_123",
+				service_tier: "priority",
+				moderation: { input: { type: "moderation_results" } },
+				choices: [
+					{
+						logprobs: { content: [], refusal: [] },
+						message: {
+							refusal: null,
+							annotations: [{ type: "url_citation", url_citation: { url: "https://example.com" } }],
+							audio: { id: "audio_1", data: "AA==", expires_at: 456, transcript: "hello" },
+							function_call: { name: "legacy", arguments: "{}" },
+						},
+					},
+				],
+			});
+		});
+
 		it("上游 id 缺省/空串时回退生成 chatcmpl-<uuid>（PY convert_dict_to_response id or 缺省）", () => {
 			const baseResponse = {
 				object: "chat.completion",

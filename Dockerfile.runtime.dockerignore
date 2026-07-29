@@ -1,0 +1,10 @@
+**
+!package.json
+!package-lock.json
+!dist/
+!dist/**
+!drizzle/
+!drizzle/**
+!ui/
+!ui/out/
+!ui/out/**

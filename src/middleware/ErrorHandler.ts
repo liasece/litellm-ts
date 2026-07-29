@@ -11,6 +11,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import { mapToApiError } from "../core/api/ErrorResponseMapper";
+import { sendProtocolError } from "../core/api/ProtocolErrorResponse";
 import { createModuleLogger } from "../core/utils/logger";
 
 const logger = createModuleLogger("ErrorHandler");
@@ -62,10 +63,10 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
 			"invalid_request_error",
 			"request_body",
 		);
-		res.status(invalidJsonError.statusCode).json(invalidJsonError.toErrorBody());
+		sendProtocolError(req, res, invalidJsonError);
 		return;
 	}
 
 	const apiError = mapToApiError(err);
-	res.status(apiError.statusCode).json(apiError.toErrorBody());
+	sendProtocolError(req, res, apiError);
 }

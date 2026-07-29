@@ -195,6 +195,66 @@ describe("Chat streaming SpendLog", () => {
 		});
 	});
 
+	it("include_usage 按 OpenAI 契约在 DONE 前发送唯一 usage chunk", async () => {
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				yield {
+					id: "chatcmpl-usage",
+					object: "chat.completion.chunk",
+					created: 123,
+					model: "upstream-model",
+					choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: null }],
+				};
+				yield {
+					id: "chatcmpl-usage",
+					object: "chat.completion.chunk",
+					created: 123,
+					model: "upstream-model",
+					choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+					_usage: {
+						prompt_tokens: 11,
+						completion_tokens: 2,
+						total_tokens: 13,
+						cache_creation_input_tokens: 3,
+						cache_read_input_tokens: 5,
+					},
+				};
+			},
+		});
+		const { app } = buildApp(provider);
+
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({
+				model: "chat-group",
+				messages: [{ role: "user", content: "hello" }],
+				stream: true,
+				stream_options: { include_usage: true },
+			})
+			.expect(200);
+
+		const payloads = response.text
+			.split("\n\n")
+			.filter((event) => event.startsWith("data: ") && event !== "data: [DONE]")
+			.map((event) => JSON.parse(event.slice("data: ".length)) as Record<string, unknown>);
+		expect(payloads).toHaveLength(3);
+		expect(payloads.slice(0, -1)).toEqual([
+			expect.objectContaining({ choices: expect.any(Array), usage: null }),
+			expect.objectContaining({ choices: expect.any(Array), usage: null }),
+		]);
+		expect(payloads.at(-1)).toEqual({
+			id: "chatcmpl-usage",
+			object: "chat.completion.chunk",
+			created: 123,
+			model: "chat-group",
+			choices: [],
+			usage: { prompt_tokens: 11, completion_tokens: 2, total_tokens: 13 },
+		});
+		expect(response.text.trimEnd().endsWith("data: [DONE]")).toBe(true);
+		expect(response.text).not.toContain("_usage");
+		expect(response.text).not.toContain("cache_creation_input_tokens");
+	});
+
 	it("provider JSON fallback 也记录 response 与 usage", async () => {
 		jest.spyOn(global, "fetch").mockResolvedValue({
 			ok: true,

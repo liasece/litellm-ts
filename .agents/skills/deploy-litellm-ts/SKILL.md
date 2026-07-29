@@ -12,7 +12,7 @@ description: 验证、部署、诊断并核验本仓库的 LiteLLM TS 生产服�
 1. 完整读取仓库当前的 `AGENTS.md`。若其中内容与本 Skill 不同，以 `AGENTS.md` 为准。
 2. 检查用户当前请求是否明确授权部署。仅检查、诊断或解释状态时，不得自行重启服务。
 3. 检查工作区和暂存区，但只读取与本次任务有关的状态。保留用户或其他任务的修改，不执行 `reset`、`restore`、`clean`、暂存或提交。
-4. 从 `AGENTS.md` 和现场命令重新确认远程主机、仓库路径、Node.js 路径、部署入口、容器名称和验证契约，不把本 Skill 中的历史示例当成永远不变的配置。
+4. 从 `AGENTS.md` 和现场命令重新确认远程主机、仓库路径、Node.js 路径、部署入口、执行部署的工具容器、生产容器名称和验证契约，不把本 Skill 中的历史示例当成永远不变的配置。
 5. 记住本地仓库是远程仓库的 Samba 映射。禁止使用 `scp`、`rsync` 或其他源码同步步骤。
 
 ## 执行发布前验证
@@ -36,7 +36,20 @@ node node_modules/typescript/bin/tsc --noEmit
 
 ## 执行正式部署
 
-从当前 `AGENTS.md` 读取并执行正式部署命令，不调用本 Skill 自带脚本，也不重新实现部署流程。
+从当前 `AGENTS.md` 读取并执行正式部署命令，不调用本 Skill 自带脚本，也不重新实现部署流程。当前部署入口必须遵循以下拓扑：
+
+1. SSH 登录 `sshjl3`（规范地址为 `root@jl3ssh.gamefantasy.com`）。
+2. 进入该主机的 `cc-server-dc` 容器。
+3. 在 `cc-server-dc` 内执行 `/root/var/tools/service/ai-out-service/restart-litellm.sh`。
+
+自动化或非交互执行时，使用等价于以下形式的单条命令：
+
+```sh
+ssh root@jl3ssh.gamefantasy.com \
+  'docker exec cc-server-dc sh -lc "sh '\''/root/var/tools/service/ai-out-service/restart-litellm.sh'\''"'
+```
+
+禁止直接在 SSH 宿主机执行部署脚本。若 `AGENTS.md`、现场容器名称或脚本路径发生变化，先确认新的部署拓扑，再更新仓库说明和本 Skill，避免两处指令冲突。
 
 观察并区分部署阶段：
 

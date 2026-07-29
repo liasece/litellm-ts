@@ -80,6 +80,25 @@ interface ChatStreamAccumulator {
 	estimatedCompletionTokens: number;
 }
 
+function shouldIncludeStreamUsage(optionalParams: Record<string, unknown>): boolean {
+	const streamOptions = optionalParams["stream_options"];
+	return (
+		typeof streamOptions === "object" &&
+		streamOptions !== null &&
+		(streamOptions as Record<string, unknown>)["include_usage"] === true
+	);
+}
+
+function toOpenAIUsage(usage: Usage): Usage {
+	return {
+		prompt_tokens: usage.prompt_tokens,
+		completion_tokens: usage.completion_tokens,
+		total_tokens: usage.total_tokens,
+		...(usage.prompt_tokens_details ? { prompt_tokens_details: usage.prompt_tokens_details } : {}),
+		...(usage.completion_tokens_details ? { completion_tokens_details: usage.completion_tokens_details } : {}),
+	};
+}
+
 function mergeProviderSpecificFields(target: Record<string, unknown>, source: Record<string, unknown> | undefined): void {
 	if (!source) {
 		return;
@@ -98,7 +117,7 @@ function accumulateChatChunk(state: ChatStreamAccumulator, chunk: ModelResponseS
 	state.id ??= chunk.id;
 	state.created ??= chunk.created;
 	state.model ??= chunk.model;
-	const internalUsage = chunk._usage ?? (chunk as unknown as { usage?: Usage }).usage;
+	const internalUsage = chunk._usage ?? chunk.usage ?? undefined;
 	if (internalUsage) {
 		state.usage = { ...internalUsage };
 	}
@@ -433,6 +452,7 @@ async function handleStreamingResponse(
 	},
 ): Promise<void> {
 	const { req, db, spendRequestId, spendLifecycle, modelResolutionTrace } = context;
+	const includeStreamUsage = shouldIncludeStreamUsage(optionalParams);
 	let fallbackDepth = 0;
 	let currentModel = model;
 	const fallbackModels: string[] = [model];
@@ -554,6 +574,7 @@ async function handleStreamingResponse(
 			const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
 			let streamError: unknown;
 			let completionStartTime: Date | undefined;
+			let usageChunkSent = false;
 
 			try {
 				const stream = (provider as unknown as StreamingProvider).streamResponse(response);
@@ -564,10 +585,32 @@ async function handleStreamingResponse(
 					completionStartTime ??= new Date();
 					accumulateChatChunk(accumulator, chunk);
 					if (!clientDisconnected) {
-						res.write(`data: ${JSON.stringify(stripInternalFields(chunk))}\n\n`);
+						const strippedChunk = stripInternalFields(chunk) as Record<string, unknown>;
+						const choices = Array.isArray(strippedChunk["choices"]) ? strippedChunk["choices"] : [];
+						const chunkUsage = strippedChunk["usage"];
+						const publicChunk =
+							includeStreamUsage && chunkUsage === undefined
+								? { ...strippedChunk, usage: null }
+								: chunkUsage && typeof chunkUsage === "object"
+									? { ...strippedChunk, usage: toOpenAIUsage(chunkUsage as Usage) }
+									: strippedChunk;
+						usageChunkSent ||= choices.length === 0 && publicChunk["usage"] !== null && publicChunk["usage"] !== undefined;
+						res.write(`data: ${JSON.stringify(publicChunk)}\n\n`);
 					}
 				}
 				if (!clientDisconnected) {
+					if (includeStreamUsage && !usageChunkSent && accumulator.usage) {
+						res.write(
+							`data: ${JSON.stringify({
+								id: accumulator.id ?? "",
+								object: "chat.completion.chunk",
+								created: accumulator.created ?? Math.floor(Date.now() / 1000),
+								model: accumulator.model ?? (fallbackDepth === 0 ? model : currentModel),
+								choices: [],
+								usage: toOpenAIUsage(accumulator.usage),
+							})}\n\n`,
+						);
+					}
 					res.write("data: [DONE]\n\n");
 				}
 			} catch (err) {
