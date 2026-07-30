@@ -7338,6 +7338,10 @@ export interface SessionTimelineEvent {
 export interface SessionTimelineResponse {
 	data: SessionTimelineEvent[];
 	summary: {
+		keys: Array<{
+			alias: string | null;
+			hash: string;
+		}>;
 		request_count: number;
 		event_count: number;
 		total_spend: number;

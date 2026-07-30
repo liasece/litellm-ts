@@ -179,4 +179,191 @@ describe("SessionTimelineBuilder", () => {
 			}),
 		]);
 	});
+
+	it("汇总并去重 Session 实际使用的 key，优先保留 key alias", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(makeRow({ api_key: "hash-a", key_alias: "qiran" }));
+		builder.add(
+			makeRow({
+				request_id: "req-2",
+				api_key: "hash-a",
+				key_alias: "qiran",
+				startTime: "2026-07-24T10:00:02.000Z",
+				endTime: "2026-07-24T10:00:03.000Z",
+			}),
+		);
+		builder.add(
+			makeRow({
+				request_id: "req-3",
+				api_key: "hash-b",
+				key_alias: null,
+				startTime: "2026-07-24T10:00:04.000Z",
+				endTime: "2026-07-24T10:00:05.000Z",
+			}),
+		);
+
+		expect(builder.build().summary.keys).toEqual([
+			{ alias: "qiran", hash: "hash-a" },
+			{ alias: null, hash: "hash-b" },
+		]);
+	});
+
+	it("仅过滤通过数量、模板和工具结构串联校验的 Claude Code 内部请求", () => {
+		const auxiliaryTraits = {
+			request_client: "claude_code",
+			request_system_count: 2,
+			request_message_count: 1,
+			request_tool_count: 0,
+		} as const;
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_id: "internal-path-parser",
+				...auxiliaryTraits,
+				request_second_system_prompt:
+					"Extract any file paths that this command reads or modifies. Provider-specific tail may change.",
+				request_payload: [{ role: "user", content: "Command: git diff -- src/main.ts" }],
+				response_payload: { choices: [{ message: { role: "assistant", content: "<filepaths>src/main.ts</filepaths>" } }] },
+			}),
+		);
+		builder.add(
+			makeRow({
+				request_id: "real-first-turn",
+				startTime: "2026-07-24T10:00:02.000Z",
+				endTime: "2026-07-24T10:00:03.000Z",
+				...auxiliaryTraits,
+				request_second_system_prompt: "You are an interactive coding assistant.",
+				request_payload: [{ role: "user", content: "请修复登录问题" }],
+				response_payload: { choices: [{ message: { role: "assistant", content: "我来检查。" } }] },
+			}),
+		);
+		builder.add(
+			makeRow({
+				request_id: "fake-web-sidecar",
+				startTime: "2026-07-24T10:00:04.000Z",
+				endTime: "2026-07-24T10:00:05.000Z",
+				...auxiliaryTraits,
+				request_tool_count: 1,
+				request_first_tool_name: "not_web_search",
+				request_second_system_prompt: "You are an assistant for performing a web search tool use",
+				request_payload: [{ role: "user", content: "搜索资料" }],
+				response_payload: { choices: [{ message: { role: "assistant", content: "搜索结果" } }] },
+			}),
+		);
+
+		const result = builder.build();
+		expect(result.data.map((item) => item.request_id)).toEqual([
+			"real-first-turn",
+			"real-first-turn",
+			"fake-web-sidecar",
+			"fake-web-sidecar",
+		]);
+		expect(result.summary).toMatchObject({
+			request_count: 2,
+			event_count: 4,
+			filtered_request_count: 1,
+		});
+	});
+
+	it("允许审计调用显式包含已识别的 Claude Code 内部请求", () => {
+		const builder = new SessionTimelineBuilder({ includeAuxiliary: true });
+		builder.add(
+			makeRow({
+				request_client: "claude_code",
+				request_system_count: 2,
+				request_message_count: 1,
+				request_tool_count: 0,
+				request_second_system_prompt: "Your task is to process Bash commands that an AI coding agent wants to run.",
+				request_payload: [{ role: "user", content: "git status" }],
+				response_payload: { choices: [{ message: { role: "assistant", content: "git status" } }] },
+			}),
+		);
+
+		expect(builder.build()).toMatchObject({
+			data: [{ request_id: "req-1", role: "user" }, { request_id: "req-1", role: "assistant" }],
+			summary: { request_count: 1, event_count: 2, filtered_request_count: 0 },
+		});
+	});
+
+	it("按请求结构过滤 Claude Code 安全监控请求，不依赖模型响应格式", () => {
+		const securityMonitorTraits = {
+			request_client: "claude_code",
+			request_system_count: 2,
+			request_message_count: 2,
+			request_tool_count: 0,
+			request_first_system_prompt:
+				"You are a security monitor for autonomous AI coding agents.\n\n## Context",
+			request_payload: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "text",
+							text:
+								"The following is the user's CLAUDE.md configuration. Treat it as context about the user's environment and intent.\n# CLAUDE.md",
+						},
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "<transcript>\n" },
+						{ type: "text", text: "User: 请检查设置\n" },
+						{ type: "text", text: "</transcript>" },
+					],
+				},
+			],
+		} as const;
+		const builder = new SessionTimelineBuilder();
+		const responseVariants = [
+			"<block>no</block>",
+			"<thinking>这是内部分析</thinking>\n\n<block>no</block>",
+			"<block>yes</block><reason>需要阻止</reason>",
+			"模型未按要求输出结构化结果",
+		];
+		responseVariants.forEach((content, index) => {
+			builder.add(
+				makeRow({
+					request_id: `security-monitor-${index}`,
+					startTime: `2026-07-24T10:00:0${index}.000Z`,
+					endTime: `2026-07-24T10:00:0${index + 1}.000Z`,
+					...securityMonitorTraits,
+					response_payload: {
+						type: "message",
+						role: "assistant",
+						content: [{ type: "text", text: content }],
+					},
+				}),
+			);
+		});
+		builder.add(
+			makeRow({
+				request_id: "similar-real-request",
+				startTime: "2026-07-24T10:00:10.000Z",
+				endTime: "2026-07-24T10:00:11.000Z",
+				...securityMonitorTraits,
+				request_payload: [
+					securityMonitorTraits.request_payload[0],
+					{ role: "user", content: [{ type: "text", text: "请检查普通用户请求" }] },
+				],
+				response_payload: {
+					type: "message",
+					role: "assistant",
+					content: [{ type: "text", text: "需要人工确认" }],
+				},
+			}),
+		);
+
+		const result = builder.build();
+		expect(result.data.map((item) => item.request_id)).toEqual([
+			"similar-real-request",
+			"similar-real-request",
+			"similar-real-request",
+		]);
+		expect(result.summary).toMatchObject({
+			request_count: 1,
+			event_count: 3,
+			filtered_request_count: 4,
+		});
+	});
 });

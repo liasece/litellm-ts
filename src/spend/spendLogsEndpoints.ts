@@ -522,6 +522,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// 已去重的最终事件；请求快照、原始响应和 proxy_server_request 不会进入 HTTP 响应。
 	registerRoute(router, { method: "get", path: "/spend/logs/session/timeline" }, async (req) => {
 		const group = parseSessionGroupQuery(req.query as Record<string, unknown>);
+		const includeAuxiliary = req.query.include_auxiliary === "true";
 		const requestedTeamId = typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
 		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
 		const baseClause = and(
@@ -535,7 +536,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			.orderBy(sql`${liteLLM_SpendLogs.startTime} DESC, ${liteLLM_SpendLogs.request_id} DESC`)
 			.limit(1);
 		const snapshot = sessionPositionFromRow(snapshotRows[0], "snapshotStartTime", "snapshotRequestId");
-		const builder = new SessionTimelineBuilder();
+		const builder = new SessionTimelineBuilder({ includeAuxiliary: includeAuxiliary });
 		if (!snapshot) return builder.build();
 
 		const boundedClause = and(baseClause, sessionSnapshotClause(snapshot)) as SQL;
@@ -955,6 +956,7 @@ function sessionTimelineSelection() {
 	return {
 		request_id: liteLLM_SpendLogs.request_id,
 		call_type: liteLLM_SpendLogs.call_type,
+		api_key: liteLLM_SpendLogs.api_key,
 		spend: liteLLM_SpendLogs.spend,
 		total_tokens: liteLLM_SpendLogs.total_tokens,
 		startTime: liteLLM_SpendLogs.startTime,
@@ -963,6 +965,9 @@ function sessionTimelineSelection() {
 		status: sql<string | null>`${liteLLM_SpendLogs.status}`,
 		metadata_status: sql<string | null>`
 			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'status' ELSE NULL END
+		`,
+		key_alias: sql<string | null>`
+			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'user_api_key_alias' ELSE NULL END
 		`,
 		error_information: sql<unknown | null>`
 			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->'error_information' ELSE NULL END
@@ -980,6 +985,60 @@ function sessionTimelineSelection() {
 			END
 		`,
 		response_payload: liteLLM_SpendLogs.response,
+		// These small derived fields let the reducer recognize Claude Code's
+		// model-backed utility calls without transferring the repeated full
+		// proxy_server_request JSON for every row in a cumulative session.
+		request_client: sql<string | null>`
+			CASE
+				WHEN ${proxy}#>>'{headers,x-app}' = 'cli'
+					AND ${proxy}#>>'{headers,user-agent}' LIKE 'claude-cli/%'
+				THEN 'claude_code'
+				ELSE NULL
+			END
+		`,
+		request_system_count: sql<number>`
+			CASE
+				WHEN jsonb_typeof(${proxy}#>'{body,system}') = 'array'
+				THEN jsonb_array_length(${proxy}#>'{body,system}')
+				ELSE 0
+			END
+		`,
+		request_message_count: sql<number>`
+			CASE
+				WHEN jsonb_typeof(${proxy}#>'{body,messages}') = 'array'
+				THEN jsonb_array_length(${proxy}#>'{body,messages}')
+				ELSE 0
+			END
+		`,
+		request_tool_count: sql<number>`
+			CASE
+				WHEN jsonb_typeof(${proxy}#>'{body,tools}') = 'array'
+				THEN jsonb_array_length(${proxy}#>'{body,tools}')
+				ELSE 0
+			END
+		`,
+		request_first_tool_name: sql<string | null>`${proxy}#>>'{body,tools,0,name}'`,
+		// Prefix matching tolerates prompt-tail edits between Claude Code versions
+		// while the 256-character cap prevents large system prompts entering the
+		// timeline batch result solely for classification.
+		request_first_system_prompt: sql<string | null>`
+			LEFT(
+				COALESCE(
+					${proxy}#>>'{body,system,0,text}',
+					${proxy}#>>'{body,system,0}'
+				),
+				256
+			)
+		`,
+		request_second_system_prompt: sql<string | null>`
+			LEFT(
+				COALESCE(
+					${proxy}#>>'{body,system,1,text}',
+					${proxy}#>>'{body,system,1}'
+				),
+				256
+			)
+		`,
 	};
 }
 

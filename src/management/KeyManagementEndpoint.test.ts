@@ -365,6 +365,16 @@ describe("KeyManagement /key/info 与 /key/list parity", () => {
 		};
 	}
 
+	function makeKeyAliasesMockDb(rows: Array<Record<string, unknown>>): unknown {
+		return {
+			select: () => ({
+				from: () => ({
+					where: () => Promise.resolve(rows),
+				}),
+			}),
+		};
+	}
+
 	it("GET /key/info?key=<hash> 返回 Python shape 且不泄漏 token", async () => {
 		const hashed = "hashed-info-token";
 		const app = makeApp(makeKeyInfoMockDb([{ token: hashed, keyAlias: "alias", userId: "user-a" }]));
@@ -415,6 +425,44 @@ describe("KeyManagement /key/info 与 /key/list parity", () => {
 		expect(res.body.key).toEqual([plain]);
 		expect(res.body.info[0].key_alias).toBe("v2-alias");
 		expect(res.body.info[0].token).toBeUndefined();
+	});
+
+	it("/key/aliases 返回 Logs 过滤器所需的可搜索分页契约，并排除空 alias 与 WebUI session key", async () => {
+		const rows = [
+			{ token: "hash-zulu", keyAlias: "zulu", teamId: "team-a" },
+			{ token: "hash-alpha", keyAlias: "Alpha One", teamId: "team-a" },
+			{ token: "hash-bravo", keyAlias: "bravo", teamId: "team-b" },
+			{ token: "hash-empty", keyAlias: "", teamId: "team-a" },
+			{ token: "hash-null", keyAlias: null, teamId: "team-a" },
+			{ token: "hash-session", keyAlias: "dashboard-session", teamId: "litellm-dashboard" },
+		];
+		const app = makeApp(makeKeyAliasesMockDb(rows));
+
+		const firstPage = await request(app).get("/key/aliases?page=1&size=2");
+		expect(firstPage.status).toBe(200);
+		expect(firstPage.body).toEqual({
+			aliases: ["Alpha One", "bravo"],
+			total_count: 3,
+			current_page: 1,
+			total_pages: 2,
+			size: 2,
+		});
+
+		const searched = await request(app).get("/key/aliases?search=alpha");
+		expect(searched.status).toBe(200);
+		expect(searched.body).toEqual({
+			aliases: ["Alpha One"],
+			total_count: 1,
+			current_page: 1,
+			total_pages: 1,
+			size: 50,
+		});
+
+		const empty = await request(app).get("/key/aliases?search=missing");
+		expect(empty.status).toBe(200);
+		expect(empty.body.total_count).toBe(0);
+		expect(empty.body.total_pages).toBe(0);
+		expect(empty.body.aliases).toEqual([]);
 	});
 
 	it("/key/list 默认 size=10，支持过滤、排序、状态，return_full_object 返回数据库 hash token 而不泄露明文 key", async () => {

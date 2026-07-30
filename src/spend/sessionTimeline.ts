@@ -46,6 +46,8 @@ interface ToolCall {
 export interface SessionTimelineSourceRow {
 	readonly request_id: string;
 	readonly call_type: string;
+	readonly api_key?: string | null;
+	readonly key_alias?: string | null;
 	readonly spend: number;
 	readonly total_tokens: number;
 	readonly startTime: Date | string;
@@ -56,6 +58,13 @@ export interface SessionTimelineSourceRow {
 	readonly error_information: unknown;
 	readonly request_payload: unknown;
 	readonly response_payload: unknown;
+	readonly request_client?: string | null;
+	readonly request_system_count?: number | null;
+	readonly request_message_count?: number | null;
+	readonly request_tool_count?: number | null;
+	readonly request_first_tool_name?: string | null;
+	readonly request_first_system_prompt?: string | null;
+	readonly request_second_system_prompt?: string | null;
 }
 
 export interface SessionTimelineItem {
@@ -73,6 +82,10 @@ export interface SessionTimelineItem {
 export interface SessionTimelineResponse {
 	readonly data: SessionTimelineItem[];
 	readonly summary: {
+		readonly keys: ReadonlyArray<{
+			readonly alias: string | null;
+			readonly hash: string;
+		}>;
 		readonly request_count: number;
 		readonly event_count: number;
 		readonly total_spend: number;
@@ -80,7 +93,16 @@ export interface SessionTimelineResponse {
 		readonly duration_seconds: number;
 		readonly start_time: string | null;
 		readonly end_time: string | null;
+		readonly filtered_request_count: number;
 	};
+}
+
+export interface SessionTimelineBuilderOptions {
+	/**
+	 * Debug/audit escape hatch. The default timeline removes only high-confidence
+	 * Claude Code service calls; callers can explicitly request the raw sequence.
+	 */
+	readonly includeAuxiliary?: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -708,6 +730,68 @@ function errorMessage(value: unknown): string {
 	return typeof value === "string" ? value : "该请求执行失败，未记录响应内容。";
 }
 
+const CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES = {
+	filePathExtraction: "Extract any file paths that this command reads or modifies",
+	bashPrefixAnalysis: "Your task is to process Bash commands that an AI coding agent wants to run",
+	webSearchSidecar: "You are an assistant for performing a web search tool use",
+	sessionTitle: "Generate a concise, sentence-case title",
+	gitHistoryAnalysis: "You are an expert at analyzing git history",
+	securityMonitor: "You are a security monitor for autonomous AI coding agents.",
+} as const;
+
+const CLAUDE_CODE_SECURITY_MONITOR_CONTEXT_PREFIX =
+	"The following is the user's CLAUDE.md configuration. Treat it as context about the user's environment and intent.";
+
+/**
+ * Claude Code's security monitor sends configuration and the cumulative
+ * transcript as two user-shaped messages. They are transport fields for an
+ * internal classifier, not conversation turns. Its model-generated response
+ * may contain thinking, reasons, or malformed text, so response formatting is
+ * deliberately excluded from the request-family identity.
+ */
+function isClaudeCodeSecurityMonitorRequest(row: SessionTimelineSourceRow): boolean {
+	if (row.request_message_count !== 2 || row.request_tool_count !== 0) return false;
+	const systemPrompt = row.request_first_system_prompt?.trimStart() ?? "";
+	if (!systemPrompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.securityMonitor)) return false;
+
+	const requestMessages = requestMessagesFrom(row.request_payload);
+	if (requestMessages.length !== 2) return false;
+	const [contextMessage, transcriptMessage] = requestMessages;
+	if (contextMessage?.role !== "user" || transcriptMessage?.role !== "user") return false;
+	if (!contextMessage.content.trimStart().startsWith(CLAUDE_CODE_SECURITY_MONITOR_CONTEXT_PREFIX)) return false;
+	return transcriptMessage.content.trimStart().startsWith("<transcript>");
+}
+
+/**
+ * Conservatively identifies Claude Code's internal model-backed service calls.
+ *
+ * The checks are intentionally chained. Message counts alone are not enough:
+ * every recognized family must also match the Claude CLI marker, a stable
+ * prompt/content signature, and its expected tool shape. Unknown requests
+ * always remain visible.
+ */
+function isClaudeCodeAuxiliaryRequest(row: SessionTimelineSourceRow): boolean {
+	if (row.request_client !== "claude_code") return false;
+	if (row.request_system_count !== 2) return false;
+	if (isClaudeCodeSecurityMonitorRequest(row)) return true;
+	if (row.request_message_count !== 1) return false;
+
+	const prompt = row.request_second_system_prompt?.trimStart() ?? "";
+	const toolCount = row.request_tool_count ?? -1;
+	if (
+		prompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.filePathExtraction) ||
+		prompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.bashPrefixAnalysis) ||
+		prompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.sessionTitle) ||
+		prompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.gitHistoryAnalysis)
+	) {
+		return toolCount === 0;
+	}
+	if (prompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.webSearchSidecar)) {
+		return toolCount === 1 && row.request_first_tool_name === "web_search";
+	}
+	return false;
+}
+
 /**
  * Stateful reducer used by the endpoint while it reads indexed DB pages.
  * It retains only fingerprints and final render events, never the raw snapshots.
@@ -715,14 +799,32 @@ function errorMessage(value: unknown): string {
 export class SessionTimelineBuilder {
 	private readonly seenHistoryOccurrences = new Map<string, number>();
 	private readonly seenSystemMessages = new Set<string>();
+	private readonly keys = new Map<string, { alias: string | null; hash: string }>();
 	private readonly items: SessionTimelineItem[] = [];
 	private requestCount = 0;
 	private totalSpend = 0;
 	private totalTokens = 0;
 	private startMs: number | null = null;
 	private endMs: number | null = null;
+	private filteredRequestCount = 0;
+
+	public constructor(private readonly options: SessionTimelineBuilderOptions = {}) {}
 
 	public add(row: SessionTimelineSourceRow): void {
+		if (!this.options.includeAuxiliary && isClaudeCodeAuxiliaryRequest(row)) {
+			this.filteredRequestCount += 1;
+			return;
+		}
+		const keyHash = row.api_key?.trim() ?? "";
+		const keyAlias = row.key_alias?.trim() || null;
+		const keyIdentity = keyHash || (keyAlias ? `alias:${keyAlias}` : "");
+		if (keyIdentity) {
+			const existingKey = this.keys.get(keyIdentity);
+			this.keys.set(keyIdentity, {
+				alias: existingKey?.alias ?? keyAlias,
+				hash: keyHash,
+			});
+		}
 		this.requestCount += 1;
 		this.totalSpend += Number.isFinite(Number(row.spend)) ? Number(row.spend) : 0;
 		this.totalTokens += Number.isFinite(Number(row.total_tokens)) ? Number(row.total_tokens) : 0;
@@ -828,6 +930,7 @@ export class SessionTimelineBuilder {
 		return {
 			data: this.items,
 			summary: {
+				keys: Array.from(this.keys.values()),
 				request_count: this.requestCount,
 				event_count: this.items.length,
 				total_spend: this.totalSpend,
@@ -836,6 +939,7 @@ export class SessionTimelineBuilder {
 					this.startMs === null || this.endMs === null ? 0 : Math.max(0, (this.endMs - this.startMs) / 1000),
 				start_time: startTime,
 				end_time: endTime,
+				filtered_request_count: this.filteredRequestCount,
 			},
 		};
 	}

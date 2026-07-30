@@ -1670,6 +1670,8 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				{
 					request_id: "req-1",
 					call_type: "completion",
+					api_key: "hash-qiran",
+					key_alias: "qiran",
 					spend: 0.01,
 					total_tokens: 10,
 					startTime: new Date("2026-07-24T10:00:00.000Z"),
@@ -1684,6 +1686,8 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				{
 					request_id: "req-2",
 					call_type: "completion",
+					api_key: "hash-qiran",
+					key_alias: "qiran",
 					spend: 0.02,
 					total_tokens: 20,
 					startTime: new Date("2026-07-24T10:00:02.000Z"),
@@ -1715,6 +1719,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				["assistant", "第二答"],
 			]);
 			expect(res.body.summary).toMatchObject({
+				keys: [{ alias: "qiran", hash: "hash-qiran" }],
 				request_count: 2,
 				event_count: 4,
 				total_spend: 0.03,

@@ -7,7 +7,7 @@
  */
 
 import type { Router, Request } from "express";
-import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, eq, ilike, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
@@ -35,6 +35,14 @@ const KEY_LIST_PAGINATION = {
 	minPage: 1,
 	minPageSize: 1,
 	minTotalPages: 1,
+} as const;
+
+/** /key/aliases 分页常量（对齐 Python LiteLLM Key Alias 下拉接口） */
+const KEY_ALIAS_PAGINATION = {
+	defaultPage: 1,
+	defaultPageSize: 50,
+	maxPageSize: 100,
+	minPageSize: 1,
 } as const;
 
 /**
@@ -304,6 +312,26 @@ function buildDeletedKeyListWhere(filters: KeyListFilters): ReturnType<typeof an
 	}
 	if (filters.projectId !== undefined) {
 		conditions.push(eq(liteLLM_DeletedVerificationToken.projectId, filters.projectId));
+	}
+	return and(...conditions);
+}
+
+interface KeyAliasFilters {
+	readonly search?: string;
+	readonly teamId?: string;
+}
+
+function buildKeyAliasesWhere(filters: KeyAliasFilters): ReturnType<typeof and> {
+	const conditions = [
+		isNotNull(LiteLLM_VerificationToken.keyAlias),
+		ne(LiteLLM_VerificationToken.keyAlias, ""),
+		or(isNull(LiteLLM_VerificationToken.teamId), ne(LiteLLM_VerificationToken.teamId, WEBUI_LOGIN_TEAM_ID)),
+	];
+	if (filters.search !== undefined) {
+		conditions.push(ilike(LiteLLM_VerificationToken.keyAlias, `%${filters.search}%`));
+	}
+	if (filters.teamId !== undefined) {
+		conditions.push(eq(LiteLLM_VerificationToken.teamId, filters.teamId));
 	}
 	return and(...conditions);
 }
@@ -724,6 +752,57 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			const info = rows.map((row) => toPythonVerificationTokenRow(row, false));
 
 			return { key: rawKeys, info: info };
+		}),
+	);
+
+	// ─── GET /key/aliases ─────────────────────────────────────
+	// Logs 页 Key Alias 过滤器使用的分页数据源。对齐 Python LiteLLM：
+	// - 排除空 alias 与 WebUI session key
+	// - 非管理员只返回对象授权范围内的 key alias
+	// - 支持大小写不敏感的部分搜索与 team_id 过滤
+	// - 空结果 total_pages=0
+	registerRoute(
+		router,
+		{ method: "get", path: "/key/aliases" },
+		authed(async (req) => {
+			const page = parsePositiveInt(req.query.page, KEY_ALIAS_PAGINATION.defaultPage);
+			const pageSize = Math.min(
+				KEY_ALIAS_PAGINATION.maxPageSize,
+				Math.max(
+					KEY_ALIAS_PAGINATION.minPageSize,
+					parsePositiveInt(req.query.size, KEY_ALIAS_PAGINATION.defaultPageSize),
+				),
+			);
+			const filters: KeyAliasFilters = {
+				search: firstString(req.query.search),
+				teamId: firstString(req.query.team_id),
+			};
+			const rows = await db.select().from(LiteLLM_VerificationToken).where(buildKeyAliasesWhere(filters));
+			const visibleRows = authorizationGuard ? await authorizationGuard.filterVisibleKeys(req.auth, rows) : rows;
+			const normalizedSearch = filters.search?.toLocaleLowerCase();
+			const aliases = visibleRows
+				.filter((row) => {
+					const alias = row.keyAlias;
+					if (typeof alias !== "string" || alias.length === 0 || row.teamId === WEBUI_LOGIN_TEAM_ID) {
+						return false;
+					}
+					if (filters.teamId !== undefined && row.teamId !== filters.teamId) {
+						return false;
+					}
+					return normalizedSearch === undefined || alias.toLocaleLowerCase().includes(normalizedSearch);
+				})
+				.map((row) => row.keyAlias as string)
+				.sort((left, right) => left.localeCompare(right));
+			const totalCount = aliases.length;
+			const startIndex = (page - 1) * pageSize;
+
+			return {
+				aliases: aliases.slice(startIndex, startIndex + pageSize),
+				total_count: totalCount,
+				current_page: page,
+				total_pages: totalCount === 0 ? 0 : Math.ceil(totalCount / pageSize),
+				size: pageSize,
+			};
 		}),
 	);
 
