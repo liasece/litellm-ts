@@ -7,7 +7,7 @@ import SidebarProvider from "@/app/(dashboard)/components/SidebarProvider";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { DebugWarningBanner } from "@/components/DebugWarningBanner";
-import { deriveDashboardPage } from "@/app/(dashboard)/dashboardNavigation";
+import { buildLegacyDashboardHref, deriveDashboardPage } from "@/app/(dashboard)/dashboardNavigation";
 
 /** ---- BASE URL HELPERS ---- */
 function normalizeBasePrefix(raw: string | undefined | null): string {
@@ -54,7 +54,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 		}
 
 		// Otherwise, navigate back to the legacy root page with query params
-		router.push(withBase(`?page=${newPage}`));
+		router.push(withBase(buildLegacyDashboardHref(newPage)));
 	};
 
 	const toggleSidebar = () => setSidebarCollapsed((v) => !v);

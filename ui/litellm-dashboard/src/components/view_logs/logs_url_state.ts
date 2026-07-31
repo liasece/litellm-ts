@@ -113,10 +113,16 @@ function setOptionalParam(params: URLSearchParams, name: string, value: string, 
 }
 
 export function writeLogsUrlState(params: URLSearchParams, state: LogsUrlState): URLSearchParams {
-	const next = new URLSearchParams(params);
+	// Logs owns only its route marker and the parameters serialized below.
+	// Rebuild from an allowlist so stale state from another page (for example
+	// `tab=aliases`) cannot survive a Logs render and later leak through nav.
+	const next = new URLSearchParams();
+	if (params.get("page") === "logs") {
+		next.set("page", "logs");
+	}
 
 	for (const filterName of Object.keys(FILTER_URL_PARAMS) as Array<keyof LogFilterState>) {
-		const value = state.filters[filterName];
+		const value = state.filters[filterName] ?? "";
 		setOptionalParam(next, FILTER_URL_PARAMS[filterName], value, value !== "");
 	}
 

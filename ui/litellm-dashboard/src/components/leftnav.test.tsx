@@ -103,6 +103,31 @@ describe("Sidebar (leftnav)", () => {
 		const flatItems = menuGroups.flatMap((group) => group.items);
 		expect(flatItems.every((item) => item.children === undefined)).toBe(true);
 	});
+
+	it("uses canonical sidebar hrefs that do not carry another page's URL state", () => {
+		window.history.replaceState(
+			{},
+			"",
+			"/ui/?page=logs&tab=aliases&key_alias=stale-alias&logs_page=4&logs_search=request",
+		);
+
+		renderWithProviders(<Sidebar {...defaultProps} />);
+
+		expect(screen.getByRole("link", { name: "Virtual Keys" })).toHaveAttribute("href", "?page=api-keys");
+		expect(screen.getByRole("link", { name: "Logs" })).toHaveAttribute("href", "?page=logs");
+	});
+
+	it("delegates navigation once to the parent without mutating the current URL itself", () => {
+		const setPage = vi.fn();
+		window.history.replaceState({}, "", "/ui/?page=logs&key_alias=stale-alias");
+		renderWithProviders(<Sidebar {...defaultProps} setPage={setPage} />);
+
+		fireEvent.click(screen.getByRole("link", { name: "Virtual Keys" }));
+
+		expect(setPage).toHaveBeenCalledWith("api-keys");
+		expect(window.location.search).toBe("?page=logs&key_alias=stale-alias");
+	});
+
 	it("has no duplicate keys among all menu items and their children", () => {
 		// Helper to recursively extract all keys from Ant Design Menu items
 		function getAllKeysFromMenu(wrapper: HTMLElement): string[] {

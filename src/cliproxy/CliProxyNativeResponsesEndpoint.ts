@@ -22,7 +22,14 @@ const REQUEST_BLOCKED_HEADERS = new Set([
 ]);
 const RESPONSE_BLOCKED_HEADERS = new Set(["connection", "transfer-encoding", "content-length", "keep-alive"]);
 const RESPONSES_SSE_KEEPALIVE_INTERVAL_MS = 15_000;
-const RESPONSES_SSE_KEEPALIVE_CHUNK = ": keepalive\n\n";
+const RESPONSES_SSE_KEEPALIVE_CHUNK = 'event: ping\ndata: {"type":"ping"}\n\n';
+// Cloudflare Tunnel can discard SSE comments while it waits for a data event.
+// Codex ignores unknown Responses event types, so a padded ping establishes the
+// byte stream without changing the response state seen by the client.
+const RESPONSES_SSE_INITIAL_PADDING_CHUNK = `event: ping\ndata: ${JSON.stringify({
+	type: "ping",
+	padding: " ".repeat(4_096),
+})}\n\n`;
 
 function isCliProxyModel(router: LiteLLMRouter, model: unknown): boolean {
 	if (typeof model !== "string") {
@@ -110,11 +117,11 @@ async function pipeUpstreamResponse(upstream: globalThis.Response, res: Response
 function startResponsesSseKeepAlive(res: Response): () => void {
 	res.status(200);
 	res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-	res.setHeader("Cache-Control", "no-cache");
+	res.setHeader("Cache-Control", "no-cache, no-transform");
 	res.setHeader("Connection", "keep-alive");
 	res.setHeader("X-Accel-Buffering", "no");
 	res.flushHeaders();
-	res.write(RESPONSES_SSE_KEEPALIVE_CHUNK);
+	res.write(RESPONSES_SSE_INITIAL_PADDING_CHUNK);
 	const interval = setInterval(() => {
 		if (!res.destroyed && !res.writableEnded) {
 			res.write(RESPONSES_SSE_KEEPALIVE_CHUNK);

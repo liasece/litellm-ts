@@ -2,6 +2,17 @@ interface SearchParamsReader {
 	get(name: string): string | null;
 }
 
+/**
+ * Sidebar navigation is a page entry, not a continuation of the current
+ * page's view state. Build the legacy route from an empty query string so
+ * filters, tabs, pagination and modal parameters cannot leak across pages.
+ */
+export function buildLegacyDashboardHref(page: string): string {
+	const params = new URLSearchParams();
+	params.set("page", page);
+	return `?${params.toString()}`;
+}
+
 const PATH_PAGE_MAP: Readonly<Record<string, string>> = {
 	"api-reference": "api-reference",
 	guardrails: "guardrails",

@@ -1,6 +1,7 @@
 import { useOrganizations } from "@/app/(dashboard)/hooks/organizations/useOrganizations";
 import { useTeams } from "@/app/(dashboard)/hooks/teams/useTeams";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
+import { buildLegacyDashboardHref } from "@/app/(dashboard)/dashboardNavigation";
 import {
 	ApiOutlined,
 	AppstoreOutlined,
@@ -308,14 +309,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 
 	// Navigate to page helper
 	const navigateToPage = (page: string) => {
-		// For migrated pages, just call setPage — the parent layout handles routing
-		if (MIGRATED_PAGES[page]) {
-			setPage(page);
-			return;
-		}
-		const newSearchParams = new URLSearchParams(window.location.search);
-		newSearchParams.set("page", page);
-		window.history.pushState(null, "", `?${newSearchParams.toString()}`);
+		// The parent is the sole owner of navigation. It decides between a
+		// path-based route and a canonical legacy ?page= entry.
 		setPage(page);
 	};
 
@@ -337,13 +332,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 		}
 		// For migrated pages, generate a path-based href for right-click "Open in new tab"
 		const migratedRoute = MIGRATED_PAGES[page];
-		const href = migratedRoute
-			? migratedHref(migratedRoute)
-			: (() => {
-					const params = new URLSearchParams(window.location.search);
-					params.set("page", page);
-					return `?${params.toString()}`;
-				})();
+		const href = migratedRoute ? migratedHref(migratedRoute) : buildLegacyDashboardHref(page);
 		return (
 			<a
 				href={href}

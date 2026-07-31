@@ -91,7 +91,13 @@ describe("CLIProxy native Responses streaming", () => {
 				client.end(JSON.stringify({ model: "gpt-5.6-sol", input: "hello", stream: true }));
 			});
 
-			expect(await firstChunk).toBe(": keepalive\n\n");
+			const initialChunk = await firstChunk;
+			expect(initialChunk.startsWith("event: ping\ndata: ")).toBe(true);
+			expect(initialChunk.endsWith("\n\n")).toBe(true);
+			const dataLine = initialChunk.split("\n").find((line) => line.startsWith("data: "));
+			expect(dataLine).toBeDefined();
+			expect(JSON.parse((dataLine ?? "").slice("data: ".length))).toMatchObject({ type: "ping" });
+			expect(Buffer.byteLength(initialChunk)).toBeGreaterThanOrEqual(4_096);
 			expect(responseStatus).toBe(200);
 			expect(responseHeaders["content-type"]).toContain("text/event-stream");
 			expect(responseHeaders["x-accel-buffering"]).toBe("no");

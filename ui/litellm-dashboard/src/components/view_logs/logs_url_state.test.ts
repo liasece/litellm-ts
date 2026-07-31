@@ -21,7 +21,7 @@ const createState = (): LogsUrlState => ({
 });
 
 describe("Logs URL state", () => {
-	it("serializes filters and restores the same filtered view after refresh", () => {
+	it("serializes only Logs-owned state and restores the same filtered view after refresh", () => {
 		const state = createState();
 		state.filters["Team ID"] = "team/a";
 		state.filters["Key Alias"] = "production key";
@@ -32,11 +32,12 @@ describe("Logs URL state", () => {
 		state.sortBy = "spend";
 		state.sortOrder = "asc";
 
-		const params = writeLogsUrlState(new URLSearchParams("page=logs&unrelated=keep"), state);
+		const params = writeLogsUrlState(new URLSearchParams("page=logs&tab=aliases&unrelated=drop"), state);
 		const restored = readLogsUrlState(params.toString(), defaults);
 
 		expect(params.get("page")).toBe("logs");
-		expect(params.get("unrelated")).toBe("keep");
+		expect(params.has("tab")).toBe(false);
+		expect(params.has("unrelated")).toBe(false);
 		expect(restored.filters["Team ID"]).toBe("team/a");
 		expect(restored.filters["Key Alias"]).toBe("production key");
 		expect(restored.filters.Status).toBe("failure");
@@ -71,9 +72,17 @@ describe("Logs URL state", () => {
 	});
 
 	it("removes reset filter parameters without disturbing the Logs route", () => {
-		const params = new URLSearchParams("page=logs&team_id=team-1&key_alias=alias-1&logs_page=4&logs_search=request");
+		const params = new URLSearchParams(
+			"page=logs&tab=aliases&team_id=team-1&key_alias=alias-1&logs_page=4&logs_search=request",
+		);
 		const next = writeLogsUrlState(params, createState());
 
 		expect(next.toString()).toBe("page=logs");
+	});
+
+	it("does not add a legacy page marker on the path-based Logs route", () => {
+		const next = writeLogsUrlState(new URLSearchParams("tab=aliases&key_alias=stale"), createState());
+
+		expect(next.toString()).toBe("");
 	});
 });

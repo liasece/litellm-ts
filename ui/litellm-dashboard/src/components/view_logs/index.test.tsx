@@ -913,6 +913,26 @@ describe("SpendLogsTable", () => {
 		expect(screen.getByRole("combobox", { name: "Logs per page" })).toHaveValue("500");
 	});
 
+	it("canonicalizes the Logs URL by removing parameters owned by another page", async () => {
+		mockFilters = { "Key Alias": "restored-alias" };
+		window.history.replaceState(
+			{},
+			"",
+			"/ui/?page=logs&tab=aliases&key_alias=restored-alias&logs_page=3&unrelated=stale",
+		);
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		await waitFor(() => {
+			const params = new URLSearchParams(window.location.search);
+			expect(params.get("page")).toBe("logs");
+			expect(params.get("key_alias")).toBe("restored-alias");
+			expect(params.get("logs_page")).toBe("3");
+			expect(params.has("tab")).toBe(false);
+			expect(params.has("unrelated")).toBe(false);
+		});
+	});
+
 	it("offers supported page sizes and resets to page 1 when the size changes", async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);

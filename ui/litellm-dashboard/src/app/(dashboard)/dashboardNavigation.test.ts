@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveDashboardPage } from "./dashboardNavigation";
+import { buildLegacyDashboardHref, deriveDashboardPage } from "./dashboardNavigation";
 
 const searchParams = (page?: string) => new URLSearchParams(page ? { page } : undefined);
 
@@ -29,5 +29,16 @@ describe("deriveDashboardPage", () => {
 
 	it("falls back to virtual keys when neither route model has a page", () => {
 		expect(deriveDashboardPage("/ui/", searchParams(), "/ui/")).toBe("api-keys");
+	});
+});
+
+describe("buildLegacyDashboardHref", () => {
+	it("builds a canonical page entry without carrying current page state", () => {
+		expect(buildLegacyDashboardHref("logs")).toBe("?page=logs");
+		expect(buildLegacyDashboardHref("models")).toBe("?page=models");
+	});
+
+	it("encodes unexpected page characters instead of producing an unsafe query", () => {
+		expect(buildLegacyDashboardHref("logs&key_alias=leak")).toBe("?page=logs%26key_alias%3Dleak");
 	});
 });

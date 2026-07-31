@@ -1,6 +1,7 @@
 "use client";
 
 import SidebarProvider from "@/app/(dashboard)/components/SidebarProvider";
+import { buildLegacyDashboardHref } from "@/app/(dashboard)/dashboardNavigation";
 import LegacyDashboardPageContent from "@/app/(dashboard)/components/LegacyDashboardPageContent";
 import { teamListCall as v2TeamListCall } from "@/app/(dashboard)/hooks/teams/useTeams";
 import LoadingScreen from "@/components/common_components/LoadingScreen";
@@ -149,13 +150,7 @@ function CreateKeyPageContent() {
 	// Custom setPage function that updates URL
 	const updatePage = (newPage: string) => {
 		setMobileSidebarOpen(false);
-		// Update URL without full page reload
-		const newSearchParams = new URLSearchParams(searchParams);
-		newSearchParams.set("page", newPage);
-
-		// Use Next.js router to update URL
-		window.history.pushState(null, "", `?${newSearchParams.toString()}`);
-
+		window.history.pushState(null, "", buildLegacyDashboardHref(newPage));
 		setPage(newPage);
 	};
 
