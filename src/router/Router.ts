@@ -48,6 +48,7 @@ import { executeWithFallback, isKnownModel, type RouterExecContext } from "./Rou
 import { createModelResolutionTraceCollector, type ModelGroupResolution, type ModelResolutionTraceCollector } from "./ModelResolutionTrace";
 import { RoutingStrategyName } from "../types/router";
 import { executeProviderRequest } from "./ProviderRequestExecutor";
+import { buildModelGroupOverrides } from "./ModelOverrides";
 
 type RouteFn = (deployments: Deployment[], ctx: RoutingContext) => Deployment | null;
 
@@ -257,6 +258,7 @@ export class Router {
 			this._modelGroupAlias,
 			this._contextWindowFallbacks,
 			this._contentPolicyFallbacks,
+			buildModelGroupOverrides(config.model_list),
 		);
 
 		this._routeFn = this._selectStrategy(config.routing_strategy);
@@ -410,7 +412,10 @@ export class Router {
 	 * @param deployment - 待新增 deployment
 	 */
 	addDeployment(deployment: Deployment): void {
+		const nextDeployments = [...this._deployments, deployment];
+		const overrides = buildModelGroupOverrides(nextDeployments);
 		this._deployments.push(deployment);
+		this._fallbackHandler.setModelOverrides(overrides);
 	}
 
 	/**
@@ -421,17 +426,21 @@ export class Router {
 	 */
 	upsertDeployment(deployment: Deployment): boolean {
 		const modelId = deployment.model_info?.id;
+		const nextDeployments = [...this._deployments];
 		if (modelId) {
-			const existingIdx = this._deployments.findIndex((dep) => dep.model_info?.id === modelId);
+			const existingIdx = nextDeployments.findIndex((dep) => dep.model_info?.id === modelId);
 			if (existingIdx >= 0) {
-				const existing = this._deployments[existingIdx]!;
+				const existing = nextDeployments[existingIdx]!;
 				if (isDeepStrictEqual(existing, deployment)) {
 					return false;
 				}
-				this._deployments.splice(existingIdx, 1);
+				nextDeployments.splice(existingIdx, 1);
 			}
 		}
-		this._deployments.push(deployment);
+		nextDeployments.push(deployment);
+		const overrides = buildModelGroupOverrides(nextDeployments);
+		this._deployments.splice(0, this._deployments.length, ...nextDeployments);
+		this._fallbackHandler.setModelOverrides(overrides);
 		return true;
 	}
 
@@ -446,6 +455,7 @@ export class Router {
 			return false;
 		}
 		this._deployments.splice(existingIdx, 1);
+		this._fallbackHandler.setModelOverrides(buildModelGroupOverrides(this._deployments));
 		return true;
 	}
 
@@ -636,7 +646,13 @@ export class Router {
 				litellm_params: structuredClone(deployment.litellm_params),
 				model_info: deployment.model_info === undefined ? undefined : structuredClone(deployment.model_info),
 			})),
-			fallbackHandler: new FallbackHandler(mergedFallbacks, aliases, contextWindowFallbacks, contentPolicyFallbacks),
+			fallbackHandler: new FallbackHandler(
+				mergedFallbacks,
+				aliases,
+				contextWindowFallbacks,
+				contentPolicyFallbacks,
+				buildModelGroupOverrides(deployments),
+			),
 			routeFn: this._selectStrategy(routingStrategy),
 			cooldownTimeMs: (cooldownSeconds !== null && cooldownSeconds > 0 ? cooldownSeconds : 5) * 1000,
 			numRetries: numRetries,

@@ -13,6 +13,7 @@ interface ModelDetailsTabsProps {
 	isAutoRouter: boolean;
 	isEditing: boolean;
 	modelAccessGroups: string[] | null;
+	availableModelNames: string[];
 	accessToken: string | null;
 	guardrails: string[];
 	tags: Record<string, Tag>;
@@ -27,6 +28,7 @@ interface ModelDetailsTabsProps {
 	onEditingChange: (editing: boolean) => void;
 	onCacheControlChange: (enabled: boolean) => void;
 	onSave: (values: any) => void | Promise<void>;
+	rawModelData: any;
 }
 
 export default function ModelDetailsTabs(props: ModelDetailsTabsProps) {
@@ -53,6 +55,7 @@ export default function ModelDetailsTabs(props: ModelDetailsTabsProps) {
 								editing={false}
 								modelData={props.localModelData}
 								modelAccessGroups={props.modelAccessGroups}
+								availableModelNames={props.availableModelNames}
 								accessToken={props.accessToken}
 								guardrails={props.guardrails}
 								tags={props.tags}
@@ -77,6 +80,7 @@ export default function ModelDetailsTabs(props: ModelDetailsTabsProps) {
 							onSave={props.onSave}
 							modelData={props.localModelData}
 							modelAccessGroups={props.modelAccessGroups}
+							availableModelNames={props.availableModelNames}
 							accessToken={props.accessToken}
 							guardrails={props.guardrails}
 							tags={props.tags}
@@ -96,7 +100,7 @@ export default function ModelDetailsTabs(props: ModelDetailsTabsProps) {
 						<details>
 							<summary className="cursor-pointer text-sm font-medium text-gray-600">Expand complete model JSON</summary>
 							<pre className="mt-2 max-h-[70vh] overflow-auto rounded bg-gray-100 p-3 text-xs">
-								{JSON.stringify(props.modelData, null, 2)}
+								{JSON.stringify(props.rawModelData, null, 2)}
 							</pre>
 						</details>
 					</Card>

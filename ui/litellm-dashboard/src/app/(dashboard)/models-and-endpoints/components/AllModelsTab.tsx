@@ -7,6 +7,7 @@ import { AllModelsDataTable } from "@/components/model_dashboard/all_models_tabl
 import ModelSettingsModal from "@/components/model_dashboard/ModelSettingsModal/ModelSettingsModal";
 import { useDeploymentHealth } from "@/components/model_dashboard/useDeploymentHealth";
 import FallbackEditModal from "@/components/molecules/models/FallbackEditModal";
+import ModelOverrideEditModal from "@/components/molecules/models/ModelOverrideEditModal";
 import { columns } from "@/components/molecules/models/columns";
 import NotificationsManager from "@/components/molecules/notifications_manager";
 import { modelDeleteCall } from "@/components/networking";
@@ -63,6 +64,7 @@ const AllModelsTab = ({
 	const [deleteModalModelId, setDeleteModalModelId] = useState<string | null>(null);
 	const [deleteLoading, setDeleteLoading] = useState(false);
 	const [fallbackEditModel, setFallbackEditModel] = useState<any | null>(null);
+	const [overrideEditModel, setOverrideEditModel] = useState<any | null>(null);
 
 	const resetToFirstPage = () => {
 		setCurrentPage(1);
@@ -272,6 +274,9 @@ const AllModelsTab = ({
 								setFallbackEditModel,
 								deploymentHealthStatuses,
 								runOneHealthCheck,
+								(model) => {
+									setOverrideEditModel(model);
+								},
 							)}
 							data={filteredData}
 							isLoading={isLoadingModelsInfo}
@@ -331,6 +336,22 @@ const AllModelsTab = ({
 					refetchModels();
 				}}
 			/>
+			{overrideEditModel && (
+				<ModelOverrideEditModal
+					isOpen
+					modelId={overrideEditModel.model_info?.id ?? null}
+					modelName={overrideEditModel.model_name ?? null}
+					currentOverride={overrideEditModel.model_info?.override_model_name ?? null}
+					availableModels={availableModelGroups}
+					accessToken={accessToken}
+					onCancel={() => setOverrideEditModel(null)}
+					onSuccess={() => {
+						setOverrideEditModel(null);
+						queryClient.invalidateQueries({ queryKey: ["models", "list"] });
+						refetchModels();
+					}}
+				/>
+			)}
 		</>
 	);
 };

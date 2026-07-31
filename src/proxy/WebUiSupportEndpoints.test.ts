@@ -1348,6 +1348,21 @@ describe("ModelsPageSupport 契约", () => {
 			expect(openAi.litellm_params.api_token).toBe("token-secret-must-not-leak");
 		});
 
+		it("已配置的 model override 应注入列表响应供快速编辑回显", async () => {
+			const config = makeConfig();
+			const deployments = makeTestDeployments();
+			deployments[0]!.model_info = {
+				...deployments[0]!.model_info,
+				override_model_name: "claude-3-7-sonnet",
+			};
+			const app = buildAuthedApp(config, deployments);
+
+			const res = await request(app).get("/v2/model/info?modelId=openai%2Fgpt-4o-primary");
+
+			expect(res.status).toBe(200);
+			expect(res.body.data[0].model_info.override_model_name).toBe("claude-3-7-sonnet");
+		});
+
 		it("无 deployment 时应返回空 data 且 total_pages=0（对齐 Python 空态）", async () => {
 			const config = makeConfig();
 			const app = buildAuthedApp(config, []);

@@ -679,7 +679,13 @@ function buildModelInfoV2Item(
 			use_in_pass_through: pickBooleanParam(dep.litellm_params, "use_in_pass_through"),
 			use_litellm_proxy: pickBooleanParam(dep.litellm_params, "use_litellm_proxy"),
 		},
-		model_info: { ...buildEnrichedModelInfo(dep, fallbackId, modelCostMap), fallbacks: [...fallbacks] },
+		model_info: {
+			...buildEnrichedModelInfo(dep, fallbackId, modelCostMap),
+			fallbacks: [...fallbacks],
+			...(typeof modelInfo?.override_model_name === "string"
+				? { override_model_name: modelInfo.override_model_name }
+				: {}),
+		},
 	};
 }
 

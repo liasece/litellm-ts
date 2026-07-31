@@ -8,6 +8,8 @@ export interface ModelInfo {
 	access_groups: string[] | null;
 	/** 该 model_group 当前 fallback 链（/v2/model/info 注入，无配置为空数组） */
 	fallbacks?: string[];
+	/** 强制把该逻辑模型解析到另一个模型组。 */
+	override_model_name?: string;
 	cache_read_input_token_cost?: number | null;
 }
 

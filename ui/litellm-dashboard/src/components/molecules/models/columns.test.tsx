@@ -184,6 +184,40 @@ describe("columns", () => {
 		});
 	});
 
+	describe("model override column", () => {
+		it("shows the target and opens quick edit without opening the model row", async () => {
+			const onEditOverrideClick = vi.fn();
+			const model = createMockModel({
+				model_info: {
+					...createMockModel().model_info,
+					override_model_name: "temporary-model",
+				},
+			});
+			const cols = columns(
+				defaultProps.userRole,
+				defaultProps.userID,
+				defaultProps.premiumUser,
+				defaultProps.setSelectedModelId,
+				defaultProps.setSelectedTeamId,
+				defaultProps.getDisplayModelName,
+				defaultProps.handleEditClick,
+				defaultProps.handleRefreshClick,
+				defaultProps.expandedRows,
+				defaultProps.setExpandedRows,
+				undefined,
+				undefined,
+				{},
+				undefined,
+				onEditOverrideClick,
+			);
+			render(<TestTable data={[model]} columns={cols} />);
+
+			expect(screen.getByText("temporary-model")).toBeInTheDocument();
+			await userEvent.click(screen.getByRole("button", { name: "Edit model override" }));
+			expect(onEditOverrideClick).toHaveBeenCalledWith(model);
+		});
+	});
+
 	it("should render columns with table structure", () => {
 		const cols = columns(
 			defaultProps.userRole,
@@ -204,12 +238,8 @@ describe("columns", () => {
 		expect(screen.getByText("Model ID")).toBeInTheDocument();
 		expect(screen.getByText("Model Information")).toBeInTheDocument();
 		expect(screen.getByText("Credentials")).toBeInTheDocument();
-		expect(screen.getByText("Created By")).toBeInTheDocument();
-		expect(screen.getByText("Updated At")).toBeInTheDocument();
 		expect(screen.getByText("Costs")).toBeInTheDocument();
-		expect(screen.getByText("Team ID")).toBeInTheDocument();
 		expect(screen.getByText("Model Access Group")).toBeInTheDocument();
-		expect(screen.getByText("Status")).toBeInTheDocument();
 		expect(screen.getByText("Actions")).toBeInTheDocument();
 	});
 
@@ -431,58 +461,6 @@ describe("columns", () => {
 		});
 	});
 
-	it("should display created by information for DB models", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				db_model: true,
-				created_by: "admin-user",
-				created_at: "2024-01-15T10:30:00Z",
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		expect(screen.getByText("admin-user")).toBeInTheDocument();
-	});
-
-	it("should display 'Defined in config' for config models", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				db_model: false,
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		expect(screen.getByText("Defined in config")).toBeInTheDocument();
-	});
-
 	it("should display cache read cost when input and output costs are absent", () => {
 		const cols = columns(
 			defaultProps.userRole,
@@ -551,32 +529,6 @@ describe("columns", () => {
 
 		const costCells = screen.getAllByText("-");
 		expect(costCells.length).toBeGreaterThan(0);
-	});
-
-	it("should display '-' when team ID is missing", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				team_id: "",
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		const teamIdCells = screen.getAllByText("-");
-		expect(teamIdCells.length).toBeGreaterThan(0);
 	});
 
 	it("should display access groups", () => {
@@ -662,56 +614,6 @@ describe("columns", () => {
 
 		const emptyCells = screen.getAllByText("-");
 		expect(emptyCells.length).toBeGreaterThan(0);
-	});
-
-	it("should display 'DB Model' status for DB models", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				db_model: true,
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		expect(screen.getByText("DB Model")).toBeInTheDocument();
-	});
-
-	it("should display 'Config Model' status for config models", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				db_model: false,
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		expect(screen.getByText("Config Model")).toBeInTheDocument();
 	});
 
 	it("should allow Admin to delete DB models", async () => {
@@ -911,83 +813,6 @@ describe("columns", () => {
 
 		// display name 为空与 Fallback 列空态都会渲染 "-"
 		expect(screen.getAllByText("-").length).toBeGreaterThan(0);
-	});
-
-	it("should handle missing created_at date", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				created_at: "",
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		expect(screen.getByText("Unknown date")).toBeInTheDocument();
-	});
-
-	it("should handle missing updated_at date", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				updated_at: "",
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		const updatedAtCells = screen.getAllByText("-");
-		expect(updatedAtCells.length).toBeGreaterThan(0);
-	});
-
-	it("should handle missing created_by for DB models", () => {
-		const cols = columns(
-			defaultProps.userRole,
-			defaultProps.userID,
-			defaultProps.premiumUser,
-			defaultProps.setSelectedModelId,
-			defaultProps.setSelectedTeamId,
-			defaultProps.getDisplayModelName,
-			defaultProps.handleEditClick,
-			defaultProps.handleRefreshClick,
-			defaultProps.expandedRows,
-			defaultProps.setExpandedRows,
-		);
-
-		const model = createMockModel({
-			model_info: {
-				...createMockModel().model_info,
-				db_model: true,
-				created_by: "",
-			},
-		});
-		render(<TestTable data={[model]} columns={cols} />);
-
-		expect(screen.getByText("Unknown")).toBeInTheDocument();
 	});
 
 	it("should display only input cost when output cost is missing", () => {

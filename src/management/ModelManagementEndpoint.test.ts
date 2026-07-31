@@ -51,11 +51,12 @@ function makeApp(
 	const router = express.Router();
 	const db = {
 		select: () => ({
-			from: () => ({
-				where: () => ({
-					limit: (n: number) => Promise.resolve(existing.slice(0, n)),
+			from: () =>
+				Object.assign(Promise.resolve(existing), {
+					where: () => ({
+						limit: (n: number) => Promise.resolve(existing.slice(0, n)),
+					}),
 				}),
-			}),
 		}),
 		insert: () => ({
 			values: (values: Record<string, unknown>) => {
@@ -171,6 +172,25 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 		for (const field of ["litellm_credential_name", "credential_name", "api_base", "api_key"]) {
 			expect((inserted[0]?.litellm_params as Record<string, unknown>)).not.toHaveProperty(field);
 		}
+	});
+});
+
+describe("ModelManagementEndpoint raw model row", () => {
+	it("returns every persisted column and leaves API keys unmasked", async () => {
+		const row = {
+			...MODEL_ROW,
+			litellm_params: { ...MODEL_ROW.litellm_params, api_key: "sk-database-secret", custom_field: "preserved" },
+			model_info: { ...MODEL_ROW.model_info, private_metadata: { source: "database" } },
+		};
+		const app = makeApp({ existing: [row] });
+
+		const response = await request(app).get("/model/model-1/raw");
+
+		expect(response.status).toBe(200);
+		expect(response.body.litellm_params.api_key).toBe("sk-database-secret");
+		expect(response.body.litellm_params.custom_field).toBe("preserved");
+		expect(response.body.model_info.private_metadata).toEqual({ source: "database" });
+		expect(Object.keys(response.body).sort()).toEqual([...PYTHON_MODEL_FIELDS].sort());
 	});
 });
 

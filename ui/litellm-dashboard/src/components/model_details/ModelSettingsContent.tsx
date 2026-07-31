@@ -11,6 +11,7 @@ export interface ModelSettingsContentProps {
 	editing: boolean;
 	modelData: any;
 	modelAccessGroups: string[] | null;
+	availableModelNames: string[];
 	accessToken: string | null;
 	guardrails: string[];
 	tags: Record<string, Tag>;
@@ -29,6 +30,7 @@ export default function ModelSettingsContent({
 	editing,
 	modelData,
 	modelAccessGroups,
+	availableModelNames,
 	accessToken,
 	guardrails,
 	tags,
@@ -42,10 +44,18 @@ export default function ModelSettingsContent({
 	onCacheControlChange,
 	onCancel,
 }: ModelSettingsContentProps) {
+	const credentialName = editing ? selectedCredentialName : modelData.litellm_params?.litellm_credential_name;
+	const credentialValues = credentials.find((credential) => credential.credential_name === credentialName)?.credential_values;
 	return (
 		<div>
 			<div className="grid grid-cols-1 overflow-hidden rounded-lg border border-gray-200 bg-white lg:grid-cols-2">
-				<ModelBasicSettings editing={editing} modelData={modelData} modelAccessGroups={modelAccessGroups} />
+				<ModelBasicSettings
+					editing={editing}
+					modelData={modelData}
+					modelAccessGroups={modelAccessGroups}
+					credentialValues={credentialValues}
+					availableModelNames={availableModelNames}
+				/>
 				<ModelPolicySettings
 					editing={editing}
 					modelData={modelData}

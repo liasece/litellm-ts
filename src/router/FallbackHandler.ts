@@ -21,6 +21,7 @@ export class FallbackHandler {
 	// DIFF-RT-ALIAS-01: alias 值类型扩展为 string | string[] | { model, hidden? }
 	// 之前只支持 string | object，string[] 多值数组报 TS 错。
 	private _modelGroupAlias: ModelGroupAliases;
+	private _modelOverrides: ModelGroupAliases;
 	private _contextWindowFallbacks: Record<string, string[]>;
 	private _contentPolicyFallbacks: Record<string, string[]>;
 	/** 内部缓存：getFallbackChain 计算结果，避免重复计算 */
@@ -32,11 +33,14 @@ export class FallbackHandler {
 		modelGroupAlias?: ModelGroupAliases,
 		contextWindowFallbacks?: Record<string, string[]>,
 		contentPolicyFallbacks?: Record<string, string[]>,
+		modelOverrides?: Record<string, string>,
 	) {
 		this._fallbacks = this._mergeFallbacks(fallbacks);
 		const aliases = modelGroupAlias ?? {};
-		this._validateModelGroupAlias(aliases);
+		const overrides = modelOverrides ?? {};
+		this._validateModelGroupAlias({ ...aliases, ...overrides });
 		this._modelGroupAlias = aliases;
+		this._modelOverrides = overrides;
 		this._contextWindowFallbacks = contextWindowFallbacks ?? {};
 		this._contentPolicyFallbacks = contentPolicyFallbacks ?? {};
 	}
@@ -251,7 +255,10 @@ export class FallbackHandler {
 
 	private _resolveAliasWithTrace(
 		model: string,
-		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }> = this._modelGroupAlias,
+		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }> = {
+			...this._modelGroupAlias,
+			...this._modelOverrides,
+		},
 	): ModelGroupResolution {
 		const path = [model];
 		const seen = new Set(path);
@@ -382,8 +389,19 @@ export class FallbackHandler {
 	 */
 	setModelGroupAlias(modelGroupAlias?: ModelGroupAliases): void {
 		const aliases = modelGroupAlias ?? {};
-		this._validateModelGroupAlias(aliases);
+		this._validateModelGroupAlias({ ...aliases, ...this._modelOverrides });
 		this._modelGroupAlias = aliases;
+		this.invalidateCache();
+	}
+
+	/**
+	 * Replace deployment-level forced redirects while preserving configured aliases.
+	 * Forced redirects take precedence when the same source name is configured in both.
+	 */
+	setModelOverrides(modelOverrides?: Record<string, string>): void {
+		const overrides = modelOverrides ?? {};
+		this._validateModelGroupAlias({ ...this._modelGroupAlias, ...overrides });
+		this._modelOverrides = overrides;
 		this.invalidateCache();
 	}
 

@@ -382,6 +382,33 @@ describe("Router execution chain", () => {
 			expect(router.hasModel("claude-unknown")).toBe(false);
 		});
 
+		it("deployment override 无条件把源模型解析到目标模型", () => {
+			const router = new Router({
+				model_list: [
+					{
+						model_name: "expensive-model",
+						litellm_params: { model: "openai/expensive" },
+						model_info: { id: "expensive-id", override_model_name: "temporary-model" },
+					},
+					{
+						model_name: "temporary-model",
+						litellm_params: { model: "anthropic/temporary" },
+						model_info: { id: "temporary-id" },
+					},
+				],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+			});
+
+			const selected = router.getAvailableDeployment("expensive-model");
+			expect(selected?.deployment.model_info?.id).toBe("temporary-id");
+			expect(router.resolveModelGroupWithTrace("expensive-model")).toEqual({
+				inputModel: "expensive-model",
+				resolvedModel: "temporary-model",
+				resolutionPath: ["expensive-model", "temporary-model"],
+			});
+		});
+
 		it("deployment id（PY has_model_id）与 litellm_params.model（PY deployment_names）命中", () => {
 			const router = new Router({
 				model_list: [

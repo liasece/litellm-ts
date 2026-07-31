@@ -15,6 +15,7 @@ function getInitialValues(modelData: any, isWildcardModel: boolean) {
 	return {
 		model_name: modelData.model_name,
 		litellm_model_name: modelData.litellm_model_name,
+		override_model_name: modelInfo.override_model_name ?? undefined,
 		api_base: litellmParams.api_base,
 		custom_llm_provider: litellmParams.custom_llm_provider,
 		organization: litellmParams.organization,

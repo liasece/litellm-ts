@@ -2307,6 +2307,23 @@ export const modelInfoV1Call = async (accessToken: string, modelId: string) => {
 	}
 };
 
+/** Return the exact persisted proxy-model row for the model details Raw JSON tab. */
+export const modelRawInfoCall = async (accessToken: string, modelId: string) => {
+	const encodedModelId = encodeURIComponent(modelId);
+	const url = proxyBaseUrl ? `${proxyBaseUrl}/model/${encodedModelId}/raw` : `/model/${encodedModelId}/raw`;
+	const response = await dashboardFetch(url, {
+		method: "GET",
+		headers: {
+			"Content-Type": "application/json",
+		},
+	});
+	if (!response.ok) {
+		const errorData = await response.text();
+		throw new Error(errorData || `Raw model query failed with HTTP ${response.status}`);
+	}
+	return await response.json();
+};
+
 export const modelHubPublicModelsCall = async () => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/model_hub` : `/public/model_hub`;
 	const response = await dashboardFetch(url, {

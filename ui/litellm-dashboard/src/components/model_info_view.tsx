@@ -1,5 +1,5 @@
 import { useModelCostMap } from "@/app/(dashboard)/hooks/models/useModelCostMap";
-import { useModelHub, useModelsInfo } from "@/app/(dashboard)/hooks/models/useModels";
+import { useAllProxyModels, useModelHub, useModelsInfo } from "@/app/(dashboard)/hooks/models/useModels";
 import { transformModelData } from "@/app/(dashboard)/models-and-endpoints/utils/modelDataTransformer";
 import { Text } from "@tremor/react";
 import { Button, Form } from "antd";
@@ -19,6 +19,7 @@ import {
 	getGuardrailsList,
 	modelDeleteCall,
 	modelInfoV1Call,
+	modelRawInfoCall,
 	modelPatchUpdateCall,
 	tagListCall,
 	testConnectionRequest,
@@ -90,12 +91,14 @@ export default function ModelInfoView({
 	const [guardrailsList, setGuardrailsList] = useState<string[]>([]);
 	const [tagsList, setTagsList] = useState<Record<string, Tag>>({});
 	const [credentialsList, setCredentialsList] = useState<CredentialItem[]>([]);
+	const [rawDatabaseModel, setRawDatabaseModel] = useState<any>(null);
 	const selectedCredentialName = Form.useWatch("litellm_credential_name", form);
 
 	// Fetch model data using hook
 	const { data: rawModelDataResponse, isLoading: isLoadingModel } = useModelsInfo(1, 50, undefined, modelId);
 	const { data: modelCostMapData } = useModelCostMap();
 	const { data: modelHubData } = useModelHub();
+	const { data: allProxyModels } = useAllProxyModels();
 
 	// Transform the model data
 	const getProviderFromModel = useCallback(
@@ -148,6 +151,7 @@ export default function ModelInfoView({
 			vector_store_ids: Array.isArray(litellmParams.vector_store_ids) ? litellmParams.vector_store_ids : [],
 			tags: Array.isArray(litellmParams.tags) ? litellmParams.tags : [],
 			health_check_model: updatedModel.model_info?.health_check_model ?? null,
+			override_model_name: updatedModel.model_info?.override_model_name ?? undefined,
 			litellm_credential_name: litellmParams.litellm_credential_name || "",
 			api_key: litellmParams.api_key ?? "",
 			delete_api_key: false,
@@ -239,6 +243,21 @@ export default function ModelInfoView({
 		void fetchTags();
 		void fetchCredentials();
 	}, [accessToken]);
+
+	useEffect(() => {
+		if (!accessToken) return;
+		let active = true;
+		modelRawInfoCall(accessToken, modelId)
+			.then((rawModel) => {
+				if (active) setRawDatabaseModel(rawModel);
+			})
+			.catch(() => {
+				if (active) setRawDatabaseModel(null);
+			});
+		return () => {
+			active = false;
+		};
+	}, [accessToken, modelId]);
 
 	const handleReuseCredential = async (values: { credential_name: string }) => {
 		if (!accessToken) return;
@@ -360,6 +379,10 @@ export default function ModelInfoView({
 						health_check_model: values.health_check_model,
 					};
 				}
+				updatedModelInfo = {
+					...updatedModelInfo,
+					override_model_name: values.override_model_name || null,
+				};
 			} catch (e) {
 				NotificationsManager.fromBackend("Invalid JSON in Model Info");
 				return;
@@ -397,6 +420,7 @@ export default function ModelInfoView({
 					};
 
 			setLocalModelData(updatedModelData);
+			setRawDatabaseModel(returnedModelData);
 			syncFormWithModel(updatedModelData);
 			onModelUpdate?.(updatedModelData);
 
@@ -492,6 +516,9 @@ export default function ModelInfoView({
 	const isWildcardModel = currentModelData.litellm_model_name.includes("*");
 	const cacheControlEnabled =
 		showCacheControl ?? Boolean(currentModelData.litellm_params?.cache_control_injection_points);
+	const availableModelNames = (allProxyModels?.data ?? [])
+		.map((model) => model.id)
+		.filter((name): name is string => typeof name === "string");
 
 	return (
 		<ResourceDetailsDrawer
@@ -530,6 +557,7 @@ export default function ModelInfoView({
 					isAutoRouter={isAutoRouter}
 					isEditing={isEditing}
 					modelAccessGroups={modelAccessGroups}
+					availableModelNames={availableModelNames}
 					accessToken={accessToken}
 					guardrails={guardrailsList}
 					tags={tagsList}
@@ -544,6 +572,7 @@ export default function ModelInfoView({
 					onEditingChange={setIsEditing}
 					onCacheControlChange={setShowCacheControl}
 					onSave={handleModelUpdate}
+					rawModelData={rawDatabaseModel ?? currentModelData}
 				/>
 
 				<ModelDetailsDialogs

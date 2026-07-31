@@ -1,7 +1,7 @@
 import { CopyOutlined, EditOutlined, InfoCircleOutlined, SyncOutlined } from "@ant-design/icons";
 import { TrashIcon } from "@heroicons/react/outline";
 import { ColumnDef } from "@tanstack/react-table";
-import { Badge, Button, Icon } from "@tremor/react";
+import { Badge, Icon } from "@tremor/react";
 import { Divider, Flex, Popover, Space, Tooltip, Typography } from "antd";
 import { ModelData } from "../../model_dashboard/types";
 import { DeploymentHealthStatus } from "../../model_dashboard/useDeploymentHealth";
@@ -58,6 +58,7 @@ export const columns = (
 	onEditFallbacksClick?: (model: any) => void,
 	deploymentHealthStatuses: Record<string, DeploymentHealthStatus> = {},
 	onRefreshHealth?: (modelId: string) => void,
+	onEditOverrideClick?: (model: any) => void,
 ): ColumnDef<ModelData>[] => [
 	{
 		header: () => <span className="text-sm font-semibold">Model ID</span>,
@@ -220,6 +221,44 @@ export const columns = (
 		},
 	},
 	{
+		header: () => <span className="text-sm font-semibold">Model Override</span>,
+		accessorKey: "model_info.override_model_name",
+		enableSorting: false,
+		size: 180,
+		minSize: 110,
+		cell: ({ row }) => {
+			const model = row.original;
+			const overrideTarget = model.model_info?.override_model_name;
+			const canEditOverride = userRole === "Admin" && !!onEditOverrideClick;
+			return (
+				<div className="flex min-w-0 items-center gap-1">
+					{overrideTarget ? (
+						<Tooltip title={`${model.model_name} → ${overrideTarget}`}>
+							<span className="truncate text-xs text-purple-700">{overrideTarget}</span>
+						</Tooltip>
+					) : (
+						<span className="text-xs text-gray-400">-</span>
+					)}
+					{canEditOverride && (
+						<Tooltip title="Edit model override">
+							<button
+								type="button"
+								aria-label="Edit model override"
+								className="flex-shrink-0 cursor-pointer text-gray-400 hover:text-gray-600"
+								onClick={(event) => {
+									event.stopPropagation();
+									onEditOverrideClick(model);
+								}}
+							>
+								<EditOutlined style={{ fontSize: 12 }} />
+							</button>
+						</Tooltip>
+					)}
+				</div>
+			);
+		},
+	},
+	{
 		header: () => (
 			<span className="flex items-center gap-1">
 				<span className="text-sm font-semibold">Credentials</span>
@@ -253,53 +292,6 @@ export const columns = (
 						</>
 					)}
 				</div>
-			);
-		},
-	},
-	{
-		header: () => <span className="text-sm font-semibold">Created By</span>,
-		accessorKey: "model_info.created_by",
-		sortingFn: "datetime",
-		size: 160,
-		minSize: 100,
-		cell: ({ row }) => {
-			const model = row.original;
-			const isConfigModel = !model.model_info?.db_model;
-			const createdBy = model.model_info.created_by;
-			const createdAt = model.model_info.created_at ? new Date(model.model_info.created_at).toLocaleDateString() : null;
-
-			return (
-				<div className="flex flex-col min-w-0 w-full">
-					{/* Created By - Primary */}
-					<div
-						className="text-xs font-medium text-gray-900 truncate"
-						title={isConfigModel ? "Defined in config" : createdBy || "Unknown"}
-					>
-						{isConfigModel ? "Defined in config" : createdBy || "Unknown"}
-					</div>
-					{/* Created At - Secondary */}
-					<div
-						className="text-xs text-gray-500 truncate mt-0.5"
-						title={isConfigModel ? "Config file" : createdAt || "Unknown date"}
-					>
-						{isConfigModel ? "-" : createdAt || "Unknown date"}
-					</div>
-				</div>
-			);
-		},
-	},
-	{
-		header: () => <span className="text-sm font-semibold">Updated At</span>,
-		accessorKey: "model_info.updated_at",
-		sortingFn: "datetime",
-		size: 120,
-		minSize: 80,
-		cell: ({ row }) => {
-			const model = row.original;
-			return (
-				<span className="text-xs">
-					{model.model_info.updated_at ? new Date(model.model_info.updated_at).toLocaleDateString() : "-"}
-				</span>
 			);
 		},
 	},
@@ -368,35 +360,6 @@ export const columns = (
 		},
 	},
 	{
-		header: () => <span className="text-sm font-semibold">Team ID</span>,
-		accessorKey: "model_info.team_id",
-		enableSorting: false,
-		size: 130,
-		minSize: 80,
-		cell: ({ row }) => {
-			const model = row.original;
-			return model.model_info.team_id ? (
-				<div className="overflow-hidden w-full">
-					<Tooltip title={model.model_info.team_id}>
-						<Button
-							size="xs"
-							variant="light"
-							className="font-mono text-blue-500 bg-blue-50 hover:bg-blue-100 text-xs font-normal px-2 py-0.5 text-left overflow-hidden truncate w-full"
-							onClick={(e: React.MouseEvent) => {
-								e.stopPropagation();
-								setSelectedTeamId(model.model_info.team_id);
-							}}
-						>
-							{model.model_info.team_id.slice(0, 7)}...
-						</Button>
-					</Tooltip>
-				</div>
-			) : (
-				"-"
-			);
-		},
-	},
-	{
 		header: () => <span className="text-sm font-semibold">Model Access Group</span>,
 		accessorKey: "model_info.model_access_group",
 		enableSorting: false,
@@ -453,25 +416,6 @@ export const columns = (
 							{isExpanded ? "−" : `+${accessGroups.length - 1}`}
 						</button>
 					)}
-				</div>
-			);
-		},
-	},
-	{
-		header: () => <span className="text-sm font-semibold">Status</span>,
-		accessorKey: "model_info.db_model",
-		size: 120,
-		minSize: 80,
-		cell: ({ row }) => {
-			const model = row.original;
-			return (
-				<div
-					className={`
-          inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
-          ${model.model_info.db_model ? "bg-blue-50 text-blue-600" : "bg-gray-100 text-gray-600"}
-        `}
-				>
-					{model.model_info.db_model ? "DB Model" : "Config Model"}
 				</div>
 			);
 		},

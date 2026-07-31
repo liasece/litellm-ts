@@ -15,6 +15,7 @@ import { ApiError, HTTP_STATUS, PYTHON_NONE_FILL } from "../core/api/ApiError";
 import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
+import { buildModelGroupOverrides } from "../router/ModelOverrides";
 import { createModuleLogger } from "../core/utils/logger";
 import { PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 
@@ -111,6 +112,14 @@ function mergeObjectPatch(existing: Record<string, unknown>, patch: Record<strin
 	return merged;
 }
 
+function validateModelOverrides(rows: ProxyModelRow[]): void {
+	try {
+		buildModelGroupOverrides(rows.map(proxyModelRowToDeployment));
+	} catch (error) {
+		throw ApiError.badRequest(error instanceof Error ? error.message : "Invalid model override");
+	}
+}
+
 /**
  * 创建代理模型管理路由
  * @param router - Express Router 实例
@@ -164,16 +173,28 @@ export function createModelManagementRoutes(
 			const requestModelInfo = modelInfo !== null && typeof modelInfo === "object" ? (modelInfo as Record<string, unknown>) : {};
 			const requestModelId = requestModelInfo["id"];
 			const modelId = typeof requestModelId === "string" && requestModelId.length > 0 ? requestModelId : randomUUID();
+			const candidate = {
+				model_id: modelId,
+				model_name: modelName as string,
+				litellm_params: withLitellmParamsDefaults(litellmParams as Record<string, unknown>),
+				model_info: { ...requestModelInfo, id: modelId, db_model: false },
+				created_at: new Date(),
+				created_by: createdBy,
+				updated_at: new Date(),
+				updated_by: createdBy,
+			} satisfies ProxyModelRow;
+			const currentRows = await db.select().from(LiteLLM_ProxyModelTable);
+			validateModelOverrides([...currentRows, candidate]);
 
 			const inserted = await db
 				.insert(LiteLLM_ProxyModelTable)
 				.values({
-					model_id: modelId,
-					model_name: modelName as string,
-					litellm_params: withLitellmParamsDefaults(litellmParams as Record<string, unknown>),
-					model_info: { ...requestModelInfo, id: modelId, db_model: false },
-					created_by: createdBy,
-					updated_by: createdBy,
+					model_id: candidate.model_id,
+					model_name: candidate.model_name,
+					litellm_params: candidate.litellm_params,
+					model_info: candidate.model_info,
+					created_by: candidate.created_by,
+					updated_by: candidate.updated_by,
 				})
 				.returning();
 
@@ -259,6 +280,20 @@ export function createModelManagementRoutes(
 			};
 		}
 
+		const allRows = await db.select().from(LiteLLM_ProxyModelTable);
+		validateModelOverrides(
+			allRows.map((row) =>
+				row.model_id === modelId
+					? ({
+							...row,
+							...(values["model_name"] === undefined ? {} : { model_name: values["model_name"] }),
+							...(values["litellm_params"] === undefined ? {} : { litellm_params: values["litellm_params"] }),
+							...(values["model_info"] === undefined ? {} : { model_info: values["model_info"] }),
+						} as ProxyModelRow)
+					: row,
+			),
+		);
+
 		const updated = await db
 			.update(LiteLLM_ProxyModelTable)
 			.set(values)
@@ -322,6 +357,26 @@ export function createModelManagementRoutes(
 				throw ApiError.badRequest("必须提供 modelId");
 			}
 			return updateModelById(modelId, (req.body ?? {}) as Record<string, unknown>, req.auth?.user_id ?? PROXY_ADMIN_USER_ID, true);
+		}),
+	);
+
+	// ─── GET /model/:modelId/raw ───────────────────────────────
+	// Dashboard Raw JSON intentionally returns the exact database row, including
+	// secrets and fields that are not part of the enriched list projection.
+	registerRoute(
+		router,
+		{ method: "get", path: "/model/:modelId/raw" },
+		authed(async (req) => {
+			const modelId = req.params["modelId"];
+			if (typeof modelId !== "string" || modelId.length === 0) {
+				throw ApiError.badRequest("必须提供 modelId");
+			}
+			const rows = await db.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1);
+			const row = rows.at(0);
+			if (row === undefined) {
+				throw ApiError.notFound("Model not found");
+			}
+			return toPythonProxyModelRow(row);
 		}),
 	);
 

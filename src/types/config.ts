@@ -9,6 +9,8 @@
 export interface ModelInfo {
 	/** 模型唯一标识 */
 	id?: string;
+	/** 强制把该逻辑模型无条件解析为另一个模型组，语义等同 alias。 */
+	override_model_name?: string;
 	/** 模型模式： "chat" | "completion" | "embedding" | "image_generation" | "audio_transcription" | "responses" */
 	mode?: string;
 	/**
@@ -54,6 +56,8 @@ export interface ModelInfo {
 	 * 当前用于解析 `metadata.model_group_name`（PY router.get_model_group 优先级最高）。
 	 */
 	metadata?: Record<string, unknown>;
+	/** 兼容数据库中由 Python LiteLLM 或管理端保存的扩展字段。 */
+	[key: string]: unknown;
 }
 
 /** 模型列表项 — litellm_params 部分 */

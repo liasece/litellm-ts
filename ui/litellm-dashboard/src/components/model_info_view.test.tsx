@@ -23,6 +23,7 @@ vi.mock("./molecules/notifications_manager", () => ({
 
 vi.mock("./networking", () => ({
 	modelInfoV1Call: vi.fn(),
+	modelRawInfoCall: vi.fn(),
 	credentialGetCall: vi.fn(),
 	credentialListCall: vi.fn(),
 	getGuardrailsList: vi.fn(),
@@ -36,10 +37,12 @@ vi.mock("./networking", () => ({
 
 const mockUseModelsInfo = vi.fn();
 const mockUseModelHub = vi.fn();
+const mockUseAllProxyModels = vi.fn();
 
 vi.mock("@/app/(dashboard)/hooks/models/useModels", () => ({
 	useModelsInfo: (...args: any[]) => mockUseModelsInfo(...args),
 	useModelHub: (...args: any[]) => mockUseModelHub(...args),
+	useAllProxyModels: (...args: any[]) => mockUseAllProxyModels(...args),
 }));
 
 const mockUseModelCostMap = vi.fn();
@@ -49,6 +52,7 @@ vi.mock("@/app/(dashboard)/hooks/models/useModelCostMap", () => ({
 
 const mockNotificationsManager = vi.mocked(NotificationsManager);
 const mockModelInfoV1Call = vi.mocked(networking.modelInfoV1Call);
+const mockModelRawInfoCall = vi.mocked(networking.modelRawInfoCall);
 const mockCredentialGetCall = vi.mocked(networking.credentialGetCall);
 const mockCredentialListCall = vi.mocked(networking.credentialListCall);
 const mockGetGuardrailsList = vi.mocked(networking.getGuardrailsList);
@@ -114,6 +118,11 @@ describe("ModelInfoView", () => {
 			isLoading: false,
 			error: null,
 		});
+		mockUseAllProxyModels.mockReturnValue({
+			data: { data: [{ id: "GPT-4" }, { id: "temporary-model" }] },
+			isLoading: false,
+			error: null,
+		});
 
 		mockUseModelCostMap.mockReturnValue({
 			data: {},
@@ -123,6 +132,16 @@ describe("ModelInfoView", () => {
 
 		mockModelInfoV1Call.mockResolvedValue({
 			data: [defaultModelData],
+		});
+		mockModelRawInfoCall.mockResolvedValue({
+			model_id: "123",
+			model_name: "GPT-4",
+			litellm_params: { ...defaultModelData.litellm_params, api_key: "sk-raw-secret" },
+			model_info: defaultModelData.model_info,
+			created_at: "2024-01-01T00:00:00Z",
+			created_by: "123",
+			updated_at: "2024-01-01T00:00:00Z",
+			updated_by: "123",
 		});
 
 		mockCredentialGetCall.mockResolvedValue({
@@ -178,6 +197,37 @@ describe("ModelInfoView", () => {
 		await waitFor(() => {
 			expect(screen.getByText("Model Settings")).toBeInTheDocument();
 		});
+	});
+
+	it("shows values resolved from the selected Credential in gray with source annotations", async () => {
+		mockCredentialListCall.mockResolvedValue({
+			credentials: [
+				{
+					credential_name: "selected-credential",
+					credential_values: {
+						api_base: "https://credential.example/v1",
+						custom_llm_provider: "anthropic",
+					},
+					credential_info: {},
+				},
+			],
+		});
+
+		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+		expect(await screen.findByText("https://credential.example/v1")).toHaveClass("text-gray-400");
+		expect(screen.getByText("anthropic")).toHaveClass("text-gray-400");
+		expect(screen.getAllByText("(from Credentials)")).toHaveLength(2);
+	});
+
+	it("renders the exact database row, including the unmasked API key, in Raw JSON", async () => {
+		const user = userEvent.setup();
+		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+		await waitFor(() => expect(mockModelRawInfoCall).toHaveBeenCalledWith("test-token", "123"));
+		await user.click(screen.getByText("Raw JSON"));
+
+		expect(await screen.findByText(/"api_key": "sk-raw-secret"/)).toBeInTheDocument();
 	});
 
 	it("should display loading state when model data is loading", () => {
@@ -454,7 +504,8 @@ describe("ModelInfoView", () => {
 		await waitFor(() => {
 			expect(screen.getByText("Provider")).toBeInTheDocument();
 			expect(screen.getByText("LiteLLM Model")).toBeInTheDocument();
-			expect(screen.getByText("Pricing")).toBeInTheDocument();
+			expect(screen.getByText("Input / 1M")).toBeInTheDocument();
+			expect(screen.getByText("Output / 1M")).toBeInTheDocument();
 		});
 	});
 
@@ -782,8 +833,8 @@ describe("ModelInfoView", () => {
 	it("should display pricing information", async () => {
 		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
 		await waitFor(() => {
-			expect(screen.getByText(/Input:/)).toBeInTheDocument();
-			expect(screen.getByText(/Output:/)).toBeInTheDocument();
+			expect(screen.getByText("Input / 1M")).toBeInTheDocument();
+			expect(screen.getByText("Output / 1M")).toBeInTheDocument();
 		});
 	});
 
