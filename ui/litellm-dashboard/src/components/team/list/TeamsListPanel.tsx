@@ -111,15 +111,15 @@ export default function TeamsListPanel(props: TeamsListPanelProps) {
 			children: (
 				<>
 					<Card styles={{ body: { padding: 0 } }}>
-						<Flex justify="space-between" align="center" className="px-4 py-3">
-							<Flex gap={12} align="center">
+						<Flex justify="space-between" align="center" wrap gap={12} className="px-4 py-3">
+							<Flex gap={12} align="center" wrap className="min-w-0 flex-1">
 								<Input
 									prefix={<SearchOutlined />}
 									suffix={props.searching ? <AntDLoadingSpinner size="small" /> : null}
 									placeholder="Search teams by name..."
 									onChange={(event) => props.onSearch(event.target.value)}
 									allowClear
-									className="max-w-[400px]"
+									className="min-w-[220px] max-w-[400px] flex-1"
 								/>
 								<OrganizationDropdown
 									organizations={props.organizations}

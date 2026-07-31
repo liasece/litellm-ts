@@ -22,7 +22,7 @@ const APIReferenceView: React.FC<ApiRefProps> = ({ proxySettings }) => {
 
 	return (
 		<>
-			<Grid className="gap-2 p-8 h-[80vh] w-full mt-2">
+			<Grid className="mt-2 w-full gap-2 p-4 sm:h-[80vh] sm:p-8">
 				<div className="mb-5">
 					{/* Header row with Docs link on the right */}
 					<div className="flex items-center justify-between">

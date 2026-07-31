@@ -211,8 +211,8 @@ const TeamsView: React.FC<TeamProps> = ({
 	};
 
 	return (
-		<div className="w-full mx-4 h-[75vh]">
-			<Grid numItems={1} className="gap-2 p-8 w-full mt-2">
+		<div className="w-full min-w-0 sm:mx-4 sm:h-[75vh]">
+			<Grid numItems={1} className="mt-2 w-full gap-2 p-4 sm:p-8">
 				<Col numColSpan={1} className="flex flex-col gap-2">
 					{(userRole == "Admin" || userRole == "Org Admin") && (
 						<Button className="w-fit" onClick={() => setIsTeamModalVisible(true)}>

@@ -317,6 +317,56 @@ describe("useLogFilterLogic", () => {
 		);
 	});
 
+	it("should restore initial backend filters and fetch their data", async () => {
+		const logs = createPaginatedResponse([createLogEntry()]);
+		const { result } = renderHook(
+			() =>
+				useLogFilterLogic({
+					...defaultProps,
+					logs,
+					initialFilters: { "Key Alias": "restored-alias" },
+				}),
+			{ wrapper },
+		);
+
+		expect(result.current.filters["Key Alias"]).toBe("restored-alias");
+		await waitFor(() => {
+			expect(uiSpendLogsCall).toHaveBeenCalledWith(
+				expect.objectContaining({
+					params: expect.objectContaining({ key_alias: "restored-alias" }),
+				}),
+			);
+		});
+	});
+
+	it("should manually refetch the active backend-filtered data source", async () => {
+		const logs = createPaginatedResponse([createLogEntry()]);
+		const { result } = renderHook(
+			() =>
+				useLogFilterLogic({
+					...defaultProps,
+					logs,
+					initialFilters: { "Key Alias": "active-alias" },
+				}),
+			{ wrapper },
+		);
+
+		await waitFor(() => expect(uiSpendLogsCall).toHaveBeenCalledTimes(1));
+		vi.mocked(uiSpendLogsCall).mockClear();
+
+		await act(async () => {
+			await result.current.refetchFilteredLogs();
+		});
+
+		expect(uiSpendLogsCall).toHaveBeenCalledTimes(1);
+		expect(uiSpendLogsCall).toHaveBeenCalledWith(
+			expect.objectContaining({
+				page: 1,
+				params: expect.objectContaining({ key_alias: "active-alias" }),
+			}),
+		);
+	});
+
 	it("should not call uiSpendLogsCall when accessToken is null", async () => {
 		const logs = createPaginatedResponse([createLogEntry()]);
 		const { result } = renderHook(() => useLogFilterLogic({ ...defaultProps, logs, accessToken: null }), { wrapper });

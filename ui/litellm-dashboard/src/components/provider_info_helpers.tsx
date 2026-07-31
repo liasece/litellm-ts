@@ -18,6 +18,7 @@ export enum Providers {
 	BYTEZ = "Bytez",
 	Cerebras = "Cerebras",
 	CLARIFAI = "Clarifai",
+	CLIProxy = "CLIProxy",
 	CLOUDFLARE = "Cloudflare",
 	CODESTRAL = "Codestral",
 	Cohere = "Cohere",
@@ -124,6 +125,7 @@ export const provider_map: Record<string, string> = {
 	BYTEZ: "bytez",
 	Cerebras: "cerebras",
 	CLARIFAI: "clarifai",
+	CLIProxy: "cliproxy",
 	CLOUDFLARE: "cloudflare",
 	CODESTRAL: "codestral",
 	Cohere: "cohere",
@@ -232,6 +234,7 @@ export const providerLogoMap: Record<string, string> = {
 	[Providers.SageMaker]: `${asset_logos_folder}bedrock.svg`,
 	[Providers.Cerebras]: `${asset_logos_folder}cerebras.svg`,
 	[Providers.CLOUDFLARE]: `${asset_logos_folder}cloudflare.svg`,
+	[Providers.CLIProxy]: `${asset_logos_folder}openai_small.svg`,
 	[Providers.CODESTRAL]: `${asset_logos_folder}mistral.svg`,
 	[Providers.Cohere]: `${asset_logos_folder}cohere.svg`,
 	[Providers.COHERE_CHAT]: `${asset_logos_folder}cohere.svg`,
@@ -330,7 +333,9 @@ export const getProviderLogoAndName = (providerValue: string): { logo: string; d
 };
 
 export const getPlaceholder = (selectedProvider: string): string => {
-	if (selectedProvider === Providers.AIML) {
+	if (selectedProvider === Providers.CLIProxy) {
+		return "Select a model from the managed CLIProxy runtime";
+	} else if (selectedProvider === Providers.AIML) {
 		return "aiml/flux-pro/v1.1";
 	} else if (selectedProvider === Providers.Vertex_AI) {
 		return "gemini-pro";

@@ -8,7 +8,7 @@ import PriceDataManagementTab from "@/app/(dashboard)/models-and-endpoints/compo
 import { handleAddModelSubmit } from "@/components/add_model/handle_add_model_submit";
 import { Team } from "@/components/key_team_helpers/key_list";
 import CredentialsPanel from "@/components/model_add/credentials";
-import { getCallbacksCall, setCallbacksCall } from "@/components/networking";
+import { getCallbacksCall, getCliProxyModels, setCallbacksCall } from "@/components/networking";
 import { Providers, getPlaceholder, getProviderModels } from "@/components/provider_info_helpers";
 import { getDisplayModelName } from "@/components/view_model/model_name_display";
 import { transformModelData } from "./utils/modelDataTransformer";
@@ -20,7 +20,7 @@ import type { UploadProps } from "antd";
 import { Form, Typography } from "antd";
 import { PlusCircleOutlined } from "@ant-design/icons";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AddModelTab from "../../../components/add_model/add_model_tab";
 import HealthCheckComponent from "../../../components/model_dashboard/HealthCheckComponent";
 import ModelGroupAliasSettings from "../../../components/model_group_alias_settings";
@@ -85,6 +85,10 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
 	const [lastRefreshed, setLastRefreshed] = useState("");
 	const [providerModels, setProviderModels] = useState<Array<string>>([]);
 	const [selectedProvider, setSelectedProvider] = useState<Providers>(Providers.Anthropic);
+	const selectedProviderRef = useRef(selectedProvider);
+	useEffect(() => {
+		selectedProviderRef.current = selectedProvider;
+	}, [selectedProvider]);
 	const [selectedModelGroup, setSelectedModelGroup] = useState<string | null>(null);
 
 	const [modelGroupRetryPolicy, setModelGroupRetryPolicy] = useState<RetryPolicyObject | null>(null);
@@ -221,7 +225,26 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
 		return transformModelData(modelDataResponse, getProviderFromModel);
 	}, [modelDataResponse, getProviderFromModel]);
 
-	const setProviderModelsFn = (provider: Providers) => {
+	const setProviderModelsFn = async (provider: Providers) => {
+		if (provider === Providers.CLIProxy) {
+			try {
+				const models = await getCliProxyModels();
+				// 防陈旧守卫：请求期间用户切换到其它 provider 时丢弃过期结果。
+				if (selectedProviderRef.current !== provider) {
+					return;
+				}
+				setProviderModels(models);
+			} catch (error) {
+				if (selectedProviderRef.current === provider) {
+					setProviderModels([]);
+					// 用户已切换 provider 时不再提示旧请求的失败。
+					NotificationsManager.fromBackend(
+						`Failed to load CLIProxy models: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			}
+			return;
+		}
 		const _providerModels = getProviderModels(provider, modelCostMapData);
 		setProviderModels(_providerModels);
 	};
@@ -342,8 +365,8 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
 
 	Object.keys(Providers).find((key) => (Providers as { [index: string]: any })[key] === selectedProvider);
 	return (
-		<div className="w-full mx-4 h-[75vh]">
-			<Grid numItems={1} className="gap-2 p-8 w-full mt-2">
+		<div className="w-full min-w-0 sm:mx-4 sm:h-[75vh]">
+			<Grid numItems={1} className="mt-2 w-full gap-2 p-4 sm:p-8">
 				<Col numColSpan={1} className="flex flex-col gap-2">
 					{/* Model Management Header */}
 					<div className="flex justify-between items-center mb-4">

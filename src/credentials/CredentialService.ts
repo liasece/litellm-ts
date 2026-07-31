@@ -105,8 +105,8 @@ export interface CredentialPatch {
 	readonly credential_info?: Record<string, unknown>;
 }
 
-/** API 可返回的固定掩码 Credential。 */
-export interface MaskedCredential {
+/** 管理 API 返回的完整 Credential。 */
+export interface CredentialView {
 	/**
 	 *
 	 */
@@ -234,7 +234,7 @@ interface ExtractedInlineCredential {
 const PROVIDER_CREDENTIAL_METADATA = providerCreateFieldsJson as readonly ProviderCredentialMetadata[];
 const LEGACY_NON_STRING_ENVELOPE = "__litellm_ts_encrypted_json";
 
-/** 协调数据库与运行时明文，所有 API 读取仅返回固定掩码。 */
+/** 协调数据库与运行时 Credential；管理 API 按产品约定返回完整字段。 */
 export class CredentialService {
 	constructor(
 		private readonly _repository: CredentialRepositoryPort,
@@ -323,33 +323,33 @@ export class CredentialService {
 		}
 	}
 
-	/** 返回全部 Credential 的固定掩码。 */
-	async list(): Promise<MaskedCredential[]> {
+	/** 返回全部 Credential 的完整字段。 */
+	async list(): Promise<CredentialView[]> {
 		const storedCredentials = await this._repository.list();
 		if (storedCredentials.length === 0) {
 			return [];
 		}
-		return storedCredentials.map((credential) => this._mask(this._toRuntime(credential)));
+		return storedCredentials.map((credential) => this._toView(this._toRuntime(credential)));
 	}
 
 	/**
-	 * 按名称返回固定掩码 Credential。
+	 * 按名称返回完整 Credential。
 	 * @param credentialName
 	 */
-	async getByName(credentialName: string): Promise<MaskedCredential | null> {
+	async getByName(credentialName: string): Promise<CredentialView | null> {
 		const stored = await this._repository.findByName(credentialName);
 		if (stored === null) {
 			return null;
 		}
-		return this._mask(this._toRuntime(stored));
+		return this._toView(this._toRuntime(stored));
 	}
 
 	/**
-	 * 按 Router deployment ID 返回命名引用或 inline Credential 的固定掩码。
+	 * 按 Router deployment ID 返回命名引用或 inline Credential 的完整字段。
 	 * @param modelId
 	 * @param deployment
 	 */
-	async getByModel(modelId: string, deployment: Deployment | null): Promise<MaskedCredential> {
+	async getByModel(modelId: string, deployment: Deployment | null): Promise<CredentialView> {
 		if (deployment === null) {
 			throw new CredentialModelNotFoundError();
 		}
@@ -368,7 +368,7 @@ export class CredentialService {
 		if (Object.keys(extracted.values).length === 0) {
 			throw new CredentialModelResolutionError("Model has no recognized inline credential fields", 409);
 		}
-		return this._mask({
+		return this._toView({
 			credential_name: modelId,
 			credential_values: extracted.values,
 			credential_info: { custom_llm_provider: extracted.provider },
@@ -495,11 +495,11 @@ export class CredentialService {
 		};
 	}
 
-	private _mask(credential: RuntimeCredential): MaskedCredential {
+	private _toView(credential: RuntimeCredential): CredentialView {
 		return {
 			credential_name: credential.credential_name,
-			credential_values: Object.fromEntries(Object.keys(credential.credential_values).map((key) => [key, MASKED_CREDENTIAL_VALUE])),
-			credential_info: { ...credential.credential_info },
+			credential_values: structuredClone(credential.credential_values),
+			credential_info: structuredClone(credential.credential_info),
 		};
 	}
 

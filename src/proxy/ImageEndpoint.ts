@@ -15,6 +15,7 @@ import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpend
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
+import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { createModuleLogger } from "../core/utils/logger";
 
@@ -98,7 +99,6 @@ export class ImageController {
 		}
 		const optionalParams: Record<string, unknown> = { ...reqBody };
 		delete optionalParams.model;
-		const messages = [{ role: "user", content: prompt }];
 		const startTime = new Date();
 		const db = this._db;
 		const auth = request.auth;
@@ -111,7 +111,7 @@ export class ImageController {
 		let providerCompleted = false;
 		try {
 			spendReservation?.heartbeat?.markProviderStarted();
-			const result = await litellmRouter.completion(model, messages, optionalParams);
+			const result = await litellmRouter.imageGeneration(model, prompt, optionalParams);
 			providerCompleted = true;
 			const spendInfo = (result as unknown as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 			calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
@@ -137,6 +137,7 @@ export class ImageController {
 						response: result,
 						usage: usage,
 						status: SpendLogStatus.Success,
+						...getResultModelResolutionMetadata(result),
 					}),
 				);
 			}

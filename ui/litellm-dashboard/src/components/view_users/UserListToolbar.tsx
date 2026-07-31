@@ -28,7 +28,7 @@ export default function UserListToolbar({
 }: UserListToolbarProps) {
 	if (loading) {
 		return (
-			<div className="flex space-x-3">
+			<div className="flex flex-wrap gap-2">
 				<Skeleton.Button active size="default" shape="default" style={{ width: 110, height: 36 }} />
 				<Skeleton.Button active size="default" shape="default" style={{ width: 145, height: 36 }} />
 				<Skeleton.Button active size="default" shape="default" style={{ width: 110, height: 36 }} />
@@ -39,7 +39,7 @@ export default function UserListToolbar({
 	if (!userId || !accessToken) return null;
 
 	return (
-		<div className="flex space-x-3">
+		<div className="flex flex-wrap gap-2">
 			<CreateUserButton userID={userId} accessToken={accessToken} teams={teams} possibleUIRoles={possibleUIRoles} />
 			{canBulkEdit && (
 				<Button onClick={onToggleSelection} type={selectionMode ? "primary" : "default"} className="flex items-center">

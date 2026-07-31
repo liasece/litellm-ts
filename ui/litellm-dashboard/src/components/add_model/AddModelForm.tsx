@@ -26,7 +26,7 @@ interface AddModelFormProps {
 	selectedProvider: Providers;
 	setSelectedProvider: (provider: Providers) => void;
 	providerModels: string[];
-	setProviderModelsFn: (provider: Providers) => void;
+	setProviderModelsFn: (provider: Providers) => void | Promise<void>;
 	getPlaceholder: (provider: Providers) => string;
 	uploadProps: UploadProps;
 	showAdvancedSettings: boolean;
@@ -119,6 +119,13 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
 
 	const isAdmin = all_admin_roles.includes(userRole);
 	const isTeamAdmin = isUserTeamAdminForAnyTeam(teams, userId);
+	const isManagedCliProxy = selectedProvider === Providers.CLIProxy;
+
+	useEffect(() => {
+		if (isManagedCliProxy) {
+			form.setFieldValue("litellm_credential_name", undefined);
+		}
+	}, [form, isManagedCliProxy]);
 
 	return (
 		<>
@@ -187,6 +194,7 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
 											setProviderModelsFn(value as Providers);
 											form.setFieldsValue({
 												custom_llm_provider: value,
+												litellm_credential_name: undefined,
 											});
 											form.setFieldsValue({
 												model: [],
@@ -248,56 +256,68 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
 									</Col>
 								</Row>
 
-								{/* Credentials */}
-								<div className="mb-4">
-									<Typography.Text className="text-sm text-gray-500 mb-2">
-										Either select existing credentials OR enter new provider credentials below
-									</Typography.Text>
-								</div>
-
-								<Form.Item label="Existing Credentials" name="litellm_credential_name" initialValue={null}>
-									<AntdSelect
-										showSearch
-										placeholder="Select or search for existing credentials"
-										optionFilterProp="children"
-										filterOption={(input, option) => (option?.label ?? "").toLowerCase().includes(input.toLowerCase())}
-										options={[
-											{ value: null, label: "None" },
-											...credentials.map((credential) => ({
-												value: credential.credential_name,
-												label: credential.credential_name,
-											})),
-										]}
-										allowClear
+								{isManagedCliProxy ? (
+									<Alert
+										message="Credentials are managed by the built-in CLIProxy runtime"
+										description="Select an upstream model and public name only. LiteLLM supplies the internal endpoint and authentication automatically."
+										type="info"
+										showIcon
+										className="mb-4"
 									/>
-								</Form.Item>
+								) : (
+									<>
+										{/* Credentials */}
+										<div className="mb-4">
+											<Typography.Text className="text-sm text-gray-500 mb-2">
+												Either select existing credentials OR enter new provider credentials below
+											</Typography.Text>
+										</div>
 
-								<Form.Item
-									noStyle
-									shouldUpdate={(prevValues, currentValues) =>
-										prevValues.litellm_credential_name !== currentValues.litellm_credential_name ||
-										prevValues.provider !== currentValues.provider
-									}
-								>
-									{({ getFieldValue }) => {
-										const credentialName = getFieldValue("litellm_credential_name");
-										console.log("🔑 Credential Name Changed:", credentialName);
-										// Only show provider specific fields if no credentials selected
-										if (!credentialName) {
-											return (
-												<>
-													<div className="flex items-center my-4">
-														<div className="flex-grow border-t border-gray-200"></div>
-														<span className="px-4 text-gray-500 text-sm">OR</span>
-														<div className="flex-grow border-t border-gray-200"></div>
-													</div>
-													<ProviderSpecificFields selectedProvider={selectedProvider} uploadProps={uploadProps} />
-												</>
-											);
-										}
-										return null;
-									}}
-								</Form.Item>
+										<Form.Item label="Existing Credentials" name="litellm_credential_name" initialValue={null}>
+											<AntdSelect
+												showSearch
+												placeholder="Select or search for existing credentials"
+												optionFilterProp="children"
+												filterOption={(input, option) => (option?.label ?? "").toLowerCase().includes(input.toLowerCase())}
+												options={[
+													{ value: null, label: "None" },
+													...credentials.map((credential) => ({
+														value: credential.credential_name,
+														label: credential.credential_name,
+													})),
+												]}
+												allowClear
+											/>
+										</Form.Item>
+
+										<Form.Item
+											noStyle
+											shouldUpdate={(prevValues, currentValues) =>
+												prevValues.litellm_credential_name !== currentValues.litellm_credential_name ||
+												prevValues.provider !== currentValues.provider
+											}
+										>
+											{({ getFieldValue }) => {
+												const credentialName = getFieldValue("litellm_credential_name");
+												console.log("🔑 Credential Name Changed:", credentialName);
+												// Only show provider specific fields if no credentials selected
+												if (!credentialName) {
+													return (
+														<>
+															<div className="flex items-center my-4">
+																<div className="flex-grow border-t border-gray-200"></div>
+																<span className="px-4 text-gray-500 text-sm">OR</span>
+																<div className="flex-grow border-t border-gray-200"></div>
+															</div>
+															<ProviderSpecificFields selectedProvider={selectedProvider} uploadProps={uploadProps} />
+														</>
+													);
+												}
+												return null;
+											}}
+										</Form.Item>
+									</>
+								)}
 								<div className="flex items-center my-4">
 									<div className="flex-grow border-t border-gray-200"></div>
 									<span className="px-4 text-gray-500 text-sm">Additional Model Info Settings</span>

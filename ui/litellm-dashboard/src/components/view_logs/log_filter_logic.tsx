@@ -8,22 +8,9 @@ import { debounce } from "lodash";
 import { PaginatedResponse } from ".";
 import type { LogsSortField } from "./columns";
 import { DEFAULT_LOGS_PAGE_SIZE } from "./constants";
+import { createEmptyLogFilters, FILTER_KEYS, hasBackendLogFilters, type LogFilterState } from "./log_filter_state";
 
-const FILTER_KEYS = {
-	TEAM_ID: "Team ID",
-	KEY_HASH: "Key Hash",
-	REQUEST_ID: "Request ID",
-	MODEL: "Model",
-	USER_ID: "User ID",
-	END_USER: "End User",
-	STATUS: "Status",
-	KEY_ALIAS: "Key Alias",
-	ERROR_CODE: "Error Code",
-	ERROR_MESSAGE: "Error Message",
-} as const;
-
-export type FilterKey = keyof typeof FILTER_KEYS;
-export type LogFilterState = Record<(typeof FILTER_KEYS)[FilterKey], string>;
+export type { FilterKey, LogFilterState } from "./log_filter_state";
 
 export function useLogFilterLogic({
 	logs,
@@ -38,6 +25,7 @@ export function useLogFilterLogic({
 	sortBy = "startTime",
 	sortOrder = "desc",
 	currentPage = 1,
+	initialFilters,
 }: {
 	logs: PaginatedResponse;
 	accessToken: string | null;
@@ -51,24 +39,14 @@ export function useLogFilterLogic({
 	sortBy?: LogsSortField;
 	sortOrder?: "asc" | "desc";
 	currentPage?: number;
+	initialFilters?: Partial<LogFilterState>;
 }) {
-	const defaultFilters = useMemo<LogFilterState>(
-		() => ({
-			[FILTER_KEYS.TEAM_ID]: "",
-			[FILTER_KEYS.KEY_HASH]: "",
-			[FILTER_KEYS.REQUEST_ID]: "",
-			[FILTER_KEYS.MODEL]: "",
-			[FILTER_KEYS.USER_ID]: "",
-			[FILTER_KEYS.END_USER]: "",
-			[FILTER_KEYS.STATUS]: "",
-			[FILTER_KEYS.KEY_ALIAS]: "",
-			[FILTER_KEYS.ERROR_CODE]: "",
-			[FILTER_KEYS.ERROR_MESSAGE]: "",
-		}),
-		[],
-	);
+	const defaultFilters = useMemo<LogFilterState>(() => createEmptyLogFilters(), []);
 
-	const [filters, setFilters] = useState<LogFilterState>(defaultFilters);
+	const [filters, setFilters] = useState<LogFilterState>(() => ({
+		...defaultFilters,
+		...initialFilters,
+	}));
 	const [backendFilteredLogs, setBackendFilteredLogs] = useState<PaginatedResponse>({
 		data: [],
 		total: 0,
@@ -81,7 +59,6 @@ export function useLogFilterLogic({
 		async (filters: LogFilterState, page = 1) => {
 			if (!accessToken) return;
 
-			console.log("Filters being sent to API:", filters);
 			const currentTimestamp = Date.now();
 			lastSearchTimestamp.current = currentTimestamp;
 
@@ -134,20 +111,7 @@ export function useLogFilterLogic({
 	}, [debouncedSearch]);
 
 	// Determine when backend filters are active (server-side filtering)
-	const hasBackendFilters = useMemo(
-		() =>
-			!!(
-				filters[FILTER_KEYS.KEY_ALIAS] ||
-				filters[FILTER_KEYS.KEY_HASH] ||
-				filters[FILTER_KEYS.REQUEST_ID] ||
-				filters[FILTER_KEYS.USER_ID] ||
-				filters[FILTER_KEYS.END_USER] ||
-				filters[FILTER_KEYS.ERROR_CODE] ||
-				filters[FILTER_KEYS.ERROR_MESSAGE] ||
-				filters[FILTER_KEYS.MODEL]
-			),
-		[filters],
-	);
+	const hasBackendFilters = useMemo(() => hasBackendLogFilters(filters), [filters]);
 
 	// Refetch when sort, page, or time range changes (backend filters use their own fetch, not the main query)
 	useEffect(() => {
@@ -273,7 +237,11 @@ export function useLogFilterLogic({
 			// Only call debouncedSearch if filters have actually changed
 			if (JSON.stringify(updatedFilters) !== JSON.stringify(prev)) {
 				setCurrentPage(1);
-				debouncedSearch(updatedFilters, 1);
+				if (hasBackendLogFilters(updatedFilters)) {
+					debouncedSearch(updatedFilters, 1);
+				} else {
+					debouncedSearch.cancel();
+				}
 			}
 
 			return updatedFilters as LogFilterState;
@@ -293,9 +261,14 @@ export function useLogFilterLogic({
 			total_pages: 0,
 		});
 
-		// Reset selections
-		debouncedSearch(defaultFilters, 1);
+		// The main query owns the unfiltered data source.
+		debouncedSearch.cancel();
 	};
+
+	const refetchFilteredLogs = useCallback(async () => {
+		debouncedSearch.cancel();
+		await performSearch(filters, currentPage);
+	}, [currentPage, debouncedSearch, filters, performSearch]);
 
 	return {
 		filters,
@@ -304,5 +277,6 @@ export function useLogFilterLogic({
 		allTeams,
 		handleFilterChange,
 		handleFilterReset,
+		refetchFilteredLogs,
 	};
 }

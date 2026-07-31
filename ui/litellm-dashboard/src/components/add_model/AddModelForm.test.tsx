@@ -187,6 +187,22 @@ describe("AddModelForm", () => {
 		expect(await screen.findByRole("heading", { name: "Add Model" })).toBeInTheDocument();
 	});
 
+	it("does not offer deployment credentials for the managed CLIProxy provider", async () => {
+		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
+		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+		const props = {
+			...createTestProps(),
+			selectedProvider: Providers.CLIProxy,
+			providerModels: ["gpt-5.4"],
+		};
+
+		renderWithProviders(<AddModelForm {...props} />);
+
+		expect(await screen.findByText("Credentials are managed by the built-in CLIProxy runtime")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Existing Credentials")).not.toBeInTheDocument();
+		expect(screen.queryByText("Either select existing credentials OR enter new provider credentials below")).not.toBeInTheDocument();
+	});
+
 	it("groups popular providers first and sorts the remaining unique providers", async () => {
 		const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
 		mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));

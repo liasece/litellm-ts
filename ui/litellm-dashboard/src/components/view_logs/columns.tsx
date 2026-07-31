@@ -82,6 +82,47 @@ export function normalizeModelResolutionChain(value: unknown): ModelResolutionCh
 	});
 }
 
+export function buildModelResolutionTooltipLines(
+	fallbackModelsValue: unknown,
+	resolutionChainValue: unknown,
+	executedModel: string,
+): string[] {
+	const fallbackModels = Array.isArray(fallbackModelsValue)
+		? fallbackModelsValue.filter((model): model is string => typeof model === "string" && model.length > 0)
+		: [];
+	const entries = normalizeModelResolutionChain(resolutionChainValue).sort(
+		(left, right) => left.fallback_index - right.fallback_index,
+	);
+	const entriesByIndex = new Map(entries.map((entry) => [entry.fallback_index, entry]));
+	const maxIndex = Math.max(fallbackModels.length - 1, ...entries.map((entry) => entry.fallback_index), 0);
+	const lines: string[] = [];
+	let previousModel: string | undefined;
+
+	for (let index = 0; index <= maxIndex; index += 1) {
+		const entry = entriesByIndex.get(index);
+		const fallbackModel = fallbackModels[index];
+		const path = entry?.resolution_path ?? (fallbackModel ? [fallbackModel] : []);
+		if (path.length === 0) continue;
+		const first = path[0]!;
+		if (index === 0) {
+			lines.push(`Request · ${first}`);
+		} else if (previousModel && previousModel !== first) {
+			lines.push(`Fallback ${index} · ${previousModel} → ${first}`);
+		} else {
+			lines.push(`Fallback ${index} · ${first}`);
+		}
+		for (let hop = 1; hop < path.length; hop += 1) {
+			lines.push(`Alias · ${path[hop - 1]} → ${path[hop]}`);
+		}
+		previousModel = path[path.length - 1];
+	}
+
+	if (executedModel) {
+		lines.push(`Executed · ${executedModel}`);
+	}
+	return lines;
+}
+
 export type SessionGroupType = "claude_code_user_id" | "session_id";
 
 export interface SessionGroupRef {
@@ -377,17 +418,22 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 							})
 							.join(" ")
 					: undefined;
-			const resolutionTooltip = normalizeModelResolutionChain(row.metadata?.model_resolution_chain)
-				.map(
-					(entry) =>
-						`${entry.fallback_index === 0 ? "Request" : `Fallback ${entry.fallback_index}`}: ${entry.resolution_path.join(" → ")}`,
-				)
-				.join("\n");
-			const modelTooltip = [resolutionTooltip || undefined, fallbackTooltip].filter(Boolean).join("\n") || modelName;
+			const resolutionLines = buildModelResolutionTooltipLines(
+				fallbackModels,
+				row.metadata?.model_resolution_chain,
+				modelName,
+			);
+			const modelTooltip = (
+				<div className="space-y-1 font-mono text-xs">
+					{resolutionLines.map((line, index) => (
+						<div key={`${line}-${index}`}>{line}</div>
+					))}
+				</div>
+			);
 			return (
 				<div className="flex items-center space-x-2">
 					{provider && <ProviderLogo provider={provider} logo={getLogoUrl(row, provider)} />}
-					<Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{modelTooltip}</span>}>
+					<Tooltip title={modelTooltip}>
 						<span className="max-w-[25ch] truncate block">
 							{fallbackCount > 0 && (
 								<Tooltip title={fallbackTooltip}>

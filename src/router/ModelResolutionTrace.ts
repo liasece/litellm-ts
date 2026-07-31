@@ -105,3 +105,43 @@ export function copyModelResolutionChain(collector: ModelResolutionTraceCollecto
 	}
 	return collector.entries.map((entry) => ({ ...entry, resolution_path: [...entry.resolution_path] }));
 }
+
+/** 从 Router 成功结果中提取可安全写入 SpendLogs 的解析元数据。 */
+export function getResultModelResolutionMetadata(result: Record<string, unknown>): {
+	fallbackModels?: string[];
+	modelResolutionChain?: ModelResolutionChainEntry[];
+	attemptedRetries?: number;
+} {
+	const fallbackModels = Array.isArray(result["_fallbackModels"])
+		? result["_fallbackModels"].filter((model): model is string => typeof model === "string")
+		: undefined;
+	const rawChain = result["_modelResolutionChain"];
+	const modelResolutionChain = Array.isArray(rawChain)
+		? rawChain.flatMap((entry) => {
+				if (typeof entry !== "object" || entry === null) return [];
+				const value = entry as Partial<ModelResolutionChainEntry>;
+				if (
+					typeof value.fallback_index !== "number" ||
+					typeof value.input_model !== "string" ||
+					typeof value.resolved_model !== "string" ||
+					!Array.isArray(value.resolution_path) ||
+					!value.resolution_path.every((node) => typeof node === "string")
+				) {
+					return [];
+				}
+				return [
+					{
+						fallback_index: value.fallback_index,
+						input_model: value.input_model,
+						resolved_model: value.resolved_model,
+						resolution_path: [...value.resolution_path],
+					},
+				];
+			})
+		: undefined;
+	return {
+		fallbackModels,
+		modelResolutionChain,
+		attemptedRetries: fallbackModels ? Math.max(fallbackModels.length - 1, 0) : undefined,
+	};
+}

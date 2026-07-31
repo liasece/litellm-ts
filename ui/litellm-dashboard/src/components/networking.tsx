@@ -482,6 +482,20 @@ export const getProviderCreateMetadata = async (): Promise<ProviderCreateInfo[]>
 	return jsonData;
 };
 
+export interface CliProxyModel {
+	id: string;
+}
+
+export const getCliProxyModels = async (): Promise<string[]> => {
+	const url = proxyBaseUrl ? `${proxyBaseUrl}/cliproxy/models` : "/cliproxy/models";
+	const response = await dashboardFetch(url);
+	if (!response.ok) {
+		throw new Error(deriveErrorMessage(await response.json().catch(() => ({}))));
+	}
+	const body = (await response.json()) as { data?: CliProxyModel[] };
+	return (body.data ?? []).map((item) => item.id);
+};
+
 export const getAgentCreateMetadata = async (): Promise<AgentCreateInfo[]> => {
 	/**
 	 * Fetch agent type metadata from the proxy's public endpoint.
@@ -4682,6 +4696,25 @@ export const setCallbacksCall = async (accessToken: string, formValues: Record<s
 	}
 };
 
+export interface RoutableModelOption {
+	model_name: string;
+	type: "model" | "alias";
+	mode: string;
+}
+
+export const routableModelOptionsCall = async (): Promise<{ data: RoutableModelOption[] }> => {
+	const url = proxyBaseUrl ? `${proxyBaseUrl}/config/routable_model/options` : "/config/routable_model/options";
+	const response = await dashboardFetch(url, {
+		method: "GET",
+		headers: { "Content-Type": "application/json" },
+	});
+	if (!response.ok) {
+		const errorData = await response.json();
+		throw new Error(deriveErrorMessage(errorData));
+	}
+	return (await response.json()) as { data: RoutableModelOption[] };
+};
+
 export const individualModelHealthCheckCall = async (accessToken: string, modelId: string) => {
 	/**
 	 * Run health check for a specific model using model ID (so each deployment is checked separately).
@@ -4709,6 +4742,26 @@ export const individualModelHealthCheckCall = async (accessToken: string, modelI
 		return data;
 	} catch (error) {
 		console.error(`Failed to call /health for model id ${modelId}:`, error);
+		throw error;
+	}
+};
+
+export const modelGroupHealthCheckCall = async (accessToken: string, model: string) => {
+	try {
+		const url = proxyBaseUrl
+			? `${proxyBaseUrl}/health?model=${encodeURIComponent(model)}`
+			: `/health?model=${encodeURIComponent(model)}`;
+		const response = await dashboardFetch(url, {
+			method: "GET",
+			headers: { "Content-Type": "application/json" },
+		});
+		if (!response.ok) {
+			const errorData = await response.json();
+			throw new Error(deriveErrorMessage(errorData));
+		}
+		return await response.json();
+	} catch (error) {
+		console.error(`Failed to call /health for model group ${model}:`, error);
 		throw error;
 	}
 };

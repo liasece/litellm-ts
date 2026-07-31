@@ -18,7 +18,7 @@ const AdminPanel: React.FC<AdminPanelProps> = () => {
 	];
 
 	return (
-		<div className="w-full m-2 mt-2 p-8">
+		<div className="mt-2 w-full min-w-0 p-4 sm:m-2 sm:p-8">
 			<Title level={4}>Admin Access </Title>
 			<Paragraph>Go to &apos;Internal Users&apos; page to add other admins.</Paragraph>
 			<Tabs items={tabItems} />

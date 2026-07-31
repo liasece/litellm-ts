@@ -1,4 +1,4 @@
-import { Card, Grid, Text, Title } from "@tremor/react";
+import { Text } from "@tremor/react";
 import { Tooltip } from "antd";
 import { useState } from "react";
 import { getProviderLogoAndName } from "../provider_info_helpers";
@@ -35,10 +35,10 @@ function ModelAuditInfo({ modelInfo }: { modelInfo: any }) {
 				day: "numeric",
 				year: "numeric",
 			})
-		: "Not Set";
+		: "-";
 
 	return (
-		<div className="mb-6 flex items-center gap-x-6 text-sm text-gray-500">
+		<div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-gray-100 px-3 py-2 text-xs text-gray-500">
 			<div className="flex items-center gap-x-2">
 				<svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
 					<path
@@ -59,42 +59,43 @@ function ModelAuditInfo({ modelInfo }: { modelInfo: any }) {
 						d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
 					/>
 				</svg>
-				Created By {modelInfo.created_by || "Not Set"}
+				Created By {modelInfo.created_by || "-"}
 			</div>
 		</div>
 	);
 }
 
 export default function ModelOverview({ modelData }: ModelOverviewProps) {
+	const overviewItems = [
+		{
+			label: "Provider",
+			value: modelData.provider,
+			render: modelData.provider ? (
+				<div className="flex items-center gap-2">
+					<ProviderLogo provider={modelData.provider} />
+					<span>{modelData.provider}</span>
+				</div>
+			) : null,
+		},
+		{ label: "LiteLLM Model", value: modelData.litellm_model_name },
+		{ label: "Input / 1M", value: modelData.input_cost != null ? `$${modelData.input_cost}` : null },
+		{ label: "Output / 1M", value: modelData.output_cost != null ? `$${modelData.output_cost}` : null },
+	];
 	return (
-		<>
-			<Grid numItems={1} numItemsSm={2} numItemsLg={3} className="mb-6 gap-6">
-				<Card>
-					<Text>Provider</Text>
-					<div className="mt-2 flex items-center space-x-2">
-						{modelData.provider && <ProviderLogo provider={modelData.provider} />}
-						<Title>{modelData.provider || "Not Set"}</Title>
-					</div>
-				</Card>
-				<Card>
-					<Text>LiteLLM Model</Text>
-					<div className="mt-2 overflow-hidden">
-						<Tooltip title={modelData.litellm_model_name || "Not Set"}>
-							<div className="cursor-pointer break-all text-sm font-medium leading-relaxed">
-								{modelData.litellm_model_name || "Not Set"}
+		<div className="mb-4 overflow-hidden rounded-lg border border-gray-200 bg-white">
+			<div className="grid grid-cols-2 lg:grid-cols-4">
+				{overviewItems.map((item) => (
+					<div key={item.label} className="min-w-0 border-r border-gray-100 px-3 py-2 last:border-r-0">
+						<Text className="text-[11px] uppercase tracking-wide text-gray-400">{item.label}</Text>
+						<Tooltip title={item.value || "-"}>
+							<div className={`mt-0.5 truncate text-sm font-medium ${item.value ? "text-gray-800" : "text-gray-300"}`}>
+								{item.render ?? item.value ?? "-"}
 							</div>
 						</Tooltip>
 					</div>
-				</Card>
-				<Card>
-					<Text>Pricing</Text>
-					<div className="mt-2">
-						<Text>Input: ${modelData.input_cost}/1M tokens</Text>
-						<Text>Output: ${modelData.output_cost}/1M tokens</Text>
-					</div>
-				</Card>
-			</Grid>
+				))}
+			</div>
 			<ModelAuditInfo modelInfo={modelData.model_info} />
-		</>
+		</div>
 	);
 }

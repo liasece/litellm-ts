@@ -24,6 +24,7 @@ import {
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
+import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
 
 const logger = createModuleLogger("Proxy:Completions");
 
@@ -124,6 +125,7 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							response: result,
 							usage: usage,
 							status: SpendLogStatus.Success,
+							...getResultModelResolutionMetadata(result),
 						}),
 					);
 				}
@@ -234,6 +236,7 @@ async function handleStreamingCompletion(
 					response: lastChunk,
 					usage: usage,
 					status: SpendLogStatus.Success,
+					...getResultModelResolutionMetadata(streamResult),
 				}),
 			);
 		} catch (accountingError) {

@@ -141,6 +141,12 @@ export const prepareModelAddRequest = async (formValues: Record<string, any>, ac
 				}
 			}
 
+			if (litellmParamsObj["custom_llm_provider"] === "cliproxy") {
+				for (const field of ["litellm_credential_name", "credential_name", "api_base", "api_key"]) {
+					delete litellmParamsObj[field];
+				}
+			}
+
 			deployments.push({ litellmParamsObj, modelInfoObj, modelName });
 		}
 

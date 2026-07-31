@@ -52,7 +52,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 	return (
 		<div className="w-full min-w-0">
 			<div className="flex w-full max-w-full flex-wrap items-center gap-3">
-				<div className="relative w-64 min-w-0 flex-shrink-0">
+				<div className="relative w-full min-w-0 sm:w-64 sm:flex-shrink-0">
 					<input
 						type="text"
 						placeholder="Search by Request ID"
@@ -75,11 +75,11 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 					</svg>
 				</div>
 
-				<div className="flex min-w-0 flex-shrink items-center gap-2">
-					<div className="relative z-50" ref={quickSelectRef}>
+				<div className="flex min-w-0 flex-wrap items-center gap-2">
+					<div className="relative z-50 max-w-full" ref={quickSelectRef}>
 						<button
 							onClick={() => setQuickSelectOpen((open) => !open)}
-							className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
+							className="flex max-w-full items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
 						>
 							<svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path
@@ -92,7 +92,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 							{displayLabel}
 						</button>
 						{quickSelectOpen && (
-							<div className="absolute right-0 z-50 mt-2 w-64 rounded-lg border bg-white p-2 shadow-lg">
+							<div className="absolute left-0 z-50 mt-2 w-64 max-w-[calc(100vw-3rem)] rounded-lg border bg-white p-2 shadow-lg sm:left-auto sm:right-0">
 								<div className="space-y-1">
 									{QUICK_SELECT_OPTIONS.map((option) => (
 										<button
@@ -130,7 +130,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 						)}
 					</div>
 
-					<div className="flex items-center gap-2">
+					<div className="flex min-w-0 items-center gap-2">
 						<label htmlFor="live-tail-interval" className="text-sm font-medium text-gray-900">
 							Live Tail
 						</label>
@@ -161,7 +161,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 				</div>
 
 				{props.customDate && (
-					<div className="flex items-center gap-2">
+					<div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
 						<input
 							type="datetime-local"
 							value={props.startTime}
@@ -169,7 +169,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 								props.onStartTimeChange(event.target.value);
 								props.onPageReset();
 							}}
-							className="rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+							className="w-full rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto"
 						/>
 						<span className="text-gray-500">to</span>
 						<input
@@ -179,7 +179,7 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 								props.onEndTimeChange(event.target.value);
 								props.onPageReset();
 							}}
-							className="rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+							className="w-full rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto"
 						/>
 					</div>
 				)}

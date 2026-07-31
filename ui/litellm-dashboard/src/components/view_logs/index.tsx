@@ -17,12 +17,13 @@ import AuditLogs from "./audit_logs";
 import { createColumns, getSessionGroupRef, LogEntry, type LogsSortField, type SessionGroupRef } from "./columns";
 import {
 	DEFAULT_LIVE_TAIL_INTERVAL_MS,
-	DEFAULT_LOGS_PAGE_SIZE,
 	ERROR_CODE_OPTIONS,
 	isLiveTailIntervalMs,
 	type LiveTailIntervalMs,
 } from "./constants";
+import { FILTER_KEYS, hasBackendLogFilters } from "./log_filter_state";
 import { useLogFilterLogic } from "./log_filter_logic";
+import { readLogsUrlState, writeLogsUrlState } from "./logs_url_state";
 import LiveTailBanner from "./LiveTailBanner";
 import { LogDetailsDrawer, SessionSimulationDrawer } from "./LogDetailsDrawer";
 import LogsPagination from "./LogsPagination";
@@ -55,22 +56,29 @@ export default function SpendLogsTable({
 	allTeams,
 	premiumUser,
 }: SpendLogsTableProps) {
-	const [searchTerm, setSearchTerm] = useState("");
-	const [currentPage, setCurrentPage] = useState(1);
-	const [pageSize, setPageSize] = useState<number>(DEFAULT_LOGS_PAGE_SIZE);
+	const initialUrlState = useMemo(() => {
+		const endTime = moment().format("YYYY-MM-DDTHH:mm");
+		const startTime = moment().subtract(24, "hours").format("YYYY-MM-DDTHH:mm");
+		return readLogsUrlState(typeof window === "undefined" ? "" : window.location.search, {
+			startTime,
+			endTime,
+		});
+	}, []);
 
-	// New state variables for Start and End Time
-	const [startTime, setStartTime] = useState<string>(moment().subtract(24, "hours").format("YYYY-MM-DDTHH:mm"));
-	const [endTime, setEndTime] = useState<string>(moment().format("YYYY-MM-DDTHH:mm"));
+	const [searchTerm, setSearchTerm] = useState(initialUrlState.searchTerm);
+	const [currentPage, setCurrentPage] = useState(initialUrlState.currentPage);
+	const [pageSize, setPageSize] = useState<number>(initialUrlState.pageSize);
+	const [startTime, setStartTime] = useState<string>(initialUrlState.startTime);
+	const [endTime, setEndTime] = useState<string>(initialUrlState.endTime);
 
-	const [isCustomDate, setIsCustomDate] = useState(false);
-	const [selectedTeamId, setSelectedTeamId] = useState("");
-	const [selectedKeyHash, setSelectedKeyHash] = useState("");
-	const [selectedModelId, setSelectedModelId] = useState("");
+	const [isCustomDate, setIsCustomDate] = useState(initialUrlState.isCustomDate);
+	const [selectedTeamId, setSelectedTeamId] = useState(initialUrlState.filters[FILTER_KEYS.TEAM_ID]);
+	const [selectedKeyHash, setSelectedKeyHash] = useState(initialUrlState.filters[FILTER_KEYS.KEY_HASH]);
+	const [selectedModelId, setSelectedModelId] = useState(initialUrlState.filters[FILTER_KEYS.MODEL]);
 	const [selectedKeyInfo, setSelectedKeyInfo] = useState<KeyResponse | null>(null);
 	const [selectedKeyIdInfoView, setSelectedKeyIdInfoView] = useState<string | null>(null);
-	const [selectedStatus, setSelectedStatus] = useState("");
-	const [selectedEndUser, setSelectedEndUser] = useState("");
+	const [selectedStatus, setSelectedStatus] = useState(initialUrlState.filters[FILTER_KEYS.STATUS]);
+	const [selectedEndUser, setSelectedEndUser] = useState(initialUrlState.filters[FILTER_KEYS.END_USER]);
 	const [filterByCurrentUser, setFilterByCurrentUser] = useState(userRole && internalUserRoles.includes(userRole));
 	const [activeTab, setActiveTab] = useState("request logs");
 
@@ -80,14 +88,14 @@ export default function SpendLogsTable({
 	const [simulationSessionGroup, setSimulationSessionGroup] = useState<SessionGroupRef | null>(null);
 	const [isSpendLogsSettingsModalVisible, setIsSpendLogsSettingsModalVisible] = useState(false);
 
-	const [sortBy, setSortBy] = useState<LogsSortField>("startTime");
-	const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+	const [sortBy, setSortBy] = useState<LogsSortField>(initialUrlState.sortBy);
+	const [sortOrder, setSortOrder] = useState<"asc" | "desc">(initialUrlState.sortOrder);
 	const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
 	// Tracks whether any filter that uses performSearch (backend) is active.
 	// Used to disable the main query so it doesn't fire redundant unfiltered requests
 	// when time range / sort / page changes while a backend filter is in effect.
-	const [isMainQueryEnabled, setIsMainQueryEnabled] = useState(true);
+	const [isMainQueryEnabled, setIsMainQueryEnabled] = useState(() => !hasBackendLogFilters(initialUrlState.filters));
 
 	const [liveTailIntervalMs, setLiveTailIntervalMs] = useState<LiveTailIntervalMs>(() => {
 		const storedInterval = sessionStorage.getItem("liveTailIntervalMs");
@@ -114,10 +122,7 @@ export default function SpendLogsTable({
 		sessionStorage.removeItem("isLiveTail");
 	}, [liveTailIntervalMs]);
 
-	const [selectedTimeInterval, setSelectedTimeInterval] = useState<{ value: number; unit: string }>({
-		value: 24,
-		unit: "hours",
-	});
+	const [selectedTimeInterval, setSelectedTimeInterval] = useState(initialUrlState.selectedTimeInterval);
 
 	useEffect(() => {
 		const fetchKeyInfo = async () => {
@@ -223,6 +228,7 @@ export default function SpendLogsTable({
 		hasBackendFilters,
 		handleFilterChange,
 		handleFilterReset: handleFilterResetFromHook,
+		refetchFilteredLogs,
 	} = useLogFilterLogic({
 		logs: logsData,
 		accessToken,
@@ -236,6 +242,7 @@ export default function SpendLogsTable({
 		sortBy,
 		sortOrder,
 		currentPage,
+		initialFilters: initialUrlState.filters,
 	});
 
 	const handleFilterReset = useCallback(() => {
@@ -277,6 +284,42 @@ export default function SpendLogsTable({
 		/* eslint-enable react-hooks/set-state-in-effect */
 	}, [filters, accessToken]);
 
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+
+		const currentUrl = new URL(window.location.href);
+		const nextParams = writeLogsUrlState(currentUrl.searchParams, {
+			filters,
+			searchTerm,
+			currentPage,
+			pageSize,
+			startTime,
+			endTime,
+			isCustomDate,
+			selectedTimeInterval,
+			sortBy,
+			sortOrder,
+		});
+		const nextSearch = nextParams.toString();
+		const nextUrl = `${currentUrl.pathname}${nextSearch ? `?${nextSearch}` : ""}${currentUrl.hash}`;
+		const currentRelativeUrl = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`;
+
+		if (nextUrl !== currentRelativeUrl) {
+			window.history.replaceState(window.history.state, "", nextUrl);
+		}
+	}, [
+		currentPage,
+		endTime,
+		filters,
+		isCustomDate,
+		pageSize,
+		searchTerm,
+		selectedTimeInterval,
+		sortBy,
+		sortOrder,
+		startTime,
+	]);
+
 	const searchedLogs = useMemo(
 		() =>
 			filteredLogs.data.filter((log) => {
@@ -292,11 +335,14 @@ export default function SpendLogsTable({
 		[filteredLogs.data, searchTerm],
 	);
 
+	const refetchLogs = logs.refetch;
+
 	// Add this function to handle manual refresh
 	const handleRefresh = useCallback(() => {
 		setIsManualRefreshing(true);
-		void logs.refetch().finally(() => setIsManualRefreshing(false));
-	}, [logs.refetch]);
+		const refresh = hasBackendFilters ? refetchFilteredLogs() : refetchLogs();
+		void refresh.finally(() => setIsManualRefreshing(false));
+	}, [hasBackendFilters, refetchFilteredLogs, refetchLogs]);
 
 	const handleRowClick = useCallback((log: LogEntry) => {
 		if (log.status === "in_progress") {
@@ -436,7 +482,7 @@ export default function SpendLogsTable({
 	}
 
 	return (
-		<div className="w-full max-w-screen p-6 overflow-x-hidden box-border">
+		<div className="box-border w-full max-w-screen overflow-x-hidden p-4 sm:p-6">
 			<TabGroup defaultIndex={0} onIndexChange={(index) => setActiveTab(index === 0 ? "request logs" : "audit logs")}>
 				<TabList>
 					<Tab>Request Logs</Tab>
@@ -446,7 +492,7 @@ export default function SpendLogsTable({
 				</TabList>
 				<TabPanels>
 					<TabPanel>
-						<div className="flex items-center justify-between mb-4">
+						<div className="mb-4 flex items-center justify-between gap-3">
 							<h1 className="text-xl font-semibold">Request Logs</h1>
 							<Button
 								icon={<SettingOutlined />}
@@ -468,6 +514,7 @@ export default function SpendLogsTable({
 									options={logFilterOptions}
 									onApplyFilters={handleFilterChange}
 									onResetFilters={handleFilterReset}
+									initialValues={filters}
 								/>
 								<SpendLogsSettingsModal
 									isVisible={isSpendLogsSettingsModalVisible}
@@ -475,7 +522,7 @@ export default function SpendLogsTable({
 									onSuccess={() => setIsSpendLogsSettingsModalVisible(false)}
 								/>
 								<div className="bg-white rounded-lg shadow w-full max-w-full box-border">
-									<div className="border-b px-6 py-4 w-full max-w-full box-border">
+									<div className="box-border w-full max-w-full border-b px-4 py-4 sm:px-6">
 										<div
 											data-testid="logs-controls-row"
 											className="flex w-full min-w-0 flex-col gap-4 xl:flex-row xl:items-center xl:justify-between"

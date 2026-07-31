@@ -90,6 +90,22 @@ describeWithDatabase("Database PostgreSQL bootstrap integration", () => {
 		);
 		expect(result.rows[0]?.session_group_key).toBe(`s:${embeddedSessionId}`);
 	});
+
+	it("session group function 优先使用服务端提取的 Codex 任务分组键", async () => {
+		const database = new Database(databaseConfig(connectionString));
+		await database.initialize();
+		await database.close();
+		const threadId = "019fa826-205c-7350-9e17-7e76ce77ce43";
+		const result = await schemaPool.query<{ session_group_key: string }>(
+			"SELECT litellm_session_group_key($1::jsonb, $2::text, $3::text) AS session_group_key",
+			[
+				JSON.stringify({ session_group_key: `s:${threadId}` }),
+				"781f34ac-e9b5-4e07-b55a-ecebae9b2668",
+				"req-1",
+			],
+		);
+		expect(result.rows[0]?.session_group_key).toBe(`s:${threadId}`);
+	});
 });
 
 describeWithDatabase("Production database read-only takeover integration", () => {

@@ -232,8 +232,8 @@ export default function ViewUserDashboard({
 	);
 
 	return (
-		<div className="w-full overflow-hidden p-8">
-			<div className="mb-4 flex items-center justify-between">
+		<div className="w-full min-w-0 overflow-hidden p-4 sm:p-8">
+			<div className="mb-4 flex flex-wrap items-center justify-between gap-3">
 				<UserListToolbar
 					loading={userListQuery.isLoading}
 					userId={userID}

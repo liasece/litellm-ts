@@ -362,6 +362,29 @@ describe("CreateKey", () => {
 		});
 	});
 
+	it("should send a custom key when provided", async () => {
+		renderWithProviders(<CreateKey {...defaultProps} />);
+
+		act(() => {
+			fireEvent.click(screen.getByRole("button", { name: /create new key/i }));
+		});
+
+		await waitFor(() => {
+			expect(screen.getByPlaceholderText("sk-...")).toBeInTheDocument();
+		});
+
+		act(() => {
+			fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "  sk-custom-key-123456  " } });
+			formMock.setFieldValue("key_alias", "Custom Key");
+			fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+		});
+
+		await waitFor(() => {
+			expect(mockKeyCreateCall).toHaveBeenCalled();
+			expect(mockKeyCreateCall.mock.calls[0][2].key).toBe("sk-custom-key-123456");
+		});
+	});
+
 	it("should include access_group_ids in keyCreateCall payload when access groups are selected", async () => {
 		renderWithProviders(<CreateKey {...defaultProps} />);
 

@@ -1,4 +1,4 @@
-import { Typography } from "antd";
+import { Image, Typography } from "antd";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MessagePart } from "./prettyMessagesTypes";
@@ -46,6 +46,68 @@ function MarkdownText({ children }: { children: string }) {
 		>
 			{children}
 		</ReactMarkdown>
+	);
+}
+
+function renderableImageSource(part: MessagePart): string | null {
+	const data = part.data && typeof part.data === "object" ? (part.data as Record<string, unknown>) : null;
+	const candidate = typeof data?.src === "string" ? data.src : part.text;
+	if (typeof candidate !== "string") return null;
+	return /^(?:data:image\/(?:png|jpe?g|webp|gif);base64,|https?:\/\/)/i.test(candidate) ? candidate : null;
+}
+
+function ImagePart({ part, compact }: { part: MessagePart; compact: boolean }) {
+	const source = renderableImageSource(part);
+	if (!source) return <OperationPart part={part} compact={compact} />;
+	const caption = part.text && part.text !== source ? part.text : "";
+	const tone = PART_TONES.image;
+
+	return (
+		<div
+			data-message-part="image"
+			style={{
+				background: tone.background,
+				border: `1px solid ${tone.border}`,
+				borderRadius: 6,
+				padding: compact ? "7px 10px" : "10px 12px",
+				marginTop: 8,
+			}}
+		>
+			<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+				<Text
+					strong
+					style={{
+						color: tone.color,
+						fontSize: 10,
+						letterSpacing: "0.4px",
+						textTransform: "uppercase",
+					}}
+				>
+					{part.label}
+				</Text>
+				{part.status ? (
+					<Text type={part.isError ? "danger" : "secondary"} style={{ fontSize: 11 }}>
+						{part.status}
+					</Text>
+				) : null}
+			</div>
+			<Image
+				src={source}
+				alt={caption || part.label || "Generated image"}
+				style={{
+					display: "block",
+					maxWidth: "100%",
+					maxHeight: compact ? 360 : 640,
+					objectFit: "contain",
+					borderRadius: 6,
+				}}
+			/>
+			{caption ? (
+				<div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: "#475569" }}>
+					<MarkdownText>{caption}</MarkdownText>
+				</div>
+			) : null}
+		</div>
 	);
 }
 
@@ -178,6 +240,9 @@ export function MessagePartsView({ parts, compact = false }: { parts: MessagePar
 							result={toolResultsByCallIndex.get(index)}
 						/>
 					);
+				}
+				if (part.kind === "image") {
+					return <ImagePart key={`${part.kind}-${part.id || index}`} part={part} compact={compact} />;
 				}
 				return <OperationPart key={`${part.kind}-${part.id || index}`} part={part} compact={compact} />;
 			})}

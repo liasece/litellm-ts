@@ -15,6 +15,7 @@ import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpend
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
+import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { createModuleLogger } from "../core/utils/logger";
 
@@ -203,6 +204,7 @@ export class AudioController {
 						response: result,
 						usage: usage,
 						status: SpendLogStatus.Success,
+						...getResultModelResolutionMetadata(result),
 					}),
 				);
 			}

@@ -813,6 +813,46 @@ describe("KeyManagement /key/generate Python 字段集契约", () => {
 		expect(expires).toBeLessThanOrEqual(Date.now() + 61 * 60 * 1000);
 	});
 
+	it("显式自定义 key 时返回该明文并仅将 hash 落库", async () => {
+		const { db, inserted } = makeGenerateMockDb();
+		const app = makeApp(db);
+		const customKey = "sk-custom-key-123456";
+
+		const res = await request(app).post("/key/generate").send({ key: customKey });
+
+		expect(res.status).toBe(200);
+		expect(res.body.key).toBe(customKey);
+		expect(res.body.token_id).toBe(hashApiKey(customKey));
+		expect(res.body.key_name).toBe(`sk-...${customKey.slice(-4)}`);
+		expect(inserted[0]?.token).toBe(hashApiKey(customKey));
+		expect(inserted[0]?.token).not.toBe(customKey);
+	});
+
+	it("key 为空白时继续自动生成", async () => {
+		const { db } = makeGenerateMockDb();
+		const app = makeApp(db);
+
+		const res = await request(app).post("/key/generate").send({ key: "   " });
+
+		expect(res.status).toBe(200);
+		expect(res.body.key).toMatch(/^sk-/);
+		expect(res.body.key).not.toBe("   ");
+		expect(res.body.token_id).toBe(hashApiKey(res.body.key as string));
+	});
+
+	it.each([
+		["缺少 sk- 前缀", "custom-key-123456", "must start with 'sk-'"],
+		["长度不足", "sk-short", "at least 16 characters"],
+	])("拒绝%s的自定义 key", async (_label, key, expectedMessage) => {
+		const { db } = makeGenerateMockDb();
+		const app = makeApp(db);
+
+		const res = await request(app).post("/key/generate").send({ key });
+
+		expect(res.status).toBe(400);
+		expect(res.body.error.message).toContain(expectedMessage);
+	});
+
 	it("非法 duration 返回 400 标准错误格式", async () => {
 		const { db } = makeGenerateMockDb();
 		const app = makeApp(db);

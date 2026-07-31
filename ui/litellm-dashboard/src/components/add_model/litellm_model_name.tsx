@@ -38,6 +38,12 @@ const LiteLLMModelNameField: React.FC<LiteLLMModelNameFieldProps> = ({
 							litellm_model: `azure/${model}`,
 						};
 					}
+					if (selectedProvider === Providers.CLIProxy) {
+						return {
+							public_name: model,
+							litellm_model: `cliproxy/${model}`,
+						};
+					}
 					return {
 						public_name: model,
 						litellm_model: model,
@@ -85,6 +91,12 @@ const LiteLLMModelNameField: React.FC<LiteLLMModelNameFieldProps> = ({
 					return {
 						public_name: customName,
 						litellm_model: `azure/${customName}`,
+					};
+				}
+				if (selectedProvider === Providers.CLIProxy) {
+					return {
+						public_name: customName,
+						litellm_model: `cliproxy/${customName}`,
 					};
 				}
 				return {

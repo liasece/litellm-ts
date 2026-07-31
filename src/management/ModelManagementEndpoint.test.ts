@@ -111,7 +111,7 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 		expect(inserted[0]?.model_id).toBe("custom-id");
 	});
 
-	it("秘密字段仅在响应中固定掩码，落库与 Router 保留真实值", async () => {
+	it("管理响应、落库与 Router 都保留完整编辑值", async () => {
 		const inserted: Record<string, unknown>[] = [];
 		const litellmRouter = new LiteLLMRouter({ model_list: [], routing_strategy: RoutingStrategyName.SimpleShuffle, num_retries: 0 });
 		const app = makeApp({ inserted: inserted, litellmRouter: litellmRouter });
@@ -126,12 +126,9 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 			});
 
 		expect(res.status).toBe(200);
-		expect(JSON.stringify(res.body)).not.toContain(secret);
-		expect(JSON.stringify(res.body)).not.toContain("nested-secret");
-		expect(JSON.stringify(res.body)).not.toContain("model-info-secret");
-		expect(res.body.litellm_params.api_key).toBe("********");
-		expect(res.body.litellm_params.extra_headers.Authorization).toBe("********");
-		expect(res.body.model_info.password).toBe("********");
+		expect(res.body.litellm_params.api_key).toBe(secret);
+		expect(res.body.litellm_params.extra_headers.Authorization).toBe("Bearer nested-secret");
+		expect(res.body.model_info.password).toBe("model-info-secret");
 		expect((inserted[0]?.litellm_params as Record<string, unknown>).api_key).toBe(secret);
 		expect(litellmRouter.getDeployment("secure-model-1")?.litellm_params.api_key).toBe(secret);
 	});
@@ -146,6 +143,34 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 		expect(res.status).toBe(200);
 		expect(res.body.model_id).toMatch(/^[0-9a-f]{8}-/);
 		expect(res.body.model_info).toMatchObject({ id: res.body.model_id, db_model: false });
+	});
+
+	it("内置 CLIProxy 模型不落库 deployment credentials 或 endpoint overrides", async () => {
+		const inserted: Record<string, unknown>[] = [];
+		const app = makeApp({ inserted });
+
+		const res = await request(app)
+			.post("/model/new")
+			.send({
+				model_name: "codex",
+				litellm_params: {
+					model: "cliproxy/gpt-5.4",
+					custom_llm_provider: "cliproxy",
+					litellm_credential_name: "legacy-cli-proxy",
+					credential_name: "legacy-cli-proxy",
+					api_base: "http://legacy.example",
+					api_key: "legacy-secret",
+				},
+			});
+
+		expect(res.status).toBe(200);
+		expect(res.body.litellm_params).toMatchObject({
+			model: "cliproxy/gpt-5.4",
+			custom_llm_provider: "cliproxy",
+		});
+		for (const field of ["litellm_credential_name", "credential_name", "api_base", "api_key"]) {
+			expect((inserted[0]?.litellm_params as Record<string, unknown>)).not.toHaveProperty(field);
+		}
 	});
 });
 
@@ -164,7 +189,7 @@ describe("ModelManagementEndpoint /model/update 契约", () => {
 	it.each([
 		["POST", "/model/update", { model_info: { id: "model-1" }, litellm_params: { api_key: "sk-rotated-secret" } }],
 		["PATCH", "/model/model-1/update", { litellm_params: { api_key: "sk-rotated-secret" } }],
-	] as const)("%s 更新响应掩码秘密，但 DB 与 Router 使用真实值", async (method, path, body) => {
+	] as const)("%s 更新响应、DB 与 Router 都使用真实值", async (method, path, body) => {
 		const updated: Record<string, unknown>[] = [];
 		const litellmRouter = new LiteLLMRouter({ model_list: [], routing_strategy: RoutingStrategyName.SimpleShuffle, num_retries: 0 });
 		const existing = {
@@ -185,9 +210,7 @@ describe("ModelManagementEndpoint /model/update 契约", () => {
 		const res = method === "POST" ? await request(app).post(path).send(body) : await request(app).patch(path).send(body);
 
 		expect(res.status).toBe(200);
-		expect(JSON.stringify(res.body)).not.toContain("sk-rotated-secret");
-		expect(JSON.stringify(res.body)).not.toContain("sk-old-secret");
-		expect(res.body.litellm_params.api_key).toBe("********");
+		expect(res.body.litellm_params.api_key).toBe("sk-rotated-secret");
 		expect(res.body.litellm_params.input_cost_per_token).toBe(0.000_002_5);
 		expect(res.body.litellm_params.output_cost_per_token).toBe(0.000_01);
 		expect((updated[0]?.litellm_params as Record<string, unknown>).api_key).toBe("sk-rotated-secret");
@@ -237,6 +260,30 @@ describe("ModelManagementEndpoint /model/update 契约", () => {
 			const invalid = await request(app).patch("/model/model-1/update").send(invalidPatch);
 			expect(invalid.status).toBe(400);
 		}
+	});
+
+	it("PATCH 迁移到内置 CLIProxy 时自动移除旧 Credentials 和 api_base", async () => {
+		const existing = {
+			...NESTED_MODEL_ROW,
+			litellm_params: {
+				...NESTED_MODEL_ROW.litellm_params,
+				litellm_credential_name: "cli-proxy-api",
+				api_key: "legacy-secret",
+			},
+		};
+		const updated: Record<string, unknown>[] = [];
+		const app = makeApp({ existing: [existing], updated });
+
+		const res = await request(app)
+			.patch("/model/model-1/update")
+			.send({ litellm_params: { model: "cliproxy/gpt-5.4", custom_llm_provider: "cliproxy" } });
+
+		expect(res.status).toBe(200);
+		const params = updated[0]?.litellm_params as Record<string, unknown>;
+		expect(params).toMatchObject({ model: "cliproxy/gpt-5.4", custom_llm_provider: "cliproxy" });
+		expect(params).not.toHaveProperty("litellm_credential_name");
+		expect(params).not.toHaveProperty("api_base");
+		expect(params).not.toHaveProperty("api_key");
 	});
 
 	it("PATCH 拒绝 URL 与 body model_info.id 冲突，且不存在时返回无 DB 细节的 404", async () => {

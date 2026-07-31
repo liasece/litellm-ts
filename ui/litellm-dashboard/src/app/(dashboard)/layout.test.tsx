@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import Layout from "./layout";
@@ -24,7 +24,13 @@ vi.mock("@/contexts/ThemeContext", () => ({
 }));
 
 vi.mock("@/components/navbar", () => ({
-	default: () => <header data-testid="navbar">Navbar</header>,
+	default: ({ onToggleMobileSidebar }: { onToggleMobileSidebar: () => void }) => (
+		<header data-testid="navbar">
+			<button type="button" data-testid="mobile-nav-toggle" onClick={onToggleMobileSidebar}>
+				Menu
+			</button>
+		</header>
+	),
 }));
 
 vi.mock("@/components/DebugWarningBanner", () => ({
@@ -60,5 +66,22 @@ describe("Dashboard layout", () => {
 			"overflow-auto",
 			"overscroll-contain",
 		);
+	});
+
+	it("opens the mobile navigation as an overlay and dismisses it from the backdrop", () => {
+		render(
+			<Layout>
+				<div>Main content</div>
+			</Layout>,
+		);
+
+		const sidebar = screen.getByTestId("dashboard-sidebar-scroll");
+		expect(sidebar).toHaveClass("invisible", "-translate-x-full");
+
+		fireEvent.click(screen.getByTestId("mobile-nav-toggle"));
+		expect(sidebar).toHaveClass("visible", "translate-x-0");
+
+		fireEvent.click(screen.getByRole("button", { name: "Dismiss navigation overlay" }));
+		expect(sidebar).toHaveClass("invisible", "-translate-x-full");
 	});
 });

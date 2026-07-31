@@ -508,14 +508,14 @@ describe("ModelInfoView", () => {
 		});
 	});
 
-	it("keeps a manual API key out of the form and PATCH when left blank", async () => {
+	it("echoes a manual API key in the form and preserves it on save", async () => {
 		const user = userEvent.setup();
 		const manualModelData = {
 			...defaultModelData,
 			litellm_params: {
 				...defaultModelData.litellm_params,
 				litellm_credential_name: "",
-				api_key: "****last",
+				api_key: "sk-existing",
 			},
 		};
 		mockUseModelsInfo.mockReturnValue({ data: { data: [manualModelData] }, isLoading: false, error: null });
@@ -524,13 +524,12 @@ describe("ModelInfoView", () => {
 		await user.click(await screen.findByRole("button", { name: /^edit$/i }));
 
 		const apiKeyInput = await screen.findByLabelText("Manual API Key");
-		expect(apiKeyInput).toHaveValue("");
-		expect(screen.queryByDisplayValue("****last")).not.toBeInTheDocument();
+		expect(apiKeyInput).toHaveValue("sk-existing");
 		await user.click(screen.getByRole("button", { name: /save changes/i }));
 
 		await waitFor(() => expect(mockModelPatchUpdateCall).toHaveBeenCalled());
 		const payload = mockModelPatchUpdateCall.mock.calls[0][1] as { litellm_params: Record<string, unknown> };
-		expect(payload.litellm_params).not.toHaveProperty("api_key");
+		expect(payload.litellm_params.api_key).toBe("sk-existing");
 		expect(payload.litellm_params.litellm_credential_name).toBeNull();
 	});
 

@@ -50,7 +50,7 @@ jest.mock("./core/db/Database", () => ({
 					}
 					if ("param_name" in table) {
 						return Promise.resolve(
-							Object.entries(mockConfigParams).map(([param_name, param_value]) => ({ param_name, param_value })),
+							Object.entries(mockConfigParams).map(([param_name, param_value]) => ({ param_name: param_name, param_value: param_value })),
 						);
 					}
 					return Promise.resolve(mockDbModelRows);
@@ -156,7 +156,7 @@ describe("createServiceContainer — Credential 接线", () => {
 		expect(await container.credentialService.list()).toEqual([
 			expect.objectContaining({
 				credential_name: "openai-prod",
-				credential_values: { api_key: "********" },
+				credential_values: { api_key: "sk-secret" },
 			}),
 		]);
 	});

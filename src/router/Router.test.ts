@@ -51,6 +51,51 @@ describe("Router smoke", () => {
 		expect(mockFetch).toHaveBeenCalledTimes(1);
 		expect((caught as { max_retries?: number }).max_retries).toBe(0);
 	});
+
+	it("imageGeneration 通过 Provider 图片协议而不是 Chat Completions", async () => {
+		const previousBase = process.env["CLIPROXY_INTERNAL_BASE_URL"];
+		const previousKey = process.env["CLIPROXY_INTERNAL_API_KEY"];
+		process.env["CLIPROXY_INTERNAL_BASE_URL"] = "http://cliproxy.internal";
+		process.env["CLIPROXY_INTERNAL_API_KEY"] = "internal-image-key";
+		mockFetch.mockResolvedValueOnce(okResponse({ created: 1, data: [{ b64_json: "AA==" }] }));
+		const router = new Router({
+			model_list: [
+				{
+					model_name: "image",
+					litellm_params: { model: "cliproxy/gpt-image-2", custom_llm_provider: "cliproxy" },
+				},
+			],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+		});
+
+		try {
+			const response = await router.imageGeneration("image", "draw a cat", {
+				response_format: "b64_json",
+				output_format: "png",
+			});
+
+			expect(response).toMatchObject({ data: [{ b64_json: "AA==" }] });
+			expect(mockFetch.mock.calls[0]?.[0]).toBe("http://cliproxy.internal/v1/images/generations");
+			expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body))).toEqual({
+				model: "gpt-image-2",
+				prompt: "draw a cat",
+				response_format: "b64_json",
+				output_format: "png",
+			});
+		} finally {
+			if (previousBase === undefined) {
+				delete process.env["CLIPROXY_INTERNAL_BASE_URL"];
+			} else {
+				process.env["CLIPROXY_INTERNAL_BASE_URL"] = previousBase;
+			}
+			if (previousKey === undefined) {
+				delete process.env["CLIPROXY_INTERNAL_API_KEY"];
+			} else {
+				process.env["CLIPROXY_INTERNAL_API_KEY"] = previousKey;
+			}
+		}
+	});
 });
 
 describe("Router.probeDeployment", () => {

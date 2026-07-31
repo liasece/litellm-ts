@@ -126,11 +126,12 @@ export class HealthController {
 	 * （litellm/proxy/health_endpoints/_health_endpoints.py:808）。
 	 * TS 端暂无主动健康检查执行器，未执行检查时返回空列表与 0 计数。
 	 * 保持 @noAuth：容器 HEALTHCHECK 探针依赖本端点 200 响应。
-	 * @param modelId
+	 * @param modelId - 精确 deployment ID
+	 * @param model - 逻辑模型组或 alias
 	 * @returns 健康检查结果汇总
 	 */
 	@get("/health")
-	async healthCheck(@query("model_id") modelId?: string): Promise<HealthCheckResponse> {
+	async healthCheck(@query("model_id") modelId?: string, @query("model") model?: string): Promise<HealthCheckResponse> {
 		if (this._router === undefined) {
 			return { healthy_endpoints: [], unhealthy_endpoints: [], healthy_count: 0, unhealthy_count: 0 };
 		}
@@ -139,6 +140,12 @@ export class HealthController {
 		try {
 			if (modelId !== undefined && modelId.length > 0) {
 				results = [await this._router.probeDeployment(modelId)];
+			} else if (model !== undefined && model.length > 0) {
+				const modelIds = this._router.getDeploymentIdsForModel(model);
+				if (modelIds.length === 0) {
+					throw ApiError.notFound(`Model or alias is unreachable: ${model}`);
+				}
+				results = await Promise.all(modelIds.map((id) => this._router!.probeDeployment(id)));
 			} else {
 				const modelIds = this._router
 					.getDeployments()
@@ -164,6 +171,17 @@ export class HealthController {
 				checked_at: result.checked_at,
 				latency_ms: result.latency_ms,
 				error_message: result.error,
+			});
+		}
+		if (model !== undefined && model.length > 0 && results.length > 0) {
+			const firstFailure = results.find((result) => result.status === "unhealthy");
+			const allHealthy = firstFailure === undefined;
+			this._latestHealthChecks.set(`alias:${model}`, {
+				model_name: model,
+				status: allHealthy ? HealthCheckStatus.HEALTHY : HealthCheckStatus.UNHEALTHY,
+				checked_at: new Date().toISOString(),
+				latency_ms: Math.max(...results.map((result) => result.latency_ms)),
+				error_message: firstFailure?.error,
 			});
 		}
 		const healthyEndpoints = results.filter((result) => result.status === "healthy");

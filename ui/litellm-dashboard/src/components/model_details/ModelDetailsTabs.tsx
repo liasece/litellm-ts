@@ -32,15 +32,15 @@ interface ModelDetailsTabsProps {
 export default function ModelDetailsTabs(props: ModelDetailsTabsProps) {
 	return (
 		<TabGroup>
-			<TabList className="mb-6">
+			<TabList className="mb-3">
 				<Tab>Overview</Tab>
 				<Tab>Raw JSON</Tab>
 			</TabList>
 			<TabPanels>
 				<TabPanel>
 					<ModelOverview modelData={props.modelData} />
-					<Card>
-						<div className="mb-4 flex items-center justify-between">
+					<Card className="p-3">
+						<div className="mb-2 flex items-center justify-between">
 							<Title>Model Settings</Title>
 							{props.isAutoRouter && props.canEditModel && (
 								<Button onClick={props.onEditAutoRouter} className="flex items-center">
@@ -92,10 +92,13 @@ export default function ModelDetailsTabs(props: ModelDetailsTabsProps) {
 					)}
 				</TabPanel>
 				<TabPanel>
-					<Card>
-						<pre className="overflow-auto rounded bg-gray-100 p-4 text-xs">
-							{JSON.stringify(props.modelData, null, 2)}
-						</pre>
+					<Card className="p-3">
+						<details>
+							<summary className="cursor-pointer text-sm font-medium text-gray-600">Expand complete model JSON</summary>
+							<pre className="mt-2 max-h-[70vh] overflow-auto rounded bg-gray-100 p-3 text-xs">
+								{JSON.stringify(props.modelData, null, 2)}
+							</pre>
+						</details>
 					</Card>
 				</TabPanel>
 			</TabPanels>

@@ -98,7 +98,7 @@ describe("EditCredentialModal", () => {
 		expect(screen.getByLabelText("Provider:")).toBeInTheDocument();
 	});
 
-	it("does not place an existing secret in the DOM and preserves it when the password field is blank", async () => {
+	it("places existing values in the edit form and preserves untouched fields", async () => {
 		const queryClient = createQueryClient();
 		const onUpdateCredential = vi.fn();
 
@@ -115,7 +115,8 @@ describe("EditCredentialModal", () => {
 		);
 
 		await waitFor(() => expect(screen.getByLabelText("OpenAI API Key")).toBeInTheDocument());
-		expect(screen.queryByDisplayValue("test-api-key")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("OpenAI API Key")).toHaveValue("test-api-key");
+		expect(screen.getByLabelText("API Base")).toHaveValue("https://api.test.com");
 
 		fireEvent.click(screen.getByRole("button", { name: "Update Credential" }));
 		await waitFor(() => expect(onUpdateCredential).toHaveBeenCalled());
@@ -123,7 +124,7 @@ describe("EditCredentialModal", () => {
 		expect(onUpdateCredential.mock.calls[0][0]).not.toHaveProperty("api_base");
 	});
 
-	it("does not place a fixed mask in a non-secret-named field or submit it", async () => {
+	it("echoes every value returned by the management API", async () => {
 		const queryClient = createQueryClient();
 		const onUpdateCredential = vi.fn();
 		const maskedCredential: CredentialItem = {
@@ -144,8 +145,8 @@ describe("EditCredentialModal", () => {
 		);
 
 		await screen.findByLabelText("API Base");
-		expect(screen.queryByDisplayValue("****masked")).not.toBeInTheDocument();
-		expect(screen.getAllByPlaceholderText("Configured — leave blank to keep current value")).toHaveLength(2);
+		expect(screen.getByLabelText("OpenAI API Key")).toHaveValue("****last");
+		expect(screen.getByLabelText("API Base")).toHaveValue("****masked");
 		fireEvent.click(screen.getByRole("button", { name: "Update Credential" }));
 		await waitFor(() => expect(onUpdateCredential).toHaveBeenCalled());
 		expect(onUpdateCredential.mock.calls[0][0]).not.toHaveProperty("api_base");

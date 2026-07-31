@@ -1155,6 +1155,12 @@ function readEmbeddedUserSessionId(metadata: unknown): string | null {
 	return SESSION_UUID_PATTERN.test(normalized) ? normalized : null;
 }
 
+/** 读取 SpendTracker 已从 OpenAI/Codex client_metadata 提取的规范分组键。 */
+function readCanonicalSessionGroup(metadata: unknown): SessionGroupRef | null {
+	const parsed = parseSpendLogMetadata(metadata);
+	return parsePersistedSessionGroupKey(parsed?.session_group_key);
+}
+
 /**
  * 统一从原始/规范化 SpendLog 行派生 Session group。
  * @param row
@@ -1166,6 +1172,14 @@ function withSessionGroup(row: Record<string, unknown>): Record<string, unknown>
 			...row,
 			session_group_type: persistedGroup.type,
 			session_group_id: persistedGroup.id,
+		};
+	}
+	const canonicalGroup = readCanonicalSessionGroup(row.metadata);
+	if (canonicalGroup) {
+		return {
+			...row,
+			session_group_type: canonicalGroup.type,
+			session_group_id: canonicalGroup.id,
 		};
 	}
 	const claudeCodeUserId = readClaudeCodeUserId(row.metadata);

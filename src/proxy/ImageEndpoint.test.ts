@@ -16,7 +16,7 @@ describe("ImageController spend lifecycle", () => {
 		socket: { remoteAddress: "127.0.0.1" },
 	} as unknown as Request;
 	const router = {
-		completion: jest.fn(),
+		imageGeneration: jest.fn(),
 		getDeployments: () => [
 			{
 				model_name: "image-test-group",
@@ -31,7 +31,7 @@ describe("ImageController spend lifecycle", () => {
 	};
 
 	beforeEach(() => {
-		router.completion.mockReset();
+		router.imageGeneration.mockReset();
 		jest.spyOn(AuthChecks, "runCommonChecks").mockImplementation(() => undefined);
 		jest.spyOn(SpendTracker, "getOrCreateSpendRequestId").mockReturnValue("request-1");
 		jest.spyOn(SpendTracker, "buildSpendReservationScopes").mockReturnValue([]);
@@ -43,7 +43,7 @@ describe("ImageController spend lifecycle", () => {
 			actual: null,
 		});
 		jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "request-1", spend: 0 });
-		router.completion.mockResolvedValue({ usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
+		router.imageGeneration.mockResolvedValue({ usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
 	});
 
 	afterEach(() => jest.restoreAllMocks());
@@ -64,14 +64,14 @@ describe("ImageController spend lifecycle", () => {
 		await expect(
 			new ImageController(router as never, {} as never).generate({ model: "image-model", prompt: "draw" }, request),
 		).rejects.toBe(accountingError);
-		expect(router.completion).toHaveBeenCalledTimes(1);
+		expect(router.imageGeneration).toHaveBeenCalledTimes(1);
 		expect(SpendTracker.trackSpendLog).toHaveBeenCalledTimes(1);
 		expect(SpendTracker.trackSpendLog).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: "success" }));
 	});
 
 	it("provider 失败后 SpendLog 与 reservation release 的 503 均不覆盖原错误", async () => {
 		const providerError = Object.assign(new Error("provider failed"), { statusCode: 429 });
-		router.completion.mockRejectedValueOnce(providerError);
+		router.imageGeneration.mockRejectedValueOnce(providerError);
 		jest.spyOn(SpendTracker, "trackSpendLog").mockRejectedValueOnce(Object.assign(new Error("track unavailable"), { statusCode: 503 }));
 		jest.spyOn(SpendTracker, "releaseSpend").mockRejectedValueOnce(
 			Object.assign(new Error("release unavailable"), { statusCode: 503 }),
@@ -94,6 +94,6 @@ describe("ImageController spend lifecycle", () => {
 			new ImageController(router as never, {} as never).generate({ model: "image-model", prompt: "draw" }, request),
 		).rejects.toMatchObject({ statusCode: 503 });
 		expect(SpendTracker.reserveSpend).not.toHaveBeenCalled();
-		expect(router.completion).not.toHaveBeenCalled();
+		expect(router.imageGeneration).not.toHaveBeenCalled();
 	});
 });

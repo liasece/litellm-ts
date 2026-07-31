@@ -28,6 +28,7 @@ export enum LlmProviders {
 	MiMoGlobal = "mimo_global",
 	LLMux = "llmux",
 	VLLM = "vllm",
+	CLIProxy = "cliproxy",
 }
 
 /** Provider 请求封装 */
@@ -75,6 +76,15 @@ export interface ProviderConfig {
 	 * @param optionalParams - 额外可选参数
 	 */
 	transformEmbeddingRequest?(model: string, input: unknown, optionalParams: Record<string, unknown>): ProviderRequest;
+
+	/**
+	 * 将标准图片生成请求转换为 Provider 的正式请求格式。
+	 * 未实现此能力的 Provider 不支持常规 LiteLLM 图片生成链路。
+	 * @param model - 模型名称
+	 * @param prompt - 图片提示词
+	 * @param optionalParams - 图片生成参数
+	 */
+	transformImageRequest?(model: string, prompt: string, optionalParams: Record<string, unknown>): ProviderRequest;
 
 	/**
 	 * 将 Provider 原始响应转换为标准 ModelResponse

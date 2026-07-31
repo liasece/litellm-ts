@@ -12,6 +12,7 @@ import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
 import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendLifecycle } from "../spend/SpendReservation";
 import {
 	buildSpendLogFromRequest,
@@ -235,6 +236,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 						usage: usage,
 						spendInfo: spendInfo,
 						status: SpendLogStatus.Success,
+						...getResultModelResolutionMetadata(result),
 					}),
 				);
 				return response;
@@ -672,6 +674,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				usage: state.usage as unknown as Record<string, unknown> | undefined,
 				spendInfo: spendInfo,
 				status: SpendLogStatus.Success,
+				...getResultModelResolutionMetadata(streamResult),
 			}),
 		);
 	} catch (error) {
@@ -993,6 +996,9 @@ async function recordSpend(
 		response?: unknown;
 		usage?: Record<string, unknown>;
 		spendInfo?: DeploymentSpendInfo;
+		fallbackModels?: string[];
+		modelResolutionChain?: import("../router/ModelResolutionTrace").ModelResolutionChainEntry[];
+		attemptedRetries?: number;
 		error?: unknown;
 		status: SpendLogStatus;
 	},
@@ -1022,6 +1028,9 @@ async function recordSpend(
 				usage: context.usage,
 				error: context.error,
 				status: context.status,
+				fallbackModels: context.fallbackModels,
+				modelResolutionChain: context.modelResolutionChain,
+				attemptedRetries: context.attemptedRetries,
 			}),
 		);
 	} catch (accountingError) {

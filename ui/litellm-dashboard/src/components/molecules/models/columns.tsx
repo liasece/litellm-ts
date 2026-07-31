@@ -1,4 +1,4 @@
-import { EditOutlined, InfoCircleOutlined, SyncOutlined } from "@ant-design/icons";
+import { CopyOutlined, EditOutlined, InfoCircleOutlined, SyncOutlined } from "@ant-design/icons";
 import { TrashIcon } from "@heroicons/react/outline";
 import { ColumnDef } from "@tanstack/react-table";
 import { Badge, Button, Icon } from "@tremor/react";
@@ -6,6 +6,7 @@ import { Divider, Flex, Popover, Space, Tooltip, Typography } from "antd";
 import { ModelData } from "../../model_dashboard/types";
 import { DeploymentHealthStatus } from "../../model_dashboard/useDeploymentHealth";
 import { ProviderLogo } from "./ProviderLogo";
+import { copyToClipboard } from "@/utils/dataUtils";
 
 const { Text, Title } = Typography;
 
@@ -147,10 +148,29 @@ export const columns = (
 							)}
 						</div>
 
-						<div className="flex flex-col min-w-0 flex-1">
-							<Text ellipsis className="text-gray-900" style={{ fontSize: 12, fontWeight: 500, lineHeight: "16px" }}>
-								{displayName}
-							</Text>
+						<div className="flex min-w-0 flex-1 flex-col">
+							<div className="flex min-w-0 items-center gap-1">
+								<Text
+									ellipsis
+									className="min-w-0 flex-1 text-gray-900"
+									style={{ fontSize: 12, fontWeight: 500, lineHeight: "16px" }}
+								>
+									{displayName}
+								</Text>
+								<Tooltip title="Copy model name">
+									<button
+										type="button"
+										aria-label={`Copy model name ${displayName}`}
+										className="shrink-0 text-gray-400 hover:text-blue-600"
+										onClick={(event) => {
+											event.stopPropagation();
+											void copyToClipboard(displayName);
+										}}
+									>
+										<CopyOutlined style={{ fontSize: 12 }} />
+									</button>
+								</Tooltip>
+							</div>
 							<Text ellipsis type="secondary" style={{ fontSize: 12, lineHeight: "16px", marginTop: 2 }}>
 								{model.litellm_model_name || "-"}
 							</Text>

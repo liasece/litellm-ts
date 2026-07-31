@@ -47,9 +47,9 @@ export default function ModelBasicSettings({ editing, modelData, modelAccessGrou
 					</Form.Item>
 				}
 			>
-				{litellmParams.input_cost_per_token
+				{litellmParams.input_cost_per_token != null
 					? (litellmParams.input_cost_per_token * 1_000_000).toFixed(4)
-					: modelInfo.input_cost_per_token
+					: modelInfo.input_cost_per_token != null
 						? (modelInfo.input_cost_per_token * 1_000_000).toFixed(4)
 						: "Not Set"}
 			</ModelSettingField>
@@ -62,9 +62,9 @@ export default function ModelBasicSettings({ editing, modelData, modelAccessGrou
 					</Form.Item>
 				}
 			>
-				{litellmParams.output_cost_per_token
+				{litellmParams.output_cost_per_token != null
 					? (litellmParams.output_cost_per_token * 1_000_000).toFixed(4)
-					: modelInfo.output_cost_per_token
+					: modelInfo.output_cost_per_token != null
 						? (modelInfo.output_cost_per_token * 1_000_000).toFixed(4)
 						: "Not Set"}
 			</ModelSettingField>
@@ -159,6 +159,7 @@ export default function ModelBasicSettings({ editing, modelData, modelAccessGrou
 			<ModelSettingField
 				label="Model Access Groups"
 				editing={editing}
+				fullWidth
 				editor={
 					<Form.Item name="model_access_group" className="mb-0">
 						<Select

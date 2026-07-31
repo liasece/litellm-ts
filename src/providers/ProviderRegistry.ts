@@ -13,6 +13,7 @@ import { LLMuxProvider } from "./LLMuxProvider";
 import { MiMoProvider } from "./MiMoProvider";
 import { MiMoOpenAIProvider } from "./MiMoOpenAIProvider";
 import { OpenAICompatProvider } from "./OpenAICompatProvider";
+import { CliProxyProvider } from "./CliProxyProvider";
 
 /** 默认 API Base 映射 */
 const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
@@ -25,6 +26,7 @@ const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
 	[LlmProviders.MiMoGlobal]: "https://api.xiaomimimo.com/v1",
 	[LlmProviders.LLMux]: "http://192.168.1.220:18182",
 	[LlmProviders.VLLM]: "http://localhost:8000/v1",
+	[LlmProviders.CLIProxy]: "http://127.0.0.1:8317",
 };
 
 /**
@@ -169,6 +171,11 @@ export class ProviderRegistry {
 				return new LLMuxProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.LLMux]);
 			case LlmProviders.VLLM:
 				return new OpenAICompatProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.VLLM]!);
+			case LlmProviders.CLIProxy:
+				return new CliProxyProvider(
+					effectiveApiKey || process.env["CLIPROXY_INTERNAL_API_KEY"] || "",
+					dynamicApiBase ?? process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? DEFAULT_API_BASES[LlmProviders.CLIProxy]!,
+				);
 			default:
 				return null;
 		}

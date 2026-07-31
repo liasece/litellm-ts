@@ -17,7 +17,6 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
 import { createModuleLogger } from "../core/utils/logger";
 import { PROXY_ADMIN_USER_ID } from "../types/webUiSession";
-import { sanitizeSensitiveValues } from "../core/api/sanitizeSensitiveValues";
 
 const logger = createModuleLogger("Management:Model");
 
@@ -29,13 +28,32 @@ const LITELLM_PARAMS_DEFAULTS: Readonly<Record<string, boolean>> = {
 	use_in_pass_through: false,
 	merge_reasoning_content_in_choices: false,
 };
+const MANAGED_CLIPROXY_CONNECTION_FIELDS = ["litellm_credential_name", "credential_name", "api_base", "api_key"] as const;
+
+/**
+ * The built-in CLIProxy provider owns its loopback endpoint and internal key.
+ * Deployment-level credentials must never override or depend on that boundary.
+ */
+function normalizeManagedProviderParams(params: Record<string, unknown>): Record<string, unknown> {
+	const output = { ...params };
+	const model = output["model"];
+	const isCliProxy =
+		output["custom_llm_provider"] === "cliproxy" || (typeof model === "string" && model.startsWith("cliproxy/"));
+	if (isCliProxy) {
+		output["custom_llm_provider"] = "cliproxy";
+		for (const field of MANAGED_CLIPROXY_CONNECTION_FIELDS) {
+			delete output[field];
+		}
+	}
+	return output;
+}
 
 /**
  * 补齐 litellm_params 的 Python pydantic 缺省字段（仅在缺省时填充 false）。
  * @param params - 请求/合并后的 litellm_params
  */
 function withLitellmParamsDefaults(params: Record<string, unknown>): Record<string, unknown> {
-	const output = { ...params };
+	const output = normalizeManagedProviderParams(params);
 	for (const [name, defaultValue] of Object.entries(LITELLM_PARAMS_DEFAULTS)) {
 		if (output[name] === undefined || output[name] === null) {
 			output[name] = defaultValue;
@@ -52,8 +70,8 @@ function toPythonProxyModelRow(row: ProxyModelRow): Record<string, unknown> {
 	return {
 		model_id: row.model_id,
 		model_name: row.model_name,
-		litellm_params: sanitizeSensitiveValues(row.litellm_params),
-		model_info: sanitizeSensitiveValues(row.model_info),
+		litellm_params: structuredClone(row.litellm_params),
+		model_info: structuredClone(row.model_info),
 		created_at: row.created_at,
 		created_by: row.created_by,
 		updated_at: row.updated_at,

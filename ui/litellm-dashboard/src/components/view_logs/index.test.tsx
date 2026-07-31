@@ -7,17 +7,22 @@ import { uiSpendLogsCall } from "../networking";
 import type { ColumnDef, Row } from "@tanstack/react-table";
 import type { Team } from "../key_team_helpers/key_list";
 import { renderWithProviders } from "../../../tests/test-utils";
+import { useLogFilterLogic } from "./log_filter_logic";
 
 const mockHandleFilterResetFromHook = vi.fn();
+const mockRefetchFilteredLogs = vi.fn().mockResolvedValue(undefined);
 let mockFilters: Record<string, string> = {};
 let mockFilteredLogs = { data: [] as LogEntry[], total: 0, page: 1, page_size: 50, total_pages: 1 };
+let mockHasBackendFilters = false;
 vi.mock("./log_filter_logic", () => ({
 	useLogFilterLogic: vi.fn(() => ({
 		filters: mockFilters,
 		filteredLogs: mockFilteredLogs,
+		hasBackendFilters: mockHasBackendFilters,
 		allTeams: [],
 		handleFilterChange: vi.fn(),
 		handleFilterReset: mockHandleFilterResetFromHook,
+		refetchFilteredLogs: mockRefetchFilteredLogs,
 	})),
 }));
 
@@ -341,7 +346,7 @@ describe("Logs columns", () => {
 		expect(document.querySelector("img")).toBeInTheDocument();
 
 		await user.hover(displayModel);
-		expect(await screen.findByText("OpenAI/gpt-4o")).toBeInTheDocument();
+		expect(await screen.findByText("Executed · OpenAI/gpt-4o")).toBeInTheDocument();
 	});
 
 	it("shows alias resolution in the model tooltip without increasing fallback count", async () => {
@@ -365,7 +370,10 @@ describe("Logs columns", () => {
 		expect(screen.getByText("(1)")).toBeInTheDocument();
 		const displayModel = screen.getByText("alias-a");
 		await user.hover(displayModel);
-		expect(await screen.findByText(/Request: alias-a → alias-b → model-a/)).toBeInTheDocument();
+		// tooltip 现在按 hop 分行为展示 alias 解析路径
+		expect(await screen.findByText("Request · alias-a")).toBeInTheDocument();
+		expect(await screen.findByText("Alias · alias-a → alias-b")).toBeInTheDocument();
+		expect(await screen.findByText("Alias · alias-b → model-a")).toBeInTheDocument();
 	});
 
 	it("does not remove a non-matching or nested gateway prefix", () => {
@@ -604,10 +612,12 @@ describe("SpendLogsTable", () => {
 		vi.clearAllMocks();
 		mockFilters = {};
 		mockFilteredLogs = { data: [], total: 0, page: 1, page_size: 50, total_pages: 1 };
+		mockHasBackendFilters = false;
 		mockDrawerProps.current = null;
 		mockSimulationDrawerProps.current = null;
 		// Clear persisted Live Tail state from previous tests.
 		sessionStorage.clear();
+		window.history.replaceState({}, "", "/ui/?page=logs");
 	});
 
 	it("Live Tail 默认每 2 秒刷新，并提供全部刷新间隔", async () => {
@@ -866,6 +876,41 @@ describe("SpendLogsTable", () => {
 			const inputsAfterReset = document.querySelectorAll('input[type="datetime-local"]');
 			expect(inputsAfterReset.length).toBe(0);
 		});
+	});
+
+	it("Fetch refreshes the backend-filtered data source when backend filters are active", async () => {
+		const user = userEvent.setup();
+		mockHasBackendFilters = true;
+		mockFilters = { "Key Alias": "active-alias" };
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		await user.click(screen.getByTitle("Fetch data"));
+
+		await waitFor(() => expect(mockRefetchFilteredLogs).toHaveBeenCalledTimes(1));
+	});
+
+	it("restores URL filters and view state when the page is refreshed", () => {
+		window.history.replaceState(
+			{},
+			"",
+			"/ui/?page=logs&key_alias=restored-alias&status_filter=failure&logs_page=3&logs_page_size=500&logs_sort_by=spend&logs_sort_order=asc",
+		);
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		expect(vi.mocked(useLogFilterLogic)).toHaveBeenCalledWith(
+			expect.objectContaining({
+				currentPage: 3,
+				pageSize: 500,
+				sortBy: "spend",
+				sortOrder: "asc",
+				initialFilters: expect.objectContaining({
+					"Key Alias": "restored-alias",
+					Status: "failure",
+				}),
+			}),
+		);
+		expect(screen.getByRole("combobox", { name: "Logs per page" })).toHaveValue("500");
 	});
 
 	it("offers supported page sizes and resets to page 1 when the size changes", async () => {

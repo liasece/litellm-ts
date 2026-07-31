@@ -880,6 +880,34 @@ describe("SpendTracker API key sanitization", () => {
 		expect(stringify(sanitizedPayload)).not.toContain(rawApiKey);
 	});
 
+	it("图片生成响应保留超过普通文本上限的完整 base64", async () => {
+		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";
+		const imageBase64 = "A".repeat(32769);
+		try {
+			const spendLog = await buildSpendLogFromRequest({
+				auth: { api_key: rawApiKey },
+				callType: CallType.AImageGeneration,
+				endTime: new Date("2026-01-01T00:00:01.000Z"),
+				messages: "生成图片",
+				model: "gpt-image-2",
+				req: createRequest(),
+				requestId: "req-image-base64",
+				response: { data: [{ b64_json: imageBase64 }] },
+				startTime: new Date("2026-01-01T00:00:00.000Z"),
+			});
+
+			expect((spendLog.response as { data: Array<{ b64_json: string }> }).data[0]?.b64_json).toBe(imageBase64);
+			expect(stringify(sanitizeSpendLogPayload({ text: imageBase64 }))).toContain("litellm_truncated");
+		} finally {
+			if (previousStorePrompts === undefined) {
+				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+			} else {
+				process.env.STORE_PROMPTS_IN_SPEND_LOGS = previousStorePrompts;
+			}
+		}
+	});
+
 	it("trackSpendLog 写入 insertData 时 api_key、metadata、proxy_server_request 不含明文 key", async () => {
 		const insertedSpendLogs: Record<string, unknown>[] = [];
 		const mockDb = createMockDb(insertedSpendLogs);
@@ -1131,6 +1159,10 @@ describe("reconstructModelName（PY litellm_core_utils/core_helpers.py:195）", 
 		expect(reconstructModelName("glm", "anthropic", "anthropic/glm-4.7")).toBe("anthropic/glm-4.7");
 	});
 
+	it("fallback 后使用无 provider 前缀的实际 deployment model", () => {
+		expect(reconstructModelName("qwen3.6-27b", "anthropic", "MiniMax-M2.7", true)).toBe("MiniMax-M2.7");
+	});
+
 	it("bedrock provider 且 model 无前缀时补 bedrock/ 前缀", () => {
 		expect(reconstructModelName("claude-3", "bedrock", undefined)).toBe("bedrock/claude-3");
 	});
@@ -1201,6 +1233,50 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		// A4: cache_key 管道就位（TS 无响应缓存子系统）
 		expect(spendLog.cache_key).toBeUndefined();
 		expect(spendLog.cache_hit).toBe(false);
+	});
+
+	it("fallback 到无 provider 前缀 deployment 时，model 用最终模型且 model_group 保留原请求", async () => {
+		const spendLog = await buildSpendLogFromRequest({
+			callType: CallType.AMessages,
+			endTime: new Date("2026-07-31T00:00:01.000Z"),
+			model: "qwen3.6-27b",
+			modelGroup: "qwen3.6-27b",
+			deploymentModel: "MiniMax-M2.7",
+			customLlmProvider: "anthropic",
+			attemptedRetries: 1,
+			fallbackModels: ["qwen3.6-27b", "MiniMax-M2.7"],
+			req: createMinimalRequest(),
+			startTime: new Date("2026-07-31T00:00:00.000Z"),
+			usage: { input_tokens: 541, output_tokens: 253 },
+		});
+
+		expect(spendLog.model).toBe("MiniMax-M2.7");
+		expect(spendLog.model_group).toBe("qwen3.6-27b");
+		expect(spendLog.metadata?.fallback_models).toEqual(["qwen3.6-27b", "MiniMax-M2.7"]);
+	});
+
+	it("从 OpenAI Responses client_metadata 提取稳定 Codex 任务分组键", async () => {
+		const threadId = "019fa826-205c-7350-9e17-7e76ce77ce43";
+		const request = createMinimalRequest();
+		request.body = {
+			model: "gpt-5.6-sol",
+			client_metadata: {
+				thread_id: `  ${threadId}  `,
+				session_id: "11111111-1111-4111-8111-111111111111",
+			},
+			prompt_cache_key: "22222222-2222-4222-8222-222222222222",
+		};
+
+		const spendLog = await buildSpendLogFromRequest({
+			callType: CallType.ACompletion,
+			endTime: new Date("2026-07-30T15:23:29.000Z"),
+			model: "gpt-5.6-sol",
+			req: request,
+			startTime: new Date("2026-07-30T15:23:16.000Z"),
+		});
+
+		expect(spendLog.metadata?.session_group_key).toBe(`s:${threadId}`);
+		expect(spendLog.session_id).not.toBe(threadId);
 	});
 
 	it("规范化并防御性复制 model_resolution_chain，与 fallback_models 语义分离", async () => {

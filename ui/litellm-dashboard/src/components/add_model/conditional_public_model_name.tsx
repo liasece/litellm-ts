@@ -4,6 +4,12 @@ import { TextInput } from "@tremor/react";
 import { Tooltip } from "../atoms/index";
 import { Providers } from "../provider_info_helpers";
 
+function toProviderModelName(model: string, provider: Providers): string {
+	if (provider === Providers.Azure) return `azure/${model}`;
+	if (provider === Providers.CLIProxy) return `cliproxy/${model}`;
+	return model;
+}
+
 const ConditionalPublicModelName: React.FC = () => {
 	const form = Form.useFormInstance();
 	const [tableKey, setTableKey] = useState(0); // Add a key to force table re-render
@@ -23,15 +29,9 @@ const ConditionalPublicModelName: React.FC = () => {
 			const currentMappings = form.getFieldValue("model_mappings") || [];
 			const updatedMappings = currentMappings.map((mapping: any) => {
 				if (mapping.public_name === "custom" || mapping.litellm_model === "custom") {
-					if (selectedProvider === Providers.Azure) {
-						return {
-							public_name: customModelName,
-							litellm_model: `azure/${customModelName}`,
-						};
-					}
 					return {
 						public_name: customModelName,
-						litellm_model: customModelName,
+						litellm_model: toProviderModelName(customModelName, selectedProvider),
 					};
 				}
 				return mapping;
@@ -58,6 +58,9 @@ const ConditionalPublicModelName: React.FC = () => {
 						if (selectedProvider === Providers.Azure) {
 							return mapping.litellm_model === `azure/${model}`;
 						}
+						if (selectedProvider === Providers.CLIProxy) {
+							return mapping.litellm_model === `cliproxy/${model}`;
+						}
 						return mapping.litellm_model === model;
 					}),
 				);
@@ -65,26 +68,14 @@ const ConditionalPublicModelName: React.FC = () => {
 			if (shouldUpdateMappings) {
 				const mappings = selectedModels.map((model: string) => {
 					if (model === "custom" && customModelName) {
-						if (selectedProvider === Providers.Azure) {
-							return {
-								public_name: customModelName,
-								litellm_model: `azure/${customModelName}`,
-							};
-						}
 						return {
 							public_name: customModelName,
-							litellm_model: customModelName,
-						};
-					}
-					if (selectedProvider === Providers.Azure) {
-						return {
-							public_name: model,
-							litellm_model: `azure/${model}`,
+							litellm_model: toProviderModelName(customModelName, selectedProvider),
 						};
 					}
 					return {
 						public_name: model,
-						litellm_model: model,
+						litellm_model: toProviderModelName(model, selectedProvider),
 					};
 				});
 

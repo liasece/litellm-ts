@@ -1049,6 +1049,34 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(groupCall?.whereSql).toContain(`s:${embeddedSessionId}`);
 			});
 
+			it("Codex 规范分组键优先于请求级顶层 session_id", async () => {
+				const threadId = "019fa826-205c-7350-9e17-7e76ce77ce43";
+				const row = {
+					...SAMPLE_UI_ROW,
+					session_id: "781f34ac-e9b5-4e07-b55a-ecebae9b2668",
+					session_group_key: undefined,
+					session_group_type: undefined,
+					session_group_id: undefined,
+					metadata: { session_group_key: `s:${threadId}` },
+				};
+				const { db, calls } = makeMockDb({
+					responses: [[{ count: 1 }], [row], [{ session_group_key: `s:${threadId}`, total: 18 }]],
+				});
+
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.data[0]).toMatchObject({
+					session_group_type: "session_id",
+					session_group_id: threadId,
+					session_total_count: 18,
+				});
+				const groupCall = calls.find((call) => call.projection.includes("session_group_key") && call.groupByCols.length > 0);
+				expect(groupCall?.whereSql).toContain(`s:${threadId}`);
+			});
+
 			it.each(["user_device_account_account_session_not-a-uuid", `${CLAUDE_CODE_USER_ID}_suffix`, "ordinary-user-id"])(
 				"非法 Claude Code user ID %s 回退顶层 session",
 				async (userId) => {

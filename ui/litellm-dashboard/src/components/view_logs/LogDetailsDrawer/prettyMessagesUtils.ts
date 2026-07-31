@@ -76,6 +76,50 @@ const toolCallPart = (
 	};
 };
 
+const imageMimeType = (value: any): string => {
+	if (typeof value !== "string") return "image/png";
+	const normalized = value.trim().toLowerCase();
+	if (normalized.startsWith("image/")) return normalized;
+	if (normalized === "jpg" || normalized === "jpeg") return "image/jpeg";
+	if (normalized === "webp") return "image/webp";
+	if (normalized === "gif") return "image/gif";
+	return "image/png";
+};
+
+const imageSource = (value: any, mimeType: string, base64 = false): string | undefined => {
+	if (typeof value !== "string" || !value.trim()) return undefined;
+	const source = value.trim();
+	if (source.includes("litellm_truncated")) return undefined;
+	if (/^(?:data:image\/|https?:\/\/)/i.test(source)) return source;
+	return base64 ? `data:${mimeType};base64,${source}` : undefined;
+};
+
+const generatedImagePart = (value: any, outputFormat?: any, sourceType = "image_generation"): MessagePart | null => {
+	const image = asRecord(value);
+	if (!image) return null;
+	const mimeType = imageMimeType(image.mime_type ?? image.mimeType ?? outputFormat);
+	const encodedImage = image.b64_json ?? image.result;
+	const wasTruncated = typeof encodedImage === "string" && encodedImage.includes("litellm_truncated");
+	const source =
+		imageSource(image.b64_json, mimeType, true) ??
+		imageSource(image.result, mimeType, true) ??
+		imageSource(image.image_url?.url ?? image.image_url ?? image.url, mimeType);
+	if (!source && !wasTruncated) return null;
+	return {
+		kind: "image",
+		label: "Generated image",
+		sourceType,
+		id: typeof image.id === "string" ? image.id : undefined,
+		status: typeof image.status === "string" ? image.status : undefined,
+		text: wasTruncated
+			? "图片数据在日志入库时被截断，无法显示。"
+			: typeof image.revised_prompt === "string"
+				? image.revised_prompt
+				: undefined,
+		data: source ? { src: source, mimeType } : { truncated: true },
+	};
+};
+
 const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolCall } => {
 	if (typeof rawBlock === "string") {
 		return { part: { kind: "text", label: "Text", text: rawBlock } };
@@ -133,12 +177,15 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 	}
 	if (block.inlineData || block.inline_data || block.fileData || block.file_data) {
 		const media = block.inlineData || block.inline_data || block.fileData || block.file_data;
+		const mimeType = imageMimeType(media?.mimeType ?? media?.mime_type);
+		const source = imageSource(media?.data, mimeType, true) ?? imageSource(media?.fileUri ?? media?.file_uri, mimeType);
 		return {
 			part: {
 				kind: "image",
 				label: "Media",
 				sourceType: block.inlineData || block.inline_data ? "inlineData" : "fileData",
 				text: media?.mimeType || media?.mime_type || media?.fileUri || media?.file_uri || "Attached media",
+				data: source ? { src: source, mimeType } : undefined,
 			},
 		};
 	}
@@ -273,13 +320,20 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 			},
 		};
 	}
+	if (type === "image_generation_call") {
+		const generated = generatedImagePart(block, block.output_format, type);
+		if (generated) return { part: generated };
+	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
+		const mimeType = imageMimeType(block.mime_type ?? block.mimeType);
+		const source = imageSource(block.image_url?.url ?? block.image_url ?? block.url, mimeType);
 		return {
 			part: {
 				kind: "image",
 				label: "Image",
 				sourceType: type,
 				text: valueToText(block.image_url?.url ?? block.image_url ?? block.file_id ?? block.url ?? "Attached image"),
+				data: source ? { src: source, mimeType } : undefined,
 			},
 		};
 	}
@@ -315,7 +369,9 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 const contentFromParts = (parts: MessagePart[]): string =>
 	parts
 		.map((part) => {
-			if (part.kind === "text" || part.kind === "tool_result" || part.kind === "refusal") return part.text || "";
+			if (part.kind === "text" || part.kind === "tool_result" || part.kind === "image" || part.kind === "refusal") {
+				return part.text || "";
+			}
 			if (part.kind === "thinking") return `[Thinking]\n${part.text || ""}`.trim();
 			if (part.kind === "redacted_thinking") return "[Redacted thinking]";
 			if (part.kind === "unknown") {
@@ -400,6 +456,9 @@ const parseRequestMessage = (message: any): ParsedMessage => {
 };
 
 const requestMessagesFrom = (request: any): ParsedMessage[] => {
+	if (typeof request === "string") {
+		return request.trim() ? [parseRequestMessage({ role: "user", content: request })] : [];
+	}
 	const body = asRecord(request?.body) || asRecord(request) || {};
 	const messages = Array.isArray(body.messages)
 		? body.messages
@@ -453,6 +512,11 @@ const responseFromParts = (parts: MessagePart[], role: any = "assistant"): Parse
 export const parseMessages = (request: any, response: any): ParsedMessages => {
 	const requestMessages = requestMessagesFrom(request);
 	let responseMessage: ParsedMessage | null = null;
+	const generatedImageParts = Array.isArray(response?.data)
+		? response.data
+				.map((item: any) => generatedImagePart(item, response.output_format))
+				.filter((part: MessagePart | null): part is MessagePart => part !== null)
+		: [];
 	const responseMsg = response?.choices?.[0]?.message;
 
 	if (responseMsg) {
@@ -496,6 +560,8 @@ export const parseMessages = (request: any, response: any): ParsedMessages => {
 			return [parseContentBlock(item).part];
 		});
 		responseMessage = responseFromParts(parts);
+	} else if (generatedImageParts.length) {
+		responseMessage = responseFromParts(generatedImageParts);
 	} else if (Array.isArray(response?.candidates) && response.candidates[0]?.content) {
 		const candidate = response.candidates[0].content;
 		const parsed = parseContent(candidate.parts || candidate.content || []);

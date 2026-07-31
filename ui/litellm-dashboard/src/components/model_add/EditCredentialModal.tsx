@@ -73,23 +73,10 @@ export default function EditCredentialsModal({
 
 	useEffect(() => {
 		if (existingCredential) {
-			// A GET response is masked, but secrets must never enter the editable form or DOM.
-			const credentialValues = Object.entries(existingCredential.credential_values ?? {}).reduce<
-				Record<string, unknown>
-			>((acc, [key, value]) => {
-				if (
-					!/(?:key|token|secret|credential|password)/i.test(key) &&
-					!(typeof value === "string" && value.startsWith("****"))
-				) {
-					acc[key] = value ?? null;
-				}
-				return acc;
-			}, {});
-
 			form.setFieldsValue({
 				credential_name: existingCredential.credential_name,
 				custom_llm_provider: existingCredential.credential_info.custom_llm_provider,
-				...credentialValues,
+				...existingCredential.credential_values,
 			});
 			setSelectedProvider(existingCredential.credential_info.custom_llm_provider as Providers);
 		}

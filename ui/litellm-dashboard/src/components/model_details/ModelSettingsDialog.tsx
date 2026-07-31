@@ -37,7 +37,7 @@ function getInitialValues(modelData: any, isWildcardModel: boolean) {
 		tags: Array.isArray(litellmParams.tags) ? litellmParams.tags : [],
 		health_check_model: isWildcardModel ? modelInfo.health_check_model : null,
 		litellm_credential_name: litellmParams.litellm_credential_name || "",
-		api_key: "",
+		api_key: litellmParams.api_key ?? "",
 		delete_api_key: false,
 		model_info: JSON.stringify(modelInfo, null, 2),
 		litellm_extra_params: JSON.stringify(

@@ -38,7 +38,7 @@ jest.mock("drizzle-orm/node-postgres/migrator", () => ({ migrate: jest.fn() }));
 jest.mock("../core/db/SchemaPreflight", () => ({ runSchemaPreflight: jest.fn().mockResolvedValue(undefined) }));
 
 function buildApp(
-	router?: Pick<Router, "getDeployments" | "probeDeployment">,
+	router?: Pick<Router, "getDeployments" | "probeDeployment"> & Partial<Pick<Router, "getDeploymentIdsForModel">>,
 	requireAuth = false,
 	database?: ReadinessDatabase,
 ): express.Express {
@@ -106,6 +106,38 @@ describe("Health 端点契约", () => {
 				status: "unhealthy",
 				error_message: "Provider returned HTTP 401",
 			});
+		});
+
+		it("按逻辑模型或 alias 探测其解析到的全部 deployment 并记录聚合状态", async () => {
+			const getDeploymentIdsForModel = jest.fn().mockReturnValue(["deployment-1", "deployment-2"]);
+			const probeDeployment = jest
+				.fn()
+				.mockResolvedValueOnce(probeResult("deployment-1", "healthy"))
+				.mockResolvedValueOnce(probeResult("deployment-2", "unhealthy"));
+			const app = buildApp({
+				getDeployments: jest.fn().mockReturnValue([]),
+				getDeploymentIdsForModel,
+				probeDeployment,
+			});
+
+			const response = await request(app).get("/health?model=alias-a").expect(200);
+			expect(getDeploymentIdsForModel).toHaveBeenCalledWith("alias-a");
+			expect(response.body).toMatchObject({ healthy_count: 1, unhealthy_count: 1 });
+			const latest = await request(app).get("/health/latest").expect(200);
+			expect(latest.body.latest_health_checks["alias:alias-a"]).toMatchObject({
+				model_name: "alias-a",
+				status: "unhealthy",
+				error_message: "Provider returned HTTP 401",
+			});
+		});
+
+		it("不可达 alias 返回 404", async () => {
+			const app = buildApp({
+				getDeployments: jest.fn().mockReturnValue([]),
+				getDeploymentIdsForModel: jest.fn().mockReturnValue([]),
+				probeDeployment: jest.fn(),
+			});
+			await request(app).get("/health?model=missing-alias").expect(404);
 		});
 
 		it("无参 /health 覆盖全部 deployment、按最多 5 个并发探测并写入 latest snapshot", async () => {

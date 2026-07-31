@@ -6,8 +6,10 @@ import { columns } from "./columns";
 import { ModelData } from "../../model_dashboard/types";
 import { Table, TableHead, TableHeaderCell, TableBody, TableRow, TableCell } from "@tremor/react";
 import * as providerInfoHelpers from "../../provider_info_helpers";
+import * as dataUtils from "@/utils/dataUtils";
 
 vi.mock("../../provider_info_helpers");
+vi.mock("@/utils/dataUtils", () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }));
 
 vi.mock("@tremor/react", async (importOriginal) => {
 	const React = await import("react");
@@ -234,6 +236,25 @@ describe("columns", () => {
 
 		expect(screen.getByText("GPT-4")).toBeInTheDocument();
 		expect(screen.getByText("gpt-4")).toBeInTheDocument();
+	});
+
+	it("copies the public model name from the list", async () => {
+		const cols = columns(
+			defaultProps.userRole,
+			defaultProps.userID,
+			defaultProps.premiumUser,
+			defaultProps.setSelectedModelId,
+			defaultProps.setSelectedTeamId,
+			defaultProps.getDisplayModelName,
+			defaultProps.handleEditClick,
+			defaultProps.handleRefreshClick,
+			defaultProps.expandedRows,
+			defaultProps.setExpandedRows,
+		);
+		render(<TestTable data={[createMockModel({ model_name: "copy-me" })]} columns={cols} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Copy model name copy-me" }));
+		expect(dataUtils.copyToClipboard).toHaveBeenCalledWith("copy-me");
 	});
 
 	it("should display credential name when available", () => {

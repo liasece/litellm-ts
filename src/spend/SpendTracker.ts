@@ -347,6 +347,13 @@ export function getKeyColumn(dimension: string): string {
  */
 const MAX_STRING_LENGTH_PROMPT_IN_DB = Number(process.env.MAX_STRING_LENGTH_PROMPT_IN_DB ?? 32768) || 32768;
 
+/**
+ * 图片响应需要保留完整 base64 才能在 Logs 中重放。它们不适用普通 prompt
+ * 的 32KB 限制，但仍设置独立上限，避免异常 provider 响应无限放大单行 JSONB。
+ */
+const MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB =
+	Number(process.env.MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB ?? 20 * 1024 * 1024) || 20 * 1024 * 1024;
+
 /** PY LITELLM_TRUNCATION_DB_SAFEGUARD_NOTE 原文（litellm/constants.py:1246） */
 const TRUNCATION_DB_SAFEGUARD_NOTE =
 	"Truncation is a DB storage safeguard. " +
@@ -372,6 +379,22 @@ function containsPlaintextApiKey(value: string): boolean {
 	return /(^|\s|["'])Bearer\s+sk-[^\s"']+/.test(value) || /(^|\s|["'])sk-[A-Za-z0-9_-]+/.test(value);
 }
 
+/** 仅识别 provider 响应中的标准图片数据字段，其他长字符串继续执行普通截断。 */
+function isImageResponseString(fieldName: string, value: unknown, parent: Record<string, unknown>): boolean {
+	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) return false;
+	if (containsPlaintextApiKey(value)) return false;
+	if (fieldName === "b64_json") return true;
+	if (fieldName === "result" && parent["type"] === "image_generation_call") return true;
+	if (
+		fieldName === "data" &&
+		typeof (parent["mimeType"] ?? parent["mime_type"]) === "string" &&
+		String(parent["mimeType"] ?? parent["mime_type"]).startsWith("image/")
+	) {
+		return true;
+	}
+	return value.startsWith("data:image/");
+}
+
 /**
  * 递归清理 SpendLogs JSON 负载（对齐 PY _sanitize_request_body_for_spend_logs_payload）：
  * - 不做字段名黑名单（PY 无此逻辑——user_api_key_alias/total_tokens 等标识与数值字段均明文保留）
@@ -379,7 +402,7 @@ function containsPlaintextApiKey(value: string): boolean {
  * - 超长字符串截断：头 35% 尾 65% 保留（PY 同款，尾部通常是更重要的上下文）
  * @param value - 待写入 SpendLogs 的任意 JSON 值
  */
-export function sanitizeSpendLogPayload(value: unknown): unknown {
+function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: boolean): unknown {
 	if (value === null || value === undefined) {
 		return value;
 	}
@@ -396,17 +419,29 @@ export function sanitizeSpendLogPayload(value: unknown): unknown {
 		return value;
 	}
 	if (Array.isArray(value)) {
-		return value.map((arrayValue) => sanitizeSpendLogPayload(arrayValue));
+		return value.map((arrayValue) => sanitizeSpendLogPayloadValue(arrayValue, preserveImageStrings));
 	}
 	if (typeof value === "object") {
 		const sourceRecord = value as Record<string, unknown>;
 		const sanitizedRecord: Record<string, unknown> = {};
 		for (const [fieldName, fieldValue] of Object.entries(sourceRecord)) {
-			sanitizedRecord[fieldName] = sanitizeSpendLogPayload(fieldValue);
+			sanitizedRecord[fieldName] =
+				preserveImageStrings && isImageResponseString(fieldName, fieldValue, sourceRecord)
+					? fieldValue
+					: sanitizeSpendLogPayloadValue(fieldValue, preserveImageStrings);
 		}
 		return sanitizedRecord;
 	}
 	return value;
+}
+
+export function sanitizeSpendLogPayload(value: unknown): unknown {
+	return sanitizeSpendLogPayloadValue(value, false);
+}
+
+/** 清理响应负载，但为可重放的图片输出保留完整 base64。 */
+export function sanitizeSpendLogResponsePayload(value: unknown): unknown {
+	return sanitizeSpendLogPayloadValue(value, true);
 }
 
 /**
@@ -500,6 +535,33 @@ function getOrCreateSpendSessionId(req: Request): string {
 	return req.spendSessionId;
 }
 
+const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * OpenAI Responses/Codex 把稳定任务 ID 放在 client_metadata，而顶层
+ * SpendLog session_id 仍是请求级 UUID。这里仅提取合法 UUID，并保持
+ * thread_id > client session_id > prompt_cache_key 的优先级。
+ */
+function getCanonicalSessionGroupKey(req: Request): string | undefined {
+	const requestBody =
+		req.body !== null && typeof req.body === "object" && !Array.isArray(req.body)
+			? (req.body as Record<string, unknown>)
+			: undefined;
+	const clientMetadata =
+		requestBody?.client_metadata !== null &&
+		typeof requestBody?.client_metadata === "object" &&
+		!Array.isArray(requestBody.client_metadata)
+			? (requestBody.client_metadata as Record<string, unknown>)
+			: undefined;
+	const candidates = [clientMetadata?.thread_id, clientMetadata?.session_id, requestBody?.prompt_cache_key];
+	for (const candidate of candidates) {
+		if (typeof candidate !== "string") continue;
+		const normalized = candidate.trim();
+		if (SESSION_UUID_PATTERN.test(normalized)) return `s:${normalized}`;
+	}
+	return undefined;
+}
+
 /**
  * session_id 对齐 Python：trace_id > litellm_trace_id > UUID。
  * @param ctx - SpendLog 构建上下文
@@ -563,14 +625,22 @@ const BEDROCK_PROVIDER_NAME = "bedrock";
 /**
  * 重建 SpendLogs.model 列的完整模型名（对齐 PY reconstruct_model_name）：
  * - 实际执行 deployment 的 litellm_params.model 含 "/" → 用它（保留原始 provider 前缀）
+ * - 发生 fallback 时，即使 deployment model 不含 "/" 也必须用实际 deployment；
+ *   否则会把最终请求错误归因并计费到原始 model group
  * - 否则 bedrock provider 且 model 无前缀 → 补 "bedrock/" 前缀
  * - 其余原样返回请求 model
  * @param model - 客户端请求的逻辑模型名
  * @param customLlmProvider - 实际执行 deployment 的 provider
  * @param deploymentModel - 实际执行 deployment 的 litellm_params.model
+ * @param fallbackOccurred - 是否已经从原请求模型 fallback 到其他模型
  */
-export function reconstructModelName(model: string, customLlmProvider: string | undefined, deploymentModel: string | undefined): string {
-	if (deploymentModel && deploymentModel.includes("/")) {
+export function reconstructModelName(
+	model: string,
+	customLlmProvider: string | undefined,
+	deploymentModel: string | undefined,
+	fallbackOccurred = false,
+): string {
+	if (deploymentModel && (deploymentModel.includes("/") || fallbackOccurred)) {
 		return deploymentModel;
 	}
 	if (customLlmProvider === BEDROCK_PROVIDER_NAME && model.length > 0 && !model.includes("/")) {
@@ -618,6 +688,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 	const failureInformation = ctx.error ? getFailureErrorInformation(ctx.error) : undefined;
 	const requesterIpAddress = getRequesterIpAddress(ctx.req);
 	return {
+		session_group_key: getCanonicalSessionGroupKey(ctx.req),
 		user_api_key: getAuthApiKeyForSpendLog(ctx),
 		user_api_key_alias: auth?.key_alias,
 		user_api_key_team_id: auth?.team_id,
@@ -685,7 +756,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		completionStartTime: (ctx.completionStartTime ?? ctx.endTime).toISOString(),
 		// PY reconstruct_model_name：model 列记实际执行 deployment 的完整模型名
 		// （含 provider 前缀），无 deployment 信息时回退请求 model
-		model: reconstructModelName(ctx.model, ctx.customLlmProvider, ctx.deploymentModel),
+		model: reconstructModelName(ctx.model, ctx.customLlmProvider, ctx.deploymentModel, (ctx.attemptedRetries ?? 0) > 0),
 		model_group: ctx.modelGroup,
 		model_id: ctx.modelId,
 		custom_llm_provider: ctx.customLlmProvider,
@@ -699,7 +770,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		metadata: metadata as unknown as Record<string, unknown>,
 		requester_ip_address: metadata.requester_ip_address,
 		messages: shouldStoreBody ? sanitizeSpendLogPayload(ctx.messages) : {},
-		response: shouldStoreBody ? sanitizeSpendLogPayload(ctx.response) : {},
+		response: shouldStoreBody ? sanitizeSpendLogResponsePayload(ctx.response) : {},
 		// 顶层列存完整 proxy_server_request（含 body）；metadata 内恒 null（对齐 Python），
 		// 详情端点 /spend/logs/ui/:request_id 从本列读取。
 		proxy_server_request: await buildProxyServerRequest(ctx),

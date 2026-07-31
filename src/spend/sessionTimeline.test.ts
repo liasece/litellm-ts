@@ -19,6 +19,79 @@ function makeRow(overrides: Partial<SessionTimelineSourceRow>): SessionTimelineS
 }
 
 describe("SessionTimelineBuilder", () => {
+	it("将 Images API 的 base64 响应转换为可渲染的图片事件", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				call_type: "aimage_generation",
+				request_payload: "画一张世界杯主题海报",
+				response_payload: {
+					data: [
+						{
+							b64_json: "iVBORw0KGgoAAA",
+							revised_prompt: "A World Cup themed poster",
+						},
+					],
+					output_format: "png",
+				},
+			}),
+		);
+
+		const result = builder.build();
+		expect(result.data).toHaveLength(2);
+		expect(result.data[0]).toMatchObject({
+			role: "user",
+			content: "画一张世界杯主题海报",
+		});
+		expect(result.data[1]).toMatchObject({
+			role: "assistant",
+			content: "A World Cup themed poster",
+			parts: [
+				{
+					kind: "image",
+					label: "Generated image",
+					sourceType: "image_generation",
+					text: "A World Cup themed poster",
+					data: {
+						src: "data:image/png;base64,iVBORw0KGgoAAA",
+						mimeType: "image/png",
+					},
+				},
+			],
+		});
+	});
+
+	it("截断的历史图片显示说明而不是返回损坏的 data URI", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				call_type: "aimage_generation",
+				request_payload: "生成图片",
+				response_payload: {
+					data: [
+						{
+							b64_json:
+								"iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+						},
+					],
+					output_format: "png",
+				},
+			}),
+		);
+
+		expect(builder.build().data[1]).toMatchObject({
+			role: "assistant",
+			content: "图片数据在日志入库时被截断，无法显示。",
+			parts: [
+				{
+					kind: "image",
+					text: "图片数据在日志入库时被截断，无法显示。",
+					data: { truncated: true },
+				},
+			],
+		});
+	});
+
 	it("去掉累计请求快照中的历史消息，同时保留再次真实发送的相同文本", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(
@@ -159,6 +232,100 @@ describe("SessionTimelineBuilder", () => {
 		const toolEvent = result.data.find((item) => item.parts?.some((part) => part.kind === "tool_call"));
 		expect(toolEvent?.parts?.map((part) => part.kind)).toEqual(["tool_call", "tool_result"]);
 		expect(result.data.some((item) => item.role === "user" && item.content === "result")).toBe(false);
+	});
+
+	it("解析 OpenAI Responses 累计历史并归并工具输出", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_payload: [
+					{
+						type: "additional_tools",
+						role: "developer",
+						tools: [{ type: "custom", name: "exec" }],
+					},
+					{
+						type: "message",
+						role: "developer",
+						content: [{ type: "input_text", text: "系统规则" }],
+					},
+					{
+						type: "message",
+						role: "user",
+						content: [{ type: "input_text", text: "检查任务" }],
+					},
+					{
+						type: "reasoning",
+						summary: [{ type: "summary_text", text: "正在分析" }],
+					},
+					{
+						type: "custom_tool_call",
+						call_id: "call-exec",
+						name: "exec",
+						input: "git status",
+					},
+					{
+						type: "custom_tool_call_output",
+						call_id: "call-exec",
+						output: "工作区干净",
+					},
+					{
+						type: "message",
+						role: "assistant",
+						content: [{ type: "output_text", text: "继续等待测试" }],
+					},
+					{
+						type: "function_call",
+						call_id: "call-wait",
+						name: "wait",
+						arguments: '{"cell_id":"423"}',
+					},
+					{
+						type: "function_call_output",
+						call_id: "call-wait",
+						output: "测试完成",
+					},
+					{
+						type: "reasoning",
+						summary: [],
+						encrypted_content: "opaque",
+					},
+				],
+				response_payload: {
+					output: [
+						{
+							type: "message",
+							role: "assistant",
+							content: [{ type: "output_text", text: "全部完成" }],
+						},
+					],
+				},
+			}),
+		);
+
+		const result = builder.build();
+		expect(result.data.map((item) => [item.role, item.content])).toEqual([
+			["system", "系统规则"],
+			["user", "检查任务"],
+			["assistant", "正在分析"],
+			["assistant", ""],
+			["assistant", "继续等待测试"],
+			["assistant", ""],
+			["assistant", "全部完成"],
+		]);
+		expect(result.data[2]?.parts).toEqual([
+			expect.objectContaining({ kind: "thinking", sourceType: "reasoning" }),
+		]);
+		expect(result.data[3]?.parts).toEqual([
+			expect.objectContaining({ kind: "tool_call", id: "call-exec", name: "exec" }),
+			expect.objectContaining({ kind: "tool_result", id: "call-exec", text: "工作区干净" }),
+		]);
+		expect(result.data[5]?.parts).toEqual([
+			expect.objectContaining({ kind: "tool_call", id: "call-wait", name: "wait" }),
+			expect.objectContaining({ kind: "tool_result", id: "call-wait", text: "测试完成" }),
+		]);
+		expect(result.data.some((item) => item.role === "user" && item.content === "")).toBe(false);
+		expect(result.summary.event_count).toBe(7);
 	});
 
 	it("为无响应的失败请求生成可渲染错误事件", () => {

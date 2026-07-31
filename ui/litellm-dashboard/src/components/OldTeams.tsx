@@ -2,7 +2,7 @@ import { useOrganizations } from "@/app/(dashboard)/hooks/organizations/useOrgan
 import TeamInfoView from "@/components/team/TeamInfo";
 import { isProxyAdminRole } from "@/utils/roles";
 import { PlusOutlined, TeamOutlined } from "@ant-design/icons";
-import { Button, Flex, Form, Layout, Space, theme, Typography } from "antd";
+import { Button, Flex, Form, Layout, Space, Typography } from "antd";
 import type { SorterResult } from "antd/es/table/interface";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { teamListCall as v2TeamListCall, type TeamsResponse } from "@/app/(dashboard)/hooks/teams/useTeams";
@@ -508,7 +508,6 @@ const Teams: React.FC<TeamProps> = ({
 		fetchTeamsV2({ page: 1, organizationID: "", teamAlias: "", sortBy: "created_at", sortOrder: "desc" });
 	};
 
-	const { token } = theme.useToken();
 	const { Title, Text } = Typography;
 	const { Content } = Layout;
 
@@ -541,7 +540,7 @@ const Teams: React.FC<TeamProps> = ({
 	const displayTeams = useMemo(() => teams ?? [], [teams]);
 
 	return (
-		<Content style={{ padding: token.paddingLG, paddingInline: token.paddingLG * 2 }}>
+		<Content className="p-4 sm:p-6 sm:px-12">
 			{selectedTeamId ? (
 				<TeamInfoView
 					teamId={selectedTeamId}
@@ -572,7 +571,7 @@ const Teams: React.FC<TeamProps> = ({
 				/>
 			) : (
 				<>
-					<Flex justify="space-between" align="center" style={{ marginBottom: 16 }}>
+					<Flex justify="space-between" align="center" wrap gap={12} style={{ marginBottom: 16 }}>
 						<Space direction="vertical" size={0}>
 							<Title level={2} style={{ margin: 0 }}>
 								<TeamOutlined style={{ marginRight: 8 }} />

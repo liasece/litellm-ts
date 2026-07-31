@@ -77,6 +77,14 @@ import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
 import { abortOrphanedActiveRequests } from "./spend/ActiveRequestRecovery";
+import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
+import {
+	registerCliProxyNativeAnthropicRoutes,
+	registerCliProxyNativeChatRoutes,
+	registerCliProxyNativeResponsesRoutes,
+} from "./cliproxy/CliProxyNativeResponsesEndpoint";
+import { registerCliProxyNativePassthroughRoutes } from "./cliproxy/CliProxyNativePassthroughEndpoint";
+import { registerCliProxyWebSocketPassthrough } from "./cliproxy/CliProxyWebSocketPassthrough";
 
 const logger = createModuleLogger("Server");
 
@@ -122,6 +130,7 @@ export class LiteLLMServer {
 				logger.info(`LiteLLM TS Gateway 已启动: http://${host}:${port}`);
 				resolve();
 			});
+			registerCliProxyWebSocketPassthrough(server, this._container!);
 			server.once("error", reject);
 			server.keepAliveTimeout = 120_000;
 			server.headersTimeout = 121_000;
@@ -150,6 +159,7 @@ export class LiteLLMServer {
 					});
 				});
 			}
+			await this._container?.cliProxyRuntime.shutdown();
 			await this._container?.db.close();
 		})();
 		return this._stopPromise;
@@ -193,6 +203,12 @@ export class LiteLLMServer {
 		const container = this._container!;
 		const healthRouter = express.Router();
 		const runtimeConfigMiddleware = container.runtimeConfigService.middleware(container.router);
+		healthRouter.get("/healthz", (_req, res) => {
+			res.json({ status: "ok" });
+		});
+		healthRouter.head("/healthz", (_req, res) => {
+			res.sendStatus(200);
+		});
 		healthRouter.use((req, res, next) => {
 			if (req.path === "/health/liveliness" || req.path === "/health/liveness") {
 				next();
@@ -235,12 +251,17 @@ export class LiteLLMServer {
 		proxyRouter.use(container.runtimeConfigService.middleware(container.router));
 
 		// Chat completions
+		registerCliProxyNativeChatRoutes(proxyRouter, container.router, container.cliProxyRuntime, container.db.db);
 		registerChatCompletionsRoutes(proxyRouter, container.router, container.db.db);
+		// Remaining CLIProxy-native protocols must run before LiteLLM compatibility
+		// endpoints with overlapping paths.
+		registerCliProxyNativePassthroughRoutes(proxyRouter, container.router, container.cliProxyRuntime, container.db.db);
 		// Embeddings
 		registerEmbeddingsRoutes(proxyRouter, container.router, container.db.db);
 		// Text completions
 		registerCompletionsRoutes(proxyRouter, container.router, container.db.db);
 		// Anthropic Messages
+		registerCliProxyNativeAnthropicRoutes(proxyRouter, container.router, container.cliProxyRuntime, container.db.db);
 		registerAnthropicMessagesEndpoints(proxyRouter, container.router, undefined, container.db.db);
 		// Models (decorator controller)
 		registerController(proxyRouter, new ModelsController(container.router));
@@ -268,6 +289,7 @@ export class LiteLLMServer {
 		createOrganizationRoutes(managementRouter, container.db.db, null);
 		createCustomerRoutes(managementRouter, container.db.db, null);
 		createModelManagementRoutes(managementRouter, container.db.db, null);
+		registerCliProxyManagementRoutes(managementRouter, container.cliProxyRuntime);
 
 		app.use(managementRouter);
 		logger.info("管理端点已注册");
@@ -308,6 +330,7 @@ export class LiteLLMServer {
 		registerFilesRoutes(stubRouter);
 		registerFineTuningRoutes(stubRouter);
 		registerVectorStoreRoutes(stubRouter);
+		registerCliProxyNativeResponsesRoutes(stubRouter, container.router, container.cliProxyRuntime, container.db.db);
 		registerResponsesApiRoutes(stubRouter, container.router, container.db.db);
 		registerRerankRoutes(stubRouter);
 		registerRealtimeRoutes(stubRouter);

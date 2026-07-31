@@ -750,7 +750,16 @@ interface AgentCreateInfo {
  * 同数据，109 个 provider），经 /public/providers/fields 返回。
  * JSON 中 field_type 为字符串字面量，与 CredentialFieldType 值一致，此处断言为枚举类型。
  */
-const PROVIDER_CREATE_FIELDS: readonly ProviderCreateInfo[] = providerCreateFieldsJson as unknown as ProviderCreateInfo[];
+const PROVIDER_CREATE_FIELDS: readonly ProviderCreateInfo[] = [
+	...(providerCreateFieldsJson as unknown as ProviderCreateInfo[]),
+	{
+		provider: "CLIProxy",
+		provider_display_name: "CLIProxy API (Managed)",
+		litellm_provider: "cliproxy",
+		default_model_placeholder: "Select a model discovered from the managed CLIProxy runtime",
+		credential_fields: [],
+	},
+];
 
 /**
  * /active/callbacks 响应（对齐 Python active_callbacks，

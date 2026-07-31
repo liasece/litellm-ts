@@ -152,6 +152,12 @@ export interface SpendLog {
 
 /** Python SpendLogs metadata JSON 负载。 */
 export interface SpendLogsMetadata {
+	/**
+	 * 服务端提取的规范 Session 分组键。
+	 * 例如 Codex Responses 请求使用 `s:<client_metadata.thread_id>`，
+	 * 避免把请求级顶层 session_id 误当成完整任务 ID。
+	 */
+	readonly session_group_key?: string;
 	/** 请求使用的 API key 哈希或 master key 别名 */
 	readonly user_api_key?: string;
 	/** 请求使用的 API key 别名 */

@@ -175,6 +175,64 @@ function toolCallPart(
 	};
 }
 
+function reasoningText(block: Record<string, unknown>): string {
+	const directText = block.thinking ?? block.text ?? block.content;
+	if (directText !== undefined) return valueToText(directText);
+	if (!Array.isArray(block.summary)) return valueToText(block.summary);
+	return block.summary
+		.map((item) => {
+			const summaryItem = asRecord(item);
+			return valueToText(summaryItem?.text ?? summaryItem?.summary ?? item);
+		})
+		.filter(Boolean)
+		.join("\n");
+}
+
+function imageMimeType(value: unknown): string {
+	if (typeof value !== "string") return "image/png";
+	const normalized = value.trim().toLowerCase();
+	if (normalized.startsWith("image/")) return normalized;
+	if (normalized === "jpg" || normalized === "jpeg") return "image/jpeg";
+	if (normalized === "webp") return "image/webp";
+	if (normalized === "gif") return "image/gif";
+	return "image/png";
+}
+
+function imageSource(value: unknown, mimeType: string, base64 = false): string | undefined {
+	if (typeof value !== "string" || !value.trim()) return undefined;
+	const source = value.trim();
+	if (source.includes("litellm_truncated")) return undefined;
+	if (/^(?:data:image\/|https?:\/\/)/i.test(source)) return source;
+	return base64 ? `data:${mimeType};base64,${source}` : undefined;
+}
+
+function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType = "image_generation"): SessionTimelinePart | null {
+	const image = asRecord(value);
+	if (!image) return null;
+	const mimeType = imageMimeType(image.mime_type ?? image.mimeType ?? outputFormat);
+	const imageUrl = asRecord(image.image_url);
+	const encodedImage = image.b64_json ?? image.result;
+	const wasTruncated = typeof encodedImage === "string" && encodedImage.includes("litellm_truncated");
+	const source =
+		imageSource(image.b64_json, mimeType, true) ??
+		imageSource(image.result, mimeType, true) ??
+		imageSource(imageUrl?.url ?? image.image_url ?? image.url, mimeType);
+	if (!source && !wasTruncated) return null;
+	return {
+		kind: "image",
+		label: "Generated image",
+		sourceType,
+		id: typeof image.id === "string" ? image.id : undefined,
+		status: typeof image.status === "string" ? image.status : undefined,
+		text: wasTruncated
+			? "图片数据在日志入库时被截断，无法显示。"
+			: typeof image.revised_prompt === "string"
+				? image.revised_prompt
+				: undefined,
+		data: source ? { src: source, mimeType } : { truncated: true },
+	};
+}
+
 function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; toolCall?: ToolCall } {
 	if (typeof rawBlock === "string") {
 		return { part: { kind: "text", label: "Text", text: rawBlock } };
@@ -228,12 +286,15 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 
 	const media = asRecord(block.inlineData ?? block.inline_data ?? block.fileData ?? block.file_data);
 	if (media) {
+		const mimeType = imageMimeType(media.mimeType ?? media.mime_type);
+		const source = imageSource(media.data, mimeType, true) ?? imageSource(media.fileUri ?? media.file_uri, mimeType);
 		return {
 			part: {
 				kind: "image",
 				label: "Media",
 				sourceType: block.inlineData ?? block.inline_data ? "inlineData" : "fileData",
 				text: String(media.mimeType ?? media.mime_type ?? media.fileUri ?? media.file_uri ?? "Attached media"),
+				data: source ? { src: source, mimeType } : undefined,
 			},
 		};
 	}
@@ -250,7 +311,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				kind: "thinking",
 				label: type === "thinking" ? "Thinking" : "Reasoning",
 				sourceType: type,
-				text: valueToText(block.thinking ?? block.summary ?? block.text ?? block.content),
+				text: reasoningText(block),
 			},
 		};
 	}
@@ -364,14 +425,21 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 			},
 		};
 	}
+	if (type === "image_generation_call") {
+		const generated = generatedImagePart(block, block.output_format, type);
+		if (generated) return { part: generated };
+	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
 		const imageUrl = asRecord(block.image_url);
+		const mimeType = imageMimeType(block.mime_type ?? block.mimeType);
+		const source = imageSource(imageUrl?.url ?? block.image_url ?? block.url, mimeType);
 		return {
 			part: {
 				kind: "image",
 				label: "Image",
 				sourceType: type,
 				text: valueToText(imageUrl?.url ?? block.image_url ?? block.file_id ?? block.url ?? "Attached image"),
+				data: source ? { src: source, mimeType } : undefined,
 			},
 		};
 	}
@@ -406,7 +474,9 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 function contentFromParts(parts: SessionTimelinePart[]): string {
 	return parts
 		.map((part) => {
-			if (part.kind === "text" || part.kind === "tool_result" || part.kind === "refusal") return part.text ?? "";
+			if (part.kind === "text" || part.kind === "tool_result" || part.kind === "image" || part.kind === "refusal") {
+				return part.text ?? "";
+			}
 			if (part.kind === "thinking") return `[Thinking]\n${part.text ?? ""}`.trim();
 			if (part.kind === "redacted_thinking") return "[Redacted thinking]";
 			if (part.kind === "unknown") {
@@ -466,6 +536,7 @@ function toolCallsToParts(toolCalls: ToolCall[] | undefined, label = "Function c
 
 function normalizeRole(role: unknown): ParsedMessage["role"] {
 	if (role === "model") return "assistant";
+	if (role === "developer") return "system";
 	return role === "system" || role === "assistant" || role === "tool" ? role : "user";
 }
 
@@ -496,7 +567,96 @@ function parseRequestMessage(value: unknown): ParsedMessage {
 	};
 }
 
+const RESPONSES_INPUT_ITEM_TYPES = new Set([
+	"additional_tools",
+	"message",
+	"reasoning",
+	"custom_tool_call",
+	"custom_tool_call_output",
+	"function_call",
+	"function_call_output",
+	"mcp_call",
+	"mcp_call_output",
+	"computer_call",
+	"computer_call_output",
+	"web_search_call",
+	"web_search_tool_result",
+	"web_search_result",
+	"file_search_call",
+	"code_interpreter_call",
+	"code_interpreter_result",
+	"code_execution_result",
+	"image_generation_call",
+]);
+
+const RESPONSES_TOOL_RESULT_TYPES = new Set([
+	"custom_tool_call_output",
+	"function_call_output",
+	"mcp_call_output",
+	"computer_call_output",
+	"web_search_tool_result",
+	"web_search_result",
+	"code_interpreter_result",
+	"code_execution_result",
+]);
+
+function looksLikeResponsesInputItems(items: unknown[]): boolean {
+	return items.some((item) => {
+		const type = asRecord(item)?.type;
+		return typeof type === "string" && RESPONSES_INPUT_ITEM_TYPES.has(type);
+	});
+}
+
+function hasRenderableMessageContent(message: ParsedMessage): boolean {
+	const parts = message.parts ?? [];
+	if (parts.length === 0) return Boolean(message.content.trim());
+	return parts.some((part) => {
+		if (["text", "thinking", "tool_result", "refusal"].includes(part.kind)) return Boolean(part.text?.trim());
+		if (part.kind === "unknown") return part.data !== undefined && part.data !== null;
+		return true;
+	});
+}
+
+/**
+ * OpenAI Responses stores cumulative history as a heterogeneous input-item
+ * stream, not as Chat Completions messages. Tool calls, tool outputs and
+ * reasoning therefore need roles inferred from their item type. The
+ * additional_tools item is only a client tool registry and is not a turn.
+ */
+function parseResponsesInputItems(items: unknown[]): ParsedMessage[] {
+	const result: ParsedMessage[] = [];
+	for (const item of items) {
+		if (typeof item === "string") {
+			const message = parseRequestMessage({ role: "user", content: item });
+			if (hasRenderableMessageContent(message)) result.push(message);
+			continue;
+		}
+
+		const itemRecord = asRecord(item);
+		if (!itemRecord) continue;
+		const type = typeof itemRecord.type === "string" ? itemRecord.type : "";
+		if (type === "additional_tools") continue;
+
+		let message: ParsedMessage;
+		if (type === "message" || itemRecord.role !== undefined) {
+			message = parseRequestMessage({
+				role: itemRecord.role ?? "user",
+				content: itemRecord.content ?? item,
+			});
+		} else if (RESPONSES_TOOL_RESULT_TYPES.has(type)) {
+			message = parseRequestMessage({ role: "tool", content: [item] });
+		} else {
+			message = parseRequestMessage({ role: "assistant", content: [item] });
+		}
+		if (hasRenderableMessageContent(message)) result.push(message);
+	}
+	return result;
+}
+
 function requestMessagesFrom(value: unknown): ParsedMessage[] {
+	if (typeof value === "string") {
+		return value.trim() ? [parseRequestMessage({ role: "user", content: value })] : [];
+	}
 	const request = Array.isArray(value) ? { messages: value } : (asRecord(value) ?? {});
 	const body = asRecord(request.body) ?? request;
 	const rawMessages = Array.isArray(body.messages)
@@ -504,7 +664,11 @@ function requestMessagesFrom(value: unknown): ParsedMessage[] {
 		: Array.isArray(request.messages)
 			? request.messages
 			: null;
-	const result = rawMessages ? rawMessages.map(parseRequestMessage) : [];
+	const result = rawMessages
+		? looksLikeResponsesInputItems(rawMessages)
+			? parseResponsesInputItems(rawMessages)
+			: rawMessages.map(parseRequestMessage)
+		: [];
 	const systemContent = body.system ?? body.instructions;
 	if (systemContent !== undefined && !result.some((message) => message.role === "system")) {
 		result.unshift(parseRequestMessage({ role: "system", content: systemContent }));
@@ -513,14 +677,7 @@ function requestMessagesFrom(value: unknown): ParsedMessage[] {
 		if (typeof body.input === "string") {
 			result.push(parseRequestMessage({ role: "user", content: body.input }));
 		} else if (Array.isArray(body.input)) {
-			for (const item of body.input) {
-				const itemRecord = asRecord(item);
-				if (itemRecord?.type === "message" || itemRecord?.role) {
-					result.push(parseRequestMessage({ role: itemRecord.role ?? "user", content: itemRecord.content ?? item }));
-				} else {
-					result.push(parseRequestMessage({ role: "user", content: [item] }));
-				}
-			}
+			result.push(...parseResponsesInputItems(body.input));
 		}
 	}
 	if (!rawMessages && Array.isArray(body.contents)) {
@@ -542,6 +699,11 @@ function parseMessages(request: unknown, responseValue: unknown): {
 	const requestMessages = requestMessagesFrom(request);
 	const response = asRecord(responseValue) ?? {};
 	let responseMessage: ParsedMessage | null = null;
+	const generatedImageParts = Array.isArray(response.data)
+		? response.data
+				.map((item) => generatedImagePart(item, response.output_format))
+				.filter((part): part is SessionTimelinePart => part !== null)
+		: [];
 	const choices = Array.isArray(response.choices) ? response.choices : [];
 	const firstChoice = asRecord(choices[0]);
 	const responseMsg = asRecord(firstChoice?.message);
@@ -598,6 +760,12 @@ function parseMessages(request: unknown, responseValue: unknown): {
 			content: contentFromParts(parts),
 			toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
 			parts: parts.length > 0 ? parts : undefined,
+		};
+	} else if (generatedImageParts.length > 0) {
+		responseMessage = {
+			role: "assistant",
+			content: contentFromParts(generatedImageParts),
+			parts: generatedImageParts,
 		};
 	} else if (Array.isArray(response.candidates)) {
 		const candidate = asRecord(response.candidates[0]);

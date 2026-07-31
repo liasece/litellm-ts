@@ -27,6 +27,9 @@ const logger = createModuleLogger("Management:Key");
 /** 日志中 token/hash 只展示固定长度前缀，避免泄露完整密钥材料。 */
 const TOKEN_LOG_PREFIX_LENGTH = 8;
 
+/** 对齐 Python LiteLLM：自定义 Virtual Key 必须具备足够长度，避免弱密钥。 */
+const MINIMUM_CUSTOM_KEY_LENGTH = 16;
+
 /** /key/list 分页常量（消除散落魔法数字） */
 const KEY_LIST_PAGINATION = {
 	defaultPage: 1,
@@ -166,6 +169,26 @@ interface KeyInfoLookup {
 
 function firstString(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * 解析 /key/generate 的可选自定义 key。
+ * 空值继续走原有随机生成流程；显式值需满足 LiteLLM Virtual Key 格式约束。
+ */
+function resolveGeneratedPlainKey(value: unknown): string {
+	if (value === undefined || value === null || (typeof value === "string" && value.trim().length === 0)) {
+		return generateApiKey();
+	}
+	if (typeof value !== "string") {
+		throw ApiError.badRequest("Custom key must be a string");
+	}
+	if (!value.startsWith(PLAIN_API_KEY_PREFIX)) {
+		throw ApiError.badRequest("Invalid key format. LiteLLM Virtual Key must start with 'sk-'");
+	}
+	if (value.length < MINIMUM_CUSTOM_KEY_LENGTH) {
+		throw ApiError.badRequest(`Invalid key format. LiteLLM Virtual Key must be at least ${MINIMUM_CUSTOM_KEY_LENGTH} characters long.`);
+	}
+	return value;
 }
 
 function resolveAuthToken(req: Request): string | undefined {
@@ -462,8 +485,8 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 						? new Date(body.expires as string)
 						: null;
 
-			// 生成 API 密钥并哈希
-			const plainKey = generateApiKey();
+			// 允许请求方指定明文 key；空值继续沿用随机生成流程。数据库始终只存 hash。
+			const plainKey = resolveGeneratedPlainKey(body.key);
 			const tokenHash = hashApiKey(plainKey);
 			// Python: key_name 缺省时自动置为 "sk-..." + 明文后 4 位
 			const keyName = typeof body.key_name === "string" && body.key_name.length > 0 ? body.key_name : `sk-...${plainKey.slice(-4)}`;
@@ -768,10 +791,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			const page = parsePositiveInt(req.query.page, KEY_ALIAS_PAGINATION.defaultPage);
 			const pageSize = Math.min(
 				KEY_ALIAS_PAGINATION.maxPageSize,
-				Math.max(
-					KEY_ALIAS_PAGINATION.minPageSize,
-					parsePositiveInt(req.query.size, KEY_ALIAS_PAGINATION.defaultPageSize),
-				),
+				Math.max(KEY_ALIAS_PAGINATION.minPageSize, parsePositiveInt(req.query.size, KEY_ALIAS_PAGINATION.defaultPageSize)),
 			);
 			const filters: KeyAliasFilters = {
 				search: firstString(req.query.search),

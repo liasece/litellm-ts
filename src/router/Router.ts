@@ -42,6 +42,7 @@ import { RouterCompletionSyncRemovedError } from "./RouterErrors";
 import { getDeploymentKey, getModelGroupName } from "./RouterModelGroupCache";
 import { buildCooldownDecision } from "./RouterExecutor";
 import type { NoDeploymentsErrorInfo } from "../core/api/ApiError";
+import { ApiError } from "../core/api/ApiError";
 import { normalizeMockTestingParams, tryDispatchMockTestingExceptions, shouldDispatchMockRateLimit } from "./RouterMockTesting";
 import { executeWithFallback, isKnownModel, type RouterExecContext } from "./RouterExecution";
 import { createModelResolutionTraceCollector, type ModelGroupResolution, type ModelResolutionTraceCollector } from "./ModelResolutionTrace";
@@ -302,6 +303,20 @@ export class Router {
 	 */
 	getDeployment(modelId: string): Deployment | null {
 		return this._runtimeState().deployments.find((dep) => dep.model_info?.id === modelId) ?? null;
+	}
+
+	/**
+	 * 返回逻辑模型（含 alias）最终可解析到的 deployment ID。
+	 * 健康检查使用精确 ID 探测，因此这里不受 cooldown 状态影响。
+	 * @param model - 模型组或 alias
+	 */
+	getDeploymentIdsForModel(model: string): string[] {
+		const runtime = this._runtimeState();
+		const resolvedModel = runtime.fallbackHandler.resolveModelGroup(model);
+		return runtime.deployments
+			.filter((deployment) => this._matchDeploymentPattern(deployment, resolvedModel))
+			.map((deployment) => deployment.model_info?.id)
+			.filter((id): id is string => typeof id === "string" && id.length > 0);
 	}
 
 	/**
@@ -787,8 +802,22 @@ export class Router {
 		messages: Message[],
 		optionalParams: Record<string, unknown>,
 	): Promise<ExecResult> {
-		const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...optionalParams };
-		const providerRequest = provider.transformRequest(deployment.litellm_params.model, messages as Message[], mergedParams);
+		const callType = optionalParams["__litellm_call_type"];
+		const requestParams = { ...optionalParams };
+		delete requestParams["__litellm_call_type"];
+		const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...requestParams };
+		const providerRequest =
+			callType === "image_generation"
+				? provider.transformImageRequest?.(
+						deployment.litellm_params.model,
+						typeof messages[0]?.content === "string" ? messages[0].content : "",
+						mergedParams,
+					)
+				: provider.transformRequest(deployment.litellm_params.model, messages as Message[], mergedParams);
+		if (!providerRequest) {
+			// 抛结构化 ApiError 而非裸 Error：让 ImageEndpoint 返回合理的 4xx/5xx 而非通用 500。
+			throw ApiError.unavailable(`Provider does not support image generation for model ${deployment.model_name}`);
+		}
 
 		const isStream = optionalParams["stream"] === true;
 		const timeoutSec = isStream
@@ -928,6 +957,17 @@ export class Router {
 			return realResult;
 		}
 		return this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
+	}
+
+	/**
+	 * 标准图片生成入口。复用 Router 的 deployment 选择、重试、fallback、cooldown
+	 * 与响应元数据，但由 Provider 使用图片生成协议构造上游请求。
+	 * @param model - 逻辑模型名
+	 * @param prompt - 图片提示词
+	 * @param optionalParams - 图片生成参数
+	 */
+	async imageGeneration(model: string, prompt: string, optionalParams: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+		return this.completion(model, [{ role: "user", content: prompt }], { ...optionalParams, __litellm_call_type: "image_generation" });
 	}
 
 	/**

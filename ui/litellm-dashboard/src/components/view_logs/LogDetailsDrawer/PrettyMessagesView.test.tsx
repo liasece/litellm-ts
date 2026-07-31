@@ -28,6 +28,44 @@ describe("PrettyMessagesView", () => {
 		expect(screen.getByText("Hi there!")).toBeInTheDocument();
 	});
 
+	it("should parse and render Images API base64 output", () => {
+		const source = "data:image/png;base64,iVBORw0KGgoAAA";
+		const response = {
+			data: [{ b64_json: "iVBORw0KGgoAAA", revised_prompt: "A World Cup themed poster" }],
+			output_format: "png",
+		};
+
+		const parsed = parseMessages("Draw a World Cup poster", response);
+		expect(parsed.requestMessages).toMatchObject([{ role: "user", content: "Draw a World Cup poster" }]);
+		expect(parsed.responseMessage?.parts).toEqual([
+			expect.objectContaining({
+				kind: "image",
+				text: "A World Cup themed poster",
+				data: { src: source, mimeType: "image/png" },
+			}),
+		]);
+
+		render(<PrettyMessagesView request="Draw a World Cup poster" response={response} />);
+		expect(screen.getByText("Draw a World Cup poster")).toBeInTheDocument();
+		expect(screen.getByRole("img", { name: "A World Cup themed poster" })).toHaveAttribute("src", source);
+	});
+
+	it("should explain a historically truncated image instead of rendering a broken image", () => {
+		const response = {
+			data: [
+				{
+					b64_json:
+						"iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+				},
+			],
+			output_format: "png",
+		};
+
+		const { container } = render(<PrettyMessagesView request="Draw an image" response={response} />);
+		expect(screen.getByText("图片数据在日志入库时被截断，无法显示。")).toBeInTheDocument();
+		expect(container.querySelector("img")).not.toBeInTheDocument();
+	});
+
 	it("should render native Anthropic messages from a proxied request", () => {
 		const request = {
 			body: {

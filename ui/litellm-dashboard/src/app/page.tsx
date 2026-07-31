@@ -148,6 +148,7 @@ function CreateKeyPageContent() {
 
 	// Custom setPage function that updates URL
 	const updatePage = (newPage: string) => {
+		setMobileSidebarOpen(false);
 		// Update URL without full page reload
 		const newSearchParams = new URLSearchParams(searchParams);
 		newSearchParams.set("page", newPage);
@@ -160,6 +161,7 @@ function CreateKeyPageContent() {
 
 	const [accessToken, setAccessToken] = useState<string | null>(null);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
 	// Track if we've already attempted a return URL redirect to prevent race conditions
 	const hasAttemptedReturnRedirectRef = useRef(false);
@@ -167,6 +169,16 @@ function CreateKeyPageContent() {
 	const toggleSidebar = () => {
 		setSidebarCollapsed(!sidebarCollapsed);
 	};
+
+	useEffect(() => {
+		if (!mobileSidebarOpen) return;
+
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setMobileSidebarOpen(false);
+		};
+		window.addEventListener("keydown", closeOnEscape);
+		return () => window.removeEventListener("keydown", closeOnEscape);
+	}, [mobileSidebarOpen]);
 
 	const addKey = (data: any) => {
 		setKeys((prevData) => (prevData ? [...prevData, data] : [data]));
@@ -376,18 +388,36 @@ function CreateKeyPageContent() {
 									isPublicPage={false}
 									sidebarCollapsed={sidebarCollapsed}
 									onToggleSidebar={toggleSidebar}
+									mobileSidebarOpen={mobileSidebarOpen}
+									onToggleMobileSidebar={() => setMobileSidebarOpen((open) => !open)}
 									isDarkMode={isDarkMode}
 									toggleDarkMode={toggleDarkMode}
 								/>
 							</div>
-							<div data-testid="dashboard-workspace" className="flex min-h-0 flex-1 overflow-hidden">
+							<div data-testid="dashboard-workspace" className="relative flex min-h-0 flex-1 overflow-hidden">
+								{mobileSidebarOpen && (
+									<button
+										type="button"
+										className="absolute inset-0 z-20 bg-slate-950/35 md:hidden"
+										onClick={() => setMobileSidebarOpen(false)}
+										aria-label="Dismiss navigation overlay"
+										tabIndex={-1}
+									/>
+								)}
 								<aside
+									id="dashboard-mobile-navigation"
 									data-testid="dashboard-sidebar-scroll"
-									className="min-h-0 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain pt-2"
+									aria-label="Dashboard navigation"
+									className={`absolute inset-y-0 left-0 z-30 min-h-0 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-white pt-2 shadow-xl transition-[transform,visibility] duration-200 md:relative md:inset-auto md:z-auto md:translate-x-0 md:visible md:shadow-none ${
+										mobileSidebarOpen ? "visible translate-x-0" : "invisible -translate-x-full"
+									}`}
 								>
 									<SidebarProvider setPage={updatePage} defaultSelectedKey={page} sidebarCollapsed={sidebarCollapsed} />
 								</aside>
-								<main data-testid="dashboard-main-scroll" className="min-w-0 flex-1 overflow-auto overscroll-contain">
+								<main
+									data-testid="dashboard-main-scroll"
+									className="dashboard-main-scroll min-w-0 flex-1 overflow-auto overscroll-contain"
+								>
 									<LegacyDashboardPageContent
 										page={page}
 										userID={userID}

@@ -29,6 +29,7 @@ function withSpendReservationRouter(router: Record<string, unknown>): LiteLLMRou
 			},
 		],
 		getFallbacks: () => ({}),
+		resolveModelGroupWithTrace: () => ({ inputModel: "model", resolvedModel: "model", resolutionPath: ["model"] }),
 	} as unknown as LiteLLMRouter;
 }
 
@@ -58,7 +59,12 @@ describe("core proxy alias routes", () => {
 			.expect(200)
 			.expect({ id: "chatcmpl-test", object: "chat.completion" });
 
-		expect(completion).toHaveBeenCalledWith(expectedModel, [{ role: "user", content: "hello" }], { temperature: 0.2 });
+		expect(completion).toHaveBeenCalledWith(
+			expectedModel,
+			[{ role: "user", content: "hello" }],
+			expect.objectContaining({ temperature: 0.2 }),
+			expect.objectContaining({ fallbackModels: [] }),
+		);
 	});
 
 	test("POST /v1/chat/completions delegates to chat completions handler with body model", async () => {
@@ -72,7 +78,12 @@ describe("core proxy alias routes", () => {
 			.expect(200)
 			.expect({ id: "chatcmpl-test", object: "chat.completion" });
 
-		expect(completion).toHaveBeenCalledWith("body-chat", [{ role: "user", content: "hello" }], { temperature: 0.2 });
+		expect(completion).toHaveBeenCalledWith(
+			"body-chat",
+			[{ role: "user", content: "hello" }],
+			expect.objectContaining({ temperature: 0.2 }),
+			expect.objectContaining({ fallbackModels: [] }),
+		);
 	});
 
 	describe("POST /v1/chat/completions 流式错误分流", () => {
@@ -197,7 +208,8 @@ describe("core proxy alias routes", () => {
 		["/audio/transcriptions", { model: "whisper-1", file: "placeholder", prompt: "meeting" }, "whisper-1", "meeting"],
 	])("POST %s delegates non-v1 alias to Router", async (path, body, expectedModel, expectedContent) => {
 		const completion = jest.fn().mockResolvedValue({ id: "alias-test" });
-		const router = withSpendReservationRouter({ completion: completion });
+		const imageGeneration = jest.fn().mockResolvedValue({ id: "alias-test" });
+		const router = withSpendReservationRouter({ completion: completion, imageGeneration: imageGeneration });
 		const app = buildApp((expressRouter) => {
 			registerController(expressRouter, new ImageController(router));
 			registerController(expressRouter, new AudioController(router));
@@ -205,11 +217,15 @@ describe("core proxy alias routes", () => {
 
 		await request(app).post(path).send(body).expect(200).expect({ id: "alias-test" });
 		const expectedOptionalParams = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "model"));
-		expect(completion).toHaveBeenCalledWith(
-			expectedModel,
-			[{ role: "user", content: expectedContent }],
-			expect.objectContaining(expectedOptionalParams),
-		);
+		if (path === "/images/generations") {
+			expect(imageGeneration).toHaveBeenCalledWith(expectedModel, expectedContent, expect.objectContaining(expectedOptionalParams));
+		} else {
+			expect(completion).toHaveBeenCalledWith(
+				expectedModel,
+				[{ role: "user", content: expectedContent }],
+				expect.objectContaining(expectedOptionalParams),
+			);
+		}
 	});
 
 	test.each([
@@ -496,7 +512,7 @@ describe("core proxy alias routes", () => {
 				"/images/generations",
 				new ImageController(
 					withSpendReservationRouter({
-						completion: jest.fn().mockResolvedValue({ id: "img", usage: { prompt_tokens: 2, total_tokens: 2 } }),
+						imageGeneration: jest.fn().mockResolvedValue({ id: "img", usage: { prompt_tokens: 2, total_tokens: 2 } }),
 					}),
 					{} as never,
 				),

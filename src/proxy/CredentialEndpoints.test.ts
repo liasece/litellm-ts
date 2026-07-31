@@ -109,7 +109,7 @@ function deployment(modelId: string, params: Record<string, unknown>): Deploymen
 }
 
 describe("CredentialEndpoints", () => {
-	it("普通 CRUD 使用持久服务、固定掩码并支持特殊字符路径", async () => {
+	it("普通 CRUD 返回完整值并支持特殊字符路径", async () => {
 		const { app } = makeApp();
 		const name = "aws/prod + east";
 		expect((await request(app).post("/credentials").send({})).status).toBe(400);
@@ -125,10 +125,10 @@ describe("CredentialEndpoints", () => {
 		).toEqual({ success: true, credential_name: name });
 
 		const list = await request(app).get("/credentials");
-		expect(list.body.credentials[0].credential_values).toEqual({ api_key: "********", region: "********" });
+		expect(list.body.credentials[0].credential_values).toEqual({ api_key: "sk-secret", region: 1 });
 		const byName = await request(app).get(`/credentials/by_name/${encodeURIComponent(name)}`);
 		expect(byName.status).toBe(200);
-		expect(byName.body.credential_values).toEqual({ api_key: "********", region: "********" });
+		expect(byName.body.credential_values).toEqual({ api_key: "sk-secret", region: 1 });
 
 		expect(
 			(
@@ -171,7 +171,7 @@ describe("CredentialEndpoints", () => {
 		expect((await request(app).delete("/credentials/shared")).status).toBe(409);
 	});
 
-	it("by_model 按 Router deployment ID 返回命名引用或 inline 字段的固定掩码", async () => {
+	it("by_model 按 Router deployment ID 返回命名引用或 inline 完整字段", async () => {
 		const { app, router } = makeApp();
 		await request(app)
 			.post("/credentials")
@@ -182,13 +182,13 @@ describe("CredentialEndpoints", () => {
 			});
 		router.getDeployment.mockReturnValueOnce(deployment("model-named", { litellm_credential_name: "named" }));
 		const named = await request(app).get("/credentials/by_model/model-named");
-		expect(named.body).toMatchObject({ credential_name: "named", credential_values: { api_key: "********" } });
+		expect(named.body).toMatchObject({ credential_name: "named", credential_values: { api_key: "sk-secret" } });
 
 		router.getDeployment.mockReturnValueOnce(deployment("model-inline", { api_key: "sk-inline", api_base: "https://api.example" }));
 		const inline = await request(app).get("/credentials/by_model/model-inline");
 		expect(inline.body).toEqual({
 			credential_name: "model-inline",
-			credential_values: { api_key: "********", api_base: "********" },
+			credential_values: { api_key: "sk-inline", api_base: "https://api.example" },
 			credential_info: { custom_llm_provider: "openai" },
 		});
 	});

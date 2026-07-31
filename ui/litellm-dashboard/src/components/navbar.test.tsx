@@ -184,6 +184,18 @@ describe("Navbar", () => {
 		expect(mockToggle).toHaveBeenCalledTimes(1);
 	});
 
+	it("should expose a separate mobile navigation toggle", async () => {
+		const mockToggle = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(<Navbar {...defaultProps} onToggleMobileSidebar={mockToggle} />);
+
+		const toggleButton = screen.getByRole("button", { name: "Open navigation" });
+		expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+
+		await user.click(toggleButton);
+		expect(mockToggle).toHaveBeenCalledTimes(1);
+	});
+
 	it("should show premium user badge when premiumUser is true", async () => {
 		const user = userEvent.setup();
 		const originalCurrent = mockUserDropdownData.current;

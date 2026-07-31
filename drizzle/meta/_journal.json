@@ -41,6 +41,14 @@
 			"tag": "0004_active_requests",
 			"file": "0004_active_requests.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 5,
+			"version": "7",
+			"when": 1785399600000,
+			"tag": "0005_codex_session_group",
+			"file": "0005_codex_session_group.sql",
+			"breakpoints": true
 		}
 	]
 }

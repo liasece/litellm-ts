@@ -273,12 +273,12 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 	};
 
 	return (
-		<div className="flex items-center gap-3">
+		<div className="flex min-w-0 flex-wrap items-center gap-3">
 			{label && <Text className="text-sm font-medium text-gray-700 whitespace-nowrap">{label}</Text>}
-			<div className="relative" ref={dropdownRef}>
+			<div className="relative min-w-0 flex-1 sm:flex-none" ref={dropdownRef}>
 				{/* Main input display */}
 				<div
-					className="w-[300px] px-3 py-2 text-sm border border-gray-300 rounded-md bg-white cursor-pointer hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+					className="w-full min-w-0 cursor-pointer rounded-md border border-gray-300 bg-white px-3 py-2 text-sm hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 sm:w-[300px]"
 					onClick={() => setIsOpen(!isOpen)}
 				>
 					<div className="flex items-center justify-between">
@@ -299,14 +299,14 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 
 				{/* Dropdown panel */}
 				{isOpen && (
-					<div className="absolute top-full right-0 z-[9999] min-w-[600px] mt-1 bg-white border border-gray-200 rounded-lg shadow-xl">
-						<div className="flex">
+					<div className="fixed inset-x-3 top-20 z-[9999] max-h-[calc(100dvh-6rem)] min-w-0 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1 sm:max-h-none sm:min-w-[600px] sm:overflow-visible">
+						<div className="flex flex-col sm:flex-row">
 							{/* Left side - Relative time options */}
-							<div className="w-1/2 border-r border-gray-200">
+							<div className="w-full border-b border-gray-200 sm:w-1/2 sm:border-b-0 sm:border-r">
 								<div className="p-3 border-b border-gray-200">
 									<span className="text-sm font-semibold text-gray-900">Relative time</span>
 								</div>
-								<div className="h-[350px] overflow-y-auto">
+								<div className="max-h-48 overflow-y-auto sm:h-[350px] sm:max-h-none">
 									{relativeTimeOptions.map((option) => {
 										const isSelected = selectedOption === option.shortLabel;
 										return (
@@ -334,7 +334,7 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 							</div>
 
 							{/* Right side - Custom date selection */}
-							<div className="w-1/2 relative">
+							<div className="relative w-full sm:w-1/2">
 								<div className="p-3.5 border-b border-gray-200">
 									<div className="flex items-center gap-2">
 										<CalendarOutlined className="text-gray-600" />
@@ -342,7 +342,7 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 									</div>
 								</div>
 
-								<div className="p-6 space-y-6 pb-20">
+								<div className="space-y-4 p-4 pb-4 sm:space-y-6 sm:p-6 sm:pb-20">
 									{/* Start date */}
 									<div>
 										<label className="text-sm text-gray-700 mb-1 block">Start date</label>
@@ -405,7 +405,7 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 									)}
 								</div>
 
-								<div className="absolute bottom-4 right-4">
+								<div className="flex justify-end px-4 pb-4 sm:absolute sm:bottom-4 sm:right-4 sm:p-0">
 									<div className="flex gap-2">
 										<Button variant="secondary" onClick={handleCancel}>
 											Cancel

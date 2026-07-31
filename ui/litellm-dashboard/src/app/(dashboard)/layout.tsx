@@ -41,9 +41,11 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 	const searchParams = useSearchParams();
 	const { accessToken, userRole, userId, userEmail, premiumUser } = useAuthorized();
 	const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+	const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
 	const page = deriveDashboardPage(pathname, searchParams, BASE_PREFIX);
 
 	const handleSetPage = (newPage: string) => {
+		setMobileSidebarOpen(false);
 		// If the page has been migrated to path routing, navigate there
 		const migratedRoute = MIGRATED_PAGES[newPage];
 		if (migratedRoute) {
@@ -57,6 +59,16 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
 	const toggleSidebar = () => setSidebarCollapsed((v) => !v);
 
+	React.useEffect(() => {
+		if (!mobileSidebarOpen) return;
+
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setMobileSidebarOpen(false);
+		};
+		window.addEventListener("keydown", closeOnEscape);
+		return () => window.removeEventListener("keydown", closeOnEscape);
+	}, [mobileSidebarOpen]);
+
 	return (
 		<ThemeProvider accessToken={""}>
 			<div data-testid="dashboard-shell" className="flex h-dvh min-h-0 flex-col overflow-hidden">
@@ -65,6 +77,8 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 						isPublicPage={false}
 						sidebarCollapsed={sidebarCollapsed}
 						onToggleSidebar={toggleSidebar}
+						mobileSidebarOpen={mobileSidebarOpen}
+						onToggleMobileSidebar={() => setMobileSidebarOpen((open) => !open)}
 						userID={userId}
 						userEmail={userEmail}
 						userRole={userRole}
@@ -79,14 +93,30 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 				<div className="shrink-0">
 					<DebugWarningBanner />
 				</div>
-				<div data-testid="dashboard-workspace" className="flex min-h-0 flex-1 overflow-hidden">
+				<div data-testid="dashboard-workspace" className="relative flex min-h-0 flex-1 overflow-hidden">
+					{mobileSidebarOpen && (
+						<button
+							type="button"
+							className="absolute inset-0 z-20 bg-slate-950/35 md:hidden"
+							onClick={() => setMobileSidebarOpen(false)}
+							aria-label="Dismiss navigation overlay"
+							tabIndex={-1}
+						/>
+					)}
 					<aside
+						id="dashboard-mobile-navigation"
 						data-testid="dashboard-sidebar-scroll"
-						className="min-h-0 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain pt-2"
+						aria-label="Dashboard navigation"
+						className={`absolute inset-y-0 left-0 z-30 min-h-0 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-white pt-2 shadow-xl transition-[transform,visibility] duration-200 md:relative md:inset-auto md:z-auto md:translate-x-0 md:visible md:shadow-none ${
+							mobileSidebarOpen ? "visible translate-x-0" : "invisible -translate-x-full"
+						}`}
 					>
 						<SidebarProvider setPage={handleSetPage} defaultSelectedKey={page} sidebarCollapsed={sidebarCollapsed} />
 					</aside>
-					<main data-testid="dashboard-main-scroll" className="min-w-0 flex-1 overflow-auto overscroll-contain">
+					<main
+						data-testid="dashboard-main-scroll"
+						className="dashboard-main-scroll min-w-0 flex-1 overflow-auto overscroll-contain"
+					>
 						{children}
 					</main>
 				</div>

@@ -43,8 +43,8 @@ export default function ModelSettingsContent({
 	onCancel,
 }: ModelSettingsContentProps) {
 	return (
-		<div className="space-y-4">
-			<div className="space-y-4">
+		<div>
+			<div className="grid grid-cols-1 overflow-hidden rounded-lg border border-gray-200 bg-white lg:grid-cols-2">
 				<ModelBasicSettings editing={editing} modelData={modelData} modelAccessGroups={modelAccessGroups} />
 				<ModelPolicySettings
 					editing={editing}
@@ -71,7 +71,7 @@ export default function ModelSettingsContent({
 			</div>
 
 			{editing && (
-				<div className="mt-6 flex justify-end gap-2">
+				<div className="mt-4 flex justify-end gap-2">
 					<TremorButton variant="secondary" onClick={onCancel} disabled={isSaving}>
 						Cancel
 					</TremorButton>

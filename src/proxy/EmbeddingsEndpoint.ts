@@ -25,6 +25,11 @@ import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import { executeProviderRequest } from "../router/ProviderRequestExecutor";
 import { createModuleLogger } from "../core/utils/logger";
+import {
+	appendModelResolutionTrace,
+	copyModelResolutionChain,
+	createModelResolutionTraceCollector,
+} from "../router/ModelResolutionTrace";
 
 const logger = createModuleLogger("Proxy:Embeddings");
 
@@ -79,6 +84,8 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 
 		const startTime = new Date();
 		const auth = req.auth;
+		const modelResolutionTrace = createModelResolutionTraceCollector();
+		appendModelResolutionTrace(modelResolutionTrace, 0, litellmRouter.resolveModelGroupWithTrace(model));
 
 		// 部署选择不调用上游；reservation 随后覆盖当前组与所有 fallback deployment。
 		const candidate = litellmRouter.getAvailableDeployment(model);
@@ -142,6 +149,9 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 						response: rawBody,
 						usage: usage,
 						status: SpendLogStatus.Success,
+						fallbackModels: [model],
+						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+						attemptedRetries: 0,
 					}),
 				);
 			}
@@ -165,6 +175,9 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 							messages: input,
 							error: error,
 							status: SpendLogStatus.Failure,
+							fallbackModels: [model],
+							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							attemptedRetries: 0,
 						}),
 					);
 				} catch (accountingError) {

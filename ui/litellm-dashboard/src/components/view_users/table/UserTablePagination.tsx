@@ -25,7 +25,7 @@ export default function UserTablePagination({
 	const end = response ? Math.min(response.page * response.page_size, response.total) : 0;
 
 	return (
-		<div className="flex items-center justify-between">
+		<div className="flex flex-wrap items-center justify-between gap-3">
 			{!loading && (
 				<span className="text-sm text-gray-700">
 					Showing {start} - {end} of {response?.total ?? 0} results

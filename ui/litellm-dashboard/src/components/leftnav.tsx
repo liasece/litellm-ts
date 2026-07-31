@@ -249,6 +249,13 @@ const menuGroups: MenuGroup[] = [
 				roles: all_admin_roles,
 			},
 			{
+				key: "cliproxy",
+				page: "cliproxy",
+				label: "CLIProxy API",
+				icon: <ApiOutlined />,
+				roles: all_admin_roles,
+			},
+			{
 				key: "logging-and-alerts",
 				page: "logging-and-alerts",
 				label: "Logging & Alerts",

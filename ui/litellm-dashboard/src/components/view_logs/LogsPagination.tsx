@@ -23,11 +23,11 @@ export default function LogsPagination({
 	const lastResult = Math.min(currentPage * pageSize, total);
 
 	return (
-		<div className="flex shrink-0 items-center gap-4 whitespace-nowrap">
+		<div className="flex min-w-0 shrink-0 flex-wrap items-center gap-3">
 			<span className="whitespace-nowrap text-sm text-gray-700">
 				Showing {loading ? "..." : firstResult} - {loading ? "..." : lastResult} of {loading ? "..." : total} results
 			</span>
-			<div className="flex items-center space-x-2">
+			<div className="flex min-w-0 flex-wrap items-center gap-2">
 				<label className="text-sm text-gray-700" htmlFor="logs-page-size">
 					Logs per page
 				</label>
@@ -43,7 +43,7 @@ export default function LogsPagination({
 						</option>
 					))}
 				</select>
-				<span className="min-w-[90px] text-sm text-gray-700">
+				<span className="text-sm text-gray-700 sm:min-w-[90px]">
 					Page {loading ? "..." : currentPage} of {loading ? "..." : totalPages || 1}
 				</span>
 				<button

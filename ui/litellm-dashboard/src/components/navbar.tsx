@@ -20,6 +20,8 @@ interface NavbarProps {
 	isPublicPage: boolean;
 	sidebarCollapsed?: boolean;
 	onToggleSidebar?: () => void;
+	mobileSidebarOpen?: boolean;
+	onToggleMobileSidebar?: () => void;
 	isDarkMode: boolean;
 	toggleDarkMode: () => void;
 }
@@ -35,6 +37,8 @@ const Navbar: React.FC<NavbarProps> = ({
 	isPublicPage = false,
 	sidebarCollapsed = false,
 	onToggleSidebar,
+	mobileSidebarOpen = false,
+	onToggleMobileSidebar,
 	isDarkMode,
 	toggleDarkMode,
 }) => {
@@ -81,22 +85,37 @@ const Navbar: React.FC<NavbarProps> = ({
 	return (
 		<nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
 			<div className="w-full">
-				<div className="flex items-center h-14 px-4">
-					<div className="flex items-center flex-shrink-0">
+				<div className="flex h-14 min-w-0 items-center px-2 sm:px-4">
+					<div className="flex min-w-0 items-center flex-shrink-0">
+						{onToggleMobileSidebar && (
+							<button
+								type="button"
+								onClick={onToggleMobileSidebar}
+								className="mr-1 flex h-11 w-11 items-center justify-center rounded text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 md:hidden"
+								title={mobileSidebarOpen ? "Close navigation" : "Open navigation"}
+								aria-label={mobileSidebarOpen ? "Close navigation" : "Open navigation"}
+								aria-expanded={mobileSidebarOpen}
+								aria-controls="dashboard-mobile-navigation"
+							>
+								<span className="text-lg">{mobileSidebarOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}</span>
+							</button>
+						)}
 						{onToggleSidebar && (
 							<button
+								type="button"
 								onClick={onToggleSidebar}
-								className="flex items-center justify-center w-10 h-10 mr-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
+								className="mr-2 hidden h-10 w-10 items-center justify-center rounded text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 md:flex"
 								title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+								aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
 							>
 								<span className="text-lg">{sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}</span>
 							</button>
 						)}
 
-						<div className="flex items-center gap-2">
-							<Link href={baseUrl ? baseUrl : "/"} className="flex items-center">
+						<div className="flex min-w-0 items-center gap-2">
+							<Link href={baseUrl ? baseUrl : "/"} className="flex min-w-0 items-center">
 								<div className="relative">
-									<div className="h-10 max-w-48 flex items-center justify-center overflow-hidden">
+									<div className="flex h-9 max-w-28 items-center justify-center overflow-hidden sm:h-10 sm:max-w-48">
 										<img
 											src={imageUrl}
 											alt="LiteLLM Brand"
@@ -108,8 +127,10 @@ const Navbar: React.FC<NavbarProps> = ({
 						</div>
 					</div>
 					{/* Right side nav items */}
-					<div className="flex items-center space-x-5 ml-auto">
-						<WorkerDropdown onWorkerSwitch={handleWorkerSwitch} />
+					<div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-3 lg:gap-5">
+						<div className="min-w-0">
+							<WorkerDropdown onWorkerSwitch={handleWorkerSwitch} />
+						</div>
 						{/* Dark mode is currently a work in progress. To test, you can change 'false' to 'true' below.
             Do not set this to true by default until all components are confirmed to support dark mode styles. */}
 						{false && (
@@ -121,9 +142,11 @@ const Navbar: React.FC<NavbarProps> = ({
 								unCheckedChildren={<SunOutlined />}
 							/>
 						)}
-						<Button type="text" href="https://docs.litellm.ai/docs/" target="_blank" rel="noopener noreferrer">
-							Docs
-						</Button>
+						<span className="hidden sm:inline-flex">
+							<Button type="text" href="https://docs.litellm.ai/docs/" target="_blank" rel="noopener noreferrer">
+								Docs
+							</Button>
+						</span>
 
 						{!isPublicPage && <UserDropdown onLogout={handleLogout} />}
 					</div>

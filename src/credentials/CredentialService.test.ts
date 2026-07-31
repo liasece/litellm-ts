@@ -52,11 +52,11 @@ function makeService(repository = new FakeRepository()) {
 }
 
 describe("CredentialService", () => {
-	it("固定掩码不泄露秘密长度或尾部", async () => {
+	it("管理读取返回完整 Credential 值", async () => {
 		const { service } = makeService();
 		await service.create({ credential_name: "openai", credential_values: { short: "a", long: "sk-secret-value" } }, "user-a");
 
-		expect((await service.getByName("openai"))?.credential_values).toEqual({ short: "********", long: "********" });
+		expect((await service.getByName("openai"))?.credential_values).toEqual({ short: "a", long: "sk-secret-value" });
 	});
 
 	it("无需加密 key 即可加载数据库明文 Credential", async () => {
@@ -72,8 +72,8 @@ describe("CredentialService", () => {
 		await expect(current.service.load()).resolves.toBeUndefined();
 		expect(current.accessor.getValues("stored")).toEqual({ api_key: "sk-stored", regions: ["us-east-1"] });
 		expect((await current.service.getByName("stored"))?.credential_values).toEqual({
-			api_key: "********",
-			regions: "********",
+			api_key: "sk-stored",
+			regions: ["us-east-1"],
 		});
 	});
 

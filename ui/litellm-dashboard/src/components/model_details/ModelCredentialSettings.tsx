@@ -46,8 +46,8 @@ export default function ModelCredentialSettings({
 				<div>
 					<Form.Item name="api_key" label="Manual API Key" className="mb-2">
 						<Input.Password
-							placeholder="Leave blank to keep the currently stored manual API key"
-							autoComplete="new-password"
+							placeholder="No API key configured"
+							autoComplete="off"
 						/>
 					</Form.Item>
 					<Form.Item name="delete_api_key" valuePropName="checked" className="mb-0">

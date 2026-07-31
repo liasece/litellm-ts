@@ -10,6 +10,10 @@ import { registerEmbeddingsRoutes } from "../../src/proxy/EmbeddingsEndpoint";
 
 /** Mock LiteLLM Router：所有模型均无可用部署 */
 class MockLiteLLMRouter {
+	resolveModelGroupWithTrace(model: string) {
+		return { inputModel: model, resolvedModel: model, resolutionPath: [] };
+	}
+
 	getAvailableDeployment(_model: string): null {
 		return null;
 	}
@@ -75,6 +79,7 @@ describe("Embeddings E2E", () => {
 			model: "embed",
 		});
 		const litellmRouter = {
+			resolveModelGroupWithTrace: (model: string) => ({ inputModel: model, resolvedModel: model, resolutionPath: [] }),
 			getAvailableDeployment: () => ({
 				deployment: { model_name: "embed-group", litellm_params: { model: "embed", timeout: 2 } },
 				provider: { transformEmbeddingRequest },
@@ -102,6 +107,7 @@ describe("Embeddings E2E", () => {
 		const unsupportedApp = express();
 		unsupportedApp.use(express.json());
 		registerEmbeddingsRoutes(unsupportedApp, {
+			resolveModelGroupWithTrace: (model: string) => ({ inputModel: model, resolvedModel: model, resolutionPath: [] }),
 			getAvailableDeployment: () => ({
 				deployment: { model_name: "anthropic", litellm_params: { model: "anthropic/claude" } },
 				provider: { transformRequest: jest.fn() },

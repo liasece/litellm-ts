@@ -368,6 +368,12 @@ describe("WebUiSupport 契约", () => {
 			expect(typeof field.field_type).toBe("string");
 
 			const anthropic = res.body.find((provider: { provider: string }) => provider.provider === "Anthropic");
+			const cliProxy = res.body.find((provider: { provider: string }) => provider.provider === "CLIProxy");
+			expect(cliProxy).toMatchObject({
+				provider_display_name: "CLIProxy API (Managed)",
+				litellm_provider: "cliproxy",
+				credential_fields: [],
+			});
 			expect(anthropic.credential_fields[0]).toEqual({
 				key: "api_base",
 				label: "Upstream API Base",
@@ -1257,7 +1263,7 @@ describe("KeyManagement /key/list 契约", () => {
 
 /**
  * 构造用于 /v2/model/info 契约测试的 deployment 列表。
- * 包含 api_key 等敏感字段，断言响应中**不**出现 api_key。
+ * 包含完整编辑字段，断言管理响应可以原样回显。
  */
 function makeTestDeployments(): Deployment[] {
 	return [
@@ -1331,24 +1337,15 @@ describe("ModelsPageSupport 契约", () => {
 			expect(typeof res.body.size).toBe("number");
 		});
 
-		it("公开 litellm_credential_name，且绝不泄露秘密字段", async () => {
+		it("管理接口返回完整 litellm_params 供编辑回显", async () => {
 			const config = makeConfig();
 			const app = buildAuthedApp(config, makeTestDeployments());
 			const res = await request(app).get("/v2/model/info");
 			expect(res.status).toBe(200);
-			// 整段 JSON 序列化后不得包含敏感字符串
-			const serialized = JSON.stringify(res.body);
-			expect(serialized).not.toContain("sk-secret-must-not-leak");
-			expect(serialized).not.toContain("token-secret-must-not-leak");
-			expect(serialized).not.toContain("sk-secret-2");
-			expect(serialized).not.toContain("sk-anthropic-secret");
 			const openAi = res.body.data.find((item: { model_info: { id: string } }) => item.model_info.id === "openai/gpt-4o-primary");
 			expect(openAi.litellm_params.litellm_credential_name).toBe("production-openai-credential");
-			for (const item of res.body.data) {
-				expect(item.litellm_params).toBeDefined();
-				expect(item.litellm_params).not.toHaveProperty("api_key");
-				expect(item.litellm_params).not.toHaveProperty("api_token");
-			}
+			expect(openAi.litellm_params.api_key).toBe("sk-secret-must-not-leak");
+			expect(openAi.litellm_params.api_token).toBe("token-secret-must-not-leak");
 		});
 
 		it("无 deployment 时应返回空 data 且 total_pages=0（对齐 Python 空态）", async () => {

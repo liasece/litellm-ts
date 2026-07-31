@@ -620,52 +620,9 @@ interface ModelInfoV1Response {
 	data: ModelInfoV2Item[];
 }
 
-/**
- * 对外暴露的 litellm_params 白名单字段。
- *
- * 设计原则：仅保留 WebUI Models 页面需要的字段，避免任意字段透传后被
- * 自动回显/代理到客户端导致敏感数据泄漏。注意这是顶层白名单（浅拷贝），
- * 不会递归进入嵌套对象——extra_headers / extra_body 等可能藏 secret 的字段
- * 整体不进入 out。
- *
- * 字段名必须是 LitellmParams 实际键（keyof LitellmParams），所以只列
- * LitellmParams 接口中已声明的字段。
- */
-const PUBLIC_LITELLM_PARAM_KEYS: ReadonlySet<keyof LitellmParams> = new Set<keyof LitellmParams>([
-	"model",
-	"api_base",
-	"custom_llm_provider",
-	"litellm_credential_name",
-	"rpm",
-	"tpm",
-	"timeout",
-	"stream_timeout",
-	"max_retries",
-	"input_cost_per_token",
-	"output_cost_per_token",
-]);
-
-/**
- * 安全地构造对外暴露的 litellm_params：仅复制白名单字段并丢弃 undefined。
- *
- * 浅拷贝边界：只复制 LitellmParams 顶层键，不递归进入嵌套对象。
- * - extra_headers / extra_body 等嵌套容器整体不返回（防止 secret 泄漏）
- * - api_key 永不返回（仅作为敏感字段额外防御）
- * @param params - 内部 litellm_params
- * @returns 字段白名单的浅拷贝
- */
+/** 管理编辑接口返回完整 litellm_params，确保现有值可以原样编辑。 */
 function buildPublicLitellmParams(params: LitellmParams): Record<string, unknown> {
-	const out: Record<string, unknown> = {};
-	for (const [paramName, paramValue] of Object.entries(params)) {
-		if (!PUBLIC_LITELLM_PARAM_KEYS.has(paramName as keyof LitellmParams)) {
-			continue;
-		}
-		if (paramValue === undefined) {
-			continue;
-		}
-		out[paramName] = paramValue;
-	}
-	return out;
+	return structuredClone(params);
 }
 
 /**
@@ -699,8 +656,7 @@ function resolveModelId(modelInfo: ModelInfo | undefined, dep: Deployment, index
  * model_info 对齐 Python `_enrich_model_info_with_litellm_data` 输出（73 键，缺省 null），
  * 另注入 `fallbacks`（该 model_group 当前 fallback 链，WebUI Fallback 列数据源，
  * 等价 PY get_all_fallbacks 按 model_group 反查 Router.fallbacks）。
- * litellm_params 为白名单浅拷贝 + Python 默认 false 的三个布尔开关。
- * 严格不包含 api_key 等敏感字段。
+ * litellm_params 为完整深拷贝 + Python 默认 false 的三个布尔开关。
  * @param dep - Router deployment
  * @param stableIndex - 同一 model_name 下的序号
  * @param modelInfo - 优先取自 dep.model_info；为空时使用兜底对象

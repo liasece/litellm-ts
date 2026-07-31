@@ -32,6 +32,7 @@ import NewUsagePage from "@/components/UsagePage/components/UsagePageView";
 import Usage from "@/components/usage";
 import UserDashboard from "@/components/user_dashboard";
 import VectorStoreManagement from "@/components/vector_store_management";
+import CliProxyManagement from "@/components/cliproxy/CliProxyManagement";
 import SpendLogsTable from "@/components/view_logs";
 import ViewUserDashboard from "@/components/view_users";
 import { isAdminRole } from "@/utils/roles";
@@ -183,6 +184,8 @@ export default function LegacyDashboardPageContent(props: LegacyDashboardPageCon
 			return <TransformRequestPanel accessToken={accessToken} />;
 		case "router-settings":
 			return <GeneralSettings userID={userID} userRole={userRole} accessToken={accessToken} modelData={modelData} />;
+		case "cliproxy":
+			return <CliProxyManagement />;
 		case "ui-theme":
 			return <UIThemeSettings userID={userID} userRole={userRole} accessToken={accessToken} />;
 		case "cost-tracking":

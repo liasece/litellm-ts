@@ -99,4 +99,29 @@ describe("prepareModelAddRequest", () => {
 		expect(deployment.litellmParamsObj.litellm_credential_name).toBe("selected-credential");
 		expect(deployment.litellmParamsObj.timeout).toBe(5);
 	});
+
+	it("removes deployment credentials and endpoint overrides for the managed CLIProxy provider", async () => {
+		const deployments = await prepareModelAddRequest(
+			{
+				model_mappings: [{ public_name: "codex", litellm_model: "cliproxy/gpt-5.4" }],
+				custom_llm_provider: "CLIProxy",
+				litellm_credential_name: "legacy-cli-proxy",
+				credential_name: "legacy-cli-proxy",
+				api_base: "http://legacy.example",
+				api_key: "legacy-secret",
+			},
+			"token",
+			null,
+		);
+
+		expect(deployments).toHaveLength(1);
+		expect(deployments![0].litellmParamsObj).toMatchObject({
+			model: "cliproxy/gpt-5.4",
+			custom_llm_provider: "cliproxy",
+		});
+		expect(deployments![0].litellmParamsObj).not.toHaveProperty("litellm_credential_name");
+		expect(deployments![0].litellmParamsObj).not.toHaveProperty("credential_name");
+		expect(deployments![0].litellmParamsObj).not.toHaveProperty("api_base");
+		expect(deployments![0].litellmParamsObj).not.toHaveProperty("api_key");
+	});
 });

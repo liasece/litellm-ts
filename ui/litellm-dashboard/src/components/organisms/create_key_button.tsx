@@ -363,6 +363,17 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
 
 	const handleCreate = async (formValues: Record<string, any>) => {
 		try {
+			if (disableCustomApiKeys) {
+				delete formValues.key;
+			} else if (typeof formValues.key === "string") {
+				const customKey = formValues.key.trim();
+				if (customKey.length > 0) {
+					formValues.key = customKey;
+				} else {
+					delete formValues.key;
+				}
+			}
+
 			const newKeyAlias = formValues?.key_alias ?? "";
 			const newKeyTeamId = formValues?.team_id ?? null;
 
@@ -896,6 +907,40 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
 							>
 								<TextInput placeholder="" />
 							</Form.Item>
+
+							{!disableCustomApiKeys && (
+								<Form.Item
+									label={
+										<span>
+											Custom Key{" "}
+											<Tooltip title="Optionally choose the Virtual Key value. Leave blank to generate one automatically.">
+												<InfoCircleOutlined style={{ marginLeft: "4px" }} />
+											</Tooltip>
+										</span>
+									}
+									name="key"
+									rules={[
+										{
+											validator: async (_rule, value) => {
+												if (typeof value !== "string" || value.trim().length === 0) {
+													return;
+												}
+												const customKey = value.trim();
+												if (!customKey.startsWith("sk-")) {
+													throw new Error("Custom Key must start with 'sk-'");
+												}
+												if (customKey.length < 16) {
+													throw new Error("Custom Key must be at least 16 characters long");
+												}
+											},
+										},
+									]}
+									help="optional - leave blank to generate automatically"
+									className="mt-4"
+								>
+									<TextInput placeholder="sk-..." />
+								</Form.Item>
+							)}
 
 							<Form.Item
 								label={
@@ -1582,7 +1627,7 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
 													"budget_duration",
 													"tpm_limit",
 													"rpm_limit",
-													...(disableCustomApiKeys ? ["key"] : []),
+													"key",
 												]}
 											/>
 										</AccordionBody>

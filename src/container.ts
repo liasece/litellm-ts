@@ -19,6 +19,8 @@ import { CredentialSecretBox } from "./credentials/CredentialSecretBox";
 import { CredentialService } from "./credentials/CredentialService";
 import { CredentialRepository } from "./repositories/CredentialRepository";
 import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfigService";
+import { ConfigRepository } from "./repositories/ConfigRepository";
+import { CliProxyRuntimeManager } from "./cliproxy/CliProxyRuntimeManager";
 
 /** WebUI 登录后 cookie 中 JWT 的有效期（与 LoginEndpoints 保持一致） */
 const LOGIN_TOKEN_TTL_MS = 5 * 60 * 1000;
@@ -43,6 +45,8 @@ export interface ServiceContainer {
 	readonly credentialService: CredentialService;
 	/** 每请求从数据库读取 Router 配置的运行时服务 */
 	readonly runtimeConfigService: DatabaseRuntimeConfigService;
+	/** 内置 CLIProxy 二进制、配置、OAuth 文件与进程生命周期。 */
+	readonly cliProxyRuntime: CliProxyRuntimeManager;
 }
 
 /**
@@ -103,6 +107,14 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 每个需要 Router 的 HTTP 请求由 DatabaseRuntimeConfigService 建立一致的 DB 快照。
 	const runtimeConfigService = new DatabaseRuntimeConfigService(db.db, config);
 
+	// 3.2 CLIProxy 是 LiteLLM 托管的内部运行时。DB 是期望配置源，生成文件与
+	// OAuth auth-dir 位于持久化卷；缺少 bootstrap binary 时不阻断网关启动。
+	const cliProxyRuntime = new CliProxyRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key);
+	await cliProxyRuntime.initialize().catch((error: unknown) => {
+		// Runtime status 保留具体错误，LiteLLM 其余 provider 仍可正常工作。
+		console.error("CLIProxy runtime initialization failed", error);
+	});
+
 	// 4. 创建 AuthRepository
 	const authRepository = new AuthRepository(db.db);
 
@@ -123,5 +135,6 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		authorizationGuard: authorizationGuard,
 		credentialService: credentialService,
 		runtimeConfigService: runtimeConfigService,
+		cliProxyRuntime: cliProxyRuntime,
 	};
 }

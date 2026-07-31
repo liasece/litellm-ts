@@ -117,7 +117,7 @@ describe("CredentialsPanel", () => {
 		expect(screen.getByText("No credentials configured")).toBeInTheDocument();
 	});
 
-	it("opens details without rendering or copying credential values", () => {
+	it("opens details and renders every credential value", () => {
 		const secret = "never-render-this-secret";
 		mockUseAuthorized.mockReturnValue({ accessToken: "test-token" });
 		mockUseCredentials.mockReturnValue({
@@ -141,11 +141,11 @@ describe("CredentialsPanel", () => {
 
 		fireEvent.click(screen.getByText("openai-key"));
 
-		expect(screen.getByText("Configured fields")).toBeInTheDocument();
 		expect(screen.getByText("api_key")).toBeInTheDocument();
 		expect(screen.getByText("api_base")).toBeInTheDocument();
 		expect(screen.getByText("us-east-1")).toBeInTheDocument();
-		expect(screen.queryByText(secret)).not.toBeInTheDocument();
+		expect(screen.getByText(secret)).toBeInTheDocument();
+		expect(screen.getByText("https://api.example.com")).toBeInTheDocument();
 	});
 
 	it("patches only dirty fields, converts explicit deletion to null, and refetches", async () => {

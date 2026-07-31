@@ -427,11 +427,11 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 	);
 
 	return (
-		<div style={{ width: "100%" }} className="p-8 relative">
+		<div style={{ width: "100%" }} className="relative min-w-0 p-4 sm:p-8">
 			{/* Global Date Picker and Tabs - Single Row */}
-			<div className="flex items-end justify-between gap-6 mb-6">
-				<div className="flex-1">
-					<div className="flex items-end justify-between gap-6 mb-4 w-full">
+			<div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between lg:gap-6">
+				<div className="min-w-0 flex-1">
+					<div className="mb-4 flex w-full flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
 						<UsageViewSelect value={usageView} onChange={(value) => setUsageView(value)} isAdmin={isAdmin} />
 						<AdvancedDatePicker value={dateValue} onValueChange={handleDateChange} />
 					</div>

@@ -235,27 +235,21 @@ const CredentialsPanel: React.FC<CredentialsPanelProps> = ({ uploadProps }) => {
 					</Descriptions.Item>
 					{Object.entries(credentialDetails?.credential_info ?? {})
 						.filter(
-							([key, value]) =>
-								key !== "custom_llm_provider" &&
-								!/(?:key|token|secret|credential|password)/i.test(key) &&
-								["string", "number", "boolean"].includes(typeof value),
+							([key, value]) => key !== "custom_llm_provider" && value !== undefined,
 						)
 						.map(([key, value]) => (
 							<Descriptions.Item key={key} label={key}>
-								{String(value)}
+								{typeof value === "object" ? JSON.stringify(value) : String(value)}
 							</Descriptions.Item>
 						))}
+					{Object.entries(credentialDetails?.credential_values ?? {}).map(([fieldName, value]) => (
+						<Descriptions.Item key={fieldName} label={fieldName}>
+							<span className="break-all font-mono text-xs">
+								{typeof value === "object" ? JSON.stringify(value) : String(value ?? "—")}
+							</span>
+						</Descriptions.Item>
+					))}
 				</Descriptions>
-				<div className="mt-6">
-					<Text className="font-medium">Configured fields</Text>
-					<div className="mt-2 flex flex-wrap gap-2">
-						{Object.keys(credentialDetails?.credential_values ?? {}).map((fieldName) => (
-							<Badge key={fieldName} color="gray" size="xs">
-								{fieldName}
-							</Badge>
-						))}
-					</div>
-				</div>
 			</ResourceDetailsDrawer>
 
 			{isAddModalOpen && (
