@@ -135,13 +135,16 @@ export function buildUpstreamAttempt(
 	const apiKey = (deployment.litellm_params.api_key as string | undefined) ?? requestApiKey ?? process.env["ANTHROPIC_API_KEY"] ?? "";
 	const anthropicVersion = requestAnthropicVersion ?? "2023-06-01";
 	const deploymentModel = deployment.litellm_params.model ?? model;
-	// 把 deployment 的全部 litellm_params 透传给 provider.transformRequest，
-	// 让 deployment.litellm_params.api_base（自定义上游）能覆盖 provider 默认 base。
-	const providerReq = provider.transformRequest(deploymentModel, [], {
+	// 原生支持 Anthropic Messages 的 provider（如 DeepSeek）使用自己的协议出口；
+	// 其余 provider 沿用 transformRequest 构造 URL/headers。
+	const requestParams = {
 		...deployment.litellm_params,
 		api_key: apiKey,
 		anthropic_version: anthropicVersion,
-	});
+	};
+	const providerReq = provider.transformAnthropicRequest
+		? provider.transformAnthropicRequest(deploymentModel, requestParams)
+		: provider.transformRequest(deploymentModel, [], requestParams);
 	return {
 		upstreamUrl: providerReq.url,
 		upstreamHeaders: providerReq.headers,

@@ -18,6 +18,7 @@ import { ApiError } from "../core/api/ApiError";
 import type { Deployment } from "../types/router";
 import type { ProviderConfig, ProviderRequest } from "../types/provider";
 import type { ModelResponse } from "../types/openai";
+import { DeepSeekProvider } from "../providers/DeepSeekProvider";
 import {
 	ProviderUpstreamError,
 	buildUpstreamAttempt,
@@ -67,6 +68,8 @@ interface MockFacadeOptions {
 	cooldownOnFailure?: boolean;
 	/** model → alias 解析结果 */
 	modelResolutions?: Record<string, { inputModel: string; resolvedModel: string; resolutionPath: readonly string[] }>;
+	/** model → provider；缺省使用固定测试 provider */
+	providersByModel?: Record<string, ProviderConfig>;
 }
 
 class MockRouterFacade implements FallbackRouterFacade {
@@ -86,7 +89,7 @@ class MockRouterFacade implements FallbackRouterFacade {
 		if (!healthy) {
 			return null;
 		}
-		return { deployment: healthy, provider: makeProvider() };
+		return { deployment: healthy, provider: this._options.providersByModel?.[model] ?? makeProvider() };
 	}
 
 	getNextFallback(model: string, fallbackDepth: number): string | null {
@@ -149,6 +152,21 @@ describe("buildUpstreamAttempt", () => {
 	it("无可用 deployment 返回 null", () => {
 		const facade = new MockRouterFacade({ deploymentsByModel: {} });
 		expect(buildUpstreamAttempt(facade, "missing-model")).toBeNull();
+	});
+
+	it("DeepSeek deployment 使用 provider 的原生 Anthropic 出口", () => {
+		const deployment = makeDeployment("deepseek-native", "deepseek/deepseek-v4-flash");
+		const facade = new MockRouterFacade({
+			deploymentsByModel: { "deepseek-native": [deployment] },
+			providersByModel: { "deepseek-native": new DeepSeekProvider() },
+		});
+
+		const attempt = buildUpstreamAttempt(facade, "deepseek-native");
+
+		expect(attempt).not.toBeNull();
+		expect(attempt!.upstreamUrl).toBe("https://api.deepseek.com/anthropic/v1/messages");
+		expect(attempt!.upstreamHeaders["x-api-key"]).toBe("key-for-deepseek-native");
+		expect(attempt!.upstreamModel).toBe("deepseek-v4-flash");
 	});
 });
 

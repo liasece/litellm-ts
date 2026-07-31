@@ -26,6 +26,8 @@ describe("ProviderRegistry", () => {
 		it('解析 "deepseek/deepseek-v4-flash" 返回 DeepSeekProvider 实例', () => {
 			const provider = registry.getProvider("deepseek/deepseek-v4-flash");
 			expect(provider).toBeInstanceOf(DeepSeekProvider);
+			const req = provider.transformRequest("deepseek/deepseek-v4-flash", [{ role: "user", content: "hi" }], {});
+			expect(req.url).toBe("https://api.deepseek.com/chat/completions");
 		});
 
 		it('解析 "glm/GLM-5.1" 返回 GLMProvider 实例', () => {

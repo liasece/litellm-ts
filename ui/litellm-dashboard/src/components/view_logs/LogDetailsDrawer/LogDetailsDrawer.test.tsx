@@ -192,6 +192,42 @@ describe("LogDetailsDrawer session fallback", () => {
 		expect(screen.getByText("details:req-clicked")).toBeInTheDocument();
 	});
 
+	it("关闭后打开同一 Session 的另一条日志时切换到新请求", async () => {
+		vi.mocked(sessionSpendLogsCall).mockResolvedValue({
+			data: [clickedLog, secondLog],
+			total: 2,
+			page: 1,
+			page_size: 100,
+			total_pages: 1,
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false },
+			},
+		});
+		const drawer = (open: boolean, logEntry: LogEntry, sessionGroup: typeof claudeCodeGroup | null) => (
+			<QueryClientProvider client={queryClient}>
+				<LogDetailsDrawer
+					open={open}
+					onClose={vi.fn()}
+					logEntry={logEntry}
+					sessionGroup={sessionGroup}
+					accessToken="unused-token"
+				/>
+			</QueryClientProvider>
+		);
+		const { rerender } = render(drawer(true, clickedLog, claudeCodeGroup));
+
+		await waitFor(() => expect(screen.getByText("model-second")).toBeInTheDocument());
+		expect(screen.getByTestId("selected-request")).toHaveTextContent("req-clicked");
+
+		rerender(drawer(false, clickedLog, null));
+		rerender(drawer(true, secondLog, claudeCodeGroup));
+
+		await waitFor(() => expect(screen.getByTestId("selected-request")).toHaveTextContent("req-second"));
+		expect(screen.getByText("details:req-second")).toBeInTheDocument();
+	});
+
 	it("Session 请求失败时保留 fallback，显示清洗错误和 Retry", async () => {
 		vi.mocked(sessionSpendLogsCall).mockRejectedValue(new Error("HTTP 404"));
 

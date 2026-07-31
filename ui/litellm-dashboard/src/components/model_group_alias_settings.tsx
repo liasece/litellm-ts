@@ -146,7 +146,10 @@ const ModelGroupAliasSettings: React.FC<ModelGroupAliasSettingsProps> = ({
 		[modelOptions],
 	);
 	const resolutions = useMemo(
-		() => Object.fromEntries(aliases.map((alias) => [alias.aliasName, resolveAliasPath(alias.aliasName, aliasObject, modelNames)])),
+		() =>
+			Object.fromEntries(
+				aliases.map((alias) => [alias.aliasName, resolveAliasPath(alias.aliasName, aliasObject, modelNames)]),
+			),
 		[aliasObject, aliases, modelNames],
 	);
 	const targetOptions = useMemo(() => {
@@ -164,7 +167,9 @@ const ModelGroupAliasSettings: React.FC<ModelGroupAliasSettingsProps> = ({
 			onAliasUpdate?.(nextAliasObject);
 			setAliases(updatedAliases);
 			setHealth((previous) =>
-				Object.fromEntries(updatedAliases.map((alias) => [alias.aliasName, previous[alias.aliasName] ?? emptyHealth()])),
+				Object.fromEntries(
+					updatedAliases.map((alias) => [alias.aliasName, previous[alias.aliasName] ?? emptyHealth()]),
+				),
 			);
 			return true;
 		} catch (error) {
@@ -184,12 +189,7 @@ const ModelGroupAliasSettings: React.FC<ModelGroupAliasSettingsProps> = ({
 			NotificationsManager.error("An alias with this name already exists");
 			return;
 		}
-		if (
-			await saveAliasesToBackend([
-				...aliases,
-				{ id: `${Date.now()}-${aliasName}`, aliasName, targetModelGroup },
-			])
-		) {
+		if (await saveAliasesToBackend([...aliases, { id: `${Date.now()}-${aliasName}`, aliasName, targetModelGroup }])) {
 			setNewAlias({ aliasName: "", targetModelGroup: "" });
 			NotificationsManager.success("Alias added");
 		}
@@ -291,7 +291,11 @@ const ModelGroupAliasSettings: React.FC<ModelGroupAliasSettingsProps> = ({
 					options={targetOptions}
 					onChange={(value) => setNewAlias((previous) => ({ ...previous, targetModelGroup: value }))}
 					placeholder="Select a model or alias"
-					filterOption={(input, option) => String(option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+					filterOption={(input, option) =>
+						String(option?.value ?? "")
+							.toLowerCase()
+							.includes(input.toLowerCase())
+					}
 					size="small"
 				/>
 				<Button size="xs" icon={PlusOutlined} onClick={() => void handleAddAlias()}>
@@ -351,26 +355,31 @@ const ModelGroupAliasSettings: React.FC<ModelGroupAliasSettingsProps> = ({
 													setEditingAlias((previous) => previous && { ...previous, targetModelGroup: value })
 												}
 												filterOption={(input, option) =>
-													String(option?.value ?? "").toLowerCase().includes(input.toLowerCase())
+													String(option?.value ?? "")
+														.toLowerCase()
+														.includes(input.toLowerCase())
 												}
 											/>
 										) : (
 											<div>
 												<div className="flex flex-wrap items-center gap-1 font-mono text-sm">
-													{resolution?.path.slice(1).map((node, index) => (
-														<React.Fragment key={`${node}-${index}`}>
-															{index > 0 && <span className="text-gray-400">→</span>}
-															<span
-																className={`rounded border px-2 py-0.5 ${
-																	resolution.reachable || index < resolution.path.length - 2
-																		? "border-amber-200 bg-amber-50 text-amber-700"
-																		: "border-red-200 bg-red-50 text-red-700"
-																}`}
-															>
-																{node}
-															</span>
-														</React.Fragment>
-													))}
+													{resolution?.path.slice(1).map((node, index) => {
+														const isTerminal = index === resolution.path.length - 2;
+														return (
+															<React.Fragment key={`${node}-${index}`}>
+																{index > 0 && <span className="text-gray-400">→</span>}
+																{isTerminal ? (
+																	<span className={resolution.reachable ? "text-gray-900" : "text-red-600"}>
+																		{node}
+																	</span>
+																) : (
+																	<span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-amber-700">
+																		{node}
+																	</span>
+																)}
+															</React.Fragment>
+														);
+													})}
 												</div>
 												{resolution?.error && <p className="mt-1 text-xs text-red-600">{resolution.error}</p>}
 											</div>
@@ -391,7 +400,11 @@ const ModelGroupAliasSettings: React.FC<ModelGroupAliasSettingsProps> = ({
 																	: "gray"
 													}
 												>
-													{aliasHealth.status === "checking" ? "checking" : aliasHealth.status === "none" ? "not checked" : aliasHealth.status}
+													{aliasHealth.status === "checking"
+														? "checking"
+														: aliasHealth.status === "none"
+															? "not checked"
+															: aliasHealth.status}
 												</Badge>
 												{aliasHealth.status === "healthy" && <CheckCircleOutlined className="text-emerald-600" />}
 												{aliasHealth.status === "unhealthy" && <CloseCircleOutlined className="text-red-600" />}

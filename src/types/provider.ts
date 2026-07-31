@@ -69,6 +69,16 @@ export interface ProviderConfig {
 	transformRequest(model: string, messages: Message[], optionalParams: Record<string, unknown>): ProviderRequest;
 
 	/**
+	 * 构造原生 Anthropic Messages 协议请求的连接信息。
+	 *
+	 * `/v1/messages` 端点使用该能力选择 provider 原生的 Anthropic 出口，
+	 * 请求体仍由端点直接透传。未实现时回退到 transformRequest。
+	 * @param model - 模型名称
+	 * @param optionalParams - deployment 与请求参数
+	 */
+	transformAnthropicRequest?(model: string, optionalParams: Record<string, unknown>): ProviderRequest;
+
+	/**
 	 * 将标准 embeddings 请求转换为该 Provider 的正式请求格式。
 	 * 未实现此能力的 Provider 不支持 embeddings。
 	 * @param model - 模型名称

@@ -168,16 +168,24 @@ export function LogDetailsDrawer({
 		}
 	}, [isSessionMode, logEntry, selectedSessionRequestId, sessionLogs]);
 
+	// A new row click is authoritative, even when the cached session contains the
+	// previously selected request. Without this sync, reopening another row from
+	// the same session can keep showing the first request that was opened.
+	useEffect(() => {
+		if (!open || !isSessionMode || !logEntry?.request_id) return;
+		setSelectedSessionRequestId(logEntry.request_id);
+	}, [open, isSessionMode, logEntry?.request_id]);
+
 	// Reset transient UI state when the drawer opens or closes.
 	useEffect(() => {
 		if (open) {
 			setIsSidebarCollapsed(false);
 		} else {
-			if (isSessionMode) setSelectedSessionRequestId(null);
+			setSelectedSessionRequestId(null);
 			setCopiedLeftPanelId(false);
 			setIsSimulationOpen(false);
 		}
-	}, [open, isSessionMode]);
+	}, [open]);
 
 	// Keyboard navigation
 	const { selectNextLog, selectPreviousLog } = useKeyboardNavigation({

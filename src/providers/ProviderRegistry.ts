@@ -19,7 +19,7 @@ import { CliProxyProvider } from "./CliProxyProvider";
 const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
 	[LlmProviders.OpenAI]: "https://api.openai.com",
 	[LlmProviders.Anthropic]: "https://api.anthropic.com",
-	[LlmProviders.DeepSeek]: "https://api.deepseek.com/beta",
+	[LlmProviders.DeepSeek]: "https://api.deepseek.com",
 	[LlmProviders.GLM]: "https://api.z.ai/api/paas/v4",
 	[LlmProviders.MiMo]: "https://token-plan-cn.xiaomimimo.com",
 	// DIFF-CFG-MIMO-01: 国际 region 走 OpenAI 兼容路径

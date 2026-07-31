@@ -1,206 +1,80 @@
-/**
- * DeepSeek Provider 单元测试
- *
- * 测试 DeepSeek 消息规范化（Patch 4+5）和请求转换。
- * normalizeMessages 同时应用 Patch 4 和 Patch 5，测试必须覆盖两者。
- */
+/** DeepSeek 原生 OpenAI / Anthropic 协议出口测试。 */
 
+import type { Message } from "../types/openai";
 import { DeepSeekProvider } from "./DeepSeekProvider";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function textBlock(text: string): Record<string, unknown> {
-	return { type: "text", text: text };
-}
-
-function toolUseBlock(id: string, name = "tool"): Record<string, unknown> {
-	return { type: "tool_use", id: id, name: name, input: {} };
-}
-
-function toolResultBlock(toolUseId: string, content: Record<string, unknown>[] | string = "done"): Record<string, unknown> {
-	return { type: "tool_result", tool_use_id: toolUseId, content: content };
-}
-
-function serverToolUseBlock(id: string, name = "tool"): Record<string, unknown> {
-	return { type: "server_tool_use", id: id, name: name, input: {} };
-}
-
-function thinkingBlock(thinking = "", signature = ""): Record<string, unknown> {
-	return { type: "thinking", thinking: thinking, signature: signature };
-}
-
-function assistant(blocks: Record<string, unknown>[] | string): Record<string, unknown> {
-	return { role: "assistant", content: blocks };
-}
-
-function user(content: Record<string, unknown>[] | string): Record<string, unknown> {
-	return { role: "user", content: content };
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("DeepSeekProvider", () => {
 	let provider: DeepSeekProvider;
 
 	beforeEach(() => {
-		provider = new DeepSeekProvider();
+		provider = new DeepSeekProvider("deepseek-key");
 	});
 
-	// -----------------------------------------------------------------------
-	// transformRequest -- 基础
-	// -----------------------------------------------------------------------
+	describe("OpenAI Chat Completions", () => {
+		it("使用正式 OpenAI 兼容端点并剥离 provider 前缀", () => {
+			const result = provider.transformRequest("deepseek/deepseek-v4-flash", [{ role: "user", content: "hi" }], {
+				temperature: 0.7,
+			});
 
-	describe("transformRequest", () => {
-		it("returns a basic OpenAI-compatible request (inherited from base)", () => {
-			const result = provider.transformRequest("deepseek-chat", [{ role: "user", content: "hi" }], { temperature: 0.7 });
-
-			expect(result.method).toBe("POST");
-			expect(result.headers["Content-Type"]).toBe("application/json");
-			expect((result.body as Record<string, unknown>).model).toBe("deepseek-chat");
-			expect((result.body as Record<string, unknown>).temperature).toBe(0.7);
+			expect(result.url).toBe("https://api.deepseek.com/chat/completions");
+			expect(result.headers["Authorization"]).toBe("Bearer deepseek-key");
+			expect(result.body).toMatchObject({
+				model: "deepseek-v4-flash",
+				temperature: 0.7,
+			});
 		});
 
-		it("uses DeepSeek API endpoint", () => {
-			const result = provider.transformRequest("deepseek-chat", [{ role: "user", content: "hi" }], {});
-
-			expect(result.url).toBe("https://api.deepseek.com/beta/chat/completions");
-		});
-
-		it("strips provider prefix from model name", () => {
-			const result = provider.transformRequest("deepseek/deepseek-chat", [{ role: "user", content: "hi" }], {});
-
-			expect((result.body as Record<string, unknown>).model).toBe("deepseek-chat");
-		});
-
-		it("keeps model name as-is when deepseek-reasoner is passed", () => {
-			const result = provider.transformRequest("deepseek-reasoner", [{ role: "user", content: "hi" }], {});
-
-			expect(result.url).toBe("https://api.deepseek.com/beta/chat/completions");
-			expect((result.body as Record<string, unknown>).model).toBe("deepseek-reasoner");
-		});
-	});
-
-	// -----------------------------------------------------------------------
-	// normalizeMessages -- Patch 4 + Patch 5 同时生效
-	// -----------------------------------------------------------------------
-
-	describe("normalizeMessages [Patch 4 + Patch 5]", () => {
-		it("moves tool_result from assistant to user message and injects thinking", () => {
-			const messages = [assistant([textBlock("a"), toolUseBlock("id1"), toolResultBlock("id1")]), user([textBlock("next")])];
-
-			provider.normalizeMessages(messages);
-
-			expect(messages).toEqual([
-				assistant([thinkingBlock(), textBlock("a"), toolUseBlock("id1")]),
-				user([toolResultBlock("id1"), textBlock("next")]),
-			]);
-		});
-
-		it("reorders assistant content so text comes before all tool_use blocks when tool_results are present", () => {
+		it("原样透传 OpenAI 消息、reasoning_effort 和 thinking，不修改调用方参数", () => {
 			const messages = [
-				assistant([toolUseBlock("A"), textBlock("mid"), toolUseBlock("B"), toolResultBlock("A"), toolResultBlock("B")]),
-				user("next"),
-			];
+				{ role: "assistant", content: "", reasoning_content: "reasoning" },
+				{ role: "user", content: "continue" },
+			] as Message[];
+			const optionalParams = {
+				reasoning_effort: "max",
+				thinking: { type: "enabled" },
+			};
 
-			provider.normalizeMessages(messages);
+			const result = provider.transformRequest("deepseek-v4-pro", messages, optionalParams);
 
-			expect(messages).toEqual([
-				assistant([thinkingBlock(), textBlock("mid"), toolUseBlock("A"), toolUseBlock("B")]),
-				user([toolResultBlock("A"), toolResultBlock("B")]),
-				user("next"),
-			]);
-		});
-
-		it("converts server_tool_use to tool_use and extracts tool_results", () => {
-			const messages = [assistant([serverToolUseBlock("s1"), toolResultBlock("s1")]), user([textBlock("next")])];
-
-			provider.normalizeMessages(messages);
-
-			expect(messages).toEqual([assistant([thinkingBlock(), toolUseBlock("s1")]), user([toolResultBlock("s1"), textBlock("next")])]);
-		});
-
-		it("orders tool_results to match tool_use ID order and injects thinking", () => {
-			const messages = [
-				assistant([toolUseBlock("B"), toolUseBlock("A"), toolResultBlock("A", "result_a"), toolResultBlock("B", "result_b")]),
-				user([textBlock("next")]),
-			];
-
-			provider.normalizeMessages(messages);
-
-			expect(messages).toEqual([
-				assistant([thinkingBlock(), toolUseBlock("B"), toolUseBlock("A")]),
-				user([toolResultBlock("B", "result_b"), toolResultBlock("A", "result_a"), textBlock("next")]),
-			]);
-		});
-
-		it("injects thinking even when no tool interleaving is present", () => {
-			const messages = [assistant([textBlock("hello")]), user("world")];
-
-			provider.normalizeMessages(messages);
-
-			expect(messages).toEqual([assistant([thinkingBlock(), textBlock("hello")]), user("world")]);
+			expect((result.body as Record<string, unknown>)["messages"]).toEqual(messages);
+			expect((result.body as Record<string, unknown>)["reasoning_effort"]).toBe("max");
+			expect((result.body as Record<string, unknown>)["thinking"]).toEqual({ type: "enabled" });
+			expect(optionalParams).toEqual({
+				reasoning_effort: "max",
+				thinking: { type: "enabled" },
+			});
 		});
 	});
 
-	// -----------------------------------------------------------------------
-	// normalizeMessages [Patch 5] -- thinking block 特定行为
-	// -----------------------------------------------------------------------
+	describe("Anthropic Messages", () => {
+		it("使用 DeepSeek 原生 Anthropic 端点和 x-api-key", () => {
+			const result = provider.transformAnthropicRequest("deepseek/deepseek-v4-flash", {});
 
-	describe("normalizeMessages [Patch 5] — thinking", () => {
-		it("preserves existing thinking block and does not add a second one", () => {
-			const messages = [assistant([thinkingBlock("I am thinking...", "sig123"), textBlock("hello")]), user("world")];
-
-			provider.normalizeMessages(messages);
-
-			expect(messages).toEqual([assistant([thinkingBlock("I am thinking...", "sig123"), textBlock("hello")]), user("world")]);
+			expect(result.url).toBe("https://api.deepseek.com/anthropic/v1/messages");
+			expect(result.headers["x-api-key"]).toBe("deepseek-key");
+			expect(result.headers["anthropic-version"]).toBe("2023-06-01");
+			expect(result.model).toBe("deepseek-v4-flash");
 		});
 
-		it("preserves redacted_thinking block and does not add a second thinking", () => {
-			const messages = [
-				assistant([{ type: "redacted_thinking", thinking: "redacted", signature: "sig" }, textBlock("hello")]),
-				user("world"),
-			];
+		it("接受独立 anthropic_api_base 覆盖且不会重复追加路径", () => {
+			const result = provider.transformAnthropicRequest("deepseek-v4-pro", {
+				api_base: "https://api.deepseek.com",
+				anthropic_api_base: "https://proxy.example/anthropic/",
+				api_key: "deployment-key",
+				anthropic_version: "2025-01-01",
+			});
 
-			provider.normalizeMessages(messages);
-
-			expect(messages).toEqual([
-				assistant([{ type: "redacted_thinking", thinking: "redacted", signature: "sig" }, textBlock("hello")]),
-				user("world"),
-			]);
+			expect(result.url).toBe("https://proxy.example/anthropic/v1/messages");
+			expect(result.headers["x-api-key"]).toBe("deployment-key");
+			expect(result.headers["anthropic-version"]).toBe("2025-01-01");
 		});
 
-		it("converts string content to block array with thinking prepended", () => {
-			const messages = [assistant("hello"), user("world")];
+		it("从兼容的 /v1 OpenAI base 派生官方 Anthropic 地址", () => {
+			const result = provider.transformAnthropicRequest("deepseek-v4-flash", {
+				api_base: "https://api.deepseek.com/v1",
+			});
 
-			provider.normalizeMessages(messages);
-
-			expect(messages).toEqual([assistant([thinkingBlock(), { type: "text", text: "hello" }]), user("world")]);
-		});
-	});
-
-	// -----------------------------------------------------------------------
-	// normalizeMessages -- Patch 4 + Patch 5 联合行为
-	// -----------------------------------------------------------------------
-
-	describe("normalizeMessages [Patch 4 + Patch 5 combined]", () => {
-		it("applies both patches on the same messages", () => {
-			const messages = [assistant([textBlock("a"), toolUseBlock("t1"), toolResultBlock("t1")]), user("next")];
-
-			provider.normalizeMessages(messages);
-
-			const assistantMsg = messages[0] as Record<string, unknown>;
-			const assistantContent = assistantMsg.content as Record<string, unknown>[];
-
-			expect(assistantContent[0]).toEqual(thinkingBlock());
-			expect(assistantContent[1]).toEqual(textBlock("a"));
-			expect(assistantContent[2]).toEqual(toolUseBlock("t1"));
-
-			expect(messages[1]).toEqual(user([toolResultBlock("t1")]));
-			expect(messages[2]).toEqual(user("next"));
+			expect(result.url).toBe("https://api.deepseek.com/anthropic/v1/messages");
 		});
 	});
 });
