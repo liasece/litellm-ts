@@ -60,6 +60,11 @@ function DataTableHeader<TData, TValue>({ headerGroups, enableSorting }: DataTab
 								key={header.id}
 								className={`py-1 h-8 ${canSort ? "cursor-pointer select-none hover:bg-gray-50" : ""}`}
 								onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+								style={
+									header.column.columnDef.size === undefined
+										? undefined
+										: { width: header.column.columnDef.size, minWidth: header.column.columnDef.size }
+								}
 							>
 								{header.isPlaceholder ? null : (
 									<div className="flex items-center gap-1">
@@ -104,7 +109,15 @@ function DataTableRow<TData, TValue>({
 				onClick={() => onRowClick?.(row.original)}
 			>
 				{row.getVisibleCells().map((cell) => (
-					<TableCell key={cell.id} className="py-0.5 max-h-8 overflow-hidden text-ellipsis whitespace-nowrap">
+					<TableCell
+						key={cell.id}
+						className="py-0.5 max-h-8 overflow-hidden text-ellipsis whitespace-nowrap"
+						style={
+							cell.column.columnDef.size === undefined
+								? undefined
+								: { width: cell.column.columnDef.size, minWidth: cell.column.columnDef.size }
+						}
+					>
 						{flexRender(cell.column.columnDef.cell, cell.getContext())}
 					</TableCell>
 				))}

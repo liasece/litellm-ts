@@ -1,8 +1,9 @@
 import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Tooltip } from "antd";
-import { ArrowDownToLine, ArrowUpFromLine, Database } from "lucide-react";
+import { Popover, Tooltip } from "antd";
+import { ArrowDownToLine, ArrowUpFromLine, CircleDollarSign, Database, GitBranch } from "lucide-react";
 import { getModelLogoAndName } from "../provider_info_helpers";
+import LabeledField from "../common_components/LabeledField";
 import { TableHeaderSortDropdown } from "../common_components/TableHeaderSortDropdown/TableHeaderSortDropdown";
 import { MetricProgress, MetricProgressCell } from "./MetricProgressCell";
 import { TimeCell } from "./time_cell";
@@ -25,6 +26,132 @@ const TOKEN_PROGRESS_MAX = {
 	input: 20_000,
 	output: 2_000,
 } as const;
+
+interface TokenCostBreakdown {
+	cacheInputCost?: number;
+	inputCost?: number;
+	outputCost?: number;
+}
+
+function readFiniteCost(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function getTokenCostBreakdown(log: LogEntry): TokenCostBreakdown {
+	const raw = log.metadata?.cost_breakdown;
+	if (!raw || typeof raw !== "object") return {};
+
+	const breakdown = raw as Record<string, unknown>;
+	const inputCost = readFiniteCost(breakdown.input_cost);
+	const outputCost = readFiniteCost(breakdown.output_cost);
+	const totalCost = readFiniteCost(breakdown.total_cost);
+	let cacheInputCost = readFiniteCost(breakdown.cache_input_cost);
+
+	if (cacheInputCost === undefined) {
+		const cacheReadCost = readFiniteCost(breakdown.cache_read_input_cost);
+		const cacheCreationCost = readFiniteCost(breakdown.cache_creation_input_cost);
+		if (cacheReadCost !== undefined || cacheCreationCost !== undefined) {
+			cacheInputCost = (cacheReadCost ?? 0) + (cacheCreationCost ?? 0);
+		}
+	}
+
+	const additionalCosts = breakdown.additional_costs;
+	const hasNonTokenCosts =
+		(readFiniteCost(breakdown.tool_usage_cost) ?? 0) !== 0 ||
+		(additionalCosts !== null &&
+			typeof additionalCosts === "object" &&
+			Object.values(additionalCosts).some((value) => (readFiniteCost(value) ?? 0) !== 0)) ||
+		[
+			breakdown.discount_amount,
+			breakdown.discount_percent,
+			breakdown.margin_fixed_amount,
+			breakdown.margin_percent,
+			breakdown.margin_total_amount,
+			breakdown.original_cost,
+		].some((value) => (readFiniteCost(value) ?? 0) !== 0);
+
+	if (
+		cacheInputCost === undefined &&
+		inputCost !== undefined &&
+		outputCost !== undefined &&
+		totalCost !== undefined &&
+		!hasNonTokenCosts
+	) {
+		cacheInputCost = Math.max(0, totalCost - inputCost - outputCost);
+	}
+
+	return { cacheInputCost, inputCost, outputCost };
+}
+
+function formatTooltipCost(value: number | undefined): string {
+	return value === undefined ? "-" : `$${formatNumberWithCommas(value, 8)}`;
+}
+
+function CostBreakdownPopoverContent({
+	cacheInputCost,
+	inputCost,
+	outputCost,
+}: TokenCostBreakdown): React.ReactElement {
+	const fields = [
+		{
+			label: "缓存输入",
+			value: formatTooltipCost(cacheInputCost),
+			icon: <Database size={14} aria-hidden="true" />,
+			className: "border-emerald-100 bg-emerald-50/70",
+		},
+		{
+			label: "输入",
+			value: formatTooltipCost(inputCost),
+			icon: <ArrowDownToLine size={14} aria-hidden="true" />,
+			className: "border-blue-100 bg-blue-50/70",
+		},
+		{
+			label: "输出",
+			value: formatTooltipCost(outputCost),
+			icon: <ArrowUpFromLine size={14} aria-hidden="true" />,
+			className: "border-violet-100 bg-violet-50/70",
+		},
+	];
+
+	return (
+		<div className="grid w-[390px] grid-cols-3 gap-2" aria-label="Cost breakdown">
+			{fields.map((field) => (
+				<div key={field.label} className={`rounded-lg border p-3 ${field.className}`}>
+					<LabeledField label={field.label} value={field.value} icon={field.icon} />
+				</div>
+			))}
+		</div>
+	);
+}
+
+function ModelInfoPopoverContent({
+	provider,
+	displayModelName,
+	resolutionLines,
+}: {
+	provider?: string;
+	displayModelName: string;
+	resolutionLines: string[];
+}): React.ReactElement {
+	return (
+		<div className="w-[440px] space-y-3 break-all" aria-label="Model information">
+			<div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+				<LabeledField label="Provider" value={provider || "-"} />
+				<LabeledField label="显示模型" value={displayModelName || "-"} />
+			</div>
+			{resolutionLines.length > 0 && (
+				<div className="space-y-3 border-t border-slate-100 pt-3">
+					{resolutionLines.map((line, index) => {
+						const separatorIndex = line.indexOf(" · ");
+						const label = separatorIndex >= 0 ? line.slice(0, separatorIndex) : "Model";
+						const value = separatorIndex >= 0 ? line.slice(separatorIndex + 3) : line;
+						return <LabeledField key={`${line}-${index}`} label={label} value={value} />;
+					})}
+				</div>
+			)}
+		</div>
+	);
+}
 
 export interface LogsSortProps {
 	sortBy: LogsSortField;
@@ -308,16 +435,35 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 				)
 			: "Cost",
 		accessorKey: "spend",
+		size: 190,
 		cell: (info: any) => {
-			const row = info.row.original;
+			const row = info.row.original as LogEntry;
 			const mcpCount = row.mcp_tool_call_count || 0;
 			const mcpSpend = row.mcp_tool_call_spend || 0;
+			const tokenCosts = getTokenCostBreakdown(row);
+			const spend = info.getValue() || 0;
 
 			return (
 				<div className="flex flex-col">
-					<Tooltip title={`$${String(info.getValue() || 0)}`}>
-						<span>{getSpendString(info.getValue() || 0)}</span>
-					</Tooltip>
+					<Popover
+						content={<CostBreakdownPopoverContent {...tokenCosts} />}
+						mouseEnterDelay={0.15}
+						placement="bottomLeft"
+						title={
+							<div className="flex items-center justify-between gap-8 py-0.5">
+								<span className="flex items-center gap-2 font-medium">
+									<CircleDollarSign size={16} className="text-emerald-600" aria-hidden="true" />
+									费用明细
+								</span>
+								<span className="font-mono text-xs font-semibold text-slate-600">{getSpendString(spend)}</span>
+							</div>
+						}
+						trigger="hover"
+					>
+						<span className="inline-flex w-fit cursor-help items-center rounded-md px-1.5 py-0.5 font-mono tabular-nums transition-colors hover:bg-emerald-50 hover:text-emerald-700">
+							{getSpendString(spend)}
+						</span>
+					</Popover>
 					{mcpCount > 0 && mcpSpend > 0 && (
 						<span className="text-[10px] text-amber-600">
 							incl. {getSpendString(mcpSpend)} from {mcpCount} MCP
@@ -402,47 +548,45 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 	{
 		header: "Model",
 		accessorKey: "model",
+		size: 280,
 		cell: (info: any) => {
-			const row = info.row.original;
+			const row = info.row.original as LogEntry;
 			const provider = row.custom_llm_provider;
 			const modelName = String(info.getValue() || "");
 			const displayModelName = getDisplayModelName(modelName, provider);
 			const fallbackModels: string[] | undefined = row.metadata?.fallback_models;
 			const fallbackCount = fallbackModels && fallbackModels.length > 1 ? fallbackModels.length - 1 : 0;
-			const fallbackTooltip =
-				fallbackModels && fallbackModels.length > 1
-					? fallbackModels
-							.map((m: string, i: number) => {
-								const name = getDisplayModelName(m, provider);
-								return i === 0 ? name : "\u2192 " + name;
-							})
-							.join(" ")
-					: undefined;
 			const resolutionLines = buildModelResolutionTooltipLines(
 				fallbackModels,
 				row.metadata?.model_resolution_chain,
 				modelName,
 			);
-			const modelTooltip = (
-				<div className="space-y-1 font-mono text-xs">
-					{resolutionLines.map((line, index) => (
-						<div key={`${line}-${index}`}>{line}</div>
-					))}
-				</div>
-			);
 			return (
-				<div className="flex items-center space-x-2">
+				<div className="flex min-w-0 items-center gap-2">
 					{provider && <ProviderLogo provider={provider} logo={getLogoUrl(row, provider)} />}
-					<Tooltip title={modelTooltip}>
-						<span className="max-w-[25ch] truncate block">
-							{fallbackCount > 0 && (
-								<Tooltip title={fallbackTooltip}>
-									<span className="text-gray-400 mr-0.5 cursor-help">({fallbackCount})</span>
-								</Tooltip>
-							)}
-							{displayModelName}
+					<Popover
+						content={
+							<ModelInfoPopoverContent
+								provider={provider}
+								displayModelName={displayModelName}
+								resolutionLines={resolutionLines}
+							/>
+						}
+						mouseEnterDelay={0.15}
+						placement="bottomLeft"
+						title={
+							<span className="flex items-center gap-2 py-0.5 font-medium">
+								<GitBranch size={16} className="text-blue-600" aria-hidden="true" />
+								模型路由信息
+							</span>
+						}
+						trigger="hover"
+					>
+						<span className="flex min-w-0 cursor-help items-center rounded-md px-1.5 py-0.5 transition-colors hover:bg-blue-50">
+							<span className="block max-w-[34ch] truncate font-medium text-slate-700">{displayModelName}</span>
+							{fallbackCount > 0 && <span className="ml-1 shrink-0 text-xs text-slate-400">({fallbackCount})</span>}
 						</span>
-					</Tooltip>
+					</Popover>
 				</div>
 			);
 		},

@@ -3,6 +3,7 @@ import { Collapse } from "antd";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 
 export interface CostBreakdown {
+	cache_input_cost?: number;
 	input_cost?: number;
 	output_cost?: number;
 	total_cost?: number;

@@ -65,6 +65,17 @@ export interface SessionTimelineSourceRow {
 	readonly request_first_tool_name?: string | null;
 	readonly request_first_system_prompt?: string | null;
 	readonly request_second_system_prompt?: string | null;
+	readonly request_first_message_role?: string | null;
+	readonly request_second_message_role?: string | null;
+	readonly request_first_message_text?: string | null;
+	readonly request_second_message_text?: string | null;
+	/**
+	 * Occurrence numbers in the original cumulative request snapshot, aligned
+	 * with request_payload after the endpoint has reduced it to unseen messages.
+	 */
+	readonly request_message_occurrences?: readonly number[];
+	readonly request_payload_available?: boolean;
+	readonly response_payload_available?: boolean;
 }
 
 export interface SessionTimelineItem {
@@ -922,6 +933,20 @@ function isClaudeCodeSecurityMonitorRequest(row: SessionTimelineSourceRow): bool
 	const systemPrompt = row.request_first_system_prompt?.trimStart() ?? "";
 	if (!systemPrompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.securityMonitor)) return false;
 
+	if (
+		row.request_first_message_role != null ||
+		row.request_second_message_role != null ||
+		row.request_first_message_text != null ||
+		row.request_second_message_text != null
+	) {
+		return (
+			row.request_first_message_role === "user" &&
+			row.request_second_message_role === "user" &&
+			(row.request_first_message_text ?? "").trimStart().startsWith(CLAUDE_CODE_SECURITY_MONITOR_CONTEXT_PREFIX) &&
+			(row.request_second_message_text ?? "").trimStart().startsWith("<transcript>")
+		);
+	}
+
 	const requestMessages = requestMessagesFrom(row.request_payload);
 	if (requestMessages.length !== 2) return false;
 	const [contextMessage, transcriptMessage] = requestMessages;
@@ -937,8 +962,9 @@ function isClaudeCodeSecurityMonitorRequest(row: SessionTimelineSourceRow): bool
  * every recognized family must also match the Claude CLI marker, a stable
  * prompt/content signature, and its expected tool shape. Unknown requests
  * always remain visible.
+ * @param row - Timeline source row with compact request classification fields.
  */
-function isClaudeCodeAuxiliaryRequest(row: SessionTimelineSourceRow): boolean {
+export function isClaudeCodeAuxiliaryTimelineRequest(row: SessionTimelineSourceRow): boolean {
 	if (row.request_client !== "claude_code") return false;
 	if (row.request_system_count !== 2) return false;
 	if (isClaudeCodeSecurityMonitorRequest(row)) return true;
@@ -979,7 +1005,7 @@ export class SessionTimelineBuilder {
 	public constructor(private readonly options: SessionTimelineBuilderOptions = {}) {}
 
 	public add(row: SessionTimelineSourceRow): void {
-		if (!this.options.includeAuxiliary && isClaudeCodeAuxiliaryRequest(row)) {
+		if (!this.options.includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
 			this.filteredRequestCount += 1;
 			return;
 		}
@@ -1009,8 +1035,13 @@ export class SessionTimelineBuilder {
 
 		requestMessages.forEach((message, index) => {
 			const fingerprint = messageHistoryFingerprint(message);
-			const occurrence = (snapshotOccurrences.get(fingerprint) ?? 0) + 1;
-			snapshotOccurrences.set(fingerprint, occurrence);
+			const snapshotOccurrence = (snapshotOccurrences.get(fingerprint) ?? 0) + 1;
+			const suppliedOccurrence = row.request_message_occurrences?.[index];
+			const occurrence =
+				typeof suppliedOccurrence === "number" && Number.isSafeInteger(suppliedOccurrence) && suppliedOccurrence > 0
+					? Math.max(snapshotOccurrence, suppliedOccurrence)
+					: snapshotOccurrence;
+			snapshotOccurrences.set(fingerprint, Math.max(snapshotOccurrence, occurrence));
 			if (message.role === "system" && this.seenSystemMessages.has(fingerprint)) return;
 			if (message.role === "system") this.seenSystemMessages.add(fingerprint);
 			const seenOccurrence = this.seenHistoryOccurrences.get(fingerprint) ?? 0;

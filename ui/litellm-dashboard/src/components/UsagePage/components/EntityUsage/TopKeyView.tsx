@@ -178,31 +178,37 @@ const TopKeyView: React.FC<TopKeyViewProps> = ({ topKeys, teams, showTags = fals
 
 	return (
 		<>
-			<div className="mb-4 flex justify-end items-center">
-				<div className="flex space-x-2">
+			<div className="-mt-6 mb-2 flex items-center justify-end">
+				<div className="flex rounded-md bg-slate-100 p-0.5">
 					<button
 						onClick={() => setViewMode("table")}
-						className={`px-3 py-1 text-sm rounded-md ${viewMode === "table" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-700"}`}
+						aria-label="Table View"
+						className={`rounded px-2 py-1 text-xs ${
+							viewMode === "table" ? "bg-blue-100 text-blue-700 shadow-sm" : "text-slate-500"
+						}`}
 					>
-						Table View
+						Table
 					</button>
 					<button
 						onClick={() => setViewMode("chart")}
-						className={`px-3 py-1 text-sm rounded-md ${viewMode === "chart" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-700"}`}
+						aria-label="Chart View"
+						className={`rounded px-2 py-1 text-xs ${
+							viewMode === "chart" ? "bg-blue-100 text-blue-700 shadow-sm" : "text-slate-500"
+						}`}
 					>
-						Chart View
+						Chart
 					</button>
 				</div>
 			</div>
 
 			{viewMode === "chart" ? (
-				<div className="relative max-h-[600px] overflow-y-auto">
+				<div className="relative max-h-[320px] overflow-y-auto">
 					<TopRankingBarChart
 						data={processedTopKeys}
 						categoryKey="display_key_alias"
 						valueKey="spend"
 						yAxisWidth={120}
-						height={52}
+						height={40}
 						valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
 						onBarClick={handleKeyClick}
 						renderTooltip={(item) =>
@@ -217,7 +223,7 @@ const TopKeyView: React.FC<TopKeyViewProps> = ({ topKeys, teams, showTags = fals
 					/>
 				</div>
 			) : (
-				<div className="border rounded-lg overflow-hidden max-h-[600px] overflow-y-auto">
+				<div className="max-h-[320px] overflow-y-auto overflow-x-hidden rounded-lg border">
 					<DataTable
 						columns={columns}
 						data={topKeys}

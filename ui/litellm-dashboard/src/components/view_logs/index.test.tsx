@@ -272,7 +272,13 @@ describe("Logs columns", () => {
 		return render(
 			column.cell({
 				getValue: () =>
-					header === "Model" ? entry.model : header === "Duration (s)" ? entry.request_duration_ms : entry.total_tokens,
+					header === "Model"
+						? entry.model
+						: header === "Duration (s)"
+							? entry.request_duration_ms
+							: header === "Cost"
+								? entry.spend
+								: entry.total_tokens,
 				row: { original: entry },
 			} as never),
 		);
@@ -333,6 +339,51 @@ describe("Logs columns", () => {
 		expect(screen.getByText("Aborted")).toHaveClass("bg-orange-100", "text-orange-800");
 	});
 
+	it("Cost 悬停时分别显示缓存输入、输入和输出费用", async () => {
+		const user = userEvent.setup();
+		renderColumnCell("Cost", {
+			...baseLogEntry,
+			spend: 0.006,
+			metadata: {
+				status: "success",
+				cost_breakdown: {
+					cache_input_cost: 0.001,
+					input_cost: 0.002,
+					output_cost: 0.003,
+					total_cost: 0.006,
+				},
+			},
+		});
+
+		await user.hover(screen.getByText("$0.006000"));
+
+		const tooltip = await screen.findByLabelText("Cost breakdown");
+		expect(tooltip).toHaveTextContent("缓存输入$0.00100000");
+		expect(tooltip).toHaveTextContent("输入$0.00200000");
+		expect(tooltip).toHaveTextContent("输出$0.00300000");
+	});
+
+	it("旧日志缺少缓存费用字段时从无附加费用的总价安全推导", async () => {
+		const user = userEvent.setup();
+		renderColumnCell("Cost", {
+			...baseLogEntry,
+			spend: 0.006,
+			metadata: {
+				status: "success",
+				cost_breakdown: {
+					input_cost: 0.002,
+					output_cost: 0.003,
+					total_cost: 0.006,
+					tool_usage_cost: 0,
+				},
+			},
+		});
+
+		await user.hover(screen.getByText("$0.006000"));
+
+		expect(await screen.findByLabelText("Cost breakdown")).toHaveTextContent("缓存输入$0.00100000");
+	});
+
 	it("removes only the matching provider prefix while preserving the original model tooltip and provider icon", async () => {
 		const user = userEvent.setup();
 		renderColumnCell("Model", {
@@ -346,7 +397,10 @@ describe("Logs columns", () => {
 		expect(document.querySelector("img")).toBeInTheDocument();
 
 		await user.hover(displayModel);
-		expect(await screen.findByText("Executed · OpenAI/gpt-4o")).toBeInTheDocument();
+		const modelInfo = await screen.findByLabelText("Model information");
+		expect(modelInfo).toHaveTextContent("Provideropenai");
+		expect(modelInfo).toHaveTextContent("显示模型gpt-4o");
+		expect(modelInfo).toHaveTextContent("ExecutedOpenAI/gpt-4o");
 	});
 
 	it("shows alias resolution in the model tooltip without increasing fallback count", async () => {
@@ -370,10 +424,10 @@ describe("Logs columns", () => {
 		expect(screen.getByText("(1)")).toBeInTheDocument();
 		const displayModel = screen.getByText("alias-a");
 		await user.hover(displayModel);
-		// tooltip 现在按 hop 分行为展示 alias 解析路径
-		expect(await screen.findByText("Request · alias-a")).toBeInTheDocument();
-		expect(await screen.findByText("Alias · alias-a → alias-b")).toBeInTheDocument();
-		expect(await screen.findByText("Alias · alias-b → model-a")).toBeInTheDocument();
+		const modelInfo = await screen.findByLabelText("Model information");
+		expect(modelInfo).toHaveTextContent("Requestalias-a");
+		expect(modelInfo).toHaveTextContent("Aliasalias-a → alias-b");
+		expect(modelInfo).toHaveTextContent("Aliasalias-b → model-a");
 	});
 
 	it("does not remove a non-matching or nested gateway prefix", () => {

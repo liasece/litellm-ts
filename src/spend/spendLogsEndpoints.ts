@@ -50,7 +50,11 @@ import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage"
 import type { Column } from "./spendManagementTypes";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
-import { SessionTimelineBuilder, type SessionTimelineSourceRow } from "./sessionTimeline";
+import {
+	isClaudeCodeAuxiliaryTimelineRequest,
+	SessionTimelineBuilder,
+	type SessionTimelineSourceRow,
+} from "./sessionTimeline";
 
 const logger = createModuleLogger("SpendLogs");
 
@@ -71,7 +75,6 @@ const INTERNAL_USER_VIEWER_ROLE = "internal_user_viewer";
 type SessionGroupType = "claude_code_user_id" | "session_id";
 const SPEND_LOG_DETAIL_BATCH_SIZE = 100;
 const COLD_STORAGE_BATCH_CONCURRENCY = 8;
-const SESSION_TIMELINE_DB_BATCH_SIZE = 100;
 
 const CLAUDE_CODE_USER_ID_PATTERN =
 	/^user_[A-Za-z0-9_-]+_account_[A-Za-z0-9_-]*_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -520,51 +523,135 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// ========== /spend/logs/session/timeline ==========
 	// 独立的 Session 时间线读取路径。服务端按复合索引升序分批读取，并在内存中只保留
 	// 已去重的最终事件；请求快照、原始响应和 proxy_server_request 不会进入 HTTP 响应。
-	registerRoute(router, { method: "get", path: "/spend/logs/session/timeline" }, async (req) => {
+	registerRoute(router, { method: "get", path: "/spend/logs/session/timeline" }, async (req, res) => {
+		const timelineStartedAt = performance.now();
+		const timings: Array<{ name: string; durationMs: number }> = [];
+		const recordTiming = (name: string, startedAt: number): void => {
+			timings.push({ name: name, durationMs: performance.now() - startedAt });
+		};
+		const applyServerTiming = (): void => {
+			res.setHeader(
+				"Server-Timing",
+				timings.map((timing) => `${timing.name};dur=${timing.durationMs.toFixed(1)}`).join(", "),
+			);
+		};
 		const group = parseSessionGroupQuery(req.query as Record<string, unknown>);
 		const includeAuxiliary = req.query.include_auxiliary === "true";
 		const requestedTeamId = typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
+		const visibilityStartedAt = performance.now();
 		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
+		recordTiming("visibility", visibilityStartedAt);
 		const baseClause = and(
 			eq(liteLLM_SpendLogs.session_group_key, sessionGroupKey(group)),
 			visibilityClause,
 		) as SQL;
+		const snapshotStartedAt = performance.now();
 		const snapshotRows = await db
 			.select({ snapshotStartTime: liteLLM_SpendLogs.startTime, snapshotRequestId: liteLLM_SpendLogs.request_id })
 			.from(liteLLM_SpendLogs)
 			.where(baseClause)
 			.orderBy(sql`${liteLLM_SpendLogs.startTime} DESC, ${liteLLM_SpendLogs.request_id} DESC`)
 			.limit(1);
+		recordTiming("snapshot", snapshotStartedAt);
 		const snapshot = sessionPositionFromRow(snapshotRows[0], "snapshotStartTime", "snapshotRequestId");
 		const builder = new SessionTimelineBuilder({ includeAuxiliary: includeAuxiliary });
-		if (!snapshot) return builder.build();
+		if (!snapshot) {
+			recordTiming("total", timelineStartedAt);
+			applyServerTiming();
+			return builder.build();
+		}
 
 		const boundedClause = and(baseClause, sessionSnapshotClause(snapshot)) as SQL;
-		let cursor: SessionPosition | null = null;
-		let hasMore = true;
-		while (hasMore) {
-			const pageClause = cursor ? and(boundedClause, sessionCursorClause(cursor)) : boundedClause;
-			const rows = await db
-				.select(sessionTimelineSelection())
-				.from(liteLLM_SpendLogs)
-				.where(pageClause)
-				.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
-				.limit(SESSION_TIMELINE_DB_BATCH_SIZE + 1);
-			const pageRows = rows.slice(0, SESSION_TIMELINE_DB_BATCH_SIZE);
-			const hydratedRows = await hydrateTimelineRowsFromColdStorage(pageRows as SessionTimelineSourceRow[]);
-			for (const row of hydratedRows) builder.add(row);
-
-			hasMore = rows.length > SESSION_TIMELINE_DB_BATCH_SIZE;
-			cursor = sessionPositionFromRow(
-				pageRows.at(-1) as unknown as Record<string, unknown> | undefined,
-				"startTime",
-				"request_id",
+		// Cumulative chat snapshots can grow to hundreds of megabytes while the
+		// final timeline only contains a few megabytes of distinct events. Read a
+		// compact fingerprint manifest first, then fetch only unseen occurrences.
+		const descriptorStartedAt = performance.now();
+		const rawDescriptorRows = (await db
+			.select(sessionTimelineDescriptorSelection())
+			.from(liteLLM_SpendLogs)
+			.where(boundedClause)
+			.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)) as SessionTimelineDescriptorRow[];
+		recordTiming("manifest", descriptorStartedAt);
+		const classificationStartedAt = performance.now();
+		const auxiliaryCandidateRequestIds = rawDescriptorRows
+			.filter(
+				(row) =>
+					(Array.isArray(row.request_payload_fingerprints) && row.request_payload_fingerprints.length <= 2) ||
+					row.request_payload_fingerprints === null,
+			)
+			.map((row) => row.request_id);
+		const classificationByRequestId = new Map<string, Partial<SessionTimelineSourceRow>>();
+		if (auxiliaryCandidateRequestIds.length > 0) {
+			const candidateRequestIdsJson = JSON.stringify(
+				Object.fromEntries(auxiliaryCandidateRequestIds.map((requestId) => [requestId, true])),
 			);
-			if (hasMore && !cursor) {
-				throw new Error("Session timeline cursor could not be derived");
+			const classificationRows = await db
+				.select(sessionTimelineAuxiliarySelection())
+				.from(liteLLM_SpendLogs)
+				.where(and(boundedClause, sql`${candidateRequestIdsJson}::jsonb ? ${liteLLM_SpendLogs.request_id}`));
+			for (const row of classificationRows) {
+				classificationByRequestId.set(row.request_id, row);
 			}
 		}
-		return builder.build();
+		const descriptorRows = rawDescriptorRows.map((row) => ({
+			...row,
+			...(classificationByRequestId.get(row.request_id) ?? {}),
+		}));
+		recordTiming("classify", classificationStartedAt);
+		const planningStartedAt = performance.now();
+		const payloadPlan = planSessionTimelinePayloads(descriptorRows, includeAuxiliary);
+		const compactArrayPayloadRequestIds = [...payloadPlan.indicesByRequestId.keys()].filter(
+			(requestId) => (payloadPlan.indicesByRequestId.get(requestId)?.length ?? 0) > 0,
+		);
+		const fallbackPayloadRequestIds = descriptorRows
+			.filter((row) => !Array.isArray(row.request_payload_fingerprints))
+			.map((row) => row.request_id);
+		const payloadRequestIds = Array.from(new Set([...compactArrayPayloadRequestIds, ...fallbackPayloadRequestIds]));
+		recordTiming("plan", planningStartedAt);
+		const payloadByRequestId = new Map<string, unknown>();
+		const payloadStartedAt = performance.now();
+		if (payloadRequestIds.length > 0) {
+			const selectedIndices = Object.fromEntries(
+				payloadRequestIds.map((requestId) => [requestId, payloadPlan.indicesByRequestId.get(requestId) ?? []]),
+			);
+			const selectedIndicesJson = JSON.stringify(selectedIndices);
+			const payloadRows = await db
+				.select(sessionTimelinePayloadSelection(selectedIndicesJson))
+				.from(liteLLM_SpendLogs)
+				.where(and(boundedClause, sql`${selectedIndicesJson}::jsonb ? ${liteLLM_SpendLogs.request_id}`));
+			for (const row of payloadRows) {
+				payloadByRequestId.set(row.request_id, row.request_payload);
+			}
+		}
+		recordTiming("payload", payloadStartedAt);
+
+		const compactRows = descriptorRows.map((row): SessionTimelineSourceRow => {
+			const fingerprints = row.request_payload_fingerprints;
+			if (!Array.isArray(fingerprints)) {
+				return {
+					...row,
+					request_payload: payloadByRequestId.get(row.request_id) ?? row.request_payload,
+				};
+			}
+			return {
+				...row,
+				request_payload: payloadByRequestId.get(row.request_id) ?? [],
+				request_message_occurrences: payloadPlan.occurrencesByRequestId.get(row.request_id) ?? [],
+				request_payload_available: fingerprints.length > 0,
+			};
+		});
+		const hydrationStartedAt = performance.now();
+		const hydratedRows = await hydrateTimelineRowsFromColdStorage(compactRows);
+		recordTiming("hydrate", hydrationStartedAt);
+		const reducerStartedAt = performance.now();
+		for (const row of hydratedRows) {
+			builder.add(row);
+		}
+		const result = builder.build();
+		recordTiming("reduce", reducerStartedAt);
+		recordTiming("total", timelineStartedAt);
+		applyServerTiming();
+		return result;
 	});
 
 	// ========== /spend/logs/ui/batch ==========
@@ -778,7 +865,9 @@ async function hydrateTimelineRowsFromColdStorage(
 	rows: readonly SessionTimelineSourceRow[],
 ): Promise<SessionTimelineSourceRow[]> {
 	return mapWithConcurrency(rows, COLD_STORAGE_BATCH_CONCURRENCY, async (row) => {
-		if (hasTimelinePayload(row.request_payload) && hasTimelinePayload(row.response_payload)) {
+		const requestPayloadAvailable = row.request_payload_available ?? hasTimelinePayload(row.request_payload);
+		const responsePayloadAvailable = row.response_payload_available ?? hasTimelinePayload(row.response_payload);
+		if (requestPayloadAvailable && responsePayloadAvailable) {
 			return row;
 		}
 		const payload = await getRequestResponsePayloadFromColdStorage(
@@ -794,8 +883,8 @@ async function hydrateTimelineRowsFromColdStorage(
 			: payload.messages;
 		return {
 			...row,
-			request_payload: hasTimelinePayload(row.request_payload) ? row.request_payload : coldRequestPayload,
-			response_payload: hasTimelinePayload(row.response_payload) ? row.response_payload : payload.response,
+			request_payload: requestPayloadAvailable ? row.request_payload : coldRequestPayload,
+			response_payload: responsePayloadAvailable ? row.response_payload : payload.response,
 		};
 	});
 }
@@ -945,12 +1034,66 @@ function uiSpendLogSelectionWithContent() {
 	};
 }
 
+interface SessionTimelineDescriptorRow extends SessionTimelineSourceRow {
+	readonly request_payload_fingerprints?: readonly string[] | null;
+}
+
+interface SessionTimelinePayloadPlan {
+	readonly indicesByRequestId: ReadonlyMap<string, readonly number[]>;
+	readonly occurrencesByRequestId: ReadonlyMap<string, readonly number[]>;
+}
+
 /**
- * 时间线专用投影。正常路径直接读取已经标准化的 messages 列；仅在该列确实
- * 没有正文时回退 proxy_server_request.body，避免对每条大 JSON 快照重复拆装。
+ * Compute unseen raw-message occurrences without retaining message bodies in
+ * Node. Occurrence numbers preserve intentional repeated messages when the
+ * semantic timeline reducer processes the compact payload later.
+ * @param rows - Chronologically ordered timeline manifest rows.
+ * @param includeAuxiliary - Whether Claude Code internal service calls remain visible.
  */
-function sessionTimelineSelection() {
-	const proxy = liteLLM_SpendLogs.proxy_server_request;
+function planSessionTimelinePayloads(
+	rows: readonly SessionTimelineDescriptorRow[],
+	includeAuxiliary: boolean,
+): SessionTimelinePayloadPlan {
+	const seenOccurrences = new Map<string, number>();
+	const indicesByRequestId = new Map<string, readonly number[]>();
+	const occurrencesByRequestId = new Map<string, readonly number[]>();
+
+	for (const row of rows) {
+		const fingerprints = row.request_payload_fingerprints;
+		if (!Array.isArray(fingerprints)) {
+			continue;
+		}
+		if (!includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
+			indicesByRequestId.set(row.request_id, []);
+			occurrencesByRequestId.set(row.request_id, []);
+			continue;
+		}
+		const snapshotOccurrences = new Map<string, number>();
+		const selectedIndices: number[] = [];
+		const selectedOccurrences: number[] = [];
+		fingerprints.forEach((fingerprint, index) => {
+			const occurrence = (snapshotOccurrences.get(fingerprint) ?? 0) + 1;
+			snapshotOccurrences.set(fingerprint, occurrence);
+			if (occurrence > (seenOccurrences.get(fingerprint) ?? 0)) {
+				selectedIndices.push(index);
+				selectedOccurrences.push(occurrence);
+			}
+		});
+		for (const [fingerprint, occurrence] of snapshotOccurrences) {
+			seenOccurrences.set(fingerprint, Math.max(seenOccurrences.get(fingerprint) ?? 0, occurrence));
+		}
+		indicesByRequestId.set(row.request_id, selectedIndices);
+		occurrencesByRequestId.set(row.request_id, selectedOccurrences);
+	}
+
+	return { indicesByRequestId: indicesByRequestId, occurrencesByRequestId: occurrencesByRequestId };
+}
+
+/**
+ * Timeline manifest projection. Array payloads are represented by compact
+ * per-message SHA-256 fingerprints; non-array legacy payloads remain inline.
+ */
+function sessionTimelineDescriptorSelection() {
 	const messages = liteLLM_SpendLogs.messages;
 	const metadata = liteLLM_SpendLogs.metadata;
 	return {
@@ -972,22 +1115,45 @@ function sessionTimelineSelection() {
 		error_information: sql<unknown | null>`
 			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->'error_information' ELSE NULL END
 		`,
-		request_payload: sql<unknown>`
+		request_payload: sql<unknown>`NULL`,
+		request_payload_fingerprints: sql<string[] | null>`
 			CASE
-				WHEN ${messages} IS NOT NULL
-					AND ${messages} <> 'null'::jsonb
-					AND ${messages} <> '{}'::jsonb
-					AND ${messages} <> '[]'::jsonb
-				THEN ${messages}
-				WHEN jsonb_typeof(${proxy}) = 'object' AND ${proxy}->'body' IS NOT NULL
-				THEN ${proxy}->'body'
-				ELSE ${proxy}
+				WHEN jsonb_typeof(${messages}) = 'array' THEN ARRAY(
+					SELECT encode(sha256(convert_to(timeline_item.value::text, 'UTF8')), 'hex')
+					FROM jsonb_array_elements(${messages}) WITH ORDINALITY AS timeline_item(value, ordinality)
+					ORDER BY timeline_item.ordinality
+				)
+				ELSE NULL
 			END
 		`,
 		response_payload: liteLLM_SpendLogs.response,
-		// These small derived fields let the reducer recognize Claude Code's
-		// model-backed utility calls without transferring the repeated full
-		// proxy_server_request JSON for every row in a cumulative session.
+		response_payload_available: sql<boolean>`
+			${liteLLM_SpendLogs.response} IS NOT NULL
+			AND ${liteLLM_SpendLogs.response} <> 'null'::jsonb
+			AND ${liteLLM_SpendLogs.response} <> '{}'::jsonb
+			AND ${liteLLM_SpendLogs.response} <> '[]'::jsonb
+		`,
+	};
+}
+
+/**
+ * Claude Code auxiliary-call classification fields. This projection only runs
+ * for manifest rows with at most two messages, so cumulative proxy snapshots
+ * are never repeatedly decompressed for normal conversation requests.
+ */
+function sessionTimelineAuxiliarySelection() {
+	const proxy = liteLLM_SpendLogs.proxy_server_request;
+	const messages = liteLLM_SpendLogs.messages;
+	return {
+		request_id: liteLLM_SpendLogs.request_id,
+		request_message_count: sql<number>`
+			CASE
+				WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
+				WHEN jsonb_typeof(${proxy}#>'{body,messages}') = 'array'
+					THEN jsonb_array_length(${proxy}#>'{body,messages}')
+				ELSE 0
+			END
+		`,
 		request_client: sql<string | null>`
 			CASE
 				WHEN ${proxy}#>>'{headers,x-app}' = 'cli'
@@ -1000,13 +1166,6 @@ function sessionTimelineSelection() {
 			CASE
 				WHEN jsonb_typeof(${proxy}#>'{body,system}') = 'array'
 				THEN jsonb_array_length(${proxy}#>'{body,system}')
-				ELSE 0
-			END
-		`,
-		request_message_count: sql<number>`
-			CASE
-				WHEN jsonb_typeof(${proxy}#>'{body,messages}') = 'array'
-				THEN jsonb_array_length(${proxy}#>'{body,messages}')
 				ELSE 0
 			END
 		`,
@@ -1038,6 +1197,74 @@ function sessionTimelineSelection() {
 				),
 				256
 			)
+		`,
+		request_first_message_role: sql<string | null>`
+			COALESCE(
+				${messages}#>>'{0,role}',
+				${proxy}#>>'{body,messages,0,role}'
+			)
+		`,
+		request_second_message_role: sql<string | null>`
+			COALESCE(
+				${messages}#>>'{1,role}',
+				${proxy}#>>'{body,messages,1,role}'
+			)
+		`,
+		request_first_message_text: sql<string | null>`
+			LEFT(COALESCE(
+				${messages}#>>'{0,content,0,text}',
+				${messages}#>>'{0,content}',
+				${proxy}#>>'{body,messages,0,content,0,text}',
+				${proxy}#>>'{body,messages,0,content}'
+			), 256)
+		`,
+		request_second_message_text: sql<string | null>`
+			LEFT(COALESCE(
+				${messages}#>>'{1,content,0,text}',
+				${messages}#>>'{1,content}',
+				${proxy}#>>'{body,messages,1,content,0,text}',
+				${proxy}#>>'{body,messages,1,content}'
+			), 256)
+		`,
+	};
+}
+
+/**
+ * Fetch only the message indexes selected from the compact manifest.
+ * @param selectedIndicesJson - request_id to zero-based message indexes.
+ */
+function sessionTimelinePayloadSelection(selectedIndicesJson: string) {
+	const proxy = liteLLM_SpendLogs.proxy_server_request;
+	const messages = liteLLM_SpendLogs.messages;
+	const fallbackPayload = sql<unknown>`
+		CASE
+			WHEN jsonb_typeof(${proxy}) = 'object' AND ${proxy}->'body' IS NOT NULL THEN ${proxy}->'body'
+			ELSE ${proxy}
+		END
+	`;
+	return {
+		request_id: liteLLM_SpendLogs.request_id,
+		request_payload: sql<unknown>`
+			CASE
+				WHEN jsonb_typeof(${messages}) = 'array' THEN COALESCE((
+					SELECT jsonb_agg(timeline_item.value ORDER BY timeline_item.ordinality)
+					FROM jsonb_array_elements(${messages}) WITH ORDINALITY AS timeline_item(value, ordinality)
+					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
+						@> to_jsonb((timeline_item.ordinality - 1)::int)
+				), '[]'::jsonb)
+				WHEN ${messages} IS NOT NULL
+					AND ${messages} <> 'null'::jsonb
+					AND ${messages} <> '{}'::jsonb
+					AND ${messages} <> '[]'::jsonb
+				THEN ${messages}
+				WHEN jsonb_typeof(${fallbackPayload}) = 'array' THEN COALESCE((
+					SELECT jsonb_agg(timeline_item.value ORDER BY timeline_item.ordinality)
+					FROM jsonb_array_elements(${fallbackPayload}) WITH ORDINALITY AS timeline_item(value, ordinality)
+					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
+						@> to_jsonb((timeline_item.ordinality - 1)::int)
+				), '[]'::jsonb)
+				ELSE ${fallbackPayload}
+			END
 		`,
 	};
 }

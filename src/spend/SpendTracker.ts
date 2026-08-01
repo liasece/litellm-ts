@@ -1563,6 +1563,7 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 	const reasoningTokens =
 		typeof completionDetails?.["reasoning_tokens"] === "number" ? (completionDetails["reasoning_tokens"] as number) : 0;
 	const {
+		cacheInputCost,
 		inputCost,
 		outputCost,
 		totalCost: spend,
@@ -1586,6 +1587,7 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 	// PY CostBreakdown（types/utils.py:2771）：cost 计算完成后注入 metadata.cost_breakdown；
 	// tool_usage_cost 无内置工具计费子系统，恒 0
 	sanitizedMetadata["cost_breakdown"] = {
+		cache_input_cost: cacheInputCost,
 		input_cost: inputCost,
 		output_cost: outputCost,
 		total_cost: spend,

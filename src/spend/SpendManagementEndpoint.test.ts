@@ -1740,6 +1740,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			);
 
 			expect(res.status).toBe(200);
+			expect(res.headers["server-timing"]).toMatch(/manifest;dur=.*payload;dur=.*reduce;dur=.*total;dur=/);
 			expect(res.body.data.map((item: Record<string, unknown>) => [item.role, item.content])).toEqual([
 				["user", "第一问"],
 				["assistant", "第一答"],
@@ -1761,7 +1762,85 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect.arrayContaining(["messages", "response", "proxy_server_request", "metadata"]),
 			);
 			expect(dataCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
-			expect(dataCall?.limitN).toBe(101);
+			expect(dataCall?.projection).toContain("request_payload_fingerprints");
+			expect(dataCall?.projectionSql).toMatch(/sha256/i);
+			expect(dataCall?.limitN).toBeNull();
+		});
+
+		it("累计快照只补取首次出现的消息，并保留再次发送的相同内容", async () => {
+			const baseRow = {
+				call_type: "completion",
+				api_key: "hash-qiran",
+				key_alias: "qiran",
+				spend: 0.01,
+				total_tokens: 10,
+				model: "claude",
+				status: "success",
+				metadata_status: null,
+				error_information: null,
+				request_payload: null,
+				request_payload_available: true,
+				response_payload_available: true,
+			};
+			const descriptors = [
+				{
+					...baseRow,
+					request_id: "aux-1",
+					startTime: new Date("2026-07-24T09:59:58.000Z"),
+					endTime: new Date("2026-07-24T09:59:59.000Z"),
+					request_client: "claude_code",
+					request_system_count: 2,
+					request_message_count: 1,
+					request_tool_count: 0,
+					request_second_system_prompt: "Extract any file paths that this command reads or modifies",
+					request_payload_fingerprints: ["same-user-message"],
+					response_payload: { choices: [{ message: { role: "assistant", content: "internal" } }] },
+				},
+				{
+					...baseRow,
+					request_id: "req-1",
+					startTime: new Date("2026-07-24T10:00:00.000Z"),
+					endTime: new Date("2026-07-24T10:00:01.000Z"),
+					request_payload_fingerprints: ["same-user-message"],
+					response_payload: { choices: [{ message: { role: "assistant", content: "第一次回复" } }] },
+				},
+				{
+					...baseRow,
+					request_id: "req-2",
+					startTime: new Date("2026-07-24T10:00:02.000Z"),
+					endTime: new Date("2026-07-24T10:00:03.000Z"),
+					request_payload_fingerprints: ["same-user-message", "first-response", "same-user-message"],
+					response_payload: { choices: [{ message: { role: "assistant", content: "第二次回复" } }] },
+				},
+			];
+			const compactPayloads = [
+				{ request_id: "req-1", request_payload: [{ role: "user", content: "继续" }] },
+				{
+					request_id: "req-2",
+					request_payload: [
+						{ role: "assistant", content: "第一次回复" },
+						{ role: "user", content: "继续" },
+					],
+				},
+			];
+			const { db, calls } = makeMockDb({ responses: [descriptors, [descriptors[0]], compactPayloads] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.data.map((item: Record<string, unknown>) => [item.role, item.content])).toEqual([
+				["user", "继续"],
+				["assistant", "第一次回复"],
+				["user", "继续"],
+				["assistant", "第二次回复"],
+			]);
+			expect(res.body.summary).toMatchObject({ request_count: 2, filtered_request_count: 1 });
+			const payloadCall = calls.find(
+				(call) => call.projection.length === 2 && call.projection.includes("request_payload"),
+			);
+			expect(payloadCall?.projectionSql).toMatch(/jsonb_agg/i);
+			expect(payloadCall?.whereSql).toMatch(/request_id/i);
 		});
 
 		it("沿用 Session 可见性边界，非法参数不查询 DB", async () => {

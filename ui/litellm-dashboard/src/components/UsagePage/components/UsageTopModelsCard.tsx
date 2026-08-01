@@ -33,21 +33,21 @@ export default function UsageTopModelsCard({
 	const modelData = viewType === "groups" ? groupModels : individualModels;
 
 	return (
-		<Card className="h-full">
-			<Title>{viewType === "groups" ? "Top Public Model Names" : "Top Litellm Models"}</Title>
-			<div className="flex justify-end items-center mb-4">
-				<div className="flex bg-gray-100 rounded-lg p-1">
+		<Card className="h-full !p-4">
+			<div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+				<Title>{viewType === "groups" ? "Top Public Model Names" : "Top Litellm Models"}</Title>
+				<div className="flex rounded-md bg-slate-100 p-0.5">
 					<button
-						className={`px-3 py-1 text-sm rounded-md transition-colors ${
-							viewType === "groups" ? "bg-white shadow-sm text-gray-900" : "text-gray-600 hover:text-gray-900"
+						className={`rounded px-2 py-1 text-xs transition-colors ${
+							viewType === "groups" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
 						}`}
 						onClick={() => onViewTypeChange("groups")}
 					>
 						Public Model Name
 					</button>
 					<button
-						className={`px-3 py-1 text-sm rounded-md transition-colors ${
-							viewType === "individual" ? "bg-white shadow-sm text-gray-900" : "text-gray-600 hover:text-gray-900"
+						className={`rounded px-2 py-1 text-xs transition-colors ${
+							viewType === "individual" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
 						}`}
 						onClick={() => onViewTypeChange("individual")}
 					>
@@ -58,17 +58,17 @@ export default function UsageTopModelsCard({
 			{loading ? (
 				<ChartLoader isDateChanging={isDateChanging} />
 			) : (
-				<div className="relative max-h-[600px] overflow-y-auto">
+				<div className="relative max-h-[320px] overflow-y-auto">
 					<TopRankingBarChart
 						data={modelData}
 						categoryKey="key"
 						valueKey="spend"
-						yAxisWidth={200}
-						height={52}
+						yAxisWidth={160}
+						height={40}
 						valueFormatter={valueFormatterSpend}
 						renderTooltip={(data) =>
 							data && (
-								<div className="bg-white p-4 shadow-lg rounded-lg border">
+								<div className="rounded-lg border bg-white p-3 text-xs shadow-lg">
 									<p className="font-bold">{data.key}</p>
 									<p className="text-cyan-500">Spend: ${formatNumberWithCommas(data.spend, 2)}</p>
 									<p className="text-gray-600">Total Requests: {data.requests.toLocaleString()}</p>

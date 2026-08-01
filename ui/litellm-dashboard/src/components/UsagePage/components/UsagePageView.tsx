@@ -11,15 +11,12 @@ import { useDebouncedState } from "@tanstack/react-pacer/debouncer";
 import {
 	BarChart,
 	Card,
-	Col,
 	DateRangePickerValue,
-	Grid,
 	Tab,
 	TabGroup,
 	TabList,
 	TabPanel,
 	TabPanels,
-	Text,
 	Title,
 } from "@tremor/react";
 import { Alert, Button, Select, Typography } from "antd";
@@ -41,7 +38,6 @@ import AdvancedDatePicker from "../../shared/advanced_date_picker";
 import { ChartLoader } from "../../shared/chart_loader";
 import { Tag } from "../../tag_management/types";
 import UserAgentActivity from "../../user_agent_activity";
-import ViewUserSpend from "../../view_user_spend";
 import { usePaginatedDailyActivity } from "../hooks/usePaginatedDailyActivity";
 import { DailyData, KeyMetricWithMetadata, MetricWithMetadata } from "../types";
 import { valueFormatterSpend } from "../utils/value_formatters";
@@ -426,371 +422,347 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 		() => processActivityData(userSpendData, "mcp_servers", teams),
 		[userSpendData, teams],
 	);
+	const dateRangeLabel = useMemo(() => {
+		if (!dateValue.from || !dateValue.to) return "";
+		const from = dateValue.from.toLocaleDateString("en-US", {
+			month: "short",
+			day: "numeric",
+			year: dateValue.from.getFullYear() !== dateValue.to.getFullYear() ? "numeric" : undefined,
+		});
+		const to = dateValue.to.toLocaleDateString("en-US", {
+			month: "short",
+			day: "numeric",
+			year: "numeric",
+		});
+		return `${from} – ${to}`;
+	}, [dateValue.from, dateValue.to]);
 
 	return (
-		<div style={{ width: "100%" }} className="relative min-w-0 p-4 sm:p-8">
-			{/* Global Date Picker and Tabs - Single Row */}
-			<div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between lg:gap-6">
-				<div className="min-w-0 flex-1">
-					<div className="mb-4 flex w-full flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
-						<UsageViewSelect value={usageView} onChange={(value) => setUsageView(value)} isAdmin={isAdmin} />
+		<div style={{ width: "100%" }} className="relative min-w-0 p-3 sm:p-5">
+			<div className="min-w-0 space-y-3">
+				<div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+					<UsageViewSelect value={usageView} onChange={(value) => setUsageView(value)} isAdmin={isAdmin} />
+					{usageView === "global" && isAdmin && (
+						<Select
+							showSearch
+							allowClear
+							className="min-w-52 flex-1 sm:max-w-80"
+							placeholder="Select user to filter..."
+							value={selectedUserId}
+							onChange={(value) => setSelectedUserId(value ?? null)}
+							filterOption={false}
+							onSearch={handleUserSearchChange}
+							searchValue={userSearchInput}
+							onPopupScroll={handleUserPopupScroll}
+							loading={isLoadingUsers}
+							notFoundContent={isLoadingUsers ? <LoadingOutlined spin /> : "No users found"}
+							options={userOptions}
+							popupRender={(menu) => (
+								<>
+									{menu}
+									{isFetchingNextUsersPage && (
+										<div className="p-2 text-center">
+											<LoadingOutlined spin />
+										</div>
+									)}
+								</>
+							)}
+						/>
+					)}
+					<div className="ml-auto">
 						<AdvancedDatePicker value={dateValue} onValueChange={handleDateChange} />
 					</div>
-					{paginatedResult.isFetchingMore && (
-						<Alert
-							banner
-							type="warning"
-							className="mb-2"
-							message={
-								<div className="flex items-center justify-between">
-									<span>
-										<LoadingOutlined spin className="mr-2" />
-										Currently fetching spend data: fetched {paginatedResult.progress.currentPage} /{" "}
-										{paginatedResult.progress.totalPages} pages. Charts will update periodically as data loads. Moving
-										off of this page will stop and reset this. To continue using the UI in the meantime,{" "}
-										<a href={window.location.href} target="_blank" rel="noopener noreferrer">
-											open a new tab <ExportOutlined />
-										</a>
-										.
-									</span>
-									<Button type="primary" danger onClick={paginatedResult.cancel}>
-										Stop
-									</Button>
-								</div>
-							}
-						/>
-					)}
-					{paginatedResult.cancelled && (
-						<Alert
-							banner
-							type="info"
-							className="mb-2"
-							message={
+				</div>
+
+				{paginatedResult.isFetchingMore && (
+					<Alert
+						banner
+						type="warning"
+						className="mb-2"
+						message={
+							<div className="flex items-center justify-between">
 								<span>
-									Showing partial data ({paginatedResult.progress.currentPage}/{paginatedResult.progress.totalPages}{" "}
-									pages loaded)
+									<LoadingOutlined spin className="mr-2" />
+									Currently fetching spend data: fetched {paginatedResult.progress.currentPage} /{" "}
+									{paginatedResult.progress.totalPages} pages. Charts will update periodically as data loads. Moving off
+									of this page will stop and reset this. To continue using the UI in the meantime,{" "}
+									<a href={window.location.href} target="_blank" rel="noopener noreferrer">
+										open a new tab <ExportOutlined />
+									</a>
+									.
 								</span>
-							}
-						/>
-					)}
-					{/* Your Usage Panel */}
-					{usageView === "global" && (
-						<>
-							{isAdmin && (
-								<div className="mb-4">
-									<Text className="mb-2">Filter by user</Text>
-									<Select
-										showSearch
-										allowClear
-										style={{ width: "100%" }}
-										placeholder="Select user to filter..."
-										value={selectedUserId}
-										onChange={(value) => setSelectedUserId(value ?? null)}
-										filterOption={false}
-										onSearch={handleUserSearchChange}
-										searchValue={userSearchInput}
-										onPopupScroll={handleUserPopupScroll}
-										loading={isLoadingUsers}
-										notFoundContent={isLoadingUsers ? <LoadingOutlined spin /> : "No users found"}
-										options={userOptions}
-										popupRender={(menu) => (
-											<>
-												{menu}
-												{isFetchingNextUsersPage && (
-													<div style={{ textAlign: "center", padding: 8 }}>
-														<LoadingOutlined spin />
-													</div>
-												)}
-											</>
-										)}
-									/>
-								</div>
-							)}
-							<TabGroup>
-								<div className="flex justify-between items-center">
-									<TabList variant="solid" className="mt-1">
-										<Tab>Cost</Tab>
-										<Tab>Model Activity</Tab>
-										<Tab>Key Activity</Tab>
-										<Tab>MCP Server Activity</Tab>
-										<Tab>Endpoint Activity</Tab>
-									</TabList>
-									<div className="flex items-center gap-2">
-										<Button
-											onClick={() => setIsAiChatOpen(true)}
-											icon={
-												<svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-													<path d="M8 1l1.5 3.5L13 6l-3.5 1.5L8 11 6.5 7.5 3 6l3.5-1.5L8 1zm4 7l.75 1.75L14.5 10.5l-1.75.75L12 13l-.75-1.75L9.5 10.5l1.75-.75L12 8zM4 9l.75 1.75L6.5 11.5l-1.75.75L4 14l-.75-1.75L1.5 11.5l1.75-.75L4 9z" />
-												</svg>
-											}
-										>
-											Ask AI
-										</Button>
-										<Button
-											onClick={() => setIsGlobalExportModalOpen(true)}
-											icon={
-												<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-													<path
-														strokeLinecap="round"
-														strokeLinejoin="round"
-														strokeWidth={2}
-														d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-													/>
-												</svg>
-											}
-										>
-											Export Data
-										</Button>
+								<Button type="primary" danger onClick={paginatedResult.cancel}>
+									Stop
+								</Button>
+							</div>
+						}
+					/>
+				)}
+				{paginatedResult.cancelled && (
+					<Alert
+						banner
+						type="info"
+						className="mb-2"
+						message={
+							<span>
+								Showing partial data ({paginatedResult.progress.currentPage}/{paginatedResult.progress.totalPages} pages
+								loaded)
+							</span>
+						}
+					/>
+				)}
+				{/* Your Usage Panel */}
+				{usageView === "global" && (
+					<TabGroup>
+						<div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+							<div className="min-w-0 overflow-x-auto">
+								<TabList variant="solid">
+									<Tab>Cost</Tab>
+									<Tab>Model Activity</Tab>
+									<Tab>Key Activity</Tab>
+									<Tab>MCP Server Activity</Tab>
+									<Tab>Endpoint Activity</Tab>
+								</TabList>
+							</div>
+							<div className="flex items-center gap-2">
+								<Button
+									size="small"
+									onClick={() => setIsAiChatOpen(true)}
+									icon={
+										<svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+											<path d="M8 1l1.5 3.5L13 6l-3.5 1.5L8 11 6.5 7.5 3 6l3.5-1.5L8 1zm4 7l.75 1.75L14.5 10.5l-1.75.75L12 13l-.75-1.75L9.5 10.5l1.75-.75L12 8zM4 9l.75 1.75L6.5 11.5l-1.75.75L4 14l-.75-1.75L1.5 11.5l1.75-.75L4 9z" />
+										</svg>
+									}
+								>
+									Ask AI
+								</Button>
+								<Button
+									size="small"
+									onClick={() => setIsGlobalExportModalOpen(true)}
+									icon={
+										<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												strokeWidth={2}
+												d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+											/>
+										</svg>
+									}
+								>
+									Export Data
+								</Button>
+							</div>
+						</div>
+						<TabPanels>
+							{/* Cost Panel */}
+							<TabPanel>
+								<div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-12">
+									<div className="xl:col-span-12">
+										<UsageMetricsCards
+											metadata={userSpendData.metadata}
+											totalSpend={totalSpend}
+											maxBudget={currentUser?.max_budget ?? null}
+											dateRangeLabel={dateRangeLabel}
+											showTokenBreakdown={showTokenBreakdown}
+											onToggleTokenBreakdown={() => setShowTokenBreakdown((visible) => !visible)}
+										/>
+									</div>
+
+									{/* Daily Spend Chart */}
+									<div className="min-w-0 xl:col-span-7">
+										<Card className="h-full !p-4">
+											<Title>Daily Spend</Title>
+											{loading ? (
+												<ChartLoader isDateChanging={isDateChanging} />
+											) : (
+												<BarChart
+													className="mt-2 !h-72"
+													data={sortedDailyResults}
+													index="date"
+													categories={["metrics.spend"]}
+													colors={["cyan"]}
+													valueFormatter={valueFormatterSpend}
+													yAxisWidth={100}
+													showLegend={false}
+													customTooltip={({ payload, active }) => {
+														if (!active || !payload?.[0]) return null;
+														const data = payload[0].payload;
+														return (
+															<div className="bg-white p-4 shadow-lg rounded-lg border">
+																<p className="font-bold">{data.date}</p>
+																<p className="text-cyan-500">Spend: ${formatNumberWithCommas(data.metrics.spend, 2)}</p>
+																<p className="text-gray-600">Requests: {data.metrics.api_requests}</p>
+																<p className="text-gray-600">Successful: {data.metrics.successful_requests}</p>
+																<p className="text-gray-600">Failed: {data.metrics.failed_requests}</p>
+																<p className="text-gray-600">
+																	Tokens: {formatNumberWithCommas(data.metrics.total_tokens, 0, false)}
+																</p>
+															</div>
+														);
+													}}
+												/>
+											)}
+										</Card>
+									</div>
+									{/* Top Models */}
+									<div className="min-w-0 xl:col-span-5">
+										<UsageTopModelsCard
+											viewType={modelViewType}
+											onViewTypeChange={setModelViewType}
+											groupModels={topModelGroups}
+											individualModels={topModels}
+											loading={loading}
+											isDateChanging={isDateChanging}
+										/>
+									</div>
+
+									{/* Spend by Provider */}
+									<div className="min-w-0 xl:col-span-7">
+										<SpendByProvider loading={loading} isDateChanging={isDateChanging} providerSpend={providerSpend} />
+									</div>
+									{/* Top API Keys */}
+									<div className="min-w-0 xl:col-span-5">
+										<Card className="h-full !p-4">
+											<Title>Top Virtual Keys</Title>
+											<TopKeyView topKeys={topKeys} teams={null} />
+										</Card>
 									</div>
 								</div>
-								<TabPanels>
-									{/* Cost Panel */}
-									<TabPanel>
-										<Grid numItems={2} className="gap-2 w-full">
-											{/* Total Spend Card */}
-											<Col numColSpan={2}>
-												<div className="flex items-center gap-4 mt-2 mb-2">
-													<Text className="text-tremor-default text-tremor-content dark:text-dark-tremor-content text-lg">
-														Project Spend{" "}
-														{dateValue.from && dateValue.to && (
-															<>
-																{dateValue.from.toLocaleDateString("en-US", {
-																	month: "short",
-																	day: "numeric",
-																	year:
-																		dateValue.from.getFullYear() !== dateValue.to.getFullYear() ? "numeric" : undefined,
-																})}
-																{" - "}
-																{dateValue.to.toLocaleDateString("en-US", {
-																	month: "short",
-																	day: "numeric",
-																	year: "numeric",
-																})}
-															</>
-														)}
-													</Text>
-												</div>
+							</TabPanel>
 
-												<ViewUserSpend
-													userSpend={totalSpend}
-													selectedTeam={null}
-													userMaxBudget={currentUser?.max_budget || null}
-												/>
-											</Col>
+							{/* Activity Panel */}
+							<TabPanel>
+								<ActivityMetrics modelMetrics={modelMetrics} />
+							</TabPanel>
+							<TabPanel>
+								<ActivityMetrics modelMetrics={keyMetrics} />
+							</TabPanel>
+							<TabPanel>
+								<ActivityMetrics modelMetrics={mcpServerMetrics} />
+							</TabPanel>
+							<TabPanel>
+								<EndpointUsage userSpendData={userSpendData} />
+							</TabPanel>
+						</TabPanels>
+					</TabGroup>
+				)}
+				{/* Organization Usage Panel */}
 
-											<Col numColSpan={2}>
-												<UsageMetricsCards
-													metadata={userSpendData.metadata}
-													totalSpend={totalSpend}
-													showTokenBreakdown={showTokenBreakdown}
-													onToggleTokenBreakdown={() => setShowTokenBreakdown((visible) => !visible)}
-												/>
-											</Col>
+				{usageView === "organization" && (
+					<EntityUsage
+						accessToken={accessToken}
+						entityType="organization"
+						userID={userID}
+						userRole={userRole}
+						dateValue={dateValue}
+						entityList={
+							organizations?.map((organization) => ({
+								label: organization.organization_alias,
+								value: organization.organization_id,
+							})) || null
+						}
+						premiumUser={premiumUser}
+					/>
+				)}
 
-											{/* Daily Spend Chart */}
-											<Col numColSpan={2}>
-												<Card>
-													<Title>Daily Spend</Title>
-													{loading ? (
-														<ChartLoader isDateChanging={isDateChanging} />
-													) : (
-														<BarChart
-															data={sortedDailyResults}
-															index="date"
-															categories={["metrics.spend"]}
-															colors={["cyan"]}
-															valueFormatter={valueFormatterSpend}
-															yAxisWidth={100}
-															showLegend={false}
-															customTooltip={({ payload, active }) => {
-																if (!active || !payload?.[0]) return null;
-																const data = payload[0].payload;
-																return (
-																	<div className="bg-white p-4 shadow-lg rounded-lg border">
-																		<p className="font-bold">{data.date}</p>
-																		<p className="text-cyan-500">
-																			Spend: ${formatNumberWithCommas(data.metrics.spend, 2)}
-																		</p>
-																		<p className="text-gray-600">Requests: {data.metrics.api_requests}</p>
-																		<p className="text-gray-600">Successful: {data.metrics.successful_requests}</p>
-																		<p className="text-gray-600">Failed: {data.metrics.failed_requests}</p>
-																		<p className="text-gray-600">
-																			Tokens: {formatNumberWithCommas(data.metrics.total_tokens, 0, false)}
-																		</p>
-																	</div>
-																);
-															}}
-														/>
-													)}
-												</Card>
-											</Col>
-											{/* Top API Keys */}
-											<Col numColSpan={1}>
-												<Card className="h-full">
-													<Title>Top Virtual Keys</Title>
-													<TopKeyView topKeys={topKeys} teams={null} />
-												</Card>
-											</Col>
+				{/* Team Usage Panel */}
+				{usageView === "team" && (
+					<EntityUsage
+						accessToken={accessToken}
+						entityType="team"
+						userID={userID}
+						userRole={userRole}
+						entityList={
+							teams?.map((team) => ({
+								label: team.team_alias,
+								value: team.team_id,
+							})) || null
+						}
+						premiumUser={premiumUser}
+						dateValue={dateValue}
+					/>
+				)}
 
-											{/* Top Models */}
-											<Col numColSpan={1}>
-												<UsageTopModelsCard
-													viewType={modelViewType}
-													onViewTypeChange={setModelViewType}
-													groupModels={topModelGroups}
-													individualModels={topModels}
-													loading={loading}
-													isDateChanging={isDateChanging}
-												/>
-											</Col>
-
-											{/* Spend by Provider */}
-											<Col numColSpan={2}>
-												<SpendByProvider
-													loading={loading}
-													isDateChanging={isDateChanging}
-													providerSpend={providerSpend}
-												/>
-											</Col>
-
-											{/* Usage Metrics */}
-										</Grid>
-									</TabPanel>
-
-									{/* Activity Panel */}
-									<TabPanel>
-										<ActivityMetrics modelMetrics={modelMetrics} />
-									</TabPanel>
-									<TabPanel>
-										<ActivityMetrics modelMetrics={keyMetrics} />
-									</TabPanel>
-									<TabPanel>
-										<ActivityMetrics modelMetrics={mcpServerMetrics} />
-									</TabPanel>
-									<TabPanel>
-										<EndpointUsage userSpendData={userSpendData} />
-									</TabPanel>
-								</TabPanels>
-							</TabGroup>
-						</>
-					)}
-					{/* Organization Usage Panel */}
-
-					{usageView === "organization" && (
-						<EntityUsage
-							accessToken={accessToken}
-							entityType="organization"
-							userID={userID}
-							userRole={userRole}
-							dateValue={dateValue}
-							entityList={
-								organizations?.map((organization) => ({
-									label: organization.organization_alias,
-									value: organization.organization_id,
-								})) || null
-							}
-							premiumUser={premiumUser}
-						/>
-					)}
-
-					{/* Team Usage Panel */}
-					{usageView === "team" && (
-						<EntityUsage
-							accessToken={accessToken}
-							entityType="team"
-							userID={userID}
-							userRole={userRole}
-							entityList={
-								teams?.map((team) => ({
-									label: team.team_alias,
-									value: team.team_id,
-								})) || null
-							}
-							premiumUser={premiumUser}
-							dateValue={dateValue}
-						/>
-					)}
-
-					{/* Customer Usage Panel */}
-					{usageView === "customer" && (
-						<EntityUsage
-							accessToken={accessToken}
-							entityType="customer"
-							userID={userID}
-							userRole={userRole}
-							entityList={
-								customers?.map((customer) => ({
-									label: customer.alias || customer.user_id,
-									value: customer.user_id,
-								})) || null
-							}
-							premiumUser={premiumUser}
-							dateValue={dateValue}
-						/>
-					)}
-					{/* Tag Usage Panel */}
-					{usageView === "tag" && (
-						<>
-							{showCredentialBanner && (
-								<Alert
-									banner
-									type="info"
-									message="Reusable credentials are automatically tracked as tags"
-									description={
-										<Typography.Text>
-											When a reusable credential is used, it will appear as a tag prefixed with{" "}
-											<Typography.Text code>Credential: </Typography.Text>
-											in this view.
-										</Typography.Text>
-									}
-									closable
-									onClose={() => setShowCredentialBanner(false)}
-									className="mb-5"
-								/>
-							)}
-							<EntityUsage
-								accessToken={accessToken}
-								entityType="tag"
-								userID={userID}
-								userRole={userRole}
-								entityList={allTags}
-								premiumUser={premiumUser}
-								dateValue={dateValue}
+				{/* Customer Usage Panel */}
+				{usageView === "customer" && (
+					<EntityUsage
+						accessToken={accessToken}
+						entityType="customer"
+						userID={userID}
+						userRole={userRole}
+						entityList={
+							customers?.map((customer) => ({
+								label: customer.alias || customer.user_id,
+								value: customer.user_id,
+							})) || null
+						}
+						premiumUser={premiumUser}
+						dateValue={dateValue}
+					/>
+				)}
+				{/* Tag Usage Panel */}
+				{usageView === "tag" && (
+					<>
+						{showCredentialBanner && (
+							<Alert
+								banner
+								type="info"
+								message="Reusable credentials are automatically tracked as tags"
+								description={
+									<Typography.Text>
+										When a reusable credential is used, it will appear as a tag prefixed with{" "}
+										<Typography.Text code>Credential: </Typography.Text>
+										in this view.
+									</Typography.Text>
+								}
+								closable
+								onClose={() => setShowCredentialBanner(false)}
+								className="mb-5"
 							/>
-						</>
-					)}
-					{usageView === "agent" && (
+						)}
 						<EntityUsage
 							accessToken={accessToken}
-							entityType="agent"
+							entityType="tag"
 							userID={userID}
 							userRole={userRole}
-							entityList={
-								agentsResponse?.agents?.map((agent) => ({ label: agent.agent_name, value: agent.agent_id })) || null
-							}
+							entityList={allTags}
 							premiumUser={premiumUser}
 							dateValue={dateValue}
 						/>
-					)}
-					{/* User Usage Panel */}
-					{usageView === "user" && (
-						<EntityUsage
-							accessToken={accessToken}
-							entityType="user"
-							userID={userID}
-							userRole={userRole}
-							entityList={userOptions.length > 0 ? userOptions : null}
-							premiumUser={premiumUser}
-							dateValue={dateValue}
-						/>
-					)}
-					{/* User Agent Activity Panel */}
-					{usageView === "user-agent-activity" && (
-						<UserAgentActivity accessToken={accessToken} userRole={userRole} dateValue={dateValue} />
-					)}
+					</>
+				)}
+				{usageView === "agent" && (
+					<EntityUsage
+						accessToken={accessToken}
+						entityType="agent"
+						userID={userID}
+						userRole={userRole}
+						entityList={
+							agentsResponse?.agents?.map((agent) => ({ label: agent.agent_name, value: agent.agent_id })) || null
+						}
+						premiumUser={premiumUser}
+						dateValue={dateValue}
+					/>
+				)}
+				{/* User Usage Panel */}
+				{usageView === "user" && (
+					<EntityUsage
+						accessToken={accessToken}
+						entityType="user"
+						userID={userID}
+						userRole={userRole}
+						entityList={userOptions.length > 0 ? userOptions : null}
+						premiumUser={premiumUser}
+						dateValue={dateValue}
+					/>
+				)}
+				{/* User Agent Activity Panel */}
+				{usageView === "user-agent-activity" && (
+					<UserAgentActivity accessToken={accessToken} userRole={userRole} dateValue={dateValue} />
+				)}
 
-					<CliProxySubscriptionQuota enabled={isAdmin} />
-				</div>
+				<CliProxySubscriptionQuota enabled={isAdmin} />
 			</div>
 
 			{/* CloudZero Export Modal */}

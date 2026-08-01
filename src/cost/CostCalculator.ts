@@ -117,11 +117,13 @@ const PER_MILLION = 1_000_000;
 
 /** 计算结果 */
 export interface CostResult {
+	/** 缓存创建 + 缓存读取输入 token 费用 */
+	readonly cacheInputCost: number;
 	/** 输入 token 费用 */
 	readonly inputCost: number;
 	/** 输出 token 费用 */
 	readonly outputCost: number;
-	/** 总费用（输入 + 输出） */
+	/** 总费用（缓存输入 + 输入 + 输出） */
 	readonly totalCost: number;
 }
 
@@ -355,8 +357,9 @@ export function costPerToken(
 		const outputCost = nonReasoningCompletion * outputPerToken;
 		const cacheCreationCost = cacheCreationTokens * cacheCreatePerToken;
 		const cacheReadCost = cacheReadTokens * cacheReadPerToken;
-		const totalCost = inputCost + outputCost + cacheCreationCost + cacheReadCost;
-		return { inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
+		const cacheInputCost = cacheCreationCost + cacheReadCost;
+		const totalCost = inputCost + outputCost + cacheInputCost;
+		return { cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
 	}
 
 	const costMapEntry = lookupCostMapEntry(model, modelCostMap);
@@ -423,13 +426,13 @@ export function costPerToken(
 			if (price === undefined) {
 				// llmux 模型仅在统一 snapshot 与显式 override 都未命中时沿用订阅零计费兼容行为。
 				if (isLlmuxModel(model)) {
-					return { inputCost: 0, outputCost: 0, totalCost: 0 };
+					return { cacheInputCost: 0, inputCost: 0, outputCost: 0, totalCost: 0 };
 				}
 				// GAP (COST-001): 对齐 PY cost_calculator.py:2076-2077 — 未知模型返回 0,0,0 静默处理
 				// 之前 throw 让 SpendTracker 等调用方手动 catch → 仍写 0；PY 直接 return 0,0,0。
 				// 现改为 return 0,0,0 + logger.warn 提示配置缺口，避免上游重复 try/catch 噪音。
 				logger.warn(`未找到模型价格: ${model}，按 0 计费`);
-				return { inputCost: 0, outputCost: 0, totalCost: 0 };
+				return { cacheInputCost: 0, inputCost: 0, outputCost: 0, totalCost: 0 };
 			}
 			inputPerMillion = price.inputPerMillion;
 			outputPerMillion = price.outputPerMillion;
@@ -471,9 +474,10 @@ export function costPerToken(
 	const cacheCreationCost = (cacheCreationTokens / PER_MILLION) * cacheCreationPerMillion;
 	const cacheReadCost = (cacheReadTokens / PER_MILLION) * cacheReadPerMillion;
 
-	const totalCost = inputCost + outputCost + cacheCreationCost + cacheReadCost;
+	const cacheInputCost = cacheCreationCost + cacheReadCost;
+	const totalCost = inputCost + outputCost + cacheInputCost;
 
-	return { inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
+	return { cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
 }
 
 /**

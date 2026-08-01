@@ -9,7 +9,7 @@ import {
 } from "@ant-design/icons";
 import { TrashIcon } from "@heroicons/react/outline";
 import { Badge, Button, Card, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@tremor/react";
-import { AutoComplete, Input, Tooltip } from "antd";
+import { AutoComplete, Input, Select, Tooltip } from "antd";
 import React, { useEffect, useMemo, useState } from "react";
 import {
 	latestHealthChecksCall,
@@ -347,17 +347,16 @@ const ModelGroupAliasSettings: React.FC<ModelGroupAliasSettingsProps> = ({
 									</TableCell>
 									<TableCell>
 										{editing ? (
-											<AutoComplete
+											<Select
 												size="small"
+												showSearch
+												style={{ width: "100%" }}
+												aria-label="Resolution"
 												value={editingAlias.targetModelGroup}
 												options={targetOptions.filter((option) => option.value !== editingAlias.aliasName)}
+												optionFilterProp="value"
 												onChange={(value) =>
 													setEditingAlias((previous) => previous && { ...previous, targetModelGroup: value })
-												}
-												filterOption={(input, option) =>
-													String(option?.value ?? "")
-														.toLowerCase()
-														.includes(input.toLowerCase())
 												}
 											/>
 										) : (

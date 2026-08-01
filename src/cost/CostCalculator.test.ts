@@ -292,16 +292,19 @@ describe("costPerToken", () => {
 				"test-200k-cache": {
 					input_cost_per_token: 1e-6,
 					output_cost_per_token: 2e-6,
-					cache_creation_input_token_cost: 0.5,
-					cache_read_input_token_cost: 0.05,
-					cache_creation_input_token_cost_above_200k_tokens: 1.0,
-					cache_read_input_token_cost_above_200k_tokens: 0.1,
+					input_cost_per_token_above_200k_tokens: 1e-6,
+					output_cost_per_token_above_200k_tokens: 2e-6,
+					cache_creation_input_token_cost: 0.5e-6,
+					cache_read_input_token_cost: 0.05e-6,
+					cache_creation_input_token_cost_above_200k_tokens: 1.0e-6,
+					cache_read_input_token_cost_above_200k_tokens: 0.1e-6,
 				},
 			};
 			const r = costPerToken("test-200k-cache", 250_000, 100_000, 10_000, 5_000, {
 				modelCostMap: modelCostMap,
 			});
 			// cache 走 above_200k 字段: 10k * 1.0 / 1M = 0.01, 5k * 0.1 / 1M = 0.0005
+			expect(r.cacheInputCost).toBeCloseTo(0.0105, 6);
 			expect(r.totalCost).toBeGreaterThan(0);
 		});
 	});

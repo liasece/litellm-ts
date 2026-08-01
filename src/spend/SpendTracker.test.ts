@@ -1360,15 +1360,40 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 		} as Parameters<typeof trackSpendLog>[1];
 	}
 
-	it("metadata.cost_breakdown 注入 {input_cost, output_cost, total_cost, tool_usage_cost: 0}", async () => {
+	it("metadata.cost_breakdown 注入缓存输入、输入、输出与总费用", async () => {
 		const insertedSpendLogs: Record<string, unknown>[] = [];
 		await trackSpendLog(createInsertCaptureDb(insertedSpendLogs), createMinimalLogEntry({}));
 		expect(insertedSpendLogs).toHaveLength(1);
 		const metadata = insertedSpendLogs[0]!["metadata"] as Record<string, unknown>;
 		expect(metadata["cost_breakdown"]).toEqual({
+			cache_input_cost: 0,
 			input_cost: 0,
 			output_cost: 0,
 			total_cost: 0,
+			tool_usage_cost: 0,
+		});
+	});
+
+	it("metadata.cost_breakdown 保留可独立展示的缓存输入费用", async () => {
+		const insertedSpendLogs: Record<string, unknown>[] = [];
+		await trackSpendLog(
+			createInsertCaptureDb(insertedSpendLogs),
+			createMinimalLogEntry({
+				cache_read_input_tokens: 40,
+				custom_cost_per_token: {
+					input_cost_per_token: 0.01,
+					output_cost_per_token: 0.02,
+					cache_read_input_token_cost: 0.001,
+				},
+			}),
+		);
+
+		const metadata = insertedSpendLogs[0]!["metadata"] as Record<string, unknown>;
+		expect(metadata["cost_breakdown"]).toEqual({
+			cache_input_cost: 0.04,
+			input_cost: 0.6,
+			output_cost: 0.4,
+			total_cost: 1.04,
 			tool_usage_cost: 0,
 		});
 	});

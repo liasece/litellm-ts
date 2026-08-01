@@ -1,6 +1,5 @@
 import {
 	BankOutlined,
-	BarChartOutlined,
 	GlobalOutlined,
 	LineChartOutlined,
 	RobotOutlined,
@@ -137,57 +136,50 @@ export const UsageViewSelect: React.FC<UsageViewSelectProps> = ({
 	};
 	const filteredOptions = getFilteredOptions();
 	return (
-		<div className="w-full" data-id={dataId}>
-			<div className="flex flex-wrap items-center justify-start gap-4">
-				<div className="flex items-stretch gap-2 min-w-0">
-					<div className="flex-shrink-0 flex items-center">
-						<BarChartOutlined style={{ fontSize: "32px" }} />
-					</div>
-					<div className="flex-1 min-w-0">
-						<h3 className="text-sm font-semibold text-gray-900 mb-0.5 leading-tight">{title}</h3>
-						<p className="text-xs text-gray-600 leading-tight">{description}</p>
-					</div>
+		<div className="min-w-0" data-id={dataId}>
+			<div className="flex min-w-0 items-center gap-2">
+				<div className="hidden min-w-0 sm:block">
+					<h3 className="mb-0 text-xs font-semibold leading-tight text-slate-700">{title}</h3>
+					<p className="truncate text-[11px] leading-tight text-slate-500">{description}</p>
 				</div>
-				<div className="flex-shrink-0">
-					<Select
-						value={value}
-						onChange={onChange}
-						className="w-54 sm:w-64 md:w-72"
-						size="large"
-						options={filteredOptions.map((opt) => ({
-							value: opt.value,
-							label: opt.label,
-						}))}
-						optionRender={(option) => {
-							const opt = filteredOptions.find((o) => o.value === option.value);
-							if (!opt) return option.label;
-							return (
-								<div className="flex items-center gap-2 py-1">
-									<div className="flex-shrink-0 mt-0.5">{opt.icon}</div>
-									<div className="flex-1 min-w-0">
-										<div className="text-sm font-medium text-gray-900">{opt.label}</div>
-										<div className="text-xs text-gray-600 mt-0.5">{opt.description}</div>
+				<Select
+					value={value}
+					onChange={onChange}
+					className="w-48 sm:w-56"
+					size="middle"
+					options={filteredOptions.map((opt) => ({
+						value: opt.value,
+						label: opt.label,
+					}))}
+					optionRender={(option) => {
+						const opt = filteredOptions.find((o) => o.value === option.value);
+						if (!opt) return option.label;
+						return (
+							<div className="flex items-center gap-2 py-1">
+								<div className="flex-shrink-0 mt-0.5">{opt.icon}</div>
+								<div className="flex-1 min-w-0">
+									<div className="text-sm font-medium text-gray-900">{opt.label}</div>
+									<div className="text-xs text-gray-600 mt-0.5">{opt.description}</div>
+								</div>
+								{opt.badgeText && (
+									<div className="items-center">
+										<Badge color="blue" count={opt.badgeText} />
 									</div>
-									{opt.badgeText && (
-										<div className="items-center">
-											<Badge color="blue" count={opt.badgeText} />
-										</div>
-									)}
-								</div>
-							);
-						}}
-						labelRender={(props) => {
-							const opt = filteredOptions.find((o) => o.value === props.value);
-							if (!opt) return props.label;
-							return (
-								<div className="flex items-center gap-2">
-									<div>{opt.icon}</div>
-									<span className="text-sm">{opt.label}</span>
-								</div>
-							);
-						}}
-					/>
-				</div>
+								)}
+							</div>
+						);
+					}}
+					labelRender={(props) => {
+						const opt = filteredOptions.find((o) => o.value === props.value);
+						if (!opt) return props.label;
+						return (
+							<div className="flex items-center gap-2">
+								<div>{opt.icon}</div>
+								<span className="text-sm">{opt.label}</span>
+							</div>
+						);
+					}}
+				/>
 			</div>
 		</div>
 	);

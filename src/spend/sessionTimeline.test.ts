@@ -132,6 +132,37 @@ describe("SessionTimelineBuilder", () => {
 		});
 	});
 
+	it("压缩后的请求正文使用原快照 occurrence 保留重复输入", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_payload: [{ role: "user", content: "继续" }],
+				request_message_occurrences: [1],
+				response_payload: { choices: [{ message: { role: "assistant", content: "第一次回复" } }] },
+			}),
+		);
+		builder.add(
+			makeRow({
+				request_id: "req-2",
+				startTime: "2026-07-24T10:00:02.000Z",
+				endTime: "2026-07-24T10:00:03.000Z",
+				request_payload: [
+					{ role: "assistant", content: "第一次回复" },
+					{ role: "user", content: "继续" },
+				],
+				request_message_occurrences: [1, 2],
+				response_payload: { choices: [{ message: { role: "assistant", content: "第二次回复" } }] },
+			}),
+		);
+
+		expect(builder.build().data.map((item) => [item.role, item.content])).toEqual([
+			["user", "继续"],
+			["assistant", "第一次回复"],
+			["user", "继续"],
+			["assistant", "第二次回复"],
+		]);
+	});
+
 	it("在交错的长短快照中按语义去重历史，并忽略响应与历史间的 reasoning 差异", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(
@@ -458,6 +489,11 @@ describe("SessionTimelineBuilder", () => {
 			request_system_count: 2,
 			request_message_count: 2,
 			request_tool_count: 0,
+			request_first_message_role: "user",
+			request_second_message_role: "user",
+			request_first_message_text:
+				"The following is the user's CLAUDE.md configuration. Treat it as context about the user's environment and intent.",
+			request_second_message_text: "<transcript>\nUser: 请检查设置",
 			request_first_system_prompt:
 				"You are a security monitor for autonomous AI coding agents.\n\n## Context",
 			request_payload: [
@@ -509,6 +545,7 @@ describe("SessionTimelineBuilder", () => {
 				startTime: "2026-07-24T10:00:10.000Z",
 				endTime: "2026-07-24T10:00:11.000Z",
 				...securityMonitorTraits,
+				request_second_message_text: "请检查普通用户请求",
 				request_payload: [
 					securityMonitorTraits.request_payload[0],
 					{ role: "user", content: [{ type: "text", text: "请检查普通用户请求" }] },
