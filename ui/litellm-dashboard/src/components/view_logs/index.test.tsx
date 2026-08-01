@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SpendLogsTable, { RequestViewer } from "./index";
@@ -609,6 +609,7 @@ describe("SpendLogsTable", () => {
 	};
 
 	beforeEach(() => {
+		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockFilters = {};
 		mockFilteredLogs = { data: [], total: 0, page: 1, page_size: 50, total_pages: 1 };
@@ -887,6 +888,22 @@ describe("SpendLogsTable", () => {
 		await user.click(screen.getByTitle("Fetch data"));
 
 		await waitFor(() => expect(mockRefetchFilteredLogs).toHaveBeenCalledTimes(1));
+	});
+
+	it("Live Tail continues refreshing the backend-filtered data source", async () => {
+		vi.useFakeTimers();
+		mockHasBackendFilters = true;
+		mockFilters = { "Key Alias": "active-alias" };
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		expect(screen.getByText("Auto-refreshing every 2s")).toBeInTheDocument();
+		await act(async () => {
+			vi.advanceTimersByTime(2_000);
+			await Promise.resolve();
+		});
+
+		expect(mockRefetchFilteredLogs).toHaveBeenCalledTimes(1);
+		vi.useRealTimers();
 	});
 
 	it("restores URL filters and view state when the page is refreshed", () => {

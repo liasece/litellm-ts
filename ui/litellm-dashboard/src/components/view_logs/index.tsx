@@ -344,6 +344,25 @@ export default function SpendLogsTable({
 		void refresh.finally(() => setIsManualRefreshing(false));
 	}, [hasBackendFilters, refetchFilteredLogs, refetchLogs]);
 
+	// The main React Query poller is disabled while backend filters are active.
+	// Keep Live Tail running by polling the filtered data source directly.
+	useEffect(() => {
+		if (
+			!hasBackendFilters ||
+			liveTailIntervalMs <= 0 ||
+			currentPage !== 1 ||
+			activeTab !== "request logs"
+		) {
+			return;
+		}
+
+		const intervalId = window.setInterval(() => {
+			void refetchFilteredLogs();
+		}, liveTailIntervalMs);
+
+		return () => window.clearInterval(intervalId);
+	}, [activeTab, currentPage, hasBackendFilters, liveTailIntervalMs, refetchFilteredLogs]);
+
 	const handleRowClick = useCallback((log: LogEntry) => {
 		if (log.status === "in_progress") {
 			return;
@@ -561,7 +580,7 @@ export default function SpendLogsTable({
 										</div>
 									</div>
 									<LiveTailBanner
-										visible={liveTailIntervalMs > 0 && currentPage === 1 && isMainQueryEnabled}
+										visible={liveTailIntervalMs > 0 && currentPage === 1 && activeTab === "request logs"}
 										intervalMs={liveTailIntervalMs}
 										onStop={() => setLiveTailIntervalMs(0)}
 									/>
