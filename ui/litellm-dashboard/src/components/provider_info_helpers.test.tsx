@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	Providers,
+	getModelLogoAndName,
+	getModelProvider,
 	getPlaceholder,
 	getProviderLogoAndName,
 	getProviderModels,
@@ -84,6 +86,41 @@ describe("provider_info_helpers", () => {
 					expect(result.displayName).toBeTruthy();
 				}
 			});
+		});
+	});
+
+	describe("CLIProxy model branding", () => {
+		it.each([
+			["gpt-5.6-sol", "openai", Providers.OpenAI],
+			["cliproxy/gpt-image-2", "openai", Providers.OpenAI],
+			["codex-auto-review", "openai", Providers.OpenAI],
+			["kimi-k2.7-code", "moonshot", Providers.MOONSHOT],
+			["cliproxy/kimi-k3-256k", "moonshot", Providers.MOONSHOT],
+			["claude-sonnet-4", "anthropic", Providers.Anthropic],
+			["gemini-3-pro", "gemini", Providers.Google_AI_Studio],
+			["qwen3-coder", "dashscope", Providers.Dashscope],
+		])("resolves %s through its model family", (model, provider, displayName) => {
+			expect(getModelProvider("cliproxy", model)).toBe(provider);
+			expect(getModelLogoAndName("cliproxy", model)).toEqual({
+				provider,
+				displayName,
+				logo: providerLogoMap[displayName],
+			});
+		});
+
+		it("keeps a concrete non-CLIProxy provider even when the model name resembles another family", () => {
+			expect(getModelProvider("azure", "gpt-5.4")).toBe("azure");
+			expect(getModelLogoAndName("azure", "gpt-5.4").logo).toBe(providerLogoMap[Providers.Azure]);
+		});
+
+		it("falls back to CLIProxy branding for an unknown managed model family", () => {
+			expect(getModelProvider("cliproxy", "future-model")).toBe("cliproxy");
+			expect(getModelLogoAndName("cliproxy", "future-model").displayName).toBe(Providers.CLIProxy);
+		});
+
+		it("infers an unprefixed model when no transport provider is available", () => {
+			expect(getModelProvider("", "kimi-k2.5")).toBe("moonshot");
+			expect(getModelProvider("", "gpt-5.4")).toBe("openai");
 		});
 	});
 

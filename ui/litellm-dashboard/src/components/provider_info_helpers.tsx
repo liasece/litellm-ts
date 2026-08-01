@@ -241,7 +241,7 @@ export const providerLogoMap: Record<string, string> = {
 	[Providers.COMETAPI]: `${asset_logos_folder}cometapi.svg`,
 	[Providers.Cursor]: `${asset_logos_folder}cursor.svg`,
 	[Providers.Databricks]: `${asset_logos_folder}databricks.svg`,
-	[Providers.Dashscope]: `${asset_logos_folder}dashscope.svg`,
+	[Providers.Dashscope]: `${asset_logos_folder}qwen.png`,
 	[Providers.Deepseek]: `${asset_logos_folder}deepseek.svg`,
 	[Providers.Deepgram]: `${asset_logos_folder}deepgram.png`,
 	[Providers.DeepInfra]: `${asset_logos_folder}deepinfra.png`,
@@ -252,7 +252,7 @@ export const providerLogoMap: Record<string, string> = {
 	[Providers.FRIENDLIAI]: `${asset_logos_folder}friendli.svg`,
 	[Providers.GITHUB_COPILOT]: `${asset_logos_folder}github_copilot.svg`,
 	[Providers.Google_AI_Studio]: `${asset_logos_folder}google.svg`,
-	[Providers.GradientAI]: `${asset_logos_folder}gradientai.svg`,
+	[Providers.GradientAI]: "https://files.readme.io/326335b-small-logo-gradient.png",
 	[Providers.Groq]: `${asset_logos_folder}groq.svg`,
 	[Providers.Hosted_Vllm]: `${asset_logos_folder}vllm.png`,
 	[Providers.HUGGINGFACE]: `${asset_logos_folder}huggingface.svg`,
@@ -282,7 +282,7 @@ export const providerLogoMap: Record<string, string> = {
 	[Providers.Perplexity]: `${asset_logos_folder}perplexity-ai.svg`,
 	[Providers.RECRAFT]: `${asset_logos_folder}recraft.svg`,
 	[Providers.REPLICATE]: `${asset_logos_folder}replicate.svg`,
-	[Providers.RunwayML]: `${asset_logos_folder}runwayml.png`,
+	[Providers.RunwayML]: `${asset_logos_folder}runway.png`,
 	[Providers.SAGEMAKER_LEGACY]: `${asset_logos_folder}bedrock.svg`,
 	[Providers.Sambanova]: `${asset_logos_folder}sambanova.svg`,
 	[Providers.SAP]: `${asset_logos_folder}sap.png`,
@@ -330,6 +330,70 @@ export const getProviderLogoAndName = (providerValue: string): { logo: string; d
 	const logo = providerLogoMap[displayName as keyof typeof providerLogoMap];
 
 	return { logo, displayName };
+};
+
+const MODEL_FAMILY_PROVIDER_RULES: ReadonlyArray<{
+	provider: string;
+	pattern: RegExp;
+}> = [
+	{ provider: "openai", pattern: /^(?:gpt|chatgpt|codex|o[1-9])(?:[-_.:]|$)/ },
+	{ provider: "moonshot", pattern: /^(?:kimi|moonshot)(?:[-_.:]|$)/ },
+	{ provider: "anthropic", pattern: /^claude(?:[-_.:]|$)/ },
+	{ provider: "gemini", pattern: /^(?:gemini|imagen|veo)(?:[-_.:]|$)/ },
+	{ provider: "xai", pattern: /^(?:grok|xai)(?:[-_.:]|$)/ },
+	{ provider: "deepseek", pattern: /^deepseek(?:[-_.:]|$)/ },
+	{ provider: "minimax", pattern: /^minimax(?:[-_.:]|$)/ },
+	{ provider: "dashscope", pattern: /^(?:qwen|qwq|wan)(?:[0-9]|[-_.:]|$)/ },
+	{ provider: "meta_llama", pattern: /^llama(?:[0-9]|[-_.:]|$)/ },
+	{ provider: "mistral", pattern: /^(?:mistral|mixtral|codestral)(?:[0-9]|[-_.:]|$)/ },
+	{ provider: "cohere", pattern: /^(?:command|embed-(?:english|multilingual))(?:[-_.:]|$)/ },
+	{ provider: "bedrock", pattern: /^(?:amazon-)?(?:nova|titan)(?:[-_.:]|$)/ },
+];
+
+function normalizedModelFamilyName(modelValue: string): string {
+	let value = modelValue.trim().toLowerCase();
+	while (value.startsWith("models/") || value.startsWith("cliproxy/")) {
+		value = value.slice(value.indexOf("/") + 1);
+	}
+	const slashIndex = value.lastIndexOf("/");
+	return slashIndex >= 0 ? value.slice(slashIndex + 1) : value;
+}
+
+/**
+ * Resolve the model vendor independently from its transport provider.
+ *
+ * CLIProxy is a routing layer, so a `cliproxy/gpt-*` deployment should use
+ * OpenAI branding while a `cliproxy/kimi-*` deployment should use Moonshot
+ * branding. Provider-specific routes keep their configured provider branding.
+ */
+export const getModelProvider = (providerValue: string | null | undefined, modelValue: string): string => {
+	const provider = providerValue?.trim().toLowerCase() ?? "";
+	if (provider && provider !== provider_map.CLIProxy) {
+		return provider;
+	}
+
+	const modelFamilyName = normalizedModelFamilyName(modelValue);
+	const inferred = MODEL_FAMILY_PROVIDER_RULES.find((rule) => rule.pattern.test(modelFamilyName))?.provider;
+	if (inferred) {
+		return inferred;
+	}
+
+	if (!provider) {
+		const modelPrefix = modelValue.trim().toLowerCase().split("/")[0] ?? "";
+		if (Object.values(provider_map).some((value) => value.toLowerCase() === modelPrefix)) {
+			return modelPrefix;
+		}
+	}
+	return provider;
+};
+
+export const getModelLogoAndName = (
+	providerValue: string | null | undefined,
+	modelValue: string,
+): { logo: string; displayName: string; provider: string } => {
+	const provider = getModelProvider(providerValue, modelValue);
+	const { logo, displayName } = getProviderLogoAndName(provider);
+	return { logo, displayName, provider };
 };
 
 export const getPlaceholder = (selectedProvider: string): string => {

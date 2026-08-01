@@ -96,7 +96,7 @@ export const columns = (
 			const popoverContent = (
 				<Space direction="vertical" size={12} style={{ minWidth: 220 }}>
 					<Flex align="center" gap={8}>
-						<ProviderLogo provider={model.provider} />
+						<ProviderLogo provider={model.provider} modelName={model.litellm_model_name} />
 						<Text type="secondary" style={{ fontSize: 12 }} ellipsis>
 							{model.provider || "Unknown provider"}
 						</Text>
@@ -143,7 +143,7 @@ export const columns = (
 					<div className="flex items-start space-x-2 min-w-0 w-full cursor-pointer">
 						<div className="flex-shrink-0 mt-0.5">
 							{model.provider ? (
-								<ProviderLogo provider={model.provider} />
+								<ProviderLogo provider={model.provider} modelName={model.litellm_model_name} />
 							) : (
 								<div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-xs">-</div>
 							)}

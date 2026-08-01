@@ -331,7 +331,12 @@ export default function ModelInfoView({
 			};
 			const selectedCredentialName = values.litellm_credential_name || null;
 			const replacementApiKey = typeof values.api_key === "string" ? values.api_key.trim() : "";
-			if (selectedCredentialName) {
+			const isManagedCliProxy = values.custom_llm_provider === "cliproxy";
+			if (isManagedCliProxy) {
+				updatedLitellmParams.api_base = null;
+				updatedLitellmParams.api_key = null;
+				updatedLitellmParams.litellm_credential_name = null;
+			} else if (selectedCredentialName) {
 				updatedLitellmParams.litellm_credential_name = selectedCredentialName;
 				updatedLitellmParams.api_key = null;
 			} else {

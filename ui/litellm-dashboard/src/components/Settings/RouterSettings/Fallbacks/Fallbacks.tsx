@@ -20,7 +20,7 @@ function renderModelNameCell(modelName: string, getProviderFromModel?: (modelNam
 	const provider = getProviderFromModel?.(modelName) ?? modelName;
 	return (
 		<span className={modelCardClass}>
-			<ProviderLogo provider={provider} className="w-4 h-4 shrink-0" />
+			<ProviderLogo provider={provider} modelName={modelName} className="w-4 h-4 shrink-0" />
 			<span>{modelName}</span>
 		</span>
 	);
@@ -38,7 +38,7 @@ function renderFallbacksChain(
 		const provider = getProviderFromModel?.(modelName) ?? modelName;
 		return (
 			<span className={modelCardClass}>
-				<ProviderLogo provider={provider} className="w-4 h-4 shrink-0" />
+				<ProviderLogo provider={provider} modelName={modelName} className="w-4 h-4 shrink-0" />
 				<span>{modelName}</span>
 			</span>
 		);

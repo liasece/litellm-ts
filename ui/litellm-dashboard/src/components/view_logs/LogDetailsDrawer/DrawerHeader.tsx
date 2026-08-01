@@ -2,7 +2,7 @@ import { Button, Space, Tag, Tooltip, Typography } from "antd";
 import { CloseOutlined, UpOutlined, DownOutlined } from "@ant-design/icons";
 import moment from "moment";
 import { LogEntry } from "../columns";
-import { getProviderLogoAndName } from "../../provider_info_helpers";
+import { getModelLogoAndName } from "../../provider_info_helpers";
 import {
 	DRAWER_HEADER_PADDING,
 	COLOR_BORDER,
@@ -41,7 +41,7 @@ export function DrawerHeader({
 	environment,
 }: DrawerHeaderProps) {
 	const provider = log.custom_llm_provider || "";
-	const providerInfo = provider ? getProviderLogoAndName(provider) : null;
+	const providerInfo = provider ? getModelLogoAndName(provider, log.model) : null;
 
 	return (
 		<div

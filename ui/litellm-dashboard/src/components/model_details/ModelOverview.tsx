@@ -1,31 +1,9 @@
 import { Text } from "@tremor/react";
 import { Tooltip } from "antd";
-import { useState } from "react";
-import { getProviderLogoAndName } from "../provider_info_helpers";
+import { ProviderLogo } from "../molecules/models/ProviderLogo";
 
 interface ModelOverviewProps {
 	modelData: any;
-}
-
-function ProviderLogo({ provider }: { provider: string }) {
-	const [failed, setFailed] = useState(false);
-
-	if (failed) {
-		return (
-			<div className="flex h-4 w-4 items-center justify-center rounded-full bg-gray-200 text-xs" aria-hidden="true">
-				{provider.charAt(0) || "-"}
-			</div>
-		);
-	}
-
-	return (
-		<img
-			src={getProviderLogoAndName(provider).logo}
-			alt={`${provider} logo`}
-			className="h-4 w-4"
-			onError={() => setFailed(true)}
-		/>
-	);
 }
 
 function ModelAuditInfo({ modelInfo }: { modelInfo: any }) {
@@ -72,7 +50,7 @@ export default function ModelOverview({ modelData }: ModelOverviewProps) {
 			value: modelData.provider,
 			render: modelData.provider ? (
 				<div className="flex items-center gap-2">
-					<ProviderLogo provider={modelData.provider} />
+					<ProviderLogo provider={modelData.provider} modelName={modelData.litellm_model_name} />
 					<span>{modelData.provider}</span>
 				</div>
 			) : null,

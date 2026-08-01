@@ -3,6 +3,7 @@
 import { CloudDownloadOutlined, ReloadOutlined, RollbackOutlined } from "@ant-design/icons";
 import CliProxyConfigEditor from "@/components/cliproxy/CliProxyConfigEditor";
 import CliProxyLogViewer, { type CliProxyLogEntry } from "@/components/cliproxy/CliProxyLogViewer";
+import CliProxyReleaseHistory, { type CliProxyReleaseInfo } from "@/components/cliproxy/CliProxyReleaseHistory";
 import { dashboardFetch } from "@/components/networking";
 import NotificationsManager from "@/components/molecules/notifications_manager";
 import {
@@ -98,6 +99,7 @@ interface UpdateInfo {
 	current: string | null;
 	latest: string;
 	update_available: boolean;
+	releases: CliProxyReleaseInfo[];
 }
 
 interface ConfigResponse {
@@ -201,6 +203,7 @@ const SubscriptionQuotaCard: React.FC<{
 
 	return (
 		<Card
+			size="small"
 			data-cliproxy-quota-card="true"
 			data-provider={account.provider}
 			className="h-full overflow-hidden"
@@ -644,9 +647,9 @@ const CliProxyManagement: React.FC = () => {
 	}
 
 	return (
-		<div className="w-full p-8">
-			<div className="mb-6">
-				<Typography.Title level={2} className="!mb-1">
+		<div className="w-full p-4 md:p-6">
+			<div className="mb-4">
+				<Typography.Title level={3} className="!mb-1">
 					CLIProxy API
 				</Typography.Title>
 				<Typography.Text type="secondary">
@@ -664,68 +667,88 @@ const CliProxyManagement: React.FC = () => {
 						key: "overview",
 						label: "Overview",
 						children: (
-							<Space direction="vertical" size="large" className="w-full">
-								<Row gutter={[16, 16]}>
-									<Col xs={24} sm={12} xl={6}>
-										<Card title="State" className="h-full">
-											<Tag color={stateColor(status?.state ?? "unknown")}>{status?.state ?? "unknown"}</Tag>
-										</Card>
-									</Col>
-									<Col xs={24} sm={12} xl={6}>
-										<Card title="Health" className="h-full">
-											<Tag color={status?.health === "healthy" ? "green" : "red"}>{status?.health ?? "unknown"}</Tag>
-										</Card>
-									</Col>
-									<Col xs={24} sm={12} xl={6}>
-										<Card title="Version" className="h-full">
-											<Typography.Text strong>{status?.version ?? "Not installed"}</Typography.Text>
-										</Card>
-									</Col>
-									<Col xs={24} sm={12} xl={6}>
-										<Card title="Process" className="h-full">
-											<Typography.Text strong>{status?.pid ? `PID ${status.pid}` : "Not running"}</Typography.Text>
-										</Card>
-									</Col>
-								</Row>
-								<Card title="Runtime and updates" data-cliproxy-runtime-operations="true">
-									<Row gutter={[24, 20]}>
-										<Col xs={24} xl={10}>
-											<Typography.Title level={5}>Service controls</Typography.Title>
-											<Typography.Paragraph type="secondary">
-												Start, stop or restart the private CLIProxy child process. LiteLLM remains online while the
-												child process is restarted.
-											</Typography.Paragraph>
-											<Space wrap>
-												<Button
-													type="primary"
-													disabled={status?.state === "running" || busy !== null}
-													loading={busy === "start"}
-													onClick={() => runOperation("start", () => api("/cliproxy/start", { method: "POST" }))}
-												>
-													Start
-												</Button>
-												<Button
-													disabled={status?.state !== "running" || busy !== null}
-													loading={busy === "restart"}
-													onClick={() => runOperation("restart", () => api("/cliproxy/restart", { method: "POST" }))}
-												>
-													Restart
-												</Button>
-												<Button
-													danger
-													disabled={status?.state === "stopped" || busy !== null}
-													loading={busy === "stop"}
-													onClick={() => runOperation("stop", () => api("/cliproxy/stop", { method: "POST" }))}
-												>
-													Stop
-												</Button>
-											</Space>
+							<Space direction="vertical" size="middle" className="w-full">
+								<Card size="small">
+									<div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+										<div className="min-w-0 rounded-md bg-slate-50 px-3 py-2">
+											<Typography.Text type="secondary" className="block !text-xs">
+												State
+											</Typography.Text>
+											<Tag color={stateColor(status?.state ?? "unknown")} className="!mt-1 !mr-0">
+												{status?.state ?? "unknown"}
+											</Tag>
+										</div>
+										<div className="min-w-0 rounded-md bg-slate-50 px-3 py-2">
+											<Typography.Text type="secondary" className="block !text-xs">
+												Health
+											</Typography.Text>
+											<Tag color={status?.health === "healthy" ? "green" : "red"} className="!mt-1 !mr-0">
+												{status?.health ?? "unknown"}
+											</Tag>
+										</div>
+										<div className="min-w-0 rounded-md bg-slate-50 px-3 py-2">
+											<Typography.Text type="secondary" className="block !text-xs">
+												Version
+											</Typography.Text>
+											<Typography.Text strong className="block !mt-1" ellipsis>
+												{status?.version ?? "Not installed"}
+											</Typography.Text>
+										</div>
+										<div className="min-w-0 rounded-md bg-slate-50 px-3 py-2">
+											<Typography.Text type="secondary" className="block !text-xs">
+												Process
+											</Typography.Text>
+											<Typography.Text strong className="block !mt-1" ellipsis>
+												{status?.pid ? `PID ${status.pid}` : "Not running"}
+											</Typography.Text>
+										</div>
+									</div>
+								</Card>
+								<Card size="small" title="Runtime and updates" data-cliproxy-runtime-operations="true">
+									<Row gutter={[16, 16]}>
+										<Col xs={24} xl={7}>
+											<div className="h-full rounded-lg border border-slate-200 p-3">
+												<div className="mb-2">
+													<Typography.Text strong>Service controls</Typography.Text>
+													<Typography.Text type="secondary" className="mt-0.5 block !text-xs">
+														Manage the private child process without stopping LiteLLM.
+													</Typography.Text>
+												</div>
+												<Space wrap size="small">
+													<Button
+														size="small"
+														type="primary"
+														disabled={status?.state === "running" || busy !== null}
+														loading={busy === "start"}
+														onClick={() => runOperation("start", () => api("/cliproxy/start", { method: "POST" }))}
+													>
+														Start
+													</Button>
+													<Button
+														size="small"
+														disabled={status?.state !== "running" || busy !== null}
+														loading={busy === "restart"}
+														onClick={() => runOperation("restart", () => api("/cliproxy/restart", { method: "POST" }))}
+													>
+														Restart
+													</Button>
+													<Button
+														size="small"
+														danger
+														disabled={status?.state === "stopped" || busy !== null}
+														loading={busy === "stop"}
+														onClick={() => runOperation("stop", () => api("/cliproxy/stop", { method: "POST" }))}
+													>
+														Stop
+													</Button>
+												</Space>
+											</div>
 										</Col>
-										<Col xs={24} xl={14}>
-											<div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-												<div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+										<Col xs={24} xl={17}>
+											<div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+												<div className="mb-2 flex flex-wrap items-start justify-between gap-2">
 													<div>
-														<div className="mb-1 flex items-center gap-2">
+														<div className="flex items-center gap-2">
 															<Typography.Text strong>Release channel</Typography.Text>
 															{updateInfo ? (
 																<Tag color={updateInfo.update_available ? "orange" : "green"}>
@@ -735,7 +758,7 @@ const CliProxyManagement: React.FC = () => {
 																<Tag>Not checked</Tag>
 															)}
 														</div>
-														<Typography.Text type="secondary">
+														<Typography.Text type="secondary" className="!text-xs">
 															Current {status?.version ?? "—"} · Latest {updateInfo?.latest ?? "—"}
 														</Typography.Text>
 													</div>
@@ -749,8 +772,9 @@ const CliProxyManagement: React.FC = () => {
 														Check
 													</Button>
 												</div>
-												<Space wrap>
+												<Space wrap size="small">
 													<Button
+														size="small"
 														type="primary"
 														icon={<CloudDownloadOutlined />}
 														loading={busy === "update"}
@@ -763,7 +787,8 @@ const CliProxyManagement: React.FC = () => {
 														allowClear
 														value={rollbackVersion ?? undefined}
 														placeholder="Select installed version"
-														style={{ minWidth: 210 }}
+														size="small"
+														style={{ minWidth: 180 }}
 														disabled={busy !== null}
 														options={(status?.installed_versions ?? [])
 															.filter((version) => version !== status?.version)
@@ -777,6 +802,7 @@ const CliProxyManagement: React.FC = () => {
 														onConfirm={rollback}
 													>
 														<Button
+															size="small"
 															icon={<RollbackOutlined />}
 															disabled={!rollbackVersion || busy !== null}
 															loading={busy === "rollback"}
@@ -785,6 +811,16 @@ const CliProxyManagement: React.FC = () => {
 														</Button>
 													</Popconfirm>
 												</Space>
+												{updateInfo && (
+													<div className="mt-3">
+														<CliProxyReleaseHistory
+															key={updateInfo.latest}
+															releases={updateInfo.releases}
+															current={updateInfo.current}
+															latest={updateInfo.latest}
+														/>
+													</div>
+												)}
 											</div>
 										</Col>
 									</Row>
@@ -798,16 +834,15 @@ const CliProxyManagement: React.FC = () => {
 									)}
 								</Card>
 
-								<div className="flex flex-wrap items-start justify-between gap-3">
+								<div className="flex flex-wrap items-center justify-between gap-3 pt-1">
 									<div>
-										<Typography.Title level={4} className="!mb-1">
-											Subscription quota
-										</Typography.Title>
-										<Typography.Text type="secondary">
+										<Typography.Text strong>Subscription quota</Typography.Text>
+										<Typography.Text type="secondary" className="block !text-xs">
 											Current plan and remaining usage for every managed CLI subscription account.
 										</Typography.Text>
 									</div>
 									<Button
+										size="small"
 										loading={accounts.some((account) => quotaStates[account.auth_index]?.status === "loading")}
 										disabled={accounts.length === 0}
 										onClick={() => void refreshAllQuotas()}
@@ -823,7 +858,7 @@ const CliProxyManagement: React.FC = () => {
 										description="Add an account in the OAuth accounts tab before querying subscription quota."
 									/>
 								) : (
-									<Row gutter={[16, 16]}>
+									<Row gutter={[12, 12]}>
 										{accounts.map((account) => (
 											<Col key={account.auth_index} xs={24} md={12} xl={8}>
 												<SubscriptionQuotaCard
@@ -867,8 +902,8 @@ const CliProxyManagement: React.FC = () => {
 						key: "accounts",
 						label: `OAuth accounts (${accounts.length})`,
 						children: (
-							<Space direction="vertical" size="middle" className="w-full">
-								<Card title="Add OAuth account">
+							<Space direction="vertical" size="small" className="w-full">
+								<Card size="small" title="Add OAuth account">
 									<Space wrap>
 										<Button type="primary" onClick={() => startOAuth("codex-device")}>
 											Codex device login
@@ -884,7 +919,13 @@ const CliProxyManagement: React.FC = () => {
 										value requested in the session output.
 									</Typography.Paragraph>
 								</Card>
-								<Table rowKey="auth_index" dataSource={accounts} columns={accountColumns} pagination={false} />
+								<Table
+									size="small"
+									rowKey="auth_index"
+									dataSource={accounts}
+									columns={accountColumns}
+									pagination={false}
+								/>
 							</Space>
 						),
 					},
@@ -907,14 +948,14 @@ const CliProxyManagement: React.FC = () => {
 						key: "advanced",
 						label: "Advanced",
 						children: (
-							<Space direction="vertical" size="middle" className="w-full">
+							<Space direction="vertical" size="small" className="w-full">
 								<Alert
 									type="info"
 									showIcon
 									message="Protected CLIProxy management console"
 									description="Requests are authenticated by LiteLLM, restricted to proxy_admin, and forwarded only to an explicit allowlist. Runtime config changes are synchronized back into LiteLLM and reloaded automatically. The child process API key and raw generated config are never exposed."
 								/>
-								<Card title="Management request">
+								<Card size="small" title="Management request">
 									<Space direction="vertical" size="middle" className="w-full">
 										<Row gutter={[12, 12]}>
 											<Col xs={24} md={6}>
@@ -970,7 +1011,7 @@ const CliProxyManagement: React.FC = () => {
 										</Button>
 									</Space>
 								</Card>
-								<Card title="Response">
+								<Card size="small" title="Response">
 									<pre className="max-h-[560px] overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-4 text-xs text-slate-100">
 										{managementResult === null
 											? "No request has been executed."

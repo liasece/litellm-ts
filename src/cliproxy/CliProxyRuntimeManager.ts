@@ -18,8 +18,10 @@ import {
 	type CliProxyOAuthProvider,
 	type CliProxyOAuthSession,
 	type CliProxyProcessState,
+	type CliProxyReleaseInfo,
 	type CliProxyRuntimeStatus,
 	type CliProxyStoredSettings,
+	type CliProxyUpdateInfo,
 } from "./CliProxyTypes";
 import { buildCliProxyQuotaRequests, normalizeCliProxyQuota, type CliProxyQuotaRequest } from "./CliProxyQuota";
 
@@ -134,6 +136,34 @@ export function compareCliProxyVersions(left: string | null, right: string | nul
 		return leftPart.localeCompare(rightPart) > 0 ? 1 : -1;
 	}
 	return 0;
+}
+
+/**
+ * Prefer the concise changelog portion of GitHub release notes. CLIProxy also
+ * repeats platform asset documentation in every release, which does not
+ * describe what changed in that version.
+ * @param source
+ */
+export function extractCliProxyReleaseNotes(source: string): string {
+	const cleaned = source.replace(/<!--[\s\S]*?-->/g, "").trim();
+	if (!cleaned) {
+		return "";
+	}
+	const headings = [...cleaned.matchAll(/^##\s+(.+?)\s*$/gm)];
+	for (const title of ["changelog", "what's changed"]) {
+		const headingIndex = headings.findIndex((heading) => heading[1]?.trim().toLowerCase() === title);
+		if (headingIndex < 0) {
+			continue;
+		}
+		const heading = headings[headingIndex]!;
+		const start = (heading.index ?? 0) + heading[0].length;
+		const end = headings[headingIndex + 1]?.index ?? cleaned.length;
+		const section = cleaned.slice(start, end).trim();
+		if (section) {
+			return section;
+		}
+	}
+	return cleaned;
 }
 
 /**
@@ -716,40 +746,63 @@ export class CliProxyRuntimeManager {
 	/**
 	 *
 	 */
-	async checkLatestVersion(): Promise<{
-		/**
-		 *
-		 */
-		current: string | null; /**
-		 *
-		 */
-		latest: string; /**
-		 *
-		 */
-		update_available: boolean;
-	}> {
-		const response = await fetch(`https://api.github.com/repos/${RELEASE_REPOSITORY}/releases/latest`, {
+	async checkLatestVersion(): Promise<CliProxyUpdateInfo> {
+		const response = await fetch(`https://api.github.com/repos/${RELEASE_REPOSITORY}/releases?per_page=100`, {
 			headers: { Accept: "application/vnd.github+json", "User-Agent": "litellm-ts-cliproxy-manager" },
 			signal: AbortSignal.timeout(15_000),
 		});
 		if (!response.ok) {
 			throw new ApiError(502, `获取 CLIProxy 最新版本失败: HTTP ${response.status}`);
 		}
-		const body = (await response.json()) as {
-			/**
-			 *
-			 */
-			tag_name?: unknown;
-		};
-		if (typeof body.tag_name !== "string") {
-			throw new ApiError(502, "CLIProxy release 响应缺少 tag_name");
+		const body = (await response.json()) as unknown;
+		if (!Array.isArray(body)) {
+			throw new ApiError(502, "CLIProxy release 响应格式无效");
 		}
-		const latest = normalizeVersion(body.tag_name);
+		const releases = body
+			.flatMap((value): CliProxyReleaseInfo[] => {
+				if (!isRecord(value) || value["draft"] === true || value["prerelease"] === true || typeof value["tag_name"] !== "string") {
+					return [];
+				}
+				try {
+					const version = normalizeVersion(value["tag_name"]);
+					return [
+						{
+							version: version,
+							published_at: typeof value["published_at"] === "string" ? value["published_at"] : null,
+							release_url:
+								typeof value["html_url"] === "string"
+									? value["html_url"]
+									: `https://github.com/${RELEASE_REPOSITORY}/releases/tag/v${version}`,
+							notes: extractCliProxyReleaseNotes(typeof value["body"] === "string" ? value["body"] : ""),
+						},
+					];
+				} catch {
+					return [];
+				}
+			})
+			.sort((left, right) => compareCliProxyVersions(right.version, left.version) ?? 0);
+		const latest = releases[0]?.version;
+		if (!latest) {
+			throw new ApiError(502, "CLIProxy release 响应中没有可用版本");
+		}
 		const current = this._currentVersion();
+		const installedVersions = this._installedVersionsSync();
+		const relevantVersions = [current, ...installedVersions].filter((version): version is string => version !== null);
+		const oldestRelevant = relevantVersions.reduce<string | null>((oldest, version) => {
+			if (oldest === null || compareCliProxyVersions(version, oldest) === -1) {
+				return version;
+			}
+			return oldest;
+		}, null);
+		const relevantReleases =
+			oldestRelevant === null
+				? releases.slice(0, 20)
+				: releases.filter((release) => (compareCliProxyVersions(release.version, oldestRelevant) ?? -1) >= 0);
 		return {
 			current: current,
 			latest: latest,
 			update_available: current === null || compareCliProxyVersions(latest, current) === 1,
+			releases: relevantReleases,
 		};
 	}
 

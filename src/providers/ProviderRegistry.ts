@@ -8,6 +8,7 @@ import { LlmProviders } from "../types/provider";
 import type { ProviderConfig } from "../types/provider";
 import { AnthropicProvider } from "./AnthropicProvider";
 import { DeepSeekProvider } from "./DeepSeekProvider";
+import { MiniMaxProvider } from "./MiniMaxProvider";
 import { GLMProvider } from "./GLMProvider";
 import { LLMuxProvider } from "./LLMuxProvider";
 import { MiMoProvider } from "./MiMoProvider";
@@ -20,6 +21,7 @@ const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
 	[LlmProviders.OpenAI]: "https://api.openai.com",
 	[LlmProviders.Anthropic]: "https://api.anthropic.com",
 	[LlmProviders.DeepSeek]: "https://api.deepseek.com",
+	[LlmProviders.MiniMax]: "https://api.minimaxi.com/v1",
 	[LlmProviders.GLM]: "https://api.z.ai/api/paas/v4",
 	[LlmProviders.MiMo]: "https://token-plan-cn.xiaomimimo.com",
 	// DIFF-CFG-MIMO-01: 国际 region 走 OpenAI 兼容路径
@@ -37,6 +39,7 @@ const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
 const PREFIX_TO_PROVIDER: ReadonlyArray<{ prefixes: readonly string[]; provider: LlmProviders }> = [
 	{ prefixes: ["claude-", "anthropic/"], provider: LlmProviders.Anthropic },
 	{ prefixes: ["deepseek/", "deepseek-"], provider: LlmProviders.DeepSeek },
+	{ prefixes: ["minimax/", "minimax-"], provider: LlmProviders.MiniMax },
 	{ prefixes: ["glm/", "glm-", "chatglm-"], provider: LlmProviders.GLM },
 	{ prefixes: ["mimo/", "mimo-"], provider: LlmProviders.MiMo },
 	{ prefixes: ["vllm/", "vllm-"], provider: LlmProviders.VLLM },
@@ -158,6 +161,8 @@ export class ProviderRegistry {
 				return new AnthropicProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.Anthropic]);
 			case LlmProviders.DeepSeek:
 				return new DeepSeekProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.DeepSeek]!);
+			case LlmProviders.MiniMax:
+				return new MiniMaxProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.MiniMax]!);
 			case LlmProviders.GLM:
 				// DIFF-CFG-ZAI-02: 修正 GLMProvider 构造参数顺序 — GLMProvider(apiKey, apiBase)，
 				// 之前漏传 apiKey 让 dynamicApiBase 落到 apiKey 位置导致 base 失效。

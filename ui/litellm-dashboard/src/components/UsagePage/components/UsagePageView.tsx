@@ -49,6 +49,7 @@ import EndpointUsage from "./EndpointUsage/EndpointUsage";
 import EntityUsage, { EntityList } from "./EntityUsage/EntityUsage";
 import SpendByProvider from "./EntityUsage/SpendByProvider";
 import TopKeyView from "./EntityUsage/TopKeyView";
+import CliProxySubscriptionQuota from "./CliProxySubscriptionQuota";
 import UsageAIChatPanel from "./UsageAIChatPanel";
 import UsageMetricsCards from "./UsageMetricsCards";
 import UsageTopModelsCard from "./UsageTopModelsCard";
@@ -787,6 +788,8 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 					{usageView === "user-agent-activity" && (
 						<UserAgentActivity accessToken={accessToken} userRole={userRole} dateValue={dateValue} />
 					)}
+
+					<CliProxySubscriptionQuota enabled={isAdmin} />
 				</div>
 			</div>
 

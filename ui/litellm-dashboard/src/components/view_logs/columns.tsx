@@ -2,7 +2,7 @@ import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Tooltip } from "antd";
 import { ArrowDownToLine, ArrowUpFromLine, Database } from "lucide-react";
-import { getProviderLogoAndName } from "../provider_info_helpers";
+import { getModelLogoAndName } from "../provider_info_helpers";
 import { TableHeaderSortDropdown } from "../common_components/TableHeaderSortDropdown/TableHeaderSortDropdown";
 import { MetricProgress, MetricProgressCell } from "./MetricProgressCell";
 import { TimeCell } from "./time_cell";
@@ -47,7 +47,7 @@ const getLogoUrl = (row: LogEntry, provider: string) => {
 		return row.metadata.mcp_tool_call_metadata.mcp_server_logo_url;
 	}
 	// Fall back to default provider logo
-	return provider ? getProviderLogoAndName(provider).logo : "";
+	return provider ? getModelLogoAndName(provider, row.model).logo : "";
 };
 
 export interface ModelResolutionChainEntry {

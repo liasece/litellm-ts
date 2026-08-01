@@ -1,17 +1,16 @@
-import { useProviderFields } from "@/app/(dashboard)/hooks/providers/useProviderFields";
 import { useGuardrails } from "@/app/(dashboard)/hooks/guardrails/useGuardrails";
 import { useTags } from "@/app/(dashboard)/hooks/tags/useTags";
 import { all_admin_roles, isUserTeamAdminForAnyTeam } from "@/utils/roles";
 import { Switch, Text } from "@tremor/react";
 import type { FormInstance } from "antd";
-import { Select as AntdSelect, Button, Card, Col, Form, Modal, Row, Tooltip, Typography, Alert } from "antd";
+import { Select as AntdSelect, Alert, Button, Card, Col, Form, Modal, Row, Tooltip, Typography } from "antd";
 import type { UploadProps } from "antd/es/upload";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
+import ProviderSelect from "../common_components/ProviderSelect";
 import TeamDropdown from "../common_components/team_dropdown";
 import type { Team } from "../key_team_helpers/key_list";
-import { type CredentialItem, type ProviderCreateInfo, modelAvailableCall } from "../networking";
+import { type CredentialItem, modelAvailableCall } from "../networking";
 import { Providers } from "../provider_info_helpers";
-import { ProviderLogo } from "../molecules/models/ProviderLogo";
 import AdvancedSettings from "./advanced_settings";
 import ConditionalPublicModelName from "./conditional_public_model_name";
 import LiteLLMModelNameField from "./litellm_model_name";
@@ -58,11 +57,6 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
 	const [connectionTestId, setConnectionTestId] = useState<string>("");
 
 	const { accessToken, userRole, premiumUser, userId } = useAuthorized();
-	const {
-		data: providerMetadata,
-		isLoading: isProviderMetadataLoading,
-		error: providerMetadataError,
-	} = useProviderFields();
 	const { data: guardrailsList, isLoading: isGuardrailsLoading, error: guardrailsError } = useGuardrails();
 	const { data: tagsList, isLoading: isTagsLoading, error: tagsError } = useTags();
 
@@ -84,38 +78,6 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
 		};
 		fetchModelAccessGroups();
 	}, [accessToken]);
-
-	const providerGroups = useMemo(() => {
-		const uniqueProviders = new Map<string, ProviderCreateInfo>();
-		for (const providerInfo of providerMetadata ?? []) {
-			if (!uniqueProviders.has(providerInfo.provider)) {
-				uniqueProviders.set(providerInfo.provider, providerInfo);
-			}
-		}
-
-		const popularProviderKeys = ["Anthropic", "OpenAI"];
-		const popularProviders = popularProviderKeys.flatMap((providerKey) => {
-			const providerInfo = uniqueProviders.get(providerKey);
-			return providerInfo ? [providerInfo] : [];
-		});
-		const popularProviderSet = new Set(popularProviderKeys);
-		const allProviders = [...uniqueProviders.values()]
-			.filter((providerInfo) => !popularProviderSet.has(providerInfo.provider))
-			.sort((a, b) => a.provider_display_name.localeCompare(b.provider_display_name));
-
-		return [
-			{ label: "Popular", providers: popularProviders },
-			{ label: "All Providers", providers: allProviders },
-		];
-	}, [providerMetadata]);
-
-	const providerCount = providerGroups.reduce((count, group) => count + group.providers.length, 0);
-
-	const providerMetadataErrorText = providerMetadataError
-		? providerMetadataError instanceof Error
-			? providerMetadataError.message
-			: "Failed to load providers"
-		: null;
 
 	const isAdmin = all_admin_roles.includes(userRole);
 	const isTeamAdmin = isUserTeamAdminForAnyTeam(teams, userId);
@@ -183,12 +145,7 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
 									labelCol={{ span: 10 }}
 									labelAlign="left"
 								>
-									<AntdSelect
-										virtual={false}
-										showSearch
-										loading={isProviderMetadataLoading}
-										placeholder={isProviderMetadataLoading ? "Loading providers..." : "Select a provider"}
-										optionFilterProp="data-label"
+									<ProviderSelect
 										onChange={(value) => {
 											setSelectedProvider(value as Providers);
 											setProviderModelsFn(value as Providers);
@@ -201,30 +158,7 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
 												model_name: undefined,
 											});
 										}}
-									>
-										{providerMetadataErrorText && providerCount === 0 && (
-											<AntdSelect.Option key="__error" value="">
-												{providerMetadataErrorText}
-											</AntdSelect.Option>
-										)}
-										{providerGroups.map((group) => (
-											<AntdSelect.OptGroup key={group.label} label={group.label}>
-												{group.providers.map((providerInfo) => {
-													const displayName = providerInfo.provider_display_name;
-													const providerKey = providerInfo.provider;
-
-													return (
-														<AntdSelect.Option key={providerKey} value={providerKey} data-label={displayName}>
-															<div className="flex items-center space-x-2">
-																<ProviderLogo provider={providerKey} className="w-5 h-5" />
-																<span>{displayName}</span>
-															</div>
-														</AntdSelect.Option>
-													);
-												})}
-											</AntdSelect.OptGroup>
-										))}
-									</AntdSelect>
+									/>
 								</Form.Item>
 								<LiteLLMModelNameField
 									selectedProvider={selectedProvider}

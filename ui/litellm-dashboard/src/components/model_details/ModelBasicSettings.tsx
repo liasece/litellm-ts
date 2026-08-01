@@ -3,6 +3,7 @@ import { TextInput } from "@tremor/react";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import NumericalInput from "../shared/numerical_input";
 import type { CredentialValues } from "../networking";
+import ProviderSelect from "../common_components/ProviderSelect";
 import ModelSettingField from "./ModelSettingField";
 import ModelValueList from "./ModelValueList";
 
@@ -36,6 +37,7 @@ export default function ModelBasicSettings({
 	credentialValues,
 	availableModelNames,
 }: ModelBasicSettingsProps) {
+	const form = Form.useFormInstance();
 	const litellmParams = modelData.litellm_params ?? {};
 	const modelInfo = modelData.model_info ?? {};
 	const hasCredentialValue = (key: string) =>
@@ -165,7 +167,22 @@ export default function ModelBasicSettings({
 				editor={resolvedEditor(
 					"custom_llm_provider",
 					<Form.Item name="custom_llm_provider" className="mb-0">
-						<TextInput placeholder="Enter custom LLM provider" />
+						<ProviderSelect
+							valueField="litellm_provider"
+							allowClear
+							aria-label="Custom LLM Provider"
+							placeholder="Select a provider"
+							onChange={(provider) => {
+								if (provider === "cliproxy") {
+									form.setFieldsValue({
+										api_base: "",
+										api_key: "",
+										delete_api_key: true,
+										litellm_credential_name: "",
+									});
+								}
+							}}
+						/>
 					</Form.Item>,
 				)}
 			>

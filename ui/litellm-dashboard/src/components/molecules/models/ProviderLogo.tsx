@@ -1,14 +1,16 @@
 import React, { useState } from "react";
-import { getProviderLogoAndName } from "../../provider_info_helpers";
+import { getModelLogoAndName, getProviderLogoAndName } from "../../provider_info_helpers";
 
 interface ProviderLogoProps {
 	provider: string;
+	modelName?: string;
 	className?: string;
 }
 
-export const ProviderLogo: React.FC<ProviderLogoProps> = ({ provider, className = "w-4 h-4" }) => {
+export const ProviderLogo: React.FC<ProviderLogoProps> = ({ provider, modelName, className = "w-4 h-4" }) => {
 	const [hasError, setHasError] = useState(false);
-	const { logo } = getProviderLogoAndName(provider);
+	const modelProvider = modelName ? getModelLogoAndName(provider, modelName) : undefined;
+	const { logo, displayName } = modelProvider ?? getProviderLogoAndName(provider);
 
 	const showFallback = hasError || !logo;
 
@@ -20,5 +22,5 @@ export const ProviderLogo: React.FC<ProviderLogoProps> = ({ provider, className 
 		);
 	}
 
-	return <img src={logo} alt={`${provider} logo`} className={className} onError={() => setHasError(true)} />;
+	return <img src={logo} alt={`${displayName} logo`} className={className} onError={() => setHasError(true)} />;
 };

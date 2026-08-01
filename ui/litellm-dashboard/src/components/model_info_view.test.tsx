@@ -50,6 +50,11 @@ vi.mock("@/app/(dashboard)/hooks/models/useModelCostMap", () => ({
 	useModelCostMap: (...args: any[]) => mockUseModelCostMap(...args),
 }));
 
+const mockUseProviderFields = vi.fn();
+vi.mock("@/app/(dashboard)/hooks/providers/useProviderFields", () => ({
+	useProviderFields: (...args: any[]) => mockUseProviderFields(...args),
+}));
+
 const mockNotificationsManager = vi.mocked(NotificationsManager);
 const mockModelInfoV1Call = vi.mocked(networking.modelInfoV1Call);
 const mockModelRawInfoCall = vi.mocked(networking.modelRawInfoCall);
@@ -126,6 +131,24 @@ describe("ModelInfoView", () => {
 
 		mockUseModelCostMap.mockReturnValue({
 			data: {},
+			isLoading: false,
+			error: null,
+		});
+		mockUseProviderFields.mockReturnValue({
+			data: [
+				{
+					provider: "OpenAI",
+					provider_display_name: "OpenAI",
+					litellm_provider: "openai",
+					credential_fields: [],
+				},
+				{
+					provider: "CLIProxy",
+					provider_display_name: "CLIProxy",
+					litellm_provider: "cliproxy",
+					credential_fields: [],
+				},
+			],
 			isLoading: false,
 			error: null,
 		});
@@ -627,6 +650,41 @@ describe("ModelInfoView", () => {
 			expect(screen.getByPlaceholderText("Enter model name")).toBeInTheDocument();
 			expect(screen.getByPlaceholderText("Enter LiteLLM model name")).toBeInTheDocument();
 		});
+	});
+
+	it("uses a provider dropdown and saves CLIProxy without credentials or an API key", async () => {
+		const user = userEvent.setup();
+		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+		await user.click(await screen.findByRole("button", { name: /^edit$/i }));
+		await screen.findByText("Edit Model Settings");
+		const providerSelect = await screen.findByRole("combobox", { name: "Custom LLM Provider" });
+		const providerSelectTrigger = providerSelect.closest(".ant-select-selector");
+		expect(providerSelectTrigger).not.toBeNull();
+
+		await user.click(providerSelectTrigger as HTMLElement);
+		expect(providerSelect).toHaveAttribute("aria-expanded", "true");
+		const cliProxyOption = (await screen.findAllByRole("option", { hidden: true })).find(
+			(option) => option.textContent?.trim() === "CLIProxy",
+		);
+		expect(cliProxyOption).toBeDefined();
+		await user.click(cliProxyOption as HTMLElement);
+		expect(await screen.findByText(/No API key is required/i)).toBeInTheDocument();
+		expect(screen.queryByLabelText("Manual API Key")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		await waitFor(() => expect(mockModelPatchUpdateCall).toHaveBeenCalled());
+
+		const payload = mockModelPatchUpdateCall.mock.calls[0][1] as { litellm_params: Record<string, unknown> };
+		expect(payload.litellm_params).toMatchObject({
+			custom_llm_provider: "cliproxy",
+			api_base: null,
+			api_key: null,
+			litellm_credential_name: null,
+		});
+		expect(mockNotificationsManager.error).not.toHaveBeenCalledWith(
+			"Enter a new API key before switching to Manual credentials",
+		);
 	});
 
 	it("should allow editing model name in edit mode", async () => {

@@ -23,6 +23,7 @@ export enum LlmProviders {
 	OpenAI = "openai",
 	Anthropic = "anthropic",
 	DeepSeek = "deepseek",
+	MiniMax = "minimax",
 	GLM = "glm",
 	MiMo = "mimo",
 	MiMoGlobal = "mimo_global",

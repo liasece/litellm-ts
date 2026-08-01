@@ -2,7 +2,7 @@ import ProviderLogo from "@/components/common_components/ProviderLogo";
 import { generateCodeSnippet } from "@/components/playground/chat_ui/CodeSnippets";
 import { getEndpointType } from "@/components/playground/chat_ui/mode_endpoint_mapping";
 import type { MessageType } from "@/components/playground/chat_ui/types";
-import { getProviderLogoAndName } from "@/components/provider_info_helpers";
+import { getModelLogoAndName } from "@/components/provider_info_helpers";
 import { Text } from "@tremor/react";
 import { Modal, Tag, Tooltip } from "antd";
 import { Copy, Info } from "lucide-react";
@@ -84,7 +84,7 @@ export default function PublicModelDetailsModal({ model, open, onClose, onCopy }
 								<Text className="font-medium">Providers:</Text>
 								<div className="mt-1 flex flex-wrap gap-1">
 									{(model.providers ?? []).map((provider) => {
-										const { logo } = getProviderLogoAndName(provider);
+										const { logo } = getModelLogoAndName(provider, model.model_group);
 										return (
 											<Tag key={provider} color="blue">
 												<span className="flex items-center space-x-1">

@@ -1,5 +1,5 @@
 import ProviderLogo from "@/components/common_components/ProviderLogo";
-import { getProviderLogoAndName } from "@/components/provider_info_helpers";
+import { getModelLogoAndName } from "@/components/provider_info_helpers";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Button, Text } from "@tremor/react";
 import { Tag, Tooltip } from "antd";
@@ -102,7 +102,7 @@ export function getPublicModelColumns(onSelect: (model: PublicModelInfo) => void
 			cell: ({ row }) => (
 				<div className="flex flex-wrap gap-1">
 					{(row.original.providers ?? []).map((provider) => {
-						const { logo } = getProviderLogoAndName(provider);
+						const { logo } = getModelLogoAndName(provider, row.original.model_group);
 						return (
 							<div key={provider} className="flex items-center space-x-1 rounded bg-gray-100 px-2 py-1 text-xs">
 								<ProviderLogo

@@ -104,6 +104,10 @@ vi.mock("./UsageAIChatPanel", () => ({
 	default: () => <div data-testid="usage-ai-chat-panel">Usage AI Chat Panel</div>,
 }));
 
+vi.mock("./CliProxySubscriptionQuota", () => ({
+	default: () => <div data-testid="cliproxy-subscription-quota">CLIProxy Subscription Quota</div>,
+}));
+
 vi.mock("@/app/(dashboard)/hooks/customers/useCustomers", () => ({
 	useCustomers: vi.fn(),
 }));

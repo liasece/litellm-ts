@@ -2,6 +2,7 @@ import { ProviderRegistry, defaultProviderRegistry } from "./ProviderRegistry";
 import { OpenAICompatProvider } from "./OpenAICompatProvider";
 import { AnthropicProvider } from "./AnthropicProvider";
 import { DeepSeekProvider } from "./DeepSeekProvider";
+import { MiniMaxProvider } from "./MiniMaxProvider";
 import { GLMProvider } from "./GLMProvider";
 import { MiMoProvider } from "./MiMoProvider";
 
@@ -28,6 +29,11 @@ describe("ProviderRegistry", () => {
 			expect(provider).toBeInstanceOf(DeepSeekProvider);
 			const req = provider.transformRequest("deepseek/deepseek-v4-flash", [{ role: "user", content: "hi" }], {});
 			expect(req.url).toBe("https://api.deepseek.com/chat/completions");
+		});
+
+		it('解析 "minimax/MiniMax-M2.7" 返回 MiniMaxProvider 实例', () => {
+			const provider = registry.getProvider("minimax/MiniMax-M2.7");
+			expect(provider).toBeInstanceOf(MiniMaxProvider);
 		});
 
 		it('解析 "glm/GLM-5.1" 返回 GLMProvider 实例', () => {

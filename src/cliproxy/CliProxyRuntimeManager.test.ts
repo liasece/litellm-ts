@@ -3,6 +3,7 @@ import type { ConfigRepository } from "../repositories/ConfigRepository";
 import {
 	buildCliProxyProjection,
 	compareCliProxyVersions,
+	extractCliProxyReleaseNotes,
 	parseCliProxyUserConfig,
 	serializeCliProxyUserConfig,
 } from "./CliProxyRuntimeManager";
@@ -71,6 +72,72 @@ describe("CLIProxy release comparison", () => {
 		["7.2.110-rc.2", "7.2.110-rc.10", -1],
 	])("compares %s with %s", (left, right, expected) => {
 		expect(compareCliProxyVersions(left, right)).toBe(expected);
+	});
+
+	it("extracts the version changelog instead of repeated release asset documentation", () => {
+		expect(
+			extractCliProxyReleaseNotes(`
+## Linux release assets
+
+- Portable build details
+
+## Changelog
+
+- feat: add a new model
+- fix: refresh credentials
+
+## What's Changed
+
+- Pull request metadata
+`),
+		).toBe("- feat: add a new model\n- fix: refresh credentials");
+	});
+
+	it("returns release notes for every stable version from the GitHub response", async () => {
+		jest.spyOn(global, "fetch").mockResolvedValueOnce(
+			new Response(
+				JSON.stringify([
+					{
+						tag_name: "v7.2.112",
+						published_at: "2026-07-31T08:39:29Z",
+						html_url: "https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.112",
+						body: "## Changelog\n\n- newest change",
+						draft: false,
+						prerelease: false,
+					},
+					{
+						tag_name: "v7.2.111",
+						published_at: "2026-07-30T18:56:58Z",
+						html_url: "https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.111",
+						body: "## Changelog\n\n- earlier change",
+						draft: false,
+						prerelease: false,
+					},
+					{
+						tag_name: "v7.2.113-rc.1",
+						body: "## Changelog\n\n- prerelease change",
+						draft: false,
+						prerelease: true,
+					},
+				]),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			),
+		);
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		await expect(runtime.checkLatestVersion()).resolves.toMatchObject({
+			latest: "7.2.112",
+			update_available: true,
+			releases: [
+				{ version: "7.2.112", notes: "- newest change" },
+				{ version: "7.2.111", notes: "- earlier change" },
+			],
+		});
+		expect(global.fetch).toHaveBeenCalledWith(
+			"https://api.github.com/repos/router-for-me/CLIProxyAPI/releases?per_page=100",
+			expect.any(Object),
+		);
+		jest.restoreAllMocks();
 	});
 });
 

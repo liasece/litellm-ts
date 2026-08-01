@@ -26,7 +26,7 @@ describe("ProviderLogo", () => {
 			displayName: "Test Provider",
 		});
 		render(<ProviderLogo provider="test" />);
-		const img = screen.getByRole("img", { name: "test logo" });
+		const img = screen.getByRole("img", { name: "Test Provider logo" });
 		expect(img).toBeInTheDocument();
 
 		act(() => {
@@ -35,5 +35,18 @@ describe("ProviderLogo", () => {
 
 		expect(screen.getByText("t")).toBeInTheDocument();
 		expect(screen.queryByRole("img")).not.toBeInTheDocument();
+	});
+
+	it("uses model-family branding when a model name is provided", () => {
+		vi.mocked(providerInfoHelpers.getModelLogoAndName).mockReturnValue({
+			logo: "/moonshot-logo.svg",
+			displayName: "Moonshot",
+			provider: "moonshot",
+		});
+
+		render(<ProviderLogo provider="cliproxy" modelName="kimi-k2.5" />);
+
+		expect(providerInfoHelpers.getModelLogoAndName).toHaveBeenCalledWith("cliproxy", "kimi-k2.5");
+		expect(screen.getByRole("img", { name: "Moonshot logo" })).toHaveAttribute("src", "/moonshot-logo.svg");
 	});
 });

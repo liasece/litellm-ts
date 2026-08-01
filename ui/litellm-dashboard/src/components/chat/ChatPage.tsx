@@ -33,7 +33,7 @@ import { makeOpenAIResponsesRequest } from "../playground/llm_calls/responses_ap
 import type { MCPEvent } from "./types";
 import { getProxyBaseUrl } from "@/components/networking";
 import { useUIConfig } from "@/app/(dashboard)/hooks/uiConfig/useUIConfig";
-import { getProviderLogoAndName } from "@/components/provider_info_helpers";
+import { getModelLogoAndName } from "@/components/provider_info_helpers";
 
 interface ChatPageProps {
 	accessToken: string;
@@ -63,26 +63,6 @@ function getDashboardUrl(root: string): string {
 	const base = process.env.NEXT_PUBLIC_BASE_URL ?? "";
 	const trimmed = base.replace(/^\/+|\/+$/g, "");
 	return trimmed ? `${root}/${trimmed}/` : `${root}/`;
-}
-
-// Extract provider from model name for logo lookup.
-// Handles prefixed models ("groq/llama-3"), and detects well-known providers by keyword.
-function getProviderFromModelName(modelName: string): string {
-	if (!modelName) return "";
-	const lower = modelName.toLowerCase();
-	const slash = lower.indexOf("/");
-	if (slash > 0) return lower.slice(0, slash);
-	// Keyword matching — order matters (more specific first)
-	if (lower.includes("claude")) return "anthropic";
-	if (lower.includes("gemini")) return "gemini";
-	if (lower.includes("gpt") || lower.includes("chatgpt") || /^o[0-9]/.test(lower)) return "openai";
-	if (lower.includes("mistral") || lower.includes("codestral")) return "mistral";
-	if (lower.includes("llama")) return "meta_llama";
-	if (lower.includes("deepseek")) return "deepseek";
-	if (lower.includes("grok")) return "xai";
-	if (lower.includes("command")) return "cohere";
-	if (lower.includes("nova") || lower.includes("titan")) return "bedrock";
-	return "";
 }
 
 interface ComparisonExchange {
@@ -571,8 +551,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
 				{filteredModels.map((m) => {
 					const checked = selectedModels.includes(m);
 					const disabled = !checked && selectedModels.length >= MAX_COMPARISON_MODELS;
-					const provider = getProviderFromModelName(m);
-					const { logo } = provider ? getProviderLogoAndName(provider) : { logo: "" };
+					const { logo } = getModelLogoAndName("", m);
 					return (
 						<button
 							key={m}
@@ -719,8 +698,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
 				) : selectedModels.length === 1 ? (
 					<>
 						{(() => {
-							const provider = getProviderFromModelName(selectedModels[0]);
-							const { logo } = provider ? getProviderLogoAndName(provider) : { logo: "" };
+							const { logo } = getModelLogoAndName("", selectedModels[0]);
 							return logo ? (
 								<img
 									src={logo}
@@ -739,8 +717,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
 				) : (
 					<div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflow: "hidden" }}>
 						{selectedModels.map((m) => {
-							const provider = getProviderFromModelName(m);
-							const { logo } = provider ? getProviderLogoAndName(provider) : { logo: "" };
+							const { logo } = getModelLogoAndName("", m);
 							return (
 								<span
 									key={m}
@@ -1300,8 +1277,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
 													{/* Response cards side-by-side */}
 													<div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
 														{selectedModels.map((model, idx) => {
-															const provider = getProviderFromModelName(model);
-															const { logo } = provider ? getProviderLogoAndName(provider) : { logo: "" };
+															const { logo } = getModelLogoAndName("", model);
 															const responseText = exchange.responses[model] ?? "";
 															const isModelStreaming = isLastExchange && comparisonStreamingSet.has(model);
 															return (

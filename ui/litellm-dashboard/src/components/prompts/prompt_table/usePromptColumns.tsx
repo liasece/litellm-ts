@@ -1,6 +1,6 @@
 import type { PromptSpec } from "@/components/networking";
 import ProviderLogo from "@/components/common_components/ProviderLogo";
-import { getProviderLogoAndName } from "@/components/provider_info_helpers";
+import { getModelLogoAndName } from "@/components/provider_info_helpers";
 import { CopyOutlined } from "@ant-design/icons";
 import { TrashIcon } from "@heroicons/react/outline";
 import { Button } from "@tremor/react";
@@ -70,7 +70,7 @@ export default function usePromptColumns({
 					if (!model) return <span className="text-xs text-gray-400">-</span>;
 
 					const provider = getProviderFromModelHub(model, modelHubData);
-					const { logo } = getProviderLogoAndName(provider || "");
+					const { logo } = getModelLogoAndName(provider, model);
 
 					return (
 						<Tooltip title={model}>

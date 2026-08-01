@@ -1,5 +1,5 @@
 import { Button as TremorButton } from "@tremor/react";
-import type { FormInstance } from "antd";
+import { Form, type FormInstance } from "antd";
 import { CredentialItem } from "../networking";
 import { Tag } from "../tag_management/types";
 import ModelAdvancedSettings from "./ModelAdvancedSettings";
@@ -46,6 +46,8 @@ export default function ModelSettingsContent({
 }: ModelSettingsContentProps) {
 	const credentialName = editing ? selectedCredentialName : modelData.litellm_params?.litellm_credential_name;
 	const credentialValues = credentials.find((credential) => credential.credential_name === credentialName)?.credential_values;
+	const watchedProvider = Form.useWatch("custom_llm_provider", form);
+	const selectedProvider = editing ? watchedProvider : modelData.litellm_params?.custom_llm_provider;
 	return (
 		<div>
 			<div className="grid grid-cols-1 overflow-hidden rounded-lg border border-gray-200 bg-white lg:grid-cols-2">
@@ -68,6 +70,7 @@ export default function ModelSettingsContent({
 					modelData={modelData}
 					selectedCredentialName={selectedCredentialName}
 					credentials={credentials}
+					selectedProvider={selectedProvider}
 				/>
 				<ModelAdvancedSettings
 					editing={editing}

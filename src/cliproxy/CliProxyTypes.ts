@@ -84,6 +84,30 @@ export interface CliProxyRuntimeStatus {
 	readonly operation: string | null;
 }
 
+/** Public release metadata used by the managed update UI. */
+export interface CliProxyReleaseInfo {
+	/** Normalized release version without the leading `v`. */
+	readonly version: string;
+	/** GitHub publication time, when one was supplied. */
+	readonly published_at: string | null;
+	/** Public GitHub release page. */
+	readonly release_url: string;
+	/** Markdown release notes, reduced to the changelog when available. */
+	readonly notes: string;
+}
+
+/** Current update state plus the notes for every relevant release. */
+export interface CliProxyUpdateInfo {
+	/** Currently active version. */
+	readonly current: string | null;
+	/** Newest stable release version. */
+	readonly latest: string;
+	/** Whether the newest stable release is newer than the active version. */
+	readonly update_available: boolean;
+	/** Stable releases from the oldest installed version through the latest. */
+	readonly releases: CliProxyReleaseInfo[];
+}
+
 /**
  *
  */
