@@ -470,7 +470,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 						/>
 					)}
 					<div className="ml-auto">
-						<AdvancedDatePicker value={dateValue} onValueChange={handleDateChange} />
+						<AdvancedDatePicker value={dateValue} onValueChange={handleDateChange} showQuickSelect />
 					</div>
 				</div>
 

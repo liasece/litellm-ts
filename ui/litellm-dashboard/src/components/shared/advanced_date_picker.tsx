@@ -9,6 +9,7 @@ interface AdvancedDatePickerProps {
 	label?: string;
 	className?: string;
 	showTimeRange?: boolean;
+	showQuickSelect?: boolean;
 }
 
 interface RelativeTimeOption {
@@ -27,10 +28,18 @@ const relativeTimeOptions: RelativeTimeOption[] = [
 		}),
 	},
 	{
+		label: "Last 3 days",
+		shortLabel: "3d",
+		getValue: () => ({
+			from: moment().subtract(2, "days").startOf("day").toDate(),
+			to: moment().endOf("day").toDate(),
+		}),
+	},
+	{
 		label: "Last 7 days",
 		shortLabel: "7d",
 		getValue: () => ({
-			from: moment().subtract(7, "days").startOf("day").toDate(),
+			from: moment().subtract(6, "days").startOf("day").toDate(),
 			to: moment().endOf("day").toDate(),
 		}),
 	},
@@ -68,6 +77,7 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 	onValueChange,
 	label = "Select Time Range",
 	showTimeRange = true,
+	showQuickSelect = false,
 }) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const [tempValue, setTempValue] = useState<DateRangePickerValue>(value);
@@ -209,6 +219,18 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 		// Don't close the dropdown - let user click Apply to confirm
 	};
 
+	const handleQuickTimeSelect = (option: RelativeTimeOption) => {
+		const { from, to } = option.getValue();
+		const newValue = adjustDateRange({ from, to });
+
+		setTempValue(newValue);
+		setSelectedOption(option.shortLabel);
+		setStartDate(moment(newValue.from).format("YYYY-MM-DD"));
+		setEndDate(moment(newValue.to).format("YYYY-MM-DD"));
+		setIsOpen(false);
+		onValueChange(newValue);
+	};
+
 	const updateTempValueFromInputs = useCallback(() => {
 		try {
 			if (startDate && endDate && validation.isValid) {
@@ -275,6 +297,28 @@ const AdvancedDatePicker: React.FC<AdvancedDatePickerProps> = ({
 	return (
 		<div className="flex min-w-0 flex-wrap items-center gap-3">
 			{label && <Text className="text-sm font-medium text-gray-700 whitespace-nowrap">{label}</Text>}
+			{showQuickSelect && (
+				<div className="flex flex-wrap items-center gap-1.5" aria-label="Quick time range">
+					{relativeTimeOptions.slice(0, 3).map((option) => {
+						const isSelected = selectedOption === option.shortLabel;
+						return (
+							<button
+								key={option.shortLabel}
+								type="button"
+								aria-pressed={isSelected}
+								className={`rounded-md border px-2.5 py-2 text-xs font-medium transition-colors ${
+									isSelected
+										? "border-blue-600 bg-blue-50 text-blue-700"
+										: "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50"
+								}`}
+								onClick={() => handleQuickTimeSelect(option)}
+							>
+								{option.label}
+							</button>
+						);
+					})}
+				</div>
+			)}
 			<div className="relative min-w-0 flex-1 sm:flex-none" ref={dropdownRef}>
 				{/* Main input display */}
 				<div

@@ -296,6 +296,62 @@ export type LogEntry = {
 	onSessionClick?: (sessionGroup: SessionGroupRef) => void;
 };
 
+function readNonNegativeTokenCount(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return undefined;
+	}
+	return Math.max(value, 0);
+}
+
+function getAdditionalUsage(metadata: LogEntry["metadata"]): Record<string, any> | undefined {
+	const additionalUsage = metadata?.additional_usage_values;
+	return additionalUsage && typeof additionalUsage === "object" ? additionalUsage : undefined;
+}
+
+/** Read cache tokens from both flattened LiteLLM fields and OpenAI detail objects. */
+export function getCacheReadInputTokens(metadata: LogEntry["metadata"]): number {
+	const additionalUsage = getAdditionalUsage(metadata);
+	const usageObject =
+		metadata?.usage_object && typeof metadata.usage_object === "object" ? metadata.usage_object : undefined;
+	const candidates = [
+		additionalUsage?.cache_read_input_tokens,
+		additionalUsage?.prompt_tokens_details?.cached_tokens,
+		additionalUsage?.input_tokens_details?.cached_tokens,
+		usageObject?.cache_read_input_tokens,
+		usageObject?.prompt_tokens_details?.cached_tokens,
+		usageObject?.input_tokens_details?.cached_tokens,
+	];
+	for (const candidate of candidates) {
+		const tokenCount = readNonNegativeTokenCount(candidate);
+		if (tokenCount !== undefined) {
+			return tokenCount;
+		}
+	}
+	return 0;
+}
+
+/** Read cache-write tokens from both flattened LiteLLM fields and OpenAI detail objects. */
+export function getCacheCreationInputTokens(metadata: LogEntry["metadata"]): number {
+	const additionalUsage = getAdditionalUsage(metadata);
+	const usageObject =
+		metadata?.usage_object && typeof metadata.usage_object === "object" ? metadata.usage_object : undefined;
+	const candidates = [
+		additionalUsage?.cache_creation_input_tokens,
+		additionalUsage?.prompt_tokens_details?.cache_creation_tokens,
+		additionalUsage?.input_tokens_details?.cache_write_tokens,
+		usageObject?.cache_creation_input_tokens,
+		usageObject?.prompt_tokens_details?.cache_creation_tokens,
+		usageObject?.input_tokens_details?.cache_write_tokens,
+	];
+	for (const candidate of candidates) {
+		const tokenCount = readNonNegativeTokenCount(candidate);
+		if (tokenCount !== undefined) {
+			return tokenCount;
+		}
+	}
+	return 0;
+}
+
 export function getSessionGroupRef(
 	log: Pick<LogEntry, "session_group_type" | "session_group_id" | "session_id">,
 ): SessionGroupRef | null {
@@ -606,9 +662,8 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		accessorKey: "total_tokens",
 		cell: (info: any) => {
 			const row = info.row.original;
-			const additionalUsage = row.metadata?.additional_usage_values;
-			const rawCacheReadTokens = Number(additionalUsage?.cache_read_input_tokens ?? 0);
-			const rawCacheCreationTokens = Number(additionalUsage?.cache_creation_input_tokens ?? 0);
+			const rawCacheReadTokens = getCacheReadInputTokens(row.metadata);
+			const rawCacheCreationTokens = getCacheCreationInputTokens(row.metadata);
 			const rawPromptTokens = Number(row.prompt_tokens ?? 0);
 			const rawOutputTokens = Number(row.completion_tokens ?? 0);
 			const cacheReadTokens = Number.isFinite(rawCacheReadTokens) ? Math.max(rawCacheReadTokens, 0) : 0;

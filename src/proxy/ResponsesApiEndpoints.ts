@@ -540,8 +540,12 @@ function mapResponseUsage(usage: Record<string, unknown> | undefined): ResponseU
 	}
 	const inputTokens = numberField(usage, "prompt_tokens", "input_tokens");
 	const outputTokens = numberField(usage, "completion_tokens", "output_tokens");
-	const inputDetails = usage["prompt_tokens_details"] as Record<string, unknown> | undefined;
-	const outputDetails = usage["completion_tokens_details"] as Record<string, unknown> | undefined;
+	const inputDetails =
+		(usage["prompt_tokens_details"] as Record<string, unknown> | undefined) ??
+		(usage["input_tokens_details"] as Record<string, unknown> | undefined);
+	const outputDetails =
+		(usage["completion_tokens_details"] as Record<string, unknown> | undefined) ??
+		(usage["output_tokens_details"] as Record<string, unknown> | undefined);
 	return {
 		input_tokens: inputTokens,
 		input_tokens_details: {

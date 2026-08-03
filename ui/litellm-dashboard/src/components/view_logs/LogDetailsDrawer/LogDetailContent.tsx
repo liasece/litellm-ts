@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { Typography, Descriptions, Card, Tag, Tabs, Alert, Collapse, Radio, Space, Spin } from "antd";
 import moment from "moment";
-import { LogEntry, normalizeModelResolutionChain } from "../columns";
+import {
+	getCacheCreationInputTokens,
+	getCacheReadInputTokens,
+	LogEntry,
+	normalizeModelResolutionChain,
+} from "../columns";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import GuardrailViewer from "../GuardrailViewer/GuardrailViewer";
 import { CostBreakdownViewer } from "../CostBreakdownViewer";
@@ -289,15 +294,14 @@ function ModelResolutionSection({ entries }: { entries: ReturnType<typeof normal
 
 function MetricsSection({ logEntry, metadata }: { logEntry: LogEntry; metadata: Record<string, any> }) {
 	const completionStartTime = logEntry.completionStartTime;
+	const cacheReadInputTokens = getCacheReadInputTokens(metadata);
+	const cacheCreationInputTokens = getCacheCreationInputTokens(metadata);
 	const ttftMs =
 		completionStartTime && completionStartTime !== logEntry.endTime
 			? new Date(completionStartTime).getTime() - new Date(logEntry.startTime).getTime()
 			: null;
 
-	const hasCacheActivity =
-		logEntry.cache_hit ||
-		(metadata?.additional_usage_values?.cache_read_input_tokens &&
-			metadata.additional_usage_values.cache_read_input_tokens > 0);
+	const hasCacheActivity = logEntry.cache_hit || cacheReadInputTokens > 0 || cacheCreationInputTokens > 0;
 
 	const cacheHitValue = String(logEntry.cache_hit ?? "None");
 	const cacheHitColor =
@@ -327,14 +331,14 @@ function MetricsSection({ logEntry, metadata }: { logEntry: LogEntry; metadata: 
 							<Descriptions.Item label="Cache Hit">
 								<Tag color={cacheHitColor}>{cacheHitValue}</Tag>
 							</Descriptions.Item>
-							{metadata?.additional_usage_values?.cache_read_input_tokens > 0 && (
+							{cacheReadInputTokens > 0 && (
 								<Descriptions.Item label="Cache Read Tokens">
-									{formatNumberWithCommas(metadata.additional_usage_values.cache_read_input_tokens)}
+									{formatNumberWithCommas(cacheReadInputTokens)}
 								</Descriptions.Item>
 							)}
-							{metadata?.additional_usage_values?.cache_creation_input_tokens > 0 && (
+							{cacheCreationInputTokens > 0 && (
 								<Descriptions.Item label="Cache Creation Tokens">
-									{formatNumberWithCommas(metadata.additional_usage_values.cache_creation_input_tokens)}
+									{formatNumberWithCommas(cacheCreationInputTokens)}
 								</Descriptions.Item>
 							)}
 						</>

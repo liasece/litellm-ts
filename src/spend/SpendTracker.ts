@@ -576,11 +576,12 @@ export function getSessionIdForSpendLog(ctx: SpendLogBuildContext): string {
  */
 export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promise<Record<string, unknown>> {
 	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
+	const requestBody = ctx.proxyServerRequestBody === undefined ? ctx.req.body : ctx.proxyServerRequestBody;
 	const requestShape: Record<string, unknown> = {
 		url: ctx.req.originalUrl ?? ctx.req.url,
 		method: ctx.req.method,
 		headers: sanitizeSpendLogHeaders(ctx.req.headers as Record<string, unknown>),
-		body: shouldStoreBody ? sanitizeSpendLogPayload(ctx.req.body) : {},
+		body: shouldStoreBody ? sanitizeSpendLogPayload(requestBody) : {},
 		arrival_time: ctx.startTime.toISOString(),
 	};
 	return requestShape;
@@ -685,6 +686,15 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 	const requestBody = ctx.req.body as Record<string, unknown> | undefined;
 	const requestMetadata = requestBody?.metadata;
 	const usageObject = ctx.usage;
+	const normalizedUsage = normalizeUsageForSpend(usageObject);
+	const usageWithNormalizedCacheFields =
+		usageObject && normalizedUsage
+			? {
+					...usageObject,
+					cache_creation_input_tokens: normalizedUsage.cache_creation_input_tokens,
+					cache_read_input_tokens: normalizedUsage.cache_read_input_tokens,
+				}
+			: usageObject;
 	const failureInformation = ctx.error ? getFailureErrorInformation(ctx.error) : undefined;
 	const requesterIpAddress = getRequesterIpAddress(ctx.req);
 	return {
@@ -704,7 +714,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 				? (sanitizeSpendLogPayload(requestMetadata) as Record<string, unknown>)
 				: undefined,
 		requester_ip_address: requesterIpAddress,
-		additional_usage_values: usageObject ? buildAdditionalUsageValues(usageObject) : undefined,
+		additional_usage_values: usageWithNormalizedCacheFields ? buildAdditionalUsageValues(usageWithNormalizedCacheFields) : undefined,
 		applied_guardrails: null,
 		mcp_tool_call_metadata: null,
 		guardrail_information: null,
@@ -1452,7 +1462,7 @@ export async function settleSpend(db: NodePgDatabase<typeof schema>, requestId: 
  * TS 之前两端点各自转换 — 现集中到本入口，trackSpendLog / calculateAndSetCost 调用时统一。
  *
  * 接受任意 usage 形状（`prompt_tokens|input_tokens|completion_tokens|output_tokens|
- *   cache_creation_input_tokens|cache_read_input_tokens|prompt_tokens_details`）并返回
+ *   cache_creation_input_tokens|cache_read_input_tokens|prompt_tokens_details|input_tokens_details`）并返回
  * 归一后的字段。返回 undefined 表示无可识别字段（避免误报 0 spend）。
  * @param usage
  */
@@ -1468,25 +1478,33 @@ export function normalizeUsageForSpend(usage: Record<string, unknown> | undefine
 	if (!usage) {
 		return undefined;
 	}
-	// cache fields: prompt_tokens_details.cached_tokens > cache_read_input_tokens
+	// cache fields: Chat Completions details > Responses details > Anthropic flat fields
 	const promptDetails = usage["prompt_tokens_details"] as Record<string, unknown> | undefined;
+	const inputDetails = usage["input_tokens_details"] as Record<string, unknown> | undefined;
 	const cacheRead =
 		(typeof promptDetails?.["cached_tokens"] === "number" ? (promptDetails["cached_tokens"] as number) : undefined) ??
+		(typeof inputDetails?.["cached_tokens"] === "number" ? (inputDetails["cached_tokens"] as number) : undefined) ??
 		(typeof usage["cache_read_input_tokens"] === "number" ? (usage["cache_read_input_tokens"] as number) : 0);
 	const cacheCreation =
 		(typeof promptDetails?.["cache_creation_tokens"] === "number" ? (promptDetails["cache_creation_tokens"] as number) : undefined) ??
+		(typeof inputDetails?.["cache_write_tokens"] === "number" ? (inputDetails["cache_write_tokens"] as number) : undefined) ??
 		(typeof usage["cache_creation_input_tokens"] === "number" ? (usage["cache_creation_input_tokens"] as number) : 0);
 	// PY: prefer `completion_tokens`; fall back to `output_tokens`
 	const completionTokens =
 		(typeof usage["completion_tokens"] === "number" ? (usage["completion_tokens"] as number) : undefined) ??
 		(typeof usage["output_tokens"] === "number" ? (usage["output_tokens"] as number) : 0);
 
-	// Anthropic/Responses 风格判定：无 prompt_tokens 且有 input_tokens。
+	// Anthropic 风格判定：无 prompt_tokens/input_tokens_details/total_tokens 且有 input_tokens。
 	// PY anthropic/chat/transformation.py:1588-1611 把 cache_creation + cache_read
 	// 折叠计入 prompt_tokens（上游 input_tokens 不含 cache），total=prompt+completion。
-	// OpenAI 风格 prompt_tokens 已含 cached_tokens（prompt_tokens_details 仅细分），不动。
+	// OpenAI Chat Completions 的 prompt_tokens 和 Responses 的 input_tokens 都已含
+	// cached_tokens（details 仅细分），不能再次折叠。
 	const rawPromptTokens = typeof usage["prompt_tokens"] === "number" ? (usage["prompt_tokens"] as number) : undefined;
-	const isAnthropicStyle = rawPromptTokens === undefined && typeof usage["input_tokens"] === "number";
+	const isAnthropicStyle =
+		rawPromptTokens === undefined &&
+		typeof usage["input_tokens"] === "number" &&
+		inputDetails === undefined &&
+		typeof usage["total_tokens"] !== "number";
 	if (isAnthropicStyle) {
 		const promptTokens = ((usage["input_tokens"] as number) ?? 0) + cacheRead + cacheCreation;
 		return {
@@ -1501,7 +1519,7 @@ export function normalizeUsageForSpend(usage: Record<string, unknown> | undefine
 			cache_read_input_tokens: cacheRead,
 		};
 	}
-	const promptTokens = rawPromptTokens ?? 0;
+	const promptTokens = rawPromptTokens ?? (typeof usage["input_tokens"] === "number" ? (usage["input_tokens"] as number) : 0);
 	const totalTokens =
 		(typeof usage["total_tokens"] === "number" ? (usage["total_tokens"] as number) : undefined) ?? promptTokens + completionTokens;
 

@@ -251,6 +251,11 @@ export interface SpendLogBuildContext {
 	readonly completionStartTime?: Date;
 	/** 原始请求消息或输入 */
 	readonly messages?: unknown;
+	/**
+	 * 供 proxy_server_request.body 使用的请求体覆盖。
+	 * 原始流式/multipart 请求不会进入 Express req.body，端点可传入已脱敏的结构化摘要。
+	 */
+	readonly proxyServerRequestBody?: unknown;
 	/** 上游响应体 */
 	readonly response?: unknown;
 	/** 上游 usage 对象 */

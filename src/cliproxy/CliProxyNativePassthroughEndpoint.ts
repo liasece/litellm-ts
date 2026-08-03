@@ -12,7 +12,10 @@ import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
 
 const MAX_PASSTHROUGH_BODY_BYTES = 50 * 1024 * 1024;
-const MAX_CAPTURED_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_CAPTURED_RESPONSE_BYTES = 24 * 1024 * 1024;
+const MAX_CAPTURED_RESPONSE_BYTES =
+	Number(process.env.MAX_CLIPROXY_CAPTURED_RESPONSE_BYTES ?? DEFAULT_MAX_CAPTURED_RESPONSE_BYTES) ||
+	DEFAULT_MAX_CAPTURED_RESPONSE_BYTES;
 const REQUEST_BLOCKED_HEADERS = new Set([
 	"authorization",
 	"x-api-key",
@@ -43,6 +46,7 @@ interface ResolvedCliProxyModel {
 interface PreparedRequestBody {
 	readonly bytes: Buffer | undefined;
 	readonly parsed: Record<string, unknown> | undefined;
+	readonly logBody: Record<string, unknown> | undefined;
 	readonly requestedModel: string | undefined;
 	readonly contentType: string | undefined;
 }
@@ -50,6 +54,7 @@ interface PreparedRequestBody {
 interface CapturedResponse {
 	readonly raw: string;
 	readonly firstChunkAt: Date | null;
+	readonly truncated: boolean;
 }
 
 interface NativeSpendContext {
@@ -232,6 +237,49 @@ async function readRawRequestBody(req: Request): Promise<Buffer> {
 	return Buffer.concat(chunks);
 }
 
+function appendFormLogValue(target: Record<string, unknown>, key: string, value: unknown): void {
+	const current = target[key];
+	if (current === undefined) {
+		target[key] = value;
+	} else if (Array.isArray(current)) {
+		current.push(value);
+	} else {
+		target[key] = [current, value];
+	}
+}
+
+async function multipartLogBody(bytes: Buffer, contentType: string): Promise<Record<string, unknown> | undefined> {
+	try {
+		const formData = await new Response(bytes as never, {
+			headers: { "content-type": contentType },
+		}).formData();
+		const result: Record<string, unknown> = {};
+		for (const [key, value] of formData.entries()) {
+			if (typeof value === "string") {
+				appendFormLogValue(result, key, value);
+				continue;
+			}
+			appendFormLogValue(result, key, {
+				filename: value.name,
+				content_type: value.type || "application/octet-stream",
+				size_bytes: value.size,
+			});
+		}
+		return result;
+	} catch {
+		// Malformed provider-specific multipart bodies still pass through unchanged.
+		return undefined;
+	}
+}
+
+function urlEncodedLogBody(bytes: Buffer): Record<string, unknown> {
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of new URLSearchParams(bytes.toString("utf8")).entries()) {
+		appendFormLogValue(result, key, value);
+	}
+	return result;
+}
+
 async function prepareRequestBody(req: Request): Promise<PreparedRequestBody> {
 	const contentType = requestContentType(req);
 	if (contentType?.includes("application/json")) {
@@ -240,17 +288,24 @@ async function prepareRequestBody(req: Request): Promise<PreparedRequestBody> {
 		return {
 			bytes: Buffer.from(JSON.stringify(parsed)),
 			parsed: parsed,
+			logBody: parsed,
 			requestedModel: bodyModel(parsed),
 			contentType: contentType,
 		};
 	}
 	if (req.method === "GET" || req.method === "HEAD") {
-		return { bytes: undefined, parsed: undefined, requestedModel: undefined, contentType: contentType };
+		return { bytes: undefined, parsed: undefined, logBody: undefined, requestedModel: undefined, contentType: contentType };
 	}
 	const bytes = await readRawRequestBody(req);
+	const logBody = contentType?.includes("multipart/form-data")
+		? await multipartLogBody(bytes, contentType)
+		: contentType?.includes("application/x-www-form-urlencoded")
+			? urlEncodedLogBody(bytes)
+			: undefined;
 	return {
 		bytes: bytes,
 		parsed: undefined,
+		logBody: logBody,
 		requestedModel: rawBodyModel(bytes, contentType),
 		contentType: contentType,
 	};
@@ -279,6 +334,7 @@ function rewritePreparedBody(body: PreparedRequestBody, resolved: ResolvedCliPro
 		return {
 			bytes: Buffer.from(JSON.stringify(parsed)),
 			parsed: parsed,
+			logBody: body.logBody,
 			requestedModel: body.requestedModel,
 			contentType: body.contentType,
 		};
@@ -287,6 +343,7 @@ function rewritePreparedBody(body: PreparedRequestBody, resolved: ResolvedCliPro
 	return {
 		bytes: Buffer.from(source.split(body.requestedModel).join(resolved.upstreamModel), "latin1"),
 		parsed: undefined,
+		logBody: body.logBody,
 		requestedModel: body.requestedModel,
 		contentType: body.contentType,
 	};
@@ -366,11 +423,13 @@ async function pipeResponse(upstream: globalThis.Response, res: Response): Promi
 	});
 	if (!upstream.body) {
 		res.end();
-		return { raw: "", firstChunkAt: null };
+		return { raw: "", firstChunkAt: null, truncated: false };
 	}
 	const reader = upstream.body.getReader();
 	const decoder = new TextDecoder();
 	let captured = "";
+	let capturedBytes = 0;
+	let captureTruncated = false;
 	let firstChunkAt: Date | null = null;
 	try {
 		while (true) {
@@ -382,16 +441,27 @@ async function pipeResponse(upstream: globalThis.Response, res: Response): Promi
 			if (!res.destroyed && !res.writableEnded) {
 				res.write(Buffer.from(value));
 			}
-			captured += decoder.decode(value, { stream: true });
-			if (captured.length > MAX_CAPTURED_RESPONSE_BYTES) {
-				captured = captured.slice(-MAX_CAPTURED_RESPONSE_BYTES);
+			if (!captureTruncated) {
+				const remaining = MAX_CAPTURED_RESPONSE_BYTES - capturedBytes;
+				if (value.byteLength <= remaining) {
+					captured += decoder.decode(value, { stream: true });
+					capturedBytes += value.byteLength;
+				} else {
+					if (remaining > 0) {
+						captured += decoder.decode(value.slice(0, remaining), { stream: true });
+						capturedBytes += remaining;
+					}
+					captureTruncated = true;
+				}
 			}
 		}
-		captured += decoder.decode();
+		if (!captureTruncated) {
+			captured += decoder.decode();
+		}
 		if (!res.writableEnded) {
 			res.end();
 		}
-		return { raw: captured, firstChunkAt: firstChunkAt };
+		return { raw: captured, firstChunkAt: firstChunkAt, truncated: captureTruncated };
 	} finally {
 		reader.releaseLock();
 	}
@@ -459,12 +529,20 @@ async function sendFilteredGeminiModels(
 	res.status(upstream.status);
 	res.setHeader("Content-Type", "application/json; charset=utf-8");
 	res.end(body);
-	return { raw: body, firstChunkAt: new Date() };
+	return { raw: body, firstChunkAt: new Date(), truncated: false };
 }
 
-function parsedResponse(raw: string): { response?: Record<string, unknown>; usage?: Record<string, unknown> } {
+function parsedResponse(captured: CapturedResponse): { response?: Record<string, unknown>; usage?: Record<string, unknown> } {
+	if (captured.truncated) {
+		return {
+			response: {
+				litellm_response_capture_truncated: true,
+				captured_bytes: MAX_CAPTURED_RESPONSE_BYTES,
+			},
+		};
+	}
 	const candidates: Record<string, unknown>[] = [];
-	const trimmed = raw.trim();
+	const trimmed = captured.raw.trim();
 	if (trimmed.startsWith("{")) {
 		try {
 			candidates.push(JSON.parse(trimmed) as Record<string, unknown>);
@@ -472,7 +550,7 @@ function parsedResponse(raw: string): { response?: Record<string, unknown>; usag
 			// Streaming and binary responses are accounted without a parsed body.
 		}
 	}
-	for (const line of raw.split(/\r?\n/)) {
+	for (const line of captured.raw.split(/\r?\n/)) {
 		if (!line.startsWith("data: ") || line === "data: [DONE]") {
 			continue;
 		}
@@ -491,7 +569,7 @@ function parsedResponse(raw: string): { response?: Record<string, unknown>; usag
 }
 
 function requestMessages(body: PreparedRequestBody): unknown {
-	return body.parsed?.["messages"] ?? body.parsed?.["input"] ?? body.parsed?.["prompt"];
+	return body.parsed?.["messages"] ?? body.parsed?.["input"] ?? body.parsed?.["prompt"] ?? body.logBody;
 }
 
 async function recordSpend(context: NativeSpendContext): Promise<void> {
@@ -500,7 +578,7 @@ async function recordSpend(context: NativeSpendContext): Promise<void> {
 	}
 	const candidate = context.router.getAvailableDeployment(context.resolved.publicModel);
 	const spendInfo = candidate ? buildDeploymentSpendInfo(candidate.deployment, context.upstreamUrl) : undefined;
-	const parsed = context.captured ? parsedResponse(context.captured.raw) : {};
+	const parsed = context.captured ? parsedResponse(context.captured) : {};
 	const log = await buildSpendLogFromRequest({
 		req: context.req,
 		requestId: context.requestId,
@@ -517,6 +595,7 @@ async function recordSpend(context: NativeSpendContext): Promise<void> {
 		endTime: new Date(),
 		completionStartTime: context.captured?.firstChunkAt ?? new Date(),
 		messages: requestMessages(context.body),
+		proxyServerRequestBody: context.body.logBody,
 		response: parsed.response,
 		usage: parsed.usage,
 		status: context.status,

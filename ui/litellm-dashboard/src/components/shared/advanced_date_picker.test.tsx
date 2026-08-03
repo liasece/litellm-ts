@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
+import moment from "moment";
 import AdvancedDatePicker from "./advanced_date_picker";
 
 // Polyfill requestIdleCallback for test environment
@@ -44,6 +45,28 @@ describe("AdvancedDatePicker", () => {
 	it("should render with custom label", () => {
 		render(<AdvancedDatePicker value={defaultValue} onValueChange={mockOnValueChange} label="Custom Label" />);
 		expect(screen.getByText("Custom Label")).toBeInTheDocument();
+	});
+
+	it("should apply external quick ranges immediately when enabled", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-08-03T10:30:00"));
+		try {
+			render(<AdvancedDatePicker value={defaultValue} onValueChange={mockOnValueChange} showQuickSelect />);
+
+			expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Last 3 days" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Last 7 days" })).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole("button", { name: "Last 3 days" }));
+
+			expect(mockOnValueChange).toHaveBeenCalledTimes(1);
+			const selectedRange = mockOnValueChange.mock.calls[0]?.[0];
+			expect(moment(selectedRange?.from).format("YYYY-MM-DD HH:mm:ss.SSS")).toBe("2026-08-01 00:00:00.000");
+			expect(moment(selectedRange?.to).format("YYYY-MM-DD HH:mm:ss.SSS")).toBe("2026-08-03 23:59:59.999");
+			expect(screen.getByRole("button", { name: "Last 3 days" })).toHaveAttribute("aria-pressed", "true");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("should display formatted date range", () => {

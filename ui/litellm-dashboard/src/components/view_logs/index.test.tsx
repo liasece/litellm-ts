@@ -521,6 +521,27 @@ describe("Logs columns", () => {
 		expect(screen.getByLabelText("Cache read 0, input 100, output 20")).toHaveTextContent("010020");
 	});
 
+	it("shows cached read from OpenAI input_tokens_details for existing logs", () => {
+		renderColumnCell("Tokens", {
+			...baseLogEntry,
+			total_tokens: 127_423,
+			prompt_tokens: 123_717,
+			completion_tokens: 3_706,
+			metadata: {
+				additional_usage_values: {
+					input_tokens: 123_717,
+					output_tokens: 3_706,
+					input_tokens_details: {
+						cached_tokens: 118_144,
+						cache_write_tokens: 0,
+					},
+				},
+			},
+		});
+
+		expect(screen.getByLabelText("Cache read 118144, input 5573, output 3706")).toHaveTextContent("118,1445,5733,706");
+	});
+
 	it("clamps input to zero when cache read exceeds prompt tokens", () => {
 		renderColumnCell("Tokens", {
 			...baseLogEntry,

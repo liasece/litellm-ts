@@ -3,7 +3,7 @@ import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { truncateString } from "@/utils/textUtils";
 import type { Row } from "@tanstack/react-table";
 import { Tag, Tooltip } from "antd";
-import type { LogEntry } from "./columns";
+import { getCacheCreationInputTokens, getCacheReadInputTokens, type LogEntry } from "./columns";
 import { ConfigInfoMessage } from "./ConfigInfoMessage";
 import { CostBreakdownViewer } from "./CostBreakdownViewer";
 import { ErrorViewer } from "./ErrorViewer";
@@ -11,6 +11,8 @@ import { RequestResponsePanel } from "./RequestResponsePanel";
 import { VectorStoreViewer } from "./VectorStoreViewer";
 
 export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onOpenSettings?: () => void }) {
+	const cacheReadInputTokens = getCacheReadInputTokens(row.original.metadata);
+	const cacheCreationInputTokens = getCacheCreationInputTokens(row.original.metadata);
 	// Helper function to clean metadata by removing specific fields
 	const formatData = (input: any) => {
 		if (typeof input === "string") {
@@ -166,15 +168,11 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 						</div>
 						<div className="flex">
 							<span className="font-medium w-1/3">Cache Read Tokens:</span>
-							<span>
-								{formatNumberWithCommas(row.original.metadata?.additional_usage_values?.cache_read_input_tokens || 0)}
-							</span>
+							<span>{formatNumberWithCommas(cacheReadInputTokens)}</span>
 						</div>
 						<div className="flex">
 							<span className="font-medium w-1/3">Cache Creation Tokens:</span>
-							<span>
-								{formatNumberWithCommas(row.original.metadata?.additional_usage_values.cache_creation_input_tokens)}
-							</span>
+							<span>{formatNumberWithCommas(cacheCreationInputTokens)}</span>
 						</div>
 						<div className="flex">
 							<span className="font-medium w-1/3">Cost:</span>

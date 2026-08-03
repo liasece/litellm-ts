@@ -908,6 +908,43 @@ describe("SpendTracker API key sanitization", () => {
 		}
 	});
 
+	it("原始流式请求可用结构化摘要覆盖 proxy_server_request.body", async () => {
+		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";
+		try {
+			const request = createRequest();
+			request.body = undefined;
+			const spendLog = await buildSpendLogFromRequest({
+				auth: { api_key: rawApiKey },
+				callType: CallType.AImageGeneration,
+				endTime: new Date("2026-01-01T00:00:01.000Z"),
+				messages: { prompt: "add a hat" },
+				model: "gpt-image-2",
+				proxyServerRequestBody: {
+					model: "gpt-image-2",
+					prompt: "add a hat",
+					image: { filename: "source.png", content_type: "image/png", size_bytes: 1234 },
+				},
+				req: request,
+				requestId: "req-multipart-summary",
+				response: { data: [] },
+				startTime: new Date("2026-01-01T00:00:00.000Z"),
+			});
+
+			expect(spendLog.proxy_server_request?.["body"]).toEqual({
+				model: "gpt-image-2",
+				prompt: "add a hat",
+				image: { filename: "source.png", content_type: "image/png", size_bytes: 1234 },
+			});
+		} finally {
+			if (previousStorePrompts === undefined) {
+				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+			} else {
+				process.env.STORE_PROMPTS_IN_SPEND_LOGS = previousStorePrompts;
+			}
+		}
+	});
+
 	it("trackSpendLog 写入 insertData 时 api_key、metadata、proxy_server_request 不含明文 key", async () => {
 		const insertedSpendLogs: Record<string, unknown>[] = [];
 		const mockDb = createMockDb(insertedSpendLogs);
@@ -1117,6 +1154,26 @@ describe("normalizeUsageForSpend cache 折叠（PY anthropic/chat/transformation
 		});
 	});
 
+	it("OpenAI Responses usage 从 input_tokens_details 提取 cache 且不重复折叠", () => {
+		const normalized = normalizeUsageForSpend({
+			input_tokens: 123_717,
+			output_tokens: 3_706,
+			total_tokens: 127_423,
+			input_tokens_details: {
+				cached_tokens: 118_144,
+				cache_write_tokens: 0,
+			},
+			output_tokens_details: { reasoning_tokens: 337 },
+		});
+		expect(normalized).toEqual({
+			prompt_tokens: 123_717,
+			completion_tokens: 3_706,
+			total_tokens: 127_423,
+			cache_creation_input_tokens: 0,
+			cache_read_input_tokens: 118_144,
+		});
+	});
+
 	it("prompt_tokens 与 input_tokens 共存时优先 prompt_tokens，不重复折叠", () => {
 		const normalized = normalizeUsageForSpend({
 			prompt_tokens: 100,
@@ -1230,6 +1287,7 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(additionalUsageValues).not.toHaveProperty("completion_tokens");
 		expect(additionalUsageValues).not.toHaveProperty("total_tokens");
 		expect(additionalUsageValues["input_tokens"]).toBe(100);
+		expect(additionalUsageValues["cache_read_input_tokens"]).toBe(40);
 		// A4: cache_key 管道就位（TS 无响应缓存子系统）
 		expect(spendLog.cache_key).toBeUndefined();
 		expect(spendLog.cache_hit).toBe(false);

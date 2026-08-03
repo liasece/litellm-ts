@@ -5,7 +5,19 @@ import type { Deployment } from "../types/router";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { registerCliProxyNativePassthroughRoutes } from "./CliProxyNativePassthroughEndpoint";
 
-function buildApp(): express.Express {
+const mockBuildSpendLogFromRequest = jest.fn(async (_context: unknown) => ({}));
+const mockTrackSpendLog = jest.fn(async (_db: unknown, _log: unknown) => ({ status: "committed", requestId: "test-request" }));
+
+jest.mock("../spend/SpendTracker", () => {
+	const actual = jest.requireActual<typeof import("../spend/SpendTracker")>("../spend/SpendTracker");
+	return {
+		...actual,
+		buildSpendLogFromRequest: (context: unknown) => mockBuildSpendLogFromRequest(context),
+		trackSpendLog: (db: unknown, log: unknown) => mockTrackSpendLog(db, log),
+	};
+});
+
+function buildApp(authenticated = false): express.Express {
 	const deployments: Deployment[] = [
 		{
 			model_name: "public-image",
@@ -45,6 +57,12 @@ function buildApp(): express.Express {
 	} as CliProxyRuntimeManager;
 	const app = express();
 	app.use(express.json());
+	if (authenticated) {
+		app.use((req, _res, next) => {
+			req.auth = { api_key: "test-key", models: ["public-image"] };
+			next();
+		});
+	}
 	const expressRouter = express.Router();
 	registerCliProxyNativePassthroughRoutes(expressRouter, router, runtime, undefined as never);
 	expressRouter.post("/v1/images/generations", (_req, res) => res.json({ source: "fallback" }));
@@ -55,6 +73,7 @@ function buildApp(): express.Express {
 describe("CLIProxy native passthrough", () => {
 	afterEach(() => {
 		jest.restoreAllMocks();
+		jest.clearAllMocks();
 	});
 
 	it("lets image generation use the standard LiteLLM ImageController provider pipeline", async () => {
@@ -87,6 +106,42 @@ describe("CLIProxy native passthrough", () => {
 		expect(forwarded.includes(Buffer.from("public-image"))).toBe(false);
 		expect(forwarded.includes(Buffer.from([0, 1, 2, 3, 255]))).toBe(true);
 		expect(new Headers(init?.headers).get("content-type")).toContain("multipart/form-data");
+	});
+
+	it("logs multipart fields, file metadata, and image responses without storing uploaded bytes", async () => {
+		const imageBase64 = "A".repeat(3 * 1024 * 1024);
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ data: [{ b64_json: imageBase64 }] }), { status: 200 }),
+		);
+
+		const response = await request(buildApp(true))
+			.post("/v1/images/edits")
+			.field("model", "public-image")
+			.field("prompt", "add a blue hat")
+			.attach("image", Buffer.from([0, 1, 2, 3, 255]), {
+				filename: "input.png",
+				contentType: "image/png",
+			});
+
+		expect(response.status).toBe(200);
+		expect(mockBuildSpendLogFromRequest).toHaveBeenCalledTimes(1);
+		const spendContext = mockBuildSpendLogFromRequest.mock.calls[0]?.[0] as {
+			messages?: unknown;
+			proxyServerRequestBody?: unknown;
+			response?: { data?: Array<{ b64_json?: string }> };
+		};
+		const expectedRequestLog = {
+			model: "public-image",
+			prompt: "add a blue hat",
+			image: {
+				filename: "input.png",
+				content_type: "image/png",
+				size_bytes: 5,
+			},
+		};
+		expect(spendContext.messages).toEqual(expectedRequestLog);
+		expect(spendContext.proxyServerRequestBody).toEqual(expectedRequestLog);
+		expect(spendContext.response?.data?.[0]?.b64_json).toHaveLength(imageBase64.length);
 	});
 
 	it("rewrites Gemini path models and preserves the action query", async () => {
