@@ -49,6 +49,14 @@
 			"tag": "0005_codex_session_group",
 			"file": "0005_codex_session_group.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1785823200000,
+			"tag": "0006_resolved_model_group_daily_spend",
+			"file": "0006_resolved_model_group_daily_spend.sql",
+			"breakpoints": true
 		}
 	]
 }

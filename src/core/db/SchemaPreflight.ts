@@ -165,6 +165,48 @@ function indexSignature(value: SchemaIndexSnapshot): string {
 	return `${value.unique ? "unique" : "index"}:${value.method}:${value.keys.map((key) => normalizeSql(key)).join(",")}:${normalizeSql(value.predicate) ?? ""}`;
 }
 
+const DAILY_SPEND_TABLES_WITH_RESOLVED_MODEL_GROUP = new Set([
+	"LiteLLM_DailyAgentSpend",
+	"LiteLLM_DailyEndUserSpend",
+	"LiteLLM_DailyOrganizationSpend",
+	"LiteLLM_DailyTagSpend",
+	"LiteLLM_DailyTeamSpend",
+	"LiteLLM_DailyUserSpend",
+]);
+
+/**
+ * 0006 migration 将 Python daily spend 唯一索引扩展为包含 model_group。
+ * 这是受管迁移后的已知替换，不应被 Python baseline 预检误判为索引丢失。
+ */
+function hasManagedDailyModelGroupIndexReplacement(
+	tableName: string,
+	expected: SchemaIndexSnapshot,
+	actualIndexes: readonly SchemaIndexSnapshot[],
+): boolean {
+	if (
+		!DAILY_SPEND_TABLES_WITH_RESOLVED_MODEL_GROUP.has(tableName) ||
+		!expected.unique ||
+		expected.method !== "btree" ||
+		expected.predicate !== null ||
+		expected.keys.includes("model_group")
+	) {
+		return false;
+	}
+	const modelIndex = expected.keys.indexOf("model");
+	if (modelIndex < 0) {
+		return false;
+	}
+	const replacementKeys = [...expected.keys.slice(0, modelIndex + 1), "model_group", ...expected.keys.slice(modelIndex + 1)];
+	return actualIndexes.some(
+		(index) =>
+			index.unique &&
+			index.method === expected.method &&
+			index.predicate === expected.predicate &&
+			index.keys.length === replacementKeys.length &&
+			index.keys.every((key, indexPosition) => normalizeSql(key) === normalizeSql(replacementKeys[indexPosition] ?? null)),
+	);
+}
+
 /**
  * 比较 Python 基线要求与数据库实际结构；允许接管后新增对象，但不允许基线对象漂移。
  * @param expected
@@ -209,7 +251,10 @@ export function compareSchemaSnapshots(expected: SchemaSnapshot, actual: SchemaS
 
 		const actualIndexes = new Set(actualTable.indexes.map(indexSignature));
 		for (const index of expectedTable.indexes) {
-			if (!actualIndexes.has(indexSignature(index))) {
+			if (
+				!actualIndexes.has(indexSignature(index)) &&
+				!hasManagedDailyModelGroupIndexReplacement(expectedTable.name, index, actualTable.indexes)
+			) {
 				drift.push(`missing index ${expectedTable.name}(${index.keys.join(",")})`);
 			}
 		}

@@ -85,6 +85,11 @@ export interface SpendLog {
 	model: string;
 	/** 模型组名称 */
 	model_group?: string;
+	/**
+	 * 最终实际执行的公共模型组名称。
+	 * 仅用于每日 Usage 聚合；SpendLogs.model_group 继续保留客户端原始请求模型。
+	 */
+	resolved_model_group?: string;
 	/** 模型 ID */
 	model_id?: string;
 	/** 自定义 LLM Provider */
@@ -216,6 +221,8 @@ export interface SpendLogsMetadata {
 	readonly fallback_models?: string[] | null;
 	/** 实际进入 Router 的各逻辑模型位置对应的 alias 展开路径；无 alias 时为 null。 */
 	readonly model_resolution_chain?: ModelResolutionChainEntry[] | null;
+	/** alias、fallback、Model Override 全部解析完成后的最终公共模型组。 */
+	readonly resolved_model_group?: string | null;
 	/**
 	 * 成本拆分明细（PY CostBreakdown，types/utils.py:2771）。
 	 * 由 trackSpendLog 算完 cost 后注入：{input_cost, output_cost, total_cost, tool_usage_cost}。

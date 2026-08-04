@@ -38,6 +38,44 @@ describe("PostgreSQL schema preflight", () => {
 		expect(compareSchemaSnapshots(compatible, actual)).toEqual([]);
 	});
 
+	it("允许 daily spend 唯一索引由受管迁移加入最终 model_group 维度", () => {
+		const expected: SchemaSnapshot = {
+			source: "fixture",
+			tables: [
+				{
+					...compatible.tables[0]!,
+					name: "LiteLLM_DailyUserSpend",
+					indexes: [
+						{
+							unique: true,
+							method: "btree",
+							keys: ["user_id", "date", "api_key", "model", "custom_llm_provider", "endpoint"],
+							predicate: null,
+						},
+					],
+				},
+			],
+		};
+		const actual: SchemaSnapshot = {
+			...expected,
+			tables: [
+				{
+					...expected.tables[0]!,
+					indexes: [
+						{
+							unique: true,
+							method: "btree",
+							keys: ["user_id", "date", "api_key", "model", "model_group", "custom_llm_provider", "endpoint"],
+							predicate: null,
+						},
+					],
+				},
+			],
+		};
+
+		expect(compareSchemaSnapshots(expected, actual)).toEqual([]);
+	});
+
 	it.each([
 		["table", { ...compatible, tables: [] }],
 		["column", { ...compatible, tables: [{ ...compatible.tables[0]!, columns: compatible.tables[0]!.columns.slice(0, 1) }] }],

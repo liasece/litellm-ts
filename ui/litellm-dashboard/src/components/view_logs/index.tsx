@@ -28,6 +28,7 @@ import LiveTailBanner from "./LiveTailBanner";
 import { LogDetailsDrawer, SessionSimulationDrawer } from "./LogDetailsDrawer";
 import LogsPagination from "./LogsPagination";
 import LogsToolbar from "./LogsToolbar";
+import ProviderStatusWarnings from "./ProviderStatusWarnings";
 import SpendLogsSettingsModal from "./SpendLogsSettingsModal/SpendLogsSettingsModal";
 import { DataTable } from "./table";
 
@@ -519,6 +520,7 @@ export default function SpendLogsTable({
 								title="Spend Logs Settings"
 							/>
 						</div>
+						<ProviderStatusWarnings logs={logsData.data} />
 						{selectedKeyInfo && selectedKeyIdInfoView && selectedKeyInfo.api_key === selectedKeyIdInfoView ? (
 							<KeyInfoView
 								keyId={selectedKeyIdInfoView}

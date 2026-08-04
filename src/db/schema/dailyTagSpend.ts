@@ -34,6 +34,7 @@ export const liteLLM_DailyTagSpend = pgTable(
 			table.date,
 			table.api_key,
 			table.model,
+			table.model_group,
 			table.custom_llm_provider,
 			table.mcp_namespaced_tool_name,
 			table.endpoint,

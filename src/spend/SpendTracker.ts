@@ -174,6 +174,15 @@ async function upsertDailySpend(
 	}
 
 	const model = log.model || "";
+	const resolvedModelGroup =
+		log.resolved_model_group ??
+		resolveFinalModelGroup({
+			modelGroup: log.model_group ?? model,
+			attemptedRetries: log.metadata?.["attempted_retries"],
+			fallbackModels: log.metadata?.["fallback_models"],
+			modelResolutionChain: log.metadata?.["model_resolution_chain"],
+			resolvedModelGroup: log.metadata?.["resolved_model_group"],
+		});
 	const successfulRequests = (log.status ?? SpendLogStatus.Success) === SpendLogStatus.Success ? 1 : 0;
 	const failedRequests = successfulRequests === 1 ? 0 : 1;
 	const updatedAt = new Date();
@@ -183,7 +192,7 @@ async function upsertDailySpend(
 		date: getDailySpendDate(log.startTime),
 		api_key: _protectApiKeyForDb(log.api_key),
 		model: model,
-		model_group: log.model_group ?? null,
+		model_group: resolvedModelGroup ?? null,
 		custom_llm_provider: log.custom_llm_provider ?? extractProvider(model),
 		mcp_namespaced_tool_name: log.mcp_namespaced_tool_name ?? "",
 		endpoint: getDailySpendEndpoint(log) ?? "",
@@ -215,6 +224,7 @@ async function upsertDailySpend(
 				table.date,
 				table.api_key,
 				table.model,
+				table.model_group,
 				table.custom_llm_provider,
 				table.mcp_namespaced_tool_name,
 				table.endpoint,
@@ -677,6 +687,49 @@ function normalizeModelResolutionChain(ctx: SpendLogBuildContext): SpendLogsMeta
 	}
 }
 
+interface FinalModelGroupResolutionInput {
+	readonly modelGroup?: unknown;
+	readonly attemptedRetries?: unknown;
+	readonly fallbackModels?: unknown;
+	readonly modelResolutionChain?: unknown;
+	readonly resolvedModelGroup?: unknown;
+}
+
+/**
+ * 解析一次请求最终实际执行的公共模型组。
+ *
+ * 最终 fallback 位置上的 alias / Model Override 解析结果优先；该位置没有 alias
+ * 轨迹时使用 fallback 链的最终模型。SpendLogs.model_group 仍保留原始请求值，
+ * 只有每日 Usage 聚合使用此结果。
+ */
+export function resolveFinalModelGroup(input: FinalModelGroupResolutionInput): string | undefined {
+	if (typeof input.resolvedModelGroup === "string" && input.resolvedModelGroup.length > 0) {
+		return input.resolvedModelGroup;
+	}
+	const fallbackModels = Array.isArray(input.fallbackModels)
+		? input.fallbackModels.filter((model): model is string => typeof model === "string" && model.length > 0)
+		: [];
+	const attemptedRetries =
+		typeof input.attemptedRetries === "number" && Number.isInteger(input.attemptedRetries) && input.attemptedRetries >= 0
+			? input.attemptedRetries
+			: Math.max(fallbackModels.length - 1, 0);
+	if (Array.isArray(input.modelResolutionChain)) {
+		for (let index = input.modelResolutionChain.length - 1; index >= 0; index--) {
+			const entry = input.modelResolutionChain[index];
+			if (
+				typeof entry === "object" &&
+				entry !== null &&
+				(entry as { fallback_index?: unknown }).fallback_index === attemptedRetries &&
+				typeof (entry as { resolved_model?: unknown }).resolved_model === "string" &&
+				((entry as { resolved_model: string }).resolved_model.length > 0)
+			) {
+				return (entry as { resolved_model: string }).resolved_model;
+			}
+		}
+	}
+	return fallbackModels[attemptedRetries] ?? fallbackModels.at(-1) ?? (typeof input.modelGroup === "string" ? input.modelGroup : undefined);
+}
+
 /**
  * 构建 Python SpendLogs metadata JSON。
  * @param ctx - SpendLog 构建上下文
@@ -697,6 +750,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 			: usageObject;
 	const failureInformation = ctx.error ? getFailureErrorInformation(ctx.error) : undefined;
 	const requesterIpAddress = getRequesterIpAddress(ctx.req);
+	const modelResolutionChain = normalizeModelResolutionChain(ctx);
 	return {
 		session_group_key: getCanonicalSessionGroupKey(ctx.req),
 		user_api_key: getAuthApiKeyForSpendLog(ctx),
@@ -730,7 +784,14 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		attempted_retries: ctx.attemptedRetries ?? null,
 		max_retries: ctx.maxRetries ?? null,
 		fallback_models: ctx.fallbackModels ?? null,
-		model_resolution_chain: normalizeModelResolutionChain(ctx),
+		model_resolution_chain: modelResolutionChain,
+		resolved_model_group:
+			resolveFinalModelGroup({
+				modelGroup: ctx.modelGroup ?? ctx.model,
+				attemptedRetries: ctx.attemptedRetries,
+				fallbackModels: ctx.fallbackModels,
+				modelResolutionChain: modelResolutionChain,
+			}) ?? null,
 		// cost_breakdown 由 trackSpendLog 算完 cost 后注入（构建时 cost 尚未计算）
 		cost_breakdown: null,
 		status: ctx.status ?? (ctx.error ? SpendLogStatus.Failure : SpendLogStatus.Success),
@@ -768,6 +829,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		// （含 provider 前缀），无 deployment 信息时回退请求 model
 		model: reconstructModelName(ctx.model, ctx.customLlmProvider, ctx.deploymentModel, (ctx.attemptedRetries ?? 0) > 0),
 		model_group: ctx.modelGroup,
+		resolved_model_group: metadata.resolved_model_group ?? undefined,
 		model_id: ctx.modelId,
 		custom_llm_provider: ctx.customLlmProvider,
 		api_base: ctx.apiBase,

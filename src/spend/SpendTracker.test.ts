@@ -27,6 +27,7 @@ import {
 	getKeyColumn,
 	normalizeUsageForSpend,
 	reconstructModelName,
+	resolveFinalModelGroup,
 	renewSpendReservation,
 	reserveSpend,
 	sanitizeSpendLogPayload,
@@ -1119,6 +1120,46 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 		).rejects.toMatchObject({ name: "ApiError", statusCode: 503 });
 		expect(successfulTables).toEqual([]);
 	});
+
+	it("每日 Usage 按最终 fallback 模型聚合，同时保留 SpendLog 原始 model_group", async () => {
+		const dailyValues: Record<string, unknown>[] = [];
+		const mockDb = withTransaction({
+			insert: jest.fn((table: unknown) => ({
+				values: jest.fn((values: Record<string, unknown>) => {
+					if (table === liteLLM_SpendLogs) {
+						return Promise.resolve();
+					}
+					dailyValues.push(values);
+					return {
+						onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+					};
+				}),
+			})),
+		}) as unknown as Parameters<typeof trackSpendLog>[0];
+
+		await trackSpendLog(mockDb, {
+			api_key: "hashed-key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			endTime: "2026-01-02T23:00:01.000Z",
+			metadata: {
+				attempted_retries: 1,
+				fallback_models: ["requested-model", "actual-fallback-model"],
+				resolved_model_group: "actual-fallback-model",
+			},
+			model: "provider/actual-model",
+			model_group: "requested-model",
+			prompt_tokens: 1,
+			request_id: "req-daily-resolved-model-group",
+			spend: 0.01,
+			startTime: "2026-01-02T23:00:00.000Z",
+			total_tokens: 2,
+			user: "user-1",
+		});
+
+		expect(dailyValues).toHaveLength(1);
+		expect(dailyValues[0]?.["model_group"]).toBe("actual-fallback-model");
+	});
 });
 
 describe("normalizeUsageForSpend cache 折叠（PY anthropic/chat/transformation.py:1588-1611）", () => {
@@ -1310,7 +1351,43 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 
 		expect(spendLog.model).toBe("MiniMax-M2.7");
 		expect(spendLog.model_group).toBe("qwen3.6-27b");
+		expect(spendLog.resolved_model_group).toBe("MiniMax-M2.7");
 		expect(spendLog.metadata?.fallback_models).toEqual(["qwen3.6-27b", "MiniMax-M2.7"]);
+		expect(spendLog.metadata?.resolved_model_group).toBe("MiniMax-M2.7");
+	});
+
+	it("alias 与 Model Override 使用最终 fallback 位置的解析目标", () => {
+		expect(
+			resolveFinalModelGroup({
+				modelGroup: "public-alias",
+				attemptedRetries: 0,
+				fallbackModels: ["public-alias"],
+				modelResolutionChain: [
+					{
+						fallback_index: 0,
+						input_model: "public-alias",
+						resolved_model: "override-target",
+						resolution_path: ["public-alias", "alias-target", "override-target"],
+					},
+				],
+			}),
+		).toBe("override-target");
+
+		expect(
+			resolveFinalModelGroup({
+				modelGroup: "public-alias",
+				attemptedRetries: 1,
+				fallbackModels: ["public-alias", "fallback-target"],
+				modelResolutionChain: [
+					{
+						fallback_index: 0,
+						input_model: "public-alias",
+						resolved_model: "initial-target",
+						resolution_path: ["public-alias", "initial-target"],
+					},
+				],
+			}),
+		).toBe("fallback-target");
 	});
 
 	it("从 OpenAI Responses client_metadata 提取稳定 Codex 任务分组键", async () => {
