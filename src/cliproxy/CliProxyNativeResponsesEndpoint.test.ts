@@ -1,18 +1,20 @@
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import request from "supertest";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { Deployment } from "../types/router";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { registerCliProxyNativeResponsesRoutes } from "./CliProxyNativeResponsesEndpoint";
 
-function buildApp(): express.Express {
+function buildApp(reasoningEffortOverride?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"): express.Express {
 	const deployment: Deployment = {
 		model_name: "gpt-5.6-sol",
 		litellm_params: {
 			model: "cliproxy/gpt-5.6-sol",
 			custom_llm_provider: "cliproxy",
 		},
+		model_info: reasoningEffortOverride ? { override_reasoning_effort: reasoningEffortOverride } : undefined,
 	};
 	const router = {
 		getAvailableDeployment: () => ({ deployment: deployment }),
@@ -118,5 +120,29 @@ describe("CLIProxy native Responses streaming", () => {
 			}
 			await closeServer(server);
 		}
+	});
+
+	it("overrides the final native Responses reasoning effort", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ id: "resp_1", usage: { input_tokens: 1, output_tokens: 1 } }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		await request(buildApp("max"))
+			.post("/v1/responses")
+			.send({
+				model: "gpt-5.6-sol",
+				input: "hello",
+				reasoning: { effort: "low", summary: "detailed" },
+			})
+			.expect(200);
+
+		const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+		expect(JSON.parse(String(init?.body))).toMatchObject({
+			model: "gpt-5.6-sol",
+			reasoning: { effort: "max", summary: "detailed" },
+		});
 	});
 });

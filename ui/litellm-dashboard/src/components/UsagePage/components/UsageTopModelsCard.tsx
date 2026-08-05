@@ -1,4 +1,5 @@
 import { Card, Title } from "@tremor/react";
+import { DatabaseOutlined } from "@ant-design/icons";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { ChartLoader } from "../../shared/chart_loader";
 import { valueFormatterSpend } from "../utils/value_formatters";
@@ -11,6 +12,13 @@ export type TopModelUsage = Record<string, unknown> & {
 	successful_requests: number;
 	failed_requests: number;
 	tokens: number;
+	prompt_tokens: number;
+	cache_read_input_tokens: number;
+};
+
+export const calculateInputCacheHitRate = (cacheReadInputTokens: number, promptTokens: number): number => {
+	if (!Number.isFinite(cacheReadInputTokens) || !Number.isFinite(promptTokens) || promptTokens <= 0) return 0;
+	return Math.round(Math.min(Math.max(cacheReadInputTokens / promptTokens, 0), 1) * 100);
 };
 
 interface UsageTopModelsCardProps {
@@ -66,6 +74,18 @@ export default function UsageTopModelsCard({
 						yAxisWidth={160}
 						height={40}
 						valueFormatter={valueFormatterSpend}
+						renderBarAnnotation={(data) => {
+							const cacheHitRate = calculateInputCacheHitRate(data.cache_read_input_tokens, data.prompt_tokens);
+							return (
+								<span
+									className="inline-flex items-center gap-1 text-[11px] text-gray-500"
+									aria-label={`Input cache hit rate: ${cacheHitRate}%`}
+								>
+									<DatabaseOutlined aria-hidden />
+									{cacheHitRate}%
+								</span>
+							);
+						}}
 						renderTooltip={(data) =>
 							data && (
 								<div className="rounded-lg border bg-white p-3 text-xs shadow-lg">
@@ -75,6 +95,9 @@ export default function UsageTopModelsCard({
 									<p className="text-green-600">Successful: {data.successful_requests.toLocaleString()}</p>
 									<p className="text-red-600">Failed: {data.failed_requests.toLocaleString()}</p>
 									<p className="text-gray-600">Tokens: {formatNumberWithCommas(data.tokens, 0, false)}</p>
+									<p className="text-gray-600">
+										Input Cache Hit: {calculateInputCacheHitRate(data.cache_read_input_tokens, data.prompt_tokens)}%
+									</p>
 								</div>
 							)
 						}

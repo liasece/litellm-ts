@@ -131,4 +131,30 @@ describe("ProviderStatusWarnings", () => {
 			},
 		]);
 	});
+
+	it("attributes a failed fallback to the final provider model when the row keeps the original model group", () => {
+		const warnings = collectProviderStatusWarnings(
+			[
+				createLog({
+					custom_llm_provider: undefined,
+					model: "qwen3.6-27b",
+					metadata: {
+						status: "failure",
+						error_information: { error_code: 529 },
+						fallback_models: ["qwen3.6-27b", "MiniMax-M2.7"],
+					},
+				}),
+			],
+			NOW,
+		);
+
+		expect(warnings).toMatchObject([
+			{
+				provider: "minimax",
+				displayName: "MiniMax",
+				errorCount: 1,
+				errorCodes: [529],
+			},
+		]);
+	});
 });

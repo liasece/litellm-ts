@@ -283,28 +283,38 @@ export class AnthropicProvider implements ProviderConfig {
 		} else if (optionalParams.reasoning_effort) {
 			const effortRaw = optionalParams.reasoning_effort as string;
 			// 先做 effort 校验（PY: transformation.py:1436-1448），避免无效值走到 _mapReasoningEffort 抛 "Unmapped"
-			if (!["low", "minimal", "medium", "high", "max", "none"].includes(effortRaw)) {
-				throw new Error(`Invalid effort value: ${effortRaw}. Must be one of: 'low', 'minimal', 'medium', 'high', 'max', 'none'`);
+			if (!["low", "minimal", "medium", "high", "xhigh", "max", "none"].includes(effortRaw)) {
+				throw new Error(
+					`Invalid effort value: ${effortRaw}. Must be one of: 'low', 'minimal', 'medium', 'high', 'xhigh', 'max', 'none'`,
+				);
 			}
 			body.thinking = this._mapReasoningEffort(effortRaw, model);
 			// 总是构造 output_config，让后面的 effort 校验生效
 			// "none" 不应构造 output_config（PY: skip effort for "none"）
 			if (effortRaw !== "none") {
-				const effortMap: Record<string, string> = { low: "low", minimal: "low", medium: "medium", high: "high", max: "max" };
+				const effortMap: Record<string, string> = {
+					low: "low",
+					minimal: "low",
+					medium: "medium",
+					high: "high",
+					xhigh: "xhigh",
+					max: "max",
+				};
 				body.output_config = { effort: effortMap[effortRaw] ?? effortRaw };
 			}
 		}
 
-		// PY: output_config effort validation — must be one of high/medium/low/max, max only Opus 4.6 (transformation.py:1436-1448)
+		// Claude's request-level effort signal. Individual models may support a
+		// subset of xhigh/max; let the upstream model return that capability error.
 		if (body.output_config) {
 			const oc = body.output_config as Record<string, unknown>;
 			const effort = oc.effort as string | undefined;
 			if (effort) {
-				if (!["high", "medium", "low", "max"].includes(effort)) {
-					throw new Error(`Invalid effort value: ${effort}. Must be one of: 'high', 'medium', 'low', 'max'`);
+				if (!["high", "medium", "low", "xhigh", "max"].includes(effort)) {
+					throw new Error(`Invalid effort value: ${effort}. Must be one of: 'high', 'medium', 'low', 'xhigh', 'max'`);
 				}
-				if (effort === "max" && !this._isOpus46Model(model)) {
-					throw new Error(`effort='max' is only supported by Claude Opus 4.6. Got model: ${model}`);
+				if ((effort === "xhigh" || effort === "max") && !this._isClaudeEffortModel(model)) {
+					throw new Error(`effort='${effort}' is only supported by compatible Claude models. Got model: ${model}`);
 				}
 			}
 		}
@@ -2271,12 +2281,11 @@ export class AnthropicProvider implements ProviderConfig {
 				return { type: "enabled", budget_tokens: DEFAULT_REASONING_EFFORT_MEDIUM_THINKING_BUDGET };
 			case "high":
 				return { type: "enabled", budget_tokens: DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET };
+			case "xhigh":
+			case "max":
+				return { type: "enabled", budget_tokens: DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET };
 			case "minimal":
 				return { type: "enabled", budget_tokens: DEFAULT_REASONING_EFFORT_MINIMAL_THINKING_BUDGET };
-			case "max":
-				// PY: max effort 仅 Opus 4.6；其他模型在 transformRequest 阶段已抛错，
-				// 此处返回 highest budget 作为兜底（不应走到这里）。
-				return { type: "enabled", budget_tokens: DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET };
 			default:
 				throw new Error(`Unmapped reasoning effort: ${reasoningEffort}`);
 		}
@@ -2294,6 +2303,11 @@ export class AnthropicProvider implements ProviderConfig {
 			lower.includes("sonnet-4.6") ||
 			lower.includes("sonnet_4.6")
 		);
+	}
+
+	private _isClaudeEffortModel(model: string): boolean {
+		const lower = model.toLowerCase();
+		return lower.includes("claude") || lower.includes("fable") || lower.includes("mythos");
 	}
 
 	// ========== user_id normalization ==========

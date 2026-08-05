@@ -18,7 +18,7 @@ import type { Message } from "../types/openai";
 describe("AnthropicProvider", () => {
 	const provider = new AnthropicProvider();
 
-	describe("output_config effort 校验 (PY: transformation.py:1436-1448)", () => {
+	describe("output_config effort 校验", () => {
 		it("Opus 4.6 接受 effort='max'", () => {
 			const messages: Message[] = [{ role: "user", content: "Hi" }];
 			expect(() =>
@@ -29,14 +29,15 @@ describe("AnthropicProvider", () => {
 			).not.toThrow();
 		});
 
-		it("非 Opus 4.6 (Sonnet) 拒绝 effort='max'", () => {
+		it("将 xhigh/max 交给上游模型做能力校验", () => {
 			const messages: Message[] = [{ role: "user", content: "Hi" }];
-			expect(() =>
-				provider.transformRequest("claude-sonnet-4-5", messages, {
+			for (const effort of ["xhigh", "max"] as const) {
+				const result = provider.transformRequest("claude-sonnet-5", messages, {
 					api_key: "k",
-					reasoning_effort: "max",
-				}),
-			).toThrow(/only supported by Claude Opus 4.6/);
+					reasoning_effort: effort,
+				});
+				expect(result.body).toMatchObject({ output_config: { effort: effort } });
+			}
 		});
 
 		it("effort='invalid' 拒绝", () => {

@@ -6,6 +6,8 @@ import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
 import type { ServiceContainer } from "../container";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
+import type { Deployment } from "../types/router";
+import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 
 const WS_AUTH_SUBPROTOCOL_PREFIX = "litellm_";
 const MAX_BUFFERED_WEBSOCKET_BYTES = 4 * 1024 * 1024;
@@ -96,12 +98,16 @@ function stripCliProxyPrefix(value: string): string {
 	return value.startsWith(`${CLIPROXY_PROVIDER}/`) ? value.slice(CLIPROXY_PROVIDER.length + 1) : value;
 }
 
-function resolveModel(container: ServiceContainer, requestedModel: string): { publicModel: string; upstreamModel: string } | null {
+function resolveModel(
+	container: ServiceContainer,
+	requestedModel: string,
+): { publicModel: string; upstreamModel: string; deployment: Deployment } | null {
 	const candidate = container.router.getAvailableDeployment(requestedModel);
 	if (candidate?.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER) {
 		return {
 			publicModel: requestedModel,
 			upstreamModel: stripCliProxyPrefix(candidate.deployment.litellm_params.model || requestedModel),
+			deployment: candidate.deployment,
 		};
 	}
 	const deployment = (container.router.getDeployments?.() ?? []).find(
@@ -109,7 +115,13 @@ function resolveModel(container: ServiceContainer, requestedModel: string): { pu
 			item.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER &&
 			stripCliProxyPrefix(item.litellm_params.model) === stripCliProxyPrefix(requestedModel),
 	);
-	return deployment ? { publicModel: deployment.model_name, upstreamModel: stripCliProxyPrefix(deployment.litellm_params.model) } : null;
+	return deployment
+		? {
+				publicModel: deployment.model_name,
+				upstreamModel: stripCliProxyPrefix(deployment.litellm_params.model),
+				deployment: deployment,
+			}
+		: null;
 }
 
 function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req: Request): { value: unknown; foundModel: boolean } {
@@ -127,6 +139,7 @@ function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req:
 	}
 	let foundModel = false;
 	const result: Record<string, unknown> = {};
+	let directDeployment: Deployment | undefined;
 	for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
 		if (key === "model" && typeof item === "string") {
 			const resolved = resolveModel(container, item);
@@ -137,6 +150,7 @@ function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req:
 				runCommonChecks(req.auth, resolved.publicModel);
 			}
 			result[key] = resolved.upstreamModel;
+			directDeployment = resolved.deployment;
 			foundModel = true;
 			continue;
 		}
@@ -144,7 +158,9 @@ function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req:
 		result[key] = rewritten.value;
 		foundModel ||= rewritten.foundModel;
 	}
-	return { value: result, foundModel: foundModel };
+	const outbound =
+		directDeployment && req.path.includes("responses") ? applyReasoningEffortOverride(result, directDeployment, "responses") : result;
+	return { value: outbound, foundModel: foundModel };
 }
 
 function rewriteClientMessage(data: WebSocket.RawData, isBinary: boolean, container: ServiceContainer, req: Request): WebSocket.RawData {

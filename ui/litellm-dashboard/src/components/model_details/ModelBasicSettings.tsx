@@ -15,13 +15,25 @@ interface ModelBasicSettingsProps {
 	availableModelNames: string[];
 }
 
-function CredentialValue({
-	value,
-	format = String,
-}: {
-	value: unknown;
-	format?: (value: any) => string;
-}) {
+const ANTHROPIC_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+const CODEX_REASONING_EFFORTS = ["minimal", ...ANTHROPIC_REASONING_EFFORTS] as const;
+
+function isCodexReasoningModel(provider: unknown, model: unknown): boolean {
+	const providerName = typeof provider === "string" ? provider.toLowerCase() : "";
+	const modelName = typeof model === "string" ? model.toLowerCase().replace(/^cliproxy\//, "") : "";
+	if (providerName === "anthropic" || modelName.includes("claude")) {
+		return false;
+	}
+	return (
+		providerName === "openai" ||
+		providerName === "cliproxy" ||
+		modelName.includes("codex") ||
+		modelName.startsWith("gpt-") ||
+		/^o\d/.test(modelName)
+	);
+}
+
+function CredentialValue({ value, format = String }: { value: unknown; format?: (value: any) => string }) {
 	return (
 		<span className="text-gray-400">
 			{format(value)}
@@ -40,6 +52,14 @@ export default function ModelBasicSettings({
 	const form = Form.useFormInstance();
 	const litellmParams = modelData.litellm_params ?? {};
 	const modelInfo = modelData.model_info ?? {};
+	const watchedProvider = Form.useWatch("custom_llm_provider", form);
+	const watchedModel = Form.useWatch("litellm_model_name", form);
+	const reasoningEfforts = isCodexReasoningModel(
+		editing ? watchedProvider ?? litellmParams.custom_llm_provider : litellmParams.custom_llm_provider,
+		editing ? watchedModel ?? modelData.litellm_model_name : modelData.litellm_model_name,
+	)
+		? CODEX_REASONING_EFFORTS
+		: ANTHROPIC_REASONING_EFFORTS;
 	const hasCredentialValue = (key: string) =>
 		credentialValues !== undefined && Object.prototype.hasOwnProperty.call(credentialValues, key);
 	const resolvedValue = (key: string, fallback: React.ReactNode, format?: (value: any) => string) =>
@@ -106,6 +126,29 @@ export default function ModelBasicSettings({
 				}
 			>
 				{modelInfo.override_model_name || "Not Set"}
+			</ModelSettingField>
+			<ModelSettingField
+				label={
+					<>
+						Override Reasoning Effort
+						<Tooltip title="When set, replaces the caller's reasoning effort on the final request sent to the model server.">
+							<InfoCircleOutlined className="ml-1" />
+						</Tooltip>
+					</>
+				}
+				editing={editing}
+				editor={
+					<Form.Item name="override_reasoning_effort" className="mb-0">
+						<Select
+							allowClear
+							aria-label="Override Reasoning Effort"
+							placeholder="Preserve request value"
+							options={reasoningEfforts.map((effort) => ({ value: effort, label: effort }))}
+						/>
+					</Form.Item>
+				}
+			>
+				{modelInfo.override_reasoning_effort || "Not Set"}
 			</ModelSettingField>
 			<ModelSettingField
 				label="Input Cost (per 1M tokens)"

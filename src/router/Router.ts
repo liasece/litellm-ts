@@ -49,6 +49,7 @@ import { createModelResolutionTraceCollector, type ModelGroupResolution, type Mo
 import { RoutingStrategyName } from "../types/router";
 import { executeProviderRequest } from "./ProviderRequestExecutor";
 import { buildModelGroupOverrides } from "./ModelOverrides";
+import { applyReasoningEffortOverride } from "./ReasoningEffortOverride";
 
 type RouteFn = (deployments: Deployment[], ctx: RoutingContext) => Deployment | null;
 
@@ -822,14 +823,16 @@ export class Router {
 		const requestParams = { ...optionalParams };
 		delete requestParams["__litellm_call_type"];
 		const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...requestParams };
+		const outboundParams =
+			callType === "image_generation" ? mergedParams : applyReasoningEffortOverride(mergedParams, deployment, "chat");
 		const providerRequest =
 			callType === "image_generation"
 				? provider.transformImageRequest?.(
 						deployment.litellm_params.model,
 						typeof messages[0]?.content === "string" ? messages[0].content : "",
-						mergedParams,
+						outboundParams,
 					)
-				: provider.transformRequest(deployment.litellm_params.model, messages as Message[], mergedParams);
+				: provider.transformRequest(deployment.litellm_params.model, messages as Message[], outboundParams);
 		if (!providerRequest) {
 			// 抛结构化 ApiError 而非裸 Error：让 ImageEndpoint 返回合理的 4xx/5xx 而非通用 500。
 			throw ApiError.unavailable(`Provider does not support image generation for model ${deployment.model_name}`);

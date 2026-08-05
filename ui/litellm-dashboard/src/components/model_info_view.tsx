@@ -152,6 +152,7 @@ export default function ModelInfoView({
 			tags: Array.isArray(litellmParams.tags) ? litellmParams.tags : [],
 			health_check_model: updatedModel.model_info?.health_check_model ?? null,
 			override_model_name: updatedModel.model_info?.override_model_name ?? undefined,
+			override_reasoning_effort: updatedModel.model_info?.override_reasoning_effort ?? undefined,
 			litellm_credential_name: litellmParams.litellm_credential_name || "",
 			api_key: litellmParams.api_key ?? "",
 			delete_api_key: false,
@@ -387,6 +388,7 @@ export default function ModelInfoView({
 				updatedModelInfo = {
 					...updatedModelInfo,
 					override_model_name: values.override_model_name || null,
+					override_reasoning_effort: values.override_reasoning_effort || null,
 				};
 			} catch (e) {
 				NotificationsManager.fromBackend("Invalid JSON in Model Info");

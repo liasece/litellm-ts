@@ -10,12 +10,13 @@ import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
+import type { Deployment } from "../types/router";
+import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 
 const MAX_PASSTHROUGH_BODY_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_CAPTURED_RESPONSE_BYTES = 24 * 1024 * 1024;
 const MAX_CAPTURED_RESPONSE_BYTES =
-	Number(process.env.MAX_CLIPROXY_CAPTURED_RESPONSE_BYTES ?? DEFAULT_MAX_CAPTURED_RESPONSE_BYTES) ||
-	DEFAULT_MAX_CAPTURED_RESPONSE_BYTES;
+	Number(process.env.MAX_CLIPROXY_CAPTURED_RESPONSE_BYTES ?? DEFAULT_MAX_CAPTURED_RESPONSE_BYTES) || DEFAULT_MAX_CAPTURED_RESPONSE_BYTES;
 const REQUEST_BLOCKED_HEADERS = new Set([
 	"authorization",
 	"x-api-key",
@@ -41,6 +42,7 @@ interface NativePassthroughRoute {
 interface ResolvedCliProxyModel {
 	readonly publicModel: string;
 	readonly upstreamModel: string;
+	readonly deployment: Deployment;
 }
 
 interface PreparedRequestBody {
@@ -166,6 +168,7 @@ function resolveCliProxyModel(router: LiteLLMRouter, requestedModel: string): Re
 		return {
 			publicModel: requestedModel,
 			upstreamModel: stripCliProxyPrefix(direct.deployment.litellm_params.model || requestedModel),
+			deployment: direct.deployment,
 		};
 	}
 	const deployment = (router.getDeployments?.() ?? []).find(
@@ -179,6 +182,7 @@ function resolveCliProxyModel(router: LiteLLMRouter, requestedModel: string): Re
 	return {
 		publicModel: deployment.model_name,
 		upstreamModel: stripCliProxyPrefix(deployment.litellm_params.model),
+		deployment: deployment,
 	};
 }
 
@@ -325,12 +329,17 @@ function rewriteModelFields(value: unknown, requestedModel: string, upstreamMode
 	return result;
 }
 
-function rewritePreparedBody(body: PreparedRequestBody, resolved: ResolvedCliProxyModel | null): PreparedRequestBody {
+function rewritePreparedBody(
+	body: PreparedRequestBody,
+	resolved: ResolvedCliProxyModel | null,
+	applyResponsesEffort: boolean,
+): PreparedRequestBody {
 	if (!resolved || !body.bytes || !body.requestedModel) {
 		return body;
 	}
 	if (body.parsed) {
-		const parsed = rewriteModelFields(body.parsed, body.requestedModel, resolved.upstreamModel) as Record<string, unknown>;
+		const rewritten = rewriteModelFields(body.parsed, body.requestedModel, resolved.upstreamModel) as Record<string, unknown>;
+		const parsed = applyResponsesEffort ? applyReasoningEffortOverride(rewritten, resolved.deployment, "responses") : rewritten;
 		return {
 			bytes: Buffer.from(JSON.stringify(parsed)),
 			parsed: parsed,
@@ -618,7 +627,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		if (resolved && req.auth) {
 			runCommonChecks(req.auth, resolved.publicModel);
 		}
-		const rewritten = rewritePreparedBody(prepared, resolved);
+		const rewritten = rewritePreparedBody(prepared, resolved, route.path.includes("responses"));
 		const path = upstreamRequestPath(route, req, resolved, requestedModel);
 		const upstreamUrl = `${runtime.baseUrl}${path}`;
 		const startTime = new Date();

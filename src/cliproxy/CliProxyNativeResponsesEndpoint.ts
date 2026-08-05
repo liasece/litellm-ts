@@ -10,6 +10,7 @@ import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/Spe
 import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { buildDeploymentSpendInfo } from "../router/RouterSpendInfo";
+import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 
 const REQUEST_BLOCKED_HEADERS = new Set([
 	"authorization",
@@ -278,10 +279,15 @@ export function registerCliProxyNativeResponsesRoutes(
 		const stopKeepAlive = streaming ? startResponsesSseKeepAlive(res) : undefined;
 		try {
 			const upstreamUrl = `${runtime.baseUrl}/v1/responses`;
+			const upstreamBody = applyReasoningEffortOverride(
+				{ ...body, model: upstreamModel(deploymentModel) },
+				candidate.deployment,
+				"responses",
+			);
 			const upstream = await fetch(upstreamUrl, {
 				method: "POST",
 				headers: buildForwardHeaders(req, runtime.internalApiKey),
-				body: JSON.stringify({ ...body, model: upstreamModel(deploymentModel) }),
+				body: JSON.stringify(upstreamBody),
 				signal: abortController.signal,
 			});
 			// 与 registerNativeRoute 一致：responses 协议也参与 deployment 冷却记账。
@@ -422,10 +428,15 @@ function registerNativeRoute({
 			res.once("close", abort);
 			try {
 				const upstreamUrl = `${runtime.baseUrl}${upstreamPath}`;
+				const upstreamBody = applyReasoningEffortOverride(
+					{ ...body, model: upstreamModel(deploymentModel) },
+					candidate.deployment,
+					anthropicNative ? "anthropic" : "chat",
+				);
 				const upstream = await fetch(upstreamUrl, {
 					method: "POST",
 					headers: buildForwardHeaders(req, runtime.internalApiKey, anthropicNative),
-					body: JSON.stringify({ ...body, model: upstreamModel(deploymentModel) }),
+					body: JSON.stringify(upstreamBody),
 					signal: abortController.signal,
 				});
 				if (upstream.ok) {

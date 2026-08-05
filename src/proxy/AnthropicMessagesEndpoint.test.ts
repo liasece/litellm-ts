@@ -14,11 +14,14 @@ function sseResponse(events: Record<string, unknown>[]): Response {
 	return new globalThis.Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-function buildApp() {
+function buildApp(reasoningEffortOverride?: string) {
 	const deployment = {
 		model_name: "native-group",
 		litellm_params: { model: "anthropic/upstream-model", api_key: "provider-key", custom_llm_provider: "anthropic" },
-		model_info: { id: "dep-native" },
+		model_info: {
+			id: "dep-native",
+			...(reasoningEffortOverride ? { override_reasoning_effort: reasoningEffortOverride } : {}),
+		},
 	};
 	const provider = {
 		transformRequest: jest.fn().mockReturnValue({
@@ -245,6 +248,37 @@ describe("native Anthropic streaming SpendLog", () => {
 					},
 				],
 			},
+		});
+	});
+
+	it("在最终 Anthropic 请求中覆盖调用方的 effort 并保留 output_config 其他字段", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new globalThis.Response(
+				JSON.stringify({
+					id: "msg-effort",
+					type: "message",
+					role: "assistant",
+					model: "upstream-model",
+					content: [{ type: "text", text: "ok" }],
+					stop_reason: "end_turn",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+
+		await request(buildApp("xhigh"))
+			.post("/v1/messages")
+			.send({
+				model: "native-group",
+				messages: [{ role: "user", content: "hello" }],
+				output_config: { effort: "low", format: { type: "json_schema" } },
+			})
+			.expect(200);
+
+		const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+		expect(JSON.parse(String(init?.body))).toMatchObject({
+			output_config: { effort: "xhigh", format: { type: "json_schema" } },
 		});
 	});
 
@@ -488,7 +522,9 @@ describe("Anthropic/OpenAI Files protocol routing", () => {
 			.expect(200);
 
 		const init = fetchSpy.mock.calls[0]?.[1] as (RequestInit & { duplex?: string }) | undefined;
-		expect(init?.headers).toEqual(expect.objectContaining({ "Content-Type": expect.stringContaining("multipart/form-data; boundary=") }));
+		expect(init?.headers).toEqual(
+			expect.objectContaining({ "Content-Type": expect.stringContaining("multipart/form-data; boundary=") }),
+		);
 		expect(init?.body).toBeDefined();
 		expect(init?.duplex).toBe("half");
 	});
@@ -577,10 +613,7 @@ describe("Anthropic/OpenAI Files protocol routing", () => {
 		const deleted = await request(app).delete("/v1/messages/batches/msgbatch_1").expect(200);
 		expect(deleted.body).toEqual({ id: "msgbatch_1", type: "message_batch_deleted" });
 		expect(fetchSpy.mock.calls).toEqual([
-			[
-				"https://provider.example/v1/messages/batches/msgbatch_1/results",
-				expect.objectContaining({ headers: expect.any(Object) }),
-			],
+			["https://provider.example/v1/messages/batches/msgbatch_1/results", expect.objectContaining({ headers: expect.any(Object) })],
 			[
 				"https://provider.example/v1/messages/batches/msgbatch_1",
 				expect.objectContaining({ method: "DELETE", headers: expect.any(Object) }),

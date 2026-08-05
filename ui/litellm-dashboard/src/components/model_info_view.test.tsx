@@ -687,6 +687,26 @@ describe("ModelInfoView", () => {
 		);
 	});
 
+	it("saves a model-level reasoning effort override", async () => {
+		const user = userEvent.setup();
+		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+		await user.click(await screen.findByRole("button", { name: /^edit$/i }));
+		const effortSelect = await screen.findByRole("combobox", { name: "Override Reasoning Effort" });
+		await user.click(effortSelect.closest(".ant-select-selector") as HTMLElement);
+		const xhighOption = await waitFor(() => {
+			const option = document.querySelector<HTMLElement>('.ant-select-item-option[title="xhigh"]');
+			expect(option).not.toBeNull();
+			return option as HTMLElement;
+		});
+		await user.click(xhighOption);
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+		await waitFor(() => expect(mockModelPatchUpdateCall).toHaveBeenCalled());
+		const payload = mockModelPatchUpdateCall.mock.calls[0][1] as { model_info: Record<string, unknown> };
+		expect(payload.model_info.override_reasoning_effort).toBe("xhigh");
+	});
+
 	it("should allow editing model name in edit mode", async () => {
 		const user = userEvent.setup();
 		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });

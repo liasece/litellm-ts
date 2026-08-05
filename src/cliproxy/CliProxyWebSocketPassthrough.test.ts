@@ -31,6 +31,7 @@ describe("CLIProxy WebSocket passthrough", () => {
 				model: "cliproxy/gpt-5.6-sol",
 				custom_llm_provider: "cliproxy",
 			},
+			model_info: { override_reasoning_effort: "max" },
 		};
 		let upstreamAuthorization: string | undefined;
 		let upstreamMessage = "";
@@ -75,7 +76,11 @@ describe("CLIProxy WebSocket passthrough", () => {
 					client.send(
 						JSON.stringify({
 							type: "response.create",
-							response: { model: "public-codex", input: "hello" },
+							response: {
+								model: "public-codex",
+								input: "hello",
+								reasoning: { effort: "low", summary: "detailed" },
+							},
 						}),
 					);
 				});
@@ -88,7 +93,11 @@ describe("CLIProxy WebSocket passthrough", () => {
 			await upstreamReceived;
 			expect(upstreamAuthorization).toBe("Bearer internal-only");
 			expect(JSON.parse(upstreamMessage)).toMatchObject({
-				response: { model: "gpt-5.6-sol", input: "hello" },
+				response: {
+					model: "gpt-5.6-sol",
+					input: "hello",
+					reasoning: { effort: "max", summary: "detailed" },
+				},
 			});
 		} finally {
 			client.terminate();

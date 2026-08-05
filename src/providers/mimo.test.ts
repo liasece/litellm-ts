@@ -104,15 +104,14 @@ describe("MiMoProvider (composition over AnthropicProvider)", () => {
 			expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
 		});
 
-		it("output_config.effort=max 在非 Opus 4.6 模型上抛错", () => {
+		it("output_config.effort=max 在非 Claude 模型上抛错", () => {
 			const messages: Message[] = [{ role: "user", content: "Hi" }];
-			// 通过 reasoning_effort=max 触发 output_config 注入 → _isOpus46Model 校验
 			expect(() =>
 				provider.transformRequest("mimo-v2.5-pro", messages, {
 					api_key: "key",
 					reasoning_effort: "max",
 				}),
-			).toThrow(/only supported by Claude Opus 4.6/);
+			).toThrow(/only supported by compatible Claude models/);
 		});
 
 		it("tool/assistant 流正确转换为 tool_use + tool_result blocks", () => {

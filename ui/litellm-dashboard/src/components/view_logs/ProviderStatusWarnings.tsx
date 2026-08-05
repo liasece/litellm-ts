@@ -7,11 +7,13 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const PROVIDER_DETAILS: Record<string, { displayName: string; statusPageUrl?: string }> = {
 	anthropic: { displayName: "Anthropic" },
 	deepseek: { displayName: "DeepSeek", statusPageUrl: "https://status.deepseek.com/" },
+	minimax: { displayName: "MiniMax" },
 	openai: { displayName: "OpenAI" },
 };
 
 const PROVIDER_MODEL_PATTERNS: Array<{ provider: string; pattern: RegExp }> = [
 	{ provider: "deepseek", pattern: /^deepseek(?:[-_.:/]|$)/ },
+	{ provider: "minimax", pattern: /^minimax(?:[-_.:/]|$)/ },
 	{ provider: "anthropic", pattern: /^claude(?:[-_.:/]|$)/ },
 	{ provider: "openai", pattern: /^(?:chatgpt|gpt|o1|o3|o4)(?:[-_.:/]|$)/ },
 ];
@@ -25,15 +27,28 @@ export interface ProviderStatusWarning {
 	statusPageUrl?: string;
 }
 
-function normalizeProvider(log: LogEntry): string | null {
-	const explicitProvider = log.custom_llm_provider?.trim().toLowerCase();
-	if (explicitProvider) return explicitProvider;
-
-	const normalizedModel = log.model.trim().toLowerCase();
+function providerFromModelName(model: unknown): string | null {
+	if (typeof model !== "string") return null;
+	const normalizedModel = model.trim().toLowerCase();
+	if (!normalizedModel) return null;
 	const modelPrefix = normalizedModel.split("/", 1)[0];
 	if (normalizedModel.includes("/") && modelPrefix) return modelPrefix;
 
 	return PROVIDER_MODEL_PATTERNS.find(({ pattern }) => pattern.test(normalizedModel))?.provider ?? null;
+}
+
+function normalizeProvider(log: LogEntry): string | null {
+	const explicitProvider = log.custom_llm_provider?.trim().toLowerCase();
+	if (explicitProvider) return explicitProvider;
+
+	const fallbackModels = Array.isArray(log.metadata?.fallback_models) ? log.metadata.fallback_models : [];
+	const modelCandidates = [...fallbackModels.slice().reverse(), log.model];
+	for (const model of modelCandidates) {
+		const provider = providerFromModelName(model);
+		if (provider) return provider;
+	}
+
+	return null;
 }
 
 function readHttpStatus(log: LogEntry): number | null {

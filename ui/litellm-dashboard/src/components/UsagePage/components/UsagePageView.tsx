@@ -270,6 +270,8 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 				successful_requests: metrics.metrics.successful_requests,
 				failed_requests: metrics.metrics.failed_requests,
 				tokens: metrics.metrics.total_tokens,
+				prompt_tokens: metrics.metrics.prompt_tokens,
+				cache_read_input_tokens: metrics.metrics.cache_read_input_tokens,
 			}))
 			.sort((a, b) => b.spend - a.spend);
 	}, [userSpendData.results]);
@@ -316,6 +318,8 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 				successful_requests: metrics.metrics.successful_requests,
 				failed_requests: metrics.metrics.failed_requests,
 				tokens: metrics.metrics.total_tokens,
+				prompt_tokens: metrics.metrics.prompt_tokens,
+				cache_read_input_tokens: metrics.metrics.cache_read_input_tokens,
 			}))
 			.sort((a, b) => b.spend - a.spend);
 	}, [userSpendData.results]);

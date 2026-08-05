@@ -48,6 +48,7 @@ import {
 	extractAnthropicWebSearchCalls,
 	resolveGooglePseSearchConfig,
 } from "../websearch/WebSearchInterceptor";
+import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 
 const logger = createModuleLogger("AnthropicMsg");
 
@@ -63,8 +64,7 @@ function getAnthropicAuxiliaryModel(litellmRouter: LiteLLMRouter): string {
 		.getDeployments()
 		.find(
 			(candidate) =>
-				candidate.litellm_params.custom_llm_provider === "anthropic" ||
-				candidate.litellm_params.model.startsWith("anthropic/"),
+				candidate.litellm_params.custom_llm_provider === "anthropic" || candidate.litellm_params.model.startsWith("anthropic/"),
 		);
 	if (!deployment) {
 		throw ApiError.unavailable("没有可用于 Anthropic 辅助 API 的 deployment");
@@ -101,12 +101,22 @@ function getUniformBatchModel(body: Record<string, unknown>): string {
 	return [...models][0]!;
 }
 
-function rewriteBatchModels(body: Record<string, unknown>, upstreamModel: string): Record<string, unknown> {
+function rewriteBatchModels(
+	body: Record<string, unknown>,
+	upstreamModel: string,
+	deployment?: UpstreamAttempt["deployment"],
+): Record<string, unknown> {
 	return {
 		...body,
 		requests: (body["requests"] as Array<Record<string, unknown>>).map((item) => ({
 			...item,
-			params: { ...(item["params"] as Record<string, unknown>), model: upstreamModel },
+			params: deployment
+				? applyReasoningEffortOverride(
+						{ ...(item["params"] as Record<string, unknown>), model: upstreamModel },
+						deployment,
+						"anthropic",
+					)
+				: { ...(item["params"] as Record<string, unknown>), model: upstreamModel },
 		})),
 	};
 }
@@ -138,12 +148,16 @@ function buildAnthropicUpstreamHeaders(
 	return headers;
 }
 
-function buildAnthropicUpstreamBody(body: Record<string, unknown>, upstreamModel: string): Record<string, unknown> {
+function buildAnthropicUpstreamBody(
+	body: Record<string, unknown>,
+	upstreamModel: string,
+	deployment?: UpstreamAttempt["deployment"],
+): Record<string, unknown> {
 	const result: Record<string, unknown> = { ...body, model: upstreamModel };
 	for (const internalKey of ["api_key", "api_base", "anthropic_version", "anthropic_beta", "custom_llm_provider"]) {
 		delete result[internalKey];
 	}
-	return result;
+	return deployment ? applyReasoningEffortOverride(result, deployment, "anthropic") : result;
 }
 
 // ========== Patch 1: UTF-16 代理对清理 ==========
@@ -703,7 +717,7 @@ export function registerAnthropicMessagesEndpoints(
 							const opened = _openAnthropicStream(
 								{ ...attempt, upstreamHeaders: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req) },
 								{
-									...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel),
+									...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel, attempt.deployment),
 								},
 								webSearchAbortController.signal,
 							);
@@ -912,7 +926,7 @@ export function registerAnthropicMessagesEndpoints(
 									...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
 									"Content-Type": "application/json",
 								},
-								body: buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel),
+								body: buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel, attempt.deployment),
 								model: attempt.upstreamModel,
 							},
 							{
@@ -973,7 +987,7 @@ export function registerAnthropicMessagesEndpoints(
 											"Content-Type": "application/json",
 										},
 										body: {
-											...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel),
+											...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel, attempt.deployment),
 											messages: [...originalMessages, ...continuation],
 										},
 										model: attempt.upstreamModel,
@@ -1122,10 +1136,7 @@ export function registerAnthropicMessagesEndpoints(
 			cleanBody["api_key"] as string | undefined,
 			cleanBody["anthropic_version"] as string | undefined,
 		);
-		const countUrl = withForwardedQuery(
-			attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens"),
-			req,
-		);
+		const countUrl = withForwardedQuery(attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens"), req);
 		const result = await fetch(countUrl, {
 			method: "POST",
 			headers: {
@@ -1238,7 +1249,7 @@ export function registerAnthropicMessagesEndpoints(
 		const result = await fetch(batchesUrl, {
 			method: "POST",
 			headers: { ...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req), "Content-Type": "application/json" },
-			body: JSON.stringify(rewriteBatchModels(cleanBody, attempt.upstreamModel)),
+			body: JSON.stringify(rewriteBatchModels(cleanBody, attempt.upstreamModel, attempt.deployment)),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");
@@ -1286,10 +1297,7 @@ export function registerAnthropicMessagesEndpoints(
 	registerRoute(router, { method: "get", path: "/v1/messages/batches/:id/results" }, async (req, res) => {
 		const model = getAnthropicAuxiliaryModel(litellmRouter);
 		const attempt = requireUpstreamAttempt(litellmRouter, model);
-		const resultsUrl = attempt.upstreamUrl.replace(
-			/\/v1\/messages$/,
-			`/v1/messages/batches/${req.params["id"]}/results`,
-		);
+		const resultsUrl = attempt.upstreamUrl.replace(/\/v1\/messages$/, `/v1/messages/batches/${req.params["id"]}/results`);
 		const result = await fetch(resultsUrl, { headers: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req) });
 		if (!result.ok) {
 			throw new ApiError(result.status, `Batches 结果返回错误 (${result.status})`);

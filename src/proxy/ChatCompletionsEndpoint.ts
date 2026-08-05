@@ -42,6 +42,7 @@ import {
 	extractOpenAIWebSearchCalls,
 	resolveGooglePseSearchConfig,
 } from "../websearch/WebSearchInterceptor";
+import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 
 const logger = createModuleLogger("Proxy:ChatCompletions");
 
@@ -83,9 +84,7 @@ interface ChatStreamAccumulator {
 function shouldIncludeStreamUsage(optionalParams: Record<string, unknown>): boolean {
 	const streamOptions = optionalParams["stream_options"];
 	return (
-		typeof streamOptions === "object" &&
-		streamOptions !== null &&
-		(streamOptions as Record<string, unknown>)["include_usage"] === true
+		typeof streamOptions === "object" && streamOptions !== null && (streamOptions as Record<string, unknown>)["include_usage"] === true
 	);
 }
 
@@ -491,11 +490,19 @@ async function handleStreamingResponse(
 
 		const { deployment, provider } = candidate;
 		litellmRouter.trackActiveRequest(deployment.model_name, 1);
-		const providerReq = provider.transformRequest(deployment.litellm_params.model, messages, {
-			...deployment.litellm_params,
-			...optionalParams,
-			stream: true,
-		});
+		const providerReq = provider.transformRequest(
+			deployment.litellm_params.model,
+			messages,
+			applyReasoningEffortOverride(
+				{
+					...deployment.litellm_params,
+					...optionalParams,
+					stream: true,
+				},
+				deployment,
+				"chat",
+			),
+		);
 
 		try {
 			const timeoutSec = deployment.litellm_params.stream_timeout ?? deployment.litellm_params.timeout;
