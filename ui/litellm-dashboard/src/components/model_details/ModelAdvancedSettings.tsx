@@ -3,6 +3,8 @@ import { Form, Input, Select, Tooltip, type FormInstance } from "antd";
 import CacheControlSettings from "../add_model/cache_control_settings";
 import { formItemValidateJSON } from "../../utils/textUtils";
 import ModelSettingField from "./ModelSettingField";
+import { useEffect, useState } from "react";
+import { builtinCapabilitiesCall } from "../networking";
 
 interface ModelAdvancedSettingsProps {
 	editing: boolean;
@@ -51,6 +53,33 @@ export default function ModelAdvancedSettings({
 	onCacheControlChange,
 }: ModelAdvancedSettingsProps) {
 	const litellmParams = modelData.litellm_params ?? {};
+	const functionCallingUnsupported = modelData.model_info?.supports_function_calling === false;
+	const [capabilityOptions, setCapabilityOptions] = useState<Array<{ label: string; value: string; disabled?: boolean }>>([
+		{
+			label: functionCallingUnsupported ? "Vision (requires function calling)" : "Vision",
+			value: "vision",
+			disabled: functionCallingUnsupported,
+		},
+	]);
+
+	useEffect(() => {
+		if (!editing) {
+			return;
+		}
+		builtinCapabilitiesCall()
+			.then((response) => {
+				setCapabilityOptions(
+					Object.entries(response.capabilities).map(([id, settings]) => ({
+						value: id,
+						label: `${id.charAt(0).toUpperCase()}${id.slice(1)}${
+							functionCallingUnsupported ? " (requires function calling)" : settings.enabled ? "" : " (globally off)"
+						}`,
+						disabled: functionCallingUnsupported,
+					})),
+				);
+			})
+			.catch(() => undefined);
+	}, [editing, functionCallingUnsupported]);
 
 	return (
 		<>
@@ -110,6 +139,28 @@ export default function ModelAdvancedSettings({
 				) : (
 					"Not Set"
 				)}
+			</ModelSettingField>
+
+			<ModelSettingField
+				label="Injected Built-in Capabilities"
+				editing={editing}
+				fullWidth
+				editor={
+					<Form.Item name="enabled_builtin_capabilities" className="mb-0">
+						<Select
+							mode="multiple"
+							allowClear
+							aria-label="Injected Built-in Capabilities"
+							options={capabilityOptions}
+							placeholder="Select capabilities injected for this model"
+						/>
+					</Form.Item>
+				}
+			>
+				{Array.isArray(modelData.model_info?.enabled_builtin_capabilities) &&
+				modelData.model_info.enabled_builtin_capabilities.length > 0
+					? modelData.model_info.enabled_builtin_capabilities.join(", ")
+					: "Not Set"}
 			</ModelSettingField>
 
 			<ModelSettingField

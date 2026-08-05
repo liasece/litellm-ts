@@ -45,6 +45,7 @@ const { Sider } = Layout;
  */
 const MIGRATED_PAGES: Record<string, string> = {
 	"api-reference": "api-reference",
+	"builtin-capabilities": "builtin-capabilities",
 };
 
 /** Build an absolute href for a migrated page, respecting base URL + serverRootPath. */
@@ -242,6 +243,13 @@ const menuGroups: MenuGroup[] = [
 		groupLabel: "SETTINGS",
 		roles: all_admin_roles,
 		items: [
+			{
+				key: "builtin-capabilities",
+				page: "builtin-capabilities",
+				label: "Built-in Capabilities",
+				icon: <ToolOutlined />,
+				roles: all_admin_roles,
+			},
 			{
 				key: "router-settings",
 				page: "router-settings",

@@ -1762,8 +1762,9 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect.arrayContaining(["messages", "response", "proxy_server_request", "metadata"]),
 			);
 			expect(dataCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
-			expect(dataCall?.projection).toContain("request_payload_fingerprints");
-			expect(dataCall?.projectionSql).toMatch(/sha256/i);
+			expect(dataCall?.projection).toContain("request_message_count");
+			expect(dataCall?.projectionSql).toMatch(/jsonb_array_length/i);
+			expect(dataCall?.projectionSql).not.toMatch(/sha256/i);
 			expect(dataCall?.limitN).toBeNull();
 		});
 
@@ -1793,7 +1794,6 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					request_message_count: 1,
 					request_tool_count: 0,
 					request_second_system_prompt: "Extract any file paths that this command reads or modifies",
-					request_payload_fingerprints: ["same-user-message"],
 					response_payload: { choices: [{ message: { role: "assistant", content: "internal" } }] },
 				},
 				{
@@ -1801,7 +1801,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					request_id: "req-1",
 					startTime: new Date("2026-07-24T10:00:00.000Z"),
 					endTime: new Date("2026-07-24T10:00:01.000Z"),
-					request_payload_fingerprints: ["same-user-message"],
+					request_message_count: 1,
 					response_payload: { choices: [{ message: { role: "assistant", content: "第一次回复" } }] },
 				},
 				{
@@ -1809,7 +1809,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					request_id: "req-2",
 					startTime: new Date("2026-07-24T10:00:02.000Z"),
 					endTime: new Date("2026-07-24T10:00:03.000Z"),
-					request_payload_fingerprints: ["same-user-message", "first-response", "same-user-message"],
+					request_message_count: 3,
 					response_payload: { choices: [{ message: { role: "assistant", content: "第二次回复" } }] },
 				},
 			];
@@ -1818,6 +1818,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				{
 					request_id: "req-2",
 					request_payload: [
+						{ role: "user", content: "继续" },
 						{ role: "assistant", content: "第一次回复" },
 						{ role: "user", content: "继续" },
 					],

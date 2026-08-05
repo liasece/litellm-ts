@@ -228,6 +228,18 @@ export interface SpendLogsMetadata {
 	 * 由 trackSpendLog 算完 cost 后注入：{input_cost, output_cost, total_cost, tool_usage_cost}。
 	 */
 	readonly cost_breakdown?: Record<string, unknown> | null;
+	/** 是否为父请求内部产生、只用于管理后台审计的调用。 */
+	readonly internal_call?: boolean;
+	/** 内部调用类别，例如 builtin_capability。 */
+	readonly internal_call_type?: string;
+	/** 内置能力 ID，例如 vision。 */
+	readonly builtin_capability?: string;
+	/** 触发该内部调用的外层请求 ID。 */
+	readonly parent_request_id?: string;
+	/** 内部工具调用 ID。 */
+	readonly tool_call_id?: string;
+	/** 用于区分内部能力缓存与外层请求缓存的审计命名空间。 */
+	readonly cache_namespace?: string;
 }
 
 /** 构建 Python 等价 SpendLog 时需要的上下文。 */
@@ -300,6 +312,10 @@ export interface SpendLogBuildContext {
 	readonly cacheKey?: string;
 	/** 响应缓存命中标记（TS 无响应缓存子系统，恒 false） */
 	readonly cacheHit?: boolean;
+	/** 覆盖 proxy_server_request.url，供网关内部虚拟端点审计。 */
+	readonly proxyServerRequestUrl?: string;
+	/** 追加到标准 SpendLogs metadata 的审计字段。 */
+	readonly metadataOverrides?: Record<string, unknown>;
 }
 
 /** 单次账务写入结果。duplicate 表示相同 request_id 已由此前事务提交。 */

@@ -11,6 +11,39 @@
   `sshjl3`。
 - 不要在命令输出、日志摘要或回复中展示部署脚本包含的密钥、数据库连接串等敏感信息。
 
+## SMB 挂载与命令执行位置
+
+- 本地目录是远端目录的 SMB 挂载，文件内容会自动同步，但在本地对仓库执行 Git、npm、
+  Node.js、npx 或其他需要密集访问大量小文件的命令可能明显变慢。实际抽样中，本地
+  `git status --short` 和 `git diff --check` 分别约需 7 秒和 3 秒，而在远端
+  `cc-server-dc` 容器中约需 84 毫秒和 26 毫秒。
+- SMB 挂载还可能阻止直接执行 `node_modules/.bin` 下的脚本；例如本地执行
+  `npm exec --offline -- tsc --version` 曾因 `/usr/bin/env: bad interpreter:
+  Operation not permitted` 失败。同一命令在 `cc-server-dc` 中可以正常运行。
+- 因此 Git 状态检查、diff、npm/npx 脚本、类型检查、测试和其他文件系统密集型命令，
+  优先通过 `sshjl3` 上的 `cc-server-dc` 容器执行。容器已经挂载同一仓库，路径为
+  `/root/var/src/jtllab/litellm-ts`，不需要复制或同步代码。例如：
+
+```sh
+ssh root@jl3ssh.gamefantasy.com \
+  'docker exec -w /root/var/src/jtllab/litellm-ts cc-server-dc git status --short'
+
+ssh root@jl3ssh.gamefantasy.com \
+  'docker exec -w /root/var/src/jtllab/litellm-ts cc-server-dc npm run build'
+```
+
+- 需要执行多条命令、管道或 shell 展开时，在容器中启动 shell：
+
+```sh
+ssh root@jl3ssh.gamefantasy.com \
+  'docker exec -w /root/var/src/jtllab/litellm-ts cc-server-dc \
+   sh -lc '\''git diff --check && node node_modules/typescript/bin/tsc --noEmit'\'''
+```
+
+- `cc-server-dc` 当前默认使用 Node.js v24，而正式部署脚本使用固定的 Node.js v22。
+  容器适合日常快速检查；需要严格验证生产 Node.js 版本兼容性时，仍以正式部署脚本及其
+  production build 结果为准。
+
 ## 部署前验证
 
 至少完成以下检查：

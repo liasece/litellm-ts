@@ -5,6 +5,7 @@ import { MessagePart } from "./prettyMessagesTypes";
 import { SimpleToolCallBlock } from "./SimpleToolCallBlock";
 
 const { Text } = Typography;
+const TRUNCATED_IMAGE_MESSAGE = "图片数据在日志入库时被截断，无法显示。";
 
 const PART_TONES: Record<string, { background: string; border: string; color: string }> = {
 	thinking: { background: "#faf5ff", border: "#e9d5ff", color: "#7e22ce" },
@@ -53,12 +54,22 @@ function renderableImageSource(part: MessagePart): string | null {
 	const data = part.data && typeof part.data === "object" ? (part.data as Record<string, unknown>) : null;
 	const candidate = typeof data?.src === "string" ? data.src : part.text;
 	if (typeof candidate !== "string") return null;
+	if (candidate.includes("litellm_truncated")) return null;
 	return /^(?:data:image\/(?:png|jpe?g|webp|gif);base64,|https?:\/\/)/i.test(candidate) ? candidate : null;
 }
 
 function ImagePart({ part, compact }: { part: MessagePart; compact: boolean }) {
 	const source = renderableImageSource(part);
-	if (!source) return <OperationPart part={part} compact={compact} />;
+	if (!source) {
+		const data = part.data && typeof part.data === "object" ? (part.data as Record<string, unknown>) : null;
+		const truncated = data?.truncated === true || part.text?.includes("litellm_truncated");
+		return (
+			<OperationPart
+				part={truncated ? { ...part, text: TRUNCATED_IMAGE_MESSAGE, data: { truncated: true } } : part}
+				compact={compact}
+			/>
+		);
+	}
 	const caption = part.text && part.text !== source ? part.text : "";
 	const tone = PART_TONES.image;
 

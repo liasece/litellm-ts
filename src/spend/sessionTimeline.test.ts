@@ -19,6 +19,43 @@ function makeRow(overrides: Partial<SessionTimelineSourceRow>): SessionTimelineS
 }
 
 describe("SessionTimelineBuilder", () => {
+	it("在普通 Session 时间线事件上标记内置能力子请求及其父请求", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_id: "vision-child",
+				model: "gpt-5.4-mini",
+				internal_call_type: "builtin_capability",
+				builtin_capability: "vision",
+				parent_request_id: "parent-request",
+				request_payload: {
+					messages: [{ role: "user", content: "What error is visible?" }],
+				},
+				response_payload: {
+					choices: [{ message: { role: "assistant", content: "TS2322 is visible." } }],
+				},
+			}),
+		);
+
+		expect(builder.build().data).toEqual([
+			expect.objectContaining({
+				request_id: "vision-child",
+				role: "user",
+				internal_call: true,
+				builtin_capability: "vision",
+				parent_request_id: "parent-request",
+			}),
+			expect.objectContaining({
+				request_id: "vision-child",
+				role: "assistant",
+				content: "TS2322 is visible.",
+				internal_call: true,
+				builtin_capability: "vision",
+				parent_request_id: "parent-request",
+			}),
+		]);
+	});
+
 	it("将 Images API 的 base64 响应转换为可渲染的图片事件", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(
@@ -83,6 +120,44 @@ describe("SessionTimelineBuilder", () => {
 			role: "assistant",
 			content: "图片数据在日志入库时被截断，无法显示。",
 			parts: [
+				{
+					kind: "image",
+					text: "图片数据在日志入库时被截断，无法显示。",
+					data: { truncated: true },
+				},
+			],
+		});
+	});
+
+	it("截断的历史输入图片在 Session 时间线中显示说明而不是损坏图片", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_payload: {
+					messages: [
+						{
+							role: "user",
+							content: [
+								{ type: "text", text: "检查图片" },
+								{
+									type: "image_url",
+									image_url: {
+										url:
+											"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+									},
+								},
+							],
+						},
+					],
+				},
+			}),
+		);
+
+		expect(builder.build().data[0]).toMatchObject({
+			role: "user",
+			content: "检查图片\n图片数据在日志入库时被截断，无法显示。",
+			parts: [
+				{ kind: "text", text: "检查图片" },
 				{
 					kind: "image",
 					text: "图片数据在日志入库时被截断，无法显示。",
@@ -240,7 +315,7 @@ describe("SessionTimelineBuilder", () => {
 		]);
 	});
 
-	it("将工具输出附着到对应工具请求，不把它伪装成用户输入", () => {
+	it("将工具输出拆成独立时间线事件，不把它伪装成用户输入", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(
 			makeRow({
@@ -260,9 +335,47 @@ describe("SessionTimelineBuilder", () => {
 		);
 
 		const result = builder.build();
-		const toolEvent = result.data.find((item) => item.parts?.some((part) => part.kind === "tool_call"));
-		expect(toolEvent?.parts?.map((part) => part.kind)).toEqual(["tool_call", "tool_result"]);
+		const toolCallEvent = result.data.find((item) => item.parts?.some((part) => part.kind === "tool_call"));
+		const toolResultEvent = result.data.find((item) => item.role === "tool");
+		expect(toolCallEvent?.parts?.map((part) => part.kind)).toEqual(["tool_call"]);
+		expect(toolResultEvent).toEqual(
+			expect.objectContaining({
+				role: "tool",
+				label: "工具结果",
+				content: "result",
+				parts: [expect.objectContaining({ kind: "tool_result", id: "tool-1", name: "search", text: "result" })],
+			}),
+		);
 		expect(result.data.some((item) => item.role === "user" && item.content === "result")).toBe(false);
+	});
+
+	it("混合 user 消息中的工具结果与真实用户文本分别生成事件", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_payload: {
+					messages: [
+						{
+							role: "assistant",
+							content: [{ type: "tool_use", id: "tool-1", name: "read_file", input: { path: "README.md" } }],
+						},
+						{
+							role: "user",
+							content: [
+								{ type: "tool_result", tool_use_id: "tool-1", content: "文件内容" },
+								{ type: "text", text: "接着检查测试" },
+							],
+						},
+					],
+				},
+			}),
+		);
+
+		expect(builder.build().data.map((item) => [item.role, item.content])).toEqual([
+			["assistant", ""],
+			["tool", "文件内容"],
+			["user", "接着检查测试"],
+		]);
 	});
 
 	it("解析 OpenAI Responses 累计历史并归并工具输出", () => {
@@ -340,8 +453,10 @@ describe("SessionTimelineBuilder", () => {
 			["user", "检查任务"],
 			["assistant", "正在分析"],
 			["assistant", ""],
+			["tool", "工作区干净"],
 			["assistant", "继续等待测试"],
 			["assistant", ""],
+			["tool", "测试完成"],
 			["assistant", "全部完成"],
 		]);
 		expect(result.data[2]?.parts).toEqual([
@@ -349,14 +464,18 @@ describe("SessionTimelineBuilder", () => {
 		]);
 		expect(result.data[3]?.parts).toEqual([
 			expect.objectContaining({ kind: "tool_call", id: "call-exec", name: "exec" }),
-			expect.objectContaining({ kind: "tool_result", id: "call-exec", text: "工作区干净" }),
 		]);
-		expect(result.data[5]?.parts).toEqual([
+		expect(result.data[4]?.parts).toEqual([
+			expect.objectContaining({ kind: "tool_result", id: "call-exec", name: "exec", text: "工作区干净" }),
+		]);
+		expect(result.data[6]?.parts).toEqual([
 			expect.objectContaining({ kind: "tool_call", id: "call-wait", name: "wait" }),
-			expect.objectContaining({ kind: "tool_result", id: "call-wait", text: "测试完成" }),
+		]);
+		expect(result.data[7]?.parts).toEqual([
+			expect.objectContaining({ kind: "tool_result", id: "call-wait", name: "wait", text: "测试完成" }),
 		]);
 		expect(result.data.some((item) => item.role === "user" && item.content === "")).toBe(false);
-		expect(result.summary.event_count).toBe(7);
+		expect(result.summary.event_count).toBe(9);
 	});
 
 	it("为无响应的失败请求生成可渲染错误事件", () => {

@@ -83,6 +83,23 @@ export function LogDetailContent({
 	const hasVectorStoreData = checkHasVectorStoreData(metadata);
 
 	const getRawRequest = () => {
+		const parsedProxy = formatData(logEntry.proxy_server_request);
+		// proxy_server_request 入库时对超长字符串统一截断（含图片 base64），
+		// 而 messages 列为 Logs/Session 重放保留完整图片。渲染时用 messages
+		// 替换 proxy 中的截断副本，保持 proxy 的 headers/url/system 等结构不变。
+		if (parsedProxy && typeof parsedProxy === "object" && !Array.isArray(parsedProxy)) {
+			const body = parsedProxy.body;
+			if (
+				body &&
+				typeof body === "object" &&
+				!Array.isArray(body) &&
+				Array.isArray(body.messages) &&
+				Array.isArray(logEntry.messages) &&
+				logEntry.messages.length > 0
+			) {
+				return { ...parsedProxy, body: { ...body, messages: logEntry.messages } };
+			}
+		}
 		return formatData(logEntry.proxy_server_request || logEntry.messages);
 	};
 
@@ -124,6 +141,16 @@ export function LogDetailContent({
 					<Descriptions column={2} size="small">
 						<Descriptions.Item label="Model">{logEntry.model}</Descriptions.Item>
 						<Descriptions.Item label="Provider">{logEntry.custom_llm_provider || "-"}</Descriptions.Item>
+						{logEntry.metadata?.internal_call_type === "builtin_capability" ? (
+							<>
+								<Descriptions.Item label="Built-in Capability">
+									<Tag color="purple">{String(logEntry.metadata?.builtin_capability || "unknown")}</Tag>
+								</Descriptions.Item>
+								<Descriptions.Item label="Parent Request">
+									<TruncatedValue value={logEntry.metadata?.parent_request_id} />
+								</Descriptions.Item>
+							</>
+						) : null}
 						<Descriptions.Item label="Call Type">{logEntry.call_type}</Descriptions.Item>
 						<Descriptions.Item label="Model ID">
 							<TruncatedValue value={logEntry.model_id} />

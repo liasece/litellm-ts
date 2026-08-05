@@ -66,6 +66,30 @@ describe("PrettyMessagesView", () => {
 		expect(container.querySelector("img")).not.toBeInTheDocument();
 	});
 
+	it("should explain a historically truncated input image instead of rendering a broken image", () => {
+		const request = {
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "Inspect this image" },
+						{
+							type: "image_url",
+							image_url: {
+								url:
+									"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const { container } = render(<PrettyMessagesView request={request} response={{}} />);
+		expect(screen.getByText("图片数据在日志入库时被截断，无法显示。")).toBeInTheDocument();
+		expect(container.querySelector("img")).not.toBeInTheDocument();
+	});
+
 	it("should render native Anthropic messages from a proxied request", () => {
 		const request = {
 			body: {

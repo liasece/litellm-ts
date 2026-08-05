@@ -31,6 +31,8 @@ export interface ModelInfo {
 	supports_parallel_function_calling?: boolean;
 	/** 是否支持视觉输入 */
 	supports_vision?: boolean;
+	/** 为该 deployment 注入的内置能力 ID；能力本身的设置由全局能力管理页维护。 */
+	enabled_builtin_capabilities?: string[];
 	/** 是否支持 system 消息 */
 	supports_system_messages?: boolean;
 	/** 是否支持工具选择 */

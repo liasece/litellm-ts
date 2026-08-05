@@ -147,6 +147,9 @@ export default function ModelInfoView({
 			model_access_group: Array.isArray(updatedModel.model_info?.access_groups)
 				? updatedModel.model_info.access_groups
 				: [],
+			enabled_builtin_capabilities: Array.isArray(updatedModel.model_info?.enabled_builtin_capabilities)
+				? updatedModel.model_info.enabled_builtin_capabilities
+				: [],
 			guardrails: Array.isArray(litellmParams.guardrails) ? litellmParams.guardrails : [],
 			vector_store_ids: Array.isArray(litellmParams.vector_store_ids) ? litellmParams.vector_store_ids : [],
 			tags: Array.isArray(litellmParams.tags) ? litellmParams.tags : [],
@@ -389,6 +392,9 @@ export default function ModelInfoView({
 					...updatedModelInfo,
 					override_model_name: values.override_model_name || null,
 					override_reasoning_effort: values.override_reasoning_effort || null,
+					enabled_builtin_capabilities: Array.isArray(values.enabled_builtin_capabilities)
+						? values.enabled_builtin_capabilities
+						: [],
 				};
 			} catch (e) {
 				NotificationsManager.fromBackend("Invalid JSON in Model Info");

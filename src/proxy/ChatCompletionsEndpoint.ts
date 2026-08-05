@@ -32,6 +32,7 @@ import {
 	appendModelResolutionTrace,
 	copyModelResolutionChain,
 	createModelResolutionTraceCollector,
+	getResultModelResolutionMetadata,
 	type ModelResolutionTraceCollector,
 } from "../router/ModelResolutionTrace";
 import { getConfig } from "../core/config";
@@ -43,6 +44,13 @@ import {
 	resolveGooglePseSearchConfig,
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
+import {
+	prepareOpenAIVisionRequest,
+	runOpenAIVisionAgentLoop,
+	type PreparedVisionRequest,
+} from "../capabilities/VisionCapability";
+import { createVisionCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 
 const logger = createModuleLogger("Proxy:ChatCompletions");
 
@@ -259,6 +267,8 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		if (!messages) {
 			throw ApiError.badRequest("messages 字段缺失");
 		}
+		const originalRequestBody = structuredClone(req.body) as Record<string, unknown>;
+		const originalMessages = originalRequestBody["messages"] as Message[];
 
 		const optionalParams: Record<string, unknown> = { ...req.body };
 		delete optionalParams.messages;
@@ -272,12 +282,18 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		});
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
+		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+		const visionImageStore = createVisionImageStore(db);
 		const modelResolutionTrace = createModelResolutionTraceCollector();
-		const completeWithResolutionTrace = (completionModel: string, completionMessages: Message[]) => {
+		const completeWithResolutionTrace = (
+			completionModel: string,
+			completionMessages: Message[],
+			params: Record<string, unknown> = optionalParams,
+		) => {
 			if (typeof litellmRouter.resolveModelGroupWithTrace === "function") {
-				return litellmRouter.completion(completionModel, completionMessages, optionalParams, modelResolutionTrace);
+				return litellmRouter.completion(completionModel, completionMessages, params, modelResolutionTrace);
 			}
-			return litellmRouter.completion(completionModel, completionMessages, optionalParams);
+			return litellmRouter.completion(completionModel, completionMessages, params);
 		};
 		try {
 			spendLifecycle.markProviderStarted();
@@ -288,7 +304,14 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 				let initialResult: Record<string, unknown> | undefined;
 				let usageCalculated = false;
 				try {
-					let result = await completeWithResolutionTrace(model, messages);
+					let result = await runOpenAIVisionAgentLoop(
+						litellmRouter,
+						model,
+						messages as unknown as Array<Record<string, unknown>>,
+						optionalParams,
+						completeWithResolutionTrace,
+						{ audit: visionAudit, imageStore: visionImageStore },
+					);
 					initialResult = result;
 					const requestTools = Array.isArray(optionalParams["tools"]) ? optionalParams["tools"] : [];
 					const searchCalls = extractOpenAIWebSearchCalls(result, requestTools);
@@ -316,7 +339,6 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 					}
 					const usage = (result as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
 					if (req.auth) {
-						const endTime = new Date();
 						const spendLog = await buildSpendLogFromRequest({
 							req: req,
 							requestId: spendRequestId,
@@ -331,9 +353,10 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							customCostPerToken: spendInfo?.customCostPerToken,
 							deploymentModel: spendInfo?.deploymentModel,
 							startTime: startTime,
-							endTime: endTime,
+							endTime: new Date(),
 							completionStartTime: completionStartTime,
-							messages: messages,
+							messages: originalMessages,
+							proxyServerRequestBody: originalRequestBody,
 							response: result,
 							usage: usage,
 							status: SpendLogStatus.Success,
@@ -376,7 +399,8 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							model: model,
 							startTime: startTime,
 							endTime: endTime,
-							messages: messages,
+							messages: originalMessages,
+							proxyServerRequestBody: originalRequestBody,
 							response: initialResult,
 							usage: initialResult?.["usage"] as Record<string, unknown> | undefined,
 							error: error,
@@ -414,6 +438,9 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 				spendRequestId: spendRequestId,
 				spendLifecycle: spendLifecycle,
 				modelResolutionTrace: modelResolutionTrace,
+				originalMessages: originalMessages,
+				originalRequestBody: originalRequestBody,
+				visionImageStore: visionImageStore,
 			});
 			return undefined;
 		} finally {
@@ -448,9 +475,25 @@ async function handleStreamingResponse(
 		spendRequestId?: string;
 		spendLifecycle: EndpointSpendLifecycle;
 		modelResolutionTrace: ModelResolutionTraceCollector;
+		originalMessages: Message[];
+		originalRequestBody: Record<string, unknown>;
+		visionImageStore: VisionImageStore;
 	},
 ): Promise<void> {
-	const { req, db, spendRequestId, spendLifecycle, modelResolutionTrace } = context;
+	const { req, db, spendRequestId, spendLifecycle, modelResolutionTrace, originalMessages, originalRequestBody, visionImageStore } = context;
+	const preparedVision = await prepareOpenAIVisionRequest(
+		litellmRouter,
+		model,
+		messages as unknown as Array<Record<string, unknown>>,
+		visionImageStore,
+	);
+	if (preparedVision) {
+		await handlePrivateVisionStreamingResponse(litellmRouter, model, messages, optionalParams, res, {
+			...context,
+			preparedVision: preparedVision,
+		});
+		return;
+	}
 	const includeStreamUsage = shouldIncludeStreamUsage(optionalParams);
 	let fallbackDepth = 0;
 	let currentModel = model;
@@ -542,7 +585,8 @@ async function handleStreamingResponse(
 						startTime: startTime,
 						endTime: new Date(),
 						completionStartTime: completionStartTime,
-						messages: messages,
+						messages: originalMessages,
+						proxyServerRequestBody: originalRequestBody,
 						response: transformed,
 						usage: transformed.usage as unknown as Record<string, unknown> | undefined,
 						status: SpendLogStatus.Success,
@@ -657,7 +701,8 @@ async function handleStreamingResponse(
 						startTime: startTime,
 						endTime: new Date(),
 						completionStartTime: completionStartTime,
-						messages: messages,
+						messages: originalMessages,
+						proxyServerRequestBody: originalRequestBody,
 						response: responseForLog,
 						usage: usage as unknown as Record<string, unknown> | undefined,
 						error: streamError,
@@ -734,7 +779,8 @@ async function handleStreamingResponse(
 						modelGroup: model,
 						startTime: startTime,
 						endTime: new Date(),
-						messages: messages,
+						messages: originalMessages,
+						proxyServerRequestBody: originalRequestBody,
 						error: terminalError,
 						status: SpendLogStatus.Failure,
 						attemptedRetries: modelResolutionTrace.fallbackDepth,
@@ -757,4 +803,143 @@ async function handleStreamingResponse(
 		}
 	}
 	throw terminalError;
+}
+
+/**
+ * Runs the hidden multi-turn vision loop before exposing any bytes, then emits
+ * one protocol-valid public Chat Completions stream. Internal tool calls can
+ * therefore never leak even when the client requested streaming.
+ * @param litellmRouter
+ * @param model
+ * @param messages
+ * @param optionalParams
+ * @param res
+ * @param context
+ */
+async function handlePrivateVisionStreamingResponse(
+	litellmRouter: LiteLLMRouter,
+	model: string,
+	messages: Message[],
+	optionalParams: Record<string, unknown>,
+	res: import("express").Response,
+	context: {
+		req: import("express").Request;
+		db: DrizzleDb;
+		spendRequestId?: string;
+		spendLifecycle: EndpointSpendLifecycle;
+		modelResolutionTrace: ModelResolutionTraceCollector;
+		originalMessages: Message[];
+		originalRequestBody: Record<string, unknown>;
+		visionImageStore: VisionImageStore;
+		preparedVision: PreparedVisionRequest<Record<string, unknown>>;
+	},
+): Promise<void> {
+	const {
+		req,
+		db,
+		spendRequestId,
+		spendLifecycle,
+		modelResolutionTrace,
+		originalMessages,
+		originalRequestBody,
+		visionImageStore,
+		preparedVision,
+	} = context;
+	const startTime = new Date();
+	const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+	const result = await runOpenAIVisionAgentLoop(
+		litellmRouter,
+		model,
+		messages as unknown as Array<Record<string, unknown>>,
+		optionalParams,
+		(completionModel, completionMessages, params) =>
+			litellmRouter.completion(completionModel, completionMessages, params, modelResolutionTrace),
+		{ audit: visionAudit, imageStore: visionImageStore, preparedRequest: preparedVision },
+	);
+	const completionStartTime = new Date();
+	const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
+	calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
+	if (result["_fallbackDepth"] === 0) {
+		result["model"] = model;
+	}
+	const response = result as unknown as ModelResponse;
+	const choice = response.choices?.[0];
+	if (!choice) {
+		throw ApiError.unavailable("识图 Agent Loop 没有返回 completion choice");
+	}
+	const usage = response.usage;
+	const providerHeaders = (result as { _providerHeaders?: Record<string, string> })._providerHeaders;
+	for (const [key, value] of Object.entries(providerHeaders ?? {})) {
+		if (!res.getHeader(key)) {
+			res.setHeader(key, value);
+		}
+	}
+	res.setHeader("Content-Type", "text/event-stream");
+	res.setHeader("Cache-Control", "no-cache");
+	res.setHeader("Connection", "keep-alive");
+	res.setHeader("X-Accel-Buffering", "no");
+	const id = response.id;
+	const created = response.created;
+	const publicModel = response.model || model;
+	const base = { id: id, object: "chat.completion.chunk", created: created, model: publicModel };
+	res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
+	const delta: Record<string, unknown> = {};
+	if (typeof choice.message.content === "string" && choice.message.content.length > 0) {
+		delta["content"] = choice.message.content;
+	}
+	if (choice.message.reasoning_content) {
+		delta["reasoning_content"] = choice.message.reasoning_content;
+	}
+	if (choice.message.tool_calls?.length) {
+		delta["tool_calls"] = choice.message.tool_calls.map((call, index) => ({
+			index: index,
+			id: call.id,
+			type: "function",
+			function: { name: call.function.name, arguments: call.function.arguments },
+		}));
+	}
+	if (Object.keys(delta).length > 0) {
+		res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] })}\n\n`);
+	}
+	res.write(
+		`data: ${JSON.stringify({
+			...base,
+			choices: [{ index: 0, delta: {}, finish_reason: choice.finish_reason }],
+			...(shouldIncludeStreamUsage(optionalParams) ? { usage: null } : {}),
+		})}\n\n`,
+	);
+	if (shouldIncludeStreamUsage(optionalParams) && usage) {
+		res.write(`data: ${JSON.stringify({ ...base, choices: [], usage: toOpenAIUsage(usage) })}\n\n`);
+	}
+	res.write("data: [DONE]\n\n");
+	res.end();
+
+	if (req.auth) {
+		const metadata = getResultModelResolutionMetadata(result);
+		const spendLog = await buildSpendLogFromRequest({
+			req: req,
+			requestId: spendRequestId,
+			auth: req.auth,
+			callType: CallType.ACompletion,
+			model: model,
+			modelGroup: model,
+			modelId: spendInfo?.modelId,
+			customLlmProvider: spendInfo?.customLlmProvider,
+			apiBase: spendInfo?.apiBase,
+			customCostPerToken: spendInfo?.customCostPerToken,
+			deploymentModel: spendInfo?.deploymentModel,
+			startTime: startTime,
+			endTime: new Date(),
+			completionStartTime: completionStartTime,
+			messages: originalMessages,
+			proxyServerRequestBody: originalRequestBody,
+			response: result,
+			usage: usage as unknown as Record<string, unknown> | undefined,
+			status: SpendLogStatus.Success,
+			attemptedRetries: metadata.attemptedRetries,
+			fallbackModels: metadata.fallbackModels,
+			modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+		});
+		await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+	}
 }

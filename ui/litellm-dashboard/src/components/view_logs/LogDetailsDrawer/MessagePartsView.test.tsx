@@ -23,6 +23,24 @@ describe("MessagePartsView", () => {
 		expect(screen.queryByText(source)).not.toBeInTheDocument();
 	});
 
+	it("将历史截断图片显示为说明而不是损坏的 img", () => {
+		const { container } = render(
+			<MessagePartsView
+				parts={[
+					{
+						kind: "image",
+						label: "Image",
+						text:
+							"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+					},
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("图片数据在日志入库时被截断，无法显示。")).toBeInTheDocument();
+		expect(container.querySelector("img")).not.toBeInTheDocument();
+	});
+
 	it("将匹配的工具输出渲染在工具请求卡片内", () => {
 		const { container } = render(
 			<MessagePartsView

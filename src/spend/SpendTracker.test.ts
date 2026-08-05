@@ -909,6 +909,50 @@ describe("SpendTracker API key sanitization", () => {
 		}
 	});
 
+	it("请求消息保留可重放的 OpenAI data URI 与 Anthropic base64 图片", async () => {
+		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";
+		const encodedImage = "A".repeat(40_000);
+		const dataUri = `data:image/png;base64,${encodedImage}`;
+		try {
+			const spendLog = await buildSpendLogFromRequest({
+				auth: { api_key: rawApiKey },
+				callType: CallType.ACompletion,
+				endTime: new Date("2026-08-05T00:00:01.000Z"),
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "image_url", image_url: { url: dataUri } },
+							{
+								type: "image",
+								source: { type: "base64", media_type: "image/png", data: encodedImage },
+							},
+						],
+					},
+				],
+				model: "vision-worker",
+				req: createRequest(),
+				requestId: "req-preserve-input-images",
+				startTime: new Date("2026-08-05T00:00:00.000Z"),
+			});
+
+			const content = (
+				spendLog.messages as Array<{
+					content: Array<{ image_url?: { url?: string }; source?: { data?: string } }>;
+				}>
+			)[0]?.content;
+			expect(content?.[0]?.image_url?.url).toBe(dataUri);
+			expect(content?.[1]?.source?.data).toBe(encodedImage);
+		} finally {
+			if (previousStorePrompts === undefined) {
+				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+			} else {
+				process.env.STORE_PROMPTS_IN_SPEND_LOGS = previousStorePrompts;
+			}
+		}
+	});
+
 	it("原始流式请求可用结构化摘要覆盖 proxy_server_request.body", async () => {
 		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
 		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";

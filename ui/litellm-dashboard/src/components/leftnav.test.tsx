@@ -81,6 +81,7 @@ describe("Sidebar (leftnav)", () => {
 			"Router Settings",
 			"Logging & Alerts",
 			"Admin Settings",
+			"Built-in Capabilities",
 			"Cost Tracking",
 		];
 
@@ -98,6 +99,7 @@ describe("Sidebar (leftnav)", () => {
 		expect(screen.getByText("Search Tools")).toBeInTheDocument();
 		expect(screen.getByText("API Playground")).toBeInTheDocument();
 		expect(screen.getByText("Admin Settings")).toBeInTheDocument();
+		expect(screen.getByText("Built-in Capabilities")).toBeInTheDocument();
 		expect(screen.queryByText("UI Theme")).not.toBeInTheDocument();
 
 		const flatItems = menuGroups.flatMap((group) => group.items);

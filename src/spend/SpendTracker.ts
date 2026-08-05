@@ -390,15 +390,15 @@ function containsPlaintextApiKey(value: string): boolean {
 }
 
 /** 仅识别 provider 响应中的标准图片数据字段，其他长字符串继续执行普通截断。 */
-function isImageResponseString(fieldName: string, value: unknown, parent: Record<string, unknown>): boolean {
+function isImagePayloadString(fieldName: string, value: unknown, parent: Record<string, unknown>): boolean {
 	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) return false;
 	if (containsPlaintextApiKey(value)) return false;
 	if (fieldName === "b64_json") return true;
 	if (fieldName === "result" && parent["type"] === "image_generation_call") return true;
 	if (
 		fieldName === "data" &&
-		typeof (parent["mimeType"] ?? parent["mime_type"]) === "string" &&
-		String(parent["mimeType"] ?? parent["mime_type"]).startsWith("image/")
+		typeof (parent["mimeType"] ?? parent["mime_type"] ?? parent["media_type"]) === "string" &&
+		String(parent["mimeType"] ?? parent["mime_type"] ?? parent["media_type"]).startsWith("image/")
 	) {
 		return true;
 	}
@@ -436,7 +436,7 @@ function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: bool
 		const sanitizedRecord: Record<string, unknown> = {};
 		for (const [fieldName, fieldValue] of Object.entries(sourceRecord)) {
 			sanitizedRecord[fieldName] =
-				preserveImageStrings && isImageResponseString(fieldName, fieldValue, sourceRecord)
+				preserveImageStrings && isImagePayloadString(fieldName, fieldValue, sourceRecord)
 					? fieldValue
 					: sanitizeSpendLogPayloadValue(fieldValue, preserveImageStrings);
 		}
@@ -451,6 +451,11 @@ export function sanitizeSpendLogPayload(value: unknown): unknown {
 
 /** 清理响应负载，但为可重放的图片输出保留完整 base64。 */
 export function sanitizeSpendLogResponsePayload(value: unknown): unknown {
+	return sanitizeSpendLogPayloadValue(value, true);
+}
+
+/** 清理请求消息，但为 Logs 与 Session 重放保留有上限的图片数据。 */
+export function sanitizeSpendLogMessagesPayload(value: unknown): unknown {
 	return sanitizeSpendLogPayloadValue(value, true);
 }
 
@@ -588,7 +593,7 @@ export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promis
 	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
 	const requestBody = ctx.proxyServerRequestBody === undefined ? ctx.req.body : ctx.proxyServerRequestBody;
 	const requestShape: Record<string, unknown> = {
-		url: ctx.req.originalUrl ?? ctx.req.url,
+		url: ctx.proxyServerRequestUrl ?? ctx.req.originalUrl ?? ctx.req.url,
 		method: ctx.req.method,
 		headers: sanitizeSpendLogHeaders(ctx.req.headers as Record<string, unknown>),
 		body: shouldStoreBody ? sanitizeSpendLogPayload(requestBody) : {},
@@ -801,6 +806,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		proxy_server_request: null,
 		error_information: failureInformation,
 		usage_object: usageObject ? (sanitizeSpendLogPayload(usageObject) as Record<string, unknown>) : undefined,
+		...(ctx.metadataOverrides ?? {}),
 	};
 }
 
@@ -841,7 +847,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		cache_hit: ctx.cacheHit ?? false,
 		metadata: metadata as unknown as Record<string, unknown>,
 		requester_ip_address: metadata.requester_ip_address,
-		messages: shouldStoreBody ? sanitizeSpendLogPayload(ctx.messages) : {},
+		messages: shouldStoreBody ? sanitizeSpendLogMessagesPayload(ctx.messages) : {},
 		response: shouldStoreBody ? sanitizeSpendLogResponsePayload(ctx.response) : {},
 		// 顶层列存完整 proxy_server_request（含 body）；metadata 内恒 null（对齐 Python），
 		// 详情端点 /spend/logs/ui/:request_id 从本列读取。

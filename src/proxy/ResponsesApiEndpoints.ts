@@ -23,6 +23,9 @@ import {
 } from "../spend/SpendTracker";
 import type { ModelResponse, ThinkingBlock, ToolCall, Usage } from "../types/openai";
 import { CallType, SpendLogStatus } from "../types/spend";
+import { prepareOpenAIVisionRequest, runOpenAIVisionAgentLoop } from "../capabilities/VisionCapability";
+import { createVisionCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 
 const logger = createModuleLogger("Proxy:Responses");
 
@@ -150,6 +153,7 @@ interface ResponsesStreamContext {
 	requestId: string | undefined;
 	startTime: Date;
 	lifecycle: EndpointSpendLifecycle;
+	visionImageStore: VisionImageStore;
 }
 
 /**
@@ -195,6 +199,8 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		});
 		const lifecycle = createEndpointSpendLifecycle(reservation);
 		const requestId = reservation?.requestId;
+		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId });
+		const visionImageStore = createVisionImageStore(db);
 		lifecycle.markProviderStarted();
 
 		try {
@@ -211,13 +217,21 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 					requestId: requestId,
 					startTime: startTime,
 					lifecycle: lifecycle,
+					visionImageStore: visionImageStore,
 				});
 				return undefined;
 			}
 
 			let providerCompleted = false;
 			try {
-				const result = await litellmRouter.completion(model, messages as never, optionalParams);
+				const result = await runOpenAIVisionAgentLoop(
+					litellmRouter,
+					model,
+					messages as unknown as Array<Record<string, unknown>>,
+					optionalParams,
+					undefined,
+					{ audit: visionAudit, imageStore: visionImageStore },
+				);
 				providerCompleted = true;
 				const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 				calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
@@ -418,7 +432,7 @@ function mapChatCompletionToResponse(result: Record<string, unknown>, request: R
 	const usage = mapResponseUsage(result["usage"] as Record<string, unknown> | undefined);
 	const status = finishReason === "length" ? "incomplete" : finishReason === "content_filter" ? "failed" : "completed";
 	const error = status === "failed" ? { code: "content_filter", message: "Response blocked by content filter" } : null;
-	return buildResponseObject({
+	const response = buildResponseObject({
 		id: responseId,
 		createdAt: createdAt,
 		status: status,
@@ -430,6 +444,7 @@ function mapChatCompletionToResponse(result: Record<string, unknown>, request: R
 		request: request,
 		incompleteDetails: status === "incomplete" ? { reason: "max_output_tokens" } : null,
 	});
+	return response;
 }
 
 function buildResponseObject(input: {
@@ -567,10 +582,33 @@ function numberField(record: Record<string, unknown> | undefined, ...keys: strin
 }
 
 async function handleResponsesStream(context: ResponsesStreamContext): Promise<void> {
-	const { litellmRouter, model, messages, optionalParams, requestBody, req, res, db, requestId, startTime, lifecycle } = context;
+	const { litellmRouter, model, messages, optionalParams, requestBody, req, res, db, requestId, startTime, lifecycle, visionImageStore } =
+		context;
 	let streamResult: Record<string, unknown>;
 	try {
-		streamResult = await litellmRouter.completion(model, messages as never, optionalParams);
+		const capabilityMessages = messages as unknown as Array<Record<string, unknown>>;
+		const preparedVision = await prepareOpenAIVisionRequest(litellmRouter, model, capabilityMessages, visionImageStore);
+		if (preparedVision) {
+			const finalResult = await runOpenAIVisionAgentLoop(
+				litellmRouter,
+				model,
+				capabilityMessages,
+				optionalParams,
+				undefined,
+				{
+					audit: createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId }),
+					imageStore: visionImageStore,
+					preparedRequest: preparedVision,
+				},
+			);
+			streamResult = {
+				...finalResult,
+				_stream: true,
+				stream: modelResponseToSyntheticStream(finalResult),
+			};
+		} else {
+			streamResult = await litellmRouter.completion(model, messages as never, optionalParams);
+		}
 	} catch (error) {
 		await lifecycle.finalize(() =>
 			recordSpend(db, req, requestId, {
@@ -668,13 +706,14 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		if (!res.writableEnded) {
 			res.end();
 		}
+		const loggedCompleted = { ...completed } as Record<string, unknown>;
 		const spendInfo = (streamResult as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 		await lifecycle.finalize(() =>
 			recordSpend(db, req, requestId, {
 				model: model,
 				requestBody: requestBody,
 				startTime: startTime,
-				response: completed,
+				response: loggedCompleted,
 				usage: state.usage as unknown as Record<string, unknown> | undefined,
 				spendInfo: spendInfo,
 				status: SpendLogStatus.Success,
@@ -715,6 +754,44 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			res.end();
 		}
 	}
+}
+
+async function* modelResponseToSyntheticStream(result: Record<string, unknown>): AsyncGenerator<Record<string, unknown>> {
+	const response = result as unknown as ModelResponse;
+	const choice = response.choices?.[0];
+	if (!choice) {
+		throw ApiError.unavailable("识图 Agent Loop 没有返回 completion choice");
+	}
+	const base = {
+		id: response.id,
+		object: "chat.completion.chunk",
+		created: response.created,
+		model: response.model,
+	};
+	yield { ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] };
+	const delta: Record<string, unknown> = {};
+	if (typeof choice.message.content === "string" && choice.message.content.length > 0) {
+		delta["content"] = choice.message.content;
+	}
+	if (choice.message.reasoning_content) {
+		delta["reasoning_content"] = choice.message.reasoning_content;
+	}
+	if (choice.message.tool_calls?.length) {
+		delta["tool_calls"] = choice.message.tool_calls.map((call, index) => ({
+			index: index,
+			id: call.id,
+			type: "function",
+			function: { name: call.function.name, arguments: call.function.arguments },
+		}));
+	}
+	if (Object.keys(delta).length > 0) {
+		yield { ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] };
+	}
+	yield {
+		...base,
+		choices: [{ index: 0, delta: {}, finish_reason: choice.finish_reason }],
+		...(response.usage ? { usage: response.usage, _usage: response.usage } : {}),
+	};
 }
 
 function consumeChatStreamChunk(chunk: unknown, state: ResponsesStreamState, res: Response): void {

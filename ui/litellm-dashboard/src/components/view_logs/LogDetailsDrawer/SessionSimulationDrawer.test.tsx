@@ -8,6 +8,7 @@ import {
 	parseTranscriptEntries,
 	parseUserContextPrefixes,
 	SystemReminderView,
+	ToolResultTimelineCard,
 	TranscriptView,
 } from "./SessionSimulationDrawer";
 
@@ -205,5 +206,44 @@ describe("SystemReminderView", () => {
 		fireEvent.click(collapseButton);
 		expect(screen.getByRole("button", { name: "展开系统提醒" })).toHaveAttribute("aria-expanded", "false");
 		expect(screen.queryByRole("region", { name: "系统提醒全文" })).not.toBeInTheDocument();
+	});
+});
+
+describe("ToolResultTimelineCard", () => {
+	it("以独立工具结果卡片展示，并默认折叠详细输出", () => {
+		render(
+			<ToolResultTimelineCard
+				item={makeEvent({
+					role: "tool",
+					label: "工具结果",
+					content: "第一行\n第二行",
+					status: "success",
+					parts: [
+						{
+							kind: "tool_result",
+							label: "Tool result",
+							id: "tool-1",
+							name: "Bash",
+							text: "第一行\n第二行",
+						},
+					],
+				})}
+			/>,
+		);
+
+		expect(screen.getByRole("region", { name: "工具结果 Bash" })).toBeInTheDocument();
+		expect(screen.getByText("Bash")).toBeInTheDocument();
+		expect(screen.getByText("已返回")).toBeInTheDocument();
+		const expandButton = screen.getByRole("button", { name: "展开工具结果 Bash" });
+		expect(expandButton).toHaveAttribute("aria-expanded", "false");
+		expect(screen.queryByRole("region", { name: "工具结果全文 Bash" })).not.toBeInTheDocument();
+
+		fireEvent.click(expandButton);
+		const collapseButton = screen.getByRole("button", { name: "收起工具结果 Bash" });
+		expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+		expect(screen.getByRole("region", { name: "工具结果全文 Bash" })).toHaveTextContent("第一行 第二行");
+
+		fireEvent.click(collapseButton);
+		expect(screen.queryByRole("region", { name: "工具结果全文 Bash" })).not.toBeInTheDocument();
 	});
 });

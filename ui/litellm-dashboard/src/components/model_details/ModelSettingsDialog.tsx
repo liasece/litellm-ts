@@ -34,6 +34,9 @@ function getInitialValues(modelData: any, isWildcardModel: boolean) {
 		cache_control: Boolean(litellmParams.cache_control_injection_points),
 		cache_control_injection_points: litellmParams.cache_control_injection_points || [],
 		model_access_group: Array.isArray(modelInfo.access_groups) ? modelInfo.access_groups : [],
+		enabled_builtin_capabilities: Array.isArray(modelInfo.enabled_builtin_capabilities)
+			? modelInfo.enabled_builtin_capabilities
+			: [],
 		guardrails: Array.isArray(litellmParams.guardrails) ? litellmParams.guardrails : [],
 		vector_store_ids: Array.isArray(litellmParams.vector_store_ids) ? litellmParams.vector_store_ids : [],
 		tags: Array.isArray(litellmParams.tags) ? litellmParams.tags : [],

@@ -13,3 +13,4 @@ export { LiteLLM_SearchToolsTable } from "./searchTools";
 export { LiteLLM_UserNotifications } from "./userNotifications";
 export { liteLLM_SpendReservations } from "./spendReservations";
 export { liteLLM_ActiveRequests } from "./activeRequests";
+export { liteLLM_BuiltinCapabilityImages } from "./builtinCapabilityImages";

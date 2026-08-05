@@ -51,6 +51,7 @@ interface ProxySettings {
 const LEGACY_REDIRECTS: Record<string, string> = {
 	api_ref: "api-reference",
 	"api-reference": "api-reference",
+	"builtin-capabilities": "builtin-capabilities",
 };
 
 function CreateKeyPageContent() {

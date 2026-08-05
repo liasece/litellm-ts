@@ -94,6 +94,8 @@ const imageSource = (value: any, mimeType: string, base64 = false): string | und
 	return base64 ? `data:${mimeType};base64,${source}` : undefined;
 };
 
+const TRUNCATED_IMAGE_MESSAGE = "图片数据在日志入库时被截断，无法显示。";
+
 const generatedImagePart = (value: any, outputFormat?: any, sourceType = "image_generation"): MessagePart | null => {
 	const image = asRecord(value);
 	if (!image) return null;
@@ -112,7 +114,7 @@ const generatedImagePart = (value: any, outputFormat?: any, sourceType = "image_
 		id: typeof image.id === "string" ? image.id : undefined,
 		status: typeof image.status === "string" ? image.status : undefined,
 		text: wasTruncated
-			? "图片数据在日志入库时被截断，无法显示。"
+			? TRUNCATED_IMAGE_MESSAGE
 			: typeof image.revised_prompt === "string"
 				? image.revised_prompt
 				: undefined,
@@ -325,15 +327,22 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 		if (generated) return { part: generated };
 	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
-		const mimeType = imageMimeType(block.mime_type ?? block.mimeType);
-		const source = imageSource(block.image_url?.url ?? block.image_url ?? block.url, mimeType);
+		const imageData = asRecord(block.source);
+		const mimeType = imageMimeType(
+			block.mime_type ?? block.mimeType ?? imageData?.media_type ?? imageData?.mime_type,
+		);
+		const rawSource = block.image_url?.url ?? block.image_url ?? block.url ?? imageData?.data;
+		const wasTruncated = typeof rawSource === "string" && rawSource.includes("litellm_truncated");
+		const source = imageSource(rawSource, mimeType, imageData?.type === "base64");
 		return {
 			part: {
 				kind: "image",
 				label: "Image",
 				sourceType: type,
-				text: valueToText(block.image_url?.url ?? block.image_url ?? block.file_id ?? block.url ?? "Attached image"),
-				data: source ? { src: source, mimeType } : undefined,
+				text: wasTruncated
+					? TRUNCATED_IMAGE_MESSAGE
+					: valueToText(rawSource ?? block.file_id ?? "Attached image"),
+				data: source ? { src: source, mimeType } : wasTruncated ? { truncated: true } : undefined,
 			},
 		};
 	}

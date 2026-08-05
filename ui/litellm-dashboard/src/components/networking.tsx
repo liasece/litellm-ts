@@ -2324,6 +2324,47 @@ export const modelRawInfoCall = async (accessToken: string, modelId: string) => 
 	return await response.json();
 };
 
+export interface BuiltinCapabilitySettings {
+	enabled: boolean;
+	always_inject: boolean;
+	handler_model: string;
+	fallback_models: string[];
+	max_iterations: number;
+	max_output_tokens: number;
+}
+
+export interface BuiltinCapabilitiesResponse {
+	capabilities: { vision: BuiltinCapabilitySettings };
+	available_models: Array<{ model_name: string; type: "model" | "alias"; mode: string }>;
+}
+
+export const builtinCapabilitiesCall = async (): Promise<BuiltinCapabilitiesResponse> => {
+	const url = proxyBaseUrl ? `${proxyBaseUrl}/builtin-capabilities` : "/builtin-capabilities";
+	const response = await dashboardFetch(url, {
+		method: "GET",
+		headers: { "Content-Type": "application/json" },
+	});
+	if (!response.ok) {
+		throw new Error((await response.text()) || `Built-in capabilities query failed with HTTP ${response.status}`);
+	}
+	return await response.json();
+};
+
+export const updateBuiltinCapabilitiesCall = async (
+	capabilities: BuiltinCapabilitiesResponse["capabilities"],
+): Promise<BuiltinCapabilitiesResponse> => {
+	const url = proxyBaseUrl ? `${proxyBaseUrl}/builtin-capabilities` : "/builtin-capabilities";
+	const response = await dashboardFetch(url, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(capabilities),
+	});
+	if (!response.ok) {
+		throw new Error((await response.text()) || `Built-in capabilities update failed with HTTP ${response.status}`);
+	}
+	return await response.json();
+};
+
 export const modelHubPublicModelsCall = async () => {
 	const url = proxyBaseUrl ? `${proxyBaseUrl}/public/model_hub` : `/public/model_hub`;
 	const response = await dashboardFetch(url, {
@@ -7403,6 +7444,9 @@ export interface SessionTimelineEvent {
 	content: string;
 	parts?: SessionTimelinePart[];
 	status?: string;
+	internal_call?: boolean;
+	builtin_capability?: string;
+	parent_request_id?: string;
 }
 
 export interface SessionTimelineResponse {

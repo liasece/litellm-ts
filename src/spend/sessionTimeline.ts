@@ -74,8 +74,17 @@ export interface SessionTimelineSourceRow {
 	 * with request_payload after the endpoint has reduced it to unseen messages.
 	 */
 	readonly request_message_occurrences?: readonly number[];
+	/**
+	 * Flags aligned with the compact request payload. A true entry came from a
+	 * position beyond the previous cumulative high-water mark, so user/tool
+	 * content remains a new occurrence even when it intentionally repeats.
+	 */
+	readonly request_message_delta_flags?: readonly boolean[];
 	readonly request_payload_available?: boolean;
 	readonly response_payload_available?: boolean;
+	readonly internal_call_type?: string | null;
+	readonly builtin_capability?: string | null;
+	readonly parent_request_id?: string | null;
 }
 
 export interface SessionTimelineItem {
@@ -88,6 +97,9 @@ export interface SessionTimelineItem {
 	readonly content: string;
 	parts?: SessionTimelinePart[];
 	readonly status?: string;
+	readonly internal_call?: boolean;
+	readonly builtin_capability?: string;
+	readonly parent_request_id?: string;
 }
 
 export interface SessionTimelineResponse {
@@ -129,6 +141,17 @@ function safeJsonStringify(value: unknown, pretty = false): string {
 	} catch {
 		return "[Unserializable content]";
 	}
+}
+
+function internalTimelineFields(
+	row: SessionTimelineSourceRow,
+): Pick<SessionTimelineItem, "internal_call" | "builtin_capability" | "parent_request_id"> {
+	const internalCall = row.internal_call_type === "builtin_capability";
+	return {
+		internal_call: internalCall || undefined,
+		builtin_capability: internalCall ? row.builtin_capability ?? undefined : undefined,
+		parent_request_id: internalCall ? row.parent_request_id ?? undefined : undefined,
+	};
 }
 
 function parseToolArguments(value: unknown): Record<string, unknown> {
@@ -217,6 +240,8 @@ function imageSource(value: unknown, mimeType: string, base64 = false): string |
 	return base64 ? `data:${mimeType};base64,${source}` : undefined;
 }
 
+const TRUNCATED_IMAGE_MESSAGE = "图片数据在日志入库时被截断，无法显示。";
+
 function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType = "image_generation"): SessionTimelinePart | null {
 	const image = asRecord(value);
 	if (!image) return null;
@@ -236,7 +261,7 @@ function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType =
 		id: typeof image.id === "string" ? image.id : undefined,
 		status: typeof image.status === "string" ? image.status : undefined,
 		text: wasTruncated
-			? "图片数据在日志入库时被截断，无法显示。"
+			? TRUNCATED_IMAGE_MESSAGE
 			: typeof image.revised_prompt === "string"
 				? image.revised_prompt
 				: undefined,
@@ -442,15 +467,22 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
 		const imageUrl = asRecord(block.image_url);
-		const mimeType = imageMimeType(block.mime_type ?? block.mimeType);
-		const source = imageSource(imageUrl?.url ?? block.image_url ?? block.url, mimeType);
+		const imageData = asRecord(block.source);
+		const mimeType = imageMimeType(
+			block.mime_type ?? block.mimeType ?? imageData?.media_type ?? imageData?.mime_type,
+		);
+		const rawSource = imageUrl?.url ?? block.image_url ?? block.url ?? imageData?.data;
+		const wasTruncated = typeof rawSource === "string" && rawSource.includes("litellm_truncated");
+		const source = imageSource(rawSource, mimeType, imageData?.type === "base64");
 		return {
 			part: {
 				kind: "image",
 				label: "Image",
 				sourceType: type,
-				text: valueToText(imageUrl?.url ?? block.image_url ?? block.file_id ?? block.url ?? "Attached image"),
-				data: source ? { src: source, mimeType } : undefined,
+				text: wasTruncated
+					? TRUNCATED_IMAGE_MESSAGE
+					: valueToText(rawSource ?? block.file_id ?? "Attached image"),
+				data: source ? { src: source, mimeType } : wasTruncated ? { truncated: true } : undefined,
 			},
 		};
 	}
@@ -855,7 +887,7 @@ function roleLabel(role: SessionTimelineRole): string {
 	}
 }
 
-function attachToolResultToCall(items: SessionTimelineItem[], result: SessionTimelinePart): boolean {
+function toolResultWithCallIdentity(items: SessionTimelineItem[], result: SessionTimelinePart): SessionTimelinePart {
 	for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
 		const item = items[itemIndex];
 		if (!item) continue;
@@ -868,21 +900,13 @@ function attachToolResultToCall(items: SessionTimelineItem[], result: SessionTim
 					(result.id ? part.id === result.id : !parts.some((candidate) => candidate.kind === "tool_result")),
 			);
 		if (!matchingCall) continue;
-		const resultWithCallIdentity = {
+		return {
 			...result,
 			id: result.id || matchingCall.id,
 			name: result.name || matchingCall.name,
 		};
-		const alreadyAttached = parts.some(
-			(part) =>
-				part.kind === "tool_result" &&
-				part.id === resultWithCallIdentity.id &&
-				part.text === resultWithCallIdentity.text,
-		);
-		if (!alreadyAttached) item.parts = [...parts, resultWithCallIdentity];
-		return true;
 	}
-	return false;
+	return result;
 }
 
 function contentFromTimelineParts(parts: SessionTimelinePart[], fallback: string): string {
@@ -1037,39 +1061,63 @@ export class SessionTimelineBuilder {
 			const fingerprint = messageHistoryFingerprint(message);
 			const snapshotOccurrence = (snapshotOccurrences.get(fingerprint) ?? 0) + 1;
 			const suppliedOccurrence = row.request_message_occurrences?.[index];
-			const occurrence =
+			let occurrence =
 				typeof suppliedOccurrence === "number" && Number.isSafeInteger(suppliedOccurrence) && suppliedOccurrence > 0
 					? Math.max(snapshotOccurrence, suppliedOccurrence)
 					: snapshotOccurrence;
+			const seenOccurrence = this.seenHistoryOccurrences.get(fingerprint) ?? 0;
+			if (row.request_message_delta_flags?.[index]) {
+				// A copied assistant response is already represented by the
+				// preceding response event. Other tail positions are genuine new
+				// history occurrences, including intentionally repeated user text.
+				occurrence =
+					(message.role === "assistant" || message.role === "system") && seenOccurrence > 0
+						? seenOccurrence
+						: seenOccurrence + 1;
+			}
 			snapshotOccurrences.set(fingerprint, Math.max(snapshotOccurrence, occurrence));
 			if (message.role === "system" && this.seenSystemMessages.has(fingerprint)) return;
 			if (message.role === "system") this.seenSystemMessages.add(fingerprint);
-			const seenOccurrence = this.seenHistoryOccurrences.get(fingerprint) ?? 0;
 			this.seenHistoryOccurrences.set(fingerprint, Math.max(seenOccurrence, occurrence));
 			if (occurrence <= seenOccurrence) return;
 
-			const toolResults = (message.parts ?? []).filter((part) => part.kind === "tool_result");
-			const attachedResults = new Set(toolResults.filter((result) => attachToolResultToCall(this.items, result)));
-			const remainingParts = (message.parts ?? []).filter((part) => !attachedResults.has(part));
-			if (attachedResults.size > 0) addedMessage = true;
-			if (remainingParts.length === 0 && toolResults.length > 0) return;
+			const messageParts = message.parts ?? [];
+			const toolResults = messageParts.filter((part) => part.kind === "tool_result");
+			const remainingParts = messageParts.filter((part) => part.kind !== "tool_result");
 
-			const role =
-				remainingParts.length > 0 && remainingParts.every((part) => part.kind === "tool_result")
-					? "tool"
-					: message.role;
-			addedMessage = true;
-			this.items.push({
-				id: `${row.request_id}:request:${index}`,
-				request_id: row.request_id,
-				role: role,
-				label: roleLabel(role),
-				timestamp: startTimestamp,
-				model: row.model,
-				content: contentFromTimelineParts(remainingParts, message.content),
-				parts: remainingParts.length > 0 ? remainingParts : undefined,
-				status: row.status ?? row.metadata_status ?? undefined,
+			toolResults.forEach((result, resultIndex) => {
+				const identifiedResult = toolResultWithCallIdentity(this.items, result);
+				this.items.push({
+					id: `${row.request_id}:request:${index}:tool-result:${resultIndex}`,
+					request_id: row.request_id,
+					role: "tool",
+					label: roleLabel("tool"),
+					timestamp: startTimestamp,
+					model: row.model,
+					content: contentFromTimelineParts([identifiedResult], message.content),
+					parts: [identifiedResult],
+					status: identifiedResult.status ?? row.status ?? row.metadata_status ?? undefined,
+					...internalTimelineFields(row),
+				});
+				addedMessage = true;
 			});
+
+			if (remainingParts.length > 0 || (messageParts.length === 0 && message.content.trim())) {
+				const role = message.role;
+				addedMessage = true;
+				this.items.push({
+					id: `${row.request_id}:request:${index}`,
+					request_id: row.request_id,
+					role: role,
+					label: roleLabel(role),
+					timestamp: startTimestamp,
+					model: row.model,
+					content: contentFromTimelineParts(remainingParts, message.content),
+					parts: remainingParts.length > 0 ? remainingParts : undefined,
+					status: row.status ?? row.metadata_status ?? undefined,
+					...internalTimelineFields(row),
+				});
+			}
 		});
 
 		if (responseMessage) {
@@ -1081,16 +1129,40 @@ export class SessionTimelineBuilder {
 				seenResponseOccurrence + 1,
 			);
 			this.seenHistoryOccurrences.set(responseFingerprint, responseOccurrence);
-			this.items.push({
-				id: `${row.request_id}:response`,
-				request_id: row.request_id,
-				role: responseMessage.role,
-				label: roleLabel(responseMessage.role),
-				timestamp: endTimestamp,
-				model: row.model,
-				content: responseMessage.content,
-				parts: responseMessage.parts,
-				status: row.status ?? row.metadata_status ?? undefined,
+			const responseParts = responseMessage.parts ?? [];
+			const toolResults = responseParts.filter((part) => part.kind === "tool_result");
+			const remainingParts = responseParts.filter((part) => part.kind !== "tool_result");
+			if (remainingParts.length > 0 || (responseParts.length === 0 && responseMessage.content.trim())) {
+				this.items.push({
+					id: `${row.request_id}:response`,
+					request_id: row.request_id,
+					role: responseMessage.role,
+					label: roleLabel(responseMessage.role),
+					timestamp: endTimestamp,
+					model: row.model,
+					content:
+						toolResults.length > 0
+							? contentFromParts(remainingParts) || responseMessage.content
+							: responseMessage.content,
+					parts: remainingParts.length > 0 ? remainingParts : undefined,
+					status: row.status ?? row.metadata_status ?? undefined,
+					...internalTimelineFields(row),
+				});
+			}
+			toolResults.forEach((result, resultIndex) => {
+				const identifiedResult = toolResultWithCallIdentity(this.items, result);
+				this.items.push({
+					id: `${row.request_id}:response:tool-result:${resultIndex}`,
+					request_id: row.request_id,
+					role: "tool",
+					label: roleLabel("tool"),
+					timestamp: endTimestamp,
+					model: row.model,
+					content: contentFromTimelineParts([identifiedResult], responseMessage.content),
+					parts: [identifiedResult],
+					status: identifiedResult.status ?? row.status ?? row.metadata_status ?? undefined,
+					...internalTimelineFields(row),
+				});
 			});
 		}
 
@@ -1105,6 +1177,7 @@ export class SessionTimelineBuilder {
 				model: row.model,
 				content: errorMessage(row.error_information),
 				status: "failure",
+				...internalTimelineFields(row),
 			});
 			addedMessage = true;
 		}
@@ -1119,6 +1192,7 @@ export class SessionTimelineBuilder {
 				model: row.model,
 				content: `${row.call_type || "completion"} · 未记录会话正文`,
 				status: row.status ?? row.metadata_status ?? undefined,
+				...internalTimelineFields(row),
 			});
 		}
 	}

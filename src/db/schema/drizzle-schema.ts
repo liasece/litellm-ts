@@ -71,3 +71,4 @@ export { liteLLM_ManagedVectorStoreTable } from "./managed-vector-stores";
 export { liteLLM_ManagedVectorStoresTable } from "./managed-vector-stores-direct";
 export { liteLLM_ManagedVectorStoreIndexTable } from "./managed-vector-store-index";
 export { liteLLM_ClaudeCodePluginTable } from "./claude-code-plugins";
+export { liteLLM_BuiltinCapabilityImages } from "./builtinCapabilityImages";

@@ -49,6 +49,9 @@ import {
 	resolveGooglePseSearchConfig,
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
+import { prepareAnthropicVisionRequest, runAnthropicVisionAgentLoop } from "../capabilities/VisionCapability";
+import { createVisionCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import { createVisionImageStore } from "../capabilities/VisionImageStore";
 
 const logger = createModuleLogger("AnthropicMsg");
 
@@ -436,6 +439,88 @@ function sendPing(res: Response): void {
 	res.write(formatAnthropicPingEvent());
 }
 
+function writeBufferedAnthropicResponseAsStream(
+	res: Response,
+	response: Record<string, unknown>,
+	requestedModel: string,
+): NativeStreamAccumulator {
+	const accumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
+	const syntheticId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+	const usage = (response["usage"] as Record<string, unknown> | undefined) ?? {};
+	const emit = (payload: Record<string, unknown>): void => {
+		accumulateNativeStreamEvent(accumulator, payload);
+		res.write(formatSSE(String(payload["type"] ?? "message"), JSON.stringify(payload)));
+	};
+	emit({
+		type: "message_start",
+		message: {
+			id: syntheticId,
+			type: "message",
+			role: "assistant",
+			model: requestedModel,
+			content: [],
+			stop_reason: null,
+			stop_sequence: null,
+			usage: {
+				input_tokens: numberValue(usage["input_tokens"]),
+				cache_creation_input_tokens: numberValue(usage["cache_creation_input_tokens"]),
+				cache_read_input_tokens: numberValue(usage["cache_read_input_tokens"]),
+				output_tokens: 0,
+			},
+		},
+	});
+	const content = Array.isArray(response["content"]) ? (response["content"] as Array<Record<string, unknown>>) : [];
+	for (const [index, block] of content.entries()) {
+		const type = block["type"];
+		if (type === "text") {
+			emit({ type: "content_block_start", index: index, content_block: { type: "text", text: "" } });
+			emit({ type: "content_block_delta", index: index, delta: { type: "text_delta", text: String(block["text"] ?? "") } });
+		} else if (type === "thinking") {
+			emit({ type: "content_block_start", index: index, content_block: { type: "thinking", thinking: "", signature: "" } });
+			emit({
+				type: "content_block_delta",
+				index: index,
+				delta: { type: "thinking_delta", thinking: String(block["thinking"] ?? "") },
+			});
+			if (typeof block["signature"] === "string" && block["signature"]) {
+				emit({
+					type: "content_block_delta",
+					index: index,
+					delta: { type: "signature_delta", signature: block["signature"] },
+				});
+			}
+		} else if (type === "tool_use") {
+			emit({
+				type: "content_block_start",
+				index: index,
+				content_block: { type: "tool_use", id: block["id"], name: block["name"], input: {} },
+			});
+			emit({
+				type: "content_block_delta",
+				index: index,
+				delta: { type: "input_json_delta", partial_json: JSON.stringify(block["input"] ?? {}) },
+			});
+		} else {
+			continue;
+		}
+		emit({ type: "content_block_stop", index: index });
+	}
+	emit({
+		type: "message_delta",
+		delta: {
+			stop_reason: response["stop_reason"] ?? "end_turn",
+			stop_sequence: response["stop_sequence"] ?? null,
+		},
+		usage: { output_tokens: numberValue(usage["output_tokens"]) },
+	});
+	emit({ type: "message_stop" });
+	return accumulator;
+}
+
+function numberValue(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 /**
  * 已经通过 Anthropic SSE 转发给客户端的上游错误。
  *
@@ -633,10 +718,12 @@ export function registerAnthropicMessagesEndpoints(
 		// PY litellm_overhead_time_ms 基准：请求进入代理的时间
 		const requestArrivalTimeMs = Date.now();
 
-		const cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
+		let cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
 		if (!cleanBody) {
 			throw ApiError.badRequest("请求体为空");
 		}
+		const originalRequestBody = structuredClone(cleanBody) as Record<string, unknown>;
+		const originalMessages = originalRequestBody["messages"];
 
 		const requestedModel = cleanBody.model as string | undefined;
 		if (!requestedModel) {
@@ -670,6 +757,11 @@ export function registerAnthropicMessagesEndpoints(
 		// 路由 model：websearch override 之后（对齐 PY common_request_processing 顺序：
 		// override 改写 data["model"] 后才调 router）。spend / 响应 model 改写仍用 requestedModel。
 		const model = cleanBody.model as string;
+		const visionImageStore = createVisionImageStore(db);
+		const preparedVision = await prepareAnthropicVisionRequest(litellmRouter, model, cleanBody, visionImageStore);
+		if (preparedVision) {
+			cleanBody = preparedVision.body;
+		}
 		const stream = cleanBody.stream === true;
 		const requestApiKey = cleanBody["api_key"] as string | undefined;
 		const requestAnthropicVersion = cleanBody["anthropic_version"] as string | undefined;
@@ -683,6 +775,7 @@ export function registerAnthropicMessagesEndpoints(
 		});
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
+		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const modelResolutionTrace = createModelResolutionTraceCollector();
 
 		try {
@@ -702,6 +795,131 @@ export function registerAnthropicMessagesEndpoints(
 				};
 				// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 				const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
+				if (preparedVision) {
+					try {
+						const completeNative = (body: Record<string, unknown>) =>
+							executeWithFallbackChain(
+								litellmRouter,
+								model,
+								requestApiKey,
+								requestAnthropicVersion,
+								async (attempt) => {
+									const timeoutSec = attempt.deployment.litellm_params.timeout;
+									const execution = await executeProviderRequest(
+										{
+											url: attempt.upstreamUrl,
+											method: "POST",
+											headers: {
+												...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+												"Content-Type": "application/json",
+											},
+											body: buildAnthropicUpstreamBody(
+												{ ...body, stream: false },
+												attempt.upstreamModel,
+												attempt.deployment,
+											),
+											model: attempt.upstreamModel,
+										},
+										{
+											readJson: false,
+											signal: webSearchAbortController.signal,
+											timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+										},
+									);
+									if (!execution.response.ok) {
+										const errBody = await execution.response.text().catch(() => "");
+										throw new ProviderUpstreamError(
+											execution.response.status,
+											`Provider 返回错误 (${execution.response.status}): ${errBody.slice(0, 200)}`,
+										);
+									}
+									completionStartTime = new Date();
+									executedAttempt = attempt;
+									const responseData = (await execution.response.json()) as Record<string, unknown>;
+									Object.defineProperty(responseData, "_spendInfo", {
+										value: buildDeploymentSpendInfo(attempt.deployment, attempt.upstreamUrl),
+										enumerable: false,
+										configurable: true,
+									});
+									return responseData;
+								},
+								streamFallbackStats,
+							);
+						const agentResult = await runAnthropicVisionAgentLoop(litellmRouter, preparedVision, completeNative, visionAudit);
+						cleanBody = agentResult.body;
+						const finalResponse = agentResult.response;
+						finalResponse["model"] = requestedModel;
+						const spendInfo = executedAttempt
+							? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
+							: undefined;
+						calculateAndSetCost(finalResponse as unknown as ModelResponse, requestedModel, spendInfo?.customCostPerToken);
+						res.writeHead(200, {
+							"Content-Type": "text/event-stream",
+							"Cache-Control": "no-cache",
+							Connection: "keep-alive",
+							"X-Accel-Buffering": "no",
+						});
+						const finalAccumulator = writeBufferedAnthropicResponseAsStream(res, finalResponse, requestedModel);
+						res.end();
+						if (db && auth && spendRequestId) {
+							const spendLog = await buildSpendLogFromRequest({
+								req: req,
+								auth: auth,
+								requestId: spendRequestId,
+								callType: CallType.AMessages,
+								model: requestedModel,
+								modelGroup: requestedModel,
+								modelId: spendInfo?.modelId,
+								customLlmProvider: spendInfo?.customLlmProvider,
+								apiBase: spendInfo?.apiBase,
+								customCostPerToken: spendInfo?.customCostPerToken,
+								deploymentModel: spendInfo?.deploymentModel,
+								litellmOverheadTimeMs: streamOverheadTimeMs,
+								attemptedRetries: streamFallbackStats.fallbackDepth,
+								maxRetries: litellmRouter.maxFallbacks,
+								fallbackModels: streamFallbackStats.fallbackModels,
+								modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+								startTime: streamStartTime,
+								endTime: new Date(),
+								completionStartTime: completionStartTime,
+								messages: originalMessages,
+								proxyServerRequestBody: originalRequestBody,
+								response: finalResponse,
+								usage: finalAccumulator.usage as Record<string, unknown> | undefined,
+								status: SpendLogStatus.Success,
+							});
+							await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+						}
+						return;
+					} catch (error) {
+						if (db && auth && spendRequestId) {
+							await spendLifecycle.finalize(async () =>
+								trackSpendLog(
+									db,
+									await buildSpendLogFromRequest({
+										req: req,
+										auth: auth,
+										requestId: spendRequestId,
+										callType: CallType.AMessages,
+										model: requestedModel,
+										modelGroup: requestedModel,
+										startTime: streamStartTime,
+										endTime: new Date(),
+										messages: originalMessages,
+										proxyServerRequestBody: originalRequestBody,
+										error: error,
+										status: SpendLogStatus.Failure,
+										attemptedRetries: streamFallbackStats.fallbackDepth,
+										maxRetries: litellmRouter.maxFallbacks,
+										fallbackModels: streamFallbackStats.fallbackModels,
+										modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+									}),
+								).then(() => undefined),
+							);
+						}
+						throw error;
+					}
+				}
 
 				// 先经 fallback 链建立上游连接：失败时响应头未发送，
 				// 由 registerRoute 返回标准 HTTP 错误（对齐 PY 全部 deployment 失败时的行为）；
@@ -741,7 +959,8 @@ export function registerAnthropicMessagesEndpoints(
 										modelGroup: requestedModel,
 										startTime: streamStartTime,
 										endTime: new Date(),
-										messages: cleanBody.messages,
+										messages: originalMessages,
+										proxyServerRequestBody: originalRequestBody,
 										error: error,
 										status: SpendLogStatus.Failure,
 										modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
@@ -867,7 +1086,8 @@ export function registerAnthropicMessagesEndpoints(
 							startTime: streamStartTime,
 							endTime: streamEndTime,
 							completionStartTime: completionStartTime,
-							messages: cleanBody.messages,
+							messages: originalMessages,
+							proxyServerRequestBody: originalRequestBody,
 							response: response,
 							usage: streamAccumulator.usage,
 							error: streamError,
@@ -911,47 +1131,58 @@ export function registerAnthropicMessagesEndpoints(
 			let initialNsResponse: Record<string, unknown> | undefined;
 			let usageCalculated = false;
 			try {
-				responseData = await executeWithFallbackChain(
-					litellmRouter,
-					model,
-					requestApiKey,
-					requestAnthropicVersion,
-					async (attempt) => {
-						const timeoutSec = attempt.deployment.litellm_params.timeout;
-						const execution = await executeProviderRequest(
-							{
-								url: attempt.upstreamUrl,
-								method: "POST",
-								headers: {
-									...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
-									"Content-Type": "application/json",
+				const completeNative = (body: Record<string, unknown>) =>
+					executeWithFallbackChain(
+						litellmRouter,
+						model,
+						requestApiKey,
+						requestAnthropicVersion,
+						async (attempt) => {
+							const timeoutSec = attempt.deployment.litellm_params.timeout;
+							const execution = await executeProviderRequest(
+								{
+									url: attempt.upstreamUrl,
+									method: "POST",
+									headers: {
+										...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+										"Content-Type": "application/json",
+									},
+									body: buildAnthropicUpstreamBody(body, attempt.upstreamModel, attempt.deployment),
+									model: attempt.upstreamModel,
 								},
-								body: buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel, attempt.deployment),
-								model: attempt.upstreamModel,
-							},
-							{
-								readJson: false,
-								signal: webSearchAbortController.signal,
-								timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
-							},
-						);
-						const result = execution.response;
-
-						if (!result.ok) {
-							const errBody = await result.text().catch(() => "");
-							throw new ProviderUpstreamError(
-								result.status,
-								`Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`,
+								{
+									readJson: false,
+									signal: webSearchAbortController.signal,
+									timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+								},
 							);
-						}
-
-						nsCompletionStartTime = new Date();
-						const responseJson = (await result.json()) as Record<string, unknown>;
-						executedNsAttempt = attempt;
-						return responseJson;
-					},
-					nsFallbackStats,
-				);
+							const result = execution.response;
+							if (!result.ok) {
+								const errBody = await result.text().catch(() => "");
+								throw new ProviderUpstreamError(
+									result.status,
+									`Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`,
+								);
+							}
+							nsCompletionStartTime = new Date();
+							executedNsAttempt = attempt;
+							const responseData = (await result.json()) as Record<string, unknown>;
+							Object.defineProperty(responseData, "_spendInfo", {
+								value: buildDeploymentSpendInfo(attempt.deployment, attempt.upstreamUrl),
+								enumerable: false,
+								configurable: true,
+							});
+							return responseData;
+						},
+						nsFallbackStats,
+					);
+				if (preparedVision) {
+					const visionResult = await runAnthropicVisionAgentLoop(litellmRouter, preparedVision, completeNative, visionAudit);
+					responseData = visionResult.response;
+					cleanBody = visionResult.body;
+				} else {
+					responseData = await completeNative(cleanBody);
+				}
 				initialNsResponse = responseData;
 
 				const requestTools = Array.isArray(cleanBody["tools"]) ? cleanBody["tools"] : [];
@@ -1033,7 +1264,8 @@ export function registerAnthropicMessagesEndpoints(
 									modelGroup: requestedModel,
 									startTime: nonStreamingStartTime,
 									endTime: new Date(),
-									messages: cleanBody.messages,
+									messages: originalMessages,
+									proxyServerRequestBody: originalRequestBody,
 									response: initialNsResponse,
 									usage: initialNsResponse?.["usage"] as Record<string, unknown> | undefined,
 									error: error,
@@ -1081,7 +1313,6 @@ export function registerAnthropicMessagesEndpoints(
 
 			// 非流式 spend 追踪（model 记原请求 model，对齐 Python SpendLogs 行为）
 			if (db && auth && spendRequestId) {
-				const usage = responseData["usage"] as Record<string, unknown> | undefined;
 				const spendLog = await buildSpendLogFromRequest({
 					req: req,
 					auth: auth,
@@ -1103,9 +1334,10 @@ export function registerAnthropicMessagesEndpoints(
 					startTime: nonStreamingStartTime,
 					endTime: nonStreamingEndTime,
 					completionStartTime: nsCompletionStartTime,
-					messages: cleanBody.messages,
+					messages: originalMessages,
+					proxyServerRequestBody: originalRequestBody,
 					response: responseData,
-					usage: usage,
+					usage: responseData["usage"] as Record<string, unknown> | undefined,
 					status: SpendLogStatus.Success,
 				});
 				await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));

@@ -422,7 +422,100 @@ export function TranscriptView({ content }: { content: string }) {
 	);
 }
 
+function formatToolResultDetail(part: MessagePart | undefined, fallback: string): string {
+	if (part?.text) return part.text;
+	if (part?.data !== undefined) {
+		try {
+			return JSON.stringify(part.data, null, 2);
+		} catch {
+			return "[无法序列化的工具结果]";
+		}
+	}
+	return fallback || "（空输出）";
+}
+
+export function ToolResultTimelineCard({ item }: { item: SessionTimelineItem }) {
+	const [expanded, setExpanded] = useState(false);
+	const result = item.parts?.find((part) => part.kind === "tool_result") as MessagePart | undefined;
+	const toolName = result?.name?.trim() || "未命名工具";
+	const detail = formatToolResultDetail(result, item.content);
+	const preview = detail.replace(/\s+/g, " ").trim() || "（空输出）";
+	const isError =
+		result?.isError === true || ["error", "failed", "failure"].includes(String(result?.status ?? item.status ?? "").toLowerCase());
+	const statusLabel = isError ? "执行失败" : result?.status || "已返回";
+
+	return (
+		<section
+			aria-label={`工具结果 ${toolName}`}
+			className={`overflow-hidden rounded-lg border shadow-sm ${
+				isError ? "border-red-200 bg-red-50/60" : "border-amber-200 bg-amber-50/60"
+			}`}
+		>
+			<button
+				type="button"
+				aria-expanded={expanded}
+				aria-label={`${expanded ? "收起" : "展开"}工具结果 ${toolName}`}
+				className={`flex w-full min-w-0 items-center gap-2.5 px-3.5 py-3 text-left focus-visible:outline-none focus-visible:ring-2 ${
+					isError
+						? "text-red-800 focus-visible:ring-red-400"
+						: "text-amber-900 focus-visible:ring-amber-400"
+				}`}
+				onClick={() => setExpanded((value) => !value)}
+			>
+				<span
+					className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-white ${
+						isError ? "border-red-200 text-red-600" : "border-amber-200 text-amber-700"
+					}`}
+				>
+					<Terminal size={15} />
+				</span>
+				<span className="min-w-0 flex-1">
+					<span className="flex min-w-0 items-center gap-2">
+						<span className="truncate text-[12px] font-semibold">{toolName}</span>
+						<span
+							className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${
+								isError ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+							}`}
+						>
+							{statusLabel}
+						</span>
+					</span>
+					<span
+						className={`mt-0.5 block truncate font-mono text-[10px] ${
+							isError ? "text-red-600/80" : "text-amber-700/75"
+						}`}
+					>
+						{preview}
+					</span>
+				</span>
+				<span className="shrink-0 text-[10px] font-medium">{expanded ? "收起" : "展开"}</span>
+				<ChevronDown size={15} className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
+			</button>
+			{expanded ? (
+				<div
+					role="region"
+					aria-label={`工具结果全文 ${toolName}`}
+					className={`border-t px-3.5 py-3 ${isError ? "border-red-200" : "border-amber-200"}`}
+				>
+					<div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+						<span>{detail.length.toLocaleString("zh-CN")} 字符</span>
+						{result?.id ? <span className="max-w-[420px] truncate font-mono">{result.id}</span> : null}
+					</div>
+					<pre
+						className={`max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-white/90 px-3 py-2.5 font-mono text-[11px] leading-5 ${
+							isError ? "border-red-100 text-red-800" : "border-amber-100 text-slate-700"
+						}`}
+					>
+						{detail}
+					</pre>
+				</div>
+			) : null}
+		</section>
+	);
+}
+
 function TimelineContent({ item }: { item: SessionTimelineItem }) {
+	if (item.role === "tool") return <ToolResultTimelineCard item={item} />;
 	const userContext = item.role === "user" ? parseUserContextPrefixes(item.content) : null;
 	if (userContext?.blocks.length) {
 		const nonTextParts = (item.parts ?? []).filter((part) => part.kind !== "text");
@@ -618,6 +711,11 @@ export function SessionSimulationDrawer({
 													{tone.icon}
 													{item.label}
 												</Tag>
+												{item.internal_call ? (
+													<Tag color="purple" className="!m-0">
+														内置能力 · {item.builtin_capability ?? "unknown"}
+													</Tag>
+												) : null}
 												<span className="max-w-[320px] truncate text-[11px] text-slate-400">{item.model}</span>
 												<button
 													type="button"
@@ -630,9 +728,13 @@ export function SessionSimulationDrawer({
 												</button>
 											</div>
 											<div
-												className={`max-h-[360px] overflow-y-auto overscroll-contain rounded-md border bg-white px-4 py-3 shadow-sm ${
-													item.role === "error" ? "border-red-200" : "border-slate-200"
-												}`}
+												className={
+													item.role === "tool"
+														? ""
+														: `max-h-[360px] overflow-y-auto overscroll-contain rounded-md border bg-white px-4 py-3 shadow-sm ${
+																item.role === "error" ? "border-red-200" : "border-slate-200"
+															}`
+												}
 											>
 												<TimelineContent item={item} />
 											</div>

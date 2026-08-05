@@ -33,6 +33,7 @@ function withBase(path: string): string {
  */
 const MIGRATED_PAGES: Record<string, string> = {
 	"api-reference": "api-reference",
+	"builtin-capabilities": "builtin-capabilities",
 };
 
 function LayoutContent({ children }: { children: React.ReactNode }) {

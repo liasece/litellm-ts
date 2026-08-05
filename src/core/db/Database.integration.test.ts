@@ -3,6 +3,7 @@ import { resolve } from "path";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { Pool } from "pg";
 import type { DatabaseConfig } from "../config";
+import { DatabaseVisionImageStore } from "../../capabilities/VisionImageStore";
 import { Database, runReadOnlySchemaPreflight } from "./Database";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -59,6 +60,7 @@ describeWithDatabase("Database PostgreSQL bootstrap integration", () => {
 		);
 		expect(tables.rows.some((row) => row.table_name === "LiteLLM_VerificationToken")).toBe(true);
 		expect(tables.rows.some((row) => row.table_name === "LiteLLM_SpendReservations")).toBe(true);
+		expect(tables.rows.some((row) => row.table_name === "LiteLLM_BuiltinCapabilityImages")).toBe(true);
 		const migrations = await schemaPool.query<{ count: string }>('SELECT count(*)::text AS count FROM "__drizzle_migrations"');
 		expect(Number(migrations.rows[0]?.count)).toBe(
 			readMigrationFiles({ migrationsFolder: resolve(__dirname, "../../../drizzle") }).length,
@@ -68,6 +70,22 @@ describeWithDatabase("Database PostgreSQL bootstrap integration", () => {
 		await second.initialize();
 		await expect(second.probeReadiness()).resolves.toEqual({ ready: true });
 		await second.close();
+	});
+
+	it("content-addressed built-in images deduplicate and can be loaded by hash reference", async () => {
+		const database = new Database(databaseConfig(connectionString));
+		await database.initialize();
+		const store = new DatabaseVisionImageStore(database.db);
+		const first = await store.put({ mediaType: "image/png", base64Data: Buffer.from("same-image").toString("base64") });
+		const second = await store.put({ mediaType: "image/png", base64Data: Buffer.from("same-image").toString("base64") });
+		expect(second.ref).toBe(first.ref);
+		await expect(store.get(first.ref)).resolves.toEqual(first);
+		const rows = await schemaPool.query<{ count: string }>(
+			'SELECT count(*)::text AS count FROM "LiteLLM_BuiltinCapabilityImages" WHERE "content_hash" = $1',
+			[first.contentHash],
+		);
+		expect(Number(rows.rows[0]?.count)).toBe(1);
+		await database.close();
 	});
 
 	it("session group function 优先识别 user_id JSON 内的稳定 session_id", async () => {

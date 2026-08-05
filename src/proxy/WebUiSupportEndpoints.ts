@@ -36,6 +36,11 @@ import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 import providerCreateFieldsJson from "../data/provider_create_fields.json";
 import { modelCostMapService, type ModelCostMapService } from "../cost/ModelCostMapService";
+import {
+	BUILTIN_CAPABILITIES_CONFIG_PARAM,
+	normalizeBuiltinCapabilitiesConfig,
+} from "../capabilities/BuiltinCapabilitiesConfig";
+import { isVisionCapableHandler } from "../capabilities/VisionCapability";
 
 const HTTP_FORBIDDEN = 403;
 const logger = createModuleLogger("WebUiSupportEndpoints");
@@ -1255,6 +1260,55 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 
 	registerRoute(router, { method: "get", path: "/config/routable_model/options" }, getRoutableModelCandidates);
 	registerRoute(router, { method: "get", path: "/config/websearch_override_target_model/options" }, getRoutableModelCandidates);
+
+	/**
+	 * Built-in capability manager data. Reading is available to authenticated
+	 * model editors; mutation remains proxy-admin only.
+	 */
+	registerRoute(router, { method: "get", path: "/builtin-capabilities" }, async () => {
+		const configValue = normalizeBuiltinCapabilitiesConfig(
+			(await configRepository.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM)) ?? {},
+		);
+		return {
+			capabilities: configValue,
+			available_models:
+				litellmRouter
+					?.getAvailableModelNames()
+					.filter((candidate) => isVisionCapableHandler(litellmRouter, candidate.model_name)) ?? [],
+		};
+	});
+
+	registerRoute(router, { method: "put", path: "/builtin-capabilities" }, async (req) => {
+		assertProxyAdmin(req);
+		if (!isRecord(req.body) || !isRecord(req.body["vision"])) {
+			throw ApiError.badRequest("vision capability settings are required");
+		}
+		const configValue = normalizeBuiltinCapabilitiesConfig(req.body);
+		const vision = configValue.vision;
+		const availableModelOptions =
+			litellmRouter
+				?.getAvailableModelNames()
+				.filter((candidate) => isVisionCapableHandler(litellmRouter, candidate.model_name)) ?? [];
+		const availableModels = new Set(availableModelOptions.map((candidate) => candidate.model_name));
+		if (vision.enabled && vision.handler_model.length === 0) {
+			throw ApiError.badRequest("Enabled vision capability requires handler_model");
+		}
+		if (vision.handler_model && !availableModels.has(vision.handler_model)) {
+			throw ApiError.badRequest(`Unknown vision handler model: ${vision.handler_model}`);
+		}
+		if (vision.fallback_models.includes(vision.handler_model)) {
+			throw ApiError.badRequest("Vision fallback models must not repeat handler_model");
+		}
+		const unknownFallback = vision.fallback_models.find((model) => !availableModels.has(model));
+		if (unknownFallback) {
+			throw ApiError.badRequest(`Unknown vision fallback model: ${unknownFallback}`);
+		}
+		await configRepository.upsertParam(BUILTIN_CAPABILITIES_CONFIG_PARAM, configValue);
+		return {
+			capabilities: configValue,
+			available_models: availableModelOptions,
+		};
+	});
 
 	/**
 	 * 更新配置（对齐 Python update_config，proxy_server.py:11930）。

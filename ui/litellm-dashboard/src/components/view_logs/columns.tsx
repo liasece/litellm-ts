@@ -1,6 +1,6 @@
 import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Popover, Tooltip } from "antd";
+import { Popover, Tag, Tooltip } from "antd";
 import { ArrowDownToLine, ArrowUpFromLine, CircleDollarSign, Database, GitBranch } from "lucide-react";
 import { getModelLogoAndName } from "../provider_info_helpers";
 import LabeledField from "../common_components/LabeledField";
@@ -610,6 +610,10 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			const provider = row.custom_llm_provider;
 			const modelName = String(info.getValue() || "");
 			const displayModelName = getDisplayModelName(modelName, provider);
+			const builtinCapability =
+				row.metadata?.internal_call_type === "builtin_capability"
+					? String(row.metadata?.builtin_capability || "unknown")
+					: null;
 			const fallbackModels: string[] | undefined = row.metadata?.fallback_models;
 			const fallbackCount = fallbackModels && fallbackModels.length > 1 ? fallbackModels.length - 1 : 0;
 			const resolutionLines = buildModelResolutionTooltipLines(
@@ -620,6 +624,11 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			return (
 				<div className="flex min-w-0 items-center gap-2">
 					{provider && <ProviderLogo provider={provider} logo={getLogoUrl(row, provider)} />}
+					{builtinCapability ? (
+						<Tag color="purple" className="!m-0 shrink-0">
+							Built-in · {builtinCapability}
+						</Tag>
+					) : null}
 					<Popover
 						content={
 							<ModelInfoPopoverContent

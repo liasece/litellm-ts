@@ -89,6 +89,28 @@ describe("LogDetailContent", () => {
 		expect(screen.getByText("completion")).toBeInTheDocument();
 	});
 
+	it("shows the built-in capability and parent request for an internal child log", () => {
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					model: "openai/gpt-5.4-mini",
+					metadata: {
+						status: "success",
+						internal_call: true,
+						internal_call_type: "builtin_capability",
+						builtin_capability: "vision",
+						parent_request_id: "parent-request-id",
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByText("Built-in Capability")).toBeInTheDocument();
+		expect(screen.getByText("vision")).toBeInTheDocument();
+		expect(screen.getByText("Parent Request")).toBeInTheDocument();
+		expect(screen.getByText("parent-request-id")).toBeInTheDocument();
+	});
+
 	it("should display error alert when request has failed", () => {
 		render(
 			<LogDetailContent
@@ -235,6 +257,47 @@ describe("LogDetailContent", () => {
 		await user.click(screen.getByRole("tab", { name: "Response" }));
 
 		expect(screen.getByText("Response data not available")).toBeInTheDocument();
+	});
+
+	it("uses intact messages column over truncated proxy_server_request body for pretty request rendering", () => {
+		const fullImageUrl = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QCARXhpZgA";
+		const truncatedImageUrl =
+			"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAASABIAAD/4QCARXhpZgA... (litellm_truncated skipped 32768 chars. Truncation is a DB storage safeguard.) .../9j/4AAQSkZJRg";
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: {
+						url: "https://api.example.com/v1/chat/completions",
+						body: {
+							model: "gpt-4",
+							messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: truncatedImageUrl } }] }],
+						},
+					},
+					messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: fullImageUrl } }] }],
+				})}
+			/>,
+		);
+
+		// 截断提示不应出现，完整图片应被渲染（img.src 来自 messages 列而非 proxy 截断副本）
+		expect(screen.queryByText("图片数据在日志入库时被截断，无法显示。")).not.toBeInTheDocument();
+		const image = document.querySelector("img[src*='data:image/jpeg;base64']");
+		expect(image).not.toBeNull();
+		expect(image?.getAttribute("src")).toBe(fullImageUrl);
+		expect(image?.getAttribute("src")).not.toContain("litellm_truncated");
+	});
+
+	it("falls back to proxy_server_request when messages column is empty", () => {
+		const proxyBodyMessages = [{ role: "user", content: "hello from proxy" }];
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: { url: "https://api.example.com", body: { messages: proxyBodyMessages } },
+					messages: [],
+				})}
+			/>,
+		);
+
+		expect(screen.getByText("hello from proxy")).toBeInTheDocument();
 	});
 
 	it("should display Metadata section collapsed by default", () => {

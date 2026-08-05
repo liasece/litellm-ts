@@ -576,8 +576,8 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const auxiliaryCandidateRequestIds = rawDescriptorRows
 			.filter(
 				(row) =>
-					(Array.isArray(row.request_payload_fingerprints) && row.request_payload_fingerprints.length <= 2) ||
-					row.request_payload_fingerprints === null,
+					(typeof row.request_message_count === "number" && row.request_message_count <= 2) ||
+					row.request_message_count === null,
 			)
 			.map((row) => row.request_id);
 		const classificationByRequestId = new Map<string, Partial<SessionTimelineSourceRow>>();
@@ -604,7 +604,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			(requestId) => (payloadPlan.indicesByRequestId.get(requestId)?.length ?? 0) > 0,
 		);
 		const fallbackPayloadRequestIds = descriptorRows
-			.filter((row) => !Array.isArray(row.request_payload_fingerprints))
+			.filter((row) => row.request_message_count === null)
 			.map((row) => row.request_id);
 		const payloadRequestIds = Array.from(new Set([...compactArrayPayloadRequestIds, ...fallbackPayloadRequestIds]));
 		recordTiming("plan", planningStartedAt);
@@ -626,8 +626,8 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		recordTiming("payload", payloadStartedAt);
 
 		const compactRows = descriptorRows.map((row): SessionTimelineSourceRow => {
-			const fingerprints = row.request_payload_fingerprints;
-			if (!Array.isArray(fingerprints)) {
+			const messageCount = row.request_message_count;
+			if (messageCount === null || messageCount === undefined) {
 				return {
 					...row,
 					request_payload: payloadByRequestId.get(row.request_id) ?? row.request_payload,
@@ -637,7 +637,8 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 				...row,
 				request_payload: payloadByRequestId.get(row.request_id) ?? [],
 				request_message_occurrences: payloadPlan.occurrencesByRequestId.get(row.request_id) ?? [],
-				request_payload_available: fingerprints.length > 0,
+				request_message_delta_flags: payloadPlan.deltaFlagsByRequestId.get(row.request_id) ?? [],
+				request_payload_available: messageCount > 0,
 			};
 		});
 		const hydrationStartedAt = performance.now();
@@ -1035,18 +1036,20 @@ function uiSpendLogSelectionWithContent() {
 }
 
 interface SessionTimelineDescriptorRow extends SessionTimelineSourceRow {
-	readonly request_payload_fingerprints?: readonly string[] | null;
+	readonly request_message_count: number | null;
 }
 
 interface SessionTimelinePayloadPlan {
 	readonly indicesByRequestId: ReadonlyMap<string, readonly number[]>;
 	readonly occurrencesByRequestId: ReadonlyMap<string, readonly number[]>;
+	readonly deltaFlagsByRequestId: ReadonlyMap<string, readonly boolean[]>;
 }
 
 /**
- * Compute unseen raw-message occurrences without retaining message bodies in
- * Node. Occurrence numbers preserve intentional repeated messages when the
- * semantic timeline reducer processes the compact payload later.
+ * Select only positions beyond the cumulative message-count high-water mark.
+ * Rows whose count does not advance are conservatively rescanned at the tail,
+ * which keeps retries and non-cumulative payloads observable without hashing
+ * every message in every historical snapshot.
  * @param rows - Chronologically ordered timeline manifest rows.
  * @param includeAuxiliary - Whether Claude Code internal service calls remain visible.
  */
@@ -1054,44 +1057,88 @@ function planSessionTimelinePayloads(
 	rows: readonly SessionTimelineDescriptorRow[],
 	includeAuxiliary: boolean,
 ): SessionTimelinePayloadPlan {
-	const seenOccurrences = new Map<string, number>();
+	let seenMessageCount = 0;
 	const indicesByRequestId = new Map<string, readonly number[]>();
 	const occurrencesByRequestId = new Map<string, readonly number[]>();
+	const deltaFlagsByRequestId = new Map<string, readonly boolean[]>();
 
 	for (const row of rows) {
-		const fingerprints = row.request_payload_fingerprints;
-		if (!Array.isArray(fingerprints)) {
+		const messageCount = row.request_message_count;
+		if (messageCount === null || !Number.isSafeInteger(messageCount) || messageCount < 0) {
 			continue;
 		}
 		if (!includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
 			indicesByRequestId.set(row.request_id, []);
 			occurrencesByRequestId.set(row.request_id, []);
+			deltaFlagsByRequestId.set(row.request_id, []);
 			continue;
 		}
-		const snapshotOccurrences = new Map<string, number>();
-		const selectedIndices: number[] = [];
-		const selectedOccurrences: number[] = [];
-		fingerprints.forEach((fingerprint, index) => {
-			const occurrence = (snapshotOccurrences.get(fingerprint) ?? 0) + 1;
-			snapshotOccurrences.set(fingerprint, occurrence);
-			if (occurrence > (seenOccurrences.get(fingerprint) ?? 0)) {
-				selectedIndices.push(index);
-				selectedOccurrences.push(occurrence);
+
+		if (messageCount > seenMessageCount) {
+			const growth = messageCount - seenMessageCount;
+			if (growth >= 4) {
+				// Large jumps in Claude/Codex histories coincide with prompt-cache
+				// boundary rewrites: tool results and injected system messages can
+				// change well before the tail. There are few such rows, so rescan
+				// the complete snapshot and let the semantic reducer deduplicate it.
+				indicesByRequestId.set(
+					row.request_id,
+					Array.from({ length: messageCount }, (_unused, index) => index),
+				);
+				occurrencesByRequestId.set(row.request_id, []);
+				deltaFlagsByRequestId.set(
+					row.request_id,
+					Array.from({ length: messageCount }, () => false),
+				);
+				seenMessageCount = messageCount;
+				continue;
 			}
-		});
-		for (const [fingerprint, occurrence] of snapshotOccurrences) {
-			seenOccurrences.set(fingerprint, Math.max(seenOccurrences.get(fingerprint) ?? 0, occurrence));
+
+			// Include two boundary messages because clients may rewrite cache
+			// markers or reasoning representation immediately before the new
+			// tail. Only positions at/after the old high-water mark are flagged
+			// as genuinely new occurrences.
+			const selectedStart = Math.max(0, seenMessageCount - 2);
+			const selectedIndices = Array.from(
+				{ length: messageCount - selectedStart },
+				(_unused, offset) => selectedStart + offset,
+			);
+			indicesByRequestId.set(row.request_id, selectedIndices);
+			occurrencesByRequestId.set(row.request_id, []);
+			deltaFlagsByRequestId.set(
+				row.request_id,
+				selectedIndices.map((index) => index >= seenMessageCount),
+			);
+			seenMessageCount = messageCount;
+			continue;
 		}
-		indicesByRequestId.set(row.request_id, selectedIndices);
-		occurrencesByRequestId.set(row.request_id, selectedOccurrences);
+
+		// Equal/decreasing counts usually mean a retry or a non-cumulative
+		// request. Re-read only the tail so a changed final turn remains visible;
+		// the semantic reducer removes exact duplicates.
+		const tailStart = Math.max(0, messageCount - 4);
+		indicesByRequestId.set(
+			row.request_id,
+			Array.from({ length: messageCount - tailStart }, (_unused, offset) => tailStart + offset),
+		);
+		occurrencesByRequestId.set(row.request_id, []);
+		deltaFlagsByRequestId.set(
+			row.request_id,
+			Array.from({ length: messageCount - tailStart }, () => false),
+		);
 	}
 
-	return { indicesByRequestId: indicesByRequestId, occurrencesByRequestId: occurrencesByRequestId };
+	return {
+		indicesByRequestId: indicesByRequestId,
+		occurrencesByRequestId: occurrencesByRequestId,
+		deltaFlagsByRequestId: deltaFlagsByRequestId,
+	};
 }
 
 /**
- * Timeline manifest projection. Array payloads are represented by compact
- * per-message SHA-256 fingerprints; non-array legacy payloads remain inline.
+ * Timeline manifest projection. Array payloads expose only their cheap count;
+ * the payload query later extracts positions selected by the count high-water
+ * plan. Non-array legacy payloads remain on the fallback path.
  */
 function sessionTimelineDescriptorSelection() {
 	const messages = liteLLM_SpendLogs.messages;
@@ -1115,14 +1162,19 @@ function sessionTimelineDescriptorSelection() {
 		error_information: sql<unknown | null>`
 			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->'error_information' ELSE NULL END
 		`,
+		internal_call_type: sql<string | null>`
+			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'internal_call_type' ELSE NULL END
+		`,
+		builtin_capability: sql<string | null>`
+			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'builtin_capability' ELSE NULL END
+		`,
+		parent_request_id: sql<string | null>`
+			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'parent_request_id' ELSE NULL END
+		`,
 		request_payload: sql<unknown>`NULL`,
-		request_payload_fingerprints: sql<string[] | null>`
+		request_message_count: sql<number | null>`
 			CASE
-				WHEN jsonb_typeof(${messages}) = 'array' THEN ARRAY(
-					SELECT encode(sha256(convert_to(timeline_item.value::text, 'UTF8')), 'hex')
-					FROM jsonb_array_elements(${messages}) WITH ORDINALITY AS timeline_item(value, ordinality)
-					ORDER BY timeline_item.ordinality
-				)
+				WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
 				ELSE NULL
 			END
 		`,

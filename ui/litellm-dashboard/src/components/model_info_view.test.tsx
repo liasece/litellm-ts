@@ -32,6 +32,7 @@ vi.mock("./networking", () => ({
 	modelPatchUpdateCall: vi.fn(),
 	modelDeleteCall: vi.fn(),
 	credentialCreateCall: vi.fn(),
+	builtinCapabilitiesCall: vi.fn(),
 	vectorStoreListCall: vi.fn().mockResolvedValue({ vector_stores: [] }),
 }));
 
@@ -66,6 +67,7 @@ const mockTestConnectionRequest = vi.mocked(networking.testConnectionRequest);
 const mockModelPatchUpdateCall = vi.mocked(networking.modelPatchUpdateCall);
 const mockModelDeleteCall = vi.mocked(networking.modelDeleteCall);
 const mockCredentialCreateCall = vi.mocked(networking.credentialCreateCall);
+const mockBuiltinCapabilitiesCall = vi.mocked(networking.builtinCapabilitiesCall);
 
 describe("ModelInfoView", () => {
 	let queryClient: QueryClient;
@@ -107,6 +109,19 @@ describe("ModelInfoView", () => {
 			},
 		});
 		vi.clearAllMocks();
+		mockBuiltinCapabilitiesCall.mockResolvedValue({
+			capabilities: {
+				vision: {
+					enabled: true,
+					always_inject: false,
+					handler_model: "gpt-5.4-mini",
+					fallback_models: [],
+					max_iterations: 4,
+					max_output_tokens: 2048,
+				},
+			},
+			available_models: [],
+		});
 
 		mockUseModelsInfo.mockReturnValue({
 			data: {
@@ -705,6 +720,27 @@ describe("ModelInfoView", () => {
 		await waitFor(() => expect(mockModelPatchUpdateCall).toHaveBeenCalled());
 		const payload = mockModelPatchUpdateCall.mock.calls[0][1] as { model_info: Record<string, unknown> };
 		expect(payload.model_info.override_reasoning_effort).toBe("xhigh");
+	});
+
+	it("saves multiple model-level built-in capability selections", async () => {
+		const user = userEvent.setup();
+		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+		await user.click(await screen.findByRole("button", { name: /^edit$/i }));
+		await screen.findByText("Edit Model Settings");
+		const capabilitySelect = await screen.findByRole("combobox", { name: "Injected Built-in Capabilities" });
+		await user.click(capabilitySelect.closest(".ant-select-selector") as HTMLElement);
+		const visionOption = await waitFor(() => {
+			const option = document.querySelector<HTMLElement>('.ant-select-item-option[title="Vision"]');
+			expect(option).not.toBeNull();
+			return option as HTMLElement;
+		});
+		await user.click(visionOption);
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+		await waitFor(() => expect(mockModelPatchUpdateCall).toHaveBeenCalled());
+		const payload = mockModelPatchUpdateCall.mock.calls[0][1] as { model_info: Record<string, unknown> };
+		expect(payload.model_info.enabled_builtin_capabilities).toEqual(["vision"]);
 	});
 
 	it("should allow editing model name in edit mode", async () => {

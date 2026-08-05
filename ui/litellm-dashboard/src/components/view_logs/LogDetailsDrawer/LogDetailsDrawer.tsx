@@ -45,6 +45,10 @@ interface TraceEventRowProps {
 function TraceEventRow({ row, isSelected, onClick }: TraceEventRowProps) {
 	const isMcp = MCP_CALL_TYPES.includes(row.call_type);
 	const isAgent = AGENT_CALL_TYPES.includes(row.call_type);
+	const builtinCapability =
+		row.metadata?.internal_call_type === "builtin_capability"
+			? String(row.metadata?.builtin_capability || "unknown")
+			: null;
 	const durationValue =
 		row.request_duration_ms != null
 			? (row.request_duration_ms / 1000).toFixed(3)
@@ -69,7 +73,7 @@ function TraceEventRow({ row, isSelected, onClick }: TraceEventRowProps) {
 					<Sparkles size={12} className="text-slate-500 flex-shrink-0" />
 				)}
 				<span className="text-xs font-medium text-slate-900 truncate">
-					{getEventDisplayName(row.call_type, row.model)}
+					{builtinCapability ? `Built-in · ${builtinCapability}` : getEventDisplayName(row.call_type, row.model)}
 				</span>
 			</div>
 			<div className="text-[10px] text-slate-500 mt-0 flex items-center gap-1.5 font-mono">

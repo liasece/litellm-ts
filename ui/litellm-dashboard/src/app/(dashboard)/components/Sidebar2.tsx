@@ -292,6 +292,13 @@ const menuItems: MenuItemCfg[] = [
 		roles: all_admin_roles,
 		children: [
 			{
+				key: "builtin-capabilities",
+				page: "builtin-capabilities",
+				label: "Built-in Capabilities",
+				icon: <ToolOutlined style={{ fontSize: 18 }} />,
+				roles: all_admin_roles,
+			},
+			{
 				key: "11",
 				page: "general-settings",
 				label: "Router Settings",
