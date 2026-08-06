@@ -44,13 +44,11 @@ import {
 	resolveGooglePseSearchConfig,
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
-import {
-	prepareOpenAIVisionRequest,
-	runOpenAIVisionAgentLoop,
-	type PreparedVisionRequest,
-} from "../capabilities/VisionCapability";
-import { createVisionCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import { prepareOpenAIVisionRequest } from "../capabilities/VisionCapability";
+import { createVisionCapabilityAuditHook, createWebCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
 import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
+import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
+import { prepareOpenAIWebRequest, type PreparedWebRequest } from "../capabilities/WebCapability";
 
 const logger = createModuleLogger("Proxy:ChatCompletions");
 
@@ -283,6 +281,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const visionImageStore = createVisionImageStore(db);
 		const modelResolutionTrace = createModelResolutionTraceCollector();
 		const completeWithResolutionTrace = (
@@ -304,13 +303,17 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 				let initialResult: Record<string, unknown> | undefined;
 				let usageCalculated = false;
 				try {
-					let result = await runOpenAIVisionAgentLoop(
+					let result = await runOpenAIBuiltinCapabilityAgentLoop(
 						litellmRouter,
 						model,
 						messages as unknown as Array<Record<string, unknown>>,
 						optionalParams,
 						completeWithResolutionTrace,
-						{ audit: visionAudit, imageStore: visionImageStore },
+						{
+							visionAudit: visionAudit,
+							webAudit: webAudit,
+							visionImageStore: visionImageStore,
+						},
 					);
 					initialResult = result;
 					const requestTools = Array.isArray(optionalParams["tools"]) ? optionalParams["tools"] : [];
@@ -480,17 +483,19 @@ async function handleStreamingResponse(
 		visionImageStore: VisionImageStore;
 	},
 ): Promise<void> {
-	const { req, db, spendRequestId, spendLifecycle, modelResolutionTrace, originalMessages, originalRequestBody, visionImageStore } = context;
+	const { req, db, spendRequestId, spendLifecycle, modelResolutionTrace, originalMessages, originalRequestBody, visionImageStore } =
+		context;
 	const preparedVision = await prepareOpenAIVisionRequest(
 		litellmRouter,
 		model,
 		messages as unknown as Array<Record<string, unknown>>,
 		visionImageStore,
 	);
-	if (preparedVision) {
+	const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, messages as unknown as Array<Record<string, unknown>>);
+	if (preparedVision || preparedWeb) {
 		await handlePrivateVisionStreamingResponse(litellmRouter, model, messages, optionalParams, res, {
 			...context,
-			preparedVision: preparedVision,
+			preparedWeb: preparedWeb,
 		});
 		return;
 	}
@@ -831,7 +836,7 @@ async function handlePrivateVisionStreamingResponse(
 		originalMessages: Message[];
 		originalRequestBody: Record<string, unknown>;
 		visionImageStore: VisionImageStore;
-		preparedVision: PreparedVisionRequest<Record<string, unknown>>;
+		preparedWeb?: PreparedWebRequest<Record<string, unknown>>;
 	},
 ): Promise<void> {
 	const {
@@ -843,18 +848,24 @@ async function handlePrivateVisionStreamingResponse(
 		originalMessages,
 		originalRequestBody,
 		visionImageStore,
-		preparedVision,
+		preparedWeb,
 	} = context;
 	const startTime = new Date();
 	const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
-	const result = await runOpenAIVisionAgentLoop(
+	const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+	const result = await runOpenAIBuiltinCapabilityAgentLoop(
 		litellmRouter,
 		model,
 		messages as unknown as Array<Record<string, unknown>>,
 		optionalParams,
 		(completionModel, completionMessages, params) =>
 			litellmRouter.completion(completionModel, completionMessages, params, modelResolutionTrace),
-		{ audit: visionAudit, imageStore: visionImageStore, preparedRequest: preparedVision },
+		{
+			visionAudit: visionAudit,
+			webAudit: webAudit,
+			visionImageStore: visionImageStore,
+			preparedWeb: preparedWeb,
+		},
 	);
 	const completionStartTime = new Date();
 	const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;

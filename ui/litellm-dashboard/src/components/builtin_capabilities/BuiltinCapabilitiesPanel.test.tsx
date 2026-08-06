@@ -31,10 +31,23 @@ const response = {
 			max_iterations: 4,
 			max_output_tokens: 2048,
 		},
+		web: {
+			enabled: true,
+			always_inject: true,
+			handler_model: "gpt-5.4",
+			fallback_models: [],
+			max_iterations: 4,
+			max_output_tokens: 4096,
+		},
 	},
 	available_models: [
 		{ model_name: "gpt-5.4-mini", type: "model", mode: "chat" },
 		{ model_name: "gpt-5.4", type: "model", mode: "chat" },
+		{ model_name: "metadata-unknown", type: "model", mode: "embedding" },
+	],
+	web_available_models: [
+		{ model_name: "gpt-5.4", type: "model", mode: "chat" },
+		{ model_name: "metadata-unknown", type: "model", mode: "search" },
 	],
 };
 
@@ -49,7 +62,9 @@ describe("BuiltinCapabilitiesPanel", () => {
 		render(<BuiltinCapabilitiesPanel />);
 
 		expect(await screen.findByText("Vision")).toBeInTheDocument();
-		expect(screen.getByText(/injection requires this global switch and vision on the requested model/i)).toBeInTheDocument();
+		expect(
+			screen.getByText(/injection requires this global switch and vision on the requested model/i),
+		).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
 		await waitFor(() =>
@@ -61,6 +76,13 @@ describe("BuiltinCapabilitiesPanel", () => {
 					fallback_models: ["gpt-5.4"],
 					max_iterations: 4,
 					max_output_tokens: 2048,
+				},
+				web: {
+					enabled: true,
+					handler_model: "gpt-5.4",
+					fallback_models: [],
+					max_iterations: 4,
+					max_output_tokens: 4096,
 				},
 			}),
 		);
@@ -76,9 +98,35 @@ describe("BuiltinCapabilitiesPanel", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
 		await waitFor(() =>
-			expect(mocks.update).toHaveBeenCalledWith({
-				vision: expect.objectContaining({ always_inject: true }),
-			}),
+			expect(mocks.update).toHaveBeenCalledWith(
+				expect.objectContaining({
+					vision: expect.objectContaining({ always_inject: true }),
+				}),
+			),
+		);
+	});
+
+	it("shows routable models regardless of capability or mode metadata", async () => {
+		render(<BuiltinCapabilitiesPanel />);
+
+		const fallbackSelects = await screen.findAllByRole("combobox", { name: "Capability fallback models" });
+		fireEvent.mouseDown(fallbackSelects[0]!);
+		expect(await screen.findByRole("option", { name: "metadata-unknown" })).toBeInTheDocument();
+	});
+
+	it("accepts worker output limits above the former 16K ceiling", async () => {
+		render(<BuiltinCapabilitiesPanel />);
+
+		const tokenLimits = await screen.findAllByRole("spinbutton", { name: /Worker output token limit/i });
+		fireEvent.change(tokenLimits[1]!, { target: { value: "65536" } });
+		fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+		await waitFor(() =>
+			expect(mocks.update).toHaveBeenCalledWith(
+				expect.objectContaining({
+					web: expect.objectContaining({ max_output_tokens: 65536 }),
+				}),
+			),
 		);
 	});
 });

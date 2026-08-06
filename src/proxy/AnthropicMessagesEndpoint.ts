@@ -49,9 +49,11 @@ import {
 	resolveGooglePseSearchConfig,
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
-import { prepareAnthropicVisionRequest, runAnthropicVisionAgentLoop } from "../capabilities/VisionCapability";
-import { createVisionCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import { prepareAnthropicVisionRequest } from "../capabilities/VisionCapability";
+import { createVisionCapabilityAuditHook, createWebCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
 import { createVisionImageStore } from "../capabilities/VisionImageStore";
+import { runAnthropicBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
+import { prepareAnthropicWebRequest } from "../capabilities/WebCapability";
 
 const logger = createModuleLogger("AnthropicMsg");
 
@@ -758,10 +760,8 @@ export function registerAnthropicMessagesEndpoints(
 		// override 改写 data["model"] 后才调 router）。spend / 响应 model 改写仍用 requestedModel。
 		const model = cleanBody.model as string;
 		const visionImageStore = createVisionImageStore(db);
-		const preparedVision = await prepareAnthropicVisionRequest(litellmRouter, model, cleanBody, visionImageStore);
-		if (preparedVision) {
-			cleanBody = preparedVision.body;
-		}
+		const preparedWeb = await prepareAnthropicWebRequest(litellmRouter, model, cleanBody);
+		const preparedVision = await prepareAnthropicVisionRequest(litellmRouter, model, preparedWeb?.body ?? cleanBody, visionImageStore);
 		const stream = cleanBody.stream === true;
 		const requestApiKey = cleanBody["api_key"] as string | undefined;
 		const requestAnthropicVersion = cleanBody["anthropic_version"] as string | undefined;
@@ -776,6 +776,7 @@ export function registerAnthropicMessagesEndpoints(
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const modelResolutionTrace = createModelResolutionTraceCollector();
 
 		try {
@@ -795,7 +796,7 @@ export function registerAnthropicMessagesEndpoints(
 				};
 				// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 				const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
-				if (preparedVision) {
+				if (preparedVision || preparedWeb) {
 					try {
 						const completeNative = (body: Record<string, unknown>) =>
 							executeWithFallbackChain(
@@ -845,7 +846,12 @@ export function registerAnthropicMessagesEndpoints(
 								},
 								streamFallbackStats,
 							);
-						const agentResult = await runAnthropicVisionAgentLoop(litellmRouter, preparedVision, completeNative, visionAudit);
+						const agentResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
+							visionAudit: visionAudit,
+							webAudit: webAudit,
+							visionImageStore: visionImageStore,
+							preparedWeb: preparedWeb,
+						});
 						cleanBody = agentResult.body;
 						const finalResponse = agentResult.response;
 						finalResponse["model"] = requestedModel;
@@ -1176,10 +1182,15 @@ export function registerAnthropicMessagesEndpoints(
 						},
 						nsFallbackStats,
 					);
-				if (preparedVision) {
-					const visionResult = await runAnthropicVisionAgentLoop(litellmRouter, preparedVision, completeNative, visionAudit);
-					responseData = visionResult.response;
-					cleanBody = visionResult.body;
+				if (preparedVision || preparedWeb) {
+					const capabilityResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
+						visionAudit: visionAudit,
+						webAudit: webAudit,
+						visionImageStore: visionImageStore,
+						preparedWeb: preparedWeb,
+					});
+					responseData = capabilityResult.response;
+					cleanBody = capabilityResult.body;
 				} else {
 					responseData = await completeNative(cleanBody);
 				}

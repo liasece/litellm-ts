@@ -36,11 +36,7 @@ import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 import providerCreateFieldsJson from "../data/provider_create_fields.json";
 import { modelCostMapService, type ModelCostMapService } from "../cost/ModelCostMapService";
-import {
-	BUILTIN_CAPABILITIES_CONFIG_PARAM,
-	normalizeBuiltinCapabilitiesConfig,
-} from "../capabilities/BuiltinCapabilitiesConfig";
-import { isVisionCapableHandler } from "../capabilities/VisionCapability";
+import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "../capabilities/BuiltinCapabilitiesConfig";
 
 const HTTP_FORBIDDEN = 403;
 const logger = createModuleLogger("WebUiSupportEndpoints");
@@ -106,7 +102,8 @@ async function resolveLogoImage(): Promise<Buffer> {
 		}
 		try {
 			const response = await fetch(logoPath, { signal: AbortSignal.timeout(5_000) });
-			if (response.ok) {
+			const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+			if (response.ok && contentType.startsWith("image/")) {
 				const body = Buffer.from(await response.arrayBuffer());
 				cachedLogo = { url: logoPath, body: body };
 				return body;
@@ -1266,47 +1263,71 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 	 * model editors; mutation remains proxy-admin only.
 	 */
 	registerRoute(router, { method: "get", path: "/builtin-capabilities" }, async () => {
-		const configValue = normalizeBuiltinCapabilitiesConfig(
-			(await configRepository.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM)) ?? {},
-		);
+		const configValue = normalizeBuiltinCapabilitiesConfig((await configRepository.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM)) ?? {});
+		const availableModelOptions = litellmRouter?.getAvailableModelNames() ?? [];
 		return {
 			capabilities: configValue,
-			available_models:
-				litellmRouter
-					?.getAvailableModelNames()
-					.filter((candidate) => isVisionCapableHandler(litellmRouter, candidate.model_name)) ?? [],
+			available_models: availableModelOptions,
+			web_available_models: availableModelOptions,
 		};
 	});
 
 	registerRoute(router, { method: "put", path: "/builtin-capabilities" }, async (req) => {
 		assertProxyAdmin(req);
-		if (!isRecord(req.body) || !isRecord(req.body["vision"])) {
-			throw ApiError.badRequest("vision capability settings are required");
+		if (!isRecord(req.body)) {
+			throw ApiError.badRequest("At least one capability setting is required");
 		}
-		const configValue = normalizeBuiltinCapabilitiesConfig(req.body);
+		const hasVision = Object.prototype.hasOwnProperty.call(req.body, "vision");
+		const hasWeb = Object.prototype.hasOwnProperty.call(req.body, "web");
+		if ((!hasVision && !hasWeb) || (hasVision && !isRecord(req.body["vision"])) || (hasWeb && !isRecord(req.body["web"]))) {
+			throw ApiError.badRequest("vision and web capability settings must be objects when provided");
+		}
+		const currentConfig = normalizeBuiltinCapabilitiesConfig(
+			(await configRepository.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM)) ?? {},
+		);
+		const configValue = normalizeBuiltinCapabilitiesConfig({
+			vision: hasVision ? req.body["vision"] : currentConfig.vision,
+			web: hasWeb ? req.body["web"] : currentConfig.web,
+		});
 		const vision = configValue.vision;
-		const availableModelOptions =
-			litellmRouter
-				?.getAvailableModelNames()
-				.filter((candidate) => isVisionCapableHandler(litellmRouter, candidate.model_name)) ?? [];
+		const web = configValue.web;
+		const availableModelOptions = litellmRouter?.getAvailableModelNames() ?? [];
 		const availableModels = new Set(availableModelOptions.map((candidate) => candidate.model_name));
-		if (vision.enabled && vision.handler_model.length === 0) {
-			throw ApiError.badRequest("Enabled vision capability requires handler_model");
+		if (hasVision) {
+			if (vision.enabled && vision.handler_model.length === 0) {
+				throw ApiError.badRequest("Enabled vision capability requires handler_model");
+			}
+			if (vision.handler_model && !availableModels.has(vision.handler_model)) {
+				throw ApiError.badRequest(`Unknown vision handler model: ${vision.handler_model}`);
+			}
+			if (vision.fallback_models.includes(vision.handler_model)) {
+				throw ApiError.badRequest("Vision fallback models must not repeat handler_model");
+			}
+			const unknownFallback = vision.fallback_models.find((model) => !availableModels.has(model));
+			if (unknownFallback) {
+				throw ApiError.badRequest(`Unknown vision fallback model: ${unknownFallback}`);
+			}
 		}
-		if (vision.handler_model && !availableModels.has(vision.handler_model)) {
-			throw ApiError.badRequest(`Unknown vision handler model: ${vision.handler_model}`);
-		}
-		if (vision.fallback_models.includes(vision.handler_model)) {
-			throw ApiError.badRequest("Vision fallback models must not repeat handler_model");
-		}
-		const unknownFallback = vision.fallback_models.find((model) => !availableModels.has(model));
-		if (unknownFallback) {
-			throw ApiError.badRequest(`Unknown vision fallback model: ${unknownFallback}`);
+		if (hasWeb) {
+			if (web.enabled && web.handler_model.length === 0) {
+				throw ApiError.badRequest("Enabled web capability requires handler_model");
+			}
+			if (web.handler_model && !availableModels.has(web.handler_model)) {
+				throw ApiError.badRequest(`Unknown web handler model: ${web.handler_model}`);
+			}
+			if (web.fallback_models.includes(web.handler_model)) {
+				throw ApiError.badRequest("Web fallback models must not repeat handler_model");
+			}
+			const unknownWebFallback = web.fallback_models.find((model) => !availableModels.has(model));
+			if (unknownWebFallback) {
+				throw ApiError.badRequest(`Unknown web fallback model: ${unknownWebFallback}`);
+			}
 		}
 		await configRepository.upsertParam(BUILTIN_CAPABILITIES_CONFIG_PARAM, configValue);
 		return {
 			capabilities: configValue,
 			available_models: availableModelOptions,
+			web_available_models: availableModelOptions,
 		};
 	});
 

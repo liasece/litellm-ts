@@ -350,6 +350,33 @@ describe("WebUiSupport 契约", () => {
 			expect(res.body.litellm_version).toBeDefined();
 		});
 
+		it("/get_image 自定义地址返回非图片内容时应回退内置 logo", async () => {
+			const { db } = makeMockConfigDb({
+				litellm_settings: {
+					ui_theme_config: { logo_url: "https://example.com/broken-logo.png" },
+				},
+			});
+			await dbConfigProvider.initialize(db as never);
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response("<!doctype html><title>not an image</title>", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				}),
+			);
+
+			const res = await request(buildPublicApp(makeConfig())).get("/get_image");
+
+			expect(res.status).toBe(200);
+			expect(res.headers["content-type"]).toMatch(/^image\/jpeg/);
+			expect(Buffer.isBuffer(res.body)).toBe(true);
+			expect(res.body.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+			expect(fetchSpy).toHaveBeenCalledWith(
+				"https://example.com/broken-logo.png",
+				expect.objectContaining({ signal: expect.any(AbortSignal) }),
+			);
+			fetchSpy.mockRestore();
+		});
+
 		it("/public/providers/fields 应返回非空 provider 字段清单（对齐 Python 109 个 provider）", async () => {
 			const app = buildPublicApp(makeConfig());
 			const res = await request(app).get("/public/providers/fields");
@@ -1880,12 +1907,17 @@ describe("内置能力管理", () => {
 				{
 					model_name: "gpt-5.4-mini",
 					litellm_params: { model: "openai/gpt-5.4-mini" },
-					model_info: { supports_vision: true },
+					model_info: { supports_vision: true, supports_web_search: true },
 				},
 				{
 					model_name: "gpt-5.4",
 					litellm_params: { model: "openai/gpt-5.4" },
-					model_info: { supports_vision: true },
+					model_info: { supports_vision: true, supports_web_search: true },
+				},
+				{
+					model_name: "metadata-unknown",
+					litellm_params: { model: "openai/metadata-unknown" },
+					model_info: {},
 				},
 			],
 			routing_strategy: RoutingStrategyName.SimpleShuffle,
@@ -1907,26 +1939,54 @@ describe("内置能力管理", () => {
 		expect(before.body.available_models.map((item: { model_name: string }) => item.model_name)).toEqual([
 			"gpt-5.4",
 			"gpt-5.4-mini",
+			"metadata-unknown",
+		]);
+		expect(before.body.capabilities.web).toMatchObject({
+			enabled: false,
+			handler_model: "",
+			fallback_models: [],
+		});
+		expect(before.body.web_available_models.map((item: { model_name: string }) => item.model_name)).toEqual([
+			"gpt-5.4",
+			"gpt-5.4-mini",
+			"metadata-unknown",
 		]);
 
-		const update = await request(app).put("/builtin-capabilities").send({
-			vision: {
-				enabled: true,
-				always_inject: true,
-				handler_model: "gpt-5.4-mini",
-				fallback_models: ["gpt-5.4"],
-				max_iterations: 5,
-				max_output_tokens: 3072,
-			},
-		});
+		const update = await request(app)
+			.put("/builtin-capabilities")
+			.send({
+				vision: {
+					enabled: true,
+					always_inject: true,
+					handler_model: "gpt-5.4-mini",
+					fallback_models: ["metadata-unknown"],
+					max_iterations: 5,
+					max_output_tokens: 3072,
+				},
+				web: {
+					enabled: true,
+					handler_model: "metadata-unknown",
+					fallback_models: ["gpt-5.4-mini"],
+					max_iterations: 4,
+					max_output_tokens: 4096,
+				},
+			});
 		expect(update.status).toBe(200);
 		expect(update.body.capabilities.vision).toEqual({
 			enabled: true,
 			always_inject: true,
 			handler_model: "gpt-5.4-mini",
-			fallback_models: ["gpt-5.4"],
+			fallback_models: ["metadata-unknown"],
 			max_iterations: 5,
 			max_output_tokens: 3072,
+		});
+		expect(update.body.capabilities.web).toEqual({
+			enabled: true,
+			always_inject: true,
+			handler_model: "metadata-unknown",
+			fallback_models: ["gpt-5.4-mini"],
+			max_iterations: 4,
+			max_output_tokens: 4096,
 		});
 		expect(store.get("builtin_capabilities")).toEqual(update.body.capabilities);
 	});
@@ -1935,26 +1995,77 @@ describe("内置能力管理", () => {
 		const { db } = makeMockConfigDb();
 		const router = buildCapabilityRouter();
 		const adminApp = buildAuthedApp(makeConfig(), undefined, undefined, db, router);
-		const unknown = await request(adminApp).put("/builtin-capabilities").send({
-			vision: { enabled: true, handler_model: "missing-model", fallback_models: [] },
-		});
+		const unknown = await request(adminApp)
+			.put("/builtin-capabilities")
+			.send({
+				vision: { enabled: true, handler_model: "missing-model", fallback_models: [] },
+				web: { enabled: false, handler_model: "", fallback_models: [] },
+			});
 		expect(unknown.status).toBe(400);
-		const repeated = await request(adminApp).put("/builtin-capabilities").send({
-			vision: { enabled: true, handler_model: "gpt-5.4-mini", fallback_models: ["gpt-5.4-mini"] },
-		});
+		const repeated = await request(adminApp)
+			.put("/builtin-capabilities")
+			.send({
+				vision: { enabled: true, handler_model: "gpt-5.4-mini", fallback_models: ["gpt-5.4-mini"] },
+				web: { enabled: false, handler_model: "", fallback_models: [] },
+			});
 		expect(repeated.status).toBe(400);
 
-		const userApp = buildAuthedApp(
-			makeConfig(),
-			undefined,
-			{ api_key: "sk-user", user_role: "internal_user" },
-			db,
-			router,
-		);
-		const forbidden = await request(userApp).put("/builtin-capabilities").send({
-			vision: { enabled: false, handler_model: "", fallback_models: [] },
-		});
+		const userApp = buildAuthedApp(makeConfig(), undefined, { api_key: "sk-user", user_role: "internal_user" }, db, router);
+		const forbidden = await request(userApp)
+			.put("/builtin-capabilities")
+			.send({
+				vision: { enabled: false, handler_model: "", fallback_models: [] },
+				web: { enabled: false, handler_model: "", fallback_models: [] },
+			});
 		expect(forbidden.status).toBe(403);
+	});
+
+	it("兼容只更新单项能力的旧客户端，并保留另一项现有配置", async () => {
+		const existing = {
+			vision: {
+				enabled: false,
+				always_inject: false,
+				handler_model: "",
+				fallback_models: [],
+				max_iterations: 4,
+				max_output_tokens: 32_768,
+			},
+			web: {
+				enabled: true,
+				always_inject: true,
+				handler_model: "removed-model",
+				fallback_models: ["removed-fallback"],
+				max_iterations: 6,
+				max_output_tokens: 12_345,
+			},
+		};
+		const { db, store } = makeMockConfigDb({ builtin_capabilities: existing });
+		const app = buildAuthedApp(makeConfig(), undefined, undefined, db, buildCapabilityRouter());
+
+		const response = await request(app)
+			.put("/builtin-capabilities")
+			.send({
+				vision: {
+					enabled: true,
+					always_inject: true,
+					handler_model: "gpt-5.4",
+					fallback_models: [],
+					max_iterations: 5,
+					max_output_tokens: 4096,
+				},
+			});
+
+		expect(response.status).toBe(200);
+		expect(response.body.capabilities.web).toEqual(existing.web);
+		expect((store.get("builtin_capabilities") as Record<string, unknown>)["web"]).toEqual(existing.web);
+	});
+
+	it("拒绝不含任何能力配置或能力值非对象的更新", async () => {
+		const { db } = makeMockConfigDb();
+		const app = buildAuthedApp(makeConfig(), undefined, undefined, db, buildCapabilityRouter());
+
+		expect((await request(app).put("/builtin-capabilities").send({})).status).toBe(400);
+		expect((await request(app).put("/builtin-capabilities").send({ vision: null })).status).toBe(400);
 	});
 });
 

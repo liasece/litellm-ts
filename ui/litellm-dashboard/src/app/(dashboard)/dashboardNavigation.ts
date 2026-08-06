@@ -15,6 +15,7 @@ export function buildLegacyDashboardHref(page: string): string {
 
 const PATH_PAGE_MAP: Readonly<Record<string, string>> = {
 	"api-reference": "api-reference",
+	"builtin-capabilities": "builtin-capabilities",
 	guardrails: "guardrails",
 	logs: "logs",
 	"model-hub": "model-hub-table",

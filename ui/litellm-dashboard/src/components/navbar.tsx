@@ -48,6 +48,7 @@ const Navbar: React.FC<NavbarProps> = ({
 
 	// Simple logo URL: use custom logo if available, otherwise default
 	const imageUrl = logoUrl || `${baseUrl}/get_image`;
+	const fallbackImageUrl = `${baseUrl}/get_image`;
 
 	useEffect(() => {
 		const initializeProxySettings = async () => {
@@ -120,6 +121,11 @@ const Navbar: React.FC<NavbarProps> = ({
 											src={imageUrl}
 											alt="LiteLLM Brand"
 											className="max-w-full max-h-full w-auto h-auto object-contain"
+											onError={(event) => {
+												if (event.currentTarget.getAttribute("src") !== fallbackImageUrl) {
+													event.currentTarget.src = fallbackImageUrl;
+												}
+											}}
 										/>
 									</div>
 								</div>

@@ -3,12 +3,7 @@ import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
 import type { Message, ToolCall, Usage } from "../types/openai";
 import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
-import {
-	createVisionImageStore,
-	storeVisionImageUrl,
-	type StoredVisionImage,
-	type VisionImageStore,
-} from "./VisionImageStore";
+import { createVisionImageStore, storeVisionImageUrl, type StoredVisionImage, type VisionImageStore } from "./VisionImageStore";
 
 export const PRIVATE_VISION_TOOL_NAME = "litellm__vision_inspect";
 
@@ -18,21 +13,13 @@ export const PRIVATE_VISION_TOOL_NAME = "litellm__vision_inspect";
 export interface VisionCapabilityBinding {
 	/** Whether the private tool is injected before any image enters the transcript. */
 	alwaysInject: boolean;
-	/**
-	 *
-	 */
+	/** Primary logical model that performs visual inspection. */
 	handlerModel: string;
-	/**
-	 * 独立于主模型路由的能力 fallback 顺序。
-	 */
+	/** Capability-local fallback chain, independent of main-model routing. */
 	fallbackModels: string[];
-	/**
-	 *
-	 */
+	/** Maximum hidden main-model turns. */
 	maxIterations: number;
-	/**
-	 *
-	 */
+	/** Maximum output tokens for one vision worker call. */
 	maxOutputTokens: number;
 }
 
@@ -40,13 +27,9 @@ export interface VisionCapabilityBinding {
  * Request-local image retained outside the text-only model transcript.
  */
 export interface VisionImage {
-	/**
-	 *
-	 */
+	/** Content-addressed private reference exposed to the target model. */
 	ref: string;
-	/**
-	 *
-	 */
+	/** Original provider-compatible image content sent only to the worker. */
 	chatPart: Record<string, unknown>;
 }
 
@@ -55,19 +38,13 @@ export interface VisionImage {
  * @template TMessage
  */
 export interface PreparedVisionRequest<TMessage> {
-	/**
-	 *
-	 */
+	/** Target-model transcript with image bytes replaced by private references. */
 	messages: TMessage[];
-	/**
-	 *
-	 */
+	/** Images available to private tool calls in this request. */
 	images: Map<string, VisionImage>;
 	/** Content-addressed backing store used to resolve image hashes. */
 	imageStore: VisionImageStore;
-	/**
-	 *
-	 */
+	/** Resolved worker configuration. */
 	binding: VisionCapabilityBinding;
 }
 
@@ -132,22 +109,6 @@ function getResolvedModel(router: Router, model: string): string {
 }
 
 /**
- * Check whether a logical model or alias resolves to at least one vision-capable deployment.
- * @param router
- * @param model
- */
-export function isVisionCapableHandler(router: Router, model: string): boolean {
-	const resolvedModel = getResolvedModel(router, model);
-	return router
-		.getDeployments()
-		.some(
-			(deployment) =>
-				(deployment.model_name === resolvedModel || deployment.model_info?.model_name === resolvedModel) &&
-				deployment.model_info?.supports_vision === true,
-		);
-}
-
-/**
  * Resolve the private vision worker configured on a logical model.
  * @param router
  * @param model
@@ -183,15 +144,12 @@ export async function resolveVisionCapability(router: Router, model: string): Pr
 	if (typeof raw.handler_model !== "string" || raw.handler_model.trim().length === 0) {
 		throw ApiError.unavailable(`模型 ${model} 的 vision capability 缺少 handler_model`);
 	}
-	if (!isVisionCapableHandler(router, raw.handler_model)) {
-		throw ApiError.unavailable(`vision capability 执行模型不支持图片: ${raw.handler_model}`);
-	}
 	return {
 		alwaysInject: raw.always_inject,
 		handlerModel: raw.handler_model,
-		fallbackModels: raw.fallback_models.filter((candidate) => isVisionCapableHandler(router, candidate)),
+		fallbackModels: raw.fallback_models,
 		maxIterations: clampInteger(raw.max_iterations, 1, 8, 4),
-		maxOutputTokens: clampInteger(raw.max_output_tokens, 128, 16_384, 2_048),
+		maxOutputTokens: minimumInteger(raw.max_output_tokens, 128, 32_768),
 	};
 }
 
@@ -200,6 +158,13 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 		return fallback;
 	}
 	return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+function minimumInteger(value: unknown, min: number, fallback: number): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return fallback;
+	}
+	return Math.max(min, Math.trunc(value));
 }
 
 function visionInstruction(refs: string[]): string {
@@ -741,6 +706,8 @@ export async function runOpenAIVisionAgentLoop(
 		audit?: VisionCapabilityAuditHook;
 		imageStore?: VisionImageStore;
 		preparedRequest?: PreparedVisionRequest<Record<string, unknown>>;
+		/** Optional unbudgeted executor for private worker-model calls. */
+		workerComplete?: Completion;
 	} = {},
 ): Promise<Record<string, unknown>> {
 	const imageStore = options.imageStore ?? createVisionImageStore();
@@ -830,11 +797,18 @@ export async function runOpenAIVisionAgentLoop(
 		transcript.push({ ...assistant, tool_calls: privateCalls });
 		consumed.push(result);
 		for (const call of privateCalls) {
-			const executed = await executeVisionToolCall(router, prepared.binding, prepared.images, call.function.arguments, complete, {
-				audit: options.audit,
-				toolCallId: call.id,
-				imageStore: prepared.imageStore,
-			});
+			const executed = await executeVisionToolCall(
+				router,
+				prepared.binding,
+				prepared.images,
+				call.function.arguments,
+				options.workerComplete ?? complete,
+				{
+					audit: options.audit,
+					toolCallId: call.id,
+					imageStore: prepared.imageStore,
+				},
+			);
 			const args = parseVisionArguments(call.function.arguments);
 			const internalCall = {
 				type: "builtin_capability",

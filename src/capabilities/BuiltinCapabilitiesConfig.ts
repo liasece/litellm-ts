@@ -21,6 +21,8 @@ export interface BuiltinCapabilitySettings {
 export interface BuiltinCapabilitiesConfig {
 	/** Private image-inspection capability. */
 	vision: BuiltinCapabilitySettings;
+	/** Private web-search and webpage-fetch capability. */
+	web: BuiltinCapabilitySettings;
 }
 
 /** Safe defaults shown before an administrator configures the capability. */
@@ -31,14 +33,24 @@ export const DEFAULT_BUILTIN_CAPABILITIES_CONFIG: BuiltinCapabilitiesConfig = {
 		handler_model: "",
 		fallback_models: [],
 		max_iterations: 4,
-		max_output_tokens: 2048,
+		max_output_tokens: 32_768,
+	},
+	web: {
+		enabled: false,
+		always_inject: true,
+		handler_model: "",
+		fallback_models: [],
+		max_iterations: 4,
+		max_output_tokens: 32_768,
 	},
 };
 
 function integer(value: unknown, fallback: number, min: number, max: number): number {
-	return typeof value === "number" && Number.isFinite(value)
-		? Math.min(max, Math.max(min, Math.trunc(value)))
-		: fallback;
+	return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.trunc(value))) : fallback;
+}
+
+function integerAtLeast(value: unknown, fallback: number, min: number): number {
+	return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.trunc(value)) : fallback;
 }
 
 /**
@@ -50,23 +62,29 @@ export function normalizeBuiltinCapabilitiesConfig(value: Record<string, unknown
 		typeof value["vision"] === "object" && value["vision"] !== null && !Array.isArray(value["vision"])
 			? (value["vision"] as Record<string, unknown>)
 			: {};
+	const rawWeb =
+		typeof value["web"] === "object" && value["web"] !== null && !Array.isArray(value["web"])
+			? (value["web"] as Record<string, unknown>)
+			: {};
+	const normalizeSettings = (raw: Record<string, unknown>, defaults: BuiltinCapabilitySettings): BuiltinCapabilitySettings => ({
+		enabled: raw["enabled"] === true,
+		always_inject: typeof raw["always_inject"] === "boolean" ? raw["always_inject"] : defaults.always_inject,
+		handler_model: typeof raw["handler_model"] === "string" ? raw["handler_model"].trim() : "",
+		fallback_models: Array.isArray(raw["fallback_models"])
+			? [
+					...new Set(
+						raw["fallback_models"]
+							.filter((model): model is string => typeof model === "string")
+							.map((model) => model.trim())
+							.filter(Boolean),
+					),
+				]
+			: [],
+		max_iterations: integer(raw["max_iterations"], defaults.max_iterations, 1, 8),
+		max_output_tokens: integerAtLeast(raw["max_output_tokens"], defaults.max_output_tokens, 128),
+	});
 	return {
-		vision: {
-			enabled: rawVision["enabled"] === true,
-			always_inject: rawVision["always_inject"] === true,
-			handler_model: typeof rawVision["handler_model"] === "string" ? rawVision["handler_model"].trim() : "",
-			fallback_models: Array.isArray(rawVision["fallback_models"])
-				? [
-						...new Set(
-							rawVision["fallback_models"]
-								.filter((model): model is string => typeof model === "string")
-								.map((model) => model.trim())
-								.filter(Boolean),
-						),
-					]
-				: [],
-			max_iterations: integer(rawVision["max_iterations"], 4, 1, 8),
-			max_output_tokens: integer(rawVision["max_output_tokens"], 2048, 128, 16_384),
-		},
+		vision: normalizeSettings(rawVision, DEFAULT_BUILTIN_CAPABILITIES_CONFIG.vision),
+		web: normalizeSettings(rawWeb, DEFAULT_BUILTIN_CAPABILITIES_CONFIG.web),
 	};
 }

@@ -119,8 +119,17 @@ describe("ModelInfoView", () => {
 					max_iterations: 4,
 					max_output_tokens: 2048,
 				},
+				web: {
+					enabled: false,
+					always_inject: true,
+					handler_model: "",
+					fallback_models: [],
+					max_iterations: 4,
+					max_output_tokens: 4096,
+				},
 			},
 			available_models: [],
+			web_available_models: [],
 		});
 
 		mockUseModelsInfo.mockReturnValue({
@@ -730,17 +739,17 @@ describe("ModelInfoView", () => {
 		await screen.findByText("Edit Model Settings");
 		const capabilitySelect = await screen.findByRole("combobox", { name: "Injected Built-in Capabilities" });
 		await user.click(capabilitySelect.closest(".ant-select-selector") as HTMLElement);
-		const visionOption = await waitFor(() => {
-			const option = document.querySelector<HTMLElement>('.ant-select-item-option[title="Vision"]');
+		const webOption = await waitFor(() => {
+			const option = document.querySelector<HTMLElement>('.ant-select-item-option[title="Web (globally off)"]');
 			expect(option).not.toBeNull();
 			return option as HTMLElement;
 		});
-		await user.click(visionOption);
+		await user.click(webOption);
 		await user.click(screen.getByRole("button", { name: /save changes/i }));
 
 		await waitFor(() => expect(mockModelPatchUpdateCall).toHaveBeenCalled());
 		const payload = mockModelPatchUpdateCall.mock.calls[0][1] as { model_info: Record<string, unknown> };
-		expect(payload.model_info.enabled_builtin_capabilities).toEqual(["vision"]);
+		expect(payload.model_info.enabled_builtin_capabilities).toEqual(["web"]);
 	});
 
 	it("should allow editing model name in edit mode", async () => {

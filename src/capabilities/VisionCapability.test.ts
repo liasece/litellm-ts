@@ -34,12 +34,12 @@ function fakeRouter(): Router {
 			{
 				model_name: "gpt-5.4-mini",
 				litellm_params: { model: "openai/gpt-5.4-mini" },
-				model_info: { supports_vision: true },
+				model_info: {},
 			},
 			{
 				model_name: "gpt-5.4",
 				litellm_params: { model: "openai/gpt-5.4" },
-				model_info: { supports_vision: true },
+				model_info: {},
 			},
 		],
 		resolveModelGroupWithTrace: (model: string) => ({

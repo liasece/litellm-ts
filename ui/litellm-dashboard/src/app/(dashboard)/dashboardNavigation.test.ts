@@ -23,6 +23,10 @@ describe("deriveDashboardPage", () => {
 		expect(deriveDashboardPage("/custom/ui/teams/team-1", searchParams(), "/custom/ui/")).toBe("teams");
 	});
 
+	it("selects Built-in Capabilities for its migrated /ui path", () => {
+		expect(deriveDashboardPage("/ui/builtin-capabilities", searchParams(), "/ui/")).toBe("builtin-capabilities");
+	});
+
 	it("keeps legacy query-param navigation for the dashboard root", () => {
 		expect(deriveDashboardPage("/ui/", searchParams("logs"), "/ui/")).toBe("logs");
 	});

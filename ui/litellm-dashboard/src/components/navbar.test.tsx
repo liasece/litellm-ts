@@ -1,7 +1,7 @@
 import userEvent from "@testing-library/user-event";
 import React, { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen, waitFor } from "../../tests/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "../../tests/test-utils";
 import Navbar from "./navbar";
 
 // Mock the hooks and utilities
@@ -226,6 +226,17 @@ describe("Navbar", () => {
 		expect(logoImg).toHaveAttribute("src", "https://example.com/custom-logo.png");
 
 		// Reset mock
+		mockUseThemeImpl = () => ({ logoUrl: null });
+	});
+
+	it("should fall back to the proxy logo when the custom logo fails", () => {
+		mockUseThemeImpl = () => ({ logoUrl: "https://example.com/broken-logo.png" });
+		renderWithProviders(<Navbar {...defaultProps} />);
+
+		const logoImg = screen.getByAltText("LiteLLM Brand");
+		fireEvent.error(logoImg);
+
+		expect(logoImg).toHaveAttribute("src", "http://localhost:4000/get_image");
 		mockUseThemeImpl = () => ({ logoUrl: null });
 	});
 
