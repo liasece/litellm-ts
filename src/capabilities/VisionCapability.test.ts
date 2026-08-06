@@ -381,8 +381,14 @@ describe("VisionCapability", () => {
 			},
 		});
 		const complete = jest.fn(async (_model: string, messages: any[], params: Record<string, unknown>) => {
-			expect(JSON.stringify(params["tools"])).toContain(PRIVATE_VISION_TOOL_NAME);
-			expect(JSON.stringify(messages)).toContain("No private image references are currently available");
+			const serializedTools = JSON.stringify(params["tools"]);
+			const serializedMessages = JSON.stringify(messages);
+			expect(serializedTools).toContain(PRIVATE_VISION_TOOL_NAME);
+			expect(serializedTools).toContain('"pattern":"^sha256:[a-f0-9]{64}$"');
+			expect(serializedTools).toContain("cannot read filesystem paths");
+			expect(serializedMessages).toContain("How LiteLLM built-in vision works");
+			expect(serializedMessages).toContain("complete set of valid image references for this request is empty");
+			expect(serializedMessages).toContain("A path, filename, URL, placeholder, or other arbitrary string is not an image reference");
 			expect(JSON.stringify(messages)).not.toContain("[Private image reference:");
 			return completion({ role: "assistant", content: "No image is needed for this answer." });
 		});
@@ -421,7 +427,10 @@ describe("VisionCapability", () => {
 		expect(prepared).toBeDefined();
 		expect(prepared!.images.size).toBe(0);
 		expect(JSON.stringify(prepared!.body["tools"])).toContain(PRIVATE_VISION_TOOL_NAME);
-		expect(JSON.stringify(prepared!.body["system"])).toContain("No private image references are currently available");
+		expect(JSON.stringify(prepared!.body["tools"])).toContain('"pattern":"^sha256:[a-f0-9]{64}$"');
+		expect(JSON.stringify(prepared!.body["system"])).toContain(
+			"complete set of valid image references for this request is empty",
+		);
 	});
 
 	it("does not expose the private tool name when model-authored image arguments are invalid", async () => {

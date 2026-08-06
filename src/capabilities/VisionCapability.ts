@@ -6,6 +6,7 @@ import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig }
 import { createVisionImageStore, storeVisionImageUrl, type StoredVisionImage, type VisionImageStore } from "./VisionImageStore";
 
 export const PRIVATE_VISION_TOOL_NAME = "litellm__vision_inspect";
+const PRIVATE_VISION_REF_SCHEMA_PATTERN = "^sha256:[a-f0-9]{64}$";
 
 /**
  * Configuration resolved for the private vision worker.
@@ -168,22 +169,17 @@ function minimumInteger(value: unknown, min: number, fallback: number): number {
 }
 
 function visionInstruction(refs: string[]): string {
-	const introduction =
-		refs.length > 0
-			? "LiteLLM replaced image bytes with private image references because this model is text-only."
-			: "LiteLLM provides a private vision tool for images that may appear in later requests because this model is text-only.";
-	const imageReferenceInstruction =
-		refs.length > 0
-			? `Available image references: ${refs.join(", ")}.`
-			: "No private image references are currently available. Do not call the private vision tool until a later request contains image bytes; if the user gives a filesystem path, use a client-provided file tool first.";
 	return [
-		introduction,
-		imageReferenceInstruction,
-		`Call ${PRIVATE_VISION_TOOL_NAME} whenever the answer depends on visual evidence.`,
-		"The call is private: formulate a precise question that reflects the user's current request and the exact visual details you need.",
-		"When calling this private tool, call it alone in that assistant turn. After receiving its result, decide whether to call any client-provided tools.",
-		"You may call it again with a different focus. Do not claim to have inspected an image without using the tool.",
-		"If the request does not depend on image pixels, answer normally. Never mention this private tool or the replacement process.",
+		"How LiteLLM built-in vision works: this model cannot read image bytes, so LiteLLM removes each attached image from the model-visible conversation, stores its bytes privately, and replaces it with an opaque content reference formatted exactly as sha256:<64 lowercase hexadecimal characters>.",
+		`${PRIVATE_VISION_TOOL_NAME} can inspect only those stored images. It sends the selected stored image bytes, your precise question, and the requested detail level to a separate vision-capable model, then returns that model's text analysis to you in a private tool result.`,
+		"The tool cannot open or fetch filesystem paths, filenames, URLs, attachments that LiteLLM did not replace, text mentioned in the conversation, or client tool results that contain no actual image bytes. Never invent, transform, or infer a reference.",
+		refs.length > 0
+			? `The complete set of valid image references for this request is: ${refs.join(", ")}. Copy references exactly from this list.`
+			: "The complete set of valid image references for this request is empty. Do not call the built-in vision tool in this turn. A path, filename, URL, placeholder, or other arbitrary string is not an image reference. If a client-provided file/image tool is available, use that tool to obtain the image bytes first.",
+		`Call ${PRIVATE_VISION_TOOL_NAME} only when the user's answer depends on pixels in one or more currently valid references.`,
+		"Formulate a precise, context-aware question describing the exact visual evidence needed. Call the built-in vision tool alone in that assistant turn. After receiving its private result, decide whether any client-provided tools are still needed.",
+		"You may inspect a valid reference again with a different visual focus. Do not claim to have inspected an image without using the tool.",
+		"If the request does not depend on pixels in a currently valid reference, answer normally. Never mention this private tool, the vision worker, private references, or the replacement process to the user.",
 	].join(" ");
 }
 
@@ -193,16 +189,22 @@ function privateOpenAITool(): Record<string, unknown> {
 		function: {
 			name: PRIVATE_VISION_TOOL_NAME,
 			description:
-				"Privately inspect one or more image references. Choose the question and visual focus required to answer the user accurately.",
+				"Inspect image bytes already stored privately by LiteLLM for this text-only model. LiteLLM replaces each attached image with an opaque sha256 reference, and this tool sends only the selected stored images plus your question to a separate vision-capable model, returning its text analysis privately. image_refs must contain only exact references explicitly listed as valid in the system instruction. This tool cannot read filesystem paths, filenames, URLs, arbitrary conversation text, or client tool results without image bytes; never invent or infer a reference.",
 			parameters: {
 				type: "object",
 				additionalProperties: false,
 				properties: {
 					image_refs: {
 						type: "array",
-						items: { type: "string" },
+						items: {
+							type: "string",
+							pattern: PRIVATE_VISION_REF_SCHEMA_PATTERN,
+							minLength: 71,
+							maxLength: 71,
+						},
 						minItems: 1,
-						description: "SHA-256 image references copied exactly from the available image references.",
+						description:
+							"One or more exact opaque references copied from the complete valid-reference list in the system instruction. Every item must be sha256: followed by exactly 64 lowercase hexadecimal characters. Paths, filenames, URLs, placeholders, and invented hashes are invalid.",
 					},
 					question: {
 						type: "string",
