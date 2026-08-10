@@ -6,6 +6,7 @@
  */
 
 import type { Request } from "express";
+import type { UpstreamLogContext } from "../router/UpstreamLogContext";
 import type { ModelResolutionChainEntry } from "../router/ModelResolutionTrace";
 import type { UserAPIKeyAuth } from "./auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
@@ -33,6 +34,7 @@ declare global {
  */
 export enum CallType {
 	ACompletion = "acompletion",
+	AResponses = "aresponses",
 	Completion = "completion",
 	AMessages = "amessages",
 	AEmbedding = "aembedding",
@@ -277,6 +279,8 @@ export interface SpendLogBuildContext {
 	readonly proxyServerRequestBody?: unknown;
 	/** 上游响应体 */
 	readonly response?: unknown;
+	/** Provider 转换后实际发出的上游请求与收到的原始响应。仅在详细日志开启时持久化。 */
+	readonly upstreamLogContext?: UpstreamLogContext;
 	/** 上游 usage 对象 */
 	readonly usage?: Record<string, unknown>;
 	/** 捕获到的请求错误 */

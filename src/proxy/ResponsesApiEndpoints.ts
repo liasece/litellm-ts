@@ -3,14 +3,15 @@
  *
  * POST create 委托统一 Router/fallback；retrieve/delete 依赖持久化存储，当前显式返回 501。
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { Request, Response, Router } from "express";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
 import { registerRoute } from "../core/api/registerRoute";
 import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
-import type { Router as LiteLLMRouter } from "../router/Router";
+import { ROUTER_CALL_TYPE_PARAM, ROUTER_RESPONSES_BODY_PARAM, type Router as LiteLLMRouter } from "../router/Router";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
 import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendLifecycle } from "../spend/SpendReservation";
@@ -21,13 +22,19 @@ import {
 	releaseSpend,
 	trackSpendLog,
 } from "../spend/SpendTracker";
-import type { ModelResponse, ThinkingBlock, ToolCall, Usage } from "../types/openai";
+import type { Message, ModelResponse, ThinkingBlock, ToolCall, Usage } from "../types/openai";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { prepareOpenAIVisionRequest } from "../capabilities/VisionCapability";
-import { createVisionCapabilityAuditHook, createWebCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import {
+	createImageGenerationCapabilityAuditHook,
+	createVisionCapabilityAuditHook,
+	createWebCapabilityAuditHook,
+} from "../capabilities/BuiltinCapabilityAudit";
+import { prepareOpenAIImageGenerationRequest, type BuiltinGeneratedImage } from "../capabilities/ImageGenerationCapability";
 import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareOpenAIWebRequest } from "../capabilities/WebCapability";
+import { attachUpstreamLogContext, getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
 
 const logger = createModuleLogger("Proxy:Responses");
 
@@ -47,6 +54,7 @@ interface ResponsesFunctionCallItem {
 	call_id?: string;
 	id?: string;
 	name: string;
+	namespace?: string;
 	arguments: string;
 }
 
@@ -66,13 +74,34 @@ interface ResponsesFunctionTool {
 	strict?: boolean;
 }
 
+interface ResponsesNamespaceTool {
+	type: "namespace";
+	name: string;
+	description?: string;
+	tools: ResponsesFunctionTool[];
+}
+
+type ResponsesTool = ResponsesFunctionTool | ResponsesNamespaceTool | Record<string, unknown>;
+
 interface ResponsesCreateRequest {
 	model?: string;
 	input?: string | ResponsesInputItem[];
 	instructions?: string;
-	tools?: ResponsesFunctionTool[];
+	tools?: ResponsesTool[];
 	stream?: boolean;
 	[key: string]: unknown;
+}
+
+interface ResponsesToolName {
+	name: string;
+	namespace?: string;
+}
+
+interface ResponsesToolRegistry {
+	chatTools: Record<string, unknown>[];
+	responsesTools: Record<string, unknown>[];
+	toChatName(name: string, namespace?: string): string;
+	fromChatName(name: string): ResponsesToolName;
 }
 
 interface ChatMessage {
@@ -97,7 +126,7 @@ interface ResponseError {
 
 interface ResponseOutputItem extends Record<string, unknown> {
 	id: string;
-	type: "reasoning" | "message" | "function_call";
+	type: "reasoning" | "message" | "function_call" | "image_generation_call";
 }
 
 interface StandardResponseObject extends Record<string, unknown> {
@@ -141,6 +170,7 @@ interface ResponsesStreamState {
 	finishReason?: string;
 	sequence: number;
 	terminalSent: boolean;
+	toolRegistry: ResponsesToolRegistry;
 }
 
 interface ResponsesStreamContext {
@@ -156,6 +186,7 @@ interface ResponsesStreamContext {
 	startTime: Date;
 	lifecycle: EndpointSpendLifecycle;
 	visionImageStore: VisionImageStore;
+	toolRegistry: ResponsesToolRegistry;
 }
 
 /**
@@ -192,16 +223,20 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 			runCommonChecks(req.auth, model);
 		}
 
-		const messages = buildResponsesMessages(reqBody.input, reqBody.instructions);
-		const optionalParams = buildResponsesOptionalParams(reqBody);
+		const toolRegistry = buildResponsesToolRegistry(reqBody.tools);
+		const messages = buildResponsesMessages(reqBody.input, reqBody.instructions, toolRegistry);
+		const optionalParams = buildResponsesOptionalParams(reqBody, toolRegistry);
+		optionalParams[ROUTER_CALL_TYPE_PARAM] = "responses";
+		optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(reqBody, toolRegistry);
 		const startTime = new Date();
 		const reservation = await reserveEndpointSpend(db, litellmRouter, req, model, reqBody, {
-			callType: CallType.ACompletion,
+			callType: CallType.AResponses,
 			startTime: startTime,
 		});
 		const lifecycle = createEndpointSpendLifecycle(reservation);
 		const requestId = reservation?.requestId;
 		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId });
+		const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId });
 		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId });
 		const visionImageStore = createVisionImageStore(db);
 		lifecycle.markProviderStarted();
@@ -221,33 +256,61 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 					startTime: startTime,
 					lifecycle: lifecycle,
 					visionImageStore: visionImageStore,
+					toolRegistry: toolRegistry,
 				});
 				return undefined;
 			}
 
 			let providerCompleted = false;
 			try {
-				const result = await runOpenAIBuiltinCapabilityAgentLoop(
+				const nativeResponses = litellmRouter.supportsNativeResponses?.(model) ?? false;
+				const capabilityMessages = messages as unknown as Array<Record<string, unknown>>;
+				const preparedVision = await prepareOpenAIVisionRequest(
 					litellmRouter,
 					model,
-					messages as unknown as Array<Record<string, unknown>>,
-					optionalParams,
-					undefined,
-					{
-						visionAudit: visionAudit,
-						webAudit: webAudit,
-						visionImageStore: visionImageStore,
-					},
+					capabilityMessages,
+					visionImageStore,
 				);
+				const preparedImageGeneration = await prepareOpenAIImageGenerationRequest(
+					litellmRouter,
+					model,
+					capabilityMessages,
+					visionImageStore,
+				);
+				const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, capabilityMessages);
+				const result =
+					preparedVision || preparedImageGeneration || preparedWeb
+						? await runOpenAIBuiltinCapabilityAgentLoop(
+							litellmRouter,
+							model,
+							capabilityMessages,
+							optionalParams,
+							nativeResponses
+								? createNativeResponsesCapabilityCompletion(litellmRouter, reqBody, capabilityMessages, toolRegistry)
+								: undefined,
+							{
+								visionAudit: visionAudit,
+								imageGenerationAudit: imageGenerationAudit,
+								webAudit: webAudit,
+								visionImageStore: visionImageStore,
+								preparedVision: preparedWeb ? undefined : preparedVision,
+								preparedWeb: preparedWeb,
+							},
+						)
+						: await litellmRouter.completion(model, messages as never, optionalParams);
 				providerCompleted = true;
 				const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 				calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 				const usage = result["usage"] as Record<string, unknown> | undefined;
-				const response = mapChatCompletionToResponse(result, reqBody);
+				const isNativeResponses = result["_responseProtocol"] === "responses";
+				const response = isNativeResponses
+					? buildNativeResponsesClientObject(result, reqBody, toolRegistry)
+					: mapChatCompletionToResponse(result, reqBody, toolRegistry);
 				if (usage?.["cost"] !== undefined) {
 					injectResponseCostHeader(res, usage["cost"] as number);
 				}
 				copyProviderHeaders(result, res);
+				const responseFailed = response["status"] === "failed";
 				await lifecycle.finalize(() =>
 					recordSpend(db, req, requestId, {
 						model: model,
@@ -256,7 +319,8 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 						response: response,
 						usage: usage,
 						spendInfo: spendInfo,
-						status: SpendLogStatus.Success,
+						upstreamLogContext: getUpstreamLogContext(result),
+						status: responseFailed ? SpendLogStatus.Failure : SpendLogStatus.Success,
 						...getResultModelResolutionMetadata(result),
 					}),
 				);
@@ -271,6 +335,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 						requestBody: reqBody,
 						startTime: startTime,
 						error: error,
+						upstreamLogContext: getUpstreamLogContext(error),
 						status: SpendLogStatus.Failure,
 					}),
 				);
@@ -297,7 +362,11 @@ function validateResponsesPersistenceOptions(body: ResponsesCreateRequest): void
 	}
 }
 
-function buildResponsesMessages(input: string | ResponsesInputItem[], instructions: string | undefined): ChatMessage[] {
+function buildResponsesMessages(
+	input: string | ResponsesInputItem[],
+	instructions: string | undefined,
+	toolRegistry: ResponsesToolRegistry,
+): ChatMessage[] {
 	const messages: ChatMessage[] = [];
 	if (instructions) {
 		messages.push({ role: "developer", content: instructions });
@@ -327,7 +396,7 @@ function buildResponsesMessages(input: string | ResponsesInputItem[], instructio
 					{
 						id: call.call_id ?? call.id ?? `call_${randomUUID()}`,
 						type: "function",
-						function: { name: call.name, arguments: call.arguments },
+						function: { name: toolRegistry.toChatName(call.name, call.namespace), arguments: call.arguments },
 					},
 				],
 			});
@@ -383,7 +452,402 @@ function responseContentToChatContent(content: unknown): unknown {
 	});
 }
 
-function buildResponsesOptionalParams(body: ResponsesCreateRequest): Record<string, unknown> {
+const CHAT_FUNCTION_NAME_MAX_LENGTH = 64;
+
+function responsesToolKey(name: string, namespace?: string): string {
+	return `${namespace ?? ""}\0${name}`;
+}
+
+function buildChatFunctionTool(tool: ResponsesFunctionTool, name: string, namespaceDescription?: string): Record<string, unknown> {
+	const description = [namespaceDescription, tool.description].filter(
+		(value): value is string => typeof value === "string" && value.length > 0,
+	);
+	return {
+		type: "function",
+		function: {
+			name: name,
+			...(description.length > 0 ? { description: description.join("\n\n") } : {}),
+			...(tool.parameters !== undefined ? { parameters: tool.parameters } : {}),
+			...(tool.strict !== undefined ? { strict: tool.strict } : {}),
+		},
+	};
+}
+
+function createNamespacedChatToolName(namespace: string, name: string, usedNames: Set<string>): string {
+	const base = `${namespace}__${name}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+	if (base.length <= CHAT_FUNCTION_NAME_MAX_LENGTH && !usedNames.has(base)) {
+		return base;
+	}
+	const digest = createHash("sha256").update(`${namespace}\0${name}`).digest("hex").slice(0, 12);
+	const prefixLength = CHAT_FUNCTION_NAME_MAX_LENGTH - digest.length - 1;
+	const prefix = base.slice(0, prefixLength);
+	let candidate = `${prefix}_${digest}`;
+	let collisionIndex = 1;
+	while (usedNames.has(candidate)) {
+		const suffix = `_${collisionIndex++}`;
+		candidate = `${prefix.slice(0, CHAT_FUNCTION_NAME_MAX_LENGTH - digest.length - suffix.length - 1)}_${digest}${suffix}`;
+	}
+	return candidate;
+}
+
+function buildResponsesToolRegistry(tools: ResponsesTool[] | undefined): ResponsesToolRegistry {
+	const chatTools: Record<string, unknown>[] = [];
+	const responsesTools: Record<string, unknown>[] = [];
+	const chatNameByResponsesName = new Map<string, string>();
+	const responsesNameByChatName = new Map<string, ResponsesToolName>();
+	const usedNames = new Set<string>();
+	const sourceTools = Array.isArray(tools) ? tools : [];
+
+	for (const value of sourceTools) {
+		if (value?.type !== "function" || typeof value.name !== "string") {
+			continue;
+		}
+		const tool = value as ResponsesFunctionTool;
+		usedNames.add(tool.name);
+		chatNameByResponsesName.set(responsesToolKey(tool.name), tool.name);
+		responsesNameByChatName.set(tool.name, { name: tool.name });
+	}
+
+	for (const value of sourceTools) {
+		if (value?.type === "function" && typeof value.name === "string") {
+			const tool = value as ResponsesFunctionTool;
+			chatTools.push(buildChatFunctionTool(tool, tool.name));
+			responsesTools.push(structuredClone(tool) as unknown as Record<string, unknown>);
+			continue;
+		}
+		if (value?.type === "namespace" && typeof value.name === "string" && Array.isArray((value as ResponsesNamespaceTool).tools)) {
+			const namespaceTool = value as ResponsesNamespaceTool;
+			responsesTools.push(structuredClone(namespaceTool) as unknown as Record<string, unknown>);
+			for (const nestedValue of namespaceTool.tools) {
+				if (nestedValue?.type !== "function" || typeof nestedValue.name !== "string") {
+					continue;
+				}
+				const chatName = createNamespacedChatToolName(namespaceTool.name, nestedValue.name, usedNames);
+				usedNames.add(chatName);
+				chatNameByResponsesName.set(responsesToolKey(nestedValue.name, namespaceTool.name), chatName);
+				responsesNameByChatName.set(chatName, { name: nestedValue.name, namespace: namespaceTool.name });
+				chatTools.push(buildChatFunctionTool(nestedValue, chatName, namespaceTool.description));
+			}
+			continue;
+		}
+		if (typeof value === "object" && value !== null) {
+			responsesTools.push(structuredClone(value) as unknown as Record<string, unknown>);
+		}
+	}
+
+	return {
+		chatTools: chatTools,
+		responsesTools: responsesTools,
+		toChatName: function (name: string, namespace?: string): string {
+			return chatNameByResponsesName.get(responsesToolKey(name, namespace)) ?? name;
+		},
+		fromChatName: function (name: string): ResponsesToolName {
+			return responsesNameByChatName.get(name) ?? { name: name };
+		},
+	};
+}
+
+function buildNativeResponsesRequestBody(body: ResponsesCreateRequest, toolRegistry: ResponsesToolRegistry): Record<string, unknown> {
+	const nativeBody = structuredClone(body) as Record<string, unknown>;
+	if (body.tools !== undefined) {
+		nativeBody["tools"] = toolRegistry.responsesTools;
+	}
+	return nativeBody;
+}
+
+function createNativeResponsesCapabilityCompletion(
+	litellmRouter: LiteLLMRouter,
+	requestBody: ResponsesCreateRequest,
+	originalMessages: Array<Record<string, unknown>>,
+	toolRegistry: ResponsesToolRegistry,
+): (
+	model: string,
+	messages: Message[],
+	optionalParams: Record<string, unknown>,
+) => Promise<Record<string, unknown>> {
+	let originalMessagesOffset: number | undefined;
+	return async (model, messages, optionalParams) => {
+		originalMessagesOffset ??= Math.max(0, messages.length - originalMessages.length);
+		const nativeBody = buildNativeResponsesCapabilityBody(
+			requestBody,
+			messages as unknown as Array<Record<string, unknown>>,
+			originalMessages,
+			originalMessagesOffset,
+			optionalParams,
+			toolRegistry,
+		);
+		const nativeParams: Record<string, unknown> = {
+			...optionalParams,
+			stream: false,
+			[ROUTER_CALL_TYPE_PARAM]: "responses",
+			[ROUTER_RESPONSES_BODY_PARAM]: nativeBody,
+		};
+		delete nativeParams["tools"];
+		delete nativeParams["parallel_tool_calls"];
+		const result = await litellmRouter.completion(model, messages as never, nativeParams);
+		return result["_responseProtocol"] === "responses" ? mapNativeResponsesToChatCompletion(result, toolRegistry) : result;
+	};
+}
+
+function buildNativeResponsesCapabilityBody(
+	requestBody: ResponsesCreateRequest,
+	messages: Array<Record<string, unknown>>,
+	originalMessages: Array<Record<string, unknown>>,
+	originalMessagesOffset: number,
+	optionalParams: Record<string, unknown>,
+	toolRegistry: ResponsesToolRegistry,
+): Record<string, unknown> {
+	const body = structuredClone(requestBody) as Record<string, unknown>;
+	body["input"] = buildPreservedNativeResponsesInput(
+		requestBody,
+		messages,
+		originalMessages,
+		originalMessagesOffset,
+		toolRegistry,
+	);
+	body["stream"] = false;
+	body["parallel_tool_calls"] = false;
+	const privateTools = chatToolsToPrivateResponsesTools(optionalParams["tools"]);
+	if (privateTools.length > 0) {
+		body["tools"] = [...toolRegistry.responsesTools.map((tool) => structuredClone(tool)), ...privateTools];
+	}
+	return body;
+}
+
+function buildPreservedNativeResponsesInput(
+	requestBody: ResponsesCreateRequest,
+	messages: Array<Record<string, unknown>>,
+	originalMessages: Array<Record<string, unknown>>,
+	originalMessagesOffset: number,
+	toolRegistry: ResponsesToolRegistry,
+): Record<string, unknown>[] {
+	const injectedMessages = messages.slice(0, originalMessagesOffset);
+	const currentOriginalMessages = messages.slice(originalMessagesOffset, originalMessagesOffset + originalMessages.length);
+	const continuationMessages = messages.slice(originalMessagesOffset + originalMessages.length);
+	const instructionsCount = typeof requestBody.instructions === "string" && requestBody.instructions.length > 0 ? 1 : 0;
+	const originalInput =
+		typeof requestBody.input === "string"
+			? [{ type: "message", role: "user", content: [{ type: "input_text", text: requestBody.input }] }]
+			: Array.isArray(requestBody.input)
+				? requestBody.input
+				: [];
+	const preservedInput = originalInput.map((item, index) => {
+		const originalMessage = originalMessages[index + instructionsCount];
+		const currentMessage = currentOriginalMessages[index + instructionsCount];
+		const clonedItem = structuredClone(item) as Record<string, unknown>;
+		if (!originalMessage || !currentMessage || isDeepStrictEqual(originalMessage, currentMessage)) {
+			return clonedItem;
+		}
+		if ((item.type === undefined || item.type === "message") && "content" in item) {
+			clonedItem["content"] = chatContentToResponsesContent(currentMessage["content"], String(item["role"] ?? "user"));
+		}
+		return clonedItem;
+	});
+	return [
+		...chatMessagesToResponsesInput(injectedMessages, toolRegistry),
+		...preservedInput,
+		...chatMessagesToResponsesInput(continuationMessages, toolRegistry),
+	];
+}
+
+function chatToolsToPrivateResponsesTools(value: unknown): Record<string, unknown>[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.flatMap((tool) => {
+		if (typeof tool !== "object" || tool === null || (tool as Record<string, unknown>)["type"] !== "function") {
+			return [];
+		}
+		const fn = (tool as Record<string, unknown>)["function"];
+		if (typeof fn !== "object" || fn === null) {
+			return [];
+		}
+		const definition = fn as Record<string, unknown>;
+		const name = definition["name"];
+		if (typeof name !== "string" || !name.startsWith("litellm__")) {
+			return [];
+		}
+		return [
+			{
+				type: "function",
+				name: name,
+				...(typeof definition["description"] === "string" ? { description: definition["description"] } : {}),
+				...(typeof definition["parameters"] === "object" && definition["parameters"] !== null
+					? { parameters: structuredClone(definition["parameters"]) }
+					: {}),
+				...(typeof definition["strict"] === "boolean" ? { strict: definition["strict"] } : {}),
+			},
+		];
+	});
+}
+
+function chatMessagesToResponsesInput(
+	messages: Array<Record<string, unknown>>,
+	toolRegistry: ResponsesToolRegistry,
+): Record<string, unknown>[] {
+	const input: Record<string, unknown>[] = [];
+	for (const message of messages) {
+		const role = typeof message["role"] === "string" ? message["role"] : "user";
+		if (role === "tool" && typeof message["tool_call_id"] === "string") {
+			input.push({
+				type: "function_call_output",
+				call_id: message["tool_call_id"],
+				output: typeof message["content"] === "string" ? message["content"] : JSON.stringify(message["content"] ?? ""),
+			});
+			continue;
+		}
+		if (message["content"] !== null && message["content"] !== undefined) {
+			input.push({
+				type: "message",
+				role: role,
+				content: chatContentToResponsesContent(message["content"], role),
+			});
+		}
+		const toolCalls = Array.isArray(message["tool_calls"]) ? (message["tool_calls"] as ToolCall[]) : [];
+		for (const toolCall of toolCalls) {
+			const mapped = toolRegistry.fromChatName(toolCall.function.name);
+			input.push({
+				type: "function_call",
+				call_id: toolCall.id,
+				name: mapped.name,
+				...(mapped.namespace ? { namespace: mapped.namespace } : {}),
+				arguments: toolCall.function.arguments,
+			});
+		}
+	}
+	return input;
+}
+
+function chatContentToResponsesContent(content: unknown, role: string): unknown {
+	const textType = role === "assistant" ? "output_text" : "input_text";
+	if (typeof content === "string") {
+		return [{ type: textType, text: content }];
+	}
+	if (!Array.isArray(content)) {
+		return [{ type: textType, text: JSON.stringify(content ?? "") }];
+	}
+	return content.map((rawPart) => {
+		if (typeof rawPart !== "object" || rawPart === null) {
+			return { type: textType, text: String(rawPart ?? "") };
+		}
+		const part = rawPart as Record<string, unknown>;
+		if (part["type"] === "text" && typeof part["text"] === "string") {
+			return { type: textType, text: part["text"] };
+		}
+		if (part["type"] === "image_url") {
+			const imageUrl = part["image_url"];
+			const url =
+				typeof imageUrl === "string"
+					? imageUrl
+					: typeof imageUrl === "object" && imageUrl !== null
+						? (imageUrl as Record<string, unknown>)["url"]
+						: undefined;
+			if (typeof url === "string") {
+				return { type: "input_image", image_url: url };
+			}
+		}
+		return structuredClone(part);
+	});
+}
+
+function mapNativeResponsesToChatCompletion(
+	result: Record<string, unknown>,
+	toolRegistry: ResponsesToolRegistry,
+): Record<string, unknown> {
+	const output = Array.isArray(result["output"]) ? (result["output"] as Array<Record<string, unknown>>) : [];
+	const toolCalls: ToolCall[] = [];
+	const text: string[] = [];
+	const refusal: string[] = [];
+	const reasoning: string[] = [];
+	for (const item of output) {
+		if (item["type"] === "function_call" && typeof item["name"] === "string") {
+			const namespace = typeof item["namespace"] === "string" ? item["namespace"] : undefined;
+			toolCalls.push({
+				id: typeof item["call_id"] === "string" ? item["call_id"] : String(item["id"] ?? `call_${randomUUID()}`),
+				type: "function",
+				function: {
+					name: toolRegistry.toChatName(item["name"], namespace),
+					arguments: typeof item["arguments"] === "string" ? item["arguments"] : JSON.stringify(item["arguments"] ?? {}),
+				},
+			});
+			continue;
+		}
+		if (item["type"] === "message" && Array.isArray(item["content"])) {
+			for (const content of item["content"] as Array<Record<string, unknown>>) {
+				if ((content["type"] === "output_text" || content["type"] === "text") && typeof content["text"] === "string") {
+					text.push(content["text"]);
+				}
+				if (content["type"] === "refusal" && typeof content["refusal"] === "string") {
+					refusal.push(content["refusal"]);
+				}
+			}
+			continue;
+		}
+		if (item["type"] === "reasoning") {
+			const summary = Array.isArray(item["summary"]) ? item["summary"] : [];
+			for (const part of summary as Array<Record<string, unknown>>) {
+				if (typeof part["text"] === "string") reasoning.push(part["text"]);
+			}
+		}
+	}
+	const usage = result["usage"] as Record<string, unknown> | undefined;
+	const inputTokens = numberField(usage, "input_tokens", "prompt_tokens");
+	const outputTokens = numberField(usage, "output_tokens", "completion_tokens");
+	const message: Record<string, unknown> = {
+		role: "assistant",
+		content: text.length > 0 ? text.join("") : null,
+		...(refusal.length > 0 ? { refusal: refusal.join("") } : {}),
+		...(reasoning.length > 0 ? { reasoning_content: reasoning.join("\n") } : {}),
+		...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+	};
+	const chatResult: Record<string, unknown> = {
+		id: result["id"],
+		created: result["created_at"],
+		model: result["model"],
+		choices: [
+			{
+				index: 0,
+				finish_reason:
+					toolCalls.length > 0 ? "tool_calls" : result["status"] === "incomplete" ? "length" : "stop",
+				message: message,
+			},
+		],
+		usage: {
+			prompt_tokens: inputTokens,
+			completion_tokens: outputTokens,
+			total_tokens: numberField(usage, "total_tokens") || inputTokens + outputTokens,
+			...(typeof usage?.["cost"] === "number" ? { cost: usage["cost"] } : {}),
+		},
+		_responseProtocol: "chat_completions",
+	};
+	for (const [key, value] of Object.entries(result)) {
+		if (key.startsWith("_") && key !== "_responseProtocol") chatResult[key] = value;
+	}
+	return attachUpstreamLogContext(chatResult, getUpstreamLogContext(result));
+}
+
+function normalizeResponsesToolChoice(value: unknown, toolRegistry: ResponsesToolRegistry): unknown {
+	if (typeof value === "string") {
+		return value;
+	}
+	if (typeof value !== "object" || value === null) {
+		return undefined;
+	}
+	const choice = value as Record<string, unknown>;
+	if (choice["type"] === "function" && typeof choice["name"] === "string") {
+		const namespace = typeof choice["namespace"] === "string" ? choice["namespace"] : undefined;
+		return {
+			type: "function",
+			function: { name: toolRegistry.toChatName(choice["name"], namespace) },
+		};
+	}
+	if (choice["type"] === "namespace") {
+		return "required";
+	}
+	return undefined;
+}
+
+function buildResponsesOptionalParams(body: ResponsesCreateRequest, toolRegistry: ResponsesToolRegistry): Record<string, unknown> {
 	const optionalParams: Record<string, unknown> = { ...body };
 	delete optionalParams["model"];
 	delete optionalParams["input"];
@@ -398,25 +862,24 @@ function buildResponsesOptionalParams(body: ResponsesCreateRequest): Record<stri
 	}
 	delete optionalParams["reasoning"];
 	if (body.tools) {
-		optionalParams["tools"] = body.tools.map((tool) => {
-			if (tool.type !== "function") {
-				return tool;
-			}
-			return {
-				type: "function",
-				function: {
-					name: tool.name,
-					...(tool.description !== undefined ? { description: tool.description } : {}),
-					...(tool.parameters !== undefined ? { parameters: tool.parameters } : {}),
-					...(tool.strict !== undefined ? { strict: tool.strict } : {}),
-				},
-			};
-		});
+		optionalParams["tools"] = toolRegistry.chatTools;
+	}
+	if (body.tool_choice !== undefined) {
+		const toolChoice = normalizeResponsesToolChoice(body.tool_choice, toolRegistry);
+		if (toolChoice === undefined) {
+			delete optionalParams["tool_choice"];
+		} else {
+			optionalParams["tool_choice"] = toolChoice;
+		}
 	}
 	return optionalParams;
 }
 
-function mapChatCompletionToResponse(result: Record<string, unknown>, request: ResponsesCreateRequest): StandardResponseObject {
+function mapChatCompletionToResponse(
+	result: Record<string, unknown>,
+	request: ResponsesCreateRequest,
+	toolRegistry: ResponsesToolRegistry,
+): StandardResponseObject {
 	const responseId = toResponseId(result["id"]);
 	const createdAt = typeof result["created"] === "number" ? result["created"] : Math.floor(Date.now() / 1000);
 	const model = typeof result["model"] === "string" ? result["model"] : request.model!;
@@ -434,7 +897,19 @@ function mapChatCompletionToResponse(result: Record<string, unknown>, request: R
 		output.push(buildMessageItem(responseId, output.length, text, refusal));
 	}
 	for (const toolCall of (message["tool_calls"] as ToolCall[] | undefined) ?? []) {
-		output.push(buildFunctionCallItem(responseId, output.length, toolCall));
+		output.push(buildFunctionCallItem(responseId, output.length, toolCall, toolRegistry));
+	}
+	for (const image of (result["_builtinGeneratedImages"] as BuiltinGeneratedImage[] | undefined) ?? []) {
+		output.push({
+			id: image.id,
+			type: "image_generation_call",
+			status: "completed",
+			result: image.b64Json,
+			output_format: image.outputFormat,
+			size: image.size ?? "auto",
+			quality: image.quality ?? "auto",
+			background: image.background ?? "auto",
+		});
 	}
 	const usage = mapResponseUsage(result["usage"] as Record<string, unknown> | undefined);
 	const status = finishReason === "length" ? "incomplete" : finishReason === "content_filter" ? "failed" : "completed";
@@ -452,6 +927,80 @@ function mapChatCompletionToResponse(result: Record<string, unknown>, request: R
 		incompleteDetails: status === "incomplete" ? { reason: "max_output_tokens" } : null,
 	});
 	return response;
+}
+
+function buildNativeResponsesClientObject(
+	result: Record<string, unknown>,
+	request: ResponsesCreateRequest,
+	toolRegistry: ResponsesToolRegistry,
+): Record<string, unknown> {
+	const publicResult = Object.fromEntries(Object.entries(result).filter(([key]) => !key.startsWith("_")));
+	const response = structuredClone(publicResult) as Record<string, unknown>;
+	restoreNativeResponsesPayload(response, request, toolRegistry);
+	const usage =
+		typeof response["usage"] === "object" && response["usage"] !== null && !Array.isArray(response["usage"])
+			? ({ ...(response["usage"] as Record<string, unknown>) } as Record<string, unknown>)
+			: undefined;
+	if (usage) {
+		delete usage["cost"];
+		response["usage"] = usage;
+	}
+	return response;
+}
+
+function restoreNativeResponsesPayload(
+	payload: Record<string, unknown>,
+	request: ResponsesCreateRequest,
+	toolRegistry: ResponsesToolRegistry,
+): void {
+	restoreNativeFunctionCallItem(payload["item"], toolRegistry);
+	const response =
+		typeof payload["response"] === "object" && payload["response"] !== null && !Array.isArray(payload["response"])
+			? (payload["response"] as Record<string, unknown>)
+			: payload["object"] === "response"
+				? payload
+				: undefined;
+	if (response) {
+		for (const item of Array.isArray(response["output"]) ? response["output"] : []) {
+			restoreNativeFunctionCallItem(item, toolRegistry);
+		}
+		if (request.tools !== undefined) {
+			response["tools"] = structuredClone(request.tools);
+		}
+		if (request.tool_choice !== undefined) {
+			response["tool_choice"] = structuredClone(request.tool_choice);
+		}
+	}
+	if (payload["type"] === "response.function_call_arguments.done" && typeof payload["name"] === "string") {
+		const toolName =
+			typeof payload["namespace"] === "string"
+				? { name: payload["name"], namespace: payload["namespace"] }
+				: toolRegistry.fromChatName(payload["name"]);
+		payload["name"] = toolName.name;
+		if (toolName.namespace !== undefined) {
+			payload["namespace"] = toolName.namespace;
+		}
+	}
+}
+
+function restoreNativeFunctionCallItem(value: unknown, toolRegistry: ResponsesToolRegistry): void {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return;
+	}
+	const item = value as Record<string, unknown>;
+	if (item["type"] !== "function_call" || typeof item["name"] !== "string") {
+		return;
+	}
+	const toolName =
+		typeof item["namespace"] === "string"
+			? { name: item["name"], namespace: item["namespace"] }
+			: toolRegistry.fromChatName(item["name"]);
+	item["name"] = toolName.name;
+	if (toolName.namespace !== undefined) {
+		item["namespace"] = toolName.namespace;
+	} else {
+		delete item["namespace"];
+	}
 }
 
 function buildResponseObject(input: {
@@ -532,13 +1081,20 @@ function buildMessageItem(responseId: string, index: number, text: string, refus
 	};
 }
 
-function buildFunctionCallItem(responseId: string, index: number, toolCall: ToolCall): ResponseOutputItem {
+function buildFunctionCallItem(
+	responseId: string,
+	index: number,
+	toolCall: ToolCall,
+	toolRegistry: ResponsesToolRegistry,
+): ResponseOutputItem {
+	const toolName = toolRegistry.fromChatName(toolCall.function.name);
 	return {
 		id: `${responseId}_function_${index}`,
 		type: "function_call",
 		status: "completed",
 		call_id: toolCall.id,
-		name: toolCall.function.name,
+		name: toolName.name,
+		...(toolName.namespace !== undefined ? { namespace: toolName.namespace } : {}),
 		arguments: toolCall.function.arguments,
 	};
 }
@@ -589,32 +1145,63 @@ function numberField(record: Record<string, unknown> | undefined, ...keys: strin
 }
 
 async function handleResponsesStream(context: ResponsesStreamContext): Promise<void> {
-	const { litellmRouter, model, messages, optionalParams, requestBody, req, res, db, requestId, startTime, lifecycle, visionImageStore } =
-		context;
+	const {
+		litellmRouter,
+		model,
+		messages,
+		optionalParams,
+		requestBody,
+		req,
+		res,
+		db,
+		requestId,
+		startTime,
+		lifecycle,
+		visionImageStore,
+		toolRegistry,
+	} = context;
 	let streamResult: Record<string, unknown>;
 	try {
 		const capabilityMessages = messages as unknown as Array<Record<string, unknown>>;
-		const preparedVision = await prepareOpenAIVisionRequest(litellmRouter, model, capabilityMessages, visionImageStore);
+		const nativeResponses = litellmRouter.supportsNativeResponses?.(model) ?? false;
+	const preparedVision = await prepareOpenAIVisionRequest(litellmRouter, model, capabilityMessages, visionImageStore);
+		const preparedImageGeneration = await prepareOpenAIImageGenerationRequest(
+			litellmRouter,
+			model,
+			capabilityMessages,
+			visionImageStore,
+		);
 		const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, capabilityMessages);
-		if (preparedVision || preparedWeb) {
+		if (preparedVision || preparedImageGeneration || preparedWeb) {
 			const finalResult = await runOpenAIBuiltinCapabilityAgentLoop(
 				litellmRouter,
 				model,
 				capabilityMessages,
 				optionalParams,
-				undefined,
+				nativeResponses
+					? createNativeResponsesCapabilityCompletion(litellmRouter, requestBody, capabilityMessages, toolRegistry)
+					: undefined,
 				{
 					visionAudit: createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId }),
+					imageGenerationAudit: createImageGenerationCapabilityAuditHook({
+						db: db,
+						req: req,
+						parentRequestId: requestId,
+					}),
 					webAudit: createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId }),
 					visionImageStore: visionImageStore,
+					preparedVision: preparedWeb ? undefined : preparedVision,
 					preparedWeb: preparedWeb,
 				},
 			);
-			streamResult = {
-				...finalResult,
-				_stream: true,
-				stream: modelResponseToSyntheticStream(finalResult),
-			};
+			streamResult = attachUpstreamLogContext(
+				{
+					...finalResult,
+					_stream: true,
+					stream: modelResponseToSyntheticStream(finalResult),
+				},
+				getUpstreamLogContext(finalResult),
+			);
 		} else {
 			streamResult = await litellmRouter.completion(model, messages as never, optionalParams);
 		}
@@ -625,6 +1212,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				requestBody: requestBody,
 				startTime: startTime,
 				error: error,
+				upstreamLogContext: getUpstreamLogContext(error),
 				status: SpendLogStatus.Failure,
 			}),
 		);
@@ -639,10 +1227,15 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				requestBody: requestBody,
 				startTime: startTime,
 				error: error,
+				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: SpendLogStatus.Failure,
 			}),
 		);
 		throw error;
+	}
+	if (streamResult["_responseProtocol"] === "responses") {
+		await relayNativeResponsesStream(context, streamResult, stream);
+		return;
 	}
 
 	copyProviderHeaders(streamResult, res);
@@ -666,6 +1259,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		nextContentIndex: 0,
 		sequence: 0,
 		terminalSent: false,
+		toolRegistry: toolRegistry,
 	};
 	writeEvent(res, state, "response.created", {
 		response: buildStreamResponse(state, requestBody, "in_progress", null),
@@ -725,6 +1319,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				response: loggedCompleted,
 				usage: state.usage as unknown as Record<string, unknown> | undefined,
 				spendInfo: spendInfo,
+				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: SpendLogStatus.Success,
 				...getResultModelResolutionMetadata(streamResult),
 			}),
@@ -751,6 +1346,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				}),
 				usage: state.usage as unknown as Record<string, unknown> | undefined,
 				error: error,
+				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: SpendLogStatus.Failure,
 			}),
 		);
@@ -763,6 +1359,175 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			res.end();
 		}
 	}
+}
+
+async function relayNativeResponsesStream(
+	context: ResponsesStreamContext,
+	streamResult: Record<string, unknown>,
+	stream: AsyncIterable<unknown>,
+): Promise<void> {
+	const { res, requestBody, toolRegistry, lifecycle, db, req, requestId, model, startTime } = context;
+	copyProviderHeaders(streamResult, res);
+	res.status(200);
+	res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+	res.setHeader("Cache-Control", "no-cache");
+	res.setHeader("Connection", "keep-alive");
+	res.setHeader("X-Accel-Buffering", "no");
+	res.flushHeaders();
+
+	const iterator = stream[Symbol.asyncIterator]();
+	let clientAborted = false;
+	let terminalType: "response.completed" | "response.incomplete" | "response.failed" | undefined;
+	let terminalResponse: Record<string, unknown> | undefined;
+	let upstreamTerminalResponse: Record<string, unknown> | undefined;
+	let lastSequence = -1;
+	let thrown: unknown;
+	let rejectClientAbort: ((error: Error) => void) | undefined;
+	const clientAbort = new Promise<never>((_resolve, reject) => {
+		rejectClientAbort = reject;
+	});
+	const onClose = (): void => {
+		if (!res.writableEnded && !clientAborted) {
+			clientAborted = true;
+			rejectClientAbort?.(Object.assign(new Error("client aborted"), { name: "AbortError" }));
+		}
+	};
+	res.once("close", onClose);
+
+	try {
+		while (true) {
+			const current = await Promise.race([iterator.next(), clientAbort]);
+			if (current.done) {
+				break;
+			}
+			if (typeof current.value !== "object" || current.value === null || Array.isArray(current.value)) {
+				throw ApiError.unavailable("Provider 返回 malformed Responses stream event");
+			}
+			const upstreamEvent = structuredClone(current.value) as Record<string, unknown>;
+			const event = structuredClone(upstreamEvent);
+			if (event["error"] !== undefined && typeof event["type"] !== "string") {
+				throw ApiError.unavailable(errorMessage(event["error"]));
+			}
+			const type = event["type"];
+			if (typeof type !== "string" || type.length === 0) {
+				throw ApiError.unavailable("Provider 返回缺少 type 的 Responses stream event");
+			}
+			if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") {
+				upstreamTerminalResponse =
+					typeof upstreamEvent["response"] === "object" &&
+					upstreamEvent["response"] !== null &&
+					!Array.isArray(upstreamEvent["response"])
+						? structuredClone(upstreamEvent["response"] as Record<string, unknown>)
+						: undefined;
+			}
+			restoreNativeResponsesPayload(event, requestBody, toolRegistry);
+			if (typeof event["sequence_number"] === "number") {
+				lastSequence = Math.max(lastSequence, event["sequence_number"] as number);
+			}
+			res.write(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`);
+			if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") {
+				terminalType = type;
+				terminalResponse =
+					typeof event["response"] === "object" && event["response"] !== null && !Array.isArray(event["response"])
+						? (event["response"] as Record<string, unknown>)
+						: undefined;
+				break;
+			}
+		}
+		if (!terminalType || !terminalResponse) {
+			throw ApiError.unavailable("Provider Responses stream 未返回终态事件");
+		}
+		if (!res.writableEnded) {
+			res.end();
+		}
+
+		const spendInfo = (streamResult as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
+		calculateAndSetCost(terminalResponse as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
+		const usage = terminalResponse["usage"] as Record<string, unknown> | undefined;
+		const loggedResponse = structuredClone(terminalResponse);
+		if (typeof loggedResponse["usage"] === "object" && loggedResponse["usage"] !== null && !Array.isArray(loggedResponse["usage"])) {
+			delete (loggedResponse["usage"] as Record<string, unknown>)["cost"];
+		}
+		const terminalError =
+			terminalType === "response.failed"
+				? new Error(
+						errorMessage((terminalResponse["error"] as Record<string, unknown> | undefined)?.["message"] ?? "Responses failed"),
+					)
+				: undefined;
+		await lifecycle.finalize(() =>
+			recordSpend(db, req, requestId, {
+				model: model,
+				requestBody: requestBody,
+				startTime: startTime,
+				response: loggedResponse,
+				usage: usage,
+				spendInfo: spendInfo,
+				error: terminalError,
+				upstreamLogContext: withUpstreamResponseBody(getUpstreamLogContext(streamResult), upstreamTerminalResponse),
+				status: terminalType === "response.failed" ? SpendLogStatus.Failure : SpendLogStatus.Success,
+				...getResultModelResolutionMetadata(streamResult),
+			}),
+		);
+	} catch (error) {
+		thrown = error;
+		if (!clientAborted) {
+			const responseError = { code: streamErrorCode(error), message: errorMessage(error) };
+			const failedResponse = {
+				id: `resp_${randomUUID()}`,
+				object: "response",
+				created_at: Math.floor(Date.now() / 1000),
+				status: "failed",
+				error: responseError,
+				incomplete_details: null,
+				model: model,
+				output: [],
+				usage: null,
+			};
+			const failedEvent = {
+				type: "response.failed",
+				sequence_number: lastSequence + 1,
+				response: failedResponse,
+			};
+			if (!res.writableEnded) {
+				res.write(`event: response.failed\ndata: ${JSON.stringify(failedEvent)}\n\n`);
+				res.end();
+			}
+		}
+		await lifecycle.finalize(() =>
+			recordSpend(db, req, requestId, {
+				model: model,
+				requestBody: requestBody,
+				startTime: startTime,
+				error: error,
+				upstreamLogContext: getUpstreamLogContext(streamResult),
+				status: SpendLogStatus.Failure,
+			}),
+		);
+	} finally {
+		res.removeListener("close", onClose);
+		if ((thrown !== undefined || terminalType !== undefined) && iterator.return) {
+			void iterator.return().catch(() => undefined);
+		}
+		if (!res.writableEnded && !clientAborted) {
+			res.end();
+		}
+	}
+}
+
+function withUpstreamResponseBody(
+	context: UpstreamLogContext | undefined,
+	body: Record<string, unknown> | undefined,
+): UpstreamLogContext | undefined {
+	if (!context?.response || body === undefined) {
+		return context;
+	}
+	return {
+		...context,
+		response: {
+			...context.response,
+			body: body,
+		},
+	};
 }
 
 async function* modelResponseToSyntheticStream(result: Record<string, unknown>): AsyncGenerator<Record<string, unknown>> {
@@ -792,6 +1557,9 @@ async function* modelResponseToSyntheticStream(result: Record<string, unknown>):
 			type: "function",
 			function: { name: call.function.name, arguments: call.function.arguments },
 		}));
+	}
+	if (Array.isArray(result["_builtinGeneratedImages"])) {
+		delta["_builtinGeneratedImages"] = result["_builtinGeneratedImages"];
 	}
 	if (Object.keys(delta).length > 0) {
 		yield { ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] };
@@ -871,6 +1639,27 @@ function consumeChatStreamChunk(chunk: unknown, state: ResponsesStreamState, res
 		}
 		for (const toolDelta of (delta["tool_calls"] as Array<Record<string, unknown>> | undefined) ?? []) {
 			consumeToolDelta(toolDelta, state, res);
+		}
+		for (const image of (delta["_builtinGeneratedImages"] as BuiltinGeneratedImage[] | undefined) ?? []) {
+			const item: ResponseOutputItem = {
+				id: image.id,
+				type: "image_generation_call",
+				status: "completed",
+				result: image.b64Json,
+				output_format: image.outputFormat,
+				size: image.size ?? "auto",
+				quality: image.quality ?? "auto",
+				background: image.background ?? "auto",
+			};
+			const outputIndex = state.output.length;
+			state.output.push(item);
+			writeEvent(res, state, "response.output_item.added", { output_index: outputIndex, item: item });
+			writeEvent(res, state, "response.image_generation_call.completed", {
+				item_id: image.id,
+				output_index: outputIndex,
+				result: image.b64Json,
+			});
+			writeEvent(res, state, "response.output_item.done", { output_index: outputIndex, item: item });
 		}
 	}
 }
@@ -952,12 +1741,15 @@ function consumeToolDelta(delta: Record<string, unknown>, state: ResponsesStream
 			outputIndex: state.output.length,
 		};
 		state.tools.set(index, tool);
+		const initialChatName = typeof fn["name"] === "string" ? fn["name"] : "";
+		const initialToolName = state.toolRegistry.fromChatName(initialChatName);
 		const item: ResponseOutputItem = {
 			id: itemId,
 			type: "function_call",
 			status: "in_progress",
 			call_id: callId,
-			name: typeof fn["name"] === "string" ? fn["name"] : "",
+			name: initialToolName.name,
+			...(initialToolName.namespace !== undefined ? { namespace: initialToolName.namespace } : {}),
 			arguments: "",
 		};
 		state.output.push(item);
@@ -1022,13 +1814,20 @@ function writeCompletedEvents(res: Response, state: ResponsesStreamState): void 
 			}
 		} else {
 			const tool = [...state.tools.values()].find((candidate) => candidate.itemId === item.id)!;
-			item.name = tool.name;
+			const toolName = state.toolRegistry.fromChatName(tool.name);
+			item.name = toolName.name;
+			if (toolName.namespace !== undefined) {
+				item.namespace = toolName.namespace;
+			} else {
+				delete item.namespace;
+			}
 			item.arguments = tool.arguments;
 			writeEvent(res, state, "response.function_call_arguments.done", {
 				item_id: item.id,
 				output_index: outputIndex,
 				arguments: tool.arguments,
-				name: tool.name,
+				name: toolName.name,
+				...(toolName.namespace !== undefined ? { namespace: toolName.namespace } : {}),
 			});
 		}
 		writeEvent(res, state, "response.output_item.done", { output_index: outputIndex, item: item });
@@ -1090,6 +1889,7 @@ async function recordSpend(
 		modelResolutionChain?: import("../router/ModelResolutionTrace").ModelResolutionChainEntry[];
 		attemptedRetries?: number;
 		error?: unknown;
+		upstreamLogContext?: UpstreamLogContext;
 		status: SpendLogStatus;
 	},
 ): Promise<void> {
@@ -1103,7 +1903,7 @@ async function recordSpend(
 				req: req,
 				auth: req.auth,
 				requestId: requestId,
-				callType: CallType.ACompletion,
+				callType: CallType.AResponses,
 				model: context.model,
 				modelGroup: context.model,
 				modelId: context.spendInfo?.modelId,
@@ -1117,6 +1917,7 @@ async function recordSpend(
 				response: context.response,
 				usage: context.usage,
 				error: context.error,
+				upstreamLogContext: context.upstreamLogContext,
 				status: context.status,
 				fallbackModels: context.fallbackModels,
 				modelResolutionChain: context.modelResolutionChain,

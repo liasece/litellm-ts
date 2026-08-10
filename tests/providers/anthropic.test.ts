@@ -384,16 +384,16 @@ describe("AnthropicProvider", () => {
 			}
 
 			expect(chunks[0]!._usage).toEqual({
-				prompt_tokens: 4,
+				prompt_tokens: 9,
 				completion_tokens: 0,
-				total_tokens: 4,
+				total_tokens: 9,
 				cache_creation_input_tokens: 2,
 				cache_read_input_tokens: 3,
 			});
 			expect(chunks[1]!._usage).toEqual({
-				prompt_tokens: 4,
+				prompt_tokens: 9,
 				completion_tokens: 6,
-				total_tokens: 10,
+				total_tokens: 15,
 				cache_creation_input_tokens: 2,
 				cache_read_input_tokens: 3,
 			});

@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { AudioController } from "./AudioEndpoint";
 import * as AuthChecks from "../auth/AuthChecks";
 import * as SpendTracker from "../spend/SpendTracker";
+import { attachUpstreamLogContext } from "../router/UpstreamLogContext";
 
 jest.mock("../core/config", () => ({ getConfig: () => ({ generalSettings: {} }) }));
 
@@ -61,6 +62,34 @@ describe("AudioController spend lifecycle", () => {
 			expect.anything(),
 			expect.objectContaining({ request_id: "audio-request-1" }),
 		);
+	});
+
+	it("成功账务携带 Router 结果上的上游日志上下文", async () => {
+		const upstreamLogContext = {
+			request: { url: "http://provider/v1/audio/speech", method: "POST", headers: {}, body: {} },
+			response: { status_code: 200, headers: {} },
+		};
+		const buildSpy = jest.spyOn(SpendTracker, "buildSpendLogFromRequest");
+		router.completion.mockResolvedValueOnce(
+			attachUpstreamLogContext({ usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }, upstreamLogContext),
+		);
+
+		await new AudioController(router as never, {} as never).speech({ model: "tts-model", input: "hello", voice: "alloy" }, request);
+
+		expect(buildSpy).toHaveBeenCalledWith(expect.objectContaining({ upstreamLogContext: upstreamLogContext }));
+	});
+
+	it("失败账务携带 provider 错误上的上游日志上下文", async () => {
+		const upstreamLogContext = {
+			request: { url: "http://provider/v1/audio/speech", method: "POST", headers: {}, body: {} },
+		};
+		const buildSpy = jest.spyOn(SpendTracker, "buildSpendLogFromRequest");
+		router.completion.mockRejectedValueOnce(attachUpstreamLogContext(new Error("provider failed"), upstreamLogContext));
+
+		await expect(
+			new AudioController(router as never, {} as never).speech({ model: "tts-model", input: "hello", voice: "alloy" }, request),
+		).rejects.toThrow("provider failed");
+		expect(buildSpy).toHaveBeenCalledWith(expect.objectContaining({ upstreamLogContext: upstreamLogContext }));
 	});
 
 	it("provider 成功后的账务错误不会被改写为失败日志", async () => {

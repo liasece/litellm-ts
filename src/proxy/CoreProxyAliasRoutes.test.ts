@@ -389,7 +389,7 @@ describe("core proxy alias routes", () => {
 			expect(reserveSpy.mock.invocationCallOrder[0]).toBeLessThan(completion.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER);
 			expect(spendSpy).toHaveBeenCalledTimes(1);
 			expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
-				call_type: CallType.ACompletion,
+				call_type: CallType.AResponses,
 				model: "gpt-4.1",
 				request_id: expect.any(String),
 			});

@@ -31,6 +31,7 @@ import { LiteLLM_ProjectTable } from "../db/schema/projects";
 import { liteLLM_SpendReservations } from "../db/schema/spendReservations";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { ApiError } from "../core/api/ApiError";
+import { mapToApiError } from "../core/api/ErrorResponseMapper";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type {
 	SpendLog,
@@ -492,6 +493,25 @@ export async function shouldStorePromptsAndResponsesInSpendLogs(): Promise<boole
 }
 
 /**
+ * Provider 上游请求/响应详情独立于下游 prompt/response 存储开关。
+ * DB general_settings（WebUI 设置项）> yaml general_settings > env。
+ */
+export async function shouldStoreUpstreamLogsInSpendLogs(): Promise<boolean> {
+	if (process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS === "true") {
+		return true;
+	}
+	try {
+		const dbGeneral = await dbConfigProvider.getParam("general_settings");
+		if ("store_upstream_logs_in_spend_logs" in dbGeneral) {
+			return dbGeneral["store_upstream_logs_in_spend_logs"] === true || dbGeneral["store_upstream_logs_in_spend_logs"] === "true";
+		}
+		return getConfig().generalSettings.store_upstream_logs_in_spend_logs === true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * 从请求中提取 requester IP，优先代理转发头。
  * @param req - Express 请求对象
  */
@@ -559,9 +579,7 @@ const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
  */
 function getCanonicalSessionGroupKey(req: Request): string | undefined {
 	const requestBody =
-		req.body !== null && typeof req.body === "object" && !Array.isArray(req.body)
-			? (req.body as Record<string, unknown>)
-			: undefined;
+		req.body !== null && typeof req.body === "object" && !Array.isArray(req.body) ? (req.body as Record<string, unknown>) : undefined;
 	const clientMetadata =
 		requestBody?.client_metadata !== null &&
 		typeof requestBody?.client_metadata === "object" &&
@@ -591,6 +609,7 @@ export function getSessionIdForSpendLog(ctx: SpendLogBuildContext): string {
  */
 export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promise<Record<string, unknown>> {
 	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
+	const shouldStoreUpstreamLogs = await shouldStoreUpstreamLogsInSpendLogs();
 	const requestBody = ctx.proxyServerRequestBody === undefined ? ctx.req.body : ctx.proxyServerRequestBody;
 	const requestShape: Record<string, unknown> = {
 		url: ctx.proxyServerRequestUrl ?? ctx.req.originalUrl ?? ctx.req.url,
@@ -599,6 +618,18 @@ export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promis
 		body: shouldStoreBody ? sanitizeSpendLogPayload(requestBody) : {},
 		arrival_time: ctx.startTime.toISOString(),
 	};
+	if (shouldStoreUpstreamLogs && ctx.upstreamLogContext) {
+		requestShape["upstream_request"] = sanitizeSpendLogPayload({
+			...ctx.upstreamLogContext.request,
+			headers: sanitizeSpendLogHeaders(ctx.upstreamLogContext.request.headers),
+		});
+		if (ctx.upstreamLogContext.response) {
+			requestShape["upstream_response"] = sanitizeSpendLogResponsePayload({
+				...ctx.upstreamLogContext.response,
+				headers: sanitizeSpendLogHeaders(ctx.upstreamLogContext.response.headers),
+			});
+		}
+	}
 	return requestShape;
 }
 
@@ -726,13 +757,15 @@ export function resolveFinalModelGroup(input: FinalModelGroupResolutionInput): s
 				entry !== null &&
 				(entry as { fallback_index?: unknown }).fallback_index === attemptedRetries &&
 				typeof (entry as { resolved_model?: unknown }).resolved_model === "string" &&
-				((entry as { resolved_model: string }).resolved_model.length > 0)
+				(entry as { resolved_model: string }).resolved_model.length > 0
 			) {
 				return (entry as { resolved_model: string }).resolved_model;
 			}
 		}
 	}
-	return fallbackModels[attemptedRetries] ?? fallbackModels.at(-1) ?? (typeof input.modelGroup === "string" ? input.modelGroup : undefined);
+	return (
+		fallbackModels[attemptedRetries] ?? fallbackModels.at(-1) ?? (typeof input.modelGroup === "string" ? input.modelGroup : undefined)
+	);
 }
 
 /**
@@ -820,6 +853,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
 	const metadata = buildSpendLogsMetadata(ctx);
 	const requestDurationMs = Math.max(0, ctx.endTime.getTime() - ctx.startTime.getTime());
+	const downstreamResponse = ctx.response ?? (ctx.error ? mapToApiError(ctx.error).toErrorBody() : undefined);
 	return {
 		request_id: ctx.requestId ?? randomUUID(),
 		call_type: ctx.callType,
@@ -848,7 +882,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		metadata: metadata as unknown as Record<string, unknown>,
 		requester_ip_address: metadata.requester_ip_address,
 		messages: shouldStoreBody ? sanitizeSpendLogMessagesPayload(ctx.messages) : {},
-		response: shouldStoreBody ? sanitizeSpendLogResponsePayload(ctx.response) : {},
+		response: shouldStoreBody ? sanitizeSpendLogResponsePayload(downstreamResponse) : {},
 		// 顶层列存完整 proxy_server_request（含 body）；metadata 内恒 null（对齐 Python），
 		// 详情端点 /spend/logs/ui/:request_id 从本列读取。
 		proxy_server_request: await buildProxyServerRequest(ctx),
@@ -1844,9 +1878,10 @@ export function calculateAndSetCost(
 		usage.prompt_tokens_details?.cache_creation_tokens ??
 		usage.cache_creation_input_tokens ??
 		0;
-	// DIFF-003: 从 usage.completion_tokens_details.reasoning_tokens 透传到 costPerToken
-	// 让 reasoning 模型的 output cost 正确扣除 reasoning_tokens（避免双重计费）。
-	const completionDetails = (usage as unknown as Record<string, unknown>)["completion_tokens_details"] as
+	// DIFF-003: Chat 使用 completion_tokens_details，Responses 使用
+	// output_tokens_details；两者都要把 reasoning_tokens 透传到 costPerToken。
+	const usageRecord = usage as unknown as Record<string, unknown>;
+	const completionDetails = (usageRecord["completion_tokens_details"] ?? usageRecord["output_tokens_details"]) as
 		| Record<string, unknown>
 		| undefined;
 	const reasoningTokens =

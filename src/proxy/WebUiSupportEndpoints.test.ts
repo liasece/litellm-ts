@@ -489,6 +489,7 @@ describe("WebUiSupport 契约", () => {
 				.send({
 					general_settings: {
 						store_prompts_in_spend_logs: true,
+						store_upstream_logs_in_spend_logs: true,
 						maximum_spend_logs_retention_period: "30d",
 					},
 				});
@@ -498,10 +499,13 @@ describe("WebUiSupport 契约", () => {
 			const listRes = await request(app).get("/config/list?config_type=general_settings");
 			const fields = listRes.body as Array<{ field_name: string; field_value: unknown; stored_in_db: boolean | null }>;
 			const storePromptsField = fields.find((field) => field.field_name === "store_prompts_in_spend_logs");
+			const storeUpstreamLogsField = fields.find((field) => field.field_name === "store_upstream_logs_in_spend_logs");
 			const retentionField = fields.find((field) => field.field_name === "maximum_spend_logs_retention_period");
 			expect(storePromptsField?.field_value).toBe(true);
 			// 值来自 DB（B3 起 /config/update 落 LiteLLM_Config），stored_in_db 对齐 Python 标记 true
 			expect(storePromptsField?.stored_in_db).toBe(true);
+			expect(storeUpstreamLogsField?.field_value).toBe(true);
+			expect(storeUpstreamLogsField?.stored_in_db).toBe(true);
 			expect(retentionField?.field_value).toBe("30d");
 			expect(retentionField?.stored_in_db).toBe(true);
 		});

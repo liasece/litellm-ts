@@ -12,6 +12,8 @@ import type { CooldownManager } from "./CooldownManager";
 import type { TPMRPMLimiter } from "./TPMRPMLimiter";
 import type { FallbackHandler } from "./FallbackHandler";
 import type { ModelResolutionTraceCollector } from "./ModelResolutionTrace";
+import type { UpstreamLogContext } from "./UpstreamLogContext";
+import type { ProviderResponseProtocol } from "../types/provider";
 
 /** Router 内部状态/方法的可注入视图，_executeWithFallback 唯一访问面 */
 export interface RouterExecContext {
@@ -106,7 +108,15 @@ export type ExecuteRequestFn = (
 	deployment: Deployment,
 	messages: { role: string; content: string | null }[],
 	optionalParams: Record<string, unknown>,
-) => Promise<{ response: Response; body: unknown; ttft: number; stream?: AsyncGenerator<unknown>; upstreamUrl: string }>;
+) => Promise<{
+	response: Response;
+	body: unknown;
+	ttft: number;
+	stream?: AsyncGenerator<unknown>;
+	upstreamUrl: string;
+	upstreamLogContext: UpstreamLogContext;
+	responseProtocol?: ProviderResponseProtocol;
+}>;
 
 /** pattern match 抽象（用于 hydrateFromBackend 时过滤 candidate deployments） */
 export type MatchDeploymentPatternFn = (dep: Deployment, model: string) => boolean;

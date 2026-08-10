@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Typography, Descriptions, Card, Tag, Tabs, Alert, Collapse, Radio, Space, Spin } from "antd";
+import { Typography, Descriptions, Card, Tag, Tabs, Alert, Collapse, Radio, Space, Spin, Button } from "antd";
 import moment from "moment";
 import {
 	getCacheCreationInputTokens,
@@ -37,6 +37,7 @@ import {
 } from "./constants";
 import { ToolsSection } from "../ToolsSection";
 import { PrettyMessagesView } from "./PrettyMessagesView";
+import { UpstreamDownstreamDiff } from "./UpstreamDownstreamDiff";
 
 const { Text } = Typography;
 
@@ -69,6 +70,15 @@ export function LogDetailContent({
 
 	const hasMessages = checkHasMessages(logEntry.messages);
 	const hasResponse = checkHasResponse(logEntry.response);
+	const parsedProxyRequest = formatData(logEntry.proxy_server_request);
+	const upstreamRequest =
+		parsedProxyRequest && typeof parsedProxyRequest === "object" && !Array.isArray(parsedProxyRequest)
+			? formatData(parsedProxyRequest.upstream_request)
+			: null;
+	const upstreamResponse =
+		parsedProxyRequest && typeof parsedProxyRequest === "object" && !Array.isArray(parsedProxyRequest)
+			? formatData(parsedProxyRequest.upstream_response)
+			: null;
 	// Don't show "missing data" warning while details are still loading
 	const missingData = !hasMessages && !hasResponse && !hasError && !isLoadingDetails;
 
@@ -82,13 +92,26 @@ export function LogDetailContent({
 	// Vector store data
 	const hasVectorStoreData = checkHasVectorStoreData(metadata);
 
-	const getRawRequest = () => {
-		const parsedProxy = formatData(logEntry.proxy_server_request);
-		// proxy_server_request 入库时对超长字符串统一截断（含图片 base64），
-		// 而 messages 列为 Logs/Session 重放保留完整图片。渲染时用 messages
-		// 替换 proxy 中的截断副本，保持 proxy 的 headers/url/system 等结构不变。
+	const getRecordedDownstreamRequest = () => {
+		const parsedProxy = parsedProxyRequest;
 		if (parsedProxy && typeof parsedProxy === "object" && !Array.isArray(parsedProxy)) {
-			const body = parsedProxy.body;
+			const {
+				upstream_request: _upstreamRequest,
+				upstream_response: _upstreamResponse,
+				...downstreamRequest
+			} = parsedProxy;
+			return downstreamRequest;
+		}
+		return formatData(logEntry.proxy_server_request || logEntry.messages);
+	};
+
+	const getRawRequest = () => {
+		const downstreamRequest = getRecordedDownstreamRequest();
+		// proxy_server_request 入库时对超长字符串统一截断（含图片 base64），
+		// 而 messages 列为 Logs/Session 重放保留完整图片。普通下游详情用
+		// messages 替换截断副本；Diff 则必须比较链路中实际记录的原始值。
+		if (downstreamRequest && typeof downstreamRequest === "object" && !Array.isArray(downstreamRequest)) {
+			const body = downstreamRequest.body;
 			if (
 				body &&
 				typeof body === "object" &&
@@ -97,10 +120,11 @@ export function LogDetailContent({
 				Array.isArray(logEntry.messages) &&
 				logEntry.messages.length > 0
 			) {
-				return { ...parsedProxy, body: { ...body, messages: logEntry.messages } };
+				return { ...downstreamRequest, body: { ...body, messages: logEntry.messages } };
 			}
+			return downstreamRequest;
 		}
-		return formatData(logEntry.proxy_server_request || logEntry.messages);
+		return downstreamRequest;
 	};
 
 	const getFormattedResponse = () => {
@@ -205,7 +229,11 @@ export function LogDetailContent({
 					hasResponse={hasResponse}
 					hasError={hasError}
 					getRawRequest={getRawRequest}
+					getRecordedDownstreamRequest={getRecordedDownstreamRequest}
 					getFormattedResponse={getFormattedResponse}
+					upstreamRequest={upstreamRequest}
+					upstreamResponse={upstreamResponse}
+					onOpenSettings={onOpenSettings}
 					logEntry={logEntry}
 				/>
 			)}
@@ -410,7 +438,11 @@ interface RequestResponseSectionProps {
 	hasResponse: boolean;
 	hasError: boolean;
 	getRawRequest: () => any;
+	getRecordedDownstreamRequest: () => any;
 	getFormattedResponse: () => any;
+	upstreamRequest: unknown;
+	upstreamResponse: unknown;
+	onOpenSettings?: () => void;
 	logEntry: LogEntry;
 }
 
@@ -418,16 +450,28 @@ function RequestResponseSection({
 	hasResponse,
 	hasError,
 	getRawRequest,
+	getRecordedDownstreamRequest,
 	getFormattedResponse,
+	upstreamRequest,
+	upstreamResponse,
+	onOpenSettings,
 	logEntry,
 }: RequestResponseSectionProps) {
 	const [activeTab, setActiveTab] = useState<typeof TAB_REQUEST | typeof TAB_RESPONSE>(TAB_REQUEST);
 	const [viewMode, setViewMode] = useState<"pretty" | "json">("pretty");
-
-	const getCopyText = () => {
-		const data = activeTab === TAB_REQUEST ? getRawRequest() : getFormattedResponse();
-		return JSON.stringify(data, null, 2);
-	};
+	const [source, setSource] = useState<"downstream" | "upstream" | "diff">("downstream");
+	const hasUpstreamTrace = Boolean(upstreamRequest || upstreamResponse);
+	const downstreamRequest = getRawRequest();
+	const downstreamDiffRequest = getRecordedDownstreamRequest();
+	const downstreamResponse = getFormattedResponse();
+	const upstreamResponseBody =
+		upstreamResponse &&
+		typeof upstreamResponse === "object" &&
+		!Array.isArray(upstreamResponse) &&
+		"body" in upstreamResponse
+			? upstreamResponse.body
+			: null;
+	const hasDiffData = Boolean(downstreamDiffRequest && upstreamRequest);
 
 	const totalSpend = logEntry.spend ?? 0;
 	const promptTokens = logEntry.prompt_tokens || 0;
@@ -436,12 +480,12 @@ function RequestResponseSection({
 	const costBreakdown = logEntry.metadata?.cost_breakdown;
 	const useCostBreakdown = costBreakdown?.input_cost !== undefined && costBreakdown?.output_cost !== undefined;
 	const inputCost = useCostBreakdown
-		? costBreakdown!.input_cost ?? 0
+		? (costBreakdown!.input_cost ?? 0)
 		: totalTokens > 0
 			? (totalSpend * promptTokens) / totalTokens
 			: 0;
 	const outputCost = useCostBreakdown
-		? costBreakdown!.output_cost ?? 0
+		? (costBreakdown!.output_cost ?? 0)
 		: totalTokens > 0
 			? (totalSpend * completionTokens) / totalTokens
 			: 0;
@@ -467,72 +511,164 @@ function RequestResponseSection({
 								<h3 className="text-lg font-medium text-gray-900" style={{ margin: 0 }}>
 									Request & Response
 								</h3>
-								<Radio.Group size="small" value={viewMode} onChange={(e) => setViewMode(e.target.value)}>
-									<Radio.Button value="pretty">Pretty</Radio.Button>
-									<Radio.Button value="json">JSON</Radio.Button>
-								</Radio.Group>
+								{source === "downstream" && (
+									<Radio.Group size="small" value={viewMode} onChange={(e) => setViewMode(e.target.value)}>
+										<Radio.Button value="pretty">Pretty</Radio.Button>
+										<Radio.Button value="json">JSON</Radio.Button>
+									</Radio.Group>
+								)}
 							</div>
 						),
 						children: (
 							<div>
-								{viewMode === "pretty" ? (
-									<PrettyMessagesView
-										request={getRawRequest()}
-										response={getFormattedResponse()}
-										metrics={{
-											prompt_tokens: promptTokens,
-											completion_tokens: completionTokens,
-											input_cost: inputCost,
-											output_cost: outputCost,
-										}}
-									/>
-								) : (
-									<Tabs
-										activeKey={activeTab}
-										onChange={(key) => setActiveTab(key as typeof TAB_REQUEST | typeof TAB_RESPONSE)}
-										tabBarExtraContent={
-											<Text
-												copyable={{
-													text: getCopyText(),
-													tooltips: ["Copy JSON", "Copied!"],
-												}}
-												disabled={activeTab === TAB_RESPONSE && !hasResponse && !hasError}
-											/>
-										}
-										items={[
-											{
-												key: TAB_REQUEST,
-												label: "Request",
-												children: (
-													<div style={{ paddingTop: SPACING_XLARGE, paddingBottom: SPACING_XLARGE }}>
-														<JsonViewer data={getRawRequest()} mode="formatted" />
-													</div>
+								<Tabs
+									activeKey={source}
+									onChange={(key) => setSource(key as "downstream" | "upstream" | "diff")}
+									items={[
+										{
+											key: "downstream",
+											label: "Downstream",
+											children:
+												viewMode === "pretty" ? (
+													<PrettyMessagesView
+														request={getRawRequest()}
+														response={getFormattedResponse()}
+														metrics={{
+															prompt_tokens: promptTokens,
+															completion_tokens: completionTokens,
+															input_cost: inputCost,
+															output_cost: outputCost,
+														}}
+													/>
+												) : (
+													<RequestResponseJsonTabs
+														activeTab={activeTab}
+														onTabChange={setActiveTab}
+														request={downstreamRequest}
+														response={downstreamResponse}
+														hasResponse={hasResponse || hasError}
+													/>
 												),
-											},
-											{
-												key: TAB_RESPONSE,
-												label: "Response",
-												children: (
-													<div style={{ paddingTop: SPACING_XLARGE, paddingBottom: SPACING_XLARGE }}>
-														{hasResponse || hasError ? (
-															<JsonViewer data={getFormattedResponse()} mode="formatted" />
+										},
+										{
+											key: "upstream",
+											label: "Upstream",
+											children: hasUpstreamTrace ? (
+												<RequestResponseJsonTabs
+													activeTab={activeTab}
+													onTabChange={setActiveTab}
+													request={upstreamRequest}
+													response={upstreamResponse}
+													hasResponse={Boolean(upstreamResponse)}
+												/>
+											) : (
+												<Alert
+													type="info"
+													showIcon
+													message="Upstream request and response details are not available"
+													description={
+														onOpenSettings ? (
+															<span>
+																Enable upstream log details in Spend Logs Settings to record future provider exchanges.
+																<Button type="link" onClick={onOpenSettings} style={{ padding: 0, marginLeft: 4 }}>
+																	Open settings
+																</Button>
+															</span>
 														) : (
-															<div style={{ textAlign: "center", padding: 20, color: "#999", fontStyle: "italic" }}>
-																Response data not available
-															</div>
-														)}
-													</div>
-												),
-											},
-										]}
-									/>
-								)}
+															"Enable upstream log details in Spend Logs Settings to record future provider exchanges."
+														)
+													}
+												/>
+											),
+										},
+										...(hasDiffData
+											? [
+													{
+														key: "diff",
+														label: "Diff",
+														children: (
+															<UpstreamDownstreamDiff
+																downstreamRequest={downstreamDiffRequest}
+																upstreamRequest={upstreamRequest}
+																downstreamResponse={downstreamResponse}
+																upstreamResponse={upstreamResponseBody}
+															/>
+														),
+													},
+												]
+											: []),
+									]}
+								/>
 							</div>
 						),
 					},
 				]}
 			/>
 		</div>
+	);
+}
+
+interface RequestResponseJsonTabsProps {
+	activeTab: typeof TAB_REQUEST | typeof TAB_RESPONSE;
+	onTabChange: (key: typeof TAB_REQUEST | typeof TAB_RESPONSE) => void;
+	request: unknown;
+	response: unknown;
+	hasResponse: boolean;
+}
+
+function RequestResponseJsonTabs({
+	activeTab,
+	onTabChange,
+	request,
+	response,
+	hasResponse,
+}: RequestResponseJsonTabsProps) {
+	return (
+		<Tabs
+			activeKey={activeTab}
+			onChange={(key) => onTabChange(key as typeof TAB_REQUEST | typeof TAB_RESPONSE)}
+			tabBarExtraContent={
+				<Text
+					copyable={{
+						text: JSON.stringify(activeTab === TAB_REQUEST ? request : response, null, 2),
+						tooltips: ["Copy JSON", "Copied!"],
+					}}
+					disabled={activeTab === TAB_RESPONSE && !hasResponse}
+				/>
+			}
+			items={[
+				{
+					key: TAB_REQUEST,
+					label: "Request",
+					children: (
+						<div style={{ paddingTop: SPACING_XLARGE, paddingBottom: SPACING_XLARGE }}>
+							{request ? (
+								<JsonViewer data={request} mode="formatted" />
+							) : (
+								<div style={{ textAlign: "center", padding: 20, color: "#999", fontStyle: "italic" }}>
+									Request data not available
+								</div>
+							)}
+						</div>
+					),
+				},
+				{
+					key: TAB_RESPONSE,
+					label: "Response",
+					children: (
+						<div style={{ paddingTop: SPACING_XLARGE, paddingBottom: SPACING_XLARGE }}>
+							{hasResponse ? (
+								<JsonViewer data={response} mode="formatted" />
+							) : (
+								<div style={{ textAlign: "center", padding: 20, color: "#999", fontStyle: "italic" }}>
+									Response data not available
+								</div>
+							)}
+						</div>
+					),
+				},
+			]}
+		/>
 	);
 }
 

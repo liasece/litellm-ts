@@ -8,7 +8,7 @@
  * 这块逻辑独立于 Router 路由策略与重试链，单独抽出便于测试与降低 Router.ts 行数。
  */
 
-import type { ProviderConfig } from "../types/provider";
+import type { ProviderConfig, ProviderResponseProtocol } from "../types/provider";
 
 /** 包装后的 stream 结果 */
 export interface StreamWithTtft {
@@ -32,8 +32,17 @@ export interface StreamWithTtft {
  * @param response - fetch Response
  * @param fetchStart - fetch 调用开始时间（ms epoch）
  * @param provider - ProviderConfig（提供 streamResponse 时走真流路径）
+ * @param responseProtocol - 上游响应协议；Responses 使用语义 SSE 解析
  */
-export function buildStreamWithTtft(response: Response, fetchStart: number, provider: ProviderConfig): StreamWithTtft {
+export function buildStreamWithTtft(
+	response: Response,
+	fetchStart: number,
+	provider: ProviderConfig,
+	responseProtocol: ProviderResponseProtocol = "chat_completions",
+): StreamWithTtft {
+	if (responseProtocol === "responses") {
+		return wrapStreamWithTtft(streamResponsesSse(response), fetchStart);
+	}
 	if (!provider.streamResponse) {
 		// provider 不支持流式 — 回退到一次性 response.text() 并通过 generator yield 一次
 		const stream = (async function* () {
@@ -43,7 +52,10 @@ export function buildStreamWithTtft(response: Response, fetchStart: number, prov
 		return { stream: stream, body: "", ttft: Date.now() - fetchStart };
 	}
 
-	const inner = provider.streamResponse(response);
+	return wrapStreamWithTtft(provider.streamResponse(response), fetchStart);
+}
+
+function wrapStreamWithTtft(inner: AsyncGenerator<unknown>, fetchStart: number): StreamWithTtft {
 	let firstChunkAt: number | null = null;
 	const wrapped = (async function* () {
 		try {
@@ -65,4 +77,64 @@ export function buildStreamWithTtft(response: Response, fetchStart: number, prov
 		body: undefined,
 		ttft: firstChunkAt !== null ? firstChunkAt - fetchStart : Date.now() - fetchStart,
 	};
+}
+
+/**
+ * 解析 OpenAI Responses 语义 SSE。`event:` 仅用于 framing，真实事件类型以
+ * JSON payload 的 `type` 为准；DeepSeek keep-alive 注释会被忽略。
+ * @param response - 上游 fetch Response
+ * @yields 解析后的 Responses 语义事件
+ */
+async function* streamResponsesSse(response: Response): AsyncGenerator<Record<string, unknown>> {
+	const reader = response.body?.getReader();
+	if (!reader) {
+		return;
+	}
+	const decoder = new TextDecoder();
+	let buffer = "";
+
+	const parseFrame = (frame: string): Record<string, unknown> | undefined => {
+		const dataLines = frame
+			.split("\n")
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trimStart());
+		if (dataLines.length === 0) {
+			return undefined;
+		}
+		const payload = dataLines.join("\n").trim();
+		if (payload.length === 0 || payload === "[DONE]") {
+			return undefined;
+		}
+		const parsed = JSON.parse(payload) as unknown;
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			throw new Error("Provider 返回 malformed Responses SSE event");
+		}
+		return parsed as Record<string, unknown>;
+	};
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+			let boundary = buffer.indexOf("\n\n");
+			while (boundary >= 0) {
+				const frame = buffer.slice(0, boundary);
+				buffer = buffer.slice(boundary + 2);
+				const event = parseFrame(frame);
+				if (event) {
+					yield event;
+				}
+				boundary = buffer.indexOf("\n\n");
+			}
+			if (done) {
+				const event = parseFrame(buffer);
+				if (event) {
+					yield event;
+				}
+				break;
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
 }

@@ -104,6 +104,78 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		};
 	}
 
+	/** Build the multipart request used by the native OpenAI-compatible image edit endpoint.
+	 * @param model - Image model name
+	 * @param prompt - Editing prompt
+	 * @param images - Source image bytes
+	 * @param optionalParams - Image output and mask options
+	 */
+	transformImageEditRequest(
+		model: string,
+		prompt: string,
+		images: Array<{ data: Uint8Array; mediaType: string }>,
+		optionalParams: Record<string, unknown>,
+	): ProviderRequest {
+		const providerModel = this.stripProviderPrefix(model);
+		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
+		const apiKey = process.env["CLIPROXY_INTERNAL_API_KEY"] ?? this.apiKey;
+		const form = new FormData();
+		form.append("model", providerModel);
+		form.append("prompt", prompt);
+		images.forEach((image, index) => {
+			const extension = image.mediaType === "image/jpeg" ? "jpg" : image.mediaType === "image/webp" ? "webp" : "png";
+			form.append("image", new Blob([image.data as never], { type: image.mediaType }), `image-${index + 1}.${extension}`);
+		});
+		const logBody: Record<string, unknown> = {
+			model: providerModel,
+			prompt: prompt,
+			image: images.map((image) => ({ media_type: image.mediaType, byte_length: image.data.byteLength })),
+		};
+		for (const [key, value] of Object.entries(optionalParams)) {
+			if (
+				value === undefined ||
+				value === null ||
+				[
+					"__litellm_call_type",
+					"__litellm_image_edit_inputs",
+					"api_base",
+					"api_key",
+					"custom_llm_provider",
+					"litellm_credential_name",
+					"credential_name",
+					"rpm",
+					"tpm",
+					"timeout",
+					"stream_timeout",
+					"num_retries",
+					"custom_cost_per_token",
+				].includes(key)
+			) {
+				continue;
+			}
+			if (key === "mask" && typeof value === "object" && value !== null && "data" in value) {
+				const mask = value as { data: Uint8Array; mediaType: string };
+				form.append("mask", new Blob([mask.data as never], { type: mask.mediaType }), "mask.png");
+				logBody["mask"] = { media_type: mask.mediaType, byte_length: mask.data.byteLength };
+				continue;
+			}
+			if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+				form.append(key, String(value));
+				logBody[key] = value;
+			}
+		}
+		return {
+			url: `${apiBase}/v1/images/edits`,
+			method: "POST",
+			headers: { Authorization: `Bearer ${apiKey}` },
+			body: form,
+			bodyEncoding: "raw",
+			logBody: logBody,
+			model: model,
+			stream: false,
+		};
+	}
+
 	override transformResponse(model: string, rawResponse: unknown): ModelResponse {
 		// CLIProxy already emits OpenAI-compatible responses. Preserve provider-
 		// specific fields rather than normalizing and potentially dropping them.

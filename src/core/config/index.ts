@@ -195,6 +195,8 @@ const GeneralSettingsSchema = z.object({
 	 */
 	disable_adding_master_key_hash_to_db: z.boolean().optional(),
 	store_prompts_in_spend_logs: z.boolean().optional(),
+	/** 是否在 SpendLogs 中存储 Provider 实际请求/响应详情，默认关闭 */
+	store_upstream_logs_in_spend_logs: z.boolean().optional(),
 });
 
 /**
@@ -394,6 +396,8 @@ export interface GeneralSettings {
 	readonly disable_adding_master_key_hash_to_db?: boolean;
 	/** 是否在 SpendLogs 中存储 prompt/response/body，默认关闭 */
 	readonly store_prompts_in_spend_logs?: boolean;
+	/** 是否在 SpendLogs 中存储 Provider 实际请求/响应详情，默认关闭 */
+	readonly store_upstream_logs_in_spend_logs?: boolean;
 }
 
 /** 服务配置 */
@@ -646,6 +650,10 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 			typeof generalSettingsRaw["store_prompts_in_spend_logs"] === "boolean"
 				? (generalSettingsRaw["store_prompts_in_spend_logs"] as boolean)
 				: config.generalSettings.store_prompts_in_spend_logs,
+		store_upstream_logs_in_spend_logs:
+			typeof generalSettingsRaw["store_upstream_logs_in_spend_logs"] === "boolean"
+				? (generalSettingsRaw["store_upstream_logs_in_spend_logs"] as boolean)
+				: config.generalSettings.store_upstream_logs_in_spend_logs,
 	};
 
 	// routerSettings: snake_case router_settings 派生，camelCase 仅作兼容回退（冲突时 snake_case 优先）

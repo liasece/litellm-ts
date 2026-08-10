@@ -24,6 +24,7 @@ import { extractDeploymentCustomCost } from "../router/RouterSpendInfo";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import { executeProviderRequest } from "../router/ProviderRequestExecutor";
+import { attachUpstreamLogContext, createUpstreamLogContext, getUpstreamLogContext } from "../router/UpstreamLogContext";
 import { createModuleLogger } from "../core/utils/logger";
 import {
 	appendModelResolutionTrace,
@@ -104,6 +105,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 		const requestId = spendReservation?.requestId;
 
 		let providerCompleted = false;
+		let upstreamLogContext: import("../router/UpstreamLogContext").UpstreamLogContext | undefined;
 		try {
 			const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...optionalParams };
 			const providerReq = provider.transformEmbeddingRequest(deployment.litellm_params.model, input, mergedParams);
@@ -111,14 +113,19 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 				...providerReq,
 				headers: { ...providerReq.headers, ...deployment.litellm_params.extra_headers },
 			};
+			upstreamLogContext = createUpstreamLogContext(requestWithHeaders);
 			const timeoutSec = deployment.litellm_params.timeout;
 			spendReservation?.heartbeat?.markProviderStarted();
 			const execution = await executeProviderRequest(requestWithHeaders, {
 				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
 				readJson: true,
 			});
+			upstreamLogContext = createUpstreamLogContext(requestWithHeaders, execution.response, execution.body);
 			if (!execution.response.ok) {
-				throw new ApiError(execution.response.status, `Provider 返回错误: ${JSON.stringify(execution.body ?? {})}`);
+				throw attachUpstreamLogContext(
+					new ApiError(execution.response.status, `Provider 返回错误: ${JSON.stringify(execution.body ?? {})}`),
+					upstreamLogContext,
+				);
 			}
 			providerCompleted = true;
 
@@ -147,6 +154,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 						endTime: new Date(),
 						messages: input,
 						response: rawBody,
+						upstreamLogContext: upstreamLogContext,
 						usage: usage,
 						status: SpendLogStatus.Success,
 						fallbackModels: [model],
@@ -174,7 +182,8 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 							endTime: new Date(),
 							messages: input,
 							error: error,
-							status: SpendLogStatus.Failure,
+								status: SpendLogStatus.Failure,
+								upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 							fallbackModels: [model],
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 							attemptedRetries: 0,

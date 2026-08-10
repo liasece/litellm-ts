@@ -18,6 +18,10 @@
 
 import { modelCostMapService, type ModelCostMap } from "../cost/ModelCostMapService";
 import type { Deployment } from "../types/router";
+import {
+	isBuiltinCapabilityAvailable,
+	type BuiltinCapabilitiesConfig,
+} from "../capabilities/BuiltinCapabilitiesConfig";
 
 /**
  * Python `ModelInfo`（litellm/types/utils.py ModelInfoBase + supported_openai_params）
@@ -377,6 +381,7 @@ export function buildEnrichedModelInfo(
 	dep: Deployment,
 	fallbackId: string,
 	modelCostMap: ModelCostMap = modelCostMapService.getSnapshot().map,
+	builtinCapabilities?: BuiltinCapabilitiesConfig,
 ): Record<string, unknown> {
 	const entry = lookupModelCostEntry(dep.litellm_params.model, modelCostMap);
 	const provider = resolveProvider(dep, entry);
@@ -408,6 +413,9 @@ export function buildEnrichedModelInfo(
 		if (infoValue !== undefined) {
 			out[infoKey] = infoValue;
 		}
+	}
+	if (builtinCapabilities && isBuiltinCapabilityAvailable(dep, "vision", builtinCapabilities)) {
+		out["supports_vision"] = true;
 	}
 
 	out["id"] =
@@ -559,10 +567,11 @@ function addLimit(total: number | null, value: number | null): number | null {
 export function buildModelGroupInfoResponse(
 	deployments: Deployment[],
 	modelCostMap: ModelCostMap = modelCostMapService.getSnapshot().map,
+	builtinCapabilities?: BuiltinCapabilitiesConfig,
 ): { data: ModelGroupInfoItem[] } {
 	const groups = new Map<string, GroupBucket>();
 	for (const dep of deployments) {
-		const info = buildEnrichedModelInfo(dep, "", modelCostMap);
+		const info = buildEnrichedModelInfo(dep, "", modelCostMap, builtinCapabilities);
 		const provider = typeof info["litellm_provider"] === "string" ? (info["litellm_provider"] as string) : "";
 		let groupBucket = groups.get(dep.model_name);
 		if (!groupBucket) {

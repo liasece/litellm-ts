@@ -1054,9 +1054,12 @@ export class AnthropicProvider implements ProviderConfig {
 				return [];
 			}
 			const rawUsage = (msg.usage as Record<string, unknown> | undefined) ?? {};
-			const promptTokens = typeof rawUsage["input_tokens"] === "number" ? rawUsage["input_tokens"] : 0;
+			const inputTokens = typeof rawUsage["input_tokens"] === "number" ? rawUsage["input_tokens"] : 0;
 			const cacheCreation = typeof rawUsage["cache_creation_input_tokens"] === "number" ? rawUsage["cache_creation_input_tokens"] : 0;
 			const cacheRead = typeof rawUsage["cache_read_input_tokens"] === "number" ? rawUsage["cache_read_input_tokens"] : 0;
+			// PY transformation.py:1587-1611：Anthropic input_tokens 不含 cache，
+			// 折叠 cache_creation + cache_read 计入 prompt_tokens，与非流式 _extractUsage 一致。
+			const promptTokens = inputTokens + cacheCreation + cacheRead;
 			state.streamUsage = {
 				prompt_tokens: promptTokens,
 				completion_tokens: 0,
@@ -1457,7 +1460,10 @@ export class AnthropicProvider implements ProviderConfig {
 
 			const messageUsage = (event.message as Record<string, unknown> | undefined)?.usage as Record<string, unknown> | undefined;
 			if (typeof messageUsage?.["input_tokens"] === "number") {
-				state.streamUsage.prompt_tokens = messageUsage["input_tokens"];
+				// Anthropic input_tokens 不含 cache，需折叠 cache_creation + cache_read（同 message_start）
+				const deltaCacheCreation = typeof messageUsage["cache_creation_input_tokens"] === "number" ? messageUsage["cache_creation_input_tokens"] : 0;
+				const deltaCacheRead = typeof messageUsage["cache_read_input_tokens"] === "number" ? messageUsage["cache_read_input_tokens"] : 0;
+				state.streamUsage.prompt_tokens = messageUsage["input_tokens"] + deltaCacheCreation + deltaCacheRead;
 			}
 			if (typeof messageUsage?.["cache_creation_input_tokens"] === "number") {
 				state.streamUsage.cache_creation_input_tokens = messageUsage["cache_creation_input_tokens"];

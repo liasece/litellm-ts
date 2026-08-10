@@ -32,6 +32,9 @@ export enum LlmProviders {
 	CLIProxy = "cliproxy",
 }
 
+/** Provider 实际使用的上游响应协议。 */
+export type ProviderResponseProtocol = "chat_completions" | "responses";
+
 /** Provider 请求封装 */
 export interface ProviderRequest {
 	/** 上游 API URL */
@@ -42,10 +45,16 @@ export interface ProviderRequest {
 	headers: Record<string, string>;
 	/** 请求体（JSON 序列化前的对象） */
 	body: unknown;
+	/** Transport encoding. JSON is the default; raw accepts a fetch BodyInit such as FormData. */
+	bodyEncoding?: "json" | "raw";
+	/** Safe structured representation used by detailed upstream logs instead of a binary body. */
+	logBody?: unknown;
 	/** 模型名称 */
 	model: string;
 	/** 是否启用流式响应 */
 	stream?: boolean;
+	/** 上游响应协议；缺省为 Chat Completions。 */
+	responseProtocol?: ProviderResponseProtocol;
 }
 
 /** Provider 响应封装 */
@@ -80,6 +89,21 @@ export interface ProviderConfig {
 	transformAnthropicRequest?(model: string, optionalParams: Record<string, unknown>): ProviderRequest;
 
 	/**
+	 * 构造原生 OpenAI Responses 请求。
+	 *
+	 * 返回 undefined 表示当前具体模型不支持原生 Responses，Router 将在同一
+	 * deployment/fallback 链内退回 Chat Completions 兼容转换。
+	 * @param model - deployment 的实际模型名称
+	 * @param body - 已保留 Responses 结构的请求体
+	 * @param optionalParams - deployment 与请求连接参数
+	 */
+	transformResponsesRequest?(
+		model: string,
+		body: Record<string, unknown>,
+		optionalParams: Record<string, unknown>,
+	): ProviderRequest | undefined;
+
+	/**
 	 * 将标准 embeddings 请求转换为该 Provider 的正式请求格式。
 	 * 未实现此能力的 Provider 不支持 embeddings。
 	 * @param model - 模型名称
@@ -96,6 +120,20 @@ export interface ProviderConfig {
 	 * @param optionalParams - 图片生成参数
 	 */
 	transformImageRequest?(model: string, prompt: string, optionalParams: Record<string, unknown>): ProviderRequest;
+
+	/**
+	 * Convert a standard image edit request into the provider's multipart protocol.
+	 * @param model - Image model name
+	 * @param prompt - Editing instructions
+	 * @param images - One or more source images
+	 * @param optionalParams - Image edit parameters, optionally including a mask
+	 */
+	transformImageEditRequest?(
+		model: string,
+		prompt: string,
+		images: Array<{ data: Uint8Array; mediaType: string }>,
+		optionalParams: Record<string, unknown>,
+	): ProviderRequest;
 
 	/**
 	 * 将 Provider 原始响应转换为标准 ModelResponse

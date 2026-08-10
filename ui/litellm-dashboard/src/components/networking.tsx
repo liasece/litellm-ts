@@ -2334,8 +2334,13 @@ export interface BuiltinCapabilitySettings {
 }
 
 export interface BuiltinCapabilitiesResponse {
-	capabilities: { vision: BuiltinCapabilitySettings; web: BuiltinCapabilitySettings };
+	capabilities: {
+		vision: BuiltinCapabilitySettings;
+		image_generation: BuiltinCapabilitySettings;
+		web: BuiltinCapabilitySettings;
+	};
 	available_models: Array<{ model_name: string; type: "model" | "alias"; mode: string }>;
+	image_generation_available_models: Array<{ model_name: string; type: "model" | "alias"; mode: string }>;
 	web_available_models: Array<{ model_name: string; type: "model" | "alias"; mode: string }>;
 }
 

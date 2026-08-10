@@ -39,17 +39,19 @@ node node_modules/typescript/bin/tsc --noEmit
 从当前 `AGENTS.md` 读取并执行正式部署命令，不调用本 Skill 自带脚本，也不重新实现部署流程。当前部署入口必须遵循以下拓扑：
 
 1. SSH 登录 `sshjl3`（规范地址为 `root@jl3ssh.gamefantasy.com`）。
-2. 进入该主机的 `cc-server-dc` 容器。
-3. 在 `cc-server-dc` 内执行 `/root/var/tools/service/ai-out-service/restart-litellm.sh`。
+2. 在 SSH 宿主机设置 `AGENTS.md` 指定的 Node.js `PATH`。
+3. 在 SSH 宿主机直接执行 `/root/var/tools/service/ai-out-service/restart-litellm.sh`，让脚本操作宿主机 Docker。
 
 自动化或非交互执行时，使用等价于以下形式的单条命令：
 
 ```sh
 ssh root@jl3ssh.gamefantasy.com \
-  'docker exec cc-server-dc sh -lc "sh '\''/root/var/tools/service/ai-out-service/restart-litellm.sh'\''"'
+  'export PATH=/root/var/ci/github-action-pacificx-unity-1/actions-runner/_work/_tool/node/22.21.1/x64/bin:$PATH; \
+   sh '\''/root/var/tools/service/ai-out-service/restart-litellm.sh'\'''
 ```
 
-禁止直接在 SSH 宿主机执行部署脚本。若 `AGENTS.md`、现场容器名称或脚本路径发生变化，先确认新的部署拓扑，再更新仓库说明和本 Skill，避免两处指令冲突。
+禁止在 `cc-server-dc` 内执行部署脚本；该容器只用于 Git、类型检查、测试等文件系统密集型验证。
+若 `AGENTS.md`、现场容器名称或脚本路径发生变化，先确认新的部署拓扑，再更新仓库说明和本 Skill，避免两处指令冲突。
 
 观察并区分部署阶段：
 
@@ -57,7 +59,7 @@ ssh root@jl3ssh.gamefantasy.com \
 2. Next.js 生产构建。
 3. Docker 镜像构建与完整性校验。
 4. 生产数据库只读预检。
-5. 停止并删除旧容器。
+5. 旧容器存在时停止并删除；旧容器已经缺失时跳过停止步骤。
 6. 启动新容器并执行迁移。
 7. 等待健康检查。
 
@@ -73,6 +75,14 @@ ssh root@jl3ssh.gamefantasy.com \
 4. **修复根因**：只修改本次任务范围内能够解释失败的代码或配置。不要用重复重启掩盖构建、依赖、网络或迁移问题。
 5. **重新验证**：从受影响的最小验证开始，再执行全部发布门禁。
 6. **重新部署并核验**：仅在根因已修复且生产状态允许时重试。
+
+生产容器已经缺失时，标准部署脚本应把它视为“旧容器已停止”，完成预检后直接启动新容器：
+
+- 禁止创建同名占位、假容器来绕过存在性检查。
+- 禁止在标准脚本之外手工重建 `docker run` 参数。
+- 如果脚本仍因容器不存在而退出，修正脚本的容器切换函数，使缺失分支跳过停止并继续；先执行
+  `sh -n /root/var/tools/service/ai-out-service/restart-litellm.sh`，再重跑标准部署入口。
+- 容器缺失本身不表示数据库迁移仍在运行；仍应从现场确认没有其他部署进程或临时容器正在执行迁移。
 
 需要具体诊断信号和安全停止条件时，读取 [故障诊断参考](references/troubleshooting.md)。
 

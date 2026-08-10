@@ -68,4 +68,27 @@ describe("CliProxyProvider", () => {
 
 		expect(provider.transformResponse("gpt-5.4", response)).toBe(response);
 	});
+
+	it("builds a multipart image-edit request without logging image bytes", async () => {
+		const request = provider.transformImageEditRequest(
+			"cliproxy/gpt-image-2",
+			"add a red hat",
+			[{ data: Buffer.from("source"), mediaType: "image/png" }],
+			{ quality: "high", api_key: "must-not-appear" },
+		);
+
+		expect(request.url).toBe("http://127.0.0.1:8317/v1/images/edits");
+		expect(request.bodyEncoding).toBe("raw");
+		expect(request.headers).toEqual({ Authorization: "Bearer internal-secret" });
+		expect(request.logBody).toEqual({
+			model: "gpt-image-2",
+			prompt: "add a red hat",
+			image: [{ media_type: "image/png", byte_length: 6 }],
+			quality: "high",
+		});
+		const form = request.body as FormData;
+		expect(form.get("model")).toBe("gpt-image-2");
+		expect(form.get("prompt")).toBe("add a red hat");
+		expect(form.get("image")).toBeInstanceOf(Blob);
+	});
 });

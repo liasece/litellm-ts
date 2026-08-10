@@ -28,6 +28,7 @@ const SpendLogsSettingsModal: React.FC<SpendLogsSettingsModalProps> = ({ isVisib
 	const { mutateAsync: deleteField, isPending: isDeletingField } = useDeleteProxyConfigField();
 	const { data: proxyConfigData, isLoading: isLoadingConfig, refetch } = useProxyConfig(ConfigType.GENERAL_SETTINGS);
 	const storePromptsValue = Form.useWatch("store_prompts_in_spend_logs", form);
+	const storeUpstreamLogsValue = Form.useWatch("store_upstream_logs_in_spend_logs", form);
 
 	// Refetch config when modal opens to ensure we have the latest values
 	useEffect(() => {
@@ -41,17 +42,22 @@ const SpendLogsSettingsModal: React.FC<SpendLogsSettingsModalProps> = ({ isVisib
 		if (!proxyConfigData) {
 			return {
 				store_prompts_in_spend_logs: false,
+				store_upstream_logs_in_spend_logs: false,
 				maximum_spend_logs_retention_period: undefined,
 			};
 		}
 
 		const storePromptsField = proxyConfigData.find((field) => field.field_name === "store_prompts_in_spend_logs");
+		const storeUpstreamLogsField = proxyConfigData.find(
+			(field) => field.field_name === "store_upstream_logs_in_spend_logs",
+		);
 		const retentionPeriodField = proxyConfigData.find(
 			(field) => field.field_name === "maximum_spend_logs_retention_period",
 		);
 
 		return {
 			store_prompts_in_spend_logs: storePromptsField?.field_value ?? false,
+			store_upstream_logs_in_spend_logs: storeUpstreamLogsField?.field_value ?? false,
 			maximum_spend_logs_retention_period: retentionPeriodField?.field_value ?? undefined,
 		};
 	}, [proxyConfigData]);
@@ -78,6 +84,7 @@ const SpendLogsSettingsModal: React.FC<SpendLogsSettingsModalProps> = ({ isVisib
 			// Update the settings (excluding maximum_spend_logs_retention_period if it's empty)
 			const updateParams: StoreRequestInSpendLogsParams = {
 				store_prompts_in_spend_logs: formValues.store_prompts_in_spend_logs,
+				store_upstream_logs_in_spend_logs: formValues.store_upstream_logs_in_spend_logs,
 				...(retentionPeriodValue &&
 					typeof retentionPeriodValue === "string" &&
 					retentionPeriodValue.trim() !== "" && {
@@ -147,8 +154,31 @@ const SpendLogsSettingsModal: React.FC<SpendLogsSettingsModalProps> = ({ isVisib
 							<Skeleton.Input active block />
 						) : (
 							<Switch
+								aria-label="Store Prompts in Spend Logs"
 								checked={storePromptsValue ?? false}
 								onChange={(checked) => form.setFieldValue("store_prompts_in_spend_logs", checked)}
+							/>
+						)}
+					</div>
+				</Form.Item>
+
+				<Form.Item
+					label="Store Upstream Logs in Spend Logs"
+					name="store_upstream_logs_in_spend_logs"
+					tooltip={
+						proxyConfigData?.find((f) => f.field_name === "store_upstream_logs_in_spend_logs")?.field_description ||
+						"When enabled, the transformed request sent to the provider and the provider response will be stored in spend logs."
+					}
+					valuePropName="checked"
+				>
+					<div>
+						{isLoadingConfig ? (
+							<Skeleton.Input active block />
+						) : (
+							<Switch
+								aria-label="Store Upstream Logs in Spend Logs"
+								checked={storeUpstreamLogsValue ?? false}
+								onChange={(checked) => form.setFieldValue("store_upstream_logs_in_spend_logs", checked)}
 							/>
 						)}
 					</div>

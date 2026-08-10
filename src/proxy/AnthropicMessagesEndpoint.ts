@@ -50,10 +50,21 @@ import {
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { prepareAnthropicVisionRequest } from "../capabilities/VisionCapability";
-import { createVisionCapabilityAuditHook, createWebCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import { resolveImageGenerationCapability } from "../capabilities/ImageGenerationCapability";
+import {
+	createImageGenerationCapabilityAuditHook,
+	createVisionCapabilityAuditHook,
+	createWebCapabilityAuditHook,
+} from "../capabilities/BuiltinCapabilityAudit";
 import { createVisionImageStore } from "../capabilities/VisionImageStore";
 import { runAnthropicBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareAnthropicWebRequest } from "../capabilities/WebCapability";
+import {
+	createUpstreamLogContext,
+	getUpstreamLogContext,
+	attachUpstreamLogContext,
+	type UpstreamLogContext,
+} from "../router/UpstreamLogContext";
 
 const logger = createModuleLogger("AnthropicMsg");
 
@@ -441,7 +452,16 @@ function sendPing(res: Response): void {
 	res.write(formatAnthropicPingEvent());
 }
 
-function writeBufferedAnthropicResponseAsStream(
+/**
+ * Convert a completed native Anthropic response into protocol-valid SSE.
+ * Generated images are carried as a public extension on message_start so a
+ * streaming client receives the same result as a non-streaming client.
+ * @param res - Express response receiving SSE frames
+ * @param response - Completed Anthropic response to serialize
+ * @param requestedModel - Public logical model name
+ * @returns Accumulated standard Anthropic message state for spend logging
+ */
+export function writeBufferedAnthropicResponseAsStream(
 	res: Response,
 	response: Record<string, unknown>,
 	requestedModel: string,
@@ -449,6 +469,9 @@ function writeBufferedAnthropicResponseAsStream(
 	const accumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
 	const syntheticId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 	const usage = (response["usage"] as Record<string, unknown> | undefined) ?? {};
+	const generatedImages = Array.isArray(response["generated_images"])
+		? (response["generated_images"] as Array<Record<string, unknown>>)
+		: [];
 	const emit = (payload: Record<string, unknown>): void => {
 		accumulateNativeStreamEvent(accumulator, payload);
 		res.write(formatSSE(String(payload["type"] ?? "message"), JSON.stringify(payload)));
@@ -461,6 +484,7 @@ function writeBufferedAnthropicResponseAsStream(
 			role: "assistant",
 			model: requestedModel,
 			content: [],
+			...(generatedImages.length > 0 ? { generated_images: generatedImages } : {}),
 			stop_reason: null,
 			stop_sequence: null,
 			usage: {
@@ -663,29 +687,30 @@ async function* _streamAnthropicSse(result: globalThis.Response): AsyncGenerator
  * @param attempt - 当前上游 deployment 与请求信息
  * @param body - 转发请求体（model 已替换为上游 model 名）
  * @param signal - 客户端取消信号
+ * @param onResponse - Optional callback receiving sanitized upstream metadata
  */
 async function _openAnthropicStream(
 	attempt: UpstreamAttempt,
 	body: Record<string, unknown>,
 	signal: AbortSignal,
+	onResponse?: (context: UpstreamLogContext) => void,
 ): Promise<AsyncGenerator<string>> {
 	const timeoutSec = attempt.deployment.litellm_params.stream_timeout ?? attempt.deployment.litellm_params.timeout;
-	const execution = await executeProviderRequest(
-		{
-			url: attempt.upstreamUrl,
-			method: "POST",
-			headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
-			body: body,
-			model: attempt.upstreamModel,
-			stream: true,
-		},
-		{
-			readJson: false,
-			signal: signal,
-			timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
-		},
-	);
+	const request = {
+		url: attempt.upstreamUrl,
+		method: "POST" as const,
+		headers: { ...attempt.upstreamHeaders, "Content-Type": "application/json" },
+		body: body,
+		model: attempt.upstreamModel,
+		stream: true,
+	};
+	const execution = await executeProviderRequest(request, {
+		readJson: false,
+		signal: signal,
+		timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+	});
 	const result = execution.response;
+	onResponse?.(createUpstreamLogContext(request, result));
 
 	if (!result.ok) {
 		const errBody = await result.text().catch(() => "");
@@ -762,6 +787,7 @@ export function registerAnthropicMessagesEndpoints(
 		const visionImageStore = createVisionImageStore(db);
 		const preparedWeb = await prepareAnthropicWebRequest(litellmRouter, model, cleanBody);
 		const preparedVision = await prepareAnthropicVisionRequest(litellmRouter, model, preparedWeb?.body ?? cleanBody, visionImageStore);
+		const imageGenerationBinding = await resolveImageGenerationCapability(litellmRouter, model);
 		const stream = cleanBody.stream === true;
 		const requestApiKey = cleanBody["api_key"] as string | undefined;
 		const requestAnthropicVersion = cleanBody["anthropic_version"] as string | undefined;
@@ -776,6 +802,7 @@ export function registerAnthropicMessagesEndpoints(
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+		const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const modelResolutionTrace = createModelResolutionTraceCollector();
 
@@ -786,6 +813,7 @@ export function registerAnthropicMessagesEndpoints(
 				const streamAccumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
 				let streamError: unknown;
 				let completionStartTime: Date | undefined;
+				let upstreamLogContext: UpstreamLogContext | undefined;
 				// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
 				let executedAttempt: UpstreamAttempt | undefined;
 				// metadata.attempted_retries 数据源：fallback 链跳数回写
@@ -796,7 +824,7 @@ export function registerAnthropicMessagesEndpoints(
 				};
 				// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 				const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
-				if (preparedVision || preparedWeb) {
+				if (preparedVision || preparedWeb || imageGenerationBinding) {
 					try {
 						const completeNative = (body: Record<string, unknown>) =>
 							executeWithFallbackChain(
@@ -806,48 +834,54 @@ export function registerAnthropicMessagesEndpoints(
 								requestAnthropicVersion,
 								async (attempt) => {
 									const timeoutSec = attempt.deployment.litellm_params.timeout;
-									const execution = await executeProviderRequest(
-										{
-											url: attempt.upstreamUrl,
-											method: "POST",
-											headers: {
-												...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
-												"Content-Type": "application/json",
-											},
-											body: buildAnthropicUpstreamBody(
-												{ ...body, stream: false },
-												attempt.upstreamModel,
-												attempt.deployment,
-											),
-											model: attempt.upstreamModel,
+									const upstreamRequest = {
+										url: attempt.upstreamUrl,
+										method: "POST" as const,
+										headers: {
+											...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+											"Content-Type": "application/json",
 										},
-										{
-											readJson: false,
-											signal: webSearchAbortController.signal,
-											timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
-										},
-									);
+										body: buildAnthropicUpstreamBody(
+											{ ...body, stream: false },
+											attempt.upstreamModel,
+											attempt.deployment,
+										),
+										model: attempt.upstreamModel,
+									};
+									const execution = await executeProviderRequest(upstreamRequest, {
+										readJson: false,
+										signal: webSearchAbortController.signal,
+										timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+									});
 									if (!execution.response.ok) {
 										const errBody = await execution.response.text().catch(() => "");
-										throw new ProviderUpstreamError(
-											execution.response.status,
-											`Provider 返回错误 (${execution.response.status}): ${errBody.slice(0, 200)}`,
+										upstreamLogContext = createUpstreamLogContext(upstreamRequest, execution.response, {
+											raw: errBody,
+										});
+										throw attachUpstreamLogContext(
+											new ProviderUpstreamError(
+												execution.response.status,
+												`Provider 返回错误 (${execution.response.status}): ${errBody.slice(0, 200)}`,
+											),
+											upstreamLogContext,
 										);
 									}
 									completionStartTime = new Date();
 									executedAttempt = attempt;
 									const responseData = (await execution.response.json()) as Record<string, unknown>;
+									upstreamLogContext = createUpstreamLogContext(upstreamRequest, execution.response, responseData);
 									Object.defineProperty(responseData, "_spendInfo", {
 										value: buildDeploymentSpendInfo(attempt.deployment, attempt.upstreamUrl),
 										enumerable: false,
 										configurable: true,
 									});
-									return responseData;
+									return attachUpstreamLogContext(responseData, upstreamLogContext);
 								},
 								streamFallbackStats,
 							);
 						const agentResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
 							visionAudit: visionAudit,
+							imageGenerationAudit: imageGenerationAudit,
 							webAudit: webAudit,
 							visionImageStore: visionImageStore,
 							preparedWeb: preparedWeb,
@@ -891,6 +925,7 @@ export function registerAnthropicMessagesEndpoints(
 								messages: originalMessages,
 								proxyServerRequestBody: originalRequestBody,
 								response: finalResponse,
+								upstreamLogContext: upstreamLogContext,
 								usage: finalAccumulator.usage as Record<string, unknown> | undefined,
 								status: SpendLogStatus.Success,
 							});
@@ -914,6 +949,7 @@ export function registerAnthropicMessagesEndpoints(
 										messages: originalMessages,
 										proxyServerRequestBody: originalRequestBody,
 										error: error,
+										upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 										status: SpendLogStatus.Failure,
 										attemptedRetries: streamFallbackStats.fallbackDepth,
 										maxRetries: litellmRouter.maxFallbacks,
@@ -938,12 +974,16 @@ export function registerAnthropicMessagesEndpoints(
 						requestApiKey,
 						requestAnthropicVersion,
 						(attempt) => {
+							const upstreamHeaders = buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req);
 							const opened = _openAnthropicStream(
-								{ ...attempt, upstreamHeaders: buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req) },
+								{ ...attempt, upstreamHeaders: upstreamHeaders },
 								{
 									...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel, attempt.deployment),
 								},
 								webSearchAbortController.signal,
+								(context) => {
+									upstreamLogContext = context;
+								},
 							);
 							executedAttempt = attempt;
 							return opened;
@@ -968,6 +1008,7 @@ export function registerAnthropicMessagesEndpoints(
 										messages: originalMessages,
 										proxyServerRequestBody: originalRequestBody,
 										error: error,
+										upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 										status: SpendLogStatus.Failure,
 										modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 										attemptedRetries: streamFallbackStats.fallbackDepth,
@@ -1095,6 +1136,7 @@ export function registerAnthropicMessagesEndpoints(
 							messages: originalMessages,
 							proxyServerRequestBody: originalRequestBody,
 							response: response,
+							upstreamLogContext: upstreamLogContext,
 							usage: streamAccumulator.usage,
 							error: streamError,
 							status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
@@ -1133,6 +1175,7 @@ export function registerAnthropicMessagesEndpoints(
 			const nsFallbackStats = { fallbackDepth: 0, fallbackModels: [] as string[], modelResolutionTrace: modelResolutionTrace };
 			// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 			const nsOverheadTimeMs = Date.now() - requestArrivalTimeMs;
+			let upstreamLogContext: UpstreamLogContext | undefined;
 			let responseData: Record<string, unknown>;
 			let initialNsResponse: Record<string, unknown> | undefined;
 			let usageCalculated = false;
@@ -1145,46 +1188,50 @@ export function registerAnthropicMessagesEndpoints(
 						requestAnthropicVersion,
 						async (attempt) => {
 							const timeoutSec = attempt.deployment.litellm_params.timeout;
-							const execution = await executeProviderRequest(
-								{
-									url: attempt.upstreamUrl,
-									method: "POST",
-									headers: {
-										...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
-										"Content-Type": "application/json",
-									},
-									body: buildAnthropicUpstreamBody(body, attempt.upstreamModel, attempt.deployment),
-									model: attempt.upstreamModel,
+							const upstreamRequest = {
+								url: attempt.upstreamUrl,
+								method: "POST" as const,
+								headers: {
+									...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+									"Content-Type": "application/json",
 								},
-								{
-									readJson: false,
-									signal: webSearchAbortController.signal,
-									timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
-								},
-							);
+								body: buildAnthropicUpstreamBody(body, attempt.upstreamModel, attempt.deployment),
+								model: attempt.upstreamModel,
+							};
+							const execution = await executeProviderRequest(upstreamRequest, {
+								readJson: false,
+								signal: webSearchAbortController.signal,
+								timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+							});
 							const result = execution.response;
 							if (!result.ok) {
 								const errBody = await result.text().catch(() => "");
-								throw new ProviderUpstreamError(
-									result.status,
-									`Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`,
+								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, { raw: errBody });
+								throw attachUpstreamLogContext(
+									new ProviderUpstreamError(
+										result.status,
+										`Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`,
+									),
+									upstreamLogContext,
 								);
 							}
 							nsCompletionStartTime = new Date();
 							executedNsAttempt = attempt;
 							const responseData = (await result.json()) as Record<string, unknown>;
+							upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData);
 							Object.defineProperty(responseData, "_spendInfo", {
 								value: buildDeploymentSpendInfo(attempt.deployment, attempt.upstreamUrl),
 								enumerable: false,
 								configurable: true,
 							});
-							return responseData;
+							return attachUpstreamLogContext(responseData, upstreamLogContext);
 						},
 						nsFallbackStats,
 					);
-				if (preparedVision || preparedWeb) {
+				if (preparedVision || preparedWeb || imageGenerationBinding) {
 					const capabilityResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
 						visionAudit: visionAudit,
+						imageGenerationAudit: imageGenerationAudit,
 						webAudit: webAudit,
 						visionImageStore: visionImageStore,
 						preparedWeb: preparedWeb,
@@ -1220,33 +1267,38 @@ export function registerAnthropicMessagesEndpoints(
 							requestAnthropicVersion,
 							async (attempt) => {
 								const timeoutSec = attempt.deployment.litellm_params.timeout;
-								const execution = await executeProviderRequest(
-									{
-										url: attempt.upstreamUrl,
-										method: "POST",
-										headers: {
-											...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
-											"Content-Type": "application/json",
-										},
-										body: {
-											...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel, attempt.deployment),
-											messages: [...originalMessages, ...continuation],
-										},
-										model: attempt.upstreamModel,
+								const upstreamRequest = {
+									url: attempt.upstreamUrl,
+									method: "POST" as const,
+									headers: {
+										...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
+										"Content-Type": "application/json",
 									},
-									{
-										readJson: false,
-										signal: webSearchAbortController.signal,
-										timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+									body: {
+										...buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel, attempt.deployment),
+										messages: [...originalMessages, ...continuation],
 									},
-								);
+									model: attempt.upstreamModel,
+								};
+								const execution = await executeProviderRequest(upstreamRequest, {
+									readJson: false,
+									signal: webSearchAbortController.signal,
+									timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+								});
 								const result = execution.response;
 								if (!result.ok) {
-									throw new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status})`);
+									const errBody = await result.text().catch(() => "");
+									upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, { raw: errBody });
+									throw attachUpstreamLogContext(
+										new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status})`),
+										upstreamLogContext,
+									);
 								}
 								nsCompletionStartTime = new Date();
 								executedNsAttempt = attempt;
-								return (await result.json()) as Record<string, unknown>;
+								const responseData = (await result.json()) as Record<string, unknown>;
+								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData);
+								return attachUpstreamLogContext(responseData, upstreamLogContext);
 							},
 							followUpStats,
 						);
@@ -1280,6 +1332,7 @@ export function registerAnthropicMessagesEndpoints(
 									response: initialNsResponse,
 									usage: initialNsResponse?.["usage"] as Record<string, unknown> | undefined,
 									error: error,
+									upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 									status: SpendLogStatus.Failure,
 									modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 									attemptedRetries: nsFallbackStats.fallbackDepth,
@@ -1349,6 +1402,7 @@ export function registerAnthropicMessagesEndpoints(
 					proxyServerRequestBody: originalRequestBody,
 					response: responseData,
 					usage: responseData["usage"] as Record<string, unknown> | undefined,
+					upstreamLogContext: upstreamLogContext,
 					status: SpendLogStatus.Success,
 				});
 				await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));

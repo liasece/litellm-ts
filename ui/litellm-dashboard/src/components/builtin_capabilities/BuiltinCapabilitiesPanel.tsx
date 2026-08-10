@@ -17,6 +17,8 @@ export default function BuiltinCapabilitiesPanel() {
 	const [saving, setSaving] = useState(false);
 	const enabled = Form.useWatch(["vision", "enabled"], form);
 	const handlerModel = Form.useWatch(["vision", "handler_model"], form);
+	const imageGenerationEnabled = Form.useWatch(["image_generation", "enabled"], form);
+	const imageGenerationHandlerModel = Form.useWatch(["image_generation", "handler_model"], form);
 	const webEnabled = Form.useWatch(["web", "enabled"], form);
 	const webHandlerModel = Form.useWatch(["web", "handler_model"], form);
 
@@ -36,6 +38,17 @@ export default function BuiltinCapabilitiesPanel() {
 		[data],
 	);
 	const fallbackOptions = modelOptions.filter((option) => option.value !== handlerModel);
+	const imageGenerationModelOptions = useMemo(
+		() =>
+			(data?.image_generation_available_models ?? []).map((candidate) => ({
+				label: candidate.model_name,
+				value: candidate.model_name,
+			})),
+		[data],
+	);
+	const imageGenerationFallbackOptions = imageGenerationModelOptions.filter(
+		(option) => option.value !== imageGenerationHandlerModel,
+	);
 	const webModelOptions = useMemo(
 		() =>
 			(data?.web_available_models ?? []).map((candidate) => ({
@@ -81,6 +94,67 @@ export default function BuiltinCapabilitiesPanel() {
 
 			<Form form={form} layout="vertical" onFinish={save}>
 				<div className="max-w-4xl space-y-6">
+					<Card>
+						<div className="mb-5 flex items-start justify-between gap-6">
+							<div>
+								<Title>Image Generation & Editing</Title>
+								<Text className="mt-1 text-gray-500">
+									Lets selected models privately create new images or edit attached images through a dedicated image model.
+								</Text>
+							</div>
+							<Form.Item name={["image_generation", "enabled"]} valuePropName="checked" className="mb-0">
+								<Switch checkedChildren="On" unCheckedChildren="Off" />
+							</Form.Item>
+						</div>
+
+						<Alert
+							className="mb-5"
+							type="info"
+							showIcon
+							message="The main model writes the production prompt and chooses create or edit. LiteLLM keeps image bytes private and attaches generated images to Chat and Responses outputs."
+						/>
+
+						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+							<Form.Item
+								name={["image_generation", "handler_model"]}
+								label="Image execution model"
+								rules={[{ required: imageGenerationEnabled, message: "Select an image generation model" }]}
+							>
+								<Select
+									showSearch
+									allowClear
+									optionFilterProp="label"
+									options={imageGenerationModelOptions}
+									placeholder="Select an image generation model"
+								/>
+							</Form.Item>
+
+							<Form.Item name={["image_generation", "fallback_models"]} label="Capability fallback models">
+								<Select
+									mode="multiple"
+									showSearch
+									allowClear
+									optionFilterProp="label"
+									options={imageGenerationFallbackOptions}
+									placeholder="Tried in order after the execution model"
+								/>
+							</Form.Item>
+
+							<Form.Item name={["image_generation", "max_iterations"]} label="Maximum private turns" rules={[{ required: true }]}>
+								<InputNumber min={1} max={8} className="w-full" />
+							</Form.Item>
+
+							<Form.Item
+								name={["image_generation", "always_inject"]}
+								label="Allow creation without source image"
+								valuePropName="checked"
+								extra="Keep enabled to allow creating an image even when no source image is attached."
+							>
+								<Switch checkedChildren="On" unCheckedChildren="Off" />
+							</Form.Item>
+						</div>
+					</Card>
+
 					<Card>
 						<div className="mb-5 flex items-start justify-between gap-6">
 							<div>

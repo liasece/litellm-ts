@@ -16,6 +16,7 @@ import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
+import { getUpstreamLogContext } from "../router/UpstreamLogContext";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { createModuleLogger } from "../core/utils/logger";
 
@@ -203,6 +204,7 @@ export class AudioController {
 						messages: storedMessages,
 						response: result,
 						usage: usage,
+						upstreamLogContext: getUpstreamLogContext(result),
 						status: SpendLogStatus.Success,
 						...getResultModelResolutionMetadata(result),
 					}),
@@ -227,6 +229,7 @@ export class AudioController {
 							endTime: new Date(),
 							messages: storedMessages,
 							error: error,
+							upstreamLogContext: getUpstreamLogContext(error),
 							status: SpendLogStatus.Failure,
 						}),
 					);

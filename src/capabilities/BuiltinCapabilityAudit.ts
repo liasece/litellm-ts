@@ -3,6 +3,7 @@ import type { Request } from "express";
 import type { DrizzleDb } from "../core/db/Database";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
+import { getUpstreamLogContext } from "../router/UpstreamLogContext";
 import { CallType, SpendLogStatus } from "../types/spend";
 
 /** Reference to the ordinary Spend Log row created for an internal call. */
@@ -14,11 +15,11 @@ export interface BuiltinCapabilityAuditReference {
 /** One ordinary model request made by a private built-in capability. */
 export interface BuiltinCapabilityModelCall {
 	/** Built-in capability identifier. */
-	readonly capability: "vision" | "web";
+	readonly capability: "vision" | "web" | "image_generation";
 	/** Worker request or main-model continuation. */
 	readonly stage: "handler" | "continuation";
 	/** Spend Log protocol classification. */
-	readonly callType: "acompletion" | "amessages";
+	readonly callType: "acompletion" | "amessages" | "aimage_generation";
 	/** Logical model used by this request. */
 	readonly model: string;
 	/** Private tool call that triggered the request. */
@@ -41,6 +42,10 @@ export interface BuiltinCapabilityModelCall {
 	readonly question?: string;
 	/** Requested visual detail. */
 	readonly detail?: string;
+	/** Image creation/editing action. */
+	readonly action?: "create" | "edit";
+	/** Image generation/editing prompt. */
+	readonly prompt?: string;
 	/** Delegated web query. */
 	readonly query?: string;
 	/** Delegated webpage URL. */
@@ -98,7 +103,12 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			req: req,
 			auth: auth,
 			requestId: requestId,
-			callType: call.callType === "amessages" ? CallType.AMessages : CallType.ACompletion,
+			callType:
+				call.callType === "amessages"
+					? CallType.AMessages
+					: call.callType === "aimage_generation"
+						? CallType.AImageGeneration
+						: CallType.ACompletion,
 			model: call.model,
 			modelGroup: call.model,
 			modelId: spendInfo?.modelId,
@@ -123,6 +133,7 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			response: call.response,
 			usage: call.response?.["usage"] as Record<string, unknown> | undefined,
 			error: call.error,
+			upstreamLogContext: getUpstreamLogContext(call.response) ?? getUpstreamLogContext(call.error),
 			status: status,
 			requestTags: ["litellm:internal", `builtin:${call.capability}`],
 			metadataOverrides: {
@@ -145,3 +156,6 @@ export const createVisionCapabilityAuditHook = createBuiltinCapabilityAuditHook;
 
 /** Web capability audit factory. */
 export const createWebCapabilityAuditHook = createBuiltinCapabilityAuditHook;
+
+/** Image generation capability audit factory. */
+export const createImageGenerationCapabilityAuditHook = createBuiltinCapabilityAuditHook;

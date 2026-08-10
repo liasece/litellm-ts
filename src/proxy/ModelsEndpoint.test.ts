@@ -1,6 +1,7 @@
 import { ModelsController } from "./ModelsEndpoint";
 import { Router } from "../router/Router";
 import { RoutingStrategyName } from "../types/router";
+import { dbConfigProvider } from "../core/config/DbConfigProvider";
 
 function makeController(): { controller: ModelsController; router: Router } {
 	const router = new Router({
@@ -24,6 +25,10 @@ function makeController(): { controller: ModelsController; router: Router } {
 }
 
 describe("ModelsEndpoint 单模型详情安全响应", () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
 	it.each(["long", "short"] as const)("%s 路径递归掩码秘密且不修改 Router deployment", async (pathKind) => {
 		const { controller, router } = makeController();
 		const req = { params: { model_id: "secure-model" } } as never;
@@ -46,5 +51,47 @@ describe("ModelsEndpoint 单模型详情安全响应", () => {
 		expect(deployment.litellm_params.api_token).toBe("token-secret");
 		expect(deployment.litellm_params.extra_headers?.Authorization).toBe("Bearer header-secret");
 		expect((deployment.model_info as Record<string, unknown>).password).toBe("model-info-secret");
+	});
+
+	it("在模型列表和详情中把已启用的内置视觉报告为图片输入能力", async () => {
+		jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({
+			vision: { enabled: true, handler_model: "vision-worker" },
+		});
+		const router = new Router({
+			model_list: [
+				{
+					model_name: "text-with-vision",
+					litellm_params: { model: "deepseek/text-model" },
+					model_info: {
+						supports_vision: false,
+						supports_function_calling: true,
+						enabled_builtin_capabilities: ["vision"],
+					},
+				},
+			],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+		});
+		const controller = new ModelsController(router);
+
+		const list = await controller.listModels();
+		expect(list.data).toEqual([
+			expect.objectContaining({
+				id: "text-with-vision",
+				supports_vision: true,
+				input_modalities: ["text", "image"],
+			}),
+		]);
+		expect(list.models).toEqual([
+			expect.objectContaining({
+				slug: "text-with-vision",
+				input_modalities: ["text", "image"],
+			}),
+		]);
+		expect(list.models[0]?.base_instructions.length).toBeGreaterThan(1_000);
+
+		const detail = await controller.getModel({ params: { model_id: "text-with-vision" } } as never);
+		expect(detail.model_info?.supports_vision).toBe(true);
+		expect(router.getDeployments()[0]?.model_info?.supports_vision).toBe(false);
 	});
 });

@@ -10,8 +10,11 @@ import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
+import { buildPassthroughLogRequest } from "./CliProxyUpstreamLogging";
 import type { Deployment } from "../types/router";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
+import { createUpstreamLogContext } from "../router/UpstreamLogContext";
+import type { ProviderRequest } from "../types/provider";
 
 const MAX_PASSTHROUGH_BODY_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_CAPTURED_RESPONSE_BYTES = 24 * 1024 * 1024;
@@ -72,6 +75,10 @@ interface NativeSpendContext {
 	readonly captured?: CapturedResponse;
 	readonly status: SpendLogStatus;
 	readonly error?: unknown;
+	/** 透传请求的上游日志请求要素（脱敏由 createUpstreamLogContext 负责）。 */
+	readonly logRequest: ProviderRequest;
+	/** 上游 fetch 响应；网络层失败时不存在。body 已耗尽时仍可读 status/headers。 */
+	readonly upstreamResponse?: globalThis.Response;
 }
 
 const NATIVE_HTTP_ROUTES: readonly NativePassthroughRoute[] = [
@@ -607,6 +614,7 @@ async function recordSpend(context: NativeSpendContext): Promise<void> {
 		proxyServerRequestBody: context.body.logBody,
 		response: parsed.response,
 		usage: parsed.usage,
+		upstreamLogContext: createUpstreamLogContext(context.logRequest, context.upstreamResponse, parsed.response),
 		status: context.status,
 		error: context.error,
 	});
@@ -644,6 +652,14 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		const abort = (): void => abortController.abort();
 		req.once("aborted", abort);
 		res.once("close", abort);
+		// logRequest 提前到 try 外：fetch 抛错的失败路径也要记录 request-only 上游日志。
+		const logRequest = buildPassthroughLogRequest({
+			url: upstreamUrl,
+			method: route.method.toUpperCase(),
+			headers: buildForwardHeaders(req, runtime.internalApiKey, rewritten.contentType),
+			body: rewritten.logBody ?? rewritten.parsed,
+			model: resolved?.publicModel,
+		});
 		try {
 			const upstream = await fetch(upstreamUrl, {
 				method: route.method.toUpperCase(),
@@ -678,6 +694,8 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 						captured: captured,
 						status: upstream.ok ? SpendLogStatus.Success : SpendLogStatus.Failure,
 						error: upstream.ok ? undefined : new Error(`CLIProxy returned HTTP ${upstream.status}`),
+						logRequest: logRequest,
+						upstreamResponse: upstream,
 					}),
 				);
 			}
@@ -700,6 +718,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 						body: rewritten,
 						status: SpendLogStatus.Failure,
 						error: error,
+						logRequest: logRequest,
 					}),
 				);
 			}

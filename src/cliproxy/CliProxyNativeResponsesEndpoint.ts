@@ -11,6 +11,8 @@ import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { buildDeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
+import { createUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { buildPassthroughLogRequest } from "./CliProxyUpstreamLogging";
 
 const REQUEST_BLOCKED_HEADERS = new Set([
 	"authorization",
@@ -175,12 +177,13 @@ function normalizeNativeUsage(value: unknown): Record<string, unknown> | undefin
 		return undefined;
 	}
 	const usage = value as Record<string, unknown>;
-	const prompt =
-		typeof usage["prompt_tokens"] === "number"
-			? usage["prompt_tokens"]
-			: typeof usage["input_tokens"] === "number"
-				? usage["input_tokens"]
-				: 0;
+	const cacheRead = typeof usage["cache_read_input_tokens"] === "number" ? usage["cache_read_input_tokens"] : 0;
+	const cacheCreation = typeof usage["cache_creation_input_tokens"] === "number" ? usage["cache_creation_input_tokens"] : 0;
+	const rawPrompt = typeof usage["prompt_tokens"] === "number" ? usage["prompt_tokens"] : undefined;
+	// Anthropic 原生形状（无 prompt_tokens，有 input_tokens）：input_tokens 不含 cache，
+	// 按 PY transformation.py:1587-1611 折叠 cache_read + cache_creation 进 prompt_tokens；
+	// 否则（Chat/Responses 形状）prompt/input 已含 cache，直接沿用。
+	const prompt = rawPrompt ?? (typeof usage["input_tokens"] === "number" ? usage["input_tokens"] + cacheRead + cacheCreation : 0);
 	const completion =
 		typeof usage["completion_tokens"] === "number"
 			? usage["completion_tokens"]
@@ -196,6 +199,136 @@ function normalizeNativeUsage(value: unknown): Record<string, unknown> | undefin
 		completion_tokens: completion,
 		total_tokens: typeof usage["total_tokens"] === "number" ? usage["total_tokens"] : prompt + completion,
 	};
+}
+
+function extractAnthropicStreamResponse(raw: string): { response?: Record<string, unknown>; usage?: Record<string, unknown> } | undefined {
+	let message: Record<string, unknown> | undefined;
+	const content = new Map<number, Record<string, unknown>>();
+	const toolInputJson = new Map<number, string>();
+	let stopReason: unknown;
+	let stopSequence: unknown;
+	const usage: Record<string, unknown> = {};
+
+	const mergeUsage = (value: unknown): void => {
+		if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+			Object.assign(usage, value);
+		}
+	};
+	const consumePayload = (payload: Record<string, unknown>): void => {
+		const type = payload["type"];
+		if (type === "message_start") {
+			const startedMessage = payload["message"];
+			if (typeof startedMessage !== "object" || startedMessage === null || Array.isArray(startedMessage)) {
+				return;
+			}
+			message = { ...(startedMessage as Record<string, unknown>) };
+			mergeUsage(message["usage"]);
+			const initialContent = message["content"];
+			if (Array.isArray(initialContent)) {
+				for (const [index, block] of initialContent.entries()) {
+					if (typeof block === "object" && block !== null && !Array.isArray(block)) {
+						content.set(index, { ...(block as Record<string, unknown>) });
+					}
+				}
+			}
+			return;
+		}
+		if (type === "content_block_start" && typeof payload["index"] === "number") {
+			const block = payload["content_block"];
+			if (typeof block === "object" && block !== null && !Array.isArray(block)) {
+				content.set(payload["index"], { ...(block as Record<string, unknown>) });
+			}
+			return;
+		}
+		if (type === "content_block_delta" && typeof payload["index"] === "number") {
+			const index = payload["index"];
+			const delta = payload["delta"];
+			const block = content.get(index);
+			if (typeof delta !== "object" || delta === null || Array.isArray(delta) || !block) {
+				return;
+			}
+			const deltaRecord = delta as Record<string, unknown>;
+			if (deltaRecord["type"] === "text_delta" && typeof deltaRecord["text"] === "string") {
+				block["text"] = `${String(block["text"] ?? "")}${deltaRecord["text"]}`;
+			} else if (deltaRecord["type"] === "thinking_delta" && typeof deltaRecord["thinking"] === "string") {
+				block["thinking"] = `${String(block["thinking"] ?? "")}${deltaRecord["thinking"]}`;
+			} else if (deltaRecord["type"] === "signature_delta" && typeof deltaRecord["signature"] === "string") {
+				block["signature"] = `${String(block["signature"] ?? "")}${deltaRecord["signature"]}`;
+			} else if (deltaRecord["type"] === "input_json_delta" && typeof deltaRecord["partial_json"] === "string") {
+				toolInputJson.set(index, `${toolInputJson.get(index) ?? ""}${deltaRecord["partial_json"]}`);
+			}
+			return;
+		}
+		if (type === "content_block_stop" && typeof payload["index"] === "number") {
+			const index = payload["index"];
+			const partialJson = toolInputJson.get(index);
+			const block = content.get(index);
+			if (partialJson !== undefined && block) {
+				try {
+					block["input"] = JSON.parse(partialJson);
+				} catch {
+					block["input"] = partialJson;
+				}
+			}
+			return;
+		}
+		if (type === "message_delta") {
+			const delta = payload["delta"];
+			if (typeof delta === "object" && delta !== null && !Array.isArray(delta)) {
+				stopReason = (delta as Record<string, unknown>)["stop_reason"];
+				stopSequence = (delta as Record<string, unknown>)["stop_sequence"];
+			}
+			mergeUsage(payload["usage"]);
+		}
+	};
+	const consumeEvent = (event: string): void => {
+		const data = event
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).replace(/^ /, ""))
+			.join("\n");
+		if (!data || data === "[DONE]") {
+			return;
+		}
+		try {
+			const parsed: unknown = JSON.parse(data);
+			if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+				consumePayload(parsed as Record<string, unknown>);
+			}
+		} catch {
+			// Malformed diagnostic data must never affect the forwarded stream.
+		}
+	};
+	let pending = raw;
+	const drain = (): void => {
+		while (true) {
+			const boundary = /\r?\n\r?\n/.exec(pending);
+			if (!boundary || boundary.index === undefined) {
+				break;
+			}
+			consumeEvent(pending.slice(0, boundary.index));
+			pending = pending.slice(boundary.index + boundary[0].length);
+		}
+		if (pending.trim()) {
+			consumeEvent(pending);
+			pending = "";
+		}
+	};
+
+	drain();
+	if (!message && content.size === 0) {
+		return undefined;
+	}
+	const response = {
+		...(message ?? {}),
+		type: message?.["type"] ?? "message",
+		role: message?.["role"] ?? "assistant",
+		content: [...content.entries()].sort(([left], [right]) => left - right).map(([, block]) => block),
+		stop_reason: stopReason !== undefined ? stopReason : message?.["stop_reason"],
+		stop_sequence: stopSequence !== undefined ? stopSequence : message?.["stop_sequence"],
+		usage: { ...usage },
+	};
+	return { response: response, usage: normalizeNativeUsage(response.usage) };
 }
 
 function extractNativeResponse(raw: string): { response?: Record<string, unknown>; usage?: Record<string, unknown> } {
@@ -277,6 +410,8 @@ export function registerCliProxyNativeResponsesRoutes(
 		res.once("close", abort);
 		const streaming = body["stream"] === true;
 		const stopKeepAlive = streaming ? startResponsesSseKeepAlive(res) : undefined;
+		// 声明在 try 外：catch 失败路径也要读取 request-only 上游日志。
+		let upstreamLogContext: UpstreamLogContext | undefined;
 		try {
 			const upstreamUrl = `${runtime.baseUrl}/v1/responses`;
 			const upstreamBody = applyReasoningEffortOverride(
@@ -284,6 +419,14 @@ export function registerCliProxyNativeResponsesRoutes(
 				candidate.deployment,
 				"responses",
 			);
+			const logRequest = buildPassthroughLogRequest({
+				url: upstreamUrl,
+				method: "POST",
+				headers: buildForwardHeaders(req, runtime.internalApiKey),
+				body: upstreamBody,
+				model: upstreamModel(deploymentModel),
+			});
+			upstreamLogContext = createUpstreamLogContext(logRequest);
 			const upstream = await fetch(upstreamUrl, {
 				method: "POST",
 				headers: buildForwardHeaders(req, runtime.internalApiKey),
@@ -310,6 +453,7 @@ export function registerCliProxyNativeResponsesRoutes(
 						})()
 					: await pipeUpstreamResponse(upstream, res);
 			const extracted = extractNativeResponse(captured.raw);
+			upstreamLogContext = createUpstreamLogContext(logRequest, upstream, extracted.response);
 			const spendInfo = buildDeploymentSpendInfo(candidate.deployment, upstreamUrl);
 			if (req.auth) {
 				const log = await buildSpendLogFromRequest({
@@ -330,6 +474,7 @@ export function registerCliProxyNativeResponsesRoutes(
 					messages: body["input"],
 					response: extracted.response,
 					usage: extracted.usage,
+					upstreamLogContext: upstreamLogContext,
 					status: upstream.ok ? SpendLogStatus.Success : SpendLogStatus.Failure,
 					error: upstream.ok ? undefined : new Error(`CLIProxy returned HTTP ${upstream.status}`),
 				});
@@ -350,6 +495,7 @@ export function registerCliProxyNativeResponsesRoutes(
 					endTime: new Date(),
 					messages: body["input"],
 					error: error,
+					upstreamLogContext: upstreamLogContext,
 					status: SpendLogStatus.Failure,
 				});
 				await lifecycle.finalize(() => trackSpendLog(db, log).then(() => undefined));
@@ -404,6 +550,7 @@ function registerNativeRoute({
 		{ method: "post", path: routePath, matches: (req) => isCliProxyModel(router, req.body?.model) },
 		async (req, res) => {
 			let deploymentRecorded = false;
+			let upstreamLogContext: UpstreamLogContext | undefined;
 			const body = req.body as Record<string, unknown>;
 			const model = body["model"];
 			if (typeof model !== "string" || model.length === 0) {
@@ -433,12 +580,25 @@ function registerNativeRoute({
 					candidate.deployment,
 					anthropicNative ? "anthropic" : "chat",
 				);
-				const upstream = await fetch(upstreamUrl, {
+				const upstreamHeaders = buildForwardHeaders(req, runtime.internalApiKey, anthropicNative);
+				const upstreamRequest = {
+					...buildPassthroughLogRequest({
+						url: upstreamUrl,
+						method: "POST",
+						headers: upstreamHeaders,
+						body: upstreamBody,
+						model: upstreamModel(deploymentModel),
+					}),
+					stream: body["stream"] === true,
+				};
+				const upstreamPromise = fetch(upstreamUrl, {
 					method: "POST",
-					headers: buildForwardHeaders(req, runtime.internalApiKey, anthropicNative),
+					headers: upstreamHeaders,
 					body: JSON.stringify(upstreamBody),
 					signal: abortController.signal,
 				});
+				upstreamLogContext = createUpstreamLogContext(upstreamRequest);
+				const upstream = await upstreamPromise;
 				if (upstream.ok) {
 					router.recordDeploymentSuccess(candidate.deployment);
 				} else {
@@ -446,7 +606,10 @@ function registerNativeRoute({
 				}
 				deploymentRecorded = true;
 				const captured = await pipeUpstreamResponse(upstream, res);
-				const extracted = extractNativeResponse(captured.raw);
+				const extracted =
+					(anthropicNative && body["stream"] === true ? extractAnthropicStreamResponse(captured.raw) : undefined) ??
+					extractNativeResponse(captured.raw);
+				upstreamLogContext = createUpstreamLogContext(upstreamRequest, upstream, extracted.response);
 				const spendInfo = buildDeploymentSpendInfo(candidate.deployment, upstreamUrl);
 				if (req.auth) {
 					const log = await buildSpendLogFromRequest({
@@ -465,7 +628,9 @@ function registerNativeRoute({
 						endTime: new Date(),
 						completionStartTime: captured.firstChunkAt ?? new Date(),
 						messages: body["messages"] ?? body["input"],
+						proxyServerRequestBody: body,
 						response: extracted.response,
+						upstreamLogContext: upstreamLogContext,
 						usage: extracted.usage,
 						status: upstream.ok ? SpendLogStatus.Success : SpendLogStatus.Failure,
 						error: upstream.ok ? undefined : new Error(`CLIProxy returned HTTP ${upstream.status}`),
@@ -486,7 +651,9 @@ function registerNativeRoute({
 						startTime: startTime,
 						endTime: new Date(),
 						messages: body["messages"] ?? body["input"],
+						proxyServerRequestBody: body,
 						error: error,
+						upstreamLogContext: upstreamLogContext,
 						status: SpendLogStatus.Failure,
 					});
 					await lifecycle.finalize(() => trackSpendLog(db, log).then(() => undefined));

@@ -29,6 +29,7 @@ import {
 	type FallbackRouterFacade,
 	type UpstreamAttempt,
 } from "./AnthropicUpstreamDispatch";
+import { attachUpstreamLogContext, getUpstreamLogContext } from "../router/UpstreamLogContext";
 
 // ========== Mock 构造 ==========
 
@@ -374,6 +375,27 @@ describe("executeWithFallbackChain", () => {
 		expect((caught as ApiError).statusCode).toBe(500);
 		expect((caught as ApiError).message).toContain("deepseek internal");
 		expect(facade.failures).toHaveLength(2);
+	});
+
+	it("链耗尽重建 ApiError 时透传最后一次 attempt 的上游日志上下文", async () => {
+		const facade = new MockRouterFacade({
+			deploymentsByModel: {
+				"glm-4-7-anthropic": [makeDeployment("glm-4-7-anthropic", "anthropic/glm-4.7")],
+			},
+			cooldownOnFailure: true,
+		});
+		const upstreamLogContext = {
+			request: { url: "https://open.bigmodel.cn/api/anthropic/v1/messages", method: "POST", headers: {}, body: {} },
+			response: { status_code: 500, headers: {} },
+		};
+		let caught: unknown;
+		await executeWithFallbackChain(facade, "glm-4-7-anthropic", undefined, undefined, async () => {
+			throw attachUpstreamLogContext(new ProviderUpstreamError(500, "Provider 返回错误 (500)"), upstreamLogContext);
+		}).catch((err) => {
+			caught = err;
+		});
+		expect(caught).toBeInstanceOf(ApiError);
+		expect(getUpstreamLogContext(caught)).toBe(upstreamLogContext);
 	});
 
 	it("客户端取消直接终止，不登记 deployment 失败或进入 fallback", async () => {

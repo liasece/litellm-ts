@@ -35,6 +35,7 @@ import {
 } from "../router/ModelResolutionTrace";
 import type { Deployment } from "../types/router";
 import type { ProviderConfig } from "../types/provider";
+import { attachUpstreamLogContext, getUpstreamLogContext } from "../router/UpstreamLogContext";
 
 const logger = createModuleLogger("AnthropicDispatch");
 
@@ -315,7 +316,8 @@ export async function executeWithFallbackChain<T>(
 
 	if (lastError !== null) {
 		const status = lastError instanceof ProviderUpstreamError ? lastError.status : 500;
-		throw new ApiError(status, lastError.message);
+		// 重建 ApiError 时透传最后一次 attempt 的上游日志上下文（新建对象会丢不可枚举 Symbol）。
+		throw attachUpstreamLogContext(new ApiError(status, lastError.message), getUpstreamLogContext(lastError));
 	}
 	// 链耗尽且无任何 provider 错误：模型不存在 → 400（PY ProxyModelNotFoundError）；
 	// 模型存在但全部署冷却 → 429 no-deployments

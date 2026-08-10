@@ -4,6 +4,7 @@ import useAuthorized from "../useAuthorized";
 
 export interface StoreRequestInSpendLogsParams {
 	store_prompts_in_spend_logs: boolean;
+	store_upstream_logs_in_spend_logs: boolean;
 	maximum_spend_logs_retention_period?: string;
 }
 
@@ -26,6 +27,7 @@ const performStoreRequestInSpendLogs = async (
 		body: JSON.stringify({
 			general_settings: {
 				store_prompts_in_spend_logs: params.store_prompts_in_spend_logs,
+				store_upstream_logs_in_spend_logs: params.store_upstream_logs_in_spend_logs,
 				...(params.maximum_spend_logs_retention_period && {
 					maximum_spend_logs_retention_period: params.maximum_spend_logs_retention_period,
 				}),

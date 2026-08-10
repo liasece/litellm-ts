@@ -37,6 +37,7 @@ import {
 } from "./SpendTracker";
 import { estimateRouterSpendReservation } from "./SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
+import { BadRequestError } from "../router/RouterErrors";
 
 describe("Spend reservation 请求 helper", () => {
 	it("同 key 与幂等 header 生成稳定 request id，不同 key 隔离 namespace", () => {
@@ -986,6 +987,114 @@ describe("SpendTracker API key sanitization", () => {
 				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
 			} else {
 				process.env.STORE_PROMPTS_IN_SPEND_LOGS = previousStorePrompts;
+			}
+		}
+	});
+
+	it("详细日志同时记录下游与上游请求响应，并脱敏两侧认证头", async () => {
+		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+		const previousStoreUpstreamLogs = process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS;
+		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";
+		process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS = "true";
+		try {
+			const spendLog = await buildSpendLogFromRequest({
+				auth: { api_key: rawApiKey },
+				callType: CallType.ACompletion,
+				endTime: new Date("2026-08-07T00:00:01.000Z"),
+				error: new BadRequestError("provider rejected request", { status_code: 400 }),
+				messages: [{ role: "developer", content: "downstream instruction" }],
+				model: "deepseek-v4-flash",
+				req: createRequest(),
+				requestId: "req-upstream-protocol-trace",
+				startTime: new Date("2026-08-07T00:00:00.000Z"),
+				upstreamLogContext: {
+					request: {
+						url: "https://api.deepseek.com/chat/completions",
+						method: "POST",
+						headers: { Authorization: `Bearer ${rawApiKey}`, "Content-Type": "application/json" },
+						body: { model: "deepseek-v4-flash", messages: [{ role: "system", content: "downstream instruction" }] },
+					},
+					response: {
+						status_code: 400,
+						headers: { "set-cookie": rawApiKey, "content-type": "application/json" },
+						body: { error: { type: "invalid_request_error" } },
+					},
+				},
+			});
+
+			const proxy = spendLog.proxy_server_request as Record<string, Record<string, unknown>>;
+			expect(proxy["body"]).toMatchObject({
+				model: "gpt-4o-mini",
+				metadata: { trace_id: "trace-spend-key-sanitize" },
+			});
+			expect(proxy["upstream_request"]).toMatchObject({
+				url: "https://api.deepseek.com/chat/completions",
+				body: { messages: [{ role: "system", content: "downstream instruction" }] },
+			});
+			expect(proxy["upstream_response"]).toMatchObject({
+				status_code: 400,
+				body: { error: { type: "invalid_request_error" } },
+			});
+			expect((proxy["upstream_request"]?.["headers"] as Record<string, string>)["Authorization"]).toBe("[REDACTED]");
+			expect((proxy["upstream_response"]?.["headers"] as Record<string, string>)["set-cookie"]).toBe("[REDACTED]");
+			expect(spendLog.response).toMatchObject({ error: { code: "400" } });
+			expect(stringify(spendLog.proxy_server_request)).not.toContain(rawApiKey);
+		} finally {
+			if (previousStorePrompts === undefined) {
+				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+			} else {
+				process.env.STORE_PROMPTS_IN_SPEND_LOGS = previousStorePrompts;
+			}
+			if (previousStoreUpstreamLogs === undefined) {
+				delete process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS;
+			} else {
+				process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS = previousStoreUpstreamLogs;
+			}
+		}
+	});
+
+	it("上游详情开关可独立于下游 prompt/response 存储", async () => {
+		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+		const previousStoreUpstreamLogs = process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS;
+		delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+		process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS = "true";
+		try {
+			const spendLog = await buildSpendLogFromRequest({
+				auth: { api_key: rawApiKey },
+				callType: CallType.ACompletion,
+				endTime: new Date("2026-08-07T00:00:01.000Z"),
+				messages: [{ role: "user", content: "downstream" }],
+				model: "gpt-4o-mini",
+				req: createRequest(),
+				requestId: "req-upstream-only",
+				startTime: new Date("2026-08-07T00:00:00.000Z"),
+				response: { choices: [{ message: { content: "downstream response" } }] },
+				upstreamLogContext: {
+					request: {
+						url: "https://provider.example/v1/chat/completions",
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: { messages: [{ role: "user", content: "upstream" }] },
+					},
+					response: { status_code: 200, headers: { "content-type": "application/json" }, body: { ok: true } },
+				},
+			});
+
+			expect(spendLog.messages).toEqual({});
+			expect(spendLog.response).toEqual({});
+			expect(spendLog.proxy_server_request?.["body"]).toEqual({});
+			expect(spendLog.proxy_server_request?.["upstream_request"]).toBeDefined();
+			expect(spendLog.proxy_server_request?.["upstream_response"]).toBeDefined();
+		} finally {
+			if (previousStorePrompts === undefined) {
+				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
+			} else {
+				process.env.STORE_PROMPTS_IN_SPEND_LOGS = previousStorePrompts;
+			}
+			if (previousStoreUpstreamLogs === undefined) {
+				delete process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS;
+			} else {
+				process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS = previousStoreUpstreamLogs;
 			}
 		}
 	});

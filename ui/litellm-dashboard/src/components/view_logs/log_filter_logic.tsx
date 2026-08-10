@@ -26,6 +26,7 @@ export function useLogFilterLogic({
 	sortOrder = "desc",
 	currentPage = 1,
 	initialFilters,
+	searchTerm = "",
 }: {
 	logs: PaginatedResponse;
 	accessToken: string | null;
@@ -40,6 +41,8 @@ export function useLogFilterLogic({
 	sortOrder?: "asc" | "desc";
 	currentPage?: number;
 	initialFilters?: Partial<LogFilterState>;
+	/** 顶部搜索框内容；非空时作为服务端 request_id 精确查询 */
+	searchTerm?: string;
 }) {
 	const defaultFilters = useMemo<LogFilterState>(() => createEmptyLogFilters(), []);
 
@@ -56,7 +59,7 @@ export function useLogFilterLogic({
 	});
 	const lastSearchTimestamp = useRef(0);
 	const performSearch = useCallback(
-		async (filters: LogFilterState, page = 1) => {
+		async (filters: LogFilterState, page = 1, term = "") => {
 			if (!accessToken) return;
 
 			const currentTimestamp = Date.now();
@@ -77,7 +80,7 @@ export function useLogFilterLogic({
 					params: {
 						api_key: filters[FILTER_KEYS.KEY_HASH] || undefined,
 						team_id: filters[FILTER_KEYS.TEAM_ID] || undefined,
-						request_id: filters[FILTER_KEYS.REQUEST_ID] || undefined,
+						request_id: filters[FILTER_KEYS.REQUEST_ID] || term || undefined,
 						user_id: filters[FILTER_KEYS.USER_ID] || undefined,
 						end_user: filters[FILTER_KEYS.END_USER] || undefined,
 						status_filter: filters[FILTER_KEYS.STATUS] || undefined,
@@ -102,7 +105,7 @@ export function useLogFilterLogic({
 	);
 
 	const debouncedSearch = useMemo(
-		() => debounce((filters: LogFilterState, page: number) => performSearch(filters, page), 300),
+		() => debounce((filters: LogFilterState, page: number, term: string) => performSearch(filters, page, term), 300),
 		[performSearch],
 	);
 
@@ -110,21 +113,36 @@ export function useLogFilterLogic({
 		return () => debouncedSearch.cancel();
 	}, [debouncedSearch]);
 
-	// Determine when backend filters are active (server-side filtering)
-	const hasBackendFilters = useMemo(() => hasBackendLogFilters(filters), [filters]);
+	// Determine when backend filters are active (server-side filtering).
+	// 顶部搜索框内容非空时也走服务端 request_id 查询。
+	const hasBackendFilters = useMemo(() => hasBackendLogFilters(filters) || searchTerm !== "", [filters, searchTerm]);
+
+	// searchTerm 变化时触发服务端 request_id 查询；清空时回退主查询。
+	useEffect(() => {
+		if (!accessToken) return;
+		setCurrentPage(1);
+		if (searchTerm === "") {
+			debouncedSearch.cancel();
+			setBackendFilteredLogs({ data: [], total: 0, page: 1, page_size: pageSize, total_pages: 0 });
+			return;
+		}
+		debouncedSearch(filters, 1, searchTerm);
+		// 仅响应 searchTerm 变化；filters 变化由 handleFilterChange 处理。
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [searchTerm, accessToken]);
 
 	// Refetch when sort, page, or time range changes (backend filters use their own fetch, not the main query)
 	useEffect(() => {
 		if (hasBackendFilters && accessToken) {
 			// Cancel any pending debounced search to prevent it from overwriting this page's results
 			debouncedSearch.cancel();
-			performSearch(filters, currentPage);
+			performSearch(filters, currentPage, searchTerm);
 		}
 		// Intentionally omitted from deps:
 		// - `filters` / `debouncedSearch` / `performSearch`: filter changes are handled by
 		//   handleFilterChange → debouncedSearch; adding them here would double-fetch on filter apply.
-		// - `hasBackendFilters` / `accessToken`: stable across sort/page/time changes; including them
-		//   would cause spurious re-runs when the filter state first becomes active.
+		// - `hasBackendFilters` / `accessToken` / `searchTerm`: stable across sort/page/time changes;
+		//   including them would cause spurious re-runs when the filter state first becomes active.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [sortBy, sortOrder, currentPage, startTime, endTime, isCustomDate]);
 
@@ -237,8 +255,8 @@ export function useLogFilterLogic({
 			// Only call debouncedSearch if filters have actually changed
 			if (JSON.stringify(updatedFilters) !== JSON.stringify(prev)) {
 				setCurrentPage(1);
-				if (hasBackendLogFilters(updatedFilters)) {
-					debouncedSearch(updatedFilters, 1);
+				if (hasBackendLogFilters(updatedFilters) || searchTerm !== "") {
+					debouncedSearch(updatedFilters, 1, searchTerm);
 				} else {
 					debouncedSearch.cancel();
 				}
@@ -267,8 +285,8 @@ export function useLogFilterLogic({
 
 	const refetchFilteredLogs = useCallback(async () => {
 		debouncedSearch.cancel();
-		await performSearch(filters, currentPage);
-	}, [currentPage, debouncedSearch, filters, performSearch]);
+		await performSearch(filters, currentPage, searchTerm);
+	}, [currentPage, debouncedSearch, filters, performSearch, searchTerm]);
 
 	return {
 		filters,

@@ -15,6 +15,7 @@ import { RoutingStrategyName } from "../types/router";
 import { RateLimitError, AuthenticationError, BadRequestError } from "./RouterErrors";
 import { installMockFetch, mkDeployment, okResponse, errorResponse } from "./RouterTestHelpers";
 import { getRetryPolicyOverrideDelegate } from "./RouterTestDelegates";
+import { getUpstreamLogContext } from "./UpstreamLogContext";
 
 let mockFetch: jest.Mock;
 
@@ -172,6 +173,60 @@ describe("Router execution chain", () => {
 			expect(result.id).toBe("chat-1");
 			const choices = result.choices as Array<{ message: { content: string } }>;
 			expect(choices[0]!.message.content).toBe("hi");
+		});
+
+		it("DeepSeek 成功结果携带不可枚举的真实 OpenAI 上游请求响应", async () => {
+			mockFetch.mockResolvedValueOnce(
+				okResponse({
+					id: "chat-deepseek-trace",
+					object: "chat.completion",
+					created: 1,
+					model: "deepseek-v4-flash",
+					choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+					usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+				}),
+			);
+			const router = new Router({
+				model_list: [
+					{
+						model_name: "deepseek-v4-flash",
+						litellm_params: {
+							model: "deepseek/deepseek-v4-flash",
+							custom_llm_provider: "deepseek",
+							api_key: "provider-key",
+						},
+						model_info: { id: "deepseek-deployment" },
+					},
+				],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+			});
+
+			const result = await router.completion("deepseek-v4-flash", [
+				{ role: "developer", content: "Follow instructions" },
+				{ role: "user", content: "hello" },
+			]);
+			const upstream = getUpstreamLogContext(result);
+
+			expect(upstream).toMatchObject({
+				request: {
+					url: "https://api.deepseek.com/chat/completions",
+					headers: { Authorization: "[REDACTED]" },
+					body: {
+						model: "deepseek-v4-flash",
+						messages: [
+							{ role: "system", content: "Follow instructions" },
+							{ role: "user", content: "hello" },
+						],
+					},
+				},
+				response: {
+					status_code: 200,
+					body: { id: "chat-deepseek-trace" },
+				},
+			});
+			expect(JSON.stringify(result)).not.toContain("provider-key");
+			expect(JSON.stringify(result)).not.toContain("upstream_request");
 		});
 
 		it("成功结果携带 alias 解析轨迹，deployment retry 不重复追加", async () => {
@@ -356,6 +411,50 @@ describe("Router execution chain", () => {
 				name: "RouterRateLimitErrorBasic",
 			});
 			expect(mockFetch.mock.calls.length).toBe(fetchCallsAfterFirstCompletion);
+		});
+
+		it("provider 400 JSON 反序列化错误保留客户端状态且不会冷却 deployment", async () => {
+			const deployment: Deployment = {
+				model_name: "deepseek-v4-flash",
+				litellm_params: {
+					model: "deepseek-v4-flash",
+					api_key: "test-key",
+					num_retries: 0,
+				},
+				model_info: { id: "deepseek-v4-flash-deployment" },
+			};
+			const router = new Router({
+				model_list: [deployment],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				cooldown_time: 60,
+				allowed_fails: 0,
+			});
+			mockFetch.mockImplementation(() =>
+				Promise.resolve(
+					errorResponse(400, {
+						error: {
+							message:
+								"Failed to deserialize the JSON body into the target type: " +
+								"messages[1].role: unknown variant `developer`, expected one of " +
+								"`system`, `user`, `assistant`, `tool`, `latest_reminder` at line 1 column 1904",
+							type: "invalid_request_error",
+							param: null,
+							code: "invalid_request_error",
+						},
+					}),
+				),
+			);
+
+			await expect(router.completion("deepseek-v4-flash", [{ role: "user", content: "hi" }])).rejects.toMatchObject({
+				name: "BadRequestError",
+				status_code: 400,
+			});
+			await expect(router.completion("deepseek-v4-flash", [{ role: "user", content: "hi" }])).rejects.toMatchObject({
+				name: "BadRequestError",
+				status_code: 400,
+			});
+			expect(mockFetch).toHaveBeenCalledTimes(2);
 		});
 	});
 	describe("Router.hasModel", () => {

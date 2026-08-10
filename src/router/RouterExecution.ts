@@ -33,6 +33,7 @@ import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
 import { appendModelResolutionTrace, copyModelResolutionChain } from "./ModelResolutionTrace";
+import { attachUpstreamLogContext } from "./UpstreamLogContext";
 import type {
 	RouterExecContext,
 	ExecutionRequest,
@@ -293,12 +294,15 @@ export async function executeWithFallback(
 			try {
 				const execResult = await executeRequest(provider, deployment, messages, optionalParams);
 				const { response, body, ttft, stream } = execResult;
+				const responseProtocol = execResult.responseProtocol ?? "chat_completions";
 				const elapsed = Date.now() - startTime;
 				const usageForLatency = (body as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
 				const completionTokens =
 					usageForLatency && typeof usageForLatency["completion_tokens"] === "number"
 						? (usageForLatency["completion_tokens"] as number)
-						: undefined;
+						: usageForLatency && typeof usageForLatency["output_tokens"] === "number"
+							? (usageForLatency["output_tokens"] as number)
+							: undefined;
 				const normalizedLatency = completionTokens && completionTokens > 0 ? elapsed / completionTokens : elapsed;
 
 				const samples = ctx.latencySamples.get(depKey) ?? [];
@@ -319,6 +323,7 @@ export async function executeWithFallback(
 				if (!response.ok) {
 					const bodyStr = JSON.stringify(body);
 					const categorizedError = categorizeProviderError(response.status, bodyStr);
+					attachUpstreamLogContext(categorizedError, execResult.upstreamLogContext);
 					lastError = categorizedError;
 					if (originalError === null) {
 						originalError = categorizedError;
@@ -419,21 +424,28 @@ export async function executeWithFallback(
 						attemptedRetries: attempt,
 						maxRetries: maxRetriesForHeaders,
 					});
-					return {
-						_stream: true,
-						stream: stream,
-						_provider: deployment.model_name,
-						_fallbackDepth: fallbackDepth,
-						_fallbackModels: effectiveFallbackModels,
-						_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
-						_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
-						// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
-						_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
-						_providerHeaders: responseHeaders,
-					};
+					return attachUpstreamLogContext(
+						{
+							_stream: true,
+							stream: stream,
+							_provider: deployment.model_name,
+							_fallbackDepth: fallbackDepth,
+							_fallbackModels: effectiveFallbackModels,
+							_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
+							// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
+							_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
+							_providerHeaders: responseHeaders,
+							...(responseProtocol === "responses" ? { _responseProtocol: "responses" } : {}),
+						},
+						execResult.upstreamLogContext,
+					);
 				}
 
-				const transformed = provider.transformResponse(deployment.litellm_params.model, body);
+				const transformed =
+					responseProtocol === "responses"
+						? (body as Record<string, unknown>)
+						: provider.transformResponse(deployment.litellm_params.model, body);
 				invokeRouterCallback(ctx.routerCallbacks, "onSuccess", deployment, transformed, Date.now() - startTime);
 
 				const providerHeaders = (response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders;
@@ -443,17 +455,21 @@ export async function executeWithFallback(
 					maxRetries: maxRetriesForHeaders,
 				});
 
-				return {
-					...transformed,
-					_provider: deployment.model_name,
-					_fallbackDepth: fallbackDepth,
-					_fallbackModels: effectiveFallbackModels,
-					_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
-					_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
-					// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
-					_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
-					_providerHeaders: responseHeaders,
-				};
+				return attachUpstreamLogContext(
+					{
+						...transformed,
+						_provider: deployment.model_name,
+						_fallbackDepth: fallbackDepth,
+						_fallbackModels: effectiveFallbackModels,
+						_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+						_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
+						// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
+						_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
+						_providerHeaders: responseHeaders,
+						...(responseProtocol === "responses" ? { _responseProtocol: "responses" } : {}),
+					},
+					execResult.upstreamLogContext,
+				);
 			} catch (err) {
 				lastError = err instanceof Error ? err : new Error(String(err));
 				if (originalError === null) {

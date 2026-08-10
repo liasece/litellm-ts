@@ -2,6 +2,7 @@ import type { Request } from "express";
 import type { DrizzleDb } from "../core/db/Database";
 import * as SpendTracker from "../spend/SpendTracker";
 import { createVisionCapabilityAuditHook } from "./BuiltinCapabilityAudit";
+import { attachUpstreamLogContext } from "../router/UpstreamLogContext";
 
 describe("BuiltinCapabilityAudit", () => {
 	afterEach(() => {
@@ -129,5 +130,52 @@ describe("BuiltinCapabilityAudit", () => {
 				}),
 			}),
 		);
+	});
+
+	it("从 worker 响应或错误提取上游日志上下文", async () => {
+		const auth = { api_key: "sk-test", token: "key-id", user_id: "user-id", team_id: "team-id" };
+		const req = {
+			auth: auth,
+			body: { model: "deepseek-v4-flash" },
+			headers: {},
+			method: "POST",
+			originalUrl: "/v1/chat/completions",
+			url: "/v1/chat/completions",
+		} as unknown as Request;
+		jest.spyOn(SpendTracker, "buildSpendLogFromRequest").mockResolvedValue({ request_id: "child-log" } as never);
+		jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "child-log", spend: 0 });
+		const audit = createVisionCapabilityAuditHook({ db: {} as DrizzleDb, req: req, parentRequestId: "parent-log" });
+		const upstreamLogContext = {
+			request: { url: "http://provider/v1/chat/completions", method: "POST", headers: {}, body: {} },
+			response: { status_code: 200, headers: {} },
+		};
+		const buildSpy = jest.spyOn(SpendTracker, "buildSpendLogFromRequest");
+
+		await audit!({
+			capability: "vision",
+			stage: "handler",
+			callType: "acompletion",
+			model: "gpt-5.4-mini",
+			toolCallId: "call-vision",
+			messages: [],
+			startTime: new Date(),
+			endTime: new Date(),
+			response: attachUpstreamLogContext({ usage: {} }, upstreamLogContext),
+		});
+		expect(buildSpy).toHaveBeenLastCalledWith(expect.objectContaining({ upstreamLogContext: upstreamLogContext }));
+
+		const errorContext = { request: { url: "http://provider/v1/chat/completions", method: "POST", headers: {}, body: {} } };
+		await audit!({
+			capability: "vision",
+			stage: "handler",
+			callType: "acompletion",
+			model: "gpt-5.4-mini",
+			toolCallId: "call-vision-2",
+			messages: [],
+			startTime: new Date(),
+			endTime: new Date(),
+			error: attachUpstreamLogContext(new Error("worker failed"), errorContext),
+		});
+		expect(buildSpy).toHaveBeenLastCalledWith(expect.objectContaining({ upstreamLogContext: errorContext }));
 	});
 });

@@ -28,6 +28,11 @@ import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
 import { modelCostMapService, type ModelCostMapService } from "../cost/ModelCostMapService";
 import { buildEnrichedModelInfo, buildModelGroupInfoResponse } from "./modelGroupBuilder";
+import {
+	BUILTIN_CAPABILITIES_CONFIG_PARAM,
+	normalizeBuiltinCapabilitiesConfig,
+	type BuiltinCapabilitiesConfig,
+} from "../capabilities/BuiltinCapabilitiesConfig";
 
 /** /v2/model/info 分页默认值与边界常量 */
 const DEFAULT_MODEL_INFO_PAGE = 1;
@@ -669,6 +674,7 @@ function buildModelInfoV2Item(
 	modelInfo: ModelInfo | undefined,
 	fallbacks: readonly string[],
 	modelCostMap: ReturnType<ModelCostMapService["getSnapshot"]>["map"],
+	builtinCapabilities?: BuiltinCapabilitiesConfig,
 ): ModelInfoV2Item {
 	const fallbackId = resolveModelId(modelInfo, dep, stableIndex);
 	return {
@@ -680,7 +686,7 @@ function buildModelInfoV2Item(
 			use_litellm_proxy: pickBooleanParam(dep.litellm_params, "use_litellm_proxy"),
 		},
 		model_info: {
-			...buildEnrichedModelInfo(dep, fallbackId, modelCostMap),
+			...buildEnrichedModelInfo(dep, fallbackId, modelCostMap, builtinCapabilities),
 			fallbacks: [...fallbacks],
 			...(typeof modelInfo?.override_model_name === "string"
 				? { override_model_name: modelInfo.override_model_name }
@@ -762,6 +768,7 @@ function buildV2ModelInfoResponse(
 	query: V2ModelInfoQuery,
 	fallbacksByGroup: Record<string, string[]>,
 	modelCostMap: ReturnType<ModelCostMapService["getSnapshot"]>["map"],
+	builtinCapabilities?: BuiltinCapabilitiesConfig,
 ): PaginatedModelInfoResponse {
 	const page = parsePositiveInt(query.page, DEFAULT_MODEL_INFO_PAGE);
 	const size = parsePositiveInt(query.size, DEFAULT_MODEL_INFO_PAGE_SIZE);
@@ -788,7 +795,7 @@ function buildV2ModelInfoResponse(
 	for (const [groupName, group] of grouped) {
 		const groupFallbacks = fallbacksByGroup[groupName] ?? [];
 		group.forEach((dep, idx) => {
-			items.push(buildModelInfoV2Item(dep, idx, dep.model_info, groupFallbacks, modelCostMap));
+			items.push(buildModelInfoV2Item(dep, idx, dep.model_info, groupFallbacks, modelCostMap, builtinCapabilities));
 		});
 	}
 
@@ -897,21 +904,25 @@ export function registerModelsPageSupportRoutes(
 	 *   - teamId: 当前 TS 端尚未实现 team 过滤；保留在 query 类型中以兼容前端，但端点不读取。
 	 *   - sortBy, sortOrder: 排序（仅支持 model_name / id；sortOrder 非法值回退 asc）
 	 */
-	registerRoute(router, { method: "get", path: "/v2/model/info" }, (req) => {
+	registerRoute(router, { method: "get", path: "/v2/model/info" }, async (req) => {
 		const deployments = resolveDeployments(routerOrAccessor);
+		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
+			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
+		);
 		// 无部署时按 Python 空态返回 total_pages = 0
 		return buildV2ModelInfoResponse(
 			deployments,
 			parseModelInfoQuery(req.query as Record<string, unknown>),
 			resolveFallbacks(routerOrAccessor),
 			costMapService.getSnapshot().map,
+			builtinCapabilities,
 		);
 	});
 
 	// ── /v1/model/info ──────────────────────────────────────
 
 	/** 单个模型详情查询（WebUI 编辑模型时使用） */
-	registerRoute(router, { method: "get", path: "/v1/model/info" }, (req): ModelInfoV1Response => {
+	registerRoute(router, { method: "get", path: "/v1/model/info" }, async (req): Promise<ModelInfoV1Response> => {
 		const modelId = firstQueryString(req.query.litellm_model_id ?? req.query.model_id ?? req.query.modelId) ?? "";
 		const deployments = resolveDeployments(routerOrAccessor);
 		if (!modelId) {
@@ -929,7 +940,12 @@ export function registerModelsPageSupportRoutes(
 		const sameGroup = deployments.filter((d) => d.model_name === dep.model_name);
 		const idx = sameGroup.indexOf(dep);
 		const fallbacks = resolveFallbacks(routerOrAccessor)[dep.model_name] ?? [];
-		return { data: [buildModelInfoV2Item(dep, idx, dep.model_info, fallbacks, costMapService.getSnapshot().map)] };
+		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
+			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
+		);
+		return {
+			data: [buildModelInfoV2Item(dep, idx, dep.model_info, fallbacks, costMapService.getSnapshot().map, builtinCapabilities)],
+		};
 	});
 
 	// ── /model_group/info ───────────────────────────────────
@@ -941,9 +957,12 @@ export function registerModelsPageSupportRoutes(
 	 * （注意：WebUI 端 modelHubData?.data?.filter / .find，必须有 data 数组，否则报
 	 * "n.find is not a function"）
 	 */
-	registerRoute(router, { method: "get", path: "/model_group/info" }, () => {
+	registerRoute(router, { method: "get", path: "/model_group/info" }, async () => {
 		const deployments = resolveDeployments(routerOrAccessor);
-		return buildModelGroupInfoResponse(deployments, costMapService.getSnapshot().map);
+		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
+			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
+		);
+		return buildModelGroupInfoResponse(deployments, costMapService.getSnapshot().map, builtinCapabilities);
 	});
 
 	// ── /config/pass_through_endpoint ───────────────────────

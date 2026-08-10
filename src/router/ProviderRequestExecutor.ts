@@ -62,7 +62,7 @@ export async function executeProviderRequest(
 		const response = await fetch(request.url, {
 			method: request.method,
 			headers: request.headers,
-			body: JSON.stringify(request.body),
+			body: request.bodyEncoding === "raw" ? (request.body as never) : JSON.stringify(request.body),
 			signal: abortController.signal,
 		});
 		const body = options.readJson === false ? undefined : await response.json();

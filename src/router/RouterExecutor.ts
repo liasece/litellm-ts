@@ -23,6 +23,7 @@ import {
 	AuthenticationError,
 	NotFoundError,
 	InternalServerError,
+	BadRequestError,
 } from "./RouterErrors";
 import { logger } from "../core/utils/logger";
 import { parseRetryAfterSeconds } from "./RouterRetryPolicy";
@@ -50,12 +51,14 @@ export function castExceptionStatusToInt(messageOrStatus: string | number | unde
 /**
  * 对齐 PY isinstance 检查 + 透传原始异常类型。
  * 401/403 → AuthenticationError, 404 → NotFoundError, 408 → TimeoutError,
- * 429 → RateLimitError, 5xx → 包装为 Error。
+ * 429 → RateLimitError, 其余 4xx → BadRequestError, 5xx → InternalServerError。
+ * 所有 HTTP 错误都保留真实 status_code，供响应映射与 cooldown 判定使用。
  * @param statusCode
  * @param bodyStr
  */
 export function categorizeProviderError(statusCode: number, bodyStr: string): Error {
 	const lower = bodyStr.toLowerCase();
+	const fields = { status_code: statusCode };
 
 	if (
 		lower.includes("context_length_exceeded") ||
@@ -65,7 +68,7 @@ export function categorizeProviderError(statusCode: number, bodyStr: string): Er
 		lower.includes("context window") ||
 		lower.includes("token limit")
 	) {
-		return new ContextWindowExceededError(bodyStr);
+		return new ContextWindowExceededError(bodyStr, fields);
 	}
 
 	if (
@@ -76,23 +79,26 @@ export function categorizeProviderError(statusCode: number, bodyStr: string): Er
 		lower.includes("harmful") ||
 		lower.includes("inappropriate")
 	) {
-		return new ContentPolicyViolationError(bodyStr);
+		return new ContentPolicyViolationError(bodyStr, fields);
 	}
 
 	if (statusCode === 401 || statusCode === 403) {
-		return new AuthenticationError(bodyStr);
+		return new AuthenticationError(bodyStr, fields);
 	}
 	if (statusCode === 404) {
-		return new NotFoundError(bodyStr);
+		return new NotFoundError(bodyStr, fields);
 	}
 	if (statusCode === 408) {
-		return new TimeoutError(bodyStr);
+		return new TimeoutError(bodyStr, fields);
 	}
 	if (statusCode === 429 || lower.includes("rate limit") || lower.includes("rate_limit")) {
-		return new RateLimitError(bodyStr);
+		return new RateLimitError(bodyStr, fields);
 	}
 	if (statusCode >= 500) {
-		return new InternalServerError(bodyStr);
+		return new InternalServerError(bodyStr, fields);
+	}
+	if (statusCode >= 400) {
+		return new BadRequestError(bodyStr, fields);
 	}
 	return new Error(bodyStr);
 }
@@ -198,7 +204,8 @@ export function buildCooldownDecision(input: CooldownDecisionInput): CooldownDec
 	const { deployment, error, sameGroupCount, retryAfterHeader, defaultCooldownTimeMs, cooldownManager, routerAllowedFails } = input;
 	const exceptionStrForCooldown = error.name || error.message;
 	const errorCategory = categorizeErrorForCooldown(error);
-	const statusCode = castExceptionStatusToInt(error.message);
+	const errorStatusCode = (error as Error & { status_code?: unknown }).status_code;
+	const statusCode = castExceptionStatusToInt(typeof errorStatusCode === "number" ? errorStatusCode : error.message);
 	const shouldCooldown = cooldownManager.isCooldownRequired(
 		getDeploymentKey(deployment),
 		statusCode,

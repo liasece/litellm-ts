@@ -45,10 +45,21 @@ import {
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { prepareOpenAIVisionRequest } from "../capabilities/VisionCapability";
-import { createVisionCapabilityAuditHook, createWebCapabilityAuditHook } from "../capabilities/BuiltinCapabilityAudit";
+import {
+	createImageGenerationCapabilityAuditHook,
+	createVisionCapabilityAuditHook,
+	createWebCapabilityAuditHook,
+} from "../capabilities/BuiltinCapabilityAudit";
+import { prepareOpenAIImageGenerationRequest } from "../capabilities/ImageGenerationCapability";
 import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareOpenAIWebRequest, type PreparedWebRequest } from "../capabilities/WebCapability";
+import {
+	attachUpstreamLogContext,
+	createUpstreamLogContext,
+	getUpstreamLogContext,
+	type UpstreamLogContext,
+} from "../router/UpstreamLogContext";
 
 const logger = createModuleLogger("Proxy:ChatCompletions");
 
@@ -281,6 +292,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+		const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const visionImageStore = createVisionImageStore(db);
 		const modelResolutionTrace = createModelResolutionTraceCollector();
@@ -311,6 +323,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 						completeWithResolutionTrace,
 						{
 							visionAudit: visionAudit,
+							imageGenerationAudit: imageGenerationAudit,
 							webAudit: webAudit,
 							visionImageStore: visionImageStore,
 						},
@@ -361,6 +374,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							messages: originalMessages,
 							proxyServerRequestBody: originalRequestBody,
 							response: result,
+							upstreamLogContext: getUpstreamLogContext(result),
 							usage: usage,
 							status: SpendLogStatus.Success,
 							attemptedRetries: modelResolutionTrace.fallbackDepth,
@@ -407,6 +421,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							response: initialResult,
 							usage: initialResult?.["usage"] as Record<string, unknown> | undefined,
 							error: error,
+							upstreamLogContext: getUpstreamLogContext(error),
 							status: SpendLogStatus.Failure,
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 							attemptedRetries: modelResolutionTrace.fallbackDepth,
@@ -491,8 +506,14 @@ async function handleStreamingResponse(
 		messages as unknown as Array<Record<string, unknown>>,
 		visionImageStore,
 	);
+	const preparedImageGeneration = await prepareOpenAIImageGenerationRequest(
+		litellmRouter,
+		model,
+		messages as unknown as Array<Record<string, unknown>>,
+		visionImageStore,
+	);
 	const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, messages as unknown as Array<Record<string, unknown>>);
-	if (preparedVision || preparedWeb) {
+	if (preparedVision || preparedImageGeneration || preparedWeb) {
 		await handlePrivateVisionStreamingResponse(litellmRouter, model, messages, optionalParams, res, {
 			...context,
 			preparedWeb: preparedWeb,
@@ -504,6 +525,7 @@ async function handleStreamingResponse(
 	let currentModel = model;
 	const fallbackModels: string[] = [model];
 	let lastError: unknown;
+	let lastUpstreamLogContext: UpstreamLogContext | undefined;
 	const startTime = new Date();
 	const upstreamAbortController = new AbortController();
 	const abortUpstream = (): void => upstreamAbortController.abort();
@@ -551,6 +573,7 @@ async function handleStreamingResponse(
 				"chat",
 			),
 		);
+		lastUpstreamLogContext = createUpstreamLogContext(providerReq);
 
 		try {
 			const timeoutSec = deployment.litellm_params.stream_timeout ?? deployment.litellm_params.timeout;
@@ -560,15 +583,21 @@ async function handleStreamingResponse(
 				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
 			});
 			const response = execution.response;
+			lastUpstreamLogContext = createUpstreamLogContext(providerReq, response);
 			if (!response.ok) {
 				const errorBody = await response.json().catch(() => ({}));
-				throw new ApiError(response.status, `Provider 返回错误: ${JSON.stringify(errorBody)}`);
+				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, errorBody);
+				throw attachUpstreamLogContext(
+					new ApiError(response.status, `Provider 返回错误: ${JSON.stringify(errorBody)}`),
+					lastUpstreamLogContext,
+				);
 			}
 
 			const spendInfo = buildDeploymentSpendInfo(deployment, providerReq.url);
 			if (!provider.supportsStreaming() || !response.body) {
 				const rawBody = await response.json();
 				const transformed = provider.transformResponse(deployment.litellm_params.model, rawBody);
+				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, rawBody);
 				const completionStartTime = new Date();
 				if (fallbackDepth === 0) {
 					transformed.model = model;
@@ -593,6 +622,7 @@ async function handleStreamingResponse(
 						messages: originalMessages,
 						proxyServerRequestBody: originalRequestBody,
 						response: transformed,
+						upstreamLogContext: lastUpstreamLogContext,
 						usage: transformed.usage as unknown as Record<string, unknown> | undefined,
 						status: SpendLogStatus.Success,
 						attemptedRetries: fallbackDepth,
@@ -709,6 +739,7 @@ async function handleStreamingResponse(
 						messages: originalMessages,
 						proxyServerRequestBody: originalRequestBody,
 						response: responseForLog,
+						upstreamLogContext: lastUpstreamLogContext,
 						usage: usage as unknown as Record<string, unknown> | undefined,
 						error: streamError,
 						status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
@@ -739,6 +770,9 @@ async function handleStreamingResponse(
 			}
 			if (spendLifecycle.isFinalized()) {
 				throw err;
+			}
+			if (getUpstreamLogContext(err) === undefined && err !== null && typeof err === "object") {
+				attachUpstreamLogContext(err as object, lastUpstreamLogContext);
 			}
 			lastError = err;
 			litellmRouter.markFailed(deployment.model_name);
@@ -786,7 +820,8 @@ async function handleStreamingResponse(
 						endTime: new Date(),
 						messages: originalMessages,
 						proxyServerRequestBody: originalRequestBody,
-						error: terminalError,
+							error: terminalError,
+							upstreamLogContext: getUpstreamLogContext(terminalError) ?? lastUpstreamLogContext,
 						status: SpendLogStatus.Failure,
 						attemptedRetries: modelResolutionTrace.fallbackDepth,
 						maxRetries: litellmRouter.maxFallbacks,
@@ -853,6 +888,7 @@ async function handlePrivateVisionStreamingResponse(
 	const startTime = new Date();
 	const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 	const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+	const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 	const result = await runOpenAIBuiltinCapabilityAgentLoop(
 		litellmRouter,
 		model,
@@ -862,6 +898,7 @@ async function handlePrivateVisionStreamingResponse(
 			litellmRouter.completion(completionModel, completionMessages, params, modelResolutionTrace),
 		{
 			visionAudit: visionAudit,
+			imageGenerationAudit: imageGenerationAudit,
 			webAudit: webAudit,
 			visionImageStore: visionImageStore,
 			preparedWeb: preparedWeb,
@@ -909,6 +946,13 @@ async function handlePrivateVisionStreamingResponse(
 			function: { name: call.function.name, arguments: call.function.arguments },
 		}));
 	}
+	const generatedMessage = choice.message as unknown as Record<string, unknown>;
+	if (generatedMessage["image"] !== undefined) {
+		delta["image"] = generatedMessage["image"];
+	}
+	if (generatedMessage["images"] !== undefined) {
+		delta["images"] = generatedMessage["images"];
+	}
 	if (Object.keys(delta).length > 0) {
 		res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] })}\n\n`);
 	}
@@ -945,6 +989,7 @@ async function handlePrivateVisionStreamingResponse(
 			messages: originalMessages,
 			proxyServerRequestBody: originalRequestBody,
 			response: result,
+			upstreamLogContext: getUpstreamLogContext(result),
 			usage: usage as unknown as Record<string, unknown> | undefined,
 			status: SpendLogStatus.Success,
 			attemptedRetries: metadata.attemptedRetries,

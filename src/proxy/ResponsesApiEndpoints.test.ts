@@ -2,6 +2,7 @@ import http from "node:http";
 import express from "express";
 import request from "supertest";
 import { ApiError } from "../core/api/ApiError";
+import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { Router } from "../router/Router";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { RoutingStrategyName, type Deployment } from "../types/router";
@@ -40,6 +41,21 @@ function deployment(modelName: string, apiBase: string): Deployment {
 	};
 }
 
+function deepseekDeployment(modelName = "deepseek-v4-flash", apiBase = "https://api.deepseek.com"): Deployment {
+	return {
+		model_name: modelName,
+		litellm_params: {
+			model: "deepseek/deepseek-v4-flash",
+			custom_llm_provider: "deepseek",
+			api_key: "deepseek-key",
+			api_base: apiBase,
+			input_cost_per_token: 0.001,
+			output_cost_per_token: 0.002,
+		},
+		model_info: { id: `${modelName}-deployment` },
+	};
+}
+
 function buildDeploymentRouter(modelList: Deployment[], fallbacks: Array<Record<string, string[]>> = []): Router {
 	return new Router({
 		model_list: modelList,
@@ -49,7 +65,7 @@ function buildDeploymentRouter(modelList: Deployment[], fallbacks: Array<Record<
 	});
 }
 
-function buildApp(router: LiteLLMRouter, authenticated = false): express.Express {
+function buildApp(router: LiteLLMRouter, authenticated = false, database: unknown = {}): express.Express {
 	const app = express();
 	app.use(express.json());
 	if (authenticated) {
@@ -63,7 +79,7 @@ function buildApp(router: LiteLLMRouter, authenticated = false): express.Express
 		});
 	}
 	const expressRouter = express.Router();
-	registerResponsesApiRoutes(expressRouter, router, {} as never);
+	registerResponsesApiRoutes(expressRouter, router, database === null ? undefined : (database as never));
 	app.use(expressRouter);
 	return app;
 }
@@ -103,6 +119,488 @@ describe("Responses API contract matrix", () => {
 	});
 
 	describe("controlled deployment matrix", () => {
+		test("DeepSeek Flash uses native Responses and preserves Responses semantics", async () => {
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-native",
+				reserved: 1,
+				actual: null,
+			});
+			const trackSpy = jest
+				.spyOn(SpendTracker, "trackSpendLog")
+				.mockResolvedValue({ status: "committed", requestId: "request-native", spend: 0 });
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: "resp_deepseek_native",
+						object: "response",
+						created_at: 1_700_000_100,
+						status: "completed",
+						model: "deepseek-v4-flash",
+						output: [
+							{
+								id: "fc_native",
+								type: "function_call",
+								status: "completed",
+								call_id: "call_native",
+								name: "js",
+								namespace: "mcp__node_repl",
+								arguments: '{"code":"1+1"}',
+							},
+						],
+						usage: {
+							input_tokens: 12,
+							input_tokens_details: { cached_tokens: 4 },
+							output_tokens: 7,
+							output_tokens_details: { reasoning_tokens: 3 },
+							total_tokens: 19,
+						},
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+			const app = buildApp(buildDeploymentRouter([deepseekDeployment()]), true);
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "deepseek-v4-flash",
+					instructions: "Follow instructions",
+					input: [{ role: "user", content: "calculate" }],
+					reasoning: { effort: "max" },
+					tools: [
+						{
+							type: "namespace",
+							name: "mcp__node_repl",
+							tools: [{ type: "function", name: "js", parameters: { type: "object" } }],
+						},
+						{ type: "web_search", external_web_access: true },
+					],
+				})
+				.expect(200);
+
+			expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://api.deepseek.com/responses");
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody).toMatchObject({
+				model: "deepseek-v4-flash",
+				instructions: "Follow instructions",
+				input: [{ role: "user", content: "calculate" }],
+				reasoning: { effort: "max" },
+			});
+			expect(providerBody["messages"]).toBeUndefined();
+			expect(providerBody["tools"]).toEqual([
+				{
+					type: "namespace",
+					name: "mcp__node_repl",
+					tools: [{ type: "function", name: "js", parameters: { type: "object" } }],
+				},
+				{ type: "web_search", external_web_access: true },
+			]);
+			expect(response.body).toMatchObject({
+				id: "resp_deepseek_native",
+				object: "response",
+				status: "completed",
+				output: [
+					{
+						type: "function_call",
+						call_id: "call_native",
+						namespace: "mcp__node_repl",
+						name: "js",
+					},
+				],
+			});
+			expect(response.body.usage.cost).toBeUndefined();
+			expect(trackSpy).toHaveBeenCalledTimes(1);
+			expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({
+				call_type: "aresponses",
+				status: "success",
+			});
+		});
+
+		test("DeepSeek native Responses stream is relayed without Chat synthesis", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "general_settings" ? { store_upstream_logs_in_spend_logs: true } : {},
+			);
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-native-stream",
+				reserved: 1,
+				actual: null,
+			});
+			const trackSpy = jest
+				.spyOn(SpendTracker, "trackSpendLog")
+				.mockResolvedValue({ status: "committed", requestId: "request-native-stream", spend: 0 });
+			const upstream = [
+				": keep-alive\r\n\r\n",
+				'event: response.created\r\ndata: {"type":"response.created","sequence_number":0,"response":{"id":"resp_native_',
+				'stream","object":"response","created_at":1700000100,"status":"in_progress","model":"deepseek-v4-flash","output":[]}}\r\n\r\n',
+				'event: response.output_item.done\ndata: {"type":"response.output_item.done","sequence_number":1,"output_index":0,"item":{"id":"fc_stream","type":"function_call","status":"completed","call_id":"call_stream","name":"read_thread_terminal","namespace":"codex_app","arguments":"{}"}}\n\n',
+				'event: response.completed\ndata: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_native_stream","object":"response","created_at":1700000100,"status":"completed","model":"deepseek-v4-flash","output":[{"id":"fc_stream","type":"function_call","status":"completed","call_id":"call_stream","name":"read_thread_terminal","namespace":"codex_app","arguments":"{}"}],"usage":{"input_tokens":5,"input_tokens_details":{"cached_tokens":1},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":7}}}\n\n',
+			];
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					new ReadableStream({
+						start: (controller) => {
+							for (const chunk of upstream) {
+								controller.enqueue(new TextEncoder().encode(chunk));
+							}
+							controller.close();
+						},
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				),
+			);
+			const app = buildApp(buildDeploymentRouter([deepseekDeployment()]), true);
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "deepseek-v4-flash",
+					input: "read terminal",
+					stream: true,
+					tools: [
+						{
+							type: "namespace",
+							name: "codex_app",
+							tools: [{ type: "function", name: "read_thread_terminal", parameters: { type: "object" } }],
+						},
+					],
+				})
+				.expect(200);
+
+			expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://api.deepseek.com/responses");
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody["input"]).toBe("read terminal");
+			expect(providerBody["messages"]).toBeUndefined();
+			expect(providerBody["tools"]).toEqual([
+				{
+					type: "namespace",
+					name: "codex_app",
+					tools: [{ type: "function", name: "read_thread_terminal", parameters: { type: "object" } }],
+				},
+			]);
+			const events = parseSseEvents(response.text);
+			expect(events.map((event) => event["type"])).toEqual(["response.created", "response.output_item.done", "response.completed"]);
+			expect(events[1]?.["item"]).toMatchObject({
+				type: "function_call",
+				namespace: "codex_app",
+				name: "read_thread_terminal",
+			});
+			expect((events[2]?.["response"] as Record<string, unknown>)?.["output"]).toEqual([
+				expect.objectContaining({ namespace: "codex_app", name: "read_thread_terminal" }),
+			]);
+			expect(trackSpy).toHaveBeenCalledTimes(1);
+			expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({
+				proxy_server_request: {
+					upstream_response: {
+						body: {
+							output: [
+								expect.objectContaining({
+									type: "function_call",
+									namespace: "codex_app",
+									name: "read_thread_terminal",
+								}),
+							],
+						},
+					},
+				},
+			});
+		});
+
+		test("DeepSeek native Responses injects always-on private capabilities without falling back to Chat", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							vision: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "vision-worker",
+								fallback_models: [],
+								max_iterations: 3,
+								max_output_tokens: 1024,
+							},
+						}
+					: {},
+			);
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: "resp_native_capability_bypass",
+						object: "response",
+						created_at: 1_700_000_100,
+						status: "completed",
+						model: "deepseek-v4-flash",
+						output: [{ id: "msg_1", type: "message", status: "completed", role: "assistant", content: [] }],
+						usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+			const nativeDeployment = deepseekDeployment();
+			nativeDeployment.model_info = {
+				...nativeDeployment.model_info,
+				supports_function_calling: true,
+				enabled_builtin_capabilities: ["vision"],
+			};
+			const app = buildApp(buildDeploymentRouter([nativeDeployment]), false, null);
+			const originalInput = [
+				{
+					id: "msg_user_history",
+					role: "user",
+					type: "message",
+					content: [{ type: "input_text", text: "Return OK." }],
+				},
+				{
+					id: "msg_assistant_history",
+					role: "assistant",
+					type: "message",
+					content: [{ type: "output_text", text: "Earlier answer." }],
+				},
+				{
+					id: "fc_history",
+					type: "function_call",
+					call_id: "call_history",
+					name: "client_tool",
+					arguments: "{}",
+				},
+				{
+					id: "fco_history",
+					type: "function_call_output",
+					call_id: "call_history",
+					output: "done",
+				},
+			];
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "deepseek-v4-flash",
+					input: originalInput,
+					instructions: "Preserve the original Responses history.",
+					store: false,
+					tools: [
+						{
+							type: "function",
+							name: "client_tool",
+							description: "Client tool",
+							parameters: { type: "object", properties: {} },
+						},
+					],
+				})
+				.expect(200);
+
+			expect(response.body).toMatchObject({
+				id: "resp_native_capability_bypass",
+				object: "response",
+				status: "completed",
+			});
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody["messages"]).toBeUndefined();
+			expect(providerBody["stream"]).toBe(false);
+			expect(providerBody["instructions"]).toBe("Preserve the original Responses history.");
+			expect(providerBody["input"]).toEqual([
+				expect.objectContaining({ type: "message", role: "system" }),
+				...originalInput,
+			]);
+			expect((providerBody["tools"] as Array<Record<string, unknown>>).map((tool) => tool["name"])).toEqual([
+				"client_tool",
+				"litellm__vision_inspect",
+			]);
+		});
+
+		test("streaming DeepSeek Responses injects private capabilities through a native non-stream agent turn", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							vision: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "vision-worker",
+								fallback_models: [],
+								max_iterations: 3,
+								max_output_tokens: 1024,
+							},
+						}
+					: {},
+			);
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: "resp_native_capability_stream",
+						object: "response",
+						created_at: 1_700_000_200,
+						status: "completed",
+						model: "deepseek-v4-flash",
+						output: [
+							{
+								id: "msg_stream",
+								type: "message",
+								status: "completed",
+								role: "assistant",
+								content: [{ type: "output_text", text: "OK", annotations: [] }],
+							},
+						],
+						usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+			const nativeDeployment = deepseekDeployment();
+			nativeDeployment.model_info = {
+				...nativeDeployment.model_info,
+				supports_function_calling: true,
+				enabled_builtin_capabilities: ["vision"],
+			};
+			const app = buildApp(buildDeploymentRouter([nativeDeployment]));
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({ model: "deepseek-v4-flash", input: "Return OK.", store: false, stream: true })
+				.expect(200);
+
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+			expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://api.deepseek.com/responses");
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody["stream"]).toBe(false);
+			expect(providerBody["tools"]).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ type: "function", name: "litellm__vision_inspect" }),
+				]),
+			);
+			const events = parseSseEvents(response.text);
+			expect(events.at(-1)).toMatchObject({
+				type: "response.completed",
+				response: { status: "completed" },
+			});
+		});
+
+		test("DeepSeek native Responses executes private capability calls and continues with function output", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							vision: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "vision-worker",
+								fallback_models: [],
+								max_iterations: 3,
+								max_output_tokens: 1024,
+							},
+						}
+					: {},
+			);
+			const unavailableRef = `sha256:${"a".repeat(64)}`;
+			const fetchSpy = jest
+				.spyOn(global, "fetch")
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							id: "resp_native_private_call",
+							object: "response",
+							created_at: 1_700_000_300,
+							status: "completed",
+							model: "deepseek-v4-flash",
+							output: [
+								{
+									id: "fc_private",
+									type: "function_call",
+									status: "completed",
+									call_id: "call_private",
+									name: "litellm__vision_inspect",
+									arguments: JSON.stringify({ image_refs: [unavailableRef], question: "What is shown?" }),
+								},
+							],
+							usage: { input_tokens: 8, output_tokens: 4, total_tokens: 12 },
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					),
+				)
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							id: "resp_native_private_done",
+							object: "response",
+							created_at: 1_700_000_301,
+							status: "completed",
+							model: "deepseek-v4-flash",
+							output: [
+								{
+									id: "msg_private_done",
+									type: "message",
+									status: "completed",
+									role: "assistant",
+									content: [{ type: "output_text", text: "No image is available.", annotations: [] }],
+								},
+							],
+							usage: { input_tokens: 12, output_tokens: 5, total_tokens: 17 },
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					),
+				);
+			const nativeDeployment = deepseekDeployment();
+			nativeDeployment.model_info = {
+				...nativeDeployment.model_info,
+				supports_function_calling: true,
+				enabled_builtin_capabilities: ["vision"],
+			};
+			const app = buildApp(buildDeploymentRouter([nativeDeployment]), false, null);
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({ model: "deepseek-v4-flash", input: "Inspect the unavailable image.", store: false })
+				.expect(200);
+			expect(fetchSpy).toHaveBeenCalledTimes(2);
+			const continuationBody = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+			expect(continuationBody["input"]).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ type: "function_call", call_id: "call_private" }),
+					expect.objectContaining({ type: "function_call_output", call_id: "call_private" }),
+				]),
+			);
+			expect(response.body.output).toEqual([
+				expect.objectContaining({
+					type: "message",
+					content: [expect.objectContaining({ type: "output_text", text: "No image is available." })],
+				}),
+			]);
+		});
+
+		test("DeepSeek native failure falls back to a Chat deployment inside Router", async () => {
+			const fetchSpy = jest
+				.spyOn(global, "fetch")
+				.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "deepseek failed" } }), { status: 500 }))
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							id: "chatcmpl-fallback",
+							model: "provider-model",
+							choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "fallback ok" } }],
+							usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					),
+				);
+			const router = buildDeploymentRouter(
+				[deepseekDeployment("deepseek-primary"), deployment("chat-fallback", "https://fallback.example/v1")],
+				[{ "deepseek-primary": ["chat-fallback"] }],
+			);
+			const app = buildApp(router);
+
+			const response = await request(app).post("/v1/responses").send({ model: "deepseek-primary", input: "hello" }).expect(200);
+
+			expect(fetchSpy.mock.calls.map((call) => call[0])).toEqual([
+				"https://api.deepseek.com/responses",
+				"https://fallback.example/v1/chat/completions",
+			]);
+			const fallbackBody = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+			expect(fallbackBody["messages"]).toEqual([{ role: "user", content: "hello" }]);
+			expect(response.body.output[0]).toMatchObject({
+				type: "message",
+				content: [{ type: "output_text", text: "fallback ok" }],
+			});
+		});
+
 		test("non-stream deployment preserves tool, reasoning and cache usage contracts", async () => {
 			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
 				new Response(
@@ -161,6 +659,113 @@ describe("Responses API contract matrix", () => {
 			});
 		});
 
+		test("Responses namespace tools are flattened for Chat providers and restored in function_call output", async () => {
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: "chatcmpl-namespace",
+						object: "chat.completion",
+						created: 1_700_000_002,
+						model: "provider-model",
+						choices: [
+							{
+								index: 0,
+								finish_reason: "tool_calls",
+								message: {
+									role: "assistant",
+									content: null,
+									tool_calls: [
+										{
+											id: "call_new",
+											type: "function",
+											function: { name: "mcp__node_repl__js", arguments: '{"code":"1+1"}' },
+										},
+									],
+								},
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+			const app = buildApp(buildDeploymentRouter([deployment("responses-model", "https://namespace.example/v1")]));
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "responses-model",
+					input: [
+						{ type: "message", role: "user", content: "calculate" },
+						{
+							type: "function_call",
+							call_id: "call_old",
+							namespace: "mcp__node_repl",
+							name: "js",
+							arguments: '{"code":"40+2"}',
+						},
+						{ type: "function_call_output", call_id: "call_old", output: "42" },
+					],
+					tools: [
+						{ type: "function", name: "plain_tool", parameters: { type: "object" } },
+						{
+							type: "namespace",
+							name: "mcp__node_repl",
+							description: "Run JavaScript",
+							tools: [
+								{
+									type: "function",
+									name: "js",
+									description: "Evaluate code",
+									parameters: { type: "object", properties: { code: { type: "string" } } },
+								},
+							],
+						},
+						{ type: "web_search", external_web_access: true },
+					],
+					tool_choice: { type: "function", namespace: "mcp__node_repl", name: "js" },
+				})
+				.expect(200);
+
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody["tools"]).toEqual([
+				{ type: "function", function: { name: "plain_tool", parameters: { type: "object" } } },
+				{
+					type: "function",
+					function: {
+						name: "mcp__node_repl__js",
+						description: "Run JavaScript\n\nEvaluate code",
+						parameters: { type: "object", properties: { code: { type: "string" } } },
+					},
+				},
+			]);
+			expect(providerBody["tool_choice"]).toEqual({ type: "function", function: { name: "mcp__node_repl__js" } });
+			expect(providerBody["messages"]).toEqual([
+				{ role: "user", content: "calculate" },
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_old",
+							type: "function",
+							function: { name: "mcp__node_repl__js", arguments: '{"code":"40+2"}' },
+						},
+					],
+				},
+				{ role: "tool", tool_call_id: "call_old", content: "42" },
+			]);
+			expect(response.body.output).toEqual([
+				expect.objectContaining({
+					type: "function_call",
+					call_id: "call_new",
+					namespace: "mcp__node_repl",
+					name: "js",
+					arguments: '{"code":"1+1"}',
+				}),
+			]);
+		});
+
 		test("stream deployment parser emits standard ordered Responses events", async () => {
 			const upstream = [
 				'data: {"id":"chatcmpl-live","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,"delta":{"reasoning_content":"think","content":"Hi"},"finish_reason":null}]}\n',
@@ -190,6 +795,66 @@ describe("Responses API contract matrix", () => {
 			expect(events.map((event) => event.type).slice(0, 2)).toEqual(["response.created", "response.in_progress"]);
 			expect(events.map((event) => event.type).at(-1)).toBe("response.completed");
 			expect(events.filter((event) => event.type === "response.completed" || event.type === "response.failed")).toHaveLength(1);
+		});
+
+		test("stream function_call restores namespace after Chat tool name flattening", async () => {
+			const upstream = [
+				'data: {"id":"chatcmpl-ns-live","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_ns","type":"function","function":{"name":"codex_app__read_thread_terminal","arguments":"{}"}}]},"finish_reason":null}]}\n',
+				'data: {"id":"chatcmpl-ns-live","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n',
+				"data: [DONE]\n",
+			];
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					new ReadableStream({
+						start: (controller) => {
+							for (const chunk of upstream) {
+								controller.enqueue(new TextEncoder().encode(chunk));
+							}
+							controller.close();
+						},
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				),
+			);
+			const app = buildApp(buildDeploymentRouter([deployment("responses-model", "https://stream.example/v1")]));
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "responses-model",
+					input: "read terminal",
+					stream: true,
+					tools: [
+						{
+							type: "namespace",
+							name: "codex_app",
+							tools: [{ type: "function", name: "read_thread_terminal", parameters: { type: "object" } }],
+						},
+						{ type: "web_search", external_web_access: true },
+					],
+				})
+				.expect(200);
+
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody["tools"]).toEqual([
+				{
+					type: "function",
+					function: { name: "codex_app__read_thread_terminal", parameters: { type: "object" } },
+				},
+			]);
+			const events = parseSseEvents(response.text);
+			const itemDone = events.find((event) => event["type"] === "response.output_item.done");
+			expect(itemDone?.["item"]).toMatchObject({
+				type: "function_call",
+				call_id: "call_ns",
+				namespace: "codex_app",
+				name: "read_thread_terminal",
+				arguments: "{}",
+			});
+			const completed = events.find((event) => event["type"] === "response.completed");
+			expect((completed?.["response"] as Record<string, unknown>)?.["output"]).toEqual([
+				expect.objectContaining({ namespace: "codex_app", name: "read_thread_terminal" }),
+			]);
 		});
 
 		test("deployment fallback stays inside Router and returns one final response", async () => {
@@ -382,10 +1047,7 @@ describe("Responses API contract matrix", () => {
 		});
 		const app = buildApp(buildRouter(completion));
 
-		const response = await request(app)
-			.post("/v1/responses")
-			.send({ model: "responses-model", input: "hello" })
-			.expect(200);
+		const response = await request(app).post("/v1/responses").send({ model: "responses-model", input: "hello" }).expect(200);
 
 		expect(response.body.output).toEqual([
 			expect.objectContaining({
@@ -510,8 +1172,7 @@ describe("Responses API contract matrix", () => {
 		expect(
 			events.filter(
 				(event) =>
-					typeof event.type === "string" &&
-					["response.completed", "response.incomplete", "response.failed"].includes(event.type),
+					typeof event.type === "string" && ["response.completed", "response.incomplete", "response.failed"].includes(event.type),
 			),
 		).toHaveLength(1);
 	});
@@ -662,5 +1323,83 @@ describe("Responses API contract matrix", () => {
 		await request(app).post("/v1/responses").send({ model: "responses-model", input: "hello" }).expect(429);
 		expect(trackSpy).toHaveBeenCalledTimes(1);
 		expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({ status: "failure" });
+	});
+
+	test("built-in image creation is returned as an official image_generation_call item", async () => {
+		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+			param === "builtin_capabilities"
+				? {
+						image_generation: {
+							enabled: true,
+							always_inject: true,
+							handler_model: "image-worker",
+							fallback_models: [],
+							max_iterations: 3,
+						},
+					}
+				: {},
+		);
+		const completion = jest
+			.fn()
+			.mockResolvedValueOnce({
+				id: "chatcmpl-image-call",
+				created: 1,
+				model: "responses-model",
+				choices: [
+					{
+						index: 0,
+						finish_reason: "tool_calls",
+						message: {
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: "call-image-create",
+									type: "function",
+									function: {
+										name: "litellm__image_create",
+										arguments: '{"prompt":"A blue paper crane"}',
+									},
+								},
+							],
+						},
+					},
+				],
+				usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+			})
+			.mockResolvedValueOnce({
+				id: "chatcmpl-image-final",
+				created: 2,
+				model: "responses-model",
+				choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Created." } }],
+				usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+			});
+		const router = buildRouter(completion) as LiteLLMRouter & { imageGeneration: jest.Mock };
+		router.getDeployments = () => [
+			{
+				model_name: "responses-model",
+				litellm_params: { model: "openai/provider-model" },
+				model_info: { supports_function_calling: true, enabled_builtin_capabilities: ["image_generation"] },
+			},
+		];
+		router.resolveModelGroupWithTrace = (model: string) => ({ inputModel: model, resolvedModel: model, resolutionPath: [model] });
+		router.imageGeneration = jest.fn().mockResolvedValue({
+			created: 2,
+			output_format: "png",
+			data: [{ b64_json: "AA==" }],
+			usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+		});
+
+		const response = await request(buildApp(router, false, null))
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "Create a blue paper crane", store: false })
+			.expect(200);
+
+		expect(response.body.output).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ type: "image_generation_call", status: "completed", result: "AA==" }),
+			]),
+		);
+		expect(JSON.stringify(response.body)).not.toContain("litellm__image_create");
 	});
 });

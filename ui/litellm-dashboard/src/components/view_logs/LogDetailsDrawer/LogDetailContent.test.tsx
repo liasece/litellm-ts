@@ -300,6 +300,106 @@ describe("LogDetailContent", () => {
 		expect(screen.getByText("hello from proxy")).toBeInTheDocument();
 	});
 
+	it("separates downstream and transformed upstream request/response views", async () => {
+		const user = userEvent.setup();
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: {
+						url: "/v1/responses",
+						method: "POST",
+						body: { model: "deepseek-v4-flash", instructions: "Follow instructions" },
+						upstream_request: {
+							url: "https://api.deepseek.com/chat/completions",
+							method: "POST",
+							body: { messages: [{ role: "system", content: "Follow instructions" }] },
+						},
+						upstream_response: {
+							status_code: 200,
+							body: { choices: [{ message: { role: "assistant", content: "OK" } }] },
+						},
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByRole("tab", { name: "Downstream" })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "Diff" })).toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: "Upstream" }));
+		expect(screen.getByRole("tab", { name: "Request" })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "Response" })).toBeInTheDocument();
+		expect(document.body.textContent).toContain("api.deepseek.com");
+
+		await user.click(screen.getByRole("tab", { name: "Diff" }));
+		const diff = screen.getByTestId("upstream-downstream-diff");
+		expect(within(diff).getByRole("tab", { name: "Request" })).toBeInTheDocument();
+		expect(within(diff).getByRole("tab", { name: "Response" })).toBeInTheDocument();
+		await user.click(within(diff).getByRole("tab", { name: "Response" }));
+		const responseDiff = within(diff).getByRole("tabpanel");
+		expect(responseDiff.textContent).toContain("OK");
+		expect(responseDiff.textContent).not.toContain("status_code");
+	});
+
+	it("compares the recorded downstream body without substituting replay messages", async () => {
+		const user = userEvent.setup();
+		const recordedMessages = [{ role: "user", content: "same recorded request" }];
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: {
+						url: "https://api.example.com/v1/messages",
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: { model: "gpt-4", messages: recordedMessages },
+						arrival_time: "2026-08-10T14:05:28.382Z",
+						upstream_request: {
+							url: "https://api.example.com/v1/messages",
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: { model: "gpt-4", messages: recordedMessages },
+						},
+					},
+					messages: [{ role: "user", content: "replay-only replacement" }],
+				})}
+			/>,
+		);
+
+		await user.click(screen.getByRole("tab", { name: "Diff" }));
+		const diff = screen.getByTestId("upstream-downstream-diff");
+		const changedRows = diff.querySelectorAll('[data-diff-kind="change"]');
+
+		expect(changedRows.length).toBeGreaterThan(0);
+		expect(Array.from(changedRows).some((row) => row.textContent?.includes("replay-only replacement"))).toBe(false);
+	});
+
+	it("keeps request Diff available when an older log has no upstream response body", async () => {
+		const user = userEvent.setup();
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: {
+						url: "/v1/responses",
+						method: "POST",
+						body: { model: "deepseek-v4-flash" },
+						upstream_request: {
+							url: "https://api.deepseek.com/responses",
+							method: "POST",
+							body: { model: "deepseek-v4-flash", reasoning: { effort: "max" } },
+						},
+						upstream_response: { status_code: 200 },
+					},
+				})}
+			/>,
+		);
+
+		const diffTab = screen.getByRole("tab", { name: "Diff" });
+		expect(diffTab).toBeInTheDocument();
+		await user.click(diffTab);
+		const diff = screen.getByTestId("upstream-downstream-diff");
+		expect(within(diff).getByRole("tab", { name: "Request" })).toBeInTheDocument();
+		expect(within(diff).queryByRole("tab", { name: "Response" })).not.toBeInTheDocument();
+	});
+
 	it("should display Metadata section collapsed by default", () => {
 		render(
 			<LogDetailContent

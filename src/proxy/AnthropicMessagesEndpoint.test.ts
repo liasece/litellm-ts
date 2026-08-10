@@ -4,6 +4,10 @@ import { formatAnthropicPingEvent, registerAnthropicMessagesEndpoints } from "./
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import * as SpendTracker from "../spend/SpendTracker";
 import { SpendLogStatus } from "../types/spend";
+import * as VisionCapability from "../capabilities/VisionCapability";
+import * as WebCapability from "../capabilities/WebCapability";
+import * as ImageGenerationCapability from "../capabilities/ImageGenerationCapability";
+import * as BuiltinCapabilityRunner from "../capabilities/BuiltinCapabilityRunner";
 
 const runtimeConfig = { generalSettings: {} };
 
@@ -191,6 +195,47 @@ describe("native Anthropic streaming SpendLog", () => {
 
 	it("keep-alive ping 携带 Anthropic 事件 discriminator", async () => {
 		expect(formatAnthropicPingEvent()).toBe('event: ping\ndata: {"type":"ping"}\n\n');
+	});
+
+	it("仅启用图片能力时进入私有循环，并在合成 SSE message_start 暴露生成图片", async () => {
+		jest.spyOn(WebCapability, "prepareAnthropicWebRequest").mockResolvedValue(undefined);
+		jest.spyOn(VisionCapability, "prepareAnthropicVisionRequest").mockResolvedValue(undefined);
+		jest.spyOn(ImageGenerationCapability, "resolveImageGenerationCapability").mockResolvedValue({
+			handlerModel: "gpt-image-test",
+			fallbackModels: [],
+			maxIterations: 4,
+			maxOutputTokens: 32768,
+			alwaysInject: true,
+		} as never);
+		const generatedImage = {
+			id: "img-test",
+			type: "image",
+			source: { type: "base64", media_type: "image/png", data: "cG5n" },
+			action: "create",
+		};
+		const runnerSpy = jest.spyOn(BuiltinCapabilityRunner, "runAnthropicBuiltinCapabilityAgentLoop").mockResolvedValue({
+			body: { model: "native-group", messages: [] },
+			response: {
+				id: "msg-image",
+				type: "message",
+				role: "assistant",
+				content: [{ type: "text", text: "done" }],
+				stop_reason: "end_turn",
+				usage: { input_tokens: 2, output_tokens: 1 },
+				generated_images: [generatedImage],
+			},
+		});
+		const app = buildApp();
+
+		const response = await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "create an image" }], stream: true })
+			.expect(200);
+
+		expect(runnerSpy).toHaveBeenCalledTimes(1);
+		expect(response.text).toContain('event: message_start');
+		expect(response.text).toContain(`"generated_images":[${JSON.stringify(generatedImage)}]`);
+		expect(response.text).toContain('event: message_stop');
 	});
 
 	it("非流式成功日志保存 alias 解析链并保留原始 fallback 首项", async () => {

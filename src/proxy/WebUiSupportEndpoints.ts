@@ -205,6 +205,7 @@ const CONFIG_GENERAL_SETTINGS_FIELD_NAMES: ReadonlySet<string> = new Set([
 	"supported_db_objects",
 	"user_mcp_management_mode",
 	"store_prompts_in_spend_logs",
+	"store_upstream_logs_in_spend_logs",
 	"maximum_spend_logs_retention_period",
 	"mcp_internal_ip_ranges",
 	"mcp_trusted_proxy_ranges",
@@ -1173,6 +1174,12 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 			field_default_value: null,
 		},
 		{
+			field_name: "store_upstream_logs_in_spend_logs",
+			field_type: ConfigFieldType.BOOLEAN,
+			field_description: "store provider upstream request and response details in spend logs",
+			field_default_value: null,
+		},
+		{
 			field_name: "maximum_spend_logs_retention_period",
 			field_type: ConfigFieldType.STRING,
 			field_description: "retention period for spend logs (e.g. '30d')",
@@ -1268,6 +1275,7 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		return {
 			capabilities: configValue,
 			available_models: availableModelOptions,
+			image_generation_available_models: availableModelOptions,
 			web_available_models: availableModelOptions,
 		};
 	});
@@ -1278,18 +1286,26 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 			throw ApiError.badRequest("At least one capability setting is required");
 		}
 		const hasVision = Object.prototype.hasOwnProperty.call(req.body, "vision");
+		const hasImageGeneration = Object.prototype.hasOwnProperty.call(req.body, "image_generation");
 		const hasWeb = Object.prototype.hasOwnProperty.call(req.body, "web");
-		if ((!hasVision && !hasWeb) || (hasVision && !isRecord(req.body["vision"])) || (hasWeb && !isRecord(req.body["web"]))) {
-			throw ApiError.badRequest("vision and web capability settings must be objects when provided");
+		if (
+			(!hasVision && !hasImageGeneration && !hasWeb) ||
+			(hasVision && !isRecord(req.body["vision"])) ||
+			(hasImageGeneration && !isRecord(req.body["image_generation"])) ||
+			(hasWeb && !isRecord(req.body["web"]))
+		) {
+			throw ApiError.badRequest("vision, image_generation and web capability settings must be objects when provided");
 		}
 		const currentConfig = normalizeBuiltinCapabilitiesConfig(
 			(await configRepository.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM)) ?? {},
 		);
 		const configValue = normalizeBuiltinCapabilitiesConfig({
 			vision: hasVision ? req.body["vision"] : currentConfig.vision,
+			image_generation: hasImageGeneration ? req.body["image_generation"] : currentConfig.image_generation,
 			web: hasWeb ? req.body["web"] : currentConfig.web,
 		});
 		const vision = configValue.vision;
+		const imageGeneration = configValue.image_generation;
 		const web = configValue.web;
 		const availableModelOptions = litellmRouter?.getAvailableModelNames() ?? [];
 		const availableModels = new Set(availableModelOptions.map((candidate) => candidate.model_name));
@@ -1323,10 +1339,26 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 				throw ApiError.badRequest(`Unknown web fallback model: ${unknownWebFallback}`);
 			}
 		}
+		if (hasImageGeneration) {
+			if (imageGeneration.enabled && imageGeneration.handler_model.length === 0) {
+				throw ApiError.badRequest("Enabled image_generation capability requires handler_model");
+			}
+			if (imageGeneration.handler_model && !availableModels.has(imageGeneration.handler_model)) {
+				throw ApiError.badRequest(`Unknown image_generation handler model: ${imageGeneration.handler_model}`);
+			}
+			if (imageGeneration.fallback_models.includes(imageGeneration.handler_model)) {
+				throw ApiError.badRequest("Image generation fallback models must not repeat handler_model");
+			}
+			const unknownImageFallback = imageGeneration.fallback_models.find((model) => !availableModels.has(model));
+			if (unknownImageFallback) {
+				throw ApiError.badRequest(`Unknown image_generation fallback model: ${unknownImageFallback}`);
+			}
+		}
 		await configRepository.upsertParam(BUILTIN_CAPABILITIES_CONFIG_PARAM, configValue);
 		return {
 			capabilities: configValue,
 			available_models: availableModelOptions,
+			image_generation_available_models: availableModelOptions,
 			web_available_models: availableModelOptions,
 		};
 	});

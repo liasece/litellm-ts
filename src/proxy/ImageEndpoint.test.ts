@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { ImageController } from "./ImageEndpoint";
 import * as AuthChecks from "../auth/AuthChecks";
 import * as SpendTracker from "../spend/SpendTracker";
+import { attachUpstreamLogContext } from "../router/UpstreamLogContext";
 
 jest.mock("../core/config", () => ({ getConfig: () => ({ generalSettings: {} }) }));
 
@@ -85,6 +86,34 @@ describe("ImageController spend lifecycle", () => {
 			expect.objectContaining({ request_id: "request-1", status: "failure" }),
 		);
 		expect(SpendTracker.releaseSpend).toHaveBeenCalledWith(expect.anything(), "request-1");
+	});
+
+	it("成功账务携带 Router 结果上的上游日志上下文", async () => {
+		const upstreamLogContext = {
+			request: { url: "http://provider/v1/images/generations", method: "POST", headers: {}, body: {} },
+			response: { status_code: 200, headers: {} },
+		};
+		const buildSpy = jest.spyOn(SpendTracker, "buildSpendLogFromRequest");
+		router.imageGeneration.mockResolvedValueOnce(
+			attachUpstreamLogContext({ usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }, upstreamLogContext),
+		);
+
+		await new ImageController(router as never, {} as never).generate({ model: "image-model", prompt: "draw" }, request);
+
+		expect(buildSpy).toHaveBeenCalledWith(expect.objectContaining({ upstreamLogContext: upstreamLogContext }));
+	});
+
+	it("失败账务携带 provider 错误上的上游日志上下文", async () => {
+		const upstreamLogContext = {
+			request: { url: "http://provider/v1/images/generations", method: "POST", headers: {}, body: {} },
+		};
+		const buildSpy = jest.spyOn(SpendTracker, "buildSpendLogFromRequest");
+		router.imageGeneration.mockRejectedValueOnce(attachUpstreamLogContext(new Error("provider failed"), upstreamLogContext));
+
+		await expect(
+			new ImageController(router as never, {} as never).generate({ model: "image-model", prompt: "draw" }, request),
+		).rejects.toThrow("provider failed");
+		expect(buildSpy).toHaveBeenCalledWith(expect.objectContaining({ upstreamLogContext: upstreamLogContext }));
 	});
 
 	it("硬预算下无法可靠上界估算时在上游前返回 503", async () => {

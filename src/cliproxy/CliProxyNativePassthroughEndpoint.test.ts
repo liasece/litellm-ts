@@ -110,9 +110,7 @@ describe("CLIProxy native passthrough", () => {
 
 	it("logs multipart fields, file metadata, and image responses without storing uploaded bytes", async () => {
 		const imageBase64 = "A".repeat(3 * 1024 * 1024);
-		jest.spyOn(global, "fetch").mockResolvedValue(
-			new Response(JSON.stringify({ data: [{ b64_json: imageBase64 }] }), { status: 200 }),
-		);
+		jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: imageBase64 }] }), { status: 200 }));
 
 		const response = await request(buildApp(true))
 			.post("/v1/images/edits")
@@ -129,6 +127,10 @@ describe("CLIProxy native passthrough", () => {
 			messages?: unknown;
 			proxyServerRequestBody?: unknown;
 			response?: { data?: Array<{ b64_json?: string }> };
+			upstreamLogContext?: {
+				request: { url: string; method: string; headers: Record<string, string>; body: unknown };
+				response?: { status_code: number };
+			};
 		};
 		const expectedRequestLog = {
 			model: "public-image",
@@ -142,6 +144,35 @@ describe("CLIProxy native passthrough", () => {
 		expect(spendContext.messages).toEqual(expectedRequestLog);
 		expect(spendContext.proxyServerRequestBody).toEqual(expectedRequestLog);
 		expect(spendContext.response?.data?.[0]?.b64_json).toHaveLength(imageBase64.length);
+		expect(spendContext.upstreamLogContext).toMatchObject({
+			request: {
+				url: "http://127.0.0.1:8317/v1/images/edits",
+				method: "POST",
+				headers: { authorization: "[REDACTED]" },
+				body: expectedRequestLog,
+			},
+			response: { status_code: 200 },
+		});
+	});
+
+	it("records request-only upstream context when the passthrough fetch fails", async () => {
+		jest.spyOn(global, "fetch").mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+		const response = await request(buildApp(true)).post("/v1/completions").send({ model: "public-image", prompt: "draw" });
+
+		expect(response.status).toBe(500);
+		expect(mockBuildSpendLogFromRequest).toHaveBeenCalledTimes(1);
+		const spendContext = mockBuildSpendLogFromRequest.mock.calls[0]?.[0] as {
+			upstreamLogContext?: {
+				request: { url: string; method: string };
+				response?: { status_code: number };
+			};
+		};
+		expect(spendContext.upstreamLogContext?.request).toMatchObject({
+			url: "http://127.0.0.1:8317/v1/completions",
+			method: "POST",
+		});
+		expect(spendContext.upstreamLogContext?.response).toBeUndefined();
 	});
 
 	it("rewrites Gemini path models and preserves the action query", async () => {

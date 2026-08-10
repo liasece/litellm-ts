@@ -20,7 +20,7 @@ import type {
 	CredentialValuesAccessor,
 	LitellmParams,
 } from "../types/router";
-import type { ProviderConfig as ProviderConfigType } from "../types/provider";
+import type { ProviderConfig as ProviderConfigType, ProviderRequest, ProviderResponseProtocol } from "../types/provider";
 import { ProviderRegistry } from "../providers/ProviderRegistry";
 import { CooldownManager } from "./CooldownManager";
 import { TPMRPMLimiter } from "./TPMRPMLimiter";
@@ -50,6 +50,7 @@ import { RoutingStrategyName } from "../types/router";
 import { executeProviderRequest } from "./ProviderRequestExecutor";
 import { buildModelGroupOverrides } from "./ModelOverrides";
 import { applyReasoningEffortOverride } from "./ReasoningEffortOverride";
+import { attachUpstreamLogContext, createUpstreamLogContext, type UpstreamLogContext } from "./UpstreamLogContext";
 
 type RouteFn = (deployments: Deployment[], ctx: RoutingContext) => Deployment | null;
 
@@ -65,6 +66,10 @@ interface ExecResult {
 	stream?: AsyncGenerator<unknown>;
 	/** 实际执行上游完整 URL（provider.transformRequest 产出），spend log api_base 用 */
 	upstreamUrl: string;
+	/** 最终上游 HTTP 请求/响应，供开启详细日志时持久化。 */
+	upstreamLogContext: UpstreamLogContext;
+	/** 实际上游响应协议。 */
+	responseProtocol: ProviderResponseProtocol;
 }
 
 interface AvailDeployment {
@@ -156,6 +161,9 @@ const ESTIMATED_TOKENS_OVERHEAD = 10;
 const FAILURE_LATENCY_PENALTY_SEC = 1000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_MAX_FALLBACKS = 5;
+export const ROUTER_CALL_TYPE_PARAM = "__litellm_call_type";
+export const ROUTER_RESPONSES_BODY_PARAM = "__litellm_responses_body";
+export const ROUTER_IMAGE_EDIT_INPUTS_PARAM = "__litellm_image_edit_inputs";
 /**
  * `completionSync` 已废弃，保留参数签名仅为兼容。
  * 该常量是历史默认超时（毫秒），保留为常量是为了避免在签名里出现裸魔法数。
@@ -813,48 +821,120 @@ export class Router {
 		return { deployment: deployment, provider: provider };
 	}
 
+	/**
+	 * 当前模型组是否能稳定使用原生 Responses。
+	 *
+	 * 只有组内所有 deployment 都支持时才返回 true，避免 simple-shuffle 在协议能力
+	 * 混合的组内随机选中 Chat provider 后绕过既有兼容能力。
+	 * @param model
+	 */
+	supportsNativeResponses(model: string): boolean {
+		const resolved = this._runtimeState().fallbackHandler.resolveModelGroup(model);
+		const deployments = this._runtimeState().deployments.filter((deployment) => this._matchDeploymentPattern(deployment, resolved));
+		if (deployments.length === 0) {
+			return false;
+		}
+		return deployments.every((rawDeployment) => {
+			const deployment = this._resolveDeploymentForExecution(rawDeployment);
+			const provider = this._providerRegistry.getProvider(
+				deployment.litellm_params.model,
+				deployment.litellm_params.custom_llm_provider,
+				deployment.litellm_params,
+			);
+			return (
+				provider.transformResponsesRequest?.(
+					deployment.litellm_params.model,
+					{ model: model, input: "" },
+					deployment.litellm_params,
+				) !== undefined
+			);
+		});
+	}
+
 	private async _executeRequest(
 		provider: ProviderConfigType,
 		deployment: Deployment,
 		messages: Message[],
 		optionalParams: Record<string, unknown>,
 	): Promise<ExecResult> {
-		const callType = optionalParams["__litellm_call_type"];
+		const callType = optionalParams[ROUTER_CALL_TYPE_PARAM];
 		const requestParams = { ...optionalParams };
-		delete requestParams["__litellm_call_type"];
+		delete requestParams[ROUTER_CALL_TYPE_PARAM];
+		const responsesBodyRaw = requestParams[ROUTER_RESPONSES_BODY_PARAM];
+		delete requestParams[ROUTER_RESPONSES_BODY_PARAM];
+		const imageEditInputsRaw = requestParams[ROUTER_IMAGE_EDIT_INPUTS_PARAM];
+		delete requestParams[ROUTER_IMAGE_EDIT_INPUTS_PARAM];
 		const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...requestParams };
-		const outboundParams =
-			callType === "image_generation" ? mergedParams : applyReasoningEffortOverride(mergedParams, deployment, "chat");
-		const providerRequest =
-			callType === "image_generation"
-				? provider.transformImageRequest?.(
-						deployment.litellm_params.model,
-						typeof messages[0]?.content === "string" ? messages[0].content : "",
-						outboundParams,
-					)
-				: provider.transformRequest(deployment.litellm_params.model, messages as Message[], outboundParams);
+		let providerRequest: ProviderRequest | undefined;
+		if (callType === "image_generation") {
+			providerRequest = provider.transformImageRequest?.(
+				deployment.litellm_params.model,
+				typeof messages[0]?.content === "string" ? messages[0].content : "",
+				mergedParams,
+			);
+		} else if (callType === "image_edit" && Array.isArray(imageEditInputsRaw)) {
+			providerRequest = provider.transformImageEditRequest?.(
+				deployment.litellm_params.model,
+				typeof messages[0]?.content === "string" ? messages[0].content : "",
+				imageEditInputsRaw as Array<{ data: Uint8Array; mediaType: string }>,
+				mergedParams,
+			);
+		} else if (
+			callType === "responses" &&
+			typeof responsesBodyRaw === "object" &&
+			responsesBodyRaw !== null &&
+			!Array.isArray(responsesBodyRaw)
+		) {
+			const rawBody = responsesBodyRaw as Record<string, unknown>;
+			const streamAdjustedBody =
+				typeof mergedParams["stream"] === "boolean" ? { ...rawBody, stream: mergedParams["stream"] } : rawBody;
+			const responsesBody = applyReasoningEffortOverride(streamAdjustedBody, deployment, "responses");
+			providerRequest = provider.transformResponsesRequest?.(deployment.litellm_params.model, responsesBody, mergedParams);
+		}
+		if (!providerRequest && callType !== "image_generation" && callType !== "image_edit") {
+			const outboundParams = applyReasoningEffortOverride(mergedParams, deployment, "chat");
+			providerRequest = provider.transformRequest(deployment.litellm_params.model, messages as Message[], outboundParams);
+		}
 		if (!providerRequest) {
 			// 抛结构化 ApiError 而非裸 Error：让 ImageEndpoint 返回合理的 4xx/5xx 而非通用 500。
-			throw ApiError.unavailable(`Provider does not support image generation for model ${deployment.model_name}`);
+			throw ApiError.unavailable(`Provider does not support ${String(callType)} for model ${deployment.model_name}`);
 		}
 
-		const isStream = optionalParams["stream"] === true;
+		const isStream = providerRequest.stream === true;
+		const responseProtocol = providerRequest.responseProtocol ?? "chat_completions";
 		const timeoutSec = isStream
 			? (deployment.litellm_params.stream_timeout ?? deployment.litellm_params.timeout)
 			: deployment.litellm_params.timeout;
-		const execution = await executeProviderRequest(providerRequest, {
-			timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
-			readJson: !isStream,
-		});
+		let execution;
+		try {
+			execution = await executeProviderRequest(providerRequest, {
+				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+				readJson: !isStream,
+			});
+		} catch (error) {
+			if (typeof error === "object" && error !== null) {
+				attachUpstreamLogContext(error, createUpstreamLogContext(providerRequest));
+			}
+			throw error;
+		}
 		const response = execution.response;
+		const upstreamLogContext = createUpstreamLogContext(providerRequest, response, execution.body);
 
 		if (isStream) {
-			const { stream, body, ttft } = buildStreamWithTtft(response, execution.startedAtMs, provider);
+			const { stream, body, ttft } = buildStreamWithTtft(response, execution.startedAtMs, provider, responseProtocol);
 			const providerHeaders = extractProviderHeaders(response);
 			if (providerHeaders) {
 				(response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders = providerHeaders;
 			}
-			return { response: response, body: body, ttft: ttft, stream: stream, upstreamUrl: providerRequest.url };
+			return {
+				response: response,
+				body: body,
+				ttft: ttft,
+				stream: stream,
+				upstreamUrl: providerRequest.url,
+				upstreamLogContext: upstreamLogContext,
+				responseProtocol: responseProtocol,
+			};
 		}
 
 		const providerHeaders = extractProviderHeaders(response);
@@ -866,6 +946,8 @@ export class Router {
 			body: execution.body,
 			ttft: execution.latencyMs,
 			upstreamUrl: providerRequest.url,
+			upstreamLogContext: upstreamLogContext,
+			responseProtocol: responseProtocol,
 		};
 	}
 
@@ -986,7 +1068,29 @@ export class Router {
 	 * @param optionalParams - 图片生成参数
 	 */
 	async imageGeneration(model: string, prompt: string, optionalParams: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-		return this.completion(model, [{ role: "user", content: prompt }], { ...optionalParams, __litellm_call_type: "image_generation" });
+		return this.completion(model, [{ role: "user", content: prompt }], {
+			...optionalParams,
+			[ROUTER_CALL_TYPE_PARAM]: "image_generation",
+		});
+	}
+
+	/** Standard image editing entry point using the same deployment/fallback machinery as generation.
+	 * @param model - Logical image model
+	 * @param prompt - Editing instructions
+	 * @param images - Source image bytes
+	 * @param optionalParams - Edit output options and optional mask
+	 */
+	async imageEdit(
+		model: string,
+		prompt: string,
+		images: Array<{ data: Uint8Array; mediaType: string }>,
+		optionalParams: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> {
+		return this.completion(model, [{ role: "user", content: prompt }], {
+			...optionalParams,
+			[ROUTER_CALL_TYPE_PARAM]: "image_edit",
+			[ROUTER_IMAGE_EDIT_INPUTS_PARAM]: images,
+		});
 	}
 
 	/**

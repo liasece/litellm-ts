@@ -67,6 +67,7 @@ describe("SpendLogsSettingsModal", () => {
 		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
 
 		expect(screen.getByText("Store Prompts in Spend Logs")).toBeInTheDocument();
+		expect(screen.getByText("Store Upstream Logs in Spend Logs")).toBeInTheDocument();
 		expect(screen.getByLabelText("Maximum Spend Logs Retention Period (Optional)")).toBeInTheDocument();
 		expect(screen.getByPlaceholderText("e.g., 7d, 30d")).toBeInTheDocument();
 	});
@@ -102,7 +103,7 @@ describe("SpendLogsSettingsModal", () => {
 		const user = userEvent.setup();
 		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
 
-		const switchElement = screen.getByRole("switch");
+		const switchElement = screen.getByRole("switch", { name: "Store Prompts in Spend Logs" });
 		expect(switchElement).not.toBeChecked();
 
 		await user.click(switchElement);
@@ -110,6 +111,18 @@ describe("SpendLogsSettingsModal", () => {
 		await waitFor(() => {
 			expect(switchElement).toBeChecked();
 		});
+	});
+
+	it("should toggle upstream log details switch", async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
+
+		const switchElement = screen.getByRole("switch", { name: "Store Upstream Logs in Spend Logs" });
+		expect(switchElement).not.toBeChecked();
+
+		await user.click(switchElement);
+
+		expect(switchElement).toBeChecked();
 	});
 
 	it("should update retention period input", async () => {
@@ -132,7 +145,7 @@ describe("SpendLogsSettingsModal", () => {
 
 		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
 
-		const switchElement = screen.getByRole("switch");
+		const switchElement = screen.getByRole("switch", { name: "Store Prompts in Spend Logs" });
 		await user.click(switchElement);
 
 		const retentionInput = screen.getByPlaceholderText("e.g., 7d, 30d");
@@ -146,6 +159,7 @@ describe("SpendLogsSettingsModal", () => {
 			expect(mockMutateAsync).toHaveBeenCalledWith(
 				{
 					store_prompts_in_spend_logs: true,
+					store_upstream_logs_in_spend_logs: false,
 					maximum_spend_logs_retention_period: "30d",
 				},
 				expect.any(Object),
@@ -172,6 +186,7 @@ describe("SpendLogsSettingsModal", () => {
 			expect(mockMutateAsync).toHaveBeenCalledWith(
 				{
 					store_prompts_in_spend_logs: false,
+					store_upstream_logs_in_spend_logs: false,
 				},
 				expect.any(Object),
 			);
@@ -305,7 +320,7 @@ describe("SpendLogsSettingsModal", () => {
 		const user = userEvent.setup();
 		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
 
-		const switchElement = screen.getByRole("switch");
+		const switchElement = screen.getByRole("switch", { name: "Store Prompts in Spend Logs" });
 		await user.click(switchElement);
 
 		const retentionInput = screen.getByPlaceholderText("e.g., 7d, 30d");
@@ -331,7 +346,7 @@ describe("SpendLogsSettingsModal", () => {
 
 		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
 
-		const switchElement = screen.getByRole("switch");
+		const switchElement = screen.getByRole("switch", { name: "Store Prompts in Spend Logs" });
 		await user.click(switchElement);
 
 		const retentionInput = screen.getByPlaceholderText("e.g., 7d, 30d");
@@ -392,6 +407,14 @@ describe("SpendLogsSettingsModal", () => {
 					field_default_value: false,
 				},
 				{
+					field_name: "store_upstream_logs_in_spend_logs",
+					field_type: "bool",
+					field_description: "Store upstream logs in spend logs",
+					field_value: true,
+					stored_in_db: true,
+					field_default_value: false,
+				},
+				{
 					field_name: "maximum_spend_logs_retention_period",
 					field_type: "string",
 					field_description: "Maximum retention period",
@@ -406,10 +429,11 @@ describe("SpendLogsSettingsModal", () => {
 
 		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
 
-		const switchElement = screen.getByRole("switch");
+		const switchElement = screen.getByRole("switch", { name: "Store Prompts in Spend Logs" });
 		const retentionInput = screen.getByPlaceholderText("e.g., 7d, 30d");
 
 		expect(switchElement).toBeChecked();
+		expect(screen.getByRole("switch", { name: "Store Upstream Logs in Spend Logs" })).toBeChecked();
 		expect(retentionInput).toHaveValue("30d");
 	});
 
@@ -451,6 +475,7 @@ describe("SpendLogsSettingsModal", () => {
 			expect(mockMutateAsync).toHaveBeenCalledWith(
 				{
 					store_prompts_in_spend_logs: false,
+					store_upstream_logs_in_spend_logs: false,
 				},
 				expect.any(Object),
 			);
@@ -469,7 +494,7 @@ describe("SpendLogsSettingsModal", () => {
 
 		renderWithProviders(<SpendLogsSettingsModal {...defaultProps} />);
 
-		const switchElement = screen.getByRole("switch");
+		const switchElement = screen.getByRole("switch", { name: "Store Prompts in Spend Logs" });
 		await user.click(switchElement);
 
 		const saveButton = screen.getByRole("button", { name: "Save Settings" });
@@ -480,6 +505,7 @@ describe("SpendLogsSettingsModal", () => {
 			expect(mockMutateAsync).toHaveBeenCalledWith(
 				{
 					store_prompts_in_spend_logs: true,
+					store_upstream_logs_in_spend_logs: false,
 				},
 				expect.any(Object),
 			);

@@ -508,4 +508,64 @@ describe("AnthropicProvider", () => {
 			expect(onlyId).not.toBe("msg_upstream");
 		});
 	});
+
+	describe("流式 usage 折叠 cache（PY transformation.py:1587-1611）", () => {
+		it("message_start 把 cache_read/cache_creation 折叠进 prompt_tokens", async () => {
+			const sseStream = [
+				`data: ${JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_x",
+						model: "claude",
+						usage: { input_tokens: 536, cache_read_input_tokens: 46336, cache_creation_input_tokens: 0 },
+					},
+				})}`,
+				"",
+				`data: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 161 } })}`,
+				"",
+			].join("\n");
+			const response = new Response(sseStream, { status: 200, headers: { "content-type": "text/event-stream" } });
+
+			const chunks = [];
+			for await (const chunk of provider.streamResponse(response)) {
+				chunks.push(chunk);
+			}
+
+			const usageChunks = chunks.filter((c) => (c as { _usage?: unknown })._usage !== undefined);
+			const last = usageChunks[usageChunks.length - 1] as unknown as { _usage: Record<string, number> };
+			expect(last._usage.prompt_tokens).toBe(536 + 46336);
+			expect(last._usage.cache_read_input_tokens).toBe(46336);
+			expect(last._usage.completion_tokens).toBe(161);
+			expect(last._usage.total_tokens).toBe(536 + 46336 + 161);
+		});
+
+		it("message_delta 携带完整 usage 时同样折叠 cache", async () => {
+			const sseStream = [
+				`data: ${JSON.stringify({
+					type: "message_start",
+					message: { id: "msg_y", model: "claude", usage: { input_tokens: 10, cache_read_input_tokens: 100 } },
+				})}`,
+				"",
+				`data: ${JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: "end_turn" },
+					usage: { output_tokens: 5 },
+					message: { usage: { input_tokens: 12, cache_read_input_tokens: 120, cache_creation_input_tokens: 3 } },
+				})}`,
+				"",
+			].join("\n");
+			const response = new Response(sseStream, { status: 200, headers: { "content-type": "text/event-stream" } });
+
+			const chunks = [];
+			for await (const chunk of provider.streamResponse(response)) {
+				chunks.push(chunk);
+			}
+
+			const usageChunks = chunks.filter((c) => (c as { _usage?: unknown })._usage !== undefined);
+			const last = usageChunks[usageChunks.length - 1] as unknown as { _usage: Record<string, number> };
+			expect(last._usage.prompt_tokens).toBe(12 + 120 + 3);
+			expect(last._usage.cache_read_input_tokens).toBe(120);
+			expect(last._usage.cache_creation_input_tokens).toBe(3);
+		});
+	});
 });

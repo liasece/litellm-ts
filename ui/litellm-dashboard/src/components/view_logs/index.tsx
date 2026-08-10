@@ -244,6 +244,7 @@ export default function SpendLogsTable({
 		sortOrder,
 		currentPage,
 		initialFilters: initialUrlState.filters,
+		searchTerm,
 	});
 
 	const handleFilterReset = useCallback(() => {
@@ -321,20 +322,9 @@ export default function SpendLogsTable({
 		startTime,
 	]);
 
-	const searchedLogs = useMemo(
-		() =>
-			filteredLogs.data.filter((log) => {
-				const matchesSearch =
-					!searchTerm ||
-					log.request_id.includes(searchTerm) ||
-					log.model.includes(searchTerm) ||
-					(log.user && log.user.includes(searchTerm));
-
-				// No need for additional filtering since we're now handling this in the API call
-				return matchesSearch;
-			}),
-		[filteredLogs.data, searchTerm],
-	);
+	// searchTerm 已由 useLogFilterLogic 作为服务端 request_id 查询处理，
+	// 此处直接使用过滤后的结果，不再做当前页客户端过滤。
+	const searchedLogs = filteredLogs.data;
 
 	const refetchLogs = logs.refetch;
 
@@ -348,12 +338,7 @@ export default function SpendLogsTable({
 	// The main React Query poller is disabled while backend filters are active.
 	// Keep Live Tail running by polling the filtered data source directly.
 	useEffect(() => {
-		if (
-			!hasBackendFilters ||
-			liveTailIntervalMs <= 0 ||
-			currentPage !== 1 ||
-			activeTab !== "request logs"
-		) {
+		if (!hasBackendFilters || liveTailIntervalMs <= 0 || currentPage !== 1 || activeTab !== "request logs") {
 			return;
 		}
 

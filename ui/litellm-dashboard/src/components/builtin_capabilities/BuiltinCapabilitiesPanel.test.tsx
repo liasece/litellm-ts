@@ -31,6 +31,14 @@ const response = {
 			max_iterations: 4,
 			max_output_tokens: 2048,
 		},
+		image_generation: {
+			enabled: false,
+			always_inject: true,
+			handler_model: "gpt-image-2",
+			fallback_models: [],
+			max_iterations: 4,
+			max_output_tokens: 32768,
+		},
 		web: {
 			enabled: true,
 			always_inject: true,
@@ -43,6 +51,10 @@ const response = {
 	available_models: [
 		{ model_name: "gpt-5.4-mini", type: "model", mode: "chat" },
 		{ model_name: "gpt-5.4", type: "model", mode: "chat" },
+		{ model_name: "metadata-unknown", type: "model", mode: "embedding" },
+	],
+	image_generation_available_models: [
+		{ model_name: "gpt-image-2", type: "model", mode: "image_generation" },
 		{ model_name: "metadata-unknown", type: "model", mode: "embedding" },
 	],
 	web_available_models: [
@@ -76,6 +88,13 @@ describe("BuiltinCapabilitiesPanel", () => {
 					fallback_models: ["gpt-5.4"],
 					max_iterations: 4,
 					max_output_tokens: 2048,
+				},
+				image_generation: {
+					enabled: false,
+					always_inject: true,
+					handler_model: "gpt-image-2",
+					fallback_models: [],
+					max_iterations: 4,
 				},
 				web: {
 					enabled: true,

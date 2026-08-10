@@ -25,6 +25,7 @@ import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
+import { getUpstreamLogContext } from "../router/UpstreamLogContext";
 
 const logger = createModuleLogger("Proxy:Completions");
 
@@ -121,8 +122,9 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							startTime: startTime,
 							endTime: new Date(),
 							completionStartTime: completionStartTime,
-							messages: prompt,
-							response: result,
+								messages: prompt,
+								response: result,
+								upstreamLogContext: getUpstreamLogContext(result),
 							usage: usage,
 							status: SpendLogStatus.Success,
 							...getResultModelResolutionMetadata(result),
@@ -232,8 +234,9 @@ async function handleStreamingCompletion(
 					deploymentModel: spendInfo?.deploymentModel,
 					startTime: startTime,
 					endTime: new Date(),
-					messages: req.body.prompt,
-					response: lastChunk,
+						messages: req.body.prompt,
+						response: lastChunk,
+						upstreamLogContext: getUpstreamLogContext(streamResult),
 					usage: usage,
 					status: SpendLogStatus.Success,
 					...getResultModelResolutionMetadata(streamResult),
@@ -272,8 +275,9 @@ async function recordProviderFailure(
 				modelGroup: model,
 				startTime: startTime,
 				endTime: new Date(),
-				messages: req.body.prompt,
-				error: providerError,
+					messages: req.body.prompt,
+					error: providerError,
+					upstreamLogContext: getUpstreamLogContext(providerError),
 				status: SpendLogStatus.Failure,
 			}),
 		);

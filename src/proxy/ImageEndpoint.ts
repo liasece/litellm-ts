@@ -16,6 +16,7 @@ import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
+import { getUpstreamLogContext } from "../router/UpstreamLogContext";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { createModuleLogger } from "../core/utils/logger";
 
@@ -136,6 +137,7 @@ export class ImageController {
 						messages: prompt,
 						response: result,
 						usage: usage,
+						upstreamLogContext: getUpstreamLogContext(result),
 						status: SpendLogStatus.Success,
 						...getResultModelResolutionMetadata(result),
 					}),
@@ -160,6 +162,7 @@ export class ImageController {
 							endTime: new Date(),
 							messages: prompt,
 							error: error,
+							upstreamLogContext: getUpstreamLogContext(error),
 							status: SpendLogStatus.Failure,
 						}),
 					);
