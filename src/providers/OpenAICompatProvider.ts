@@ -87,6 +87,11 @@ export class OpenAICompatProvider implements ProviderConfig {
 			if (key === "stream") {
 				continue;
 			}
+			// stream_options 必须伴随 stream=true（DeepSeek 等上游校验），非流式时剥离，
+			// 否则上游返回 invalid_request_error: "stream_options should be set along with stream = true"
+			if (key === "stream_options" && !stream) {
+				continue;
+			}
 			if (key in optionalParams) {
 				body[key] = optionalParams[key];
 			}

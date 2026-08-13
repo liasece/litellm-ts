@@ -89,7 +89,7 @@ import { registerCliProxyWebSocketPassthrough } from "./cliproxy/CliProxyWebSock
 const logger = createModuleLogger("Server");
 
 /** Claude Code 启动请求会携带较大的系统提示与工具定义，需对齐 LiteLLM 代理的大请求体入口。 */
-const REQUEST_BODY_LIMIT = "50mb";
+const REQUEST_BODY_LIMIT = "200mb";
 
 /**
  * LiteLLM TS Gateway 服务器

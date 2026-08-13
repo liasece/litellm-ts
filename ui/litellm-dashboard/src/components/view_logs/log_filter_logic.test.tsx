@@ -721,4 +721,34 @@ describe("useLogFilterLogic", () => {
 			{ timeout: 500 },
 		);
 	});
+
+	it("should trigger backend search when accessToken loads asynchronously with initial filters", async () => {
+		vi.mocked(uiSpendLogsCall).mockResolvedValue(
+			createPaginatedResponse([createLogEntry({ request_id: "async-token" })]),
+		);
+		const logs = createPaginatedResponse([]);
+		const { rerender } = renderHook(
+			(props: { accessToken: string | null }) =>
+				useLogFilterLogic({
+					...defaultProps,
+					logs,
+					accessToken: props.accessToken,
+					initialFilters: { "Key Alias": "jansen" },
+				}),
+			{ wrapper, initialProps: { accessToken: null as string | null } },
+		);
+
+		// accessToken 初始为 null：backend 查询不应触发
+		expect(uiSpendLogsCall).not.toHaveBeenCalled();
+
+		// accessToken 异步加载完成：应触发带 key_alias 的 backend 查询
+		rerender({ accessToken: "test-token" });
+
+		await waitFor(() => expect(uiSpendLogsCall).toHaveBeenCalledTimes(1), { timeout: 500 });
+		expect(uiSpendLogsCall).toHaveBeenCalledWith(
+			expect.objectContaining({
+				params: expect.objectContaining({ key_alias: "jansen" }),
+			}),
+		);
+	});
 });

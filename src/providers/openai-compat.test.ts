@@ -34,6 +34,28 @@ describe("OpenAICompatProvider", () => {
 			expect(body.stream).toBe(true);
 		});
 
+		it("forwards stream_options when streaming", () => {
+			const req = provider.transformRequest("deepseek/deepseek-chat", [{ role: "user", content: "Hi" }], {
+				stream: true,
+				stream_options: { include_usage: true },
+			});
+
+			const body = req.body as Record<string, unknown>;
+			expect(body.stream).toBe(true);
+			expect(body.stream_options).toEqual({ include_usage: true });
+		});
+
+		it("strips stream_options when not streaming", () => {
+			const req = provider.transformRequest("deepseek/deepseek-chat", [{ role: "user", content: "Hi" }], {
+				stream: false,
+				stream_options: { include_usage: true },
+			});
+
+			const body = req.body as Record<string, unknown>;
+			expect(body.stream).toBeUndefined();
+			expect(body.stream_options).toBeUndefined();
+		});
+
 		it("strips provider prefix from model name in request body", () => {
 			const req = provider.transformRequest("deepseek/deepseek-chat", [{ role: "user", content: "Hello" }], {});
 

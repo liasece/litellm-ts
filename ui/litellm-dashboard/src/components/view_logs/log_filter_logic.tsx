@@ -141,10 +141,13 @@ export function useLogFilterLogic({
 		// Intentionally omitted from deps:
 		// - `filters` / `debouncedSearch` / `performSearch`: filter changes are handled by
 		//   handleFilterChange → debouncedSearch; adding them here would double-fetch on filter apply.
-		// - `hasBackendFilters` / `accessToken` / `searchTerm`: stable across sort/page/time changes;
+		// - `hasBackendFilters` / `searchTerm`: stable across sort/page/time changes;
 		//   including them would cause spurious re-runs when the filter state first becomes active.
+		// `accessToken` 必须保留：它由 getWebUiSession 异步加载（初始为 null），若不在依赖中，
+		// 带 key_alias 等 backend filter 的 URL 首次进入时 performSearch 会因 accessToken 为 null
+		// 而跳过，accessToken 到位后又不会重跑，导致过滤结果永远为空。
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [sortBy, sortOrder, currentPage, startTime, endTime, isCustomDate]);
+	}, [sortBy, sortOrder, currentPage, startTime, endTime, isCustomDate, accessToken]);
 
 	// Compute client-side filtered logs directly from incoming logs and filters
 	const clientDerivedFilteredLogs: PaginatedResponse = useMemo(() => {
