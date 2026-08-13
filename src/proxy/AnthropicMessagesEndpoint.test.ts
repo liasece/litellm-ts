@@ -18,13 +18,17 @@ function sseResponse(events: Record<string, unknown>[]): Response {
 	return new globalThis.Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-function buildApp(reasoningEffortOverride?: string) {
+function buildApp(
+	reasoningEffortOverride?: string,
+	enabledBuiltinCapabilities?: Array<"vision" | "web" | "image_generation">,
+) {
 	const deployment = {
 		model_name: "native-group",
 		litellm_params: { model: "anthropic/upstream-model", api_key: "provider-key", custom_llm_provider: "anthropic" },
 		model_info: {
 			id: "dep-native",
 			...(reasoningEffortOverride ? { override_reasoning_effort: reasoningEffortOverride } : {}),
+			...(enabledBuiltinCapabilities ? { enabled_builtin_capabilities: enabledBuiltinCapabilities } : {}),
 		},
 	};
 	const provider = {
@@ -633,6 +637,49 @@ describe("Anthropic/OpenAI Files protocol routing", () => {
 		);
 		expect(String((init?.headers as Record<string, string>)["anthropic-beta"])).toContain("token-counting-2024-11-01");
 		expect(JSON.parse(String(init?.body))).not.toHaveProperty("api_key");
+	});
+
+	it("count_tokens 计入内置能力注入并应用 deployment reasoning override", async () => {
+		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param: string) =>
+			param === "builtin_capabilities"
+				? {
+						vision: {
+							enabled: true,
+							always_inject: true,
+							handler_model: "vision-handler",
+							fallback_models: [],
+							max_iterations: 4,
+							max_output_tokens: 4096,
+						},
+					}
+				: {},
+		);
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ input_tokens: 1032 }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		await request(buildApp("xhigh", ["vision"]))
+			.post("/v1/messages/count_tokens")
+			.send({
+				model: "native-group",
+				messages: [{ role: "user", content: "hello" }],
+				output_config: { effort: "low", format: { type: "json_schema" } },
+			})
+			.expect(200, { input_tokens: 1032 });
+
+		const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+		const upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+		expect(upstreamBody).toMatchObject({
+			model: "upstream-model",
+			messages: [{ role: "user", content: "hello" }],
+			output_config: { effort: "xhigh", format: { type: "json_schema" } },
+		});
+		expect(typeof upstreamBody["system"]).toBe("string");
+		expect(String(upstreamBody["system"])).toContain("built-in vision works");
+		expect(upstreamBody["tools"]).toEqual([expect.objectContaining({ name: expect.any(String) })]);
 	});
 
 	it("Message Batches results 与 delete 路由保持官方方法和响应类型", async () => {

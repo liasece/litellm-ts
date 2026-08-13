@@ -62,6 +62,27 @@ describe("networking - expired session handling", () => {
 		expect(new Headers(forwardedInit.headers).get("x-litellm-csrf-token")).toBeNull();
 	});
 
+	it("多个页面订阅者共享 6 小时 session 心跳，心跳确认过期时通知全部订阅者", async () => {
+		vi.useFakeTimers();
+		const firstExpired = vi.fn();
+		const secondExpired = vi.fn();
+		global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 } as Response);
+		const unsubscribeFirst = Networking.subscribeToWebUiSessionKeepAlive(firstExpired);
+		const unsubscribeSecond = Networking.subscribeToWebUiSessionKeepAlive(secondExpired);
+
+		try {
+			await vi.advanceTimersByTimeAsync(Networking.WEBUI_SESSION_KEEPALIVE_INTERVAL_MS);
+
+			expect(global.fetch).toHaveBeenCalledOnce();
+			expect(firstExpired).toHaveBeenCalledOnce();
+			expect(secondExpired).toHaveBeenCalledOnce();
+		} finally {
+			unsubscribeFirst();
+			unsubscribeSecond();
+			vi.useRealTimers();
+		}
+	});
+
 	it("keyInfoV1Call 应编码 query、仅携带 cookie 并只解析一次 JSON", async () => {
 		const json = vi.fn().mockResolvedValue({ info: { key_alias: "logs-key" } });
 		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: json } as any);
@@ -706,6 +727,9 @@ describe("sessionSpendLogsCall", () => {
 
 describe("sessionTimelineCall", () => {
 	const originalFetch = global.fetch;
+	beforeEach(() => {
+		Networking.switchToWorkerUrl(null);
+	});
 
 	afterEach(() => {
 		global.fetch = originalFetch;

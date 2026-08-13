@@ -2,7 +2,7 @@
  * UserApiKeyAuth 认证中间件测试
  */
 import { jest as jestGlobals } from "@jest/globals";
-import type { Request } from "express";
+import type { Request, Response } from "express";
 
 // Jest 30 的严格 mock 泛型无法从 Drizzle 推导返回类型；测试仓库均为最小结构 mock。
 const jestMock = jestGlobals as any;
@@ -42,9 +42,13 @@ function makeToken(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-async function runMiddleware(middleware: ReturnType<typeof createApiKeyAuth>, req: Request): Promise<unknown> {
+async function runMiddleware(
+	middleware: ReturnType<typeof createApiKeyAuth>,
+	req: Request,
+	res: Response = {} as Response,
+): Promise<unknown> {
 	return new Promise((resolve) => {
-		middleware(req, {} as never, (error) => resolve(error));
+		middleware(req, res, (error) => resolve(error));
 	});
 }
 
@@ -197,6 +201,83 @@ describe("UserApiKeyAuth", () => {
 			expect(repository.findVerificationTokenByHash).toHaveBeenCalledTimes(1);
 			expect(repository.findVerificationTokenByHash).toHaveBeenCalledWith(hashApiKey("session-jti"));
 			expect(repository.findVerificationTokenByHash).not.toHaveBeenCalledWith(hashApiKey("spend-log-token-hash"));
+		});
+
+		it("剩余不足 1 天时应将 DB、JWT 和 CSRF cookie 同步续到新的 3 天", async () => {
+			const { createApiKeyAuth } = await import("./UserApiKeyAuth");
+			const nowSeconds = Math.floor(Date.now() / 1000);
+			const nearExpiryClaims = { ...sessionClaims, iat: nowSeconds - 2 * 86400, exp: nowSeconds + 12 * 3600 };
+			const extendVerificationTokenExpiry = jestMock.fn().mockResolvedValue(undefined);
+			const repository = {
+				findVerificationTokenByHash: jestMock.fn().mockResolvedValue(
+					makeToken({
+						token: hashApiKey("session-jti"),
+						userId: "default_user_id",
+						teamId: "litellm-dashboard",
+						expires: new Date((nowSeconds + 12 * 3600) * 1000),
+						metadata: { webui_session: true },
+					}),
+				),
+				extendVerificationTokenExpiry: extendVerificationTokenExpiry,
+			} as unknown as Parameters<typeof createApiKeyAuth>[0];
+			const jwtHandler = {
+				verifyJwt: jestMock.fn().mockResolvedValue({ claims: nearExpiryClaims }),
+			} as unknown as Parameters<typeof createApiKeyAuth>[2];
+			const middleware = createApiKeyAuth(repository, "master-key", jwtHandler, undefined, {
+				durationSeconds: 3 * 86400,
+			});
+			const req = mkReq({ cookie: "token=header.payload.signature; litellm_csrf_token=csrf-value" });
+			const cookie = jestMock.fn();
+
+			const error = await runMiddleware(middleware, req, { cookie: cookie } as unknown as Response);
+
+			expect(error).toBeUndefined();
+			expect(extendVerificationTokenExpiry).toHaveBeenCalledTimes(1);
+			const renewedExpiry = extendVerificationTokenExpiry.mock.calls[0]![1] as Date;
+			expect(Math.floor(renewedExpiry.getTime() / 1000) - nowSeconds).toBe(3 * 86400);
+			expect(cookie).toHaveBeenCalledTimes(2);
+			const tokenCall = cookie.mock.calls.find((call: unknown[]) => call[0] === "token")!;
+			const renewedPayload = JSON.parse(
+				Buffer.from(String(tokenCall[1]).split(".")[1]!, "base64url").toString("utf8"),
+			) as Record<string, unknown>;
+			expect(renewedPayload.jti).toBe("session-jti");
+			expect((renewedPayload.exp as number) - (renewedPayload.iat as number)).toBe(3 * 86400);
+			expect(cookie).toHaveBeenCalledWith("litellm_csrf_token", "csrf-value", expect.objectContaining({ httpOnly: false }));
+		});
+
+		it("剩余超过 1 天时不应频繁写 DB 或重置 cookie", async () => {
+			const { createApiKeyAuth } = await import("./UserApiKeyAuth");
+			const nowSeconds = Math.floor(Date.now() / 1000);
+			const healthyClaims = { ...sessionClaims, iat: nowSeconds, exp: nowSeconds + 2 * 86400 };
+			const extendVerificationTokenExpiry = jestMock.fn();
+			const repository = {
+				findVerificationTokenByHash: jestMock.fn().mockResolvedValue(
+					makeToken({
+						token: hashApiKey("session-jti"),
+						teamId: "litellm-dashboard",
+						expires: new Date((nowSeconds + 2 * 86400) * 1000),
+						metadata: { webui_session: true },
+					}),
+				),
+				extendVerificationTokenExpiry: extendVerificationTokenExpiry,
+			} as unknown as Parameters<typeof createApiKeyAuth>[0];
+			const jwtHandler = {
+				verifyJwt: jestMock.fn().mockResolvedValue({ claims: healthyClaims }),
+			} as unknown as Parameters<typeof createApiKeyAuth>[2];
+			const middleware = createApiKeyAuth(repository, "master-key", jwtHandler, undefined, {
+				durationSeconds: 3 * 86400,
+			});
+			const cookie = jestMock.fn();
+
+			const error = await runMiddleware(
+				middleware,
+				mkReq({ cookie: "token=header.payload.signature" }),
+				{ cookie: cookie } as unknown as Response,
+			);
+
+			expect(error).toBeUndefined();
+			expect(extendVerificationTokenExpiry).not.toHaveBeenCalled();
+			expect(cookie).not.toHaveBeenCalled();
 		});
 
 		it("缺少 DB session 的 cookie JWT 应被拒绝", async () => {

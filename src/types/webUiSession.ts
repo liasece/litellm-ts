@@ -12,8 +12,8 @@ export const WEBUI_CSRF_HEADER_NAME = "x-litellm-csrf-token";
 /** WebUI session duration 环境变量。 */
 export const WEBUI_SESSION_DURATION_ENV_VAR = "LITELLM_UI_SESSION_DURATION";
 
-/** Python LiteLLM 默认 UI session duration。 */
-export const DEFAULT_WEBUI_SESSION_DURATION = "24h";
+/** WebUI session 滑动过期窗口：3 天无在线活动后需重新登录。 */
+export const DEFAULT_WEBUI_SESSION_DURATION = "3d";
 
 /** 登录方式。 */
 export const LOGIN_METHOD_USERNAME_PASSWORD = "username_password";

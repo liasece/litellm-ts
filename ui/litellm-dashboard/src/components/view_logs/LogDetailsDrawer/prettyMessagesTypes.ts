@@ -50,6 +50,23 @@ export interface ParsedMessages {
 	responseMessage: ParsedMessage | null;
 }
 
+/**
+ * 请求级元信息，用于 pretty 视图顶部的 tag 行。
+ * 从请求体（body）中提取思考强度、工具列表等关键参数。
+ */
+export interface RequestMeta {
+	model?: string;
+	/** OpenAI reasoning_effort 或 DeepSeek reasoning.effort，如 "low" | "medium" | "high" | "max" */
+	reasoningEffort?: string;
+	/** Anthropic thinking.budget_tokens，思考预算 token 数 */
+	thinkingBudget?: number;
+	/** 请求中声明的工具名列表 */
+	tools: string[];
+	temperature?: number;
+	topP?: number;
+	maxTokens?: number;
+}
+
 export interface RoleStyle {
 	background: string;
 	borderColor: string;

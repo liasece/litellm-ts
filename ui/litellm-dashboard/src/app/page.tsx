@@ -10,6 +10,7 @@ import Navbar from "@/components/navbar";
 import {
 	getUiConfig,
 	getWebUiSession,
+	subscribeToWebUiSessionKeepAlive,
 	Organization,
 	proxyBaseUrl,
 	getInProductNudgesCall,
@@ -184,6 +185,12 @@ function CreateKeyPageContent() {
 
 	useEffect(() => {
 		let cancelled = false;
+		const unsubscribeKeepAlive = subscribeToWebUiSessionKeepAlive(() => {
+			if (!cancelled) {
+				setToken(null);
+				setAccessToken(null);
+			}
+		});
 
 		(async () => {
 			try {
@@ -213,6 +220,7 @@ function CreateKeyPageContent() {
 
 		return () => {
 			cancelled = true;
+			unsubscribeKeepAlive();
 		};
 	}, []);
 

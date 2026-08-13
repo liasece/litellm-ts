@@ -2,7 +2,7 @@
  * Provider-neutral parsing for the log detail Pretty view.
  */
 
-import { MessagePart, ParsedMessage, ParsedMessages, RoleStyle, ToolCall } from "./prettyMessagesTypes";
+import { MessagePart, ParsedMessage, ParsedMessages, RequestMeta, RoleStyle, ToolCall } from "./prettyMessagesTypes";
 
 export const ROLE_STYLES: Record<string, RoleStyle> = {
 	system: { background: "transparent", borderColor: "#8c8c8c", label: "SYSTEM", labelColor: "#8c8c8c" },
@@ -328,9 +328,7 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
 		const imageData = asRecord(block.source);
-		const mimeType = imageMimeType(
-			block.mime_type ?? block.mimeType ?? imageData?.media_type ?? imageData?.mime_type,
-		);
+		const mimeType = imageMimeType(block.mime_type ?? block.mimeType ?? imageData?.media_type ?? imageData?.mime_type);
 		const rawSource = block.image_url?.url ?? block.image_url ?? block.url ?? imageData?.data;
 		const wasTruncated = typeof rawSource === "string" && rawSource.includes("litellm_truncated");
 		const source = imageSource(rawSource, mimeType, imageData?.type === "base64");
@@ -339,9 +337,7 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 				kind: "image",
 				label: "Image",
 				sourceType: type,
-				text: wasTruncated
-					? TRUNCATED_IMAGE_MESSAGE
-					: valueToText(rawSource ?? block.file_id ?? "Attached image"),
+				text: wasTruncated ? TRUNCATED_IMAGE_MESSAGE : valueToText(rawSource ?? block.file_id ?? "Attached image"),
 				data: source ? { src: source, mimeType } : wasTruncated ? { truncated: true } : undefined,
 			},
 		};
@@ -515,6 +511,63 @@ const responseFromParts = (parts: MessagePart[], role: any = "assistant"): Parse
 		content: contentFromParts(parts),
 		toolCalls: toolCalls.length ? toolCalls : undefined,
 		parts: parts.length ? parts : undefined,
+	};
+};
+
+/** 从工具定义中提取工具名，兼容 OpenAI（function.name）与 Anthropic（name）格式 */
+const toolNameFromDefinition = (tool: any): string => {
+	const record = asRecord(tool);
+	if (!record) return "";
+	if (typeof record.function?.name === "string") return record.function.name;
+	if (typeof record.name === "string") return record.name;
+	return "";
+};
+
+/**
+ * 从请求中提取用于 pretty 视图顶部 tag 行的元信息。
+ * 兼容 request 为 { body: {...} } 或直接为请求体对象两种形态。
+ */
+export const parseRequestMeta = (request: any): RequestMeta => {
+	const body = asRecord(request?.body) || asRecord(request) || {};
+
+	let reasoningEffort: string | undefined;
+	if (typeof body.reasoning_effort === "string") {
+		reasoningEffort = body.reasoning_effort;
+	} else {
+		const reasoning = asRecord(body.reasoning);
+		if (reasoning && typeof reasoning.effort === "string") {
+			reasoningEffort = reasoning.effort;
+		} else {
+			// Anthropic 原生 /v1/messages 用 output_config.effort 表达思考强度
+			const outputConfig = asRecord(body.output_config);
+			if (outputConfig && typeof outputConfig.effort === "string") {
+				reasoningEffort = outputConfig.effort;
+			}
+		}
+	}
+
+	const thinking = asRecord(body.thinking);
+	const thinkingBudget = thinking && typeof thinking.budget_tokens === "number" ? thinking.budget_tokens : undefined;
+
+	const tools = Array.isArray(body.tools)
+		? body.tools.map(toolNameFromDefinition).filter((name: string): name is string => Boolean(name))
+		: [];
+
+	let maxTokens: number | undefined;
+	if (typeof body.max_tokens === "number") {
+		maxTokens = body.max_tokens;
+	} else if (typeof body.max_completion_tokens === "number") {
+		maxTokens = body.max_completion_tokens;
+	}
+
+	return {
+		model: typeof body.model === "string" ? body.model : undefined,
+		reasoningEffort,
+		thinkingBudget,
+		tools,
+		temperature: typeof body.temperature === "number" ? body.temperature : undefined,
+		topP: typeof body.top_p === "number" ? body.top_p : undefined,
+		maxTokens,
 	};
 };
 

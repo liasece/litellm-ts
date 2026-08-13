@@ -10,12 +10,15 @@ import type { DrizzleDb } from "../core/db/Database";
 import { hashApiKey } from "../core/utils/crypto";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import {
+	clearWebUiSessionCookies,
+	setWebUiSessionCookies,
+	signWebUiSessionToken,
+} from "../auth/WebUiSessionLifecycle";
+import {
 	DEFAULT_WEBUI_SESSION_DURATION,
 	LOGIN_METHOD_USERNAME_PASSWORD,
 	PROXY_ADMIN_ROLE,
 	PROXY_ADMIN_USER_ID,
-	WEBUI_COOKIE_TOKEN_NAME,
-	WEBUI_CSRF_COOKIE_NAME,
 	WEBUI_LOGIN_TEAM_ID,
 	WEBUI_SESSION_DURATION_ENV_VAR,
 	type WebUiSessionClaims,
@@ -23,7 +26,6 @@ import {
 } from "../types/webUiSession";
 
 const DEFAULT_UI_USERNAME = "admin";
-const SECURE_COOKIE_ENV_VAR = "LITELLM_COOKIE_SECURE";
 const MAX_SESSION_GEN_RETRIES = 3;
 const DURATION_PATTERN = /^(\d+)(s|m|h|d)$/;
 
@@ -69,7 +71,7 @@ export function registerLoginRoutes(
 					throw ApiError.unauthorized("WebUI session required");
 				}
 				await authRepository.revokeVerificationTokenByHash(req.auth.token);
-				clearSessionCookies(res);
+				clearWebUiSessionCookies(res);
 				res.json({ status: "success" });
 			} catch (error) {
 				next(error);
@@ -101,20 +103,8 @@ async function loginV2(body: LoginRequestBody, res: Response, config: ServiceCon
 	const expiresAt = new Date(expiresAtSeconds * 1000);
 	const jti = await issueWebUiSession(db, expiresAt);
 	const sessionClaims = createWebUiSessionClaims(config, jti, issuedAtSeconds, expiresAtSeconds);
-	const jwtToken = signHs256(sessionClaims, masterKey);
-	const secure = isProductionCookieSecure();
-	const cookieOptions = {
-		httpOnly: true,
-		path: "/",
-		sameSite: "lax" as const,
-		secure: secure,
-		expires: expiresAt,
-	};
-	res.cookie(WEBUI_COOKIE_TOKEN_NAME, jwtToken, cookieOptions);
-	res.cookie(WEBUI_CSRF_COOKIE_NAME, crypto.randomBytes(32).toString("base64url"), {
-		...cookieOptions,
-		httpOnly: false,
-	});
+	const jwtToken = signWebUiSessionToken(sessionClaims, masterKey);
+	setWebUiSessionCookies(res, jwtToken, crypto.randomBytes(32).toString("base64url"), expiresAt);
 
 	return { redirect_url: "/ui/?login=success" };
 }
@@ -166,11 +156,6 @@ export function parseSessionDuration(raw: string): number {
 	return value * multipliers[match[2] as keyof typeof multipliers];
 }
 
-function isProductionCookieSecure(): boolean {
-	const raw = process.env[SECURE_COOKIE_ENV_VAR];
-	return raw?.toLowerCase() === "true" || raw === "1";
-}
-
 function createWebUiSessionClaims(
 	config: ServiceConfig,
 	jti: string,
@@ -208,12 +193,6 @@ function createSessionInfo(metadata: Record<string, unknown> | undefined): WebUi
 	};
 }
 
-function clearSessionCookies(res: Response): void {
-	const options = { httpOnly: true, path: "/", sameSite: "lax" as const, secure: isProductionCookieSecure() };
-	res.clearCookie(WEBUI_COOKIE_TOKEN_NAME, options);
-	res.clearCookie(WEBUI_CSRF_COOKIE_NAME, { ...options, httpOnly: false });
-}
-
 function getStringSetting(settings: Record<string, unknown> | undefined, key: string): string | undefined {
 	return asString(settings?.[key]);
 }
@@ -226,16 +205,4 @@ function timingSafeEqual(left: string, right: string): boolean {
 	const leftBuffer = Buffer.from(left, "utf8");
 	const rightBuffer = Buffer.from(right, "utf8");
 	return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function signHs256(payload: WebUiSessionClaims, secret: string): string {
-	const encodedHeader = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-	const encodedPayload = base64UrlEncode(JSON.stringify(payload));
-	const signedData = `${encodedHeader}.${encodedPayload}`;
-	const signature = crypto.createHmac("sha256", secret).update(signedData).digest("base64url");
-	return `${signedData}.${signature}`;
-}
-
-function base64UrlEncode(value: string): string {
-	return Buffer.from(value, "utf8").toString("base64url");
 }

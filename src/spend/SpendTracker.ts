@@ -184,8 +184,9 @@ async function upsertDailySpend(
 			modelResolutionChain: log.metadata?.["model_resolution_chain"],
 			resolvedModelGroup: log.metadata?.["resolved_model_group"],
 		});
-	const successfulRequests = (log.status ?? SpendLogStatus.Success) === SpendLogStatus.Success ? 1 : 0;
-	const failedRequests = successfulRequests === 1 ? 0 : 1;
+	const status = log.status ?? SpendLogStatus.Success;
+	const successfulRequests = status === SpendLogStatus.Success ? 1 : 0;
+	const failedRequests = status === SpendLogStatus.Failure ? 1 : 0;
 	const updatedAt = new Date();
 	const values: Record<string, unknown> = {
 		id: randomUUID(),
@@ -1014,6 +1015,33 @@ export async function renewActiveRequest(db: NodePgDatabase<typeof schema>, requ
 		.update(liteLLM_ActiveRequests)
 		.set({
 			expires_at: new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS),
+			updated_at: now,
+		})
+		.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")))
+		.returning({ requestId: liteLLM_ActiveRequests.request_id });
+	return rows.length > 0;
+}
+
+/**
+ * Persist a bounded execution checkpoint without making observability writes
+ * part of the provider success path. The final SpendLog transaction still owns
+ * accounting; this journal only preserves already observed request state for
+ * diagnostics and restart recovery.
+ * @param db
+ * @param requestId
+ * @param checkpoint
+ */
+export async function checkpointActiveRequest(
+	db: NodePgDatabase<typeof schema>,
+	requestId: string,
+	checkpoint: Record<string, unknown>,
+): Promise<boolean> {
+	const now = new Date();
+	const rows = await db
+		.update(liteLLM_ActiveRequests)
+		.set({
+			metadata: sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || jsonb_build_object('responses_execution', ${JSON.stringify(checkpoint)}::jsonb)`,
+			request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${now}::timestamp - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
 			updated_at: now,
 		})
 		.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")))

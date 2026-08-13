@@ -8,13 +8,20 @@
  */
 
 import * as crypto from "node:crypto";
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { ApiError } from "../core/api/ApiError";
 import { hashApiKey } from "../core/utils/crypto";
 import type { AuthRepository } from "./AuthRepository";
 import type { BudgetSnapshots, UserAPIKeyAuth } from "../types/auth";
 import { JWTHandler } from "./JWTHandler";
 import { createModuleLogger } from "../core/utils/logger";
+import {
+	getWebUiSessionRefreshThresholdSeconds,
+	refreshWebUiSessionClaims,
+	setWebUiSessionCookies,
+	shouldRefreshWebUiSession,
+	signWebUiSessionToken,
+} from "./WebUiSessionLifecycle";
 import {
 	WEBUI_COOKIE_TOKEN_NAME,
 	WEBUI_CSRF_COOKIE_NAME,
@@ -26,6 +33,25 @@ import {
 } from "../types/webUiSession";
 
 const logger = createModuleLogger("UserApiKeyAuth");
+
+/** WebUI cookie session 滑动续签配置。 */
+export interface WebUiSessionRenewalOptions {
+	/** 每次续签后的完整有效期（秒）。 */
+	readonly durationSeconds: number;
+	/** 可选续签阈值；默认为 min(1 天, 会话时长 / 3)。 */
+	readonly refreshThresholdSeconds?: number;
+}
+
+interface RefreshWebUiSessionParams {
+	readonly repository: AuthRepository;
+	readonly res: Response;
+	readonly cookieHeader: string | undefined;
+	readonly claims: Record<string, unknown>;
+	readonly sessionHash: string;
+	readonly databaseExpiresAt: Date;
+	readonly masterKey: string;
+	readonly options: WebUiSessionRenewalOptions;
+}
 
 /**
  * Express Request 扩展 — 增加 auth 属性
@@ -309,6 +335,7 @@ export function parseCookieValue(cookieHeader: string | undefined, cookieName: s
  * @param masterKey - 可选超级管理员密钥（直接放行）
  * @param jwtHandler
  * @param customKeyHeaderName - 可选的自定义密钥头名（PY general_settings.custom_litellm_key_header_name）
+ * @param webUiSessionRenewal - WebUI cookie session 滑动续签配置
  * @returns Express 请求处理中间件
  */
 export function createApiKeyAuth(
@@ -316,8 +343,9 @@ export function createApiKeyAuth(
 	masterKey?: string,
 	jwtHandler?: JWTHandler,
 	customKeyHeaderName?: string,
+	webUiSessionRenewal?: WebUiSessionRenewalOptions,
 ): RequestHandler {
-	return async (req, _res, next): Promise<void> => {
+	return async (req, res, next): Promise<void> => {
 		try {
 			const cookieToken = parseCookieToken(req.headers.cookie);
 			const apiKey = extractApiKey(req, customKeyHeaderName, req.path);
@@ -410,6 +438,18 @@ export function createApiKeyAuth(
 						expires: session.expires.toISOString(),
 						metadata: pickSafeJwtClaims(claims),
 					} satisfies UserAPIKeyAuth;
+					if (masterKey && webUiSessionRenewal) {
+						await maybeRefreshWebUiSession({
+							repository: repository,
+							res: res,
+							cookieHeader: req.headers.cookie,
+							claims: claims,
+							sessionHash: session.token,
+							databaseExpiresAt: session.expires,
+							masterKey: masterKey,
+							options: webUiSessionRenewal,
+						});
+					}
 					next();
 					return;
 				}
@@ -607,6 +647,37 @@ export function createApiKeyAuth(
 			next(error instanceof ApiError ? error : ApiError.unavailable("认证账务数据暂不可用"));
 		}
 	};
+}
+
+/**
+ * 在有效 WebUI session 进入临期窗口后同步延长 DB、JWT 和 CSRF cookie。
+ * 续签失败不会中断当前仍然有效的请求；后续请求会继续重试。
+ * @param params
+ */
+async function maybeRefreshWebUiSession(params: RefreshWebUiSessionParams): Promise<void> {
+	const { repository, res, cookieHeader, claims, sessionHash, databaseExpiresAt, masterKey, options } = params;
+	const nowSeconds = Math.floor(Date.now() / 1000);
+	const jwtExpiresAtSeconds = claims.exp as number;
+	const refreshThresholdSeconds =
+		options.refreshThresholdSeconds ?? getWebUiSessionRefreshThresholdSeconds(options.durationSeconds);
+	if (!shouldRefreshWebUiSession(jwtExpiresAtSeconds, databaseExpiresAt, nowSeconds, refreshThresholdSeconds)) {
+		return;
+	}
+
+	const expiresAtSeconds = nowSeconds + options.durationSeconds;
+	const expiresAt = new Date(expiresAtSeconds * 1000);
+	const renewedClaims = refreshWebUiSessionClaims(claims, nowSeconds, expiresAtSeconds);
+	const renewedToken = signWebUiSessionToken(renewedClaims, masterKey);
+	const csrfToken = parseCookieValue(cookieHeader, WEBUI_CSRF_COOKIE_NAME) ?? crypto.randomBytes(32).toString("base64url");
+
+	try {
+		await repository.extendVerificationTokenExpiry(sessionHash, expiresAt);
+		setWebUiSessionCookies(res, renewedToken, csrfToken, expiresAt);
+	} catch (error) {
+		logger.warn("WebUI session 自动续签失败，将在后续请求重试", {
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
 }
 
 /**

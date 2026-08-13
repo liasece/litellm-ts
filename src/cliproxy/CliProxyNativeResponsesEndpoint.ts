@@ -7,12 +7,19 @@ import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
 import type { DrizzleDb } from "../core/db/Database";
 import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
-import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
+import { buildSpendLogFromRequest, checkpointActiveRequest, trackSpendLog } from "../spend/SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { buildDeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { createUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import { buildPassthroughLogRequest } from "./CliProxyUpstreamLogging";
+import { createModuleLogger } from "../core/utils/logger";
+import {
+	CliProxyResponsesExecution,
+	type CliProxyResponsesExecutionSnapshot,
+} from "./CliProxyResponsesExecution";
+
+const logger = createModuleLogger("CLIProxy:Responses");
 
 const REQUEST_BLOCKED_HEADERS = new Set([
 	"authorization",
@@ -25,6 +32,9 @@ const REQUEST_BLOCKED_HEADERS = new Set([
 ]);
 const RESPONSE_BLOCKED_HEADERS = new Set(["connection", "transfer-encoding", "content-length", "keep-alive"]);
 const RESPONSES_SSE_KEEPALIVE_INTERVAL_MS = 15_000;
+const RESPONSES_CLIENT_DISCONNECT_TAIL_GRACE_MS = 250;
+const RESPONSES_CLIENT_DISCONNECT_TEXT_TAIL_GRACE_MS = 1_500;
+const RESPONSES_POST_OUTPUT_DRAIN_TIMEOUT_MS = 5_000;
 const RESPONSES_SSE_KEEPALIVE_CHUNK = 'event: ping\ndata: {"type":"ping"}\n\n';
 // Cloudflare Tunnel can discard SSE comments while it waits for a data event.
 // Codex ignores unknown Responses event types, so a padded ping establishes the
@@ -73,7 +83,89 @@ interface CapturedNativeResponse {
 	readonly firstChunkAt: Date | null;
 }
 
-async function pipeUpstreamResponse(upstream: globalThis.Response, res: Response): Promise<CapturedNativeResponse> {
+interface PipeUpstreamResponseOptions {
+	/**
+	 * Responses 客户端可能在收到成功或 incomplete 终态后立即关闭下游 SSE，而 CLIProxy 的 HTTP body
+	 * 尚未来得及返回 EOF。此时保留完整终态并按实际结果落库，而不是把收尾竞态误记为失败。
+	 */
+	readonly acceptResponsesTerminalOnAbort?: boolean;
+}
+
+const RESPONSES_SUCCESS_TERMINAL_EVENT_TYPES = new Set(["response.completed", "response.incomplete"]);
+
+function parseResponsesSseEvent(event: string): Record<string, unknown> | null {
+	const data = event
+		.split(/\r?\n/)
+		.filter((line) => line.startsWith("data:"))
+		.map((line) => line.slice(5).replace(/^ /, ""))
+		.join("\n");
+	if (!data) {
+		return null;
+	}
+	try {
+		const payload: unknown = JSON.parse(data);
+		return typeof payload === "object" && payload !== null && !Array.isArray(payload)
+			? (payload as Record<string, unknown>)
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function hasCompleteResponsesTerminalEvent(raw: string): boolean {
+	const eventBoundary = /\r?\n\r?\n/g;
+	let eventStart = 0;
+	let boundary: RegExpExecArray | null;
+	while ((boundary = eventBoundary.exec(raw)) !== null) {
+		const event = raw.slice(eventStart, boundary.index);
+		eventStart = eventBoundary.lastIndex;
+		const payload = parseResponsesSseEvent(event);
+		if (payload && RESPONSES_SUCCESS_TERMINAL_EVENT_TYPES.has(String(payload["type"] ?? ""))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function isAbortError(error: unknown): boolean {
+	return typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError";
+}
+
+class ClientDisconnectedError extends Error {
+	readonly statusCode = 499;
+
+	constructor(source: string) {
+		super(`Client disconnected before the upstream response reached a terminal event (${source}).`);
+		this.name = "ClientDisconnected";
+	}
+}
+
+async function pipeUpstreamResponse(
+	upstream: globalThis.Response,
+	res: Response,
+	execution?: CliProxyResponsesExecution,
+	options: PipeUpstreamResponseOptions = {},
+): Promise<CapturedNativeResponse> {
+	let fallbackRaw = "";
+	let fallbackFirstChunkAt: Date | null = null;
+	const recordDecodedChunk = (chunk: string): void => {
+		if (!chunk) {
+			return;
+		}
+		if (execution) {
+			execution.recordDecodedChunk(chunk);
+			return;
+		}
+		fallbackFirstChunkAt ??= new Date();
+		fallbackRaw += chunk;
+		if (fallbackRaw.length > 2_000_000) {
+			fallbackRaw = fallbackRaw.slice(-2_000_000);
+		}
+	};
+	const captured = (): CapturedNativeResponse => ({
+		raw: execution?.snapshot.raw ?? fallbackRaw,
+		firstChunkAt: execution?.snapshot.firstChunkAt ?? fallbackFirstChunkAt,
+	});
 	if (!res.headersSent) {
 		res.status(upstream.status);
 		upstream.headers.forEach((value, key) => {
@@ -86,32 +178,40 @@ async function pipeUpstreamResponse(upstream: globalThis.Response, res: Response
 		if (!res.writableEnded) {
 			res.end();
 		}
-		return { raw: "", firstChunkAt: null };
+		return captured();
 	}
 	const reader = upstream.body.getReader();
 	const decoder = new TextDecoder();
-	let captured = "";
-	let firstChunkAt: Date | null = null;
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) {
 				break;
 			}
-			firstChunkAt ??= new Date();
+			const decoded = decoder.decode(value, { stream: true });
+			recordDecodedChunk(decoded);
 			if (!res.destroyed && !res.writableEnded) {
 				res.write(Buffer.from(value));
 			}
-			captured += decoder.decode(value, { stream: true });
-			if (captured.length > 2_000_000) {
-				captured = captured.slice(-2_000_000);
-			}
 		}
-		captured += decoder.decode();
+		const decodedTail = decoder.decode();
+		recordDecodedChunk(decodedTail);
 		if (!res.writableEnded) {
 			res.end();
 		}
-		return { raw: captured, firstChunkAt: firstChunkAt };
+		return captured();
+	} catch (error) {
+		const decodedTail = decoder.decode();
+		recordDecodedChunk(decodedTail);
+		const capture = captured();
+		if (
+			options.acceptResponsesTerminalOnAbort === true &&
+			isAbortError(error) &&
+			hasCompleteResponsesTerminalEvent(capture.raw)
+		) {
+			return capture;
+		}
+		throw error;
 	} finally {
 		reader.releaseLock();
 	}
@@ -353,6 +453,11 @@ function extractNativeResponse(raw: string): { response?: Record<string, unknown
 	}
 	let response: Record<string, unknown> | undefined;
 	let usage: Record<string, unknown> | undefined;
+	let responsesBase: Record<string, unknown> | undefined;
+	let responsesEventSeen = false;
+	let responsesTerminalSeen = false;
+	let lastResponsesEvent: Record<string, unknown> | undefined;
+	let partialOutputText = "";
 	for (const candidate of candidates) {
 		const nestedResponse =
 			typeof candidate["response"] === "object" && candidate["response"] !== null
@@ -364,8 +469,80 @@ function extractNativeResponse(raw: string): { response?: Record<string, unknown
 				: undefined;
 		response = nestedResponse ?? message ?? candidate;
 		usage = normalizeNativeUsage(response["usage"]) ?? normalizeNativeUsage(candidate["usage"]) ?? usage;
+		const type = candidate["type"];
+		if (typeof type === "string" && type.startsWith("response.")) {
+			responsesEventSeen = true;
+			lastResponsesEvent = candidate;
+			responsesBase = nestedResponse ?? responsesBase;
+			responsesTerminalSeen ||= ["response.completed", "response.incomplete", "response.failed", "response.cancelled"].includes(type);
+			if (type === "response.output_text.delta" && typeof candidate["delta"] === "string") {
+				partialOutputText += candidate["delta"];
+			} else if (type === "response.output_text.done" && typeof candidate["text"] === "string") {
+				partialOutputText = candidate["text"];
+			}
+		}
+	}
+	if (responsesEventSeen && !responsesTerminalSeen) {
+		response = {
+			...(responsesBase ?? {}),
+			status: responsesBase?.["status"] ?? "in_progress",
+			partial_output_text: partialOutputText || undefined,
+			last_event: lastResponsesEvent,
+		};
 	}
 	return { response: response, usage: usage };
+}
+
+function responsesExecutionMetadata(
+	snapshot: CliProxyResponsesExecutionSnapshot,
+	extracted: ReturnType<typeof extractNativeResponse>,
+	finalStatus?: SpendLogStatus,
+): Record<string, unknown> {
+	let state = "running";
+	if (finalStatus === SpendLogStatus.Success) {
+		state = "completed";
+	} else if (finalStatus === SpendLogStatus.Cancelled) {
+		state = "client_cancelled";
+	} else if (finalStatus === SpendLogStatus.Failure) {
+		state = snapshot.cancellationRequested ? "cancelled" : "failed";
+	} else if (snapshot.terminalReceived) {
+		state = "terminal_received";
+	} else if (snapshot.cancellationRequested) {
+		state = "cancel_requested";
+	}
+	return {
+		state: state,
+		client_disconnected: snapshot.clientDisconnected,
+		cancel_requested: snapshot.cancellationRequested,
+		cancel_strategy: snapshot.cancellationStrategy,
+		cancel_source: snapshot.cancellationSource,
+		client_disconnected_at: snapshot.cancellationRequestedAt?.toISOString() ?? null,
+		upstream_abort_issued: snapshot.upstreamAbortIssued,
+		upstream_abort_issued_at: snapshot.upstreamAbortIssuedAt?.toISOString() ?? null,
+		completed_output_received: snapshot.completedOutputReceived,
+		terminal_received: snapshot.terminalReceived,
+		terminal_received_at: snapshot.terminalReceivedAt?.toISOString() ?? null,
+		last_sse_event: snapshot.lastSseEventType ?? null,
+		last_sse_event_at: snapshot.lastSseEventAt?.toISOString() ?? null,
+		first_chunk_at: snapshot.firstChunkAt?.toISOString() ?? null,
+		captured_characters: snapshot.capturedCharacters,
+		captured_truncated: snapshot.capturedTruncated,
+		response: extracted.response ?? null,
+		usage: extracted.usage ?? null,
+	};
+}
+
+function responsesTerminalFailure(response: Record<string, unknown> | undefined): Error | undefined {
+	const status = response?.["status"];
+	if (status !== "failed" && status !== "cancelled" && status !== "canceled") {
+		return undefined;
+	}
+	const error = response?.["error"];
+	const message =
+		typeof error === "object" && error !== null && typeof (error as Record<string, unknown>)["message"] === "string"
+			? String((error as Record<string, unknown>)["message"])
+			: `CLIProxy Responses request ${status}`;
+	return new Error(message);
 }
 
 /**
@@ -404,116 +581,150 @@ export function registerCliProxyNativeResponsesRoutes(
 		});
 		const lifecycle = createEndpointSpendLifecycle(reservation);
 		lifecycle.markProviderStarted();
-		const abortController = new AbortController();
-		const abort = (): void => abortController.abort();
-		req.once("aborted", abort);
-		res.once("close", abort);
 		const streaming = body["stream"] === true;
 		const stopKeepAlive = streaming ? startResponsesSseKeepAlive(res) : undefined;
-		// 声明在 try 外：catch 失败路径也要读取 request-only 上游日志。
-		let upstreamLogContext: UpstreamLogContext | undefined;
-		try {
-			const upstreamUrl = `${runtime.baseUrl}/v1/responses`;
-			const upstreamBody = applyReasoningEffortOverride(
-				{ ...body, model: upstreamModel(deploymentModel) },
-				candidate.deployment,
-				"responses",
-			);
-			const logRequest = buildPassthroughLogRequest({
-				url: upstreamUrl,
-				method: "POST",
-				headers: buildForwardHeaders(req, runtime.internalApiKey),
-				body: upstreamBody,
-				model: upstreamModel(deploymentModel),
-			});
-			upstreamLogContext = createUpstreamLogContext(logRequest);
-			const upstream = await fetch(upstreamUrl, {
-				method: "POST",
-				headers: buildForwardHeaders(req, runtime.internalApiKey),
-				body: JSON.stringify(upstreamBody),
-				signal: abortController.signal,
-			});
-			// 与 registerNativeRoute 一致：responses 协议也参与 deployment 冷却记账。
-			if (upstream.ok) {
-				router.recordDeploymentSuccess(candidate.deployment);
-			} else {
-				router.recordDeploymentFailure(candidate.deployment, new Error(`CLIProxy returned HTTP ${upstream.status}`));
+		const upstreamUrl = `${runtime.baseUrl}/v1/responses`;
+		const spendInfo = buildDeploymentSpendInfo(candidate.deployment, upstreamUrl);
+		const execution = new CliProxyResponsesExecution({
+			postOutputDrainTimeoutMs: RESPONSES_POST_OUTPUT_DRAIN_TIMEOUT_MS,
+			terminalTailGraceMs: RESPONSES_CLIENT_DISCONNECT_TAIL_GRACE_MS,
+			textTerminalTailGraceMs: RESPONSES_CLIENT_DISCONNECT_TEXT_TAIL_GRACE_MS,
+			onCheckpoint:
+				reservation?.requestId && db
+					? async (snapshot): Promise<void> => {
+							const extracted = extractNativeResponse(snapshot.raw);
+							await checkpointActiveRequest(
+								db,
+								reservation.requestId,
+								responsesExecutionMetadata(snapshot, extracted),
+							);
+						}
+					: undefined,
+			onCheckpointError: (error): void => {
+				logger.warn("Responses execution checkpoint failed", { error: error, requestId: reservation?.requestId });
+			},
+		});
+		const cancelExecution = (): void => execution.requestClientCancellation("request_aborted");
+		const cancelOnResponseClose = (): void => {
+			if (!res.writableEnded) {
+				execution.requestClientCancellation("response_closed");
 			}
-			deploymentRecorded = true;
-			const captured =
-				streaming && !upstream.ok
-					? await (async (): Promise<CapturedNativeResponse> => {
-							const raw = await upstream.text();
+		};
+		req.once("aborted", cancelExecution);
+		res.once("close", cancelOnResponseClose);
+		try {
+			await execution.start(async (work): Promise<void> => {
+				let upstreamLogContext: UpstreamLogContext | undefined;
+				let upstream: globalThis.Response | undefined;
+				const upstreamBody = applyReasoningEffortOverride(
+					{ ...body, model: upstreamModel(deploymentModel) },
+					candidate.deployment,
+					"responses",
+				);
+				const logRequest = buildPassthroughLogRequest({
+					url: upstreamUrl,
+					method: "POST",
+					headers: buildForwardHeaders(req, runtime.internalApiKey),
+					body: upstreamBody,
+					model: upstreamModel(deploymentModel),
+				});
+				upstreamLogContext = createUpstreamLogContext(logRequest);
+
+				const finalizeLog = async (error: unknown, status: SpendLogStatus): Promise<void> => {
+					if (lifecycle.isFinalized() || !req.auth) {
+						return;
+					}
+					const snapshot = work.snapshot;
+					const extracted = extractNativeResponse(snapshot.raw);
+					if (upstream) {
+						upstreamLogContext = createUpstreamLogContext(logRequest, upstream, extracted.response);
+					}
+					await work.flushCheckpoints();
+					const endTime = new Date();
+					const log = await buildSpendLogFromRequest({
+						req: req,
+						requestId: reservation?.requestId,
+						auth: req.auth,
+						callType: CallType.ACompletion,
+						model: model,
+						modelGroup: model,
+						modelId: spendInfo.modelId,
+						customLlmProvider: spendInfo.customLlmProvider,
+						apiBase: spendInfo.apiBase,
+						customCostPerToken: spendInfo.customCostPerToken,
+						deploymentModel: spendInfo.deploymentModel,
+						startTime: startTime,
+						endTime: endTime,
+						completionStartTime: snapshot.firstChunkAt ?? endTime,
+						messages: body["input"],
+						response: extracted.response,
+						usage: extracted.usage,
+						error: error,
+						upstreamLogContext: upstreamLogContext,
+						status: status,
+						metadataOverrides: { responses_execution: responsesExecutionMetadata(snapshot, extracted, status) },
+					});
+					await lifecycle.finalize(() => trackSpendLog(db, log).then(() => undefined));
+				};
+
+				try {
+					upstream = await fetch(upstreamUrl, {
+						method: "POST",
+						headers: buildForwardHeaders(req, runtime.internalApiKey),
+						body: JSON.stringify(upstreamBody),
+						signal: work.signal,
+					});
+					upstreamLogContext = createUpstreamLogContext(logRequest, upstream);
+					if (upstream.ok) {
+						router.recordDeploymentSuccess(candidate.deployment);
+					} else {
+						router.recordDeploymentFailure(candidate.deployment, new Error(`CLIProxy returned HTTP ${upstream.status}`));
+					}
+					deploymentRecorded = true;
+					if (streaming && !upstream.ok) {
+						const raw = await upstream.text();
+						work.recordDecodedChunk(raw);
+						writeResponsesSseError(res, upstream.status, upstreamErrorMessage(raw, `CLIProxy returned HTTP ${upstream.status}`));
+					} else {
+						await pipeUpstreamResponse(upstream, res, work, { acceptResponsesTerminalOnAbort: true });
+					}
+					const extracted = extractNativeResponse(work.snapshot.raw);
+					const upstreamError = upstream.ok
+						? responsesTerminalFailure(extracted.response)
+						: new Error(`CLIProxy returned HTTP ${upstream.status}`);
+					await finalizeLog(upstreamError, upstreamError ? SpendLogStatus.Failure : SpendLogStatus.Success);
+				} catch (error) {
+					if (!deploymentRecorded && !isAbortError(error)) {
+						router.recordDeploymentFailure(candidate.deployment, error instanceof Error ? error : new Error(String(error)));
+					}
+					const snapshot = work.snapshot;
+					const clientCancellation = snapshot.clientDisconnected && snapshot.upstreamAbortIssued && work.signal.aborted;
+					await finalizeLog(
+						clientCancellation ? new ClientDisconnectedError(snapshot.cancellationSource) : error,
+						clientCancellation ? SpendLogStatus.Cancelled : SpendLogStatus.Failure,
+					);
+					if (streaming && res.headersSent) {
+						if (work.snapshot.clientDisconnected) {
+							if (!res.destroyed && !res.writableEnded) {
+								res.end();
+							}
+						} else {
 							writeResponsesSseError(
 								res,
-								upstream.status,
-								upstreamErrorMessage(raw, `CLIProxy returned HTTP ${upstream.status}`),
+								502,
+								error instanceof Error && error.message.length > 0 ? error.message.slice(0, 4_096) : "CLIProxy request failed",
 							);
-							return { raw: raw, firstChunkAt: new Date() };
-						})()
-					: await pipeUpstreamResponse(upstream, res);
-			const extracted = extractNativeResponse(captured.raw);
-			upstreamLogContext = createUpstreamLogContext(logRequest, upstream, extracted.response);
-			const spendInfo = buildDeploymentSpendInfo(candidate.deployment, upstreamUrl);
-			if (req.auth) {
-				const log = await buildSpendLogFromRequest({
-					req: req,
-					requestId: reservation?.requestId,
-					auth: req.auth,
-					callType: CallType.ACompletion,
-					model: model,
-					modelGroup: model,
-					modelId: spendInfo.modelId,
-					customLlmProvider: spendInfo.customLlmProvider,
-					apiBase: spendInfo.apiBase,
-					customCostPerToken: spendInfo.customCostPerToken,
-					deploymentModel: spendInfo.deploymentModel,
-					startTime: startTime,
-					endTime: new Date(),
-					completionStartTime: captured.firstChunkAt ?? new Date(),
-					messages: body["input"],
-					response: extracted.response,
-					usage: extracted.usage,
-					upstreamLogContext: upstreamLogContext,
-					status: upstream.ok ? SpendLogStatus.Success : SpendLogStatus.Failure,
-					error: upstream.ok ? undefined : new Error(`CLIProxy returned HTTP ${upstream.status}`),
-				});
-				await lifecycle.finalize(() => trackSpendLog(db, log).then(() => undefined));
-			}
-		} catch (error) {
-			if (!deploymentRecorded && !(error instanceof DOMException && error.name === "AbortError")) {
-				router.recordDeploymentFailure(candidate.deployment, error instanceof Error ? error : new Error(String(error)));
-			}
-			if (!lifecycle.isFinalized() && req.auth) {
-				const log = await buildSpendLogFromRequest({
-					req: req,
-					requestId: reservation?.requestId,
-					auth: req.auth,
-					callType: CallType.ACompletion,
-					model: model,
-					startTime: startTime,
-					endTime: new Date(),
-					messages: body["input"],
-					error: error,
-					upstreamLogContext: upstreamLogContext,
-					status: SpendLogStatus.Failure,
-				});
-				await lifecycle.finalize(() => trackSpendLog(db, log).then(() => undefined));
-			}
-			if (streaming && res.headersSent) {
-				writeResponsesSseError(
-					res,
-					502,
-					error instanceof Error && error.message.length > 0 ? error.message.slice(0, 4_096) : "CLIProxy request failed",
-				);
-				return;
-			}
-			throw error;
+						}
+						return;
+					}
+					throw error;
+				}
+			});
 		} finally {
 			stopKeepAlive?.();
 			lifecycle.stop();
-			req.removeListener("aborted", abort);
-			res.removeListener("close", abort);
+			req.removeListener("aborted", cancelExecution);
+			res.removeListener("close", cancelOnResponseClose);
 		}
 	};
 

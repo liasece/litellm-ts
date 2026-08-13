@@ -2,7 +2,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { PrettyMessagesView } from "./PrettyMessagesView";
-import { parseMessages } from "./prettyMessagesUtils";
+import { parseMessages, parseRequestMeta } from "./prettyMessagesUtils";
 
 vi.mock("antd", async () => {
 	const actual = await vi.importActual<typeof import("antd")>("antd");
@@ -76,8 +76,7 @@ describe("PrettyMessagesView", () => {
 						{
 							type: "image_url",
 							image_url: {
-								url:
-									"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+								url: "data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
 							},
 						},
 					],
@@ -444,5 +443,75 @@ describe("PrettyMessagesView", () => {
 		render(<PrettyMessagesView request={request} response={response} />);
 		expect(screen.getByText("Test")).toBeInTheDocument();
 		expect(screen.getByText("Reply")).toBeInTheDocument();
+	});
+
+	it("should render request metadata tags for reasoning effort, tools and params", () => {
+		const request = {
+			body: {
+				model: "deepseek-v4-pro",
+				messages: [{ role: "user", content: "Hello" }],
+				reasoning: { effort: "max" },
+				tools: [
+					{ type: "function", function: { name: "get_weather" } },
+					{ type: "function", function: { name: "get_time" } },
+				],
+				temperature: 0.7,
+				top_p: 0.9,
+				max_tokens: 4096,
+			},
+		};
+		const response = { choices: [{ message: { role: "assistant", content: "Hi" } }] };
+
+		render(<PrettyMessagesView request={request} response={response} />);
+
+		expect(screen.getByText(/Reasoning: max/)).toBeInTheDocument();
+		expect(screen.getByText(/Tools: get_weather, get_time/)).toBeInTheDocument();
+		expect(screen.getByText(/temperature: 0.7/)).toBeInTheDocument();
+		expect(screen.getByText(/top_p: 0.9/)).toBeInTheDocument();
+		expect(screen.getByText(/max_tokens: 4096/)).toBeInTheDocument();
+	});
+
+	it("should render thinking budget for Anthropic-style requests", () => {
+		const request = {
+			body: {
+				model: "claude-sonnet-4-6",
+				messages: [{ role: "user", content: "Hello" }],
+				thinking: { type: "enabled", budget_tokens: 2048 },
+				tools: [{ name: "search", description: "Search the web" }],
+			},
+		};
+		const response = { choices: [{ message: { role: "assistant", content: "Hi" } }] };
+
+		render(<PrettyMessagesView request={request} response={response} />);
+
+		expect(screen.getByText(/Thinking budget: 2048 tokens/)).toBeInTheDocument();
+		expect(screen.getByText(/Tools: search/)).toBeInTheDocument();
+	});
+
+	it("should render reasoning effort from Anthropic output_config.effort", () => {
+		const request = {
+			body: {
+				model: "claude-opus-4-5",
+				messages: [{ role: "user", content: "Hello" }],
+				output_config: { effort: "high" },
+			},
+		};
+		const response = { choices: [{ message: { role: "assistant", content: "Hi" } }] };
+
+		render(<PrettyMessagesView request={request} response={response} />);
+
+		expect(screen.getByText(/Reasoning: high/)).toBeInTheDocument();
+	});
+
+	it("should not render request metadata tags when request has none", () => {
+		expect(parseRequestMeta({ body: { model: "gpt-4", messages: [] } })).toEqual({
+			model: "gpt-4",
+			reasoningEffort: undefined,
+			thinkingBudget: undefined,
+			tools: [],
+			temperature: undefined,
+			topP: undefined,
+			maxTokens: undefined,
+		});
 	});
 });

@@ -1,6 +1,11 @@
 "use client";
 
-import { getProxyBaseUrl, getWebUiSession, type WebUiSessionInfo } from "@/components/networking";
+import {
+	getProxyBaseUrl,
+	getWebUiSession,
+	subscribeToWebUiSessionKeepAlive,
+	type WebUiSessionInfo,
+} from "@/components/networking";
 import { buildLoginUrlWithReturn, storeReturnUrl } from "@/utils/returnUrlUtils";
 import { formatUserRole } from "@/utils/roles";
 import { useRouter } from "next/navigation";
@@ -22,6 +27,9 @@ const useAuthorized = () => {
 
 	useEffect(() => {
 		let active = true;
+		const unsubscribeKeepAlive = subscribeToWebUiSessionKeepAlive(() => {
+			if (active) setSession(null);
+		});
 		void getWebUiSession()
 			.then((response) => {
 				if (active) setSession(response);
@@ -34,6 +42,7 @@ const useAuthorized = () => {
 			});
 		return () => {
 			active = false;
+			unsubscribeKeepAlive();
 		};
 	}, []);
 

@@ -1196,6 +1196,39 @@ describe("SpendTracker DailySpend 聚合写入", () => {
 		expect(conflictSet["updated_at"]).toBeInstanceOf(Date);
 	});
 
+	it("客户端取消请求保留 API 请求数，但不计入成功或失败聚合", async () => {
+		const dailyValues: Record<string, unknown>[] = [];
+		const mockDb = withTransaction({
+			insert: jest.fn((table: unknown) => ({
+				values: jest.fn((values: Record<string, unknown>) => {
+					if (table === liteLLM_SpendLogs) {
+						return Promise.resolve();
+					}
+					dailyValues.push(values);
+					return { onConflictDoUpdate: jest.fn(() => Promise.resolve()) };
+				}),
+			})),
+		}) as unknown as Parameters<typeof trackSpendLog>[0];
+
+		await trackSpendLog(mockDb, {
+			api_key: "hashed-key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 0,
+			endTime: "2026-01-02T23:00:01.000Z",
+			model: "provider/model",
+			prompt_tokens: 0,
+			request_id: "req-daily-cancelled",
+			spend: 0,
+			startTime: "2026-01-02T23:00:00.000Z",
+			status: SpendLogStatus.Cancelled,
+			total_tokens: 0,
+			user: "user-1",
+		});
+
+		expect(dailyValues).toHaveLength(1);
+		expect(dailyValues[0]).toMatchObject({ api_requests: 1, successful_requests: 0, failed_requests: 0 });
+	});
+
 	it("缺失 MCP 工具名和 endpoint 时归一为空字符串", async () => {
 		const dailyValues: Record<string, unknown>[] = [];
 		const mockDb = withTransaction({
@@ -1485,6 +1518,41 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		// A4: cache_key 管道就位（TS 无响应缓存子系统）
 		expect(spendLog.cache_key).toBeUndefined();
 		expect(spendLog.cache_hit).toBe(false);
+	});
+
+	it("客户端取消使用独立状态和错误类型，并在执行元数据中保留部分响应", async () => {
+		const error = Object.assign(new Error("Client disconnected before terminal."), {
+			name: "ClientDisconnected",
+			statusCode: 499,
+		});
+		const spendLog = await buildSpendLogFromRequest({
+			callType: CallType.ACompletion,
+			endTime: new Date("2026-08-13T10:00:02.000Z"),
+			error: error,
+			model: "gpt-5.6-sol",
+			metadataOverrides: {
+				responses_execution: {
+					response: { id: "resp_partial", status: "in_progress", partial_output_text: "hello" },
+				},
+			},
+			req: createMinimalRequest(),
+			response: { id: "resp_partial", status: "in_progress", partial_output_text: "hello" },
+			startTime: new Date("2026-08-13T10:00:00.000Z"),
+			status: SpendLogStatus.Cancelled,
+		});
+
+		expect(spendLog.status).toBe(SpendLogStatus.Cancelled);
+		expect(spendLog.metadata).toMatchObject({
+			status: SpendLogStatus.Cancelled,
+			error_information: {
+				error_type: "ClientDisconnected",
+				error_code: 499,
+				error_message: "Client disconnected before terminal.",
+			},
+			responses_execution: {
+				response: { id: "resp_partial", status: "in_progress", partial_output_text: "hello" },
+			},
+		});
 	});
 
 	it("fallback 到无 provider 前缀 deployment 时，model 用最终模型且 model_group 保留原请求", async () => {

@@ -166,6 +166,275 @@ describe("CLIProxy native Responses streaming", () => {
 		}
 	});
 
+	it("finishes reading a terminal already in flight after the client closes on the final text delta", async () => {
+		const encoder = new TextEncoder();
+		const outputTextDeltaEvent =
+			'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"hello"}\n\n';
+		const outputTextDoneEvent =
+			'event: response.output_text.done\ndata: {"type":"response.output_text.done","item_id":"msg_1","output_index":0,"content_index":0,"text":"hello"}\n\n';
+		const outputItemDoneEvent =
+			'event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[]}}\n\n';
+		const terminalEvent =
+			'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":3,"output_tokens":5}}}\n\n';
+		let releaseTerminal!: () => void;
+		const terminalReady = new Promise<void>((resolve) => {
+			releaseTerminal = resolve;
+		});
+		let terminalReleased = false;
+		let upstreamAborted = false;
+		jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+			const body = new ReadableStream<Uint8Array>({
+				start: (controller) => {
+					controller.enqueue(encoder.encode(outputTextDeltaEvent));
+					init?.signal?.addEventListener(
+						"abort",
+						() => {
+							upstreamAborted = true;
+							controller.error(new DOMException("This operation was aborted", "AbortError"));
+						},
+						{ once: true },
+					);
+					void terminalReady.then(() => {
+						if (!upstreamAborted) {
+							controller.enqueue(encoder.encode(outputTextDoneEvent + outputItemDoneEvent + terminalEvent));
+							controller.close();
+						}
+					});
+				},
+			});
+			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+		});
+
+		const app = express();
+		app.use(express.json());
+		app.use((req, _res, next) => {
+			req.auth = { api_key: "test-key", models: ["gpt-5.6-sol"] } as never;
+			next();
+		});
+		const deployment: Deployment = {
+			model_name: "gpt-5.6-sol",
+			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+		};
+		const router = {
+			getAvailableDeployment: () => ({ deployment: deployment }),
+			getDeployments: () => [deployment],
+			getFallbacks: () => ({}),
+			recordDeploymentSuccess: jest.fn(),
+			recordDeploymentFailure: jest.fn(),
+		} as unknown as LiteLLMRouter;
+		const expressRouter = express.Router();
+		registerCliProxyNativeResponsesRoutes(
+			expressRouter,
+			router,
+			{ baseUrl: "http://127.0.0.1:8317", internalApiKey: "internal-only" } as CliProxyRuntimeManager,
+			undefined as never,
+		);
+		app.use(expressRouter);
+		const server = await new Promise<http.Server>((resolve, reject) => {
+			const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+			listening.once("error", reject);
+		});
+		let client: http.ClientRequest | undefined;
+
+		try {
+			const port = (server.address() as AddressInfo).port;
+			await new Promise<void>((resolve, reject) => {
+				client = http.request(
+					{
+						host: "127.0.0.1",
+						port: port,
+						path: "/v1/responses",
+						method: "POST",
+						headers: { "content-type": "application/json" },
+					},
+					(response) => {
+						let received = "";
+						response.on("data", (chunk: Buffer) => {
+							received += chunk.toString("utf8");
+							if (received.includes("event: response.output_text.delta")) {
+								response.destroy();
+								resolve();
+							}
+						});
+					},
+				);
+				client.once("error", reject);
+				client.end(JSON.stringify({ model: "gpt-5.6-sol", input: "hello", stream: true }));
+			});
+			// The old 250 ms grace aborted this exact race before the terminal arrived.
+			await new Promise((resolve) => setTimeout(resolve, 350));
+			expect(upstreamAborted).toBe(false);
+			terminalReleased = true;
+			releaseTerminal();
+
+			for (let attempt = 0; attempt < 20 && mockBuildSpendLogFromRequest.mock.calls.length === 0; attempt++) {
+				await new Promise<void>((resolve) => setImmediate(resolve));
+			}
+			expect(mockBuildSpendLogFromRequest).toHaveBeenCalledTimes(1);
+			const spendContext = mockBuildSpendLogFromRequest.mock.calls[0]?.[0] as {
+				status?: string;
+				response?: Record<string, unknown>;
+				usage?: Record<string, unknown>;
+				metadataOverrides?: Record<string, unknown>;
+			};
+			expect(spendContext).toMatchObject({
+				status: "success",
+				response: { id: "resp_1", status: "completed" },
+				usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 },
+				metadataOverrides: {
+					responses_execution: {
+						state: "completed",
+						cancel_strategy: "text_terminal_tail_grace",
+						upstream_abort_issued: false,
+						terminal_received: true,
+						terminal_received_at: expect.any(String),
+						last_sse_event_at: expect.any(String),
+					},
+				},
+			});
+		} finally {
+			client?.destroy();
+			if (!terminalReleased) {
+				releaseTerminal();
+			}
+			await closeServer(server);
+		}
+	});
+
+	it("aborts unfinished upstream work after client disconnect and logs the accumulated partial response", async () => {
+		const encoder = new TextEncoder();
+		const partialEvents =
+			'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_partial","status":"in_progress","output":[]}}\n\n' +
+			'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","item_id":"msg_1","delta":"hel"}\n\n' +
+			'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","item_id":"msg_1","delta":"lo"}\n\n';
+		let upstreamAborted = false;
+		jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+			const body = new ReadableStream<Uint8Array>({
+				start: (controller) => {
+					controller.enqueue(encoder.encode(partialEvents));
+					init?.signal?.addEventListener(
+						"abort",
+						() => {
+							upstreamAborted = true;
+							controller.error(new DOMException("This operation was aborted", "AbortError"));
+						},
+						{ once: true },
+					);
+				},
+			});
+			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+		});
+
+		const app = express();
+		app.use(express.json());
+		app.use((req, _res, next) => {
+			req.auth = { api_key: "test-key", models: ["gpt-5.6-sol"] } as never;
+			next();
+		});
+		const deployment: Deployment = {
+			model_name: "gpt-5.6-sol",
+			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+		};
+		const router = {
+			getAvailableDeployment: () => ({ deployment: deployment }),
+			getDeployments: () => [deployment],
+			getFallbacks: () => ({}),
+			recordDeploymentSuccess: jest.fn(),
+			recordDeploymentFailure: jest.fn(),
+		} as unknown as LiteLLMRouter;
+		const expressRouter = express.Router();
+		registerCliProxyNativeResponsesRoutes(
+			expressRouter,
+			router,
+			{ baseUrl: "http://127.0.0.1:8317", internalApiKey: "internal-only" } as CliProxyRuntimeManager,
+			undefined as never,
+		);
+		app.use(expressRouter);
+		const server = await new Promise<http.Server>((resolve, reject) => {
+			const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+			listening.once("error", reject);
+		});
+		let client: http.ClientRequest | undefined;
+
+		try {
+			const port = (server.address() as AddressInfo).port;
+			await new Promise<void>((resolve, reject) => {
+				client = http.request(
+					{
+						host: "127.0.0.1",
+						port: port,
+						path: "/v1/responses",
+						method: "POST",
+						headers: { "content-type": "application/json" },
+					},
+					(response) => {
+						let received = "";
+						response.on("data", (chunk: Buffer) => {
+							received += chunk.toString("utf8");
+							if (received.includes('"delta":"lo"')) {
+								response.destroy();
+								resolve();
+							}
+						});
+					},
+				);
+				client.once("error", reject);
+				client.end(JSON.stringify({ model: "gpt-5.6-sol", input: "hello", stream: true }));
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 1_650));
+			for (let attempt = 0; attempt < 40 && mockBuildSpendLogFromRequest.mock.calls.length === 0; attempt++) {
+				await new Promise<void>((resolve) => setImmediate(resolve));
+			}
+			expect(upstreamAborted).toBe(true);
+			expect(mockBuildSpendLogFromRequest).toHaveBeenCalledTimes(1);
+			const spendContext = mockBuildSpendLogFromRequest.mock.calls[0]?.[0] as {
+				status?: string;
+				modelGroup?: string;
+				deploymentModel?: string;
+				customLlmProvider?: string;
+				response?: Record<string, unknown>;
+				metadataOverrides?: Record<string, unknown>;
+				error?: Error;
+			};
+			expect(spendContext).toMatchObject({
+				status: "cancelled",
+				modelGroup: "gpt-5.6-sol",
+				deploymentModel: "cliproxy/gpt-5.6-sol",
+				customLlmProvider: "cliproxy",
+				response: {
+					id: "resp_partial",
+					status: "in_progress",
+					partial_output_text: "hello",
+					last_event: { type: "response.output_text.delta", delta: "lo" },
+				},
+				metadataOverrides: {
+					responses_execution: {
+						state: "client_cancelled",
+						client_disconnected: true,
+						cancel_requested: true,
+						cancel_strategy: "text_terminal_tail_grace",
+						cancel_source: "response_closed",
+						client_disconnected_at: expect.any(String),
+						upstream_abort_issued: true,
+						upstream_abort_issued_at: expect.any(String),
+						terminal_received: false,
+						last_sse_event: "response.output_text.delta",
+						last_sse_event_at: expect.any(String),
+					},
+				},
+			});
+			expect(spendContext.error).toMatchObject({
+				name: "ClientDisconnected",
+				message: "Client disconnected before the upstream response reached a terminal event (response_closed).",
+			});
+			expect(mockTrackSpendLog).toHaveBeenCalledTimes(1);
+		} finally {
+			client?.destroy();
+			await closeServer(server);
+		}
+	});
+
 	it("records upstream request and response context for native Responses passthrough", async () => {
 		jest.spyOn(global, "fetch").mockResolvedValue(
 			new Response(JSON.stringify({ id: "resp_1", status: "completed", usage: { input_tokens: 3, output_tokens: 5 } }), {

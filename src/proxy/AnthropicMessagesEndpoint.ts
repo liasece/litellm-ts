@@ -3,7 +3,7 @@
  *
  * 提供符合 Anthropic Messages API 规格的代理端点：
  * - POST /v1/messages — 转发消息到 Anthropic 兼容 provider，支持流式 SSE 透传
- * - POST /v1/messages/count_tokens — Token 计数（桩实现）
+ * - POST /v1/messages/count_tokens — 按实际上游请求形态计数
  *
  * 自定义补丁集成：
  * - Patch 1: UTF-16 代理对清理
@@ -50,7 +50,10 @@ import {
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { prepareAnthropicVisionRequest } from "../capabilities/VisionCapability";
-import { resolveImageGenerationCapability } from "../capabilities/ImageGenerationCapability";
+import {
+	prepareAnthropicImageGenerationRequest,
+	resolveImageGenerationCapability,
+} from "../capabilities/ImageGenerationCapability";
 import {
 	createImageGenerationCapabilityAuditHook,
 	createVisionCapabilityAuditHook,
@@ -174,6 +177,36 @@ function buildAnthropicUpstreamBody(
 		delete result[internalKey];
 	}
 	return deployment ? applyReasoningEffortOverride(result, deployment, "anthropic") : result;
+}
+
+/**
+ * Prepare the same first upstream request that the built-in capability agent
+ * stack would send for an Anthropic Messages call. Token counting must include
+ * private instructions and tools injected by the gateway, otherwise clients
+ * underestimate the context consumed by the corresponding /v1/messages call.
+ * @param litellmRouter
+ * @param model
+ * @param body
+ * @param db
+ */
+async function prepareAnthropicTokenCountBody(
+	litellmRouter: LiteLLMRouter,
+	model: string,
+	body: Record<string, unknown>,
+	db?: DrizzleDb,
+): Promise<Record<string, unknown>> {
+	const visionImageStore = createVisionImageStore(db);
+	const preparedWeb = await prepareAnthropicWebRequest(litellmRouter, model, body);
+	let preparedBody = preparedWeb?.body ?? body;
+	const preparedVision = await prepareAnthropicVisionRequest(litellmRouter, model, preparedBody, visionImageStore);
+	preparedBody = preparedVision?.body ?? preparedBody;
+	const preparedImageGeneration = await prepareAnthropicImageGenerationRequest(
+		litellmRouter,
+		model,
+		preparedBody,
+		visionImageStore,
+	);
+	return preparedImageGeneration?.body ?? preparedBody;
 }
 
 // ========== Patch 1: UTF-16 代理对清理 ==========
@@ -1419,19 +1452,34 @@ export function registerAnthropicMessagesEndpoints(
 	// POST /v1/messages/count_tokens — Patch 10: 转发到上游
 	registerRoute(router, { method: "post", path: "/v1/messages/count_tokens" }, async (req) => {
 		const cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
-		const model = cleanBody.model as string | undefined;
-		if (!model) {
+		const requestedModel = cleanBody.model as string | undefined;
+		if (!requestedModel) {
 			throw ApiError.badRequest("缺少 model 字段");
 		}
 		// GAP 7: 同步在 count_tokens 端点走授权检查，对齐 PY `_virtual_key_soft_budget_check`
 		if (req.auth) {
-			runCommonChecks(req.auth, model);
+			runCommonChecks(req.auth, requestedModel);
 		}
+		// Token counting must follow the same routing override and private
+		// capability preparation as the corresponding Messages request.
+		const generalSettings = {
+			...(getConfig().generalSettings as unknown as Record<string, unknown>),
+			...(await dbConfigProvider.getParam("general_settings")),
+		};
+		_applyWebSearchOverrideTargetModel(cleanBody, generalSettings);
+		if (typeof cleanBody.metadata === "object" && cleanBody.metadata !== null) {
+			const meta = cleanBody.metadata as Record<string, unknown>;
+			if (typeof meta.user_id === "string") {
+				meta.user_id = normalizeUserId(meta.user_id);
+			}
+		}
+		const model = cleanBody.model as string;
+		const preparedBody = await prepareAnthropicTokenCountBody(litellmRouter, model, cleanBody, db);
 		const attempt = requireUpstreamAttempt(
 			litellmRouter,
 			model,
-			cleanBody["api_key"] as string | undefined,
-			cleanBody["anthropic_version"] as string | undefined,
+			preparedBody["api_key"] as string | undefined,
+			preparedBody["anthropic_version"] as string | undefined,
 		);
 		const countUrl = withForwardedQuery(attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens"), req);
 		const result = await fetch(countUrl, {
@@ -1440,8 +1488,9 @@ export function registerAnthropicMessagesEndpoints(
 				...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["token-counting-2024-11-01"]),
 				"Content-Type": "application/json",
 			},
-			// body.model 替换为剥离 provider 前缀后的上游 model 名
-			body: JSON.stringify(buildAnthropicUpstreamBody(cleanBody, attempt.upstreamModel)),
+			// body.model 替换为剥离 provider 前缀后的上游 model 名，并应用
+			// deployment 级 reasoning/output_config override，与 /v1/messages 保持一致。
+			body: JSON.stringify(buildAnthropicUpstreamBody(preparedBody, attempt.upstreamModel, attempt.deployment)),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");

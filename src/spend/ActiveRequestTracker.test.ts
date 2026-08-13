@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { CallType } from "../types/spend";
-import { registerActiveRequest, startActiveRequestHeartbeat, trackSpendLog } from "./SpendTracker";
+import { checkpointActiveRequest, registerActiveRequest, startActiveRequestHeartbeat, trackSpendLog } from "./SpendTracker";
 
 describe("Active request tracking", () => {
 	it("registers a lightweight in-progress row before provider execution", async () => {
@@ -80,6 +80,25 @@ describe("Active request tracking", () => {
 		await expect(heartbeat.renewNow()).resolves.toBe(true);
 		heartbeat.stop();
 		await expect(heartbeat.renewNow()).resolves.toBe(false);
+		expect(returning).toHaveBeenCalledTimes(1);
+	});
+
+	it("persists a Responses execution checkpoint on the active request", async () => {
+		const returning = jest.fn(() => Promise.resolve([{ requestId: "req-active" }]));
+		const set = jest.fn(() => ({
+			where: jest.fn(() => ({ returning: returning })),
+		}));
+		const db = {
+			update: jest.fn(() => ({ set: set })),
+		};
+
+		await expect(
+			checkpointActiveRequest(db as never, "req-active", {
+				last_sse_event: "response.output_text.done",
+				response: { id: "resp-1", status: "in_progress", partial_output_text: "hello" },
+			}),
+		).resolves.toBe(true);
+		expect(set).toHaveBeenCalledTimes(1);
 		expect(returning).toHaveBeenCalledTimes(1);
 	});
 

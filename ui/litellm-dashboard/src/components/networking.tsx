@@ -79,6 +79,21 @@ import type { SessionGroupRef } from "./view_logs/columns";
 const CSRF_COOKIE_NAME = "litellm_csrf_token";
 const CSRF_HEADER_NAME = "x-litellm-csrf-token";
 const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+/** 持续打开 Dashboard 时每 6 小时确认一次 session，让服务端在临期窗口续签。 */
+export const WEBUI_SESSION_KEEPALIVE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+type SessionExpiredListener = () => void;
+const sessionExpiredListeners = new Set<SessionExpiredListener>();
+let sessionKeepAliveTimer: number | null = null;
+let sessionKeepAliveRequest: Promise<void> | null = null;
+let lastSessionKeepAliveAt = 0;
+
+export class WebUiSessionRequestError extends Error {
+	constructor(readonly status: number) {
+		super("WebUI session is not authenticated");
+		this.name = "WebUiSessionRequestError";
+	}
+}
 
 export type PlaygroundAuth = { readonly kind: "session" } | { readonly kind: "virtual-key"; readonly apiKey: string };
 export type PlaygroundProtocol = "openai" | "anthropic";
@@ -227,10 +242,57 @@ export const getProxyBaseUrl = (): string => {
 export const getWebUiSession = async (): Promise<WebUiSessionInfo> => {
 	const response = await dashboardFetch(`${getProxyBaseUrl()}/auth/session`);
 	if (!response.ok) {
-		throw new Error("WebUI session is not authenticated");
+		throw new WebUiSessionRequestError(response.status);
 	}
 	return (await response.json()) as WebUiSessionInfo;
 };
+
+/**
+ * 共享一个 Dashboard session 心跳，避免多个 useAuthorized 实例各自创建定时器。
+ * 网络短暂失败不会把用户送回登录页；只有明确的 401/403 才通知订阅者。
+ */
+export const subscribeToWebUiSessionKeepAlive = (onExpired: SessionExpiredListener): (() => void) => {
+	sessionExpiredListeners.add(onExpired);
+	if (sessionKeepAliveTimer === null && typeof window !== "undefined") {
+		lastSessionKeepAliveAt = Date.now();
+		sessionKeepAliveTimer = window.setInterval(() => void runWebUiSessionKeepAlive(), WEBUI_SESSION_KEEPALIVE_INTERVAL_MS);
+		window.addEventListener("focus", handleSessionKeepAliveWake);
+		document.addEventListener("visibilitychange", handleSessionKeepAliveWake);
+	}
+
+	return () => {
+		sessionExpiredListeners.delete(onExpired);
+		if (sessionExpiredListeners.size === 0 && sessionKeepAliveTimer !== null) {
+			window.clearInterval(sessionKeepAliveTimer);
+			sessionKeepAliveTimer = null;
+			window.removeEventListener("focus", handleSessionKeepAliveWake);
+			document.removeEventListener("visibilitychange", handleSessionKeepAliveWake);
+		}
+	};
+};
+
+function handleSessionKeepAliveWake(): void {
+	if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+	if (Date.now() - lastSessionKeepAliveAt >= WEBUI_SESSION_KEEPALIVE_INTERVAL_MS) {
+		void runWebUiSessionKeepAlive();
+	}
+}
+
+function runWebUiSessionKeepAlive(): Promise<void> {
+	if (sessionKeepAliveRequest) return sessionKeepAliveRequest;
+	lastSessionKeepAliveAt = Date.now();
+	sessionKeepAliveRequest = getWebUiSession()
+		.then(() => undefined)
+		.catch((error: unknown) => {
+			if (error instanceof WebUiSessionRequestError && (error.status === 401 || error.status === 403)) {
+				for (const listener of sessionExpiredListeners) listener();
+			}
+		})
+		.finally(() => {
+			sessionKeepAliveRequest = null;
+		});
+	return sessionKeepAliveRequest;
+}
 
 /** 注销并撤销服务端 WebUI session。 */
 export const logoutWebUiSession = async (): Promise<void> => {

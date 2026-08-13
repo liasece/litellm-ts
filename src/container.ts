@@ -21,9 +21,8 @@ import { CredentialRepository } from "./repositories/CredentialRepository";
 import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfigService";
 import { ConfigRepository } from "./repositories/ConfigRepository";
 import { CliProxyRuntimeManager } from "./cliproxy/CliProxyRuntimeManager";
-
-/** WebUI 登录后 cookie 中 JWT 的有效期（与 LoginEndpoints 保持一致） */
-const LOGIN_TOKEN_TTL_MS = 5 * 60 * 1000;
+import { parseSessionDuration } from "./proxy/LoginEndpoints";
+import { DEFAULT_WEBUI_SESSION_DURATION, WEBUI_SESSION_DURATION_ENV_VAR } from "./types/webUiSession";
 
 /** 服务容器接口 */
 export interface ServiceContainer {
@@ -119,10 +118,15 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	const authRepository = new AuthRepository(db.db);
 
 	// 5. 创建认证中间件
-	// WebUI 登录后 cookie 中的 token 是 HS256 JWT，用 master_key 签名；
-	// 同步让 JWTHandler 以 master_key 作为 hmacSecret 验签（与 LoginEndpoints 一致）。
-	const jwtHandler = new JWTHandler(undefined, undefined, LOGIN_TOKEN_TTL_MS, config.generalSettings.master_key);
-	const authMiddleware = createApiKeyAuth(authRepository, config.generalSettings.master_key, jwtHandler);
+	// WebUI 登录 cookie 是用 master_key 签名的 HS256 JWT。会话默认 3 天滑动过期：
+	// 已认证请求在临期窗口内同步延长 JWT cookie 和 DB session。
+	const jwtHandler = new JWTHandler(undefined, undefined, undefined, config.generalSettings.master_key);
+	const webUiSessionDurationSeconds = parseSessionDuration(
+		process.env[WEBUI_SESSION_DURATION_ENV_VAR] ?? DEFAULT_WEBUI_SESSION_DURATION,
+	);
+	const authMiddleware = createApiKeyAuth(authRepository, config.generalSettings.master_key, jwtHandler, undefined, {
+		durationSeconds: webUiSessionDurationSeconds,
+	});
 	const authorizationGuard = new AuthorizationGuard(authRepository);
 
 	return {

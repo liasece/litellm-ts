@@ -44,6 +44,18 @@ export class AuthRepository {
 	}
 
 	/**
+	 * 延长 WebUI session 的服务端过期时间。不改变 blocked 状态，因此与并发注销兼容。
+	 * @param tokenHash
+	 * @param expiresAt
+	 */
+	async extendVerificationTokenExpiry(tokenHash: string, expiresAt: Date): Promise<void> {
+		await this._db
+			.update(LiteLLM_VerificationToken)
+			.set({ expires: expiresAt, updatedAt: new Date() })
+			.where(eq(LiteLLM_VerificationToken.token, tokenHash));
+	}
+
+	/**
 	 * 根据旧令牌哈希查找轮换后的 deprecated token 记录
 	 * @param tokenHash - SHA-256 哈希后的旧 API 密钥
 	 * @returns deprecated token 记录或 null

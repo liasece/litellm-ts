@@ -1023,15 +1023,22 @@ describe("WebUiSupport 契约", () => {
 	});
 
 	describe("Login 端点", () => {
-		it("正确用户名/密码应返回 redirect_url 并设置 token cookie", async () => {
+		it("正确用户名/密码应签发默认 3 天 token cookie", async () => {
 			const app = buildPublicApp(makeConfig());
 			const res = await request(app).post("/v2/login").send({ username: "admin", password: "sk-test-master-key" });
 			expect(res.status).toBe(200);
 			expect(res.body.redirect_url).toBe("/ui/?login=success");
 			const setCookie = res.headers["set-cookie"];
 			expect(setCookie).toBeDefined();
-			const cookieHeader = Array.isArray(setCookie) ? setCookie.join(";") : String(setCookie);
-			expect(cookieHeader).toMatch(/token=/);
+			const cookies = Array.isArray(setCookie) ? setCookie : [String(setCookie)];
+			const tokenCookie = cookies.find((cookie) => cookie.startsWith("token="));
+			expect(tokenCookie).toBeDefined();
+			const tokenValue = tokenCookie!.split(";")[0]!.slice("token=".length);
+			const payload = JSON.parse(Buffer.from(tokenValue.split(".")[1]!, "base64url").toString("utf8")) as Record<
+				string,
+				unknown
+			>;
+			expect((payload.exp as number) - (payload.iat as number)).toBe(3 * 24 * 60 * 60);
 		});
 
 		it("错误密码应返回 401", async () => {
