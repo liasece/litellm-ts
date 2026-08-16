@@ -1,84 +1,68 @@
-# LiteLLM TS 仓库操作说明
+# LiteLLM TS 仓库协作约定
 
-## 生产环境与部署边界
+## 适用范围与事实源
 
-- 生产环境是单点服务，不需要设计或执行集群滚动发布。
-- 采用一次性全量部署，可以接受部署期间服务停机。
-- 本地仓库 `/Users/jansen/jl3/src/jtllab/litellm-ts` 是远程服务器
-  `/root/var/src/jtllab/litellm-ts` 的 Samba 映射。修改本地文件后，远程目录已经同步，
-  不要再执行 `scp`、`rsync` 或其他代码同步操作。
-- 远程主机通过 `ssh root@jl3ssh.gamefantasy.com` 访问。用户交互环境中也可能称其为
-  `sshjl3`。
-- 不要在命令输出、日志摘要或回复中展示部署脚本包含的密钥、数据库连接串等敏感信息。
+- 本文件只保存每次仓库任务都需要的稳定边界。具体实现、命令和版本以当前源码、`package.json`、
+  锁文件及实际脚本为准，不在这里维护日期化测试数量、工具链补丁版本或生产现场快照。
+- 修改 `ui/litellm-dashboard/` 前，完整读取该目录的 `AGENTS.md`；更近目录的规则只覆盖其作用域。
+- 生产部署、线上核验和故障恢复使用 `$deploy-litellm-ts`。生产拓扑与诊断信号只在该 Skill 的
+  reference 中维护，不复制到根指令。
 
-## SMB 挂载与命令执行位置
+## 工作判断
 
-- 本地目录是远端目录的 SMB 挂载，文件内容会自动同步，但在本地对仓库执行 Git、npm、
-  Node.js、npx 或其他需要密集访问大量小文件的命令可能明显变慢。实际抽样中，本地
-  `git status --short` 和 `git diff --check` 分别约需 7 秒和 3 秒，而在远端
-  `cc-server-dc` 容器中约需 84 毫秒和 26 毫秒。
-- SMB 挂载还可能阻止直接执行 `node_modules/.bin` 下的脚本；例如本地执行
-  `npm exec --offline -- tsc --version` 曾因 `/usr/bin/env: bad interpreter:
-  Operation not permitted` 失败。同一命令在 `cc-server-dc` 中可以正常运行。
-- 因此 Git 状态检查、diff、npm/npx 脚本、类型检查、测试和其他文件系统密集型命令，
-  优先通过 `sshjl3` 上的 `cc-server-dc` 容器执行。容器已经挂载同一仓库，路径为
-  `/root/var/src/jtllab/litellm-ts`，不需要复制或同步代码。例如：
+本仓库以系统、团队和全生命周期的总成本判断“简单”，不以本次少改文件、少写说明、少做检查或少
+保留一个恢复分支为目标。相关系统包括 API 调用方、上游模型供应商、Proxy、Spend/Logs、Dashboard、
+数据库、部署脚本、值班与未来维护者；生命周期包括理解、开发、验证、上线、迁移、观察、排错、恢复
+和退出。
 
-```sh
-ssh root@jl3ssh.gamefantasy.com \
-  'docker exec -w /root/var/src/jtllab/litellm-ts cc-server-dc git status --short'
+作出方案时，根据风险回答：
 
-ssh root@jl3ssh.gamefantasy.com \
-  'docker exec -w /root/var/src/jtllab/litellm-ts cc-server-dc npm run build'
-```
+1. 用户或调用方依赖的可观察结果是什么，哪个真实 API、日志查询、页面或运行状态可以证明？
+2. 修改影响哪些协议端点、流式路径、费用事实、数据库状态、Dashboard 和生产运维；是否把边界划得
+   过小？
+3. 当前选择减少了谁的成本，又让谁反复承担额外推理、手工核对、兼容、迁移或故障风险？
+4. 删除、隐藏或抽象的信息是否真的不再必要；若仍必要，能否由类型、数据库约束、脚本、测试或运行
+   检查自动提供，而不是让调用方或值班人员猜？
+5. 上游异常、流中断、迁移卡住、容器替换失败或作者离开时，问题能否被发现、定位和安全恢复？
+6. 类型、抽象、复用、测试形式和部署流程都只是工具；只有在当前证据下减少整体理解、变化和失败成本
+   时才采用，不把任何方法本身当成目标。
 
-- 需要执行多条命令、管道或 shell 展开时，在容器中启动 shell：
+低风险局部任务不需要输出形式化清单；涉及公共协议、费用、持久化、生产或不可逆变化时，明确记录会
+影响授权、验证和恢复的答案。
 
-```sh
-ssh root@jl3ssh.gamefantasy.com \
-  'docker exec -w /root/var/src/jtllab/litellm-ts cc-server-dc \
-   sh -lc '\''git diff --check && node node_modules/typescript/bin/tsc --noEmit'\'''
-```
+## 授权与安全边界
 
-- `cc-server-dc` 当前默认使用 Node.js v24，而正式部署脚本使用固定的 Node.js v22。
-  容器适合日常快速检查；需要严格验证生产 Node.js 版本兼容性时，仍以正式部署脚本及其
-  production build 结果为准。
+- 回答、解释、审查、规划或诊断请求只授权调查和报告，不授权修改代码或改变外部状态。
+- 修复、实现或调整请求授权当前仓库内的必要修改和非破坏性验证，不自动授权部署、重启或其他
+  生产变更。完成本地工作后明确报告尚未部署。
+- 只有用户明确要求部署、发布或重启 LiteLLM TS 时，才可执行生产部署。检查线上状态、核验结果、
+  查看日志或诊断失败均不构成部署或重启授权。
+- `git commit`、push、生产数据写入、基础设施变更和破坏性操作分别需要用户明确授权；一种授权不
+  自动包含另一种授权。
+- 保留工作区中已有的 staged、unstaged 和 untracked 内容。不要擅自 `reset`、`restore`、`clean`、
+  stash、暂存或提交。
+- 不得在命令输出、日志摘要、截图、补丁或回复中展示密钥、数据库连接串、认证头或其他凭据。
 
-## 部署前验证
+## 工作区边界
 
-至少完成以下检查：
+- 当前 checkout 通过 Samba 映射远端工作区；本地修改会自动同步。不要使用 `scp`、`rsync` 或其他
+  方式再次复制源码。
+- 默认在当前 checkout 完成读取、编辑和本地验证。Samba 可能让大量小文件操作变慢，也可能使共享
+  `node_modules` 中的平台专属可执行文件无法在本机运行。
+- 不要仅为加速本地任务而连接远端或生产环境。只有请求本身涉及远端/生产调查或部署时，才按
+  `$deploy-litellm-ts` 的授权边界使用远端环境。
+- 遇到平台依赖错配时，先确认原因；不要为绕过环境问题删除锁文件、整个依赖目录或放宽工程门禁。
 
-```sh
-git diff --check
-node node_modules/typescript/bin/tsc --noEmit
-```
+## 验证与交付
 
-远程非交互 SSH 环境默认可能找不到 Node.js，需要先设置：
-
-```sh
-export PATH=/root/var/ci/github-action-pacificx-unity-1/actions-runner/_work/_tool/node/22.21.1/x64/bin:$PATH
-```
-
-后端完整验证命令：
-
-```sh
-cd /root/var/src/jtllab/litellm-ts
-npm run build
-npx jest --silent
-```
-
-截至 2026-07-27，完整后端基线为 1191 个测试通过、25 个跳过、0 个失败。
-如果只改动 Logs 查询，可先运行：
-
-```sh
-npx jest --runInBand --silent --runTestsByPath \
-  src/spend/SpendManagementEndpoint.test.ts \
-  src/core/db/Database.integration.test.ts
-```
-
-前端独立 `npx tsc --noEmit` 会被仓库内既有测试夹具类型错误阻塞，不能单独作为发布门禁。
-应以部署脚本执行的 Next.js production build 是否成功为准；改动的前端文件仍应单独执行
-ESLint。
+- 从当前 `package.json` 选择与改动相称的命令。后端常用门禁为 `npm run typecheck`、相关 Jest、
+  `npm run build` 和 `npm run lint`；不要把本文列举当成替代当前脚本的第二事实源。
+- 修改后至少运行 `git diff --check`，并运行能覆盖受影响行为的最小充分检查。高风险、跨模块或发布前
+  改动应扩大到完整相关测试和 production build。
+- 前端改动遵守 `ui/litellm-dashboard/AGENTS.md`，至少覆盖相关 ESLint、Vitest、TypeScript 检查和
+  Next.js production build；已知基线问题必须与本次回归分开说明，不能用放宽配置绕过。
+- 必需检查失败时先诊断根因。若环境阻塞且不在当前授权范围内，保留现场并报告已验证、失败原因和
+  未验证项；不得把未解释的失败或未执行的生产核验描述为通过。
 
 ## 测试质量
 
@@ -89,91 +73,7 @@ ESLint。
   变更没有值得自动化验证的行为，可以只运行现有相关测试、类型检查、构建及必要的页面验证。
 - 不以测试数量或覆盖率数字代替测试价值；测试不应因无关重构或文案调整而频繁失败。
 
-## 修复任务的交付闭环
+## 专用工作流
 
-- 对本仓库生产功能的缺陷修复或行为调整，完成代码和部署前验证后，必须部署到正式环境并自行完成
-  上线核验；除非用户明确要求只修改代码、只诊断或不要部署，不得把“本地修改完成”作为任务终点。
-- 上线核验必须覆盖用户报告的具体现象。涉及已有日志或数据时，应直接复查对应记录；涉及前端展示时，
-  应在真实生产页面验证可观察结果，不能只以单元测试、构建成功或搜索压缩产物代替功能验证。
-- 如果部署或上线核验失败，应先定位并修复根因，再重新验证和部署；只有正式环境中的目标功能正确、
-  容器健康且规定的接口检查全部通过后，才能报告任务完成。
-
-## 正式部署
-
-标准部署命令：
-
-```sh
-ssh root@jl3ssh.gamefantasy.com
-sh '/root/var/tools/service/ai-out-service/restart-litellm.sh'
-```
-
-自动化或非交互执行时使用：
-
-```sh
-ssh root@jl3ssh.gamefantasy.com \
-  'export PATH=/root/var/ci/github-action-pacificx-unity-1/actions-runner/_work/_tool/node/22.21.1/x64/bin:$PATH; \
-   sh '\''/root/var/tools/service/ai-out-service/restart-litellm.sh'\'''
-```
-
-部署脚本会依次：
-
-1. 构建 TypeScript 后端。
-2. 构建 Next.js 前端。
-3. 构建并校验 `litellm-prod` Docker 镜像。
-4. 对生产数据库执行只读预检。
-5. 如果旧 `litellm-prod` 容器存在，停止并删除它；如果容器已经不存在，视为已经停止并直接继续。
-6. 启动新容器；应用启动时执行 Drizzle migration。
-7. 等待容器健康检查。
-
-### 生产容器缺失时的恢复
-
-- 标准部署脚本必须支持 `litellm-prod` 已经不存在的情况：完成构建、镜像校验和数据库只读预检后，
-  跳过停止旧容器，直接按脚本内的固定端口、挂载和环境配置启动新容器。
-- 不要为了满足“旧容器必须存在”的判断而创建同名占位或假容器；这会掩盖部署脚本的恢复缺陷，
-  还会增加一次无意义的创建、停止和删除。
-- 如果部署脚本仍因容器不存在而退出，应先修正其容器切换函数，让“容器不存在”等价于“无需停止”，
-  用 `sh -n` 验证脚本语法后再重新执行标准部署入口。
-- 不要在脚本之外手工拼接 `docker run` 来恢复生产容器，避免遗漏环境变量、挂载、端口或重启策略。
-
-数据库迁移较大时可以设置 `HEALTH_CHECK_TIMEOUT=1800`，但 Docker 内置 healthcheck
-仍可能在迁移期间先把容器标记为 `unhealthy`，从而让部署脚本提前返回失败。此时不要立即
-重启或删除容器；先判断迁移是否仍在运行。
-
-## 部署后检查
-
-首先确认容器没有退出或 OOM：
-
-```sh
-ssh root@jl3ssh.gamefantasy.com \
-  'docker ps -a --filter name=litellm-prod --format "{{.Names}} {{.Status}}"'
-```
-
-按用户要求持续查看日志：
-
-```sh
-ssh root@jl3ssh.gamefantasy.com
-docker logs litellm-prod -f
-```
-
-日志至少应出现：
-
-- `数据库接管与迁移已完成`
-- `健康检查路由已注册`
-- `LiteLLM TS Gateway 已启动`
-
-然后验证外部入口：
-
-```sh
-curl -sS -o /dev/null -w 'health_status=%{http_code} health_time=%{time_total}\n' \
-  https://litellm.gamefantasy.com/health/liveliness
-curl -sS -o /dev/null -w 'ui_status=%{http_code} ui_time=%{time_total}\n' \
-  'https://litellm.gamefantasy.com/ui/?page=logs'
-```
-
-两者都应返回 HTTP 200。还需要使用容器已有的 master key 环境变量，从容器内部请求
-`/spend/logs/ui`，验证真实认证查询返回 200、50 行数据以及每行都有
-`session_total_count`。不得打印 master key。
-
-若迁移期间服务尚未监听 4000，可从容器内连接 PostgreSQL，检查 `pg_stat_activity`。
-只要容器仍为 running、没有 OOM，并且 migration SQL 仍为 active，就继续等待，不要打断
-事务。迁移提交后再等待 Docker 状态恢复为 `healthy`。
+- 生产检查、部署或部署故障：使用 `$deploy-litellm-ts`，先区分只读诊断与已授权部署。
+- 提交已暂存内容：仅在用户明确要求提交时使用 `$commit-staged-changes`；该 Skill 不授权 push 或部署。

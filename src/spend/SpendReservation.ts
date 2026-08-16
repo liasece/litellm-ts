@@ -237,6 +237,7 @@ export async function reserveEndpointSpend(
 			model: model,
 			callType: options.callType ?? CallType.ACompletion,
 			startTime: options.startTime,
+			requestBody: requestBody,
 		});
 		return startActiveRequestHeartbeat(db, requestId);
 	};

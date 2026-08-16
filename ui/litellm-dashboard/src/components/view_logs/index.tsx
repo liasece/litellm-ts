@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import moment from "moment";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SettingOutlined } from "@ant-design/icons";
@@ -328,12 +328,20 @@ export default function SpendLogsTable({
 
 	const refetchLogs = logs.refetch;
 
+	const queryClient = useQueryClient();
+
 	// Add this function to handle manual refresh
 	const handleRefresh = useCallback(() => {
 		setIsManualRefreshing(true);
 		const refresh = hasBackendFilters ? refetchFilteredLogs() : refetchLogs();
 		void refresh.finally(() => setIsManualRefreshing(false));
 	}, [hasBackendFilters, refetchFilteredLogs, refetchLogs]);
+
+	// 详情抽屉打开时的刷新：invalidate 列表缓存重拉，让详情页来自列表的数据
+	// （Request Details / Metrics / 状态等）同步更新；详情本身在 DrawerHeader 单独 refetch。
+	const handleDrawerRefresh = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: ["logs"] });
+	}, [queryClient]);
 
 	// The main React Query poller is disabled while backend filters are active.
 	// Keep Live Tail running by polling the filtered data source directly.
@@ -350,9 +358,6 @@ export default function SpendLogsTable({
 	}, [activeTab, currentPage, hasBackendFilters, liveTailIntervalMs, refetchFilteredLogs]);
 
 	const handleRowClick = useCallback((log: LogEntry) => {
-		if (log.status === "in_progress") {
-			return;
-		}
 		// A session-backed request opens the drawer in session mode and loads every log in that session.
 		const sessionGroup = getSessionGroupRef(log);
 		if (sessionGroup) {
@@ -361,7 +366,7 @@ export default function SpendLogsTable({
 			setIsDrawerOpen(true);
 			return;
 		}
-		// Single-call row: open the detail drawer
+		// Single-call row: open the detail drawer（含进行中的请求）
 		setSelectedSessionGroup(null);
 		setSelectedLog(log);
 		setIsDrawerOpen(true);
@@ -611,6 +616,7 @@ export default function SpendLogsTable({
 				onOpenSettings={() => setIsSpendLogsSettingsModalVisible(true)}
 				allLogs={searchedLogs}
 				onSelectLog={handleSelectLog}
+				onRefresh={handleDrawerRefresh}
 				startTime={moment(startTime).utc().format("YYYY-MM-DD HH:mm:ss")}
 			/>
 			{simulationSessionGroup ? (

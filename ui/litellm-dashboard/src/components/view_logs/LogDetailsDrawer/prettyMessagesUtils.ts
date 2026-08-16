@@ -568,6 +568,7 @@ export const parseRequestMeta = (request: any): RequestMeta => {
 		temperature: typeof body.temperature === "number" ? body.temperature : undefined,
 		topP: typeof body.top_p === "number" ? body.top_p : undefined,
 		maxTokens,
+		stream: typeof body.stream === "boolean" ? body.stream : undefined,
 	};
 };
 

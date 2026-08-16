@@ -65,6 +65,8 @@ export interface RequestMeta {
 	temperature?: number;
 	topP?: number;
 	maxTokens?: number;
+	/** 请求体 stream 字段；true 表示下游要求流式响应 */
+	stream?: boolean;
 }
 
 export interface RoleStyle {

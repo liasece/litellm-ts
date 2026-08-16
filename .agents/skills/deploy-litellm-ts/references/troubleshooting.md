@@ -1,7 +1,13 @@
-# 部署故障诊断参考
+# 生产运维与故障诊断参考
+
+本文件在 `$deploy-litellm-ts` 触发后按需加载。记录的是定位入口和安全诊断方法，不是无需核实即可
+执行的永久配置。生产变更前必须用当前脚本、主机配置和现场状态复核。
 
 ## 目录
 
+- 已知拓扑与事实源
+- 工具链与发布前验证
+- 标准部署与上线核验
 - 构建疑似卡住
 - Next.js 外部字体死锁
 - 安全停止容器替换前的构建
@@ -9,6 +15,75 @@
 - 迁移或健康检查超时
 - Samba 共享依赖的平台错配
 - 脏工作区和并发 Git 活动
+
+## 已知拓扑与事实源
+
+以下值用于开始调查，使用前逐项确认：
+
+| 项目         | 已知入口                                                    | 当前事实源                           |
+| ------------ | ----------------------------------------------------------- | ------------------------------------ |
+| 远程主机     | `root@jl3ssh.gamefantasy.com`（交互中也可能称 `sshjl3`）    | SSH 配置与用户本轮指定               |
+| 远程仓库     | `/root/var/src/jtllab/litellm-ts`                           | 当前 Samba 映射与远端 `pwd`          |
+| 验证容器     | `cc-server-dc`                                              | `docker inspect` 及其仓库挂载        |
+| 生产容器     | `litellm-prod`                                              | `docker inspect`、部署脚本与服务配置 |
+| 标准部署入口 | `/root/var/tools/service/ai-out-service/restart-litellm.sh` | 主机当前服务配置与脚本               |
+
+- 本地 checkout 与远端仓库是同一 Samba 内容面，不执行 `scp`、`rsync` 或二次源码同步。
+- `cc-server-dc` 只用于 Git、Node.js、类型检查、测试和构建等验证；标准部署脚本在 SSH 宿主机运行。
+- 脚本、容器或路径与表格不一致时，以只读现场证据为准。不能唯一确认时停止，不同时尝试多个入口。
+
+## 工具链与发布前验证
+
+不要在文档中固化 Node.js 补丁版本或 CI tool-cache 绝对路径。非交互 SSH 找不到 Node.js 时：
+
+1. 从当前 `package.json#engines`、标准部署脚本和主机工具链配置确认所需版本范围。
+2. 在主机上确认将使用的 `node`、`npm` 实际路径与版本；只有来源一致时才把其 bin 目录临时加入
+   该次部署命令的 `PATH`。
+3. 若只能看到多个候选工具链而无法确定标准版本，停止并报告，不按“最新版本”猜测。
+
+从当前 `package.json` 读取脚本。后端通常执行：
+
+```sh
+git diff --check
+npm run typecheck
+npm run build
+npm test
+```
+
+只改动特定模块时可以先运行聚焦测试获得快速反馈；正式发布前仍按改动风险完成全部相关门禁。不要
+维护固定的通过/跳过测试数量，因为测试集合会随仓库变化。
+
+前端验证前读取 `ui/litellm-dashboard/AGENTS.md`，再从其 `package.json` 选择相关 ESLint、Vitest、
+TypeScript 检查与 `npm run build`。独立检查若命中已知基线问题，必须区分本次回归与既有问题。
+
+在验证容器中运行命令时，先确认它仍挂载当前远端仓库，再以当前路径作为 `docker exec -w`；不要在
+这里复制一套可能漂移的固定命令。
+
+## 标准部署与上线核验
+
+生产是单实例服务，标准发布会一次性替换容器并允许短暂停机。部署授权明确、门禁通过且工具链确认后：
+
+1. SSH 到已确认的远程主机。
+2. 必要时仅为本次命令设置已确认的 Node.js `PATH`。
+3. 在宿主机执行已确认的标准部署入口，不在 `cc-server-dc` 内执行。
+4. 观察后端构建、Dashboard production build、镜像构建/校验、数据库只读预检、旧容器切换、
+   新容器启动/迁移和健康检查。
+
+基础核验：
+
+```sh
+docker ps -a --filter name=litellm-prod --format "{{.Names}} {{.Status}}"
+curl -sS -o /dev/null -w 'health_status=%{http_code} health_time=%{time_total}\n' \
+  https://litellm.gamefantasy.com/health/liveliness
+curl -sS -o /dev/null -w 'ui_status=%{http_code} ui_time=%{time_total}\n' \
+  'https://litellm.gamefantasy.com/ui/?page=logs'
+```
+
+两条外部入口当前均应返回 HTTP 200。读取有限范围日志确认服务可用，不持续输出无关历史日志。
+
+只有改动涉及 Logs 查询或其响应契约时，才使用容器已有的 master key 从容器内部请求
+`/spend/logs/ui`，验证 HTTP 状态、分页/行数及受影响字段（例如 `session_total_count`）。不得打印
+master key、环境变量、Authorization 内容或完整敏感响应。
 
 ## 构建疑似卡住
 
@@ -21,7 +96,8 @@ ps -o pid,ppid,pgid,sid,etime,state,%cpu,%mem,command -p <已确认的 PID 列�
 docker ps --filter name=litellm-prod --format "{{.Names}} {{.Status}}"
 ```
 
-从当前 `AGENTS.md` 确认远程仓库路径，再检查构建目录最近是否仍有文件写入。不要直接照抄历史路径。
+从本文件的已知拓扑开始，并用当前挂载与 `pwd` 确认远程仓库路径，再检查构建目录最近是否仍有文件
+写入。不要直接照抄历史路径。
 
 区分以下状态：
 
@@ -48,11 +124,12 @@ rg -n "next/font/google|fonts\\.googleapis|fonts\\.gstatic" \
   ui/litellm-dashboard --glob '!node_modules/**' --glob '!.next/**'
 ```
 
-优先消除构建期外网依赖，例如使用仓库内本地字体或系统字体栈。修改后重新执行相关 ESLint、测试和完整 Next.js 生产构建。
+优先消除构建期外网依赖，例如使用仓库内本地字体或系统字体栈。若源码修复属于当前授权范围，修改后
+重新执行相关 ESLint、测试和完整 Next.js 生产构建；否则保留现场并报告建议。
 
 ## 安全停止容器替换前的构建
 
-只有同时满足以下条件，才考虑停止卡住的部署：
+只有部署或恢复动作已获明确授权，并且同时满足以下条件，才考虑停止卡住的部署：
 
 1. 部署仍处于构建阶段。
 2. 旧 `litellm-prod` 容器仍健康。
@@ -72,10 +149,10 @@ ps -o pid,ppid,pgid,sid,state,command -p <已确认的 PID 列表>
 若 `docker container inspect litellm-prod` 已确认容器不存在：
 
 1. 确认没有另一个部署进程、临时容器或数据库迁移仍在运行。
-2. 继续使用 `AGENTS.md` 规定的标准部署入口；部署脚本应在镜像校验和数据库只读预检通过后，
+2. 继续使用经现场确认的标准部署入口；部署脚本应在镜像校验和数据库只读预检通过后，
    把“容器不存在”视为“无需停止”，直接启动新容器。
-3. 如果脚本因旧容器不存在而退出，修正脚本的停止函数，使缺失分支直接返回成功，并用 `sh -n`
-   验证语法后重新运行标准部署。
+3. 如果脚本因旧容器不存在而退出，先确认脚本修改属于当前授权范围；若是，修正停止函数，使缺失
+   分支直接返回成功，并用 `sh -n` 验证语法后重新运行标准部署；若不是，停止并请求授权。
 
 禁止创建同名占位或假容器来通过存在性检查，也不要在标准部署脚本之外手工拼接 `docker run`。
 前者会掩盖部署脚本的灾难恢复缺陷，后者容易造成环境变量、挂载、端口或重启策略漂移。
@@ -96,7 +173,9 @@ ps -o pid,ppid,pgid,sid,state,command -p <已确认的 PID 列表>
 
 仓库由 macOS 和 Linux 通过 Samba 共享。远程 `npm ci` 可能把 Linux 原生可选依赖写入共享 `node_modules`，导致本地 macOS Vitest、Rollup 或可执行入口报错。
 
-先判断错误是否来自平台依赖，而不是业务代码。部署任务中不要为此删除 `node_modules` 或锁文件；在远程 Linux 主机设置 `AGENTS.md` 当前给出的 Node.js `PATH` 后运行聚焦测试和 ESLint。避免本地与远程同时安装依赖。
+先判断错误是否来自平台依赖，而不是业务代码。部署任务中不要为此删除 `node_modules` 或锁文件；按
+“工具链与发布前验证”确认远程 Linux 主机的 Node.js 与 `PATH` 后运行聚焦测试和 ESLint。避免本地与
+远程同时安装依赖。
 
 ## 脏工作区和并发 Git 活动
 

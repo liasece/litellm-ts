@@ -18,10 +18,13 @@ import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendL
 import {
 	buildSpendLogFromRequest,
 	calculateAndSetCost,
+	checkpointActiveRequest,
 	injectResponseCostHeader,
 	releaseSpend,
 	trackSpendLog,
 } from "../spend/SpendTracker";
+import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
+import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import type { Message, ModelResponse, ThinkingBlock, ToolCall, Usage } from "../types/openai";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { prepareOpenAIVisionRequest } from "../capabilities/VisionCapability";
@@ -786,7 +789,7 @@ function mapNativeResponsesToChatCompletion(
 		if (item["type"] === "reasoning") {
 			const summary = Array.isArray(item["summary"]) ? item["summary"] : [];
 			for (const part of summary as Array<Record<string, unknown>>) {
-				if (typeof part["text"] === "string") reasoning.push(part["text"]);
+				if (typeof part["text"] === "string") {reasoning.push(part["text"]);}
 			}
 		}
 	}
@@ -821,7 +824,7 @@ function mapNativeResponsesToChatCompletion(
 		_responseProtocol: "chat_completions",
 	};
 	for (const [key, value] of Object.entries(result)) {
-		if (key.startsWith("_") && key !== "_responseProtocol") chatResult[key] = value;
+		if (key.startsWith("_") && key !== "_responseProtocol") {chatResult[key] = value;}
 	}
 	return attachUpstreamLogContext(chatResult, getUpstreamLogContext(result));
 }
@@ -1261,6 +1264,27 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		terminalSent: false,
 		toolRegistry: toolRegistry,
 	};
+	const checkpointRequestId = requestId;
+	const checkpointDb = db;
+	let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
+	if (checkpointRequestId !== undefined && checkpointDb !== undefined) {
+		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
+			serialize: () => {
+				const response = buildStreamResponse(state, requestBody, "in_progress", null);
+				const upstream = getUpstreamLogContext(streamResult);
+				return {
+					protocol: "responses",
+					state: "in_progress",
+					response: response as unknown as Record<string, unknown>,
+					usage: (state.usage ?? null) as unknown as Record<string, unknown> | null,
+					upstream_request: (upstream?.request ?? null) as Record<string, unknown> | null,
+					upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
+				};
+			},
+			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+		});
+	}
+
 	writeEvent(res, state, "response.created", {
 		response: buildStreamResponse(state, requestBody, "in_progress", null),
 	});
@@ -1289,6 +1313,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				break;
 			}
 			consumeChatStreamChunk(current.value, state, res);
+			streamingCheckpointScheduler?.onChunk();
 		}
 		writeCompletedEvents(res, state);
 		const terminalStatus =
@@ -1311,6 +1336,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		}
 		const loggedCompleted = { ...completed } as Record<string, unknown>;
 		const spendInfo = (streamResult as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
+		await streamingCheckpointScheduler?.dispose();
 		await lifecycle.finalize(() =>
 			recordSpend(db, req, requestId, {
 				model: model,
@@ -1326,6 +1352,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		);
 	} catch (error) {
 		terminalError = error;
+		await streamingCheckpointScheduler?.dispose();
 		if (!clientAborted) {
 			const responseError = { code: streamErrorCode(error), message: errorMessage(error) };
 			writeTerminalEvent(res, state, "response.failed", {
@@ -1361,6 +1388,95 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 原生 Responses 协议流的中间响应累积器。
+ * 对齐 CLIProxy extractNativeResponse 的 partial 思路，但累积标准 output item 结构，
+ * 供流式进行中 checkpoint 出可展示的部分 response。
+ */
+class NativeResponsesAccumulator {
+	private _id?: string;
+	private _model?: string;
+	private _output: Record<string, unknown>[] = [];
+	private _text = "";
+	private _reasoning = "";
+	private _usage: Record<string, unknown> | undefined;
+
+	accumulate(event: Record<string, unknown>): void {
+		const type = typeof event["type"] === "string" ? event["type"] : "";
+		if (type === "response.created" || type === "response.in_progress") {
+			const response = asResponseRecord(event["response"]);
+			if (response) {
+				this._id ??= typeof response["id"] === "string" ? response["id"] : undefined;
+				this._model ??= typeof response["model"] === "string" ? response["model"] : undefined;
+				if (Array.isArray(response["output"])) {
+					this._output = response["output"].filter(isRecord).map((item) => structuredClone(item));
+				}
+			}
+		} else if (type === "response.output_text.delta" && typeof event["delta"] === "string") {
+			this._text += event["delta"];
+		} else if (type === "response.output_text.done" && typeof event["text"] === "string") {
+			this._text = event["text"];
+		} else if (type === "response.reasoning_text.delta" && typeof event["delta"] === "string") {
+			this._reasoning += event["delta"];
+		} else if (type === "response.output_item.done") {
+			const item = asResponseRecord(event["item"]);
+			if (item) {
+				this._output.push(structuredClone(item));
+			}
+		} else if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") {
+			const response = asResponseRecord(event["response"]);
+			if (response) {
+				this._id = typeof response["id"] === "string" ? response["id"] : this._id;
+				this._model = typeof response["model"] === "string" ? response["model"] : this._model;
+				if (Array.isArray(response["output"])) {
+					this._output = response["output"].filter(isRecord).map((item) => structuredClone(item));
+				}
+				const usage = asResponseRecord(response["usage"]);
+				if (usage) {
+					this._usage = structuredClone(usage);
+				}
+			}
+		}
+	}
+
+	snapshot(): Record<string, unknown> | null {
+		if (this._id === undefined && this._model === undefined && this._output.length === 0 && this._text === "" && this._reasoning === "") {
+			return null;
+		}
+		const output = [...this._output];
+		if (this._text !== "") {
+			output.push({
+				type: "message",
+				role: "assistant",
+				status: "in_progress",
+				content: [{ type: "output_text", text: this._text }],
+			});
+		}
+		if (this._reasoning !== "") {
+			output.push({
+				type: "reasoning",
+				content: [{ type: "reasoning_text", text: this._reasoning }],
+			});
+		}
+		return {
+			id: this._id ?? "",
+			object: "response",
+			status: "in_progress",
+			model: this._model,
+			output: output,
+			usage: this._usage ?? null,
+		};
+	}
+}
+
+function asResponseRecord(value: unknown): Record<string, unknown> | undefined {
+	return isRecord(value) ? value : undefined;
+}
+
 async function relayNativeResponsesStream(
 	context: ResponsesStreamContext,
 	streamResult: Record<string, unknown>,
@@ -1376,6 +1492,30 @@ async function relayNativeResponsesStream(
 	res.flushHeaders();
 
 	const iterator = stream[Symbol.asyncIterator]();
+	const nativeAccumulator = new NativeResponsesAccumulator();
+	const checkpointRequestId = requestId;
+	const checkpointDb = db;
+	let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
+	if (checkpointRequestId !== undefined && checkpointDb !== undefined) {
+		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
+			serialize: () => {
+				const response = nativeAccumulator.snapshot();
+				if (response === null) {
+					return null;
+				}
+				const upstream = getUpstreamLogContext(streamResult);
+				return {
+					protocol: "responses_native",
+					state: "in_progress",
+					response: response,
+					usage: isRecord(response["usage"]) ? response["usage"] : null,
+					upstream_request: (upstream?.request ?? null) as Record<string, unknown> | null,
+					upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
+				};
+			},
+			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+		});
+	}
 	let clientAborted = false;
 	let terminalType: "response.completed" | "response.incomplete" | "response.failed" | undefined;
 	let terminalResponse: Record<string, unknown> | undefined;
@@ -1425,6 +1565,8 @@ async function relayNativeResponsesStream(
 				lastSequence = Math.max(lastSequence, event["sequence_number"] as number);
 			}
 			res.write(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`);
+			nativeAccumulator.accumulate(event);
+			streamingCheckpointScheduler?.onChunk();
 			if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") {
 				terminalType = type;
 				terminalResponse =
@@ -1454,6 +1596,7 @@ async function relayNativeResponsesStream(
 						errorMessage((terminalResponse["error"] as Record<string, unknown> | undefined)?.["message"] ?? "Responses failed"),
 					)
 				: undefined;
+		await streamingCheckpointScheduler?.dispose();
 		await lifecycle.finalize(() =>
 			recordSpend(db, req, requestId, {
 				model: model,
@@ -1470,6 +1613,7 @@ async function relayNativeResponsesStream(
 		);
 	} catch (error) {
 		thrown = error;
+		await streamingCheckpointScheduler?.dispose();
 		if (!clientAborted) {
 			const responseError = { code: streamErrorCode(error), message: errorMessage(error) };
 			const failedResponse = {

@@ -30,7 +30,9 @@ import { createModuleLogger } from "../core/utils/logger";
 import { cleanSurrogates } from "../core/utils/text";
 import { getConfig } from "../core/config";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
-import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost, checkpointActiveRequest, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
+import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
+import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { CallType, SpendLogStatus } from "../types/spend";
@@ -844,9 +846,45 @@ export function registerAnthropicMessagesEndpoints(
 			if (stream) {
 				const streamStartTime = new Date();
 				const streamAccumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
+				// capability 分支（vision/web 等）会在 agent loop 每轮用新的 accumulator 流式累积，
+				// 因此 scheduler 通过可变引用读取「当前正在累积」的 accumulator。
+				let currentAccumulator: NativeStreamAccumulator = streamAccumulator;
+				// 上游上下文在流式过程中通过 _openAnthropicStream 回调设置；提前声明供 serialize 闭包读取，
+				// 使进行中请求的日志详情也能展示 Upstream 请求/响应。
+				let upstreamLogContext: UpstreamLogContext | undefined;
+				const checkpointRequestId = spendRequestId;
+				const checkpointDb = db;
+				let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
+				if (checkpointRequestId !== undefined && checkpointDb !== undefined) {
+					streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
+						serialize: () => {
+							const response = buildNativeStreamResponse(currentAccumulator, requestedModel);
+							const inputTokens = currentAccumulator.usage["input_tokens"] ?? 0;
+							const outputTokens = currentAccumulator.usage["output_tokens"] ?? 0;
+							if (response === undefined && inputTokens === 0 && outputTokens === 0) {
+								return null;
+							}
+							return {
+								protocol: "anthropic_messages",
+								state: "in_progress",
+								response: response ?? null,
+								usage:
+									inputTokens > 0 || outputTokens > 0
+										? {
+												prompt_tokens: inputTokens,
+												completion_tokens: outputTokens,
+												total_tokens: inputTokens + outputTokens,
+											}
+										: null,
+								upstream_request: (upstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+								upstream_response: (upstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+							};
+						},
+						write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+					});
+				}
 				let streamError: unknown;
 				let completionStartTime: Date | undefined;
-				let upstreamLogContext: UpstreamLogContext | undefined;
 				// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
 				let executedAttempt: UpstreamAttempt | undefined;
 				// metadata.attempted_retries 数据源：fallback 链跳数回写
@@ -866,43 +904,43 @@ export function registerAnthropicMessagesEndpoints(
 								requestApiKey,
 								requestAnthropicVersion,
 								async (attempt) => {
-									const timeoutSec = attempt.deployment.litellm_params.timeout;
-									const upstreamRequest = {
-										url: attempt.upstreamUrl,
-										method: "POST" as const,
-										headers: {
-											...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req),
-											"Content-Type": "application/json",
+									const upstreamHeaders = buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req);
+									const opened = await _openAnthropicStream(
+										{ ...attempt, upstreamHeaders: upstreamHeaders },
+										buildAnthropicUpstreamBody(body, attempt.upstreamModel, attempt.deployment),
+										webSearchAbortController.signal,
+										(context) => {
+											upstreamLogContext = context;
 										},
-										body: buildAnthropicUpstreamBody(
-											{ ...body, stream: false },
-											attempt.upstreamModel,
-											attempt.deployment,
-										),
-										model: attempt.upstreamModel,
-									};
-									const execution = await executeProviderRequest(upstreamRequest, {
-										readJson: false,
-										signal: webSearchAbortController.signal,
-										timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
-									});
-									if (!execution.response.ok) {
-										const errBody = await execution.response.text().catch(() => "");
-										upstreamLogContext = createUpstreamLogContext(upstreamRequest, execution.response, {
-											raw: errBody,
-										});
+									);
+									completionStartTime = new Date();
+									executedAttempt = attempt;
+									// capability agent loop 每轮的主模型调用改为真流式（对齐真正的流式分支）：边累积边
+									// checkpoint，使「进行中」时也能看到主模型的流式中间响应；流结束后 buildNativeStreamResponse
+									// 返回完整响应供 agent loop 决策（解析 tool_use 判断是否继续下一轮）。
+									const accumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
+									currentAccumulator = accumulator;
+									for await (const sseChunk of opened) {
+										const payload = parseSsePayload(sseChunk);
+										if (payload?.["type"] === "error") {
+											const forwardedError = buildForwardedAnthropicStreamError(payload);
+											throw attachUpstreamLogContext(
+												new ProviderUpstreamError(502, forwardedError.message),
+												upstreamLogContext,
+											);
+										}
+										if (payload) {
+											accumulateNativeStreamEvent(accumulator, payload);
+											streamingCheckpointScheduler?.onChunk();
+										}
+									}
+									const responseData = buildNativeStreamResponse(accumulator, attempt.upstreamModel);
+									if (!responseData) {
 										throw attachUpstreamLogContext(
-											new ProviderUpstreamError(
-												execution.response.status,
-												`Provider 返回错误 (${execution.response.status}): ${errBody.slice(0, 200)}`,
-											),
+											new ProviderUpstreamError(502, "Provider 流式响应未产生有效内容"),
 											upstreamLogContext,
 										);
 									}
-									completionStartTime = new Date();
-									executedAttempt = attempt;
-									const responseData = (await execution.response.json()) as Record<string, unknown>;
-									upstreamLogContext = createUpstreamLogContext(upstreamRequest, execution.response, responseData);
 									Object.defineProperty(responseData, "_spendInfo", {
 										value: buildDeploymentSpendInfo(attempt.deployment, attempt.upstreamUrl),
 										enumerable: false,
@@ -932,6 +970,7 @@ export function registerAnthropicMessagesEndpoints(
 							Connection: "keep-alive",
 							"X-Accel-Buffering": "no",
 						});
+						await streamingCheckpointScheduler?.dispose();
 						const finalAccumulator = writeBufferedAnthropicResponseAsStream(res, finalResponse, requestedModel);
 						res.end();
 						if (db && auth && spendRequestId) {
@@ -1125,6 +1164,7 @@ export function registerAnthropicMessagesEndpoints(
 						}
 						if (payload) {
 							accumulateNativeStreamEvent(streamAccumulator, payload);
+							streamingCheckpointScheduler?.onChunk();
 						}
 						completionStartTime ??= new Date();
 						res.write(sseChunk);
@@ -1135,6 +1175,7 @@ export function registerAnthropicMessagesEndpoints(
 					logger.error("流式响应错误", { error: String(err) });
 				} finally {
 					clearInterval(pingTimer);
+					await streamingCheckpointScheduler?.dispose();
 					res.end();
 
 					// 即使无 usage 也提交零费用失败/成功日志，确保 reservation 不会遗留。

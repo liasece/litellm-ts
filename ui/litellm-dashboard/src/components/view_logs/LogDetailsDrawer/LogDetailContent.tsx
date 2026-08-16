@@ -80,7 +80,9 @@ export function LogDetailContent({
 			? formatData(parsedProxyRequest.upstream_response)
 			: null;
 	// Don't show "missing data" warning while details are still loading
-	const missingData = !hasMessages && !hasResponse && !hasError && !isLoadingDetails;
+	// 进行中请求允许暂时无 response（等流式产生内容），不显示缺失提示
+	const isInProgress = logEntry.status === "in_progress" || metadata.status === "in_progress";
+	const missingData = !hasMessages && !hasResponse && !hasError && !isInProgress && !isLoadingDetails;
 
 	// Guardrail data
 	const guardrailInfo = metadata?.guardrail_information;
@@ -480,12 +482,12 @@ function RequestResponseSection({
 	const costBreakdown = logEntry.metadata?.cost_breakdown;
 	const useCostBreakdown = costBreakdown?.input_cost !== undefined && costBreakdown?.output_cost !== undefined;
 	const inputCost = useCostBreakdown
-		? (costBreakdown!.input_cost ?? 0)
+		? costBreakdown!.input_cost ?? 0
 		: totalTokens > 0
 			? (totalSpend * promptTokens) / totalTokens
 			: 0;
 	const outputCost = useCostBreakdown
-		? (costBreakdown!.output_cost ?? 0)
+		? costBreakdown!.output_cost ?? 0
 		: totalTokens > 0
 			? (totalSpend * completionTokens) / totalTokens
 			: 0;

@@ -25,6 +25,7 @@ export const liteLLM_ActiveRequests = pgTable(
 		session_id: text("session_id"),
 		metadata: jsonb("metadata").default("{}").notNull(),
 		request_tags: jsonb("request_tags").default("[]").notNull(),
+		proxy_server_request: jsonb("proxy_server_request").default("{}").notNull(),
 		status: text("status").$type<"in_progress">().default("in_progress").notNull(),
 		request_duration_ms: integer("request_duration_ms"),
 		expires_at: timestamp("expires_at").notNull(),

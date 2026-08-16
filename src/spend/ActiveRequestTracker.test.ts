@@ -41,7 +41,9 @@ describe("Active request tracking", () => {
 				key_alias: "alias-1",
 			},
 			body: { metadata: { trace_id: "trace-1" } },
-			headers: {},
+			method: "POST",
+			originalUrl: "/v1/chat/completions",
+			headers: { authorization: "Bearer secret" },
 			socket: {},
 		} as unknown as Request;
 
@@ -51,6 +53,7 @@ describe("Active request tracking", () => {
 			model: "model-a",
 			callType: CallType.ACompletion,
 			startTime: new Date("2026-07-27T00:00:00Z"),
+			requestBody: { model: "model-a", messages: [{ role: "user", content: "hi" }] },
 		});
 
 		expect(inserted).toMatchObject({
@@ -63,6 +66,12 @@ describe("Active request tracking", () => {
 			session_id: "trace-1",
 			status: "in_progress",
 			metadata: { status: "in_progress", user_api_key_alias: "alias-1" },
+			proxy_server_request: {
+				url: "/v1/chat/completions",
+				method: "POST",
+				headers: { authorization: "[REDACTED]" },
+				body: { model: "model-a", messages: [{ role: "user", content: "hi" }] },
+			},
 		});
 	});
 
@@ -100,6 +109,49 @@ describe("Active request tracking", () => {
 		).resolves.toBe(true);
 		expect(set).toHaveBeenCalledTimes(1);
 		expect(returning).toHaveBeenCalledTimes(1);
+	});
+
+	it("persists a streaming checkpoint under the streaming_execution key", async () => {
+		const returning = jest.fn(() => Promise.resolve([{ requestId: "req-active" }]));
+		const set = jest.fn(() => ({
+			where: jest.fn(() => ({ returning: returning })),
+		}));
+		const db = {
+			update: jest.fn(() => ({ set: set })),
+		};
+
+		await expect(
+			checkpointActiveRequest(db as never, "req-active", { response: { id: "resp-1", status: "in_progress" } }, "streaming_execution"),
+		).resolves.toBe(true);
+
+		const metadata = (set.mock.calls[0] as unknown as [{ metadata: unknown }])[0].metadata;
+		const strings: string[] = [];
+		const collect = (value: unknown): void => {
+			if (typeof value === "string") {
+				strings.push(value);
+				return;
+			}
+			if (!value || typeof value !== "object") {
+				return;
+			}
+			const obj = value as { value?: unknown; queryChunks?: unknown[] };
+			if (Array.isArray(obj.value)) {
+				for (const entry of obj.value) {
+					if (typeof entry === "string") {
+						strings.push(entry);
+					}
+				}
+			}
+			if (Array.isArray(obj.queryChunks)) {
+				for (const chunk of obj.queryChunks) {
+					collect(chunk);
+				}
+			}
+		};
+		collect(metadata);
+		const sqlText = strings.join("");
+		expect(sqlText).toContain("streaming_execution");
+		expect(sqlText).not.toContain("responses_execution");
 	});
 
 	it("deletes the active row in the same transaction as the final SpendLog", async () => {

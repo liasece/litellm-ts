@@ -9,7 +9,9 @@ export const ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART = "server_restart";
  *
  * 单实例服务只在开始监听端口前调用本函数，因此此时全部 in_progress 行都属于旧进程。
  * 插入终态日志、释放预算预留、删除 ActiveRequests 在同一事务中完成；已 checkpoint 的
- * response/usage 会保留，未知 usage 与费用保持为 0。
+ * response/usage 会保留（checkpoint 双 key 兼容：普通流式写 streaming_execution、
+ * CLIProxy 写 responses_execution，前者优先），未知 usage 与费用保持为 0。proxy_server_request
+ * 列随行保留，使 aborted 日志仍能查看原始 request。
  * @param db - Drizzle 数据库实例
  * @param abortedAt - 本次恢复发生的时间
  * @returns 已回收的请求数量
@@ -62,18 +64,18 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 					api_key,
 					0,
 					CASE
-						WHEN jsonb_typeof(metadata #> '{responses_execution,usage,total_tokens}') = 'number'
-						THEN ((metadata #>> '{responses_execution,usage,total_tokens}')::numeric)::integer
+						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,total_tokens}', metadata #> '{responses_execution,usage,total_tokens}')) = 'number'
+						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,total_tokens}', metadata #>> '{responses_execution,usage,total_tokens}'))::numeric)::integer
 						ELSE 0
 					END,
 					CASE
-						WHEN jsonb_typeof(metadata #> '{responses_execution,usage,prompt_tokens}') = 'number'
-						THEN ((metadata #>> '{responses_execution,usage,prompt_tokens}')::numeric)::integer
+						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,prompt_tokens}', metadata #> '{responses_execution,usage,prompt_tokens}')) = 'number'
+						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,prompt_tokens}', metadata #>> '{responses_execution,usage,prompt_tokens}'))::numeric)::integer
 						ELSE 0
 					END,
 					CASE
-						WHEN jsonb_typeof(metadata #> '{responses_execution,usage,completion_tokens}') = 'number'
-						THEN ((metadata #>> '{responses_execution,usage,completion_tokens}')::numeric)::integer
+						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,completion_tokens}', metadata #> '{responses_execution,usage,completion_tokens}')) = 'number'
+						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,completion_tokens}', metadata #>> '{responses_execution,usage,completion_tokens}'))::numeric)::integer
 						ELSE 0
 					END,
 					"startTime",
@@ -107,10 +109,10 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 					end_user,
 					requester_ip_address,
 					'{}'::jsonb,
-					COALESCE(metadata #> '{responses_execution,response}', '{}'::jsonb),
+					COALESCE(metadata #> '{streaming_execution,response}', metadata #> '{responses_execution,response}', '{}'::jsonb),
 					session_id,
 					'aborted',
-					'{}'::jsonb
+					COALESCE("proxy_server_request", '{}'::jsonb)
 				FROM orphaned
 				ON CONFLICT (request_id) DO NOTHING
 			),

@@ -3,7 +3,8 @@ import { useMemo, useState } from "react";
 
 const { Text } = Typography;
 
-const CONTEXT_LINES = 3;
+// 折叠未变化块时首尾各保留的行数：保留足够上下文，中间部分折叠为可点击展开的占位行。
+const CONTEXT_LINES = 50;
 const MAX_LCS_CELLS = 4_000_000;
 
 type DiffTabKey = "request" | "response";
@@ -387,7 +388,11 @@ function appendPatienceRange(
 ): void {
 	let leftStart = initialLeftStart;
 	let rightStart = initialRightStart;
-	while (leftStart < initialLeftEnd && rightStart < initialRightEnd && leftLines[leftStart] === rightLines[rightStart]) {
+	while (
+		leftStart < initialLeftEnd &&
+		rightStart < initialRightEnd &&
+		leftLines[leftStart] === rightLines[rightStart]
+	) {
 		operations.push({ kind: "equal", text: leftLines[leftStart] });
 		leftStart += 1;
 		rightStart += 1;

@@ -6,18 +6,13 @@ import { UpstreamDownstreamDiff } from "./UpstreamDownstreamDiff";
 describe("UpstreamDownstreamDiff", () => {
 	it("renders request and response diffs with foldable unchanged context", async () => {
 		const user = userEvent.setup();
-		const commonRequest = {
-			model: "gpt-4",
-			messages: [{ role: "user", content: "hello" }],
-			metadata: {
-				first: "same",
-				second: "same",
-				third: "same",
-				fourth: "same",
-				fifth: "same",
-				sixth: "same",
-			},
-		};
+		// 构造 > CONTEXT_LINES * 2 + 1（101）行相同的字段，使未变化块触发折叠，
+		// 从而验证「折叠中间、保留首尾、可点击展开」的交互。
+		const commonFields: Record<string, string> = {};
+		for (let index = 0; index < 120; index += 1) {
+			commonFields[`field_${String(index).padStart(3, "0")}`] = `same_value_${index}`;
+		}
+		const commonRequest = { model: "gpt-4", ...commonFields };
 
 		render(
 			<UpstreamDownstreamDiff

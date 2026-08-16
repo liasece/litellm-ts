@@ -858,7 +858,7 @@ describe("SpendLogsTable", () => {
 		expect(mockDrawerProps.current.sessionGroup).toEqual({ type: "session_id", id: "session-single" });
 	});
 
-	it("进行中的日志不可打开尚不存在的详情 Drawer", async () => {
+	it("进行中的日志可打开详情 Drawer", async () => {
 		const user = userEvent.setup();
 		mockFilteredLogs = {
 			data: [
@@ -879,8 +879,8 @@ describe("SpendLogsTable", () => {
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 		await user.click(await screen.findByText("req-active"));
 
-		expect(screen.queryByTestId("log-details-drawer")).not.toBeInTheDocument();
-		expect(mockDrawerProps.current.open).toBe(false);
+		expect(screen.queryByTestId("log-details-drawer")).toBeInTheDocument();
+		expect(mockDrawerProps.current.open).toBe(true);
 	});
 
 	it("Session Drawer 使用当前显式 Team ID filter scope，而非行自身 team_id", async () => {

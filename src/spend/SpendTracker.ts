@@ -391,12 +391,17 @@ function containsPlaintextApiKey(value: string): boolean {
 	return /(^|\s|["'])Bearer\s+sk-[^\s"']+/.test(value) || /(^|\s|["'])sk-[A-Za-z0-9_-]+/.test(value);
 }
 
-/** 仅识别 provider 响应中的标准图片数据字段，其他长字符串继续执行普通截断。 */
+/**
+ * 仅识别 provider 响应中的标准图片数据字段，其他长字符串继续执行普通截断。
+ * @param fieldName
+ * @param value
+ * @param parent
+ */
 function isImagePayloadString(fieldName: string, value: unknown, parent: Record<string, unknown>): boolean {
-	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) return false;
-	if (containsPlaintextApiKey(value)) return false;
-	if (fieldName === "b64_json") return true;
-	if (fieldName === "result" && parent["type"] === "image_generation_call") return true;
+	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) {return false;}
+	if (containsPlaintextApiKey(value)) {return false;}
+	if (fieldName === "b64_json") {return true;}
+	if (fieldName === "result" && parent["type"] === "image_generation_call") {return true;}
 	if (
 		fieldName === "data" &&
 		typeof (parent["mimeType"] ?? parent["mime_type"] ?? parent["media_type"]) === "string" &&
@@ -413,6 +418,7 @@ function isImagePayloadString(fieldName: string, value: unknown, parent: Record<
  * - 明文 API key 检测脱敏（安全兜底，仅命中真含 sk- 明文的字符串值）
  * - 超长字符串截断：头 35% 尾 65% 保留（PY 同款，尾部通常是更重要的上下文）
  * @param value - 待写入 SpendLogs 的任意 JSON 值
+ * @param preserveImageStrings
  */
 function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: boolean): unknown {
 	if (value === null || value === undefined) {
@@ -447,16 +453,25 @@ function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: bool
 	return value;
 }
 
+/**
+ * @param value
+ */
 export function sanitizeSpendLogPayload(value: unknown): unknown {
 	return sanitizeSpendLogPayloadValue(value, false);
 }
 
-/** 清理响应负载，但为可重放的图片输出保留完整 base64。 */
+/**
+ * 清理响应负载，但为可重放的图片输出保留完整 base64。
+ * @param value
+ */
 export function sanitizeSpendLogResponsePayload(value: unknown): unknown {
 	return sanitizeSpendLogPayloadValue(value, true);
 }
 
-/** 清理请求消息，但为 Logs 与 Session 重放保留有上限的图片数据。 */
+/**
+ * 清理请求消息，但为 Logs 与 Session 重放保留有上限的图片数据。
+ * @param value
+ */
 export function sanitizeSpendLogMessagesPayload(value: unknown): unknown {
 	return sanitizeSpendLogPayloadValue(value, true);
 }
@@ -577,6 +592,7 @@ const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
  * OpenAI Responses/Codex 把稳定任务 ID 放在 client_metadata，而顶层
  * SpendLog session_id 仍是请求级 UUID。这里仅提取合法 UUID，并保持
  * thread_id > client session_id > prompt_cache_key 的优先级。
+ * @param req
  */
 function getCanonicalSessionGroupKey(req: Request): string | undefined {
 	const requestBody =
@@ -589,9 +605,9 @@ function getCanonicalSessionGroupKey(req: Request): string | undefined {
 			: undefined;
 	const candidates = [clientMetadata?.thread_id, clientMetadata?.session_id, requestBody?.prompt_cache_key];
 	for (const candidate of candidates) {
-		if (typeof candidate !== "string") continue;
+		if (typeof candidate !== "string") {continue;}
 		const normalized = candidate.trim();
-		if (SESSION_UUID_PATTERN.test(normalized)) return `s:${normalized}`;
+		if (SESSION_UUID_PATTERN.test(normalized)) {return `s:${normalized}`;}
 	}
 	return undefined;
 }
@@ -738,6 +754,7 @@ interface FinalModelGroupResolutionInput {
  * 最终 fallback 位置上的 alias / Model Override 解析结果优先；该位置没有 alias
  * 轨迹时使用 fallback 链的最终模型。SpendLogs.model_group 仍保留原始请求值，
  * 只有每日 Usage 聚合使用此结果。
+ * @param input
  */
 export function resolveFinalModelGroup(input: FinalModelGroupResolutionInput): string | undefined {
 	if (typeof input.resolvedModelGroup === "string" && input.resolvedModelGroup.length > 0) {
@@ -940,6 +957,24 @@ export interface ActiveRequestInput {
 	readonly callType: CallType;
 	/** 请求开始时间；缺省为登记时间。 */
 	readonly startTime?: Date;
+	/** 已解析的请求体；缺省回退到 req.body。 */
+	readonly requestBody?: Record<string, unknown>;
+}
+
+/**
+ * 构造活跃请求行的 proxy_server_request（对齐 buildProxyServerRequest 的基础结构，
+ * 不含 upstream 信息；在途请求为短生命周期行，body 不随存储开关门控）。
+ * @param input
+ */
+function buildActiveRequestProxyServerRequest(input: ActiveRequestInput): Record<string, unknown> {
+	const requestBody = input.requestBody ?? input.req.body ?? {};
+	return {
+		url: input.req.originalUrl ?? input.req.url,
+		method: input.req.method,
+		headers: sanitizeSpendLogHeaders(input.req.headers as Record<string, unknown>),
+		body: sanitizeSpendLogPayload(requestBody),
+		arrival_time: (input.startTime ?? new Date()).toISOString(),
+	};
 }
 
 /**
@@ -986,6 +1021,7 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 						user_api_key_alias: auth.key_alias ?? null,
 					},
 					request_tags: [],
+					proxy_server_request: buildActiveRequestProxyServerRequest(input),
 					status: "in_progress",
 					expires_at: new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS),
 					updated_at: now,
@@ -1022,6 +1058,9 @@ export async function renewActiveRequest(db: NodePgDatabase<typeof schema>, requ
 	return rows.length > 0;
 }
 
+/** checkpoint metadata 的顶层 key 枚举。 */
+export type ActiveRequestCheckpointKey = "responses_execution" | "streaming_execution";
+
 /**
  * Persist a bounded execution checkpoint without making observability writes
  * part of the provider success path. The final SpendLog transaction still owns
@@ -1030,17 +1069,19 @@ export async function renewActiveRequest(db: NodePgDatabase<typeof schema>, requ
  * @param db
  * @param requestId
  * @param checkpoint
+ * @param key - metadata 顶层 key；CLIProxy 用 responses_execution，普通流式用 streaming_execution
  */
 export async function checkpointActiveRequest(
 	db: NodePgDatabase<typeof schema>,
 	requestId: string,
-	checkpoint: Record<string, unknown>,
+	checkpoint: unknown,
+	key: ActiveRequestCheckpointKey = "responses_execution",
 ): Promise<boolean> {
 	const now = new Date();
 	const rows = await db
 		.update(liteLLM_ActiveRequests)
 		.set({
-			metadata: sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || jsonb_build_object('responses_execution', ${JSON.stringify(checkpoint)}::jsonb)`,
+			metadata: sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || jsonb_build_object(${sql.raw(`'${key}'`)}::text, ${JSON.stringify(checkpoint)}::jsonb)`,
 			request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${now}::timestamp - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
 			updated_at: now,
 		})

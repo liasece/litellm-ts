@@ -22,8 +22,11 @@ import {
 	trackSpendLog,
 	injectResponseCostHeader,
 	buildSpendLogFromRequest,
+	checkpointActiveRequest,
 	releaseSpend,
 } from "../spend/SpendTracker";
+import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
+import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendLifecycle } from "../spend/SpendReservation";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { CallType, SpendLogStatus } from "../types/spend";
@@ -230,6 +233,36 @@ function buildAggregatedChatResponse(state: ChatStreamAccumulator, fallbackModel
 }
 
 /**
+ * 流式累积后构造完整响应，并为「上游流式未提供 usage」的场景补 estimatedCompletionTokens
+ * 估算，保证非流式下游拿到的响应与非流式 completion 等价（含 usage）。
+ * @param state
+ * @param fallbackModel
+ * @param streamResult
+ */
+function finalizeStreamedCompletion(state: ChatStreamAccumulator, fallbackModel: string, streamResult: Record<string, unknown>): Record<string, unknown> {
+	const response = buildAggregatedChatResponse(state, fallbackModel);
+	if (response === undefined) {
+		return streamResult;
+	}
+	if (!response.usage && state.estimatedCompletionTokens > 0) {
+		response.usage = {
+			prompt_tokens: 0,
+			completion_tokens: state.estimatedCompletionTokens,
+			total_tokens: state.estimatedCompletionTokens,
+		};
+	}
+	const result = response as unknown as Record<string, unknown>;
+	// 合并流式返回里的内部字段（_fallbackDepth/_spendInfo/_providerHeaders 等），保证 agent loop / 下游
+	// 拿到和非流式 completion 等价的结果（含计费与追踪元数据，而非流式包装字段）。
+	for (const [key, value] of Object.entries(streamResult)) {
+		if (key.startsWith("_")) {
+			result[key] = value;
+		}
+	}
+	return result;
+}
+
+/**
  * 注册 Chat Completions 路由到 Express Router
  *
  * 覆盖以下路径：
@@ -293,18 +326,76 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
 		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+
 		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const visionImageStore = createVisionImageStore(db);
 		const modelResolutionTrace = createModelResolutionTraceCollector();
-		const completeWithResolutionTrace = (
+		// 非流式路径同样向上游请求流式（需求：litellm 自身需要流式输出以做 checkpoint），
+		// completeWithResolutionTrace 在流结束后返回累积的完整响应，下游仍拿到一次性非流式响应。
+		let currentAccumulator: ChatStreamAccumulator | undefined;
+		// 非流式路径向上游请求流式后，从 streamResult 提取上游上下文供 checkpoint 记录，使
+		// 进行中请求的日志详情也能展示 Upstream 请求/响应。
+		let currentUpstreamLogContext: UpstreamLogContext | undefined;
+		const checkpointRequestId = spendRequestId;
+		let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
+		if (checkpointRequestId !== undefined && db !== undefined) {
+			streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
+				serialize: () => {
+					const acc = currentAccumulator;
+					if (!acc) {
+						return null;
+					}
+					const response = buildAggregatedChatResponse(acc, model);
+					const usage =
+						acc.usage ??
+						(acc.estimatedCompletionTokens > 0
+							? {
+									prompt_tokens: 0,
+									completion_tokens: acc.estimatedCompletionTokens,
+									total_tokens: acc.estimatedCompletionTokens,
+								}
+							: undefined);
+					if (response === undefined && usage === undefined) {
+						return null;
+					}
+					return {
+						protocol: "chat_completions",
+						state: "in_progress",
+						response: (response ?? null) as Record<string, unknown> | null,
+						usage: (usage ?? null) as Record<string, unknown> | null,
+						upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+						upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+					};
+				},
+				write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+			});
+		}
+
+		const completeWithResolutionTrace = async (
 			completionModel: string,
 			completionMessages: Message[],
 			params: Record<string, unknown> = optionalParams,
 		) => {
-			if (typeof litellmRouter.resolveModelGroupWithTrace === "function") {
-				return litellmRouter.completion(completionModel, completionMessages, params, modelResolutionTrace);
+			// 向上游请求流式，累积后返回完整响应：既满足下游非流式契约，又在流式过程中 checkpoint。
+			const streamParams = { ...params, stream: true };
+			const streamResult =
+				typeof litellmRouter.resolveModelGroupWithTrace === "function"
+					? await litellmRouter.completion(completionModel, completionMessages, streamParams, modelResolutionTrace)
+					: await litellmRouter.completion(completionModel, completionMessages, streamParams);
+			const stream = (streamResult as { stream?: AsyncGenerator<ModelResponseStream> })["stream"];
+			if (stream === undefined) {
+				return streamResult;
 			}
-			return litellmRouter.completion(completionModel, completionMessages, params);
+			const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
+			currentAccumulator = accumulator;
+			currentUpstreamLogContext = getUpstreamLogContext(streamResult);
+			for await (const chunk of stream) {
+				if (chunk && typeof chunk === "object") {
+					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
+					streamingCheckpointScheduler?.onChunk();
+				}
+			}
+			return finalizeStreamedCompletion(accumulator, completionModel, streamResult);
 		};
 		try {
 			spendLifecycle.markProviderStarted();
@@ -658,6 +749,36 @@ async function handleStreamingResponse(
 				}
 			}, SSE_KEEPALIVE_INTERVAL_MS);
 			const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
+			const checkpointRequestId = spendRequestId;
+			let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
+			if (checkpointRequestId !== undefined) {
+				streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
+					serialize: () => {
+						const response = buildAggregatedChatResponse(accumulator, fallbackDepth === 0 ? model : currentModel);
+						const usage =
+							accumulator.usage ??
+							(accumulator.estimatedCompletionTokens > 0
+								? {
+										prompt_tokens: 0,
+										completion_tokens: accumulator.estimatedCompletionTokens,
+										total_tokens: accumulator.estimatedCompletionTokens,
+									}
+								: undefined);
+						if (response === undefined && usage === undefined) {
+							return null;
+						}
+						return {
+							protocol: "chat_completions",
+							state: "in_progress",
+							response: (response ?? null) as Record<string, unknown> | null,
+							usage: (usage ?? null) as Record<string, unknown> | null,
+							upstream_request: (lastUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+							upstream_response: (lastUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+						};
+					},
+					write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+				});
+			}
 			let streamError: unknown;
 			let completionStartTime: Date | undefined;
 			let usageChunkSent = false;
@@ -670,6 +791,7 @@ async function handleStreamingResponse(
 					}
 					completionStartTime ??= new Date();
 					accumulateChatChunk(accumulator, chunk);
+					streamingCheckpointScheduler?.onChunk();
 					if (!clientDisconnected) {
 						const strippedChunk = stripInternalFields(chunk) as Record<string, unknown>;
 						const choices = Array.isArray(strippedChunk["choices"]) ? strippedChunk["choices"] : [];
@@ -707,6 +829,7 @@ async function handleStreamingResponse(
 				}
 			} finally {
 				clearInterval(keepAlive);
+				await streamingCheckpointScheduler?.dispose();
 				if (!res.writableEnded) {
 					res.end();
 				}
@@ -889,13 +1012,74 @@ async function handlePrivateVisionStreamingResponse(
 	const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 	const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 	const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
+	// capability agent loop 每轮的主模型调用改为向上游请求流式（即使 agent loop 内部强制
+	// stream:false 也要流式），边累积边 checkpoint，使「进行中」时能看到主模型的流式中间响应；
+	// complete 回调在流结束后返回累积的完整响应供 agent loop 决策（解析 tool_use）。
+	let currentAccumulator: ChatStreamAccumulator | undefined;
+	// capability 分支向上游请求流式后，从 streamResult 提取上游上下文供 checkpoint 记录
+	let currentUpstreamLogContext: UpstreamLogContext | undefined;
+	const checkpointRequestId = spendRequestId;
+	let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
+	if (checkpointRequestId !== undefined && db !== undefined) {
+		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
+			serialize: () => {
+					const acc = currentAccumulator;
+					if (!acc) {
+						return null;
+					}
+					const response = buildAggregatedChatResponse(acc, model);
+					const usage =
+						acc.usage ??
+						(acc.estimatedCompletionTokens > 0
+							? {
+									prompt_tokens: 0,
+									completion_tokens: acc.estimatedCompletionTokens,
+									total_tokens: acc.estimatedCompletionTokens,
+								}
+							: undefined);
+					if (response === undefined && usage === undefined) {
+						return null;
+					}
+					return {
+						protocol: "chat_completions",
+						state: "in_progress",
+						response: (response ?? null) as Record<string, unknown> | null,
+						usage: (usage ?? null) as Record<string, unknown> | null,
+						upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+						upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+					};
+			},
+			write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+		});
+	}
+
 	const result = await runOpenAIBuiltinCapabilityAgentLoop(
 		litellmRouter,
 		model,
 		messages as unknown as Array<Record<string, unknown>>,
 		optionalParams,
-		(completionModel, completionMessages, params) =>
-			litellmRouter.completion(completionModel, completionMessages, params, modelResolutionTrace),
+		async (completionModel, completionMessages, params) => {
+			const streamResult = await litellmRouter.completion(
+				completionModel,
+				completionMessages,
+				{ ...params, stream: true },
+				modelResolutionTrace,
+			);
+			const stream = (streamResult as { stream?: AsyncGenerator<ModelResponseStream> })["stream"];
+			if (stream === undefined) {
+				return streamResult;
+			}
+			const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
+			currentAccumulator = accumulator;
+			currentUpstreamLogContext = getUpstreamLogContext(streamResult);
+			for await (const chunk of stream) {
+				if (chunk && typeof chunk === "object") {
+					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
+					streamingCheckpointScheduler?.onChunk();
+				}
+			}
+			return finalizeStreamedCompletion(accumulator, completionModel, streamResult);
+		},
 		{
 			visionAudit: visionAudit,
 			imageGenerationAudit: imageGenerationAudit,
@@ -904,6 +1088,7 @@ async function handlePrivateVisionStreamingResponse(
 			preparedWeb: preparedWeb,
 		},
 	);
+	await streamingCheckpointScheduler?.dispose();
 	const completionStartTime = new Date();
 	const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 	calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);

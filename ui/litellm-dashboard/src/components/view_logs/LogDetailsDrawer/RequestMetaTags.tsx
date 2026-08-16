@@ -20,7 +20,8 @@ export function RequestMetaTags({ meta }: RequestMetaTagsProps) {
 		meta.tools.length > 0 ||
 		meta.temperature !== undefined ||
 		meta.topP !== undefined ||
-		meta.maxTokens !== undefined;
+		meta.maxTokens !== undefined ||
+		meta.stream !== undefined;
 
 	if (!hasMeta) return null;
 
@@ -29,6 +30,11 @@ export function RequestMetaTags({ meta }: RequestMetaTagsProps) {
 
 	return (
 		<div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+			{meta.stream && (
+				<Tag color="geekblue" style={{ margin: 0 }}>
+					streaming
+				</Tag>
+			)}
 			{meta.reasoningEffort !== undefined && (
 				<Tag color="purple" style={{ margin: 0 }}>
 					Reasoning: {meta.reasoningEffort}

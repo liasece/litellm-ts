@@ -23,20 +23,27 @@ function parseData(input: any): any {
  * Extract tools array from request data
  */
 function extractToolsFromRequest(log: LogEntry): ToolDefinition[] {
-	// Check proxy_server_request first (most complete), then messages
-	const requestData = parseData(log.proxy_server_request || log.messages);
-
-	if (!requestData) return [];
-
-	// Handle array format (messages array)
-	if (Array.isArray(requestData)) {
-		// Tools are not typically in messages array, return empty
-		return [];
+	// proxy_server_request 是结构化对象 { url, method, headers, body, arrival_time }，tools 位于
+	// body.tools；同时兼容旧形态（对象直接含 tools）与 messages 对象形态。
+	const requestData = parseData(log.proxy_server_request);
+	if (requestData && typeof requestData === "object" && !Array.isArray(requestData)) {
+		const body = requestData.body;
+		if (body && typeof body === "object" && !Array.isArray(body) && Array.isArray(body.tools)) {
+			return body.tools;
+		}
+		if (Array.isArray(requestData.tools)) {
+			return requestData.tools;
+		}
 	}
 
-	// Handle object format (request body)
-	if (typeof requestData === "object" && requestData.tools) {
-		return Array.isArray(requestData.tools) ? requestData.tools : [];
+	const messagesData = parseData(log.messages);
+	if (
+		messagesData &&
+		typeof messagesData === "object" &&
+		!Array.isArray(messagesData) &&
+		Array.isArray(messagesData.tools)
+	) {
+		return messagesData.tools;
 	}
 
 	return [];

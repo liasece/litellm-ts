@@ -1,5 +1,5 @@
 import { Button, Space, Tag, Tooltip, Typography } from "antd";
-import { CloseOutlined, UpOutlined, DownOutlined } from "@ant-design/icons";
+import { CloseOutlined, UpOutlined, DownOutlined, ReloadOutlined } from "@ant-design/icons";
 import moment from "moment";
 import { LogEntry } from "../columns";
 import { getModelLogoAndName } from "../../provider_info_helpers";
@@ -22,8 +22,9 @@ interface DrawerHeaderProps {
 	onClose: () => void;
 	onPrevious: () => void;
 	onNext: () => void;
+	onRefresh: () => void;
 	statusLabel: string;
-	statusColor: "error" | "success";
+	statusColor: "error" | "success" | "processing";
 	environment: string;
 }
 
@@ -36,6 +37,7 @@ export function DrawerHeader({
 	onClose,
 	onPrevious,
 	onNext,
+	onRefresh,
 	statusLabel,
 	statusColor,
 	environment,
@@ -66,7 +68,7 @@ export function DrawerHeader({
 				style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: SPACING_MEDIUM }}
 			>
 				<RequestIdSection requestId={log.request_id} />
-				<NavigationSection onPrevious={onPrevious} onNext={onNext} onClose={onClose} />
+				<NavigationSection onPrevious={onPrevious} onNext={onNext} onRefresh={onRefresh} onClose={onClose} />
 			</div>
 
 			{/* Row 2: Status + Env + Timestamp */}
@@ -147,10 +149,12 @@ function RequestIdSection({ requestId }: { requestId: string }) {
 function NavigationSection({
 	onPrevious,
 	onNext,
+	onRefresh,
 	onClose,
 }: {
 	onPrevious: () => void;
 	onNext: () => void;
+	onRefresh: () => void;
 	onClose: () => void;
 }) {
 	const keyboardShortcutStyle = {
@@ -165,6 +169,15 @@ function NavigationSection({
 
 	return (
 		<Space size={SPACING_SMALL} split={<div style={{ width: 1, height: 20, background: COLOR_BORDER }} />}>
+			<Tooltip title="Refresh log details">
+				<Button
+					type="text"
+					size="small"
+					icon={<ReloadOutlined />}
+					onClick={onRefresh}
+					aria-label="Refresh log details"
+				/>
+			</Tooltip>
 			<Button type="text" size="small" onClick={onPrevious}>
 				<UpOutlined />
 				<span style={keyboardShortcutStyle}>K</span>
@@ -191,7 +204,7 @@ function StatusBar({
 }: {
 	log: LogEntry;
 	statusLabel: string;
-	statusColor: "error" | "success";
+	statusColor: "error" | "success" | "processing";
 	environment: string;
 }) {
 	return (

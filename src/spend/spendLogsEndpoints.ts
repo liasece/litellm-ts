@@ -738,7 +738,46 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			.where(eq(liteLLM_SpendLogs.request_id, requestId as string))
 			.limit(1);
 
-		return rows.at(0) ?? null;
+		const completed = rows.at(0);
+		if (completed) {
+			return completed;
+		}
+
+		// 进行中请求：SpendLogs 未命中时回落 ActiveRequests。checkpoint 双 key 兼容——
+		// 普通流式写 streaming_execution，CLIProxy 写 responses_execution，前者优先。
+		// messages 不在此返回（前端回退到 proxy_server_request.body.messages），response 取
+		// checkpoint 的部分响应；尚未产生任何内容时为 null。
+		const activeRows = await db
+			.select({
+				proxy_server_request: liteLLM_ActiveRequests.proxy_server_request,
+				metadata: liteLLM_ActiveRequests.metadata,
+			})
+			.from(liteLLM_ActiveRequests)
+			.where(eq(liteLLM_ActiveRequests.request_id, requestId as string))
+			.limit(1);
+		const activeRow = activeRows.at(0);
+		if (!activeRow) {
+			return null;
+		}
+		const metadata = (activeRow.metadata ?? {}) as Record<string, unknown>;
+		const checkpoint =
+			(metadata["streaming_execution"] as Record<string, unknown> | undefined) ??
+			(metadata["responses_execution"] as Record<string, unknown> | undefined);
+		// 进行中请求的 proxy_server_request 不含 upstream 信息（upstream 尚未落库），
+		// 从 checkpoint 取出流式过程中记录的 upstream 请求/响应，使详情页 Upstream 视图可用。
+		const upstreamRequest = checkpoint?.["upstream_request"] as Record<string, unknown> | undefined;
+		const upstreamResponse = checkpoint?.["upstream_response"] as Record<string, unknown> | undefined;
+		const proxyServerRequest = {
+			...(activeRow.proxy_server_request ?? {}),
+			...(upstreamRequest ? { upstream_request: upstreamRequest } : {}),
+			...(upstreamResponse ? { upstream_response: upstreamResponse } : {}),
+		};
+		return {
+			messages: undefined,
+			response: (checkpoint?.["response"] as Record<string, unknown> | undefined) ?? null,
+			proxy_server_request: proxyServerRequest,
+			status: "in_progress",
+		};
 	});
 
 	// ========== /spend/calculate ==========
@@ -852,13 +891,13 @@ async function mapWithConcurrency<T, R>(
 }
 
 function hasTimelinePayload(value: unknown): boolean {
-	if (value === null || value === undefined) return false;
+	if (value === null || value === undefined) {return false;}
 	if (typeof value === "string") {
 		const trimmed = value.trim();
 		return trimmed !== "" && trimmed !== "null" && trimmed !== "{}" && trimmed !== "[]";
 	}
-	if (Array.isArray(value)) return value.length > 0;
-	if (typeof value === "object") return Object.keys(value).length > 0;
+	if (Array.isArray(value)) {return value.length > 0;}
+	if (typeof value === "object") {return Object.keys(value).length > 0;}
 	return true;
 }
 
@@ -878,7 +917,7 @@ async function hydrateTimelineRowsFromColdStorage(
 			(_coldStorageLogger, error) =>
 				logger.warn(`/spend/logs/session/timeline 冷存储回查失败: ${(error as Error).message}`),
 		);
-		if (!payload) return row;
+		if (!payload) {return row;}
 		const coldRequestPayload = hasTimelinePayload(payload.proxy_server_request)
 			? payload.proxy_server_request
 			: payload.messages;
@@ -1434,7 +1473,10 @@ function readEmbeddedUserSessionId(metadata: unknown): string | null {
 	return SESSION_UUID_PATTERN.test(normalized) ? normalized : null;
 }
 
-/** 读取 SpendTracker 已从 OpenAI/Codex client_metadata 提取的规范分组键。 */
+/**
+ * 读取 SpendTracker 已从 OpenAI/Codex client_metadata 提取的规范分组键。
+ * @param metadata
+ */
 function readCanonicalSessionGroup(metadata: unknown): SessionGroupRef | null {
 	const parsed = parseSpendLogMetadata(metadata);
 	return parsePersistedSessionGroupKey(parsed?.session_group_key);

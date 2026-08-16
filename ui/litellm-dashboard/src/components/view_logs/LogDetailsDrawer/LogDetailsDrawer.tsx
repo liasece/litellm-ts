@@ -26,6 +26,8 @@ export interface LogDetailsDrawerProps {
 	onOpenSettings?: () => void;
 	allLogs?: LogEntry[];
 	onSelectLog?: (log: LogEntry) => void;
+	/** 刷新按钮回调：除详情外还应触发列表级刷新（Request Details / Metrics 等来自列表）。 */
+	onRefresh?: () => void;
 	startTime?: string;
 }
 
@@ -115,6 +117,7 @@ export function LogDetailsDrawer({
 	onOpenSettings,
 	allLogs = [],
 	onSelectLog,
+	onRefresh,
 	startTime,
 }: LogDetailsDrawerProps) {
 	const isSessionMode = Boolean(sessionGroup);
@@ -149,7 +152,14 @@ export function LogDetailsDrawer({
 	);
 
 	const currentLog = useMemo(() => {
-		if (!isSessionMode) return logEntry;
+		if (!isSessionMode) {
+			// 列表刷新后 allLogs 里的同 request_id 行是最新数据，优先用它以同步
+			// Request Details / Metrics / 状态等来自列表的字段（logEntry 是打开时的快照）。
+			if (logEntry?.request_id) {
+				return allLogs.find((row) => row.request_id === logEntry.request_id) ?? logEntry;
+			}
+			return logEntry;
+		}
 		if (!sessionLogs.length) return null;
 		if (selectedSessionRequestId) {
 			return sessionLogs.find((row) => row.request_id === selectedSessionRequestId) || sessionLogs[0];
@@ -159,7 +169,7 @@ export function LogDetailsDrawer({
 			return clickedLog || sessionLogs[0];
 		}
 		return sessionLogs[0];
-	}, [isSessionMode, logEntry, selectedSessionRequestId, sessionLogs]);
+	}, [isSessionMode, logEntry, allLogs, selectedSessionRequestId, sessionLogs]);
 
 	useEffect(() => {
 		if (!isSessionMode || !sessionLogs.length) return;
@@ -207,7 +217,8 @@ export function LogDetailsDrawer({
 
 	// Lazy-load log details (messages/response) only when drawer is open.
 	// This fetches data for a single log on-demand instead of prefetching all 50.
-	const logDetails = useLogDetails(currentLog?.request_id, startTime, open && !!currentLog?.request_id);
+	const isInProgress = currentLog?.status === "in_progress" || currentLog?.metadata?.status === "in_progress";
+	const logDetails = useLogDetails(currentLog?.request_id, startTime, open && !!currentLog?.request_id, isInProgress);
 	const detailsData = logDetails.data as any;
 	const isLoadingDetails = logDetails.isLoading;
 
@@ -227,8 +238,12 @@ export function LogDetailsDrawer({
 	const metadata = currentLog?.metadata || {};
 
 	// Status display values
-	const statusLabel = metadata.status === "failure" ? "Failure" : "Success";
-	const statusColor = metadata.status === "failure" ? ("error" as const) : ("success" as const);
+	const statusLabel = isInProgress ? "In Progress" : metadata.status === "failure" ? "Failure" : "Success";
+	const statusColor = isInProgress
+		? ("processing" as const)
+		: metadata.status === "failure"
+			? ("error" as const)
+			: ("success" as const);
 	const environment = metadata?.user_api_key_team_alias || "default";
 	const rawSessionErrorMessage = sessionError instanceof Error ? sessionError.message : "Unknown error";
 	const sessionErrorMessage = /^\s*(?:<!doctype\s+html|<html)\b/i.test(rawSessionErrorMessage)
@@ -430,6 +445,10 @@ export function LogDetailsDrawer({
 						onClose={onClose}
 						onPrevious={selectPreviousLog}
 						onNext={selectNextLog}
+						onRefresh={() => {
+							logDetails.refetch();
+							onRefresh?.();
+						}}
 						statusLabel={statusLabel}
 						statusColor={statusColor}
 						environment={environment}

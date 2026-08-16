@@ -55,6 +55,41 @@ describe("ToolsSection utils", () => {
 			});
 		});
 
+		it("should parse tools from proxy_server_request body (real structure)", () => {
+			const log: Partial<LogEntry> = {
+				request_id: "test-2b",
+				proxy_server_request: {
+					url: "/chat/completions",
+					method: "POST",
+					headers: {},
+					body: {
+						model: "gpt-4",
+						tools: [
+							{
+								type: "function",
+								function: {
+									name: "get_weather",
+									description: "Get the current weather",
+								},
+							},
+						],
+					},
+					arrival_time: "2026-08-14T00:00:00.000Z",
+				},
+				response: {},
+			} as any;
+
+			const result = parseToolsFromLog(log as LogEntry);
+
+			expect(result).toHaveLength(1);
+			expect(result[0]).toMatchObject({
+				index: 1,
+				name: "get_weather",
+				description: "Get the current weather",
+				called: false,
+			});
+		});
+
 		it("should parse tools from messages object format", () => {
 			const log: Partial<LogEntry> = {
 				request_id: "test-3",
