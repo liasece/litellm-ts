@@ -392,6 +392,14 @@ function containsPlaintextApiKey(value: string): boolean {
 }
 
 /**
+ * PostgreSQL text/jsonb 无法存储 NUL；日志副本用可见转义保留其位置。
+ * @param value - 待写入数据库的字符串
+ */
+function sanitizePostgresString(value: string): string {
+	return value.replaceAll("\0", "\\u0000");
+}
+
+/**
  * 仅识别 provider 响应中的标准图片数据字段，其他长字符串继续执行普通截断。
  * @param fieldName
  * @param value
@@ -425,16 +433,17 @@ function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: bool
 		return value;
 	}
 	if (typeof value === "string") {
-		if (containsPlaintextApiKey(value)) {
+		const databaseSafeValue = sanitizePostgresString(value);
+		if (containsPlaintextApiKey(databaseSafeValue)) {
 			return "[REDACTED]";
 		}
-		if (value.length > MAX_STRING_LENGTH_PROMPT_IN_DB) {
+		if (databaseSafeValue.length > MAX_STRING_LENGTH_PROMPT_IN_DB) {
 			const startChars = Math.floor(MAX_STRING_LENGTH_PROMPT_IN_DB * 0.35);
 			const endChars = MAX_STRING_LENGTH_PROMPT_IN_DB - startChars;
-			const skippedChars = value.length - startChars - endChars;
-			return `${value.slice(0, startChars)}... (litellm_truncated skipped ${skippedChars} chars. ${TRUNCATION_DB_SAFEGUARD_NOTE}) ...${value.slice(value.length - endChars)}`;
+			const skippedChars = databaseSafeValue.length - startChars - endChars;
+			return `${databaseSafeValue.slice(0, startChars)}... (litellm_truncated skipped ${skippedChars} chars. ${TRUNCATION_DB_SAFEGUARD_NOTE}) ...${databaseSafeValue.slice(databaseSafeValue.length - endChars)}`;
 		}
-		return value;
+		return databaseSafeValue;
 	}
 	if (Array.isArray(value)) {
 		return value.map((arrayValue) => sanitizeSpendLogPayloadValue(arrayValue, preserveImageStrings));
@@ -443,9 +452,10 @@ function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: bool
 		const sourceRecord = value as Record<string, unknown>;
 		const sanitizedRecord: Record<string, unknown> = {};
 		for (const [fieldName, fieldValue] of Object.entries(sourceRecord)) {
-			sanitizedRecord[fieldName] =
+			const databaseSafeFieldName = sanitizePostgresString(fieldName);
+			sanitizedRecord[databaseSafeFieldName] =
 				preserveImageStrings && isImagePayloadString(fieldName, fieldValue, sourceRecord)
-					? fieldValue
+					? sanitizePostgresString(fieldValue as string)
 					: sanitizeSpendLogPayloadValue(fieldValue, preserveImageStrings);
 		}
 		return sanitizedRecord;
@@ -1078,10 +1088,11 @@ export async function checkpointActiveRequest(
 	key: ActiveRequestCheckpointKey = "responses_execution",
 ): Promise<boolean> {
 	const now = new Date();
+	const sanitizedCheckpoint = sanitizeSpendLogPayload(checkpoint);
 	const rows = await db
 		.update(liteLLM_ActiveRequests)
 		.set({
-			metadata: sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || jsonb_build_object(${sql.raw(`'${key}'`)}::text, ${JSON.stringify(checkpoint)}::jsonb)`,
+			metadata: sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || jsonb_build_object(${sql.raw(`'${key}'`)}::text, ${JSON.stringify(sanitizedCheckpoint)}::jsonb)`,
 			request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${now}::timestamp - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
 			updated_at: now,
 		})

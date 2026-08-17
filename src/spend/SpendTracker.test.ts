@@ -882,6 +882,19 @@ describe("SpendTracker API key sanitization", () => {
 		expect(stringify(sanitizedPayload)).not.toContain(rawApiKey);
 	});
 
+	it("sanitizeSpendLogPayload 将 PostgreSQL 不支持的 NUL 转成可见转义", () => {
+		const sanitizedPayload = sanitizeSpendLogPayload({
+			messages: [{ content: [{ type: "tool_result", content: "---\n\0binary output" }] }],
+			["field\0name"]: "value\0suffix",
+		}) as Record<string, unknown>;
+
+		expect(sanitizedPayload).toMatchObject({
+			messages: [{ content: [{ type: "tool_result", content: "---\n\\u0000binary output" }] }],
+			["field\\u0000name"]: "value\\u0000suffix",
+		});
+		expect(stringify(sanitizedPayload)).not.toContain("\0");
+	});
+
 	it("图片生成响应保留超过普通文本上限的完整 base64", async () => {
 		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
 		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";

@@ -46,6 +46,10 @@ describe("Active request tracking", () => {
 			headers: { authorization: "Bearer secret" },
 			socket: {},
 		} as unknown as Request;
+		const requestBody = {
+			model: "model-a",
+			messages: [{ role: "user", content: [{ type: "tool_result", content: "---\n\0binary output" }] }],
+		};
 
 		await registerActiveRequest(db as never, {
 			req: req,
@@ -53,7 +57,7 @@ describe("Active request tracking", () => {
 			model: "model-a",
 			callType: CallType.ACompletion,
 			startTime: new Date("2026-07-27T00:00:00Z"),
-			requestBody: { model: "model-a", messages: [{ role: "user", content: "hi" }] },
+			requestBody: requestBody,
 		});
 
 		expect(inserted).toMatchObject({
@@ -70,9 +74,13 @@ describe("Active request tracking", () => {
 				url: "/v1/chat/completions",
 				method: "POST",
 				headers: { authorization: "[REDACTED]" },
-				body: { model: "model-a", messages: [{ role: "user", content: "hi" }] },
+				body: {
+					model: "model-a",
+					messages: [{ role: "user", content: [{ type: "tool_result", content: "---\n\\u0000binary output" }] }],
+				},
 			},
 		});
+		expect(requestBody.messages[0]?.content[0]?.content).toBe("---\n\0binary output");
 	});
 
 	it("renews and stops the active request lease heartbeat", async () => {
@@ -121,7 +129,12 @@ describe("Active request tracking", () => {
 		};
 
 		await expect(
-			checkpointActiveRequest(db as never, "req-active", { response: { id: "resp-1", status: "in_progress" } }, "streaming_execution"),
+			checkpointActiveRequest(
+				db as never,
+				"req-active",
+				{ response: { id: "resp-1", status: "in_progress", partial_output_text: "before\0after" } },
+				"streaming_execution",
+			),
 		).resolves.toBe(true);
 
 		const metadata = (set.mock.calls[0] as unknown as [{ metadata: unknown }])[0].metadata;
@@ -152,6 +165,8 @@ describe("Active request tracking", () => {
 		const sqlText = strings.join("");
 		expect(sqlText).toContain("streaming_execution");
 		expect(sqlText).not.toContain("responses_execution");
+		expect(sqlText).toContain("\\u0000");
+		expect(sqlText).not.toContain("\0");
 	});
 
 	it("deletes the active row in the same transaction as the final SpendLog", async () => {
