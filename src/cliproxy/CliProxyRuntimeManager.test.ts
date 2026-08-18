@@ -1,5 +1,8 @@
 import { ApiError } from "../core/api/ApiError";
 import type { ConfigRepository } from "../repositories/ConfigRepository";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
 	buildCliProxyProjection,
 	compareCliProxyVersions,
@@ -150,7 +153,7 @@ describe("CLIProxy managed quota transport", () => {
 		const calls: Array<{ url: string; init?: RequestInit }> = [];
 		jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {
 			const url = String(input);
-			calls.push({ url, init });
+			calls.push({ url: url, init: init });
 			if (url.includes("/auth-files")) {
 				return new Response(
 					JSON.stringify({
@@ -232,5 +235,86 @@ describe("CLIProxy managed quota transport", () => {
 			statusCode: 503,
 			message: "codex 订阅额度查询失败: HTTP 401",
 		});
+	});
+});
+
+describe("CLIProxy OAuth account trash/restore", () => {
+	let runtimeRoot: string;
+	let authDir: string;
+	let previousRuntimeRoot: string | undefined;
+
+	beforeEach(async () => {
+		runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cliproxy-test-"));
+		authDir = path.join(runtimeRoot, "auths");
+		await fs.mkdir(authDir, { recursive: true });
+		previousRuntimeRoot = process.env["CLIPROXY_RUNTIME_ROOT"];
+		process.env["CLIPROXY_RUNTIME_ROOT"] = runtimeRoot;
+	});
+
+	afterEach(async () => {
+		if (previousRuntimeRoot === undefined) {
+			delete process.env["CLIPROXY_RUNTIME_ROOT"];
+		} else {
+			process.env["CLIPROXY_RUNTIME_ROOT"] = previousRuntimeRoot;
+		}
+		await fs.rm(runtimeRoot, { recursive: true, force: true });
+	});
+
+	it("trashAccount 把文件移入 .trash 并加时间戳前缀", async () => {
+		await fs.writeFile(path.join(authDir, "codex-foo.json"), "{}");
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		await runtime.trashAccount("codex-foo.json");
+
+		const authsEntries = await fs.readdir(authDir);
+		expect(authsEntries).not.toContain("codex-foo.json");
+		const trashEntries = await fs.readdir(path.join(authDir, ".trash"));
+		expect(trashEntries).toHaveLength(1);
+		expect(trashEntries[0]).toMatch(/^\d+-codex-foo\.json$/);
+	});
+
+	it("restoreAccount 把 trash 文件还原为原始文件名", async () => {
+		await fs.mkdir(path.join(authDir, ".trash"), { recursive: true });
+		await fs.writeFile(path.join(authDir, ".trash", "1786846264579-codex-foo.json"), "{}");
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		await runtime.restoreAccount(".trash/1786846264579-codex-foo.json");
+
+		const authsEntries = await fs.readdir(authDir);
+		expect(authsEntries).toContain("codex-foo.json");
+		const trashEntries = await fs.readdir(path.join(authDir, ".trash"));
+		expect(trashEntries).toHaveLength(0);
+	});
+
+	it("restoreAccount 拒绝非 .trash 前缀路径", async () => {
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+		await expect(runtime.restoreAccount("codex-foo.json")).rejects.toMatchObject({ statusCode: 400 });
+		await expect(runtime.restoreAccount("../etc/passwd")).rejects.toMatchObject({ statusCode: 400 });
+	});
+
+	it("restoreAccount 文件不存在时返回 404", async () => {
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+		await expect(runtime.restoreAccount(".trash/1786846264579-missing.json")).rejects.toMatchObject({ statusCode: 404 });
+	});
+
+	it("listAccounts 默认过滤 trash 文件，includeTrashed 时保留", async () => {
+		jest.spyOn(global, "fetch").mockImplementation(async () =>
+			new Response(
+				JSON.stringify({
+					files: [
+						{ name: "codex-active.json", auth_index: "a1", type: "codex" },
+						{ name: ".trash/1786846264579-codex-archived.json", auth_index: "a2", type: "codex" },
+					],
+				}),
+				{ status: 200 },
+			),
+		);
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		const active = await runtime.listAccounts();
+		expect(active.map((a) => a.filename)).toEqual(["codex-active.json"]);
+
+		const all = await runtime.listAccounts({ includeTrashed: true });
+		expect(all.map((a) => a.filename)).toEqual([".trash/1786846264579-codex-archived.json", "codex-active.json"]);
 	});
 });

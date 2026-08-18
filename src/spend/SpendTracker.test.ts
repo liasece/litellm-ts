@@ -846,7 +846,7 @@ describe("SpendTracker API key sanitization", () => {
 		}) as unknown as Parameters<typeof trackSpendLog>[0];
 	}
 
-	it("buildSpendLogFromRequest 输出 hash key 且 proxy_server_request 不含明文 key", async () => {
+	it("buildSpendLogFromRequest 输出 hash key 且 proxy_server_request 保留请求体原文", async () => {
 		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
 		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";
 		try {
@@ -864,7 +864,7 @@ describe("SpendTracker API key sanitization", () => {
 			expect(spendLog.api_key).not.toBe(rawApiKey);
 			expect(spendLog.api_key.startsWith("sk-")).toBe(false);
 			expect(metadata["user_api_key"]).toBe(spendLog.api_key);
-			expect(stringify(spendLog.proxy_server_request)).not.toContain(rawApiKey);
+			expect(stringify(spendLog.proxy_server_request)).toContain(rawApiKey);
 		} finally {
 			if (previousStorePrompts === undefined) {
 				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
@@ -874,12 +874,12 @@ describe("SpendTracker API key sanitization", () => {
 		}
 	});
 
-	it("sanitizeSpendLogPayload 按值移除非敏感字段名里的明文 key", () => {
+	it("sanitizeSpendLogPayload 保留字段原文不做明文 key 清洗", () => {
 		const sanitizedPayload = sanitizeSpendLogPayload({
 			message: `Bearer ${rawApiKey}`,
 			nested: { value: rawApiKey },
 		});
-		expect(stringify(sanitizedPayload)).not.toContain(rawApiKey);
+		expect(stringify(sanitizedPayload)).toContain(rawApiKey);
 	});
 
 	it("sanitizeSpendLogPayload 将 PostgreSQL 不支持的 NUL 转成可见转义", () => {
@@ -1048,10 +1048,10 @@ describe("SpendTracker API key sanitization", () => {
 				status_code: 400,
 				body: { error: { type: "invalid_request_error" } },
 			});
-			expect((proxy["upstream_request"]?.["headers"] as Record<string, string>)["Authorization"]).toBe("[REDACTED]");
-			expect((proxy["upstream_response"]?.["headers"] as Record<string, string>)["set-cookie"]).toBe("[REDACTED]");
+			expect((proxy["upstream_request"]?.["headers"] as Record<string, string>)["Authorization"]).toBe(`Bearer ${rawApiKey}`);
+			expect((proxy["upstream_response"]?.["headers"] as Record<string, string>)["set-cookie"]).toBe(rawApiKey);
 			expect(spendLog.response).toMatchObject({ error: { code: "400" } });
-			expect(stringify(spendLog.proxy_server_request)).not.toContain(rawApiKey);
+			expect(stringify(spendLog.proxy_server_request)).toContain(rawApiKey);
 		} finally {
 			if (previousStorePrompts === undefined) {
 				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
@@ -1112,7 +1112,7 @@ describe("SpendTracker API key sanitization", () => {
 		}
 	});
 
-	it("trackSpendLog 写入 insertData 时 api_key、metadata、proxy_server_request 不含明文 key", async () => {
+	it("trackSpendLog 写入 insertData 时 api_key 经哈希保护、proxy_server_request 保留请求体原文", async () => {
 		const insertedSpendLogs: Record<string, unknown>[] = [];
 		const mockDb = createMockDb(insertedSpendLogs);
 		await trackSpendLog(mockDb, {
@@ -1141,8 +1141,8 @@ describe("SpendTracker API key sanitization", () => {
 		expect(insertData["api_key"]).not.toBe(rawApiKey);
 		expect(String(insertData["api_key"]).startsWith("sk-")).toBe(false);
 		expect(metadata["user_api_key"]).toBe(insertData["api_key"]);
-		expect(stringify(insertData)).not.toContain(rawApiKey);
-		expect(stringify(insertData["proxy_server_request"])).not.toContain(rawApiKey);
+		expect(stringify(insertData)).toContain(rawApiKey);
+		expect(stringify(insertData["proxy_server_request"])).toContain(rawApiKey);
 	});
 });
 

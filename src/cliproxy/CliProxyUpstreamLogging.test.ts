@@ -39,7 +39,7 @@ describe("buildPassthroughLogRequest", () => {
 		expect(request.model).toBe("");
 	});
 
-	it("与 createUpstreamLogContext 组合时脱敏请求头", () => {
+	it("与 createUpstreamLogContext 组合时原样记录请求头", () => {
 		const context = createUpstreamLogContext(
 			buildPassthroughLogRequest({
 				url: "http://x/v1/responses",
@@ -48,7 +48,7 @@ describe("buildPassthroughLogRequest", () => {
 				body: { a: 1 },
 			}),
 		);
-		expect(context.request.headers["authorization"]).toBe("[REDACTED]");
+		expect(context.request.headers["authorization"]).toBe("Bearer secret");
 		expect(context.request.headers["x-custom"]).toBe("keep");
 	});
 

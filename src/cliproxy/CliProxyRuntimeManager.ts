@@ -32,8 +32,6 @@ const HEALTH_TIMEOUT_MS = 15_000;
 const MAX_OAUTH_SESSIONS = 32;
 const RELEASE_REPOSITORY = "router-for-me/CLIProxyAPI";
 const RESERVED_CONFIG_KEYS = new Set(["host", "port", "auth-dir", "api-keys", "remote-management"]);
-const SENSITIVE_LOG_PATTERN =
-	/(authorization|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret)(["':=\s]+)([^\s,"'}]+)/gi;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -514,15 +512,21 @@ export class CliProxyRuntimeManager {
 	}
 
 	/**
-	 *
+	 * @param options
 	 */
-	async listAccounts(): Promise<CliProxyAccountSummary[]> {
+	async listAccounts(options?: { includeTrashed?: boolean }): Promise<CliProxyAccountSummary[]> {
 		const files = await this._listManagedAuthFiles();
+		const includeTrashed = options?.includeTrashed === true;
 		return files
 			.flatMap((value): CliProxyAccountSummary[] => {
 				const authIndex = this._stringField(value, "auth_index", "authIndex");
 				const filename = this._stringField(value, "name", "filename");
 				if (!authIndex || !filename) {
+					return [];
+				}
+				// 上游 /auth-files 会包含 .trash/ 已归档文件；默认不返回，includeTrashed 时保留
+				const trashed = filename.includes("/") || filename.includes("\\");
+				if (trashed && !includeTrashed) {
 					return [];
 				}
 				const modified = value["modtime"] ?? value["modified_at"] ?? value["updated_at"];
@@ -636,6 +640,36 @@ export class CliProxyRuntimeManager {
 	}
 
 	/**
+	 * 恢复 .trash 中的账户文件回 auths/ 根目录。
+	 * 输入 filename 形如 `.trash/1786846264579-codex-foo.json`（trashAccount 写入时的格式），
+	 * 去掉 `.trash/` 前缀与时间戳前缀还原为原始文件名。
+	 * @param filenameValue - trash 中的相对路径
+	 */
+	async restoreAccount(filenameValue: string): Promise<void> {
+		if (!filenameValue.startsWith(".trash/") || filenameValue.includes("\0")) {
+			throw ApiError.badRequest("仅支持恢复 .trash/ 下的账户文件");
+		}
+		const trashName = filenameValue.slice(".trash/".length);
+		const filename = safeAccountFilename(trashName);
+		// trashAccount 写入时的文件名格式为 `${Date.now()}-${originalName}`
+		const originalName = filename.replace(/^\d+-/, "");
+		if (originalName.length === 0) {
+			throw ApiError.badRequest("无法从 trash 文件名解析原始账户名");
+		}
+		const sourcePath = path.join(this._authDir, ".trash", filename);
+		const targetPath = path.join(this._authDir, originalName);
+		try {
+			await rename(sourcePath, targetPath);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+				throw ApiError.notFound(`trash 中的账户文件不存在: ${filename}`);
+			}
+			throw error;
+		}
+		this._appendLog("system", `OAuth 账户 ${filename} 已恢复为 ${originalName}`);
+	}
+
+	/**
 	 * @param provider
 	 */
 	async startOAuth(provider: CliProxyOAuthProvider): Promise<CliProxyOAuthSession> {
@@ -669,14 +703,13 @@ export class CliProxyRuntimeManager {
 		this._oauthSessions.set(id, { snapshot: snapshot, process: child });
 		const receive = (chunk: Buffer): void => {
 			for (const line of chunk.toString("utf8").split(/\r?\n/).filter(Boolean)) {
-				const safeLine = this._sanitizeLog(line);
 				const current = this._oauthSessions.get(id);
 				if (!current) {
 					continue;
 				}
-				const output = [...current.snapshot.output, safeLine].slice(-MAX_OAUTH_OUTPUT_LINES);
+				const output = [...current.snapshot.output, line].slice(-MAX_OAUTH_OUTPUT_LINES);
 				current.snapshot = { ...current.snapshot, output: output };
-				this._appendLog("oauth", `[${provider}] ${safeLine}`);
+				this._appendLog("oauth", `[${provider}] ${line}`);
 			}
 		};
 		child.stdout.on("data", receive);
@@ -1279,17 +1312,13 @@ export class CliProxyRuntimeManager {
 		}
 	}
 
-	private _sanitizeLog(message: string): string {
-		return message.replace(SENSITIVE_LOG_PATTERN, (_match, key: string, separator: string) => `${key}${separator}[REDACTED]`);
-	}
-
 	private _appendLog(stream: CliProxyLogEntry["stream"], message: string): void {
 		this._logSequence += 1;
 		this._logs.push({
 			id: this._logSequence,
 			timestamp: new Date().toISOString(),
 			stream: stream,
-			message: this._sanitizeLog(message),
+			message: message,
 		});
 		if (this._logs.length > MAX_LOG_ENTRIES) {
 			this._logs.splice(0, this._logs.length - MAX_LOG_ENTRIES);

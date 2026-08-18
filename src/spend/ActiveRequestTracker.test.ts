@@ -73,7 +73,7 @@ describe("Active request tracking", () => {
 			proxy_server_request: {
 				url: "/v1/chat/completions",
 				method: "POST",
-				headers: { authorization: "[REDACTED]" },
+				headers: { authorization: "Bearer secret" },
 				body: {
 					model: "model-a",
 					messages: [{ role: "user", content: [{ type: "tool_result", content: "---\n\\u0000binary output" }] }],

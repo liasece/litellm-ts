@@ -482,7 +482,7 @@ describe("CLIProxy native Responses streaming", () => {
 			request: {
 				url: "http://127.0.0.1:8317/v1/responses",
 				method: "POST",
-				headers: { authorization: "[REDACTED]" },
+				headers: { authorization: "Bearer internal-only" },
 				body: { model: "gpt-5.6-sol", input: "hello" },
 			},
 			response: { status_code: 200, body: { id: "resp_1", status: "completed" } },
@@ -660,7 +660,7 @@ describe("CLIProxy native Responses streaming", () => {
 				request: {
 					url: "http://127.0.0.1:8317/v1/messages",
 					method: "POST",
-					headers: { authorization: "[REDACTED]", "x-api-key": "[REDACTED]" },
+					headers: { authorization: "Bearer internal-only", "x-api-key": "internal-only" },
 					body: { model: "gpt-5.6-sol", stream: true },
 				},
 				response: {

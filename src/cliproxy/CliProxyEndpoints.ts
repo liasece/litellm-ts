@@ -234,8 +234,8 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		return runtime.logs(after);
 	});
 
-	registerRoute(router, { method: "get", path: "/cliproxy/accounts" }, async () => ({
-		data: await runtime.listAccounts(),
+	registerRoute(router, { method: "get", path: "/cliproxy/accounts" }, async (req) => ({
+		data: await runtime.listAccounts({ includeTrashed: req.query["include_trashed"] === "true" }),
 	}));
 
 	registerRoute(router, { method: "get", path: "/cliproxy/accounts/:authIndex/quota" }, (req) =>
@@ -251,6 +251,11 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		}
 		await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight });
 		return { status: "ok" };
+	});
+
+	registerRoute(router, { method: "post", path: "/cliproxy/accounts/:filename/restore" }, async (req) => {
+		await runtime.restoreAccount(routeParam(req, "filename"));
+		return { status: "restored" };
 	});
 
 	registerRoute(router, { method: "delete", path: "/cliproxy/accounts/:filename" }, async (req) => {

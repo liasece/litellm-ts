@@ -361,7 +361,7 @@ const CliProxyManagement: React.FC = () => {
 	}, []);
 
 	const refreshAccounts = useCallback(async () => {
-		const value = await api<{ data: Account[] }>("/cliproxy/accounts");
+		const value = await api<{ data: Account[] }>("/cliproxy/accounts?include_trashed=true");
 		setAccounts(value.data);
 	}, []);
 
@@ -551,7 +551,9 @@ const CliProxyManagement: React.FC = () => {
 	}, []);
 
 	const refreshAllQuotas = useCallback(async () => {
-		await Promise.all(accounts.map((account) => loadQuota(account)));
+		await Promise.all(
+			accounts.filter((account) => !account.filename.startsWith(".trash/")).map((account) => loadQuota(account)),
+		);
 	}, [accounts, loadQuota]);
 
 	const executeManagementRequest = async () => {
@@ -579,19 +581,39 @@ const CliProxyManagement: React.FC = () => {
 		() => [
 			{ title: "Provider", dataIndex: "provider", key: "provider", render: (value: string) => <Tag>{value}</Tag> },
 			{ title: "Account", dataIndex: "email", key: "email", render: (value: string | null) => value ?? "—" },
-			{ title: "File", dataIndex: "filename", key: "filename", ellipsis: true },
+			{
+				title: "File",
+				dataIndex: "filename",
+				key: "filename",
+				ellipsis: true,
+				render: (value: string) => (
+					<span>
+						{value}
+						{value.startsWith(".trash/") ? (
+							<Tag color="orange" className="ml-2">
+								trashed
+							</Tag>
+						) : null}
+					</span>
+				),
+			},
 			{
 				title: "Enabled",
 				key: "enabled",
 				render: (_: unknown, account: Account) => (
 					<Switch
 						checked={!account.disabled}
+						disabled={account.filename.startsWith(".trash/")}
 						onChange={async (checked) => {
-							await api(`/cliproxy/accounts/${encodeURIComponent(account.filename)}`, {
-								method: "PATCH",
-								body: JSON.stringify({ disabled: !checked }),
-							});
-							await refreshAccounts();
+							try {
+								await api(`/cliproxy/accounts/${encodeURIComponent(account.filename)}`, {
+									method: "PATCH",
+									body: JSON.stringify({ disabled: !checked }),
+								});
+								await refreshAccounts();
+							} catch (error) {
+								NotificationsManager.fromBackend(error instanceof Error ? error.message : String(error));
+							}
 						}}
 					/>
 				),
@@ -605,13 +627,18 @@ const CliProxyManagement: React.FC = () => {
 						max={1_000_000}
 						value={account.weight ?? undefined}
 						placeholder="default"
+						disabled={account.filename.startsWith(".trash/")}
 						onBlur={async (event) => {
 							const raw = event.currentTarget.value;
-							await api(`/cliproxy/accounts/${encodeURIComponent(account.filename)}`, {
-								method: "PATCH",
-								body: JSON.stringify({ weight: raw === "" ? null : Number(raw) }),
-							});
-							await refreshAccounts();
+							try {
+								await api(`/cliproxy/accounts/${encodeURIComponent(account.filename)}`, {
+									method: "PATCH",
+									body: JSON.stringify({ weight: raw === "" ? null : Number(raw) }),
+								});
+								await refreshAccounts();
+							} catch (error) {
+								NotificationsManager.fromBackend(error instanceof Error ? error.message : String(error));
+							}
 						}}
 					/>
 				),
@@ -619,20 +646,52 @@ const CliProxyManagement: React.FC = () => {
 			{
 				title: "Action",
 				key: "action",
-				render: (_: unknown, account: Account) => (
-					<Popconfirm
-						title="Move this account to .trash?"
-						description="The token file is retained for recovery."
-						onConfirm={async () => {
-							await api(`/cliproxy/accounts/${encodeURIComponent(account.filename)}`, { method: "DELETE" });
-							await refreshAccounts();
-						}}
-					>
-						<Button danger size="small">
-							Trash
-						</Button>
-					</Popconfirm>
-				),
+				render: (_: unknown, account: Account) => {
+					if (account.filename.startsWith(".trash/")) {
+						return (
+							<Space size="small">
+								<Popconfirm
+									title="Restore this account?"
+									description="The token file will be moved back to the active auth directory."
+									onConfirm={async () => {
+										try {
+											await api(`/cliproxy/accounts/${encodeURIComponent(account.filename)}/restore`, {
+												method: "POST",
+											});
+											NotificationsManager.success(`Account ${account.filename} restored`);
+											await refreshAccounts();
+										} catch (error) {
+											NotificationsManager.fromBackend(error instanceof Error ? error.message : String(error));
+										}
+									}}
+								>
+									<Button size="small" icon={<RollbackOutlined />}>
+										Restore
+									</Button>
+								</Popconfirm>
+							</Space>
+						);
+					}
+					return (
+						<Popconfirm
+							title="Move this account to .trash?"
+							description="The token file is retained for recovery."
+							onConfirm={async () => {
+								try {
+									await api(`/cliproxy/accounts/${encodeURIComponent(account.filename)}`, { method: "DELETE" });
+									NotificationsManager.success(`Account ${account.filename} moved to trash`);
+									await refreshAccounts();
+								} catch (error) {
+									NotificationsManager.fromBackend(error instanceof Error ? error.message : String(error));
+								}
+							}}
+						>
+							<Button danger size="small">
+								Trash
+							</Button>
+						</Popconfirm>
+					);
+				},
 			},
 		],
 		[refreshAccounts],

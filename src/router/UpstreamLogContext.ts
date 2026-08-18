@@ -1,22 +1,22 @@
 import type { ProviderRequest } from "../types/provider";
 
-/** 脱敏后可写入详细 SpendLog 的上游请求。 */
+/** 可写入详细 SpendLog 的上游请求。 */
 export interface UpstreamRequestLog {
 	/** 最终请求 URL。 */
 	readonly url: string;
 	/** HTTP 方法。 */
 	readonly method: string;
-	/** 已脱敏请求头。 */
+	/** 请求头（原样记录）。 */
 	readonly headers: Record<string, string>;
 	/** Provider 转换后的 JSON 请求体。 */
 	readonly body: unknown;
 }
 
-/** 脱敏后可写入详细 SpendLog 的上游响应。 */
+/** 可写入详细 SpendLog 的上游响应。 */
 export interface UpstreamResponseLog {
 	/** 上游 HTTP 状态码。 */
 	readonly status_code: number;
-	/** 已脱敏响应头。 */
+	/** 响应头（原样记录）。 */
 	readonly headers: Record<string, string>;
 	/** 已解析的非流式响应体，或流式协议终态事件携带的完整响应对象。 */
 	readonly body?: unknown;
@@ -31,21 +31,10 @@ export interface UpstreamLogContext {
 }
 
 const UPSTREAM_LOG_CONTEXT = Symbol("litellm.upstreamLogContext");
-const SENSITIVE_HEADER_NAMES = new Set([
-	"authorization",
-	"proxy-authorization",
-	"x-api-key",
-	"api-key",
-	"x-litellm-api-key",
-	"cookie",
-	"set-cookie",
-]);
 
-function sanitizeHeaders(headers: Headers | Record<string, string> | undefined): Record<string, string> {
+function collectHeaders(headers: Headers | Record<string, string> | undefined): Record<string, string> {
 	const entries = headers instanceof Headers ? [...headers.entries()] : Object.entries(headers ?? {});
-	return Object.fromEntries(
-		entries.map(([name, value]) => [name, SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) ? "[REDACTED]" : value]),
-	);
+	return Object.fromEntries(entries);
 }
 
 /**
@@ -59,14 +48,14 @@ export function createUpstreamLogContext(request: ProviderRequest, response?: Re
 		request: {
 			url: request.url,
 			method: request.method,
-			headers: sanitizeHeaders(request.headers),
+			headers: collectHeaders(request.headers),
 			body: request.logBody ?? request.body,
 		},
 		...(response
 			? {
 					response: {
 						status_code: response.status,
-						headers: sanitizeHeaders(response.headers),
+						headers: collectHeaders(response.headers),
 						...(responseBody !== undefined ? { body: responseBody } : {}),
 					},
 				}

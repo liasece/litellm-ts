@@ -211,7 +211,7 @@ describe("Router execution chain", () => {
 			expect(upstream).toMatchObject({
 				request: {
 					url: "https://api.deepseek.com/chat/completions",
-					headers: { Authorization: "[REDACTED]" },
+					headers: { Authorization: "Bearer provider-key" },
 					body: {
 						model: "deepseek-v4-flash",
 						messages: [

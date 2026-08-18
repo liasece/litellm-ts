@@ -148,7 +148,7 @@ describe("CLIProxy native passthrough", () => {
 			request: {
 				url: "http://127.0.0.1:8317/v1/images/edits",
 				method: "POST",
-				headers: { authorization: "[REDACTED]" },
+				headers: { authorization: "Bearer internal-only" },
 				body: expectedRequestLog,
 			},
 			response: { status_code: 200 },

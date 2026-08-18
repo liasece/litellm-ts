@@ -372,25 +372,6 @@ const TRUNCATION_DB_SAFEGUARD_NOTE =
 	"Full, untruncated data is logged to logging callbacks (OTEL, Datadog, etc.). " +
 	"To increase the truncation limit, set `MAX_STRING_LENGTH_PROMPT_IN_DB` in your env.";
 
-/** 需脱敏的请求头（明文凭证不入库）；仅作用于 proxy_server_request.headers 层 */
-const SENSITIVE_HEADER_NAMES: ReadonlySet<string> = new Set([
-	"authorization",
-	"proxy-authorization",
-	"x-api-key",
-	"api-key",
-	"x-litellm-api-key",
-	"cookie",
-	"set-cookie",
-]);
-
-/**
- * 判断字符串是否包含明文 LiteLLM/OpenAI 风格 API key。
- * @param value - 待检查字符串
- */
-function containsPlaintextApiKey(value: string): boolean {
-	return /(^|\s|["'])Bearer\s+sk-[^\s"']+/.test(value) || /(^|\s|["'])sk-[A-Za-z0-9_-]+/.test(value);
-}
-
 /**
  * PostgreSQL text/jsonb 无法存储 NUL；日志副本用可见转义保留其位置。
  * @param value - 待写入数据库的字符串
@@ -407,7 +388,6 @@ function sanitizePostgresString(value: string): string {
  */
 function isImagePayloadString(fieldName: string, value: unknown, parent: Record<string, unknown>): boolean {
 	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) {return false;}
-	if (containsPlaintextApiKey(value)) {return false;}
 	if (fieldName === "b64_json") {return true;}
 	if (fieldName === "result" && parent["type"] === "image_generation_call") {return true;}
 	if (
@@ -423,7 +403,6 @@ function isImagePayloadString(fieldName: string, value: unknown, parent: Record<
 /**
  * 递归清理 SpendLogs JSON 负载（对齐 PY _sanitize_request_body_for_spend_logs_payload）：
  * - 不做字段名黑名单（PY 无此逻辑——user_api_key_alias/total_tokens 等标识与数值字段均明文保留）
- * - 明文 API key 检测脱敏（安全兜底，仅命中真含 sk- 明文的字符串值）
  * - 超长字符串截断：头 35% 尾 65% 保留（PY 同款，尾部通常是更重要的上下文）
  * @param value - 待写入 SpendLogs 的任意 JSON 值
  * @param preserveImageStrings
@@ -434,9 +413,6 @@ function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: bool
 	}
 	if (typeof value === "string") {
 		const databaseSafeValue = sanitizePostgresString(value);
-		if (containsPlaintextApiKey(databaseSafeValue)) {
-			return "[REDACTED]";
-		}
 		if (databaseSafeValue.length > MAX_STRING_LENGTH_PROMPT_IN_DB) {
 			const startChars = Math.floor(MAX_STRING_LENGTH_PROMPT_IN_DB * 0.35);
 			const endChars = MAX_STRING_LENGTH_PROMPT_IN_DB - startChars;
@@ -487,13 +463,13 @@ export function sanitizeSpendLogMessagesPayload(value: unknown): unknown {
 }
 
 /**
- * 清理 proxy_server_request.headers：敏感请求头值脱敏，其余透传。
+ * 清理 proxy_server_request.headers：请求头值原样透传。
  * @param headers - Express req.headers
  */
 export function sanitizeSpendLogHeaders(headers: Record<string, unknown>): Record<string, unknown> {
 	const sanitized: Record<string, unknown> = {};
 	for (const [headerName, headerValue] of Object.entries(headers)) {
-		sanitized[headerName] = SENSITIVE_HEADER_NAMES.has(headerName.toLowerCase()) ? "[REDACTED]" : sanitizeSpendLogPayload(headerValue);
+		sanitized[headerName] = sanitizeSpendLogPayload(headerValue);
 	}
 	return sanitized;
 }
