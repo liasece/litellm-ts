@@ -231,6 +231,7 @@ export class AudioController {
 							error: error,
 							upstreamLogContext: getUpstreamLogContext(error),
 							status: SpendLogStatus.Failure,
+							...getResultModelResolutionMetadata(error as unknown as Record<string, unknown>),
 						}),
 					);
 				} catch (accountingError) {

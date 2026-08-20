@@ -32,7 +32,7 @@ import { maskCooldownEntries } from "./CooldownMasking";
 import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
-import { appendModelResolutionTrace, copyModelResolutionChain } from "./ModelResolutionTrace";
+import { appendModelResolutionTrace, appendRoutingTrace, copyModelResolutionChain, copyRoutingTrace } from "./ModelResolutionTrace";
 import { attachUpstreamLogContext } from "./UpstreamLogContext";
 import type {
 	RouterExecContext,
@@ -178,6 +178,17 @@ export async function executeWithFallback(
 		// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
 		const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 		if (nextFallback) {
+			const noDeploymentError = Object.assign(new Error(`No available deployment for model "${resolvedModel}"`), {
+				name: "NoAvailableDeploymentError",
+				statusCode: 429,
+			});
+			appendRoutingTrace(modelResolutionTrace, {
+				fromModel: model,
+				toResolution: nextFallback,
+				routingType: "general_fallback",
+				reason: "no_available_deployment",
+				error: noDeploymentError,
+			});
 			return executeWithFallback(
 				ctx,
 				{
@@ -257,6 +268,20 @@ export async function executeWithFallback(
 					);
 					const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 					if (nextFallback) {
+						const rateLimitError = Object.assign(
+							new Error(
+								`Rate limit reached on ${deployment.model_name} (rpm=${usage.rpm}/${rpmLimit ?? "-"}, tpm=${usage.tpm}/${tpmLimit ?? "-"})`,
+							),
+							{ name: "RateLimitError", statusCode: 429 },
+						);
+						appendRoutingTrace(modelResolutionTrace, {
+							fromModel: model,
+							toResolution: nextFallback,
+							routingType: "general_fallback",
+							reason: "rate_limit",
+							error: rateLimitError,
+							attemptedDeployment: deployment.model_name,
+						});
 						return executeWithFallback(
 							ctx,
 							{
@@ -321,7 +346,8 @@ export async function executeWithFallback(
 				}
 
 				if (!response.ok) {
-					const bodyStr = JSON.stringify(body);
+					const serializedBody = typeof body === "string" ? body : JSON.stringify(body);
+					const bodyStr = serializedBody && serializedBody.length > 0 ? serializedBody : `Provider returned HTTP ${response.status}`;
 					const categorizedError = categorizeProviderError(response.status, bodyStr);
 					attachUpstreamLogContext(categorizedError, execResult.upstreamLogContext);
 					lastError = categorizedError;
@@ -432,6 +458,7 @@ export async function executeWithFallback(
 							_fallbackDepth: fallbackDepth,
 							_fallbackModels: effectiveFallbackModels,
 							_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							_routingTrace: copyRoutingTrace(modelResolutionTrace),
 							_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
 							// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
 							_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
@@ -462,6 +489,7 @@ export async function executeWithFallback(
 						_fallbackDepth: fallbackDepth,
 						_fallbackModels: effectiveFallbackModels,
 						_modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+						_routingTrace: copyRoutingTrace(modelResolutionTrace),
 						_customCostPerToken: deployment.litellm_params.custom_cost_per_token,
 						// 批次 9: spend 记账对齐 — 实际执行 deployment 的 provider/api_base/model_id/model_info 价格
 						_spendInfo: buildDeploymentSpendInfo(deployment, execResult.upstreamUrl),
@@ -582,6 +610,13 @@ export async function executeWithFallback(
 
 		const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 		if (nextFallback) {
+			appendRoutingTrace(modelResolutionTrace, {
+				fromModel: model,
+				toResolution: nextFallback,
+				routingType: "general_fallback",
+				error: error,
+				attemptedDeployment: deployment.model_name,
+			});
 			return executeWithFallback(
 				ctx,
 				{

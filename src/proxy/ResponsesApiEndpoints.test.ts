@@ -161,12 +161,18 @@ describe("Responses API contract matrix", () => {
 			);
 			const app = buildApp(buildDeploymentRouter([deepseekDeployment()]), true);
 
+			const reasoningItem = {
+				id: "rs_history",
+				type: "reasoning",
+				summary: [],
+				encrypted_content: "encrypted-history",
+			};
 			const response = await request(app)
 				.post("/v1/responses")
 				.send({
 					model: "deepseek-v4-flash",
 					instructions: "Follow instructions",
-					input: [{ role: "user", content: "calculate" }],
+					input: [reasoningItem, { role: "user", content: "calculate" }],
 					reasoning: { effort: "max" },
 					tools: [
 						{
@@ -184,7 +190,7 @@ describe("Responses API contract matrix", () => {
 			expect(providerBody).toMatchObject({
 				model: "deepseek-v4-flash",
 				instructions: "Follow instructions",
-				input: [{ role: "user", content: "calculate" }],
+				input: [reasoningItem, { role: "user", content: "calculate" }],
 				reasoning: { effort: "max" },
 			});
 			expect(providerBody["messages"]).toBeUndefined();
@@ -656,6 +662,61 @@ describe("Responses API contract matrix", () => {
 				output_tokens: 5,
 				output_tokens_details: { reasoning_tokens: 2 },
 				total_tokens: 14,
+			});
+		});
+
+		test("Chat fallback accepts replayed Responses reasoning history without exposing it as a message", async () => {
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: "chatcmpl-reasoning-history",
+						object: "chat.completion",
+						created: 1_700_000_002,
+						model: "provider-model",
+						choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "continued" } }],
+						usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+			const app = buildApp(buildDeploymentRouter([deployment("responses-model", "https://primary.example/v1")]));
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "responses-model",
+					input: [
+						{
+							id: "rs_previous",
+							type: "reasoning",
+							summary: [],
+							encrypted_content: "encrypted-history",
+						},
+						{
+							id: "msg_previous",
+							type: "message",
+							role: "assistant",
+							content: [{ type: "output_text", text: "Earlier answer." }],
+						},
+						{ type: "message", role: "user", content: [{ type: "input_text", text: "Continue." }] },
+					],
+					store: false,
+				})
+				.expect(200);
+
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody["messages"]).toEqual([
+				{ role: "assistant", content: "Earlier answer." },
+				{ role: "user", content: "Continue." },
+			]);
+			expect(response.body).toMatchObject({
+				status: "completed",
+				output: [
+					{
+						type: "message",
+						content: [{ type: "output_text", text: "continued" }],
+					},
+				],
 			});
 		});
 

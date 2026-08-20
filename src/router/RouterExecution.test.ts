@@ -456,6 +456,35 @@ describe("Router execution chain", () => {
 			});
 			expect(mockFetch).toHaveBeenCalledTimes(2);
 		});
+
+		it("流式 provider 400 保留错误体和状态，不被二次 TypeError 覆盖", async () => {
+			mockFetch.mockResolvedValueOnce(
+				errorResponse(400, {
+					error: {
+						message: "messages[0].role: developer is invalid",
+						type: "invalid_request_error",
+					},
+				}),
+			);
+			const router = new Router({
+				model_list: [mkDeployment("stream-model")],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+			});
+
+			let caught: unknown;
+			try {
+				await router.completion("stream-model", [{ role: "user", content: "hi" }], { stream: true });
+			} catch (error) {
+				caught = error;
+			}
+
+			expect(caught).toMatchObject({
+				name: "BadRequestError",
+				status_code: 400,
+			});
+			expect((caught as Error).message).toContain("developer is invalid");
+		});
 	});
 	describe("Router.hasModel", () => {
 		it("model_name 命中（含全部署冷却时仍已知）", () => {
@@ -754,6 +783,25 @@ describe("Router execution chain", () => {
 				expect((result as unknown as { _provider: string })._provider).toBe("c");
 				// 跳数计数器：A→B→C 共 2 跳
 				expect((result as unknown as { _fallbackDepth: number })._fallbackDepth).toBe(2);
+				expect(result._routingTrace).toEqual([
+					expect.objectContaining({
+						fallback_index: 1,
+						from_model: "a",
+						to_resolved_model: "b",
+						routing_type: "general_fallback",
+						reason: "no_available_deployment",
+						error_information: expect.objectContaining({ error_type: "NoAvailableDeploymentError", error_code: 429 }),
+					}),
+					expect.objectContaining({
+						fallback_index: 2,
+						from_model: "b",
+						to_resolved_model: "c",
+						routing_type: "general_fallback",
+						reason: "upstream_error",
+						attempted_deployment: "b",
+						error_information: expect.objectContaining({ error_message: expect.stringContaining("b failed") }),
+					}),
+				]);
 				// B 打过一次、C 打过一次；A 冷却未打
 				expect(mockFetch).toHaveBeenCalledTimes(2);
 			});

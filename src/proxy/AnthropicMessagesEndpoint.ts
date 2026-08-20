@@ -41,7 +41,7 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import type { ModelResponse } from "../types/openai";
 import { ProviderUpstreamError, executeWithFallbackChain, requireUpstreamAttempt, type UpstreamAttempt } from "./AnthropicUpstreamDispatch";
 import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
-import { copyModelResolutionChain, createModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
+import { copyModelResolutionChain, copyRoutingTrace, createModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
 import { executeProviderRequest } from "../router/ProviderRequestExecutor";
 import {
 	buildAnthropicSearchContinuation,
@@ -991,6 +991,7 @@ export function registerAnthropicMessagesEndpoints(
 								maxRetries: litellmRouter.maxFallbacks,
 								fallbackModels: streamFallbackStats.fallbackModels,
 								modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+								routingTrace: copyRoutingTrace(modelResolutionTrace),
 								startTime: streamStartTime,
 								endTime: new Date(),
 								completionStartTime: completionStartTime,
@@ -1027,6 +1028,7 @@ export function registerAnthropicMessagesEndpoints(
 										maxRetries: litellmRouter.maxFallbacks,
 										fallbackModels: streamFallbackStats.fallbackModels,
 										modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+										routingTrace: copyRoutingTrace(modelResolutionTrace),
 									}),
 								).then(() => undefined),
 							);
@@ -1083,6 +1085,7 @@ export function registerAnthropicMessagesEndpoints(
 										upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 										status: SpendLogStatus.Failure,
 										modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+										routingTrace: copyRoutingTrace(modelResolutionTrace),
 										attemptedRetries: streamFallbackStats.fallbackDepth,
 										maxRetries: litellmRouter.maxFallbacks,
 										fallbackModels: streamFallbackStats.fallbackModels,
@@ -1204,6 +1207,7 @@ export function registerAnthropicMessagesEndpoints(
 							maxRetries: litellmRouter.maxFallbacks,
 							fallbackModels: streamFallbackStats.fallbackModels,
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							routingTrace: copyRoutingTrace(modelResolutionTrace),
 							startTime: streamStartTime,
 							endTime: streamEndTime,
 							completionStartTime: completionStartTime,
@@ -1409,6 +1413,7 @@ export function registerAnthropicMessagesEndpoints(
 									upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 									status: SpendLogStatus.Failure,
 									modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+									routingTrace: copyRoutingTrace(modelResolutionTrace),
 									attemptedRetries: nsFallbackStats.fallbackDepth,
 									maxRetries: litellmRouter.maxFallbacks,
 									fallbackModels: nsFallbackStats.fallbackModels,
@@ -1468,6 +1473,7 @@ export function registerAnthropicMessagesEndpoints(
 					attemptedRetries: nsFallbackStats.fallbackDepth,
 					fallbackModels: nsFallbackStats.fallbackModels,
 					modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+					routingTrace: copyRoutingTrace(modelResolutionTrace),
 					maxRetries: litellmRouter.maxFallbacks,
 					startTime: nonStreamingStartTime,
 					endTime: nonStreamingEndTime,

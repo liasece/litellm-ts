@@ -13,6 +13,7 @@ import type { Deployment } from "../types/router";
 import { ContextWindowExceededError, ContentPolicyViolationError } from "./RouterErrors";
 import { logger } from "../core/utils/logger";
 import type { RouterExecContext, ExecutionRequest, ExecutionHelpers } from "./RouterExecutionTypes";
+import { appendRoutingTrace } from "./ModelResolutionTrace";
 
 /** 触发 fallback 派发的错误来源，仅用于日志后缀 */
 export enum FallbackErrorKind {
@@ -54,6 +55,13 @@ export function tryRouteToFallbackForMock(args: {
 		const [firstChain] = chain;
 		if (firstChain !== undefined) {
 			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			appendRoutingTrace(req.modelResolutionTrace, {
+				fromModel: model,
+				toResolution: resolution,
+				routingType: "context_window_fallback",
+				reason: "context_window_exceeded",
+				error: error,
+			});
 			return runExecution(
 				ctx,
 				{
@@ -70,6 +78,13 @@ export function tryRouteToFallbackForMock(args: {
 		const [firstChain] = chain;
 		if (firstChain !== undefined) {
 			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			appendRoutingTrace(req.modelResolutionTrace, {
+				fromModel: model,
+				toResolution: resolution,
+				routingType: "content_policy_fallback",
+				reason: "content_policy_violation",
+				error: error,
+			});
 			return runExecution(
 				ctx,
 				{
@@ -86,6 +101,12 @@ export function tryRouteToFallbackForMock(args: {
 	// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
 	const general = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 	if (general) {
+		appendRoutingTrace(req.modelResolutionTrace, {
+			fromModel: model,
+			toResolution: general,
+			routingType: "general_fallback",
+			error: error,
+		});
 		return runExecution(
 			ctx,
 			{
@@ -132,6 +153,14 @@ export function tryRouteToFallback(args: {
 		if (firstChain !== undefined) {
 			logger.warn(`Context window error on ${deployment.model_name}${suffix}, trying context window fallback`);
 			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			appendRoutingTrace(req.modelResolutionTrace, {
+				fromModel: model,
+				toResolution: resolution,
+				routingType: "context_window_fallback",
+				reason: "context_window_exceeded",
+				error: error,
+				attemptedDeployment: deployment.model_name,
+			});
 			return runExecution(
 				ctx,
 				{
@@ -150,6 +179,14 @@ export function tryRouteToFallback(args: {
 		if (firstChain !== undefined) {
 			logger.warn(`Content policy error on ${deployment.model_name}${suffix}, trying content policy fallback`);
 			const resolution = ctx.fallbackHandler.resolveModelGroupWithTrace(firstChain);
+			appendRoutingTrace(req.modelResolutionTrace, {
+				fromModel: model,
+				toResolution: resolution,
+				routingType: "content_policy_fallback",
+				reason: "content_policy_violation",
+				error: error,
+				attemptedDeployment: deployment.model_name,
+			});
 			return runExecution(
 				ctx,
 				{
@@ -166,6 +203,13 @@ export function tryRouteToFallback(args: {
 	// 每个 model 查自身 fallback 链的链首（depth 恒为 0）
 	const general = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
 	if (general) {
+		appendRoutingTrace(req.modelResolutionTrace, {
+			fromModel: model,
+			toResolution: general,
+			routingType: "general_fallback",
+			error: error,
+			attemptedDeployment: deployment.model_name,
+		});
 		return runExecution(
 			ctx,
 			{

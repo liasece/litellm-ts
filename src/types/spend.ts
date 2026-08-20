@@ -7,7 +7,7 @@
 
 import type { Request } from "express";
 import type { UpstreamLogContext } from "../router/UpstreamLogContext";
-import type { ModelResolutionChainEntry } from "../router/ModelResolutionTrace";
+import type { ModelResolutionChainEntry, RoutingTraceEntry } from "../router/ModelResolutionTrace";
 import type { UserAPIKeyAuth } from "./auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
 
@@ -225,6 +225,8 @@ export interface SpendLogsMetadata {
 	readonly fallback_models?: string[] | null;
 	/** 实际进入 Router 的各逻辑模型位置对应的 alias 展开路径；无 alias 时为 null。 */
 	readonly model_resolution_chain?: ModelResolutionChainEntry[] | null;
+	/** 跨模型 fallback 的逐跳路由类型、原因与错误摘要；无 fallback 时为 null。 */
+	readonly routing_trace?: RoutingTraceEntry[] | null;
 	/** alias、fallback、Model Override 全部解析完成后的最终公共模型组。 */
 	readonly resolved_model_group?: string | null;
 	/**
@@ -314,6 +316,8 @@ export interface SpendLogBuildContext {
 	readonly fallbackModels?: string[];
 	/** alias 解析轨迹；SpendTracker 会过滤无 alias/坏条目并防御性复制。 */
 	readonly modelResolutionChain?: readonly ModelResolutionChainEntry[];
+	/** 跨模型 fallback 的逐跳决策轨迹。 */
+	readonly routingTrace?: readonly RoutingTraceEntry[];
 	/** 响应缓存键（PY 键集对齐；TS 无响应缓存子系统，恒 null） */
 	readonly cacheKey?: string;
 	/** 响应缓存命中标记（TS 无响应缓存子系统，恒 false） */

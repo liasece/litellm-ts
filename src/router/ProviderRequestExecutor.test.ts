@@ -45,6 +45,19 @@ describe("executeProviderRequest", () => {
 		expect(await result.response.text()).toBe("data: test\n\n");
 	});
 
+	it("reads a JSON error body for a rejected streaming response", async () => {
+		const response = new Response(JSON.stringify({ error: { message: "developer role is invalid" } }), {
+			status: 400,
+			headers: { "content-type": "application/json" },
+		});
+		jest.spyOn(global, "fetch").mockResolvedValue(response);
+
+		const result = await executeProviderRequest(request, { readJson: false });
+
+		expect(result.response).toBe(response);
+		expect(result.body).toEqual({ error: { message: "developer role is invalid" } });
+	});
+
 	it("aborts a request when the timeout expires", async () => {
 		jest.useFakeTimers();
 		jest.spyOn(global, "fetch").mockImplementation((_url, init) => {

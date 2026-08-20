@@ -40,7 +40,8 @@ describe("LogDetailContent", () => {
 		expect(screen.getByText("Request Details")).toBeInTheDocument();
 	});
 
-	it("shows valid nested alias resolution entries and filters invalid metadata", () => {
+	it("shows valid nested alias resolution entries in a collapsed routing section", async () => {
+		const user = userEvent.setup();
 		render(
 			<LogDetailContent
 				logEntry={createLogEntry({
@@ -60,17 +61,60 @@ describe("LogDetailContent", () => {
 			/>,
 		);
 
-		expect(screen.getByText("Model Resolution")).toBeInTheDocument();
-		expect(screen.getByText("Request")).toBeInTheDocument();
-		expect(screen.getByLabelText("alias-a → alias-b → model-a")).toBeInTheDocument();
+		expect(screen.getByText("Routing")).toBeInTheDocument();
+		expect(screen.queryByTestId("routing-details")).not.toBeInTheDocument();
+		await user.click(screen.getByText("Routing"));
+		expect(screen.getByText("Original request")).toBeInTheDocument();
+		expect(screen.getByText("Resolution: alias-a → alias-b → model-a")).toBeInTheDocument();
 		expect(screen.queryByText("ignored")).not.toBeInTheDocument();
 	});
 
-	it("does not show Model Resolution for old or invalid logs", () => {
+	it("does not show Routing for logs without fallback or alias data", () => {
 		render(
 			<LogDetailContent logEntry={createLogEntry({ metadata: { status: "success", model_resolution_chain: null } })} />,
 		);
-		expect(screen.queryByText("Model Resolution")).not.toBeInTheDocument();
+		expect(screen.queryByText("Routing")).not.toBeInTheDocument();
+	});
+
+	it("shows every fallback hop with route type, reason, and error information", async () => {
+		const user = userEvent.setup();
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					model: "openai/final-model",
+					metadata: {
+						status: "success",
+						fallback_models: ["request-model", "fallback-model"],
+						routing_trace: [
+							{
+								fallback_index: 1,
+								from_model: "request-model",
+								to_model: "fallback-alias",
+								to_resolved_model: "fallback-model",
+								resolution_path: ["fallback-alias", "fallback-model"],
+								routing_type: "general_fallback",
+								reason: "rate_limit",
+								attempted_deployment: "openai/request-model",
+								error_information: {
+									error_type: "RateLimitError",
+									error_code: 429,
+									error_message: "RPM quota exhausted",
+								},
+							},
+						],
+					},
+				})}
+			/>,
+		);
+
+		await user.click(screen.getByText("Routing"));
+		expect(screen.getByText("Hop 1")).toBeInTheDocument();
+		expect(screen.getByText("General fallback")).toBeInTheDocument();
+		expect(screen.getByText("Rate limit")).toBeInTheDocument();
+		expect(screen.getByText("RateLimitError · 429")).toBeInTheDocument();
+		expect(screen.getByText("RPM quota exhausted")).toBeInTheDocument();
+		expect(screen.getByText("openai/request-model")).toBeInTheDocument();
+		expect(within(screen.getByTestId("routing-details")).getByText("openai/final-model")).toBeInTheDocument();
 	});
 
 	it("should display Request Details with model, provider, and call type", () => {

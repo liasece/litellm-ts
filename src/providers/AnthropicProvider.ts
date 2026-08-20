@@ -281,13 +281,14 @@ export class AnthropicProvider implements ProviderConfig {
 		if (optionalParams.thinking) {
 			body.thinking = optionalParams.thinking;
 		} else if (optionalParams.reasoning_effort) {
-			const effortRaw = optionalParams.reasoning_effort as string;
+			const configuredEffort = optionalParams.reasoning_effort as string;
 			// 先做 effort 校验（PY: transformation.py:1436-1448），避免无效值走到 _mapReasoningEffort 抛 "Unmapped"
-			if (!["low", "minimal", "medium", "high", "xhigh", "max", "none"].includes(effortRaw)) {
+			if (!["low", "minimal", "medium", "high", "xhigh", "max", "none"].includes(configuredEffort)) {
 				throw new Error(
-					`Invalid effort value: ${effortRaw}. Must be one of: 'low', 'minimal', 'medium', 'high', 'xhigh', 'max', 'none'`,
+					`Invalid effort value: ${configuredEffort}. Must be one of: 'low', 'minimal', 'medium', 'high', 'xhigh', 'max', 'none'`,
 				);
 			}
+			const effortRaw = this._normalizeReasoningEffortForModel(configuredEffort, model);
 			body.thinking = this._mapReasoningEffort(effortRaw, model);
 			// 总是构造 output_config，让后面的 effort 校验生效
 			// "none" 不应构造 output_config（PY: skip effort for "none"）
@@ -304,7 +305,7 @@ export class AnthropicProvider implements ProviderConfig {
 			}
 		}
 
-		// Claude's request-level effort signal. Individual models may support a
+		// Anthropic-compatible request-level effort signal. Individual models may support a
 		// subset of xhigh/max; let the upstream model return that capability error.
 		if (body.output_config) {
 			const oc = body.output_config as Record<string, unknown>;
@@ -313,8 +314,8 @@ export class AnthropicProvider implements ProviderConfig {
 				if (!["high", "medium", "low", "xhigh", "max"].includes(effort)) {
 					throw new Error(`Invalid effort value: ${effort}. Must be one of: 'high', 'medium', 'low', 'xhigh', 'max'`);
 				}
-				if ((effort === "xhigh" || effort === "max") && !this._isClaudeEffortModel(model)) {
-					throw new Error(`effort='${effort}' is only supported by compatible Claude models. Got model: ${model}`);
+				if ((effort === "xhigh" || effort === "max") && !this._supportsExtendedReasoningEffort(model)) {
+					throw new Error(`effort='${effort}' is only supported by compatible models. Got model: ${model}`);
 				}
 			}
 		}
@@ -1518,7 +1519,7 @@ export class AnthropicProvider implements ProviderConfig {
 		}> = [];
 
 		for (const msg of messages) {
-			if (msg.role === "system") {
+			if (msg.role === "system" || msg.role === "developer") {
 				const storedCacheControl = (msg as unknown as Record<string, unknown>).cache_control as Record<string, unknown> | undefined;
 				if (typeof msg.content === "string") {
 					if (!msg.content) {
@@ -2297,6 +2298,22 @@ export class AnthropicProvider implements ProviderConfig {
 		}
 	}
 
+	/**
+	 * Qwen3.8 names its highest effort xhigh; normalize equivalent OpenAI values before building the Anthropic-compatible body.
+	 * @param reasoningEffort - Validated caller effort
+	 * @param model - Upstream model name
+	 */
+	private _normalizeReasoningEffortForModel(reasoningEffort: string, model: string): string {
+		if (this._isQwen38Model(model) && (reasoningEffort === "high" || reasoningEffort === "max")) {
+			return "xhigh";
+		}
+		return reasoningEffort;
+	}
+
+	private _isQwen38Model(model: string): boolean {
+		return model.toLowerCase().includes("qwen3.8");
+	}
+
 	private _isClaude46Model(model: string): boolean {
 		const lower = model.toLowerCase();
 		return (
@@ -2311,9 +2328,9 @@ export class AnthropicProvider implements ProviderConfig {
 		);
 	}
 
-	private _isClaudeEffortModel(model: string): boolean {
+	private _supportsExtendedReasoningEffort(model: string): boolean {
 		const lower = model.toLowerCase();
-		return lower.includes("claude") || lower.includes("fable") || lower.includes("mythos");
+		return lower.includes("claude") || lower.includes("fable") || lower.includes("mythos") || this._isQwen38Model(model);
 	}
 
 	// ========== user_id normalization ==========

@@ -279,6 +279,7 @@ async function recordProviderFailure(
 					error: providerError,
 					upstreamLogContext: getUpstreamLogContext(providerError),
 				status: SpendLogStatus.Failure,
+				...getResultModelResolutionMetadata(providerError as unknown as Record<string, unknown>),
 			}),
 		);
 	} catch (accountingError) {

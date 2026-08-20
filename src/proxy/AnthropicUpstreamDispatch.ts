@@ -27,11 +27,14 @@ import { buildInvalidModelError, formatInvalidModelMessage } from "../router/Rou
 import { getDeploymentKey } from "../router/RouterModelGroupCache";
 import {
 	appendModelResolutionTrace,
+	appendRoutingTrace,
 	copyModelResolutionChain,
+	copyRoutingTrace,
 	createModelResolutionTraceCollector,
 	type ModelGroupResolution,
 	type ModelResolutionChainEntry,
 	type ModelResolutionTraceCollector,
+	type RoutingTraceEntry,
 } from "../router/ModelResolutionTrace";
 import type { Deployment } from "../types/router";
 import type { ProviderConfig } from "../types/provider";
@@ -214,6 +217,8 @@ export interface FallbackExecutionStats {
 	fallbackModels?: string[];
 	/** 已展开的 alias 解析链快照。 */
 	modelResolutionChain?: ModelResolutionChainEntry[];
+	/** 跨模型 fallback 的逐跳原因与错误。 */
+	routingTrace?: RoutingTraceEntry[];
 	/** 请求级共享 alias 解析轨迹。 */
 	modelResolutionTrace?: ModelResolutionTraceCollector;
 }
@@ -266,9 +271,12 @@ export async function executeWithFallbackChain<T>(
 			fallbackStats.fallbackDepth = fallbackDepth;
 			fallbackStats.fallbackModels = [...fallbackModels];
 			fallbackStats.modelResolutionChain = copyModelResolutionChain(modelResolutionTrace);
+			fallbackStats.routingTrace = copyRoutingTrace(modelResolutionTrace);
 		}
 		// 同模型组循环：失败 deployment 入冷却后，组内其余健康 deployment 继续承担
 		let attempt = buildUpstreamAttempt(router, currentModel, requestApiKey, requestAnthropicVersion);
+		let lastAttemptedDeployment: string | undefined;
+		let groupLastError: Error | null = null;
 		while (attempt !== null && !attemptedDeploymentKeys.has(attempt.deploymentKey)) {
 			attemptedDeploymentKeys.add(attempt.deploymentKey);
 			try {
@@ -278,6 +286,7 @@ export async function executeWithFallbackChain<T>(
 					fallbackStats.fallbackDepth = fallbackDepth;
 					fallbackStats.fallbackModels = [...fallbackModels];
 					fallbackStats.modelResolutionChain = copyModelResolutionChain(modelResolutionTrace);
+					fallbackStats.routingTrace = copyRoutingTrace(modelResolutionTrace);
 				}
 				return result;
 			} catch (err) {
@@ -286,6 +295,8 @@ export async function executeWithFallbackChain<T>(
 				}
 				const failure = normalizeProviderFailure(err);
 				lastError = failure;
+				groupLastError = failure;
+				lastAttemptedDeployment = attempt.deployment.model_name;
 				router.recordDeploymentFailure(attempt.deployment, failure);
 				logger.warn("上游 deployment 失败，尝试同组下一 deployment 或 fallback 链", {
 					model: currentModel,
@@ -303,14 +314,29 @@ export async function executeWithFallbackChain<T>(
 			break;
 		}
 		const fallbackResolution: ModelGroupResolution | null | undefined = router.getNextFallbackWithTrace?.(currentModel, 0);
-		if (fallbackResolution) {
-			currentModel = fallbackResolution.inputModel;
-			fallbackModels.push(fallbackResolution.resolvedModel);
+		const plainFallback: string | null = fallbackResolution ? null : router.getNextFallback(currentModel, 0);
+		const nextResolution: ModelGroupResolution | null =
+			fallbackResolution ??
+			(plainFallback === null ? null : { inputModel: plainFallback, resolvedModel: plainFallback, resolutionPath: [plainFallback] });
+		if (nextResolution) {
+			const routingError =
+				groupLastError ??
+				Object.assign(new Error(`No available deployment for model "${resolution.resolvedModel}"`), {
+					name: "NoAvailableDeploymentError",
+					statusCode: 429,
+				});
+			appendRoutingTrace(modelResolutionTrace, {
+				fromModel: currentModel,
+				toResolution: nextResolution,
+				routingType: "general_fallback",
+				...(groupLastError ? {} : { reason: "no_available_deployment" as const }),
+				error: routingError,
+				attemptedDeployment: lastAttemptedDeployment,
+			});
+			currentModel = nextResolution.inputModel;
+			fallbackModels.push(nextResolution.resolvedModel);
 		} else {
-			currentModel = router.getNextFallback(currentModel, 0);
-			if (currentModel !== null) {
-				fallbackModels.push(currentModel);
-			}
+			currentModel = null;
 		}
 	}
 

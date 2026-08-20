@@ -164,6 +164,7 @@ export class ImageController {
 							error: error,
 							upstreamLogContext: getUpstreamLogContext(error),
 							status: SpendLogStatus.Failure,
+							...getResultModelResolutionMetadata(error as unknown as Record<string, unknown>),
 						}),
 					);
 				} catch (accountingError) {

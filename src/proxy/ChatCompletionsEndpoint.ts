@@ -33,7 +33,9 @@ import { CallType, SpendLogStatus } from "../types/spend";
 import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import {
 	appendModelResolutionTrace,
+	appendRoutingTrace,
 	copyModelResolutionChain,
+	copyRoutingTrace,
 	createModelResolutionTraceCollector,
 	getResultModelResolutionMetadata,
 	type ModelResolutionTraceCollector,
@@ -472,6 +474,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							maxRetries: litellmRouter.maxFallbacks,
 							fallbackModels: [...modelResolutionTrace.fallbackModels],
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							routingTrace: copyRoutingTrace(modelResolutionTrace),
 						});
 						await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
 					}
@@ -515,6 +518,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							upstreamLogContext: getUpstreamLogContext(error),
 							status: SpendLogStatus.Failure,
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							routingTrace: copyRoutingTrace(modelResolutionTrace),
 							attemptedRetries: modelResolutionTrace.fallbackDepth,
 							maxRetries: litellmRouter.maxFallbacks,
 							fallbackModels: [...modelResolutionTrace.fallbackModels],
@@ -643,6 +647,16 @@ async function handleStreamingResponse(
 			if (!nextFallback) {
 				break;
 			}
+			appendRoutingTrace(modelResolutionTrace, {
+				fromModel: currentModel,
+				toResolution: nextFallback,
+				routingType: "general_fallback",
+				reason: "no_available_deployment",
+				error: Object.assign(new Error(`No available deployment for model "${resolution.resolvedModel}"`), {
+					name: "NoAvailableDeploymentError",
+					statusCode: 429,
+				}),
+			});
 			fallbackDepth++;
 			currentModel = nextFallback.inputModel;
 			fallbackModels.push(nextFallback.resolvedModel);
@@ -719,6 +733,7 @@ async function handleStreamingResponse(
 						attemptedRetries: fallbackDepth,
 						fallbackModels: fallbackModels,
 						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+						routingTrace: copyRoutingTrace(modelResolutionTrace),
 					});
 					await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
 				}
@@ -869,6 +884,7 @@ async function handleStreamingResponse(
 						attemptedRetries: fallbackDepth,
 						fallbackModels: fallbackModels,
 						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+						routingTrace: copyRoutingTrace(modelResolutionTrace),
 					});
 					try {
 						await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
@@ -910,6 +926,13 @@ async function handleStreamingResponse(
 			if (!nextFallback) {
 				break;
 			}
+			appendRoutingTrace(modelResolutionTrace, {
+				fromModel: currentModel,
+				toResolution: nextFallback,
+				routingType: "general_fallback",
+				error: err instanceof Error ? err : new Error(String(err)),
+				attemptedDeployment: deployment.model_name,
+			});
 			fallbackDepth++;
 			currentModel = nextFallback.inputModel;
 			fallbackModels.push(nextFallback.resolvedModel);
@@ -950,6 +973,7 @@ async function handleStreamingResponse(
 						maxRetries: litellmRouter.maxFallbacks,
 						fallbackModels: [...modelResolutionTrace.fallbackModels],
 						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+						routingTrace: copyRoutingTrace(modelResolutionTrace),
 					}),
 				).then(() => undefined),
 			);
@@ -1180,6 +1204,7 @@ async function handlePrivateVisionStreamingResponse(
 			attemptedRetries: metadata.attemptedRetries,
 			fallbackModels: metadata.fallbackModels,
 			modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+			routingTrace: metadata.routingTrace ?? copyRoutingTrace(modelResolutionTrace),
 		});
 		await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
 	}

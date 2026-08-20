@@ -1680,6 +1680,39 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect(spendLog.metadata?.model_resolution_chain).toBeNull();
 	});
 
+	it("routing_trace 以结构化错误逐跳持久化，并防御性复制", async () => {
+		const sourcePath = ["fallback-alias", "fallback-model"];
+		const spendLog = await buildSpendLogFromRequest({
+			callType: CallType.ACompletion,
+			endTime: new Date("2026-01-01T00:00:01.000Z"),
+			model: "primary",
+			req: createMinimalRequest(),
+			startTime: new Date("2026-01-01T00:00:00.000Z"),
+			routingTrace: [
+				{
+					fallback_index: 1,
+					from_model: "primary",
+					to_model: "fallback-alias",
+					to_resolved_model: "fallback-model",
+					resolution_path: sourcePath,
+					routing_type: "general_fallback",
+					reason: "rate_limit",
+					error_information: { error_type: "RateLimitError", error_code: 429, error_message: "RPM exhausted" },
+				},
+			],
+		});
+		sourcePath.push("mutated");
+
+		expect(spendLog.metadata?.routing_trace).toEqual([
+			expect.objectContaining({
+				fallback_index: 1,
+				resolution_path: ["fallback-alias", "fallback-model"],
+				reason: "rate_limit",
+				error_information: { error_type: "RateLimitError", error_code: 429, error_message: "RPM exhausted" },
+			}),
+		]);
+	});
+
 	it("无 team_alias 时 user_api_key_team_alias 落 null", async () => {
 		const spendLog = await buildSpendLogFromRequest({
 			auth: { api_key: "sk-test" },

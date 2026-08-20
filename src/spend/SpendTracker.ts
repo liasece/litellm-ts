@@ -50,6 +50,7 @@ import { hashApiKey } from "../core/utils/crypto";
 import { getConfig } from "../core/config";
 import type { UserAPIKeyAuth } from "../types/auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
+import { normalizeRoutingTrace } from "../router/ModelResolutionTrace";
 
 const logger = createModuleLogger("SpendTracker");
 
@@ -793,6 +794,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 	const failureInformation = ctx.error ? getFailureErrorInformation(ctx.error) : undefined;
 	const requesterIpAddress = getRequesterIpAddress(ctx.req);
 	const modelResolutionChain = normalizeModelResolutionChain(ctx);
+	const routingTrace = normalizeRoutingTrace(ctx.routingTrace);
 	return {
 		session_group_key: getCanonicalSessionGroupKey(ctx.req),
 		user_api_key: getAuthApiKeyForSpendLog(ctx),
@@ -827,6 +829,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		max_retries: ctx.maxRetries ?? null,
 		fallback_models: ctx.fallbackModels ?? null,
 		model_resolution_chain: modelResolutionChain,
+		routing_trace: routingTrace.length > 0 ? routingTrace : null,
 		resolved_model_group:
 			resolveFinalModelGroup({
 				modelGroup: ctx.modelGroup ?? ctx.model,

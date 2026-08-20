@@ -111,7 +111,7 @@ describe("MiMoProvider (composition over AnthropicProvider)", () => {
 					api_key: "key",
 					reasoning_effort: "max",
 				}),
-			).toThrow(/only supported by compatible Claude models/);
+		).toThrow(/only supported by compatible models/);
 		});
 
 		it("tool/assistant 流正确转换为 tool_use + tool_result blocks", () => {

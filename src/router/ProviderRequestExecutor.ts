@@ -5,7 +5,7 @@ import { TimeoutError } from "./RouterErrors";
 export interface ProviderRequestExecutionOptions {
 	/** 请求超时（毫秒）；缺省时不设置定时中止。 */
 	readonly timeoutMs?: number;
-	/** 是否读取 JSON 响应体；流式请求应设为 false。 */
+	/** 是否读取 JSON 响应体；false 时成功流保持未读，但非 2xx 响应仍读取错误体。 */
 	readonly readJson?: boolean;
 	/** 调用方取消信号；与 provider timeout 任一触发都会中止上游请求。 */
 	readonly signal?: AbortSignal;
@@ -65,7 +65,19 @@ export async function executeProviderRequest(
 			body: request.bodyEncoding === "raw" ? (request.body as never) : JSON.stringify(request.body),
 			signal: abortController.signal,
 		});
-		const body = options.readJson === false ? undefined : await response.json();
+		let body: unknown;
+		if (options.readJson === false) {
+			if (!response.ok) {
+				const text = await response.text();
+				try {
+					body = JSON.parse(text) as unknown;
+				} catch {
+					body = text;
+				}
+			}
+		} else {
+			body = await response.json();
+		}
 		return {
 			response: response,
 			body: body,

@@ -45,7 +45,12 @@ import type { NoDeploymentsErrorInfo } from "../core/api/ApiError";
 import { ApiError } from "../core/api/ApiError";
 import { normalizeMockTestingParams, tryDispatchMockTestingExceptions, shouldDispatchMockRateLimit } from "./RouterMockTesting";
 import { executeWithFallback, isKnownModel, type RouterExecContext } from "./RouterExecution";
-import { createModelResolutionTraceCollector, type ModelGroupResolution, type ModelResolutionTraceCollector } from "./ModelResolutionTrace";
+import {
+	attachModelResolutionMetadataToError,
+	createModelResolutionTraceCollector,
+	type ModelGroupResolution,
+	type ModelResolutionTraceCollector,
+} from "./ModelResolutionTrace";
 import { RoutingStrategyName } from "../types/router";
 import { executeProviderRequest } from "./ProviderRequestExecutor";
 import { buildModelGroupOverrides } from "./ModelOverrides";
@@ -921,14 +926,14 @@ export class Router {
 		const upstreamLogContext = createUpstreamLogContext(providerRequest, response, execution.body);
 
 		if (isStream) {
-			const { stream, body, ttft } = buildStreamWithTtft(response, execution.startedAtMs, provider, responseProtocol);
+			const { stream, body: streamBody, ttft } = buildStreamWithTtft(response, execution.startedAtMs, provider, responseProtocol);
 			const providerHeaders = extractProviderHeaders(response);
 			if (providerHeaders) {
 				(response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders = providerHeaders;
 			}
 			return {
 				response: response,
-				body: body,
+				body: response.ok ? streamBody : execution.body,
 				ttft: ttft,
 				stream: stream,
 				upstreamUrl: providerRequest.url,
@@ -1049,15 +1054,20 @@ export class Router {
 			previousForModel.push(retryAttempt);
 			logger.debug(`Retrying request with num_retries: ${retryAttempt}`);
 		}
-		const silentModel = optionalParams["silent_model"];
-		if (typeof silentModel === "string" && silentModel.length > 0) {
-			const realResult = await this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
-			this._executeWithFallback(silentModel, messages, { ...optionalParams, isSilentCall: true }, 0).catch(() => {
-				// silent_model 失败仅记录，不抛
-			});
-			return realResult;
+		try {
+			const silentModel = optionalParams["silent_model"];
+			if (typeof silentModel === "string" && silentModel.length > 0) {
+				const realResult = await this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
+				this._executeWithFallback(silentModel, messages, { ...optionalParams, isSilentCall: true }, 0).catch(() => {
+					// silent_model 失败仅记录，不抛
+				});
+				return realResult;
+			}
+			return await this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
+		} catch (error) {
+			attachModelResolutionMetadataToError(error, modelResolutionTrace);
+			throw error;
 		}
-		return this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
 	}
 
 	/**
@@ -1074,7 +1084,8 @@ export class Router {
 		});
 	}
 
-	/** Standard image editing entry point using the same deployment/fallback machinery as generation.
+	/**
+	 * Standard image editing entry point using the same deployment/fallback machinery as generation.
 	 * @param model - Logical image model
 	 * @param prompt - Editing instructions
 	 * @param images - Source image bytes

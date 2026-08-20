@@ -67,7 +67,17 @@ interface ResponsesFunctionCallOutputItem {
 	output: unknown;
 }
 
-type ResponsesInputItem = ResponsesMessageItem | ResponsesFunctionCallItem | ResponsesFunctionCallOutputItem | Record<string, unknown>;
+interface ResponsesReasoningItem {
+	type: "reasoning";
+	[key: string]: unknown;
+}
+
+type ResponsesInputItem =
+	| ResponsesMessageItem
+	| ResponsesFunctionCallItem
+	| ResponsesFunctionCallOutputItem
+	| ResponsesReasoningItem
+	| Record<string, unknown>;
 
 interface ResponsesFunctionTool {
 	type: "function";
@@ -340,6 +350,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 						error: error,
 						upstreamLogContext: getUpstreamLogContext(error),
 						status: SpendLogStatus.Failure,
+						...getResultModelResolutionMetadata(error as unknown as Record<string, unknown>),
 					}),
 				);
 				throw error;
@@ -384,6 +395,13 @@ function buildResponsesMessages(
 	for (const item of input) {
 		if (!item || typeof item !== "object") {
 			throw ApiError.badRequest("input item 格式无效");
+		}
+		if (item.type === "reasoning") {
+			// Native Responses requests retain the original item in the separately
+			// preserved request body. Chat-compatible protocols cannot safely replay
+			// encrypted or provider-specific reasoning, so omit it while retaining the
+			// adjacent assistant message or function call that carries conversation state.
+			continue;
 		}
 		if (item.type === "function_call_output") {
 			const output = item as ResponsesFunctionCallOutputItem;
@@ -1217,6 +1235,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				error: error,
 				upstreamLogContext: getUpstreamLogContext(error),
 				status: SpendLogStatus.Failure,
+				...getResultModelResolutionMetadata(error as unknown as Record<string, unknown>),
 			}),
 		);
 		throw error;
@@ -1232,6 +1251,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				error: error,
 				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: SpendLogStatus.Failure,
+				...getResultModelResolutionMetadata(streamResult),
 			}),
 		);
 		throw error;
@@ -1375,6 +1395,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				error: error,
 				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: SpendLogStatus.Failure,
+				...getResultModelResolutionMetadata(streamResult),
 			}),
 		);
 	} finally {
@@ -1645,6 +1666,7 @@ async function relayNativeResponsesStream(
 				error: error,
 				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: SpendLogStatus.Failure,
+				...getResultModelResolutionMetadata(streamResult),
 			}),
 		);
 	} finally {
@@ -2031,6 +2053,7 @@ async function recordSpend(
 		spendInfo?: DeploymentSpendInfo;
 		fallbackModels?: string[];
 		modelResolutionChain?: import("../router/ModelResolutionTrace").ModelResolutionChainEntry[];
+		routingTrace?: import("../router/ModelResolutionTrace").RoutingTraceEntry[];
 		attemptedRetries?: number;
 		error?: unknown;
 		upstreamLogContext?: UpstreamLogContext;
@@ -2065,6 +2088,7 @@ async function recordSpend(
 				status: context.status,
 				fallbackModels: context.fallbackModels,
 				modelResolutionChain: context.modelResolutionChain,
+				routingTrace: context.routingTrace,
 				attemptedRetries: context.attemptedRetries,
 			}),
 		);

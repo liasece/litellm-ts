@@ -18,6 +18,26 @@ import type { Message } from "../types/openai";
 describe("AnthropicProvider", () => {
 	const provider = new AnthropicProvider();
 
+	describe("消息角色转换", () => {
+		it("将 OpenAI developer 消息归入 Anthropic system，且不修改调用方消息", () => {
+			const messages = [
+				{ role: "system", content: "System instruction" },
+				{ role: "developer", content: "Developer instruction" },
+				{ role: "user", content: "Hello" },
+			] as Message[];
+
+			const result = provider.transformRequest("anthropic/vllm-qwen3.8-27b", messages, { api_key: "k" });
+			const body = result.body as Record<string, unknown>;
+
+			expect(body.system).toEqual([
+				{ type: "text", text: "System instruction" },
+				{ type: "text", text: "Developer instruction" },
+			]);
+			expect(body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "Hello" }] }]);
+			expect(messages.map((message) => message.role)).toEqual(["system", "developer", "user"]);
+		});
+	});
+
 	describe("output_config effort 校验", () => {
 		it("Opus 4.6 接受 effort='max'", () => {
 			const messages: Message[] = [{ role: "user", content: "Hi" }];
@@ -59,6 +79,21 @@ describe("AnthropicProvider", () => {
 						reasoning_effort: effort,
 					}),
 				).not.toThrow();
+			}
+		});
+
+		it("Qwen3.8 将 high/max 归一化为其最高档 xhigh", () => {
+			const messages: Message[] = [{ role: "user", content: "Reason" }];
+			for (const effort of ["high", "max"] as const) {
+				const optionalParams = { api_key: "k", reasoning_effort: effort };
+
+				const result = provider.transformRequest("anthropic/vllm-qwen3.8-27b", messages, optionalParams);
+
+				expect(result.body).toMatchObject({
+					thinking: { type: "enabled", budget_tokens: 4096 },
+					output_config: { effort: "xhigh" },
+				});
+				expect(optionalParams.reasoning_effort).toBe(effort);
 			}
 		});
 	});
