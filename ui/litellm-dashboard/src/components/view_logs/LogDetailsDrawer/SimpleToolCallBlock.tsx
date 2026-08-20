@@ -4,6 +4,7 @@
  */
 
 import { Typography } from "antd";
+import type { ReactNode } from "react";
 import { MessagePart, ToolCall } from "./prettyMessagesTypes";
 
 const { Text } = Typography;
@@ -13,6 +14,7 @@ interface SimpleToolCallBlockProps {
 	compact?: boolean;
 	badge?: string;
 	result?: MessagePart;
+	resultContent?: ReactNode;
 }
 
 function formatToolResult(result: MessagePart): string {
@@ -32,6 +34,7 @@ export function SimpleToolCallBlock({
 	compact = false,
 	badge = "Function call",
 	result,
+	resultContent,
 }: SimpleToolCallBlockProps) {
 	return (
 		<div
@@ -105,21 +108,23 @@ export function SimpleToolCallBlock({
 						<span>工具输出</span>
 						{result.status ? <span>{result.status}</span> : null}
 					</div>
-					<pre
-						style={{
-							margin: 0,
-							maxHeight: compact ? 180 : 320,
-							overflow: "auto",
-							whiteSpace: "pre-wrap",
-							wordBreak: "break-word",
-							color: result.isError ? "#b91c1c" : "#334155",
-							fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-							fontSize: 12,
-							lineHeight: 1.6,
-						}}
-					>
-						{formatToolResult(result)}
-					</pre>
+					{resultContent ?? (
+						<pre
+							style={{
+								margin: 0,
+								maxHeight: compact ? 180 : 320,
+								overflow: "auto",
+								whiteSpace: "pre-wrap",
+								wordBreak: "break-word",
+								color: result.isError ? "#b91c1c" : "#334155",
+								fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+								fontSize: 12,
+								lineHeight: 1.6,
+							}}
+						>
+							{formatToolResult(result)}
+						</pre>
+					)}
 				</div>
 			) : null}
 		</div>

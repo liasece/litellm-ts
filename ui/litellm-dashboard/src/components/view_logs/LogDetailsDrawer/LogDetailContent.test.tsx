@@ -330,6 +330,39 @@ describe("LogDetailContent", () => {
 		expect(image?.getAttribute("src")).not.toContain("litellm_truncated");
 	});
 
+	it("uses intact messages column over truncated Responses input for pretty function results", () => {
+		const fullImageUrl = "data:image/png;base64,iVBORw0KGgoAAA";
+		const truncatedImageUrl =
+			"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 32768 chars. Truncation is a DB storage safeguard.) ...IEND";
+		const functionResult = (imageUrl: string) => [
+			{
+				type: "function_call_output",
+				call_id: "call_view",
+				output: [
+					{ type: "input_text", text: "Image Size: 100x100." },
+					{ type: "input_image", image_url: imageUrl },
+				],
+			},
+		];
+
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: {
+						url: "https://api.example.com/v1/responses",
+						body: { model: "gpt-5", input: functionResult(truncatedImageUrl) },
+					},
+					messages: functionResult(fullImageUrl),
+				})}
+			/>,
+		);
+
+		expect(screen.queryByText("图片数据在日志入库时被截断，无法显示。")).not.toBeInTheDocument();
+		expect(screen.getByText("Function result")).toBeInTheDocument();
+		expect(screen.getByText("Image Size: 100x100.")).toBeInTheDocument();
+		expect(screen.getByRole("img", { name: "Image" })).toHaveAttribute("src", fullImageUrl);
+	});
+
 	it("falls back to proxy_server_request when messages column is empty", () => {
 		const proxyBodyMessages = [{ role: "user", content: "hello from proxy" }];
 		render(

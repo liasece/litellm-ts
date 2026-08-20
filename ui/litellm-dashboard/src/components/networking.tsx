@@ -7500,6 +7500,7 @@ export interface SessionTimelinePart {
 	data?: unknown;
 	status?: string;
 	isError?: boolean;
+	parts?: SessionTimelinePart[];
 }
 
 export interface SessionTimelineEvent {
@@ -7582,8 +7583,8 @@ export const sessionSpendLogsCall = async (
 	legacyPageSize?: number,
 ) => {
 	try {
-		const options =
-			typeof pageOrOptions === "number" ? { page: pageOrOptions, pageSize: legacyPageSize } : (pageOrOptions ?? {});
+			const options =
+				typeof pageOrOptions === "number" ? { page: pageOrOptions, pageSize: legacyPageSize } : (pageOrOptions ?? {});
 		const searchParams = new URLSearchParams();
 		if (typeof session === "string") {
 			searchParams.set("session_id", session);
@@ -9966,7 +9967,7 @@ export const storeMCPOAuthUserCredential = async (
 		const detailMsg = Array.isArray(detail)
 			? detail
 					.map((d: unknown) =>
-						d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
+							d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
 					)
 					.join("; ")
 			: typeof detail === "string"
@@ -9997,7 +9998,7 @@ export const deleteMCPOAuthUserCredential = async (
 		const detailMsg = Array.isArray(detail)
 			? detail
 					.map((d: unknown) =>
-						d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
+							d && typeof d === "object" ? ((d as Record<string, unknown>).msg ?? JSON.stringify(d)) : String(d),
 					)
 					.join("; ")
 			: typeof detail === "string"

@@ -246,4 +246,39 @@ describe("ToolResultTimelineCard", () => {
 		fireEvent.click(collapseButton);
 		expect(screen.queryByRole("region", { name: "工具结果全文 Bash" })).not.toBeInTheDocument();
 	});
+
+	it("展开后渲染工具结果中的图片", () => {
+		const source = "data:image/png;base64,iVBORw0KGgoAAA";
+		render(
+			<ToolResultTimelineCard
+				item={makeEvent({
+					role: "tool",
+					label: "工具结果",
+					content: "Image Size: 100x100.\n[Image]",
+					parts: [
+						{
+							kind: "tool_result",
+							label: "Function result",
+							id: "call-view",
+							name: "view_image",
+							text: "Image Size: 100x100.\n[Image]",
+							parts: [
+								{ kind: "text", label: "Text", text: "Image Size: 100x100." },
+								{
+									kind: "image",
+									label: "Image",
+									text: source,
+									data: { src: source, mimeType: "image/png" },
+								},
+							],
+						},
+					],
+				})}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "展开工具结果 view_image" }));
+		expect(screen.getByText("Image Size: 100x100.")).toBeInTheDocument();
+		expect(screen.getByRole("img", { name: "Image" })).toHaveAttribute("src", source);
+	});
 });

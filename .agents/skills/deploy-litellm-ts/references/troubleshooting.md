@@ -53,6 +53,9 @@ npm test
 只改动特定模块时可以先运行聚焦测试获得快速反馈；正式发布前仍按改动风险完成全部相关门禁。不要
 维护固定的通过/跳过测试数量，因为测试集合会随仓库变化。
 
+向 npm script 透传额外参数前先检查该 script 已包含的选项，避免把互斥参数叠加后误判为代码失败；
+例如 Jest 的 `--runInBand` 不能与 script 已有的 `--maxWorkers` 同时使用。
+
 前端验证前读取 `ui/litellm-dashboard/AGENTS.md`，再从其 `package.json` 选择相关 ESLint、Vitest、
 TypeScript 检查与 `npm run build`。独立检查若命中已知基线问题，必须区分本次回归与既有问题。
 
@@ -173,9 +176,26 @@ ps -o pid,ppid,pgid,sid,state,command -p <已确认的 PID 列表>
 
 仓库由 macOS 和 Linux 通过 Samba 共享。远程 `npm ci` 可能把 Linux 原生可选依赖写入共享 `node_modules`，导致本地 macOS Vitest、Rollup 或可执行入口报错。
 
-先判断错误是否来自平台依赖，而不是业务代码。部署任务中不要为此删除 `node_modules` 或锁文件；按
-“工具链与发布前验证”确认远程 Linux 主机的 Node.js 与 `PATH` 后运行聚焦测试和 ESLint。避免本地与
-远程同时安装依赖。
+本机测试收集、TypeScript 扫描或构建因 Samba 小文件 I/O 明显变慢，或者出现原生依赖平台错配时，
+不要在本机反复重试或安装另一平台的依赖作为补丁。优先在挂载同一 checkout 的 `cc-server-dc` 中
+完成测试、ESLint、类型检查和构建；源码会通过 Samba 自动同步，不执行 `scp` 或 `rsync`。
+
+执行前按以下顺序确认现场：
+
+1. 确认当前可用的实际 SSH 主机入口。交互中的 `sshjl3` 可能只是称呼而不是本机可解析的 SSH alias；
+   alias 解析失败不代表远端不可用，应回到“已知拓扑与事实源”核实当前主机，不尝试猜测多个地址。
+2. 用只读检查确认 `cc-server-dc` 正在运行、仍挂载目标仓库，并在容器内确认仓库路径。
+3. 从对应目录的当前 `package.json` 读取脚本，再用已确认的值执行：
+
+   ```sh
+   ssh <已确认主机> 'docker exec -w <已确认仓库目录> cc-server-dc sh -lc "<验证命令>"'
+   ```
+
+4. 前后端目录不同，分别设置 `docker exec -w`；先跑聚焦检查，风险需要时再扩展到 production build。
+
+先判断错误是否来自平台依赖、命令参数还是业务代码。不要为此删除共享 `node_modules` 或锁文件，也不
+要让本机与远端同时安装依赖或写入同一个构建缓存。独立门禁命中既有基线问题时，明确区分本次回归、
+已知基线和未验证项。
 
 ## 脏工作区和并发 Git 活动
 

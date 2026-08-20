@@ -98,6 +98,46 @@ describe("SessionTimelineBuilder", () => {
 		});
 	});
 
+	it("在 Responses Function result 中保留图片内容块", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_payload: {
+					input: [
+						{ type: "function_call", call_id: "call_view", name: "view_image", arguments: '{"path":"image.png"}' },
+						{
+							type: "function_call_output",
+							call_id: "call_view",
+							output: [
+								{ type: "input_text", text: "Image Size: 100x100." },
+								{ type: "image", data: "iVBORw0KGgoAAA", mimeType: "image/png" },
+							],
+						},
+					],
+				},
+			}),
+		);
+
+		const toolResult = builder.build().data.find((item) => item.role === "tool");
+		expect(toolResult).toMatchObject({
+			content: "Image Size: 100x100.\n[Image]",
+			parts: [
+				{
+					kind: "tool_result",
+					label: "Function result",
+					id: "call_view",
+					parts: [
+						{ kind: "text", text: "Image Size: 100x100." },
+						{
+							kind: "image",
+							data: { src: "data:image/png;base64,iVBORw0KGgoAAA", mimeType: "image/png" },
+						},
+					],
+				},
+			],
+		});
+	});
+
 	it("截断的历史图片显示说明而不是返回损坏的 data URI", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(
@@ -142,8 +182,8 @@ describe("SessionTimelineBuilder", () => {
 								{
 									type: "image_url",
 									image_url: {
-										url:
-											"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+									url:
+										"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
 									},
 								},
 							],

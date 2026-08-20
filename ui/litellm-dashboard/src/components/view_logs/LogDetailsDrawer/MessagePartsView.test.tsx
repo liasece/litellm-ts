@@ -67,4 +67,28 @@ describe("MessagePartsView", () => {
 		expect(toolOutput).toContainElement(screen.getByText("search result"));
 		expect(screen.queryByText("Tool result")).not.toBeInTheDocument();
 	});
+
+	it("在 Function result 内渲染结构化图片内容", () => {
+		const source = "data:image/png;base64,iVBORw0KGgoAAA";
+		render(
+			<MessagePartsView
+				parts={[
+					{
+						kind: "tool_result",
+						label: "Function result",
+						text: "Image Size: 100x100.\n[Image]",
+						parts: [
+							{ kind: "text", label: "Text", text: "Image Size: 100x100." },
+							{ kind: "image", label: "Image", text: source, data: { src: source, mimeType: "image/png" } },
+						],
+					},
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("Function result")).toBeInTheDocument();
+		expect(screen.getByText("Image Size: 100x100.")).toBeInTheDocument();
+		expect(screen.getByRole("img", { name: "Image" })).toHaveAttribute("src", source);
+		expect(screen.queryByText(source)).not.toBeInTheDocument();
+	});
 });

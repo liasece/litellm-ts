@@ -119,11 +119,15 @@ export function LogDetailContent({
 				body &&
 				typeof body === "object" &&
 				!Array.isArray(body) &&
-				Array.isArray(body.messages) &&
 				Array.isArray(logEntry.messages) &&
 				logEntry.messages.length > 0
 			) {
-				return { ...downstreamRequest, body: { ...body, messages: logEntry.messages } };
+				if (Array.isArray(body.messages)) {
+					return { ...downstreamRequest, body: { ...body, messages: logEntry.messages } };
+				}
+				if (Array.isArray(body.input)) {
+					return { ...downstreamRequest, body: { ...body, input: logEntry.messages } };
+				}
 			}
 			return downstreamRequest;
 		}

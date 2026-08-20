@@ -27,6 +27,7 @@ export interface SessionTimelinePart {
 	readonly data?: unknown;
 	readonly status?: string;
 	readonly isError?: boolean;
+	readonly parts?: SessionTimelinePart[];
 }
 
 interface ParsedMessage {
@@ -269,6 +270,62 @@ function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType =
 	};
 }
 
+function structuredToolResultParts(value: unknown): SessionTimelinePart[] | undefined {
+	let structured = value;
+	if (typeof value === "string" && (value.trimStart().startsWith("[") || value.trimStart().startsWith("{"))) {
+		try {
+			structured = JSON.parse(value) as unknown;
+		} catch {
+			return undefined;
+		}
+	}
+
+	const record = asRecord(structured);
+	const blocks = Array.isArray(structured)
+		? structured
+		: Array.isArray(record?.content)
+			? record.content
+			: typeof record?.type === "string"
+				? [record]
+				: null;
+	if (
+		!blocks?.length ||
+		!blocks.every((block) => {
+			if (typeof block === "string") {
+				return true;
+			}
+			const blockRecord = asRecord(block);
+			return Boolean(
+				blockRecord?.type ||
+				blockRecord?.functionCall ||
+				blockRecord?.functionResponse ||
+				blockRecord?.inlineData ||
+				blockRecord?.inline_data ||
+				blockRecord?.fileData ||
+				blockRecord?.file_data,
+			);
+		})
+	) {
+		return undefined;
+	}
+	return blocks.map((block) => parseContentBlock(block).part);
+}
+
+function toolResultSummary(parts: SessionTimelinePart[]): string {
+	return parts
+		.map((part) => {
+			if (part.kind === "image") {
+				const data = asRecord(part.data);
+				return data?.truncated === true ? TRUNCATED_IMAGE_MESSAGE : "[Image]";
+			}
+			if (part.kind === "thinking") return `[Thinking]\n${part.text ?? ""}`.trim();
+			if (part.kind === "redacted_thinking") return "[Redacted thinking]";
+			return part.text ?? (part.data !== undefined ? safeJsonStringify(part.data, true) : "");
+		})
+		.filter(Boolean)
+		.join("\n");
+}
+
 function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; toolCall?: ToolCall } {
 	if (typeof rawBlock === "string") {
 		return { part: { kind: "text", label: "Text", text: rawBlock } };
@@ -284,14 +341,17 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 	}
 	const functionResponse = asRecord(block.functionResponse);
 	if (functionResponse) {
+		const result = functionResponse.response;
+		const parts = structuredToolResultParts(result);
 		return {
 			part: {
 				kind: "tool_result",
 				label: "Function result",
 				sourceType: "functionResponse",
 				name: typeof functionResponse.name === "string" ? functionResponse.name : undefined,
-				text: valueToText(functionResponse.response),
-				data: functionResponse.response,
+				text: parts ? toolResultSummary(parts) : valueToText(result),
+				data: result,
+				parts,
 			},
 		};
 	}
@@ -384,6 +444,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 		)
 	) {
 		const result = block.content ?? block.output ?? block.result ?? block.response;
+		const parts = structuredToolResultParts(result);
 		return {
 			part: {
 				kind: "tool_result",
@@ -391,10 +452,11 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				sourceType: type,
 				id: String(block.tool_use_id ?? block.call_id ?? block.id ?? ""),
 				name: typeof block.name === "string" ? block.name : undefined,
-				text: valueToText(result),
+				text: parts ? toolResultSummary(parts) : valueToText(result),
 				data: result !== null && typeof result === "object" ? result : undefined,
 				status: typeof block.status === "string" ? block.status : undefined,
 				isError: block.is_error === true || block.status === "failed" || block.status === "error",
+				parts,
 			},
 		};
 	}
@@ -469,19 +531,21 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 		const imageUrl = asRecord(block.image_url);
 		const imageData = asRecord(block.source);
 		const mimeType = imageMimeType(
-			block.mime_type ?? block.mimeType ?? imageData?.media_type ?? imageData?.mime_type,
+			block.mime_type ?? block.mimeType ?? block.media_type ?? imageData?.media_type ?? imageData?.mime_type,
 		);
-		const rawSource = imageUrl?.url ?? block.image_url ?? block.url ?? imageData?.data;
+		const rawSource = imageUrl?.url ?? block.image_url ?? block.url ?? imageData?.data ?? block.data;
 		const wasTruncated = typeof rawSource === "string" && rawSource.includes("litellm_truncated");
-		const source = imageSource(rawSource, mimeType, imageData?.type === "base64");
+		const source = imageSource(
+			rawSource,
+			mimeType,
+			imageData?.type === "base64" || (typeof block.data === "string" && rawSource === block.data),
+		);
 		return {
 			part: {
 				kind: "image",
 				label: "Image",
 				sourceType: type,
-				text: wasTruncated
-					? TRUNCATED_IMAGE_MESSAGE
-					: valueToText(rawSource ?? block.file_id ?? "Attached image"),
+				text: wasTruncated ? TRUNCATED_IMAGE_MESSAGE : valueToText(source ?? rawSource ?? block.file_id ?? "Attached image"),
 				data: source ? { src: source, mimeType } : wasTruncated ? { truncated: true } : undefined,
 			},
 		};
@@ -598,6 +662,7 @@ function parseRequestMessage(value: unknown): ParsedMessage {
 				id: typeof message.tool_call_id === "string" ? message.tool_call_id : undefined,
 				name: typeof message.name === "string" ? message.name : undefined,
 				text: parsed.content,
+				parts: parsed.parts,
 			},
 		];
 	}

@@ -43,6 +43,8 @@ export interface MessagePart {
 	data?: any;
 	status?: string;
 	isError?: boolean;
+	/** Structured content returned by a tool (for example text plus an image). */
+	parts?: MessagePart[];
 }
 
 export interface ParsedMessages {

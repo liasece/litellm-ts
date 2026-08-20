@@ -122,7 +122,60 @@ const generatedImagePart = (value: any, outputFormat?: any, sourceType = "image_
 	};
 };
 
-const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolCall } => {
+const structuredToolResultParts = (value: any): MessagePart[] | undefined => {
+	let structured = value;
+	if (typeof value === "string" && (value.trimStart().startsWith("[") || value.trimStart().startsWith("{"))) {
+		try {
+			structured = JSON.parse(value);
+		} catch {
+			return undefined;
+		}
+	}
+
+	const record = asRecord(structured);
+	const blocks = Array.isArray(structured)
+		? structured
+		: Array.isArray(record?.content)
+			? record.content
+			: typeof record?.type === "string"
+				? [record]
+				: null;
+	if (
+		!blocks?.length ||
+		!blocks.every(
+			(block: any) =>
+				typeof block === "string" ||
+				Boolean(
+					asRecord(block)?.type ||
+						asRecord(block)?.functionCall ||
+						asRecord(block)?.functionResponse ||
+						asRecord(block)?.inlineData ||
+						asRecord(block)?.inline_data ||
+						asRecord(block)?.fileData ||
+						asRecord(block)?.file_data,
+				),
+		)
+	) {
+		return undefined;
+	}
+	return blocks.map((block: any) => parseContentBlock(block).part);
+};
+
+const toolResultSummary = (parts: MessagePart[]): string =>
+	parts
+		.map((part) => {
+			if (part.kind === "image") {
+				const data = asRecord(part.data);
+				return data?.truncated === true ? TRUNCATED_IMAGE_MESSAGE : "[Image]";
+			}
+			if (part.kind === "thinking") return `[Thinking]\n${part.text || ""}`.trim();
+			if (part.kind === "redacted_thinking") return "[Redacted thinking]";
+			return part.text || (part.data !== undefined ? safeJsonStringify(part.data, true) : "");
+		})
+		.filter(Boolean)
+		.join("\n");
+
+function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolCall } {
 	if (typeof rawBlock === "string") {
 		return { part: { kind: "text", label: "Text", text: rawBlock } };
 	}
@@ -144,14 +197,17 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 	}
 	if (asRecord(block.functionResponse)) {
 		const functionResponse = block.functionResponse;
+		const result = functionResponse.response;
+		const parts = structuredToolResultParts(result);
 		return {
 			part: {
 				kind: "tool_result",
 				label: "Function result",
 				sourceType: "functionResponse",
 				name: functionResponse.name,
-				text: valueToText(functionResponse.response),
-				data: functionResponse.response,
+				text: parts ? toolResultSummary(parts) : valueToText(result),
+				data: result,
+				parts,
 			},
 		};
 	}
@@ -245,6 +301,7 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 		].includes(type)
 	) {
 		const result = block.content ?? block.output ?? block.result ?? block.response;
+		const parts = structuredToolResultParts(result);
 		return {
 			part: {
 				kind: "tool_result",
@@ -252,10 +309,11 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 				sourceType: type,
 				id: String(block.tool_use_id || block.call_id || block.id || ""),
 				name: block.name,
-				text: valueToText(result),
+				text: parts ? toolResultSummary(parts) : valueToText(result),
 				data: typeof result === "object" ? result : undefined,
 				status: typeof block.status === "string" ? block.status : undefined,
 				isError: block.is_error === true || block.status === "failed" || block.status === "error",
+				parts,
 			},
 		};
 	}
@@ -328,16 +386,24 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
 		const imageData = asRecord(block.source);
-		const mimeType = imageMimeType(block.mime_type ?? block.mimeType ?? imageData?.media_type ?? imageData?.mime_type);
-		const rawSource = block.image_url?.url ?? block.image_url ?? block.url ?? imageData?.data;
+		const mimeType = imageMimeType(
+			block.mime_type ?? block.mimeType ?? block.media_type ?? imageData?.media_type ?? imageData?.mime_type,
+		);
+		const rawSource = block.image_url?.url ?? block.image_url ?? block.url ?? imageData?.data ?? block.data;
 		const wasTruncated = typeof rawSource === "string" && rawSource.includes("litellm_truncated");
-		const source = imageSource(rawSource, mimeType, imageData?.type === "base64");
+		const source = imageSource(
+			rawSource,
+			mimeType,
+			imageData?.type === "base64" || (typeof block.data === "string" && rawSource === block.data),
+		);
 		return {
 			part: {
 				kind: "image",
 				label: "Image",
 				sourceType: type,
-				text: wasTruncated ? TRUNCATED_IMAGE_MESSAGE : valueToText(rawSource ?? block.file_id ?? "Attached image"),
+				text: wasTruncated
+					? TRUNCATED_IMAGE_MESSAGE
+					: valueToText(source ?? rawSource ?? block.file_id ?? "Attached image"),
 				data: source ? { src: source, mimeType } : wasTruncated ? { truncated: true } : undefined,
 			},
 		};
@@ -369,7 +435,7 @@ const parseContentBlock = (rawBlock: any): { part: MessagePart; toolCall?: ToolC
 			data: block,
 		},
 	};
-};
+}
 
 const contentFromParts = (parts: MessagePart[]): string =>
 	parts
@@ -447,6 +513,7 @@ const parseRequestMessage = (message: any): ParsedMessage => {
 				id: message?.tool_call_id,
 				name: message?.name,
 				text: parsed.content,
+				parts: parsed.parts,
 			},
 		];
 	}

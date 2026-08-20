@@ -443,6 +443,7 @@ export function ToolResultTimelineCard({ item }: { item: SessionTimelineItem }) 
 	const isError =
 		result?.isError === true || ["error", "failed", "failure"].includes(String(result?.status ?? item.status ?? "").toLowerCase());
 	const statusLabel = isError ? "执行失败" : result?.status || "已返回";
+	const structuredParts = result?.parts?.length ? result.parts : undefined;
 
 	return (
 		<section
@@ -501,13 +502,21 @@ export function ToolResultTimelineCard({ item }: { item: SessionTimelineItem }) 
 						<span>{detail.length.toLocaleString("zh-CN")} 字符</span>
 						{result?.id ? <span className="max-w-[420px] truncate font-mono">{result.id}</span> : null}
 					</div>
-					<pre
-						className={`max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-white/90 px-3 py-2.5 font-mono text-[11px] leading-5 ${
-							isError ? "border-red-100 text-red-800" : "border-amber-100 text-slate-700"
-						}`}
-					>
-						{detail}
-					</pre>
+					{structuredParts ? (
+						<div
+							className={`rounded-md border bg-white/90 p-2.5 ${isError ? "border-red-100" : "border-amber-100"}`}
+						>
+							<MessagePartsView parts={structuredParts} />
+						</div>
+					) : (
+						<pre
+							className={`max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-white/90 px-3 py-2.5 font-mono text-[11px] leading-5 ${
+								isError ? "border-red-100 text-red-800" : "border-amber-100 text-slate-700"
+							}`}
+						>
+							{detail}
+						</pre>
+					)}
 				</div>
 			) : null}
 		</section>

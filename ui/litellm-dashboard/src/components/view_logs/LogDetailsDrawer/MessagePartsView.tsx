@@ -139,6 +139,7 @@ function OperationPart({ part, compact }: { part: MessagePart; compact: boolean 
 
 	const tone = PART_TONES[part.kind] || PART_TONES.unknown;
 	const detail = part.text || (part.data !== undefined ? safeJson(part.data) : "");
+	const structuredParts = part.parts?.length ? part.parts : undefined;
 
 	return (
 		<div
@@ -151,7 +152,9 @@ function OperationPart({ part, compact }: { part: MessagePart; compact: boolean 
 				marginTop: 8,
 			}}
 		>
-			<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: detail ? 6 : 0 }}>
+			<div
+				style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: detail || structuredParts ? 6 : 0 }}
+			>
 				<Text
 					strong
 					style={{
@@ -175,7 +178,9 @@ function OperationPart({ part, compact }: { part: MessagePart; compact: boolean 
 					</Text>
 				) : null}
 			</div>
-			{detail && (part.kind === "thinking" || part.kind === "refusal") ? (
+			{structuredParts ? (
+				<MessagePartsView parts={structuredParts} compact={compact} />
+			) : detail && (part.kind === "thinking" || part.kind === "refusal") ? (
 				<div style={{ fontSize: 12, lineHeight: 1.6, color: "#262626" }}>
 					<MarkdownText>{detail}</MarkdownText>
 				</div>
@@ -238,6 +243,7 @@ export function MessagePartsView({ parts, compact = false }: { parts: MessagePar
 					);
 				}
 				if (part.kind === "tool_call") {
+					const result = toolResultsByCallIndex.get(index);
 					return (
 						<SimpleToolCallBlock
 							key={`${part.kind}-${part.id || index}`}
@@ -248,7 +254,10 @@ export function MessagePartsView({ parts, compact = false }: { parts: MessagePar
 							}}
 							compact={compact}
 							badge={part.label}
-							result={toolResultsByCallIndex.get(index)}
+							result={result}
+							resultContent={
+								result?.parts?.length ? <MessagePartsView parts={result.parts} compact={compact} /> : undefined
+							}
 						/>
 					);
 				}

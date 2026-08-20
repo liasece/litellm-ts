@@ -338,6 +338,62 @@ describe("PrettyMessagesView", () => {
 		expect(screen.queryByText(/Unknown block: tool_result/)).not.toBeInTheDocument();
 	});
 
+	it("should render an image returned inside an OpenAI function result", () => {
+		const source = "data:image/png;base64,iVBORw0KGgoAAA";
+		const request = {
+			body: {
+				input: [
+					{ type: "function_call", call_id: "call_view", name: "view_image", arguments: '{"path":"image.png"}' },
+					{
+						type: "function_call_output",
+						call_id: "call_view",
+						output: [
+							{ type: "input_text", text: "Image Size: 100x100." },
+							{ type: "input_image", image_url: source },
+						],
+					},
+				],
+			},
+		};
+
+		const parsed = parseMessages(request, {});
+		expect(parsed.requestMessages[1]?.parts?.[0]).toMatchObject({
+			kind: "tool_result",
+			label: "Function result",
+			text: "Image Size: 100x100.\n[Image]",
+			parts: [
+				{ kind: "text", text: "Image Size: 100x100." },
+				{ kind: "image", data: { src: source, mimeType: "image/png" } },
+			],
+		});
+
+		render(<PrettyMessagesView request={request} response={{}} />);
+		expect(screen.getByText("Function result")).toBeInTheDocument();
+		expect(screen.getByText("Image Size: 100x100.")).toBeInTheDocument();
+		expect(screen.getByRole("img", { name: "Image" })).toHaveAttribute("src", source);
+		expect(screen.queryByText(source)).not.toBeInTheDocument();
+	});
+
+	it("should render MCP image content with top-level data and mimeType", () => {
+		const request = {
+			messages: [
+				{
+					role: "tool",
+					tool_call_id: "call_view",
+					content: [
+						{ type: "text", text: "Rendered image" },
+						{ type: "image", data: "iVBORw0KGgoAAA", mimeType: "image/png" },
+					],
+				},
+			],
+		};
+
+		render(<PrettyMessagesView request={request} response={{}} />);
+		expect(screen.getByText("Rendered image")).toBeInTheDocument();
+		expect(screen.getByRole("img", { name: "Image" })).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgoAAA");
+		expect(screen.queryByText("iVBORw0KGgoAAA")).not.toBeInTheDocument();
+	});
+
 	it("should classify OpenAI Responses operations in output order", () => {
 		const parsed = parseMessages(
 			{},
