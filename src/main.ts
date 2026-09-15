@@ -15,6 +15,7 @@ import { createServiceContainer, type ServiceContainer } from "./container";
 import { registerController } from "./core/api/registerController";
 import { jsonBigIntReplacer } from "./core/api/jsonBigInt";
 import { errorHandler } from "./middleware/ErrorHandler";
+import { zstdRequestDecompress } from "./middleware/ZstdRequestDecompress";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
 import { spendResponseCompression } from "./middleware/SpendResponseCompression";
 import { createModuleLogger } from "./core/utils/logger";
@@ -181,6 +182,7 @@ export class LiteLLMServer {
 
 		// 全局中间件
 		app.set("json replacer", jsonBigIntReplacer);
+		app.use(zstdRequestDecompress);
 		app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 		app.use(accessLogFilter);
 
