@@ -681,6 +681,16 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
 			)}
 			<Modal open={isModalVisible} width={1000} footer={null} onOk={handleOk} onCancel={handleCancel}>
 				<Form form={form} onFinish={handleCreate} labelCol={{ span: 8 }} wrapperCol={{ span: 16 }} labelAlign="left">
+					<Form.Item
+						label="Enabled"
+						name="blocked"
+						initialValue={false}
+						getValueProps={(blocked: boolean | null | undefined) => ({ checked: blocked !== true })}
+						getValueFromEvent={(enabled: boolean) => !enabled}
+						tooltip="When disabled, this key cannot be used for API requests. Re-enable it to restore access."
+					>
+						<Switch aria-label="Enabled" checkedChildren="Enabled" unCheckedChildren="Disabled" />
+					</Form.Item>
 					{/* Section 1: Key Ownership */}
 					<div className="mb-8">
 						<Title className="mb-4">Key Ownership</Title>

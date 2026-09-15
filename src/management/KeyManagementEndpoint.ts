@@ -475,6 +475,9 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 		authed(async (req) => {
 			const body = (req.body ?? {}) as Record<string, unknown>;
 			await authorizationGuard?.assertCanCreateKey(req.auth, firstString(body.team_id));
+			if (body.blocked != null && typeof body.blocked !== "boolean") {
+				throw ApiError.badRequest("blocked must be a boolean");
+			}
 			const now = new Date();
 
 			// Python: duration 优先于 expires，expires = now + duration
@@ -581,6 +584,12 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 
 			// 构建可更新字段
 			const updateFields: Record<string, unknown> = {};
+			if (updates.blocked !== undefined) {
+				if (typeof updates.blocked !== "boolean") {
+					throw ApiError.badRequest("blocked must be a boolean");
+				}
+				updateFields.blocked = updates.blocked;
+			}
 			if (updates.key_alias !== undefined) {
 				updateFields.keyAlias = updates.key_alias;
 			}

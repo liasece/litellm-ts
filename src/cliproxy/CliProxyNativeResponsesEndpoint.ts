@@ -11,13 +11,21 @@ import { buildSpendLogFromRequest, checkpointActiveRequest, trackSpendLog } from
 import { CallType, SpendLogStatus } from "../types/spend";
 import { buildDeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
-import { createUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import {
+	attachUpstreamLogContext,
+	createUpstreamLogContext,
+	getUpstreamLogContext,
+	type UpstreamLogContext,
+} from "../router/UpstreamLogContext";
 import { buildPassthroughLogRequest } from "./CliProxyUpstreamLogging";
 import { createModuleLogger } from "../core/utils/logger";
+import { CliProxyResponsesExecution, type CliProxyResponsesExecutionSnapshot } from "./CliProxyResponsesExecution";
 import {
-	CliProxyResponsesExecution,
-	type CliProxyResponsesExecutionSnapshot,
-} from "./CliProxyResponsesExecution";
+	executeWithFallbackChain,
+	ProviderUpstreamError,
+	type FallbackExecutionStats,
+	type UpstreamAttempt,
+} from "../proxy/AnthropicUpstreamDispatch";
 
 const logger = createModuleLogger("CLIProxy:Responses");
 
@@ -104,9 +112,7 @@ function parseResponsesSseEvent(event: string): Record<string, unknown> | null {
 	}
 	try {
 		const payload: unknown = JSON.parse(data);
-		return typeof payload === "object" && payload !== null && !Array.isArray(payload)
-			? (payload as Record<string, unknown>)
-			: null;
+		return typeof payload === "object" && payload !== null && !Array.isArray(payload) ? (payload as Record<string, unknown>) : null;
 	} catch {
 		return null;
 	}
@@ -204,11 +210,7 @@ async function pipeUpstreamResponse(
 		const decodedTail = decoder.decode();
 		recordDecodedChunk(decodedTail);
 		const capture = captured();
-		if (
-			options.acceptResponsesTerminalOnAbort === true &&
-			isAbortError(error) &&
-			hasCompleteResponsesTerminalEvent(capture.raw)
-		) {
+		if (options.acceptResponsesTerminalOnAbort === true && isAbortError(error) && hasCompleteResponsesTerminalEvent(capture.raw)) {
 			return capture;
 		}
 		throw error;
@@ -593,11 +595,7 @@ export function registerCliProxyNativeResponsesRoutes(
 				reservation?.requestId && db
 					? async (snapshot): Promise<void> => {
 							const extracted = extractNativeResponse(snapshot.raw);
-							await checkpointActiveRequest(
-								db,
-								reservation.requestId,
-								responsesExecutionMetadata(snapshot, extracted),
-							);
+							await checkpointActiveRequest(db, reservation.requestId, responsesExecutionMetadata(snapshot, extracted));
 						}
 					: undefined,
 			onCheckpointError: (error): void => {
@@ -684,7 +682,11 @@ export function registerCliProxyNativeResponsesRoutes(
 					if (streaming && !upstream.ok) {
 						const raw = await upstream.text();
 						work.recordDecodedChunk(raw);
-						writeResponsesSseError(res, upstream.status, upstreamErrorMessage(raw, `CLIProxy returned HTTP ${upstream.status}`));
+						writeResponsesSseError(
+							res,
+							upstream.status,
+							upstreamErrorMessage(raw, `CLIProxy returned HTTP ${upstream.status}`),
+						);
 					} else {
 						await pipeUpstreamResponse(upstream, res, work, { acceptResponsesTerminalOnAbort: true });
 					}
@@ -712,7 +714,9 @@ export function registerCliProxyNativeResponsesRoutes(
 							writeResponsesSseError(
 								res,
 								502,
-								error instanceof Error && error.message.length > 0 ? error.message.slice(0, 4_096) : "CLIProxy request failed",
+								error instanceof Error && error.message.length > 0
+									? error.message.slice(0, 4_096)
+									: "CLIProxy request failed",
 							);
 						}
 						return;
@@ -747,6 +751,96 @@ interface NativeRouteOptions {
 	readonly db: DrizzleDb;
 }
 
+interface NativeAnthropicExecution {
+	readonly upstream: globalThis.Response;
+	readonly attempt: UpstreamAttempt;
+	readonly request: ReturnType<typeof buildPassthroughLogRequest> & { readonly stream: boolean };
+}
+
+function parsedUpstreamErrorBody(raw: string): unknown {
+	if (!raw) {
+		return undefined;
+	}
+	try {
+		return JSON.parse(raw) as unknown;
+	} catch {
+		return { raw: raw.slice(0, 4_096) };
+	}
+}
+
+function buildFallbackAnthropicHeaders(req: Request, attempt: UpstreamAttempt): Headers {
+	const headers = new Headers({ ...attempt.upstreamHeaders, "Content-Type": "application/json" });
+	for (const name of ["anthropic-version", "anthropic-beta"] as const) {
+		const value = req.headers[name];
+		if (typeof value === "string" && value.length > 0) {
+			headers.set(name, value);
+		}
+	}
+	return headers;
+}
+
+async function executeNativeAnthropicWithFallback(args: {
+	readonly req: Request;
+	readonly router: LiteLLMRouter;
+	readonly runtime: CliProxyRuntimeManager;
+	readonly upstreamPath: string;
+	readonly body: Record<string, unknown>;
+	readonly model: string;
+	readonly signal: AbortSignal;
+	readonly stats: FallbackExecutionStats;
+}): Promise<NativeAnthropicExecution> {
+	const { req, router, runtime, upstreamPath, body, model, signal, stats } = args;
+	const requestApiKey = typeof body["api_key"] === "string" ? body["api_key"] : undefined;
+	const requestAnthropicVersion =
+		typeof body["anthropic_version"] === "string"
+			? body["anthropic_version"]
+			: typeof req.headers["anthropic-version"] === "string"
+				? req.headers["anthropic-version"]
+				: undefined;
+
+	return executeWithFallbackChain(
+		router,
+		model,
+		requestApiKey,
+		requestAnthropicVersion,
+		async (attempt) => {
+			const cliProxyAttempt = attempt.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER;
+			const upstreamUrl = cliProxyAttempt ? `${runtime.baseUrl}${upstreamPath}` : attempt.upstreamUrl;
+			const upstreamBody = applyReasoningEffortOverride({ ...body, model: attempt.upstreamModel }, attempt.deployment, "anthropic");
+			const upstreamHeaders = cliProxyAttempt
+				? buildForwardHeaders(req, runtime.internalApiKey, true)
+				: buildFallbackAnthropicHeaders(req, attempt);
+			const upstreamRequest = {
+				...buildPassthroughLogRequest({
+					url: upstreamUrl,
+					method: "POST",
+					headers: upstreamHeaders,
+					body: upstreamBody,
+					model: attempt.upstreamModel,
+				}),
+				stream: body["stream"] === true,
+			};
+			const upstream = await fetch(upstreamUrl, {
+				method: "POST",
+				headers: upstreamHeaders,
+				body: JSON.stringify(upstreamBody),
+				signal: signal,
+			});
+			if (!upstream.ok) {
+				const raw = await upstream.text().catch(() => "");
+				const context = createUpstreamLogContext(upstreamRequest, upstream, parsedUpstreamErrorBody(raw));
+				const providerName = cliProxyAttempt ? "CLIProxy" : "Provider";
+				throw attachUpstreamLogContext(
+					new ProviderUpstreamError(upstream.status, `${providerName} returned HTTP ${upstream.status}: ${raw.slice(0, 500)}`),
+					context,
+				);
+			}
+			return { upstream: upstream, attempt: attempt, request: upstreamRequest };
+		},
+		stats,
+	);
+}
+
 function registerNativeRoute({
 	expressRouter,
 	router,
@@ -762,6 +856,7 @@ function registerNativeRoute({
 		async (req, res) => {
 			let deploymentRecorded = false;
 			let upstreamLogContext: UpstreamLogContext | undefined;
+			const fallbackStats: FallbackExecutionStats = { fallbackDepth: 0, fallbackModels: [] };
 			const body = req.body as Record<string, unknown>;
 			const model = body["model"];
 			if (typeof model !== "string" || model.length === 0) {
@@ -785,43 +880,64 @@ function registerNativeRoute({
 			req.once("aborted", abort);
 			res.once("close", abort);
 			try {
-				const upstreamUrl = `${runtime.baseUrl}${upstreamPath}`;
-				const upstreamBody = applyReasoningEffortOverride(
-					{ ...body, model: upstreamModel(deploymentModel) },
-					candidate.deployment,
-					anthropicNative ? "anthropic" : "chat",
-				);
-				const upstreamHeaders = buildForwardHeaders(req, runtime.internalApiKey, anthropicNative);
-				const upstreamRequest = {
-					...buildPassthroughLogRequest({
-						url: upstreamUrl,
+				let executedDeployment = candidate.deployment;
+				let upstreamUrl: string;
+				let upstreamRequest: ReturnType<typeof buildPassthroughLogRequest> & { readonly stream: boolean };
+				let upstream: globalThis.Response;
+				if (anthropicNative) {
+					const execution = await executeNativeAnthropicWithFallback({
+						req: req,
+						router: router,
+						runtime: runtime,
+						upstreamPath: upstreamPath,
+						body: body,
+						model: model,
+						signal: abortController.signal,
+						stats: fallbackStats,
+					});
+					upstream = execution.upstream;
+					upstreamRequest = execution.request;
+					executedDeployment = execution.attempt.deployment;
+					upstreamUrl = upstreamRequest.url;
+					deploymentRecorded = true;
+				} else {
+					upstreamUrl = `${runtime.baseUrl}${upstreamPath}`;
+					const upstreamBody = applyReasoningEffortOverride(
+						{ ...body, model: upstreamModel(deploymentModel) },
+						candidate.deployment,
+						"chat",
+					);
+					const upstreamHeaders = buildForwardHeaders(req, runtime.internalApiKey, false);
+					upstreamRequest = {
+						...buildPassthroughLogRequest({
+							url: upstreamUrl,
+							method: "POST",
+							headers: upstreamHeaders,
+							body: upstreamBody,
+							model: upstreamModel(deploymentModel),
+						}),
+						stream: body["stream"] === true,
+					};
+					upstreamLogContext = createUpstreamLogContext(upstreamRequest);
+					upstream = await fetch(upstreamUrl, {
 						method: "POST",
 						headers: upstreamHeaders,
-						body: upstreamBody,
-						model: upstreamModel(deploymentModel),
-					}),
-					stream: body["stream"] === true,
-				};
-				const upstreamPromise = fetch(upstreamUrl, {
-					method: "POST",
-					headers: upstreamHeaders,
-					body: JSON.stringify(upstreamBody),
-					signal: abortController.signal,
-				});
-				upstreamLogContext = createUpstreamLogContext(upstreamRequest);
-				const upstream = await upstreamPromise;
-				if (upstream.ok) {
-					router.recordDeploymentSuccess(candidate.deployment);
-				} else {
-					router.recordDeploymentFailure(candidate.deployment, new Error(`CLIProxy returned HTTP ${upstream.status}`));
+						body: JSON.stringify(upstreamBody),
+						signal: abortController.signal,
+					});
+					if (upstream.ok) {
+						router.recordDeploymentSuccess(candidate.deployment);
+					} else {
+						router.recordDeploymentFailure(candidate.deployment, new Error(`CLIProxy returned HTTP ${upstream.status}`));
+					}
+					deploymentRecorded = true;
 				}
-				deploymentRecorded = true;
 				const captured = await pipeUpstreamResponse(upstream, res);
 				const extracted =
 					(anthropicNative && body["stream"] === true ? extractAnthropicStreamResponse(captured.raw) : undefined) ??
 					extractNativeResponse(captured.raw);
 				upstreamLogContext = createUpstreamLogContext(upstreamRequest, upstream, extracted.response);
-				const spendInfo = buildDeploymentSpendInfo(candidate.deployment, upstreamUrl);
+				const spendInfo = buildDeploymentSpendInfo(executedDeployment, upstreamUrl);
 				if (req.auth) {
 					const log = await buildSpendLogFromRequest({
 						req: req,
@@ -845,11 +961,16 @@ function registerNativeRoute({
 						usage: extracted.usage,
 						status: upstream.ok ? SpendLogStatus.Success : SpendLogStatus.Failure,
 						error: upstream.ok ? undefined : new Error(`CLIProxy returned HTTP ${upstream.status}`),
+						attemptedRetries: anthropicNative ? fallbackStats.fallbackDepth : undefined,
+						maxRetries: anthropicNative ? router.maxFallbacks : undefined,
+						fallbackModels: anthropicNative ? fallbackStats.fallbackModels : undefined,
+						modelResolutionChain: anthropicNative ? fallbackStats.modelResolutionChain : undefined,
+						routingTrace: anthropicNative ? fallbackStats.routingTrace : undefined,
 					});
 					await lifecycle.finalize(() => trackSpendLog(db, log).then(() => undefined));
 				}
 			} catch (error) {
-				if (!deploymentRecorded && !(error instanceof DOMException && error.name === "AbortError")) {
+				if (!anthropicNative && !deploymentRecorded && !(error instanceof DOMException && error.name === "AbortError")) {
 					router.recordDeploymentFailure(candidate.deployment, error instanceof Error ? error : new Error(String(error)));
 				}
 				if (!lifecycle.isFinalized() && req.auth) {
@@ -864,8 +985,13 @@ function registerNativeRoute({
 						messages: body["messages"] ?? body["input"],
 						proxyServerRequestBody: body,
 						error: error,
-						upstreamLogContext: upstreamLogContext,
+						upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 						status: SpendLogStatus.Failure,
+						attemptedRetries: anthropicNative ? fallbackStats.fallbackDepth : undefined,
+						maxRetries: anthropicNative ? router.maxFallbacks : undefined,
+						fallbackModels: anthropicNative ? fallbackStats.fallbackModels : undefined,
+						modelResolutionChain: anthropicNative ? fallbackStats.modelResolutionChain : undefined,
+						routingTrace: anthropicNative ? fallbackStats.routingTrace : undefined,
 					});
 					await lifecycle.finalize(() => trackSpendLog(db, log).then(() => undefined));
 				}

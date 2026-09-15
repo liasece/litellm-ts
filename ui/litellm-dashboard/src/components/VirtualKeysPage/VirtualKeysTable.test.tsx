@@ -1,18 +1,19 @@
-import { screen, waitFor, fireEvent } from "@testing-library/react";
+import { screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { vi, it, expect, beforeEach, MockedFunction } from "vitest";
 import { renderWithProviders } from "../../../tests/test-utils";
 import { VirtualKeysTable } from "./VirtualKeysTable";
 import { KeyResponse, Team } from "../key_team_helpers/key_list";
-import { Organization } from "../networking";
+import { Organization, keyUpdateCall } from "../networking";
 import { KeysResponse, useKeys } from "@/app/(dashboard)/hooks/keys/useKeys";
 import { useFilterLogic } from "../key_team_helpers/filter_logic";
 import useTeams from "@/app/(dashboard)/hooks/useTeams";
 
 // Mock network calls
-vi.mock("./networking", async (importOriginal) => {
+vi.mock("../networking", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../networking")>();
 	return {
 		...actual,
+		keyUpdateCall: vi.fn(),
 		userListCall: vi.fn().mockResolvedValue({
 			users: [
 				{
@@ -45,6 +46,7 @@ vi.mock("./key_team_helpers/filter_helpers", () => ({
 // Mock useKeys hook
 vi.mock("@/app/(dashboard)/hooks/keys/useKeys", () => ({
 	useKeys: vi.fn(),
+	keyKeys: { all: ["keys"] },
 }));
 
 // Mock useFilterLogic hook
@@ -988,4 +990,39 @@ describe("refetch button", () => {
 		expect(fetchButton).not.toBeDisabled();
 		expect(screen.getByText("Fetch")).toBeInTheDocument();
 	});
+});
+
+it.each([false, true])("should save a quick enabled toggle for blocked=%s and refresh the list", async (blocked) => {
+	const current = mockUseFilterLogic({ keys: [], teams: [], organizations: [] });
+	mockUseFilterLogic.mockReturnValue({ ...current, filteredKeys: [{ ...mockKey, blocked }] });
+	let complete: (value: unknown) => void = () => {};
+	vi.mocked(keyUpdateCall).mockReturnValue(
+		new Promise((resolve) => {
+			complete = resolve;
+		}),
+	);
+	renderWithProviders(<VirtualKeysTable teams={[mockTeam]} organizations={[mockOrganization]} />);
+	const toggle = screen.getByRole("switch", { name: "Enabled Test Key Alias" });
+	expect(toggle).toHaveAttribute("aria-checked", String(!blocked));
+	await act(async () => {
+		fireEvent.click(toggle);
+	});
+	expect(keyUpdateCall).toHaveBeenCalledWith("123", { token: mockKey.token, blocked: !blocked });
+	await waitFor(() => expect(screen.getByRole("switch", { name: "Enabled Test Key Alias" })).toBeDisabled());
+	await act(async () => {
+		complete({ ...mockKey, blocked: !blocked });
+	});
+	await waitFor(() => expect(current.handleFilterChange).toHaveBeenCalledWith(current.filters));
+});
+
+it("should retain enabled state when a quick toggle fails", async () => {
+	vi.mocked(keyUpdateCall).mockRejectedValue(new Error("Update failed"));
+	renderWithProviders(<VirtualKeysTable teams={[mockTeam]} organizations={[mockOrganization]} />);
+	const toggle = screen.getByRole("switch", { name: "Enabled Test Key Alias" });
+	await act(async () => {
+		fireEvent.click(toggle);
+	});
+	await waitFor(() => expect(screen.getByRole("switch", { name: "Enabled Test Key Alias" })).not.toBeDisabled());
+	expect(screen.getByRole("switch", { name: "Enabled Test Key Alias" })).toHaveAttribute("aria-checked", "true");
+	expect(mockUseFilterLogic({ keys: [], teams: [], organizations: [] }).handleFilterChange).not.toHaveBeenCalled();
 });

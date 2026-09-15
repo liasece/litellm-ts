@@ -1,5 +1,10 @@
 "use client";
-import { useKeys } from "@/app/(dashboard)/hooks/keys/useKeys";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
+import useTeams from "@/app/(dashboard)/hooks/useTeams";
+import { isProxyAdminRole, isUserTeamAdminForSingleTeam } from "@/utils/roles";
+import NotificationManager from "../molecules/notifications_manager";
+import { keyKeys, useKeys } from "@/app/(dashboard)/hooks/keys/useKeys";
 import { useOrganizations } from "@/app/(dashboard)/hooks/organizations/useOrganizations";
 import {
 	getCoreRowModel,
@@ -15,13 +20,15 @@ import { useFilterLogic } from "../key_team_helpers/filter_logic";
 import { PaginatedKeyAliasSelect } from "../KeyAliasSelect/PaginatedKeyAliasSelect/PaginatedKeyAliasSelect";
 import { KeyResponse, Team } from "../key_team_helpers/key_list";
 import FilterComponent, { FilterOption } from "../molecules/filter";
-import { Organization } from "../networking";
+import { Organization, keyUpdateCall } from "../networking";
 import KeyInfoView from "../templates/key_info_view";
 import useVirtualKeyColumns from "./table/useVirtualKeyColumns";
 import VirtualKeysTableHeader from "./table/VirtualKeysTableHeader";
 import VirtualKeysTableRow from "./table/VirtualKeysTableRow";
 import VirtualKeysTableStateRow from "./table/VirtualKeysTableStateRow";
 import VirtualKeysToolbar from "./table/VirtualKeysToolbar";
+
+const EMPTY_KEYS: KeyResponse[] = [];
 
 interface VirtualKeysTableProps {
 	teams: Team[] | null;
@@ -39,6 +46,9 @@ interface VirtualKeysTableProps {
  */
 
 export function VirtualKeysTable({ teams, organizations, onSortChange, currentSort }: VirtualKeysTableProps) {
+	const { accessToken, userId, userRole } = useAuthorized();
+	const { teams: authorizedTeams } = useTeams();
+	const queryClient = useQueryClient();
 	const { data: fetchedOrganizations } = useOrganizations();
 	const resolvedOrganizations = fetchedOrganizations ?? organizations ?? [];
 	const [selectedKey, setSelectedKey] = useState<KeyResponse | null>(null);
@@ -89,7 +99,7 @@ export function VirtualKeysTable({ teams, organizations, onSortChange, currentSo
 		handleFilterChange,
 		handleFilterReset,
 	} = useFilterLogic({
-		keys: keys?.keys || [],
+		keys: keys?.keys ?? EMPTY_KEYS,
 		teams,
 		organizations,
 	});
@@ -121,10 +131,33 @@ export function VirtualKeysTable({ teams, organizations, onSortChange, currentSo
 		}
 	}, [refetch]);
 
+	const enabledMutation = useMutation({
+		mutationFn: async ({ key, enabled }: { key: KeyResponse; enabled: boolean }) => {
+			if (!accessToken) throw new Error("Access token is required");
+			return keyUpdateCall(accessToken, { token: key.token, blocked: !enabled });
+		},
+		onSuccess: async () => {
+			await queryClient.invalidateQueries({ queryKey: keyKeys.all });
+			handleFilterChange(filters);
+		},
+		onError: (error) => NotificationManager.fromBackend(error),
+	});
+	const canModifyKey = (key: KeyResponse) =>
+		Boolean(accessToken) &&
+		(isProxyAdminRole(userRole || "") ||
+			isUserTeamAdminForSingleTeam(
+				authorizedTeams?.find((team) => team.team_id === key.team_id)?.members_with_roles ?? null,
+				userId || "",
+			) ||
+			(Boolean(userId) && userId === key.user_id && userRole === "Internal User"));
+
 	const columns = useVirtualKeyColumns({
 		teams,
 		organizations: resolvedOrganizations,
 		onSelect: setSelectedKey,
+		canModifyKey,
+		onToggleEnabled: (key, enabled) => enabledMutation.mutate({ key, enabled }),
+		updatingToken: enabledMutation.isPending ? enabledMutation.variables.key.token : undefined,
 	});
 
 	const filterOptions: FilterOption[] = [

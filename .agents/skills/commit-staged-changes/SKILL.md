@@ -1,6 +1,6 @@
 ---
 name: commit-staged-changes
-description: 提交当前 LiteLLM TS 仓库已暂存的 Git 更改。仅当用户明确要求提交、commit、提交暂存内容、提交 staged changes，或指定使用 commit-staged-changes 时使用；只提交 index 中已有内容，不修改代码、不新增暂存、不回滚文件、不推送、不部署；如果 staged 内容包含多个修改部分，在提交信息正文中逐条列出。
+description: 用户明确要求提交 LiteLLM TS 暂存内容时使用；只提交 index，保留其他修改，不推送或部署。
 ---
 
 # 提交暂存的更改

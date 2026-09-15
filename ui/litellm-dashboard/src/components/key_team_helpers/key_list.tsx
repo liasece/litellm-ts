@@ -44,7 +44,7 @@ export interface KeyResponse {
 	model_spend: Record<string, number>;
 	model_max_budget: Record<string, number>;
 	soft_budget_cooldown: boolean;
-	blocked: boolean;
+	blocked?: boolean | null;
 	litellm_budget_table: Record<string, unknown>;
 	organization_id: string | null;
 	org_id?: string | null;

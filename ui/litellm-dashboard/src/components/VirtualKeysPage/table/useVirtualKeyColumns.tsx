@@ -3,7 +3,7 @@ import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { Button } from "@tremor/react";
-import { Popover, Tooltip } from "antd";
+import { Popover, Switch, Tooltip } from "antd";
 import { useMemo } from "react";
 import type { KeyResponse, Team } from "../../key_team_helpers/key_list";
 import VirtualKeyModelsCell from "./VirtualKeyModelsCell";
@@ -14,6 +14,9 @@ interface UseVirtualKeyColumnsOptions {
 	organizations: Organization[];
 	onSelect: (key: KeyResponse) => void;
 	scope?: "global" | "team";
+	onToggleEnabled?: (key: KeyResponse, enabled: boolean) => void;
+	canModifyKey?: (key: KeyResponse) => boolean;
+	updatingToken?: string;
 }
 
 export default function useVirtualKeyColumns({
@@ -21,6 +24,9 @@ export default function useVirtualKeyColumns({
 	organizations,
 	onSelect,
 	scope = "global",
+	onToggleEnabled,
+	canModifyKey,
+	updatingToken,
 }: UseVirtualKeyColumnsOptions): ColumnDef<KeyResponse>[] {
 	return useMemo<ColumnDef<KeyResponse>[]>(
 		() => [
@@ -75,6 +81,27 @@ export default function useVirtualKeyColumns({
 					</span>
 				),
 			},
+			...(scope === "global"
+				? [
+						{
+							id: "enabled",
+							header: "Enabled",
+							size: 110,
+							enableSorting: false,
+							cell: ({ row }: CellContext<KeyResponse, unknown>) => (
+								<Switch
+									aria-label={`Enabled ${row.original.key_alias || row.original.token}`}
+									checked={row.original.blocked !== true}
+									checkedChildren="Enabled"
+									unCheckedChildren="Disabled"
+									loading={updatingToken === row.original.token}
+									disabled={Boolean(updatingToken) || !canModifyKey?.(row.original)}
+									onChange={(enabled) => onToggleEnabled?.(row.original, enabled)}
+								/>
+							),
+						},
+					]
+				: []),
 			{
 				id: "key_name",
 				accessorKey: "key_name",
@@ -290,6 +317,6 @@ export default function useVirtualKeyColumns({
 				),
 			},
 		],
-		[onSelect, organizations, scope, teams],
+		[onSelect, organizations, scope, teams, onToggleEnabled, canModifyKey, updatingToken],
 	);
 }

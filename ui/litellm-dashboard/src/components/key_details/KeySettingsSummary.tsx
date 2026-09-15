@@ -51,6 +51,9 @@ export default function KeySettingsSummary({
 				<KeySetting label="Key ID">
 					<Text className="font-mono">{keyData.token_id || keyData.token}</Text>
 				</KeySetting>
+				<KeySetting label="Enabled">
+					<Text>{keyData.blocked === true ? "Disabled" : "Enabled"}</Text>
+				</KeySetting>
 				<KeySetting label="Key Alias">
 					<Text>{keyData.key_alias || "Not Set"}</Text>
 				</KeySetting>

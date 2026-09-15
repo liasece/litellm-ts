@@ -167,6 +167,7 @@ export function KeyEditView({
 	// Set initial form values
 	const initialValues = {
 		...keyData,
+		blocked: keyData.blocked ?? false,
 		token: keyData.token || keyData.token_id,
 		budget_duration: getBudgetDuration(keyData.budget_duration),
 		metadata: formatMetadataForDisplay(stripTagsFromMetadata(keyData.metadata)),
@@ -200,6 +201,7 @@ export function KeyEditView({
 	useEffect(() => {
 		form.setFieldsValue({
 			...keyData,
+			blocked: keyData.blocked ?? false,
 			token: keyData.token || keyData.token_id,
 			budget_duration: getBudgetDuration(keyData.budget_duration),
 			metadata: formatMetadataForDisplay(stripTagsFromMetadata(keyData.metadata)),
@@ -282,6 +284,15 @@ export function KeyEditView({
 
 	return (
 		<Form form={form} onFinish={handleSubmit} initialValues={initialValues} layout="vertical">
+			<Form.Item
+				label="Enabled"
+				name="blocked"
+				getValueProps={(blocked: boolean | null | undefined) => ({ checked: blocked !== true })}
+				getValueFromEvent={(enabled: boolean) => !enabled}
+				tooltip="When disabled, this key cannot be used for API requests. Re-enable it to restore access."
+			>
+				<Switch aria-label="Enabled" checkedChildren="Enabled" unCheckedChildren="Disabled" />
+			</Form.Item>
 			<Form.Item label="Key Alias" name="key_alias">
 				<TextInput />
 			</Form.Item>

@@ -309,6 +309,51 @@ describe("KeyEditView", () => {
 		});
 	});
 
+	it.each([null, undefined])(
+		"should save a legacy enabled key without touching the switch for blocked=%s",
+		async (blocked) => {
+			const onSubmit = vi.fn().mockResolvedValue(undefined);
+			renderWithProviders(
+				<KeyEditView
+					keyData={{ ...MOCK_KEY_DATA, blocked }}
+					onCancel={() => {}}
+					onSubmit={onSubmit}
+					teams={[]}
+					accessToken="test-token"
+					userID="test-user"
+					userRole="Admin"
+				/>,
+			);
+			await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+			await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ blocked: false })));
+		},
+	);
+
+	it.each([false, true, null, undefined])(
+		"should load and save enabled configuration for blocked=%s",
+		async (blocked) => {
+			const onSubmit = vi.fn().mockResolvedValue(undefined);
+			renderWithProviders(
+				<KeyEditView
+					keyData={{ ...MOCK_KEY_DATA, blocked }}
+					onCancel={() => {}}
+					onSubmit={onSubmit}
+					teams={[]}
+					accessToken="test-token"
+					userID="test-user"
+					userRole="Admin"
+				/>,
+			);
+			const toggle = screen.getByRole("switch", { name: "Enabled" });
+			expect(toggle).toHaveAttribute("aria-checked", String(blocked !== true));
+			await userEvent.click(toggle);
+			await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+			await waitFor(() =>
+				expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ blocked: blocked !== true })),
+			);
+		},
+	);
+
 	it("should call onSubmit with form values when form is submitted", async () => {
 		const onSubmitMock = vi.fn().mockResolvedValue(undefined);
 		renderWithProviders(

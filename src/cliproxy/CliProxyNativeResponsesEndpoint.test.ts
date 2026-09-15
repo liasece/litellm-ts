@@ -6,6 +6,8 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import type { Deployment } from "../types/router";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { registerCliProxyNativeAnthropicRoutes, registerCliProxyNativeResponsesRoutes } from "./CliProxyNativeResponsesEndpoint";
+import { CliProxyProvider } from "../providers/CliProxyProvider";
+import { SpendLogStatus } from "../types/spend";
 
 const mockBuildSpendLogFromRequest = jest.fn(async (_context: unknown) => ({}));
 const mockTrackSpendLog = jest.fn(async (_db: unknown, _log: unknown) => ({ status: "committed", requestId: "test-request" }));
@@ -47,7 +49,7 @@ function buildApp(reasoningEffortOverride?: "minimal" | "low" | "medium" | "high
 	return app;
 }
 
-function buildAnthropicApp(): express.Express {
+function buildAnthropicApp(routerOverride?: LiteLLMRouter): express.Express {
 	const deployment: Deployment = {
 		model_name: "gpt-5.6-sol",
 		litellm_params: {
@@ -55,13 +57,20 @@ function buildAnthropicApp(): express.Express {
 			custom_llm_provider: "cliproxy",
 		},
 	};
-	const router = {
-		getAvailableDeployment: () => ({ deployment: deployment }),
-		getDeployments: () => [deployment],
-		getFallbacks: () => ({}),
-		recordDeploymentSuccess: jest.fn(),
-		recordDeploymentFailure: jest.fn(),
-	} as unknown as LiteLLMRouter;
+	const provider = new CliProxyProvider("internal-only", "http://127.0.0.1:8317");
+	const router =
+		routerOverride ??
+		({
+			getAvailableDeployment: () => ({ deployment: deployment, provider: provider }),
+			getDeployments: () => [deployment],
+			getFallbacks: () => ({}),
+			getNextFallback: () => null,
+			hasModel: () => true,
+			getNoAvailableDeploymentInfo: () => ({}),
+			maxFallbacks: 5,
+			recordDeploymentSuccess: jest.fn(),
+			recordDeploymentFailure: jest.fn(),
+		} as unknown as LiteLLMRouter);
 	const runtime = {
 		baseUrl: "http://127.0.0.1:8317",
 		internalApiKey: "internal-only",
@@ -69,7 +78,7 @@ function buildAnthropicApp(): express.Express {
 	const app = express();
 	app.use(express.json());
 	app.use((req, _res, next) => {
-		req.auth = { api_key: "test-key", models: ["gpt-5.6-sol"] };
+		req.auth = { api_key: "test-key", models: ["gpt-5.6-sol", "k3"] };
 		next();
 	});
 	const expressRouter = express.Router();
@@ -676,5 +685,88 @@ describe("CLIProxy native Responses streaming", () => {
 			}
 			await closeServer(server);
 		}
+	});
+
+	it("falls back before forwarding an Anthropic upstream 403 response", async () => {
+		const primary: Deployment = {
+			model_name: "k3",
+			litellm_params: { model: "cliproxy/kimi-k3", custom_llm_provider: "cliproxy" },
+			model_info: { id: "k3-deployment" },
+		};
+		const fallback: Deployment = {
+			model_name: "gpt-5.6-sol",
+			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+			model_info: { id: "sol-deployment" },
+		};
+		const provider = new CliProxyProvider("internal-only", "http://127.0.0.1:8317");
+		const recordDeploymentFailure = jest.fn();
+		const recordDeploymentSuccess = jest.fn();
+		const router = {
+			getAvailableDeployment: (model: string) => {
+				if (model === "k3") {
+					return { deployment: primary, provider: provider };
+				}
+				if (model === "gpt-5.6-sol") {
+					return { deployment: fallback, provider: provider };
+				}
+				return null;
+			},
+			getDeployments: () => [primary, fallback],
+			getFallbacks: () => ({ k3: ["gpt-5.6-sol"] }),
+			getNextFallback: (model: string) => (model === "k3" ? "gpt-5.6-sol" : null),
+			hasModel: (model: string) => model === "k3" || model === "gpt-5.6-sol",
+			getNoAvailableDeploymentInfo: () => ({}),
+			maxFallbacks: 5,
+			recordDeploymentSuccess: recordDeploymentSuccess,
+			recordDeploymentFailure: recordDeploymentFailure,
+		} as unknown as LiteLLMRouter;
+		const upstreamEvents =
+			'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_fb","type":"message","role":"assistant","model":"gpt-5.6-sol","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}\n\n' +
+			'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n' +
+			'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"fallback ok"}}\n\n' +
+			'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n' +
+			'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n' +
+			'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+		const fetchSpy = jest
+			.spyOn(global, "fetch")
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						type: "error",
+						error: { type: "permission_error", message: "usage limit for this billing cycle" },
+					}),
+					{ status: 403, headers: { "content-type": "application/json" } },
+				),
+			)
+			.mockResolvedValueOnce(new Response(upstreamEvents, { status: 200, headers: { "content-type": "text/event-stream" } }));
+
+		const response = await request(buildAnthropicApp(router))
+			.post("/v1/messages")
+			.send({ model: "k3", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(response.text).toBe(upstreamEvents);
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toMatchObject({ model: "kimi-k3" });
+		expect(JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body))).toMatchObject({ model: "gpt-5.6-sol" });
+		expect(recordDeploymentFailure).toHaveBeenCalledWith(primary, expect.objectContaining({ status: 403 }));
+		expect(recordDeploymentSuccess).toHaveBeenCalledWith(fallback);
+		const spendContext = mockBuildSpendLogFromRequest.mock.calls[0]?.[0] as {
+			attemptedRetries?: number;
+			fallbackModels?: string[];
+			routingTrace?: Array<Record<string, unknown>>;
+			modelId?: string;
+			status?: SpendLogStatus;
+		};
+		expect(spendContext).toMatchObject({
+			attemptedRetries: 1,
+			fallbackModels: ["k3", "gpt-5.6-sol"],
+			modelId: "sol-deployment",
+			status: SpendLogStatus.Success,
+		});
+		expect(spendContext.routingTrace).toEqual([
+			expect.objectContaining({ from_model: "k3", to_model: "gpt-5.6-sol", routing_type: "general_fallback" }),
+		]);
 	});
 });

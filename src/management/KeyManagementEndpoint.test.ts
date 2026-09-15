@@ -595,12 +595,36 @@ describe("KeyManagement /key/update Python 字段集契约", () => {
 			update: () => ({
 				set: (values: Record<string, unknown>) => {
 					updateCalls.push(values);
+					Object.assign(row, values);
 					return { where: () => Promise.resolve({ rowCount: 1 }) };
 				},
 			}),
 		};
 		return { db: db, updateCalls: updateCalls };
 	}
+
+	it.each([true, false])("更新启用状态 blocked=%s 并返回持久化状态", async (blocked) => {
+		const { db, updateCalls } = makeKeyUpdateMockDb({ token: "test-hash", blocked: !blocked, budgetId: null });
+		const response = await request(makeApp(db)).post("/key/update").send({ token: "test-hash", blocked });
+		expect(response.status).toBe(200);
+		expect(updateCalls[0]?.blocked).toBe(blocked);
+		expect(response.body.blocked).toBe(blocked);
+	});
+
+	it.each(["false", 0, null])("拒绝非布尔启用状态 %s 且不写数据库", async (blocked) => {
+		const { db, updateCalls } = makeKeyUpdateMockDb({ token: "test-hash", blocked: true });
+		const response = await request(makeApp(db)).post("/key/update").send({ token: "test-hash", blocked });
+		expect(response.status).toBe(400);
+		expect(updateCalls).toHaveLength(0);
+	});
+
+	it("编辑其他配置保留已有禁用状态", async () => {
+		const { db, updateCalls } = makeKeyUpdateMockDb({ token: "test-hash", blocked: true, budgetId: null });
+		const response = await request(makeApp(db)).post("/key/update").send({ token: "test-hash", key_alias: "renamed" });
+		expect(response.status).toBe(200);
+		expect(updateCalls[0]).not.toHaveProperty("blocked");
+		expect(response.body.blocked).toBe(true);
+	});
 
 	it("返回 { key: 原请求 key, ...完整 key 对象（48 键） }，max_budget 已更新", async () => {
 		const plain = "sk-update-target-key";
@@ -796,6 +820,21 @@ describe("KeyManagement /key/generate Python 字段集契约", () => {
 		expect(inserted[0]?.token).toBe(res.body.token_id);
 		expect(inserted[0]?.keyName).toBe(res.body.key_name);
 		expect(inserted[0]?.blocked).toBe(false);
+	});
+
+	it("允许创建时禁用 Key", async () => {
+		const { db, inserted } = makeGenerateMockDb();
+		const response = await request(makeApp(db)).post("/key/generate").send({ blocked: true });
+		expect(response.status).toBe(200);
+		expect(inserted[0]?.blocked).toBe(true);
+		expect(response.body.blocked).toBe(true);
+	});
+
+	it("拒绝非布尔创建状态且不写数据库", async () => {
+		const { db, inserted } = makeGenerateMockDb();
+		const response = await request(makeApp(db)).post("/key/generate").send({ blocked: "false" });
+		expect(response.status).toBe(400);
+		expect(inserted).toHaveLength(0);
 	});
 
 	it("显式 key_name/created_by 优先；duration 换算 expires", async () => {
