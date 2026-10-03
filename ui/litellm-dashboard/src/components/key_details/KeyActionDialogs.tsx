@@ -1,4 +1,5 @@
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { Modal } from "antd";
 import DeleteResourceModal from "../common_components/DeleteResourceModal";
 import type { KeyResponse } from "../key_team_helpers/key_list";
@@ -29,6 +30,7 @@ interface KeyActionDialogsProps {
 }
 
 export default function KeyActionDialogs(props: KeyActionDialogsProps) {
+	const formatMoney = useMoneyFormatter();
 	return (
 		<>
 			<RegenerateKeyModal
@@ -50,7 +52,7 @@ export default function KeyActionDialogs(props: KeyActionDialogsProps) {
 					{ label: "Team ID", value: props.keyData.team_id || "-", code: true },
 					{
 						label: "Spend",
-						value: props.keyData.spend ? `$${formatNumberWithCommas(props.keyData.spend, 4)}` : "$0.0000",
+						value: props.keyData.spend ? formatMoney(props.keyData.spend, 4) : formatMoney(0, 4),
 					},
 				]}
 				onCancel={props.onDeleteClose}
@@ -70,11 +72,11 @@ export default function KeyActionDialogs(props: KeyActionDialogsProps) {
 			>
 				<p>
 					Reset spend for <strong>{props.keyData.key_alias || props.keyData.token_id || "this key"}</strong> to{" "}
-					<strong>$0</strong>?
+					<strong>{<Money value={0} decimals={0} />}</strong>?
 				</p>
 				<p className="mt-2 text-sm text-gray-500">
-					Current spend: <strong>${formatNumberWithCommas(props.keyData.spend, 4)}</strong>. Spend history is preserved
-					in logs. This resets the current period spend counter, the same as an automatic budget reset.
+					Current spend: <strong>{<Money value={props.keyData.spend} decimals={4} />}</strong>. Spend history is
+					preserved in logs. This resets the current period spend counter, the same as an automatic budget reset.
 				</p>
 			</Modal>
 

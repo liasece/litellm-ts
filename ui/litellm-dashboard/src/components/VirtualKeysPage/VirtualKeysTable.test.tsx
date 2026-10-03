@@ -259,7 +259,7 @@ it("should display key information correctly", async () => {
 	await waitFor(() => {
 		expect(screen.getByText("Test Key Alias")).toBeInTheDocument();
 		expect(screen.getByText("Test Team")).toBeInTheDocument();
-		expect(screen.getByText("5.5000")).toBeInTheDocument();
+		expect(screen.getByText("$5.5000")).toBeInTheDocument();
 	});
 });
 
@@ -401,7 +401,7 @@ it("should render table headers correctly", () => {
 	expect(screen.getByText("Key Alias")).toBeInTheDocument();
 	expect(screen.getByText("Team")).toBeInTheDocument();
 	expect(screen.getByText("Models")).toBeInTheDocument();
-	expect(screen.getByText("Spend (USD)")).toBeInTheDocument();
+	expect(screen.getByText("Spend")).toBeInTheDocument();
 });
 
 it("should expose a CSS-driven column resize handle", () => {

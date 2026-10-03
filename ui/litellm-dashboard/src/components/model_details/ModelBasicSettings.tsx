@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import { Form, Select, Tooltip } from "antd";
 import { TextInput } from "@tremor/react";
 import { InfoCircleOutlined } from "@ant-design/icons";
@@ -49,6 +50,7 @@ export default function ModelBasicSettings({
 	credentialValues,
 	availableModelNames,
 }: ModelBasicSettingsProps) {
+	const formatMoney = useMoneyFormatter();
 	const form = Form.useFormInstance();
 	const litellmParams = modelData.litellm_params ?? {};
 	const modelInfo = modelData.model_info ?? {};
@@ -151,45 +153,57 @@ export default function ModelBasicSettings({
 				{modelInfo.override_reasoning_effort || "Not Set"}
 			</ModelSettingField>
 			<ModelSettingField
-				label="Input Cost (per 1M tokens)"
+				label={editing ? "Input Cost (USD / 1M tokens)" : "Input Cost (per 1M tokens)"}
 				editing={editing}
 				editor={resolvedEditor(
 					"input_cost_per_token",
 					<Form.Item name="input_cost" className="mb-0">
 						<NumericalInput placeholder="Enter input cost" />
 					</Form.Item>,
-					(value) => (Number(value) * 1_000_000).toFixed(4),
+					(value) =>
+						editing
+							? "$" + (Number(value) * 1_000_000).toFixed(4)
+							: formatMoney(Number(value) * 1_000_000, 4, modelData),
 				)}
 			>
 				{resolvedValue(
 					"input_cost_per_token",
 					litellmParams.input_cost_per_token != null
-						? (litellmParams.input_cost_per_token * 1_000_000).toFixed(4)
+						? formatMoney(litellmParams.input_cost_per_token * 1_000_000, 4, modelData)
 						: modelInfo.input_cost_per_token != null
-							? (modelInfo.input_cost_per_token * 1_000_000).toFixed(4)
+							? formatMoney(modelInfo.input_cost_per_token * 1_000_000, 4, modelData)
 							: "Not Set",
-					(value) => (Number(value) * 1_000_000).toFixed(4),
+					(value) =>
+						editing
+							? "$" + (Number(value) * 1_000_000).toFixed(4)
+							: formatMoney(Number(value) * 1_000_000, 4, modelData),
 				)}
 			</ModelSettingField>
 			<ModelSettingField
-				label="Output Cost (per 1M tokens)"
+				label={editing ? "Output Cost (USD / 1M tokens)" : "Output Cost (per 1M tokens)"}
 				editing={editing}
 				editor={resolvedEditor(
 					"output_cost_per_token",
 					<Form.Item name="output_cost" className="mb-0">
 						<NumericalInput placeholder="Enter output cost" />
 					</Form.Item>,
-					(value) => (Number(value) * 1_000_000).toFixed(4),
+					(value) =>
+						editing
+							? "$" + (Number(value) * 1_000_000).toFixed(4)
+							: formatMoney(Number(value) * 1_000_000, 4, modelData),
 				)}
 			>
 				{resolvedValue(
 					"output_cost_per_token",
 					litellmParams.output_cost_per_token != null
-						? (litellmParams.output_cost_per_token * 1_000_000).toFixed(4)
+						? formatMoney(litellmParams.output_cost_per_token * 1_000_000, 4, modelData)
 						: modelInfo.output_cost_per_token != null
-							? (modelInfo.output_cost_per_token * 1_000_000).toFixed(4)
+							? formatMoney(modelInfo.output_cost_per_token * 1_000_000, 4, modelData)
 							: "Not Set",
-					(value) => (Number(value) * 1_000_000).toFixed(4),
+					(value) =>
+						editing
+							? "$" + (Number(value) * 1_000_000).toFixed(4)
+							: formatMoney(Number(value) * 1_000_000, 4, modelData),
 				)}
 			</ModelSettingField>
 			<ModelSettingField

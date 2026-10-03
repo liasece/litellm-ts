@@ -1,14 +1,9 @@
+import { formatMoney } from "@/contexts/PriceDisplay";
 import { CostEstimateResponse } from "../types";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { MultiModelResult } from "./types";
 
-const formatCostForExport = (value: number | null | undefined): string => {
-	if (value === null || value === undefined) return "-";
-	if (value === 0) return "$0.00";
-	if (value < 0.01) return `$${value.toFixed(6)}`;
-	if (value < 1) return `$${value.toFixed(4)}`;
-	return `$${formatNumberWithCommas(value, 2)}`;
-};
+const formatCostForExport = (value: number | null | undefined, model?: string): string => formatMoney(value, 6, model);
 
 const formatRequestsForExport = (value: number | null | undefined): string => {
 	if (value === null || value === undefined) return "-";
@@ -36,27 +31,27 @@ const generateModelSection = (result: CostEstimateResponse): string => {
         </tr>
         <tr>
           <td>Input Cost</td>
-          <td class="cost-value">${formatCostForExport(result.input_cost_per_request)}</td>
-          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_input_cost)}</td>` : ""}
-          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_input_cost)}</td>` : ""}
+          <td class="cost-value">${formatCostForExport(result.input_cost_per_request, result.model)}</td>
+          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_input_cost, result.model)}</td>` : ""}
+          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_input_cost, result.model)}</td>` : ""}
         </tr>
         <tr>
           <td>Output Cost</td>
-          <td class="cost-value">${formatCostForExport(result.output_cost_per_request)}</td>
-          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_output_cost)}</td>` : ""}
-          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_output_cost)}</td>` : ""}
+          <td class="cost-value">${formatCostForExport(result.output_cost_per_request, result.model)}</td>
+          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_output_cost, result.model)}</td>` : ""}
+          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_output_cost, result.model)}</td>` : ""}
         </tr>
         <tr>
           <td>Margin/Fee</td>
-          <td class="cost-value">${formatCostForExport(result.margin_cost_per_request)}</td>
-          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_margin_cost)}</td>` : ""}
-          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_margin_cost)}</td>` : ""}
+          <td class="cost-value">${formatCostForExport(result.margin_cost_per_request, result.model)}</td>
+          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_margin_cost, result.model)}</td>` : ""}
+          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_margin_cost, result.model)}</td>` : ""}
         </tr>
         <tr class="total-row">
           <td>Total</td>
-          <td class="cost-value">${formatCostForExport(result.cost_per_request)}</td>
-          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_cost)}</td>` : ""}
-          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_cost)}</td>` : ""}
+          <td class="cost-value">${formatCostForExport(result.cost_per_request, result.model)}</td>
+          ${result.daily_cost !== null ? `<td class="cost-value">${formatCostForExport(result.daily_cost, result.model)}</td>` : ""}
+          ${result.monthly_cost !== null ? `<td class="cost-value">${formatCostForExport(result.monthly_cost, result.model)}</td>` : ""}
         </tr>
       </table>
     </div>
@@ -254,7 +249,12 @@ export const exportMultiToPDF = (multiResult: MultiModelResult): void => {
 export const exportMultiToCSV = (multiResult: MultiModelResult): void => {
 	const validEntries = multiResult.entries.filter((e) => e.result !== null);
 
-	const rows: string[][] = [["LLM Multi-Model Cost Estimate Report"], ["Generated", new Date().toLocaleString()], [""]];
+	const rows: string[][] = [
+		["LLM Multi-Model Cost Estimate Report"],
+		["Generated", new Date().toLocaleString()],
+		["Currency", "USD"],
+		[""],
+	];
 
 	// Summary section
 	rows.push(

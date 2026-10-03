@@ -1,3 +1,5 @@
+import { Money } from "@/contexts/PriceDisplay";
+import { usePriceDisplay } from "@/contexts/PriceDisplay";
 import ProviderLogo from "@/components/common_components/ProviderLogo";
 import { generateCodeSnippet } from "@/components/playground/chat_ui/CodeSnippets";
 import { getEndpointType } from "@/components/playground/chat_ui/mode_endpoint_mapping";
@@ -17,11 +19,12 @@ interface PublicModelDetailsModalProps {
 	onCopy: (value: string) => void;
 }
 
-function formatCost(cost: number) {
-	return `$${(cost * 1_000_000).toFixed(4)}`;
+function formatCost(cost: number, model?: import("@/utils/priceDisplay").ModelPriceIdentity) {
+	return <Money value={cost * 1_000_000} decimals={4} model={model} />;
 }
 
 export default function PublicModelDetailsModal({ model, open, onClose, onCopy }: PublicModelDetailsModalProps) {
+	usePriceDisplay();
 	const capabilities = model
 		? Object.entries(model)
 				.filter(([key, value]) => key.startsWith("supports_") && value === true)
@@ -135,11 +138,17 @@ export default function PublicModelDetailsModal({ model, open, onClose, onCopy }
 							</div>
 							<div>
 								<Text className="font-medium">Input Cost per 1M Tokens:</Text>
-								<Text>{model.input_cost_per_token ? formatCost(model.input_cost_per_token) : "Not specified"}</Text>
+								<Text>
+									{model.input_cost_per_token != null ? formatCost(model.input_cost_per_token, model) : "Not specified"}
+								</Text>
 							</div>
 							<div>
 								<Text className="font-medium">Output Cost per 1M Tokens:</Text>
-								<Text>{model.output_cost_per_token ? formatCost(model.output_cost_per_token) : "Not specified"}</Text>
+								<Text>
+									{model.output_cost_per_token != null
+										? formatCost(model.output_cost_per_token, model)
+										: "Not specified"}
+								</Text>
 							</div>
 						</div>
 					</section>

@@ -1,3 +1,5 @@
+import { Money } from "@/contexts/PriceDisplay";
+import { usePriceDisplay } from "@/contexts/PriceDisplay";
 import { getProxyBaseUrl } from "@/components/networking";
 import { Badge, Text } from "@tremor/react";
 import { Modal } from "antd";
@@ -18,11 +20,12 @@ function formatCapabilityName(key: string) {
 		.join(" ");
 }
 
-function formatCost(cost: number) {
-	return `$${(cost * 1_000_000).toFixed(2)}`;
+function formatCost(cost: number, model?: import("@/utils/priceDisplay").ModelPriceIdentity) {
+	return <Money value={cost * 1_000_000} decimals={2} model={model} />;
 }
 
 export default function ModelHubModelDetailsModal({ model, open, onClose }: ModelHubModelDetailsModalProps) {
+	usePriceDisplay();
 	const capabilities = model
 		? Object.entries(model)
 				.filter(([key, value]) => key.startsWith("supports_") && value === true)
@@ -78,11 +81,17 @@ export default function ModelHubModelDetailsModal({ model, open, onClose }: Mode
 							</div>
 							<div>
 								<Text className="font-medium">Input Cost per 1M Tokens:</Text>
-								<Text>{model.input_cost_per_token ? formatCost(model.input_cost_per_token) : "Not specified"}</Text>
+								<Text>
+									{model.input_cost_per_token != null ? formatCost(model.input_cost_per_token, model) : "Not specified"}
+								</Text>
 							</div>
 							<div>
 								<Text className="font-medium">Output Cost per 1M Tokens:</Text>
-								<Text>{model.output_cost_per_token ? formatCost(model.output_cost_per_token) : "Not specified"}</Text>
+								<Text>
+									{model.output_cost_per_token != null
+										? formatCost(model.output_cost_per_token, model)
+										: "Not specified"}
+								</Text>
 							</div>
 						</div>
 					</section>

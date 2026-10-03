@@ -1,10 +1,11 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/outline";
 import { Button } from "@tremor/react";
 import { Tooltip } from "antd";
 import React, { useState } from "react";
 import TopRankingBarChart from "../TopRankingBarChart";
-import { formatNumberWithCommas } from "../../../../utils/dataUtils";
 import { transformKeyInfo } from "../../../key_team_helpers/transform_key_info";
 import { keyInfoV1Call } from "../../../networking";
 import KeyInfoView from "../../../templates/key_info_view";
@@ -18,6 +19,7 @@ interface TopKeyViewProps {
 }
 
 const TopKeyView: React.FC<TopKeyViewProps> = ({ topKeys, teams, showTags = false }) => {
+	const formatMoney = useMoneyFormatter();
 	const { accessToken, userRole, userId: userID, premiumUser } = useAuthorized();
 	const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -132,8 +134,7 @@ const TopKeyView: React.FC<TopKeyViewProps> = ({ topKeys, teams, showTags = fals
 											<span className="text-gray-300">Tag Name:</span> {tag.tag}
 										</div>
 										<div>
-											<span className="text-gray-300">Spend:</span>{" "}
-											{tag.usage > 0 && tag.usage < 0.01 ? "<$0.01" : `$${formatNumberWithCommas(tag.usage, 2)}`}
+											<span className="text-gray-300">Spend:</span> {<Money value={tag.usage} decimals={2} />}
 										</div>
 									</div>
 								}
@@ -161,11 +162,11 @@ const TopKeyView: React.FC<TopKeyViewProps> = ({ topKeys, teams, showTags = fals
 	};
 
 	const spendColumn = {
-		header: "Spend (USD)",
+		header: "Spend",
 		accessorKey: "spend",
 		cell: (info: any) => {
 			const value = info.getValue();
-			return value > 0 && value < 0.01 ? "<$0.01" : `$${formatNumberWithCommas(value, 2)}`;
+			return formatMoney(value, 2);
 		},
 	};
 
@@ -209,14 +210,14 @@ const TopKeyView: React.FC<TopKeyViewProps> = ({ topKeys, teams, showTags = fals
 						valueKey="spend"
 						yAxisWidth={120}
 						height={40}
-						valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
+						valueFormatter={(value) => formatMoney(value, 2)}
 						onBarClick={handleKeyClick}
 						renderTooltip={(item) =>
 							item && (
 								<div className="p-3 bg-black/90 shadow-lg rounded-lg text-white max-w-xs">
 									<div>Key Alias: {item.key_alias}</div>
 									<div>Key ID: {item.api_key}</div>
-									<div>Spend: ${formatNumberWithCommas(item.spend, 2)}</div>
+									<div>Spend: {<Money value={item.spend} decimals={2} />}</div>
 								</div>
 							)
 						}

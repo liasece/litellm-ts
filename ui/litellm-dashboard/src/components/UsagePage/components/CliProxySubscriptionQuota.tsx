@@ -1,4 +1,5 @@
 "use client";
+import { formatMoney, usePriceDisplay } from "@/contexts/PriceDisplay";
 
 import { ReloadOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Progress, Skeleton, Tag, Typography } from "antd";
@@ -79,10 +80,12 @@ function formatBalance(balance: QuotaBalance): string {
 		return `${balance.limit.toFixed(0)} ${balance.unit}`;
 	}
 	const remaining = Math.max(0, balance.limit - balance.used);
+	if (balance.unit === "USD") return formatMoney(remaining, 2) + " remaining";
 	return `${remaining.toFixed(2)} ${balance.unit} remaining`;
 }
 
 const CliProxySubscriptionQuota: React.FC<CliProxySubscriptionQuotaProps> = ({ enabled }) => {
+	usePriceDisplay();
 	const [accounts, setAccounts] = useState<CliProxyAccount[] | null>(null);
 	const [quotaStates, setQuotaStates] = useState<Record<string, QuotaState>>({});
 	const [refreshing, setRefreshing] = useState(false);

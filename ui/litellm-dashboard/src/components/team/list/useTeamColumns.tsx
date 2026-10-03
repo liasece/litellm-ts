@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import TableIconActionButton from "@/components/common_components/IconActionButton/TableIconActionButtons/TableIconActionButton";
 import type { KeyResponse, Team } from "@/components/key_team_helpers/key_list";
 import type { Member, Organization } from "@/components/networking";
@@ -39,6 +41,7 @@ export default function useTeamColumns({
 	onOpen,
 	onDelete,
 }: UseTeamColumnsOptions): ColumnsType<Team> {
+	const formatMoney = useMoneyFormatter();
 	const { Text } = Typography;
 
 	return useMemo(
@@ -142,15 +145,10 @@ export default function useTeamColumns({
 					return (
 						<Flex vertical gap={2}>
 							<Text style={{ fontSize: 13 }}>
-								${spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+								{<Money value={spend} decimals={4} />}
 								<Text type="secondary" style={{ fontSize: 12 }}>
 									{" / "}
-									{budget == null
-										? "Unlimited"
-										: `$${budget.toLocaleString(undefined, {
-												minimumFractionDigits: 2,
-												maximumFractionDigits: 2,
-											})}`}
+									{budget == null ? "Unlimited" : formatMoney(budget, 4)}
 								</Text>
 							</Text>
 							{percentage != null && (
@@ -218,6 +216,6 @@ export default function useTeamColumns({
 				),
 			},
 		],
-		[Text, onDelete, onOpen, organizations, perTeamInfo, userRole],
+		[formatMoney, Text, onDelete, onOpen, organizations, perTeamInfo, userRole],
 	);
 }

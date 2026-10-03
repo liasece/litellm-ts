@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React, { useState, useEffect } from "react";
 import {
 	Card,
@@ -32,6 +33,7 @@ interface TagInfoViewProps {
 }
 
 const TagInfoView: React.FC<TagInfoViewProps> = ({ tagId, onClose, accessToken, is_admin, editTag }) => {
+	usePriceDisplay();
 	const [form] = Form.useForm();
 	const [tagDetails, setTagDetails] = useState<Tag | null>(null);
 	const [isEditing, setIsEditing] = useState<boolean>(editTag);
@@ -270,7 +272,7 @@ const TagInfoView: React.FC<TagInfoViewProps> = ({ tagId, onClose, accessToken, 
 									tagDetails.litellm_budget_table.max_budget !== null && (
 										<div>
 											<Text className="font-medium">Max Budget</Text>
-											<Text>${tagDetails.litellm_budget_table.max_budget}</Text>
+											<Text>{<Money value={tagDetails.litellm_budget_table.max_budget} decimals={4} />}</Text>
 										</div>
 									)}
 								{tagDetails.litellm_budget_table.budget_duration && (

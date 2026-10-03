@@ -163,7 +163,7 @@ describe("CLIProxy managed quota transport", () => {
 								auth_index: "auth-index-1",
 								type: "codex",
 								email: "user@example.com",
-								chatgpt_account_id: "chatgpt-account-1",
+								id_token: { chatgpt_account_id: "chatgpt-account-1" },
 							},
 						],
 					}),
@@ -200,7 +200,7 @@ describe("CLIProxy managed quota transport", () => {
 			auth_index: "auth-index-1",
 			method: "GET",
 			url: "https://chatgpt.com/backend-api/wham/usage",
-			header: expect.objectContaining({ Authorization: "Bearer $TOKEN$" }),
+			header: expect.objectContaining({ Authorization: "Bearer $TOKEN$", "Chatgpt-Account-Id": "chatgpt-account-1" }),
 		});
 		expect(JSON.stringify(quota)).not.toMatch(/access_token|master-key-for-test|cpm-/);
 	});

@@ -88,8 +88,8 @@ describe("TeamsTable", () => {
 		expect(screen.getByText("Team Name")).toBeInTheDocument();
 		expect(screen.getByText("Team ID")).toBeInTheDocument();
 		expect(screen.getByText("Created")).toBeInTheDocument();
-		expect(screen.getByText("Spend (USD)")).toBeInTheDocument();
-		expect(screen.getByText("Budget (USD)")).toBeInTheDocument();
+		expect(screen.getByText("Spend")).toBeInTheDocument();
+		expect(screen.getByText("Budget")).toBeInTheDocument();
 		expect(screen.getByText("Models")).toBeInTheDocument();
 		expect(screen.getByText("Organization")).toBeInTheDocument();
 		expect(screen.getByText("Your Role")).toBeInTheDocument();

@@ -1,4 +1,5 @@
-import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
+import { Money, useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { formatNumberWithCommas } from "@/utils/dataUtils";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Popover, Tag, Tooltip } from "antd";
 import { ArrowDownToLine, ArrowUpFromLine, CircleDollarSign, Database, GitBranch } from "lucide-react";
@@ -31,6 +32,7 @@ interface TokenCostBreakdown {
 	cacheInputCost?: number;
 	inputCost?: number;
 	outputCost?: number;
+	model?: import("@/utils/priceDisplay").ModelPriceIdentity;
 }
 
 function readFiniteCost(value: unknown): number | undefined {
@@ -83,31 +85,29 @@ export function getTokenCostBreakdown(log: LogEntry): TokenCostBreakdown {
 	return { cacheInputCost, inputCost, outputCost };
 }
 
-function formatTooltipCost(value: number | undefined): string {
-	return value === undefined ? "-" : `$${formatNumberWithCommas(value, 8)}`;
-}
-
 function CostBreakdownPopoverContent({
 	cacheInputCost,
 	inputCost,
 	outputCost,
+	model,
 }: TokenCostBreakdown): React.ReactElement {
+	const formatMoney = useMoneyFormatter();
 	const fields = [
 		{
 			label: "缓存输入",
-			value: formatTooltipCost(cacheInputCost),
+			value: formatMoney(cacheInputCost, 8, model),
 			icon: <Database size={14} aria-hidden="true" />,
 			className: "border-emerald-100 bg-emerald-50/70",
 		},
 		{
 			label: "输入",
-			value: formatTooltipCost(inputCost),
+			value: formatMoney(inputCost, 8, model),
 			icon: <ArrowDownToLine size={14} aria-hidden="true" />,
 			className: "border-blue-100 bg-blue-50/70",
 		},
 		{
 			label: "输出",
-			value: formatTooltipCost(outputCost),
+			value: formatMoney(outputCost, 8, model),
 			icon: <ArrowUpFromLine size={14} aria-hidden="true" />,
 			className: "border-violet-100 bg-violet-50/70",
 		},
@@ -502,7 +502,7 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			return (
 				<div className="flex flex-col">
 					<Popover
-						content={<CostBreakdownPopoverContent {...tokenCosts} />}
+						content={<CostBreakdownPopoverContent {...tokenCosts} model={row} />}
 						mouseEnterDelay={0.15}
 						placement="bottomLeft"
 						title={
@@ -511,18 +511,20 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 									<CircleDollarSign size={16} className="text-emerald-600" aria-hidden="true" />
 									费用明细
 								</span>
-								<span className="font-mono text-xs font-semibold text-slate-600">{getSpendString(spend)}</span>
+								<span className="font-mono text-xs font-semibold text-slate-600">
+									{<Money value={spend || null} decimals={6} model={row} />}
+								</span>
 							</div>
 						}
 						trigger="hover"
 					>
 						<span className="inline-flex w-fit cursor-help items-center rounded-md px-1.5 py-0.5 font-mono tabular-nums transition-colors hover:bg-emerald-50 hover:text-emerald-700">
-							{getSpendString(spend)}
+							{<Money value={spend || null} decimals={6} model={row} />}
 						</span>
 					</Popover>
 					{mcpCount > 0 && mcpSpend > 0 && (
 						<span className="text-[10px] text-amber-600">
-							incl. {getSpendString(mcpSpend)} from {mcpCount} MCP
+							incl. {<Money value={mcpSpend || null} decimals={6} model={row} />} from {mcpCount} MCP
 						</span>
 					)}
 				</div>

@@ -1,5 +1,6 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import type { ProjectResponse } from "@/app/(dashboard)/hooks/projects/useProjects";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { Badge, Card, Text, Title } from "@tremor/react";
 import { Tag } from "antd";
 import { mapInternalToDisplayNames } from "../callback_info_helpers";
@@ -37,6 +38,7 @@ export default function KeySettingsSummary({
 	lastRegeneratedAt,
 	recentlyRegenerated,
 }: KeySettingsSummaryProps) {
+	const formatMoney = useMoneyFormatter();
 	const project = projects?.find((item) => item.project_id === keyData.project_id);
 	const projectLabel = keyData.project_id
 		? project?.project_alias
@@ -101,10 +103,10 @@ export default function KeySettingsSummary({
 				/>
 
 				<KeySetting label="Spend">
-					<Text>${formatNumberWithCommas(keyData.spend, 4)} USD</Text>
+					<Text>{<Money value={keyData.spend} decimals={4} />}</Text>
 				</KeySetting>
 				<KeySetting label="Budget">
-					<Text>{keyData.max_budget !== null ? `$${formatNumberWithCommas(keyData.max_budget, 2)}` : "Unlimited"}</Text>
+					<Text>{keyData.max_budget !== null ? formatMoney(keyData.max_budget, 2) : "Unlimited"}</Text>
 				</KeySetting>
 				<KeySetting label="Tags">
 					<KeyValueList values={keyData.metadata?.tags} empty="No tags specified" />

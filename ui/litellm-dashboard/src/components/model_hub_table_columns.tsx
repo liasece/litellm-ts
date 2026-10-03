@@ -1,3 +1,4 @@
+import { Money } from "@/contexts/PriceDisplay";
 import { ColumnDef } from "@tanstack/react-table";
 import { Button, Badge, Text } from "@tremor/react";
 import { Tooltip, Tag } from "antd";
@@ -35,8 +36,8 @@ const getModelCapabilities = (model: ModelHubData) => {
 		.map(([key]) => key);
 };
 
-const formatCost = (cost: number) => {
-	return `$${(cost * 1_000_000).toFixed(2)}`;
+const formatCost = (cost: number, model?: import("@/utils/priceDisplay").ModelPriceIdentity) => {
+	return <Money value={cost * 1_000_000} decimals={2} model={model} />;
 };
 
 const formatTokens = (tokens: number) => {
@@ -167,9 +168,11 @@ export const modelHubColumns = (
 
 				return (
 					<div className="space-y-1">
-						<Text className="text-xs">{model.input_cost_per_token ? formatCost(model.input_cost_per_token) : "-"}</Text>
+						<Text className="text-xs">
+							{model.input_cost_per_token != null ? formatCost(model.input_cost_per_token, model) : "-"}
+						</Text>
 						<Text className="text-xs text-gray-500">
-							{model.output_cost_per_token ? formatCost(model.output_cost_per_token) : "-"}
+							{model.output_cost_per_token != null ? formatCost(model.output_cost_per_token, model) : "-"}
 						</Text>
 					</div>
 				);

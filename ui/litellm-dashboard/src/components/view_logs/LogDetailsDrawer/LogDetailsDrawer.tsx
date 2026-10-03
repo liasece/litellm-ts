@@ -1,3 +1,4 @@
+import { usePriceDisplay } from "@/contexts/PriceDisplay";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Button } from "antd";
 import { CheckOutlined, CopyOutlined, LeftOutlined, PlayCircleOutlined, RightOutlined } from "@ant-design/icons";
@@ -45,6 +46,7 @@ interface TraceEventRowProps {
 }
 
 function TraceEventRow({ row, isSelected, onClick }: TraceEventRowProps) {
+	usePriceDisplay();
 	const isMcp = MCP_CALL_TYPES.includes(row.call_type);
 	const isAgent = AGENT_CALL_TYPES.includes(row.call_type);
 	const builtinCapability =
@@ -83,7 +85,7 @@ function TraceEventRow({ row, isSelected, onClick }: TraceEventRowProps) {
 				{row.spend ? (
 					<>
 						<span>·</span>
-						<span>{getSpendString(row.spend)}</span>
+						<span>{getSpendString(row.spend, 6, row)}</span>
 					</>
 				) : null}
 				{row.total_tokens ? (
@@ -120,6 +122,7 @@ export function LogDetailsDrawer({
 	onRefresh,
 	startTime,
 }: LogDetailsDrawerProps) {
+	usePriceDisplay();
 	const isSessionMode = Boolean(sessionGroup);
 	const [selectedSessionRequestId, setSelectedSessionRequestId] = useState<string | null>(null);
 	const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -381,7 +384,9 @@ export function LogDetailsDrawer({
 											) : null;
 										})}
 										<span className="mx-1.5">·</span>
-										{isSessionMode ? getSpendString(totalSessionCost) : getSpendString(currentLog.spend || 0)}
+										{isSessionMode
+											? getSpendString(totalSessionCost)
+											: getSpendString(currentLog.spend || 0, 6, currentLog)}
 										{isSessionMode && (
 											<>
 												<span className="mx-1.5">·</span>

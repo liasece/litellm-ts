@@ -1,6 +1,6 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import MemberTable from "@/components/common_components/MemberTable";
 import type { Member, Organization } from "@/components/networking";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import type { ColumnsType } from "antd/es/table";
 import { Typography } from "antd";
 import { useMemo } from "react";
@@ -20,14 +20,15 @@ export default function OrganizationMembers({
 	onDelete,
 	onAdd,
 }: OrganizationMembersProps) {
+	usePriceDisplay();
 	const extraColumns = useMemo<ColumnsType<Member>>(
 		() => [
 			{
-				title: "Spend (USD)",
+				title: "Spend",
 				key: "spend",
 				render: (_value, record) => {
 					const member = organization.members?.find((item) => item.user_id === record.user_id);
-					return <Typography.Text>${formatNumberWithCommas(member?.spend ?? 0, 4)}</Typography.Text>;
+					return <Typography.Text>{<Money value={member?.spend ?? 0} decimals={4} />}</Typography.Text>;
 				},
 			},
 			{

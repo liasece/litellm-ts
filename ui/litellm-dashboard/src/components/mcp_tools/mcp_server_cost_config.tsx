@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React from "react";
 import { Tooltip, InputNumber, Collapse, Badge } from "antd";
 import { InfoCircleOutlined, DollarOutlined, ToolOutlined } from "@ant-design/icons";
@@ -17,6 +18,7 @@ const MCPServerCostConfig: React.FC<MCPServerCostConfigProps> = ({
 	tools = [],
 	disabled = false,
 }) => {
+	usePriceDisplay();
 	const handleDefaultCostChange = (defaultCost: number | null) => {
 		const updated = {
 			...value,
@@ -137,7 +139,7 @@ const MCPServerCostConfig: React.FC<MCPServerCostConfigProps> = ({
 						<div className="mt-2 space-y-1">
 							{value.default_cost_per_query && (
 								<Text className="text-blue-700">
-									• Default cost: ${value.default_cost_per_query.toFixed(4)} per query
+									• Default cost: {<Money value={value.default_cost_per_query} decimals={4} />} per query
 								</Text>
 							)}
 							{value.tool_name_to_cost_per_query &&
@@ -146,7 +148,7 @@ const MCPServerCostConfig: React.FC<MCPServerCostConfigProps> = ({
 										cost !== null &&
 										cost !== undefined && (
 											<Text key={toolName} className="text-blue-700">
-												• {toolName}: ${cost.toFixed(4)} per query
+												• {toolName}: {<Money value={cost} decimals={4} />} per query
 											</Text>
 										),
 								)}

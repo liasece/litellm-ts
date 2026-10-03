@@ -70,7 +70,7 @@ describe("CliProxySubscriptionQuota", () => {
 		expect(await screen.findByText("owner@example.com")).toBeInTheDocument();
 		expect(screen.getByText("Plus")).toBeInTheDocument();
 		expect(screen.getByText("73% remaining")).toBeInTheDocument();
-		expect(screen.getByText("7.50 USD remaining")).toBeInTheDocument();
+		expect(screen.getByText("$7.50 remaining")).toBeInTheDocument();
 	});
 
 	it("refreshes quota without reloading the account list", async () => {

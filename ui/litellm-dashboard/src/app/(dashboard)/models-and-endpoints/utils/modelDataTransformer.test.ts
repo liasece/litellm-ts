@@ -30,8 +30,8 @@ describe("transformModelData", () => {
 		const result = transformModelData(rawData, mockGetProviderFromModel);
 
 		expect(result.data[0]).toHaveProperty("provider", "openai");
-		expect(result.data[0]).toHaveProperty("input_cost", "1.50");
-		expect(result.data[0]).toHaveProperty("output_cost", "2.00");
+		expect(result.data[0]).toHaveProperty("input_cost", 1.5);
+		expect(result.data[0]).toHaveProperty("output_cost", 2);
 		expect(result.data[0]).toHaveProperty("max_tokens", 8192);
 		expect(result.data[0]).toHaveProperty("max_input_tokens", 128000);
 		expect(result.data[0]).toHaveProperty("api_base", "https://api.openai.com");
@@ -71,9 +71,9 @@ describe("transformModelData", () => {
 
 		const result = transformModelData(rawData, mockGetProviderFromModel);
 
-		// Zero costs should be converted to "0.00" per 1M tokens, not left as 0 or null
-		expect(result.data[0]).toHaveProperty("input_cost", "0.00");
-		expect(result.data[0]).toHaveProperty("output_cost", "0.00");
+		// 零价格与未配置区分，格式化和舍入留在显示层。
+		expect(result.data[0]).toHaveProperty("input_cost", 0);
+		expect(result.data[0]).toHaveProperty("output_cost", 0);
 	});
 
 	it("should handle null cost fields in model_info", () => {
@@ -114,11 +114,11 @@ describe("transformModelData", () => {
 
 		const result = transformModelData(rawData, mockGetProviderFromModel);
 
-		expect(result.data[0].cache_read_input_cost).toBe("0.25");
+		expect(result.data[0].cache_read_input_cost).toBe(0.25);
 		expect(rawData.data[0].model_info.cache_read_input_token_cost).toBe(0.00000025);
 	});
 
-	it("should retain zero cache read cost as 0.00 and missing cost as null", () => {
+	it("保留零缓存价格并区分未配置价格", () => {
 		const result = transformModelData(
 			{
 				data: [
@@ -129,7 +129,7 @@ describe("transformModelData", () => {
 			mockGetProviderFromModel,
 		);
 
-		expect(result.data[0].cache_read_input_cost).toBe("0.00");
+		expect(result.data[0].cache_read_input_cost).toBe(0);
 		expect(result.data[1].cache_read_input_cost).toBeNull();
 	});
 

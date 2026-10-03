@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React, { useState, useEffect } from "react";
 import {
 	Title,
@@ -46,6 +47,7 @@ interface PerUserUsageProps {
 }
 
 const PerUserUsage: React.FC<PerUserUsageProps> = ({ accessToken, selectedTags, formatAbbreviatedNumber }) => {
+	usePriceDisplay();
 	// Maximum number of user agent categories to show in charts to prevent color palette overflow
 	const MAX_USER_AGENTS = 8;
 	const [perUserData, setPerUserData] = useState<PerUserAnalyticsResponse>({
@@ -142,7 +144,7 @@ const PerUserUsage: React.FC<PerUserUsageProps> = ({ accessToken, selectedTags, 
 											<Text>{formatAbbreviatedNumber(item.failed_requests)}</Text>
 										</TableCell>
 										<TableCell className="text-right">
-											<Text>${formatAbbreviatedNumber(item.spend, 4)}</Text>
+											<Text>{<Money value={item.spend} decimals={4} />}</Text>
 										</TableCell>
 									</TableRow>
 								))}

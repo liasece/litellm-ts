@@ -1,6 +1,6 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import { Button, Icon, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, Text } from "@tremor/react";
 import { Tooltip } from "antd";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { PencilAltIcon, TrashIcon } from "@heroicons/react/outline";
 import React from "react";
 import { type KeyResponse, Team } from "@/components/key_team_helpers/key_list";
@@ -38,6 +38,7 @@ const TeamsTable = ({
 	setEditTeam,
 	onDeleteTeam,
 }: TeamsTableProps) => {
+	usePriceDisplay();
 	return (
 		<Table>
 			<TableHead>
@@ -45,8 +46,8 @@ const TeamsTable = ({
 					<TableHeaderCell>Team Name</TableHeaderCell>
 					<TableHeaderCell>Team ID</TableHeaderCell>
 					<TableHeaderCell>Created</TableHeaderCell>
-					<TableHeaderCell>Spend (USD)</TableHeaderCell>
-					<TableHeaderCell>Budget (USD)</TableHeaderCell>
+					<TableHeaderCell>Spend</TableHeaderCell>
+					<TableHeaderCell>Budget</TableHeaderCell>
 					<TableHeaderCell>Models</TableHeaderCell>
 					<TableHeaderCell>Organization</TableHeaderCell>
 					<TableHeaderCell>Your Role</TableHeaderCell>
@@ -106,7 +107,7 @@ const TeamsTable = ({
 											overflow: "hidden",
 										}}
 									>
-										{formatNumberWithCommas(team["spend"], 4)}
+										{<Money value={team["spend"]} decimals={4} />}
 									</TableCell>
 									<TableCell
 										style={{
@@ -115,7 +116,11 @@ const TeamsTable = ({
 											overflow: "hidden",
 										}}
 									>
-										{team["max_budget"] !== null && team["max_budget"] !== undefined ? team["max_budget"] : "No limit"}
+										{team["max_budget"] !== null && team["max_budget"] !== undefined ? (
+											<Money value={team["max_budget"]} />
+										) : (
+											"No limit"
+										)}
 									</TableCell>
 									<ModelsCell team={team} />
 									<TableCell>{team.organization_id}</TableCell>

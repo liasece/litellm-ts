@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { BarChart } from "@tremor/react";
 import { Segmented } from "antd";
 import { useState } from "react";
@@ -19,6 +21,7 @@ interface TopModelViewProps {
 }
 
 export default function TopModelView({ topModels, topModelsLimit, setTopModelsLimit }: TopModelViewProps) {
+	const formatMoney = useMoneyFormatter();
 	const [modelViewMode, setModelViewMode] = useState<"chart" | "table">("table");
 
 	const columns = [
@@ -28,11 +31,11 @@ export default function TopModelView({ topModels, topModelsLimit, setTopModelsLi
 			cell: (info: any) => info.getValue() || "-",
 		},
 		{
-			header: "Spend (USD)",
+			header: "Spend",
 			accessorKey: "spend",
 			cell: (info: any) => {
 				const value = info.getValue();
-				return `$${formatNumberWithCommas(value, 2)}`;
+				return <Money value={value} decimals={2} model={info.row.original.key} />;
 			},
 		},
 		{
@@ -90,7 +93,7 @@ export default function TopModelView({ topModels, topModelsLimit, setTopModelsLi
 						index="key"
 						categories={["spend"]}
 						colors={["cyan"]}
-						valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
+						valueFormatter={(value) => formatMoney(value, 2)}
 						layout="vertical"
 						yAxisWidth={200}
 						tickGap={5}

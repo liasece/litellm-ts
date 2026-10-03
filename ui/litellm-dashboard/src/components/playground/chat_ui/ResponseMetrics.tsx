@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React from "react";
 import { Tooltip } from "antd";
 import {
@@ -23,9 +24,17 @@ interface ResponseMetricsProps {
 	totalLatency?: number;
 	usage?: TokenUsage;
 	toolName?: string;
+	model?: string;
 }
 
-const ResponseMetrics: React.FC<ResponseMetricsProps> = ({ timeToFirstToken, totalLatency, usage, toolName }) => {
+const ResponseMetrics: React.FC<ResponseMetricsProps> = ({
+	timeToFirstToken,
+	totalLatency,
+	usage,
+	toolName,
+	model,
+}) => {
+	usePriceDisplay();
 	if (!timeToFirstToken && !totalLatency && !usage) return null;
 
 	return (
@@ -88,7 +97,7 @@ const ResponseMetrics: React.FC<ResponseMetricsProps> = ({ timeToFirstToken, tot
 				<Tooltip title="Cost">
 					<div className="flex items-center">
 						<DollarOutlined className="mr-1" />
-						<span>${usage.cost.toFixed(6)}</span>
+						<span>{<Money value={usage.cost} decimals={6} model={model} />}</span>
 					</div>
 				</Tooltip>
 			)}

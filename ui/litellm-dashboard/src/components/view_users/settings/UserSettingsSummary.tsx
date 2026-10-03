@@ -1,4 +1,4 @@
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { Button as AntdButton } from "antd";
 import { Text } from "@tremor/react";
@@ -21,6 +21,7 @@ function UserSetting({ label, children }: { label: string; children: React.React
 }
 
 export default function UserSettingsSummary({ user, userIdCopied, onCopyUserId }: UserSettingsSummaryProps) {
+	const formatMoney = useMoneyFormatter();
 	return (
 		<div className="space-y-4">
 			<UserSetting label="User ID">
@@ -69,9 +70,7 @@ export default function UserSettingsSummary({ user, userIdCopied, onCopyUserId }
 			</UserSetting>
 			<UserSetting label="Max Budget">
 				<Text>
-					{user.max_budget !== null && user.max_budget !== undefined
-						? `$${formatNumberWithCommas(user.max_budget, 4)}`
-						: "Unlimited"}
+					{user.max_budget !== null && user.max_budget !== undefined ? formatMoney(user.max_budget, 4) : "Unlimited"}
 				</Text>
 			</UserSetting>
 			<UserSetting label="Budget Reset">

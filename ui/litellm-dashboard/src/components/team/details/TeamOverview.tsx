@@ -1,4 +1,5 @@
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { Badge, Card, Grid, Text, Title } from "@tremor/react";
 import LoggingSettingsView from "../../logging_settings_view";
 import ObjectPermissionsView from "../../object_permissions_view";
@@ -33,6 +34,7 @@ function BadgeList({
 }
 
 export default function TeamOverview({ teamData, accessToken, policyGuardrails, loadingPolicies }: TeamOverviewProps) {
+	const formatMoney = useMoneyFormatter();
 	const info = teamData.team_info;
 
 	return (
@@ -40,12 +42,12 @@ export default function TeamOverview({ teamData, accessToken, policyGuardrails, 
 			<Card>
 				<Text>Budget Status</Text>
 				<div className="mt-2">
-					<Title>${formatNumberWithCommas(info.spend, 4)}</Title>
-					<Text>of {info.max_budget === null ? "Unlimited" : `$${formatNumberWithCommas(info.max_budget, 4)}`}</Text>
+					<Title>{<Money value={info.spend} decimals={4} />}</Title>
+					<Text>of {info.max_budget === null ? "Unlimited" : formatMoney(info.max_budget, 4)}</Text>
 					{info.budget_duration && <Text className="text-gray-500">Reset: {info.budget_duration}</Text>}
 					{info.team_member_budget_table && (
 						<Text className="mt-2 text-gray-500">
-							Team Member Budget: ${formatNumberWithCommas(info.team_member_budget_table.max_budget, 4)}
+							Team Member Budget: {<Money value={info.team_member_budget_table.max_budget} decimals={4} />}
 						</Text>
 					)}
 				</div>

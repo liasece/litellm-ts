@@ -1,5 +1,5 @@
 "use client";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import { ChevronDownIcon, ChevronUpIcon, SwitchVerticalIcon } from "@heroicons/react/outline";
 import {
 	ColumnDef,
@@ -22,6 +22,7 @@ interface DeletedTeamsTableProps {
 }
 
 export function DeletedTeamsTable({ teams, isLoading, isFetching }: DeletedTeamsTableProps) {
+	const formatMoney = useMoneyFormatter();
 	const [sorting, setSorting] = useState<SortingState>([
 		{
 			id: "deleted_at",
@@ -76,27 +77,25 @@ export function DeletedTeamsTable({ teams, isLoading, isFetching }: DeletedTeams
 		{
 			id: "spend",
 			accessorKey: "spend",
-			header: "Spend (USD)",
+			header: "Spend",
 			size: 100,
 			maxSize: 140,
 			cell: (info) => {
 				const spend = (info.row.original as any).spend as number | undefined;
-				return (
-					<span className="block max-w-[140px]">{spend !== undefined ? formatNumberWithCommas(spend, 4) : "-"}</span>
-				);
+				return <span className="block max-w-[140px]">{spend !== undefined ? formatMoney(spend, 4) : "-"}</span>;
 			},
 		},
 		{
 			id: "max_budget",
 			accessorKey: "max_budget",
-			header: "Budget (USD)",
+			header: "Budget",
 			size: 110,
 			maxSize: 150,
 			cell: (info) => {
 				const maxBudget = info.getValue() as number | null;
 				return (
 					<span className="block max-w-[150px]">
-						{maxBudget === null || maxBudget === undefined ? "No limit" : `$${formatNumberWithCommas(maxBudget)}`}
+						{maxBudget === null || maxBudget === undefined ? "No limit" : formatMoney(maxBudget, 4)}
 					</span>
 				);
 			},

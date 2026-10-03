@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { LoadingOutlined } from "@ant-design/icons";
 import { Card, Col, Empty, Flex, Progress, Row, Spin, Tag, Typography } from "antd";
 import { KeyIcon, UsersIcon } from "lucide-react";
@@ -11,6 +13,7 @@ interface ProjectResourcesSectionProps {
 }
 
 function ProjectTeamCard({ teamInfo, hasTeam }: ProjectResourcesSectionProps) {
+	const formatMoney = useMoneyFormatter();
 	if (!teamInfo) {
 		return hasTeam ? (
 			<Flex justify="center" align="center" style={{ padding: 16 }}>
@@ -60,9 +63,9 @@ function ProjectTeamCard({ teamInfo, hasTeam }: ProjectResourcesSectionProps) {
 						Spend
 					</Text>
 					<Text style={{ fontSize: 12 }}>
-						${teamSpend.toFixed(2)}
+						{<Money value={teamSpend} decimals={2} />}
 						<Text type="secondary" style={{ fontSize: 12 }}>
-							{hasLimit && teamBudget != null ? ` / $${teamBudget.toFixed(2)}` : " (Unlimited)"}
+							{hasLimit && teamBudget != null ? ` / ${formatMoney(teamBudget, 2)}` : " (Unlimited)"}
 						</Text>
 					</Text>
 				</Flex>

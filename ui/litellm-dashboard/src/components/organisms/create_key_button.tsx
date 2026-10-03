@@ -1,11 +1,11 @@
 "use client";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import { keyKeys } from "@/app/(dashboard)/hooks/keys/useKeys";
 import { useOrganizations } from "@/app/(dashboard)/hooks/organizations/useOrganizations";
 import { useProjects } from "@/app/(dashboard)/hooks/projects/useProjects";
 import { useTags } from "@/app/(dashboard)/hooks/tags/useTags";
 import { useUISettings } from "@/app/(dashboard)/hooks/uiSettings/useUISettings";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { Accordion, AccordionBody, AccordionHeader, Button, Col, Grid, Text, TextInput, Title } from "@tremor/react";
@@ -161,6 +161,7 @@ export const fetchUserModels = async (
  * ─────────────────────────────────────────────────────────────────────────
  */
 const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOpenCreate, prefillData }) => {
+	const formatMoney = useMoneyFormatter();
 	const { accessToken, userId: userID, userRole, premiumUser } = useAuthorized();
 	const canEditGuardrails = premiumUser || (userRole != null && rolesWithWriteAccess.includes(userRole));
 	const { data: organizations, isLoading: isOrganizationsLoading } = useOrganizations();
@@ -1068,14 +1069,12 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
 											</span>
 										}
 										name="max_budget"
-										help={`Budget cannot exceed team max budget: $${team?.max_budget !== null && team?.max_budget !== undefined ? team?.max_budget : "unlimited"}`}
+										help={`Budget cannot exceed team max budget: ${formatMoney(team?.max_budget !== null && team?.max_budget !== undefined ? team?.max_budget : "unlimited", 4)}`}
 										rules={[
 											{
 												validator: async (_, value) => {
 													if (value && team && team.max_budget !== null && value > team.max_budget) {
-														throw new Error(
-															`Budget cannot exceed team max budget: $${formatNumberWithCommas(team.max_budget, 4)}`,
-														);
+														throw new Error(`Budget cannot exceed team max budget: ${formatMoney(team.max_budget, 4)}`);
 													}
 												},
 											},

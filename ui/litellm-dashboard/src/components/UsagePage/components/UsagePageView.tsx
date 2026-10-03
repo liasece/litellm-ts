@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 /**
  * New Usage Page
  *
@@ -57,6 +58,7 @@ interface UsagePageProps {
 }
 
 const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
+	usePriceDisplay();
 	const { accessToken, userRole, userId: userID, premiumUser } = useAuthorized();
 	// Aggregated endpoint: try first, fall back to paginated if unavailable
 	const [aggregatedData, setAggregatedData] = useState<{ results: DailyData[]; metadata: any } | null>(null);
@@ -586,7 +588,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 													index="date"
 													categories={["metrics.spend"]}
 													colors={["cyan"]}
-													valueFormatter={valueFormatterSpend}
+													valueFormatter={(value) => valueFormatterSpend(value)}
 													yAxisWidth={100}
 													showLegend={false}
 													customTooltip={({ payload, active }) => {
@@ -595,7 +597,9 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
 														return (
 															<div className="bg-white p-4 shadow-lg rounded-lg border">
 																<p className="font-bold">{data.date}</p>
-																<p className="text-cyan-500">Spend: ${formatNumberWithCommas(data.metrics.spend, 2)}</p>
+																<p className="text-cyan-500">
+																	Spend: {<Money value={data.metrics.spend} decimals={2} />}
+																</p>
 																<p className="text-gray-600">Requests: {data.metrics.api_requests}</p>
 																<p className="text-gray-600">Successful: {data.metrics.successful_requests}</p>
 																<p className="text-gray-600">Failed: {data.metrics.failed_requests}</p>

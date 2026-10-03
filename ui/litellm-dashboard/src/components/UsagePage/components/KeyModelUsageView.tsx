@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { BarChart, Card, Title } from "@tremor/react";
 import { Table } from "antd";
@@ -23,10 +25,10 @@ const columns: ColumnsType<TopModelData> = [
 		render: (value) => value || "-",
 	},
 	{
-		title: "Spend (USD)",
+		title: "Spend",
 		dataIndex: "spend",
 		key: "spend",
-		render: (value) => `$${formatNumberWithCommas(value, 2)}`,
+		render: (value, record) => <Money value={value} decimals={2} model={record.model} />,
 	},
 	{
 		title: "Requests",
@@ -55,6 +57,7 @@ const columns: ColumnsType<TopModelData> = [
 ];
 
 const KeyModelUsageView: React.FC<KeyModelUsageViewProps> = ({ topModels }) => {
+	const formatMoney = useMoneyFormatter();
 	const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
 	const topModelsBySpend = [...topModels].sort((a, b) => b.spend - a.spend);
 	const topModelsByTokens = [...topModels].sort((a, b) => b.tokens - a.tokens);
@@ -93,7 +96,7 @@ const KeyModelUsageView: React.FC<KeyModelUsageViewProps> = ({ topModels }) => {
 								index="key"
 								categories={["spend"]}
 								colors={["cyan"]}
-								valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
+								valueFormatter={(value) => formatMoney(value, 2)}
 								layout="vertical"
 								yAxisWidth={180}
 								tickGap={5}

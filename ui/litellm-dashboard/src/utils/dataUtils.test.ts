@@ -112,7 +112,7 @@ describe("dataUtils", () => {
 
 		it("should return threshold string for very small values", () => {
 			expect(getSpendString(0.0000004, 6)).toBe("< $0.000001");
-			expect(getSpendString(-0.0000004, 6)).toBe("< $0.000001");
+			expect(getSpendString(-0.0000004, 6)).toBe("> -$0.000001");
 		});
 
 		it("should respect custom decimals", () => {

@@ -1,10 +1,10 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import MCPServerSelector from "@/components/mcp_server_management/MCPServerSelector";
 import { ModelSelect } from "@/components/ModelSelect/ModelSelect";
 import type { Organization } from "@/components/networking";
 import ObjectPermissionsView from "@/components/object_permissions_view";
 import NumericalInput from "@/components/shared/numerical_input";
 import VectorStoreSelector from "@/components/vector_store_management/VectorStoreSelector";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { Button, Card, Text, TextInput, Title } from "@tremor/react";
 import { Form, Input, Select, type FormInstance } from "antd";
 
@@ -46,6 +46,7 @@ export default function OrganizationSettings({
 	onCancel,
 	onSave,
 }: OrganizationSettingsProps) {
+	const formatMoney = useMoneyFormatter();
 	const budget = organization.litellm_budget_table;
 
 	return (
@@ -171,9 +172,7 @@ export default function OrganizationSettings({
 					</div>
 					<div>
 						<Text className="font-medium">Budget</Text>
-						<div>
-							Max: {budget.max_budget !== null ? `$${formatNumberWithCommas(budget.max_budget, 4)}` : "No Limit"}
-						</div>
+						<div>Max: {budget.max_budget !== null ? formatMoney(budget.max_budget, 4) : "No Limit"}</div>
 						<div>Reset: {budget.budget_duration || "Never"}</div>
 					</div>
 					<ObjectPermissionsView

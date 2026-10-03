@@ -1,4 +1,5 @@
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { Badge, Text } from "@tremor/react";
 import { Tooltip } from "antd";
@@ -22,6 +23,7 @@ function SettingValue({ label, children }: { label: string; children: ReactNode 
 }
 
 export default function TeamSettingsSummary({ info, accessToken }: TeamSettingsSummaryProps) {
+	const formatMoney = useMoneyFormatter();
 	return (
 		<div className="space-y-4">
 			<SettingValue label="Team Name">{info.team_alias}</SettingValue>
@@ -43,14 +45,10 @@ export default function TeamSettingsSummary({ info, accessToken }: TeamSettingsS
 				<div>RPM: {info.rpm_limit || "Unlimited"}</div>
 			</SettingValue>
 			<SettingValue label="Team Budget">
-				<div>
-					Max Budget: {info.max_budget !== null ? `$${formatNumberWithCommas(info.max_budget, 4)}` : "No Limit"}
-				</div>
+				<div>Max Budget: {info.max_budget !== null ? formatMoney(info.max_budget, 4) : "No Limit"}</div>
 				<div>
 					Soft Budget:{" "}
-					{info.soft_budget !== null && info.soft_budget !== undefined
-						? `$${formatNumberWithCommas(info.soft_budget, 4)}`
-						: "No Limit"}
+					{info.soft_budget !== null && info.soft_budget !== undefined ? formatMoney(info.soft_budget, 4) : "No Limit"}
 				</div>
 				<div>Budget Reset: {info.budget_duration || "Never"}</div>
 				{Array.isArray(info.metadata?.soft_budget_alerting_emails) &&
@@ -65,7 +63,14 @@ export default function TeamSettingsSummary({ info, accessToken }: TeamSettingsS
 						<InfoCircleOutlined style={{ marginLeft: 4 }} />
 					</Tooltip>
 				</Text>
-				<div>Max Budget: {info.team_member_budget_table?.max_budget || "No Limit"}</div>
+				<div>
+					Max Budget:{" "}
+					{info.team_member_budget_table?.max_budget == null ? (
+						"No Limit"
+					) : (
+						<Money value={info.team_member_budget_table.max_budget} />
+					)}
+				</div>
 				<div>Budget Duration: {info.team_member_budget_table?.budget_duration || "No Limit"}</div>
 				<div>Key Duration: {info.metadata?.team_member_key_duration || "No Limit"}</div>
 				<div>TPM Limit: {info.team_member_budget_table?.tpm_limit || "No Limit"}</div>

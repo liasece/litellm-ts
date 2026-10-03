@@ -1,3 +1,4 @@
+import { Money } from "@/contexts/PriceDisplay";
 /**
  * The parent pane, showing list of budgets
  *
@@ -154,7 +155,7 @@ const BudgetPanel: React.FC<BudgetSettingsPageProps> = ({ accessToken }) => {
 											.map((value: budgetItem, index: number) => (
 												<TableRow key={index}>
 													<TableCell>{value.budget_id}</TableCell>
-													<TableCell>{value.max_budget ? value.max_budget : "n/a"}</TableCell>
+													<TableCell>{value.max_budget != null ? <Money value={value.max_budget} /> : "n/a"}</TableCell>
 													<TableCell>{value.tpm_limit ? value.tpm_limit : "n/a"}</TableCell>
 													<TableCell>{value.rpm_limit ? value.rpm_limit : "n/a"}</TableCell>
 													<TableIconActionButton

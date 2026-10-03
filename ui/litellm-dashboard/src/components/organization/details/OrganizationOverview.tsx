@@ -1,5 +1,6 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import type { Organization } from "@/components/networking";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { Badge, Card, Grid, Text, Title } from "@tremor/react";
 import ObjectPermissionsView from "../../object_permissions_view";
 
@@ -10,6 +11,7 @@ interface OrganizationOverviewProps {
 }
 
 export default function OrganizationOverview({ organization, teamAliasMap, accessToken }: OrganizationOverviewProps) {
+	const formatMoney = useMoneyFormatter();
 	const budget = organization.litellm_budget_table;
 
 	return (
@@ -25,10 +27,8 @@ export default function OrganizationOverview({ organization, teamAliasMap, acces
 			<Card>
 				<Text>Budget Status</Text>
 				<div className="mt-2">
-					<Title>${formatNumberWithCommas(organization.spend, 4)}</Title>
-					<Text>
-						of {budget.max_budget === null ? "Unlimited" : `$${formatNumberWithCommas(budget.max_budget, 4)}`}
-					</Text>
+					<Title>{<Money value={organization.spend} decimals={4} />}</Title>
+					<Text>of {budget.max_budget === null ? "Unlimited" : formatMoney(budget.max_budget, 4)}</Text>
 					{budget.budget_duration && <Text className="text-gray-500">Reset: {budget.budget_duration}</Text>}
 				</div>
 			</Card>

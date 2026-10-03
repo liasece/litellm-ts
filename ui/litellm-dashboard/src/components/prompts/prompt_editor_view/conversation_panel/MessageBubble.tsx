@@ -95,6 +95,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
 					{message.role === "assistant" && (message.timeToFirstToken || message.totalLatency || message.usage) && (
 						<ResponseMetrics
+							model={message.model}
 							timeToFirstToken={message.timeToFirstToken}
 							totalLatency={message.totalLatency}
 							usage={message.usage}

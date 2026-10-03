@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import { Tag, Typography } from "antd";
 import { CloseOutlined, CopyOutlined, CheckOutlined } from "@ant-design/icons";
 import { useState, useCallback } from "react";
@@ -84,6 +85,7 @@ function MetadataRow({ label, value }: { label: string; value: React.ReactNode }
 }
 
 function DiffSection({ log }: { log: AuditLogEntry }) {
+	usePriceDisplay();
 	const { action, table_name, before_value, updated_values } = log;
 	const isKeyTable = table_name === "LiteLLM_VerificationToken";
 	const isUpdateAction = action === "updated" || action === "rotated";
@@ -155,12 +157,13 @@ function DiffSection({ log }: { log: AuditLogEntry }) {
 							)}
 							{value.spend !== undefined && (
 								<p>
-									<span className="text-gray-500">Spend:</span> ${Number(value.spend).toFixed(6)}
+									<span className="text-gray-500">Spend:</span> {<Money value={Number(value.spend)} decimals={6} />}
 								</p>
 							)}
 							{value.max_budget !== undefined && (
 								<p>
-									<span className="text-gray-500">Max Budget:</span> ${Number(value.max_budget).toFixed(6)}
+									<span className="text-gray-500">Max Budget:</span>{" "}
+									{<Money value={Number(value.max_budget)} decimals={6} />}
 								</p>
 							)}
 						</div>

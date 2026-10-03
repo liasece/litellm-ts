@@ -1,3 +1,4 @@
+import { usePriceDisplay } from "@/contexts/PriceDisplay";
 import { useState } from "react";
 import { Alert, Button, Empty, Spin, Tag } from "antd";
 import { SortAscendingOutlined, SortDescendingOutlined } from "@ant-design/icons";
@@ -377,15 +378,12 @@ export function TranscriptView({ content }: { content: string }) {
 	const entries = parseTranscriptEntries(content);
 	const firstEntry = entries[0];
 	const preview = firstEntry
-		? `${firstEntry.kind === "tool" ? (firstEntry.toolName ?? firstEntry.label) : firstEntry.label} · ${
+		? `${firstEntry.kind === "tool" ? firstEntry.toolName ?? firstEntry.label : firstEntry.label} · ${
 				firstEntry.content.replace(/\s+/g, " ").trim() || "（空内容）"
 			}`
 		: "（空转录）";
 	return (
-		<section
-			aria-label="会话转录"
-			className="overflow-hidden rounded-md border border-indigo-200 bg-indigo-50/50"
-		>
+		<section aria-label="会话转录" className="overflow-hidden rounded-md border border-indigo-200 bg-indigo-50/50">
 			<button
 				type="button"
 				aria-expanded={expanded}
@@ -441,7 +439,8 @@ export function ToolResultTimelineCard({ item }: { item: SessionTimelineItem }) 
 	const detail = formatToolResultDetail(result, item.content);
 	const preview = detail.replace(/\s+/g, " ").trim() || "（空输出）";
 	const isError =
-		result?.isError === true || ["error", "failed", "failure"].includes(String(result?.status ?? item.status ?? "").toLowerCase());
+		result?.isError === true ||
+		["error", "failed", "failure"].includes(String(result?.status ?? item.status ?? "").toLowerCase());
 	const statusLabel = isError ? "执行失败" : result?.status || "已返回";
 	const structuredParts = result?.parts?.length ? result.parts : undefined;
 
@@ -457,9 +456,7 @@ export function ToolResultTimelineCard({ item }: { item: SessionTimelineItem }) 
 				aria-expanded={expanded}
 				aria-label={`${expanded ? "收起" : "展开"}工具结果 ${toolName}`}
 				className={`flex w-full min-w-0 items-center gap-2.5 px-3.5 py-3 text-left focus-visible:outline-none focus-visible:ring-2 ${
-					isError
-						? "text-red-800 focus-visible:ring-red-400"
-						: "text-amber-900 focus-visible:ring-amber-400"
+					isError ? "text-red-800 focus-visible:ring-red-400" : "text-amber-900 focus-visible:ring-amber-400"
 				}`}
 				onClick={() => setExpanded((value) => !value)}
 			>
@@ -503,9 +500,7 @@ export function ToolResultTimelineCard({ item }: { item: SessionTimelineItem }) 
 						{result?.id ? <span className="max-w-[420px] truncate font-mono">{result.id}</span> : null}
 					</div>
 					{structuredParts ? (
-						<div
-							className={`rounded-md border bg-white/90 p-2.5 ${isError ? "border-red-100" : "border-amber-100"}`}
-						>
+						<div className={`rounded-md border bg-white/90 p-2.5 ${isError ? "border-red-100" : "border-amber-100"}`}>
 							<MessagePartsView parts={structuredParts} />
 						</div>
 					) : (
@@ -560,6 +555,7 @@ export function SessionSimulationDrawer({
 	teamId,
 	accessToken,
 }: SessionSimulationDrawerProps) {
+	usePriceDisplay();
 	const [newestFirst, setNewestFirst] = useState(true);
 	const {
 		data: timelineResponse,
@@ -642,7 +638,8 @@ export function SessionSimulationDrawer({
 								<strong className="font-semibold text-slate-900">{summary?.request_count ?? 0}</strong> 请求
 							</span>
 							<span>
-								<strong className="font-semibold text-slate-900">{summary?.event_count ?? timeline.length}</strong> 时间线事件
+								<strong className="font-semibold text-slate-900">{summary?.event_count ?? timeline.length}</strong>{" "}
+								时间线事件
 							</span>
 							<span>
 								<strong className="font-semibold text-slate-900">
@@ -654,9 +651,7 @@ export function SessionSimulationDrawer({
 								<strong className="font-semibold text-slate-900">{getSpendString(summary?.total_spend ?? 0)}</strong>
 							</span>
 							<span>
-								<strong className="font-semibold text-slate-900">
-									{(summary?.duration_seconds ?? 0).toFixed(2)}s
-								</strong>
+								<strong className="font-semibold text-slate-900">{(summary?.duration_seconds ?? 0).toFixed(2)}s</strong>
 							</span>
 						</div>
 						<Button

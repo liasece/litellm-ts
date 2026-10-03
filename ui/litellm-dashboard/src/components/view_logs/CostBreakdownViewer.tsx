@@ -1,6 +1,6 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import React from "react";
 import { Collapse } from "antd";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 
 export interface CostBreakdown {
 	cache_input_cost?: number;
@@ -23,12 +23,8 @@ interface CostBreakdownViewerProps {
 	promptTokens?: number;
 	completionTokens?: number;
 	cacheHit?: string;
+	model?: import("@/utils/priceDisplay").ModelPriceIdentity;
 }
-
-const formatCost = (cost: number | undefined): string => {
-	if (cost === undefined || cost === null) return "-";
-	return `$${formatNumberWithCommas(cost, 8)}`;
-};
 
 const formatPercent = (percent: number | undefined): string => {
 	if (percent === undefined || percent === null) return "-";
@@ -41,7 +37,10 @@ export const CostBreakdownViewer: React.FC<CostBreakdownViewerProps> = ({
 	promptTokens,
 	completionTokens,
 	cacheHit,
+	model,
 }) => {
+	const formatMoney = useMoneyFormatter();
+	const formatCost = (cost: number | undefined) => formatMoney(cost, 8, model);
 	const isCached = cacheHit?.toLowerCase() === "true";
 	const hasTokenCounts = promptTokens !== undefined || completionTokens !== undefined;
 

@@ -1,7 +1,8 @@
 "use client";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import React, { useEffect, useState } from "react";
 import { modelAvailableCall } from "./networking";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 
 // Define the props type
@@ -16,11 +17,10 @@ interface ViewUserSpendProps {
 	selectedTeam: any | null;
 }
 const ViewUserSpend: React.FC<ViewUserSpendProps> = ({ userSpend, userMaxBudget, selectedTeam }) => {
+	const formatMoney = useMoneyFormatter();
 	const { accessToken, userRole, userId: userID } = useAuthorized();
 	let [spend, setSpend] = useState(userSpend !== null ? userSpend : 0.0);
-	const [maxBudget, setMaxBudget] = useState(
-		selectedTeam ? Number(formatNumberWithCommas(selectedTeam.max_budget, 4)) : null,
-	);
+	const [maxBudget, setMaxBudget] = useState(selectedTeam ? Number(selectedTeam.max_budget) : null);
 	useEffect(() => {
 		if (selectedTeam) {
 			if (selectedTeam.team_alias === "Default Team") {
@@ -114,9 +114,7 @@ const ViewUserSpend: React.FC<ViewUserSpendProps> = ({ userSpend, userMaxBudget,
 		modelsToDisplay = userModels;
 	}
 
-	const displayMaxBudget = maxBudget !== null ? `$${formatNumberWithCommas(Number(maxBudget), 4)} limit` : "No limit";
-
-	const roundedSpend = spend !== undefined ? formatNumberWithCommas(spend, 4) : null;
+	const displayMaxBudget = maxBudget !== null ? `${formatMoney(Number(maxBudget), 4)} limit` : "No limit";
 
 	console.log(`spend in view user spend: ${spend}`);
 	return (
@@ -125,7 +123,7 @@ const ViewUserSpend: React.FC<ViewUserSpendProps> = ({ userSpend, userMaxBudget,
 				<div>
 					<p className="text-tremor-default text-tremor-content dark:text-dark-tremor-content">Total Spend</p>
 					<p className="text-2xl text-tremor-content-strong dark:text-dark-tremor-content-strong font-semibold">
-						${roundedSpend}
+						{<Money value={spend} decimals={4} />}
 					</p>
 				</div>
 				<div>

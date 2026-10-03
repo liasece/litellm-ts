@@ -1,3 +1,6 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
+import { formatMoney } from "@/contexts/PriceDisplay";
 import {
 	BarChart,
 	BarList,
@@ -95,10 +98,7 @@ const customTooltip = (props: CustomTooltipTypeBar) => {
 						<p className="text-tremor-content text-xs">
 							{key}
 							{":"}
-							<span className="text-xs text-tremor-content-emphasis">
-								{" "}
-								{value ? `$${formatNumberWithCommas(value, 2)}` : ""}
-							</span>
+							<span className="text-xs text-tremor-content-emphasis"> {value ? formatMoney(value, 2) : ""}</span>
 						</p>
 					</div>
 				</div>
@@ -133,6 +133,7 @@ const isAdminOrAdminViewer = (role: string | null): boolean => {
 };
 
 const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, userID, keys, premiumUser }) => {
+	const formatMoney = useMoneyFormatter();
 	const currentDate = new Date();
 	const [keySpendData, setKeySpendData] = useState<any[]>([]);
 	const [topKeys, setTopKeys] = useState<any[]>([]);
@@ -379,7 +380,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 					key: k["api_key"].substring(0, 10),
 					api_key: k["api_key"],
 					key_alias: k["key_alias"],
-					spend: Number(k["total_spend"].toFixed(2)),
+					spend: Number(k["total_spend"]),
 				}));
 			},
 			setTopKeys,
@@ -394,7 +395,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 				const top_models = await adminTopModelsCall(accessToken);
 				return top_models.map((k: any) => ({
 					key: k["model"],
-					spend: formatNumberWithCommas(k["total_spend"], 2),
+					spend: Number(k["total_spend"]),
 				}));
 			},
 			setTopModels,
@@ -421,7 +422,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 				setUniqueTeamIds(teamSpend.teams);
 				return teamSpend.total_spend_per_team.map((tspt: any) => ({
 					name: tspt["team_id"] || "",
-					value: formatNumberWithCommas(tspt["total_spend"] || 0, 2),
+					value: Number(tspt["total_spend"] || 0),
 				}));
 			},
 			setTotalSpendPerTeam,
@@ -647,7 +648,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 													layout="vertical"
 													showXAxis={false}
 													showLegend={false}
-													valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
+													valueFormatter={(value: number) => formatMoney(value, 2)}
 												/>
 											</Card>
 										</Col>
@@ -665,7 +666,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 																index="provider"
 																category="spend"
 																colors={["cyan"]}
-																valueFormatter={(value) => `$${formatNumberWithCommas(value, 2)}`}
+																valueFormatter={(value: number) => formatMoney(value, 2)}
 															/>
 														</Col>
 														<Col numColSpan={1}>
@@ -680,11 +681,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 																	{spendByProvider.map((provider) => (
 																		<TableRow key={provider.provider}>
 																			<TableCell>{provider.provider}</TableCell>
-																			<TableCell>
-																				{parseFloat(provider.spend.toFixed(2)) < 0.00001
-																					? "less than 0.00"
-																					: formatNumberWithCommas(provider.spend, 2)}
-																			</TableCell>
+																			<TableCell>{formatMoney(provider.spend, 2)}</TableCell>
 																		</TableRow>
 																	))}
 																</TableBody>
@@ -779,7 +776,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 							<Col numColSpan={2}>
 								<Card className="mb-2">
 									<Title>Total Spend Per Team</Title>
-									<BarList data={totalSpendPerTeam} />
+									<BarList data={totalSpendPerTeam} valueFormatter={(value: number) => formatMoney(value, 2)} />
 								</Card>
 								<Card>
 									<Title>Daily Spend Per Team</Title>
@@ -789,6 +786,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 										showLegend={true}
 										index="date"
 										categories={uniqueTeamIds}
+										valueFormatter={(value: number) => formatMoney(value, 2)}
 										yAxisWidth={80}
 										stack={true}
 									/>
@@ -860,7 +858,7 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 									{topUsers?.map((user: any, index: number) => (
 										<TableRow key={index}>
 											<TableCell>{user.end_user}</TableCell>
-											<TableCell>{formatNumberWithCommas(user.total_spend, 2)}</TableCell>
+											<TableCell>{<Money value={user.total_spend} decimals={2} />}</TableCell>
 											<TableCell>{user.total_count}</TableCell>
 										</TableRow>
 									))}

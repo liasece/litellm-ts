@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React, { useState, useEffect } from "react";
 import {
 	Card,
@@ -63,6 +64,7 @@ interface UserAgentActivityProps {
 }
 
 const UserAgentActivity: React.FC<UserAgentActivityProps> = ({ accessToken, userRole, dateValue, onDateChange }) => {
+	usePriceDisplay();
 	// Maximum number of categories to show in charts to prevent color palette overflow
 	const MAX_CATEGORIES = 10;
 
@@ -435,7 +437,7 @@ const UserAgentActivity: React.FC<UserAgentActivityProps> = ({ accessToken, user
 											</div>
 											<div>
 												<Text className="text-sm text-gray-600">Total Cost</Text>
-												<Metric className="text-lg">${formatAbbreviatedNumber(tag.total_spend, 4)}</Metric>
+												<Metric className="text-lg">{<Money value={tag.total_spend} decimals={4} />}</Metric>
 											</div>
 										</div>
 									</Card>

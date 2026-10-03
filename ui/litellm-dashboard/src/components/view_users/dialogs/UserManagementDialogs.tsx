@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import type { UserInfoV2Response } from "../../networking";
 import type { Dispatch, SetStateAction } from "react";
 import DeleteResourceModal from "../../common_components/DeleteResourceModal";
@@ -35,6 +36,7 @@ interface UserManagementDialogsProps {
 }
 
 export default function UserManagementDialogs(props: UserManagementDialogsProps) {
+	const formatMoney = useMoneyFormatter();
 	return (
 		<>
 			<OnboardingModal
@@ -61,9 +63,11 @@ export default function UserManagementDialogs(props: UserManagementDialogsProps)
 							"-",
 					},
 					{
-						label: "Total Spend (USD)",
+						label: "Total Spend",
 						value:
-							props.user.spend !== null && props.user.spend !== undefined ? props.user.spend.toFixed(2) : undefined,
+							props.user.spend !== null && props.user.spend !== undefined
+								? formatMoney(props.user.spend, 2)
+								: undefined,
 					},
 				]}
 				onCancel={props.onDeleteUserCancel}

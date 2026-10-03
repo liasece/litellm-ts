@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import React, { useState } from "react";
 import { Modal, Typography, Divider, Table, Select, InputNumber, Card, Space, Checkbox } from "antd";
 import { userBulkUpdateUserCall, teamBulkMemberAddCall, Member } from "./networking";
@@ -32,6 +33,7 @@ const BulkEditUserModal: React.FC<BulkEditUserModalProps> = ({
 	userModels,
 	allowAllUsers = false,
 }) => {
+	const formatMoney = useMoneyFormatter();
 	const [loading, setLoading] = useState(false);
 	const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
 	const [teamBudget, setTeamBudget] = useState<number | null>(null);
@@ -273,7 +275,7 @@ const BulkEditUserModal: React.FC<BulkEditUserModalProps> = ({
 								key: "max_budget",
 								width: "20%",
 								render: (budget: number | null) => (
-									<Text style={{ fontSize: "12px" }}>{budget !== null ? `$${budget}` : "Unlimited"}</Text>
+									<Text style={{ fontSize: "12px" }}>{budget !== null ? formatMoney(budget, 4) : "Unlimited"}</Text>
 								),
 							},
 						]}

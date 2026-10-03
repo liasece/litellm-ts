@@ -142,6 +142,7 @@ export function MessageDisplay({ messages, isLoading }: MessageDisplayProps) {
 								{renderMessageBody(assistantMessage)}
 								{(assistantMessage.timeToFirstToken || assistantMessage.totalLatency || assistantMessage.usage) && (
 									<ResponseMetrics
+										model={assistantMessage.model}
 										timeToFirstToken={assistantMessage.timeToFirstToken}
 										totalLatency={assistantMessage.totalLatency}
 										usage={assistantMessage.usage}

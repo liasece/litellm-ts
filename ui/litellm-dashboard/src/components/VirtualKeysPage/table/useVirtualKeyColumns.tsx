@@ -1,5 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import type { Organization } from "@/components/networking";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { Button } from "@tremor/react";
@@ -28,6 +28,7 @@ export default function useVirtualKeyColumns({
 	canModifyKey,
 	updatingToken,
 }: UseVirtualKeyColumnsOptions): ColumnDef<KeyResponse>[] {
+	const formatMoney = useMoneyFormatter();
 	return useMemo<ColumnDef<KeyResponse>[]>(
 		() => [
 			...(scope === "global"
@@ -269,20 +270,20 @@ export default function useVirtualKeyColumns({
 			{
 				id: "spend",
 				accessorKey: "spend",
-				header: "Spend (USD)",
+				header: "Spend",
 				size: 100,
 				enableSorting: true,
-				cell: (info) => formatNumberWithCommas(info.getValue<number>(), 4),
+				cell: (info) => formatMoney(info.getValue<number>(), 4),
 			},
 			{
 				id: "max_budget",
 				accessorKey: "max_budget",
-				header: "Budget (USD)",
+				header: "Budget",
 				size: 110,
 				enableSorting: true,
 				cell: (info) => {
 					const budget = info.getValue<number | null>();
-					return budget === null ? "Unlimited" : `$${formatNumberWithCommas(budget)}`;
+					return budget === null ? "Unlimited" : formatMoney(budget, 4);
 				},
 			},
 			{
@@ -317,6 +318,6 @@ export default function useVirtualKeyColumns({
 				),
 			},
 		],
-		[onSelect, organizations, scope, teams, onToggleEnabled, canModifyKey, updatingToken],
+		[formatMoney, onSelect, organizations, scope, teams, onToggleEnabled, canModifyKey, updatingToken],
 	);
 }

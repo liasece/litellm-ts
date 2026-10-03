@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { BarChart } from "@tremor/react";
 import { Card, Col, Empty, Flex, Progress, Row, Typography } from "antd";
 import { DollarSignIcon } from "lucide-react";
@@ -11,6 +13,7 @@ interface ProjectSpendSectionProps {
 }
 
 export default function ProjectSpendSection({ spend, maxBudget, modelSpendData }: ProjectSpendSectionProps) {
+	const formatMoney = useMoneyFormatter();
 	const hasLimit = maxBudget != null && maxBudget > 0;
 	const spendPercent = hasLimit ? Math.min((spend / maxBudget) * 100, 100) : 0;
 	const spendColor = spendPercent >= 90 ? "#f5222d" : spendPercent >= 70 ? "#faad14" : "#52c41a";
@@ -30,11 +33,11 @@ export default function ProjectSpendSection({ spend, maxBudget, modelSpendData }
 					<Flex vertical gap={16}>
 						<div>
 							<Text strong style={{ fontSize: 28, lineHeight: 1 }}>
-								${spend.toFixed(2)}
+								{<Money value={spend} decimals={2} />}
 							</Text>
 							<br />
 							<Text type="secondary">
-								{hasLimit && maxBudget != null ? `of $${maxBudget.toFixed(2)} budget` : "No budget limit"}
+								{hasLimit && maxBudget != null ? `of ${formatMoney(maxBudget, 2)} budget` : "No budget limit"}
 							</Text>
 						</div>
 						{hasLimit && (
@@ -57,7 +60,7 @@ export default function ProjectSpendSection({ spend, maxBudget, modelSpendData }
 							categories={["spend"]}
 							colors={["cyan"]}
 							layout="vertical"
-							valueFormatter={(value) => `$${value.toFixed(4)}`}
+							valueFormatter={(value) => formatMoney(value, 4)}
 							yAxisWidth={140}
 							showLegend={false}
 							style={{ height: Math.max(modelSpendData.length * 40, 120) }}

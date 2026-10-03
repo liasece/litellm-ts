@@ -1,3 +1,4 @@
+import { Money } from "@/contexts/PriceDisplay";
 import ProviderLogo from "@/components/common_components/ProviderLogo";
 import { getModelLogoAndName } from "@/components/provider_info_helpers";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -7,8 +8,8 @@ import { Copy } from "lucide-react";
 import { formatCapabilityName } from "./filters";
 import type { PublicAgentCard, PublicMcpServer, PublicModelInfo } from "./types";
 
-function formatCost(cost: number) {
-	return `$${(cost * 1_000_000).toFixed(4)}`;
+function formatCost(cost: number, model?: import("@/utils/priceDisplay").ModelPriceIdentity) {
+	return <Money value={cost * 1_000_000} decimals={4} model={model} />;
 }
 
 function formatTokens(tokens?: number) {
@@ -153,7 +154,9 @@ export function getPublicModelColumns(onSelect: (model: PublicModelInfo) => void
 			enableSorting: true,
 			cell: ({ row }) => (
 				<Text className="text-center">
-					{row.original.input_cost_per_token ? formatCost(row.original.input_cost_per_token) : "Free"}
+					{row.original.input_cost_per_token != null
+						? formatCost(row.original.input_cost_per_token, row.original)
+						: "Free"}
 				</Text>
 			),
 			size: 100,
@@ -165,7 +168,9 @@ export function getPublicModelColumns(onSelect: (model: PublicModelInfo) => void
 			enableSorting: true,
 			cell: ({ row }) => (
 				<Text className="text-center">
-					{row.original.output_cost_per_token ? formatCost(row.original.output_cost_per_token) : "Free"}
+					{row.original.output_cost_per_token != null
+						? formatCost(row.original.output_cost_per_token, row.original)
+						: "Free"}
 				</Text>
 			),
 			size: 100,

@@ -1,8 +1,10 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React, { useState, useMemo } from "react";
 import { Text, TextInput } from "@tremor/react";
 import CodeBlock from "@/app/(dashboard)/api-reference/components/CodeBlock";
 
 const HowItWorks: React.FC = () => {
+	usePriceDisplay();
 	const [responseCost, setResponseCost] = useState("");
 	const [discountAmount, setDiscountAmount] = useState("");
 
@@ -121,15 +123,21 @@ const HowItWorks: React.FC = () => {
 						<div className="space-y-2">
 							<div className="flex items-center justify-between">
 								<Text className="text-xs text-blue-800">Original Cost:</Text>
-								<code className="text-xs font-mono text-blue-900">${calculatedDiscount.originalCost}</code>
+								<code className="text-xs font-mono text-blue-900">
+									{<Money value={calculatedDiscount.originalCost} decimals={4} />}
+								</code>
 							</div>
 							<div className="flex items-center justify-between">
 								<Text className="text-xs text-blue-800">Final Cost:</Text>
-								<code className="text-xs font-mono text-blue-900">${calculatedDiscount.finalCost}</code>
+								<code className="text-xs font-mono text-blue-900">
+									{<Money value={calculatedDiscount.finalCost} decimals={4} />}
+								</code>
 							</div>
 							<div className="flex items-center justify-between">
 								<Text className="text-xs text-blue-800">Discount Amount:</Text>
-								<code className="text-xs font-mono text-blue-900">${calculatedDiscount.discountAmount}</code>
+								<code className="text-xs font-mono text-blue-900">
+									{<Money value={calculatedDiscount.discountAmount} decimals={4} />}
+								</code>
 							</div>
 							<div className="flex items-center justify-between pt-2 border-t border-blue-300">
 								<Text className="text-xs font-semibold text-blue-900">Discount Applied:</Text>

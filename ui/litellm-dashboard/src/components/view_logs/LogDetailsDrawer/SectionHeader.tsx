@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 /**
  * SectionHeader - Datadog-style header with icon, label, metrics, and copy
  */
@@ -27,6 +28,7 @@ export function SectionHeader({
 	onToggleCollapse,
 	turnCount,
 }: SectionHeaderProps) {
+	usePriceDisplay();
 	return (
 		<div
 			onClick={onToggleCollapse}
@@ -81,7 +83,7 @@ export function SectionHeader({
 				{/* Cost */}
 				{cost !== undefined && (
 					<Text type="secondary" style={{ fontSize: 12 }}>
-						Cost: ${cost.toFixed(6)}
+						Cost: {<Money value={cost} decimals={6} />}
 					</Text>
 				)}
 

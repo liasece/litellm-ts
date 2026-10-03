@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import React, { useState } from "react";
 import { TextInput, Icon, Text } from "@tremor/react";
 import { TrashIcon, PencilAltIcon, CheckIcon, XIcon } from "@heroicons/react/outline";
@@ -21,6 +22,7 @@ const ProviderMarginTable: React.FC<ProviderMarginTableProps> = ({
 	onMarginChange,
 	onRemoveProvider,
 }) => {
+	const formatMoney = useMoneyFormatter();
 	const [editingProvider, setEditingProvider] = useState<string | null>(null);
 	const [editPercentage, setEditPercentage] = useState<string>("");
 	const [editFixedAmount, setEditFixedAmount] = useState<string>("");
@@ -85,7 +87,7 @@ const ProviderMarginTable: React.FC<ProviderMarginTableProps> = ({
 			parts.push(`${(margin.percentage * 100).toFixed(1)}%`);
 		}
 		if (margin.fixed_amount !== undefined) {
-			parts.push(`$${margin.fixed_amount.toFixed(6)}`);
+			parts.push(formatMoney(margin.fixed_amount, 6));
 		}
 		return parts.join(" + ") || "0%";
 	};

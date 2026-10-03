@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import BulkEditUserModal from "../../BulkEditUsers";
 import DeleteResourceModal from "../../common_components/DeleteResourceModal";
 import EditUserModal from "../../edit_user";
@@ -32,6 +33,7 @@ interface UserListDialogsProps {
 }
 
 export default function UserListDialogs(props: UserListDialogsProps) {
+	const formatMoney = useMoneyFormatter();
 	return (
 		<>
 			<EditUserModal
@@ -56,7 +58,7 @@ export default function UserListDialogs(props: UserListDialogsProps) {
 							props.userToDelete?.user_role ||
 							"-",
 					},
-					{ label: "Total Spend (USD)", value: props.userToDelete?.spend?.toFixed(2) },
+					{ label: "Total Spend", value: formatMoney(props.userToDelete?.spend, 2) },
 				]}
 				onCancel={props.onDeleteCancel}
 				onOk={props.onDeleteConfirm}

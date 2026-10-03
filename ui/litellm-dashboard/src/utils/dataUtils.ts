@@ -1,3 +1,4 @@
+import { formatMoney } from "@/contexts/PriceDisplay";
 import NotificationsManager from "@/components/molecules/notifications_manager";
 
 export function updateExistingKeys<Source extends object>(target: Source, source: object): Source {
@@ -47,20 +48,13 @@ export const formatNumberWithCommas = (
 	return `${sign}${scaled.toLocaleString("en-US", opts)}${suffix}`;
 };
 
-export const getSpendString = (value: number | null | undefined, decimals: number = 6): string => {
-	if (value === null || value === undefined || !Number.isFinite(value) || value === 0) {
-		return "-";
-	}
-
-	const formatted = formatNumberWithCommas(value, decimals, false, false);
-	const numericFormatted = Number(formatted.replace(/,/g, ""));
-
-	if (numericFormatted === 0) {
-		const threshold = (1 / 10 ** decimals).toFixed(decimals);
-		return `< $${threshold}`;
-	}
-
-	return `$${formatted}`;
+export const getSpendString = (
+	value: number | null | undefined,
+	decimals = 6,
+	model?: import("./priceDisplay").ModelPriceIdentity,
+): string => {
+	if (value == null || !Number.isFinite(value) || value === 0) return "-";
+	return formatMoney(value, decimals, model);
 };
 
 export const copyToClipboard = async (

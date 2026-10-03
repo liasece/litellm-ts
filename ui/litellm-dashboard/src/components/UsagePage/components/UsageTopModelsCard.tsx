@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import { Card, Title } from "@tremor/react";
 import { DatabaseOutlined } from "@ant-design/icons";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
@@ -38,6 +39,7 @@ export default function UsageTopModelsCard({
 	loading,
 	isDateChanging,
 }: UsageTopModelsCardProps) {
+	usePriceDisplay();
 	const modelData = viewType === "groups" ? groupModels : individualModels;
 
 	return (
@@ -73,7 +75,7 @@ export default function UsageTopModelsCard({
 						valueKey="spend"
 						yAxisWidth={160}
 						height={40}
-						valueFormatter={valueFormatterSpend}
+						valueFormatter={(value) => valueFormatterSpend(value)}
 						renderBarAnnotation={(data) => {
 							const cacheHitRate = calculateInputCacheHitRate(data.cache_read_input_tokens, data.prompt_tokens);
 							return (
@@ -90,7 +92,7 @@ export default function UsageTopModelsCard({
 							data && (
 								<div className="rounded-lg border bg-white p-3 text-xs shadow-lg">
 									<p className="font-bold">{data.key}</p>
-									<p className="text-cyan-500">Spend: ${formatNumberWithCommas(data.spend, 2)}</p>
+									<p className="text-cyan-500">Spend: {<Money value={data.spend} decimals={2} model={data.key} />}</p>
 									<p className="text-gray-600">Total Requests: {data.requests.toLocaleString()}</p>
 									<p className="text-green-600">Successful: {data.successful_requests.toLocaleString()}</p>
 									<p className="text-red-600">Failed: {data.failed_requests.toLocaleString()}</p>

@@ -62,17 +62,15 @@ export const transformModelData = (rawModelData: any, getProviderFromModel: (mod
 
 		// Convert Cost in terms of Cost per 1M tokens
 		if (transformedData[i].input_cost != null) {
-			transformedData[i].input_cost = (Number(transformedData[i].input_cost) * 1000000).toFixed(2);
+			transformedData[i].input_cost = Number(transformedData[i].input_cost) * 1000000;
 		}
 
 		if (transformedData[i].output_cost != null) {
-			transformedData[i].output_cost = (Number(transformedData[i].output_cost) * 1000000).toFixed(2);
+			transformedData[i].output_cost = Number(transformedData[i].output_cost) * 1000000;
 		}
 
 		if (transformedData[i].cache_read_input_cost != null) {
-			transformedData[i].cache_read_input_cost = (Number(transformedData[i].cache_read_input_cost) * 1000000).toFixed(
-				2,
-			);
+			transformedData[i].cache_read_input_cost = Number(transformedData[i].cache_read_input_cost) * 1000000;
 		}
 
 		transformedData[i].max_tokens = max_tokens;

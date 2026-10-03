@@ -1,3 +1,5 @@
+import { ModelPriceScope } from "@/contexts/PriceDisplay";
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import { useState } from "react";
 import { Typography, Descriptions, Card, Tag, Tabs, Alert, Collapse, Radio, Space, Spin, Button } from "antd";
 import moment from "moment";
@@ -149,130 +151,133 @@ export function LogDetailContent({
 	};
 
 	return (
-		<div style={{ padding: `${DRAWER_CONTENT_PADDING} ${DRAWER_CONTENT_PADDING} 0` }}>
-			{/* Error Alert */}
-			{hasError && errorInfo && (
-				<Alert
-					type="error"
-					showIcon
-					message="Request Failed"
-					description={<ErrorDescription errorInfo={errorInfo} />}
-					className="mb-6"
-				/>
-			)}
-
-			{/* Tags */}
-			{logEntry.request_tags && Object.keys(logEntry.request_tags).length > 0 && (
-				<TagsSection tags={logEntry.request_tags} />
-			)}
-
-			{/* Request Details */}
-			<div className="bg-white rounded-lg shadow w-full max-w-full overflow-hidden mb-6">
-				<Card title="Request Details" size="small" bordered={false} style={{ marginBottom: 0 }}>
-					<Descriptions column={2} size="small">
-						<Descriptions.Item label="Model">{logEntry.model}</Descriptions.Item>
-						<Descriptions.Item label="Provider">{logEntry.custom_llm_provider || "-"}</Descriptions.Item>
-						{logEntry.metadata?.internal_call_type === "builtin_capability" ? (
-							<>
-								<Descriptions.Item label="Built-in Capability">
-									<Tag color="purple">{String(logEntry.metadata?.builtin_capability || "unknown")}</Tag>
-								</Descriptions.Item>
-								<Descriptions.Item label="Parent Request">
-									<TruncatedValue value={logEntry.metadata?.parent_request_id} />
-								</Descriptions.Item>
-							</>
-						) : null}
-						<Descriptions.Item label="Call Type">{logEntry.call_type}</Descriptions.Item>
-						<Descriptions.Item label="Model ID">
-							<TruncatedValue value={logEntry.model_id} />
-						</Descriptions.Item>
-						<Descriptions.Item label="API Base">
-							<TruncatedValue value={logEntry.api_base} maxWidth={API_BASE_MAX_WIDTH} />
-						</Descriptions.Item>
-						{logEntry.requester_ip_address && (
-							<Descriptions.Item label="IP Address">{logEntry.requester_ip_address}</Descriptions.Item>
-						)}
-						{hasGuardrailData && (
-							<Descriptions.Item label="Guardrail">
-								<GuardrailLabel label={primaryGuardrailLabel} maskedCount={totalMaskedEntities} />
-							</Descriptions.Item>
-						)}
-					</Descriptions>
-				</Card>
-			</div>
-
-			<RoutingSection logEntry={logEntry} modelResolutionChain={modelResolutionChain} />
-
-			{/* Metrics */}
-			<MetricsSection logEntry={logEntry} metadata={metadata} />
-
-			{/* Cost Breakdown */}
-			<CostBreakdownViewer
-				costBreakdown={metadata?.cost_breakdown}
-				totalSpend={logEntry.spend ?? 0}
-				promptTokens={logEntry.prompt_tokens}
-				completionTokens={logEntry.completion_tokens}
-				cacheHit={logEntry.cache_hit}
-			/>
-
-			{/* Tools */}
-			<ToolsSection log={logEntry} />
-
-			{/* Configuration Info Message */}
-			{missingData && (
-				<div className="mb-6">
-					<ConfigInfoMessage show={missingData} onOpenSettings={onOpenSettings} />
-				</div>
-			)}
-
-			{/* Request/Response JSON */}
-			{isLoadingDetails ? (
-				<div className="bg-white rounded-lg shadow w-full max-w-full overflow-hidden mb-6 p-8 text-center">
-					<Spin size="default" />
-					<div style={{ marginTop: 8, color: "#999" }}>Loading request &amp; response data...</div>
-				</div>
-			) : (
-				<RequestResponseSection
-					hasResponse={hasResponse}
-					hasError={hasError}
-					getRawRequest={getRawRequest}
-					getRecordedDownstreamRequest={getRecordedDownstreamRequest}
-					getFormattedResponse={getFormattedResponse}
-					upstreamRequest={upstreamRequest}
-					upstreamResponse={upstreamResponse}
-					onOpenSettings={onOpenSettings}
-					logEntry={logEntry}
-				/>
-			)}
-
-			{/* Guardrail Data */}
-			{hasGuardrailData && (
-				<div id="guardrail-section">
-					<GuardrailViewer
-						data={guardrailInfo}
-						accessToken={accessToken ?? null}
-						logEntry={{
-							request_id: logEntry.request_id,
-							user: logEntry.user,
-							model: logEntry.model,
-							startTime: logEntry.startTime,
-							metadata: logEntry.metadata,
-						}}
+		<ModelPriceScope model={logEntry}>
+			<div style={{ padding: `${DRAWER_CONTENT_PADDING} ${DRAWER_CONTENT_PADDING} 0` }}>
+				{/* Error Alert */}
+				{hasError && errorInfo && (
+					<Alert
+						type="error"
+						showIcon
+						message="Request Failed"
+						description={<ErrorDescription errorInfo={errorInfo} />}
+						className="mb-6"
 					/>
+				)}
+
+				{/* Tags */}
+				{logEntry.request_tags && Object.keys(logEntry.request_tags).length > 0 && (
+					<TagsSection tags={logEntry.request_tags} />
+				)}
+
+				{/* Request Details */}
+				<div className="bg-white rounded-lg shadow w-full max-w-full overflow-hidden mb-6">
+					<Card title="Request Details" size="small" bordered={false} style={{ marginBottom: 0 }}>
+						<Descriptions column={2} size="small">
+							<Descriptions.Item label="Model">{logEntry.model}</Descriptions.Item>
+							<Descriptions.Item label="Provider">{logEntry.custom_llm_provider || "-"}</Descriptions.Item>
+							{logEntry.metadata?.internal_call_type === "builtin_capability" ? (
+								<>
+									<Descriptions.Item label="Built-in Capability">
+										<Tag color="purple">{String(logEntry.metadata?.builtin_capability || "unknown")}</Tag>
+									</Descriptions.Item>
+									<Descriptions.Item label="Parent Request">
+										<TruncatedValue value={logEntry.metadata?.parent_request_id} />
+									</Descriptions.Item>
+								</>
+							) : null}
+							<Descriptions.Item label="Call Type">{logEntry.call_type}</Descriptions.Item>
+							<Descriptions.Item label="Model ID">
+								<TruncatedValue value={logEntry.model_id} />
+							</Descriptions.Item>
+							<Descriptions.Item label="API Base">
+								<TruncatedValue value={logEntry.api_base} maxWidth={API_BASE_MAX_WIDTH} />
+							</Descriptions.Item>
+							{logEntry.requester_ip_address && (
+								<Descriptions.Item label="IP Address">{logEntry.requester_ip_address}</Descriptions.Item>
+							)}
+							{hasGuardrailData && (
+								<Descriptions.Item label="Guardrail">
+									<GuardrailLabel label={primaryGuardrailLabel} maskedCount={totalMaskedEntities} />
+								</Descriptions.Item>
+							)}
+						</Descriptions>
+					</Card>
 				</div>
-			)}
 
-			{/* Vector Store Data */}
-			{hasVectorStoreData && <VectorStoreViewer data={metadata.vector_store_request_metadata} />}
+				<RoutingSection logEntry={logEntry} modelResolutionChain={modelResolutionChain} />
 
-			{/* Metadata */}
-			{logEntry.metadata && Object.keys(logEntry.metadata).length > 0 && (
-				<MetadataSection metadata={logEntry.metadata} />
-			)}
+				{/* Metrics */}
+				<MetricsSection logEntry={logEntry} metadata={metadata} />
 
-			{/* Bottom spacing */}
-			<div style={{ height: DRAWER_CONTENT_PADDING }} />
-		</div>
+				{/* Cost Breakdown */}
+				<CostBreakdownViewer
+					model={logEntry}
+					costBreakdown={metadata?.cost_breakdown}
+					totalSpend={logEntry.spend ?? 0}
+					promptTokens={logEntry.prompt_tokens}
+					completionTokens={logEntry.completion_tokens}
+					cacheHit={logEntry.cache_hit}
+				/>
+
+				{/* Tools */}
+				<ToolsSection log={logEntry} />
+
+				{/* Configuration Info Message */}
+				{missingData && (
+					<div className="mb-6">
+						<ConfigInfoMessage show={missingData} onOpenSettings={onOpenSettings} />
+					</div>
+				)}
+
+				{/* Request/Response JSON */}
+				{isLoadingDetails ? (
+					<div className="bg-white rounded-lg shadow w-full max-w-full overflow-hidden mb-6 p-8 text-center">
+						<Spin size="default" />
+						<div style={{ marginTop: 8, color: "#999" }}>Loading request &amp; response data...</div>
+					</div>
+				) : (
+					<RequestResponseSection
+						hasResponse={hasResponse}
+						hasError={hasError}
+						getRawRequest={getRawRequest}
+						getRecordedDownstreamRequest={getRecordedDownstreamRequest}
+						getFormattedResponse={getFormattedResponse}
+						upstreamRequest={upstreamRequest}
+						upstreamResponse={upstreamResponse}
+						onOpenSettings={onOpenSettings}
+						logEntry={logEntry}
+					/>
+				)}
+
+				{/* Guardrail Data */}
+				{hasGuardrailData && (
+					<div id="guardrail-section">
+						<GuardrailViewer
+							data={guardrailInfo}
+							accessToken={accessToken ?? null}
+							logEntry={{
+								request_id: logEntry.request_id,
+								user: logEntry.user,
+								model: logEntry.model,
+								startTime: logEntry.startTime,
+								metadata: logEntry.metadata,
+							}}
+						/>
+					</div>
+				)}
+
+				{/* Vector Store Data */}
+				{hasVectorStoreData && <VectorStoreViewer data={metadata.vector_store_request_metadata} />}
+
+				{/* Metadata */}
+				{logEntry.metadata && Object.keys(logEntry.metadata).length > 0 && (
+					<MetadataSection metadata={logEntry.metadata} />
+				)}
+
+				{/* Bottom spacing */}
+				<div style={{ height: DRAWER_CONTENT_PADDING }} />
+			</div>
+		</ModelPriceScope>
 	);
 }
 
@@ -331,6 +336,7 @@ function GuardrailLabel({ label, maskedCount }: { label: string; maskedCount: nu
 }
 
 function MetricsSection({ logEntry, metadata }: { logEntry: LogEntry; metadata: Record<string, any> }) {
+	usePriceDisplay();
 	const completionStartTime = logEntry.completionStartTime;
 	const cacheReadInputTokens = getCacheReadInputTokens(metadata);
 	const cacheCreationInputTokens = getCacheCreationInputTokens(metadata);
@@ -356,7 +362,9 @@ function MetricsSection({ logEntry, metadata }: { logEntry: LogEntry; metadata: 
 							total={logEntry.total_tokens}
 						/>
 					</Descriptions.Item>
-					<Descriptions.Item label="Cost">${formatNumberWithCommas(logEntry.spend || 0, 8)}</Descriptions.Item>
+					<Descriptions.Item label="Cost">
+						{<Money value={logEntry.spend || 0} decimals={8} model={logEntry} />}
+					</Descriptions.Item>
 					<Descriptions.Item label="Duration">
 						{logEntry.request_duration_ms != null ? (logEntry.request_duration_ms / 1000).toFixed(3) : "-"} s
 					</Descriptions.Item>

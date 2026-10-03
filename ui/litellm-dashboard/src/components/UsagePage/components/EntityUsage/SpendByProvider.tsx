@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { Card, Switch, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, Title } from "@tremor/react";
@@ -22,6 +23,7 @@ interface SpendByProviderProps {
 }
 
 const SpendByProvider: React.FC<SpendByProviderProps> = ({ loading, isDateChanging, providerSpend }) => {
+	usePriceDisplay();
 	const [includeZeroSpend, setIncludeZeroSpend] = useState(false);
 	const [includeUnknown, setIncludeUnknown] = useState(false);
 
@@ -91,7 +93,7 @@ const SpendByProvider: React.FC<SpendByProviderProps> = ({ loading, isDateChangi
 									</TableCell>
 									<TableCell>
 										<div className="min-w-24">
-											<div className="tabular-nums">${formatNumberWithCommas(provider.spend, 2)}</div>
+											<div className="tabular-nums">{<Money value={provider.spend} decimals={2} />}</div>
 											<div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-100">
 												<div
 													className="h-full rounded-full bg-cyan-500"

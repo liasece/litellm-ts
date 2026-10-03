@@ -1,5 +1,6 @@
 "use client";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { ChevronDownIcon, ChevronUpIcon, SwitchVerticalIcon } from "@heroicons/react/outline";
 import {
 	ColumnDef,
@@ -35,6 +36,7 @@ export function DeletedKeysTable({
 	pageSize,
 	onPageChange,
 }: DeletedKeysTableProps) {
+	const formatMoney = useMoneyFormatter();
 	const [sorting, setSorting] = useState<SortingState>([
 		{
 			id: "deleted_at",
@@ -97,25 +99,23 @@ export function DeletedKeysTable({
 		{
 			id: "spend",
 			accessorKey: "spend",
-			header: "Spend (USD)",
+			header: "Spend",
 			size: 100,
 			maxSize: 140,
 			cell: (info) => (
-				<span className="block max-w-[140px]">{formatNumberWithCommas(info.getValue() as number, 4)}</span>
+				<span className="block max-w-[140px]">{<Money value={info.getValue() as number} decimals={4} />}</span>
 			),
 		},
 		{
 			id: "max_budget",
 			accessorKey: "max_budget",
-			header: "Budget (USD)",
+			header: "Budget",
 			size: 110,
 			maxSize: 150,
 			cell: (info) => {
 				const maxBudget = info.getValue() as number | null;
 				return (
-					<span className="block max-w-[150px]">
-						{maxBudget === null ? "Unlimited" : `$${formatNumberWithCommas(maxBudget)}`}
-					</span>
+					<span className="block max-w-[150px]">{maxBudget === null ? "Unlimited" : formatMoney(maxBudget, 4)}</span>
 				);
 			},
 		},

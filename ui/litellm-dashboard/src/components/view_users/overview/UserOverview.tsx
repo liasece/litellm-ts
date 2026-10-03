@@ -1,4 +1,5 @@
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import type { UserInfoV2Response } from "../../networking";
 import { Card, Grid, Text, Title } from "@tremor/react";
 import type { TeamDisplayInfo } from "../types";
@@ -23,13 +24,14 @@ export default function UserOverview({
 	onAddTeam,
 	onRemoveTeam,
 }: UserOverviewProps) {
+	const formatMoney = useMoneyFormatter();
 	return (
 		<Grid numItems={1} numItemsSm={2} numItemsLg={3} className="gap-6">
 			<Card>
 				<Text>Spend</Text>
 				<div className="mt-2">
-					<Title>${formatNumberWithCommas(user.spend || 0, 4)}</Title>
-					<Text>of {user.max_budget !== null ? `$${formatNumberWithCommas(user.max_budget, 4)}` : "Unlimited"}</Text>
+					<Title>{<Money value={user.spend || 0} decimals={4} />}</Title>
+					<Text>of {user.max_budget !== null ? formatMoney(user.max_budget, 4) : "Unlimited"}</Text>
 				</div>
 			</Card>
 

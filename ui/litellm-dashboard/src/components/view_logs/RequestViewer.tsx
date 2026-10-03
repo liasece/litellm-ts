@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import GuardrailViewer from "@/components/view_logs/GuardrailViewer/GuardrailViewer";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { truncateString } from "@/utils/textUtils";
@@ -11,6 +12,7 @@ import { RequestResponsePanel } from "./RequestResponsePanel";
 import { VectorStoreViewer } from "./VectorStoreViewer";
 
 export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onOpenSettings?: () => void }) {
+	usePriceDisplay();
 	const cacheReadInputTokens = getCacheReadInputTokens(row.original.metadata);
 	const cacheCreationInputTokens = getCacheCreationInputTokens(row.original.metadata);
 	// Helper function to clean metadata by removing specific fields
@@ -176,7 +178,7 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 						</div>
 						<div className="flex">
 							<span className="font-medium w-1/3">Cost:</span>
-							<span>${formatNumberWithCommas(row.original.spend || 0, 6)}</span>
+							<span>{<Money value={row.original.spend || 0} decimals={6} model={row.original} />}</span>
 						</div>
 						<div className="flex">
 							<span className="font-medium w-1/3">Cache Hit:</span>
@@ -247,6 +249,7 @@ export function RequestViewer({ row, onOpenSettings }: { row: Row<LogEntry>; onO
 
 			{/* Cost Breakdown - Show if cost breakdown data is available */}
 			<CostBreakdownViewer
+				model={row.original}
 				costBreakdown={row.original.metadata?.cost_breakdown}
 				totalSpend={row.original.spend ?? 0}
 				promptTokens={row.original.prompt_tokens}

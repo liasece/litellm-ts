@@ -480,7 +480,7 @@ describe("columns", () => {
 				columns={cols}
 			/>,
 		);
-		expect(screen.getByText("Cache read: $0.25")).toBeInTheDocument();
+		expect(screen.getByText("Cache read: $0.2500")).toBeInTheDocument();
 	});
 
 	it("should display costs when available", () => {
@@ -503,8 +503,8 @@ describe("columns", () => {
 		});
 		render(<TestTable data={[model]} columns={cols} />);
 
-		expect(screen.getByText("In: $0.01")).toBeInTheDocument();
-		expect(screen.getByText("Out: $0.03")).toBeInTheDocument();
+		expect(screen.getByText("In: $0.0100")).toBeInTheDocument();
+		expect(screen.getByText("Out: $0.0300")).toBeInTheDocument();
 	});
 
 	it("should display '-' when costs are missing", () => {
@@ -835,7 +835,7 @@ describe("columns", () => {
 		});
 		render(<TestTable data={[model]} columns={cols} />);
 
-		expect(screen.getByText("In: $0.01")).toBeInTheDocument();
+		expect(screen.getByText("In: $0.0100")).toBeInTheDocument();
 		expect(screen.queryByText(/Out:/)).not.toBeInTheDocument();
 	});
 
@@ -859,7 +859,7 @@ describe("columns", () => {
 		});
 		render(<TestTable data={[model]} columns={cols} />);
 
-		expect(screen.getByText("Out: $0.03")).toBeInTheDocument();
+		expect(screen.getByText("Out: $0.0300")).toBeInTheDocument();
 		expect(screen.queryByText(/In:/)).not.toBeInTheDocument();
 	});
 

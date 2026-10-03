@@ -77,7 +77,7 @@ describe("KeyModelUsageView", () => {
 		render(<KeyModelUsageView topModels={mockTopModels} />);
 		const chartButton = screen.getByRole("button", { name: "Chart" });
 		expect(chartButton).toHaveClass("bg-blue-100");
-		expect(screen.queryByText("Spend (USD)")).not.toBeInTheDocument();
+		expect(screen.queryByText("Spend")).not.toBeInTheDocument();
 	});
 
 	it("renders full spend and token model charts with independent sorting and responsive sizing", () => {
@@ -128,7 +128,7 @@ describe("KeyModelUsageView", () => {
 	it("should display all table column headers", () => {
 		renderTableView(mockTopModels);
 		expect(screen.getByText("Model")).toBeInTheDocument();
-		expect(screen.getByText("Spend (USD)")).toBeInTheDocument();
+		expect(screen.getByText("Spend")).toBeInTheDocument();
 		expect(screen.getByText("Requests")).toBeInTheDocument();
 		expect(screen.getByText("Successful")).toBeInTheDocument();
 		expect(screen.getByText("Failed")).toBeInTheDocument();

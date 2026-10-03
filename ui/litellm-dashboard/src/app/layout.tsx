@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 import AntdGlobalProvider from "@/contexts/AntdGlobalProvider";
+import { PriceDisplayProvider } from "@/contexts/PriceDisplay";
 import ReactQueryProvider from "@/contexts/ReactQueryProvider";
 
 export const metadata: Metadata = {
@@ -19,7 +20,9 @@ export default function RootLayout({
 		<html lang="en">
 			<body className="font-sans">
 				<ReactQueryProvider>
-					<AntdGlobalProvider>{children}</AntdGlobalProvider>
+					<AntdGlobalProvider>
+						<PriceDisplayProvider>{children}</PriceDisplayProvider>
+					</AntdGlobalProvider>
 				</ReactQueryProvider>
 			</body>
 		</html>

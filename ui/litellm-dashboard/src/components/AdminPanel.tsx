@@ -1,5 +1,6 @@
 import { Tabs, Typography } from "antd";
 import React from "react";
+import PriceDisplaySettings from "./PriceDisplaySettings";
 import UISettings from "./Settings/AdminSettings/UISettings/UISettings";
 
 const { Title, Paragraph } = Typography;
@@ -15,6 +16,7 @@ const AdminPanel: React.FC<AdminPanelProps> = () => {
 			label: "UI Settings",
 			children: <UISettings />,
 		},
+		{ key: "price-display", label: "价格显示", children: <PriceDisplaySettings /> },
 	];
 
 	return (

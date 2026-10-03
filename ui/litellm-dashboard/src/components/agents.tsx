@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React, { useState, useEffect } from "react";
 import {
 	Button,
@@ -20,7 +21,6 @@ import AgentInfoView from "./agents/agent_info";
 import NotificationsManager from "./molecules/notifications_manager";
 import { Agent, AgentKeyInfo } from "./agents/types";
 import { Team } from "./key_team_helpers/key_list";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import TableIconActionButton from "./common_components/IconActionButton/TableIconActionButtons/TableIconActionButton";
 
 interface AgentsPanelProps {
@@ -34,6 +34,7 @@ interface AgentsResponse {
 }
 
 const AgentsPanel: React.FC<AgentsPanelProps> = ({ accessToken, userRole, teams }) => {
+	usePriceDisplay();
 	const [agentsList, setAgentsList] = useState<Agent[]>([]);
 	const [keyInfoMap, setKeyInfoMap] = useState<Record<string, AgentKeyInfo>>({});
 	const [isAddModalVisible, setIsAddModalVisible] = useState(false);
@@ -200,7 +201,7 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({ accessToken, userRole, teams 
 							<TableRow>
 								<TableHeaderCell>Agent Name</TableHeaderCell>
 								<TableHeaderCell>Agent ID</TableHeaderCell>
-								<TableHeaderCell>Spend (USD)</TableHeaderCell>
+								<TableHeaderCell>Spend</TableHeaderCell>
 								<TableHeaderCell>Model</TableHeaderCell>
 								<TableHeaderCell>Created</TableHeaderCell>
 								<TableHeaderCell>Status</TableHeaderCell>
@@ -235,7 +236,7 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({ accessToken, userRole, teams 
 											</Tooltip>
 										</TableCell>
 										<TableCell>
-											<Text>{formatNumberWithCommas(agent.spend, 4)}</Text>
+											<Text>{<Money value={agent.spend} decimals={4} />}</Text>
 										</TableCell>
 										<TableCell>
 											<Badge size="xs" color="blue">

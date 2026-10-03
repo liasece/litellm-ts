@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React, { useState } from "react";
 import {
 	Card,
@@ -70,6 +71,7 @@ const PassThroughInfoView: React.FC<PassThroughInfoProps> = ({
 	premiumUser = false,
 	onEndpointUpdated,
 }) => {
+	usePriceDisplay();
 	const [endpointData, setEndpointData] = useState<PassThroughEndpoint | null>(initialEndpointData);
 	const [loading, setLoading] = useState(false);
 	const [isEditing, setIsEditing] = useState(false);
@@ -216,7 +218,7 @@ const PassThroughInfoView: React.FC<PassThroughInfoProps> = ({
 									)}
 									{endpointData.cost_per_request !== undefined && (
 										<div>
-											<Text>Cost per request: ${endpointData.cost_per_request}</Text>
+											<Text>Cost per request: {<Money value={endpointData.cost_per_request} decimals={4} />}</Text>
 										</div>
 									)}
 								</div>
@@ -391,7 +393,7 @@ const PassThroughInfoView: React.FC<PassThroughInfoProps> = ({
 										{endpointData.cost_per_request !== undefined && (
 											<div>
 												<Text className="font-medium">Cost per Request</Text>
-												<div>${endpointData.cost_per_request}</div>
+												<div>{<Money value={endpointData.cost_per_request} decimals={4} />}</div>
 											</div>
 										)}
 										<div>

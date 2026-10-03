@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import { DownOutlined, InfoCircleOutlined, RightOutlined } from "@ant-design/icons";
 import { Card, Text, Title } from "@tremor/react";
 import { Tooltip } from "antd";
@@ -56,6 +57,7 @@ export default function UsageMetricsCards({
 	showTokenBreakdown,
 	onToggleTokenBreakdown,
 }: UsageMetricsCardsProps) {
+	const formatMoney = useMoneyFormatter();
 	const totalRequests = metadata?.total_api_requests ?? 0;
 	const successfulRequests = metadata?.total_successful_requests ?? 0;
 	const successRate = totalRequests > 0 ? (successfulRequests / totalRequests) * 100 : 0;
@@ -67,11 +69,8 @@ export default function UsageMetricsCards({
 				<Text className="!text-xs !text-slate-500">{dateRangeLabel}</Text>
 			</div>
 			<div className="grid grid-cols-2 divide-x divide-y divide-slate-200 sm:grid-cols-4 xl:grid-cols-7 xl:divide-y-0">
-				<MetricTile label="Total Spend" value={`$${formatNumberWithCommas(totalSpend, 4)}`} />
-				<MetricTile
-					label="Max Budget"
-					value={maxBudget === null ? "No limit" : `$${formatNumberWithCommas(maxBudget, 4)}`}
-				/>
+				<MetricTile label="Total Spend" value={formatMoney(totalSpend, 4)} />
+				<MetricTile label="Max Budget" value={maxBudget === null ? "No limit" : formatMoney(maxBudget, 4)} />
 				<MetricTile label="Total Requests" value={totalRequests.toLocaleString()} />
 				<MetricTile
 					label="Successful Requests"
@@ -85,10 +84,7 @@ export default function UsageMetricsCards({
 					valueClassName="text-rose-600"
 					tooltip="Includes routing, tool usage, and other request failures where a provider may not be available."
 				/>
-				<MetricTile
-					label="Avg. Cost / Request"
-					value={`$${formatNumberWithCommas(totalSpend / (totalRequests || 1), 4)}`}
-				/>
+				<MetricTile label="Avg. Cost / Request" value={formatMoney(totalSpend / (totalRequests || 1), 4)} />
 				<button
 					type="button"
 					className="min-w-0 px-4 py-3 text-left transition-colors hover:bg-slate-50"

@@ -66,6 +66,47 @@ describe("CLIProxy subscription quota normalization", () => {
 		expect(JSON.stringify(buildCliProxyQuotaRequests("codex", {}))).not.toContain("must-not-be-forwarded");
 	});
 
+	it("uses Codex account metadata nested in the managed auth-file id_token", () => {
+		const authFile = {
+			id_token: {
+				chatgpt_account_id: "managed-account",
+				plan_type: "pro",
+				chatgpt_subscription_active_until: "2026-12-31T00:00:00Z",
+			},
+		};
+		const request = buildCliProxyQuotaRequests("codex", authFile)[0];
+		expect(request?.header["Chatgpt-Account-Id"]).toBe("managed-account");
+		const quota = normalizeCliProxyQuota(
+			"codex",
+			[
+				{
+					id: "usage",
+					body: {
+						rate_limit: { primary_window: { used_percent: 70, limit_window_seconds: 604800 } },
+					},
+				},
+			],
+			authFile,
+		);
+		expect(quota).toMatchObject({
+			plan: "pro",
+			subscription_expires_at: "2026-12-31T00:00:00.000Z",
+			windows: [expect.objectContaining({ remaining_percent: 30 })],
+		});
+	});
+
+	it("keeps legacy Codex metadata precedence and ignores non-object id_token values", () => {
+		expect(
+			buildCliProxyQuotaRequests("codex", {
+				chatgpt_account_id: "legacy-account",
+				id_token: { chatgpt_account_id: "nested-account" },
+			})[0]?.header["Chatgpt-Account-Id"],
+		).toBe("legacy-account");
+		for (const idToken of [null, "opaque-token", [], 42]) {
+			expect(buildCliProxyQuotaRequests("codex", { id_token: idToken })[0]?.header["Chatgpt-Account-Id"]).toBeUndefined();
+		}
+	});
+
 	it("normalizes Claude utilization and Antigravity remaining fractions without reversing their meaning", () => {
 		const claude = normalizeCliProxyQuota(
 			"claude",

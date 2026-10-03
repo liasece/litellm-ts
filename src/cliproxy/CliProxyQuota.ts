@@ -165,18 +165,24 @@ function codexWindows(payload: Record<string, unknown>, nowMs: number): CliProxy
 	return windows;
 }
 
+function codexAuthMetadata(authFile: Record<string, unknown>): Record<string, unknown> {
+	// 新版 /auth-files 将 Codex 账户信息放在已解析的 id_token 对象中。
+	return { ...record(authFile["id_token"]), ...authFile };
+}
+
 function normalizeCodex(
 	payload: Record<string, unknown>,
 	authFile: Record<string, unknown>,
 	nowMs: number,
 ): Omit<CliProxyAccountQuota, "provider" | "fetched_at"> {
+	const metadata = codexAuthMetadata(authFile);
 	const credits = record(payload["rate_limit_reset_credits"] ?? payload["rateLimitResetCredits"]);
 	const availableCredits = numberValue(credits?.["available_count"] ?? credits?.["availableCount"]);
 	const balances: CliProxyQuotaBalance[] =
 		availableCredits === null ? [] : [{ label: "限额重置次数", used: 0, limit: availableCredits, unit: "次可用" }];
 	return {
-		plan: stringValue(payload["plan_type"] ?? payload["planType"] ?? authFile["plan_type"] ?? authFile["planType"]),
-		subscription_expires_at: normalizeDate(authFile["chatgpt_subscription_active_until"] ?? authFile["subscription_active_until"]),
+		plan: stringValue(payload["plan_type"] ?? payload["planType"] ?? metadata["plan_type"] ?? metadata["planType"]),
+		subscription_expires_at: normalizeDate(metadata["chatgpt_subscription_active_until"] ?? metadata["subscription_active_until"]),
 		windows: codexWindows(payload, nowMs),
 		balances: balances,
 	};
@@ -435,7 +441,8 @@ export function buildCliProxyQuotaRequests(providerValue: string, authFile: Reco
 			...bearerHeaders,
 			"User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
 		};
-		const accountId = stringValue(authFile["chatgpt_account_id"] ?? authFile["chatgptAccountId"]);
+		const metadata = codexAuthMetadata(authFile);
+		const accountId = stringValue(metadata["chatgpt_account_id"] ?? metadata["chatgptAccountId"]);
 		if (accountId) {
 			headers["Chatgpt-Account-Id"] = accountId;
 		}

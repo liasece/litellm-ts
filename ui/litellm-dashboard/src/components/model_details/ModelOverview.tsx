@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { ModelCurrencySetting } from "../PriceDisplaySettings";
 import { Text } from "@tremor/react";
 import { Tooltip } from "antd";
 import { ProviderLogo } from "../molecules/models/ProviderLogo";
@@ -44,6 +46,7 @@ function ModelAuditInfo({ modelInfo }: { modelInfo: any }) {
 }
 
 export default function ModelOverview({ modelData }: ModelOverviewProps) {
+	const formatMoney = useMoneyFormatter();
 	const overviewItems = [
 		{
 			label: "Provider",
@@ -56,8 +59,14 @@ export default function ModelOverview({ modelData }: ModelOverviewProps) {
 			) : null,
 		},
 		{ label: "LiteLLM Model", value: modelData.litellm_model_name },
-		{ label: "Input / 1M", value: modelData.input_cost != null ? `$${modelData.input_cost}` : null },
-		{ label: "Output / 1M", value: modelData.output_cost != null ? `$${modelData.output_cost}` : null },
+		{
+			label: "Input / 1M",
+			value: modelData.input_cost != null ? formatMoney(modelData.input_cost, 4, modelData) : null,
+		},
+		{
+			label: "Output / 1M",
+			value: modelData.output_cost != null ? formatMoney(modelData.output_cost, 4, modelData) : null,
+		},
 	];
 	return (
 		<div className="mb-4 overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -73,6 +82,10 @@ export default function ModelOverview({ modelData }: ModelOverviewProps) {
 					</div>
 				))}
 			</div>
+			<ModelCurrencySetting
+				modelId={modelData.model_info?.id ?? modelData.model_name}
+				modelName={modelData.model_name}
+			/>
 			<ModelAuditInfo modelInfo={modelData.model_info} />
 		</div>
 	);

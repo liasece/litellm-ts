@@ -1,3 +1,5 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
+import { formatMoney } from "@/contexts/PriceDisplay";
 import React, { useState } from "react";
 import { Text, Button } from "@tremor/react";
 import { Card, Statistic, Row, Col, Divider, Spin, Table, Tag } from "antd";
@@ -12,13 +14,8 @@ interface MultiCostResultsProps {
 	timePeriod: "day" | "month";
 }
 
-const formatCost = (value: number | null | undefined): string => {
-	if (value === null || value === undefined) return "-";
-	if (value === 0) return "$0";
-	if (value < 0.0001) return `$${value.toExponential(2)}`;
-	if (value < 1) return `$${value.toFixed(4)}`;
-	return `$${formatNumberWithCommas(value, 2, true)}`;
-};
+const formatCost = (value: number | null | undefined, model?: string): string =>
+	formatMoney(value, value != null && Math.abs(value) < 1 ? 6 : 2, model);
 
 const formatRequests = (value: number | null | undefined): string => {
 	if (value === null || value === undefined) return "-";
@@ -30,6 +27,7 @@ const SingleModelBreakdown: React.FC<{
 	loading: boolean;
 	timePeriod: "day" | "month";
 }> = ({ result, loading, timePeriod }) => {
+	usePriceDisplay();
 	const periodLabel = timePeriod === "day" ? "Daily" : "Monthly";
 	const periodCost = timePeriod === "day" ? result.daily_cost : result.monthly_cost;
 	const periodInputCost = timePeriod === "day" ? result.daily_input_cost : result.monthly_input_cost;
@@ -49,20 +47,22 @@ const SingleModelBreakdown: React.FC<{
 			<div className="grid grid-cols-4 gap-4">
 				<div>
 					<Text className="text-xs text-gray-500 block">Total/Request</Text>
-					<Text className="text-base font-semibold text-blue-600">{formatCost(result.cost_per_request)}</Text>
+					<Text className="text-base font-semibold text-blue-600">
+						{formatCost(result.cost_per_request, result.model)}
+					</Text>
 				</div>
 				<div>
 					<Text className="text-xs text-gray-500 block">Input Cost</Text>
-					<Text className="text-sm">{formatCost(result.input_cost_per_request)}</Text>
+					<Text className="text-sm">{formatCost(result.input_cost_per_request, result.model)}</Text>
 				</div>
 				<div>
 					<Text className="text-xs text-gray-500 block">Output Cost</Text>
-					<Text className="text-sm">{formatCost(result.output_cost_per_request)}</Text>
+					<Text className="text-sm">{formatCost(result.output_cost_per_request, result.model)}</Text>
 				</div>
 				<div>
 					<Text className="text-xs text-gray-500 block">Margin Fee</Text>
 					<Text className={`text-sm ${result.margin_cost_per_request > 0 ? "text-amber-600" : ""}`}>
-						{formatCost(result.margin_cost_per_request)}
+						{formatCost(result.margin_cost_per_request, result.model)}
 					</Text>
 				</div>
 			</div>
@@ -74,21 +74,21 @@ const SingleModelBreakdown: React.FC<{
 							{periodLabel} Total ({formatRequests(periodRequests)} req)
 						</Text>
 						<Text className={`text-base font-semibold ${timePeriod === "day" ? "text-green-600" : "text-purple-600"}`}>
-							{formatCost(periodCost)}
+							{formatCost(periodCost, result.model)}
 						</Text>
 					</div>
 					<div>
 						<Text className="text-xs text-gray-500 block">{periodLabel} Input</Text>
-						<Text className="text-sm">{formatCost(periodInputCost)}</Text>
+						<Text className="text-sm">{formatCost(periodInputCost, result.model)}</Text>
 					</div>
 					<div>
 						<Text className="text-xs text-gray-500 block">{periodLabel} Output</Text>
-						<Text className="text-sm">{formatCost(periodOutputCost)}</Text>
+						<Text className="text-sm">{formatCost(periodOutputCost, result.model)}</Text>
 					</div>
 					<div>
 						<Text className="text-xs text-gray-500 block">{periodLabel} Margin Fee</Text>
 						<Text className={`text-sm ${(periodMarginCost ?? 0) > 0 ? "text-amber-600" : ""}`}>
-							{formatCost(periodMarginCost)}
+							{formatCost(periodMarginCost, result.model)}
 						</Text>
 					</div>
 				</div>
@@ -98,11 +98,15 @@ const SingleModelBreakdown: React.FC<{
 				<div className="text-xs text-gray-400 pt-2 border-t border-gray-200">
 					Token Pricing:{" "}
 					{result.input_cost_per_token && (
-						<span>Input ${formatNumberWithCommas(result.input_cost_per_token * 1_000_000, 2)}/1M</span>
+						<span>
+							Input {<Money value={result.input_cost_per_token * 1_000_000} decimals={2} model={result.model} />}/1M
+						</span>
 					)}
 					{result.input_cost_per_token && result.output_cost_per_token && " | "}
 					{result.output_cost_per_token && (
-						<span>Output ${formatNumberWithCommas(result.output_cost_per_token * 1_000_000, 2)}/1M</span>
+						<span>
+							Output {<Money value={result.output_cost_per_token * 1_000_000} decimals={2} model={result.model} />}/1M
+						</span>
 					)}
 				</div>
 			)}
@@ -111,6 +115,7 @@ const SingleModelBreakdown: React.FC<{
 };
 
 const MultiCostResults: React.FC<MultiCostResultsProps> = ({ multiResult, timePeriod }) => {
+	usePriceDisplay();
 	const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
 
 	const validEntries = multiResult.entries.filter((e) => e.result !== null);
@@ -215,11 +220,11 @@ const MultiCostResults: React.FC<MultiCostResultsProps> = ({ multiResult, timePe
 			dataIndex: "cost_per_request",
 			key: "cost_per_request",
 			align: "right" as const,
-			render: (value: number | null, record: { error?: string | null }) =>
+			render: (value: number | null, record: { error?: string | null; model: string }) =>
 				record.error ? (
 					<span className="text-gray-400">-</span>
 				) : (
-					<span className="font-mono text-sm">{formatCost(value)}</span>
+					<span className="font-mono text-sm">{formatCost(value, record.model)}</span>
 				),
 		},
 		{
@@ -227,12 +232,12 @@ const MultiCostResults: React.FC<MultiCostResultsProps> = ({ multiResult, timePe
 			dataIndex: "margin_cost_per_request",
 			key: "margin_cost_per_request",
 			align: "right" as const,
-			render: (value: number | null, record: { error?: string | null }) =>
+			render: (value: number | null, record: { error?: string | null; model: string }) =>
 				record.error ? (
 					<span className="text-gray-400">-</span>
 				) : (
 					<span className={`font-mono text-sm ${(value ?? 0) > 0 ? "text-amber-600" : "text-gray-400"}`}>
-						{formatCost(value)}
+						{formatCost(value, record.model)}
 					</span>
 				),
 		},
@@ -241,11 +246,11 @@ const MultiCostResults: React.FC<MultiCostResultsProps> = ({ multiResult, timePe
 			dataIndex: periodCostKey,
 			key: "period_cost",
 			align: "right" as const,
-			render: (value: number | null, record: { error?: string | null }) =>
+			render: (value: number | null, record: { error?: string | null; model: string }) =>
 				record.error ? (
 					<span className="text-gray-400">-</span>
 				) : (
-					<span className="font-mono text-sm">{formatCost(value)}</span>
+					<span className="font-mono text-sm">{formatCost(value, record.model)}</span>
 				),
 		},
 		{

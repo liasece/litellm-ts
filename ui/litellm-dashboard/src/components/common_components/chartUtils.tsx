@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import type { CustomTooltipProps } from "@tremor/react";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { SpendMetrics } from "../UsagePage/types";
@@ -18,6 +19,7 @@ const colorNameToHex: { [key: string]: string } = {
 };
 
 export const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
+	const formatMoney = useMoneyFormatter();
 	if (active && payload && payload.length) {
 		const formatCategoryName = (name: string): string => {
 			return name
@@ -50,7 +52,7 @@ export const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) =>
 					const formattedValue =
 						rawValue !== undefined
 							? isSpend
-								? `$${rawValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+								? formatMoney(rawValue, 2)
 								: isToken
 									? formatNumberWithCommas(rawValue, 0, false)
 									: rawValue.toLocaleString()

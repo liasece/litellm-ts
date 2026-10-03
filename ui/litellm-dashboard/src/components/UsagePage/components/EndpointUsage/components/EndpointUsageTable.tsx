@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import React from "react";
 import { Table, Progress } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -20,6 +21,7 @@ interface EndpointRow {
 }
 
 const EndpointUsageTable: React.FC<EndpointUsageTableProps> = ({ endpointData }) => {
+	const formatMoney = useMoneyFormatter();
 	const calculateSuccessRate = (successful: number, total: number): number => {
 		if (total === 0) return 0;
 		return (successful / total) * 100;
@@ -112,7 +114,7 @@ const EndpointUsageTable: React.FC<EndpointUsageTableProps> = ({ endpointData })
 			title: "Spend",
 			dataIndex: "spend",
 			key: "spend",
-			render: (value: number) => `$${formatNumberWithCommas(value, 2)}`,
+			render: (value: number) => formatMoney(value, 2),
 		},
 	];
 

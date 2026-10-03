@@ -1,3 +1,4 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
 import React, { useState, useEffect } from "react";
 import { Card, Title, Text, Divider, TextInput } from "@tremor/react";
 import { Button, Typography, Spin, Switch, Select, InputNumber } from "antd";
@@ -5,7 +6,6 @@ import { PlusOutlined, DeleteOutlined } from "@ant-design/icons";
 import { getInternalUserSettings, updateInternalUserSettings, modelAvailableCall } from "./networking";
 import BudgetDurationDropdown, { getBudgetDurationLabel } from "./common_components/budget_duration_dropdown";
 import { getModelDisplayName } from "./key_team_helpers/fetch_available_models_team_key";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
 import NotificationManager from "./molecules/notifications_manager";
 
 interface DefaultUserSettingsProps {
@@ -27,6 +27,7 @@ const DefaultUserSettings: React.FC<DefaultUserSettingsProps> = ({
 	userID,
 	userRole,
 }) => {
+	const formatMoney = useMoneyFormatter();
 	const [loading, setLoading] = useState<boolean>(true);
 	const [settings, setSettings] = useState<any>(null);
 	const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -333,9 +334,7 @@ const DefaultUserSettings: React.FC<DefaultUserSettingsProps> = ({
 								<div>
 									<span className="font-medium text-gray-600">Max Budget:</span>
 									<p className="text-gray-900">
-										{team.max_budget_in_team !== undefined
-											? `$${formatNumberWithCommas(team.max_budget_in_team, 4)}`
-											: "No limit"}
+										{team.max_budget_in_team !== undefined ? formatMoney(team.max_budget_in_team, 4) : "No limit"}
 									</p>
 								</div>
 								<div>

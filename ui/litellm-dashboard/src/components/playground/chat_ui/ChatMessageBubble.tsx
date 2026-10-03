@@ -186,6 +186,7 @@ function ChatMessageBubble({
 						(message.timeToFirstToken || message.totalLatency || message.usage) &&
 						!message.a2aMetadata && (
 							<ResponseMetrics
+								model={message.model}
 								timeToFirstToken={message.timeToFirstToken}
 								totalLatency={message.totalLatency}
 								usage={message.usage}

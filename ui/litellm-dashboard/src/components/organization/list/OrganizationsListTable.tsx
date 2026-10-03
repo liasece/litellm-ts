@@ -1,6 +1,6 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import type { Organization } from "../../networking";
 import TableIconActionButton from "../../common_components/IconActionButton/TableIconActionButtons/TableIconActionButton";
-import { formatNumberWithCommas } from "../../../utils/dataUtils";
 import { Button, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, Text } from "@tremor/react";
 import { Tooltip } from "antd";
 import OrganizationModelsCell from "./OrganizationModelsCell";
@@ -18,6 +18,7 @@ export default function OrganizationsListTable({
 	onOpen,
 	onDelete,
 }: OrganizationsListTableProps) {
+	usePriceDisplay();
 	const sortedOrganizations = [...organizations].sort(
 		(first, second) => new Date(second.created_at).getTime() - new Date(first.created_at).getTime(),
 	);
@@ -29,8 +30,8 @@ export default function OrganizationsListTable({
 					<TableHeaderCell>Organization ID</TableHeaderCell>
 					<TableHeaderCell>Organization Name</TableHeaderCell>
 					<TableHeaderCell>Created</TableHeaderCell>
-					<TableHeaderCell>Spend (USD)</TableHeaderCell>
-					<TableHeaderCell>Budget (USD)</TableHeaderCell>
+					<TableHeaderCell>Spend</TableHeaderCell>
+					<TableHeaderCell>Budget</TableHeaderCell>
 					<TableHeaderCell>Models</TableHeaderCell>
 					<TableHeaderCell>TPM / RPM Limits</TableHeaderCell>
 					<TableHeaderCell>Info</TableHeaderCell>
@@ -56,8 +57,14 @@ export default function OrganizationsListTable({
 						<TableCell>
 							{organization.created_at ? new Date(organization.created_at).toLocaleDateString() : "N/A"}
 						</TableCell>
-						<TableCell>{formatNumberWithCommas(organization.spend, 4)}</TableCell>
-						<TableCell>{organization.litellm_budget_table?.max_budget ?? "No limit"}</TableCell>
+						<TableCell>{<Money value={organization.spend} decimals={4} />}</TableCell>
+						<TableCell>
+							{organization.litellm_budget_table?.max_budget == null ? (
+								"No limit"
+							) : (
+								<Money value={organization.litellm_budget_table.max_budget} />
+							)}
+						</TableCell>
 						<TableCell className={organization.models.length > 3 ? "px-0" : ""}>
 							<OrganizationModelsCell models={organization.models} />
 						</TableCell>

@@ -28,7 +28,7 @@ describe("TopModelView", () => {
 	it("should display all table column headers", () => {
 		render(<TopModelView topModels={[]} topModelsLimit={5} setTopModelsLimit={mockSetTopModelsLimit} />);
 		expect(screen.getByText("Model")).toBeInTheDocument();
-		expect(screen.getByText("Spend (USD)")).toBeInTheDocument();
+		expect(screen.getByText("Spend")).toBeInTheDocument();
 		expect(screen.getByText("Successful")).toBeInTheDocument();
 		expect(screen.getByText("Failed")).toBeInTheDocument();
 		expect(screen.getByText("Tokens")).toBeInTheDocument();
@@ -243,7 +243,7 @@ describe("TopModelView", () => {
 	it("should handle empty model list", () => {
 		render(<TopModelView topModels={[]} topModelsLimit={5} setTopModelsLimit={mockSetTopModelsLimit} />);
 		expect(screen.getByText("Model")).toBeInTheDocument();
-		expect(screen.getByText("Spend (USD)")).toBeInTheDocument();
+		expect(screen.getByText("Spend")).toBeInTheDocument();
 	});
 
 	it("should display dash for missing model key", () => {

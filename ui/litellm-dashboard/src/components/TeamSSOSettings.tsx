@@ -1,3 +1,4 @@
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import React, { useState, useEffect } from "react";
 import { Card, Button, InputNumber, Typography, Spin, Select, Tag, Row, Col } from "antd";
 import { EditOutlined, SaveOutlined } from "@ant-design/icons";
@@ -86,6 +87,7 @@ const DEFAULT_VALUES: SettingsValues = {
 };
 
 const TeamSSOSettings: React.FC<TeamSSOSettingsProps> = ({ accessToken }) => {
+	usePriceDisplay();
 	const [loading, setLoading] = useState<boolean>(true);
 	const [values, setValues] = useState<SettingsValues>(DEFAULT_VALUES);
 	const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -201,7 +203,11 @@ const TeamSSOSettings: React.FC<TeamSSOSettingsProps> = ({ accessToken }) => {
 							description="Maximum budget (in USD) for new automatically created teams."
 							isEditing={isEditing}
 							viewContent={
-								values.max_budget != null ? <Text>${Number(values.max_budget).toLocaleString()}</Text> : <NotSet />
+								values.max_budget != null ? (
+									<Text>{<Money value={Number(values.max_budget)} decimals={4} />}</Text>
+								) : (
+									<NotSet />
+								)
 							}
 							editContent={
 								<InputNumber

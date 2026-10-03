@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { useUISettings } from "@/app/(dashboard)/hooks/uiSettings/useUISettings";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { Member } from "@/components/networking";
@@ -26,6 +28,7 @@ export default function TeamMemberTab({
 	setIsEditMemberModalVisible,
 	setIsAddMemberModalVisible,
 }: TeamMemberTabProps) {
+	const formatMoney = useMoneyFormatter();
 	const formatNumber = (value: number | null): string => {
 		if (value === null || value === undefined) return "0";
 
@@ -86,7 +89,7 @@ export default function TeamMemberTab({
 		{
 			title: (
 				<Space direction="horizontal">
-					Team Member Spend (USD)
+					Team Member Spend
 					<Tooltip title="This is the amount spent by a user in the team.">
 						<InfoCircleOutlined />
 					</Tooltip>
@@ -94,17 +97,15 @@ export default function TeamMemberTab({
 			),
 			key: "spend",
 			render: (_: unknown, record: Member) => (
-				<Typography.Text>${formatNumberWithCommas(getUserSpend(record.user_id), 4)}</Typography.Text>
+				<Typography.Text>{<Money value={getUserSpend(record.user_id)} decimals={4} />}</Typography.Text>
 			),
 		},
 		{
-			title: "Team Member Budget (USD)",
+			title: "Team Member Budget",
 			key: "budget",
 			render: (_: unknown, record: Member) => {
 				const budget = getUserBudget(record.user_id);
-				return (
-					<Typography.Text>{budget ? `$${formatNumberWithCommas(Number(budget), 4)}` : "No Limit"}</Typography.Text>
-				);
+				return <Typography.Text>{budget ? formatMoney(Number(budget), 4) : "No Limit"}</Typography.Text>;
 			},
 		},
 		{

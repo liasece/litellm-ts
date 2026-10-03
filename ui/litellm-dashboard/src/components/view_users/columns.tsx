@@ -1,10 +1,11 @@
+import { Money } from "@/contexts/PriceDisplay";
 import { ColumnDef } from "@tanstack/react-table";
 import { Badge, Grid, Icon } from "@tremor/react";
 import { Tooltip, Checkbox } from "antd";
 import { UserInfo } from "./types";
 import { PencilAltIcon, TrashIcon, InformationCircleIcon, RefreshIcon } from "@heroicons/react/outline";
 import { CopyOutlined } from "@ant-design/icons";
-import { formatNumberWithCommas, copyToClipboard } from "@/utils/dataUtils";
+import { copyToClipboard } from "@/utils/dataUtils";
 
 interface SelectionOptions {
 	selectedUsers: UserInfo[];
@@ -67,19 +68,21 @@ export const columns = (
 			cell: ({ row }) => <span className="text-xs">{row.original.user_alias || "-"}</span>,
 		},
 		{
-			header: "Spend (USD)",
+			header: "Spend",
 			accessorKey: "spend",
 			enableSorting: true,
 			cell: ({ row }) => (
-				<span className="text-xs">{row.original.spend ? formatNumberWithCommas(row.original.spend, 4) : "-"}</span>
+				<span className="text-xs">{row.original.spend ? <Money value={row.original.spend} decimals={4} /> : "-"}</span>
 			),
 		},
 		{
-			header: "Budget (USD)",
+			header: "Budget",
 			accessorKey: "max_budget",
 			enableSorting: false,
 			cell: ({ row }) => (
-				<span className="text-xs">{row.original.max_budget !== null ? row.original.max_budget : "Unlimited"}</span>
+				<span className="text-xs">
+					{row.original.max_budget !== null ? <Money value={row.original.max_budget} /> : "Unlimited"}
+				</span>
 			),
 		},
 		{

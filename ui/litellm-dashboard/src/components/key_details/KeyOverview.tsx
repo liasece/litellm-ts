@@ -1,4 +1,5 @@
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { Money } from "@/contexts/PriceDisplay";
 import { Badge, Card, Grid, Text, Title } from "@tremor/react";
 import { mapInternalToDisplayNames } from "../callback_info_helpers";
 import AutoRotationView from "../common_components/AutoRotationView";
@@ -15,6 +16,7 @@ interface KeyOverviewProps {
 }
 
 export default function KeyOverview({ keyData, accessToken, policyGuardrails, loadingPolicies }: KeyOverviewProps) {
+	const formatMoney = useMoneyFormatter();
 	const guardrails = Array.isArray(keyData.metadata?.guardrails) ? keyData.metadata.guardrails : [];
 	const policies = Array.isArray(keyData.metadata?.policies) ? keyData.metadata.policies : [];
 
@@ -23,8 +25,8 @@ export default function KeyOverview({ keyData, accessToken, policyGuardrails, lo
 			<Card>
 				<Text>Spend</Text>
 				<div className="mt-2">
-					<Title>${formatNumberWithCommas(keyData.spend, 4)}</Title>
-					<Text>of {keyData.max_budget !== null ? `$${formatNumberWithCommas(keyData.max_budget)}` : "Unlimited"}</Text>
+					<Title>{<Money value={keyData.spend} decimals={4} />}</Title>
+					<Text>of {keyData.max_budget !== null ? formatMoney(keyData.max_budget, 4) : "Unlimited"}</Text>
 				</div>
 			</Card>
 

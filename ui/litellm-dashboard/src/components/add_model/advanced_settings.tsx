@@ -196,7 +196,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
 								{pricingModel === "per_token" ? (
 									<>
 										<Form.Item
-											label="Input Cost (per 1M tokens)"
+											label="Input Cost (USD / 1M tokens)"
 											name="input_cost_per_token"
 											rules={[{ validator: validateNumber }]}
 											className="mb-4"
@@ -204,7 +204,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
 											<TextInput />
 										</Form.Item>
 										<Form.Item
-											label="Output Cost (per 1M tokens)"
+											label="Output Cost (USD / 1M tokens)"
 											name="output_cost_per_token"
 											rules={[{ validator: validateNumber }]}
 											className="mb-4"
@@ -214,7 +214,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
 									</>
 								) : (
 									<Form.Item
-										label="Cost Per Second"
+										label="Cost Per Second (USD)"
 										name="input_cost_per_second"
 										rules={[{ validator: validateNumber }]}
 										className="mb-4"

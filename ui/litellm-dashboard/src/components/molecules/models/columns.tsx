@@ -1,3 +1,4 @@
+import { Money } from "@/contexts/PriceDisplay";
 import { CopyOutlined, EditOutlined, InfoCircleOutlined, SyncOutlined } from "@ant-design/icons";
 import { TrashIcon } from "@heroicons/react/outline";
 import { ColumnDef } from "@tanstack/react-table";
@@ -348,11 +349,21 @@ export const columns = (
 				<Tooltip title="Cost per 1M tokens">
 					<div className="flex flex-col min-w-0 w-full">
 						{/* Input Cost - Primary */}
-						{inputCost != null && <div className="text-xs font-medium text-gray-900 truncate">In: ${inputCost}</div>}
+						{inputCost != null && (
+							<div className="text-xs font-medium text-gray-900 truncate">
+								In: {<Money value={inputCost} decimals={4} model={model} />}
+							</div>
+						)}
 						{/* Output Cost - Secondary */}
-						{outputCost != null && <div className="text-xs text-gray-500 truncate mt-0.5">Out: ${outputCost}</div>}
+						{outputCost != null && (
+							<div className="text-xs text-gray-500 truncate mt-0.5">
+								Out: {<Money value={outputCost} decimals={4} model={model} />}
+							</div>
+						)}
 						{cacheReadInputCost != null && (
-							<div className="text-xs text-gray-500 truncate mt-0.5">Cache read: ${cacheReadInputCost}</div>
+							<div className="text-xs text-gray-500 truncate mt-0.5">
+								Cache read: {<Money value={cacheReadInputCost} decimals={4} model={model} />}
+							</div>
 						)}
 					</div>
 				</Tooltip>

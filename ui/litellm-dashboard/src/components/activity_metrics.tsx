@@ -1,3 +1,5 @@
+import { useMoneyFormatter } from "@/contexts/PriceDisplay";
+import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { resolveTeamAliasFromTeamID } from "@/utils/teamUtils";
 import { AreaChart, BarChart, Card, Grid, Text, Title } from "@tremor/react";
@@ -46,6 +48,7 @@ const ModelSection = ({
 	metrics: ModelActivityData;
 	hidePromptCachingMetrics?: boolean;
 }) => {
+	const formatMoney = useMoneyFormatter();
 	const topApiKeyLabels = getTopApiKeyLabels(metrics.top_api_keys || []);
 	const topApiKeyChartData = (metrics.top_api_keys || []).map((keyData, index) => ({
 		key: topApiKeyLabels[index],
@@ -78,9 +81,10 @@ const ModelSection = ({
 				</Card>
 				<Card>
 					<Text>Total Spend</Text>
-					<Title>${formatNumberWithCommas(metrics.total_spend, 2)}</Title>
+					<Title>{<Money value={metrics.total_spend} decimals={2} />}</Title>
 					<Text>
-						${formatNumberWithCommas(metrics.total_spend / metrics.total_successful_requests, 3)} per successful request
+						{<Money value={metrics.total_spend / metrics.total_successful_requests} decimals={3} />} per successful
+						request
 					</Text>
 				</Card>
 			</Grid>
@@ -96,7 +100,7 @@ const ModelSection = ({
 								index="key"
 								categories={["spend"]}
 								colors={["cyan"]}
-								valueFormatter={(value: number) => `$${formatNumberWithCommas(value, 2)}`}
+								valueFormatter={(value: number) => formatMoney(value, 2)}
 								layout="vertical"
 								yAxisWidth={180}
 								tickGap={5}
@@ -138,7 +142,7 @@ const ModelSection = ({
 					index="date"
 					categories={["metrics.spend"]}
 					colors={["green"]}
-					valueFormatter={(value: number) => `$${formatNumberWithCommas(value, 2, true)}`}
+					valueFormatter={(value: number) => formatMoney(value, 2)}
 					yAxisWidth={72}
 				/>
 			</Card>
@@ -238,6 +242,7 @@ const ModelSection = ({
 };
 
 export const ActivityMetrics: React.FC<ActivityMetricsProps> = ({ modelMetrics, hidePromptCachingMetrics = false }) => {
+	usePriceDisplay();
 	const modelNames = Object.keys(modelMetrics).sort((a, b) => {
 		if (a === "") return 1;
 		if (b === "") return -1;
@@ -329,7 +334,7 @@ export const ActivityMetrics: React.FC<ActivityMetricsProps> = ({ modelMetrics, 
 					</Card>
 					<Card>
 						<Text>Total Spend</Text>
-						<Title>${formatNumberWithCommas(totalMetrics.total_spend, 2)}</Title>
+						<Title>{<Money value={totalMetrics.total_spend} decimals={2} />}</Title>
 					</Card>
 				</Grid>
 
@@ -384,7 +389,7 @@ export const ActivityMetrics: React.FC<ActivityMetricsProps> = ({ modelMetrics, 
 							<div className="flex justify-between items-center w-full">
 								<Title>{modelMetrics[modelName].label || "Unknown Item"}</Title>
 								<div className="flex space-x-4 text-sm text-gray-500">
-									<span>${formatNumberWithCommas(modelMetrics[modelName].total_spend, 2)}</span>
+									<span>{<Money value={modelMetrics[modelName].total_spend} decimals={2} model={modelName} />}</span>
 									<span>{modelMetrics[modelName].total_requests.toLocaleString()} requests</span>
 								</div>
 							</div>
