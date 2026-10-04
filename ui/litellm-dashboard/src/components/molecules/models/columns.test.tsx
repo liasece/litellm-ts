@@ -46,8 +46,9 @@ const createMockModel = (overrides: Partial<ModelData> = {}): ModelData => ({
 	model_name: "test-model",
 	provider: "openai",
 	litellm_model_name: "gpt-4",
-	input_cost: 0.01,
-	output_cost: 0.03,
+	input_cost: "0.01",
+	output_cost: "0.03",
+	cache_read_input_cost: null,
 	max_tokens: 4096,
 	max_input_tokens: 8192,
 	litellm_params: {
@@ -498,8 +499,8 @@ describe("columns", () => {
 		);
 
 		const model = createMockModel({
-			input_cost: 0.01,
-			output_cost: 0.03,
+			input_cost: "0.01",
+			output_cost: "0.03",
 		});
 		render(<TestTable data={[model]} columns={cols} />);
 
@@ -830,7 +831,7 @@ describe("columns", () => {
 		);
 
 		const model = createMockModel({
-			input_cost: 0.01,
+			input_cost: "0.01",
 			output_cost: undefined as any,
 		});
 		render(<TestTable data={[model]} columns={cols} />);
@@ -855,7 +856,7 @@ describe("columns", () => {
 
 		const model = createMockModel({
 			input_cost: undefined as any,
-			output_cost: 0.03,
+			output_cost: "0.03",
 		});
 		render(<TestTable data={[model]} columns={cols} />);
 
@@ -879,7 +880,7 @@ describe("columns", () => {
 			defaultProps.setExpandedRows,
 			undefined,
 			undefined,
-			{ "test-model-id": { status: "healthy", loading: false } },
+			{ "test-model-id": { status: "healthy", lastCheck: "None", loading: false } },
 			onRefreshHealth,
 		);
 		render(<TestTable data={[createMockModel()]} columns={cols} />);

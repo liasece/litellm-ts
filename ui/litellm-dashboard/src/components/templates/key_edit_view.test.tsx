@@ -98,6 +98,7 @@ describe("KeyEditView", () => {
 		config: {},
 		user_id: "default_user_id",
 		team_id: null,
+		project_id: null,
 		max_parallel_requests: 10,
 		metadata: {
 			logging: [],
@@ -119,6 +120,7 @@ describe("KeyEditView", () => {
 		organization_id: null,
 		created_at: "2025-10-29T01:26:41.613000Z",
 		updated_at: "2025-10-29T01:47:33.980000Z",
+		last_active: null,
 		team_spend: 100,
 		team_alias: "",
 		team_tpm_limit: 100,

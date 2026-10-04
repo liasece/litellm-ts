@@ -91,7 +91,7 @@ describe("ProjectKeysTable", () => {
 	});
 
 	it("should display the owner using user.user_email when available", () => {
-		const key = makeKey({ user: { user_id: "u1", user_email: "alice@example.com" } });
+		const key = makeKey({ user: { user_id: "u1", user_email: "alice@example.com", user_alias: null } });
 		renderWithProviders(<ProjectKeysTable keys={[key]} />);
 		expect(screen.getByTestId("owner-tag")).toHaveTextContent("alice@example.com");
 	});

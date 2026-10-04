@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchAvailableModelsForTeamOrKey } from "./key_team_helpers/fetch_available_models_team_key";
-import { fetchMCPAccessGroups, getGuardrailsList, teamCreateCall } from "./networking";
+import { Organization, fetchMCPAccessGroups, getGuardrailsList, teamCreateCall } from "./networking";
 import OldTeams from "./OldTeams";
 
 const mockTeamInfoView = vi.fn();
@@ -130,6 +130,24 @@ const renderWithQueryClient = (component: React.ReactElement) => {
 	return render(<QueryClientProvider client={queryClient}>{component}</QueryClientProvider>);
 };
 
+const mockOrganization: Organization = {
+	organization_id: "org-1",
+	organization_alias: "Org 1",
+	budget_id: "budget-1",
+	metadata: {},
+	models: [],
+	spend: 0,
+	model_spend: {},
+	created_at: "2024-10-01T10:00:00Z",
+	created_by: "user-1",
+	updated_at: "2024-11-01T10:00:00Z",
+	updated_by: "user-1",
+	litellm_budget_table: null,
+	teams: null,
+	users: null,
+	members: null,
+};
+
 describe("OldTeams - interactions", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -160,7 +178,6 @@ describe("OldTeams - interactions", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -189,7 +206,6 @@ describe("OldTeams - empty state", () => {
 		renderWithQueryClient(
 			<OldTeams
 				teams={[]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -210,7 +226,6 @@ describe("OldTeams - empty state", () => {
 		renderWithQueryClient(
 			<OldTeams
 				teams={null}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -246,7 +261,6 @@ describe("OldTeams - empty state", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -293,7 +307,6 @@ describe("OldTeams - premium props", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -339,7 +352,6 @@ describe("OldTeams - Default Team Settings tab visibility", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -370,7 +382,6 @@ describe("OldTeams - Default Team Settings tab visibility", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -401,7 +412,6 @@ describe("OldTeams - Default Team Settings tab visibility", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -432,7 +442,6 @@ describe("OldTeams - Default Team Settings tab visibility", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -472,12 +481,11 @@ describe("OldTeams - access_group_ids in team create", () => {
 			renderWithQueryClient(
 				<OldTeams
 					teams={[]}
-					searchParams={{}}
 					accessToken="test-token"
 					setTeams={vi.fn()}
 					userID="user-123"
 					userRole="Admin"
-					organizations={[{ organization_id: "org-1", organization_alias: "Org 1", models: [], members: [] }]}
+					organizations={[mockOrganization]}
 				/>,
 			);
 
@@ -538,7 +546,6 @@ describe("OldTeams - models dropdown options", () => {
 		renderWithQueryClient(
 			<OldTeams
 				teams={[]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -611,7 +618,6 @@ describe("OldTeams - organization alias display", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -647,7 +653,6 @@ describe("OldTeams - organization alias display", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"
@@ -682,7 +687,6 @@ describe("OldTeams - organization alias display", () => {
 						spend: 0,
 					},
 				]}
-				searchParams={{}}
 				accessToken="test-token"
 				setTeams={vi.fn()}
 				userID="user-123"

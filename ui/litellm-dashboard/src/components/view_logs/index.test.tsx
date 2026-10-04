@@ -246,6 +246,10 @@ describe("Logs columns", () => {
 			session_group_id: "user_device_account__session_123e4567-e89b-12d3-a456-426614174000",
 		});
 
+		if (group === null) {
+			throw new Error("Expected getSessionGroupRef to resolve the Claude Code session group");
+		}
+
 		expect(group).toEqual({
 			type: "claude_code_user_id",
 			id: "user_device_account__session_123e4567-e89b-12d3-a456-426614174000",

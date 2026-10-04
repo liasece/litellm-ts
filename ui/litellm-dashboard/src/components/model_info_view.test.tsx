@@ -119,6 +119,14 @@ describe("ModelInfoView", () => {
 					max_iterations: 4,
 					max_output_tokens: 2048,
 				},
+				image_generation: {
+					enabled: false,
+					always_inject: false,
+					handler_model: "",
+					fallback_models: [],
+					max_iterations: 4,
+					max_output_tokens: 2048,
+				},
 				web: {
 					enabled: false,
 					always_inject: true,
@@ -129,6 +137,7 @@ describe("ModelInfoView", () => {
 				},
 			},
 			available_models: [],
+			image_generation_available_models: [],
 			web_available_models: [],
 		});
 

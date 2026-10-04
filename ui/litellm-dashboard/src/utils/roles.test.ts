@@ -85,6 +85,7 @@ describe("roles", () => {
 					organization_id: "org-1",
 					created_at: "2024-01-01",
 					keys: [],
+					spend: 0,
 					members_with_roles: [{ user_id: "user-1", user_email: "user1@test.com", role: "user" }],
 				},
 				{
@@ -98,6 +99,7 @@ describe("roles", () => {
 					organization_id: "org-1",
 					created_at: "2024-01-01",
 					keys: [],
+					spend: 0,
 					members_with_roles: [{ user_id: "user-1", user_email: "user1@test.com", role: "admin" }],
 				},
 			];
@@ -117,6 +119,7 @@ describe("roles", () => {
 					organization_id: "org-1",
 					created_at: "2024-01-01",
 					keys: [],
+					spend: 0,
 					members_with_roles: [{ user_id: "user-1", user_email: "user1@test.com", role: "user" }],
 				},
 				{
@@ -130,6 +133,7 @@ describe("roles", () => {
 					organization_id: "org-1",
 					created_at: "2024-01-01",
 					keys: [],
+					spend: 0,
 					members_with_roles: [{ user_id: "user-2", user_email: "user2@test.com", role: "admin" }],
 				},
 			];

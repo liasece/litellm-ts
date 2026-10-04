@@ -129,6 +129,8 @@ describe("AllModelsTab", () => {
 	};
 
 	const mockUseAuthorized = {
+		isLoading: false,
+		isAuthorized: true,
 		token: "mock-token",
 		accessToken: "mock-access-token",
 		userId: "user-123",

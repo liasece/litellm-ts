@@ -25,7 +25,7 @@ describe("MCPPermissionManagement", () => {
 	};
 
 	const renderWithForm = (props = {}) => {
-		const Wrapper: React.FC = ({ children }) => {
+		const Wrapper: React.FC<React.PropsWithChildren> = ({ children }) => {
 			const [form] = Form.useForm();
 			return (
 				<Form form={form} initialValues={{ allow_all_keys: false }}>

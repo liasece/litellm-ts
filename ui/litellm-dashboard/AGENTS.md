@@ -12,5 +12,6 @@
 - `eslint-suppressions.json` 是启用 Next 16 规则时记录的存量错误基线。不得增加 suppression
   数量；修复存量问题后运行 `eslint . --prune-suppressions` 收紧基线。
 - 新增路径路由时，必须兼容现有 legacy `?page=...` 路由，并同步更新路径到导航选中项的映射及测试。
-- 前端改动至少运行 ESLint、相关 Vitest 和 Next.js production build；同时检查 TypeScript。仓库内
-  既有测试夹具类型错误应单独记录，不得用放宽生产类型检查来绕过。
+- 前端改动至少运行 ESLint、相关 Vitest 和 Next.js production build，另外必须运行 `npx tsc --noEmit`
+  （当前为 0 错误）。`next build` 的类型检查会跳过 `*.test.*` 诊断，不能用构建成功代替类型检查。
+  不得用 `as any`、`@ts-ignore` 或放宽 tsconfig 掩盖类型问题。

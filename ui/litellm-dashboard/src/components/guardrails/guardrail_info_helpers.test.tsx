@@ -89,8 +89,8 @@ describe("guardrail_info_helpers", () => {
 			const result = getGuardrailProviders();
 
 			// Returns dynamic (which includes legacy + custom)
-			expect(result.CustomGuardrail).toBe("Custom Guardrail");
-			expect(result.PresidioPII).toBe("Presidio PII");
+			expect(result).toHaveProperty("CustomGuardrail", "Custom Guardrail");
+			expect(result).toHaveProperty("PresidioPII", "Presidio PII");
 		});
 	});
 

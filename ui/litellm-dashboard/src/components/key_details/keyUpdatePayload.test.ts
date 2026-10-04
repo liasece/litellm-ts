@@ -13,7 +13,7 @@ const currentKey = {
 		agents: ["old-agent"],
 		agent_access_groups: ["old-agent-group"],
 	},
-} as KeyResponse;
+} as unknown as KeyResponse;
 
 describe("buildKeyUpdatePayload", () => {
 	it("merges all resource permission fields without overwriting sibling updates", () => {

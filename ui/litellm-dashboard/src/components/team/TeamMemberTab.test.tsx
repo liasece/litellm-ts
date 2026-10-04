@@ -106,7 +106,7 @@ describe("TeamMembersComponent", () => {
 			token: "test-token",
 			userEmail: "test@example.com",
 			premiumUser: false,
-			disabledPersonalKeyCreation: null,
+			disabledPersonalKeyCreation: false,
 			showSSOBanner: false,
 		});
 	});

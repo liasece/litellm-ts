@@ -66,6 +66,8 @@ describe("TopKeyView", () => {
 		vi.clearAllMocks();
 		mockUseAuthorized.mockReturnValue({
 			token: "mock-token",
+			isLoading: false,
+			isAuthorized: true,
 			accessToken: mockProps.accessToken,
 			userId: mockProps.userID,
 			userEmail: "test@example.com",

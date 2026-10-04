@@ -165,7 +165,7 @@ vi.mock("antd", () => {
 	const Tag = ({ children }: { children?: any }) => React.createElement("span", null, children);
 	const Tooltip = ({ children }: { children?: any }) => React.createElement(React.Fragment, null, children);
 
-	const Button = ({ children, htmlType, ...props }: { children?: any; htmlType?: string }) =>
+	const Button = ({ children, htmlType, ...props }: { children?: any; htmlType?: string; type?: string }) =>
 		React.createElement("button", { ...props, type: htmlType ?? props.type }, children);
 
 	return {

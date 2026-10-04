@@ -38,8 +38,8 @@ describe("GeneralSettings web-search override", () => {
 			},
 		]);
 		vi.mocked(getRoutableModelCandidatesCall).mockResolvedValue([
-			{ model_name: "logical-model", type: "model" },
-			{ model_name: "search-alias", type: "alias" },
+			{ model_name: "logical-model", type: "model", mode: "chat" },
+			{ model_name: "search-alias", type: "alias", mode: "chat" },
 		]);
 	});
 

@@ -41,6 +41,8 @@ describe("TopKeyView", () => {
 	const mockTransformKeyInfo = vi.mocked(transformKeyInfo.transformKeyInfo);
 
 	const mockAuth = {
+		isLoading: false,
+		isAuthorized: true,
 		token: "mock-token",
 		accessToken: "test-token",
 		userId: "user-1",

@@ -90,6 +90,8 @@ vi.mock("@/app/(dashboard)/hooks/tags/useTags", () => ({
 }));
 
 const mockAuthorizedUser = (userRole: string, userId: string, premiumUser: boolean) => ({
+	isLoading: false,
+	isAuthorized: true,
 	token: "test-token",
 	accessToken: "test-access-token",
 	userId,
@@ -101,6 +103,7 @@ const mockAuthorizedUser = (userRole: string, userId: string, premiumUser: boole
 });
 
 const testTeam: Team = {
+	spend: 0,
 	team_id: "team-1",
 	team_alias: "Test Team",
 	models: ["gpt-4"],
@@ -200,7 +203,9 @@ describe("AddModelForm", () => {
 
 		expect(await screen.findByText("Credentials are managed by the built-in CLIProxy runtime")).toBeInTheDocument();
 		expect(screen.queryByLabelText("Existing Credentials")).not.toBeInTheDocument();
-		expect(screen.queryByText("Either select existing credentials OR enter new provider credentials below")).not.toBeInTheDocument();
+		expect(
+			screen.queryByText("Either select existing credentials OR enter new provider credentials below"),
+		).not.toBeInTheDocument();
 	});
 
 	it("groups popular providers first and sorts the remaining unique providers", async () => {
