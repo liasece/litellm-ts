@@ -21,6 +21,43 @@ interface ResolveResult {
 	matched_policies: PolicyMatchDetail[];
 }
 
+/** Loads the team/key/model options for the test panel. Kept at module scope so
+ * the effect that calls it never reads a variable declared later in the component. */
+async function loadOptions(
+	accessToken: string | null,
+	userId: string,
+	userRole: string,
+	setAvailableTeams: React.Dispatch<React.SetStateAction<string[]>>,
+	setAvailableKeys: React.Dispatch<React.SetStateAction<string[]>>,
+	setAvailableModels: React.Dispatch<React.SetStateAction<string[]>>,
+): Promise<void> {
+	if (!accessToken) return;
+
+	try {
+		const teamsResponse = await teamListCall(accessToken, null, userId);
+		const teamsArray = Array.isArray(teamsResponse) ? teamsResponse : teamsResponse?.data || [];
+		setAvailableTeams(teamsArray.map((t: any) => t.team_alias).filter(Boolean));
+	} catch (error) {
+		console.error("Failed to load teams:", error);
+	}
+
+	try {
+		const keysResponse = await keyListCall(accessToken, null, null, null, null, null, 1, 100);
+		const keysArray = keysResponse?.keys || keysResponse?.data || [];
+		setAvailableKeys(keysArray.map((k: any) => k.key_alias).filter(Boolean));
+	} catch (error) {
+		console.error("Failed to load keys:", error);
+	}
+
+	try {
+		const modelsResponse = await modelAvailableCall(accessToken, userId || "", userRole || "");
+		const modelsArray = modelsResponse?.data || (Array.isArray(modelsResponse) ? modelsResponse : []);
+		setAvailableModels(modelsArray.map((m: any) => m.id || m.model_name).filter(Boolean));
+	} catch (error) {
+		console.error("Failed to load models:", error);
+	}
+}
+
 const PolicyTestPanel: React.FC<PolicyTestPanelProps> = ({ accessToken }) => {
 	const [form] = Form.useForm();
 	const [isLoading, setIsLoading] = useState(false);
@@ -33,38 +70,10 @@ const PolicyTestPanel: React.FC<PolicyTestPanelProps> = ({ accessToken }) => {
 
 	useEffect(() => {
 		if (accessToken) {
-			loadOptions();
+			loadOptions(accessToken, userId, userRole, setAvailableTeams, setAvailableKeys, setAvailableModels);
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [accessToken]);
-
-	const loadOptions = async () => {
-		if (!accessToken) return;
-
-		try {
-			const teamsResponse = await teamListCall(accessToken, null, userId);
-			const teamsArray = Array.isArray(teamsResponse) ? teamsResponse : teamsResponse?.data || [];
-			setAvailableTeams(teamsArray.map((t: any) => t.team_alias).filter(Boolean));
-		} catch (error) {
-			console.error("Failed to load teams:", error);
-		}
-
-		try {
-			const keysResponse = await keyListCall(accessToken, null, null, null, null, null, 1, 100);
-			const keysArray = keysResponse?.keys || keysResponse?.data || [];
-			setAvailableKeys(keysArray.map((k: any) => k.key_alias).filter(Boolean));
-		} catch (error) {
-			console.error("Failed to load keys:", error);
-		}
-
-		try {
-			const modelsResponse = await modelAvailableCall(accessToken, userId || "", userRole || "");
-			const modelsArray = modelsResponse?.data || (Array.isArray(modelsResponse) ? modelsResponse : []);
-			setAvailableModels(modelsArray.map((m: any) => m.id || m.model_name).filter(Boolean));
-		} catch (error) {
-			console.error("Failed to load models:", error);
-		}
-	};
 
 	const handleTest = async () => {
 		if (!accessToken) return;

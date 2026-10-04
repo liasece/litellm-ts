@@ -17,10 +17,14 @@ const DEBOUNCE_DELAY = 300;
 
 export const FilterInput: React.FC<FilterInputProps> = ({ placeholder, value, onChange, icon: Icon, className }) => {
 	const [localValue, setLocalValue] = useState(value);
-
-	useEffect(() => {
+	// Keep the field in sync when the controlled value changes from the outside
+	// (e.g. the parent clears a filter). Adjusting state during render with a guard
+	// is the documented replacement for a state-syncing effect.
+	const [prevValue, setPrevValue] = useState(value);
+	if (!Object.is(value, prevValue)) {
+		setPrevValue(value);
 		setLocalValue(value);
-	}, [value]);
+	}
 
 	const debouncedOnChange = useMemo(() => debounce((val: string) => onChange(val), DEBOUNCE_DELAY), [onChange]);
 

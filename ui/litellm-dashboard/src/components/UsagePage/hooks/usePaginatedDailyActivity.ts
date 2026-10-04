@@ -107,7 +107,13 @@ export function usePaginatedDailyActivity({
 	// Keep args in a ref so the effect can always read the latest values
 	// without needing them in the dependency array.
 	const argsRef = useRef(args);
-	argsRef.current = args;
+
+	// Keep the ref in sync after commit instead of writing it during render.
+	// Declared before the fetch effect so it always runs first and the fetch
+	// reads the latest args.
+	useEffect(() => {
+		argsRef.current = args;
+	});
 
 	// Stable serialised key so the effect only re-runs when the arg *values* change.
 	const argsKey = JSON.stringify(args);
@@ -123,18 +129,22 @@ export function usePaginatedDailyActivity({
 	}, []);
 
 	useEffect(() => {
-		if (!enabled) {
+		void (async () => {
+			if (enabled) return;
+
 			setData(EMPTY_DATA);
 			setLoading(false);
 			setIsFetchingMore(false);
 			setProgress({ currentPage: 0, totalPages: 0 });
 			setCancelled(false);
-			return;
-		}
+		})();
 
+		if (!enabled) return;
 		const currentFetchId = ++fetchIdRef.current;
 		cancelledRef.current = false;
-		setCancelled(false);
+		void (async () => {
+			setCancelled(false);
+		})();
 
 		const isStale = () => fetchIdRef.current !== currentFetchId || cancelledRef.current;
 

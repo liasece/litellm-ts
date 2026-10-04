@@ -69,6 +69,15 @@ export default function MCPSemanticFilterSettings({ accessToken }: MCPSemanticFi
 		loadEmbeddingModels();
 	}, [accessToken]);
 
+	// The antd form is an external store, so its fields are still pushed from an
+	// effect. The dirty flag follows the incoming server values and is adjusted
+	// during render with a guard instead of being set from that effect.
+	const [prevValues, setPrevValues] = useState(values);
+	if (!Object.is(values, prevValues)) {
+		setPrevValues(values);
+		setIsDirty(false);
+	}
+
 	useEffect(() => {
 		if (values) {
 			form.setFieldsValue({
@@ -77,7 +86,6 @@ export default function MCPSemanticFilterSettings({ accessToken }: MCPSemanticFi
 				top_k: values.top_k ?? 10,
 				similarity_threshold: values.similarity_threshold ?? 0.3,
 			});
-			setIsDirty(false);
 		}
 	}, [values, form]);
 

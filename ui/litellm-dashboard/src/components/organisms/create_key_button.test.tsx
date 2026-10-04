@@ -58,8 +58,8 @@ vi.mock("react-copy-to-clipboard", () => ({
 	CopyToClipboard: ({ children }: { children: any }) => children,
 }));
 
-vi.mock("@tremor/react", () => {
-	const React = require("react");
+vi.mock("@tremor/react", async () => {
+	const React = await import("react");
 	const Stub = ({ children }: { children?: any }) => React.createElement("div", null, children);
 	const Button = ({ children, ...props }: { children?: any }) => React.createElement("button", props, children);
 	const TextInput = (props: any) => React.createElement("input", props);
@@ -77,8 +77,8 @@ vi.mock("@tremor/react", () => {
 	};
 });
 
-vi.mock("antd", () => {
-	const React = require("react");
+vi.mock("antd", async () => {
+	const React = await import("react");
 
 	const getValueFromEvent = (event: any) => {
 		if (event?.target) {
@@ -110,12 +110,12 @@ vi.mock("antd", () => {
 			children,
 		);
 
-	Form.Item = ({ children, name }: { children?: any; name?: string }) => {
+	Form.Item = function FormItem({ children, name }: { children?: any; name?: string }) {
 		if (!name || !React.isValidElement(children)) {
 			return React.createElement(React.Fragment, null, children);
 		}
 
-		return React.cloneElement(children, {
+		return React.cloneElement<any>(children, {
 			value: formStateRef.current[name],
 			onChange: (event: any) => {
 				formStateRef.current[name] = getValueFromEvent(event);
@@ -145,18 +145,24 @@ vi.mock("antd", () => {
 			options?.map((opt: any) => React.createElement("option", { key: opt.value, value: opt.value }, opt.label)),
 		);
 
-	Select.Option = ({ children, ...props }: { children?: any }) => React.createElement("option", props, children);
+	Select.Option = function SelectOption({ children, ...props }: { children?: any }) {
+		return React.createElement("option", props, children);
+	};
 
 	const Input = (props: any) => React.createElement("input", props);
-	Input.Password = (props: any) => React.createElement("input", { ...props, type: "password" });
-	Input.TextArea = (props: any) => React.createElement("textarea", props);
+	Input.Password = function InputPassword(props: any) {
+		return React.createElement("input", { ...props, type: "password" });
+	};
+	Input.TextArea = function InputTextArea(props: any) {
+		return React.createElement("textarea", props);
+	};
 
 	const Modal = ({ children, open }: { children?: any; open?: boolean }) =>
 		open ? React.createElement("div", null, children) : null;
 
 	const Radio = ({ children, ...props }: { children?: any }) => React.createElement("div", props, children);
 
-	Radio.Group = ({ children, value }: { children?: any; value?: string }) => {
+	Radio.Group = function RadioGroup({ children, value }: { children?: any; value?: string }) {
 		radioGroupValueRef.current = value ?? null;
 		return React.createElement("div", null, children);
 	};

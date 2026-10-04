@@ -764,7 +764,9 @@ export function TeamGuardrailsTab({ accessToken }: TeamGuardrailsTabProps) {
 	}, [accessToken, statusFilter, searchDebounced]);
 
 	useEffect(() => {
-		fetchSubmissions();
+		void (async () => {
+			fetchSubmissions();
+		})();
 	}, [fetchSubmissions]);
 
 	const filtered = guardrails;

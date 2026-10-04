@@ -142,29 +142,31 @@ const CompliancePanel: React.FC<CompliancePanelProps> = ({ accessToken, logEntry
 	const [gdprError, setGdprError] = useState<string | null>(null);
 
 	useEffect(() => {
-		if (!accessToken || !logEntry.request_id) return;
+		void (async () => {
+			if (!accessToken || !logEntry.request_id) return;
 
-		const payload: ComplianceCheckRequest = {
-			request_id: logEntry.request_id,
-			user_id: logEntry.user,
-			model: logEntry.model,
-			timestamp: logEntry.startTime,
-			guardrail_information: logEntry.metadata?.guardrail_information,
-		};
+			const payload: ComplianceCheckRequest = {
+				request_id: logEntry.request_id,
+				user_id: logEntry.user,
+				model: logEntry.model,
+				timestamp: logEntry.startTime,
+				guardrail_information: logEntry.metadata?.guardrail_information,
+			};
 
-		setEuAiActLoading(true);
-		setEuAiActError(null);
-		checkEuAiActCompliance(accessToken, payload)
-			.then(setEuAiActData)
-			.catch((err) => setEuAiActError(err.message || "Failed to check EU AI Act compliance"))
-			.finally(() => setEuAiActLoading(false));
+			setEuAiActLoading(true);
+			setEuAiActError(null);
+			checkEuAiActCompliance(accessToken, payload)
+				.then(setEuAiActData)
+				.catch((err) => setEuAiActError(err.message || "Failed to check EU AI Act compliance"))
+				.finally(() => setEuAiActLoading(false));
 
-		setGdprLoading(true);
-		setGdprError(null);
-		checkGdprCompliance(accessToken, payload)
-			.then(setGdprData)
-			.catch((err) => setGdprError(err.message || "Failed to check GDPR compliance"))
-			.finally(() => setGdprLoading(false));
+			setGdprLoading(true);
+			setGdprError(null);
+			checkGdprCompliance(accessToken, payload)
+				.then(setGdprData)
+				.catch((err) => setGdprError(err.message || "Failed to check GDPR compliance"))
+				.finally(() => setGdprLoading(false));
+		})();
 	}, [accessToken, logEntry]);
 
 	return (

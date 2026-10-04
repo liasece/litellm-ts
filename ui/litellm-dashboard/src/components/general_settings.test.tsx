@@ -1,12 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import GeneralSettings from "./general_settings";
-import {
-	deleteConfigFieldSetting,
-	getGeneralSettingsCall,
-	getRoutableModelCandidatesCall,
-	updateConfigFieldSetting,
-} from "./networking";
+import { getGeneralSettingsCall, getRoutableModelCandidatesCall, updateConfigFieldSetting } from "./networking";
 
 vi.mock("./networking", () => ({
 	getGeneralSettingsCall: vi.fn(),

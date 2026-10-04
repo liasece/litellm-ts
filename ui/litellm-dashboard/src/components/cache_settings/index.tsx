@@ -51,7 +51,9 @@ const CacheSettings: React.FC<CacheSettingsProps> = ({ accessToken, userRole, us
 		if (!accessToken) {
 			return;
 		}
-		loadCacheSettings();
+		void (async () => {
+			await loadCacheSettings();
+		})();
 	}, [accessToken, loadCacheSettings]);
 
 	const handleTestConnection = async () => {

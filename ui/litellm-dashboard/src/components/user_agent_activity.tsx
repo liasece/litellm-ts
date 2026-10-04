@@ -90,20 +90,6 @@ const UserAgentActivity: React.FC<UserAgentActivityProps> = ({ accessToken, user
 	// Use today's date as the end date for all API calls
 	const today = React.useMemo(() => new Date(), []);
 
-	const fetchAvailableTags = React.useCallback(async () => {
-		if (!accessToken) return;
-
-		setTagsLoading(true);
-		try {
-			const data = await tagDistinctCall(accessToken);
-			setAvailableTags(data.results.map((item: DistinctTagResponse) => item.tag));
-		} catch (error) {
-			console.error("Failed to fetch available tags:", error);
-		} finally {
-			setTagsLoading(false);
-		}
-	}, [accessToken]);
-
 	const fetchDauData = React.useCallback(async () => {
 		if (!accessToken) return;
 
@@ -182,8 +168,19 @@ const UserAgentActivity: React.FC<UserAgentActivityProps> = ({ accessToken, user
 
 	// Effect to fetch available tags on mount
 	useEffect(() => {
-		fetchAvailableTags();
-	}, [accessToken, fetchAvailableTags]);
+		if (!accessToken) return;
+		void (async () => {
+			setTagsLoading(true);
+			try {
+				const data = await tagDistinctCall(accessToken);
+				setAvailableTags(data.results.map((item: DistinctTagResponse) => item.tag));
+			} catch (error) {
+				console.error("Failed to fetch available tags:", error);
+			} finally {
+				setTagsLoading(false);
+			}
+		})();
+	}, [accessToken]);
 
 	// Effect for DAU/WAU/MAU data (independent of date picker)
 	useEffect(() => {

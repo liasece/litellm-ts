@@ -1285,31 +1285,36 @@ export const FlowBuilderPage: React.FC<FlowBuilderPageProps> = ({
 	const [isCreatingVersion, setIsCreatingVersion] = useState(false);
 	const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
-	// Sync local state when editingPolicy changes (e.g. user switched version)
-	React.useEffect(() => {
+	// Sync local state when editingPolicy changes (e.g. user switched version).
+	// Render-phase state adjustment instead of an effect, so no setState runs inside an effect body.
+	const [prevEditingPolicy, setPrevEditingPolicy] = useState<{ value: Policy | null | undefined } | null>(null);
+	if (!prevEditingPolicy || editingPolicy !== prevEditingPolicy.value) {
+		setPrevEditingPolicy({ value: editingPolicy });
 		setPolicyName(editingPolicy?.policy_name || "");
 		setDescription(editingPolicy?.description || "");
 		setPipeline(derivePipelineFromPolicy(editingPolicy));
-	}, [editingPolicy]);
+	}
 
 	// Fetch versions when editing an existing policy by name
 	React.useEffect(() => {
-		if (!showVersionsSidebar || !editingPolicy?.policy_name || !accessToken) {
-			setVersions([]);
-			return;
-		}
 		let cancelled = false;
-		setIsVersionsLoading(true);
-		listPolicyVersions(accessToken, editingPolicy.policy_name)
-			.then((res) => {
-				if (!cancelled) setVersions(res.versions || []);
-			})
-			.catch(() => {
-				if (!cancelled) setVersions([]);
-			})
-			.finally(() => {
-				if (!cancelled) setIsVersionsLoading(false);
-			});
+		void (async () => {
+			if (!showVersionsSidebar || !editingPolicy?.policy_name || !accessToken) {
+				setVersions([]);
+				return;
+			}
+			setIsVersionsLoading(true);
+			listPolicyVersions(accessToken, editingPolicy.policy_name)
+				.then((res) => {
+					if (!cancelled) setVersions(res.versions || []);
+				})
+				.catch(() => {
+					if (!cancelled) setVersions([]);
+				})
+				.finally(() => {
+					if (!cancelled) setIsVersionsLoading(false);
+				});
+		})();
 		return () => {
 			cancelled = true;
 		};

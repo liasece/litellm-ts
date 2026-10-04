@@ -33,14 +33,18 @@ const MCPServerEdit: React.FC<MCPServerEditProps> = ({
 	availableAccessGroups,
 }) => {
 	const [form] = Form.useForm();
-	const [costConfig, setCostConfig] = useState<MCPServerCostInfo>({});
+	const [costConfig, setCostConfig] = useState<MCPServerCostInfo>(mcpServer.mcp_info?.mcp_server_cost_info ?? {});
 	const [tools, setTools] = useState<any[]>([]);
 	const [isLoadingTools, setIsLoadingTools] = useState(false);
 	const [searchValue, setSearchValue] = useState<string>("");
 	const [aliasManuallyEdited, setAliasManuallyEdited] = useState(false);
-	const [allowedTools, setAllowedTools] = useState<string[]>([]);
-	const [toolNameToDisplayName, setToolNameToDisplayName] = useState<Record<string, string>>({});
-	const [toolNameToDescription, setToolNameToDescription] = useState<Record<string, string>>({});
+	const [allowedTools, setAllowedTools] = useState<string[]>(mcpServer.allowed_tools ?? []);
+	const [toolNameToDisplayName, setToolNameToDisplayName] = useState<Record<string, string>>(
+		mcpServer.tool_name_to_display_name ?? {},
+	);
+	const [toolNameToDescription, setToolNameToDescription] = useState<Record<string, string>>(
+		mcpServer.tool_name_to_description ?? {},
+	);
 	const [pendingRestoredValues, setPendingRestoredValues] = useState<Record<string, any> | null>(null);
 	const [logoUrl, setLogoUrl] = useState<string | undefined>(mcpServer.mcp_info?.logo_url || undefined);
 	const authType = Form.useWatch("auth_type", form) as string | undefined;
@@ -192,69 +196,72 @@ const MCPServerEdit: React.FC<MCPServerEditProps> = ({
 		[mcpServer, effectiveTransport, initialStaticHeaders],
 	);
 
-	// Initialize cost config from existing server data
-	useEffect(() => {
+	// Re-sync cost config and tool overrides when a different server object is passed in.
+	// Adjusting state during render (React docs pattern) replaces the previous setState-in-effect.
+	const [previousMcpServer, setPreviousMcpServer] = useState(mcpServer);
+	if (mcpServer !== previousMcpServer) {
+		setPreviousMcpServer(mcpServer);
 		if (mcpServer.mcp_info?.mcp_server_cost_info) {
 			setCostConfig(mcpServer.mcp_info.mcp_server_cost_info);
 		}
-	}, [mcpServer]);
-
-	// Initialize allowed tools and tool overrides from existing server data
-	useEffect(() => {
 		if (mcpServer.allowed_tools) {
 			setAllowedTools(mcpServer.allowed_tools);
 		}
 		setToolNameToDisplayName(mcpServer.tool_name_to_display_name ?? {});
 		setToolNameToDescription(mcpServer.tool_name_to_description ?? {});
-	}, [mcpServer]);
+	}
 
 	useEffect(() => {
-		if (typeof window === "undefined") {
-			return;
-		}
-		const storedState = window.sessionStorage.getItem(EDIT_OAUTH_UI_STATE_KEY);
-		if (!storedState) {
-			return;
-		}
-
-		try {
-			const parsed = JSON.parse(storedState);
-			if (!parsed || parsed.serverId !== mcpServer.server_id) {
+		void (async () => {
+			if (typeof window === "undefined") {
 				return;
 			}
-			if (parsed.formValues) {
-				setPendingRestoredValues({ ...mcpServer, ...parsed.formValues });
+			const storedState = window.sessionStorage.getItem(EDIT_OAUTH_UI_STATE_KEY);
+			if (!storedState) {
+				return;
 			}
-			if (parsed.costConfig) {
-				setCostConfig(parsed.costConfig);
+
+			try {
+				const parsed = JSON.parse(storedState);
+				if (!parsed || parsed.serverId !== mcpServer.server_id) {
+					return;
+				}
+				if (parsed.formValues) {
+					setPendingRestoredValues({ ...mcpServer, ...parsed.formValues });
+				}
+				if (parsed.costConfig) {
+					setCostConfig(parsed.costConfig);
+				}
+				if (parsed.allowedTools) {
+					setAllowedTools(parsed.allowedTools);
+				}
+				if (parsed.searchValue) {
+					setSearchValue(parsed.searchValue);
+				}
+				if (typeof parsed.aliasManuallyEdited === "boolean") {
+					setAliasManuallyEdited(parsed.aliasManuallyEdited);
+				}
+			} catch (err) {
+				console.error("Failed to restore MCP edit state", err);
+			} finally {
+				window.sessionStorage.removeItem(EDIT_OAUTH_UI_STATE_KEY);
 			}
-			if (parsed.allowedTools) {
-				setAllowedTools(parsed.allowedTools);
-			}
-			if (parsed.searchValue) {
-				setSearchValue(parsed.searchValue);
-			}
-			if (typeof parsed.aliasManuallyEdited === "boolean") {
-				setAliasManuallyEdited(parsed.aliasManuallyEdited);
-			}
-		} catch (err) {
-			console.error("Failed to restore MCP edit state", err);
-		} finally {
-			window.sessionStorage.removeItem(EDIT_OAUTH_UI_STATE_KEY);
-		}
+		})();
 	}, [form, mcpServer]);
 
 	useEffect(() => {
-		if (!pendingRestoredValues) {
-			return;
-		}
-		const transport = pendingRestoredValues.transport || mcpServer.transport;
-		if (transport && transport !== form.getFieldValue("transport")) {
-			form.setFieldsValue({ transport });
-			return;
-		}
-		form.setFieldsValue(pendingRestoredValues);
-		setPendingRestoredValues(null);
+		void (async () => {
+			if (!pendingRestoredValues) {
+				return;
+			}
+			const transport = pendingRestoredValues.transport || mcpServer.transport;
+			if (transport && transport !== form.getFieldValue("transport")) {
+				form.setFieldsValue({ transport });
+				return;
+			}
+			form.setFieldsValue(pendingRestoredValues);
+			setPendingRestoredValues(null);
+		})();
 	}, [pendingRestoredValues, form, mcpServer.transport]);
 
 	// Transform string array to object array for initial form values

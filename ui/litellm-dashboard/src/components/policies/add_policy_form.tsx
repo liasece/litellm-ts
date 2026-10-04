@@ -147,6 +147,45 @@ const ModePicker: React.FC<ModePicker> = ({ selected, onSelect }) => (
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Loads the available models for the policy form. Kept at module scope so the
+ * effect that calls it never reads a variable declared later in the component. */
+async function loadAvailableModels(
+	accessToken: string | null,
+	userId: string,
+	userRole: string,
+	setAvailableModels: React.Dispatch<React.SetStateAction<string[]>>,
+): Promise<void> {
+	if (!accessToken) return;
+	try {
+		const response = await modelAvailableCall(accessToken, userId, userRole);
+		if (response?.data) {
+			const models = response.data.map((m: any) => m.id || m.model_name).filter(Boolean);
+			setAvailableModels(models);
+		}
+	} catch (error) {
+		console.error("Failed to load available models:", error);
+	}
+}
+
+/** Loads the guardrails resolved for a policy. Kept at module scope for the same reason. */
+async function loadResolvedGuardrails(
+	accessToken: string | null,
+	policyId: string,
+	setIsLoadingResolved: React.Dispatch<React.SetStateAction<boolean>>,
+	setResolvedGuardrails: React.Dispatch<React.SetStateAction<string[]>>,
+): Promise<void> {
+	if (!accessToken) return;
+	setIsLoadingResolved(true);
+	try {
+		const data = await getResolvedGuardrails(accessToken, policyId);
+		setResolvedGuardrails(data.resolved_guardrails || []);
+	} catch (error) {
+		console.error("Failed to load resolved guardrails:", error);
+	} finally {
+		setIsLoadingResolved(false);
+	}
+}
+
 const AddPolicyForm: React.FC<AddPolicyFormProps> = ({
 	visible,
 	onClose,
@@ -173,74 +212,50 @@ const AddPolicyForm: React.FC<AddPolicyFormProps> = ({
 	const isEditing = !!editingPolicy?.policy_id;
 
 	useEffect(() => {
-		if (visible && editingPolicy) {
-			const modelCondition = editingPolicy.condition?.model;
-			const isRegex = modelCondition && /[.*+?^${}()|[\]\\]/.test(modelCondition);
-			setModelConditionType(isRegex ? "regex" : "model");
+		void (async () => {
+			if (visible && editingPolicy) {
+				const modelCondition = editingPolicy.condition?.model;
+				const isRegex = modelCondition && /[.*+?^${}()|[\]\\]/.test(modelCondition);
+				setModelConditionType(isRegex ? "regex" : "model");
 
-			form.setFieldsValue({
-				policy_name: editingPolicy.policy_name,
-				description: editingPolicy.description,
-				inherit: editingPolicy.inherit,
-				guardrails_add: editingPolicy.guardrails_add || [],
-				guardrails_remove: editingPolicy.guardrails_remove || [],
-				model_condition: modelCondition,
-			});
+				form.setFieldsValue({
+					policy_name: editingPolicy.policy_name,
+					description: editingPolicy.description,
+					inherit: editingPolicy.inherit,
+					guardrails_add: editingPolicy.guardrails_add || [],
+					guardrails_remove: editingPolicy.guardrails_remove || [],
+					model_condition: modelCondition,
+				});
 
-			if (editingPolicy.policy_id && accessToken) {
-				loadResolvedGuardrails(editingPolicy.policy_id);
+				if (editingPolicy.policy_id && accessToken) {
+					loadResolvedGuardrails(accessToken, editingPolicy.policy_id, setIsLoadingResolved, setResolvedGuardrails);
+				}
+
+				// If editing a pipeline policy, go directly to flow builder
+				if (editingPolicy.pipeline) {
+					onClose();
+					onOpenFlowBuilder();
+					return;
+				}
+				// If editing a simple policy, skip mode picker
+				setStep("simple_form");
+			} else if (visible) {
+				form.resetFields();
+				setResolvedGuardrails([]);
+				setModelConditionType("model");
+				setSelectedMode("simple");
+				setStep("pick_mode");
 			}
-
-			// If editing a pipeline policy, go directly to flow builder
-			if (editingPolicy.pipeline) {
-				onClose();
-				onOpenFlowBuilder();
-				return;
-			}
-			// If editing a simple policy, skip mode picker
-			setStep("simple_form");
-		} else if (visible) {
-			form.resetFields();
-			setResolvedGuardrails([]);
-			setModelConditionType("model");
-			setSelectedMode("simple");
-			setStep("pick_mode");
-		}
+		})();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [visible, editingPolicy, form]);
 
 	useEffect(() => {
 		if (visible && accessToken) {
-			loadAvailableModels();
+			loadAvailableModels(accessToken, userId, userRole, setAvailableModels);
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [visible, accessToken]);
-
-	const loadAvailableModels = async () => {
-		if (!accessToken) return;
-		try {
-			const response = await modelAvailableCall(accessToken, userId, userRole);
-			if (response?.data) {
-				const models = response.data.map((m: any) => m.id || m.model_name).filter(Boolean);
-				setAvailableModels(models);
-			}
-		} catch (error) {
-			console.error("Failed to load available models:", error);
-		}
-	};
-
-	const loadResolvedGuardrails = async (policyId: string) => {
-		if (!accessToken) return;
-		setIsLoadingResolved(true);
-		try {
-			const data = await getResolvedGuardrails(accessToken, policyId);
-			setResolvedGuardrails(data.resolved_guardrails || []);
-		} catch (error) {
-			console.error("Failed to load resolved guardrails:", error);
-		} finally {
-			setIsLoadingResolved(false);
-		}
-	};
 
 	const computeResolvedGuardrails = (): string[] => {
 		const values = form.getFieldsValue(true);

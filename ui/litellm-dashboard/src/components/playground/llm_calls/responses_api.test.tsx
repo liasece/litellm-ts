@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createPlaygroundFetch } from "../../networking";
-import OpenAI from "openai";
 import { makeOpenAIResponsesRequest } from "./responses_api";
 import { MessageType } from "../chat_ui/types";
 

@@ -40,8 +40,9 @@ const mockProject: ProjectResponse = {
 };
 
 function makeWrapper(queryClient: QueryClient) {
-	return ({ children }: { children: ReactNode }) =>
-		React.createElement(QueryClientProvider, { client: queryClient }, children);
+	return function QueryClientWrapper({ children }: { children: ReactNode }) {
+		return React.createElement(QueryClientProvider, { client: queryClient }, children);
+	};
 }
 
 describe("useCreateProject", () => {

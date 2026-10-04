@@ -121,8 +121,9 @@ const VectorStoreManagement: React.FC<VectorStoreProps> = ({ accessToken, userID
 	};
 
 	useEffect(() => {
-		fetchVectorStores();
-		fetchCredentials();
+		void (async () => {
+			await Promise.all([fetchVectorStores(), fetchCredentials()]);
+		})();
 	}, [accessToken, fetchCredentials, fetchVectorStores]);
 
 	return selectedVectorStoreId ? (

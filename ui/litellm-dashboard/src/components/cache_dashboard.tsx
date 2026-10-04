@@ -15,7 +15,7 @@ import {
 	TabPanels,
 	Text,
 } from "@tremor/react";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import NotificationsManager from "./molecules/notifications_manager";
 import UsageDatePicker from "./shared/usage_date_picker";
@@ -100,18 +100,14 @@ const deepParse = (input: any) => {
 };
 
 const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole, userID, premiumUser }) => {
-	const [filteredData, setFilteredData] = useState<uiData[]>([]);
 	const [selectedApiKeys, setSelectedApiKeys] = useState<string[]>([]);
 	const [selectedModels, setSelectedModels] = useState<string[]>([]);
 	const [data, setData] = useState<cacheDataItem[]>([]);
-	const [cachedResponses, setCachedResponses] = useState("0");
-	const [cachedTokens, setCachedTokens] = useState("0");
-	const [cacheHitRatio, setCacheHitRatio] = useState("0");
 
-	const [dateValue, setDateValue] = useState<DateRangePickerValue>({
+	const [dateValue, setDateValue] = useState<DateRangePickerValue>(() => ({
 		from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
 		to: new Date(),
-	});
+	}));
 
 	const [lastRefreshed, setLastRefreshed] = useState("");
 	const [healthCheckResponse, setHealthCheckResponse] = useState<any>("");
@@ -128,10 +124,13 @@ const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole
 			);
 			setData(response);
 		};
-		fetchData();
 
-		const currentDate = new Date();
-		setLastRefreshed(currentDate.toLocaleString());
+		void (async () => {
+			fetchData();
+
+			const currentDate = new Date();
+			setLastRefreshed(currentDate.toLocaleString());
+		})();
 	}, [accessToken, dateValue]);
 
 	const uniqueApiKeys = Array.from(new Set(data.map((item) => item?.api_key ?? "")));
@@ -152,7 +151,7 @@ const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole
 		setData(new_cache_data);
 	};
 
-	useEffect(() => {
+	const { filteredData, cachedResponses, cachedTokens, cacheHitRatio } = useMemo(() => {
 		console.log("DATA IN CACHE DASHBOARD", data);
 		let newData: cacheDataItem[] = data;
 		if (selectedApiKeys.length > 0) {
@@ -188,6 +187,12 @@ const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole
 		let llm_api_requests = 0;
 		let cache_hits = 0;
 		let cached_tokens = 0;
+		for (const item of newData) {
+			llm_api_requests += (item.total_rows || 0) - (item.cache_hit_true_rows || 0);
+			cache_hits += item.cache_hit_true_rows || 0;
+			cached_tokens += item.cached_completion_tokens || 0;
+		}
+
 		const processedData = newData.reduce((acc: uiData[], item) => {
 			console.log("Processing item:", item);
 
@@ -195,10 +200,6 @@ const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole
 				console.log("Item has no call_type:", item);
 				item.call_type = "Unknown";
 			}
-
-			llm_api_requests += (item.total_rows || 0) - (item.cache_hit_true_rows || 0);
-			cache_hits += item.cache_hit_true_rows || 0;
-			cached_tokens += item.cached_completion_tokens || 0;
 
 			const existingItem = acc.find((i) => i.name === item.call_type);
 			if (existingItem) {
@@ -219,20 +220,23 @@ const CacheDashboard: React.FC<CachePageProps> = ({ accessToken, token, userRole
 		}, []);
 
 		// set header cache statistics
-		setCachedResponses(valueFormatterNumbers(cache_hits));
-		setCachedTokens(valueFormatterTokens(cached_tokens));
+		const cachedResponses = valueFormatterNumbers(cache_hits);
+		const cachedTokens = valueFormatterTokens(cached_tokens);
 		let allRequests = cache_hits + llm_api_requests;
+		let cacheHitRatio = "0";
 		if (allRequests > 0) {
-			let cache_hit_ratio = ((cache_hits / allRequests) * 100).toFixed(2);
-			setCacheHitRatio(cache_hit_ratio);
-		} else {
-			setCacheHitRatio("0");
+			cacheHitRatio = ((cache_hits / allRequests) * 100).toFixed(2);
 		}
 
-		setFilteredData(processedData);
-
 		console.log("PROCESSED DATA IN CACHE DASHBOARD", processedData);
-	}, [selectedApiKeys, selectedModels, dateValue, data]);
+
+		return {
+			filteredData: processedData,
+			cachedResponses,
+			cachedTokens,
+			cacheHitRatio,
+		};
+	}, [selectedApiKeys, selectedModels, data]);
 
 	const handleRefreshClick = () => {
 		// Update the 'lastRefreshed' state to the current date and time

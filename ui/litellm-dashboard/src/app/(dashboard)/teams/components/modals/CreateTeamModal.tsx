@@ -81,7 +81,6 @@ const CreateTeamModal = ({
 	const [form] = Form.useForm();
 	const [userModels, setUserModels] = useState<string[]>([]);
 	const [currentOrgForCreateTeam, setCurrentOrgForCreateTeam] = useState<Organization | null>(null);
-	const [modelsToPick, setModelsToPick] = useState<string[]>([]);
 	const [guardrailsList, setGuardrailsList] = useState<string[]>([]);
 	const [policiesList, setPoliciesList] = useState<string[]>([]);
 	const [mcpAccessGroups, setMcpAccessGroups] = useState<string[]>([]);
@@ -105,11 +104,13 @@ const CreateTeamModal = ({
 		fetchUserModels();
 	}, [accessToken, userID, userRole, teams]);
 
+	// modelsToPick 是 currentOrgForCreateTeam / userModels 的纯派生值，直接在渲染期计算
+	const modelsToPick = React.useMemo(
+		() => getOrganizationModels(currentOrgForCreateTeam, userModels),
+		[currentOrgForCreateTeam, userModels],
+	);
+
 	useEffect(() => {
-		console.log(`currentOrgForCreateTeam: ${currentOrgForCreateTeam}`);
-		const models = getOrganizationModels(currentOrgForCreateTeam, userModels);
-		console.log(`models: ${models}`);
-		setModelsToPick(models);
 		form.setFieldValue("models", []);
 	}, [currentOrgForCreateTeam, userModels, form]);
 
@@ -126,8 +127,18 @@ const CreateTeamModal = ({
 	}, [accessToken]);
 
 	useEffect(() => {
-		fetchMcpAccessGroups();
-	}, [accessToken, fetchMcpAccessGroups]);
+		void (async () => {
+			try {
+				if (accessToken == null) {
+					return;
+				}
+				const groups = await fetchMCPAccessGroups(accessToken);
+				setMcpAccessGroups(groups);
+			} catch (error) {
+				console.error("Failed to fetch MCP access groups:", error);
+			}
+		})();
+	}, [accessToken]);
 
 	useEffect(() => {
 		const fetchGuardrails = async () => {

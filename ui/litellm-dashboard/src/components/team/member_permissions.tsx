@@ -38,7 +38,9 @@ const MemberPermissions: React.FC<MemberPermissionsProps> = ({ teamId, accessTok
 	}, [accessToken, teamId]);
 
 	useEffect(() => {
-		fetchPermissions();
+		void (async () => {
+			await fetchPermissions();
+		})();
 	}, [teamId, accessToken, fetchPermissions]);
 
 	const handlePermissionChange = (permission: string, checked: boolean) => {

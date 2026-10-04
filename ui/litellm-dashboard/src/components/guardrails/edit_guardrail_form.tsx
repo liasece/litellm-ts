@@ -70,11 +70,13 @@ const EditGuardrailForm: React.FC<EditGuardrailFormProps> = ({
 
 	// Initialize selected entities and actions from initialValues
 	useEffect(() => {
-		if (initialValues?.pii_entities_config && Object.keys(initialValues.pii_entities_config).length > 0) {
-			const entities = Object.keys(initialValues.pii_entities_config);
-			setSelectedEntities(entities);
-			setSelectedActions(initialValues.pii_entities_config);
-		}
+		void (async () => {
+			if (initialValues?.pii_entities_config && Object.keys(initialValues.pii_entities_config).length > 0) {
+				const entities = Object.keys(initialValues.pii_entities_config);
+				setSelectedEntities(entities);
+				setSelectedActions(initialValues.pii_entities_config);
+			}
+		})();
 	}, [initialValues]);
 
 	const handleProviderChange = (value: string) => {

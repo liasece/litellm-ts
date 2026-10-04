@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Modal, Form, Select, Input, Steps, Radio, Tag, Divider, Switch, InputNumber, Collapse } from "antd";
+import { Modal, Form, Select, Input, Steps, Radio, Tag, Divider, Switch, InputNumber } from "antd";
 import MessageManager from "@/components/molecules/message_manager";
 import { Button } from "@tremor/react";
 import { CheckCircleFilled, KeyOutlined, RobotOutlined, AppstoreOutlined, InfoCircleOutlined } from "@ant-design/icons";
@@ -107,22 +107,22 @@ const AddAgentForm: React.FC<AddAgentFormProps> = ({ visible, onClose, accessTok
 	useEffect(() => {
 		if ((currentStep !== 1 && currentStep !== 3) || !accessToken || !userId || !userRole) return;
 		let cancelled = false;
-		setLoadingModels(true);
-		modelAvailableCall(accessToken, userId, userRole)
-			.then((response) => {
+		void (async () => {
+			setLoadingModels(true);
+			try {
+				const response = await modelAvailableCall(accessToken, userId, userRole);
 				if (cancelled) return;
 				const modelsArray = response?.data ?? (Array.isArray(response) ? response : []);
 				const ids = modelsArray
 					.map((m: { id?: string; model_name?: string }) => m.id ?? m.model_name)
 					.filter(Boolean) as string[];
 				setAvailableModels(ids);
-			})
-			.catch((error) => {
+			} catch (error) {
 				if (!cancelled) console.error("Error fetching models:", error);
-			})
-			.finally(() => {
+			} finally {
 				if (!cancelled) setLoadingModels(false);
-			});
+			}
+		})();
 		return () => {
 			cancelled = true;
 		};
@@ -131,19 +131,19 @@ const AddAgentForm: React.FC<AddAgentFormProps> = ({ visible, onClose, accessTok
 	useEffect(() => {
 		if (currentStep !== 1 || !accessToken) return;
 		let cancelled = false;
-		setLoadingAgents(true);
-		getAgentsList(accessToken)
-			.then((response) => {
+		void (async () => {
+			setLoadingAgents(true);
+			try {
+				const response = await getAgentsList(accessToken);
 				if (cancelled) return;
 				const agents = response?.agents ?? [];
 				setAvailableAgents(agents.map((a: any) => ({ agent_id: a.agent_id, agent_name: a.agent_name })));
-			})
-			.catch((error) => {
+			} catch (error) {
 				if (!cancelled) console.error("Error fetching agents:", error);
-			})
-			.finally(() => {
+			} finally {
 				if (!cancelled) setLoadingAgents(false);
-			});
+			}
+		})();
 		return () => {
 			cancelled = true;
 		};

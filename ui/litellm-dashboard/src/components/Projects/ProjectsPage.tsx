@@ -18,7 +18,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { LayersIcon, SearchIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CreateProjectModal } from "./ProjectModals/CreateProjectModal";
 import { ProjectDetail } from "./ProjectDetailsPage";
 
@@ -34,11 +34,14 @@ export function ProjectsPage() {
 	const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
 	const [searchText, setSearchText] = useState("");
 	const [currentPage, setCurrentPage] = useState(1);
+	const [previousSearchText, setPreviousSearchText] = useState(searchText);
 	const pageSize = 10;
 
-	useEffect(() => {
+	// Reset to the first page whenever the search filter changes (render-time state adjustment).
+	if (previousSearchText !== searchText) {
+		setPreviousSearchText(searchText);
 		setCurrentPage(1);
-	}, [searchText]);
+	}
 
 	// Build a team_id → team_alias lookup from the teams list
 	const teamAliasMap = useMemo(() => {

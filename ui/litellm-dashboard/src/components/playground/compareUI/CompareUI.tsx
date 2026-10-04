@@ -201,27 +201,28 @@ export default function CompareUI({ accessToken, disabledPersonalKeyCreation }: 
 		};
 	}, [playgroundAuth, hasPlaygroundAuth, isA2AMode, customProxyBaseUrl]);
 
-	useEffect(() => {
-		if (modelOptions.length === 0) {
-			return;
+	const [prevModelOptions, setPrevModelOptions] = useState(modelOptions);
+	if (modelOptions !== prevModelOptions) {
+		setPrevModelOptions(modelOptions);
+		if (modelOptions.length > 0) {
+			setComparisons((prev) =>
+				prev.map((comparison, index) => {
+					return {
+						...comparison,
+						temperature: comparison.temperature ?? 1,
+						maxTokens: comparison.maxTokens ?? 2048,
+						applyAcrossModels: comparison.applyAcrossModels ?? false,
+						useAdvancedParams: comparison.useAdvancedParams ?? false,
+						...(comparison.model
+							? {}
+							: {
+									model: modelOptions[index % modelOptions.length]?.model_group ?? "",
+								}),
+					};
+				}),
+			);
 		}
-		setComparisons((prev) =>
-			prev.map((comparison, index) => {
-				return {
-					...comparison,
-					temperature: comparison.temperature ?? 1,
-					maxTokens: comparison.maxTokens ?? 2048,
-					applyAcrossModels: comparison.applyAcrossModels ?? false,
-					useAdvancedParams: comparison.useAdvancedParams ?? false,
-					...(comparison.model
-						? {}
-						: {
-								model: modelOptions[index % modelOptions.length]?.model_group ?? "",
-							}),
-				};
-			}),
-		);
-	}, [modelOptions]);
+	}
 	const maxComparisons = 3;
 	const addComparison = () => {
 		if (comparisons.length >= maxComparisons) {

@@ -330,7 +330,9 @@ export const useMcpOAuthFlow = ({
 	}, [onTokenReceived]);
 
 	useEffect(() => {
-		resumeOAuthFlow();
+		void (async () => {
+			await resumeOAuthFlow();
+		})();
 	}, [resumeOAuthFlow]);
 
 	return {

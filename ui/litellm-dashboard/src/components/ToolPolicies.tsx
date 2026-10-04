@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Button, Switch, Tooltip } from "antd";
+import { Switch, Tooltip } from "antd";
 import { Table, TableHead, TableHeaderCell, TableBody, TableRow, TableCell } from "@tremor/react";
 import { TimeCell } from "./view_logs/time_cell";
 import type { SortState } from "./common_components/TableHeaderSortDropdown/TableHeaderSortDropdown";
@@ -48,6 +48,24 @@ interface ToolPoliciesProps {
 	onSelectTool?: (toolName: string) => void;
 }
 
+interface SortHeaderProps {
+	label: string;
+	field: SortField;
+	sortField: SortField;
+	sortOrder: "asc" | "desc";
+	onSortChange: (field: SortField, state: SortState) => void;
+}
+
+const SortHeader: React.FC<SortHeaderProps> = ({ label, field, sortField, sortOrder, onSortChange }) => (
+	<div className="flex items-center gap-1">
+		<span>{label}</span>
+		<TableHeaderSortDropdown
+			sortState={sortField === field ? sortOrder : false}
+			onSortChange={(s) => onSortChange(field, s)}
+		/>
+	</div>
+);
+
 export const ToolPolicies: React.FC<ToolPoliciesProps> = ({ accessToken, onSelectTool }) => {
 	const [tools, setTools] = useState<ToolRow[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -83,7 +101,9 @@ export const ToolPolicies: React.FC<ToolPoliciesProps> = ({ accessToken, onSelec
 	}, [accessToken]);
 
 	useEffect(() => {
-		load();
+		void (async () => {
+			await load();
+		})();
 	}, [load]);
 
 	useEffect(() => {
@@ -201,16 +221,6 @@ export const ToolPolicies: React.FC<ToolPoliciesProps> = ({ accessToken, onSelec
 				needsReviewTools,
 			};
 		}, [tools]);
-
-	const SortHeader = ({ label, field }: { label: string; field: SortField }) => (
-		<div className="flex items-center gap-1">
-			<span>{label}</span>
-			<TableHeaderSortDropdown
-				sortState={sortField === field ? sortOrder : false}
-				onSortChange={(s) => handleSortChange(field, s)}
-			/>
-		</div>
-	);
 
 	const filtered = tools.filter((t) => {
 		if (searchTerm) {
@@ -420,26 +430,68 @@ export const ToolPolicies: React.FC<ToolPoliciesProps> = ({ accessToken, onSelec
 					<TableHead>
 						<TableRow>
 							<TableHeaderCell className="py-1 h-8">
-								<SortHeader label="Discovered" field="created_at" />
+								<SortHeader
+									label="Discovered"
+									field="created_at"
+									sortField={sortField}
+									sortOrder={sortOrder}
+									onSortChange={handleSortChange}
+								/>
 							</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">
-								<SortHeader label="Tool Name" field="tool_name" />
+								<SortHeader
+									label="Tool Name"
+									field="tool_name"
+									sortField={sortField}
+									sortOrder={sortOrder}
+									onSortChange={handleSortChange}
+								/>
 							</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">
-								<SortHeader label="Input Policy" field="input_policy" />
+								<SortHeader
+									label="Input Policy"
+									field="input_policy"
+									sortField={sortField}
+									sortOrder={sortOrder}
+									onSortChange={handleSortChange}
+								/>
 							</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">
-								<SortHeader label="Output Policy" field="output_policy" />
+								<SortHeader
+									label="Output Policy"
+									field="output_policy"
+									sortField={sortField}
+									sortOrder={sortOrder}
+									onSortChange={handleSortChange}
+								/>
 							</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">
-								<SortHeader label="# Calls" field="call_count" />
+								<SortHeader
+									label="# Calls"
+									field="call_count"
+									sortField={sortField}
+									sortOrder={sortOrder}
+									onSortChange={handleSortChange}
+								/>
 							</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">
-								<SortHeader label="Team Name" field="team_id" />
+								<SortHeader
+									label="Team Name"
+									field="team_id"
+									sortField={sortField}
+									sortOrder={sortOrder}
+									onSortChange={handleSortChange}
+								/>
 							</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">Key Hash</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">
-								<SortHeader label="Key Name" field="key_alias" />
+								<SortHeader
+									label="Key Name"
+									field="key_alias"
+									sortField={sortField}
+									sortOrder={sortOrder}
+									onSortChange={handleSortChange}
+								/>
 							</TableHeaderCell>
 							<TableHeaderCell className="py-1 h-8">User Agent</TableHeaderCell>
 						</TableRow>

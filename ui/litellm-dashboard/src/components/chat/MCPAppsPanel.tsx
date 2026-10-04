@@ -138,58 +138,60 @@ const MCPAppsPanel: React.FC<Props> = ({ accessToken, selectedServers, onChange 
 
 	useEffect(() => {
 		let cancelled = false;
-		setLoading(true);
+		void (async () => {
+			setLoading(true);
 
-		// 1. Load servers first — show the list immediately
-		fetchMCPServers(accessToken)
-			.then((serverData) => {
-				if (cancelled) return;
-				const list: MCPServer[] = Array.isArray(serverData) ? serverData : serverData?.data ?? [];
-				setServers(list);
-				setLoading(false);
-
-				// 2. Fetch tools per server in parallel — each resolves independently and updates counts one by one
-				setLoadingCounts(true);
-				let remaining = list.length;
-				if (remaining === 0) {
-					setLoadingCounts(false);
-					return;
-				}
-				list.forEach((s) => {
-					listMCPTools(accessToken, s.server_id)
-						.then((toolsData) => {
-							if (cancelled) return;
-							const tools: MCPTool[] = Array.isArray(toolsData?.tools) ? toolsData.tools : [];
-							const sname = nameOf(s);
-							setToolCounts((prev) => ({ ...prev, [sname]: tools.length }));
-						})
-						.catch(() => {})
-						.finally(() => {
-							if (cancelled) return;
-							remaining -= 1;
-							if (remaining === 0) setLoadingCounts(false);
-						});
-				});
-
-				// 3. Check OAuth credential status for OAuth2 servers in parallel
-				const oauthServers = list.filter((s) => s.auth_type === AUTH_TYPE.OAUTH2);
-				oauthServers.forEach((s) => {
-					getMCPOAuthUserCredentialStatus(accessToken, s.server_id)
-						.then((status) => {
-							if (cancelled) return;
-							if (status.has_credential && !status.is_expired) {
-								setOauthConnected((prev) => new Set(prev).add(s.server_id));
-							}
-						})
-						.catch(() => {});
-				});
-			})
-			.catch(() => {
-				if (!cancelled) {
-					setServers([]);
+			// 1. Load servers first — show the list immediately
+			fetchMCPServers(accessToken)
+				.then((serverData) => {
+					if (cancelled) return;
+					const list: MCPServer[] = Array.isArray(serverData) ? serverData : serverData?.data ?? [];
+					setServers(list);
 					setLoading(false);
-				}
-			});
+
+					// 2. Fetch tools per server in parallel — each resolves independently and updates counts one by one
+					setLoadingCounts(true);
+					let remaining = list.length;
+					if (remaining === 0) {
+						setLoadingCounts(false);
+						return;
+					}
+					list.forEach((s) => {
+						listMCPTools(accessToken, s.server_id)
+							.then((toolsData) => {
+								if (cancelled) return;
+								const tools: MCPTool[] = Array.isArray(toolsData?.tools) ? toolsData.tools : [];
+								const sname = nameOf(s);
+								setToolCounts((prev) => ({ ...prev, [sname]: tools.length }));
+							})
+							.catch(() => {})
+							.finally(() => {
+								if (cancelled) return;
+								remaining -= 1;
+								if (remaining === 0) setLoadingCounts(false);
+							});
+					});
+
+					// 3. Check OAuth credential status for OAuth2 servers in parallel
+					const oauthServers = list.filter((s) => s.auth_type === AUTH_TYPE.OAUTH2);
+					oauthServers.forEach((s) => {
+						getMCPOAuthUserCredentialStatus(accessToken, s.server_id)
+							.then((status) => {
+								if (cancelled) return;
+								if (status.has_credential && !status.is_expired) {
+									setOauthConnected((prev) => new Set(prev).add(s.server_id));
+								}
+							})
+							.catch(() => {});
+					});
+				})
+				.catch(() => {
+					if (!cancelled) {
+						setServers([]);
+						setLoading(false);
+					}
+				});
+		})();
 		return () => {
 			cancelled = true;
 		};
@@ -249,25 +251,27 @@ const MCPAppsPanel: React.FC<Props> = ({ accessToken, selectedServers, onChange 
 
 	// Fetch tools for the detail view — server_id must be the UUID
 	useEffect(() => {
-		if (!detailServer) {
-			setDetailTools([]);
-			return;
-		}
 		let cancelled = false;
-		setLoadingTools(true);
-		listMCPTools(accessToken, detailServer.server_id)
-			.then((result) => {
-				if (cancelled) return;
-				// API returns { tools: [...], error: null }
-				const tools: MCPTool[] = Array.isArray(result?.tools) ? result.tools : [];
-				setDetailTools(tools);
-			})
-			.catch(() => {
-				if (!cancelled) setDetailTools([]);
-			})
-			.finally(() => {
-				if (!cancelled) setLoadingTools(false);
-			});
+		void (async () => {
+			if (!detailServer) {
+				setDetailTools([]);
+				return;
+			}
+			setLoadingTools(true);
+			listMCPTools(accessToken, detailServer.server_id)
+				.then((result) => {
+					if (cancelled) return;
+					// API returns { tools: [...], error: null }
+					const tools: MCPTool[] = Array.isArray(result?.tools) ? result.tools : [];
+					setDetailTools(tools);
+				})
+				.catch(() => {
+					if (!cancelled) setDetailTools([]);
+				})
+				.finally(() => {
+					if (!cancelled) setLoadingTools(false);
+				});
+		})();
 		return () => {
 			cancelled = true;
 		};

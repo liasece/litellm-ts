@@ -60,7 +60,9 @@ const PluginInfoView: React.FC<PluginInfoViewProps> = ({
 	}, [accessToken, pluginId]);
 
 	useEffect(() => {
-		void fetchPluginInfo();
+		void (async () => {
+			await fetchPluginInfo();
+		})();
 	}, [pluginId, accessToken, fetchPluginInfo]);
 
 	const handleToggleEnabled = async () => {

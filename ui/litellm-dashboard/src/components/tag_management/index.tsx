@@ -112,7 +112,11 @@ const TagManagement: React.FC<TagProps> = ({ accessToken, userID, userRole }) =>
 	}, [accessToken, userID, userRole]);
 
 	useEffect(() => {
-		fetchTags();
+		// fetchTags is shared with the refresh/create/delete handlers; awaiting it
+		// inside an async IIFE keeps the effect body free of synchronous state updates.
+		void (async () => {
+			await fetchTags();
+		})();
 	}, [accessToken, fetchTags]);
 
 	return (

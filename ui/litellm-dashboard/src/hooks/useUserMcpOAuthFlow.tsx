@@ -192,96 +192,94 @@ export const useUserMcpOAuthFlow = ({
 		}
 	}, [accessToken, serverId, serverAlias, scopes, preClientId]);
 
-	const resumeOAuthFlow = useCallback(async () => {
-		if (typeof window === "undefined" || processingRef.current) return;
-
-		const storedResult = getStorage(RESULT_KEY);
-		if (!storedResult) return;
-
-		// When multiple OAuth2ConnectButton components are mounted (one per server
-		// card), each holds its own hook instance.  All run resumeOAuthFlow() on
-		// mount and would compete for the same RESULT_KEY.  Peek at the stored
-		// flow state first: only the hook instance whose serverId matches the one
-		// that initiated the OAuth flow should consume the result.
-		const rawFlowState = getStorage(FLOW_STATE_KEY);
-		if (rawFlowState) {
-			try {
-				const peeked = JSON.parse(rawFlowState) as StoredFlowState;
-				if (peeked.serverId && peeked.serverId !== serverId) return;
-			} catch (_) {}
-		}
-
-		processingRef.current = true;
-		clearStorage(RESULT_KEY);
-
-		let payload: Record<string, unknown> | null = null;
-		let flowState: StoredFlowState | null = null;
-
-		try {
-			payload = JSON.parse(storedResult);
-			const raw = getStorage(FLOW_STATE_KEY);
-			flowState = raw ? JSON.parse(raw) : null;
-		} catch (_) {
-			setError("Failed to resume OAuth flow. Please retry.");
-			setStatus("error");
-			processingRef.current = false;
-			clearStorage(FLOW_STATE_KEY);
-			return;
-		}
-
-		try {
-			if (!flowState?.state || !flowState.codeVerifier || !flowState.serverId) {
-				throw new Error("OAuth session state was lost. Please retry.");
-			}
-			if (!payload?.state || payload.state !== flowState.state) {
-				throw new Error("OAuth state mismatch. Please retry.");
-			}
-			if (payload.error) {
-				throw new Error((payload.error_description as string) || (payload.error as string));
-			}
-			if (!payload.code) {
-				throw new Error("Authorization code missing in callback.");
-			}
-
-			setStatus("exchanging");
-			const token = await exchangeMcpOAuthToken({
-				serverId: flowState.serverId,
-				code: payload.code as string,
-				clientId: flowState.clientId,
-				clientSecret: flowState.clientSecret,
-				codeVerifier: flowState.codeVerifier,
-				redirectUri: flowState.redirectUri,
-			});
-
-			// Persist the token for this user via the backend.
-			// accessToken comes from props — it is never stored in sessionStorage.
-			await storeMCPOAuthUserCredential(accessToken, flowState.serverId, {
-				access_token: token.access_token,
-				refresh_token: token.refresh_token,
-				expires_in: token.expires_in,
-				scopes: flowState.scopes,
-			});
-
-			setStatus("success");
-			setError(null);
-			NotificationsManager.success("Connected successfully");
-			onSuccess();
-		} catch (err) {
-			const msg = extractErrorMessage(err);
-			setError(msg);
-			setStatus("error");
-			NotificationsManager.error(msg);
-		} finally {
-			clearStorage(FLOW_STATE_KEY);
-			setTimeout(() => {
-				processingRef.current = false;
-			}, 1000);
-		}
-	}, [accessToken, serverId, onSuccess]);
-
 	useEffect(() => {
-		resumeOAuthFlow();
-	}, [resumeOAuthFlow]);
+		void (async () => {
+			if (typeof window === "undefined" || processingRef.current) return;
+
+			const storedResult = getStorage(RESULT_KEY);
+			if (!storedResult) return;
+
+			// When multiple OAuth2ConnectButton components are mounted (one per server
+			// card), each holds its own hook instance.  All run this resume effect on
+			// mount and would compete for the same RESULT_KEY.  Peek at the stored
+			// flow state first: only the hook instance whose serverId matches the one
+			// that initiated the OAuth flow should consume the result.
+			const rawFlowState = getStorage(FLOW_STATE_KEY);
+			if (rawFlowState) {
+				try {
+					const peeked = JSON.parse(rawFlowState) as StoredFlowState;
+					if (peeked.serverId && peeked.serverId !== serverId) return;
+				} catch (_) {}
+			}
+
+			processingRef.current = true;
+			clearStorage(RESULT_KEY);
+
+			let payload: Record<string, unknown> | null = null;
+			let flowState: StoredFlowState | null = null;
+
+			try {
+				payload = JSON.parse(storedResult);
+				const raw = getStorage(FLOW_STATE_KEY);
+				flowState = raw ? JSON.parse(raw) : null;
+			} catch (_) {
+				setError("Failed to resume OAuth flow. Please retry.");
+				setStatus("error");
+				processingRef.current = false;
+				clearStorage(FLOW_STATE_KEY);
+				return;
+			}
+
+			try {
+				if (!flowState?.state || !flowState.codeVerifier || !flowState.serverId) {
+					throw new Error("OAuth session state was lost. Please retry.");
+				}
+				if (!payload?.state || payload.state !== flowState.state) {
+					throw new Error("OAuth state mismatch. Please retry.");
+				}
+				if (payload.error) {
+					throw new Error((payload.error_description as string) || (payload.error as string));
+				}
+				if (!payload.code) {
+					throw new Error("Authorization code missing in callback.");
+				}
+
+				setStatus("exchanging");
+				const token = await exchangeMcpOAuthToken({
+					serverId: flowState.serverId,
+					code: payload.code as string,
+					clientId: flowState.clientId,
+					clientSecret: flowState.clientSecret,
+					codeVerifier: flowState.codeVerifier,
+					redirectUri: flowState.redirectUri,
+				});
+
+				// Persist the token for this user via the backend.
+				// accessToken comes from props — it is never stored in sessionStorage.
+				await storeMCPOAuthUserCredential(accessToken, flowState.serverId, {
+					access_token: token.access_token,
+					refresh_token: token.refresh_token,
+					expires_in: token.expires_in,
+					scopes: flowState.scopes,
+				});
+
+				setStatus("success");
+				setError(null);
+				NotificationsManager.success("Connected successfully");
+				onSuccess();
+			} catch (err) {
+				const msg = extractErrorMessage(err);
+				setError(msg);
+				setStatus("error");
+				NotificationsManager.error(msg);
+			} finally {
+				clearStorage(FLOW_STATE_KEY);
+				setTimeout(() => {
+					processingRef.current = false;
+				}, 1000);
+			}
+		})();
+	}, [accessToken, serverId, onSuccess]);
 
 	return { startOAuthFlow, status, error };
 };

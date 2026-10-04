@@ -72,14 +72,16 @@ export default function EditCredentialsModal({
 	};
 
 	useEffect(() => {
-		if (existingCredential) {
-			form.setFieldsValue({
-				credential_name: existingCredential.credential_name,
-				custom_llm_provider: existingCredential.credential_info.custom_llm_provider,
-				...existingCredential.credential_values,
-			});
-			setSelectedProvider(existingCredential.credential_info.custom_llm_provider as Providers);
-		}
+		void (async () => {
+			if (existingCredential) {
+				form.setFieldsValue({
+					credential_name: existingCredential.credential_name,
+					custom_llm_provider: existingCredential.credential_info.custom_llm_provider,
+					...existingCredential.credential_values,
+				});
+				setSelectedProvider(existingCredential.credential_info.custom_llm_provider as Providers);
+			}
+		})();
 	}, [existingCredential, form]);
 
 	return (

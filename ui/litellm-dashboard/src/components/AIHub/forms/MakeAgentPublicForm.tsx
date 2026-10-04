@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Modal, Form, Steps, Button, Checkbox } from "antd";
 import { Text, Title, Badge } from "@tremor/react";
 import { makeAgentsPublicCall } from "../../networking";
@@ -69,8 +69,12 @@ const MakeAgentPublicForm: React.FC<MakeAgentPublicFormProps> = ({
 		}
 	};
 
-	// Initialize and preselect already public agents when modal opens
-	useEffect(() => {
+	// Initialize and preselect already public agents when the modal opens or the agent list changes.
+	// Adjusted during render (React's documented "adjust state when a prop changes" pattern) so no
+	// effect has to call setState synchronously.
+	const [preselectKey, setPreselectKey] = useState<{ visible: boolean; agentHubData: AgentHubData[] } | null>(null);
+	if (preselectKey === null || preselectKey.visible !== visible || preselectKey.agentHubData !== agentHubData) {
+		setPreselectKey({ visible, agentHubData });
 		if (visible && agentHubData.length > 0) {
 			// Preselect agents that are already public
 			const alreadyPublicAgents = agentHubData
@@ -79,7 +83,7 @@ const MakeAgentPublicForm: React.FC<MakeAgentPublicFormProps> = ({
 
 			setSelectedAgents(new Set(alreadyPublicAgents));
 		}
-	}, [visible, agentHubData]);
+	}
 
 	const handleSubmit = async () => {
 		if (selectedAgents.size === 0) {

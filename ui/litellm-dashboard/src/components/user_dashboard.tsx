@@ -87,6 +87,20 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 	const [proxySettings, setProxySettings] = useState<ProxySettings | null>(null);
 	const [selectedTeam, setSelectedTeam] = useState<any | null>(null);
 
+	function gotoLogin() {
+		void logoutWebUiSession().catch(() => undefined);
+		const baseUrl = getProxyBaseUrl();
+
+		console.log("proxyBaseUrl:", baseUrl);
+
+		const url = baseUrl ? `${baseUrl}/sso/key/generate` : `/sso/key/generate`;
+
+		console.log("Full URL:", url);
+		window.location.href = url;
+
+		return null;
+	}
+
 	// Clear session storage on page unload so next load fetches fresh data.
 	// Note: MCP auth tokens are persistent and should not be cleared on page refresh
 	// They are only cleared on logout
@@ -103,11 +117,11 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 		if (userID && accessToken && userRole) {
 			const cachedUserSpendData = sessionStorage.getItem("userSpendData" + userID);
 			const cachedUserModels = sessionStorage.getItem("userModels" + userID);
-			if (cachedUserSpendData && cachedUserModels) {
-				setUserSpendData(JSON.parse(cachedUserSpendData));
-				setUserModels(JSON.parse(cachedUserModels));
-			} else {
-				const fetchData = async () => {
+			void (async () => {
+				if (cachedUserSpendData && cachedUserModels) {
+					setUserSpendData(JSON.parse(cachedUserSpendData));
+					setUserModels(JSON.parse(cachedUserModels));
+				} else {
 					try {
 						const proxy_settings: ProxySettings = await getProxyUISettings(accessToken);
 						setProxySettings(proxy_settings);
@@ -132,9 +146,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 						}
 						// Optionally, update your UI to reflect the error state here as well
 					}
-				};
-				fetchData();
-			}
+				}
+			})();
 		}
 	}, [accessToken, userID, userRole]);
 
@@ -150,42 +163,30 @@ const UserDashboard: React.FC<UserDashboardProps> = ({
 
 	useEffect(() => {
 		// This code will run every time selectedTeam changes
-		if (keys !== null && selectedTeam !== null && selectedTeam !== undefined && selectedTeam.team_id !== null) {
-			let sum = 0;
-			console.log(`keys: ${JSON.stringify(keys)}`);
-			for (const key of keys) {
-				if (selectedTeam.hasOwnProperty("team_id") && key.team_id !== null && key.team_id === selectedTeam.team_id) {
+		void (async () => {
+			if (keys !== null && selectedTeam !== null && selectedTeam !== undefined && selectedTeam.team_id !== null) {
+				let sum = 0;
+				console.log(`keys: ${JSON.stringify(keys)}`);
+				for (const key of keys) {
+					if (selectedTeam.hasOwnProperty("team_id") && key.team_id !== null && key.team_id === selectedTeam.team_id) {
+						sum += key.spend;
+					}
+				}
+				console.log(`sum: ${sum}`);
+				setTeamSpend(sum);
+			} else if (keys !== null) {
+				// sum the keys which don't have team-id set (default team)
+				let sum = 0;
+				for (const key of keys) {
 					sum += key.spend;
 				}
+				setTeamSpend(sum);
 			}
-			console.log(`sum: ${sum}`);
-			setTeamSpend(sum);
-		} else if (keys !== null) {
-			// sum the keys which don't have team-id set (default team)
-			let sum = 0;
-			for (const key of keys) {
-				sum += key.spend;
-			}
-			setTeamSpend(sum);
-		}
+		})();
 	}, [keys, selectedTeam]);
 
 	if (invitation_id != null) {
 		return <Onboarding></Onboarding>;
-	}
-
-	function gotoLogin() {
-		void logoutWebUiSession().catch(() => undefined);
-		const baseUrl = getProxyBaseUrl();
-
-		console.log("proxyBaseUrl:", baseUrl);
-
-		const url = baseUrl ? `${baseUrl}/sso/key/generate` : `/sso/key/generate`;
-
-		console.log("Full URL:", url);
-		window.location.href = url;
-
-		return null;
 	}
 
 	if (userID == null) {

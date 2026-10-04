@@ -9,8 +9,7 @@
   state 直接派生的值；这类值应在渲染时计算，必要时使用纯函数或 `useMemo`。
 - 不得随意关闭 `react-hooks/exhaustive-deps`，也不得全局关闭 React Hooks 或 Next.js 核心规则来
   掩盖存量问题。确需例外时，应在最小作用域说明理由并有测试覆盖。
-- `eslint-suppressions.json` 是启用 Next 16 规则时记录的存量错误基线。不得增加 suppression
-  数量；修复存量问题后运行 `eslint . --prune-suppressions` 收紧基线。
+- 前端 ESLint 已无存量违规（原 `eslint-suppressions.json` 基线已清零并删除）。不得用 `eslint-disable`、`--suppress-all` 或关闭规则掩盖新问题；确需最小范围例外时，在代码处写明原因。
 - 新增路径路由时，必须兼容现有 legacy `?page=...` 路由，并同步更新路径到导航选中项的映射及测试。
 - 前端改动至少运行 ESLint、相关 Vitest 和 Next.js production build，另外必须运行 `npx tsc --noEmit`
   （当前为 0 错误）。`next build` 的类型检查会跳过 `*.test.*` 诊断，不能用构建成功代替类型检查。

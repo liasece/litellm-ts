@@ -1,6 +1,6 @@
 import { Alert, Card, Descriptions, Input, Modal, Typography, theme } from "antd";
 import { ExclamationCircleOutlined } from "@ant-design/icons";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 
 interface DeleteResourceModalProps {
 	isOpen: boolean;
@@ -35,12 +35,15 @@ export default function DeleteResourceModal({
 	const { Title, Text } = Typography;
 	const { token } = theme.useToken();
 	const [requiredConfirmationInput, setRequiredConfirmationInput] = useState("");
-
-	useEffect(() => {
+	// Clear the typed confirmation whenever the modal opens. Adjusting state during
+	// render with a guard replaces the prop-syncing effect.
+	const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+	if (isOpen !== prevIsOpen) {
+		setPrevIsOpen(isOpen);
 		if (isOpen) {
 			setRequiredConfirmationInput("");
 		}
-	}, [isOpen]);
+	}
 
 	return (
 		<Modal

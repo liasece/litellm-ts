@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useSyncExternalStore, useState } from "react";
 import { Card, Title, Text, Grid, Button as TremorButton, Callout, TextInput, Divider } from "@tremor/react";
 import { Form } from "antd";
 import { keyCreateCall } from "./networking";
@@ -19,24 +19,30 @@ interface SCIMConfigProps {
 	proxySettings: any;
 }
 
+const DEFAULT_SCIM_BASE_URL = "<your_proxy_base_url>";
+
+const subscribeToLocation = () => () => {};
+
+const resolveBaseUrl = (proxySettings: any) => {
+	if (proxySettings && proxySettings.PROXY_BASE_URL && proxySettings.PROXY_BASE_URL !== undefined) {
+		return proxySettings.PROXY_BASE_URL;
+	}
+	if (typeof window !== "undefined") {
+		// Use the current origin as the base URL if no proxy URL is set
+		return window.location.origin;
+	}
+	return DEFAULT_SCIM_BASE_URL;
+};
+
 const SCIMConfig: React.FC<SCIMConfigProps> = ({ accessToken, userID, proxySettings }) => {
 	const [form] = Form.useForm();
 	const [isCreatingToken, setIsCreatingToken] = useState(false);
 	const [tokenData, setTokenData] = useState<any>(null);
-	const [baseUrl, setBaseUrl] = useState("<your_proxy_base_url>");
-
-	useEffect(() => {
-		let url = "<your_proxy_base_url>";
-
-		if (proxySettings && proxySettings.PROXY_BASE_URL && proxySettings.PROXY_BASE_URL !== undefined) {
-			url = proxySettings.PROXY_BASE_URL;
-		} else if (typeof window !== "undefined") {
-			// Use the current origin as the base URL if no proxy URL is set
-			url = window.location.origin;
-		}
-
-		setBaseUrl(url);
-	}, [proxySettings]);
+	const baseUrl = useSyncExternalStore(
+		subscribeToLocation,
+		() => resolveBaseUrl(proxySettings),
+		() => DEFAULT_SCIM_BASE_URL,
+	);
 
 	const scimBaseUrl = `${baseUrl}/scim/v2`;
 

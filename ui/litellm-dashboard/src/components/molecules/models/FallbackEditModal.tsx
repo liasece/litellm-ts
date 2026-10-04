@@ -9,7 +9,7 @@
 import NotificationsManager from "@/components/molecules/notifications_manager";
 import { getCallbacksCall, setCallbacksCall } from "@/components/networking";
 import { Modal, Select, Typography } from "antd";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 const { Text } = Typography;
 
@@ -43,12 +43,21 @@ const FallbackEditModal: React.FC<FallbackEditModalProps> = ({
 }) => {
 	const [selectedFallbacks, setSelectedFallbacks] = useState<string[]>([]);
 	const [saving, setSaving] = useState(false);
-
-	useEffect(() => {
+	// 渲染期调整 state：isOpen / currentFallbacks 变化时重新同步选中项，替代原 effect。
+	const [lastSyncedFallbacks, setLastSyncedFallbacks] = useState<{
+		isOpen: boolean;
+		currentFallbacks: string[];
+	} | null>(null);
+	if (
+		lastSyncedFallbacks === null ||
+		isOpen !== lastSyncedFallbacks.isOpen ||
+		currentFallbacks !== lastSyncedFallbacks.currentFallbacks
+	) {
+		setLastSyncedFallbacks({ isOpen, currentFallbacks });
 		if (isOpen) {
 			setSelectedFallbacks(currentFallbacks);
 		}
-	}, [isOpen, currentFallbacks]);
+	}
 
 	const handleSave = async () => {
 		if (!accessToken || !userID || !userRole || !modelName) {

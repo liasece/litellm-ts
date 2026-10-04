@@ -29,9 +29,9 @@ vi.mock("@tremor/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tremor/react")>();
 	return {
 		...actual,
-		Button: React.forwardRef<HTMLButtonElement, any>(({ children, ...props }, ref) =>
-			React.createElement("button", { ...props, ref }, children),
-		),
+		Button: React.forwardRef<HTMLButtonElement, any>(function Button({ children, ...props }, ref) {
+			return React.createElement("button", { ...props, ref }, children);
+		}),
 		Tooltip: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 		Switch: ({
 			checked,

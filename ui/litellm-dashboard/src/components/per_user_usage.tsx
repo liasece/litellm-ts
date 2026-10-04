@@ -81,7 +81,9 @@ const PerUserUsage: React.FC<PerUserUsageProps> = ({ accessToken, selectedTags, 
 	}, [accessToken, currentPage, selectedTags]);
 
 	useEffect(() => {
-		fetchPerUserData();
+		void (async () => {
+			await fetchPerUserData();
+		})();
 	}, [accessToken, selectedTags, currentPage, fetchPerUserData]);
 
 	const handleNextPage = () => {

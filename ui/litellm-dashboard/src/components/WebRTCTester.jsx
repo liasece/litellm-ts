@@ -587,7 +587,7 @@ export default function WebRTCTester() {
                   {entries.length === 0 ? (
                     <div className="wrt-empty">
                       <div style={{ fontSize: 22, opacity: 0.3 }}>📡</div>
-                      <div>Hit "Start Session" to begin</div>
+                      <div>Hit &quot;Start Session&quot; to begin</div>
                     </div>
                   ) : (
                     entries.map((e) => (

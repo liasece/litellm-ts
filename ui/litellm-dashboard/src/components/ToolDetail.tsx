@@ -3,7 +3,7 @@
 import { ArrowLeftOutlined, HistoryOutlined, ToolOutlined } from "@ant-design/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Select, Spin } from "antd";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import TeamDropdown from "@/components/common_components/team_dropdown";
 import { LogViewer } from "@/components/GuardrailsMonitor/LogViewer";
 import type { LogEntry } from "@/components/GuardrailsMonitor/mockData";
@@ -16,7 +16,6 @@ import {
 	keyListCall,
 	teamListCall,
 	updateToolPolicy,
-	type ToolPolicyOption,
 	type ToolPolicyOverrideRow,
 } from "@/components/networking";
 import type { Team } from "@/components/key_team_helpers/key_list";

@@ -108,9 +108,11 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
 	}, [accessToken]);
 
 	useEffect(() => {
-		fetchPolicies();
-		fetchAttachments();
-		fetchGuardrails();
+		void (async () => {
+			fetchPolicies();
+			fetchAttachments();
+			fetchGuardrails();
+		})();
 	}, [fetchPolicies, fetchAttachments, fetchGuardrails]);
 
 	const handleAddPolicy = () => {

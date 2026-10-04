@@ -35,17 +35,22 @@ export default function PageVisibilitySettings({
 		return grouped;
 	}, [availablePages]);
 
-	// Local state for page selection
-	const [selectedPages, setSelectedPages] = useState<string[]>(enabledPagesInternalUsers || []);
+	// Local page-selection override. It is keyed to the `enabledPagesInternalUsers`
+	// value it was created for, so a new value from the parent discards the override
+	// and the incoming selection is rendered directly (no setState during render).
+	const [pageSelectionOverride, setPageSelectionOverride] = useState<{
+		source: string[] | null | undefined;
+		pages: string[];
+	} | null>(null);
 
-	// Update local state when data changes
-	useMemo(() => {
-		if (enabledPagesInternalUsers) {
-			setSelectedPages(enabledPagesInternalUsers);
-		} else {
-			setSelectedPages([]);
-		}
-	}, [enabledPagesInternalUsers]);
+	const selectedPages =
+		pageSelectionOverride && pageSelectionOverride.source === enabledPagesInternalUsers
+			? pageSelectionOverride.pages
+			: enabledPagesInternalUsers || [];
+
+	const setSelectedPages = (pages: string[]) => {
+		setPageSelectionOverride({ source: enabledPagesInternalUsers, pages });
+	};
 
 	const handleSavePageVisibility = () => {
 		onUpdate({ enabled_ui_pages_internal_users: selectedPages.length > 0 ? selectedPages : null });

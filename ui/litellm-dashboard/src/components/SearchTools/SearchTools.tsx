@@ -3,6 +3,7 @@ import { LoadingOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Text, Title } from "@tremor/react";
 import { Form, Input, Modal, Select, Spin, Table } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import React, { useState } from "react";
 import DeleteResourceModal from "../common_components/DeleteResourceModal";
 import NotificationsManager from "../molecules/notifications_manager";
@@ -17,6 +18,61 @@ interface SearchToolsProps {
 	userRole: string | null;
 	userID: string | null;
 }
+
+interface ToolsTabProps {
+	selectedToolId: string | null;
+	searchTools?: SearchTool[];
+	isLoadingTools: boolean;
+	isEditing: boolean;
+	accessToken: string | null;
+	availableProviders: AvailableSearchProvider[];
+	columns: ColumnsType<SearchTool>;
+	onBack: () => void;
+}
+
+const ToolsTab: React.FC<ToolsTabProps> = ({
+	selectedToolId,
+	searchTools,
+	isLoadingTools,
+	isEditing,
+	accessToken,
+	availableProviders,
+	columns,
+	onBack,
+}) =>
+	selectedToolId ? (
+		<SearchToolView
+			searchTool={
+				searchTools?.find((tool: SearchTool) => tool.search_tool_id === selectedToolId) || {
+					search_tool_id: "",
+					search_tool_name: "",
+					litellm_params: {
+						search_provider: "",
+					},
+				}
+			}
+			onBack={onBack}
+			isEditing={isEditing}
+			accessToken={accessToken}
+			availableProviders={availableProviders}
+		/>
+	) : (
+		<div className="w-full h-full">
+			<Spin spinning={isLoadingTools} indicator={<LoadingOutlined spin />} size="large">
+				<Table
+					bordered
+					dataSource={searchTools || []}
+					columns={columns}
+					rowKey={(record) => record.search_tool_id || record.search_tool_name}
+					pagination={false}
+					locale={{
+						emptyText: "No search tools configured",
+					}}
+					size="small"
+				/>
+			</Spin>
+		</div>
+	);
 
 const SearchTools: React.FC<SearchToolsProps> = ({ accessToken, userRole, userID }) => {
 	const {
@@ -193,45 +249,6 @@ const SearchTools: React.FC<SearchToolsProps> = ({ accessToken, userRole, userID
 		return <div className="p-6 text-center text-gray-500">Missing required authentication parameters.</div>;
 	}
 
-	const ToolsTab = () =>
-		selectedToolId ? (
-			<SearchToolView
-				searchTool={
-					searchTools?.find((tool: SearchTool) => tool.search_tool_id === selectedToolId) || {
-						search_tool_id: "",
-						search_tool_name: "",
-						litellm_params: {
-							search_provider: "",
-						},
-					}
-				}
-				onBack={() => {
-					setEditTool(false);
-					setSelectedToolId(null);
-					refetch();
-				}}
-				isEditing={editTool}
-				accessToken={accessToken}
-				availableProviders={availableProviders}
-			/>
-		) : (
-			<div className="w-full h-full">
-				<Spin spinning={isLoadingTools} indicator={<LoadingOutlined spin />} size="large">
-					<Table
-						bordered
-						dataSource={searchTools || []}
-						columns={columns}
-						rowKey={(record) => record.search_tool_id || record.search_tool_name}
-						pagination={false}
-						locale={{
-							emptyText: "No search tools configured",
-						}}
-						size="small"
-					/>
-				</Spin>
-			</div>
-		);
-
 	return (
 		<div className="w-full h-full p-6">
 			<DeleteResourceModal
@@ -288,7 +305,20 @@ const SearchTools: React.FC<SearchToolsProps> = ({ accessToken, userRole, userID
 				</Button>
 			)}
 
-			<ToolsTab />
+			<ToolsTab
+				selectedToolId={selectedToolId}
+				searchTools={searchTools}
+				isLoadingTools={isLoadingTools}
+				isEditing={editTool}
+				accessToken={accessToken}
+				availableProviders={availableProviders}
+				columns={columns}
+				onBack={() => {
+					setEditTool(false);
+					setSelectedToolId(null);
+					refetch();
+				}}
+			/>
 		</div>
 	);
 };

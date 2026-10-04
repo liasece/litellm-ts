@@ -29,11 +29,13 @@ function LoginPageContent() {
 
 	// Pre-select worker from URL param (e.g. /ui/login?worker=team-b)
 	useEffect(() => {
-		const params = new URLSearchParams(window.location.search);
-		const workerParam = params.get("worker");
-		if (workerParam) {
-			setSelectedWorkerId(workerParam);
-		}
+		void (async () => {
+			const params = new URLSearchParams(window.location.search);
+			const workerParam = params.get("worker");
+			if (workerParam) {
+				setSelectedWorkerId(workerParam);
+			}
+		})();
 	}, []);
 
 	useEffect(() => {

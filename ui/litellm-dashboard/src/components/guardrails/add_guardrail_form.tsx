@@ -170,38 +170,40 @@ const AddGuardrailForm: React.FC<AddGuardrailFormProps> = ({ visible, onClose, a
 
 	// Apply preset when settings are loaded and form becomes visible
 	useEffect(() => {
-		if (!preset || !visible || !guardrailSettings) return;
+		void (async () => {
+			if (!preset || !visible || !guardrailSettings) return;
 
-		// Set provider
-		setSelectedProvider(preset.provider);
-		const baseValues: Record<string, any> = {
-			provider: preset.provider,
-			guardrail_name: preset.guardrailNameSuggestion,
-			mode: preset.mode,
-			default_on: preset.defaultOn,
-		};
-		if (preset.provider === "BlockCodeExecution") {
-			baseValues.confidence_threshold = 0.5;
-		}
-		form.setFieldsValue(baseValues);
-
-		// Pre-select content category if specified
-		if (preset.categoryName && guardrailSettings.content_filter_settings?.content_categories) {
-			const category = guardrailSettings.content_filter_settings.content_categories.find(
-				(c: any) => c.name === preset.categoryName,
-			);
-			if (category) {
-				setSelectedContentCategories([
-					{
-						id: `category-${Date.now()}`,
-						category: category.name,
-						display_name: category.display_name,
-						action: category.default_action as "BLOCK" | "MASK",
-						severity_threshold: "medium",
-					},
-				]);
+			// Set provider
+			setSelectedProvider(preset.provider);
+			const baseValues: Record<string, any> = {
+				provider: preset.provider,
+				guardrail_name: preset.guardrailNameSuggestion,
+				mode: preset.mode,
+				default_on: preset.defaultOn,
+			};
+			if (preset.provider === "BlockCodeExecution") {
+				baseValues.confidence_threshold = 0.5;
 			}
-		}
+			form.setFieldsValue(baseValues);
+
+			// Pre-select content category if specified
+			if (preset.categoryName && guardrailSettings.content_filter_settings?.content_categories) {
+				const category = guardrailSettings.content_filter_settings.content_categories.find(
+					(c: any) => c.name === preset.categoryName,
+				);
+				if (category) {
+					setSelectedContentCategories([
+						{
+							id: `category-${Date.now()}`,
+							category: category.name,
+							display_name: category.display_name,
+							action: category.default_action as "BLOCK" | "MASK",
+							severity_threshold: "medium",
+						},
+					]);
+				}
+			}
+		})();
 	}, [preset, visible, guardrailSettings, form]);
 
 	const handleProviderChange = (value: string) => {
@@ -912,8 +914,8 @@ const AddGuardrailForm: React.FC<AddGuardrailFormProps> = ({ visible, onClose, a
 			<div className="space-y-6">
 				<div>
 					<p className="text-sm text-gray-500">
-						Configure settings for a specific call type. Most guardrails don't need this — skip it unless you're using a
-						specific endpoint like <code>/v1/realtime</code>.
+						Configure settings for a specific call type. Most guardrails don&apos;t need this — skip it unless
+						you&apos;re using a specific endpoint like <code>/v1/realtime</code>.
 					</p>
 				</div>
 

@@ -15,7 +15,6 @@ import {
 	KeyOutlined,
 	ArrowLeftOutlined,
 	DownOutlined,
-	CloseOutlined,
 	CheckOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
@@ -172,34 +171,36 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
 
 	// Load models
 	useEffect(() => {
-		if (!accessToken) return;
-		setIsLoadingModels(true);
-		fetchAvailableModels(accessToken)
-			.then((data) => {
-				const names = (data || []).map((m: { model_group?: string }) => m.model_group ?? "").filter(Boolean);
-				setModels(names);
-				try {
-					const saved = localStorage.getItem(LOCALSTORAGE_MODEL_KEY);
-					if (saved) {
-						const parsed: unknown = JSON.parse(saved);
-						if (Array.isArray(parsed)) {
-							const valid = (parsed as string[]).filter((m) => names.includes(m));
-							if (valid.length > 0) {
-								setSelectedModels(valid);
-								return;
+		void (async () => {
+			if (!accessToken) return;
+			setIsLoadingModels(true);
+			fetchAvailableModels(accessToken)
+				.then((data) => {
+					const names = (data || []).map((m: { model_group?: string }) => m.model_group ?? "").filter(Boolean);
+					setModels(names);
+					try {
+						const saved = localStorage.getItem(LOCALSTORAGE_MODEL_KEY);
+						if (saved) {
+							const parsed: unknown = JSON.parse(saved);
+							if (Array.isArray(parsed)) {
+								const valid = (parsed as string[]).filter((m) => names.includes(m));
+								if (valid.length > 0) {
+									setSelectedModels(valid);
+									return;
+								}
 							}
 						}
+					} catch {
+						// ignore parse errors
 					}
-				} catch {
-					// ignore parse errors
-				}
-				if (names.length > 0) {
-					setSelectedModels([names[0]]);
-					localStorage.setItem(LOCALSTORAGE_MODEL_KEY, JSON.stringify([names[0]]));
-				}
-			})
-			.catch(() => MessageManager.error("Could not load models"))
-			.finally(() => setIsLoadingModels(false));
+					if (names.length > 0) {
+						setSelectedModels([names[0]]);
+						localStorage.setItem(LOCALSTORAGE_MODEL_KEY, JSON.stringify([names[0]]));
+					}
+				})
+				.catch(() => MessageManager.error("Could not load models"))
+				.finally(() => setIsLoadingModels(false));
+		})();
 	}, [accessToken]);
 
 	useEffect(() => {
@@ -208,9 +209,11 @@ const ChatPage: React.FC<ChatPageProps> = ({ accessToken, userRole, userId, user
 
 	// Reset the responses session when switching between conversations so that
 	// previous_response_id from conversation A is never sent for conversation B.
-	useEffect(() => {
+	const [previousConversationId, setPreviousConversationId] = useState(activeConversationId);
+	if (previousConversationId !== activeConversationId) {
+		setPreviousConversationId(activeConversationId);
 		setResponsesSessionId(null);
-	}, [activeConversationId]);
+	}
 
 	const toggleModel = useCallback((model: string) => {
 		setSelectedModels((prev) => {

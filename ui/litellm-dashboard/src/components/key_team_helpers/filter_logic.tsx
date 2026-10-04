@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KeyResponse } from "../key_team_helpers/key_list";
 import { keyListCall, Organization } from "../networking";
 import { Team } from "../key_team_helpers/key_list";
@@ -15,6 +15,28 @@ export interface FilterState {
 	"User ID": string;
 	"Sort By": string;
 	"Sort Order": string;
+}
+
+// Client-side application of the Team / Organization filters. Kept pure so the
+// render-phase derivation shares one implementation.
+function filterKeysByFilters(keys: KeyResponse[] | null, filters: FilterState): KeyResponse[] {
+	if (!keys) {
+		return [];
+	}
+
+	let result = [...keys];
+
+	// Apply Team ID filter
+	if (filters["Team ID"]) {
+		result = result.filter((key) => key.team_id === filters["Team ID"]);
+	}
+
+	// Apply Organization ID filter
+	if (filters["Organization ID"]) {
+		result = result.filter((key) => (key.organization_id ?? key.org_id) === filters["Organization ID"]);
+	}
+
+	return result;
 }
 
 export function useFilterLogic({
@@ -41,67 +63,58 @@ export function useFilterLogic({
 	const [filteredKeys, setFilteredKeys] = useState<KeyResponse[]>(keys);
 	const [filteredTotalCount, setFilteredTotalCount] = useState<number | null>(null);
 	const lastSearchTimestamp = useRef(0);
-	const debouncedSearch = React.useMemo(
-		() =>
-			debounce(async (filters: FilterState) => {
-				if (!accessToken) {
-					return;
-				}
+	const debouncedSearchRef = useRef<((filters: FilterState) => void) | null>(null);
 
-				const currentTimestamp = Date.now();
-				lastSearchTimestamp.current = currentTimestamp;
-
-				try {
-					// Make the API call using userListCall with all filter parameters
-					const data = await keyListCall(
-						accessToken,
-						filters["Organization ID"] || null,
-						filters["Team ID"] || null,
-						filters["Key Alias"] || null,
-						filters["User ID"] || null,
-						filters["Key Hash"] || null,
-						1, // Reset to first page when searching
-						defaultPageSize,
-						filters["Sort By"] || null,
-						filters["Sort Order"] || null,
-					);
-
-					// Only update state if this is the most recent search
-					if (currentTimestamp === lastSearchTimestamp.current) {
-						if (data) {
-							setFilteredKeys(data.keys);
-							setFilteredTotalCount(data.total_count ?? null);
-							console.log("called from debouncedSearch filters:", JSON.stringify(filters));
-							console.log("called from debouncedSearch data:", JSON.stringify(data));
-						}
-					}
-				} catch (error) {
-					console.error("Error searching users:", error);
-				}
-			}, 300),
-		[accessToken],
-	);
-	// Apply filters to keys whenever keys or filters change
+	// Create the debounced search after commit rather than during render, so its
+	// callback (which calls Date.now and updates a ref) is not render-phase code.
+	// As before, the instance is recreated only when the access token changes and
+	// in-flight calls from the previous instance are left alone.
 	useEffect(() => {
-		if (!keys) {
-			setFilteredKeys([]);
-			return;
-		}
+		debouncedSearchRef.current = debounce(async (filters: FilterState) => {
+			if (!accessToken) {
+				return;
+			}
 
-		let result = [...keys];
+			const currentTimestamp = Date.now();
+			lastSearchTimestamp.current = currentTimestamp;
 
-		// Apply Team ID filter
-		if (filters["Team ID"]) {
-			result = result.filter((key) => key.team_id === filters["Team ID"]);
-		}
+			try {
+				// Make the API call using userListCall with all filter parameters
+				const data = await keyListCall(
+					accessToken,
+					filters["Organization ID"] || null,
+					filters["Team ID"] || null,
+					filters["Key Alias"] || null,
+					filters["User ID"] || null,
+					filters["Key Hash"] || null,
+					1, // Reset to first page when searching
+					defaultPageSize,
+					filters["Sort By"] || null,
+					filters["Sort Order"] || null,
+				);
 
-		// Apply Organization ID filter
-		if (filters["Organization ID"]) {
-			result = result.filter((key) => (key.organization_id ?? key.org_id) === filters["Organization ID"]);
-		}
-
-		setFilteredKeys(result);
-	}, [keys, filters]);
+				// Only update state if this is the most recent search
+				if (currentTimestamp === lastSearchTimestamp.current) {
+					if (data) {
+						setFilteredKeys(data.keys);
+						setFilteredTotalCount(data.total_count ?? null);
+						console.log("called from debouncedSearch filters:", JSON.stringify(filters));
+						console.log("called from debouncedSearch data:", JSON.stringify(data));
+					}
+				}
+			} catch (error) {
+				console.error("Error searching users:", error);
+			}
+		}, 300);
+	}, [accessToken]);
+	// Apply filters to keys whenever keys or filters change. The client-side filter is a
+	// pure function of those inputs, so it is recomputed during render with a guard
+	// instead of being pushed into state from an effect.
+	const [prevKeyFilterInputs, setPrevKeyFilterInputs] = useState<[KeyResponse[] | null, FilterState]>([null, filters]);
+	if (prevKeyFilterInputs[0] !== keys || prevKeyFilterInputs[1] !== filters) {
+		setPrevKeyFilterInputs([keys, filters]);
+		setFilteredKeys(filterKeysByFilters(keys, filters));
+	}
 
 	// Fetch all data for filters when component mounts
 	useEffect(() => {
@@ -124,24 +137,33 @@ export function useFilterLogic({
 		}
 	}, [accessToken]);
 
-	// Update teams and organizations when props change
-	useEffect(() => {
+	// Track the teams prop and only adopt it when it is larger than the current set
+	// (the fetched list may already be broader). Adjusting state during render with a
+	// guard replaces the prop-syncing effect.
+	const [prevTeamsProp, setPrevTeamsProp] = useState<Team[] | null>(teams);
+	if (teams !== prevTeamsProp) {
+		setPrevTeamsProp(teams);
 		if (teams && teams.length > 0) {
-			setAllTeams((prevTeams) => {
+			const nextTeams = teams;
+			setAllTeams((currentTeams) => {
 				// Only update if we don't already have a larger set of teams
-				return prevTeams.length < teams.length ? teams : prevTeams;
+				return currentTeams.length < nextTeams.length ? nextTeams : currentTeams;
 			});
 		}
-	}, [teams]);
+	}
 
-	useEffect(() => {
+	// Same guarded adoption for the organizations prop.
+	const [prevOrganizationsProp, setPrevOrganizationsProp] = useState<Organization[] | null>(organizations);
+	if (organizations !== prevOrganizationsProp) {
+		setPrevOrganizationsProp(organizations);
 		if (organizations && organizations.length > 0) {
-			setAllOrganizations((prevOrgs) => {
+			const nextOrganizations = organizations;
+			setAllOrganizations((currentOrganizations) => {
 				// Only update if we don't already have a larger set of organizations
-				return prevOrgs.length < organizations.length ? organizations : prevOrgs;
+				return currentOrganizations.length < nextOrganizations.length ? nextOrganizations : currentOrganizations;
 			});
 		}
-	}, [organizations]);
+	}
 
 	const handleFilterChange = (newFilters: Record<string, string>, skipDebounce: boolean = false) => {
 		// Update filters state
@@ -162,7 +184,7 @@ export function useFilterLogic({
 				...filters,
 				...newFilters,
 			};
-			debouncedSearch(updatedFilters);
+			debouncedSearchRef.current?.(updatedFilters);
 		}
 	};
 
@@ -172,7 +194,7 @@ export function useFilterLogic({
 		setFilteredTotalCount(null);
 
 		// Reset selections
-		debouncedSearch(defaultFilters);
+		debouncedSearchRef.current?.(defaultFilters);
 	};
 
 	return {

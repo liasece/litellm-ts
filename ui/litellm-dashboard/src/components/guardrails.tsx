@@ -70,7 +70,9 @@ const GuardrailsPanel: React.FC<GuardrailsPanelProps> = ({ accessToken, userRole
 	}, [accessToken]);
 
 	useEffect(() => {
-		fetchGuardrails();
+		void (async () => {
+			await fetchGuardrails();
+		})();
 	}, [accessToken, fetchGuardrails]);
 
 	const handleAddGuardrail = () => {

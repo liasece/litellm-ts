@@ -48,24 +48,28 @@ export function ProjectBaseForm({ form }: ProjectBaseFormProps) {
 	// Sync selectedTeam from form value (needed for edit mode pre-fill)
 	const teamIdValue = Form.useWatch("team_id", form);
 	useEffect(() => {
-		if (teamIdValue && teams) {
-			const team = teams.find((t) => t.team_id === teamIdValue) ?? null;
-			if (team && team.team_id !== selectedTeam?.team_id) {
-				setSelectedTeam(team);
+		void (async () => {
+			if (teamIdValue && teams) {
+				const team = teams.find((t) => t.team_id === teamIdValue) ?? null;
+				if (team && team.team_id !== selectedTeam?.team_id) {
+					setSelectedTeam(team);
+				}
 			}
-		}
+		})();
 	}, [teamIdValue, teams, selectedTeam?.team_id]);
 
 	// Fetch team-scoped models when team selection changes
 	useEffect(() => {
-		if (userId && userRole && accessToken && selectedTeam) {
-			fetchTeamModels(userId, userRole, accessToken, selectedTeam.team_id).then((models) => {
-				const allModels = Array.from(new Set([...(selectedTeam.models ?? []), ...models]));
-				setModelsToPick(allModels);
-			});
-		} else {
-			setModelsToPick([]);
-		}
+		void (async () => {
+			if (userId && userRole && accessToken && selectedTeam) {
+				fetchTeamModels(userId, userRole, accessToken, selectedTeam.team_id).then((models) => {
+					const allModels = Array.from(new Set([...(selectedTeam.models ?? []), ...models]));
+					setModelsToPick(allModels);
+				});
+			} else {
+				setModelsToPick([]);
+			}
+		})();
 	}, [selectedTeam, accessToken, userId, userRole]);
 
 	const handleTeamChange = (teamId: string) => {

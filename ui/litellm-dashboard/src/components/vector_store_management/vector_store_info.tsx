@@ -74,8 +74,9 @@ const VectorStoreInfoView: React.FC<VectorStoreInfoViewProps> = ({
 	}, [accessToken]);
 
 	useEffect(() => {
-		fetchVectorStoreDetails();
-		fetchCredentials();
+		void (async () => {
+			await Promise.all([fetchVectorStoreDetails(), fetchCredentials()]);
+		})();
 	}, [vectorStoreId, accessToken, fetchVectorStoreDetails, fetchCredentials]);
 
 	const handleSave = async (values: any) => {

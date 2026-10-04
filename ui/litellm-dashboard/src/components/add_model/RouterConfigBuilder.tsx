@@ -47,6 +47,11 @@ interface RouterConfigBuilderProps {
 	onChange?: (config: any) => void;
 }
 
+/** Id generator kept at module scope so the component body stays pure. */
+function createRouteId(): string {
+	return `route-${Date.now()}`;
+}
+
 const RouterConfigBuilder: React.FC<RouterConfigBuilderProps> = ({ modelInfo, value, onChange }) => {
 	const [routes, setRoutes] = useState<Route[]>([]);
 	const [showJsonPreview, setShowJsonPreview] = useState<boolean>(false);
@@ -54,34 +59,36 @@ const RouterConfigBuilder: React.FC<RouterConfigBuilderProps> = ({ modelInfo, va
 
 	// Initialize routes from value prop - preserve existing route IDs to avoid focus loss when parent re-renders
 	useEffect(() => {
-		const routesFromValue = value?.routes;
-		if (routesFromValue) {
-			const routeIds: string[] = [];
-			setRoutes((prevRoutes) => {
-				const initializedRoutes = routesFromValue.map((route: SavedRoute, index: number) => {
-					const existingRoute = prevRoutes[index];
-					const id = existingRoute?.id || route.id || `route-${index}-${Date.now()}`;
-					routeIds.push(id);
-					return {
-						id,
-						model: route.name || route.model || "", // handle both 'name' and 'model' fields
-						utterances: route.utterances || [],
-						description: route.description || "",
-						score_threshold: route.score_threshold ?? 0.5,
-					};
+		void (async () => {
+			const routesFromValue = value?.routes;
+			if (routesFromValue) {
+				const routeIds: string[] = [];
+				setRoutes((prevRoutes) => {
+					const initializedRoutes = routesFromValue.map((route: SavedRoute, index: number) => {
+						const existingRoute = prevRoutes[index];
+						const id = existingRoute?.id || route.id || `route-${index}-${Date.now()}`;
+						routeIds.push(id);
+						return {
+							id,
+							model: route.name || route.model || "", // handle both 'name' and 'model' fields
+							utterances: route.utterances || [],
+							description: route.description || "",
+							score_threshold: route.score_threshold ?? 0.5,
+						};
+					});
+					return initializedRoutes;
 				});
-				return initializedRoutes;
-			});
-			setExpandedRoutes(routeIds);
-		} else {
-			setRoutes([]);
-			setExpandedRoutes([]);
-		}
+				setExpandedRoutes(routeIds);
+			} else {
+				setRoutes([]);
+				setExpandedRoutes([]);
+			}
+		})();
 	}, [value]);
 
 	// Handle adding a new route
 	const addRoute = () => {
-		const newRouteId = `route-${Date.now()}`;
+		const newRouteId = createRouteId();
 		const newRoute: Route = {
 			id: newRouteId,
 			model: "",

@@ -288,25 +288,27 @@ const CustomCodeModal: React.FC<CustomCodeModalProps> = ({ visible, onClose, onS
 
 	// Reset form when modal opens or editData changes
 	useEffect(() => {
-		if (visible) {
-			if (editData) {
-				// Edit mode: populate with existing data
-				setGuardrailName(editData.guardrail_name || "");
-				setMode(normalizeMode(editData.litellm_params?.mode));
-				setDefaultOn(editData.litellm_params?.default_on || false);
-				setCode(editData.litellm_params?.custom_code || CODE_TEMPLATES.empty.code);
-				setSelectedTemplate(""); // No template selected in edit mode
-			} else {
-				// Create mode: reset to defaults
-				setGuardrailName("");
-				setMode(["pre_call"]);
-				setDefaultOn(false);
-				setSelectedTemplate("empty");
-				setCode(CODE_TEMPLATES.empty.code);
+		void (async () => {
+			if (visible) {
+				if (editData) {
+					// Edit mode: populate with existing data
+					setGuardrailName(editData.guardrail_name || "");
+					setMode(normalizeMode(editData.litellm_params?.mode));
+					setDefaultOn(editData.litellm_params?.default_on || false);
+					setCode(editData.litellm_params?.custom_code || CODE_TEMPLATES.empty.code);
+					setSelectedTemplate(""); // No template selected in edit mode
+				} else {
+					// Create mode: reset to defaults
+					setGuardrailName("");
+					setMode(["pre_call"]);
+					setDefaultOn(false);
+					setSelectedTemplate("empty");
+					setCode(CODE_TEMPLATES.empty.code);
+				}
+				setTestResult(null);
+				setTestExpanded(false);
 			}
-			setTestResult(null);
-			setTestExpanded(false);
-		}
+		})();
 	}, [visible, editData]);
 
 	// Copy primitive to clipboard

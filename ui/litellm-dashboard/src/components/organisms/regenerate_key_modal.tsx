@@ -23,12 +23,6 @@ export function RegenerateKeyModal({ selectedToken, visible, onClose, onKeyUpdat
 	const [newExpiryTime, setNewExpiryTime] = useState<string | null>(null);
 	const [isRegenerating, setIsRegenerating] = useState(false);
 
-	// Track whether this is the user's own authentication key
-	const [isOwnKey, setIsOwnKey] = useState<boolean>(false);
-
-	// Keep track of the current valid access token locally
-	const [currentAccessToken, setCurrentAccessToken] = useState<string | null>(null);
-
 	useEffect(() => {
 		if (visible && selectedToken && accessToken) {
 			form.setFieldsValue({
@@ -39,23 +33,21 @@ export function RegenerateKeyModal({ selectedToken, visible, onClose, onKeyUpdat
 				duration: selectedToken.duration || "",
 				grace_period: "",
 			});
-
-			// Initialize the current access token
-			setCurrentAccessToken(accessToken);
-
-			// Check if this is the user's own authentication key by comparing the key values
-			const isUserOwnKey = selectedToken.key_name === accessToken;
-			setIsOwnKey(isUserOwnKey);
 		}
 	}, [visible, selectedToken, form, accessToken]);
 
-	useEffect(() => {
+	const [prevVisible, setPrevVisible] = useState(visible);
+	if (prevVisible !== visible) {
+		setPrevVisible(visible);
 		if (!visible) {
-			// Reset states when modal is closed
+			// Reset states when the modal closes, including closes triggered outside handleClose
 			setRegeneratedKey(null);
 			setIsRegenerating(false);
-			setIsOwnKey(false);
-			setCurrentAccessToken(null);
+		}
+	}
+
+	useEffect(() => {
+		if (!visible) {
 			form.resetFields();
 		}
 	}, [visible, form]);
@@ -83,27 +75,14 @@ export function RegenerateKeyModal({ selectedToken, visible, onClose, onKeyUpdat
 		}
 	};
 
-	useEffect(() => {
-		if (regenerateFormData?.duration) {
-			setNewExpiryTime(calculateNewExpiryTime(regenerateFormData.duration));
-		} else {
-			setNewExpiryTime(null);
-		}
-	}, [regenerateFormData?.duration]);
-
 	const handleRegenerateKey = async () => {
-		if (!selectedToken || !currentAccessToken) return;
-
+		if (!selectedToken || !accessToken) return;
 		setIsRegenerating(true);
 		try {
 			const formValues = await form.validateFields();
 
 			// Use the current access token for the API call
-			const response = await regenerateKeyCall(
-				currentAccessToken,
-				selectedToken.token || selectedToken.token_id,
-				formValues,
-			);
+			const response = await regenerateKeyCall(accessToken, selectedToken.token || selectedToken.token_id, formValues);
 			setRegeneratedKey(response.key);
 			NotificationManager.success("Virtual Key regenerated successfully");
 
@@ -140,8 +119,6 @@ export function RegenerateKeyModal({ selectedToken, visible, onClose, onKeyUpdat
 	const handleClose = () => {
 		setRegeneratedKey(null);
 		setIsRegenerating(false);
-		setIsOwnKey(false);
-		setCurrentAccessToken(null);
 		form.resetFields();
 		onClose();
 	};
@@ -202,6 +179,7 @@ export function RegenerateKeyModal({ selectedToken, visible, onClose, onKeyUpdat
 					onValuesChange={(changedValues) => {
 						if ("duration" in changedValues) {
 							setRegenerateFormData((prev: { duration?: string }) => ({ ...prev, duration: changedValues.duration }));
+							setNewExpiryTime(calculateNewExpiryTime(changedValues.duration));
 						}
 					}}
 				>

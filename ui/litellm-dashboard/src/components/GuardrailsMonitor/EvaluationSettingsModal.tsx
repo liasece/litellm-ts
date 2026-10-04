@@ -44,22 +44,24 @@ export function EvaluationSettingsModal({
 	const [loadingModels, setLoadingModels] = useState(false);
 
 	useEffect(() => {
-		if (!open || !accessToken) {
-			setModelOptions([]);
-			return;
-		}
 		let cancelled = false;
-		setLoadingModels(true);
-		fetchAvailableModels(accessToken)
-			.then((list) => {
-				if (!cancelled) setModelOptions(list);
-			})
-			.catch(() => {
-				if (!cancelled) setModelOptions([]);
-			})
-			.finally(() => {
-				if (!cancelled) setLoadingModels(false);
-			});
+		void (async () => {
+			if (!open || !accessToken) {
+				setModelOptions([]);
+				return;
+			}
+			setLoadingModels(true);
+			fetchAvailableModels(accessToken)
+				.then((list) => {
+					if (!cancelled) setModelOptions(list);
+				})
+				.catch(() => {
+					if (!cancelled) setModelOptions([]);
+				})
+				.finally(() => {
+					if (!cancelled) setLoadingModels(false);
+				});
+		})();
 		return () => {
 			cancelled = true;
 		};

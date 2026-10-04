@@ -39,28 +39,32 @@ const MCPDiscovery: React.FC<MCPDiscoveryProps> = ({
 
 	useEffect(() => {
 		if (isVisible && accessToken) {
-			setLoading(true);
-			setError(null);
-			fetchDiscoverableMCPServers(accessToken)
-				.then((data: DiscoverMCPServersResponse) => {
+			void (async () => {
+				setLoading(true);
+				setError(null);
+				try {
+					const data: DiscoverMCPServersResponse = await fetchDiscoverableMCPServers(accessToken);
 					setServers(data.servers || []);
 					setCategories(data.categories || []);
-				})
-				.catch((err: Error) => {
-					setError(err.message || "Failed to load MCP servers");
-				})
-				.finally(() => {
+				} catch (err) {
+					setError((err as Error).message || "Failed to load MCP servers");
+				} finally {
 					setLoading(false);
-				});
+				}
+			})();
 		}
 	}, [isVisible, accessToken]);
 
-	useEffect(() => {
+	// Reset the search controls when the modal is (re)opened. Adjusting state during
+	// render with a guard replaces the prop-syncing effect.
+	const [prevIsVisible, setPrevIsVisible] = useState(isVisible);
+	if (isVisible !== prevIsVisible) {
+		setPrevIsVisible(isVisible);
 		if (isVisible) {
 			setSearchQuery("");
 			setSelectedCategory("All");
 		}
-	}, [isVisible]);
+	}
 
 	const filteredServers = useMemo(() => {
 		let result = servers;

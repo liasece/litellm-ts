@@ -18,10 +18,12 @@ const useFetchTeams = ({ currentOrg, setTeams }: useFetchTeamsProps) => {
 	}, []);
 
 	useEffect(() => {
-		if (accessToken) {
-			fetchTeams(accessToken, userId, userRole, currentOrg, setTeams).then();
-		}
-		onRefreshClick();
+		void (async () => {
+			if (accessToken) {
+				fetchTeams(accessToken, userId, userRole, currentOrg, setTeams).then();
+			}
+			onRefreshClick();
+		})();
 	}, [accessToken, currentOrg, lastRefreshed, onRefreshClick, setTeams, userId, userRole]);
 
 	return { lastRefreshed, setLastRefreshed, onRefreshClick };

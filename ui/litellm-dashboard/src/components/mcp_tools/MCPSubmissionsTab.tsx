@@ -486,7 +486,12 @@ export function MCPSubmissionsTab({ accessToken }: MCPSubmissionsTabProps) {
 	}, [accessToken]);
 
 	useEffect(() => {
-		fetchData();
+		// fetchData is shared with the approve/reject handlers and keeps the
+		// loading/error semantics in one place; awaiting it inside an async IIFE keeps
+		// the effect body free of synchronous state updates.
+		void (async () => {
+			await fetchData();
+		})();
 	}, [fetchData]);
 
 	const handleSaveRules = async () => {

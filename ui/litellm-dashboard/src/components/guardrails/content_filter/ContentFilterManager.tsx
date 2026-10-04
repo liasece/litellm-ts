@@ -87,8 +87,18 @@ const ContentFilterManager: React.FC<ContentFilterManagerProps> = ({
 		null,
 	);
 
-	// Load data from guardrail on mount or when guardrailData changes
-	useEffect(() => {
+	// 渲染期调整 state：guardrailData / 内容类别设置变化时重算本地表单数据，替代原 effect。
+	const [derivedFrom, setDerivedFrom] = useState<{
+		guardrailData: any;
+		contentCategories: ContentCategory[] | undefined;
+	} | null>(null);
+	const contentCategoriesSetting = guardrailSettings?.content_filter_settings?.content_categories;
+	if (
+		derivedFrom === null ||
+		derivedFrom.guardrailData !== guardrailData ||
+		derivedFrom.contentCategories !== contentCategoriesSetting
+	) {
+		setDerivedFrom({ guardrailData, contentCategories: contentCategoriesSetting });
 		if (guardrailData?.litellm_params?.patterns) {
 			const patterns = guardrailData.litellm_params.patterns.map((p: any, index: number) => ({
 				id: `pattern-${index}`,
@@ -163,7 +173,7 @@ const ContentFilterManager: React.FC<ContentFilterManagerProps> = ({
 			setOriginalCompetitorIntentEnabled(false);
 			setOriginalCompetitorIntentConfig(null);
 		}
-	}, [guardrailData, guardrailSettings?.content_filter_settings?.content_categories]);
+	}
 
 	// Notify parent component when data changes
 	useEffect(() => {

@@ -19,7 +19,7 @@ import {
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { Button, Divider, Dropdown, Space, Switch, Tag, Tooltip, Typography } from "antd";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 const { Text } = Typography;
 
@@ -33,12 +33,9 @@ const UserDropdown: React.FC<UserDropdownProps> = ({ onLogout }) => {
 	const disableUsageIndicator = useDisableUsageIndicator();
 	const disableBlogPosts = useDisableBlogPosts();
 	const disableBouncingIcon = useDisableBouncingIcon();
-	const [disableShowNewBadge, setDisableShowNewBadge] = useState(false);
-
-	useEffect(() => {
-		const storedValue = getLocalStorageItem("disableShowNewBadge");
-		setDisableShowNewBadge(storedValue === "true");
-	}, []);
+	const [disableShowNewBadge, setDisableShowNewBadge] = useState(
+		() => getLocalStorageItem("disableShowNewBadge") === "true",
+	);
 
 	const userItems: MenuProps["items"] = [
 		{

@@ -149,10 +149,10 @@ const UsagePage: React.FC<UsagePageProps> = ({ accessToken, token, userRole, use
 	const [globalActivityPerModel, setGlobalActivityPerModel] = useState<any[]>([]);
 	const [selectedKeyID, setSelectedKeyID] = useState<string | null>("");
 	const [selectedTags, setSelectedTags] = useState<string[]>(["all-tags"]);
-	const [dateValue, setDateValue] = useState<DateRangePickerValue>({
+	const [dateValue, setDateValue] = useState<DateRangePickerValue>(() => ({
 		from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
 		to: new Date(),
-	});
+	}));
 	const [proxySettings, setProxySettings] = useState<ProxySettings | null>(null);
 	const [totalMonthlySpend, setTotalMonthlySpend] = useState<number>(0);
 

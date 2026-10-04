@@ -225,10 +225,13 @@ interface SearchModalProps {
 
 const SearchModal: React.FC<SearchModalProps> = ({ open, conversations, onSelect, onClose }) => {
 	const [query, setQuery] = useState("");
+	const [prevOpen, setPrevOpen] = useState(open);
 
-	useEffect(() => {
+	// Reset the query during render when the modal closes.
+	if (open !== prevOpen) {
+		setPrevOpen(open);
 		if (!open) setQuery("");
-	}, [open]);
+	}
 
 	const filtered = query.trim()
 		? conversations.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase()))

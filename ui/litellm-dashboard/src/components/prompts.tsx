@@ -45,7 +45,9 @@ const PromptsPanel = ({ accessToken, userRole }: PromptsProps) => {
 	}, [accessToken]);
 
 	useEffect(() => {
-		void fetchPrompts();
+		void (async () => {
+			await fetchPrompts();
+		})();
 	}, [fetchPrompts]);
 
 	const handlePromptClick = (promptId: string) => {

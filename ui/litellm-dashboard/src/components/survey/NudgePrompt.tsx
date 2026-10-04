@@ -34,10 +34,20 @@ export function NudgePrompt({
 	const [progress, setProgress] = useState(100);
 	const [showConfirmation, setShowConfirmation] = useState(false);
 
-	useEffect(() => {
+	// Reset the prompt when it is hidden again. Adjusting state during render with a
+	// guard keeps the reset in the same render as the visibility change instead of
+	// scheduling an extra effect-driven render.
+	const [prevIsVisible, setPrevIsVisible] = useState(isVisible);
+	if (isVisible !== prevIsVisible) {
+		setPrevIsVisible(isVisible);
 		if (!isVisible) {
 			setProgress(100);
 			setShowConfirmation(false);
+		}
+	}
+
+	useEffect(() => {
+		if (!isVisible) {
 			return;
 		}
 

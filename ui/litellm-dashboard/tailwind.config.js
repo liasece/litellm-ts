@@ -1,6 +1,10 @@
 /** @type {import('tailwindcss').Config} */
 
+// This CommonJS config is loaded with require() by Tailwind's PostCSS plugin
+// (package.json has no "type": "module"), so require() has to stay here.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const colors = require("tailwindcss/colors");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const userColors = require("./ui_colors.json") || {};
 module.exports = {
 	content: ["./src/**/*.{js,ts,jsx,tsx}", "./node_modules/@tremor/**/*.{js,ts,jsx,tsx}"],
@@ -123,5 +127,6 @@ module.exports = {
 				/^(fill-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(?:50|100|200|300|400|500|600|700|800|900|950))$/,
 		},
 	],
+	// eslint-disable-next-line @typescript-eslint/no-require-imports
 	plugins: [require("@headlessui/tailwindcss"), require("@tailwindcss/forms")],
 };

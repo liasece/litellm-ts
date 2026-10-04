@@ -237,10 +237,12 @@ export function ToolTestPanel({
 
 	// Track when result changes to calculate duration
 	React.useEffect(() => {
-		if (startTime && (result || error)) {
-			const endTime = Date.now();
-			setDuration(endTime - startTime);
-		}
+		void (async () => {
+			if (startTime && (result || error)) {
+				const endTime = Date.now();
+				setDuration(endTime - startTime);
+			}
+		})();
 	}, [result, error, startTime]);
 
 	const copyToClipboard = async (text: string) => {

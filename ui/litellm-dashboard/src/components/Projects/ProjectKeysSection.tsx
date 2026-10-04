@@ -2,7 +2,7 @@ import { useKeys } from "@/app/(dashboard)/hooks/keys/useKeys";
 import { LoadingOutlined } from "@ant-design/icons";
 import { Card, Flex, Input, Pagination, Spin } from "antd";
 import { KeyIcon, SearchIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ProjectKeysTable } from "./ProjectKeysTable";
 
 interface ProjectKeysSectionProps {
@@ -19,11 +19,6 @@ export function ProjectKeysSection({ projectId }: ProjectKeysSectionProps) {
 		projectID: projectId,
 		selectedKeyAlias: keyAlias || null,
 	});
-
-	// Reset to page 1 when filter changes
-	useEffect(() => {
-		setPage(1);
-	}, [keyAlias]);
 
 	const keys = data?.keys ?? [];
 	const totalCount = data?.total_count ?? 0;
@@ -44,7 +39,11 @@ export function ProjectKeysSection({ projectId }: ProjectKeysSectionProps) {
 					placeholder="Filter by key name..."
 					style={{ maxWidth: 220 }}
 					value={keyAlias}
-					onChange={(e) => setKeyAlias(e.target.value)}
+					onChange={(e) => {
+						setKeyAlias(e.target.value);
+						// Reset to page 1 when the filter changes
+						setPage(1);
+					}}
 					allowClear
 					size="small"
 				/>

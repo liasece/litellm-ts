@@ -21,11 +21,13 @@ vi.mock("@tremor/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tremor/react")>();
 	return {
 		...actual,
-		Button: React.forwardRef<HTMLButtonElement, any>(
-			({ children, loading: _loading, loadingText: _loadingText, variant: _variant, icon: _icon, ...props }, ref) =>
-				// Render as a native button without forwarding Tremor-only props to the DOM.
-				React.createElement("button", { ...props, ref }, children),
-		),
+		Button: React.forwardRef<HTMLButtonElement, any>(function Button(
+			{ children, loading: _loading, loadingText: _loadingText, variant: _variant, icon: _icon, ...props },
+			ref,
+		) {
+			// Render as a native button without forwarding Tremor-only props to the DOM.
+			return React.createElement("button", { ...props, ref }, children);
+		}),
 		Tooltip: ({ children, ..._props }: { children?: React.ReactNode; [key: string]: unknown }) => {
 			// Return children directly without tooltip functionality to prevent flaky tests
 			// This avoids issues with hover states, positioning, and DOM queries in tests
@@ -72,9 +74,8 @@ afterEach(() => {
 // Make toLocaleString deterministic in tests; individual tests can override
 // This returns ISO-like strings to keep assertions stable.
 vi.spyOn(Date.prototype, "toLocaleString").mockImplementation(function (this: Date, ..._args: unknown[]) {
-	const d = this;
 	const pad = (n: number) => String(n).padStart(2, "0");
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+	return `${this.getFullYear()}-${pad(this.getMonth() + 1)}-${pad(this.getDate())} ${pad(this.getHours())}:${pad(this.getMinutes())}:${pad(this.getSeconds())}`;
 });
 
 // Fixed matchMedia not found error in tests: https://github.com/vitest-dev/vitest/issues/821

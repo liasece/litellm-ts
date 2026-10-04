@@ -20,15 +20,27 @@ const ViewUserSpend: React.FC<ViewUserSpendProps> = ({ userSpend, userMaxBudget,
 	const formatMoney = useMoneyFormatter();
 	const { accessToken, userRole, userId: userID } = useAuthorized();
 	let [spend, setSpend] = useState(userSpend !== null ? userSpend : 0.0);
-	const [maxBudget, setMaxBudget] = useState(selectedTeam ? Number(selectedTeam.max_budget) : null);
-	useEffect(() => {
+	const [prevUserSpend, setPrevUserSpend] = useState(userSpend);
+	// Keep the displayed spend in sync with the latest non-null value from the parent.
+	// Adjusting state during render with a guard replaces the prop-syncing effect.
+	if (!Object.is(userSpend, prevUserSpend)) {
+		setPrevUserSpend(userSpend);
+		if (userSpend !== null) {
+			setSpend(userSpend);
+		}
+	}
+	// The max budget is a pure derivation of the selected team, the signed-in user and
+	// the parent-provided fallback, so it is computed during render instead of being
+	// mirrored into state by an effect.
+	const maxBudget = React.useMemo(() => {
 		if (selectedTeam) {
 			if (selectedTeam.team_alias === "Default Team") {
-				setMaxBudget(userMaxBudget);
-			} else {
-				let setMaxBudgetFlag = false;
-				if (selectedTeam.team_memberships) {
-					/**
+				return userMaxBudget;
+			}
+			let memberMaxBudget: number | null = null;
+			let setMaxBudgetFlag = false;
+			if (selectedTeam.team_memberships) {
+				/**
                * What 'team_memberships' looks like:
                * "team_memberships": [
                *  {
@@ -45,24 +57,20 @@ const ViewUserSpend: React.FC<ViewUserSpendProps> = ({ userSpend, userMaxBudget,
                   "budget_duration": null
               }
                */
-					for (const member of selectedTeam.team_memberships) {
-						if (
-							member.user_id === userID &&
-							"max_budget" in member.litellm_budget_table &&
-							member.litellm_budget_table.max_budget !== null
-						) {
-							setMaxBudget(member.litellm_budget_table.max_budget);
-							setMaxBudgetFlag = true;
-						}
+				for (const member of selectedTeam.team_memberships) {
+					if (
+						member.user_id === userID &&
+						"max_budget" in member.litellm_budget_table &&
+						member.litellm_budget_table.max_budget !== null
+					) {
+						memberMaxBudget = member.litellm_budget_table.max_budget;
+						setMaxBudgetFlag = true;
 					}
 				}
-				if (!setMaxBudgetFlag) {
-					setMaxBudget(selectedTeam.max_budget);
-				}
 			}
-		} else {
-			setMaxBudget(userMaxBudget);
+			return setMaxBudgetFlag ? memberMaxBudget : selectedTeam.max_budget;
 		}
+		return userMaxBudget;
 	}, [selectedTeam, userID, userMaxBudget]);
 	const [userModels, setUserModels] = useState([]);
 	useEffect(() => {
@@ -91,12 +99,6 @@ const ViewUserSpend: React.FC<ViewUserSpendProps> = ({ userSpend, userMaxBudget,
 		fetchUserModels();
 		fetchData();
 	}, [userRole, accessToken, userID]);
-
-	useEffect(() => {
-		if (userSpend !== null) {
-			setSpend(userSpend);
-		}
-	}, [userSpend]);
 
 	// logic to decide what models to display
 	let modelsToDisplay = [];

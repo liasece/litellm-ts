@@ -35,17 +35,19 @@ const DictField: React.FC<DictFieldProps> = ({ field, fieldKey, fullFieldKey, va
 
 	// Initialize selectedEntries and availableKeys based on existing value
 	React.useEffect(() => {
-		if (value && typeof value === "object") {
-			const existingKeys = Object.keys(value);
-			const entries = existingKeys.map((key) => ({
-				key: key,
-				id: `${key}_${Date.now()}_${Math.random()}`,
-			}));
-			setSelectedEntries(entries);
+		void (async () => {
+			if (value && typeof value === "object") {
+				const existingKeys = Object.keys(value);
+				const entries = existingKeys.map((key) => ({
+					key: key,
+					id: `${key}_${Date.now()}_${Math.random()}`,
+				}));
+				setSelectedEntries(entries);
 
-			const remainingKeys = (field.dict_key_options || []).filter((key) => !existingKeys.includes(key));
-			setAvailableKeys(remainingKeys);
-		}
+				const remainingKeys = (field.dict_key_options || []).filter((key) => !existingKeys.includes(key));
+				setAvailableKeys(remainingKeys);
+			}
+		})();
 	}, [value, field.dict_key_options]);
 
 	const addEntry = (selectedKey: string) => {

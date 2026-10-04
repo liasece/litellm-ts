@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { Form, Table } from "antd";
 import { TextInput } from "@tremor/react";
 import { Tooltip } from "../atoms/index";
@@ -12,7 +12,7 @@ function toProviderModelName(model: string, provider: Providers): string {
 
 const ConditionalPublicModelName: React.FC = () => {
 	const form = Form.useFormInstance();
-	const [tableKey, setTableKey] = useState(0); // Add a key to force table re-render
+	const modelMappings = Form.useWatch("model_mappings", form);
 
 	// Watch the 'model' field for changes and ensure it's always an array
 	const modelValue = Form.useWatch("model", form);
@@ -37,7 +37,6 @@ const ConditionalPublicModelName: React.FC = () => {
 				return mapping;
 			});
 			form.setFieldValue("model_mappings", updatedMappings);
-			setTableKey((prev) => prev + 1); // Force table re-render
 		}
 	}, [customModelName, selectedModels, selectedProvider, form]);
 
@@ -80,7 +79,6 @@ const ConditionalPublicModelName: React.FC = () => {
 				});
 
 				form.setFieldValue("model_mappings", mappings);
-				setTableKey((prev) => prev + 1); // Force table re-render
 			}
 		}
 	}, [selectedModels, customModelName, selectedProvider, form]);
@@ -193,13 +191,7 @@ const ConditionalPublicModelName: React.FC = () => {
 					},
 				]}
 			>
-				<Table
-					key={tableKey} // Add key to force re-render
-					dataSource={form.getFieldValue("model_mappings")}
-					columns={columns}
-					pagination={false}
-					size="small"
-				/>
+				<Table dataSource={modelMappings} columns={columns} pagination={false} size="small" />
 			</Form.Item>
 		</>
 	);

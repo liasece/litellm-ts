@@ -138,12 +138,15 @@ const CreateSearchTool: React.FC<CreateSearchToolProps> = ({
 		}
 	};
 
-	// Clear formValues when modal closes to reset
-	React.useEffect(() => {
+	// Clear formValues when modal closes to reset. Adjusting state during render with
+	// a guard replaces the prop-syncing effect.
+	const [prevIsModalVisible, setPrevIsModalVisible] = useState(isModalVisible);
+	if (isModalVisible !== prevIsModalVisible) {
+		setPrevIsModalVisible(isModalVisible);
 		if (!isModalVisible) {
 			setFormValues({});
 		}
-	}, [isModalVisible]);
+	}
 
 	if (!isAdminRole(userRole)) {
 		return null;

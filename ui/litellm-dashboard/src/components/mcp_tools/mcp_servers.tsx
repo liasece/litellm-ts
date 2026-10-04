@@ -4,7 +4,7 @@ import { Button, Tab, TabGroup, TabList, TabPanel, TabPanels, Text, Title } from
 import NewBadge from "../common_components/NewBadge";
 import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
 import { Descriptions, Modal, Select, Tooltip, Typography } from "antd";
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo } from "react";
 import { useMCPServers } from "../../app/(dashboard)/hooks/mcpServers/useMCPServers";
 import { useMCPServerHealth } from "../../app/(dashboard)/hooks/mcpServers/useMCPServerHealth";
 import NotificationsManager from "../molecules/notifications_manager";
@@ -26,6 +26,50 @@ const { Text: AntdText, Title: AntdTitle } = Typography;
 const EDIT_OAUTH_UI_STATE_KEY = "litellm-mcp-oauth-edit-state";
 
 const { Option } = Select;
+
+// The edit drawer is restored after the OAuth round-trip. The value is read once during
+// the first render (sessionStorage only exists in the browser) instead of being seeded
+// into state by an effect.
+function readPendingOAuthEditServerId(): string | null {
+	if (typeof window === "undefined") {
+		return null;
+	}
+	try {
+		const stored = window.sessionStorage.getItem(EDIT_OAUTH_UI_STATE_KEY);
+		if (stored) {
+			const parsed = JSON.parse(stored);
+			if (parsed?.serverId) {
+				return parsed.serverId;
+			}
+		}
+	} catch (err) {
+		console.error("Failed to restore MCP edit view state", err);
+	}
+	return null;
+}
+
+// Pure team / MCP access group filtering, shared by the initial state of the filtered
+// list and the render-phase derivation.
+function computeFilteredServers(servers: MCPServer[], teamId: string, group: string): MCPServer[] {
+	if (teamId === "personal") {
+		return [];
+	}
+	let filtered = servers;
+	if (teamId !== "all") {
+		filtered = filtered.filter((server) => server.teams?.some((team) => team.team_id === teamId));
+	}
+	if (group !== "all") {
+		filtered = filtered.filter((server) =>
+			server.mcp_access_groups?.some((g: any) => (typeof g === "string" ? g === group : g && g.name === group)),
+		);
+	}
+	return [...filtered].sort((a, b) => {
+		if (!a.created_at && !b.created_at) return 0;
+		if (!a.created_at) return 1;
+		if (!b.created_at) return -1;
+		return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+	});
+}
 
 const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID }) => {
 	const { data: mcpServers, isLoading: isLoadingServers, refetch } = useMCPServers();
@@ -59,10 +103,12 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
 	const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 	const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
 	const [editServer, setEditServer] = useState(false);
-	const [pendingOAuthEditServerId, setPendingOAuthEditServerId] = useState<string | null>(null);
+	const [pendingOAuthEditServerId, setPendingOAuthEditServerId] = useState<string | null>(readPendingOAuthEditServerId);
 	const [selectedTeam, setSelectedTeam] = useState<string>("all");
 	const [selectedMcpAccessGroup, setSelectedMcpAccessGroup] = useState<string>("all");
-	const [filteredServers, setFilteredServers] = useState<MCPServer[]>([]);
+	const [filteredServers, setFilteredServers] = useState<MCPServer[]>(() =>
+		computeFilteredServers(serversWithHealth, selectedTeam, selectedMcpAccessGroup),
+	);
 	const [isModalVisible, setModalVisible] = useState(false);
 	const [isDiscoveryVisible, setDiscoveryVisible] = useState(false);
 	const [prefillData, setPrefillData] = useState<DiscoverableMCPServer | null>(null);
@@ -70,31 +116,20 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
 	const [byokModalServer, setByokModalServer] = useState<MCPServer | null>(null);
 	const isInternalUser = userRole === "Internal User";
 
-	useEffect(() => {
-		if (typeof window === "undefined") {
-			return;
+	// Once the server list contains the id restored from sessionStorage, open its edit
+	// drawer and clear the pending marker. The unavailable -> available transition is
+	// detected during render with a guard instead of from an effect.
+	const pendingOAuthEditServerAvailable =
+		!!pendingOAuthEditServerId && !!mcpServers?.some((server) => server.server_id === pendingOAuthEditServerId);
+	const [wasPendingOAuthEditServerAvailable, setWasPendingOAuthEditServerAvailable] = useState(false);
+	if (pendingOAuthEditServerAvailable !== wasPendingOAuthEditServerAvailable) {
+		setWasPendingOAuthEditServerAvailable(pendingOAuthEditServerAvailable);
+		if (pendingOAuthEditServerAvailable && pendingOAuthEditServerId) {
+			setSelectedServerId(pendingOAuthEditServerId);
+			setEditServer(true);
+			setPendingOAuthEditServerId(null);
 		}
-		try {
-			const stored = window.sessionStorage.getItem(EDIT_OAUTH_UI_STATE_KEY);
-			if (stored) {
-				const parsed = JSON.parse(stored);
-				if (parsed?.serverId) {
-					setPendingOAuthEditServerId(parsed.serverId);
-				}
-			}
-		} catch (err) {
-			console.error("Failed to restore MCP edit view state", err);
-		}
-	}, []);
-
-	useEffect(() => {
-		if (!pendingOAuthEditServerId || !mcpServers?.some((server) => server.server_id === pendingOAuthEditServerId)) {
-			return;
-		}
-		setSelectedServerId(pendingOAuthEditServerId);
-		setEditServer(true);
-		setPendingOAuthEditServerId(null);
-	}, [mcpServers, pendingOAuthEditServerId]);
+	}
 
 	// Get unique teams from all servers
 	const uniqueTeams = React.useMemo(() => {
@@ -127,50 +162,32 @@ const MCPServers: React.FC<MCPServerProps> = ({ accessToken, userRole, userID })
 		);
 	}, [serversWithHealth]);
 
-	// Filtering logic for both team and access group
-	const filterServers = useCallback(
-		(teamId: string, group: string) => {
-			if (!serversWithHealth) return setFilteredServers([]);
-			let filtered = serversWithHealth;
-			if (teamId === "personal") {
-				setFilteredServers([]);
-				return;
-			}
-			if (teamId !== "all") {
-				filtered = filtered.filter((server) => server.teams?.some((team) => team.team_id === teamId));
-			}
-			if (group !== "all") {
-				filtered = filtered.filter((server) =>
-					server.mcp_access_groups?.some((g: any) => (typeof g === "string" ? g === group : g && g.name === group)),
-				);
-			}
-			const sorted = [...filtered].sort((a, b) => {
-				if (!a.created_at && !b.created_at) return 0;
-				if (!a.created_at) return 1;
-				if (!b.created_at) return -1;
-				return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-			});
-			setFilteredServers(sorted);
-		},
-		[serversWithHealth],
-	);
+	// Re-apply the team / access group filters whenever the server data or the selected
+	// filters change (query updates and health-status updates included). Adjusting state
+	// during render with a guard replaces the effect-driven update.
+	const [prevServerFilterInputs, setPrevServerFilterInputs] = useState<[MCPServer[], string, string]>([
+		serversWithHealth,
+		selectedTeam,
+		selectedMcpAccessGroup,
+	]);
+	if (
+		prevServerFilterInputs[0] !== serversWithHealth ||
+		prevServerFilterInputs[1] !== selectedTeam ||
+		prevServerFilterInputs[2] !== selectedMcpAccessGroup
+	) {
+		setPrevServerFilterInputs([serversWithHealth, selectedTeam, selectedMcpAccessGroup]);
+		setFilteredServers(computeFilteredServers(serversWithHealth, selectedTeam, selectedMcpAccessGroup));
+	}
 
 	// Handle team filter change
 	const handleTeamChange = (teamId: string) => {
 		setSelectedTeam(teamId);
-		filterServers(teamId, selectedMcpAccessGroup);
 	};
 
 	// Handle MCP access group filter change
 	const handleMcpAccessGroupChange = (group: string) => {
 		setSelectedMcpAccessGroup(group);
-		filterServers(selectedTeam, group);
 	};
-
-	// Initial and effect-based filtering (trigger on query data updates and health data updates)
-	useEffect(() => {
-		filterServers(selectedTeam, selectedMcpAccessGroup);
-	}, [serversWithHealth, selectedTeam, selectedMcpAccessGroup, filterServers]);
 
 	const columns = React.useMemo(
 		() =>

@@ -117,46 +117,48 @@ const ContentCategoryConfiguration: React.FC<ContentCategoryConfigurationProps> 
 
 	// Fetch preview YAML/JSON when a category is selected in dropdown
 	React.useEffect(() => {
-		if (selectedCategoryName && accessToken) {
-			// Check if we already have this content cached
-			const cachedContent = categoryYaml[selectedCategoryName];
-			if (cachedContent) {
-				setPreviewYaml(cachedContent);
-				return;
-			}
+		void (async () => {
+			if (selectedCategoryName && accessToken) {
+				// Check if we already have this content cached
+				const cachedContent = categoryYaml[selectedCategoryName];
+				if (cachedContent) {
+					setPreviewYaml(cachedContent);
+					return;
+				}
 
-			// Fetch the content for preview
-			setLoadingPreviewYaml(true);
-			getCategoryYaml(accessToken, selectedCategoryName)
-				.then((data) => {
-					let content = data.yaml_content;
+				// Fetch the content for preview
+				setLoadingPreviewYaml(true);
+				getCategoryYaml(accessToken, selectedCategoryName)
+					.then((data) => {
+						let content = data.yaml_content;
 
-					// Format JSON content for better readability
-					if (data.file_type === "json") {
-						try {
-							const parsed = JSON.parse(content);
-							content = JSON.stringify(parsed, null, 2);
-						} catch (e) {
-							console.warn(`Failed to format JSON for ${selectedCategoryName}:`, e);
+						// Format JSON content for better readability
+						if (data.file_type === "json") {
+							try {
+								const parsed = JSON.parse(content);
+								content = JSON.stringify(parsed, null, 2);
+							} catch (e) {
+								console.warn(`Failed to format JSON for ${selectedCategoryName}:`, e);
+							}
 						}
-					}
 
-					setPreviewYaml(content);
-					// Also cache it for later use
-					setCategoryYaml((prev) => ({ ...prev, [selectedCategoryName]: content }));
-					setCategoryFileTypes((prev) => ({ ...prev, [selectedCategoryName]: data.file_type || "yaml" }));
-				})
-				.catch((error) => {
-					console.error(`Failed to fetch preview content for category ${selectedCategoryName}:`, error);
-					setPreviewYaml("");
-				})
-				.finally(() => {
-					setLoadingPreviewYaml(false);
-				});
-		} else {
-			setPreviewYaml("");
-			setLoadingPreviewYaml(false);
-		}
+						setPreviewYaml(content);
+						// Also cache it for later use
+						setCategoryYaml((prev) => ({ ...prev, [selectedCategoryName]: content }));
+						setCategoryFileTypes((prev) => ({ ...prev, [selectedCategoryName]: data.file_type || "yaml" }));
+					})
+					.catch((error) => {
+						console.error(`Failed to fetch preview content for category ${selectedCategoryName}:`, error);
+						setPreviewYaml("");
+					})
+					.finally(() => {
+						setLoadingPreviewYaml(false);
+					});
+			} else {
+				setPreviewYaml("");
+				setLoadingPreviewYaml(false);
+			}
+		})();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectedCategoryName, accessToken]);
 

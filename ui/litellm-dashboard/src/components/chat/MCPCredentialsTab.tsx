@@ -7,7 +7,7 @@
  * Lives in the Chat sidebar's "Credentials" tab.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Spin } from "antd";
 import MessageManager from "@/components/molecules/message_manager";
 import { DeleteOutlined, LinkOutlined } from "@ant-design/icons";
@@ -58,17 +58,19 @@ const MCPCredentialsTab: React.FC<Props> = ({ accessToken }) => {
 	const [loading, setLoading] = useState(true);
 	const [revoking, setRevoking] = useState<Set<string>>(new Set());
 
-	const load = useCallback(() => {
-		setLoading(true);
-		listMCPUserCredentials(accessToken)
-			.then(setCredentials)
-			.catch(() => setCredentials([]))
-			.finally(() => setLoading(false));
-	}, [accessToken]);
-
 	useEffect(() => {
-		load();
-	}, [load]);
+		void (async () => {
+			setLoading(true);
+			try {
+				const creds = await listMCPUserCredentials(accessToken);
+				setCredentials(creds);
+			} catch {
+				setCredentials([]);
+			} finally {
+				setLoading(false);
+			}
+		})();
+	}, [accessToken]);
 
 	const handleRevoke = async (serverId: string) => {
 		setRevoking((prev) => new Set(prev).add(serverId));

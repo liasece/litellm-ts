@@ -182,97 +182,102 @@ const CreateMCPServer: React.FC<CreateMCPServerProps> = ({
 		if (!storedState) {
 			return;
 		}
-
-		try {
-			const parsed = JSON.parse(storedState);
-			if (parsed.modalVisible) {
-				setModalVisible(true);
+		void (async () => {
+			try {
+				const parsed = JSON.parse(storedState);
+				if (parsed.modalVisible) {
+					setModalVisible(true);
+				}
+				const restoredTransport = parsed.formValues?.transport || parsed.transportType || "";
+				if (restoredTransport) {
+					setTransportType(restoredTransport);
+				}
+				if (parsed.formValues) {
+					setPendingRestoredValues({ values: parsed.formValues, transport: restoredTransport });
+				}
+				if (parsed.costConfig) {
+					setCostConfig(parsed.costConfig);
+				}
+				if (parsed.allowedTools) {
+					setAllowedTools(parsed.allowedTools);
+				}
+				if (parsed.searchValue) {
+					setSearchValue(parsed.searchValue);
+				}
+				if (typeof parsed.aliasManuallyEdited === "boolean") {
+					setAliasManuallyEdited(parsed.aliasManuallyEdited);
+				}
+				if (parsed.logoUrl) {
+					setLogoUrl(parsed.logoUrl);
+				}
+			} catch (err) {
+				console.error("Failed to restore MCP create state", err);
+			} finally {
+				window.sessionStorage.removeItem(CREATE_OAUTH_UI_STATE_KEY);
 			}
-			const restoredTransport = parsed.formValues?.transport || parsed.transportType || "";
-			if (restoredTransport) {
-				setTransportType(restoredTransport);
-			}
-			if (parsed.formValues) {
-				setPendingRestoredValues({ values: parsed.formValues, transport: restoredTransport });
-			}
-			if (parsed.costConfig) {
-				setCostConfig(parsed.costConfig);
-			}
-			if (parsed.allowedTools) {
-				setAllowedTools(parsed.allowedTools);
-			}
-			if (parsed.searchValue) {
-				setSearchValue(parsed.searchValue);
-			}
-			if (typeof parsed.aliasManuallyEdited === "boolean") {
-				setAliasManuallyEdited(parsed.aliasManuallyEdited);
-			}
-			if (parsed.logoUrl) {
-				setLogoUrl(parsed.logoUrl);
-			}
-		} catch (err) {
-			console.error("Failed to restore MCP create state", err);
-		} finally {
-			window.sessionStorage.removeItem(CREATE_OAUTH_UI_STATE_KEY);
-		}
+		})();
 	}, [form, setModalVisible]);
 
 	React.useEffect(() => {
-		if (!pendingRestoredValues) {
-			return;
-		}
-		const transportReady = transportType || pendingRestoredValues.transport || "";
-		if (pendingRestoredValues.transport && !transportType) {
-			// wait until transportType state catches up so the URL field is mounted
-			return;
-		}
-		form.setFieldsValue(pendingRestoredValues.values);
-		setFormValues(pendingRestoredValues.values);
-		setPendingRestoredValues(null);
+		void (async () => {
+			if (!pendingRestoredValues) {
+				return;
+			}
+			const transportReady = transportType || pendingRestoredValues.transport || "";
+			if (pendingRestoredValues.transport && !transportType) {
+				// wait until transportType state catches up so the URL field is mounted
+				return;
+			}
+			form.setFieldsValue(pendingRestoredValues.values);
+			setFormValues(pendingRestoredValues.values);
+			setPendingRestoredValues(null);
+		})();
 	}, [pendingRestoredValues, form, transportType]);
 
 	// Pre-fill form from discovery selection
 	React.useEffect(() => {
-		if (!isModalVisible || !prefillData) {
-			return;
-		}
-		// Sanitize server name: strip vendor prefix, replace hyphens with underscores
-		const sanitizedName = (prefillData.name || "")
-			.replace(/[^a-zA-Z0-9_]/g, "_")
-			.replace(/_+/g, "_")
-			.replace(/^_|_$/g, "");
+		void (async () => {
+			if (!isModalVisible || !prefillData) {
+				return;
+			}
+			// Sanitize server name: strip vendor prefix, replace hyphens with underscores
+			const sanitizedName = (prefillData.name || "")
+				.replace(/[^a-zA-Z0-9_]/g, "_")
+				.replace(/_+/g, "_")
+				.replace(/^_|_$/g, "");
 
-		const transport = prefillData.transport || "";
-		setTransportType(transport);
+			const transport = prefillData.transport || "";
+			setTransportType(transport);
 
-		const prefillValues: Record<string, any> = {
-			server_name: sanitizedName,
-			alias: sanitizedName,
-			description: prefillData.description || "",
-			transport: transport,
-		};
+			const prefillValues: Record<string, any> = {
+				server_name: sanitizedName,
+				alias: sanitizedName,
+				description: prefillData.description || "",
+				transport: transport,
+			};
 
-		if (transport === "stdio") {
-			const stdioObj: Record<string, any> = {};
-			if (prefillData.command) stdioObj.command = prefillData.command;
-			if (prefillData.args && prefillData.args.length > 0) stdioObj.args = prefillData.args;
-			if (prefillData.env_vars && prefillData.env_vars.length > 0) {
-				const envObj: Record<string, string> = {};
-				for (const v of prefillData.env_vars) {
-					envObj[v.name] = v.description ? `<${v.description}>` : "";
+			if (transport === "stdio") {
+				const stdioObj: Record<string, any> = {};
+				if (prefillData.command) stdioObj.command = prefillData.command;
+				if (prefillData.args && prefillData.args.length > 0) stdioObj.args = prefillData.args;
+				if (prefillData.env_vars && prefillData.env_vars.length > 0) {
+					const envObj: Record<string, string> = {};
+					for (const v of prefillData.env_vars) {
+						envObj[v.name] = v.description ? `<${v.description}>` : "";
+					}
+					stdioObj.env = envObj;
 				}
-				stdioObj.env = envObj;
+				if (Object.keys(stdioObj).length > 0) {
+					prefillValues.stdio_config = JSON.stringify(stdioObj, null, 2);
+				}
+			} else if (prefillData.url) {
+				prefillValues.url = prefillData.url;
 			}
-			if (Object.keys(stdioObj).length > 0) {
-				prefillValues.stdio_config = JSON.stringify(stdioObj, null, 2);
-			}
-		} else if (prefillData.url) {
-			prefillValues.url = prefillData.url;
-		}
 
-		form.setFieldsValue(prefillValues);
-		setFormValues(prefillValues);
-		setAliasManuallyEdited(false);
+			form.setFieldsValue(prefillValues);
+			setFormValues(prefillValues);
+			setAliasManuallyEdited(false);
+		})();
 	}, [isModalVisible, prefillData, form]);
 
 	const handleCreate = async (values: Record<string, any>) => {
@@ -472,18 +477,22 @@ const CreateMCPServer: React.FC<CreateMCPServerProps> = ({
 
 	// Auto-populate alias from server_name unless manually edited
 	React.useEffect(() => {
-		if (!aliasManuallyEdited && formValues.server_name) {
-			const normalized = formValues.server_name.replace(/\s+/g, "_");
-			form.setFieldsValue({ alias: normalized });
-			setFormValues((prev) => ({ ...prev, alias: normalized }));
-		}
+		void (async () => {
+			if (!aliasManuallyEdited && formValues.server_name) {
+				const normalized = formValues.server_name.replace(/\s+/g, "_");
+				form.setFieldsValue({ alias: normalized });
+				setFormValues((prev) => ({ ...prev, alias: normalized }));
+			}
+		})();
 	}, [aliasManuallyEdited, form, formValues.server_name]);
 
 	// Clear formValues when modal closes to reset child components
 	React.useEffect(() => {
-		if (!isModalVisible) {
-			setFormValues({});
-		}
+		void (async () => {
+			if (!isModalVisible) {
+				setFormValues({});
+			}
+		})();
 	}, [isModalVisible]);
 
 	const isAdmin = isAdminRole(userRole);

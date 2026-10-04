@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Modal, Form, Steps, Button, Checkbox } from "antd";
 import { Text, Title, Badge } from "@tremor/react";
 import { makeMCPPublicCall } from "../../networking";
@@ -69,8 +69,16 @@ const MakeMCPPublicForm: React.FC<MakeMCPPublicFormProps> = ({
 		}
 	};
 
-	// Initialize and preselect already public servers when modal opens
-	useEffect(() => {
+	// 渲染期调整 state：visible / mcpHubData 变化时重新预选已公开的服务，替代原 effect。
+	const [lastPrefilledFrom, setLastPrefilledFrom] = useState<{ visible: boolean; mcpHubData: MCPServerData[] } | null>(
+		null,
+	);
+	if (
+		lastPrefilledFrom === null ||
+		visible !== lastPrefilledFrom.visible ||
+		mcpHubData !== lastPrefilledFrom.mcpHubData
+	) {
+		setLastPrefilledFrom({ visible, mcpHubData });
 		if (visible && mcpHubData.length > 0) {
 			// Extract server IDs from servers that are already public
 			const publicServerIds = mcpHubData
@@ -80,7 +88,7 @@ const MakeMCPPublicForm: React.FC<MakeMCPPublicFormProps> = ({
 			// Preselect servers that are already public
 			setSelectedServers(new Set(publicServerIds));
 		}
-	}, [mcpHubData, visible]); // Only re-run when modal visibility changes, not when mcpHubData updates
+	}
 
 	const handleSubmit = async () => {
 		if (selectedServers.size === 0) {

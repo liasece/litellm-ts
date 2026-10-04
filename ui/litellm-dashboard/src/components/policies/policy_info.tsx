@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, Badge, Button } from "@tremor/react";
 import { ArrowLeftIcon, PencilIcon } from "@heroicons/react/outline";
 import { Descriptions, Tag, Spin, Divider, Typography, Alert } from "antd";
@@ -30,34 +30,32 @@ const PolicyInfoView: React.FC<PolicyInfoViewProps> = ({
 	const [resolvedGuardrails, setResolvedGuardrails] = useState<string[]>([]);
 	const [isLoadingResolved, setIsLoadingResolved] = useState(false);
 
-	const fetchPolicy = useCallback(async () => {
-		if (!accessToken || !policyId) return;
-
-		setIsLoading(true);
-		try {
-			const data = await getPolicy(accessToken, policyId);
-			setPolicy(data);
-
-			// Also fetch resolved guardrails
-			setIsLoadingResolved(true);
-			try {
-				const resolvedData = await getResolvedGuardrails(accessToken, policyId);
-				setResolvedGuardrails(resolvedData.resolved_guardrails || []);
-			} catch (error) {
-				console.error("Error fetching resolved guardrails:", error);
-			} finally {
-				setIsLoadingResolved(false);
-			}
-		} catch (error) {
-			console.error("Error fetching policy:", error);
-		} finally {
-			setIsLoading(false);
-		}
-	}, [policyId, accessToken, getPolicy]);
-
 	useEffect(() => {
-		fetchPolicy();
-	}, [fetchPolicy]);
+		void (async () => {
+			if (!accessToken || !policyId) return;
+
+			setIsLoading(true);
+			try {
+				const data = await getPolicy(accessToken, policyId);
+				setPolicy(data);
+
+				// Also fetch resolved guardrails
+				setIsLoadingResolved(true);
+				try {
+					const resolvedData = await getResolvedGuardrails(accessToken, policyId);
+					setResolvedGuardrails(resolvedData.resolved_guardrails || []);
+				} catch (error) {
+					console.error("Error fetching resolved guardrails:", error);
+				} finally {
+					setIsLoadingResolved(false);
+				}
+			} catch (error) {
+				console.error("Error fetching policy:", error);
+			} finally {
+				setIsLoading(false);
+			}
+		})();
+	}, [policyId, accessToken, getPolicy]);
 
 	if (isLoading) {
 		return (

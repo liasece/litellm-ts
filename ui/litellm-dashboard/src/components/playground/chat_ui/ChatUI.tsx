@@ -7,7 +7,6 @@ import {
 	CodeOutlined,
 	DatabaseOutlined,
 	DeleteOutlined,
-	FilePdfOutlined,
 	InfoCircleOutlined,
 	KeyOutlined,
 	LinkOutlined,
@@ -19,12 +18,10 @@ import {
 	SoundOutlined,
 	TagsOutlined,
 	ToolOutlined,
-	UserOutlined,
 } from "@ant-design/icons";
 import { Card, Text, TextInput, Title, Button as TremorButton } from "@tremor/react";
 import { Button, Input, Modal, Popover, Select, Spin, Tooltip, Typography, Upload } from "antd";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { coy } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { v4 as uuidv4 } from "uuid";
@@ -48,14 +45,10 @@ import { fetchRoutableModels, ModelGroup, modelGroupsToSelectOptions } from "../
 import { makeOpenAIImageEditsRequest } from "../llm_calls/image_edits";
 import { makeOpenAIImageGenerationRequest } from "../llm_calls/image_generation";
 import { makeOpenAIResponsesRequest } from "../llm_calls/responses_api";
-import A2AMetrics from "./A2AMetrics";
 import AdditionalModelSettings from "./AdditionalModelSettings";
-import AudioRenderer from "./AudioRenderer";
 import { OPEN_AI_VOICE_SELECT_OPTIONS, OpenAIVoice } from "./chatConstants";
-import ChatImageRenderer from "./ChatImageRenderer";
 import ChatImageUpload from "./ChatImageUpload";
 import { createChatDisplayMessage, createChatMultimodalMessage } from "./ChatImageUtils";
-import CodeInterpreterOutput from "./CodeInterpreterOutput";
 import CodeInterpreterTool from "./CodeInterpreterTool";
 import { generateCodeSnippet } from "./CodeSnippets";
 import EndpointSelector from "./EndpointSelector";
@@ -63,15 +56,11 @@ import FilePreviewCard from "./FilePreviewCard";
 import ChatMessageBubble from "./ChatMessageBubble";
 import MCPEventsDisplay from "./MCPEventsDisplay";
 import { EndpointType, getEndpointType } from "./mode_endpoint_mapping";
-import ReasoningContent from "./ReasoningContent";
-import ResponseMetrics, { TokenUsage } from "./ResponseMetrics";
-import ResponsesImageRenderer from "./ResponsesImageRenderer";
 import ResponsesImageUpload from "./ResponsesImageUpload";
 import { createDisplayMessage, createMultimodalMessage } from "./ResponsesImageUtils";
-import { SearchResultsDisplay } from "./SearchResultsDisplay";
 import SessionManagement from "./SessionManagement";
 import RealtimePlayground from "./RealtimePlayground";
-import { A2ATaskMetadata, MessageType } from "./types";
+import { MessageType } from "./types";
 import { useCodeInterpreter } from "./useCodeInterpreter";
 import { useChatHistory } from "./useChatHistory";
 

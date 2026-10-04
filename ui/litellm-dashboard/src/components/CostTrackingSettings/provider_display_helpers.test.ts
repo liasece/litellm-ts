@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { getProviderDisplayInfo, getProviderBackendValue, handleImageError } from "./provider_display_helpers";
 
 vi.mock("../provider_info_helpers", () => ({

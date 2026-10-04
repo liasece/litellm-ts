@@ -188,12 +188,16 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
 	}, [accessToken]);
 
 	useEffect(() => {
-		fetchGuardrailProviderSpecificParams();
+		void (async () => {
+			fetchGuardrailProviderSpecificParams();
+		})();
 	}, [accessToken, fetchGuardrailProviderSpecificParams]);
 
 	useEffect(() => {
-		fetchGuardrailInfo();
-		fetchGuardrailUISettings();
+		void (async () => {
+			fetchGuardrailInfo();
+			fetchGuardrailUISettings();
+		})();
 	}, [guardrailId, accessToken, fetchGuardrailInfo, fetchGuardrailUISettings]);
 
 	// Reset form when guardrail data or provider params change
@@ -231,7 +235,9 @@ const GuardrailInfoView: React.FC<GuardrailInfoProps> = ({ guardrailId, onClose,
 	}, [emptyToolPermissionConfig, guardrailData]);
 
 	useEffect(() => {
-		resetToolPermissionEditor();
+		void (async () => {
+			resetToolPermissionEditor();
+		})();
 	}, [resetToolPermissionEditor]);
 
 	const handleToolPermissionConfigChange = (config: ToolPermissionConfig) => {

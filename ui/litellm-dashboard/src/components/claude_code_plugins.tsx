@@ -48,7 +48,9 @@ const ClaudeCodePluginsPanel: React.FC<ClaudeCodePluginsPanelProps> = ({ accessT
 	}, [accessToken]);
 
 	useEffect(() => {
-		fetchPlugins();
+		void (async () => {
+			fetchPlugins();
+		})();
 	}, [accessToken, fetchPlugins]);
 
 	const handleAddPlugin = () => {

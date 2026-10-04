@@ -28,59 +28,57 @@ const UsefulLinksManagement: React.FC<UsefulLinksManagementProps> = ({ accessTok
 	const [isRearranging, setIsRearranging] = useState(false);
 	const [originalLinksOrder, setOriginalLinksOrder] = useState<Link[]>([]);
 
-	const fetchUsefulLinks = React.useCallback(async () => {
-		if (!accessToken) return;
-
-		try {
-			setLoading(true);
-			const response = await getPublicModelHubInfo();
-
-			if (response && response.useful_links) {
-				const usefulLinks = response.useful_links || {};
-
-				// Convert object to array of links with ids
-				// Handle both old format (Dict[str, str]) and new format (Dict[str, {url, index}])
-				const linksArray = Object.entries(usefulLinks)
-					.map(([displayName, value]) => {
-						// Check if it's the new format with {url, index}
-						if (typeof value === "object" && value !== null && "url" in value) {
-							return {
-								id: `${(value as any).index ?? 0}-${displayName}`,
-								displayName,
-								url: (value as any).url as string,
-								index: (value as any).index ?? 0,
-							};
-						} else {
-							// Old format: just a string URL
-							return {
-								id: `0-${displayName}`,
-								displayName,
-								url: value as string,
-								index: 0,
-							};
-						}
-					})
-					.sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-					.map((link, index) => ({
-						...link,
-						id: `${index}-${link.displayName}`,
-					}));
-
-				setLinks(linksArray);
-			} else {
-				setLinks([]);
-			}
-		} catch (error) {
-			console.error("Error fetching useful links:", error);
-			setLinks([]);
-		} finally {
-			setLoading(false);
-		}
-	}, [accessToken]);
-
 	useEffect(() => {
-		fetchUsefulLinks();
-	}, [accessToken, fetchUsefulLinks]);
+		void (async () => {
+			if (!accessToken) return;
+
+			try {
+				setLoading(true);
+				const response = await getPublicModelHubInfo();
+
+				if (response && response.useful_links) {
+					const usefulLinks = response.useful_links || {};
+
+					// Convert object to array of links with ids
+					// Handle both old format (Dict[str, str]) and new format (Dict[str, {url, index}])
+					const linksArray = Object.entries(usefulLinks)
+						.map(([displayName, value]) => {
+							// Check if it's the new format with {url, index}
+							if (typeof value === "object" && value !== null && "url" in value) {
+								return {
+									id: `${(value as any).index ?? 0}-${displayName}`,
+									displayName,
+									url: (value as any).url as string,
+									index: (value as any).index ?? 0,
+								};
+							} else {
+								// Old format: just a string URL
+								return {
+									id: `0-${displayName}`,
+									displayName,
+									url: value as string,
+									index: 0,
+								};
+							}
+						})
+						.sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+						.map((link, index) => ({
+							...link,
+							id: `${index}-${link.displayName}`,
+						}));
+
+					setLinks(linksArray);
+				} else {
+					setLinks([]);
+				}
+			} catch (error) {
+				console.error("Error fetching useful links:", error);
+				setLinks([]);
+			} finally {
+				setLoading(false);
+			}
+		})();
+	}, [accessToken]);
 
 	// Check if user is admin
 	if (!isAdminRole(userRole || "")) {

@@ -34,27 +34,29 @@ const AddPluginForm: React.FC<AddPluginFormProps> = ({ visible, onClose, accessT
 	const [sourceType, setSourceType] = useState<"github" | "url" | "git-subdir">("github");
 
 	useEffect(() => {
-		if (!visible) return;
-		const source = initialPlugin?.source;
-		const initialSourceType = source?.source === "github" ? "github" : "url";
-		setSourceType(initialSourceType);
-		form.setFieldsValue(
-			initialPlugin
-				? {
-						name: initialPlugin.name,
-						sourceType: initialSourceType,
-						repo: source?.repo,
-						url: source?.url,
-						version: initialPlugin.version,
-						description: initialPlugin.description,
-						category: initialPlugin.category,
-						keywords: initialPlugin.keywords?.join(", "),
-						authorName: initialPlugin.author?.name,
-						authorEmail: initialPlugin.author?.email,
-						homepage: initialPlugin.homepage,
-					}
-				: { sourceType: "github" },
-		);
+		void (async () => {
+			if (!visible) return;
+			const source = initialPlugin?.source;
+			const initialSourceType = source?.source === "github" ? "github" : "url";
+			setSourceType(initialSourceType);
+			form.setFieldsValue(
+				initialPlugin
+					? {
+							name: initialPlugin.name,
+							sourceType: initialSourceType,
+							repo: source?.repo,
+							url: source?.url,
+							version: initialPlugin.version,
+							description: initialPlugin.description,
+							category: initialPlugin.category,
+							keywords: initialPlugin.keywords?.join(", "),
+							authorName: initialPlugin.author?.name,
+							authorEmail: initialPlugin.author?.email,
+							homepage: initialPlugin.homepage,
+						}
+					: { sourceType: "github" },
+			);
+		})();
 	}, [visible, initialPlugin, form]);
 
 	const handleSubmit = async (values: any) => {

@@ -74,7 +74,9 @@ const TagInfoView: React.FC<TagInfoViewProps> = ({ tagId, onClose, accessToken, 
 	}, [accessToken, editTag, form, tagId]);
 
 	useEffect(() => {
-		fetchTagDetails();
+		void (async () => {
+			await fetchTagDetails();
+		})();
 	}, [tagId, accessToken, fetchTagDetails]);
 
 	useEffect(() => {

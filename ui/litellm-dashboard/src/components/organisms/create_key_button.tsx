@@ -312,50 +312,52 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
 	// Auto-open modal and prefill form from URL params (deep link).
 	// Guarded by write access so we don't open for read-only users.
 	useEffect(() => {
-		if (autoOpenCreate && !hasPrefilled && teams && userRole && rolesWithWriteAccess.includes(userRole)) {
-			// Open the modal
-			setIsModalVisible(true);
-			setHasPrefilled(true);
+		void (async () => {
+			if (autoOpenCreate && !hasPrefilled && teams && userRole && rolesWithWriteAccess.includes(userRole)) {
+				// Open the modal
+				setIsModalVisible(true);
+				setHasPrefilled(true);
 
-			// Apply prefill data if provided
-			if (prefillData) {
-				// Set key owner (owned_by) - validate that "another_user" is only allowed for Admin
-				if (prefillData.owned_by) {
-					if (prefillData.owned_by === "another_user" && userRole !== "Admin") {
-						// Ignore invalid owned_by for non-admin users, fall back to default
-						setKeyOwner("you");
-					} else {
-						setKeyOwner(prefillData.owned_by);
+				// Apply prefill data if provided
+				if (prefillData) {
+					// Set key owner (owned_by) - validate that "another_user" is only allowed for Admin
+					if (prefillData.owned_by) {
+						if (prefillData.owned_by === "another_user" && userRole !== "Admin") {
+							// Ignore invalid owned_by for non-admin users, fall back to default
+							setKeyOwner("you");
+						} else {
+							setKeyOwner(prefillData.owned_by);
+						}
 					}
-				}
 
-				// Set team - find the team by ID and set it (only if team exists in user's teams)
-				if (prefillData.team_id) {
-					const selectedTeam = teams?.find((t) => t.team_id === prefillData.team_id) || null;
-					if (selectedTeam) {
-						setSelectedCreateKeyTeam(selectedTeam);
-						form.setFieldsValue({ team_id: prefillData.team_id });
+					// Set team - find the team by ID and set it (only if team exists in user's teams)
+					if (prefillData.team_id) {
+						const selectedTeam = teams?.find((t) => t.team_id === prefillData.team_id) || null;
+						if (selectedTeam) {
+							setSelectedCreateKeyTeam(selectedTeam);
+							form.setFieldsValue({ team_id: prefillData.team_id });
+						}
+						// Silently ignore invalid team_id - don't prefill with a team user doesn't have access to
 					}
-					// Silently ignore invalid team_id - don't prefill with a team user doesn't have access to
-				}
 
-				// Set key alias
-				if (prefillData.key_alias) {
-					form.setFieldsValue({ key_alias: prefillData.key_alias });
-				}
+					// Set key alias
+					if (prefillData.key_alias) {
+						form.setFieldsValue({ key_alias: prefillData.key_alias });
+					}
 
-				// Defer model selection until we load the allowed model list.
-				if (prefillData.models && prefillData.models.length > 0) {
-					setPendingPrefillModels(prefillData.models);
-				}
+					// Defer model selection until we load the allowed model list.
+					if (prefillData.models && prefillData.models.length > 0) {
+						setPendingPrefillModels(prefillData.models);
+					}
 
-				// Set key type
-				if (prefillData.key_type) {
-					setKeyType(prefillData.key_type);
-					form.setFieldsValue({ key_type: prefillData.key_type });
+					// Set key type
+					if (prefillData.key_type) {
+						setKeyType(prefillData.key_type);
+						form.setFieldsValue({ key_type: prefillData.key_type });
+					}
 				}
 			}
-		}
+		})();
 	}, [autoOpenCreate, prefillData, teams, hasPrefilled, form, userRole]);
 
 	// Check if team selection is required
@@ -566,57 +568,63 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
 	// Note: Model prefill from URL params is handled by the useEffect below, which
 	// watches for pendingPrefillModels + modelsToPick to both be populated.
 	useEffect(() => {
-		if (selectedProjectId) {
-			// When a project is selected, use the project's models
-			const project = projects?.find((p) => p.project_id === selectedProjectId);
-			const projectModels = project?.models ?? [];
-			setModelsToPick(projectModels);
-			form.setFieldValue("models", []);
-			return;
-		}
-		if (userID && userRole && accessToken) {
-			fetchTeamModels(userID, userRole, accessToken, selectedCreateKeyTeam?.team_id ?? null).then((models) => {
-				let allModels = Array.from(new Set([...(selectedCreateKeyTeam?.models ?? []), ...models]));
-				setModelsToPick(allModels);
-			});
-		}
-		// Only clear models if we don't have pending prefill models
-		if (!pendingPrefillModels) {
-			form.setFieldValue("models", []);
-		}
-		// Clear MCP server selection when team changes (available servers may differ)
-		form.setFieldValue("allowed_mcp_servers_and_groups", { servers: [], accessGroups: [] });
+		void (async () => {
+			if (selectedProjectId) {
+				// When a project is selected, use the project's models
+				const project = projects?.find((p) => p.project_id === selectedProjectId);
+				const projectModels = project?.models ?? [];
+				setModelsToPick(projectModels);
+				form.setFieldValue("models", []);
+				return;
+			}
+			if (userID && userRole && accessToken) {
+				fetchTeamModels(userID, userRole, accessToken, selectedCreateKeyTeam?.team_id ?? null).then((models) => {
+					let allModels = Array.from(new Set([...(selectedCreateKeyTeam?.models ?? []), ...models]));
+					setModelsToPick(allModels);
+				});
+			}
+			// Only clear models if we don't have pending prefill models
+			if (!pendingPrefillModels) {
+				form.setFieldValue("models", []);
+			}
+			// Clear MCP server selection when team changes (available servers may differ)
+			form.setFieldValue("allowed_mcp_servers_and_groups", { servers: [], accessGroups: [] });
+		})();
 	}, [selectedCreateKeyTeam, selectedProjectId, accessToken, userID, userRole, form, pendingPrefillModels, projects]);
 
 	// Apply deferred model prefill once the available model list arrives.
 	// This handles timing where prefill data arrives before or after models are fetched.
 	useEffect(() => {
-		if (!pendingPrefillModels || pendingPrefillModels.length === 0) {
-			return;
-		}
-		if (!modelsToPick || modelsToPick.length === 0) {
-			return;
-		}
+		void (async () => {
+			if (!pendingPrefillModels || pendingPrefillModels.length === 0) {
+				return;
+			}
+			if (!modelsToPick || modelsToPick.length === 0) {
+				return;
+			}
 
-		const validModels = pendingPrefillModels.filter((model) => modelsToPick.includes(model));
-		if (validModels.length > 0) {
-			form.setFieldsValue({ models: validModels });
-		}
-		setPendingPrefillModels(null);
+			const validModels = pendingPrefillModels.filter((model) => modelsToPick.includes(model));
+			if (validModels.length > 0) {
+				form.setFieldsValue({ models: validModels });
+			}
+			setPendingPrefillModels(null);
+		})();
 	}, [pendingPrefillModels, modelsToPick, form]);
 
 	// Sync team when project is selected but teams loaded later (race condition)
 	useEffect(() => {
-		if (!selectedProjectId || !teams) return;
-		const project = projects?.find((p) => p.project_id === selectedProjectId);
-		if (!project?.team_id) return;
-		// If team is already set correctly, skip
-		if (selectedCreateKeyTeam?.team_id === project.team_id) return;
-		const projectTeam = teams.find((t) => t.team_id === project.team_id) || null;
-		if (projectTeam) {
-			setSelectedCreateKeyTeam(projectTeam);
-			form.setFieldValue("team_id", projectTeam.team_id);
-		}
+		void (async () => {
+			if (!selectedProjectId || !teams) return;
+			const project = projects?.find((p) => p.project_id === selectedProjectId);
+			if (!project?.team_id) return;
+			// If team is already set correctly, skip
+			if (selectedCreateKeyTeam?.team_id === project.team_id) return;
+			const projectTeam = teams.find((t) => t.team_id === project.team_id) || null;
+			if (projectTeam) {
+				setSelectedCreateKeyTeam(projectTeam);
+				form.setFieldValue("team_id", projectTeam.team_id);
+			}
+		})();
 	}, [teams, selectedProjectId, projects, selectedCreateKeyTeam?.team_id, form]);
 
 	// Add a callback function to handle user creation

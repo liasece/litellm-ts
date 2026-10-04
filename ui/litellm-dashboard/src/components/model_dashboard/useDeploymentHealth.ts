@@ -175,7 +175,9 @@ export const useDeploymentHealth = (accessToken: string | null, deploymentIds: s
 	}, [accessToken, initializeStatuses, knownIds, knownIdSet]);
 
 	useEffect(() => {
-		if (accessToken) void hydrateLatest();
+		void (async () => {
+			if (accessToken) void hydrateLatest();
+		})();
 	}, [accessToken, hydrateLatest]);
 
 	const applyResponse = useCallback((response: HealthCheckResponse, ids: Set<string>) => {

@@ -1,5 +1,5 @@
 import * as useAuthorizedModule from "@/app/(dashboard)/hooks/useAuthorized";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "../../../../../tests/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AllModelsTab from "./AllModelsTab";

@@ -35,11 +35,17 @@ const OpenAPIQuickPicker: React.FC<OpenAPIQuickPickerProps> = ({ accessToken, se
 
 	useEffect(() => {
 		if (!accessToken) return;
-		setLoading(true);
-		fetchOpenAPIRegistry(accessToken)
-			.then((data) => setApis(data.apis ?? []))
-			.catch(() => setApis([]))
-			.finally(() => setLoading(false));
+		void (async () => {
+			setLoading(true);
+			try {
+				const data = await fetchOpenAPIRegistry(accessToken);
+				setApis(data.apis ?? []);
+			} catch {
+				setApis([]);
+			} finally {
+				setLoading(false);
+			}
+		})();
 	}, [accessToken]);
 
 	const handleImgError = (name: string) => {

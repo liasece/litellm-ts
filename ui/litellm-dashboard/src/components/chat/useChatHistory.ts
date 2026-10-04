@@ -67,36 +67,42 @@ export function useChatHistory(activeConversationId: string | null): {
 	const storageUnavailableRef = useRef(false);
 	const initializedRef = useRef(false);
 
-	// Sync internal active id whenever the URL-derived prop changes (e.g. "New chat" → null)
-	useEffect(() => {
+	// 渲染期调整 state：URL 派生的 activeConversationId 变化时同步内部 id（React 官方守卫模式）。
+	const [lastActiveConversationId, setLastActiveConversationId] = useState(activeConversationId);
+	if (activeConversationId !== lastActiveConversationId) {
+		setLastActiveConversationId(activeConversationId);
 		setCurrentActiveId(activeConversationId);
 		setStaleId(false);
-	}, [activeConversationId]);
+	}
 
 	useEffect(() => {
-		const { conversations: loaded, storageUnavailable: unavailable } = loadFromStorage();
-		storageUnavailableRef.current = unavailable;
-		setConversations(loaded);
-		setStorageUnavailable(unavailable);
-		initializedRef.current = true;
+		void (async () => {
+			const { conversations: loaded, storageUnavailable: unavailable } = loadFromStorage();
+			storageUnavailableRef.current = unavailable;
+			setConversations(loaded);
+			setStorageUnavailable(unavailable);
+			initializedRef.current = true;
 
-		if (activeConversationId !== null) {
-			const found = loaded.some((c) => c.id === activeConversationId);
-			if (!found) {
-				setStaleId(true);
+			if (activeConversationId !== null) {
+				const found = loaded.some((c) => c.id === activeConversationId);
+				if (!found) {
+					setStaleId(true);
+				}
 			}
-		}
+		})();
 	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Persist to localStorage after every conversations change (pure effect, no setState inside updaters)
 	useEffect(() => {
 		if (!initializedRef.current) return;
 		if (storageUnavailableRef.current) return;
-		const success = saveToStorage(conversations);
-		if (!success) {
-			storageUnavailableRef.current = true;
-			setStorageUnavailable(true);
-		}
+		void (async () => {
+			const success = saveToStorage(conversations);
+			if (!success) {
+				storageUnavailableRef.current = true;
+				setStorageUnavailable(true);
+			}
+		})();
 	}, [conversations]);
 
 	const createConversation = useCallback((model: string): string => {

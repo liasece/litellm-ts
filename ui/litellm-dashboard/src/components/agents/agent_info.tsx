@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Card, Tab, TabGroup, TabList, TabPanel, TabPanels, Text, Title } from "@tremor/react";
+import { Tab, TabGroup, TabList, TabPanel, TabPanels, Title } from "@tremor/react";
 import { Button, Descriptions, Divider, Form, Input, InputNumber, Modal } from "antd";
 import MessageManager from "@/components/molecules/message_manager";
 import ResourceDetailsDrawer from "../common_components/ResourceDetailsDrawer";
@@ -35,12 +35,12 @@ const AgentInfoView: React.FC<AgentInfoViewProps> = ({
 	const [isSaving, setIsSaving] = useState(false);
 	const [form] = Form.useForm();
 	const [agentTypeMetadata, setAgentTypeMetadata] = useState<AgentCreateInfo[]>([]);
-	const [detectedAgentType, setDetectedAgentType] = useState("a2a");
+	// Derived from the loaded agent (previously mirrored into local state by populateForm).
+	const detectedAgentType = agent ? detectAgentType(agent) : "a2a";
 
 	const populateForm = React.useCallback(
 		(data: Agent) => {
 			const agentType = detectAgentType(data);
-			setDetectedAgentType(agentType);
 			if (agentType === "a2a") {
 				form.setFieldsValue(parseAgentForForm(data));
 				return;
@@ -80,7 +80,9 @@ const AgentInfoView: React.FC<AgentInfoViewProps> = ({
 	}, []);
 
 	useEffect(() => {
-		void fetchAgentInfo();
+		void (async () => {
+			await fetchAgentInfo();
+		})();
 	}, [agentId, accessToken, fetchAgentInfo]);
 
 	useEffect(() => {

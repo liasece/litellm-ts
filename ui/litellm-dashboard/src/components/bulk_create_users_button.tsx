@@ -46,6 +46,11 @@ interface UISettings {
 	SSO_ENABLED: boolean;
 }
 
+/** 邀请链接基址来自当前页面地址；改到使用时计算，避免在 effect 中同步 setState。 */
+function getInvitationBaseUrl(): string {
+	return new URL("/", window.location.href).toString();
+}
+
 const BulkCreateUsersButton: React.FC<BulkCreateUsersProps> = ({
 	accessToken,
 	teams,
@@ -60,7 +65,6 @@ const BulkCreateUsersButton: React.FC<BulkCreateUsersProps> = ({
 	const [fileError, setFileError] = useState<string | null>(null);
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
 	const [uiSettings, setUISettings] = useState<UISettings | null>(null);
-	const [baseUrl, setBaseUrl] = useState("http://localhost:4000");
 
 	useEffect(() => {
 		// Get UI settings
@@ -74,10 +78,6 @@ const BulkCreateUsersButton: React.FC<BulkCreateUsersProps> = ({
 		};
 
 		fetchUISettings();
-
-		// Set base URL
-		const base = new URL("/", window.location.href);
-		setBaseUrl(base.toString());
 	}, [accessToken]);
 
 	const downloadTemplate = () => {
@@ -364,7 +364,10 @@ const BulkCreateUsersButton: React.FC<BulkCreateUsersProps> = ({
 						if (!uiSettings?.SSO_ENABLED) {
 							// Regular invitation flow
 							const invitationData = await invitationCreateCall(accessToken, user_id);
-							const invitationUrl = new URL(`/ui?invitation_id=${invitationData.id}`, baseUrl).toString();
+							const invitationUrl = new URL(
+								`/ui?invitation_id=${invitationData.id}`,
+								getInvitationBaseUrl(),
+							).toString();
 
 							setParsedData((current) =>
 								current.map((u, i) =>
@@ -380,7 +383,7 @@ const BulkCreateUsersButton: React.FC<BulkCreateUsersProps> = ({
 							);
 						} else {
 							// SSO flow - just use the base URL
-							const invitationUrl = new URL("/ui", baseUrl).toString();
+							const invitationUrl = new URL("/ui", getInvitationBaseUrl()).toString();
 
 							setParsedData((current) =>
 								current.map((u, i) =>

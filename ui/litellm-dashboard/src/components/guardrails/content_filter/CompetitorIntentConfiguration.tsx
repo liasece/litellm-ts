@@ -57,11 +57,13 @@ const CompetitorIntentConfiguration: React.FC<CompetitorIntentConfigurationProps
 
 	useEffect(() => {
 		if (effectiveConfig.competitor_intent_type === "airline" && accessToken && airlineOptions.length === 0) {
-			setLoadingAirlines(true);
-			getMajorAirlines(accessToken)
-				.then((res) => setAirlineOptions(res.airlines ?? []))
-				.catch(() => setAirlineOptions([]))
-				.finally(() => setLoadingAirlines(false));
+			void (async () => {
+				setLoadingAirlines(true);
+				getMajorAirlines(accessToken)
+					.then((res) => setAirlineOptions(res.airlines ?? []))
+					.catch(() => setAirlineOptions([]))
+					.finally(() => setLoadingAirlines(false));
+			})();
 		}
 	}, [effectiveConfig.competitor_intent_type, accessToken, airlineOptions.length]);
 

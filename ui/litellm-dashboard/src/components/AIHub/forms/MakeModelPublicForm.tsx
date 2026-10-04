@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { Modal, Form, Steps, Button, Checkbox } from "antd";
 import { Text, Title, Badge } from "@tremor/react";
 import { makeModelGroupPublic } from "../../networking";
@@ -94,8 +94,19 @@ const MakeModelPublicForm: React.FC<MakeModelPublicFormProps> = ({
 		// Keep existing selections when filters change - don't clear them
 	}, []);
 
-	// Initialize filtered data and preselect already public models when modal opens
-	useEffect(() => {
+	// Initialize filtered data and preselect already public models when modal opens.
+	// Render-phase state adjustment (React "adjusting state when a prop changes" pattern)
+	// instead of an effect, so no setState runs synchronously inside an effect body.
+	const [prevInitialization, setPrevInitialization] = useState<{
+		visible: boolean;
+		modelHubData: ModelGroupInfo[];
+	} | null>(null);
+	if (
+		!prevInitialization ||
+		visible !== prevInitialization.visible ||
+		modelHubData !== prevInitialization.modelHubData
+	) {
+		setPrevInitialization({ visible, modelHubData });
 		if (visible && modelHubData.length > 0) {
 			setFilteredData(modelHubData);
 
@@ -106,7 +117,7 @@ const MakeModelPublicForm: React.FC<MakeModelPublicFormProps> = ({
 
 			setSelectedModels(new Set(alreadyPublicModels));
 		}
-	}, [visible, modelHubData]);
+	}
 
 	const handleSubmit = async () => {
 		if (selectedModels.size === 0) {

@@ -5,9 +5,13 @@ import { vi, describe, it, beforeEach, afterEach, expect } from "vitest";
 /** ----------------------------
  * Hoisted helpers for mocks (required by Vitest)
  * --------------------------- */
-const { stub, consumeReturnUrlMock, getWebUiSessionMock } = vi.hoisted(() => {
-	const React = require("react");
-	const stub = (name: string) => () => React.createElement("div", { "data-testid": name });
+const { stub, consumeReturnUrlMock, getWebUiSessionMock } = await vi.hoisted(async () => {
+	const React = await import("react");
+	const stub = (name: string) => {
+		const Stub = () => React.createElement("div", { "data-testid": name });
+		Stub.displayName = name;
+		return Stub;
+	};
 	return {
 		stub,
 		consumeReturnUrlMock: vi.fn(),
@@ -19,8 +23,8 @@ const { stub, consumeReturnUrlMock, getWebUiSessionMock } = vi.hoisted(() => {
  * Mocks
  * --------------------------- */
 
-vi.mock("@/hooks/useFeatureFlags", () => {
-	const React = require("react");
+vi.mock("@/hooks/useFeatureFlags", async () => {
+	const React = await import("react");
 
 	// minimal context so useFeatureFlags() returns something stable
 	const FeatureFlagsCtx = React.createContext({ get: () => false, flags: {} });
@@ -134,8 +138,8 @@ vi.mock("@/components/common_components/fetch_teams", () => ({ fetchTeams: vi.fn
 vi.mock("@/components/ui/ui-loading-spinner", () => ({
 	UiLoadingSpinner: stub("spinner"),
 }));
-vi.mock("@/contexts/ThemeContext", () => {
-	const React = require("react");
+vi.mock("@/contexts/ThemeContext", async () => {
+	const React = await import("react");
 	return {
 		ThemeProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
 	};

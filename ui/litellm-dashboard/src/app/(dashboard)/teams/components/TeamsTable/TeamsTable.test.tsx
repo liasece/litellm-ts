@@ -6,9 +6,9 @@ import { Team } from "@/components/key_team_helpers/key_list";
 import TeamsTable from "./TeamsTable";
 
 vi.mock("@tremor/react", () => ({
-	Button: React.forwardRef<HTMLButtonElement, any>(({ children, ...props }, ref) =>
-		React.createElement("button", { ...props, ref }, children),
-	),
+	Button: React.forwardRef<HTMLButtonElement, any>(function Button({ children, ...props }, ref) {
+		return React.createElement("button", { ...props, ref }, children);
+	}),
 	Icon: ({ onClick, ...props }: any) => (
 		<button data-testid={props["data-testid"] || "icon-btn"} onClick={onClick} aria-label={props["aria-label"]} />
 	),
