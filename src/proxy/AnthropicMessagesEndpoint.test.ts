@@ -18,10 +18,7 @@ function sseResponse(events: Record<string, unknown>[]): Response {
 	return new globalThis.Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-function buildApp(
-	reasoningEffortOverride?: string,
-	enabledBuiltinCapabilities?: Array<"vision" | "web" | "image_generation">,
-) {
+function buildApp(reasoningEffortOverride?: string, enabledBuiltinCapabilities?: Array<"vision" | "web" | "image_generation">) {
 	const deployment = {
 		model_name: "native-group",
 		litellm_params: { model: "anthropic/upstream-model", api_key: "provider-key", custom_llm_provider: "anthropic" },
@@ -237,9 +234,9 @@ describe("native Anthropic streaming SpendLog", () => {
 			.expect(200);
 
 		expect(runnerSpy).toHaveBeenCalledTimes(1);
-		expect(response.text).toContain('event: message_start');
+		expect(response.text).toContain("event: message_start");
 		expect(response.text).toContain(`"generated_images":[${JSON.stringify(generatedImage)}]`);
-		expect(response.text).toContain('event: message_stop');
+		expect(response.text).toContain("event: message_stop");
 	});
 
 	it("非流式成功日志保存 alias 解析链并保留原始 fallback 首项", async () => {
@@ -761,4 +758,36 @@ describe("Anthropic web-search target model override", () => {
 			.expect(200);
 		expect(router.getAvailableDeployment).toHaveBeenLastCalledWith("requested-model");
 	});
+});
+
+it("does not forward routing tags inside native Anthropic metadata", async () => {
+	jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "request-1", spend: 0 });
+	const fetch = jest
+		.spyOn(global, "fetch")
+		.mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					id: "msg-test",
+					type: "message",
+					role: "assistant",
+					model: "upstream-model",
+					content: [{ type: "text", text: "ok" }],
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+			),
+		);
+	try {
+		const response = await request(buildApp())
+			.post("/v1/messages")
+			.send({
+				model: "native-group",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hi" }],
+				metadata: { tags: ["&eu"], user_id: "user-keep" },
+			});
+		expect(response.status).toBe(200);
+		expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).metadata).toEqual({ user_id: "user-keep" });
+	} finally {
+		jest.restoreAllMocks();
+	}
 });

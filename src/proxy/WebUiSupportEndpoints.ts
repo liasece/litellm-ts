@@ -1,3 +1,4 @@
+import { usageDateRange, isUsageAdmin } from "../spend/UsageQuery";
 /**
  * WebUI 支撑端点
  *
@@ -12,7 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Router } from "express";
-import { and, count, desc, eq, gte, inArray, lte, notInArray, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, notInArray, sql, type SQL } from "drizzle-orm";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import type { ServiceConfig } from "../core/config";
@@ -550,16 +551,33 @@ function aggregateDailyActivityRows(
 }
 
 function buildDailyActivityHandler(db: DrizzleDb, config: DailyActivityRouteConfig, aggregated = false) {
-	return async (req: { readonly query: Record<string, unknown> }): Promise<DailyActivityResponse> => {
+	return async (req: { readonly query: Record<string, unknown>; readonly auth?: UserAPIKeyAuth }): Promise<DailyActivityResponse> => {
 		const startDate = typeof req.query["start_date"] === "string" ? req.query["start_date"] : null;
 		const endDate = typeof req.query["end_date"] === "string" ? req.query["end_date"] : null;
 		if (!startDate || !endDate) {
 			throw ApiError.httpException(HTTP_STATUS.BAD_REQUEST, { error: "Please provide start_date and end_date" });
 		}
 
+		usageDateRange(req.query);
 		const page = aggregated ? DAILY_ACTIVITY_DEFAULT_PAGE : parseDailyActivityPage(req.query["page"], DAILY_ACTIVITY_DEFAULT_PAGE);
-		const pageSize = parseDailyActivityPage(req.query["page_size"], 50);
+		const pageSize = Math.min(1000, parseDailyActivityPage(req.query["page_size"], 50));
 		const conditions: SQL[] = [gte(config.table.date, startDate), lte(config.table.date, endDate)];
+		if (!req.auth) {
+			throw ApiError.unauthorized("Authentication required");
+		}
+		if (!isUsageAdmin(req.auth)) {
+			if (config.entityField === "user_id" && req.auth.user_id) {
+				conditions.push(eq(config.entityColumn, req.auth.user_id));
+			} else if (config.entityField === "team_id" && req.auth.team_id) {
+				conditions.push(eq(config.entityColumn, req.auth.team_id));
+			} else if (config.entityField === "organization_id" && req.auth.user_role === "org_admin" && req.auth.organization_id) {
+				conditions.push(eq(config.entityColumn, req.auth.organization_id));
+			} else if (req.auth.token) {
+				conditions.push(eq(config.table.api_key, req.auth.token));
+			} else {
+				throw ApiError.forbidden("No accessible usage scope");
+			}
+		}
 		const entityIds = parseDailyActivityList(req.query[config.filterParam]);
 		const singleEntityId = config.singleFilterParam ? req.query[config.singleFilterParam] : undefined;
 		if (entityIds.length > 0) {
@@ -581,11 +599,21 @@ function buildDailyActivityHandler(db: DrizzleDb, config: DailyActivityRouteConf
 			conditions.push(inArray(config.table.api_key, apiKeys));
 		}
 
+		const search = req.query["api_key_search"] ?? req.query["key_alias"] ?? req.query["q"];
+		if (typeof search === "string" && search.trim()) {
+			const pattern = `%${search.trim().replace(/[\\%_]/g, "\\$&")}%`;
+			conditions.push(
+				sql`(${config.table.api_key} ILIKE ${pattern} OR EXISTS (SELECT 1 FROM ${LiteLLM_VerificationToken} WHERE ${LiteLLM_VerificationToken.token} = ${config.table.api_key} AND (${LiteLLM_VerificationToken.keyAlias} ILIKE ${pattern} OR ${LiteLLM_VerificationToken.keyName} ILIKE ${pattern})) OR EXISTS (SELECT 1 FROM ${liteLLM_DeletedVerificationToken} WHERE ${liteLLM_DeletedVerificationToken.token} = ${config.table.api_key} AND (${liteLLM_DeletedVerificationToken.keyAlias} ILIKE ${pattern} OR ${liteLLM_DeletedVerificationToken.keyName} ILIKE ${pattern})))`,
+			);
+		}
 		const where = and(...conditions);
 		const countRows = await db.select({ count: count() }).from(config.table).where(where);
 		const totalCount = Number(countRows[0]?.count ?? 0);
 		const baseQuery = db.select().from(config.table).where(where).orderBy(desc(config.table.date));
-		const selectedRows = aggregated ? await baseQuery : await baseQuery.limit(pageSize).offset((page - 1) * pageSize);
+		const selectedRows = aggregated ? await baseQuery.limit(10001) : await baseQuery.limit(pageSize).offset((page - 1) * pageSize);
+		if (aggregated && selectedRows.length > 10000) {
+			throw ApiError.badRequest("Too many usage rows; narrow the date range or entity filters");
+		}
 		const rows = selectedRows as unknown as DailyActivityRow[];
 		const keyMetadataMap = await loadDailyActivityKeyMetadata(db, rows);
 		const results = aggregateDailyActivityRows(rows, config.entityField, keyMetadataMap);
@@ -1656,6 +1684,20 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 	registerRoute(router, { method: "get", path: "/user/daily/activity" }, buildDailyActivityHandler(db, userDailyActivity));
 	for (const [routePath, routeConfig] of dailyActivityRoutes) {
 		registerRoute(router, { method: "get", path: routePath }, buildDailyActivityHandler(db, routeConfig));
+		registerRoute(router, { method: "get", path: `${routePath}/aggregated` }, buildDailyActivityHandler(db, routeConfig, true));
+		registerRoute(router, { method: "get", path: `${routePath}/export` }, async (req, res) => {
+			const result = await buildDailyActivityHandler(db, routeConfig, true)(req);
+			const lines = [
+				"date,spend,prompt_tokens,completion_tokens,api_requests",
+				...result.results.map((row) =>
+					[row.date, row.metrics.spend, row.metrics.prompt_tokens, row.metrics.completion_tokens, row.metrics.api_requests].join(
+						",",
+					),
+				),
+			];
+			res.type("text/csv").setHeader("Content-Disposition", 'attachment; filename="usage.csv"');
+			res.send(lines.join("\r\n"));
+		});
 	}
 
 	/** 客户列表（Customer-based usage tab） */

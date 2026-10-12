@@ -45,7 +45,7 @@ export class DeepSeekProvider extends AnthropicCompatibleProvider {
 	 * @param body
 	 * @param optionalParams
 	 */
-	transformResponsesRequest(
+	override transformResponsesRequest(
 		model: string,
 		body: Record<string, unknown>,
 		optionalParams: Record<string, unknown>,

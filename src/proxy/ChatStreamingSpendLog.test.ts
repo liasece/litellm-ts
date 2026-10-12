@@ -390,4 +390,56 @@ describe("Chat streaming SpendLog", () => {
 			error_information: expect.objectContaining({ error_message: expect.stringContaining("stream broke") }),
 		});
 	});
+
+	it("preserves cost supplied by the final streaming usage", async () => {
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				yield { id: "cost-stream", choices: [], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3, cost: 0.12 } };
+			},
+		});
+		const { app } = buildApp(provider);
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({
+				model: "chat-group",
+				messages: [{ role: "user", content: "hi" }],
+				stream: true,
+				stream_options: { include_usage: true },
+			});
+		expect(response.status).toBe(200);
+		expect(response.text).toContain('"cost":0.12');
+	});
+	it("tries sibling fallback before first output and records only the successful deployment", async () => {
+		let attempts = 0;
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				attempts++;
+				if (attempts < 3) throw new Error("before output");
+				yield {
+					id: "recovered",
+					choices: [{ index: 0, delta: { content: "recovered" }, finish_reason: "stop" }],
+					usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+				};
+			},
+		});
+		const next = jest.fn((model: string, index: number) => (model === "chat-group" ? (["fb1", "fb2"][index] ?? null) : null));
+		const { app, router } = buildApp(provider, next);
+		router.getAvailableDeployment.mockImplementation((model: string) => ({
+			provider: provider,
+			deployment: {
+				model_name: model,
+				litellm_params: { model: "anthropic/upstream-model", custom_llm_provider: "anthropic" },
+				model_info: { id: model },
+			},
+		}));
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true });
+		expect(response.status).toBe(200);
+		expect(response.text).toContain("recovered");
+		expect(response.text).not.toContain("stream_error");
+		expect(attempts).toBe(3);
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ model_id: "fb2", status: SpendLogStatus.Success });
+	});
 });

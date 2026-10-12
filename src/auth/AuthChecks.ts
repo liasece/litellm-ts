@@ -105,6 +105,18 @@ export function canKeyAccessModel(model: string, allowedModels: string[], teamMo
 }
 
 /**
+ * Read-only discovery and counting use the same key/team allowlists without charging budget.
+ * @param auth
+ * @param model
+ */
+export function canAuthAccessModel(auth: UserAPIKeyAuth, model: string): boolean {
+	return (
+		canKeyAccessModel(model, auth.models ?? [], auth.team_model_aliases) &&
+		canKeyAccessModel(model, auth.team_models ?? [], auth.team_model_aliases)
+	);
+}
+
+/**
  * 软预算警告 — 触发已注册的所有报警 channels（Slack/Webhook/Email/...）。
  * GAP: 之前仅 logger.warn，无法通知运维。现在通过 emitBudgetAlert 集中分发。
  * @param spend - 当前花费

@@ -16,7 +16,7 @@ export class AnthropicCompatibleProvider extends OpenAICompatProvider {
 	 * @param model
 	 * @param optionalParams
 	 */
-	transformAnthropicRequest(model: string, optionalParams: Record<string, unknown>): ProviderRequest {
+	override transformAnthropicRequest(model: string, optionalParams: Record<string, unknown>): ProviderRequest {
 		const explicitAnthropicBase = optionalParams["anthropic_api_base"];
 		const hasExplicitAnthropicBase = typeof explicitAnthropicBase === "string" && explicitAnthropicBase.length > 0;
 		const configuredBase = hasExplicitAnthropicBase ? explicitAnthropicBase : (optionalParams["api_base"] ?? this.apiBase);

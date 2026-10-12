@@ -1,3 +1,7 @@
+import { startSseKeepalive, getKeepaliveDeployment } from "./SseKeepalive";
+import { countInputTokens } from "../core/utils/inputTokens";
+import { canAuthAccessModel } from "../auth/AuthChecks";
+import { resolveCodingClientModel } from "./CodingClientModels";
 /**
  * Responses API 端点。
  *
@@ -210,6 +214,35 @@ interface ResponsesStreamContext {
  */
 export function registerResponsesApiRoutes(router: Router, litellmRouter?: LiteLLMRouter, db?: DrizzleDb): void {
 	const createHandler = createResponsesHandler(litellmRouter, db);
+	for (const path of ["/v1/responses/input_tokens", "/responses/input_tokens", "/openai/v1/responses/input_tokens"]) {
+		registerRoute(router, { method: "post", path: path }, (req) => {
+			const body = req.body as ResponsesCreateRequest;
+			if (!body?.model || typeof body.model !== "string") {
+				throw ApiError.badRequest("Missing required parameter: 'model'.");
+			}
+			if (body.input === undefined || body.input === "" || (Array.isArray(body.input) && body.input.length === 0)) {
+				throw ApiError.badRequest("Missing required parameter: 'input'.");
+			}
+			if (body.previous_response_id || body["conversation"] || body["prompt"]) {
+				throw ApiError.badRequest("Stored Responses context is not supported for token counting.");
+			}
+			if (req.auth && !canAuthAccessModel(req.auth, body.model)) {
+				throw ApiError.forbidden("API key cannot access this model");
+			}
+			const registry = buildResponsesToolRegistry(body.tools);
+			const messages = buildResponsesMessages(body.input, body.instructions, registry);
+			return { object: "response.input_tokens", input_tokens: countInputTokens(messages, registry.chatTools) };
+		});
+	}
+	registerRoute(router, { method: "post", path: "/cursor/chat/completions" }, async (req, res) => {
+		if (req.body && "input" in req.body) {
+			if (litellmRouter) {
+				req.body = resolveCodingClientModel(req.body, litellmRouter, true);
+			}
+			return createHandler(req, res);
+		}
+		throw ApiError.badRequest("Cursor request must include input or messages");
+	});
 	registerRoute(router, { method: "post", path: "/v1/responses" }, createHandler);
 	registerRoute(router, { method: "post", path: "/responses" }, createHandler);
 	registerRoute(router, { method: "get", path: "/v1/responses/:id" }, responseStorageNotImplemented);
@@ -278,12 +311,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 			try {
 				const nativeResponses = litellmRouter.supportsNativeResponses?.(model) ?? false;
 				const capabilityMessages = messages as unknown as Array<Record<string, unknown>>;
-				const preparedVision = await prepareOpenAIVisionRequest(
-					litellmRouter,
-					model,
-					capabilityMessages,
-					visionImageStore,
-				);
+				const preparedVision = await prepareOpenAIVisionRequest(litellmRouter, model, capabilityMessages, visionImageStore);
 				const preparedImageGeneration = await prepareOpenAIImageGenerationRequest(
 					litellmRouter,
 					model,
@@ -294,22 +322,22 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 				const result =
 					preparedVision || preparedImageGeneration || preparedWeb
 						? await runOpenAIBuiltinCapabilityAgentLoop(
-							litellmRouter,
-							model,
-							capabilityMessages,
-							optionalParams,
-							nativeResponses
-								? createNativeResponsesCapabilityCompletion(litellmRouter, reqBody, capabilityMessages, toolRegistry)
-								: undefined,
-							{
-								visionAudit: visionAudit,
-								imageGenerationAudit: imageGenerationAudit,
-								webAudit: webAudit,
-								visionImageStore: visionImageStore,
-								preparedVision: preparedWeb ? undefined : preparedVision,
-								preparedWeb: preparedWeb,
-							},
-						)
+								litellmRouter,
+								model,
+								capabilityMessages,
+								optionalParams,
+								nativeResponses
+									? createNativeResponsesCapabilityCompletion(litellmRouter, reqBody, capabilityMessages, toolRegistry)
+									: undefined,
+								{
+									visionAudit: visionAudit,
+									imageGenerationAudit: imageGenerationAudit,
+									webAudit: webAudit,
+									visionImageStore: visionImageStore,
+									preparedVision: preparedWeb ? undefined : preparedVision,
+									preparedWeb: preparedWeb,
+								},
+							)
 						: await litellmRouter.completion(model, messages as never, optionalParams);
 				providerCompleted = true;
 				const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
@@ -581,11 +609,7 @@ function createNativeResponsesCapabilityCompletion(
 	requestBody: ResponsesCreateRequest,
 	originalMessages: Array<Record<string, unknown>>,
 	toolRegistry: ResponsesToolRegistry,
-): (
-	model: string,
-	messages: Message[],
-	optionalParams: Record<string, unknown>,
-) => Promise<Record<string, unknown>> {
+): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
 	let originalMessagesOffset: number | undefined;
 	return async (model, messages, optionalParams) => {
 		originalMessagesOffset ??= Math.max(0, messages.length - originalMessages.length);
@@ -619,13 +643,7 @@ function buildNativeResponsesCapabilityBody(
 	toolRegistry: ResponsesToolRegistry,
 ): Record<string, unknown> {
 	const body = structuredClone(requestBody) as Record<string, unknown>;
-	body["input"] = buildPreservedNativeResponsesInput(
-		requestBody,
-		messages,
-		originalMessages,
-		originalMessagesOffset,
-		toolRegistry,
-	);
+	body["input"] = buildPreservedNativeResponsesInput(requestBody, messages, originalMessages, originalMessagesOffset, toolRegistry);
 	body["stream"] = false;
 	body["parallel_tool_calls"] = false;
 	const privateTools = chatToolsToPrivateResponsesTools(optionalParams["tools"]);
@@ -771,10 +789,7 @@ function chatContentToResponsesContent(content: unknown, role: string): unknown 
 	});
 }
 
-function mapNativeResponsesToChatCompletion(
-	result: Record<string, unknown>,
-	toolRegistry: ResponsesToolRegistry,
-): Record<string, unknown> {
+function mapNativeResponsesToChatCompletion(result: Record<string, unknown>, toolRegistry: ResponsesToolRegistry): Record<string, unknown> {
 	const output = Array.isArray(result["output"]) ? (result["output"] as Array<Record<string, unknown>>) : [];
 	const toolCalls: ToolCall[] = [];
 	const text: string[] = [];
@@ -807,7 +822,9 @@ function mapNativeResponsesToChatCompletion(
 		if (item["type"] === "reasoning") {
 			const summary = Array.isArray(item["summary"]) ? item["summary"] : [];
 			for (const part of summary as Array<Record<string, unknown>>) {
-				if (typeof part["text"] === "string") {reasoning.push(part["text"]);}
+				if (typeof part["text"] === "string") {
+					reasoning.push(part["text"]);
+				}
 			}
 		}
 	}
@@ -828,8 +845,7 @@ function mapNativeResponsesToChatCompletion(
 		choices: [
 			{
 				index: 0,
-				finish_reason:
-					toolCalls.length > 0 ? "tool_calls" : result["status"] === "incomplete" ? "length" : "stop",
+				finish_reason: toolCalls.length > 0 ? "tool_calls" : result["status"] === "incomplete" ? "length" : "stop",
 				message: message,
 			},
 		],
@@ -837,12 +853,15 @@ function mapNativeResponsesToChatCompletion(
 			prompt_tokens: inputTokens,
 			completion_tokens: outputTokens,
 			total_tokens: numberField(usage, "total_tokens") || inputTokens + outputTokens,
+			...(typeof usage?.["cost"] === "number" && Number.isFinite(usage["cost"]) ? { cost: usage["cost"] } : {}),
 			...(typeof usage?.["cost"] === "number" ? { cost: usage["cost"] } : {}),
 		},
 		_responseProtocol: "chat_completions",
 	};
 	for (const [key, value] of Object.entries(result)) {
-		if (key.startsWith("_") && key !== "_responseProtocol") {chatResult[key] = value;}
+		if (key.startsWith("_") && key !== "_responseProtocol") {
+			chatResult[key] = value;
+		}
 	}
 	return attachUpstreamLogContext(chatResult, getUpstreamLogContext(result));
 }
@@ -1153,6 +1172,7 @@ function mapResponseUsage(usage: Record<string, unknown> | undefined): ResponseU
 		output_tokens: outputTokens,
 		output_tokens_details: { reasoning_tokens: numberField(outputDetails, "reasoning_tokens") },
 		total_tokens: numberField(usage, "total_tokens") || inputTokens + outputTokens,
+		...(typeof usage?.["cost"] === "number" && Number.isFinite(usage["cost"]) ? { cost: usage["cost"] } : {}),
 	};
 }
 
@@ -1185,7 +1205,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 	try {
 		const capabilityMessages = messages as unknown as Array<Record<string, unknown>>;
 		const nativeResponses = litellmRouter.supportsNativeResponses?.(model) ?? false;
-	const preparedVision = await prepareOpenAIVisionRequest(litellmRouter, model, capabilityMessages, visionImageStore);
+		const preparedVision = await prepareOpenAIVisionRequest(litellmRouter, model, capabilityMessages, visionImageStore);
 		const preparedImageGeneration = await prepareOpenAIImageGenerationRequest(
 			litellmRouter,
 			model,
@@ -1261,13 +1281,21 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		return;
 	}
 
-	copyProviderHeaders(streamResult, res);
-	res.status(200);
-	res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-	res.setHeader("Cache-Control", "no-cache");
-	res.setHeader("Connection", "keep-alive");
-	res.setHeader("X-Accel-Buffering", "no");
+	if (!res.headersSent) {
+		copyProviderHeaders(streamResult, res);
+		res.status(200);
+		res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+		res.setHeader("Cache-Control", "no-cache");
+		res.setHeader("Connection", "keep-alive");
+		res.setHeader("X-Accel-Buffering", "no");
+	}
+
 	res.flushHeaders();
+	const stopKeepalive = await startSseKeepalive(
+		req,
+		res,
+		getKeepaliveDeployment(litellmRouter, model, (streamResult["_spendInfo"] as DeploymentSpendInfo | undefined)?.modelId),
+	);
 
 	const state: ResponsesStreamState = {
 		responseId: `resp_${randomUUID()}`,
@@ -1399,6 +1427,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			}),
 		);
 	} finally {
+		stopKeepalive();
 		res.removeListener("close", onClose);
 		if (terminalError !== undefined && iterator.return) {
 			void iterator.return().catch(() => undefined);
@@ -1465,7 +1494,13 @@ class NativeResponsesAccumulator {
 	}
 
 	snapshot(): Record<string, unknown> | null {
-		if (this._id === undefined && this._model === undefined && this._output.length === 0 && this._text === "" && this._reasoning === "") {
+		if (
+			this._id === undefined &&
+			this._model === undefined &&
+			this._output.length === 0 &&
+			this._text === "" &&
+			this._reasoning === ""
+		) {
 			return null;
 		}
 		const output = [...this._output];
@@ -1504,13 +1539,21 @@ async function relayNativeResponsesStream(
 	stream: AsyncIterable<unknown>,
 ): Promise<void> {
 	const { res, requestBody, toolRegistry, lifecycle, db, req, requestId, model, startTime } = context;
-	copyProviderHeaders(streamResult, res);
-	res.status(200);
-	res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-	res.setHeader("Cache-Control", "no-cache");
-	res.setHeader("Connection", "keep-alive");
-	res.setHeader("X-Accel-Buffering", "no");
+	if (!res.headersSent) {
+		copyProviderHeaders(streamResult, res);
+		res.status(200);
+		res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+		res.setHeader("Cache-Control", "no-cache");
+		res.setHeader("Connection", "keep-alive");
+		res.setHeader("X-Accel-Buffering", "no");
+	}
+
 	res.flushHeaders();
+	const stopKeepalive = await startSseKeepalive(
+		req,
+		res,
+		getKeepaliveDeployment(context.litellmRouter, model, (streamResult["_spendInfo"] as DeploymentSpendInfo | undefined)?.modelId),
+	);
 
 	const iterator = stream[Symbol.asyncIterator]();
 	const nativeAccumulator = new NativeResponsesAccumulator();
@@ -1670,6 +1713,7 @@ async function relayNativeResponsesStream(
 			}),
 		);
 	} finally {
+		stopKeepalive();
 		res.removeListener("close", onClose);
 		if ((thrown !== undefined || terminalType !== undefined) && iterator.return) {
 			void iterator.return().catch(() => undefined);

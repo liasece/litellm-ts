@@ -405,10 +405,7 @@ describe("Responses API contract matrix", () => {
 			expect(providerBody["messages"]).toBeUndefined();
 			expect(providerBody["stream"]).toBe(false);
 			expect(providerBody["instructions"]).toBe("Preserve the original Responses history.");
-			expect(providerBody["input"]).toEqual([
-				expect.objectContaining({ type: "message", role: "system" }),
-				...originalInput,
-			]);
+			expect(providerBody["input"]).toEqual([expect.objectContaining({ type: "message", role: "system" }), ...originalInput]);
 			expect((providerBody["tools"] as Array<Record<string, unknown>>).map((tool) => tool["name"])).toEqual([
 				"client_tool",
 				"litellm__vision_inspect",
@@ -470,9 +467,7 @@ describe("Responses API contract matrix", () => {
 			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
 			expect(providerBody["stream"]).toBe(false);
 			expect(providerBody["tools"]).toEqual(
-				expect.arrayContaining([
-					expect.objectContaining({ type: "function", name: "litellm__vision_inspect" }),
-				]),
+				expect.arrayContaining([expect.objectContaining({ type: "function", name: "litellm__vision_inspect" })]),
 			);
 			const events = parseSseEvents(response.text);
 			expect(events.at(-1)).toMatchObject({
@@ -657,6 +652,7 @@ describe("Responses API contract matrix", () => {
 			});
 			expect(response.body.output.map((item: { type: string }) => item.type)).toEqual(["reasoning", "function_call"]);
 			expect(response.body.usage).toEqual({
+				cost: 0.012,
 				input_tokens: 9,
 				input_tokens_details: { cached_tokens: 3 },
 				output_tokens: 5,
@@ -1457,9 +1453,7 @@ describe("Responses API contract matrix", () => {
 			.expect(200);
 
 		expect(response.body.output).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ type: "image_generation_call", status: "completed", result: "AA==" }),
-			]),
+			expect.arrayContaining([expect.objectContaining({ type: "image_generation_call", status: "completed", result: "AA==" })]),
 		);
 		expect(JSON.stringify(response.body)).not.toContain("litellm__image_create");
 	});

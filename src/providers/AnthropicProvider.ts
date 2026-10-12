@@ -1,3 +1,4 @@
+import { anthropicModelCapabilities, normalizeAnthropicThinking } from "./AnthropicThinkingCompatibility";
 /**
  * Anthropic Provider
  *
@@ -206,7 +207,7 @@ export class AnthropicProvider implements ProviderConfig {
 		const apiBase = typeof apiBaseRaw === "string" && apiBaseRaw.length > 0 ? apiBaseRaw : this._apiBase;
 
 		const providerModel = this._stripProviderPrefix(model);
-		const body: Record<string, unknown> = {
+		let body: Record<string, unknown> = {
 			model: providerModel,
 			messages: anthropicMessages,
 		};
@@ -307,6 +308,14 @@ export class AnthropicProvider implements ProviderConfig {
 
 		// Anthropic-compatible request-level effort signal. Individual models may support a
 		// subset of xhigh/max; let the upstream model return that capability error.
+		// passthrough params
+		for (const key of ["temperature", "top_p", "stop_sequences", "stream"] as const) {
+			if (optionalParams[key] !== undefined && body[key] === undefined) {
+				body[key] = optionalParams[key];
+			}
+		}
+
+		body = normalizeAnthropicThinking({ ...body, drop_params: optionalParams["drop_params"] }, model);
 		if (body.output_config) {
 			const oc = body.output_config as Record<string, unknown>;
 			const effort = oc.effort as string | undefined;
@@ -397,13 +406,6 @@ export class AnthropicProvider implements ProviderConfig {
 			const mapped = this._mapStopSequences(optionalParams.stop, !!optionalParams.drop_params);
 			if (mapped !== undefined) {
 				body.stop_sequences = mapped;
-			}
-		}
-
-		// passthrough params
-		for (const key of ["temperature", "top_p", "stop_sequences", "stream"] as const) {
-			if (optionalParams[key] !== undefined && body[key] === undefined) {
-				body[key] = optionalParams[key];
 			}
 		}
 
@@ -1462,8 +1464,10 @@ export class AnthropicProvider implements ProviderConfig {
 			const messageUsage = (event.message as Record<string, unknown> | undefined)?.usage as Record<string, unknown> | undefined;
 			if (typeof messageUsage?.["input_tokens"] === "number") {
 				// Anthropic input_tokens 不含 cache，需折叠 cache_creation + cache_read（同 message_start）
-				const deltaCacheCreation = typeof messageUsage["cache_creation_input_tokens"] === "number" ? messageUsage["cache_creation_input_tokens"] : 0;
-				const deltaCacheRead = typeof messageUsage["cache_read_input_tokens"] === "number" ? messageUsage["cache_read_input_tokens"] : 0;
+				const deltaCacheCreation =
+					typeof messageUsage["cache_creation_input_tokens"] === "number" ? messageUsage["cache_creation_input_tokens"] : 0;
+				const deltaCacheRead =
+					typeof messageUsage["cache_read_input_tokens"] === "number" ? messageUsage["cache_read_input_tokens"] : 0;
 				state.streamUsage.prompt_tokens = messageUsage["input_tokens"] + deltaCacheCreation + deltaCacheRead;
 			}
 			if (typeof messageUsage?.["cache_creation_input_tokens"] === "number") {
@@ -2315,6 +2319,9 @@ export class AnthropicProvider implements ProviderConfig {
 	}
 
 	private _isClaude46Model(model: string): boolean {
+		if (anthropicModelCapabilities(model)?.["supports_adaptive_thinking"] === true) {
+			return true;
+		}
 		const lower = model.toLowerCase();
 		return (
 			lower.includes("opus-4-6") ||

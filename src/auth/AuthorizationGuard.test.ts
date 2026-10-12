@@ -87,3 +87,30 @@ describe("AuthorizationGuard role 与对象权限", () => {
 		await expect(guard.assertKeyAccess(makeAuth({ user_id: "member-a" }), [row], "write")).rejects.toMatchObject({ statusCode: 403 });
 	});
 });
+
+describe("key field permission delegation", () => {
+	it("limits permission edits to proxy admins", async () => {
+		const guard = new AuthorizationGuard(makeRepository());
+		await expect(guard.assertKeyFieldUpdates(makeAuth(), { permissions: { admin: true } })).rejects.toThrow("Only proxy admins");
+		await expect(
+			guard.assertKeyFieldUpdates(makeAuth({ user_role: "proxy_admin" }), { permissions: { admin: true } }),
+		).resolves.toBeUndefined();
+		await expect(guard.assertKeyFieldUpdates(makeAuth(), { key_alias: "safe-alias" })).resolves.toBeUndefined();
+	});
+});
+
+it("permits organization PATCH only through the management route group, not key-only authorization", () => {
+	const guard = new AuthorizationGuard({} as never);
+	const next = jest.fn();
+	const req = {
+		path: "/v2/organization/org-1",
+		method: "PATCH",
+		auth: { api_key: "test", user_role: "proxy_admin", allowed_routes: ["key_management_routes"] },
+	};
+	guard.middleware("management")(req as never, {} as never, next);
+	expect(next.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+	next.mockClear();
+	req.auth.allowed_routes = ["management_routes"];
+	guard.middleware("management")(req as never, {} as never, next);
+	expect(next).toHaveBeenCalledWith();
+});

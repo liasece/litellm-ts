@@ -5,6 +5,7 @@
 - 本文件只保存每次仓库任务都需要的稳定边界。具体实现、命令和版本以当前源码、`package.json`、
   锁文件及实际脚本为准，不在这里维护日期化测试数量、工具链补丁版本或生产现场快照。
 - 修改 `ui/litellm-dashboard/` 前，完整读取该目录的 `AGENTS.md`；更近目录的规则只覆盖其作用域。
+- 上游近期变更评估与对齐状态维护在 [docs/upstream-alignment.md](docs/upstream-alignment.md)；执行类似调查或复刻前先读该记录，按源码与验证结果更新状态。
 - 生产部署、线上核验和故障恢复使用 `$deploy-litellm-ts`。生产拓扑与诊断信号只在该 Skill 的
   reference 中维护，不复制到根指令。
 

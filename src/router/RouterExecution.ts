@@ -1,3 +1,4 @@
+import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
 /**
  * RouterExecution — _executeWithFallback 主循环
  *
@@ -33,7 +34,7 @@ import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
 import { appendModelResolutionTrace, appendRoutingTrace, copyModelResolutionChain, copyRoutingTrace } from "./ModelResolutionTrace";
-import { attachUpstreamLogContext } from "./UpstreamLogContext";
+import { attachUpstreamLogContext, getUpstreamLogContext } from "./UpstreamLogContext";
 import type {
 	RouterExecContext,
 	ExecutionRequest,
@@ -119,14 +120,22 @@ export function isKnownModel(
  * 主入口：执行带 fallback 的 completion。行为完全等价于 Router._executeWithFallback，
  * 拆分目的仅为控制 Router.ts 行数。
  * @param ctx
- * @param req
+ * @param request
  * @param helpers
  */
 export async function executeWithFallback(
 	ctx: RouterExecContext,
-	req: ExecutionRequest,
+	request: ExecutionRequest,
 	helpers: ExecutionHelpers,
 ): Promise<Record<string, unknown>> {
+	const req =
+		request.optionalParams["stream"] === true
+			? {
+					...request,
+					streamAbortController: request.streamAbortController ?? new AbortController(),
+					streamAttemptedModels: request.streamAttemptedModels ?? new Set(request.fallbackModels),
+				}
+			: request;
 	const { model, messages, optionalParams, fallbackDepth, fallbackModels, previousError, modelResolutionTrace } = req;
 	const effectiveFallbackModels: string[] = fallbackModels.length > 0 ? fallbackModels : [model];
 
@@ -166,6 +175,7 @@ export async function executeWithFallback(
 	const effectiveRetryPolicyOverride: Record<string, RetryPolicy> | undefined = perRequestRetryPolicy ?? ctx.modelGroupRetryPolicy;
 	// DIFF-RT-02: 优先用 FallbackHandler.resolveModelGroup 解析（合并 alias 路径）
 	const resolvedModel = modelResolution.resolvedModel;
+	req.streamAttemptedModels?.add(resolvedModel);
 	// GAP 10: 从分布式 cache backend (Redis 等) warm 本地 cooldown 状态
 	const candidateKeys = ctx.deployments.filter((d) => matchDeploymentPattern(d, resolvedModel)).map((d) => getDeploymentKey(d));
 	if (candidateKeys.length > 0) {
@@ -303,21 +313,39 @@ export async function executeWithFallback(
 	}
 
 	const currentActive = ctx.activeRequests.get(depKey) ?? 0;
+	const maxParallel = deployment.litellm_params["max_parallel_requests"];
+	if (typeof maxParallel === "number" && currentActive >= maxParallel) {
+		throw new RouterRateLimitErrorBasic("Deployment max_parallel_requests exceeded", { model: model });
+	}
 	ctx.activeRequests.set(depKey, currentActive + 1);
 
+	const requestRetries = optionalParams["num_retries"];
+	const hasRequestRetries = typeof requestRetries === "number" && Number.isInteger(requestRetries) && requestRetries >= 0;
+	let observedRetryLimit = hasRequestRetries ? requestRetries : (deployment.litellm_params.num_retries ?? ctx.numRetries);
+	let streamOwnsSlot = false;
+	let slotReleased = false;
+	const releaseSlot = (): void => {
+		if (!slotReleased) {
+			slotReleased = true;
+			ctx.activeRequests.set(depKey, Math.max(0, (ctx.activeRequests.get(depKey) ?? 1) - 1));
+		}
+	};
 	const startTime = Date.now();
 	let retryAfterHeader: string | undefined;
 	let originalError: Error | null = null;
 
 	try {
 		let lastError: Error | null = null;
-		const deploymentRetries = deployment.litellm_params.num_retries ?? ctx.numRetries;
+		const deploymentRetries =
+			typeof optionalParams["num_retries"] === "number"
+				? optionalParams["num_retries"]
+				: (deployment.litellm_params.num_retries ?? ctx.numRetries);
 		let maxRetries = deploymentRetries > 0 ? deploymentRetries : 0;
 		let maxRetriesForHeaders = maxRetries;
 
 		for (let attempt = 0; attempt <= maxRetries; attempt++) {
 			try {
-				const execResult = await executeRequest(provider, deployment, messages, optionalParams);
+				const execResult = await executeRequest(provider, deployment, messages, optionalParams, req.streamAbortController?.signal);
 				const { response, body, ttft, stream } = execResult;
 				const responseProtocol = execResult.responseProtocol ?? "chat_completions";
 				const elapsed = Date.now() - startTime;
@@ -340,15 +368,21 @@ export async function executeWithFallback(
 				ctx.latencies.set(depKey, avgLatency);
 
 				const isStreamReq = optionalParams["stream"] === true;
-				if (isStreamReq && completionTokens && completionTokens > 0) {
-					const streamTtft = ttft > 0 ? ttft : elapsed;
-					ctx.ttft.set(depKey, streamTtft / completionTokens);
+				if (isStreamReq && ttft > 0 && !stream) {
+					ctx.ttft.set(depKey, ttft);
 				}
 
 				if (!response.ok) {
 					const serializedBody = typeof body === "string" ? body : JSON.stringify(body);
-					const bodyStr = serializedBody && serializedBody.length > 0 ? serializedBody : `Provider returned HTTP ${response.status}`;
-					const categorizedError = categorizeProviderError(response.status, bodyStr);
+					const bodyStr =
+						serializedBody && serializedBody.length > 0 ? serializedBody : `Provider returned HTTP ${response.status}`;
+					const categorizedError = categorizeProviderError(
+						response.status,
+						redactConfiguredSecrets(bodyStr, {
+							...deployment.litellm_params,
+							...execResult.upstreamLogContext?.request.headers,
+						}),
+					);
 					attachUpstreamLogContext(categorizedError, execResult.upstreamLogContext);
 					lastError = categorizedError;
 					if (originalError === null) {
@@ -372,13 +406,15 @@ export async function executeWithFallback(
 						}
 					}
 
-					const retryPolicyOverride = getRetryPolicyOverride(
-						categorizedError,
-						ctx.retryPolicy,
-						model,
-						ctx.modelGroupRetryPolicy,
-						effectiveRetryPolicyOverride,
-					);
+					const retryPolicyOverride = hasRequestRetries
+						? undefined
+						: getRetryPolicyOverride(
+								categorizedError,
+								ctx.retryPolicy,
+								model,
+								ctx.modelGroupRetryPolicy,
+								effectiveRetryPolicyOverride,
+							);
 
 					let shouldRetry: boolean;
 					if (retryPolicyOverride !== undefined) {
@@ -403,7 +439,9 @@ export async function executeWithFallback(
 					}
 
 					const responseEffectiveMaxRetries = retryPolicyOverride !== undefined ? retryPolicyOverride : maxRetries;
+					maxRetries = responseEffectiveMaxRetries;
 					maxRetriesForHeaders = responseEffectiveMaxRetries;
+					observedRetryLimit = responseEffectiveMaxRetries;
 					if (attempt < responseEffectiveMaxRetries) {
 						invokeRouterCallback(ctx.routerCallbacks, "onRetry", deployment, attempt, categorizedError);
 						const sleepSec = computeSleepBeforeRetry({
@@ -443,17 +481,131 @@ export async function executeWithFallback(
 				}
 
 				if (isStreamReq && stream) {
-					invokeRouterCallback(ctx.routerCallbacks, "onSuccess", deployment, body, Date.now() - startTime);
+					streamOwnsSlot = true;
+					let publicStreamResult: Record<string, unknown> = {};
+					let closingStream = false;
+					let fallbackStream: AsyncGenerator<unknown> | undefined;
+					const ownedStream = (async function* () {
+						let emitted = false;
+						try {
+							for await (const chunk of stream) {
+								if (typeof chunk === "object" && chunk !== null && "error" in chunk) {
+									throw new Error(
+										redactConfiguredSecrets(
+											String((chunk as Record<string, unknown>)["error"]),
+											deployment.litellm_params,
+										),
+									);
+								}
+								if (!emitted) {
+									const value = execResult.ttft;
+									if (ctx.recordTtft) {
+										ctx.recordTtft(deployment, value);
+									} else {
+										ctx.ttft.set(depKey, value);
+									}
+								}
+								emitted = true;
+								yield chunk;
+							}
+							invokeRouterCallback(ctx.routerCallbacks, "onSuccess", deployment, body, Date.now() - startTime);
+						} catch (error) {
+							const streamFailure = error instanceof Error ? error : new Error(String(error));
+							streamFailure.message = redactConfiguredSecrets(streamFailure.message, {
+								...deployment.litellm_params,
+								...execResult.upstreamLogContext?.request.headers,
+							});
+							if (closingStream || req.streamAbortController?.signal.aborted) {
+								return;
+							}
+							invokeRouterCallback(ctx.routerCallbacks, "onFailure", deployment, streamFailure);
+							if (emitted) {
+								yield { error: streamFailure.message };
+								return;
+							}
+							// Share attempts across nested streams; siblings must never be replayed.
+							const attemptedModels = req.streamAttemptedModels ?? new Set(effectiveFallbackModels);
+							attemptedModels.add(resolvedModel);
+							const remaining = ctx.fallbackHandler.getFallbackChain(effectiveFallbackModels[0] ?? model);
+							releaseSlot();
+							for (const next of remaining) {
+								if (closingStream || req.streamAbortController?.signal.aborted) {
+									return;
+								}
+								const nextResolution = ctx.fallbackHandler.resolveModelGroupWithTrace(next);
+								if (attemptedModels.has(nextResolution.resolvedModel) || attemptedModels.size >= ctx.maxFallbacks) {
+									continue;
+								}
+								attemptedModels.add(nextResolution.resolvedModel);
+								appendRoutingTrace(modelResolutionTrace, {
+									fromModel: model,
+									toResolution: nextResolution,
+									routingType: "general_fallback",
+									error: streamFailure,
+									attemptedDeployment: deployment.model_name,
+								});
+								let fallbackEmitted = false;
+								try {
+									const result = await executeWithFallback(
+										ctx,
+										{
+											...req,
+											model: next,
+											fallbackDepth: fallbackDepth + 1,
+											fallbackModels: [...effectiveFallbackModels, nextResolution.resolvedModel],
+											streamAttemptedModels: attemptedModels,
+										},
+										helpers,
+									);
+									if (result["stream"]) {
+										fallbackStream = result["stream"] as AsyncGenerator<unknown>;
+										for await (const chunk of fallbackStream) {
+											fallbackEmitted = true;
+											Object.assign(publicStreamResult, { ...result, stream: publicStreamResult["stream"] });
+											attachUpstreamLogContext(publicStreamResult, getUpstreamLogContext(result));
+											yield chunk;
+										}
+										return;
+									}
+								} catch (failure) {
+									if (closingStream || req.streamAbortController?.signal.aborted) {
+										return;
+									}
+									if (fallbackEmitted) {
+										yield { error: failure instanceof Error ? failure.message : String(failure) };
+										return;
+									}
+								}
+							}
+
+							throw streamFailure;
+						} finally {
+							releaseSlot();
+						}
+					})();
+					const originalReturn = ownedStream.return.bind(ownedStream);
+					ownedStream.return = async (value) => {
+						closingStream = true;
+						req.streamAbortController?.abort();
+						execResult.cancelStream?.();
+						releaseSlot();
+						void fallbackStream?.return(undefined).catch(() => undefined);
+						try {
+							return await originalReturn(value);
+						} finally {
+							releaseSlot();
+						}
+					};
 					const providerHeaders = (response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders;
 					const responseHeaders = buildResponseHeaders(deployment, providerHeaders, {
 						attemptedFallbacks: fallbackDepth,
 						attemptedRetries: attempt,
 						maxRetries: maxRetriesForHeaders,
 					});
-					return attachUpstreamLogContext(
+					publicStreamResult = attachUpstreamLogContext(
 						{
 							_stream: true,
-							stream: stream,
+							stream: ownedStream,
 							_provider: deployment.model_name,
 							_fallbackDepth: fallbackDepth,
 							_fallbackModels: effectiveFallbackModels,
@@ -467,6 +619,7 @@ export async function executeWithFallback(
 						},
 						execResult.upstreamLogContext,
 					);
+					return publicStreamResult;
 				}
 
 				const transformed =
@@ -500,6 +653,13 @@ export async function executeWithFallback(
 				);
 			} catch (err) {
 				lastError = err instanceof Error ? err : new Error(String(err));
+				if (req.streamAbortController?.signal.aborted) {
+					throw lastError;
+				}
+				lastError.message = redactConfiguredSecrets(lastError.message, {
+					...deployment.litellm_params,
+					...getUpstreamLogContext(lastError)?.request.headers,
+				});
 				if (originalError === null) {
 					originalError = lastError;
 				}
@@ -509,11 +669,13 @@ export async function executeWithFallback(
 					typeof errWithRetries.num_retries === "number" &&
 					Number.isInteger(errWithRetries.num_retries) &&
 					errWithRetries.num_retries >= 0;
-				if (hasExceptionNumRetries) {
+				if (hasRequestRetries) {
+					maxRetries = requestRetries;
+				} else if (hasExceptionNumRetries) {
 					maxRetries = errWithRetries.num_retries as number;
-				} else if (typeof deployment.litellm_params.num_retries === "number" && deployment.litellm_params.num_retries >= 0) {
-					errWithRetries.num_retries = deployment.litellm_params.num_retries;
-					maxRetries = deployment.litellm_params.num_retries;
+				} else if (typeof deploymentRetries === "number" && deploymentRetries >= 0) {
+					errWithRetries.num_retries = deploymentRetries;
+					maxRetries = deploymentRetries;
 				}
 
 				if (lastError instanceof ContextWindowExceededError || lastError instanceof ContentPolicyViolationError) {
@@ -532,15 +694,13 @@ export async function executeWithFallback(
 					}
 				}
 
-				const policyOverride = getRetryPolicyOverride(
-					lastError,
-					ctx.retryPolicy,
-					model,
-					ctx.modelGroupRetryPolicy,
-					effectiveRetryPolicyOverride,
-				);
+				const policyOverride = hasRequestRetries
+					? undefined
+					: getRetryPolicyOverride(lastError, ctx.retryPolicy, model, ctx.modelGroupRetryPolicy, effectiveRetryPolicyOverride);
 				const effectiveMaxRetries = policyOverride !== undefined ? policyOverride : maxRetries;
+				maxRetries = effectiveMaxRetries;
 				maxRetriesForHeaders = effectiveMaxRetries;
+				observedRetryLimit = effectiveMaxRetries;
 
 				if (attempt >= effectiveMaxRetries) {
 					throw originalError ?? lastError;
@@ -569,6 +729,10 @@ export async function executeWithFallback(
 		throw originalError ?? lastError ?? new Error("Unknown error during completion");
 	} catch (err) {
 		const error = err instanceof Error ? err : new Error(String(err));
+		if (req.streamAbortController?.signal.aborted) {
+			throw error;
+		}
+		error.message = redactConfiguredSecrets(error.message, deployment.litellm_params);
 
 		ctx.failCalls.set(depKey, (ctx.failCalls.get(depKey) ?? 0) + 1);
 		ctx.totalCalls.set(depKey, (ctx.totalCalls.get(depKey) ?? 0) + 1);
@@ -630,7 +794,7 @@ export async function executeWithFallback(
 			);
 		}
 
-		const maxRetries = ctx.numRetries;
+		const maxRetries = observedRetryLimit;
 		const fallbacksList = ctx.fallbackHandler.getFallbackChain(model);
 		const augmented = error as unknown as {
 			num_retries?: number;
@@ -647,7 +811,8 @@ export async function executeWithFallback(
 		invokeRouterCallback(ctx.routerCallbacks, "onFailure", deployment, error);
 		throw error;
 	} finally {
-		const active = ctx.activeRequests.get(depKey) ?? 1;
-		ctx.activeRequests.set(depKey, Math.max(0, active - 1));
+		if (!streamOwnsSlot) {
+			releaseSlot();
+		}
 	}
 }

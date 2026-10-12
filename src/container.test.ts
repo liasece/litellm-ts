@@ -29,6 +29,8 @@ jest.mock("./cost/ModelCostMapService", () => ({
 
 jest.mock("./core/config/DbConfigProvider", () => ({
 	dbConfigProvider: {
+		setDefaults: jest.fn(),
+		getEffectiveParam: jest.fn((name: string) => mockConfigParams[name] ?? {}),
 		initialize: jest.fn().mockResolvedValue(undefined),
 		getParam: jest.fn((paramName: string) => mockConfigParams[paramName] ?? {}),
 		hasParam: jest.fn((paramName: string, key: string) => key in (mockConfigParams[paramName] ?? {})),
@@ -50,7 +52,10 @@ jest.mock("./core/db/Database", () => ({
 					}
 					if ("param_name" in table) {
 						return Promise.resolve(
-							Object.entries(mockConfigParams).map(([param_name, param_value]) => ({ param_name: param_name, param_value: param_value })),
+							Object.entries(mockConfigParams).map(([param_name, param_value]) => ({
+								param_name: param_name,
+								param_value: param_value,
+							})),
 						);
 					}
 					return Promise.resolve(mockDbModelRows);

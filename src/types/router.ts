@@ -129,6 +129,18 @@ export interface RetryPolicy {
 	ContentPolicyViolationErrorRetries?: number | null;
 	/** 5xx 服务端错误重试次数 */
 	InternalServerErrorRetries?: number | null;
+	/**
+	 *
+	 */
+	ServiceUnavailableErrorRetries?: number;
+	/**
+	 *
+	 */
+	NotFoundErrorRetries?: number;
+	/**
+	 *
+	 */
+	DefaultRetries?: number;
 }
 
 /** 模型组别名项，对齐 PY RouterModelGroupAliasItem TypedDict */
@@ -160,6 +172,10 @@ export interface AllowedFailsPolicy {
 
 /** Router 配置 */
 export interface RouterConfig {
+	/**
+	 *
+	 */
+	routing_strategy_args?: { ttft_percentile?: number };
 	/** 模型部署列表 */
 	model_list: Deployment[];
 	/** 路由策略 */

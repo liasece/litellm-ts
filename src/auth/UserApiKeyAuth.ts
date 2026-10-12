@@ -514,6 +514,7 @@ export function createApiKeyAuth(
 				},
 			};
 			let teamModelAliases: Record<string, string> | undefined;
+			let teamModels: string[] | undefined;
 			let teamSoftBudget: number | undefined;
 			let teamAlias: string | undefined;
 			if (verifiedToken.teamId) {
@@ -525,6 +526,7 @@ export function createApiKeyAuth(
 					budgetSnapshots.team = { id: team.teamId, spend: team.spend ?? 0, max_budget: team.maxBudget ?? null };
 				}
 				teamAlias = team?.teamAlias ?? undefined;
+				teamModels = team?.models ?? undefined;
 				const meta = (team?.metadata as Record<string, unknown> | undefined) ?? {};
 				teamModelAliases = meta["model_group_alias"] as Record<string, string> | undefined;
 				teamSoftBudget = team?.softBudget ?? (meta["soft_budget"] as number | undefined);
@@ -607,6 +609,7 @@ export function createApiKeyAuth(
 				project_id: verifiedToken.projectId ?? undefined,
 				key_alias: verifiedToken.keyAlias ?? undefined,
 				models: verifiedToken.models,
+				team_models: teamModels,
 				spend: verifiedToken.spend ?? 0,
 				max_budget: verifiedToken.maxBudget ?? undefined,
 				budget_snapshots: budgetSnapshots,
@@ -658,8 +661,7 @@ async function maybeRefreshWebUiSession(params: RefreshWebUiSessionParams): Prom
 	const { repository, res, cookieHeader, claims, sessionHash, databaseExpiresAt, masterKey, options } = params;
 	const nowSeconds = Math.floor(Date.now() / 1000);
 	const jwtExpiresAtSeconds = claims.exp as number;
-	const refreshThresholdSeconds =
-		options.refreshThresholdSeconds ?? getWebUiSessionRefreshThresholdSeconds(options.durationSeconds);
+	const refreshThresholdSeconds = options.refreshThresholdSeconds ?? getWebUiSessionRefreshThresholdSeconds(options.durationSeconds);
 	if (!shouldRefreshWebUiSession(jwtExpiresAtSeconds, databaseExpiresAt, nowSeconds, refreshThresholdSeconds)) {
 		return;
 	}

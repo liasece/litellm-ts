@@ -35,6 +35,10 @@ export interface RouterExecContext {
 	latencySamples: Map<string, number[]>;
 	/** 各 deployment time-to-first-token（毫秒） */
 	ttft: Map<string, number>;
+	/**
+	 *
+	 */
+	recordTtft?: (deployment: Deployment, value: number) => void;
 	/** 各 deployment 累计请求数 */
 	totalCalls: Map<string, number>;
 	/** 各 deployment 累计成功数 */
@@ -91,6 +95,10 @@ export interface ExecutionRequest {
 	previousError?: Error;
 	/** 请求级 alias 解析轨迹，由 endpoint 创建并跨递归复用。 */
 	modelResolutionTrace?: ModelResolutionTraceCollector;
+	/** Shared visited set prevents recursive streams from replaying failed sibling groups. */
+	streamAttemptedModels?: Set<string>;
+	/** Abort pending connections and reads across the entire streaming fallback chain. */
+	streamAbortController?: AbortController;
 }
 
 /** getAvailableDeployment 抽象，Router 主类提供以复用 routingStrategy + provider 选择 */
@@ -108,11 +116,13 @@ export type ExecuteRequestFn = (
 	deployment: Deployment,
 	messages: { role: string; content: string | null }[],
 	optionalParams: Record<string, unknown>,
+	signal?: AbortSignal,
 ) => Promise<{
 	response: Response;
 	body: unknown;
 	ttft: number;
 	stream?: AsyncGenerator<unknown>;
+	cancelStream?: () => void;
 	upstreamUrl: string;
 	upstreamLogContext: UpstreamLogContext;
 	responseProtocol?: ProviderResponseProtocol;

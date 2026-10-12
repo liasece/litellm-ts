@@ -1,3 +1,4 @@
+import { stripRoutingMetadata } from "../router/TagRouting";
 /**
  * OpenAI 兼容 Provider 基类
  *
@@ -43,6 +44,7 @@ const SUPPORTED_PARAMS = [
 	"metadata",
 	"store",
 	"prompt_cache_key",
+	"prompt_cache_retention",
 	"safety_identifier",
 	"verbosity",
 	"web_search_options",
@@ -114,9 +116,70 @@ export class OpenAICompatProvider implements ProviderConfig {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${apiKey}`,
 			},
-			body: body,
+			body: stripRoutingMetadata(body),
 			model: model,
 			stream: stream,
+		};
+	}
+
+	/**
+	 * @param model
+	 * @param optionalParams
+	 */
+	transformAnthropicRequest(model: string, optionalParams: Record<string, unknown>): ProviderRequest | undefined {
+		const endpoints = optionalParams["supported_endpoints"];
+		if (!Array.isArray(endpoints) || !endpoints.includes("/v1/messages")) {
+			return undefined;
+		}
+		const connection = this.transformRequest(model, [], optionalParams);
+		return {
+			...connection,
+			url: connection.url.replace(/\/chat\/completions$/, "/messages"),
+			body: {},
+			headers: {
+				...connection.headers,
+				"anthropic-version":
+					typeof optionalParams["anthropic_version"] === "string" ? optionalParams["anthropic_version"] : "2023-06-01",
+			},
+		};
+	}
+
+	/**
+	 * @param model
+	 * @param body
+	 * @param optionalParams
+	 */
+	transformResponsesRequest(
+		model: string,
+		body: Record<string, unknown>,
+		optionalParams: Record<string, unknown>,
+	): ProviderRequest | undefined {
+		const endpoints = optionalParams["supported_endpoints"];
+		if (!Array.isArray(endpoints) || !endpoints.includes("/v1/responses")) {
+			return undefined;
+		}
+		const connection = this.transformRequest(model, [], optionalParams);
+		const payload = { ...body, model: this.stripProviderPrefix(model), store: body["store"] ?? false };
+		for (const key of [
+			"api_key",
+			"api_base",
+			"auth_token",
+			"extra_headers",
+			"litellm_credential_name",
+			"drop_params",
+			"custom_llm_provider",
+			"supported_endpoints",
+			"keepalive_seconds",
+			"allow_client_keepalive_override",
+		]) {
+			delete (payload as Record<string, unknown>)[key];
+		}
+		return {
+			...connection,
+			url: connection.url.replace(/\/chat\/completions$/, "/responses"),
+			body: stripRoutingMetadata(payload),
+			stream: body["stream"] === true,
+			responseProtocol: "responses",
 		};
 	}
 
@@ -201,9 +264,7 @@ export class OpenAICompatProvider implements ProviderConfig {
 						content: (msg?.content as string | null) ?? null,
 						...(msg?.refusal !== undefined ? { refusal: msg.refusal as string | null } : {}),
 						...(Array.isArray(msg?.annotations) ? { annotations: msg.annotations } : {}),
-						...(typeof msg?.audio === "object" && msg.audio !== null
-							? { audio: msg.audio as Record<string, unknown> }
-							: {}),
+						...(typeof msg?.audio === "object" && msg.audio !== null ? { audio: msg.audio as Record<string, unknown> } : {}),
 						...(typeof msg?.function_call === "object" && msg.function_call !== null
 							? { function_call: msg.function_call as ModelResponse["choices"][number]["message"]["function_call"] }
 							: {}),
@@ -332,7 +393,7 @@ export class OpenAICompatProvider implements ProviderConfig {
 	 * @param apiBase
 	 */
 	private _normalizeApiBase(apiBase: string): string {
-		return apiBase.replace(/\/+$/, "").replace(/\/(?:chat\/completions|embeddings)$/, "");
+		return apiBase.replace(/\/+$/, "").replace(/\/(?:chat\/completions|embeddings|responses|messages)$/, "");
 	}
 
 	/**

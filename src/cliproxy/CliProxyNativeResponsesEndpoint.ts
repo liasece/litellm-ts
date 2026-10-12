@@ -60,6 +60,12 @@ function isCliProxyModel(router: LiteLLMRouter, model: unknown): boolean {
 	return candidate?.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER;
 }
 
+function nativeUpstreamBody(body: Record<string, unknown>): Record<string, unknown> {
+	const forwarded = { ...body };
+	delete forwarded["drop_params"];
+	return forwarded;
+}
+
 function upstreamModel(value: string): string {
 	return value.startsWith(`${CLIPROXY_PROVIDER}/`) ? value.slice(CLIPROXY_PROVIDER.length + 1) : value;
 }
@@ -615,7 +621,7 @@ export function registerCliProxyNativeResponsesRoutes(
 				let upstreamLogContext: UpstreamLogContext | undefined;
 				let upstream: globalThis.Response | undefined;
 				const upstreamBody = applyReasoningEffortOverride(
-					{ ...body, model: upstreamModel(deploymentModel) },
+					{ ...nativeUpstreamBody(body), model: upstreamModel(deploymentModel) },
 					candidate.deployment,
 					"responses",
 				);
@@ -806,7 +812,11 @@ async function executeNativeAnthropicWithFallback(args: {
 		async (attempt) => {
 			const cliProxyAttempt = attempt.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER;
 			const upstreamUrl = cliProxyAttempt ? `${runtime.baseUrl}${upstreamPath}` : attempt.upstreamUrl;
-			const upstreamBody = applyReasoningEffortOverride({ ...body, model: attempt.upstreamModel }, attempt.deployment, "anthropic");
+			const upstreamBody = applyReasoningEffortOverride(
+				{ ...nativeUpstreamBody(body), model: attempt.upstreamModel },
+				attempt.deployment,
+				"anthropic",
+			);
 			const upstreamHeaders = cliProxyAttempt
 				? buildForwardHeaders(req, runtime.internalApiKey, true)
 				: buildFallbackAnthropicHeaders(req, attempt);
@@ -903,7 +913,7 @@ function registerNativeRoute({
 				} else {
 					upstreamUrl = `${runtime.baseUrl}${upstreamPath}`;
 					const upstreamBody = applyReasoningEffortOverride(
-						{ ...body, model: upstreamModel(deploymentModel) },
+						{ ...nativeUpstreamBody(body), model: upstreamModel(deploymentModel) },
 						candidate.deployment,
 						"chat",
 					);

@@ -17,6 +17,15 @@ export type DbConfigParamName = "general_settings" | "litellm_settings" | "route
 
 class DbConfigProvider {
 	private _db: DrizzleDb | null = null;
+	private _defaults: Record<string, Record<string, unknown>> = {};
+
+	setDefaults(defaults: Record<string, Record<string, unknown>>): void {
+		this._defaults = structuredClone(defaults);
+	}
+
+	async getEffectiveParam(name: DbConfigParamName): Promise<Record<string, unknown>> {
+		return { ...this._defaults[name], ...(await this.getParam(name)) };
+	}
 
 	/**
 	 * 初始化（启动时调用一次）。

@@ -1,3 +1,6 @@
+import { validateSpendMetadataFields } from "../spend/SpendMetadataFields";
+import { validateKeyAliasSettings } from "../management/KeyAliasPolicy";
+import { ApiError } from "../core/api/ApiError";
 /**
  * LiteLLM_Config 仓库 — WebUI 配置参数的 DB 读写
  *
@@ -28,6 +31,18 @@ export class ConfigRepository extends BaseRepository {
 	 * @param value - 参数值（jsonb）
 	 */
 	async upsertParam(paramName: string, value: unknown): Promise<void> {
+		if (value && typeof value === "object" && !Array.isArray(value)) {
+			if (paramName === "general_settings") {
+				try {
+					validateSpendMetadataFields((value as Record<string, unknown>)["spend_logs_metadata_fields"]);
+				} catch {
+					throw ApiError.badRequest("Invalid spend_logs_metadata_fields configuration");
+				}
+			}
+			if (paramName === "litellm_settings") {
+				validateKeyAliasSettings(value as Record<string, unknown>);
+			}
+		}
 		await this._db
 			.insert(LiteLLM_Config)
 			.values({ param_name: paramName, param_value: value })

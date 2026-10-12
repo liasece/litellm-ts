@@ -1,0 +1,65 @@
+{
+  "ts_head": "ef0ca0e03b2485aea0b9308d7bc42d1d7113e830",
+  "implementation_state": "working-tree",
+  "results": [
+    {
+      "id": "BUG-01",
+      "active_before_stream_consumption": 1,
+      "consumed_chunks": 0
+    },
+    {
+      "id": "BUG-02",
+      "request_num_retries": 0,
+      "actual_attempts": 1
+    },
+    {
+      "id": "BUG-03",
+      "actual_first_chunk_ms": 400,
+      "wrapper_reported_ms": 400,
+      "provided_ttft_ms": 100,
+      "output_tokens": 10,
+      "router_metric_ms": 100
+    },
+    {
+      "id": "BUG-04",
+      "max_input_tokens": 100,
+      "tool_schema_characters": 20106,
+      "estimated_messages_only": 8,
+      "provider_called": 0
+    },
+    {
+      "id": "BUG-05",
+      "synthetic_secret_survives_router_and_response_mapper": false
+    },
+    {
+      "id": "BUG-06",
+      "mock_switch_configured": false,
+      "client_test_parameter_executed": true,
+      "error_name": "RateLimitError"
+    },
+    {
+      "id": "BUG-07",
+      "exhausted_budget_status": 429
+    },
+    {
+      "id": "BUG-08",
+      "caller_role": "internal_user",
+      "http_status": 403,
+      "privileged_permissions_written": false
+    },
+    {
+      "id": "BUG-09",
+      "configured_fallbacks": [
+        "fb1",
+        "fb2"
+      ],
+      "attempted_groups": [
+        "primary",
+        "fb1",
+        "fb2"
+      ],
+      "unrecovered_error_before_first_output": false
+    }
+  ],
+  "verified_at": "2026-10-11T22:48:34.679933+08:00"
+}

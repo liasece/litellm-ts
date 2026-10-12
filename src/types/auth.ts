@@ -74,6 +74,8 @@ export interface UserAPIKeyAuth {
 	key_alias?: string;
 	/** 允许使用的模型列表（空数组表示无限制） */
 	models?: string[];
+	/** Team model allowlist, kept separate from the key allowlist. */
+	team_models?: string[];
 	/** API key 主体当前已提交花费；不再与 team spend 合并。 */
 	spend?: number;
 	/** API key 主体最大预算；不再回退为 team budget。 */

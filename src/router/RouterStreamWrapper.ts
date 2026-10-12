@@ -75,7 +75,9 @@ function wrapStreamWithTtft(inner: AsyncGenerator<unknown>, fetchStart: number):
 	return {
 		stream: wrapped,
 		body: undefined,
-		ttft: firstChunkAt !== null ? firstChunkAt - fetchStart : Date.now() - fetchStart,
+		get ttft() {
+			return firstChunkAt !== null ? firstChunkAt - fetchStart : Date.now() - fetchStart;
+		},
 	};
 }
 

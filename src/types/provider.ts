@@ -86,7 +86,7 @@ export interface ProviderConfig {
 	 * @param model - 模型名称
 	 * @param optionalParams - deployment 与请求参数
 	 */
-	transformAnthropicRequest?(model: string, optionalParams: Record<string, unknown>): ProviderRequest;
+	transformAnthropicRequest?(model: string, optionalParams: Record<string, unknown>): ProviderRequest | undefined;
 
 	/**
 	 * 构造原生 OpenAI Responses 请求。

@@ -1,3 +1,4 @@
+import { codingClientModelMiddleware } from "../proxy/CodingClientModels";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -5,7 +6,11 @@ import request from "supertest";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { Deployment } from "../types/router";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
-import { registerCliProxyNativeAnthropicRoutes, registerCliProxyNativeResponsesRoutes } from "./CliProxyNativeResponsesEndpoint";
+import {
+	registerCliProxyNativeChatRoutes,
+	registerCliProxyNativeAnthropicRoutes,
+	registerCliProxyNativeResponsesRoutes,
+} from "./CliProxyNativeResponsesEndpoint";
 import { CliProxyProvider } from "../providers/CliProxyProvider";
 import { SpendLogStatus } from "../types/spend";
 
@@ -31,6 +36,7 @@ function buildApp(reasoningEffortOverride?: "minimal" | "low" | "medium" | "high
 		model_info: reasoningEffortOverride ? { override_reasoning_effort: reasoningEffortOverride } : undefined,
 	};
 	const router = {
+		hasModel: () => true,
 		getAvailableDeployment: () => ({ deployment: deployment }),
 		getDeployments: () => [deployment],
 		getFallbacks: () => ({}),
@@ -43,8 +49,10 @@ function buildApp(reasoningEffortOverride?: "minimal" | "low" | "medium" | "high
 	} as CliProxyRuntimeManager;
 	const app = express();
 	app.use(express.json());
+	app.use(codingClientModelMiddleware(router));
 	const expressRouter = express.Router();
 	registerCliProxyNativeResponsesRoutes(expressRouter, router, runtime, undefined as never);
+	registerCliProxyNativeChatRoutes(expressRouter, router, runtime, undefined as never);
 	app.use(expressRouter);
 	return app;
 }
@@ -77,6 +85,7 @@ function buildAnthropicApp(routerOverride?: LiteLLMRouter): express.Express {
 	} as CliProxyRuntimeManager;
 	const app = express();
 	app.use(express.json());
+	app.use(codingClientModelMiddleware(router));
 	app.use((req, _res, next) => {
 		req.auth = { api_key: "test-key", models: ["gpt-5.6-sol", "k3"] };
 		next();
@@ -769,4 +778,39 @@ describe("CLIProxy native Responses streaming", () => {
 			expect.objectContaining({ from_model: "k3", to_model: "gpt-5.6-sol", routing_type: "general_fallback" }),
 		]);
 	});
+});
+
+describe("Codex parameters at native upstream boundaries", () => {
+	afterEach(() => jest.restoreAllMocks());
+	it.each(["/v1/responses", "/v1/chat/completions", "/v1/messages"])(
+		"keeps gateway drop_params out of %s while retaining native fields",
+		async (path) => {
+			const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+				const body = JSON.parse(String(init?.body));
+				return "drop_params" in body
+					? new Response(JSON.stringify({ detail: "Unsupported parameter: drop_params" }), {
+							status: 400,
+							headers: { "content-type": "application/json" },
+						})
+					: new Response(JSON.stringify({ id: "test-native", usage: { input_tokens: 1, output_tokens: 1 } }), {
+							status: 200,
+							headers: { "content-type": "application/json" },
+						});
+			});
+			const body = {
+				model: "gpt-5.6-sol",
+				max_output_tokens: 32,
+				store: false,
+				...(path === "/v1/responses" ? { input: "hello" } : { messages: [{ role: "user", content: "hello" }] }),
+			};
+			await request(path === "/v1/messages" ? buildAnthropicApp() : buildApp())
+				.post(path)
+				.set("User-Agent", "codex/test")
+				.send(body)
+				.expect(200);
+			const forwarded = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+			expect(forwarded).not.toHaveProperty("drop_params");
+			expect(forwarded).toMatchObject({ ...body, model: "gpt-5.6-sol" });
+		},
+	);
 });

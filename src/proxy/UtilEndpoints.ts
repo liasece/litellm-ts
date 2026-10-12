@@ -15,6 +15,23 @@ import { lookupModelCostEntry, deriveSupportedOpenaiParams } from "./modelGroupB
  * @param router
  */
 export function registerUtilRoutes(router: Router): void {
+	registerRoute(router, { method: "get", path: "/utils/model_info" }, (req) => {
+		const model = typeof req.query["model"] === "string" ? req.query["model"] : "";
+		if (!model) {
+			throw ApiError.unprocessableEntity([{ loc: ["query", "model"], msg: "Field required", type: "missing" }]);
+		}
+		const provider = typeof req.query["custom_llm_provider"] === "string" ? req.query["custom_llm_provider"] : undefined;
+		const entry = lookupModelCostEntry(provider ? `${provider}/${model}` : model);
+		if (!entry) {
+			throw ApiError.httpException(404, { error: `model=${model} is not in the model cost map` });
+		}
+		const resolved = typeof entry["litellm_provider"] === "string" ? entry["litellm_provider"] : (provider ?? "openai");
+		return {
+			model: model,
+			custom_llm_provider: resolved,
+			model_info: { ...entry, key: model, supported_openai_params: deriveSupportedOpenaiParams(resolved, entry, model) },
+		};
+	});
 	registerRoute(router, { method: "post", path: "/utils/token_counter" }, notImpl("Token Counter"));
 
 	registerRoute(router, { method: "get", path: "/utils/supported_openai_params" }, (req) => {

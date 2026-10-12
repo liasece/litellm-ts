@@ -1,3 +1,4 @@
+import { projectSpendMetadata, validateSpendMetadataFields } from "./SpendMetadataFields";
 /**
  * 花费追踪器
  *
@@ -388,9 +389,15 @@ function sanitizePostgresString(value: string): string {
  * @param parent
  */
 function isImagePayloadString(fieldName: string, value: unknown, parent: Record<string, unknown>): boolean {
-	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) {return false;}
-	if (fieldName === "b64_json") {return true;}
-	if (fieldName === "result" && parent["type"] === "image_generation_call") {return true;}
+	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) {
+		return false;
+	}
+	if (fieldName === "b64_json") {
+		return true;
+	}
+	if (fieldName === "result" && parent["type"] === "image_generation_call") {
+		return true;
+	}
 	if (
 		fieldName === "data" &&
 		typeof (parent["mimeType"] ?? parent["mime_type"] ?? parent["media_type"]) === "string" &&
@@ -592,9 +599,13 @@ function getCanonicalSessionGroupKey(req: Request): string | undefined {
 			: undefined;
 	const candidates = [clientMetadata?.thread_id, clientMetadata?.session_id, requestBody?.prompt_cache_key];
 	for (const candidate of candidates) {
-		if (typeof candidate !== "string") {continue;}
+		if (typeof candidate !== "string") {
+			continue;
+		}
 		const normalized = candidate.trim();
-		if (SESSION_UUID_PATTERN.test(normalized)) {return `s:${normalized}`;}
+		if (SESSION_UUID_PATTERN.test(normalized)) {
+			return `s:${normalized}`;
+		}
 	}
 	return undefined;
 }
@@ -1773,6 +1784,23 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		tool_usage_cost: 0,
 	};
 
+	const metadataSettings = await dbConfigProvider.getEffectiveParam("general_settings");
+	const errorInfo = sanitizedMetadata["error_information"] as Record<string, unknown> | undefined;
+	const persistedMetadata = projectSpendMetadata(
+		{
+			...sanitizedMetadata,
+			litellm_call_id: logEntry.request_id,
+			...(errorInfo
+				? {
+						normalized_error: {
+							error_class: errorInfo["error_class"] ?? errorInfo["error_type"] ?? "provider_error",
+							error_code: errorInfo["error_code"] ?? null,
+						},
+					}
+				: {}),
+		},
+		validateSpendMetadataFields(metadataSettings["spend_logs_metadata_fields"]),
+	);
 	const insertData: typeof liteLLM_SpendLogs.$inferInsert = {
 		request_id: logEntry.request_id,
 		call_type: logEntry.call_type || CallType.ACompletion,
@@ -1804,7 +1832,7 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		cache_hit: logEntry.cache_hit ? "True" : "False",
 		requester_ip_address: logEntry.requester_ip_address ?? null,
 		proxy_server_request: sanitizedProxyServerRequest,
-		metadata: sanitizedMetadata,
+		metadata: persistedMetadata,
 		response: logEntry.response ?? {},
 		messages: logEntry.messages ?? {},
 

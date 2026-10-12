@@ -95,3 +95,38 @@ describe("ModelsEndpoint 单模型详情安全响应", () => {
 		expect(router.getDeployments()[0]?.model_info?.supports_vision).toBe(false);
 	});
 });
+
+describe("negotiated discovery and access scope", () => {
+	it("only lists accessible discoverable logical models and emits Anthropic display names", async () => {
+		const router = new Router({
+			model_list: [
+				{
+					model_name: "visible",
+					litellm_params: { model: "openai/gpt-6-sol" },
+					model_info: { display_name: "Coding", service_tiers: ["priority"] },
+				},
+				{ model_name: "other", litellm_params: { model: "openai/gpt-6-sol" } },
+				{ model_name: "hidden", litellm_params: { model: "openai/gpt-6-sol" }, model_info: { discoverable: false } },
+			],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+		});
+		const controller = new ModelsController(router);
+		const req = {
+			auth: { models: ["visible", "hidden"] },
+			get: (name: string) => (name === "anthropic-version" ? "2023-06-01" : undefined),
+		} as never;
+		const native = await controller.listModels(req);
+		expect(native).toMatchObject({
+			has_more: false,
+			first_id: "visible",
+			last_id: "visible",
+			data: [{ id: "visible", display_name: "Coding", type: "model" }],
+		});
+		const legacy = await controller.listModels();
+		expect(legacy.models.find((model) => model.slug === "visible")?.service_tiers).toEqual([
+			{ id: "priority", name: "priority", description: "" },
+		]);
+		expect(legacy.data.map((model) => model.id)).not.toContain("hidden");
+	});
+});

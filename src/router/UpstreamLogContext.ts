@@ -1,3 +1,4 @@
+import { redactErrorPayload } from "../core/api/redactConfiguredSecrets";
 import type { ProviderRequest } from "../types/provider";
 
 /** 可写入详细 SpendLog 的上游请求。 */
@@ -56,7 +57,9 @@ export function createUpstreamLogContext(request: ProviderRequest, response?: Re
 					response: {
 						status_code: response.status,
 						headers: collectHeaders(response.headers),
-						...(responseBody !== undefined ? { body: responseBody } : {}),
+						...(responseBody !== undefined
+							? { body: response.status >= 400 ? redactErrorPayload(responseBody, request.headers) : responseBody }
+							: {}),
 					},
 				}
 			: {}),

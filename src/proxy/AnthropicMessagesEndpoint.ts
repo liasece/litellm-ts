@@ -1,3 +1,7 @@
+import { stripRoutingMetadata } from "../router/TagRouting";
+import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
+import { normalizeAnthropicThinking } from "../providers/AnthropicThinkingCompatibility";
+import { startSseKeepalive } from "./SseKeepalive";
 /**
  * Anthropic Messages API 原生端点
  *
@@ -52,10 +56,7 @@ import {
 } from "../websearch/WebSearchInterceptor";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { prepareAnthropicVisionRequest } from "../capabilities/VisionCapability";
-import {
-	prepareAnthropicImageGenerationRequest,
-	resolveImageGenerationCapability,
-} from "../capabilities/ImageGenerationCapability";
+import { prepareAnthropicImageGenerationRequest, resolveImageGenerationCapability } from "../capabilities/ImageGenerationCapability";
 import {
 	createImageGenerationCapabilityAuditHook,
 	createVisionCapabilityAuditHook,
@@ -175,10 +176,25 @@ function buildAnthropicUpstreamBody(
 	deployment?: UpstreamAttempt["deployment"],
 ): Record<string, unknown> {
 	const result: Record<string, unknown> = { ...body, model: upstreamModel };
-	for (const internalKey of ["api_key", "api_base", "anthropic_version", "anthropic_beta", "custom_llm_provider"]) {
+	for (const internalKey of [
+		"api_key",
+		"api_base",
+		"auth_token",
+		"extra_headers",
+		"litellm_credential_name",
+		"anthropic_version",
+		"anthropic_beta",
+		"custom_llm_provider",
+		"keepalive_seconds",
+		"allow_client_keepalive_override",
+		"supported_endpoints",
+	]) {
 		delete result[internalKey];
 	}
-	return deployment ? applyReasoningEffortOverride(result, deployment, "anthropic") : result;
+	return normalizeAnthropicThinking(
+		stripRoutingMetadata(deployment ? applyReasoningEffortOverride(result, deployment, "anthropic") : result),
+		upstreamModel,
+	);
 }
 
 /**
@@ -202,12 +218,7 @@ async function prepareAnthropicTokenCountBody(
 	let preparedBody = preparedWeb?.body ?? body;
 	const preparedVision = await prepareAnthropicVisionRequest(litellmRouter, model, preparedBody, visionImageStore);
 	preparedBody = preparedVision?.body ?? preparedBody;
-	const preparedImageGeneration = await prepareAnthropicImageGenerationRequest(
-		litellmRouter,
-		model,
-		preparedBody,
-		visionImageStore,
-	);
+	const preparedImageGeneration = await prepareAnthropicImageGenerationRequest(litellmRouter, model, preparedBody, visionImageStore);
 	return preparedImageGeneration?.body ?? preparedBody;
 }
 
@@ -483,10 +494,6 @@ export function formatAnthropicPingEvent(): string {
 	return formatSSE("ping", JSON.stringify({ type: "ping" }));
 }
 
-function sendPing(res: Response): void {
-	res.write(formatAnthropicPingEvent());
-}
-
 /**
  * Convert a completed native Anthropic response into protocol-valid SSE.
  * Generated images are carried as a public extension on message_start so a
@@ -749,7 +756,10 @@ async function _openAnthropicStream(
 
 	if (!result.ok) {
 		const errBody = await result.text().catch(() => "");
-		throw new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`);
+		throw new ProviderUpstreamError(
+			result.status,
+			`Provider 返回错误 (${result.status}): ${redactConfiguredSecrets(errBody, { ...attempt.deployment.litellm_params, ...attempt.upstreamHeaders }).slice(0, 200)}`,
+		);
 	}
 
 	return _streamAnthropicSse(result);
@@ -880,7 +890,8 @@ export function registerAnthropicMessagesEndpoints(
 								upstream_response: (upstreamLogContext?.response ?? null) as Record<string, unknown> | null,
 							};
 						},
-						write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+						write: (checkpoint) =>
+							checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
 					});
 				}
 				let streamError: unknown;
@@ -918,7 +929,11 @@ export function registerAnthropicMessagesEndpoints(
 									// capability agent loop 每轮的主模型调用改为真流式（对齐真正的流式分支）：边累积边
 									// checkpoint，使「进行中」时也能看到主模型的流式中间响应；流结束后 buildNativeStreamResponse
 									// 返回完整响应供 agent loop 决策（解析 tool_use 判断是否继续下一轮）。
-									const accumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
+									const accumulator: NativeStreamAccumulator = {
+										content: new Map(),
+										toolInputJson: new Map(),
+										usage: {},
+									};
 									currentAccumulator = accumulator;
 									for await (const sseChunk of opened) {
 										const payload = parseSsePayload(sseChunk);
@@ -964,12 +979,14 @@ export function registerAnthropicMessagesEndpoints(
 							? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
 							: undefined;
 						calculateAndSetCost(finalResponse as unknown as ModelResponse, requestedModel, spendInfo?.customCostPerToken);
-						res.writeHead(200, {
-							"Content-Type": "text/event-stream",
-							"Cache-Control": "no-cache",
-							Connection: "keep-alive",
-							"X-Accel-Buffering": "no",
-						});
+						if (!res.headersSent) {
+							res.writeHead(200, {
+								"Content-Type": "text/event-stream",
+								"Cache-Control": "no-cache",
+								Connection: "keep-alive",
+								"X-Accel-Buffering": "no",
+							});
+						}
 						await streamingCheckpointScheduler?.dispose();
 						const finalAccumulator = writeBufferedAnthropicResponseAsStream(res, finalResponse, requestedModel);
 						res.end();
@@ -1111,25 +1128,23 @@ export function registerAnthropicMessagesEndpoints(
 				}
 
 				// Patch 12: SSE keep-alive
-				res.writeHead(200, {
-					"Content-Type": "text/event-stream",
-					"Cache-Control": "no-cache",
-					Connection: "keep-alive",
-					"X-Accel-Buffering": "no",
-				});
+				if (!res.headersSent) {
+					res.writeHead(200, {
+						"Content-Type": "text/event-stream",
+						"Cache-Control": "no-cache",
+						Connection: "keep-alive",
+						"X-Accel-Buffering": "no",
+					});
+				}
 
 				let messageStarted = false;
-				const pingTimer = setInterval(() => {
-					try {
-						if (messageStarted) {
-							sendPing(res);
-						}
-					} catch {
-						clearInterval(pingTimer);
-					}
-				}, KEEPALIVE_INTERVAL_MS);
-
-				req.on("close", () => clearInterval(pingTimer));
+				const stopKeepalive = await startSseKeepalive(
+					req,
+					res,
+					executedAttempt?.deployment,
+					"anthropic",
+					KEEPALIVE_INTERVAL_MS / 1000,
+				);
 
 				try {
 					// 对外保留上游 message_start 的完整 usage，只改写 id/model，避免泄露
@@ -1177,7 +1192,7 @@ export function registerAnthropicMessagesEndpoints(
 					res.write(formatSSE("error", JSON.stringify({ type: "error", error: { type: "api_error", message: String(err) } })));
 					logger.error("流式响应错误", { error: String(err) });
 				} finally {
-					clearInterval(pingTimer);
+					stopKeepalive();
 					await streamingCheckpointScheduler?.dispose();
 					res.end();
 
@@ -1288,7 +1303,7 @@ export function registerAnthropicMessagesEndpoints(
 								throw attachUpstreamLogContext(
 									new ProviderUpstreamError(
 										result.status,
-										`Provider 返回错误 (${result.status}): ${errBody.slice(0, 200)}`,
+										`Provider 返回错误 (${result.status}): ${redactConfiguredSecrets(errBody, { ...attempt.deployment.litellm_params, ...attempt.upstreamHeaders }).slice(0, 200)}`,
 									),
 									upstreamLogContext,
 								);

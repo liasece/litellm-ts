@@ -1,3 +1,5 @@
+import { validateKeyAlias } from "./KeyAliasPolicy";
+import { dbConfigProvider } from "../core/config/DbConfigProvider";
 /**
  * 密钥管理端点 — CRUD + 生命周期操作
  *
@@ -174,6 +176,8 @@ function firstString(value: unknown): string | undefined {
 /**
  * 解析 /key/generate 的可选自定义 key。
  * 空值继续走原有随机生成流程；显式值需满足 LiteLLM Virtual Key 格式约束。
+ * @param value
+ * @throws {Error} Rejects invalid input or a denied operation.
  */
 function resolveGeneratedPlainKey(value: unknown): string {
 	if (value === undefined || value === null || (typeof value === "string" && value.trim().length === 0)) {
@@ -235,7 +239,12 @@ function matchesKeyListFilters(row: VerificationTokenRowLike, filters: KeyListFi
 	if (filters.keyHash !== undefined && row.token !== filters.keyHash) {
 		return false;
 	}
-	if (filters.keyAlias !== undefined && row.keyAlias !== filters.keyAlias) {
+	if (
+		filters.keyAlias !== undefined &&
+		!String(row.keyAlias ?? "")
+			.toLowerCase()
+			.includes(filters.keyAlias.toLowerCase())
+	) {
 		return false;
 	}
 	if (filters.projectId !== undefined && row.projectId !== filters.projectId) {
@@ -247,13 +256,19 @@ function matchesKeyListFilters(row: VerificationTokenRowLike, filters: KeyListFi
 			return false;
 		}
 	}
-	if (filters.status === "blocked" && row.blocked !== true) {
+	if ((filters.status === "blocked" || filters.status === "revoked") && row.blocked !== true) {
+		return false;
+	}
+	if (filters.expires === "expired" && !isExpiredValue(row.expires)) {
+		return false;
+	}
+	if (filters.expires === "not_expired" && isExpiredValue(row.expires)) {
 		return false;
 	}
 	if (filters.status === "active" && (row.blocked === true || isExpiredValue(row.expires))) {
 		return false;
 	}
-	if (filters.status === "expired" && !isExpiredValue(row.expires)) {
+	if (filters.status === "expired" && (row.blocked === true || !isExpiredValue(row.expires))) {
 		return false;
 	}
 	return true;
@@ -267,12 +282,17 @@ interface KeyListFilters {
 	readonly keyAlias?: string;
 	readonly projectId?: string;
 	readonly accessGroupId?: string;
-	readonly status?: "active" | "blocked" | "expired" | "deleted";
+	readonly expires?: "expired" | "not_expired";
+	readonly status?: "active" | "blocked" | "revoked" | "expired" | "deleted";
 }
 
 function parseKeyListFilters(query: Request["query"]): KeyListFilters {
 	const keyHash = firstString(query.key_hash);
 	const status = firstString(query.status);
+	const expires = firstString(query.expires);
+	if (expires !== undefined && expires !== "expired" && expires !== "not_expired") {
+		throw ApiError.badRequest("expires must be expired or not_expired");
+	}
 	return {
 		userId: firstString(query.user_id),
 		teamId: firstString(query.team_id),
@@ -281,7 +301,11 @@ function parseKeyListFilters(query: Request["query"]): KeyListFilters {
 		keyAlias: firstString(query.key_alias),
 		projectId: firstString(query.project_id),
 		accessGroupId: firstString(query.access_group_id),
-		status: status === "active" || status === "blocked" || status === "expired" || status === "deleted" ? status : undefined,
+		expires: expires as "expired" | "not_expired" | undefined,
+		status:
+			status === "active" || status === "blocked" || status === "revoked" || status === "expired" || status === "deleted"
+				? status
+				: undefined,
 	};
 }
 
@@ -300,12 +324,12 @@ function buildKeyListWhere(filters: KeyListFilters): ReturnType<typeof and> {
 		conditions.push(eq(LiteLLM_VerificationToken.token, filters.keyHash));
 	}
 	if (filters.keyAlias !== undefined) {
-		conditions.push(eq(LiteLLM_VerificationToken.keyAlias, filters.keyAlias));
+		conditions.push(ilike(LiteLLM_VerificationToken.keyAlias, `%${filters.keyAlias.replace(/[\\%_]/g, "\\$&")}%`));
 	}
 	if (filters.projectId !== undefined) {
 		conditions.push(eq(LiteLLM_VerificationToken.projectId, filters.projectId));
 	}
-	if (filters.status === "blocked") {
+	if (filters.status === "blocked" || filters.status === "revoked") {
 		conditions.push(eq(LiteLLM_VerificationToken.blocked, true));
 	}
 	if (filters.status === "active") {
@@ -331,7 +355,7 @@ function buildDeletedKeyListWhere(filters: KeyListFilters): ReturnType<typeof an
 		conditions.push(eq(liteLLM_DeletedVerificationToken.token, filters.keyHash));
 	}
 	if (filters.keyAlias !== undefined) {
-		conditions.push(eq(liteLLM_DeletedVerificationToken.keyAlias, filters.keyAlias));
+		conditions.push(ilike(liteLLM_DeletedVerificationToken.keyAlias, `%${filters.keyAlias.replace(/[\\%_]/g, "\\$&")}%`));
 	}
 	if (filters.projectId !== undefined) {
 		conditions.push(eq(liteLLM_DeletedVerificationToken.projectId, filters.projectId));
@@ -474,6 +498,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 		{ method: "post", path: "/key/generate" },
 		authed(async (req) => {
 			const body = (req.body ?? {}) as Record<string, unknown>;
+			validateKeyAlias(body.key_alias, await dbConfigProvider.getEffectiveParam("litellm_settings"));
 			await authorizationGuard?.assertCanCreateKey(req.auth, firstString(body.team_id));
 			if (body.blocked != null && typeof body.blocked !== "boolean") {
 				throw ApiError.badRequest("blocked must be a boolean");
@@ -570,7 +595,20 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 		{ method: "post", path: "/key/update" },
 		authed(async (req) => {
 			const { key, token, ...updates } = req.body ?? {};
-			const tokenId = token ?? (key ? hashApiKey(key) : null);
+			await authorizationGuard?.assertKeyFieldUpdates(req.auth, updates);
+			validateKeyAlias(updates.key_alias, await dbConfigProvider.getEffectiveParam("litellm_settings"));
+			let tokenId = token ?? (key ? hashTokenIfNeeded(key) : null);
+			if (!tokenId && typeof updates.key_alias === "string") {
+				const matches = await db
+					.select()
+					.from(LiteLLM_VerificationToken)
+					.where(eq(LiteLLM_VerificationToken.keyAlias, updates.key_alias))
+					.limit(2);
+				if (matches.length !== 1) {
+					throw ApiError.badRequest("key_alias must identify exactly one key");
+				}
+				tokenId = matches[0]!.token;
+			}
 
 			if (!tokenId) {
 				throw ApiError.badRequest("key or token is required");
@@ -962,10 +1000,12 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			}
 
 			const body = (req.body ?? {}) as Record<string, unknown>;
+			const aliasSettings = await dbConfigProvider.getEffectiveParam("litellm_settings");
 			const now = new Date();
 			const newPlainKey = firstString(body.new_key) ?? generateApiKey();
 			const newTokenHash = hashApiKey(newPlainKey);
 			const revokeAt = resolveRotationRevokeAt(body, now);
+			validateKeyAlias(body.key_alias, await dbConfigProvider.getEffectiveParam("litellm_settings"));
 
 			await db.transaction(async (tx) => {
 				const existing = await tx
@@ -995,10 +1035,13 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 					});
 				}
 				const record = existing[0]!;
+				const keyAlias = body.key_alias === undefined ? record.keyAlias : body.key_alias;
+				validateKeyAlias(keyAlias, aliasSettings);
 				await tx
 					.update(LiteLLM_VerificationToken)
 					.set({
 						token: newTokenHash,
+						keyAlias: keyAlias as string | null,
 						keyName: `sk-...${newPlainKey.slice(-4)}`,
 						rotationCount: (record.rotationCount ?? 0) + 1,
 						lastRotationAt: now,

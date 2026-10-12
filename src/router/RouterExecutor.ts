@@ -23,6 +23,7 @@ import {
 	AuthenticationError,
 	NotFoundError,
 	InternalServerError,
+	ServiceUnavailableError,
 	BadRequestError,
 } from "./RouterErrors";
 import { logger } from "../core/utils/logger";
@@ -93,6 +94,9 @@ export function categorizeProviderError(statusCode: number, bodyStr: string): Er
 	}
 	if (statusCode === 429 || lower.includes("rate limit") || lower.includes("rate_limit")) {
 		return new RateLimitError(bodyStr, fields);
+	}
+	if (statusCode === 503) {
+		return new ServiceUnavailableError(bodyStr, fields);
 	}
 	if (statusCode >= 500) {
 		return new InternalServerError(bodyStr, fields);
@@ -213,12 +217,15 @@ export function buildCooldownDecision(input: CooldownDecisionInput): CooldownDec
 		sameGroupCount,
 		errorCategory,
 		error,
-		deployment.litellm_params.cooldown_allowed_fails ?? routerAllowedFails,
+		(deployment.model_info?.["allowed_fails_policy"] as AllowedFailsPolicy) ??
+			deployment.litellm_params.cooldown_allowed_fails ??
+			routerAllowedFails,
 	);
 	if (!shouldCooldown) {
 		return { shouldCooldown: false, cooldownDurationMs: 0, statusCode: statusCode };
 	}
-	const deployCooldown = deployment.litellm_params.cooldown_time ? deployment.litellm_params.cooldown_time * 1000 : undefined;
+	const configuredCooldown = deployment.model_info?.["cooldown_time"] ?? deployment.litellm_params.cooldown_time;
+	const deployCooldown = typeof configuredCooldown === "number" ? configuredCooldown * 1000 : undefined;
 	const effectiveRetryAfter = retryAfterHeader ?? extractRetryAfterFromError(error);
 	const retryAfterSec = effectiveRetryAfter ? (parseRetryAfterSeconds(effectiveRetryAfter) ?? 0) : 0;
 	const retryCooldown = retryAfterSec > 0 ? retryAfterSec * 1000 : undefined;

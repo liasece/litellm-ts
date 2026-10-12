@@ -1,3 +1,5 @@
+import { validateKeyAliasSettings } from "../../management/KeyAliasPolicy";
+import { validateSpendMetadataFields } from "../../spend/SpendMetadataFields";
 /**
  * 服务配置管理模块
  * 从 YAML 文件读取配置，通过 zod schema 校验并提供类型安全的配置访问
@@ -566,6 +568,8 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 	const generalSettingsRaw = (config.general_settings ?? {}) as Record<string, unknown>;
 	const routerSettingsRaw = (config.router_settings ?? {}) as Record<string, unknown>;
 	const litellmSettingsRaw = (config.litellm_settings ?? {}) as Record<string, unknown>;
+	validateSpendMetadataFields(generalSettingsRaw["spend_logs_metadata_fields"]);
+	validateKeyAliasSettings(litellmSettingsRaw);
 
 	// server.port: APP_PORT → server.port → general_settings.port → 默认 4000
 	let serverPort = config.server.port;

@@ -1,3 +1,7 @@
+import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
+import { startSseKeepalive } from "./SseKeepalive";
+import { getDeploymentKey } from "../router/RouterModelGroupCache";
+import { resolveCodingClientModel } from "./CodingClientModels";
 /**
  * Chat Completions 代理端点
  *
@@ -115,6 +119,7 @@ function toOpenAIUsage(usage: Usage): Usage {
 		prompt_tokens: usage.prompt_tokens,
 		completion_tokens: usage.completion_tokens,
 		total_tokens: usage.total_tokens,
+		...(typeof usage.cost === "number" && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
 		...(usage.prompt_tokens_details ? { prompt_tokens_details: usage.prompt_tokens_details } : {}),
 		...(usage.completion_tokens_details ? { completion_tokens_details: usage.completion_tokens_details } : {}),
 	};
@@ -241,7 +246,11 @@ function buildAggregatedChatResponse(state: ChatStreamAccumulator, fallbackModel
  * @param fallbackModel
  * @param streamResult
  */
-function finalizeStreamedCompletion(state: ChatStreamAccumulator, fallbackModel: string, streamResult: Record<string, unknown>): Record<string, unknown> {
+function finalizeStreamedCompletion(
+	state: ChatStreamAccumulator,
+	fallbackModel: string,
+	streamResult: Record<string, unknown>,
+): Record<string, unknown> {
 	const response = buildAggregatedChatResponse(state, fallbackModel);
 	if (response === undefined) {
 		return streamResult;
@@ -280,10 +289,53 @@ export function registerChatCompletionsRoutes(expressRouter: Router, litellmRout
 	const paths = ["/v1/chat/completions", "/chat/completions", "/engines/*/chat/completions", "/openai/deployments/*/chat/completions"];
 
 	const handler = createChatHandler(litellmRouter, db);
+	registerRoute(
+		expressRouter,
+		{
+			method: "post",
+			path: "/cursor/chat/completions",
+			matches: (req) => req.body && "messages" in req.body && !("input" in req.body),
+		},
+		(req, res) => {
+			req.body = resolveCodingClientModel(req.body, litellmRouter, true);
+			return handler(req, res);
+		},
+	);
 
 	for (const path of paths) {
 		registerRoute(expressRouter, { method: "post", path: path }, handler);
 	}
+}
+
+/**
+ * Find unvisited own-chain or root-chain fallbacks without switching after semantic output.
+ * @param router
+ * @param current
+ * @param original
+ * @param visited
+ */
+function getNextStreamingFallback(router: LiteLLMRouter, current: string, original: string, visited: string[]) {
+	const limit = router.maxFallbacks ?? 5;
+	if (visited.length >= limit) {
+		return null;
+	}
+	const resolve = (model: string, index: number) =>
+		router.getNextFallbackWithTrace?.(model, index) ??
+		((fallback: string | null) =>
+			(fallback === null ? null : { inputModel: fallback, resolvedModel: fallback, resolutionPath: [fallback] }))(
+			router.getNextFallback(model, index),
+		);
+	const own = resolve(current, 0);
+	if (own && !visited.includes(own.resolvedModel)) {
+		return own;
+	}
+	for (let index = 0; index < limit; index++) {
+		const fallback = resolve(original, index);
+		if (fallback && !visited.includes(fallback.resolvedModel)) {
+			return fallback;
+		}
+	}
+	return null;
 }
 
 function getPathModel(req: import("express").Request): unknown {
@@ -634,16 +686,9 @@ async function handleStreamingResponse(
 			resolutionPath: [currentModel],
 		};
 		appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, resolution);
-		const candidate = litellmRouter.getAvailableDeployment(currentModel);
+		const candidate = litellmRouter.getAvailableDeployment(currentModel, messages, optionalParams);
 		if (!candidate) {
-			const nextFallback =
-				litellmRouter.getNextFallbackWithTrace?.(currentModel, 0) ??
-				((fallbackModel) => {
-					if (fallbackModel === null) {
-						return null;
-					}
-					return { inputModel: fallbackModel, resolvedModel: fallbackModel, resolutionPath: [fallbackModel] };
-				})(litellmRouter.getNextFallback(currentModel, 0));
+			const nextFallback = getNextStreamingFallback(litellmRouter, currentModel, model, fallbackModels);
 			if (!nextFallback) {
 				break;
 			}
@@ -664,7 +709,6 @@ async function handleStreamingResponse(
 		}
 
 		const { deployment, provider } = candidate;
-		litellmRouter.trackActiveRequest(deployment.model_name, 1);
 		const providerReq = provider.transformRequest(
 			deployment.litellm_params.model,
 			messages,
@@ -679,8 +723,11 @@ async function handleStreamingResponse(
 			),
 		);
 		lastUpstreamLogContext = createUpstreamLogContext(providerReq);
+		litellmRouter.trackActiveRequest(getDeploymentKey(deployment), 1);
+		let stopKeepalive: () => void = () => undefined;
 
 		try {
+			stopKeepalive = await startSseKeepalive(req, res, deployment, "openai", SSE_KEEPALIVE_INTERVAL_MS / 1000);
 			const timeoutSec = deployment.litellm_params.stream_timeout ?? deployment.litellm_params.timeout;
 			const execution = await executeProviderRequest(providerReq, {
 				readJson: false,
@@ -693,7 +740,10 @@ async function handleStreamingResponse(
 				const errorBody = await response.json().catch(() => ({}));
 				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, errorBody);
 				throw attachUpstreamLogContext(
-					new ApiError(response.status, `Provider 返回错误: ${JSON.stringify(errorBody)}`),
+					new ApiError(
+						response.status,
+						`Provider 返回错误: ${redactConfiguredSecrets(JSON.stringify(errorBody), { ...deployment.litellm_params, ...providerReq.headers })}`,
+					),
 					lastUpstreamLogContext,
 				);
 			}
@@ -741,14 +791,16 @@ async function handleStreamingResponse(
 				return;
 			}
 
-			res.setHeader("Content-Type", "text/event-stream");
-			res.setHeader("Cache-Control", "no-cache");
-			res.setHeader("Connection", "keep-alive");
-			res.setHeader("X-Accel-Buffering", "no");
-			const providerHeaders = (response as unknown as { _providerHeaders?: Record<string, string> })._providerHeaders;
-			for (const [key, value] of Object.entries(providerHeaders ?? {})) {
-				if (!res.getHeader(key)) {
-					res.setHeader(key, value);
+			if (!res.headersSent) {
+				res.setHeader("Content-Type", "text/event-stream");
+				res.setHeader("Cache-Control", "no-cache");
+				res.setHeader("Connection", "keep-alive");
+				res.setHeader("X-Accel-Buffering", "no");
+				const providerHeaders = (response as unknown as { _providerHeaders?: Record<string, string> })._providerHeaders;
+				for (const [key, value] of Object.entries(providerHeaders ?? {})) {
+					if (!res.getHeader(key)) {
+						res.setHeader(key, value);
+					}
 				}
 			}
 
@@ -758,11 +810,6 @@ async function handleStreamingResponse(
 					clientDisconnected = true;
 				}
 			});
-			const keepAlive = setInterval(() => {
-				if (!clientDisconnected) {
-					res.write(": keepalive\n\n");
-				}
-			}, SSE_KEEPALIVE_INTERVAL_MS);
 			const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
 			const checkpointRequestId = spendRequestId;
 			let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
@@ -797,14 +844,23 @@ async function handleStreamingResponse(
 			let streamError: unknown;
 			let completionStartTime: Date | undefined;
 			let usageChunkSent = false;
+			let semanticOutputEmitted = false;
+			let retryBeforeOutput = false;
 
 			try {
 				const stream = (provider as unknown as StreamingProvider).streamResponse(response);
 				for await (const chunk of stream) {
+					if ("error" in chunk) {
+						throw new Error(redactConfiguredSecrets(JSON.stringify(chunk["error"]), deployment.litellm_params));
+					}
+					semanticOutputEmitted = true;
 					if (fallbackDepth === 0) {
 						chunk.model = model;
 					}
-					completionStartTime ??= new Date();
+					if (!completionStartTime) {
+						completionStartTime = new Date();
+						litellmRouter.recordDeploymentTtft?.(deployment, Date.now() - execution.startedAtMs);
+					}
 					accumulateChatChunk(accumulator, chunk);
 					streamingCheckpointScheduler?.onChunk();
 					if (!clientDisconnected) {
@@ -837,70 +893,89 @@ async function handleStreamingResponse(
 					res.write("data: [DONE]\n\n");
 				}
 			} catch (err) {
-				streamError = err;
-				logger.error("流式响应处理异常", { error: err });
-				if (!clientDisconnected) {
-					res.write(`data: ${JSON.stringify({ error: { message: String(err), type: "stream_error" } })}\n\n`);
+				const streamFailure = err instanceof Error ? err : new Error(String(err));
+				streamFailure.message = redactConfiguredSecrets(streamFailure.message, {
+					...deployment.litellm_params,
+					...providerReq.headers,
+				});
+				streamError = streamFailure;
+				retryBeforeOutput =
+					!semanticOutputEmitted &&
+					!clientDisconnected &&
+					!upstreamAbortController.signal.aborted &&
+					getNextStreamingFallback(litellmRouter, currentModel, model, fallbackModels) !== null;
+				if (!retryBeforeOutput && !clientDisconnected) {
+					litellmRouter.recordDeploymentFailure?.(deployment, streamFailure);
+				}
+				logger.error("流式响应处理异常", { error: streamFailure });
+				if (!retryBeforeOutput && !clientDisconnected) {
+					res.write(`data: ${JSON.stringify({ error: { message: String(streamFailure), type: "stream_error" } })}\n\n`);
 				}
 			} finally {
-				clearInterval(keepAlive);
+				stopKeepalive();
 				await streamingCheckpointScheduler?.dispose();
-				if (!res.writableEnded) {
-					res.end();
-				}
-				if (req.auth) {
-					const responseForLog = buildAggregatedChatResponse(accumulator, fallbackDepth === 0 ? model : currentModel);
-					const usage =
-						accumulator.usage ??
-						(accumulator.estimatedCompletionTokens > 0
-							? {
-									prompt_tokens: 0,
-									completion_tokens: accumulator.estimatedCompletionTokens,
-									total_tokens: accumulator.estimatedCompletionTokens,
-								}
-							: undefined);
-					const spendLog = await buildSpendLogFromRequest({
-						req: req,
-						requestId: spendRequestId,
-						auth: req.auth,
-						callType: CallType.ACompletion,
-						model: model,
-						modelGroup: model,
-						modelId: spendInfo.modelId,
-						customLlmProvider: spendInfo.customLlmProvider,
-						apiBase: spendInfo.apiBase,
-						customCostPerToken: spendInfo.customCostPerToken,
-						deploymentModel: spendInfo.deploymentModel,
-						startTime: startTime,
-						endTime: new Date(),
-						completionStartTime: completionStartTime,
-						messages: originalMessages,
-						proxyServerRequestBody: originalRequestBody,
-						response: responseForLog,
-						upstreamLogContext: lastUpstreamLogContext,
-						usage: usage as unknown as Record<string, unknown> | undefined,
-						error: streamError,
-						status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
-						attemptedRetries: fallbackDepth,
-						fallbackModels: fallbackModels,
-						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
-						routingTrace: copyRoutingTrace(modelResolutionTrace),
-					});
-					try {
-						await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
-					} catch (accountingError) {
-						// SSE headers 已发送，无法再返回 503；保留错误日志供运维重试账务。
-						logger.error("流式花费账务提交失败", { error: accountingError, requestId: spendRequestId });
-						if (streamError !== undefined && spendRequestId) {
-							await releaseSpend(db, spendRequestId).catch((releaseError: unknown) => {
-								logger.error("流式 Provider 失败后释放 reservation 失败", {
-									error: releaseError,
-									requestId: spendRequestId,
-								});
-							});
+				if (!retryBeforeOutput) {
+					if (!res.writableEnded) {
+						res.end();
+					}
+					if (req.auth) {
+						const responseForLog = buildAggregatedChatResponse(accumulator, fallbackDepth === 0 ? model : currentModel);
+						const usage =
+							accumulator.usage ??
+							(accumulator.estimatedCompletionTokens > 0
+								? {
+										prompt_tokens: 0,
+										completion_tokens: accumulator.estimatedCompletionTokens,
+										total_tokens: accumulator.estimatedCompletionTokens,
+									}
+								: undefined);
+						const spendLog = await buildSpendLogFromRequest({
+							req: req,
+							requestId: spendRequestId,
+							auth: req.auth,
+							callType: CallType.ACompletion,
+							model: model,
+							modelGroup: model,
+							modelId: spendInfo.modelId,
+							customLlmProvider: spendInfo.customLlmProvider,
+							apiBase: spendInfo.apiBase,
+							customCostPerToken: spendInfo.customCostPerToken,
+							deploymentModel: spendInfo.deploymentModel,
+							startTime: startTime,
+							endTime: new Date(),
+							completionStartTime: completionStartTime,
+							messages: originalMessages,
+							proxyServerRequestBody: originalRequestBody,
+							response: responseForLog,
+							upstreamLogContext: lastUpstreamLogContext,
+							usage: usage as unknown as Record<string, unknown> | undefined,
+							error: streamError,
+							status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
+							attemptedRetries: fallbackDepth,
+							fallbackModels: fallbackModels,
+							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
+							routingTrace: copyRoutingTrace(modelResolutionTrace),
+						});
+						try {
+							await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+						} catch (accountingError) {
+							// SSE headers 已发送，无法再返回 503；保留错误日志供运维重试账务。
+							logger.error("流式花费账务提交失败", { error: accountingError, requestId: spendRequestId });
+							const failedRequestId = streamError !== undefined ? spendRequestId : undefined;
+							await (failedRequestId ? releaseSpend(db, failedRequestId) : Promise.resolve()).catch(
+								(releaseError: unknown) => {
+									logger.error("流式 Provider 失败后释放 reservation 失败", {
+										error: releaseError,
+										requestId: spendRequestId,
+									});
+								},
+							);
 						}
 					}
 				}
+			}
+			if (retryBeforeOutput) {
+				throw streamError;
 			}
 			return;
 		} catch (err) {
@@ -914,15 +989,12 @@ async function handleStreamingResponse(
 				attachUpstreamLogContext(err as object, lastUpstreamLogContext);
 			}
 			lastError = err;
-			litellmRouter.markFailed(deployment.model_name);
-			const nextFallback =
-				litellmRouter.getNextFallbackWithTrace?.(currentModel, 0) ??
-				((fallbackModel) => {
-					if (fallbackModel === null) {
-						return null;
-					}
-					return { inputModel: fallbackModel, resolvedModel: fallbackModel, resolutionPath: [fallbackModel] };
-				})(litellmRouter.getNextFallback(currentModel, 0));
+			if (litellmRouter.recordDeploymentFailure) {
+				litellmRouter.recordDeploymentFailure(deployment, err instanceof Error ? err : new Error(String(err)));
+			} else {
+				litellmRouter.markFailed(getDeploymentKey(deployment));
+			}
+			const nextFallback = getNextStreamingFallback(litellmRouter, currentModel, model, fallbackModels);
 			if (!nextFallback) {
 				break;
 			}
@@ -937,7 +1009,8 @@ async function handleStreamingResponse(
 			currentModel = nextFallback.inputModel;
 			fallbackModels.push(nextFallback.resolvedModel);
 		} finally {
-			litellmRouter.trackActiveRequest(deployment.model_name, -1);
+			stopKeepalive();
+			litellmRouter.trackActiveRequest(getDeploymentKey(deployment), -1);
 		}
 	}
 
@@ -966,8 +1039,8 @@ async function handleStreamingResponse(
 						endTime: new Date(),
 						messages: originalMessages,
 						proxyServerRequestBody: originalRequestBody,
-							error: terminalError,
-							upstreamLogContext: getUpstreamLogContext(terminalError) ?? lastUpstreamLogContext,
+						error: terminalError,
+						upstreamLogContext: getUpstreamLogContext(terminalError) ?? lastUpstreamLogContext,
 						status: SpendLogStatus.Failure,
 						attemptedRetries: modelResolutionTrace.fallbackDepth,
 						maxRetries: litellmRouter.maxFallbacks,
@@ -1047,31 +1120,31 @@ async function handlePrivateVisionStreamingResponse(
 	if (checkpointRequestId !== undefined && db !== undefined) {
 		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
 			serialize: () => {
-					const acc = currentAccumulator;
-					if (!acc) {
-						return null;
-					}
-					const response = buildAggregatedChatResponse(acc, model);
-					const usage =
-						acc.usage ??
-						(acc.estimatedCompletionTokens > 0
-							? {
-									prompt_tokens: 0,
-									completion_tokens: acc.estimatedCompletionTokens,
-									total_tokens: acc.estimatedCompletionTokens,
-								}
-							: undefined);
-					if (response === undefined && usage === undefined) {
-						return null;
-					}
-					return {
-						protocol: "chat_completions",
-						state: "in_progress",
-						response: (response ?? null) as Record<string, unknown> | null,
-						usage: (usage ?? null) as Record<string, unknown> | null,
-						upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
-						upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
-					};
+				const acc = currentAccumulator;
+				if (!acc) {
+					return null;
+				}
+				const response = buildAggregatedChatResponse(acc, model);
+				const usage =
+					acc.usage ??
+					(acc.estimatedCompletionTokens > 0
+						? {
+								prompt_tokens: 0,
+								completion_tokens: acc.estimatedCompletionTokens,
+								total_tokens: acc.estimatedCompletionTokens,
+							}
+						: undefined);
+				if (response === undefined && usage === undefined) {
+					return null;
+				}
+				return {
+					protocol: "chat_completions",
+					state: "in_progress",
+					response: (response ?? null) as Record<string, unknown> | null,
+					usage: (usage ?? null) as Record<string, unknown> | null,
+					upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+					upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+				};
 			},
 			write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
 		});
@@ -1125,16 +1198,18 @@ async function handlePrivateVisionStreamingResponse(
 		throw ApiError.unavailable("识图 Agent Loop 没有返回 completion choice");
 	}
 	const usage = response.usage;
-	const providerHeaders = (result as { _providerHeaders?: Record<string, string> })._providerHeaders;
-	for (const [key, value] of Object.entries(providerHeaders ?? {})) {
-		if (!res.getHeader(key)) {
-			res.setHeader(key, value);
+	if (!res.headersSent) {
+		const providerHeaders = (result as { _providerHeaders?: Record<string, string> })._providerHeaders;
+		for (const [key, value] of Object.entries(providerHeaders ?? {})) {
+			if (!res.getHeader(key)) {
+				res.setHeader(key, value);
+			}
 		}
+		res.setHeader("Content-Type", "text/event-stream");
+		res.setHeader("Cache-Control", "no-cache");
+		res.setHeader("Connection", "keep-alive");
+		res.setHeader("X-Accel-Buffering", "no");
 	}
-	res.setHeader("Content-Type", "text/event-stream");
-	res.setHeader("Cache-Control", "no-cache");
-	res.setHeader("Connection", "keep-alive");
-	res.setHeader("X-Accel-Buffering", "no");
 	const id = response.id;
 	const created = response.created;
 	const publicModel = response.model || model;

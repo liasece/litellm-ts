@@ -21,6 +21,7 @@ import {
 	ContextWindowExceededError,
 	NotFoundError,
 	InternalServerError,
+	ServiceUnavailableError,
 } from "./RouterErrors";
 import type { FallbackHandler } from "./FallbackHandler";
 
@@ -150,24 +151,30 @@ export function getRetryPolicyOverride(
 		return undefined;
 	}
 	if (exception instanceof AuthenticationError) {
-		return policy.AuthenticationErrorRetries ?? undefined;
+		return policy.AuthenticationErrorRetries ?? policy.DefaultRetries;
 	}
 	if (exception instanceof APIConnectionError || exception instanceof TimeoutError) {
-		return policy.TimeoutErrorRetries ?? undefined;
+		return policy.TimeoutErrorRetries ?? policy.DefaultRetries;
 	}
 	if (exception instanceof RateLimitError) {
-		return policy.RateLimitErrorRetries ?? undefined;
+		return policy.RateLimitErrorRetries ?? policy.DefaultRetries;
 	}
 	if (exception instanceof ContentPolicyViolationError) {
-		return policy.ContentPolicyViolationErrorRetries ?? undefined;
+		return policy.ContentPolicyViolationErrorRetries ?? policy.DefaultRetries;
+	}
+	if (exception instanceof ServiceUnavailableError) {
+		return policy.ServiceUnavailableErrorRetries ?? policy.InternalServerErrorRetries ?? policy.DefaultRetries;
+	}
+	if (exception instanceof NotFoundError) {
+		return policy.NotFoundErrorRetries ?? policy.DefaultRetries;
 	}
 	if (exception instanceof InternalServerError) {
-		return policy.InternalServerErrorRetries ?? undefined;
+		return policy.InternalServerErrorRetries ?? policy.DefaultRetries;
 	}
 	if (exception instanceof BadRequestError) {
-		return policy.BadRequestErrorRetries ?? undefined;
+		return policy.BadRequestErrorRetries ?? policy.DefaultRetries;
 	}
-	return undefined;
+	return policy.DefaultRetries;
 }
 
 /**

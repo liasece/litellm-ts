@@ -17,3 +17,16 @@ describe("DbConfigProvider", () => {
 		expect(limit).toHaveBeenCalledTimes(2);
 	});
 });
+
+it("merges YAML defaults with fresh database overrides, including explicit false and zero", async () => {
+	const defaults = { keepalive_seconds: 10, enabled: true };
+	dbConfigProvider.setDefaults({ litellm_settings: defaults });
+	defaults.keepalive_seconds = 99;
+	let value = { enabled: false, keepalive_seconds: 0 };
+	const db = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ param_value: value }] }) }) }) };
+	await dbConfigProvider.initialize(db as never);
+	expect(await dbConfigProvider.getEffectiveParam("litellm_settings")).toEqual({ enabled: false, keepalive_seconds: 0 });
+	value = {} as typeof value;
+	expect(await dbConfigProvider.getEffectiveParam("litellm_settings")).toEqual({ enabled: true, keepalive_seconds: 10 });
+	dbConfigProvider.setDefaults({});
+});

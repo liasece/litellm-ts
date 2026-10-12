@@ -1,3 +1,5 @@
+import { trackIteratorLifetime } from "../router/TrackedStream";
+import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
 /**
  * AnthropicUpstreamDispatch — Anthropic Messages 端点的上游派发与 fallback 链执行
  *
@@ -84,6 +86,10 @@ export interface UpstreamAttempt {
  */
 export interface FallbackRouterFacade {
 	/** 选取一个可用 deployment（内部已解析 model_group_alias 并排除冷却中的实例） */
+	trackActiveRequest?(deploymentKey: string, delta: number): void;
+	/**
+	 *
+	 */
 	getAvailableDeployment(model: string): { deployment: Deployment; provider: ProviderConfig } | null;
 	/** 解析逻辑模型并返回完整 alias 路径。 */
 	resolveModelGroupWithTrace?(model: string): ModelGroupResolution;
@@ -146,9 +152,9 @@ export function buildUpstreamAttempt(
 		api_key: apiKey,
 		anthropic_version: anthropicVersion,
 	};
-	const providerReq = provider.transformAnthropicRequest
-		? provider.transformAnthropicRequest(deploymentModel, requestParams)
-		: provider.transformRequest(deploymentModel, [], requestParams);
+	const providerReq =
+		provider.transformAnthropicRequest?.(deploymentModel, requestParams) ??
+		provider.transformRequest(deploymentModel, [], requestParams);
 	return {
 		upstreamUrl: providerReq.url,
 		upstreamHeaders: providerReq.headers,
@@ -279,6 +285,15 @@ export async function executeWithFallbackChain<T>(
 		let groupLastError: Error | null = null;
 		while (attempt !== null && !attemptedDeploymentKeys.has(attempt.deploymentKey)) {
 			attemptedDeploymentKeys.add(attempt.deploymentKey);
+			const deploymentKey = attempt.deploymentKey;
+			router.trackActiveRequest?.(deploymentKey, 1);
+			let released = false;
+			const release = (): void => {
+				if (!released) {
+					released = true;
+					router.trackActiveRequest?.(deploymentKey, -1);
+				}
+			};
 			try {
 				const result = await execute(attempt);
 				router.recordDeploymentSuccess(attempt.deployment);
@@ -288,12 +303,17 @@ export async function executeWithFallbackChain<T>(
 					fallbackStats.modelResolutionChain = copyModelResolutionChain(modelResolutionTrace);
 					fallbackStats.routingTrace = copyRoutingTrace(modelResolutionTrace);
 				}
-				return result;
+				return trackIteratorLifetime(result, release);
 			} catch (err) {
+				release();
 				if (err !== null && typeof err === "object" && "name" in err && err.name === "AbortError") {
 					throw err;
 				}
 				const failure = normalizeProviderFailure(err);
+				failure.message = redactConfiguredSecrets(failure.message, {
+					...attempt.deployment.litellm_params,
+					...attempt.upstreamHeaders,
+				});
 				lastError = failure;
 				groupLastError = failure;
 				lastAttemptedDeployment = attempt.deployment.model_name;

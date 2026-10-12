@@ -1,3 +1,4 @@
+import { registerScopedSpendReports } from "./ScopedSpendReports";
 /**
  * 花费管理端点入口
  *
@@ -43,6 +44,7 @@ export function registerSpendManagementEndpoints(
 	_requireAuth?: (req: Request, res: Response, next: () => void) => void,
 ): void {
 	logger.info("Registering spend management endpoints");
+	registerScopedSpendReports(router, db);
 	registerSpendLogsEndpoints(router, db);
 	registerGlobalSpendEndpoints(router, db);
 }

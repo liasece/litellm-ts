@@ -1,3 +1,5 @@
+import { validateSpendMetadataFields } from "./spend/SpendMetadataFields";
+import { validateKeyAliasSettings } from "./management/KeyAliasPolicy";
 /**
  * 服务容器
  * 集中管理所有运行时服务实例的创建和生命周期
@@ -68,7 +70,14 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 1.5 加载 DB 配置覆盖（LiteLLM_Config 表：store_prompts/logo/callbacks 等
 	// WebUI 设置项，对齐 Python proxy_config.get_config() 的 DB 合并语义）
 	const { dbConfigProvider } = await import("./core/config/DbConfigProvider");
+	dbConfigProvider.setDefaults({
+		general_settings: config.generalSettingsRaw ?? {},
+		litellm_settings: config.litellmSettingsRaw ?? {},
+		router_settings: config.routerSettingsRaw ?? {},
+	});
 	await dbConfigProvider.initialize(db.db);
+	validateSpendMetadataFields((await dbConfigProvider.getEffectiveParam("general_settings"))["spend_logs_metadata_fields"]);
+	validateKeyAliasSettings(await dbConfigProvider.getEffectiveParam("litellm_settings"));
 
 	// 1.6 批次 E2：yaml ↔ DB 配置差异检测（yaml 快照 hash 比对 + 全量 diff），
 	// 结果存内存 pending 列表，供 WebUI 差异对比窗口（/config/yaml_diff）消费。
@@ -121,9 +130,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// WebUI 登录 cookie 是用 master_key 签名的 HS256 JWT。会话默认 3 天滑动过期：
 	// 已认证请求在临期窗口内同步延长 JWT cookie 和 DB session。
 	const jwtHandler = new JWTHandler(undefined, undefined, undefined, config.generalSettings.master_key);
-	const webUiSessionDurationSeconds = parseSessionDuration(
-		process.env[WEBUI_SESSION_DURATION_ENV_VAR] ?? DEFAULT_WEBUI_SESSION_DURATION,
-	);
+	const webUiSessionDurationSeconds = parseSessionDuration(process.env[WEBUI_SESSION_DURATION_ENV_VAR] ?? DEFAULT_WEBUI_SESSION_DURATION);
 	const authMiddleware = createApiKeyAuth(authRepository, config.generalSettings.master_key, jwtHandler, undefined, {
 		durationSeconds: webUiSessionDurationSeconds,
 	});

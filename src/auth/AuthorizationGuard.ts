@@ -10,6 +10,8 @@ const ROUTE_GROUPS: Readonly<Record<string, readonly string[]>> = {
 	llm_api_routes: [
 		"/chat/completions",
 		"/v1/chat/completions",
+		"/cursor/chat/completions",
+		"/openai/v1/responses/input_tokens",
 		"/completions",
 		"/v1/completions",
 		"/embeddings",
@@ -55,9 +57,19 @@ const ROUTE_GROUPS: Readonly<Record<string, readonly string[]>> = {
 		"/models",
 		"/v1/models",
 	],
-	info_routes: ["/key/info", "/v2/key/info", "/key/list", "/team/info", "/team/list", "/user/info", "/models", "/v1/models"],
+	info_routes: [
+		"/utils/model_info",
+		"/key/info",
+		"/v2/key/info",
+		"/key/list",
+		"/team/info",
+		"/team/list",
+		"/user/info",
+		"/models",
+		"/v1/models",
+	],
 	key_management_routes: ["/key/*", "/v2/key/info"],
-	management_routes: ["/key/*", "/v2/key/info", "/team/*", "/organization/*", "/user/*", "/customer/*", "/model/*"],
+	management_routes: ["/v2/organization/*", "/key/*", "/v2/key/info", "/team/*", "/organization/*", "/user/*", "/customer/*", "/model/*"],
 };
 
 /**
@@ -170,6 +182,17 @@ export class AuthorizationGuard {
 				next(error);
 			}
 		};
+	}
+
+	/**
+	 * @param authValue
+	 * @param updates
+	 */
+	async assertKeyFieldUpdates(authValue: UserAPIKeyAuth | undefined, updates: Record<string, unknown>): Promise<void> {
+		const auth = this._requireAuth(authValue);
+		if (updates["permissions"] !== undefined && !isProxyAdmin(auth)) {
+			throw ApiError.forbidden("Only proxy admins can change key permissions");
+		}
 	}
 
 	/**

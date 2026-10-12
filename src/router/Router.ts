@@ -1,3 +1,6 @@
+import { RouterRateLimitErrorBasic } from "./RouterErrors";
+import { countInputTokens } from "../core/utils/inputTokens";
+import { filterDeploymentsByTags, stripRoutingMetadata } from "./TagRouting";
 /**
  * LiteLLM Router — 主类。
  * 持有 deployments / cooldown / tpmRpmLimiter / fallbackHandler / providerRegistry；
@@ -69,6 +72,7 @@ interface ExecResult {
 	body: unknown;
 	ttft: number;
 	stream?: AsyncGenerator<unknown>;
+	cancelStream?: () => void;
 	/** 实际执行上游完整 URL（provider.transformRequest 产出），spend log api_base 用 */
 	upstreamUrl: string;
 	/** 最终上游 HTTP 请求/响应，供开启详细日志时持久化。 */
@@ -93,6 +97,10 @@ export interface RouterRuntimeSnapshot {
 	readonly fallbackHandler: FallbackHandler;
 	/** 当前请求使用的部署选择函数。 */
 	readonly routeFn: RouteFn;
+	/**
+	 *
+	 */
+	readonly routingStrategyArgs?: { ttft_percentile?: number };
 	/** 默认冷却时长（毫秒）。 */
 	readonly cooldownTimeMs: number;
 	/** 默认重试次数。 */
@@ -161,8 +169,6 @@ const STRATEGY_MAP: Record<string, RouteFn> = {
 };
 
 const RECENT_LATENCY_COUNT = 10;
-const CHARS_PER_TOKEN = 3.5;
-const ESTIMATED_TOKENS_OVERHEAD = 10;
 const FAILURE_LATENCY_PENALTY_SEC = 1000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_MAX_FALLBACKS = 5;
@@ -188,6 +194,7 @@ export class Router {
 	private readonly _fallbackHandler: FallbackHandler;
 	private readonly _providerRegistry: ProviderRegistry;
 	private _routeFn: RouteFn;
+	private _routingStrategyArgs: { ttft_percentile?: number } | undefined;
 	private _cooldownTimeMs: number;
 	private _numRetries: number;
 	private readonly _modelGroupAlias: Record<string, RouterModelGroupAliasValue>;
@@ -205,6 +212,8 @@ export class Router {
 	private readonly _routerCallbacks: RouterCallbacks | undefined;
 	private readonly _credentialValues: CredentialValuesAccessor | undefined;
 
+	private readonly _requestRoutingParams = new AsyncLocalStorage<Record<string, unknown>>();
+
 	private readonly _activeRequests: Map<string, number> = new Map();
 	private readonly _latencies: Map<string, number> = new Map();
 	private readonly _previousModels: Map<string, number[]> = new Map();
@@ -212,6 +221,7 @@ export class Router {
 	private readonly _successCalls: Map<string, number> = new Map();
 	private readonly _failCalls: Map<string, number> = new Map();
 	private readonly _ttft: Map<string, number> = new Map();
+	private readonly _ttftSamples = new Map<string, number[]>();
 	private readonly _latencySamples: Map<string, number[]> = new Map();
 
 	constructor(
@@ -220,6 +230,8 @@ export class Router {
 		credentialValues?: CredentialValuesAccessor,
 	) {
 		this._deployments = [...config.model_list];
+		this._routingStrategyArgs = config.routing_strategy_args;
+		Router._validateRoutingArgs(this._routingStrategyArgs);
 		this._credentialValues = credentialValues;
 		this._cooldownTimeMs = (config.cooldown_time != null && config.cooldown_time > 0 ? config.cooldown_time : 5) * 1000;
 		// PY router.py:497-502：`if num_retries is not None: self.num_retries = num_retries`——
@@ -542,6 +554,9 @@ export class Router {
 					this._preCallChecks = Boolean(value);
 					break;
 				case "routing_strategy_args":
+					Router._validateRoutingArgs(value as { ttft_percentile?: number });
+					this._routingStrategyArgs = value as { ttft_percentile?: number };
+					break;
 				case "timeout":
 				case "max_retries":
 					// PY 白名单内；TS Router 无对应运行时字段（超时走 deployment.litellm_params），跳过
@@ -654,7 +669,9 @@ export class Router {
 				? (settings["optional_pre_call_checks"] as Record<string, boolean>)
 				: undefined;
 
+		Router._validateRoutingArgs(settings["routing_strategy_args"] as { ttft_percentile?: number } | undefined);
 		return {
+			routingStrategyArgs: settings["routing_strategy_args"] as { ttft_percentile?: number } | undefined,
 			deployments: deployments.map((deployment) => ({
 				...deployment,
 				litellm_params: structuredClone(deployment.litellm_params),
@@ -696,6 +713,7 @@ export class Router {
 				deployments: this._deployments,
 				fallbackHandler: this._fallbackHandler,
 				routeFn: this._routeFn,
+				routingStrategyArgs: this._routingStrategyArgs,
 				cooldownTimeMs: this._cooldownTimeMs,
 				numRetries: this._numRetries,
 				retryPolicy: this._retryPolicy,
@@ -710,9 +728,8 @@ export class Router {
 		);
 	}
 
-	private _estimateInputTokens(messages: Message[]): number {
-		const inputTextLength = messages.reduce((sum, m) => sum + (typeof m.content === "string" ? m.content.length : 0), 0);
-		return Math.ceil(inputTextLength / CHARS_PER_TOKEN) + ESTIMATED_TOKENS_OVERHEAD;
+	private _estimateInputTokens(messages: Message[], optionalParams: Record<string, unknown> = {}): number {
+		return countInputTokens(messages, optionalParams["tools"]);
 	}
 
 	private _buildRoutingContext(deployments: Deployment[], estimatedInputTokens?: number): RoutingContext {
@@ -802,17 +819,30 @@ export class Router {
 	}
 
 	/**
+	 * Keep client routing metadata isolated through native adapters and fallback calls.
+	 * @template T
+	 * @param params
+	 * @param callback
+	 */
+	runWithRequestRoutingParams<T>(params: Record<string, unknown>, callback: () => T): T {
+		return this._requestRoutingParams.run(structuredClone(params), callback);
+	}
+
+	/**
 	 * 选取一个可用 deployment 并附上其 provider 配置。messages 可选用于 token 估算
 	 * @param model - 逻辑模型名（用户传入）
 	 * @param messages - 可选消息列表（用于 token 估算）
+	 * @param optionalParams
 	 */
-	getAvailableDeployment(model: string, messages?: Message[]): AvailDeployment | null {
-		const deployments = this._getDeploymentsForModel(model);
+	getAvailableDeployment(model: string, messages?: Message[], optionalParams: Record<string, unknown> = {}): AvailDeployment | null {
+		const routingParams = { ...this._requestRoutingParams.getStore(), ...optionalParams };
+		const deployments = filterDeploymentsByTags(this._getDeploymentsForModel(model), routingParams);
 		if (deployments.length === 0) {
 			return null;
 		}
-		const estimatedInputTokens = messages ? this._estimateInputTokens(messages) : undefined;
+		const estimatedInputTokens = messages ? this._estimateInputTokens(messages, optionalParams) : undefined;
 		const ctx = this._buildRoutingContext(deployments, estimatedInputTokens);
+		ctx.isStream = routingParams["stream"] === true;
 		const selected = this._runtimeState().routeFn(deployments, ctx);
 		if (!selected) {
 			return null;
@@ -861,6 +891,7 @@ export class Router {
 		deployment: Deployment,
 		messages: Message[],
 		optionalParams: Record<string, unknown>,
+		signal?: AbortSignal,
 	): Promise<ExecResult> {
 		const callType = optionalParams[ROUTER_CALL_TYPE_PARAM];
 		const requestParams = { ...optionalParams };
@@ -869,7 +900,16 @@ export class Router {
 		delete requestParams[ROUTER_RESPONSES_BODY_PARAM];
 		const imageEditInputsRaw = requestParams[ROUTER_IMAGE_EDIT_INPUTS_PARAM];
 		delete requestParams[ROUTER_IMAGE_EDIT_INPUTS_PARAM];
-		const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...requestParams };
+		const mergedParams: Record<string, unknown> = {
+			...deployment.litellm_params,
+			...requestParams,
+			supported_endpoints: deployment.litellm_params["supported_endpoints"],
+		};
+		if (callType === "responses") {
+			for (const field of ["api_base", "api_key", "auth_token", "extra_headers", "custom_llm_provider", "litellm_credential_name"]) {
+				mergedParams[field] = deployment.litellm_params[field];
+			}
+		}
 		let providerRequest: ProviderRequest | undefined;
 		if (callType === "image_generation") {
 			providerRequest = provider.transformImageRequest?.(
@@ -905,7 +945,11 @@ export class Router {
 			throw ApiError.unavailable(`Provider does not support ${String(callType)} for model ${deployment.model_name}`);
 		}
 
+		if (providerRequest.body && typeof providerRequest.body === "object" && !Array.isArray(providerRequest.body)) {
+			providerRequest = { ...providerRequest, body: stripRoutingMetadata(providerRequest.body as Record<string, unknown>) };
+		}
 		const isStream = providerRequest.stream === true;
+		const streamAbortController = isStream ? new AbortController() : undefined;
 		const responseProtocol = providerRequest.responseProtocol ?? "chat_completions";
 		const timeoutSec = isStream
 			? (deployment.litellm_params.stream_timeout ?? deployment.litellm_params.timeout)
@@ -914,6 +958,10 @@ export class Router {
 		try {
 			execution = await executeProviderRequest(providerRequest, {
 				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
+				signal:
+					streamAbortController && signal
+						? AbortSignal.any([streamAbortController.signal, signal])
+						: (streamAbortController?.signal ?? signal),
 				readJson: !isStream,
 			});
 		} catch (error) {
@@ -926,7 +974,8 @@ export class Router {
 		const upstreamLogContext = createUpstreamLogContext(providerRequest, response, execution.body);
 
 		if (isStream) {
-			const { stream, body: streamBody, ttft } = buildStreamWithTtft(response, execution.startedAtMs, provider, responseProtocol);
+			const measured = buildStreamWithTtft(response, execution.startedAtMs, provider, responseProtocol);
+			const { stream, body: streamBody } = measured;
 			const providerHeaders = extractProviderHeaders(response);
 			if (providerHeaders) {
 				(response as Response & { _providerHeaders?: Record<string, string> })._providerHeaders = providerHeaders;
@@ -934,8 +983,11 @@ export class Router {
 			return {
 				response: response,
 				body: response.ok ? streamBody : execution.body,
-				ttft: ttft,
+				get ttft() {
+					return measured.ttft;
+				},
 				stream: stream,
+				cancelStream: () => streamAbortController?.abort(),
 				upstreamUrl: providerRequest.url,
 				upstreamLogContext: upstreamLogContext,
 				responseProtocol: responseProtocol,
@@ -981,6 +1033,7 @@ export class Router {
 			retryAfter: runtime.retryAfter,
 			cooldownTimeMs: runtime.cooldownTimeMs,
 			allowedFails: runtime.allowedFails,
+			recordTtft: (deployment, value) => this.recordDeploymentTtft(deployment, value),
 			recentLatencyCount: RECENT_LATENCY_COUNT,
 			failureLatencyPenaltySec: FAILURE_LATENCY_PENALTY_SEC,
 		};
@@ -1007,9 +1060,9 @@ export class Router {
 				modelResolutionTrace: modelResolutionTrace,
 			},
 			{
-				getCandidate: (m, msgs) => this.getAvailableDeployment(m, msgs),
-				estimateInputTokens: (msgs) => this._estimateInputTokens(msgs),
-				executeRequest: (prov, dep, msgs, params) => this._executeRequest(prov, dep, msgs, params),
+				getCandidate: (m, msgs) => this.getAvailableDeployment(m, msgs, optionalParams),
+				estimateInputTokens: (msgs) => this._estimateInputTokens(msgs, optionalParams),
+				executeRequest: (prov, dep, msgs, params, signal) => this._executeRequest(prov, dep, msgs, params, signal),
 				matchDeploymentPattern: (dep, m) => this._matchDeploymentPattern(dep, m),
 				getHealthyDeployments: (m) => this._getHealthyDeploymentsForGroup(m),
 			},
@@ -1264,13 +1317,49 @@ export class Router {
 		};
 	}
 
+	private static _validateRoutingArgs(args?: { ttft_percentile?: number }): void {
+		const value = args?.ttft_percentile;
+		if (value !== undefined && (!Number.isFinite(value) || value <= 0 || value > 1)) {
+			throw new Error("ttft_percentile must be greater than 0 and at most 1");
+		}
+	}
+
+	/**
+	 * @param deployment
+	 * @param value
+	 */
+	recordDeploymentTtft(deployment: Deployment, value: number): void {
+		if (!Number.isFinite(value) || value < 0) {
+			return;
+		}
+		const key = getDeploymentKey(deployment);
+		const samples = this._ttftSamples.get(key) ?? [];
+		samples.push(value);
+		if (samples.length > RECENT_LATENCY_COUNT) {
+			samples.shift();
+		}
+		this._ttftSamples.set(key, samples);
+		const percentile = this._runtimeState().routingStrategyArgs?.ttft_percentile;
+		const selected =
+			percentile === undefined
+				? samples.reduce((sum, sample) => sum + sample, 0) / samples.length
+				: [...samples].sort((a, b) => a - b)[Math.ceil(samples.length * percentile) - 1]!;
+		this._ttft.set(key, selected);
+	}
+
 	/**
 	 * 增减某 deployment 的活跃请求计数（外部/test 观察）
 	 * @param modelName - deployment model_name
 	 * @param delta - 增量（正/负）
+	 * @throws {Error} Rejects invalid input or a denied operation.
 	 */
 	trackActiveRequest(modelName: string, delta: number): void {
 		const current = this._activeRequests.get(modelName) ?? 0;
+		const deployment = this.getDeployments().find((dep) => getDeploymentKey(dep) === modelName);
+		const limit = deployment?.litellm_params["max_parallel_requests"];
+		if (delta > 0 && typeof limit === "number" && current + delta > limit) {
+			throw new RouterRateLimitErrorBasic("Deployment max_parallel_requests exceeded", { model: deployment!.model_name });
+		}
 		this._activeRequests.set(modelName, Math.max(0, current + delta));
 	}
 }

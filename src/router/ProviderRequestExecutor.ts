@@ -43,12 +43,8 @@ export async function executeProviderRequest(
 ): Promise<ProviderRequestExecutionResult> {
 	const abortController = new AbortController();
 	let timedOut = false;
-	const abortFromCaller = (): void => abortController.abort(options.signal?.reason);
-	if (options.signal?.aborted === true) {
-		abortFromCaller();
-	} else {
-		options.signal?.addEventListener("abort", abortFromCaller, { once: true });
-	}
+	// Fetch retains this signal while reading the response body after headers arrive.
+	const signal = options.signal ? AbortSignal.any([abortController.signal, options.signal]) : abortController.signal;
 	const timeoutHandle =
 		options.timeoutMs !== undefined
 			? setTimeout(() => {
@@ -63,7 +59,7 @@ export async function executeProviderRequest(
 			method: request.method,
 			headers: request.headers,
 			body: request.bodyEncoding === "raw" ? (request.body as never) : JSON.stringify(request.body),
-			signal: abortController.signal,
+			signal: signal,
 		});
 		let body: unknown;
 		if (options.readJson === false) {
@@ -90,7 +86,6 @@ export async function executeProviderRequest(
 		}
 		throw error;
 	} finally {
-		options.signal?.removeEventListener("abort", abortFromCaller);
 		if (timeoutHandle !== undefined) {
 			clearTimeout(timeoutHandle);
 		}

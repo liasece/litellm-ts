@@ -18,6 +18,8 @@ import {
 	type BuiltinCapabilitiesConfig,
 } from "../capabilities/BuiltinCapabilitiesConfig";
 import { buildEnrichedModelInfo } from "./modelGroupBuilder";
+import { canAuthAccessModel } from "../auth/AuthChecks";
+import { claudeCodeModelId, isClaudeCodeClient } from "./CodingClientModels";
 import codexModelDefaults from "../data/codex_model_defaults.json";
 
 /** OpenAI 兼容的模型对象定义 */
@@ -37,7 +39,7 @@ interface OpenAIModel {
 }
 
 /** OpenAI 兼容的模型列表响应 */
-interface ModelListResponse {
+interface OpenAIModelListResponse {
 	/** 对象类型，固定为 "list" */
 	object: "list";
 	/** 模型数据数组 */
@@ -46,13 +48,21 @@ interface ModelListResponse {
 	models: CodexModelInfo[];
 }
 
+interface AnthropicModelListResponse {
+	data: Array<{ id: string; type: "model"; display_name: string; created_at: string }>;
+	has_more: boolean;
+	first_id: string | null;
+	last_id: string | null;
+}
+type ModelListResponse = OpenAIModelListResponse | AnthropicModelListResponse;
+
 /** Rich model metadata consumed by Codex's remote `/models` catalog. */
 interface CodexModelInfo {
 	slug: string;
 	display_name: string;
 	description: string | null;
 	supported_reasoning_levels: Array<{ effort: string; description: string }>;
-	shell_type: "default";
+	shell_type: "unified_exec";
 	visibility: "list";
 	supported_in_api: boolean;
 	priority: number;
@@ -70,7 +80,7 @@ interface CodexModelInfo {
 	default_verbosity: null;
 	apply_patch_tool_type: null;
 	web_search_tool_type: "text";
-	truncation_policy: { mode: "tokens"; limit: number };
+	truncation_policy: { mode: "bytes"; limit: number };
 	supports_parallel_tool_calls: boolean;
 	supports_image_detail_original: boolean;
 	context_window: number | null;
@@ -117,20 +127,40 @@ export class ModelsController {
 	 * 获取所有可用模型列表
 	 * @returns OpenAI 兼容的模型列表响应
 	 */
+	listModels(): Promise<OpenAIModelListResponse>;
+
+	/**
+	 *
+	 */
+	listModels(request: Request): Promise<ModelListResponse>;
+
+	/**
+	 * @param request
+	 */
 	@noAuth()
 	@get("/v1/models")
-	async listModels(): Promise<ModelListResponse> {
-		return this._buildModelList();
+	async listModels(@req() request?: Request): Promise<ModelListResponse> {
+		return this._buildModelList(request);
 	}
 
 	/**
 	 * 简写路径的模型列表
 	 * @returns OpenAI 兼容的模型列表响应
 	 */
+	listModelsShort(): Promise<OpenAIModelListResponse>;
+
+	/**
+	 *
+	 */
+	listModelsShort(request: Request): Promise<ModelListResponse>;
+
+	/**
+	 * @param request
+	 */
 	@noAuth()
 	@get("/models")
-	async listModelsShort(): Promise<ModelListResponse> {
-		return this._buildModelList();
+	async listModelsShort(@req() request?: Request): Promise<ModelListResponse> {
+		return this._buildModelList(request);
 	}
 
 	/**
@@ -141,7 +171,7 @@ export class ModelsController {
 	@noAuth()
 	@get("/v1/models/:model_id")
 	async getModel(@req() req: Request): Promise<ModelDetailResponse> {
-		return this._findModel(String(req.params.model_id));
+		return this._findModel(String(req.params.model_id), req);
 	}
 
 	/**
@@ -152,19 +182,26 @@ export class ModelsController {
 	@noAuth()
 	@get("/models/:model_id")
 	async getModelShort(@req() req: Request): Promise<ModelDetailResponse> {
-		return this._findModel(String(req.params.model_id));
+		return this._findModel(String(req.params.model_id), req);
 	}
 
 	/**
 	 * 构建模型列表响应
+	 * @param request
 	 */
-	private async _buildModelList(): Promise<ModelListResponse> {
+	private async _buildModelList(request?: Request): Promise<ModelListResponse> {
 		const data: OpenAIModel[] = [];
 		const models: CodexModelInfo[] = [];
 		const builtinCapabilities = await this._loadBuiltinCapabilities();
 		const deployments = this._router.getDeployments?.() ?? [];
 		const deploymentsByModel = new Map<string, Deployment[]>();
 		for (const deployment of deployments) {
+			if (
+				deployment.model_info?.["discoverable"] === false ||
+				(request?.auth && !canAuthAccessModel(request.auth, deployment.model_name))
+			) {
+				continue;
+			}
 			const group = deploymentsByModel.get(deployment.model_name);
 			if (group) {
 				group.push(deployment);
@@ -190,22 +227,33 @@ export class ModelsController {
 			models.push(this._buildCodexModelInfo(modelName, enrichedGroup, inputModalities, models.length));
 		}
 
+		if (request?.get?.("anthropic-version") || isClaudeCodeClient(request)) {
+			const listing = data.map((model) => ({
+				id: isClaudeCodeClient(request) ? claudeCodeModelId(model.id) : model.id,
+				type: "model" as const,
+				display_name: models.find((entry) => entry.slug === model.id)?.display_name ?? model.id,
+				created_at: new Date(model.created * 1000).toISOString(),
+			}));
+			// Decorator handlers serialize both negotiated protocol shapes directly.
+			return { data: listing, has_more: false, first_id: listing[0]?.id ?? null, last_id: listing.at(-1)?.id ?? null };
+		}
 		return { object: "list", data: data, models: models };
 	}
 
 	/**
 	 * 根据 model_id 查找模型详情
 	 * @param modelId - 模型 ID（逻辑模型名称）
+	 * @param request
 	 * @throws {ApiError} 模型不存在时抛出 404 错误
 	 */
-	private async _findModel(modelId: string): Promise<ModelDetailResponse> {
+	private async _findModel(modelId: string, request?: Request): Promise<ModelDetailResponse> {
 		const deployments = this._router.getDeployments?.() ?? [];
 		const builtinCapabilities = await this._loadBuiltinCapabilities();
 
 		// 允许通过完整的 model_name 或 litellm_params.model 匹配
 		const dep = deployments.find((d) => d.model_name === modelId || d.litellm_params.model === modelId);
 
-		if (!dep) {
+		if (!dep || (request?.auth && !canAuthAccessModel(request.auth, dep.model_name))) {
 			throw ApiError.notFound(`模型 "${modelId}" 不存在`);
 		}
 
@@ -247,17 +295,43 @@ export class ModelsController {
 			.map((info) => info["max_input_tokens"])
 			.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
 		const contextWindow = contextWindows.length > 0 ? Math.max(...contextWindows) : null;
+		const info = enrichedGroup[0] ?? {};
+		const tiers = Array.isArray(info["service_tiers"]) ? info["service_tiers"] : [];
+		const serviceTiers = tiers.flatMap((tier: unknown) => {
+			if (typeof tier === "string") {
+				return [{ id: tier, name: tier, description: "" }];
+			}
+			if (typeof tier !== "object" || tier === null || typeof (tier as Record<string, unknown>)["id"] !== "string") {
+				return [];
+			}
+			const row = tier as Record<string, unknown>;
+			return [
+				{
+					id: row["id"] as string,
+					name: typeof row["name"] === "string" ? row["name"] : (row["id"] as string),
+					description: typeof row["description"] === "string" ? row["description"] : "",
+				},
+			];
+		});
 		return {
 			slug: modelName,
-			display_name: modelName,
+			display_name: typeof info["display_name"] === "string" ? info["display_name"] : modelName,
 			description: `LiteLLM logical model ${modelName}`,
-			supported_reasoning_levels: [],
-			shell_type: "default",
+			supported_reasoning_levels: Array.isArray(info["supported_reasoning_levels"])
+				? (info["supported_reasoning_levels"] as Array<{ effort: string; description: string }>)
+				: ["low", "medium", "high", "xhigh", "max"]
+						.filter(
+							(effort) =>
+								info[`supports_${effort}_reasoning_effort`] === true ||
+								(info["supports_reasoning"] === true && ["low", "medium", "high"].includes(effort)),
+						)
+						.map((effort) => ({ effort: effort, description: effort })),
+			shell_type: "unified_exec",
 			visibility: "list",
 			supported_in_api: true,
 			priority: priority,
 			additional_speed_tiers: [],
-			service_tiers: [],
+			service_tiers: serviceTiers,
 			availability_nux: null,
 			upgrade: null,
 			base_instructions: codexModelDefaults.base_instructions,
@@ -270,10 +344,8 @@ export class ModelsController {
 			default_verbosity: null,
 			apply_patch_tool_type: null,
 			web_search_tool_type: "text",
-			truncation_policy: { mode: "tokens", limit: 10_000 },
-			supports_parallel_tool_calls: enrichedGroup.some(
-				(info) => info["supports_parallel_function_calling"] === true,
-			),
+			truncation_policy: { mode: "bytes", limit: 10_000 },
+			supports_parallel_tool_calls: enrichedGroup.some((info) => info["supports_parallel_function_calling"] === true),
 			supports_image_detail_original: false,
 			context_window: contextWindow,
 			max_context_window: contextWindow,

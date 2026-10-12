@@ -58,6 +58,15 @@ export function registerRoute(router: Router, endpoint: EndpointDef, handler: Ro
 			}
 		} catch (error) {
 			if (res.headersSent) {
+				if (!res.writableEnded && String(res.getHeader("Content-Type")).includes("text/event-stream")) {
+					const body = mapToApiError(error).toErrorBody();
+					res.write(
+						req.path === "/v1/messages"
+							? `event: error\ndata: ${JSON.stringify({ type: "error", ...body })}\n\n`
+							: `data: ${JSON.stringify(body)}\n\n`,
+					);
+					res.end();
+				}
 				return;
 			}
 			if (!(error instanceof ApiError)) {

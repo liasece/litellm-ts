@@ -1,3 +1,6 @@
+import { sseKeepaliveMiddleware } from "./proxy/SseKeepalive";
+import { registerEntityPatchRoutes } from "./management/EntityPatchEndpoints";
+import { codingClientModelMiddleware } from "./proxy/CodingClientModels";
 /**
  * LiteLLM TypeScript Gateway — 主入口
  *
@@ -247,10 +250,15 @@ export class LiteLLMServer {
 	// ── 核心代理端点 ──
 	private _registerCoreProxyRoutes(app: express.Express, container: ServiceContainer): void {
 		const proxyRouter = express.Router();
+		proxyRouter.use(codingClientModelMiddleware(container.router));
 		proxyRouter.use(container.authMiddleware);
 		proxyRouter.use(webUiCsrfProtection);
 		proxyRouter.use(container.authorizationGuard.middleware("inference"));
 		proxyRouter.use(container.runtimeConfigService.middleware(container.router));
+		proxyRouter.use((req, _res, next) =>
+			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
+		);
+		proxyRouter.use(sseKeepaliveMiddleware(container.router));
 
 		// Chat completions
 		registerCliProxyNativeChatRoutes(proxyRouter, container.router, container.cliProxyRuntime, container.db.db);
@@ -285,6 +293,7 @@ export class LiteLLMServer {
 		managementRouter.use(webUiCsrfProtection);
 		managementRouter.use(container.authorizationGuard.middleware("management"));
 
+		registerEntityPatchRoutes(managementRouter, container.db.db);
 		createKeyManagementRoutes(managementRouter, container.db.db, container.authorizationGuard);
 		createInternalUserRoutes(managementRouter, container.db.db, null);
 		createTeamRoutes(managementRouter, container.db.db, null);
@@ -312,10 +321,15 @@ export class LiteLLMServer {
 	// ── Stub 端点（28 个 LiteLLM API 表面） ──
 	private _registerStubRoutes(app: express.Express, container: ServiceContainer): void {
 		const stubRouter = express.Router();
+		stubRouter.use(codingClientModelMiddleware(container.router));
 		stubRouter.use(container.authMiddleware);
 		stubRouter.use(webUiCsrfProtection);
 		stubRouter.use(container.authorizationGuard.middleware("authenticated"));
 		stubRouter.use(container.runtimeConfigService.middleware(container.router));
+		stubRouter.use((req, _res, next) =>
+			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
+		);
+		stubRouter.use(sseKeepaliveMiddleware(container.router));
 
 		// Models 页面支撑（需鉴权）
 		// 必须传 container.router：Router deployments 是运行时真实模型源，

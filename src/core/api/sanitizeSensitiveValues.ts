@@ -18,7 +18,7 @@ const SENSITIVE_KEY_NAMES = new Set([
  * 判断字段名是否承载秘密，避免将 max_tokens 等普通配置误判为 secret。
  * @param key
  */
-function isSensitiveKey(key: string): boolean {
+export function isSensitiveKey(key: string): boolean {
 	const normalized = key.toLowerCase().replaceAll("-", "_");
 	if (normalized.endsWith("_cost_per_token")) {
 		return false;
