@@ -14,7 +14,15 @@ import FilterComponent, { FilterOption } from "../molecules/filter";
 import { allEndUsersCall, keyInfoV1Call, uiSpendLogsCall } from "../networking";
 import KeyInfoView from "../templates/key_info_view";
 import AuditLogs from "./audit_logs";
-import { createColumns, getSessionGroupRef, LogEntry, type LogsSortField, type SessionGroupRef } from "./columns";
+import {
+	createColumns,
+	getSessionGroupRef,
+	LogEntry,
+	type LogsOptionalColumnId,
+	type LogsSortField,
+	type SessionGroupRef,
+} from "./columns";
+import { readLogsColumnPreferences, writeLogsColumnPreferences } from "./logs_column_prefs";
 import {
 	DEFAULT_LIVE_TAIL_INTERVAL_MS,
 	ERROR_CODE_OPTIONS,
@@ -88,6 +96,14 @@ export default function SpendLogsTable({
 	const [selectedSessionGroup, setSelectedSessionGroup] = useState<SessionGroupRef | null>(null);
 	const [simulationSessionGroup, setSimulationSessionGroup] = useState<SessionGroupRef | null>(null);
 	const [isSpendLogsSettingsModalVisible, setIsSpendLogsSettingsModalVisible] = useState(false);
+	// 列显示设置属于本地展示偏好，保存在浏览器中，不影响代理侧配置。
+	const [visibleOptionalColumns, setVisibleOptionalColumns] = useState<LogsOptionalColumnId[]>(() =>
+		readLogsColumnPreferences(),
+	);
+
+	useEffect(() => {
+		writeLogsColumnPreferences(visibleOptionalColumns);
+	}, [visibleOptionalColumns]);
 
 	const [sortBy, setSortBy] = useState<LogsSortField>(initialUrlState.sortBy);
 	const [sortOrder, setSortOrder] = useState<"asc" | "desc">(initialUrlState.sortOrder);
@@ -397,14 +413,17 @@ export default function SpendLogsTable({
 
 	const logColumns = useMemo(
 		() =>
-			createColumns({
-				sortBy,
-				sortOrder,
-				onSortChange: handleSortChange,
-				onKeyHashClick: handleKeyHashClick,
-				onSessionClick: handleSessionClick,
-			}),
-		[handleKeyHashClick, handleSessionClick, handleSortChange, sortBy, sortOrder],
+			createColumns(
+				{
+					sortBy,
+					sortOrder,
+					onSortChange: handleSortChange,
+					onKeyHashClick: handleKeyHashClick,
+					onSessionClick: handleSessionClick,
+				},
+				{ visibleOptionalColumns },
+			),
+		[handleKeyHashClick, handleSessionClick, handleSortChange, sortBy, sortOrder, visibleOptionalColumns],
 	);
 
 	const logFilterOptions: FilterOption[] = [
@@ -531,6 +550,8 @@ export default function SpendLogsTable({
 									isVisible={isSpendLogsSettingsModalVisible}
 									onCancel={() => setIsSpendLogsSettingsModalVisible(false)}
 									onSuccess={() => setIsSpendLogsSettingsModalVisible(false)}
+									visibleOptionalColumns={visibleOptionalColumns}
+									onVisibleOptionalColumnsChange={setVisibleOptionalColumns}
 								/>
 								<div className="bg-white rounded-lg shadow w-full max-w-full box-border">
 									<div className="box-border w-full max-w-full border-b px-4 py-4 sm:px-6">

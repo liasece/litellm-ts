@@ -4,7 +4,7 @@
  * Detects realtime API responses and renders a specialized view.
  */
 
-import { parseMessages, parseRequestMeta } from "./prettyMessagesUtils";
+import { hasRequestMetaBody, parseMessages, parseRequestMeta } from "./prettyMessagesUtils";
 import { InputCard } from "./InputCard";
 import { OutputCard } from "./OutputCard";
 import { RequestMetaTags } from "./RequestMetaTags";
@@ -13,6 +13,11 @@ import { isRealtimeResponse, RealtimePrettyView } from "./RealtimePrettyView";
 interface PrettyMessagesViewProps {
 	request: any;
 	response: any;
+	/**
+	 * 上游请求（Provider 转换后真正发出的请求）。
+	 * Tag 行按上游请求取值，仅在上游日志缺失时回退到 request。
+	 */
+	metaRequest?: any;
 	metrics?: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
@@ -21,13 +26,16 @@ interface PrettyMessagesViewProps {
 	};
 }
 
-export function PrettyMessagesView({ request, response, metrics }: PrettyMessagesViewProps) {
+export function PrettyMessagesView({ request, response, metrics, metaRequest }: PrettyMessagesViewProps) {
 	if (isRealtimeResponse(response)) {
 		return <RealtimePrettyView response={response} metrics={metrics} />;
 	}
 
 	const { requestMessages, responseMessage } = parseMessages(request, response);
-	const requestMeta = parseRequestMeta(request);
+	// 思考强度等参数可能由代理按模型配置注入，只存在于上游请求中；
+	// 上游日志关闭时（无 upstream 请求体）回退到下游请求，避免标签整体消失。
+	const metaSource = metaRequest && hasRequestMetaBody(metaRequest) ? metaRequest : request;
+	const requestMeta = parseRequestMeta(metaSource);
 
 	return (
 		<div>

@@ -523,6 +523,7 @@ function RequestResponseSection({
 												viewMode === "pretty" ? (
 													<PrettyMessagesView
 														request={getRawRequest()}
+											metaRequest={upstreamRequest}
 														response={getFormattedResponse()}
 														metrics={{
 															prompt_tokens: promptTokens,

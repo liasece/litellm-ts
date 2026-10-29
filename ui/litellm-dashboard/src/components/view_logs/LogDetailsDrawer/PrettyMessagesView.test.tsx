@@ -559,6 +559,32 @@ describe("PrettyMessagesView", () => {
 		expect(screen.getByText(/Reasoning: high/)).toBeInTheDocument();
 	});
 
+	it("should take request metadata tags from the upstream request when provided", () => {
+		const downstreamRequest = { body: { model: "gpt-5", messages: [{ role: "user", content: "Hello" }] } };
+		const upstreamRequest = {
+			url: "https://api.openai.com/v1/responses",
+			method: "POST",
+			body: { model: "gpt-5", reasoning_effort: "high", input: "Hello" },
+		};
+		const response = { choices: [{ message: { role: "assistant", content: "Hi" } }] };
+
+		render(
+			<PrettyMessagesView request={downstreamRequest} metaRequest={upstreamRequest} response={response} />,
+		);
+
+		expect(screen.getByText(/Reasoning: high/)).toBeInTheDocument();
+	});
+
+	it("should fall back to the downstream request when the upstream body is missing", () => {
+		const request = { body: { model: "gpt-5", reasoning_effort: "low", messages: [] } };
+		const upstreamRequest = { url: "https://api.openai.com/v1/responses", method: "POST", body: {} };
+		const response = { choices: [{ message: { role: "assistant", content: "Hi" } }] };
+
+		render(<PrettyMessagesView request={request} metaRequest={upstreamRequest} response={response} />);
+
+		expect(screen.getByText(/Reasoning: low/)).toBeInTheDocument();
+	});
+
 	it("should not render request metadata tags when request has none", () => {
 		expect(parseRequestMeta({ body: { model: "gpt-4", messages: [] } })).toEqual({
 			model: "gpt-4",

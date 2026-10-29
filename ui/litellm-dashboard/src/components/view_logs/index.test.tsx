@@ -8,6 +8,7 @@ import type { ColumnDef, Row } from "@tanstack/react-table";
 import type { Team } from "../key_team_helpers/key_list";
 import { renderWithProviders } from "../../../tests/test-utils";
 import { useLogFilterLogic } from "./log_filter_logic";
+import type { SpendLogsSettingsModalProps } from "./SpendLogsSettingsModal/SpendLogsSettingsModal";
 
 const mockHandleFilterResetFromHook = vi.fn();
 const mockRefetchFilteredLogs = vi.fn().mockResolvedValue(undefined);
@@ -47,6 +48,40 @@ vi.mock("../key_team_helpers/filter_helpers", () => ({
 	fetchAllTeams: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("./SpendLogsSettingsModal/SpendLogsSettingsModal", async () => {
+	const { LOGS_OPTIONAL_COLUMNS } = await import("./columns");
+	return {
+		default: ({
+			isVisible,
+			onCancel,
+			visibleOptionalColumns = [],
+			onVisibleOptionalColumnsChange,
+		}: SpendLogsSettingsModalProps) => {
+			if (!isVisible) return null;
+			return (
+				<div data-testid="logs-settings-modal">
+					<button type="button" onClick={onCancel}>
+						close-settings
+					</button>
+					{LOGS_OPTIONAL_COLUMNS.map((column) => (
+						<button
+							key={column.id}
+							type="button"
+							onClick={() => {
+								const next = visibleOptionalColumns.includes(column.id)
+									? visibleOptionalColumns.filter((id) => id !== column.id)
+									: [...visibleOptionalColumns, column.id];
+								onVisibleOptionalColumnsChange?.(next);
+							}}
+						>
+							{`toggle-${column.id}`}
+						</button>
+					))}
+				</div>
+			);
+		},
+	};
+});
 const { mockDrawerProps, mockSimulationDrawerProps } = vi.hoisted(() => ({
 	mockDrawerProps: { current: null as any },
 	mockSimulationDrawerProps: { current: null as any },
@@ -89,8 +124,13 @@ vi.mock("./table", () => ({
 		onRowClick?: (log: LogEntry) => void;
 	}) => {
 		const sessionColumn = columns.find((column) => column.header === "Session ID");
+		const headerLabels = columns
+			.filter((column) => typeof column.header === "string")
+			.map((column) => column.header as string)
+			.join("|");
 		return (
 			<div>
+				<div data-testid="logs-table-headers">{headerLabels}</div>
 				{data.map((log) => (
 					<div key={log.request_id} onClick={() => onRowClick?.(log)}>
 						<span>{log.request_id}</span>
@@ -288,6 +328,46 @@ describe("Logs columns", () => {
 		);
 	};
 
+	it("renders the optional Key Hash column with key-details click wiring", async () => {
+		const user = userEvent.setup();
+		const onKeyHashClick = vi.fn();
+		const keyHashColumns = createColumns(
+			{ sortBy: "startTime", sortOrder: "desc", onSortChange: vi.fn(), onKeyHashClick },
+			{ visibleOptionalColumns: ["key_hash"] },
+		);
+		const keyHashColumn = keyHashColumns.find((column) => column.header === "Key Hash");
+		if (!keyHashColumn || typeof keyHashColumn.cell !== "function") {
+			throw new Error("Missing Key Hash cell renderer");
+		}
+
+		render(
+			keyHashColumn.cell({
+				getValue: () => "hashed-key-value",
+				row: { original: { ...baseLogEntry, metadata: { user_api_key: "hashed-key-value" } } },
+			} as never),
+		);
+
+		await user.click(screen.getByText("hashed-key-value"));
+		expect(onKeyHashClick).toHaveBeenCalledWith("hashed-key-value");
+	});
+
+	it("renders the optional Type column badges for MCP and LLM calls", () => {
+		const typeColumns = createColumns(undefined, { visibleOptionalColumns: ["call_type"] });
+		const typeColumn = typeColumns.find((column) => column.header === "Type");
+		if (!typeColumn || typeof typeColumn.cell !== "function") {
+			throw new Error("Missing Type cell renderer");
+		}
+
+		const { rerender } = render(
+			typeColumn.cell({ row: { original: { ...baseLogEntry, call_type: "call_mcp_tool", session_total_count: 3 } } } as never),
+		);
+		expect(screen.getByText("3")).toBeInTheDocument();
+
+		rerender(
+			typeColumn.cell({ row: { original: { ...baseLogEntry, call_type: "chat" } } } as never),
+		);
+		expect(screen.getByText("LLM")).toBeInTheDocument();
+	});
 	it("renders Session ID as a link that opens its complete session without bubbling to the row", async () => {
 		const user = userEvent.setup();
 		const onSessionClick = vi.fn();
@@ -696,10 +776,39 @@ describe("SpendLogsTable", () => {
 		mockDrawerProps.current = null;
 		mockSimulationDrawerProps.current = null;
 		// Clear persisted Live Tail state from previous tests.
+		localStorage.clear();
 		sessionStorage.clear();
 		window.history.replaceState({}, "", "/ui/?page=logs");
 	});
 
+	it("默认不显示 Internal User、End User 与 Tags 列，可在设置中勾选后显示", async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		const headers = () => screen.getByTestId("logs-table-headers").textContent ?? "";
+		expect(headers()).toContain("Model");
+		expect(headers()).toContain("Session ID");
+		expect(headers()).not.toContain("Internal User");
+		expect(headers()).not.toContain("End User");
+		expect(headers()).not.toContain("Tags");
+
+		await user.click(screen.getByTitle("Spend Logs Settings"));
+		await user.click(screen.getByRole("button", { name: "toggle-end_user" }));
+
+		expect(headers()).toContain("End User");
+		await waitFor(() =>
+			expect(localStorage.getItem("logsVisibleOptionalColumns")).toBe(JSON.stringify(["end_user"])),
+		);
+	});
+
+	it("恢复浏览器中保存的可选列设置", () => {
+		localStorage.setItem("logsVisibleOptionalColumns", JSON.stringify(["request_id", "request_tags"]));
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		const headers = screen.getByTestId("logs-table-headers").textContent ?? "";
+		expect(headers).toContain("Request ID");
+		expect(headers).toContain("Tags");
+	});
 	it("Live Tail 默认每 2 秒刷新，并提供全部刷新间隔", async () => {
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 

@@ -511,4 +511,24 @@ describe("SpendLogsSettingsModal", () => {
 			);
 		});
 	});
+	it("lists optional table columns as checkboxes and reports toggles", async () => {
+		const user = userEvent.setup();
+		const onVisibleOptionalColumnsChange = vi.fn();
+		renderWithProviders(
+			<SpendLogsSettingsModal
+				{...defaultProps}
+				visibleOptionalColumns={["end_user"]}
+				onVisibleOptionalColumnsChange={onVisibleOptionalColumnsChange}
+			/>,
+		);
+
+		expect(screen.getByText("Additional columns")).toBeInTheDocument();
+		expect(screen.getByLabelText("End User")).toBeChecked();
+		expect(screen.getByLabelText("Tags")).not.toBeChecked();
+
+		await user.click(screen.getByLabelText("Tags"));
+
+		expect(onVisibleOptionalColumnsChange).toHaveBeenCalledWith(["end_user", "request_tags"]);
+	});
+
 });

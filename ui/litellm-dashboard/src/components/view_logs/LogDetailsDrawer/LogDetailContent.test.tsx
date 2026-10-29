@@ -417,6 +417,27 @@ describe("LogDetailContent", () => {
 		expect(responseDiff.textContent).not.toContain("status_code");
 	});
 
+	it("shows the reasoning effort recorded on the upstream request instead of the downstream one", () => {
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: {
+						url: "/v1/responses",
+						method: "POST",
+						body: { model: "gpt-5", messages: [{ role: "user", content: "Hello" }] },
+						upstream_request: {
+							url: "https://api.openai.com/v1/responses",
+							method: "POST",
+							body: { model: "gpt-5", reasoning_effort: "xhigh", input: "Hello" },
+						},
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByText(/Reasoning: xhigh/)).toBeInTheDocument();
+	});
+
 	it("compares the recorded downstream body without substituting replay messages", async () => {
 		const user = userEvent.setup();
 		const recordedMessages = [{ role: "user", content: "same recorded request" }];

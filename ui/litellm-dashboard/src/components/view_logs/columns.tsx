@@ -8,6 +8,8 @@ import LabeledField from "../common_components/LabeledField";
 import { TableHeaderSortDropdown } from "../common_components/TableHeaderSortDropdown/TableHeaderSortDropdown";
 import { MetricProgress, MetricProgressCell } from "./MetricProgressCell";
 import { TimeCell } from "./time_cell";
+import { AGENT_CALL_TYPES, MCP_CALL_TYPES } from "./constants";
+import { AgentBadge, LlmBadge, McpBadge } from "./TypeBadges";
 import ProviderLogo from "../common_components/ProviderLogo";
 
 /** API sort field mapping for /spend/logs/ui endpoint */
@@ -19,6 +21,54 @@ export const LOGS_SORT_FIELD_MAP = {
 } as const;
 
 export type LogsSortField = keyof typeof LOGS_SORT_FIELD_MAP;
+
+/** 默认隐藏、可由用户勾选显示的列；id 与表格列 id 一一对应。 */
+export type LogsOptionalColumnId =
+	| "call_type"
+	| "request_id"
+	| "team_name"
+	| "key_hash"
+	| "user"
+	| "end_user"
+	| "request_tags";
+
+/** Logs 设置中可勾选的列，顺序与表格列顺序一致。 */
+export const LOGS_OPTIONAL_COLUMNS: readonly { id: LogsOptionalColumnId; label: string }[] = [
+	{ id: "call_type", label: "Type" },
+	{ id: "request_id", label: "Request ID" },
+	{ id: "team_name", label: "Team Name" },
+	{ id: "key_hash", label: "Key Hash" },
+	{ id: "user", label: "Internal User" },
+	{ id: "end_user", label: "End User" },
+	{ id: "request_tags", label: "Tags" },
+];
+
+const OPTIONAL_COLUMN_IDS = new Set<string>(LOGS_OPTIONAL_COLUMNS.map((column) => column.id));
+
+function columnOptionalId(column: ColumnDef<LogEntry>): LogsOptionalColumnId | undefined {
+	const columnId =
+		typeof column.id === "string"
+			? column.id
+			: "accessorKey" in column && typeof column.accessorKey === "string"
+				? column.accessorKey
+				: undefined;
+	return columnId && OPTIONAL_COLUMN_IDS.has(columnId) ? (columnId as LogsOptionalColumnId) : undefined;
+}
+
+/**
+ * 过滤默认隐藏的可选列（Internal User / End User / Tags 等）。
+ * 未勾选的列不进入表格，避免横向拥挤；列自身定义保持不变。
+ */
+export function filterOptionalColumns(
+	columns: ColumnDef<LogEntry>[],
+	visibleOptionalColumns: readonly LogsOptionalColumnId[] = [],
+): ColumnDef<LogEntry>[] {
+	const visible = new Set<LogsOptionalColumnId>(visibleOptionalColumns);
+	return columns.filter((column) => {
+		const optionalId = columnOptionalId(column);
+		return optionalId === undefined || visible.has(optionalId);
+	});
+}
 
 const MIN_OUTPUT_TOKENS_FOR_TPS = 20;
 const DURATION_PROGRESS_MAX_SECONDS = 30;
@@ -400,7 +450,7 @@ const SortableHeader = ({
 	</div>
 );
 
-export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
+const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 	{
 		header: sortProps
 			? () => (
@@ -415,6 +465,19 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			: "Time",
 		accessorKey: "startTime",
 		cell: (info: any) => <TimeCell utcTime={info.getValue()} />,
+	},
+	{
+		// 会话类型徽标：LLM / Agent / MCP；多次调用的会话追加调用次数
+		header: "Type",
+		id: "call_type",
+		cell: (info: any) => {
+			const row = info.row.original as LogEntry;
+			const sessionCount = row.session_total_count || 1;
+			const count = sessionCount > 1 ? sessionCount : undefined;
+			if (MCP_CALL_TYPES.includes(row.call_type)) return <McpBadge count={count} />;
+			if (AGENT_CALL_TYPES.includes(row.call_type)) return <AgentBadge count={count} />;
+			return <LlmBadge count={count} />;
+		},
 	},
 	{
 		header: "Status",
@@ -474,6 +537,18 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 					>
 						{sessionId}
 					</a>
+				</Tooltip>
+			);
+		},
+	},
+	{
+		header: "Request ID",
+		accessorKey: "request_id",
+		cell: (info: any) => {
+			const requestId = String(info.getValue() || "-");
+			return (
+				<Tooltip title={requestId}>
+					<span className="block max-w-[22ch] truncate font-mono text-xs">{requestId}</span>
 				</Tooltip>
 			);
 		},
@@ -577,6 +652,36 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 			return (
 				<Tooltip title={`${ttftMs}ms`}>
 					<span className="max-w-[25ch] truncate block">{ttftSeconds}</span>
+				</Tooltip>
+			);
+		},
+	},
+	{
+		header: "Team Name",
+		accessorKey: "metadata.user_api_key_team_alias",
+		id: "team_name",
+		cell: (info: any) => (
+			<Tooltip title={String(info.getValue() || "-")}>
+				<span className="block max-w-[25ch] truncate">{String(info.getValue() || "-")}</span>
+			</Tooltip>
+		),
+	},
+	{
+		header: "Key Hash",
+		accessorKey: "metadata.user_api_key",
+		id: "key_hash",
+		cell: (info: any) => {
+			// 点击打开 key 详情页，与 Key Name 列保持同一交互
+			const keyHash = String(info.getValue() || "-");
+			const onKeyHashClick = sortProps?.onKeyHashClick ?? info.row.original.onKeyHashClick;
+			return (
+				<Tooltip title={keyHash}>
+					<span
+						className="block max-w-[25ch] cursor-pointer truncate font-mono text-xs hover:text-blue-600"
+						onClick={() => keyHash !== "-" && onKeyHashClick?.(keyHash)}
+					>
+						{keyHash}
+					</span>
 				</Tooltip>
 			);
 		},
@@ -818,6 +923,16 @@ export const createColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] 
 		},
 	},
 ];
+
+export interface LogsColumnOptions {
+	/** 额外显示的可选列；未列出的可选列保持隐藏。 */
+	visibleOptionalColumns?: readonly LogsOptionalColumnId[];
+}
+
+export const createColumns = (
+	sortProps?: LogsSortProps,
+	options: LogsColumnOptions = {},
+): ColumnDef<LogEntry>[] => filterOptionalColumns(buildColumns(sortProps), options.visibleOptionalColumns);
 
 /** Default columns without sort (for backward compatibility) */
 export const columns = createColumns();

@@ -10,19 +10,29 @@ import {
 	StoreRequestInSpendLogsParams,
 	useStoreRequestInSpendLogs,
 } from "@/app/(dashboard)/hooks/storeRequestInSpendLogs/useStoreRequestInSpendLogs";
+import { LOGS_OPTIONAL_COLUMNS, type LogsOptionalColumnId } from "../columns";
 import NotificationsManager from "@/components/molecules/notifications_manager";
 import { parseErrorMessage } from "@/components/shared/errorUtils";
 import { ClockCircleOutlined } from "@ant-design/icons";
-import { Button, Form, Input, Modal, Skeleton, Space, Switch, Typography } from "antd";
+import { Button, Checkbox, Form, Input, Modal, Skeleton, Space, Switch, Typography } from "antd";
 import React, { useEffect, useMemo } from "react";
 
-interface SpendLogsSettingsModalProps {
+export interface SpendLogsSettingsModalProps {
 	isVisible: boolean;
 	onCancel: () => void;
 	onSuccess?: () => void;
+	/** 列表额外显示的可选列（本地展示偏好）。 */
+	visibleOptionalColumns?: readonly LogsOptionalColumnId[];
+	onVisibleOptionalColumnsChange?: (columns: LogsOptionalColumnId[]) => void;
 }
 
-const SpendLogsSettingsModal: React.FC<SpendLogsSettingsModalProps> = ({ isVisible, onCancel, onSuccess }) => {
+const SpendLogsSettingsModal: React.FC<SpendLogsSettingsModalProps> = ({
+	isVisible,
+	onCancel,
+	onSuccess,
+	visibleOptionalColumns = [],
+	onVisibleOptionalColumnsChange,
+}) => {
 	const [form] = Form.useForm();
 	const { mutateAsync, isPending } = useStoreRequestInSpendLogs();
 	const { mutateAsync: deleteField, isPending: isDeletingField } = useDeleteProxyConfigField();
@@ -197,6 +207,25 @@ const SpendLogsSettingsModal: React.FC<SpendLogsSettingsModalProps> = ({ isVisib
 					) : (
 						<Input placeholder="e.g., 7d, 30d" prefix={<ClockCircleOutlined />} />
 					)}
+				</Form.Item>
+
+				<div className="mt-2 mb-3 text-sm font-medium text-gray-900">Additional columns</div>
+				<Form.Item
+					label="Show extra columns"
+					tooltip="These columns are hidden by default to keep the request log table compact. Changes apply immediately and are stored in this browser only."
+				>
+					<Checkbox.Group
+						value={[...visibleOptionalColumns]}
+						onChange={(values) => onVisibleOptionalColumnsChange?.(values as LogsOptionalColumnId[])}
+					>
+						<div className="grid grid-cols-2 gap-1">
+							{LOGS_OPTIONAL_COLUMNS.map((column) => (
+								<Checkbox key={column.id} value={column.id}>
+									{column.label}
+								</Checkbox>
+							))}
+						</div>
+					</Checkbox.Group>
 				</Form.Item>
 			</Form>
 		</Modal>

@@ -639,6 +639,15 @@ export const parseRequestMeta = (request: any): RequestMeta => {
 	};
 };
 
+/**
+ * 判断请求对象是否带有可用于提取元信息的请求体。
+ * 上游日志未开启或请求体未记录时返回 false，调用方应回退到下游请求。
+ */
+export function hasRequestMetaBody(request: any): boolean {
+	const body = asRecord(request?.body) || asRecord(request);
+	return Boolean(body && Object.keys(body).length > 0);
+}
+
 export const parseMessages = (request: any, response: any): ParsedMessages => {
 	const requestMessages = requestMessagesFrom(request);
 	let responseMessage: ParsedMessage | null = null;
