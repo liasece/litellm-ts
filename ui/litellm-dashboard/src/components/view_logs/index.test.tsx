@@ -706,7 +706,7 @@ describe("Logs columns", () => {
 
 		expect(screen.getByText("10.0")).toBeInTheDocument();
 		expect(screen.getByLabelText("Output TPS 10.0")).toBeInTheDocument();
-		expect(screen.getByTestId("output-tps-progress")).toHaveStyle({ clipPath: "inset(0 90% 0 0)" });
+		expect(screen.getByTestId("output-tps-progress")).toHaveStyle({ clipPath: "inset(0 95% 0 0)" });
 		expect(screen.getByTestId("output-tps-progress")).toHaveClass(
 			"inset-0",
 			"bg-gradient-to-r",
@@ -716,15 +716,15 @@ describe("Logs columns", () => {
 		);
 	});
 
-	it("caps the output TPS progress bar at 100 TPS", () => {
+	it("caps the output TPS progress bar at 200 TPS", () => {
 		renderColumnCell("输出 TPS", {
 			...baseLogEntry,
-			completion_tokens: 250,
+			completion_tokens: 500,
 			startTime: "2025-11-14T00:00:00Z",
 			endTime: "2025-11-14T00:00:02Z",
 		});
 
-		expect(screen.getByText("125.0")).toBeInTheDocument();
+		expect(screen.getByText("250.0")).toBeInTheDocument();
 		expect(screen.getByTestId("output-tps-progress")).toHaveStyle({ clipPath: "inset(0 0% 0 0)" });
 	});
 

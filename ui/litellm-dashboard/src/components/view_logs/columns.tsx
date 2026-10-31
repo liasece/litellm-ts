@@ -71,6 +71,7 @@ export function filterOptionalColumns(
 }
 
 const MIN_OUTPUT_TOKENS_FOR_TPS = 20;
+const TPS_PROGRESS_MAX = 200;
 const DURATION_PROGRESS_MAX_SECONDS = 30;
 const TOKEN_PROGRESS_MAX = {
 	cacheRead: 200_000,
@@ -862,7 +863,7 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 					ariaLabel={`Output TPS ${tps.toFixed(1)}`}
 					color="blue"
 					displayValue={tps.toFixed(1)}
-					maxValue={100}
+					maxValue={TPS_PROGRESS_MAX}
 					progressTestId="output-tps-progress"
 					tooltip={`${completionTokens} tokens / ${durationSec.toFixed(2)}s`}
 					value={tps}

@@ -1,4 +1,4 @@
 interface:
-  display_name: "提交暂存更改"
-  short_description: "仅分析并提交当前仓库已经暂存的全部 Git 更改内容"
-  default_prompt: "Use $commit-staged-changes to commit the currently staged changes."
+  display_name: "提交更改"
+  short_description: "普通提交按明确路径暂存本次改动后提交，禁止无范围暂存；仅暂存模式只提交 index"
+  default_prompt: "Use $commit-staged-changes to commit the current task's changes."

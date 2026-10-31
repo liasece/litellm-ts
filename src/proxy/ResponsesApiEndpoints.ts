@@ -1,3 +1,4 @@
+import { toChatUsage } from "../core/utils/usage";
 import { startSseKeepalive, getKeepaliveDeployment } from "./SseKeepalive";
 import { countInputTokens } from "../core/utils/inputTokens";
 import { canAuthAccessModel } from "../auth/AuthChecks";
@@ -12,6 +13,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Request, Response, Router } from "express";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
+import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { registerRoute } from "../core/api/registerRoute";
 import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
@@ -29,7 +31,7 @@ import {
 } from "../spend/SpendTracker";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
-import type { Message, ModelResponse, ThinkingBlock, ToolCall, Usage } from "../types/openai";
+import type { Message, ModelResponse, ModelResponseStream, ThinkingBlock, ToolCall, Usage } from "../types/openai";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { prepareOpenAIVisionRequest } from "../capabilities/VisionCapability";
 import {
@@ -42,6 +44,7 @@ import { createVisionImageStore, type VisionImageStore } from "../capabilities/V
 import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareOpenAIWebRequest } from "../capabilities/WebCapability";
 import { attachUpstreamLogContext, getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { accumulateChatChunk, finalizeStreamedCompletion, type ChatStreamAccumulator } from "./ChatCompletionsEndpoint";
 
 const logger = createModuleLogger("Proxy:Responses");
 
@@ -273,7 +276,13 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		const messages = buildResponsesMessages(reqBody.input, reqBody.instructions, toolRegistry);
 		const optionalParams = buildResponsesOptionalParams(reqBody, toolRegistry);
 		optionalParams[ROUTER_CALL_TYPE_PARAM] = "responses";
-		optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(reqBody, toolRegistry);
+		// CLIProxy 的原生 /v1/responses 是整段返回，流式请求改走 chat 协议才能逐块下发。
+		const streamForClient = reqBody.stream === true;
+		const upstreamDeployment = litellmRouter.getAvailableDeployment?.(model)?.deployment;
+		const cliproxyUpstream = upstreamDeployment?.litellm_params?.custom_llm_provider === "cliproxy";
+		if (!(streamForClient && cliproxyUpstream)) {
+			optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(reqBody, toolRegistry);
+		}
 		const startTime = new Date();
 		const reservation = await reserveEndpointSpend(db, litellmRouter, req, model, reqBody, {
 			callType: CallType.AResponses,
@@ -340,6 +349,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 							)
 						: await litellmRouter.completion(model, messages as never, optionalParams);
 				providerCompleted = true;
+				const responseReceivedAt = new Date();
 				const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 				calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 				const usage = result["usage"] as Record<string, unknown> | undefined;
@@ -357,6 +367,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 						model: model,
 						requestBody: reqBody,
 						startTime: startTime,
+						completionStartTime: responseReceivedAt,
 						response: response,
 						usage: usage,
 						spendInfo: spendInfo,
@@ -438,7 +449,7 @@ function buildResponsesMessages(
 		}
 		if (item.type === "function_call") {
 			const call = item as ResponsesFunctionCallItem;
-			messages.push({
+			appendResponsesChatMessage(messages, {
 				role: "assistant",
 				content: null,
 				tool_calls: [
@@ -456,12 +467,42 @@ function buildResponsesMessages(
 			continue;
 		}
 		if ((item.type === undefined || item.type === "message") && typeof item["role"] === "string" && "content" in item) {
-			messages.push({ role: item["role"], content: responseContentToChatContent(item["content"]) });
+			appendResponsesChatMessage(messages, { role: item["role"], content: responseContentToChatContent(item["content"]) });
 			continue;
 		}
 		throw ApiError.badRequest(`不支持的 input item type: ${String(item.type)}`);
 	}
 	return messages;
+}
+
+/**
+ * Responses may represent one assistant turn as several text and function-call items.
+ * Chat must keep that turn in one message so every tool result belongs to the same batch.
+ * @param messages
+ * @param message
+ */
+function appendResponsesChatMessage(messages: ChatMessage[], message: ChatMessage): void {
+	const previous = messages.at(-1);
+	if (message.role !== "assistant" || previous?.role !== "assistant") {
+		messages.push(message);
+		return;
+	}
+
+	if (message.content !== null && message.content !== undefined) {
+		if (previous.content === null || previous.content === undefined) {
+			previous.content = message.content;
+		} else if (typeof previous.content === "string" && typeof message.content === "string") {
+			previous.content += message.content;
+		} else {
+			previous.content = [
+				...(Array.isArray(previous.content) ? previous.content : [{ type: "text", text: previous.content }]),
+				...(Array.isArray(message.content) ? message.content : [{ type: "text", text: message.content }]),
+			];
+		}
+	}
+	if (message.tool_calls) {
+		previous.tool_calls = [...(previous.tool_calls ?? []), ...message.tool_calls];
+	}
 }
 
 function responseContentToChatContent(content: unknown): unknown {
@@ -604,11 +645,15 @@ function buildNativeResponsesRequestBody(body: ResponsesCreateRequest, toolRegis
 	return nativeBody;
 }
 
-function createNativeResponsesCapabilityCompletion(
+/**
+ * 构造原生 Responses 能力调用。stream=false 用于 worker 与兼容回退；stream=true 用于主模型轮流式。
+ */
+function createNativeCapabilityCaller(
 	litellmRouter: LiteLLMRouter,
 	requestBody: ResponsesCreateRequest,
 	originalMessages: Array<Record<string, unknown>>,
 	toolRegistry: ResponsesToolRegistry,
+	streaming: boolean,
 ): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
 	let originalMessagesOffset: number | undefined;
 	return async (model, messages, optionalParams) => {
@@ -621,16 +666,31 @@ function createNativeResponsesCapabilityCompletion(
 			optionalParams,
 			toolRegistry,
 		);
+		nativeBody["stream"] = streaming;
 		const nativeParams: Record<string, unknown> = {
 			...optionalParams,
-			stream: false,
+			stream: streaming,
 			[ROUTER_CALL_TYPE_PARAM]: "responses",
 			[ROUTER_RESPONSES_BODY_PARAM]: nativeBody,
 		};
 		delete nativeParams["tools"];
 		delete nativeParams["parallel_tool_calls"];
-		const result = await litellmRouter.completion(model, messages as never, nativeParams);
-		return result["_responseProtocol"] === "responses" ? mapNativeResponsesToChatCompletion(result, toolRegistry) : result;
+		return await litellmRouter.completion(model, messages as never, nativeParams);
+	};
+}
+
+function createNativeResponsesCapabilityCompletion(
+	litellmRouter: LiteLLMRouter,
+	requestBody: ResponsesCreateRequest,
+	originalMessages: Array<Record<string, unknown>>,
+	toolRegistry: ResponsesToolRegistry,
+): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
+	const call = createNativeCapabilityCaller(litellmRouter, requestBody, originalMessages, toolRegistry, false);
+	return async (model, messages, optionalParams) => {
+		const result = await call(model, messages, optionalParams);
+		return result["_responseProtocol"] === "responses"
+			? mapNativeResponsesToChatCompletion(result, toolRegistry)
+			: result;
 	};
 }
 
@@ -829,8 +889,6 @@ function mapNativeResponsesToChatCompletion(result: Record<string, unknown>, too
 		}
 	}
 	const usage = result["usage"] as Record<string, unknown> | undefined;
-	const inputTokens = numberField(usage, "input_tokens", "prompt_tokens");
-	const outputTokens = numberField(usage, "output_tokens", "completion_tokens");
 	const message: Record<string, unknown> = {
 		role: "assistant",
 		content: text.length > 0 ? text.join("") : null,
@@ -849,13 +907,7 @@ function mapNativeResponsesToChatCompletion(result: Record<string, unknown>, too
 				message: message,
 			},
 		],
-		usage: {
-			prompt_tokens: inputTokens,
-			completion_tokens: outputTokens,
-			total_tokens: numberField(usage, "total_tokens") || inputTokens + outputTokens,
-			...(typeof usage?.["cost"] === "number" && Number.isFinite(usage["cost"]) ? { cost: usage["cost"] } : {}),
-			...(typeof usage?.["cost"] === "number" ? { cost: usage["cost"] } : {}),
-		},
+		usage: toChatUsage(usage ?? {}),
 		_responseProtocol: "chat_completions",
 	};
 	for (const [key, value] of Object.entries(result)) {
@@ -1201,6 +1253,24 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		visionImageStore,
 		toolRegistry,
 	} = context;
+	const state: ResponsesStreamState = {
+		responseId: `resp_${randomUUID()}`,
+		createdAt: Math.floor(Date.now() / 1000),
+		model: model,
+		instructions: requestBody.instructions ?? null,
+		output: [],
+		tools: new Map(),
+		text: "",
+		refusal: "",
+		reasoning: "",
+		nextContentIndex: 0,
+		sequence: 0,
+		terminalSent: false,
+		toolRegistry: toolRegistry,
+	};
+	let capabilitySseStarted = false;
+	let capabilityFirstChunkAt: Date | undefined;
+	let capabilityVisibleDeltas = false;
 	let streamResult: Record<string, unknown>;
 	try {
 		const capabilityMessages = messages as unknown as Array<Record<string, unknown>>;
@@ -1214,14 +1284,121 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		);
 		const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, capabilityMessages);
 		if (preparedVision || preparedImageGeneration || preparedWeb) {
+			// 工具执行与 worker 调用保持非流式；主模型轮的可见文本边收边发。
+			if (!res.headersSent) {
+				res.status(200);
+				res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+				res.setHeader("Cache-Control", "no-cache");
+				res.setHeader("Connection", "keep-alive");
+				res.setHeader("X-Accel-Buffering", "no");
+			}
+			res.flushHeaders();
+			capabilitySseStarted = true;
+			writeEvent(res, state, "response.created", {
+				response: buildStreamResponse(state, requestBody, "in_progress", null),
+			});
+			writeEvent(res, state, "response.in_progress", {
+				response: buildStreamResponse(state, requestBody, "in_progress", null),
+			});
+			const nativeCompletion = nativeResponses
+				? createNativeResponsesCapabilityCompletion(litellmRouter, requestBody, capabilityMessages, toolRegistry)
+				: undefined;
+			const nativeStream = nativeResponses
+				? createNativeCapabilityCaller(litellmRouter, requestBody, capabilityMessages, toolRegistry, true)
+				: undefined;
+			const streamingMainTurn = async (
+				completionModel: string,
+				completionMessages: Message[],
+				params: Record<string, unknown>,
+			): Promise<Record<string, unknown>> => {
+				let streamed: Record<string, unknown>;
+				try {
+					// 流式主轮改走 chat 协议：原生 /v1/responses 上游经 CLIProxy 往往是整段返回，
+// 只有 chat 协议才是增量的，否则下游 TTFT 仍等于总耗时。
+const chatParams: Record<string, unknown> = { ...params, stream: true };
+delete chatParams[ROUTER_CALL_TYPE_PARAM];
+delete chatParams[ROUTER_RESPONSES_BODY_PARAM];
+streamed = await litellmRouter.completion(completionModel, completionMessages as never, chatParams);
+				} catch (error) {
+					// 上游不支持流式时回退到既有非流式能力调用。
+					if (nativeCompletion) {
+						return nativeCompletion(completionModel, completionMessages, params);
+					}
+					throw error;
+				}
+				const upstreamStream = streamed["stream"];
+				if (!isAsyncIterable(upstreamStream)) {
+					// 部分供应商即使请求 stream 也只返回完整 SSE 文本，这里就地解析。
+					const rawBody = streamed["body"];
+					if (typeof rawBody === "string" && rawBody.includes("data:")) {
+						const bufferedAccumulator = new NativeResponsesAccumulator();
+						for (const record of toNativeResponseEvents(rawBody)) {
+							bufferedAccumulator.accumulate(record);
+							const chunk = nativeResponsesEventToChatChunk(record);
+							if (chunk === undefined) {
+								continue;
+							}
+							capabilityFirstChunkAt ??= new Date();
+							capabilityVisibleDeltas = true;
+							consumeChatStreamChunk(chunk, state, res);
+						}
+						const bufferedSnapshot = bufferedAccumulator.snapshot();
+						if (bufferedSnapshot !== null) {
+							const mapped = mapNativeResponsesToChatCompletion(bufferedSnapshot, toolRegistry);
+							for (const [key, value] of Object.entries(streamed)) {
+								if (key.startsWith("_")) {
+									mapped[key] = value;
+								}
+							}
+							return mapped;
+						}
+					}
+					return streamed;
+				}
+				if (streamed["_responseProtocol"] === "responses") {
+					// 原生 Responses SSE：转成内部 chat chunk 后走同一条下发管道。
+					const nativeAccumulator = new NativeResponsesAccumulator();
+					const parseNativeEvents = createNativeEventParser();
+					for await (const raw of upstreamStream as AsyncIterable<unknown>) {
+						for (const record of parseNativeEvents(raw)) {
+							nativeAccumulator.accumulate(record);
+							const chunk = nativeResponsesEventToChatChunk(record);
+							if (chunk === undefined) {
+								continue;
+							}
+							capabilityFirstChunkAt ??= new Date();
+							capabilityVisibleDeltas = true;
+							consumeChatStreamChunk(chunk, state, res);
+						}
+					}
+					const snapshot = nativeAccumulator.snapshot();
+					if (snapshot === null) {
+						return streamed;
+					}
+					const mapped = mapNativeResponsesToChatCompletion(snapshot, toolRegistry);
+					// 流式包装上的计费/追踪元数据不在累加结果里，需要显式带回。
+					for (const [key, value] of Object.entries(streamed)) {
+						if (key.startsWith("_")) {
+							mapped[key] = value;
+						}
+					}
+					return mapped;
+				}
+				const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
+				for await (const chunk of upstreamStream as AsyncIterable<unknown>) {
+					capabilityFirstChunkAt ??= new Date();
+					capabilityVisibleDeltas = true;
+					consumeChatStreamChunk(stripPrivateToolDeltas(chunk), state, res);
+					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
+				}
+				return finalizeStreamedCompletion(accumulator, completionModel, streamed);
+			};
 			const finalResult = await runOpenAIBuiltinCapabilityAgentLoop(
 				litellmRouter,
 				model,
 				capabilityMessages,
 				optionalParams,
-				nativeResponses
-					? createNativeResponsesCapabilityCompletion(litellmRouter, requestBody, capabilityMessages, toolRegistry)
-					: undefined,
+				streamingMainTurn,
 				{
 					visionAudit: createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId }),
 					imageGenerationAudit: createImageGenerationCapabilityAuditHook({
@@ -1233,13 +1410,21 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 					visionImageStore: visionImageStore,
 					preparedVision: preparedWeb ? undefined : preparedVision,
 					preparedWeb: preparedWeb,
+					workerComplete: nativeCompletion
+						? nativeCompletion
+						: (workerModel: string, workerMessages: Message[], workerParams: Record<string, unknown>) =>
+								litellmRouter.completion(workerModel, workerMessages as never, workerParams),
 				},
 			);
+			if (finalResult["usage"] !== undefined) {
+				state.usage = finalResult["usage"] as Usage;
+			}
 			streamResult = attachUpstreamLogContext(
 				{
 					...finalResult,
+					_responseProtocol: "chat_completions",
 					_stream: true,
-					stream: modelResponseToSyntheticStream(finalResult),
+					stream: modelResponseToSyntheticStream(finalResult, capabilityVisibleDeltas),
 				},
 				getUpstreamLogContext(finalResult),
 			);
@@ -1297,21 +1482,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		getKeepaliveDeployment(litellmRouter, model, (streamResult["_spendInfo"] as DeploymentSpendInfo | undefined)?.modelId),
 	);
 
-	const state: ResponsesStreamState = {
-		responseId: `resp_${randomUUID()}`,
-		createdAt: Math.floor(Date.now() / 1000),
-		model: model,
-		instructions: requestBody.instructions ?? null,
-		output: [],
-		tools: new Map(),
-		text: "",
-		refusal: "",
-		reasoning: "",
-		nextContentIndex: 0,
-		sequence: 0,
-		terminalSent: false,
-		toolRegistry: toolRegistry,
-	};
 	const checkpointRequestId = requestId;
 	const checkpointDb = db;
 	let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
@@ -1333,12 +1503,14 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		});
 	}
 
-	writeEvent(res, state, "response.created", {
-		response: buildStreamResponse(state, requestBody, "in_progress", null),
-	});
-	writeEvent(res, state, "response.in_progress", {
-		response: buildStreamResponse(state, requestBody, "in_progress", null),
-	});
+	if (!capabilitySseStarted) {
+		writeEvent(res, state, "response.created", {
+			response: buildStreamResponse(state, requestBody, "in_progress", null),
+		});
+		writeEvent(res, state, "response.in_progress", {
+			response: buildStreamResponse(state, requestBody, "in_progress", null),
+		});
+	}
 
 	const iterator = stream[Symbol.asyncIterator]();
 	let clientAborted = false;
@@ -1353,6 +1525,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		}
 	};
 	res.once("close", onClose);
+	let firstChunkAt: Date | undefined;
 	let terminalError: unknown;
 	try {
 		while (true) {
@@ -1360,6 +1533,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			if (current.done) {
 				break;
 			}
+			firstChunkAt ??= new Date();
 			consumeChatStreamChunk(current.value, state, res);
 			streamingCheckpointScheduler?.onChunk();
 		}
@@ -1390,6 +1564,9 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				model: model,
 				requestBody: requestBody,
 				startTime: startTime,
+				// 能力分支已经把真实上游增量边收边发，capabilityFirstChunkAt 才是用户看到首字的时刻；
+				// 收尾时下游读到的是事后合成流，它的 firstChunkAt 会晚到总耗时末尾。
+				completionStartTime: capabilityFirstChunkAt ?? firstChunkAt,
 				response: loggedCompleted,
 				usage: state.usage as unknown as Record<string, unknown> | undefined,
 				spendInfo: spendInfo,
@@ -1415,6 +1592,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				model: model,
 				requestBody: requestBody,
 				startTime: startTime,
+				completionStartTime: firstChunkAt,
 				response: buildStreamResponse(state, requestBody, "failed", {
 					code: streamErrorCode(error),
 					message: errorMessage(error),
@@ -1533,6 +1711,24 @@ function asResponseRecord(value: unknown): Record<string, unknown> | undefined {
 	return isRecord(value) ? value : undefined;
 }
 
+/** 原生 Responses 的语义增量事件：只有这些 type 才能反映「模型开始产出内容」。 */
+const NATIVE_RESPONSES_CONTENT_DELTA_TYPES = new Set<string>([
+	"response.output_text.delta",
+	"response.reasoning_text.delta",
+	"response.reasoning_summary_text.delta",
+	"response.refusal.delta",
+	"response.function_call_arguments.delta",
+	"response.custom_tool_call_input.delta",
+]);
+
+/**
+ * 判断原生 Responses 事件是否是承载模型产出的增量事件。
+ * @param type
+ */
+function isNativeResponsesContentDelta(type: string): boolean {
+	return NATIVE_RESPONSES_CONTENT_DELTA_TYPES.has(type);
+}
+
 async function relayNativeResponsesStream(
 	context: ResponsesStreamContext,
 	streamResult: Record<string, unknown>,
@@ -1586,6 +1782,9 @@ async function relayNativeResponsesStream(
 	let upstreamTerminalResponse: Record<string, unknown> | undefined;
 	let lastSequence = -1;
 	let thrown: unknown;
+	// TTFT 取首个语义增量（推理/正文/工具参数）的到达时间。response.created 等包络事件由本端立即转发，
+	// 把它算作首字会让每次请求的 TTFT 都接近 0，反而掩盖真实的首字延迟。
+	let firstSemanticDeltaAt: Date | undefined;
 	let rejectClientAbort: ((error: Error) => void) | undefined;
 	const clientAbort = new Promise<never>((_resolve, reject) => {
 		rejectClientAbort = reject;
@@ -1623,6 +1822,9 @@ async function relayNativeResponsesStream(
 					!Array.isArray(upstreamEvent["response"])
 						? structuredClone(upstreamEvent["response"] as Record<string, unknown>)
 						: undefined;
+			}
+			if (firstSemanticDeltaAt === undefined && isNativeResponsesContentDelta(type)) {
+				firstSemanticDeltaAt = new Date();
 			}
 			restoreNativeResponsesPayload(event, requestBody, toolRegistry);
 			if (typeof event["sequence_number"] === "number") {
@@ -1670,6 +1872,7 @@ async function relayNativeResponsesStream(
 				usage: usage,
 				spendInfo: spendInfo,
 				error: terminalError,
+				completionStartTime: firstSemanticDeltaAt,
 				upstreamLogContext: withUpstreamResponseBody(getUpstreamLogContext(streamResult), upstreamTerminalResponse),
 				status: terminalType === "response.failed" ? SpendLogStatus.Failure : SpendLogStatus.Success,
 				...getResultModelResolutionMetadata(streamResult),
@@ -1707,6 +1910,7 @@ async function relayNativeResponsesStream(
 				requestBody: requestBody,
 				startTime: startTime,
 				error: error,
+				completionStartTime: firstSemanticDeltaAt,
 				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: SpendLogStatus.Failure,
 				...getResultModelResolutionMetadata(streamResult),
@@ -1740,7 +1944,10 @@ function withUpstreamResponseBody(
 	};
 }
 
-async function* modelResponseToSyntheticStream(result: Record<string, unknown>): AsyncGenerator<Record<string, unknown>> {
+async function* modelResponseToSyntheticStream(
+	result: Record<string, unknown>,
+	skipVisibleText = false,
+): AsyncGenerator<Record<string, unknown>> {
 	const response = result as unknown as ModelResponse;
 	const choice = response.choices?.[0];
 	if (!choice) {
@@ -1754,10 +1961,10 @@ async function* modelResponseToSyntheticStream(result: Record<string, unknown>):
 	};
 	yield { ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] };
 	const delta: Record<string, unknown> = {};
-	if (typeof choice.message.content === "string" && choice.message.content.length > 0) {
+	if (!skipVisibleText && typeof choice.message.content === "string" && choice.message.content.length > 0) {
 		delta["content"] = choice.message.content;
 	}
-	if (choice.message.reasoning_content) {
+	if (!skipVisibleText && choice.message.reasoning_content) {
 		delta["reasoning_content"] = choice.message.reasoning_content;
 	}
 	if (choice.message.tool_calls?.length) {
@@ -1778,6 +1985,117 @@ async function* modelResponseToSyntheticStream(result: Record<string, unknown>):
 		...base,
 		choices: [{ index: 0, delta: {}, finish_reason: choice.finish_reason }],
 		...(response.usage ? { usage: response.usage, _usage: response.usage } : {}),
+	};
+}
+
+/**
+ * 原生流既可能是已解析事件，也可能是被任意切块的 SSE 文本；跨块帧需要保留残余缓冲。
+ */
+function createNativeEventParser(): (raw: unknown) => Record<string, unknown>[] {
+	let pending = "";
+	return (raw: unknown): Record<string, unknown>[] => {
+		if (typeof raw === "object" && raw !== null) {
+			return [raw as Record<string, unknown>];
+		}
+		if (typeof raw !== "string") {
+			return [];
+		}
+		pending += raw;
+		const frames = pending.split("\n\n");
+		pending = frames.pop() ?? "";
+		const events: Record<string, unknown>[] = [];
+		for (const frame of frames) {
+			const dataLines = frame
+				.split("\n")
+				.filter((line) => line.startsWith("data:"))
+				.map((line) => line.slice(5).trimStart());
+			if (dataLines.length === 0) {
+				continue;
+			}
+			const payload = dataLines.join("\n").trim();
+			if (payload.length === 0 || payload === "[DONE]") {
+				continue;
+			}
+			try {
+				const parsed = JSON.parse(payload) as unknown;
+				if (typeof parsed === "object" && parsed !== null) {
+					events.push(parsed as Record<string, unknown>);
+				}
+			} catch {
+				// 非 JSON 帧（注释/心跳）忽略
+			}
+		}
+		return events;
+	};
+}
+
+/** 原生流既可能是已解析事件，也可能是原始 SSE 文本，统一为事件对象。 */
+function toNativeResponseEvents(raw: unknown): Record<string, unknown>[] {
+	if (typeof raw === "object" && raw !== null) {
+		return [raw as Record<string, unknown>];
+	}
+	if (typeof raw !== "string") {
+		return [];
+	}
+	const events: Record<string, unknown>[] = [];
+	for (const frame of raw.split("\n\n")) {
+		const dataLines = frame
+			.split("\n")
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trimStart());
+		if (dataLines.length === 0) {
+			continue;
+		}
+		const payload = dataLines.join("\n").trim();
+		if (payload.length === 0 || payload === "[DONE]") {
+			continue;
+		}
+		try {
+			const parsed = JSON.parse(payload) as unknown;
+			if (typeof parsed === "object" && parsed !== null) {
+				events.push(parsed as Record<string, unknown>);
+			}
+		} catch {
+			// 非 JSON 帧（注释/心跳）忽略
+		}
+	}
+	return events;
+}
+
+/** 原生 Responses 事件转内部 chat chunk：只有可见文本需要下行。 */
+function nativeResponsesEventToChatChunk(event: Record<string, unknown>): Record<string, unknown> | undefined {
+	const type = typeof event["type"] === "string" ? event["type"] : "";
+	if (type === "response.output_text.delta" && typeof event["delta"] === "string" && event["delta"].length > 0) {
+		return { choices: [{ index: 0, delta: { content: event["delta"] }, finish_reason: null }] };
+	}
+	if (type === "response.reasoning_text.delta" && typeof event["delta"] === "string" && event["delta"].length > 0) {
+		return { choices: [{ index: 0, delta: { reasoning_content: event["delta"] }, finish_reason: null }] };
+	}
+	return undefined;
+}
+
+/** 能力循环里的工具调用是私有链路，不能出现在下游 SSE 中。 */
+function stripPrivateToolDeltas(chunk: unknown): unknown {
+	if (typeof chunk !== "object" || chunk === null) {
+		return chunk;
+	}
+	const record = chunk as Record<string, unknown>;
+	if (!Array.isArray(record["choices"])) {
+		return chunk;
+	}
+	return {
+		...record,
+		choices: (record["choices"] as unknown[]).map((choice) => {
+			if (typeof choice !== "object" || choice === null) {
+				return choice;
+			}
+			const entry = choice as Record<string, unknown>;
+			const delta = entry["delta"] as Record<string, unknown> | undefined;
+			if (delta === undefined || delta === null || delta["tool_calls"] === undefined) {
+				return choice;
+			}
+			return { ...entry, delta: Object.fromEntries(Object.entries(delta).filter(([key]) => key !== "tool_calls")) };
+		}),
 	};
 }
 
@@ -2022,24 +2340,27 @@ function writeCompletedEvents(res: Response, state: ResponsesStreamState): void 
 					part: part,
 				});
 			}
-		} else {
-			const tool = [...state.tools.values()].find((candidate) => candidate.itemId === item.id)!;
-			const toolName = state.toolRegistry.fromChatName(tool.name);
-			item.name = toolName.name;
-			if (toolName.namespace !== undefined) {
-				item.namespace = toolName.namespace;
-			} else {
-				delete item.namespace;
+		} else if (item.type === "function_call") {
+			const tool = [...state.tools.values()].find((candidate) => candidate.itemId === item.id);
+			if (tool !== undefined) {
+				const toolName = state.toolRegistry.fromChatName(tool.name);
+				item.name = toolName.name;
+				if (toolName.namespace !== undefined) {
+					item.namespace = toolName.namespace;
+				} else {
+					delete item.namespace;
+				}
+				item.arguments = tool.arguments;
+				writeEvent(res, state, "response.function_call_arguments.done", {
+					item_id: item.id,
+					output_index: outputIndex,
+					arguments: tool.arguments,
+					name: toolName.name,
+					...(toolName.namespace !== undefined ? { namespace: toolName.namespace } : {}),
+				});
 			}
-			item.arguments = tool.arguments;
-			writeEvent(res, state, "response.function_call_arguments.done", {
-				item_id: item.id,
-				output_index: outputIndex,
-				arguments: tool.arguments,
-				name: toolName.name,
-				...(toolName.namespace !== undefined ? { namespace: toolName.namespace } : {}),
-			});
 		}
+		// 其余类型（如 image_generation_call）在加入 output 时已是终态，无需再补工具参数。
 		writeEvent(res, state, "response.output_item.done", { output_index: outputIndex, item: item });
 	}
 }
@@ -2101,6 +2422,7 @@ async function recordSpend(
 		attemptedRetries?: number;
 		error?: unknown;
 		upstreamLogContext?: UpstreamLogContext;
+		completionStartTime?: Date;
 		status: SpendLogStatus;
 	},
 ): Promise<void> {
@@ -2124,6 +2446,7 @@ async function recordSpend(
 				deploymentModel: context.spendInfo?.deploymentModel,
 				startTime: context.startTime,
 				endTime: new Date(),
+				completionStartTime: context.completionStartTime,
 				messages: context.requestBody.input,
 				response: context.response,
 				usage: context.usage,
@@ -2153,7 +2476,7 @@ function copyProviderHeaders(result: Record<string, unknown>, res: Response): vo
 		return;
 	}
 	for (const [key, value] of Object.entries(headers)) {
-		if (typeof value === "string" && !res.getHeader(key)) {
+		if (typeof value === "string" && isForwardableUpstreamHeader(key) && !res.getHeader(key)) {
 			res.setHeader(key, value);
 		}
 	}
