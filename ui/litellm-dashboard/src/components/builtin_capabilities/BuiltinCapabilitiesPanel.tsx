@@ -1,26 +1,32 @@
 "use client";
 
 import { Button, Card, Text, Title } from "@tremor/react";
-import { Alert, Form, InputNumber, Select, Spin, Switch } from "antd";
+import { Alert, Form, InputNumber, Spin, Switch } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import NotificationsManager from "../molecules/notifications_manager";
 import {
 	builtinCapabilitiesCall,
 	type BuiltinCapabilitiesResponse,
+	credentialListCall,
 	updateBuiltinCapabilitiesCall,
 } from "../networking";
+import ExecutorChainEditor from "./ExecutorChainEditor";
+
+/** 把候选模型列表投影成下拉选项。 */
+function toModelOptions(
+	candidates: BuiltinCapabilitiesResponse["available_models"] | undefined,
+): Array<{ label: string; value: string }> {
+	return (candidates ?? []).map((candidate) => ({ label: candidate.model_name, value: candidate.model_name }));
+}
 
 export default function BuiltinCapabilitiesPanel() {
 	const [form] = Form.useForm();
 	const [data, setData] = useState<BuiltinCapabilitiesResponse | null>(null);
+	const [credentialOptions, setCredentialOptions] = useState<Array<{ label: string; value: string }>>([]);
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
-	const enabled = Form.useWatch(["vision", "enabled"], form);
-	const handlerModel = Form.useWatch(["vision", "handler_model"], form);
 	const imageGenerationEnabled = Form.useWatch(["image_generation", "enabled"], form);
-	const imageGenerationHandlerModel = Form.useWatch(["image_generation", "handler_model"], form);
 	const webEnabled = Form.useWatch(["web", "enabled"], form);
-	const webHandlerModel = Form.useWatch(["web", "handler_model"], form);
 
 	useEffect(() => {
 		builtinCapabilitiesCall()
@@ -30,34 +36,25 @@ export default function BuiltinCapabilitiesPanel() {
 			})
 			.catch(() => NotificationsManager.fromBackend("Failed to load built-in capabilities"))
 			.finally(() => setLoading(false));
+		// 直连执行者只按名称引用 Credential；这里只取名称用于下拉，从不读取或展示密钥。
+		credentialListCall("")
+			.then((response) =>
+				setCredentialOptions(
+					(response.credentials ?? []).map((credential) => ({
+						label: credential.credential_name,
+						value: credential.credential_name,
+					})),
+				),
+			)
+			.catch(() => setCredentialOptions([]));
 	}, [form]);
 
-	const modelOptions = useMemo(
-		() =>
-			(data?.available_models ?? []).map((candidate) => ({ label: candidate.model_name, value: candidate.model_name })),
-		[data],
-	);
-	const fallbackOptions = modelOptions.filter((option) => option.value !== handlerModel);
+	const modelOptions = useMemo(() => toModelOptions(data?.available_models), [data]);
 	const imageGenerationModelOptions = useMemo(
-		() =>
-			(data?.image_generation_available_models ?? []).map((candidate) => ({
-				label: candidate.model_name,
-				value: candidate.model_name,
-			})),
+		() => toModelOptions(data?.image_generation_available_models),
 		[data],
 	);
-	const imageGenerationFallbackOptions = imageGenerationModelOptions.filter(
-		(option) => option.value !== imageGenerationHandlerModel,
-	);
-	const webModelOptions = useMemo(
-		() =>
-			(data?.web_available_models ?? []).map((candidate) => ({
-				label: candidate.model_name,
-				value: candidate.model_name,
-			})),
-		[data],
-	);
-	const webFallbackOptions = webModelOptions.filter((option) => option.value !== webHandlerModel);
+	const webModelOptions = useMemo(() => toModelOptions(data?.web_available_models), [data]);
 
 	const save = async (capabilities: BuiltinCapabilitiesResponse["capabilities"]) => {
 		try {
@@ -97,7 +94,7 @@ export default function BuiltinCapabilitiesPanel() {
 					<Card>
 						<div className="mb-5 flex items-start justify-between gap-6">
 							<div>
-								<Title>Image Generation & Editing</Title>
+								<Title>Image Generation &amp; Editing</Title>
 								<Text className="mt-1 text-gray-500">
 									Lets selected models privately create new images or edit attached images through a dedicated image model.
 								</Text>
@@ -114,34 +111,39 @@ export default function BuiltinCapabilitiesPanel() {
 							message="The main model writes the production prompt and chooses create or edit. LiteLLM keeps image bytes private and attaches generated images to Chat and Responses outputs."
 						/>
 
-						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+						<div className="mb-5">
+							<Text className="mb-2 block text-sm font-medium">Execution chain</Text>
+							<Text className="mb-3 block text-xs text-gray-500">
+								Tried in order. The first executor that succeeds answers the tool call.
+							</Text>
 							<Form.Item
-								name={["image_generation", "handler_model"]}
-								label="Image execution model"
-								rules={[{ required: imageGenerationEnabled, message: "Select an image generation model" }]}
+								name={["image_generation", "executors"]}
+								rules={[
+									{
+										validator: async (_, value: unknown[] | undefined) => {
+											if (imageGenerationEnabled && (value ?? []).length === 0) {
+												throw new Error("Add at least one executor");
+											}
+										},
+									},
+								]}
 							>
-								<Select
-									showSearch
-									allowClear
-									optionFilterProp="label"
-									options={imageGenerationModelOptions}
-									placeholder="Select an image generation model"
+								<ExecutorChainEditor
+									modelOptions={imageGenerationModelOptions}
+									credentialOptions={credentialOptions}
+									allowDeepSeekTools={false}
+									emptyHint="No executor configured. Add a model executor to run this capability."
 								/>
 							</Form.Item>
+						</div>
 
-							<Form.Item name={["image_generation", "fallback_models"]} label="Capability fallback models">
-								<Select
-									mode="multiple"
-									showSearch
-									allowClear
-									optionFilterProp="label"
-									options={imageGenerationFallbackOptions}
-									placeholder="Tried in order after the execution model"
-								/>
-							</Form.Item>
-
+						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 							<Form.Item name={["image_generation", "max_iterations"]} label="Maximum private turns" rules={[{ required: true }]}>
 								<InputNumber min={1} max={8} className="w-full" />
+							</Form.Item>
+
+							<Form.Item name={["image_generation", "max_output_tokens"]} label="Worker output token limit">
+								<InputNumber min={128} step={128} className="w-full" />
 							</Form.Item>
 
 							<Form.Item
@@ -184,32 +186,22 @@ export default function BuiltinCapabilitiesPanel() {
 							<Switch aria-label="Always inject into context" checkedChildren="On" unCheckedChildren="Off" />
 						</Form.Item>
 
+						<div className="mb-5">
+							<Text className="mb-2 block text-sm font-medium">Execution chain</Text>
+							<Text className="mb-3 block text-xs text-gray-500">
+								Tried in order. The first executor that succeeds answers the tool call.
+							</Text>
+							<Form.Item name={["vision", "executors"]}>
+								<ExecutorChainEditor
+									modelOptions={modelOptions}
+									credentialOptions={credentialOptions}
+									allowDeepSeekTools={false}
+									emptyHint="No executor configured. Add a vision-capable model executor."
+								/>
+							</Form.Item>
+						</div>
+
 						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-							<Form.Item
-								name={["vision", "handler_model"]}
-								label="Execution model"
-								rules={[{ required: enabled, message: "Select a vision execution model" }]}
-							>
-								<Select
-									showSearch
-									allowClear
-									optionFilterProp="label"
-									options={modelOptions}
-									placeholder="Select a vision-capable model"
-								/>
-							</Form.Item>
-
-							<Form.Item name={["vision", "fallback_models"]} label="Capability fallback models">
-								<Select
-									mode="multiple"
-									showSearch
-									allowClear
-									optionFilterProp="label"
-									options={fallbackOptions}
-									placeholder="Tried in order after the execution model"
-								/>
-							</Form.Item>
-
 							<Form.Item name={["vision", "max_iterations"]} label="Maximum private turns" rules={[{ required: true }]}>
 								<InputNumber min={1} max={8} className="w-full" />
 							</Form.Item>
@@ -227,10 +219,9 @@ export default function BuiltinCapabilitiesPanel() {
 					<Card>
 						<div className="mb-5 flex items-start justify-between gap-6">
 							<div>
-								<Title>Web Search & Fetch</Title>
+								<Title>Web Search &amp; Fetch</Title>
 								<Text className="mt-1 text-gray-500">
-									Lets selected models privately delegate live web searches and webpage retrieval to a network-enabled
-									model.
+									Lets selected models privately search the live web and retrieve webpages.
 								</Text>
 							</div>
 							<Form.Item name={["web", "enabled"]} valuePropName="checked" className="mb-0">
@@ -242,35 +233,37 @@ export default function BuiltinCapabilitiesPanel() {
 							className="mb-5"
 							type="info"
 							showIcon
-							message="Injection requires this global switch and Web on the requested model. The execution model below performs the real network request."
+							message="A model executor performs the request through its upstream hosted search. A DeepSeek Search & Fetch executor calls the provider's tools endpoint directly: no worker-model tokens, billed per successful request, and the API key stays in the referenced credential."
 						/>
 
-						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+						<div className="mb-5">
+							<Text className="mb-2 block text-sm font-medium">Execution chain</Text>
+							<Text className="mb-3 block text-xs text-gray-500">
+								Tried in order. Model executors cover hosted search; DeepSeek Search &amp; Fetch bypasses the model
+								entirely.
+							</Text>
 							<Form.Item
-								name={["web", "handler_model"]}
-								label="Network execution model"
-								rules={[{ required: webEnabled, message: "Select a web-enabled execution model" }]}
+								name={["web", "executors"]}
+								rules={[
+									{
+										validator: async (_, value: unknown[] | undefined) => {
+											if (webEnabled && (value ?? []).length === 0) {
+												throw new Error("Add at least one executor");
+											}
+										},
+									},
+								]}
 							>
-								<Select
-									showSearch
-									allowClear
-									optionFilterProp="label"
-									options={webModelOptions}
-									placeholder="Select a model with native web search"
+								<ExecutorChainEditor
+									modelOptions={webModelOptions}
+									credentialOptions={credentialOptions}
+									allowDeepSeekTools={true}
+									emptyHint="No executor configured. Add a model or DeepSeek Search & Fetch executor."
 								/>
 							</Form.Item>
+						</div>
 
-							<Form.Item name={["web", "fallback_models"]} label="Capability fallback models">
-								<Select
-									mode="multiple"
-									showSearch
-									allowClear
-									optionFilterProp="label"
-									options={webFallbackOptions}
-									placeholder="Tried in order after the execution model"
-								/>
-							</Form.Item>
-
+						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 							<Form.Item name={["web", "max_iterations"]} label="Maximum private turns" rules={[{ required: true }]}>
 								<InputNumber min={1} max={8} className="w-full" />
 							</Form.Item>

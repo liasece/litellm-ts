@@ -2386,11 +2386,29 @@ export const modelRawInfoCall = async (accessToken: string, modelId: string) => 
 	return await response.json();
 };
 
+export interface BuiltinCapabilityModelExecutor {
+	type: "model";
+	model: string;
+	max_output_tokens?: number;
+}
+
+export interface BuiltinCapabilityDeepSeekToolsExecutor {
+	type: "deepseek_tools";
+	api_base: string;
+	credential_name: string;
+	timeout_ms: number;
+	search_count: number;
+	search_need_content: boolean;
+	localization: string;
+}
+
+export type BuiltinCapabilityExecutor = BuiltinCapabilityModelExecutor | BuiltinCapabilityDeepSeekToolsExecutor;
+
 export interface BuiltinCapabilitySettings {
 	enabled: boolean;
 	always_inject: boolean;
 	handler_model: string;
-	fallback_models: string[];
+	executors: BuiltinCapabilityExecutor[];
 	max_iterations: number;
 	max_output_tokens: number;
 }
