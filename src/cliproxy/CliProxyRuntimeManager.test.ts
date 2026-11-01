@@ -73,7 +73,12 @@ describe("CLIProxy managed OpenCode Go plugin", () => {
 	it("enables the managed plugin inside the managed runtime boundary", () => {
 		const projected = buildCliProxyProjection(
 			{},
-			{ port: 8317, authDir: "/state/auths", internalApiKey: "internal-only", pluginDir: "/opt/cliproxy/plugins" },
+			{
+				port: 8317,
+				authDir: "/state/auths",
+				internalApiKey: "internal-only",
+				plugins: { dir: "/opt/cliproxy/plugins", opencodeGo: true, commandcode: false },
+			},
 		);
 
 		expect(projected["plugins"]).toEqual({
@@ -99,7 +104,12 @@ describe("CLIProxy managed OpenCode Go plugin", () => {
 					},
 				},
 			},
-			{ port: 8317, authDir: "/state/auths", internalApiKey: "internal-only", pluginDir: "/opt/cliproxy/plugins" },
+			{
+				port: 8317,
+				authDir: "/state/auths",
+				internalApiKey: "internal-only",
+				plugins: { dir: "/opt/cliproxy/plugins", opencodeGo: true, commandcode: false },
+			},
 		);
 
 		expect(projected["plugins"]).toMatchObject({
@@ -107,6 +117,45 @@ describe("CLIProxy managed OpenCode Go plugin", () => {
 			dir: "/opt/cliproxy/plugins",
 			configs: { "opencode-go-cliproxyapi": { "api-keys": [{ value: "oc_sk_from_page" }] } },
 		});
+	});
+
+	it("enables the Command Code plugin without an OpenCode key", () => {
+		const projected = buildCliProxyProjection(
+			{},
+			{
+				port: 8317,
+				authDir: "/state/auths",
+				internalApiKey: "internal-only",
+				plugins: { dir: "/opt/cliproxy/plugins", opencodeGo: false, commandcode: true },
+			},
+		);
+
+		expect(projected["plugins"]).toEqual({
+			enabled: true,
+			dir: "/opt/cliproxy/plugins",
+			configs: {
+				"commandcode-go-cliproxyapi": {
+					enabled: true,
+					"base-url": "https://api.commandcode.ai/provider/v1",
+					"model-prefix": { enabled: true, value: "commandcode" },
+				},
+			},
+		});
+	});
+
+	it("keeps both managed plugins in one config", () => {
+		const projected = buildCliProxyProjection(
+			{},
+			{
+				port: 8317,
+				authDir: "/state/auths",
+				internalApiKey: "internal-only",
+				plugins: { dir: "/opt/cliproxy/plugins", opencodeGo: true, commandcode: true },
+			},
+		);
+
+		const plugins = projected["plugins"] as { configs: Record<string, unknown> };
+		expect(Object.keys(plugins.configs).sort()).toEqual(["commandcode-go-cliproxyapi", "opencode-go-cliproxyapi"]);
 	});
 
 	it("leaves configuration untouched when the runtime does not ship the plugin", () => {
@@ -251,6 +300,43 @@ describe("CLIProxy plugin subscription quota", () => {
 			expect.objectContaining({ label: "5 小时", used_percent: 20, remaining_percent: 80 }),
 			expect.objectContaining({ label: "周", remaining_percent: 50 }),
 		]);
+	});
+
+	it("routes CommandCode account quotas through the plugin management API", async () => {
+		const calls: Array<{ url: string; body?: string }> = [];
+		jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+			const url = String(input);
+			calls.push({ url: url, body: typeof init?.body === "string" ? init.body : undefined });
+			if (url.includes("/auth-files")) {
+				return Response.json({ files: [{ name: "commandcode.json", auth_index: "cc-1", provider: "commandcode" }] });
+			}
+			if (url.includes("/plugins/commandcode-go-cliproxyapi/quota-usage")) {
+				return Response.json({
+					cards: [
+						{
+							key_id: "cc-1",
+							usage: {
+								plan: "GOAT",
+								plan_credits: 70,
+								credits_left: 60,
+								five_hour: { percent: 10 },
+								weekly: { percent: 20 },
+							},
+						},
+					],
+				});
+			}
+			return new Response("{}", { status: 404 });
+		});
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		const quota = await runtime.getAccountQuota("cc-1");
+
+		expect(quota.provider).toBe("commandcode");
+		expect(quota.plan).toBe("GOAT");
+		expect(quota.windows.map((window) => window.label)).toEqual(["5 小时", "周"]);
+		const quotaCall = calls.find((call) => call.url.includes("quota-usage"));
+		expect(JSON.parse(String(quotaCall?.body))).toEqual({ key_id: "cc-1" });
 	});
 });
 

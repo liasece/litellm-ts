@@ -27,6 +27,10 @@
   注入。`plugins.enabled` / `plugins.dir` 属于托管边界，用户配置中同一插件 id 的其他字段优先。
   插件目录由 `CLIPROXY_PLUGIN_DIR` 指定；OpenCode Go 的密钥优先通过 `OPENCODE_GO_API_KEY`
   环境变量注入，不要把密钥写进仓库、配置样例或日志。
+- CommandCode GOAT/Pro/Max 插件（`commandcode-go-cliproxyapi`）同样内置。它不接受插件配置里的
+  `api-keys`，账户只来自 CPA auth 文件（`CLIPROXY_RUNTIME_ROOT/auths/`，`type: commandcode`）；
+  模型前缀为 `commandcode/`，额度走插件的 `quota-usage` 管理接口。CommandCode Go 套餐不支持。
+  细节见 `docs/cliproxy-commandcode-goat-plugin.md`。
 - 账户额度优先走 CLIProxy 的通用插件额度接口（`/v0/management/quota/providers`、
   `/v0/management/quota/fetch`），provider 专用额度逻辑只保留给 codex/claude/kimi/antigravity/xai。
   插件额度是账号级窗口，不提供按模型的美元余额明细。

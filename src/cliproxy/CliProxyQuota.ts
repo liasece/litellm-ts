@@ -438,6 +438,99 @@ export function normalizeCliProxyPluginQuota(
 	};
 }
 
+const COMMANDCODE_WINDOW_LABELS: Record<string, string> = {
+	five_hour: "5 小时",
+	weekly: "周",
+	month: "月",
+};
+
+/**
+ * 归一化 CommandCode 插件 quota-usage 接口返回的账号额度。
+ * @param payload
+ * @param authIndex
+ */
+export function normalizeCliProxyCommandCodeQuota(
+	payload: unknown,
+	authIndex: string,
+): Omit<CliProxyAccountQuota, "provider" | "fetched_at"> | null {
+	const value = record(payload);
+	if (!value) {
+		return null;
+	}
+	let card: Record<string, unknown> | null = null;
+	if (Array.isArray(value["cards"])) {
+		for (const candidate of value["cards"]) {
+			const entry = record(candidate);
+			if (!entry) {
+				continue;
+			}
+			if (stringValue(entry["key_id"]) === authIndex) {
+				card = entry;
+				break;
+			}
+			if (!card) {
+				card = entry;
+			}
+		}
+	} else if (value["key_id"] !== undefined || value["usage"] !== undefined || value["error"] !== undefined) {
+		// 指定 key_id 时插件直接返回单个账户卡片，而不是 { cards: [...] }。
+		card = value;
+	}
+	if (!card) {
+		return null;
+	}
+	const failure = stringValue(card["error"]);
+	if (failure) {
+		throw ApiError.unavailable(`CommandCode 额度查询失败: ${failure}`);
+	}
+	const usage = record(card["usage"]);
+	if (!usage) {
+		return null;
+	}
+	const windows: CliProxyQuotaWindow[] = [];
+	for (const key of ["five_hour", "weekly", "month"]) {
+		const window = record(usage[key]);
+		if (!window) {
+			continue;
+		}
+		const rawPercent = numberValue(window["percent"]);
+		const cap = numberValue(window["cap"]);
+		const used = numberValue(window["used"]);
+		const computed = rawPercent ?? (cap !== null && cap > 0 && used !== null ? (used / cap) * 100 : null);
+		const percent = boundedPercent(computed);
+		if (percent === null) {
+			continue;
+		}
+		windows.push({
+			id: `commandcode:${key}`,
+			label: COMMANDCODE_WINDOW_LABELS[key] ?? key,
+			used_percent: percent,
+			remaining_percent: Math.round((100 - percent) * 100) / 100,
+			resets_at: normalizeDate(window["resets_at"]),
+		});
+	}
+	const planCredits = numberValue(usage["plan_credits"]) ?? 0;
+	const creditsLeft = numberValue(usage["credits_left"]) ?? 0;
+	const balances: CliProxyQuotaBalance[] = [];
+	if (planCredits > 0) {
+		balances.push({
+			label: "剩余计划额度",
+			used: Math.min(planCredits, Math.max(0, planCredits - creditsLeft)),
+			limit: planCredits,
+			unit: "$",
+		});
+	} else if (creditsLeft > 0) {
+		balances.push({ label: "剩余额度", used: 0, limit: creditsLeft, unit: "$" });
+	}
+	const month = record(usage["month"]);
+	return {
+		plan: stringValue(usage["plan"]) ?? null,
+		subscription_expires_at: normalizeDate(month?.["resets_at"]),
+		windows: windows,
+		balances: balances,
+	};
+}
+
 /**
  * @param providerValue
  * @param payloads

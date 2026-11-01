@@ -1,4 +1,10 @@
-import { buildCliProxyQuotaRequests, normalizeCliProxyPluginQuota, normalizeCliProxyQuota } from "./CliProxyQuota";
+import { ApiError } from "../core/api/ApiError";
+import {
+	buildCliProxyQuotaRequests,
+	normalizeCliProxyCommandCodeQuota,
+	normalizeCliProxyPluginQuota,
+	normalizeCliProxyQuota,
+} from "./CliProxyQuota";
 
 describe("CLIProxy subscription quota normalization", () => {
 	it("converts Codex used percentages to remaining percentages and classifies rolling windows", () => {
@@ -170,5 +176,55 @@ describe("CLIProxy plugin quota normalization", () => {
 		});
 		expect(unnamed?.windows[0]?.id).toBe("opencode-go:bucket-1");
 		expect(normalizeCliProxyPluginQuota("opencode-go", { groups: [] })).toBeNull();
+	});
+});
+
+describe("CLIProxy CommandCode quota normalization", () => {
+	it("maps account credits and rolling windows", () => {
+		const quota = normalizeCliProxyCommandCodeQuota(
+			{
+				cards: [
+					{
+						key_id: "cc-1",
+						status: "active",
+						usage: {
+							plan: "GOAT",
+							plan_credits: 70,
+							credits_left: 52.5,
+							five_hour: { percent: 10, resets_at: "2026-11-01T06:00:00Z" },
+							weekly: { percent: 25 },
+							month: { percent: 25, resets_at: "2026-12-01T00:00:00Z" },
+						},
+					},
+				],
+			},
+			"cc-1",
+		);
+
+		expect(quota?.plan).toBe("GOAT");
+		expect(quota?.windows.map((window) => window.label)).toEqual(["5 小时", "周", "月"]);
+		expect(quota?.windows[0]).toMatchObject({ used_percent: 10, remaining_percent: 90 });
+		expect(quota?.balances[0]).toMatchObject({ label: "剩余计划额度", used: 17.5, limit: 70, unit: "$" });
+		expect(quota?.subscription_expires_at).toBe("2026-12-01T00:00:00.000Z");
+	});
+
+	it("surfaces the plugin account error", () => {
+		expect(() => normalizeCliProxyCommandCodeQuota({ cards: [{ key_id: "cc-1", error: "account request failed" }] }, "cc-1")).toThrow(
+			ApiError,
+		);
+	});
+
+	it("accepts the single-card response returned for a key_id query", () => {
+		const quota = normalizeCliProxyCommandCodeQuota(
+			{ key_id: "cc-1", usage: { plan: "GOAT", credits_left: 70, five_hour: { percent: 0 } } },
+			"cc-1",
+		);
+
+		expect(quota?.plan).toBe("GOAT");
+		expect(quota?.windows).toHaveLength(1);
+	});
+
+	it("returns null when no card is present", () => {
+		expect(normalizeCliProxyCommandCodeQuota({ cards: [] }, "cc-1")).toBeNull();
 	});
 });

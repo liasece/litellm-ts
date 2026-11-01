@@ -27,6 +27,7 @@ FROM alpine:3.22 AS cliproxy-download
 ARG TARGETARCH
 ARG CLIPROXY_VERSION=8.0.47
 ARG OPENCODE_GO_PLUGIN_VERSION=0.2.2
+ARG COMMANDCODE_PLUGIN_VERSION=0.1.3
 WORKDIR /download
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
@@ -51,7 +52,15 @@ RUN set -eu; \
     test -n "${plugin_expected}"; \
     echo "${plugin_expected}  ${plugin_archive}" | sha256sum -c -; \
     mkdir -p plugins; \
-    unzip -q -o "${plugin_archive}" -d plugins
+    unzip -q -o "${plugin_archive}" -d plugins; \
+    cc_archive="commandcode-go-cliproxyapi_${COMMANDCODE_PLUGIN_VERSION}_linux_${plugin_arch}.zip"; \
+    cc_base="https://github.com/mczhoucn/commandcode-go-cliproxyapi/releases/download/v${COMMANDCODE_PLUGIN_VERSION}"; \
+    wget -q "${cc_base}/checksums.txt" -O cc-checksums.txt; \
+    wget -q "${cc_base}/${cc_archive}" -O "${cc_archive}"; \
+    cc_expected="$(awk -v name="${cc_archive}" '$2 == name { print $1 }' cc-checksums.txt)"; \
+    test -n "${cc_expected}"; \
+    echo "${cc_expected}  ${cc_archive}" | sha256sum -c -; \
+    unzip -q -o "${cc_archive}" -d plugins
 
 FROM node:22-bookworm-slim AS runtime
 
@@ -74,6 +83,7 @@ COPY drizzle/ ./drizzle/
 COPY --from=dashboard-build /build/ui/litellm-dashboard/out/ ./ui/out/
 COPY --from=cliproxy-download /download/cli-proxy-api /opt/cliproxy/cli-proxy-api
 COPY --from=cliproxy-download /download/plugins/opencode-go-cliproxyapi.so /opt/cliproxy/plugins/opencode-go-cliproxyapi.so
+COPY --from=cliproxy-download /download/plugins/commandcode-go-cliproxyapi.so /opt/cliproxy/plugins/commandcode-go-cliproxyapi.so
 
 ENV CLIPROXY_PLUGIN_DIR=/opt/cliproxy/plugins
 ENV CLIPROXY_BOOTSTRAP_BINARY=/opt/cliproxy/cli-proxy-api

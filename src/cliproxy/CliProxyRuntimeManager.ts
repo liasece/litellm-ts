@@ -25,6 +25,7 @@ import {
 } from "./CliProxyTypes";
 import {
 	buildCliProxyQuotaRequests,
+	normalizeCliProxyCommandCodeQuota,
 	normalizeCliProxyPluginQuota,
 	normalizeCliProxyQuota,
 	type CliProxyQuotaRequest,
@@ -40,10 +41,36 @@ const RESERVED_CONFIG_KEYS = new Set(["host", "port", "auth-dir", "api-keys", "r
 const OPENCODE_GO_PLUGIN_ID = "opencode-go-cliproxyapi";
 const OPENCODE_GO_PLUGIN_MIN_VERSION = "8.0.0";
 const OPENCODE_GO_PLUGIN_BASE_URL = "https://opencode.ai/inference/go/v1";
+const COMMANDCODE_PLUGIN_ID = "commandcode-go-cliproxyapi";
+const COMMANDCODE_PLUGIN_BASE_URL = "https://api.commandcode.ai/provider/v1";
 const PROVIDER_SPECIFIC_QUOTA = new Set(["codex", "claude", "anthropic", "kimi", "antigravity", "xai"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 把额度查询失败的原始原因压成一句可展示文本。
+ *
+ * 之前这里统一吞成"订阅额度查询失败"，用户无法区分该重试、该重新登录还是该换账号；
+ * 保留状态码与上游正文后，503 才有可操作性。
+ * @param error - 捕获到的失败原因
+ */
+function describeQuotaFailure(error: unknown): string {
+	if (error instanceof ApiError) {
+		return error.message;
+	}
+	if (isRecord(error)) {
+		const status = error["statusCode"] ?? error["status"] ?? error["status_code"];
+		const message = error["message"];
+		if (typeof status === "number" || typeof status === "string") {
+			return typeof message === "string" && message.length > 0 ? `HTTP ${status}: ${message.slice(0, 200)}` : `HTTP ${status}`;
+		}
+		if (typeof message === "string" && message.length > 0) {
+			return message.slice(0, 200);
+		}
+	}
+	return String(error).slice(0, 200);
 }
 
 /**
@@ -174,6 +201,21 @@ export function extractCliProxyReleaseNotes(source: string): string {
 }
 
 /**
+ * 当前启用的托管插件组合。
+ *
+ * 每个插件是否注入由"插件文件存在"与"凭据/账户可用"共同决定；
+ * `dir` 是 CPA 的插件目录，两个插件共享同一个目录。
+ */
+export interface CliProxyManagedPlugins {
+	/** CPA 插件目录（.so/.dylib 存放处）。 */
+	readonly dir: string;
+	/** OpenCode Go 插件是否启用。 */
+	readonly opencodeGo: boolean;
+	/** CommandCode GOAT/Pro/Max 插件是否启用。 */
+	readonly commandcode: boolean;
+}
+
+/**
  * @param userConfig
  * @param options
  */
@@ -190,9 +232,9 @@ export function buildCliProxyProjection(
 		 *
 		 */
 		internalApiKey: string; /**
-		 * Managed plugin directory; when set, the OpenCode Go plugin is enabled.
+		 * Managed plugin toggles; when non-null the matching plugin entries are injected.
 		 */
-		pluginDir?: string | null;
+		plugins?: CliProxyManagedPlugins | null;
 	},
 ): Record<string, unknown> {
 	const projected: Record<string, unknown> = {
@@ -211,8 +253,8 @@ export function buildCliProxyProjection(
 		"logging-to-file": false,
 		pprof: { enable: false, addr: "127.0.0.1:8316" },
 	};
-	if (options.pluginDir) {
-		projected["plugins"] = buildCliProxyPluginConfig(userConfig["plugins"], options.pluginDir);
+	if (options.plugins) {
+		projected["plugins"] = buildCliProxyPluginConfig(userConfig["plugins"], options.plugins);
 	}
 	return projected;
 }
@@ -248,30 +290,41 @@ export function cliProxyReleaseArchiveName(version: string, architecture: "amd64
 }
 
 /**
- * 合并 OpenCode Go 插件的托管配置，允许用户在页面上覆盖密钥等字段。
+ * 合并托管插件的配置，允许用户在页面上覆盖密钥等字段。
  * @param userValue
- * @param directory
+ * @param plugins
  */
-export function buildCliProxyPluginConfig(userValue: unknown, directory: string): Record<string, unknown> {
+export function buildCliProxyPluginConfig(userValue: unknown, plugins: CliProxyManagedPlugins): Record<string, unknown> {
 	const userPlugins = isRecord(userValue) ? userValue : {};
 	const userConfigs = isRecord(userPlugins["configs"]) ? (userPlugins["configs"] as Record<string, unknown>) : {};
-	const userEntry = isRecord(userConfigs[OPENCODE_GO_PLUGIN_ID]) ? (userConfigs[OPENCODE_GO_PLUGIN_ID] as Record<string, unknown>) : {};
+	const configs: Record<string, unknown> = { ...userConfigs };
+	if (plugins.opencodeGo) {
+		const entry = isRecord(configs[OPENCODE_GO_PLUGIN_ID]) ? (configs[OPENCODE_GO_PLUGIN_ID] as Record<string, unknown>) : {};
+		configs[OPENCODE_GO_PLUGIN_ID] = {
+			enabled: true,
+			"base-url": OPENCODE_GO_PLUGIN_BASE_URL,
+			"model-prefix": { enabled: true, value: "opencode-go" },
+			// CLIProxy 在运行时展开该占位符，不能交给 JavaScript 模板字符串。
+			// eslint-disable-next-line no-template-curly-in-string
+			"api-keys": [{ value: "${OPENCODE_GO_API_KEY}", name: "Personal" }],
+			...entry,
+		};
+	}
+	if (plugins.commandcode) {
+		// CommandCode 不接受 api-keys：账户只来自 CPA auth 文件（type: commandcode）。
+		const entry = isRecord(configs[COMMANDCODE_PLUGIN_ID]) ? (configs[COMMANDCODE_PLUGIN_ID] as Record<string, unknown>) : {};
+		configs[COMMANDCODE_PLUGIN_ID] = {
+			enabled: true,
+			"base-url": COMMANDCODE_PLUGIN_BASE_URL,
+			"model-prefix": { enabled: true, value: "commandcode" },
+			...entry,
+		};
+	}
 	return {
 		...userPlugins,
 		enabled: true,
-		dir: directory,
-		configs: {
-			...userConfigs,
-			[OPENCODE_GO_PLUGIN_ID]: {
-				enabled: true,
-				"base-url": OPENCODE_GO_PLUGIN_BASE_URL,
-				"model-prefix": { enabled: true, value: "opencode-go" },
-				// CLIProxy 在运行时展开该占位符，不能交给 JavaScript 模板字符串。
-				// eslint-disable-next-line no-template-curly-in-string
-				"api-keys": [{ value: "${OPENCODE_GO_API_KEY}", name: "Personal" }],
-				...userEntry,
-			},
-		},
+		dir: plugins.dir,
+		configs,
 	};
 }
 
@@ -637,6 +690,30 @@ export class CliProxyRuntimeManager {
 			.sort((left, right) => left.filename.localeCompare(right.filename) || left.auth_index.localeCompare(right.auth_index));
 	}
 
+	/**
+	 * 通过 CommandCode 插件的管理接口查询账户额度。
+	 *
+	 * 该插件的账户只来自 CPA auth 文件，额度是账号级窗口（计划/剩余 credits/5 小时、周、月），
+	 * 不提供按模型的美元余额明细；插件未加载或账户不存在时返回 null 由调用方降级。
+	 * @param authIndex - CPA auth 文件索引
+	 */
+	private async _fetchCommandCodeQuota(authIndex: string): Promise<CliProxyAccountQuota | null> {
+		let payload: unknown;
+		try {
+			payload = await this._managementJson<unknown>(`/plugins/${COMMANDCODE_PLUGIN_ID}/quota-usage`, {
+				method: "POST",
+				body: JSON.stringify({ key_id: authIndex }),
+			});
+		} catch {
+			return null;
+		}
+		const normalized = normalizeCliProxyCommandCodeQuota(payload, authIndex);
+		if (!normalized) {
+			return null;
+		}
+		return { provider: "commandcode", ...normalized, fetched_at: new Date().toISOString() };
+	}
+
 	private async _fetchPluginQuota(authIndex: string, provider: string): Promise<CliProxyAccountQuota | null> {
 		const normalizedProvider = provider.trim().toLowerCase();
 		if (PROVIDER_SPECIFIC_QUOTA.has(normalizedProvider)) {
@@ -663,8 +740,10 @@ export class CliProxyRuntimeManager {
 				method: "POST",
 				body: JSON.stringify({ auth_index: authIndex }),
 			});
-		} catch {
-			throw ApiError.unavailable(`${provider} 订阅额度查询失败`);
+		} catch (error) {
+			// 保留真实原因（HTTP 状态码/超时/上游正文）：只回一句"查询失败"时，
+			// 用户无法判断该重试、该重新登录还是该换账号。
+			throw ApiError.unavailable(`${provider} 订阅额度查询失败: ${describeQuotaFailure(error)}`);
 		}
 		const normalized = normalizeCliProxyPluginQuota(provider, payload);
 		if (!normalized) {
@@ -687,6 +766,14 @@ export class CliProxyRuntimeManager {
 			throw ApiError.notFound("CLIProxy OAuth 账户不存在");
 		}
 		const provider = this._stringField(authFile, "type", "provider") ?? "unknown";
+		// CommandCode 额度只能走插件接口，不能退化到 provider 专用查询（那条路径没有它的实现）。
+		if (provider.trim().toLowerCase() === "commandcode") {
+			const commandCodeQuota = await this._fetchCommandCodeQuota(authIndex);
+			if (commandCodeQuota) {
+				return commandCodeQuota;
+			}
+			throw ApiError.unavailable("CommandCode 额度不可用：插件未加载或账户不存在");
+		}
 		const pluginQuota = await this._fetchPluginQuota(authIndex, provider);
 		if (pluginQuota) {
 			return pluginQuota;
@@ -1044,16 +1131,20 @@ export class CliProxyRuntimeManager {
 		}
 	}
 
-	private async _pluginFileAvailable(): Promise<boolean> {
+	private async _pluginFileAvailable(pluginId: string): Promise<boolean> {
 		for (const extension of [".so", ".dylib"]) {
 			try {
-				await access(path.join(this._pluginDir, `${OPENCODE_GO_PLUGIN_ID}${extension}`));
+				await access(path.join(this._pluginDir, `${pluginId}${extension}`));
 				return true;
 			} catch {
 				// 继续探测其他平台扩展名。
 			}
 		}
 		return false;
+	}
+
+	private async _hasAnyPluginFile(): Promise<boolean> {
+		return (await this._pluginFileAvailable(OPENCODE_GO_PLUGIN_ID)) || (await this._pluginFileAvailable(COMMANDCODE_PLUGIN_ID));
 	}
 
 	private _hasPluginCredential(userConfig: Record<string, unknown>): boolean {
@@ -1075,7 +1166,7 @@ export class CliProxyRuntimeManager {
 		if ((await this._readArtifactKind(version)) === "plugin") {
 			return;
 		}
-		if (!(await this._pluginFileAvailable())) {
+		if (!(await this._hasAnyPluginFile())) {
 			return;
 		}
 		if (version === this._bootstrapVersion) {
@@ -1100,7 +1191,7 @@ export class CliProxyRuntimeManager {
 		}
 	}
 
-	private async _resolvePluginDir(userConfig: Record<string, unknown>): Promise<string | null> {
+	private async _resolveManagedPlugins(userConfig: Record<string, unknown>): Promise<CliProxyManagedPlugins | null> {
 		const version = this._currentVersion();
 		if (!version || !supportsCliProxyPlugins(version)) {
 			return null;
@@ -1108,29 +1199,25 @@ export class CliProxyRuntimeManager {
 		if ((await this._readArtifactKind(version)) !== "plugin") {
 			return null;
 		}
-		if (!this._hasPluginCredential(userConfig)) {
+		// 两个插件开关独立：OpenCode Go 需要凭据，CommandCode 只看插件文件
+		// （它的账户来自 CPA auth 文件，不经配置）。
+		const opencodeGo = (await this._pluginFileAvailable(OPENCODE_GO_PLUGIN_ID)) && this._hasPluginCredential(userConfig);
+		const commandcode = await this._pluginFileAvailable(COMMANDCODE_PLUGIN_ID);
+		if (!opencodeGo && !commandcode) {
 			return null;
 		}
-		for (const extension of [".so", ".dylib"]) {
-			try {
-				await access(path.join(this._pluginDir, `${OPENCODE_GO_PLUGIN_ID}${extension}`));
-				return this._pluginDir;
-			} catch {
-				// 继续探测其他平台扩展名。
-			}
-		}
-		return null;
+		return { dir: this._pluginDir, opencodeGo, commandcode };
 	}
 
 	private async _projectConfig(): Promise<void> {
 		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
-		const pluginDir = await this._resolvePluginDir(userConfig);
-		this._pluginsEnabled = pluginDir !== null;
+		const plugins = await this._resolveManagedPlugins(userConfig);
+		this._pluginsEnabled = plugins !== null;
 		const projected = buildCliProxyProjection(userConfig, {
 			port: this._port,
 			authDir: this._authDir,
 			internalApiKey: this._internalApiKey,
-			pluginDir: pluginDir,
+			plugins,
 		});
 		const contents = `# Generated by LiteLLM TS. Edit through the LiteLLM CLIProxy page.\n${yaml.dump(projected, {
 			noRefs: true,

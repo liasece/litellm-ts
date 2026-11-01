@@ -9,6 +9,7 @@ RUN apt-get update \
 ARG TARGETARCH
 ARG CLIPROXY_VERSION=8.0.47
 ARG OPENCODE_GO_PLUGIN_VERSION=0.2.2
+ARG COMMANDCODE_PLUGIN_VERSION=0.1.3
 
 ARG APP_PORT=4000
 ENV APP_PORT=${APP_PORT}
@@ -49,7 +50,15 @@ RUN set -eu; \
     test -n "${plugin_expected}"; \
     echo "${plugin_expected}  ${plugin_archive}" | sha256sum -c -; \
     mkdir -p /opt/cliproxy/plugins; \
-    unzip -q -o "${plugin_archive}" -d /opt/cliproxy/plugins
+    unzip -q -o "${plugin_archive}" -d /opt/cliproxy/plugins; \
+    cc_archive="commandcode-go-cliproxyapi_${COMMANDCODE_PLUGIN_VERSION}_linux_${plugin_arch}.zip"; \
+    cc_base="https://github.com/mczhoucn/commandcode-go-cliproxyapi/releases/download/v${COMMANDCODE_PLUGIN_VERSION}"; \
+    wget -q "${cc_base}/checksums.txt" -O cc-checksums.txt; \
+    wget -q "${cc_base}/${cc_archive}" -O "${cc_archive}"; \
+    cc_expected="$(awk -v name="${cc_archive}" '$2 == name { print $1 }' cc-checksums.txt)"; \
+    test -n "${cc_expected}"; \
+    echo "${cc_expected}  ${cc_archive}" | sha256sum -c -; \
+    unzip -q -o "${cc_archive}" -d /opt/cliproxy/plugins
 
 ENV CLIPROXY_PLUGIN_DIR=/opt/cliproxy/plugins
 ENV CLIPROXY_BOOTSTRAP_BINARY=/opt/cliproxy/cli-proxy-api
