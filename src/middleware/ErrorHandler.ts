@@ -36,12 +36,20 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
 			error: err.message,
 		});
 	} else if (err instanceof ApiError) {
-		logger.warn("API 错误", {
-			method: req.method,
-			url: req.originalUrl,
-			statusCode: err.statusCode,
-			message: err.message,
-		});
+		// 4xx 已由 accessLogFilter 在响应结束时记录（含 method/url/status/耗时），
+		// 这里再记一条会让同一个客户端错误出现两次：生产日志里 401 因此被双写到
+		// 1,120 + 1,121 条，warn 级别彻底失去信噪比。
+		// 仅当响应不是通过本中间件正常写出（例如 headersSent 已为真）时才补记，
+		// 保证"确实发生了 4xx 但没人记录"的情况仍然可见。
+		const isClientError = err.statusCode >= 400 && err.statusCode < 500;
+		if (!isClientError || res.headersSent) {
+			logger.warn("API 错误", {
+				method: req.method,
+				url: req.originalUrl,
+				statusCode: err.statusCode,
+				message: err.message,
+			});
+		}
 	} else {
 		logger.error("未处理的请求错误", {
 			method: req.method,

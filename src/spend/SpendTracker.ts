@@ -560,7 +560,10 @@ export function getFailureErrorInformation(error: unknown): Record<string, unkno
 		error_type: errorLike.name,
 		error_code: typeof statusCode === "number" || typeof statusCode === "string" ? statusCode : code,
 		...(cause === undefined ? {} : { error_cause: cause }),
-		...(typeof errorLike.stage === "string" ? { error_stage: errorLike.stage } : {}),
+		// error_stage 缺省补 "proxy"：只有上游请求中止这类路径才会显式打 stage，
+		// 其余失败若留空，就无法把"客户端取消 / 上游连接中断 / 流解析失败"区分开
+		// （生产曾累计 4,530 条 abort 全部无 stage）。
+		error_stage: typeof errorLike.stage === "string" ? errorLike.stage : "proxy",
 	};
 }
 
@@ -986,7 +989,10 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		// PY reconstruct_model_name：model 列记实际执行 deployment 的完整模型名
 		// （含 provider 前缀），无 deployment 信息时回退请求 model
 		model: reconstructModelName(ctx.model, ctx.customLlmProvider, ctx.deploymentModel, (ctx.attemptedRetries ?? 0) > 0),
-		model_group: ctx.modelGroup,
+		// model_group 必须始终有值：请求在选部署前就失败（如客户端提前断开）时
+		// ctx.modelGroup 为空，会让失败行无法按模型归组（生产 901 条失败里有 246 条如此）。
+		// 回退到请求原始 model —— 它在路由解析前就已确定，一定能拿到。
+		model_group: ctx.modelGroup ?? ctx.model,
 		resolved_model_group: metadata.resolved_model_group ?? undefined,
 		model_id: ctx.modelId,
 		custom_llm_provider: ctx.customLlmProvider,

@@ -544,7 +544,13 @@ export function costPerToken(
 				// GAP (COST-001): 对齐 PY cost_calculator.py:2076-2077 — 未知模型返回 0,0,0 静默处理
 				// 之前 throw 让 SpendTracker 等调用方手动 catch → 仍写 0；PY 直接 return 0,0,0。
 				// 现改为 return 0,0,0 + logger.warn 提示配置缺口，避免上游重复 try/catch 噪音。
-				logger.warn(`未找到模型价格: ${model}，按 0 计费`);
+				// 告警必须带上候选名，否则只看到裸逻辑名（如 MiniMax-M3）无法判断该给哪个
+				// deployment 补价 —— 生产上正是因为缺这条线索，MiniMax 漏记持续了三个月。
+				logger.warn(`未找到模型价格: ${model}，按 0 计费`, {
+					model: model,
+					candidates: _candidatesFor(model),
+					customCostProvided: customPrices.length > 0,
+				});
 				return { cacheInputCost: 0, inputCost: 0, outputCost: 0, totalCost: 0 };
 			}
 			inputPerMillion = price.inputPerMillion;
