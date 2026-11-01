@@ -1,4 +1,5 @@
 import express from "express";
+import { MiniMaxProvider } from "../providers/MiniMaxProvider";
 import request from "supertest";
 import { registerChatCompletionsRoutes } from "./ChatCompletionsEndpoint";
 import * as SpendTracker from "../spend/SpendTracker";
@@ -56,6 +57,79 @@ function baseProvider(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Chat streaming SpendLog", () => {
+	it.each([undefined, { include_usage: false }, { include_usage: true }])(
+		"MiniMax records cached usage while respecting client stream_options=%j",
+		async (streamOptions) => {
+			const provider = new MiniMaxProvider("minimax-key");
+			jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+				const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				const upstreamOptions = body["stream_options"] as Record<string, unknown> | undefined;
+				const chunks: Record<string, unknown>[] = [
+					{
+						id: "chatcmpl-minimax-usage",
+						object: "chat.completion.chunk",
+						created: 1,
+						model: "MiniMax-M3.1-Flash",
+						choices: [{ index: 0, delta: { content: "OK" }, finish_reason: "stop" }],
+					},
+				];
+				if (upstreamOptions?.["include_usage"] === true) {
+					chunks.push({
+						id: "chatcmpl-minimax-usage",
+						object: "chat.completion.chunk",
+						created: 1,
+						model: "MiniMax-M3.1-Flash",
+						choices: [],
+						usage: {
+							prompt_tokens: 1200,
+							completion_tokens: 30,
+							total_tokens: 1230,
+							prompt_tokens_details: { cached_tokens: 1024 },
+						},
+					});
+				}
+				return new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n", {
+					headers: { "content-type": "text/event-stream" },
+				});
+			});
+			const { app } = buildApp(provider as unknown as Record<string, unknown>);
+			const response = await request(app)
+				.post("/v1/chat/completions")
+				.send({
+					model: "chat-group",
+					messages: [{ role: "user", content: "Return OK" }],
+					stream: true,
+					...(streamOptions ? { stream_options: streamOptions } : {}),
+				})
+				.expect(200);
+			expect(response.text).toContain('"content":"OK"');
+			const chunks = response.text
+				.split("\n")
+				.filter((line) => line.startsWith("data: {"))
+				.map((line) => JSON.parse(line.slice(6)));
+			if (streamOptions?.include_usage) {
+				expect(chunks.filter((chunk) => chunk.usage)).toHaveLength(1);
+				expect(chunks.at(-1)?.usage).toMatchObject({
+					prompt_tokens: 1200,
+					completion_tokens: 30,
+					prompt_tokens_details: { cached_tokens: 1024 },
+				});
+			} else {
+				expect(chunks).toHaveLength(1);
+				expect(response.text).not.toContain('"usage":');
+			}
+			expect(response.text).not.toContain('"_usage":');
+			expect(spendSpy).toHaveBeenCalledTimes(1);
+			expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+				status: SpendLogStatus.Success,
+				prompt_tokens: 1200,
+				completion_tokens: 30,
+				total_tokens: 1230,
+				cache_read_input_tokens: 1024,
+			});
+		},
+	);
+
 	let spendSpy: jest.SpyInstance;
 	let previousStorePrompts: string | undefined;
 
