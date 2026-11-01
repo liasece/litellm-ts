@@ -97,7 +97,7 @@ describe("DeepSeekProvider", () => {
 			expect(result!.body).toEqual(body);
 		});
 
-		it("尊重 /v1 api_base 且不为尚未支持的 v4-pro 声明原生 Responses", () => {
+		it("尊重 /v1 api_base，并为 deepseek-v4-pro 声明原生 Responses", () => {
 			const flash = provider.transformResponsesRequest(
 				"deepseek-v4-flash",
 				{ model: "logical-model", input: "hello" },
@@ -107,7 +107,23 @@ describe("DeepSeekProvider", () => {
 			expect(flash?.url).toBe("https://proxy.example/v1/responses");
 			expect(flash?.headers["Authorization"]).toBe("Bearer deployment-key");
 			expect(flash?.body).toMatchObject({ model: "deepseek-v4-flash", input: "hello" });
-			expect(provider.transformResponsesRequest("deepseek-v4-pro", { input: "hello" }, {})).toBeUndefined();
+		});
+
+		it("托管 web_search 只对 deepseek-v4-pro 生效，因此它必须拿到原生 Responses 通道", () => {
+			// 官方文档：web_search "Supported with deepseek-v4-pro ... Ignored with deepseek-flash"。
+			// 若继续把 v4-pro 挡在 Responses 之外，Router 只能退回 Chat 兼容路径，
+			// 而 web_search_options 会被上游忽略，联网能力于是静默降级。
+			const pro = provider.transformResponsesRequest("deepseek/deepseek-v4-pro", { input: "hello" }, {});
+
+			expect(pro).toBeDefined();
+			expect(pro!.url).toBe("https://api.deepseek.com/responses");
+			expect(pro!.responseProtocol).toBe("responses");
+			expect(pro!.body).toMatchObject({ model: "deepseek-v4-pro", input: "hello" });
+		});
+
+		it("未开放 Responses 的 DeepSeek 模型仍返回 undefined 以保留 Chat 兼容路径", () => {
+			expect(provider.transformResponsesRequest("deepseek-embedding", { input: "hello" }, {})).toBeUndefined();
+			expect(provider.transformResponsesRequest("deepseek-reasoner", { input: "hello" }, {})).toBeUndefined();
 		});
 	});
 

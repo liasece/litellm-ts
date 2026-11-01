@@ -5,6 +5,15 @@ import type { ProviderRequest } from "../types/provider";
 import { AnthropicCompatibleProvider } from "./AnthropicCompatibleProvider";
 
 /**
+ * 支持原生 Responses 出口的 DeepSeek 模型。
+ *
+ * 托管 \`web_search\` 工具只能通过 Responses 协议下发；Chat Completions 的
+ * \`web_search_options\` 会被上游忽略，联网能力于是静默降级为「模型自称无法联网」。
+ * 旧名 deepseek-v4-flash 继续接受，因为既有部署仍按该名配置。
+ */
+const DEEPSEEK_RESPONSES_MODELS = new Set(["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"]);
+
+/**
  * DeepSeek 提供商
  *
  * Chat Completions 请求由 OpenAICompatProvider 原样透传；
@@ -39,8 +48,9 @@ export class DeepSeekProvider extends AnthropicCompatibleProvider {
 	/**
 	 * DeepSeek 原生 Responses 出口。
 	 *
-	 * 官方当前仅为 deepseek-v4-flash 开放 Responses；其他模型返回 undefined，
-	 * 让 Router 在不离开原 fallback 链的前提下使用 Chat 兼容路径。
+	 * 官方当前为 deepseek-flash 与 deepseek-v4-pro 开放 Responses（旧名
+	 * deepseek-v4-flash 仍被接受，实际由 V4.1-Flash-1017 承接）；其他模型返回
+	 * undefined，让 Router 在不离开原 fallback 链的前提下使用 Chat 兼容路径。
 	 * @param model
 	 * @param body
 	 * @param optionalParams
@@ -51,7 +61,7 @@ export class DeepSeekProvider extends AnthropicCompatibleProvider {
 		optionalParams: Record<string, unknown>,
 	): ProviderRequest | undefined {
 		const upstreamModel = this.stripProviderPrefix(model);
-		if (upstreamModel !== "deepseek-v4-flash") {
+		if (!DEEPSEEK_RESPONSES_MODELS.has(upstreamModel)) {
 			return undefined;
 		}
 
