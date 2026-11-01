@@ -179,7 +179,6 @@ describe("CredentialsPanel", () => {
 
 		await waitFor(() =>
 			expect(mockCredentialUpdateCall).toHaveBeenCalledWith("test-token", "openai-key", {
-				credential_name: "openai-key",
 				credential_values: {
 					api_base: "https://new.example.com",
 					api_key: null,
@@ -187,6 +186,39 @@ describe("CredentialsPanel", () => {
 			}),
 		);
 		expect(refetch).toHaveBeenCalled();
+	});
+
+	it("keeps the edit form open and preserves input when saving fails", async () => {
+		mockCredentialUpdateCall.mockRejectedValue(new Error("Credential update failed"));
+		mockUseAuthorized.mockReturnValue({ accessToken: "test-token" });
+		mockUseCredentials.mockReturnValue({
+			data: {
+				credentials: [
+					{
+						credential_name: "openai-key",
+						credential_values: { api_key: "sk-old", api_base: "https://old.example.com" },
+						credential_info: { custom_llm_provider: "openai" },
+					},
+				],
+			},
+			refetch: vi.fn(),
+		});
+
+		render(
+			<QueryClientProvider client={createQueryClient()}>
+				<CredentialsPanel uploadProps={DEFAULT_UPLOAD_PROPS} />
+			</QueryClientProvider>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Edit credential openai-key" }));
+		await screen.findByText("Edit Credential");
+		const apiBaseInput = await screen.findByLabelText("API Base");
+		fireEvent.change(apiBaseInput, { target: { value: "https://new.example.com" } });
+		fireEvent.click(screen.getByRole("button", { name: "Update Credential" }));
+
+		await waitFor(() => expect(mockNotificationError).toHaveBeenCalledWith("Credential update failed"));
+		expect(screen.getByText("Edit Credential")).toBeInTheDocument();
+		expect(screen.getByLabelText("API Base")).toHaveValue("https://new.example.com");
 	});
 
 	it("shows the backend conflict message when a referenced credential cannot be deleted", async () => {

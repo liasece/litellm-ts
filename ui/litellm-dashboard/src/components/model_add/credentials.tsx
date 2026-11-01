@@ -59,17 +59,21 @@ const CredentialsPanel: React.FC<CredentialsPanelProps> = ({ uploadProps }) => {
 		for (const key of deleteSecretFields) {
 			filter_credential_values[key] = null;
 		}
-		// Transform form values into credential structure
+		// Credential 名称由 URL 标识且不可修改，PATCH 不再提交 credential_name。
 		const newCredential = {
-			credential_name: values.credential_name,
 			credential_values: filter_credential_values,
 			...(values.custom_llm_provider ? { credential_info: { custom_llm_provider: values.custom_llm_provider } } : {}),
 		};
 
-		await credentialUpdateCall(accessToken, values.credential_name, newCredential);
-		NotificationsManager.success("Credential updated successfully");
-		setIsUpdateModalOpen(false);
-		await refetchCredentials();
+		try {
+			await credentialUpdateCall(accessToken, values.credential_name, newCredential);
+			NotificationsManager.success("Credential updated successfully");
+			setIsUpdateModalOpen(false);
+			await refetchCredentials();
+		} catch (error) {
+			NotificationsManager.error(error instanceof Error ? error.message : "Failed to update credential");
+			throw error;
+		}
 	};
 
 	const handleAddCredential = async (values: EditCredentialFormValues) => {
@@ -90,10 +94,15 @@ const CredentialsPanel: React.FC<CredentialsPanelProps> = ({ uploadProps }) => {
 		};
 
 		// Add to list and close modal
-		await credentialCreateCall(accessToken, newCredential);
-		NotificationsManager.success("Credential added successfully");
-		setIsAddModalOpen(false);
-		await refetchCredentials();
+		try {
+			await credentialCreateCall(accessToken, newCredential);
+			NotificationsManager.success("Credential added successfully");
+			setIsAddModalOpen(false);
+			await refetchCredentials();
+		} catch (error) {
+			NotificationsManager.error(error instanceof Error ? error.message : "Failed to add credential");
+			throw error;
+		}
 	};
 
 	const renderProviderBadge = (provider: string) => {
@@ -234,9 +243,7 @@ const CredentialsPanel: React.FC<CredentialsPanelProps> = ({ uploadProps }) => {
 						{credentialDetails?.credential_info?.custom_llm_provider ?? "—"}
 					</Descriptions.Item>
 					{Object.entries(credentialDetails?.credential_info ?? {})
-						.filter(
-							([key, value]) => key !== "custom_llm_provider" && value !== undefined,
-						)
+						.filter(([key, value]) => key !== "custom_llm_provider" && value !== undefined)
 						.map(([key, value]) => (
 							<Descriptions.Item key={key} label={key}>
 								{typeof value === "object" ? JSON.stringify(value) : String(value)}

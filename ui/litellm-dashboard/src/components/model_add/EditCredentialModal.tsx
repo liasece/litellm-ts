@@ -16,7 +16,7 @@ export interface EditCredentialFormValues extends Record<string, unknown> {
 interface EditCredentialsModalProps {
 	open: boolean;
 	onCancel: () => void;
-	onUpdateCredential: (values: EditCredentialFormValues) => void;
+	onUpdateCredential: (values: EditCredentialFormValues) => Promise<void> | void;
 	uploadProps: UploadProps;
 	existingCredential: CredentialItem | null;
 }
@@ -30,6 +30,7 @@ export default function EditCredentialsModal({
 }: EditCredentialsModalProps) {
 	const [form] = Form.useForm();
 	const [selectedProvider, setSelectedProvider] = useState<Providers>(Providers.Anthropic);
+	const [isSubmitting, setIsSubmitting] = useState(false);
 
 	const sensitiveFieldNames = new Set(
 		Object.keys(existingCredential?.credential_values ?? {}).filter((key) =>
@@ -37,7 +38,7 @@ export default function EditCredentialsModal({
 		),
 	);
 
-	const handleSubmit = (values: Record<string, unknown>) => {
+	const handleSubmit = async (values: Record<string, unknown>) => {
 		const deleteSecretFields = Object.entries((values.delete_secret_fields ?? {}) as Record<string, boolean>)
 			.filter(([, shouldDelete]) => shouldDelete)
 			.map(([key]) => key);
@@ -67,8 +68,14 @@ export default function EditCredentialsModal({
 		if (deleteSecretFields.length > 0) {
 			filteredValues.delete_secret_fields = deleteSecretFields;
 		}
-		onUpdateCredential(filteredValues);
-		form.resetFields();
+		setIsSubmitting(true);
+		try {
+			await onUpdateCredential(filteredValues);
+		} catch {
+			// 保存失败时保留用户输入，错误提示由父组件展示，修正后可再次提交。
+		} finally {
+			setIsSubmitting(false);
+		}
 	};
 
 	useEffect(() => {
@@ -85,17 +92,7 @@ export default function EditCredentialsModal({
 	}, [existingCredential, form]);
 
 	return (
-		<Modal
-			title="Edit Credential"
-			open={open}
-			onCancel={() => {
-				onCancel();
-				form.resetFields();
-			}}
-			footer={null}
-			width={600}
-			destroyOnHidden={true}
-		>
+		<Modal title="Edit Credential" open={open} onCancel={onCancel} footer={null} width={600} destroyOnHidden={true}>
 			<Form form={form} onFinish={handleSubmit} layout="vertical">
 				{/* Credential Name */}
 				<Form.Item
@@ -120,6 +117,9 @@ export default function EditCredentialsModal({
 					<AntdSelect
 						showSearch
 						onChange={(value) => {
+							if (value.toLowerCase() === String(selectedProvider).toLowerCase()) {
+								return;
+							}
 							const providerFields = Object.keys(form.getFieldsValue()).filter(
 								(key) => key !== "credential_name" && key !== "custom_llm_provider",
 							);
@@ -174,16 +174,12 @@ export default function EditCredentialsModal({
 					</Tooltip>
 
 					<div>
-						<Button
-							onClick={() => {
-								onCancel();
-								form.resetFields();
-							}}
-							style={{ marginRight: 10 }}
-						>
+						<Button onClick={onCancel} style={{ marginRight: 10 }}>
 							Cancel
 						</Button>
-						<Button htmlType="submit">{"Update Credential"}</Button>
+						<Button htmlType="submit" loading={isSubmitting}>
+							{"Update Credential"}
+						</Button>
 					</div>
 				</div>
 			</Form>

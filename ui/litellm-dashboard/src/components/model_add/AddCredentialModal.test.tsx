@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Providers } from "../provider_info_helpers";
 import AddCredentialModal from "./AddCredentialModal";
@@ -104,5 +104,30 @@ describe("AddCredentialModal", () => {
 			expect(screen.getByLabelText("OpenAI API Key")).toBeInTheDocument();
 			expect(screen.getByPlaceholderText("https://api.openai.com/v1")).toBeInTheDocument();
 		});
+	});
+
+	it("keeps the form open and preserves input when adding fails", async () => {
+		const queryClient = createQueryClient();
+		const onAddCredential = vi.fn().mockRejectedValue(new Error("Credential already exists"));
+
+		render(
+			<QueryClientProvider client={queryClient}>
+				<AddCredentialModal
+					open={true}
+					onCancel={vi.fn()}
+					onAddCredential={onAddCredential}
+					uploadProps={mockUploadProps}
+				/>
+			</QueryClientProvider>,
+		);
+
+		fireEvent.change(screen.getByLabelText("Credential Name:"), { target: { value: "duplicate" } });
+		await waitFor(() => expect(screen.getByLabelText("OpenAI API Key")).toBeInTheDocument());
+		fireEvent.change(screen.getByLabelText("OpenAI API Key"), { target: { value: "sk-keep" } });
+		fireEvent.click(screen.getByRole("button", { name: "Add Credential" }));
+
+		await waitFor(() => expect(onAddCredential).toHaveBeenCalled());
+		expect(screen.getByLabelText("Credential Name:")).toHaveValue("duplicate");
+		expect(screen.getByLabelText("OpenAI API Key")).toHaveValue("sk-keep");
 	});
 });

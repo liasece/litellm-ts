@@ -9,36 +9,34 @@ const { Link } = Typography;
 interface AddCredentialsModalProps {
 	open: boolean;
 	onCancel: () => void;
-	onAddCredential: (values: any) => void;
+	onAddCredential: (values: any) => Promise<void> | void;
 	uploadProps: UploadProps;
 }
 
 const AddCredentialsModal: React.FC<AddCredentialsModalProps> = ({ open, onCancel, onAddCredential, uploadProps }) => {
 	const [form] = Form.useForm();
 	const [selectedProvider, setSelectedProvider] = useState<Providers>(Providers.OpenAI);
+	const [isSubmitting, setIsSubmitting] = useState(false);
 
-	const handleSubmit = (values: any) => {
+	const handleSubmit = async (values: any) => {
 		const filteredValues = Object.entries(values).reduce((acc, [key, value]) => {
 			if (value !== "" && value !== undefined && value !== null) {
 				acc[key] = value;
 			}
 			return acc;
 		}, {} as any);
-		onAddCredential(filteredValues);
-		form.resetFields();
+		setIsSubmitting(true);
+		try {
+			await onAddCredential(filteredValues);
+		} catch {
+			// 保存失败时保留用户输入，错误提示由父组件展示，修正后可再次提交。
+		} finally {
+			setIsSubmitting(false);
+		}
 	};
 
 	return (
-		<Modal
-			title="Add New Credential"
-			open={open}
-			onCancel={() => {
-				onCancel();
-				form.resetFields();
-			}}
-			footer={null}
-			width={600}
-		>
+		<Modal title="Add New Credential" open={open} onCancel={onCancel} footer={null} width={600}>
 			<Form form={form} onFinish={handleSubmit} layout="vertical">
 				{/* Credential Name */}
 				<Form.Item
@@ -55,6 +53,7 @@ const AddCredentialsModal: React.FC<AddCredentialsModalProps> = ({ open, onCance
 					label="Provider:"
 					name="custom_llm_provider"
 					tooltip="Helper to auto-populate provider specific fields"
+					initialValue={Providers.OpenAI}
 				>
 					<AntdSelect
 						showSearch
@@ -98,16 +97,12 @@ const AddCredentialsModal: React.FC<AddCredentialsModalProps> = ({ open, onCance
 					</Tooltip>
 
 					<div>
-						<Button
-							onClick={() => {
-								onCancel();
-								form.resetFields();
-							}}
-							style={{ marginRight: 10 }}
-						>
+						<Button onClick={onCancel} style={{ marginRight: 10 }}>
 							Cancel
 						</Button>
-						<Button htmlType="submit">{"Add Credential"}</Button>
+						<Button htmlType="submit" loading={isSubmitting}>
+							{"Add Credential"}
+						</Button>
 					</div>
 				</div>
 			</Form>
