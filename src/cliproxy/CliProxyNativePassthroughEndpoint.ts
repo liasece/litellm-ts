@@ -29,7 +29,7 @@ const REQUEST_BLOCKED_HEADERS = new Set([
 	"connection",
 	"transfer-encoding",
 ]);
-const RESPONSE_BLOCKED_HEADERS = new Set(["connection", "transfer-encoding", "content-length", "keep-alive"]);
+const RESPONSE_BLOCKED_HEADERS = new Set(["connection", "transfer-encoding", "content-length", "content-encoding", "keep-alive"]);
 
 type ModelLocation = "body" | "path" | "optional";
 
@@ -40,6 +40,8 @@ interface NativePassthroughRoute {
 	readonly modelLocation: ModelLocation;
 	readonly callType?: CallType;
 	readonly conflictsWithLiteLlmRoute?: boolean;
+	/** 是否写入 SpendLog；token 计数等辅助接口没有计费语义，写入只会产生 0 token 噪声行。 */
+	readonly recordsSpend?: boolean;
 }
 
 interface ResolvedCliProxyModel {
@@ -120,6 +122,7 @@ const NATIVE_HTTP_ROUTES: readonly NativePassthroughRoute[] = [
 		upstreamPath: "/v1/messages/count_tokens",
 		modelLocation: "body",
 		callType: CallType.AMessages,
+		recordsSpend: false,
 		conflictsWithLiteLlmRoute: true,
 	},
 	{
@@ -423,6 +426,9 @@ function buildForwardHeaders(req: Request, internalApiKey: string, contentType: 
 			headers.set(key, value);
 		}
 	}
+	// 不向上游声明 zstd：Node fetch 只解 gzip/deflate/br，压缩字节会让 SSE/JSON
+	// 解析失败并与 usage、错误信息一起丢失。
+	headers.delete("accept-encoding");
 	headers.set("Authorization", `Bearer ${internalApiKey}`);
 	if (contentType) {
 		headers.set("Content-Type", contentType);
@@ -639,7 +645,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		const path = upstreamRequestPath(route, req, resolved, requestedModel);
 		const upstreamUrl = `${runtime.baseUrl}${path}`;
 		const startTime = new Date();
-		const reservation = resolved
+		const reservation = resolved && route.recordsSpend !== false
 			? await reserveEndpointSpend(db, router, req, resolved.publicModel, rewritten.parsed ?? {}, {
 					callType: route.callType ?? CallType.ACompletion,
 					costMode: route.callType === CallType.AImageGeneration ? "image" : undefined,
@@ -649,7 +655,10 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		const lifecycle = createEndpointSpendLifecycle(reservation);
 		lifecycle.markProviderStarted();
 		const abortController = new AbortController();
-		const abort = (): void => abortController.abort();
+		const abort = (): void => {
+			// 带上中止来源，失败 SpendLog 才能区分「客户端断开」与上游故障。
+			abortController.abort(new DOMException(`客户端在响应完成前断开连接（${route.path}）`, "AbortError"));
+		};
 		req.once("aborted", abort);
 		res.once("close", abort);
 		// logRequest 提前到 try 外：fetch 抛错的失败路径也要记录 request-only 上游日志。
@@ -671,7 +680,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 				route.path === "/v1beta/models"
 					? await sendFilteredGeminiModels(upstream, res, req, router)
 					: await pipeResponse(upstream, res);
-			if (resolved) {
+			if (resolved && route.recordsSpend !== false) {
 				const candidate = router.getAvailableDeployment(resolved.publicModel);
 				if (upstream.ok) {
 					if (candidate) {
@@ -700,7 +709,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 				);
 			}
 		} catch (error) {
-			if (resolved) {
+			if (resolved && route.recordsSpend !== false) {
 				const candidate = router.getAvailableDeployment(resolved.publicModel);
 				if (candidate && !(error instanceof DOMException && error.name === "AbortError")) {
 					router.recordDeploymentFailure(candidate.deployment, error instanceof Error ? error : new Error(String(error)));

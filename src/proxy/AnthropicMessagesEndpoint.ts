@@ -838,7 +838,14 @@ export function registerAnthropicMessagesEndpoints(
 		const requestAnthropicVersion = cleanBody["anthropic_version"] as string | undefined;
 		const auth = req.auth;
 		const webSearchAbortController = new AbortController();
-		const abortWebSearch = (): void => webSearchAbortController.abort();
+		const abortWebSearch = (): void => {
+			// 正常写完响应后 close 也会触发；此时中止会把成功请求误记成 AbortError 失败。
+			if (res.writableEnded || res.writableFinished) {
+				return;
+			}
+			// 带上中止来源，失败 SpendLog 才能区分「客户端断开」与上游故障。
+			webSearchAbortController.abort(new DOMException(`客户端在响应完成前断开连接（/v1/messages）`, "AbortError"));
+		};
 		req.once("aborted", abortWebSearch);
 		res.once("close", abortWebSearch);
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, cleanBody, {

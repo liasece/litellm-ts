@@ -7,7 +7,13 @@ import type { CliProxyOAuthProvider, CliProxyRuntimeStatus, CliProxyStoredSettin
 
 const OAUTH_PROVIDERS = new Set<CliProxyOAuthProvider>(["codex-device", "codex", "claude", "antigravity", "kimi", "xai"]);
 const MAX_MANAGEMENT_BODY_BYTES = 64 * 1024 * 1024;
-const MANAGEMENT_RESPONSE_BLOCKED_HEADERS = new Set(["connection", "transfer-encoding", "content-length", "keep-alive"]);
+const MANAGEMENT_RESPONSE_BLOCKED_HEADERS = new Set([
+	"connection",
+	"transfer-encoding",
+	"content-length",
+	"content-encoding",
+	"keep-alive",
+]);
 
 interface ManagementRoute {
 	readonly methods: ReadonlySet<string>;

@@ -42,6 +42,18 @@ function buildApp(register: (router: express.Router) => void): express.Express {
 	return app;
 }
 
+
+/** 读取 fetch 收到的请求头：上游改写成 Headers 后对象断言不再成立（键统一小写）。 */
+function sentHeaders(call: unknown[] | undefined): Record<string, string> {
+	const init = call?.[1] as { headers?: unknown } | undefined;
+	const headers = init?.headers;
+	const entries =
+		headers instanceof Headers
+			? [...headers.entries()]
+			: Object.entries((headers ?? {}) as Record<string, string>);
+	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
+}
+
 describe("core proxy alias routes", () => {
 	test.each([
 		["/engines/azure-chat/chat/completions", "azure-chat"],
@@ -193,12 +205,12 @@ describe("core proxy alias routes", () => {
 			encoding_format: "float",
 			model: "provider-embed",
 		});
-		expect(fetchMock).toHaveBeenCalledWith("https://provider.example/v1/embeddings", {
-			method: "POST",
-			headers: { authorization: "Bearer test" },
-			body: JSON.stringify({ model: "provider-embed", input: "hello", encoding_format: "float" }),
-			signal: expect.any(AbortSignal),
-		});
+		const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+		expect(fetchMock.mock.calls[0]?.[0]).toBe("https://provider.example/v1/embeddings");
+		expect(init?.method).toBe("POST");
+		expect(sentHeaders(fetchMock.mock.calls[0])).toEqual({ authorization: "Bearer test" });
+		expect(init?.body).toBe(JSON.stringify({ model: "provider-embed", input: "hello", encoding_format: "float" }));
+		expect(init?.signal).toBeInstanceOf(AbortSignal);
 		fetchMock.mockRestore();
 	});
 

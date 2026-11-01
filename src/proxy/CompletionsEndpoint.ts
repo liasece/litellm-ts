@@ -8,6 +8,7 @@
 import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
+import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { stripInternalFields } from "../core/api/stripInternalFields";
 import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
@@ -122,9 +123,9 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							startTime: startTime,
 							endTime: new Date(),
 							completionStartTime: completionStartTime,
-								messages: prompt,
-								response: result,
-								upstreamLogContext: getUpstreamLogContext(result),
+							messages: prompt,
+							response: result,
+							upstreamLogContext: getUpstreamLogContext(result),
 							usage: usage,
 							status: SpendLogStatus.Success,
 							...getResultModelResolutionMetadata(result),
@@ -234,9 +235,9 @@ async function handleStreamingCompletion(
 					deploymentModel: spendInfo?.deploymentModel,
 					startTime: startTime,
 					endTime: new Date(),
-						messages: req.body.prompt,
-						response: lastChunk,
-						upstreamLogContext: getUpstreamLogContext(streamResult),
+					messages: req.body.prompt,
+					response: lastChunk,
+					upstreamLogContext: getUpstreamLogContext(streamResult),
 					usage: usage,
 					status: SpendLogStatus.Success,
 					...getResultModelResolutionMetadata(streamResult),
@@ -275,9 +276,9 @@ async function recordProviderFailure(
 				modelGroup: model,
 				startTime: startTime,
 				endTime: new Date(),
-					messages: req.body.prompt,
-					error: providerError,
-					upstreamLogContext: getUpstreamLogContext(providerError),
+				messages: req.body.prompt,
+				error: providerError,
+				upstreamLogContext: getUpstreamLogContext(providerError),
 				status: SpendLogStatus.Failure,
 				...getResultModelResolutionMetadata(providerError as unknown as Record<string, unknown>),
 			}),
@@ -301,7 +302,7 @@ function copyProviderHeaders(result: Record<string, unknown>, res: import("expre
 		return;
 	}
 	for (const [key, value] of Object.entries(providerHeaders)) {
-		if (typeof value === "string" && !res.getHeader(key)) {
+		if (typeof value === "string" && isForwardableUpstreamHeader(key) && !res.getHeader(key)) {
 			res.setHeader(key, value);
 		}
 	}

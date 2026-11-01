@@ -14,6 +14,7 @@ import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { stripInternalFields } from "../core/api/stripInternalFields";
 import { ApiError } from "../core/api/ApiError";
+import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { buildInvalidModelError, formatInvalidModelMessage, CHAT_COMPLETIONS_ROUTE_NAME } from "../router/RouterExecution";
 import { executeProviderRequest } from "../router/ProviderRequestExecutor";
 import type { Router as LiteLLMRouter } from "../router/Router";
@@ -98,7 +99,7 @@ interface ChoiceAccumulator {
 	toolCalls: Map<number, ToolCallAccumulator>;
 }
 
-interface ChatStreamAccumulator {
+export interface ChatStreamAccumulator {
 	id?: string;
 	created?: number;
 	model?: string;
@@ -139,7 +140,7 @@ function mergeProviderSpecificFields(target: Record<string, unknown>, source: Re
 	}
 }
 
-function accumulateChatChunk(state: ChatStreamAccumulator, chunk: ModelResponseStream): void {
+export function accumulateChatChunk(state: ChatStreamAccumulator, chunk: ModelResponseStream): void {
 	state.id ??= chunk.id;
 	state.created ??= chunk.created;
 	state.model ??= chunk.model;
@@ -246,7 +247,7 @@ function buildAggregatedChatResponse(state: ChatStreamAccumulator, fallbackModel
  * @param fallbackModel
  * @param streamResult
  */
-function finalizeStreamedCompletion(
+export function finalizeStreamedCompletion(
 	state: ChatStreamAccumulator,
 	fallbackModel: string,
 	streamResult: Record<string, unknown>,
@@ -319,12 +320,14 @@ function getNextStreamingFallback(router: LiteLLMRouter, current: string, origin
 	if (visited.length >= limit) {
 		return null;
 	}
+	const fallbackResult = (fallback: string | null) => {
+		if (fallback === null) {
+			return null;
+		}
+		return { inputModel: fallback, resolvedModel: fallback, resolutionPath: [fallback] };
+	};
 	const resolve = (model: string, index: number) =>
-		router.getNextFallbackWithTrace?.(model, index) ??
-		((fallback: string | null) =>
-			(fallback === null ? null : { inputModel: fallback, resolvedModel: fallback, resolutionPath: [fallback] }))(
-			router.getNextFallback(model, index),
-		);
+		router.getNextFallbackWithTrace?.(model, index) ?? fallbackResult(router.getNextFallback(model, index));
 	const own = resolve(current, 0);
 	if (own && !visited.includes(own.resolvedModel)) {
 		return own;
@@ -370,7 +373,13 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		delete optionalParams.messages;
 		delete optionalParams.model;
 		const webSearchAbortController = new AbortController();
-		const abortWebSearch = (): void => webSearchAbortController.abort();
+		const abortWebSearch = (): void => {
+			// 正常写完响应后 close 也会触发；此时中止会把成功请求误记成 AbortError 失败。
+			if (res.writableEnded || res.writableFinished) {
+				return;
+			}
+			webSearchAbortController.abort();
+		};
 		req.once("aborted", abortWebSearch);
 		res.once("close", abortWebSearch);
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body, {
@@ -444,8 +453,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 			currentAccumulator = accumulator;
 			currentUpstreamLogContext = getUpstreamLogContext(streamResult);
 			for await (const chunk of stream) {
-				if (chunk && typeof chunk === "object") {
-					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
+				if (chunk && typeof chunk === "object") {					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
 					streamingCheckpointScheduler?.onChunk();
 				}
 			}
@@ -536,7 +544,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 					const providerHeaders = (result as unknown as { _providerHeaders?: Record<string, string> })._providerHeaders;
 					if (providerHeaders) {
 						for (const [k, v] of Object.entries(providerHeaders)) {
-							if (!res.getHeader(k)) {
+							if (isForwardableUpstreamHeader(k) && !res.getHeader(k)) {
 								res.setHeader(k, v);
 							}
 						}
@@ -675,7 +683,14 @@ async function handleStreamingResponse(
 	let lastUpstreamLogContext: UpstreamLogContext | undefined;
 	const startTime = new Date();
 	const upstreamAbortController = new AbortController();
-	const abortUpstream = (): void => upstreamAbortController.abort();
+	const abortUpstream = (): void => {
+		// 正常写完响应后 close 也会触发；此时中止会把成功请求误记成 AbortError 失败。
+		if (res.writableEnded || res.writableFinished) {
+			return;
+		}
+		// 带上中止来源，失败 SpendLog 才能区分「客户端断开」与上游故障。
+		upstreamAbortController.abort(new DOMException(`客户端在响应完成前断开连接（/v1/chat/completions）`, "AbortError"));
+	};
 	req.once("aborted", abortUpstream);
 	res.once("close", abortUpstream);
 
@@ -798,7 +813,7 @@ async function handleStreamingResponse(
 				res.setHeader("X-Accel-Buffering", "no");
 				const providerHeaders = (response as unknown as { _providerHeaders?: Record<string, string> })._providerHeaders;
 				for (const [key, value] of Object.entries(providerHeaders ?? {})) {
-					if (!res.getHeader(key)) {
+					if (isForwardableUpstreamHeader(key) && !res.getHeader(key)) {
 						res.setHeader(key, value);
 					}
 				}
@@ -867,10 +882,17 @@ async function handleStreamingResponse(
 						const strippedChunk = stripInternalFields(chunk) as Record<string, unknown>;
 						const choices = Array.isArray(strippedChunk["choices"]) ? strippedChunk["choices"] : [];
 						const chunkUsage = strippedChunk["usage"];
+						// Provider 可为内部计费请求用量；客户端仍按原始 include_usage 选项接收。
+						if (!includeStreamUsage) {
+							delete strippedChunk["usage"];
+						}
+						if (!includeStreamUsage && chunkUsage !== undefined && choices.length === 0) {
+							continue;
+						}
 						const publicChunk =
 							includeStreamUsage && chunkUsage === undefined
 								? { ...strippedChunk, usage: null }
-								: chunkUsage && typeof chunkUsage === "object"
+								: includeStreamUsage && chunkUsage && typeof chunkUsage === "object"
 									? { ...strippedChunk, usage: toOpenAIUsage(chunkUsage as Usage) }
 									: strippedChunk;
 						usageChunkSent ||= choices.length === 0 && publicChunk["usage"] !== null && publicChunk["usage"] !== undefined;
@@ -1113,6 +1135,7 @@ async function handlePrivateVisionStreamingResponse(
 	// stream:false 也要流式），边累积边 checkpoint，使「进行中」时能看到主模型的流式中间响应；
 	// complete 回调在流结束后返回累积的完整响应供 agent loop 决策（解析 tool_use）。
 	let currentAccumulator: ChatStreamAccumulator | undefined;
+	let chatSseStarted = false;
 	// capability 分支向上游请求流式后，从 streamResult 提取上游上下文供 checkpoint 记录
 	let currentUpstreamLogContext: UpstreamLogContext | undefined;
 	const checkpointRequestId = spendRequestId;
@@ -1171,6 +1194,42 @@ async function handlePrivateVisionStreamingResponse(
 			currentUpstreamLogContext = getUpstreamLogContext(streamResult);
 			for await (const chunk of stream) {
 				if (chunk && typeof chunk === "object") {
+					const choices = (chunk as unknown as Record<string, unknown>)["choices"];
+					if (Array.isArray(choices)) {
+						for (const item of choices) {
+							const delta = (item as Record<string, unknown>)["delta"] as Record<string, unknown> | undefined;
+							if (delta === undefined) {
+								continue;
+							}
+							const visible: Record<string, unknown> = {};
+							if (typeof delta["content"] === "string" && delta["content"].length > 0) {
+								visible["content"] = delta["content"];
+							}
+							if (typeof delta["reasoning_content"] === "string" && delta["reasoning_content"].length > 0) {
+								visible["reasoning_content"] = delta["reasoning_content"];
+							}
+							if (Object.keys(visible).length === 0) {
+								continue;
+							}
+							const head = {
+								id: (chunk as unknown as Record<string, unknown>)["id"],
+								object: "chat.completion.chunk",
+								created: (chunk as unknown as Record<string, unknown>)["created"],
+								model: (chunk as unknown as Record<string, unknown>)["model"],
+							};
+							if (!chatSseStarted) {
+								chatSseStarted = true;
+								if (!res.headersSent) {
+									res.setHeader("Content-Type", "text/event-stream");
+									res.setHeader("Cache-Control", "no-cache");
+									res.setHeader("Connection", "keep-alive");
+									res.setHeader("X-Accel-Buffering", "no");
+								}
+								res.write(`data: ${JSON.stringify({ ...head, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
+							}
+							res.write(`data: ${JSON.stringify({ ...head, choices: [{ index: 0, delta: visible, finish_reason: null }] })}\n\n`);
+						}
+					}
 					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
 					streamingCheckpointScheduler?.onChunk();
 				}
@@ -1201,7 +1260,7 @@ async function handlePrivateVisionStreamingResponse(
 	if (!res.headersSent) {
 		const providerHeaders = (result as { _providerHeaders?: Record<string, string> })._providerHeaders;
 		for (const [key, value] of Object.entries(providerHeaders ?? {})) {
-			if (!res.getHeader(key)) {
+			if (isForwardableUpstreamHeader(key) && !res.getHeader(key)) {
 				res.setHeader(key, value);
 			}
 		}
@@ -1214,7 +1273,9 @@ async function handlePrivateVisionStreamingResponse(
 	const created = response.created;
 	const publicModel = response.model || model;
 	const base = { id: id, object: "chat.completion.chunk", created: created, model: publicModel };
+	if (!chatSseStarted) {
 	res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
+	}
 	const delta: Record<string, unknown> = {};
 	if (typeof choice.message.content === "string" && choice.message.content.length > 0) {
 		delta["content"] = choice.message.content;
@@ -1237,7 +1298,7 @@ async function handlePrivateVisionStreamingResponse(
 	if (generatedMessage["images"] !== undefined) {
 		delta["images"] = generatedMessage["images"];
 	}
-	if (Object.keys(delta).length > 0) {
+	if (!chatSseStarted && Object.keys(delta).length > 0) {
 		res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] })}\n\n`);
 	}
 	res.write(

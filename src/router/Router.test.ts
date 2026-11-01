@@ -17,6 +17,18 @@ beforeEach(() => {
 	mockFetch = installMockFetch();
 });
 
+
+/** 读取 fetch 收到的请求头（统一小写键）：上游改写成 Headers 后普通对象断言不再成立。 */
+function sentHeaders(call: unknown[] | undefined): Record<string, string> {
+	const init = call?.[1] as { headers?: unknown } | undefined;
+	const headers = init?.headers;
+	const entries =
+		headers instanceof Headers
+			? [...headers.entries()]
+			: Object.entries((headers ?? {}) as Record<string, string>);
+	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
+}
+
 describe("Router smoke", () => {
 	it("completion 走通成功路径（mock fetch 200）", async () => {
 		mockFetch.mockResolvedValueOnce(
@@ -140,7 +152,7 @@ describe("Router.probeDeployment", () => {
 		expect(result).toMatchObject({ model_id: "second", model_name: "shared", status: "healthy" });
 		expect(mockFetch).toHaveBeenCalledTimes(1);
 		expect(mockFetch.mock.calls[0]?.[0]).toBe("https://second.example/v1/chat/completions");
-		expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: "Bearer second-secret", "x-health": "yes" });
+		expect(sentHeaders(mockFetch.mock.calls[0])).toMatchObject({ authorization: "Bearer second-secret", "x-health": "yes" });
 		expect(JSON.stringify(result)).not.toContain("second-secret");
 		expect(JSON.stringify(result)).not.toContain("health-check");
 	});
@@ -269,7 +281,7 @@ describe("Router runtime credential resolution", () => {
 		mockFetch.mockResolvedValueOnce(okResponse({ choices: [], usage: { total_tokens: 1 } }));
 		await router.completion("credential-model", [{ role: "user", content: "hello" }]);
 		expect(mockFetch.mock.calls[0]?.[0]).toBe("https://credential.example/v1/chat/completions");
-		expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: "Bearer credential-secret" });
+		expect(sentHeaders(mockFetch.mock.calls[0])).toMatchObject({ authorization: "Bearer credential-secret" });
 		expect(JSON.stringify(mockFetch.mock.calls[0])).not.toContain("litellm_credential_name");
 	});
 
@@ -323,7 +335,7 @@ describe("Router runtime credential resolution", () => {
 		);
 		mockFetch.mockResolvedValueOnce(errorResponse(500)).mockResolvedValueOnce(okResponse({ choices: [], usage: { total_tokens: 1 } }));
 		await router.completion("primary", [{ role: "user", content: "hello" }]);
-		expect(mockFetch.mock.calls.map((call) => call[1]?.headers.Authorization)).toEqual([
+		expect(mockFetch.mock.calls.map((call) => sentHeaders(call).authorization)).toEqual([
 			"Bearer primary-secret",
 			"Bearer fallback-secret",
 		]);
@@ -331,7 +343,7 @@ describe("Router runtime credential resolution", () => {
 		mockFetch.mockResolvedValueOnce(new Response("data: [DONE]\\n\\n", { status: 200 }));
 		const streamResult = await router.completion("fallback", [{ role: "user", content: "hello" }], { stream: true });
 		expect(streamResult._stream).toBe(true);
-		expect(mockFetch.mock.calls[2]?.[1]?.headers).toMatchObject({ Authorization: "Bearer fallback-secret" });
+		expect(sentHeaders(mockFetch.mock.calls[2])).toMatchObject({ authorization: "Bearer fallback-secret" });
 	});
 
 	it("probeDeployment 使用解析后的凭据且不发送引用名", async () => {
@@ -343,7 +355,7 @@ describe("Router runtime credential resolution", () => {
 
 		expect(result.status).toBe("healthy");
 		expect(mockFetch.mock.calls[0]?.[0]).toBe("https://credential.example/v1/chat/completions");
-		expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: "Bearer credential-secret" });
+		expect(sentHeaders(mockFetch.mock.calls[0])).toMatchObject({ authorization: "Bearer credential-secret" });
 		expect(JSON.stringify(mockFetch.mock.calls[0])).not.toContain("litellm_credential_name");
 	});
 });

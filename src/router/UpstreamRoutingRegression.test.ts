@@ -16,6 +16,18 @@ function router(deployments: Deployment[], extra = {}): Router {
 }
 const message = [{ role: "user", content: "hi" }];
 
+
+/** 读取 fetch 收到的请求头（统一小写键）：上游改写成 Headers 后普通对象断言不再成立。 */
+function sentHeaders(call: unknown[] | undefined): Record<string, string> {
+	const init = call?.[1] as { headers?: unknown } | undefined;
+	const headers = init?.headers;
+	const entries =
+		headers instanceof Headers
+			? [...headers.entries()]
+			: Object.entries((headers ?? {}) as Record<string, string>);
+	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
+}
+
 describe("upstream Router regressions and strategy additions", () => {
 	afterEach(() => {
 		jest.restoreAllMocks();
@@ -175,7 +187,7 @@ it("pins Responses connection credentials and URL to the selected deployment", a
 			api_base: "https://unapproved.invalid",
 		});
 		expect(fetch.mock.calls[0]?.[0]).toBe("https://approved.invalid/v1/responses");
-		expect((fetch.mock.calls[0]?.[1]?.headers as Record<string, string>)["Authorization"]).toBe("Bearer test-provider-secret");
+		expect(sentHeaders(fetch.mock.calls[0])["authorization"]).toBe("Bearer test-provider-secret");
 	} finally {
 		jest.restoreAllMocks();
 	}

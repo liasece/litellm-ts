@@ -94,6 +94,18 @@ function buildApp(reasoningEffortOverride?: string, enabledBuiltinCapabilities?:
 	return app;
 }
 
+
+/** 读取 fetch 收到的请求头：上游改写成 Headers 后对象断言不再成立（键统一小写）。 */
+function sentHeaders(call: unknown[] | undefined): Record<string, string> {
+	const init = call?.[1] as { headers?: unknown } | undefined;
+	const headers = init?.headers;
+	const entries =
+		headers instanceof Headers
+			? [...headers.entries()]
+			: Object.entries((headers ?? {}) as Record<string, string>);
+	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
+}
+
 describe("native Anthropic streaming SpendLog", () => {
 	let spendSpy: jest.SpyInstance;
 	let previousStorePrompts: string | undefined;
@@ -270,12 +282,10 @@ describe("native Anthropic streaming SpendLog", () => {
 			.expect(200);
 
 		const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
-		expect(init?.headers).toEqual(
-			expect.objectContaining({
-				"anthropic-version": "2025-01-01",
-				"anthropic-beta": "feature-a,feature-b",
-			}),
-		);
+		expect(sentHeaders(fetchSpy.mock.calls[0])).toMatchObject({
+			"anthropic-version": "2025-01-01",
+			"anthropic-beta": "feature-a,feature-b",
+		});
 		const upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
 		expect(upstreamBody).not.toHaveProperty("api_key");
 		expect(upstreamBody).not.toHaveProperty("anthropic_version");
@@ -790,4 +800,67 @@ it("does not forward routing tags inside native Anthropic metadata", async () =>
 	} finally {
 		jest.restoreAllMocks();
 	}
+});
+
+
+describe("Anthropic private web tool call recovery", () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("returns the model answer instead of a 400 when a private web call has invalid arguments", async () => {
+		jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue(undefined as never);
+		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param: string) =>
+			param === "builtin_capabilities"
+				? {
+						web: {
+							enabled: true,
+							handler_model: "network-model",
+							fallback_models: [],
+							max_iterations: 3,
+							max_output_tokens: 1024,
+						},
+					}
+				: {},
+		);
+		const fetchSpy = jest
+			.spyOn(global, "fetch")
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						id: "msg_web_bad",
+						type: "message",
+						role: "assistant",
+						content: [{ type: "tool_use", id: "toolu_web_bad", name: "litellm__web_search", input: {} }],
+						stop_reason: "tool_use",
+						usage: { input_tokens: 1, output_tokens: 1 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						id: "msg_web_after_recovery",
+						type: "message",
+						role: "assistant",
+						content: [{ type: "text", text: "I could not search the web." }],
+						stop_reason: "end_turn",
+						usage: { input_tokens: 2, output_tokens: 2 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+
+		const response = await request(buildApp(undefined, ["web"]))
+			.post("/v1/messages")
+			.send({ model: "native-group", max_tokens: 64, messages: [{ role: "user", content: "Any news?" }] })
+			.expect(200);
+
+		expect(JSON.stringify(response.body)).toContain("I could not search the web.");
+		expect(JSON.stringify(response.body)).not.toContain("litellm__web_search");
+		const recoveryBody = JSON.parse(String(((fetchSpy.mock.calls[1]?.[1] as RequestInit) || {}).body)) as Record<string, unknown>;
+		expect(JSON.stringify(recoveryBody["messages"])).toContain("网络搜索参数缺少 query");
+		expect(JSON.stringify(recoveryBody["messages"])).toContain('"is_error":true');
+	});
 });
