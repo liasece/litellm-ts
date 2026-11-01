@@ -80,7 +80,7 @@ import { registerAlertingRoutes } from "./proxy/AlertingEndpoints";
 import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
-import { abortOrphanedActiveRequests } from "./spend/ActiveRequestRecovery";
+import { abortOrphanedActiveRequests, reapExpiredActiveRequests } from "./spend/ActiveRequestRecovery";
 import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
 import {
 	registerCliProxyNativeAnthropicRoutes,
@@ -95,6 +95,9 @@ const logger = createModuleLogger("Server");
 /** Claude Code 启动请求会携带较大的系统提示与工具定义，需对齐 LiteLLM 代理的大请求体入口。 */
 const REQUEST_BODY_LIMIT = "200mb";
 
+/** 在途请求租约巡检周期（毫秒）：与 ACTIVE_REQUEST_LEASE_MS 的 1/3 同量级。 */
+const ACTIVE_REQUEST_REAPER_INTERVAL_MS = 5 * 60 * 1000;
+
 /**
  * LiteLLM TS Gateway 服务器
  *
@@ -106,6 +109,8 @@ export class LiteLLMServer {
 	private readonly _app: express.Express;
 	private _httpServer: HttpServer | null = null;
 	private _stopPromise: Promise<void> | null = null;
+	/** 在途请求租约巡检定时器；unref 后不阻止进程退出。 */
+	private _activeRequestReaper: NodeJS.Timeout | null = null;
 
 	constructor() {
 		this._config = loadConfig();
@@ -126,6 +131,7 @@ export class LiteLLMServer {
 		if (abortedRequestCount > 0) {
 			logger.warn("已将旧进程遗留的在途请求标记为 aborted", { requestCount: abortedRequestCount });
 		}
+		this._startActiveRequestReaper();
 		this._assemblyExpress();
 		await new Promise<void>((resolve, reject) => {
 			const server = this._app.listen(port, host, () => {
@@ -150,6 +156,10 @@ export class LiteLLMServer {
 			return this._stopPromise;
 		}
 		this._stopPromise = (async () => {
+			if (this._activeRequestReaper !== null) {
+				clearInterval(this._activeRequestReaper);
+				this._activeRequestReaper = null;
+			}
 			const httpServer = this._httpServer;
 			this._httpServer = null;
 			if (httpServer) {
@@ -167,6 +177,31 @@ export class LiteLLMServer {
 			await this._container?.db.close();
 		})();
 		return this._stopPromise;
+	}
+
+	/**
+	 * 启动在途请求租约巡检。
+	 *
+	 * 活跃请求的心跳会持续续租 expires_at，因此只有心跳已停的孤儿行会过期。
+	 * 没有这个巡检，孤儿行只能等下一次进程重启才被清掉，期间会永久占据
+	 * LiteLLM_ActiveRequests 并被反复 UPDATE（生产曾累计 23 行、最老 100 分钟）。
+	 * 扫描周期取租约的 1/3，与心跳节流保持同一量级。
+	 */
+	private _startActiveRequestReaper(): void {
+		const timer = setInterval(() => {
+			void reapExpiredActiveRequests(this._container!.db.db)
+				.then((reaped) => {
+					if (reaped > 0) {
+						logger.warn("已回收租约过期的在途请求", { requestCount: reaped });
+					}
+				})
+				.catch((error: unknown) => {
+					logger.error("在途请求巡检失败", { error: error });
+				});
+		}, ACTIVE_REQUEST_REAPER_INTERVAL_MS);
+		// 巡检不应阻止进程退出。
+		timer.unref();
+		this._activeRequestReaper = timer;
 	}
 
 	/** 获取 Express 应用实例 */
