@@ -16,7 +16,7 @@ import { stripInternalFields } from "../core/api/stripInternalFields";
 import { ApiError } from "../core/api/ApiError";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { buildInvalidModelError, formatInvalidModelMessage, CHAT_COMPLETIONS_ROUTE_NAME } from "../router/RouterExecution";
-import { executeProviderRequest } from "../router/ProviderRequestExecutor";
+import { describeUpstreamErrorBody, executeProviderRequest } from "../router/ProviderRequestExecutor";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { createModuleLogger } from "../core/utils/logger";
 import type { Message, ModelResponse, ModelResponseStream, ThinkingBlock, ToolCall, Usage } from "../types/openai";
@@ -140,6 +140,13 @@ function mergeProviderSpecificFields(target: Record<string, unknown>, source: Re
 	}
 }
 
+/**
+ * 把一个上游 chunk 累加进流式状态。
+ *
+ * 只做纯累加、不做任何 I/O，便于在流式转发前同步判断是否需要额外事件（如 usage 块）。
+ * @param state - 本次流的累积状态，会被就地修改
+ * @param chunk - 上游返回的单个 chunk
+ */
 export function accumulateChatChunk(state: ChatStreamAccumulator, chunk: ModelResponseStream): void {
 	state.id ??= chunk.id;
 	state.created ??= chunk.created;
@@ -752,12 +759,14 @@ async function handleStreamingResponse(
 			const response = execution.response;
 			lastUpstreamLogContext = createUpstreamLogContext(providerReq, response);
 			if (!response.ok) {
-				const errorBody = await response.json().catch(() => ({}));
+				// executor 在 readJson:false 且非 2xx 时已消费响应体并写入 execution.body；
+				// 再调 response.json() 只会得到 "Body has already been read" → {}，上游错误全丢。
+				const errorBody = execution.body === undefined ? {} : execution.body;
 				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, errorBody);
 				throw attachUpstreamLogContext(
 					new ApiError(
 						response.status,
-						`Provider 返回错误: ${redactConfiguredSecrets(JSON.stringify(errorBody), { ...deployment.litellm_params, ...providerReq.headers })}`,
+						`Provider 返回错误: ${redactConfiguredSecrets(describeUpstreamErrorBody(errorBody), { ...deployment.litellm_params, ...providerReq.headers })}`,
 					),
 					lastUpstreamLogContext,
 				);

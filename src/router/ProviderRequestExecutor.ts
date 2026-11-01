@@ -68,6 +68,46 @@ export function createUpstreamAbortError(signal: AbortSignal, url: string, cause
 }
 
 /**
+ * 判断错误是否为"调用方主动中止"（客户端断开/上层取消）而非服务端故障。
+ *
+ * 这类错误会沿链路上抛，但语义是"请求方不要了"，不属于本服务的逻辑错误；
+ * 日志应按 info 记录，避免把取消刷成告警。
+ * @param error - 待判定的错误
+ */
+export function isClientAbortError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null) {
+		return false;
+	}
+	const candidate = error as { name?: unknown; stage?: unknown };
+	// createUpstreamAbortError 会额外打 stage，其他路径只看 name。
+	return candidate.name === "AbortError";
+}
+
+/**
+ * 把 executeProviderRequest 已经解析的上游错误体还原成可读文本。
+ *
+ * 非 2xx 时 executor 在 readJson:false 分支里已消费 Response 流并把结果放在
+ * `execution.body`：JSON 可解析时是对象，否则是原始字符串，空响应则为 undefined。
+ * 调用方必须用它而不是再次读取 `execution.response`，否则二次读流会抛
+ * "Body has already been read" 并被 catch 吞成空字符串，上游错误正文全部丢失。
+ * @param body - executeProviderRequest 返回的已解析错误体
+ * @returns 可写入日志/错误消息的文本；无正文时为空字符串
+ */
+export function describeUpstreamErrorBody(body: unknown): string {
+	if (body === undefined || body === null) {
+		return "";
+	}
+	if (typeof body === "string") {
+		return body;
+	}
+	try {
+		return JSON.stringify(body);
+	} catch {
+		return String(body);
+	}
+}
+
+/**
  * 执行已经由 Provider 转换完成的 HTTP 请求。
  * 不处理状态码、重试、fallback、cooldown、SpendLog 或流式解析。
  * @param request - Provider 转换后的请求

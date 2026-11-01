@@ -46,7 +46,7 @@ import type { ModelResponse } from "../types/openai";
 import { ProviderUpstreamError, executeWithFallbackChain, requireUpstreamAttempt, type UpstreamAttempt } from "./AnthropicUpstreamDispatch";
 import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { copyModelResolutionChain, copyRoutingTrace, createModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
-import { executeProviderRequest } from "../router/ProviderRequestExecutor";
+import { describeUpstreamErrorBody, executeProviderRequest, isClientAbortError } from "../router/ProviderRequestExecutor";
 import {
 	buildAnthropicSearchContinuation,
 	mergeAgenticLoopUsage,
@@ -755,7 +755,10 @@ async function _openAnthropicStream(
 	onResponse?.(createUpstreamLogContext(request, result));
 
 	if (!result.ok) {
-		const errBody = await result.text().catch(() => "");
+		// executeProviderRequest 在 readJson:false 且非 2xx 时已消费响应体（execution.body），
+		// 再次读取同一个 Response 会抛 "Body has already been read" 并被 catch 吞成空字符串，
+		// 导致上游错误正文全部丢失。必须复用 execution.body。
+		const errBody = describeUpstreamErrorBody(execution.body);
 		throw new ProviderUpstreamError(
 			result.status,
 			`Provider 返回错误 (${result.status}): ${redactConfiguredSecrets(errBody, { ...attempt.deployment.litellm_params, ...attempt.upstreamHeaders }).slice(0, 200)}`,
@@ -1197,7 +1200,13 @@ export function registerAnthropicMessagesEndpoints(
 				} catch (err) {
 					streamError = err;
 					res.write(formatSSE("error", JSON.stringify({ type: "error", error: { type: "api_error", message: String(err) } })));
-					logger.error("流式响应错误", { error: String(err) });
+					// 客户端主动断开（取消、关页、超时）不是本服务的逻辑错误，降到 info；
+					// 其余（上游流损坏、SSE 协议异常）仍按 error 记录。
+					if (isClientAbortError(err)) {
+						logger.info("客户端在响应完成前断开连接，流式响应提前结束", { error: String(err) });
+					} else {
+						logger.error("流式响应错误", { error: String(err) });
+					}
 				} finally {
 					stopKeepalive();
 					await streamingCheckpointScheduler?.dispose();
@@ -1305,7 +1314,8 @@ export function registerAnthropicMessagesEndpoints(
 							});
 							const result = execution.response;
 							if (!result.ok) {
-								const errBody = await result.text().catch(() => "");
+								// 响应体已在 executeProviderRequest 内被读取，复用 execution.body 避免二次读流。
+								const errBody = describeUpstreamErrorBody(execution.body);
 								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, { raw: errBody });
 								throw attachUpstreamLogContext(
 									new ProviderUpstreamError(
@@ -1387,7 +1397,8 @@ export function registerAnthropicMessagesEndpoints(
 								});
 								const result = execution.response;
 								if (!result.ok) {
-									const errBody = await result.text().catch(() => "");
+									// 同上：execution.body 已持有上游错误正文。
+									const errBody = describeUpstreamErrorBody(execution.body);
 									upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, { raw: errBody });
 									throw attachUpstreamLogContext(
 										new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status})`),

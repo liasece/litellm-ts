@@ -318,9 +318,13 @@ export async function executeWithFallbackChain<T>(
 				groupLastError = failure;
 				lastAttemptedDeployment = attempt.deployment.model_name;
 				router.recordDeploymentFailure(attempt.deployment, failure);
-				logger.warn("上游 deployment 失败，尝试同组下一 deployment 或 fallback 链", {
+				// 上游错误不是本服务的逻辑错误：只要还能换 deployment / 走 fallback，
+				// 就没到需要人介入的程度，降到 debug 只留排障线索。
+				// 真正会返回给调用方的那次失败由下方统一 warn 记录（避免每跳刷屏）。
+				logger.debug("上游 deployment 失败，尝试同组下一 deployment 或 fallback 链", {
 					model: currentModel,
 					deployment: attempt.deployment.model_name,
+					status: failure instanceof ProviderUpstreamError ? failure.status : undefined,
 					error: failure.message,
 				});
 				attempt = buildUpstreamAttempt(router, currentModel, requestApiKey, requestAnthropicVersion);
@@ -362,6 +366,15 @@ export async function executeWithFallbackChain<T>(
 
 	if (lastError !== null) {
 		const status = lastError instanceof ProviderUpstreamError ? lastError.status : 500;
+		// 这是最终会透传给调用方的那次失败：整条 fallback 链只有这一条 warn，
+		// 记录模型、状态码与上游正文，便于判断该扩配额还是该改配置。
+		logger.warn("上游全部 deployment 失败，错误透传给调用方", {
+			model: model,
+			status: status,
+			attemptedDeployments: attemptedDeploymentKeys.size,
+			fallbackDepth: fallbackDepth,
+			error: lastError.message,
+		});
 		// 重建 ApiError 时透传最后一次 attempt 的上游日志上下文（新建对象会丢不可枚举 Symbol）。
 		throw attachUpstreamLogContext(new ApiError(status, lastError.message), getUpstreamLogContext(lastError));
 	}
