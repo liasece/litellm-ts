@@ -7,8 +7,8 @@
 
 import type { ModelGroupResolution } from "./ModelResolutionTrace";
 
-type ModelGroupAliasValue = string | string[] | { model: string; hidden?: boolean };
-type ModelGroupAliases = Record<string, ModelGroupAliasValue>;
+import { getModelGroupAliasTarget, validateModelGroupAliases } from "../shared/ModelGroupAlias";
+import type { ModelGroupAliases } from "../shared/ModelGroupAlias";
 
 /**
  * Fallback Handler
@@ -26,6 +26,7 @@ export class FallbackHandler {
 	private _contentPolicyFallbacks: Record<string, string[]>;
 	/** 内部缓存：getFallbackChain 计算结果，避免重复计算 */
 	private _chainCache: Map<string, ModelGroupResolution[]> = new Map();
+	private _chainCacheMinute = -1;
 
 	constructor(
 		/** PY 风格：fallbacks 是 List[Dict]，first-match-wins 合并 */
@@ -34,6 +35,8 @@ export class FallbackHandler {
 		contextWindowFallbacks?: Record<string, string[]>,
 		contentPolicyFallbacks?: Record<string, string[]>,
 		modelOverrides?: Record<string, string>,
+		/** Keep model selection consistent throughout one request snapshot. */
+		private readonly _referenceTime?: Date,
 	) {
 		this._fallbacks = this._mergeFallbacks(fallbacks);
 		const aliases = modelGroupAlias ?? {};
@@ -175,8 +178,9 @@ export class FallbackHandler {
 	 * 3. Wildcard '*' match
 	 * @param model
 	 * @param fallbackMap
+	 * @param at
 	 */
-	private _lookupFallback(model: string, fallbackMap: Record<string, string[]>): string[] {
+	private _lookupFallback(model: string, fallbackMap: Record<string, string[]>, at = this._referenceTime ?? new Date()): string[] {
 		// Exact match
 		const exact = fallbackMap[model];
 		if (exact) {
@@ -191,7 +195,7 @@ export class FallbackHandler {
 			}
 		}
 		// Resolve alias and try again
-		const resolvedAlias = this._resolveAlias(model);
+		const resolvedAlias = this._resolveAlias(model, this._modelGroupAlias, at);
 		if (resolvedAlias !== model) {
 			// Exact match on resolved alias
 			const aliasMatch = fallbackMap[resolvedAlias];
@@ -237,35 +241,26 @@ export class FallbackHandler {
 	 * 读取 alias 的单跳目标。string[] 只取首项，空数组没有下一跳。
 	 * @param model - 当前模型组
 	 * @param aliases - 待查询的 alias 映射
+	 * @param at
 	 */
-	private _getAliasTarget(model: string, aliases: ModelGroupAliases): string | undefined {
-		const alias = aliases[model];
-		if (typeof alias === "string") {
-			return alias;
-		}
-		if (Array.isArray(alias)) {
-			// PY: 多值别名取第一个
-			return alias[0];
-		}
-		if (alias && typeof alias === "object" && "model" in alias) {
-			return alias.model;
-		}
-		return undefined;
+	private _getAliasTarget(model: string, aliases: ModelGroupAliases, at: Date): string | undefined {
+		return Object.prototype.hasOwnProperty.call(aliases, model) ? getModelGroupAliasTarget(aliases[model], at) : undefined;
 	}
 
 	private _resolveAliasWithTrace(
 		model: string,
-		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }> = {
+		aliases: ModelGroupAliases = {
 			...this._modelGroupAlias,
 			...this._modelOverrides,
 		},
+		at = this._referenceTime ?? new Date(),
 	): ModelGroupResolution {
 		const path = [model];
 		const seen = new Set(path);
 		let current = model;
 
 		while (true) {
-			const target = this._getAliasTarget(current, aliases);
+			const target = this._getAliasTarget(current, aliases, at);
 			if (target === undefined) {
 				return { inputModel: model, resolvedModel: current, resolutionPath: path };
 			}
@@ -280,15 +275,14 @@ export class FallbackHandler {
 
 	private _resolveAlias(
 		model: string,
-		aliases: Record<string, string | string[] | { model: string; hidden?: boolean }> = this._modelGroupAlias,
+		aliases: ModelGroupAliases = this._modelGroupAlias,
+		at = this._referenceTime ?? new Date(),
 	): string {
-		return this._resolveAliasWithTrace(model, aliases).resolvedModel;
+		return this._resolveAliasWithTrace(model, aliases, at).resolvedModel;
 	}
 
 	private _validateModelGroupAlias(aliases: ModelGroupAliases): void {
-		for (const model of Object.keys(aliases)) {
-			this._resolveAlias(model, aliases);
-		}
+		validateModelGroupAliases(aliases);
 	}
 
 	/**
@@ -301,15 +295,21 @@ export class FallbackHandler {
 	 * @returns ordered fallback chain (excluding the original model)
 	 */
 	getFallbackChainWithTrace(model: string): ModelGroupResolution[] {
+		const at = this._referenceTime ?? new Date();
+		const minute = Math.floor(at.getTime() / 60_000);
+		if (minute !== this._chainCacheMinute) {
+			this.invalidateCache();
+			this._chainCacheMinute = minute;
+		}
 		const cached = this._chainCache.get(model);
 		if (cached) {
 			return cached.map((entry) => ({ ...entry, resolutionPath: [...entry.resolutionPath] }));
 		}
-		const directFallbacks = this._lookupFallback(model, this._fallbacks);
+		const directFallbacks = this._lookupFallback(model, this._fallbacks, at);
 		const chain: ModelGroupResolution[] = [];
 		const seen = new Set<string>([model]);
 		for (const fallback of directFallbacks) {
-			const resolution = this._resolveAliasWithTrace(fallback);
+			const resolution = this._resolveAliasWithTrace(fallback, { ...this._modelGroupAlias, ...this._modelOverrides }, at);
 			if (!seen.has(resolution.resolvedModel)) {
 				chain.push(resolution);
 				seen.add(resolution.resolvedModel);
@@ -397,6 +397,7 @@ export class FallbackHandler {
 	/**
 	 * Replace deployment-level forced redirects while preserving configured aliases.
 	 * Forced redirects take precedence when the same source name is configured in both.
+	 * @param modelOverrides
 	 */
 	setModelOverrides(modelOverrides?: Record<string, string>): void {
 		const overrides = modelOverrides ?? {};

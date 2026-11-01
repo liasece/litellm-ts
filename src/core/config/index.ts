@@ -50,6 +50,8 @@ import * as yaml from "js-yaml";
 import * as path from "path";
 import { z } from "zod";
 import type { ModelInfo } from "../../types/config";
+import { validateModelGroupAliases } from "../../shared/ModelGroupAlias";
+import type { ModelGroupAliases } from "../../shared/ModelGroupAlias";
 
 // ============ Zod Schema 定义 ============
 
@@ -148,6 +150,16 @@ const ModelListItemSchema = z.object({
 /** Fallback config: { model_name: string[] } */
 const FallbackConfigSchema = z.record(z.string(), z.array(z.string()));
 
+const ModelGroupAliasesSchema = z.unknown().transform((value, context): ModelGroupAliases => {
+	try {
+		validateModelGroupAliases(value);
+		return value;
+	} catch (error) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : "Invalid aliases" });
+		return z.NEVER;
+	}
+});
+
 /** Router settings schema (litellm YAML style) */
 const RouterSettingsSchema = z.object({
 	/** 路由策略：cost-based / latency-based / round-robin */
@@ -164,7 +176,7 @@ const RouterSettingsSchema = z.object({
 	max_fallbacks: z.number().optional(),
 	routing_strategy: z.string().optional(),
 	fallbacks: z.array(FallbackConfigSchema).default([]),
-	model_group_alias: z.record(z.string()).default({}),
+	model_group_alias: ModelGroupAliasesSchema.default({}),
 	enable_pre_call_checks: z.boolean().optional(),
 	search_tools: z.array(z.record(z.unknown())).optional(),
 	redis_url: z.string().optional(),
@@ -183,7 +195,7 @@ const GeneralSettingsSchema = z.object({
 	// Litellm proxy general fields (snake_case, optional)
 	master_key: z.string().optional(),
 	store_model_in_db: z.boolean().optional(),
-	model_group_alias: z.record(z.string()).default({}),
+	model_group_alias: ModelGroupAliasesSchema.default({}),
 	websearch_override_target_model: z.string().optional(),
 	skip_provider_token_counting: z.boolean().optional(),
 	database_url: z.string().optional(),
@@ -359,7 +371,7 @@ export interface RouterSettings {
 	/** 降级配置列表 */
 	readonly fallbacks: Record<string, string[]>[];
 	/** 模型组别名映射 */
-	readonly model_group_alias: Record<string, string>;
+	readonly model_group_alias: ModelGroupAliases;
 	/** 启用请求前预检 */
 	readonly enable_pre_call_checks?: boolean;
 	/** 搜索工具配置（websearch 拦截与 /v1/search/tools 清单） */
@@ -384,7 +396,7 @@ export interface GeneralSettings {
 	/** 是否将模型配置存入数据库 */
 	readonly store_model_in_db?: boolean;
 	/** 模型组别名映射 */
-	readonly model_group_alias: Record<string, string>;
+	readonly model_group_alias: ModelGroupAliases;
 	/** websearch 目标模型覆盖 */
 	readonly websearch_override_target_model?: string;
 	/** 是否跳过 provider token 计数 */
@@ -635,8 +647,8 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 				? (generalSettingsRaw["store_model_in_db"] as boolean)
 				: config.generalSettings.store_model_in_db,
 		model_group_alias:
-			Object.keys(generalSettingsRaw["model_group_alias"] ?? {}).length > 0
-				? (generalSettingsRaw["model_group_alias"] as Record<string, string>)
+			generalSettingsRaw["model_group_alias"] !== undefined
+				? ModelGroupAliasesSchema.parse(generalSettingsRaw["model_group_alias"])
 				: config.generalSettings.model_group_alias,
 		websearch_override_target_model:
 			(generalSettingsRaw["websearch_override_target_model"] as string | undefined) ??
@@ -685,8 +697,8 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 				? (routerSettingsRaw["fallbacks"] as Record<string, string[]>[])
 				: config.routerSettings.fallbacks,
 		model_group_alias:
-			Object.keys(routerSettingsRaw["model_group_alias"] ?? {}).length > 0
-				? (routerSettingsRaw["model_group_alias"] as Record<string, string>)
+			routerSettingsRaw["model_group_alias"] !== undefined
+				? ModelGroupAliasesSchema.parse(routerSettingsRaw["model_group_alias"])
 				: config.routerSettings.model_group_alias,
 		enable_pre_call_checks:
 			typeof routerSettingsRaw["enable_pre_call_checks"] === "boolean"

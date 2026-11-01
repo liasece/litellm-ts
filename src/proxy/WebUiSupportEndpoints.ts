@@ -33,6 +33,8 @@ import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
 import { ConfigRepository } from "../repositories/ConfigRepository";
 import type { Router as LiteLLMRouter } from "../router/Router";
+import { buildModelGroupOverrides } from "../router/ModelOverrides";
+import { validateModelGroupAliases } from "../shared/ModelGroupAlias";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 import providerCreateFieldsJson from "../data/provider_create_fields.json";
@@ -1400,6 +1402,21 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 	 */
 	registerRoute(router, { method: "post", path: "/config/update" }, async (req) => {
 		const body = (req.body ?? {}) as ConfigUpdateRequestBody;
+		// Reject invalid schedules before writing any section of the request.
+		for (const section of ["general_settings", "router_settings"] as const) {
+			const incoming = body[section];
+			if (isRecord(incoming) && Object.prototype.hasOwnProperty.call(incoming, "model_group_alias")) {
+				try {
+					validateModelGroupAliases(incoming.model_group_alias);
+					validateModelGroupAliases({
+						...incoming.model_group_alias,
+						...buildModelGroupOverrides(litellmRouter?.getDeployments?.() ?? []),
+					});
+				} catch (error) {
+					throw ApiError.badRequest(error instanceof Error ? error.message : "Invalid model group aliases");
+				}
+			}
+		}
 		for (const section of CONFIG_UPDATE_SECTIONS) {
 			const incoming = body[section];
 			if (incoming === undefined) {
@@ -1410,7 +1427,7 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 			// model_group_alias 是完整映射，不是 patch。否则 UI 删除 alias 时，
 			// 被省略的旧 key 会被递归深合并保留。
 			if (
-				section === "router_settings" &&
+				(section === "router_settings" || section === "general_settings") &&
 				Object.prototype.hasOwnProperty.call(incoming, "model_group_alias") &&
 				isRecord(incoming.model_group_alias)
 			) {

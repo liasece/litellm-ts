@@ -683,6 +683,7 @@ export class Router {
 				contextWindowFallbacks,
 				contentPolicyFallbacks,
 				buildModelGroupOverrides(deployments),
+				new Date(),
 			),
 			routeFn: this._selectStrategy(routingStrategy),
 			cooldownTimeMs: (cooldownSeconds !== null && cooldownSeconds > 0 ? cooldownSeconds : 5) * 1000,

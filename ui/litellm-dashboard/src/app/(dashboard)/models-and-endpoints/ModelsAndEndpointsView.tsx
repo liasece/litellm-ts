@@ -24,6 +24,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AddModelTab from "../../../components/add_model/add_model_tab";
 import HealthCheckComponent from "../../../components/model_dashboard/HealthCheckComponent";
 import ModelGroupAliasSettings from "../../../components/model_group_alias_settings";
+import type { ModelGroupAliases } from "../../../../../../src/shared/ModelGroupAlias";
 import ModelInfoView from "../../../components/model_info_view";
 import NotificationsManager from "../../../components/molecules/notifications_manager";
 import PassThroughSettings from "../../../components/pass_through_settings";
@@ -94,7 +95,7 @@ const ModelsAndEndpointsView: React.FC<ModelDashboardProps> = ({ premiumUser, te
 	const [modelGroupRetryPolicy, setModelGroupRetryPolicy] = useState<RetryPolicyObject | null>(null);
 	const [globalRetryPolicy, setGlobalRetryPolicy] = useState<GlobalRetryPolicyObject | null>(null);
 	const [defaultRetry, setDefaultRetry] = useState<number>(0);
-	const [modelGroupAlias, setModelGroupAlias] = useState<{ [key: string]: string }>({});
+	const [modelGroupAlias, setModelGroupAlias] = useState<ModelGroupAliases>({});
 	const [showAdvancedSettings, setShowAdvancedSettings] = useState<boolean>(false);
 	const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 	const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);

@@ -5,6 +5,7 @@
  */
 
 import type { ModelInfo } from "./config";
+import type { ModelGroupAliasConfig, ModelGroupAliasValue } from "../shared/ModelGroupAlias";
 
 /** 路由策略名称（单一来源，消除与 RoutingStrategies.ts 重复字符串联合） */
 export enum RoutingStrategyName {
@@ -144,15 +145,10 @@ export interface RetryPolicy {
 }
 
 /** 模型组别名项，对齐 PY RouterModelGroupAliasItem TypedDict */
-export interface RouterModelGroupAliasItem {
-	/** 别名映射的真实模型名 */
-	model: string;
-	/** 是否在可用模型列表中隐藏此别名（PY TypedDict 为必填 bool） */
-	hidden: boolean;
-}
+export type RouterModelGroupAliasItem = ModelGroupAliasConfig;
 
 /** 模型组别名值类型：单个模型名、模型名列表、或 RouterModelGroupAliasItem */
-export type RouterModelGroupAliasValue = string | string[] | RouterModelGroupAliasItem;
+export type RouterModelGroupAliasValue = ModelGroupAliasValue;
 
 /** 按异常类型配置的允许失败策略，对齐 PY AllowedFailsPolicy TypedDict */
 export interface AllowedFailsPolicy {

@@ -5,6 +5,8 @@
  * 参考: LiteLLM Python litellm/proxy/proxy_server.py
  */
 
+import type { ModelGroupAliases } from "../shared/ModelGroupAlias";
+
 /** 模型元信息 */
 export interface ModelInfo {
 	/** 模型唯一标识 */
@@ -203,7 +205,7 @@ export interface GeneralSettings {
 	/** 网页搜索覆写目标模型 */
 	websearch_override_target_model?: string;
 	/** 模型组别名（支持 PY RouterModelGroupAliasItem 结构） */
-	model_group_alias?: Record<string, string | { model: string; hidden?: boolean }>;
+	model_group_alias?: ModelGroupAliases;
 	/** 数据库连接池大小 */
 	database_connection_pool_limit?: number;
 	/** 代理设置 */

@@ -10,8 +10,8 @@ const nextConfig = {
 	basePath: "",
 	assetPrefix: "/litellm-asset-prefix",
 	turbopack: {
-		// Must be absolute; "." is no longer allowed
-		root: __dirname,
+		// The alias editor shares time-window rules with the backend under src/shared.
+		root: path.resolve(__dirname, "../.."),
 	},
 };
 

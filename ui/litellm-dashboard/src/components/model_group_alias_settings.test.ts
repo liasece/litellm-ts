@@ -3,11 +3,7 @@ import { resolveAliasPath } from "./model_group_alias_settings";
 
 describe("resolveAliasPath", () => {
 	it("解释任意深度 alias 并判断最终模型可达", () => {
-		const resolution = resolveAliasPath(
-			"advanced",
-			{ advanced: "t1", t1: "gpt-5.6-sol" },
-			new Set(["gpt-5.6-sol"]),
-		);
+		const resolution = resolveAliasPath("advanced", { advanced: "t1", t1: "gpt-5.6-sol" }, new Set(["gpt-5.6-sol"]));
 		expect(resolution).toEqual({
 			path: ["advanced", "t1", "gpt-5.6-sol"],
 			resolvedModel: "gpt-5.6-sol",
@@ -36,6 +32,26 @@ describe("resolveAliasPath", () => {
 			path: ["a", "b", "a"],
 			reachable: false,
 			error: "Alias cycle: a → b → a",
+		});
+	});
+
+	it("previews scheduled alias chains with the same timezone and boundaries as routing", () => {
+		const aliases = {
+			nested: "flexible",
+			flexible: {
+				model: "minimax",
+				timezone: "Asia/Shanghai",
+				schedule: [{ start: "22:00", end: "06:00", model: "deepseek" }],
+			},
+		};
+		const names = new Set(["deepseek", "minimax"]);
+		expect(resolveAliasPath("nested", aliases, names, new Date("2026-10-24T21:59:59Z"))).toMatchObject({
+			path: ["nested", "flexible", "deepseek"],
+			reachable: true,
+		});
+		expect(resolveAliasPath("nested", aliases, names, new Date("2026-10-24T22:00:00Z"))).toMatchObject({
+			path: ["nested", "flexible", "minimax"],
+			reachable: true,
 		});
 	});
 });

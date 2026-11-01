@@ -552,6 +552,53 @@ describe("WebUiSupport 契约", () => {
 			});
 		});
 
+		it("persists daily alias schedules and removes them when replaced with a static target", async () => {
+			const { db, store } = makeMockConfigDb();
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const value = {
+				model: "minimax",
+				hidden: true,
+				timezone: "Asia/Shanghai",
+				schedule: [{ start: "00:30", end: "08:30", model: "deepseek" }],
+			};
+			const response = await request(app)
+				.post("/config/update")
+				.send({ router_settings: { model_group_alias: { flexible: value } } });
+			expect(response.status).toBe(200);
+			expect(store.get("router_settings")).toEqual({ model_group_alias: { flexible: value } });
+			const updated = await request(app)
+				.post("/config/update")
+				.send({ router_settings: { model_group_alias: { flexible: "minimax" } } });
+			expect(updated.status).toBe(200);
+			expect(store.get("router_settings")).toEqual({ model_group_alias: { flexible: "minimax" } });
+		});
+
+		it.each([
+			{ model: "minimax", timezone: "Invalid/Zone", schedule: [{ start: "00:30", end: "08:30", model: "deepseek" }] },
+			{ model: "minimax", timezone: "UTC", schedule: [{ start: "00:30", end: "00:30", model: "deepseek" }] },
+			{
+				model: "minimax",
+				timezone: "UTC",
+				schedule: [
+					{ start: "22:00", end: "06:00", model: "deepseek" },
+					{ start: "05:00", end: "08:00", model: "minimax" },
+				],
+			},
+			{ model: "minimax", timezone: "UTC", schedule: [{ start: "22:00", end: "06:00", model: "flexible" }] },
+		])("rejects invalid alias schedules before any config section is persisted %#", async (value) => {
+			const { db, store } = makeMockConfigDb({ router_settings: { model_group_alias: { flexible: "minimax" } } });
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const response = await request(app)
+				.post("/config/update")
+				.send({
+					general_settings: { store_prompts_in_spend_logs: true },
+					router_settings: { model_group_alias: { flexible: value } },
+				});
+			expect(response.status).toBe(400);
+			expect(store.get("router_settings")).toEqual({ model_group_alias: { flexible: "minimax" } });
+			expect(store.has("general_settings")).toBe(false);
+		});
+
 		it("/config/update 剔除 model_list 且写入 router_settings（对齐 Python save_config）", async () => {
 			const { db, store } = makeMockConfigDb();
 			await dbConfigProvider.initialize(db as never);
@@ -1034,10 +1081,7 @@ describe("WebUiSupport 契约", () => {
 			const tokenCookie = cookies.find((cookie) => cookie.startsWith("token="));
 			expect(tokenCookie).toBeDefined();
 			const tokenValue = tokenCookie!.split(";")[0]!.slice("token=".length);
-			const payload = JSON.parse(Buffer.from(tokenValue.split(".")[1]!, "base64url").toString("utf8")) as Record<
-				string,
-				unknown
-			>;
+			const payload = JSON.parse(Buffer.from(tokenValue.split(".")[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
 			expect((payload.exp as number) - (payload.iat as number)).toBe(3 * 24 * 60 * 60);
 		});
 
