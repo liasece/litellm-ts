@@ -647,6 +647,11 @@ function buildNativeResponsesRequestBody(body: ResponsesCreateRequest, toolRegis
 
 /**
  * 构造原生 Responses 能力调用。stream=false 用于 worker 与兼容回退；stream=true 用于主模型轮流式。
+ * @param litellmRouter - 执行底层调用的 Router
+ * @param requestBody - 客户端原始 Responses 请求体
+ * @param originalMessages - 客户端原始消息，用于计算能力循环追加消息的偏移
+ * @param toolRegistry - 工具名在 chat 与 Responses 协议间的映射表
+ * @param streaming - 是否以流式方式发起
  */
 function createNativeCapabilityCaller(
 	litellmRouter: LiteLLMRouter,
@@ -1302,9 +1307,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			});
 			const nativeCompletion = nativeResponses
 				? createNativeResponsesCapabilityCompletion(litellmRouter, requestBody, capabilityMessages, toolRegistry)
-				: undefined;
-			const nativeStream = nativeResponses
-				? createNativeCapabilityCaller(litellmRouter, requestBody, capabilityMessages, toolRegistry, true)
 				: undefined;
 			const streamingMainTurn = async (
 				completionModel: string,
@@ -2029,7 +2031,11 @@ function createNativeEventParser(): (raw: unknown) => Record<string, unknown>[] 
 	};
 }
 
-/** 原生流既可能是已解析事件，也可能是原始 SSE 文本，统一为事件对象。 */
+/**
+ * 原生流既可能是已解析事件，也可能是原始 SSE 文本，统一为事件对象。
+ * @param raw - 上游返回的单个事件对象或整段 SSE 文本
+ * @returns 解析后的事件对象列表；非 JSON 帧被丢弃
+ */
 function toNativeResponseEvents(raw: unknown): Record<string, unknown>[] {
 	if (typeof raw === "object" && raw !== null) {
 		return [raw as Record<string, unknown>];
@@ -2062,7 +2068,11 @@ function toNativeResponseEvents(raw: unknown): Record<string, unknown>[] {
 	return events;
 }
 
-/** 原生 Responses 事件转内部 chat chunk：只有可见文本需要下行。 */
+/**
+ * 原生 Responses 事件转内部 chat chunk：只有可见文本需要下行。
+ * @param event - 单个原生 Responses 事件
+ * @returns 对应 chat chunk；无可见文本增量时返回 undefined
+ */
 function nativeResponsesEventToChatChunk(event: Record<string, unknown>): Record<string, unknown> | undefined {
 	const type = typeof event["type"] === "string" ? event["type"] : "";
 	if (type === "response.output_text.delta" && typeof event["delta"] === "string" && event["delta"].length > 0) {
@@ -2074,7 +2084,11 @@ function nativeResponsesEventToChatChunk(event: Record<string, unknown>): Record
 	return undefined;
 }
 
-/** 能力循环里的工具调用是私有链路，不能出现在下游 SSE 中。 */
+/**
+ * 能力循环里的工具调用是私有链路，不能出现在下游 SSE 中。
+ * @param chunk - 待下行的 chunk
+ * @returns 去掉私有工具调用增量后的 chunk
+ */
 function stripPrivateToolDeltas(chunk: unknown): unknown {
 	if (typeof chunk !== "object" || chunk === null) {
 		return chunk;

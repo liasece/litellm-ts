@@ -130,24 +130,21 @@ export function registerStaticUiRoutes(app: Express): void {
 		return;
 	}
 
-	// Next.js 静态资源（chunk、图片、字体等）
-	app.use(
-		"/_next",
-		express.static(path.join(uiOutDir, "_next"), {
-			fallthrough: true,
-			immutable: true,
-			maxAge: "1y",
-		}),
-	);
+	// Next.js 静态资源（chunk、图片、字体等）。
+	// 未命中的请求必须就地 404 截止：继续 next() 会落到后面的鉴权路由，把
+	// "文件不存在"伪装成 401 Missing API key，排障时会被误判成鉴权故障
+	//（生产里成批的 .js.map 401 就是这个成因）。
+	const staticOptions = { fallthrough: true, immutable: true, maxAge: "1y" } as const;
+	const missingAsset = (req: Request, res: Response): void => {
+		res.status(404).type("text/plain").send(`Not Found: ${req.originalUrl}`);
+	};
+	app.use("/_next", express.static(path.join(uiOutDir, "_next"), staticOptions), missingAsset);
 
-	// 资产前缀路径（向后兼容）
+	// 资产前缀路径（向后兼容）。同上，未命中直接 404。
 	app.use(
 		`${ASSET_PREFIX}/_next`,
-		express.static(path.join(uiOutDir, "_next"), {
-			fallthrough: true,
-			immutable: true,
-			maxAge: "1y",
-		}),
+		express.static(path.join(uiOutDir, "_next"), staticOptions),
+		missingAsset,
 	);
 
 	// favicon 与 WebUI HTML 路由均为公开资源，必须在鉴权路由之前命中。

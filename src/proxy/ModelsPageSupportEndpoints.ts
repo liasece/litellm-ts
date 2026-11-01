@@ -909,6 +909,24 @@ export function registerModelsPageSupportRoutes(
 	 *   - teamId: 当前 TS 端尚未实现 team 过滤；保留在 query 类型中以兼容前端，但端点不读取。
 	 *   - sortBy, sortOrder: 排序（仅支持 model_name / id；sortOrder 非法值回退 asc）
 	 */
+	// ── /model/info（Python 兼容别名）────────────────────────
+	// Python LiteLLM 同时暴露裸 /model/info，按 Python 文档写的客户端会直接打这个路径。
+	// TS 原先只有 /v1 与 /v2，导致按上游文档接入的脚本拿到 404（生产日志出现过两次）。
+	// 这里复用 v2 的实现，保持响应形状一致。
+	registerRoute(router, { method: "get", path: "/model/info" }, async (req) => {
+		const deployments = resolveDeployments(routerOrAccessor);
+		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
+			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
+		);
+		return buildV2ModelInfoResponse(
+			deployments,
+			parseModelInfoQuery(req.query as Record<string, unknown>),
+			resolveFallbacks(routerOrAccessor),
+			costMapService.getSnapshot().map,
+			builtinCapabilities,
+		);
+	});
+
 	registerRoute(router, { method: "get", path: "/v2/model/info" }, async (req) => {
 		const deployments = resolveDeployments(routerOrAccessor);
 		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
