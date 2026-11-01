@@ -648,6 +648,61 @@ export function hasRequestMetaBody(request: any): boolean {
 	return Boolean(body && Object.keys(body).length > 0);
 }
 
+/**
+ * 内置能力（web search / fetch 等）的响应不走 OpenAI choices，而是
+ * { brief, results, executor } 这样的私有结构。Pretty 视图原先只认
+ * choices / output / candidates，导致 Logs 详情里这类记录显示为空。
+ * 这里把它们转成可读的 parts，使搜索结果与来源真正可见。
+ * @param response - 已落库的 response 字段
+ * @returns 解析后的 message；无法识别时返回 null
+ */
+const parseBuiltinCapabilityResponse = (response: any): ParsedMessage | null => {
+	const record = asRecord(response);
+	if (!record) {
+		return null;
+	}
+	const brief = typeof record.brief === "string" ? record.brief : "";
+	const executor = typeof record.executor === "string" ? record.executor : "";
+	const results = Array.isArray(record.results) ? record.results : [];
+	if (!brief && results.length === 0) {
+		return null;
+	}
+
+	const parts: MessagePart[] = [];
+	if (brief) {
+		parts.push({ kind: "text", label: "Result", sourceType: "builtin_capability", text: brief });
+	}
+	for (const item of results) {
+		const entry = asRecord(item);
+		if (!entry) {
+			continue;
+		}
+		const title = typeof entry.title === "string" ? entry.title : "";
+		const url = typeof entry.url === "string" ? entry.url : "";
+		const siteName = typeof entry.siteName === "string" ? entry.siteName : "";
+		const date = typeof entry.date === "string" ? entry.date.slice(0, 10) : "";
+		const snippet =
+			typeof entry.snippet === "string" ? entry.snippet : typeof entry.summary === "string" ? entry.summary : "";
+		const meta = [siteName, date].filter((value) => value.length > 0).join(" · ");
+		const lines = [title, url, meta, snippet].filter((value) => value.length > 0);
+		if (lines.length === 0) {
+			continue;
+		}
+		parts.push({
+			kind: "web_search",
+			label: "Source",
+			sourceType: "builtin_capability",
+			name: title || url,
+			text: lines.join("\n"),
+			data: entry,
+		});
+	}
+	if (executor) {
+		parts.push({ kind: "text", label: "Executor", sourceType: "builtin_capability", text: executor });
+	}
+	return parts.length > 0 ? responseFromParts(parts) : null;
+};
+
 export const parseMessages = (request: any, response: any): ParsedMessages => {
 	const requestMessages = requestMessagesFrom(request);
 	let responseMessage: ParsedMessage | null = null;
@@ -656,9 +711,12 @@ export const parseMessages = (request: any, response: any): ParsedMessages => {
 				.map((item: any) => generatedImagePart(item, response.output_format))
 				.filter((part: MessagePart | null): part is MessagePart => part !== null)
 		: [];
+	const builtinCapabilityMessage = parseBuiltinCapabilityResponse(response);
 	const responseMsg = response?.choices?.[0]?.message;
 
-	if (responseMsg) {
+	if (builtinCapabilityMessage) {
+		responseMessage = builtinCapabilityMessage;
+	} else if (responseMsg) {
 		const parsed = parseContent(responseMsg.content ?? "");
 		const reasoning = responseMsg.reasoning_content ?? responseMsg.reasoning ?? responseMsg.analysis;
 		const explicitToolCalls = parseToolCalls(responseMsg.tool_calls);

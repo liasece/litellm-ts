@@ -597,3 +597,42 @@ describe("PrettyMessagesView", () => {
 		});
 	});
 });
+
+describe("PrettyMessagesView builtin capability responses", () => {
+	/**
+	 * web 搜索/抓取的 response 是 { brief, results, executor }，没有 choices。
+	 * 修复前 parseMessages 返回 null，Logs 详情显示为空，用户看不到搜索结果。
+	 */
+	it("renders web search brief and sources instead of an empty response", () => {
+		const request = { messages: [{ role: "user", content: "查一下价格" }] };
+		const response = {
+			brief: "Live web search results for the query.",
+			executor: "deepseek_tools:deepseek",
+			results: [{
+				title: "DeepSeek Pricing",
+				url: "https://api-docs.deepseek.com/pricing",
+				snippet: "0.75 USD per 1K requests",
+			}],
+		};
+
+		const result = parseMessages(request, response);
+		expect(result.responseMessage).not.toBeNull();
+		expect(result.responseMessage?.content).toContain("Live web search results");
+
+		// 来源与执行器作为 part 渲染成独立卡片，不并入 content 文本。
+		const parts = result.responseMessage?.parts ?? [];
+		const sourcePart = parts.find((part) => part.kind === "web_search");
+		expect(sourcePart?.text).toContain("https://api-docs.deepseek.com/pricing");
+		expect(parts.some((part) => part.text === "deepseek_tools:deepseek")).toBe(true);
+	});
+
+	it("keeps standard chat completions working", () => {
+		const result = parseMessages({ messages: [] }, { choices: [{ message: { content: "hi" } }] });
+		expect(result.responseMessage?.content).toBe("hi");
+	});
+
+	it("returns null for responses without recognizable content", () => {
+		const result = parseMessages({ messages: [] }, { unrelated: true });
+		expect(result.responseMessage).toBeNull();
+	});
+});
