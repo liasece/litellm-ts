@@ -376,6 +376,7 @@ function resolveProvider(dep: Deployment, entry: ModelCostEntry | undefined): st
  * @param dep - Router deployment
  * @param fallbackId - cost map 与 config 均无 id 时的兜底 id
  * @param modelCostMap
+ * @param builtinCapabilities - 用于补充代理提供的 vision 等内置能力配置。
  */
 export function buildEnrichedModelInfo(
 	dep: Deployment,
@@ -563,6 +564,7 @@ function addLimit(total: number | null, value: number | null): number | null {
  * 把 deployments 数组按 model_name 聚合成 Python `/model_group/info` 形状（22 键）。
  * @param deployments - Router 全部 deployment
  * @param modelCostMap
+ * @param builtinCapabilities - 在聚合前补充各部署内置能力的配置。
  */
 export function buildModelGroupInfoResponse(
 	deployments: Deployment[],

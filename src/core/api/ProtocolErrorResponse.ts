@@ -19,7 +19,11 @@ function ensureAnthropicRequestId(res: Response): string {
 	return requestId;
 }
 
-/** Add protocol-mandated response headers before a route begins writing its body. */
+/**
+ * Add protocol-mandated response headers before a route begins writing its body.
+ * @param req - Request whose route and headers select the wire protocol.
+ * @param res - Response receiving the protocol headers.
+ */
 export function prepareProtocolResponse(req: Request, res: Response): void {
 	if (isAnthropicProtocolRequest(req)) {
 		ensureAnthropicRequestId(res);
@@ -51,7 +55,12 @@ function anthropicErrorType(statusCode: number): string {
 	}
 }
 
-/** Serialize an API error using the wire protocol selected by the request route/headers. */
+/**
+ * Serialize an API error using the wire protocol selected by the request route/headers.
+ * @param req - Request whose route and headers select the error envelope.
+ * @param res - Response receiving the error status, headers and body.
+ * @param error - API error carrying the HTTP status and public message.
+ */
 export function sendProtocolError(req: Request, res: Response, error: ApiError): void {
 	if (!isAnthropicProtocolRequest(req)) {
 		res.status(error.statusCode).json(error.toErrorBody());

@@ -1,5 +1,7 @@
+/** Conversation roles plus synthetic request and error events used by the timeline. */
 export type SessionTimelineRole = "system" | "user" | "assistant" | "tool" | "request" | "error";
 
+/** Provider-independent rendering categories for message content blocks. */
 export type SessionTimelinePartKind =
 	| "text"
 	| "thinking"
@@ -17,16 +19,27 @@ export type SessionTimelinePartKind =
 	| "refusal"
 	| "unknown";
 
+/** A renderable content block retaining tool identity and provider-specific details. */
 export interface SessionTimelinePart {
+	/** Rendering category after normalization from the provider's content type. */
 	readonly kind: SessionTimelinePartKind;
+	/** Display label for the normalized content block. */
 	readonly label: string;
+	/** Original provider content type, when supplied. */
 	readonly sourceType?: string;
+	/** Protocol item or tool-call identifier used to correlate related blocks. */
 	readonly id?: string;
+	/** Tool or operation name when the block identifies one. */
 	readonly name?: string;
+	/** Human-readable content extracted from the block. */
 	readonly text?: string;
+	/** Structured arguments, results or other details retained for inspection. */
 	readonly data?: unknown;
+	/** Provider status associated with this content block. */
 	readonly status?: string;
+	/** Whether the provider marked this block as a tool error. */
 	readonly isError?: boolean;
+	/** Nested content blocks, such as the structured content of a tool result. */
 	readonly parts?: SessionTimelinePart[];
 }
 
@@ -44,31 +57,57 @@ interface ToolCall {
 	readonly arguments: Record<string, unknown>;
 }
 
+/** Spend-log projection and optional classification metadata consumed by the timeline reducer. */
 export interface SessionTimelineSourceRow {
+	/** Spend-log request identity used to link timeline events to their request. */
 	readonly request_id: string;
+	/** Recorded API call type, also used when no conversation body is available. */
 	readonly call_type: string;
+	/** Key identifier stored with the spend log, used to group the session's keys. */
 	readonly api_key?: string | null;
+	/** Display alias for the recorded key, when available. */
 	readonly key_alias?: string | null;
+	/** Recorded request cost added to the visible session total. */
 	readonly spend: number;
+	/** Recorded request token usage added to the visible session total. */
 	readonly total_tokens: number;
+	/** Request start time used for input events and the session's earliest boundary. */
 	readonly startTime: Date | string;
+	/** Request end time used for response events and the session's latest boundary. */
 	readonly endTime: Date | string;
+	/** Recorded model name shown on each event from this request. */
 	readonly model: string;
+	/** Spend-log status, taking precedence over the metadata status when present. */
 	readonly status: string | null;
+	/** Status retained in metadata for records without a top-level status. */
 	readonly metadata_status: string | null;
+	/** Recorded failure details used when no response message is available. */
 	readonly error_information: unknown;
+	/** Request body or compacted history containing the messages to reconstruct. */
 	readonly request_payload: unknown;
+	/** Recorded provider response from which output events are reconstructed. */
 	readonly response_payload: unknown;
+	/** Recognized client identity used to classify auxiliary requests. */
 	readonly request_client?: string | null;
+	/** Number of system blocks used to classify known auxiliary request shapes. */
 	readonly request_system_count?: number | null;
+	/** Original request message count, before history compaction. */
 	readonly request_message_count?: number | null;
+	/** Number of declared tools used to distinguish auxiliary request families. */
 	readonly request_tool_count?: number | null;
+	/** First declared tool name used to identify auxiliary web-search requests. */
 	readonly request_first_tool_name?: string | null;
+	/** Prefix of the first system prompt used for auxiliary request classification. */
 	readonly request_first_system_prompt?: string | null;
+	/** Prefix of the second system prompt used for auxiliary request classification. */
 	readonly request_second_system_prompt?: string | null;
+	/** First message role projected for auxiliary classification without loading full history. */
 	readonly request_first_message_role?: string | null;
+	/** Second message role projected for auxiliary classification without loading full history. */
 	readonly request_second_message_role?: string | null;
+	/** First message text prefix used to identify security-monitor context. */
 	readonly request_first_message_text?: string | null;
+	/** Second message text prefix used to identify security-monitor transcripts. */
 	readonly request_second_message_text?: string | null;
 	/**
 	 * Occurrence numbers in the original cumulative request snapshot, aligned
@@ -81,46 +120,79 @@ export interface SessionTimelineSourceRow {
 	 * content remains a new occurrence even when it intentionally repeats.
 	 */
 	readonly request_message_delta_flags?: readonly boolean[];
+	/** Whether request content is already available, including history intentionally compacted away. */
 	readonly request_payload_available?: boolean;
+	/** Whether response content is available without a cold-storage lookup. */
 	readonly response_payload_available?: boolean;
+	/** Internal request category; builtin_capability marks proxy-generated capability calls. */
 	readonly internal_call_type?: string | null;
+	/** Capability name attached to an internal request, such as vision. */
 	readonly builtin_capability?: string | null;
+	/** Request identity linking an internal capability call to its parent. */
 	readonly parent_request_id?: string | null;
 }
 
+/** One visible timeline event reconstructed from a logged request or response. */
 export interface SessionTimelineItem {
+	/** Stable event identifier derived from its request and position within that request. */
 	readonly id: string;
+	/** Spend-log request identity used to open the underlying request details. */
 	readonly request_id: string;
+	/** Conversation role or synthetic event category used for rendering. */
 	readonly role: SessionTimelineRole;
+	/** Display label for the event's role. */
 	readonly label: string;
+	/** Serialized request start or end time associated with this event. */
 	readonly timestamp: string;
+	/** Recorded model name for the request that produced this event. */
 	readonly model: string;
+	/** Plain-text representation for display when structured parts are unavailable. */
 	readonly content: string;
+	/** Structured content blocks preserving tool calls, results and multimodal details. */
 	parts?: SessionTimelinePart[];
+	/** Block-level or request-level status associated with this event. */
 	readonly status?: string;
+	/** True for proxy-generated built-in capability calls; otherwise omitted. */
 	readonly internal_call?: boolean;
+	/** Built-in capability that produced this internal event, when applicable. */
 	readonly builtin_capability?: string;
+	/** Parent request identity for a proxy-generated capability call. */
 	readonly parent_request_id?: string;
 }
 
+/** Reconstructed events and aggregates for the included requests in a session. */
 export interface SessionTimelineResponse {
+	/** Events in the order they were added by the timeline reducer. */
 	readonly data: SessionTimelineItem[];
+	/** Aggregates over included requests, plus the count of filtered auxiliary requests. */
 	readonly summary: {
+		/** Distinct keys observed among included requests. */
 		readonly keys: ReadonlyArray<{
+			/** First available display alias for this key, or null. */
 			readonly alias: string | null;
+			/** Stored key identifier; empty when only a key alias was available. */
 			readonly hash: string;
 		}>;
+		/** Number of requests included after auxiliary filtering. */
 		readonly request_count: number;
+		/** Number of rendered events; one request may contribute several events. */
 		readonly event_count: number;
+		/** Sum of finite recorded costs for included requests. */
 		readonly total_spend: number;
+		/** Sum of finite recorded token counts for included requests. */
 		readonly total_tokens: number;
+		/** Span from earliest included start to latest included end, in seconds. */
 		readonly duration_seconds: number;
+		/** Earliest valid included request start time, or null. */
 		readonly start_time: string | null;
+		/** Latest valid included request end time, or null. */
 		readonly end_time: string | null;
+		/** Number of auxiliary requests omitted from both events and aggregates. */
 		readonly filtered_request_count: number;
 	};
 }
 
+/** Controls whether recognized client-side auxiliary requests appear in the timeline. */
 export interface SessionTimelineBuilderOptions {
 	/**
 	 * Debug/audit escape hatch. The default timeline removes only high-confidence
@@ -168,20 +240,28 @@ function parseToolArguments(value: unknown): Record<string, unknown> {
 }
 
 function valueToText(value: unknown): string {
-	if (typeof value === "string") return value;
+	if (typeof value === "string") {
+		return value;
+	}
 	if (Array.isArray(value)) {
 		return value
 			.map((item) => {
-				if (typeof item === "string") return item;
+				if (typeof item === "string") {
+					return item;
+				}
 				const itemRecord = asRecord(item);
-				if (typeof itemRecord?.text === "string") return itemRecord.text;
+				if (typeof itemRecord?.text === "string") {
+					return itemRecord.text;
+				}
 				return safeJsonStringify(item, true);
 			})
 			.filter(Boolean)
 			.join("\n");
 	}
 	const record = asRecord(value);
-	if (typeof record?.text === "string") return record.text;
+	if (typeof record?.text === "string") {
+		return record.text;
+	}
 	return value === null || value === undefined ? "" : safeJsonStringify(value, true);
 }
 
@@ -212,8 +292,12 @@ function toolCallPart(
 
 function reasoningText(block: Record<string, unknown>): string {
 	const directText = block.thinking ?? block.text ?? block.content;
-	if (directText !== undefined) return valueToText(directText);
-	if (!Array.isArray(block.summary)) return valueToText(block.summary);
+	if (directText !== undefined) {
+		return valueToText(directText);
+	}
+	if (!Array.isArray(block.summary)) {
+		return valueToText(block.summary);
+	}
 	return block.summary
 		.map((item) => {
 			const summaryItem = asRecord(item);
@@ -224,20 +308,36 @@ function reasoningText(block: Record<string, unknown>): string {
 }
 
 function imageMimeType(value: unknown): string {
-	if (typeof value !== "string") return "image/png";
+	if (typeof value !== "string") {
+		return "image/png";
+	}
 	const normalized = value.trim().toLowerCase();
-	if (normalized.startsWith("image/")) return normalized;
-	if (normalized === "jpg" || normalized === "jpeg") return "image/jpeg";
-	if (normalized === "webp") return "image/webp";
-	if (normalized === "gif") return "image/gif";
+	if (normalized.startsWith("image/")) {
+		return normalized;
+	}
+	if (normalized === "jpg" || normalized === "jpeg") {
+		return "image/jpeg";
+	}
+	if (normalized === "webp") {
+		return "image/webp";
+	}
+	if (normalized === "gif") {
+		return "image/gif";
+	}
 	return "image/png";
 }
 
 function imageSource(value: unknown, mimeType: string, base64 = false): string | undefined {
-	if (typeof value !== "string" || !value.trim()) return undefined;
+	if (typeof value !== "string" || !value.trim()) {
+		return undefined;
+	}
 	const source = value.trim();
-	if (source.includes("litellm_truncated")) return undefined;
-	if (/^(?:data:image\/|https?:\/\/)/i.test(source)) return source;
+	if (source.includes("litellm_truncated")) {
+		return undefined;
+	}
+	if (/^(?:data:image\/|https?:\/\/)/i.test(source)) {
+		return source;
+	}
 	return base64 ? `data:${mimeType};base64,${source}` : undefined;
 }
 
@@ -245,7 +345,9 @@ const TRUNCATED_IMAGE_MESSAGE = "图片数据在日志入库时被截断，无�
 
 function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType = "image_generation"): SessionTimelinePart | null {
 	const image = asRecord(value);
-	if (!image) return null;
+	if (!image) {
+		return null;
+	}
 	const mimeType = imageMimeType(image.mime_type ?? image.mimeType ?? outputFormat);
 	const imageUrl = asRecord(image.image_url);
 	const encodedImage = image.b64_json ?? image.result;
@@ -254,11 +356,13 @@ function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType =
 		imageSource(image.b64_json, mimeType, true) ??
 		imageSource(image.result, mimeType, true) ??
 		imageSource(imageUrl?.url ?? image.image_url ?? image.url, mimeType);
-	if (!source && !wasTruncated) return null;
+	if (!source && !wasTruncated) {
+		return null;
+	}
 	return {
 		kind: "image",
 		label: "Generated image",
-		sourceType,
+		sourceType: sourceType,
 		id: typeof image.id === "string" ? image.id : undefined,
 		status: typeof image.status === "string" ? image.status : undefined,
 		text: wasTruncated
@@ -266,7 +370,7 @@ function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType =
 			: typeof image.revised_prompt === "string"
 				? image.revised_prompt
 				: undefined,
-		data: source ? { src: source, mimeType } : { truncated: true },
+		data: source ? { src: source, mimeType: mimeType } : { truncated: true },
 	};
 }
 
@@ -318,8 +422,12 @@ function toolResultSummary(parts: SessionTimelinePart[]): string {
 				const data = asRecord(part.data);
 				return data?.truncated === true ? TRUNCATED_IMAGE_MESSAGE : "[Image]";
 			}
-			if (part.kind === "thinking") return `[Thinking]\n${part.text ?? ""}`.trim();
-			if (part.kind === "redacted_thinking") return "[Redacted thinking]";
+			if (part.kind === "thinking") {
+				return `[Thinking]\n${part.text ?? ""}`.trim();
+			}
+			if (part.kind === "redacted_thinking") {
+				return "[Redacted thinking]";
+			}
 			return part.text ?? (part.data !== undefined ? safeJsonStringify(part.data, true) : "");
 		})
 		.filter(Boolean)
@@ -351,7 +459,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				name: typeof functionResponse.name === "string" ? functionResponse.name : undefined,
 				text: parts ? toolResultSummary(parts) : valueToText(result),
 				data: result,
-				parts,
+				parts: parts,
 			},
 		};
 	}
@@ -390,7 +498,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				label: "Media",
 				sourceType: block.inlineData ?? block.inline_data ? "inlineData" : "fileData",
 				text: String(media.mimeType ?? media.mime_type ?? media.fileUri ?? media.file_uri ?? "Attached media"),
-				data: source ? { src: source, mimeType } : undefined,
+				data: source ? { src: source, mimeType: mimeType } : undefined,
 			},
 		};
 	}
@@ -456,7 +564,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				data: result !== null && typeof result === "object" ? result : undefined,
 				status: typeof block.status === "string" ? block.status : undefined,
 				isError: block.is_error === true || block.status === "failed" || block.status === "error",
-				parts,
+				parts: parts,
 			},
 		};
 	}
@@ -525,7 +633,9 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 	}
 	if (type === "image_generation_call") {
 		const generated = generatedImagePart(block, block.output_format, type);
-		if (generated) return { part: generated };
+		if (generated) {
+			return { part: generated };
+		}
 	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
 		const imageUrl = asRecord(block.image_url);
@@ -546,7 +656,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				label: "Image",
 				sourceType: type,
 				text: wasTruncated ? TRUNCATED_IMAGE_MESSAGE : valueToText(source ?? rawSource ?? block.file_id ?? "Attached image"),
-				data: source ? { src: source, mimeType } : wasTruncated ? { truncated: true } : undefined,
+				data: source ? { src: source, mimeType: mimeType } : wasTruncated ? { truncated: true } : undefined,
 			},
 		};
 	}
@@ -584,8 +694,12 @@ function contentFromParts(parts: SessionTimelinePart[]): string {
 			if (part.kind === "text" || part.kind === "tool_result" || part.kind === "image" || part.kind === "refusal") {
 				return part.text ?? "";
 			}
-			if (part.kind === "thinking") return `[Thinking]\n${part.text ?? ""}`.trim();
-			if (part.kind === "redacted_thinking") return "[Redacted thinking]";
+			if (part.kind === "thinking") {
+				return `[Thinking]\n${part.text ?? ""}`.trim();
+			}
+			if (part.kind === "redacted_thinking") {
+				return "[Redacted thinking]";
+			}
 			if (part.kind === "unknown") {
 				return `[Unknown block: ${part.sourceType ?? "unknown"}]\n${safeJsonStringify(part.data)}`;
 			}
@@ -600,7 +714,9 @@ function parseContent(content: unknown): { content: string; parts?: SessionTimel
 		return { content: content, parts: [{ kind: "text", label: "Text", text: content }] };
 	}
 	if (!Array.isArray(content)) {
-		if (content === null || content === undefined) return { content: "" };
+		if (content === null || content === undefined) {
+			return { content: "" };
+		}
 		const parsed = parseContentBlock(content);
 		return {
 			content: contentFromParts([parsed.part]),
@@ -619,7 +735,9 @@ function parseContent(content: unknown): { content: string; parts?: SessionTimel
 }
 
 function parseToolCalls(value: unknown): ToolCall[] | undefined {
-	if (!Array.isArray(value)) return undefined;
+	if (!Array.isArray(value)) {
+		return undefined;
+	}
 	return value.map((rawToolCall) => {
 		const toolCall = asRecord(rawToolCall) ?? {};
 		const fn = asRecord(toolCall.function);
@@ -642,8 +760,12 @@ function toolCallsToParts(toolCalls: ToolCall[] | undefined, label = "Function c
 }
 
 function normalizeRole(role: unknown): ParsedMessage["role"] {
-	if (role === "model") return "assistant";
-	if (role === "developer") return "system";
+	if (role === "model") {
+		return "assistant";
+	}
+	if (role === "developer") {
+		return "system";
+	}
 	return role === "system" || role === "assistant" || role === "tool" ? role : "user";
 }
 
@@ -717,10 +839,16 @@ function looksLikeResponsesInputItems(items: unknown[]): boolean {
 
 function hasRenderableMessageContent(message: ParsedMessage): boolean {
 	const parts = message.parts ?? [];
-	if (parts.length === 0) return Boolean(message.content.trim());
+	if (parts.length === 0) {
+		return Boolean(message.content.trim());
+	}
 	return parts.some((part) => {
-		if (["text", "thinking", "tool_result", "refusal"].includes(part.kind)) return Boolean(part.text?.trim());
-		if (part.kind === "unknown") return part.data !== undefined && part.data !== null;
+		if (["text", "thinking", "tool_result", "refusal"].includes(part.kind)) {
+			return Boolean(part.text?.trim());
+		}
+		if (part.kind === "unknown") {
+			return part.data !== undefined && part.data !== null;
+		}
 		return true;
 	});
 }
@@ -730,20 +858,27 @@ function hasRenderableMessageContent(message: ParsedMessage): boolean {
  * stream, not as Chat Completions messages. Tool calls, tool outputs and
  * reasoning therefore need roles inferred from their item type. The
  * additional_tools item is only a client tool registry and is not a turn.
+ * @param items - Responses input items in their original history order.
  */
 function parseResponsesInputItems(items: unknown[]): ParsedMessage[] {
 	const result: ParsedMessage[] = [];
 	for (const item of items) {
 		if (typeof item === "string") {
 			const message = parseRequestMessage({ role: "user", content: item });
-			if (hasRenderableMessageContent(message)) result.push(message);
+			if (hasRenderableMessageContent(message)) {
+				result.push(message);
+			}
 			continue;
 		}
 
 		const itemRecord = asRecord(item);
-		if (!itemRecord) continue;
+		if (!itemRecord) {
+			continue;
+		}
 		const type = typeof itemRecord.type === "string" ? itemRecord.type : "";
-		if (type === "additional_tools") continue;
+		if (type === "additional_tools") {
+			continue;
+		}
 
 		let message: ParsedMessage;
 		if (type === "message" || itemRecord.role !== undefined) {
@@ -756,7 +891,9 @@ function parseResponsesInputItems(items: unknown[]): ParsedMessage[] {
 		} else {
 			message = parseRequestMessage({ role: "assistant", content: [item] });
 		}
-		if (hasRenderableMessageContent(message)) result.push(message);
+		if (hasRenderableMessageContent(message)) {
+			result.push(message);
+		}
 	}
 	return result;
 }
@@ -853,7 +990,9 @@ function parseMessages(request: unknown, responseValue: unknown): {
 	} else if (Array.isArray(response.output)) {
 		const parts = response.output.flatMap((item) => {
 			const itemRecord = asRecord(item);
-			if (itemRecord?.type === "message") return parseContent(itemRecord.content ?? []).parts ?? [];
+			if (itemRecord?.type === "message") {
+				return parseContent(itemRecord.content ?? []).parts ?? [];
+			}
 			return [parseContentBlock(item).part];
 		});
 		const toolCalls = parts
@@ -900,9 +1039,13 @@ function parseMessages(request: unknown, responseValue: unknown): {
 }
 
 function canonicalizeFingerprintValue(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(canonicalizeFingerprintValue);
+	if (Array.isArray(value)) {
+		return value.map(canonicalizeFingerprintValue);
+	}
 	const record = asRecord(value);
-	if (!record) return value;
+	if (!record) {
+		return value;
+	}
 	return Object.fromEntries(
 		Object.keys(record)
 			.sort()
@@ -915,6 +1058,7 @@ function canonicalizeFingerprintValue(value: unknown): unknown {
  * display structures. Reasoning blocks are intentionally excluded when a
  * visible/tool part exists: providers commonly return reasoning on the live
  * response but omit it from the next cumulative request snapshot.
+ * @param message - Normalized message whose semantic content identifies a history occurrence.
  */
 function messageHistoryFingerprint(message: ParsedMessage): string {
 	const semanticParts = (message.parts ?? [])
@@ -955,7 +1099,9 @@ function roleLabel(role: SessionTimelineRole): string {
 function toolResultWithCallIdentity(items: SessionTimelineItem[], result: SessionTimelinePart): SessionTimelinePart {
 	for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
 		const item = items[itemIndex];
-		if (!item) continue;
+		if (!item) {
+			continue;
+		}
 		const parts = item.parts ?? [];
 		const matchingCall = [...parts]
 			.reverse()
@@ -964,7 +1110,9 @@ function toolResultWithCallIdentity(items: SessionTimelineItem[], result: Sessio
 					part.kind === "tool_call" &&
 					(result.id ? part.id === result.id : !parts.some((candidate) => candidate.kind === "tool_result")),
 			);
-		if (!matchingCall) continue;
+		if (!matchingCall) {
+			continue;
+		}
 		return {
 			...result,
 			id: result.id || matchingCall.id,
@@ -977,8 +1125,12 @@ function toolResultWithCallIdentity(items: SessionTimelineItem[], result: Sessio
 function contentFromTimelineParts(parts: SessionTimelinePart[], fallback: string): string {
 	const content = parts
 		.flatMap((part) => {
-			if (part.text) return [part.text];
-			if (part.kind === "unknown" && part.data !== undefined) return [safeJsonStringify(part.data, true)];
+			if (part.text) {
+				return [part.text];
+			}
+			if (part.kind === "unknown" && part.data !== undefined) {
+				return [safeJsonStringify(part.data, true)];
+			}
 			return [];
 		})
 		.join("\n")
@@ -993,8 +1145,12 @@ function isoDate(value: Date | string): string {
 
 function errorMessage(value: unknown): string {
 	const errorInfo = asRecord(value);
-	if (typeof errorInfo?.error_message === "string") return errorInfo.error_message;
-	if (typeof errorInfo?.message === "string") return errorInfo.message;
+	if (typeof errorInfo?.error_message === "string") {
+		return errorInfo.error_message;
+	}
+	if (typeof errorInfo?.message === "string") {
+		return errorInfo.message;
+	}
 	return typeof value === "string" ? value : "该请求执行失败，未记录响应内容。";
 }
 
@@ -1016,11 +1172,16 @@ const CLAUDE_CODE_SECURITY_MONITOR_CONTEXT_PREFIX =
  * internal classifier, not conversation turns. Its model-generated response
  * may contain thinking, reasons, or malformed text, so response formatting is
  * deliberately excluded from the request-family identity.
+ * @param row - Logged request with projected classification fields or its original payload.
  */
 function isClaudeCodeSecurityMonitorRequest(row: SessionTimelineSourceRow): boolean {
-	if (row.request_message_count !== 2 || row.request_tool_count !== 0) return false;
+	if (row.request_message_count !== 2 || row.request_tool_count !== 0) {
+		return false;
+	}
 	const systemPrompt = row.request_first_system_prompt?.trimStart() ?? "";
-	if (!systemPrompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.securityMonitor)) return false;
+	if (!systemPrompt.startsWith(CLAUDE_CODE_AUXILIARY_PROMPT_PREFIXES.securityMonitor)) {
+		return false;
+	}
 
 	if (
 		row.request_first_message_role != null ||
@@ -1037,10 +1198,16 @@ function isClaudeCodeSecurityMonitorRequest(row: SessionTimelineSourceRow): bool
 	}
 
 	const requestMessages = requestMessagesFrom(row.request_payload);
-	if (requestMessages.length !== 2) return false;
+	if (requestMessages.length !== 2) {
+		return false;
+	}
 	const [contextMessage, transcriptMessage] = requestMessages;
-	if (contextMessage?.role !== "user" || transcriptMessage?.role !== "user") return false;
-	if (!contextMessage.content.trimStart().startsWith(CLAUDE_CODE_SECURITY_MONITOR_CONTEXT_PREFIX)) return false;
+	if (contextMessage?.role !== "user" || transcriptMessage?.role !== "user") {
+		return false;
+	}
+	if (!contextMessage.content.trimStart().startsWith(CLAUDE_CODE_SECURITY_MONITOR_CONTEXT_PREFIX)) {
+		return false;
+	}
 	return transcriptMessage.content.trimStart().startsWith("<transcript>");
 }
 
@@ -1054,10 +1221,18 @@ function isClaudeCodeSecurityMonitorRequest(row: SessionTimelineSourceRow): bool
  * @param row - Timeline source row with compact request classification fields.
  */
 export function isClaudeCodeAuxiliaryTimelineRequest(row: SessionTimelineSourceRow): boolean {
-	if (row.request_client !== "claude_code") return false;
-	if (row.request_system_count !== 2) return false;
-	if (isClaudeCodeSecurityMonitorRequest(row)) return true;
-	if (row.request_message_count !== 1) return false;
+	if (row.request_client !== "claude_code") {
+		return false;
+	}
+	if (row.request_system_count !== 2) {
+		return false;
+	}
+	if (isClaudeCodeSecurityMonitorRequest(row)) {
+		return true;
+	}
+	if (row.request_message_count !== 1) {
+		return false;
+	}
 
 	const prompt = row.request_second_system_prompt?.trimStart() ?? "";
 	const toolCount = row.request_tool_count ?? -1;
@@ -1080,43 +1255,51 @@ export function isClaudeCodeAuxiliaryTimelineRequest(row: SessionTimelineSourceR
  * It retains only fingerprints and final render events, never the raw snapshots.
  */
 export class SessionTimelineBuilder {
-	private readonly seenHistoryOccurrences = new Map<string, number>();
-	private readonly seenSystemMessages = new Set<string>();
-	private readonly keys = new Map<string, { alias: string | null; hash: string }>();
-	private readonly items: SessionTimelineItem[] = [];
-	private requestCount = 0;
-	private totalSpend = 0;
-	private totalTokens = 0;
-	private startMs: number | null = null;
-	private endMs: number | null = null;
-	private filteredRequestCount = 0;
+	private readonly _seenHistoryOccurrences = new Map<string, number>();
+	private readonly _seenSystemMessages = new Set<string>();
+	private readonly _keys = new Map<string, { alias: string | null; hash: string }>();
+	private readonly _items: SessionTimelineItem[] = [];
+	private _requestCount = 0;
+	private _totalSpend = 0;
+	private _totalTokens = 0;
+	private _startMs: number | null = null;
+	private _endMs: number | null = null;
+	private _filteredRequestCount = 0;
 
-	public constructor(private readonly options: SessionTimelineBuilderOptions = {}) {}
+	public constructor(private readonly _options: SessionTimelineBuilderOptions = {}) {}
 
+	/**
+	 * Add a request in chronological order, removing cumulative history already represented.
+	 * @param row - Logged request and optional compact-history classification metadata.
+	 */
 	public add(row: SessionTimelineSourceRow): void {
-		if (!this.options.includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
-			this.filteredRequestCount += 1;
+		if (!this._options.includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
+			this._filteredRequestCount += 1;
 			return;
 		}
 		const keyHash = row.api_key?.trim() ?? "";
 		const keyAlias = row.key_alias?.trim() || null;
 		const keyIdentity = keyHash || (keyAlias ? `alias:${keyAlias}` : "");
 		if (keyIdentity) {
-			const existingKey = this.keys.get(keyIdentity);
-			this.keys.set(keyIdentity, {
+			const existingKey = this._keys.get(keyIdentity);
+			this._keys.set(keyIdentity, {
 				alias: existingKey?.alias ?? keyAlias,
 				hash: keyHash,
 			});
 		}
-		this.requestCount += 1;
-		this.totalSpend += Number.isFinite(Number(row.spend)) ? Number(row.spend) : 0;
-		this.totalTokens += Number.isFinite(Number(row.total_tokens)) ? Number(row.total_tokens) : 0;
+		this._requestCount += 1;
+		this._totalSpend += Number.isFinite(Number(row.spend)) ? Number(row.spend) : 0;
+		this._totalTokens += Number.isFinite(Number(row.total_tokens)) ? Number(row.total_tokens) : 0;
 		const startTimestamp = isoDate(row.startTime);
 		const endTimestamp = isoDate(row.endTime);
 		const startMs = Date.parse(startTimestamp);
 		const endMs = Date.parse(endTimestamp);
-		if (Number.isFinite(startMs)) this.startMs = this.startMs === null ? startMs : Math.min(this.startMs, startMs);
-		if (Number.isFinite(endMs)) this.endMs = this.endMs === null ? endMs : Math.max(this.endMs, endMs);
+		if (Number.isFinite(startMs)) {
+			this._startMs = this._startMs === null ? startMs : Math.min(this._startMs, startMs);
+		}
+		if (Number.isFinite(endMs)) {
+			this._endMs = this._endMs === null ? endMs : Math.max(this._endMs, endMs);
+		}
 
 		const { requestMessages, responseMessage } = parseMessages(row.request_payload, row.response_payload);
 		let addedMessage = false;
@@ -1130,7 +1313,7 @@ export class SessionTimelineBuilder {
 				typeof suppliedOccurrence === "number" && Number.isSafeInteger(suppliedOccurrence) && suppliedOccurrence > 0
 					? Math.max(snapshotOccurrence, suppliedOccurrence)
 					: snapshotOccurrence;
-			const seenOccurrence = this.seenHistoryOccurrences.get(fingerprint) ?? 0;
+			const seenOccurrence = this._seenHistoryOccurrences.get(fingerprint) ?? 0;
 			if (row.request_message_delta_flags?.[index]) {
 				// A copied assistant response is already represented by the
 				// preceding response event. Other tail positions are genuine new
@@ -1141,18 +1324,24 @@ export class SessionTimelineBuilder {
 						: seenOccurrence + 1;
 			}
 			snapshotOccurrences.set(fingerprint, Math.max(snapshotOccurrence, occurrence));
-			if (message.role === "system" && this.seenSystemMessages.has(fingerprint)) return;
-			if (message.role === "system") this.seenSystemMessages.add(fingerprint);
-			this.seenHistoryOccurrences.set(fingerprint, Math.max(seenOccurrence, occurrence));
-			if (occurrence <= seenOccurrence) return;
+			if (message.role === "system" && this._seenSystemMessages.has(fingerprint)) {
+				return;
+			}
+			if (message.role === "system") {
+				this._seenSystemMessages.add(fingerprint);
+			}
+			this._seenHistoryOccurrences.set(fingerprint, Math.max(seenOccurrence, occurrence));
+			if (occurrence <= seenOccurrence) {
+				return;
+			}
 
 			const messageParts = message.parts ?? [];
 			const toolResults = messageParts.filter((part) => part.kind === "tool_result");
 			const remainingParts = messageParts.filter((part) => part.kind !== "tool_result");
 
 			toolResults.forEach((result, resultIndex) => {
-				const identifiedResult = toolResultWithCallIdentity(this.items, result);
-				this.items.push({
+				const identifiedResult = toolResultWithCallIdentity(this._items, result);
+				this._items.push({
 					id: `${row.request_id}:request:${index}:tool-result:${resultIndex}`,
 					request_id: row.request_id,
 					role: "tool",
@@ -1170,7 +1359,7 @@ export class SessionTimelineBuilder {
 			if (remainingParts.length > 0 || (messageParts.length === 0 && message.content.trim())) {
 				const role = message.role;
 				addedMessage = true;
-				this.items.push({
+				this._items.push({
 					id: `${row.request_id}:request:${index}`,
 					request_id: row.request_id,
 					role: role,
@@ -1188,17 +1377,17 @@ export class SessionTimelineBuilder {
 		if (responseMessage) {
 			addedMessage = true;
 			const responseFingerprint = messageHistoryFingerprint(responseMessage);
-			const seenResponseOccurrence = this.seenHistoryOccurrences.get(responseFingerprint) ?? 0;
+			const seenResponseOccurrence = this._seenHistoryOccurrences.get(responseFingerprint) ?? 0;
 			const responseOccurrence = Math.max(
 				(snapshotOccurrences.get(responseFingerprint) ?? 0) + 1,
 				seenResponseOccurrence + 1,
 			);
-			this.seenHistoryOccurrences.set(responseFingerprint, responseOccurrence);
+			this._seenHistoryOccurrences.set(responseFingerprint, responseOccurrence);
 			const responseParts = responseMessage.parts ?? [];
 			const toolResults = responseParts.filter((part) => part.kind === "tool_result");
 			const remainingParts = responseParts.filter((part) => part.kind !== "tool_result");
 			if (remainingParts.length > 0 || (responseParts.length === 0 && responseMessage.content.trim())) {
-				this.items.push({
+				this._items.push({
 					id: `${row.request_id}:response`,
 					request_id: row.request_id,
 					role: responseMessage.role,
@@ -1215,8 +1404,8 @@ export class SessionTimelineBuilder {
 				});
 			}
 			toolResults.forEach((result, resultIndex) => {
-				const identifiedResult = toolResultWithCallIdentity(this.items, result);
-				this.items.push({
+				const identifiedResult = toolResultWithCallIdentity(this._items, result);
+				this._items.push({
 					id: `${row.request_id}:response:tool-result:${resultIndex}`,
 					request_id: row.request_id,
 					role: "tool",
@@ -1233,7 +1422,7 @@ export class SessionTimelineBuilder {
 
 		const status = String(row.status ?? row.metadata_status ?? "").toLowerCase();
 		if (!responseMessage && (status === "failure" || row.error_information != null)) {
-			this.items.push({
+			this._items.push({
 				id: `${row.request_id}:error`,
 				request_id: row.request_id,
 				role: "error",
@@ -1248,7 +1437,7 @@ export class SessionTimelineBuilder {
 		}
 
 		if (!addedMessage) {
-			this.items.push({
+			this._items.push({
 				id: `${row.request_id}:request`,
 				request_id: row.request_id,
 				role: "request",
@@ -1262,22 +1451,23 @@ export class SessionTimelineBuilder {
 		}
 	}
 
+	/** Return the accumulated events and totals; the returned data array remains owned by this builder. */
 	public build(): SessionTimelineResponse {
-		const startTime = this.startMs === null ? null : new Date(this.startMs).toISOString();
-		const endTime = this.endMs === null ? null : new Date(this.endMs).toISOString();
+		const startTime = this._startMs === null ? null : new Date(this._startMs).toISOString();
+		const endTime = this._endMs === null ? null : new Date(this._endMs).toISOString();
 		return {
-			data: this.items,
+			data: this._items,
 			summary: {
-				keys: Array.from(this.keys.values()),
-				request_count: this.requestCount,
-				event_count: this.items.length,
-				total_spend: this.totalSpend,
-				total_tokens: this.totalTokens,
+				keys: Array.from(this._keys.values()),
+				request_count: this._requestCount,
+				event_count: this._items.length,
+				total_spend: this._totalSpend,
+				total_tokens: this._totalTokens,
 				duration_seconds:
-					this.startMs === null || this.endMs === null ? 0 : Math.max(0, (this.endMs - this.startMs) / 1000),
+					this._startMs === null || this._endMs === null ? 0 : Math.max(0, (this._endMs - this._startMs) / 1000),
 				start_time: startTime,
 				end_time: endTime,
-				filtered_request_count: this.filteredRequestCount,
+				filtered_request_count: this._filteredRequestCount,
 			},
 		};
 	}

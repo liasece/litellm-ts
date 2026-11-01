@@ -177,6 +177,9 @@ const DAILY_SPEND_TABLES_WITH_RESOLVED_MODEL_GROUP = new Set([
 /**
  * 0006 migration 将 Python daily spend 唯一索引扩展为包含 model_group。
  * 这是受管迁移后的已知替换，不应被 Python baseline 预检误判为索引丢失。
+ * @param tableName - 正在检查的 daily spend 表名。
+ * @param expected - Python baseline 要求的原始唯一索引。
+ * @param actualIndexes - 当前数据库实际存在的索引。
  */
 function hasManagedDailyModelGroupIndexReplacement(
 	tableName: string,

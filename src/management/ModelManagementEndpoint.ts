@@ -34,6 +34,7 @@ const MANAGED_CLIPROXY_CONNECTION_FIELDS = ["litellm_credential_name", "credenti
 /**
  * The built-in CLIProxy provider owns its loopback endpoint and internal key.
  * Deployment-level credentials must never override or depend on that boundary.
+ * @param params - Deployment parameters copied before managed connection fields are removed.
  */
 function normalizeManagedProviderParams(params: Record<string, unknown>): Record<string, unknown> {
 	const output = { ...params };
@@ -283,14 +284,14 @@ export function createModelManagementRoutes(
 		const allRows = await db.select().from(LiteLLM_ProxyModelTable);
 		validateModelOverrides(
 			allRows.map((row) =>
-				row.model_id === modelId
+				(row.model_id === modelId
 					? ({
 							...row,
 							...(values["model_name"] === undefined ? {} : { model_name: values["model_name"] }),
 							...(values["litellm_params"] === undefined ? {} : { litellm_params: values["litellm_params"] }),
 							...(values["model_info"] === undefined ? {} : { model_info: values["model_info"] }),
 						} as ProxyModelRow)
-					: row,
+					: row),
 			),
 		);
 

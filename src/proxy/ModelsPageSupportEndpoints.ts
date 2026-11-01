@@ -625,7 +625,10 @@ interface ModelInfoV1Response {
 	data: ModelInfoV2Item[];
 }
 
-/** 管理编辑接口返回完整 litellm_params，确保现有值可以原样编辑。 */
+/**
+ * 管理编辑接口返回完整 litellm_params，确保现有值可以原样编辑。
+ * @param params - 需要深拷贝返回的部署参数。
+ */
 function buildPublicLitellmParams(params: LitellmParams): Record<string, unknown> {
 	return structuredClone(params);
 }
@@ -667,6 +670,7 @@ function resolveModelId(modelInfo: ModelInfo | undefined, dep: Deployment, index
  * @param modelInfo - 优先取自 dep.model_info；为空时使用兜底对象
  * @param fallbacks - 该 model_group 的当前 fallback 链（无配置时传空数组）
  * @param modelCostMap
+ * @param builtinCapabilities - 用于补充代理提供的 vision 等内置能力配置。
  */
 function buildModelInfoV2Item(
 	dep: Deployment,
@@ -762,6 +766,7 @@ function sortItems<T extends { model_name: string; model_info: { id?: string } }
  * @param query - 原始 query
  * @param fallbacksByGroup - model_group → fallback 链（Router 当前配置）
  * @param modelCostMap
+ * @param builtinCapabilities - 用于补充各部署内置能力的配置。
  */
 function buildV2ModelInfoResponse(
 	deployments: Deployment[],
