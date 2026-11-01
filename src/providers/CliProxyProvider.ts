@@ -97,7 +97,16 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			model: this.stripProviderPrefix(model),
 			store: body["store"] ?? false,
 		};
-		for (const connectionKey of ["api_base", "api_key", "custom_llm_provider", "supported_endpoints", "litellm_credential_name"]) {
+		// drop_params 是 LiteLLM 自身的转发策略，任何上游都不应收到；漏删会让 CLIProxy
+		// 在 fallback 场景下返回 400 Unsupported parameter: drop_params。
+		for (const connectionKey of [
+			"api_base",
+			"api_key",
+			"custom_llm_provider",
+			"supported_endpoints",
+			"litellm_credential_name",
+			"drop_params",
+		]) {
 			delete payload[connectionKey];
 		}
 		return {

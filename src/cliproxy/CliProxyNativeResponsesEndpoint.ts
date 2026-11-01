@@ -1182,6 +1182,9 @@ export function registerCliProxyNativeChatRoutes(
 		runtime: runtime,
 		routePath: "/v1/chat/completions",
 		upstreamPath: "/v1/chat/completions",
+		// 绑定了 builtin capability 的模型必须交回 LiteLLM 兼容端点执行：
+		// 能力注入、隐藏多轮与审计只在那边实现，透传会静默跳过 web/vision 工具。
+		skipModelsWithBuiltinCapabilities: true,
 		db: db,
 	});
 	registerNativeRoute({
@@ -1190,6 +1193,7 @@ export function registerCliProxyNativeChatRoutes(
 		runtime: runtime,
 		routePath: "/chat/completions",
 		upstreamPath: "/v1/chat/completions",
+		skipModelsWithBuiltinCapabilities: true,
 		db: db,
 	});
 }

@@ -991,6 +991,113 @@ describe('CLIProxy native Responses route and builtin capabilities', () => {
 	});
 });
 
+describe('CLIProxy native chat route and builtin capabilities', () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+		jest.clearAllMocks();
+	});
+
+	async function postChat(router: LiteLLMRouter, path: string, payload: Record<string, unknown>): Promise<number> {
+		const runtime = {
+			baseUrl: 'http://127.0.0.1:8317',
+			internalApiKey: 'internal-only',
+		} as CliProxyRuntimeManager;
+		const app = express();
+		app.use(express.json());
+		app.use(codingClientModelMiddleware(router));
+		const expressRouter = express.Router();
+		registerCliProxyNativeChatRoutes(expressRouter, router, runtime, undefined as never);
+		app.use(expressRouter);
+		const server = await new Promise<http.Server>((resolve) => {
+			const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+		});
+		try {
+			const port = (server.address() as AddressInfo).port;
+			return await new Promise<number>((resolve, reject) => {
+				const req = http.request(
+					{
+						host: '127.0.0.1',
+						port: port,
+						path: path,
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+					},
+					(response) => {
+						response.resume();
+						resolve(response.statusCode ?? 0);
+					},
+				);
+				req.once('error', reject);
+				req.end(JSON.stringify(payload));
+			});
+		} finally {
+			await closeServer(server);
+		}
+	}
+
+	/**
+	 * 透传路由必须让出绑定了内置能力的模型，否则能力注入（web/vision 工具）会被静默跳过：
+	 * 请求虽然 200，但模型收不到任何私有工具。这正是 web 能力在 cliproxy 模型上失效的原因。
+	 */
+	it.each(['/v1/chat/completions', '/chat/completions'])(
+		'leaves models with builtin capabilities to the LiteLLM chat endpoint (%s)',
+		async (path) => {
+			const deployment: Deployment = {
+				model_name: 'opencode-go/deepseek-v4.1-flash',
+				litellm_params: {
+					model: 'cliproxy/opencode-go/deepseek-v4.1-flash',
+					custom_llm_provider: 'cliproxy',
+				},
+				model_info: { enabled_builtin_capabilities: ['image_generation', 'web'] },
+			};
+			const router = {
+				getAvailableDeployment: () => ({ deployment: deployment }),
+				getDeployments: () => [deployment],
+				resolveModelGroupWithTrace: (model: string) => ({
+					inputModel: model,
+					resolvedModel: model,
+					resolutionPath: [model],
+				}),
+				hasModel: () => true,
+				getFallbacks: () => ({}),
+				recordDeploymentSuccess: jest.fn(),
+				recordDeploymentFailure: jest.fn(),
+			} as unknown as LiteLLMRouter;
+
+			// 未注册匹配 -> Express 落到 404，证明请求没有进入透传 handler。
+			await expect(
+				postChat(router, path, { model: 'opencode-go/deepseek-v4.1-flash', messages: [{ role: 'user', content: 'hi' }] }),
+			).resolves.toBe(404);
+		},
+	);
+
+	it('still passes through cliproxy models without builtin capabilities', async () => {
+		const deployment: Deployment = {
+			model_name: 'opencode-go/plain-model',
+			litellm_params: {
+				model: 'cliproxy/opencode-go/plain-model',
+				custom_llm_provider: 'cliproxy',
+			},
+		};
+		const router = {
+			getAvailableDeployment: () => ({ deployment: deployment }),
+			getDeployments: () => [deployment],
+			resolveModelGroupWithTrace: (model: string) => ({ inputModel: model, resolvedModel: model, resolutionPath: [model] }),
+			hasModel: () => true,
+			getFallbacks: () => ({}),
+			recordDeploymentSuccess: jest.fn(),
+			recordDeploymentFailure: jest.fn(),
+		} as unknown as LiteLLMRouter;
+
+		// 有能力的模型才让出；无能力模型仍由透传接管（不会 404）。
+		const status = await postChat(router, '/v1/chat/completions', {
+			model: 'opencode-go/plain-model',
+			messages: [{ role: 'user', content: 'hi' }],
+		});
+		expect(status).not.toBe(404);
+	});
+});
+
 describe('CLIProxy native Anthropic route and builtin capabilities', () => {
 	afterEach(() => {
 		jest.restoreAllMocks();
