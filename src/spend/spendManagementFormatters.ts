@@ -51,6 +51,48 @@ export function toDateString(value: unknown): string {
 }
 
 /**
+ * 把 Date / 数据库时间戳文本归一为 ISO-8601 UTC 字符串（带 Z）。
+ *
+ * `/spend/logs/ui` 走 ActiveRequests ∪ SpendLogs 的 UNION 时，`completionStartTime`、
+ * `endTime` 这类裸 SQL 列不经过 drizzle 的 timestamp mapper，node-postgres 原样返回
+ * `YYYY-MM-DD HH:MM:SS.mmm`（无时区）文本；而 `startTime` 这类真实列被映射成 Date 后
+ * 序列化为 `...Z`。两种格式混发会让浏览器把无时区字符串按本地时区解析，非 UTC 时区下
+ * `completionStartTime - startTime` 变成负数，TTFT 被渲染成 `-`。
+ * 数据库会话时区为 UTC，因此无时区值按 UTC 解释，输出与 Date 的 JSON 序列化一致。
+ * @param value
+ */
+export function toIsoTimestamp(value: unknown): unknown {
+	if (value === null || value === undefined) {
+		return value;
+	}
+	if (value instanceof Date) {
+		return Number.isNaN(value.getTime()) ? null : value.toISOString();
+	}
+	if (typeof value !== "string") {
+		return value;
+	}
+	const text = value.trim();
+	if (text === "") {
+		return value;
+	}
+	const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/.exec(text);
+	if (match === null) {
+		return value;
+	}
+	const [, datePart, timePart, zonePart] = match;
+	let zone = "Z";
+	if (zonePart !== undefined && zonePart !== "Z") {
+		const sign = zonePart.slice(0, 1);
+		const digits = zonePart.slice(1).replace(":", "");
+		const hours = digits.slice(0, 2);
+		const minutes = digits.length >= 4 ? digits.slice(2, 4) : "00";
+		zone = sign + hours + ":" + minutes;
+	}
+	const parsed = new Date(datePart + "T" + timePart + zone);
+	return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
+/**
  * 把单条 spend_logs 行归一化：
  * - date 字符串
  * - spend / total_tokens / prompt_tokens / completion_tokens 全为 finite number
@@ -61,6 +103,9 @@ export function normalizeSpendLogRow(row: Record<string, unknown>): Record<strin
 	return {
 		...row,
 		date: toDateString(row.startTime),
+		startTime: toIsoTimestamp(row.startTime),
+		endTime: toIsoTimestamp(row.endTime),
+		completionStartTime: toIsoTimestamp(row.completionStartTime),
 		spend: toFiniteNumber(row.spend),
 		total_tokens: toFiniteNumber(row.total_tokens),
 		prompt_tokens: toFiniteNumber(row.prompt_tokens),

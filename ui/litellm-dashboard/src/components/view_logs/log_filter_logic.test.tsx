@@ -624,6 +624,9 @@ describe("useLogFilterLogic", () => {
 		const logs = createPaginatedResponse([createLogEntry()]);
 		const { result } = renderHook(() => useLogFilterLogic({ ...defaultProps, logs, setCurrentPage }), { wrapper });
 
+		// Exclude the mount-time reset so these assertions only cover filter changes.
+		setCurrentPage.mockClear();
+
 		act(() => {
 			result.current.handleFilterChange({ "Team ID": "team-1" });
 		});

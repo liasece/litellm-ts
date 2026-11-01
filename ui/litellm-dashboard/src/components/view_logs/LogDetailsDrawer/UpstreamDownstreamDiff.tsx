@@ -1,4 +1,4 @@
-import { Tabs, Tag, Typography } from "antd";
+import { Alert, Tabs, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 
 const { Text } = Typography;
@@ -57,9 +57,21 @@ export function UpstreamDownstreamDiff({
 }: UpstreamDownstreamDiffProps) {
 	const [activeTab, setActiveTab] = useState<DiffTabKey>("request");
 	const hasResponseDiff = upstreamResponse !== undefined && upstreamResponse !== null;
+	const downstreamProtocol = getRequestProtocol(downstreamRequest);
+	const upstreamProtocol = getRequestProtocol(upstreamRequest);
+	const hasProtocolMismatch = downstreamProtocol && upstreamProtocol && downstreamProtocol !== upstreamProtocol;
 
 	return (
 		<div data-testid="upstream-downstream-diff">
+			{hasProtocolMismatch && (
+				<Alert
+					type="warning"
+					showIcon
+					message="上下游协议不一致"
+					description={`下游使用 ${downstreamProtocol}，上游使用 ${upstreamProtocol}。协议转换可能产生大量意料之外的 diff，即使内容相同也可能被标记为差异。`}
+					style={{ marginBottom: 12 }}
+				/>
+			)}
 			<div
 				style={{
 					display: "flex",
@@ -104,6 +116,21 @@ export function UpstreamDownstreamDiff({
 			/>
 		</div>
 	);
+}
+
+function getRequestProtocol(request: unknown): string | null {
+	try {
+		const parsed: unknown = typeof request === "string" ? JSON.parse(request) : request;
+		if (!parsed || typeof parsed !== "object" || !("url" in parsed) || typeof parsed.url !== "string") return null;
+
+		const pathname = new URL(parsed.url, "http://litellm.local").pathname.replace(/\/+$/, "");
+		if (pathname.endsWith("/chat/completions")) return "Chat Completions";
+		if (pathname.endsWith("/responses")) return "Responses";
+		if (pathname.endsWith("/messages")) return "Anthropic Messages";
+		return null;
+	} catch {
+		return null;
+	}
 }
 
 function InlineLegend() {
@@ -274,7 +301,7 @@ function formatDiffValue(value: unknown): string {
 	if (typeof value === "string") {
 		try {
 			const parsed = JSON.parse(value);
-			return JSON.stringify(parsed, null, 2);
+			return formatSortedJson(parsed);
 		} catch {
 			return value;
 		}
@@ -284,10 +311,31 @@ function formatDiffValue(value: unknown): string {
 	if (value === null) return "null";
 
 	try {
-		return JSON.stringify(value, null, 2) ?? String(value);
+		const serialized = JSON.stringify(value);
+		return serialized === undefined ? String(value) : formatSortedJson(JSON.parse(serialized));
 	} catch {
 		return String(value);
 	}
+}
+
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+function formatSortedJson(value: JsonValue, depth = 0): string {
+	if (value === null || typeof value !== "object") return JSON.stringify(value);
+
+	const isArray = Array.isArray(value);
+	// Emit keys directly: JSON.stringify on a rebuilt object would reorder integer-like keys numerically.
+	const entries = isArray
+		? value.map((entry) => formatSortedJson(entry, depth + 1))
+		: Object.keys(value)
+				.sort()
+				.map((key) => `${JSON.stringify(key)}: ${formatSortedJson(value[key], depth + 1)}`);
+	const opening = isArray ? "[" : "{";
+	const closing = isArray ? "]" : "}";
+	if (entries.length === 0) return opening + closing;
+
+	const indent = "  ".repeat(depth + 1);
+	return `${opening}\n${indent}${entries.join(`,\n${indent}`)}\n${"  ".repeat(depth)}${closing}`;
 }
 
 function buildFoldedDiffRows(leftText: string, rightText: string): FoldedDiffRow[] {
