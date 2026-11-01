@@ -1,3 +1,4 @@
+import { normalizeUsageTokens } from "../core/utils/usage";
 import { projectSpendMetadata, validateSpendMetadataFields } from "./SpendMetadataFields";
 /**
  * 花费追踪器
@@ -45,12 +46,12 @@ import type {
 } from "../types/spend";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse, ModelResponseStream, Usage } from "../types/openai";
-import { costPerToken } from "../cost/CostCalculator";
+import { costPerToken, resolvePeakMultiplier } from "../cost/CostCalculator";
 import { createModuleLogger } from "../core/utils/logger";
 import { hashApiKey } from "../core/utils/crypto";
 import { getConfig } from "../core/config";
 import type { UserAPIKeyAuth } from "../types/auth";
-import type { CustomCostPerToken } from "../cost/CostCalculator";
+import type { CustomCostPerToken, PeakPricingConfig } from "../cost/CostCalculator";
 import { normalizeRoutingTrace } from "../router/ModelResolutionTrace";
 
 const logger = createModuleLogger("SpendTracker");
@@ -542,18 +543,113 @@ export function getRequesterIpAddress(req: Request): string | undefined {
  * @param error - 捕获到的请求错误
  */
 export function getFailureErrorInformation(error: unknown): Record<string, unknown> {
-	if (error instanceof Error) {
-		const statusCode = (error as { statusCode?: unknown; status?: unknown }).statusCode ?? (error as { status?: unknown }).status;
+	const errorLike = toErrorLike(error);
+	if (errorLike === undefined) {
 		return {
-			error_message: error.message,
-			error_type: error.name,
-			error_code: typeof statusCode === "number" || typeof statusCode === "string" ? statusCode : undefined,
+			error_message: String(error),
+			error_type: "Error",
 		};
 	}
+	const statusCode = errorLike.statusCode ?? errorLike.status;
+	const code = typeof errorLike.code === "number" || typeof errorLike.code === "string" ? errorLike.code : undefined;
+	// fetch/undici 的真实原因常在 cause 里（如 "fetch failed" → "connect ECONNREFUSED"），
+	// 只落 error.message 会让日志无法定位，故展开 cause 链并单独保留字段。
+	const cause = describeErrorCause(errorLike.cause);
 	return {
-		error_message: String(error),
-		error_type: "Error",
+		error_message: cause === undefined ? errorLike.message : `${errorLike.message} (cause: ${cause})`,
+		error_type: errorLike.name,
+		error_code: typeof statusCode === "number" || typeof statusCode === "string" ? statusCode : code,
+		...(cause === undefined ? {} : { error_cause: cause }),
+		...(typeof errorLike.stage === "string" ? { error_stage: errorLike.stage } : {}),
 	};
+}
+
+/** 可写入 failure metadata 的错误形状（Error 与 DOMException 的公共投影）。 */
+interface ErrorLike {
+	readonly name: string;
+	readonly message: string;
+	readonly statusCode?: unknown;
+	readonly status?: unknown;
+	readonly code?: unknown;
+	readonly stage?: unknown;
+	readonly cause?: unknown;
+}
+
+/**
+ * 归一化任意抛出对象：DOMException 在 Node 中不是 Error 实例，取消类错误
+ * 只有按结构读取 name/message 才能保住 error_type 与文案。
+ * @param error - 捕获到的错误
+ */
+function toErrorLike(error: unknown): ErrorLike | undefined {
+	if (error instanceof Error) {
+		const extra = error as Error & Partial<ErrorLike>;
+		return {
+			name: error.name,
+			message: error.message,
+			statusCode: extra.statusCode,
+			status: extra.status,
+			code: extra.code,
+			stage: extra.stage,
+			cause: extra.cause,
+		};
+	}
+	if (typeof error !== "object" || error === null) {
+		return undefined;
+	}
+	const candidate = error as { name?: unknown; message?: unknown } & Partial<ErrorLike>;
+	if (typeof candidate.message !== "string") {
+		return undefined;
+	}
+	return {
+		name: typeof candidate.name === "string" && candidate.name.length > 0 ? candidate.name : "Error",
+		message: candidate.message,
+		statusCode: candidate.statusCode,
+		status: candidate.status,
+		code: candidate.code,
+		stage: candidate.stage,
+		cause: candidate.cause,
+	};
+}
+
+/**
+ * 展开错误 cause 链为单行描述（最多 3 层），避免日志只剩一句笼统错误。
+ * @param cause - Error.cause 或任意抛出的原因
+ * @param depth - 当前递归深度
+ */
+function describeErrorCause(cause: unknown, depth = 0): string | undefined {
+	if (cause === undefined || cause === null || depth >= 3) {
+		return undefined;
+	}
+	if (cause instanceof Error) {
+		const nested = describeErrorCause((cause as { cause?: unknown }).cause, depth + 1);
+		const current = `${cause.name}: ${cause.message}`;
+		return nested === undefined ? current : `${current} -> ${nested}`;
+	}
+	if (typeof cause === "string") {
+		return cause;
+	}
+	if (typeof cause === "number" || typeof cause === "boolean" || typeof cause === "bigint") {
+		return String(cause);
+	}
+	return undefined;
+}
+
+/**
+ * 把捕获到的上游地址与状态码补进失败信息，Logs 页面可直接定位失败的上游。
+ * @param failureInformation - 写入 metadata.error_information 的对象
+ * @param context - 本次请求捕获的上游上下文
+ */
+function attachUpstreamFailureContext(
+	failureInformation: Record<string, unknown>,
+	context: { request: { url: string }; response?: { status_code: number } } | undefined,
+): void {
+	if (context === undefined) {
+		return;
+	}
+	failureInformation.upstream_url = context.request.url;
+	if (context.response !== undefined) {
+		failureInformation.upstream_status = context.response.status_code;
+	}
 }
 
 /**
@@ -803,6 +899,9 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 				}
 			: usageObject;
 	const failureInformation = ctx.error ? getFailureErrorInformation(ctx.error) : undefined;
+	if (failureInformation !== undefined) {
+		attachUpstreamFailureContext(failureInformation, ctx.upstreamLogContext);
+	}
 	const requesterIpAddress = getRequesterIpAddress(ctx.req);
 	const modelResolutionChain = normalizeModelResolutionChain(ctx);
 	const routingTrace = normalizeRoutingTrace(ctx.routingTrace);
@@ -1638,74 +1737,8 @@ export async function settleSpend(db: NodePgDatabase<typeof schema>, requestId: 
  * 归一后的字段。返回 undefined 表示无可识别字段（避免误报 0 spend）。
  * @param usage
  */
-export function normalizeUsageForSpend(usage: Record<string, unknown> | undefined):
-	| {
-			prompt_tokens: number;
-			completion_tokens: number;
-			total_tokens: number;
-			cache_creation_input_tokens: number;
-			cache_read_input_tokens: number;
-	  }
-	| undefined {
-	if (!usage) {
-		return undefined;
-	}
-	// cache fields: Chat Completions details > Responses details > Anthropic flat fields
-	const promptDetails = usage["prompt_tokens_details"] as Record<string, unknown> | undefined;
-	const inputDetails = usage["input_tokens_details"] as Record<string, unknown> | undefined;
-	const cacheRead =
-		(typeof promptDetails?.["cached_tokens"] === "number" ? (promptDetails["cached_tokens"] as number) : undefined) ??
-		(typeof inputDetails?.["cached_tokens"] === "number" ? (inputDetails["cached_tokens"] as number) : undefined) ??
-		(typeof usage["cache_read_input_tokens"] === "number" ? (usage["cache_read_input_tokens"] as number) : 0);
-	const cacheCreation =
-		(typeof promptDetails?.["cache_creation_tokens"] === "number" ? (promptDetails["cache_creation_tokens"] as number) : undefined) ??
-		(typeof inputDetails?.["cache_write_tokens"] === "number" ? (inputDetails["cache_write_tokens"] as number) : undefined) ??
-		(typeof usage["cache_creation_input_tokens"] === "number" ? (usage["cache_creation_input_tokens"] as number) : 0);
-	// PY: prefer `completion_tokens`; fall back to `output_tokens`
-	const completionTokens =
-		(typeof usage["completion_tokens"] === "number" ? (usage["completion_tokens"] as number) : undefined) ??
-		(typeof usage["output_tokens"] === "number" ? (usage["output_tokens"] as number) : 0);
-
-	// Anthropic 风格判定：无 prompt_tokens/input_tokens_details/total_tokens 且有 input_tokens。
-	// PY anthropic/chat/transformation.py:1588-1611 把 cache_creation + cache_read
-	// 折叠计入 prompt_tokens（上游 input_tokens 不含 cache），total=prompt+completion。
-	// OpenAI Chat Completions 的 prompt_tokens 和 Responses 的 input_tokens 都已含
-	// cached_tokens（details 仅细分），不能再次折叠。
-	const rawPromptTokens = typeof usage["prompt_tokens"] === "number" ? (usage["prompt_tokens"] as number) : undefined;
-	const isAnthropicStyle =
-		rawPromptTokens === undefined &&
-		typeof usage["input_tokens"] === "number" &&
-		inputDetails === undefined &&
-		typeof usage["total_tokens"] !== "number";
-	if (isAnthropicStyle) {
-		const promptTokens = ((usage["input_tokens"] as number) ?? 0) + cacheRead + cacheCreation;
-		return {
-			prompt_tokens: promptTokens,
-
-			completion_tokens: completionTokens,
-
-			total_tokens: promptTokens + completionTokens,
-
-			cache_creation_input_tokens: cacheCreation,
-
-			cache_read_input_tokens: cacheRead,
-		};
-	}
-	const promptTokens = rawPromptTokens ?? (typeof usage["input_tokens"] === "number" ? (usage["input_tokens"] as number) : 0);
-	const totalTokens =
-		(typeof usage["total_tokens"] === "number" ? (usage["total_tokens"] as number) : undefined) ?? promptTokens + completionTokens;
-
-	return {
-		prompt_tokens: promptTokens,
-
-		completion_tokens: completionTokens,
-
-		total_tokens: totalTokens,
-
-		cache_creation_input_tokens: cacheCreation,
-
-		cache_read_input_tokens: cacheRead,
-	};
+export function normalizeUsageForSpend(usage: Record<string, unknown> | undefined): ReturnType<typeof normalizeUsageTokens> {
+	return normalizeUsageTokens(usage);
 }
 
 /**
@@ -1762,6 +1795,8 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		customCostPerToken: logEntry.custom_cost_per_token,
 		modelCostMap: modelCostMapEntry as never,
 		reasoningTokens: reasoningTokens,
+		// 峰谷：以请求开始时刻判定，避免长请求跨越峰谷边界后计费漂移
+		at: new Date(logEntry.startTime),
 	});
 	const requestStartTime = new Date(logEntry.startTime);
 	const requestEndTime = new Date(logEntry.endTime);
@@ -1774,6 +1809,9 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 	if (typeof sourceUserApiKey === "string") {
 		sanitizedMetadata["user_api_key"] = _protectApiKeyForDb(sourceUserApiKey);
 	}
+	// 峰谷：记录本次适用的价格档位，便于在 Logs 页核对是按峰时还是空闲价计费
+	const peakPricing = (logEntry.custom_cost_per_token as { peak_pricing?: PeakPricingConfig } | undefined)?.peak_pricing;
+	const peakMultiplier = resolvePeakMultiplier(peakPricing, new Date(logEntry.startTime));
 	// PY CostBreakdown（types/utils.py:2771）：cost 计算完成后注入 metadata.cost_breakdown；
 	// tool_usage_cost 无内置工具计费子系统，恒 0
 	sanitizedMetadata["cost_breakdown"] = {
@@ -1782,6 +1820,9 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		output_cost: outputCost,
 		total_cost: spend,
 		tool_usage_cost: 0,
+		...(peakPricing === undefined
+			? {}
+			: { price_tier: peakMultiplier > 1 ? "peak" : "off_peak", price_multiplier: peakMultiplier }),
 	};
 
 	const metadataSettings = await dbConfigProvider.getEffectiveParam("general_settings");

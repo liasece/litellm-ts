@@ -23,6 +23,7 @@ import {
 	buildSpendReservationScopes,
 	estimateSpendReservation,
 	getDailyTable,
+	getFailureErrorInformation,
 	getOrCreateSpendRequestId,
 	getKeyColumn,
 	normalizeUsageForSpend,
@@ -1807,5 +1808,36 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 		await trackSpendLog(mockDb, createMinimalLogEntry({ request_id: "req-cache-hit-true", cache_hit: true }));
 		expect(insertedSpendLogs[0]!["cache_hit"]).toBe("False");
 		expect(insertedSpendLogs[1]!["cache_hit"]).toBe("True");
+	});
+});
+
+describe("getFailureErrorInformation", () => {
+	it("surfaces the cause chain so fetch failures stay diagnosable", () => {
+		const error = new TypeError("fetch failed") as TypeError & { cause?: unknown };
+		error.cause = new Error("connect ECONNREFUSED 127.0.0.1:8317");
+
+		const information = getFailureErrorInformation(error);
+
+		expect(information).toMatchObject({
+			error_type: "TypeError",
+			error_message: "fetch failed (cause: Error: connect ECONNREFUSED 127.0.0.1:8317)",
+			error_cause: "Error: connect ECONNREFUSED 127.0.0.1:8317",
+		});
+	});
+
+	it("keeps abort stage and status so client disconnects differ from upstream faults", () => {
+		const error = Object.assign(new DOMException("上游请求已取消：客户端断开（/v1/messages）", "AbortError"), {
+			stage: "upstream_request",
+			statusCode: 499,
+		});
+
+		const information = getFailureErrorInformation(error);
+
+		expect(information).toMatchObject({
+			error_type: "AbortError",
+			error_code: 499,
+			error_stage: "upstream_request",
+			error_message: "上游请求已取消：客户端断开（/v1/messages）",
+		});
 	});
 });
