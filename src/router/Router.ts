@@ -858,6 +858,17 @@ export class Router {
 	}
 
 	/**
+	 * 返回命名 Credential 的值读取器。
+	 *
+	 * 内置能力的直连执行者（如 DeepSeek Search / Fetch）不经过 deployment 解析，
+	 * 但仍必须从同一套 Credential 体系取密钥；暴露这个只读视图可以避免它们
+	 * 私自读环境变量或把明文密钥写进能力配置。
+	 */
+	listCredentialValues(): CredentialValuesAccessor | undefined {
+		return this._runtimeState().credentialValues;
+	}
+
+	/**
 	 * 当前模型组是否能稳定使用原生 Responses。
 	 *
 	 * 只有组内所有 deployment 都支持时才返回 true，避免 simple-shuffle 在协议能力

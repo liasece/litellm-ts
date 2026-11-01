@@ -175,8 +175,7 @@ describe("WebCapability", () => {
 		const result = await executeWebToolCall(
 			fakeRouter(),
 			{
-				handlerModel: "network-model",
-				fallbackModels: [],
+				executors: [{ type: "model", model: "network-model" }],
 				maxIterations: 3,
 				maxOutputTokens: 1024,
 			},
@@ -194,8 +193,7 @@ describe("WebCapability", () => {
 			executeWebToolCall(
 				fakeRouter(),
 				{
-					handlerModel: "network-model",
-					fallbackModels: [],
+					executors: [{ type: "model", model: "network-model" }],
 					maxIterations: 3,
 					maxOutputTokens: 1024,
 				},
@@ -672,7 +670,11 @@ describe("WebCapability native Responses worker", () => {
 
 		const result = await executeWebToolCall(
 			router,
-			{ handlerModel: "network-model", fallbackModels: [], maxIterations: 3, maxOutputTokens: 1024 },
+			{
+				executors: [{ type: "model", model: "network-model" }],
+				maxIterations: 3,
+				maxOutputTokens: 1024,
+			},
 			PRIVATE_WEB_SEARCH_TOOL_NAME,
 			JSON.stringify({ query: "top story on hacker news" }),
 			complete,

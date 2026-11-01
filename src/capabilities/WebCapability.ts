@@ -6,7 +6,11 @@ import type { Message, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
 import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
 import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
-import { executeWebToolCall } from "./WebCapabilityExecution";
+import {
+	executeWebToolCall,
+	type WebCapabilityBinding,
+	type WebCredentialAccessor,
+} from "./WebCapabilityExecution";
 import {
 	anthropicInput,
 	anthropicWebTools,
@@ -16,18 +20,6 @@ import {
 	PRIVATE_WEB_FETCH_TOOL_NAME,
 	PRIVATE_WEB_SEARCH_TOOL_NAME,
 } from "./WebCapabilityProtocol";
-
-/** Configuration resolved for the private live-web worker. */
-export interface WebCapabilityBinding {
-	/** Primary logical model that performs the real network request. */
-	readonly handlerModel: string;
-	/** Capability-local fallback chain. */
-	readonly fallbackModels: string[];
-	/** Maximum hidden main-model turns. */
-	readonly maxIterations: number;
-	/** Maximum output tokens for one worker call. */
-	readonly maxOutputTokens: number;
-}
 
 /**
  * Rewritten request carrying the resolved web capability binding.
@@ -75,15 +67,28 @@ export async function resolveWebCapability(router: Router, model: string): Promi
 	if (!settings.enabled) {
 		return undefined;
 	}
-	if (!settings.handler_model) {
-		throw ApiError.unavailable(`模型 ${model} 的 web capability 缺少 handler_model`);
+	if (settings.executors.length === 0) {
+		throw ApiError.unavailable(`模型 ${model} 的 web capability 没有配置任何执行者`);
 	}
 	return {
-		handlerModel: settings.handler_model,
-		fallbackModels: settings.fallback_models,
+		executors: settings.executors,
 		maxIterations: settings.max_iterations,
 		maxOutputTokens: settings.max_output_tokens,
+		credentialValues: resolveCredentialAccessor(router),
 	};
+}
+
+/**
+ * 取出 Router 当前的命名 Credential 读取器。
+ *
+ * 直连执行者的密钥只能来自命名 Credential；Router 未注入访问器时返回
+ * undefined，直连执行者会明确报错而不是静默读取环境变量。
+ * @param router - 当前请求的 Router
+ */
+function resolveCredentialAccessor(router: Router): WebCredentialAccessor | undefined {
+	const accessor = (router as unknown as { listCredentialValues?: () => WebCredentialAccessor | undefined })
+		.listCredentialValues;
+	return typeof accessor === "function" ? accessor.call(router) : undefined;
 }
 
 function webInstruction(): string {

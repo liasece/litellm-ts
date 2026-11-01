@@ -976,6 +976,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		call_type: ctx.callType,
 		api_key: getAuthApiKeyForSpendLog(ctx),
 		spend: 0,
+		...(ctx.fixedCostUsd === undefined ? {} : { fixed_cost_usd: ctx.fixedCostUsd }),
 		total_tokens: usage?.total_tokens ?? 0,
 		prompt_tokens: usage?.prompt_tokens ?? 0,
 		completion_tokens: usage?.completion_tokens ?? 0,
@@ -1785,12 +1786,7 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		undefined;
 	const reasoningTokens =
 		typeof completionDetails?.["reasoning_tokens"] === "number" ? (completionDetails["reasoning_tokens"] as number) : 0;
-	const {
-		cacheInputCost,
-		inputCost,
-		outputCost,
-		totalCost: spend,
-	} = costPerToken(logEntry.model, promptTokens, completionTokens, cacheCreationTokens, cacheReadTokens, {
+	const tokenCost = costPerToken(logEntry.model, promptTokens, completionTokens, cacheCreationTokens, cacheReadTokens, {
 		// 批次 9: 实际执行 deployment 的 model_info/litellm_params 自定义价格优先于内置价格表
 		customCostPerToken: logEntry.custom_cost_per_token,
 		modelCostMap: modelCostMapEntry as never,
@@ -1798,6 +1794,12 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		// 峰谷：以请求开始时刻判定，避免长请求跨越峰谷边界后计费漂移
 		at: new Date(logEntry.startTime),
 	});
+	// 按次计费的直连工具调用（如 DeepSeek Search / Fetch）不产生模型调用，token 费用恒 0；
+	// 其固定单价在此并入 spend，并单独记入 cost_breakdown.tool_usage_cost，
+	// 保证费用统计与 Logs 页能看到这部分支出。
+	const { cacheInputCost, inputCost, outputCost } = tokenCost;
+	const fixedCost = typeof logEntry.fixed_cost_usd === "number" && logEntry.fixed_cost_usd > 0 ? logEntry.fixed_cost_usd : 0;
+	const spend = tokenCost.totalCost + fixedCost;
 	const requestStartTime = new Date(logEntry.startTime);
 	const requestEndTime = new Date(logEntry.endTime);
 	const requestDurationMs = logEntry.request_duration_ms ?? Math.max(0, requestEndTime.getTime() - requestStartTime.getTime());
@@ -1812,14 +1814,14 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 	// 峰谷：记录本次适用的价格档位，便于在 Logs 页核对是按峰时还是空闲价计费
 	const peakPricing = (logEntry.custom_cost_per_token as { peak_pricing?: PeakPricingConfig } | undefined)?.peak_pricing;
 	const peakMultiplier = resolvePeakMultiplier(peakPricing, new Date(logEntry.startTime));
-	// PY CostBreakdown（types/utils.py:2771）：cost 计算完成后注入 metadata.cost_breakdown；
-	// tool_usage_cost 无内置工具计费子系统，恒 0
+	// PY CostBreakdown（types/utils.py:2771）：cost 计算完成后注入 metadata.cost_breakdown。
+	// tool_usage_cost 记录按次计费的直连工具调用固定费用（无此类调用时为 0）。
 	sanitizedMetadata["cost_breakdown"] = {
 		cache_input_cost: cacheInputCost,
 		input_cost: inputCost,
 		output_cost: outputCost,
 		total_cost: spend,
-		tool_usage_cost: 0,
+		tool_usage_cost: fixedCost,
 		...(peakPricing === undefined
 			? {}
 			: { price_tier: peakMultiplier > 1 ? "peak" : "off_peak", price_multiplier: peakMultiplier }),

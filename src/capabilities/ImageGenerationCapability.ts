@@ -7,7 +7,11 @@ import type { Router } from "../router/Router";
 import { calculateAndSetCost } from "../spend/SpendTracker";
 import type { Message, ModelResponse, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
-import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
+import {
+	BUILTIN_CAPABILITIES_CONFIG_PARAM,
+	modelsFromExecutors,
+	normalizeBuiltinCapabilitiesConfig,
+} from "./BuiltinCapabilitiesConfig";
 import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
 import { createVisionImageStore, storeVisionImageUrl, type StoredVisionImage, type VisionImageStore } from "./VisionImageStore";
 
@@ -154,13 +158,14 @@ export async function resolveImageGenerationCapability(
 	if (!settings.enabled) {
 		return undefined;
 	}
-	if (!settings.handler_model) {
-		throw ApiError.unavailable(`模型 ${model} 的 image_generation capability 缺少 handler_model`);
+	const [handlerModel, ...fallbackModels] = modelsFromExecutors(settings);
+	if (handlerModel === undefined) {
+		throw ApiError.unavailable(`模型 ${model} 的 image_generation capability 没有配置任何执行者`);
 	}
 	return {
 		alwaysInject: settings.always_inject,
-		handlerModel: settings.handler_model,
-		fallbackModels: settings.fallback_models,
+		handlerModel: handlerModel,
+		fallbackModels: fallbackModels,
 		maxIterations: Math.min(8, Math.max(1, Math.trunc(settings.max_iterations || 4))),
 	};
 }

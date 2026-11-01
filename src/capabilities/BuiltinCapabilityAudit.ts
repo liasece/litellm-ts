@@ -19,11 +19,22 @@ export interface BuiltinCapabilityModelCall {
 	/** Worker request or main-model continuation. */
 	readonly stage: "handler" | "continuation";
 	/** Spend Log protocol classification. */
-	readonly callType: "acompletion" | "amessages" | "aimage_generation";
+	readonly callType: "acompletion" | "amessages" | "aimage_generation" | "asearch";
 	/** Logical model used by this request. */
 	readonly model: string;
 	/** Private tool call that triggered the request. */
 	readonly toolCallId: string;
+	/** 执行链元素的稳定标识，例如 model:gpt-5.4 或 deepseek_tools:ds-prod。 */
+	readonly executor?: string;
+	/** 直连执行者使用的命名 Credential 名称（非密钥本身）。 */
+	readonly credentialName?: string;
+	/**
+	 * 直连工具调用的固定费用（美元）。
+	 *
+	 * 直连执行者不产生模型调用，token 费用恒 0；该值让按次计费出现在
+	 * SpendLogs.spend 与 metadata.cost_breakdown.tool_usage_cost 中。
+	 */
+	readonly fixedCostUsd?: number;
 	/** Actual messages sent to the model. */
 	readonly messages: import("../types/openai").Message[];
 	/** Full protocol request body, when relevant. */
@@ -64,6 +75,19 @@ interface BuiltinCapabilityAuditorOptions {
 	readonly parentRequestId?: string;
 }
 
+function mapCallType(callType: BuiltinCapabilityModelCall["callType"]): CallType {
+	switch (callType) {
+		case "amessages":
+			return CallType.AMessages;
+		case "aimage_generation":
+			return CallType.AImageGeneration;
+		case "asearch":
+			return CallType.ASearch;
+		default:
+			return CallType.ACompletion;
+	}
+}
+
 /**
  * Create an endpoint-owned recorder that persists every capability-model
  * attempt as an ordinary Spend Log row in the same session as its parent.
@@ -98,17 +122,14 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			builtin_capability_stage: call.stage,
 			parent_request_id: parentRequestId,
 			tool_call_id: call.toolCallId,
+			...(call.executor === undefined ? {} : { builtin_capability_executor: call.executor }),
+			...(call.credentialName === undefined ? {} : { builtin_capability_credential: call.credentialName }),
 		};
 		const log = await buildSpendLogFromRequest({
 			req: req,
 			auth: auth,
 			requestId: requestId,
-			callType:
-				call.callType === "amessages"
-					? CallType.AMessages
-					: call.callType === "aimage_generation"
-						? CallType.AImageGeneration
-						: CallType.ACompletion,
+			callType: mapCallType(call.callType),
 			model: call.model,
 			modelGroup: call.model,
 			modelId: spendInfo?.modelId,
@@ -136,15 +157,8 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			upstreamLogContext: getUpstreamLogContext(call.response) ?? getUpstreamLogContext(call.error),
 			status: status,
 			requestTags: ["litellm:internal", `builtin:${call.capability}`],
-			metadataOverrides: {
-				internal_call: true,
-				internal_call_type: "builtin_capability",
-				builtin_capability: call.capability,
-				builtin_capability_stage: call.stage,
-				parent_request_id: parentRequestId,
-				tool_call_id: call.toolCallId,
-				cache_namespace: `builtin:${call.capability}`,
-			},
+			...(call.fixedCostUsd === undefined ? {} : { fixedCostUsd: call.fixedCostUsd }),
+			metadataOverrides: { ...auditMetadata, cache_namespace: `builtin:${call.capability}` },
 		});
 		await trackSpendLog(db, log);
 		return { requestId: requestId };

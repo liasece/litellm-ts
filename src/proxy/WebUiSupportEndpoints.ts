@@ -39,7 +39,12 @@ import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 import providerCreateFieldsJson from "../data/provider_create_fields.json";
 import { modelCostMapService, type ModelCostMapService } from "../cost/ModelCostMapService";
-import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "../capabilities/BuiltinCapabilitiesConfig";
+import {
+	BUILTIN_CAPABILITIES_CONFIG_PARAM,
+	type BuiltinCapabilityId,
+	type BuiltinCapabilitySettings,
+	normalizeBuiltinCapabilitiesConfig,
+} from "../capabilities/BuiltinCapabilitiesConfig";
 
 const HTTP_FORBIDDEN = 403;
 const logger = createModuleLogger("WebUiSupportEndpoints");
@@ -1127,14 +1132,109 @@ export function registerWebUiSupportPublicRoutes(router: Router, costMapService:
 	}));
 }
 
+/** 管理端校验执行链所需的命名 Credential 列表。 */
+export interface BuiltinCapabilityCredentialLister {
+	/**
+	 * 返回已保存的 Credential 视图列表。
+	 */
+	list(): Promise<ReadonlyArray<{ readonly credential_name: string }>>;
+}
+
+/**
+ * 取出管理员本次提交的模型执行者名称（保留重复与顺序）。
+ *
+ * 同时接受新的 \`executors\` 结构与历史的 \`handler_model\` + \`fallback_models\`，
+ * 两种写法共用同一套重复校验。
+ * @param submitted - 本次 PUT 提交的单个能力配置
+ * @returns 提交顺序下的模型执行者名称（保留重复）
+ */
+function submittedExecutorModels(submitted: Record<string, unknown> | undefined): string[] {
+	if (submitted === undefined) {
+		return [];
+	}
+	const executors = submitted["executors"];
+	if (Array.isArray(executors)) {
+		return executors
+			.map((entry) => {
+				if (typeof entry !== "object" || entry === null) {
+					return "";
+				}
+				const record = entry as Record<string, unknown>;
+				if (record["type"] !== "model") {
+					return "";
+				}
+				return String(record["model"] ?? "").trim();
+			})
+			.filter((model) => model.length > 0);
+	}
+	const handlerModel = typeof submitted["handler_model"] === "string" ? submitted["handler_model"].trim() : "";
+	const fallbackModels = Array.isArray(submitted["fallback_models"])
+		? (submitted["fallback_models"] as unknown[]).map((model) => String(model ?? "").trim()).filter(Boolean)
+		: [];
+	return [...(handlerModel.length > 0 ? [handlerModel] : []), ...fallbackModels];
+}
+
+/**
+ * 校验一个内置能力的执行链。
+ *
+ * 三条规则与运行路径一一对应：链非空、模型名必须在 Router 里可路由、
+ * 直连执行者引用的 Credential 必须已存在。这样配置错误在保存时暴露，
+ * 而不是等到线上第一次联网调用才失败。
+ * @param capability - 用于错误信息的能力名
+ * @param settings - 归一化后的能力配置
+ * @param availableModels - 当前可路由的模型名集合
+ * @param credentialNames - 已保存的 Credential 名称集合；undefined 表示跳过该检查
+ * @param submitted - 本次 PUT 提交的原始能力配置，用于在去重前发现重复项
+ * @throws ApiError 链为空、模型不可路由、模型重复或 Credential 不存在时抛出 400
+ */
+function validateCapabilityExecutors(
+	capability: BuiltinCapabilityId,
+	settings: BuiltinCapabilitySettings,
+	availableModels: ReadonlySet<string>,
+	credentialNames?: ReadonlySet<string>,
+	submitted?: Record<string, unknown>,
+): void {
+	if (settings.enabled && settings.executors.length === 0) {
+		throw ApiError.badRequest(`Enabled ${capability} capability requires at least one executor`);
+	}
+	// 归一化会去重，因此「同一条链里重复提交同一个模型」必须在原始载荷上检查，
+	// 否则管理员的重复配置会被静默吞掉而不是收到明确报错。
+	const submittedModels = submittedExecutorModels(submitted);
+	const duplicated = submittedModels.find((model, index) => submittedModels.indexOf(model) !== index);
+	if (duplicated !== undefined) {
+		throw ApiError.badRequest(`Duplicate ${capability} executor model: ${duplicated}`);
+	}
+	for (const executor of settings.executors) {
+		if (executor.type === "model") {
+			if (!availableModels.has(executor.model)) {
+				throw ApiError.badRequest(`Unknown ${capability} executor model: ${executor.model}`);
+			}
+			continue;
+		}
+		if (capability !== "web") {
+			throw ApiError.badRequest(`${capability} capability does not support ${executor.type} executors`);
+		}
+		if (credentialNames !== undefined && !credentialNames.has(executor.credential_name)) {
+			throw ApiError.badRequest(`Unknown web executor credential: ${executor.credential_name}`);
+		}
+	}
+}
+
 /**
  * 注册 WebUI 鉴权支撑端点。
  * @param router - 已经过鉴权的 Router
  * @param config - 服务配置
  * @param db - Drizzle 数据库实例（LiteLLM_Config 写路径：/config/update、/config/field/*、/update/ui_theme_settings）
  * @param litellmRouter - 可选 LiteLLM Router；提供时 /config/update 写 router_settings 后立即热应用（批次 C1）
+ * @param credentialService - 可选 Credential 服务；提供时保存内置能力前会校验直连执行者引用的凭据存在
  */
-export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig, db: DrizzleDb, litellmRouter?: LiteLLMRouter): void {
+export function registerWebUiSupportRoutes(
+	router: Router,
+	config: ServiceConfig,
+	db: DrizzleDb,
+	litellmRouter?: LiteLLMRouter,
+	credentialService?: BuiltinCapabilityCredentialLister,
+): void {
 	const emptyList = (): unknown[] => [];
 	const configRepository = new ConfigRepository(db);
 
@@ -1326,9 +1426,8 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		) {
 			throw ApiError.badRequest("vision, image_generation and web capability settings must be objects when provided");
 		}
-		const currentConfig = normalizeBuiltinCapabilitiesConfig(
-			(await configRepository.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM)) ?? {},
-		);
+		const storedConfig = (await configRepository.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM)) ?? {};
+		const currentConfig = normalizeBuiltinCapabilitiesConfig(storedConfig);
 		const configValue = normalizeBuiltinCapabilitiesConfig({
 			vision: hasVision ? req.body["vision"] : currentConfig.vision,
 			image_generation: hasImageGeneration ? req.body["image_generation"] : currentConfig.image_generation,
@@ -1339,52 +1438,37 @@ export function registerWebUiSupportRoutes(router: Router, config: ServiceConfig
 		const web = configValue.web;
 		const availableModelOptions = litellmRouter?.getAvailableModelNames() ?? [];
 		const availableModels = new Set(availableModelOptions.map((candidate) => candidate.model_name));
+		// 直连执行者只引用命名 Credential，保存前先确认该 Credential 存在，
+		// 避免把拼错的凭据名持久化后要到第一次联网调用才失败。
+		const credentialNames =
+			credentialService === undefined
+				? undefined
+				: new Set((await credentialService.list()).map((credential) => credential.credential_name));
 		if (hasVision) {
-			if (vision.enabled && vision.handler_model.length === 0) {
-				throw ApiError.badRequest("Enabled vision capability requires handler_model");
-			}
-			if (vision.handler_model && !availableModels.has(vision.handler_model)) {
-				throw ApiError.badRequest(`Unknown vision handler model: ${vision.handler_model}`);
-			}
-			if (vision.fallback_models.includes(vision.handler_model)) {
-				throw ApiError.badRequest("Vision fallback models must not repeat handler_model");
-			}
-			const unknownFallback = vision.fallback_models.find((model) => !availableModels.has(model));
-			if (unknownFallback) {
-				throw ApiError.badRequest(`Unknown vision fallback model: ${unknownFallback}`);
-			}
+			validateCapabilityExecutors("vision", vision, availableModels, undefined, isRecord(req.body["vision"]) ? req.body["vision"] : undefined);
 		}
 		if (hasWeb) {
-			if (web.enabled && web.handler_model.length === 0) {
-				throw ApiError.badRequest("Enabled web capability requires handler_model");
-			}
-			if (web.handler_model && !availableModels.has(web.handler_model)) {
-				throw ApiError.badRequest(`Unknown web handler model: ${web.handler_model}`);
-			}
-			if (web.fallback_models.includes(web.handler_model)) {
-				throw ApiError.badRequest("Web fallback models must not repeat handler_model");
-			}
-			const unknownWebFallback = web.fallback_models.find((model) => !availableModels.has(model));
-			if (unknownWebFallback) {
-				throw ApiError.badRequest(`Unknown web fallback model: ${unknownWebFallback}`);
-			}
+			validateCapabilityExecutors("web", web, availableModels, credentialNames, isRecord(req.body["web"]) ? req.body["web"] : undefined);
 		}
 		if (hasImageGeneration) {
-			if (imageGeneration.enabled && imageGeneration.handler_model.length === 0) {
-				throw ApiError.badRequest("Enabled image_generation capability requires handler_model");
-			}
-			if (imageGeneration.handler_model && !availableModels.has(imageGeneration.handler_model)) {
-				throw ApiError.badRequest(`Unknown image_generation handler model: ${imageGeneration.handler_model}`);
-			}
-			if (imageGeneration.fallback_models.includes(imageGeneration.handler_model)) {
-				throw ApiError.badRequest("Image generation fallback models must not repeat handler_model");
-			}
-			const unknownImageFallback = imageGeneration.fallback_models.find((model) => !availableModels.has(model));
-			if (unknownImageFallback) {
-				throw ApiError.badRequest(`Unknown image_generation fallback model: ${unknownImageFallback}`);
-			}
+			validateCapabilityExecutors("image_generation", imageGeneration, availableModels, undefined, isRecord(req.body["image_generation"]) ? req.body["image_generation"] : undefined);
 		}
-		await configRepository.upsertParam(BUILTIN_CAPABILITIES_CONFIG_PARAM, configValue);
+		// 只规范化本次提交的能力；未提交的能力原样保留。
+		// 否则一次只改 vision 的保存会把管理员从未编辑过的 web 配置重写成新结构，
+		// 让持久化内容与「只改了一项」的意图不符，也会让回滚变得不可判定。
+		const nextStoredConfig: Record<string, unknown> = isRecord(storedConfig) ? { ...storedConfig } : {};
+		const keepOrWrite = (capability: "vision" | "image_generation" | "web", submitted: boolean): void => {
+			// 已提交：写入规范化结果。未提交但库里已有：原样保留。
+			// 未提交且库里没有：补上规范化默认值，保证存储文档与响应结构一致。
+			if (!submitted && Object.prototype.hasOwnProperty.call(nextStoredConfig, capability)) {
+				return;
+			}
+			nextStoredConfig[capability] = configValue[capability];
+		};
+		keepOrWrite("vision", hasVision);
+		keepOrWrite("image_generation", hasImageGeneration);
+		keepOrWrite("web", hasWeb);
+		await configRepository.upsertParam(BUILTIN_CAPABILITIES_CONFIG_PARAM, nextStoredConfig);
 		return {
 			capabilities: configValue,
 			available_models: availableModelOptions,

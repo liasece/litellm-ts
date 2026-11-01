@@ -339,7 +339,7 @@ export class LiteLLMServer {
 		registerModelsPageSupportRoutes(stubRouter, container.router, this._config, container.modelCostMapService);
 
 		// WebUI 鉴权支撑端点（/get/ui_settings、/config/list、/config/update、/team/list 等）
-		registerWebUiSupportRoutes(stubRouter, this._config, container.db.db, container.router);
+		registerWebUiSupportRoutes(stubRouter, this._config, container.db.db, container.router, container.credentialService);
 
 		registerAssistantsRoutes(stubRouter);
 		registerBatchesRoutes(stubRouter);

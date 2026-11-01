@@ -31,6 +31,7 @@ declare global {
  * - Embedding: 同步 embedding 调用
  * - AImageGeneration: 异步图像生成
  * - ImageGeneration: 同步图像生成
+ * - ASearch / Search: 直连 Search 工具接口（非模型调用，按次计费）
  */
 export enum CallType {
 	ACompletion = "acompletion",
@@ -45,6 +46,8 @@ export enum CallType {
 	Transcription = "transcription",
 	ASpeech = "aspeech",
 	Speech = "speech",
+	ASearch = "asearch",
+	Search = "search",
 }
 
 /**
@@ -73,6 +76,13 @@ export interface SpendLog {
 	api_key: string;
 	/** 花费金额（美元） */
 	spend: number;
+	/**
+	 * 非 token 计费部分的固定费用（美元）。
+	 *
+	 * 直连工具接口（如 DeepSeek Search / Fetch）不产生模型调用，只有按次单价；
+	 * 该值由 trackSpendLog 与 token 费用合并后计入 spend。
+	 */
+	fixed_cost_usd?: number;
 	/** 总 token 数 */
 	total_tokens: number;
 	/** 提示 token 数 */
@@ -326,6 +336,13 @@ export interface SpendLogBuildContext {
 	readonly proxyServerRequestUrl?: string;
 	/** 追加到标准 SpendLogs metadata 的审计字段。 */
 	readonly metadataOverrides?: Record<string, unknown>;
+	/**
+	 * 本次请求的固定费用（美元），用于不产生 token 的直连工具调用。
+	 *
+	 * 设置后 trackSpendLog 跳过 token 计价，直接以该值作为 spend，并写入
+	 * metadata.cost_breakdown.tool_usage_cost，使按次计费在费用统计中可见。
+	 */
+	readonly fixedCostUsd?: number;
 }
 
 /** 单次账务写入结果。duplicate 表示相同 request_id 已由此前事务提交。 */

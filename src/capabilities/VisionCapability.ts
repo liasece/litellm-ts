@@ -3,7 +3,11 @@ import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
 import type { Message, ToolCall } from "../types/openai";
-import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
+import {
+	BUILTIN_CAPABILITIES_CONFIG_PARAM,
+	modelsFromExecutors,
+	normalizeBuiltinCapabilitiesConfig,
+} from "./BuiltinCapabilitiesConfig";
 import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
 import { createVisionImageStore, storeVisionImageUrl, type StoredVisionImage, type VisionImageStore } from "./VisionImageStore";
 
@@ -144,13 +148,14 @@ export async function resolveVisionCapability(router: Router, model: string): Pr
 	if (!raw.enabled) {
 		return undefined;
 	}
-	if (typeof raw.handler_model !== "string" || raw.handler_model.trim().length === 0) {
-		throw ApiError.unavailable(`模型 ${model} 的 vision capability 缺少 handler_model`);
+	const [handlerModel, ...fallbackModels] = modelsFromExecutors(raw);
+	if (handlerModel === undefined) {
+		throw ApiError.unavailable(`模型 ${model} 的 vision capability 没有配置任何执行者`);
 	}
 	return {
 		alwaysInject: raw.always_inject,
-		handlerModel: raw.handler_model,
-		fallbackModels: raw.fallback_models,
+		handlerModel: handlerModel,
+		fallbackModels: fallbackModels,
 		maxIterations: clampInteger(raw.max_iterations, 1, 8, 4),
 		maxOutputTokens: minimumInteger(raw.max_output_tokens, 128, 32_768),
 	};

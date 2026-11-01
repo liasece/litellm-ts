@@ -1801,6 +1801,51 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 		});
 	});
 
+	it("直连工具调用的固定费用进入 spend 与 tool_usage_cost（按次计费）", async () => {
+		const insertedSpendLogs: Record<string, unknown>[] = [];
+		await trackSpendLog(
+			createInsertCaptureDb(insertedSpendLogs),
+			createMinimalLogEntry({
+				call_type: CallType.ASearch,
+				fixed_cost_usd: 0.00075,
+				prompt_tokens: 0,
+				completion_tokens: 0,
+				total_tokens: 0,
+			}),
+		);
+
+		expect(insertedSpendLogs).toHaveLength(1);
+		const row = insertedSpendLogs[0]!;
+		// 直连工具没有模型调用，token 费用恒 0；spend 必须等于按次单价，
+		// 否则这部分支出会从费用统计里静默消失。
+		expect(row["spend"]).toBeCloseTo(0.00075, 10);
+		const metadata = row["metadata"] as Record<string, unknown>;
+		expect(metadata["cost_breakdown"]).toEqual({
+			cache_input_cost: 0,
+			input_cost: 0,
+			output_cost: 0,
+			total_cost: 0.00075,
+			tool_usage_cost: 0.00075,
+		});
+	});
+
+	it("固定费用与 token 费用相加，不覆盖模型部分", async () => {
+		const insertedSpendLogs: Record<string, unknown>[] = [];
+		await trackSpendLog(
+			createInsertCaptureDb(insertedSpendLogs),
+			createMinimalLogEntry({
+				custom_cost_per_token: { input_cost_per_token: 0.01, output_cost_per_token: 0.02 },
+				fixed_cost_usd: 0.5,
+			}),
+		);
+
+		const row = insertedSpendLogs[0]!;
+		// 100 prompt * 0.01 + 20 completion * 0.02 = 1.4，再加 0.5 固定费用
+		expect(row["spend"]).toBeCloseTo(1.9, 10);
+		const metadata = row["metadata"] as Record<string, unknown>;
+		expect((metadata["cost_breakdown"] as Record<string, unknown>)["tool_usage_cost"]).toBeCloseTo(0.5, 10);
+	});
+
 	it("cache_hit 默认写 'False'，命中写 'True'（PY str(bool) 大写）", async () => {
 		const insertedSpendLogs: Record<string, unknown>[] = [];
 		const mockDb = createInsertCaptureDb(insertedSpendLogs);

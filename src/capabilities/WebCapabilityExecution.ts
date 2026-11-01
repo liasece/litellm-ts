@@ -1,14 +1,42 @@
 import { ApiError } from "../core/api/ApiError";
+import { logger } from "../core/utils/logger";
 import { ROUTER_CALL_TYPE_PARAM, ROUTER_RESPONSES_BODY_PARAM, type Router } from "../router/Router";
 import type { Message } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
+import type { BuiltinCapabilityExecutor } from "./BuiltinCapabilitiesConfig";
+import {
+	buildDeepSeekSearchQuery,
+	callDeepSeekFetch,
+	callDeepSeekSearch,
+	DEEPSEEK_TOOLS_COST_PER_REQUEST_USD,
+	type DeepSeekToolsConnection,
+} from "./DeepSeekToolsClient";
 import { extractAssistant, parseWebArguments, type WebToolRequest } from "./WebCapabilityProtocol";
 
-interface WebCapabilityBinding {
-	readonly handlerModel: string;
-	readonly fallbackModels: string[];
+/**
+ * 执行链里一个模型执行者的解析结果。
+ *
+ * `executors` 保留原始顺序，元素既有模型也有直连客户端；
+ * `maxOutputTokens` 已按执行者级覆盖合并能力级默认值。
+ */
+export interface WebCapabilityBinding {
+	/** 有序执行链。 */
+	readonly executors: BuiltinCapabilityExecutor[];
+	/** 隐藏主模型续接的最大轮数。 */
 	readonly maxIterations: number;
+	/** 能力级默认最大输出 token。 */
 	readonly maxOutputTokens: number;
+	/** 解析命名 Credential 的只读访问器；未注入时直连执行者不可用。 */
+	readonly credentialValues?: WebCredentialAccessor;
+}
+
+/** 直连执行者解析密钥所需的最小接口。 */
+export interface WebCredentialAccessor {
+	/**
+	 * 返回命名 Credential 的值副本。
+	 * @param credentialName - Credential 名称
+	 */
+	getValues(credentialName: string): Record<string, unknown> | undefined;
 }
 
 type Completion = (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -30,6 +58,9 @@ interface WebAttemptAuditContext {
 	readonly requestBody: Record<string, unknown>;
 	readonly startTime: Date;
 	readonly endTime: Date;
+	readonly executor: string;
+	readonly credentialName?: string;
+	readonly fixedCostUsd?: number;
 	readonly outcome: { response: Record<string, unknown> } | { error: unknown };
 }
 
@@ -131,9 +162,12 @@ async function recordWebAttempt(
 	return audit({
 		capability: "web",
 		stage: "handler",
-		callType: "acompletion",
+		callType: context.fixedCostUsd === undefined ? "acompletion" : "asearch",
 		model: context.model,
 		toolCallId: context.toolCallId,
+		executor: context.executor,
+		...(context.credentialName === undefined ? {} : { credentialName: context.credentialName }),
+		...(context.fixedCostUsd === undefined ? {} : { fixedCostUsd: context.fixedCostUsd }),
 		...(context.request.kind === "search" ? { query: context.request.query } : { url: context.request.url }),
 		messages: context.messages,
 		requestBody: { ...context.requestBody, model: context.model, messages: context.messages },
@@ -144,13 +178,182 @@ async function recordWebAttempt(
 }
 
 /**
- * Executes one validated private search or fetch with the configured worker fallback chain.
- * @param router
- * @param binding
- * @param toolName
- * @param rawArguments
- * @param complete
- * @param options
+ * 执行链元素的稳定标识，写进审计 metadata 便于定位具体执行者。
+ * @param executor - 链上元素
+ */
+function executorLabel(executor: BuiltinCapabilityExecutor): string {
+	return executor.type === "model" ? `model:${executor.model}` : `deepseek_tools:${executor.credential_name}`;
+}
+
+/**
+ * 解析直连执行者的明文密钥。
+ *
+ * 密钥只能来自命名 Credential；缺失时抛错让执行链继续下一个执行者，
+ * 绝不回退到环境变量或请求参数，避免把密钥来源变得不可审计。
+ * @param binding - 已解析的能力绑定
+ * @param executor - deepseek_tools 执行者
+ * @throws ApiError Credential 访问器缺失或该 Credential 没有 api_key 时抛出
+ */
+function resolveDeepSeekConnection(
+	binding: WebCapabilityBinding,
+	executor: Extract<BuiltinCapabilityExecutor, { type: "deepseek_tools" }>,
+): DeepSeekToolsConnection {
+	const accessor = binding.credentialValues;
+	if (accessor === undefined) {
+		throw ApiError.unavailable("web capability 的直连执行者缺少 Credential 访问器");
+	}
+	const values = accessor.getValues(executor.credential_name);
+	const apiKey = values?.["api_key"];
+	if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
+		throw ApiError.unavailable(`web capability 的 Credential ${executor.credential_name} 缺少 api_key`);
+	}
+	return { apiBase: executor.api_base, apiKey: apiKey.trim(), timeoutMs: executor.timeout_ms };
+}
+
+/**
+ * 用 DeepSeek 直连接口执行一次私有 web 调用。
+ *
+ * 该路径不产生任何模型调用，因此没有 token 消耗；审计行只带按次固定费用。
+ * @param binding - 已解析的能力绑定
+ * @param executor - deepseek_tools 执行者
+ * @param request - 已校验的私有工具请求
+ * @param context - 审计上下文公共字段
+ */
+async function executeDeepSeekToolCall(
+	binding: WebCapabilityBinding,
+	executor: Extract<BuiltinCapabilityExecutor, { type: "deepseek_tools" }>,
+	request: WebToolRequest,
+	context: {
+		readonly audit?: BuiltinCapabilityAuditHook;
+		readonly toolCallId: string;
+		readonly messages: Message[];
+		readonly requestBody: Record<string, unknown>;
+	},
+): Promise<{ text: string; raw: Record<string, unknown>; model: string }> {
+	const connection = resolveDeepSeekConnection(binding, executor);
+	const raw: Record<string, unknown> =
+		request.kind === "search"
+			? await callDeepSeekSearch(connection, {
+					query: buildDeepSeekSearchQuery(request.query, request.recencyDays),
+					count: executor.search_count,
+					needContent: executor.search_need_content,
+					localization: executor.localization,
+				}).then((envelope) => ({ ...envelope }))
+			: await callDeepSeekFetch(connection, request.url).then((envelope) => ({ ...envelope }));
+	const text = typeof raw["brief"] === "string" ? (raw["brief"] as string) : "";
+	if (text.trim().length === 0) {
+		throw ApiError.unavailable("DeepSeek 直连工具没有返回可用内容");
+	}
+	await recordWebAttempt(context.audit, {
+		request: request,
+		model: `deepseek_tools/${request.kind}`,
+		toolCallId: context.toolCallId,
+		messages: context.messages,
+		requestBody: context.requestBody,
+		startTime: new Date(),
+		endTime: new Date(),
+		executor: executorLabel(executor),
+		credentialName: executor.credential_name,
+		fixedCostUsd: DEEPSEEK_TOOLS_COST_PER_REQUEST_USD,
+		outcome: { response: { executor: executorLabel(executor), ...raw } },
+	});
+	return { text: text, raw: raw, model: `deepseek_tools/${request.kind}` };
+}
+
+/**
+ * 用可路由模型执行一次私有 web 调用。
+ * @param router - 当前请求的 Router
+ * @param binding - 已解析的能力绑定
+ * @param executor - model 执行者
+ * @param request - 已校验的私有工具请求
+ * @param complete - 模型调用函数
+ * @param context - 审计上下文公共字段
+ */
+async function executeModelToolCall(
+	router: Router,
+	binding: WebCapabilityBinding,
+	executor: Extract<BuiltinCapabilityExecutor, { type: "model" }>,
+	request: WebToolRequest,
+	complete: Completion,
+	context: {
+		readonly audit?: BuiltinCapabilityAuditHook;
+		readonly toolCallId: string;
+		readonly messages: Message[];
+	},
+): Promise<{ text: string; raw: Record<string, unknown>; model: string }> {
+	const capabilityModel = executor.model;
+	const maxOutputTokens = executor.max_output_tokens ?? binding.maxOutputTokens;
+	const nativeResponses = supportsNativeResponses(router, capabilityModel);
+	const requestBody: Record<string, unknown> = nativeResponses
+		? {
+				stream: false,
+				max_output_tokens: maxOutputTokens,
+				tools: [{ type: "web_search" }],
+			}
+		: {
+				stream: false,
+				max_completion_tokens: maxOutputTokens,
+				web_search_options: { search_context_size: "high" },
+			};
+	const completionParams: Record<string, unknown> = nativeResponses
+		? {
+				...requestBody,
+				[ROUTER_CALL_TYPE_PARAM]: "responses",
+				[ROUTER_RESPONSES_BODY_PARAM]: {
+					model: capabilityModel,
+					input: [{ role: "user", content: workerPrompt(request) }],
+					tools: [{ type: "web_search" }],
+					stream: false,
+					max_output_tokens: maxOutputTokens,
+				},
+			}
+		: requestBody;
+	const startTime = new Date();
+	try {
+		const modelResponse = await complete(capabilityModel, context.messages, completionParams);
+		const text = nativeResponses ? textFromResponsesCompletion(modelResponse) : textFromCompletion(modelResponse);
+		const endTime = new Date();
+		await recordWebAttempt(context.audit, {
+			request: request,
+			model: capabilityModel,
+			toolCallId: context.toolCallId,
+			messages: context.messages,
+			requestBody: requestBody,
+			startTime: startTime,
+			endTime: endTime,
+			executor: executorLabel(executor),
+			outcome: { response: modelResponse },
+		});
+		return { text: text, raw: modelResponse, model: capabilityModel };
+	} catch (error) {
+		const endTime = new Date();
+		await recordWebAttempt(context.audit, {
+			request: request,
+			model: capabilityModel,
+			toolCallId: context.toolCallId,
+			messages: context.messages,
+			requestBody: requestBody,
+			startTime: startTime,
+			endTime: endTime,
+			executor: executorLabel(executor),
+			outcome: { error: error },
+		});
+		throw error;
+	}
+}
+
+/**
+ * Executes one validated private search or fetch through the configured executor chain.
+ *
+ * 链上元素按声明顺序尝试：模型执行者交给 Router（可能走托管搜索），
+ * 直连执行者直接调用上游工具接口。任一执行者成功即返回；全部失败时抛出
+ * 最后一个错误，让主模型把失败当作工具结果继续处理。
+ * @param router - 当前请求的 Router
+ * @param binding - 已解析的能力绑定
+ * @param toolName - 私有工具名
+ * @param rawArguments - 模型给出的原始工具参数
+ * @param complete - 模型调用函数
+ * @param options - 审计钩子与工具调用 ID
  */
 export async function executeWebToolCall(
 	router: Router,
@@ -162,78 +365,50 @@ export async function executeWebToolCall(
 ): Promise<{ text: string; raw: Record<string, unknown>; model: string; attempts: WebExecutionAttempt[] }> {
 	const request = parseWebArguments(toolName, rawArguments);
 	const messages = [{ role: "user", content: workerPrompt(request) } as Message];
-	const models = [...new Set([binding.handlerModel, ...binding.fallbackModels])];
 	const attempts: WebExecutionAttempt[] = [];
 	const toolCallId = options.toolCallId ?? "web_call";
+	const requestBody: Record<string, unknown> = {
+		stream: false,
+		max_output_tokens: binding.maxOutputTokens,
+		web_search_options: { search_context_size: "high" },
+	};
 	let lastError: unknown;
-	for (const capabilityModel of models) {
+	for (const executor of binding.executors) {
 		const startTime = new Date();
-		const nativeResponses = supportsNativeResponses(router, capabilityModel);
-		const requestBody: Record<string, unknown> = nativeResponses
-			? {
-					stream: false,
-					max_output_tokens: binding.maxOutputTokens,
-					tools: [{ type: "web_search" }],
-				}
-			: {
-					stream: false,
-					max_completion_tokens: binding.maxOutputTokens,
-					web_search_options: { search_context_size: "high" },
-				};
-		const completionParams: Record<string, unknown> = nativeResponses
-			? {
-					...requestBody,
-					[ROUTER_CALL_TYPE_PARAM]: "responses",
-					[ROUTER_RESPONSES_BODY_PARAM]: {
-						model: capabilityModel,
-						input: [{ role: "user", content: workerPrompt(request) }],
-						tools: [{ type: "web_search" }],
-						stream: false,
-						max_output_tokens: binding.maxOutputTokens,
-					},
-				}
-			: requestBody;
 		try {
-			const modelResponse = await complete(capabilityModel, messages, completionParams);
-			const text = nativeResponses ? textFromResponsesCompletion(modelResponse) : textFromCompletion(modelResponse);
-			const endTime = new Date();
-			const reference = await recordWebAttempt(options.audit, {
-				request: request,
-				model: capabilityModel,
-				toolCallId: toolCallId,
-				messages: messages,
-				requestBody: requestBody,
-				startTime: startTime,
-				endTime: endTime,
-				outcome: { response: modelResponse },
-			});
+			const outcome =
+				executor.type === "model"
+					? await executeModelToolCall(router, binding, executor, request, complete, {
+							audit: options.audit,
+							toolCallId: toolCallId,
+							messages: messages,
+						})
+					: await executeDeepSeekToolCall(binding, executor, request, {
+							audit: options.audit,
+							toolCallId: toolCallId,
+							messages: messages,
+							requestBody: requestBody,
+						});
 			attempts.push({
-				request_id: reference.requestId,
-				model: capabilityModel,
+				request_id: `${toolCallId}:${executorLabel(executor)}`,
+				model: outcome.model,
 				status: "success",
 				start_time: startTime.toISOString(),
-				end_time: endTime.toISOString(),
+				end_time: new Date().toISOString(),
 			});
-			return { text: text, raw: modelResponse, model: capabilityModel, attempts: attempts };
+			return { text: outcome.text, raw: outcome.raw, model: outcome.model, attempts: attempts };
 		} catch (error) {
 			lastError = error;
-			const endTime = new Date();
-			const reference = await recordWebAttempt(options.audit, {
-				request: request,
-				model: capabilityModel,
-				toolCallId: toolCallId,
-				messages: messages,
-				requestBody: requestBody,
-				startTime: startTime,
-				endTime: endTime,
-				outcome: { error: error },
+			logger.warn("web capability 执行者失败，继续下一个", {
+				executor: executorLabel(executor),
+				error: error instanceof Error ? error.message : String(error),
 			});
 			attempts.push({
-				request_id: reference.requestId,
-				model: capabilityModel,
+				request_id: `${toolCallId}:${executorLabel(executor)}`,
+				model: executor.type === "model" ? executor.model : `deepseek_tools/${request.kind}`,
 				status: "failure",
 				start_time: startTime.toISOString(),
-				end_time: endTime.toISOString(),
+				end_time: new Date().toISOString(),
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}

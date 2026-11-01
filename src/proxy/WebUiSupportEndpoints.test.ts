@@ -1989,7 +1989,7 @@ describe("内置能力管理", () => {
 			enabled: false,
 			always_inject: false,
 			handler_model: "",
-			fallback_models: [],
+			executors: [],
 		});
 		expect(before.body.available_models.map((item: { model_name: string }) => item.model_name)).toEqual([
 			"gpt-5.4",
@@ -1999,7 +1999,7 @@ describe("内置能力管理", () => {
 		expect(before.body.capabilities.web).toMatchObject({
 			enabled: false,
 			handler_model: "",
-			fallback_models: [],
+			executors: [],
 		});
 		expect(before.body.web_available_models.map((item: { model_name: string }) => item.model_name)).toEqual([
 			"gpt-5.4",
@@ -2031,7 +2031,10 @@ describe("内置能力管理", () => {
 			enabled: true,
 			always_inject: true,
 			handler_model: "gpt-5.4-mini",
-			fallback_models: ["metadata-unknown"],
+			executors: [
+				{ type: "model", model: "gpt-5.4-mini" },
+				{ type: "model", model: "metadata-unknown" },
+			],
 			max_iterations: 5,
 			max_output_tokens: 3072,
 		});
@@ -2039,7 +2042,10 @@ describe("内置能力管理", () => {
 			enabled: true,
 			always_inject: true,
 			handler_model: "metadata-unknown",
-			fallback_models: ["gpt-5.4-mini"],
+			executors: [
+				{ type: "model", model: "metadata-unknown" },
+				{ type: "model", model: "gpt-5.4-mini" },
+			],
 			max_iterations: 4,
 			max_output_tokens: 4096,
 		});
@@ -2075,7 +2081,7 @@ describe("内置能力管理", () => {
 		expect(forbidden.status).toBe(403);
 	});
 
-	it("兼容只更新单项能力的旧客户端，并保留另一项现有配置", async () => {
+	it("兼容只更新单项能力的旧客户端，并原样保留另一项现有配置", async () => {
 		const existing = {
 			vision: {
 				enabled: false,
@@ -2111,7 +2117,19 @@ describe("内置能力管理", () => {
 			});
 
 		expect(response.status).toBe(200);
-		expect(response.body.capabilities.web).toEqual(existing.web);
+		// 响应把未提交的 web 配置按新结构投影出来，方便客户端统一读取。
+		expect(response.body.capabilities.web).toEqual({
+			enabled: true,
+			always_inject: true,
+			handler_model: "removed-model",
+			executors: [
+				{ type: "model", model: "removed-model" },
+				{ type: "model", model: "removed-fallback" },
+			],
+			max_iterations: 6,
+			max_output_tokens: 12_345,
+		});
+		// 持久化层原样保留未提交的能力，避免顺手改写管理员没有编辑过的配置。
 		expect((store.get("builtin_capabilities") as Record<string, unknown>)["web"]).toEqual(existing.web);
 	});
 
