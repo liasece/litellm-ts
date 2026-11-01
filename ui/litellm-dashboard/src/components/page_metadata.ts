@@ -24,6 +24,8 @@ export const pageDescriptions: Record<string, string> = {
 	"tag-management": "Organize resources with tags",
 	"claude-code-plugins": "Configure Claude Code plugins",
 	usage: "View legacy usage dashboard",
+	"builtin-capabilities": "Configure vision, image generation and web search handlers",
+	cliproxy: "Manage the embedded CLIProxyAPI runtime, plugins and accounts",
 	"router-settings": "Configure routing and load balancing settings",
 	"logging-and-alerts": "Set up logging and alert configurations",
 	"admin-panel": "Access admin panel and settings",
