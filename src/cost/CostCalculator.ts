@@ -257,6 +257,11 @@ export interface CustomCostPerToken {
 	readonly cache_creation_input_token_cost?: number;
 	/** cache read 单价（每 token），覆盖模型级 cacheReadPerMillion */
 	readonly cache_read_input_token_cost?: number;
+	/**
+	 * 峰谷定价配置。放在这里是为了让已透传 customCostPerToken 的端点自动获得峰谷能力，
+	 * 无需再为每个端点单独传参。
+	 */
+	readonly peak_pricing?: PeakPricingConfig;
 }
 
 /**
@@ -309,6 +314,88 @@ export interface CustomCostPerToken {
  * @param options - 可选配置：skipProviderTokenCounting + customCostPerToken + service_tier + modelCostMap + reasoningTokens
  * @returns CostResult — 输入/输出/总费用
  */
+/**
+ * 模型峰谷定价配置（写在 deployment 的 model_info.peak_pricing 或 litellm_params.peak_pricing）。
+ *
+ * 基础价（input_cost_per_token 等）按“空闲时段”配置，峰时按 multiplier 上浮。
+ * 对齐 DeepSeek 官方口径：高峰为北京时间周一至周五 9:00-12:00、14:00-18:00，
+ * 其余时段（含周末与法定节假日）为空闲时段，空闲价为高峰价的一半。
+ */
+export interface PeakPricingConfig {
+	/** IANA 时区，缺省 Asia/Shanghai */
+	readonly timezone?: string;
+	/** 峰时窗口；days 为 ISO 星期（1=周一 … 7=周日），start/end 为时区内 HH:mm，左闭右开 */
+	readonly windows: ReadonlyArray<{ readonly days: number[]; readonly start: string; readonly end: string }>;
+	/** 峰时相对基础价（空闲价）的倍数，例如 2 */
+	readonly multiplier: number;
+	/** 法定节假日（YYYY-MM-DD，按时区判定），全天按空闲价；缺省不排除 */
+	readonly holidays?: readonly string[];
+}
+
+const ISO_WEEKDAYS: Readonly<Record<string, number>> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+
+/**
+ * HH:mm 转当日分钟数。
+ * @param value - 时钟文本
+ */
+function clockMinutes(value: string): number {
+	const [hours, minutes] = value.split(":");
+	return Number(hours) * 60 + Number(minutes);
+}
+
+/**
+ * 解析请求时刻对应的价格系数：峰时返回 multiplier，其余返回 1。
+ * 配置缺失或非法时一律返回 1（按基础价计费），避免计费因配置笔误整体失效。
+ * @param config - 峰谷配置
+ * @param at - 请求开始时刻；缺省取当前时间
+ */
+export function resolvePeakMultiplier(config: PeakPricingConfig | undefined, at: Date | undefined): number {
+	if (config === undefined || !(config.multiplier > 1) || !Array.isArray(config.windows) || config.windows.length === 0) {
+		return 1;
+	}
+	const instant = at ?? new Date();
+	const timeZone = config.timezone ?? "Asia/Shanghai";
+	let parts: Intl.DateTimeFormatPart[];
+	try {
+		parts = new Intl.DateTimeFormat("en-US", {
+			timeZone: timeZone,
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			weekday: "short",
+			hour: "2-digit",
+			minute: "2-digit",
+			hourCycle: "h23",
+		}).formatToParts(instant);
+	} catch {
+		return 1;
+	}
+	const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
+	const weekday = ISO_WEEKDAYS[pick("weekday")];
+	if (weekday === undefined) {
+		return 1;
+	}
+	if (config.holidays !== undefined && config.holidays.includes(`${pick("year")}-${pick("month")}-${pick("day")}`)) {
+		return 1;
+	}
+	const minutes = Number(pick("hour")) * 60 + Number(pick("minute"));
+	const inPeakWindow = config.windows.some(
+		(window) => window.days.includes(weekday) && minutes >= clockMinutes(window.start) && minutes < clockMinutes(window.end),
+	);
+	return inPeakWindow ? config.multiplier : 1;
+}
+
+/**
+ * 计算一次请求的分项与总费用。
+ * 价格优先级：部署级 customCostPerToken > 模型价格表 > 内置 PRICE_TABLE；
+ * 命中峰谷配置且请求时刻处于峰时窗口时，输入/输出/缓存单价统一上浮。
+ * @param model - 模型名
+ * @param promptTokens - 输入 token 数
+ * @param completionTokens - 输出 token 数
+ * @param cacheCreationTokens - 缓存写入 token 数
+ * @param cacheReadTokens - 缓存读取 token 数
+ * @param options - 可选计费参数
+ */
 export function costPerToken(
 	model: string,
 	promptTokens: number,
@@ -317,12 +404,20 @@ export function costPerToken(
 	cacheReadTokens = 0,
 	options?:
 		| {
+				/** 跳过上游 token 统计，按字符数启发式估算 */
 				skipProviderTokenCounting?: boolean;
+				/** 部署级 per-token 价格（含可选峰谷配置） */
 				customCostPerToken?: CustomCostPerToken;
+				/** 服务等级，决定价格表字段后缀 */
 				service_tier?: ServiceTier;
+				/** 模型价格表快照 */
 				modelCostMap?: Record<string, ModelCostMapEntry>;
 				/** DIFF-003: completion_tokens_details.reasoning_tokens — 从 output 中扣除 */
 				reasoningTokens?: number;
+				/** 模型峰谷配置；命中峰时按 multiplier 上浮基础价 */
+				peakPricing?: PeakPricingConfig;
+				/** 请求开始时刻，用于判定峰谷；缺省取当前时间 */
+				at?: Date;
 		  }
 		| boolean,
 ): CostResult {
@@ -333,6 +428,11 @@ export function costPerToken(
 	const modelCostMap = typeof options === "object" ? options?.modelCostMap : undefined;
 	// DIFF-003: 从 options 取 reasoningTokens
 	const reasoningTokens = typeof options === "object" ? (options?.reasoningTokens ?? 0) : 0;
+	// 峰谷：基础价按空闲时段配置，峰时统一上浮（含输入、输出与缓存价）
+	const peakMultiplier =
+		typeof options === "object"
+			? resolvePeakMultiplier(options?.peakPricing ?? options?.customCostPerToken?.peak_pricing, options?.at)
+			: 1;
 	// When skipping provider token counting, use heuristic (chars/4) for token estimation
 	const effectivePrompt = skipProviderTokenCounting ? Math.max(1, Math.round(promptTokens / 4)) : promptTokens;
 	const effectiveCompletion = skipProviderTokenCounting ? Math.max(1, Math.round(completionTokens / 4)) : completionTokens;
@@ -340,16 +440,29 @@ export function costPerToken(
 	// GAP: 优先级 1 — customCostPerToken（部署级 per-token override，含 model_info 价格）。
 	// 必须先于 llmux 零计费判定：PY 无 llmux 特判，配置显式价格（即使 0.0）即为真实计费
 	// （生产 model_info 给 gpt-5.6-* 等订阅模型也配置了价格，spend 需按价实算）。
-	if (
-		customCostPerToken?.input_cost_per_token !== undefined ||
-		customCostPerToken?.output_cost_per_token !== undefined ||
-		customCostPerToken?.cache_creation_input_token_cost !== undefined ||
-		customCostPerToken?.cache_read_input_token_cost !== undefined
-	) {
-		const inputPerToken = customCostPerToken.input_cost_per_token ?? 0;
-		const outputPerToken = customCostPerToken.output_cost_per_token ?? 0;
-		const cacheCreatePerToken = customCostPerToken.cache_creation_input_token_cost ?? 0;
-		const cacheReadPerToken = customCostPerToken.cache_read_input_token_cost ?? 0;
+	// UI 新建的 DB 模型会把 input/output_cost_per_token 默认写成 0，这会把模型价格表里
+	// 已知的价格整体抹平（如 minimax/MiniMax-M3 的 919 条请求 spend=0）。仅当自定义价格
+	// "全为 0"且价格表能给出非零价格时回退价格表并留痕一次；其余情况保留显式 0 计费
+	//（自建 / 订阅模型的故意零计费）。
+	const customPrices = [
+		customCostPerToken?.input_cost_per_token,
+		customCostPerToken?.output_cost_per_token,
+		customCostPerToken?.cache_creation_input_token_cost,
+		customCostPerToken?.cache_read_input_token_cost,
+	].filter((value): value is number => value !== undefined);
+	const customIsAllZero = customPrices.length > 0 && customPrices.every((value) => value === 0);
+	const zeroFallbackEntry = customIsAllZero ? lookupCostMapEntry(model, modelCostMap) : undefined;
+	const zeroFallbackHasPrice =
+		zeroFallbackEntry !== undefined &&
+		((zeroFallbackEntry.input_cost_per_token ?? 0) > 0 || (zeroFallbackEntry.output_cost_per_token ?? 0) > 0);
+	if (customIsAllZero && zeroFallbackHasPrice) {
+		warnZeroPriceFallback(model);
+	}
+	if (customPrices.length > 0 && !(customIsAllZero && zeroFallbackHasPrice)) {
+		const inputPerToken = (customCostPerToken?.input_cost_per_token ?? 0) * peakMultiplier;
+		const outputPerToken = (customCostPerToken?.output_cost_per_token ?? 0) * peakMultiplier;
+		const cacheCreatePerToken = (customCostPerToken?.cache_creation_input_token_cost ?? 0) * peakMultiplier;
+		const cacheReadPerToken = (customCostPerToken?.cache_read_input_token_cost ?? 0) * peakMultiplier;
 		const nonCachePrompt = Math.max(0, effectivePrompt - cacheCreationTokens - cacheReadTokens);
 		// DIFF-003: 从 output 扣除 reasoning_tokens（PY: completion_tokens -= reasoning_tokens）
 		const nonReasoningCompletion = Math.max(0, effectiveCompletion - reasoningTokens);
@@ -359,7 +472,7 @@ export function costPerToken(
 		const cacheReadCost = cacheReadTokens * cacheReadPerToken;
 		const cacheInputCost = cacheCreationCost + cacheReadCost;
 		const totalCost = inputCost + outputCost + cacheInputCost;
-		return { cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
+		return { cacheInputCost: cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
 	}
 
 	const costMapEntry = lookupCostMapEntry(model, modelCostMap);
@@ -446,7 +559,7 @@ export function costPerToken(
 	// TS 当前实现按 0 单价处理 = 完全不计费，与 PY 默认行为一致。
 	const nonReasoningCompletion = Math.max(0, effectiveCompletion - reasoningTokens);
 	// DIFF-COST-01: 移除硬编码 tierMultiplier，缺省时 input/output 直接用 lookup 得到的单价。
-	const inputCost = (nonCachePrompt / PER_MILLION) * inputPerMillion;
+	const inputCost = (nonCachePrompt / PER_MILLION) * inputPerMillion * peakMultiplier;
 	// DIFF-COST-01: batch tier 输出 * 0.5
 	// PY `cost_calculator.py:140-159 _get_service_tier_cost_key`：batch 走
 	//   output_cost_per_token_batches / 2（即 output_cost_per_token_batches 字段再除以 2）。
@@ -454,7 +567,7 @@ export function costPerToken(
 	// 缺省（回退 standard）时 output 不应用 0.5 折扣。直接内联 batch+usedTierKey 判定，避免
 	// 多余的 isBatchTier 中间变量。
 	const outputMultiplier = serviceTier === ServiceTier.Batch && usedTierKey ? 0.5 : 1.0;
-	const outputCost = (nonReasoningCompletion / PER_MILLION) * outputPerMillion * outputMultiplier;
+	const outputCost = (nonReasoningCompletion / PER_MILLION) * outputPerMillion * outputMultiplier * peakMultiplier;
 
 	// GAP: 模型级动态 cache 定价（cost_calculator.py 从 model_cost_map 读取
 	//   cache_read_input_token_cost / cache_creation_input_token_cost 字段）。
@@ -471,13 +584,13 @@ export function costPerToken(
 		(costMapEntry?.cache_read_input_token_cost === undefined
 			? CACHE_READ_INPUT_COST_PER_MILLION
 			: costMapEntry.cache_read_input_token_cost * PER_MILLION);
-	const cacheCreationCost = (cacheCreationTokens / PER_MILLION) * cacheCreationPerMillion;
-	const cacheReadCost = (cacheReadTokens / PER_MILLION) * cacheReadPerMillion;
+	const cacheCreationCost = (cacheCreationTokens / PER_MILLION) * cacheCreationPerMillion * peakMultiplier;
+	const cacheReadCost = (cacheReadTokens / PER_MILLION) * cacheReadPerMillion * peakMultiplier;
 
 	const cacheInputCost = cacheCreationCost + cacheReadCost;
 	const totalCost = inputCost + outputCost + cacheInputCost;
 
-	return { cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
+	return { cacheInputCost: cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
 }
 
 /**
@@ -544,4 +657,19 @@ export interface ModelCostMapEntry {
 	 * DIFF-007: above_200k 阶梯定价 — cache read。
 	 */
 	readonly cache_read_input_token_cost_above_200k_tokens?: number;
+}
+
+/** 价格全为 0 的部署回退价格表时只告警一次，避免逐请求刷屏。 */
+const zeroPriceFallbackWarned = new Set<string>();
+
+/**
+ * 记录「部署价格全为 0 已回退价格表」的配置缺口。
+ * @param model - 本次计费的模型名
+ */
+function warnZeroPriceFallback(model: string): void {
+	if (zeroPriceFallbackWarned.has(model)) {
+		return;
+	}
+	zeroPriceFallbackWarned.add(model);
+	logger.warn(`模型配置价格全为 0，已回退模型价格表: ${model}`);
 }

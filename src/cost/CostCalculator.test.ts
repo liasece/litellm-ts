@@ -1,7 +1,14 @@
 /**
  * CostCalculator 测试
  */
-import { costPerToken, lookupModelCostPerToken, ServiceTier } from "./CostCalculator";
+import {
+	costPerToken,
+	lookupModelCostPerToken,
+	resolvePeakMultiplier,
+	ServiceTier,
+	type CustomCostPerToken,
+	type PeakPricingConfig,
+} from "./CostCalculator";
 import { modelCostMapService } from "./ModelCostMapService";
 
 describe("costPerToken", () => {
@@ -392,5 +399,91 @@ describe("costPerToken", () => {
 				expect(result.totalCost).toBeCloseTo(17);
 			});
 		});
+	});
+});
+
+describe("costPerToken zero-only deployment pricing", () => {
+	it("falls back to the bundled price table when a deployment only declares zero prices", () => {
+		// UI 新建 DB 模型默认写入 0/0，会把已知模型价格抹平；价格表命中时回退按表计费。
+		const result = costPerToken("minimax/MiniMax-M3", 1_000_000, 1_000_000, 0, 0, {
+			customCostPerToken: { input_cost_per_token: 0, output_cost_per_token: 0 },
+		});
+		expect(result.inputCost).toBeCloseTo(0.3, 6);
+		expect(result.outputCost).toBeCloseTo(1.2, 6);
+	});
+
+	it("keeps explicit zero pricing when the price table has no entry", () => {
+		const result = costPerToken("self-hosted/qwen-next-iq3", 1_000_000, 1_000_000, 0, 0, {
+			customCostPerToken: { input_cost_per_token: 0, output_cost_per_token: 0 },
+		});
+		expect(result.totalCost).toBe(0);
+	});
+
+	it("still prefers non-zero deployment prices over the price table", () => {
+		const result = costPerToken("minimax/MiniMax-M3", 1_000_000, 1_000_000, 0, 0, {
+			customCostPerToken: { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6 },
+		});
+		expect(result.inputCost).toBeCloseTo(1, 6);
+		expect(result.outputCost).toBeCloseTo(2, 6);
+	});
+});
+
+describe("峰谷定价", () => {
+	const config: PeakPricingConfig = {
+		timezone: "Asia/Shanghai",
+		multiplier: 2,
+		windows: [
+			{ days: [1, 2, 3, 4, 5], start: "09:00", end: "12:00" },
+			{ days: [1, 2, 3, 4, 5], start: "14:00", end: "18:00" },
+		],
+	};
+
+	it("在峰时窗口内返回配置倍率", () => {
+		// 2026-10-29 是周四，02:00Z = 北京时间 10:00
+		expect(resolvePeakMultiplier(config, new Date("2026-10-29T02:00:00Z"))).toBe(2);
+		expect(resolvePeakMultiplier(config, new Date("2026-10-29T07:00:00Z"))).toBe(2);
+	});
+
+	it("午休、清晨与夜间回到基础价", () => {
+		expect(resolvePeakMultiplier(config, new Date("2026-10-29T04:30:00Z"))).toBe(1);
+		expect(resolvePeakMultiplier(config, new Date("2026-10-29T00:30:00Z"))).toBe(1);
+		expect(resolvePeakMultiplier(config, new Date("2026-10-29T11:00:00Z"))).toBe(1);
+	});
+
+	it("周末全天按基础价，即使落在工作日的时刻区间内", () => {
+		// 2026-10-31 是周六，02:00Z = 北京时间 10:00
+		expect(resolvePeakMultiplier(config, new Date("2026-10-31T02:00:00Z"))).toBe(1);
+	});
+
+	it("法定节假日全天按基础价", () => {
+		const holidayConfig: PeakPricingConfig = { ...config, holidays: ["2026-10-29"] };
+		expect(resolvePeakMultiplier(holidayConfig, new Date("2026-10-29T02:00:00Z"))).toBe(1);
+	});
+
+	it("配置缺失或非法时按基础价计费", () => {
+		expect(resolvePeakMultiplier(undefined, new Date("2026-10-29T02:00:00Z"))).toBe(1);
+		expect(resolvePeakMultiplier({ ...config, multiplier: 1 }, new Date("2026-10-29T02:00:00Z"))).toBe(1);
+		expect(resolvePeakMultiplier({ ...config, windows: [] }, new Date("2026-10-29T02:00:00Z"))).toBe(1);
+	});
+
+	it("峰时按倍率上浮部署自定义单价", () => {
+		const customCostPerToken: CustomCostPerToken = {
+			input_cost_per_token: 1e-6,
+			output_cost_per_token: 2e-6,
+			peak_pricing: config,
+		};
+		const peak = costPerToken("deepseek-v4-flash", 1_000_000, 500_000, 0, 0, {
+			customCostPerToken,
+			at: new Date("2026-10-29T02:00:00Z"),
+		});
+		expect(peak.inputCost).toBeCloseTo(2, 10);
+		expect(peak.outputCost).toBeCloseTo(2, 10);
+		expect(peak.totalCost).toBeCloseTo(4, 10);
+
+		const offPeak = costPerToken("deepseek-v4-flash", 1_000_000, 500_000, 0, 0, {
+			customCostPerToken,
+			at: new Date("2026-10-29T00:30:00Z"),
+		});
+		expect(offPeak.totalCost).toBeCloseTo(2, 10);
 	});
 });

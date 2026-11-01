@@ -15,7 +15,7 @@
  */
 
 import { defaultProviderRegistry } from "../providers/ProviderRegistry";
-import type { CustomCostPerToken } from "../cost/CostCalculator";
+import type { CustomCostPerToken, PeakPricingConfig } from "../cost/CostCalculator";
 import type { Deployment } from "../types/router";
 
 /** 实际执行 deployment 的 spend 归因信息（挂在 Router 结果的 `_spendInfo` 字段） */
@@ -34,6 +34,8 @@ export interface DeploymentSpendInfo {
 	readonly deploymentModel: string;
 	/** deployment 自定义价格（per-token）；无任何价格配置时为 undefined */
 	readonly customCostPerToken?: CustomCostPerToken;
+	/** deployment 峰谷定价配置；未配置时为 undefined（按基础价计费） */
+	readonly peakPricing?: PeakPricingConfig;
 }
 
 /**
@@ -59,15 +61,32 @@ export function extractDeploymentCustomCost(deployment: Deployment): CustomCostP
 			(params["cache_read_input_token_cost"] as number | undefined) ??
 			modelInfo?.cache_read_input_token_cost,
 	};
+	const peakPricing = extractDeploymentPeakPricing(deployment);
 	if (
 		merged.input_cost_per_token === undefined &&
 		merged.output_cost_per_token === undefined &&
 		merged.cache_creation_input_token_cost === undefined &&
-		merged.cache_read_input_token_cost === undefined
+		merged.cache_read_input_token_cost === undefined &&
+		peakPricing === undefined
 	) {
 		return undefined;
 	}
-	return merged;
+	// 峰谷配置随价格一起透传：部分端点的 cost 计算只认 custom_cost_per_token
+	return peakPricing === undefined ? merged : { ...merged, peak_pricing: peakPricing };
+}
+
+/**
+ * 提取 deployment 的峰谷定价配置。
+ * 与价格字段一致：model_info 优先，其次 litellm_params 平铺字段。
+ * @param deployment - 实际执行的 deployment
+ */
+export function extractDeploymentPeakPricing(deployment: Deployment): PeakPricingConfig | undefined {
+	const raw = deployment.model_info?.peak_pricing ?? deployment.litellm_params.peak_pricing;
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		return undefined;
+	}
+	const candidate = raw as PeakPricingConfig;
+	return Array.isArray(candidate.windows) && typeof candidate.multiplier === "number" ? candidate : undefined;
 }
 
 /**
@@ -86,5 +105,6 @@ export function buildDeploymentSpendInfo(deployment: Deployment, apiBase: string
 		modelId: deployment.model_info?.id,
 		deploymentModel: params.model,
 		customCostPerToken: extractDeploymentCustomCost(deployment),
+		peakPricing: extractDeploymentPeakPricing(deployment),
 	};
 }
