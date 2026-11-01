@@ -60,6 +60,8 @@ export async function runOpenAIBuiltinCapabilityAgentLoop(
 		preparedWeb?: PreparedWebRequest<Record<string, unknown>>;
 		preparedVision?: PreparedVisionRequest<Record<string, unknown>>;
 		preparedImageGeneration?: PreparedImageGenerationRequest<Record<string, unknown>>;
+		/** 工具 worker 调用：始终非流式，输出不进入下游流。 */
+		workerComplete?: Completion;
 	},
 ): Promise<Record<string, unknown>> {
 	const preparedWeb = options.preparedWeb ?? (await prepareOpenAIWebRequest(router, model, messages));
@@ -101,13 +103,13 @@ export async function runOpenAIBuiltinCapabilityAgentLoop(
 				audit: options.visionAudit,
 				imageStore: options.visionImageStore,
 				preparedRequest: options.preparedVision,
-				workerComplete: complete,
+				workerComplete: options.workerComplete ?? complete,
 			},
 		);
 	return runOpenAIWebAgentLoop(router, model, messages, optionalParams, completeWithVision, {
 		audit: options.webAudit,
 		preparedRequest: preparedWeb,
-		workerComplete: complete,
+		workerComplete: options.workerComplete ?? complete,
 	});
 }
 

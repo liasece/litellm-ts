@@ -1,5 +1,5 @@
 import { ApiError } from "../core/api/ApiError";
-import type { Router } from "../router/Router";
+import { ROUTER_CALL_TYPE_PARAM, ROUTER_RESPONSES_BODY_PARAM, type Router } from "../router/Router";
 import type { Message } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
 import { extractAssistant, parseWebArguments, type WebToolRequest } from "./WebCapabilityProtocol";
@@ -47,6 +47,57 @@ function textFromCompletion(result: Record<string, unknown>): string {
 		}
 	}
 	throw ApiError.unavailable("联网执行模型没有返回文本结果");
+}
+
+/**
+ * 上游 model 是否具备原生 Responses 通道。
+ *
+ * 托管 web_search 工具只能通过 Responses 协议下发；Chat Completions 的
+ * web_search_options 会被多数上游忽略，worker 于是拿到无法联网的自述文本。
+ * @param router
+ * @param model
+ */
+function supportsNativeResponses(router: Router, model: string): boolean {
+	const probe = (router as unknown as { supportsNativeResponses?: (value: string) => boolean }).supportsNativeResponses;
+	if (typeof probe !== 'function') {
+		return false;
+	}
+	try {
+		return probe.call(router, model) === true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 从原生 Responses 结果里取出最终文本。
+ * @param result - 原生 Responses 响应体
+ * @throws ApiError 上游没有返回任何文本时抛出，交由 fallback 链继续尝试
+ */
+function textFromResponsesCompletion(result: Record<string, unknown>): string {
+	const outputText = result['output_text'];
+	if (typeof outputText === 'string' && outputText.trim()) {
+		return outputText.trim();
+	}
+	const output = Array.isArray(result['output']) ? (result['output'] as Array<Record<string, unknown>>) : [];
+	const parts: string[] = [];
+	for (const item of output) {
+		if (typeof item !== 'object' || item === null || item['type'] !== 'message') {
+			continue;
+		}
+		const content = Array.isArray(item['content']) ? (item['content'] as Array<Record<string, unknown>>) : [];
+		for (const part of content) {
+			const text = part?.['text'];
+			if (typeof text === 'string' && text.trim()) {
+				parts.push(text);
+			}
+		}
+	}
+	const joined = parts.join('\n').trim();
+	if (joined) {
+		return joined;
+	}
+	throw ApiError.unavailable('联网执行模型没有返回文本结果');
 }
 
 function workerPrompt(request: WebToolRequest): string {
@@ -117,14 +168,34 @@ export async function executeWebToolCall(
 	let lastError: unknown;
 	for (const capabilityModel of models) {
 		const startTime = new Date();
-		const requestBody = {
-			stream: false,
-			max_completion_tokens: binding.maxOutputTokens,
-			web_search_options: { search_context_size: "high" },
-		};
+		const nativeResponses = supportsNativeResponses(router, capabilityModel);
+		const requestBody: Record<string, unknown> = nativeResponses
+			? {
+					stream: false,
+					max_output_tokens: binding.maxOutputTokens,
+					tools: [{ type: "web_search" }],
+				}
+			: {
+					stream: false,
+					max_completion_tokens: binding.maxOutputTokens,
+					web_search_options: { search_context_size: "high" },
+				};
+		const completionParams: Record<string, unknown> = nativeResponses
+			? {
+					...requestBody,
+					[ROUTER_CALL_TYPE_PARAM]: "responses",
+					[ROUTER_RESPONSES_BODY_PARAM]: {
+						model: capabilityModel,
+						input: [{ role: "user", content: workerPrompt(request) }],
+						tools: [{ type: "web_search" }],
+						stream: false,
+						max_output_tokens: binding.maxOutputTokens,
+					},
+				}
+			: requestBody;
 		try {
-			const modelResponse = await complete(capabilityModel, messages, requestBody);
-			const text = textFromCompletion(modelResponse);
+			const modelResponse = await complete(capabilityModel, messages, completionParams);
+			const text = nativeResponses ? textFromResponsesCompletion(modelResponse) : textFromCompletion(modelResponse);
 			const endTime = new Date();
 			const reference = await recordWebAttempt(options.audit, {
 				request: request,

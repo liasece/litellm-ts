@@ -8,14 +8,17 @@ import {
 } from "./ImageGenerationCapability";
 import { MemoryVisionImageStore } from "./VisionImageStore";
 
-function completion(message: Record<string, unknown>) {
+function completion(
+	message: Record<string, unknown>,
+	usage: Record<string, unknown> = { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+) {
 	return {
 		id: "chatcmpl-image-capability",
 		object: "chat.completion",
 		created: 1,
 		model: "text-model",
 		choices: [{ index: 0, finish_reason: "stop", message: message }],
-		usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+		usage: usage,
 	};
 }
 
@@ -56,33 +59,57 @@ describe("ImageGenerationCapability", () => {
 				created: 1,
 				output_format: "png",
 				data: [{ b64_json: "AA==" }],
-				usage: { input_tokens: 7, output_tokens: 11, total_tokens: 18 },
+				usage: {
+					input_tokens: 7,
+					output_tokens: 11,
+					total_tokens: 18,
+					input_tokens_details: { cached_tokens: 4 },
+					output_tokens_details: { reasoning_tokens: 2 },
+				},
 			};
 		});
 		const router = fakeRouter({ imageGeneration } as unknown as Partial<Router>);
 		const complete = jest
 			.fn()
 			.mockResolvedValueOnce(
-				completion({
-					role: "assistant",
-					content: null,
-					tool_calls: [
-						{
-							id: "call-create",
-							type: "function",
-							function: {
-								name: PRIVATE_IMAGE_CREATE_TOOL_NAME,
-								arguments: JSON.stringify({ prompt: "A tabby cat with an orange scarf", quality: "high" }),
+				completion(
+					{
+						role: "assistant",
+						content: null,
+						tool_calls: [
+							{
+								id: "call-create",
+								type: "function",
+								function: {
+									name: PRIVATE_IMAGE_CREATE_TOOL_NAME,
+									arguments: JSON.stringify({ prompt: "A tabby cat with an orange scarf", quality: "high" }),
+								},
 							},
-						},
-					],
-				}),
+						],
+					},
+					{
+						prompt_tokens: 100,
+						completion_tokens: 10,
+						total_tokens: 110,
+						prompt_tokens_details: { cached_tokens: 80 },
+						completion_tokens_details: { reasoning_tokens: 3 },
+					},
+				),
 			)
 			.mockImplementationOnce(async (_model, messages) => {
 				const toolMessage = messages.find((message: Record<string, unknown>) => message["role"] === "tool");
 				expect(JSON.parse(String(toolMessage?.["content"]))).toMatchObject({ status: "completed", action: "create" });
 				expect(JSON.stringify(messages)).not.toContain("AA==");
-				return completion({ role: "assistant", content: "I created the requested image." });
+				return completion(
+					{ role: "assistant", content: "I created the requested image." },
+					{
+						prompt_tokens: 200,
+						completion_tokens: 20,
+						total_tokens: 220,
+						prompt_tokens_details: { cached_tokens: 160 },
+						completion_tokens_details: { reasoning_tokens: 7 },
+					},
+				);
 			});
 
 		const result = await runOpenAIImageGenerationAgentLoop(
@@ -95,6 +122,13 @@ describe("ImageGenerationCapability", () => {
 		);
 
 		expect(imageGeneration).toHaveBeenCalledTimes(2);
+		expect(result["usage"]).toMatchObject({
+			prompt_tokens: 307,
+			completion_tokens: 41,
+			total_tokens: 348,
+			prompt_tokens_details: { cached_tokens: 244 },
+			completion_tokens_details: { reasoning_tokens: 12 },
+		});
 		const message = (result["choices"] as Array<Record<string, unknown>>)[0]!["message"] as Record<string, unknown>;
 		expect(message["content"]).toBe("I created the requested image.");
 		expect(message["image"]).toMatchObject({ url: "data:image/png;base64,AA==" });
@@ -153,7 +187,62 @@ describe("ImageGenerationCapability", () => {
 			preparedRequest: prepared,
 		});
 
-		expect((router.imageEdit as jest.Mock)).toHaveBeenCalledTimes(1);
+		expect(router.imageEdit as jest.Mock).toHaveBeenCalledTimes(1);
 		expect(result["_builtinGeneratedImages"]).toEqual([expect.objectContaining({ action: "edit", outputFormat: "webp" })]);
+	});
+});
+
+describe("private image generation tool call recovery", () => {
+	beforeEach(() => {
+		jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({
+			image_generation: {
+				enabled: true,
+				always_inject: true,
+				handler_model: "image-primary",
+				fallback_models: ["image-fallback"],
+				max_iterations: 3,
+			},
+		});
+	});
+
+	afterEach(() => jest.restoreAllMocks());
+
+	it("hands invalid create arguments back to the model instead of failing the request", async () => {
+		const imageGeneration = jest.fn();
+		const router = fakeRouter({ imageGeneration } as unknown as Partial<Router>);
+		let mainTurn = 0;
+		const complete = jest.fn(async (_model: string, messages: any[]) => {
+			mainTurn++;
+			if (mainTurn === 1) {
+				return completion({
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_create_invalid",
+							type: "function",
+							function: { name: PRIVATE_IMAGE_CREATE_TOOL_NAME, arguments: "{}" },
+						},
+					],
+				});
+			}
+			const toolMessage = [...messages].reverse().find((message) => message["role"] === "tool");
+			expect(toolMessage).toMatchObject({ tool_call_id: "call_create_invalid" });
+			expect(String(toolMessage?.["content"])).toContain("图片生成参数缺少 prompt");
+			return completion({ role: "assistant", content: "Please describe the image you want." });
+		});
+
+		const result = await runOpenAIImageGenerationAgentLoop(
+			router,
+			"text-model",
+			[{ role: "user", content: "Draw something" }],
+			{},
+			complete,
+			{ imageStore: new MemoryVisionImageStore() },
+		);
+
+		expect(imageGeneration).not.toHaveBeenCalled();
+		expect(mainTurn).toBe(2);
+		expect(JSON.stringify(result)).toContain("Please describe the image you want.");
 	});
 });

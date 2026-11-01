@@ -692,3 +692,69 @@ describe("VisionCapability", () => {
 		expect(turn).toBe(2);
 	});
 });
+
+
+describe("private vision tool call recovery", () => {
+	beforeEach(() => {
+		jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({
+			vision: {
+				enabled: true,
+				handler_model: "gpt-5.4-mini",
+				fallback_models: ["gpt-5.4"],
+				max_iterations: 3,
+				max_output_tokens: 1024,
+			},
+		});
+	});
+
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("hands invalid private vision arguments back to the model instead of failing the request", async () => {
+		let mainTurn = 0;
+		const workerComplete = jest.fn();
+		const complete = jest.fn(async (_model: string, messages: any[]) => {
+			mainTurn++;
+			if (mainTurn === 1) {
+				return completion({
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_vision_invalid",
+							type: "function",
+							function: { name: PRIVATE_VISION_TOOL_NAME, arguments: "{invalid" },
+						},
+					],
+				});
+			}
+			const toolMessage = [...messages].reverse().find((message) => message["role"] === "tool");
+			expect(toolMessage).toMatchObject({ tool_call_id: "call_vision_invalid" });
+			expect(String(toolMessage?.["content"])).toContain("图片检查参数");
+			return completion({ role: "assistant", content: "The screenshot could not be inspected." });
+		});
+
+		const result = await runOpenAIVisionAgentLoop(
+			fakeRouter(),
+			"deepseek-v4-flash",
+			[
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "Diagnose this screenshot" },
+						{ type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
+					],
+				},
+			],
+			{},
+			complete,
+			{ workerComplete },
+		);
+
+		expect(workerComplete).not.toHaveBeenCalled();
+		expect(mainTurn).toBe(2);
+		expect(JSON.stringify(stripInternalFields(result))).toContain("could not be inspected");
+		expect(JSON.stringify(stripInternalFields(result))).not.toContain(PRIVATE_VISION_TOOL_NAME);
+	});
+});

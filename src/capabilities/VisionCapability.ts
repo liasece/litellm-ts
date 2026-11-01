@@ -1,8 +1,10 @@
+import { addResponseUsage } from "../core/utils/usage";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
-import type { Message, ToolCall, Usage } from "../types/openai";
+import type { Message, ToolCall } from "../types/openai";
 import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
+import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
 import { createVisionImageStore, storeVisionImageUrl, type StoredVisionImage, type VisionImageStore } from "./VisionImageStore";
 
 export const PRIVATE_VISION_TOOL_NAME = "litellm__vision_inspect";
@@ -540,29 +542,6 @@ function textFromCompletion(result: Record<string, unknown>): string {
 	throw ApiError.unavailable("识图模型没有返回文本结果");
 }
 
-function addUsage(target: Record<string, unknown>, source: Record<string, unknown>): void {
-	const targetUsage = target["usage"] as (Usage & Record<string, number>) | undefined;
-	const sourceUsage = source["usage"] as (Usage & Record<string, number>) | undefined;
-	if (!targetUsage || !sourceUsage) {
-		return;
-	}
-	const targetUsesAnthropic = typeof targetUsage["input_tokens"] === "number" || typeof targetUsage["output_tokens"] === "number";
-	if (targetUsesAnthropic) {
-		targetUsage["input_tokens"] = (targetUsage["input_tokens"] ?? 0) + (sourceUsage["input_tokens"] ?? sourceUsage.prompt_tokens ?? 0);
-		targetUsage["output_tokens"] =
-			(targetUsage["output_tokens"] ?? 0) + (sourceUsage["output_tokens"] ?? sourceUsage.completion_tokens ?? 0);
-	} else {
-		targetUsage.prompt_tokens += sourceUsage.prompt_tokens ?? sourceUsage["input_tokens"] ?? 0;
-		targetUsage.completion_tokens += sourceUsage.completion_tokens ?? sourceUsage["output_tokens"] ?? 0;
-		targetUsage.total_tokens +=
-			sourceUsage.total_tokens ??
-			(sourceUsage.prompt_tokens ?? sourceUsage["input_tokens"] ?? 0) +
-				(sourceUsage.completion_tokens ?? sourceUsage["output_tokens"] ?? 0);
-	}
-	if (typeof sourceUsage.cost === "number") {
-		targetUsage.cost = (targetUsage.cost ?? 0) + sourceUsage.cost;
-	}
-}
 
 /**
  * Execute a model-authored private vision request through the configured worker.
@@ -788,7 +767,7 @@ export async function runOpenAIVisionAgentLoop(
 		const privateCalls = calls.filter((call) => call.function?.name === PRIVATE_VISION_TOOL_NAME);
 		if (privateCalls.length === 0) {
 			for (const prior of consumed) {
-				addUsage(result, prior);
+				addResponseUsage(result, prior);
 			}
 			return result;
 		}
@@ -799,18 +778,26 @@ export async function runOpenAIVisionAgentLoop(
 		transcript.push({ ...assistant, tool_calls: privateCalls });
 		consumed.push(result);
 		for (const call of privateCalls) {
-			const executed = await executeVisionToolCall(
-				router,
-				prepared.binding,
-				prepared.images,
-				call.function.arguments,
-				options.workerComplete ?? complete,
-				{
-					audit: options.audit,
-					toolCallId: call.id,
-					imageStore: prepared.imageStore,
-				},
+			const outcome = await capturePrivateToolCallOutcome(() =>
+				executeVisionToolCall(
+					router,
+					prepared.binding,
+					prepared.images,
+					call.function.arguments,
+					options.workerComplete ?? complete,
+					{
+						audit: options.audit,
+						toolCallId: call.id,
+						imageStore: prepared.imageStore,
+					},
+				),
 			);
+			pendingToolCallIds.push(call.id);
+			if (outcome.status === "argument_error") {
+				transcript.push({ role: "tool", tool_call_id: call.id, content: outcome.text });
+				continue;
+			}
+			const executed = outcome.result;
 			const args = parseVisionArguments(call.function.arguments);
 			const internalCall = {
 				type: "builtin_capability",
@@ -830,7 +817,6 @@ export async function runOpenAIVisionAgentLoop(
 			};
 			internalCalls.push(internalCall);
 			pendingInternalCalls.push(internalCall);
-			pendingToolCallIds.push(call.id);
 			transcript.push({
 				role: "tool",
 				tool_call_id: call.id,
@@ -864,11 +850,18 @@ export async function executeAnthropicVisionCalls(
 	const toolResults = [];
 	for (const toolUse of toolUses) {
 		const rawInput = anthropicVisionInputArguments(toolUse["input"]);
-		const executed = await executeVisionToolCall(router, prepared.binding, prepared.images, rawInput, undefined, {
-			audit: audit,
-			toolCallId: String(toolUse["id"] ?? "vision_call"),
-			imageStore: prepared.imageStore,
-		});
+		const outcome = await capturePrivateToolCallOutcome(() =>
+			executeVisionToolCall(router, prepared.binding, prepared.images, rawInput, undefined, {
+				audit: audit,
+				toolCallId: String(toolUse["id"] ?? "vision_call"),
+				imageStore: prepared.imageStore,
+			}),
+		);
+		if (outcome.status === "argument_error") {
+			toolResults.push({ type: "tool_result", tool_use_id: toolUse["id"], content: outcome.text, is_error: true });
+			continue;
+		}
+		const executed = outcome.result;
 		const args = parseVisionArguments(rawInput);
 		internalCalls.push({
 			type: "builtin_capability",
@@ -1008,7 +1001,7 @@ export async function runAnthropicVisionAgentLoop(
 		const continuation = await executeAnthropicVisionCalls(router, prepared, response, audit, internalCalls);
 		if (continuation.length === 0) {
 			for (const consumed of consumedResponses) {
-				addUsage(response, consumed);
+				addResponseUsage(response, consumed);
 			}
 			return { response: response, body: body };
 		}

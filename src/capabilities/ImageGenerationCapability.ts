@@ -1,12 +1,14 @@
+import { addResponseUsage } from "../core/utils/usage";
 /* eslint-disable jsdoc/check-alignment, jsdoc/multiline-blocks */
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
 import { calculateAndSetCost } from "../spend/SpendTracker";
-import type { Message, ModelResponse, ToolCall, Usage } from "../types/openai";
+import type { Message, ModelResponse, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
 import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
+import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
 import { createVisionImageStore, storeVisionImageUrl, type StoredVisionImage, type VisionImageStore } from "./VisionImageStore";
 
 export const PRIVATE_IMAGE_CREATE_TOOL_NAME = "litellm__image_create";
@@ -468,24 +470,6 @@ async function normalizeGeneratedImages(
 	return result;
 }
 
-function addUsage(target: Record<string, unknown>, source: Record<string, unknown>): void {
-	const targetUsage = target["usage"] as (Usage & Record<string, number>) | undefined;
-	const sourceUsage = source["usage"] as (Usage & Record<string, number>) | undefined;
-	if (!targetUsage || !sourceUsage) {
-		return;
-	}
-	targetUsage.prompt_tokens = (targetUsage.prompt_tokens ?? 0) + (sourceUsage.prompt_tokens ?? sourceUsage["input_tokens"] ?? 0);
-	targetUsage.completion_tokens =
-		(targetUsage.completion_tokens ?? 0) + (sourceUsage.completion_tokens ?? sourceUsage["output_tokens"] ?? 0);
-	targetUsage.total_tokens =
-		(targetUsage.total_tokens ?? 0) +
-		(sourceUsage.total_tokens ??
-			(sourceUsage.prompt_tokens ?? sourceUsage["input_tokens"] ?? 0) +
-				(sourceUsage.completion_tokens ?? sourceUsage["output_tokens"] ?? 0));
-	if (typeof sourceUsage.cost === "number") {
-		targetUsage.cost = (targetUsage.cost ?? 0) + sourceUsage.cost;
-	}
-}
 
 function appendGeneratedImages(result: Record<string, unknown>, images: BuiltinGeneratedImage[]): void {
 	const existing = Array.isArray(result["_builtinGeneratedImages"]) ? (result["_builtinGeneratedImages"] as BuiltinGeneratedImage[]) : [];
@@ -730,7 +714,7 @@ export async function runOpenAIImageGenerationAgentLoop(
 		const calls = privateCallsFromAssistant(assistant);
 		if (calls.length === 0) {
 			for (const prior of consumed) {
-				addUsage(result, prior);
+				addResponseUsage(result, prior);
 			}
 			appendGeneratedImages(result, generated);
 			return result;
@@ -738,20 +722,27 @@ export async function runOpenAIImageGenerationAgentLoop(
 		transcript.push({ ...assistant, tool_calls: calls });
 		consumed.push(result);
 		for (const call of calls) {
-			const executed = await executeImageGenerationToolCall(
-				router,
-				prepared.binding,
-				prepared.images,
-				call.function.name,
-				call.function.arguments,
-				{ audit: options.audit, toolCallId: call.id, imageStore: prepared.imageStore },
+			const outcome = await capturePrivateToolCallOutcome(() =>
+				executeImageGenerationToolCall(
+					router,
+					prepared.binding,
+					prepared.images,
+					call.function.name,
+					call.function.arguments,
+					{ audit: options.audit, toolCallId: call.id, imageStore: prepared.imageStore },
+				),
 			);
+			pendingToolCallIds.push(call.id);
+			if (outcome.status === "argument_error") {
+				transcript.push({ role: "tool", tool_call_id: call.id, content: outcome.text });
+				continue;
+			}
+			const executed = outcome.result;
 			generated.push(...executed.images);
 			consumed.push(executed.raw);
 			for (const image of executed.images) {
 				prepared.images.set(image.ref, (await prepared.imageStore.get(image.ref))!);
 			}
-			pendingToolCallIds.push(call.id);
 			transcript.push({ role: "tool", tool_call_id: call.id, content: executed.text });
 		}
 	}
@@ -819,7 +810,7 @@ export async function runAnthropicImageGenerationAgentLoop(
 		);
 		if (toolUses.length === 0) {
 			for (const prior of consumed) {
-				addUsage(response, prior);
+				addResponseUsage(response, prior);
 			}
 			appendAnthropicGeneratedImages(response, generated);
 			return { response: response, body: requestBody };
@@ -827,14 +818,21 @@ export async function runAnthropicImageGenerationAgentLoop(
 		consumed.push(response);
 		const toolResults = [];
 		for (const use of toolUses) {
-			const executed = await executeImageGenerationToolCall(
-				router,
-				prepared.binding,
-				prepared.images,
-				String(use["name"]),
-				anthropicInputArguments(use["input"]),
-				{ audit: options.audit, toolCallId: String(use["id"] ?? "image_generation_call"), imageStore: prepared.imageStore },
+			const outcome = await capturePrivateToolCallOutcome(() =>
+				executeImageGenerationToolCall(
+					router,
+					prepared.binding,
+					prepared.images,
+					String(use["name"]),
+					anthropicInputArguments(use["input"]),
+					{ audit: options.audit, toolCallId: String(use["id"] ?? "image_generation_call"), imageStore: prepared.imageStore },
+				),
 			);
+			if (outcome.status === "argument_error") {
+				toolResults.push({ type: "tool_result", tool_use_id: use["id"], content: outcome.text, is_error: true });
+				continue;
+			}
+			const executed = outcome.result;
 			generated.push(...executed.images);
 			consumed.push(executed.raw);
 			for (const image of executed.images) {

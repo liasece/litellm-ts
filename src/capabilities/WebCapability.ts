@@ -1,9 +1,11 @@
+import { addResponseUsage } from "../core/utils/usage";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
-import type { Message, ToolCall, Usage } from "../types/openai";
+import type { Message, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
 import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
+import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
 import { executeWebToolCall } from "./WebCapabilityExecution";
 import {
 	anthropicInput,
@@ -167,28 +169,6 @@ export async function prepareAnthropicWebRequest(
 	};
 }
 
-function addUsage(target: Record<string, unknown>, source: Record<string, unknown>): void {
-	const targetUsage = target["usage"] as (Usage & Record<string, number>) | undefined;
-	const sourceUsage = source["usage"] as (Usage & Record<string, number>) | undefined;
-	if (!targetUsage || !sourceUsage) {
-		return;
-	}
-	if (typeof targetUsage["input_tokens"] === "number" || typeof targetUsage["output_tokens"] === "number") {
-		targetUsage["input_tokens"] = (targetUsage["input_tokens"] ?? 0) + (sourceUsage["input_tokens"] ?? sourceUsage.prompt_tokens ?? 0);
-		targetUsage["output_tokens"] =
-			(targetUsage["output_tokens"] ?? 0) + (sourceUsage["output_tokens"] ?? sourceUsage.completion_tokens ?? 0);
-	} else {
-		targetUsage.prompt_tokens += sourceUsage.prompt_tokens ?? sourceUsage["input_tokens"] ?? 0;
-		targetUsage.completion_tokens += sourceUsage.completion_tokens ?? sourceUsage["output_tokens"] ?? 0;
-		targetUsage.total_tokens +=
-			sourceUsage.total_tokens ??
-			(sourceUsage.prompt_tokens ?? sourceUsage["input_tokens"] ?? 0) +
-				(sourceUsage.completion_tokens ?? sourceUsage["output_tokens"] ?? 0);
-	}
-	if (typeof sourceUsage.cost === "number") {
-		targetUsage.cost = (targetUsage.cost ?? 0) + sourceUsage.cost;
-	}
-}
 
 /**
  * Full hidden OpenAI-style web capability loop.
@@ -270,7 +250,7 @@ export async function runOpenAIWebAgentLoop(
 		const privateCalls = calls.filter((call) => isPrivateWebTool(call.function?.name));
 		if (privateCalls.length === 0) {
 			for (const prior of consumed) {
-				addUsage(result, prior);
+				addResponseUsage(result, prior);
 			}
 			return result;
 		}
@@ -281,16 +261,18 @@ export async function runOpenAIWebAgentLoop(
 		transcript.push({ ...assistant, tool_calls: privateCalls });
 		consumed.push(result);
 		for (const call of privateCalls) {
-			const executed = await executeWebToolCall(
-				router,
-				binding,
-				call.function.name,
-				call.function.arguments,
-				options.workerComplete,
-				{ audit: options.audit, toolCallId: call.id },
+			const outcome = await capturePrivateToolCallOutcome(() =>
+				executeWebToolCall(router, binding, call.function.name, call.function.arguments, options.workerComplete, {
+					audit: options.audit,
+					toolCallId: call.id,
+				}),
 			);
 			pendingToolCallIds.push(call.id);
-			transcript.push({ role: "tool", tool_call_id: call.id, content: executed.text });
+			transcript.push({
+				role: "tool",
+				tool_call_id: call.id,
+				content: outcome.status === "ok" ? outcome.result.text : outcome.text,
+			});
 		}
 	}
 	throw ApiError.unavailable(`网络处理超过 ${binding.maxIterations} 轮仍未完成`);
@@ -357,7 +339,7 @@ export async function runAnthropicWebAgentLoop(
 		const toolUses = content.filter((block) => block?.["type"] === "tool_use" && isPrivateWebTool(block["name"]));
 		if (toolUses.length === 0) {
 			for (const prior of consumed) {
-				addUsage(response, prior);
+				addResponseUsage(response, prior);
 			}
 			return { response: response, body: body };
 		}
@@ -365,13 +347,19 @@ export async function runAnthropicWebAgentLoop(
 		const toolResults: Record<string, unknown>[] = [];
 		for (const toolUse of toolUses) {
 			const name = String(toolUse["name"]);
-			const executed = await executeWebToolCall(router, binding, name, anthropicInput(toolUse["input"]), workerComplete, {
-				audit: audit,
-				toolCallId: String(toolUse["id"] ?? "web_call"),
-			});
 			const id = String(toolUse["id"] ?? "web_call");
+			const outcome = await capturePrivateToolCallOutcome(() =>
+				executeWebToolCall(router, binding, name, anthropicInput(toolUse["input"]), workerComplete, {
+					audit: audit,
+					toolCallId: id,
+				}),
+			);
 			pendingToolCallIds.push(id);
-			toolResults.push({ type: "tool_result", tool_use_id: id, content: executed.text });
+			toolResults.push(
+				outcome.status === "ok"
+					? { type: "tool_result", tool_use_id: id, content: outcome.result.text }
+					: { type: "tool_result", tool_use_id: id, content: outcome.text, is_error: true },
+			);
 		}
 		const privateContent = content.filter((block) => block?.["type"] !== "tool_use" || isPrivateWebTool(block["name"]));
 		const priorMessages = Array.isArray(body["messages"]) ? body["messages"] : [];

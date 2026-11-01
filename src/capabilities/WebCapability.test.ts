@@ -44,14 +44,17 @@ function fakeRouter(): Router {
 	} as unknown as Router;
 }
 
-function completion(message: Record<string, unknown>) {
+function completion(
+	message: Record<string, unknown>,
+	usage: Record<string, unknown> = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+) {
 	return {
 		id: "chatcmpl_web",
 		object: "chat.completion",
 		created: 1,
 		model: "test",
 		choices: [{ index: 0, finish_reason: "stop", message: message }],
-		usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+		usage: usage,
 	};
 }
 
@@ -102,23 +105,41 @@ describe("WebCapability", () => {
 			if (targetCalls === 1) {
 				const toolNames = (params["tools"] as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
 				expect(toolNames).toEqual([PRIVATE_WEB_SEARCH_TOOL_NAME, PRIVATE_WEB_FETCH_TOOL_NAME]);
-				return completion({
-					role: "assistant",
-					content: null,
-					tool_calls: [
-						{
-							id: "search-1",
-							type: "function",
-							function: {
-								name: PRIVATE_WEB_SEARCH_TOOL_NAME,
-								arguments: JSON.stringify({ query: "TypeScript 6 release date", recency_days: 30 }),
+				return completion(
+					{
+						role: "assistant",
+						content: null,
+						tool_calls: [
+							{
+								id: "search-1",
+								type: "function",
+								function: {
+									name: PRIVATE_WEB_SEARCH_TOOL_NAME,
+									arguments: JSON.stringify({ query: "TypeScript 6 release date", recency_days: 30 }),
+								},
 							},
-						},
-					],
-				});
+						],
+					},
+					{
+						prompt_tokens: 100,
+						completion_tokens: 10,
+						total_tokens: 110,
+						prompt_tokens_details: { cached_tokens: 80 },
+						completion_tokens_details: { reasoning_tokens: 3 },
+					},
+				);
 			}
 			expect(JSON.stringify(messages)).toContain("https://example.com/ts6");
-			return completion({ role: "assistant", content: "TypeScript 6 was announced on August 1." });
+			return completion(
+				{ role: "assistant", content: "TypeScript 6 was announced on August 1." },
+				{
+					prompt_tokens: 200,
+					completion_tokens: 20,
+					total_tokens: 220,
+					prompt_tokens_details: { cached_tokens: 160 },
+					completion_tokens_details: { reasoning_tokens: 7 },
+				},
+			);
 		});
 
 		const result = await runOpenAIWebAgentLoop(
@@ -131,6 +152,13 @@ describe("WebCapability", () => {
 		);
 
 		expect(targetCalls).toBe(2);
+		expect(result["usage"]).toMatchObject({
+			prompt_tokens: 300,
+			completion_tokens: 30,
+			total_tokens: 330,
+			prompt_tokens_details: { cached_tokens: 240 },
+			completion_tokens_details: { reasoning_tokens: 10 },
+		});
 		expect(JSON.stringify(result)).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
 		expect((result["choices"] as any[])[0].message.content).toContain("August 1");
 	});
@@ -279,7 +307,7 @@ describe("WebCapability", () => {
 						{ type: "tool_use", id: "toolu_agent", name: "Agent", input: { prompt: "Inspect the repository" } },
 					],
 					stop_reason: "tool_use",
-					usage: { input_tokens: 1, output_tokens: 1 },
+					usage: { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 80, cache_creation_input_tokens: 10 },
 				};
 			}
 			const messages = body["messages"] as Array<Record<string, unknown>>;
@@ -295,7 +323,7 @@ describe("WebCapability", () => {
 				role: "assistant",
 				content: [{ type: "tool_use", id: "toolu_agent_after_web", name: "Agent", input: { prompt: "Inspect the repository" } }],
 				stop_reason: "tool_use",
-				usage: { input_tokens: 2, output_tokens: 2 },
+				usage: { input_tokens: 20, output_tokens: 2, cache_read_input_tokens: 160, cache_creation_input_tokens: 20 },
 			};
 		});
 		const workerComplete = jest.fn(async () => completion({ role: "assistant", content: "The current release is 6.0." }));
@@ -307,6 +335,12 @@ describe("WebCapability", () => {
 		]);
 		expect(JSON.stringify(result.response)).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
 		expect(mainTurn).toBe(2);
+		expect(result.response["usage"]).toEqual({
+			input_tokens: 30,
+			output_tokens: 3,
+			cache_read_input_tokens: 240,
+			cache_creation_input_tokens: 30,
+		});
 	});
 
 	it("composes web and vision without either private tool leaking to the client", async () => {
@@ -599,5 +633,146 @@ describe("WebCapability", () => {
 		).rejects.toMatchObject({ statusCode: 503, message: "组合内置能力处理超过 6 个主模型轮次仍未完成" });
 		expect(mainTurn).toBe(6);
 		expect(completeNative).toHaveBeenCalledTimes(6);
+	});
+});
+
+describe("WebCapability native Responses worker", () => {
+	beforeEach(() => {
+		jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({
+			web: {
+				enabled: true,
+				handler_model: "network-model",
+				fallback_models: [],
+				max_iterations: 3,
+				max_output_tokens: 1024,
+			},
+		} as never);
+	});
+
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("uses the hosted web_search tool through native Responses when the handler supports it", async () => {
+		const router = { ...fakeRouter(), supportsNativeResponses: () => true } as unknown as Router;
+		const complete = jest.fn(async (model: string, _messages: unknown[], params: Record<string, unknown>) => {
+			expect(model).toBe("network-model");
+			expect(params["__litellm_call_type"]).toBe("responses");
+			expect(params["web_search_options"]).toBeUndefined();
+			const body = params["__litellm_responses_body"] as Record<string, unknown>;
+			expect(body["tools"]).toEqual([{ type: "web_search" }]);
+			return {
+				object: "response",
+				output: [
+					{ type: "web_search_call", status: "completed" },
+					{ type: "message", content: [{ type: "output_text", text: "Top story: Qwenputer RISC-V CPU." }] },
+				],
+			};
+		});
+
+		const result = await executeWebToolCall(
+			router,
+			{ handlerModel: "network-model", fallbackModels: [], maxIterations: 3, maxOutputTokens: 1024 },
+			PRIVATE_WEB_SEARCH_TOOL_NAME,
+			JSON.stringify({ query: "top story on hacker news" }),
+			complete,
+		);
+
+		expect(result.text).toContain("Qwenputer");
+		expect(result.model).toBe("network-model");
+	});
+});
+
+describe("private tool call recovery", () => {
+	beforeEach(() => {
+		jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({
+			web: {
+				enabled: true,
+				handler_model: "network-model",
+				fallback_models: ["network-fallback"],
+				max_iterations: 3,
+				max_output_tokens: 2048,
+			},
+		});
+	});
+
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("hands invalid private web arguments back to Chat models as the tool result", async () => {
+		let mainTurn = 0;
+		const workerComplete = jest.fn();
+		const complete = jest.fn(async (_model: string, messages: any[]) => {
+			mainTurn++;
+			if (mainTurn === 1) {
+				return completion({
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_web_empty",
+							type: "function",
+							function: { name: PRIVATE_WEB_SEARCH_TOOL_NAME, arguments: "{}" },
+						},
+					],
+				});
+			}
+			const toolMessage = [...messages].reverse().find((message) => message["role"] === "tool");
+			expect(toolMessage).toMatchObject({ tool_call_id: "call_web_empty" });
+			expect(String(toolMessage?.["content"])).toContain("网络搜索参数缺少 query");
+			return completion({ role: "assistant", content: "I could not search the web." });
+		});
+
+		const result = await runOpenAIWebAgentLoop(fakeRouter(), "text-model", [{ role: "user", content: "Any news?" }], {}, complete, {
+			workerComplete,
+		});
+
+		expect(workerComplete).not.toHaveBeenCalled();
+		expect(mainTurn).toBe(2);
+		expect(JSON.stringify(result)).toContain("I could not search the web.");
+		expect(JSON.stringify(result)).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
+	});
+
+	it("hands invalid private web arguments back to Anthropic models as an errored tool result", async () => {
+		const prepared = await prepareAnthropicWebRequest(fakeRouter(), "text-model", {
+			model: "text-model",
+			messages: [{ role: "user", content: "Any news?" }],
+		});
+		expect(prepared).toBeDefined();
+		const workerComplete = jest.fn();
+		let mainTurn = 0;
+		const completeNative = jest.fn(async (body: Record<string, unknown>) => {
+			mainTurn++;
+			if (mainTurn === 1) {
+				return {
+					id: "msg_web_invalid",
+					type: "message",
+					role: "assistant",
+					content: [{ type: "tool_use", id: "toolu_web_empty", name: PRIVATE_WEB_SEARCH_TOOL_NAME, input: {} }],
+					stop_reason: "tool_use",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				};
+			}
+			const messages = body["messages"] as Array<Record<string, unknown>>;
+			const toolResults = messages.at(-1)?.["content"] as Array<Record<string, unknown>>;
+			expect(toolResults).toEqual([expect.objectContaining({ type: "tool_result", tool_use_id: "toolu_web_empty", is_error: true })]);
+			expect(String(toolResults[0]!["content"])).toContain("网络搜索参数缺少 query");
+			return {
+				id: "msg_web_after_recovery",
+				type: "message",
+				role: "assistant",
+				content: [{ type: "text", text: "I could not search the web." }],
+				stop_reason: "end_turn",
+				usage: { input_tokens: 2, output_tokens: 2 },
+			};
+		});
+
+		const result = await runAnthropicWebAgentLoop(fakeRouter(), prepared!, completeNative, undefined, workerComplete);
+
+		expect(workerComplete).not.toHaveBeenCalled();
+		expect(mainTurn).toBe(2);
+		expect(JSON.stringify(result.response)).toContain("I could not search the web.");
+		expect(JSON.stringify(result.response)).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
 	});
 });
