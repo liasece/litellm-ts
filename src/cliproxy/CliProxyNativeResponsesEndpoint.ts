@@ -38,7 +38,7 @@ const REQUEST_BLOCKED_HEADERS = new Set([
 	"connection",
 	"transfer-encoding",
 ]);
-const RESPONSE_BLOCKED_HEADERS = new Set(["connection", "transfer-encoding", "content-length", "keep-alive"]);
+const RESPONSE_BLOCKED_HEADERS = new Set(["connection", "transfer-encoding", "content-length", "content-encoding", "keep-alive"]);
 const RESPONSES_SSE_KEEPALIVE_INTERVAL_MS = 15_000;
 const RESPONSES_CLIENT_DISCONNECT_TAIL_GRACE_MS = 250;
 const RESPONSES_CLIENT_DISCONNECT_TEXT_TAIL_GRACE_MS = 1_500;
@@ -58,6 +58,25 @@ function isCliProxyModel(router: LiteLLMRouter, model: unknown): boolean {
 	}
 	const candidate = router.getAvailableDeployment(model);
 	return candidate?.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER;
+}
+
+function hasBoundBuiltinCapability(router: LiteLLMRouter, model: unknown): boolean {
+	if (typeof model !== "string" || model.length === 0 || typeof router.getDeployments !== "function") {
+		return false;
+	}
+	const resolver = router.resolveModelGroupWithTrace;
+	const resolvedModel = typeof resolver === "function" ? resolver.call(router, model).resolvedModel : model;
+	return router.getDeployments().some((deployment) => {
+		const capabilities = deployment.model_info?.enabled_builtin_capabilities;
+		return (
+			(deployment.model_name === resolvedModel ||
+				deployment.model_info?.model_name === resolvedModel ||
+				deployment.model_name === model) &&
+			Array.isArray(capabilities) &&
+			capabilities.length > 0 &&
+			deployment.model_info?.supports_function_calling !== false
+		);
+	});
 }
 
 function nativeUpstreamBody(body: Record<string, unknown>): Record<string, unknown> {
@@ -84,6 +103,8 @@ function buildForwardHeaders(req: Request, internalApiKey: string, anthropicNati
 			headers.set(key, value);
 		}
 	}
+	// 不向上游声明 zstd：Node fetch 只解 gzip/deflate/br。
+	headers.delete("accept-encoding");
 	headers.set("Authorization", `Bearer ${internalApiKey}`);
 	if (anthropicNative) {
 		headers.set("x-api-key", internalApiKey);
@@ -307,6 +328,116 @@ function normalizeNativeUsage(value: unknown): Record<string, unknown> | undefin
 		completion_tokens: completion,
 		total_tokens: typeof usage["total_tokens"] === "number" ? usage["total_tokens"] : prompt + completion,
 	};
+}
+
+/**
+ * Chat SSE 的结束事件通常只有空 delta 或 usage；日志必须累积此前的输出，
+ * 不能把最后一个 chunk 当成完整 response。此处只构造日志副本，不改变透传字节。
+ * @param raw
+ */
+function extractChatStreamResponse(raw: string): { response: Record<string, unknown>; usage?: Record<string, unknown> } | undefined {
+	const base: Record<string, unknown> = {};
+	const choices = new Map<
+		number,
+		{
+			fields: Record<string, unknown>;
+			message: Record<string, unknown>;
+			tools: Map<number, Record<string, unknown>>;
+		}
+	>();
+	for (const event of raw.split(/\r?\n\r?\n/)) {
+		const payload = parseResponsesSseEvent(event);
+		if (!payload || payload["object"] !== "chat.completion.chunk" || !Array.isArray(payload["choices"])) {
+			continue;
+		}
+		for (const [key, value] of Object.entries(payload)) {
+			if (key !== "choices" && key !== "object" && value !== null && value !== undefined) {
+				base[key] = value;
+			}
+		}
+		for (const choice of payload["choices"] as Array<Record<string, unknown>>) {
+			if (!choice || typeof choice["index"] !== "number") {
+				continue;
+			}
+			const index = choice["index"];
+			const accumulated = choices.get(index) ?? {
+				fields: { index: index, finish_reason: null },
+				message: { role: "assistant", content: null },
+				tools: new Map<number, Record<string, unknown>>(),
+			};
+			choices.set(index, accumulated);
+			for (const [key, value] of Object.entries(choice)) {
+				if (key !== "delta" && value !== null && value !== undefined) {
+					accumulated.fields[key] = value;
+				}
+			}
+			const delta = choice["delta"];
+			if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
+				continue;
+			}
+			const { tool_calls: toolCalls, ...messageDelta } = delta as Record<string, unknown>;
+			mergeChatLogDelta(accumulated.message, messageDelta);
+			if (Array.isArray(toolCalls)) {
+				for (const tool of toolCalls as Array<Record<string, unknown>>) {
+					if (!tool || typeof tool["index"] !== "number") {
+						continue;
+					}
+					const toolIndex = tool["index"];
+					const { index: _index, ...toolDelta } = tool;
+					const accumulatedTool = accumulated.tools.get(toolIndex) ?? {};
+					mergeChatLogDelta(accumulatedTool, toolDelta);
+					accumulated.tools.set(toolIndex, accumulatedTool);
+				}
+			}
+		}
+	}
+	if (choices.size === 0) {
+		return undefined;
+	}
+	const response = {
+		...base,
+		object: "chat.completion",
+		choices: [...choices.entries()]
+			.sort(([left], [right]) => left - right)
+			.map(([, choice]) => ({
+				...choice.fields,
+				message: {
+					...choice.message,
+					...(choice.tools.size > 0
+						? {
+								tool_calls: [...choice.tools.entries()].sort(([left], [right]) => left - right).map(([, tool]) => tool),
+							}
+						: {}),
+				},
+			})),
+	};
+	return { response: response, usage: normalizeNativeUsage(base["usage"]) };
+}
+
+/**
+ * 合并文本/函数参数增量，同时保留 provider 附加字段。
+ * @param target
+ * @param delta
+ */
+function mergeChatLogDelta(target: Record<string, unknown>, delta: Record<string, unknown>): void {
+	for (const [key, value] of Object.entries(delta)) {
+		if (key === "__proto__" || key === "constructor" || key === "prototype" || value === null || value === undefined) {
+			continue;
+		}
+		if (typeof value === "string" && ["content", "reasoning_content", "refusal", "name", "arguments"].includes(key)) {
+			target[key] = `${typeof target[key] === "string" ? target[key] : ""}${value}`;
+		} else if (Array.isArray(value)) {
+			target[key] = [...(Array.isArray(target[key]) ? target[key] : []), ...value];
+		} else if (typeof value === "object") {
+			const previous = target[key];
+			const nested: Record<string, unknown> =
+				typeof previous === "object" && previous !== null && !Array.isArray(previous) ? (previous as Record<string, unknown>) : {};
+			mergeChatLogDelta(nested, value as Record<string, unknown>);
+			target[key] = nested;
+		} else {
+			target[key] = value;
+		}
+	}
 }
 
 function extractAnthropicStreamResponse(raw: string): { response?: Record<string, unknown>; usage?: Record<string, unknown> } | undefined {
@@ -738,12 +869,15 @@ export function registerCliProxyNativeResponsesRoutes(
 		}
 	};
 
+	// 绑定了 builtin capability 的模型不接管：能力注入、隐藏多轮与审计只在
+	// LiteLLM 兼容端点里实现，透传路径无法执行它们。
+	const matches = (req: { body?: { model?: unknown } }): boolean => {
+		const model = req.body?.model;
+		return isCliProxyModel(router, model) && !hasBoundBuiltinCapability(router, model);
+	};
+
 	for (const routePath of ["/v1/responses", "/responses", "/backend-api/codex/responses"]) {
-		registerRoute(
-			expressRouter,
-			{ method: "post", path: routePath, matches: (req) => isCliProxyModel(router, req.body?.model) },
-			handler,
-		);
+		registerRoute(expressRouter, { method: "post", path: routePath, matches: matches }, handler);
 	}
 }
 
@@ -754,6 +888,11 @@ interface NativeRouteOptions {
 	readonly routePath: string;
 	readonly upstreamPath: string;
 	readonly anthropicNative?: boolean;
+	/**
+	 * 绑定了 builtin capability 的模型不接管：能力注入、隐藏多轮与审计只在
+	 * LiteLLM 兼容端点里实现，透传路径无法执行它们。
+	 */
+	readonly skipModelsWithBuiltinCapabilities?: boolean;
 	readonly db: DrizzleDb;
 }
 
@@ -858,11 +997,17 @@ function registerNativeRoute({
 	routePath,
 	upstreamPath,
 	anthropicNative = false,
+	skipModelsWithBuiltinCapabilities = false,
 	db,
 }: NativeRouteOptions): void {
-	registerRoute(
-		expressRouter,
-		{ method: "post", path: routePath, matches: (req) => isCliProxyModel(router, req.body?.model) },
+	const matches = (req: { body?: { model?: unknown } }): boolean => {
+		const model = req.body?.model;
+		if (!isCliProxyModel(router, model)) {
+			return false;
+		}
+		return !(skipModelsWithBuiltinCapabilities && hasBoundBuiltinCapability(router, model));
+	};
+	registerRoute(expressRouter, { method: "post", path: routePath, matches: matches },
 		async (req, res) => {
 			let deploymentRecorded = false;
 			let upstreamLogContext: UpstreamLogContext | undefined;
@@ -944,8 +1089,11 @@ function registerNativeRoute({
 				}
 				const captured = await pipeUpstreamResponse(upstream, res);
 				const extracted =
-					(anthropicNative && body["stream"] === true ? extractAnthropicStreamResponse(captured.raw) : undefined) ??
-					extractNativeResponse(captured.raw);
+					(body["stream"] === true
+						? anthropicNative
+							? extractAnthropicStreamResponse(captured.raw)
+							: extractChatStreamResponse(captured.raw)
+						: undefined) ?? extractNativeResponse(captured.raw);
 				upstreamLogContext = createUpstreamLogContext(upstreamRequest, upstream, extracted.response);
 				const spendInfo = buildDeploymentSpendInfo(executedDeployment, upstreamUrl);
 				if (req.auth) {
@@ -1066,6 +1214,7 @@ export function registerCliProxyNativeAnthropicRoutes(
 		routePath: "/v1/messages",
 		upstreamPath: "/v1/messages",
 		anthropicNative: true,
+		skipModelsWithBuiltinCapabilities: true,
 		db: db,
 	});
 }

@@ -18,6 +18,12 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		super(apiKey, apiBase);
 	}
 
+	/**
+	 * Build the internal CLIProxy request while keeping connection settings out of its body.
+	 * @param model - Configured model name, including any provider prefix.
+	 * @param messages - Conversation history to forward to CLIProxy.
+	 * @param optionalParams - Protocol options and internal connection settings.
+	 */
 	override transformRequest(model: string, messages: Message[], optionalParams: Record<string, unknown>): ProviderRequest {
 		const providerModel = this.stripProviderPrefix(model);
 		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
@@ -34,8 +40,8 @@ export class CliProxyProvider extends OpenAICompatProvider {
 					"x-api-key": apiKey,
 					"anthropic-version": optionalParams["anthropic_version"] as string,
 				},
-				body: { model: providerModel, messages },
-				model,
+				body: { model: providerModel, messages: messages },
+				model: model,
 				stream: optionalParams["stream"] === true,
 			};
 		}
@@ -43,7 +49,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		const body: Record<string, unknown> = {
 			...optionalParams,
 			model: providerModel,
-			messages,
+			messages: messages,
 		};
 		for (const connectionKey of [
 			"api_base",
@@ -63,12 +69,54 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			url: `${apiBase}/v1/chat/completions`,
 			method: "POST",
 			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-			body,
-			model,
+			body: body,
+			model: model,
 			stream: optionalParams["stream"] === true,
 		};
 	}
 
+	/**
+	 * Build a native Responses request for CLIProxy.
+	 *
+	 * CLIProxy 的 \`/v1/responses\` 对其模型始终可用，不受 deployment 的
+	 * \`supported_endpoints\` 元数据约束；web capability worker 依赖该出口取得
+	 * 上游托管的 \`web_search\` 工具，因此这里不复用 OpenAI-compat 的门禁判断。
+	 * @param model - Configured model name, including any provider prefix.
+	 * @param body - Responses request body.
+	 * @param _optionalParams - 内部连接参数（CLIProxy 内网出口不接受按 deployment 覆盖）。
+	 */
+	override transformResponsesRequest(
+		model: string,
+		body: Record<string, unknown>,
+		_optionalParams: Record<string, unknown>,
+	): ProviderRequest {
+		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
+		const apiKey = process.env["CLIPROXY_INTERNAL_API_KEY"] ?? this.apiKey;
+		const payload: Record<string, unknown> = {
+			...body,
+			model: this.stripProviderPrefix(model),
+			store: body["store"] ?? false,
+		};
+		for (const connectionKey of ["api_base", "api_key", "custom_llm_provider", "supported_endpoints", "litellm_credential_name"]) {
+			delete payload[connectionKey];
+		}
+		return {
+			url: `${apiBase}/v1/responses`,
+			method: "POST",
+			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+			body: payload,
+			model: model,
+			stream: body["stream"] === true,
+			responseProtocol: "responses",
+		};
+	}
+
+	/**
+	 * Build a native image generation request with internal CLIProxy credentials.
+	 * @param model - Configured image model name.
+	 * @param prompt - Image generation prompt.
+	 * @param optionalParams - Image output options and internal connection settings.
+	 */
 	transformImageRequest(model: string, prompt: string, optionalParams: Record<string, unknown>): ProviderRequest {
 		const providerModel = this.stripProviderPrefix(model);
 		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
@@ -104,7 +152,8 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		};
 	}
 
-	/** Build the multipart request used by the native OpenAI-compatible image edit endpoint.
+	/**
+	 * Build the multipart request used by the native OpenAI-compatible image edit endpoint.
 	 * @param model - Image model name
 	 * @param prompt - Editing prompt
 	 * @param images - Source image bytes
@@ -176,6 +225,11 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		};
 	}
 
+	/**
+	 * Preserve CLIProxy's response body, including provider-specific extensions.
+	 * @param model - Configured model name required by the provider interface.
+	 * @param rawResponse - OpenAI-compatible response returned by CLIProxy.
+	 */
 	override transformResponse(model: string, rawResponse: unknown): ModelResponse {
 		// CLIProxy already emits OpenAI-compatible responses. Preserve provider-
 		// specific fields rather than normalizing and potentially dropping them.

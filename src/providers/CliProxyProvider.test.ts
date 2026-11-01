@@ -92,3 +92,32 @@ describe("CliProxyProvider", () => {
 		expect(form.get("image")).toBeInstanceOf(Blob);
 	});
 });
+
+describe('CliProxyProvider native Responses', () => {
+	const provider = new CliProxyProvider('internal-secret', 'http://127.0.0.1:8317');
+
+	it('builds a native Responses request that keeps the upstream web_search tool', () => {
+		const request = provider.transformResponsesRequest(
+			'cliproxy/gpt-6-luna',
+			{
+				model: 'gpt-6-luna',
+				input: [{ role: 'user', content: 'search the web' }],
+				tools: [{ type: 'web_search' }],
+				stream: false,
+				supported_endpoints: ['/v1/chat/completions'],
+			},
+			{},
+		);
+
+		expect(request.url).toBe('http://127.0.0.1:8317/v1/responses');
+		expect(request.responseProtocol).toBe('responses');
+		expect(request.headers.Authorization).toBe('Bearer internal-secret');
+		expect(request.stream).toBe(false);
+		expect(request.body).toMatchObject({
+			model: 'gpt-6-luna',
+			store: false,
+			tools: [{ type: 'web_search' }],
+		});
+		expect(request.body).not.toHaveProperty('supported_endpoints');
+	});
+});

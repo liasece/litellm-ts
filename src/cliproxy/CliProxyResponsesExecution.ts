@@ -7,39 +7,65 @@ const RESPONSES_TERMINAL_EVENT_TYPES = new Set([
 	"response.cancelled",
 ]);
 
+/** Policy chosen when the client disconnects, based on the upstream output already observed. */
 export type ResponsesCancellationStrategy =
 	| "none"
 	| "immediate_abort"
 	| "terminal_tail_grace"
 	| "text_terminal_tail_grace"
 	| "post_output_drain";
+/** HTTP lifecycle event that requested cancellation of the upstream execution. */
 export type ResponsesCancellationSource = "unknown" | "request_aborted" | "response_closed";
 
+/** Captured upstream progress retained independently of the client connection. */
 export interface CliProxyResponsesExecutionSnapshot {
+	/** Decoded upstream stream, bounded by the capture limit with its head and tail retained. */
 	readonly raw: string;
+	/** Receipt time of the first nonempty decoded chunk, or null before any data arrives. */
 	readonly firstChunkAt: Date | null;
+	/** Whether a client cancellation request has detached the downstream connection. */
 	readonly clientDisconnected: boolean;
+	/** Whether the execution has accepted a client cancellation request. */
 	readonly cancellationRequested: boolean;
+	/** Abort or drain policy selected when cancellation was requested. */
 	readonly cancellationStrategy: ResponsesCancellationStrategy;
+	/** HTTP event that initiated the accepted cancellation request. */
 	readonly cancellationSource: ResponsesCancellationSource;
+	/** Time of the first accepted cancellation request, or null if none was accepted. */
 	readonly cancellationRequestedAt: Date | null;
+	/** Whether the execution has aborted its upstream AbortSignal. */
 	readonly upstreamAbortIssued: boolean;
+	/** Time the upstream abort was issued, or null while it remains active. */
 	readonly upstreamAbortIssuedAt: Date | null;
+	/** Whether a text-done event or a completed message item has been observed. */
 	readonly completedOutputReceived: boolean;
+	/** Whether a completed, incomplete, failed or cancelled response event has been observed. */
 	readonly terminalReceived: boolean;
+	/** Receipt time of the first terminal response event. */
 	readonly terminalReceivedAt: Date | null;
+	/** Type of the most recently parsed SSE payload with a string type field. */
 	readonly lastSseEventType?: string;
+	/** Receipt time of the last recognized SSE payload. */
 	readonly lastSseEventAt: Date | null;
+	/** Total decoded UTF-16 code units received, including content omitted from raw. */
 	readonly capturedCharacters: number;
+	/** Whether the captured stream has exceeded the configured retention limit. */
 	readonly capturedTruncated: boolean;
 }
 
+/** Drain deadlines and checkpoint callbacks for a single Responses execution. */
 export interface CliProxyResponsesExecutionOptions {
+	/** Delay before aborting after completed output or a terminal event during cancellation, in milliseconds. */
 	readonly postOutputDrainTimeoutMs: number;
+	/** Grace period after nontext output when the client cancels, in milliseconds. */
 	readonly terminalTailGraceMs: number;
+	/** Grace period after text output when the client cancels, in milliseconds. */
 	readonly textTerminalTailGraceMs: number;
+	/** Maximum retained stream size in UTF-16 code units before keeping only its head and tail. */
 	readonly captureLimit?: number;
+	/** Receives serialized progress checkpoints; completion waits for the checkpoint queue. */
 	readonly onCheckpoint?: (snapshot: CliProxyResponsesExecutionSnapshot) => void | Promise<void>;
+	/** Receives errors from checkpoint callbacks. */
 	readonly onCheckpointError?: (error: unknown) => void;
 }
 
@@ -122,10 +148,12 @@ export class CliProxyResponsesExecution {
 		this._onCheckpointError = options.onCheckpointError;
 	}
 
+	/** Signal used by the upstream request; client disconnects follow the configured drain policy. */
 	get signal(): AbortSignal {
 		return this._abortController.signal;
 	}
 
+	/** Read the current captured state without transferring ownership of the execution. */
 	get snapshot(): CliProxyResponsesExecutionSnapshot {
 		return {
 			raw: this._raw,
@@ -147,6 +175,11 @@ export class CliProxyResponsesExecution {
 		};
 	}
 
+	/**
+	 * Run one upstream operation and wait for queued checkpoints before settling.
+	 * @param operation - Work that uses this execution to record upstream progress.
+	 * @throws {Error} If the execution has already been started.
+	 */
 	start<T>(operation: (execution: CliProxyResponsesExecution) => Promise<T>): Promise<T> {
 		if (this._completion) {
 			throw new Error("CLIProxy Responses execution already started");
@@ -162,6 +195,11 @@ export class CliProxyResponsesExecution {
 		return completion;
 	}
 
+	/**
+	 * Capture decoded data and advance SSE progress across chunk boundaries.
+	 * @param chunk - Decoded upstream text; empty chunks are ignored.
+	 * @param receivedAt - Receipt time shared by all events completed in this chunk.
+	 */
 	recordDecodedChunk(chunk: string, receivedAt: Date = new Date()): void {
 		if (!chunk) {
 			return;
@@ -212,6 +250,11 @@ export class CliProxyResponsesExecution {
 		}
 	}
 
+	/**
+	 * Accept the first client disconnect and select an abort or drain deadline.
+	 * @param source - HTTP lifecycle event that triggered cancellation.
+	 * @param requestedAt - Time of the client cancellation request.
+	 */
 	requestClientCancellation(source: ResponsesCancellationSource = "unknown", requestedAt: Date = new Date()): void {
 		if (this._finished || this._cancellationRequested) {
 			return;
@@ -236,6 +279,7 @@ export class CliProxyResponsesExecution {
 		this._queueCheckpoint();
 	}
 
+	/** Wait until the currently queued checkpoint callbacks have settled. */
 	async flushCheckpoints(): Promise<void> {
 		await this._checkpointTail;
 	}

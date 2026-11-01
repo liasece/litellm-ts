@@ -26,7 +26,10 @@ jest.mock("../spend/SpendTracker", () => {
 	};
 });
 
-function buildApp(reasoningEffortOverride?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"): express.Express {
+function buildApp(
+	reasoningEffortOverride?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
+	authenticated = false,
+): express.Express {
 	const deployment: Deployment = {
 		model_name: "gpt-5.6-sol",
 		litellm_params: {
@@ -50,6 +53,12 @@ function buildApp(reasoningEffortOverride?: "minimal" | "low" | "medium" | "high
 	const app = express();
 	app.use(express.json());
 	app.use(codingClientModelMiddleware(router));
+	if (authenticated) {
+		app.use((req, _res, next) => {
+			req.auth = { api_key: "test-key", models: ["gpt-5.6-sol"] };
+			next();
+		});
+	}
 	const expressRouter = express.Router();
 	registerCliProxyNativeResponsesRoutes(expressRouter, router, runtime, undefined as never);
 	registerCliProxyNativeChatRoutes(expressRouter, router, runtime, undefined as never);
@@ -696,6 +705,131 @@ describe("CLIProxy native Responses streaming", () => {
 		}
 	});
 
+	it.each([
+		["/v1/chat/completions", true],
+		["/chat/completions", false],
+	] as const)("records complete Chat output from deltas at %s (usage-only tail: %s)", async (path, usageOnlyTail) => {
+		const chunk = (choices: unknown[], extra = {}) => ({
+			id: "chat_log",
+			object: "chat.completion.chunk",
+			model: "gpt-5.6-sol",
+			created: 123,
+			choices,
+			...extra,
+		});
+		const usage = { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 };
+		const events =
+			[
+				chunk([{ index: 0, delta: { role: "assistant", reasoning_content: "Think " } }]),
+				chunk([{ index: 0, delta: { reasoning_content: "first", content: "Hello " } }]),
+				chunk([{ index: 0, delta: { content: "世界" }, finish_reason: "stop", native_finish_reason: "stop" }]),
+				chunk([
+					{
+						index: 1,
+						delta: {
+							role: "assistant",
+							tool_calls: [
+								{ index: 1, id: "call_b", type: "function", function: { name: "second", arguments: '{"b":' } },
+								{ index: 0, id: "call_a", type: "function", function: { name: "read_", arguments: '{"a":' } },
+							],
+						},
+					},
+				]),
+				chunk([
+					{
+						index: 1,
+						delta: {
+							tool_calls: [
+								{ index: 0, function: { name: "file", arguments: "1}" } },
+								{ index: 1, function: { arguments: "2}" } },
+							],
+						},
+					},
+				]),
+				chunk([{ index: 1, delta: {}, finish_reason: "tool_calls" }]),
+				chunk([], { usage, service_tier: "default" }),
+			]
+				.map((value) => `data: ${JSON.stringify(value)}\r\n\r\n`)
+				.join("") + "data: [DONE]\r\n\r\n";
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(events, {
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+		const result = await request(buildApp(undefined, true))
+			.post(path)
+			.send({ model: "gpt-5.6-sol", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(result.text).toBe(events);
+		expect(mockBuildSpendLogFromRequest).toHaveBeenCalledTimes(1);
+		const context = mockBuildSpendLogFromRequest.mock.calls[0]?.[0] as {
+			response: unknown;
+			usage: unknown;
+			upstreamLogContext: { response: { body: unknown } };
+		};
+		expect(context.response).toMatchObject({
+			id: "chat_log",
+			object: "chat.completion",
+			usage,
+			service_tier: "default",
+			choices: [
+				{
+					index: 0,
+					finish_reason: "stop",
+					native_finish_reason: "stop",
+					message: {
+						role: "assistant",
+						content: "Hello 世界",
+						reasoning_content: "Think first",
+					},
+				},
+				{
+					index: 1,
+					finish_reason: "tool_calls",
+					message: {
+						role: "assistant",
+						content: null,
+						tool_calls: [
+							{ id: "call_a", type: "function", function: { name: "read_file", arguments: '{"a":1}' } },
+							{ id: "call_b", type: "function", function: { name: "second", arguments: '{"b":2}' } },
+						],
+					},
+				},
+			],
+		});
+		expect(context.usage).toMatchObject(usage);
+		expect(context.upstreamLogContext.response.body).toEqual(context.response);
+		expect(mockTrackSpendLog).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([false, true])("keeps a native JSON Chat response intact (stream requested: %s)", async (stream) => {
+		const body = {
+			id: "chat_json",
+			object: "chat.completion",
+			model: "gpt-5.6-sol",
+			choices: [{ index: 0, message: { role: "assistant", content: "A complete answer" }, finish_reason: "stop" }],
+			usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+		};
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(JSON.stringify(body), {
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const result = await request(buildApp(undefined, true))
+			.post("/v1/chat/completions")
+			.send({ model: "gpt-5.6-sol", messages: [{ role: "user", content: "hello" }], stream })
+			.expect(200);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(result.body).toEqual(body);
+		expect(mockBuildSpendLogFromRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				response: body,
+				usage: body.usage,
+			}),
+		);
+	});
+
 	it("falls back before forwarding an Anthropic upstream 403 response", async () => {
 		const primary: Deployment = {
 			model_name: "k3",
@@ -813,4 +947,120 @@ describe("Codex parameters at native upstream boundaries", () => {
 			expect(forwarded).toMatchObject({ ...body, model: "gpt-5.6-sol" });
 		},
 	);
+});
+
+describe('CLIProxy native Responses route and builtin capabilities', () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+		jest.clearAllMocks();
+	});
+
+	it('leaves models with builtin capabilities to the LiteLLM Responses endpoint', async () => {
+		const deployment: Deployment = {
+			model_name: 'opencode-go/deepseek-v4.1-flash',
+			litellm_params: {
+				model: 'cliproxy/opencode-go/deepseek-v4.1-flash',
+				custom_llm_provider: 'cliproxy',
+			},
+			model_info: { enabled_builtin_capabilities: ['image_generation', 'web'] },
+		};
+		const router = {
+			getAvailableDeployment: () => ({ deployment: deployment }),
+			getDeployments: () => [deployment],
+			resolveModelGroupWithTrace: (model: string) => ({ inputModel: model, resolvedModel: model, resolutionPath: [model] }),
+			hasModel: () => true,
+			getFallbacks: () => ({}),
+			recordDeploymentSuccess: jest.fn(),
+			recordDeploymentFailure: jest.fn(),
+		} as unknown as LiteLLMRouter;
+		const runtime = {
+			baseUrl: 'http://127.0.0.1:8317',
+			internalApiKey: 'internal-only',
+		} as CliProxyRuntimeManager;
+		const app = express();
+		app.use(express.json());
+		app.use(codingClientModelMiddleware(router));
+		const expressRouter = express.Router();
+		registerCliProxyNativeResponsesRoutes(expressRouter, router, runtime, undefined as never);
+		app.use(expressRouter);
+
+		await request(app)
+			.post('/v1/responses')
+			.send({ model: 'opencode-go/deepseek-v4.1-flash', input: 'hi', store: false })
+			.expect(404);
+	});
+});
+
+describe('CLIProxy native Anthropic route and builtin capabilities', () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+		jest.clearAllMocks();
+	});
+
+	async function postMessages(router: LiteLLMRouter, payload: Record<string, unknown>): Promise<number> {
+		const runtime = {
+			baseUrl: 'http://127.0.0.1:8317',
+			internalApiKey: 'internal-only',
+		} as CliProxyRuntimeManager;
+		const app = express();
+		app.use(express.json());
+		app.use(codingClientModelMiddleware(router));
+		const expressRouter = express.Router();
+		registerCliProxyNativeAnthropicRoutes(expressRouter, router, runtime, undefined as never);
+		app.use(expressRouter);
+		const server = await new Promise<http.Server>((resolve) => {
+			const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+		});
+		try {
+			const port = (server.address() as AddressInfo).port;
+			return await new Promise<number>((resolve, reject) => {
+				const req = http.request(
+					{
+						host: '127.0.0.1',
+						port: port,
+						path: '/v1/messages',
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+					},
+					(response) => {
+						response.resume();
+						resolve(response.statusCode ?? 0);
+					},
+				);
+				req.once('error', reject);
+				req.end(JSON.stringify(payload));
+			});
+		} finally {
+			await closeServer(server);
+		}
+	}
+
+	it('leaves models with builtin capabilities to the LiteLLM Messages endpoint', async () => {
+		const deployment: Deployment = {
+			model_name: 'opencode-go/deepseek-v4.1-flash',
+			litellm_params: {
+				model: 'cliproxy/opencode-go/deepseek-v4.1-flash',
+				custom_llm_provider: 'cliproxy',
+			},
+			model_info: { enabled_builtin_capabilities: ['web'] },
+		};
+		const router = {
+			getAvailableDeployment: () => ({ deployment: deployment }),
+			getDeployments: () => [deployment],
+			resolveModelGroupWithTrace: (model: string) => ({ inputModel: model, resolvedModel: model, resolutionPath: [model] }),
+			hasModel: () => true,
+			getFallbacks: () => ({}),
+			recordDeploymentSuccess: jest.fn(),
+			recordDeploymentFailure: jest.fn(),
+		} as unknown as LiteLLMRouter;
+
+		const status = await postMessages(router, {
+			model: 'opencode-go/deepseek-v4.1-flash',
+			max_tokens: 16,
+			messages: [{ role: 'user', content: 'hi' }],
+		});
+
+		expect(status).toBe(404);
+	});
+
 });
