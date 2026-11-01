@@ -19,20 +19,22 @@ COPY ui/litellm-dashboard/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY ui/litellm-dashboard/ ./
+COPY src/shared/ ./../../src/shared/
 RUN npm run build
 
 FROM alpine:3.22 AS cliproxy-download
 
 ARG TARGETARCH
-ARG CLIPROXY_VERSION=7.2.110
+ARG CLIPROXY_VERSION=8.0.47
+ARG OPENCODE_GO_PLUGIN_VERSION=0.2.2
 WORKDIR /download
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
-      amd64) cliproxy_arch=amd64 ;; \
-      arm64) cliproxy_arch=aarch64 ;; \
+      amd64) cliproxy_arch=amd64; plugin_arch=amd64 ;; \
+      arm64) cliproxy_arch=aarch64; plugin_arch=arm64 ;; \
       *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    archive="CLIProxyAPI_${CLIPROXY_VERSION}_linux_${cliproxy_arch}_no-plugin.tar.gz"; \
+    archive="CLIProxyAPI_${CLIPROXY_VERSION}_linux_${cliproxy_arch}.tar.gz"; \
     base="https://github.com/router-for-me/CLIProxyAPI/releases/download/v${CLIPROXY_VERSION}"; \
     wget -q "${base}/checksums.txt" -O checksums.txt; \
     wget -q "${base}/${archive}" -O "${archive}"; \
@@ -40,12 +42,25 @@ RUN set -eu; \
     test -n "${expected}"; \
     echo "${expected}  ${archive}" | sha256sum -c -; \
     tar -xzf "${archive}" cli-proxy-api; \
-    chmod 0755 cli-proxy-api
+    chmod 0755 cli-proxy-api; \
+    plugin_archive="opencode-go-cliproxyapi_${OPENCODE_GO_PLUGIN_VERSION}_linux_${plugin_arch}.zip"; \
+    plugin_base="https://github.com/massiveits/opencode-go-cliproxyapi/releases/download/v${OPENCODE_GO_PLUGIN_VERSION}"; \
+    wget -q "${plugin_base}/checksums.txt" -O plugin-checksums.txt; \
+    wget -q "${plugin_base}/${plugin_archive}" -O "${plugin_archive}"; \
+    plugin_expected="$(awk -v name="${plugin_archive}" '$2 == name { print $1 }' plugin-checksums.txt)"; \
+    test -n "${plugin_expected}"; \
+    echo "${plugin_expected}  ${plugin_archive}" | sha256sum -c -; \
+    mkdir -p plugins; \
+    unzip -q -o "${plugin_archive}" -d plugins
 
-FROM node:22-alpine AS runtime
+FROM node:22-bookworm-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG APP_PORT=4000
-ARG CLIPROXY_VERSION=7.2.110
+ARG CLIPROXY_VERSION=8.0.47
 ENV APP_PORT=${APP_PORT}
 ENV NODE_ENV=production
 
@@ -58,7 +73,9 @@ COPY --from=backend-build /build/dist/ ./dist/
 COPY drizzle/ ./drizzle/
 COPY --from=dashboard-build /build/ui/litellm-dashboard/out/ ./ui/out/
 COPY --from=cliproxy-download /download/cli-proxy-api /opt/cliproxy/cli-proxy-api
+COPY --from=cliproxy-download /download/plugins/opencode-go-cliproxyapi.so /opt/cliproxy/plugins/opencode-go-cliproxyapi.so
 
+ENV CLIPROXY_PLUGIN_DIR=/opt/cliproxy/plugins
 ENV CLIPROXY_BOOTSTRAP_BINARY=/opt/cliproxy/cli-proxy-api
 ENV CLIPROXY_BOOTSTRAP_VERSION=${CLIPROXY_VERSION}
 ENV CLIPROXY_RUNTIME_ROOT=/var/lib/litellm/cliproxy
@@ -69,6 +86,6 @@ RUN node -e "const { readMigrationFiles } = require('drizzle-orm/migrator'); con
 EXPOSE ${APP_PORT}
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${APP_PORT}/health/liveliness || exit 1
+    CMD curl -fsS -o /dev/null http://127.0.0.1:${APP_PORT}/health/liveliness || exit 1
 
 CMD ["node", "dist/main.js"]

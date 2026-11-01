@@ -376,6 +376,68 @@ function firstPayload(payloads: QuotaPayload[], id: string): Record<string, unkn
 	return record(payloads.find((payload) => payload.id === id)?.body);
 }
 
+const PLUGIN_WINDOW_LABELS: Record<string, string> = {
+	rolling: "5 小时",
+	weekly: "周",
+	monthly: "月",
+};
+
+/**
+ * 归一化 CLIProxy 插件 QuotaProvider 的通用额度结构。
+ * @param providerValue
+ * @param payload
+ */
+export function normalizeCliProxyPluginQuota(
+	providerValue: string,
+	payload: unknown,
+): Omit<CliProxyAccountQuota, "provider" | "fetched_at"> | null {
+	const provider = providerValue.trim().toLowerCase();
+	const value = record(payload);
+	if (!value) {
+		return null;
+	}
+	const subscription = record(value["subscription"]);
+	const windows: CliProxyQuotaWindow[] = [];
+	for (const groupValue of array(value["groups"])) {
+		const group = record(groupValue);
+		if (!group) {
+			continue;
+		}
+		const groupLabel = stringValue(group["displayName"] ?? group["display_name"]);
+		for (const bucketValue of array(group["buckets"])) {
+			const bucket = record(bucketValue);
+			if (!bucket) {
+				continue;
+			}
+			const remaining = numberValue(bucket["remainingFraction"] ?? bucket["remaining_fraction"]);
+			if (remaining === null) {
+				continue;
+			}
+			const remainingPercent = boundedPercent(remaining * 100);
+			if (remainingPercent === null) {
+				continue;
+			}
+			const windowName = stringValue(bucket["window"]) ?? `bucket-${windows.length + 1}`;
+			windows.push({
+				id: `${provider}:${windowName}`,
+				label: PLUGIN_WINDOW_LABELS[windowName.toLowerCase()] ?? groupLabel ?? windowName,
+				used_percent: Math.round((100 - remainingPercent) * 100) / 100,
+				remaining_percent: Math.round(remainingPercent * 100) / 100,
+				resets_at: normalizeDate(bucket["resetTime"] ?? bucket["reset_time"]),
+			});
+		}
+	}
+	if (windows.length === 0) {
+		return null;
+	}
+	return {
+		plan: stringValue(subscription?.["plan"]) ?? stringValue(subscription?.["tierName"]) ?? null,
+		subscription_expires_at: null,
+		windows: windows,
+		balances: [],
+	};
+}
+
 /**
  * @param providerValue
  * @param payloads

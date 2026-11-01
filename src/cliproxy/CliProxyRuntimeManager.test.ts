@@ -5,10 +5,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
 	buildCliProxyProjection,
+	cliProxyReleaseArchiveName,
 	compareCliProxyVersions,
 	extractCliProxyReleaseNotes,
 	parseCliProxyUserConfig,
 	serializeCliProxyUserConfig,
+	shouldEnableCliProxyPlugin,
+	supportsCliProxyPlugins,
 } from "./CliProxyRuntimeManager";
 import { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 
@@ -63,6 +66,70 @@ request-retry: 4
 			"future-feature": { enabled: true },
 		});
 		expect(() => serializeCliProxyUserConfig({ host: "0.0.0.0" })).toThrow(ApiError);
+	});
+});
+
+describe("CLIProxy managed OpenCode Go plugin", () => {
+	it("enables the managed plugin inside the managed runtime boundary", () => {
+		const projected = buildCliProxyProjection(
+			{},
+			{ port: 8317, authDir: "/state/auths", internalApiKey: "internal-only", pluginDir: "/opt/cliproxy/plugins" },
+		);
+
+		expect(projected["plugins"]).toEqual({
+			enabled: true,
+			dir: "/opt/cliproxy/plugins",
+			configs: {
+				"opencode-go-cliproxyapi": {
+					enabled: true,
+					"base-url": "https://opencode.ai/inference/go/v1",
+					"model-prefix": { enabled: true, value: "opencode-go" },
+					"api-keys": [{ value: "${OPENCODE_GO_API_KEY}", name: "Personal" }],
+				},
+			},
+		});
+	});
+
+	it("lets the page override the plugin credential while keeping the managed directory", () => {
+		const projected = buildCliProxyProjection(
+			{
+				plugins: {
+					configs: {
+						"opencode-go-cliproxyapi": { "api-keys": [{ value: "oc_sk_from_page" }] },
+					},
+				},
+			},
+			{ port: 8317, authDir: "/state/auths", internalApiKey: "internal-only", pluginDir: "/opt/cliproxy/plugins" },
+		);
+
+		expect(projected["plugins"]).toMatchObject({
+			enabled: true,
+			dir: "/opt/cliproxy/plugins",
+			configs: { "opencode-go-cliproxyapi": { "api-keys": [{ value: "oc_sk_from_page" }] } },
+		});
+	});
+
+	it("leaves configuration untouched when the runtime does not ship the plugin", () => {
+		const projected = buildCliProxyProjection({}, { port: 8317, authDir: "/state/auths", internalApiKey: "internal-only" });
+
+		expect(projected).not.toHaveProperty("plugins");
+	});
+
+	it("only enables the plugin for plugin-built runtimes", () => {
+		expect(shouldEnableCliProxyPlugin("8.0.47", "plugin")).toBe(true);
+		expect(shouldEnableCliProxyPlugin("8.0.47", "no-plugin")).toBe(false);
+		expect(shouldEnableCliProxyPlugin("8.0.47", null)).toBe(false);
+		expect(shouldEnableCliProxyPlugin("7.9.9", "plugin")).toBe(false);
+		expect(shouldEnableCliProxyPlugin(null, "plugin")).toBe(false);
+	});
+
+	it("selects plugin-enabled archives from CLIProxy 8.0.0 onwards", () => {
+		expect(cliProxyReleaseArchiveName("7.2.119", "amd64")).toBe("CLIProxyAPI_7.2.119_linux_amd64_no-plugin.tar.gz");
+		expect(cliProxyReleaseArchiveName("8.0.47", "aarch64")).toBe("CLIProxyAPI_8.0.47_linux_aarch64.tar.gz");
+		expect(supportsCliProxyPlugins(null)).toBe(false);
+		expect(supportsCliProxyPlugins("7.9.9")).toBe(false);
+		expect(supportsCliProxyPlugins("8.0.0")).toBe(true);
+		expect(supportsCliProxyPlugins("8.0.47")).toBe(true);
 	});
 });
 
@@ -141,6 +208,49 @@ describe("CLIProxy release comparison", () => {
 			expect.any(Object),
 		);
 		jest.restoreAllMocks();
+	});
+});
+
+describe("CLIProxy plugin subscription quota", () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("routes provider-plugin quotas through the management quota API", async () => {
+		jest.spyOn(global, "fetch").mockImplementation(async (input) => {
+			const url = String(input);
+			if (url.includes("/auth-files")) {
+				return Response.json({ files: [{ name: "opencode-go.json", auth_index: "oi-1", provider: "opencode-go" }] });
+			}
+			if (url.includes("/quota/providers")) {
+				return Response.json({ providers: [{ provider: "opencode-go", supported_providers: ["opencode-go"] }] });
+			}
+			if (url.includes("/quota/fetch")) {
+				return Response.json({
+					subscription: { plan: "Go" },
+					groups: [
+						{
+							displayName: "OpenCode Go",
+							buckets: [
+								{ window: "rolling", remainingFraction: 0.8, resetTime: "2026-10-29T10:00:00Z" },
+								{ window: "weekly", remainingFraction: 0.5 },
+							],
+						},
+					],
+				});
+			}
+			return new Response("{}", { status: 404 });
+		});
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		const quota = await runtime.getAccountQuota("oi-1");
+
+		expect(quota.provider).toBe("opencode-go");
+		expect(quota.plan).toBe("Go");
+		expect(quota.windows).toEqual([
+			expect.objectContaining({ label: "5 小时", used_percent: 20, remaining_percent: 80 }),
+			expect.objectContaining({ label: "周", remaining_percent: 50 }),
+		]);
 	});
 });
 
@@ -298,16 +408,17 @@ describe("CLIProxy OAuth account trash/restore", () => {
 	});
 
 	it("listAccounts 默认过滤 trash 文件，includeTrashed 时保留", async () => {
-		jest.spyOn(global, "fetch").mockImplementation(async () =>
-			new Response(
-				JSON.stringify({
-					files: [
-						{ name: "codex-active.json", auth_index: "a1", type: "codex" },
-						{ name: ".trash/1786846264579-codex-archived.json", auth_index: "a2", type: "codex" },
-					],
-				}),
-				{ status: 200 },
-			),
+		jest.spyOn(global, "fetch").mockImplementation(
+			async () =>
+				new Response(
+					JSON.stringify({
+						files: [
+							{ name: "codex-active.json", auth_index: "a1", type: "codex" },
+							{ name: ".trash/1786846264579-codex-archived.json", auth_index: "a2", type: "codex" },
+						],
+					}),
+					{ status: 200 },
+				),
 		);
 		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
 

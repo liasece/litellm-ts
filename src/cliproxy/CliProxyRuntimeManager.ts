@@ -23,7 +23,12 @@ import {
 	type CliProxyStoredSettings,
 	type CliProxyUpdateInfo,
 } from "./CliProxyTypes";
-import { buildCliProxyQuotaRequests, normalizeCliProxyQuota, type CliProxyQuotaRequest } from "./CliProxyQuota";
+import {
+	buildCliProxyQuotaRequests,
+	normalizeCliProxyPluginQuota,
+	normalizeCliProxyQuota,
+	type CliProxyQuotaRequest,
+} from "./CliProxyQuota";
 
 const MAX_LOG_ENTRIES = 4_000;
 const MAX_OAUTH_OUTPUT_LINES = 500;
@@ -32,6 +37,10 @@ const HEALTH_TIMEOUT_MS = 15_000;
 const MAX_OAUTH_SESSIONS = 32;
 const RELEASE_REPOSITORY = "router-for-me/CLIProxyAPI";
 const RESERVED_CONFIG_KEYS = new Set(["host", "port", "auth-dir", "api-keys", "remote-management"]);
+const OPENCODE_GO_PLUGIN_ID = "opencode-go-cliproxyapi";
+const OPENCODE_GO_PLUGIN_MIN_VERSION = "8.0.0";
+const OPENCODE_GO_PLUGIN_BASE_URL = "https://opencode.ai/inference/go/v1";
+const PROVIDER_SPECIFIC_QUOTA = new Set(["codex", "claude", "anthropic", "kimi", "antigravity", "xai"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -180,10 +189,13 @@ export function buildCliProxyProjection(
 		authDir: string; /**
 		 *
 		 */
-		internalApiKey: string;
+		internalApiKey: string; /**
+		 * Managed plugin directory; when set, the OpenCode Go plugin is enabled.
+		 */
+		pluginDir?: string | null;
 	},
 ): Record<string, unknown> {
-	return {
+	const projected: Record<string, unknown> = {
 		...userConfig,
 		host: "127.0.0.1",
 		port: options.port,
@@ -198,6 +210,68 @@ export function buildCliProxyProjection(
 		"api-keys": [options.internalApiKey],
 		"logging-to-file": false,
 		pprof: { enable: false, addr: "127.0.0.1:8316" },
+	};
+	if (options.pluginDir) {
+		projected["plugins"] = buildCliProxyPluginConfig(userConfig["plugins"], options.pluginDir);
+	}
+	return projected;
+}
+
+/**
+ * 判断当前 CLIProxy 版本是否支持动态插件。
+ * @param version
+ */
+export function supportsCliProxyPlugins(version: string | null): boolean {
+	if (!version) {
+		return false;
+	}
+	const comparison = compareCliProxyVersions(version, OPENCODE_GO_PLUGIN_MIN_VERSION);
+	return comparison !== null && comparison >= 0;
+}
+
+/**
+ * 只有插件版二进制才能加载托管插件；no-plugin 静态构建一律不注入插件配置。
+ * @param version
+ * @param artifact
+ */
+export function shouldEnableCliProxyPlugin(version: string | null, artifact: string | null): boolean {
+	return supportsCliProxyPlugins(version) && artifact === "plugin";
+}
+
+/**
+ * 计算托管 CLIProxy 运行时的发布归档名。
+ * @param version
+ * @param architecture
+ */
+export function cliProxyReleaseArchiveName(version: string, architecture: "amd64" | "aarch64"): string {
+	return `CLIProxyAPI_${version}_linux_${architecture}${supportsCliProxyPlugins(version) ? "" : "_no-plugin"}.tar.gz`;
+}
+
+/**
+ * 合并 OpenCode Go 插件的托管配置，允许用户在页面上覆盖密钥等字段。
+ * @param userValue
+ * @param directory
+ */
+export function buildCliProxyPluginConfig(userValue: unknown, directory: string): Record<string, unknown> {
+	const userPlugins = isRecord(userValue) ? userValue : {};
+	const userConfigs = isRecord(userPlugins["configs"]) ? (userPlugins["configs"] as Record<string, unknown>) : {};
+	const userEntry = isRecord(userConfigs[OPENCODE_GO_PLUGIN_ID]) ? (userConfigs[OPENCODE_GO_PLUGIN_ID] as Record<string, unknown>) : {};
+	return {
+		...userPlugins,
+		enabled: true,
+		dir: directory,
+		configs: {
+			...userConfigs,
+			[OPENCODE_GO_PLUGIN_ID]: {
+				enabled: true,
+				"base-url": OPENCODE_GO_PLUGIN_BASE_URL,
+				"model-prefix": { enabled: true, value: "opencode-go" },
+				// CLIProxy 在运行时展开该占位符，不能交给 JavaScript 模板字符串。
+				// eslint-disable-next-line no-template-curly-in-string
+				"api-keys": [{ value: "${OPENCODE_GO_API_KEY}", name: "Personal" }],
+				...userEntry,
+			},
+		},
 	};
 }
 
@@ -235,6 +309,7 @@ export class CliProxyRuntimeManager {
 	private readonly _authDir: string;
 	private readonly _logsDir: string;
 	private readonly _configPath: string;
+	private readonly _pluginDir: string;
 	private readonly _currentLink: string;
 	private readonly _bootstrapBinary: string;
 	private readonly _bootstrapVersion: string;
@@ -249,6 +324,7 @@ export class CliProxyRuntimeManager {
 	private _lastExitCode: number | null = null;
 	private _lastError: string | null = null;
 	private _configHash: string | null = null;
+	private _pluginsEnabled = false;
 	private _health: CliProxyRuntimeStatus["health"] = "unknown";
 	private _operation: string | null = null;
 	private _desiredStop = false;
@@ -276,6 +352,7 @@ export class CliProxyRuntimeManager {
 		this._authDir = path.join(this._runtimeRoot, "auths");
 		this._logsDir = path.join(this._runtimeRoot, "logs");
 		this._configPath = path.join(this._runtimeRoot, "config.yaml");
+		this._pluginDir = process.env["CLIPROXY_PLUGIN_DIR"] ?? path.join(this._runtimeRoot, "plugins");
 		this._currentLink = path.join(this._runtimeRoot, "current");
 		this._bootstrapBinary = process.env["CLIPROXY_BOOTSTRAP_BINARY"] ?? "/opt/cliproxy/cli-proxy-api";
 		this._bootstrapVersion = normalizeVersion(process.env["CLIPROXY_BOOTSTRAP_VERSION"] ?? "7.2.110");
@@ -339,6 +416,7 @@ export class CliProxyRuntimeManager {
 			this._settings = await this._importExistingOrDefaultSettings();
 			await this._repository.upsertParam(CLIPROXY_CONFIG_PARAM, this._settings);
 		}
+		await this._ensurePluginArtifact();
 		await this._projectConfig();
 		if (this._settings.enabled) {
 			await this.start();
@@ -394,10 +472,22 @@ export class CliProxyRuntimeManager {
 		await this._serialize("apply-config", async () => {
 			this._settings = { enabled: next.enabled, config_yaml: next.config_yaml };
 			await this._repository.upsertParam(CLIPROXY_CONFIG_PARAM, this._settings);
+			const pluginsEnabledBefore = this._pluginsEnabled;
 			await this._projectConfig();
 			if (!next.enabled) {
 				this._desiredStop = true;
 				await this._stopProcess();
+				return;
+			}
+			if (this._process && pluginsEnabledBefore !== this._pluginsEnabled) {
+				this._appendLog(
+					"system",
+					this._pluginsEnabled ? "已启用 OpenCode Go 插件，重启 CLIProxy" : "已停用 OpenCode Go 插件，重启 CLIProxy",
+				);
+				await this._restartProcess();
+				if (this._state !== "running") {
+					throw ApiError.unavailable(this._lastError ?? "CLIProxy 重启后健康检查未通过");
+				}
 				return;
 			}
 			if (!this._process) {
@@ -547,6 +637,42 @@ export class CliProxyRuntimeManager {
 			.sort((left, right) => left.filename.localeCompare(right.filename) || left.auth_index.localeCompare(right.auth_index));
 	}
 
+	private async _fetchPluginQuota(authIndex: string, provider: string): Promise<CliProxyAccountQuota | null> {
+		const normalizedProvider = provider.trim().toLowerCase();
+		if (PROVIDER_SPECIFIC_QUOTA.has(normalizedProvider)) {
+			return null;
+		}
+		let described: { providers?: unknown };
+		try {
+			described = await this._managementJson<{ providers?: unknown }>("/quota/providers");
+		} catch {
+			// 旧版 CLIProxy 没有插件额度接口，继续走 provider 专用查询。
+			return null;
+		}
+		const providers = Array.isArray(described.providers) ? described.providers.filter(isRecord) : [];
+		const supported = providers.some((entry) => {
+			const values = Array.isArray(entry["supported_providers"]) ? entry["supported_providers"] : [];
+			return values.some((value) => typeof value === "string" && value.trim().toLowerCase() === normalizedProvider);
+		});
+		if (!supported) {
+			return null;
+		}
+		let payload: unknown;
+		try {
+			payload = await this._managementJson<unknown>("/quota/fetch", {
+				method: "POST",
+				body: JSON.stringify({ auth_index: authIndex }),
+			});
+		} catch {
+			throw ApiError.unavailable(`${provider} 订阅额度查询失败`);
+		}
+		const normalized = normalizeCliProxyPluginQuota(provider, payload);
+		if (!normalized) {
+			throw ApiError.unavailable(`${provider} 未返回可展示的订阅额度`);
+		}
+		return { provider: provider, ...normalized, fetched_at: new Date().toISOString() };
+	}
+
 	/**
 	 * @param authIndexValue
 	 */
@@ -561,6 +687,10 @@ export class CliProxyRuntimeManager {
 			throw ApiError.notFound("CLIProxy OAuth 账户不存在");
 		}
 		const provider = this._stringField(authFile, "type", "provider") ?? "unknown";
+		const pluginQuota = await this._fetchPluginQuota(authIndex, provider);
+		if (pluginQuota) {
+			return pluginQuota;
+		}
 		const requests = buildCliProxyQuotaRequests(provider, authFile);
 		const payloads: Array<{
 			/**
@@ -851,6 +981,7 @@ export class CliProxyRuntimeManager {
 			this._state = "updating";
 			await this._installRelease(version);
 			await this._activateVersion(version);
+			await this._projectConfig();
 			await this._restartProcess();
 			this._assertRunning();
 		});
@@ -865,6 +996,7 @@ export class CliProxyRuntimeManager {
 		await access(path.join(this._versionsDir, version, "cli-proxy-api"));
 		await this._serialize("rollback", async () => {
 			await this._activateVersion(version);
+			await this._projectConfig();
 			await this._restartProcess();
 			this._assertRunning();
 		});
@@ -900,12 +1032,105 @@ export class CliProxyRuntimeManager {
 		};
 	}
 
+	private _artifactMarkerPath(version: string): string {
+		return path.join(this._versionsDir, version, ".artifact");
+	}
+
+	private async _readArtifactKind(version: string): Promise<string | null> {
+		try {
+			return (await readFile(this._artifactMarkerPath(version), "utf8")).trim() || null;
+		} catch {
+			return null;
+		}
+	}
+
+	private async _pluginFileAvailable(): Promise<boolean> {
+		for (const extension of [".so", ".dylib"]) {
+			try {
+				await access(path.join(this._pluginDir, `${OPENCODE_GO_PLUGIN_ID}${extension}`));
+				return true;
+			} catch {
+				// 继续探测其他平台扩展名。
+			}
+		}
+		return false;
+	}
+
+	private _hasPluginCredential(userConfig: Record<string, unknown>): boolean {
+		if ((process.env["OPENCODE_GO_API_KEY"] ?? "").trim() !== "") {
+			return true;
+		}
+		const plugins = isRecord(userConfig["plugins"]) ? userConfig["plugins"] : null;
+		const configs = plugins && isRecord(plugins["configs"]) ? plugins["configs"] : null;
+		const entry = configs && isRecord(configs[OPENCODE_GO_PLUGIN_ID]) ? configs[OPENCODE_GO_PLUGIN_ID] : null;
+		const keys = entry?.["api-keys"];
+		return Array.isArray(keys) && keys.length > 0;
+	}
+
+	private async _ensurePluginArtifact(): Promise<void> {
+		const version = this._currentVersion();
+		if (!version || !supportsCliProxyPlugins(version)) {
+			return;
+		}
+		if ((await this._readArtifactKind(version)) === "plugin") {
+			return;
+		}
+		if (!(await this._pluginFileAvailable())) {
+			return;
+		}
+		if (version === this._bootstrapVersion) {
+			try {
+				await access(this._bootstrapBinary);
+				const targetBinary = path.join(this._versionsDir, version, "cli-proxy-api");
+				await copyFile(this._bootstrapBinary, targetBinary);
+				await chmod(targetBinary, 0o755);
+				await writeFile(this._artifactMarkerPath(version), "plugin", { mode: 0o600 });
+				this._appendLog("system", `CLIProxy ${version} 已使用镜像内置的插件版二进制`);
+				return;
+			} catch {
+				// 回退到在线安装。
+			}
+		}
+		try {
+			await this._installRelease(version, true);
+			this._appendLog("system", `CliProxy ${version} 已切换为插件版二进制`);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this._appendLog("system", `CliProxy ${version} 插件版二进制安装失败: ${message}`);
+		}
+	}
+
+	private async _resolvePluginDir(userConfig: Record<string, unknown>): Promise<string | null> {
+		const version = this._currentVersion();
+		if (!version || !supportsCliProxyPlugins(version)) {
+			return null;
+		}
+		if ((await this._readArtifactKind(version)) !== "plugin") {
+			return null;
+		}
+		if (!this._hasPluginCredential(userConfig)) {
+			return null;
+		}
+		for (const extension of [".so", ".dylib"]) {
+			try {
+				await access(path.join(this._pluginDir, `${OPENCODE_GO_PLUGIN_ID}${extension}`));
+				return this._pluginDir;
+			} catch {
+				// 继续探测其他平台扩展名。
+			}
+		}
+		return null;
+	}
+
 	private async _projectConfig(): Promise<void> {
 		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
+		const pluginDir = await this._resolvePluginDir(userConfig);
+		this._pluginsEnabled = pluginDir !== null;
 		const projected = buildCliProxyProjection(userConfig, {
 			port: this._port,
 			authDir: this._authDir,
 			internalApiKey: this._internalApiKey,
+			pluginDir: pluginDir,
 		});
 		const contents = `# Generated by LiteLLM TS. Edit through the LiteLLM CLIProxy page.\n${yaml.dump(projected, {
 			noRefs: true,
@@ -1102,11 +1327,13 @@ export class CliProxyRuntimeManager {
 		this._appendLog("system", `已激活 CLIProxy ${version}`);
 	}
 
-	private async _installRelease(version: string): Promise<void> {
+	private async _installRelease(version: string, force = false): Promise<void> {
 		const targetBinary = path.join(this._versionsDir, version, "cli-proxy-api");
 		try {
 			await access(targetBinary);
-			return;
+			if (!force) {
+				return;
+			}
 		} catch {
 			// Continue with installation.
 		}
@@ -1114,7 +1341,7 @@ export class CliProxyRuntimeManager {
 		if (!architecture) {
 			throw ApiError.badRequest(`不支持的 CPU 架构: ${process.arch}`);
 		}
-		const archiveName = `CLIProxyAPI_${version}_linux_${architecture}_no-plugin.tar.gz`;
+		const archiveName = cliProxyReleaseArchiveName(version, architecture);
 		const releaseBase = `https://github.com/${RELEASE_REPOSITORY}/releases/download/v${version}`;
 		const [checksumsResponse, archiveResponse] = await Promise.all([
 			fetch(`${releaseBase}/checksums.txt`, { signal: AbortSignal.timeout(30_000) }),
@@ -1151,6 +1378,9 @@ export class CliProxyRuntimeManager {
 		await mkdir(targetDir, { recursive: true });
 		await copyFile(extractedBinary, targetBinary);
 		await chmod(targetBinary, 0o755);
+		await writeFile(this._artifactMarkerPath(version), supportsCliProxyPlugins(version) ? "plugin" : "no-plugin", {
+			mode: 0o600,
+		});
 		await this._runCommand(targetBinary, ["-h"]);
 		this._appendLog("system", `CLIProxy ${version} 下载并校验完成`);
 	}

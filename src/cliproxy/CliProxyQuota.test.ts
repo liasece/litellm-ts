@@ -1,4 +1,4 @@
-import { buildCliProxyQuotaRequests, normalizeCliProxyQuota } from "./CliProxyQuota";
+import { buildCliProxyQuotaRequests, normalizeCliProxyPluginQuota, normalizeCliProxyQuota } from "./CliProxyQuota";
 
 describe("CLIProxy subscription quota normalization", () => {
 	it("converts Codex used percentages to remaining percentages and classifies rolling windows", () => {
@@ -133,5 +133,42 @@ describe("CLIProxy subscription quota normalization", () => {
 
 		expect(claude.windows[0]).toMatchObject({ used_percent: 20, remaining_percent: 80 });
 		expect(antigravity.windows[0]).toMatchObject({ used_percent: 35, remaining_percent: 65 });
+	});
+});
+
+describe("CLIProxy plugin quota normalization", () => {
+	it("maps generic plugin buckets to display windows", () => {
+		const quota = normalizeCliProxyPluginQuota("opencode-go", {
+			subscription: { plan: "Go" },
+			groups: [
+				{
+					displayName: "OpenCode Go",
+					buckets: [
+						{ window: "rolling", remainingFraction: 0.75, resetTime: "2026-10-29T09:00:00Z" },
+						{ window: "monthly", remaining_fraction: 0.4, reset_time: "2026-11-01T00:00:00Z" },
+					],
+				},
+			],
+		});
+
+		expect(quota?.plan).toBe("Go");
+		expect(quota?.windows).toEqual([
+			expect.objectContaining({
+				id: "opencode-go:rolling",
+				label: "5 小时",
+				used_percent: 25,
+				remaining_percent: 75,
+				resets_at: "2026-10-29T09:00:00.000Z",
+			}),
+			expect.objectContaining({ id: "opencode-go:monthly", label: "月", remaining_percent: 40 }),
+		]);
+	});
+
+	it("returns null when no readable bucket is present", () => {
+		const unnamed = normalizeCliProxyPluginQuota("opencode-go", {
+			groups: [{ buckets: [{ remainingFraction: 1 }] }],
+		});
+		expect(unnamed?.windows[0]?.id).toBe("opencode-go:bucket-1");
+		expect(normalizeCliProxyPluginQuota("opencode-go", { groups: [] })).toBeNull();
 	});
 });
