@@ -8,59 +8,62 @@ LiteLLM TS 托管的 CLIProxyAPI 运行时内置 [commandcode-go-cliproxyapi](ht
 
 ## 上游与模型
 
-- 上游：`https://api.commandcode.ai/provider/v1`
-- 默认路由：OpenAI Chat Completions（`/chat/completions`）；Claude 模型可走 `/messages`，
-  部分模型支持 `/responses`，可用 `route-overrides` 固定。
-- 模型目录来自 `GET {base-url}/models`，客户端模型 ID 形如：
-  - `commandcode/deepseek/deepseek-v4.1-flash`
-  - `commandcode/z-ai/glm-5.3-flash`
-  - `commandcode/moonshotai/kimi-k3`
-
-## 启用方式
-
-插件库已打进运行时镜像的 `/opt/cliproxy/plugins`。管理器在以下条件同时满足时把
-`plugins.configs.commandcode-go-cliproxyapi` 注入 CPA 配置：
-
-1. 当前 CLIProxyAPI ≥ 8.0.0 且运行的是插件版二进制；
-2. 镜像里存在 `commandcode-go-cliproxyapi.so`。
-
-托管字段只包含 `enabled`、`base-url`、`model-prefix`；用户在同一插件 id 下写的字段优先。
-插件不读取配置里的 `api-keys`，密钥只来自 CPA auth 文件。
+- 上游：@@BThttps://api.commandcode.ai/provider/v1@@BT
+- 默认路由：OpenAI Chat Completions（@@BT/chat/completions@@BT）；Claude 模型可走 @@BT/messages@@BT，
+  部分模型支持 @@BT/responses@@BT，可用 @@BTroute-overrides@@BT 固定。
+- 模型目录来自 @@BTGET {base-url}/models@@BT，客户端模型 ID 形如：
+  - @@BTcommandcode/deepseek/deepseek-v4.1-flash@@BT
+  - @@BTcommandcode/z-ai/glm-5.3-flash@@BT
+  - @@BTcommandcode/moonshotai/kimi-k3@@BT
 
 ## 账户（API key）
 
-把账户写成 CPA auth 文件，放在 `CLIPROXY_RUNTIME_ROOT/auths/`（生产宿主
-`/root/var/tools/service/ai-out-service/CLIProxyAPI/auths/`），权限 600：
+密钥写在 LiteLLM 管理的 CLIProxy 配置里，不需要额外的 key 文件：
 
-~~~json
-{
-  "type": "commandcode",
-  "api_key": "cc_xxx",
-  "label": "GOAT"
-}
+~~~yaml
+plugins:
+  managed-accounts:
+    commandcode:
+      api-key: "cc_xxx"
+      label: "GOAT"      # 可选，默认 CommandCode
 ~~~
 
-CPA 的文件监听会加载它，插件会在下一个目录刷新周期把模型挂到 `commandcode/` 前缀下。
-插件自带的账户页面（Management Center → CommandCode）依赖 CPA 控制面板，本仓库托管模式
-不暴露该页面，因此用 auth 文件维护账户。
+保存后管理器会：
+
+1. 从投影给 CPA 的配置中移除 @@BTmanaged-accounts@@BT，密钥不会进入 CPA 的 config.yaml；
+2. 在 @@BTCLIPROXY_RUNTIME_ROOT/auths/@@BT 写入 @@BTcommandcode-managed-<摘要>.json@@BT（权限 600）；
+3. 换 key 时删除旧的托管 auth 文件，删除该段时一并清理。
+
+手工放置 @@BTtype: commandcode@@BT 的 auth 文件仍然兼容，但不再需要；插件自带的
+Management Center 账户页在托管模式下不暴露。
+
+## 启用方式
+
+插件库已打进运行时镜像的 @@BT/opt/cliproxy/plugins@@BT。管理器在以下条件同时满足时把
+@@BTplugins.configs.commandcode-go-cliproxyapi@@BT 注入 CPA 配置：
+
+1. 当前 CLIProxyAPI ≥ 8.0.0 且运行的是插件版二进制；
+2. 镜像里存在 @@BTcommandcode-go-cliproxyapi.so@@BT。
+
+托管字段只包含 @@BTenabled@@BT、@@BTbase-url@@BT、@@BTmodel-prefix@@BT；用户在同一插件 id 下写的字段优先。
 
 ## 额度
 
-LiteLLM 的账户额度查询对 `provider = commandcode` 走插件的管理接口：
+LiteLLM 的账户额度查询对 @@BTprovider = commandcode@@BT 走插件的管理接口：
 
-- `POST /v0/management/plugins/commandcode-go-cliproxyapi/quota-usage`，body `{"key_id":"<auth_index>"}`
+- @@BTPOST /v0/management/plugins/commandcode-go-cliproxyapi/quota-usage@@BT，body @@BT{"key_id":"<auth_index>"}@@BT
 
 插件返回计划（GOAT/Pro/Max）、计划额度、剩余 credits、5 小时/周/月窗口；LiteLLM 归一化成
 统一的额度卡片。CommandCode 的额度接口需要有效 key，账户失效会显示插件返回的错误。
 
 ## 模型放行
 
-CPA 的 `/v1/models` 能看到全部 `commandcode/*`，但 LiteLLM 只会路由已经加入模型配置的
-模型。使用前在模型管理里添加对应模型（例如 `commandcode/deepseek/deepseek-v4.1-flash`）。
+CPA 的 @@BT/v1/models@@BT 能看到全部 @@BTcommandcode/*@@BT，但 LiteLLM 只会路由已经加入模型配置的
+模型。使用前在模型管理里添加对应模型（例如 @@BTcommandcode/deepseek/deepseek-v4.1-flash@@BT）。
 
 ## 验证
 
-1. 容器日志出现 `plugin loaded plugin_id=commandcode-go-cliproxyapi` 与 `plugin registered`；
-2. `GET /v1/models` 含 `commandcode/` 前缀（需要至少一个启用账户，目录才会发现）；
-3. 账户 `auth_index` 的额度接口返回 plan/credits/窗口；
-4. 通过 LiteLLM 调用 `commandcode/...` 返回 200。
+1. 容器日志出现 @@BTplugin loaded plugin_id=commandcode-go-cliproxyapi@@BT 与 @@BTplugin registered@@BT；
+2. @@BTGET /v1/models@@BT 含 @@BTcommandcode/@@BT 前缀（需要至少一个启用账户，目录才会发现）；
+3. 账户 @@BTauth_index@@BT 的额度接口返回 plan/credits/窗口；
+4. 通过 LiteLLM 调用 @@BTcommandcode/...@@BT 返回 200。

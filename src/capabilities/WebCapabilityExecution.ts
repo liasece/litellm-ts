@@ -11,6 +11,8 @@ import {
 	DEEPSEEK_TOOLS_COST_PER_REQUEST_USD,
 	type DeepSeekToolsConnection,
 } from "./DeepSeekToolsClient";
+import { captureUpstreamExchange } from "../router/UpstreamExchange";
+import { getAttachedUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import { extractAssistant, parseWebArguments, type WebToolRequest } from "./WebCapabilityProtocol";
 
 /**
@@ -61,6 +63,8 @@ interface WebAttemptAuditContext {
 	readonly executor: string;
 	readonly credentialName?: string;
 	readonly fixedCostUsd?: number;
+	/** 该次调用自己的上游交换；由 worker 子作用域捕获，避免与主请求混用。 */
+	readonly upstreamLogContext?: UpstreamLogContext;
 	readonly outcome: { response: Record<string, unknown> } | { error: unknown };
 }
 
@@ -173,6 +177,7 @@ async function recordWebAttempt(
 		requestBody: { ...context.requestBody, model: context.model, messages: context.messages },
 		startTime: context.startTime,
 		endTime: context.endTime,
+		upstreamLogContext: context.upstreamLogContext,
 		...context.outcome,
 	});
 }
@@ -310,7 +315,9 @@ async function executeModelToolCall(
 		: requestBody;
 	const startTime = new Date();
 	try {
-		const modelResponse = await complete(capabilityModel, context.messages, completionParams);
+		// worker 调用在自己的子作用域里记录上游交换：它属于审计行，不能覆盖外层请求的上游详情。
+		const captured = await captureUpstreamExchange(() => complete(capabilityModel, context.messages, completionParams));
+		const modelResponse = captured.result;
 		const text = nativeResponses ? textFromResponsesCompletion(modelResponse) : textFromCompletion(modelResponse);
 		const endTime = new Date();
 		await recordWebAttempt(context.audit, {
@@ -322,6 +329,7 @@ async function executeModelToolCall(
 			startTime: startTime,
 			endTime: endTime,
 			executor: executorLabel(executor),
+			upstreamLogContext: captured.context,
 			outcome: { response: modelResponse },
 		});
 		return { text: text, raw: modelResponse, model: capabilityModel };
@@ -336,6 +344,7 @@ async function executeModelToolCall(
 			startTime: startTime,
 			endTime: endTime,
 			executor: executorLabel(executor),
+			upstreamLogContext: getAttachedUpstreamLogContext(error),
 			outcome: { error: error },
 		});
 		throw error;

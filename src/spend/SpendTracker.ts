@@ -45,6 +45,7 @@ import type {
 	SpendReservationScope,
 } from "../types/spend";
 import { CallType, SpendLogStatus } from "../types/spend";
+import { getRecordedUpstreamExchange } from "../router/UpstreamExchange";
 import type { ModelResponse, ModelResponseStream, Usage } from "../types/openai";
 import { costPerToken, resolvePeakMultiplier } from "../cost/CostCalculator";
 import { createModuleLogger } from "../core/utils/logger";
@@ -732,15 +733,18 @@ export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promis
 		body: shouldStoreBody ? sanitizeSpendLogPayload(requestBody) : {},
 		arrival_time: ctx.startTime.toISOString(),
 	};
-	if (shouldStoreUpstreamLogs && ctx.upstreamLogContext) {
+	// 上游详情以请求作用域通道为准：端点显式传入时用传入值，否则读取传输层记录的真实交换。
+	// 这样任何中间层重建结果对象都不会让日志丢上游详情。
+	const upstreamLogContext = ctx.upstreamLogContext ?? (ctx.disableAmbientUpstreamContext === true ? undefined : getRecordedUpstreamExchange());
+	if (shouldStoreUpstreamLogs && upstreamLogContext) {
 		requestShape["upstream_request"] = sanitizeSpendLogPayload({
-			...ctx.upstreamLogContext.request,
-			headers: sanitizeSpendLogHeaders(ctx.upstreamLogContext.request.headers),
+			...upstreamLogContext.request,
+			headers: sanitizeSpendLogHeaders(upstreamLogContext.request.headers),
 		});
-		if (ctx.upstreamLogContext.response) {
+		if (upstreamLogContext.response) {
 			requestShape["upstream_response"] = sanitizeSpendLogResponsePayload({
-				...ctx.upstreamLogContext.response,
-				headers: sanitizeSpendLogHeaders(ctx.upstreamLogContext.response.headers),
+				...upstreamLogContext.response,
+				headers: sanitizeSpendLogHeaders(upstreamLogContext.response.headers),
 			});
 		}
 	}

@@ -38,6 +38,7 @@ import LogsPagination from "./LogsPagination";
 import LogsToolbar from "./LogsToolbar";
 import ProviderStatusWarnings from "./ProviderStatusWarnings";
 import SpendLogsSettingsModal from "./SpendLogsSettingsModal/SpendLogsSettingsModal";
+import { ConfigType, useProxyConfig } from "@/app/(dashboard)/hooks/proxyConfig/useProxyConfig";
 import { DataTable } from "./table";
 
 interface SpendLogsTableProps {
@@ -96,6 +97,12 @@ export default function SpendLogsTable({
 	const [selectedSessionGroup, setSelectedSessionGroup] = useState<SessionGroupRef | null>(null);
 	const [simulationSessionGroup, setSimulationSessionGroup] = useState<SessionGroupRef | null>(null);
 	const [isSpendLogsSettingsModalVisible, setIsSpendLogsSettingsModalVisible] = useState(false);
+	// 上游详情开关决定详情页的提示语义：设置已开时，缺失不能再归因于设置。
+	const { data: generalSettingsConfig } = useProxyConfig(ConfigType.GENERAL_SETTINGS);
+	const upstreamLogsEnabled = useMemo(() => {
+		const field = generalSettingsConfig?.find((item) => item.field_name === "store_upstream_logs_in_spend_logs");
+		return field === undefined ? undefined : field.field_value === true;
+	}, [generalSettingsConfig]);
 	// 列显示设置属于本地展示偏好，保存在浏览器中，不影响代理侧配置。
 	const [visibleOptionalColumns, setVisibleOptionalColumns] = useState<LogsOptionalColumnId[]>(() =>
 		readLogsColumnPreferences(),
@@ -635,6 +642,7 @@ export default function SpendLogsTable({
 				teamId={selectedTeamId || undefined}
 				accessToken={accessToken}
 				onOpenSettings={() => setIsSpendLogsSettingsModalVisible(true)}
+				upstreamLogsEnabled={upstreamLogsEnabled}
 				allLogs={searchedLogs}
 				onSelectLog={handleSelectLog}
 				onRefresh={handleDrawerRefresh}

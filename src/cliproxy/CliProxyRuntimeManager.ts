@@ -2,7 +2,7 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream, readdirSync, readlinkSync } from "node:fs";
-import { access, chmod, copyFile, mkdir, open, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, open, readdir, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -43,6 +43,8 @@ const OPENCODE_GO_PLUGIN_MIN_VERSION = "8.0.0";
 const OPENCODE_GO_PLUGIN_BASE_URL = "https://opencode.ai/inference/go/v1";
 const COMMANDCODE_PLUGIN_ID = "commandcode-go-cliproxyapi";
 const COMMANDCODE_PLUGIN_BASE_URL = "https://api.commandcode.ai/provider/v1";
+const MANAGED_ACCOUNTS_KEY = "managed-accounts";
+const COMMANDCODE_ACCOUNT_KEY = "commandcode";
 const PROVIDER_SPECIFIC_QUOTA = new Set(["codex", "claude", "anthropic", "kimi", "antigravity", "xai"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -216,6 +218,38 @@ export interface CliProxyManagedPlugins {
 }
 
 /**
+ * 读取 config.yaml 中由 LiteLLM 托管的 CommandCode 账户。
+ * @param userConfig
+ */
+export function extractManagedCommandCodeAccount(userConfig: Record<string, unknown>): { apiKey: string; label: string } | null {
+	const plugins = isRecord(userConfig["plugins"]) ? userConfig["plugins"] : null;
+	const accounts = plugins && isRecord(plugins[MANAGED_ACCOUNTS_KEY]) ? plugins[MANAGED_ACCOUNTS_KEY] : null;
+	const entry = accounts && isRecord(accounts[COMMANDCODE_ACCOUNT_KEY]) ? accounts[COMMANDCODE_ACCOUNT_KEY] : null;
+	const value = entry?.["api-key"];
+	const apiKey = typeof value === "string" ? value.trim() : "";
+	if (!apiKey) {
+		return null;
+	}
+	const labelValue = entry?.["label"];
+	const label = typeof labelValue === "string" && labelValue.trim() ? labelValue.trim() : "CommandCode";
+	return { apiKey: apiKey, label: label };
+}
+
+/**
+ * 从用户配置中移除 LiteLLM 托管的账户段，避免密钥进入 CPA 配置。
+ * @param userConfig
+ */
+export function stripManagedCliProxyAccounts(userConfig: Record<string, unknown>): Record<string, unknown> {
+	const plugins = userConfig["plugins"];
+	if (!isRecord(plugins) || plugins[MANAGED_ACCOUNTS_KEY] === undefined) {
+		return userConfig;
+	}
+	const nextPlugins: Record<string, unknown> = { ...plugins };
+	delete nextPlugins[MANAGED_ACCOUNTS_KEY];
+	return { ...userConfig, plugins: nextPlugins };
+}
+
+/**
  * @param userConfig
  * @param options
  */
@@ -237,8 +271,9 @@ export function buildCliProxyProjection(
 		plugins?: CliProxyManagedPlugins | null;
 	},
 ): Record<string, unknown> {
+	const sanitizedConfig = stripManagedCliProxyAccounts(userConfig);
 	const projected: Record<string, unknown> = {
-		...userConfig,
+		...sanitizedConfig,
 		host: "127.0.0.1",
 		port: options.port,
 		tls: { enable: false, cert: "", key: "" },
@@ -254,7 +289,7 @@ export function buildCliProxyProjection(
 		pprof: { enable: false, addr: "127.0.0.1:8316" },
 	};
 	if (options.plugins) {
-		projected["plugins"] = buildCliProxyPluginConfig(userConfig["plugins"], options.plugins);
+		projected["plugins"] = buildCliProxyPluginConfig(sanitizedConfig["plugins"], options.plugins);
 	}
 	return projected;
 }
@@ -295,7 +330,8 @@ export function cliProxyReleaseArchiveName(version: string, architecture: "amd64
  * @param plugins
  */
 export function buildCliProxyPluginConfig(userValue: unknown, plugins: CliProxyManagedPlugins): Record<string, unknown> {
-	const userPlugins = isRecord(userValue) ? userValue : {};
+	const userPlugins = isRecord(userValue) ? { ...userValue } : {};
+	delete userPlugins[MANAGED_ACCOUNTS_KEY];
 	const userConfigs = isRecord(userPlugins["configs"]) ? (userPlugins["configs"] as Record<string, unknown>) : {};
 	const configs: Record<string, unknown> = { ...userConfigs };
 	if (plugins.opencodeGo) {
@@ -324,12 +360,12 @@ export function buildCliProxyPluginConfig(userValue: unknown, plugins: CliProxyM
 		...userPlugins,
 		enabled: true,
 		dir: plugins.dir,
-		configs,
+		configs: configs,
 	};
 }
 
 function sanitizeImportedConfig(value: Record<string, unknown>): Record<string, unknown> {
-	const result = { ...value };
+	const result = stripManagedCliProxyAccounts({ ...value });
 	for (const key of RESERVED_CONFIG_KEYS) {
 		delete result[key];
 	}
@@ -1191,6 +1227,42 @@ export class CliProxyRuntimeManager {
 		}
 	}
 
+	private async _syncManagedCommandCodeAccount(userConfig: Record<string, unknown>): Promise<void> {
+		if (!(await this._pluginFileAvailable(COMMANDCODE_PLUGIN_ID))) {
+			return;
+		}
+		const prefix = "commandcode-managed-";
+		let existing: string[] = [];
+		try {
+			existing = (await readdir(this._authDir)).filter((name) => name.startsWith(prefix) && name.endsWith(".json"));
+		} catch {
+			existing = [];
+		}
+		const account = extractManagedCommandCodeAccount(userConfig);
+		if (!account) {
+			await Promise.all(existing.map((name) => unlink(path.join(this._authDir, name)).catch(() => undefined)));
+			return;
+		}
+		const digest = createHash("sha256").update(account.apiKey).digest("hex").slice(0, 12);
+		const filename = `${prefix}${digest}.json`;
+		const targetPath = path.join(this._authDir, filename);
+		const payload = JSON.stringify({ type: "commandcode", api_key: account.apiKey, label: account.label });
+		let current: string | null = null;
+		try {
+			current = await readFile(targetPath, "utf8");
+		} catch {
+			current = null;
+		}
+		if (current !== payload) {
+			const temporary = path.join(this._authDir, `.${filename}.${randomUUID()}.tmp`);
+			await writeFile(temporary, payload, { mode: 0o600 });
+			await rename(temporary, targetPath);
+		}
+		await Promise.all(
+			existing.filter((name) => name !== filename).map((name) => unlink(path.join(this._authDir, name)).catch(() => undefined)),
+		);
+	}
+
 	private async _resolveManagedPlugins(userConfig: Record<string, unknown>): Promise<CliProxyManagedPlugins | null> {
 		const version = this._currentVersion();
 		if (!version || !supportsCliProxyPlugins(version)) {
@@ -1206,18 +1278,19 @@ export class CliProxyRuntimeManager {
 		if (!opencodeGo && !commandcode) {
 			return null;
 		}
-		return { dir: this._pluginDir, opencodeGo, commandcode };
+		return { dir: this._pluginDir, opencodeGo: opencodeGo, commandcode: commandcode };
 	}
 
 	private async _projectConfig(): Promise<void> {
 		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
+		await this._syncManagedCommandCodeAccount(userConfig);
 		const plugins = await this._resolveManagedPlugins(userConfig);
 		this._pluginsEnabled = plugins !== null;
 		const projected = buildCliProxyProjection(userConfig, {
 			port: this._port,
 			authDir: this._authDir,
 			internalApiKey: this._internalApiKey,
-			plugins,
+			plugins: plugins,
 		});
 		const contents = `# Generated by LiteLLM TS. Edit through the LiteLLM CLIProxy page.\n${yaml.dump(projected, {
 			noRefs: true,

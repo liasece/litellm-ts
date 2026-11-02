@@ -1,10 +1,14 @@
 import { useMoneyFormatter } from "@/contexts/PriceDisplay";
-import { Form, Select, Tooltip } from "antd";
+import { useMemo, useState } from "react";
+import { Button, Form, Select, Tooltip } from "antd";
 import { TextInput } from "@tremor/react";
 import { InfoCircleOutlined } from "@ant-design/icons";
+import { useCliProxyModels } from "@/app/(dashboard)/hooks/models/useCliProxyModels";
+import { useModelCostMap } from "@/app/(dashboard)/hooks/models/useModelCostMap";
 import NumericalInput from "../shared/numerical_input";
 import type { CredentialValues } from "../networking";
 import ProviderSelect from "../common_components/ProviderSelect";
+import { provider_map } from "../provider_info_helpers";
 import ModelSettingField from "./ModelSettingField";
 import ModelValueList from "./ModelValueList";
 
@@ -34,6 +38,86 @@ function isCodexReasoningModel(provider: unknown, model: unknown): boolean {
 	);
 }
 
+function toSuggestionOptions(values: Array<string | undefined>): Array<{ value: string; label: string }> {
+	const seen = new Set<string>();
+	const options: Array<{ value: string; label: string }> = [];
+	for (const value of values) {
+		if (typeof value !== "string" || value.trim() === "" || seen.has(value)) {
+			continue;
+		}
+		seen.add(value);
+		options.push({ value, label: value });
+	}
+	return options;
+}
+
+interface SuggestionInputProps {
+	value?: string;
+	onChange?: (value: string) => void;
+	options: Array<{ value: string; label: string }>;
+	placeholder: string;
+	ariaLabel: string;
+	customPlaceholder: string;
+}
+
+const CUSTOM_SUGGESTION_VALUE = "__custom__";
+
+/**
+ * 可选择已知候选、也可输入任意新值的单值字段。
+ *
+ * 与 Add Model 的 LiteLLM Model Name 一致：候选项覆盖已知取值，任意自定义值通过
+ * "自定义取值" 选项切换到输入框，避免候选列表变成取值限制。
+ */
+function SuggestionInput({ value, onChange, options, placeholder, ariaLabel, customPlaceholder }: SuggestionInputProps) {
+	const [customActive, setCustomActive] = useState(false);
+	const current = typeof value === "string" ? value : "";
+	const selectOptions = useMemo(() => {
+		const merged = [...toSuggestionOptions([current]), ...options];
+		const seen = new Set<string>();
+		const unique: Array<{ value: string; label: string }> = [];
+		for (const option of merged) {
+			if (seen.has(option.value)) {
+				continue;
+			}
+			seen.add(option.value);
+			unique.push(option);
+		}
+		// 自定义入口放在首位，避免长候选列表把它挤到需要滚动才可见的位置。
+		return [{ value: CUSTOM_SUGGESTION_VALUE, label: "自定义取值（手动输入）" }, ...unique];
+	}, [current, options]);
+
+	if (customActive) {
+		return (
+			<div className="space-y-1">
+				<TextInput value={current} onChange={(event) => onChange?.(event.target.value)} placeholder={customPlaceholder} />
+				<Button type="link" size="small" className="px-0" onClick={() => setCustomActive(false)}>
+					从已知候选中选择
+				</Button>
+			</div>
+		);
+	}
+
+	return (
+		<Select
+			showSearch
+			allowClear
+			value={current === "" ? undefined : current}
+			onChange={(next?: string) => {
+				if (next === CUSTOM_SUGGESTION_VALUE) {
+					setCustomActive(true);
+					return;
+				}
+				onChange?.(next ?? "");
+			}}
+			options={selectOptions}
+			optionFilterProp="label"
+			aria-label={ariaLabel}
+			placeholder={placeholder}
+			style={{ width: "100%" }}
+		/>
+	);
+}
+
 function CredentialValue({ value, format = String }: { value: unknown; format?: (value: any) => string }) {
 	return (
 		<span className="text-gray-400">
@@ -56,12 +140,53 @@ export default function ModelBasicSettings({
 	const modelInfo = modelData.model_info ?? {};
 	const watchedProvider = Form.useWatch("custom_llm_provider", form);
 	const watchedModel = Form.useWatch("litellm_model_name", form);
+	const watchedModelGroup = Form.useWatch("model_name", form);
 	const reasoningEfforts = isCodexReasoningModel(
 		editing ? watchedProvider ?? litellmParams.custom_llm_provider : litellmParams.custom_llm_provider,
 		editing ? watchedModel ?? modelData.litellm_model_name : modelData.litellm_model_name,
 	)
 		? CODEX_REASONING_EFFORTS
 		: ANTHROPIC_REASONING_EFFORTS;
+	// Model Name / LiteLLM Model Name 的候选只是补全来源，任意自定义值仍可保存。
+	const activeProvider = editing ? watchedProvider ?? litellmParams.custom_llm_provider : litellmParams.custom_llm_provider;
+	const providerSlug = typeof activeProvider === "string" ? activeProvider.toLowerCase() : "";
+	const isCliProxyProvider = providerSlug === provider_map.CLIProxy.toLowerCase();
+	const currentModelName = editing ? watchedModel ?? modelData.litellm_model_name : modelData.litellm_model_name;
+	const { data: modelCostMapData } = useModelCostMap(editing);
+	const { data: cliProxyModels } = useCliProxyModels(editing && isCliProxyProvider);
+
+	// Model Name 是 model group 名，可直接从已有 model group 里补全，也允许新名字。
+	const currentModelGroupName = editing ? watchedModelGroup ?? modelData.model_name : modelData.model_name;
+	const modelGroupOptions = useMemo(
+		() => toSuggestionOptions([currentModelGroupName, ...availableModelNames]),
+		[currentModelGroupName, availableModelNames],
+	);
+
+	const modelNameOptions = useMemo(() => {
+		if (isCliProxyProvider) {
+			const cliProxyCandidates = (cliProxyModels ?? [])
+				.map((model) => `cliproxy/${model}`)
+				.sort((left, right) => left.localeCompare(right));
+			return toSuggestionOptions([currentModelName, ...cliProxyCandidates]);
+		}
+		if (providerSlug === "") {
+			return toSuggestionOptions([currentModelName]);
+		}
+		// 与 ProviderSelect 一致，按 litellm_provider 从模型价格表筛选该 provider 的已知模型；
+		// vertex_ai-* / bedrock_* 这类同族 slug 一并纳入，其它 provider 前缀（如 azure_openai）不会误入。
+		const matchesProvider = (litellmProvider: unknown) =>
+			typeof litellmProvider === "string" &&
+			(litellmProvider === providerSlug ||
+				litellmProvider.startsWith(`${providerSlug}_`) ||
+				litellmProvider.startsWith(`${providerSlug}-`));
+		const candidates = Object.entries(modelCostMapData ?? {})
+			.filter(([, entry]) => typeof entry === "object" && entry !== null)
+			.filter(([, entry]) => matchesProvider((entry as { litellm_provider?: unknown }).litellm_provider))
+			.map(([modelName]) => modelName)
+			.sort((left, right) => left.localeCompare(right));
+		return toSuggestionOptions([currentModelName, ...candidates]);
+	}, [isCliProxyProvider, providerSlug, modelCostMapData, cliProxyModels, currentModelName]);
+
 	const hasCredentialValue = (key: string) =>
 		credentialValues !== undefined && Object.prototype.hasOwnProperty.call(credentialValues, key);
 	const resolvedValue = (key: string, fallback: React.ReactNode, format?: (value: any) => string) =>
@@ -85,7 +210,12 @@ export default function ModelBasicSettings({
 				editing={editing}
 				editor={
 					<Form.Item name="model_name" className="mb-0">
-						<TextInput placeholder="Enter model name" />
+						<SuggestionInput
+							ariaLabel="Model Name"
+							placeholder="Enter model name"
+							options={modelGroupOptions}
+							customPlaceholder="Enter model name"
+						/>
 					</Form.Item>
 				}
 			>
@@ -97,7 +227,12 @@ export default function ModelBasicSettings({
 				editor={resolvedEditor(
 					"model",
 					<Form.Item name="litellm_model_name" className="mb-0">
-						<TextInput placeholder="Enter LiteLLM model name" />
+						<SuggestionInput
+							ariaLabel="LiteLLM Model Name"
+							placeholder="Enter LiteLLM model name"
+							options={modelNameOptions}
+							customPlaceholder="Enter LiteLLM model name"
+						/>
 					</Form.Item>,
 				)}
 			>

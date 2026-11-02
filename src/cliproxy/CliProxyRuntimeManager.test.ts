@@ -8,9 +8,11 @@ import {
 	cliProxyReleaseArchiveName,
 	compareCliProxyVersions,
 	extractCliProxyReleaseNotes,
+	extractManagedCommandCodeAccount,
 	parseCliProxyUserConfig,
 	serializeCliProxyUserConfig,
 	shouldEnableCliProxyPlugin,
+	stripManagedCliProxyAccounts,
 	supportsCliProxyPlugins,
 } from "./CliProxyRuntimeManager";
 import { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
@@ -66,6 +68,58 @@ request-retry: 4
 			"future-feature": { enabled: true },
 		});
 		expect(() => serializeCliProxyUserConfig({ host: "0.0.0.0" })).toThrow(ApiError);
+	});
+});
+
+describe("CLIProxy managed CommandCode account", () => {
+	it("extracts the account from config.yaml and defaults its label", () => {
+		expect(
+			extractManagedCommandCodeAccount({
+				plugins: { "managed-accounts": { commandcode: { "api-key": "cc_secret", label: "GOAT" } } },
+			}),
+		).toEqual({ apiKey: "cc_secret", label: "GOAT" });
+		expect(extractManagedCommandCodeAccount({ plugins: { "managed-accounts": { commandcode: { "api-key": "cc_secret" } } } })).toEqual({
+			apiKey: "cc_secret",
+			label: "CommandCode",
+		});
+		expect(extractManagedCommandCodeAccount({ plugins: { "managed-accounts": { commandcode: { "api-key": "   " } } } })).toBeNull();
+	});
+
+	it("strips managed accounts without touching other plugin config", () => {
+		const stripped = stripManagedCliProxyAccounts({
+			debug: true,
+			plugins: {
+				"managed-accounts": { commandcode: { "api-key": "cc_secret" } },
+				configs: { "opencode-go-cliproxyapi": { enabled: true } },
+			},
+		});
+
+		expect(stripped["debug"]).toBe(true);
+		expect(JSON.stringify(stripped)).not.toContain("cc_secret");
+		expect((stripped["plugins"] as Record<string, unknown>)["configs"]).toEqual({ "opencode-go-cliproxyapi": { enabled: true } });
+	});
+
+	it("never projects the managed account secret into the CPA config", () => {
+		const projected = buildCliProxyProjection(
+			{ plugins: { "managed-accounts": { commandcode: { "api-key": "cc_secret", label: "GOAT" } } } },
+			{
+				port: 8317,
+				authDir: "/state/auths",
+				internalApiKey: "internal-only",
+				plugins: { dir: "/opt/cliproxy/plugins", opencodeGo: false, commandcode: true },
+			},
+		);
+
+		expect(JSON.stringify(projected)).not.toContain("cc_secret");
+		const plugins = projected["plugins"] as Record<string, unknown>;
+		expect(plugins["managed-accounts"]).toBeUndefined();
+		expect(plugins["configs"]).toEqual({
+			"commandcode-go-cliproxyapi": {
+				enabled: true,
+				"base-url": "https://api.commandcode.ai/provider/v1",
+				"model-prefix": { enabled: true, value: "commandcode" },
+			},
+		});
 	});
 });
 

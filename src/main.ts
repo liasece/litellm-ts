@@ -20,6 +20,7 @@ import { jsonBigIntReplacer } from "./core/api/jsonBigInt";
 import { errorHandler } from "./middleware/ErrorHandler";
 import { zstdRequestDecompress } from "./middleware/ZstdRequestDecompress";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
+import { upstreamExchangeScope } from "./middleware/UpstreamExchangeScope";
 import { spendResponseCompression } from "./middleware/SpendResponseCompression";
 import { createModuleLogger } from "./core/utils/logger";
 import { registerStaticUiRoutes } from "./ui/StaticUiRoutes";
@@ -223,6 +224,8 @@ export class LiteLLMServer {
 		app.use(zstdRequestDecompress);
 		app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 		app.use(accessLogFilter);
+		// 上游交换旁路作用域：所有会发起上游调用的路由之前建立，日志层据此读取上游详情。
+		app.use(upstreamExchangeScope);
 
 		// 注册路由
 		this._registerHealthRoutes(app);

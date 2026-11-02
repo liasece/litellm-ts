@@ -1,3 +1,14 @@
+import { CONTENT_FIELD_RULES, readFieldRule, reasoningTextFromBlock } from "../core/utils/contentFields";
+
+/**
+ * 从内容块按规则表取字段；规则集中在 {@link CONTENT_FIELD_RULES}。
+ * @param record - 内容块或消息对象
+ * @param rule - 该语义的提取规则
+ */
+function pickField(record: unknown, rule: { readonly candidates: readonly string[]; readonly fallback?: unknown }): unknown {
+	return readFieldRule(record, rule);
+}
+
 /** Conversation roles plus synthetic request and error events used by the timeline. */
 export type SessionTimelineRole = "system" | "user" | "assistant" | "tool" | "request" | "error";
 
@@ -272,7 +283,7 @@ function toolCallPart(
 	args: unknown,
 ): { part: SessionTimelinePart; toolCall: ToolCall } {
 	const toolCall = {
-		id: String(block.id ?? block.call_id ?? block.tool_use_id ?? ""),
+		id: String(pickField(block, CONTENT_FIELD_RULES.toolCallId) || ""),
 		name: typeof name === "string" && name ? name : "unknown",
 		arguments: parseToolArguments(args),
 	};
@@ -290,21 +301,12 @@ function toolCallPart(
 	};
 }
 
+/**
+ * 取出 reasoning 块的可读文本；与日志详情页共用同一套挑选规则。
+ * @param block - 原始 reasoning/thinking 块
+ */
 function reasoningText(block: Record<string, unknown>): string {
-	const directText = block.thinking ?? block.text ?? block.content;
-	if (directText !== undefined) {
-		return valueToText(directText);
-	}
-	if (!Array.isArray(block.summary)) {
-		return valueToText(block.summary);
-	}
-	return block.summary
-		.map((item) => {
-			const summaryItem = asRecord(item);
-			return valueToText(summaryItem?.text ?? summaryItem?.summary ?? item);
-		})
-		.filter(Boolean)
-		.join("\n");
+	return reasoningTextFromBlock(block);
 }
 
 function imageMimeType(value: unknown): string {
@@ -488,7 +490,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 		};
 	}
 
-	const media = asRecord(block.inlineData ?? block.inline_data ?? block.fileData ?? block.file_data);
+	const media = asRecord(pickField(block, CONTENT_FIELD_RULES.inlineMedia));
 	if (media) {
 		const mimeType = imageMimeType(media.mimeType ?? media.mime_type);
 		const source = imageSource(media.data, mimeType, true) ?? imageSource(media.fileUri ?? media.file_uri, mimeType);
@@ -530,7 +532,6 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 		};
 	}
 	if (["tool_use", "server_tool_use", "function_call", "custom_tool_call", "mcp_call"].includes(type)) {
-		const functionRecord = asRecord(block.function);
 		const label =
 			type === "server_tool_use"
 				? "Server tool call"
@@ -542,8 +543,8 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 		return toolCallPart(
 			block,
 			label,
-			block.name ?? functionRecord?.name,
-			block.input ?? block.arguments ?? functionRecord?.arguments,
+			pickField(block, CONTENT_FIELD_RULES.toolName),
+			pickField(block, CONTENT_FIELD_RULES.toolArguments),
 		);
 	}
 	if (
@@ -551,14 +552,14 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 			type,
 		)
 	) {
-		const result = block.content ?? block.output ?? block.result ?? block.response;
+		const result = pickField(block, CONTENT_FIELD_RULES.toolResult);
 		const parts = structuredToolResultParts(result);
 		return {
 			part: {
 				kind: "tool_result",
 				label: type === "tool_result" ? "Tool result" : "Function result",
 				sourceType: type,
-				id: String(block.tool_use_id ?? block.call_id ?? block.id ?? ""),
+				id: String(pickField(block, CONTENT_FIELD_RULES.toolCallId) || ""),
 				name: typeof block.name === "string" ? block.name : undefined,
 				text: parts ? toolResultSummary(parts) : valueToText(result),
 				data: result !== null && typeof result === "object" ? result : undefined,
@@ -576,7 +577,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				sourceType: type,
 				id: String(block.id ?? block.call_id ?? ""),
 				status: typeof block.status === "string" ? block.status : undefined,
-				text: valueToText(block.query ?? block.content ?? block.result),
+				text: valueToText(pickField(block, CONTENT_FIELD_RULES.webSearchText)),
 				data: block.action ?? block.results,
 			},
 		};
@@ -615,7 +616,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				sourceType: type,
 				id: String(block.id ?? block.call_id ?? ""),
 				status: typeof block.status === "string" ? block.status : undefined,
-				text: valueToText(block.code ?? block.input),
+				text: valueToText(pickField(block, CONTENT_FIELD_RULES.code)),
 				data: block.outputs,
 			},
 		};
@@ -627,7 +628,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				label: "Code result",
 				sourceType: type,
 				status: typeof (block.status ?? block.outcome) === "string" ? String(block.status ?? block.outcome) : undefined,
-				text: valueToText(block.output ?? block.result),
+				text: valueToText(pickField(block, CONTENT_FIELD_RULES.codeResult)),
 			},
 		};
 	}
@@ -638,12 +639,9 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 		}
 	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
-		const imageUrl = asRecord(block.image_url);
 		const imageData = asRecord(block.source);
-		const mimeType = imageMimeType(
-			block.mime_type ?? block.mimeType ?? block.media_type ?? imageData?.media_type ?? imageData?.mime_type,
-		);
-		const rawSource = imageUrl?.url ?? block.image_url ?? block.url ?? imageData?.data ?? block.data;
+		const mimeType = imageMimeType(pickField(block, CONTENT_FIELD_RULES.imageMimeType));
+		const rawSource = pickField(block, CONTENT_FIELD_RULES.imageSource);
 		const wasTruncated = typeof rawSource === "string" && rawSource.includes("litellm_truncated");
 		const source = imageSource(
 			rawSource,
@@ -666,7 +664,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 				kind: "document",
 				label: "Document",
 				sourceType: type,
-				text: valueToText(block.filename ?? block.file_id ?? block.url ?? block.source ?? "Attached document"),
+				text: valueToText(pickField(block, CONTENT_FIELD_RULES.documentLabel)),
 			},
 		};
 	}
@@ -675,7 +673,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 	}
 	if (type === "refusal") {
 		return {
-			part: { kind: "refusal", label: "Refusal", sourceType: type, text: valueToText(block.refusal ?? block.text) },
+			part: { kind: "refusal", label: "Refusal", sourceType: type, text: valueToText(pickField(block, CONTENT_FIELD_RULES.refusal)) },
 		};
 	}
 	return {

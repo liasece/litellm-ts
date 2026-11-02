@@ -43,7 +43,8 @@ import { prepareOpenAIImageGenerationRequest, type BuiltinGeneratedImage } from 
 import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareOpenAIWebRequest } from "../capabilities/WebCapability";
-import { attachUpstreamLogContext, getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { reasoningTextFromBlock } from "../core/utils/contentFields";
 import { accumulateChatChunk, finalizeStreamedCompletion, type ChatStreamAccumulator } from "./ChatCompletionsEndpoint";
 
 const logger = createModuleLogger("Proxy:Responses");
@@ -885,11 +886,9 @@ function mapNativeResponsesToChatCompletion(result: Record<string, unknown>, too
 			continue;
 		}
 		if (item["type"] === "reasoning") {
-			const summary = Array.isArray(item["summary"]) ? item["summary"] : [];
-			for (const part of summary as Array<Record<string, unknown>>) {
-				if (typeof part["text"] === "string") {
-					reasoning.push(part["text"]);
-				}
+			const itemText = reasoningTextFromBlock(item, ["text", "content"]);
+			if (itemText.length > 0) {
+				reasoning.push(itemText);
 			}
 		}
 	}
@@ -920,7 +919,7 @@ function mapNativeResponsesToChatCompletion(result: Record<string, unknown>, too
 			chatResult[key] = value;
 		}
 	}
-	return attachUpstreamLogContext(chatResult, getUpstreamLogContext(result));
+	return chatResult;
 }
 
 function normalizeResponsesToolChoice(value: unknown, toolRegistry: ResponsesToolRegistry): unknown {
@@ -1421,15 +1420,13 @@ streamed = await litellmRouter.completion(completionModel, completionMessages as
 			if (finalResult["usage"] !== undefined) {
 				state.usage = finalResult["usage"] as Usage;
 			}
-			streamResult = attachUpstreamLogContext(
-				{
-					...finalResult,
-					_responseProtocol: "chat_completions",
-					_stream: true,
-					stream: modelResponseToSyntheticStream(finalResult, capabilityVisibleDeltas),
-				},
-				getUpstreamLogContext(finalResult),
-			);
+			// 上游详情由请求作用域的旁路通道记录，重建结果对象不会丢；这里只拼下游协议字段。
+			streamResult = {
+				...finalResult,
+				_responseProtocol: "chat_completions",
+				_stream: true,
+				stream: modelResponseToSyntheticStream(finalResult, capabilityVisibleDeltas),
+			};
 		} else {
 			streamResult = await litellmRouter.completion(model, messages as never, optionalParams);
 		}

@@ -47,6 +47,13 @@ const { Text } = Typography;
 export interface LogDetailContentProps {
 	logEntry: LogEntry;
 	onOpenSettings?: () => void;
+	/**
+	 * 是否已在 Spend Logs Settings 开启上游详情记录。
+	 *
+	 * undefined 表示设置尚未加载；只有明确为 false 时才能把缺失原因归到设置上，
+	 * 否则会把记录缺陷或历史日志误报成配置问题。
+	 */
+	upstreamLogsEnabled?: boolean;
 	/** When true, log details (messages/response) are still being lazy-loaded. */
 	isLoadingDetails?: boolean;
 	accessToken?: string | null;
@@ -63,6 +70,7 @@ export interface LogDetailContentProps {
 export function LogDetailContent({
 	logEntry,
 	onOpenSettings,
+	upstreamLogsEnabled,
 	isLoadingDetails = false,
 	accessToken,
 }: LogDetailContentProps) {
@@ -245,6 +253,7 @@ export function LogDetailContent({
 						upstreamRequest={upstreamRequest}
 						upstreamResponse={upstreamResponse}
 						onOpenSettings={onOpenSettings}
+						upstreamLogsEnabled={upstreamLogsEnabled}
 						logEntry={logEntry}
 					/>
 				)}
@@ -434,6 +443,7 @@ interface RequestResponseSectionProps {
 	upstreamRequest: unknown;
 	upstreamResponse: unknown;
 	onOpenSettings?: () => void;
+	upstreamLogsEnabled?: boolean;
 	logEntry: LogEntry;
 }
 
@@ -446,6 +456,7 @@ function RequestResponseSection({
 	upstreamRequest,
 	upstreamResponse,
 	onOpenSettings,
+	upstreamLogsEnabled,
 	logEntry,
 }: RequestResponseSectionProps) {
 	const [activeTab, setActiveTab] = useState<typeof TAB_REQUEST | typeof TAB_RESPONSE>(TAB_REQUEST);
@@ -553,21 +564,38 @@ function RequestResponseSection({
 													response={upstreamResponse}
 													hasResponse={Boolean(upstreamResponse)}
 												/>
+											) : upstreamLogsEnabled === true ? (
+												<Alert
+													type="info"
+													showIcon
+													message="This request has no recorded upstream details"
+													description={
+														<span>
+															Upstream log details are already enabled, so new requests record the provider exchange. This
+															entry has none: it was written before that setting was turned on, or the provider call never
+															completed. Check the matching audit entry for the provider response.
+														</span>
+													}
+												/>
 											) : (
 												<Alert
 													type="info"
 													showIcon
 													message="Upstream request and response details are not available"
 													description={
-														onOpenSettings ? (
-															<span>
-																Enable upstream log details in Spend Logs Settings to record future provider exchanges.
-																<Button type="link" onClick={onOpenSettings} style={{ padding: 0, marginLeft: 4 }}>
-																	Open settings
-																</Button>
-															</span>
+														upstreamLogsEnabled === false ? (
+															onOpenSettings ? (
+																<span>
+																	Enable upstream log details in Spend Logs Settings to record future provider exchanges.
+																	<Button type="link" onClick={onOpenSettings} style={{ padding: 0, marginLeft: 4 }}>
+																		Open settings
+																	</Button>
+																</span>
+															) : (
+																"Enable upstream log details in Spend Logs Settings to record future provider exchanges."
+															)
 														) : (
-															"Enable upstream log details in Spend Logs Settings to record future provider exchanges."
+															"Upstream request and response details were not recorded for this exchange."
 														)
 													}
 												/>

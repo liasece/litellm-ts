@@ -1,6 +1,7 @@
 import { addResponseUsage } from "../core/utils/usage";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
+import { getUpstreamLogContext } from "../router/UpstreamLogContext";
 import type { Router } from "../router/Router";
 import type { Message, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
@@ -231,6 +232,7 @@ export async function runOpenAIWebAgentLoop(
 					startTime: startTime,
 					endTime: new Date(),
 					error: error,
+					upstreamLogContext: getUpstreamLogContext(error),
 				});
 			}
 			throw error;
@@ -247,6 +249,7 @@ export async function runOpenAIWebAgentLoop(
 				startTime: startTime,
 				endTime: new Date(),
 				response: result,
+				upstreamLogContext: getUpstreamLogContext(result),
 			});
 			pendingToolCallIds = [];
 		}
@@ -321,6 +324,7 @@ export async function runAnthropicWebAgentLoop(
 					startTime: startTime,
 					endTime: new Date(),
 					error: error,
+					upstreamLogContext: getUpstreamLogContext(error),
 				});
 			}
 			throw error;

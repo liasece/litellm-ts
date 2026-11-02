@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
+import { captureUpstreamExchange } from "../router/UpstreamExchange";
+import { getAttachedUpstreamLogContext, getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import { calculateAndSetCost } from "../spend/SpendTracker";
 import type { Message, ModelResponse, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
@@ -552,6 +554,7 @@ export async function executeImageGenerationToolCall(
 		throw ApiError.badRequest(`图片编辑 mask 引用不可用: ${args.maskRef}`);
 	}
 	let lastError: unknown;
+	let workerUpstream: UpstreamLogContext | undefined;
 	for (const capabilityModel of [...new Set([binding.handlerModel, ...binding.fallbackModels])]) {
 		const startTime = new Date();
 		try {
@@ -559,15 +562,21 @@ export async function executeImageGenerationToolCall(
 				...args.params,
 				...(mask ? { mask: { data: Buffer.from(mask.base64Data, "base64"), mediaType: mask.mediaType } } : {}),
 			};
-			const raw =
-				args.action === "create"
-					? await router.imageGeneration(capabilityModel, args.prompt, optionalParams)
-					: await router.imageEdit(
-							capabilityModel,
-							args.prompt,
-							sourceImages.map((image) => ({ data: Buffer.from(image.base64Data, "base64"), mediaType: image.mediaType })),
-							optionalParams,
-						);
+			// 图片执行者调用走独立的旁路子作用域，捕获它自己的上游交换。
+			const runExecutor = async (): Promise<Record<string, unknown>> => {
+				if (args.action === "create") {
+					return await router.imageGeneration(capabilityModel, args.prompt, optionalParams);
+				}
+				return await router.imageEdit(
+					capabilityModel,
+					args.prompt,
+					sourceImages.map((image) => ({ data: Buffer.from(image.base64Data, "base64"), mediaType: image.mediaType })),
+					optionalParams,
+				);
+			};
+			const captured = await captureUpstreamExchange(runExecutor);
+			const raw = captured.result;
+			workerUpstream = captured.context;
 			const spendInfo = raw["_spendInfo"] as
 				| { customCostPerToken?: Parameters<typeof calculateAndSetCost>[2] }
 				| undefined;
@@ -587,6 +596,7 @@ export async function executeImageGenerationToolCall(
 				startTime: startTime,
 				endTime: new Date(),
 				response: raw,
+				upstreamLogContext: workerUpstream,
 			});
 			return {
 				text: JSON.stringify({
@@ -614,6 +624,7 @@ export async function executeImageGenerationToolCall(
 				startTime: startTime,
 				endTime: new Date(),
 				error: error,
+				upstreamLogContext: getAttachedUpstreamLogContext(error),
 			});
 		}
 	}
@@ -696,6 +707,7 @@ export async function runOpenAIImageGenerationAgentLoop(
 					startTime: startTime,
 					endTime: new Date(),
 					error: error,
+					upstreamLogContext: getUpstreamLogContext(error),
 				});
 			}
 			throw error;
@@ -712,6 +724,7 @@ export async function runOpenAIImageGenerationAgentLoop(
 				startTime: startTime,
 				endTime: new Date(),
 				response: result,
+				upstreamLogContext: getUpstreamLogContext(result),
 			});
 			pendingToolCallIds = [];
 		}

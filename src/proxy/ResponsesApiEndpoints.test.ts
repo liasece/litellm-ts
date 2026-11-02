@@ -8,6 +8,7 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import { RoutingStrategyName, type Deployment } from "../types/router";
 import { createEndpointSpendLifecycle } from "../spend/SpendReservation";
 import * as SpendTracker from "../spend/SpendTracker";
+import { upstreamExchangeScope } from "../middleware/UpstreamExchangeScope";
 import { registerResponsesApiRoutes } from "./ResponsesApiEndpoints";
 
 function buildRouter(completion: jest.Mock): LiteLLMRouter {
@@ -67,6 +68,8 @@ function buildDeploymentRouter(modelList: Deployment[], fallbacks: Array<Record<
 
 function buildApp(router: LiteLLMRouter, authenticated = false, database: unknown = {}): express.Express {
 	const app = express();
+	// 与生产装配一致：请求级上游交换作用域在任何路由之前建立。
+	app.use(upstreamExchangeScope);
 	app.use(express.json());
 	if (authenticated) {
 		app.use((req, _res, next) => {
@@ -657,11 +660,81 @@ describe("Responses API contract matrix", () => {
 				]),
 			);
 			const events = parseSseEvents(response.text);
-			console.log("DBG", JSON.stringify(events.map((e) => e.type)), JSON.stringify(events.at(-1)).slice(0, 300));
 			expect(events.at(-1)).toMatchObject({
 				type: "response.completed",
 				response: { status: "completed" },
 			});
+		});
+
+
+
+		test("streaming builtin capability keeps upstream details in the spend log", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							vision: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "vision-worker",
+								fallback_models: [],
+								max_iterations: 3,
+								max_output_tokens: 1024,
+							},
+						}
+					: param === "general_settings"
+						? { store_upstream_logs_in_spend_logs: true }
+						: {},
+			);
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-capability-stream",
+				reserved: 1,
+				actual: null,
+			});
+			const trackSpy = jest
+				.spyOn(SpendTracker, "trackSpendLog")
+				.mockResolvedValue({ status: "committed", requestId: "request-capability-stream", spend: 0 });
+			jest.spyOn(global, "fetch").mockImplementation(async () => {
+				const chatChunk = (delta: Record<string, unknown>, finish: string | null, usage?: Record<string, unknown>) =>
+					"data: " +
+					JSON.stringify({
+						id: "chatcmpl-capability-upstream",
+						object: "chat.completion.chunk",
+						created: 1700000300,
+						model: "deepseek-v4.1-flash",
+						choices: [{ index: 0, delta: delta, finish_reason: finish }],
+						...(usage === undefined ? {} : { usage: usage }),
+					}) +
+					"\\n\\n";
+				const sse =
+					chatChunk({ role: "assistant" }, null) +
+					chatChunk({ content: "OK" }, null) +
+					chatChunk({}, "stop", { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 }) +
+					"data: [DONE]\\n\\n";
+				return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+			});
+			const nativeDeployment = deepseekDeployment();
+			nativeDeployment.model_info = {
+				...nativeDeployment.model_info,
+				supports_function_calling: true,
+				enabled_builtin_capabilities: ["vision"],
+			};
+			// SpendLog 只在已认证请求上写入，与生产一致。
+			const app = buildApp(buildDeploymentRouter([nativeDeployment]), true);
+
+			await request(app)
+				.post("/v1/responses")
+				.send({ model: "deepseek-v4-flash", input: "Return OK.", store: false, stream: true })
+				.expect(200);
+
+			expect(trackSpy).toHaveBeenCalledTimes(1);
+			const logged = trackSpy.mock.calls[0]?.[1] as unknown as Record<string, Record<string, unknown>>;
+			// 修复前：能力分支把能力链结果重建为新对象，挂在对象上的 Symbol 丢失，这里为空。
+			expect(logged["proxy_server_request"]?.["upstream_request"]).toMatchObject({
+				url: "https://api.deepseek.com/chat/completions",
+				method: "POST",
+			});
+			expect(logged["proxy_server_request"]?.["upstream_response"]).toMatchObject({ status_code: 200 });
 		});
 
 		test("DeepSeek native Responses executes private capability calls and continues with function output", async () => {
@@ -773,6 +846,7 @@ describe("Responses API contract matrix", () => {
 				}),
 			]);
 		});
+
 
 		test("DeepSeek native failure falls back to a Chat deployment inside Router", async () => {
 			const fetchSpy = jest

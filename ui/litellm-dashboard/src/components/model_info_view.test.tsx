@@ -34,6 +34,7 @@ vi.mock("./networking", () => ({
 	credentialCreateCall: vi.fn(),
 	builtinCapabilitiesCall: vi.fn(),
 	vectorStoreListCall: vi.fn().mockResolvedValue({ vector_stores: [] }),
+	getCliProxyModels: vi.fn(),
 }));
 
 const mockUseModelsInfo = vi.fn();
@@ -68,6 +69,7 @@ const mockModelPatchUpdateCall = vi.mocked(networking.modelPatchUpdateCall);
 const mockModelDeleteCall = vi.mocked(networking.modelDeleteCall);
 const mockCredentialCreateCall = vi.mocked(networking.credentialCreateCall);
 const mockBuiltinCapabilitiesCall = vi.mocked(networking.builtinCapabilitiesCall);
+const mockGetCliProxyModels = vi.mocked(networking.getCliProxyModels);
 
 describe("ModelInfoView", () => {
 	let queryClient: QueryClient;
@@ -240,6 +242,7 @@ describe("ModelInfoView", () => {
 			status: "success",
 		});
 
+		mockGetCliProxyModels.mockResolvedValue([]);
 		mockModelPatchUpdateCall.mockResolvedValue({});
 		mockModelDeleteCall.mockResolvedValue({});
 		mockCredentialCreateCall.mockResolvedValue({});
@@ -680,8 +683,8 @@ describe("ModelInfoView", () => {
 		await user.click(editButton);
 
 		await waitFor(() => {
-			expect(screen.getByPlaceholderText("Enter model name")).toBeInTheDocument();
-			expect(screen.getByPlaceholderText("Enter LiteLLM model name")).toBeInTheDocument();
+			expect(screen.getByRole("combobox", { name: "Model Name" })).toBeInTheDocument();
+			expect(screen.getByRole("combobox", { name: "LiteLLM Model Name" })).toBeInTheDocument();
 		});
 	});
 
@@ -761,6 +764,54 @@ describe("ModelInfoView", () => {
 		expect(payload.model_info.enabled_builtin_capabilities).toEqual(["web"]);
 	});
 
+	it("suggests provider models for LiteLLM Model Name and still accepts a custom value", async () => {
+		const user = userEvent.setup();
+		mockUseModelCostMap.mockReturnValue({
+			data: {
+				"gpt-4o": { litellm_provider: "openai" },
+				"claude-3-opus": { litellm_provider: "anthropic" },
+			},
+			isLoading: false,
+			error: null,
+		});
+		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+		await user.click(await screen.findByRole("button", { name: /^edit$/i }));
+		await screen.findByText("Edit Model Settings");
+
+		const modelNameSelect = await screen.findByRole("combobox", { name: "LiteLLM Model Name" });
+		await user.click(modelNameSelect);
+		const suggestedOption = await waitFor(() => {
+			const option = document.querySelector<HTMLElement>('.ant-select-item-option[title="gpt-4o"]');
+			expect(option).not.toBeNull();
+			return option as HTMLElement;
+		});
+		// 只提示当前 provider 的已知模型；其它 provider 的同表模型不出现。
+		expect(document.querySelector('.ant-select-item-option[title="claude-3-opus"]')).toBeNull();
+		await user.click(suggestedOption);
+		await waitFor(() =>
+			expect(document.querySelector('.ant-select-selection-item[title="gpt-4o"]')).not.toBeNull(),
+		);
+
+		// 自定义模型名仍然可输入：候选里的自定义项会切换到自由输入。
+		await user.click(modelNameSelect);
+		const customOption = await waitFor(() => {
+			const option = document.querySelector<HTMLElement>('.ant-select-item-option[title="自定义取值（手动输入）"]');
+			expect(option).not.toBeNull();
+			return option as HTMLElement;
+		});
+		await user.click(customOption);
+
+		const customInput = await screen.findByPlaceholderText("Enter LiteLLM model name");
+		await user.clear(customInput);
+		await user.type(customInput, "my-custom-model");
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+		await waitFor(() => expect(mockModelPatchUpdateCall).toHaveBeenCalled());
+		const payload = mockModelPatchUpdateCall.mock.calls[0][1] as { litellm_params: Record<string, unknown> };
+		expect(payload.litellm_params.model).toBe("my-custom-model");
+	});
+
 	it("should allow editing model name in edit mode", async () => {
 		const user = userEvent.setup();
 		render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
@@ -772,7 +823,7 @@ describe("ModelInfoView", () => {
 		const editButton = screen.getByRole("button", { name: /^edit$/i });
 		await user.click(editButton);
 
-		const modelNameInput = await screen.findByPlaceholderText("Enter model name");
+		const modelNameInput = await screen.findByRole("combobox", { name: "Model Name" });
 		await user.clear(modelNameInput);
 		await user.type(modelNameInput, "Updated Model Name");
 

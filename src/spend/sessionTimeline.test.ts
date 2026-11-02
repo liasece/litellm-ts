@@ -278,6 +278,58 @@ describe("SessionTimelineBuilder", () => {
 		]);
 	});
 
+
+	it("content 是空数组时，有内容的 summary 不会被空容器挡住", () => {
+		// 旧实现先取 content（空数组也算「有值」），于是整段思考被渲染成空白。
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				response_payload: {
+					output: [
+						{
+							id: "rs_1",
+							type: "reasoning",
+							status: "completed",
+							content: [],
+							summary: [{ type: "summary_text", text: "先核对参考文件。" }],
+						},
+					],
+				},
+			}),
+		);
+
+		const thinking = builder
+			.build()
+			.data.flatMap((item) => item.parts ?? [])
+			.find((part) => part.kind === "thinking");
+		expect(thinking).toMatchObject({ kind: "thinking", text: "先核对参考文件。" });
+	});
+
+	it("summary 有内容时优先显示摘要而不是完整 reasoning 正文", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				response_payload: {
+					output: [
+						{
+							id: "rs_2",
+							type: "reasoning",
+							status: "completed",
+							content: [{ type: "reasoning_text", text: "很长的内部推理过程" }],
+							summary: [{ type: "summary_text", text: "简短摘要" }],
+						},
+					],
+				},
+			}),
+		);
+
+		const thinking = builder
+			.build()
+			.data.flatMap((item) => item.parts ?? [])
+			.find((part) => part.kind === "thinking");
+		expect(thinking).toMatchObject({ kind: "thinking", text: "简短摘要" });
+	});
+
 	it("在交错的长短快照中按语义去重历史，并忽略响应与历史间的 reasoning 差异", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(

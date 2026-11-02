@@ -3,7 +3,7 @@ import type { Request } from "express";
 import type { DrizzleDb } from "../core/db/Database";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
-import { getUpstreamLogContext } from "../router/UpstreamLogContext";
+import { getAttachedUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import { CallType, SpendLogStatus } from "../types/spend";
 
 /** Reference to the ordinary Spend Log row created for an internal call. */
@@ -47,6 +47,13 @@ export interface BuiltinCapabilityModelCall {
 	readonly response?: Record<string, unknown>;
 	/** Provider or routing failure. */
 	readonly error?: unknown;
+	/**
+	 * 本次内部调用自己的上游交换。
+	 *
+	 * 内部调用运行在独立的旁路子作用域里，外层请求的通道记录的是外层交换；
+	 * 由执行者显式带上，审计行才不会写错对象或缺详情。
+	 */
+	readonly upstreamLogContext?: UpstreamLogContext;
 	/** Delegated image references. */
 	readonly imageRefs?: string[];
 	/** Delegated visual question. */
@@ -154,7 +161,11 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			response: call.response,
 			usage: call.response?.["usage"] as Record<string, unknown> | undefined,
 			error: call.error,
-			upstreamLogContext: getUpstreamLogContext(call.response) ?? getUpstreamLogContext(call.error),
+			// 只用该次内部调用自己的上游交换：显式捕获值，或它自己结果对象上的挂载值；
+			// 绝不借用外层请求通道，否则审计行会写成主请求的上游。
+			upstreamLogContext: call.upstreamLogContext ?? getAttachedUpstreamLogContext(call.response) ?? getAttachedUpstreamLogContext(call.error),
+			// 内部调用只记录自己的上游交换，禁止借用外层请求的通道记录。
+			disableAmbientUpstreamContext: true,
 			status: status,
 			requestTags: ["litellm:internal", `builtin:${call.capability}`],
 			...(call.fixedCostUsd === undefined ? {} : { fixedCostUsd: call.fixedCostUsd }),

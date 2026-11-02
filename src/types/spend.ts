@@ -295,6 +295,13 @@ export interface SpendLogBuildContext {
 	readonly response?: unknown;
 	/** Provider 转换后实际发出的上游请求与收到的原始响应。仅在详细日志开启时持久化。 */
 	readonly upstreamLogContext?: UpstreamLogContext;
+	/**
+	 * 禁止回退到请求作用域的上游交换通道。
+	 *
+	 * 内置能力审计行描述一次内部调用，必须只记录该调用自己的上游交换；置 true 后不会
+	 * 读取外层请求通道，避免把主请求的上游详情写进内部调用的日志。
+	 */
+	readonly disableAmbientUpstreamContext?: boolean;
 	/** 上游 usage 对象 */
 	readonly usage?: Record<string, unknown>;
 	/** 捕获到的请求错误 */

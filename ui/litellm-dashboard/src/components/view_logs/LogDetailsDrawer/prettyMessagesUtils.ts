@@ -3,6 +3,7 @@
  */
 
 import { MessagePart, ParsedMessage, ParsedMessages, RequestMeta, RoleStyle, ToolCall } from "./prettyMessagesTypes";
+import { PRETTY_FIELD_RULES, readFieldRule, type FieldRule } from "./prettyFieldRules";
 
 export const ROLE_STYLES: Record<string, RoleStyle> = {
 	system: { background: "transparent", borderColor: "#8c8c8c", label: "SYSTEM", labelColor: "#8c8c8c" },
@@ -35,6 +36,13 @@ const parseToolArguments = (args: any): Record<string, any> => {
 	return asRecord(args) || (args === null || args === undefined ? {} : { raw: args });
 };
 
+/**
+ * 从内容块按规则表取字段；规则集中在 {@link PRETTY_FIELD_RULES}。
+ * @param record - 内容块或消息对象
+ * @param rule - 该语义的提取规则
+ */
+const pickField = (record: any, rule: FieldRule): any => readFieldRule(record, rule);
+
 const valueToText = (value: any): string => {
 	if (typeof value === "string") return value;
 	if (Array.isArray(value)) {
@@ -58,7 +66,7 @@ const toolCallPart = (
 	args: any,
 ): { part: MessagePart; toolCall: ToolCall } => {
 	const toolCall = {
-		id: String(block.id || block.call_id || block.tool_use_id || ""),
+		id: String(pickField(block, PRETTY_FIELD_RULES.toolCallId) || ""),
 		name: typeof name === "string" && name ? name : "unknown",
 		arguments: parseToolArguments(args),
 	};
@@ -99,7 +107,7 @@ const TRUNCATED_IMAGE_MESSAGE = "图片数据在日志入库时被截断，无�
 const generatedImagePart = (value: any, outputFormat?: any, sourceType = "image_generation"): MessagePart | null => {
 	const image = asRecord(value);
 	if (!image) return null;
-	const mimeType = imageMimeType(image.mime_type ?? image.mimeType ?? outputFormat);
+	const mimeType = imageMimeType(pickField(image, PRETTY_FIELD_RULES.imageMimeType) ?? outputFormat);
 	const encodedImage = image.b64_json ?? image.result;
 	const wasTruncated = typeof encodedImage === "string" && encodedImage.includes("litellm_truncated");
 	const source =
@@ -261,7 +269,7 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 				kind: "thinking",
 				label: type === "thinking" ? "Thinking" : "Reasoning",
 				sourceType: type,
-				text: valueToText(block.thinking ?? block.summary ?? block.text ?? block.content),
+				text: valueToText(pickField(block, PRETTY_FIELD_RULES.reasoning)),
 			},
 		};
 	}
@@ -287,8 +295,8 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 		return toolCallPart(
 			block,
 			label,
-			block.name ?? block.function?.name,
-			block.input ?? block.arguments ?? block.function?.arguments,
+			pickField(block, PRETTY_FIELD_RULES.toolName),
+			pickField(block, PRETTY_FIELD_RULES.toolArguments),
 		);
 	}
 	if (
@@ -300,14 +308,14 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 			"computer_call_output",
 		].includes(type)
 	) {
-		const result = block.content ?? block.output ?? block.result ?? block.response;
+		const result = pickField(block, PRETTY_FIELD_RULES.toolResult);
 		const parts = structuredToolResultParts(result);
 		return {
 			part: {
 				kind: "tool_result",
 				label: type === "tool_result" ? "Tool result" : "Function result",
 				sourceType: type,
-				id: String(block.tool_use_id || block.call_id || block.id || ""),
+				id: String(pickField(block, PRETTY_FIELD_RULES.toolCallId) || ""),
 				name: block.name,
 				text: parts ? toolResultSummary(parts) : valueToText(result),
 				data: typeof result === "object" ? result : undefined,
@@ -325,7 +333,7 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 				sourceType: type,
 				id: String(block.id || block.call_id || ""),
 				status: block.status,
-				text: valueToText(block.query ?? block.content ?? block.result),
+				text: valueToText(pickField(block, PRETTY_FIELD_RULES.webSearchText)),
 				data: block.action ?? block.results,
 			},
 		};
@@ -364,7 +372,7 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 				sourceType: type,
 				id: String(block.id || block.call_id || ""),
 				status: block.status,
-				text: valueToText(block.code ?? block.input),
+				text: valueToText(pickField(block, PRETTY_FIELD_RULES.code)),
 				data: block.outputs,
 			},
 		};
@@ -376,7 +384,7 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 				label: "Code result",
 				sourceType: type,
 				status: block.status ?? block.outcome,
-				text: valueToText(block.output ?? block.result),
+				text: valueToText(pickField(block, PRETTY_FIELD_RULES.codeResult)),
 			},
 		};
 	}
@@ -386,10 +394,8 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 	}
 	if (["image", "image_url", "input_image", "output_image"].includes(type)) {
 		const imageData = asRecord(block.source);
-		const mimeType = imageMimeType(
-			block.mime_type ?? block.mimeType ?? block.media_type ?? imageData?.media_type ?? imageData?.mime_type,
-		);
-		const rawSource = block.image_url?.url ?? block.image_url ?? block.url ?? imageData?.data ?? block.data;
+		const mimeType = imageMimeType(pickField(block, PRETTY_FIELD_RULES.imageMimeType));
+		const rawSource = pickField(block, PRETTY_FIELD_RULES.imageSource);
 		const wasTruncated = typeof rawSource === "string" && rawSource.includes("litellm_truncated");
 		const source = imageSource(
 			rawSource,
@@ -414,7 +420,7 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 				kind: "document",
 				label: "Document",
 				sourceType: type,
-				text: valueToText(block.filename ?? block.file_id ?? block.url ?? block.source ?? "Attached document"),
+				text: valueToText(pickField(block, PRETTY_FIELD_RULES.documentLabel)),
 			},
 		};
 	}
@@ -423,7 +429,7 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 	}
 	if (type === "refusal") {
 		return {
-			part: { kind: "refusal", label: "Refusal", sourceType: type, text: valueToText(block.refusal ?? block.text) },
+			part: { kind: "refusal", label: "Refusal", sourceType: type, text: valueToText(pickField(block, PRETTY_FIELD_RULES.refusal)) },
 		};
 	}
 
@@ -500,7 +506,7 @@ const normalizeRole = (role: any): ParsedMessage["role"] => {
 
 const parseRequestMessage = (message: any): ParsedMessage => {
 	const role = normalizeRole(message?.role);
-	const parsed = parseContent(message?.content ?? message?.parts ?? "");
+	const parsed = parseContent(pickField(message, PRETTY_FIELD_RULES.messageContent) ?? "");
 	const explicitToolCalls = parseToolCalls(message?.tool_calls);
 	const toolCalls = [...(parsed.toolCalls || []), ...(explicitToolCalls || [])];
 	let parts = [...(parsed.parts || []), ...toolCallsToParts(explicitToolCalls)];
@@ -664,7 +670,11 @@ const parseBuiltinCapabilityResponse = (response: any): ParsedMessage | null => 
 	const brief = typeof record.brief === "string" ? record.brief : "";
 	const executor = typeof record.executor === "string" ? record.executor : "";
 	const results = Array.isArray(record.results) ? record.results : [];
-	if (!brief && results.length === 0) {
+	// fetch 的响应是 { url, brief, title, content, executor }，没有 results。
+	const fetchedUrl = typeof record.url === "string" ? record.url : "";
+	const fetchedTitle = typeof record.title === "string" ? record.title : "";
+	const fetchedContent = typeof record.content === "string" ? record.content : "";
+	if (!brief && results.length === 0 && !fetchedContent && !fetchedUrl) {
 		return null;
 	}
 
@@ -697,6 +707,16 @@ const parseBuiltinCapabilityResponse = (response: any): ParsedMessage | null => 
 			data: entry,
 		});
 	}
+	if (fetchedUrl || fetchedContent) {
+		parts.push({
+			kind: "web_search",
+			label: "Fetched page",
+			sourceType: "builtin_capability",
+			name: fetchedTitle || fetchedUrl,
+			text: [fetchedTitle, fetchedUrl, fetchedContent].filter((value) => value.length > 0).join("\n"),
+			data: record,
+		});
+	}
 	if (executor) {
 		parts.push({ kind: "text", label: "Executor", sourceType: "builtin_capability", text: executor });
 	}
@@ -717,8 +737,8 @@ export const parseMessages = (request: any, response: any): ParsedMessages => {
 	if (builtinCapabilityMessage) {
 		responseMessage = builtinCapabilityMessage;
 	} else if (responseMsg) {
-		const parsed = parseContent(responseMsg.content ?? "");
-		const reasoning = responseMsg.reasoning_content ?? responseMsg.reasoning ?? responseMsg.analysis;
+		const parsed = parseContent(pickField(responseMsg, PRETTY_FIELD_RULES.messageContent) ?? "");
+		const reasoning = pickField(responseMsg, PRETTY_FIELD_RULES.messageReasoning);
 		const explicitToolCalls = parseToolCalls(responseMsg.tool_calls);
 		const parts = [
 			...(reasoning

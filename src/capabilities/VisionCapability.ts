@@ -1,6 +1,8 @@
 import { addResponseUsage } from "../core/utils/usage";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
+import { captureUpstreamExchange } from "../router/UpstreamExchange";
+import { getAttachedUpstreamLogContext, getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import type { Router } from "../router/Router";
 import type { Message, ToolCall } from "../types/openai";
 import {
@@ -87,6 +89,8 @@ export interface VisionCapabilityModelCall {
 	readonly response?: Record<string, unknown>;
 	/** Provider or routing failure, when the attempt failed. */
 	readonly error?: unknown;
+	/** 这次调用的上游交换；由 worker 子作用域捕获，写入该次调用自己的审计行。 */
+	readonly upstreamLogContext?: UpstreamLogContext;
 }
 
 /** Result returned by the endpoint-owned ordinary Spend Log recorder. */
@@ -609,11 +613,17 @@ export async function executeVisionToolCall(
 	for (const capabilityModel of capabilityModels) {
 		const startTime = new Date();
 		let raw: Record<string, unknown>;
+		// worker 调用在自己的子作用域里记录上游交换，写进它自己的审计行。
+		let workerUpstream: UpstreamLogContext | undefined;
 		try {
-			raw = await complete(capabilityModel, [{ role: "user", content: content } as unknown as Message], {
-				stream: false,
-				max_completion_tokens: binding.maxOutputTokens,
-			});
+			const captured = await captureUpstreamExchange(() =>
+				complete(capabilityModel, [{ role: "user", content: content } as unknown as Message], {
+					stream: false,
+					max_completion_tokens: binding.maxOutputTokens,
+				}),
+			);
+			raw = captured.result;
+			workerUpstream = captured.context;
 		} catch (error) {
 			lastError = error;
 			const endTime = new Date();
@@ -631,6 +641,7 @@ export async function executeVisionToolCall(
 						startTime: startTime,
 						endTime: endTime,
 						error: error,
+						upstreamLogContext: getAttachedUpstreamLogContext(error),
 					})
 				: { requestId: `${toolCallId}:${capabilityModel}` };
 			attempts.push({
@@ -658,6 +669,7 @@ export async function executeVisionToolCall(
 					startTime: startTime,
 					endTime: endTime,
 					response: raw,
+					upstreamLogContext: workerUpstream,
 				})
 			: { requestId: `${toolCallId}:${capabilityModel}` };
 		attempts.push({
@@ -734,6 +746,7 @@ export async function runOpenAIVisionAgentLoop(
 					startTime: continuationStartTime,
 					endTime: new Date(),
 					error: error,
+					upstreamLogContext: getUpstreamLogContext(error),
 				});
 			}
 			throw error;
@@ -752,6 +765,7 @@ export async function runOpenAIVisionAgentLoop(
 						startTime: continuationStartTime,
 						endTime: continuationEndTime,
 						response: result,
+						upstreamLogContext: getUpstreamLogContext(result),
 					})
 				: { requestId: `${pendingToolCallIds.join(",")}:continuation` };
 			const continuation = {
@@ -946,6 +960,7 @@ export async function runAnthropicVisionAgentLoop(
 						startTime: startTime,
 						endTime: new Date(),
 						error: error,
+						upstreamLogContext: getUpstreamLogContext(error),
 					});
 					continuationAttempts.push({
 						request_id: reference.requestId,

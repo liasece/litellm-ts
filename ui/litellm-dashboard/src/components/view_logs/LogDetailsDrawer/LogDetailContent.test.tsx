@@ -34,6 +34,45 @@ const createLogEntry = (overrides: Partial<LogEntry> = {}): LogEntry =>
 	}) as LogEntry;
 
 describe("LogDetailContent", () => {
+
+	it("attributes a missing upstream trace to the setting only when it is off", async () => {
+		const user = userEvent.setup();
+		const logEntry = createLogEntry({
+			proxy_server_request: { url: "/v1/chat/completions", method: "POST", body: { model: "gpt-4" } },
+		});
+
+		const { unmount } = render(
+			<LogDetailContent logEntry={logEntry} upstreamLogsEnabled={false} onOpenSettings={() => {}} />,
+		);
+		await user.click(screen.getByRole("tab", { name: "Upstream" }));
+		expect(await screen.findByText("Upstream request and response details are not available")).toBeInTheDocument();
+		expect(screen.getByText(/Enable upstream log details in Spend Logs Settings/)).toBeInTheDocument();
+		unmount();
+
+		render(<LogDetailContent logEntry={logEntry} upstreamLogsEnabled={true} onOpenSettings={() => {}} />);
+		await user.click(screen.getByRole("tab", { name: "Upstream" }));
+		// 设置已开启时不再把缺失说成配置问题，也不会误导用户去改设置。
+		expect(await screen.findByText("This request has no recorded upstream details")).toBeInTheDocument();
+		expect(screen.queryByText(/Enable upstream log details in Spend Logs Settings/)).not.toBeInTheDocument();
+	});
+
+	it("keeps the upstream trace alert factual while the setting is unknown", async () => {
+		const user = userEvent.setup();
+		render(
+			<LogDetailContent
+				logEntry={createLogEntry({
+					proxy_server_request: { url: "/v1/chat/completions", method: "POST", body: { model: "gpt-4" } },
+				})}
+			/>,
+		);
+
+		await user.click(screen.getByRole("tab", { name: "Upstream" }));
+		expect(await screen.findByText("Upstream request and response details are not available")).toBeInTheDocument();
+		expect(screen.queryByText(/Enable upstream log details in Spend Logs Settings/)).not.toBeInTheDocument();
+	});
+
+
+
 	it("should render the component successfully", () => {
 		render(<LogDetailContent logEntry={createLogEntry()} />);
 

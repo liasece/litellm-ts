@@ -81,6 +81,7 @@ interface StreamingProvider extends ProviderConfig {
 /** 流式读取的 chunk 大小 */
 const SSE_KEEPALIVE_INTERVAL_MS = 2000;
 
+/** 流式 tool_call 增量累积状态，按 index 合并分片参数。 */
 interface ToolCallAccumulator {
 	id: string;
 	type: "function";
@@ -88,6 +89,7 @@ interface ToolCallAccumulator {
 	arguments: string;
 }
 
+/** 单个 choice 的流式累积状态，含推理内容与 provider 私有字段。 */
 interface ChoiceAccumulator {
 	index: number;
 	role: string;
@@ -99,12 +101,19 @@ interface ChoiceAccumulator {
 	toolCalls: Map<number, ToolCallAccumulator>;
 }
 
+/** 跨 chunk 复用同一个 accumulator，最后统一生成 usage 与结束事件。 */
 export interface ChatStreamAccumulator {
+	/** 上游返回的 completion id */
 	id?: string;
+	/** 上游返回的创建时间戳（秒） */
 	created?: number;
+	/** 上游回报的模型名 */
 	model?: string;
+	/** 按 index 累积的 choice 分片 */
 	choices: Map<number, ChoiceAccumulator>;
+	/** 上游给出的 usage；缺失时按估算补齐 */
 	usage?: Usage;
+	/** 上游未给 usage 时用于估算的 completion token 数 */
 	estimatedCompletionTokens: number;
 }
 

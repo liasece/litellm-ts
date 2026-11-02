@@ -394,6 +394,64 @@ describe("PrettyMessagesView", () => {
 		expect(screen.queryByText("iVBORw0KGgoAAA")).not.toBeInTheDocument();
 	});
 
+
+	it("should show reasoning text that providers emit in content beside an empty summary", () => {
+		// 生产实测结构：Responses 的 reasoning item 固定带 summary: []，文本在 content 里。
+		const parsed = parseMessages(
+			{},
+			{
+				output: [
+					{
+						id: "rs_1",
+						type: "reasoning",
+						status: "completed",
+						content: [{ type: "reasoning_text", text: "Checked the reference files first." }],
+						summary: [],
+					},
+					{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Done" }] },
+				],
+			},
+		);
+
+		const thinking = parsed.responseMessage?.parts?.find((part) => part.kind === "thinking");
+		expect(thinking?.text).toBe("Checked the reference files first.");
+	});
+
+	it("should still prefer a filled summary over the raw reasoning content", () => {
+		const parsed = parseMessages(
+			{},
+			{
+				output: [
+					{
+						id: "rs_2",
+						type: "reasoning",
+						status: "completed",
+						content: [{ type: "reasoning_text", text: "long internal trace" }],
+						summary: [{ type: "summary_text", text: "Short summary" }],
+					},
+				],
+			},
+		);
+
+		const thinking = parsed.responseMessage?.parts?.find((part) => part.kind === "thinking");
+		expect(thinking?.text).toBe("Short summary");
+	});
+
+	it("should show a tool result whose text sits behind an empty sibling field", () => {
+		const parsed = parseMessages(
+			{},
+			{
+				output: [
+					{ type: "function_call_output", call_id: "call_1", output: "", content: [{ type: "input_text", text: "real output" }] },
+					{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Done" }] },
+				],
+			},
+		);
+
+		const toolResult = parsed.responseMessage?.parts?.find((part) => part.kind === "tool_result");
+		expect(toolResult?.text).toContain("real output");
+	});
+
 	it("should classify OpenAI Responses operations in output order", () => {
 		const parsed = parseMessages(
 			{},
@@ -624,6 +682,24 @@ describe("PrettyMessagesView builtin capability responses", () => {
 		const sourcePart = parts.find((part) => part.kind === "web_search");
 		expect(sourcePart?.text).toContain("https://api-docs.deepseek.com/pricing");
 		expect(parts.some((part) => part.text === "deepseek_tools:deepseek")).toBe(true);
+	});
+
+
+	it("renders a fetched page from its url, title and content", () => {
+		// fetch 的响应没有 results，是 { url, brief, title, content, executor }。
+		const response = {
+			url: "https://api-docs.deepseek.com/quick_start/pricing",
+			title: "Models and Pricing",
+			content: "Page body about pricing.",
+			brief: "Retrieved page for the URL.",
+			executor: "deepseek_tools:deepseek",
+		};
+
+		const result = parseMessages({ messages: [] }, response);
+		expect(result.responseMessage).not.toBeNull();
+		const pagePart = (result.responseMessage?.parts ?? []).find((part) => part.label === "Fetched page");
+		expect(pagePart?.text).toContain("https://api-docs.deepseek.com/quick_start/pricing");
+		expect(pagePart?.text).toContain("Page body about pricing.");
 	});
 
 	it("keeps standard chat completions working", () => {

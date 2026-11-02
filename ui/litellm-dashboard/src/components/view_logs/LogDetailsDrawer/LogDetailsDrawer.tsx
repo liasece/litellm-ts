@@ -25,6 +25,8 @@ export interface LogDetailsDrawerProps {
 	teamId?: string;
 	accessToken?: string | null;
 	onOpenSettings?: () => void;
+	/** 上游详情记录开关；undefined 表示设置尚未加载。 */
+	upstreamLogsEnabled?: boolean;
 	allLogs?: LogEntry[];
 	onSelectLog?: (log: LogEntry) => void;
 	/** 刷新按钮回调：除详情外还应触发列表级刷新（Request Details / Metrics 等来自列表）。 */
@@ -117,6 +119,7 @@ export function LogDetailsDrawer({
 	teamId,
 	accessToken,
 	onOpenSettings,
+	upstreamLogsEnabled,
 	allLogs = [],
 	onSelectLog,
 	onRefresh,
@@ -480,6 +483,7 @@ export function LogDetailsDrawer({
 						<LogDetailContent
 							logEntry={enrichedLog}
 							onOpenSettings={onOpenSettings}
+							upstreamLogsEnabled={upstreamLogsEnabled}
 							isLoadingDetails={isLoadingDetails}
 							accessToken={accessToken ?? null}
 						/>
