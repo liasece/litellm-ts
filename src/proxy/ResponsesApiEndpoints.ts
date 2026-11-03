@@ -1431,17 +1431,36 @@ streamed = await litellmRouter.completion(completionModel, completionMessages as
 			streamResult = await litellmRouter.completion(model, messages as never, optionalParams);
 		}
 	} catch (error) {
+		// 能力分支会先写出 response.created / response.in_progress，再逐块下发真实上游增量。
+		// 这条 SSE 一旦开始，失败就必须以 Responses 的终态事件收尾：继续向上抛会让上层把
+		// chat 格式的 {error} 帧塞进这条流，客户端读不到 response.failed，只看到被截断的响应。
+		const failedAfterSseStarted = capabilitySseStarted && res.headersSent;
+		const failureBody = failedAfterSseStarted
+			? buildStreamResponse(state, requestBody, "failed", {
+					code: streamErrorCode(error),
+					message: errorMessage(error),
+				})
+			: undefined;
 		await lifecycle.finalize(() =>
 			recordSpend(db, req, requestId, {
 				model: model,
 				requestBody: requestBody,
 				startTime: startTime,
+				response: failureBody,
+				completionStartTime: capabilityFirstChunkAt,
 				error: error,
 				upstreamLogContext: getUpstreamLogContext(error),
 				status: SpendLogStatus.Failure,
 				...getResultModelResolutionMetadata(error as unknown as Record<string, unknown>),
 			}),
 		);
+		if (failureBody !== undefined) {
+			writeTerminalEvent(res, state, "response.failed", { response: failureBody });
+			if (!res.writableEnded) {
+				res.end();
+			}
+			return;
+		}
 		throw error;
 	}
 	const stream = streamResult["stream"];

@@ -43,7 +43,7 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | BUG-08 / 优先 | [#31469](https://github.com/BerriAI/litellm/pull/31469)、[#31810](https://github.com/BerriAI/litellm/pull/31810)；v1.92.0 | Key 对象授权与 permissions 存储/编辑 | 使用真实 AuthorizationGuard 和 /key/update，自己的 internal_user Key 写 permissions 返回 HTTP 200，内存 DB 收到特权字段 | [AuthorizationGuard.ts](../src/auth/AuthorizationGuard.ts)、[KeyManagementEndpoint.ts](../src/management/KeyManagementEndpoint.ts)。对象可编辑不等于能写管理员专属字段；只确认字段写保护缺失，不声称所有写入权限都已用于执行。缺省保留，显式 {} / null 与非空值均需相同门禁 | 已修复：非管理员写 permissions 返回 403，DB 未写特权字段；字段缺省保留。 |
 | BUG-05 / 优先 | [#32083](https://github.com/BerriAI/litellm/pull/32083)；v1.92.0 | Provider 错误、fallback 错误与 API 错误响应 | 合成供应商错误含当前 deployment 配置的占位 key，穿过 Router 和 API 映射器后仍包含完整值 | [RouterExecution.ts](../src/router/RouterExecution.ts)、[ErrorResponseMapper.ts](../src/core/api/ErrorResponseMapper.ts)、[CooldownMasking.ts](../src/router/CooldownMasking.ts)。确认字符串内凭据未脱敏；不声称 TS 支持上游同样的 inline fallback dict。保留模型/错误类型等诊断信息 | 已修复指定路径：配置秘密从公开错误文本和详细上游错误负载中移除，保留错误类别与代码。 |
 | BUG-01 / 优先 | [#39859](https://github.com/BerriAI/litellm/pull/39859)；v1.101.0 | 流式请求与 least-busy 活跃计数 | 返回 stream 时尚未消费任何 chunk，activeRequests 已从 1 减为 0，长流被当作空闲 | [RouterExecution.ts](../src/router/RouterExecution.ts)、[RoutingStrategies.ts](../src/router/RoutingStrategies.ts)。计数绑定消费/关闭/错误/断开生命周期，恰好释放一次；未以此宣称当前 deployment max_parallel_requests 已完整执行 | 已修复：消费前 active=1；消费、取消或失败后恰好释放一次，增加部署并发拒绝。 |
-| BUG-09 / 优先 | [#42283](https://github.com/BerriAI/litellm/pull/42283)；v1.104.0 | 普通 Router 的流式响应与多候选 fallback | 配置 primary → [fb1, fb2]；primary 失败后进入 fb1，fb1 在首个有效输出前失败，只访问 primary、fb1，没有访问 fb2 | [RouterStreamWrapper.ts](../src/router/RouterStreamWrapper.ts)、[RouterExecution.ts](../src/router/RouterExecution.ts)。本次复现普通 Router 路径，未推广为所有 Messages/CLIProxy 都同样失败。保存原组/已尝试集合；已输出有效内容后不能重放 | 已修复普通 Router 和 Chat 路径：primary → fb1 → fb2，首有效输出前失败可继续；已输出后不重放。 |
+| BUG-09 / 优先 | [#42283](https://github.com/BerriAI/litellm/pull/42283)；v1.104.0 | 普通 Router 的流式响应与多候选 fallback | 配置 primary → [fb1, fb2]；primary 失败后进入 fb1，fb1 在首个有效输出前失败，只访问 primary、fb1，没有访问 fb2 | [RouterStreamWrapper.ts](../src/router/RouterStreamWrapper.ts)、[RouterExecution.ts](../src/router/RouterExecution.ts)。本次复现普通 Router 路径，未推广为所有 Messages/CLIProxy 都同样失败。保存原组/已尝试集合；已输出有效内容后不能重放 | 已修复普通 Router、Chat 与能力流式路径：primary → fb1 → fb2，首有效输出前失败可继续；已下发答案内容后不重放。判据见 [StreamOutputVisibility.ts](../src/router/StreamOutputVisibility.ts)：包络块、思考增量（reasoning/thinking）与错误透传块都不算锁定候选，只有正文/拒绝/工具调用增量才真的终结 fallback 空间（生产 request b28e4807 首个可见增量前断流、request f2dd8cd7 思考增量之后断流，两次都因此没 fallback）。 |
 | BUG-02 / 随后 | [#35483](https://github.com/BerriAI/litellm/pull/35483)；v1.96.0 | 全局、deployment 重试及请求参数透传 | deployment.num_retries=2，请求 num_retries=0，实际执行 3 次 | [RouterExecution.ts](../src/router/RouterExecution.ts)。请求 0 必须关闭重试，缺省才继承；完整 header/body/deployment/global 优先级需实施时验收。本次只证明 body override 失效 | 已修复：显式 num_retries=0 仅调用一次；缺省继承部署和异常类别策略。 |
 | BUG-03 / 随后 | [#40202](https://github.com/BerriAI/litellm/pull/40202)；v1.102.0 | 流式 TTFT 与 latency-based routing | 实际首 chunk 晚 400ms，wrapper 提前返回的 TTFT 仍为 0；另向 Router 提供 100ms、10 输出 token，记录为 10ms | [RouterStreamWrapper.ts](../src/router/RouterStreamWrapper.ts)、[RouterExecution.ts](../src/router/RouterExecution.ts)。首 token 到达时更新真实 TTFT，流式不能除以输出 token；非流式耗时口径独立处理 | 已修复：延迟首 chunk 报告 400ms，提供 100ms/10 token 仍记录 100ms；增加最近 10 个样本的可选分位数。 |
 | BUG-04 / 随后 | [#39663](https://github.com/BerriAI/litellm/pull/39663)；v1.101.0 | 上下文窗口调用前预检 | max_input_tokens=100，工具 schema 20106 字符，仍只估算消息为 11 token，Provider 被调用 | [Router.ts](../src/router/Router.ts)、[RouterExecution.ts](../src/router/RouterExecution.ts)。本探针确认 Chat tools 漏计；Anthropic system、多模态和 Responses 要分别验证，不能一次性宣称全部复现 | 已修复指定路径：工具 schema 参与本地 tokenizer 估算，超过窗口时 Provider 调用数为 0；多模态专有附件 token 成本未计入本地文本估算。 |
@@ -230,6 +230,21 @@ DB 配置覆盖 YAML 默认值，读取时保留显式 false/0；metadata 策略
 全仓 lint 的基线文件：CliProxyResponsesExecution.ts、ProtocolErrorResponse.ts、SchemaPreflight.ts、CostCalculator.ts、ModelManagementEndpoint.ts、CliProxyProvider.ts、ModelsPageSupportEndpoints.ts、modelGroupBuilder.ts、FallbackHandler.ts、ModelOverrides.ts、ReasoningEffortOverride.ts、sessionTimeline.ts。已以 `git diff --exit-code HEAD -- <path>` 核对均未修改。它们的规则错误保留，不能把本批交付描述成全仓所有门禁绿灯。
 
 2026-10-11 的开发命令在既有开发容器 `/root/var/src/jtllab/litellm-ts` 执行，当时未提交、未推送、未部署。2026-10-12 用户授权 review 后部署，已完成上述发布；仍未提交或推送。没有数据库迁移；若后续撤销源码，需要只移除本批修改，保留其他工作区内容及既有配置数据。
+
+## 2026-11-03 流式 fallback 判据修正
+
+生产 request f2dd8cd7（`commandcode/deepseek/deepseek-v4.1-flash`，upstream `terminated`）在思考增量已经下发之后断流，仍然没有 fallback。原因同上一批：`RouterExecution` 用的「已产出 chunk」判据仍然过粗，把 reasoning 增量也当成答案。
+
+修正后按「客户端是否已经拿到答案内容」判定，实现在 [StreamOutputVisibility.ts](../src/router/StreamOutputVisibility.ts)，由普通 Router、Chat 与 Responses 能力流式三处共用：
+
+| 类别 | 是否锁定候选 | 理由 |
+| --- | --- | --- |
+| 包络块（role delta、finish_reason/usage 收尾、`response.created` 等） | 否 | 对客户端没有信息量 |
+| 思考增量（reasoning_content / thinking / `response.reasoning_text.*`） | 否 | 是模型的中间过程；换候选后「思考 → 答案」仍自洽 |
+| 正文、拒绝文本、工具调用增量 | 是 | 已下发，重放会出现两段互相矛盾的答案或半截工具 JSON |
+| 上游错误透传块 | 否 | 不是模型产出 |
+
+新增回归在修复前失败、修复后通过：Router 层验证 primary 在思考增量后断流时仍切到 b（`UpstreamRoutingRegression.test.ts`），Responses 层验证同场景下客户端最终拿到 `response.completed` 与 fallback 的答案（`ResponsesApiEndpoints.test.ts`）。
 
 ## 后续维护规则
 

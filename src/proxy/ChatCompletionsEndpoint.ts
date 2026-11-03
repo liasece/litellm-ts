@@ -17,6 +17,7 @@ import { ApiError } from "../core/api/ApiError";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { buildInvalidModelError, formatInvalidModelMessage, CHAT_COMPLETIONS_ROUTE_NAME } from "../router/RouterExecution";
 import { describeUpstreamErrorBody, executeProviderRequest } from "../router/ProviderRequestExecutor";
+import { hasCommittedStreamOutput } from "../router/StreamOutputVisibility";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { createModuleLogger } from "../core/utils/logger";
 import type { Message, ModelResponse, ModelResponseStream, ThinkingBlock, ToolCall, Usage } from "../types/openai";
@@ -886,7 +887,8 @@ async function handleStreamingResponse(
 					if ("error" in chunk) {
 						throw new Error(redactConfiguredSecrets(JSON.stringify(chunk["error"]), deployment.litellm_params));
 					}
-					semanticOutputEmitted = true;
+					// 包络块和思考增量都没有给出答案；上游在这之前断流时仍应继续尝试下一个 fallback 候选。
+					semanticOutputEmitted = semanticOutputEmitted || hasCommittedStreamOutput(chunk);
 					if (fallbackDepth === 0) {
 						chunk.model = model;
 					}

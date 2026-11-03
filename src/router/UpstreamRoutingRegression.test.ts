@@ -81,6 +81,60 @@ describe("upstream Router regressions and strategy additions", () => {
 		expect(chunks).toEqual([{ choices: [{ index: 0, delta: { content: "ok" } }] }]);
 		expect((result["_spendInfo"] as { modelId: string }).modelId).toBe("c");
 	});
+	it("keeps falling back when the upstream breaks after envelope-only chunks", async () => {
+		const provider = new OpenAICompatProvider("test-key", "https://example.invalid/v1");
+		jest.spyOn(provider, "streamResponse").mockImplementation(async function* (response) {
+			if (response.headers.get("x-test") === "a") {
+				yield { choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] } as never;
+				throw new TypeError("terminated");
+			}
+			yield { choices: [{ index: 0, delta: { content: "ok" } }] } as never;
+		});
+		jest.spyOn(ProviderRegistry.prototype, "getProvider").mockReturnValue(provider);
+		jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+			const name = (JSON.parse(String(init?.body)) as { model: string }).model;
+			return new Response("", { status: 200, headers: { "x-test": name } });
+		});
+		const result = await router([deployment("a"), deployment("b")], { fallbacks: [{ a: ["b"] }] }).acompletion(
+			"a",
+			message,
+			{ stream: true },
+		);
+		const chunks: unknown[] = [];
+		for await (const chunk of result["stream"] as AsyncGenerator<unknown>) chunks.push(chunk);
+		expect(chunks).toEqual([
+			{ choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+			{ choices: [{ index: 0, delta: { content: "ok" } }] },
+		]);
+		expect((result["_spendInfo"] as { modelId: string }).modelId).toBe("b");
+	});
+	it("keeps falling back when the upstream breaks after reasoning-only output", async () => {
+		const provider = new OpenAICompatProvider("test-key", "https://example.invalid/v1");
+		jest.spyOn(provider, "streamResponse").mockImplementation(async function* (response) {
+			if (response.headers.get("x-test") === "a") {
+				yield { choices: [{ index: 0, delta: { reasoning_content: "thinking hard" }, finish_reason: null }] } as never;
+				throw new TypeError("terminated");
+			}
+			yield { choices: [{ index: 0, delta: { content: "ok" } }] } as never;
+		});
+		jest.spyOn(ProviderRegistry.prototype, "getProvider").mockReturnValue(provider);
+		jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+			const name = (JSON.parse(String(init?.body)) as { model: string }).model;
+			return new Response("", { status: 200, headers: { "x-test": name } });
+		});
+		const result = await router([deployment("a"), deployment("b")], { fallbacks: [{ a: ["b"] }] }).acompletion(
+			"a",
+			message,
+			{ stream: true },
+		);
+		const chunks: unknown[] = [];
+		for await (const chunk of result["stream"] as AsyncGenerator<unknown>) chunks.push(chunk);
+		expect(chunks).toEqual([
+			{ choices: [{ index: 0, delta: { reasoning_content: "thinking hard" }, finish_reason: null }] },
+			{ choices: [{ index: 0, delta: { content: "ok" } }] },
+		]);
+		expect((result["_spendInfo"] as { modelId: string }).modelId).toBe("b");
+	});
 	it("measures first chunk latency lazily without dividing by output token count", async () => {
 		let now = 1000;
 		jest.spyOn(Date, "now").mockImplementation(() => now);

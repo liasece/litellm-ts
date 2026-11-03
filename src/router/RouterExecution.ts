@@ -35,6 +35,7 @@ import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
 import { appendModelResolutionTrace, appendRoutingTrace, copyModelResolutionChain, copyRoutingTrace } from "./ModelResolutionTrace";
 import { attachUpstreamLogContext, getUpstreamLogContext } from "./UpstreamLogContext";
+import { hasCommittedStreamOutput } from "./StreamOutputVisibility";
 import type {
 	RouterExecContext,
 	ExecutionRequest,
@@ -486,7 +487,10 @@ export async function executeWithFallback(
 					let closingStream = false;
 					let fallbackStream: AsyncGenerator<unknown> | undefined;
 					const ownedStream = (async function* () {
+						// emitted 只表示「已经产出过 chunk」，用于 TTFT 采样；能否换候选另算：
+						// 包络块和思考增量都没给出答案，不阻断中途切换候选。
 						let emitted = false;
+						let answerOutputCommitted = false;
 						try {
 							for await (const chunk of stream) {
 								if (typeof chunk === "object" && chunk !== null && "error" in chunk) {
@@ -506,6 +510,7 @@ export async function executeWithFallback(
 									}
 								}
 								emitted = true;
+								answerOutputCommitted = answerOutputCommitted || hasCommittedStreamOutput(chunk);
 								yield chunk;
 							}
 							invokeRouterCallback(ctx.routerCallbacks, "onSuccess", deployment, body, Date.now() - startTime);
@@ -519,7 +524,8 @@ export async function executeWithFallback(
 								return;
 							}
 							invokeRouterCallback(ctx.routerCallbacks, "onFailure", deployment, streamFailure);
-							if (emitted) {
+							// 只有已经下发答案内容时才能就地终结；包络/思考阶段断流仍然可以换候选。
+							if (answerOutputCommitted) {
 								yield { error: streamFailure.message };
 								return;
 							}
@@ -544,7 +550,7 @@ export async function executeWithFallback(
 									error: streamFailure,
 									attemptedDeployment: deployment.model_name,
 								});
-								let fallbackEmitted = false;
+								let fallbackAnswerOutput = false;
 								try {
 									const result = await executeWithFallback(
 										ctx,
@@ -560,7 +566,7 @@ export async function executeWithFallback(
 									if (result["stream"]) {
 										fallbackStream = result["stream"] as AsyncGenerator<unknown>;
 										for await (const chunk of fallbackStream) {
-											fallbackEmitted = true;
+											fallbackAnswerOutput = fallbackAnswerOutput || hasCommittedStreamOutput(chunk);
 											Object.assign(publicStreamResult, { ...result, stream: publicStreamResult["stream"] });
 											attachUpstreamLogContext(publicStreamResult, getUpstreamLogContext(result));
 											yield chunk;
@@ -571,7 +577,7 @@ export async function executeWithFallback(
 									if (closingStream || req.streamAbortController?.signal.aborted) {
 										return;
 									}
-									if (fallbackEmitted) {
+									if (fallbackAnswerOutput) {
 										yield { error: failure instanceof Error ? failure.message : String(failure) };
 										return;
 									}

@@ -1587,6 +1587,123 @@ describe("Responses API contract matrix", () => {
 		expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({ status: "failure" });
 	});
 
+	test("capability stream failure without an available fallback ends with one Responses terminal event", async () => {
+		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+			param === "builtin_capabilities"
+				? {
+						vision: {
+							enabled: true,
+							always_inject: true,
+							handler_model: "vision-worker",
+							fallback_models: [],
+							max_iterations: 3,
+							max_output_tokens: 1024,
+						},
+					}
+				: {},
+		);
+		jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+			status: "reserved",
+			requestId: "request-capability-stream-failure",
+			reserved: 1,
+			actual: null,
+		});
+		const trackSpy = jest
+			.spyOn(SpendTracker, "trackSpendLog")
+			.mockResolvedValue({ status: "committed", requestId: "request-capability-stream-failure", spend: 0 });
+		jest.spyOn(global, "fetch").mockImplementation(async () => {
+			const envelope =
+				"data: " +
+				JSON.stringify({
+					id: "chatcmpl-envelope",
+					object: "chat.completion.chunk",
+					created: 1700000400,
+					model: "provider-model",
+					choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+				}) +
+				"\n\n";
+			const body = new ReadableStream({
+				start: (controller) => {
+					controller.enqueue(new TextEncoder().encode(envelope));
+					setTimeout(() => controller.error(new TypeError("terminated")), 0);
+				},
+			});
+			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+		});
+		const capabilityDeployment = deployment("responses-model", "https://stream.example/v1");
+		capabilityDeployment.model_info = {
+			...capabilityDeployment.model_info,
+			supports_function_calling: true,
+			enabled_builtin_capabilities: ["vision"],
+		};
+		const app = buildApp(buildDeploymentRouter([capabilityDeployment]), true);
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "Return OK.", store: false, stream: true })
+			.expect(200);
+		const events = parseSseEvents(response.text);
+		expect(events.filter((event) => event.type === "response.completed" || event.type === "response.failed")).toHaveLength(1);
+		expect(events.at(-1)).toMatchObject({ type: "response.failed" });
+		expect(response.text).not.toContain("stream_error");
+		expect(trackSpy).toHaveBeenCalledTimes(1);
+		expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({ status: "failure" });
+	});
+
+	test("stream continues on the fallback deployment when the primary breaks after reasoning output", async () => {
+		jest.spyOn(global, "fetch").mockImplementation(async (url) => {
+			const primary = String(url).includes("primary.example");
+			const sse = (payload: Record<string, unknown>) => "data: " + JSON.stringify(payload) + "\n\n";
+			if (!primary) {
+				return new Response(
+					sse({
+						id: "chatcmpl-fallback",
+						object: "chat.completion.chunk",
+						created: 1700000500,
+						model: "fallback-provider-model",
+						choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }],
+					}) + "data: [DONE]\n\n",
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				);
+			}
+			const reasoning =
+				"data: " +
+				JSON.stringify({
+					id: "chatcmpl-primary",
+					object: "chat.completion.chunk",
+					created: 1700000500,
+					model: "primary-provider-model",
+					choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "thinking" }, finish_reason: null }],
+				}) +
+				"\n\n";
+			const body = new ReadableStream({
+				start: (controller) => {
+					controller.enqueue(new TextEncoder().encode(reasoning));
+					setTimeout(() => controller.error(new TypeError("terminated")), 0);
+				},
+			});
+			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+		});
+		const app = buildApp(
+			buildDeploymentRouter(
+				[deployment("primary-model", "https://primary.example/v1"), deployment("fallback-model", "https://fallback.example/v1")],
+				[{ "primary-model": ["fallback-model"] }],
+			),
+		);
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({ model: "primary-model", input: "hello", stream: true })
+			.expect(200);
+		const events = parseSseEvents(response.text);
+		expect(events.filter((event) => event.type === "response.completed" || event.type === "response.failed")).toHaveLength(1);
+		expect(events.at(-1)).toMatchObject({ type: "response.completed" });
+		const completed = events.at(-1)?.["response"] as Record<string, unknown>;
+		const output = completed["output"] as Array<Record<string, unknown>>;
+		expect(output.some((item) => item["type"] === "message")).toBe(true);
+		expect(JSON.stringify(output)).toContain("ok");
+	});
+
 	test("client abort interrupts a pending stream and records one failure", async () => {
 		jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
 			status: "reserved",
