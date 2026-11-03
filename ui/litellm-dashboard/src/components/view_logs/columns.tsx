@@ -73,6 +73,7 @@ export function filterOptionalColumns(
 const MIN_OUTPUT_TOKENS_FOR_TPS = 20;
 const TPS_PROGRESS_MAX = 200;
 const DURATION_PROGRESS_MAX_SECONDS = 30;
+const TTFT_PROGRESS_MAX_SECONDS = 10;
 const TOKEN_PROGRESS_MAX = {
 	cacheRead: 200_000,
 	input: 20_000,
@@ -649,11 +650,17 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 			// 非流式 cst 与 endTime 同毫秒为正常边界（Python 亦如此），不再据此隐藏。
 			const ttftMs = new Date(completionStartTime).getTime() - new Date(row.startTime).getTime();
 			if (ttftMs <= 0) return <span>-</span>;
-			const ttftSeconds = (ttftMs / 1000).toFixed(2);
+			const ttftSeconds = ttftMs / 1000;
 			return (
-				<Tooltip title={`${ttftMs}ms`}>
-					<span className="max-w-[25ch] truncate block">{ttftSeconds}</span>
-				</Tooltip>
+				<MetricProgressCell
+					ariaLabel={`TTFT ${ttftSeconds.toFixed(2)} seconds`}
+					color="red"
+					displayValue={ttftSeconds.toFixed(2)}
+					maxValue={TTFT_PROGRESS_MAX_SECONDS}
+					progressTestId="ttft-progress"
+					tooltip={`${ttftMs}ms`}
+					value={ttftSeconds}
+				/>
 			);
 		},
 	},

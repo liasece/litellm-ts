@@ -320,9 +320,11 @@ describe("Logs columns", () => {
 						? entry.model
 						: header === "Duration (s)"
 							? entry.request_duration_ms
-							: header === "Cost"
-								? entry.spend
-								: entry.total_tokens,
+							: header === "TTFT (s)"
+								? entry.completionStartTime
+								: header === "Cost"
+									? entry.spend
+									: entry.total_tokens,
 				row: { original: entry },
 			} as never),
 		);
@@ -744,6 +746,36 @@ describe("Logs columns", () => {
 			"via-red-400/15",
 			"to-red-500/30",
 		);
+	});
+
+	it("shows TTFT on a fixed red 10-second gradient scale", () => {
+		renderColumnCell("TTFT (s)", {
+			...baseLogEntry,
+			startTime: "2025-11-14T00:00:00Z",
+			completionStartTime: "2025-11-14T00:00:02Z",
+		});
+
+		expect(screen.getByText("2.00")).toBeInTheDocument();
+		expect(screen.getByLabelText("TTFT 2.00 seconds")).toBeInTheDocument();
+		expect(screen.getByTestId("ttft-progress")).toHaveStyle({ clipPath: "inset(0 80% 0 0)" });
+		expect(screen.getByTestId("ttft-progress")).toHaveClass(
+			"inset-0",
+			"bg-gradient-to-r",
+			"from-transparent",
+			"via-red-400/15",
+			"to-red-500/30",
+		);
+	});
+
+	it("caps the TTFT progress bar at 10 seconds", () => {
+		renderColumnCell("TTFT (s)", {
+			...baseLogEntry,
+			startTime: "2025-11-14T00:00:00Z",
+			completionStartTime: "2025-11-14T00:00:12Z",
+		});
+
+		expect(screen.getByText("12.00")).toBeInTheDocument();
+		expect(screen.getByTestId("ttft-progress")).toHaveStyle({ clipPath: "inset(0 0% 0 0)" });
 	});
 
 	it("caps the duration progress bar at 30 seconds", () => {
