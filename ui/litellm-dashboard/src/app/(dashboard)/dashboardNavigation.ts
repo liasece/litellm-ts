@@ -19,6 +19,7 @@ const PATH_PAGE_MAP: Readonly<Record<string, string>> = {
 	guardrails: "guardrails",
 	logs: "logs",
 	"model-hub": "model-hub-table",
+	speed: "speed",
 	"models-and-endpoints": "models",
 	organizations: "organizations",
 	playground: "llm-playground",

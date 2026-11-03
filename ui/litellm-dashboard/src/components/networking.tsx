@@ -1,3 +1,5 @@
+import type { ModelSpeedReport } from "../../../../src/shared/ModelSpeed";
+
 // Shared date formatter for daily activity endpoints
 export const formatDate = (date: Date) => {
 	const year = date.getFullYear();
@@ -3001,6 +3003,39 @@ export const adminTopKeysCall = async (accessToken: string) => {
 		return data;
 	} catch (error) {
 		console.error("Failed to create key:", error);
+		throw error;
+	}
+};
+
+export const modelSpeedCall = async (
+	accessToken: string,
+	params: { startDate: string; endDate: string; timezone: string },
+): Promise<ModelSpeedReport> => {
+	try {
+		const search = new URLSearchParams({
+			start_date: params.startDate,
+			end_date: params.endDate,
+			timezone: params.timezone,
+		});
+		const path = `/global/model_speed?` + search.toString();
+		const url = proxyBaseUrl ? proxyBaseUrl + path : path;
+
+		const response = await dashboardFetch(url, {
+			method: "GET",
+			headers: {
+				"Content-Type": "application/json",
+			},
+		});
+		if (!response.ok) {
+			const errorData = await response.json().catch(() => ({}));
+			const errorMessage = deriveErrorMessage(errorData);
+			handleError(errorMessage);
+			throw new Error(errorMessage);
+		}
+
+		return await response.json();
+	} catch (error) {
+		console.error("Failed to load model speed:", error);
 		throw error;
 	}
 };

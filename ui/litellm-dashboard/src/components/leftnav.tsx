@@ -18,6 +18,7 @@ import {
 	SettingOutlined,
 	TagsOutlined,
 	TeamOutlined,
+	ThunderboltOutlined,
 	ToolOutlined,
 	UserOutlined,
 } from "@ant-design/icons";
@@ -46,6 +47,7 @@ const { Sider } = Layout;
 const MIGRATED_PAGES: Record<string, string> = {
 	"api-reference": "api-reference",
 	"builtin-capabilities": "builtin-capabilities",
+	speed: "speed",
 };
 
 /** Build an absolute href for a migrated page, respecting base URL + serverRootPath. */
@@ -148,6 +150,13 @@ const menuGroups: MenuGroup[] = [
 				page: "logs",
 				label: "Logs",
 				icon: <LineChartOutlined />,
+			},
+			{
+				key: "speed",
+				page: "speed",
+				label: "Speed",
+				icon: <ThunderboltOutlined />,
+				roles: [...all_admin_roles, ...internalUserRoles],
 			},
 		],
 	},

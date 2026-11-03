@@ -10,6 +10,9 @@
  * 不修改路由签名、不修改 WebUI 消费契约，保留所有现有测试。
  */
 
+import type { UserAPIKeyAuth } from "../types/auth";
+import { INTERNAL_USER_ROLE, INTERNAL_USER_VIEWER_ROLE } from "../types/webUiSession";
+
 /** 默认页码（无 page 参数时从 1 开始） */
 export const DEFAULT_PAGE = 1;
 
@@ -161,6 +164,23 @@ export function parseOptionalFloatQueryParam(raw: unknown): number | undefined |
 }
 
 export { UI_DATE_FORMAT, V2_DATE_FORMAT, UI_DATE_REGEX, V2_DATE_REGEX };
+
+/**
+ * Python LiteLLM internal user / viewer 角色可见范围：只能看自己的消费记录。
+ *
+ * Proxy admin / admin viewer 返回 undefined（不额外过滤）；internal_user 与
+ * internal_user_viewer 返回其 user_id，供调用方追加 user 过滤条件。
+ * @param auth - 当前请求的鉴权信息
+ */
+export function getInternalUserId(auth: UserAPIKeyAuth | undefined): string | undefined {
+	if (!auth || !auth.user_id) {
+		return undefined;
+	}
+	if (auth.user_role === INTERNAL_USER_ROLE || auth.user_role === INTERNAL_USER_VIEWER_ROLE) {
+		return auth.user_id;
+	}
+	return undefined;
+}
 
 /**
  * 把多查询端点通用的 `try { ... } catch (err) { logger.warn(...); return <fallback> }`

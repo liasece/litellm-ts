@@ -15,24 +15,9 @@ import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import type { UserAPIKeyAuth } from "../types/auth";
-import { INTERNAL_USER_ROLE, INTERNAL_USER_VIEWER_ROLE } from "../types/webUiSession";
-import { AGGREGATE_DEFAULT_LIMIT } from "./spendManagementHelpers";
+import { AGGREGATE_DEFAULT_LIMIT, getInternalUserId } from "./spendManagementHelpers";
 import { toFiniteNumber, toPythonMonthDayString, toSafeString } from "./spendManagementFormatters";
 import { registerGlobalSpendAggregationEndpoints } from "./globalSpendAggregationEndpoints";
-
-/**
- * Python LiteLLM internal user / viewer 角色可见范围：只能看自己的 spend。
- * @param auth
- */
-function getInternalUserId(auth: UserAPIKeyAuth | undefined): string | undefined {
-	if (!auth || !auth.user_id) {
-		return undefined;
-	}
-	if (auth.user_role === INTERNAL_USER_ROLE || auth.user_role === INTERNAL_USER_VIEWER_ROLE) {
-		return auth.user_id;
-	}
-	return undefined;
-}
 
 function parseActivityDate(raw: unknown): Date {
 	if (typeof raw !== "string" || raw.length === 0) {

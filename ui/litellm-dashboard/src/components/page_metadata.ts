@@ -12,6 +12,7 @@ export const pageDescriptions: Record<string, string> = {
 	"search-tools": "Configure RAG search and retrieval tools",
 	new_usage: "View usage analytics and metrics",
 	logs: "Access request and response logs",
+	speed: "Compare model output token speed (TPS) over time",
 	users: "Manage internal user accounts and permissions",
 	teams: "Create and manage teams for access control",
 	organizations: "Manage organizations and their members",

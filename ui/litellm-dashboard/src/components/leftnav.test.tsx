@@ -73,6 +73,7 @@ describe("Sidebar (leftnav)", () => {
 			"Search Tools",
 			"Usage",
 			"Logs",
+			"Speed",
 			"AI Hub",
 			"API Playground",
 			"Tag Management",

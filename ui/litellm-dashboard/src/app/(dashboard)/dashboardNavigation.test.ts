@@ -11,6 +11,7 @@ describe("deriveDashboardPage", () => {
 		["/playground", "llm-playground"],
 		["/usage", "new_usage"],
 		["/model-hub", "model-hub-table"],
+		["/speed", "speed"],
 	])("derives the legacy navigation key from path %s", (pathname, expected) => {
 		expect(deriveDashboardPage(pathname, searchParams())).toBe(expected);
 	});
@@ -25,6 +26,10 @@ describe("deriveDashboardPage", () => {
 
 	it("selects Built-in Capabilities for its migrated /ui path", () => {
 		expect(deriveDashboardPage("/ui/builtin-capabilities", searchParams(), "/ui/")).toBe("builtin-capabilities");
+	});
+
+	it("selects Speed for its migrated /ui path so the sidebar keeps the item highlighted", () => {
+		expect(deriveDashboardPage("/ui/speed", searchParams(), "/ui/")).toBe("speed");
 	});
 
 	it("keeps legacy query-param navigation for the dashboard root", () => {

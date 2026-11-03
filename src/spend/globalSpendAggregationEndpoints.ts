@@ -14,26 +14,16 @@ import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
 import { createModuleLogger } from "../core/utils/logger";
-import type { UserAPIKeyAuth } from "../types/auth";
-import { INTERNAL_USER_ROLE, INTERNAL_USER_VIEWER_ROLE } from "../types/webUiSession";
-import { AGGREGATE_DEFAULT_LIMIT, DAILY_SPEND_MATRIX_LIMIT, parseAggregateLimitParam, runWithFallback } from "./spendManagementHelpers";
+import {
+	AGGREGATE_DEFAULT_LIMIT,
+	DAILY_SPEND_MATRIX_LIMIT,
+	getInternalUserId,
+	parseAggregateLimitParam,
+	runWithFallback,
+} from "./spendManagementHelpers";
 import { normalizeTagSpendRow, toDateString, toFiniteNumber, toSafeString } from "./spendManagementFormatters";
 
 const logger = createModuleLogger("GlobalSpendAggregation");
-
-/**
- * Python LiteLLM internal user / viewer 角色可见范围：只能看自己的 spend。
- * @param auth
- */
-function getInternalUserId(auth: UserAPIKeyAuth | undefined): string | undefined {
-	if (!auth || !auth.user_id) {
-		return undefined;
-	}
-	if (auth.user_role === INTERNAL_USER_ROLE || auth.user_role === INTERNAL_USER_VIEWER_ROLE) {
-		return auth.user_id;
-	}
-	return undefined;
-}
 
 /**
  * 注册 /global/spend* 聚合端点（spend/keys/teams/models/providers/report/logs/provider/tags/all_tag_names/end_users）。

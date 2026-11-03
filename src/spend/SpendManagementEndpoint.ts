@@ -28,6 +28,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { createModuleLogger } from "../core/utils/logger";
 import { registerGlobalSpendEndpoints } from "./globalSpendEndpoints";
+import { registerModelSpeedEndpoints } from "./ModelSpeedEndpoint";
 import { registerSpendLogsEndpoints } from "./spendLogsEndpoints";
 
 const logger = createModuleLogger("SpendMgmt");
@@ -47,4 +48,5 @@ export function registerSpendManagementEndpoints(
 	registerScopedSpendReports(router, db);
 	registerSpendLogsEndpoints(router, db);
 	registerGlobalSpendEndpoints(router, db);
+	registerModelSpeedEndpoints(router, db);
 }
