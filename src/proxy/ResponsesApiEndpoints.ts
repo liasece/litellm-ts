@@ -984,7 +984,9 @@ function mapChatCompletionToResponse(
 	const finishReason = typeof choice?.["finish_reason"] === "string" ? choice["finish_reason"] : "stop";
 	const output: ResponseOutputItem[] = [];
 	const reasoning = extractReasoningText(message);
-	if (reasoning) {
+	// 上游可能只产出空白（实测是一个空格、reasoning_tokens 为 1）；为空时不生成 output item，
+	// 免得客户端渲染出一个没有内容的思考区。
+	if (reasoning.trim().length > 0) {
 		output.push(buildReasoningItem(responseId, output.length, reasoning));
 	}
 	const text = typeof message["content"] === "string" ? message["content"] : "";
@@ -2165,14 +2167,18 @@ function consumeChatStreamChunk(chunk: unknown, state: ResponsesStreamState, res
 				? delta["reasoning_content"]
 				: extractThinkingDelta(delta["thinking_blocks"]);
 		if (reasoningDelta) {
-			openReasoningItem(state, res);
 			state.reasoning += reasoningDelta;
-			writeEvent(res, state, "response.reasoning_text.delta", {
-				item_id: state.reasoningItem!.id,
-				output_index: state.output.indexOf(state.reasoningItem!),
-				content_index: 0,
-				delta: reasoningDelta,
-			});
+			// 空白增量本身不构成可展示内容：只在已经有真正的文字时才产出思考分区。
+			// 注意不能在这里 continue——同一 delta 里可能还带着正文或工具调用，跳过会丢掉它们。
+			if (state.reasoning.trim().length > 0) {
+				openReasoningItem(state, res);
+				writeEvent(res, state, "response.reasoning_text.delta", {
+					item_id: state.reasoningItem!.id,
+					output_index: state.output.indexOf(state.reasoningItem!),
+					content_index: 0,
+					delta: reasoningDelta,
+				});
+			}
 		}
 		if (typeof delta["content"] === "string" && delta["content"].length > 0) {
 			openTextPart(state, res);
@@ -2327,6 +2333,11 @@ function consumeToolDelta(delta: Record<string, unknown>, state: ResponsesStream
 }
 
 function writeCompletedEvents(res: Response, state: ResponsesStreamState): void {
+	// reasoning 全程只有空白时没有可展示内容，直接从 output 移除，避免客户端渲染空思考区。
+	if (state.reasoningItem && state.reasoning.trim().length === 0) {
+		state.output = state.output.filter((entry) => entry !== state.reasoningItem);
+		state.reasoningItem = undefined;
+	}
 	for (let outputIndex = 0; outputIndex < state.output.length; outputIndex++) {
 		const item = state.output[outputIndex]!;
 		item.status = "completed";

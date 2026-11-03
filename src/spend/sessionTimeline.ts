@@ -512,12 +512,25 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 			: { part: { kind: "text", label: "Text", sourceType: type || "text", text: valueToText(block.text) } };
 	}
 	if (["thinking", "reasoning", "analysis"].includes(type)) {
+		const text = reasoningText(block);
+		// Anthropic 的加密思考块带 signature 但 thinking 为空：内容不可见，标成已隐藏，
+		// 避免渲染出一个空的思考区。
+		if (text.trim().length === 0 && typeof block.signature === "string" && block.signature.length > 0) {
+			return {
+				part: {
+					kind: "redacted_thinking",
+					label: "Redacted thinking",
+					sourceType: type,
+					text: "Content redacted by provider",
+				},
+			};
+		}
 		return {
 			part: {
 				kind: "thinking",
 				label: type === "thinking" ? "Thinking" : "Reasoning",
 				sourceType: type,
-				text: reasoningText(block),
+				text: text,
 			},
 		};
 	}

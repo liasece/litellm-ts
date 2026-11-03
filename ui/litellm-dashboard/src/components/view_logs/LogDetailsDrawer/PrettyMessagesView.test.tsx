@@ -395,6 +395,60 @@ describe("PrettyMessagesView", () => {
 	});
 
 
+
+	it("should not render a thinking section when upstream only produced whitespace", () => {
+		// 生产实测形态：reasoning item 内容是一个空格，页面上不应出现空的思考区。
+		const parsed = parseMessages(
+			{},
+			{
+				output: [
+					{
+						id: "rs_blank",
+						type: "reasoning",
+						status: "completed",
+						content: [{ type: "reasoning_text", text: " " }],
+						summary: [],
+					},
+					{ type: "message", role: "assistant", content: [{ type: "output_text", text: "已处理" }] },
+				],
+			},
+		);
+
+		expect(parsed.responseMessage?.parts?.some((part) => part.kind === "thinking")).toBe(false);
+		expect(parsed.responseMessage?.content).not.toContain("[Thinking]");
+	});
+
+
+	it("should mark an encrypted Anthropic thinking block as redacted instead of showing an empty Thinking box", () => {
+		// 生产实测：gpt-6-astra 返回 { type: "thinking", thinking: "", signature: "..." }，
+		// 内容不可见，但结构完整；直接渲染只会留下一个空的 Thinking 框。
+		const parsed = parseMessages(
+			{},
+			{
+				content: [
+					{ type: "thinking", thinking: "", signature: "gAAAAABq6DFHHW7AZfcgOr86D8_kzI33" },
+					{ type: "text", text: "已完成" },
+				],
+			},
+		);
+
+		const thinking = parsed.responseMessage?.parts?.find((part) => part.kind !== "text");
+		expect(thinking).toMatchObject({ kind: "redacted_thinking", text: "Content redacted by provider" });
+		expect(parsed.responseMessage?.parts?.some((part) => part.kind === "thinking")).toBe(false);
+	});
+
+	it("should still show a thinking block when the provider sent real reasoning text", () => {
+		const parsed = parseMessages(
+			{},
+			{
+				content: [{ type: "thinking", thinking: "先核对参考文件", signature: "sig" }],
+			},
+		);
+
+		const thinking = parsed.responseMessage?.parts?.find((part) => part.kind === "thinking");
+		expect(thinking).toMatchObject({ kind: "thinking", text: "先核对参考文件" });
+	});
+
 	it("should show reasoning text that providers emit in content beside an empty summary", () => {
 		// 生产实测结构：Responses 的 reasoning item 固定带 summary: []，文本在 content 里。
 		const parsed = parseMessages(

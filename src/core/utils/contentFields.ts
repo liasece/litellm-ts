@@ -36,7 +36,9 @@ export function isMeaningful(value: unknown): boolean {
 		return false;
 	}
 	if (typeof value === "string") {
-		return value.length > 0;
+		// 上游有时只产出空白字符（实测 reasoning 会是一个空格，且 reasoning_tokens 为 1），
+		// trim 后为空说明用户看不到任何内容，应与空字符串同等对待。
+		return value.trim().length > 0;
 	}
 	if (Array.isArray(value)) {
 		return value.length > 0;

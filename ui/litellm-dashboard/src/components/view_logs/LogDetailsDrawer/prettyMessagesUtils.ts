@@ -264,12 +264,25 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 		return { part: { kind: "text", label: "Text", sourceType: type || "text", text: valueToText(block.text) } };
 	}
 	if (["thinking", "reasoning", "analysis"].includes(type)) {
+		const text = valueToText(pickField(block, PRETTY_FIELD_RULES.reasoning));
+		// Anthropic 的加密思考块带 signature 但 thinking 为空：内容不在客户端可见，不能当成
+		// 普通思考区渲染，否则页面只会出现一个空的 Thinking 框。
+		if (text.trim().length === 0 && typeof block.signature === "string" && block.signature.length > 0) {
+			return {
+				part: {
+					kind: "redacted_thinking",
+					label: "Redacted thinking",
+					sourceType: type,
+					text: "Content redacted by provider",
+				},
+			};
+		}
 		return {
 			part: {
 				kind: "thinking",
 				label: type === "thinking" ? "Thinking" : "Reasoning",
 				sourceType: type,
-				text: valueToText(pickField(block, PRETTY_FIELD_RULES.reasoning)),
+				text: text,
 			},
 		};
 	}
@@ -443,6 +456,17 @@ function parseContentBlock(rawBlock: any): { part: MessagePart; toolCall?: ToolC
 	};
 }
 
+/**
+ * 丢弃没有任何可见内容的思考分区。
+ *
+ * 上游有时只产出空白（实测 reasoning 文本是一个空格、reasoning_tokens 为 1）。这样的块
+ * 如果照常渲染，页面会出现一个空白的「Reasoning」框，看起来像内容丢失。既然用户看不到
+ * 任何东西，就不该为它生成分区。
+ * @param parts - 解析后的内容分区
+ */
+const withoutEmptyThinking = (parts: MessagePart[]): MessagePart[] =>
+	parts.filter((part) => part.kind !== "thinking" || (part.text ?? "").trim().length > 0);
+
 const contentFromParts = (parts: MessagePart[]): string =>
 	parts
 		.map((part) => {
@@ -464,15 +488,16 @@ const parseContent = (content: any): { content: string; parts?: MessagePart[]; t
 	if (!Array.isArray(content)) {
 		if (content === null || content === undefined) return { content: "" };
 		const parsed = parseContentBlock(content);
+		const parts = withoutEmptyThinking([parsed.part]);
 		return {
-			content: contentFromParts([parsed.part]),
-			parts: [parsed.part],
+			content: contentFromParts(parts),
+			parts,
 			toolCalls: parsed.toolCall ? [parsed.toolCall] : undefined,
 		};
 	}
 
 	const parsed = content.map(parseContentBlock);
-	const parts = parsed.map((item) => item.part);
+	const parts = withoutEmptyThinking(parsed.map((item) => item.part));
 	const toolCalls = parsed.flatMap((item) => (item.toolCall ? [item.toolCall] : []));
 	return {
 		content: contentFromParts(parts),
@@ -772,10 +797,12 @@ export const parseMessages = (request: any, response: any): ParsedMessages => {
 			parts: parsed.parts,
 		};
 	} else if (Array.isArray(response?.output)) {
-		const parts = response.output.flatMap((item: any) => {
-			if (item?.type === "message") return parseContent(item.content || []).parts || [];
-			return [parseContentBlock(item).part];
-		});
+		const parts = withoutEmptyThinking(
+			response.output.flatMap((item: any) => {
+				if (item?.type === "message") return parseContent(item.content || []).parts || [];
+				return [parseContentBlock(item).part];
+			}),
+		);
 		responseMessage = responseFromParts(parts);
 	} else if (generatedImageParts.length) {
 		responseMessage = responseFromParts(generatedImageParts);

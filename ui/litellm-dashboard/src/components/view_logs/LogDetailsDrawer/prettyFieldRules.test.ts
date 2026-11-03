@@ -58,4 +58,11 @@ describe("pretty field rules", () => {
 		).toBe("image/webp");
 		expect(readFieldRule({ mimeType: "image/png" }, PRETTY_FIELD_RULES.imageMimeType)).toBe("image/png");
 	});
+
+	it("把只有空白字符的字符串也视为没有内容", () => {
+		// 生产实测：reasoning 文本可能只是一个空格（reasoning_tokens 为 1），页面上什么都看不到。
+		expect(isMeaningful(" ")).toBe(false);
+		expect(isMeaningful("\n\t ")).toBe(false);
+		expect(readFieldRule({ content: " " }, PRETTY_FIELD_RULES.reasoning)).toBeUndefined();
+	});
 });

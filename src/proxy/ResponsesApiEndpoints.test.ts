@@ -848,6 +848,52 @@ describe("Responses API contract matrix", () => {
 		});
 
 
+
+	test("非流式响应不会为纯空白的 reasoning 生成 output item", async () => {
+		// 生产实测：上游有时只产出 1 个 reasoning token（一个空格），不该变成空的思考区。
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					id: "chatcmpl-blank-reasoning",
+					object: "chat.completion",
+					created: 1_700_000_900,
+					model: "provider-model",
+					choices: [
+						{
+							index: 0,
+							finish_reason: "tool_calls",
+							message: {
+								role: "assistant",
+								content: null,
+								reasoning_content: " ",
+								tool_calls: [
+									{ id: "call_1", type: "function", function: { name: "get_weather", arguments: '{"city":"SF"}' } },
+								],
+							},
+						},
+					],
+					usage: {
+						prompt_tokens: 5,
+						completion_tokens: 3,
+						total_tokens: 8,
+						completion_tokens_details: { reasoning_tokens: 1 },
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		const app = buildApp(buildDeploymentRouter([deployment("chat-deployment", "https://example.com/v1")]));
+
+		const response = await request(app)
+			.post("/v1/responses")
+			.send({ model: "chat-deployment", input: "weather?", store: false })
+			.expect(200);
+
+		expect(fetchSpy).toHaveBeenCalled();
+		expect(response.body.output.some((item: { type: string }) => item.type === "reasoning")).toBe(false);
+		expect(response.body.output.some((item: { type: string }) => item.type === "function_call")).toBe(true);
+	});
+
 		test("DeepSeek native failure falls back to a Chat deployment inside Router", async () => {
 			const fetchSpy = jest
 				.spyOn(global, "fetch")
