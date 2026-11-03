@@ -1,7 +1,8 @@
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { registerCliProxyManagementRoutes } from "./CliProxyEndpoints";
-import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
+import { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
+import type { ConfigRepository } from "../repositories/ConfigRepository";
 
 function makeRuntime() {
 	return {
@@ -100,5 +101,29 @@ describe("CLIProxy protected management bridge", () => {
 
 		expect(response.status).toBe(404);
 		expect(runtime.managementRequest).not.toHaveBeenCalled();
+	});
+});
+
+describe("CLIProxy release check endpoint", () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	it("页面预取复用缓存，手动检查强制刷新", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(
+			async () =>
+				new Response(
+					JSON.stringify([{ tag_name: "v8.0.52", body: "## Changelog\n\n- change", draft: false, prerelease: false }]),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				),
+		);
+		const app = makeApp(new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test"));
+
+		await request(app).get("/cliproxy/update/check").expect(200);
+		await request(app).get("/cliproxy/update/check").expect(200);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+		await request(app).get("/cliproxy/update/check?refresh=true").expect(200);
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 });

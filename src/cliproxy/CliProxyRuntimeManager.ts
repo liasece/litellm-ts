@@ -202,6 +202,91 @@ export function extractCliProxyReleaseNotes(source: string): string {
 	return cleaned;
 }
 
+/** GitHub 未认证 REST 配额：每小时 60 次，按出口 IP 共享，耗尽后返回 403。 */
+const GITHUB_ANONYMOUS_HOURLY_LIMIT = 60;
+
+/**
+ * 版本检查结果缓存时长。
+ *
+ * 每次打开 CLIProxy 页面都会预取一次最新版本，而 GitHub 未认证配额按出口 IP 共享，
+ * 没有缓存时多开几个页面就会耗尽额度。手动检查通过 refresh 绕过缓存。
+ */
+const UPDATE_CHECK_CACHE_TTL_MS = 5 * 60_000;
+
+/** checkLatestVersion 的调用意图。 */
+export interface CliProxyUpdateCheckOptions {
+	/** 手动操作（Check 按钮、安装/回滚后的复核）绕过缓存，直接请求 GitHub 并刷新缓存。 */
+	readonly refresh?: boolean;
+}
+
+interface CliProxyReleaseCache {
+	readonly fetchedAt: number;
+	readonly releases: readonly CliProxyReleaseInfo[];
+}
+
+const EMPTY_RELEASE_MESSAGE = "GitHub 上没有可用的正式版 CLIProxy release";
+
+/**
+ * 识别 GitHub 的限流响应，避免把 403 限流当成普通的网关故障。
+ * @param response - GitHub 响应
+ * @param bodyText - 已读取的响应正文，用于识别 403 的限流文案
+ */
+function isGitHubRateLimited(response: Response, bodyText: string): boolean {
+	if (response.status === 429) {
+		return true;
+	}
+	if (response.status !== 403) {
+		return false;
+	}
+	return response.headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(bodyText);
+}
+
+/**
+ * 按 x-ratelimit-reset 说明配额何时恢复。
+ * @param response - GitHub 响应
+ */
+function describeRateLimitReset(response: Response): string {
+	const header = response.headers.get("x-ratelimit-reset");
+	if (!header || !/^\d+$/.test(header)) {
+		return "请稍后重试";
+	}
+	const waitSeconds = Number(header) - Math.floor(Date.now() / 1000);
+	if (waitSeconds <= 0) {
+		return "现在可以重试";
+	}
+	return `约 ${Math.max(1, Math.ceil(waitSeconds / 60))} 分钟后恢复`;
+}
+
+/**
+ * 把 GitHub 的非成功响应翻译成可执行说明：限流要说清原因和恢复时间，其余要给状态码。
+ * @param response - GitHub 响应
+ * @param bodyText - 已读取的响应正文
+ */
+function cliProxyReleaseResponseError(response: Response, bodyText: string): ApiError {
+	if (isGitHubRateLimited(response, bodyText)) {
+		return new ApiError(
+			502,
+			`GitHub API 限流：这台服务器与其它服务共用出口 IP，每小时 ${GITHUB_ANONYMOUS_HOURLY_LIMIT} 次未认证请求额度已用完，${describeRateLimitReset(response)}。请稍后重试。`,
+			"rate_limit_exceeded",
+		);
+	}
+	return new ApiError(502, `GitHub 返回 HTTP ${response.status}，暂时无法获取 CLIProxy 版本列表，请稍后重试`);
+}
+
+/**
+ * 把 fetch 的连接层失败翻译成可执行说明，避免只抛出 "fetch failed"。
+ * @param error - fetch 抛出的异常
+ */
+function cliProxyReleaseFetchError(error: unknown): ApiError {
+	const name = isRecord(error) ? error["name"] : undefined;
+	if (name === "TimeoutError" || name === "AbortError") {
+		return new ApiError(502, "连接 GitHub 超时（15 秒），请确认服务器出网正常后重试");
+	}
+	const cause = isRecord(error) && isRecord(error["cause"]) ? error["cause"]["message"] : undefined;
+	const detail = typeof cause === "string" && cause.length > 0 ? `（${cause}）` : "";
+	return new ApiError(502, `无法连接 GitHub，请确认服务器出网正常后重试${detail}`);
+}
+
 /**
  * 当前启用的托管插件组合。
  *
@@ -420,6 +505,8 @@ export class CliProxyRuntimeManager {
 	private _restartTimer: NodeJS.Timeout | null = null;
 	private _operationTail: Promise<void> = Promise.resolve();
 	private _logSequence = 0;
+	private _releaseCache: CliProxyReleaseCache | null = null;
+	private _releaseFetch: Promise<readonly CliProxyReleaseInfo[]> | null = null;
 	private readonly _logs: CliProxyLogEntry[] = [];
 	private readonly _oauthSessions = new Map<
 		string,
@@ -1030,19 +1117,30 @@ export class CliProxyRuntimeManager {
 	}
 
 	/**
-	 *
+	 * 从 GitHub 拉取正式版列表，并刷新缓存。
 	 */
-	async checkLatestVersion(): Promise<CliProxyUpdateInfo> {
-		const response = await fetch(`https://api.github.com/repos/${RELEASE_REPOSITORY}/releases?per_page=100`, {
-			headers: { Accept: "application/vnd.github+json", "User-Agent": "litellm-ts-cliproxy-manager" },
-			signal: AbortSignal.timeout(15_000),
-		});
-		if (!response.ok) {
-			throw new ApiError(502, `获取 CLIProxy 最新版本失败: HTTP ${response.status}`);
+	private async _fetchReleases(): Promise<readonly CliProxyReleaseInfo[]> {
+		let response: Response;
+		try {
+			response = await fetch(`https://api.github.com/repos/${RELEASE_REPOSITORY}/releases?per_page=100`, {
+				headers: { Accept: "application/vnd.github+json", "User-Agent": "litellm-ts-cliproxy-manager" },
+				signal: AbortSignal.timeout(15_000),
+			});
+		} catch (error) {
+			throw cliProxyReleaseFetchError(error);
 		}
-		const body = (await response.json()) as unknown;
+		if (!response.ok) {
+			const bodyText = await response.text().catch(() => "");
+			throw cliProxyReleaseResponseError(response, bodyText);
+		}
+		let body: unknown;
+		try {
+			body = (await response.json()) as unknown;
+		} catch {
+			throw new ApiError(502, "GitHub 返回的 CLIProxy release 数据不是有效 JSON，请稍后重试");
+		}
 		if (!Array.isArray(body)) {
-			throw new ApiError(502, "CLIProxy release 响应格式无效");
+			throw new ApiError(502, "GitHub 返回的 CLIProxy release 数据格式异常，请稍后重试");
 		}
 		const releases = body
 			.flatMap((value): CliProxyReleaseInfo[] => {
@@ -1067,9 +1165,40 @@ export class CliProxyRuntimeManager {
 				}
 			})
 			.sort((left, right) => compareCliProxyVersions(right.version, left.version) ?? 0);
+		if (releases.length === 0) {
+			throw new ApiError(502, EMPTY_RELEASE_MESSAGE);
+		}
+		this._releaseCache = { fetchedAt: Date.now(), releases: releases };
+		return releases;
+	}
+
+	/**
+	 * 读取版本列表；TTL 内复用缓存，并发请求合并为一次。
+	 */
+	private async _releasesWithCache(): Promise<readonly CliProxyReleaseInfo[]> {
+		if (this._releaseCache && Date.now() - this._releaseCache.fetchedAt < UPDATE_CHECK_CACHE_TTL_MS) {
+			return this._releaseCache.releases;
+		}
+		if (!this._releaseFetch) {
+			this._releaseFetch = this._fetchReleases().finally(() => {
+				this._releaseFetch = null;
+			});
+		}
+		return this._releaseFetch;
+	}
+
+	/**
+	 * 查询 CLIProxy 最新正式版。
+	 *
+	 * 页面打开时的预取会反复读取 GitHub，而未认证配额按出口 IP 共享，因此默认复用短周期缓存；
+	 * 手动检查（Check 按钮、安装/回滚后的复核）通过 refresh 绕过缓存并刷新它。
+	 * @param options - refresh 为 true 时强制请求 GitHub
+	 */
+	async checkLatestVersion(options: CliProxyUpdateCheckOptions = {}): Promise<CliProxyUpdateInfo> {
+		const releases = options.refresh === true ? await this._fetchReleases() : await this._releasesWithCache();
 		const latest = releases[0]?.version;
-		if (!latest) {
-			throw new ApiError(502, "CLIProxy release 响应中没有可用版本");
+		if (latest === undefined) {
+			throw new ApiError(502, EMPTY_RELEASE_MESSAGE);
 		}
 		const current = this._currentVersion();
 		const installedVersions = this._installedVersionsSync();

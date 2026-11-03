@@ -286,7 +286,10 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		return runtime.sendOAuthInput(routeParam(req, "id"), input);
 	});
 
-	registerRoute(router, { method: "get", path: "/cliproxy/update/check" }, () => runtime.checkLatestVersion());
+	// 页面预取走缓存以节省 GitHub 未认证配额；手动 Check 传 refresh=true 强制刷新。
+	registerRoute(router, { method: "get", path: "/cliproxy/update/check" }, (req) =>
+		runtime.checkLatestVersion({ refresh: req.query["refresh"] === "true" }),
+	);
 	registerRoute(router, { method: "post", path: "/cliproxy/update" }, (req) => {
 		const version = bodyRecord(req)["version"];
 		if (version !== undefined && typeof version !== "string") {

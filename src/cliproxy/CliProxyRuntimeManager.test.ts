@@ -314,6 +314,79 @@ describe("CLIProxy release comparison", () => {
 	});
 });
 
+describe("CLIProxy release check cache and failures", () => {
+	afterEach(() => {
+		jest.restoreAllMocks();
+	});
+
+	function releasesResponse(versions: readonly string[]): Response {
+		return new Response(
+			JSON.stringify(
+				versions.map((version) => ({
+					tag_name: `v${version}`,
+					published_at: "2026-07-31T08:39:29Z",
+					html_url: `https://github.com/router-for-me/CLIProxyAPI/releases/tag/v${version}`,
+					body: "## Changelog\n\n- change",
+					draft: false,
+					prerelease: false,
+				})),
+			),
+			{ status: 200, headers: { "Content-Type": "application/json" } },
+		);
+	}
+
+	it("页面重复预取只请求一次 GitHub", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(releasesResponse(["8.0.52"]));
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		const first = await runtime.checkLatestVersion();
+		const second = await runtime.checkLatestVersion();
+
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(second).toEqual(first);
+	});
+
+	it("手动检查绕过缓存并返回最新结果", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch");
+		fetchSpy.mockResolvedValueOnce(releasesResponse(["8.0.52"]));
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+		await runtime.checkLatestVersion();
+
+		fetchSpy.mockResolvedValueOnce(releasesResponse(["8.0.53", "8.0.52"]));
+
+		await expect(runtime.checkLatestVersion({ refresh: true })).resolves.toMatchObject({ latest: "8.0.53" });
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it("把 GitHub 限流翻译成可执行的说明", async () => {
+		const resetAt = Math.floor(Date.now() / 1000) + 900;
+		jest.spyOn(global, "fetch").mockImplementation(async () =>
+			new Response(JSON.stringify({ message: "API rate limit exceeded for 212.50.233.18." }), {
+				status: 403,
+				headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(resetAt) },
+			}),
+		);
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		await expect(runtime.checkLatestVersion({ refresh: true })).rejects.toMatchObject({
+			statusCode: 502,
+			errorType: "rate_limit_exceeded",
+		});
+		await expect(runtime.checkLatestVersion({ refresh: true })).rejects.toThrow(
+			/每小时 60 次未认证请求额度已用完，约 15 分钟后恢复/,
+		);
+	});
+
+	it("把连接失败翻译成可执行的说明", async () => {
+		jest
+			.spyOn(global, "fetch")
+			.mockRejectedValue(new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED 140.82.113.6:443") }));
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+
+		await expect(runtime.checkLatestVersion({ refresh: true })).rejects.toThrow(/无法连接 GitHub，请确认服务器出网正常后重试（connect ECONNREFUSED/);
+	});
+});
+
 describe("CLIProxy plugin subscription quota", () => {
 	afterEach(() => {
 		jest.restoreAllMocks();

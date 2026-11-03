@@ -128,6 +128,10 @@ const ADVANCED_MANAGEMENT_RESOURCES = [
 	{ value: "/oauth-model-alias", label: "OAuth model aliases" },
 ] as const;
 
+/** 页面预取走缓存；手动检查与安装/回滚后的复核强制刷新，避免展示过期版本。 */
+const UPDATE_CHECK_CACHED_PATH = "/cliproxy/update/check";
+const UPDATE_CHECK_REFRESH_PATH = "/cliproxy/update/check?refresh=true";
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
 	const response = await dashboardFetch(path, {
 		...init,
@@ -405,7 +409,7 @@ const CliProxyManagement: React.FC = () => {
 				api<ConfigResponse>("/cliproxy/config"),
 				api<{ data: Account[] }>("/cliproxy/accounts"),
 				api<{ entries: CliProxyLogEntry[]; cursor: number }>("/cliproxy/logs"),
-				api<UpdateInfo>("/cliproxy/update/check").catch(() => null),
+				api<UpdateInfo>(UPDATE_CHECK_CACHED_PATH).catch(() => null),
 			]);
 			setStatus(config.status);
 			setEnabled(config.settings.enabled);
@@ -485,7 +489,7 @@ const CliProxyManagement: React.FC = () => {
 
 	const checkUpdate = () =>
 		runOperation("update check", async () => {
-			setUpdateInfo(await api<UpdateInfo>("/cliproxy/update/check"));
+			setUpdateInfo(await api<UpdateInfo>(UPDATE_CHECK_REFRESH_PATH));
 		});
 
 	const installUpdate = () =>
@@ -495,7 +499,7 @@ const CliProxyManagement: React.FC = () => {
 				method: "POST",
 				body: JSON.stringify({ version: updateInfo.latest }),
 			});
-			setUpdateInfo(await api<UpdateInfo>("/cliproxy/update/check"));
+			setUpdateInfo(await api<UpdateInfo>(UPDATE_CHECK_REFRESH_PATH));
 		});
 
 	const rollback = () =>
@@ -506,7 +510,7 @@ const CliProxyManagement: React.FC = () => {
 				body: JSON.stringify({ version: rollbackVersion }),
 			});
 			setRollbackVersion(null);
-			setUpdateInfo(await api<UpdateInfo>("/cliproxy/update/check"));
+			setUpdateInfo(await api<UpdateInfo>(UPDATE_CHECK_REFRESH_PATH));
 		});
 
 	const startOAuth = async (provider: string) => {
