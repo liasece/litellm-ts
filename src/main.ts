@@ -83,6 +83,7 @@ import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
 import { abortOrphanedActiveRequests, reapExpiredActiveRequests } from "./spend/ActiveRequestRecovery";
 import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
+import { registerProviderQuotaRoutes } from "./proxy/ProviderQuotaEndpoints";
 import {
 	registerCliProxyNativeAnthropicRoutes,
 	registerCliProxyNativeChatRoutes,
@@ -234,6 +235,7 @@ export class LiteLLMServer {
 		registerStaticUiRoutes(app);
 		this._registerCoreProxyRoutes(app, container);
 		this._registerManagementRoutes(app, container);
+		this._registerProviderQuotaRoutes(app, container);
 		this._registerSpendRoutes(app, container);
 		this._registerStubRoutes(app, container);
 
@@ -342,6 +344,18 @@ export class LiteLLMServer {
 
 		app.use(managementRouter);
 		logger.info("管理端点已注册");
+	}
+
+	// ── 内置 Provider 额度端点 ──
+	private _registerProviderQuotaRoutes(app: express.Express, container: ServiceContainer): void {
+		const providerQuotaRouter = express.Router();
+		providerQuotaRouter.use(container.authMiddleware);
+		providerQuotaRouter.use(webUiCsrfProtection);
+		providerQuotaRouter.use(container.authorizationGuard.middleware("management"));
+		providerQuotaRouter.use(container.runtimeConfigService.middleware(container.router));
+		registerProviderQuotaRoutes(providerQuotaRouter, container.providerQuotaService, container.router);
+		app.use(providerQuotaRouter);
+		logger.info("内置 Provider 额度端点已注册");
 	}
 
 	// ── 消费端点 ──

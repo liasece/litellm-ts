@@ -16,6 +16,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 	} as unknown as Response;
 }
 
+const emptyBuiltIn = () => jsonResponse({ data: [] });
+
 describe("CliProxySubscriptionQuota", () => {
 	const mockDashboardFetch = vi.mocked(dashboardFetch);
 
@@ -23,16 +25,16 @@ describe("CliProxySubscriptionQuota", () => {
 		mockDashboardFetch.mockReset();
 	});
 
-	it("stays hidden when no CLIProxy subscription accounts exist", async () => {
-		mockDashboardFetch.mockResolvedValueOnce(jsonResponse({ data: [] }));
+	it("stays hidden when neither CLIProxy accounts nor built-in provider keys exist", async () => {
+		mockDashboardFetch.mockResolvedValueOnce(jsonResponse({ data: [] })).mockResolvedValueOnce(emptyBuiltIn());
 
 		render(<CliProxySubscriptionQuota enabled />);
 
 		await waitFor(() => expect(mockDashboardFetch).toHaveBeenCalledWith("/cliproxy/accounts", expect.anything()));
-		expect(screen.queryByTestId("cliproxy-subscription-quota")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("upstream-account-quota")).not.toBeInTheDocument();
 	});
 
-	it("shows each subscription account's remaining windows and balance at the bottom section", async () => {
+	it("shows each subscription account's remaining windows and balance", async () => {
 		mockDashboardFetch
 			.mockResolvedValueOnce(
 				jsonResponse({
@@ -46,6 +48,7 @@ describe("CliProxySubscriptionQuota", () => {
 					],
 				}),
 			)
+			.mockResolvedValueOnce(emptyBuiltIn())
 			.mockResolvedValueOnce(
 				jsonResponse({
 					provider: "codex",
@@ -66,14 +69,111 @@ describe("CliProxySubscriptionQuota", () => {
 
 		render(<CliProxySubscriptionQuota enabled />);
 
-		expect(await screen.findByText("CLIProxy API subscription quota")).toBeInTheDocument();
+		expect(await screen.findByText("Upstream account quota")).toBeInTheDocument();
 		expect(await screen.findByText("owner@example.com")).toBeInTheDocument();
 		expect(screen.getByText("Plus")).toBeInTheDocument();
 		expect(screen.getByText("73% remaining")).toBeInTheDocument();
 		expect(screen.getByText("$7.50 remaining")).toBeInTheDocument();
 	});
 
-	it("refreshes quota without reloading the account list", async () => {
+	it("renders a built-in MiniMax subscription key next to CLIProxy accounts", async () => {
+		mockDashboardFetch
+			.mockResolvedValueOnce(jsonResponse({ data: [] }))
+			.mockResolvedValueOnce(
+				jsonResponse({
+					data: [
+						{
+							id: "minimax:minimax-main:",
+							provider: "minimax",
+							label: "minimax-main",
+							models: ["MiniMax-M3"],
+							account_kind: "subscription",
+							plan: "Explore",
+							subscription_expires_at: null,
+							windows: [
+								{ id: "general-5h", label: "MiniMax · 5-hour", remaining_percent: 81, resets_at: null },
+								{ id: "general-weekly", label: "MiniMax · 7-day", remaining_percent: 42, resets_at: null },
+							],
+							balances: [],
+							fetched_at: "2026-11-03T00:00:00.000Z",
+						},
+					],
+				}),
+			);
+
+		render(<CliProxySubscriptionQuota enabled />);
+
+		expect(await screen.findByText("minimax-main")).toBeInTheDocument();
+		expect(screen.getByText("Subscription key")).toBeInTheDocument();
+		expect(screen.getByText("Explore")).toBeInTheDocument();
+		expect(screen.getByText("81% remaining")).toBeInTheDocument();
+		expect(screen.getByText("42% remaining")).toBeInTheDocument();
+	});
+
+	it("shows a pay-as-you-go MiniMax key with its detected kind and explanation", async () => {
+		mockDashboardFetch.mockResolvedValueOnce(jsonResponse({ data: [] })).mockResolvedValueOnce(
+			jsonResponse({
+				data: [
+					{
+						id: "minimax:payg:",
+						provider: "minimax",
+						label: "payg",
+						models: ["MiniMax-M3"],
+						account_kind: "pay_as_you_go",
+						plan: null,
+						subscription_expires_at: null,
+						windows: [],
+						balances: [],
+						warning:
+							"This is a pay-as-you-go key. MiniMax does not expose a public balance API for it, so only the key kind is shown.",
+						fetched_at: "2026-11-03T00:00:00.000Z",
+					},
+				],
+			}),
+		);
+
+		render(<CliProxySubscriptionQuota enabled />);
+
+		expect(await screen.findByText("payg")).toBeInTheDocument();
+		expect(screen.getByText("Pay-as-you-go key")).toBeInTheDocument();
+		expect(screen.getByText(/does not expose a public balance API/)).toBeInTheDocument();
+	});
+
+	it("renders a DeepSeek balance in its own currency instead of converting it as USD", async () => {
+		mockDashboardFetch.mockResolvedValueOnce(jsonResponse({ data: [] })).mockResolvedValueOnce(
+			jsonResponse({
+				data: [
+					{
+						id: "deepseek:deepseek-main:",
+						provider: "deepseek",
+						label: "deepseek-main",
+						models: ["deepseek-flash"],
+						account_kind: "pay_as_you_go",
+						plan: null,
+						subscription_expires_at: null,
+						windows: [],
+						balances: [
+							{
+								label: "DeepSeek balance (CNY)",
+								remaining: 110,
+								unit: "CNY",
+								details: ["Granted 10.00", "Topped up 100.00"],
+							},
+						],
+						fetched_at: "2026-11-03T00:00:00.000Z",
+					},
+				],
+			}),
+		);
+
+		render(<CliProxySubscriptionQuota enabled />);
+
+		expect(await screen.findByText("deepseek-main")).toBeInTheDocument();
+		expect(screen.getByText("CNY 110.00 remaining")).toBeInTheDocument();
+		expect(screen.getByText("Granted 10.00 · Topped up 100.00")).toBeInTheDocument();
+	});
+
+	it("refreshes both sources without reloading the account list", async () => {
 		mockDashboardFetch
 			.mockResolvedValueOnce(
 				jsonResponse({
@@ -87,6 +187,7 @@ describe("CliProxySubscriptionQuota", () => {
 					],
 				}),
 			)
+			.mockResolvedValueOnce(emptyBuiltIn())
 			.mockResolvedValueOnce(
 				jsonResponse({
 					provider: "codex",
@@ -106,21 +207,22 @@ describe("CliProxySubscriptionQuota", () => {
 					balances: [],
 					fetched_at: "2026-08-01T01:00:00.000Z",
 				}),
-			);
+			)
+			.mockResolvedValueOnce(emptyBuiltIn());
 
 		render(<CliProxySubscriptionQuota enabled />);
 		expect(await screen.findByText("40% remaining")).toBeInTheDocument();
 
-		fireEvent.click(screen.getByTestId("cliproxy-quota-refresh"));
+		fireEvent.click(screen.getByTestId("upstream-quota-refresh"));
 
 		expect(await screen.findByText("35% remaining")).toBeInTheDocument();
-		expect(mockDashboardFetch).toHaveBeenCalledTimes(3);
+		expect(mockDashboardFetch).toHaveBeenCalledWith("/provider/quota?refresh=true", expect.anything());
 	});
 
 	it("does not query management APIs when the current user is not an admin", () => {
 		render(<CliProxySubscriptionQuota enabled={false} />);
 
 		expect(mockDashboardFetch).not.toHaveBeenCalled();
-		expect(screen.queryByTestId("cliproxy-subscription-quota")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("upstream-account-quota")).not.toBeInTheDocument();
 	});
 });

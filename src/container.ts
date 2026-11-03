@@ -23,6 +23,7 @@ import { CredentialRepository } from "./repositories/CredentialRepository";
 import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfigService";
 import { ConfigRepository } from "./repositories/ConfigRepository";
 import { CliProxyRuntimeManager } from "./cliproxy/CliProxyRuntimeManager";
+import { ProviderQuotaService } from "./providerusage/ProviderQuotaService";
 import { parseSessionDuration } from "./proxy/LoginEndpoints";
 import { DEFAULT_WEBUI_SESSION_DURATION, WEBUI_SESSION_DURATION_ENV_VAR } from "./types/webUiSession";
 
@@ -48,6 +49,8 @@ export interface ServiceContainer {
 	readonly runtimeConfigService: DatabaseRuntimeConfigService;
 	/** 内置 CLIProxy 二进制、配置、OAuth 文件与进程生命周期。 */
 	readonly cliProxyRuntime: CliProxyRuntimeManager;
+	/** 内置 Provider（DeepSeek / MiniMax）账户额度查询。 */
+	readonly providerQuotaService: ProviderQuotaService;
 }
 
 /**
@@ -147,5 +150,6 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		credentialService: credentialService,
 		runtimeConfigService: runtimeConfigService,
 		cliProxyRuntime: cliProxyRuntime,
+		providerQuotaService: new ProviderQuotaService(),
 	};
 }
