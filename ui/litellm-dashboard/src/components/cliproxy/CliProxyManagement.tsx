@@ -55,6 +55,12 @@ interface Account {
 	modified_at: string;
 }
 
+interface CommandCodeAccount {
+	index: number;
+	label: string;
+	filename: string;
+}
+
 interface QuotaWindow {
 	id: string;
 	label: string;
@@ -343,6 +349,12 @@ const CliProxyManagement: React.FC = () => {
 	const [userConfig, setUserConfig] = useState<Record<string, unknown>>({});
 	const [enabled, setEnabled] = useState(true);
 	const [accounts, setAccounts] = useState<Account[]>([]);
+	const [commandCodeAccounts, setCommandCodeAccounts] = useState<CommandCodeAccount[]>([]);
+	const [commandCodeLabel, setCommandCodeLabel] = useState("");
+	const [commandCodeKey, setCommandCodeKey] = useState("");
+	const [editingCommandCode, setEditingCommandCode] = useState<CommandCodeAccount | null>(null);
+	const [editingCommandCodeLabel, setEditingCommandCodeLabel] = useState("");
+	const [editingCommandCodeKey, setEditingCommandCodeKey] = useState("");
 	const [logs, setLogs] = useState<CliProxyLogEntry[]>([]);
 	const [logCursor, setLogCursor] = useState(0);
 	const [loading, setLoading] = useState(true);
@@ -367,6 +379,11 @@ const CliProxyManagement: React.FC = () => {
 	const refreshAccounts = useCallback(async () => {
 		const value = await api<{ data: Account[] }>("/cliproxy/accounts?include_trashed=true");
 		setAccounts(value.data);
+	}, []);
+
+	const refreshCommandCodeAccounts = useCallback(async () => {
+		const value = await api<{ data: CommandCodeAccount[] }>("/cliproxy/commandcode/accounts");
+		setCommandCodeAccounts(value.data);
 	}, []);
 
 	const logsFetchInFlight = useRef<number | null>(null);
@@ -405,9 +422,10 @@ const CliProxyManagement: React.FC = () => {
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [config, accountResponse, logResponse, versionInfo] = await Promise.all([
+			const [config, accountResponse, commandCodeResponse, logResponse, versionInfo] = await Promise.all([
 				api<ConfigResponse>("/cliproxy/config"),
 				api<{ data: Account[] }>("/cliproxy/accounts"),
+				api<{ data: CommandCodeAccount[] }>("/cliproxy/commandcode/accounts"),
 				api<{ entries: CliProxyLogEntry[]; cursor: number }>("/cliproxy/logs"),
 				api<UpdateInfo>(UPDATE_CHECK_CACHED_PATH).catch(() => null),
 			]);
@@ -416,6 +434,7 @@ const CliProxyManagement: React.FC = () => {
 			setConfigYaml(config.settings.config_yaml);
 			setUserConfig(config.user_config);
 			setAccounts(accountResponse.data);
+			setCommandCodeAccounts(commandCodeResponse.data);
 			setLogs(logResponse.entries);
 			setLogCursor(logResponse.cursor);
 			setUpdateInfo(versionInfo);
@@ -528,6 +547,47 @@ const CliProxyManagement: React.FC = () => {
 		}
 	};
 
+	const addCommandCodeAccount = async () => {
+		setBusy("add commandcode account");
+		try {
+			await api("/cliproxy/commandcode/accounts", {
+				method: "POST",
+				body: JSON.stringify({ api_key: commandCodeKey, label: commandCodeLabel }),
+			});
+			setCommandCodeKey("");
+			setCommandCodeLabel("");
+			await Promise.all([refreshAccounts(), refreshCommandCodeAccounts()]);
+			NotificationsManager.success("CommandCode account added");
+		} catch (error) {
+			NotificationsManager.fromBackend(error instanceof Error ? error.message : String(error));
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	const saveCommandCodeAccount = async () => {
+		if (!editingCommandCode) return;
+		setBusy("edit commandcode account");
+		try {
+			const payload: Record<string, string> = { label: editingCommandCodeLabel };
+			if (editingCommandCodeKey.trim().length > 0) {
+				payload["api_key"] = editingCommandCodeKey;
+			}
+			await api(`/cliproxy/commandcode/accounts/${editingCommandCode.index}`, {
+				method: "PATCH",
+				body: JSON.stringify(payload),
+			});
+			setEditingCommandCode(null);
+			setEditingCommandCodeKey("");
+			await Promise.all([refreshAccounts(), refreshCommandCodeAccounts()]);
+			NotificationsManager.success("CommandCode account updated");
+		} catch (error) {
+			NotificationsManager.fromBackend(error instanceof Error ? error.message : String(error));
+		} finally {
+			setBusy(null);
+		}
+	};
+
 	const loadQuota = useCallback(async (account: Account) => {
 		setQuotaStates((current) => ({
 			...current,
@@ -580,6 +640,11 @@ const CliProxyManagement: React.FC = () => {
 		quotaLoadedOnce.current = true;
 		void refreshAllQuotas();
 	}, [accounts.length, refreshAllQuotas]);
+
+	const commandCodeAccountByFilename = useMemo(
+		() => new Map(commandCodeAccounts.map((account) => [account.filename, account])),
+		[commandCodeAccounts],
+	);
 
 	const accountColumns = useMemo(
 		() => [
@@ -651,6 +716,41 @@ const CliProxyManagement: React.FC = () => {
 				title: "Action",
 				key: "action",
 				render: (_: unknown, account: Account) => {
+					const managed = commandCodeAccountByFilename.get(account.filename);
+					if (managed) {
+						return (
+							<Space size="small">
+								<Button
+									size="small"
+									onClick={() => {
+										setEditingCommandCode(managed);
+										setEditingCommandCodeLabel(managed.label);
+										setEditingCommandCodeKey("");
+									}}
+								>
+									Edit
+								</Button>
+								<Popconfirm
+									title="Delete this CommandCode account?"
+									description="It will be removed from the LiteLLM config and its CPA auth file will be deleted."
+									onConfirm={async () => {
+										try {
+											await api(`/cliproxy/commandcode/accounts/${managed.index}`, { method: "DELETE" });
+											NotificationsManager.success(`CommandCode account ${managed.label} deleted`);
+											await Promise.all([refreshAccounts(), refreshCommandCodeAccounts()]);
+										} catch (error) {
+											NotificationsManager.fromBackend(error instanceof Error ? error.message : String(error));
+										}
+									}}
+								>
+									<Button danger size="small">
+										Delete
+									</Button>
+								</Popconfirm>
+							</Space>
+						);
+					}
+
 					if (account.filename.startsWith(".trash/")) {
 						return (
 							<Space size="small">
@@ -698,7 +798,7 @@ const CliProxyManagement: React.FC = () => {
 				},
 			},
 		],
-		[refreshAccounts],
+		[commandCodeAccountByFilename, refreshAccounts, refreshCommandCodeAccounts],
 	);
 
 	if (loading) {
@@ -982,6 +1082,34 @@ const CliProxyManagement: React.FC = () => {
 										value requested in the session output.
 									</Typography.Paragraph>
 								</Card>
+
+								<Card size="small" title="Add CommandCode account">
+									<Space wrap>
+										<Input
+											placeholder="Label (optional)"
+											value={commandCodeLabel}
+											onChange={(event) => setCommandCodeLabel(event.target.value)}
+											style={{ width: 180 }}
+										/>
+										<Input.Password
+											placeholder="CommandCode API key"
+											value={commandCodeKey}
+											onChange={(event) => setCommandCodeKey(event.target.value)}
+											style={{ width: 360 }}
+										/>
+										<Button
+											type="primary"
+											loading={busy === "add commandcode account"}
+											disabled={commandCodeKey.trim().length === 0 || busy !== null}
+											onClick={() => void addCommandCodeAccount()}
+										>
+											Add
+										</Button>
+									</Space>
+									<Typography.Paragraph type="secondary" className="!mt-3 !mb-0">
+										Stored in the LiteLLM config and materialized as a CPA auth file. Use Edit to rotate the key.
+									</Typography.Paragraph>
+								</Card>
 								<Table
 									size="small"
 									rowKey="auth_index"
@@ -1150,6 +1278,32 @@ const CliProxyManagement: React.FC = () => {
 						</Button>
 					</Space.Compact>
 				)}
+			</Modal>
+
+			<Modal
+				title="Edit CommandCode account"
+				open={editingCommandCode !== null}
+				onCancel={() => setEditingCommandCode(null)}
+				onOk={() => void saveCommandCodeAccount()}
+				confirmLoading={busy === "edit commandcode account"}
+				okText="Save"
+			>
+				<Space direction="vertical" size="middle" className="w-full">
+					<div>
+						<Typography.Text type="secondary">Label</Typography.Text>
+						<Input
+							value={editingCommandCodeLabel}
+							onChange={(event) => setEditingCommandCodeLabel(event.target.value)}
+						/>
+					</div>
+					<div>
+						<Typography.Text type="secondary">New API key (leave blank to keep the current key)</Typography.Text>
+						<Input.Password
+							value={editingCommandCodeKey}
+							onChange={(event) => setEditingCommandCodeKey(event.target.value)}
+						/>
+					</div>
+				</Space>
 			</Modal>
 		</div>
 	);

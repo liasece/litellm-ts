@@ -96,6 +96,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function commandCodeAccountIndex(req: Request): number {
+	const value = routeParam(req, "index");
+	if (!/^\d+$/.test(value)) {
+		throw ApiError.badRequest("CommandCode 账户索引无效");
+	}
+	return Number(value);
+}
+
 function routeParam(req: Request, name: string): string {
 	const value = req.params[name];
 	if (typeof value !== "string" || value.length === 0) {
@@ -268,6 +276,34 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		await runtime.trashAccount(routeParam(req, "filename"));
 		return { status: "trashed" };
 	});
+
+	registerRoute(router, { method: "get", path: "/cliproxy/commandcode/accounts" }, async () => ({
+		data: await runtime.listCommandCodeAccounts(),
+	}));
+
+	registerRoute(router, { method: "post", path: "/cliproxy/commandcode/accounts" }, async (req) => {
+		const body = bodyRecord(req);
+		return { data: await runtime.addCommandCodeAccount(body["api_key"], body["label"]) };
+	});
+
+	registerRoute(router, { method: "patch", path: "/cliproxy/commandcode/accounts/:index" }, async (req) => {
+		const body = bodyRecord(req);
+		const patch: { apiKey?: unknown; label?: unknown } = {};
+		if (body["api_key"] !== undefined) {
+			patch.apiKey = body["api_key"];
+		}
+		if (body["label"] !== undefined) {
+			patch.label = body["label"];
+		}
+		if (patch.apiKey === undefined && patch.label === undefined) {
+			throw ApiError.badRequest("必须提供 api_key 或 label");
+		}
+		return { data: await runtime.updateCommandCodeAccount(commandCodeAccountIndex(req), patch) };
+	});
+
+	registerRoute(router, { method: "delete", path: "/cliproxy/commandcode/accounts/:index" }, async (req) => ({
+		data: await runtime.deleteCommandCodeAccount(commandCodeAccountIndex(req)),
+	}));
 
 	registerRoute(router, { method: "post", path: "/cliproxy/oauth" }, async (req) => {
 		const provider = bodyRecord(req)["provider"];

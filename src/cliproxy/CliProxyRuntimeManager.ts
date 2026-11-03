@@ -302,22 +302,125 @@ export interface CliProxyManagedPlugins {
 	readonly commandcode: boolean;
 }
 
+/** 托管 CommandCode 账户的只读摘要（不含密钥）。 */
+export interface ManagedCommandCodeAccountSummary {
+	/** 在 config.yaml 数组中的位置。 */
+	readonly index: number;
+	/** 展示名称。 */
+	readonly label: string;
+	/** 对应的 CPA auth 文件名。 */
+	readonly filename: string;
+}
+
+/** LiteLLM 托管的一个 CommandCode 账户。 */
+export interface ManagedCommandCodeAccount {
+	/** CommandCode API key。 */
+	readonly apiKey: string;
+	/** 展示名称。 */
+	readonly label: string;
+}
+
 /**
- * 读取 config.yaml 中由 LiteLLM 托管的 CommandCode 账户。
+ * 读取 config.yaml 里 CommandCode 账户的原始条目。
  * @param userConfig
  */
-export function extractManagedCommandCodeAccount(userConfig: Record<string, unknown>): { apiKey: string; label: string } | null {
+function commandCodeAccountEntries(userConfig: Record<string, unknown>): Record<string, unknown>[] {
 	const plugins = isRecord(userConfig["plugins"]) ? userConfig["plugins"] : null;
 	const accounts = plugins && isRecord(plugins[MANAGED_ACCOUNTS_KEY]) ? plugins[MANAGED_ACCOUNTS_KEY] : null;
-	const entry = accounts && isRecord(accounts[COMMANDCODE_ACCOUNT_KEY]) ? accounts[COMMANDCODE_ACCOUNT_KEY] : null;
-	const value = entry?.["api-key"];
-	const apiKey = typeof value === "string" ? value.trim() : "";
-	if (!apiKey) {
-		return null;
+	const raw = accounts?.[COMMANDCODE_ACCOUNT_KEY];
+	if (Array.isArray(raw)) {
+		return raw.filter(isRecord).map((entry) => ({ ...entry }));
 	}
-	const labelValue = entry?.["label"];
-	const label = typeof labelValue === "string" && labelValue.trim() ? labelValue.trim() : "CommandCode";
-	return { apiKey: apiKey, label: label };
+	if (isRecord(raw)) {
+		return [{ ...raw }];
+	}
+	return [];
+}
+
+/**
+ * 把 CommandCode 账户条目写回 config.yaml 结构。
+ * @param userConfig
+ * @param entries
+ */
+function setCommandCodeAccountEntries(userConfig: Record<string, unknown>, entries: Record<string, unknown>[]): void {
+	const plugins = isRecord(userConfig["plugins"]) ? { ...userConfig["plugins"] } : {};
+	const accounts = isRecord(plugins[MANAGED_ACCOUNTS_KEY]) ? { ...plugins[MANAGED_ACCOUNTS_KEY] } : {};
+	if (entries.length > 0) {
+		accounts[COMMANDCODE_ACCOUNT_KEY] = entries;
+	} else {
+		delete accounts[COMMANDCODE_ACCOUNT_KEY];
+	}
+	if (Object.keys(accounts).length > 0) {
+		plugins[MANAGED_ACCOUNTS_KEY] = accounts;
+	} else {
+		delete plugins[MANAGED_ACCOUNTS_KEY];
+	}
+	userConfig["plugins"] = plugins;
+}
+
+/**
+ * 读取 config.yaml 中由 LiteLLM 托管的 CommandCode 账户列表。
+ * 兼容旧的单对象写法：commandcode: {api-key, label}。
+ * @param userConfig
+ */
+export function extractManagedCommandCodeAccounts(userConfig: Record<string, unknown>): ManagedCommandCodeAccount[] {
+	const result: ManagedCommandCodeAccount[] = [];
+	for (const entry of commandCodeAccountEntries(userConfig)) {
+		const value = entry["api-key"];
+		const apiKey = typeof value === "string" ? value.trim() : "";
+		if (!apiKey) {
+			continue;
+		}
+		const labelValue = entry["label"];
+		const label = typeof labelValue === "string" && labelValue.trim() ? labelValue.trim() : "CommandCode";
+		result.push({ apiKey: apiKey, label: label });
+	}
+	return result;
+}
+
+/**
+ * 托管 CommandCode 账户对应的 auth 文件名；同一把 key 始终映射到同一个文件。
+ * @param apiKey
+ */
+export function commandCodeAccountFilename(apiKey: string): string {
+	return `commandcode-managed-${createHash("sha256").update(apiKey.trim()).digest("hex").slice(0, 12)}.json`;
+}
+
+/**
+ * 校验并规范化用户提交的 API key。
+ * @param value
+ */
+function normalizeCommandCodeApiKey(value: unknown): string {
+	if (typeof value !== "string") {
+		throw ApiError.badRequest("CommandCode API key 必须是字符串");
+	}
+	const apiKey = value.trim();
+	const hasControlCharacter = [...apiKey].some((character) => {
+		const code = character.charCodeAt(0);
+		return code < 32 || code === 127;
+	});
+	if (apiKey.length === 0 || apiKey.length > 8_192 || hasControlCharacter) {
+		throw ApiError.badRequest("CommandCode API key 无效");
+	}
+	return apiKey;
+}
+
+/**
+ * 校验并规范化账户展示名。
+ * @param value
+ */
+function normalizeCommandCodeLabel(value: unknown): string {
+	if (value === undefined || value === null || value === "") {
+		return "CommandCode";
+	}
+	if (typeof value !== "string") {
+		throw ApiError.badRequest("CommandCode 账户名称必须是字符串");
+	}
+	const label = value.trim();
+	if (label.length > 200) {
+		throw ApiError.badRequest("CommandCode 账户名称过长");
+	}
+	return label || "CommandCode";
 }
 
 /**
@@ -693,6 +796,84 @@ export class CliProxyRuntimeManager {
 	 */
 	async saveUserConfig(enabled: boolean, userConfig: unknown): Promise<CliProxyRuntimeStatus> {
 		return this.saveSettings({ enabled: enabled, config_yaml: serializeCliProxyUserConfig(userConfig) });
+	}
+
+	/**
+	 * 列出托管 CommandCode 账户，不返回密钥。
+	 */
+	async listCommandCodeAccounts(): Promise<ManagedCommandCodeAccountSummary[]> {
+		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
+		return extractManagedCommandCodeAccounts(userConfig).map((account, index) => ({
+			index: index,
+			label: account.label,
+			filename: commandCodeAccountFilename(account.apiKey),
+		}));
+	}
+
+	/**
+	 * 新增一个托管 CommandCode 账户。
+	 * @param apiKeyValue
+	 * @param labelValue
+	 */
+	async addCommandCodeAccount(apiKeyValue: unknown, labelValue?: unknown): Promise<ManagedCommandCodeAccountSummary[]> {
+		const apiKey = normalizeCommandCodeApiKey(apiKeyValue);
+		const label = normalizeCommandCodeLabel(labelValue);
+		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
+		const entries = commandCodeAccountEntries(userConfig);
+		if (entries.some((entry) => typeof entry["api-key"] === "string" && entry["api-key"].trim() === apiKey)) {
+			throw ApiError.conflict("该 CommandCode API key 已存在");
+		}
+		entries.push({ "api-key": apiKey, label: label });
+		await this._saveCommandCodeAccountEntries(userConfig, entries);
+		return this.listCommandCodeAccounts();
+	}
+
+	/**
+	 * 修改托管 CommandCode 账户的 label，或轮换 API key。
+	 * @param indexValue
+	 * @param patch
+	 */
+	async updateCommandCodeAccount(
+		indexValue: number,
+		patch: { apiKey?: unknown; label?: unknown },
+	): Promise<ManagedCommandCodeAccountSummary[]> {
+		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
+		const entries = commandCodeAccountEntries(userConfig);
+		if (!Number.isInteger(indexValue) || indexValue < 0 || indexValue >= entries.length) {
+			throw ApiError.notFound("CommandCode 账户不存在");
+		}
+		const entry = entries[indexValue]!;
+		if (patch.apiKey !== undefined) {
+			const apiKey = normalizeCommandCodeApiKey(patch.apiKey);
+			const duplicate = entries.some(
+				(candidate, index) =>
+					index !== indexValue && typeof candidate["api-key"] === "string" && candidate["api-key"].trim() === apiKey,
+			);
+			if (duplicate) {
+				throw ApiError.conflict("该 CommandCode API key 已存在");
+			}
+			entry["api-key"] = apiKey;
+		}
+		if (patch.label !== undefined) {
+			entry["label"] = normalizeCommandCodeLabel(patch.label);
+		}
+		await this._saveCommandCodeAccountEntries(userConfig, entries);
+		return this.listCommandCodeAccounts();
+	}
+
+	/**
+	 * 删除一个托管 CommandCode 账户。
+	 * @param indexValue
+	 */
+	async deleteCommandCodeAccount(indexValue: number): Promise<ManagedCommandCodeAccountSummary[]> {
+		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
+		const entries = commandCodeAccountEntries(userConfig);
+		if (!Number.isInteger(indexValue) || indexValue < 0 || indexValue >= entries.length) {
+			throw ApiError.notFound("CommandCode 账户不存在");
+		}
+		entries.splice(indexValue, 1);
+		await this._saveCommandCodeAccountEntries(userConfig, entries);
+		return this.listCommandCodeAccounts();
 	}
 
 	/**
@@ -1356,7 +1537,15 @@ export class CliProxyRuntimeManager {
 		}
 	}
 
-	private async _syncManagedCommandCodeAccount(userConfig: Record<string, unknown>): Promise<void> {
+	private async _saveCommandCodeAccountEntries(userConfig: Record<string, unknown>, entries: Record<string, unknown>[]): Promise<void> {
+		setCommandCodeAccountEntries(userConfig, entries);
+		await this.saveSettings({
+			enabled: this._settings.enabled,
+			config_yaml: serializeCliProxyUserConfig(userConfig),
+		});
+	}
+
+	private async _syncManagedCommandCodeAccounts(userConfig: Record<string, unknown>): Promise<void> {
 		if (!(await this._pluginFileAvailable(COMMANDCODE_PLUGIN_ID))) {
 			return;
 		}
@@ -1367,29 +1556,33 @@ export class CliProxyRuntimeManager {
 		} catch {
 			existing = [];
 		}
-		const account = extractManagedCommandCodeAccount(userConfig);
-		if (!account) {
-			await Promise.all(existing.map((name) => unlink(path.join(this._authDir, name)).catch(() => undefined)));
-			return;
-		}
-		const digest = createHash("sha256").update(account.apiKey).digest("hex").slice(0, 12);
-		const filename = `${prefix}${digest}.json`;
-		const targetPath = path.join(this._authDir, filename);
-		const payload = JSON.stringify({ type: "commandcode", api_key: account.apiKey, label: account.label });
-		let current: string | null = null;
-		try {
-			current = await readFile(targetPath, "utf8");
-		} catch {
-			current = null;
-		}
-		if (current !== payload) {
-			const temporary = path.join(this._authDir, `.${filename}.${randomUUID()}.tmp`);
-			await writeFile(temporary, payload, { mode: 0o600 });
-			await rename(temporary, targetPath);
+		const desired = new Map<string, ManagedCommandCodeAccount>();
+		for (const account of extractManagedCommandCodeAccounts(userConfig)) {
+			desired.set(commandCodeAccountFilename(account.apiKey), account);
 		}
 		await Promise.all(
-			existing.filter((name) => name !== filename).map((name) => unlink(path.join(this._authDir, name)).catch(() => undefined)),
+			existing.filter((name) => !desired.has(name)).map((name) => unlink(path.join(this._authDir, name)).catch(() => undefined)),
 		);
+		for (const [filename, account] of desired) {
+			const targetPath = path.join(this._authDir, filename);
+			let current: Record<string, unknown> | null = null;
+			try {
+				const parsed = JSON.parse(await readFile(targetPath, "utf8")) as unknown;
+				if (isRecord(parsed)) {
+					current = parsed;
+				}
+			} catch {
+				current = null;
+			}
+			// 保留用户在 UI 上设置的 disabled/weight 等非密钥字段。
+			if (current?.["type"] === "commandcode" && current["api_key"] === account.apiKey && current["label"] === account.label) {
+				continue;
+			}
+			const payload = { ...(current ?? {}), type: "commandcode", api_key: account.apiKey, label: account.label };
+			const temporary = path.join(this._authDir, `.${filename}.${randomUUID()}.tmp`);
+			await writeFile(temporary, JSON.stringify(payload), { mode: 0o600 });
+			await rename(temporary, targetPath);
+		}
 	}
 
 	private async _resolveManagedPlugins(userConfig: Record<string, unknown>): Promise<CliProxyManagedPlugins | null> {
@@ -1412,7 +1605,7 @@ export class CliProxyRuntimeManager {
 
 	private async _projectConfig(): Promise<void> {
 		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
-		await this._syncManagedCommandCodeAccount(userConfig);
+		await this._syncManagedCommandCodeAccounts(userConfig);
 		const plugins = await this._resolveManagedPlugins(userConfig);
 		this._pluginsEnabled = plugins !== null;
 		const projected = buildCliProxyProjection(userConfig, {

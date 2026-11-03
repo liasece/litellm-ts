@@ -8,7 +8,8 @@ import {
 	cliProxyReleaseArchiveName,
 	compareCliProxyVersions,
 	extractCliProxyReleaseNotes,
-	extractManagedCommandCodeAccount,
+	extractManagedCommandCodeAccounts,
+	commandCodeAccountFilename,
 	parseCliProxyUserConfig,
 	serializeCliProxyUserConfig,
 	shouldEnableCliProxyPlugin,
@@ -71,18 +72,31 @@ request-retry: 4
 	});
 });
 
-describe("CLIProxy managed CommandCode account", () => {
-	it("extracts the account from config.yaml and defaults its label", () => {
+describe("CLIProxy managed CommandCode accounts", () => {
+	it("reads both the legacy single-object form and the array form", () => {
 		expect(
-			extractManagedCommandCodeAccount({
+			extractManagedCommandCodeAccounts({
 				plugins: { "managed-accounts": { commandcode: { "api-key": "cc_secret", label: "GOAT" } } },
 			}),
-		).toEqual({ apiKey: "cc_secret", label: "GOAT" });
-		expect(extractManagedCommandCodeAccount({ plugins: { "managed-accounts": { commandcode: { "api-key": "cc_secret" } } } })).toEqual({
-			apiKey: "cc_secret",
-			label: "CommandCode",
-		});
-		expect(extractManagedCommandCodeAccount({ plugins: { "managed-accounts": { commandcode: { "api-key": "   " } } } })).toBeNull();
+		).toEqual([{ apiKey: "cc_secret", label: "GOAT" }]);
+		expect(
+			extractManagedCommandCodeAccounts({
+				plugins: {
+					"managed-accounts": {
+						commandcode: [{ "api-key": "cc_a", label: "A" }, { "api-key": "cc_b" }, { "api-key": "   " }],
+					},
+				},
+			}),
+		).toEqual([
+			{ apiKey: "cc_a", label: "A" },
+			{ apiKey: "cc_b", label: "CommandCode" },
+		]);
+	});
+
+	it("derives a stable auth filename per key", () => {
+		expect(commandCodeAccountFilename("cc_secret")).toMatch(/^commandcode-managed-[0-9a-f]{12}\.json$/);
+		expect(commandCodeAccountFilename(" cc_secret ")).toBe(commandCodeAccountFilename("cc_secret"));
+		expect(commandCodeAccountFilename("cc_secret")).not.toBe(commandCodeAccountFilename("cc_other"));
 	});
 
 	it("strips managed accounts without touching other plugin config", () => {
