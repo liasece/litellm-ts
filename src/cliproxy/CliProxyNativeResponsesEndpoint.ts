@@ -4,6 +4,7 @@ import { ApiError } from "../core/api/ApiError";
 import { runCommonChecks } from "../auth/AuthChecks";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
+import { trackCliProxyRequest } from "./CliProxyDrainGate";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
 import type { DrizzleDb } from "../core/db/Database";
 import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
@@ -1034,6 +1035,8 @@ function registerNativeRoute({
 			const abort = (): void => abortController.abort();
 			req.once("aborted", abort);
 			res.once("close", abort);
+			// 升级排空要把这条直连请求也等完，否则重启会截断它的 SSE。
+			const releaseDrainSlot = trackCliProxyRequest();
 			try {
 				let executedDeployment = candidate.deployment;
 				let upstreamUrl: string;
@@ -1158,6 +1161,7 @@ function registerNativeRoute({
 				lifecycle.stop();
 				req.removeListener("aborted", abort);
 				res.removeListener("close", abort);
+				releaseDrainSlot();
 			}
 		},
 	);

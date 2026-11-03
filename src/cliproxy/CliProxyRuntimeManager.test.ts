@@ -72,6 +72,27 @@ request-retry: 4
 	});
 });
 
+describe("CLIProxy drain status", () => {
+	it("exposes the drain flag and the in-flight count on the runtime status", async () => {
+		const { beginCliProxyDrain, endCliProxyDrain, resetCliProxyDrainGateForTest, trackCliProxyRequest } = await import(
+			"./CliProxyDrainGate"
+		);
+		resetCliProxyDrainGateForTest();
+		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");
+		runtime.setActiveRequestProbe(() => 2);
+		expect(runtime.status()).toMatchObject({ draining: false, in_flight_requests: 2 });
+		const release = trackCliProxyRequest();
+		beginCliProxyDrain();
+		try {
+			expect(runtime.status()).toMatchObject({ draining: true, in_flight_requests: 3 });
+		} finally {
+			release();
+			endCliProxyDrain();
+			resetCliProxyDrainGateForTest();
+		}
+	});
+});
+
 describe("CLIProxy managed CommandCode accounts", () => {
 	it("reads both the legacy single-object form and the array form", () => {
 		expect(

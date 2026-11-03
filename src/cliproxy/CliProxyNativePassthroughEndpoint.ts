@@ -9,6 +9,7 @@ import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/Spe
 import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
+import { trackCliProxyRequest } from "./CliProxyDrainGate";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
 import { buildPassthroughLogRequest } from "./CliProxyUpstreamLogging";
 import type { Deployment } from "../types/router";
@@ -662,6 +663,8 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		req.once("aborted", abort);
 		res.once("close", abort);
 		// logRequest 提前到 try 外：fetch 抛错的失败路径也要记录 request-only 上游日志。
+		// 升级排空要把这条直连请求也等完，否则重启会截断它的 SSE。
+		const releaseDrainSlot = trackCliProxyRequest();
 		const logRequest = buildPassthroughLogRequest({
 			url: upstreamUrl,
 			method: route.method.toUpperCase(),
@@ -736,6 +739,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 			lifecycle.stop();
 			req.removeListener("aborted", abort);
 			res.removeListener("close", abort);
+			releaseDrainSlot();
 		}
 	};
 }

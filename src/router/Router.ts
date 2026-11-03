@@ -30,6 +30,8 @@ import { TPMRPMLimiter } from "./TPMRPMLimiter";
 import { FallbackHandler } from "./FallbackHandler";
 import { RedisCooldownBackend } from "./RedisCooldownBackend";
 import { extractProviderHeaders } from "./RouterResponseHeaders";
+import { isCliProxyDraining } from "../cliproxy/CliProxyDrainGate";
+import { isCliProxyDeploymentParams } from "../cliproxy/CliProxyTypes";
 import { buildStreamWithTtft } from "./RouterStreamWrapper";
 import {
 	simpleShuffle,
@@ -838,13 +840,18 @@ export class Router {
 	getAvailableDeployment(model: string, messages?: Message[], optionalParams: Record<string, unknown> = {}): AvailDeployment | null {
 		const routingParams = { ...this._requestRoutingParams.getStore(), ...optionalParams };
 		const deployments = filterDeploymentsByTags(this._getDeploymentsForModel(model), routingParams);
-		if (deployments.length === 0) {
+		// CLIProxy 升级排空期间降级：不再选中 CLIProxy deployment，请求自然落到 fallback 链；
+		// 若整个组只有 CLIProxy deployment，这里返回 null，由调用方按「无可用部署」处理。
+		const usableDeployments = isCliProxyDraining()
+			? deployments.filter((deployment) => !isCliProxyDeploymentParams(deployment.litellm_params))
+			: deployments;
+		if (usableDeployments.length === 0) {
 			return null;
 		}
 		const estimatedInputTokens = messages ? this._estimateInputTokens(messages, optionalParams) : undefined;
-		const ctx = this._buildRoutingContext(deployments, estimatedInputTokens);
+		const ctx = this._buildRoutingContext(usableDeployments, estimatedInputTokens);
 		ctx.isStream = routingParams["stream"] === true;
-		const selected = this._runtimeState().routeFn(deployments, ctx);
+		const selected = this._runtimeState().routeFn(usableDeployments, ctx);
 		if (!selected) {
 			return null;
 		}
@@ -1373,5 +1380,23 @@ export class Router {
 			throw new RouterRateLimitErrorBasic("Deployment max_parallel_requests exceeded", { model: deployment!.model_name });
 		}
 		this._activeRequests.set(modelName, Math.max(0, current + delta));
+	}
+
+	/**
+	 * 统计当前在途请求数，可按 deployment 过滤。
+	 *
+	 * CLIProxy 升级前要等这些请求写完再重启进程，否则 SSE 会被截断。
+	 * 只统计仍然出现在当前部署快照里的 deployment：已下线的部署不会再有新请求。
+	 * @param isIncluded - 可选的部署过滤器
+	 */
+	getActiveRequestCount(isIncluded?: (deployment: Deployment) => boolean): number {
+		let total = 0;
+		for (const deployment of this._runtimeState().deployments) {
+			if (isIncluded && !isIncluded(deployment)) {
+				continue;
+			}
+			total += this._activeRequests.get(getDeploymentKey(deployment)) ?? 0;
+		}
+		return total;
 	}
 }

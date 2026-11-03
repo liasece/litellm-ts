@@ -1,4 +1,20 @@
 export const CLIPROXY_PROVIDER = "cliproxy";
+
+/**
+ * 判断部署是否由内部 CLIProxy 承载。
+ *
+ * 升级排空时要按这个判据把流量从 CLIProxy 上摘下来，所以判定必须与 ProviderRegistry
+ * 选 provider 的规则一致：显式 custom_llm_provider 优先，其次看模型名前缀。
+ * @param params - deployment 的 litellm_params
+ */
+export function isCliProxyDeploymentParams(params: { model?: unknown; custom_llm_provider?: unknown }): boolean {
+	const custom = typeof params.custom_llm_provider === "string" ? params.custom_llm_provider.trim().toLowerCase() : "";
+	if (custom.length > 0) {
+		return custom === CLIPROXY_PROVIDER;
+	}
+	const model = typeof params.model === "string" ? params.model : "";
+	return model.split("/")[0]?.toLowerCase() === CLIPROXY_PROVIDER;
+}
 export const CLIPROXY_CONFIG_PARAM = "cliproxy_settings";
 export const CLIPROXY_DEFAULT_PORT = 8317;
 
@@ -78,6 +94,14 @@ export interface CliProxyRuntimeStatus {
 	 *
 	 */
 	readonly health: "healthy" | "unhealthy" | "unknown";
+	/**
+	 * 是否处于升级前的降级/排空阶段（此时新请求不再进入 CLIProxy）。
+	 */
+	readonly draining: boolean;
+	/**
+	 * 当前在途的 CLIProxy 请求数，排空等待它归零。
+	 */
+	readonly in_flight_requests: number;
 	/**
 	 *
 	 */

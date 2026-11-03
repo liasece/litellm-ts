@@ -30,6 +30,11 @@ import {
 	normalizeCliProxyQuota,
 	type CliProxyQuotaRequest,
 } from "./CliProxyQuota";
+import {
+	getCliProxyDrainSnapshot,
+	resolveCliProxyDrainTimeoutMs,
+	withCliProxyDrain,
+} from "./CliProxyDrainGate";
 
 const MAX_LOG_ENTRIES = 4_000;
 const MAX_OAUTH_OUTPUT_LINES = 500;
@@ -610,6 +615,8 @@ export class CliProxyRuntimeManager {
 	private _logSequence = 0;
 	private _releaseCache: CliProxyReleaseCache | null = null;
 	private _releaseFetch: Promise<readonly CliProxyReleaseInfo[]> | null = null;
+	// 由容器注入：返回 Router 侧在途的 CLIProxy 请求数，用于升级前排空。
+	private _activeRequestProbe: () => number = () => 0;
 	private readonly _logs: CliProxyLogEntry[] = [];
 	private readonly _oauthSessions = new Map<
 		string,
@@ -722,6 +729,30 @@ export class CliProxyRuntimeManager {
 	/**
 	 *
 	 */
+	/**
+	 * 当前在途的 CLIProxy 请求数（Router 侧 + 直连端点侧）。
+	 */
+	private _countInFlightRequests(): number {
+		let routerSide = 0;
+		try {
+			routerSide = Math.max(0, Math.trunc(this._activeRequestProbe()));
+		} catch {
+			routerSide = 0;
+		}
+		return routerSide + getCliProxyDrainSnapshot().in_flight_requests;
+	}
+
+	/**
+	 * 注入 Router 侧在途请求探针；排空要等这些请求写完才重启进程。
+	 * @param probe - 返回在途 CLIProxy 请求数的函数
+	 */
+	setActiveRequestProbe(probe: () => number): void {
+		this._activeRequestProbe = probe;
+	}
+
+	/**
+	 * 运行时状态快照：版本、健康、进程信息与升级排空进度。
+	 */
 	status(): CliProxyRuntimeStatus {
 		const uptime =
 			this._startedAt && this._state === "running" ? Math.max(0, Math.floor((Date.now() - this._startedAt.getTime()) / 1000)) : null;
@@ -740,6 +771,8 @@ export class CliProxyRuntimeManager {
 			config_hash: this._configHash,
 			health: this._health,
 			operation: this._operation,
+			draining: getCliProxyDrainSnapshot().draining,
+			in_flight_requests: this._countInFlightRequests(),
 		};
 	}
 
@@ -1993,11 +2026,32 @@ export class CliProxyRuntimeManager {
 	}
 
 	private async _restartProcess(): Promise<void> {
-		this._desiredStop = true;
-		await this._stopProcess();
-		this._desiredStop = false;
-		this._restartCount += 1;
-		await this._startProcess();
+		// 重启会掐断在途 SSE：先降级（新请求走 fallback）并等旧请求写完，再换进程。
+		// 进程本来就不在运行时没有可排空的流，timeoutMs=0 直接重启，避免崩溃恢复被拖慢。
+		await withCliProxyDrain(
+			async () => {
+				this._desiredStop = true;
+				await this._stopProcess();
+				this._desiredStop = false;
+				this._restartCount += 1;
+				await this._startProcess();
+			},
+			{
+				probe: () => this._activeRequestProbe(),
+				timeoutMs: this._process === null ? 0 : resolveCliProxyDrainTimeoutMs(),
+				onStart: (inFlight) =>
+					this._appendLog("system", `CLIProxy 进入降级：新请求改走 fallback，在途 ${inFlight} 个`),
+				onSettled: (result) => {
+					this._appendLog(
+						"system",
+						result.idle
+							? `CLIProxy 排空完成（${result.waitedMs}ms），开始重启`
+							: `CLIProxy 排空超时（${result.timeoutMs}ms），仍有 ${result.remaining} 个在途请求；继续重启，被截断的流由 Router fallback 兜底`,
+					);
+				},
+			},
+		);
+		this._appendLog("system", "CLIProxy 已退出降级，恢复流量");
 	}
 
 	private async _waitForHealth(timeoutMs: number): Promise<boolean> {

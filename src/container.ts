@@ -24,6 +24,7 @@ import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfi
 import { ConfigRepository } from "./repositories/ConfigRepository";
 import { CliProxyRuntimeManager } from "./cliproxy/CliProxyRuntimeManager";
 import { ProviderQuotaService } from "./providerusage/ProviderQuotaService";
+import { isCliProxyDeploymentParams } from "./cliproxy/CliProxyTypes";
 import { parseSessionDuration } from "./proxy/LoginEndpoints";
 import { DEFAULT_WEBUI_SESSION_DURATION, WEBUI_SESSION_DURATION_ENV_VAR } from "./types/webUiSession";
 
@@ -121,6 +122,10 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 3.2 CLIProxy 是 LiteLLM 托管的内部运行时。DB 是期望配置源，生成文件与
 	// OAuth auth-dir 位于持久化卷；缺少 bootstrap binary 时不阻断网关启动。
 	const cliProxyRuntime = new CliProxyRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key);
+	// 升级 CLIProxy 前要等在途请求写完：这里把 Router 侧的 CLIProxy 在途计数接进排空逻辑。
+	cliProxyRuntime.setActiveRequestProbe(() =>
+		router.getActiveRequestCount((deployment) => isCliProxyDeploymentParams(deployment.litellm_params)),
+	);
 	await cliProxyRuntime.initialize().catch((error: unknown) => {
 		// Runtime status 保留具体错误，LiteLLM 其余 provider 仍可正常工作。
 		console.error("CLIProxy runtime initialization failed", error);

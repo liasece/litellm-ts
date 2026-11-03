@@ -36,6 +36,7 @@
 - 账户额度优先走 CLIProxy 的通用插件额度接口（`/v0/management/quota/providers`、
   `/v0/management/quota/fetch`），provider 专用额度逻辑只保留给 codex/claude/kimi/antigravity/xai。
   插件额度是账号级窗口，不提供按模型的美元余额明细。
+- 升级、回滚或重启托管 CLIProxy 前会自动降级并排空在途请求（默认 120 秒上限，可用环境变量 CLIPROXY_DRAIN_TIMEOUT_SECONDS 调整），见 [docs/cliproxy-runtime-upgrade.md](docs/cliproxy-runtime-upgrade.md)。
 - 改变 runtime 基础镜像、切换 CPA 大版本或调整插件注入规则属于兼容性/部署形态变化，先说明影响、
   验证方式和回滚边界。实现细节、插件来源与验证步骤见
   [docs/cliproxy-opencode-go-plugin.md](docs/cliproxy-opencode-go-plugin.md)。
