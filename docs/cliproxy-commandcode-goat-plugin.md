@@ -1,7 +1,11 @@
 # CLIProxy 托管的 CommandCode GOAT 插件
 
 LiteLLM TS 托管的 CLIProxyAPI 运行时内置 [commandcode-go-cliproxyapi](https://github.com/mczhoucn/commandcode-go-cliproxyapi)
-插件（0.1.3），用于接入 **CommandCode GOAT / Pro / Max** 订阅。
+插件（由本仓库 fork 自上游 0.1.3 并自行维护、编译），用于接入 **CommandCode GOAT / Pro / Max** 订阅。
+
+> 源码在 [plugins/commandcode-go-cliproxyapi](../plugins/commandcode-go-cliproxyapi/FORK.md)，镜像在
+> `commandcode-plugin-build` 阶段从该目录现场编译，**不再下载上游发布物**。fork 修的是上游 0.1.3
+> 对 Responses `namespace` 工具直接报错的问题；新增行为写在该目录的 `FORK.md`，同步上游前先读它。
 
 > CommandCode Go 套餐不在支持范围：Go 使用官方 CLI 的私有协议，没有 Provider API 权限；
 > 本插件只走 CommandCode 的 OpenAI 兼容 Provider API。
@@ -55,11 +59,12 @@ Management Center 账户页在托管模式下不暴露。
 
 ## 启用方式
 
-插件库已打进运行时镜像的 `/opt/cliproxy/plugins`。管理器在以下条件同时满足时把
+插件库由本仓库源码在镜像构建时编译进 `/opt/cliproxy/plugins`。管理器在以下条件同时满足时把
 `plugins.configs.commandcode-go-cliproxyapi` 注入 CPA 配置：
 
 1. 当前 CLIProxyAPI ≥ 8.0.0 且运行的是插件版二进制；
-2. 镜像里存在 `commandcode-go-cliproxyapi.so`。
+2. 镜像里存在 `commandcode-go-cliproxyapi.so`（由 `Dockerfile.runtime` 的
+   `commandcode-plugin-build` 阶段产出；glibc 基础镜像，musl 无法加载该 cgo 插件）。
 
 托管字段只包含 `enabled`、`base-url`、`model-prefix`；用户在同一插件 id 下写的字段优先。
 

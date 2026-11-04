@@ -22,12 +22,37 @@ COPY ui/litellm-dashboard/ ./
 COPY src/shared/ ./../../src/shared/
 RUN npm run build
 
+FROM golang:1.26-bookworm AS commandcode-plugin-build
+
+# The CommandCode plugin is vendored under plugins/commandcode-go-cliproxyapi and
+# built from that source instead of a published release: our fork carries fixes
+# upstream does not ship (Responses namespace tool flattening). Build it against
+# the runtime's glibc ABI - the plugin is loaded through cgo/dlopen, so a musl
+# build would crash at load time.
+ARG TARGETARCH
+WORKDIR /src
+
+COPY plugins/commandcode-go-cliproxyapi/ ./
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) goarch=amd64 ;; \
+      arm64) goarch=arm64 ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    go test ./internal/... 2>&1 | tail -5; \
+    CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" \
+      go build -trimpath -buildmode=c-shared -ldflags "-s -w" \
+      -o /out/commandcode-go-cliproxyapi.so . ; \
+    rm -f /out/commandcode-go-cliproxyapi.h; \
+    test -s /out/commandcode-go-cliproxyapi.so
+
 FROM alpine:3.22 AS cliproxy-download
 
 ARG TARGETARCH
 ARG CLIPROXY_VERSION=8.0.47
 ARG OPENCODE_GO_PLUGIN_VERSION=0.2.2
-ARG COMMANDCODE_PLUGIN_VERSION=0.1.3
 WORKDIR /download
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
@@ -52,15 +77,7 @@ RUN set -eu; \
     test -n "${plugin_expected}"; \
     echo "${plugin_expected}  ${plugin_archive}" | sha256sum -c -; \
     mkdir -p plugins; \
-    unzip -q -o "${plugin_archive}" -d plugins; \
-    cc_archive="commandcode-go-cliproxyapi_${COMMANDCODE_PLUGIN_VERSION}_linux_${plugin_arch}.zip"; \
-    cc_base="https://github.com/mczhoucn/commandcode-go-cliproxyapi/releases/download/v${COMMANDCODE_PLUGIN_VERSION}"; \
-    wget -q "${cc_base}/checksums.txt" -O cc-checksums.txt; \
-    wget -q "${cc_base}/${cc_archive}" -O "${cc_archive}"; \
-    cc_expected="$(awk -v name="${cc_archive}" '$2 == name { print $1 }' cc-checksums.txt)"; \
-    test -n "${cc_expected}"; \
-    echo "${cc_expected}  ${cc_archive}" | sha256sum -c -; \
-    unzip -q -o "${cc_archive}" -d plugins
+    unzip -q -o "${plugin_archive}" -d plugins
 
 FROM node:22-bookworm-slim AS runtime
 
@@ -83,7 +100,7 @@ COPY drizzle/ ./drizzle/
 COPY --from=dashboard-build /build/ui/litellm-dashboard/out/ ./ui/out/
 COPY --from=cliproxy-download /download/cli-proxy-api /opt/cliproxy/cli-proxy-api
 COPY --from=cliproxy-download /download/plugins/opencode-go-cliproxyapi.so /opt/cliproxy/plugins/opencode-go-cliproxyapi.so
-COPY --from=cliproxy-download /download/plugins/commandcode-go-cliproxyapi.so /opt/cliproxy/plugins/commandcode-go-cliproxyapi.so
+COPY --from=commandcode-plugin-build /out/commandcode-go-cliproxyapi.so /opt/cliproxy/plugins/commandcode-go-cliproxyapi.so
 
 ENV CLIPROXY_PLUGIN_DIR=/opt/cliproxy/plugins
 ENV CLIPROXY_BOOTSTRAP_BINARY=/opt/cliproxy/cli-proxy-api

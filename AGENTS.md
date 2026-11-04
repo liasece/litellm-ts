@@ -33,6 +33,10 @@
   Dashboard 的 OAuth accounts 页签支持增删改托管账号。模型前缀为 `commandcode/`，额度走插件的
   `quota-usage` 管理接口。CommandCode Go 套餐不支持。细节见
   `docs/cliproxy-commandcode-goat-plugin.md`。
+- 该插件的源码是**本仓库 fork**：`plugins/commandcode-go-cliproxyapi/`。镜像从该目录现场
+  编译（`Dockerfile` / `Dockerfile.runtime` 的 `commandcode-plugin-build` 阶段），
+  **不再下载上游 release**。上游 0.1.3 对 Responses `namespace` 工具直接报错，fork 已修复且
+  行为写在 `FORK.md`；同步上游前先读它，不要直接覆盖该目录。
 - 账户额度优先走 CLIProxy 的通用插件额度接口（`/v0/management/quota/providers`、
   `/v0/management/quota/fetch`），provider 专用额度逻辑只保留给 codex/claude/kimi/antigravity/xai。
   插件额度是账号级窗口，不提供按模型的美元余额明细。

@@ -8,3 +8,5 @@
 !ui/
 !ui/out/
 !ui/out/**
+!plugins/
+!plugins/**
