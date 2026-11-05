@@ -159,28 +159,18 @@ ${formattedBody}
 					<div className="loading-spinner" style={{ marginBottom: "16px" }}>
 						{/* Simple CSS spinner */}
 						<div
+							className="animate-spin"
 							style={{
 								border: "3px solid #f3f3f3",
 								borderTop: "3px solid #1890ff",
 								borderRadius: "50%",
 								width: "30px",
 								height: "30px",
-								animation: "spin 1s linear infinite",
 								margin: "0 auto",
 							}}
 						/>
 					</div>
 					<Text style={{ fontSize: "16px" }}>Testing connection to {modelName}...</Text>
-					<style jsx>{`
-						@keyframes spin {
-							0% {
-								transform: rotate(0deg);
-							}
-							100% {
-								transform: rotate(360deg);
-							}
-						}
-					`}</style>
 				</div>
 			) : isSuccess ? (
 				<div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 20px" }}>

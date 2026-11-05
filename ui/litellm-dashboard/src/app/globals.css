@@ -2,6 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * The dashboard runs without motion. Windows (modals, drawers, dropdowns, tooltips,
+ * message, notification) and hover/expand transitions settle in 1ms instead of
+ * animating: every open used to cost a repaint + compositing pass, and this UI is
+ * judged on information density and speed, not on effect. Loading spinners are the
+ * one exception - their rotation is the "still working" signal itself.
+ */
+*,
+*::before,
+*::after {
+  transition-duration: 1ms !important;
+  transition-delay: 0s !important;
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+.animate-spin,
+.animate-spin *,
+.ant-spin-dot,
+.ant-spin-dot-item {
+  animation-duration: 1s !important;
+  animation-iteration-count: infinite !important;
+}
+
 :root {
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 255, 255, 255;
