@@ -100,6 +100,38 @@ describe("FallbackHandler", () => {
 		});
 	});
 
+	describe("Model Override 作为强制 fallback", () => {
+		it("override 源模型组直接使用目标模型组的 fallback 链", () => {
+			const fh = new FallbackHandler({ "model-b": ["model-c"] }, undefined, undefined, undefined, { "model-a": "model-b" });
+			expect(fh.getFallbackChain("model-a")).toEqual(["model-c"]);
+			expect(fh.getFallbackChain("model-b")).toEqual(["model-c"]);
+		});
+
+		it("源模型组自己的 fallback 配置不会遮住目标链", () => {
+			const fh = new FallbackHandler(
+				{ "model-a": ["stale-target"], "model-b": ["model-c"] },
+				undefined,
+				undefined,
+				undefined,
+				{ "model-a": "model-b" },
+			);
+			expect(fh.getNextFallback("model-a", 0)).toBe("model-c");
+		});
+
+		it("多跳 override 使用最终目标模型组的链", () => {
+			const fh = new FallbackHandler({ "model-c": ["model-d"] }, undefined, undefined, undefined, {
+				"model-a": "model-b",
+				"model-b": "model-c",
+			});
+			expect(fh.getFallbackChain("model-a")).toEqual(["model-d"]);
+		});
+
+		it("纯 alias 仍按源名字优先，不套用 override 的强制语义", () => {
+			const fh = new FallbackHandler({ "model-a": ["alias-fallback"], "model-c": ["alias-target-chain"] }, { "model-a": "model-c" });
+			expect(fh.getFallbackChain("model-a")).toEqual(["alias-fallback"]);
+		});
+	});
+
 	describe("provider 前缀剥离（大小写敏感）", () => {
 		it("已知 provider 前缀剥离匹配", () => {
 			const fh = new FallbackHandler({ "gpt-4": ["claude-3"] });

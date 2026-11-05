@@ -549,6 +549,47 @@ describe("Router execution chain", () => {
 			expect(router.hasModel("anthropic/glm-4.7")).toBe(true);
 		});
 	});
+	describe("Model Override 与 fallback 链", () => {
+		it("fallback 配置在 override 目标模型组时，源模型组的请求失败后按该链降级", async () => {
+			const router = new Router({
+				model_list: [
+					{
+						model_name: "MiniMax-M3",
+						litellm_params: { model: "minimax/MiniMax-M3", api_key: "test-key" },
+						model_info: { id: "MiniMax-M3", override_model_name: "MiniMax-M3.1-Flash" },
+					},
+					{
+						model_name: "MiniMax-M3.1-Flash",
+						litellm_params: { model: "minimax/MiniMax-M3.1-Flash", api_key: "test-key" },
+						model_info: { id: "MiniMax-M3.1-Flash" },
+					},
+					mkDeployment("cc-flash", "openai/cc-flash"),
+				],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				fallbacks: [{ "MiniMax-M3.1-Flash": ["cc-flash"] }],
+			});
+
+			// 请求经 override 落到目标模型组，目标组的上游额度耗尽
+			mockFetch.mockResolvedValueOnce(errorResponse(429, { error: "quota exhausted" }));
+			mockFetch.mockResolvedValueOnce(
+				okResponse({
+					id: "fb-1",
+					object: "chat.completion",
+					created: 1,
+					model: "cc-flash",
+					choices: [{ index: 0, message: { role: "assistant", content: "fb-ok" }, finish_reason: "stop" }],
+					usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+				}),
+			);
+
+			const result = await router.completion("MiniMax-M3", [{ role: "user", content: "hi" }]);
+			expect((result as unknown as { _provider: string })._provider).toBe("cc-flash");
+			expect(result._fallbackDepth).toBe(1);
+			expect(result._fallbackModels).toEqual(["MiniMax-M3", "cc-flash"]);
+		});
+	});
+
 	describe("Router.getNoAvailableDeploymentInfo", () => {
 		it("无冷却条目时回退 Router 默认 cooldown_time，cooldownList 为空", () => {
 			const router = new Router({

@@ -91,8 +91,8 @@ export default function ModelOverrideEditModal({
 					/>
 				</div>
 				<Text type="secondary" className="text-xs">
-					All requests for this model are routed to the target as if this model were an alias. Clear the selection to
-					restore normal routing.
+					All requests for this model are forced to the target before the first attempt, then fall back along the chain
+					configured on the target. Clear the selection to restore normal routing.
 				</Text>
 			</div>
 		</Modal>

@@ -242,7 +242,7 @@ export default function ModelBasicSettings({
 				label={
 					<>
 						Model Override
-						<Tooltip title="Always route requests for this model to the selected target, with alias semantics.">
+						<Tooltip title="Always route requests for this model to the selected target first, then fall back along the chain configured on that target.">
 							<InfoCircleOutlined className="ml-1" />
 						</Tooltip>
 					</>

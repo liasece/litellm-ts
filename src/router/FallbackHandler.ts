@@ -2,7 +2,7 @@
  * Fallback Handler
  *
  * Manages fallback chains for model requests.
- * Supports model_group_alias resolution (Patch 14).
+ * Supports model_group_alias and deployment override_model_name resolution (Patch 14).
  */
 
 import type { ModelGroupResolution } from "./ModelResolutionTrace";
@@ -175,28 +175,33 @@ export class FallbackHandler {
 	 * Lookup in the given fallback map with fallback resolution:
 	 * 1. Exact model name match
 	 * 2. Provider-prefix stripped match
-	 * 3. Wildcard '*' match
+	 * 3. alias 解析后的名字匹配
+	 * 4. Wildcard '*' match
+	 *
+	 * Model Override（override_model_name）是「强制的直接 fallback」：请求在选 deployment 前
+	 * 就已经落在目标模型组上，所以链按目标模型组查；源模型组自己的 fallbacks 配置不会遮住目标链。
 	 * @param model
 	 * @param fallbackMap
 	 * @param at
 	 */
 	private _lookupFallback(model: string, fallbackMap: Record<string, string[]>, at = this._referenceTime ?? new Date()): string[] {
+		const lookupModel = this._forcedModelGroup(model, at);
 		// Exact match
-		const exact = fallbackMap[model];
+		const exact = fallbackMap[lookupModel];
 		if (exact) {
 			return exact;
 		}
 		// Provider-prefix stripped match
-		const stripped = this._stripProviderPrefix(model);
-		if (stripped !== model) {
+		const stripped = this._stripProviderPrefix(lookupModel);
+		if (stripped !== lookupModel) {
 			const strippedMatch = fallbackMap[stripped];
 			if (strippedMatch) {
 				return strippedMatch;
 			}
 		}
 		// Resolve alias and try again
-		const resolvedAlias = this._resolveAlias(model, this._modelGroupAlias, at);
-		if (resolvedAlias !== model) {
+		const resolvedAlias = this._resolveAlias(lookupModel, this._redirects(), at);
+		if (resolvedAlias !== lookupModel) {
 			// Exact match on resolved alias
 			const aliasMatch = fallbackMap[resolvedAlias];
 			if (aliasMatch) {
@@ -238,6 +243,39 @@ export class FallbackHandler {
 	}
 
 	/**
+	 * 合并 model_group_alias 与 deployment 强制重定向（override_model_name）后的解析表。
+	 * 同名时 override 优先，与 resolveModelGroup 的路由解析保持同一优先级。
+	 */
+	private _redirects(): ModelGroupAliases {
+		return { ...this._modelGroupAlias, ...this._modelOverrides };
+	}
+
+	/**
+	 * 请求实际执行的模型组。Model Override 视为「强制的直接 fallback」：请求在选 deployment 前
+	 * 就跳到目标，因此后续 fallback 链按目标查。纯 alias 不跨 override 边，仍保持源名字优先。
+	 * @param model - 请求里的模型组
+	 * @param at - 请求快照固定的时间
+	 */
+	private _forcedModelGroup(model: string, at: Date): string {
+		const redirects = this._redirects();
+		const seen = new Set<string>([model]);
+		let current = model;
+		let crossedOverride = false;
+		for (;;) {
+			const next = this._getAliasTarget(current, redirects, at);
+			if (next === undefined || seen.has(next)) {
+				break;
+			}
+			if (Object.prototype.hasOwnProperty.call(this._modelOverrides, current)) {
+				crossedOverride = true;
+			}
+			seen.add(next);
+			current = next;
+		}
+		return crossedOverride ? current : model;
+	}
+
+	/**
 	 * 读取 alias 的单跳目标。string[] 只取首项，空数组没有下一跳。
 	 * @param model - 当前模型组
 	 * @param aliases - 待查询的 alias 映射
@@ -249,10 +287,7 @@ export class FallbackHandler {
 
 	private _resolveAliasWithTrace(
 		model: string,
-		aliases: ModelGroupAliases = {
-			...this._modelGroupAlias,
-			...this._modelOverrides,
-		},
+		aliases: ModelGroupAliases = this._redirects(),
 		at = this._referenceTime ?? new Date(),
 	): ModelGroupResolution {
 		const path = [model];
@@ -307,9 +342,9 @@ export class FallbackHandler {
 		}
 		const directFallbacks = this._lookupFallback(model, this._fallbacks, at);
 		const chain: ModelGroupResolution[] = [];
-		const seen = new Set<string>([model]);
+		const seen = new Set<string>([model, this._forcedModelGroup(model, at)]);
 		for (const fallback of directFallbacks) {
-			const resolution = this._resolveAliasWithTrace(fallback, { ...this._modelGroupAlias, ...this._modelOverrides }, at);
+			const resolution = this._resolveAliasWithTrace(fallback, this._redirects(), at);
 			if (!seen.has(resolution.resolvedModel)) {
 				chain.push(resolution);
 				seen.add(resolution.resolvedModel);
