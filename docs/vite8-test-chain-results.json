@@ -1,0 +1,836 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-11-04T02:47:45.294202+00:00",
+  "decision": "keep_existing_vite_7_vitest_3",
+  "retained_implementation_changes": [],
+  "environment": {
+    "node": "v24.22.2",
+    "npm": "11.19.1",
+    "head": "0ecd4dcf4ec6e2789428e93998025f16838167e1",
+    "source_files": 1304,
+    "source_digest": "62d8bf89160eb65648e59574f2c8d7bdbf68b03c010ec9458c6722e8ece43641",
+    "test_workers": 4,
+    "platform": "linux",
+    "arch": "x64",
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "available_parallelism": 80,
+    "logical_cpus": 128,
+    "total_memory_bytes": 540448935936,
+    "container_memory_max": "137438953472",
+    "cpu_max": "8000000 100000"
+  },
+  "versions": {
+    "retained": {
+      "vite": "7.3.1",
+      "vitest": "3.2.4",
+      "@vitest/ui": "3.2.4",
+      "@vitest/coverage-v8": "3.2.4",
+      "postcss": "8.5.6",
+      "react": "18.3.1",
+      "next": "16.1.7"
+    },
+    "evaluated_candidate": {
+      "vite": "8.3.5",
+      "vitest": "4.1.10",
+      "@vitest/ui": "4.1.10",
+      "@vitest/coverage-v8": "4.1.10",
+      "postcss": "8.5.32",
+      "react": "18.3.1",
+      "next": "16.1.7"
+    }
+  },
+  "selected_files": [
+    "src/utils/priceDisplay.test.ts",
+    "src/app/(dashboard)/hooks/models/useModels.test.ts",
+    "src/components/view_logs/LogDetailsDrawer/SessionSimulationDrawer.test.tsx",
+    "src/components/view_logs/LogDetailsDrawer/MessagePartsView.test.tsx",
+    "src/components/CostTrackingSettings/pricing_calculator/use_multi_cost_estimate.test.ts",
+    "src/components/playground/llm_calls/responses_api.test.tsx",
+    "src/components/VirtualKeysPage/VirtualKeysTable.test.tsx",
+    "src/components/model_group_alias_settings.ui.test.tsx"
+  ],
+  "selected_run_command": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--maxWorkers=4",
+    "--reporter=default",
+    "--reporter=json",
+    "--outputFile=/tmp/litellm-vite8-01a1a458/baseline-selected-1-vitest.json",
+    "src/utils/priceDisplay.test.ts",
+    "src/app/(dashboard)/hooks/models/useModels.test.ts",
+    "src/components/view_logs/LogDetailsDrawer/SessionSimulationDrawer.test.tsx",
+    "src/components/view_logs/LogDetailsDrawer/MessagePartsView.test.tsx",
+    "src/components/CostTrackingSettings/pricing_calculator/use_multi_cost_estimate.test.ts",
+    "src/components/playground/llm_calls/responses_api.test.tsx",
+    "src/components/VirtualKeysPage/VirtualKeysTable.test.tsx",
+    "src/components/model_group_alias_settings.ui.test.tsx"
+  ],
+  "baseline_full": {
+    "label": "baseline-full",
+    "wall_seconds": 446.145,
+    "vitest_duration": "Duration  445.17s (transform 11.30s, setup 43.39s, collect 604.26s, tests 836.89s, environment 193.14s, prepare 25.17s)",
+    "counts": {
+      "numTotalTests": 3920,
+      "numPassedTests": 3920,
+      "numFailedTests": 0,
+      "numPendingTests": 0,
+      "numTotalTestSuites": 1121,
+      "numPassedTestSuites": 1121,
+      "numFailedTestSuites": 0,
+      "success": true
+    },
+    "files": 412,
+    "load_before": "3.53 2.38 1.02 3/5936 990",
+    "load_after": "7.92 7.85 4.27 3/6215 12556",
+    "reported_stage_seconds": {
+      "Duration": 445.17,
+      "transform": 11.3,
+      "setup": 43.39,
+      "collect": 604.26,
+      "tests": 836.89,
+      "environment": 193.14,
+      "prepare": 25.17
+    }
+  },
+  "baseline_compatible_sdk_mocks": {
+    "label": "baseline-sdk",
+    "wall_seconds": 7.03,
+    "vitest_duration": "Duration  6.52s (transform 632ms, setup 1.34s, collect 12.18s, tests 126ms, environment 5.14s, prepare 683ms)",
+    "counts": {
+      "numTotalTests": 27,
+      "numPassedTests": 27,
+      "numFailedTests": 0,
+      "numPendingTests": 0,
+      "numTotalTestSuites": 22,
+      "numPassedTestSuites": 22,
+      "numFailedTestSuites": 0,
+      "success": true
+    },
+    "files": 11,
+    "load_before": "4.87 7.01 4.17 3/6202 12627",
+    "load_after": "4.96 7.00 4.18 3/6199 12996",
+    "reported_stage_seconds": {
+      "Duration": 6.52,
+      "transform": 0.632,
+      "setup": 1.34,
+      "collect": 12.18,
+      "tests": 0.126,
+      "environment": 5.14,
+      "prepare": 0.683
+    }
+  },
+  "constructor_mock_changes_evaluated_and_reverted": [
+    {
+      "file": "ui/litellm-dashboard/src/components/playground/llm_calls/chat_completion.test.tsx",
+      "before": "3a91edc9cbde88edc3059e3d88010c35238273be13af8af5019c49b639c0acbf",
+      "after": "b5213f331ac5c85e4bdd0f2f973f5586083a2058598126c409883296fe4abd98"
+    },
+    {
+      "file": "ui/litellm-dashboard/src/components/playground/llm_calls/responses_api.test.tsx",
+      "before": "d17d5ad2abd6f27dc2fcab69df509ef085b7aa90e3c7c72c43834887a4f01d65",
+      "after": "4dc443961cb2e2ce47cc832236f19a14edcc5acbaad33e6a2e321b7e16ea7ef7"
+    },
+    {
+      "file": "ui/litellm-dashboard/src/components/playground/llm_calls/image_generation.test.tsx",
+      "before": "d249d845b4e6cb6d28d15816ad49d650e92b7740befd9d8c68db106e778e9ecd",
+      "after": "5e185d48e6105999b024bf73292b750232f25997a8b945e9379f6d32eda43eab"
+    },
+    {
+      "file": "ui/litellm-dashboard/src/components/playground/llm_calls/image_edits.test.tsx",
+      "before": "ef516304a79bf744a03f46c6fff48cadcea0fcd5cc9641aa1ca63f845875f34c",
+      "after": "7a47d98822cf77443dd4dd8fd5f5bc77336a2b46b92c344f619f936a192ed320"
+    },
+    {
+      "file": "ui/litellm-dashboard/src/components/playground/llm_calls/anthropic_messages.test.tsx",
+      "before": "b1c90176d2aaf55f936211183caa83e5924b39dc69e5afa627331ac5f37a6d1e",
+      "after": "92fdc10cf09f69903b92793411d7be5802167704f9697443c8f845c0ed55a7dd"
+    },
+    {
+      "file": "ui/litellm-dashboard/src/components/playground/llm_calls/audio_speech.test.tsx",
+      "before": "8c78595632f1e52d4afeb42536fb43ad24d0f7ec3630d6b298695a5b8cb24f05",
+      "after": "056260d1a6f8801a190958c4936c1f8908553553104e917b7cbfac3ef4a57cc9"
+    },
+    {
+      "file": "ui/litellm-dashboard/src/components/playground/llm_calls/audio_transcriptions.test.tsx",
+      "before": "64c47b91d4592e122234cd2f15df1b9d1e57ef465429c6e8f43b6082cf5333a7",
+      "after": "c540931feb530bd3518c5db20e83db4f93fd3c3ee07bb0c19710ca5e19f9fd3d"
+    }
+  ],
+  "source_digests": {
+    "original_source_digest": "62d8bf89160eb65648e59574f2c8d7bdbf68b03c010ec9458c6722e8ece43641",
+    "benchmark_source_digest": "93504c997dd81a844d0600a1ae9ee24ef98038620d7f145bbe9531885648a324",
+    "candidate_lock_sha256": "1542c6aa9aa813069ba7590f5958f9e027e6625d2a51e24ac4589053e0b15e1f"
+  },
+  "candidate_config_evaluated_and_reverted": "import { defineConfig } from \"vitest/config\";\nimport { resolve } from \"path\";\n\nexport default defineConfig({\n\ttest: {\n\t\tenvironment: \"jsdom\",\n\t\tsetupFiles: [\"tests/setupTests.ts\"],\n\t\tglobals: true,\n\t\tcss: true, // lets you import CSS/modules without extra mocks\n\t\t// The full suite runs many jsdom/Ant Design tests concurrently; allow\n\t\t// behavior-heavy interaction tests enough headroom without per-test hacks.\n\t\ttestTimeout: 20000,\n\t\tcoverage: {\n\t\t\tprovider: \"v8\",\n\t\t\treporter: [\"text\", \"lcov\"],\n\t\t\tinclude: [\"src/**/*.{ts,tsx}\"],\n\t\t\texclude: [\n\t\t\t\t\"**/*.d.ts\",\n\t\t\t\t\"**/*.test.*\",\n\t\t\t\t\"**/*.spec.*\",\n\n\t\t\t\t\"tests/**\",\n\t\t\t\t\"e2e_tests/**\",\n\n\t\t\t\t\"node_modules/**\",\n\t\t\t\t\".next/**\",\n\t\t\t\t\"out/**\",\n\n\t\t\t\t\"**/*.config.*\",\n\t\t\t\t\"postcss.config.*\",\n\t\t\t\t\"tailwind.config.*\",\n\t\t\t\t\"next.config.*\",\n\t\t\t],\n\t\t},\n\t\texclude: [\"e2e_tests/**\", \"node_modules/**\"],\n\t\tinclude: [\"src/**/*.test.ts\", \"src/**/*.test.tsx\", \"tests/**/*.test.ts\", \"tests/**/*.test.tsx\"],\n\t},\n\tresolve: {\n\t\talias: {\n\t\t\t\"@\": resolve(__dirname, \"src\"),\n\t\t},\n\t},\n\tdefine: {\n\t\t\"import.meta.vitest\": \"undefined\",\n\t},\n\toxc: {\n\t\tjsx: {\n\t\t\truntime: \"automatic\",\n\t\t\timportSource: \"react\",\n\t\t},\n\t},\n});\n",
+  "candidate_install": {
+    "command": [
+      "npm",
+      "install",
+      "--save-dev",
+      "--save-exact",
+      "vite@8.3.5",
+      "vitest@4.1.10",
+      "@vitest/ui@4.1.10",
+      "@vitest/coverage-v8@4.1.10"
+    ],
+    "exit_code": 0,
+    "seconds": 62.962
+  },
+  "candidate_dependency_changes": {
+    "direct_version_changes_beyond_requested_tools": [
+      {
+        "name": "postcss",
+        "old": "8.5.6",
+        "new": "8.5.32"
+      }
+    ],
+    "added_packages": 31,
+    "removed_packages": 82,
+    "changed_versions": [
+      {
+        "package": "node_modules/@babel/helper-string-parser",
+        "before": "7.27.1",
+        "after": "7.29.11"
+      },
+      {
+        "package": "node_modules/@babel/types",
+        "before": "7.29.0",
+        "after": "7.29.11"
+      },
+      {
+        "package": "node_modules/@vitest/coverage-v8",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/expect",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/mocker",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/pretty-format",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/runner",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/snapshot",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/spy",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/ui",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/@vitest/utils",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      },
+      {
+        "package": "node_modules/ast-v8-to-istanbul",
+        "before": "0.3.11",
+        "after": "1.0.7"
+      },
+      {
+        "package": "node_modules/chai",
+        "before": "5.3.3",
+        "after": "6.3.0"
+      },
+      {
+        "package": "node_modules/es-module-lexer",
+        "before": "1.7.0",
+        "after": "2.3.2"
+      },
+      {
+        "package": "node_modules/expect-type",
+        "before": "1.3.0",
+        "after": "1.4.0"
+      },
+      {
+        "package": "node_modules/fflate",
+        "before": "0.8.2",
+        "after": "0.8.3"
+      },
+      {
+        "package": "node_modules/flatted",
+        "before": "3.3.3",
+        "after": "3.4.4"
+      },
+      {
+        "package": "node_modules/magicast",
+        "before": "0.3.5",
+        "after": "0.5.5"
+      },
+      {
+        "package": "node_modules/nanoid",
+        "before": "3.3.11",
+        "after": "3.3.20"
+      },
+      {
+        "package": "node_modules/picomatch",
+        "before": "4.0.3",
+        "after": "4.0.7"
+      },
+      {
+        "package": "node_modules/postcss",
+        "before": "8.5.6",
+        "after": "8.5.32"
+      },
+      {
+        "package": "node_modules/source-map-js",
+        "before": "1.2.1",
+        "after": "1.2.2"
+      },
+      {
+        "package": "node_modules/std-env",
+        "before": "3.10.0",
+        "after": "4.3.0"
+      },
+      {
+        "package": "node_modules/tinyexec",
+        "before": "0.3.2",
+        "after": "1.3.1"
+      },
+      {
+        "package": "node_modules/tinyglobby",
+        "before": "0.2.15",
+        "after": "0.2.17"
+      },
+      {
+        "package": "node_modules/tinyrainbow",
+        "before": "2.0.0",
+        "after": "3.2.0"
+      },
+      {
+        "package": "node_modules/vite",
+        "before": "7.3.1",
+        "after": "8.3.5"
+      },
+      {
+        "package": "node_modules/vitest",
+        "before": "3.2.4",
+        "after": "4.1.10"
+      }
+    ]
+  },
+  "runs": {
+    "baseline": [
+      {
+        "label": "baseline-selected-1",
+        "wall_seconds": 10.235,
+        "vitest_duration": "Duration  9.75s (transform 903ms, setup 1.00s, collect 13.12s, tests 10.92s, environment 3.73s, prepare 493ms)",
+        "counts": {
+          "numTotalTests": 111,
+          "numPassedTests": 111,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "numTotalTestSuites": 31,
+          "numPassedTestSuites": 31,
+          "numFailedTestSuites": 0,
+          "success": true
+        },
+        "files": 8,
+        "load_before": "4.96 7.00 4.18 10/6199 12997",
+        "load_after": "5.90 7.13 4.25 3/6479 13303",
+        "reported_stage_seconds": {
+          "Duration": 9.75,
+          "transform": 0.903,
+          "setup": 1.0,
+          "collect": 13.12,
+          "tests": 10.92,
+          "environment": 3.73,
+          "prepare": 0.493
+        }
+      },
+      {
+        "label": "baseline-selected-2",
+        "wall_seconds": 10.385,
+        "vitest_duration": "Duration  9.87s (transform 875ms, setup 985ms, collect 13.17s, tests 10.98s, environment 3.78s, prepare 522ms)",
+        "counts": {
+          "numTotalTests": 111,
+          "numPassedTests": 111,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "numTotalTestSuites": 31,
+          "numPassedTestSuites": 31,
+          "numFailedTestSuites": 0,
+          "success": true
+        },
+        "files": 8,
+        "load_before": "5.90 7.13 4.25 9/6479 13304",
+        "load_after": "6.30 7.17 4.30 3/6263 13618",
+        "reported_stage_seconds": {
+          "Duration": 9.87,
+          "transform": 0.875,
+          "setup": 0.985,
+          "collect": 13.17,
+          "tests": 10.98,
+          "environment": 3.78,
+          "prepare": 0.522
+        }
+      },
+      {
+        "label": "baseline-selected-3",
+        "wall_seconds": 10.085,
+        "vitest_duration": "Duration  9.61s (transform 808ms, setup 936ms, collect 12.93s, tests 10.80s, environment 3.72s, prepare 499ms)",
+        "counts": {
+          "numTotalTests": 111,
+          "numPassedTests": 111,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "numTotalTestSuites": 31,
+          "numPassedTestSuites": 31,
+          "numFailedTestSuites": 0,
+          "success": true
+        },
+        "files": 8,
+        "load_before": "6.30 7.17 4.30 4/6263 13620",
+        "load_after": "7.04 7.30 4.37 3/6230 13943",
+        "reported_stage_seconds": {
+          "Duration": 9.61,
+          "transform": 0.808,
+          "setup": 0.936,
+          "collect": 12.93,
+          "tests": 10.8,
+          "environment": 3.72,
+          "prepare": 0.499
+        }
+      }
+    ],
+    "candidate": [
+      {
+        "label": "candidate-selected-1",
+        "wall_seconds": 9.985,
+        "vitest_duration": "Duration  9.28s (transform 703ms, setup 997ms, import 13.06s, tests 10.86s, environment 3.79s)",
+        "counts": {
+          "numTotalTests": 111,
+          "numPassedTests": 111,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "numTotalTestSuites": 31,
+          "numPassedTestSuites": 31,
+          "numFailedTestSuites": 0,
+          "success": true
+        },
+        "files": 8,
+        "load_before": "3.55 5.97 4.23 3/6165 14568",
+        "load_after": "3.86 5.95 4.24 2/6171 14840",
+        "reported_stage_seconds": {
+          "Duration": 9.28,
+          "transform": 0.703,
+          "setup": 0.997,
+          "import": 13.06,
+          "tests": 10.86,
+          "environment": 3.79
+        }
+      },
+      {
+        "label": "candidate-selected-2",
+        "wall_seconds": 10.133,
+        "vitest_duration": "Duration  9.45s (transform 743ms, setup 1.00s, import 12.89s, tests 11.08s, environment 3.75s)",
+        "counts": {
+          "numTotalTests": 111,
+          "numPassedTests": 111,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "numTotalTestSuites": 31,
+          "numPassedTestSuites": 31,
+          "numFailedTestSuites": 0,
+          "success": true
+        },
+        "files": 8,
+        "load_before": "3.86 5.95 4.24 2/6171 14841",
+        "load_after": "5.47 6.20 4.35 10/6293 15132",
+        "reported_stage_seconds": {
+          "Duration": 9.45,
+          "transform": 0.743,
+          "setup": 1.0,
+          "import": 12.89,
+          "tests": 11.08,
+          "environment": 3.75
+        }
+      },
+      {
+        "label": "candidate-selected-3",
+        "wall_seconds": 9.935,
+        "vitest_duration": "Duration  9.29s (transform 670ms, setup 987ms, import 12.83s, tests 10.93s, environment 3.75s)",
+        "counts": {
+          "numTotalTests": 111,
+          "numPassedTests": 111,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "numTotalTestSuites": 31,
+          "numPassedTestSuites": 31,
+          "numFailedTestSuites": 0,
+          "success": true
+        },
+        "files": 8,
+        "load_before": "5.47 6.20 4.35 14/6293 15133",
+        "load_after": "6.61 6.42 4.44 7/6533 15405",
+        "reported_stage_seconds": {
+          "Duration": 9.29,
+          "transform": 0.67,
+          "setup": 0.987,
+          "import": 12.83,
+          "tests": 10.93,
+          "environment": 3.75
+        }
+      }
+    ]
+  },
+  "comparison": {
+    "baseline": {
+      "walls": [
+        10.235,
+        10.385,
+        10.085
+      ],
+      "median": 10.235,
+      "coverage_files": 876,
+      "uncovered_files_in_report": 813,
+      "coverage_total": {
+        "lines": {
+          "total": 131679,
+          "covered": 2942,
+          "skipped": 0,
+          "pct": 2.23
+        },
+        "statements": {
+          "total": 131679,
+          "covered": 2942,
+          "skipped": 0,
+          "pct": 2.23
+        },
+        "functions": {
+          "total": 1336,
+          "covered": 447,
+          "skipped": 0,
+          "pct": 33.45
+        },
+        "branches": {
+          "total": 1613,
+          "covered": 871,
+          "skipped": 0,
+          "pct": 53.99
+        },
+        "branchesTrue": {
+          "total": 0,
+          "covered": 0,
+          "skipped": 0,
+          "pct": 100
+        }
+      },
+      "test_identity_digest": "7bca9e8a00d78e51546d002227038c1abb7753ff595b41eadef7fe8e7e1fe910"
+    },
+    "candidate": {
+      "walls": [
+        9.985,
+        10.133,
+        9.935
+      ],
+      "median": 9.985,
+      "coverage_files": 876,
+      "uncovered_files_in_report": 801,
+      "coverage_total": {
+        "lines": {
+          "total": 35861,
+          "covered": 1018,
+          "skipped": 0,
+          "pct": 2.83
+        },
+        "statements": {
+          "total": 38258,
+          "covered": 1066,
+          "skipped": 0,
+          "pct": 2.78
+        },
+        "functions": {
+          "total": 9461,
+          "covered": 202,
+          "skipped": 0,
+          "pct": 2.13
+        },
+        "branches": {
+          "total": 31473,
+          "covered": 667,
+          "skipped": 0,
+          "pct": 2.11
+        },
+        "branchesTrue": {
+          "total": 0,
+          "covered": 0,
+          "skipped": 0,
+          "pct": 100
+        }
+      },
+      "test_identity_digest": "7bca9e8a00d78e51546d002227038c1abb7753ff595b41eadef7fe8e7e1fe910"
+    },
+    "coverage_file_sets_equal": true,
+    "coverage_files_only_baseline": [],
+    "coverage_files_only_candidate": [],
+    "percent_wall_reduction": 2.443
+  },
+  "coverage_runs": {
+    "baseline": {
+      "label": "baseline-selected-coverage",
+      "wall_seconds": 23.716,
+      "vitest_duration": "Duration  21.69s (transform 890ms, setup 1.07s, collect 13.88s, tests 21.73s, environment 4.17s, prepare 588ms)",
+      "counts": {
+        "numTotalTests": 111,
+        "numPassedTests": 111,
+        "numFailedTests": 0,
+        "numPendingTests": 0,
+        "numTotalTestSuites": 31,
+        "numPassedTestSuites": 31,
+        "numFailedTestSuites": 0,
+        "success": true
+      },
+      "files": 8,
+      "load_before": "7.04 7.30 4.37 3/6230 13944",
+      "load_after": "6.52 7.16 4.40 3/6257 14283",
+      "reported_stage_seconds": {
+        "Duration": 21.69,
+        "transform": 0.89,
+        "setup": 1.07,
+        "collect": 13.88,
+        "tests": 21.73,
+        "environment": 4.17,
+        "prepare": 0.588
+      }
+    },
+    "candidate": {
+      "label": "candidate-selected-coverage",
+      "wall_seconds": 21.509,
+      "vitest_duration": "Duration  19.73s (transform 765ms, setup 1.17s, import 13.84s, tests 18.18s, environment 3.76s)",
+      "counts": {
+        "numTotalTests": 111,
+        "numPassedTests": 111,
+        "numFailedTests": 0,
+        "numPendingTests": 0,
+        "numTotalTestSuites": 31,
+        "numPassedTestSuites": 31,
+        "numFailedTestSuites": 0,
+        "success": true
+      },
+      "files": 8,
+      "load_before": "6.61 6.42 4.44 12/6533 15406",
+      "load_after": "8.51 6.89 4.64 7/6250 15681",
+      "reported_stage_seconds": {
+        "Duration": 19.73,
+        "transform": 0.765,
+        "setup": 1.17,
+        "import": 13.84,
+        "tests": 18.18,
+        "environment": 3.76
+      }
+    }
+  },
+  "watch": {
+    "baseline": {
+      "label": "baseline-watch",
+      "command": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "--watch",
+        "src/utils/priceDisplay.test.ts",
+        "--maxWorkers=4",
+        "--reporter=default"
+      ],
+      "initial_seconds": 1.406,
+      "dependency_rerun_seconds": 0.808,
+      "pass_summaries": [
+        "Test Files  1 passed (1)",
+        "Tests  4 passed (4)",
+        "Test Files  1 passed (1)",
+        "Tests  4 passed (4)"
+      ],
+      "success": true
+    },
+    "candidate": {
+      "label": "candidate-watch",
+      "command": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "--watch",
+        "src/utils/priceDisplay.test.ts",
+        "--maxWorkers=4",
+        "--reporter=default"
+      ],
+      "initial_seconds": 1.389,
+      "dependency_rerun_seconds": 0.847,
+      "pass_summaries": [
+        "Test Files  1 passed (1)",
+        "Tests  4 passed (4)",
+        "Test Files  1 passed (1)",
+        "Tests  4 passed (4)"
+      ],
+      "success": true
+    }
+  },
+  "candidate_ui": {
+    "label": "candidate-ui",
+    "command": [
+      "node",
+      "node_modules/vitest/vitest.mjs",
+      "--watch",
+      "src/utils/priceDisplay.test.ts",
+      "--maxWorkers=4",
+      "--reporter=default",
+      "--ui",
+      "--no-open",
+      "--api.host=127.0.0.1",
+      "--api.port=49393",
+      "--api.strictPort"
+    ],
+    "initial_seconds": 1.394,
+    "browser": {
+      "http_status": 200,
+      "title": "Vitest",
+      "file_visible": true,
+      "suite_visible": true,
+      "page_errors": []
+    },
+    "success": true
+  },
+  "restored_checks": {
+    "restored-install": {
+      "command": [
+        "npm",
+        "ci"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 24.063
+    },
+    "restored-selected": {
+      "label": "restored-selected",
+      "command": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--maxWorkers=4",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile=/tmp/litellm-vite8-01a1a458/restored-selected-vitest.json",
+        "src/utils/priceDisplay.test.ts",
+        "src/app/(dashboard)/hooks/models/useModels.test.ts",
+        "src/components/view_logs/LogDetailsDrawer/SessionSimulationDrawer.test.tsx",
+        "src/components/view_logs/LogDetailsDrawer/MessagePartsView.test.tsx",
+        "src/components/CostTrackingSettings/pricing_calculator/use_multi_cost_estimate.test.ts",
+        "src/components/playground/llm_calls/responses_api.test.tsx",
+        "src/components/VirtualKeysPage/VirtualKeysTable.test.tsx",
+        "src/components/model_group_alias_settings.ui.test.tsx"
+      ],
+      "load_before": "3.96 5.38 4.42 3/5997 16407",
+      "started_at": "2026-11-04T02:41:43Z",
+      "exit_code": 0,
+      "wall_seconds": 11.688,
+      "load_after": "4.11 5.36 4.43 3/6233 16722",
+      "vitest_duration": "Duration  11.21s (transform 887ms, setup 987ms, collect 13.36s, tests 10.76s, environment 3.76s, prepare 533ms)",
+      "counts": {
+        "numTotalTests": 111,
+        "numPassedTests": 111,
+        "numFailedTests": 0,
+        "numPendingTests": 0,
+        "numTotalTestSuites": 31,
+        "numPassedTestSuites": 31,
+        "numFailedTestSuites": 0,
+        "success": true
+      },
+      "files": 8,
+      "failed_files": []
+    },
+    "restored-lint": {
+      "label": "restored-lint",
+      "command": [
+        "npm",
+        "run",
+        "lint"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 42.916
+    },
+    "restored-typecheck": {
+      "label": "restored-typecheck",
+      "command": [
+        "npx",
+        "tsc",
+        "--noEmit"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 5.227
+    },
+    "restored-next-build": {
+      "label": "restored-next-build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 50.646
+    }
+  },
+  "protection": {
+    "source_files_matching_original": 1304,
+    "source_inventory_unchanged": true,
+    "package_lock_config_bytes_restored": true,
+    "all_direct_installed_versions_match_original_lock": true,
+    "pre_existing_git_status_entries_preserved": 35,
+    "only_added_status_entries": [
+      "?? docs/vite8-test-chain-evaluation.md",
+      "?? docs/vite8-test-chain-results.json"
+    ],
+    "diff_check_passed": true
+  },
+  "not_run": [
+    "Candidate full 412-file test suite",
+    "Candidate full ESLint and independent TypeScript checks",
+    "Candidate Next production build",
+    "Repeated coverage/watch benchmarks",
+    "Production deployment or live behavior validation",
+    "Benchmarks with the default worker count"
+  ],
+  "performance_limits": [
+    "Shared host; no exclusive CPU isolation",
+    "Three sequential fresh-process samples per version; baseline block followed by candidate block",
+    "Installation, network, lint, TypeScript and Next build excluded from sample timings",
+    "Coverage and watch measured once each",
+    "Vitest stage counters are not additive wall-clock phases",
+    "Candidate includes the Vitest/Vite dependency changes and a hoisted PostCSS update"
+  ],
+  "delegation": {
+    "title": "委派 · jansen · LiteLLM：核对 Vite 8 与 Vitest 迁移风险",
+    "model": "jansen-litellm / minimax-latest-anthropic",
+    "status": "timed_out",
+    "timeout_seconds": 480,
+    "interrupt_confirmed": true,
+    "used_as_validation_evidence": false
+  },
+  "deployments": [],
+  "commits": [],
+  "pushes": [],
+  "cleanup": {
+    "scratch_directory_removed": true,
+    "remaining_processes_referencing_scratch": 0,
+    "candidate_ui_port_closed": true,
+    "verbose_logs_coverage_scripts_and_snapshots_removed": true,
+    "summary_evidence_retained_in_docs": true
+  }
+}
