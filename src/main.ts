@@ -123,12 +123,16 @@ export class LiteLLMServer {
 	 * 启动服务器，监听指定端口和主机
 	 */
 	async start(): Promise<void> {
+		const startedAt = Date.now();
 		const port = this._config.server.port;
 		const host = this._config.server.host;
 
 		logger.info("LiteLLM TS Gateway 启动中...", { port: port, host: host, modelCount: this._config.modelList.length });
 
 		this._container = await createServiceContainer(this._config);
+		// 预热与启动收尾并行：远端模型价格快照和 CLIProxy 子进程都不是监听的前提，
+		// 在这里尽早开始，它们的秒级耗时（及各自超时预算）不再计入服务不可用窗口。
+		void this._container.warmUp();
 		const abortedRequestCount = await abortOrphanedActiveRequests(this._container.db.db);
 		if (abortedRequestCount > 0) {
 			logger.warn("已将旧进程遗留的在途请求标记为 aborted", { requestCount: abortedRequestCount });
@@ -139,7 +143,8 @@ export class LiteLLMServer {
 			const server = this._app.listen(port, host, () => {
 				server.off("error", reject);
 				this._httpServer = server;
-				logger.info(`LiteLLM TS Gateway 已启动: http://${host}:${port}`);
+				// 这里是「可以开始接受请求」的时刻，不含已在后台进行的预热。
+				logger.info(`LiteLLM TS Gateway 已启动: http://${host}:${port}`, { startupMs: Date.now() - startedAt });
 				resolve();
 			});
 			registerCliProxyWebSocketPassthrough(server, this._container!);

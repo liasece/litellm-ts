@@ -27,6 +27,9 @@ import { ProviderQuotaService } from "./providerusage/ProviderQuotaService";
 import { isCliProxyDeploymentParams } from "./cliproxy/CliProxyTypes";
 import { parseSessionDuration } from "./proxy/LoginEndpoints";
 import { DEFAULT_WEBUI_SESSION_DURATION, WEBUI_SESSION_DURATION_ENV_VAR } from "./types/webUiSession";
+import { createModuleLogger } from "./core/utils/logger";
+
+const logger = createModuleLogger("ServiceContainer");
 
 /** 服务容器接口 */
 export interface ServiceContainer {
@@ -52,6 +55,54 @@ export interface ServiceContainer {
 	readonly cliProxyRuntime: CliProxyRuntimeManager;
 	/** 内置 Provider（DeepSeek / MiniMax）账户额度查询。 */
 	readonly providerQuotaService: ProviderQuotaService;
+	/**
+	 * 并行预热不在启动关键路径上的外部依赖：远端模型价格快照与内置 CLIProxy 子进程。
+	 *
+	 * 两者都不是「可以开始监听」的前提：价格快照拉取失败本来就回退镜像内置数据，
+	 * CLIProxy 是多秒级的子进程启动（生产实测 3.6 秒，健康等待上限 15 秒）。把它们
+	 * 留在启动链上只会把外部网络和子进程时间叠加成服务的不可用窗口，因此改到监听
+	 * 之后、与请求处理并行完成。失败只降级对应能力，不抛错；幂等，重复调用返回同
+	 * 一个 Promise。
+	 */
+	readonly warmUp: () => Promise<void>;
+}
+
+/** 一个不在启动关键路径上、可以并行完成的预热任务。 */
+interface WarmUpTask {
+	/** 日志与耗时统计里的分段名 */
+	readonly name: string;
+	/** 幂等的预热动作；失败只影响对应能力 */
+	readonly run: () => Promise<void>;
+}
+
+/**
+ * 并行执行启动预热任务，并用一条结构化日志记录每段耗时。
+ *
+ * 预热的定义是「失败也不该拦启动」的外部依赖工作，因此这里的异常统一收敛成日志，
+ * 让调用方可以无条件地 `void container.warmUp()`。
+ * @param tasks - 需要并行完成的预热任务
+ */
+async function runWarmUp(tasks: readonly WarmUpTask[]): Promise<void> {
+	const startedAt = Date.now();
+	const stepsMs: Record<string, number> = {};
+	const failures: Array<{ step: string; error: string }> = [];
+	await Promise.all(
+		tasks.map(async (task) => {
+			const taskStartedAt = Date.now();
+			try {
+				await task.run();
+			} catch (error) {
+				failures.push({ step: task.name, error: error instanceof Error ? error.message : String(error) });
+			}
+			stepsMs[task.name] = Date.now() - taskStartedAt;
+		}),
+	);
+	if (failures.length > 0) {
+		failures.sort((left, right) => left.step.localeCompare(right.step));
+		logger.error("启动预热未全部就绪", { totalMs: Date.now() - startedAt, steps: stepsMs, failures: failures });
+		return;
+	}
+	logger.info("启动预热完成", { totalMs: Date.now() - startedAt, steps: stepsMs });
 }
 
 /**
@@ -67,9 +118,6 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 1. 初始化数据库
 	const db = new Database(config.database);
 	await db.initialize();
-
-	// 1.1 价格快照初始化：远端异常由服务内部回退 bundled，不阻断代理启动。
-	await modelCostMapService.initialize();
 
 	// 1.5 加载 DB 配置覆盖（LiteLLM_Config 表：store_prompts/logo/callbacks 等
 	// WebUI 设置项，对齐 Python proxy_config.get_config() 的 DB 合并语义）
@@ -126,10 +174,19 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	cliProxyRuntime.setActiveRequestProbe(() =>
 		router.getActiveRequestCount((deployment) => isCliProxyDeploymentParams(deployment.litellm_params)),
 	);
-	await cliProxyRuntime.initialize().catch((error: unknown) => {
-		// Runtime status 保留具体错误，LiteLLM 其余 provider 仍可正常工作。
-		console.error("CLIProxy runtime initialization failed", error);
-	});
+	// 这里的 initialize() 会安装/校验二进制、投影配置并等待子进程健康检查通过，
+	// 不在关键路径上执行，交给 warmUp() 与监听并行；子进程状态仍在 runtime status 里。
+	let warmUpPromise: Promise<void> | null = null;
+	const warmUp = (): Promise<void> =>
+		(warmUpPromise ??= runWarmUp([
+			{
+				name: "model_cost_map",
+				run: async () => {
+					await modelCostMapService.initialize();
+				},
+			},
+			{ name: "cliproxy_runtime", run: () => cliProxyRuntime.initialize() },
+		]));
 
 	// 4. 创建 AuthRepository
 	const authRepository = new AuthRepository(db.db);
@@ -156,5 +213,6 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		runtimeConfigService: runtimeConfigService,
 		cliProxyRuntime: cliProxyRuntime,
 		providerQuotaService: new ProviderQuotaService(),
+		warmUp: warmUp,
 	};
 }

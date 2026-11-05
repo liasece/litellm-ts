@@ -44,6 +44,10 @@
 - 改变 runtime 基础镜像、切换 CPA 大版本或调整插件注入规则属于兼容性/部署形态变化，先说明影响、
   验证方式和回滚边界。实现细节、插件来源与验证步骤见
   [docs/cliproxy-opencode-go-plugin.md](docs/cliproxy-opencode-go-plugin.md)。
+- 启动链路不等待 CPA 就绪：`createServiceContainer()` 之后由 `container.warmUp()` 在监听后并行
+  预热远端模型价格快照与子进程，只有数据库迁移、遗留在途请求回收、路由装配在关键路径上。改动启动
+  顺序前先读 [docs/startup.md](docs/startup.md)，不要把 `await cliProxyRuntime.initialize()` 或远端
+  价格快照拉取加回装配流程。
 
 ## 工作判断
 

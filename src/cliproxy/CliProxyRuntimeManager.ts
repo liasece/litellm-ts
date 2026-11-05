@@ -685,28 +685,39 @@ export class CliProxyRuntimeManager {
 	 *
 	 */
 	async initialize(): Promise<void> {
-		await Promise.all([
-			mkdir(this._runtimeRoot, { recursive: true }),
-			mkdir(this._versionsDir, { recursive: true }),
-			mkdir(this._authDir, { recursive: true }),
-			mkdir(this._logsDir, { recursive: true }),
-		]);
-		await this._installBootstrapIfNeeded();
-		const stored = await this._repository.getParam(CLIPROXY_CONFIG_PARAM);
-		if (stored) {
-			this._settings = {
-				enabled: stored["enabled"] !== false,
-				config_yaml: typeof stored["config_yaml"] === "string" ? stored["config_yaml"] : "",
-			};
-		} else {
-			this._settings = await this._importExistingOrDefaultSettings();
-			await this._repository.upsertParam(CLIPROXY_CONFIG_PARAM, this._settings);
-		}
-		await this._ensurePluginArtifact();
-		await this._projectConfig();
-		if (this._settings.enabled) {
-			await this.start();
-		}
+		// 这段初始化在网关监听之后的后台预热里执行，管理接口此时已经可以进来，
+		// 因此和其它改配置/改进程的操作共用同一个串行队列。每一步之前检查停止意图：
+		// 停机过程中（SIGTERM 常落在启动这几秒内）不再继续装文件或拉起子进程。
+		await this._serialize("initialize", async () => {
+			await Promise.all([
+				mkdir(this._runtimeRoot, { recursive: true }),
+				mkdir(this._versionsDir, { recursive: true }),
+				mkdir(this._authDir, { recursive: true }),
+				mkdir(this._logsDir, { recursive: true }),
+			]);
+			if (this._desiredStop) {
+				return;
+			}
+			await this._installBootstrapIfNeeded();
+			const stored = await this._repository.getParam(CLIPROXY_CONFIG_PARAM);
+			if (stored) {
+				this._settings = {
+					enabled: stored["enabled"] !== false,
+					config_yaml: typeof stored["config_yaml"] === "string" ? stored["config_yaml"] : "",
+				};
+			} else {
+				this._settings = await this._importExistingOrDefaultSettings();
+				await this._repository.upsertParam(CLIPROXY_CONFIG_PARAM, this._settings);
+			}
+			await this._ensurePluginArtifact();
+			await this._projectConfig();
+			if (this._desiredStop || !this._settings.enabled) {
+				return;
+			}
+			// 直接起进程而不是走 start()：start() 会再次进入串行队列，在这里会自等待。
+			// 传 true 让进程启动前的最后一次检查也认停机意图，避免停机中又被预热拉起。
+			await this._startProcess(true);
+		});
 	}
 
 	/**
@@ -1918,7 +1929,12 @@ export class CliProxyRuntimeManager {
 		});
 	}
 
-	private async _startProcess(): Promise<void> {
+	/**
+	 * 启动子进程并等待健康检查。
+	 * @param respectStopIntent - 为 true 时，把停机意图当成放弃启动的理由；供后台预热使用，
+	 * 使「检查停止意图」与「spawn」落在同一段同步代码里，停机期间不会被预热重新拉起。
+	 */
+	private async _startProcess(respectStopIntent = false): Promise<void> {
 		if (this._process) {
 			return;
 		}
@@ -1927,6 +1943,10 @@ export class CliProxyRuntimeManager {
 			return;
 		}
 		const binary = await this._resolveCurrentBinary();
+		if (respectStopIntent && this._desiredStop) {
+			this._state = "stopped";
+			return;
+		}
 		this._desiredStop = false;
 		this._state = "starting";
 		this._health = "unknown";
@@ -1971,6 +1991,11 @@ export class CliProxyRuntimeManager {
 			}, delay);
 		});
 		if (!(await this._waitForHealth(HEALTH_TIMEOUT_MS))) {
+			if (this._desiredStop) {
+				// 健康等待是被停机意图打断的，不要覆盖 shutdown 已经写好的 stopped 状态。
+				this._state = "stopped";
+				return;
+			}
 			// 子进程仍在运行且已被受管（exit handler 已挂载），不抛错、不失控；
 			// 保持 degraded 状态让 status() 如实反映，用户可 restart() 重试。
 			this._state = "degraded";
@@ -2057,6 +2082,12 @@ export class CliProxyRuntimeManager {
 	private async _waitForHealth(timeoutMs: number): Promise<boolean> {
 		const deadline = Date.now() + timeoutMs;
 		while (Date.now() < deadline) {
+			// 停机意图已下发或子进程已经退出时没有可等的东西：继续轮询只会让后台预热
+			// 拖住退出，而且这个端口不会再健康。
+			if (this._desiredStop || this._process === null) {
+				this._health = "unhealthy";
+				return false;
+			}
 			try {
 				const response = await fetch(`${this.baseUrl}/healthz`, { signal: AbortSignal.timeout(1_500) });
 				if (response.ok) {

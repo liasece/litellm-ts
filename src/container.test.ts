@@ -20,6 +20,18 @@ const mockDbModelRows: Array<Record<string, unknown>> = [];
 /** 测试可控的 LiteLLM_CredentialsTable 行（Database mock 数据源），每个用例前重置 */
 const mockCredentialRows: Array<Record<string, unknown>> = [];
 
+/** 测试记录的 CLIProxy 运行时初始化调用；装配阶段不应触发，只有 warmUp 才触发。 */
+const mockCliProxyInitialize = jest.fn().mockResolvedValue(undefined);
+
+jest.mock("./cliproxy/CliProxyRuntimeManager", () => ({
+	CliProxyRuntimeManager: jest.fn().mockImplementation(() => ({
+		initialize: mockCliProxyInitialize,
+		setActiveRequestProbe: jest.fn(),
+		shutdown: jest.fn().mockResolvedValue(undefined),
+		status: jest.fn(() => ({ state: "stopped" })),
+	})),
+}));
+
 jest.mock("./cost/ModelCostMapService", () => ({
 	modelCostMapService: {
 		initialize: jest.fn().mockResolvedValue(undefined),
@@ -71,6 +83,7 @@ jest.mock("./core/db/Database", () => ({
 }));
 
 beforeEach(() => {
+	jest.clearAllMocks();
 	for (const key of Object.keys(mockConfigParams)) {
 		delete mockConfigParams[key];
 	}
@@ -83,6 +96,38 @@ async function withDatabaseSnapshot<T>(container: Awaited<ReturnType<typeof crea
 	return container.router.runWithRuntimeSnapshot(snapshot, callback);
 }
 
+describe("createServiceContainer — 启动关键路径", () => {
+	function buildConfig(): ReturnType<typeof validateAndTransform> {
+		return validateAndTransform({
+			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
+		});
+	}
+
+	it("远端价格快照与 CLIProxy 子进程留到 warmUp，装配阶段不等待", async () => {
+		const container = await createServiceContainer(buildConfig());
+		expect(modelCostMapService.initialize).not.toHaveBeenCalled();
+		expect(mockCliProxyInitialize).not.toHaveBeenCalled();
+		await container.warmUp();
+		expect(modelCostMapService.initialize).toHaveBeenCalledTimes(1);
+		expect(mockCliProxyInitialize).toHaveBeenCalledTimes(1);
+	});
+
+	it("warmUp 幂等：重复调用不会重复拉起子进程或重跑远端拉取", async () => {
+		const container = await createServiceContainer(buildConfig());
+		await Promise.all([container.warmUp(), container.warmUp()]);
+		await container.warmUp();
+		expect(modelCostMapService.initialize).toHaveBeenCalledTimes(1);
+		expect(mockCliProxyInitialize).toHaveBeenCalledTimes(1);
+	});
+
+	it("预热失败只降级对应能力，不向调用方抛错", async () => {
+		mockCliProxyInitialize.mockRejectedValueOnce(new Error("CLIProxy 二进制缺失"));
+		const container = await createServiceContainer(buildConfig());
+		await expect(container.warmUp()).resolves.toBeUndefined();
+		expect(modelCostMapService.initialize).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("createServiceContainer — router_settings 接线", () => {
 	it("enable_pre_call_checks / max_fallbacks 传入 Router", async () => {
 		const config = validateAndTransform({
@@ -90,7 +135,6 @@ describe("createServiceContainer — router_settings 接线", () => {
 			router_settings: { enable_pre_call_checks: true, max_fallbacks: 10 },
 		});
 		const container = await createServiceContainer(config);
-		expect(modelCostMapService.initialize).toHaveBeenCalled();
 		expect(container.modelCostMapService).toBe(modelCostMapService);
 		await withDatabaseSnapshot(container, () => {
 			expect(container.router.getNoAvailableDeploymentInfo("missing").preCallChecks).toBe(true);
