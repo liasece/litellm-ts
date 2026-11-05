@@ -249,6 +249,10 @@ async function executeDeepSeekToolCall(
 	if (text.trim().length === 0) {
 		throw ApiError.unavailable("DeepSeek 直连工具没有返回可用内容");
 	}
+	// 官方口径：Search 只有返回非空结果列表才计费，空结果免费（Fetch 正文为空已在上一步抛错）。
+	// 空结果仍写审计行，但固定单价记 0，避免把上游不收费的调用算成支出。
+	const resultItems = raw["results"];
+	const billable = request.kind === "fetch" || (Array.isArray(resultItems) && resultItems.length > 0);
 	await recordWebAttempt(context.audit, {
 		request: request,
 		model: `deepseek_tools/${request.kind}`,
@@ -259,7 +263,7 @@ async function executeDeepSeekToolCall(
 		endTime: new Date(),
 		executor: executorLabel(executor),
 		credentialName: executor.credential_name,
-		fixedCostUsd: DEEPSEEK_TOOLS_COST_PER_REQUEST_USD,
+		fixedCostUsd: billable ? DEEPSEEK_TOOLS_COST_PER_REQUEST_USD : 0,
 		outcome: { response: { executor: executorLabel(executor), ...raw } },
 	});
 	return { text: text, raw: raw, model: `deepseek_tools/${request.kind}` };

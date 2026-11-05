@@ -205,6 +205,46 @@ describe("web 执行链：直连执行者", () => {
 });
 
 describe("web 执行链：按次计费可观察性", () => {
+	it("Search 返回空结果时保留审计行但不计费", async () => {
+		mockDeepSeek(() => ({ status: 200, body: searchResponse([]) }));
+		const audited: BuiltinCapabilityModelCall[] = [];
+		const audit: BuiltinCapabilityAuditHook = async (call) => {
+			audited.push(call);
+			return { requestId: "audit-empty" };
+		};
+
+		const result = await executeWebToolCall(
+			stubRouter(),
+			{
+				maxIterations: 3,
+				maxOutputTokens: 1024,
+				executors: [
+					{
+						type: "deepseek_tools",
+						api_base: "https://api.deepseek.com",
+						credential_name: "deepseek-prod",
+						timeout_ms: 5_000,
+						search_count: 10,
+						search_need_content: false,
+						localization: "",
+					},
+				],
+				credentialValues: credentialAccessor({
+					"deepseek-prod": { api_key: "sk-direct" },
+				}),
+			},
+			PRIVATE_WEB_SEARCH_TOOL_NAME,
+			JSON.stringify({ query: "no results" }),
+			jest.fn(),
+			{ audit: audit, toolCallId: "call-empty" },
+		);
+
+		// 上游对空结果不收费：审计行照旧记录，固定费用必须是 0 而不是 0.00075。
+		expect(result.text).toContain("returned no results");
+		expect(audited).toHaveLength(1);
+		expect(audited[0]!.callType).toBe("asearch");
+		expect(audited[0]!.fixedCostUsd).toBe(0);
+	});
 	it("直连调用写入固定费用与 asearch 调用类型，使按次支出出现在费用统计里", async () => {
 		mockDeepSeek(() => ({
 			status: 200,
