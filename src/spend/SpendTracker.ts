@@ -1783,6 +1783,16 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 	const totalTokens = normalized?.total_tokens ?? logEntry.total_tokens;
 	const cacheCreationTokens = normalized?.cache_creation_input_tokens ?? logEntry.cache_creation_input_tokens ?? 0;
 	const cacheReadTokens = normalized?.cache_read_input_tokens ?? logEntry.cache_read_input_tokens ?? 0;
+	// 按次计费的直连工具调用（如 DeepSeek Search / Fetch）不产生模型调用，token 费用恒 0；
+	// 其固定单价并入 spend，并单独记入 cost_breakdown.tool_usage_cost，
+	// 保证费用统计与 Logs 页能看到这部分支出。
+	const fixedCost = typeof logEntry.fixed_cost_usd === "number" && logEntry.fixed_cost_usd > 0 ? logEntry.fixed_cost_usd : 0;
+	// 这类审计行的模型是内部伪模型名（deepseek_tools/search），计价口径是"每次请求的固定单价"，
+	// 不存在 token 单价可查。再走 token 价格表只会得到"未找到模型价格 … 按 0 计费"，
+	// 把已经记进 tool_usage_cost 的费用说成漏价，并在生产刷出每小时数十条噪音。
+	// fixed_cost_usd 有值即代表该行按次计费（含空结果这种官方免费的 0 元行），token 费用恒 0。
+	const perRequestChargeOnly =
+		typeof logEntry.fixed_cost_usd === "number" && promptTokens + completionTokens + cacheCreationTokens + cacheReadTokens === 0;
 
 	// GAP (COST-001): costPerToken 现在对未知模型返回 0,0,0 静默（对齐 PY）。
 	// 不再 try/catch：spend 默认为 0，未知模型日志会由 costPerToken 内部 logger.warn 留痕。
@@ -1798,19 +1808,19 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		undefined;
 	const reasoningTokens =
 		typeof completionDetails?.["reasoning_tokens"] === "number" ? (completionDetails["reasoning_tokens"] as number) : 0;
-	const tokenCost = costPerToken(logEntry.model, promptTokens, completionTokens, cacheCreationTokens, cacheReadTokens, {
-		// 批次 9: 实际执行 deployment 的 model_info/litellm_params 自定义价格优先于内置价格表
-		customCostPerToken: logEntry.custom_cost_per_token,
-		modelCostMap: modelCostMapEntry as never,
-		reasoningTokens: reasoningTokens,
-		// 峰谷：以请求开始时刻判定，避免长请求跨越峰谷边界后计费漂移
-		at: new Date(logEntry.startTime),
-	});
-	// 按次计费的直连工具调用（如 DeepSeek Search / Fetch）不产生模型调用，token 费用恒 0；
-	// 其固定单价在此并入 spend，并单独记入 cost_breakdown.tool_usage_cost，
-	// 保证费用统计与 Logs 页能看到这部分支出。
+	// 纯按次计费的行既没有 token，也没有可查的 token 单价（见上方 perRequestChargeOnly），
+	// 直接取零，避免为每次搜索/抓取打印一次"未找到模型价格"。
+	const tokenCost = perRequestChargeOnly
+		? { cacheInputCost: 0, inputCost: 0, outputCost: 0, totalCost: 0 }
+		: costPerToken(logEntry.model, promptTokens, completionTokens, cacheCreationTokens, cacheReadTokens, {
+				// 批次 9: 实际执行 deployment 的 model_info/litellm_params 自定义价格优先于内置价格表
+				customCostPerToken: logEntry.custom_cost_per_token,
+				modelCostMap: modelCostMapEntry as never,
+				reasoningTokens: reasoningTokens,
+				// 峰谷：以请求开始时刻判定，避免长请求跨越峰谷边界后计费漂移
+				at: new Date(logEntry.startTime),
+			});
 	const { cacheInputCost, inputCost, outputCost } = tokenCost;
-	const fixedCost = typeof logEntry.fixed_cost_usd === "number" && logEntry.fixed_cost_usd > 0 ? logEntry.fixed_cost_usd : 0;
 	const spend = tokenCost.totalCost + fixedCost;
 	const requestStartTime = new Date(logEntry.startTime);
 	const requestEndTime = new Date(logEntry.endTime);

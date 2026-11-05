@@ -37,6 +37,7 @@ import {
 	trackSpendLog,
 } from "./SpendTracker";
 import { estimateRouterSpendReservation } from "./SpendReservation";
+import { logger } from "../core/utils/logger";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { BadRequestError } from "../router/RouterErrors";
 
@@ -1763,6 +1764,19 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 		} as Parameters<typeof trackSpendLog>[1];
 	}
 
+	/**
+	 * 收集漏价告警：winston 子日志器最终都写回根实例，spy 根 write 即可覆盖。
+	 * @param spy
+	 */
+	function missingPriceWarnings(spy: jest.SpyInstance): Record<string, unknown>[] {
+		return spy.mock.calls
+			.map((call) => call[0] as Record<string, unknown> | undefined)
+			.filter(
+				(info): info is Record<string, unknown> =>
+					info !== undefined && info["level"] === "warn" && String(info["message"]).includes("未找到模型价格"),
+			);
+	}
+
 	it("metadata.cost_breakdown 注入缓存输入、输入、输出与总费用", async () => {
 		const insertedSpendLogs: Record<string, unknown>[] = [];
 		await trackSpendLog(createInsertCaptureDb(insertedSpendLogs), createMinimalLogEntry({}));
@@ -1827,6 +1841,74 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 			total_cost: 0.00075,
 			tool_usage_cost: 0.00075,
 		});
+	});
+
+	it("纯按次计费的审计行不再为伪模型名打印“未找到模型价格”", async () => {
+		const insertedSpendLogs: Record<string, unknown>[] = [];
+		const writeSpy = jest.spyOn(logger, "write");
+		let warnings: Record<string, unknown>[] = [];
+		try {
+			await trackSpendLog(
+				createInsertCaptureDb(insertedSpendLogs),
+				createMinimalLogEntry({
+					call_type: CallType.ASearch,
+					model: "deepseek_tools/search",
+					fixed_cost_usd: 0.00075,
+					prompt_tokens: 0,
+					completion_tokens: 0,
+					total_tokens: 0,
+				}),
+			);
+			// mockRestore 会清空调用记录，必须在恢复前取快照。
+			warnings = missingPriceWarnings(writeSpy);
+		} finally {
+			writeSpy.mockRestore();
+		}
+
+		// 费用仍按官方固定单价入账，改动只去掉"把已记账费用说成漏价"的误导告警。
+		expect(insertedSpendLogs[0]!["spend"]).toBeCloseTo(0.00075, 10);
+		expect(warnings).toHaveLength(0);
+	});
+
+	it("仍有 token 的未知模型保留漏价告警", async () => {
+		const insertedSpendLogs: Record<string, unknown>[] = [];
+		const writeSpy = jest.spyOn(logger, "write");
+		let warnings: Record<string, unknown>[] = [];
+		try {
+			await trackSpendLog(createInsertCaptureDb(insertedSpendLogs), createMinimalLogEntry({}));
+			warnings = missingPriceWarnings(writeSpy);
+		} finally {
+			writeSpy.mockRestore();
+		}
+
+		expect(insertedSpendLogs[0]!["spend"]).toBe(0);
+		expect(warnings.length).toBeGreaterThan(0);
+	});
+
+	it("空结果审计行按官方口径记 0 费用且不打印漏价告警", async () => {
+		const insertedSpendLogs: Record<string, unknown>[] = [];
+		const writeSpy = jest.spyOn(logger, "write");
+		let warnings: Record<string, unknown>[] = [];
+		try {
+			await trackSpendLog(
+				createInsertCaptureDb(insertedSpendLogs),
+				createMinimalLogEntry({
+					call_type: CallType.ASearch,
+					model: "deepseek_tools/search",
+					fixed_cost_usd: 0,
+					prompt_tokens: 0,
+					completion_tokens: 0,
+					total_tokens: 0,
+				}),
+			);
+			warnings = missingPriceWarnings(writeSpy);
+		} finally {
+			writeSpy.mockRestore();
+		}
+
+		// 官方口径：Search 空结果不计费，因此 0 元行必须保留审计痕迹但不能被当成漏价。
+		expect(insertedSpendLogs[0]!["spend"]).toBe(0);
+		expect(warnings).toHaveLength(0);
 	});
 
 	it("固定费用与 token 费用相加，不覆盖模型部分", async () => {
