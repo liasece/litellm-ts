@@ -182,9 +182,12 @@ function DataTableComponent<TData, TValue>({
 	return (
 		<div className="rounded-lg custom-border overflow-x-auto w-full max-w-full box-border">
 			{/* Tremor 把 className 放在外层 div 上，<table> 只接收 style；table-fixed 类不会生效。
-			   固定布局让列宽只由 columnDef.size 决定，单元格内容再长也不会改变表格宽度。 */}
+			   固定布局让列宽只由 columnDef.size 决定，单元格内容再长也不会改变表格宽度。
+			   行高必须是整数：border-collapse: collapse 下每行会带上半格边框的 0.5px，
+			   数据刷新时各行的 32.5px/33px 取整相位跟着变，整张表高度就会在 3338/3339 之间
+			   来回跳 1px（表现为整页抖动）。给单元格一个固定整数高度即可消除。 */}
 			<Table
-				className="[&_td]:py-0.5 [&_th]:py-1 w-full box-border"
+				className="[&_td]:py-0.5 [&_tbody_td]:h-[33px] [&_th]:py-1 w-full box-border"
 				style={{ minWidth: "400px", tableLayout: "fixed" }}
 			>
 				<MemoizedDataTableHeader
