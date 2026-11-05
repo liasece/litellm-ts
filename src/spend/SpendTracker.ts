@@ -54,6 +54,7 @@ import { getConfig } from "../core/config";
 import type { UserAPIKeyAuth } from "../types/auth";
 import type { CustomCostPerToken, PeakPricingConfig } from "../cost/CostCalculator";
 import { normalizeRoutingTrace } from "../router/ModelResolutionTrace";
+import { resolveRequestSessionGroupKey } from "./sessionIdentity";
 
 const logger = createModuleLogger("SpendTracker");
 
@@ -680,34 +681,13 @@ function getOrCreateSpendSessionId(req: Request): string {
 	return req.spendSessionId;
 }
 
-const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
- * OpenAI Responses/Codex 把稳定任务 ID 放在 client_metadata，而顶层
- * SpendLog session_id 仍是请求级 UUID。这里仅提取合法 UUID，并保持
- * thread_id > client session_id > prompt_cache_key 的优先级。
+ * 顶层 SpendLog session_id 仍是请求级 UUID。客户端声明的稳定任务 ID 才是会话分组依据，
+ * 具体来源与优先级见 sessionIdentity。
  * @param req
  */
 function getCanonicalSessionGroupKey(req: Request): string | undefined {
-	const requestBody =
-		req.body !== null && typeof req.body === "object" && !Array.isArray(req.body) ? (req.body as Record<string, unknown>) : undefined;
-	const clientMetadata =
-		requestBody?.client_metadata !== null &&
-		typeof requestBody?.client_metadata === "object" &&
-		!Array.isArray(requestBody.client_metadata)
-			? (requestBody.client_metadata as Record<string, unknown>)
-			: undefined;
-	const candidates = [clientMetadata?.thread_id, clientMetadata?.session_id, requestBody?.prompt_cache_key];
-	for (const candidate of candidates) {
-		if (typeof candidate !== "string") {
-			continue;
-		}
-		const normalized = candidate.trim();
-		if (SESSION_UUID_PATTERN.test(normalized)) {
-			return `s:${normalized}`;
-		}
-	}
-	return undefined;
+	return resolveRequestSessionGroupKey(req);
 }
 
 /**

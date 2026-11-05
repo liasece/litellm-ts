@@ -124,6 +124,86 @@ describeWithDatabase("Database PostgreSQL bootstrap integration", () => {
 		);
 		expect(result.rows[0]?.session_group_key).toBe(`s:${threadId}`);
 	});
+
+	it("带前缀的客户端会话 ID 归一成裸 UUID 分组键，与其他写法合并到同一会话", async () => {
+		const database = new Database(databaseConfig(connectionString));
+		await database.initialize();
+		await database.close();
+		const sessionId = "2e24587f-15e6-4d81-b63d-f5e53668efb3";
+		const groupKeyFor = async (canonical: string): Promise<string | undefined> => {
+			const result = await schemaPool.query<{ session_group_key: string }>(
+				"SELECT litellm_session_group_key($1::jsonb, $2::text, $3::text) AS session_group_key",
+				[JSON.stringify({ session_group_key: canonical }), "request-level-uuid", "req-1"],
+			);
+			return result.rows[0]?.session_group_key;
+		};
+		// 客户端可能写 session-<uuid>、SESSION-<uuid> 或裸 UUID；三者必须落到同一会话，
+		// 否则一次对话会在 Logs 里被拆成多个会话。
+		await expect(groupKeyFor(`s:session-${sessionId}`)).resolves.toBe(`s:${sessionId}`);
+		await expect(groupKeyFor(`s:${sessionId.toUpperCase()}`)).resolves.toBe(`s:${sessionId}`);
+		await expect(groupKeyFor(`s:${sessionId}`)).resolves.toBe(`s:${sessionId}`);
+	});
+
+	it("启动迁移不改写历史日志；显式回填分批合并会话并可重试", async () => {
+		const database = new Database(databaseConfig(connectionString));
+		await database.initialize();
+		await database.close();
+		const sessionUuid = "2e24587f-15e6-4d81-b63d-f5e53668efb3";
+		const requestBody = {
+			body: { prompt_cache_key: `session-${sessionUuid}` },
+			headers: { session_id: `session-${sessionUuid}` },
+		};
+		await schemaPool.query(
+			`INSERT INTO "LiteLLM_SpendLogs" (request_id, call_type, api_key, model, "startTime", "endTime", session_id, metadata, proxy_server_request)
+			 VALUES ('backfill-1', 'aresponses', 'k', 'm', now(), now(), 'request-level-1', '{}'::jsonb, $1::jsonb),
+			        ('backfill-2', 'aresponses', 'k', 'm', now(), now(), 'request-level-2', '{}'::jsonb, $1::jsonb)`,
+			[JSON.stringify(requestBody)],
+		);
+		await schemaPool.query(
+			`INSERT INTO "LiteLLM_SpendLogs" (request_id, call_type, api_key, model, "startTime", "endTime", session_id, metadata, proxy_server_request)
+			 VALUES ('backfill-0', 'aresponses', 'k', 'm', now(), now(), 'request-level-0', '{}'::jsonb, '{}'::jsonb)`,
+		);
+		const latestMigration = readMigrationFiles({ migrationsFolder: resolve(__dirname, "../../../drizzle") }).at(-1)!;
+		await schemaPool.query('DELETE FROM "__drizzle_migrations" WHERE created_at = $1', [latestMigration.folderMillis]);
+		const upgraded = new Database(databaseConfig(connectionString));
+		try {
+			await upgraded.initialize();
+			await expect(upgraded.probeReadiness()).resolves.toEqual({ ready: true });
+		} finally {
+			await upgraded.close();
+		}
+		// 升级只更新规则，不扫描请求或改写现有分组；历史回填由独立维护入口完成。
+		const before = await schemaPool.query<{ session_group_key: string }>(
+			`SELECT session_group_key FROM "LiteLLM_SpendLogs" WHERE request_id LIKE 'backfill-%' ORDER BY request_id`,
+		);
+		expect(before.rows.map((row) => row.session_group_key)).toEqual(["s:request-level-0", "s:request-level-1", "s:request-level-2"]);
+
+		const maintenanceSql = readFileSync(resolve(__dirname, "../../../scripts/backfill-session-group-ids.sql"), "utf8");
+		const backfillSql = maintenanceSql
+			.slice(maintenanceSql.indexOf("WITH batch"), maintenanceSql.lastIndexOf("COMMIT;"))
+			.replace(":'after_request_id'", "$1")
+			.replace(":batch_size", "$2");
+		const firstBatch = await schemaPool.query(backfillSql, ["", 1]);
+		expect(firstBatch.rows[0]).toMatchObject({ scanned_rows: "1", updated_rows: "0" });
+		const secondBatch = await schemaPool.query(backfillSql, [firstBatch.rows[0].next_request_id, 1]);
+		expect(secondBatch.rows[0]).toMatchObject({ scanned_rows: "1", updated_rows: "1" });
+		const thirdBatch = await schemaPool.query(backfillSql, [secondBatch.rows[0].next_request_id, 1]);
+		expect(thirdBatch.rows[0]).toMatchObject({ scanned_rows: "1", updated_rows: "1" });
+		const exhausted = await schemaPool.query(backfillSql, [thirdBatch.rows[0].next_request_id, 1]);
+		expect(exhausted.rows[0]).toMatchObject({ scanned_rows: "0", updated_rows: "0" });
+
+		// 修复后：两行合并成同一个会话，且再跑一次不会改变结果。
+		const after = await schemaPool.query<{ session_group_key: string }>(
+			`SELECT session_group_key FROM "LiteLLM_SpendLogs" WHERE request_id LIKE 'backfill-%' ORDER BY request_id`,
+		);
+		expect(after.rows.map((row) => row.session_group_key)).toEqual(["s:request-level-0", `s:${sessionUuid}`, `s:${sessionUuid}`]);
+		const repeated = await schemaPool.query(backfillSql, ["", 3]);
+		expect(repeated.rows[0]).toMatchObject({ scanned_rows: "3", updated_rows: "0" });
+		const rerun = await schemaPool.query<{ session_group_key: string }>(
+			`SELECT session_group_key FROM "LiteLLM_SpendLogs" WHERE request_id LIKE 'backfill-%' ORDER BY request_id`,
+		);
+		expect(rerun.rows.map((row) => row.session_group_key)).toEqual(["s:request-level-0", `s:${sessionUuid}`, `s:${sessionUuid}`]);
+	});
 });
 
 describeWithDatabase("Production database read-only takeover integration", () => {

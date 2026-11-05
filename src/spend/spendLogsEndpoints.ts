@@ -47,6 +47,7 @@ import {
 } from "./spendManagementFormatters";
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
+import { CLAUDE_CODE_USER_ID_PATTERN, normalizeSessionUuid } from "./sessionIdentity";
 import type { Column } from "./spendManagementTypes";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
@@ -76,9 +77,6 @@ type SessionGroupType = "claude_code_user_id" | "session_id";
 const SPEND_LOG_DETAIL_BATCH_SIZE = 100;
 const COLD_STORAGE_BATCH_CONCURRENCY = 8;
 
-const CLAUDE_CODE_USER_ID_PATTERN =
-	/^user_[A-Za-z0-9_-]+_account_[A-Za-z0-9_-]*_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * /spend/logs/ui 响应包络 — 对齐 Python `ui_view_spend_logs` 返回。
@@ -1465,12 +1463,7 @@ function readEmbeddedUserSessionId(metadata: unknown): string | null {
 	if (userMetadata === null || typeof userMetadata !== "object" || Array.isArray(userMetadata)) {
 		return null;
 	}
-	const sessionId = (userMetadata as Record<string, unknown>).session_id;
-	if (typeof sessionId !== "string") {
-		return null;
-	}
-	const normalized = sessionId.trim();
-	return SESSION_UUID_PATTERN.test(normalized) ? normalized : null;
+	return normalizeSessionUuid((userMetadata as Record<string, unknown>).session_id);
 }
 
 /**
