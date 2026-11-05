@@ -1,9 +1,11 @@
+import { Fragment } from "react";
+
 import { Money, useMoneyFormatter } from "@/contexts/PriceDisplay";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Popover, Tag, Tooltip } from "antd";
 import { ArrowDownToLine, ArrowUpFromLine, CircleDollarSign, Database, GitBranch } from "lucide-react";
-import { getModelLogoAndName } from "../provider_info_helpers";
+import { getModelLogoAndName, getProviderLogoAndName } from "../provider_info_helpers";
 import LabeledField from "../common_components/LabeledField";
 import { TableHeaderSortDropdown } from "../common_components/TableHeaderSortDropdown/TableHeaderSortDropdown";
 import { MetricProgress, MetricProgressCell } from "./MetricProgressCell";
@@ -176,6 +178,41 @@ function CostBreakdownPopoverContent({
 	);
 }
 
+/** 路由弹层里的模型图标尺寸；图标只补充厂商信息，名称仍是主要内容。 */
+const MODEL_INFO_ICON_CLASS = "mr-1 inline-block h-3.5 w-3.5 align-[-2px] object-contain";
+const MODEL_INFO_ICON_FALLBACK_CLASS =
+	"mr-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-200 align-[-2px] text-[10px] leading-none";
+
+/**
+ * 路由信息中的模型名。provider 取自当前日志，历史日志缺失 provider 时只显示名称，
+ * 不为无法判断厂商的别名凭空画一个图标。
+ */
+function ModelNameWithIcon({ provider, model }: { provider?: string; model: string }): React.ReactElement {
+	return (
+		<>
+			{provider ? (
+				<ProviderLogo
+					provider={provider}
+					logo={getModelLogoAndName(provider, model).logo}
+					className={MODEL_INFO_ICON_CLASS}
+					fallbackClassName={MODEL_INFO_ICON_FALLBACK_CLASS}
+				/>
+			) : null}
+			{model}
+		</>
+	);
+}
+
+/** 与 LabeledField 同一套排版，值可以是带图标的模型名。 */
+function ModelInfoField({ label, children }: { label: string; children: React.ReactNode }): React.ReactElement {
+	return (
+		<div className="min-w-0">
+			<div className="text-xs uppercase tracking-[0.05em] text-slate-500">{label}</div>
+			<div className="min-w-0 break-all text-sm font-semibold text-slate-800">{children}</div>
+		</div>
+	);
+}
+
 function ModelInfoPopoverContent({
 	provider,
 	displayModelName,
@@ -183,22 +220,45 @@ function ModelInfoPopoverContent({
 }: {
 	provider?: string;
 	displayModelName: string;
-	resolutionLines: string[];
+	resolutionLines: ModelResolutionLine[];
 }): React.ReactElement {
 	return (
-		<div className="w-[440px] space-y-3 break-all" aria-label="Model information">
+		<div className="w-[440px] space-y-3" aria-label="Model information">
 			<div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
-				<LabeledField label="Provider" value={provider || "-"} />
-				<LabeledField label="显示模型" value={displayModelName || "-"} />
+				<ModelInfoField label="Provider">
+					{provider ? (
+						<>
+							<ProviderLogo
+								provider={provider}
+								logo={getProviderLogoAndName(provider).logo}
+								className={MODEL_INFO_ICON_CLASS}
+								fallbackClassName={MODEL_INFO_ICON_FALLBACK_CLASS}
+							/>
+							{provider}
+						</>
+					) : (
+						"-"
+					)}
+				</ModelInfoField>
+				<ModelInfoField label="显示模型">
+					{displayModelName ? <ModelNameWithIcon provider={provider} model={displayModelName} /> : "-"}
+				</ModelInfoField>
 			</div>
 			{resolutionLines.length > 0 && (
-				<div className="space-y-3 border-t border-slate-100 pt-3">
-					{resolutionLines.map((line, index) => {
-						const separatorIndex = line.indexOf(" · ");
-						const label = separatorIndex >= 0 ? line.slice(0, separatorIndex) : "Model";
-						const value = separatorIndex >= 0 ? line.slice(separatorIndex + 3) : line;
-						return <LabeledField key={`${line}-${index}`} label={label} value={value} />;
-					})}
+				<div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 border-t border-slate-100 pt-3">
+					{resolutionLines.map((line, index) => (
+						<Fragment key={`${line.label}-${index}`}>
+							<span className="pt-0.5 text-xs uppercase tracking-[0.05em] text-slate-500">{line.label}</span>
+							<div className="min-w-0 break-all text-sm font-semibold text-slate-800">
+								{line.path.map((model, hopIndex) => (
+									<Fragment key={`${model}-${hopIndex}`}>
+										{hopIndex > 0 && " \u2192 "}
+										<ModelNameWithIcon provider={provider} model={model} />
+									</Fragment>
+								))}
+							</div>
+						</Fragment>
+					))}
 				</div>
 			)}
 		</div>
@@ -261,11 +321,16 @@ export function normalizeModelResolutionChain(value: unknown): ModelResolutionCh
 	});
 }
 
-export function buildModelResolutionTooltipLines(
+export interface ModelResolutionLine {
+	label: string;
+	path: string[];
+}
+
+export function buildModelResolutionLines(
 	fallbackModelsValue: unknown,
 	resolutionChainValue: unknown,
 	executedModel: string,
-): string[] {
+): ModelResolutionLine[] {
 	const fallbackModels = Array.isArray(fallbackModelsValue)
 		? fallbackModelsValue.filter((model): model is string => typeof model === "string" && model.length > 0)
 		: [];
@@ -274,7 +339,7 @@ export function buildModelResolutionTooltipLines(
 	);
 	const entriesByIndex = new Map(entries.map((entry) => [entry.fallback_index, entry]));
 	const maxIndex = Math.max(fallbackModels.length - 1, ...entries.map((entry) => entry.fallback_index), 0);
-	const lines: string[] = [];
+	const lines: ModelResolutionLine[] = [];
 	let previousModel: string | undefined;
 
 	for (let index = 0; index <= maxIndex; index += 1) {
@@ -284,20 +349,20 @@ export function buildModelResolutionTooltipLines(
 		if (path.length === 0) continue;
 		const first = path[0]!;
 		if (index === 0) {
-			lines.push(`Request · ${first}`);
+			lines.push({ label: "Request", path: [first] });
 		} else if (previousModel && previousModel !== first) {
-			lines.push(`Fallback ${index} · ${previousModel} → ${first}`);
+			lines.push({ label: `Fallback ${index}`, path: [previousModel, first] });
 		} else {
-			lines.push(`Fallback ${index} · ${first}`);
+			lines.push({ label: `Fallback ${index}`, path: [first] });
 		}
 		for (let hop = 1; hop < path.length; hop += 1) {
-			lines.push(`Alias · ${path[hop - 1]} → ${path[hop]}`);
+			lines.push({ label: "Alias", path: [path[hop - 1], path[hop]] });
 		}
 		previousModel = path[path.length - 1];
 	}
 
 	if (executedModel) {
-		lines.push(`Executed · ${executedModel}`);
+		lines.push({ label: "Executed", path: [executedModel] });
 	}
 	return lines;
 }
@@ -731,7 +796,7 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 					: null;
 			const fallbackModels: string[] | undefined = row.metadata?.fallback_models;
 			const fallbackCount = fallbackModels && fallbackModels.length > 1 ? fallbackModels.length - 1 : 0;
-			const resolutionLines = buildModelResolutionTooltipLines(
+			const resolutionLines = buildModelResolutionLines(
 				fallbackModels,
 				row.metadata?.model_resolution_chain,
 				modelName,

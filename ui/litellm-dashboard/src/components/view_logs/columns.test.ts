@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildModelResolutionTooltipLines } from "./columns";
+import { buildModelResolutionLines } from "./columns";
 
-describe("buildModelResolutionTooltipLines", () => {
+describe("buildModelResolutionLines", () => {
 	it("将请求、嵌套 alias、fallback 与最终执行模型逐跳分行", () => {
 		expect(
-			buildModelResolutionTooltipLines(
+			buildModelResolutionLines(
 				["A", "fallback-alias"],
 				[
 					{
@@ -23,12 +23,12 @@ describe("buildModelResolutionTooltipLines", () => {
 				"openai/C",
 			),
 		).toEqual([
-			"Request · A",
-			"Alias · A → alias-mid",
-			"Alias · alias-mid → B",
-			"Fallback 1 · B → fallback-alias",
-			"Alias · fallback-alias → C",
-			"Executed · openai/C",
+			{ label: "Request", path: ["A"] },
+			{ label: "Alias", path: ["A", "alias-mid"] },
+			{ label: "Alias", path: ["alias-mid", "B"] },
+			{ label: "Fallback 1", path: ["B", "fallback-alias"] },
+			{ label: "Alias", path: ["fallback-alias", "C"] },
+			{ label: "Executed", path: ["openai/C"] },
 		]);
 	});
 });
