@@ -95,6 +95,56 @@ function parseSseEvents(body: string): Array<Record<string, unknown>> {
 		.map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
 }
 
+/** 原生 Responses 上游流式帧：能力主轮走原生协议后，测试替身必须按该协议应答。 */
+function nativeResponsesSse(options: {
+	id: string;
+	text: string;
+	usage: Record<string, unknown>;
+	model?: string;
+	reasoning?: string;
+}): string {
+	const event = (type: string, payload: Record<string, unknown>): string =>
+		`event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`;
+	const model = options.model ?? "deepseek-v4-flash";
+	const chunks = [
+		event("response.created", { response: { id: options.id, object: "response", model, status: "in_progress" } }),
+	];
+	if (options.reasoning !== undefined) {
+		chunks.push(
+			event("response.reasoning_summary_text.delta", {
+				item_id: `rs_${options.id}`,
+				output_index: 0,
+				delta: options.reasoning,
+			}),
+		);
+	}
+	chunks.push(
+		event("response.output_text.delta", { item_id: `msg_${options.id}`, output_index: 0, content_index: 0, delta: options.text }),
+	);
+	chunks.push(
+		event("response.completed", {
+			response: {
+				id: options.id,
+				object: "response",
+				model,
+				status: "completed",
+				output: [
+					{
+						id: `msg_${options.id}`,
+						type: "message",
+						role: "assistant",
+						status: "completed",
+						content: [{ type: "output_text", text: options.text, annotations: [] }],
+					},
+				],
+				usage: options.usage,
+			},
+		}),
+	);
+	chunks.push("data: [DONE]\n\n");
+	return chunks.join("");
+}
+
 describe("Responses API contract matrix", () => {
 	test("shared endpoint lifecycle commits only one terminal accounting action", async () => {
 		const stop = jest.fn();
@@ -239,12 +289,10 @@ describe("Responses API contract matrix", () => {
 						headers: { "content-type": "application/json" },
 					});
 				}
-				const chatChunk = (delta: Record<string, unknown>, finish: string | null, extra: Record<string, unknown> = {}) => "data: " + JSON.stringify({ id: "chatcmpl-cap", object: "chat.completion.chunk", created: 1700000200, model: "deepseek-v4.1-flash", choices: [{ index: 0, delta: delta, finish_reason: finish }], ...extra }) + "\n\n";
-				const sse = chatChunk({ role: "assistant" }, null) +
-					chatChunk({ content: "OK" }, null) +
-					chatChunk({}, "stop", { usage: upstreamResponse.usage }) +
-					"data: [DONE]\n\n";
-				return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+				return new Response(
+					nativeResponsesSse({ id: "resp_cap_cache", text: "OK", model: "deepseek-v4.1-flash", usage: upstreamResponse.usage }),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				);
 			});
 			const nativeDeployment = {
 				model_name: "cliproxy-cached",
@@ -293,6 +341,109 @@ describe("Responses API contract matrix", () => {
 			if (!stream) {
 				expect((clientResponse.usage as Record<string, unknown>).cost).toBeCloseTo(expectedCost, 10);
 			}
+		});
+
+		test("CLIProxy streaming Responses keeps the native Responses transport", async () => {
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-cliproxy-native",
+				reserved: 1,
+				actual: null,
+			});
+			jest.spyOn(SpendTracker, "checkpointActiveRequest").mockResolvedValue(true);
+			jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({
+				status: "committed",
+				requestId: "request-cliproxy-native",
+				spend: 0,
+			});
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					nativeResponsesSse({
+						id: "resp_cliproxy_native",
+						text: "OK",
+						usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				),
+			);
+			const deployment = {
+				model_name: "cliproxy-native",
+				litellm_params: { model: "cliproxy/opencode-go/deepseek-v4.1-flash", custom_llm_provider: "cliproxy" },
+				model_info: { id: "cliproxy-native-deployment" },
+			};
+			const app = buildApp(buildDeploymentRouter([deployment]), true);
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({ model: "cliproxy-native", input: "Return OK.", store: false, stream: true })
+				.expect(200);
+
+			expect(String(fetchSpy.mock.calls[0]?.[0])).toContain("/responses");
+			expect(String(fetchSpy.mock.calls[0]?.[0])).not.toContain("/chat/completions");
+			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+			expect(providerBody["stream"]).toBe(true);
+			expect(providerBody["input"]).toBeDefined();
+			const events = parseSseEvents(response.text);
+			expect(events.at(-1)).toMatchObject({ type: "response.completed" });
+		});
+
+		test("capability main turn relays upstream reasoning to the client", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							vision: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "vision-worker",
+								fallback_models: [],
+								max_iterations: 3,
+								max_output_tokens: 1024,
+							},
+						}
+					: {},
+			);
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-reasoning",
+				reserved: 1,
+				actual: null,
+			});
+			jest.spyOn(SpendTracker, "checkpointActiveRequest").mockResolvedValue(true);
+			jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({
+				status: "committed",
+				requestId: "request-reasoning",
+				spend: 0,
+			});
+			jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					nativeResponsesSse({
+						id: "resp_reasoning",
+						text: "OK",
+						reasoning: "We need",
+						usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				),
+			);
+			const nativeDeployment = deepseekDeployment();
+			nativeDeployment.model_info = {
+				...nativeDeployment.model_info,
+				supports_function_calling: true,
+				enabled_builtin_capabilities: ["vision"],
+			};
+			const app = buildApp(buildDeploymentRouter([nativeDeployment]), true);
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({ model: "deepseek-v4-flash", input: "Return OK.", store: false, stream: true })
+				.expect(200);
+
+			const events = parseSseEvents(response.text);
+			const reasoning = events
+				.filter((event) => event.type === "response.reasoning_text.delta")
+				.map((event) => String(event.delta ?? ""))
+				.join("");
+			expect(reasoning).toBe("We need");
 		});
 
 		test("DeepSeek Flash uses native Responses and preserves Responses semantics", async () => {
@@ -588,7 +739,7 @@ describe("Responses API contract matrix", () => {
 			]);
 		});
 
-		test("streaming DeepSeek Responses injects private capabilities through a native non-stream agent turn", async () => {
+		test("streaming DeepSeek Responses injects private capabilities through a native streaming agent turn", async () => {
 			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
 				param === "builtin_capabilities"
 					? {
@@ -628,14 +779,10 @@ describe("Responses API contract matrix", () => {
 						headers: { "content-type": "application/json" },
 					});
 				}
-				const chatChunk = (delta: Record<string, unknown>, finish: string | null, extra: Record<string, unknown> = {}) =>
-					"data: " + JSON.stringify({ id: "chatcmpl-cap", object: "chat.completion.chunk", created: 1700000200, model: "deepseek-v4.1-flash", choices: [{ index: 0, delta: delta, finish_reason: finish }], ...extra }) + "\n\n";
-				const sse =
-					chatChunk({ role: "assistant" }, null) +
-					chatChunk({ content: "OK" }, null) +
-					chatChunk({}, "stop", { usage: upstreamResponse.usage }) +
-					"data: [DONE]\n\n";
-				return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+				return new Response(
+					nativeResponsesSse({ id: "resp_cap_stream", text: "OK", model: "deepseek-v4.1-flash", usage: upstreamResponse.usage }),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				);
 			});
 			const nativeDeployment = deepseekDeployment();
 			nativeDeployment.model_info = {
@@ -651,13 +798,12 @@ describe("Responses API contract matrix", () => {
 				.expect(200);
 
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
-			expect(String(fetchSpy.mock.calls[0]?.[0])).toContain("/chat/completions");
+			expect(String(fetchSpy.mock.calls[0]?.[0])).toContain("/responses");
 			const providerBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
 			expect(providerBody["stream"]).toBe(true);
+			expect(providerBody["input"]).toBeDefined();
 			expect(providerBody["tools"]).toEqual(
-				expect.arrayContaining([
-					expect.objectContaining({ type: "function", function: expect.objectContaining({ name: "litellm__vision_inspect" }) }),
-				]),
+				expect.arrayContaining([expect.objectContaining({ type: "function", name: "litellm__vision_inspect" })]),
 			);
 			const events = parseSseEvents(response.text);
 			expect(events.at(-1)).toMatchObject({
@@ -695,23 +841,15 @@ describe("Responses API contract matrix", () => {
 				.spyOn(SpendTracker, "trackSpendLog")
 				.mockResolvedValue({ status: "committed", requestId: "request-capability-stream", spend: 0 });
 			jest.spyOn(global, "fetch").mockImplementation(async () => {
-				const chatChunk = (delta: Record<string, unknown>, finish: string | null, usage?: Record<string, unknown>) =>
-					"data: " +
-					JSON.stringify({
-						id: "chatcmpl-capability-upstream",
-						object: "chat.completion.chunk",
-						created: 1700000300,
+				return new Response(
+					nativeResponsesSse({
+						id: "resp_cap_log",
+						text: "OK",
 						model: "deepseek-v4.1-flash",
-						choices: [{ index: 0, delta: delta, finish_reason: finish }],
-						...(usage === undefined ? {} : { usage: usage }),
-					}) +
-					"\\n\\n";
-				const sse =
-					chatChunk({ role: "assistant" }, null) +
-					chatChunk({ content: "OK" }, null) +
-					chatChunk({}, "stop", { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 }) +
-					"data: [DONE]\\n\\n";
-				return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+						usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				);
 			});
 			const nativeDeployment = deepseekDeployment();
 			nativeDeployment.model_info = {
@@ -731,7 +869,7 @@ describe("Responses API contract matrix", () => {
 			const logged = trackSpy.mock.calls[0]?.[1] as unknown as Record<string, Record<string, unknown>>;
 			// 修复前：能力分支把能力链结果重建为新对象，挂在对象上的 Symbol 丢失，这里为空。
 			expect(logged["proxy_server_request"]?.["upstream_request"]).toMatchObject({
-				url: "https://api.deepseek.com/chat/completions",
+				url: "https://api.deepseek.com/responses",
 				method: "POST",
 			});
 			expect(logged["proxy_server_request"]?.["upstream_response"]).toMatchObject({ status_code: 200 });

@@ -29,10 +29,15 @@ type StreamConverter struct {
 	toolCallsSeen bool
 
 	// claude (Messages) target state.
-	textIndex  int
-	textOpen   bool
-	nextIndex  int
-	openBlocks []int
+	textIndex int
+	textOpen  bool
+	// thinkingOpen tracks the extended-thinking block opened by streamed
+	// upstream reasoning. closeOpenBlocks stops it like any other block, so
+	// Anthropic clients always see start/delta/stop pairing.
+	thinkingOpen  bool
+	thinkingIndex int
+	nextIndex     int
+	openBlocks    []int
 
 	// Shared function_call announce-or-replay decision table for both
 	// conversion targets; an instance converts to exactly one target,
@@ -330,6 +335,15 @@ func (sc *StreamConverter) convertEvent(eventType, payload string) ([][]byte, bo
 			return nil, false, eErr
 		}
 		return sc.argsFragment(ev.ItemID, ev.Delta)
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		var ev textDeltaEvent
+		if eErr := decodeEvent(eventType, payload, &ev); eErr != nil {
+			return nil, false, eErr
+		}
+		if eErr := sc.checkTarget(); eErr != nil {
+			return nil, false, eErr
+		}
+		return sc.reasoningDelta(ev.Delta)
 	case "response.completed", "response.incomplete":
 		var ev terminalEvent
 		if eErr := decodeEvent(eventType, payload, &ev); eErr != nil {
@@ -364,8 +378,8 @@ func (sc *StreamConverter) convertEvent(eventType, payload string) ([][]byte, bo
 		}
 		return nil, false, failureError(&ev)
 	default:
-		// Informational events (response.in_progress, annotations,
-		// reasoning summaries) have no client equivalent and are omitted
+		// Informational events (response.in_progress, annotations)
+		// have no client equivalent and are omitted
 		// per the FR-005/FR-006 compatibility policy; the payload is
 		// validated without materializing a discarded generic graph.
 		if payload != "" && !json.Valid([]byte(payload)) {
@@ -417,6 +431,32 @@ func (sc *StreamConverter) textDelta(delta string) ([][]byte, bool, *errclass.Er
 	}
 	out = append(out, sc.claudeChunks().ContentBlockDelta(sc.textIndex,
 		map[string]any{"type": "text_delta", "text": delta}))
+	return out, false, nil
+}
+
+// reasoningDelta preserves upstream thinking on both client surfaces. Chat
+// Completions carries it in the standard reasoning_content field — the same
+// field shared.BackfillReasoningContent fills for the opposite direction —
+// and Messages carries it as an extended-thinking block opened lazily on the
+// first fragment. Dropping this event type used to erase the model's whole
+// thinking phase from chat/Claude clients, which also collapsed any
+// first-token-based throughput measurement.
+func (sc *StreamConverter) reasoningDelta(delta string) ([][]byte, bool, *errclass.Error) {
+	if delta == "" {
+		return nil, false, nil
+	}
+	if sc.source == "openai" {
+		return [][]byte{sc.chatChunks().Delta(map[string]any{"reasoning_content": delta})}, false, nil
+	}
+	var out [][]byte
+	if !sc.thinkingOpen {
+		out = append(out, sc.closeOpenBlocks()...)
+		sc.thinkingIndex = sc.allocIndex()
+		sc.thinkingOpen = true
+		sc.openBlocks = append(sc.openBlocks, sc.thinkingIndex)
+		out = append(out, sc.claudeChunks().ThinkingBlockStart(sc.thinkingIndex))
+	}
+	out = append(out, sc.claudeChunks().ThinkingDelta(sc.thinkingIndex, delta))
 	return out, false, nil
 }
 
@@ -572,6 +612,7 @@ func (sc *StreamConverter) closeOpenBlocks() [][]byte {
 	}
 	sc.openBlocks = nil
 	sc.textOpen = false
+	sc.thinkingOpen = false
 	return out
 }
 

@@ -277,13 +277,11 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		const messages = buildResponsesMessages(reqBody.input, reqBody.instructions, toolRegistry);
 		const optionalParams = buildResponsesOptionalParams(reqBody, toolRegistry);
 		optionalParams[ROUTER_CALL_TYPE_PARAM] = "responses";
-		// CLIProxy 的原生 /v1/responses 是整段返回，流式请求改走 chat 协议才能逐块下发。
-		const streamForClient = reqBody.stream === true;
-		const upstreamDeployment = litellmRouter.getAvailableDeployment?.(model)?.deployment;
-		const cliproxyUpstream = upstreamDeployment?.litellm_params?.custom_llm_provider === "cliproxy";
-		if (!(streamForClient && cliproxyUpstream)) {
-			optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(reqBody, toolRegistry);
-		}
+		// 原生 Responses 请求体总是随参数下发：支持原生 Responses 的 provider（含 CLIProxy）
+		// 会原样转发，客户端与上游之间不再因为兼容端点优先而降级成 chat——降级会丢掉
+		// reasoning 增量，并把工具参数合并成单个块；不支持原生 Responses 的 provider 由
+		// 路由层回落到 chat。
+		optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(reqBody, toolRegistry);
 		const startTime = new Date();
 		const reservation = await reserveEndpointSpend(db, litellmRouter, req, model, reqBody, {
 			callType: CallType.AResponses,
@@ -1309,25 +1307,52 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			const nativeCompletion = nativeResponses
 				? createNativeResponsesCapabilityCompletion(litellmRouter, requestBody, capabilityMessages, toolRegistry)
 				: undefined;
+			// 支持原生 Responses 的 provider：能力主轮也走原生协议。能力循环内部仍以 chat 形态
+			// 记账，但每一轮都用原生 Responses 请求体发往上游，客户端收到的就是上游的
+			// reasoning/文本增量，而不是“responses→chat→responses”往返后的合成结果。
+			const nativeStreaming = nativeResponses
+				? createNativeCapabilityCaller(litellmRouter, requestBody, capabilityMessages, toolRegistry, true)
+				: undefined;
+			const chatStreamingMainTurn = async (
+				completionModel: string,
+				completionMessages: Message[],
+				params: Record<string, unknown>,
+			): Promise<Record<string, unknown>> => {
+				const chatParams: Record<string, unknown> = { ...params, stream: true };
+				delete chatParams[ROUTER_CALL_TYPE_PARAM];
+				delete chatParams[ROUTER_RESPONSES_BODY_PARAM];
+				return await litellmRouter.completion(completionModel, completionMessages as never, chatParams);
+			};
 			const streamingMainTurn = async (
 				completionModel: string,
 				completionMessages: Message[],
 				params: Record<string, unknown>,
 			): Promise<Record<string, unknown>> => {
 				let streamed: Record<string, unknown>;
-				try {
-					// 流式主轮改走 chat 协议：原生 /v1/responses 上游经 CLIProxy 往往是整段返回，
-// 只有 chat 协议才是增量的，否则下游 TTFT 仍等于总耗时。
-const chatParams: Record<string, unknown> = { ...params, stream: true };
-delete chatParams[ROUTER_CALL_TYPE_PARAM];
-delete chatParams[ROUTER_RESPONSES_BODY_PARAM];
-streamed = await litellmRouter.completion(completionModel, completionMessages as never, chatParams);
-				} catch (error) {
-					// 上游不支持流式时回退到既有非流式能力调用。
-					if (nativeCompletion) {
-						return nativeCompletion(completionModel, completionMessages, params);
+				if (nativeStreaming) {
+					try {
+						streamed = await nativeStreaming(completionModel, completionMessages, params);
+					} catch {
+						// 原生流失败时退回 chat，保持既有可用性兜底。
+						try {
+							streamed = await chatStreamingMainTurn(completionModel, completionMessages, params);
+						} catch (error) {
+							if (nativeCompletion) {
+								return nativeCompletion(completionModel, completionMessages, params);
+							}
+							throw error;
+						}
 					}
-					throw error;
+				} else {
+					try {
+						streamed = await chatStreamingMainTurn(completionModel, completionMessages, params);
+					} catch (error) {
+						// 上游不支持流式时回退到既有非流式能力调用。
+						if (nativeCompletion) {
+							return nativeCompletion(completionModel, completionMessages, params);
+						}
+						throw error;
+					}
 				}
 				const upstreamStream = streamed["stream"];
 				if (!isAsyncIterable(upstreamStream)) {
@@ -2096,7 +2121,11 @@ function nativeResponsesEventToChatChunk(event: Record<string, unknown>): Record
 	if (type === "response.output_text.delta" && typeof event["delta"] === "string" && event["delta"].length > 0) {
 		return { choices: [{ index: 0, delta: { content: event["delta"] }, finish_reason: null }] };
 	}
-	if (type === "response.reasoning_text.delta" && typeof event["delta"] === "string" && event["delta"].length > 0) {
+	if (
+		(type === "response.reasoning_text.delta" || type === "response.reasoning_summary_text.delta") &&
+		typeof event["delta"] === "string" &&
+		event["delta"].length > 0
+	) {
 		return { choices: [{ index: 0, delta: { reasoning_content: event["delta"] }, finish_reason: null }] };
 	}
 	return undefined;
