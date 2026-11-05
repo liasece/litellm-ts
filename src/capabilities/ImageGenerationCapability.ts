@@ -45,7 +45,7 @@ export interface ImageGenerationCapabilityBinding {
 	readonly maxIterations: number;
 }
 
-/** Prepared request with private image bytes removed from the model transcript.
+/** Main-model request with edit sources registered separately from its image content.
  * @template TMessage
  */
 export interface PreparedImageGenerationRequest<TMessage> {
@@ -287,18 +287,18 @@ async function registerRefsFromText(text: string, store: VisionImageStore, image
 	}
 }
 
-async function rewriteImageContent(content: unknown, store: VisionImageStore, images: Map<string, StoredVisionImage>): Promise<unknown> {
+// Image-generation tools may index source images, but only their own execution
+// resolves those references. The main-model transcript must keep its image input.
+async function registerImageSources(content: unknown, store: VisionImageStore, images: Map<string, StoredVisionImage>): Promise<void> {
 	if (typeof content === "string") {
 		await registerRefsFromText(content, store, images);
-		return content;
+		return;
 	}
 	if (!Array.isArray(content)) {
-		return content;
+		return;
 	}
-	const rewritten: unknown[] = [];
 	for (const rawPart of content) {
 		if (typeof rawPart !== "object" || rawPart === null) {
-			rewritten.push(rawPart);
 			continue;
 		}
 		const part = rawPart as Record<string, unknown>;
@@ -306,19 +306,16 @@ async function rewriteImageContent(content: unknown, store: VisionImageStore, im
 		if (url) {
 			const stored = await storeVisionImageUrl(store, url);
 			images.set(stored.ref, stored);
-			rewritten.push({ type: "text", text: `[Private image reference: ${stored.ref}]` });
 			continue;
 		}
-		if (part["type"] === "tool_result" && Array.isArray(part["content"])) {
-			rewritten.push({ ...part, content: await rewriteImageContent(part["content"], store, images) });
+		if (part["type"] === "tool_result") {
+			await registerImageSources(part["content"], store, images);
 			continue;
 		}
 		if (typeof part["text"] === "string") {
 			await registerRefsFromText(part["text"], store, images);
 		}
-		rewritten.push({ ...part });
 	}
-	return rewritten;
 }
 
 /**
@@ -338,15 +335,18 @@ export async function prepareOpenAIImageGenerationRequest(
 		return undefined;
 	}
 	const images = new Map<string, StoredVisionImage>();
-	const rewritten = [];
 	for (const message of messages) {
-		rewritten.push({ ...message, content: await rewriteImageContent(message["content"], imageStore, images) });
+		await registerImageSources(message["content"], imageStore, images);
 	}
 	if (images.size === 0 && !binding.alwaysInject) {
 		return undefined;
 	}
-	rewritten.unshift({ role: "system", content: imageGenerationInstruction([...images.keys()]) });
-	return { messages: rewritten, images: images, imageStore: imageStore, binding: binding };
+	return {
+		messages: [{ role: "system", content: imageGenerationInstruction([...images.keys()]) }, ...messages],
+		images: images,
+		imageStore: imageStore,
+		binding: binding,
+	};
 }
 
 /**
@@ -375,9 +375,8 @@ export async function prepareAnthropicImageGenerationRequest(
 	}
 	const images = new Map<string, StoredVisionImage>();
 	const sourceMessages = Array.isArray(body["messages"]) ? (body["messages"] as Array<Record<string, unknown>>) : [];
-	const messages = [];
 	for (const message of sourceMessages) {
-		messages.push({ ...message, content: await rewriteImageContent(message["content"], imageStore, images) });
+		await registerImageSources(message["content"], imageStore, images);
 	}
 	if (images.size === 0 && !binding.alwaysInject) {
 		return undefined;
@@ -393,8 +392,8 @@ export async function prepareAnthropicImageGenerationRequest(
 	const tools = Array.isArray(body["tools"]) ? body["tools"] : [];
 	assertToolNamesAvailable(tools, "anthropic");
 	return {
-		body: { ...body, system: system, messages: messages, tools: [...tools, ...privateAnthropicImageTools()] },
-		messages: messages,
+		body: { ...body, system: system, messages: sourceMessages, tools: [...tools, ...privateAnthropicImageTools()] },
+		messages: sourceMessages,
 		images: images,
 		imageStore: imageStore,
 		binding: binding,

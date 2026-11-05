@@ -4,6 +4,7 @@ import {
 	PRIVATE_IMAGE_CREATE_TOOL_NAME,
 	PRIVATE_IMAGE_EDIT_TOOL_NAME,
 	prepareOpenAIImageGenerationRequest,
+	runAnthropicImageGenerationAgentLoop,
 	runOpenAIImageGenerationAgentLoop,
 } from "./ImageGenerationCapability";
 import { MemoryVisionImageStore } from "./VisionImageStore";
@@ -137,7 +138,7 @@ describe("ImageGenerationCapability", () => {
 		]);
 	});
 
-	it("replaces attached bytes with a reference and sends them only to imageEdit", async () => {
+	it("preserves main-model image input while resolving source references for imageEdit", async () => {
 		const store = new MemoryVisionImageStore();
 		const router = fakeRouter({
 			imageEdit: jest.fn(async (_model, prompt, images) => {
@@ -157,7 +158,7 @@ describe("ImageGenerationCapability", () => {
 			},
 		];
 		const prepared = await prepareOpenAIImageGenerationRequest(router, "text-model", sourceMessages, store);
-		expect(JSON.stringify(prepared!.messages)).not.toContain("YWJj");
+		expect(prepared!.messages.slice(1)).toEqual(sourceMessages);
 		const ref = [...prepared!.images.keys()][0]!;
 		const complete = jest
 			.fn()
@@ -188,7 +189,124 @@ describe("ImageGenerationCapability", () => {
 		});
 
 		expect(router.imageEdit as jest.Mock).toHaveBeenCalledTimes(1);
+		for (const [, messages] of complete.mock.calls) {
+			expect(messages.filter((message: Record<string, unknown>) => message["role"] === "user")).toEqual(sourceMessages);
+		}
 		expect(result["_builtinGeneratedImages"]).toEqual([expect.objectContaining({ action: "edit", outputFormat: "webp" })]);
+	});
+
+	it("keeps ordinary Chat image input intact when no image tool is called", async () => {
+		const sourceMessages = [
+			{ role: "system", content: "Describe the attached image." },
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "What is in this picture?" },
+					{ type: "image_url", image_url: { url: "data:image/png;base64,YWJj", detail: "high" } },
+				],
+			},
+		];
+		const originalMessages = structuredClone(sourceMessages);
+		const imageEdit = jest.fn();
+		const imageGeneration = jest.fn();
+		const router = fakeRouter({ imageEdit, imageGeneration } as unknown as Partial<Router>);
+		const complete = jest.fn(async (_model, messages) => {
+			expect(messages.slice(1)).toEqual(originalMessages);
+			return completion({ role: "assistant", content: "A cat." });
+		});
+
+		const result = await runOpenAIImageGenerationAgentLoop(router, "text-model", sourceMessages, {}, complete, {
+			imageStore: new MemoryVisionImageStore(),
+		});
+
+		expect(complete).toHaveBeenCalledTimes(1);
+		expect(imageEdit).not.toHaveBeenCalled();
+		expect(imageGeneration).not.toHaveBeenCalled();
+		expect(result["choices"]).toMatchObject([{ message: { role: "assistant", content: "A cat." } }]);
+		expect(sourceMessages).toEqual(originalMessages);
+	});
+
+	it("preserves native and tool-result images in ordinary Anthropic conversations", async () => {
+		const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "YWJj" } };
+		const body = {
+			model: "text-model",
+			max_tokens: 256,
+			system: [{ type: "text", text: "Describe the image.", cache_control: { type: "ephemeral" } }],
+			messages: [
+				{ role: "assistant", content: [{ type: "tool_use", id: "read-image", name: "read_file", input: { path: "/image.png" } }] },
+				{
+					role: "user",
+					content: [
+						{ type: "tool_result", tool_use_id: "read-image", content: [{ type: "text", text: "File loaded." }, image] },
+						{ ...image, cache_control: { type: "ephemeral" } },
+					],
+				},
+			],
+		};
+		const originalBody = structuredClone(body);
+		const imageEdit = jest.fn();
+		const router = fakeRouter({ imageEdit } as unknown as Partial<Router>);
+		const complete = jest.fn(async (requestBody) => {
+			expect(requestBody["messages"]).toEqual(originalBody.messages);
+			expect(requestBody["system"]).toEqual(expect.arrayContaining(originalBody.system));
+			expect(requestBody["max_tokens"]).toBe(256);
+			return { content: [{ type: "text", text: "A cat." }] };
+		});
+
+		const result = await runAnthropicImageGenerationAgentLoop(router, "text-model", body, complete, {
+			imageStore: new MemoryVisionImageStore(),
+		});
+
+		expect(result.response["content"]).toEqual([{ type: "text", text: "A cat." }]);
+		expect(complete).toHaveBeenCalledTimes(1);
+		expect(imageEdit).not.toHaveBeenCalled();
+		expect(body).toEqual(originalBody);
+	});
+
+	it("keeps Anthropic image input in both main turns while the edit worker receives the selected image", async () => {
+		const sourceMessages = [
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "Add a red hat to the second image." },
+					{ type: "image", source: { type: "base64", media_type: "image/png", data: "YWJj" } },
+					{ type: "image", source: { type: "base64", media_type: "image/png", data: "ZGVm" } },
+				],
+			},
+		];
+		const imageEdit = jest.fn(async (_model, prompt, images) => {
+			expect(prompt).toBe("Add a red hat");
+			expect(images).toHaveLength(1);
+			expect(Buffer.from(images[0]!.data).toString("base64")).toBe("ZGVm");
+			return { output_format: "png", data: [{ b64_json: "AQ==" }], usage: { total_tokens: 1 } };
+		});
+		const router = fakeRouter({ imageEdit } as unknown as Partial<Router>);
+		let mainTurn = 0;
+		const complete = jest.fn(async (requestBody) => {
+			expect((requestBody["messages"] as unknown[]).slice(0, 1)).toEqual(sourceMessages);
+			if (mainTurn++ === 0) {
+				const refs = String(requestBody["system"]).match(/sha256:[a-f0-9]{64}/g)!;
+				return {
+					content: [
+						{
+							type: "tool_use",
+							id: "edit-second-image",
+							name: PRIVATE_IMAGE_EDIT_TOOL_NAME,
+							input: { prompt: "Add a red hat", image_refs: [refs[1]] },
+						},
+					],
+				};
+			}
+			return { content: [{ type: "text", text: "Edited." }] };
+		});
+
+		const result = await runAnthropicImageGenerationAgentLoop(router, "text-model", { messages: sourceMessages }, complete, {
+			imageStore: new MemoryVisionImageStore(),
+		});
+
+		expect(complete).toHaveBeenCalledTimes(2);
+		expect(imageEdit).toHaveBeenCalledTimes(1);
+		expect(result.response["_builtinGeneratedImages"]).toEqual([expect.objectContaining({ action: "edit" })]);
 	});
 });
 
