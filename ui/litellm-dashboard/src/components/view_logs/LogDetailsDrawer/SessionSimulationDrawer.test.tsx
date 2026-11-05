@@ -26,39 +26,39 @@ function makeEvent(overrides: Partial<SessionTimelineEvent>): SessionTimelineEve
 }
 
 describe("orderSessionTimeline", () => {
-	it("支持按真实事件时间最新优先展示，且不修改服务端返回数组", () => {
+	it("保留服务端按请求历史连接的顺序，最新优先反转完整消息顺序且不修改原数组", () => {
 		const timeline = [
-			makeEvent({ id: "req-1:user", content: "第一问" }),
+			makeEvent({ content: "第一问" }),
 			makeEvent({
-				id: "req-1:assistant",
-				role: "assistant",
-				label: "输出",
-				timestamp: "2026-07-24T10:00:10.000Z",
-				content: "第一答",
-			}),
-			makeEvent({
-				id: "req-2:user",
+				id: "req-2:request:1",
 				request_id: "req-2",
+				content: "补出的上下文",
 				timestamp: "2026-07-24T10:00:02.000Z",
-				content: "第二问",
 			}),
 			makeEvent({
-				id: "req-2:assistant",
-				request_id: "req-2",
+				id: "req-1:response",
 				role: "assistant",
-				label: "输出",
-				timestamp: "2026-07-24T10:00:03.000Z",
-				content: "第二答",
+				content: "第一答",
+				timestamp: "2026-07-24T10:00:01.000Z",
+			}),
+			makeEvent({
+				id: "req-2:request:3",
+				request_id: "req-2",
+				content: "第二问",
+				timestamp: "2026-07-24T10:00:02.000Z",
 			}),
 		];
+		expect(orderSessionTimeline(timeline, false).map((item) => item.content))
+			.toEqual(["第一问", "补出的上下文", "第一答", "第二问"]);
+		expect(orderSessionTimeline(timeline, true).map((item) => item.content))
+			.toEqual(["第二问", "第一答", "补出的上下文", "第一问"]);
+		expect(timeline.map((item) => item.content)).toEqual(["第一问", "补出的上下文", "第一答", "第二问"]);
+	});
 
-		expect(orderSessionTimeline(timeline, true).map((item) => item.content)).toEqual([
-			"第一答",
-			"第二答",
-			"第二问",
-			"第一问",
-		]);
-		expect(timeline.map((item) => item.content)).toEqual(["第一问", "第一答", "第二问", "第二答"]);
+	it("同一请求的多条同时间消息在最新优先下也按消息先后倒序", () => {
+		const timeline = [makeEvent({ content: "先发送" }), makeEvent({ id: "req-1:request:1", content: "后发送" })];
+		expect(orderSessionTimeline(timeline, true).map((item) => item.content)).toEqual(["后发送", "先发送"]);
+		expect(orderSessionTimeline(timeline, false).map((item) => item.content)).toEqual(["先发送", "后发送"]);
 	});
 });
 

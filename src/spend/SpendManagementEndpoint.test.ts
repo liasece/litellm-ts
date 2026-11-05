@@ -1693,6 +1693,43 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 	});
 
 	describe("/spend/logs/session/timeline", () => {
+		it("压缩请求中的历史顺序优先于日志时间，补出的消息排在已有回复之前", async () => {
+			const baseRow = {
+				call_type: "completion", spend: 0.01, total_tokens: 10, model: "claude",
+				status: "success", metadata_status: null, error_information: null,
+				request_payload: null, request_payload_available: true, response_payload_available: true,
+			};
+			const descriptors = [
+				{ ...baseRow, request_id: "req-1", request_message_count: 1,
+					startTime: new Date("2026-07-24T10:00:00.000Z"),
+					endTime: new Date("2026-07-24T10:00:01.000Z"),
+					response_payload: { choices: [{ message: { role: "assistant", content: "已有回复" } }] },
+				},
+				{ ...baseRow, request_id: "req-2", request_message_count: 4,
+					startTime: new Date("2026-07-24T10:00:02.000Z"),
+					endTime: new Date("2026-07-24T10:00:03.000Z"),
+					response_payload: { choices: [{ message: { role: "assistant", content: "下一答" } }] },
+				},
+			];
+			const payloads = [
+				{ request_id: "req-1", request_payload: [{ role: "user", content: "开始" }] },
+				{ request_id: "req-2", request_payload: [
+					{ role: "user", content: "开始" },
+					{ role: "user", content: "补出的上下文" },
+					{ role: "assistant", content: "已有回复" },
+					{ role: "user", content: "下一问" },
+				] },
+			];
+			const { db } = makeMockDb({ responses: [descriptors, [descriptors[0]], payloads] });
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
+			);
+			expect(res.status).toBe(200);
+			expect(res.body.data.map((item: { content: string }) => item.content))
+				.toEqual(["开始", "补出的上下文", "已有回复", "下一问", "下一答"]);
+			expect(res.body.summary).toMatchObject({ request_count: 2, event_count: 5, total_spend: 0.02 });
+		});
+
 		it("服务端返回去重后的渲染事件与汇总，不暴露原始重字段", async () => {
 			const rows = [
 				{

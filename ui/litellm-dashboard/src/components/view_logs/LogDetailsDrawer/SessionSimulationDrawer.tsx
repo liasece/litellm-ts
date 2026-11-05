@@ -175,23 +175,9 @@ export function parseTranscriptEntries(content: string): TranscriptEntry[] {
 }
 
 export function orderSessionTimeline(timeline: SessionTimelineItem[], newestFirst: boolean): SessionTimelineItem[] {
-	return timeline
-		.map((item, originalIndex) => ({ item, originalIndex }))
-		.sort((left, right) => {
-			const leftTime = Date.parse(left.item.timestamp);
-			const rightTime = Date.parse(right.item.timestamp);
-			const leftIsValid = Number.isFinite(leftTime);
-			const rightIsValid = Number.isFinite(rightTime);
-
-			if (leftIsValid && rightIsValid && leftTime !== rightTime) {
-				return newestFirst ? rightTime - leftTime : leftTime - rightTime;
-			}
-			if (leftIsValid !== rightIsValid) {
-				return leftIsValid ? -1 : 1;
-			}
-			return left.originalIndex - right.originalIndex;
-		})
-		.map(({ item }) => item);
+	// The API connects cumulative request histories; timestamps only indicate
+	// when a snapshot was recorded and cannot recover message order within it.
+	return newestFirst ? [...timeline].reverse() : [...timeline];
 }
 
 export function formatSessionKey(key: { alias: string | null; hash: string }): string {

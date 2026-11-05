@@ -19,6 +19,99 @@ function makeRow(overrides: Partial<SessionTimelineSourceRow>): SessionTimelineS
 }
 
 describe("SessionTimelineBuilder", () => {
+	it("后续快照补出的历史按请求内顺序插入已有回复之前，不受同时间戳影响", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(makeRow({
+			request_payload: [{ role: "user", content: "开始" }],
+			response_payload: { choices: [{ message: { role: "assistant", content: "已有回复" } }] },
+		}));
+		builder.add(makeRow({
+			request_id: "req-2",
+			startTime: "2026-07-24T10:00:02.000Z",
+			endTime: "2026-07-24T10:00:03.000Z",
+			request_payload: [
+				{ role: "user", content: "开始" },
+				{ role: "user", content: "补出的上下文" },
+				{ role: "assistant", content: "已有回复" },
+				{ role: "user", content: "下一问" },
+			],
+			response_payload: { choices: [{ message: { role: "assistant", content: "下一答" } }] },
+		}));
+
+		expect(builder.build().data.map((item) => item.content)).toEqual([
+			"开始", "补出的上下文", "已有回复", "下一问", "下一答",
+		]);
+	});
+
+	it("使用压缩快照中的历史边界连接消息，优先于请求时间与结束时间", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(makeRow({
+			endTime: "2026-07-24T10:00:10.000Z",
+			request_payload: [{ role: "user", content: "第一问" }],
+			response_payload: { choices: [{ message: { role: "assistant", content: "第一答" } }] },
+		}));
+		builder.add(makeRow({
+			request_id: "req-2",
+			startTime: "2026-07-24T10:00:02.000Z",
+			endTime: "2026-07-24T10:00:03.000Z",
+			request_message_delta_flags: [false, true],
+			request_payload: [
+				{ role: "assistant", content: "第一答" },
+				{ role: "user", content: "第二问" },
+			],
+			response_payload: { choices: [{ message: { role: "assistant", content: "第二答" } }] },
+		}));
+
+		expect(builder.build().data.map((item) => item.content)).toEqual([
+			"第一问", "第一答", "第二问", "第二答",
+		]);
+	});
+
+	it("互不关联的并发请求按时间穿插，并保留各请求内部顺序", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(makeRow({
+			endTime: "2026-07-24T10:00:10.000Z",
+			request_payload: [{ role: "user", content: "独立问题 A" }],
+			response_payload: { choices: [{ message: { role: "assistant", content: "独立回复 A" } }] },
+		}));
+		builder.add(makeRow({
+			request_id: "req-2",
+			startTime: "2026-07-24T10:00:02.000Z",
+			endTime: "2026-07-24T10:00:03.000Z",
+			request_payload: [
+				{ role: "user", content: "独立问题 B" },
+				{ role: "user", content: "B 的补充" },
+			],
+			response_payload: { choices: [{ message: { role: "assistant", content: "独立回复 B" } }] },
+		}));
+
+		expect(builder.build().data.map((item) => item.content)).toEqual([
+			"独立问题 A", "独立问题 B", "B 的补充", "独立回复 B", "独立回复 A",
+		]);
+	});
+
+	it("矛盾历史仍输出所有事件，并在重复 build 后继续接收请求", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(makeRow({ request_payload: [
+			{ role: "user", content: "A" },
+			{ role: "assistant", content: "B" },
+		] }));
+		builder.add(makeRow({ request_id: "req-2", request_payload: [
+			{ role: "assistant", content: "B" },
+			{ role: "user", content: "A" },
+			{ role: "user", content: "C" },
+		] }));
+		const first = builder.build().data;
+		expect(first.map((item) => item.content)).toEqual(["A", "B", "C"]);
+		expect(builder.build().data).toEqual(first);
+		builder.add(makeRow({ request_id: "req-3", request_payload: [
+			{ role: "user", content: "C" },
+			{ role: "user", content: "D" },
+		] }));
+		expect(builder.build().data.filter((item) => item.role !== "request").map((item) => item.content))
+			.toEqual(["A", "B", "C", "D"]);
+	});
+
 	it("在普通 Session 时间线事件上标记内置能力子请求及其父请求", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(

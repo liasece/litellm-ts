@@ -1,3 +1,4 @@
+import { SessionTimelineOrder } from "./sessionTimelineOrder";
 import { CONTENT_FIELD_RULES, readFieldRule, reasoningTextFromBlock } from "../core/utils/contentFields";
 
 /**
@@ -173,7 +174,7 @@ export interface SessionTimelineItem {
 
 /** Reconstructed events and aggregates for the included requests in a session. */
 export interface SessionTimelineResponse {
-	/** Events in the order they were added by the timeline reducer. */
+	/** Events ordered by request history, falling back to time for unrelated events. */
 	readonly data: SessionTimelineItem[];
 	/** Aggregates over included requests, plus the count of filtered auxiliary requests. */
 	readonly summary: {
@@ -1267,6 +1268,8 @@ export function isClaudeCodeAuxiliaryTimelineRequest(row: SessionTimelineSourceR
  */
 export class SessionTimelineBuilder {
 	private readonly _seenHistoryOccurrences = new Map<string, number>();
+	private readonly _historyItemIndices = new Map<string, Map<number, readonly number[]>>();
+	private readonly _order = new SessionTimelineOrder();
 	private readonly _seenSystemMessages = new Set<string>();
 	private readonly _keys = new Map<string, { alias: string | null; hash: string }>();
 	private readonly _items: SessionTimelineItem[] = [];
@@ -1315,6 +1318,7 @@ export class SessionTimelineBuilder {
 		const { requestMessages, responseMessage } = parseMessages(row.request_payload, row.response_payload);
 		let addedMessage = false;
 		const snapshotOccurrences = new Map<string, number>();
+		const requestItemIndices: number[] = [];
 
 		requestMessages.forEach((message, index) => {
 			const fingerprint = messageHistoryFingerprint(message);
@@ -1336,6 +1340,7 @@ export class SessionTimelineBuilder {
 			}
 			snapshotOccurrences.set(fingerprint, Math.max(snapshotOccurrence, occurrence));
 			if (message.role === "system" && this._seenSystemMessages.has(fingerprint)) {
+				requestItemIndices.push(...(this._historyItemIndices.get(fingerprint)?.get(seenOccurrence) ?? []));
 				return;
 			}
 			if (message.role === "system") {
@@ -1343,9 +1348,11 @@ export class SessionTimelineBuilder {
 			}
 			this._seenHistoryOccurrences.set(fingerprint, Math.max(seenOccurrence, occurrence));
 			if (occurrence <= seenOccurrence) {
+				requestItemIndices.push(...(this._historyItemIndices.get(fingerprint)?.get(occurrence) ?? []));
 				return;
 			}
 
+			const firstItemIndex = this._items.length;
 			const messageParts = message.parts ?? [];
 			const toolResults = messageParts.filter((part) => part.kind === "tool_result");
 			const remainingParts = messageParts.filter((part) => part.kind !== "tool_result");
@@ -1383,6 +1390,7 @@ export class SessionTimelineBuilder {
 					...internalTimelineFields(row),
 				});
 			}
+			requestItemIndices.push(...this._recordHistoryItems(fingerprint, occurrence, firstItemIndex));
 		});
 
 		if (responseMessage) {
@@ -1394,6 +1402,7 @@ export class SessionTimelineBuilder {
 				seenResponseOccurrence + 1,
 			);
 			this._seenHistoryOccurrences.set(responseFingerprint, responseOccurrence);
+			const firstItemIndex = this._items.length;
 			const responseParts = responseMessage.parts ?? [];
 			const toolResults = responseParts.filter((part) => part.kind === "tool_result");
 			const remainingParts = responseParts.filter((part) => part.kind !== "tool_result");
@@ -1429,10 +1438,12 @@ export class SessionTimelineBuilder {
 					...internalTimelineFields(row),
 				});
 			});
+			requestItemIndices.push(...this._recordHistoryItems(responseFingerprint, responseOccurrence, firstItemIndex));
 		}
 
 		const status = String(row.status ?? row.metadata_status ?? "").toLowerCase();
 		if (!responseMessage && (status === "failure" || row.error_information != null)) {
+			requestItemIndices.push(this._items.length);
 			this._items.push({
 				id: `${row.request_id}:error`,
 				request_id: row.request_id,
@@ -1448,6 +1459,7 @@ export class SessionTimelineBuilder {
 		}
 
 		if (!addedMessage) {
+			requestItemIndices.push(this._items.length);
 			this._items.push({
 				id: `${row.request_id}:request`,
 				request_id: row.request_id,
@@ -1460,14 +1472,26 @@ export class SessionTimelineBuilder {
 				...internalTimelineFields(row),
 			});
 		}
+		this._order.addSequence(requestItemIndices);
 	}
 
-	/** Return the accumulated events and totals; the returned data array remains owned by this builder. */
+	private _recordHistoryItems(fingerprint: string, occurrence: number, firstItemIndex: number): readonly number[] {
+		const indices = Array.from({ length: this._items.length - firstItemIndex }, (_unused, offset) => firstItemIndex + offset);
+		let occurrences = this._historyItemIndices.get(fingerprint);
+		if (!occurrences) {
+			occurrences = new Map();
+			this._historyItemIndices.set(fingerprint, occurrences);
+		}
+		occurrences.set(occurrence, indices);
+		return indices;
+	}
+
+	/** Return accumulated events in conversation order and request-level totals. */
 	public build(): SessionTimelineResponse {
 		const startTime = this._startMs === null ? null : new Date(this._startMs).toISOString();
 		const endTime = this._endMs === null ? null : new Date(this._endMs).toISOString();
 		return {
-			data: this._items,
+			data: this._order.order(this._items),
 			summary: {
 				keys: Array.from(this._keys.values()),
 				request_count: this._requestCount,
