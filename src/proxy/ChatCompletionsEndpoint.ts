@@ -684,7 +684,12 @@ async function handleStreamingResponse(
 		messages as unknown as Array<Record<string, unknown>>,
 		visionImageStore,
 	);
-	const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, messages as unknown as Array<Record<string, unknown>>);
+	const preparedWeb = await prepareOpenAIWebRequest(
+		litellmRouter,
+		model,
+		messages as unknown as Array<Record<string, unknown>>,
+		Array.isArray(optionalParams["tools"]) ? (optionalParams["tools"] as unknown[]) : [],
+	);
 	if (preparedVision || preparedImageGeneration || preparedWeb) {
 		await handlePrivateVisionStreamingResponse(litellmRouter, model, messages, optionalParams, res, {
 			...context,

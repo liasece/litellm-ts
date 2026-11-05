@@ -90,6 +90,24 @@ describe("WebCapability", () => {
 		await expect(prepareOpenAIWebRequest(router, "text-model", [])).resolves.toBeUndefined();
 	});
 
+	it("把本次请求的私有轮次预算写进注入说明，并随配置变化", async () => {
+		// 模型只有知道还剩几轮，才会规划查询数量而不是撞上限后 503。
+		const prepared = await prepareOpenAIWebRequest(fakeRouter(), "text-model", []);
+		const system = String((prepared!.messages[0] as Record<string, unknown>)["content"] ?? "");
+		expect(system).toContain("at most 3 private rounds");
+		expect(system).toContain("billed to the operator per request");
+
+		jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({
+			web: { enabled: true, handler_model: "network-model", max_iterations: 20 },
+		});
+		const raised = await prepareOpenAIWebRequest(fakeRouter(), "text-model", []);
+		expect(String((raised!.messages[0] as Record<string, unknown>)["content"] ?? "")).toContain("at most 20 private rounds");
+
+		// Anthropic 原生入口注入的是同一份说明。
+		const anthropic = await prepareAnthropicWebRequest(fakeRouter(), "text-model", { messages: [] });
+		expect(String(anthropic!.body["system"] ?? "")).toContain("at most 20 private rounds");
+	});
+
 	it("delegates a live search to the configured network model and hides the private turn", async () => {
 		let targetCalls = 0;
 		const complete = jest.fn(async (model: string, messages: any[], params: Record<string, unknown>) => {
@@ -776,5 +794,245 @@ describe("private tool call recovery", () => {
 		expect(mainTurn).toBe(2);
 		expect(JSON.stringify(result.response)).toContain("I could not search the web.");
 		expect(JSON.stringify(result.response)).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
+	});
+});
+
+describe("客户端已声明网络工具时的代执行", () => {
+	function clientWebRouter(): Router {
+		return {
+			getDeployments: () => [targetDeployment()],
+			resolveModelGroupWithTrace: (model: string) => ({
+				inputModel: model,
+				resolvedModel: model,
+				resolutionPath: [model],
+			}),
+			listCredentialValues: () => ({
+				getValues: (name: string) => (name === "deepseek" ? { api_key: "test-key" } : undefined),
+			}),
+		} as unknown as Router;
+	}
+
+	function mockDeepSeekSearch(brief: string): Array<Record<string, unknown>> {
+		const bodies: Array<Record<string, unknown>> = [];
+		global.fetch = jest.fn(async (_input: any, init: any) => {
+			bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+			return {
+				ok: true,
+				status: 200,
+				text: async () =>
+					JSON.stringify({
+						results: [{ title: "Docs", url: "https://example.com/docs", summary: brief, date: "2026-10-01" }],
+						brief: brief,
+					}),
+			} as unknown as Response;
+		}) as unknown as typeof fetch;
+		return bodies;
+	}
+
+	beforeEach(() => {
+		jest.spyOn(dbConfigProvider, "getParam").mockResolvedValue({
+			web: {
+				enabled: true,
+				executors: [
+					{
+						type: "deepseek_tools",
+						api_base: "https://api.deepseek.com",
+						credential_name: "deepseek",
+						timeout_ms: 5_000,
+						search_count: 10,
+						search_need_content: false,
+						localization: "",
+					},
+					{ type: "model", model: "network-model" },
+				],
+				max_iterations: 1,
+				max_output_tokens: 1024,
+			},
+		});
+	});
+
+	afterEach(() => {
+		jest.restoreAllMocks();
+		delete (global as { fetch?: unknown }).fetch;
+	});
+
+	it("不再注入私有工具与私有说明，只登记客户端工具", async () => {
+		const prepared = await prepareOpenAIWebRequest(fakeRouter(), "text-model", [{ role: "user", content: "hi" }], [
+			{ type: "function", function: { name: "web_search", parameters: { type: "object" } } },
+		]);
+		expect(prepared).toBeDefined();
+		expect(prepared!.clientTools).toEqual([{ name: "web_search", kind: "search", hosted: false }]);
+		expect(JSON.stringify(prepared!.messages)).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
+		expect(JSON.stringify(prepared!.messages)).not.toContain("private web tools");
+	});
+
+	it("忠实执行客户端工具并把 DeepSeek 结果作为普通工具结果注入，轮次不计入 max_iterations", async () => {
+		const searchBodies = mockDeepSeekSearch("LiteLLM 1.80 is the current release.");
+		let mainTurn = 0;
+		const complete = jest.fn(async (model: string, messages: any[], params: Record<string, unknown>) => {
+			mainTurn++;
+			expect(JSON.stringify(params["tools"])).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
+			if (mainTurn === 1) {
+				return completion({
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_client_web",
+							type: "function",
+							function: { name: "web_search", arguments: JSON.stringify({ query: "litellm latest release" }) },
+						},
+					],
+				});
+			}
+			const toolMessage = [...messages].reverse().find((message: Record<string, unknown>) => message["role"] === "tool");
+			expect(toolMessage?.["tool_call_id"]).toBe("call_client_web");
+			expect(String(toolMessage?.["content"])).toContain("LiteLLM 1.80 is the current release.");
+			return completion({ role: "assistant", content: "当前版本是 1.80。" });
+		});
+
+		const result = await runOpenAIWebAgentLoop(
+			clientWebRouter(),
+			"text-model",
+			[{ role: "user", content: "litellm 最新版本？" }],
+			{ tools: [{ type: "function", function: { name: "web_search", parameters: { type: "object" } } }] },
+			complete,
+		);
+
+		const finalMessage = (result["choices"] as Array<{ message: Record<string, unknown> }>)[0]!.message;
+		expect(finalMessage["content"]).toBe("当前版本是 1.80。");
+		// max_iterations 配成 1，仍然跑了两轮主模型：客户端工具轮次不占私有预算。
+		expect(mainTurn).toBe(2);
+		expect(searchBodies).toHaveLength(1);
+		const searchBody = searchBodies[0]!;
+		expect(String(searchBody["q"] ?? searchBody["query"] ?? "")).toContain("litellm latest release");
+	});
+
+	it("数组型查询逐条执行，并把多份结果合并成一条工具结果", async () => {
+		const queries: string[] = [];
+		global.fetch = jest.fn(async (_input: any, init: any) => {
+			const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+			const query = String(body["q"] ?? body["query"] ?? "");
+			queries.push(query);
+			return {
+				ok: true,
+				status: 200,
+				text: async () =>
+					JSON.stringify({
+						results: [{ title: "Docs", url: "https://example.com/docs", summary: `brief for ${query}`, date: "2026-10-01" }],
+						brief: `brief for ${query}`,
+					}),
+			} as unknown as Response;
+		}) as unknown as typeof fetch;
+
+		let mainTurn = 0;
+		const complete = jest.fn(async (model: string, messages: any[]) => {
+			mainTurn++;
+			if (mainTurn === 1) {
+				return completion({
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_multi_query",
+							type: "function",
+							function: { name: "web_search", arguments: JSON.stringify({ queries: ["alpha news", "beta news", "gamma news"] }) },
+						},
+					],
+				});
+			}
+			const toolMessage = [...messages].reverse().find((message: Record<string, unknown>) => message["role"] === "tool");
+			const toolContent = String(toolMessage?.["content"] ?? "");
+			// 三条查询各自执行、结果合并到同一条工具结果里。
+			expect(toolContent).toContain("brief for alpha news");
+			expect(toolContent).toContain("brief for beta news");
+			expect(toolContent).toContain("brief for gamma news");
+			return completion({ role: "assistant", content: "三条查询都已检索。" });
+		});
+
+		await runOpenAIWebAgentLoop(
+			clientWebRouter(),
+			"text-model",
+			[{ role: "user", content: "搜索三条" }],
+			{ tools: [{ type: "function", function: { name: "web_search", parameters: { type: "object" } } }] },
+			complete,
+		);
+
+		expect(mainTurn).toBe(2);
+		expect(queries).toEqual(["alpha news", "beta news", "gamma news"]);
+	});
+
+	it("参数抽不到时把错误文本作为工具结果注入，不发上游请求", async () => {
+		const searchBodies = mockDeepSeekSearch("unused");
+		let mainTurn = 0;
+		const complete = jest.fn(async (model: string, messages: any[]) => {
+			mainTurn++;
+			if (mainTurn === 1) {
+				return completion({
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{ id: "call_bad", type: "function", function: { name: "web_search", arguments: "{}" } },
+					],
+				});
+			}
+			const toolMessage = [...messages].reverse().find((message: Record<string, unknown>) => message["role"] === "tool");
+			expect(String(toolMessage?.["content"])).toContain("query");
+			return completion({ role: "assistant", content: "没有查询语句，请补充。" });
+		});
+
+		await runOpenAIWebAgentLoop(
+			clientWebRouter(),
+			"text-model",
+			[{ role: "user", content: "搜索" }],
+			{ tools: [{ type: "function", function: { name: "web_search", parameters: { type: "object" } } }] },
+			complete,
+		);
+
+		expect(mainTurn).toBe(2);
+		expect(searchBodies).toHaveLength(0);
+	});
+
+	it("Anthropic 托管工具类型被改写成可调用工具并由网关执行", async () => {
+		mockDeepSeekSearch("Docs 说配额是每分钟 600 次。");
+		const prepared = await prepareAnthropicWebRequest(clientWebRouter(), "text-model", {
+			model: "text-model",
+			tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
+			messages: [{ role: "user", content: "配额是多少？" }],
+		});
+		expect(prepared).toBeDefined();
+		expect(prepared!.clientTools).toEqual([{ name: "web_search", kind: "search", hosted: true }]);
+		expect(prepared!.body["system"]).toBeUndefined();
+		expect(JSON.stringify(prepared!.body["tools"])).not.toContain("web_search_20250305");
+
+		let mainTurn = 0;
+		const completeNative = jest.fn(async (body: Record<string, unknown>) => {
+			mainTurn++;
+			if (mainTurn === 1) {
+				return {
+					id: "msg_client_web",
+					type: "message",
+					role: "assistant",
+					content: [{ type: "tool_use", id: "toolu_client_web", name: "web_search", input: { query: "rate limit" } }],
+					stop_reason: "tool_use",
+					usage: { input_tokens: 5, output_tokens: 1 },
+				};
+			}
+			const messages = body["messages"] as Array<Record<string, unknown>>;
+			const toolResult = [...messages].reverse().find((message) => message["role"] === "user");
+			expect(JSON.stringify(toolResult)).toContain("每分钟 600 次");
+			return {
+				id: "msg_final",
+				type: "message",
+				role: "assistant",
+				content: [{ type: "text", text: "配额是每分钟 600 次。" }],
+				stop_reason: "end_turn",
+				usage: { input_tokens: 10, output_tokens: 2 },
+			};
+		});
+
+		const result = await runAnthropicWebAgentLoop(clientWebRouter(), prepared!, completeNative);
+		expect(mainTurn).toBe(2);
+		expect(result.response["content"]).toEqual([{ type: "text", text: "配额是每分钟 600 次。" }]);
 	});
 });

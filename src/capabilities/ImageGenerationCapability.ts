@@ -11,6 +11,7 @@ import type { Message, ModelResponse, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
 import {
 	BUILTIN_CAPABILITIES_CONFIG_PARAM,
+	MAX_BUILTIN_CAPABILITY_ITERATIONS,
 	modelsFromExecutors,
 	normalizeBuiltinCapabilitiesConfig,
 } from "./BuiltinCapabilitiesConfig";
@@ -168,7 +169,7 @@ export async function resolveImageGenerationCapability(
 		alwaysInject: settings.always_inject,
 		handlerModel: handlerModel,
 		fallbackModels: fallbackModels,
-		maxIterations: Math.min(8, Math.max(1, Math.trunc(settings.max_iterations || 4))),
+		maxIterations: Math.min(MAX_BUILTIN_CAPABILITY_ITERATIONS, Math.max(1, Math.trunc(settings.max_iterations || 4))),
 	};
 }
 

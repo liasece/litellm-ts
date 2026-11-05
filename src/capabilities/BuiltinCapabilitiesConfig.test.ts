@@ -1,4 +1,8 @@
-import { isBuiltinCapabilityAvailable, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
+import {
+	MAX_BUILTIN_CAPABILITY_ITERATIONS,
+	isBuiltinCapabilityAvailable,
+	normalizeBuiltinCapabilitiesConfig,
+} from "./BuiltinCapabilitiesConfig";
 import type { Deployment } from "../types/router";
 
 describe("BuiltinCapabilitiesConfig", () => {
@@ -15,6 +19,21 @@ describe("BuiltinCapabilitiesConfig", () => {
 		});
 		expect(configured.vision.max_output_tokens).toBe(65_536);
 		expect(configured.web.max_output_tokens).toBe(131_072);
+	});
+
+	it("承认 20 轮私有轮次配置，超过上限才收口", () => {
+		// 4 轮时代复杂调研任务常在拿到证据前耗尽预算（生产 503「超过 4 轮仍未完成」）。
+		expect(MAX_BUILTIN_CAPABILITY_ITERATIONS).toBe(20);
+
+		const raised = normalizeBuiltinCapabilitiesConfig({ web: { max_iterations: 20 } });
+		expect(raised.web.max_iterations).toBe(20);
+
+		const oversized = normalizeBuiltinCapabilitiesConfig({ web: { max_iterations: 99 } });
+		expect(oversized.web.max_iterations).toBe(MAX_BUILTIN_CAPABILITY_ITERATIONS);
+
+		// 缺省回落到默认 4 轮，0 收到下限 1。
+		expect(normalizeBuiltinCapabilitiesConfig({ web: {} }).web.max_iterations).toBe(4);
+		expect(normalizeBuiltinCapabilitiesConfig({ web: { max_iterations: 0 } }).web.max_iterations).toBe(1);
 	});
 
 	it("advertises a selected capability only when its global executor is usable", () => {

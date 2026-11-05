@@ -12,6 +12,9 @@ import {
 } from "../networking";
 import ExecutorChainEditor from "./ExecutorChainEditor";
 
+/** 与后端 MAX_BUILTIN_CAPABILITY_ITERATIONS 对齐的私有轮次上限。 */
+const MAX_PRIVATE_TURNS = 20;
+
 /** 把候选模型列表投影成下拉选项。 */
 function toModelOptions(
 	candidates: BuiltinCapabilitiesResponse["available_models"] | undefined,
@@ -139,7 +142,7 @@ export default function BuiltinCapabilitiesPanel() {
 
 						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 							<Form.Item name={["image_generation", "max_iterations"]} label="Maximum private turns" rules={[{ required: true }]}>
-								<InputNumber min={1} max={8} className="w-full" />
+								<InputNumber min={1} max={MAX_PRIVATE_TURNS} className="w-full" />
 							</Form.Item>
 
 							<Form.Item name={["image_generation", "max_output_tokens"]} label="Worker output token limit">
@@ -203,7 +206,7 @@ export default function BuiltinCapabilitiesPanel() {
 
 						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 							<Form.Item name={["vision", "max_iterations"]} label="Maximum private turns" rules={[{ required: true }]}>
-								<InputNumber min={1} max={8} className="w-full" />
+								<InputNumber min={1} max={MAX_PRIVATE_TURNS} className="w-full" />
 							</Form.Item>
 
 							<Form.Item
@@ -265,7 +268,7 @@ export default function BuiltinCapabilitiesPanel() {
 
 						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 							<Form.Item name={["web", "max_iterations"]} label="Maximum private turns" rules={[{ required: true }]}>
-								<InputNumber min={1} max={8} className="w-full" />
+								<InputNumber min={1} max={MAX_PRIVATE_TURNS} className="w-full" />
 							</Form.Item>
 
 							<Form.Item

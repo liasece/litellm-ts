@@ -17,6 +17,7 @@ import {
 	type PreparedImageGenerationRequest,
 } from "./ImageGenerationCapability";
 import {
+	MAX_CLIENT_WEB_TURNS,
 	prepareAnthropicWebRequest,
 	prepareOpenAIWebRequest,
 	runAnthropicWebAgentLoop,
@@ -64,13 +65,24 @@ export async function runOpenAIBuiltinCapabilityAgentLoop(
 		workerComplete?: Completion;
 	},
 ): Promise<Record<string, unknown>> {
-	const preparedWeb = options.preparedWeb ?? (await prepareOpenAIWebRequest(router, model, messages));
+	const preparedWeb =
+		options.preparedWeb ??
+		(await prepareOpenAIWebRequest(
+			router,
+			model,
+			messages,
+			Array.isArray(optionalParams["tools"]) ? (optionalParams["tools"] as unknown[]) : [],
+		));
 	const visionBinding = await resolveVisionCapability(router, model);
 	const imageGenerationBinding = await resolveImageGenerationCapability(router, model);
+	// 客户端自带网络工具时，那些轮次不占私有 max_iterations；组合护栏也要把这段预算让出来，
+	// 否则多能力叠加时会在客户端工具的收尾轮之前抛出 503。
+	const clientWebTurns = (preparedWeb?.clientTools ?? []).length > 0 ? MAX_CLIENT_WEB_TURNS : 0;
 	const combinedMaxTurns =
 		(preparedWeb?.binding.maxIterations ?? 0) +
 		(visionBinding?.maxIterations ?? 0) +
-		(imageGenerationBinding?.maxIterations ?? 0);
+		(imageGenerationBinding?.maxIterations ?? 0) +
+		clientWebTurns;
 	const guardMainModelTurn =
 		[preparedWeb, visionBinding, imageGenerationBinding].filter(Boolean).length > 1
 			? createMainModelTurnGuard(combinedMaxTurns)
@@ -140,10 +152,14 @@ export async function runAnthropicBuiltinCapabilityAgentLoop(
 	const preparedWeb = options.preparedWeb ?? (await prepareAnthropicWebRequest(router, model, body));
 	const visionBinding = await resolveVisionCapability(router, model);
 	const imageGenerationBinding = await resolveImageGenerationCapability(router, model);
+	// 客户端自带网络工具时，那些轮次不占私有 max_iterations；组合护栏也要把这段预算让出来，
+	// 否则多能力叠加时会在客户端工具的收尾轮之前抛出 503。
+	const clientWebTurns = (preparedWeb?.clientTools ?? []).length > 0 ? MAX_CLIENT_WEB_TURNS : 0;
 	const combinedMaxTurns =
 		(preparedWeb?.binding.maxIterations ?? 0) +
 		(visionBinding?.maxIterations ?? 0) +
-		(imageGenerationBinding?.maxIterations ?? 0);
+		(imageGenerationBinding?.maxIterations ?? 0) +
+		clientWebTurns;
 	const guardMainModelTurn =
 		[preparedWeb, visionBinding, imageGenerationBinding].filter(Boolean).length > 1
 			? createMainModelTurnGuard(combinedMaxTurns)

@@ -326,7 +326,22 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 					capabilityMessages,
 					visionImageStore,
 				);
-				const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, capabilityMessages);
+				// 非原生 Responses 上游看不到托管工具类型（type: "web_search"），
+				// 交给能力层改写成可调用函数；原生上游继续自己执行。
+				// 只把托管网络工具（type: "web_search" 等）交给能力层改写； Responses 形态的
+				// 函数工具已经在 toolRegistry.chatTools 里有 chat 版本，重复传入会让上游收到无法解析的 schema。
+				const hostedWebToolDeclarations = nativeResponses
+					? []
+					: (Array.isArray(reqBody.tools) ? reqBody.tools : []).filter(
+							(tool) => typeof tool?.type === "string" && tool.type.startsWith("web_"),
+						);
+				const capabilityDeclaredTools = [...toolRegistry.chatTools, ...hostedWebToolDeclarations];
+				const preparedWeb = await prepareOpenAIWebRequest(
+					litellmRouter,
+					model,
+					capabilityMessages,
+					capabilityDeclaredTools,
+				);
 				const result =
 					preparedVision || preparedImageGeneration || preparedWeb
 						? await runOpenAIBuiltinCapabilityAgentLoop(
@@ -1286,7 +1301,18 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			capabilityMessages,
 			visionImageStore,
 		);
-		const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, capabilityMessages);
+		const hostedWebToolDeclarations = nativeResponses
+			? []
+			: (Array.isArray(requestBody.tools) ? requestBody.tools : []).filter(
+					(tool) => typeof tool?.type === "string" && tool.type.startsWith("web_"),
+				);
+		const capabilityDeclaredTools = [...toolRegistry.chatTools, ...hostedWebToolDeclarations];
+		const preparedWeb = await prepareOpenAIWebRequest(
+			litellmRouter,
+			model,
+			capabilityMessages,
+			capabilityDeclaredTools,
+		);
 		if (preparedVision || preparedImageGeneration || preparedWeb) {
 			// 工具执行与 worker 调用保持非流式；主模型轮的可见文本边收边发。
 			if (!res.headersSent) {

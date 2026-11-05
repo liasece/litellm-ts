@@ -91,6 +91,15 @@ const DEFAULT_DEEPSEEK_SEARCH_COUNT = 10;
 /** 单次请求默认超时时间（毫秒）。 */
 const DEFAULT_DEEPSEEK_TIMEOUT_MS = 15_000;
 
+/**
+ * 每种能力单次客户端请求允许的私有轮次上限。
+ *
+ * 一轮 = 一次主模型调用（其中可能发起私有工具调用）。上限随执行器可靠性提高而上调：
+ * 4 轮时复杂调研任务经常在拿到证据前就耗尽预算（生产表现为 503「网络处理超过 4 轮仍未完成」），
+ * 因此放到 20 轮，让主模型自行按需分配。上限只是护栏，实际轮次仍由主模型决定。
+ */
+export const MAX_BUILTIN_CAPABILITY_ITERATIONS = 20;
+
 /** Safe defaults shown before an administrator configures the capability. */
 export const DEFAULT_BUILTIN_CAPABILITIES_CONFIG: BuiltinCapabilitiesConfig = {
 	vision: {
@@ -243,7 +252,7 @@ export function normalizeBuiltinCapabilitiesConfig(value: Record<string, unknown
 			// handler_model 保持为「主模型执行者」的投影，供模型发现与历史读取路径使用。
 			handler_model: primaryModel?.model ?? handlerModel,
 			executors: executors,
-			max_iterations: integer(raw["max_iterations"], defaults.max_iterations, 1, 8),
+			max_iterations: integer(raw["max_iterations"], defaults.max_iterations, 1, MAX_BUILTIN_CAPABILITY_ITERATIONS),
 			max_output_tokens: integerAtLeast(raw["max_output_tokens"], defaults.max_output_tokens, 128),
 		};
 	};

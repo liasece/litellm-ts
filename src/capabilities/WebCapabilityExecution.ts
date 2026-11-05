@@ -376,7 +376,33 @@ export async function executeWebToolCall(
 	complete: Completion = (model, messages, params) => router.completion(model, messages, params),
 	options: { audit?: BuiltinCapabilityAuditHook; toolCallId?: string } = {},
 ): Promise<{ text: string; raw: Record<string, unknown>; model: string; attempts: WebExecutionAttempt[] }> {
-	const request = parseWebArguments(toolName, rawArguments);
+	return await executeWebRequest(router, binding, parseWebArguments(toolName, rawArguments), complete, options);
+}
+
+/**
+ * 执行一次已归一化的搜索或抓取请求。
+ *
+ * 客户端已经声明 web_search / web_fetch 时，网关只做忠实执行：优先使用直连执行者
+ * （deepseek_tools），不再交给内置 worker 模型总结一遍；只有完全没有直连执行者时才回落到
+ * 模型执行者，否则这类请求会直接失去联网能力。
+ * @param router - 当前请求的 Router
+ * @param binding - 已解析的能力绑定
+ * @param request - 已归一化的搜索或抓取请求
+ * @param complete - 模型调用函数
+ * @param options - 审计钩子、工具调用 ID 与直连偏好
+ */
+export async function executeWebRequest(
+	router: Router,
+	binding: WebCapabilityBinding,
+	request: WebToolRequest,
+	complete: Completion = (model, messages, params) => router.completion(model, messages, params),
+	options: { audit?: BuiltinCapabilityAuditHook; toolCallId?: string; directOnly?: boolean } = {},
+): Promise<{
+	text: string;
+	raw: Record<string, unknown>;
+	model: string;
+	attempts: WebExecutionAttempt[];
+}> {
 	const messages = [{ role: "user", content: workerPrompt(request) } as Message];
 	const attempts: WebExecutionAttempt[] = [];
 	const toolCallId = options.toolCallId ?? "web_call";
@@ -386,7 +412,10 @@ export async function executeWebToolCall(
 		web_search_options: { search_context_size: "high" },
 	};
 	let lastError: unknown;
-	for (const executor of binding.executors) {
+	// 客户端工具走直连优先：有 deepseek_tools 时完全绕开 worker 模型，避免二次总结。
+	const directExecutors = binding.executors.filter((executor) => executor.type === "deepseek_tools");
+	const executors = options.directOnly === true && directExecutors.length > 0 ? directExecutors : binding.executors;
+	for (const executor of executors) {
 		const startTime = new Date();
 		try {
 			const outcome =

@@ -7,6 +7,7 @@ import type { Router } from "../router/Router";
 import type { Message, ToolCall } from "../types/openai";
 import {
 	BUILTIN_CAPABILITIES_CONFIG_PARAM,
+	MAX_BUILTIN_CAPABILITY_ITERATIONS,
 	modelsFromExecutors,
 	normalizeBuiltinCapabilitiesConfig,
 } from "./BuiltinCapabilitiesConfig";
@@ -160,7 +161,7 @@ export async function resolveVisionCapability(router: Router, model: string): Pr
 		alwaysInject: raw.always_inject,
 		handlerModel: handlerModel,
 		fallbackModels: fallbackModels,
-		maxIterations: clampInteger(raw.max_iterations, 1, 8, 4),
+		maxIterations: clampInteger(raw.max_iterations, 1, MAX_BUILTIN_CAPABILITY_ITERATIONS, 4),
 		maxOutputTokens: minimumInteger(raw.max_output_tokens, 128, 32_768),
 	};
 }
