@@ -1888,7 +1888,36 @@ describe("Responses API contract matrix", () => {
 		expect(JSON.stringify(output)).toContain("ok");
 	});
 
-	test("client abort interrupts a pending stream and records one failure", async () => {
+	test("native upstream AbortError stays a failure even when its message resembles a client cancellation", async () => {
+		jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+			status: "reserved",
+			requestId: "request-1",
+			reserved: 1,
+			actual: null,
+		});
+		const trackSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({
+			status: "committed",
+			requestId: "request-1",
+			spend: 0,
+		});
+		async function* failedStream() {
+			yield { type: "response.created", response: { id: "resp-failed", status: "in_progress", output: [] } };
+			throw Object.assign(new Error("client aborted"), { name: "AbortError" });
+		}
+		const completion = jest.fn().mockResolvedValue({ _stream: true, _responseProtocol: "responses", stream: failedStream() });
+		const response = await request(buildApp(buildRouter(completion), true))
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "hello", stream: true })
+			.expect(200);
+		expect(parseSseEvents(response.text).at(-1)?.type).toBe("response.failed");
+		expect(trackSpy).toHaveBeenCalledTimes(1);
+		expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: "failure",
+			metadata: { status: "failure", termination_reason: "request_failed" },
+		});
+	});
+
+	test.each(["chat", "native"] as const)("client abort interrupts a pending %s stream and records one aborted log", async (protocol) => {
 		jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
 			status: "reserved",
 			requestId: "request-1",
@@ -1904,14 +1933,29 @@ describe("Responses API contract matrix", () => {
 			return { status: "committed", requestId: "request-1", spend: 0 };
 		});
 		async function* pendingStream() {
+			if (protocol === "native") {
+				yield { type: "response.created", response: { id: "resp-abort", status: "in_progress", output: [] } };
+				yield { type: "response.output_text.delta", item_id: "msg-abort", output_index: 0, content_index: 0, delta: "first" };
+			} else {
 			yield {
 				id: "chatcmpl-abort",
 				model: "provider-model",
 				choices: [{ index: 0, delta: { content: "first" }, finish_reason: null }],
+					usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
 			};
+			}
 			await new Promise<never>(() => undefined);
 		}
-		const app = buildApp(buildRouter(jest.fn().mockResolvedValue({ _stream: true, stream: pendingStream() })), true);
+		const app = buildApp(
+			buildRouter(
+				jest.fn().mockResolvedValue({
+					_stream: true,
+					_responseProtocol: protocol === "native" ? "responses" : "chat",
+					stream: pendingStream(),
+				}),
+			),
+			true,
+		);
 		const server = app.listen(0);
 		try {
 			const address = server.address();
@@ -1928,9 +1972,13 @@ describe("Responses API contract matrix", () => {
 						headers: { "content-type": "application/json" },
 					},
 					(response) => {
-						response.once("data", () => {
+						let received = "";
+						response.on("data", (chunk: Buffer) => {
+							received += chunk.toString();
+							if (received.includes("first")) {
 							response.destroy();
 							resolve();
+							}
 						});
 					},
 				);
@@ -1939,7 +1987,16 @@ describe("Responses API contract matrix", () => {
 			});
 			await accounted;
 			expect(trackSpy).toHaveBeenCalledTimes(1);
-			expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({ status: "failure" });
+			expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({
+				status: "aborted",
+				metadata: {
+					status: "aborted",
+					error_information: { error_type: "AbortError", error_message: "client aborted" },
+				},
+			});
+			if (protocol === "chat") {
+				expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({ prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 });
+			}
 		} finally {
 			server.close();
 		}

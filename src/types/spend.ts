@@ -57,7 +57,7 @@ export enum CallType {
  * - Success: 请求成功且 usage 已计费
  * - Failure: 请求失败（上游错误、timeout 等）
  * - Cancelled: 下游主动断开后，网关按取消策略终止了上游工作
- * - Aborted: 网关进程结束前未生成最终结果，usage 与费用未知
+ * - Aborted: 请求完成前因客户端断开或网关重启而中止，保留已观测的 usage 与费用
  */
 export enum SpendLogStatus {
 	Success = "success",

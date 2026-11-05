@@ -47,6 +47,7 @@ import {
 } from "./spendManagementFormatters";
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
+import { spendLogStatusSql } from "./spendLogStatus";
 import { hydrateSessionTimelineImages } from "./sessionTimelineImages";
 import { CallType } from "../types/spend";
 import { CLAUDE_CODE_USER_ID_PATTERN, normalizeSessionUuid } from "./sessionIdentity";
@@ -1076,7 +1077,7 @@ function uiSpendLogSelection() {
 		startTime: liteLLM_SpendLogs.startTime,
 		endTime: liteLLM_SpendLogs.endTime,
 		completionStartTime: liteLLM_SpendLogs.completionStartTime,
-		model: liteLLM_SpendLogs.model,
+		model: spendLogExecutionModelSql(),
 		model_id: liteLLM_SpendLogs.model_id,
 		model_group: liteLLM_SpendLogs.model_group,
 		custom_llm_provider: sql<string | null>`${liteLLM_SpendLogs.custom_llm_provider}`,
@@ -1092,7 +1093,7 @@ function uiSpendLogSelection() {
 		requester_ip_address: liteLLM_SpendLogs.requester_ip_address,
 		session_id: liteLLM_SpendLogs.session_id,
 		session_group_key: liteLLM_SpendLogs.session_group_key,
-		status: sql<string | null>`${liteLLM_SpendLogs.status}`,
+		status: spendLogStatusSql(liteLLM_SpendLogs.status, liteLLM_SpendLogs.metadata),
 		mcp_namespaced_tool_name: liteLLM_SpendLogs.mcp_namespaced_tool_name,
 		agent_id: liteLLM_SpendLogs.agent_id,
 		request_duration_ms: spendLogDurationSql(),
@@ -1225,11 +1226,12 @@ function sessionTimelineDescriptorSelection() {
 		total_tokens: liteLLM_SpendLogs.total_tokens,
 		startTime: liteLLM_SpendLogs.startTime,
 		endTime: liteLLM_SpendLogs.endTime,
-		status: sql<string | null>`${liteLLM_SpendLogs.status}`,
-		metadata_status: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'status' ELSE NULL END
-		`,
 		model: spendLogExecutionModelSql(),
+		status: spendLogStatusSql(liteLLM_SpendLogs.status, liteLLM_SpendLogs.metadata),
+		metadata_status: spendLogStatusSql(
+			sql<string | null>`CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'status' ELSE NULL END`,
+			liteLLM_SpendLogs.metadata,
+		),
 		key_alias: sql<string | null>`
 			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'user_api_key_alias' ELSE NULL END
 		`,
@@ -1718,7 +1720,7 @@ function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
 		if (args.statusFilter === "success") {
 			conditions.push(sql`(${liteLLM_SpendLogs.status} = 'success' OR ${liteLLM_SpendLogs.status} IS NULL)`);
 		} else {
-			conditions.push(sql`${liteLLM_SpendLogs.status} = ${args.statusFilter}`);
+			conditions.push(sql`${spendLogStatusSql(liteLLM_SpendLogs.status, liteLLM_SpendLogs.metadata)} = ${args.statusFilter}`);
 		}
 	}
 	if (args.minSpend !== undefined) {

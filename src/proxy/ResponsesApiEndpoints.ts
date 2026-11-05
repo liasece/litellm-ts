@@ -1559,6 +1559,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 
 	const iterator = stream[Symbol.asyncIterator]();
 	let clientAborted = false;
+	const clientAbortError = Object.assign(new Error("client aborted"), { name: "AbortError" });
 	let rejectClientAbort: ((error: Error) => void) | undefined;
 	const clientAbort = new Promise<never>((_resolve, reject) => {
 		rejectClientAbort = reject;
@@ -1566,7 +1567,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 	const onClose = (): void => {
 		if (!res.writableEnded && !clientAborted) {
 			clientAborted = true;
-			rejectClientAbort?.(Object.assign(new Error("client aborted"), { name: "AbortError" }));
+			rejectClientAbort?.(clientAbortError);
 		}
 	};
 	res.once("close", onClose);
@@ -1622,9 +1623,12 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		);
 	} catch (error) {
 		terminalError = error;
+		// Classify the error that won the race, before any later disconnect can change the flag.
+		const status = error === clientAbortError ? SpendLogStatus.Aborted : SpendLogStatus.Failure;
+		const errorCode = status === SpendLogStatus.Aborted ? "client_aborted" : streamErrorCode(error);
 		await streamingCheckpointScheduler?.dispose();
 		if (!clientAborted) {
-			const responseError = { code: streamErrorCode(error), message: errorMessage(error) };
+			const responseError = { code: errorCode, message: errorMessage(error) };
 			writeTerminalEvent(res, state, "response.failed", {
 				response: buildStreamResponse(state, requestBody, "failed", responseError),
 			});
@@ -1639,13 +1643,13 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				startTime: startTime,
 				completionStartTime: firstChunkAt,
 				response: buildStreamResponse(state, requestBody, "failed", {
-					code: streamErrorCode(error),
+					code: errorCode,
 					message: errorMessage(error),
 				}),
 				usage: state.usage as unknown as Record<string, unknown> | undefined,
 				error: error,
 				upstreamLogContext: getUpstreamLogContext(streamResult),
-				status: SpendLogStatus.Failure,
+				status: status,
 				...getResultModelResolutionMetadata(streamResult),
 			}),
 		);
@@ -1822,6 +1826,7 @@ async function relayNativeResponsesStream(
 		});
 	}
 	let clientAborted = false;
+	const clientAbortError = Object.assign(new Error("client aborted"), { name: "AbortError" });
 	let terminalType: "response.completed" | "response.incomplete" | "response.failed" | undefined;
 	let terminalResponse: Record<string, unknown> | undefined;
 	let upstreamTerminalResponse: Record<string, unknown> | undefined;
@@ -1837,7 +1842,7 @@ async function relayNativeResponsesStream(
 	const onClose = (): void => {
 		if (!res.writableEnded && !clientAborted) {
 			clientAborted = true;
-			rejectClientAbort?.(Object.assign(new Error("client aborted"), { name: "AbortError" }));
+			rejectClientAbort?.(clientAbortError);
 		}
 	};
 	res.once("close", onClose);
@@ -1925,9 +1930,12 @@ async function relayNativeResponsesStream(
 		);
 	} catch (error) {
 		thrown = error;
+		// Classify the error that won the race, before any later disconnect can change the flag.
+		const status = error === clientAbortError ? SpendLogStatus.Aborted : SpendLogStatus.Failure;
+		const errorCode = status === SpendLogStatus.Aborted ? "client_aborted" : streamErrorCode(error);
 		await streamingCheckpointScheduler?.dispose();
 		if (!clientAborted) {
-			const responseError = { code: streamErrorCode(error), message: errorMessage(error) };
+			const responseError = { code: errorCode, message: errorMessage(error) };
 			const failedResponse = {
 				id: `resp_${randomUUID()}`,
 				object: "response",
@@ -1957,7 +1965,7 @@ async function relayNativeResponsesStream(
 				error: error,
 				completionStartTime: firstSemanticDeltaAt,
 				upstreamLogContext: getUpstreamLogContext(streamResult),
-				status: SpendLogStatus.Failure,
+				status: status,
 				...getResultModelResolutionMetadata(streamResult),
 			}),
 		);
@@ -2523,6 +2531,12 @@ async function recordSpend(
 				error: context.error,
 				upstreamLogContext: context.upstreamLogContext,
 				status: context.status,
+				metadataOverrides:
+					context.error === undefined
+						? undefined
+						: {
+								termination_reason: context.status === SpendLogStatus.Aborted ? "client_disconnected" : "request_failed",
+							},
 				fallbackModels: context.fallbackModels,
 				modelResolutionChain: context.modelResolutionChain,
 				routingTrace: context.routingTrace,

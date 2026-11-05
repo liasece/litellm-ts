@@ -74,3 +74,49 @@ describe("legacy failed fallback attribution", () => {
 		);
 	});
 });
+
+describe("historical client abort status", () => {
+	const row = {
+		request_id: "legacy-client-abort",
+		status: "failure",
+		spend: 1.25,
+		total_tokens: 5,
+		metadata: {
+			status: "failure",
+			error_information: { error_type: "AbortError", error_message: "client aborted" },
+		},
+	};
+
+	test("keeps cancellation status, diagnostics and observed billing consistent", () => {
+		expect(normalizeSpendLogRow(row)).toMatchObject({
+			status: "aborted",
+			spend: 1.25,
+			total_tokens: 5,
+			metadata: { status: "aborted", error_information: row.metadata.error_information },
+		});
+		expect(normalizeSpendLogRow({ ...row, status: "aborted" }).metadata).toMatchObject({ status: "aborted" });
+		expect(row.metadata.status).toBe("failure");
+	});
+
+	test.each([
+		{ error_type: "AbortError", error_message: "provider timeout" },
+		{ error_type: "AbortError", error_message: "This operation was aborted" },
+		{ error_type: "Error", error_message: "client aborted" },
+	])("keeps upstream and unclassified errors as failures: %j", (error) => {
+		expect(normalizeSpendLogRow({ ...row, metadata: { status: "failure", error_information: error } })).toMatchObject({
+			status: "failure",
+			metadata: { status: "failure" },
+		});
+	});
+
+	test("preserves explicit failure and success outcomes instead of applying legacy recovery", () => {
+		expect(normalizeSpendLogRow({ ...row, metadata: { ...row.metadata, termination_reason: "request_failed" } })).toMatchObject({
+			status: "failure",
+			metadata: { status: "failure" },
+		});
+		expect(normalizeSpendLogRow({ ...row, status: "success", metadata: { ...row.metadata, status: "success" } })).toMatchObject({
+			status: "success",
+			metadata: { status: "success" },
+		});
+	});
+});

@@ -1,3 +1,5 @@
+import { isLegacyClientAbort } from "./spendLogStatus";
+
 /**
  * SpendManagementEndpoint 纯函数 formatter / 归一化 helper
  *
@@ -100,6 +102,8 @@ export function toIsoTimestamp(value: unknown): unknown {
  * @param row
  */
 export function normalizeSpendLogRow(row: Record<string, unknown>): Record<string, unknown> {
+	const metadata = parseJsonLikeValue(row.metadata);
+	const clientAborted = (row.status === "failure" || row.status === "aborted") && isLegacyClientAbort(row.metadata);
 	const proxy = parseJsonLikeValue(row.proxy_server_request) as { upstream_request?: { body?: { model?: unknown } } } | null;
 	const upstreamModel = proxy?.upstream_request?.body?.model;
 	const recoverLegacyModel =
@@ -110,6 +114,7 @@ export function normalizeSpendLogRow(row: Record<string, unknown>): Record<strin
 		upstreamModel.length > 0;
 	return {
 		...row,
+		...(clientAborted ? { status: "aborted" } : {}),
 		...(recoverLegacyModel ? { model: upstreamModel } : {}),
 		date: toDateString(row.startTime),
 		startTime: toIsoTimestamp(row.startTime),
@@ -120,7 +125,7 @@ export function normalizeSpendLogRow(row: Record<string, unknown>): Record<strin
 		prompt_tokens: toFiniteNumber(row.prompt_tokens),
 		completion_tokens: toFiniteNumber(row.completion_tokens),
 		request_duration_ms: toFiniteNumber(row.request_duration_ms),
-		metadata: parseJsonLikeValue(row.metadata),
+		metadata: clientAborted ? { ...(metadata as Record<string, unknown>), status: "aborted" } : metadata,
 		request_tags: parseJsonLikeValue(row.request_tags),
 	};
 }
