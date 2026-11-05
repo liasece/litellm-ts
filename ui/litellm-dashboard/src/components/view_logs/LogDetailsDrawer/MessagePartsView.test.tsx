@@ -30,8 +30,7 @@ describe("MessagePartsView", () => {
 					{
 						kind: "image",
 						label: "Image",
-						text:
-							"data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
+						text: "data:image/png;base64,iVBORw0KGgo... (litellm_truncated skipped 100000 chars. Truncation is a DB storage safeguard.) ...IEND",
 					},
 				]}
 			/>,
@@ -90,5 +89,62 @@ describe("MessagePartsView", () => {
 		expect(screen.getByText("Image Size: 100x100.")).toBeInTheDocument();
 		expect(screen.getByRole("img", { name: "Image" })).toHaveAttribute("src", source);
 		expect(screen.queryByText(source)).not.toBeInTheDocument();
+	});
+	it("将回放中已关联的本地 Markdown 图片渲染为可预览的原图", () => {
+		const path = "/Users/example/outputs/golden-retriever.png";
+		const source = "data:image/png;base64,iVBORw0KGgoAAA";
+		render(
+			<MessagePartsView
+				parts={[{ kind: "text", label: "Text", text: `![金毛幼犬](${path})` }]}
+				imageSources={{ [path]: source }}
+			/>,
+		);
+		expect(screen.getByRole("img", { name: "金毛幼犬" })).toHaveAttribute("src", source);
+	});
+
+	it("保留 Markdown 中的栅格图片数据，并继续阻止活动内容链接", () => {
+		const source = "data:image/png;base64,iVBORw0KGgoAAA";
+		render(
+			<MessagePartsView
+				parts={[
+					{
+						kind: "text",
+						label: "Text",
+						text: `![小狗](${source})\n[unsafe](javascript:alert%281%29)\n[inline](data:text/html;base64,PHNjcmlwdD4=)`,
+					},
+				]}
+			/>,
+		);
+		expect(screen.getByRole("img", { name: "小狗" })).toHaveAttribute("src", source);
+		expect(screen.getByText("unsafe").closest("a")).toHaveAttribute("href", "");
+		expect(screen.getByText("inline").closest("a")).toHaveAttribute("href", "");
+	});
+
+	it("本地文件没有可关联的图片数据时显示原因，避免请求错误的网站路径", () => {
+		const { container } = render(
+			<MessagePartsView
+				parts={[{ kind: "text", label: "Text", text: "![金毛幼犬](/Users/example/outputs/golden-retriever.png)" }]}
+			/>,
+		);
+		expect(container.querySelector("img")).not.toBeInTheDocument();
+		expect(screen.getByText("图片保存在生成设备上，日志中没有可显示的图片数据。")).toBeInTheDocument();
+	});
+	it("渲染带空格的本地 Markdown 图片路径", () => {
+		const path = "/Users/example/My images/dog.png";
+		const source = "data:image/png;base64,iVBORw0KGgoAAA";
+		render(
+			<MessagePartsView
+				parts={[{ kind: "text", label: "Text", text: `![幼犬](<${path}>)` }]}
+				imageSources={{ [path]: source }}
+			/>,
+		);
+		expect(screen.getByRole("img", { name: "幼犬" })).toHaveAttribute("src", source);
+	});
+
+	it.each(["image/svg+xml", "text/html"])("不渲染 Markdown 中的活动内容 %s", (mime) => {
+		const { container } = render(
+			<MessagePartsView parts={[{ kind: "text", label: "Text", text: `![unsafe](data:${mime};base64,PHN2Zz4=)` }]} />,
+		);
+		expect(container.querySelector("img")).not.toBeInTheDocument();
 	});
 });

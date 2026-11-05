@@ -1,5 +1,5 @@
 import { Image, Typography } from "antd";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MessagePart } from "./prettyMessagesTypes";
 import { SimpleToolCallBlock } from "./SimpleToolCallBlock";
@@ -31,12 +31,54 @@ function safeJson(value: any): string {
 	}
 }
 
-function MarkdownText({ children }: { children: string }) {
+type ImageSources = Readonly<Record<string, string>>;
+const RASTER_IMAGE_DATA = /^data:image\/(?:png|jpe?g|webp|gif);base64,/i;
+const LOCAL_IMAGE_PATH = /^(?:\/(?:Users|home|root|mnt|tmp|var)\/|[a-z]:[\\/]|file:\/|sandbox:\/)/i;
+
+function MarkdownText({ children, imageSources }: { children: string; imageSources?: ImageSources }) {
 	return (
 		<ReactMarkdown
 			remarkPlugins={[remarkGfm]}
+			urlTransform={(url, key, node) => {
+				if (key === "src" && node.tagName === "img") {
+					let source = imageSources?.[url];
+					if (!source) {
+						try {
+							source = imageSources?.[decodeURIComponent(url)];
+						} catch {
+							// Invalid percent escapes cannot identify a recorded image.
+						}
+					}
+					source ??= url;
+					if (RASTER_IMAGE_DATA.test(source) && !source.includes("litellm_truncated")) return source;
+					return defaultUrlTransform(source);
+				}
+				return defaultUrlTransform(url);
+			}}
 			components={{
-				p: ({ children: paragraph }) => <p style={{ margin: "0 0 6px" }}>{paragraph}</p>,
+				p: ({ children: paragraph }) => <div style={{ margin: "0 0 6px" }}>{paragraph}</div>,
+				img: ({ src, alt }) => {
+					if (!src || LOCAL_IMAGE_PATH.test(src)) {
+						return (
+							<span className="inline-flex flex-col gap-1 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+								{alt ? <span className="font-medium text-slate-700">{alt}</span> : null}
+								<span>
+									{src && LOCAL_IMAGE_PATH.test(src)
+										? "图片保存在生成设备上，日志中没有可显示的图片数据。"
+										: "日志中的图片地址或数据不可用。"}
+								</span>
+							</span>
+						);
+					}
+					return (
+						<Image
+							src={src}
+							alt={alt || "图片"}
+							wrapperStyle={{ maxWidth: "100%" }}
+							style={{ display: "block", maxWidth: "100%", maxHeight: 640, objectFit: "contain", borderRadius: 6 }}
+						/>
+					);
+				},
 				pre: ({ children: code }) => (
 					<pre style={{ overflow: "auto", padding: 8, borderRadius: 4, background: "#f6f8fa" }}>{code}</pre>
 				),
@@ -58,7 +100,15 @@ function renderableImageSource(part: MessagePart): string | null {
 	return /^(?:data:image\/(?:png|jpe?g|webp|gif);base64,|https?:\/\/)/i.test(candidate) ? candidate : null;
 }
 
-function ImagePart({ part, compact }: { part: MessagePart; compact: boolean }) {
+function ImagePart({
+	part,
+	compact,
+	imageSources,
+}: {
+	part: MessagePart;
+	compact: boolean;
+	imageSources?: ImageSources;
+}) {
 	const source = renderableImageSource(part);
 	if (!source) {
 		const data = part.data && typeof part.data === "object" ? (part.data as Record<string, unknown>) : null;
@@ -67,6 +117,7 @@ function ImagePart({ part, compact }: { part: MessagePart; compact: boolean }) {
 			<OperationPart
 				part={truncated ? { ...part, text: TRUNCATED_IMAGE_MESSAGE, data: { truncated: true } } : part}
 				compact={compact}
+				imageSources={imageSources}
 			/>
 		);
 	}
@@ -115,14 +166,22 @@ function ImagePart({ part, compact }: { part: MessagePart; compact: boolean }) {
 			/>
 			{caption ? (
 				<div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: "#475569" }}>
-					<MarkdownText>{caption}</MarkdownText>
+					<MarkdownText imageSources={imageSources}>{caption}</MarkdownText>
 				</div>
 			) : null}
 		</div>
 	);
 }
 
-function OperationPart({ part, compact }: { part: MessagePart; compact: boolean }) {
+function OperationPart({
+	part,
+	compact,
+	imageSources,
+}: {
+	part: MessagePart;
+	compact: boolean;
+	imageSources?: ImageSources;
+}) {
 	if (part.kind === "tool_call") {
 		return (
 			<SimpleToolCallBlock
@@ -152,9 +211,7 @@ function OperationPart({ part, compact }: { part: MessagePart; compact: boolean 
 				marginTop: 8,
 			}}
 		>
-			<div
-				style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: detail || structuredParts ? 6 : 0 }}
-			>
+			<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: detail || structuredParts ? 6 : 0 }}>
 				<Text
 					strong
 					style={{
@@ -179,10 +236,10 @@ function OperationPart({ part, compact }: { part: MessagePart; compact: boolean 
 				) : null}
 			</div>
 			{structuredParts ? (
-				<MessagePartsView parts={structuredParts} compact={compact} />
+				<MessagePartsView parts={structuredParts} compact={compact} imageSources={imageSources} />
 			) : detail && (part.kind === "thinking" || part.kind === "refusal") ? (
 				<div style={{ fontSize: 12, lineHeight: 1.6, color: "#262626" }}>
-					<MarkdownText>{detail}</MarkdownText>
+					<MarkdownText imageSources={imageSources}>{detail}</MarkdownText>
 				</div>
 			) : detail ? (
 				<pre
@@ -205,7 +262,15 @@ function OperationPart({ part, compact }: { part: MessagePart; compact: boolean 
 	);
 }
 
-export function MessagePartsView({ parts, compact = false }: { parts: MessagePart[]; compact?: boolean }) {
+export function MessagePartsView({
+	parts,
+	compact = false,
+	imageSources,
+}: {
+	parts: MessagePart[];
+	compact?: boolean;
+	imageSources?: ImageSources;
+}) {
 	const pairedResultIndexes = new Set<number>();
 	const toolResultsByCallIndex = new Map<number, MessagePart>();
 
@@ -238,7 +303,7 @@ export function MessagePartsView({ parts, compact = false }: { parts: MessagePar
 								marginTop: index === 0 ? 0 : 8,
 							}}
 						>
-							<MarkdownText>{part.text || ""}</MarkdownText>
+							<MarkdownText imageSources={imageSources}>{part.text || ""}</MarkdownText>
 						</div>
 					);
 				}
@@ -256,15 +321,31 @@ export function MessagePartsView({ parts, compact = false }: { parts: MessagePar
 							badge={part.label}
 							result={result}
 							resultContent={
-								result?.parts?.length ? <MessagePartsView parts={result.parts} compact={compact} /> : undefined
+								result?.parts?.length ? (
+									<MessagePartsView parts={result.parts} compact={compact} imageSources={imageSources} />
+								) : undefined
 							}
 						/>
 					);
 				}
 				if (part.kind === "image") {
-					return <ImagePart key={`${part.kind}-${part.id || index}`} part={part} compact={compact} />;
+					return (
+						<ImagePart
+							key={`${part.kind}-${part.id || index}`}
+							part={part}
+							compact={compact}
+							imageSources={imageSources}
+						/>
+					);
 				}
-				return <OperationPart key={`${part.kind}-${part.id || index}`} part={part} compact={compact} />;
+				return (
+					<OperationPart
+						key={`${part.kind}-${part.id || index}`}
+						part={part}
+						compact={compact}
+						imageSources={imageSources}
+					/>
+				);
 			})}
 		</div>
 	);

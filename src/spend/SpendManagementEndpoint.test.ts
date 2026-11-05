@@ -1881,6 +1881,46 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(payloadCall?.whereSql).toMatch(/request_id/i);
 		});
 
+
+		it("从相同 Key 和可见用户范围内恢复本地图片，保留原会话计费汇总", async () => {
+			const path = "/Users/example/outputs/dog.png";
+			const prompt = "一只金毛幼犬";
+			const command = `node /skills/run-generate.mjs --prompt '${prompt}' --out ${path}`;
+			const baseRow = {
+				call_type: "completion", api_key: "hash-owner", spend: 0.01, total_tokens: 10, model: "assistant",
+				status: "success", metadata_status: null, error_information: null, request_payload: {},
+			};
+			const rows = [
+				{ ...baseRow, request_id: "command", startTime: new Date("2026-11-03T09:19:14Z"),
+					endTime: new Date("2026-11-03T09:19:15Z"),
+					response_payload: { output: [{ type: "custom_tool_call", name: "exec", call_id: "generate",
+						input: `text(await tools.exec_command({cmd:${JSON.stringify(command)}}));` }] },
+				},
+				{ ...baseRow, request_id: "output", startTime: new Date("2026-11-03T09:19:46Z"),
+					endTime: new Date("2026-11-03T09:19:47Z"),
+					response_payload: { choices: [{ message: { role: "assistant", content: `![幼犬](${path})` } }] },
+				},
+			];
+			const { db, calls } = makeMockDb({ responses: [rows, [{
+				requestId: "image", response: { data: [{ b64_json: "iVBORw0KGgoAAA" }] },
+			}]] });
+			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get(
+				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
+			);
+			expect(res.status).toBe(200);
+			expect(res.body.data.find((event: { request_id: string }) => event.request_id === "output")).toMatchObject({
+				content: `![幼犬](${path})`, image_sources: { [path]: "data:image/png;base64,iVBORw0KGgoAAA" },
+			});
+			expect(res.body.summary).toMatchObject({ request_count: 2, total_spend: 0.02, total_tokens: 20 });
+			const imageLookup = calls.find((call) => call.projection.includes("requestId"));
+			expect(imageLookup?.whereSql).toContain("hash-owner");
+			expect(imageLookup?.whereSql).toContain(INTERNAL_USER_AUTH.user_id);
+			expect(imageLookup?.whereSql).toContain(prompt);
+			expect(imageLookup?.whereSql).toMatch(/startTime.*>=/s);
+			expect(imageLookup?.whereSql).toMatch(/endTime.*<=/s);
+			expect(imageLookup?.limitN).toBe(2);
+		});
+
 		it("沿用 Session 可见性边界，非法参数不查询 DB", async () => {
 			const { db, calls } = makeMockDb();
 			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get(

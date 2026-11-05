@@ -487,7 +487,7 @@ export function ToolResultTimelineCard({ item }: { item: SessionTimelineItem }) 
 					</div>
 					{structuredParts ? (
 						<div className={`rounded-md border bg-white/90 p-2.5 ${isError ? "border-red-100" : "border-amber-100"}`}>
-							<MessagePartsView parts={structuredParts} />
+							<MessagePartsView parts={structuredParts} imageSources={item.image_sources} />
 						</div>
 					) : (
 						<pre
@@ -519,12 +519,12 @@ function TimelineContent({ item }: { item: SessionTimelineItem }) {
 						{userContext.remainingContent}
 					</div>
 				) : null}
-				{nonTextParts.length ? <MessagePartsView parts={nonTextParts as MessagePart[]} /> : null}
+				{nonTextParts.length ? <MessagePartsView parts={nonTextParts as MessagePart[]} imageSources={item.image_sources} /> : null}
 			</div>
 		);
 	}
 	if (item.parts?.length) {
-		return <MessagePartsView parts={item.parts as MessagePart[]} />;
+		return <MessagePartsView parts={item.parts as MessagePart[]} imageSources={item.image_sources} />;
 	}
 	return (
 		<div className="whitespace-pre-wrap break-words text-[13px] leading-6 text-slate-800">

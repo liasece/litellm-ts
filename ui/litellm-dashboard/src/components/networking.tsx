@@ -7557,6 +7557,7 @@ export interface SessionTimelinePart {
 }
 
 export interface SessionTimelineEvent {
+	image_sources?: Record<string, string>;
 	id: string;
 	request_id: string;
 	role: "system" | "user" | "assistant" | "tool" | "request" | "error";

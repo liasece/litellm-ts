@@ -162,6 +162,8 @@ export interface SessionTimelineItem {
 	readonly content: string;
 	/** Structured content blocks preserving tool calls, results and multimodal details. */
 	parts?: SessionTimelinePart[];
+	/** Local Markdown image destinations resolved from visible generation logs. */
+	readonly image_sources?: Readonly<Record<string, string>>;
 	/** Block-level or request-level status associated with this event. */
 	readonly status?: string;
 	/** True for proxy-generated built-in capability calls; otherwise omitted. */

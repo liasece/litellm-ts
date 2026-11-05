@@ -47,6 +47,8 @@ import {
 } from "./spendManagementFormatters";
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
+import { hydrateSessionTimelineImages } from "./sessionTimelineImages";
+import { CallType } from "../types/spend";
 import { CLAUDE_CODE_USER_ID_PATTERN, normalizeSessionUuid } from "./sessionIdentity";
 import type { Column } from "./spendManagementTypes";
 import type { UserAPIKeyAuth } from "../types/auth";
@@ -648,9 +650,32 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		}
 		const result = builder.build();
 		recordTiming("reduce", reducerStartedAt);
+		const imagesStartedAt = performance.now();
+		const hydratedResult = await hydrateSessionTimelineImages(result, hydratedRows, async (lookup) => {
+			const candidates = await db.select({
+				requestId: liteLLM_SpendLogs.request_id,
+				response: liteLLM_SpendLogs.response,
+			}).from(liteLLM_SpendLogs).where(and(
+				visibilityClause,
+				eq(liteLLM_SpendLogs.api_key, lookup.apiKey),
+				inArray(liteLLM_SpendLogs.call_type, [CallType.ImageGeneration, CallType.AImageGeneration]),
+				sql`${liteLLM_SpendLogs.startTime} >= ${lookup.from}`,
+				sql`${liteLLM_SpendLogs.endTime} <= ${lookup.to}`,
+				sql`COALESCE(${liteLLM_SpendLogs.proxy_server_request}#>>'{body,prompt}',
+					${liteLLM_SpendLogs.messages}#>>'{}') = ${lookup.prompt}`,
+			)).limit(2);
+			if (candidates.length !== 1) {
+				return candidates;
+			}
+			const candidate = candidates[0]!;
+			const cold = await getRequestResponsePayloadFromColdStorage(candidate.requestId, lookup.from, lookup.to,
+				() => logger.warn("Session image cold-storage lookup failed"));
+			return [{ ...candidate, response: cold?.response ?? candidate.response }];
+		});
+		recordTiming("images", imagesStartedAt);
 		recordTiming("total", timelineStartedAt);
 		applyServerTiming();
-		return result;
+		return hydratedResult;
 	});
 
 	// ========== /spend/logs/ui/batch ==========
