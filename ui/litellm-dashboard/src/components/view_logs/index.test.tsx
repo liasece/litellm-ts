@@ -646,11 +646,11 @@ describe("Logs columns", () => {
 	it("uses independent green progress scales for cache, input, and output tokens", () => {
 		renderColumnCell("Tokens", {
 			...baseLogEntry,
-			prompt_tokens: 110_000,
+			prompt_tokens: 310_000,
 			completion_tokens: 1_000,
 			metadata: {
 				additional_usage_values: {
-					cache_read_input_tokens: 100_000,
+					cache_read_input_tokens: 300_000,
 				},
 			},
 		});
@@ -670,11 +670,11 @@ describe("Logs columns", () => {
 	it("caps each token progress bar at its own maximum", () => {
 		renderColumnCell("Tokens", {
 			...baseLogEntry,
-			prompt_tokens: 230_001,
+			prompt_tokens: 630_002,
 			completion_tokens: 2_001,
 			metadata: {
 				additional_usage_values: {
-					cache_read_input_tokens: 200_001,
+					cache_read_input_tokens: 600_001,
 				},
 			},
 		});

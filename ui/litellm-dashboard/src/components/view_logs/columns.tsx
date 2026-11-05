@@ -77,7 +77,7 @@ const TPS_PROGRESS_MAX = 200;
 const DURATION_PROGRESS_MAX_SECONDS = 30;
 const TTFT_PROGRESS_MAX_SECONDS = 10;
 const TOKEN_PROGRESS_MAX = {
-	cacheRead: 200_000,
+	cacheRead: 600_000,
 	input: 20_000,
 	output: 2_000,
 } as const;
