@@ -985,12 +985,12 @@ export class Router {
 			});
 		} catch (error) {
 			if (typeof error === "object" && error !== null) {
-				attachUpstreamLogContext(error, createUpstreamLogContext(providerRequest));
+				attachUpstreamLogContext(error, createUpstreamLogContext(providerRequest, undefined, undefined, deployment));
 			}
 			throw error;
 		}
 		const response = execution.response;
-		const upstreamLogContext = createUpstreamLogContext(providerRequest, response, execution.body);
+		const upstreamLogContext = createUpstreamLogContext(providerRequest, response, execution.body, deployment);
 
 		if (isStream) {
 			const measured = buildStreamWithTtft(response, execution.startedAtMs, provider, responseProtocol);

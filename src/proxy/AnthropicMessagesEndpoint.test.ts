@@ -125,6 +125,53 @@ describe("native Anthropic streaming SpendLog", () => {
 		jest.restoreAllMocks();
 	});
 
+	it.each([
+		{ stream: false, failure: "http" },
+		{ stream: true, failure: "http" },
+		{ stream: false, failure: "network" },
+		{ stream: true, failure: "network" },
+	])("records the actual failed fallback for Messages $stream / $failure", async ({ stream, failure }) => {
+		const app = buildApp();
+		const router = (
+			app as unknown as {
+				__router: {
+					getAvailableDeployment: jest.Mock;
+					getNextFallback: jest.Mock;
+				};
+			}
+		).__router;
+		const first = router.getAvailableDeployment("native-group");
+		const finalDeployment = {
+			model_name: "fallback-group",
+			litellm_params: { model: "MiniMax-M3.1-Flash", custom_llm_provider: "minimax" },
+			model_info: { id: "dep-final" },
+		};
+		router.getAvailableDeployment.mockImplementation((model: string) =>
+			model === "native-group" ? first : { deployment: finalDeployment, provider: first.provider },
+		);
+		router.getNextFallback.mockImplementation((model: string) => (model === "native-group" ? "fallback-group" : null));
+		const fetchMock = jest
+			.spyOn(global, "fetch")
+			.mockResolvedValueOnce(new Response('{"error":"initial unavailable"}', { status: 503 }));
+		if (failure === "network") {
+			fetchMock.mockRejectedValueOnce(new TypeError("final connection failed"));
+		} else {
+			fetchMock.mockResolvedValueOnce(new Response('{"error":"final overloaded"}', { status: 529 }));
+		}
+		await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", max_tokens: 10, messages: [{ role: "user", content: "hello" }], stream });
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: SpendLogStatus.Failure,
+			model: "MiniMax-M3.1-Flash",
+			model_group: "native-group",
+			model_id: "dep-final",
+			custom_llm_provider: "minimax",
+		});
+	});
+
 	it("聚合标准事件、cache usage、thinking/signature 与 tool partial JSON", async () => {
 		jest.spyOn(global, "fetch").mockResolvedValue(
 			sseResponse([

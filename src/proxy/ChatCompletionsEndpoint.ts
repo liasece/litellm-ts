@@ -754,7 +754,7 @@ async function handleStreamingResponse(
 				"chat",
 			),
 		);
-		lastUpstreamLogContext = createUpstreamLogContext(providerReq);
+		lastUpstreamLogContext = createUpstreamLogContext(providerReq, undefined, undefined, deployment);
 		litellmRouter.trackActiveRequest(getDeploymentKey(deployment), 1);
 		let stopKeepalive: () => void = () => undefined;
 
@@ -767,12 +767,12 @@ async function handleStreamingResponse(
 				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
 			});
 			const response = execution.response;
-			lastUpstreamLogContext = createUpstreamLogContext(providerReq, response);
+			lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, undefined, deployment);
 			if (!response.ok) {
 				// executor 在 readJson:false 且非 2xx 时已消费响应体并写入 execution.body；
 				// 再调 response.json() 只会得到 "Body has already been read" → {}，上游错误全丢。
 				const errorBody = execution.body === undefined ? {} : execution.body;
-				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, errorBody);
+				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, errorBody, deployment);
 				throw attachUpstreamLogContext(
 					new ApiError(
 						response.status,
@@ -786,7 +786,7 @@ async function handleStreamingResponse(
 			if (!provider.supportsStreaming() || !response.body) {
 				const rawBody = await response.json();
 				const transformed = provider.transformResponse(deployment.litellm_params.model, rawBody);
-				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, rawBody);
+				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, rawBody, deployment);
 				const completionStartTime = new Date();
 				if (fallbackDepth === 0) {
 					transformed.model = model;

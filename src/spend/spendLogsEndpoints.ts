@@ -1051,7 +1051,19 @@ async function canTeamMemberViewLog(db: NodePgDatabase<typeof schema>, auth: Use
 	return role === "admin";
 }
 
-/** UI 日志列表共用轻量投影，排除请求/响应等重 JSON 字段。 */
+/** Recover legacy failed-call attribution only from a recorded upstream request. */
+function spendLogExecutionModelSql() {
+	return sql<string>`CASE
+		WHEN ${liteLLM_SpendLogs.status} = 'failure'
+			AND COALESCE(${liteLLM_SpendLogs.model_id}, '') = ''
+			AND ${liteLLM_SpendLogs.model} = ${liteLLM_SpendLogs.model_group}
+			AND jsonb_typeof(${liteLLM_SpendLogs.proxy_server_request}#>'{upstream_request,body,model}') = 'string'
+		THEN COALESCE(NULLIF(${liteLLM_SpendLogs.proxy_server_request}#>>'{upstream_request,body,model}', ''), ${liteLLM_SpendLogs.model})
+		ELSE ${liteLLM_SpendLogs.model}
+	END`;
+}
+
+/** UI logs omit request/response payloads; legacy recovery projects one scalar. */
 function uiSpendLogSelection() {
 	return {
 		request_id: liteLLM_SpendLogs.request_id,
@@ -1213,11 +1225,11 @@ function sessionTimelineDescriptorSelection() {
 		total_tokens: liteLLM_SpendLogs.total_tokens,
 		startTime: liteLLM_SpendLogs.startTime,
 		endTime: liteLLM_SpendLogs.endTime,
-		model: liteLLM_SpendLogs.model,
 		status: sql<string | null>`${liteLLM_SpendLogs.status}`,
 		metadata_status: sql<string | null>`
 			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'status' ELSE NULL END
 		`,
+		model: spendLogExecutionModelSql(),
 		key_alias: sql<string | null>`
 			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'user_api_key_alias' ELSE NULL END
 		`,
@@ -1694,7 +1706,7 @@ function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
 		conditions.push(eq(liteLLM_SpendLogs.request_id, args.requestId));
 	}
 	if (args.model !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.model, args.model));
+		conditions.push(eq(spendLogExecutionModelSql(), args.model));
 	}
 	if (args.modelId !== undefined) {
 		conditions.push(eq(liteLLM_SpendLogs.model_id, args.modelId));

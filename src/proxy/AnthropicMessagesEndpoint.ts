@@ -746,13 +746,14 @@ async function _openAnthropicStream(
 		model: attempt.upstreamModel,
 		stream: true,
 	};
+	onResponse?.(createUpstreamLogContext(request, undefined, undefined, attempt.deployment));
 	const execution = await executeProviderRequest(request, {
 		readJson: false,
 		signal: signal,
 		timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
 	});
 	const result = execution.response;
-	onResponse?.(createUpstreamLogContext(request, result));
+	onResponse?.(createUpstreamLogContext(request, result, execution.body, attempt.deployment));
 
 	if (!result.ok) {
 		// executeProviderRequest 在 readJson:false 且非 2xx 时已消费响应体（execution.body），
@@ -1307,6 +1308,7 @@ export function registerAnthropicMessagesEndpoints(
 								body: buildAnthropicUpstreamBody(body, attempt.upstreamModel, attempt.deployment),
 								model: attempt.upstreamModel,
 							};
+							upstreamLogContext = createUpstreamLogContext(upstreamRequest, undefined, undefined, attempt.deployment);
 							const execution = await executeProviderRequest(upstreamRequest, {
 								readJson: false,
 								signal: webSearchAbortController.signal,
@@ -1316,7 +1318,12 @@ export function registerAnthropicMessagesEndpoints(
 							if (!result.ok) {
 								// 响应体已在 executeProviderRequest 内被读取，复用 execution.body 避免二次读流。
 								const errBody = describeUpstreamErrorBody(execution.body);
-								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, { raw: errBody });
+								upstreamLogContext = createUpstreamLogContext(
+									upstreamRequest,
+									result,
+									{ raw: errBody },
+									attempt.deployment,
+								);
 								throw attachUpstreamLogContext(
 									new ProviderUpstreamError(
 										result.status,
@@ -1328,7 +1335,7 @@ export function registerAnthropicMessagesEndpoints(
 							nsCompletionStartTime = new Date();
 							executedNsAttempt = attempt;
 							const responseData = (await result.json()) as Record<string, unknown>;
-							upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData);
+							upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData, attempt.deployment);
 							Object.defineProperty(responseData, "_spendInfo", {
 								value: buildDeploymentSpendInfo(attempt.deployment, attempt.upstreamUrl),
 								enumerable: false,
@@ -1390,6 +1397,7 @@ export function registerAnthropicMessagesEndpoints(
 									},
 									model: attempt.upstreamModel,
 								};
+								upstreamLogContext = createUpstreamLogContext(upstreamRequest, undefined, undefined, attempt.deployment);
 								const execution = await executeProviderRequest(upstreamRequest, {
 									readJson: false,
 									signal: webSearchAbortController.signal,
@@ -1399,7 +1407,12 @@ export function registerAnthropicMessagesEndpoints(
 								if (!result.ok) {
 									// 同上：execution.body 已持有上游错误正文。
 									const errBody = describeUpstreamErrorBody(execution.body);
-									upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, { raw: errBody });
+									upstreamLogContext = createUpstreamLogContext(
+										upstreamRequest,
+										result,
+										{ raw: errBody },
+										attempt.deployment,
+									);
 									throw attachUpstreamLogContext(
 										new ProviderUpstreamError(result.status, `Provider 返回错误 (${result.status})`),
 										upstreamLogContext,
@@ -1408,7 +1421,7 @@ export function registerAnthropicMessagesEndpoints(
 								nsCompletionStartTime = new Date();
 								executedNsAttempt = attempt;
 								const responseData = (await result.json()) as Record<string, unknown>;
-								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData);
+								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData, attempt.deployment);
 								return attachUpstreamLogContext(responseData, upstreamLogContext);
 							},
 							followUpStats,

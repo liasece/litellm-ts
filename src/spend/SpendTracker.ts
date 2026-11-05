@@ -952,6 +952,23 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
  * @param ctx - SpendLog 构建上下文
  */
 export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promise<SpendLog> {
+	const upstreamLogContext =
+		ctx.upstreamLogContext ?? (ctx.disableAmbientUpstreamContext === true ? undefined : getRecordedUpstreamExchange());
+	const failed = ctx.error !== undefined || ctx.status === SpendLogStatus.Failure || ctx.status === SpendLogStatus.Cancelled;
+	const spendInfo = failed ? upstreamLogContext?.spendInfo : undefined;
+	// A failed fallback has no successful Router result. Attribute it from the
+	// last real exchange, never from the last planned (possibly unavailable) route.
+	if (spendInfo) {
+		ctx = {
+			...ctx,
+			modelId: spendInfo.modelId,
+			customLlmProvider: spendInfo.customLlmProvider,
+			apiBase: spendInfo.apiBase,
+			deploymentModel: spendInfo.deploymentModel,
+			customCostPerToken: spendInfo.customCostPerToken,
+		};
+	}
+	ctx = { ...ctx, upstreamLogContext: upstreamLogContext };
 	const usage = normalizeUsageForSpend(ctx.usage);
 	const status = ctx.status ?? (ctx.error ? SpendLogStatus.Failure : SpendLogStatus.Success);
 	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
@@ -972,7 +989,12 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		completionStartTime: (ctx.completionStartTime ?? ctx.endTime).toISOString(),
 		// PY reconstruct_model_name：model 列记实际执行 deployment 的完整模型名
 		// （含 provider 前缀），无 deployment 信息时回退请求 model
-		model: reconstructModelName(ctx.model, ctx.customLlmProvider, ctx.deploymentModel, (ctx.attemptedRetries ?? 0) > 0),
+		model: reconstructModelName(
+			ctx.model,
+			ctx.customLlmProvider,
+			ctx.deploymentModel,
+			spendInfo !== undefined || (ctx.attemptedRetries ?? 0) > 0,
+		),
 		// model_group 必须始终有值：请求在选部署前就失败（如客户端提前断开）时
 		// ctx.modelGroup 为空，会让失败行无法按模型归组（生产 901 条失败里有 246 条如此）。
 		// 回退到请求原始 model —— 它在路由解析前就已确定，一定能拿到。

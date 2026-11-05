@@ -100,8 +100,17 @@ export function toIsoTimestamp(value: unknown): unknown {
  * @param row
  */
 export function normalizeSpendLogRow(row: Record<string, unknown>): Record<string, unknown> {
+	const proxy = parseJsonLikeValue(row.proxy_server_request) as { upstream_request?: { body?: { model?: unknown } } } | null;
+	const upstreamModel = proxy?.upstream_request?.body?.model;
+	const recoverLegacyModel =
+		row.status === "failure" &&
+		!row.model_id &&
+		row.model === row.model_group &&
+		typeof upstreamModel === "string" &&
+		upstreamModel.length > 0;
 	return {
 		...row,
+		...(recoverLegacyModel ? { model: upstreamModel } : {}),
 		date: toDateString(row.startTime),
 		startTime: toIsoTimestamp(row.startTime),
 		endTime: toIsoTimestamp(row.endTime),

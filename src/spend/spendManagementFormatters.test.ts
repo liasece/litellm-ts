@@ -45,3 +45,32 @@ describe("normalizeSpendLogRow", () => {
 		expect(ttftMs).toBe(2531);
 	});
 });
+
+describe("legacy failed fallback attribution", () => {
+	const failedRow = {
+		status: "failure",
+		model: "qwen3.8-27b",
+		model_group: "qwen3.8-27b",
+		model_id: null,
+		proxy_server_request: { upstream_request: { body: { model: "MiniMax-M3.1-Flash" } } },
+	};
+
+	test("uses the persisted actual upstream model and preserves the requested group", () => {
+		expect(normalizeSpendLogRow(failedRow)).toMatchObject({ model: "MiniMax-M3.1-Flash", model_group: "qwen3.8-27b" });
+	});
+
+	test.each([
+		{ status: "success" },
+		{ model_id: "existing-deployment" },
+		{ proxy_server_request: {} },
+		{ proxy_server_request: { upstream_request: { body: { model: "" } } } },
+	])("preserves recorded attribution when recovery lacks evidence or is unnecessary: %j", (overrides) => {
+		expect(normalizeSpendLogRow({ ...failedRow, ...overrides }).model).toBe("qwen3.8-27b");
+	});
+
+	test("does not substitute an unexecuted fallback target for the actual upstream", () => {
+		expect(normalizeSpendLogRow({ ...failedRow, metadata: { resolved_model_group: "unavailable-final-group" } }).model).toBe(
+			"MiniMax-M3.1-Flash",
+		);
+	});
+});

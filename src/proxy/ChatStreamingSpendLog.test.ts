@@ -149,6 +149,43 @@ describe("Chat streaming SpendLog", () => {
 		jest.restoreAllMocks();
 	});
 
+	it.each(["http", "network"])("attributes exhausted streaming fallbacks to the last actual deployment (%s)", async (failure) => {
+		const provider = baseProvider();
+		const { app, router } = buildApp(
+			provider,
+			jest.fn((model: string) => (model === "chat-group" ? "fallback-group" : null)),
+		);
+		const first = router.getAvailableDeployment();
+		const finalDeployment = {
+			model_name: "fallback-group",
+			litellm_params: { model: "MiniMax-M3.1-Flash", custom_llm_provider: "minimax" },
+			model_info: { id: "dep-final" },
+		};
+		router.getAvailableDeployment.mockImplementation((model: string) =>
+			model === "chat-group" ? first : { deployment: finalDeployment, provider },
+		);
+		const fetchMock = jest.mocked(global.fetch);
+		fetchMock.mockReset().mockResolvedValueOnce(new Response('{"error":"initial unavailable"}', { status: 503 }));
+		if (failure === "network") {
+			fetchMock.mockRejectedValueOnce(new TypeError("final connection failed"));
+		} else {
+			fetchMock.mockResolvedValueOnce(new Response('{"error":"final overloaded"}', { status: 529 }));
+		}
+		await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hello" }], stream: true });
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(spendSpy).toHaveBeenCalledTimes(1);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: SpendLogStatus.Failure,
+			model: "MiniMax-M3.1-Flash",
+			model_group: "chat-group",
+			model_id: "dep-final",
+			custom_llm_provider: "minimax",
+			metadata: { fallback_models: ["chat-group", "fallback-group"] },
+		});
+	});
+
 	it("聚合多 choice、tool calls、reasoning、真实 usage，并不向客户端泄漏内部 usage", async () => {
 		const provider = baseProvider({
 			streamResponse: async function* () {

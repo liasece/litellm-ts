@@ -1,5 +1,7 @@
 import { redactErrorPayload } from "../core/api/redactConfiguredSecrets";
 import type { ProviderRequest } from "../types/provider";
+import type { Deployment } from "../types/router";
+import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "./RouterSpendInfo";
 import { getRecordedUpstreamExchange, recordUpstreamExchange } from "./UpstreamExchange";
 
 /** 可写入详细 SpendLog 的上游请求。 */
@@ -26,6 +28,8 @@ export interface UpstreamResponseLog {
 
 /** 单次最终 Provider 调用的请求/响应上下文。 */
 export interface UpstreamLogContext {
+	/** Actual deployment of this exchange, including failed calls. Never serialized with request payloads. */
+	readonly spendInfo?: DeploymentSpendInfo;
 	/** 实际上游请求。 */
 	readonly request: UpstreamRequestLog;
 	/** 实际上游响应；网络层失败时可能不存在。 */
@@ -47,9 +51,16 @@ function collectHeaders(headers: Headers | Record<string, string> | undefined): 
  * @param request - Provider 转换后的最终请求
  * @param response - 上游 HTTP 响应
  * @param responseBody - 已解析的非流式上游响应体
+ * @param deployment - Actual deployment that sent this request
  */
-export function createUpstreamLogContext(request: ProviderRequest, response?: Response, responseBody?: unknown): UpstreamLogContext {
+export function createUpstreamLogContext(
+	request: ProviderRequest,
+	response?: Response,
+	responseBody?: unknown,
+	deployment?: Deployment,
+): UpstreamLogContext {
 	const context: UpstreamLogContext = {
+		...(deployment ? { spendInfo: buildDeploymentSpendInfo(deployment, request.url) } : {}),
 		request: {
 			url: request.url,
 			method: request.method,
