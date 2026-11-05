@@ -60,11 +60,7 @@ function DataTableHeader<TData, TValue>({ headerGroups, enableSorting }: DataTab
 								key={header.id}
 								className={`py-1 h-8 ${canSort ? "cursor-pointer select-none hover:bg-gray-50" : ""}`}
 								onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
-								style={
-									header.column.columnDef.size === undefined
-										? undefined
-										: { width: header.column.columnDef.size, minWidth: header.column.columnDef.size }
-								}
+								style={header.column.columnDef.size === undefined ? undefined : { width: header.column.columnDef.size }}
 							>
 								{header.isPlaceholder ? null : (
 									<div className="flex items-center gap-1">
@@ -112,11 +108,7 @@ function DataTableRow<TData, TValue>({
 					<TableCell
 						key={cell.id}
 						className="py-0.5 max-h-8 overflow-hidden text-ellipsis whitespace-nowrap"
-						style={
-							cell.column.columnDef.size === undefined
-								? undefined
-								: { width: cell.column.columnDef.size, minWidth: cell.column.columnDef.size }
-						}
+						style={cell.column.columnDef.size === undefined ? undefined : { width: cell.column.columnDef.size }}
 					>
 						{flexRender(cell.column.columnDef.cell, cell.getContext())}
 					</TableCell>
@@ -189,7 +181,12 @@ function DataTableComponent<TData, TValue>({
 
 	return (
 		<div className="rounded-lg custom-border overflow-x-auto w-full max-w-full box-border">
-			<Table className="[&_td]:py-0.5 [&_th]:py-1 table-fixed w-full box-border" style={{ minWidth: "400px" }}>
+			{/* Tremor 把 className 放在外层 div 上，<table> 只接收 style；table-fixed 类不会生效。
+			   固定布局让列宽只由 columnDef.size 决定，单元格内容再长也不会改变表格宽度。 */}
+			<Table
+				className="[&_td]:py-0.5 [&_th]:py-1 w-full box-border"
+				style={{ minWidth: "400px", tableLayout: "fixed" }}
+			>
 				<MemoizedDataTableHeader
 					headerGroups={headerGroups}
 					columns={columns}

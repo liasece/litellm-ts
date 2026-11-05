@@ -561,7 +561,7 @@ describe("Logs columns", () => {
 		const tokenSummary = screen.getByLabelText("Cache read 1299321, input 0, output 20");
 		expect(tokenSummary).toHaveTextContent("1,299,321020");
 		expect(tokenSummary).not.toHaveTextContent(/[+/]/);
-		expect(tokenSummary).toHaveClass("grid", "w-72", "grid-cols-3", "text-left", "text-current");
+		expect(tokenSummary).toHaveClass("grid", "w-full", "grid-cols-3", "text-left", "text-current");
 		expect(screen.queryByText("120")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Input:/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Cache read:/)).not.toBeInTheDocument();

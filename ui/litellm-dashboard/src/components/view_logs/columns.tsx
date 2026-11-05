@@ -531,6 +531,7 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 				)
 			: "Time",
 		accessorKey: "startTime",
+		size: 180,
 		cell: (info: any) => <TimeCell utcTime={info.getValue()} />,
 	},
 	{
@@ -849,6 +850,7 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 				)
 			: "Tokens",
 		accessorKey: "total_tokens",
+		size: 320,
 		cell: (info: any) => {
 			const row = info.row.original;
 			const rawCacheReadTokens = getCacheReadInputTokens(row.metadata);
@@ -875,7 +877,7 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 			return (
 				<Tooltip title={tooltip}>
 					<span
-						className="grid w-72 grid-cols-3 whitespace-nowrap text-left font-mono tabular-nums text-sm text-current"
+						className="grid w-full grid-cols-3 whitespace-nowrap text-left font-mono tabular-nums text-sm text-current"
 						aria-label={`Cache read ${cacheReadTokens}, input ${inputTokens}, output ${outputTokens}`}
 						data-testid="tokens-three-column"
 					>
