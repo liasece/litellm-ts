@@ -26,6 +26,26 @@
   animation-iteration-count: infinite !important;
 }
 
+/*
+ * antd 的 Tooltip / Popover 用巨大的离屏坐标停放浮层（实测 left 会在 19462px 与 -18820px 之间跳），
+ * 一旦落在右侧，文档宽度会被撑到 19000px 以上，桌面 Chrome 随即显示一条水平滚动条。
+ * 滚动条占掉十几像素视口高度 → 重新布局 → 浮层重新定位 → 滚动条再消失，就这样反复，
+ * 鼠标下面的内容跟着高频抖动（看起来像悬停时整页在抖）。
+ * 这个界面本来就不需要文档级横向滚动（表格有自己的横向滚动容器），直接从根上裁掉。
+ */
+html,
+body {
+  overflow-x: hidden;
+}
+
+/* clip 连程序化/手势的横向滚动也一并禁掉；旧引擎退回 hidden（无滚动条但可横向拖动）。 */
+@supports (overflow-x: clip) {
+  html,
+  body {
+    overflow-x: clip;
+  }
+}
+
 :root {
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 255, 255, 255;

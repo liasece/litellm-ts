@@ -33,6 +33,7 @@ import { FILTER_KEYS, hasBackendLogFilters } from "./log_filter_state";
 import { useLogFilterLogic } from "./log_filter_logic";
 import { readLogsUrlState, writeLogsUrlState } from "./logs_url_state";
 import LiveTailBanner from "./LiveTailBanner";
+import { shareLogsPageIdentity } from "./logsStructuralSharing";
 import { LogDetailsDrawer, SessionSimulationDrawer } from "./LogDetailsDrawer";
 import LogsPagination from "./LogsPagination";
 import LogsToolbar from "./LogsToolbar";
@@ -232,7 +233,9 @@ export default function SpendLogsTable({
 		refetchInterval: liveTailIntervalMs > 0 && currentPage === 1 ? liveTailIntervalMs : false,
 		placeholderData: keepPreviousData,
 		refetchIntervalInBackground: false,
-		structuralSharing: true,
+		// 按 request_id 复用未变化的日志行，避免整页重渲染（详见 logsStructuralSharing.ts）。
+		structuralSharing: (oldData: unknown, newData: unknown) =>
+			shareLogsPageIdentity(oldData as PaginatedResponse | undefined, newData as PaginatedResponse),
 		// Polling transport state must not invalidate the whole Logs view.
 		// React Query's structural sharing preserves unchanged row references in `data`.
 		notifyOnChangeProps: ["data", "isLoading"],
