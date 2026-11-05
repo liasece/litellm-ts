@@ -5,22 +5,26 @@
 
 import { useState } from "react";
 import MessageManager from "@/components/molecules/message_manager";
-import { ParsedMessage } from "./prettyMessagesTypes";
+import { ParsedMessage, RequestTool } from "./prettyMessagesTypes";
 import { SectionHeader } from "./SectionHeader";
 import { CollapsibleMessage } from "./CollapsibleMessage";
 import { HistoryTree } from "./HistoryTree";
 import { SimpleMessageBlock } from "./SimpleMessageBlock";
+import { InputToolsList } from "./InputToolsList";
 
 interface InputCardProps {
 	messages: ParsedMessage[];
 	promptTokens?: number;
 	inputCost?: number;
+	/** 请求中声明的工具定义；展开后展示每个工具的描述与参数 */
+	tools?: RequestTool[];
 }
 
-export function InputCard({ messages, promptTokens, inputCost }: InputCardProps) {
+export function InputCard({ messages, promptTokens, inputCost, tools = [] }: InputCardProps) {
 	const [isCollapsed, setIsCollapsed] = useState(false);
 
-	if (messages.length === 0) {
+	// 没有消息时只要还有工具定义，仍然值得展示 Tools 列表。
+	if (messages.length === 0 && tools.length === 0) {
 		return null;
 	}
 
@@ -76,6 +80,9 @@ export function InputCard({ messages, promptTokens, inputCost }: InputCardProps)
 
 					{/* History - Tree style, collapsed by default */}
 					{historyMessages.length > 0 && <HistoryTree messages={historyMessages} />}
+
+					{/* Tools declared with this request - below history, collapsed by default */}
+					<InputToolsList tools={tools} />
 
 					{/* Last User Message - Always visible */}
 					{lastMessage && (

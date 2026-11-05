@@ -2,8 +2,16 @@
  * Provider-neutral parsing for the log detail Pretty view.
  */
 
-import { MessagePart, ParsedMessage, ParsedMessages, RequestMeta, RoleStyle, ToolCall } from "./prettyMessagesTypes";
-import { PRETTY_FIELD_RULES, readFieldRule, type FieldRule } from "./prettyFieldRules";
+import {
+	MessagePart,
+	ParsedMessage,
+	ParsedMessages,
+	RequestMeta,
+	RequestTool,
+	RoleStyle,
+	ToolCall,
+} from "./prettyMessagesTypes";
+import { isMeaningful, PRETTY_FIELD_RULES, readFieldRule, type FieldRule } from "./prettyFieldRules";
 
 export const ROLE_STYLES: Record<string, RoleStyle> = {
 	system: { background: "transparent", borderColor: "#8c8c8c", label: "SYSTEM", labelColor: "#8c8c8c" },
@@ -612,13 +620,50 @@ const responseFromParts = (parts: MessagePart[], role: any = "assistant"): Parse
 	};
 };
 
-/** 从工具定义中提取工具名，兼容 OpenAI（function.name）与 Anthropic（name）格式 */
-const toolNameFromDefinition = (tool: any): string => {
+/** tools[] 条目里已经由 {@link RequestTool} 承载的键；其余键放进 extra，避免展开后丢信息。 */
+const REQUEST_TOOL_KEYS = new Set(["name", "type", "description", "function", "parameters", "input_schema"]);
+/** function 子对象里已经由 {@link RequestTool} 承载的键。 */
+const FUNCTION_TOOL_KEYS = new Set(["name", "description", "parameters"]);
+
+const toolText = (value: unknown): string => (typeof value === "string" && value.trim() ? value : "");
+
+/** 按候选顺序取第一个有内容的参数 schema：OpenAI function.parameters、Responses parameters、Anthropic input_schema。 */
+const toolParameters = (...candidates: unknown[]): unknown => candidates.find(isMeaningful);
+
+/**
+ * 把一条 tools[] 定义归一成可展示的字段。
+ *
+ * 兼容 OpenAI chat（function.name/description/parameters）、OpenAI Responses（扁平
+ * name/description/parameters）与 Anthropic（name/description/input_schema）。没有名字的
+ * 供应商内置工具（如 Responses 的 web_search）用声明的 type 作名字；名字和 type 都取不到的
+ * 条目无法展示，直接跳过。
+ */
+const requestToolFromDefinition = (tool: any): RequestTool | null => {
 	const record = asRecord(tool);
-	if (!record) return "";
-	if (typeof record.function?.name === "string") return record.function.name;
-	if (typeof record.name === "string") return record.name;
-	return "";
+	if (!record) return null;
+	const fn = asRecord(record.function);
+	const declaredType = toolText(record.type);
+	const name = toolText(fn?.name) || toolText(record.name) || (declaredType !== "function" ? declaredType : "");
+	if (!name) return null;
+
+	const extra: Record<string, any> = {};
+	for (const [key, value] of Object.entries(record)) {
+		if (!REQUEST_TOOL_KEYS.has(key)) extra[key] = value;
+	}
+	for (const [key, value] of Object.entries(fn ?? {})) {
+		if (!FUNCTION_TOOL_KEYS.has(key)) extra[`function.${key}`] = value;
+	}
+
+	const description = toolText(fn?.description) || toolText(record.description);
+	const parameters = toolParameters(fn?.parameters, record.parameters, record.input_schema);
+
+	return {
+		name,
+		type: declaredType || "function",
+		...(description ? { description } : {}),
+		...(parameters !== undefined ? { parameters } : {}),
+		...(Object.keys(extra).length > 0 ? { extra } : {}),
+	};
 };
 
 /**
@@ -648,7 +693,9 @@ export const parseRequestMeta = (request: any): RequestMeta => {
 	const thinkingBudget = thinking && typeof thinking.budget_tokens === "number" ? thinking.budget_tokens : undefined;
 
 	const tools = Array.isArray(body.tools)
-		? body.tools.map(toolNameFromDefinition).filter((name: string): name is string => Boolean(name))
+		? body.tools
+				.map(requestToolFromDefinition)
+				.filter((tool: RequestTool | null): tool is RequestTool => tool !== null)
 		: [];
 
 	let maxTokens: number | undefined;

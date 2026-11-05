@@ -25,7 +25,10 @@ export function RequestMetaTags({ meta }: RequestMetaTagsProps) {
 
 	if (!hasMeta) return null;
 
-	const toolNames = meta.tools.slice(0, MAX_TOOL_NAMES).join(", ");
+	const toolNames = meta.tools
+		.slice(0, MAX_TOOL_NAMES)
+		.map((tool) => tool.name)
+		.join(", ");
 	const remainingTools = meta.tools.length - MAX_TOOL_NAMES;
 
 	return (

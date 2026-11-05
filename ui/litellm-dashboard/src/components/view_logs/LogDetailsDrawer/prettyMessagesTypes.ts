@@ -53,6 +53,23 @@ export interface ParsedMessages {
 }
 
 /**
+ * 请求体 tools[] 中的一个工具定义，已归一到可展示的字段。
+ * 供应商形状差异（OpenAI function.*、Responses 扁平字段、Anthropic input_schema）在
+ * prettyMessagesUtils 里统一处理。
+ */
+export interface RequestTool {
+	/** 工具名；没有名字的供应商内置工具（如 web_search）回退为声明的 type */
+	name: string;
+	/** 供应商声明的类型，OpenAI chat 为 function，Anthropic 内置工具是 web_search_20250305 等 */
+	type: string;
+	description?: string;
+	/** 参数 schema：OpenAI function.parameters 或 Anthropic input_schema，原样保留 */
+	parameters?: unknown;
+	/** 以上字段之外的原始定义字段（如 max_uses、strict），保证展开后不丢信息 */
+	extra?: Record<string, unknown>;
+}
+
+/**
  * 请求级元信息，用于 pretty 视图顶部的 tag 行。
  * 从请求体（body）中提取思考强度、工具列表等关键参数。
  */
@@ -62,8 +79,8 @@ export interface RequestMeta {
 	reasoningEffort?: string;
 	/** Anthropic thinking.budget_tokens，思考预算 token 数 */
 	thinkingBudget?: number;
-	/** 请求中声明的工具名列表 */
-	tools: string[];
+	/** 请求中声明的工具定义，顺序与请求一致 */
+	tools: RequestTool[];
 	temperature?: number;
 	topP?: number;
 	maxTokens?: number;

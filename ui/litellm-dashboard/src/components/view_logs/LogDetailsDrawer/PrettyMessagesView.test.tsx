@@ -1,5 +1,6 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import { PrettyMessagesView } from "./PrettyMessagesView";
 import { parseMessages, parseRequestMeta } from "./prettyMessagesUtils";
@@ -685,6 +686,54 @@ describe("PrettyMessagesView", () => {
 		);
 
 		expect(screen.getByText(/Reasoning: high/)).toBeInTheDocument();
+	});
+
+	it("lists declared tools below history and expands their details on click", async () => {
+		const request = {
+			body: {
+				model: "claude-sonnet-4-6",
+				messages: [
+					{ role: "system", content: "Be brief" },
+					{ role: "user", content: "Earlier question" },
+					{ role: "assistant", content: "Earlier answer" },
+					{ role: "user", content: "What is the weather?" },
+				],
+				tools: [
+					{
+						name: "get_weather",
+						description: "Look up the current weather",
+						input_schema: {
+							type: "object",
+							properties: { city: { type: "string" } },
+							required: ["city"],
+						},
+					},
+					{ name: "web_search", type: "web_search_20250305", max_uses: 3 },
+				],
+			},
+		};
+		const response = { choices: [{ message: { role: "assistant", content: "Sunny" } }] };
+
+		render(<PrettyMessagesView request={request} response={response} />);
+
+		// 工具区块排在 history 下面、最后一条消息上面，默认收起。
+		const historyHeader = screen.getByText(/HISTORY \(2 messages\)/);
+		const toolsHeader = screen.getByText("TOOLS (2)");
+		expect(historyHeader.compareDocumentPosition(toolsHeader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(screen.queryByText(/1\. get_weather/)).not.toBeInTheDocument();
+
+		await userEvent.click(toolsHeader);
+		expect(screen.getByText(/1\. get_weather/)).toBeInTheDocument();
+
+		// 每个工具的详情默认折叠，单独点击后才展开。
+		expect(screen.queryByText("Look up the current weather")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByText(/1\. get_weather/));
+		expect(screen.getByText("Look up the current weather")).toBeInTheDocument();
+		expect(screen.getByText(/"required"/)).toBeInTheDocument();
+		expect(screen.queryByText(/"max_uses": 3/)).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByText(/2\. web_search/));
+		expect(screen.getByText(/"max_uses": 3/)).toBeInTheDocument();
 	});
 
 	it("should fall back to the downstream request when the upstream body is missing", () => {
