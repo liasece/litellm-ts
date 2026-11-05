@@ -125,6 +125,43 @@ describe("DeepSeekProvider", () => {
 			expect(provider.transformResponsesRequest("deepseek-embedding", { input: "hello" }, {})).toBeUndefined();
 			expect(provider.transformResponsesRequest("deepseek-reasoner", { input: "hello" }, {})).toBeUndefined();
 		});
+
+		it("停在工具循环且当前轮缺少推理时补齐占位 reasoning", () => {
+			const body = {
+				model: "deepseek-v4-flash",
+				input: [
+					{ role: "user", content: "现在几点？" },
+					{ type: "function_call", call_id: "call_1", name: "get_time", arguments: "{}" },
+					{ type: "function_call_output", call_id: "call_1", output: "18:30" },
+				],
+				tools: [{ type: "function", name: "get_time", parameters: { type: "object", properties: {} } }],
+			};
+
+			const result = provider.transformResponsesRequest("deepseek/deepseek-v4-flash", body, {});
+			const input = (result!.body as { input: Array<Record<string, unknown>> }).input;
+
+			expect(input).toHaveLength(4);
+			expect(input[1]).toEqual({ type: "reasoning", content: [{ type: "reasoning_text", text: "(reasoning omitted)" }] });
+			expect((result!.body as Record<string, unknown>)["tools"]).toEqual(body.tools);
+			expect(result!.url).toBe("https://api.deepseek.com/responses");
+		});
+
+		it("部署可用 disable_deepseek_responses_reasoning_backfill 关闭补齐", () => {
+			const body = {
+				input: [
+					{ role: "user", content: "现在几点？" },
+					{ type: "function_call", call_id: "call_1", name: "get_time", arguments: "{}" },
+					{ type: "function_call_output", call_id: "call_1", output: "18:30" },
+				],
+				tools: [{ type: "function", name: "get_time", parameters: { type: "object", properties: {} } }],
+			};
+
+			const result = provider.transformResponsesRequest("deepseek/deepseek-v4-flash", body, {
+				disable_deepseek_responses_reasoning_backfill: true,
+			});
+
+			expect((result!.body as { input: unknown[] }).input).toHaveLength(3);
+		});
 	});
 
 	describe("Anthropic Messages", () => {

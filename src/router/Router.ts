@@ -43,6 +43,11 @@ import {
 } from "./RoutingStrategies";
 import type { RoutingContext } from "./RoutingStrategies";
 import { logger } from "../core/utils/logger";
+import {
+	DEEPSEEK_THINKING_DOWNGRADE_PARAM,
+	buildThinkingDowngradedResponsesBody,
+	isThinkingReplayRejection,
+} from "./DeepSeekReasoningReplay";
 import { RouterCompletionSyncRemovedError } from "./RouterErrors";
 import { getDeploymentKey, getModelGroupName } from "./RouterModelGroupCache";
 import { buildCooldownDecision } from "./RouterExecutor";
@@ -919,6 +924,7 @@ export class Router {
 		delete requestParams[ROUTER_RESPONSES_BODY_PARAM];
 		const imageEditInputsRaw = requestParams[ROUTER_IMAGE_EDIT_INPUTS_PARAM];
 		delete requestParams[ROUTER_IMAGE_EDIT_INPUTS_PARAM];
+		delete requestParams[DEEPSEEK_THINKING_DOWNGRADE_PARAM];
 		const mergedParams: Record<string, unknown> = {
 			...deployment.litellm_params,
 			...requestParams,
@@ -1089,6 +1095,55 @@ export class Router {
 	}
 
 	/**
+	 * 执行请求，并在 DeepSeek 拒绝推理回显时关闭思考重试一次。
+	 *
+	 * 代理侧已经为停在工具循环里的 Responses 请求补齐占位推理
+	 * （providers/deepseekResponsesHistory.ts）；这里仍被拒绝说明上游校验规则变化，
+	 * 此时降级为不思考比直接把 400 抛给客户端更可解释，代价是这一次回答没有思维链。
+	 * @param model - 逻辑模型名
+	 * @param messages - 消息列表
+	 * @param optionalParams - 请求参数（含原生 Responses 请求体）
+	 * @param fallbackDepth - 当前 fallback 跳数
+	 * @param modelResolutionTrace - 模型解析轨迹
+	 */
+	private async _executeWithFallbackOrDowngradeThinking(
+		model: string,
+		messages: Message[],
+		optionalParams: Record<string, unknown>,
+		fallbackDepth: number,
+		modelResolutionTrace: ModelResolutionTraceCollector,
+	): Promise<Record<string, unknown>> {
+		try {
+			return await this._executeWithFallback(model, messages, optionalParams, fallbackDepth, undefined, modelResolutionTrace);
+		} catch (error) {
+			const downgradedBody = buildThinkingDowngradedResponsesBody(
+				optionalParams[ROUTER_CALL_TYPE_PARAM],
+				optionalParams[ROUTER_RESPONSES_BODY_PARAM],
+			);
+			if (
+				downgradedBody === undefined ||
+				optionalParams[DEEPSEEK_THINKING_DOWNGRADE_PARAM] === true ||
+				!isThinkingReplayRejection(error)
+			) {
+				throw error;
+			}
+			logger.warn(`[Router] ${model} 的历史未被上游接受（推理回显），已关闭思考重试一次`);
+			return await this._executeWithFallback(
+				model,
+				messages,
+				{
+					...optionalParams,
+					[ROUTER_RESPONSES_BODY_PARAM]: downgradedBody,
+					[DEEPSEEK_THINKING_DOWNGRADE_PARAM]: true,
+				},
+				fallbackDepth,
+				undefined,
+				modelResolutionTrace,
+			);
+		}
+	}
+
+	/**
 	 * PY: completion(model, messages, **kwargs) 透传 kwargs
 	 * @param model - 逻辑模型名
 	 * @param messages - 消息列表
@@ -1129,13 +1184,13 @@ export class Router {
 		try {
 			const silentModel = optionalParams["silent_model"];
 			if (typeof silentModel === "string" && silentModel.length > 0) {
-				const realResult = await this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
+				const realResult = await this._executeWithFallbackOrDowngradeThinking(model, messages, optionalParams, 0, modelResolutionTrace);
 				this._executeWithFallback(silentModel, messages, { ...optionalParams, isSilentCall: true }, 0).catch(() => {
 					// silent_model 失败仅记录，不抛
 				});
 				return realResult;
 			}
-			return await this._executeWithFallback(model, messages, optionalParams, 0, undefined, modelResolutionTrace);
+			return await this._executeWithFallbackOrDowngradeThinking(model, messages, optionalParams, 0, modelResolutionTrace);
 		} catch (error) {
 			attachModelResolutionMetadataToError(error, modelResolutionTrace);
 			throw error;

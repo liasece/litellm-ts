@@ -254,7 +254,12 @@ describe("Responses tool history on the provider boundary", () => {
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 		const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
 		expect(body.messages).toBeUndefined();
-		expect(body.input.slice(-input.length)).toEqual(input);
+		// 官方 /responses 在工具循环里要求当前轮回显推理：这里只补一条结构占位，其余条目顺序不变。
+		expect(body.input).toEqual([
+			input[0],
+			{ type: "reasoning", content: [{ type: "reasoning_text", text: "(reasoning omitted)" }] },
+			...input.slice(1),
+		]);
 	});
 
 	test("preserves an upstream error for a missing result without inventing or dropping history", async () => {

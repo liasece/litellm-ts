@@ -3,6 +3,7 @@
 import type { Message } from "../types/openai";
 import type { ProviderRequest } from "../types/provider";
 import { AnthropicCompatibleProvider } from "./AnthropicCompatibleProvider";
+import { backfillDeepSeekResponsesReasoning } from "./deepseekResponsesHistory";
 
 /**
  * 支持原生 Responses 出口的 DeepSeek 模型。
@@ -70,7 +71,12 @@ export class DeepSeekProvider extends AnthropicCompatibleProvider {
 		const normalizedBase = apiBase.replace(/\/+$/, "").replace(/\/(?:chat\/completions|responses|embeddings)$/, "");
 		const apiKeyRaw = optionalParams["api_key"];
 		const apiKey = typeof apiKeyRaw === "string" && apiKeyRaw.length > 0 ? apiKeyRaw : this.apiKey;
-		const requestBody: Record<string, unknown> = { ...body, model: upstreamModel };
+		// 跨上游 fallback 到官方 /responses 时，历史里可能缺少思考回显；只在官方端点这一层补结构占位，
+		// 其余情况下请求体字节不变（判定依据与实测见 deepseekResponsesHistory.ts）。
+		const requestBody: Record<string, unknown> =
+			optionalParams["disable_deepseek_responses_reasoning_backfill"] === true
+				? { ...body, model: upstreamModel }
+				: backfillDeepSeekResponsesReasoning({ ...body, model: upstreamModel });
 
 		return {
 			url: `${normalizedBase}/responses`,
