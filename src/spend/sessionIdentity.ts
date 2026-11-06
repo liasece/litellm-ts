@@ -5,7 +5,9 @@
  * `session_id`，每个请求各自成组：
  * - OpenAI Responses/Codex 用 `client_metadata.thread_id` / `client_metadata.session_id`；
  * - DeepSeek Harness 用 `session_id` 请求头，并把它同时写进 `prompt_cache_key`；
- * - 部分客户端给稳定 UUID 加 `session-` 前缀，如 `session-2e24587f-…`。
+ * - 部分客户端给稳定 UUID 加 `session-` 前缀，如 `session-2e24587f-…`；
+ * - Claude Code 用 `metadata.user_id` 里的 `user_…_account_…_session_…` 整体分组，落 `c:` 键；
+ * - 也有客户端把 `{"session_id":"<uuid>"}` 塞进同一个 `user_id`。
  *
  * 归一后只保留小写裸 UUID，使请求写入、`litellm_session_group_key` 的规范分支与历史
  * 回填迁移得到同一个分组键。
@@ -57,39 +59,73 @@ function readSessionIdHeader(headers: Record<string, unknown>, name: string): un
 }
 
 /**
- * Claude Code 的会话整体由 `user_…_account_…_session_…` 分组；同一个请求即使还带了
- * 会话头也不能把会话拆开，因此这里让出分组优先级。
+ * 读取客户端声明的 spend 用户标识。
+ *
+ * 生产上 Claude Code 直接写在 `metadata.user_id`，也有客户端嵌一层
+ * `metadata.spend_logs_metadata.user_id`（Python 兼容形状），两处都认。
  * @param requestBody - 请求体
  */
-function hasClaudeCodeUserId(requestBody: Record<string, unknown> | undefined): boolean {
+function readDeclaredSpendUserId(requestBody: Record<string, unknown> | undefined): unknown {
 	const metadata = requestBody?.metadata;
 	if (!isRecord(metadata)) {
-		return false;
+		return undefined;
 	}
-	const spendMetadata = metadata.spend_logs_metadata;
-	if (!isRecord(spendMetadata)) {
-		return false;
+	if (metadata.user_id !== undefined) {
+		return metadata.user_id;
 	}
-	const userId = spendMetadata.user_id;
-	return typeof userId === "string" && CLAUDE_CODE_USER_ID_PATTERN.test(userId.trim());
+	const nested = metadata.spend_logs_metadata;
+	return isRecord(nested) ? nested.user_id : undefined;
+}
+
+/**
+ * Claude Code 的 `user_…_account_…_session_…` 整体分组；返回规范键里的 user_id 部分。
+ * @param value - 客户端声明的用户标识
+ */
+export function matchClaudeCodeSessionUserId(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	return CLAUDE_CODE_USER_ID_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+/** 部分客户端把会话信息塞进 user_id，形如 `{"session_id":"<uuid>"}`。 */
+const EMBEDDED_SESSION_ID_PATTERN =
+	/"session_id"[[:space:]]*:[[:space:]]*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i;
+
+/**
+ * `user_id` 里内嵌的会话 UUID。
+ * @param value - 客户端声明的用户标识
+ */
+export function matchEmbeddedSessionId(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const matched = EMBEDDED_SESSION_ID_PATTERN.exec(value)?.[1];
+	return matched === undefined ? null : matched.toLowerCase();
 }
 
 /**
  * 解析一次请求的规范会话分组键。
  *
- * 优先级：`client_metadata.thread_id` > `client_metadata.session_id` > 会话请求头 >
- * `prompt_cache_key`。请求体里的显式稳定 ID 是 OpenAI/Codex 的契约；会话头是客户端对
- * 本次会话的明确声明；`prompt_cache_key` 只是缓存提示，排在最后。
+ * Claude Code 优先：它的整段对话由 `user_…_account_…_session_…` 决定，即使同一个请求还带了
+ * 会话头也不能把会话拆开。其余按 `client_metadata.thread_id` > `client_metadata.session_id` >
+ * 会话请求头 > `prompt_cache_key`，最后才是 `user_id` 里内嵌的会话 UUID。
+ *
+ * 返回形状（`c:<user_id>` / `s:<uuid>`）与 `litellm_session_group_key` 的规范分支一致，
+ * 因此在途行与结束后落库的行得到同一个分组键。
  * @param request - 含 body 与 headers 的请求
- * @returns `s:<uuid>`；没有可识别会话标识时为 undefined
+ * @returns `c:<user_id>` 或 `s:<uuid>`；没有可识别会话标识时为 undefined
  */
 export function resolveRequestSessionGroupKey(request: {
 	readonly body?: unknown;
 	readonly headers?: Record<string, unknown> | undefined;
 }): string | undefined {
 	const requestBody = isRecord(request.body) ? request.body : undefined;
-	if (hasClaudeCodeUserId(requestBody)) {
-		return undefined;
+	const declaredUserId = readDeclaredSpendUserId(requestBody);
+	const claudeCodeUserId = matchClaudeCodeSessionUserId(declaredUserId);
+	if (claudeCodeUserId !== null) {
+		return `c:${claudeCodeUserId}`;
 	}
 	const headers = request.headers ?? {};
 	const clientMetadata = isRecord(requestBody?.client_metadata) ? requestBody.client_metadata : undefined;
@@ -105,5 +141,6 @@ export function resolveRequestSessionGroupKey(request: {
 			return `s:${sessionUuid}`;
 		}
 	}
-	return undefined;
+	const embeddedSessionId = matchEmbeddedSessionId(declaredUserId);
+	return embeddedSessionId === null ? undefined : `s:${embeddedSessionId}`;
 }
