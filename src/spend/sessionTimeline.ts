@@ -174,6 +174,26 @@ export interface SessionTimelineItem {
 	readonly parent_request_id?: string;
 }
 
+/**
+ * Window metadata for a long session.
+ *
+ * Cumulative chat snapshots grow linearly with the number of turns, so a session with
+ * thousands of requests cannot be rendered or transferred in one response. The endpoint
+ * returns the newest slice and reports how to page further back.
+ */
+export interface SessionTimelineWindow {
+	/** Number of settled requests returned in this response. */
+	readonly returned_requests: number;
+	/** Total settled requests in the session, including the ones left for older pages. */
+	readonly total_requests: number;
+	/** Whether settled requests older than this window still exist. */
+	readonly has_more: boolean;
+	/** Cursor for the next older page; null when the window already reaches the session start. */
+	readonly before: string | null;
+	/** Server-side window size; null when the whole session was returned. */
+	readonly limit: number | null;
+}
+
 /** Reconstructed events and aggregates for the included requests in a session. */
 export interface SessionTimelineResponse {
 	/** Events ordered by request history, falling back to time for unrelated events. */
@@ -203,7 +223,11 @@ export interface SessionTimelineResponse {
 		readonly end_time: string | null;
 		/** Number of auxiliary requests omitted from both events and aggregates. */
 		readonly filtered_request_count: number;
+		/** Number of still-running requests overlaid on the settled events. */
+		readonly in_progress_request_count: number;
 	};
+	/** Window bounds when only part of a long session was returned. */
+	readonly window?: SessionTimelineWindow;
 }
 
 /** Controls whether recognized client-side auxiliary requests appear in the timeline. */
@@ -1269,20 +1293,49 @@ export function isClaudeCodeAuxiliaryTimelineRequest(row: SessionTimelineSourceR
  * It retains only fingerprints and final render events, never the raw snapshots.
  */
 export class SessionTimelineBuilder {
-	private readonly _seenHistoryOccurrences = new Map<string, number>();
-	private readonly _historyItemIndices = new Map<string, Map<number, readonly number[]>>();
-	private readonly _order = new SessionTimelineOrder();
-	private readonly _seenSystemMessages = new Set<string>();
-	private readonly _keys = new Map<string, { alias: string | null; hash: string }>();
-	private readonly _items: SessionTimelineItem[] = [];
+	private _seenHistoryOccurrences = new Map<string, number>();
+	private _historyItemIndices = new Map<string, Map<number, readonly number[]>>();
+	private _order = new SessionTimelineOrder();
+	private _seenSystemMessages = new Set<string>();
+	private _keys = new Map<string, { alias: string | null; hash: string }>();
+	private _items: SessionTimelineItem[] = [];
 	private _requestCount = 0;
 	private _totalSpend = 0;
 	private _totalTokens = 0;
 	private _startMs: number | null = null;
 	private _endMs: number | null = null;
 	private _filteredRequestCount = 0;
+	private _inProgressRequestCount = 0;
 
 	public constructor(private readonly _options: SessionTimelineBuilderOptions = {}) {}
+
+	/**
+	 * 复制当前去重、排序与汇总状态，用于叠加「进行中」的行而保持已提交状态不变。
+	 *
+	 * 进行中请求携带累计历史，必须和已落库行一起参与去重才能只显示新增消息；但它随每次
+	 * checkpoint 变化，请求结束后还要用最终落库行校正，所以不能写回已提交的 builder。
+	 * 叠加层每次刷新都从已提交状态的副本开始重算。已提交的事件对象按引用共享，避免每
+	 * 秒重建全部事件的文本。
+	 */
+	public fork(): SessionTimelineBuilder {
+		const fork = new SessionTimelineBuilder(this._options);
+		fork._seenHistoryOccurrences = new Map(this._seenHistoryOccurrences);
+		fork._historyItemIndices = new Map([...this._historyItemIndices].map(([key, value]) => [key, new Map(value)]));
+		fork._order = this._order.fork();
+		for (const systemMessage of this._seenSystemMessages) {
+			fork._seenSystemMessages.add(systemMessage);
+		}
+		fork._keys = new Map([...this._keys].map(([key, value]) => [key, { ...value }]));
+		fork._items = [...this._items];
+		fork._requestCount = this._requestCount;
+		fork._totalSpend = this._totalSpend;
+		fork._totalTokens = this._totalTokens;
+		fork._startMs = this._startMs;
+		fork._endMs = this._endMs;
+		fork._filteredRequestCount = this._filteredRequestCount;
+		fork._inProgressRequestCount = this._inProgressRequestCount;
+		return fork;
+	}
 
 	/**
 	 * Add a request in chronological order, removing cumulative history already represented.
@@ -1292,6 +1345,9 @@ export class SessionTimelineBuilder {
 		if (!this._options.includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
 			this._filteredRequestCount += 1;
 			return;
+		}
+		if (String(row.status ?? row.metadata_status ?? "").toLowerCase() === "in_progress") {
+			this._inProgressRequestCount += 1;
 		}
 		const keyHash = row.api_key?.trim() ?? "";
 		const keyAlias = row.key_alias?.trim() || null;
@@ -1505,6 +1561,7 @@ export class SessionTimelineBuilder {
 				start_time: startTime,
 				end_time: endTime,
 				filtered_request_count: this._filteredRequestCount,
+				in_progress_request_count: this._inProgressRequestCount,
 			},
 		};
 	}

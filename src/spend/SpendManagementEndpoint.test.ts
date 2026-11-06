@@ -1720,7 +1720,10 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					{ role: "user", content: "下一问" },
 				] },
 			];
-			const { db } = makeMockDb({ responses: [descriptors, [descriptors[0]], payloads] });
+			// 时间线快照先读会话总数，再切窗口、读清单、分类与选中消息。
+			const { db } = makeMockDb({
+				responses: [[{ count: 2 }], descriptors, descriptors, [descriptors[0]], payloads],
+			});
 			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
 				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
 			);
@@ -1771,13 +1774,13 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					response_payload: { choices: [{ message: { role: "assistant", content: "第二答" } }] },
 				},
 			];
-			const { db, calls } = makeMockDb({ responses: [rows] });
+			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], rows, rows] });
 			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
 				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
 			);
 
 			expect(res.status).toBe(200);
-			expect(res.headers["server-timing"]).toMatch(/manifest;dur=.*payload;dur=.*reduce;dur=.*total;dur=/);
+			expect(res.headers["server-timing"]).toMatch(/snapshot;dur=.*total;dur=.*manifest;dur=.*payload;dur=.*hydrate;dur=/);
 			expect(res.body.data.map((item: Record<string, unknown>) => [item.role, item.content])).toEqual([
 				["user", "第一问"],
 				["assistant", "第一答"],
@@ -1792,17 +1795,32 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				total_tokens: 30,
 				duration_seconds: 3,
 			});
+			// 一次性读取与长连接快照同形：已落库事件之外还带进行中叠加层（此处为空）。
+			expect(res.body.active_requests).toEqual([]);
+			expect(res.body.summary.in_progress_request_count).toBe(0);
 			expect(JSON.stringify(res.body)).not.toMatch(/proxy_server_request|"messages"|"response"/);
-			expect(calls.some((call) => call.hasCount)).toBe(false);
+			// 快照的总数查询必须落在会话范围内，不能退化成全表计数。
+			expect(calls.find((call) => call.hasCount)?.whereSql).toContain("session_group_key");
 			const dataCall = calls.find((call) => call.projection.includes("request_payload"));
 			expect(dataCall?.projection).not.toEqual(
 				expect.arrayContaining(["messages", "response", "proxy_server_request", "metadata"]),
 			);
-			expect(dataCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
 			expect(dataCall?.projection).toContain("request_message_count");
 			expect(dataCall?.projectionSql).toMatch(/jsonb_array_length/i);
 			expect(dataCall?.projectionSql).not.toMatch(/sha256/i);
-			expect(dataCall?.limitN).toBeNull();
+			// 窗口扫描按位置倒序只读最近 50 条（多取一条判断是否还有更早的请求），不读消息内容。
+			const scanCall = calls.find((call) => call.projection.includes("messages_bytes"));
+			expect(scanCall?.limitN).toBe(51);
+			expect(scanCall?.orderSql).toMatch(/startTime.*request_id|request_id.*startTime/is);
+			expect(scanCall?.projectionSql).toMatch(/pg_column_size/i);
+			expect(scanCall?.projectionSql).not.toMatch(/jsonb_array_length/i);
+			expect(res.body.window).toMatchObject({
+				returned_requests: 2,
+				total_requests: 2,
+				has_more: false,
+				before: null,
+				limit: 50,
+			});
 		});
 
 		it("累计快照只补取首次出现的消息，并保留再次发送的相同内容", async () => {
@@ -1861,7 +1879,9 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					],
 				},
 			];
-			const { db, calls } = makeMockDb({ responses: [descriptors, [descriptors[0]], compactPayloads] });
+			const { db, calls } = makeMockDb({
+				responses: [[{ count: 3 }], descriptors, descriptors, [descriptors[0]], compactPayloads],
+			});
 			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
 				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
 			);
@@ -1882,6 +1902,42 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 		});
 
 
+		it("压缩快照超过字节预算时只返回最新一行，并把剩余请求留给翻页", async () => {
+			const baseRow = {
+				call_type: "completion", api_key: "hash-qiran", key_alias: "qiran", spend: 0.01,
+				total_tokens: 10, model: "claude", status: "success", metadata_status: null,
+				error_information: null, request_payload: null, request_payload_available: true,
+				response_payload: null, response_payload_available: true,
+			};
+			// 累积式会话的最近几行各自就有几十 MB：只按条数切窗口仍会把它们全读出来。
+			const scanRows = [
+				{ request_id: "req-3", startTime: new Date("2026-07-24T10:00:04.000Z"), messages_bytes: 70 * 1024 * 1024 },
+				{ request_id: "req-2", startTime: new Date("2026-07-24T10:00:02.000Z"), messages_bytes: 70 * 1024 * 1024 },
+				{ request_id: "req-1", startTime: new Date("2026-07-24T10:00:00.000Z"), messages_bytes: 1024 },
+			];
+			const descriptors = [{
+				...baseRow, request_id: "req-3", request_message_count: 200,
+				startTime: new Date("2026-07-24T10:00:04.000Z"),
+				endTime: new Date("2026-07-24T10:00:05.000Z"),
+				response_payload: { choices: [{ message: { role: "assistant", content: "最新一答" } }] },
+			}];
+			const payloads = [{
+				request_id: "req-3",
+				request_payload: [{ role: "user", content: "最新一问" }],
+			}];
+			const { db } = makeMockDb({ responses: [[{ count: 3 }], scanRows, descriptors, payloads] });
+
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
+			);
+
+			expect(res.status).toBe(200);
+			// 单行 70 MB 已超过 24 MB 预算：窗口只剩最新一行，其余交给 before 翻页。
+			expect(res.body.window).toMatchObject({ returned_requests: 1, total_requests: 3, has_more: true, limit: 50 });
+			expect(res.body.summary.request_count).toBe(1);
+			expect(res.body.data.map((item: { content: string }) => item.content)).toEqual(["最新一问", "最新一答"]);
+		});
+
 		it("从相同 Key 和可见用户范围内恢复本地图片，保留原会话计费汇总", async () => {
 			const path = "/Users/example/outputs/dog.png";
 			const prompt = "一只金毛幼犬";
@@ -1901,7 +1957,8 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					response_payload: { choices: [{ message: { role: "assistant", content: `![幼犬](${path})` } }] },
 				},
 			];
-			const { db, calls } = makeMockDb({ responses: [rows, [{
+			// 图片回填排在在途读取之后，先占住进行中变更指纹与在途行两轮查询。
+			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], rows, rows, [], [], [{
 				requestId: "image", response: { data: [{ b64_json: "iVBORw0KGgoAAA" }] },
 			}]] });
 			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get(
@@ -1921,6 +1978,78 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(imageLookup?.limitN).toBe(2);
 		});
 
+		it("把进行中的请求作为叠加层返回，已落库的消息不重复", async () => {
+			const settledRow = {
+				request_id: "req-1",
+				call_type: "completion",
+				api_key: "hash-qiran",
+				key_alias: "qiran",
+				spend: 0.01,
+				total_tokens: 10,
+				startTime: new Date("2026-07-24T10:00:00.000Z"),
+				endTime: new Date("2026-07-24T10:00:01.000Z"),
+				model: "claude",
+				status: "success",
+				metadata_status: null,
+				error_information: null,
+				request_message_count: 1,
+				request_payload: null,
+				request_payload_available: true,
+				response_payload: { choices: [{ message: { role: "assistant", content: "第一答" } }] },
+				response_payload_available: true,
+			};
+			const activeRow = {
+				request_id: "req-2",
+				call_type: "completion",
+				api_key: "hash-qiran",
+				startTime: new Date("2026-07-24T10:00:02.000Z"),
+				model: "claude",
+				metadata: {
+					session_group_key: "s:session-A",
+					streaming_execution: {
+						response: { choices: [{ message: { role: "assistant", content: "生成中" } }] },
+					},
+				},
+				proxy_server_request: {
+					body: {
+						messages: [
+							{ role: "user", content: "第一问" },
+							{ role: "assistant", content: "第一答" },
+							{ role: "user", content: "第二问" },
+						],
+					},
+				},
+				completion_start_time: null,
+				updated_at: new Date("2026-07-24T10:00:03.000Z"),
+			};
+			const { db } = makeMockDb({
+				responses: [
+					[{ count: 1 }],
+					[settledRow],
+					[settledRow],
+					[settledRow],
+					[{ request_id: "req-1", request_payload: [{ role: "user", content: "第一问" }] }],
+					[{ count: 1, latest: new Date("2026-07-24T10:00:03.000Z") }],
+					[activeRow],
+				],
+			});
+			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
+				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.data.map((item: { content: string }) => item.content)).toEqual(["第一问", "第一答"]);
+			expect(res.body.active_requests).toHaveLength(1);
+			expect(res.body.active_requests[0].request_id).toBe("req-2");
+			// 进行中请求的请求体带完整历史，叠加层只保留尚未落库的消息与当前输出。
+			expect(res.body.active_requests[0].events.map((event: { content: string }) => event.content)).toEqual([
+				"第二问",
+				"生成中",
+			]);
+			expect(res.body.summary.in_progress_request_count).toBe(1);
+			expect(res.body.summary.request_count).toBe(2);
+		});
+
 		it("沿用 Session 可见性边界，非法参数不查询 DB", async () => {
 			const { db, calls } = makeMockDb();
 			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get(
@@ -1928,6 +2057,19 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			);
 
 			expect(res.status).toBe(400);
+			expect(calls).toHaveLength(0);
+		});
+
+		it("窗口大小或翻页游标非法时返回 400，不静默截断", async () => {
+			const { db, calls } = makeMockDb();
+			const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+
+			for (const query of ["limit=0", "limit=501", "limit=abc", "before=not-a-cursor"]) {
+				const res = await request(app).get(
+					`/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A&${query}`,
+				);
+				expect([query, res.status]).toEqual([query, 400]);
+			}
 			expect(calls).toHaveLength(0);
 		});
 	});

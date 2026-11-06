@@ -48,18 +48,39 @@ import {
 } from "./spendManagementFormatters";
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
+import { buildUiSpendLogDetail } from "./UiLogDetail";
 import { spendLogStatusSql } from "./spendLogStatus";
-import { hydrateSessionTimelineImages } from "./sessionTimelineImages";
-import { CallType } from "../types/spend";
+import {
+	DEFAULT_SESSION_TIMELINE_WINDOW,
+	MAX_SESSION_TIMELINE_WINDOW,
+	createSessionImageLookup,
+	loadSessionTimeline,
+} from "./sessionTimelineLive";
 import { CLAUDE_CODE_USER_ID_PATTERN, normalizeSessionUuid } from "./sessionIdentity";
 import type { Column } from "./spendManagementTypes";
 import type { UserAPIKeyAuth } from "../types/auth";
-import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
 import {
-	isClaudeCodeAuxiliaryTimelineRequest,
-	SessionTimelineBuilder,
-	type SessionTimelineSourceRow,
-} from "./sessionTimeline";
+	isInternalUserRole,
+	isSpendAdminView,
+	resolveActiveRequestVisibilityClause,
+	resolveSpendVisibilityClause,
+} from "./spendVisibility";
+import {
+	parsePersistedSessionGroupKey,
+	parseSessionGroupQuery,
+	readSessionGroup,
+	sessionGroupKey,
+	type SessionGroupRef,
+} from "./sessionGroup";
+import {
+	encodeSessionPosition,
+	parseSessionPosition,
+	sessionCursorClause,
+	sessionPositionFromRow,
+	sessionSnapshotClause,
+	type SessionPosition,
+} from "./sessionPosition";
+import { spendLogDurationSql, spendLogExecutionModelSql, spendLogMetadataJsonSql } from "./spendLogProjections";
 
 const logger = createModuleLogger("SpendLogs");
 
@@ -392,10 +413,16 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			const normalizedRows = mixedRows.map((row) => normalizeUiSpendLogRow(row as Record<string, unknown>));
 			const completedRows = normalizedRows.filter((row) => row.status !== "in_progress").map((row) => withSessionGroup(row));
 			const enrichedCompletedRows = await enrichSessionCounts(db, completedRows, visibilityClause);
+			const enrichedActiveRows = await enrichInProgressSessionCounts(
+				db,
+				normalizedRows.filter((row) => row.status === "in_progress"),
+				visibilityClause,
+			);
 			let completedIndex = 0;
+			let activeIndex = 0;
 			data = normalizedRows.map((row) => {
 				return row.status === "in_progress"
-					? { ...row, session_total_count: 1 }
+					? (enrichedActiveRows[activeIndex++] ?? { ...row, session_total_count: 1 })
 					: (enrichedCompletedRows[completedIndex++] ?? { ...row, session_total_count: 1 });
 			});
 		} else {
@@ -430,11 +457,11 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			);
 			// UI 路径 enrichment session_total_count；v2 路径不 enrichment。
 			const completedData = isV2 ? normalizedCompletedRows : await enrichSessionCounts(db, normalizedCompletedRows, visibilityClause);
-			const normalizedActiveRows = activeRows.map((row) => ({
-				...normalizeUiSpendLogRow(row as Record<string, unknown>),
-				session_total_count: 1,
-			}));
-			data = [...normalizedActiveRows, ...completedData];
+			const normalizedActiveRows = activeRows.map((row) => normalizeUiSpendLogRow(row as Record<string, unknown>));
+			const activeData = isV2
+				? normalizedActiveRows.map((row) => ({ ...row, session_total_count: 1 }))
+				: await enrichInProgressSessionCounts(db, normalizedActiveRows, visibilityClause);
+			data = [...activeData, ...completedData];
 		}
 
 		const response: UiSpendLogsPage = {
@@ -511,161 +538,39 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	});
 
 	// ========== /spend/logs/session/timeline ==========
-	// 独立的 Session 时间线读取路径。服务端按复合索引升序分批读取，并在内存中只保留
-	// 已去重的最终事件；请求快照、原始响应和 proxy_server_request 不会进入 HTTP 响应。
+	// 独立的 Session 时间线读取路径。已落库行按复合索引升序分批读取，仍在进行中的请求单独
+	// 叠加在 `active_requests`；服务端只保留已去重的最终事件，请求快照、原始响应和
+	// proxy_server_request 不会进入 HTTP 响应。WebSocket 长连接复用同一装配实现。
 	registerRoute(router, { method: "get", path: "/spend/logs/session/timeline" }, async (req, res) => {
-		const timelineStartedAt = performance.now();
 		const timings: Array<{ name: string; durationMs: number }> = [];
 		const recordTiming = (name: string, startedAt: number): void => {
 			timings.push({ name: name, durationMs: performance.now() - startedAt });
 		};
-		const applyServerTiming = (): void => {
-			res.setHeader(
-				"Server-Timing",
-				timings.map((timing) => `${timing.name};dur=${timing.durationMs.toFixed(1)}`).join(", "),
-			);
-		};
 		const group = parseSessionGroupQuery(req.query as Record<string, unknown>);
-		const includeAuxiliary = req.query.include_auxiliary === "true";
-		const requestedTeamId = typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
+		const requestedTeamId =
+			typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
 		const visibilityStartedAt = performance.now();
 		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
 		recordTiming("visibility", visibilityStartedAt);
-		const baseClause = and(
-			eq(liteLLM_SpendLogs.session_group_key, sessionGroupKey(group)),
-			visibilityClause,
-		) as SQL;
-		const snapshotStartedAt = performance.now();
-		const snapshotRows = await db
-			.select({ snapshotStartTime: liteLLM_SpendLogs.startTime, snapshotRequestId: liteLLM_SpendLogs.request_id })
-			.from(liteLLM_SpendLogs)
-			.where(baseClause)
-			.orderBy(sql`${liteLLM_SpendLogs.startTime} DESC, ${liteLLM_SpendLogs.request_id} DESC`)
-			.limit(1);
-		recordTiming("snapshot", snapshotStartedAt);
-		const snapshot = sessionPositionFromRow(snapshotRows[0], "snapshotStartTime", "snapshotRequestId");
-		const builder = new SessionTimelineBuilder({ includeAuxiliary: includeAuxiliary });
-		if (!snapshot) {
-			recordTiming("total", timelineStartedAt);
-			applyServerTiming();
-			return builder.build();
-		}
-
-		const boundedClause = and(baseClause, sessionSnapshotClause(snapshot)) as SQL;
-		// Cumulative chat snapshots can grow to hundreds of megabytes while the
-		// final timeline only contains a few megabytes of distinct events. Read a
-		// compact fingerprint manifest first, then fetch only unseen occurrences.
-		const descriptorStartedAt = performance.now();
-		const rawDescriptorRows = (await db
-			.select(sessionTimelineDescriptorSelection())
-			.from(liteLLM_SpendLogs)
-			.where(boundedClause)
-			.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)) as SessionTimelineDescriptorRow[];
-		recordTiming("manifest", descriptorStartedAt);
-		const classificationStartedAt = performance.now();
-		const auxiliaryCandidateRequestIds = rawDescriptorRows
-			.filter(
-				(row) =>
-					(typeof row.request_message_count === "number" && row.request_message_count <= 2) ||
-					row.request_message_count === null,
-			)
-			.map((row) => row.request_id);
-		const classificationByRequestId = new Map<string, Partial<SessionTimelineSourceRow>>();
-		if (auxiliaryCandidateRequestIds.length > 0) {
-			const candidateRequestIdsJson = JSON.stringify(
-				Object.fromEntries(auxiliaryCandidateRequestIds.map((requestId) => [requestId, true])),
-			);
-			const classificationRows = await db
-				.select(sessionTimelineAuxiliarySelection())
-				.from(liteLLM_SpendLogs)
-				.where(and(boundedClause, sql`${candidateRequestIdsJson}::jsonb ? ${liteLLM_SpendLogs.request_id}`));
-			for (const row of classificationRows) {
-				classificationByRequestId.set(row.request_id, row);
-			}
-		}
-		const descriptorRows = rawDescriptorRows.map((row) => ({
-			...row,
-			...(classificationByRequestId.get(row.request_id) ?? {}),
-		}));
-		recordTiming("classify", classificationStartedAt);
-		const planningStartedAt = performance.now();
-		const payloadPlan = planSessionTimelinePayloads(descriptorRows, includeAuxiliary);
-		const compactArrayPayloadRequestIds = [...payloadPlan.indicesByRequestId.keys()].filter(
-			(requestId) => (payloadPlan.indicesByRequestId.get(requestId)?.length ?? 0) > 0,
+		const payload = await loadSessionTimeline(
+			db,
+			{
+				groupKey: sessionGroupKey(group),
+				includeAuxiliary: req.query.include_auxiliary === "true",
+				visibilityClause: visibilityClause,
+				activeVisibilityClause: resolveActiveRequestVisibilityClause(req.auth, requestedTeamId),
+			},
+			{ findImages: createSessionImageLookup(db, visibilityClause), recordTiming: recordTiming },
+			{
+				limit: parseSessionTimelineWindow(req.query.limit),
+				before: parseSessionPosition(req.query.before, "before"),
+			},
 		);
-		const fallbackPayloadRequestIds = descriptorRows
-			.filter((row) => row.request_message_count === null)
-			.map((row) => row.request_id);
-		const payloadRequestIds = Array.from(new Set([...compactArrayPayloadRequestIds, ...fallbackPayloadRequestIds]));
-		recordTiming("plan", planningStartedAt);
-		const payloadByRequestId = new Map<string, unknown>();
-		const payloadStartedAt = performance.now();
-		if (payloadRequestIds.length > 0) {
-			const selectedIndices = Object.fromEntries(
-				payloadRequestIds.map((requestId) => [requestId, payloadPlan.indicesByRequestId.get(requestId) ?? []]),
-			);
-			const selectedIndicesJson = JSON.stringify(selectedIndices);
-			const payloadRows = await db
-				.select(sessionTimelinePayloadSelection(selectedIndicesJson))
-				.from(liteLLM_SpendLogs)
-				.where(and(boundedClause, sql`${selectedIndicesJson}::jsonb ? ${liteLLM_SpendLogs.request_id}`));
-			for (const row of payloadRows) {
-				payloadByRequestId.set(row.request_id, row.request_payload);
-			}
-		}
-		recordTiming("payload", payloadStartedAt);
-
-		const compactRows = descriptorRows.map((row): SessionTimelineSourceRow => {
-			const messageCount = row.request_message_count;
-			if (messageCount === null || messageCount === undefined) {
-				return {
-					...row,
-					request_payload: payloadByRequestId.get(row.request_id) ?? row.request_payload,
-				};
-			}
-			return {
-				...row,
-				request_payload: payloadByRequestId.get(row.request_id) ?? [],
-				request_message_occurrences: payloadPlan.occurrencesByRequestId.get(row.request_id) ?? [],
-				request_message_delta_flags: payloadPlan.deltaFlagsByRequestId.get(row.request_id) ?? [],
-				request_payload_available: messageCount > 0,
-			};
-		});
-		const hydrationStartedAt = performance.now();
-		const hydratedRows = await hydrateTimelineRowsFromColdStorage(compactRows);
-		recordTiming("hydrate", hydrationStartedAt);
-		const reducerStartedAt = performance.now();
-		for (const row of hydratedRows) {
-			builder.add(row);
-		}
-		const result = builder.build();
-		recordTiming("reduce", reducerStartedAt);
-		const imagesStartedAt = performance.now();
-		const hydratedResult = await hydrateSessionTimelineImages(result, hydratedRows, async (lookup) => {
-			const candidates = await db.select({
-				requestId: liteLLM_SpendLogs.request_id,
-				response: liteLLM_SpendLogs.response,
-			}).from(liteLLM_SpendLogs).where(and(
-				visibilityClause,
-				eq(liteLLM_SpendLogs.api_key, lookup.apiKey),
-				inArray(liteLLM_SpendLogs.call_type, [CallType.ImageGeneration, CallType.AImageGeneration]),
-				sql`${liteLLM_SpendLogs.startTime} >= ${lookup.from}`,
-				sql`${liteLLM_SpendLogs.endTime} <= ${lookup.to}`,
-				sql`COALESCE(${liteLLM_SpendLogs.proxy_server_request}#>>'{body,prompt}',
-					${liteLLM_SpendLogs.messages}#>>'{}') = ${lookup.prompt}`,
-			)).limit(2);
-			if (candidates.length !== 1) {
-				return candidates;
-			}
-			const candidate = candidates[0]!;
-			const cold = await getRequestResponsePayloadFromColdStorage(candidate.requestId, lookup.from, lookup.to,
-				() => logger.warn("Session image cold-storage lookup failed"));
-			return [{ ...candidate, response: cold?.response ?? candidate.response }];
-		});
-		recordTiming("images", imagesStartedAt);
-		recordTiming("total", timelineStartedAt);
-		applyServerTiming();
-		return hydratedResult;
+		res.setHeader(
+			"Server-Timing",
+			timings.map((timing) => `${timing.name};dur=${timing.durationMs.toFixed(1)}`).join(", "),
+		);
+		return payload;
 	});
 
 	// ========== /spend/logs/ui/batch ==========
@@ -874,16 +779,6 @@ function uiSpendLogSelectionWithContent() {
 	};
 }
 
-interface SessionTimelineDescriptorRow extends SessionTimelineSourceRow {
-	readonly request_message_count: number | null;
-}
-
-interface SessionTimelinePayloadPlan {
-	readonly indicesByRequestId: ReadonlyMap<string, readonly number[]>;
-	readonly occurrencesByRequestId: ReadonlyMap<string, readonly number[]>;
-	readonly deltaFlagsByRequestId: ReadonlyMap<string, readonly boolean[]>;
-}
-
 /**
  * Select only positions beyond the cumulative message-count high-water mark.
  * Rows whose count does not advance are conservatively rescanned at the tail,
@@ -892,274 +787,23 @@ interface SessionTimelinePayloadPlan {
  * @param rows - Chronologically ordered timeline manifest rows.
  * @param includeAuxiliary - Whether Claude Code internal service calls remain visible.
  */
-function planSessionTimelinePayloads(
-	rows: readonly SessionTimelineDescriptorRow[],
-	includeAuxiliary: boolean,
-): SessionTimelinePayloadPlan {
-	let seenMessageCount = 0;
-	const indicesByRequestId = new Map<string, readonly number[]>();
-	const occurrencesByRequestId = new Map<string, readonly number[]>();
-	const deltaFlagsByRequestId = new Map<string, readonly boolean[]>();
-
-	for (const row of rows) {
-		const messageCount = row.request_message_count;
-		if (messageCount === null || !Number.isSafeInteger(messageCount) || messageCount < 0) {
-			continue;
-		}
-		if (!includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
-			indicesByRequestId.set(row.request_id, []);
-			occurrencesByRequestId.set(row.request_id, []);
-			deltaFlagsByRequestId.set(row.request_id, []);
-			continue;
-		}
-
-		if (messageCount > seenMessageCount) {
-			const growth = messageCount - seenMessageCount;
-			if (growth >= 4) {
-				// Large jumps in Claude/Codex histories coincide with prompt-cache
-				// boundary rewrites: tool results and injected system messages can
-				// change well before the tail. There are few such rows, so rescan
-				// the complete snapshot and let the semantic reducer deduplicate it.
-				indicesByRequestId.set(
-					row.request_id,
-					Array.from({ length: messageCount }, (_unused, index) => index),
-				);
-				occurrencesByRequestId.set(row.request_id, []);
-				deltaFlagsByRequestId.set(
-					row.request_id,
-					Array.from({ length: messageCount }, () => false),
-				);
-				seenMessageCount = messageCount;
-				continue;
-			}
-
-			// Include two boundary messages because clients may rewrite cache
-			// markers or reasoning representation immediately before the new
-			// tail. Only positions at/after the old high-water mark are flagged
-			// as genuinely new occurrences.
-			const selectedStart = Math.max(0, seenMessageCount - 2);
-			const selectedIndices = Array.from(
-				{ length: messageCount - selectedStart },
-				(_unused, offset) => selectedStart + offset,
-			);
-			indicesByRequestId.set(row.request_id, selectedIndices);
-			occurrencesByRequestId.set(row.request_id, []);
-			deltaFlagsByRequestId.set(
-				row.request_id,
-				selectedIndices.map((index) => index >= seenMessageCount),
-			);
-			seenMessageCount = messageCount;
-			continue;
-		}
-
-		// Equal/decreasing counts usually mean a retry or a non-cumulative
-		// request. Re-read only the tail so a changed final turn remains visible;
-		// the semantic reducer removes exact duplicates.
-		const tailStart = Math.max(0, messageCount - 4);
-		indicesByRequestId.set(
-			row.request_id,
-			Array.from({ length: messageCount - tailStart }, (_unused, offset) => tailStart + offset),
-		);
-		occurrencesByRequestId.set(row.request_id, []);
-		deltaFlagsByRequestId.set(
-			row.request_id,
-			Array.from({ length: messageCount - tailStart }, () => false),
-		);
-	}
-
-	return {
-		indicesByRequestId: indicesByRequestId,
-		occurrencesByRequestId: occurrencesByRequestId,
-		deltaFlagsByRequestId: deltaFlagsByRequestId,
-	};
-}
 
 /**
  * Timeline manifest projection. Array payloads expose only their cheap count;
  * the payload query later extracts positions selected by the count high-water
  * plan. Non-array legacy payloads remain on the fallback path.
  */
-function sessionTimelineDescriptorSelection() {
-	const messages = liteLLM_SpendLogs.messages;
-	const metadata = liteLLM_SpendLogs.metadata;
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		call_type: liteLLM_SpendLogs.call_type,
-		api_key: liteLLM_SpendLogs.api_key,
-		spend: liteLLM_SpendLogs.spend,
-		total_tokens: liteLLM_SpendLogs.total_tokens,
-		startTime: liteLLM_SpendLogs.startTime,
-		endTime: liteLLM_SpendLogs.endTime,
-		model: spendLogExecutionModelSql(),
-		status: spendLogStatusSql(liteLLM_SpendLogs.status, liteLLM_SpendLogs.metadata),
-		metadata_status: spendLogStatusSql(
-			sql<string | null>`CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'status' ELSE NULL END`,
-			liteLLM_SpendLogs.metadata,
-		),
-		key_alias: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'user_api_key_alias' ELSE NULL END
-		`,
-		error_information: sql<unknown | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->'error_information' ELSE NULL END
-		`,
-		internal_call_type: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'internal_call_type' ELSE NULL END
-		`,
-		builtin_capability: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'builtin_capability' ELSE NULL END
-		`,
-		parent_request_id: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'parent_request_id' ELSE NULL END
-		`,
-		request_payload: sql<unknown>`NULL`,
-		request_message_count: sql<number | null>`
-			CASE
-				WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
-				ELSE NULL
-			END
-		`,
-		response_payload: liteLLM_SpendLogs.response,
-		response_payload_available: sql<boolean>`
-			${liteLLM_SpendLogs.response} IS NOT NULL
-			AND ${liteLLM_SpendLogs.response} <> 'null'::jsonb
-			AND ${liteLLM_SpendLogs.response} <> '{}'::jsonb
-			AND ${liteLLM_SpendLogs.response} <> '[]'::jsonb
-		`,
-	};
-}
 
 /**
  * Claude Code auxiliary-call classification fields. This projection only runs
  * for manifest rows with at most two messages, so cumulative proxy snapshots
  * are never repeatedly decompressed for normal conversation requests.
  */
-function sessionTimelineAuxiliarySelection() {
-	const proxy = liteLLM_SpendLogs.proxy_server_request;
-	const messages = liteLLM_SpendLogs.messages;
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		request_message_count: sql<number>`
-			CASE
-				WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
-				WHEN jsonb_typeof(${proxy}#>'{body,messages}') = 'array'
-					THEN jsonb_array_length(${proxy}#>'{body,messages}')
-				ELSE 0
-			END
-		`,
-		request_client: sql<string | null>`
-			CASE
-				WHEN ${proxy}#>>'{headers,x-app}' = 'cli'
-					AND ${proxy}#>>'{headers,user-agent}' LIKE 'claude-cli/%'
-				THEN 'claude_code'
-				ELSE NULL
-			END
-		`,
-		request_system_count: sql<number>`
-			CASE
-				WHEN jsonb_typeof(${proxy}#>'{body,system}') = 'array'
-				THEN jsonb_array_length(${proxy}#>'{body,system}')
-				ELSE 0
-			END
-		`,
-		request_tool_count: sql<number>`
-			CASE
-				WHEN jsonb_typeof(${proxy}#>'{body,tools}') = 'array'
-				THEN jsonb_array_length(${proxy}#>'{body,tools}')
-				ELSE 0
-			END
-		`,
-		request_first_tool_name: sql<string | null>`${proxy}#>>'{body,tools,0,name}'`,
-		// Prefix matching tolerates prompt-tail edits between Claude Code versions
-		// while the 256-character cap prevents large system prompts entering the
-		// timeline batch result solely for classification.
-		request_first_system_prompt: sql<string | null>`
-			LEFT(
-				COALESCE(
-					${proxy}#>>'{body,system,0,text}',
-					${proxy}#>>'{body,system,0}'
-				),
-				256
-			)
-		`,
-		request_second_system_prompt: sql<string | null>`
-			LEFT(
-				COALESCE(
-					${proxy}#>>'{body,system,1,text}',
-					${proxy}#>>'{body,system,1}'
-				),
-				256
-			)
-		`,
-		request_first_message_role: sql<string | null>`
-			COALESCE(
-				${messages}#>>'{0,role}',
-				${proxy}#>>'{body,messages,0,role}'
-			)
-		`,
-		request_second_message_role: sql<string | null>`
-			COALESCE(
-				${messages}#>>'{1,role}',
-				${proxy}#>>'{body,messages,1,role}'
-			)
-		`,
-		request_first_message_text: sql<string | null>`
-			LEFT(COALESCE(
-				${messages}#>>'{0,content,0,text}',
-				${messages}#>>'{0,content}',
-				${proxy}#>>'{body,messages,0,content,0,text}',
-				${proxy}#>>'{body,messages,0,content}'
-			), 256)
-		`,
-		request_second_message_text: sql<string | null>`
-			LEFT(COALESCE(
-				${messages}#>>'{1,content,0,text}',
-				${messages}#>>'{1,content}',
-				${proxy}#>>'{body,messages,1,content,0,text}',
-				${proxy}#>>'{body,messages,1,content}'
-			), 256)
-		`,
-	};
-}
 
 /**
  * Fetch only the message indexes selected from the compact manifest.
  * @param selectedIndicesJson - request_id to zero-based message indexes.
  */
-function sessionTimelinePayloadSelection(selectedIndicesJson: string) {
-	const proxy = liteLLM_SpendLogs.proxy_server_request;
-	const messages = liteLLM_SpendLogs.messages;
-	const fallbackPayload = sql<unknown>`
-		CASE
-			WHEN jsonb_typeof(${proxy}) = 'object' AND ${proxy}->'body' IS NOT NULL THEN ${proxy}->'body'
-			ELSE ${proxy}
-		END
-	`;
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		request_payload: sql<unknown>`
-			CASE
-				WHEN jsonb_typeof(${messages}) = 'array' THEN COALESCE((
-					SELECT jsonb_agg(timeline_item.value ORDER BY timeline_item.ordinality)
-					FROM jsonb_array_elements(${messages}) WITH ORDINALITY AS timeline_item(value, ordinality)
-					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
-						@> to_jsonb((timeline_item.ordinality - 1)::int)
-				), '[]'::jsonb)
-				WHEN ${messages} IS NOT NULL
-					AND ${messages} <> 'null'::jsonb
-					AND ${messages} <> '{}'::jsonb
-					AND ${messages} <> '[]'::jsonb
-				THEN ${messages}
-				WHEN jsonb_typeof(${fallbackPayload}) = 'array' THEN COALESCE((
-					SELECT jsonb_agg(timeline_item.value ORDER BY timeline_item.ordinality)
-					FROM jsonb_array_elements(${fallbackPayload}) WITH ORDINALITY AS timeline_item(value, ordinality)
-					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
-						@> to_jsonb((timeline_item.ordinality - 1)::int)
-				), '[]'::jsonb)
-				ELSE ${fallbackPayload}
-			END
-		`,
-	};
-}
 
 /** 活跃请求转成与 UI SpendLog 列表兼容的轻量行。 */
 function uiActiveRequestSelection() {
@@ -1173,14 +817,16 @@ function uiActiveRequestSelection() {
 		completion_tokens: sql<number>`0`,
 		startTime: liteLLM_ActiveRequests.startTime,
 		endTime: sql<Date>`CURRENT_TIMESTAMP`,
-		completionStartTime: sql<Date | null>`NULL`,
+		completionStartTime: liteLLM_ActiveRequests.completion_start_time,
 		model: liteLLM_ActiveRequests.model,
 		model_id: liteLLM_ActiveRequests.model_id,
 		model_group: liteLLM_ActiveRequests.model_group,
-		custom_llm_provider: sql<string | null>`''`,
-		api_base: sql<string | null>`''`,
+		// ActiveRequests 侧非空，UNION 需要与 SpendLogs 侧的可空类型对齐。
+		custom_llm_provider: sql<string | null>`${liteLLM_ActiveRequests.custom_llm_provider}`,
+		api_base: sql<string | null>`${liteLLM_ActiveRequests.api_base}`,
 		user: liteLLM_ActiveRequests.user,
-		metadata: sql<unknown | null>`${liteLLM_ActiveRequests.metadata}`,
+		// 聚合中的响应正文只属于详情页，列表不重复下发（见 /spend/logs/ui/:request_id）。
+		metadata: sql<unknown | null>`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) - 'streaming_execution' - 'responses_execution'`,
 		cache_hit: sql<string | null>`'False'`,
 		cache_key: sql<string | null>`NULL`,
 		request_tags: sql<unknown | null>`${liteLLM_ActiveRequests.request_tags}`,
@@ -1188,7 +834,7 @@ function uiActiveRequestSelection() {
 		organization_id: liteLLM_ActiveRequests.organization_id,
 		end_user: liteLLM_ActiveRequests.end_user,
 		requester_ip_address: liteLLM_ActiveRequests.requester_ip_address,
-		session_id: sql<string | null>`NULL`,
+		session_id: liteLLM_ActiveRequests.session_id,
 		session_group_key: sql<string | null>`NULL`,
 		status: sql<string | null>`${liteLLM_ActiveRequests.status}`,
 		mcp_namespaced_tool_name: sql<string | null>`NULL`,
@@ -1198,14 +844,8 @@ function uiActiveRequestSelection() {
 }
 
 /** Python UI logs duration expression: DB NULL fallback to endTime-startTime in milliseconds. */
-function spendLogDurationSql() {
-	return sql<number>`COALESCE(${liteLLM_SpendLogs.request_duration_ms}, GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.startTime})) * 1000))::int)`;
-}
 
 /** metadata 仅在原生 JSON object 时参与通用字段过滤；历史 string 不做不安全 cast。 */
-function spendLogMetadataJsonSql() {
-	return sql`CASE WHEN jsonb_typeof(${liteLLM_SpendLogs.metadata}) = 'object' THEN ${liteLLM_SpendLogs.metadata} ELSE '{}'::jsonb END`;
-}
 
 /**
  * JSONB metadata 可能是 object，也可能是包含 JSON object 的历史 string。
@@ -1327,39 +967,30 @@ function parseKnownSessionTotal(value: unknown): number | null {
 	return total;
 }
 
-function encodeSessionPosition(position: SessionPosition): string {
-	return Buffer.from(JSON.stringify({ startTime: position.startTime.toISOString(), requestId: position.requestId }), "utf8").toString(
-		"base64url",
-	);
-}
-
-function sessionPositionFromRow(
-	row: Record<string, unknown> | undefined,
-	startTimeKey: string,
-	requestIdKey: string,
-): SessionPosition | null {
-	if (!row) {
-		return null;
-	}
-	const rawStartTime = row[startTimeKey];
-	const startTime = rawStartTime instanceof Date ? rawStartTime : typeof rawStartTime === "string" ? new Date(rawStartTime) : null;
-	const requestId = row[requestIdKey];
-	if (!startTime || Number.isNaN(startTime.getTime()) || typeof requestId !== "string" || requestId.length === 0) {
-		return null;
-	}
-	return { startTime: startTime, requestId: requestId };
-}
-
 function sessionPositionFromNormalizedRow(row: Record<string, unknown> | undefined): SessionPosition | null {
 	return sessionPositionFromRow(row, "startTime", "request_id");
 }
 
-function sessionSnapshotClause(snapshot: SessionPosition): SQL {
-	return sql`(${liteLLM_SpendLogs.startTime}, ${liteLLM_SpendLogs.request_id}) <= (${snapshot.startTime}, ${snapshot.requestId})`;
-}
-
-function sessionCursorClause(cursor: SessionPosition): SQL {
-	return sql`(${liteLLM_SpendLogs.startTime}, ${liteLLM_SpendLogs.request_id}) > (${cursor.startTime}, ${cursor.requestId})`;
+/**
+ * 解析时间线窗口大小（最近多少个已落库请求）。
+ *
+ * 缺省用 {@link DEFAULT_SESSION_TIMELINE_WINDOW}，超过上限返回 400，不静默截断——
+ * 让调用方知道请求被拒，而不是拿到一份看起来完整其实被裁剪的时间线。
+ * @param value - 查询参数 `limit`
+ * @throws {ApiError} 不是 1..{@link MAX_SESSION_TIMELINE_WINDOW} 的整数时返回 400
+ */
+function parseSessionTimelineWindow(value: unknown): number {
+	if (value === undefined) {
+		return DEFAULT_SESSION_TIMELINE_WINDOW;
+	}
+	if (typeof value !== "string" || !/^\d+$/.test(value)) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid limit");
+	}
+	const limit = Number(value);
+	if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_SESSION_TIMELINE_WINDOW) {
+		throw new ApiError(HTTP_STATUS.BAD_REQUEST, `limit must be between 1 and ${MAX_SESSION_TIMELINE_WINDOW}`);
+	}
+	return limit;
 }
 
 function makeSessionPage(
@@ -1531,27 +1162,61 @@ function buildActiveRequestsWhereConditions(args: UiSpendLogsWhereArgs) {
 }
 
 /**
- * UI 路径 enrichment：按持久化 Session group key 批量查询总行数。
- * 普通 session_id 与 Claude Code user ID 使用同一个复合索引，不读取 metadata 全表。
- * 失败时记 warn 日志并退化为 session_total_count=1。
- * @param db
- * @param rows
- * @param visibilityClause
+ * 补全进行中行的会话分组与计数。
+ *
+ * 进行中的请求还没写 SpendLogs：会话分组来自注册时写入的 `metadata.session_group_key`
+ * （与请求结束后一致），会话计数则是已落库的同伴数量再加它自己。
+ * @param db - Drizzle 数据库实例
+ * @param rows - 列表里的进行中行
+ * @param visibilityClause - 可见性过滤
  */
-async function enrichSessionCounts(
+async function enrichInProgressSessionCounts(
 	db: NodePgDatabase<typeof schema>,
 	rows: Record<string, unknown>[],
 	visibilityClause: SQL,
 ): Promise<Record<string, unknown>[]> {
-	const groups = rows.map(readSessionGroup);
-	const groupKeys = Array.from(
+	if (rows.length === 0) {
+		return rows;
+	}
+	const grouped = rows.map((row) => withSessionGroup(row));
+	const groups = grouped.map(readSessionGroup);
+	const groupKeys = collectSessionGroupKeys(groups);
+	if (groupKeys.length === 0) {
+		return grouped.map((row) => ({ ...row, session_total_count: 1 }));
+	}
+	const countMap = await queryCompletedSessionCounts(db, groupKeys, visibilityClause);
+	return grouped.map((row, index) => {
+		const group = groups[index] ?? null;
+		const completed = group === null ? 0 : (countMap.get(sessionGroupKey(group)) ?? 0);
+		return { ...row, session_total_count: group === null ? 1 : completed + 1 };
+	});
+}
+
+/**
+ * 去重后的 Session group key 列表，保持首次出现顺序。
+ * @param groups - 行对应的会话分组（可能为空）
+ */
+function collectSessionGroupKeys(groups: (SessionGroupRef | null)[]): string[] {
+	return Array.from(
 		new Set(groups.filter((group): group is SessionGroupRef => group !== null).map((group) => sessionGroupKey(group))),
 	);
-	if (groupKeys.length === 0) {
-		return rows.map((row) => ({ ...row, session_total_count: 1 }));
-	}
+}
 
+/**
+ * 按 Session group key 统计 SpendLogs 里的已完成行数。失败时记 warn 并返回空表。
+ * @param db - Drizzle 数据库实例
+ * @param groupKeys - 待统计的会话分组 key
+ * @param visibilityClause - 可见性过滤
+ */
+async function queryCompletedSessionCounts(
+	db: NodePgDatabase<typeof schema>,
+	groupKeys: string[],
+	visibilityClause: SQL,
+): Promise<Map<string, number>> {
 	const countMap = new Map<string, number>();
+	if (groupKeys.length === 0) {
+		return countMap;
+	}
 	try {
 		const sessionCounts = await db
 			.select({
@@ -1569,6 +1234,29 @@ async function enrichSessionCounts(
 	} catch (err) {
 		logger.warn(`/spend/logs/ui session count enrichment failed: ${(err as Error).message}`);
 	}
+	return countMap;
+}
+
+/**
+ * UI 路径 enrichment：按持久化 Session group key 批量查询总行数。
+ * 普通 session_id 与 Claude Code user ID 使用同一个复合索引，不读取 metadata 全表。
+ * 失败时记 warn 日志并退化为 session_total_count=1。
+ * @param db
+ * @param rows
+ * @param visibilityClause
+ */
+async function enrichSessionCounts(
+	db: NodePgDatabase<typeof schema>,
+	rows: Record<string, unknown>[],
+	visibilityClause: SQL,
+): Promise<Record<string, unknown>[]> {
+	const groups = rows.map(readSessionGroup);
+	const groupKeys = collectSessionGroupKeys(groups);
+	if (groupKeys.length === 0) {
+		return rows.map((row) => ({ ...row, session_total_count: 1 }));
+	}
+
+	const countMap = await queryCompletedSessionCounts(db, groupKeys, visibilityClause);
 
 	return rows.map((row, index) => {
 		const group = groups[index];

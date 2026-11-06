@@ -7572,27 +7572,71 @@ export interface SessionTimelineEvent {
 	parent_request_id?: string;
 }
 
+/** 仍在进行中的请求及其当前事件组；事件 id 与结算后落库事件的 id 相同。 */
+export interface SessionActiveTimelineRequest {
+	request_id: string;
+	events: SessionTimelineEvent[];
+}
+
+export interface SessionTimelineSummary {
+	keys: Array<{
+		alias: string | null;
+		hash: string;
+	}>;
+	request_count: number;
+	event_count: number;
+	total_spend: number;
+	total_tokens: number;
+	duration_seconds: number;
+	start_time: string | null;
+	end_time: string | null;
+	/** 被过滤掉的 Claude Code 内部服务调用数。 */
+	filtered_request_count?: number;
+	/** 仍在进行中的请求数；旧版服务端没有该字段。 */
+	in_progress_request_count?: number;
+}
+
+/** 长会话的窗口信息：本次只返回最近一段，更早的请求按 `before` 游标翻页。 */
+export interface SessionTimelineWindow {
+	/** 本次返回的已落库请求数。 */
+	returned_requests: number;
+	/** 会话内已落库请求总数，含未返回的更早请求。 */
+	total_requests: number;
+	/** 是否还有更早的请求未返回。 */
+	has_more: boolean;
+	/** 请求更早一页时使用的游标；已到头时为 null。 */
+	before: string | null;
+	/** 服务端生效的窗口大小；null 表示返回了整个会话。 */
+	limit: number | null;
+}
+
 export interface SessionTimelineResponse {
+	/** 已落库事件；与 active_requests 互不重叠。 */
 	data: SessionTimelineEvent[];
-	summary: {
-		keys: Array<{
-			alias: string | null;
-			hash: string;
-		}>;
-		request_count: number;
-		event_count: number;
-		total_spend: number;
-		total_tokens: number;
-		duration_seconds: number;
-		start_time: string | null;
-		end_time: string | null;
-	};
+	summary: SessionTimelineSummary;
+	/** 仍在进行中的请求事件组；长连接推送与一次性读取同形。 */
+	active_requests?: SessionActiveTimelineRequest[];
+	/** 只返回了长会话的一段时给出的窗口信息。 */
+	window?: SessionTimelineWindow;
+}
+
+/** 长连接推送的一次增量：只包含变化的事件。 */
+export interface SessionTimelineUpdate {
+	upsert: SessionTimelineEvent[];
+	/** 顺序变化时的完整事件 id 顺序；未变化时省略。 */
+	order?: string[];
+	/** 已消失的已落库事件 id。 */
+	removed?: string[];
+	summary: SessionTimelineSummary;
+	/** 当前全部进行中请求事件组，前端整体替换叠加层。 */
+	active_requests: SessionActiveTimelineRequest[];
 }
 
 export const sessionTimelineCall = async (
 	accessToken: string,
 	sessionGroup: SessionGroupRef,
 	teamId?: string,
+	options: { readonly before?: string | null } = {},
 ): Promise<SessionTimelineResponse> => {
 	try {
 		const searchParams = new URLSearchParams({
@@ -7600,6 +7644,7 @@ export const sessionTimelineCall = async (
 			session_group_id: sessionGroup.id,
 		});
 		if (teamId) searchParams.set("team_id", teamId);
+		if (options.before) searchParams.set("before", options.before);
 		const path = `/spend/logs/session/timeline?${searchParams.toString().replace(/\+/g, "%20")}`;
 		const url = proxyBaseUrl ? `${proxyBaseUrl}${path}` : path;
 		const response = await dashboardFetch(url, {

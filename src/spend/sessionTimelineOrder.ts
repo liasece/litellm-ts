@@ -2,7 +2,21 @@ import type { SessionTimelineItem } from "./sessionTimeline";
 
 /** Records message precedence from request snapshots without retaining their payloads. */
 export class SessionTimelineOrder {
-	private readonly _successors = new Map<number, Set<number>>();
+	private _successors = new Map<number, Set<number>>();
+
+	/**
+	 * 复制已记录的消息顺序关系。
+	 *
+	 * 进行中请求的叠加层需要沿用已落库事件之间的先后关系才能正确排序，但叠加层每次都
+	 * 重新计算，不能改动已提交的顺序状态，因此复制一份关系表给叠加层使用。
+	 */
+	public fork(): SessionTimelineOrder {
+		const fork = new SessionTimelineOrder();
+		for (const [index, successors] of this._successors) {
+			fork._successors.set(index, new Set(successors));
+		}
+		return fork;
+	}
 
 	/**
 	 * Connect visible occurrences in their original request/response order.

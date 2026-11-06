@@ -1,5 +1,5 @@
 import { usePriceDisplay } from "@/contexts/PriceDisplay";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Alert, Button, Empty, Spin, Tag } from "antd";
 import { SortAscendingOutlined, SortDescendingOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import { sessionTimelineCall, type SessionTimelineEvent } from "../../networking";
+import { useSessionTimelineStream } from "@/app/(dashboard)/hooks/logDetails/useSessionTimelineStream";
 import SidePanel from "../../common_components/SidePanel";
 import type { SessionGroupRef } from "../columns";
 import type { MessagePart } from "./prettyMessagesTypes";
@@ -543,6 +544,16 @@ export function SessionSimulationDrawer({
 }: SessionSimulationDrawerProps) {
 	usePriceDisplay();
 	const [newestFirst, setNewestFirst] = useState(true);
+	// 长会话按窗口加载：更早的页独立保存，避免与长连接推送的窗口事件互相覆盖。
+	const [earlierEvents, setEarlierEvents] = useState<SessionTimelineItem[]>([]);
+	const [earlierCursor, setEarlierCursor] = useState<string | null>(null);
+	const [earlierHasMore, setEarlierHasMore] = useState(false);
+	/** 是否已经成功加载过更早的页；加载之后由最新一页的 has_more 决定按钮，而不是首窗口的。 */
+	const [earlierLoaded, setEarlierLoaded] = useState(false);
+	const [loadingEarlier, setLoadingEarlier] = useState(false);
+	const [earlierError, setEarlierError] = useState<string | null>(null);
+	// 面板打开即订阅时间线长连接：服务端先发快照，之后只在有变化时推送增量（含进行中请求）。
+	const { streaming } = useSessionTimelineStream(sessionGroup, teamId, accessToken, Boolean(open));
 	const {
 		data: timelineResponse,
 		isLoading,
@@ -571,12 +582,42 @@ export function SessionSimulationDrawer({
 			return sessionTimelineCall(accessToken, sessionGroup, teamId);
 		},
 		enabled: Boolean(open && accessToken),
+		// 长连接会持续写入同一份缓存；窗口聚焦时重新拉取只会把更旧的数据写回来。
+		refetchOnWindowFocus: false,
 	});
 
 	const timeline = timelineResponse?.data ?? [];
+	const activeRequests = timelineResponse?.active_requests ?? [];
+	const windowInfo = timelineResponse?.window;
+	// 更早的页在前、当前窗口在后：已落库事件在前、进行中事件在后，请求结算时事件 id 不变。
+	const combinedTimeline = [...earlierEvents, ...timeline, ...activeRequests.flatMap((request) => request.events)];
+	const earlierPageAvailable = earlierHasMore || (!earlierLoaded && Boolean(windowInfo?.has_more));
+
+	/** 按窗口游标向更早翻一页；结果拼在已加载事件之前，不清空当前窗口。 */
+	const loadEarlier = useCallback(async () => {
+		const cursor = earlierCursor ?? windowInfo?.before ?? null;
+		if (!accessToken || !cursor || loadingEarlier) {
+			return;
+		}
+		setLoadingEarlier(true);
+		setEarlierError(null);
+		try {
+			const page = await sessionTimelineCall(accessToken, sessionGroup, teamId, { before: cursor });
+			setEarlierEvents((previous) => [...page.data, ...previous]);
+			setEarlierCursor(page.window?.before ?? null);
+			setEarlierHasMore(page.window?.has_more ?? false);
+			setEarlierLoaded(true);
+		} catch (loadError) {
+			const message = loadError instanceof Error ? loadError.message : "加载更早的请求失败";
+			setEarlierError(message.slice(0, 200));
+		} finally {
+			setLoadingEarlier(false);
+		}
+	}, [accessToken, earlierCursor, loadingEarlier, sessionGroup, teamId, windowInfo?.before]);
 	const summary = timelineResponse?.summary;
+	const inProgressCount = summary?.in_progress_request_count ?? activeRequests.length;
 	const sessionKeyLabels = (summary?.keys ?? []).map(formatSessionKey);
-	const displayedTimeline = orderSessionTimeline(timeline, newestFirst);
+	const displayedTimeline = orderSessionTimeline(combinedTimeline, newestFirst);
 	const rawErrorMessage = error instanceof Error ? error.message : "Session 历史加载失败";
 	const errorMessage = /^\s*(?:<!doctype\s+html|<html)\b/i.test(rawErrorMessage)
 		? "Session 历史加载失败"
@@ -624,7 +665,7 @@ export function SessionSimulationDrawer({
 								<strong className="font-semibold text-slate-900">{summary?.request_count ?? 0}</strong> 请求
 							</span>
 							<span>
-								<strong className="font-semibold text-slate-900">{summary?.event_count ?? timeline.length}</strong>{" "}
+								<strong className="font-semibold text-slate-900">{summary?.event_count ?? combinedTimeline.length}</strong>{" "}
 								时间线事件
 							</span>
 							<span>
@@ -640,24 +681,63 @@ export function SessionSimulationDrawer({
 								<strong className="font-semibold text-slate-900">{(summary?.duration_seconds ?? 0).toFixed(2)}s</strong>
 							</span>
 						</div>
-						<Button
-							size="small"
-							icon={newestFirst ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
-							onClick={() => setNewestFirst((value) => !value)}
-						>
-							{newestFirst ? "最新优先" : "最早优先"}
-						</Button>
+						<div className="flex items-center gap-2">
+							{streaming ? (
+								<Tag color="processing" className="!m-0" data-testid="session-simulation-streaming">
+									实时更新
+								</Tag>
+							) : null}
+							{inProgressCount > 0 ? (
+								<Tag color="blue" className="!m-0" data-testid="session-simulation-in-progress">
+									{inProgressCount} 个请求进行中
+								</Tag>
+							) : null}
+							<Button
+								size="small"
+								icon={newestFirst ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
+								onClick={() => setNewestFirst((value) => !value)}
+							>
+								{newestFirst ? "最新优先" : "最早优先"}
+							</Button>
+						</div>
 					</div>
 					<div className="mt-1.5 text-[11px] text-slate-400">
-						按历史 Spend Logs 重放，仅用于查看，不会重新调用模型。
+						{streaming
+							? "按历史 Spend Logs 重放并实时更新，进行中的请求会随推送补全；仅用于查看，不会重新调用模型。"
+						: "按历史 Spend Logs 重放，仅用于查看，不会重新调用模型。"}
 					</div>
 				</div>
 
+				{windowInfo && (earlierPageAvailable || earlierEvents.length > 0) ? (
+					<div
+						data-testid="session-simulation-window"
+						className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-5 py-2 text-[11px] text-slate-500"
+					>
+						<span>
+							长会话按窗口加载：已显示最近 {windowInfo.returned_requests} 个请求（会话共 {windowInfo.total_requests} 个）
+							{earlierEvents.length > 0 ? `，另外加载了更早的 ${earlierEvents.length} 个事件` : ""}
+						</span>
+						<span className="flex items-center gap-2">
+							{earlierError ? <span className="text-red-500">{earlierError}</span> : null}
+							{earlierPageAvailable ? (
+								<Button
+									size="small"
+									loading={loadingEarlier}
+									onClick={() => void loadEarlier()}
+									data-testid="session-simulation-load-earlier"
+								>
+									加载更早
+								</Button>
+							) : null}
+						</span>
+					</div>
+				) : null}
+
 				{isLoading ? (
 					<div className="flex min-h-[360px] items-center justify-center">
-						<Spin tip="正在加载完整 Session 历史…" />
+						<Spin tip="正在加载 Session 历史…" />
 					</div>
-				) : isError ? (
+				) : isError && !timelineResponse ? (
 					<div className="p-5">
 						<Alert
 							type="error"
@@ -704,6 +784,11 @@ export function SessionSimulationDrawer({
 												{item.internal_call ? (
 													<Tag color="purple" className="!m-0">
 														内置能力 · {item.builtin_capability ?? "unknown"}
+													</Tag>
+												) : null}
+												{item.status === "in_progress" ? (
+													<Tag color="processing" className="!m-0">
+														进行中
 													</Tag>
 												) : null}
 												<span className="max-w-[320px] truncate text-[11px] text-slate-400">{item.model}</span>
