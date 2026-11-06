@@ -29,6 +29,7 @@ import {
 	releaseSpend,
 	trackSpendLog,
 } from "../spend/SpendTracker";
+import { NativeResponsesAccumulator, isRecord } from "./NativeResponsesAccumulator";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import type { Message, ModelResponse, ModelResponseStream, ThinkingBlock, ToolCall, Usage } from "../types/openai";
@@ -1571,6 +1572,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				};
 			},
 			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+			onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 		});
 	}
 
@@ -1691,100 +1693,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 	}
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * 原生 Responses 协议流的中间响应累积器。
- * 对齐 CLIProxy extractNativeResponse 的 partial 思路，但累积标准 output item 结构，
- * 供流式进行中 checkpoint 出可展示的部分 response。
- */
-class NativeResponsesAccumulator {
-	private _id?: string;
-	private _model?: string;
-	private _output: Record<string, unknown>[] = [];
-	private _text = "";
-	private _reasoning = "";
-	private _usage: Record<string, unknown> | undefined;
-
-	accumulate(event: Record<string, unknown>): void {
-		const type = typeof event["type"] === "string" ? event["type"] : "";
-		if (type === "response.created" || type === "response.in_progress") {
-			const response = asResponseRecord(event["response"]);
-			if (response) {
-				this._id ??= typeof response["id"] === "string" ? response["id"] : undefined;
-				this._model ??= typeof response["model"] === "string" ? response["model"] : undefined;
-				if (Array.isArray(response["output"])) {
-					this._output = response["output"].filter(isRecord).map((item) => structuredClone(item));
-				}
-			}
-		} else if (type === "response.output_text.delta" && typeof event["delta"] === "string") {
-			this._text += event["delta"];
-		} else if (type === "response.output_text.done" && typeof event["text"] === "string") {
-			this._text = event["text"];
-		} else if (type === "response.reasoning_text.delta" && typeof event["delta"] === "string") {
-			this._reasoning += event["delta"];
-		} else if (type === "response.output_item.done") {
-			const item = asResponseRecord(event["item"]);
-			if (item) {
-				this._output.push(structuredClone(item));
-			}
-		} else if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") {
-			const response = asResponseRecord(event["response"]);
-			if (response) {
-				this._id = typeof response["id"] === "string" ? response["id"] : this._id;
-				this._model = typeof response["model"] === "string" ? response["model"] : this._model;
-				if (Array.isArray(response["output"])) {
-					this._output = response["output"].filter(isRecord).map((item) => structuredClone(item));
-				}
-				const usage = asResponseRecord(response["usage"]);
-				if (usage) {
-					this._usage = structuredClone(usage);
-				}
-			}
-		}
-	}
-
-	snapshot(): Record<string, unknown> | null {
-		if (
-			this._id === undefined &&
-			this._model === undefined &&
-			this._output.length === 0 &&
-			this._text === "" &&
-			this._reasoning === ""
-		) {
-			return null;
-		}
-		const output = [...this._output];
-		if (this._text !== "") {
-			output.push({
-				type: "message",
-				role: "assistant",
-				status: "in_progress",
-				content: [{ type: "output_text", text: this._text }],
-			});
-		}
-		if (this._reasoning !== "") {
-			output.push({
-				type: "reasoning",
-				content: [{ type: "reasoning_text", text: this._reasoning }],
-			});
-		}
-		return {
-			id: this._id ?? "",
-			object: "response",
-			status: "in_progress",
-			model: this._model,
-			output: output,
-			usage: this._usage ?? null,
-		};
-	}
-}
-
-function asResponseRecord(value: unknown): Record<string, unknown> | undefined {
-	return isRecord(value) ? value : undefined;
-}
 
 /** 原生 Responses 的语义增量事件：只有这些 type 才能反映「模型开始产出内容」。 */
 const NATIVE_RESPONSES_CONTENT_DELTA_TYPES = new Set<string>([
@@ -1849,6 +1757,7 @@ async function relayNativeResponsesStream(
 				};
 			},
 			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+			onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 		});
 	}
 	let clientAborted = false;

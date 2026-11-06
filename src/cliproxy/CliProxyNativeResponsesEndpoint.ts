@@ -22,6 +22,14 @@ import { buildPassthroughLogRequest } from "./CliProxyUpstreamLogging";
 import { createModuleLogger } from "../core/utils/logger";
 import { CliProxyResponsesExecution, type CliProxyResponsesExecutionSnapshot } from "./CliProxyResponsesExecution";
 import {
+	createAnthropicStreamLogAccumulator,
+	createChatStreamLogAccumulator,
+	createLiveStreamCheckpoint,
+	normalizeNativeUsage,
+	parseResponsesSseEvent,
+} from "./CliProxyStreamLogAccumulator";
+
+import {
 	executeWithFallbackChain,
 	ProviderUpstreamError,
 	type FallbackExecutionStats,
@@ -125,26 +133,14 @@ interface PipeUpstreamResponseOptions {
 	 * 尚未来得及返回 EOF。此时保留完整终态并按实际结果落库，而不是把收尾竞态误记为失败。
 	 */
 	readonly acceptResponsesTerminalOnAbort?: boolean;
+	/**
+	 * 每个解码后的字节片段回调一次（旁路观测用）。
+	 * 透传路径借它在转发的同时累积日志副本，写入进行中的 checkpoint。
+	 */
+	readonly onDecodedChunk?: (chunk: string) => void;
 }
 
 const RESPONSES_SUCCESS_TERMINAL_EVENT_TYPES = new Set(["response.completed", "response.incomplete"]);
-
-function parseResponsesSseEvent(event: string): Record<string, unknown> | null {
-	const data = event
-		.split(/\r?\n/)
-		.filter((line) => line.startsWith("data:"))
-		.map((line) => line.slice(5).replace(/^ /, ""))
-		.join("\n");
-	if (!data) {
-		return null;
-	}
-	try {
-		const payload: unknown = JSON.parse(data);
-		return typeof payload === "object" && payload !== null && !Array.isArray(payload) ? (payload as Record<string, unknown>) : null;
-	} catch {
-		return null;
-	}
-}
 
 function hasCompleteResponsesTerminalEvent(raw: string): boolean {
 	const eventBoundary = /\r?\n\r?\n/g;
@@ -185,6 +181,11 @@ async function pipeUpstreamResponse(
 	const recordDecodedChunk = (chunk: string): void => {
 		if (!chunk) {
 			return;
+		}
+		try {
+			options.onDecodedChunk?.(chunk);
+		} catch {
+			// 旁路观测不能影响透传字节。
 		}
 		if (execution) {
 			execution.recordDecodedChunk(chunk);
@@ -302,273 +303,34 @@ function writeResponsesSseError(res: Response, status: number, message: string):
 	res.end();
 }
 
-function normalizeNativeUsage(value: unknown): Record<string, unknown> | undefined {
-	if (typeof value !== "object" || value === null) {
-		return undefined;
-	}
-	const usage = value as Record<string, unknown>;
-	const cacheRead = typeof usage["cache_read_input_tokens"] === "number" ? usage["cache_read_input_tokens"] : 0;
-	const cacheCreation = typeof usage["cache_creation_input_tokens"] === "number" ? usage["cache_creation_input_tokens"] : 0;
-	const rawPrompt = typeof usage["prompt_tokens"] === "number" ? usage["prompt_tokens"] : undefined;
-	// Anthropic 原生形状（无 prompt_tokens，有 input_tokens）：input_tokens 不含 cache，
-	// 按 PY transformation.py:1587-1611 折叠 cache_read + cache_creation 进 prompt_tokens；
-	// 否则（Chat/Responses 形状）prompt/input 已含 cache，直接沿用。
-	const prompt = rawPrompt ?? (typeof usage["input_tokens"] === "number" ? usage["input_tokens"] + cacheRead + cacheCreation : 0);
-	const completion =
-		typeof usage["completion_tokens"] === "number"
-			? usage["completion_tokens"]
-			: typeof usage["output_tokens"] === "number"
-				? usage["output_tokens"]
-				: 0;
-	if (prompt === 0 && completion === 0 && typeof usage["total_tokens"] !== "number") {
-		return undefined;
-	}
-	return {
-		...usage,
-		prompt_tokens: prompt,
-		completion_tokens: completion,
-		total_tokens: typeof usage["total_tokens"] === "number" ? usage["total_tokens"] : prompt + completion,
-	};
-}
-
 /**
- * Chat SSE 的结束事件通常只有空 delta 或 usage；日志必须累积此前的输出，
- * 不能把最后一个 chunk 当成完整 response。此处只构造日志副本，不改变透传字节。
- * @param raw
+ * Chat SSE 的日志副本：与实时 checkpoint 共用同一个增量累积器，只在这里跑完整段字节。
+ * @param raw - 完整 SSE 文本
  */
 function extractChatStreamResponse(raw: string): { response: Record<string, unknown>; usage?: Record<string, unknown> } | undefined {
-	const base: Record<string, unknown> = {};
-	const choices = new Map<
-		number,
-		{
-			fields: Record<string, unknown>;
-			message: Record<string, unknown>;
-			tools: Map<number, Record<string, unknown>>;
-		}
-	>();
-	for (const event of raw.split(/\r?\n\r?\n/)) {
-		const payload = parseResponsesSseEvent(event);
-		if (!payload || payload["object"] !== "chat.completion.chunk" || !Array.isArray(payload["choices"])) {
-			continue;
-		}
-		for (const [key, value] of Object.entries(payload)) {
-			if (key !== "choices" && key !== "object" && value !== null && value !== undefined) {
-				base[key] = value;
-			}
-		}
-		for (const choice of payload["choices"] as Array<Record<string, unknown>>) {
-			if (!choice || typeof choice["index"] !== "number") {
-				continue;
-			}
-			const index = choice["index"];
-			const accumulated = choices.get(index) ?? {
-				fields: { index: index, finish_reason: null },
-				message: { role: "assistant", content: null },
-				tools: new Map<number, Record<string, unknown>>(),
-			};
-			choices.set(index, accumulated);
-			for (const [key, value] of Object.entries(choice)) {
-				if (key !== "delta" && value !== null && value !== undefined) {
-					accumulated.fields[key] = value;
-				}
-			}
-			const delta = choice["delta"];
-			if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
-				continue;
-			}
-			const { tool_calls: toolCalls, ...messageDelta } = delta as Record<string, unknown>;
-			mergeChatLogDelta(accumulated.message, messageDelta);
-			if (Array.isArray(toolCalls)) {
-				for (const tool of toolCalls as Array<Record<string, unknown>>) {
-					if (!tool || typeof tool["index"] !== "number") {
-						continue;
-					}
-					const toolIndex = tool["index"];
-					const { index: _index, ...toolDelta } = tool;
-					const accumulatedTool = accumulated.tools.get(toolIndex) ?? {};
-					mergeChatLogDelta(accumulatedTool, toolDelta);
-					accumulated.tools.set(toolIndex, accumulatedTool);
-				}
-			}
-		}
-	}
-	if (choices.size === 0) {
+	const accumulator = createChatStreamLogAccumulator();
+	accumulator.feed(raw);
+	accumulator.finish();
+	const snapshot = accumulator.snapshot();
+	if (!snapshot?.response) {
 		return undefined;
 	}
-	const response = {
-		...base,
-		object: "chat.completion",
-		choices: [...choices.entries()]
-			.sort(([left], [right]) => left - right)
-			.map(([, choice]) => ({
-				...choice.fields,
-				message: {
-					...choice.message,
-					...(choice.tools.size > 0
-						? {
-								tool_calls: [...choice.tools.entries()].sort(([left], [right]) => left - right).map(([, tool]) => tool),
-							}
-						: {}),
-				},
-			})),
-	};
-	return { response: response, usage: normalizeNativeUsage(base["usage"]) };
+	return { response: snapshot.response, usage: snapshot.usage };
 }
 
 /**
- * 合并文本/函数参数增量，同时保留 provider 附加字段。
- * @param target
- * @param delta
+ * Anthropic Messages SSE 的日志副本：同上，复用增量累积器。
+ * @param raw - 完整 SSE 文本
  */
-function mergeChatLogDelta(target: Record<string, unknown>, delta: Record<string, unknown>): void {
-	for (const [key, value] of Object.entries(delta)) {
-		if (key === "__proto__" || key === "constructor" || key === "prototype" || value === null || value === undefined) {
-			continue;
-		}
-		if (typeof value === "string" && ["content", "reasoning_content", "refusal", "name", "arguments"].includes(key)) {
-			target[key] = `${typeof target[key] === "string" ? target[key] : ""}${value}`;
-		} else if (Array.isArray(value)) {
-			target[key] = [...(Array.isArray(target[key]) ? target[key] : []), ...value];
-		} else if (typeof value === "object") {
-			const previous = target[key];
-			const nested: Record<string, unknown> =
-				typeof previous === "object" && previous !== null && !Array.isArray(previous) ? (previous as Record<string, unknown>) : {};
-			mergeChatLogDelta(nested, value as Record<string, unknown>);
-			target[key] = nested;
-		} else {
-			target[key] = value;
-		}
-	}
-}
-
 function extractAnthropicStreamResponse(raw: string): { response?: Record<string, unknown>; usage?: Record<string, unknown> } | undefined {
-	let message: Record<string, unknown> | undefined;
-	const content = new Map<number, Record<string, unknown>>();
-	const toolInputJson = new Map<number, string>();
-	let stopReason: unknown;
-	let stopSequence: unknown;
-	const usage: Record<string, unknown> = {};
-
-	const mergeUsage = (value: unknown): void => {
-		if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-			Object.assign(usage, value);
-		}
-	};
-	const consumePayload = (payload: Record<string, unknown>): void => {
-		const type = payload["type"];
-		if (type === "message_start") {
-			const startedMessage = payload["message"];
-			if (typeof startedMessage !== "object" || startedMessage === null || Array.isArray(startedMessage)) {
-				return;
-			}
-			message = { ...(startedMessage as Record<string, unknown>) };
-			mergeUsage(message["usage"]);
-			const initialContent = message["content"];
-			if (Array.isArray(initialContent)) {
-				for (const [index, block] of initialContent.entries()) {
-					if (typeof block === "object" && block !== null && !Array.isArray(block)) {
-						content.set(index, { ...(block as Record<string, unknown>) });
-					}
-				}
-			}
-			return;
-		}
-		if (type === "content_block_start" && typeof payload["index"] === "number") {
-			const block = payload["content_block"];
-			if (typeof block === "object" && block !== null && !Array.isArray(block)) {
-				content.set(payload["index"], { ...(block as Record<string, unknown>) });
-			}
-			return;
-		}
-		if (type === "content_block_delta" && typeof payload["index"] === "number") {
-			const index = payload["index"];
-			const delta = payload["delta"];
-			const block = content.get(index);
-			if (typeof delta !== "object" || delta === null || Array.isArray(delta) || !block) {
-				return;
-			}
-			const deltaRecord = delta as Record<string, unknown>;
-			if (deltaRecord["type"] === "text_delta" && typeof deltaRecord["text"] === "string") {
-				block["text"] = `${String(block["text"] ?? "")}${deltaRecord["text"]}`;
-			} else if (deltaRecord["type"] === "thinking_delta" && typeof deltaRecord["thinking"] === "string") {
-				block["thinking"] = `${String(block["thinking"] ?? "")}${deltaRecord["thinking"]}`;
-			} else if (deltaRecord["type"] === "signature_delta" && typeof deltaRecord["signature"] === "string") {
-				block["signature"] = `${String(block["signature"] ?? "")}${deltaRecord["signature"]}`;
-			} else if (deltaRecord["type"] === "input_json_delta" && typeof deltaRecord["partial_json"] === "string") {
-				toolInputJson.set(index, `${toolInputJson.get(index) ?? ""}${deltaRecord["partial_json"]}`);
-			}
-			return;
-		}
-		if (type === "content_block_stop" && typeof payload["index"] === "number") {
-			const index = payload["index"];
-			const partialJson = toolInputJson.get(index);
-			const block = content.get(index);
-			if (partialJson !== undefined && block) {
-				try {
-					block["input"] = JSON.parse(partialJson);
-				} catch {
-					block["input"] = partialJson;
-				}
-			}
-			return;
-		}
-		if (type === "message_delta") {
-			const delta = payload["delta"];
-			if (typeof delta === "object" && delta !== null && !Array.isArray(delta)) {
-				stopReason = (delta as Record<string, unknown>)["stop_reason"];
-				stopSequence = (delta as Record<string, unknown>)["stop_sequence"];
-			}
-			mergeUsage(payload["usage"]);
-		}
-	};
-	const consumeEvent = (event: string): void => {
-		const data = event
-			.split(/\r?\n/)
-			.filter((line) => line.startsWith("data:"))
-			.map((line) => line.slice(5).replace(/^ /, ""))
-			.join("\n");
-		if (!data || data === "[DONE]") {
-			return;
-		}
-		try {
-			const parsed: unknown = JSON.parse(data);
-			if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-				consumePayload(parsed as Record<string, unknown>);
-			}
-		} catch {
-			// Malformed diagnostic data must never affect the forwarded stream.
-		}
-	};
-	let pending = raw;
-	const drain = (): void => {
-		while (true) {
-			const boundary = /\r?\n\r?\n/.exec(pending);
-			if (!boundary || boundary.index === undefined) {
-				break;
-			}
-			consumeEvent(pending.slice(0, boundary.index));
-			pending = pending.slice(boundary.index + boundary[0].length);
-		}
-		if (pending.trim()) {
-			consumeEvent(pending);
-			pending = "";
-		}
-	};
-
-	drain();
-	if (!message && content.size === 0) {
+	const accumulator = createAnthropicStreamLogAccumulator();
+	accumulator.feed(raw);
+	accumulator.finish();
+	const snapshot = accumulator.snapshot();
+	if (!snapshot) {
 		return undefined;
 	}
-	const response = {
-		...(message ?? {}),
-		type: message?.["type"] ?? "message",
-		role: message?.["role"] ?? "assistant",
-		content: [...content.entries()].sort(([left], [right]) => left - right).map(([, block]) => block),
-		stop_reason: stopReason !== undefined ? stopReason : message?.["stop_reason"],
-		stop_sequence: stopSequence !== undefined ? stopSequence : message?.["stop_sequence"],
-		usage: { ...usage },
-	};
-	return { response: response, usage: normalizeNativeUsage(response.usage) };
+	return { response: snapshot.response, usage: snapshot.usage };
 }
 
 function extractNativeResponse(raw: string): { response?: Record<string, unknown>; usage?: Record<string, unknown> } {
@@ -725,6 +487,21 @@ export function registerCliProxyNativeResponsesRoutes(
 		const stopKeepAlive = streaming ? startResponsesSseKeepAlive(res) : undefined;
 		const upstreamUrl = `${runtime.baseUrl}/v1/responses`;
 		const spendInfo = buildDeploymentSpendInfo(candidate.deployment, upstreamUrl);
+		// Responses 透传只搬字节，`responses_execution` 又是诊断用的原始捕获快照（长流会被截断，
+		// 且没有可直接渲染的 output）。详情页要在流进行中看到 Response，需要一份事件级累积的
+		// 可展示部分响应，这里按与其他流式端点一致的窗口写 `streaming_execution`。
+		// 上游请求在 execution 回调内才确定，用闭包变量把它交给 checkpoint 序列化。
+		let checkpointUpstreamRequest: Record<string, unknown> | undefined;
+		const liveCheckpoint =
+			streaming && reservation?.requestId && db
+				? createLiveStreamCheckpoint({
+						db: db,
+						requestId: reservation.requestId,
+						protocol: "responses_native",
+						currentUpstreamRequest: () => checkpointUpstreamRequest,
+						onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
+					})
+				: undefined;
 		const execution = new CliProxyResponsesExecution({
 			postOutputDrainTimeoutMs: RESPONSES_POST_OUTPUT_DRAIN_TIMEOUT_MS,
 			terminalTailGraceMs: RESPONSES_CLIENT_DISCONNECT_TAIL_GRACE_MS,
@@ -765,6 +542,7 @@ export function registerCliProxyNativeResponsesRoutes(
 					model: upstreamModel(deploymentModel),
 				});
 				upstreamLogContext = createUpstreamLogContext(logRequest);
+				checkpointUpstreamRequest = upstreamLogContext.request as unknown as Record<string, unknown>;
 
 				const finalizeLog = async (error: unknown, status: SpendLogStatus): Promise<void> => {
 					if (lifecycle.isFinalized() || !req.auth) {
@@ -826,8 +604,12 @@ export function registerCliProxyNativeResponsesRoutes(
 							upstreamErrorMessage(raw, `CLIProxy returned HTTP ${upstream.status}`),
 						);
 					} else {
-						await pipeUpstreamResponse(upstream, res, work, { acceptResponsesTerminalOnAbort: true });
+						await pipeUpstreamResponse(upstream, res, work, {
+							acceptResponsesTerminalOnAbort: true,
+							onDecodedChunk: (chunk) => liveCheckpoint?.feed(chunk),
+						});
 					}
+					await liveCheckpoint?.dispose();
 					const extracted = extractNativeResponse(work.snapshot.raw);
 					const upstreamError = upstream.ok
 						? responsesTerminalFailure(extracted.response)
@@ -863,6 +645,7 @@ export function registerCliProxyNativeResponsesRoutes(
 				}
 			});
 		} finally {
+			await liveCheckpoint?.dispose();
 			stopKeepAlive?.();
 			lifecycle.stop();
 			req.removeListener("aborted", cancelExecution);
@@ -1037,6 +820,20 @@ function registerNativeRoute({
 			res.once("close", abort);
 			// 升级排空要把这条直连请求也等完，否则重启会截断它的 SSE。
 			const releaseDrainSlot = trackCliProxyRequest();
+			// 透传端点不解析上游 SSE，若不旁路累积，进行中的日志详情在整条流里都没有
+			// response 可看（只有流结束后的最终 SpendLog）。这里用同一套累积器在转发的同时
+			// 写 streaming_execution checkpoint，与 LiteLLM 兼容端点保持一致的实时性。
+			const liveCheckpoint =
+				body["stream"] === true && reservation?.requestId
+					? createLiveStreamCheckpoint({
+							db: db,
+							requestId: reservation.requestId,
+							protocol: anthropicNative ? "anthropic_messages" : "chat_completions",
+							currentUpstreamRequest: () => upstreamLogContext?.request,
+							// 兼容端点都在首个 chunk 补写 TTFT；透传流同样写，详情页才不会整条流都显示"—"。
+							onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
+						})
+					: undefined;
 			try {
 				let executedDeployment = candidate.deployment;
 				let upstreamUrl: string;
@@ -1090,7 +887,10 @@ function registerNativeRoute({
 					}
 					deploymentRecorded = true;
 				}
-				const captured = await pipeUpstreamResponse(upstream, res);
+				const captured = await pipeUpstreamResponse(upstream, res, undefined, {
+					onDecodedChunk: (chunk) => liveCheckpoint?.feed(chunk),
+				});
+				await liveCheckpoint?.dispose();
 				const extracted =
 					(body["stream"] === true
 						? anthropicNative
@@ -1158,6 +958,7 @@ function registerNativeRoute({
 				}
 				throw error;
 			} finally {
+				await liveCheckpoint?.dispose();
 				lifecycle.stop();
 				req.removeListener("aborted", abort);
 				res.removeListener("close", abort);

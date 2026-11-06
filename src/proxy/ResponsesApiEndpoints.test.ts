@@ -732,12 +732,13 @@ describe("Responses API contract matrix", () => {
 			expect(providerBody["messages"]).toBeUndefined();
 			expect(providerBody["stream"]).toBe(false);
 			expect(providerBody["instructions"]).toBe("Preserve the original Responses history.");
-			// 官方端点要求工具循环里的当前轮回显推理：只补一条结构占位，其它条目顺序不变。
+			// 官方端点要求工具循环里的当前轮回显推理：补一条结构占位；占位排在该段 assistant
+			// 产出的最前面（先有文本消息时在其之前），其它条目顺序不变。
 			expect(providerBody["input"]).toEqual([
 				expect.objectContaining({ type: "message", role: "system" }),
 				originalInput[0],
-				originalInput[1],
 				{ type: "reasoning", content: [{ type: "reasoning_text", text: "(reasoning omitted)" }] },
+				originalInput[1],
 				originalInput[2],
 				originalInput[3],
 			]);
