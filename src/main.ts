@@ -91,6 +91,12 @@ import {
 } from "./cliproxy/CliProxyNativeResponsesEndpoint";
 import { registerCliProxyNativePassthroughRoutes } from "./cliproxy/CliProxyNativePassthroughEndpoint";
 import { registerCliProxyWebSocketPassthrough } from "./cliproxy/CliProxyWebSocketPassthrough";
+import { registerSpendLogStreamWebSocket, SPEND_LOG_STREAM_PATH } from "./spend/logStreamWebSocket";
+import { registerSpendLogUpdatesWebSocket, SPEND_LOG_UPDATES_PATH } from "./spend/logUpdatesWebSocket";
+import {
+	registerSpendSessionTimelineStreamWebSocket,
+	SPEND_SESSION_TIMELINE_STREAM_PATH,
+} from "./spend/sessionTimelineWebSocket";
 
 const logger = createModuleLogger("Server");
 
@@ -147,7 +153,13 @@ export class LiteLLMServer {
 				logger.info(`LiteLLM TS Gateway 已启动: http://${host}:${port}`, { startupMs: Date.now() - startedAt });
 				resolve();
 			});
-			registerCliProxyWebSocketPassthrough(server, this._container!);
+			// CLIProxy 透传负责清理无人认领的升级连接，先声明日志流的路径，避免它误断订阅。
+			registerCliProxyWebSocketPassthrough(server, this._container!, {
+				additionalUpgradePaths: [SPEND_LOG_STREAM_PATH, SPEND_LOG_UPDATES_PATH, SPEND_SESSION_TIMELINE_STREAM_PATH],
+			});
+			registerSpendLogStreamWebSocket(server, this._container!);
+			registerSpendLogUpdatesWebSocket(server, this._container!);
+			registerSpendSessionTimelineStreamWebSocket(server, this._container!);
 			server.once("error", reject);
 			server.keepAliveTimeout = 120_000;
 			server.headersTimeout = 121_000;

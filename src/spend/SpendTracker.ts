@@ -55,6 +55,7 @@ import type { UserAPIKeyAuth } from "../types/auth";
 import type { CustomCostPerToken, PeakPricingConfig } from "../cost/CostCalculator";
 import { normalizeRoutingTrace } from "../router/ModelResolutionTrace";
 import { resolveRequestSessionGroupKey } from "./sessionIdentity";
+import { publishSpendLogChange } from "./spendLogChangeFeed";
 
 const logger = createModuleLogger("SpendTracker");
 
@@ -1182,6 +1183,7 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 		}
 		throw ApiError.unavailable("活跃请求记录数据库暂不可用");
 	}
+	publishSpendLogChange();
 }
 
 /**
@@ -1244,6 +1246,7 @@ export async function checkpointActiveRequest(
  */
 export async function removeActiveRequest(db: NodePgDatabase<typeof schema>, requestId: string): Promise<void> {
 	await db.delete(liteLLM_ActiveRequests).where(eq(liteLLM_ActiveRequests.request_id, requestId));
+	publishSpendLogChange();
 }
 
 /**
@@ -2018,6 +2021,9 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 			throw error;
 		}
 		throw ApiError.unavailable("花费账务数据库暂不可用");
+	} finally {
+		// 无论落账成功、重复还是失败后清理在途行，列表都可能已经变化；通知只负责提示重查。
+		publishSpendLogChange();
 	}
 	logger.debug(`花费已记录: ${logEntry.request_id} spend=${spend}`);
 	return result;

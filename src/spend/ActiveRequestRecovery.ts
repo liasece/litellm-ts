@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
+import { publishSpendLogChange } from "./spendLogChangeFeed";
 
 export const ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART = "server_restart";
 
@@ -17,7 +18,7 @@ export const ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART = "server_restart";
  * @returns 已回收的请求数量
  */
 export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof schema>, abortedAt: Date = new Date()): Promise<number> {
-	return db.transaction(async (tx) => {
+	const recovered = await db.transaction(async (tx) => {
 		const result = await tx.execute(sql`
 			WITH orphaned AS MATERIALIZED (
 				SELECT *
@@ -131,6 +132,10 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 		`);
 		return result.rows.length;
 	});
+	if (recovered > 0) {
+		publishSpendLogChange();
+	}
+	return recovered;
 }
 
 /**
@@ -147,7 +152,7 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
  * @returns 已回收的请求数量
  */
 export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema>, now: Date = new Date()): Promise<number> {
-	return db.transaction(async (tx) => {
+	const recovered = await db.transaction(async (tx) => {
 		const result = await tx.execute(sql`
 			WITH expired AS MATERIALIZED (
 				SELECT *
@@ -220,4 +225,8 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 		`);
 		return result.rows.length;
 	});
+	if (recovered > 0) {
+		publishSpendLogChange();
+	}
+	return recovered;
 }

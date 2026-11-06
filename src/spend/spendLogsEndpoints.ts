@@ -717,80 +717,21 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	});
 
 	// ========== /spend/logs/ui/:request_id ==========
-	// 对齐 PY ui_view_request_response_for_request_id（spend_management_endpoints.py:2028-2048）：
-	// 先遍历冷存储 CustomLogger（S3/GCS 等），任一返回非 null payload 即采用；
-	// 无注册实现或全部未命中时回落 DB 重列。
+	// 负载构造与 WebSocket 日志流共用（见 UiLogDetail.ts），保证一次性拉取与推送帧同形。
 
 	registerRoute(router, { method: "get", path: "/spend/logs/ui/:request_id" }, async (req) => {
 		const requestId = req.params.request_id;
-		if (!requestId) {
+		if (typeof requestId !== "string" || requestId.length === 0) {
 			return null;
 		}
 
 		// PY: 可选 start_date / end_date 查询参数（YYYY-MM-DD HH:MM:SS），透传给冷存储 logger 收窄回查窗口
-		const startDateObj = parseOptionalDetailDate(req.query.start_date);
-		const endDateObj = parseOptionalDetailDate(req.query.end_date);
-
-		const coldStoragePayload = await getRequestResponsePayloadFromColdStorage(
-			requestId as string,
-			startDateObj,
-			endDateObj,
-			(_coldStorageLogger, error) => logger.warn(`/spend/logs/ui/:request_id 冷存储回查失败: ${(error as Error).message}`),
+		return await buildUiSpendLogDetail(
+			db,
+			requestId,
+			parseOptionalDetailDate(req.query.start_date),
+			parseOptionalDetailDate(req.query.end_date),
 		);
-		if (coldStoragePayload !== null) {
-			return coldStoragePayload;
-		}
-
-		const rows = await db
-			.select({
-				messages: liteLLM_SpendLogs.messages,
-				response: liteLLM_SpendLogs.response,
-				proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
-			})
-			.from(liteLLM_SpendLogs)
-			.where(eq(liteLLM_SpendLogs.request_id, requestId as string))
-			.limit(1);
-
-		const completed = rows.at(0);
-		if (completed) {
-			return completed;
-		}
-
-		// 进行中请求：SpendLogs 未命中时回落 ActiveRequests。checkpoint 双 key 兼容——
-		// 普通流式写 streaming_execution，CLIProxy 写 responses_execution，前者优先。
-		// messages 不在此返回（前端回退到 proxy_server_request.body.messages），response 取
-		// checkpoint 的部分响应；尚未产生任何内容时为 null。
-		const activeRows = await db
-			.select({
-				proxy_server_request: liteLLM_ActiveRequests.proxy_server_request,
-				metadata: liteLLM_ActiveRequests.metadata,
-			})
-			.from(liteLLM_ActiveRequests)
-			.where(eq(liteLLM_ActiveRequests.request_id, requestId as string))
-			.limit(1);
-		const activeRow = activeRows.at(0);
-		if (!activeRow) {
-			return null;
-		}
-		const metadata = (activeRow.metadata ?? {}) as Record<string, unknown>;
-		const checkpoint =
-			(metadata["streaming_execution"] as Record<string, unknown> | undefined) ??
-			(metadata["responses_execution"] as Record<string, unknown> | undefined);
-		// 进行中请求的 proxy_server_request 不含 upstream 信息（upstream 尚未落库），
-		// 从 checkpoint 取出流式过程中记录的 upstream 请求/响应，使详情页 Upstream 视图可用。
-		const upstreamRequest = checkpoint?.["upstream_request"] as Record<string, unknown> | undefined;
-		const upstreamResponse = checkpoint?.["upstream_response"] as Record<string, unknown> | undefined;
-		const proxyServerRequest = {
-			...(activeRow.proxy_server_request ?? {}),
-			...(upstreamRequest ? { upstream_request: upstreamRequest } : {}),
-			...(upstreamResponse ? { upstream_response: upstreamResponse } : {}),
-		};
-		return {
-			messages: undefined,
-			response: (checkpoint?.["response"] as Record<string, unknown> | undefined) ?? null,
-			proxy_server_request: proxyServerRequest,
-			status: "in_progress",
-		};
 	});
 
 	// ========== /spend/calculate ==========

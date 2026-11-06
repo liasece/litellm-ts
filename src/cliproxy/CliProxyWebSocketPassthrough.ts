@@ -1,6 +1,5 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
-import type { Duplex } from "node:stream";
-import type { NextFunction, Request, RequestHandler, Response } from "express";
+import type { Request } from "express";
 import WebSocket, { WebSocketServer } from "ws";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
@@ -8,6 +7,7 @@ import type { ServiceContainer } from "../container";
 import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
 import type { Deployment } from "../types/router";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
+import { expressRequest, guardUpgradeSocket, runMiddleware, writeUpgradeError } from "../core/http/UpgradeRequest";
 
 const WS_AUTH_SUBPROTOCOL_PREFIX = "litellm_";
 const MAX_BUFFERED_WEBSOCKET_BYTES = 4 * 1024 * 1024;
@@ -56,42 +56,6 @@ function safeProtocols(req: IncomingMessage): string[] {
 		.split(",")
 		.map((value) => value.trim())
 		.filter((value) => value.length > 0 && !value.startsWith(WS_AUTH_SUBPROTOCOL_PREFIX));
-}
-
-function expressRequest(req: IncomingMessage, path: string, query: URLSearchParams): Request {
-	const expressReq = req as unknown as Request;
-	Object.defineProperties(expressReq, {
-		path: { configurable: true, value: path },
-		originalUrl: { configurable: true, value: req.url ?? path },
-		query: { configurable: true, value: Object.fromEntries(query.entries()) },
-		body: { configurable: true, writable: true, value: {} },
-	});
-	return expressReq;
-}
-
-async function runMiddleware(middleware: RequestHandler, req: Request): Promise<void> {
-	await new Promise<void>((resolve, reject) => {
-		const next: NextFunction = (error?: unknown): void => {
-			if (error) {
-				reject(error);
-				return;
-			}
-			resolve();
-		};
-		Promise.resolve(middleware(req, {} as Response, next)).catch(reject);
-	});
-}
-
-function writeUpgradeError(socket: Duplex, error: unknown): void {
-	const apiError = error instanceof ApiError ? error : ApiError.unavailable("CLIProxy WebSocket connection failed");
-	const body = Buffer.from(JSON.stringify(apiError.toErrorBody()));
-	socket.write(
-		`HTTP/1.1 ${apiError.statusCode} WebSocket Error\r\n` +
-			"Connection: close\r\n" +
-			"Content-Type: application/json\r\n" +
-			`Content-Length: ${body.length}\r\n\r\n`,
-	);
-	socket.end(body);
 }
 
 function stripCliProxyPrefix(value: string): string {
@@ -265,23 +229,43 @@ function relayWebSocket(
 	downstream.on("error", () => closeBoth());
 }
 
+/** upgrade 注册选项。 */
+export interface CliProxyWebSocketPassthroughOptions {
+	/**
+	 * 由其他处理器负责的路径（如日志详情流）。
+	 *
+	 * Node 会把 `upgrade` 事件通知给所有监听器，而本处理器负责清理无人认领的连接；
+	 * 声明这些路径后，它们不会被误当成非法升级而断开。
+	 */
+	readonly additionalUpgradePaths?: readonly string[];
+}
+
 /**
  * Attach authenticated WebSocket upgrades for the CLIProxyAPI v7.2.110
  * Responses, Live, Realtime, and provider relay routes.
  * @param server
  * @param container
+ * @param options - 额外声明给其他处理器的路径
  */
-export function registerCliProxyWebSocketPassthrough(server: HttpServer, container: ServiceContainer): void {
+export function registerCliProxyWebSocketPassthrough(
+	server: HttpServer,
+	container: ServiceContainer,
+	options: CliProxyWebSocketPassthroughOptions = {},
+): void {
 	const webSocketServer = new WebSocketServer({
 		noServer: true,
 		handleProtocols: (protocols) => [...protocols].find((value) => !value.startsWith(WS_AUTH_SUBPROTOCOL_PREFIX)) || false,
 	});
 	server.on("upgrade", (incoming, socket, head) => {
+		guardUpgradeSocket(socket);
 		void (async () => {
 			const url = new URL(incoming.url ?? "/", "http://127.0.0.1");
 			const route = WEBSOCKET_ROUTES.find((item) => item.pattern.test(url.pathname));
 			if (!route) {
-				socket.destroy();
+				// 其他处理器（日志详情流等）的路径交给它们自己处理，这里只清理无人认领的连接。
+				if (!(options.additionalUpgradePaths ?? []).includes(url.pathname)) {
+					socket.destroy();
+				}
 				return;
 			}
 			const req = expressRequest(incoming, url.pathname, url.searchParams);
@@ -293,7 +277,7 @@ export function registerCliProxyWebSocketPassthrough(server: HttpServer, contain
 					relayWebSocket(downstream, req, container, route.target(url.pathname), url.searchParams);
 				});
 			});
-		})().catch((error: unknown) => writeUpgradeError(socket, error));
+		})().catch((error: unknown) => writeUpgradeError(socket, error, "CLIProxy WebSocket connection failed"));
 	});
 	server.once("close", () => webSocketServer.close());
 }
