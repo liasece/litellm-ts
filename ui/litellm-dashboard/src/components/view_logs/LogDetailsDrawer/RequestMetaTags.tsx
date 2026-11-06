@@ -10,7 +10,7 @@ interface RequestMetaTagsProps {
 	meta: RequestMeta;
 }
 
-/** 工具列表 tag 最多展示的名字数量，超出以 "+N" 收尾，完整列表见 Tools 区块 */
+/** 工具列表 tag 最多展示的名字数量，超出以 "+N" 收尾；完整列表在 Request & Response 的 Input 卡片里 */
 const MAX_TOOL_NAMES = 3;
 
 export function RequestMetaTags({ meta }: RequestMetaTagsProps) {

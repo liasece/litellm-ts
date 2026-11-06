@@ -235,7 +235,8 @@ describe("LogDetailContent", () => {
 		expect(screen.queryByText("Tags")).not.toBeInTheDocument();
 	});
 
-	it("should display Metrics section with tokens and cost", () => {
+	it("should fold metrics and cost details into one Detail Info section", async () => {
+		const user = userEvent.setup();
 		render(
 			<LogDetailContent
 				logEntry={createLogEntry({
@@ -243,12 +244,24 @@ describe("LogDetailContent", () => {
 					completion_tokens: 50,
 					total_tokens: 150,
 					spend: 0.002,
+					metadata: {
+						status: "success",
+						cost_breakdown: { input_cost: 0.0005, output_cost: 0.0015, total_cost: 0.002 },
+					},
 				})}
 			/>,
 		);
 
-		expect(screen.getByText("Metrics")).toBeInTheDocument();
+		// 收起时标题栏保留总费用，完整的 token 拆分和费用推导留在展开后的同一面板里。
+		expect(screen.getByText("Detail Info")).toBeInTheDocument();
 		expect(screen.getAllByText("$0.00200000").length).toBeGreaterThanOrEqual(1);
+		expect(screen.queryByText("Input Cost:")).not.toBeInTheDocument();
+
+		await user.click(screen.getByText("Detail Info"));
+
+		expect(screen.getByText("150 (100 prompt tokens + 50 completion tokens)")).toBeInTheDocument();
+		expect(screen.getByText("Input Cost:")).toBeInTheDocument();
+		expect(screen.getByText("Final Calculated Cost:")).toBeInTheDocument();
 	});
 
 	it("should display ConfigInfoMessage when no messages, response, or error and not loading", () => {
@@ -582,7 +595,8 @@ describe("LogDetailContent", () => {
 		expect(screen.getByText("2 masked")).toBeInTheDocument();
 	});
 
-	it("should display cache hit information when cache_hit is true", () => {
+	it("should display cache hit information when cache_hit is true", async () => {
+		const user = userEvent.setup();
 		render(
 			<LogDetailContent
 				logEntry={createLogEntry({
@@ -598,13 +612,16 @@ describe("LogDetailContent", () => {
 			/>,
 		);
 
+		await user.click(screen.getByText("Detail Info"));
+
 		expect(screen.getByText("Cache Hit")).toBeInTheDocument();
 		expect(screen.getByText("true")).toBeInTheDocument();
 		expect(screen.getByText("Cache Read Tokens")).toBeInTheDocument();
 		expect(screen.getByText("100")).toBeInTheDocument();
 	});
 
-	it("should display LiteLLM Overhead when litellm_overhead_time_ms is in metadata", () => {
+	it("should display LiteLLM Overhead when litellm_overhead_time_ms is in metadata", async () => {
+		const user = userEvent.setup();
 		render(
 			<LogDetailContent
 				logEntry={createLogEntry({
@@ -616,11 +633,14 @@ describe("LogDetailContent", () => {
 			/>,
 		);
 
+		await user.click(screen.getByText("Detail Info"));
+
 		expect(screen.getByText("LiteLLM Overhead")).toBeInTheDocument();
 		expect(screen.getByText("42.50 ms")).toBeInTheDocument();
 	});
 
-	it("should display start and end time in ISO format", () => {
+	it("should display start and end time in ISO format", async () => {
+		const user = userEvent.setup();
 		render(
 			<LogDetailContent
 				logEntry={createLogEntry({
@@ -629,6 +649,8 @@ describe("LogDetailContent", () => {
 				})}
 			/>,
 		);
+
+		await user.click(screen.getByText("Detail Info"));
 
 		expect(screen.getByText("Start Time")).toBeInTheDocument();
 		expect(screen.getByText("End Time")).toBeInTheDocument();

@@ -795,8 +795,22 @@ const parseBuiltinCapabilityResponse = (response: any): ParsedMessage | null => 
 	return parts.length > 0 ? responseFromParts(parts) : null;
 };
 
-export const parseMessages = (request: any, response: any): ParsedMessages => {
-	const requestMessages = requestMessagesFrom(request);
+/**
+ * 只解析请求侧消息。
+ *
+ * 流式期间响应每 400ms 变一次，请求侧内容不变；拆出来后调用方可以用请求的引用做
+ * memo，不必跟着响应重算整段对话。
+ * @param request - 请求体或 messages 数组
+ * @returns 解析后的请求消息
+ */
+export const parseRequestMessages = (request: any): ParsedMessage[] => requestMessagesFrom(request);
+
+/**
+ * 只解析响应侧消息。
+ * @param response - 已落库的 response 字段
+ * @returns 解析后的响应消息；无法识别时返回 null
+ */
+export const parseResponseMessage = (response: any): ParsedMessage | null => {
 	let responseMessage: ParsedMessage | null = null;
 	const generatedImageParts = Array.isArray(response?.data)
 		? response.data
@@ -872,5 +886,10 @@ export const parseMessages = (request: any, response: any): ParsedMessages => {
 		};
 	}
 
-	return { requestMessages, responseMessage };
+	return responseMessage;
 };
+
+export const parseMessages = (request: any, response: any): ParsedMessages => ({
+	requestMessages: parseRequestMessages(request),
+	responseMessage: parseResponseMessage(response),
+});

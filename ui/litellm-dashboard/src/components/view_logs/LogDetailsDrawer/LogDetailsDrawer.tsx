@@ -8,11 +8,14 @@ import { AGENT_CALL_TYPES, MCP_CALL_TYPES } from "../constants";
 import { getEventDisplayName } from "../utils";
 import { DrawerHeader } from "./DrawerHeader";
 import { useKeyboardNavigation } from "./useKeyboardNavigation";
+import { useRefreshOnSettle } from "./useRefreshOnSettle";
 import { LogDetailContent, GuardrailJumpLink } from "./LogDetailContent";
+import { LogDetailLiveProvider, readLiveDetailValues } from "./liveDetail";
 import { useQuery } from "@tanstack/react-query";
 import { formatNumberWithCommas, getSpendString } from "@/utils/dataUtils";
 import { normalizeGuardrailEntries } from "./utils";
 import { useLogDetails } from "@/app/(dashboard)/hooks/logDetails/useLogDetails";
+import { useLogDetailStream } from "@/app/(dashboard)/hooks/logDetails/useLogDetailStream";
 import SidePanel from "../../common_components/SidePanel";
 import { loadCompleteSessionLogs } from "./sessionLogs";
 import { SessionSimulationDrawer } from "./SessionSimulationDrawer";
@@ -223,23 +226,55 @@ export function LogDetailsDrawer({
 
 	// Lazy-load log details (messages/response) only when drawer is open.
 	// This fetches data for a single log on-demand instead of prefetching all 50.
-	const isInProgress = currentLog?.status === "in_progress" || currentLog?.metadata?.status === "in_progress";
-	const logDetails = useLogDetails(currentLog?.request_id, startTime, open && !!currentLog?.request_id, isInProgress);
+	const listRowInProgress = currentLog?.status === "in_progress" || currentLog?.metadata?.status === "in_progress";
+	// 进行中的请求订阅服务端推送，帧直接写进详情查询缓存；流不可用时回落到 2 秒轮询。
+	const logStream = useLogDetailStream(currentLog?.request_id, startTime, open && listRowInProgress && !!currentLog?.request_id);
+	const logDetails = useLogDetails(
+		currentLog?.request_id,
+		startTime,
+		open && !!currentLog?.request_id,
+		listRowInProgress,
+		logStream.streaming,
+	);
 	const detailsData = logDetails.data as any;
 	const isLoadingDetails = logDetails.isLoading;
+
+	// 详情端点能自证状态：进行中的负载带 status=in_progress，落库后的负载没有这个字段。
+	// 拿到落库数据就立刻按已结束展示，不必等列表行（最多晚一个刷新周期）跟上；手上还是
+	// 进行中内容时继续按进行中展示，避免"状态已成功、内容还是旧的"。
+	const detailInProgress = detailsData?.status === "in_progress";
+	const isDetailSettled = detailsData != null && !detailInProgress;
+	const isInProgress = !isDetailSettled && (listRowInProgress || detailInProgress);
+
+	// 列表先一步看到结束时补拉一次，补上可能因为断订阅而丢失的最终负载。
+	useRefreshOnSettle(listRowInProgress, logDetails.refetch);
 
 	// Build an enriched log entry that merges lazy-loaded details.
 	// The list endpoint may already include messages/response when store_prompts_in_spend_logs is enabled,
 	// while the detail endpoint fetches from custom loggers (S3, GCS, etc.) or DB fallback.
 	const enrichedLog = useMemo(() => {
 		if (!currentLog) return null;
-		return {
+		const merged = {
 			...currentLog,
 			messages: detailsData?.messages || currentLog.messages,
 			response: detailsData?.response || currentLog.response,
 			proxy_server_request: detailsData?.proxy_server_request || currentLog.proxy_server_request,
 		};
-	}, [currentLog, detailsData]);
+		if (!isInProgress || !detailsData) {
+			return merged;
+		}
+		// 进行中：详情端点读的是 LiteLLM_ActiveRequests 的当前内容，列表行可能还停在上一次轮询。
+		// 覆盖其中已经确定的字段（provider / api_base / model_id / 路由链 / 上游交换 / TTFT /
+		// 已观测 token）；messages 等重字段仍用上面合并好的结果。
+		const settled: Partial<LogEntry> = { ...detailsData };
+		delete settled.messages;
+		delete settled.response;
+		delete settled.proxy_server_request;
+		return { ...merged, ...settled };
+	}, [currentLog, detailsData, isInProgress]);
+
+	// 流式期间详情主体只在静态字段变化时重渲染，响应/指标走 context 单独推送。
+	const liveDetail = readLiveDetailValues(enrichedLog);
 
 	const metadata = currentLog?.metadata || {};
 
@@ -387,9 +422,12 @@ export function LogDetailsDrawer({
 											) : null;
 										})}
 										<span className="mx-1.5">·</span>
+										{/* 进行中的请求还没结算，显示 0 会被读成免费。 */}
 										{isSessionMode
 											? getSpendString(totalSessionCost)
-											: getSpendString(currentLog.spend || 0, 6, currentLog)}
+											: isInProgress
+												? "—"
+												: getSpendString(currentLog.spend || 0, 6, currentLog)}
 										{isSessionMode && (
 											<>
 												<span className="mx-1.5">·</span>
@@ -480,13 +518,15 @@ export function LogDetailsDrawer({
 						/>
 					) : null}
 					<div className="flex-1 overflow-y-auto">
-						<LogDetailContent
-							logEntry={enrichedLog}
-							onOpenSettings={onOpenSettings}
-							upstreamLogsEnabled={upstreamLogsEnabled}
-							isLoadingDetails={isLoadingDetails}
-							accessToken={accessToken ?? null}
-						/>
+						<LogDetailLiveProvider response={liveDetail.response} metrics={liveDetail.metrics}>
+							<LogDetailContent
+								logEntry={enrichedLog}
+								onOpenSettings={onOpenSettings}
+								upstreamLogsEnabled={upstreamLogsEnabled}
+								isLoadingDetails={isLoadingDetails}
+								accessToken={accessToken ?? null}
+							/>
+						</LogDetailLiveProvider>
 					</div>
 				</div>
 			</div>

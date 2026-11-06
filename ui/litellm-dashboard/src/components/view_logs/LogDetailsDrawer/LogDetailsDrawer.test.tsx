@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionSpendLogsCall } from "../../networking";
+import { useLogDetails } from "@/app/(dashboard)/hooks/logDetails/useLogDetails";
 import type { LogEntry } from "../columns";
 import { LOG_DETAILS_PANEL_WIDTH, LogDetailsDrawer } from "./LogDetailsDrawer";
 
@@ -19,7 +20,12 @@ vi.mock("./useKeyboardNavigation", () => ({
 }));
 
 vi.mock("./DrawerHeader", () => ({
-	DrawerHeader: ({ log }: { log: LogEntry }) => <div data-testid="selected-request">{log.request_id}</div>,
+	DrawerHeader: ({ log, statusLabel }: { log: LogEntry; statusLabel: string }) => (
+		<>
+			<div data-testid="selected-request">{log.request_id}</div>
+			<div data-testid="drawer-status">{statusLabel}</div>
+		</>
+	),
 }));
 
 vi.mock("./LogDetailContent", () => ({
@@ -123,6 +129,93 @@ function renderDrawer(sessionGroup = claudeCodeGroup, teamId?: string) {
 	);
 	return { ...view, queryClient };
 }
+
+
+function renderRequestDrawer(logEntry: LogEntry, allLogs: LogEntry[]) {
+	const queryClient = new QueryClient({
+		defaultOptions: {
+			queries: { retry: false },
+		},
+	});
+	return render(
+		<QueryClientProvider client={queryClient}>
+			<LogDetailsDrawer
+				open={true}
+				onClose={vi.fn()}
+				logEntry={logEntry}
+				accessToken="unused-token"
+				allLogs={allLogs}
+				startTime="2026-07-24 10:00:00"
+			/>
+		</QueryClientProvider>,
+	);
+}
+
+describe("LogDetailsDrawer 请求结束后的详情同步", () => {
+	it("列表先一步结束时不把旧的进行中内容当成最终结果，落库详情到达后再显示成功", () => {
+		const refetch = vi.fn();
+		const inProgressRow: LogEntry = { ...clickedLog, status: "in_progress", metadata: { status: "in_progress" } };
+		const settledRow: LogEntry = { ...clickedLog, status: "success", metadata: { status: "success" } };
+
+		vi.mocked(useLogDetails).mockReturnValue({
+			data: { status: "in_progress", messages: [], response: { partial: true } },
+			isLoading: false,
+			refetch,
+		} as never);
+		const view = renderRequestDrawer(inProgressRow, [inProgressRow]);
+		expect(screen.getByTestId("drawer-status")).toHaveTextContent("In Progress");
+
+		// 列表刷新看到结束：订阅随之断开，最终帧可能收不到，这里应立刻补拉一次详情。
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<LogDetailsDrawer
+					open={true}
+					onClose={vi.fn()}
+					logEntry={settledRow}
+					accessToken="unused-token"
+					allLogs={[settledRow]}
+					startTime="2026-07-24 10:00:00"
+				/>
+			</QueryClientProvider>,
+		);
+		expect(refetch).toHaveBeenCalledTimes(1);
+		// 缓存里还是进行中内容，不能提前显示成功。
+		expect(screen.getByTestId("drawer-status")).toHaveTextContent("In Progress");
+
+		// 补拉返回落库负载（详情端点不再带 status 字段）。
+		vi.mocked(useLogDetails).mockReturnValue({
+			data: { messages: [], response: { text: "done" } },
+			isLoading: false,
+			refetch,
+		} as never);
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<LogDetailsDrawer
+					open={true}
+					onClose={vi.fn()}
+					logEntry={settledRow}
+					accessToken="unused-token"
+					allLogs={[settledRow]}
+					startTime="2026-07-24 10:00:00"
+				/>
+			</QueryClientProvider>,
+		);
+		expect(screen.getByTestId("drawer-status")).toHaveTextContent("Success");
+	});
+
+	it("详情推送拿到落库负载后立刻显示成功，不等列表行刷新", () => {
+		const settledRow: LogEntry = { ...clickedLog, status: "success", metadata: { status: "success" } };
+		vi.mocked(useLogDetails).mockReturnValue({
+			data: { messages: [], response: { text: "done" } },
+			isLoading: false,
+			refetch: vi.fn(),
+		} as never);
+
+		renderRequestDrawer(settledRow, [settledRow]);
+
+		expect(screen.getByTestId("drawer-status")).toHaveTextContent("Success");
+	});
+});
 
 describe("LogDetailsDrawer session fallback", () => {
 	beforeEach(() => {

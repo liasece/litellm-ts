@@ -1,21 +1,11 @@
 import { ModelPriceScope } from "@/contexts/PriceDisplay";
-import { usePriceDisplay, Money } from "@/contexts/PriceDisplay";
-import { useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { Typography, Descriptions, Card, Tag, Tabs, Alert, Collapse, Radio, Space, Spin, Button } from "antd";
-import moment from "moment";
-import {
-	getCacheCreationInputTokens,
-	getCacheReadInputTokens,
-	LogEntry,
-	normalizeModelResolutionChain,
-} from "../columns";
-import { formatNumberWithCommas } from "@/utils/dataUtils";
+import { LogEntry, normalizeModelResolutionChain } from "../columns";
 import GuardrailViewer from "../GuardrailViewer/GuardrailViewer";
-import { CostBreakdownViewer } from "../CostBreakdownViewer";
 import { ConfigInfoMessage } from "../ConfigInfoMessage";
 import { VectorStoreViewer } from "../VectorStoreViewer";
 import { TruncatedValue } from "./TruncatedValue";
-import { TokenFlow } from "./TokenFlow";
 import { JsonViewer } from "./JsonViewer";
 import {
 	formatData,
@@ -37,10 +27,11 @@ import {
 	SPACING_XLARGE,
 	SPACING_MEDIUM,
 } from "./constants";
-import { ToolsSection } from "../ToolsSection";
 import { PrettyMessagesView } from "./PrettyMessagesView";
 import { UpstreamDownstreamDiff } from "./UpstreamDownstreamDiff";
 import { RoutingSection } from "./RoutingSection";
+import { DetailInfoSection } from "./DetailInfoSection";
+import { areSameStaticLogFields, isEntryInProgress, useLiveLogMetrics, useLiveLogResponse } from "./liveDetail";
 
 const { Text } = Typography;
 
@@ -61,13 +52,13 @@ export interface LogDetailContentProps {
 
 /**
  * The scrollable detail content for a single log entry.
- * Renders request details, metrics, cost breakdown, request/response,
+ * Renders request details, the merged detail info (metrics + cost breakdown), request/response,
  * guardrails, vector store data, and metadata.
  *
  * Designed to be placed inside LogDetailsDrawer's right panel so it can
  * be reused for both single-log and session-mode views.
  */
-export function LogDetailContent({
+function LogDetailContentImpl({
 	logEntry,
 	onOpenSettings,
 	upstreamLogsEnabled,
@@ -80,8 +71,11 @@ export function LogDetailContent({
 	const modelResolutionChain = normalizeModelResolutionChain(metadata.model_resolution_chain);
 
 	const hasMessages = checkHasMessages(logEntry.messages);
+	// 是否完全缺数据只看当前条目；流式期间即使还没有响应，也由 isInProgress 兜底。
 	const hasResponse = checkHasResponse(logEntry.response);
-	const parsedProxyRequest = formatData(logEntry.proxy_server_request);
+	// proxy_server_request 可能带图片 base64；推送帧只覆盖变化字段，按字段引用缓存即可，
+	// 流式期间不会每帧重新解析。
+	const parsedProxyRequest = useMemo(() => formatData(logEntry.proxy_server_request), [logEntry.proxy_server_request]);
 	const upstreamRequest =
 		parsedProxyRequest && typeof parsedProxyRequest === "object" && !Array.isArray(parsedProxyRequest)
 			? formatData(parsedProxyRequest.upstream_request)
@@ -105,7 +99,7 @@ export function LogDetailContent({
 	// Vector store data
 	const hasVectorStoreData = checkHasVectorStoreData(metadata);
 
-	const getRecordedDownstreamRequest = () => {
+	const getRecordedDownstreamRequest = useCallback(() => {
 		const parsedProxy = parsedProxyRequest;
 		if (parsedProxy && typeof parsedProxy === "object" && !Array.isArray(parsedProxy)) {
 			const {
@@ -116,9 +110,9 @@ export function LogDetailContent({
 			return downstreamRequest;
 		}
 		return formatData(logEntry.proxy_server_request || logEntry.messages);
-	};
+	}, [logEntry.messages, logEntry.proxy_server_request, parsedProxyRequest]);
 
-	const getRawRequest = () => {
+	const getRawRequest = useCallback(() => {
 		const downstreamRequest = getRecordedDownstreamRequest();
 		// proxy_server_request 入库时对超长字符串统一截断（含图片 base64），
 		// 而 messages 列为 Logs/Session 重放保留完整图片。普通下游详情用
@@ -142,21 +136,7 @@ export function LogDetailContent({
 			return downstreamRequest;
 		}
 		return downstreamRequest;
-	};
-
-	const getFormattedResponse = () => {
-		if (hasError && errorInfo) {
-			return {
-				error: {
-					message: errorInfo.error_message || "An error occurred",
-					type: errorInfo.error_class || "error",
-					code: errorInfo.error_code || "unknown",
-					param: null,
-				},
-			};
-		}
-		return formatData(logEntry.response);
-	};
+	}, [getRecordedDownstreamRequest, logEntry.messages]);
 
 	return (
 		<ModelPriceScope model={logEntry}>
@@ -214,21 +194,8 @@ export function LogDetailContent({
 
 				<RoutingSection logEntry={logEntry} modelResolutionChain={modelResolutionChain} />
 
-				{/* Metrics */}
-				<MetricsSection logEntry={logEntry} metadata={metadata} />
-
-				{/* Cost Breakdown */}
-				<CostBreakdownViewer
-					model={logEntry}
-					costBreakdown={metadata?.cost_breakdown}
-					totalSpend={logEntry.spend ?? 0}
-					promptTokens={logEntry.prompt_tokens}
-					completionTokens={logEntry.completion_tokens}
-					cacheHit={logEntry.cache_hit}
-				/>
-
-				{/* Tools */}
-				<ToolsSection log={logEntry} />
+				{/* Metrics + cost breakdown, folded into one panel */}
+				<DetailInfoSection logEntry={logEntry} metadata={metadata} isInProgress={isInProgress} />
 
 				{/* Configuration Info Message */}
 				{missingData && (
@@ -245,11 +212,10 @@ export function LogDetailContent({
 					</div>
 				) : (
 					<RequestResponseSection
-						hasResponse={hasResponse}
 						hasError={hasError}
+						errorInfo={errorInfo}
 						getRawRequest={getRawRequest}
 						getRecordedDownstreamRequest={getRecordedDownstreamRequest}
-						getFormattedResponse={getFormattedResponse}
 						upstreamRequest={upstreamRequest}
 						upstreamResponse={upstreamResponse}
 						onOpenSettings={onOpenSettings}
@@ -344,102 +310,11 @@ function GuardrailLabel({ label, maskedCount }: { label: string; maskedCount: nu
 	);
 }
 
-function MetricsSection({ logEntry, metadata }: { logEntry: LogEntry; metadata: Record<string, any> }) {
-	usePriceDisplay();
-	const completionStartTime = logEntry.completionStartTime;
-	const cacheReadInputTokens = getCacheReadInputTokens(metadata);
-	const cacheCreationInputTokens = getCacheCreationInputTokens(metadata);
-	const ttftMs =
-		completionStartTime && completionStartTime !== logEntry.endTime
-			? new Date(completionStartTime).getTime() - new Date(logEntry.startTime).getTime()
-			: null;
-
-	const hasCacheActivity = logEntry.cache_hit || cacheReadInputTokens > 0 || cacheCreationInputTokens > 0;
-
-	const cacheHitValue = String(logEntry.cache_hit ?? "None");
-	const cacheHitColor =
-		cacheHitValue.toLowerCase() === "true" ? "green" : cacheHitValue.toLowerCase() === "false" ? "red" : "default";
-
-	return (
-		<div className="bg-white rounded-lg shadow w-full max-w-full overflow-hidden mb-6">
-			<Card title="Metrics" size="small" style={{ marginBottom: 0 }}>
-				<Descriptions column={2} size="small">
-					<Descriptions.Item label="Tokens">
-						<TokenFlow
-							prompt={logEntry.prompt_tokens}
-							completion={logEntry.completion_tokens}
-							total={logEntry.total_tokens}
-						/>
-					</Descriptions.Item>
-					<Descriptions.Item label="Cost">
-						{<Money value={logEntry.spend || 0} decimals={8} model={logEntry} />}
-					</Descriptions.Item>
-					<Descriptions.Item label="Duration">
-						{logEntry.request_duration_ms != null ? (logEntry.request_duration_ms / 1000).toFixed(3) : "-"} s
-					</Descriptions.Item>
-					{ttftMs != null && ttftMs > 0 && (
-						<Descriptions.Item label="Time to First Token">{(ttftMs / 1000).toFixed(3)} s</Descriptions.Item>
-					)}
-
-					{hasCacheActivity && (
-						<>
-							<Descriptions.Item label="Cache Hit">
-								<Tag color={cacheHitColor}>{cacheHitValue}</Tag>
-							</Descriptions.Item>
-							{cacheReadInputTokens > 0 && (
-								<Descriptions.Item label="Cache Read Tokens">
-									{formatNumberWithCommas(cacheReadInputTokens)}
-								</Descriptions.Item>
-							)}
-							{cacheCreationInputTokens > 0 && (
-								<Descriptions.Item label="Cache Creation Tokens">
-									{formatNumberWithCommas(cacheCreationInputTokens)}
-								</Descriptions.Item>
-							)}
-						</>
-					)}
-
-					{metadata?.litellm_overhead_time_ms !== undefined && metadata.litellm_overhead_time_ms !== null && (
-						<Descriptions.Item label="LiteLLM Overhead">
-							{metadata.litellm_overhead_time_ms.toFixed(2)} ms
-						</Descriptions.Item>
-					)}
-
-					<Descriptions.Item label="Retries">
-						{metadata?.attempted_retries !== undefined && metadata?.attempted_retries !== null ? (
-							metadata.attempted_retries > 0 ? (
-								<>
-									{metadata.attempted_retries}
-									{metadata.max_retries !== undefined && metadata.max_retries !== null
-										? ` / ${metadata.max_retries}`
-										: ""}
-								</>
-							) : (
-								<Tag color="green">None</Tag>
-							)
-						) : (
-							"-"
-						)}
-					</Descriptions.Item>
-
-					<Descriptions.Item label="Start Time">
-						{moment(logEntry.startTime).format("YYYY-MM-DDTHH:mm:ss.SSS[Z]")}
-					</Descriptions.Item>
-					<Descriptions.Item label="End Time">
-						{moment(logEntry.endTime).format("YYYY-MM-DDTHH:mm:ss.SSS[Z]")}
-					</Descriptions.Item>
-				</Descriptions>
-			</Card>
-		</div>
-	);
-}
-
 interface RequestResponseSectionProps {
-	hasResponse: boolean;
 	hasError: boolean;
+	errorInfo: any;
 	getRawRequest: () => any;
 	getRecordedDownstreamRequest: () => any;
-	getFormattedResponse: () => any;
 	upstreamRequest: unknown;
 	upstreamResponse: unknown;
 	onOpenSettings?: () => void;
@@ -448,11 +323,10 @@ interface RequestResponseSectionProps {
 }
 
 function RequestResponseSection({
-	hasResponse,
 	hasError,
+	errorInfo,
 	getRawRequest,
 	getRecordedDownstreamRequest,
-	getFormattedResponse,
 	upstreamRequest,
 	upstreamResponse,
 	onOpenSettings,
@@ -463,9 +337,29 @@ function RequestResponseSection({
 	const [viewMode, setViewMode] = useState<"pretty" | "json">("pretty");
 	const [source, setSource] = useState<"downstream" | "upstream" | "diff">("downstream");
 	const hasUpstreamTrace = Boolean(upstreamRequest || upstreamResponse);
-	const downstreamRequest = getRawRequest();
-	const downstreamDiffRequest = getRecordedDownstreamRequest();
-	const downstreamResponse = getFormattedResponse();
+	// 响应与 token 是流式期间唯一变化的部分，单独订阅；请求侧按回调身份缓存，
+	// 避免每帧重新解析整段对话。
+	const liveResponse = useLiveLogResponse(logEntry.response);
+	const liveMetrics = useLiveLogMetrics({
+		prompt_tokens: logEntry.prompt_tokens,
+		completion_tokens: logEntry.completion_tokens,
+	});
+	const hasResponse = checkHasResponse(liveResponse);
+	const downstreamRequest = useMemo(() => getRawRequest(), [getRawRequest]);
+	const downstreamDiffRequest = useMemo(() => getRecordedDownstreamRequest(), [getRecordedDownstreamRequest]);
+	const downstreamResponse = useMemo(() => {
+		if (hasError && errorInfo) {
+			return {
+				error: {
+					message: errorInfo.error_message || "An error occurred",
+					type: errorInfo.error_class || "error",
+					code: errorInfo.error_code || "unknown",
+					param: null,
+				},
+			};
+		}
+		return formatData(liveResponse);
+	}, [hasError, errorInfo, liveResponse]);
 	const upstreamResponseBody =
 		upstreamResponse &&
 		typeof upstreamResponse === "object" &&
@@ -476,8 +370,8 @@ function RequestResponseSection({
 	const hasDiffData = Boolean(downstreamDiffRequest && upstreamRequest);
 
 	const totalSpend = logEntry.spend ?? 0;
-	const promptTokens = logEntry.prompt_tokens || 0;
-	const completionTokens = logEntry.completion_tokens || 0;
+	const promptTokens = liveMetrics.prompt_tokens || 0;
+	const completionTokens = liveMetrics.completion_tokens || 0;
 	const totalTokens = promptTokens + completionTokens;
 	const costBreakdown = logEntry.metadata?.cost_breakdown;
 	const useCostBreakdown = costBreakdown?.input_cost !== undefined && costBreakdown?.output_cost !== undefined;
@@ -533,9 +427,9 @@ function RequestResponseSection({
 											children:
 												viewMode === "pretty" ? (
 													<PrettyMessagesView
-														request={getRawRequest()}
+														request={downstreamRequest}
 											metaRequest={upstreamRequest}
-														response={getFormattedResponse()}
+														response={downstreamResponse}
 														metrics={{
 															prompt_tokens: promptTokens,
 															completion_tokens: completionTokens,
@@ -770,3 +664,29 @@ function MetadataSection({ metadata }: { metadata: Record<string, any> }) {
 		</div>
 	);
 }
+
+/**
+ * 进行中请求只比较静态字段。
+ *
+ * 推送帧每 400ms 换一次 `logEntry` 身份，但除了响应/token/耗时之外的字段引用都没变；
+ * 这种情况下不重渲染详情主体，变化的区域由 context 驱动。
+ * @param previous - 上一次 props
+ * @param next - 本次 props
+ */
+function areLogDetailContentPropsEqual(previous: LogDetailContentProps, next: LogDetailContentProps): boolean {
+	if (previous.onOpenSettings !== next.onOpenSettings) return false;
+	if (previous.upstreamLogsEnabled !== next.upstreamLogsEnabled) return false;
+	if (previous.isLoadingDetails !== next.isLoadingDetails) return false;
+	if (previous.accessToken !== next.accessToken) return false;
+	if (previous.logEntry === next.logEntry) return true;
+	// 已结算的条目正常重渲染；只有流式期间才忽略高频字段。
+	return isEntryInProgress(next.logEntry) && areSameStaticLogFields(previous.logEntry, next.logEntry);
+}
+
+/**
+ * 详情页主体。
+ *
+ * 用 `memo` + 静态字段比较包住：流式期间抽屉每 400ms 重渲染一次，这里直接跳过；
+ * 真正变化的响应/指标由 `LogDetailLiveProvider` 通过 context 送到对应区域。
+ */
+export const LogDetailContent = memo(LogDetailContentImpl, areLogDetailContentPropsEqual);
