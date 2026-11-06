@@ -24,13 +24,14 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import { costPerToken } from "../cost/CostCalculator";
 import {
 	AGGREGATE_DEFAULT_LIMIT,
+	COLD_STORAGE_BATCH_CONCURRENCY,
 	SpendSortOrder,
+	mapWithConcurrency,
 	normalizeSortOrder,
 	parseOptionalFloatQueryParam,
 	parsePageParam,
@@ -66,19 +67,7 @@ const logger = createModuleLogger("SpendLogs");
 const SPEND_LOG_SORT_FIELDS = ["spend", "total_tokens", "startTime", "endTime", "request_duration_ms"] as const;
 type SpendLogSortField = (typeof SPEND_LOG_SORT_FIELDS)[number];
 
-/** Python LiteLLM proxy admin / viewer 角色字面量 */
-const PROXY_ADMIN_VIEWER_ROLE = "proxy_admin_viewer";
-
-/** HTTP 403 Forbidden 字面量 */
-const HTTP_FORBIDDEN = 403;
-
-/** Python LiteLLM internal user / viewer 角色字面量 */
-const INTERNAL_USER_ROLE = "internal_user";
-const INTERNAL_USER_VIEWER_ROLE = "internal_user_viewer";
-
-type SessionGroupType = "claude_code_user_id" | "session_id";
 const SPEND_LOG_DETAIL_BATCH_SIZE = 100;
-const COLD_STORAGE_BATCH_CONCURRENCY = 8;
 
 
 /**
@@ -306,7 +295,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 		// 权限裁剪
 		const auth = req.auth;
-		const isAdminView = !!auth && (auth.user_role === PROXY_ADMIN_ROLE || auth.user_role === PROXY_ADMIN_VIEWER_ROLE);
+		const isAdminView = isSpendAdminView(auth);
 
 		const effectiveTeamId = teamIdFilter;
 		let effectiveUserId = userIdFilter;
@@ -896,173 +885,7 @@ function parseSpendLogDetailBatch(body: unknown): SpendLogDetailBatchRequest[] {
 	return [...uniqueRequests.values()];
 }
 
-async function mapWithConcurrency<T, R>(
-	items: readonly T[],
-	concurrency: number,
-	mapper: (item: T) => Promise<R>,
-): Promise<R[]> {
-	const results = new Array<R>(items.length);
-	let nextIndex = 0;
-	const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-		while (nextIndex < items.length) {
-			const index = nextIndex;
-			nextIndex += 1;
-			results[index] = await mapper(items[index]!);
-		}
-	});
-	await Promise.all(workers);
-	return results;
-}
-
-function hasTimelinePayload(value: unknown): boolean {
-	if (value === null || value === undefined) {return false;}
-	if (typeof value === "string") {
-		const trimmed = value.trim();
-		return trimmed !== "" && trimmed !== "null" && trimmed !== "{}" && trimmed !== "[]";
-	}
-	if (Array.isArray(value)) {return value.length > 0;}
-	if (typeof value === "object") {return Object.keys(value).length > 0;}
-	return true;
-}
-
-async function hydrateTimelineRowsFromColdStorage(
-	rows: readonly SessionTimelineSourceRow[],
-): Promise<SessionTimelineSourceRow[]> {
-	return mapWithConcurrency(rows, COLD_STORAGE_BATCH_CONCURRENCY, async (row) => {
-		const requestPayloadAvailable = row.request_payload_available ?? hasTimelinePayload(row.request_payload);
-		const responsePayloadAvailable = row.response_payload_available ?? hasTimelinePayload(row.response_payload);
-		if (requestPayloadAvailable && responsePayloadAvailable) {
-			return row;
-		}
-		const payload = await getRequestResponsePayloadFromColdStorage(
-			row.request_id,
-			new Date(row.startTime),
-			new Date(row.endTime),
-			(_coldStorageLogger, error) =>
-				logger.warn(`/spend/logs/session/timeline 冷存储回查失败: ${(error as Error).message}`),
-		);
-		if (!payload) {return row;}
-		const coldRequestPayload = hasTimelinePayload(payload.proxy_server_request)
-			? payload.proxy_server_request
-			: payload.messages;
-		return {
-			...row,
-			request_payload: requestPayloadAvailable ? row.request_payload : coldRequestPayload,
-			response_payload: responsePayloadAvailable ? row.response_payload : payload.response,
-		};
-	});
-}
-
-/**
- * 判断用户角色是否为 internal_user / internal_user_viewer（Python `_can_user_view_spend_log`）。
- * @param auth
- */
-function isInternalUserRole(auth: UserAPIKeyAuth | undefined): boolean {
-	if (!auth) {
-		return false;
-	}
-	return auth.user_role === INTERNAL_USER_ROLE || auth.user_role === INTERNAL_USER_VIEWER_ROLE;
-}
-
-/**
- * 列表、Session count 和 Session detail 共用的认证可见性边界。
- * @param db
- * @param auth
- * @param requestedTeamId
- */
-async function resolveSpendVisibilityClause(
-	db: NodePgDatabase<typeof schema>,
-	auth: UserAPIKeyAuth | undefined,
-	requestedTeamId?: string,
-): Promise<SQL> {
-	if (auth && (auth.user_role === PROXY_ADMIN_ROLE || auth.user_role === PROXY_ADMIN_VIEWER_ROLE)) {
-		return requestedTeamId === undefined ? sql`TRUE` : eq(liteLLM_SpendLogs.team_id, requestedTeamId);
-	}
-	if (requestedTeamId !== undefined) {
-		if (!(await canTeamMemberViewLog(db, auth, requestedTeamId))) {
-			throw new ApiError(HTTP_FORBIDDEN, "Not authorized to view requested team spend");
-		}
-		return eq(liteLLM_SpendLogs.team_id, requestedTeamId);
-	}
-	if (isInternalUserRole(auth) && auth?.user_id) {
-		return eq(liteLLM_SpendLogs.user, auth.user_id);
-	}
-	if (auth?.team_id) {
-		return eq(liteLLM_SpendLogs.team_id, auth.team_id);
-	}
-	if (auth?.user_id) {
-		return eq(liteLLM_SpendLogs.user, auth.user_id);
-	}
-	return sql`FALSE`;
-}
-
-/**
- * ActiveRequests 使用与 SpendLogs 相同的可见性决策。requestedTeamId 的成员校验已由
- * resolveSpendVisibilityClause 完成，此处只把同一决策映射到活跃表列。
- * @param auth
- * @param requestedTeamId
- */
-function resolveActiveRequestVisibilityClause(auth: UserAPIKeyAuth | undefined, requestedTeamId?: string): SQL {
-	if (auth && (auth.user_role === PROXY_ADMIN_ROLE || auth.user_role === PROXY_ADMIN_VIEWER_ROLE)) {
-		return requestedTeamId === undefined ? sql`TRUE` : eq(liteLLM_ActiveRequests.team_id, requestedTeamId);
-	}
-	if (requestedTeamId !== undefined) {
-		return eq(liteLLM_ActiveRequests.team_id, requestedTeamId);
-	}
-	if (isInternalUserRole(auth) && auth?.user_id) {
-		return eq(liteLLM_ActiveRequests.user, auth.user_id);
-	}
-	if (auth?.team_id) {
-		return eq(liteLLM_ActiveRequests.team_id, auth.team_id);
-	}
-	if (auth?.user_id) {
-		return eq(liteLLM_ActiveRequests.user, auth.user_id);
-	}
-	return sql`FALSE`;
-}
-
-/**
- * Python `_can_team_member_view_log`：team 存在且用户在 team admins 列表中。
- * @param db
- * @param auth
- * @param teamId
- */
-async function canTeamMemberViewLog(db: NodePgDatabase<typeof schema>, auth: UserAPIKeyAuth | undefined, teamId: string): Promise<boolean> {
-	if (!auth || !auth.user_id) {
-		return false;
-	}
-	const rows = await db
-		.select({
-			admins: LiteLLM_TeamTable.admins,
-			membersWithRoles: LiteLLM_TeamTable.membersWithRoles,
-		})
-		.from(LiteLLM_TeamTable)
-		.where(eq(LiteLLM_TeamTable.teamId, teamId))
-		.limit(1);
-	const team = rows.at(0);
-	if (!team) {
-		return false;
-	}
-	const adminList = Array.isArray(team.admins) ? team.admins : [];
-	if (adminList.includes(auth.user_id)) {
-		return true;
-	}
-	const roles = (team.membersWithRoles as Record<string, { role?: string }> | null) ?? null;
-	const role = roles?.[auth.user_id]?.role;
-	return role === "admin";
-}
-
 /** Recover legacy failed-call attribution only from a recorded upstream request. */
-function spendLogExecutionModelSql() {
-	return sql<string>`CASE
-		WHEN ${liteLLM_SpendLogs.status} = 'failure'
-			AND COALESCE(${liteLLM_SpendLogs.model_id}, '') = ''
-			AND ${liteLLM_SpendLogs.model} = ${liteLLM_SpendLogs.model_group}
-			AND jsonb_typeof(${liteLLM_SpendLogs.proxy_server_request}#>'{upstream_request,body,model}') = 'string'
-		THEN COALESCE(NULLIF(${liteLLM_SpendLogs.proxy_server_request}#>>'{upstream_request,body,model}', ''), ${liteLLM_SpendLogs.model})
-		ELSE ${liteLLM_SpendLogs.model}
-	END`;
-}
 
 /** UI logs omit request/response payloads; legacy recovery projects one scalar. */
 function uiSpendLogSelection() {
@@ -1549,31 +1372,6 @@ function withSessionGroup(row: Record<string, unknown>): Record<string, unknown>
 		: { ...row, session_group_type: null, session_group_id: null };
 }
 
-interface SessionPosition {
-	readonly startTime: Date;
-	readonly requestId: string;
-}
-
-function parseSessionPosition(value: unknown, parameterName: string): SessionPosition | null {
-	if (value === undefined) {
-		return null;
-	}
-	if (typeof value !== "string" || value.length === 0) {
-		throw new ApiError(HTTP_STATUS.BAD_REQUEST, `invalid ${parameterName}`);
-	}
-	try {
-		const decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
-		const startTime = typeof decoded.startTime === "string" ? new Date(decoded.startTime) : null;
-		const requestId = decoded.requestId;
-		if (!startTime || Number.isNaN(startTime.getTime()) || typeof requestId !== "string" || requestId.length === 0) {
-			throw new Error("invalid position");
-		}
-		return { startTime: startTime, requestId: requestId };
-	} catch {
-		throw new ApiError(HTTP_STATUS.BAD_REQUEST, `invalid ${parameterName}`);
-	}
-}
-
 function parseKnownSessionTotal(value: unknown): number | null {
 	if (value === undefined) {
 		return null;
@@ -1836,70 +1634,4 @@ async function enrichSessionCounts(
 		const total = group ? (countMap.get(sessionGroupKey(group)) ?? 1) : 1;
 		return { ...row, session_total_count: total };
 	});
-}
-
-interface SessionGroupRef {
-	readonly type: SessionGroupType;
-	readonly id: string;
-}
-
-function parseSessionGroupQuery(query: Record<string, unknown>): SessionGroupRef {
-	const legacySessionId = query.session_id;
-	const sessionGroupType = query.session_group_type;
-	const sessionGroupId = query.session_group_id;
-	const hasLegacySessionId = legacySessionId !== undefined;
-	const hasSessionGroupType = sessionGroupType !== undefined;
-	const hasSessionGroupId = sessionGroupId !== undefined;
-	if (hasLegacySessionId && (hasSessionGroupType || hasSessionGroupId)) {
-		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "session_id cannot be combined with session group parameters");
-	}
-	if (hasLegacySessionId) {
-		if (typeof legacySessionId !== "string" || legacySessionId.length === 0) {
-			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "session_id is required");
-		}
-		return { type: "session_id", id: legacySessionId };
-	}
-	if (
-		!hasSessionGroupType ||
-		!hasSessionGroupId ||
-		typeof sessionGroupType !== "string" ||
-		typeof sessionGroupId !== "string" ||
-		sessionGroupId.length === 0 ||
-		(sessionGroupType !== "session_id" && sessionGroupType !== "claude_code_user_id")
-	) {
-		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "valid session group parameters are required");
-	}
-	const normalizedGroupId = sessionGroupId.trim();
-	if (sessionGroupType === "claude_code_user_id" && !CLAUDE_CODE_USER_ID_PATTERN.test(normalizedGroupId)) {
-		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid Claude Code session group");
-	}
-	return { type: sessionGroupType, id: normalizedGroupId };
-}
-
-function readSessionGroup(row: Record<string, unknown>): SessionGroupRef | null {
-	const type = row.session_group_type;
-	const id = row.session_group_id;
-	if ((type !== "session_id" && type !== "claude_code_user_id") || typeof id !== "string" || id.length === 0) {
-		return null;
-	}
-	return { type: type, id: id };
-}
-
-function sessionGroupKey(group: SessionGroupRef): string {
-	return `${group.type === "claude_code_user_id" ? "c" : "s"}:${group.id}`;
-}
-
-function parsePersistedSessionGroupKey(value: unknown): SessionGroupRef | null {
-	if (typeof value !== "string" || value.length < 3) {
-		return null;
-	}
-	if (value.startsWith("c:")) {
-		const id = value.slice(2);
-		return CLAUDE_CODE_USER_ID_PATTERN.test(id) ? { type: "claude_code_user_id", id: id } : null;
-	}
-	if (value.startsWith("s:")) {
-		const id = value.slice(2);
-		return id.length > 0 ? { type: "session_id", id: id } : null;
-	}
-	return null;
 }

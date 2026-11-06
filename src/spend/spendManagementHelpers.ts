@@ -204,3 +204,32 @@ export async function runWithFallback<T>(
 		return fallback;
 	}
 }
+
+/** 冷存储等外部回查的批量并发上限，避免单个大 Session 打出数百个并发请求。 */
+export const COLD_STORAGE_BATCH_CONCURRENCY = 8;
+
+/**
+ * 保持结果顺序、按固定并发度执行异步映射。
+ * @template T - 输入元素类型
+ * @template R - 映射结果类型
+ * @param items - 待处理元素
+ * @param concurrency - 并发上限
+ * @param mapper - 单个元素的异步处理函数
+ */
+export async function mapWithConcurrency<T, R>(
+	items: readonly T[],
+	concurrency: number,
+	mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let nextIndex = 0;
+	const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+		while (nextIndex < items.length) {
+			const index = nextIndex;
+			nextIndex += 1;
+			results[index] = await mapper(items[index]!);
+		}
+	});
+	await Promise.all(workers);
+	return results;
+}
