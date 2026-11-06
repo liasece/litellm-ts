@@ -81,6 +81,14 @@
 			"tag": "0009_session_group_prefixed_ids",
 			"file": "0009_session_group_prefixed_ids.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1793750400000,
+			"tag": "0010_active_request_observation",
+			"file": "0010_active_request_observation.sql",
+			"breakpoints": true
 		}
 	]
 }

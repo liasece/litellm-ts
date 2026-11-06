@@ -34,8 +34,10 @@ import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
 import { appendModelResolutionTrace, appendRoutingTrace, copyModelResolutionChain, copyRoutingTrace } from "./ModelResolutionTrace";
+import { publishModelResolutionTrace } from "./UpstreamExchange";
 import { attachUpstreamLogContext, getUpstreamLogContext } from "./UpstreamLogContext";
 import { hasCommittedStreamOutput } from "./StreamOutputVisibility";
+import { streamErrorPayloadMessage } from "./StreamErrorPayload";
 import type {
 	RouterExecContext,
 	ExecutionRequest,
@@ -148,6 +150,10 @@ export async function executeWithFallback(
 
 	const modelResolution = ctx.fallbackHandler.resolveModelGroupWithTrace(model);
 	appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, modelResolution);
+	// 路由已解析：把请求级轨迹发布到请求作用域，在途日志补写器据此补写 alias 展开链与 fallback 决策。
+	if (modelResolutionTrace !== undefined) {
+		publishModelResolutionTrace(modelResolutionTrace);
+	}
 
 	// GAP (MOCK-001): 异步入口 mock_testing_* 钩子抛出的异常（previousError），
 	// 按异常类型路由到对应的专属 fallback chain（对齐 PY async_function_with_retries）。

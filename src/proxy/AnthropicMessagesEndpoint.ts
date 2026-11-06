@@ -903,6 +903,7 @@ export function registerAnthropicMessagesEndpoints(
 						},
 						write: (checkpoint) =>
 							checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+						onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 					});
 				}
 				let streamError: unknown;

@@ -395,7 +395,7 @@ function isImagePayloadString(fieldName: string, value: unknown, parent: Record<
 	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) {
 		return false;
 	}
-	if (fieldName === "b64_json") {
+	if (fieldName === "b64_json" || fieldName === "partial_image_b64") {
 		return true;
 	}
 	if (fieldName === "result" && parent["type"] === "image_generation_call") {
@@ -470,6 +470,18 @@ export function sanitizeSpendLogResponsePayload(value: unknown): unknown {
  * @param value
  */
 export function sanitizeSpendLogMessagesPayload(value: unknown): unknown {
+	return sanitizeSpendLogPayloadValue(value, true);
+}
+
+/**
+ * 清理在途日志（ActiveRequests）负载：图片 base64 与最终 SpendLog 同规格保留。
+ *
+ * 进行中的请求没有 messages/response 列可以回退，详情页只能读注册时的
+ * `proxy_server_request.body` 与流式 checkpoint。若沿用普通文本截断（32KB），
+ * 任何图片都会变成不可显示的截断标记；这里保留图片，使在途与落库后的展示一致。
+ * @param value - 待写入 ActiveRequests 的任意 JSON 值
+ */
+export function sanitizeActiveRequestPayload(value: unknown): unknown {
 	return sanitizeSpendLogPayloadValue(value, true);
 }
 
@@ -1084,9 +1096,32 @@ function buildActiveRequestProxyServerRequest(input: ActiveRequestInput): Record
 		url: input.req.originalUrl ?? input.req.url,
 		method: input.req.method,
 		headers: sanitizeSpendLogHeaders(input.req.headers as Record<string, unknown>),
-		body: sanitizeSpendLogPayload(requestBody),
+		body: sanitizeActiveRequestPayload(requestBody),
 		arrival_time: (input.startTime ?? new Date()).toISOString(),
 	};
+}
+
+/**
+ * 在途行的初始 metadata：注册那一刻就已经确定、后续不会再变的归属信息。
+ *
+ * 这些键与最终 SpendLog 的 metadata 同名同形，因此进行中的行在详情页里能直接显示
+ * key/team 归属与会话分组；`session_group_key` 让进行中的请求落到与结束后一致的会话。
+ * @param req - 当前请求
+ */
+function buildActiveRequestMetadata(req: Request): Record<string, unknown> {
+	const auth = req.auth;
+	const metadata: Record<string, unknown> = {
+		status: "in_progress",
+		user_api_key_alias: auth?.key_alias ?? null,
+		user_api_key_team_alias: auth?.team_alias ?? null,
+		user_api_key_org_id: auth?.organization_id ?? null,
+		user_api_key_project_id: auth?.project_id ?? null,
+	};
+	const sessionGroupKey = getCanonicalSessionGroupKey(req);
+	if (sessionGroupKey !== undefined) {
+		metadata["session_group_key"] = sessionGroupKey;
+	}
+	return metadata;
 }
 
 /**
@@ -1128,10 +1163,7 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 					end_user: auth.end_user_id ?? null,
 					requester_ip_address: getRequesterIpAddress(input.req) ?? null,
 					session_id: getOrCreateSpendSessionId(input.req),
-					metadata: {
-						status: "in_progress",
-						user_api_key_alias: auth.key_alias ?? null,
-					},
+					metadata: buildActiveRequestMetadata(input.req),
 					request_tags: [],
 					proxy_server_request: buildActiveRequestProxyServerRequest(input),
 					status: "in_progress",
@@ -1190,7 +1222,7 @@ export async function checkpointActiveRequest(
 	key: ActiveRequestCheckpointKey = "responses_execution",
 ): Promise<boolean> {
 	const now = new Date();
-	const sanitizedCheckpoint = sanitizeSpendLogPayload(checkpoint);
+	const sanitizedCheckpoint = sanitizeActiveRequestPayload(checkpoint);
 	const rows = await db
 		.update(liteLLM_ActiveRequests)
 		.set({
@@ -1200,6 +1232,8 @@ export async function checkpointActiveRequest(
 		})
 		.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")))
 		.returning({ requestId: liteLLM_ActiveRequests.request_id });
+	// 列表只展示注册时确定的行字段；流式 checkpoint 只属于详情页，不触发列表刷新，
+	// 否则持续流式期间会退化成每 500ms 全量拉取一次列表。
 	return rows.length > 0;
 }
 

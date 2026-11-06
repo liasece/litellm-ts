@@ -10,12 +10,18 @@ import type { UpstreamLogContext } from "../router/UpstreamLogContext";
 import type { ModelResolutionChainEntry, RoutingTraceEntry } from "../router/ModelResolutionTrace";
 import type { UserAPIKeyAuth } from "./auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
+import type { ActiveRequestJournal } from "../spend/ActiveRequestJournal";
 
 declare global {
 	namespace Express {
 		interface Request {
 			spendRequestId?: string;
 			spendSessionId?: string;
+			/**
+			 * 在途日志补写器：请求登记后由 spend reservation 挂上，供流式路径补写 TTFT 等
+			 * 「一旦确定就不再变化」的字段。数据库不支持 ActiveRequests 时为空。
+			 */
+			activeRequestJournal?: ActiveRequestJournal;
 		}
 	}
 }

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { ModelResolutionTraceCollector } from "./ModelResolutionTrace";
 import type { UpstreamLogContext } from "./UpstreamLogContext";
 
 /**
@@ -11,9 +12,16 @@ import type { UpstreamLogContext } from "./UpstreamLogContext";
  * 现在改为按请求作用域记录：传输层写入最近一次真实上游交换，日志层读取它。
  * 业务结果对象不再承载诊断状态，中间层怎么复制都不会影响观测。
  */
+/** 上游交换的只读观察者；在传输层记录后同步调用，异常不影响请求。 */
+export type UpstreamExchangeObserver = (context: UpstreamLogContext) => void;
+
 interface UpstreamExchangeChannel {
 	/** 当前作用域最近一次真实上游交换。 */
 	latest?: UpstreamLogContext;
+	/** 请求级观察者，用于把已确定的上游信息补写进在途日志。 */
+	observer?: UpstreamExchangeObserver;
+	/** 请求级路由解析轨迹，供观察者读取当前进度。 */
+	resolutionTrace?: ModelResolutionTraceCollector;
 }
 
 const channels = new AsyncLocalStorage<UpstreamExchangeChannel>();
@@ -36,9 +44,56 @@ export function runWithUpstreamExchangeScope<T>(callback: () => T): T {
  */
 export function recordUpstreamExchange(context: UpstreamLogContext): void {
 	const channel = channels.getStore();
-	if (channel !== undefined) {
-		channel.latest = context;
+	if (channel === undefined) {
+		return;
 	}
+	channel.latest = context;
+	const observer = channel.observer;
+	if (observer === undefined) {
+		return;
+	}
+	try {
+		observer(context);
+	} catch {
+		// 观察者只做旁路记录，任何异常都不能影响真实上游调用与客户端响应。
+	}
+}
+
+/**
+ * 注册当前请求作用域的上游交换观察者。
+ *
+ * 传输层在每次记录真实上游交换后同步调用它，调用方据此把已经确定的上游请求/响应
+ * 补写进在途日志。子作用域（内置能力调用）不会继承观察者，内部调用的上游交换
+ * 仍只归它自己的审计日志。
+ * @param observer - 收到上游交换后执行的旁路逻辑
+ * @returns 当前不在请求作用域内时返回 false
+ */
+export function observeUpstreamExchange(observer: UpstreamExchangeObserver): boolean {
+	const channel = channels.getStore();
+	if (channel === undefined) {
+		return false;
+	}
+	channel.observer = observer;
+	return true;
+}
+
+/**
+ * 记录当前请求的路由解析轨迹，供上游交换观察者读取最新进度。
+ * @param collector - endpoint 持有的请求级可变轨迹容器
+ */
+export function publishModelResolutionTrace(collector: ModelResolutionTraceCollector): void {
+	const channel = channels.getStore();
+	if (channel !== undefined) {
+		channel.resolutionTrace = collector;
+	}
+}
+
+/**
+ * 读取当前请求已发布的路由解析轨迹。
+ * @returns 尚未开始路由解析时返回 undefined
+ */
+export function getRecordedModelResolutionTrace(): ModelResolutionTraceCollector | undefined {
+	return channels.getStore()?.resolutionTrace;
 }
 
 /**

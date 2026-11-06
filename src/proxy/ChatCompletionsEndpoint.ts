@@ -448,6 +448,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 					};
 				},
 				write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+				onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 			});
 		}
 
@@ -878,6 +879,7 @@ async function handleStreamingResponse(
 						};
 					},
 					write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+					onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 				});
 			}
 			let streamError: unknown;
@@ -1195,6 +1197,7 @@ async function handlePrivateVisionStreamingResponse(
 				};
 			},
 			write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+			onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 		});
 	}
 
