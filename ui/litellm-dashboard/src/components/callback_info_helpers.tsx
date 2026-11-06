@@ -1,3 +1,5 @@
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
+
 interface CallbackConfig {
 	id: string;
 	displayName: string;
@@ -7,7 +9,7 @@ interface CallbackConfig {
 	description: string;
 }
 
-const asset_logos_folder = "../ui/assets/logos/";
+const asset_logos_folder = UI_LOGOS_FOLDER;
 
 export const CALLBACK_CONFIGS: CallbackConfig[] = [
 	{

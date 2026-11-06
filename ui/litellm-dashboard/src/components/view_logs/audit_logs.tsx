@@ -8,6 +8,7 @@ import { uiAuditLogsCall } from "../networking";
 import type { AuditLogEntry } from "./auditLogTypes";
 import { AuditLogDrawer } from "./AuditLogDrawer/AuditLogDrawer";
 import DefaultProxyAdminTag from "../common_components/DefaultProxyAdminTag";
+import { UI_ASSETS_FOLDER } from "@/utils/uiAssets";
 
 const { Search } = Input;
 
@@ -20,7 +21,7 @@ interface AuditLogsProps {
 	premiumUser: boolean;
 }
 
-const asset_logos_folder = "../ui/assets/";
+const asset_logos_folder = UI_ASSETS_FOLDER;
 export const auditLogsPreviewImg = `${asset_logos_folder}audit-logs-preview.png`;
 
 const TABLE_NAME_DISPLAY: Record<string, string> = {

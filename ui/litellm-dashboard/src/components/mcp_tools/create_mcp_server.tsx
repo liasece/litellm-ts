@@ -17,8 +17,9 @@ import { validateMCPServerUrl, validateMCPServerName } from "./utils";
 import NotificationsManager from "../molecules/notifications_manager";
 import { useMcpOAuthFlow } from "@/hooks/useMcpOAuthFlow";
 import { useTestMCPConnection } from "@/hooks/useTestMCPConnection";
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
 
-const asset_logos_folder = "../ui/assets/logos/";
+const asset_logos_folder = UI_LOGOS_FOLDER;
 export const mcpLogoImg = `${asset_logos_folder}mcp_logo.png`;
 
 interface CreateMCPServerProps {

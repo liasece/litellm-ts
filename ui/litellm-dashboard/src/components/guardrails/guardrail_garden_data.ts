@@ -1,3 +1,5 @@
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
+
 export interface GuardrailCardInfo {
 	id: string;
 	name: string;
@@ -16,7 +18,7 @@ export interface GuardrailCardInfo {
 	providerKey?: string;
 }
 
-const ASSET_PREFIX = "../ui/assets/logos/";
+const ASSET_PREFIX = UI_LOGOS_FOLDER;
 
 export const LITELLM_CONTENT_FILTER_CARDS: GuardrailCardInfo[] = [
 	{

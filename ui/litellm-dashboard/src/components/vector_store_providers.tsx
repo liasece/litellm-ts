@@ -1,3 +1,5 @@
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
+
 export enum VectorStoreProviders {
 	Bedrock = "Amazon Bedrock",
 	S3Vectors = "Amazon S3 Vectors",
@@ -18,7 +20,7 @@ export const vectorStoreProviderMap: Record<string, string> = {
 	S3Vectors: "s3_vectors",
 };
 
-const asset_logos_folder = "../ui/assets/logos/";
+const asset_logos_folder = UI_LOGOS_FOLDER;
 
 export const vectorStoreProviderLogoMap: Record<string, string> = {
 	[VectorStoreProviders.Bedrock]: `${asset_logos_folder}bedrock.svg`,

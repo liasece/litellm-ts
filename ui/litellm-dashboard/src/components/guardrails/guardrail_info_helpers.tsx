@@ -1,3 +1,5 @@
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
+
 // Legacy enum - keeping for backward compatibility
 export enum GuardrailProviders {
 	PresidioPII = "Presidio PII",
@@ -102,7 +104,7 @@ export const shouldRenderContentFilterConfigSettings = (provider: string | null)
 	return providerEnum === "LiteLLM Content Filter";
 };
 
-const asset_logos_folder = "../ui/assets/logos/";
+const asset_logos_folder = UI_LOGOS_FOLDER;
 
 export const guardrailLogoMap: Record<string, string> = {
 	"Zscaler AI Guard": `${asset_logos_folder}zscaler.svg`,

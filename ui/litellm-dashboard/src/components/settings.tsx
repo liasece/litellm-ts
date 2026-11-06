@@ -40,6 +40,7 @@ import {
 import { LoggingCallbacksTable } from "./Settings/LoggingAndAlerts/LoggingCallbacks/LoggingCallbacksTable";
 import { AlertingObject } from "./Settings/LoggingAndAlerts/LoggingCallbacks/types";
 import { parseErrorMessage } from "./shared/errorUtils";
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
 interface SettingsPageProps {
 	accessToken: string | null;
 	userRole: string | null;
@@ -53,7 +54,7 @@ interface genericCallbackParams {
 	litellm_callback_params: string[] | null; // known required params for this callback
 }
 
-const assetsLogoFolder = "../ui/assets/logos/";
+const assetsLogoFolder = UI_LOGOS_FOLDER;
 
 interface DynamicParamsFieldsProps {
 	params: string[];

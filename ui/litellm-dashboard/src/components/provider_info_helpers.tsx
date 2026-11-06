@@ -1,3 +1,5 @@
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
+
 export enum Providers {
 	A2A_Agent = "A2A Agent",
 	AI21 = "Ai21",
@@ -214,7 +216,7 @@ export const provider_map: Record<string, string> = {
 	XINFERENCE: "xinference",
 };
 
-const asset_logos_folder = "../ui/assets/logos/";
+const asset_logos_folder = UI_LOGOS_FOLDER;
 
 export const providerLogoMap: Record<string, string> = {
 	[Providers.A2A_Agent]: `${asset_logos_folder}a2a_agent.png`,

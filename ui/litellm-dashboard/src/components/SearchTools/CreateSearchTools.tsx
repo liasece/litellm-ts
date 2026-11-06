@@ -9,11 +9,12 @@ import NotificationsManager from "../molecules/notifications_manager";
 import { createSearchTool, fetchAvailableSearchProviders } from "../networking";
 import SearchConnectionTest from "./SearchConnectionTest";
 import { AvailableSearchProvider, SearchTool } from "./types";
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
 
 const { TextArea } = Input;
 
 // Search provider logos folder path (matches existing provider logo pattern)
-const searchProviderLogosFolder = "../ui/assets/logos/";
+const searchProviderLogosFolder = UI_LOGOS_FOLDER;
 
 // Helper function to get logo path for a search provider
 const getSearchProviderLogo = (providerName: string): string => {

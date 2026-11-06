@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { Input, Tooltip } from "antd";
 import { InfoCircleOutlined, LinkOutlined } from "@ant-design/icons";
+import { UI_LOGOS_FOLDER } from "@/utils/uiAssets";
 
-const logos = "/ui/assets/logos/";
+const logos = UI_LOGOS_FOLDER;
 
 const WELL_KNOWN_LOGOS: { name: string; url: string }[] = [
 	{ name: "GitHub", url: `${logos}github.svg` },
