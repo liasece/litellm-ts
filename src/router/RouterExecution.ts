@@ -500,11 +500,12 @@ export async function executeWithFallback(
 						try {
 							for await (const chunk of stream) {
 								if (typeof chunk === "object" && chunk !== null && "error" in chunk) {
+									// 上游错误块是对象时不能直接 String()：那样只剩 "[object Object]"，
+									// 客户端看不到原因，按文本判定的降级（如推理回显关闭思考）也失效。
+									const payload = (chunk as Record<string, unknown>)["error"];
 									throw new Error(
-										redactConfiguredSecrets(
-											String((chunk as Record<string, unknown>)["error"]),
-											deployment.litellm_params,
-										),
+										redactConfiguredSecrets(streamErrorPayloadMessage(payload), deployment.litellm_params),
+										{ cause: payload },
 									);
 								}
 								if (!emitted) {
@@ -583,8 +584,18 @@ export async function executeWithFallback(
 									if (closingStream || req.streamAbortController?.signal.aborted) {
 										return;
 									}
+									// 候选失败不能静默丢弃：这条流最后抛给客户端的是首个候选的错误，
+									// 若不在这里留痕，后面几次上游 400 就只剩库里的一行 [object Object]。
+									const fallbackErrorText = redactConfiguredSecrets(
+										failure instanceof Error ? failure.message : streamErrorPayloadMessage(failure),
+										deployment.litellm_params,
+									);
+									logger.warn(
+										`[Router] 流式 fallback 候选 ${nextResolution.resolvedModel} 失败` +
+											`（主候选 ${resolvedModel}：${streamFailure.message}）：${fallbackErrorText}`,
+									);
 									if (fallbackAnswerOutput) {
-										yield { error: failure instanceof Error ? failure.message : String(failure) };
+										yield { error: fallbackErrorText };
 										return;
 									}
 								}

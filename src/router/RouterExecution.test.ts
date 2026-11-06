@@ -14,6 +14,7 @@ import type { Deployment } from "../types/router";
 import { RoutingStrategyName } from "../types/router";
 import { RateLimitError, AuthenticationError, BadRequestError } from "./RouterErrors";
 import { installMockFetch, mkDeployment, okResponse, errorResponse } from "./RouterTestHelpers";
+import { logger } from "../core/utils/logger";
 import { getRetryPolicyOverrideDelegate } from "./RouterTestDelegates";
 import { getUpstreamLogContext } from "./UpstreamLogContext";
 
@@ -486,6 +487,75 @@ describe("Router execution chain", () => {
 			expect((caught as Error).message).toContain("developer is invalid");
 		});
 	});
+
+	describe("流内对象型错误块的可观测性", () => {
+		it("错误块是对象时抛出上游原话，而不是 [object Object]", async () => {
+			const sse = [
+				'data: {"id":"chatcmpl-err","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}',
+				'data: {"error":{"message":"The `reasoning_text` in the thinking mode must be passed back to the API."}}',
+				"",
+			].join("\n\n");
+			mockFetch.mockResolvedValueOnce(new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));
+			const router = new Router({
+				model_list: [mkDeployment("stream-error-model")],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+			});
+
+			let caught: unknown;
+			try {
+				const result = await router.completion("stream-error-model", [{ role: "user", content: "hi" }], { stream: true });
+				for await (const chunk of result["stream"] as AsyncIterable<unknown>) {
+					void chunk;
+				}
+			} catch (error) {
+				caught = error;
+			}
+
+			expect(caught).toBeInstanceOf(Error);
+			expect((caught as Error).message).toContain("reasoning_text");
+			expect((caught as Error).message).not.toContain("[object Object]");
+		});
+
+		it("流式 fallback 候选失败留 warn，不静默丢弃", async () => {
+			const warn = jest.spyOn(logger, "warn").mockImplementation(() => logger);
+			try {
+				const sse = 'data: {"error":{"type":"api_error","message":"upstream stream terminated"}}\n\n';
+				mockFetch.mockResolvedValueOnce(
+					new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+				);
+				mockFetch.mockResolvedValueOnce(
+					errorResponse(400, {
+						error: { message: "The `reasoning_text` in the thinking mode must be passed back to the API." },
+					}),
+				);
+				const router = new Router({
+					model_list: [mkDeployment("primary-model"), mkDeployment("fallback-model")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					num_retries: 0,
+					fallbacks: [{ "primary-model": ["fallback-model"] }],
+				});
+
+				let caught: unknown;
+				try {
+					const result = await router.completion("primary-model", [{ role: "user", content: "hi" }], { stream: true });
+					for await (const chunk of result["stream"] as AsyncIterable<unknown>) {
+						void chunk;
+					}
+				} catch (error) {
+					caught = error;
+				}
+
+				// 客户端仍看到首个候选的错误，但 fallback 的 400 已经落到日志里
+				expect((caught as Error).message).toContain("upstream stream terminated");
+				const warnings = warn.mock.calls.map((call) => String(call[0]));
+				expect(warnings.some((text) => text.includes("fallback-model") && text.includes("reasoning_text"))).toBe(true);
+			} finally {
+				warn.mockRestore();
+			}
+		});
+	});
+
 	describe("Router.hasModel", () => {
 		it("model_name 命中（含全部署冷却时仍已知）", () => {
 			const router = new Router({
