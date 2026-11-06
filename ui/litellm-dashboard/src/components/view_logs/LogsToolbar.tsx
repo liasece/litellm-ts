@@ -1,5 +1,5 @@
 import { SyncOutlined } from "@ant-design/icons";
-import { Button } from "antd";
+import { Button, Switch } from "antd";
 import moment from "moment";
 import { useEffect, useRef, useState } from "react";
 import { LIVE_TAIL_INTERVAL_OPTIONS, QUICK_SELECT_OPTIONS, type LiveTailIntervalMs } from "./constants";
@@ -17,6 +17,7 @@ interface LogsToolbarProps {
 	customDate: boolean;
 	selectedInterval: LogsTimeInterval;
 	liveTailIntervalMs: LiveTailIntervalMs;
+	liveTailEnabled: boolean;
 	fetching: boolean;
 	onSearchTermChange: (value: string) => void;
 	onStartTimeChange: (value: string) => void;
@@ -24,6 +25,7 @@ interface LogsToolbarProps {
 	onCustomDateChange: (custom: boolean) => void;
 	onSelectedIntervalChange: (interval: LogsTimeInterval) => void;
 	onLiveTailIntervalChange: (intervalMs: LiveTailIntervalMs) => void;
+	onLiveTailEnabledChange: (enabled: boolean) => void;
 	onRefresh: () => void;
 	onPageReset: () => void;
 }
@@ -131,22 +133,28 @@ export default function LogsToolbar(props: LogsToolbarProps) {
 					</div>
 
 					<div className="flex min-w-0 items-center gap-2">
-						<label htmlFor="live-tail-interval" className="text-sm font-medium text-gray-900">
-							Live Tail
-						</label>
-						<select
-							id="live-tail-interval"
-							aria-label="Live Tail refresh interval"
-							className="min-w-20 rounded-md border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-							value={props.liveTailIntervalMs}
-							onChange={(event) => props.onLiveTailIntervalChange(Number(event.target.value) as LiveTailIntervalMs)}
-						>
-							{LIVE_TAIL_INTERVAL_OPTIONS.map((option) => (
-								<option key={option.value} value={option.value}>
-									{option.label}
-								</option>
-							))}
-						</select>
+						<span className="text-sm font-medium text-gray-900">Live Tail</span>
+						<Switch
+							aria-label="Live Tail"
+							checked={props.liveTailEnabled}
+							onChange={props.onLiveTailEnabledChange}
+						/>
+						{props.liveTailEnabled && (
+							<select
+								aria-label="Live Tail refresh interval"
+								className="min-w-20 rounded-md border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+								value={props.liveTailIntervalMs}
+								onChange={(event) =>
+									props.onLiveTailIntervalChange(Number(event.target.value) as LiveTailIntervalMs)
+								}
+							>
+								{LIVE_TAIL_INTERVAL_OPTIONS.filter((option) => option.value > 0).map((option) => (
+									<option key={option.value} value={option.value}>
+										{option.label}
+									</option>
+								))}
+							</select>
+						)}
 					</div>
 
 					<Button

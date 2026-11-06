@@ -2,7 +2,13 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SpendLogsTable, { RequestViewer } from "./index";
-import { createColumns, getSessionGroupKey, getSessionGroupRef, type LogEntry } from "./columns";
+import {
+	createColumns,
+	getSessionGroupKey,
+	getSessionGroupRef,
+	type LogEntry,
+	type LogsColumnOptions,
+} from "./columns";
 import { uiSpendLogsCall } from "../networking";
 import type { ColumnDef, Row } from "@tanstack/react-table";
 import type { Team } from "../key_team_helpers/key_list";
@@ -141,6 +147,28 @@ vi.mock("./table", () => ({
 				))}
 			</div>
 		);
+	},
+}));
+
+const { mockLiveTail } = vi.hoisted(() => ({
+	mockLiveTail: {
+		current: null as null | {
+			enabled: boolean;
+			intervalMs: number;
+			accessToken: string | null;
+			onRefresh: () => unknown;
+		},
+	},
+}));
+vi.mock("./useLiveTail", () => ({
+	useLiveTail: (options: {
+		enabled: boolean;
+		intervalMs: number;
+		accessToken: string | null;
+		onRefresh: () => unknown;
+	}) => {
+		mockLiveTail.current = options;
+		return { connected: true };
 	},
 }));
 
@@ -307,8 +335,8 @@ describe("Logs columns", () => {
 		expect(getSessionGroupRef(baseLogEntry)).toBeNull();
 	});
 
-	const renderColumnCell = (header: string, entry: LogEntry) => {
-		const column = createColumns().find((candidate) => candidate.header === header);
+	const renderColumnCell = (header: string, entry: LogEntry, options?: LogsColumnOptions) => {
+		const column = createColumns(undefined, options).find((candidate) => candidate.header === header);
 		if (!column || typeof column.cell !== "function") {
 			throw new Error(`Missing ${header} cell renderer`);
 		}
@@ -399,6 +427,29 @@ describe("Logs columns", () => {
 		await user.click(screen.getByRole("link", { name: sessionId }));
 		expect(onSessionClick).toHaveBeenCalledWith({ type: "claude_code_user_id", id: sessionId });
 		expect(onRowClick).not.toHaveBeenCalled();
+	});
+
+	it("renders an in-progress Session ID as a link that opens the session view", async () => {
+		const user = userEvent.setup();
+		const onSessionClick = vi.fn();
+		const sessionColumn = createColumns().find((candidate) => candidate.header === "Session ID");
+		if (!sessionColumn || typeof sessionColumn.cell !== "function") {
+			throw new Error("Missing Session ID cell renderer");
+		}
+		const entry = {
+			...baseLogEntry,
+			status: "in_progress",
+			metadata: { status: "in_progress" },
+			session_id: "3f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8",
+			onSessionClick,
+		};
+
+		render(
+			<div>{sessionColumn.cell({ getValue: () => sessionColumn, row: { original: entry } } as never)}</div>,
+		);
+
+		await user.click(screen.getByRole("link", { name: entry.session_id }));
+		expect(onSessionClick).toHaveBeenCalledWith({ type: "session_id", id: entry.session_id });
 	});
 
 	it("renders an explicit In Progress status instead of treating it as Success", () => {
@@ -748,6 +799,44 @@ describe("Logs columns", () => {
 		);
 	});
 
+	it("进行中的行在 Live Tail 开启时按秒推进 Duration", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2025-11-14T00:00:12Z"));
+		try {
+			renderColumnCell(
+				"Duration (s)",
+				{
+					...baseLogEntry,
+					status: "in_progress",
+					metadata: { status: "in_progress" },
+					startTime: "2025-11-14T00:00:00Z",
+					request_duration_ms: 8000,
+				},
+				{ liveTailActive: true },
+			);
+
+			expect(screen.getByText("12.00")).toBeInTheDocument();
+			act(() => {
+				vi.advanceTimersByTime(1000);
+			});
+			expect(screen.getByText("13.00")).toBeInTheDocument();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("Live Tail 关闭时进行中的行仍用服务端耗时", () => {
+		renderColumnCell("Duration (s)", {
+			...baseLogEntry,
+			status: "in_progress",
+			metadata: { status: "in_progress" },
+			startTime: "2025-11-14T00:00:00Z",
+			request_duration_ms: 8000,
+		});
+
+		expect(screen.getByText("8.00")).toBeInTheDocument();
+	});
+
 	it("shows TTFT on a fixed red 10-second gradient scale", () => {
 		renderColumnCell("TTFT (s)", {
 			...baseLogEntry,
@@ -841,47 +930,91 @@ describe("SpendLogsTable", () => {
 		expect(headers).toContain("Request ID");
 		expect(headers).toContain("Tags");
 	});
-	it("Live Tail 默认每 2 秒刷新，并提供全部刷新间隔", async () => {
+	it("Live Tail 默认开启，按 10 秒兜底刷新且只提供开启后的间隔", async () => {
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 
+		const liveTailSwitch = await screen.findByRole("switch", { name: "Live Tail" });
+		expect(liveTailSwitch).toBeChecked();
 		const intervalSelect = await screen.findByLabelText("Live Tail refresh interval");
-		expect(intervalSelect).toHaveValue("2000");
+		expect(intervalSelect).toHaveValue("10000");
 		expect(Array.from((intervalSelect as HTMLSelectElement).options).map((option) => option.text)).toEqual([
-			"关",
 			"2s",
 			"10s",
 			"30s",
 			"1m",
 			"5m",
 		]);
-		expect(screen.getByText("Auto-refreshing every 2s")).toBeInTheDocument();
-		await waitFor(() => expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("2000"));
+		expect(screen.getByText("Live updates on change; idle refresh every 10s")).toBeInTheDocument();
+		await waitFor(() => {
+			expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("10000");
+			expect(sessionStorage.getItem("liveTailEnabled")).toBe("true");
+		});
 	});
 
-	it("Live Tail 可以切换刷新间隔或关闭", async () => {
+	it("Live Tail 开关控制间隔下拉框，关闭后保留上次间隔", async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 
+		const liveTailSwitch = await screen.findByRole("switch", { name: "Live Tail" });
 		const intervalSelect = await screen.findByLabelText("Live Tail refresh interval");
 		await user.selectOptions(intervalSelect, "10000");
 		expect(intervalSelect).toHaveValue("10000");
-		expect(screen.getByText("Auto-refreshing every 10s")).toBeInTheDocument();
+		expect(screen.getByText("Live updates on change; idle refresh every 10s")).toBeInTheDocument();
 		await waitFor(() => expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("10000"));
 
-		await user.selectOptions(intervalSelect, "0");
-		expect(intervalSelect).toHaveValue("0");
-		expect(screen.queryByText(/Auto-refreshing every/)).not.toBeInTheDocument();
-		await waitFor(() => expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("0"));
+		await user.click(liveTailSwitch);
+		expect(liveTailSwitch).not.toBeChecked();
+		expect(screen.queryByLabelText("Live Tail refresh interval")).not.toBeInTheDocument();
+		expect(screen.queryByText(/idle refresh every/)).not.toBeInTheDocument();
+		await waitFor(() => {
+			expect(sessionStorage.getItem("liveTailEnabled")).toBe("false");
+			expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("10000");
+			expect(mockLiveTail.current?.enabled).toBe(false);
+		});
+
+		await user.click(liveTailSwitch);
+		expect(liveTailSwitch).toBeChecked();
+		expect(await screen.findByLabelText("Live Tail refresh interval")).toHaveValue("10000");
+		expect(screen.getByText("Live updates on change; idle refresh every 10s")).toBeInTheDocument();
+		await waitFor(() => expect(mockLiveTail.current?.enabled).toBe(true));
 	});
 
-	it("旧 Live Tail 关闭状态会迁移为新的关闭间隔", async () => {
+	it("Live Tail 变化时通过完整日志接口刷新当前列表", async () => {
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		await waitFor(() => expect(mockLiveTail.current).not.toBeNull());
+		expect(mockLiveTail.current?.enabled).toBe(true);
+		expect(mockLiveTail.current?.intervalMs).toBe(10_000);
+
+		const callsBefore = vi.mocked(uiSpendLogsCall, true).mock.calls.length;
+		await act(async () => {
+			await mockLiveTail.current?.onRefresh();
+		});
+		await waitFor(() => expect(vi.mocked(uiSpendLogsCall, true).mock.calls.length).toBeGreaterThan(callsBefore));
+	});
+
+	it("旧 Live Tail 关闭状态迁移为关闭的开关", async () => {
 		sessionStorage.setItem("isLiveTail", "false");
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 
-		expect(await screen.findByLabelText("Live Tail refresh interval")).toHaveValue("0");
+		expect(await screen.findByRole("switch", { name: "Live Tail" })).not.toBeChecked();
+		expect(screen.queryByLabelText("Live Tail refresh interval")).not.toBeInTheDocument();
 		await waitFor(() => {
-			expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("0");
+			expect(sessionStorage.getItem("liveTailEnabled")).toBe("false");
+			expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("10000");
 			expect(sessionStorage.getItem("isLiveTail")).toBeNull();
+		});
+	});
+
+	it("旧版 0 间隔迁移为关闭的开关并恢复默认间隔", async () => {
+		sessionStorage.setItem("liveTailIntervalMs", "0");
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+
+		expect(await screen.findByRole("switch", { name: "Live Tail" })).not.toBeChecked();
+		expect(screen.queryByLabelText("Live Tail refresh interval")).not.toBeInTheDocument();
+		await waitFor(() => {
+			expect(sessionStorage.getItem("liveTailEnabled")).toBe("false");
+			expect(sessionStorage.getItem("liveTailIntervalMs")).toBe("10000");
 		});
 	});
 
@@ -950,6 +1083,33 @@ describe("SpendLogsTable", () => {
 		});
 		expect(screen.getByTestId("session-simulation-drawer")).toBeInTheDocument();
 		expect(screen.queryByTestId("log-details-drawer")).not.toBeInTheDocument();
+	});
+
+	it("进行中的行也能通过 Session ID 链接打开模拟窗口", async () => {
+		const user = userEvent.setup();
+		const groupId = "3f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8";
+		mockFilteredLogs = {
+			data: [
+				{
+					...baseLogEntry,
+					request_id: "req-active-session",
+					status: "in_progress",
+					metadata: { status: "in_progress" },
+					session_group_type: "session_id",
+					session_group_id: groupId,
+				},
+			],
+			total: 1,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		};
+
+		renderWithProviders(<SpendLogsTable {...defaultProps} />);
+		await user.click(await screen.findByRole("link", { name: groupId }));
+
+		expect(mockSimulationDrawerProps.current.sessionGroup).toEqual({ type: "session_id", id: groupId });
+		expect(screen.getByTestId("session-simulation-drawer")).toBeInTheDocument();
 	});
 
 	it("点击模拟时间线的 Log ID 后关闭模拟窗口并打开对应 Log 详情", async () => {
@@ -1110,20 +1270,18 @@ describe("SpendLogsTable", () => {
 		await waitFor(() => expect(mockRefetchFilteredLogs).toHaveBeenCalledTimes(1));
 	});
 
-	it("Live Tail continues refreshing the backend-filtered data source", async () => {
-		vi.useFakeTimers();
+	it("Live Tail refreshes the backend-filtered data source when notified", async () => {
 		mockHasBackendFilters = true;
 		mockFilters = { "Key Alias": "active-alias" };
 		renderWithProviders(<SpendLogsTable {...defaultProps} />);
 
-		expect(screen.getByText("Auto-refreshing every 2s")).toBeInTheDocument();
+		expect(screen.getByText("Live updates on change; idle refresh every 10s")).toBeInTheDocument();
+		await waitFor(() => expect(mockLiveTail.current).not.toBeNull());
 		await act(async () => {
-			vi.advanceTimersByTime(2_000);
-			await Promise.resolve();
+			await mockLiveTail.current?.onRefresh();
 		});
 
 		expect(mockRefetchFilteredLogs).toHaveBeenCalledTimes(1);
-		vi.useRealTimers();
 	});
 
 	it("restores URL filters and view state when the page is refreshed", () => {

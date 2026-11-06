@@ -16,7 +16,8 @@ import KeyInfoView from "../templates/key_info_view";
 import AuditLogs from "./audit_logs";
 import {
 	createColumns,
-	getSessionGroupRef,
+	getNavigableSessionGroupRef,
+	getSessionGroupKey,
 	LogEntry,
 	type LogsOptionalColumnId,
 	type LogsSortField,
@@ -33,6 +34,7 @@ import { FILTER_KEYS, hasBackendLogFilters } from "./log_filter_state";
 import { useLogFilterLogic } from "./log_filter_logic";
 import { readLogsUrlState, writeLogsUrlState } from "./logs_url_state";
 import LiveTailBanner from "./LiveTailBanner";
+import { useLiveTail } from "./useLiveTail";
 import { shareLogsPageIdentity } from "./logsStructuralSharing";
 import { LogDetailsDrawer, SessionSimulationDrawer } from "./LogDetailsDrawer";
 import LogsPagination from "./LogsPagination";
@@ -122,21 +124,35 @@ export default function SpendLogsTable({
 	// when time range / sort / page changes while a backend filter is in effect.
 	const [isMainQueryEnabled, setIsMainQueryEnabled] = useState(() => !hasBackendLogFilters(initialUrlState.filters));
 
-	const [liveTailIntervalMs, setLiveTailIntervalMs] = useState<LiveTailIntervalMs>(() => {
+	const [liveTailEnabled, setLiveTailEnabled] = useState(() => {
+		const storedEnabled = sessionStorage.getItem("liveTailEnabled");
+		if (storedEnabled !== null) {
+			return storedEnabled !== "false";
+		}
+
+		// 旧版本用 0 表示关闭；迁移时保留「关闭」，但把间隔恢复为默认值。
 		const storedInterval = sessionStorage.getItem("liveTailIntervalMs");
-		if (storedInterval !== null) {
-			const parsedInterval = Number(storedInterval);
-			if (isLiveTailIntervalMs(parsedInterval)) {
-				return parsedInterval;
-			}
+		if (storedInterval !== null && Number(storedInterval) === 0) {
+			return false;
 		}
 
 		const legacyLiveTail = sessionStorage.getItem("isLiveTail");
 		if (legacyLiveTail !== null) {
 			try {
-				return JSON.parse(legacyLiveTail) === false ? 0 : DEFAULT_LIVE_TAIL_INTERVAL_MS;
+				return JSON.parse(legacyLiveTail) !== false;
 			} catch {
 				// Ignore malformed legacy state and use the new default.
+			}
+		}
+		return true;
+	});
+
+	const [liveTailIntervalMs, setLiveTailIntervalMs] = useState<LiveTailIntervalMs>(() => {
+		const storedInterval = sessionStorage.getItem("liveTailIntervalMs");
+		if (storedInterval !== null) {
+			const parsedInterval = Number(storedInterval);
+			if (isLiveTailIntervalMs(parsedInterval) && parsedInterval > 0) {
+				return parsedInterval;
 			}
 		}
 		return DEFAULT_LIVE_TAIL_INTERVAL_MS;
@@ -144,8 +160,9 @@ export default function SpendLogsTable({
 
 	useEffect(() => {
 		sessionStorage.setItem("liveTailIntervalMs", String(liveTailIntervalMs));
+		sessionStorage.setItem("liveTailEnabled", String(liveTailEnabled));
 		sessionStorage.removeItem("isLiveTail");
-	}, [liveTailIntervalMs]);
+	}, [liveTailEnabled, liveTailIntervalMs]);
 
 	const [selectedTimeInterval, setSelectedTimeInterval] = useState(initialUrlState.selectedTimeInterval);
 
@@ -230,14 +247,12 @@ export default function SpendLogsTable({
 			return response;
 		},
 		enabled: !!accessToken && !!token && !!userRole && !!userID && activeTab === "request logs" && isMainQueryEnabled,
-		refetchInterval: liveTailIntervalMs > 0 && currentPage === 1 ? liveTailIntervalMs : false,
 		placeholderData: keepPreviousData,
-		refetchIntervalInBackground: false,
 		// 按 request_id 复用未变化的日志行，避免整页重渲染（详见 logsStructuralSharing.ts）。
 		structuralSharing: (oldData: unknown, newData: unknown) =>
 			shareLogsPageIdentity(oldData as PaginatedResponse | undefined, newData as PaginatedResponse),
-		// Polling transport state must not invalidate the whole Logs view.
-		// React Query's structural sharing preserves unchanged row references in `data`.
+		// Refetch/fetching state must not invalidate the whole Logs view: Live Tail refreshes
+		// outside React Query's interval, and structural sharing preserves unchanged rows.
 		notifyOnChangeProps: ["data", "isLoading"],
 	});
 
@@ -369,23 +384,28 @@ export default function SpendLogsTable({
 		void queryClient.invalidateQueries({ queryKey: ["logs"] });
 	}, [queryClient]);
 
-	// The main React Query poller is disabled while backend filters are active.
-	// Keep Live Tail running by polling the filtered data source directly.
-	useEffect(() => {
-		if (!hasBackendFilters || liveTailIntervalMs <= 0 || currentPage !== 1 || activeTab !== "request logs") {
-			return;
+	// Live Tail：长连接只通知「有变化」，数据仍走完整日志接口。过滤器生效时
+	// 主查询被禁用，刷新对应到被后端过滤的那份列表。
+	const refreshLiveTail = useCallback(() => {
+		if (hasBackendFilters) {
+			return refetchFilteredLogs();
 		}
+		return refetchLogs();
+	}, [hasBackendFilters, refetchFilteredLogs, refetchLogs]);
 
-		const intervalId = window.setInterval(() => {
-			void refetchFilteredLogs();
-		}, liveTailIntervalMs);
-
-		return () => window.clearInterval(intervalId);
-	}, [activeTab, currentPage, hasBackendFilters, liveTailIntervalMs, refetchFilteredLogs]);
+	const liveTailActive = liveTailEnabled && currentPage === 1 && activeTab === "request logs";
+	const { connected: liveTailConnected } = useLiveTail({
+		enabled: liveTailActive,
+		intervalMs: liveTailIntervalMs,
+		accessToken,
+		onRefresh: refreshLiveTail,
+	});
 
 	const handleRowClick = useCallback((log: LogEntry) => {
 		// A session-backed request opens the drawer in session mode and loads every log in that session.
-		const sessionGroup = getSessionGroupRef(log);
+		// 详情抽屉的会话模式只读 SpendLogs，进行中的请求此时返回 null，走单条详情；
+		// Session ID 列链接走的是模拟面板，那条链路包含进行中请求。
+		const sessionGroup = getNavigableSessionGroupRef(log);
 		if (sessionGroup) {
 			setSelectedSessionGroup(sessionGroup);
 			setSelectedLog(log);
@@ -431,9 +451,9 @@ export default function SpendLogsTable({
 					onKeyHashClick: handleKeyHashClick,
 					onSessionClick: handleSessionClick,
 				},
-				{ visibleOptionalColumns },
+				{ visibleOptionalColumns, liveTailActive },
 			),
-		[handleKeyHashClick, handleSessionClick, handleSortChange, sortBy, sortOrder, visibleOptionalColumns],
+		[handleKeyHashClick, handleSessionClick, handleSortChange, sortBy, sortOrder, visibleOptionalColumns, liveTailActive],
 	);
 
 	const logFilterOptions: FilterOption[] = [
@@ -577,6 +597,7 @@ export default function SpendLogsTable({
 													customDate={isCustomDate}
 													selectedInterval={selectedTimeInterval}
 													liveTailIntervalMs={liveTailIntervalMs}
+													liveTailEnabled={liveTailEnabled}
 													fetching={isManualRefreshing}
 													onSearchTermChange={setSearchTerm}
 													onStartTimeChange={setStartTime}
@@ -584,6 +605,7 @@ export default function SpendLogsTable({
 													onCustomDateChange={setIsCustomDate}
 													onSelectedIntervalChange={setSelectedTimeInterval}
 													onLiveTailIntervalChange={setLiveTailIntervalMs}
+													onLiveTailEnabledChange={setLiveTailEnabled}
 													onRefresh={handleRefresh}
 													onPageReset={() => setCurrentPage(1)}
 												/>
@@ -603,9 +625,10 @@ export default function SpendLogsTable({
 										</div>
 									</div>
 									<LiveTailBanner
-										visible={liveTailIntervalMs > 0 && currentPage === 1 && activeTab === "request logs"}
+										visible={liveTailActive}
 										intervalMs={liveTailIntervalMs}
-										onStop={() => setLiveTailIntervalMs(0)}
+										connected={liveTailConnected}
+										onStop={() => setLiveTailEnabled(false)}
 									/>
 									<DataTable
 										columns={logColumns}
@@ -653,6 +676,8 @@ export default function SpendLogsTable({
 			/>
 			{simulationSessionGroup ? (
 				<SessionSimulationDrawer
+					// 会话变化即换实例：分页游标等面板内状态随会话一起重置。
+					key={getSessionGroupKey(simulationSessionGroup)}
 					open={true}
 					onClose={() => setSimulationSessionGroup(null)}
 					onOpenLog={(event) => {

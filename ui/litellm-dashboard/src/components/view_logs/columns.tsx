@@ -8,6 +8,7 @@ import { ArrowDownToLine, ArrowUpFromLine, CircleDollarSign, Database, GitBranch
 import { getModelLogoAndName, getProviderLogoAndName } from "../provider_info_helpers";
 import LabeledField from "../common_components/LabeledField";
 import { TableHeaderSortDropdown } from "../common_components/TableHeaderSortDropdown/TableHeaderSortDropdown";
+import { LiveDurationCell } from "./LiveDurationCell";
 import { MetricProgress, MetricProgressCell } from "./MetricProgressCell";
 import { TimeCell } from "./time_cell";
 import { AGENT_CALL_TYPES, MCP_CALL_TYPES } from "./constants";
@@ -485,6 +486,29 @@ export function getSessionGroupRef(
 	return null;
 }
 
+/**
+ * 请求是否仍在进行中。
+ *
+ * SpendLogs 只有请求结束后才写入，进行中的行来自 LiteLLM_ActiveRequests（status 也一样
+ * 放在 metadata 里做双保险）。
+ * @param log - 列表或详情行
+ */
+export function isInProgressLog(log: Pick<LogEntry, "status" | "metadata">): boolean {
+	return log.status === "in_progress" || log.metadata?.status === "in_progress";
+}
+
+/**
+ * 可以打开详情抽屉会话模式的 Session group。
+ *
+ * 详情抽屉的会话模式（`/spend/logs/session/ui`）只读 SpendLogs，看不到仍在
+ * LiteLLM_ActiveRequests 里的请求；返回 null 让进行中的行退回单条详情。
+ * “Session 模拟”面板读取的时间线接口包含进行中请求，因此不受这里限制。
+ * @param log - 列表或详情行
+ */
+export function getNavigableSessionGroupRef(log: LogEntry): SessionGroupRef | null {
+	return isInProgressLog(log) ? null : getSessionGroupRef(log);
+}
+
 export function getSessionGroupKey(group: SessionGroupRef): string {
 	return `${group.type}\u0000${group.id}`;
 }
@@ -517,7 +541,7 @@ const SortableHeader = ({
 	</div>
 );
 
-const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
+const buildColumns = (sortProps?: LogsSortProps, options: LogsColumnOptions = {}): ColumnDef<LogEntry>[] => [
 	{
 		header: sortProps
 			? () => (
@@ -583,6 +607,7 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 			if (!sessionGroup) return <span>-</span>;
 
 			const sessionId = sessionGroup.id;
+			// Session 模拟面板的时间线包含进行中请求，因此进行中的行同样可以点开。
 			const onSessionClick = sortProps?.onSessionClick ?? row.onSessionClick;
 			if (!onSessionClick) {
 				return (
@@ -688,7 +713,12 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 			: "Duration (s)",
 		accessorKey: "request_duration_ms",
 		cell: (info: any) => {
+			const row = info.row.original as LogEntry;
 			const ms = info.getValue();
+			// 进行中的行由前端按秒推进：Live Tail 的刷新间隔（默认 10s）内也能连续看到耗时增长。
+			if (isInProgressLog(row) && options.liveTailActive) {
+				return <LiveDurationCell startTime={row.startTime} serverDurationMs={ms} />;
+			}
 			if (ms == null) return <span>-</span>;
 			const durationSeconds = Number(ms) / 1000;
 			const seconds = durationSeconds.toFixed(2);
@@ -1002,12 +1032,18 @@ const buildColumns = (sortProps?: LogsSortProps): ColumnDef<LogEntry>[] => [
 export interface LogsColumnOptions {
 	/** 额外显示的可选列；未列出的可选列保持隐藏。 */
 	visibleOptionalColumns?: readonly LogsOptionalColumnId[];
+	/**
+	 * Live Tail 是否正在刷新这个列表。
+	 * 为 true 时进行中的行由前端按秒推进 Duration，避免只能按刷新间隔跳变。
+	 */
+	liveTailActive?: boolean;
 }
 
 export const createColumns = (
 	sortProps?: LogsSortProps,
 	options: LogsColumnOptions = {},
-): ColumnDef<LogEntry>[] => filterOptionalColumns(buildColumns(sortProps), options.visibleOptionalColumns);
+): ColumnDef<LogEntry>[] =>
+	filterOptionalColumns(buildColumns(sortProps, options), options.visibleOptionalColumns);
 
 /** Default columns without sort (for backward compatibility) */
 export const columns = createColumns();

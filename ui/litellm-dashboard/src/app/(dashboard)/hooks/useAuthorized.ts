@@ -10,6 +10,7 @@ import { buildLoginUrlWithReturn, storeReturnUrl } from "@/utils/returnUrlUtils"
 import { formatUserRole } from "@/utils/roles";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { WEB_UI_COOKIE_SESSION_SENTINEL } from "@/utils/webUiSession";
 import { useUIConfig } from "./uiConfig/useUIConfig";
 
 /** 通过后端 HttpOnly cookie session 判断 Dashboard 身份。 */
@@ -59,8 +60,8 @@ const useAuthorized = () => {
 		isLoading: isLoading,
 		isAuthorized: isAuthorized,
 		// 保留现有组件的 truthy 门禁；该固定标记不是密钥，networking 不会把它写入 header。
-		token: isAuthorized ? "cookie-session" : null,
-		accessToken: isAuthorized ? "cookie-session" : "",
+		token: isAuthorized ? WEB_UI_COOKIE_SESSION_SENTINEL : null,
+		accessToken: isAuthorized ? WEB_UI_COOKIE_SESSION_SENTINEL : "",
 		userId: session?.user_id ?? "",
 		userEmail: session?.user_email ?? "",
 		userRole: session ? formatUserRole(session.user_role) : "",
