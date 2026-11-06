@@ -71,6 +71,32 @@ describe("backfillDeepSeekResponsesReasoning", () => {
 		expect(backfillDeepSeekResponsesReasoning(body)).toBe(body);
 	});
 
+	it("同一段 assistant 先发文本消息再调用工具时，占位插在文本消息之前", () => {
+		const message = { type: "message", role: "assistant", content: [{ type: "output_text", text: "先查一下时间" }] };
+		const body = { input: [user, message, call, output], tools };
+
+		const input = backfillDeepSeekResponsesReasoning(body)["input"] as unknown[];
+
+		expect(input).toHaveLength(5);
+		expect(reasoningText(input[1])).toBe(DEEPSEEK_REASONING_PLACEHOLDER);
+		expect(input[2]).toEqual(message);
+		expect(input[3]).toEqual(call);
+		expect(input[4]).toEqual(output);
+	});
+
+	it("多段时每段的占位都落在该段 assistant 文本消息之前", () => {
+		const firstMessage = { type: "message", role: "assistant", content: [{ type: "output_text", text: "先查时间" }] };
+		const secondMessage = { type: "message", role: "assistant", content: [{ type: "output_text", text: "再查一次" }] };
+		const body = { input: [user, firstMessage, call, output, secondMessage, secondCall, secondOutput], tools };
+
+		const input = backfillDeepSeekResponsesReasoning(body)["input"] as unknown[];
+
+		expect(reasoningText(input[1])).toBe(DEEPSEEK_REASONING_PLACEHOLDER);
+		expect(input[2]).toEqual(firstMessage);
+		expect(reasoningText(input[5])).toBe(DEEPSEEK_REASONING_PLACEHOLDER);
+		expect(input[6]).toEqual(secondMessage);
+	});
+
 	it("同一段的多个并行调用只补一条占位", () => {
 		const body = { input: [user, call, secondCall, output, secondOutput], tools };
 

@@ -13,6 +13,9 @@
  *    空字符串、仅 summary 全部仍然 400；
  * 4. reasoning item 必须位于对应 function_call 之前，插到其后会变成
  *    `No tool output found for tool call`。
+ * 5. 同一段里 assistant 先发文本消息再发起调用时，回显必须排到这条消息之前；插在消息与调用
+ *    之间仍按缺推理处理。生产 2026-11-06 request 38df4018 就是这样被 400 拒绝的，而同一会话
+ *    随后两条请求的占位落在段首（紧跟 function_call_output）都被接受。
  *
  * 跨上游 fallback（CLIProxy/CommandCode → 官方端点）会把历史整体搬过去，而其中大量回合由
  * 前者产生、本来就没有推理。这里只补结构占位，正文用固定标记，不伪造思考内容。
@@ -107,12 +110,16 @@ export function backfillDeepSeekResponsesReasoning(
 	// 一段 = 一次 assistant 工具调用及其结果；逐段判定是否已经带回推理。
 	const insertBefore: number[] = [];
 	let roundFirstCall = -1;
+	let roundFirstItem = -1;
 	let roundHasReasoningText = false;
 	const closeRound = (): void => {
 		if (roundFirstCall >= 0 && !roundHasReasoningText) {
-			insertBefore.push(roundFirstCall);
+			// 回显要排在这一段 assistant 产出的最前面：段内若先有 assistant 文本消息，占位必须
+			// 插在消息之前，夹在消息与调用之间仍会被上游判为缺推理（见文件头结论 5）。
+			insertBefore.push(roundFirstItem >= 0 ? roundFirstItem : roundFirstCall);
 		}
 		roundFirstCall = -1;
+		roundFirstItem = -1;
 		roundHasReasoningText = false;
 	};
 	for (let index = turnStart; index < input.length; index++) {
@@ -130,6 +137,9 @@ export function backfillDeepSeekResponsesReasoning(
 				roundHasReasoningText = true;
 			}
 			continue;
+		}
+		if (roundFirstItem < 0) {
+			roundFirstItem = index;
 		}
 		if (hasTypeIn(item, TOOL_CALL_TYPES)) {
 			if (roundFirstCall < 0) {
