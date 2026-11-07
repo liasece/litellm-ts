@@ -2,58 +2,26 @@
 
 ## 适用范围与事实源
 
-在 OPC 管理的工作区，先从发起会话所在的管理端实际读取[公司共同工作约定](/Users/jansen/src/liasece/OPC/organization/shared-guidance.md)，再按下文查项目事实。这个路径位于管理端 Mac。直接在 JL3 发起会话时，按该环境的用户级入口查找同一真源；无法读取时，说明缺口，先做不依赖它的只读调查。
+以当前用户目标、有效协议和实际实现判断任务。[公司共同工作约定](/Users/jansen/src/liasece/OPC/organization/shared-guidance.md)提供通用方法，可按当前疑问参考；该绝对路径位于管理端 Mac，JL3 不默认有此路径。资料按会话需求和已有上下文选取，不设置文档阅读前置步骤；关键依据不可取得时说明影响，不猜测授权。
 
 - 本文件只保存每次仓库任务都需要的稳定边界。具体实现、命令和版本以当前源码、`package.json`、
   锁文件及实际脚本为准，不在这里维护日期化测试数量、工具链补丁版本或生产现场快照。
-- 修改 `ui/litellm-dashboard/` 前，完整读取该目录的 `AGENTS.md`；更近目录的规则只覆盖其作用域。
-- 上游近期变更评估与对齐状态维护在 [docs/upstream-alignment.md](docs/upstream-alignment.md)；执行类似调查或复刻前先读该记录，按源码与验证结果更新状态。
+- `ui/litellm-dashboard/AGENTS.md` 表达前端范围的工作方法和约束，可按问题定位；更近目录的规则只覆盖其作用域。
+- 上游近期变更评估与对齐状态维护在 [docs/upstream-alignment.md](docs/upstream-alignment.md)；类似调查可从该记录定位已有尝试，状态从当前源码和验证结果核实。
 - 生产部署、线上核验和故障恢复使用 `$deploy-litellm-ts`。生产拓扑与诊断信号只在该 Skill 的
   reference 中维护，不复制到根指令。
 
 ## 托管 CLIProxy（CPA）运行时
 
-- 本仓库自带 CLIProxyAPI：`src/cliproxy/CliProxyRuntimeManager.ts` 在应用容器内以子进程启动
-  `cli-proxy-api`，配置、凭证、日志和版本都放在 `CLIPROXY_RUNTIME_ROOT`（默认
-  `/var/lib/litellm/cliproxy`）下。它不是外部独立服务；排查 CPA 或改 CPA 配置先看这里，
-  不要假设另有一套独立部署的 CPA。
-- 运行时镜像由 `Dockerfile` / `Dockerfile.runtime` 构建，**runtime 阶段必须是 glibc 发行版**
-  （当前为 `node:22-bookworm-slim`）。官方 CPA 插件版二进制和插件 `.so` 都动态链接 glibc，
-  Alpine/musl 无法加载（gcompat 兼容层实测会崩溃）；不要为了缩小镜像把 runtime 改回 Alpine。
-  Alpine 只能用于构建阶段。
-- CPA 发布物分两种：`_no-plugin` 静态构建（任意 libc 都能跑）和插件版（依赖 glibc）。
-  管理器的选择规则是 ≥ 8.0.0 使用插件版，< 8.0.0 继续用 `_no-plugin`。构建参数
-  `CLIPROXY_VERSION` 只决定新实例的 bootstrap；已有实例的 `current` 软链不会因镜像升级
-  自动切换，需要在 CLIProxy 页面升级版本后插件才会生效。
-- 插件配置由管理器投影进 `config.yaml` 的 `plugins` 块，仅当当前 CPA ≥ 8.0.0 且插件文件存在时
-  注入。`plugins.enabled` / `plugins.dir` 属于托管边界，用户配置中同一插件 id 的其他字段优先。
-  插件目录由 `CLIPROXY_PLUGIN_DIR` 指定；OpenCode Go 的密钥优先通过 `OPENCODE_GO_API_KEY`
-  环境变量注入，不要把密钥写进仓库、配置样例或日志。
-- CommandCode GOAT/Pro/Max 插件（`commandcode-go-cliproxyapi`）同样内置。它不接受插件配置里的
-  `api-keys`；账户写在 LiteLLM 配置的 `plugins.managed-accounts.commandcode`（单对象或数组），
-  管理器把每个密钥投影成 `CLIPROXY_RUNTIME_ROOT/auths/` 下的托管 auth 文件（手写 auth 文件仍兼容）。
-  Dashboard 的 OAuth accounts 页签支持增删改托管账号。模型前缀为 `commandcode/`，额度走插件的
-  `quota-usage` 管理接口。CommandCode Go 套餐不支持。细节见
-  `docs/cliproxy-commandcode-goat-plugin.md`。
-- 该插件的源码是**本仓库 fork**：`plugins/commandcode-go-cliproxyapi/`。镜像从该目录现场
-  编译（`Dockerfile` / `Dockerfile.runtime` 的 `commandcode-plugin-build` 阶段），
-  **不再下载上游 release**。上游 0.1.3 对 Responses `namespace` 工具直接报错，fork 已修复且
-  行为写在 `FORK.md`；同步上游前先读它，不要直接覆盖该目录。
-- 账户额度优先走 CLIProxy 的通用插件额度接口（`/v0/management/quota/providers`、
-  `/v0/management/quota/fetch`），provider 专用额度逻辑只保留给 codex/claude/kimi/antigravity/xai。
-  插件额度是账号级窗口，不提供按模型的美元余额明细。
-- 升级、回滚或重启托管 CLIProxy 前会自动降级并排空在途请求（默认 120 秒上限，可用环境变量 CLIPROXY_DRAIN_TIMEOUT_SECONDS 调整），见 [docs/cliproxy-runtime-upgrade.md](docs/cliproxy-runtime-upgrade.md)。
-- 改变 runtime 基础镜像、切换 CPA 大版本或调整插件注入规则属于兼容性/部署形态变化，先说明影响、
-  验证方式和回滚边界。实现细节、插件来源与验证步骤见
-  [docs/cliproxy-opencode-go-plugin.md](docs/cliproxy-opencode-go-plugin.md)。
-- 启动链路不等待 CPA 就绪：`createServiceContainer()` 之后由 `container.warmUp()` 在监听后并行
-  预热远端模型价格快照与子进程，只有数据库迁移、遗留在途请求回收、路由装配在关键路径上。改动启动
-  顺序前先读 [docs/startup.md](docs/startup.md)，不要把 `await cliProxyRuntime.initialize()` 或远端
-  价格快照拉取加回装配流程。
+CPA 由本应用管理为子进程，调查先确定当前管理器、配置投影、版本软链、持久目录和真实进程，不假定独立部署。插件版运行依赖 glibc，runtime 不改回 Alpine/musl。升级、回滚和重启保持在途请求降级与排空，版本及超时从当前实现和环境声明核实。
+
+插件 fork、本地兼容修复与托管账号边界不能被上游发布物直接覆盖；密钥不进日志或样例。服务监听不等待 CPA 或远端价格快照，预热在监听后异步进行；数据库迁移、在途请求回收和路由装配仍在必要关键路径。
+
+[CPA 运行专题](docs/agent-guides/cliproxy-runtime.md)提供二进制、插件、账号和升级调查方法，可按问题参考；真实版本选择与配置规则由当前 `src/cliproxy/CliProxyRuntimeManager.ts`、构建及部署配置表达。
 
 ## 工作判断
 
-以 API 调用方、上游供应商、Proxy、费用与日志、Dashboard、数据库和运维的完整可观察结果判断方案。必要约束由类型、数据库或检查保证；不能用局部代码更短把兼容、迁移或恢复成本转给其他人。低风险任务无需形式化问卷，公共协议、费用、持久化和生产变更应说明影响、验证与恢复边界。
+区分最新产品目标、仍需兑现的公共协议和费用/数据责任、当前实现与运行状态；代码说明现状，不能自动否定新需求。以 API 调用方、上游供应商、Proxy、费用与日志、Dashboard、数据库和运维的完整可观察结果判断方案。必要约束由类型、数据库或检查保证；不能用局部代码更短把兼容、迁移或恢复成本转给其他人。低风险任务无需形式化问卷，公共协议、费用、持久化和生产变更应说明影响、验证与恢复边界。
 
 ## 授权与安全边界
 
