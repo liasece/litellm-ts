@@ -40,8 +40,9 @@ onBeforeUnmount(() => timers.forEach(clearTimeout));
 				></UiButton>
 			</div>
 			<div>
-				<code>{{ tool.search_tool_id }}</code
+				<code>{{ tool.search_tool_id || "From config (YAML)" }}</code
 				><UiButton
+					v-if="tool.search_tool_id"
 					size="small"
 					variant="text"
 					:class="{ 'tools-copy-done': copied.id }"
