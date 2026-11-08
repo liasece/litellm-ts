@@ -8,12 +8,15 @@ export function createCostTrackingStore(api: CostTrackingApi = costTrackingApi) 
 	const state = reactive({ discounts: {} as DiscountConfig, margins: {} as MarginConfig, models: [] as string[], loading: true });
 	let disposed = false,
 		generation = 0;
+	// 读取失败必须提示：静默留空会让用户以为"没有配置折扣/保证金"，
+	// 而这两项配置直接决定实际计费金额。
 	async function loadDiscounts() {
 		try {
 			const value = await api.discounts();
 			if (!disposed) state.discounts = value;
 		} catch (error: unknown) {
-			if (!(error instanceof HttpApiError)) notificationManager.fromBackend("Failed to fetch discount configuration");
+			if (!disposed)
+				notificationManager.fromBackend(error instanceof HttpApiError ? error.message : "Failed to fetch discount configuration");
 		}
 	}
 	async function loadMargins() {
@@ -21,7 +24,8 @@ export function createCostTrackingStore(api: CostTrackingApi = costTrackingApi) 
 			const value = await api.margins();
 			if (!disposed) state.margins = value;
 		} catch (error: unknown) {
-			if (!(error instanceof HttpApiError)) notificationManager.fromBackend("Failed to fetch margin configuration");
+			if (!disposed)
+				notificationManager.fromBackend(error instanceof HttpApiError ? error.message : "Failed to fetch margin configuration");
 		}
 	}
 	async function initialize() {
@@ -45,8 +49,11 @@ export function createCostTrackingStore(api: CostTrackingApi = costTrackingApi) 
 				await loadDiscounts();
 			}
 		} catch (error: unknown) {
-			if (!disposed)
+			if (!disposed) {
 				notificationManager.fromBackend(error instanceof HttpApiError ? error.message : "Failed to update discount configuration");
+				// 保存失败时回读服务端状态，避免表格继续显示未生效的乐观值
+				await loadDiscounts();
+			}
 		}
 	}
 	async function saveMargins(config: MarginConfig) {
@@ -58,8 +65,11 @@ export function createCostTrackingStore(api: CostTrackingApi = costTrackingApi) 
 				await loadMargins();
 			}
 		} catch (error: unknown) {
-			if (!disposed)
+			if (!disposed) {
 				notificationManager.fromBackend(error instanceof HttpApiError ? error.message : "Failed to update margin configuration");
+				// 保存失败时回读服务端状态，避免表格继续显示未生效的乐观值
+				await loadMargins();
+			}
 		}
 	}
 	async function createDiscount(provider: string | undefined, text: string) {

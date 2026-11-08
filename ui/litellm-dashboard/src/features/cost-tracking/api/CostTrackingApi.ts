@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { dashboardFetch, getApiBaseUrl, HttpApiError } from "../../platform/api/HttpApiClient";
+import { dashboardFetch, deriveErrorMessage, getApiBaseUrl, HttpApiError } from "../../platform/api/HttpApiClient";
 import type { CostEstimateRequest, DiscountConfig, MarginConfig } from "../support/CostTrackingModels";
 const number = z.number().finite();
 const discount = z.record(z.string(), number),
@@ -41,18 +41,10 @@ async function request<T>(path: string, init: RequestInit, parse: (value: unknow
 	});
 	const data: unknown = await response.json();
 	if (!response.ok) {
-		const detail = object(data).detail,
-			nested = object(detail).error;
-		throw new HttpApiError(
-			typeof nested === "string"
-				? nested
-				: typeof detail === "string"
-					? detail
-					: path === "/cost/estimate"
-						? "Failed to estimate cost"
-						: "Failed to update settings",
-			response.status,
-		);
+		// 后端统一错误体是 { error: { message } }（PY 兼容端点用 detail），
+		// 校验错误（如非法 provider、超范围比例）必须原样告知用户，不能退化成通用文案。
+		const fallback = path === "/cost/estimate" ? "Failed to estimate cost" : "Failed to update settings";
+		throw new HttpApiError(data === undefined ? fallback : deriveErrorMessage(data), response.status);
 	}
 	return parse(data);
 }
