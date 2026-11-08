@@ -79,7 +79,7 @@ const costFields = computed(() => [
 		></template
 	>
 	<div v-else-if="column === 'spend'" style="display: flex; flex-direction: column">
-		<UiPopover placement="bottomLeft">
+		<UiPopover placement="bottomLeft" popup-class="logs-cost-popover-shell">
 			<span class="logs-cost-value logs-mono">{{ money(log.spend || null, 6, priceIdentity) }}</span>
 			<template #content>
 				<div class="logs-cost-popover-title">
@@ -147,7 +147,7 @@ const costFields = computed(() => [
 	<div v-else-if="column === 'model'" class="logs-model">
 		<ProviderLogoComponent v-if="model.provider" :provider="model.provider" :logo="model.logo" />
 		<UiTag v-if="model.builtin" color="purple" style="margin: 0; flex-shrink: 0">Built-in · {{ model.builtin }}</UiTag>
-		<UiPopover placement="bottomLeft">
+		<UiPopover placement="bottomLeft" popup-class="logs-model-popover-shell">
 			<span class="logs-model-name"
 				><span>{{ model.displayName }}</span
 				><span v-if="model.fallback > 0" class="logs-model-fallback">({{ model.fallback }})</span></span

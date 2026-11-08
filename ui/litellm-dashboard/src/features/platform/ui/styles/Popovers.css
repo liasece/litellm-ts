@@ -7,7 +7,7 @@
 .ui-popover {
 	position: fixed;
 	z-index: 1200;
-	max-width: min(400px, calc(100vw - 8px));
+	max-width: min(var(--ui-popover-max-width, 400px), calc(100vw - 8px));
 	padding: 12px;
 	border-radius: 8px;
 	box-shadow: var(--ui-overlay-shadow);

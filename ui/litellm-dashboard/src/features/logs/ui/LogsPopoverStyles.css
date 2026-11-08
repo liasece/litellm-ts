@@ -15,8 +15,20 @@
 	align-items: center;
 	gap: 8px;
 }
+/* 面板比默认 tooltip 宽，气泡卡按内容放宽（仍受视口约束） */
+.ui-popover.logs-cost-popover-shell {
+	--ui-popover-max-width: 414px;
+	max-height: calc(100vh - 8px);
+	overflow-y: auto;
+}
+.ui-popover.logs-model-popover-shell {
+	--ui-popover-max-width: 464px;
+	max-height: calc(100vh - 8px);
+	overflow-y: auto;
+}
 .logs-cost-popover {
 	width: 390px;
+	max-width: 100%;
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
 	gap: 8px;
@@ -47,9 +59,11 @@
 	line-height: 20px;
 	font-weight: 600;
 	color: #1e293b;
+	overflow-wrap: anywhere;
 }
 .logs-model-popover {
 	width: 440px;
+	max-width: 100%;
 }
 .logs-model-summary {
 	display: grid;
