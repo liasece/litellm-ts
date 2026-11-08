@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { QuotaWindow } from "../api/UpstreamQuotaApi";
 defineProps<{ windows: QuotaWindow[] }>();
+function exhaustedClass(value: number | null) {
+	return value !== null && value <= 0 ? "usage-quota-window-name--exhausted" : "";
+}
 function color(value: number | null) {
 	return value !== null && value < 20 ? "#ff4d4f" : value !== null && value < 50 ? "#faad14" : "#52c41a";
 }
@@ -9,7 +12,7 @@ function color(value: number | null) {
 	<div class="usage-quota-windows">
 		<div v-for="window in windows" :key="window.id">
 			<header>
-				<strong>{{ window.label }}</strong
+				<strong :class="exhaustedClass(window.remaining_percent)">{{ window.label }}</strong
 				><span>{{ window.remaining_percent === null ? "—" : Math.round(window.remaining_percent) + "% remaining" }}</span>
 			</header>
 			<div class="usage-quota-progress">

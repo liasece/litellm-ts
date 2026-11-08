@@ -10,6 +10,7 @@ defineEmits<{ refresh: [] }>();
 const quotaColor = (remaining: number | null) =>
 	remaining !== null && remaining < 20 ? "#ff4d4f" : remaining !== null && remaining < 50 ? "#faad14" : "#52c41a";
 const date = (value: string) => new Date(value).toLocaleString();
+const exhaustedClass = (remaining: number | null) => (remaining !== null && remaining <= 0 ? "cp-quota-window-name--exhausted" : "");
 </script>
 <template>
 	<UiCard
@@ -57,7 +58,7 @@ const date = (value: string) => new Date(value).toLocaleString();
 			</div>
 			<div v-for="window in quotaState.data.windows" :key="window.id">
 				<div class="cp-between cp-mb-4">
-					<strong>{{ window.label }}</strong
+					<strong :class="exhaustedClass(window.remaining_percent)">{{ window.label }}</strong
 					><span>{{ window.remaining_percent === null ? "—" : Math.round(window.remaining_percent) + "% remaining" }}</span>
 				</div>
 				<div

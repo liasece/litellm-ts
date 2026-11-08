@@ -107,6 +107,9 @@
 .usage-quota-balances strong {
 	font-weight: 600;
 }
+.usage-quota-windows header strong.usage-quota-window-name--exhausted {
+	color: #ff4d4f;
+}
 .usage-quota-progress {
 	height: 8px;
 	border-radius: 100px;
