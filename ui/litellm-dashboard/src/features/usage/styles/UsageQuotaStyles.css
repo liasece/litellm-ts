@@ -46,11 +46,17 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	min-width: 0;
+}
+.usage-quota-account-title .provider-identity {
+	flex: none;
 }
 .usage-quota-account-title .ui-tag {
 	margin-right: 0;
 }
 .usage-quota-account-title strong {
+	flex: 1 1 auto;
+	min-width: 0;
 	font-weight: 600;
 	overflow: hidden;
 	text-overflow: ellipsis;

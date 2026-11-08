@@ -302,6 +302,16 @@
 .cp-quota-heading .ui-tag {
 	margin-right: 0;
 }
+.cp-quota-heading .provider-identity {
+	flex: none;
+}
+.cp-quota-heading .cp-inline > .cp-ellipsis {
+	flex: 1 1 auto;
+}
+
+.cp-quota-window-name--exhausted {
+	color: #ff4d4f;
+}
 .cp-quota-filename {
 	display: inline-block;
 	max-width: 280px;
