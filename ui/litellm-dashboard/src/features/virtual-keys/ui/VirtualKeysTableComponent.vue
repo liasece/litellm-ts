@@ -84,7 +84,7 @@ onBeforeUnmount(finish);
 	<div class="vk-table-viewport">
 		<div class="vk-table-border">
 			<div class="vk-table-scroll">
-				<table class="vk-table" :style="{ width: tableWidth + 'px' }">
+				<table class="vk-table" :style="{ minWidth: tableWidth + 'px' }">
 					<thead>
 						<tr>
 							<th

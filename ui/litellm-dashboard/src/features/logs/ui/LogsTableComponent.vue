@@ -26,7 +26,7 @@ const width = computed(() => columns.value.reduce((sum, item) => sum + item.widt
 </script>
 <template>
 	<div class="logs-table-wrap">
-		<table class="logs-table" :style="{ width: width + 'px' }">
+		<table class="logs-table" :style="{ minWidth: width + 'px' }">
 			<thead>
 				<tr>
 					<th v-for="column in columns" :key="column.id" :style="{ width: column.width + 'px' }">
