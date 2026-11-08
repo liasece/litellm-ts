@@ -246,6 +246,24 @@ DB 配置覆盖 YAML 默认值，读取时保留显式 false/0；metadata 策略
 
 新增回归在修复前失败、修复后通过：Router 层验证 primary 在思考增量后断流时仍切到 b（`UpstreamRoutingRegression.test.ts`），Responses 层验证同场景下客户端最终拿到 `response.completed` 与 fallback 的答案（`ResponsesApiEndpoints.test.ts`）。
 
+## 2026-11-08 Cost Tracking 设置端点补全
+
+Dashboard 的 `/ui/?page=cost-tracking` 一打开就提示读取折扣/保证金配置失败。根因不是前端：Python 有、TS 从未实现的三个端点缺失，请求落进静态资源兜底后返回 HTML 404，前端 `response.json()` 解析失败。
+
+| 端点 | 语义 |
+| --- | --- |
+| `GET` / `PATCH /config/cost_discount_config` | 折扣配置（provider → 0~1 的比例），存入 `litellm_settings.cost_discount_config` |
+| `GET` / `PATCH /config/cost_margin_config` | 保证金配置（provider 或 `global` → 比例，或 `{percentage, fixed_amount}`），存入 `litellm_settings.cost_margin_config` |
+| `POST /cost/estimate` | 只读估算：按 `/model_group/info` 同源价格与当前折扣/保证金算出单次、日、月成本 |
+
+计费口径对齐 Python `cost_calculator.py`：base token 成本 → 折扣（`cost *= 1 - d`）→ 保证金（provider 键优先，否则 `global`；percentage 作用于折后金额，fixed_amount 直接相加）。读取的配置是「DB 覆盖 + yaml 默认」的有效值，写入只改 DB 对应键并立即刷新进程内快照（TTL 60s 兜底）。
+
+影响：默认空配置时计费完全不变。一旦配置，实际落账 `spend`、预算 reservation 上界、`/spend/calculate` 与 `usage.cost`（即 `x-litellm-response-cost` 响应头）使用同一函数，预算判断与实际扣费不会互相矛盾；`cost_breakdown` 只在发生调整时补 `original_cost`、`discount_percent`、`margin_percent` 等键。历史 spend 日志不会回溯重算。
+
+验证：`CostTrackingConfig` 14 项、端点 8 项、`SpendTracker`（含 reservation 与落账口径）回归通过；2026-11-08 部署后线上 GET 返回 `200 {values:{}}`、`/cost/estimate` 给出真实价格（glm-4-7-anthropic 100 万输入 + 50 万输出 = $1.75/请求、$52.50/月）、未知模型返回 `404 Could not find pricing for model ...`，页面无错误提示，预算计算器可用。保存失败路径也在线上验证过：给本部署没有的 provider 保存折扣返回 `400` 并原样提示可用 provider 列表，前端回读服务端状态后不保留未生效的行，数据库未被写入。
+
+恢复边界：清空方式是 PATCH 空对象或删除 `litellm_settings` 中的对应键，无需迁移；回滚代码需重新部署。provider 取值只接受本部署 `LlmProviders` 里的真实 provider（外加 `global`），WebUI 的下拉来自上游全量目录，选到本部署没有的 provider 会得到 400 并列出可用值，而不是静默无效。
+
 ## 后续维护规则
 
 1. 先读本文件，核实当前 TS commit/工作区，再读取对应源码和上游最终 PR/固定版本。不得覆盖用户未提交改动。
@@ -264,3 +282,4 @@ DB 配置覆盖 YAML 默认值，读取时保留显式 false/0；metadata 策略
 | 2026-10-11 分类复核 | 固定 171 条发布窗口、完整功能标注及非 feat 新增契约，展开回补源；当前 TS 实现 | 9 个 BUG 隔离探针确认；50 个新增能力组，1420 个原始 PR 逐条建议；60 个工程/回补审计；已排除未验证风险与无对应功能的上游修复 | 无 / 未部署 |
 | 2026-10-11 建议实施 | 用户选择 F02/F03/F04/F05/F06/F07/F15/F16/F19；现有 Provider/Router/DB 范围 | 9 组建议增量；7 个确认 BUG 修复，2 个未选 BUG 保留；逐条实施状态见功能索引 | 未提交工作区 / 未部署 |
 | 2026-10-12 审查与部署 | 对本批兼容、流式生命周期与生产协议进行审查 | 修复 7 项本批回归；1504 后端测试通过；生产 API 与 4 条真实调用路径通过；保留已有 lint/UI 基线与上游过期别名限制 | 未提交工作区 / 已部署（最终镜像见发布记录） |
+| 2026-11-08 Cost Tracking | Dashboard cost-tracking 页面报错，定位为 Python 有、TS 缺失的三个端点 | 实现折扣/保证金配置读写与 `/cost/estimate`，折扣→保证金口径接入落账、预算 reservation、`/spend/calculate` 与响应头；provider 校验限定本部署真实值 | 未提交工作区 / 已部署并线上核验 |

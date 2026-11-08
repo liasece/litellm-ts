@@ -90,6 +90,17 @@ export function extractDeploymentPeakPricing(deployment: Deployment): PeakPricin
 }
 
 /**
+ * 解析 deployment 的 provider，与 ProviderRegistry.getProvider / SpendLogs.custom_llm_provider
+ * 同一优先级：litellm_params.custom_llm_provider ?? parseProviderName(litellm_params.model)。
+ * 费用折扣/保证金与预算预留都按这个值匹配 provider 配置。
+ * @param deployment - deployment
+ */
+export function resolveDeploymentProvider(deployment: Deployment): string {
+	const params = deployment.litellm_params;
+	return params.custom_llm_provider ?? defaultProviderRegistry.parseProviderName(params.model);
+}
+
+/**
  * 构造实际执行 deployment 的 spend 归因信息。
  * provider 解析与 ProviderRegistry.getProvider 同一优先级：
  * litellm_params.custom_llm_provider ?? parseProviderName(litellm_params.model)。
@@ -98,7 +109,7 @@ export function extractDeploymentPeakPricing(deployment: Deployment): PeakPricin
  */
 export function buildDeploymentSpendInfo(deployment: Deployment, apiBase: string): DeploymentSpendInfo {
 	const params = deployment.litellm_params;
-	const customLlmProvider = params.custom_llm_provider ?? defaultProviderRegistry.parseProviderName(params.model);
+	const customLlmProvider = resolveDeploymentProvider(deployment);
 	return {
 		customLlmProvider: customLlmProvider,
 		apiBase: apiBase,

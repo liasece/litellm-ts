@@ -48,6 +48,7 @@ import { CallType, SpendLogStatus } from "../types/spend";
 import { getRecordedUpstreamExchange } from "../router/UpstreamExchange";
 import type { ModelResponse, ModelResponseStream, Usage } from "../types/openai";
 import { costPerToken, resolvePeakMultiplier } from "../cost/CostCalculator";
+import { adjustCost, costTrackingConfigService, resolveCostProvider } from "../cost/CostTrackingConfig";
 import { createModuleLogger } from "../core/utils/logger";
 import { hashApiKey } from "../core/utils/crypto";
 import { getConfig } from "../core/config";
@@ -1342,18 +1343,30 @@ export function buildSpendReservationScopes(auth: UserAPIKeyAuth): SpendReservat
 
 /**
  * 估算请求最大费用；输入使用 cl100k_base tokenizer，输出使用请求声明的最大 token 数。
+ * 费用口径与落账一致：先按 provider 折扣、再加保证金（默认空配置不影响金额）。
  * @param model
  * @param requestBody
  * @param customCost
+ * @param provider - 实际执行 deployment 的 provider；缺省从模型名解析
  */
-export function estimateSpendReservation(model: string, requestBody: Record<string, unknown>, customCost?: CustomCostPerToken): number {
+export function estimateSpendReservation(
+	model: string,
+	requestBody: Record<string, unknown>,
+	customCost?: CustomCostPerToken,
+	provider?: string,
+): number {
 	reservationTokenizer ??= get_encoding("cl100k_base");
 	const promptTokens = reservationTokenizer.encode(JSON.stringify(requestBody)).length;
 	const configuredLimits = [requestBody["max_completion_tokens"], requestBody["max_output_tokens"], requestBody["max_tokens"]].filter(
 		(value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
 	);
 	const completionTokens = configuredLimits.length > 0 ? Math.ceil(Math.max(...configuredLimits)) : DEFAULT_RESERVATION_COMPLETION_TOKENS;
-	const estimate = costPerToken(model, promptTokens, completionTokens, 0, 0, { customCostPerToken: customCost }).totalCost;
+	const baseCost = costPerToken(model, promptTokens, completionTokens, 0, 0, { customCostPerToken: customCost }).totalCost;
+	const estimate = adjustCost(
+		baseCost,
+		resolveCostProvider(provider, model),
+		costTrackingConfigService.getSnapshot(),
+	).total;
 	return Number.isFinite(estimate) ? Math.max(0, estimate) : 0;
 }
 
@@ -1858,7 +1871,14 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 				at: new Date(logEntry.startTime),
 			});
 	const { cacheInputCost, inputCost, outputCost } = tokenCost;
-	const spend = tokenCost.totalCost + fixedCost;
+	// 费用折扣/保证金：按实际执行 provider 生效（销毁前先在 CostTrackingConfig 校验）。
+	// 默认空配置时 total 与 tokenCost.totalCost 完全相同，不改变任何既有账务。
+	const costAdjustment = adjustCost(
+		tokenCost.totalCost,
+		resolveCostProvider(logEntry.custom_llm_provider, logEntry.model),
+		costTrackingConfigService.getSnapshot(),
+	);
+	const spend = costAdjustment.total + fixedCost;
 	const requestStartTime = new Date(logEntry.startTime);
 	const requestEndTime = new Date(logEntry.endTime);
 	const requestDurationMs = logEntry.request_duration_ms ?? Math.max(0, requestEndTime.getTime() - requestStartTime.getTime());
@@ -1875,6 +1895,8 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 	const peakMultiplier = resolvePeakMultiplier(peakPricing, new Date(logEntry.startTime));
 	// PY CostBreakdown（types/utils.py:2771）：cost 计算完成后注入 metadata.cost_breakdown。
 	// tool_usage_cost 记录按次计费的直连工具调用固定费用（无此类调用时为 0）。
+	// 折扣/保证金仅在命中配置时出现，便于 Logs 页核对"原价 → 折后 → 加价"。
+	const hasCostAdjustment = costAdjustment.discountAmount !== 0 || costAdjustment.marginAmount !== 0;
 	sanitizedMetadata["cost_breakdown"] = {
 		cache_input_cost: cacheInputCost,
 		input_cost: inputCost,
@@ -1884,6 +1906,16 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
 		...(peakPricing === undefined
 			? {}
 			: { price_tier: peakMultiplier > 1 ? "peak" : "off_peak", price_multiplier: peakMultiplier }),
+		...(hasCostAdjustment
+			? {
+					original_cost: tokenCost.totalCost,
+					discount_percent: costAdjustment.discountPercent,
+					discount_amount: costAdjustment.discountAmount,
+					margin_percent: costAdjustment.marginPercent,
+					margin_fixed_amount: costAdjustment.marginFixedAmount,
+					margin_total_amount: costAdjustment.marginAmount,
+				}
+			: {}),
 	};
 
 	const metadataSettings = await dbConfigProvider.getEffectiveParam("general_settings");
@@ -2102,8 +2134,16 @@ export function calculateAndSetCost(
 		reasoningTokens: reasoningTokens,
 	});
 
+	// 折扣/保证金：与落账同口径（provider 来自 Router 透传的 _spendInfo）
+	const spendInfoProvider = (response as unknown as { _spendInfo?: { customLlmProvider?: string } })._spendInfo?.customLlmProvider;
+	const adjustedCost = adjustCost(
+		totalCost,
+		resolveCostProvider(spendInfoProvider, model),
+		costTrackingConfigService.getSnapshot(),
+	);
+
 	// 在 usage 上设置 cost
-	(usage as Usage & { cost?: number }).cost = totalCost;
+	(usage as Usage & { cost?: number }).cost = adjustedCost.total;
 }
 
 /**

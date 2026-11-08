@@ -17,6 +17,7 @@ import { AuthorizationGuard } from "./auth/AuthorizationGuard";
 import type { ServiceConfig } from "./core/config";
 import type { RequestHandler } from "express";
 import { modelCostMapService, type ModelCostMapService } from "./cost/ModelCostMapService";
+import { costTrackingConfigService } from "./cost/CostTrackingConfig";
 import { CredentialSecretBox } from "./credentials/CredentialSecretBox";
 import { CredentialService } from "./credentials/CredentialService";
 import { CredentialRepository } from "./repositories/CredentialRepository";
@@ -186,6 +187,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 				},
 			},
 			{ name: "cliproxy_runtime", run: () => cliProxyRuntime.initialize() },
+			{ name: "cost_tracking_config", run: () => costTrackingConfigService.refresh(true) },
 		]));
 
 	// 4. 创建 AuthRepository

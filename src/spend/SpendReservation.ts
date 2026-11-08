@@ -10,7 +10,7 @@ import { lookupModelCostPerToken, type CustomCostPerToken } from "../cost/CostCa
 import { ApiError } from "../core/api/ApiError";
 import type { DrizzleDb } from "../core/db/Database";
 import { getModelGroupName } from "../router/RouterModelGroupCache";
-import { extractDeploymentCustomCost } from "../router/RouterSpendInfo";
+import { extractDeploymentCustomCost, resolveDeploymentProvider } from "../router/RouterSpendInfo";
 import type { Deployment } from "../types/router";
 import { CallType } from "../types/spend";
 import { createActiveRequestJournal } from "./ActiveRequestJournal";
@@ -194,7 +194,14 @@ export function estimateRouterSpendReservation(
 	let maximum = 0;
 	for (const deployment of candidates) {
 		const deploymentModel = deployment.litellm_params.model;
-		const estimate = estimateSpendReservation(deploymentModel, requestBody, conservativeDeploymentCost(deployment));
+		// provider 与落账口径一致（custom_llm_provider ?? 模型名前缀）：预算预留与实际扣费
+		// 必须用同一套折扣/保证金，否则预算边界会出现预留通过、落账 429 的错位。
+		const estimate = estimateSpendReservation(
+			deploymentModel,
+			requestBody,
+			conservativeDeploymentCost(deployment),
+			resolveDeploymentProvider(deployment),
+		);
 		if (!Number.isFinite(estimate) || estimate < 0) {
 			throw ApiError.unavailable(`deployment 模型费用无法估算: ${deploymentModel}`);
 		}

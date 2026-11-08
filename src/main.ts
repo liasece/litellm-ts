@@ -81,6 +81,7 @@ import { registerAlertingRoutes } from "./proxy/AlertingEndpoints";
 import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
+import { registerCostTrackingRoutes } from "./proxy/CostTrackingEndpoints";
 import { abortOrphanedActiveRequests, reapExpiredActiveRequests } from "./spend/ActiveRequestRecovery";
 import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
 import { registerProviderQuotaRoutes } from "./proxy/ProviderQuotaEndpoints";
@@ -409,6 +410,9 @@ export class LiteLLMServer {
 
 		// WebUI 鉴权支撑端点（/get/ui_settings、/config/list、/config/update、/team/list 等）
 		registerWebUiSupportRoutes(stubRouter, this._config, container.db.db, container.router, container.credentialService);
+
+		// Cost Tracking：折扣/保证金配置读写与费用估算（价格口径与 /model_group/info 一致）
+		registerCostTrackingRoutes(stubRouter, container.db.db, container.router);
 
 		registerAssistantsRoutes(stubRouter);
 		registerBatchesRoutes(stubRouter);

@@ -27,6 +27,7 @@ import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import { costPerToken } from "../cost/CostCalculator";
+import { adjustCost, costTrackingConfigService, resolveCostProvider } from "../cost/CostTrackingConfig";
 import {
 	AGGREGATE_DEFAULT_LIMIT,
 	COLD_STORAGE_BATCH_CONCURRENCY,
@@ -665,6 +666,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			logger.warn(`/spend/calculate cost query failed: ${(err as Error).message}`);
 			totalCost = 0;
 		}
+		// 与落账/响应头同口径：按 provider 折扣与保证金调整（默认空配置不改变金额）。
+		// 这里没有 deployment 上下文，provider 只能从模型名前缀解析。
+		totalCost = adjustCost(totalCost, resolveCostProvider(undefined, model), costTrackingConfigService.getSnapshot()).total;
 		return {
 			cost: totalCost,
 			model: model,

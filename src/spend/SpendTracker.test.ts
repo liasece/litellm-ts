@@ -37,6 +37,7 @@ import {
 	trackSpendLog,
 } from "./SpendTracker";
 import { estimateRouterSpendReservation } from "./SpendReservation";
+import { costTrackingConfigService } from "../cost/CostTrackingConfig";
 import { logger } from "../core/utils/logger";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { BadRequestError } from "../router/RouterErrors";
@@ -119,6 +120,24 @@ describe("Spend reservation 请求 helper", () => {
 			{ output_cost_per_token: 0.2 },
 		);
 		expect(estimated).toBeGreaterThanOrEqual(2_000);
+	});
+
+	it("预留估算按 provider 折扣与保证金调整，预算上界与落账同口径", () => {
+		// 先固定快照时间，避免后台刷新竞争
+		costTrackingConfigService.setValues({}, {});
+		const body = { input: "hello", max_tokens: 1_000 };
+		const custom = { output_cost_per_token: 1 };
+		const base = estimateSpendReservation("deepseek-v4-flash", body, custom, "deepseek");
+		costTrackingConfigService.setValues({ deepseek: 0.5 }, { deepseek: 0.1 });
+		try {
+			const adjusted = estimateSpendReservation("deepseek-v4-flash", body, custom, "deepseek");
+			// 折扣 50% 后加 10% 保证金
+			expect(adjusted).toBeCloseTo(base * 0.5 * 1.1, 10);
+			// 未命中该 provider 时只受 global 影响（此处无 global，保持原价）
+			expect(estimateSpendReservation("deepseek-v4-flash", body, custom, "openai")).toBeCloseTo(base, 10);
+		} finally {
+			costTrackingConfigService.setValues({}, {});
+		}
 	});
 
 	it("多个输出 token 上限字段同时存在时取最大值", () => {
@@ -741,6 +760,56 @@ describe("trackSpendLog 原子提交", () => {
 			total_tokens: 2,
 		});
 		expect(reservationSets).toContainEqual(expect.objectContaining({ status: "settled", actual: 0.25 }));
+	});
+
+	it("折扣与保证金按 provider 作用于实际落账金额，并在 cost_breakdown 保留原价", async () => {
+		const insertedValues: Record<string, unknown>[] = [];
+		const db: Record<string, unknown> = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => Promise.resolve()) })) })),
+			insert: jest.fn(() => ({
+				values: jest.fn((values: Record<string, unknown>) => {
+					insertedValues.push(values);
+					return {
+						onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ request_id: "req-adjust" }])) })),
+						onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+					};
+				}),
+			})),
+		};
+		// 用显式部署价避免依赖价格表快照：1000 输入 + 1000 输出 = 0.003 基础费用
+		costTrackingConfigService.setValues({ deepseek: 0.5 }, { deepseek: 0.1 });
+		try {
+			await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+				api_key: "key",
+				call_type: CallType.ACompletion,
+				completion_tokens: 1000,
+				custom_cost_per_token: { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
+				custom_llm_provider: "deepseek",
+				endTime: "2026-01-01T00:00:01.000Z",
+				model: "deepseek-v4-flash",
+				prompt_tokens: 1000,
+				request_id: "req-adjust",
+				spend: 0,
+				startTime: "2026-01-01T00:00:00.000Z",
+				total_tokens: 2000,
+			});
+		} finally {
+			costTrackingConfigService.reset();
+		}
+
+		// 0.003 → 折扣 50% = 0.0015 → 保证金 10% = 0.00165
+		const inserted = insertedValues[0];
+		expect(inserted).toBeDefined();
+		expect(inserted?.["spend"]).toBeCloseTo(0.00165, 12);
+		const breakdown = (inserted?.["metadata"] as Record<string, unknown>)["cost_breakdown"] as Record<string, number>;
+		expect(breakdown["original_cost"]).toBeCloseTo(0.003, 12);
+		expect(breakdown["discount_percent"]).toBe(0.5);
+		expect(breakdown["discount_amount"]).toBeCloseTo(0.0015, 12);
+		expect(breakdown["margin_percent"]).toBe(0.1);
+		expect(breakdown["margin_total_amount"]).toBeCloseTo(0.00015, 12);
+		expect(breakdown["total_cost"]).toBeCloseTo(0.00165, 12);
 	});
 
 	it("transaction 数据库错误转换为 ApiError 503，并尝试释放未决 reservation", async () => {
