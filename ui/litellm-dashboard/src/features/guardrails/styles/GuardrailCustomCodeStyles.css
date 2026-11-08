@@ -1,0 +1,483 @@
+.guardrail-custom-code-dialog {
+	padding: 24px;
+}
+.guardrail-custom-code {
+	height: 80vh;
+	display: flex;
+	flex-direction: column;
+	font-family: inherit;
+	color: #111827;
+}
+.guardrail-custom-code > header {
+	padding-bottom: 16px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.guardrail-custom-code h2 {
+	font-size: 20px;
+	line-height: 28px;
+	font-weight: 600;
+	margin: 0;
+}
+.guardrail-custom-code header p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+	margin: 4px 0 0;
+}
+.guardrail-code-controls {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 16px 0;
+	border-bottom: 1px solid #f3f4f6;
+}
+.guardrail-code-controls > label {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: #4b5563;
+}
+.guardrail-code-name {
+	flex: 1;
+	max-width: 200px;
+}
+.guardrail-code-mode {
+	width: 280px;
+}
+.guardrail-code-template {
+	width: 180px;
+}
+.guardrail-code-controls > .guardrail-code-default {
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
+	padding-top: 20px;
+	font-size: 14px;
+	font-weight: 400;
+}
+.guardrail-community-template {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 8px 12px;
+	border-top: 1px solid #f0f0f0;
+	color: #1890ff;
+	font-size: 12px;
+}
+.guardrail-community-template:hover {
+	background: #f0f0f0;
+}
+.guardrail-code-main {
+	display: flex;
+	flex: 1;
+	overflow: hidden;
+	margin-top: 16px;
+	gap: 24px;
+}
+.guardrail-code-main-left {
+	flex: 2;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow-y: auto;
+}
+.guardrail-code-caption {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
+	flex-shrink: 0;
+	font-size: 12px;
+	line-height: 16px;
+	color: #9ca3af;
+}
+.guardrail-code-caption strong {
+	font-weight: 600;
+	color: #6b7280;
+	text-transform: uppercase;
+	letter-spacing: 0.025em;
+}
+.guardrail-code-editor {
+	position: relative;
+	border: 1px solid #374151;
+	background: #1e1e1e;
+	border-radius: 8px;
+	overflow: hidden;
+	min-height: 300px;
+	max-height: 400px;
+	flex-shrink: 0;
+}
+.guardrail-code-editor textarea,
+.guardrail-code-lines {
+	font-family: "Fira Code", "Monaco", "Consolas", monospace;
+	font-size: 14px;
+	line-height: 1.6;
+}
+.guardrail-code-lines {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 48px;
+	background: #1e1e1e;
+	border-right: 1px solid #374151;
+	text-align: right;
+	padding: 12px 12px 0 0;
+	user-select: none;
+	overflow: hidden;
+	color: #6b7280;
+}
+.guardrail-code-lines > div {
+	height: 22.4px;
+}
+.guardrail-code-editor textarea {
+	width: 100%;
+	height: 100%;
+	padding: 12px 16px 12px 56px;
+	resize: none;
+	outline: none;
+	background: transparent;
+	color: #e5e7eb;
+	border: 0;
+	tab-size: 4;
+}
+.guardrail-code-test {
+	margin-top: 12px;
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	flex-shrink: 0;
+}
+.guardrail-code-test-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 12px 16px;
+	width: 100%;
+	font-size: 14px;
+	font-weight: 500;
+	text-align: left;
+}
+.guardrail-code-test-heading > .ui-icon:nth-child(2) {
+	color: #3b82f6;
+}
+.guardrail-code-test-body {
+	border-top: 1px solid #e5e7eb;
+	padding: 16px;
+	display: grid;
+	gap: 12px;
+}
+.guardrail-code-test-body > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: 12px;
+	color: #6b7280;
+}
+.guardrail-code-test-body > header > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.guardrail-code-test-body > header label {
+	font-weight: 500;
+	color: #4b5563;
+}
+.guardrail-code-test-body > header button {
+	padding: 4px 8px;
+	font-size: 12px;
+	line-height: 16px;
+	border: 1px solid;
+	border-radius: 4px;
+}
+.guardrail-code-test-body .pre-call {
+	background: #fff7ed;
+	color: #c2410c;
+	border-color: #fed7aa;
+}
+.guardrail-code-test-body .pre-mcp {
+	background: #faf5ff;
+	color: #7e22ce;
+	border-color: #e9d5ff;
+}
+.guardrail-code-test-body .post-call {
+	background: #f0fdf4;
+	color: #15803d;
+	border-color: #bbf7d0;
+}
+.guardrail-code-input-help {
+	padding: 8px;
+	background: #f9fafb;
+	border: 1px solid #e5e7eb;
+	border-radius: 4px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #4b5563;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 4px 16px;
+}
+.guardrail-orange {
+	color: #ea580c;
+}
+.guardrail-purple {
+	color: #9333ea;
+}
+.guardrail-green {
+	color: #16a34a;
+}
+.guardrail-code-test-input {
+	padding: 0;
+}
+.guardrail-code-test-input textarea {
+	font-family: var(--ui-font-mono);
+	font-size: 12px;
+	line-height: 1.5714285714;
+	padding: 4px 11px;
+}
+.guardrail-code-test-body {
+	row-gap: 0;
+}
+.guardrail-code-test-body > header {
+	margin-bottom: 8px;
+}
+.guardrail-code-input-help {
+	margin-bottom: 8px;
+}
+.guardrail-code-run {
+	margin-top: 12px;
+}
+.guardrail-primitives h3 {
+	margin-bottom: 12px;
+	color: #374151;
+}
+.guardrail-primitives > p {
+	margin-top: 0;
+}
+.guardrail-primitives > section {
+	margin-bottom: 8px;
+}
+.guardrail-primitive-category {
+	justify-content: space-between;
+	font-weight: 500;
+	color: #374151;
+}
+.guardrail-primitive-list {
+	gap: 8px;
+}
+.guardrail-primitive-category .ui-icon {
+	font-size: 12px;
+}
+
+.guardrail-code-run {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.guardrail-code-test-result {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	color: #2563eb;
+}
+.guardrail-code-test-result.error {
+	color: #dc2626;
+}
+.guardrail-code-test-result.allow {
+	color: #16a34a;
+}
+.guardrail-code-test-result.block {
+	color: #ea580c;
+}
+.guardrail-code-test-result small {
+	font-size: 12px;
+	color: #6b7280;
+	margin-left: 4px;
+}
+.guardrail-code-contribution {
+	margin-top: 12px;
+	padding: 16px;
+	background: linear-gradient(to right, #eff6ff, #eef2ff);
+	border: 1px solid #bfdbfe;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-shrink: 0;
+}
+.guardrail-code-contribution > div {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.guardrail-code-contribution > div > span {
+	background: #dbeafe;
+	border-radius: 999px;
+	padding: 8px;
+	color: #2563eb;
+}
+.guardrail-code-contribution strong {
+	display: block;
+	font-size: 14px;
+	font-weight: 500;
+}
+.guardrail-code-contribution small {
+	display: block;
+	font-size: 12px;
+	color: #4b5563;
+}
+.guardrail-primitives {
+	width: 300px;
+	border-left: 1px solid #e5e7eb;
+	padding-left: 24px;
+	overflow-y: auto;
+	flex-shrink: 0;
+}
+.guardrail-primitives h3 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+}
+.guardrail-primitives > p {
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+	margin: 12px 0;
+}
+.guardrail-primitive-category {
+	padding: 8px 12px;
+	display: flex;
+	gap: 8px;
+	font-size: 14px;
+	width: 100%;
+	align-items: center;
+	text-align: left;
+}
+.guardrail-primitive-list {
+	padding: 8px 12px;
+	display: grid;
+	gap: 4px;
+}
+.guardrail-primitive-list > button {
+	padding: 8px;
+	border-radius: 4px;
+	background: #f9fafb;
+	width: 100%;
+	text-align: left;
+}
+.guardrail-primitive-list > button:hover {
+	background: #eff6ff;
+}
+.guardrail-primitive-list code {
+	font-size: 12px;
+	color: #1f2937;
+	display: block;
+}
+.guardrail-primitive-list small {
+	display: block;
+	font-size: 10px;
+	color: #6b7280;
+	margin-top: 2px;
+}
+.guardrail-primitive-list > button.copied {
+	background: #dcfce7;
+	color: #15803d;
+	font-size: 12px;
+}
+.guardrail-primitive-list > button.copied span {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+.guardrail-custom-code > footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding-top: 16px;
+	margin-top: 16px;
+	border-top: 1px solid #e5e7eb;
+	flex-shrink: 0;
+}
+.guardrail-custom-code > footer > span {
+	font-size: 12px;
+	color: #9ca3af;
+}
+.guardrail-custom-code > footer > div {
+	display: flex;
+	gap: 12px;
+}
+.guardrail-custom-code [data-guardrail-size="xs"] {
+	font-size: 12px;
+	line-height: 16px;
+	padding: 6px 10px;
+	min-height: 30px;
+}
+
+.guardrail-custom-code-dialog .ui-dialog__close {
+	top: 20px;
+	right: 20px;
+}
+
+.guardrail-code-contribution strong {
+	line-height: 20px;
+	color: #111827;
+}
+.guardrail-code-contribution small {
+	line-height: 16px;
+}
+.guardrail-code-contribution .ui-button {
+	background: #2563eb;
+	border-width: 0;
+}
+.guardrail-primitives h3 > .ui-icon {
+	color: #3b82f6;
+}
+.guardrail-primitive-list code {
+	line-height: 16px;
+}
+.guardrail-primitive-list small {
+	line-height: 15px;
+}
+.guardrail-primitive-list {
+	border-top: 1px solid #d9d9d9;
+}
+.guardrail-custom-code > footer > div {
+	align-items: center;
+}
+
+.guardrail-code-name {
+	min-width: 160px;
+}
+
+.guardrail-code-controls > .guardrail-code-default {
+	line-height: 20px;
+}
+.guardrail-primitive-list small {
+	line-height: 1.5714285714;
+}
+
+.guardrail-primitive-list {
+	gap: 8px;
+}
+.guardrail-custom-code > footer > span {
+	line-height: 16px;
+}
+.guardrail-code-test-heading > .ui-icon:first-child {
+	margin-right: 4px;
+}
+
+.guardrail-code-editor textarea {
+	appearance: none;
+	border: 1px solid #6b7280;
+}
+.guardrail-code-editor textarea:focus {
+	border-color: #2563eb;
+	box-shadow: 0 0 0 1px #2563eb;
+}

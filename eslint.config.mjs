@@ -261,10 +261,8 @@ export default [
 		files: ["ui/litellm-dashboard/**/*.{ts,tsx}"],
 		ignores: [
 			"ui/litellm-dashboard/node_modules/**",
-			"ui/litellm-dashboard/.next/**",
 			"ui/litellm-dashboard/out/**",
 			"ui/litellm-dashboard/coverage/**",
-			"ui/litellm-dashboard/e2e_tests/**",
 			"ui/litellm-dashboard/scripts/**",
 			"ui/litellm-dashboard/tests/**",
 		],

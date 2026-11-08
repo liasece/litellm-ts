@@ -9,3 +9,10 @@ ui/litellm-dashboard/.next/
 ui/litellm-dashboard/out/
 ui/litellm-dashboard/tsconfig.tsbuildinfo
 core.*
+
+# Vue migration build output and local visual acceptance artifacts
+ui/litellm-dashboard/.cache/
+.artifacts/
+
+# Read-only React source/build reference during Vue acceptance
+/ui/litellm-dashboard-react-reference/

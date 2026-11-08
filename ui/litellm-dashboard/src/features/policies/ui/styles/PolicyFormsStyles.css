@@ -1,0 +1,442 @@
+.policy-form-dialog p,
+.policy-parameters-dialog p,
+.policy-selection-dialog p,
+.policy-ai-dialog p {
+	margin: 0;
+}
+.policy-form-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 16px;
+}
+.policy-mode-actions {
+	margin-top: 24px;
+}
+.policy-mode-picker {
+	display: flex;
+	gap: 16px;
+	padding: 8px 0;
+}
+.policy-mode-picker > button {
+	position: relative;
+	flex: 1;
+	padding: 24px 20px;
+	border: 2px solid #e5e7eb;
+	border-radius: 12px;
+	background: #fff;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	text-align: left;
+	color: rgba(0, 0, 0, 0.88);
+}
+.policy-mode-picker > button.is-selected {
+	border-color: #4f46e5;
+	background: #eef2ff;
+}
+.policy-mode-picker > button > strong {
+	display: block;
+	font-size: 15px;
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+.policy-mode-picker > button > span:last-child {
+	color: rgba(0, 0, 0, 0.45);
+	font-size: 13px;
+}
+.policy-mode-picker .ui-tag {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	font-size: 10px;
+	font-weight: 600;
+	margin: 0;
+}
+.policy-mode-icon {
+	width: 40px;
+	height: 40px;
+	border-radius: 10px;
+	background: #f3f4f6;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin-bottom: 16px;
+}
+.is-selected > .policy-mode-icon {
+	background: #e0e7ff;
+}
+.policy-mode-notice {
+	margin-top: 16px;
+	background: #eef2ff;
+	border-color: #c7d2fe;
+}
+.policy-mode-continue.ui-button {
+	background: #4f46e5;
+	color: white;
+	border-color: transparent;
+}
+.policy-divider {
+	display: flex;
+	align-items: center;
+	margin: 16px 0;
+	color: rgba(0, 0, 0, 0.88);
+	font: 500 16px/1.5714285714285714 var(--ui-font-antd);
+	white-space: nowrap;
+}
+.policy-divider::before,
+.policy-divider::after {
+	content: "";
+	border-top: 1px solid #0000000f;
+	position: relative;
+	transform: translateY(50%);
+}
+.policy-divider::before {
+	width: 5%;
+}
+.policy-divider::after {
+	width: 95%;
+}
+.policy-divider > span {
+	display: inline-block;
+	padding: 0 16px;
+	flex-shrink: 0;
+}
+.policy-divider > span > strong {
+	font: 600 14px/22px var(--ui-font-antd);
+}
+.policy-divider--plain {
+	border-top: 1px solid #0000000f;
+	margin: 24px 0;
+}
+.policy-divider--plain::before,
+.policy-divider--plain::after {
+	display: none;
+}
+.policy-radios {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	padding-top: 5px;
+	margin-bottom: 5px;
+}
+.policy-radio {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	margin-right: 8px;
+}
+.policy-radio > input {
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+	border: 1px solid #d9d9d9;
+	border-radius: 50%;
+	margin: 0;
+	background: white;
+	display: grid;
+	place-items: center;
+	cursor: pointer;
+}
+.policy-radio > input:checked {
+	border-color: #1677ff;
+	background: #1677ff;
+}
+.policy-radio > input:checked:after {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: white;
+}
+.policy-radio > span {
+	padding: 0 8px 0 0;
+}
+.policy-radio--button {
+	justify-content: center;
+	text-align: center;
+	flex: 1;
+	border: 1px solid #d9d9d9;
+	border-radius: 0;
+	height: 32px;
+	padding: 0 15px;
+	margin: 0;
+	color: #000000e0;
+}
+.policy-radio--button > input {
+	position: absolute;
+	opacity: 0;
+	width: 0;
+	height: 0;
+}
+.policy-radio--button > span {
+	padding: 0;
+}
+.policy-radio--button.is-checked {
+	color: #1677ff;
+	border-color: #1677ff;
+}
+.policy-tag-input {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px;
+	min-height: 32px;
+	padding: 1px 4px;
+	border: 1px solid #d9d9d9;
+	border-radius: 6px;
+	background: white;
+	cursor: text;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+}
+.policy-tag-input:focus-within {
+	border-color: #4096ff;
+	box-shadow: 0 0 0 2px #0591ff1a;
+}
+.policy-tag-input > span {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	background: #0000000a;
+	border: 1px solid #0000000f;
+	border-radius: 4px;
+	padding: 0 4px 0 8px;
+	height: 24px;
+	font-size: 14px;
+	line-height: 22px;
+}
+.policy-tag-input > span > button {
+	display: flex;
+	align-items: center;
+	border: 0;
+	background: none;
+	padding: 0;
+	color: #00000073;
+	cursor: pointer;
+}
+.policy-tag-input input {
+	min-width: 4px;
+	flex: 1;
+	width: 60px;
+	height: 24px;
+	border: 0;
+	outline: none;
+	padding: 0 0 0 6px;
+	font: inherit;
+	color: inherit;
+	background: transparent;
+}
+.policy-tag-input input::placeholder {
+	color: #00000040;
+}
+.policy-field-extra {
+	font-size: 12px;
+	line-height: 18.857px;
+	color: #00000073;
+	margin-top: 4px !important;
+}
+.policy-impact-samples {
+	margin-top: 4px;
+}
+.policy-impact-samples > span {
+	font-size: 12px;
+	color: #00000073;
+}
+.policy-impact-samples .ui-tag,
+.policy-impact-samples small {
+	font-size: 11px;
+}
+.policy-impact-popover {
+	max-width: 280px;
+	font-size: 12px;
+	line-height: 16px;
+}
+.policy-impact-popover h4 {
+	font-size: 14px;
+	line-height: 22px;
+	font-weight: 600;
+	margin: 0 0 8px;
+}
+.policy-impact-popover p {
+	margin: 0 0 4px;
+}
+.policy-impact-popover .ui-tag {
+	font-size: 10px;
+	margin: 1px;
+}
+.policy-impact-popover div > span {
+	color: #6b7280;
+}
+.policy-impact-global {
+	font-weight: 500;
+	color: #d97706;
+}
+.policy-impact-loading {
+	padding: 8px;
+	text-align: center;
+}
+.policy-simulator {
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+}
+.policy-simulator > section {
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 24px;
+	margin-bottom: 24px;
+}
+.policy-simulator h3 {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+	margin: 0 0 4px;
+}
+.policy-simulator header {
+	margin-bottom: 20px;
+}
+.policy-simulator header p {
+	color: #00000073;
+}
+.policy-simulator-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+}
+.policy-simulator-grid .ui-form-field {
+	margin-bottom: 12px;
+}
+.policy-simulator .ui-button--tremor .ui-button__label {
+	font-size: 14px;
+	line-height: 20px;
+}
+.policy-simulator > .policy-simulator-empty {
+	text-align: center;
+	padding: 32px;
+}
+.policy-simulator-empty svg {
+	display: block;
+	margin: 0 auto 12px;
+	color: #9ca3af;
+}
+.policy-simulator-empty strong {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #4b5563;
+	margin-bottom: 4px;
+}
+.policy-simulator-empty p {
+	font-size: 12px;
+	line-height: 16px;
+	color: #9ca3af;
+}
+.policy-simulator-effective {
+	margin-bottom: 16px;
+}
+.policy-simulator-effective > strong {
+	display: block;
+	margin-bottom: 8px;
+}
+.policy-simulator-results {
+	width: 100%;
+	font-size: 14px;
+	line-height: 20px;
+	border-collapse: collapse;
+	text-align: left;
+}
+.policy-simulator-results th {
+	padding: 8px 16px 8px 0;
+	font-weight: 700;
+	border-bottom: 1px solid #e5e7eb;
+}
+.policy-simulator-results td {
+	padding: 8px 16px 8px 0;
+	border-bottom: 1px solid #e5e7eb;
+}
+.policy-simulator-results tbody tr:last-child td {
+	border-bottom: 0;
+}
+.policy-simulator-results td > strong {
+	font-weight: 500;
+}
+.policy-delete-content {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+.policy-delete-content .ui-card {
+	margin-top: 8px;
+	background: #fff2f0;
+	border-color: #ffccc7;
+}
+.policy-delete-content .ui-card__header {
+	background: #fff2f0;
+	border-color: #ffccc7;
+}
+.policy-delete-content .ui-card__body {
+	padding: 16px;
+}
+.policy-delete-content dl {
+	margin: 0;
+	font-size: 14px;
+	line-height: 22px;
+}
+.policy-delete-content dl > div {
+	display: flex;
+	margin-bottom: 9.3333px;
+}
+.policy-delete-content dl > div:last-child {
+	margin-bottom: 0;
+}
+.policy-delete-content dt {
+	font-weight: 600;
+	color: rgba(0, 0, 0, 0.45);
+	margin-right: 2px;
+}
+.policy-delete-content dt::after {
+	content: ":";
+	margin-right: 8px;
+}
+.policy-delete-content dd {
+	margin: 0;
+}
+.policy-delete-content code {
+	background: #00000005;
+	border: 1px solid #0000000f;
+	border-radius: 3px;
+	padding: 2px 4px;
+}
+.policy-delete-content p {
+	margin: 0;
+}
+.policy-attachment-delete > .ui-dialog__body > div {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding-top: 12px;
+}
+.policy-attachment-delete > .ui-dialog__body > div > .ui-icon {
+	color: #faad14;
+}
+.policy-attachment-delete section > strong {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+}
+.policy-attachment-delete section > p {
+	margin: 8px 0 0;
+}
+.policy-attachment-delete .ui-dialog__footer {
+	margin-top: 24px;
+}
+
+.policy-form-label-help {
+	margin-left: 4px;
+	color: #00000073;
+}

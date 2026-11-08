@@ -203,7 +203,7 @@ describe("UserApiKeyAuth", () => {
 			expect(repository.findVerificationTokenByHash).not.toHaveBeenCalledWith(hashApiKey("spend-log-token-hash"));
 		});
 
-		it("剩余不足 1 天时应将 DB、JWT 和 CSRF cookie 同步续到新的 3 天", async () => {
+		it("剩余不足 1 天时应将 DB、JWT 和 CSRF cookie 同步续到新的 7 天", async () => {
 			const { createApiKeyAuth } = await import("./UserApiKeyAuth");
 			const nowSeconds = Math.floor(Date.now() / 1000);
 			const nearExpiryClaims = { ...sessionClaims, iat: nowSeconds - 2 * 86400, exp: nowSeconds + 12 * 3600 };
@@ -224,7 +224,7 @@ describe("UserApiKeyAuth", () => {
 				verifyJwt: jestMock.fn().mockResolvedValue({ claims: nearExpiryClaims }),
 			} as unknown as Parameters<typeof createApiKeyAuth>[2];
 			const middleware = createApiKeyAuth(repository, "master-key", jwtHandler, undefined, {
-				durationSeconds: 3 * 86400,
+				durationSeconds: 7 * 86400,
 			});
 			const req = mkReq({ cookie: "token=header.payload.signature; litellm_csrf_token=csrf-value" });
 			const cookie = jestMock.fn();
@@ -234,14 +234,14 @@ describe("UserApiKeyAuth", () => {
 			expect(error).toBeUndefined();
 			expect(extendVerificationTokenExpiry).toHaveBeenCalledTimes(1);
 			const renewedExpiry = extendVerificationTokenExpiry.mock.calls[0]![1] as Date;
-			expect(Math.floor(renewedExpiry.getTime() / 1000) - nowSeconds).toBe(3 * 86400);
+			expect(Math.floor(renewedExpiry.getTime() / 1000) - nowSeconds).toBe(7 * 86400);
 			expect(cookie).toHaveBeenCalledTimes(2);
 			const tokenCall = cookie.mock.calls.find((call: unknown[]) => call[0] === "token")!;
 			const renewedPayload = JSON.parse(
 				Buffer.from(String(tokenCall[1]).split(".")[1]!, "base64url").toString("utf8"),
 			) as Record<string, unknown>;
 			expect(renewedPayload.jti).toBe("session-jti");
-			expect((renewedPayload.exp as number) - (renewedPayload.iat as number)).toBe(3 * 86400);
+			expect((renewedPayload.exp as number) - (renewedPayload.iat as number)).toBe(7 * 86400);
 			expect(cookie).toHaveBeenCalledWith("litellm_csrf_token", "csrf-value", expect.objectContaining({ httpOnly: false }));
 		});
 
@@ -265,7 +265,7 @@ describe("UserApiKeyAuth", () => {
 				verifyJwt: jestMock.fn().mockResolvedValue({ claims: healthyClaims }),
 			} as unknown as Parameters<typeof createApiKeyAuth>[2];
 			const middleware = createApiKeyAuth(repository, "master-key", jwtHandler, undefined, {
-				durationSeconds: 3 * 86400,
+				durationSeconds: 7 * 86400,
 			});
 			const cookie = jestMock.fn();
 

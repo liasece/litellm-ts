@@ -1,0 +1,256 @@
+.ui-button {
+	display: inline-flex;
+	justify-content: center;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	padding: 0 15px;
+	border: 1px solid var(--ui-border);
+	border-radius: 6px;
+	background: var(--ui-surface);
+	color: var(--ui-text-antd);
+	box-shadow: 0 2px 0 rgb(0 0 0 / 2%);
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 21px;
+	white-space: nowrap;
+	text-align: center;
+	flex-shrink: 0;
+}
+.ui-button--antd {
+	font-weight: 400;
+}
+/* AntD leaves flex items shrinkable; Tremor explicitly keeps shrink-0. */
+.ui-button--antd,
+.ui-button--antd > .ui-icon,
+.ui-button--antd > .ui-lucide-icon,
+.ui-button--antd > .ui-hero-icon {
+	flex-shrink: 1;
+}
+.ui-button:not(:disabled):hover {
+	color: var(--ui-primary-hover);
+	border-color: var(--ui-primary-hover);
+}
+.ui-button:not(:disabled):active {
+	color: var(--ui-primary-active);
+	border-color: var(--ui-primary-active);
+}
+.ui-button--small {
+	height: 24px;
+	padding: 0 7px;
+	border-radius: 4px;
+}
+.ui-button--large {
+	height: 40px;
+	padding: 0 15px;
+	font-size: 16px;
+	border-radius: 8px;
+	line-height: 21px;
+}
+.ui-button__icon {
+	display: block;
+	height: 21px;
+	line-height: 21px;
+	flex: none;
+}
+.ui-button__icon > svg {
+	display: inline-flex;
+	vertical-align: -0.125em;
+}
+.ui-button--primary {
+	background: var(--ui-primary);
+	border-color: var(--ui-primary);
+	color: white;
+	box-shadow: 0 2px 0 rgb(5 145 255 / 10%);
+}
+.ui-button--primary:not(:disabled):hover {
+	background: var(--ui-primary-hover);
+	border-color: var(--ui-primary-hover);
+	color: white;
+}
+.ui-button--primary:not(:disabled):active {
+	background: var(--ui-primary-active);
+	border-color: var(--ui-primary-active);
+	color: white;
+}
+.ui-button--text,
+.ui-button--link {
+	border-color: transparent;
+	background: transparent;
+	box-shadow: none;
+}
+.ui-button--link {
+	color: var(--ui-primary);
+}
+.ui-button--text:not(:disabled):hover {
+	color: var(--ui-text-antd);
+	background: rgb(0 0 0 / 4%);
+	border-color: transparent;
+}
+.ui-button--link:not(:disabled):hover {
+	color: #69b1ff;
+	border-color: transparent;
+}
+.ui-button--danger {
+	color: var(--ui-danger);
+	border-color: var(--ui-danger);
+}
+.ui-button--danger:not(:disabled):hover {
+	color: var(--ui-danger-hover);
+	border-color: var(--ui-danger-hover);
+}
+.ui-button--primary.ui-button--danger {
+	background: var(--ui-danger);
+	color: white;
+}
+.ui-button--antd.ui-button--danger:not(:disabled):not(.ui-button--text):not(.ui-button--link) {
+	box-shadow: 0 2px 0 rgb(255 38 5 / 6%);
+}
+.ui-button--primary.ui-button--danger:not(:disabled):hover {
+	background: var(--ui-danger-hover);
+	color: white;
+}
+.ui-button--text.ui-button--danger,
+.ui-button--link.ui-button--danger {
+	border-color: transparent;
+}
+.ui-button--block {
+	width: 100%;
+}
+.ui-button:disabled {
+	color: var(--ui-text-disabled);
+	background: rgb(0 0 0 / 4%);
+	border-color: var(--ui-border);
+	box-shadow: none;
+}
+.ui-button--link:disabled,
+.ui-button--text:disabled {
+	background: transparent;
+	border-color: transparent;
+}
+.ui-button .ui-spinner {
+	color: currentColor;
+}
+.ui-button--tremor {
+	outline: 2px solid transparent;
+	outline-offset: 2px;
+	gap: 0;
+	border-radius: 8px;
+	padding: 8px 16px;
+	height: auto;
+	/* Tremor buttons inherit their stack: Tailwind's font-sans on the page, the antd
+	   stack inside drawers and dialogs, matching the reference component library. */
+	font-family: inherit;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	box-shadow: var(--ui-input-shadow);
+}
+.ui-button--tremor.ui-button--primary {
+	background: var(--ui-tremor-brand);
+	border-color: var(--ui-tremor-brand);
+}
+.ui-button--tremor.ui-button--primary:not(:disabled):hover {
+	background: var(--ui-tremor-brand-emphasis);
+	border-color: var(--ui-tremor-brand-emphasis);
+}
+.ui-button--tremor.ui-button--small {
+	padding: 6px 10px;
+	height: auto;
+	font-size: 12px;
+	line-height: 16px;
+}
+.ui-button--tremor.ui-button--large {
+	padding: 10px 16px;
+	height: auto;
+	font-size: 18px;
+	line-height: 28px;
+}
+.ui-button--tremor:disabled {
+	opacity: 0.5;
+	box-shadow: var(--ui-input-shadow);
+}
+
+.ui-button--antd.ui-button--primary:not(:disabled),
+.ui-button--antd.ui-button--primary:not(:disabled):hover,
+.ui-button--antd.ui-button--primary:not(:disabled):active {
+	border-color: transparent;
+}
+
+.ui-button--antd.ui-button--icon-only {
+	width: 32px;
+	min-width: 32px;
+	padding: 0;
+}
+.ui-button--antd.ui-button--icon-only.ui-button--small {
+	width: 24px;
+	min-width: 24px;
+}
+.ui-button--antd.ui-button--icon-only.ui-button--large {
+	width: 40px;
+	min-width: 40px;
+}
+
+.ui-button--tremor .ui-button__label {
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.ui-button--tremor.ui-button--default {
+	color: var(--ui-tremor-brand);
+	border-color: var(--ui-tremor-brand);
+	background: transparent;
+}
+.ui-button--tremor.ui-button--default:not(:disabled):hover {
+	color: var(--ui-tremor-brand-emphasis);
+	border-color: var(--ui-tremor-brand);
+}
+.ui-button--tremor.ui-button--text,
+.ui-button--tremor.ui-button--link {
+	color: var(--ui-tremor-brand);
+	border: 0;
+	background: transparent;
+	padding: 0;
+	box-shadow: none;
+}
+.ui-button--tremor.ui-button--text:not(:disabled):hover,
+.ui-button--tremor.ui-button--link:not(:disabled):hover {
+	color: var(--ui-tremor-brand-emphasis);
+	background: transparent;
+}
+.ui-button--tremor.ui-button--danger {
+	color: #ef4444;
+	border-color: #ef4444;
+	background: transparent;
+}
+.ui-button--tremor.ui-button--primary.ui-button--danger {
+	color: white;
+	background: #ef4444;
+}
+.ui-button--tremor.ui-button--primary:disabled {
+	color: white;
+}
+
+.ui-button__tremor-icon {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	width: 20px;
+	height: 20px;
+}
+.ui-button__tremor-icon--with-label {
+	margin-left: -4px;
+	margin-right: 6px;
+}
+.ui-button--small .ui-button__tremor-icon {
+	width: 16px;
+	height: 16px;
+}
+.ui-button--large .ui-button__tremor-icon {
+	width: 24px;
+	height: 24px;
+}
+.ui-button__tremor-icon > svg:not(.ui-icon) {
+	display: block;
+	width: 100%;
+	height: 100%;
+}

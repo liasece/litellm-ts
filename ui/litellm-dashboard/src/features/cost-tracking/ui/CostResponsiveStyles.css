@@ -1,0 +1,115 @@
+@media (min-width: 576px) {
+	.cost-summary-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (min-width: 768px) {
+	.cost-tracking-header {
+		flex-direction: row;
+		align-items: center;
+	}
+	.cost-discount-calculator-inputs {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+.cost-pricing-table td:first-child .ui-select {
+	min-width: 130px;
+}
+.cost-pricing-table td > * {
+	vertical-align: top;
+}
+.cost-antd-table th {
+	position: relative;
+}
+.cost-antd-table th:not(:last-child)::before {
+	position: absolute;
+	top: 50%;
+	right: 0;
+	width: 1px;
+	height: 1.6em;
+	background: #f0f0f0;
+	transform: translateY(-50%);
+	content: "";
+}
+@media (max-width: 767px) {
+	.cost-provider-dialog.ui-dialog--overlay-panel {
+		margin-top: 40px;
+	}
+	.cost-tracking-page {
+		padding: 16px;
+	}
+	.cost-accordion-header {
+		padding: 16px;
+	}
+	.cost-accordion-inner {
+		padding: 16px;
+	}
+	.cost-estimate-empty {
+		padding-top: 16px;
+		padding-bottom: 16px;
+	}
+	.cost-accordion-body.cost-accordion-inner {
+		padding-bottom: 28px;
+	}
+}
+
+.cost-provider-table th {
+	padding: 14px 16px;
+	font-weight: 600;
+	color: #111827;
+	border-bottom: 0;
+}
+.cost-provider-table td {
+	padding: 16px;
+	vertical-align: middle;
+	white-space: nowrap;
+	border-bottom: 0;
+}
+.cost-provider-table tbody tr + tr {
+	border-top: 1px solid #e5e7eb;
+}
+
+.cost-icon-button {
+	padding: 6px;
+	flex-shrink: 0;
+	color: #4b5563;
+}
+.cost-icon-button.cost-icon-blue {
+	color: #2563eb;
+}
+.cost-icon-button.cost-icon-green {
+	color: #16a34a;
+}
+.cost-icon-button.cost-icon-delete {
+	color: #6366f1;
+}
+.cost-icon-button.cost-icon-delete:hover {
+	color: #dc2626;
+}
+.cost-remove-provider.ui-dialog {
+	padding: 32px 32px 24px;
+}
+.cost-remove-provider .ui-dialog__header {
+	padding: 0;
+	margin: 0 0 8px 34px;
+	border: 0;
+}
+.cost-remove-provider .ui-dialog__body {
+	padding: 0 0 0 34px;
+}
+.cost-remove-provider .ui-dialog__footer {
+	padding: 0;
+	margin-top: 24px;
+	border: 0;
+}
+.cost-remove-provider-message {
+	display: block;
+}
+.cost-remove-provider-message > .ui-icon {
+	position: absolute;
+	left: 32px;
+	top: 32px;
+	width: 22px;
+	height: 22px;
+}

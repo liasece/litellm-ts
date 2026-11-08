@@ -1,0 +1,184 @@
+.admin-settings-page {
+	width: 100%;
+	min-width: 0;
+	margin-top: 8px;
+	padding: 16px;
+	font: 14px/22px var(--ui-font-antd);
+	color: rgb(0 0 0/0.88);
+}
+.admin-settings-page > h4,
+.admin-price-display > h4 {
+	font: 600 20px/28px var(--ui-font-antd);
+	margin: 0 0 10px;
+}
+.admin-settings-page > p,
+.admin-price-display p {
+	margin-bottom: 14px;
+}
+.admin-ui-settings-fields {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+.admin-ui-settings-fields > p {
+	margin: 0;
+}
+.admin-toggle-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 16px;
+	/* AntD inline-flex Switch raises its 22px line box to 23.296875px. */
+	min-height: 23.296875px;
+}
+.admin-toggle-row > .ui-switch {
+	/* Baseline-positioned AntD Switch sits 1.296875px below the row line box. */
+	margin-top: 1.296875px;
+}
+.admin-toggle-row strong {
+	font-weight: 600;
+}
+.admin-toggle-row p {
+	margin: 4px 0 0;
+}
+.admin-toggle-row--indented {
+	margin-left: 32px;
+}
+.admin-secondary {
+	color: rgb(0 0 0/0.45);
+}
+.admin-ui-settings-fields > hr {
+	border: 0;
+	border-top: 1px solid rgb(5 5 5/0.06);
+	margin: 24px 0;
+}
+.admin-page-visibility {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+.admin-page-visibility-copy {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.admin-page-visibility-copy > div {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+.admin-page-visibility-copy strong {
+	font-weight: 600;
+}
+.admin-page-visibility-copy p {
+	margin: 0;
+}
+.admin-visibility-description {
+	font-size: 12px;
+	font-style: italic;
+	color: rgb(0 0 0/0.45);
+}
+.admin-visibility-note {
+	font-size: 12px;
+	color: #8b5cf6;
+}
+.admin-collapse {
+	border: 1px solid #d9d9d9;
+	border-radius: 8px;
+	overflow: hidden;
+	background: rgb(0 0 0/0.02);
+}
+.admin-collapse > button {
+	width: 100%;
+	display: flex;
+	gap: 12px;
+	align-items: center;
+	text-align: left;
+	padding: 12px 16px;
+	font: 14px/22px var(--ui-font-antd);
+}
+.admin-rotated {
+	transform: rotate(90deg);
+}
+.admin-collapse-body {
+	background: #fff;
+	border-top: 1px solid #d9d9d9;
+	padding: 16px;
+}
+.admin-page-group {
+	margin-bottom: 16px;
+}
+.admin-page-group h5 {
+	font: 600 11px/22px var(--ui-font-antd);
+	color: #6b7280;
+	letter-spacing: 0.05em;
+	margin-bottom: 8px;
+}
+.admin-page-group > div {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin-left: 16px;
+}
+.admin-page-label {
+	display: flex;
+	flex-direction: column;
+}
+.admin-page-label small {
+	font: 12px/22px var(--ui-font-antd);
+	color: rgb(0 0 0/0.45);
+}
+.admin-visibility-actions,
+.admin-price-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.admin-price-display {
+	max-width: 768px;
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+}
+/* Tailwind space-y-5 collapses the Title's 10px bottom margin into the 20px gap;
+   a flex column would add them (20 + 10), pushing everything below down 10px. */
+.admin-price-display > h4 {
+	margin-bottom: 0;
+}
+.admin-price-display p {
+	margin: 0;
+}
+.admin-price-currency {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.admin-price-currency > .ui-select {
+	min-width: 170px;
+	width: auto;
+}
+.admin-price-display .ui-input-wrapper + p {
+	margin-bottom: 14px;
+}
+.admin-skeleton {
+	display: grid;
+	gap: 16px;
+}
+.admin-skeleton > span {
+	height: 16px;
+	background: rgb(0 0 0/0.06);
+	width: 100%;
+}
+.admin-skeleton > span:first-child {
+	width: 38%;
+	height: 20px;
+}
+.admin-skeleton > span:last-child {
+	width: 61%;
+}
+@media (min-width: 640px) {
+	.admin-settings-page {
+		margin: 8px;
+		padding: 32px;
+	}
+}

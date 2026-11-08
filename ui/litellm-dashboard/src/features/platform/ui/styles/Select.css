@@ -1,0 +1,554 @@
+.ui-select {
+	display: inline-flex;
+	align-items: center;
+	position: relative;
+	width: 100%;
+	min-height: 32px;
+	min-width: 0;
+	padding: 4px 11px;
+	border: 1px solid var(--ui-border);
+	border-radius: 6px;
+	background: white;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+	color: var(--ui-text-antd);
+	cursor: pointer;
+}
+.ui-select:not(.ui-select--disabled):hover {
+	border-color: var(--ui-primary-hover);
+}
+.ui-select--open,
+.ui-select:focus-within {
+	border-color: var(--ui-primary);
+	box-shadow: var(--ui-focus-ring);
+}
+.ui-select__values {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	min-width: 0;
+	position: relative;
+	gap: 4px;
+}
+.ui-select__single {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	pointer-events: none;
+	padding-right: 4px;
+}
+.ui-select__input {
+	width: 100%;
+	min-width: 4px;
+	border: 0;
+	outline: none !important;
+	background: transparent;
+	font: inherit;
+	line-height: inherit;
+	padding: 0;
+	cursor: inherit;
+}
+.ui-select__input::placeholder {
+	color: var(--ui-text-disabled);
+}
+.ui-select--tremor .ui-select__input::placeholder {
+	color: #6b7280;
+}
+.ui-select__arrow {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 0;
+	flex: none;
+	width: 12px;
+	height: 12px;
+	margin-left: 6px;
+	color: var(--ui-text-disabled);
+}
+.ui-select--antd .ui-select__arrow {
+	margin-right: -1px;
+}
+.ui-select__arrow svg {
+	width: 12px;
+	height: 12px;
+}
+.ui-select__clear {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 12px;
+	height: 12px;
+	flex: none;
+	color: white;
+	background: rgb(0 0 0 / 25%);
+	border-radius: 50%;
+	font-size: 12px;
+	line-height: 1;
+}
+.ui-select:hover .ui-select__clear {
+	display: inline-flex;
+}
+.ui-select:hover .ui-select__clear + .ui-select__arrow {
+	display: none;
+}
+/* Tremor Select keeps both the clear affordance and the chevron visible. Its clear
+   button is `inset-y-0 right-0 mr-8` with a 16px XCircleIcon. */
+.ui-select--tremor .ui-select__clear {
+	position: absolute;
+	right: 32px;
+	top: 50%;
+	display: inline-flex;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	color: #9ca3af;
+	background: none;
+	border-radius: 0;
+	transform: translateY(-50%);
+}
+.ui-select--tremor .ui-select__clear svg {
+	width: 16px;
+	height: 16px;
+}
+.ui-select--tremor .ui-select__clear + .ui-select__arrow {
+	display: flex;
+}
+/* Tremor's MultiSelect pins the clear-all button at `mr-8` and the chevron at `mr-2.5`. */
+.ui-select--tremor.ui-select--multiple .ui-select__clear {
+	right: 31px;
+}
+.ui-select--tremor.ui-select--multiple .ui-select__arrow {
+	right: 9px;
+}
+.ui-select--small {
+	min-height: 24px;
+	padding: 0 7px;
+	border-radius: 4px;
+}
+.ui-select--large {
+	min-height: 40px;
+	padding: 7px 11px;
+	border-radius: 8px;
+	font-size: 16px;
+	line-height: 24px;
+}
+.ui-select--disabled {
+	color: var(--ui-text-disabled);
+	background: rgb(0 0 0 / 4%);
+	cursor: not-allowed;
+}
+.ui-select--error {
+	border-color: var(--ui-danger);
+}
+.ui-select--warning {
+	border-color: #faad14;
+}
+.ui-select--multiple {
+	padding: 2px 4px;
+}
+.ui-select--multiple .ui-select__values {
+	flex-wrap: wrap;
+	gap: 2px 4px;
+}
+.ui-select--multiple .ui-select__input {
+	width: 4px;
+	flex: 1;
+	min-width: 4px;
+	height: 24px;
+}
+.ui-select--multiple .ui-select__input:placeholder-shown:not([placeholder=""]) {
+	min-width: 90px;
+}
+.ui-select__tag {
+	display: inline-flex;
+	align-items: center;
+	max-width: 100%;
+	height: 24px;
+	margin: 0;
+	padding: 0 7px;
+	gap: 4px;
+	border-radius: 4px;
+	background: rgb(0 0 0 / 6%);
+	color: var(--ui-text-antd);
+	font-size: 14px;
+	line-height: 22px;
+}
+.ui-select__tag span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ui-select__tag button {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	color: rgb(0 0 0 / 45%);
+	font-size: 14px;
+	line-height: 1;
+}
+.ui-select--antd .ui-select__tag button {
+	font-size: 10px;
+	line-height: inherit;
+}
+.ui-select--tremor {
+	min-height: 0;
+	padding: 8px 12px;
+	border-color: var(--ui-tremor-border);
+	border-radius: 8px;
+	font-family: inherit;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #374151;
+	box-shadow: var(--ui-input-shadow);
+}
+/* Tremor MultiSelect trigger: `pl-3 pr-8 py-1.5` and text-xs chips inside a 24px row. */
+.ui-select--tremor.ui-select--multiple {
+	padding: 6px 32px 6px 12px;
+}
+.ui-select--tremor.ui-select--multiple .ui-select__values {
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	align-items: center;
+	min-height: 24px;
+	gap: 0 4px;
+	/* Tremor's chip strip is `-ml-1.5 mr-5` inside the button's content box. */
+	margin: 0 20px 0 -6px;
+	scrollbar-width: none;
+}
+.ui-select--tremor.ui-select--multiple .ui-select__values::-webkit-scrollbar {
+	display: none;
+}
+.ui-select--tremor .ui-select__tag {
+	/* Tremor chip: pl-2 pr-1.5 py-1, rounded-tremor-small, bg-tremor-background-subtle. */
+	flex: none;
+	height: 24px;
+	max-width: 200px;
+	padding: 4px 6px 4px 8px;
+	gap: 0;
+	border-radius: 6px;
+	background: #f3f4f6;
+	color: #374151;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 16px;
+}
+.ui-select--tremor .ui-select__tag > span {
+	font-size: 12px;
+	line-height: 16px;
+}
+.ui-select--tremor .ui-select__tag button {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	margin-left: 8px;
+	border-radius: 9999px;
+	color: #9ca3af;
+	font-size: 12px;
+	line-height: 1;
+}
+.ui-select--tremor.ui-select--open,
+.ui-select--tremor:focus-within {
+	border-color: var(--ui-tremor-brand);
+	box-shadow: 0 0 0 2px rgb(99 102 241 / 20%);
+}
+.ui-select-popup {
+	position: fixed;
+	z-index: 1100;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	padding: 4px;
+	border-radius: 8px;
+	background: white;
+	box-shadow: var(--ui-overlay-shadow);
+	color: var(--ui-text-antd);
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+}
+.ui-select-popup__option {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+	min-height: 32px;
+	padding: 5px 12px;
+	border-radius: 4px;
+	background: white;
+	font-size: inherit;
+	line-height: inherit;
+	text-align: left;
+}
+.ui-select-popup__option--active:not(:disabled) {
+	background: rgb(0 0 0 / 4%);
+}
+.ui-select-popup__option--selected:not(:disabled) {
+	background: #e6f4ff;
+	font-weight: 600;
+}
+.ui-select-popup__option:disabled {
+	color: var(--ui-text-disabled);
+}
+.ui-select-popup__option small {
+	display: block;
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--ui-text-secondary);
+}
+.ui-select-popup__check {
+	color: var(--ui-primary);
+}
+.ui-select-popup__empty {
+	padding: 8px 12px;
+	color: var(--ui-text-disabled);
+	text-align: center;
+}
+.ui-select-popup--tremor {
+	border: 1px solid var(--ui-tremor-border);
+	font-family: var(--ui-font-sans);
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.ui-select-popup--tremor .ui-select-popup__option--selected {
+	background: #eef2ff;
+	color: var(--ui-tremor-brand);
+}
+
+.ui-select-popup__group {
+	min-height: 32px;
+	padding: 5px 12px;
+	color: rgb(0 0 0 / 45%);
+	font-size: 12px;
+	line-height: 22px;
+}
+
+/* AntD reserves 18px inside the full selection wrap. Our arrow already consumes
+   17px in flex flow (12px + 6px - 1px), leaving exactly 1px for the label. */
+.ui-select--antd:not(.ui-select--small) .ui-select__single {
+	padding-right: 1px;
+}
+.ui-select--antd .ui-select__clear {
+	margin-left: 6px;
+	margin-right: -1px;
+}
+.ui-select--tag-limited .ui-select__tag {
+	flex: none;
+	padding: 0 4px 0 8px;
+	border: 1px solid transparent;
+}
+.ui-select--tag-limited .ui-select__tag button,
+.ui-select__tag-remove-measure {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	font-size: 10px;
+	line-height: inherit;
+}
+.ui-select--tag-limited .ui-select__tag--overflow {
+	padding-right: 8px;
+}
+.ui-select--tag-responsive .ui-select__values {
+	flex-wrap: nowrap;
+}
+.ui-select--tag-responsive .ui-select__input {
+	flex: 0 1 auto;
+	max-width: 100%;
+}
+.ui-select__measurements {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: flex-start;
+	visibility: hidden;
+	pointer-events: none;
+	overflow: hidden;
+}
+.ui-select__search-measure {
+	flex: none;
+	min-width: 4px;
+	white-space: pre;
+}
+
+.ui-select--antd.ui-select--tag-limited {
+	padding: 1px 24px 1px 3px;
+}
+.ui-select--antd.ui-select--tag-limited .ui-select__arrow,
+.ui-select--antd.ui-select--tag-limited .ui-select__clear {
+	position: absolute;
+	/* Old arrow is 11px from the outer root; this root owns a 1px border. */
+	right: 10px;
+	top: 50%;
+	margin: 0;
+	transform: translateY(-50%);
+}
+
+.ui-select--antd.ui-select--tag-limited .ui-select__tag {
+	font-size: inherit;
+}
+.ui-select--antd.ui-select--tag-limited.ui-select--small .ui-select__tag {
+	height: 16px;
+	line-height: 14px;
+}
+.ui-select--antd.ui-select--tag-limited.ui-select--small .ui-select__input {
+	height: 16px;
+}
+.ui-select--antd.ui-select--tag-limited.ui-select--large .ui-select__tag {
+	height: 32px;
+	line-height: 30px;
+}
+.ui-select--antd.ui-select--tag-limited.ui-select--large .ui-select__input {
+	height: 32px;
+}
+.ui-select--tag-limited.ui-select--disabled .ui-select__tag {
+	color: var(--ui-text-disabled);
+}
+
+.ui-select--tag-responsive .ui-select__tag {
+	max-width: var(--ui-select-tag-max-width, 100%);
+}
+
+/* AntD multiple selectors use the same measured geometry with or without an
+   overflow limit. The placeholder is independent from the editable search. */
+.ui-select--antd.ui-select--multiple {
+	padding: 1px 24px 1px 3px;
+}
+.ui-select--antd.ui-select--multiple .ui-select__values {
+	row-gap: 0;
+}
+.ui-select--antd.ui-select--multiple .ui-select__tag {
+	padding: 0 4px 0 8px;
+	border: 1px solid transparent;
+	margin: 2px 0;
+	font-size: inherit;
+}
+.ui-select--antd.ui-select--multiple .ui-select__tag--overflow {
+	padding-right: 8px;
+}
+.ui-select--antd.ui-select--multiple .ui-select__input {
+	margin: 2px 0;
+	line-height: 24px;
+}
+.ui-select--antd.ui-select--multiple .ui-select__arrow,
+.ui-select--antd.ui-select--multiple .ui-select__clear {
+	position: absolute;
+	right: 10px;
+	top: 50%;
+	margin: 0;
+	transform: translateY(-50%);
+}
+.ui-select--antd.ui-select--multiple.ui-select--empty .ui-select__input {
+	margin-left: 8px;
+	flex-grow: 1;
+}
+.ui-select--antd.ui-select--multiple .ui-select__input::placeholder {
+	color: transparent;
+}
+.ui-select__placeholder {
+	position: absolute;
+	left: 8px;
+	right: 11px;
+	top: 50%;
+	transform: translateY(-50%);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	pointer-events: none;
+	color: var(--ui-text-disabled);
+}
+.ui-select--tremor .ui-select__placeholder {
+	color: #6b7280;
+}
+.ui-select--antd.ui-select--multiple.ui-select--small .ui-select__tag,
+.ui-select--antd.ui-select--multiple.ui-select--small .ui-select__input {
+	height: 16px;
+	line-height: 16px;
+}
+.ui-select--antd.ui-select--multiple.ui-select--small .ui-select__tag {
+	line-height: 14px;
+}
+.ui-select--antd.ui-select--multiple.ui-select--small.ui-select--empty .ui-select__input {
+	margin-left: 2px;
+}
+.ui-select--antd.ui-select--multiple.ui-select--small .ui-select__placeholder {
+	left: 7px;
+	right: 7px;
+}
+.ui-select--antd.ui-select--multiple.ui-select--large .ui-select__tag,
+.ui-select--antd.ui-select--multiple.ui-select--large .ui-select__input {
+	height: 32px;
+	line-height: 32px;
+}
+.ui-select--antd.ui-select--multiple.ui-select--large .ui-select__tag {
+	line-height: 30px;
+}
+.ui-select--antd.ui-select--multiple.ui-select--disabled .ui-select__tag {
+	color: var(--ui-text-disabled);
+}
+
+.ui-select--antd.ui-select--multiple .ui-select__tag {
+	/* rc-overflow constrains each item by4px and its tag carries a4px end margin. */
+	max-width: calc(100% - 8px);
+}
+.ui-select--antd.ui-select--multiple.ui-select--tag-responsive .ui-select__tag {
+	max-width: var(--ui-select-tag-max-width, calc(100% - 8px));
+}
+
+.ui-select--tremor {
+	padding-right: 32px;
+}
+.ui-select--tremor .ui-select__arrow {
+	position: absolute;
+	right: 12px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 20px;
+	height: 20px;
+	margin: 0;
+	color: #9ca3af;
+}
+.ui-select--tremor .ui-select__arrow svg {
+	width: 20px;
+	height: 20px;
+}
+.ui-select--tremor .ui-select__single {
+	width: 90%;
+	right: auto;
+	padding-right: 0;
+}
+
+.ui-select--antd:not(.ui-select--multiple) .ui-select__input:not([readonly]) {
+	height: 30px;
+	margin-block: -4px;
+}
+.ui-select--antd.ui-select--small:not(.ui-select--multiple) .ui-select__input:not([readonly]) {
+	height: 22px;
+	margin-block: 0;
+}
+.ui-select--antd.ui-select--large:not(.ui-select--multiple) .ui-select__input:not([readonly]) {
+	height: 38px;
+	margin-block: -7px;
+}
+.ui-select--antd .ui-select__input:not([readonly]):focus {
+	box-shadow: 0 0 0 1px #2563eb;
+}
+.ui-select__input::-webkit-search-cancel-button {
+	appearance: none;
+}
+.ui-select--antd .ui-select__clear {
+	color: rgb(0 0 0 /25%);
+	background: #fff;
+}
+.ui-select--antd .ui-select__clear:hover {
+	color: rgb(0 0 0 /45%);
+}
+
+.ui-select--antd .ui-select__input,
+.ui-select--antd .ui-select__input::-webkit-search-decoration {
+	appearance: none;
+}

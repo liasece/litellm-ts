@@ -1,0 +1,128 @@
+.usage-grid-two,
+.usage-grid-four,
+.usage-grid-five {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+}
+
+.usage-grid-four {
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.usage-grid-five {
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.usage-activity {
+	display: flex;
+	flex-direction: column;
+	gap: 32px;
+}
+
+.usage-overall {
+	padding: 16px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+}
+
+.usage-overall > .usage-grid-four {
+	margin-bottom: 16px;
+}
+
+.usage-overall .ui-card p,
+.usage-model-section .ui-card p {
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+
+.usage-overall header,
+.usage-model-section header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.usage-overall .usage-chart,
+.usage-model-section .usage-chart {
+	margin-top: 16px;
+}
+
+.usage-collapse {
+	border: 1px solid #d9d9d9;
+	background: #fafafa;
+	border-radius: 8px;
+	font-family: var(--ui-font-antd);
+}
+
+.usage-collapse > section + section {
+	border-top: 1px solid #d9d9d9;
+}
+
+.usage-collapse > section > button {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	padding: 12px 16px;
+	text-align: left;
+	border: 0;
+	background: none;
+	font: inherit;
+	cursor: pointer;
+}
+
+.usage-collapse > section > button > span:last-child {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	gap: 8px;
+}
+
+.usage-collapse > section > button > span:last-child > span {
+	display: flex;
+	gap: 16px;
+	color: #6b7280;
+	font-size: 14px;
+	line-height: 20px;
+}
+
+.usage-collapse-body {
+	border-top: 1px solid #d9d9d9;
+	background: #fff;
+	padding: 16px;
+}
+
+.usage-model-section {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.usage-activity-key-charts {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 16px;
+	margin-top: 16px;
+}
+
+.usage-activity-key-charts > * > div {
+	max-height: 234px;
+	overflow-y: auto;
+	margin-top: 12px;
+}
+
+.usage-model-section > .usage-grid-two {
+	margin-top: 16px;
+}
+
+.usage-activity-daily,
+.usage-key-model {
+	margin-top: 16px;
+}
+
+.usage-cache-totals {
+	margin-bottom: 8px;
+}

@@ -1,3 +1,6 @@
-next-env.d.ts
-core.*
-
+node_modules/
+out/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo

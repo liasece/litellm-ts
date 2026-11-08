@@ -1,0 +1,140 @@
+.logging-callback-dialog > .ui-dialog__body {
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-doc-link {
+	color: blue;
+}
+.logging-callback-form {
+	margin: 0;
+}
+.logging-field {
+	display: flex;
+	width: 100%;
+	margin-bottom: 24px;
+	align-items: flex-start;
+}
+.logging-field > label {
+	flex: 0 0 33.333333%;
+	max-width: 33.333333%;
+	height: 32px;
+	display: flex;
+	align-items: center;
+	padding-right: 8px;
+	font: 14px/22px var(--ui-font-antd);
+	color: rgb(0 0 0/0.88);
+}
+.logging-field > label:after {
+	content: ":";
+	margin: 0 8px 0 2px;
+}
+.logging-required:before {
+	content: "*";
+	display: inline-block;
+	margin-right: 4px;
+	color: #ff4d4f;
+	font: 14px/1 var(--ui-font-sans);
+}
+.logging-field > div {
+	flex: 1;
+	min-width: 0;
+}
+.logging-field .ui-input-wrapper--large {
+	border-radius: 6px;
+	border-color: #d1d5db;
+	box-shadow: 0 1px 2px rgb(0 0 0/0.05);
+}
+.logging-dynamic-fields {
+	margin-top: 24px;
+	padding: 16px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #f9fafb;
+}
+.logging-dynamic-fields > .logging-field {
+	margin-bottom: 16px;
+}
+.logging-dynamic-fields > .logging-field > label {
+	line-height: 20px;
+	font-weight: 500;
+	color: #374151;
+}
+.logging-dynamic-fields > .logging-field:last-child:not(:first-child) {
+	margin-bottom: 0;
+}
+.logging-callback-option {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 4px 0;
+}
+.logging-callback-logo {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 24px;
+	height: 24px;
+}
+.logging-callback-option--value {
+	/* the selected value sits in .ui-select__single (24px, overflow hidden); a 38px line box
+	   clipped the label and pushed its ink ~11px below antd's centred text */
+	line-height: 22px;
+	padding: 0;
+}
+.logging-callback-logo > img {
+	width: 24px;
+	height: 24px;
+	object-fit: contain;
+	border-radius: 4px;
+}
+.logging-callback-option > strong {
+	font-weight: 500;
+	color: #111827;
+}
+/* antd's focused Select uses #1677ff with a 2px rgba(5,145,255,.1) ring. */
+.logging-callback-form .ui-select--antd:focus-within {
+	border-color: #1677ff;
+	box-shadow: 0 0 0 2px rgb(5 145 255 / 10%);
+}
+.logging-callback-form > footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 12px;
+	padding-top: 24px;
+	margin-top: 24px;
+	border-top: 1px solid #e5e7eb;
+}
+.logging-error {
+	font: 14px/22px var(--ui-font-antd);
+	color: #ff4d4f;
+}
+.logging-cloudzero-field {
+	margin-bottom: 24px;
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-cloudzero-field > label {
+	display: flex;
+	align-items: center;
+	padding-bottom: 8px;
+	color: rgb(0 0 0/0.88);
+}
+.logging-cloudzero-field > label > .ui-popover-anchor {
+	margin-left: 4px;
+	color: rgb(0 0 0/0.45);
+}
+@media (max-width: 575px) {
+	.logging-field {
+		display: block;
+	}
+	.logging-field > label {
+		max-width: 100%;
+		height: 40px;
+		padding: 0 0 8px;
+	}
+	.logging-field > label:after {
+		display: none;
+	}
+	.logging-field > div {
+		width: 100%;
+	}
+}

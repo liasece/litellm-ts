@@ -1,0 +1,660 @@
+@import "./SettingsStyles.css";
+@import "./ResourceFormsStyles.css";
+.access-list-card > .ui-card__body {
+	padding: 0;
+}
+.access-pagination > .ui-pagination {
+	margin: 0;
+	gap: 0;
+	line-height: 22px;
+}
+.access-pagination .ui-pagination__item {
+	min-width: 24px;
+	height: 24px;
+	padding: 0 4px;
+	border-radius: 6px;
+	line-height: 22px;
+}
+.access-pagination .ui-pagination__item--active {
+	font-weight: 400;
+}
+.access-pagination .ui-pagination__size {
+	height: 32px;
+	margin-left: 8px;
+}
+.access-teams-page h2 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.access-teams-page {
+	padding: 16px;
+}
+.access-teams-page > .ui-tabs {
+	margin-bottom: 16px;
+}
+.access-team-toolbar {
+	flex-wrap: wrap;
+}
+.access-team-search {
+	display: flex;
+	flex: 1;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+.access-team-search > .ui-input-wrapper {
+	min-width: 220px;
+	max-width: 400px;
+	flex: 1;
+}
+.access-team-search > .ui-select {
+	width: auto;
+	min-width: 280px;
+	flex: none;
+}
+.access-team-spend {
+	font-size: 13px;
+	line-height: 20px;
+}
+.access-team-spend small {
+	font-size: 12px;
+}
+.access-team-spend > .access-progress {
+	height: 6px;
+	margin: 2px 0 0;
+}
+.access-empty-teams {
+	padding: 64px 0;
+	text-align: center;
+	color: #d1d5db;
+}
+.access-empty-teams > svg {
+	margin: 0 auto 12px;
+}
+.access-empty-teams p {
+	margin: 4px 0;
+	color: #4b5563;
+	font-size: 15px;
+}
+.access-empty-teams p.access-muted {
+	font-size: 13px;
+	color: rgba(0, 0, 0, 0.45);
+}
+.access-empty-teams > .ui-button {
+	margin-top: 16px;
+}
+.access-team-detail {
+	padding: 16px;
+}
+.access-team-detail > .ui-tabs {
+	margin-bottom: 16px;
+}
+.access-resource-detail-header {
+	display: flex;
+	gap: 16px;
+	align-items: center;
+	margin-bottom: 24px;
+}
+.access-resource-detail-header h2 {
+	font-size: 24px;
+	line-height: 32px;
+	font-weight: 600;
+	margin: 0;
+}
+.access-resource-detail-header > div:last-child:not(:nth-child(2)) {
+	margin-left: auto;
+}
+.access-overview-grid {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 24px;
+}
+.access-overview-grid p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-family: inherit;
+	color: #6b7280;
+	margin: 0;
+}
+.access-overview-values {
+	margin-top: 8px;
+}
+.access-overview-values h3 {
+	font-weight: 500;
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-family: inherit;
+	color: #111827;
+	margin: 0;
+}
+.access-overview-grid .access-tags {
+	margin-top: 8px;
+	gap: 8px;
+}
+.access-overview-grid strong {
+	font-size: 14px;
+	font-weight: 600;
+	color: #111827;
+}
+.access-team-settings {
+	max-height: 65vh;
+	overflow-y: auto;
+	font-family: var(--ui-font-antd);
+	color: #374151;
+}
+.access-team-settings > .ui-card__body {
+	display: contents;
+}
+.access-team-settings header,
+.access-default-settings header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 16px;
+	margin-bottom: 8px;
+}
+.access-team-settings header {
+	margin-bottom: 16px;
+}
+.access-team-settings h3 {
+	font-size: 16.4px;
+	font-weight: 500;
+	line-height: 26.4px;
+	color: #111827;
+	margin: 0;
+}
+.access-default-settings h3 {
+	font-size: 24px;
+	font-weight: 600;
+	line-height: 32px;
+	color: rgba(0, 0, 0, 0.88);
+	/* The reference keeps the Ant Design heading margin under the title. */
+	margin: 0 0 12px;
+}
+.access-settings-summary {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+.access-settings-summary p {
+	font-weight: 500;
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+	margin: 0;
+}
+.access-settings-summary pre {
+	font: 12px/16px var(--ui-font-mono);
+	background: #f3f4f6;
+	padding: 8px;
+	border-radius: 4px;
+	overflow: auto;
+	margin: 4px 0 0;
+}
+.access-sticky-footer {
+	position: sticky;
+	bottom: -24px;
+	inset-inline: -24px;
+	background: white;
+	border-top: 1px solid #e5e7eb;
+	padding: 16px;
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	z-index: 10;
+}
+.access-team-create-form > .ui-form-field:nth-child(2) {
+	margin-top: 32px;
+}
+.access-team-create-form > .access-tremor-accordion {
+	margin: 32px 0;
+}
+.access-team-create-form > .access-team-additional {
+	margin-top: 80px;
+}
+.access-team-logging > label {
+	font: 14px/22px var(--ui-font-antd);
+	color: rgba(0, 0, 0, 0.88);
+	display: block;
+	margin-bottom: 8px;
+}
+.access-premium-logging-tags {
+	color: #166534;
+	opacity: 0.5;
+	padding: 6px 12px;
+	border: 1px solid #bbf7d0;
+	background: #f0fdf4;
+	border-radius: 8px;
+	margin-bottom: 12px;
+	display: inline-flex;
+}
+.access-member-form .ui-form-field {
+	margin-bottom: 16px;
+}
+.access-member-or {
+	text-align: center;
+	margin: 0 0 16px;
+}
+.access-members {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 8px;
+	width: 100%;
+	color: #374151;
+}
+.access-members > span {
+	line-height: 22px;
+}
+.access-members .ui-table td {
+	height: 49px;
+}
+.access-members > .ui-table-wrapper {
+	width: 100%;
+}
+.access-capitalize {
+	text-transform: capitalize;
+}
+.access-center {
+	text-align: center;
+	padding: 24px;
+}
+.access-table-scroll {
+	overflow-x: auto;
+}
+.access-member-permissions {
+	box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+.access-member-permissions header {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	align-items: center;
+	border-bottom: 1px solid #e5e7eb;
+	padding-bottom: 16px;
+	margin-bottom: 24px;
+}
+.access-member-permissions h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 500;
+	color: #111827;
+	margin: 0;
+}
+.access-member-permissions .ui-card__body > p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #4b5563;
+	margin-bottom: 24px;
+}
+.access-permission-table {
+	min-width: 100%;
+	border-collapse: collapse;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.access-permission-table th {
+	text-align: left;
+	font-weight: 600;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #111827;
+	padding: 14px 16px;
+}
+.access-permission-table td {
+	padding: 16.3px 16px;
+	border-bottom: 1px solid #e5e7eb;
+	white-space: nowrap;
+	color: #374151;
+}
+.access-permission-table code {
+	font-family: var(--ui-font-mono);
+	font-size: 14px;
+	line-height: 20px;
+	color: #1f2937;
+}
+.access-permission-table tr:last-child td {
+	border-bottom: 0;
+}
+.access-permission-table th:last-child,
+.access-permission-table td:last-child {
+	text-align: center;
+	position: sticky;
+	right: 0;
+	background: white;
+	box-shadow: -4px 0 4px -4px rgba(0, 0, 0, 0.1);
+}
+.access-permission-table td:last-child > .ui-checkbox {
+	justify-content: center;
+}
+.access-method-get,
+.access-method-post {
+	padding: 4px 8px;
+	border-radius: 4px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+}
+.access-method-get {
+	color: #1e40af;
+	background: #dbeafe;
+}
+.access-method-post {
+	color: #166534;
+	background: #dcfce7;
+}
+@media (min-width: 640px) {
+	.access-teams-page {
+		padding: 24px 48px;
+	}
+	.access-overview-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (min-width: 1024px) {
+	.access-overview-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+@media (max-width: 639px) {
+	.access-default-team > .access-columns {
+		grid-template-columns: 1fr;
+	}
+	.access-default-row--team {
+		grid-template-columns: 1fr 2fr;
+	}
+	.access-router-grid {
+		grid-template-columns: 1fr;
+	}
+	.access-team-toolbar {
+		gap: 12px;
+	}
+}
+
+.access-member-edit-dialog .access-member-form .ui-form-field--horizontal {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+	column-gap: 0;
+}
+.access-member-edit-dialog .ui-form-field--horizontal .ui-form-field__label {
+	text-align: left;
+	padding: 5px 0;
+	align-self: start;
+}
+.access-member-edit-dialog .ui-form-field__label::after {
+	content: ":";
+	margin-left: 2px;
+}
+
+.access-member-add-dialog .access-member-form .ui-form-field--horizontal {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+	column-gap: 0;
+}
+.access-member-add-dialog .ui-form-field--horizontal .ui-form-field__label {
+	text-align: left;
+	padding: 5px 0;
+	align-self: start;
+}
+.access-member-add-dialog .ui-form-field__label::after {
+	content: ":";
+	margin-left: 2px;
+}
+.access-member-edit-dialog .access-member-role-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+}
+.access-member-role-label > span + span {
+	color: #6b7280;
+	font-size: 14px;
+	line-height: 20px;
+}
+.access-member-edit-dialog .access-field-tooltip {
+	margin-left: 8px;
+	color: inherit;
+}
+.access-member-edit-dialog .access-member-or {
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #6b7280;
+}
+.access-member-edit-dialog .access-form-footer {
+	margin-top: 24px;
+}
+@media (max-width: 575px) {
+	.access-member-edit-dialog .access-member-form .ui-form-field--horizontal,
+	.access-member-add-dialog .access-member-form .ui-form-field--horizontal {
+		display: block;
+	}
+	.access-member-edit-dialog .ui-form-field--horizontal .ui-form-field__label,
+	.access-member-add-dialog .ui-form-field--horizontal .ui-form-field__label {
+		padding: 0 0 8px;
+		min-height: 40px;
+		display: flex;
+		align-items: center;
+	}
+	.access-member-edit-dialog .ui-form-field__label::after,
+	.access-member-add-dialog .ui-form-field__label::after {
+		display: none;
+	}
+}
+
+.access-team-detail-header {
+	margin-bottom: 24px;
+}
+.access-team-back.ui-button {
+	margin-bottom: 16px;
+}
+.access-team-detail-header h2 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 500;
+	color: #111827;
+	margin: 0;
+}
+.access-team-overview > .ui-card {
+	padding: 24px;
+}
+.access-team-overview p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-family: inherit;
+}
+.access-team-overview h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-family: inherit;
+	color: #111827;
+}
+/* The reference separates the label from the value with the Title mt-2. */
+.access-team-overview .ui-card__body > h3 {
+	margin: 8px 0 0;
+}
+/* The reference draws these empty states without the leading glyph. */
+.access-team-overview .vk-summary-empty > :is(.ui-icon, .vk-hero-icon) {
+	display: none;
+}
+.access-team-overview .access-team-overview-values {
+	margin-top: 8px;
+}
+.access-team-overview .access-team-overview-title {
+	display: block;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+.access-team-overview .access-team-overview-title--spaced {
+	margin-bottom: 12px;
+}
+.access-team-overview-title--spaced + .access-tags {
+	margin-top: 0;
+}
+.access-team-overview > .ui-card:first-child p:last-child {
+	margin-top: 8px;
+}
+
+.access-team-settings {
+	font-family: var(--ui-font-antd);
+}
+.access-team-settings h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	color: #111827;
+}
+
+.access-team-detail .access-team-settings {
+	padding: 24px;
+}
+
+.access-team-overview .access-logging-summary-section > strong {
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+
+.access-teams-page .ui-table th,
+.access-teams-page .ui-table td {
+	padding: 12px 8px;
+}
+.access-teams-page .ui-table {
+	table-layout: fixed;
+}
+.access-team-header-label {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.access-team-spend {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	line-height: 1.5714285714;
+}
+.access-team-progress {
+	font-size: 12px;
+	line-height: 1.5714285714;
+	height: 18.84375px;
+	display: flex;
+	align-items: center;
+}
+.access-team-progress > .access-progress {
+	height: 6px;
+	margin: 0;
+	width: 100%;
+}
+.access-teams-page .access-team-date {
+	font-size: 13px;
+}
+
+.access-teams-page .access-list-header > div {
+	line-height: 24px;
+}
+.access-teams-page .access-list-header > div > .access-muted {
+	display: block;
+	line-height: 24px;
+}
+
+.access-teams-page .access-list-header {
+	flex-wrap: wrap;
+	gap: 12px;
+}
+@media (max-width: 639px) {
+	.access-page.access-teams-page {
+		padding: 16px;
+	}
+}
+@media (max-width: 767px) {
+	.access-team-toolbar .ui-pagination__size {
+		display: none;
+	}
+}
+
+.access-team-create-dialog .access-tremor-accordion > summary {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 16px;
+	list-style: none;
+	color: #374151;
+}
+.access-team-create-dialog .access-tremor-accordion > summary::-webkit-details-marker {
+	display: none;
+}
+.access-team-accordion-arrow {
+	flex: none;
+	margin-right: -4px;
+	color: #9ca3af;
+}
+.access-team-create-dialog details[open] > summary > .access-team-accordion-arrow {
+	transform: rotate(180deg);
+}
+.access-team-create-dialog .access-field-tooltip {
+	color: rgb(0 0 0 /45%);
+}
+
+@media (min-width: 1200px) {
+	.access-members--team .ui-table {
+		table-layout: fixed;
+	}
+	.access-members--team .ui-table th:nth-child(1),
+	.access-members--team .ui-table td:nth-child(1) {
+		width: 167px;
+	}
+	.access-members--team .ui-table th:nth-child(2),
+	.access-members--team .ui-table td:nth-child(2) {
+		width: 100px;
+	}
+	.access-members--team .ui-table th:nth-child(3),
+	.access-members--team .ui-table td:nth-child(3) {
+		width: 112px;
+	}
+	.access-members--team .ui-table th:nth-child(4),
+	.access-members--team .ui-table td:nth-child(4) {
+		width: 185px;
+	}
+	.access-members--team .ui-table th:nth-child(5),
+	.access-members--team .ui-table td:nth-child(5) {
+		width: 168px;
+	}
+	.access-members--team .ui-table th:nth-child(6),
+	.access-members--team .ui-table td:nth-child(6) {
+		width: 222px;
+	}
+	.access-members--team .ui-table th:nth-child(7),
+	.access-members--team .ui-table td:nth-child(7) {
+		width: 112px;
+	}
+}
+
+@media (min-width: 1200px) {
+	.access-members--organization .ui-table {
+		table-layout: fixed;
+	}
+	.access-members--organization .ui-table th:nth-child(1),
+	.access-members--organization .ui-table td:nth-child(1) {
+		width: 296px;
+	}
+	.access-members--organization .ui-table th:nth-child(2),
+	.access-members--organization .ui-table td:nth-child(2) {
+		width: 176px;
+	}
+	.access-members--organization .ui-table th:nth-child(3),
+	.access-members--organization .ui-table td:nth-child(3) {
+		width: 250px;
+	}
+	.access-members--organization .ui-table th:nth-child(4),
+	.access-members--organization .ui-table td:nth-child(4) {
+		width: 123px;
+	}
+	.access-members--organization .ui-table th:nth-child(5),
+	.access-members--organization .ui-table td:nth-child(5) {
+		width: 159px;
+	}
+	.access-members--organization .ui-table th:nth-child(6),
+	.access-members--organization .ui-table td:nth-child(6) {
+		width: 118px;
+	}
+}

@@ -1,0 +1,353 @@
+@import "./LoggingFormsStyles.css";
+@import "./LoggingCloudZeroStyles.css";
+.logging-settings-page {
+	width: 100%;
+	margin: 0 16px;
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-settings-page > div > .ui-tabs > .ui-tabs__list {
+	font-family: var(--ui-font-sans);
+}
+.logging-settings-page > div {
+	width: 100%;
+	padding: 32px;
+	margin-top: 8px;
+}
+.logging-settings-page h4 {
+	font: 600 20px/28px var(--ui-font-antd);
+	margin-bottom: 10px;
+	color: rgb(0 0 0/0.88);
+}
+/* antd's Button label uses the 1.5714 ratio (22px at 14px); the shared .ui-button base
+   hard-codes 21px, which lifts antd-style labels half a pixel. */
+.logging-cloudzero-controls .ui-button,
+.logging-cloudzero-actions .ui-button {
+	line-height: 22px;
+}
+.logging-callbacks {
+	width: 100%;
+	margin-top: 16px;
+}
+.logging-callbacks-heading {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin: 8px 0;
+}
+.logging-callbacks-heading h4 {
+	margin-bottom: 10px;
+}
+.logging-callbacks-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 32px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #f9fafb;
+	text-align: center;
+}
+.logging-callbacks-empty h3 {
+	font: 500 18px/28px var(--ui-font-antd);
+	color: #374151;
+	margin-bottom: 8px;
+}
+.logging-callbacks-empty p {
+	color: #6b7280;
+}
+.logging-callbacks-table {
+	overflow: auto;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+}
+.logging-callbacks-table table {
+	width: 100%;
+	border-collapse: collapse;
+	text-align: left;
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-callbacks-table th,
+.logging-callbacks-table td {
+	padding: 16px;
+	border-bottom: 1px solid #f0f0f0;
+}
+.logging-callbacks-table th {
+	background: #fafafa;
+	font-weight: 500;
+	color: #374151;
+}
+.logging-callbacks-table th + th {
+	width: 240px;
+}
+.logging-callbacks-table th:last-child {
+	text-align: right;
+}
+.logging-callbacks-table td:first-child {
+	font-weight: 500;
+	color: #1f2937;
+}
+.logging-callbacks-table tbody tr:hover {
+	background: #f9fafb;
+}
+.logging-callbacks-table td:last-child > div {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+.logging-callbacks-table td:last-child button {
+	padding: 6px;
+	color: #6b7280;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+.logging-callbacks-table td:last-child button:hover {
+	color: #2563eb;
+}
+.logging-callbacks-table td:last-child .ui-popover-anchor:last-child button:hover {
+	color: #dc2626;
+}
+.logging-callback-mode {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 10px;
+	border-radius: 9999px;
+	font: 500 12px/16px var(--ui-font-antd);
+}
+.logging-callback-mode--success {
+	background: #dcfce7;
+	color: #166534;
+}
+.logging-callback-mode--failure {
+	background: #fee2e2;
+	color: #991b1b;
+}
+.logging-callback-mode--other {
+	background: #dbeafe;
+	color: #1e40af;
+}
+.logging-error {
+	color: #ff4d4f;
+}
+.logging-mono {
+	font-family: var(--ui-font-mono);
+	color: #4b5563;
+}
+.logging-alert-types {
+	font: 16px/24px var(--ui-font-sans);
+}
+.logging-alert-table-scroll {
+	overflow: auto;
+}
+.logging-tremor-table {
+	width: 100%;
+	border-collapse: collapse;
+	text-align: left;
+	white-space: nowrap;
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #6b7280;
+}
+.logging-tremor-table th {
+	padding: 14px 16px;
+	color: #111827;
+	font-weight: 600;
+}
+.logging-tremor-table td {
+	padding: 16px;
+	vertical-align: middle;
+}
+.logging-tremor-table tbody tr + tr {
+	border-top: 1px solid #e5e7eb;
+}
+.logging-alert-name {
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #6b7280;
+}
+.logging-alert-description {
+	margin: 8px 0;
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #6b7280;
+}
+.logging-alert-types a,
+.logging-email-settings a {
+	color: blue;
+}
+.logging-alert-types > div.ui-card__body {
+	overflow: auto;
+}
+.logging-alert-actions {
+	display: block;
+}
+.logging-alert-actions > .ui-button + .ui-button {
+	margin-inline: 8px;
+}
+.logging-alert-actions > .ui-button:first-child {
+	margin-top: 8px;
+}
+.logging-alert-parameters {
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-alert-parameters table {
+	border-collapse: collapse;
+}
+.logging-alert-parameters td {
+	padding: 16px;
+	font: 12.4px/18.4px var(--ui-font-antd);
+	color: #6b7280;
+	white-space: nowrap;
+}
+.logging-alert-parameters td small {
+	display: block;
+	margin-top: 4px;
+	/* antd's inherited 1.5714 line-height ratio: React's description paragraph is 16.34px tall. */
+	font: italic 10.4px/16.34px var(--ui-font-antd);
+	color: #808080;
+}
+/* antd wraps this cell's control in a 52px Form.Item, so it always sits at the cell's top
+   padding edge while the badge/icon cells stay vertically centred. */
+.logging-alert-parameters td.logging-alert-parameters__input {
+	vertical-align: top;
+}
+/* Premium fields' Form.Item keeps antd's 24px bottom margin inside the row. */
+.logging-alert-parameters td.logging-alert-parameters__input--premium {
+	padding-bottom: 40px;
+}
+/* antd's Button uses a 1.5714 ratio (22px at 14px); the shared .ui-button base fixes 21px,
+   which lifts the label half a pixel. */
+.logging-alert-parameters > .ui-button {
+	line-height: 22px;
+}
+.logging-alert-parameters .ui-input-number {
+	width: 90px;
+}
+.logging-setting-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	white-space: nowrap;
+	padding: 2px 10px;
+	border-radius: 8px;
+	background: #fff;
+	/* Tailwind's bare `outline` utility paints with currentColor, and `text-gray` is not a
+	   real utility, so the badge inherits antd's rgba(0,0,0,.88) ink for text and ring. */
+	outline: 3px solid currentColor;
+	outline-offset: 0;
+	color: rgb(0 0 0/0.88);
+	font: 14px/20px var(--ui-font-antd);
+}
+.logging-setting-status--db {
+	outline: 0;
+	/* React's badge uses Tremor's `bg-tremor-brand-faint`, which is not defined in this
+	   build, so the fill stays transparent over the white row. */
+	background: #fff;
+	box-shadow: inset 0 0 0 1px rgb(99 102 241/0.2);
+	color: white;
+	border-radius: 6px;
+	/* the check icon sits 6px in and 6px before the label, mirroring Tremor's Badge */
+	padding-left: 6px;
+	gap: 6px;
+}
+.logging-reset-field {
+	padding: 6px;
+	display: flex;
+	color: #ef4444;
+}
+.logging-email-settings {
+	font: 16px/24px var(--ui-font-sans);
+}
+.logging-email-events-wrap {
+	margin: 24px 0;
+}
+.logging-email-events .ui-card__body > p,
+.logging-email-server-card .ui-card__body > p,
+.logging-email-event-list p,
+.logging-email-server > p {
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #6b7280;
+}
+.logging-email-events hr {
+	margin: 24px 0;
+	border: 0;
+	border-top: 1px solid rgb(5 5 5/0.06);
+}
+.logging-email-loading {
+	text-align: center;
+	padding: 20px;
+}
+.logging-email-event-list {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+.logging-email-event-list > div {
+	display: flex;
+	align-items: center;
+}
+.logging-email-event-list > div > div {
+	margin-left: 12px;
+}
+.logging-email-event-list small {
+	display: block;
+	color: #6b7280;
+	font: 14px/20px var(--ui-font-sans);
+}
+.logging-email-events footer {
+	display: flex;
+	gap: 16px;
+	margin-top: 24px;
+}
+.logging-email-servers {
+	display: flex;
+	width: 100%;
+}
+.logging-email-server {
+	padding: 16px;
+	white-space: nowrap;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.logging-email-field {
+	margin: 8px;
+}
+.logging-email-field > span,
+.logging-email-field > a {
+	display: block;
+	margin-top: 8px;
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #6b7280;
+}
+.logging-email-field > .ui-input-wrapper {
+	width: 100%;
+	min-width: 160px;
+	min-height: 0;
+	padding: 0;
+	font-size: 16px;
+	line-height: 24px;
+}
+.logging-email-field .ui-input {
+	width: 400px;
+	padding: 8px 48px 8px 12px;
+}
+.logging-email-field > p {
+	font: italic small/1.5 var(--ui-font-sans);
+	color: gray;
+}
+.logging-email-field strong {
+	color: red;
+	font-weight: 400;
+}
+.logging-email-server-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.logging-email-server-actions > .ui-button:first-child {
+	margin-top: 8px;
+}
+
+@media (max-width: 767px) {
+	.logging-settings-page > div {
+		padding: 16px;
+	}
+}

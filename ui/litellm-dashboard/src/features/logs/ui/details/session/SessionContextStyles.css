@@ -1,0 +1,408 @@
+.session-user-text {
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 13px;
+	line-height: 24px;
+	color: #1e293b;
+}
+.session-user-context {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+.session-context-file {
+	border: 1px solid #bae6fd;
+	border-radius: 6px;
+	background: rgb(240 249 255 / 80%);
+	padding: 10px 12px;
+}
+.session-context-file__header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 11px;
+	font-weight: 600;
+	color: #0369a1;
+}
+.session-context-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 24px;
+	height: 24px;
+	border: 1px solid currentColor;
+	border-radius: 6px;
+	background: #fff;
+}
+.session-context-file .session-context-icon {
+	border-color: #bae6fd;
+}
+.session-context-file__name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	border-radius: 4px;
+	background: #e0f2fe;
+	padding: 2px 6px;
+	font:
+		500 10px ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		monospace;
+	color: #075985;
+}
+.session-context-file__path {
+	margin-top: 8px;
+	word-break: break-all;
+	border: 1px solid #e0f2fe;
+	border-radius: 4px;
+	background: rgb(255 255 255 / 80%);
+	padding: 6px 10px;
+	font:
+		11px/20px ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		monospace;
+	color: #334155;
+}
+.session-context-disclosure {
+	border: 1px solid;
+	border-radius: 6px;
+	overflow: hidden;
+}
+.session-context-disclosure > button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	padding: 8px 12px;
+	text-align: left;
+	border: 0;
+	background: none;
+	cursor: pointer;
+}
+.session-context-disclosure > button > strong {
+	font-size: 11px;
+	font-weight: 600;
+	flex: none;
+}
+.session-context-disclosure > button > svg {
+	flex: none;
+	transition: transform 0.15s;
+}
+.session-context-preview {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	font-weight: 400;
+}
+.session-context-control {
+	font-size: 10px;
+	flex: none;
+}
+.session-context-count {
+	font-size: 10px;
+	padding: 2px 8px;
+	border-radius: 9999px;
+	flex: none;
+}
+.session-context-reminder {
+	border-color: #ddd6fe;
+	background: rgb(245 243 255 / 70%);
+	padding: 2px 0;
+}
+.session-context-reminder > button {
+	color: #6d28d9;
+}
+.session-context-reminder .session-context-icon {
+	border-color: #ddd6fe;
+	color: #7c3aed;
+}
+.session-context-reminder .session-context-preview {
+	color: #7c3aed;
+}
+.session-context-reminder .session-context-control {
+	color: #8b5cf6;
+}
+.session-context-reminder__text {
+	margin: 0 12px 10px;
+	border: 1px solid #ede9fe;
+	border-radius: 4px;
+	background: rgb(255 255 255 / 80%);
+	padding: 8px 10px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 11px;
+	line-height: 20px;
+	color: #334155;
+}
+.session-context-transcript {
+	border-color: #c7d2fe;
+	background: rgb(238 242 255 / 50%);
+}
+.session-context-transcript > button {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: #eef2ff;
+	color: #3730a3;
+}
+.session-context-transcript .session-context-icon {
+	border-color: #c7d2fe;
+}
+.session-context-transcript .session-context-count {
+	background: #e0e7ff;
+	color: #4f46e5;
+}
+.session-context-transcript .session-context-preview {
+	color: #4f46e5;
+}
+.session-context-transcript .session-context-control {
+	color: #6366f1;
+}
+.session-context-transcript > .session-context-disclosure__body {
+	padding: 10px;
+	border-top: 1px solid #c7d2fe;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.session-transcript-entry {
+	border: 1px solid #e2e8f0;
+	border-radius: 6px;
+	background: #f8fafc;
+	padding: 10px 12px;
+}
+.session-transcript-entry__label {
+	margin-bottom: 8px;
+}
+.session-transcript-badge {
+	border-radius: 4px;
+	padding: 2px 6px;
+	font-size: 10px;
+	font-weight: 600;
+	background: #e2e8f0;
+	color: #334155;
+	flex: none;
+}
+.session-transcript-entry__text {
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 12px;
+	line-height: 20px;
+	color: #334155;
+}
+.session-transcript-entry--user {
+	border-color: #a7f3d0;
+	background: rgb(236 253 245 / 70%);
+}
+.session-transcript-entry--user .session-transcript-badge {
+	background: #d1fae5;
+	color: #065f46;
+}
+.session-transcript-entry--assistant {
+	border-color: #bfdbfe;
+	background: rgb(239 246 255 / 70%);
+}
+.session-transcript-entry--assistant .session-transcript-badge {
+	background: #dbeafe;
+	color: #1e40af;
+}
+.session-transcript-entry--system {
+	border-color: #ddd6fe;
+	background: rgb(245 243 255 / 70%);
+}
+.session-transcript-entry--system .session-transcript-badge {
+	background: #ede9fe;
+	color: #5b21b6;
+}
+.session-transcript-entry--tool {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 8px 12px;
+	border-color: #fde68a;
+	background: rgb(255 251 235 / 80%);
+}
+.session-transcript-entry--tool .session-transcript-badge {
+	background: #fef3c7;
+	color: #92400e;
+}
+.session-transcript-tool-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border: 1px solid #fde68a;
+	border-radius: 4px;
+	background: #fff;
+	color: #b45309;
+	flex: none;
+	margin-top: 2px;
+}
+.session-transcript-entry > code {
+	min-width: 0;
+	white-space: pre-wrap;
+	word-break: break-all;
+	font:
+		11px/20px ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		monospace;
+	color: #334155;
+}
+.session-transcript-empty {
+	padding: 12px 8px;
+	font-size: 11px;
+	color: #64748b;
+}
+.session-tool-result {
+	overflow: hidden;
+	border: 1px solid #fde68a;
+	border-radius: 8px;
+	background: rgb(255 251 235 / 60%);
+	box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
+	color: #78350f;
+}
+.session-tool-result > button {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-width: 0;
+	padding: 12px 14px;
+	text-align: left;
+	border: 0;
+	background: none;
+	color: inherit;
+	cursor: pointer;
+}
+.session-tool-result > button > svg {
+	flex: none;
+	transition: transform 0.15s;
+}
+.session-tool-result__icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border: 1px solid #fde68a;
+	border-radius: 8px;
+	background: #fff;
+	color: #b45309;
+	flex: none;
+}
+.session-tool-result__summary {
+	min-width: 0;
+	flex: 1;
+}
+.session-tool-result__summary > span:first-child {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.session-tool-result__summary strong {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	font-weight: 600;
+}
+.session-tool-result__status {
+	flex: none;
+	border-radius: 9999px;
+	padding: 2px 8px;
+	font-size: 9px;
+	font-weight: 600;
+	background: #fef3c7;
+	color: #b45309;
+}
+.session-tool-result__preview {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	margin-top: 2px;
+	font:
+		10px ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		monospace;
+	color: rgb(180 83 9 / 75%);
+}
+.session-tool-result__control {
+	flex: none;
+	font-size: 10px;
+	font-weight: 500;
+}
+.session-tool-result__body {
+	border-top: 1px solid #fde68a;
+	padding: 12px 14px;
+}
+.session-tool-result__meta {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	font-size: 10px;
+	color: #64748b;
+	margin-bottom: 8px;
+}
+.session-tool-result__meta > .ld-mono {
+	max-width: 420px;
+}
+.session-tool-result__structured,
+.session-tool-result__body > pre {
+	border: 1px solid #fef3c7;
+	border-radius: 6px;
+	background: rgb(255 255 255 / 90%);
+	padding: 10px;
+}
+.session-tool-result__body > pre {
+	max-height: 360px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	padding: 10px 12px;
+	margin: 0;
+	font:
+		11px/20px ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		monospace;
+	color: #334155;
+}
+.session-tool-result--error {
+	border-color: #fecaca;
+	background: rgb(254 242 242 / 60%);
+	color: #991b1b;
+}
+.session-tool-result--error .session-tool-result__icon,
+.session-tool-result--error .session-tool-result__body {
+	border-color: #fecaca;
+}
+.session-tool-result--error .session-tool-result__icon {
+	color: #dc2626;
+}
+.session-tool-result--error .session-tool-result__status {
+	background: #fee2e2;
+	color: #b91c1c;
+}
+.session-tool-result--error .session-tool-result__preview {
+	color: rgb(220 38 38 / 80%);
+}
+.session-tool-result--error .session-tool-result__structured,
+.session-tool-result--error .session-tool-result__body > pre {
+	border-color: #fee2e2;
+}
+.session-tool-result--error .session-tool-result__body > pre {
+	color: #991b1b;
+}

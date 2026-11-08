@@ -1,0 +1,422 @@
+.cost-how-it-works {
+	padding-top: 8px;
+}
+.cost-how-it-works > * + * {
+	margin-top: 16px;
+}
+.cost-how-it-works p {
+	margin: 0;
+	font-size: 12px;
+	line-height: 16px;
+	color: #4b5563;
+}
+.cost-how-it-works .cost-how-heading {
+	margin-bottom: 4px;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #111827;
+}
+.cost-how-it-works p > code {
+	background: #f3f4f6;
+	padding: 2px 6px;
+	border-radius: 4px;
+	font: 12px/16px var(--ui-font-mono);
+}
+.cost-how-section {
+	padding-top: 16px;
+	border-top: 1px solid #e5e7eb;
+}
+.cost-how-it-works .cost-how-before-code {
+	margin-bottom: 12px;
+}
+.cost-how-it-works .cost-how-after-code {
+	margin: 12px 0 8px;
+}
+.cost-response-headers > div {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+.cost-response-headers > div + div {
+	margin-top: 6px;
+}
+.cost-response-headers code {
+	padding: 4px 8px;
+	border-radius: 4px;
+	background: #f3f4f6;
+	color: #1f2937;
+	white-space: nowrap;
+	font: 12px/16px var(--ui-font-mono);
+}
+.cost-discount-calculator-inputs {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 16px;
+	margin-bottom: 16px;
+}
+.cost-discount-calculator-inputs label {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: #374151;
+}
+.cost-discount-calculated {
+	padding: 16px;
+	border: 1px solid #bfdbfe;
+	border-radius: 8px;
+	background: #eff6ff;
+}
+.cost-discount-calculated > p {
+	margin-bottom: 8px;
+	color: #1e3a8a;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+}
+.cost-discount-calculated > div {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	color: #1e40af;
+	font-size: 12px;
+	line-height: 16px;
+}
+.cost-discount-calculated > div + div {
+	margin-top: 8px;
+}
+.cost-discount-calculated code {
+	padding: 0;
+	background: transparent;
+	color: #1e3a8a;
+	font: 12px/16px var(--ui-font-mono);
+}
+.cost-discount-calculated .cost-discount-applied {
+	padding-top: 8px;
+	border-top: 1px solid #93c5fd;
+	font-weight: 600;
+	color: #1e3a8a;
+}
+.cost-discount-applied strong {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 700;
+}
+.cost-pricing-calculator > * + * {
+	margin-top: 16px;
+}
+.cost-time-period {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	margin-bottom: 8px;
+}
+.cost-time-period button {
+	position: relative;
+	padding: 0 7px;
+	height: 24px;
+	border: 1px solid #d9d9d9;
+	background: white;
+	font: 14px/22px var(--ui-font-antd);
+	color: #000000e0;
+	cursor: pointer;
+}
+.cost-time-period button:first-child {
+	border-radius: 4px 0 0 4px;
+}
+.cost-time-period button:last-child {
+	margin-left: -1px;
+	border-radius: 0 4px 4px 0;
+}
+.cost-time-period button.selected {
+	z-index: 1;
+	border-color: #1677ff;
+	background: #1677ff;
+	color: white;
+}
+.cost-pricing-table-wrap {
+	overflow-x: auto;
+}
+.cost-antd-table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	font: 14px/22px var(--ui-font-antd);
+	color: #000000e0;
+	text-align: left;
+}
+.cost-antd-table th {
+	padding: 8px;
+	font-weight: 600;
+	background: #fafafa;
+	color: #000000e0;
+	border-bottom: 1px solid #f0f0f0;
+	text-align: left;
+}
+.cost-antd-table td {
+	padding: 8px;
+	border-bottom: 1px solid #f0f0f0;
+}
+.cost-antd-table th:first-child {
+	border-top-left-radius: 8px;
+}
+.cost-antd-table th:last-child {
+	border-top-right-radius: 8px;
+}
+.cost-pricing-table {
+	table-layout: auto;
+}
+.cost-pricing-table .ui-input-number,
+.cost-pricing-table .ui-select {
+	width: 100%;
+}
+.cost-pricing-table-footer {
+	padding: 8px;
+	background: #fafafa;
+	border-radius: 0 0 8px 8px;
+}
+.cost-add-model {
+	width: 100%;
+	border-style: dashed !important;
+}
+.cost-estimate-empty {
+	padding: 24px 0;
+	border: 1px dashed #d1d5db;
+	border-radius: 8px;
+	background: #f9fafb;
+	text-align: center;
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.cost-estimate-loading {
+	padding: 24px 0;
+	text-align: center;
+}
+.cost-estimate-loading > p {
+	margin: 8px 0 0;
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.cost-results > * + * {
+	margin-top: 16px;
+}
+.cost-results > hr {
+	margin: 16px 0;
+	border: 0;
+	border-top: 1px solid #0505050f;
+}
+.cost-results-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.cost-results-heading > p {
+	margin: 0;
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+	color: #111827;
+}
+.cost-results-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.cost-export-menu {
+	position: relative;
+	display: inline-block;
+}
+.cost-export-options {
+	position: absolute;
+	right: 0;
+	z-index: 50;
+	width: 176px;
+	margin-top: 4px;
+	padding: 4px 0;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: white;
+	box-shadow:
+		0 10px 15px -3px #0000001a,
+		0 4px 6px -4px #0000001a;
+}
+.cost-export-options button {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	padding: 8px 16px;
+	font-size: 14px;
+	line-height: 20px;
+	color: #374151;
+	background: transparent;
+	border: 0;
+	cursor: pointer;
+}
+.cost-export-options button:hover {
+	background: #f9fafb;
+}
+.cost-export-options .ui-icon {
+	margin-right: 12px;
+}
+.cost-summary-card {
+	padding: 12px;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	background: linear-gradient(to right, #f8fafc, #eff6ff);
+	font-family: var(--ui-font-antd);
+}
+.cost-summary-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	column-gap: 16px;
+	row-gap: 8px;
+}
+.cost-summary-grid p {
+	margin: 0 0 4px;
+	font-size: 12px;
+	line-height: 22px;
+	color: #00000073;
+}
+.cost-summary-grid strong {
+	font: 400 18px/1.5714285714 monospace;
+}
+.cost-summary-grid span {
+	font: 14px/20px var(--ui-font-mono);
+	color: #d97706;
+}
+.cost-summary-margins {
+	margin-top: 12px;
+	padding-top: 12px;
+	border-top: 1px solid #e2e8f0;
+}
+.cost-summary-margins p {
+	margin: 0;
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+}
+.cost-summary-table-wrap {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	overflow-x: auto;
+}
+.cost-summary-table th:nth-child(2),
+.cost-summary-table th:nth-child(3),
+.cost-summary-table th:nth-child(4),
+.cost-summary-table td:nth-child(2),
+.cost-summary-table td:nth-child(3),
+.cost-summary-table td:nth-child(4) {
+	text-align: right;
+}
+.cost-summary-table td:nth-child(2),
+.cost-summary-table td:nth-child(3),
+.cost-summary-table td:nth-child(4) {
+	font: 14px/20px var(--ui-font-mono);
+}
+.cost-summary-model {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.cost-summary-model > span:first-child {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+}
+.cost-result-missing {
+	color: #9ca3af;
+}
+.cost-margin-value {
+	color: #d97706;
+}
+.cost-result-error-inline,
+.cost-result-zero-warning {
+	margin-top: 4px;
+	padding: 4px 8px;
+	border-radius: 4px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #dc2626;
+	background: #fef2f2;
+}
+.cost-result-zero-warning {
+	color: #d97706;
+	background: #fffbeb;
+}
+.cost-result-error {
+	padding: 12px;
+	border: 1px solid #fecaca;
+	border-radius: 8px;
+	background: #fef2f2;
+	color: #dc2626;
+	font-size: 14px;
+	line-height: 20px;
+}
+.cost-result-error strong {
+	font-weight: 500;
+}
+.cost-single-model {
+	padding: 16px;
+	background: #f9fafb;
+	border-radius: 8px;
+}
+.cost-single-updating {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: #6b7280;
+	font-size: 14px;
+	line-height: 20px;
+	margin-bottom: 12px;
+}
+.cost-breakdown-grid {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 16px;
+}
+.cost-breakdown-grid p {
+	margin: 0;
+	font: 12px/16px var(--ui-font-sans);
+	color: #6b7280;
+}
+.cost-breakdown-grid span {
+	font: 14px/20px var(--ui-font-sans);
+	color: #6b7280;
+}
+.cost-breakdown-grid .cost-breakdown-request-total {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+	color: #2563eb;
+}
+.cost-breakdown-grid .cost-margin-value {
+	color: #d97706;
+}
+.cost-breakdown-period {
+	margin-top: 12px;
+	padding-top: 8px;
+	border-top: 1px solid #e5e7eb;
+}
+.cost-breakdown-period-total {
+	font-size: 16px !important;
+	line-height: 24px !important;
+	font-weight: 600;
+}
+.cost-breakdown-day .cost-breakdown-period-total {
+	color: #16a34a;
+}
+.cost-breakdown-month .cost-breakdown-period-total {
+	color: #9333ea;
+}
+.cost-token-pricing {
+	margin-top: 12px;
+	padding-top: 8px;
+	border-top: 1px solid #e5e7eb;
+	font-size: 12px;
+	line-height: 16px;
+	color: #9ca3af;
+}

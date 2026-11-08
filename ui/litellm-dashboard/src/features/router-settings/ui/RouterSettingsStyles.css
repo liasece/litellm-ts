@@ -1,0 +1,264 @@
+@import "./FallbackStyles.css";
+.router-settings-page {
+	width: 100%;
+	font: 14px/22px var(--ui-font-sans);
+}
+.router-settings-page > .ui-tabs > .ui-tabs__list {
+	padding: 16px 32px 0;
+}
+.router-settings-page > .ui-tabs > .ui-tabs__panel {
+	margin-top: 8px;
+}
+.router-settings-panel {
+	padding: 24px 32px;
+}
+@media (max-width: 1023px) {
+	.router-settings-page > .ui-tabs > .ui-tabs__list {
+		padding: 16px 16px 0;
+	}
+	.router-settings-panel {
+		padding: 16px;
+	}
+}
+.routing-form {
+	width: 100%;
+	padding: 8px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 32px;
+}
+.routing-section {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+.routing-section header {
+	max-width: 768px;
+}
+.routing-section h3 {
+	font: 500 14px/20px var(--ui-font-sans);
+	color: #111827;
+}
+.routing-section header p {
+	margin-top: 4px;
+	font: 12px/16px var(--ui-font-sans);
+	color: #6b7280;
+}
+.routing-strategy {
+	max-width: 768px;
+}
+.routing-strategy > label,
+.routing-tag-filter label,
+.routing-grid label > span {
+	display: block;
+	font: 500 12px/16px var(--ui-font-sans);
+	text-transform: uppercase;
+	letter-spacing: 0.025em;
+	color: #374151;
+}
+.routing-strategy > label,
+.routing-tag-filter label {
+	position: relative;
+	top: 1px;
+	line-height: 24px;
+}
+.routing-grid label > span {
+	position: relative;
+	top: 1px;
+	line-height: 24px;
+}
+.routing-strategy > p,
+.routing-tag-filter p,
+.routing-grid label > p {
+	margin-top: 2px;
+	color: #6b7280;
+	font: 12px/16px var(--ui-font-sans);
+}
+.routing-strategy > p,
+.routing-grid label > p {
+	margin-bottom: 8px;
+}
+.routing-strategy-option {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 4px 0;
+}
+.routing-strategy-option strong {
+	font: 500 14px/20px var(--ui-font-mono);
+}
+.routing-strategy-option small {
+	font: 400 12px/16px var(--ui-font-antd);
+	color: #6b7280;
+}
+.routing-strategy .ui-select {
+	margin-top: 2px;
+}
+.routing-strategy .ui-select--large {
+	padding-block: 0;
+}
+.routing-strategy .ui-select--large .ui-select__values {
+	height: 38px;
+	align-items: center;
+}
+.routing-strategy .ui-select--large .ui-select__single {
+	display: flex;
+	align-items: center;
+	height: 38px;
+	overflow: visible;
+	white-space: normal;
+}
+.routing-tag-filter {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	max-width: 768px;
+}
+.routing-tag-filter > .ui-switch {
+	margin-left: 16px;
+}
+.routing-tag-filter a {
+	color: #2563eb;
+	text-decoration: underline;
+}
+.routing-form > hr {
+	border: 0;
+	border-top: 1px solid #e5e7eb;
+	margin: 0;
+}
+.routing-grid {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 24px;
+}
+.routing-grid .ui-input {
+	font-family: var(--ui-font-mono);
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.routing-actions {
+	border-top: 1px solid #e5e7eb;
+	padding-top: 24px;
+	display: flex;
+	justify-content: flex-end;
+	gap: 12px;
+}
+.routing-actions .ui-button {
+	height: auto;
+	padding: 8px 16px;
+	font-size: 12.4px;
+	font-weight: 500;
+}
+.routing-actions .ui-button__label {
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.routing-table-scroll {
+	overflow: auto;
+}
+.routing-table {
+	width: 100%;
+	text-align: left;
+	border-collapse: collapse;
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #6b7280;
+	white-space: nowrap;
+}
+.routing-table th {
+	padding: 14px 16px;
+	font-weight: 600;
+	color: #111827;
+}
+.routing-table td {
+	padding: 16px;
+}
+.routing-table tbody tr + tr {
+	border-top: 1px solid #e5e7eb;
+}
+.routing-table small {
+	display: block;
+	margin-top: 4px;
+	font: italic 10.4px/18.4px var(--ui-font-sans);
+	color: #808080;
+}
+.routing-status {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 10px;
+	border-radius: 6px;
+	background: transparent;
+	color: #6b7280;
+	font: 400 14px/20px var(--ui-font-sans);
+	box-shadow: inset 0 0 0 1px rgb(99 102 241/0.2);
+}
+.routing-status:not(.routing-status--db) {
+	outline: 3px solid currentColor;
+}
+.routing-status--db {
+	color: white;
+}
+.routing-status > .ui-hero-icon {
+	flex: none;
+	margin: 0 6px 0 -4px;
+}
+.routing-field-actions {
+	display: inline;
+}
+.routing-field-actions > button:last-child {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: #ef4444;
+	padding: 6px;
+}
+.routing-field-actions > button:last-child svg {
+	display: block;
+}
+.router-general-card .ui-select__input {
+	flex: 1 1 0%;
+	width: 0;
+}
+.router-general-card .ui-select {
+	min-width: 0;
+	width: auto;
+	padding-block: 0;
+}
+.router-general-card .ui-select__values {
+	align-items: stretch;
+	height: 30px;
+}
+.router-general-card .ui-select--antd:not(.ui-select--small) .ui-select__single {
+	position: static;
+	inset: auto;
+	overflow: visible;
+	text-overflow: clip;
+	height: 30px;
+	line-height: 30px;
+	padding-right: 10px;
+}
+.router-general-card .ui-select--antd .ui-select__arrow {
+	position: absolute;
+	top: 50%;
+	right: 10px;
+	margin: 0;
+	transform: translateY(-50%);
+}
+.router-general-card .ui-input-number__input {
+	font-family: var(--ui-font-antd);
+}
+@media (min-width: 1024px) {
+	.routing-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (min-width: 1280px) {
+	.routing-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+/* AntD keeps the focus border on a hovered focused select; the shared
+   ui-select hover rule has higher specificity than its focus rule. */
+.router-settings-page .ui-select:not(.ui-select--disabled):hover:focus-within {
+	border-color: var(--ui-primary);
+}

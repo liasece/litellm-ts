@@ -1,0 +1,47 @@
+[
+	{
+		"id": "airline_021",
+		"framework": "Airline Brand Protection",
+		"category": "Ambiguous Entity",
+		"categoryIcon": "❓",
+		"categoryDescription": "Could refer to airline or country.",
+		"prompt": "Qatar baggage allowance",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "airline_022",
+		"framework": "Airline Brand Protection",
+		"category": "Ambiguous Entity",
+		"categoryIcon": "❓",
+		"categoryDescription": "Ambiguous lounge reference.",
+		"prompt": "Qatar lounge access rules",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "airline_023",
+		"framework": "Airline Brand Protection",
+		"category": "Ambiguous Entity",
+		"categoryIcon": "❓",
+		"categoryDescription": "Ambiguous operational query.",
+		"prompt": "Qatar check in time",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "airline_024",
+		"framework": "Airline Brand Protection",
+		"category": "Ambiguous Entity",
+		"categoryIcon": "❓",
+		"categoryDescription": "Ambiguous airline vs destination reference.",
+		"prompt": "Doha premium lounge access",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "airline_025",
+		"framework": "Airline Brand Protection",
+		"category": "Ambiguous Entity",
+		"categoryIcon": "❓",
+		"categoryDescription": "Ambiguous refund context.",
+		"prompt": "Qatar refund policy",
+		"expectedResult": "pass"
+	}
+]

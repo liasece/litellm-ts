@@ -1,0 +1,251 @@
+.application-usage-indicator {
+	position: fixed;
+	bottom: 16px;
+	left: 16px;
+	z-index: 50;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 21px;
+	color: #000;
+}
+.application-usage-indicator .ui-lucide-icon {
+	display: block;
+	flex-shrink: 0;
+}
+.application-usage-minimized {
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	box-shadow: 0 1px 2px #0000000d;
+	padding: 12px;
+	width: 100%;
+	transition: all 0.15s;
+}
+.application-usage-minimized:hover {
+	box-shadow:
+		0 4px 6px -1px #0000001a,
+		0 2px 4px -2px #0000001a;
+}
+.application-usage-minimized > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.application-usage-minimized > div > span {
+	flex-shrink: 0;
+}
+.application-usage-minimized > div > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.application-usage-minimized > div > div > span:not(.application-usage-fallback) {
+	flex-shrink: 0;
+	padding: 2px 6px;
+	border-radius: 4px;
+	font-size: 12px;
+	line-height: 16px;
+	border: 1px solid;
+}
+.application-usage-indicator span.tone-normal {
+	background: #f9fafb;
+	color: #374151;
+	border-color: #e5e7eb;
+}
+.application-usage-indicator span.tone-warning {
+	background: #fefce8;
+	color: #a16207;
+	border-color: #fef08a;
+}
+.application-usage-indicator span.tone-error {
+	background: #fef2f2;
+	color: #b91c1c;
+	border-color: #fecaca;
+}
+.application-usage-loading,
+.application-usage-error {
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	box-shadow: 0 1px 2px #0000000d;
+	padding: 16px;
+	width: 100%;
+}
+.application-usage-loading {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding-top: 24px;
+	padding-bottom: 24px;
+}
+.application-usage-loading > .ui-lucide-icon {
+	animation: application-usage-spin 1s linear infinite;
+}
+.application-usage-loading > span,
+.application-usage-error > span {
+	color: #6b7280;
+	font-size: 14px;
+	line-height: 20px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.application-usage-error {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.application-usage-error > span {
+	flex: 1;
+	min-width: 0;
+}
+.application-usage-error > button,
+.application-usage-card > header > button {
+	opacity: 0;
+	padding: 4px;
+	border-radius: 4px;
+	flex-shrink: 0;
+	color: #9ca3af;
+}
+.application-usage-error:hover > button,
+.application-usage-card:hover > header > button {
+	opacity: 1;
+}
+.application-usage-error > button:hover,
+.application-usage-card > header > button:hover {
+	background: #f3f4f6;
+}
+.application-usage-card {
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	box-shadow: 0 1px 2px #0000000d;
+	padding: 12px;
+	width: 100%;
+	transition: all 0.2s;
+}
+.application-usage-card > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+.application-usage-card > header > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex: 1;
+}
+.application-usage-card > header strong {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.application-usage-card > div {
+	display: grid;
+	gap: 12px;
+	font-size: 14px;
+	line-height: 20px;
+}
+.application-usage-quota,
+.application-usage-license {
+	display: grid;
+	gap: 4px;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	padding: 8px;
+}
+.application-usage-quota.tone-error,
+.application-usage-license.tone-error {
+	border-color: #fecaca;
+	background: #fef2f2;
+}
+.application-usage-quota.tone-warning,
+.application-usage-license.tone-warning {
+	border-color: #fef08a;
+	background: #fefce8;
+}
+.application-usage-quota > header,
+.application-usage-license > header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #4b5563;
+	margin-bottom: 0;
+}
+.application-usage-quota strong,
+.application-usage-license strong {
+	font-weight: 500;
+	text-align: right;
+}
+.application-usage-quota header > span,
+.application-usage-license header > span {
+	margin-left: 4px;
+	padding: 2px 6px;
+	border: 1px solid;
+	border-radius: 4px;
+}
+.application-usage-quota header > span.tone-normal,
+.application-usage-license header > span.tone-normal {
+	color: #4b5563;
+}
+.application-usage-quota > div,
+.application-usage-license > div {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.application-usage-quota > div > span,
+.application-usage-license > div > span {
+	font-size: 12px;
+	line-height: 16px;
+	color: #4b5563;
+}
+.quota-text-error {
+	color: #dc2626;
+}
+.quota-text-warning {
+	color: #ca8a04;
+}
+.application-usage-progress {
+	width: 100%;
+	height: 8px;
+	border-radius: 999px;
+	background: #e5e7eb;
+	overflow: visible;
+}
+.application-usage-progress > div {
+	height: 8px;
+	border-radius: 999px;
+	transition: all 0.3s;
+	background: #22c55e;
+}
+.application-usage-progress > div.error {
+	background: #ef4444;
+}
+.application-usage-progress > div.warning {
+	background: #eab308;
+}
+.application-usage-card .license-type {
+	text-transform: capitalize;
+}
+@keyframes application-usage-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}

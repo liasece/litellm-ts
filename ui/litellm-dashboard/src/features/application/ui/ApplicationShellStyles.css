@@ -1,0 +1,469 @@
+.application-shell {
+	display: flex;
+	height: 100dvh;
+	min-height: 0;
+	flex-direction: column;
+	overflow: hidden;
+}
+.application-navbar {
+	flex-shrink: 0;
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	background: #fff;
+	border-bottom: 1px solid #e5e7eb;
+}
+.application-navbar-inner {
+	width: 100%;
+	display: flex;
+	height: 56px;
+	min-width: 0;
+	align-items: center;
+	padding: 0 16px;
+}
+.application-navbar-brand-group {
+	display: flex;
+	flex-shrink: 0;
+	min-width: 0;
+	align-items: center;
+}
+.application-desktop-menu-button,
+.application-mobile-menu-button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	margin-right: 8px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: #4b5563;
+	cursor: pointer;
+}
+.application-desktop-menu-button:hover,
+.application-mobile-menu-button:hover {
+	background: #f3f4f6;
+	color: #111827;
+}
+.application-mobile-menu-button {
+	display: none;
+}
+.application-navbar-brand {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+}
+.application-navbar-brand-relative {
+	position: relative;
+}
+.application-navbar-brand-image-box {
+	display: flex;
+	height: 40px;
+	max-width: 192px;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+}
+.application-navbar-brand img {
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
+	object-fit: contain;
+}
+.application-navbar-actions {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	margin-left: auto;
+	gap: 20px;
+}
+.application-navbar-text-button {
+	display: inline-flex;
+	height: 32px;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 4px 15px;
+	color: rgba(0, 0, 0, 0.88);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	font:
+		14px/22px -apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Roboto,
+		"Helvetica Neue",
+		Arial,
+		"Noto Sans",
+		sans-serif;
+	text-decoration: none;
+	cursor: pointer;
+}
+.application-navbar-text-button:hover {
+	background: rgba(0, 0, 0, 0.04);
+	color: rgba(0, 0, 0, 0.88);
+}
+.application-workspace {
+	display: flex;
+	position: relative;
+	min-height: 0;
+	flex: 1;
+	overflow: hidden;
+}
+.application-sidebar {
+	transform: translateX(0);
+	flex-shrink: 0;
+	position: relative;
+	width: 220px;
+	min-height: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	overscroll-behavior: contain;
+	padding-top: 8px;
+	background: white;
+}
+.application-sidebar--collapsed {
+	width: 80px;
+}
+.application-sidebar-content {
+	background: #fff;
+	font:
+		14px/1.5 -apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Roboto,
+		"Helvetica Neue",
+		Arial,
+		"Noto Sans",
+		sans-serif;
+	color: rgba(0, 0, 0, 0.88);
+}
+.application-sidebar-menu {
+	padding-top: 4px;
+	padding-bottom: 4px;
+}
+.application-navigation-group {
+	padding: 0;
+	margin: 0;
+}
+.application-navigation-heading {
+	padding: 8px 16px;
+	color: #6b7280;
+	font-size: 10px;
+	line-height: 15px;
+	font-weight: 600;
+	letter-spacing: 0.05em;
+}
+.application-navigation-heading:not(.application-navigation-heading--collapsible) > span {
+	display: block;
+	margin-bottom: 2px;
+	padding: 12px 0 4px 12px;
+}
+.application-navigation-heading--collapsible {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 30px;
+	width: calc(100% - 8px);
+	margin: 4px;
+	padding: 0 calc(16px + 10px * 13 / 14 + 8px) 0 24px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	cursor: pointer;
+	text-align: left;
+}
+.application-navigation-heading--collapsible:hover {
+	background: rgba(0, 0, 0, 0.04);
+}
+.application-navigation-items {
+	padding: 0;
+}
+.application-navigation-item {
+	display: flex;
+	position: relative;
+	align-items: center;
+	gap: 10px;
+	height: 30px;
+	padding: 0 8px 0 24px;
+	margin: 4px;
+	overflow: hidden;
+	color: rgba(0, 0, 0, 0.88);
+	border-radius: 6px;
+	font-size: 13px;
+	line-height: 30px;
+	text-decoration: none;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.application-navigation-item:hover {
+	background: rgba(0, 0, 0, 0.04);
+	color: rgba(0, 0, 0, 0.88);
+}
+.application-navigation-item--selected,
+.application-navigation-item--selected:hover {
+	color: #1677ff;
+	background: #e6f4ff;
+}
+.application-sidebar-menu--collapsed .application-navigation-item {
+	justify-content: flex-start;
+	align-items: flex-start;
+	padding: 5px 28px 0;
+	height: 30px;
+	margin: 4px;
+}
+.application-sidebar-menu--collapsed .application-navigation-items {
+	padding-bottom: 0;
+}
+.application-new-badge {
+	display: inline-block;
+	flex-shrink: 0;
+	min-width: 20px;
+	height: 20px;
+	margin-left: -2px;
+	padding: 0 8px;
+	border-radius: 10px;
+	background: #1677ff;
+	color: #fff;
+	box-shadow: 0 0 0 1px #fff;
+	font: 12px/20px var(--ui-font-antd);
+	text-align: center;
+	white-space: nowrap;
+}
+.application-main {
+	min-width: 0;
+	flex: 1;
+	overflow: auto;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
+.application-navigation-overlay {
+	display: none;
+}
+.application-user-menu {
+	position: relative;
+}
+.application-user-popup {
+	position: absolute;
+	top: 36px;
+	right: 0;
+	width: 330px;
+	z-index: 1050;
+	padding: 4px;
+	color: rgba(0, 0, 0, 0.88);
+	background: white;
+	border-radius: 8px;
+	box-shadow:
+		0 6px 16px 0 rgba(0, 0, 0, 0.08),
+		0 3px 6px -4px rgba(0, 0, 0, 0.12),
+		0 9px 28px 8px rgba(0, 0, 0, 0.05);
+	font:
+		14px/22px -apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Roboto,
+		"Helvetica Neue",
+		Arial,
+		"Noto Sans",
+		sans-serif;
+}
+.application-user-information {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+}
+.application-user-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-height: 22px;
+}
+.application-secondary {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: rgba(0, 0, 0, 0.45);
+}
+.application-membership {
+	display: inline-flex;
+	gap: 4px;
+	align-items: center;
+	border: 1px solid #d9d9d9;
+	border-radius: 4px;
+	padding: 0 7px;
+	background: #fafafa;
+	font-size: 12px;
+}
+.application-user-information hr {
+	height: 1px;
+	width: 100%;
+	margin: 8px 0;
+	border: 0;
+	background: rgba(5, 5, 5, 0.06);
+}
+.application-copy-user {
+	max-width: 150px;
+	padding: 0;
+	color: inherit;
+	background: none;
+	border: 0;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font: inherit;
+}
+.application-user-logout {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	width: 100%;
+	padding: 5px 12px;
+	border: 0;
+	background: white;
+	color: inherit;
+	font: inherit;
+	border-top: 1px solid rgba(5, 5, 5, 0.06);
+	text-align: left;
+	cursor: pointer;
+}
+.application-user-logout:hover {
+	background: rgba(0, 0, 0, 0.04);
+}
+.application-worker-select {
+	min-width: 180px;
+}
+.application-notifications {
+	position: fixed;
+	z-index: 1100;
+	top: 24px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 16px;
+	max-width: calc(100vw - 32px);
+}
+.application-notification {
+	padding: 9px 12px;
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	border-radius: 8px;
+	background: white;
+	box-shadow:
+		0 6px 16px rgba(0, 0, 0, 0.08),
+		0 3px 6px -4px rgba(0, 0, 0, 0.12);
+	font:
+		14px/22px -apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Roboto,
+		"Helvetica Neue",
+		Arial,
+		"Noto Sans",
+		sans-serif;
+}
+@media (max-width: 1023px) {
+	.application-navbar-actions {
+		gap: 12px;
+	}
+}
+@media (max-width: 767px) {
+	.application-navbar-inner {
+		padding: 0 8px;
+	}
+	.application-mobile-menu-button {
+		display: flex;
+		width: 44px;
+		height: 44px;
+		margin-right: 4px;
+	}
+	.application-desktop-menu-button {
+		display: none;
+	}
+	.application-navbar-brand-image-box {
+		height: 36px;
+		max-width: 112px;
+	}
+	.application-navbar-actions {
+		gap: 4px;
+	}
+	.application-sidebar {
+		position: absolute;
+		inset: 0 auto 0 0;
+		z-index: 30;
+		visibility: hidden;
+		transform: translateX(-100%);
+		box-shadow:
+			0 20px 25px -5px rgb(0 0 0/0.1),
+			0 8px 10px -6px rgb(0 0 0/0.1);
+	}
+	.application-sidebar--mobile-open {
+		visibility: visible;
+		transform: translateX(0);
+	}
+	.application-workspace > .application-navigation-overlay {
+		display: block;
+		position: absolute;
+		inset: 0;
+		z-index: 20;
+		background: rgb(2 6 23/0.35);
+		border: 0;
+	}
+}
+@media (max-width: 639px) {
+	.application-docs-link {
+		display: none;
+	}
+}
+
+.application-docs-link {
+	/* Ant Design text buttons in the reference navbar measure 21px even though the user trigger is 22px. */
+	line-height: 21px;
+}
+
+.application-navigation-item > .ui-icon {
+	margin-right: 1px;
+}
+
+.application-navbar .application-desktop-menu-button > .ui-icon,
+.application-navbar .application-mobile-menu-button > .ui-icon,
+.application-navbar .application-navbar-text-button > .ui-icon {
+	position: relative;
+	top: -0.75px;
+}
+
+.application-copy-user-icon {
+	display: inline-block;
+	margin-left: 4px;
+	color: #1677ff;
+	vertical-align: -0.125em;
+}
+.application-membership--premium {
+	background: #fffbe6;
+	border-color: #ffe58f;
+	color: #d48806;
+}
+
+.application-debug-banner {
+	flex-shrink: 0;
+}
+
+.application-navigation-items--nested {
+	display: flow-root;
+	background: rgba(0, 0, 0, 0.02);
+}
+.application-navigation-items--nested .application-navigation-item {
+	padding-left: 48px;
+}
+.application-navigation-heading--collapsible:hover {
+	background: rgba(0, 0, 0, 0.06);
+}

@@ -1,0 +1,83 @@
+/* Native Vue port of the existing react-json-view-lite light presentation.
+ * Copyright (c) 2024 AnyRoad, MIT; full notice: ../support/JsonViewLicense.txt. */
+.json-content {
+	overflow: auto;
+}
+.json-content--framed {
+	padding: 12px;
+	border-radius: 4px;
+	background: #fafafa;
+}
+.json-content-empty {
+	color: rgba(0, 0, 0, 0.45);
+}
+.json-content__tree {
+	background: #fff;
+	color: #0f172a;
+	line-height: 1.2;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+.json-content__node {
+	margin: 0;
+	padding: 0 10px;
+}
+.json-content__children {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.json-content__label {
+	margin-right: 5px;
+	font-weight: 600;
+	color: #000;
+}
+.json-content__label--clickable,
+.json-content__expander,
+.json-content__collapsed {
+	cursor: pointer;
+}
+.json-content__punctuation {
+	margin-right: 5px;
+	font-weight: 700;
+	color: #000;
+}
+.json-content__punctuation + .json-content__punctuation {
+	margin-left: -5px;
+}
+.json-content__expander {
+	font-size: 1.2em;
+	margin-right: 5px;
+	user-select: none;
+	color: #000;
+}
+.json-content__expander--closed::after {
+	content: "\25B8";
+}
+.json-content__expander--open::after {
+	content: "\25BE";
+}
+.json-content__collapsed {
+	margin-right: 5px;
+	color: #000;
+}
+.json-content__collapsed::after {
+	content: "...";
+	font-size: 0.8em;
+}
+.json-content__value--null,
+.json-content__value--undefined {
+	color: #df113a;
+}
+.json-content__value--string {
+	color: rgb(42, 63, 60);
+}
+.json-content__value--number {
+	color: #0b75f5;
+}
+.json-content__value--boolean {
+	color: rgb(70, 144, 56);
+}
+.json-content__value--other {
+	color: #43413d;
+}

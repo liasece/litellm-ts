@@ -1,0 +1,315 @@
+.tools-mcp-tools-wrapper {
+	width: 100%;
+	height: 100vh;
+	padding: 16px;
+	background: #fff;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+}
+.tools-mcp-tools-viewer {
+	width: 100%;
+	border-radius: 12px;
+	overflow: hidden;
+	box-shadow:
+		0 4px 6px -1px #0000001a,
+		0 2px 4px -2px #0000001a;
+}
+.tools-mcp-tools-layout {
+	display: flex;
+	height: auto;
+	width: 100%;
+	gap: 16px;
+}
+.tools-mcp-tools-layout > aside {
+	display: flex;
+	flex-direction: column;
+	width: 25%;
+	padding: 16px;
+	background: #f9fafb;
+}
+.tools-mcp-tools-layout > aside > h2 {
+	font-size: 20px;
+	line-height: 28px;
+	font-weight: 600;
+	margin: 8px 0 24px;
+	color: #111827;
+}
+.tools-mcp-tools-layout > aside > h3 {
+	display: flex;
+	align-items: center;
+	font-size: 12px;
+	line-height: 20px;
+	font-weight: 500;
+	margin: 0 0 12px;
+	color: #374151;
+	white-space: nowrap;
+}
+.tools-mcp-tools-layout > aside > h3 > .ui-icon {
+	margin-right: 8px;
+}
+.tools-mcp-tools-layout > aside > h3 > b {
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	margin-left: 8px;
+	padding: 2px 8px;
+	border-radius: 9999px;
+	color: #1e40af;
+	background: #dbeafe;
+}
+.tools-mcp-tool-search {
+	position: relative;
+	margin-bottom: 12px;
+}
+.tools-mcp-tool-search > .ui-icon {
+	position: absolute;
+	left: 12px;
+	top: 50%;
+	transform: translateY(-50%);
+	z-index: 1;
+	color: #9ca3af;
+}
+.tools-mcp-tool-search .ui-input {
+	padding-left: 30px;
+	border-radius: 8px;
+}
+.tools-mcp-tools-list {
+	flex: 1;
+	min-height: 0;
+	max-height: 400px;
+	overflow-y: auto;
+	scrollbar-width: auto;
+	scrollbar-color: #cbd5e0 #f7fafc;
+}
+.tools-mcp-tools-list > button {
+	display: block;
+	width: 100%;
+	padding: 12px;
+	text-align: left;
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	margin-bottom: 8px;
+	cursor: pointer;
+	color: #374151;
+}
+.tools-mcp-tools-list > button:last-child {
+	margin-bottom: 0;
+}
+.tools-mcp-tools-list > button:hover {
+	border-color: #d1d5db;
+	box-shadow: 0 1px 2px #0000000d;
+}
+.tools-mcp-tools-list > button.selected {
+	background: #eff6ff;
+	border-color: #3b82f6;
+	box-shadow: 0 0 0 1px #bfdbfe;
+}
+.tools-mcp-tools-list > button > div {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+.tools-mcp-tools-list img {
+	width: 16px;
+	height: 16px;
+	object-fit: contain;
+	flex-shrink: 0;
+	margin-top: 2px;
+}
+.tools-mcp-tools-list section {
+	flex: 1;
+	min-width: 0;
+}
+.tools-mcp-tools-list h4 {
+	font-family: var(--ui-font-mono);
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: #111827;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.tools-mcp-tools-list small {
+	display: block;
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.tools-mcp-tools-list section p {
+	font-size: 12px;
+	line-height: 19.5px;
+	color: #4b5563;
+	margin: 4px 0 0;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.tools-mcp-tools-list footer {
+	border-top: 1px solid #bfdbfe;
+	padding-top: 8px;
+	margin-top: 8px;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: #1d4ed8;
+}
+.tools-mcp-tools-list > p {
+	padding: 32px 0;
+	text-align: center;
+	font-size: 12px;
+	color: #374151;
+	margin: 0;
+}
+.tools-mcp-tools-error {
+	padding: 12px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #991b1b;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 8px;
+}
+.tools-mcp-tools-error p {
+	margin: 0;
+	font-weight: 500;
+}
+.tools-mcp-tool-empty {
+	padding: 16px;
+	text-align: center;
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+}
+.tools-mcp-tool-empty strong {
+	display: block;
+	font-size: 12px;
+	font-weight: 500;
+	color: #374151;
+	margin: 8px 0 4px;
+}
+.tools-mcp-tool-empty p {
+	margin: 0;
+}
+.tools-mcp-tools-layout > main {
+	display: flex;
+	flex-direction: column;
+	width: 75%;
+	min-width: 0;
+	background: #fff;
+}
+.tools-mcp-tools-layout > main > header {
+	padding: 16px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.tools-mcp-tools-layout > main > header h2 {
+	font-size: 20px;
+	line-height: 28px;
+	font-weight: 600;
+	margin: 0;
+	color: #111827;
+}
+.tools-mcp-testing-body {
+	flex: 1;
+	overflow: auto;
+	padding: 16px;
+}
+.tools-mcp-select-tool {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	text-align: center;
+	color: #9ca3af;
+}
+.tools-mcp-select-tool > .ui-icon {
+	margin-bottom: 16px;
+}
+.tools-mcp-select-tool h3 {
+	font-size: 18px;
+	line-height: 28px;
+	font-weight: 500;
+	color: #4b5563;
+	margin: 0 0 8px;
+}
+.tools-mcp-select-tool p {
+	font-size: 12px;
+	line-height: 19.5px;
+	color: #6b7280;
+	max-width: 448px;
+	margin: 0;
+}
+.tools-mcp-extra-headers {
+	margin-bottom: 16px;
+	padding: 12px;
+	background: #eff6ff;
+	border: 1px solid #bfdbfe;
+	border-radius: 8px;
+}
+.tools-mcp-extra-headers > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+.tools-mcp-extra-headers strong {
+	display: flex;
+	align-items: center;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #1e40af;
+}
+.tools-mcp-extra-headers strong > .ui-icon {
+	margin-right: 8px;
+	color: #2563eb;
+}
+.tools-mcp-extra-headers button {
+	font-size: 12px;
+	color: #1d4ed8;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+}
+.tools-mcp-extra-headers p {
+	font-size: 12px;
+	line-height: 16px;
+	color: #1d4ed8;
+	margin: 0;
+}
+.tools-mcp-extra-headers p.tools-mcp-headers-set {
+	color: #15803d;
+	margin-top: 8px;
+}
+.tools-mcp-extra-headers label {
+	display: block;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: #374151;
+	margin-top: 12px;
+}
+.tools-mcp-extra-headers label .ui-input {
+	margin-top: 4px;
+	font-weight: 400;
+}
+.tools-mcp-extra-headers .ui-button {
+	width: 100%;
+	color: #fff;
+	background: #1677ff;
+	margin-top: 8px;
+}

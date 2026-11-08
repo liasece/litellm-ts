@@ -1,0 +1,335 @@
+.policy-ai-dialog h3,
+.policy-ai-dialog h4 {
+	margin: 0;
+}
+.policy-ai-header {
+	padding: 32px 32px 16px;
+	border-bottom: 1px solid #f3f4f6;
+}
+.policy-ai-header h3 {
+	font-size: 20px;
+	line-height: 28px;
+	font-weight: 600;
+	color: #111827;
+	margin-bottom: 4px;
+}
+.policy-ai-header p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+}
+.policy-ai-input {
+	padding: 24px 32px;
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+.policy-ai-input label {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #374151;
+	margin-bottom: 6px;
+}
+.policy-ai-input textarea {
+	display: inline-block;
+	width: 100%;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 10px 36px 10px 14px;
+	font-size: 14px;
+	line-height: 20px;
+	color: #111827;
+	overflow: hidden;
+	min-height: 40px;
+	resize: none;
+	font-family: inherit;
+}
+.policy-ai-input textarea::placeholder {
+	color: #9ca3af;
+}
+.policy-ai-input textarea:focus {
+	outline: none;
+	border-color: #3b82f6;
+	box-shadow: 0 0 0 1px #3b82f6;
+}
+.policy-ai-input textarea.policy-ai-description {
+	min-height: 60px;
+	padding-right: 14px;
+}
+.policy-ai-examples {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.policy-ai-examples > div {
+	position: relative;
+}
+.policy-ai-examples button {
+	position: absolute;
+	top: 10px;
+	right: 10px;
+	color: #d1d5db;
+	background: none;
+	border: 0;
+	opacity: 0;
+	cursor: pointer;
+	padding: 0;
+}
+.policy-ai-examples > div:hover > button {
+	opacity: 1;
+}
+.policy-ai-add-example {
+	border: 0;
+	background: none;
+	padding: 0;
+	margin-top: 8px;
+	color: #2563eb;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	cursor: pointer;
+}
+.policy-ai-info {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 14px;
+	background: #eff6ff;
+	border: 1px solid #dbeafe;
+	border-radius: 8px;
+}
+.policy-ai-info > .ui-icon {
+	color: #3b82f6;
+	margin-top: 2px;
+	flex-shrink: 0;
+}
+.policy-ai-info p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #1d4ed8;
+}
+.policy-ai-loading {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	padding: 16px;
+	background: #f9fafb;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	font-size: 14px;
+	line-height: 20px;
+	color: #4b5563;
+}
+.policy-ai-input > footer,
+.policy-ai-results > footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 12px;
+	padding-top: 8px;
+}
+.policy-ai-results {
+	padding: 24px 32px;
+}
+.policy-ai-results > footer {
+	padding-top: 24px;
+	border-top: 1px solid #f3f4f6;
+	margin-top: 16px;
+}
+.policy-ai-single {
+	max-height: 520px;
+	overflow-y: auto;
+	padding-right: 4px;
+}
+.policy-ai-split {
+	display: flex;
+	gap: 24px;
+	min-height: 500px;
+	max-height: 70vh;
+}
+.policy-ai-split > .policy-ai-suggestions,
+.policy-ai-split > .policy-ai-no-results {
+	width: 50%;
+	overflow-y: auto;
+	padding-right: 8px;
+}
+.policy-ai-split > .policy-ai-test-scroll {
+	width: 50%;
+	border-left: 1px solid #e5e7eb;
+	padding-left: 24px;
+	overflow-y: auto;
+}
+.policy-ai-suggestions {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+.policy-ai-suggestions > article {
+	border: 2px solid #e5e7eb;
+	border-radius: 12px;
+	transition: all 0.15s;
+}
+.policy-ai-suggestions > article:hover {
+	border-color: #d1d5db;
+	box-shadow: 0 1px 2px #0000000d;
+}
+.policy-ai-suggestions > article.is-selected {
+	border-color: #60a5fa;
+	background: #eff6ff99;
+	box-shadow: 0 1px 2px #0000000d;
+}
+.policy-ai-suggestions > article > div {
+	padding: 16px;
+	cursor: pointer;
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+.policy-ai-suggestions .ui-checkbox {
+	margin-top: 2px;
+}
+.policy-ai-suggestions section {
+	flex: 1;
+	min-width: 0;
+}
+.policy-ai-suggestions section > header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+.policy-ai-suggestions header > strong {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	color: #111827;
+}
+.policy-ai-pill {
+	padding: 2px 8px;
+	border-radius: 9999px;
+	font-size: 10px;
+	line-height: 1.5714285714285714;
+	font-weight: 500;
+	border: 1px solid;
+}
+.policy-ai-pill--green {
+	background: #f0fdf4;
+	color: #16a34a;
+	border-color: #bbf7d0;
+}
+.policy-ai-pill--amber {
+	background: #fffbeb;
+	color: #d97706;
+	border-color: #fde68a;
+}
+.policy-ai-suggestions section > p {
+	font-size: 12px;
+	line-height: 19.5px;
+	color: #6b7280;
+}
+.policy-ai-guardrails {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+.policy-ai-guardrails > span {
+	display: inline-flex;
+	padding: 2px 6px;
+	border-radius: 4px;
+	font-size: 10px;
+	line-height: 1.5714285714285714;
+	font-weight: 500;
+	background: #f3f4f6;
+	color: #4b5563;
+}
+.policy-ai-guardrails small {
+	font-size: 10px;
+	line-height: 1.5714285714285714;
+	color: #9ca3af;
+}
+.policy-ai-reason {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	margin-top: 8px;
+	color: #2563eb;
+}
+.policy-ai-reason > .ui-icon {
+	flex-shrink: 0;
+	margin-top: 2px;
+	color: #3b82f6;
+}
+.policy-ai-reason p {
+	font-size: 12px;
+	line-height: 19.5px;
+}
+.policy-ai-explanation {
+	padding: 12px;
+	background: #f9fafb;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+}
+.policy-ai-explanation header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+.policy-ai-explanation strong {
+	font-size: 10px;
+	line-height: 1.5714285714285714;
+	font-weight: 600;
+	color: #6b7280;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+.policy-ai-explanation .ui-icon {
+	color: #9ca3af;
+}
+.policy-ai-explanation p {
+	font-size: 12px;
+	line-height: 19.5px;
+	color: #4b5563;
+}
+.policy-ai-no-results {
+	text-align: center;
+	padding: 48px 0;
+	color: #6b7280;
+}
+.policy-ai-no-results svg {
+	display: block;
+	margin: 0 auto 12px;
+	color: #d1d5db;
+}
+.policy-ai-no-results strong {
+	font-weight: 500;
+}
+.policy-ai-no-results p {
+	font-size: 14px;
+	line-height: 20px;
+	margin-top: 4px;
+}
+
+.policy-ai-suggestions .policy-ai-explanation header strong {
+	font-size: 10px;
+	line-height: 1.5714285714285714;
+	color: #6b7280;
+}
+.policy-ai-explanation header > .ui-icon {
+	flex-shrink: 1;
+}
+.policy-ai-suggestions .policy-complexity--Low {
+	color: #6b7280;
+}
+.policy-ai-suggestions .policy-complexity--High {
+	color: #a855f7;
+	border-color: #f3e8ff;
+}
+
+.policy-ai-dialog {
+	overflow-wrap: break-word;
+}

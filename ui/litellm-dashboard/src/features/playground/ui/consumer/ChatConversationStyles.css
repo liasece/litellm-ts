@@ -1,0 +1,198 @@
+.chat-conversations {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+	flex: 1;
+	min-height: 0;
+}
+.chat-conversations > header {
+	padding: 12px 10px 8px;
+}
+.chat-conversations > header .ui-popover-anchor {
+	display: block;
+	width: 100%;
+}
+.chat-conversations > header .ui-button {
+	width: 100%;
+}
+.chat-conversations__list {
+	flex: 1;
+	overflow-y: auto;
+	padding: 0 6px;
+}
+.chat-conversations__empty {
+	text-align: center;
+	color: #bbb;
+	font-size: 12px;
+	margin-top: 32px;
+	padding: 0 12px;
+}
+.chat-conversations__list > section {
+	margin-bottom: 8px;
+}
+.chat-conversations__list h3 {
+	font-size: 11px;
+	font-weight: 600;
+	color: #999;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	padding: 8px 8px 4px;
+	margin: 0;
+}
+.chat-conversation-row {
+	display: flex;
+	align-items: center;
+	padding: 6px 8px;
+	border-radius: 6px;
+	cursor: pointer;
+	background: transparent;
+	transition: background-color 0.15s;
+	min-height: 34px;
+	position: relative;
+}
+.chat-conversation-row:hover {
+	background: #f5f5f5;
+}
+.chat-conversation-row.is-active {
+	background: #e6f4ff;
+}
+.chat-conversation-row > span {
+	flex: 1;
+	font-size: 13px;
+	color: #333;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-weight: 400;
+}
+.chat-conversation-row.is-active > span {
+	color: #1677ff;
+	font-weight: 500;
+}
+.chat-conversation-row__actions {
+	display: flex;
+	gap: 2px;
+	opacity: 0;
+	transition: opacity 0.15s;
+	flex-shrink: 0;
+}
+.chat-conversation-row:hover .chat-conversation-row__actions,
+.chat-conversation-row:focus-within .chat-conversation-row__actions {
+	opacity: 1;
+}
+.chat-conversation-row__actions .ui-button {
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	min-width: 22px;
+	font-size: 12px;
+}
+.chat-conversation-row__actions .ui-popover-anchor:last-child .ui-button {
+	color: #ff4d4f;
+}
+.chat-conversation-row__edit {
+	flex: 1;
+	min-width: 0;
+	height: 24px;
+	padding: 0 7px;
+	border: 1px solid #d9d9d9;
+	border-radius: 4px;
+	font-size: 13px;
+	color: #000000e0;
+	outline: none;
+}
+.chat-conversation-row__edit:focus {
+	border-color: #4096ff;
+	box-shadow: 0 0 0 2px #0591ff1a;
+}
+.chat-conversation-row__confirm > strong {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	font-size: 14px;
+	font-weight: 600;
+}
+.chat-conversation-row__confirm > strong > .ui-icon {
+	color: #faad14;
+}
+.chat-conversation-row__confirm > div {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+	margin-top: 8px;
+}
+.chat-conversations > footer {
+	padding: 10px 12px;
+	border-top: 1px solid #f0f0f0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.chat-conversations > footer > span:first-child {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	background: #e0e7ff;
+	color: #4f46e5;
+	flex-shrink: 0;
+	border-radius: 50%;
+}
+.chat-conversations > footer > span:last-child {
+	font-size: 13px;
+	color: #555;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.chat-search-dialog .ui-dialog__header {
+	display: none;
+}
+.chat-search-dialog .ui-dialog__body {
+	padding: 16px 16px 8px;
+}
+.chat-search-dialog .ui-input {
+	margin-bottom: 12px;
+}
+.chat-search-dialog__results {
+	max-height: 320px;
+	overflow-y: auto;
+}
+.chat-search-dialog__results > p {
+	text-align: center;
+	padding: 24px 0;
+	color: #999;
+	margin: 0;
+}
+.chat-search-dialog__results > button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: 6px;
+	cursor: pointer;
+	background: none;
+	text-align: left;
+	transition: background-color 0.1s;
+}
+.chat-search-dialog__results > button:hover {
+	background: #f0f5ff;
+}
+.chat-search-dialog__results > button > .ui-icon {
+	color: #999;
+	flex-shrink: 0;
+}
+.chat-search-dialog__results > button > span:not(.ui-icon) {
+	font-size: 13px;
+}
+.chat-search-dialog__results small {
+	font-size: 11px;
+	margin-left: auto;
+	flex-shrink: 0;
+	color: #00000073;
+}

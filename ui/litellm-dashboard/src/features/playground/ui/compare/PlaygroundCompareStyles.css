@@ -1,0 +1,317 @@
+.pg-compare {
+	width: 100%;
+	height: 100%;
+	padding: 16px;
+	color: #111827;
+	font-size: 16px;
+	line-height: 24px;
+	background: #fff;
+}
+.pg-compare * {
+	box-sizing: border-box;
+}
+.pg-compare__card {
+	border: 1px solid #e5e7eb;
+	border-radius: 16px;
+	background: #fff;
+	box-shadow: 0 1px 2px #0000000d;
+	min-height: calc(100vh - 160px);
+	display: flex;
+	flex-direction: column;
+}
+.pg-compare__card > header {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 8px 16px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.pg-compare__card > header label {
+	font-size: 14px;
+	font-weight: 500;
+	color: #4b5563;
+}
+.pg-compare__panels {
+	display: grid;
+	flex: 1;
+	min-height: 0;
+	grid-auto-rows: minmax(0, 1fr);
+}
+.pg-compare-panel {
+	border-left: 1px solid #e5e7eb;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	min-width: 0;
+}
+.pg-compare-panel:first-child {
+	border-left: 0;
+}
+.pg-compare-panel > header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 16px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.pg-compare-panel header button:not(.ui-select__trigger) {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 8px;
+	border: 0;
+	border-radius: 8px;
+	background: none;
+	color: #4b5563;
+	cursor: pointer;
+}
+.pg-compare-panel header button:hover {
+	background: #f3f4f6;
+}
+.pg-compare-panel header button.pg-compare-panel__remove {
+	color: #dc2626;
+}
+.pg-compare-panel__messages {
+	flex: 1;
+	max-height: calc(100vh - 385px);
+	overflow: auto;
+	border-radius: 0 0 16px 16px;
+	min-height: 0;
+}
+.pg-compare-settings {
+	width: 300px;
+	max-height: 65vh;
+	overflow-y: auto;
+	position: relative;
+	padding-right: 2px;
+	font-size: 12px;
+}
+.pg-compare-settings__close {
+	position: absolute;
+	top: 0;
+	right: 0;
+	border: 0;
+	background: none;
+	color: #6b7280;
+	cursor: pointer;
+}
+.pg-compare-settings > hr {
+	margin: 16px 0;
+	border: 0;
+	border-top: 1px solid #e5e7eb;
+}
+.pg-compare-settings h4 {
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.025em;
+	color: #374151;
+	margin: 8px 0 6px;
+}
+.pg-compare-settings label:not(.ui-checkbox) {
+	display: block;
+	font-size: 12px;
+	font-weight: 500;
+	color: #4b5563;
+	margin-top: 8px;
+}
+.pg-compare-settings label > .ui-select {
+	margin-top: 2px;
+}
+.pg-compare-settings input[type="range"] {
+	width: 100%;
+	margin: 10px 0;
+	height: 4px;
+	accent-color: #1677ff;
+}
+.pg-compare-settings .ui-checkbox {
+	font-size: 12px;
+}
+.pg-compare-messages {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+	min-width: 0;
+	width: 100%;
+	padding: 16px;
+}
+.pg-compare-messages__block > hr {
+	border: 0;
+	border-top: 1px solid #e5e7eb;
+	margin: 16px 0;
+}
+.pg-compare-messages__heading {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+.pg-compare-messages__heading > span {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	flex-shrink: 0;
+	border-radius: 50%;
+	background: #f3f4f6;
+	color: #4b5563;
+}
+.pg-compare-messages__heading > span.is-user {
+	background: #dbeafe;
+	color: #2563eb;
+}
+.pg-compare-messages__heading strong {
+	font-size: 14px;
+	font-weight: 600;
+	color: #374151;
+}
+.pg-compare-messages__heading small {
+	padding: 2px 8px;
+	background: #f3f4f6;
+	color: #4b5563;
+	border-radius: 4px;
+	font-size: 12px;
+}
+.pg-compare-messages .pg-message {
+	text-align: left;
+	margin: 0;
+}
+.pg-compare-messages .pg-message__bubble {
+	display: block;
+	max-width: 100%;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: none;
+	box-shadow: none;
+}
+.pg-compare-messages .pg-message__heading {
+	display: none;
+}
+.pg-compare__card > footer {
+	display: flex;
+	justify-content: center;
+	padding-bottom: 16px;
+}
+.pg-compare__card > footer > div {
+	width: 100%;
+	max-width: 768px;
+	padding: 0 16px;
+}
+.pg-compare__composer {
+	padding: 16px;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	background: #fff;
+	box-shadow:
+		0 10px 15px -3px #0000001a,
+		0 4px 6px -4px #0000001a;
+}
+.pg-compare__suggestions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	overflow-x: auto;
+	min-height: 32px;
+	margin-bottom: 12px;
+	color: #6b7280;
+}
+.pg-compare__suggestions button {
+	flex-shrink: 0;
+	padding: 4px 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 999px;
+	background: #fff;
+	color: #4b5563;
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+}
+.pg-compare__send {
+	border-radius: 50% !important;
+	width: 32px !important;
+	height: 32px !important;
+	padding: 0 !important;
+	margin-left: 0;
+	flex-shrink: 0;
+}
+.pg-compare__send .ui-icon {
+	font-size: 14px;
+}
+
+.pg-compare-panel__selection > .pg-grow {
+	width: 192px;
+	flex: 0 1 auto;
+}
+@media (min-width: 768px) {
+	.pg-compare-panel__selection > .pg-grow {
+		width: 256px;
+	}
+}
+@media (min-width: 1024px) {
+	.pg-compare-panel__selection > .pg-grow {
+		width: 288px;
+	}
+}
+.pg-compare__suggestions button {
+	line-height: 16px;
+}
+.pg-compare-messages .pg-message__reasoning {
+	margin-top: 12px;
+}
+.pg-compare-messages .pg-message:not(.pg-message--user) .pg-message__content {
+	margin-top: 12px;
+}
+
+.pg-compare {
+	color: #000;
+}
+.pg-compare__card > header label,
+.pg-compare-messages__heading strong {
+	line-height: 20px;
+}
+
+.pg-compare-panel > header {
+	justify-content: space-between;
+}
+.pg-compare-panel__selection {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: 12px;
+}
+
+/* Preserve the original upload table and its inline baseline in the comparison composer. */
+.pg-compare .pg-composer__tools {
+	display: block;
+}
+.pg-compare__attachment-wrap {
+	display: inline-block;
+	font: 14px/22px var(--ui-font-antd);
+}
+.pg-compare__attachment-table {
+	display: table;
+	padding: 16px;
+	border-radius: 8px;
+}
+.pg-compare__attachment-cell {
+	display: table-cell;
+	vertical-align: middle;
+}
+.pg-compare .pg-composer__tools .pg-attachment {
+	width: 32px;
+	height: 32px;
+	padding: 0;
+}
+
+/* Original selector has an unpadded outer flex box; its bordered control is inside it. */
+.pg-compare-panel > header button .ui-lucide-icon {
+	flex-shrink: 1;
+}
+
+.pg-compare-messages .pg-metrics {
+	margin-top: 12px;
+}

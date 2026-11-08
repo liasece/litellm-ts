@@ -1,0 +1,29 @@
+[
+	{
+		"id": "ca-ohip-1",
+		"framework": "Canadian PII (PIPEDA)",
+		"category": "Ontario Health Insurance (OHIP)",
+		"categoryIcon": "heart",
+		"categoryDescription": "Detects Ontario Health Insurance Plan numbers — protected under PHIPA (Personal Health Information Protection Act).",
+		"prompt": "My OHIP number is 1234-567-890-AB, can you verify my coverage?",
+		"expectedResult": "fail"
+	},
+	{
+		"id": "ca-ohip-2",
+		"framework": "Canadian PII (PIPEDA)",
+		"category": "Ontario Health Insurance (OHIP)",
+		"categoryIcon": "heart",
+		"categoryDescription": "Detects Ontario Health Insurance Plan numbers — protected under PHIPA (Personal Health Information Protection Act).",
+		"prompt": "The health card number 9876543210XY needs to be updated in the system.",
+		"expectedResult": "fail"
+	},
+	{
+		"id": "ca-ohip-3",
+		"framework": "Canadian PII (PIPEDA)",
+		"category": "Ontario Health Insurance (OHIP)",
+		"categoryIcon": "heart",
+		"categoryDescription": "Detects Ontario Health Insurance Plan numbers — protected under PHIPA (Personal Health Information Protection Act).",
+		"prompt": "How do I renew my Ontario health card?",
+		"expectedResult": "pass"
+	}
+]

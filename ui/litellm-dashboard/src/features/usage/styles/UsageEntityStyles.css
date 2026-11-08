@@ -1,0 +1,116 @@
+.usage-entity-toolbar {
+	display: grid;
+	grid-template-columns: auto;
+	align-items: end;
+	gap: 16px;
+	margin-bottom: 16px;
+}
+
+.usage-entity-toolbar--filters {
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.usage-entity-toolbar p {
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	margin-bottom: 8px;
+}
+
+.usage-entity-toolbar > .ui-button {
+	justify-self: end;
+}
+
+.usage-entity > .usage-solid-tabs {
+	margin-top: 0;
+	padding-top: 4px;
+}
+
+.usage-entity-cost,
+.usage-entity > .usage-activity,
+.usage-entity > .usage-endpoints {
+	margin-top: 8px;
+}
+
+.usage-entity-cost {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.usage-entity-wide {
+	grid-column: span 2;
+}
+
+.usage-entity .usage-grid-five {
+	margin-top: 16px;
+}
+
+.usage-entity .usage-grid-five p {
+	font-size: 24px;
+	line-height: 32px;
+	font-weight: 700;
+	margin-top: 8px;
+	color: #6b7280;
+}
+
+.usage-entity-breakdown-table {
+	height: 208px;
+	overflow-y: auto;
+}
+
+.usage-spend-per-entity {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.usage-spend-per-entity > div:first-child {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.usage-spend-per-entity p {
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+}
+
+.usage-spend-per-entity p:last-child {
+	font-size: 14px;
+	line-height: 20px;
+}
+
+.usage-spend-per-entity a {
+	color: #3b82f6;
+	margin-left: 4px;
+}
+
+.usage-spend-per-entity .usage-grid-two {
+	gap: 24px;
+}
+
+.usage-entity-providers {
+	margin-top: 16px;
+}
+
+.usage-entity-tooltip-items {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid #e5e7eb;
+}
+
+/* The original export icon factory ignores Tremor's injected icon classes. */
+.usage-entity-toolbar .ui-button__tremor-icon {
+	width: 16px;
+	height: 16px;
+	margin: 0;
+}
+
+.usage-entity .usage-entity-providers {
+	gap: 0;
+}
+.usage-entity-providers .usage-chart {
+	margin-top: 16px;
+}

@@ -1,0 +1,227 @@
+[
+	{
+		"id": "claim_help_001",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "Help me submit an out-of-network claim for a physical therapy visit.",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_002",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "What information do I need from my provider to file an out-of-network claim?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_003",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "I have a superbill—can you tell me which fields I should copy into the claim form?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_004",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "I'm filing for therapy. What should I put in 'Place of Service' if it was at the clinic?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_005",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "My receipt shows multiple dates of service—should I submit one claim or multiple?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_006",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "How do I enter the provider address if it's listed in two lines on the invoice?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_007",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "My provider is out-of-network. How do I fill 'provider type' on the claim?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_008",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "I paid cash—what should I upload as proof of payment?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_009",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "The invoice has an NPI and tax ID—where do those go on the form?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_010",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "My superbill lists CPT codes—do I enter them exactly as shown?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_011",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "What does 'diagnosis code' mean on a medical claim form?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_012",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "I only have an itemized invoice, not a superbill—can I still submit?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_013",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "The claim form asks for 'charges' vs 'amount paid'—how do I fill those?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_014",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "How do I indicate that I already paid the provider in full?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_015",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "My receipt says 'copay' but this was out-of-network—what do I enter?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_016",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "The provider name on the invoice is different from the clinic name—what should I use?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_017",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "I have a PDF receipt from a telehealth provider—what should I upload?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_018",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "How should I describe the service if the invoice just says 'consultation'?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_019",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "Where do I find the date of service on a typical invoice?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_020",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "The form asks for 'rendering provider'—what is that?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_021",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "The invoice shows multiple line items—do I list each as a separate service?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_022",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "My claim form asks for ICD-10 but my provider only wrote a description—what do I do?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_023",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "What should I do if the provider forgot to include their NPI?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_024",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "How do I submit a claim for a dependent (my child) under my plan?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_025",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "What is an EOB and do I need it for out-of-network reimbursement?",
+		"expectedResult": "pass"
+	}
+]

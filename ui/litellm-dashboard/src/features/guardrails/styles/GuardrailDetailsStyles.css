@@ -1,0 +1,263 @@
+.guardrail-detail-drawer .ui-drawer__title > span {
+	display: block;
+}
+.guardrail-detail-drawer .ui-drawer__title > small {
+	display: block;
+	font-size: 12px;
+	line-height: 16px;
+	color: #00000073;
+	font-weight: 400;
+}
+.guardrail-detail-content {
+	padding: 16px;
+}
+.guardrail-detail-loading {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	padding: 48px;
+}
+.guardrail-detail-identifier h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	color: #111827;
+	/* Tremor Title uses font-medium. */
+	font-weight: 500;
+	margin: 0;
+}
+.guardrail-detail-identifier > div {
+	display: flex;
+	align-items: center;
+	cursor: pointer;
+}
+.guardrail-detail-identifier code {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #6b7280;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+.guardrail-detail-identifier button {
+	position: relative;
+	left: 8px;
+	color: #6b7280;
+	z-index: 10;
+}
+.guardrail-detail-identifier button.copied {
+	background: #f0fdf4;
+	color: #16a34a;
+	border-color: #bbf7d0;
+}
+.guardrail-detail-content > .ui-tabs {
+	margin-bottom: 16px;
+}
+.guardrail-overview-grid {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 24px;
+}
+@media (min-width: 640px) {
+	.guardrail-overview-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (min-width: 1024px) {
+	.guardrail-overview-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+.guardrail-overview .ui-card__body > p,
+.guardrail-overview .ui-card__body > div > p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #6b7280;
+	margin: 0;
+}
+.guardrail-overview-grid .ui-card__body > div {
+	margin-top: 8px;
+}
+.guardrail-overview h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 600;
+	color: #111827;
+	margin: 0;
+}
+.guardrail-overview-provider {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.guardrail-overview-provider img {
+	height: 24px;
+	width: 24px;
+}
+.guardrail-pii-summary,
+.guardrail-pii-config,
+.guardrail-detail-section {
+	margin-top: 24px;
+}
+.guardrail-pii-summary .ui-card__body > div {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.guardrail-pii-summary p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-weight: 400;
+	color: #6b7280;
+}
+.guardrail-pii-config h3 {
+	font-size: 18px;
+	line-height: 28px;
+	font-weight: 600;
+	color: #6b7280;
+	margin: 0 0 16px;
+}
+.guardrail-pii-config .ui-card__body > div {
+	overflow: hidden;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	box-shadow: 0 1px 2px #0000000d;
+}
+.guardrail-pii-config header,
+.guardrail-pii-config section {
+	display: flex;
+	border-bottom: 1px solid #e5e7eb;
+	padding: 12px 20px;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #374151;
+}
+.guardrail-pii-config header {
+	background: #f9fafb;
+	font-weight: 600;
+	color: #374151;
+}
+.guardrail-pii-config header > span,
+.guardrail-pii-config section > * {
+	flex: 1;
+}
+.guardrail-pii-config section > strong {
+	font-weight: 500;
+	color: #111827;
+}
+.guardrail-pii-config section > span {
+	display: block;
+	min-width: 0;
+}
+.guardrail-pii-config .guardrail-pii-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.guardrail-pii-config .ui-card__body > div > div {
+	max-height: 400px;
+	overflow-y: auto;
+}
+.guardrail-action-mask {
+	color: #2563eb;
+}
+.guardrail-action-block {
+	color: #dc2626;
+}
+.guardrail-detail-section .ui-card__body > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 16px;
+}
+.guardrail-detail-section h3 {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+.guardrail-detail-section h3 > .ui-icon {
+	color: #3b82f6;
+}
+.guardrail-custom-preview {
+	border: 1px solid #374151;
+	border-radius: 8px;
+	background: #1e1e1e;
+	color: #e5e7eb;
+	overflow-x: auto;
+	padding: 16px;
+	font-family: "Fira Code", "Monaco", "Consolas", monospace;
+	font-size: 14px;
+	line-height: 20px;
+	margin: 0;
+}
+.guardrail-settings-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 16px;
+}
+.guardrail-settings-heading h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 600;
+	color: #374151;
+	margin: 0;
+}
+.guardrail-settings-summary {
+	display: grid;
+	gap: 16px;
+	font-size: 14px;
+	line-height: 21px;
+	color: #111827;
+}
+.guardrail-settings-summary p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-weight: 500;
+	color: #6b7280;
+	margin: 0;
+}
+.guardrail-settings-summary section > div,
+.guardrail-settings-summary section > code {
+	color: #111827;
+	display: block;
+	font-size: 14px;
+	line-height: 21px;
+}
+.guardrail-settings-summary section > p + .ui-tag {
+	margin-top: 0;
+}
+.guardrail-edit-dialog .ui-dialog__body {
+	max-height: calc(100vh - 180px);
+	overflow-y: auto;
+}
+.guardrail-edit-form > .ui-alert {
+	margin-bottom: 16px;
+}
+.guardrail-edit-form > footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 24px;
+}
+.guardrail-form-divider {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	margin: 16px 0;
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 500;
+	color: #000000e0;
+	white-space: nowrap;
+}
+.guardrail-form-divider:before {
+	content: "";
+	width: 5%;
+	border-top: 1px solid #f0f0f0;
+}
+.guardrail-form-divider:after {
+	content: "";
+	flex: 1;
+	border-top: 1px solid #f0f0f0;
+}
+.guardrail-edit-form > .guardrail-content-filter {
+	margin-bottom: 24px;
+}

@@ -1,0 +1,79 @@
+.ui-card {
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	background: white;
+	text-align: left;
+}
+.ui-card--tremor {
+	padding: 24px;
+	border-radius: 8px;
+	box-shadow:
+		0 0 0 0 #fff,
+		0 0 0 1px var(--ui-tremor-border),
+		var(--ui-card-shadow);
+}
+.ui-card--antd {
+	border: 1px solid var(--ui-border-subtle);
+	border-radius: 8px;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+}
+.ui-card--antd > .ui-card__body {
+	padding: 24px;
+}
+.ui-card__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 16px;
+}
+.ui-card__title {
+	font-size: 16.4px;
+	font-weight: 500;
+	line-height: 26.4px;
+	color: #374151;
+}
+.ui-card--antd .ui-card__header {
+	gap: 0;
+	padding: 0 24px;
+	min-height: 56px;
+	margin-bottom: -1px;
+	border-bottom: 1px solid var(--ui-border-subtle);
+	border-radius: 8px 8px 0 0;
+}
+.ui-card--antd .ui-card__title {
+	display: inline-block;
+	flex: 1;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: var(--ui-text-antd);
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 1.5714285714285714;
+}
+
+.ui-card--antd.ui-card--small .ui-card__header {
+	min-height: 38px;
+	padding: 0 12px;
+}
+.ui-card--antd.ui-card--small > .ui-card__body {
+	padding: 12px;
+}
+
+.ui-card--tremor > .ui-card__body {
+	display: contents;
+}
+
+.ui-card--antd .ui-card__header > :not(.ui-card__title) {
+	margin-inline-start: auto;
+	font-size: 14px;
+	font-weight: 400;
+}
+.ui-card--antd.ui-card--small .ui-card__title {
+	font-size: 14px;
+	line-height: 22px;
+}

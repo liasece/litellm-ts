@@ -1,0 +1,55 @@
+.usage-endpoints {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.usage-endpoints .ui-card > .ui-card__body > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.usage-endpoints .ui-card .usage-chart {
+	margin-top: 16px;
+}
+
+.usage-endpoints > .ui-card:last-child {
+	margin-bottom: 24px;
+}
+
+.usage-endpoint-name,
+.usage-endpoint-rate {
+	font-weight: 500;
+}
+.usage-endpoint-progress {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.usage-endpoint-progress > div:first-child {
+	flex: 1;
+	min-width: 0;
+	border-radius: 100px;
+	background: #0000000a;
+	height: 6px;
+	overflow: hidden;
+}
+.usage-endpoint-progress i {
+	display: block;
+	height: 100%;
+}
+.usage-endpoint-counts {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 100px;
+	font-size: 14px;
+}
+.usage-endpoint-counts > .usage-success,
+.usage-endpoint-counts > .usage-failed {
+	font-weight: 500;
+}
+.usage-endpoint-counts > span:nth-child(2) {
+	color: #9ca3af;
+}

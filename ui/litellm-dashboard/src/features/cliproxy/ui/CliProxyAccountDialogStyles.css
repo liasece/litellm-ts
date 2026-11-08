@@ -1,0 +1,196 @@
+.cp-commandcode-label {
+	width: 180px;
+}
+.cp-commandcode-key {
+	width: 360px;
+	max-width: 100%;
+}
+.cp-password-eye {
+	display: flex;
+	border: 0;
+	padding: 0;
+	background: transparent;
+	color: rgba(0, 0, 0, 0.45);
+	cursor: pointer;
+}
+.cp-password-eye:hover {
+	color: rgba(0, 0, 0, 0.88);
+}
+.cp-accounts-table-scroll {
+	max-width: 100%;
+	overflow-x: auto;
+}
+.cp-accounts-table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: 14px;
+	text-align: start;
+	background: #fff;
+}
+.cp-accounts-table th {
+	background: #fafafa;
+	font-weight: 600;
+}
+.cp-accounts-table th,
+.cp-accounts-table td {
+	padding: 8px;
+	border-bottom: 1px solid #f0f0f0;
+	text-align: start;
+}
+.cp-accounts-table th:first-child {
+	border-top-left-radius: 8px;
+}
+.cp-accounts-table th:last-child {
+	border-top-right-radius: 8px;
+}
+.cp-accounts-table tr:hover td {
+	background: #fafafa;
+}
+.cp-account-filename {
+	max-width: 300px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.cp-weight-input {
+	width: 90px;
+}
+.cp-table-empty {
+	height: 100px;
+	text-align: center !important;
+	color: rgba(0, 0, 0, 0.25);
+}
+.cp-management-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 12px;
+}
+.cp-oauth-input {
+	display: flex;
+	width: 100%;
+}
+.cp-oauth-input > .ui-input-wrapper {
+	flex: 1;
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+}
+.cp-oauth-input > .ui-button {
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+	margin-left: -1px;
+}
+.cp-confirm-anchor {
+	display: inline-flex;
+}
+.cp-confirm-popover {
+	position: fixed;
+	width: min(300px, calc(100vw - 24px));
+	padding: 12px;
+	z-index: 1100;
+	border-radius: 8px;
+	background: #fff;
+	color: rgba(0, 0, 0, 0.88);
+	box-shadow:
+		0 6px 16px 0 rgba(0, 0, 0, 0.08),
+		0 3px 6px -4px rgba(0, 0, 0, 0.12),
+		0 9px 28px 8px rgba(0, 0, 0, 0.05);
+	font-size: 14px;
+	line-height: 1.5714285714;
+}
+.cp-confirm-title {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+}
+.cp-confirm-title strong {
+	font-weight: 600;
+}
+.cp-confirm-question {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: #faad14;
+	color: #fff;
+	font-size: 10px;
+	font-weight: 600;
+	flex: none;
+}
+.cp-confirm-popover p {
+	margin: 4px 0 8px 22px;
+}
+.cp-confirm-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.cp-alert-with-description.ui-alert {
+	padding: 20px 24px;
+	align-items: flex-start;
+	gap: 12px;
+}
+.cp-alert-with-description .ui-alert__symbol {
+	margin-top: 0;
+	width: 24px;
+	height: 24px;
+	flex: none;
+	font-size: 18px;
+	line-height: 24px;
+}
+.cp-alert-with-description .ui-alert__title {
+	margin-bottom: 8px;
+	font-size: 16px;
+	font-weight: 400;
+	line-height: 1.5714285714;
+}
+
+@media (min-width: 768px) {
+	.cp-management-row {
+		grid-template-columns: minmax(0, calc(25% - 9px)) minmax(0, 1fr);
+	}
+}
+
+.cp-account-content {
+	padding-top: 8px;
+}
+.cp-accounts-table {
+	table-layout: fixed;
+}
+.cp-accounts-table td {
+	overflow-wrap: break-word;
+}
+.cp-accounts-table th {
+	position: relative;
+}
+.cp-accounts-table th:not(:last-child)::after {
+	content: "";
+	position: absolute;
+	inset: 50% 0 auto auto;
+	width: 1px;
+	height: 22px;
+	transform: translateY(-50%);
+	background: #f0f0f0;
+}
+
+.cp-accounts-table {
+	overflow-wrap: break-word;
+}
+.cp-accounts-table td {
+	position: relative;
+}
+.cp-alert-with-description .ui-alert__symbol {
+	font-size: 24px;
+	line-height: 0;
+}
+.cp-alert-with-description .ui-alert__symbol > .ui-icon {
+	width: 24px;
+	height: 24px;
+}
+
+.cp-account-dialog .cp-field {
+	margin-bottom: 0;
+}

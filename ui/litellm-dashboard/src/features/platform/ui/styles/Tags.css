@@ -1,0 +1,199 @@
+.ui-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 7px;
+	margin-inline-end: 8px;
+	border: 1px solid var(--ui-border);
+	border-radius: 4px;
+	font-family: var(--ui-font-antd);
+	font-size: 12px;
+	line-height: 20px;
+	color: var(--ui-text-antd);
+	background: var(--ui-surface-subtle);
+	white-space: nowrap;
+}
+.ui-tag--blue {
+	color: #0958d9;
+	background: #e6f4ff;
+	border-color: #91caff;
+}
+.ui-tag--green {
+	color: #389e0d;
+	background: #f6ffed;
+	border-color: #b7eb8f;
+}
+.ui-tag--red {
+	color: #cf1322;
+	background: #fff1f0;
+	border-color: #ffa39e;
+}
+.ui-tag--orange {
+	color: #d46b08;
+	background: #fff7e6;
+	border-color: #ffd591;
+}
+.ui-tag--gold {
+	color: #d48806;
+	background: #fffbe6;
+	border-color: #ffe58f;
+}
+.ui-tag--purple {
+	color: #531dab;
+	background: #f9f0ff;
+	border-color: #d3adf7;
+}
+.ui-tag--cyan {
+	color: #08979c;
+	background: #e6fffb;
+	border-color: #87e8de;
+}
+.ui-tag--indigo {
+	color: #4338ca;
+	background: #eef2ff;
+	border-color: #c7d2fe;
+}
+.ui-tag__close {
+	color: rgb(0 0 0 / 45%);
+	font-size: 14px;
+}
+
+.ui-tag--geekblue {
+	color: #1d39c4;
+	background: #f0f5ff;
+	border-color: #adc6ff;
+}
+.ui-tag--lime {
+	color: #7cb305;
+	background: #fcffe6;
+	border-color: #eaff8f;
+}
+.ui-tag--magenta {
+	color: #c41d7f;
+	background: #fff0f6;
+	border-color: #ffadd2;
+}
+.ui-tag--volcano {
+	color: #d4380d;
+	background: #fff2e8;
+	border-color: #ffbb96;
+}
+.ui-tag.ui-tag--tremor {
+	display: inline-flex;
+	width: max-content;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	gap: 0;
+	margin: 0;
+	padding: 2px 10px;
+	border: 0 solid var(--ui-tremor-border);
+	border-radius: 6px;
+	font-family: inherit;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 400;
+	color: var(--ui-tag-text, #4338ca);
+	background: rgb(var(--ui-tag-rgb, 99 102 241) / 10%);
+	box-shadow:
+		inset 0 0 0 0 #fff,
+		inset 0 0 0 1px rgb(var(--ui-tag-rgb, 99 102 241) / 20%),
+		0 0 #0000;
+	cursor: default;
+}
+.ui-tag--tremor.ui-tag--default {
+	background: transparent;
+}
+.ui-tag--tremor.ui-tag--xs {
+	padding: 2px 8px;
+	font-size: 12px;
+	line-height: 16px;
+}
+.ui-tag--tremor.ui-tag--slate {
+	--ui-tag-rgb: 100 116 139;
+	--ui-tag-text: #475569;
+}
+.ui-tag--tremor.ui-tag--gray {
+	--ui-tag-rgb: 107 114 128;
+	--ui-tag-text: #4b5563;
+}
+.ui-tag--tremor.ui-tag--zinc {
+	--ui-tag-rgb: 113 113 122;
+	--ui-tag-text: #52525b;
+}
+.ui-tag--tremor.ui-tag--neutral {
+	--ui-tag-rgb: 115 115 115;
+	--ui-tag-text: #525252;
+}
+.ui-tag--tremor.ui-tag--stone {
+	--ui-tag-rgb: 120 113 108;
+	--ui-tag-text: #57534e;
+}
+.ui-tag--tremor.ui-tag--red {
+	--ui-tag-rgb: 239 68 68;
+	--ui-tag-text: #dc2626;
+}
+.ui-tag--tremor.ui-tag--orange {
+	--ui-tag-rgb: 249 115 22;
+	--ui-tag-text: #ea580c;
+}
+.ui-tag--tremor.ui-tag--amber {
+	--ui-tag-rgb: 245 158 11;
+	--ui-tag-text: #d97706;
+}
+.ui-tag--tremor.ui-tag--yellow {
+	--ui-tag-rgb: 234 179 8;
+	--ui-tag-text: #ca8a04;
+}
+.ui-tag--tremor.ui-tag--lime {
+	--ui-tag-rgb: 132 204 22;
+	--ui-tag-text: #65a30d;
+}
+.ui-tag--tremor.ui-tag--green {
+	--ui-tag-rgb: 34 197 94;
+	--ui-tag-text: #16a34a;
+}
+.ui-tag--tremor.ui-tag--emerald {
+	--ui-tag-rgb: 16 185 129;
+	--ui-tag-text: #059669;
+}
+.ui-tag--tremor.ui-tag--teal {
+	--ui-tag-rgb: 20 184 166;
+	--ui-tag-text: #0d9488;
+}
+.ui-tag--tremor.ui-tag--cyan {
+	--ui-tag-rgb: 6 182 212;
+	--ui-tag-text: #0891b2;
+}
+.ui-tag--tremor.ui-tag--sky {
+	--ui-tag-rgb: 14 165 233;
+	--ui-tag-text: #0284c7;
+}
+.ui-tag--tremor.ui-tag--blue {
+	--ui-tag-rgb: 59 130 246;
+	--ui-tag-text: #2563eb;
+}
+.ui-tag--tremor.ui-tag--indigo {
+	--ui-tag-rgb: 99 102 241;
+	--ui-tag-text: #4f46e5;
+}
+.ui-tag--tremor.ui-tag--violet {
+	--ui-tag-rgb: 139 92 246;
+	--ui-tag-text: #7c3aed;
+}
+.ui-tag--tremor.ui-tag--purple {
+	--ui-tag-rgb: 168 85 247;
+	--ui-tag-text: #9333ea;
+}
+.ui-tag--tremor.ui-tag--fuchsia {
+	--ui-tag-rgb: 217 70 239;
+	--ui-tag-text: #c026d3;
+}
+.ui-tag--tremor.ui-tag--pink {
+	--ui-tag-rgb: 236 72 153;
+	--ui-tag-text: #db2777;
+}
+.ui-tag--tremor.ui-tag--rose {
+	--ui-tag-rgb: 244 63 94;
+	--ui-tag-text: #e11d48;
+}

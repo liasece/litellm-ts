@@ -1,0 +1,151 @@
+.markdown-image {
+	display: inline-block;
+	max-width: 100%;
+	vertical-align: middle;
+}
+.markdown-image img {
+	display: block;
+	max-width: 100%;
+	max-height: 640px;
+	object-fit: contain;
+	border-radius: 6px;
+}
+.markdown-image__trigger {
+	position: relative;
+	display: block;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+	max-width: 100%;
+	color: inherit;
+}
+.markdown-image__mask {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	background: rgb(0 0 0 / 50%);
+	color: white;
+	opacity: 0;
+	transition: opacity 0.3s;
+}
+.markdown-image__trigger:hover .markdown-image__mask {
+	opacity: 1;
+}
+.markdown-image-unavailable {
+	display: inline-flex;
+	flex-direction: column;
+	gap: 4px;
+	border: 1px solid #e2e8f0;
+	border-radius: 4px;
+	background: #f8fafc;
+	padding: 8px 12px;
+	font-size: 12px;
+	color: #64748b;
+}
+.markdown-image-unavailable__label {
+	font-weight: 500;
+	color: #334155;
+}
+.markdown-image-preview {
+	position: fixed;
+	inset: 0;
+	width: 100vw;
+	height: 100dvh;
+	max-width: 100vw;
+	max-height: 100dvh;
+	padding: 0;
+	margin: 0;
+	border: 0;
+	overflow: hidden;
+	background: transparent;
+	color: #fff;
+	font-family: var(--ui-font-antd);
+}
+.markdown-image-preview::backdrop {
+	background: rgb(0 0 0 / 45%);
+}
+.markdown-image-preview__viewport {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+}
+.markdown-image-preview__viewport > img {
+	max-width: 100%;
+	max-height: 70%;
+	object-fit: contain;
+	user-select: none;
+	touch-action: none;
+	cursor: grab;
+	transition: transform 0.3s cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.markdown-image-preview__viewport > img.markdown-image-preview__image--dragging {
+	cursor: grabbing;
+	transition: none;
+}
+.markdown-image-preview__close {
+	position: fixed;
+	top: 32px;
+	right: 32px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 12px;
+	border: 0;
+	border-radius: 50%;
+	background: rgb(0 0 0 / 10%);
+	color: #fff;
+	cursor: pointer;
+	transition: background 0.3s;
+}
+.markdown-image-preview__close:hover {
+	background: rgb(0 0 0 / 20%);
+}
+.markdown-image-preview__close > .ui-icon {
+	font-size: 21px;
+}
+.markdown-image-preview__toolbar {
+	position: fixed;
+	bottom: 32px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	padding: 0 24px;
+	border-radius: 100px;
+	background: rgb(0 0 0 / 10%);
+	color: rgb(255 255 255 / 65%);
+}
+.markdown-image-preview__toolbar > button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	border: 0;
+	background: none;
+	color: inherit;
+	cursor: pointer;
+	margin-left: 12px;
+	padding: 12px;
+	user-select: none;
+	transition: color 0.3s;
+}
+.markdown-image-preview__toolbar > button:first-child {
+	margin-left: 0;
+}
+.markdown-image-preview__toolbar > button > .ui-icon {
+	font-size: 21px;
+}
+.markdown-image-preview__toolbar > button:hover:not(:disabled) {
+	color: rgb(255 255 255 / 85%);
+}
+.markdown-image-preview__toolbar > button:disabled {
+	color: rgb(255 255 255 / 25%);
+	cursor: not-allowed;
+}

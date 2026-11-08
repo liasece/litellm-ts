@@ -1,0 +1,45 @@
+.access-drawer-resource-title {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding-right: 24px;
+}
+.access-drawer-resource-identity {
+	min-width: 0;
+}
+.access-drawer-resource-subtitle {
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 400;
+	color: #6b7280;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.access-drawer-resource-actions {
+	display: flex;
+	flex-shrink: 0;
+	gap: 8px;
+}
+.access-user-detail-id {
+	display: flex;
+	align-items: center;
+	cursor: pointer;
+}
+.access-user-detail-id > span {
+	font: 12.4px/18.4px var(--ui-font-mono);
+	color: #6b7280;
+}
+.access-user-detail-id .ui-button {
+	position: relative;
+	left: 8px;
+	z-index: 10;
+	color: #6b7280;
+}
+.access-user-detail-id .ui-button.copied {
+	border-color: #bbf7d0;
+	background: #f0fdf4;
+	color: #16a34a;
+}

@@ -1,0 +1,2794 @@
+[
+	{
+		"key": "0",
+		"label": "OpenAI Python SDK",
+		"code": "import openai\nclient = openai.OpenAI(\n    api_key=\"your_api_key\",\n    base_url=\"__LITELLM_PROXY_URL__\" # LiteLLM Proxy is OpenAI compatible, Read More: https://docs.litellm.ai/docs/proxy/user_keys\n)\n\nresponse = client.chat.completions.create(\n    model=\"gpt-3.5-turbo\", # model to send to the proxy\n    messages = [\n        {\n            \"role\": \"user\",\n            \"content\": \"this is a test request, write a short poem\"\n        }\n    ]\n)\n\nprint(response)",
+		"tree": {
+			"tag": "pre",
+			"attributes": {
+				"style": "background:hsl(230, 1%, 98%);color:hsl(230, 8%, 24%);font-family:\"Fira Code\", \"Fira Mono\", Menlo, Consolas, \"DejaVu Sans Mono\", monospace;direction:ltr;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;line-height:1.5;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none;padding:1.5rem;margin:0;overflow:auto;border-radius:0.5rem;font-size:0.9rem;background-color:#fafafa"
+			},
+			"children": [
+				{
+					"tag": "code",
+					"attributes": {
+						"class": "language-python",
+						"style": "white-space:pre;background:hsl(230, 1%, 98%);color:hsl(230, 8%, 24%);font-family:\"Fira Code\", \"Fira Mono\", Menlo, Consolas, \"DejaVu Sans Mono\", monospace;direction:ltr;text-align:left;word-spacing:normal;word-break:normal;line-height:1.5;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none"
+					},
+					"children": [
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["1"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" openai\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["2"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["client "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" openai"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["OpenAI"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["3"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    api_key"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"your_api_key\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["4"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    base_url"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"__LITELLM_PROXY_URL__\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["# LiteLLM Proxy is OpenAI compatible, Read More: https://docs.litellm.ai/docs/proxy/user_keys"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["5"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["6"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["7"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["response "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" client"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["chat"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["completions"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["create"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["8"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    model"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"gpt-3.5-turbo\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["# model to send to the proxy"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["9"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    messages "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["["]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["10"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["        "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["{"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["11"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["            "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"role\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [":"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"user\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["12"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["            "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"content\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [":"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"this is a test request, write a short poem\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["13"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["        "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["}"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["14"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["]"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["15"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["16"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["17"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["print"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["response"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						}
+					]
+				}
+			]
+		}
+	},
+	{
+		"key": "1",
+		"label": "LlamaIndex",
+		"code": "import os, dotenv\n\nfrom llama_index.llms import AzureOpenAI\nfrom llama_index.embeddings import AzureOpenAIEmbedding\nfrom llama_index import VectorStoreIndex, SimpleDirectoryReader, ServiceContext\n\nllm = AzureOpenAI(\n    engine=\"azure-gpt-3.5\",               # model_name on litellm proxy\n    temperature=0.0,\n    azure_endpoint=\"__LITELLM_PROXY_URL__\", # litellm proxy endpoint\n    api_key=\"sk-1234\",                    # litellm proxy API Key\n    api_version=\"2023-07-01-preview\",\n)\n\nembed_model = AzureOpenAIEmbedding(\n    deployment_name=\"azure-embedding-model\",\n    azure_endpoint=\"__LITELLM_PROXY_URL__\",\n    api_key=\"sk-1234\",\n    api_version=\"2023-07-01-preview\",\n)\n\ndocuments = SimpleDirectoryReader(\"llama_index_data\").load_data()\nservice_context = ServiceContext.from_defaults(llm=llm, embed_model=embed_model)\nindex = VectorStoreIndex.from_documents(documents, service_context=service_context)\n\nquery_engine = index.as_query_engine()\nresponse = query_engine.query(\"What did the author do growing up?\")\nprint(response)",
+		"tree": {
+			"tag": "pre",
+			"attributes": {
+				"style": "background:hsl(230, 1%, 98%);color:hsl(230, 8%, 24%);font-family:\"Fira Code\", \"Fira Mono\", Menlo, Consolas, \"DejaVu Sans Mono\", monospace;direction:ltr;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;line-height:1.5;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none;padding:1.5rem;margin:0;overflow:auto;border-radius:0.5rem;font-size:0.9rem;background-color:#fafafa"
+			},
+			"children": [
+				{
+					"tag": "code",
+					"attributes": {
+						"class": "language-python",
+						"style": "white-space:pre;background:hsl(230, 1%, 98%);color:hsl(230, 8%, 24%);font-family:\"Fira Code\", \"Fira Mono\", Menlo, Consolas, \"DejaVu Sans Mono\", monospace;direction:ltr;text-align:left;word-spacing:normal;word-break:normal;line-height:1.5;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none"
+					},
+					"children": [
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["1"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" os"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" dotenv\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["2"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["3"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["from"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" llama_index"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["llms "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" AzureOpenAI\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["4"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["from"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" llama_index"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["embeddings "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" AzureOpenAIEmbedding\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["5"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["from"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" llama_index "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" VectorStoreIndex"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" SimpleDirectoryReader"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" ServiceContext\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["6"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["7"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["llm "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" AzureOpenAI"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["8"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    engine"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"azure-gpt-3.5\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["               "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["# model_name on litellm proxy"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["9"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    temperature"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(35, 99%, 36%)"
+							},
+							"children": ["0.0"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["10"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    azure_endpoint"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"__LITELLM_PROXY_URL__\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["# litellm proxy endpoint"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["11"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    api_key"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"sk-1234\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["                    "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["# litellm proxy API Key"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["12"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    api_version"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"2023-07-01-preview\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["13"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["14"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["15"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["embed_model "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" AzureOpenAIEmbedding"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["16"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    deployment_name"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"azure-embedding-model\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["17"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    azure_endpoint"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"__LITELLM_PROXY_URL__\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["18"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    api_key"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"sk-1234\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["19"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    api_version"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"2023-07-01-preview\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["20"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["21"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["22"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["documents "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" SimpleDirectoryReader"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"llama_index_data\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["load_data"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["23"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["service_context "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" ServiceContext"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["from_defaults"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["llm"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["llm"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" embed_model"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["embed_model"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["24"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["index "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" VectorStoreIndex"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["from_documents"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["documents"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" service_context"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["service_context"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["25"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["26"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["query_engine "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" index"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["as_query_engine"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["27"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["response "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" query_engine"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["query"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"What did the author do growing up?\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["28"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["print"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["response"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						}
+					]
+				}
+			]
+		}
+	},
+	{
+		"key": "2",
+		"label": "Langchain Py",
+		"code": "from langchain.chat_models import ChatOpenAI\nfrom langchain.prompts.chat import (\n    ChatPromptTemplate,\n    HumanMessagePromptTemplate,\n    SystemMessagePromptTemplate,\n)\nfrom langchain.schema import HumanMessage, SystemMessage\n\nchat = ChatOpenAI(\n    openai_api_base=\"__LITELLM_PROXY_URL__\",\n    model = \"gpt-3.5-turbo\",\n    temperature=0.1\n)\n\nmessages = [\n    SystemMessage(\n        content=\"You are a helpful assistant that im using to make a test request to.\"\n    ),\n    HumanMessage(\n        content=\"test from litellm. tell me why it's amazing in 1 sentence\"\n    ),\n]\nresponse = chat(messages)\n\nprint(response)",
+		"tree": {
+			"tag": "pre",
+			"attributes": {
+				"style": "background:hsl(230, 1%, 98%);color:hsl(230, 8%, 24%);font-family:\"Fira Code\", \"Fira Mono\", Menlo, Consolas, \"DejaVu Sans Mono\", monospace;direction:ltr;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;line-height:1.5;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none;padding:1.5rem;margin:0;overflow:auto;border-radius:0.5rem;font-size:0.9rem;background-color:#fafafa"
+			},
+			"children": [
+				{
+					"tag": "code",
+					"attributes": {
+						"class": "language-python",
+						"style": "white-space:pre;background:hsl(230, 1%, 98%);color:hsl(230, 8%, 24%);font-family:\"Fira Code\", \"Fira Mono\", Menlo, Consolas, \"DejaVu Sans Mono\", monospace;direction:ltr;text-align:left;word-spacing:normal;word-break:normal;line-height:1.5;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none"
+					},
+					"children": [
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["1"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["from"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" langchain"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["chat_models "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" ChatOpenAI\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["2"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["from"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" langchain"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["prompts"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["chat "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["3"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    ChatPromptTemplate"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["4"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    HumanMessagePromptTemplate"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["5"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    SystemMessagePromptTemplate"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["6"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["7"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["from"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" langchain"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["."]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["schema "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["import"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" HumanMessage"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" SystemMessage\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["8"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["9"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["chat "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" ChatOpenAI"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["10"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    openai_api_base"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"__LITELLM_PROXY_URL__\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["11"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    model "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"gpt-3.5-turbo\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["12"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    temperature"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(35, 99%, 36%)"
+							},
+							"children": ["0.1"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["13"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["14"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["15"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["messages "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["["]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["16"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    SystemMessage"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["17"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["        content"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"You are a helpful assistant that im using to make a test request to.\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["18"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["19"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    HumanMessage"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["20"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["        content"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(119, 34%, 47%)"
+							},
+							"children": ["\"test from litellm. tell me why it's amazing in 1 sentence\""]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["21"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["    "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [","]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["22"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["]"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["23"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["response "]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(221, 87%, 60%)"
+							},
+							"children": ["="]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": [" chat"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["messages"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["\n"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["24"]
+						},
+						"\n",
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "linenumber react-syntax-highlighter-line-number",
+								"style": "display:inline-block;min-width:2.25em;padding-right:1em;text-align:right;user-select:none;color:hsl(230, 4%, 64%);font-style:italic"
+							},
+							"children": ["25"]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": []
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(301, 63%, 40%)"
+							},
+							"children": ["print"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": ["("]
+						},
+						{
+							"tag": "span",
+							"attributes": {},
+							"children": ["response"]
+						},
+						{
+							"tag": "span",
+							"attributes": {
+								"class": "token",
+								"style": "color:hsl(230, 8%, 24%)"
+							},
+							"children": [")"]
+						}
+					]
+				}
+			]
+		}
+	}
+]

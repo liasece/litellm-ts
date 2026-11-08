@@ -1,0 +1,47 @@
+[
+	{
+		"id": "claim_help_026",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "My receipt is in Spanish—can I still submit it?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_027",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "The provider wrote a diagnosis description—do I need the exact ICD code?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_028",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "The invoice has HCPCS codes—are those the same as CPT?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_029",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "What does 'member reimbursement' mean on a claim form?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "claim_help_030",
+		"framework": "Claims Assistant",
+		"category": "Claim Submission Help",
+		"categoryIcon": "file-text",
+		"categoryDescription": "User is submitting an out-of-network claim and wants help filling fields or understanding what to enter.",
+		"prompt": "What's the difference between 'date of service' and 'date billed'?",
+		"expectedResult": "pass"
+	}
+]

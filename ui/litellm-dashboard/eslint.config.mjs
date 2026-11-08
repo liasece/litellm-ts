@@ -1,38 +1,75 @@
-import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTypescript from "eslint-config-next/typescript";
-import prettier from "eslint-config-prettier/flat";
-import unusedImports from "eslint-plugin-unused-imports";
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+import vue from "eslint-plugin-vue";
+import vueParser from "vue-eslint-parser";
 
-export default defineConfig([
-	...nextVitals,
-	...nextTypescript,
+export default tseslint.config(
+	{ ignores: ["node_modules/**", "out/**", "coverage/**", "playwright-report/**", "test-results/**"] },
+	js.configs.recommended,
+	...tseslint.configs.recommended,
+	...vue.configs["flat/recommended"],
 	{
-		files: ["**/*.{js,jsx,ts,tsx}"],
-		plugins: {
-			"unused-imports": unusedImports,
-		},
-		rules: {
-			"unused-imports/no-unused-imports": "error",
-			"@typescript-eslint/no-explicit-any": "off",
-			"@typescript-eslint/no-unused-vars": "off",
-			"@typescript-eslint/no-unused-expressions": "off",
-			"@typescript-eslint/ban-ts-comment": "off",
-			"prefer-const": "off",
-			"no-empty": "off",
-			"no-prototype-builtins": "off",
-			"no-useless-catch": "off",
-			"no-useless-escape": "off",
-			"no-self-assign": "off",
-			// The dashboard is a static export and renders authenticated blob URLs,
-			// provider logos, and user-supplied images that cannot use next/image.
-			"@next/next/no-img-element": "off",
-			// React Compiler is not enabled (the project intentionally remains on
-			// React 18); TanStack Table's stable APIs are therefore not a compiler
-			// compatibility concern for this codebase.
-			"react-hooks/incompatible-library": "off",
+		files: ["**/*.vue"],
+		languageOptions: {
+			parser: vueParser,
+			parserOptions: { parser: tseslint.parser, extraFileExtensions: [".vue"] },
 		},
 	},
-	prettier,
-	globalIgnores([".next/**", "out/**", "build/**", "coverage/**", "next-env.d.ts"]),
-]);
+	{
+		languageOptions: {
+			globals: {
+				window: "readonly",
+				document: "readonly",
+				navigator: "readonly",
+				fetch: "readonly",
+				Request: "readonly",
+				Response: "readonly",
+				Headers: "readonly",
+				URL: "readonly",
+				URLSearchParams: "readonly",
+				AbortController: "readonly",
+				DOMException: "readonly",
+				console: "readonly",
+				localStorage: "readonly",
+				sessionStorage: "readonly",
+				setTimeout: "readonly",
+				clearTimeout: "readonly",
+				setInterval: "readonly",
+				clearInterval: "readonly",
+				requestAnimationFrame: "readonly",
+				cancelAnimationFrame: "readonly",
+				Node: "readonly",
+				PointerEvent: "readonly",
+				process: "readonly",
+				HTMLElement: "readonly",
+				HTMLInputElement: "readonly",
+				HTMLSelectElement: "readonly",
+				HTMLTextAreaElement: "readonly",
+				HTMLDialogElement: "readonly",
+				HTMLButtonElement: "readonly",
+				Element: "readonly",
+				Event: "readonly",
+				MouseEvent: "readonly",
+				KeyboardEvent: "readonly",
+				FocusEvent: "readonly",
+				WebSocket: "readonly",
+				ReadableStream: "readonly",
+				TextDecoder: "readonly",
+				TextEncoder: "readonly",
+				CustomEvent: "readonly",
+				getComputedStyle: "readonly",
+			},
+		},
+		// Prettier is the formatting gate, as in Guan Lan; ESLint retains semantic Vue and TypeScript rules.
+		rules: {
+			"vue/attribute-hyphenation": "off",
+			"vue/attributes-order": "off",
+			"vue/html-indent": "off",
+			"vue/html-closing-bracket-newline": "off",
+			"vue/html-self-closing": "off",
+			"vue/max-attributes-per-line": "off",
+			"vue/multiline-html-element-content-newline": "off",
+			"vue/singleline-html-element-content-newline": "off",
+		},
+	},
+);

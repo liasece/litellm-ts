@@ -1,0 +1,19 @@
+.model-selection > label {
+	display: flex;
+	align-items: center;
+	font-family: var(--ui-font-sans);
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #374151;
+	margin-bottom: 8px;
+}
+.model-selection > label > .ui-icon {
+	margin-right: 8px;
+}
+.model-selection-select {
+	border-radius: 6px;
+}
+.model-selection > .ui-input-wrapper {
+	margin-top: 8px;
+}

@@ -1,0 +1,102 @@
+.usage-export-dialog .ui-dialog__title {
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.usage-export-form {
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+	padding: 8px 0;
+}
+
+.usage-export-summary {
+	color: #6b7280;
+	font-size: 14px;
+	line-height: 20px;
+}
+
+.usage-export-form fieldset {
+	border: 0;
+	padding: 0;
+	margin: 0;
+}
+
+.usage-export-form legend,
+.usage-export-label {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #374151;
+	margin-bottom: 8px;
+}
+
+.usage-export-form fieldset > label {
+	display: flex;
+	align-items: flex-start;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 12px;
+	cursor: pointer;
+}
+
+.usage-export-form fieldset > label + label {
+	margin-top: 8px;
+}
+
+.usage-export-form fieldset > label:hover {
+	background: #f9fafb;
+}
+
+.usage-export-radio {
+	display: inline-flex;
+	align-items: center;
+	height: 22px;
+	line-height: 22px;
+	margin: 2px 8px 0 0;
+	flex-shrink: 0;
+}
+
+.usage-export-form input[type="radio"] {
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	border: 1px solid #d9d9d9;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.usage-export-form input[type="radio"]:checked {
+	border: 5px solid #1677ff;
+}
+
+.usage-export-form .usage-export-option {
+	margin-left: 12px;
+	flex: 1;
+}
+
+.usage-export-form b {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+}
+
+.usage-export-form small {
+	display: block;
+	margin-top: 2px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+}
+
+.usage-export-form footer {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	padding-top: 16px;
+	border-top: 1px solid #e5e7eb;
+}

@@ -1,0 +1,146 @@
+.ui-checkbox {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+	cursor: pointer;
+}
+.ui-checkbox input {
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	border: 1px solid var(--ui-border);
+	border-radius: 4px;
+	background: white;
+	cursor: inherit;
+	flex-shrink: 0;
+	position: relative;
+}
+.ui-checkbox input:checked {
+	background: var(--ui-primary);
+	border-color: var(--ui-primary);
+}
+.ui-checkbox input:checked::after {
+	content: "";
+	position: absolute;
+	left: 4px;
+	top: 1px;
+	width: 5px;
+	height: 9px;
+	border: solid white;
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+.ui-checkbox input:indeterminate::after {
+	content: "";
+	position: absolute;
+	inset: 3px;
+	background: var(--ui-primary);
+}
+.ui-checkbox--disabled {
+	color: var(--ui-text-disabled);
+	cursor: not-allowed;
+}
+.ui-checkbox input:disabled {
+	background: rgb(0 0 0 / 4%);
+	border-color: var(--ui-border);
+}
+.ui-checkbox input:disabled:checked::after {
+	border-color: var(--ui-text-disabled);
+}
+
+.ui-switch {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	min-width: 44px;
+	height: 22px;
+	padding: 0;
+	border-radius: 100px;
+	background: rgb(0 0 0 / 25%);
+	vertical-align: middle;
+	font-family: var(--ui-font-antd);
+}
+.ui-switch--checked {
+	background: var(--ui-primary);
+}
+.ui-switch__handle {
+	position: absolute;
+	inset-inline-start: 2px;
+	top: 2px;
+	width: 18px;
+	height: 18px;
+	border-radius: 9px;
+	background: white;
+	box-shadow: 0 2px 4px 0 rgb(0 35 11 / 20%);
+}
+.ui-switch--checked .ui-switch__handle {
+	inset-inline-start: calc(100% - 20px);
+}
+.ui-switch__label {
+	margin: 0 9px 0 24px;
+	color: white;
+	font-size: 12px;
+	line-height: 22px;
+}
+.ui-switch--checked .ui-switch__label {
+	margin: 0 24px 0 9px;
+}
+.ui-switch--small {
+	min-width: 28px;
+	height: 16px;
+}
+.ui-switch--small .ui-switch__handle {
+	width: 12px;
+	height: 12px;
+}
+.ui-switch--small.ui-switch--checked .ui-switch__handle {
+	inset-inline-start: calc(100% - 14px);
+}
+.ui-switch:disabled {
+	opacity: 0.65;
+}
+
+.ui-switch--tremor,
+.ui-switch--tremor.ui-switch--checked {
+	width: 40px;
+	min-width: 40px;
+	height: 20px;
+	background: transparent;
+}
+.ui-switch--tremor::before {
+	content: "";
+	position: absolute;
+	left: 2px;
+	top: 4px;
+	width: 36px;
+	height: 12px;
+	border-radius: 9999px;
+	background: #e5e7eb;
+}
+.ui-switch--tremor .ui-switch__handle {
+	inset-inline-start: 0;
+	top: 0;
+	width: 20px;
+	height: 20px;
+	border: 2px solid white;
+	border-radius: 9999px;
+	background: #e5e7eb;
+	box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
+}
+.ui-switch--tremor.ui-switch--checked::before,
+.ui-switch--tremor.ui-switch--checked .ui-switch__handle {
+	background: var(--ui-tremor-brand);
+}
+.ui-switch--tremor.ui-switch--checked .ui-switch__handle {
+	inset-inline-start: 20px;
+}
+.ui-switch--tremor:focus .ui-switch__handle {
+	outline: 2px solid var(--ui-tremor-brand-muted);
+}
+.ui-switch--tremor:disabled {
+	opacity: 1;
+	cursor: not-allowed;
+}

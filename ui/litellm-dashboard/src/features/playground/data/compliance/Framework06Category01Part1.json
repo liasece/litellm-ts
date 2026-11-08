@@ -1,0 +1,29 @@
+[
+	{
+		"id": "ca-uoft-id-1",
+		"framework": "Canadian PII (FIPPA)",
+		"category": "UofT Student/Employee Number",
+		"categoryIcon": "graduation-cap",
+		"categoryDescription": "Detects University of Toronto student and employee numbers (10-digit, prefix '10') — protected under Ontario FIPPA.",
+		"prompt": "My student number is 1012345678 for course registration.",
+		"expectedResult": "fail"
+	},
+	{
+		"id": "ca-uoft-id-2",
+		"framework": "Canadian PII (FIPPA)",
+		"category": "UofT Student/Employee Number",
+		"categoryIcon": "graduation-cap",
+		"categoryDescription": "Detects University of Toronto student and employee numbers (10-digit, prefix '10') — protected under Ontario FIPPA.",
+		"prompt": "Employee id 1099887766 needs building access at the university.",
+		"expectedResult": "fail"
+	},
+	{
+		"id": "ca-uoft-id-3",
+		"framework": "Canadian PII (FIPPA)",
+		"category": "UofT Student/Employee Number",
+		"categoryIcon": "graduation-cap",
+		"categoryDescription": "Detects University of Toronto student and employee numbers (10-digit, prefix '10') — protected under Ontario FIPPA.",
+		"prompt": "How do I find my U of T student number?",
+		"expectedResult": "pass"
+	}
+]

@@ -1070,7 +1070,7 @@ describe("WebUiSupport 契约", () => {
 	});
 
 	describe("Login 端点", () => {
-		it("正确用户名/密码应签发默认 3 天 token cookie", async () => {
+		it("正确用户名/密码应签发默认 7 天 token cookie", async () => {
 			const app = buildPublicApp(makeConfig());
 			const res = await request(app).post("/v2/login").send({ username: "admin", password: "sk-test-master-key" });
 			expect(res.status).toBe(200);
@@ -1082,7 +1082,7 @@ describe("WebUiSupport 契约", () => {
 			expect(tokenCookie).toBeDefined();
 			const tokenValue = tokenCookie!.split(";")[0]!.slice("token=".length);
 			const payload = JSON.parse(Buffer.from(tokenValue.split(".")[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
-			expect((payload.exp as number) - (payload.iat as number)).toBe(3 * 24 * 60 * 60);
+			expect((payload.exp as number) - (payload.iat as number)).toBe(7 * 24 * 60 * 60);
 		});
 
 		it("错误密码应返回 401", async () => {

@@ -1,0 +1,511 @@
+.guardrails-monitor-page {
+	padding: 24px;
+	width: 100%;
+	min-width: 0;
+	flex: 1;
+	font-family: var(--ui-font-sans);
+}
+.monitor-date-row {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	margin-bottom: 16px;
+}
+.monitor-overview-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	margin-bottom: 20px;
+}
+.monitor-overview-header > div > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+.monitor-overview-header > div > div > .ui-icon {
+	color: #6366f1;
+}
+.monitor-overview-header h1,
+.monitor-detail h1 {
+	font-size: 20px;
+	line-height: 28px;
+	font-weight: 600;
+	color: #111827;
+}
+.monitor-overview-header p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+}
+.monitor-metrics-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+	margin-bottom: 24px;
+	align-items: stretch;
+}
+.monitor-metric-card {
+	height: 100%;
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 20px;
+	display: flex;
+	flex-direction: column;
+}
+.monitor-metric-card header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 4px;
+}
+.monitor-metric-card header > span {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #4b5563;
+}
+.monitor-metric-card > strong {
+	font-size: 30px;
+	line-height: 36px;
+	font-weight: 600;
+	letter-spacing: -0.025em;
+	color: #111827;
+}
+.monitor-metric-card > p {
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+	margin-top: 4px;
+}
+.monitor-color-default {
+	color: #111827;
+}
+.monitor-color-gray {
+	color: #6b7280;
+}
+.monitor-color-muted {
+	color: #9ca3af;
+}
+.monitor-color-red,
+.monitor-metric-card > strong.monitor-color-red {
+	color: #dc2626;
+}
+.monitor-color-amber,
+.monitor-metric-card > strong.monitor-color-amber {
+	color: #d97706;
+}
+.monitor-color-green,
+.monitor-metric-card > strong.monitor-color-green {
+	color: #16a34a;
+}
+.monitor-color-red-light {
+	color: #f87171;
+}
+.monitor-color-green-light {
+	color: #4ade80;
+}
+.monitor-chart-region {
+	margin-bottom: 24px;
+}
+.monitor-score-chart {
+	background: #fff;
+	border: 1px solid #e5e7eb;
+}
+.monitor-score-chart > .ui-card__body > h2 {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+	color: #111827;
+	margin-bottom: 16px;
+}
+.monitor-score-chart > .ui-card__body > div {
+	height: 320px;
+	min-height: 280px;
+}
+.monitor-score-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+}
+.monitor-performance-card {
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+}
+.monitor-loading-strip {
+	padding: 16px 24px;
+	border-bottom: 1px solid #e5e7eb;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.monitor-loading-strip > span {
+	font-size: 14px;
+	line-height: 20px;
+	color: #dc2626;
+}
+.monitor-performance-card > .ui-card__body > header {
+	padding: 16px 24px;
+	border-bottom: 1px solid #e5e7eb;
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+}
+.monitor-performance-card h2 {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+	color: #111827;
+}
+.monitor-performance-card header p {
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+	margin-top: 2px;
+}
+.monitor-performance-table-region {
+	position: relative;
+	overflow-x: auto;
+}
+.monitor-performance-table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	text-align: left;
+	color: rgb(0 0 0 /0.88);
+	font: 14px/22px var(--ui-font-antd);
+}
+.monitor-performance-table th {
+	padding: 16px;
+	background: #fafafa;
+	color: rgb(0 0 0 /0.88);
+	font-weight: 600;
+	border-bottom: 1px solid #f0f0f0;
+	white-space: nowrap;
+}
+.monitor-performance-table th:first-child {
+	border-start-start-radius: 8px;
+}
+.monitor-performance-table th:last-child {
+	border-start-end-radius: 8px;
+}
+.monitor-performance-table th + th {
+	position: relative;
+}
+.monitor-performance-table th + th:before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 50%;
+	width: 1px;
+	height: 1.6em;
+	transform: translateY(-50%);
+	background: #f0f0f0;
+}
+.monitor-performance-table .monitor-column-sorters {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font: inherit;
+}
+.monitor-performance-table th.sortable {
+	cursor: pointer;
+}
+.monitor-performance-table th.sortable:hover {
+	background: #f0f0f0;
+}
+.monitor-performance-table th.sorted {
+	background: #f0f0f0;
+}
+.monitor-performance-table td.sorted {
+	background: #fafafa;
+}
+.monitor-sorter {
+	display: inline-flex;
+	margin-left: 4px;
+	font-size: 0;
+	flex-shrink: 0;
+	flex-direction: column;
+	color: #bfbfbf;
+	line-height: 0;
+}
+.monitor-sorter > .ui-icon {
+	font-size: 11px;
+	line-height: 1;
+}
+.monitor-sorter > .ui-icon + .ui-icon {
+	margin-top: -0.3em;
+}
+.monitor-column-sorters > span:first-child {
+	flex: 1;
+}
+.monitor-sorter .active {
+	color: #1677ff;
+}
+.monitor-performance-table td {
+	padding: 16px;
+	border-bottom: 1px solid #f0f0f0;
+}
+.monitor-performance-table .numeric {
+	text-align: right;
+}
+.monitor-performance-table .status {
+	text-align: center;
+}
+.monitor-performance-table tbody tr {
+	cursor: pointer;
+}
+.monitor-performance-table tbody tr:hover {
+	background: #fafafa;
+}
+.monitor-performance-table td > button {
+	font: 500 14px/20px var(--ui-font-antd);
+	color: #111827;
+	text-align: left;
+}
+.monitor-performance-table td > button:hover {
+	color: #4f46e5;
+}
+.monitor-performance-table small {
+	font-size: 12px;
+	line-height: 16px;
+	margin-left: 4px;
+}
+.monitor-performance-table .monitor-performance-empty {
+	text-align: center;
+	padding: 16px;
+	cursor: default;
+	color: rgb(0 0 0 /0.88);
+}
+.monitor-provider-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 8px;
+	font: 500 12px/16px var(--ui-font-antd);
+	border-radius: 4px;
+	border: 1px solid #e5e7eb;
+	background: #f3f4f6;
+	color: #4b5563;
+	white-space: nowrap;
+}
+.monitor-provider-badge.is-orange {
+	background: #ffedd5;
+	color: #c2410c;
+	border-color: #fed7aa;
+}
+.monitor-provider-badge.is-sky {
+	background: #e0f2fe;
+	color: #0369a1;
+	border-color: #bae6fd;
+}
+.monitor-provider-badge.is-indigo {
+	background: #e0e7ff;
+	color: #4338ca;
+	border-color: #c7d2fe;
+}
+.monitor-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.monitor-status i {
+	width: 8px;
+	height: 8px;
+	border-radius: 9999px;
+	background: #ef4444;
+}
+.monitor-status i.is-healthy {
+	background: #22c55e;
+}
+.monitor-status i.is-warning {
+	background: #f59e0b;
+}
+.monitor-status > span {
+	font: 12px/16px var(--ui-font-antd);
+	color: #4b5563;
+	text-transform: capitalize;
+}
+.monitor-table-loading {
+	position: absolute;
+	inset: 0;
+	background: rgb(255 255 255 /0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.monitor-back.ui-button {
+	padding-left: 0;
+	margin-bottom: 16px;
+}
+.monitor-detail-loading {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 48px 0;
+}
+.monitor-detail > header {
+	margin-bottom: 24px;
+}
+.monitor-detail > header > div {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+}
+.monitor-detail > header > div > div:first-child > div {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 4px;
+}
+.monitor-detail > header .ui-icon {
+	color: #9ca3af;
+}
+.monitor-detail > header p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+	margin-left: 32px;
+}
+.monitor-detail > header > div > div + div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.monitor-detail-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 10px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	border-radius: 9999px;
+	background: #f0fdf4;
+	color: #15803d;
+}
+.monitor-detail-status i {
+	width: 6px;
+	height: 6px;
+	border-radius: 9999px;
+	background: #22c55e;
+}
+.monitor-detail-status.is-warning {
+	background: #fffbeb;
+	color: #b45309;
+}
+.monitor-detail-status.is-warning i {
+	background: #f59e0b;
+}
+.monitor-detail-status.is-critical {
+	background: #fef2f2;
+	color: #b91c1c;
+}
+.monitor-detail-status.is-critical i {
+	background: #ef4444;
+}
+.monitor-detail-provider {
+	display: inline-flex;
+	align-items: center;
+	padding: 4px 10px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	border-radius: 6px;
+	background: #eef2ff;
+	color: #4338ca;
+	border: 1px solid #c7d2fe;
+}
+.monitor-detail-content,
+.monitor-detail-logs {
+	margin-top: 16px;
+}
+.monitor-detail-metrics {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+	margin-bottom: 24px;
+}
+.monitor-evaluation-dialog > .ui-dialog__body > p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+	margin-bottom: 16px;
+}
+.monitor-evaluation-dialog section + section {
+	margin-top: 16px;
+}
+.monitor-evaluation-dialog section header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 6px;
+}
+.monitor-evaluation-dialog label {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #374151;
+	margin-bottom: 6px;
+}
+.monitor-evaluation-dialog header label {
+	margin-bottom: 0;
+}
+.monitor-evaluation-dialog header > button {
+	font-size: 12px;
+	line-height: 16px;
+	color: #4f46e5;
+}
+.monitor-evaluation-dialog .ui-input {
+	font: 14px/22px var(--ui-font-mono);
+}
+.monitor-evaluation-dialog small {
+	display: block;
+	font-size: 12px;
+	line-height: 16px;
+	color: #9ca3af;
+	margin: 4px 0;
+}
+.monitor-evaluation-dialog footer {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 24px;
+	padding-top: 16px;
+	border-top: 1px solid #f3f4f6;
+}
+@media (min-width: 768px) {
+	.monitor-detail-metrics {
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+	}
+}
+@media (min-width: 1024px) {
+	.monitor-metrics-grid {
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+	}
+}
+
+.monitor-metric-card header > .monitor-metric-icon {
+	color: #9ca3af;
+	font-size: 16px;
+	line-height: 24px;
+}
+
+.monitor-overview-header > .ui-button,
+.monitor-overview-header > .ui-button > .ui-icon {
+	flex-shrink: 1;
+	min-width: 0;
+}
+@media (max-width: 767px) {
+	.guardrails-monitor-page {
+		padding: 16px;
+	}
+}

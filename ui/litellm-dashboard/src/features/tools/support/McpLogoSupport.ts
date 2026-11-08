@@ -1,0 +1,23 @@
+const logos = "/ui/assets/logos/";
+export const WELL_KNOWN_LOGOS: { name: string; url: string }[] = [
+	{ name: "GitHub", url: `${logos}github.svg` },
+	{ name: "Slack", url: `${logos}slack.svg` },
+	{ name: "Notion", url: `${logos}notion.svg` },
+	{ name: "Linear", url: `${logos}linear.svg` },
+	{ name: "Jira", url: `${logos}jira.svg` },
+	{ name: "Figma", url: `${logos}figma.svg` },
+	{ name: "Gmail", url: `${logos}gmail.svg` },
+	{ name: "Google Drive", url: `${logos}google_drive.svg` },
+	{ name: "Stripe", url: `${logos}stripe.svg` },
+	{ name: "Shopify", url: `${logos}shopify.svg` },
+	{ name: "Salesforce", url: `${logos}salesforce.svg` },
+	{ name: "HubSpot", url: `${logos}hubspot.svg` },
+	{ name: "Twilio", url: `${logos}twilio.svg` },
+	{ name: "Cloudflare", url: `${logos}cloudflare.svg` },
+	{ name: "Sentry", url: `${logos}sentry.svg` },
+	{ name: "PostgreSQL", url: `${logos}postgresql.svg` },
+	{ name: "Snowflake", url: `${logos}snowflake.svg` },
+	{ name: "Zapier", url: `${logos}zapier.svg` },
+	{ name: "Google", url: `${logos}google.svg` },
+	{ name: "GitLab", url: `${logos}gitlab.svg` },
+];

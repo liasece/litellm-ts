@@ -1,0 +1,295 @@
+.tools-mcp-byok {
+	font-family: var(--ui-font-antd);
+	color: #111827;
+}
+.tools-mcp-byok .ui-dialog__body {
+	padding: 8px;
+}
+.tools-mcp-byok-top > button:last-child {
+	height: 22px;
+}
+.tools-mcp-byok-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 24px;
+}
+.tools-mcp-byok-top > button {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	border: 0;
+	background: transparent;
+	color: #6b7280;
+	font-size: 14px;
+	line-height: 20px;
+	cursor: pointer;
+	padding: 0;
+}
+.tools-mcp-byok-top > button:last-child {
+	color: #9ca3af;
+}
+.tools-mcp-byok-top > div {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.tools-mcp-byok-top i {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #d1d5db;
+}
+.tools-mcp-byok-top i.active {
+	background: #3b82f6;
+}
+.tools-mcp-byok-brand {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	margin-bottom: 24px;
+}
+.tools-mcp-byok-brand > div {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 56px;
+	height: 56px;
+	background: linear-gradient(to bottom right, #2dd4bf, #0891b2);
+	border-radius: 12px;
+	color: #fff;
+	font-weight: 700;
+	font-size: 20px;
+	line-height: 28px;
+	box-shadow:
+		0 1px 3px #0000001a,
+		0 1px 2px -1px #0000001a;
+}
+.tools-mcp-byok-brand > div:last-child {
+	background: linear-gradient(to bottom right, #2563eb, #3730a3);
+}
+.tools-mcp-byok-brand > .ui-icon {
+	font-size: 18px;
+	color: #9ca3af;
+}
+.tools-mcp-byok h2 {
+	font-size: 24px;
+	line-height: 32px;
+	font-weight: 700;
+	margin: 0 0 8px;
+	text-align: center;
+	color: #111827;
+}
+.tools-mcp-byok .ui-dialog__body > p {
+	font-size: 14px;
+	line-height: 22px;
+	color: #6b7280;
+	text-align: center;
+	margin: 0 0 24px;
+}
+.tools-mcp-byok section,
+.tools-mcp-byok-permissions {
+	padding: 16px;
+	border-radius: 12px;
+	background: #f9fafb;
+	margin-bottom: 16px;
+	text-align: left;
+}
+.tools-mcp-byok-info {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+.tools-mcp-byok-info-icon {
+	margin-top: 2px;
+	color: #6b7280;
+	flex-shrink: 1;
+	min-width: 0;
+}
+.tools-mcp-byok-info-icon > svg {
+	max-width: 100%;
+}
+.tools-mcp-byok-permissions h3 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.tools-mcp-byok-permissions h3 > svg {
+	flex: none;
+	color: #22c55e;
+}
+.tools-mcp-byok section h3 {
+	font-size: 14px;
+	line-height: 22px;
+	font-weight: 600;
+	color: #1f2937;
+	margin: 0 0 4px;
+}
+.tools-mcp-byok section p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+	margin: 0;
+}
+.tools-mcp-byok-permissions {
+	margin-bottom: 24px;
+}
+.tools-mcp-byok-permissions h3 {
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: #6b7280;
+	margin: 0 0 12px;
+}
+.tools-mcp-byok-permissions p {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	line-height: 20px;
+	color: #374151;
+	margin: 0;
+}
+.tools-mcp-byok-permissions p + p {
+	margin-top: 8px;
+}
+.tools-mcp-byok-permissions .ui-icon {
+	color: #22c55e;
+	flex-shrink: 0;
+}
+.tools-mcp-byok .tools-mcp-byok-continue,
+.tools-mcp-byok form > .ui-button {
+	width: 100%;
+	padding: 12px 24px;
+	border-radius: 12px;
+	height: auto;
+	font-size: 14px;
+	line-height: 22px;
+	font-weight: 500;
+	box-shadow: none;
+	background: #111827;
+	color: #fff;
+	border: 0;
+}
+.tools-mcp-byok .tools-mcp-byok-continue:hover {
+	background: #374151;
+}
+.tools-mcp-byok-cancel {
+	display: block;
+	margin-top: 12px;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	color: #9ca3af;
+	font-size: 14px;
+	line-height: 20px;
+	padding: 8px;
+	cursor: pointer;
+}
+.tools-mcp-byok-key-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 48px;
+	height: 48px;
+	border-radius: 50%;
+	background: #eff6ff;
+	color: #60a5fa;
+	margin-bottom: 16px;
+}
+.tools-mcp-byok-key-icon ~ h2,
+.tools-mcp-byok .tools-mcp-byok-key-icon ~ p {
+	text-align: left;
+}
+.tools-mcp-byok form > label {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	color: #1f2937;
+	margin-bottom: 8px;
+}
+.tools-mcp-byok form > .tools-password-input {
+	position: relative;
+	display: flex;
+	align-items: center;
+	height: 40px;
+	border-radius: 8px;
+}
+.tools-mcp-byok form > .tools-password-input > .ui-input-wrapper {
+	width: 100%;
+	height: 40px;
+}
+.tools-mcp-byok form > .tools-password-input > button {
+	position: absolute;
+	top: 0;
+	right: 0;
+	display: flex;
+	align-items: center;
+	height: 40px;
+	padding: 0 11px;
+	border: 0;
+	background: none;
+	color: rgb(0 0 0 / 45%);
+	font-size: 16px;
+	cursor: pointer;
+}
+.tools-mcp-byok form > a {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	color: #3b82f6;
+	font-size: 14px;
+	line-height: 20px;
+	margin-top: 8px;
+}
+.tools-mcp-byok-save {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	background: #f9fafb;
+	padding: 16px;
+	border-radius: 12px;
+	margin: 16px 0;
+}
+.tools-mcp-byok-save-label {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.tools-mcp-byok-save-label > svg {
+	flex: none;
+	color: #6b7280;
+}
+.tools-mcp-byok-save strong {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #1f2937;
+}
+.tools-mcp-byok form > aside {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 16px;
+	border-radius: 12px;
+	background: #eff6ff;
+	font-size: 14px;
+	line-height: 20px;
+	color: #1d4ed8;
+	margin-bottom: 24px;
+}
+.tools-mcp-byok form > aside > .ui-icon {
+	color: #60a5fa;
+	margin-top: 2px;
+	flex-shrink: 0;
+}
+.tools-mcp-byok form > .ui-button {
+	background: #3b82f6;
+}
+.tools-mcp-byok form > .ui-button:hover {
+	background: #2563eb;
+}

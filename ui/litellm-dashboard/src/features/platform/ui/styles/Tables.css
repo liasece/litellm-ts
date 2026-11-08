@@ -1,0 +1,209 @@
+.ui-table-wrapper {
+	position: relative;
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	border-radius: 8px 8px 0 0;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+	color: var(--ui-text-antd);
+}
+.ui-table-scroll {
+	overflow-x: auto;
+	overscroll-behavior-inline: contain;
+	-webkit-overflow-scrolling: touch;
+}
+.ui-table {
+	width: 100%;
+	table-layout: auto;
+	border-collapse: separate;
+	border-spacing: 0;
+	text-align: left;
+}
+.ui-table th {
+	position: relative;
+	background: #fafafa;
+	font-weight: 600;
+}
+.ui-table th,
+.ui-table td {
+	padding: 16px;
+	border-bottom: 1px solid var(--ui-border-subtle);
+	vertical-align: middle;
+	overflow-wrap: break-word;
+}
+.ui-table th:first-child {
+	border-top-left-radius: 8px;
+}
+.ui-table th:last-child {
+	border-top-right-radius: 8px;
+}
+.ui-table th:not(:last-child)::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	right: 0;
+	width: 1px;
+	height: 22px;
+	background: #f0f0f0;
+	transform: translateY(-50%);
+}
+.ui-table__row:hover td {
+	background: #fafafa;
+}
+.ui-table__row--selected td {
+	background: #e6f4ff;
+}
+.ui-table__row--selected:hover td {
+	background: #bae0ff;
+}
+.ui-table__cell--ellipsis {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	max-width: 0;
+}
+.ui-table__selection {
+	width: 32px;
+	padding-inline: 8px !important;
+	text-align: center;
+}
+.ui-table__selection::after {
+	display: none;
+}
+.ui-table__sort {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	text-align: inherit;
+	font: inherit;
+}
+.ui-table__sort-arrows {
+	display: inline-flex;
+	flex-direction: column;
+	color: rgb(0 0 0 / 29%);
+	font-size: 10px;
+	line-height: 8px;
+}
+.ui-table__sort-arrows .is-active {
+	color: var(--ui-primary);
+}
+.ui-table__empty {
+	border-bottom: 1px solid var(--ui-border-subtle);
+	background: white;
+}
+.ui-table__loading {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgb(255 255 255 / 65%);
+	z-index: 1;
+}
+.ui-table--sticky th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+.ui-table-wrapper--compact th,
+.ui-table-wrapper--compact td {
+	padding: 8px;
+}
+.ui-table-wrapper--tremor {
+	font-family: inherit;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #6b7280;
+	border-radius: 0;
+}
+.ui-table-wrapper--tremor th {
+	color: #374151;
+	font-weight: 600;
+	background: white;
+}
+.ui-table-wrapper--tremor th,
+.ui-table-wrapper--tremor td {
+	padding: 12px 16px;
+	border-bottom-color: var(--ui-tremor-border);
+}
+.ui-table-wrapper--tremor th:first-child,
+.ui-table-wrapper--tremor td:first-child {
+	padding-left: 0;
+}
+.ui-table-wrapper--tremor th:last-child,
+.ui-table-wrapper--tremor td:last-child {
+	padding-right: 0;
+}
+.ui-table-wrapper--tremor th::after {
+	display: none;
+}
+.ui-table-wrapper--tremor .ui-table__row:hover td {
+	background: white;
+}
+
+.ui-pagination {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 16px 0;
+	color: var(--ui-text-antd);
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 30px;
+}
+.ui-pagination__item {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 32px;
+	height: 32px;
+	padding: 0 6px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: white;
+	font-weight: 400;
+	line-height: 30px;
+}
+.ui-pagination__item:hover:not(:disabled) {
+	background: rgb(0 0 0 / 6%);
+}
+.ui-pagination__item--active {
+	border-color: var(--ui-primary);
+	color: var(--ui-primary);
+	font-weight: 600;
+}
+.ui-pagination__item--active:hover:not(:disabled) {
+	background: white;
+}
+.ui-pagination__item:disabled {
+	color: var(--ui-text-disabled);
+	background: transparent;
+}
+.ui-pagination__total {
+	margin-right: 0;
+}
+.ui-pagination__jump {
+	color: rgb(0 0 0 / 25%);
+	font-size: 8px;
+	letter-spacing: 1px;
+}
+.ui-pagination__size {
+	height: 32px;
+	margin-left: 8px;
+	padding: 0 11px;
+	border: 1px solid var(--ui-border);
+	border-radius: 6px;
+	background: white;
+	font: inherit;
+}
+@media (max-width: 767px) {
+	.ui-pagination {
+		row-gap: 8px;
+	}
+}

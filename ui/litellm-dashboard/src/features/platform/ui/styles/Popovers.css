@@ -1,0 +1,27 @@
+.ui-popover-anchor {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	vertical-align: middle;
+}
+.ui-popover {
+	position: fixed;
+	z-index: 1200;
+	max-width: min(400px, calc(100vw - 8px));
+	padding: 12px;
+	border-radius: 8px;
+	box-shadow: var(--ui-overlay-shadow);
+	background: white;
+	color: var(--ui-text-antd);
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+	overflow-wrap: break-word;
+}
+.ui-popover--dark {
+	max-width: 250px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	background: rgb(0 0 0 / 85%);
+	color: white;
+}

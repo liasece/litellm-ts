@@ -192,7 +192,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	const authRepository = new AuthRepository(db.db);
 
 	// 5. 创建认证中间件
-	// WebUI 登录 cookie 是用 master_key 签名的 HS256 JWT。会话默认 3 天滑动过期：
+	// WebUI 登录 cookie 是用 master_key 签名的 HS256 JWT。会话默认 7 天滑动过期：
 	// 已认证请求在临期窗口内同步延长 JWT cookie 和 DB session。
 	const jwtHandler = new JWTHandler(undefined, undefined, undefined, config.generalSettings.master_key);
 	const webUiSessionDurationSeconds = parseSessionDuration(process.env[WEBUI_SESSION_DURATION_ENV_VAR] ?? DEFAULT_WEBUI_SESSION_DURATION);

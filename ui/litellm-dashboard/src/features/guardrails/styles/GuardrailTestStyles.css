@@ -1,0 +1,385 @@
+.guardrail-test-playground {
+	width: 100%;
+	height: calc(100vh - 200px);
+}
+.guardrail-test-playground > .ui-card,
+.guardrail-test-playground > .ui-card > .ui-card__body {
+	height: 100%;
+}
+.guardrail-test-layout {
+	display: flex;
+	height: 100%;
+}
+.guardrail-test-layout > aside {
+	width: 25%;
+	border-right: 1px solid #e5e7eb;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+.guardrail-test-layout > aside > header {
+	padding: 16px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.guardrail-test-layout > aside > header .ui-input-wrapper {
+	margin-bottom: 12px;
+}
+.guardrail-test-layout > aside h3 {
+	font-size: 18px;
+	line-height: 28px;
+	font-weight: 600;
+	color: #111827;
+	margin: 0 0 12px;
+}
+.guardrail-test-selection {
+	flex: 1;
+	overflow: auto;
+	/* The reference list is an Ant Design List, which restores the antd stack inside the
+	   Tailwind page container. */
+	font-family: var(--ui-font-antd);
+}
+.guardrail-test-choice {
+	cursor: pointer;
+	/* The reference Ant Design list item carries no horizontal padding; its content starts
+	   right after the 4px selection border. */
+	padding: 12px 0;
+	border-left: 4px solid transparent;
+	border-bottom: 1px solid #f0f0f0;
+	display: flex;
+	align-items: flex-start;
+	gap: 16px;
+}
+.guardrail-test-choice.selected {
+	background: #eff6ff;
+	border-left-color: #3b82f6;
+}
+/* Tailwind emits hover: variants after plain ones, so the reference list item greys out
+   even while selected; keeping this rule last reproduces that precedence. */
+.guardrail-test-choice:hover {
+	background: #f9fafb;
+}
+.guardrail-test-choice input {
+	margin-top: 3px;
+	accent-color: #1677ff;
+	width: 16px;
+	height: 16px;
+}
+.guardrail-test-choice strong {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	line-height: 22px;
+	font-weight: 500;
+	color: #111827;
+	margin-bottom: 0;
+}
+.guardrail-test-choice strong > .ui-icon {
+	color: #9ca3af;
+}
+.guardrail-test-choice small {
+	display: block;
+	font-size: 12px;
+	line-height: 16px;
+	color: #4b5563;
+	margin-top: 0;
+}
+.guardrail-test-choice strong + small,
+.guardrail-test-choice small + small {
+	margin-top: 4px;
+}
+.guardrail-test-choice small b {
+	font-weight: 500;
+	color: #00000073;
+}
+.guardrail-test-layout > aside > footer {
+	padding: 12px;
+	border-top: 1px solid #e5e7eb;
+	background: #f9fafb;
+	font-size: 12px;
+	line-height: 16px;
+	color: #4b5563;
+}
+.guardrail-test-layout > section {
+	width: 75%;
+	display: flex;
+	flex-direction: column;
+	background: white;
+}
+.guardrail-test-layout > section > header {
+	padding: 16px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.guardrail-test-layout > section > header h3 {
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 28px;
+	margin: 0;
+	color: #111827;
+}
+.guardrail-test-layout > section > div {
+	flex: 1;
+	overflow: auto;
+	padding: 16px;
+}
+.guardrail-test-placeholder {
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	color: #9ca3af;
+}
+.guardrail-test-placeholder > .ui-icon {
+	margin-bottom: 16px;
+}
+.guardrail-test-placeholder h3 {
+	font-size: 18px;
+	line-height: 28px;
+	font-weight: 500;
+	color: #4b5563;
+	margin: 0 0 8px;
+}
+.guardrail-test-placeholder p {
+	text-align: center;
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 21px;
+	max-width: 448px;
+	margin: 0;
+}
+.guardrail-test-panel {
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+.guardrail-test-panel > header {
+	padding-bottom: 12px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.guardrail-test-panel > header > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+.guardrail-test-panel h2 {
+	font-size: 18px;
+	line-height: 28px;
+	font-weight: 600;
+	color: #111827;
+	margin: 0;
+}
+.guardrail-test-panel > header > div > div {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.guardrail-test-panel > header span {
+	padding: 4px 12px;
+	border: 1px solid #bfdbfe;
+	border-radius: 6px;
+	background: #eff6ff;
+	color: #1d4ed8;
+	font-family: ui-monospace, monospace;
+	font-weight: 500;
+	font-size: 14px;
+	line-height: 20px;
+}
+.guardrail-test-panel > header p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+	margin: 0;
+}
+.guardrail-test-panel-scroll {
+	flex: 1;
+	overflow: auto;
+}
+.guardrail-test-input {
+	display: grid;
+	gap: 12px;
+}
+.guardrail-test-input > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: -4px;
+}
+.guardrail-test-input > header label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	font-weight: 500;
+	color: #374151;
+}
+.guardrail-test-input .ui-input-wrap textarea {
+	font-family: ui-monospace, monospace;
+	font-size: 14px;
+	line-height: 20px;
+}
+.guardrail-test-input > footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 16px;
+	margin-top: -8px;
+}
+.guardrail-test-input kbd {
+	padding: 2px 4px;
+	background: #f3f4f6;
+	border: 1px solid #d1d5db;
+	border-radius: 4px;
+	font-size: 12px;
+	line-height: 16px;
+}
+.guardrail-test-input > .ui-button {
+	width: 100%;
+	margin-top: 8px;
+}
+.guardrail-test-results {
+	margin-top: 16px;
+	padding-top: 16px;
+	border-top: 1px solid #e5e7eb;
+	display: grid;
+	gap: 12px;
+}
+.guardrail-test-results h3 {
+	font-size: 14px;
+	font-weight: 600;
+	color: #111827;
+	margin: 0;
+	line-height: 20px;
+}
+.guardrail-test-success {
+	background: #f0fdf4;
+	border-color: #bbf7d0;
+}
+.guardrail-test-success .ui-card__body {
+	display: grid;
+	gap: 12px;
+}
+.guardrail-test-success header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.guardrail-test-success header > button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+}
+.guardrail-test-success header > button > .ui-icon:first-child {
+	font-size: 12px;
+	color: #6b7280;
+}
+.guardrail-test-success header > button > .ui-icon:nth-child(2) {
+	font-size: 18px;
+	color: #16a34a;
+}
+.guardrail-test-success header strong {
+	font-size: 14px;
+	font-weight: 500;
+	color: #166534;
+}
+.guardrail-test-success header > div {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.guardrail-test-success header > div > span,
+.guardrail-test-error header > span {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 12px;
+	font-weight: 500;
+	color: #4b5563;
+}
+.guardrail-test-output {
+	background: white;
+	border: 1px solid #bbf7d0;
+	border-radius: 4px;
+	padding: 12px;
+}
+.guardrail-test-output label {
+	display: block;
+	font-size: 12px;
+	font-weight: 500;
+	color: #4b5563;
+	margin-bottom: 8px;
+}
+.guardrail-test-output > div {
+	font-family: ui-monospace, monospace;
+	font-size: 14px;
+	color: #111827;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+.guardrail-test-success small {
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 16px;
+}
+.guardrail-test-success small strong {
+	font-weight: 500;
+}
+.guardrail-test-error {
+	background: #fef2f2;
+	border-color: #fecaca;
+}
+.guardrail-test-error .ui-card__body > div {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+.guardrail-test-error .ui-card__body > div > button {
+	color: #6b7280;
+	margin-top: 2px;
+	font-size: 12px;
+}
+.guardrail-test-error .ui-card__body > div > .ui-icon {
+	color: #dc2626;
+	margin-top: 2px;
+}
+.guardrail-test-error .ui-card__body > div > div {
+	flex: 1;
+}
+.guardrail-test-error header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 4px;
+}
+.guardrail-test-error header > button {
+	font-size: 14px;
+	font-weight: 500;
+	color: #991b1b;
+}
+.guardrail-test-error p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #b91c1c;
+	margin: 4px 0 0;
+}
+.guardrail-test-panel [data-guardrail-size="xs"],
+.guardrail-test-results [data-guardrail-size="xs"] {
+	padding: 6px 10px;
+	font-size: 12px;
+	line-height: 16px;
+}
+.guardrail-test-panel [data-guardrail-size="xs"] .ui-button__label,
+.guardrail-test-results [data-guardrail-size="xs"] .ui-button__label {
+	font: inherit;
+}
+/* Tremor renders the size="xs" icon as an inline h-4/w-4 svg, so its baseline gap makes
+   the button 32.41px tall; a block icon only reaches 30px and shifts the panel below it. */
+.guardrail-test-panel [data-guardrail-size="xs"],
+.guardrail-test-results [data-guardrail-size="xs"] {
+	height: 32.41px;
+}

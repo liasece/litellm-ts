@@ -1,0 +1,273 @@
+.policy-flow {
+	position: fixed;
+	inset: 0;
+	z-index: 1000;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: #f9fafb;
+	font-family: var(--ui-font-sans);
+	font-size: 16px;
+	line-height: 1.5;
+	color: #111827;
+}
+.policy-flow > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-shrink: 0;
+	padding: 10px 24px;
+	background: white;
+	border-bottom: 1px solid #e5e7eb;
+}
+.policy-flow > header > div {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.policy-flow > header > div + div {
+	gap: 8px;
+}
+.policy-flow > header > div > button:not(.ui-button) {
+	padding: 4px;
+	background: none;
+	border: 0;
+	display: flex;
+	align-items: center;
+	color: #6b7280;
+	cursor: pointer;
+}
+.policy-flow > header > div > span {
+	font-size: 14px;
+	color: #6b7280;
+}
+.policy-flow > header .policy-flow-slash {
+	color: #d1d5db;
+}
+.policy-flow > header b {
+	font-size: 11px;
+	font-weight: 600;
+	background: #eef2ff;
+	color: #6366f1;
+	padding: 3px 8px;
+	border-radius: 4px;
+	letter-spacing: 0.02em;
+}
+.policy-flow-description {
+	padding: 8px 24px;
+	background: white;
+	border-bottom: 1px solid #e5e7eb;
+	flex-shrink: 0;
+}
+.policy-flow-body {
+	flex: 1;
+	display: flex;
+	overflow: hidden;
+}
+.policy-flow-body > main {
+	flex: 1;
+	overflow-y: auto;
+	display: flex;
+	justify-content: center;
+	padding: 32px 24px;
+}
+.policy-flow-body > main > div {
+	max-width: 760px;
+	width: 100%;
+}
+.policy-flow-canvas {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 16px 0;
+}
+.policy-flow-trigger,
+.policy-flow-end,
+.policy-flow-readonly-step {
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	background: white;
+	max-width: 720px;
+	width: 100%;
+	padding: 16px 20px;
+}
+.policy-flow-trigger,
+.policy-flow-end {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.policy-flow-end,
+.policy-flow-canvas--readonly > .policy-flow-trigger {
+	padding: 14px 20px;
+}
+.policy-flow-trigger > div > strong,
+.policy-flow-end > div > strong {
+	display: block;
+	margin-bottom: 2px;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	color: #6b7280;
+	letter-spacing: 0.06em;
+}
+.policy-flow-trigger b,
+.policy-flow-end b {
+	display: block;
+	font-size: 14px;
+	font-weight: 600;
+	color: #111827;
+}
+.policy-flow-trigger > div > span,
+.policy-flow-end > div > span {
+	font-size: 13px;
+	color: #9ca3af;
+}
+.policy-flow-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	background: #f3f4f6;
+	flex-shrink: 0;
+}
+.policy-flow-icon--guardrail {
+	background: #eef2ff;
+}
+.policy-flow-outcome-icon {
+	flex-shrink: 0;
+}
+.policy-flow-connector {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	height: 56px;
+}
+.policy-flow-connector > i {
+	width: 1px;
+	flex: 1;
+	background: #d1d5db;
+}
+.policy-flow-connector > button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border-radius: 50%;
+	border: 1px solid #d1d5db;
+	background: white;
+	cursor: pointer;
+	z-index: 1;
+	transition: all 0.15s ease;
+	color: #9ca3af;
+}
+.policy-flow-connector > button:hover {
+	border-color: #6366f1;
+	background: #eef2ff;
+}
+.policy-flow-step {
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	background: white;
+	max-width: 720px;
+	width: 100%;
+	overflow: hidden;
+}
+.policy-flow-step > header,
+.policy-flow-readonly-step > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 14px 20px 0;
+}
+.policy-flow-step > header > span,
+.policy-flow-readonly-step > header > span {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	color: #9ca3af;
+}
+.policy-flow-step header strong,
+.policy-flow-readonly-step header strong {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	color: #6366f1;
+	letter-spacing: 0.06em;
+}
+.policy-flow-step header button {
+	display: flex;
+	align-items: center;
+	background: none;
+	border: 0;
+	padding: 2px;
+	color: #9ca3af;
+	cursor: pointer;
+}
+.policy-flow-step header button:disabled {
+	opacity: 0.3;
+	cursor: not-allowed;
+}
+.policy-flow-step-select {
+	padding: 12px 20px 16px;
+}
+.policy-flow-step label,
+.policy-pipeline-input > label {
+	display: block;
+	font-size: 12px;
+	font-weight: 500;
+	color: #6b7280;
+	margin-bottom: 6px;
+}
+.policy-flow-step > section {
+	border-top: 1px solid #f0f0f0;
+	padding: 14px 20px;
+}
+.policy-flow-step h4 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 8px;
+	font-size: 13px;
+	font-weight: 600;
+	color: #374151;
+}
+.policy-flow-message {
+	margin-top: 8px;
+}
+.policy-flow-static-connector {
+	width: 1px;
+	height: 32px;
+	background: #d1d5db;
+}
+.policy-flow-readonly-step {
+	padding: 14px 20px;
+}
+.policy-flow-readonly-step > header {
+	padding: 0;
+	margin-bottom: 8px;
+}
+.policy-flow-readonly-step > h4 {
+	font-size: 15px;
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+.policy-flow-readonly-step > div {
+	display: flex;
+	align-items: center;
+	gap: 24px;
+	font-size: 13px;
+	color: #374151;
+	border-top: 1px solid #f3f4f6;
+	padding-top: 10px;
+}
+.policy-flow-readonly-step > div > span {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}

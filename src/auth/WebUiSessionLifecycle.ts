@@ -9,7 +9,7 @@ import {
 
 const SECURE_COOKIE_ENV_VAR = "LITELLM_COOKIE_SECURE";
 
-/** 默认 3 天会话在剩余 1 天时续签；较短的自定义会话使用其时长的三分之一。 */
+/** 续签窗口最多 1 天；较短的自定义会话使用其时长的三分之一。 */
 export const MAX_WEBUI_SESSION_REFRESH_THRESHOLD_SECONDS = 24 * 60 * 60;
 
 /**

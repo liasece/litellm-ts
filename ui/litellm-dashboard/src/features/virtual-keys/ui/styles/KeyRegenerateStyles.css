@@ -1,0 +1,32 @@
+.vk-regenerated {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 8px;
+	width: 100%;
+}
+.vk-regenerated-title {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 500;
+	color: #111827;
+}
+.vk-regenerated-label {
+	margin-top: 12px;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #6b7280;
+}
+.vk-regenerated-value {
+	padding: 8px;
+	border-radius: 4px;
+	margin-bottom: 8px;
+	background: #f3f4f6;
+}
+.vk-regenerated-value pre {
+	font: 14px/22px var(--ui-font-mono);
+	word-break: break-word;
+	white-space: normal;
+}
+.vk-regenerated-copy {
+	margin-top: 12px;
+}

@@ -1,0 +1,1 @@
+SVG nodes in KeyHeroIconDefinitions.json are preserved from the existing @heroicons/react 1.0.6 package (outline icons). Original source: https://github.com/tailwindlabs/heroicons/tree/v1.0.6 . Copyright (c) 2020 Refactoring UI Inc.; MIT license is preserved in KeyHeroIcons.LICENSE. These are static Vue-rendered paths; there is no React runtime dependency.

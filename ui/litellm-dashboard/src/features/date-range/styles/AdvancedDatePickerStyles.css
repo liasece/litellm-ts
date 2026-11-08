@@ -1,0 +1,316 @@
+.date-range-picker {
+	display: flex;
+	min-width: 0;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	font-family: var(--ui-font-sans);
+	font-size: 14px;
+	line-height: 20px;
+}
+.date-range-picker > label {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #374151;
+	white-space: nowrap;
+}
+.date-range-quick {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.date-range-quick > button {
+	font-family: inherit;
+	cursor: pointer;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	background: #fff;
+	color: #374151;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	padding: 8px 10px;
+	white-space: nowrap;
+}
+.date-range-quick > button:hover {
+	border-color: #9ca3af;
+	background: #f9fafb;
+}
+.date-range-quick > button.selected {
+	border-color: #2563eb;
+	background: #eff6ff;
+	color: #1d4ed8;
+}
+.date-range-dropdown {
+	position: relative;
+	min-width: 0;
+	flex: 1;
+}
+.date-range-trigger {
+	display: block;
+	width: 100%;
+	min-width: 0;
+	cursor: pointer;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	background: #fff;
+	padding: 8px 12px;
+	font-family: inherit;
+	font-size: 14px;
+	line-height: 20px;
+	text-align: left;
+}
+.date-range-trigger:hover {
+	border-color: #9ca3af;
+}
+.date-range-trigger-content {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.date-range-trigger-main {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: #111827;
+}
+.date-range-clock {
+	display: inline-flex;
+	align-items: center;
+	line-height: 0;
+}
+.date-range-trigger .ui-icon {
+	color: #4b5563;
+	flex-shrink: 1;
+	display: block;
+}
+.date-range-trigger-content > svg {
+	width: 16px;
+	height: 16px;
+	color: #9ca3af;
+	flex-shrink: 1;
+	transition: transform 0.15s;
+}
+.date-range-trigger-content > svg.open {
+	transform: rotate(180deg);
+}
+.date-range-popup {
+	position: fixed;
+	left: 12px;
+	right: 12px;
+	top: 80px;
+	z-index: 9999;
+	max-height: calc(100dvh - 96px);
+	min-width: 0;
+	overflow-y: auto;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #fff;
+	box-shadow:
+		0 20px 25px -5px #0000001a,
+		0 8px 10px -6px #0000001a;
+	display: flex;
+	flex-direction: column;
+}
+.date-range-relative {
+	width: 100%;
+	border-bottom: 1px solid #e5e7eb;
+}
+.date-range-relative > header {
+	padding: 12px;
+	border-bottom: 1px solid #e5e7eb;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	color: #111827;
+}
+.date-range-relative > div {
+	max-height: 192px;
+	overflow-y: auto;
+}
+.date-range-relative button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	padding: 16px 20px;
+	border: 0;
+	border-bottom: 1px solid #f3f4f6;
+	background: #fff;
+	cursor: pointer;
+	font-family: inherit;
+	text-align: left;
+}
+.date-range-relative button:hover {
+	background: #f9fafb;
+}
+.date-range-relative button > span {
+	font-size: 14px;
+	line-height: 20px;
+	color: #374151;
+}
+.date-range-relative button > small {
+	font-size: 12px;
+	line-height: 16px;
+	padding: 4px 8px;
+	border-radius: 4px;
+	text-transform: capitalize;
+	color: #6b7280;
+	background: #f3f4f6;
+}
+.date-range-relative button.selected {
+	background: #eff6ff;
+	border-bottom-color: #bfdbfe;
+}
+.date-range-relative button.selected:hover {
+	background: #dbeafe;
+}
+.date-range-relative button.selected > span {
+	color: #1d4ed8;
+	font-weight: 500;
+}
+.date-range-relative button.selected > small {
+	color: #1d4ed8;
+	background: #dbeafe;
+}
+.date-range-custom {
+	position: relative;
+	width: 100%;
+}
+.date-range-custom > header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 14px;
+	border-bottom: 1px solid #e5e7eb;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	color: #111827;
+}
+.date-range-custom > header .ui-icon {
+	color: #4b5563;
+}
+.date-range-fields {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 16px;
+}
+.date-range-fields label {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	color: #374151;
+	margin-bottom: 4px;
+}
+.date-range-fields input {
+	font-family: inherit;
+	font-size: 14px;
+	line-height: 20px;
+	padding: 8px 12px;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	background: #fff;
+	cursor: pointer;
+	color: inherit;
+}
+.date-range-fields input:hover {
+	border-color: #9ca3af;
+}
+.date-range-fields input:focus {
+	outline: none;
+	border-color: #3b82f6;
+	box-shadow: 0 0 0 1px #3b82f6;
+}
+.date-range-fields input.invalid {
+	border-color: #fca5a5;
+}
+.date-range-fields input.invalid:focus {
+	border-color: #ef4444;
+	box-shadow: 0 0 0 1px #fecaca;
+}
+.date-range-error {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid #fecaca;
+	border-radius: 6px;
+	background: #fef2f2;
+	color: #b91c1c;
+	font-size: 14px;
+	line-height: 20px;
+}
+.date-range-error strong {
+	font-weight: 500;
+}
+.date-range-error .ui-icon {
+	color: #ef4444;
+}
+.date-range-selection {
+	padding: 12px;
+	border-radius: 6px;
+	background: #eff6ff;
+	color: #1e40af;
+	font-size: 12px;
+	line-height: 16px;
+}
+.date-range-selection p {
+	margin: 0;
+}
+.date-range-selection p + p {
+	margin-top: 4px;
+}
+.date-range-selection strong {
+	font-weight: 500;
+}
+.date-range-custom > footer {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0 16px 16px;
+	gap: 8px;
+}
+@media (min-width: 640px) {
+	.date-range-dropdown {
+		flex: none;
+	}
+	.date-range-trigger {
+		width: 300px;
+	}
+	.date-range-popup {
+		position: absolute;
+		left: auto;
+		right: 0;
+		top: 100%;
+		margin-top: 4px;
+		max-height: none;
+		min-width: 600px;
+		overflow: visible;
+		flex-direction: row;
+	}
+	.date-range-relative {
+		width: 50%;
+		border-bottom: 0;
+		border-right: 1px solid #e5e7eb;
+	}
+	.date-range-relative > div {
+		height: 350px;
+		max-height: none;
+	}
+	.date-range-custom {
+		width: 50%;
+	}
+	.date-range-fields {
+		gap: 24px;
+		padding: 24px 24px 80px;
+	}
+	.date-range-custom > footer {
+		position: absolute;
+		right: 16px;
+		bottom: 16px;
+		padding: 0;
+	}
+}

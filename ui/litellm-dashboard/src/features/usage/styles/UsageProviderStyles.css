@@ -1,0 +1,72 @@
+.usage-provider-toggles {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.usage-provider-toggle,
+.usage-provider-unknown {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.usage-provider-unknown {
+	gap: 4px;
+}
+
+.usage-provider-unknown .ui-icon {
+	color: #94a3b8;
+}
+
+.usage-provider-toggles label {
+	font-size: 12px;
+	line-height: 16px;
+	color: #475569;
+}
+
+.usage-provider-table {
+	max-height: 320px;
+	overflow: auto;
+}
+
+.usage-provider-table .usage-simple-table th,
+.usage-provider-table .usage-simple-table td {
+	padding-top: 8px;
+	padding-bottom: 8px;
+}
+
+.usage-provider-name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.usage-provider-name img,
+.usage-provider-name > span:first-child {
+	width: 16px;
+	height: 16px;
+}
+
+.usage-provider-bar {
+	min-width: 96px;
+}
+
+.usage-provider-bar > span {
+	font-variant-numeric: tabular-nums;
+}
+
+.usage-provider-bar > div {
+	height: 4px;
+	overflow: hidden;
+	border-radius: 9999px;
+	background: #f1f5f9;
+	margin-top: 4px;
+}
+
+.usage-provider-bar i {
+	display: block;
+	height: 100%;
+	border-radius: 9999px;
+	background: #06b6d4;
+}

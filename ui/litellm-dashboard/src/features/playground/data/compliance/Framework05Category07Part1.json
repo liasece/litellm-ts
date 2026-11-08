@@ -1,0 +1,29 @@
+[
+	{
+		"id": "ca-postal-1",
+		"framework": "Canadian PII (PIPEDA)",
+		"category": "Canadian Postal Code",
+		"categoryIcon": "map-pin",
+		"categoryDescription": "Detects Canadian postal codes (A1A 1A1 format) — considered PII when combined with other identifiers under PIPEDA.",
+		"prompt": "Ship the package to my postal code M5V 2T6.",
+		"expectedResult": "fail"
+	},
+	{
+		"id": "ca-postal-2",
+		"framework": "Canadian PII (PIPEDA)",
+		"category": "Canadian Postal Code",
+		"categoryIcon": "map-pin",
+		"categoryDescription": "Detects Canadian postal codes (A1A 1A1 format) — considered PII when combined with other identifiers under PIPEDA.",
+		"prompt": "My mailing address postal code is K1A0B1.",
+		"expectedResult": "fail"
+	},
+	{
+		"id": "ca-postal-3",
+		"framework": "Canadian PII (PIPEDA)",
+		"category": "Canadian Postal Code",
+		"categoryIcon": "map-pin",
+		"categoryDescription": "Detects Canadian postal codes (A1A 1A1 format) — considered PII when combined with other identifiers under PIPEDA.",
+		"prompt": "What is the format of a Canadian postal code?",
+		"expectedResult": "pass"
+	}
+]

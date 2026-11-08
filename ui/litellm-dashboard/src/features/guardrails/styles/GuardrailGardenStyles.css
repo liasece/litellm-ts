@@ -1,0 +1,283 @@
+.guardrail-garden-search {
+	margin-bottom: 24px;
+}
+.guardrail-garden-search > .ui-input-wrap {
+	border-radius: 8px;
+}
+.guardrail-garden-search .ui-icon {
+	color: #9ca3af;
+}
+.guardrail-garden > section {
+	margin-bottom: 40px;
+}
+.guardrail-garden > section > header h2 {
+	margin-bottom: 0;
+}
+.guardrail-garden > section > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 4px;
+}
+.guardrail-garden h2 {
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 30px;
+	color: #111827;
+	margin: 0 0 4px;
+}
+.guardrail-garden > section > p {
+	font-size: 13px;
+	line-height: 19.5px;
+	color: #6b7280;
+	margin: 4px 0 20px;
+}
+.guardrail-garden > section > header > button {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: #1a73e8;
+	font-size: 14px;
+	padding: 0;
+	font-weight: 400;
+}
+.guardrail-garden-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: 16px;
+}
+.guardrail-garden-card {
+	display: flex;
+	flex-direction: column;
+	text-align: left;
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 20px 20px 16px;
+	min-height: 170px;
+	cursor: pointer;
+	transition:
+		box-shadow 0.15s,
+		border-color 0.15s;
+}
+.guardrail-garden-card:hover {
+	border-color: #93c5fd;
+	box-shadow: 0 1px 6px rgba(59, 130, 246, 0.08);
+}
+.guardrail-garden-card > header {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 10px;
+}
+.guardrail-garden-card > header img,
+.guardrail-garden-logo-fallback {
+	width: 28px;
+	height: 28px;
+	border-radius: 6px;
+	object-fit: contain;
+	flex-shrink: 0;
+}
+.guardrail-garden-logo-fallback {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #f3f4f6;
+	color: #6b7280;
+	font-size: 14px;
+	font-weight: 600;
+}
+.guardrail-garden-card strong {
+	font-size: 14px;
+	font-weight: 600;
+	color: #111827;
+	line-height: 1.3;
+}
+.guardrail-garden-card > p {
+	font-size: 12px;
+	color: #6b7280;
+	line-height: 1.6;
+	margin: 0;
+	flex: 1;
+	overflow: hidden;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+}
+.guardrail-garden-card > footer {
+	margin-top: 10px;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	color: #16a34a;
+	font-size: 11px;
+	font-weight: 500;
+}
+.guardrail-garden-detail {
+	max-width: 960px;
+	margin: 0 auto;
+}
+.guardrail-garden-back {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: #5f6368;
+	font-size: 14px;
+	margin: 0 0 24px;
+}
+.guardrail-garden-detail > header {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	margin-bottom: 8px;
+}
+.guardrail-garden-detail > header img {
+	width: 40px;
+	height: 40px;
+	border-radius: 8px;
+	object-fit: contain;
+}
+.guardrail-garden-detail h1 {
+	font-size: 28px;
+	font-weight: 400;
+	color: #202124;
+	margin: 0;
+	line-height: 1.2;
+}
+.guardrail-garden-detail > p {
+	font-size: 14px;
+	color: #5f6368;
+	margin: 0 0 20px;
+	line-height: 1.6;
+}
+.guardrail-garden-detail-actions {
+	display: flex;
+	gap: 10px;
+	margin-bottom: 32px;
+}
+.guardrail-garden-detail-actions > .ui-button {
+	border-radius: 20px;
+	background: #ffffff;
+	border-color: #dadce0;
+	color: #1a73e8;
+	padding: 4px 20px;
+	height: 36px;
+	font-size: 14px;
+	font-weight: 500;
+	box-shadow: 0 2px 0 rgb(0 0 0 / 2%);
+}
+.guardrail-garden-detail > nav {
+	border-bottom: 1px solid #dadce0;
+	margin-bottom: 28px;
+	display: flex;
+}
+.guardrail-garden-detail > nav > button {
+	padding: 12px 24px;
+	font-size: 14px;
+	font-weight: 500;
+	color: #5f6368;
+	border-bottom: 3px solid transparent;
+}
+.guardrail-garden-detail > nav > button.selected {
+	border-color: #1a73e8;
+	color: #1a73e8;
+}
+.guardrail-garden-detail-overview {
+	display: flex;
+	gap: 64px;
+}
+.guardrail-garden-detail-overview > div {
+	flex: 1;
+	min-width: 0;
+}
+.guardrail-garden-detail h2 {
+	font-size: 18px;
+	font-weight: 400;
+	color: #202124;
+	margin: 0 0 12px;
+}
+.guardrail-garden-detail-overview > div > p {
+	font-size: 14px;
+	color: #3c4043;
+	line-height: 1.7;
+	margin: 0 0 32px;
+}
+.guardrail-garden-detail-overview > div > h2:nth-of-type(2) {
+	margin-bottom: 4px;
+}
+.guardrail-garden-detail-overview small {
+	display: block;
+	font-size: 13px;
+	color: #5f6368;
+	margin-bottom: 16px;
+}
+.guardrail-garden-detail table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 14px;
+}
+.guardrail-garden-detail th {
+	text-align: left;
+	padding: 12px 0;
+	color: #5f6368;
+	font-weight: 500;
+	border-bottom: 1px solid #dadce0;
+}
+.guardrail-garden-detail th:first-child {
+	width: 200px;
+}
+.guardrail-garden-detail td {
+	padding: 12px 0;
+	color: #3c4043;
+	border-bottom: 1px solid #f1f3f4;
+}
+.guardrail-garden-detail td:last-child {
+	color: #202124;
+}
+.guardrail-garden-detail-overview > aside {
+	width: 240px;
+	flex-shrink: 0;
+}
+.guardrail-garden-detail-overview > aside > section {
+	margin-bottom: 28px;
+}
+.guardrail-garden-detail-overview > aside label {
+	display: block;
+	font-size: 12px;
+	color: #5f6368;
+	margin-bottom: 4px;
+}
+.guardrail-garden-detail-overview > aside p {
+	font-size: 13px;
+	color: #202124;
+	word-break: break-all;
+	margin: 0;
+}
+.guardrail-garden-detail-overview > aside > section > div {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.guardrail-garden-detail-overview > aside span {
+	padding: 4px 10px;
+	border-radius: 4px;
+	background: #f1f3f4;
+	color: #5f6368;
+	font-size: 12px;
+}
+.guardrail-garden-evaluations h2 {
+	margin-bottom: 16px;
+}
+.guardrail-garden-evaluations table {
+	max-width: 560px;
+}
+.guardrail-garden-evaluations th,
+.guardrail-garden-evaluations td {
+	padding: 12px 16px;
+}
+.guardrail-garden-evaluations thead {
+	background: #f8f9fa;
+}
+.guardrail-garden-evaluations td:last-child {
+	font-weight: 500;
+}

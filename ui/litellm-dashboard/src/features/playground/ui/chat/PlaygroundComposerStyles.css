@@ -1,0 +1,328 @@
+.pg-composer {
+	padding: 16px;
+	border-top: 1px solid #e5e7eb;
+}
+.pg-composer__row {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+}
+.pg-composer__input {
+	display: flex;
+	align-items: center;
+	flex: 1;
+	min-height: 44px;
+	min-width: 0;
+	padding: 4px 12px;
+	background: #fff;
+	border: 1px solid #d1d5db;
+	border-radius: 12px;
+}
+.pg-composer__tools {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex-shrink: 0;
+	margin-right: 8px;
+}
+.pg-composer__tools button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 6px;
+	border: 0;
+	border-radius: 6px;
+	color: #9ca3af;
+	background: none;
+	cursor: pointer;
+	font-size: 16px;
+}
+.pg-composer__tools button:hover {
+	background: #f3f4f6;
+	color: #4b5563;
+}
+.pg-composer__tools button.is-active {
+	background: #dbeafe;
+	color: #2563eb;
+}
+.pg-composer__textarea {
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+	border: 0 !important;
+	border-radius: 0 !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	padding: 0 !important;
+}
+.pg-composer__textarea textarea {
+	border: 0 !important;
+	padding: 4px 0 !important;
+	line-height: 20px !important;
+	font-size: 14px !important;
+	resize: none !important;
+	background: transparent !important;
+	box-shadow: none !important;
+}
+.pg-send {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	margin-left: 8px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: #2563eb;
+	color: #fff;
+	cursor: pointer;
+}
+.pg-send .ui-icon {
+	font-size: 14px;
+}
+.pg-send:hover {
+	background: #1d4ed8;
+}
+.pg-send:disabled {
+	background: #d1d5db;
+	color: #6b7280;
+	cursor: not-allowed;
+	/* Tremor's disabled variant fades the whole control to 50%. */
+	opacity: 0.5;
+}
+.pg-cancel {
+	background: #fef2f2 !important;
+	color: #dc2626 !important;
+	border-color: #fecaca !important;
+}
+.pg-suggestions {
+	display: flex;
+	align-items: center;
+	overflow-x: auto;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+.pg-suggestions button {
+	flex-shrink: 0;
+	font-weight: 500;
+	border: 1px solid #e5e7eb;
+	border-radius: 16px;
+	background: #fff;
+	padding: 4px 12px;
+	color: #4b5563;
+	font-size: 12px;
+	line-height: 16px;
+	cursor: pointer;
+}
+.pg-suggestions button:hover {
+	background: #f9fafb;
+}
+.pg-composer__tool-form {
+	flex: 1;
+	min-width: 0;
+	overflow-y: auto;
+	max-height: 192px;
+	min-height: 44px;
+	padding: 8px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #f9fafb80;
+}
+.pg-upload-drop {
+	padding: 16px;
+	border: 1px dashed #d9d9d9;
+	border-radius: 8px;
+	background: #fafafa;
+	text-align: center;
+	cursor: pointer;
+}
+.pg-upload-drop > .ui-icon {
+	font-size: 24px;
+	color: #666;
+}
+.pg-upload-drop p {
+	font-size: 14px;
+	margin: 4px 0;
+}
+.pg-upload-drop small {
+	color: #6b7280;
+	font-size: 12px;
+}
+.pg-upload-images,
+.pg-upload-audio {
+	margin-bottom: 16px;
+}
+.pg-upload-images__list {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.pg-upload-images__item {
+	position: relative;
+	max-width: 128px;
+}
+.pg-upload-images__item img {
+	max-width: 128px;
+	max-height: 128px;
+	border-radius: 6px;
+	border: 1px solid #e5e7eb;
+	object-fit: cover;
+}
+.pg-upload-images__item button {
+	position: absolute;
+	right: 4px;
+	top: 4px;
+	padding: 4px;
+	border: 1px solid #e5e7eb;
+	border-radius: 4px;
+	background: #fff;
+	box-shadow: 0 1px 2px #0000000d;
+	color: #ef4444;
+	font-size: 12px;
+	line-height: 16px;
+	cursor: pointer;
+}
+.pg-upload-images__add {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	align-items: center;
+	justify-content: center;
+	width: 128px;
+	height: 128px;
+	background: #fff;
+	border: 2px dashed #d1d5db;
+	border-radius: 6px;
+	color: #6b7280;
+	font-size: 12px;
+	cursor: pointer;
+}
+.pg-upload-images__add > .ui-icon {
+	font-size: 24px;
+	color: #666;
+}
+.pg-upload-file {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px;
+	margin-bottom: 8px;
+	background: #f9fafb;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+}
+.pg-upload-file > img,
+.pg-upload-file__pdf {
+	width: 40px;
+	height: 40px;
+	border-radius: 6px;
+	object-fit: cover;
+	border: 1px solid #e5e7eb;
+}
+.pg-upload-file__pdf {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #ef4444;
+	color: #fff;
+}
+.pg-upload-file > div {
+	flex: 1;
+	min-width: 0;
+}
+.pg-upload-file strong {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 14px;
+	font-weight: 500;
+}
+.pg-upload-file small {
+	display: block;
+	color: #6b7280;
+	font-size: 12px;
+}
+.pg-upload-file > button {
+	border: 0;
+	background: none;
+	color: #9ca3af;
+	cursor: pointer;
+}
+.pg-upload-file--audio {
+	margin-bottom: 0;
+}
+.pg-upload-file__audio {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+}
+.pg-upload-file__audio > .ui-icon {
+	font-size: 20px;
+	color: #666;
+}
+.pg-upload-file__audio > span {
+	font-size: 14px;
+	font-weight: 500;
+}
+.pg-upload-file--audio > button {
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 4px;
+	padding: 4px 8px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #ef4444;
+	box-shadow: 0 1px 2px #0000000d;
+}
+.pg-code-banner {
+	margin-bottom: 8px;
+	font-size: 14px;
+	font-weight: 500;
+	color: #1d4ed8;
+}
+.pg-code-banner > .pg-between {
+	padding: 8px 12px;
+	border: 1px solid #bfdbfe;
+	border-radius: 8px;
+	background: linear-gradient(to right, #eff6ff, #faf5ff);
+}
+.pg-code-banner .ui-icon {
+	color: #3b82f6;
+}
+.pg-code-banner > .pg-between > button {
+	border: 0;
+	background: none;
+	color: #3b82f6;
+	font-size: 12px;
+	cursor: pointer;
+}
+.pg-code-banner__prompts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 8px;
+}
+.pg-code-banner__prompts button {
+	padding: 6px 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 9999px;
+	background: #fff;
+	color: inherit;
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 16px;
+	cursor: pointer;
+}
+
+.pg-composer__tools button.pg-attachment {
+	width: 64px;
+	height: 64px;
+	padding: 16px;
+}
+.pg-attachment > .ui-icon {
+	font-size: 16px;
+}

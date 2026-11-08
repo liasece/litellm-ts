@@ -1,18 +1,16 @@
-# LiteLLM Dashboard 前端契约
+# LiteLLM Dashboard Vue 前端契约
 
-本目录使用 React 18 与 Next.js 16 App Router。除非有单独的迁移设计和验证，不要升级到 React 19。
+本目录采用观澜 Web 工程栈：Vue 3、TypeScript、Vite、原生响应式 Store、普通 CSS、ECharts、Vue Router、Vitest、Playwright、ESLint 与 Prettier。具体版本以 package.json 和锁文件为准。
 
-- 当前管理后台以 Client Component 为主。不得在局部功能改动中无计划引入 React Server Component
-  或 Server Action；如需改变渲染边界，应先说明数据流、缓存、认证和回退方案。
-- 服务端状态优先沿用现有 TanStack Query 模式，不得为局部需求新增状态管理库。
-- `useEffect` 只用于与浏览器 API、网络、订阅等外部系统同步，不用于计算能从 props、URL 或其他
-  state 直接派生的值；这类值应在渲染时计算，必要时使用纯函数或 `useMemo`。
-- 不得随意关闭 `react-hooks/exhaustive-deps`，也不得全局关闭 React Hooks 或 Next.js 核心规则来
-  掩盖存量问题。确需例外时，应在最小作用域说明理由并有测试覆盖。
-- 维护现有 ESLint 门禁，不新增基线或重新引入全局抑制来掩盖违规。不得用 `eslint-disable`、`--suppress-all` 或关闭规则掩盖新问题；确需最小范围例外时，在代码处写明原因。
-- 新增路径路由时，必须兼容现有 legacy `?page=...` 路由，并同步更新路径到导航选中项的映射及测试。
-- 前端改动至少运行 ESLint、相关 Vitest 和 Next.js production build，另外必须运行 `npx tsc --noEmit`
-  并确认其实际覆盖受影响的源码与测试；构建阶段的类型覆盖从当前配置核实，不能用构建成功代替独立类型检查。
-  不得用 `as any`、`@ts-ignore` 或放宽 tsconfig 掩盖类型问题。
+- 本次迁移的范围、截图证据和发布门禁见 ../../docs/frontend-vue-migration.md。保留现有外观、响应式布局、URL、权限、认证和业务交互；验收例外必须有用户明确决定。React 对照源码和产物位于 ../litellm-dashboard-react-reference，只供调查和回退。
+- 不在当前运行时引入 React、Next、TanStack Query 或另一套组件设计。现有视觉由本项目 CSS 与 Vue 组件实现；复用的图标、算法和静态资源须保留来源及许可证。
+- 按功能与职责组织 API、data、logic、stores、render、ui。组件负责装配和交互，纯派生值用 computed/纯函数；Store 管理异步状态及生命周期，不依赖渲染器。
+- 与网络、浏览器事件、计时器、订阅、流、图表实例同步时明确初始化与销毁；取消旧请求，避免过期响应覆盖新状态。
+- 保持 HttpOnly session cookie、写请求 CSRF、显式虚拟密钥推理的认证边界；不在截图、日志或示例中使用真实凭据。
+- 路径路由与 legacy ?page=... 同时兼容，导航选中映射与后端静态路径共用 src/shared/WebUiPaths.ts。HTML 回退只覆盖页面路由，资源不存在须返回 404。
+- 不得用 as any、@ts-ignore、放宽 tsconfig、关闭 ESLint 规则或新建违规基线掩盖问题。
+- 修改后至少运行相关 Vitest、npm run typecheck、npm run lint、npm run format:check、npm run build 与 git diff --check。构建含类型检查也不能代替覆盖源码及测试的独立 typecheck。
+- 前后截图须使用同一浏览器、视口、时区和合成数据；保留原图、SHA、DOM、请求记录和实际构建指纹。Vite dev 的截图是诊断，不代表生产产物验收。不用占位页、遮罩或统一像素容差替代核对。
+- out 在静态截图读取期间保持不变。BuildRuntime 会校验前后源码指纹，保留上一发布产物的客户端静态资源，并写入构建来源与资源清单。
 
-复杂状态问题可参考 OPC 的[前端状态与职责](/Users/jansen/src/liasece/OPC/practices/engineering/frontend-state-and-boundaries.md)，按当前疑问选取；该路径位于管理端 Mac。依赖版本从包与锁文件核实，本项目渲染边界和门禁继续适用。
+根目录的共享环境、授权、保护已有修改、标准部署和线上核验约定继续适用。

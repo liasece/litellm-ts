@@ -1,0 +1,112 @@
+.ld-diff__legend {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
+	font-size: 12px;
+}
+.ld-diff__legend > span:first-child {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.ld-diff__legend .ui-tag {
+	margin: 0;
+}
+.ld-diff__identical {
+	padding: 24px 16px;
+	text-align: center;
+	border: 1px solid #d0d7de;
+	border-radius: 6px;
+	background: #f6f8fa;
+	color: rgb(0 0 0 / 45%);
+}
+.ld-diff {
+	border: 1px solid #d0d7de;
+	border-radius: 6px;
+	overflow: hidden;
+	font:
+		12px ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		Consolas,
+		monospace;
+}
+.ld-diff__heading {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	background: #f6f8fa;
+	border-bottom: 1px solid #d0d7de;
+	font:
+		600 12px -apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		sans-serif;
+}
+.ld-diff__heading > div {
+	padding: 8px 12px;
+}
+.ld-diff__heading > div:first-child {
+	border-right: 1px solid #d0d7de;
+}
+.ld-diff__scroll {
+	max-height: 460px;
+	overflow: auto;
+}
+.ld-diff__row {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	border-bottom: 1px solid #f0f2f4;
+}
+.ld-diff__cell {
+	display: grid;
+	grid-template-columns: 42px minmax(0, 1fr);
+	min-height: 22px;
+	background: #fff;
+	border-right: 1px solid #d0d7de;
+}
+.ld-diff__cell--remove {
+	background: #ffebe9;
+}
+.ld-diff__cell--add {
+	background: #e6ffec;
+}
+.ld-diff__number {
+	padding: 2px 8px;
+	color: #6e7781;
+	text-align: right;
+	user-select: none;
+}
+.ld-diff__cell > pre {
+	margin: 0;
+	padding: 2px 8px 2px 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+	color: #24292f;
+	font: inherit;
+}
+.ld-diff__cell > pre.ld-diff__empty {
+	color: #8c959f;
+}
+.ld-diff__plus,
+.ld-diff__minus {
+	display: inline-block;
+	width: 16px;
+}
+.ld-diff__plus {
+	color: #1a7f37;
+}
+.ld-diff__minus {
+	color: #cf222e;
+}
+.ld-diff__fold {
+	display: block;
+	width: 100%;
+	padding: 6px 12px;
+	border: 0;
+	border-bottom: 1px solid #d0d7de;
+	background: #ddf4ff;
+	color: #0969da;
+	cursor: pointer;
+	text-align: left;
+}

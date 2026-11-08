@@ -1,0 +1,183 @@
+.logging-cloudzero-wrap {
+	padding: 32px;
+}
+.logging-cloudzero {
+	color: rgb(0 0 0 / 88%);
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-cloudzero-empty {
+	background: white;
+	padding: 48px;
+	border: 1px dashed #d1d5db;
+	border-radius: 8px;
+	text-align: center;
+	max-width: 672px;
+	margin: 32px auto 0;
+}
+.logging-cloudzero-empty .ui-empty-state {
+	/* antd Empty normal size keeps its 32px block margin plus the 8px inline inset. */
+	padding: 0;
+	margin: 32px 8px 0;
+}
+/* Two classes so the page-level `.logging-settings-page h4` margin does not win here. */
+.logging-cloudzero-empty .ui-empty-state > h4 {
+	font: 600 20px/28px var(--ui-font-antd);
+	/* flex gap supplies 8px; antd leaves 10px between the Title and the Paragraph. */
+	margin: 0 0 2px;
+}
+.logging-cloudzero-empty p {
+	color: rgb(0 0 0/0.45);
+	max-width: 448px;
+	margin: auto;
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-cloudzero-empty > .ui-button {
+	/* centred in antd's Empty content box, which is inset 8px on each side. */
+	margin: 16px 8px 0;
+}
+.logging-cloudzero-content {
+	width: 100%;
+	max-width: 896px;
+	margin: auto;
+}
+.logging-cloudzero-content > .ui-card {
+	box-shadow: 0 1px 2px rgb(0 0 0/0.05);
+}
+.logging-cloudzero-heading {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font: 600 18px/28px var(--ui-font-antd);
+}
+.logging-cloudzero-heading > .ui-tag {
+	margin-left: 8px;
+	text-transform: capitalize;
+}
+.logging-cloudzero-controls {
+	display: flex;
+	flex: none;
+	gap: 8px;
+}
+.logging-cloudzero-controls .ui-button,
+.logging-cloudzero-actions .ui-button {
+	display: inline-flex;
+	gap: 8px;
+}
+.logging-cloudzero-description {
+	width: 100%;
+	border: 1px solid rgb(5 5 5 / 6%);
+	border-radius: 8px;
+}
+.logging-cloudzero-description table {
+	width: 100%;
+	table-layout: auto;
+	border-collapse: collapse;
+}
+.logging-cloudzero-description tr {
+	border-bottom: 1px solid rgb(5 5 5 / 6%);
+}
+.logging-cloudzero-description tr:last-child {
+	border-bottom: none;
+}
+.logging-cloudzero-description th,
+.logging-cloudzero-description td {
+	padding: 16px 24px;
+	font-size: 14px;
+	line-height: 22px;
+	border-inline-end: 1px solid rgb(5 5 5 / 6%);
+}
+.logging-cloudzero-description td:last-child {
+	border-inline-end: none;
+	word-break: break-word;
+	overflow-wrap: break-word;
+}
+.logging-cloudzero-description th {
+	font-weight: 400;
+	text-align: start;
+	background: rgb(0 0 0 / 2%);
+	color: rgb(0 0 0 / 65%);
+}
+.logging-cloudzero-description tr:first-child th {
+	border-start-start-radius: 8px;
+}
+.logging-cloudzero-description tr:last-child th {
+	border-end-start-radius: 8px;
+}
+.logging-cloudzero-description em {
+	font-style: italic;
+	color: #9ca3af;
+}
+.logging-cloudzero-divider {
+	display: flex;
+	align-items: center;
+	margin: 16px 0;
+	color: rgb(0 0 0 / 88%);
+	gap: 0;
+	font: 500 16px/1.5714285714285714 var(--ui-font-antd);
+}
+.logging-cloudzero-divider > span {
+	flex: none;
+	padding-inline: 16px;
+}
+.logging-cloudzero-divider:before,
+.logging-cloudzero-divider:after {
+	content: "";
+	border-top: 1px solid rgb(5 5 5/0.06);
+}
+.logging-cloudzero-divider:before {
+	flex: 1;
+}
+.logging-cloudzero-divider:after {
+	flex: 19;
+}
+.logging-cloudzero-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	margin-bottom: 24px;
+}
+.logging-cloudzero-results {
+	margin-top: 24px;
+}
+.logging-cloudzero-results .ui-alert__symbol {
+	color: #3b82f6;
+}
+.logging-cloudzero-results .ui-alert__content > div:last-child {
+	margin-top: 8px;
+}
+.logging-cloudzero-results p {
+	margin-bottom: 8px;
+	color: #4b5563;
+	font-size: 14px;
+}
+.logging-cloudzero-results pre {
+	background: #f9fafb;
+	padding: 16px;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	overflow-x: auto;
+	font: 12px/16px var(--ui-font-mono);
+	color: #1f2937;
+}
+.logging-cloudzero-export {
+	font: 14px/22px var(--ui-font-antd);
+}
+.logging-cloudzero-export > p {
+	margin-top: 8px;
+}
+.logging-cloudzero-export > footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.logging-cloudzero-empty .ui-empty-state > p:empty {
+	display: none;
+}
+
+@media (max-width: 767px) {
+	.logging-cloudzero-wrap {
+		padding: 16px;
+	}
+}

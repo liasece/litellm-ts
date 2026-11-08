@@ -1,0 +1,2 @@
+Calendar, ArrowLeftHeadIcon and ArrowRightHeadIcon vectors preserve the original @tremor/react 3.18.7 distribution assets. Copyright and license are reproduced in TremorDateRange.LICENSE.
+Range selection behavior follows the installed react-day-picker addToRange contract. Its MIT license is reproduced in ReactDayPicker.LICENSE.

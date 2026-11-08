@@ -1,0 +1,128 @@
+.usage-user-agent {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+	margin-top: 0;
+}
+.usage-subtitle {
+	color: #374151;
+	font-size: 16px;
+	line-height: 24px;
+}
+.usage-user-agent-summary {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+.usage-user-agent-summary > header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+}
+.usage-user-agent-summary > header > div:last-child {
+	width: 384px;
+}
+.usage-user-agent-summary label {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #6b7280;
+	margin-bottom: 8px;
+}
+.usage-user-agent-summary .usage-grid-four .ui-popover-anchor {
+	display: block;
+}
+.usage-user-agent-summary .usage-grid-four .ui-popover-anchor > h2 {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.usage-user-agent-totals {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin-top: 16px;
+}
+.usage-user-agent-totals p {
+	font-size: 14px;
+	line-height: 20px;
+	color: #4b5563;
+}
+.usage-user-agent-totals strong {
+	font-size: 18px;
+	line-height: 28px;
+	color: #111827;
+	font-weight: 600;
+}
+.usage-agent-tabs {
+	margin-bottom: 24px;
+}
+.usage-agent-chart-heading {
+	margin-bottom: 24px;
+}
+.usage-agent-chart-title {
+	font-size: 18px !important;
+	line-height: 28px !important;
+	margin-bottom: 16px !important;
+}
+.usage-per-user {
+	margin-bottom: 24px;
+}
+.usage-per-user > .ui-tabs {
+	margin-bottom: 24px;
+}
+.usage-per-user-table {
+	overflow-x: auto;
+}
+.usage-per-user-table th:nth-child(n + 4),
+.usage-per-user-table td:nth-child(n + 4) {
+	text-align: right;
+}
+.usage-per-user-table td:first-child {
+	font-weight: 500;
+}
+.usage-per-user-pagination {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-top: 16px;
+	font-size: 14px;
+	line-height: 20px;
+	color: #6b7280;
+}
+.usage-per-user-pagination > div {
+	display: flex;
+	gap: 8px;
+}
+.usage-per-user > div:last-child > div:first-child {
+	margin-bottom: 16px;
+}
+.usage-credential-banner {
+	margin-bottom: 0;
+	border: 0;
+	border-radius: 0;
+}
+.usage-credential-banner code {
+	margin: 0 0.2em;
+	padding-inline: 0.4em;
+	padding-block: 0.2em 0.1em;
+	border: 1px solid rgba(100, 100, 100, 0.2);
+	border-radius: 3px;
+	background: rgba(150, 150, 150, 0.1);
+	font-size: 85%;
+	line-height: 1.5714285714;
+	font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
+}
+.usage-per-user > div:last-child h2 {
+	font-size: 18px;
+	line-height: 28px;
+}
+
+.usage-user-loading {
+	padding: 8px;
+	text-align: center;
+}
+.usage-daily-spend-chart {
+	margin-top: 8px;
+}

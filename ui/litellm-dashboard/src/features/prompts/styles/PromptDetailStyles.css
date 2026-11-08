@@ -1,0 +1,298 @@
+.prompt-details-title {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-width: 0;
+	padding-right: 24px;
+}
+.prompt-details-title > div:first-child {
+	min-width: 0;
+}
+.prompt-details-title small {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 400;
+}
+.prompt-details-title > div + div {
+	display: flex;
+	gap: 8px;
+	flex-shrink: 0;
+}
+.prompt-details-loading {
+	display: flex;
+	justify-content: center;
+	padding: 40px 0;
+	color: #1677ff;
+}
+.prompt-details-not-found {
+	padding: 16px;
+}
+.prompt-details-body {
+	padding: 16px;
+	line-height: 1.5;
+	font-family: inherit;
+	color: inherit;
+}
+.prompt-identifier-bar {
+	display: flex;
+	align-items: center;
+	cursor: pointer;
+	margin-bottom: 16px;
+	color: #6b7280;
+}
+.prompt-identifier-bar > span {
+	font-family: var(--ui-font-mono);
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.prompt-details-body > .ui-tabs {
+	margin-bottom: 16px;
+}
+.prompt-detail-summary {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 24px;
+}
+.prompt-detail-summary h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 500;
+	color: #111827;
+	margin-top: 8px;
+}
+.prompt-detail-summary p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #6b7280;
+}
+.prompt-detail-summary .ui-tag {
+	margin-top: 4px;
+}
+.prompt-detail-summary .prompt-summary-id {
+	font-family: var(--ui-font-mono);
+	font-size: 14px;
+	line-height: 20px;
+}
+.prompt-parameters-card {
+	margin-top: 24px;
+}
+.prompt-parameters-card label,
+.prompt-admin-panel label,
+.prompt-template-panel label {
+	display: block;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	color: #6b7280;
+	font-weight: 500;
+}
+.prompt-details-body pre {
+	white-space: pre-wrap;
+	font-family: var(--ui-font-mono);
+	font-size: 12px;
+	line-height: 16px;
+	color: #1f2937;
+	padding: 12px;
+	background: #f9fafb;
+	border-radius: 6px;
+	margin-top: 8px;
+}
+.prompt-admin-panel h3,
+.prompt-template-panel h3,
+.prompt-raw-panel h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 500;
+	color: #111827;
+}
+.prompt-admin-panel > .ui-card__body > h3 {
+	margin-bottom: 16px;
+}
+.prompt-admin-panel section + section,
+.prompt-template-panel section + section {
+	margin-top: 16px;
+}
+.prompt-detail-id {
+	padding: 8px;
+	background: #f9fafb;
+	border-radius: 4px;
+	font-family: var(--ui-font-mono);
+	font-size: 14px;
+	line-height: 20px;
+}
+.prompt-admin-panel pre,
+.prompt-template-panel pre,
+.prompt-raw-panel pre {
+	border: 1px solid #e5e7eb;
+}
+.prompt-admin-parameters {
+	max-height: 384px;
+	overflow: auto;
+}
+.prompt-template-panel > .ui-card__body > header,
+.prompt-raw-panel > .ui-card__body > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 16px;
+}
+.prompt-template-panel .prompt-template-content {
+	max-height: 384px;
+	overflow: auto;
+	padding: 16px;
+	font-size: 14px;
+	line-height: 20px;
+}
+.prompt-template-panel .prompt-template-metadata {
+	max-height: 256px;
+	overflow: auto;
+}
+.prompt-raw-panel pre {
+	overflow: auto;
+	padding: 16px;
+	margin-top: 0;
+}
+.prompt-template-panel .ui-button,
+.prompt-raw-panel .ui-button {
+	color: #6b7280;
+	line-height: 21px;
+}
+.prompt-template-panel .ui-button.copied,
+.prompt-raw-panel .ui-button.copied {
+	border-color: #bbf7d0;
+	background: #f0fdf4;
+	color: #16a34a;
+}
+.prompt-history-panel {
+	position: fixed;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	width: clamp(50vw, 1200px, 80vw);
+	max-width: 100vw;
+	background: #fff;
+	z-index: 1100;
+	display: flex;
+	flex-direction: column;
+	box-shadow:
+		0 6px 16px 0 rgb(0 0 0 /8%),
+		0 3px 6px -4px rgb(0 0 0 /12%),
+		0 9px 28px 8px rgb(0 0 0 /5%);
+	color: rgb(0 0 0 /0.88);
+	font: 14px/22px var(--ui-font-antd);
+}
+.prompt-history-panel > header {
+	display: flex;
+	align-items: center;
+	padding: 16px 24px;
+	border-bottom: 1px solid rgb(5 5 5 /6%);
+}
+.prompt-history-panel > header > button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	margin-right: 12px;
+	color: rgb(0 0 0 /0.45);
+}
+.prompt-history-panel > header h2 {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+}
+.prompt-history-panel > div {
+	padding: 24px;
+	overflow: auto;
+	flex: 1;
+}
+.prompt-history-version {
+	display: block;
+	width: 100%;
+	text-align: left;
+	margin-bottom: 16px;
+	padding: 16px;
+	border-radius: 8px;
+	border: 1px solid #e5e7eb;
+	background: #fff;
+}
+.prompt-history-version:hover {
+	box-shadow:
+		0 4px 6px -1px rgb(0 0 0 /0.1),
+		0 2px 4px -2px rgb(0 0 0 /0.1);
+	border-color: #93c5fd;
+}
+.prompt-history-version.selected {
+	border-color: #3b82f6;
+	background: #eff6ff;
+}
+.prompt-history-version header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+.prompt-history-version header > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.prompt-history-version .ui-tag {
+	margin: 0;
+}
+.prompt-history-version strong {
+	display: block;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: #4b5563;
+}
+.prompt-history-version small {
+	display: block;
+	font-size: 12px;
+	line-height: 16px;
+	color: rgb(0 0 0 /0.45);
+	margin-top: 4px;
+}
+.prompt-history-empty {
+	text-align: center;
+	padding: 32px 0;
+	color: #6b7280;
+}
+.prompt-history-skeleton span,
+.prompt-history-skeleton p {
+	display: block;
+	height: 16px;
+	border-radius: 4px;
+	background: #f0f0f0;
+}
+.prompt-history-skeleton span {
+	width: 38%;
+	margin: 12px 0 28px;
+}
+.prompt-history-skeleton p {
+	margin-top: 16px;
+}
+.prompt-history-skeleton p:last-child {
+	width: 61%;
+}
+@media (min-width: 640px) {
+	.prompt-detail-summary {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (min-width: 1024px) {
+	.prompt-detail-summary {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+.prompt-details-drawer .ui-overlay-close:focus-visible,
+.prompt-history-panel > header > button:focus-visible {
+	outline: none;
+}

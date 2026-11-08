@@ -1,0 +1,84 @@
+.resource-delete__content {
+	font: 14px/22px var(--ui-font-antd);
+}
+.resource-delete__content > p {
+	margin-top: 16px;
+}
+.resource-delete__information {
+	background: #fff2f0;
+	border-color: #ffccc7;
+	margin-top: 16px;
+}
+.resource-delete__information > .ui-card__header,
+.resource-delete__information > .ui-card__head {
+	background: #fff2f0;
+	border-color: #ffccc7;
+}
+.resource-delete__information dl {
+	font: 14px/22px var(--ui-font-antd);
+}
+/* antd Descriptions renders each row as an auto-width label cell followed by the content
+   cell, so the values line up right after their own label instead of a shared column. */
+.resource-delete__entry {
+	display: flex;
+	padding: 1px 0 8px 1px;
+}
+.resource-delete__entry:last-child {
+	padding-bottom: 0;
+}
+.resource-delete__information dt {
+	display: flex;
+	font-weight: 600;
+	color: rgb(0 0 0/0.45);
+}
+.resource-delete__information dt::after {
+	content: ":";
+	margin: 0 8px 0 1px;
+	position: relative;
+	top: -0.5px;
+}
+.resource-delete__entry:has(code) {
+	/* the inline <code> box with its border/padding grows the line box by 2px; antd's
+	   Descriptions row only grows by 0.7px, so trim the surplus here. */
+	padding-bottom: 7px;
+}
+.resource-delete__information dd {
+	/* keep the content inline: antd renders code as an inline box, and a flex/block dd
+	   would blockify it and add its 22px line box on top of the padding. */
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.resource-delete__confirmation {
+	border-top: 1px solid #e5e7eb;
+	padding-top: 16px;
+	margin-top: 16px;
+	margin-bottom: 24px;
+}
+.resource-delete__confirmation > p {
+	display: block;
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 500;
+	margin-bottom: 8px;
+	color: #374151;
+}
+.resource-delete__confirmation strong,
+.resource-delete__confirmation .ui-input-prefix {
+	color: #ff4d4f;
+}
+.resource-delete .ui-button--danger.ui-button--primary {
+	background: #ff4d4f;
+	border-color: transparent;
+	color: white;
+}
+
+.resource-delete__information code {
+	margin: 0 0.2em;
+	padding: 0.2em 0.4em 0.1em;
+	font-size: 85%;
+	font-family: var(--ui-font-mono);
+	background: rgb(150 150 150/0.1);
+	border: 1px solid rgb(100 100 100/0.2);
+	border-radius: 3px;
+}

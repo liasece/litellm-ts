@@ -1,11 +1,9 @@
 .git
 .github
 .cache
-.next
 dist
 node_modules
 ui/out
-ui/litellm-dashboard/.next
 ui/litellm-dashboard/node_modules
 ui/litellm-dashboard/coverage
 ui/litellm-dashboard/playwright-report
@@ -15,6 +13,9 @@ coverage
 *.tsbuildinfo
 .env
 .env.*
-!ui/litellm-dashboard/.env.production
 config.yaml
 config.litellm.yaml
+
+# Visual evidence and the retained migration reference are not image inputs.
+.artifacts
+ui/litellm-dashboard-react-reference

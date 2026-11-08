@@ -1,0 +1,66 @@
+.theme-settings {
+	width: 100%;
+	max-width: 896px;
+	margin: auto;
+	padding: 16px;
+	font: 14px/20px var(--ui-font-sans);
+}
+.theme-settings > header {
+	margin-bottom: 32px;
+}
+.theme-settings h2 {
+	font: 700 24px/32px var(--ui-font-sans);
+	color: #111827;
+	margin: 0 0 8px;
+}
+.theme-settings p {
+	font: 12.4px/18.4px var(--ui-font-sans);
+	color: #4b5563;
+}
+.theme-settings-card.ui-card {
+	padding: 16px;
+	/* Tremor Card: shadow-sm + ring-1 (ring-tremor-ring #e5e7eb). */
+	box-shadow:
+		0 0 0 1px #e5e7eb,
+		0 1px 2px 0 rgb(0 0 0/0.05);
+}
+.theme-settings-fields > label {
+	display: block;
+	margin-bottom: 24px;
+}
+.theme-settings-fields strong {
+	display: block;
+	font: 500 14px/20px var(--ui-font-sans);
+	color: #374151;
+	margin-bottom: 8px;
+}
+.theme-settings-fields small {
+	display: block;
+	font: 12px/16px var(--ui-font-sans);
+	color: #6b7280;
+	margin-top: 4px;
+}
+.theme-settings-actions {
+	display: flex;
+	gap: 12px;
+	padding-top: 16px;
+}
+.theme-reset.ui-button--tremor {
+	/* Tremor secondary/gray button: gray-500 text and border. */
+	color: #6b7280;
+	border-color: #6b7280;
+}
+.theme-reset.ui-button--tremor:hover {
+	background: #f9fafb;
+	border-color: #4b5563;
+	color: #374151;
+}
+
+@media (min-width: 768px) {
+	.theme-settings {
+		padding: 32px 24px;
+	}
+	.theme-settings-card.ui-card {
+		padding: 24px;
+	}
+}

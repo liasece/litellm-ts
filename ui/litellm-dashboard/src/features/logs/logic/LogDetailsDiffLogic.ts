@@ -1,0 +1,306 @@
+const CONTEXT_LINES = 50;
+const MAX_LCS_CELLS = 4_000_000;
+type DiffLineKind = "context" | "change";
+
+export interface DiffLine {
+	text: string;
+	lineNumber: number;
+}
+
+export interface DiffRow {
+	kind: DiffLineKind;
+	left?: DiffLine;
+	right?: DiffLine;
+}
+
+export type FoldedDiffRow = DiffRow | { kind: "fold"; hidden: DiffRow[] };
+
+type EditOperation = { kind: "equal"; text: string } | { kind: "remove"; text: string } | { kind: "add"; text: string };
+
+interface PatienceAnchor {
+	leftIndex: number;
+	rightIndex: number;
+}
+
+export function getRequestProtocol(request: unknown): string | null {
+	try {
+		const parsed: unknown = typeof request === "string" ? JSON.parse(request) : request;
+		if (!parsed || typeof parsed !== "object" || !("url" in parsed) || typeof parsed.url !== "string") return null;
+
+		const pathname = new URL(parsed.url, "http://litellm.local").pathname.replace(/\/+$/, "");
+		if (pathname.endsWith("/chat/completions")) return "Chat Completions";
+		if (pathname.endsWith("/responses")) return "Responses";
+		if (pathname.endsWith("/messages")) return "Anthropic Messages";
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+export function formatDiffValue(value: unknown): string {
+	if (typeof value === "string") {
+		try {
+			const parsed = JSON.parse(value);
+			return formatSortedJson(parsed);
+		} catch {
+			return value;
+		}
+	}
+
+	if (value === undefined) return "";
+	if (value === null) return "null";
+
+	try {
+		const serialized = JSON.stringify(value);
+		return serialized === undefined ? String(value) : formatSortedJson(JSON.parse(serialized));
+	} catch {
+		return String(value);
+	}
+}
+
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+function formatSortedJson(value: JsonValue, depth = 0): string {
+	if (value === null || typeof value !== "object") return JSON.stringify(value);
+
+	const isArray = Array.isArray(value);
+	// Emit keys directly: JSON.stringify on a rebuilt object would reorder integer-like keys numerically.
+	const entries = isArray
+		? value.map((entry) => formatSortedJson(entry, depth + 1))
+		: Object.keys(value)
+				.sort()
+				.map((key) => `${JSON.stringify(key)}: ${formatSortedJson(value[key], depth + 1)}`);
+	const opening = isArray ? "[" : "{";
+	const closing = isArray ? "]" : "}";
+	if (entries.length === 0) return opening + closing;
+
+	const indent = "  ".repeat(depth + 1);
+	return `${opening}\n${indent}${entries.join(`,\n${indent}`)}\n${"  ".repeat(depth)}${closing}`;
+}
+
+export function buildFoldedDiffRows(leftText: string, rightText: string): FoldedDiffRow[] {
+	const operations = buildEditOperations(leftText.split("\n"), rightText.split("\n"));
+	const rows: DiffRow[] = [];
+	let leftLineNumber = 1;
+	let rightLineNumber = 1;
+
+	for (let index = 0; index < operations.length; ) {
+		const operation = operations[index];
+		if (operation.kind === "equal") {
+			rows.push({
+				kind: "context",
+				left: { text: operation.text, lineNumber: leftLineNumber++ },
+				right: { text: operation.text, lineNumber: rightLineNumber++ },
+			});
+			index += 1;
+			continue;
+		}
+
+		const removed: string[] = [];
+		const added: string[] = [];
+		while (index < operations.length && operations[index].kind !== "equal") {
+			if (operations[index].kind === "remove") removed.push(operations[index].text);
+			if (operations[index].kind === "add") added.push(operations[index].text);
+			index += 1;
+		}
+
+		const changeCount = Math.max(removed.length, added.length);
+		for (let offset = 0; offset < changeCount; offset += 1) {
+			rows.push({
+				kind: "change",
+				left: removed[offset] === undefined ? undefined : { text: removed[offset], lineNumber: leftLineNumber++ },
+				right: added[offset] === undefined ? undefined : { text: added[offset], lineNumber: rightLineNumber++ },
+			});
+		}
+	}
+
+	return foldContextRows(rows);
+}
+
+function buildEditOperations(leftLines: string[], rightLines: string[]): EditOperation[] {
+	if (leftLines.length * rightLines.length > MAX_LCS_CELLS) {
+		return buildPatienceEditOperations(leftLines, rightLines);
+	}
+	return buildLcsEditOperations(leftLines, rightLines);
+}
+
+function buildLcsEditOperations(leftLines: string[], rightLines: string[]): EditOperation[] {
+	const columns = rightLines.length + 1;
+	const table = Array.from({ length: leftLines.length + 1 }, () => new Uint32Array(columns));
+	for (let leftIndex = 1; leftIndex <= leftLines.length; leftIndex += 1) {
+		for (let rightIndex = 1; rightIndex <= rightLines.length; rightIndex += 1) {
+			table[leftIndex][rightIndex] =
+				leftLines[leftIndex - 1] === rightLines[rightIndex - 1]
+					? table[leftIndex - 1][rightIndex - 1] + 1
+					: Math.max(table[leftIndex - 1][rightIndex], table[leftIndex][rightIndex - 1]);
+		}
+	}
+
+	const operations: EditOperation[] = [];
+	let leftIndex = leftLines.length;
+	let rightIndex = rightLines.length;
+	while (leftIndex > 0 || rightIndex > 0) {
+		if (leftIndex > 0 && rightIndex > 0 && leftLines[leftIndex - 1] === rightLines[rightIndex - 1]) {
+			operations.push({ kind: "equal", text: leftLines[leftIndex - 1] });
+			leftIndex -= 1;
+			rightIndex -= 1;
+		} else if (leftIndex > 0 && (rightIndex === 0 || table[leftIndex - 1][rightIndex] >= table[leftIndex][rightIndex - 1])) {
+			operations.push({ kind: "remove", text: leftLines[leftIndex - 1] });
+			leftIndex -= 1;
+		} else {
+			operations.push({ kind: "add", text: rightLines[rightIndex - 1] });
+			rightIndex -= 1;
+		}
+	}
+
+	return operations.reverse();
+}
+
+function buildPatienceEditOperations(leftLines: string[], rightLines: string[]): EditOperation[] {
+	const operations: EditOperation[] = [];
+	appendPatienceRange(operations, leftLines, 0, leftLines.length, rightLines, 0, rightLines.length);
+	return operations;
+}
+
+function appendPatienceRange(
+	operations: EditOperation[],
+	leftLines: string[],
+	initialLeftStart: number,
+	initialLeftEnd: number,
+	rightLines: string[],
+	initialRightStart: number,
+	initialRightEnd: number,
+): void {
+	let leftStart = initialLeftStart;
+	let rightStart = initialRightStart;
+	while (leftStart < initialLeftEnd && rightStart < initialRightEnd && leftLines[leftStart] === rightLines[rightStart]) {
+		operations.push({ kind: "equal", text: leftLines[leftStart] });
+		leftStart += 1;
+		rightStart += 1;
+	}
+
+	let leftEnd = initialLeftEnd;
+	let rightEnd = initialRightEnd;
+	while (leftEnd > leftStart && rightEnd > rightStart && leftLines[leftEnd - 1] === rightLines[rightEnd - 1]) {
+		leftEnd -= 1;
+		rightEnd -= 1;
+	}
+
+	if (leftStart === leftEnd) {
+		for (let index = rightStart; index < rightEnd; index += 1) {
+			operations.push({ kind: "add", text: rightLines[index] });
+		}
+	} else if (rightStart === rightEnd) {
+		for (let index = leftStart; index < leftEnd; index += 1) {
+			operations.push({ kind: "remove", text: leftLines[index] });
+		}
+	} else {
+		const anchors = findPatienceAnchors(leftLines, leftStart, leftEnd, rightLines, rightStart, rightEnd);
+		if (anchors.length === 0) {
+			const leftSegment = leftLines.slice(leftStart, leftEnd);
+			const rightSegment = rightLines.slice(rightStart, rightEnd);
+			if (leftSegment.length * rightSegment.length <= MAX_LCS_CELLS) {
+				operations.push(...buildLcsEditOperations(leftSegment, rightSegment));
+			} else {
+				for (const line of leftSegment) operations.push({ kind: "remove", text: line });
+				for (const line of rightSegment) operations.push({ kind: "add", text: line });
+			}
+		} else {
+			let previousLeft = leftStart;
+			let previousRight = rightStart;
+			for (const anchor of anchors) {
+				appendPatienceRange(operations, leftLines, previousLeft, anchor.leftIndex, rightLines, previousRight, anchor.rightIndex);
+				operations.push({ kind: "equal", text: leftLines[anchor.leftIndex] });
+				previousLeft = anchor.leftIndex + 1;
+				previousRight = anchor.rightIndex + 1;
+			}
+			appendPatienceRange(operations, leftLines, previousLeft, leftEnd, rightLines, previousRight, rightEnd);
+		}
+	}
+
+	const suffixLength = initialLeftEnd - leftEnd;
+	for (let offset = 0; offset < suffixLength; offset += 1) {
+		operations.push({ kind: "equal", text: leftLines[leftEnd + offset] });
+	}
+}
+
+function findPatienceAnchors(
+	leftLines: string[],
+	leftStart: number,
+	leftEnd: number,
+	rightLines: string[],
+	rightStart: number,
+	rightEnd: number,
+): PatienceAnchor[] {
+	const leftUnique = uniqueLinePositions(leftLines, leftStart, leftEnd);
+	const rightUnique = uniqueLinePositions(rightLines, rightStart, rightEnd);
+	const pairs: PatienceAnchor[] = [];
+	for (let leftIndex = leftStart; leftIndex < leftEnd; leftIndex += 1) {
+		const line = leftLines[leftIndex];
+		if (leftUnique.get(line) !== leftIndex) continue;
+		const rightIndex = rightUnique.get(line);
+		if (rightIndex !== undefined) pairs.push({ leftIndex: leftIndex, rightIndex: rightIndex });
+	}
+	if (pairs.length <= 1) return pairs;
+
+	const tails: number[] = [];
+	const previous = new Int32Array(pairs.length);
+	previous.fill(-1);
+	for (let index = 0; index < pairs.length; index += 1) {
+		let low = 0;
+		let high = tails.length;
+		while (low < high) {
+			const middle = (low + high) >> 1;
+			if (pairs[tails[middle]].rightIndex < pairs[index].rightIndex) low = middle + 1;
+			else high = middle;
+		}
+		if (low > 0) previous[index] = tails[low - 1];
+		tails[low] = index;
+	}
+
+	const anchors: PatienceAnchor[] = [];
+	let current = tails[tails.length - 1];
+	while (current !== undefined && current >= 0) {
+		anchors.push(pairs[current]);
+		current = previous[current];
+	}
+	return anchors.reverse();
+}
+
+function uniqueLinePositions(lines: string[], start: number, end: number): Map<string, number> {
+	const positions = new Map<string, number>();
+	const duplicates = new Set<string>();
+	for (let index = start; index < end; index += 1) {
+		const line = lines[index];
+		if (positions.has(line)) duplicates.add(line);
+		else positions.set(line, index);
+	}
+	for (const line of duplicates) positions.delete(line);
+	return positions;
+}
+
+function foldContextRows(rows: DiffRow[]): FoldedDiffRow[] {
+	if (!rows.some((row) => row.kind === "change")) return rows;
+
+	const foldedRows: FoldedDiffRow[] = [];
+	for (let index = 0; index < rows.length; ) {
+		if (rows[index].kind === "change") {
+			foldedRows.push(rows[index]);
+			index += 1;
+			continue;
+		}
+
+		const contextStart = index;
+		while (index < rows.length && rows[index].kind === "context") index += 1;
+		const contextRows = rows.slice(contextStart, index);
+		if (contextRows.length <= CONTEXT_LINES * 2 + 1) {
+			foldedRows.push(...contextRows);
+		} else {
+			foldedRows.push(...contextRows.slice(0, CONTEXT_LINES));
+			foldedRows.push({ kind: "fold", hidden: contextRows.slice(CONTEXT_LINES, -CONTEXT_LINES) });
+			foldedRows.push(...contextRows.slice(-CONTEXT_LINES));
+		}
+	}
+
+	return foldedRows;
+}

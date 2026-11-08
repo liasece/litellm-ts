@@ -1,0 +1,144 @@
+.usage-chart {
+	position: relative;
+	min-width: 0;
+	width: 100%;
+}
+.usage-chart > .echarts,
+.usage-chart-drawing > .echarts {
+	height: 100%;
+	width: 100%;
+}
+.usage-chart-empty {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	border: 1px dashed #e5e7eb;
+	border-radius: 8px;
+	pointer-events: none;
+}
+.usage-chart-tooltip {
+	position: fixed;
+	z-index: 100;
+	pointer-events: none;
+	max-width: 420px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #fff;
+	padding: 16px;
+	box-shadow:
+		0 10px 15px -3px #0000001a,
+		0 4px 6px -4px #0000001a;
+	font:
+		16px/24px ui-sans-serif,
+		system-ui,
+		sans-serif;
+	color: #4b5563;
+}
+.usage-chart-tooltip p {
+	margin: 0;
+}
+.usage-chart-tooltip b {
+	font-weight: 700;
+	color: #000;
+}
+.usage-chart-loader {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 160px;
+}
+.usage-chart-loader > div {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+}
+.usage-chart-loader span:not(.ui-spinner) {
+	font-size: 14px;
+	line-height: 20px;
+	color: #4b5563;
+	font-weight: 500;
+}
+.usage-chart-loader small {
+	display: block;
+	font-size: 12px;
+	line-height: 16px;
+	color: #9ca3af;
+	margin-top: 4px;
+}
+.usage-chart-legend {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 16px;
+}
+.usage-chart-legend > span {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: #6b7280;
+	font-size: 14px;
+	line-height: 20px;
+}
+.usage-chart-legend i {
+	border-radius: 9999px;
+	width: 8px;
+	height: 8px;
+	flex-shrink: 0;
+	box-shadow: 0 0 0 4px #fff;
+}
+
+.usage-success {
+	color: #16a34a !important;
+}
+
+.usage-failed {
+	color: #dc2626 !important;
+}
+
+.usage-cyan {
+	color: #06b6d4 !important;
+}
+
+.usage-chart-tooltip:not(.usage-chart-tooltip--custom) {
+	padding: 0;
+	max-width: none;
+}
+.usage-chart-tooltip--ranking {
+	font-size: 12px;
+	line-height: 16px;
+	padding: 12px;
+}
+.usage-chart-tooltip--dark {
+	font-size: 16px;
+	line-height: 24px;
+	padding: 12px;
+	background: #000000e6;
+	color: white;
+	border: 0;
+	max-width: 320px;
+}
+.usage-chart-cursor {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	max-width: none;
+}
+
+.usage-chart-tooltip--dark b {
+	color: inherit;
+}
+
+.usage-chart-drawing {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	max-width: none;
+	transform-origin: 0 0;
+}

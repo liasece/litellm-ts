@@ -1,0 +1,231 @@
+.vk-mcp-tools {
+	margin-top: 24px;
+}
+.vk-mcp-permissions {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	font-family: inherit;
+	font-size: 14px;
+	line-height: 20px;
+}
+.vk-mcp-server {
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	overflow: hidden;
+	background: white;
+}
+.vk-mcp-server > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 12px 16px;
+	border-bottom: 1px solid #e5e7eb;
+	background: #f9fafb;
+}
+.vk-mcp-server > header > strong {
+	font-size: 14px;
+	font-weight: 500;
+}
+.vk-mcp-server > header > div {
+	display: flex;
+	gap: 12px;
+	align-items: center;
+}
+.vk-mcp-server > header button {
+	color: #3b82f6;
+	font-size: 12px;
+}
+.vk-segmented {
+	display: flex;
+	padding: 2px;
+	background: #f3f4f6;
+	border-radius: 6px;
+}
+.vk-segmented > button {
+	padding: 4px 8px;
+	border-radius: 4px;
+	color: #6b7280 !important;
+}
+.vk-segmented > button.active {
+	background: white;
+	color: #111827 !important;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+}
+.vk-mcp-server-body {
+	padding: 16px;
+}
+.vk-mcp-loading,
+.vk-mcp-error,
+.vk-mcp-empty {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	align-items: center;
+	padding: 24px;
+	color: #6b7280;
+	text-align: center;
+}
+.vk-mcp-error {
+	color: #dc2626;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 6px;
+}
+.vk-mcp-error strong {
+	font-weight: 500;
+}
+.vk-crud-groups {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+.vk-crud-group {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	overflow: hidden;
+}
+.vk-crud-group > header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	background: #f9fafb;
+	padding: 10px 12px;
+	gap: 8px;
+}
+.vk-crud-collapse {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	text-align: left;
+}
+.vk-crud-collapse > svg {
+	width: 16px;
+	height: 16px;
+	flex: none;
+	color: #6b7280;
+}
+.vk-crud-collapse > strong {
+	font-size: 14px;
+	font-weight: 500;
+}
+.vk-crud-collapse > small {
+	color: #6b7280;
+	font-size: 12px;
+	white-space: nowrap;
+}
+.vk-risk-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 8px;
+	border: 1px solid #e5e7eb;
+	border-radius: 9999px;
+	color: #6b7280;
+	background: #f9fafb;
+	font-size: 10px;
+	font-weight: 500;
+	line-height: 14px;
+	white-space: nowrap;
+}
+.vk-risk-badge--low {
+	color: #15803d;
+	border-color: #bbf7d0;
+	background: #f0fdf4;
+}
+.vk-risk-badge--medium {
+	color: #b45309;
+	border-color: #fde68a;
+	background: #fffbeb;
+}
+.vk-risk-badge--high {
+	color: #b91c1c;
+	border-color: #fecaca;
+	background: #fef2f2;
+}
+.vk-crud-group-toggle {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	color: #6b7280;
+}
+.vk-crud-description {
+	padding: 8px 12px;
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 16px;
+	border-top: 1px solid #e5e7eb;
+}
+.vk-crud-tool {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 12px;
+	border-top: 1px solid #e5e7eb;
+	cursor: pointer;
+}
+.vk-crud-tool:hover {
+	background: #f9fafb;
+}
+.vk-crud-tool .ui-checkbox {
+	margin-top: 2px;
+}
+.vk-crud-tool > div {
+	flex: 1;
+	min-width: 0;
+}
+.vk-crud-tool strong {
+	font-weight: 500;
+	color: #111827;
+}
+.vk-crud-tool p {
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 16px;
+	margin-top: 4px;
+}
+.vk-crud-tool--off {
+	opacity: 0.5;
+}
+.vk-tool-enabled {
+	padding: 0 6px;
+	color: #9ca3af;
+	font-size: 10px;
+	font-family: var(--ui-font-mono);
+}
+.vk-tool-enabled--on {
+	color: #16a34a;
+}
+.vk-mcp-flat {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.vk-mcp-flat > label {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 8px;
+	border-radius: 4px;
+}
+.vk-mcp-flat > label:hover {
+	background: #f9fafb;
+}
+.vk-mcp-flat strong {
+	font-weight: 500;
+}
+.vk-mcp-flat label > span > span {
+	color: #6b7280;
+	font-size: 12px;
+}
+@media (max-width: 767px) {
+	.vk-mcp-server > header {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+	.vk-crud-collapse {
+		flex-wrap: wrap;
+	}
+}

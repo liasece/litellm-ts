@@ -1,0 +1,132 @@
+.ui-tabs {
+	min-width: 0;
+}
+.ui-tabs__list {
+	display: flex;
+	position: relative;
+	align-items: center;
+	gap: 32px;
+	min-width: 0;
+	overflow-x: auto;
+	overscroll-behavior-inline: contain;
+	border-bottom: 1px solid var(--ui-border-subtle);
+	margin-bottom: 16px;
+}
+.ui-tabs__tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	position: relative;
+	flex: none;
+	padding: 12px 0;
+	color: var(--ui-text-antd);
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+	border-bottom: 2px solid transparent;
+}
+.ui-tabs__tab:hover:not(:disabled) {
+	color: var(--ui-primary-hover);
+}
+.ui-tabs__tab--active {
+	color: var(--ui-primary);
+	border-bottom-color: var(--ui-primary);
+	text-shadow: 0 0 0.25px currentColor;
+}
+.ui-tabs__tab:disabled {
+	color: var(--ui-text-disabled);
+}
+.ui-tabs__extra {
+	margin-left: auto;
+	flex: none;
+}
+.ui-tabs__count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	padding: 0 6px;
+	border-radius: 10px;
+	background: #f0f0f0;
+	color: var(--ui-text-antd);
+	font-size: 12px;
+	line-height: 20px;
+}
+.ui-tabs--antd .ui-tabs__list {
+	border-bottom: 0;
+}
+.ui-tabs--antd .ui-tabs__list::before {
+	content: "";
+	position: absolute;
+	inset: auto 0 0;
+	height: 1px;
+	background: var(--ui-border-subtle);
+}
+.ui-tabs--antd .ui-tabs__tab {
+	border-bottom: 0;
+}
+.ui-tabs--antd .ui-tabs__tab--active::after {
+	content: "";
+	position: absolute;
+	inset: auto 0 0;
+	height: 2px;
+	background: var(--ui-primary);
+}
+.ui-tabs--tremor .ui-tabs__list {
+	position: static;
+	overflow-x: clip;
+	overflow-y: visible;
+	gap: 0;
+	border-color: var(--ui-tremor-border);
+	margin-bottom: 0;
+	/* Tremor's row height comes from the active tab's 2px indicator; every other tab is
+	   stretched to that height, which is what keeps their label baseline identical. */
+	align-items: stretch;
+}
+.ui-tabs--tremor .ui-tabs__tab {
+	outline: 2px solid transparent;
+	outline-offset: 2px;
+	display: flex;
+	flex: 0 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-family: var(--ui-font-sans);
+	padding: 8px;
+	max-width: 320px;
+	white-space: nowrap;
+	margin-bottom: -1px;
+	color: #6b7280;
+	font-family: inherit;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-weight: 400;
+	/* Only the active tab paints the 2px indicator (Tremor `data-[selected]:border-b-2`). */
+	border-bottom-width: 0;
+	/* The label is top-aligned inside the stretched box, like Tremor's block child. */
+	align-items: flex-start;
+}
+.ui-tabs--tremor .ui-tabs__tab--active {
+	color: var(--ui-tremor-brand);
+	border-bottom: 2px solid var(--ui-tremor-brand);
+	text-shadow: none;
+}
+
+.ui-tabs--tremor .ui-tabs__tab + .ui-tabs__tab {
+	margin-left: 16px;
+}
+.ui-tabs--tremor .ui-tabs__panel {
+	margin-top: 8px;
+}
+
+.ui-tabs--tremor .ui-tabs__tab:hover:not(:disabled) {
+	color: #374151;
+	border-bottom: 2px solid #6b7280;
+}
+.ui-tabs--tremor .ui-tabs__tab--active:hover:not(:disabled) {
+	color: var(--ui-tremor-brand);
+	border-bottom-color: var(--ui-tremor-brand);
+}
+
+.ui-tabs__group {
+	display: flex;
+}

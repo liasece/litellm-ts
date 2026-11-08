@@ -1,0 +1,714 @@
+.access-users-page {
+	width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	padding: 16px;
+	font: 14px/20px var(--ui-font-sans);
+	color: #111827;
+}
+.access-user-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 16px;
+}
+.access-users-page > .ui-tabs {
+	margin-bottom: 16px;
+}
+.access-user-list {
+	background: #fff;
+	border-radius: 8px;
+	box-shadow:
+		0 1px 3px rgba(0, 0, 0, 0.1),
+		0 1px 2px -1px rgba(0, 0, 0, 0.1);
+}
+.access-user-list-controls {
+	padding: 16px 24px;
+	border-bottom: 1px solid #e5e7eb;
+}
+.access-user-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: center;
+}
+.access-user-search {
+	width: 256px;
+	flex: none;
+}
+.access-user-additional-filters {
+	margin-top: 16px;
+}
+.access-user-additional-filters > .ui-input-wrapper,
+.access-user-additional-filters > .ui-select {
+	width: 256px;
+}
+.access-user-pagination {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 16px;
+	color: #374151;
+}
+.access-user-pagination > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.access-user-pagination .ui-button {
+	height: 32px;
+}
+.access-users-table-wrap {
+	border: 1px solid #e0e0fa;
+	border-radius: 8px;
+	box-shadow: 0 1px 2px #d9d9e2;
+	overflow-x: auto;
+}
+.access-users-table {
+	width: 100%;
+	white-space: nowrap;
+	text-align: left;
+	border-collapse: collapse;
+	font-size: 12px;
+	line-height: 20px;
+}
+.access-users-table th {
+	height: 32px;
+	padding: 4px 16px;
+	color: #111827;
+	font-size: 14px;
+	font-weight: 600;
+}
+.access-users-table th > span {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.access-users-table td {
+	height: 32px;
+	padding: 2px 16px;
+	max-height: 32px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	border-bottom: 1px solid #e5e7eb;
+}
+.access-users-table tbody tr:last-child td {
+	border-bottom: 0;
+}
+.access-users-table .access-users-empty {
+	text-align: center;
+	color: #6b7280;
+	font-size: 14px;
+}
+.access-user-sort {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 8px;
+	min-width: 100%;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+}
+.access-sort-active {
+	color: #3b82f6;
+}
+.access-sort-inactive {
+	color: #9ca3af;
+}
+.access-users-actions {
+	position: sticky;
+	right: 0;
+	background: white;
+	box-shadow: -4px 0 8px -6px rgba(0, 0, 0, 0.1);
+}
+.access-user-id-cell {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.access-user-copy {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 12px;
+	height: 12px;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: #6b7280;
+	cursor: pointer;
+}
+.access-user-copy:hover {
+	color: #3b82f6;
+}
+.access-user-id {
+	font: inherit;
+	font-size: 12px;
+	background: transparent;
+	color: #3b82f6;
+	padding: 0;
+	border: 0;
+	cursor: pointer;
+}
+.access-users-row-action {
+	border: 0;
+	background: transparent;
+	color: #6b7280;
+	padding: 4px;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+.access-users-row-action:hover {
+	color: #2563eb;
+}
+.access-users-table td {
+	font-size: 12px;
+	line-height: 16px;
+	/* Tremor table cells carry the muted content colour in the reference. */
+	color: #6b7280;
+}
+.access-users-table .access-icon-action {
+	padding: 0;
+	color: #6b7280;
+}
+.access-users-table .access-icon-action svg {
+	width: 12px;
+	height: 12px;
+}
+.access-budget-label {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+.access-invite-intro {
+	margin-bottom: 16px;
+}
+.access-invite-intro > p {
+	margin: 0 0 16px;
+}
+.access-invite-intro p {
+	font-size: 14px;
+	line-height: 22px;
+}
+.access-invitation-line {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 20px 0 8px;
+}
+.access-invitation-line span:last-child {
+	overflow-wrap: anywhere;
+}
+.access-bulk-all {
+	margin-bottom: 16px;
+}
+.access-warning {
+	color: #faad14;
+	font-size: 12px;
+	line-height: 20px;
+}
+.access-bulk-team-management {
+	background: #fafafa;
+	margin: 16px 0;
+}
+.access-card-inline-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 16px;
+}
+.access-user-detail .access-card-inline-header {
+	margin-bottom: 16px;
+}
+.access-overview-grid .ui-card__body > h3 {
+	margin: 8px 0 0;
+	font-weight: 500;
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-family: inherit;
+	color: #111827;
+}
+.access-overview-grid .access-card-inline-header > p {
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-family: inherit;
+	color: #6b7280;
+	margin: 0;
+}
+.access-user-detail .access-budget-table {
+	width: 100%;
+	border-collapse: collapse;
+	text-align: left;
+	white-space: normal;
+}
+.access-user-detail .access-budget-table th {
+	height: 46.4px;
+	padding: 14px 16px;
+	font-weight: 600;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-family: inherit;
+	color: #111827;
+	border-bottom: 1px solid #e5e7eb;
+}
+.access-user-detail .access-budget-table td {
+	height: 53.4px;
+	padding: 16px;
+	font-size: 12.4px;
+	line-height: 18.4px;
+	font-family: inherit;
+	color: #6b7280;
+	border-bottom: 1px solid #e5e7eb;
+}
+.access-user-detail .access-budget-table tr:last-child td {
+	border-bottom: 0;
+}
+.access-user-detail .access-budget-table th:last-child,
+.access-user-detail .access-budget-table td:last-child {
+	text-align: right;
+}
+.access-user-team-remove {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: #ef4444;
+	cursor: pointer;
+}
+.access-user-team-remove:hover {
+	color: #dc2626;
+}
+.access-card-inline-header h3 {
+	margin: 0;
+}
+.access-user-detail {
+	padding: 16px;
+}
+/* The reference renders these detail screens inside an Ant Design drawer, so their content inherits the antd stack. */
+.access-user-detail,
+.access-team-detail,
+.access-organization-detail {
+	font-family: var(--ui-font-antd);
+}
+.access-user-detail > .ui-tabs {
+	margin-bottom: 16px;
+}
+.access-model-label {
+	padding: 4px 8px;
+	background: #dbeafe;
+	border-radius: 4px;
+	font-size: 12px;
+}
+.access-csv-dialog .ui-dialog__body {
+	max-height: 70vh;
+	overflow: auto;
+}
+.access-csv-step {
+	display: flex;
+	align-items: center;
+	margin-bottom: 16px;
+	gap: 12px;
+}
+.access-csv-step > span {
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
+	background: #3b82f6;
+	color: white;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+}
+.access-csv-step h3 {
+	font-size: 18px;
+	font-weight: 500;
+	line-height: 28px;
+	margin: 0;
+}
+.access-csv-content {
+	margin: 0 0 24px 44px;
+}
+.access-csv-content > p {
+	margin: 0 0 16px;
+}
+.access-csv-content ol {
+	list-style: decimal inside;
+	margin: 0 0 16px 8px;
+}
+.access-csv-content ol li {
+	margin-bottom: 8px;
+}
+.access-csv-columns {
+	padding: 16px;
+	background: #f9fafb;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	margin-bottom: 16px;
+}
+.access-csv-columns h4 {
+	margin: 0 0 8px;
+	font-size: 14px;
+	font-weight: 500;
+}
+.access-csv-columns > div {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+}
+.access-csv-columns p {
+	margin: 0;
+}
+.access-csv-column-item {
+	display: flex;
+	align-items: flex-start;
+}
+.access-csv-column-item > div {
+	flex: 1;
+	min-width: 0;
+}
+.access-csv-dot {
+	flex: none;
+	width: 12px;
+	height: 12px;
+	margin: 6px 8px 0 0;
+	border-radius: 50%;
+	background: #d1d5db;
+}
+.access-csv-dot--required {
+	background: #ef4444;
+}
+.access-csv-columns p > strong {
+	font-weight: 500;
+}
+.access-csv-columns small {
+	display: block;
+	color: #4b5563;
+	font-size: 14px;
+	line-height: 20px;
+}
+.access-csv-drop {
+	width: 100%;
+	padding: 32px;
+	border: 2px dashed #d1d5db;
+	border-radius: 8px;
+	text-align: center;
+	background: transparent;
+	font: inherit;
+	color: #6b7280;
+	cursor: pointer;
+}
+.access-csv-drop > svg {
+	margin: 0 auto 8px;
+}
+.access-csv-drop p {
+	margin: 0 0 12px;
+}
+.access-csv-drop > span {
+	display: inline-block;
+	border: 1px solid #d9d9d9;
+	border-radius: 6px;
+	padding: 0 7px;
+	color: rgba(0, 0, 0, 0.88);
+	line-height: 22px;
+	font-family: var(--ui-font-antd);
+}
+.access-csv-drop small {
+	display: block;
+	margin-top: 16px;
+	font-size: 12px;
+}
+.access-csv-selected {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	padding: 16px;
+	background: #eff6ff;
+	border: 1px solid #bfdbfe;
+	border-radius: 6px;
+	margin-bottom: 16px;
+	color: #1e40af;
+}
+.access-csv-selected--error {
+	background: #fef2f2;
+	color: #991b1b;
+	border-color: #fecaca;
+}
+.access-csv-selected small {
+	display: block;
+	font-size: 12px;
+}
+.access-csv-selected p {
+	width: 100%;
+	color: #dc2626;
+}
+.access-csv-review-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+.access-csv-review-header > div {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.access-csv-review-header strong {
+	font-size: 14px;
+	font-weight: 400;
+	padding: 4px 8px;
+	border-radius: 4px;
+	background: #dbeafe;
+	color: #1e40af;
+}
+.access-csv-link {
+	display: inline-block;
+	max-width: 150px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+}
+.access-danger {
+	color: #ef4444;
+}
+.access-success-text {
+	color: #22c55e;
+}
+@media (min-width: 640px) {
+	.access-users-page {
+		padding: 32px;
+	}
+}
+@media (max-width: 639px) {
+	.access-csv-columns > div {
+		grid-template-columns: 1fr;
+	}
+}
+
+.access-user-detail-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 24px;
+}
+.access-user-back.ui-button {
+	margin-bottom: 16px;
+}
+.access-user-detail-header h2,
+.access-user-detail .access-card-inline-header h3 {
+	font-size: 16.4px;
+	line-height: 26.4px;
+	font-weight: 500;
+	color: #111827;
+	margin: 0;
+}
+
+.access-user-detail-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.access-user-detail-actions .access-user-delete {
+	border-color: #ef4444;
+	color: #ef4444;
+}
+.access-user-detail-actions .access-user-delete:hover {
+	border-color: #dc2626;
+	color: #dc2626;
+}
+.access-user-detail > .ui-card {
+	padding: 24px;
+}
+.access-user-edit-form .ui-form-field__label {
+	font-weight: 400;
+}
+.access-user-edit-form .access-user-model-info {
+	margin-left: 4px;
+}
+.access-role-option {
+	display: flex;
+}
+.access-role-option small {
+	margin-left: 8px;
+	color: gray;
+	font-size: 12px;
+}
+.access-user-edit-form > .access-budget-label {
+	font: 14px/22px var(--ui-font-antd);
+}
+.access-user-edit-form > .access-form-footer {
+	margin-top: 0;
+}
+
+.access-bulk-user-edit-dialog .access-bulk-selected-users {
+	margin-bottom: 16px;
+}
+.access-bulk-selected-users h5 {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+	margin: 0 0 8px;
+}
+.access-bulk-selected-users .ui-table-wrapper {
+	border: 1px solid #f0f0f0;
+	border-radius: 8px 8px 0 0;
+}
+.access-bulk-selected-users .ui-table th,
+.access-bulk-selected-users .ui-table td {
+	border-inline-end: 1px solid #f0f0f0;
+}
+.access-bulk-selected-users .ui-table th:last-child,
+.access-bulk-selected-users .ui-table td:last-child {
+	border-inline-end: 0;
+}
+.access-bulk-selected-users .ui-table td {
+	font-size: 12px;
+}
+.access-bulk-selected-users .ui-table td:nth-child(2) {
+	color: rgba(0, 0, 0, 0.45);
+}
+.access-bulk-selected-users .ui-table th::before {
+	display: none;
+}
+.access-bulk-user-edit-dialog hr {
+	display: block;
+	border: 0;
+	border-top: 1px solid rgba(5, 5, 5, 0.06);
+	margin: 24px 0;
+}
+.access-bulk-instructions {
+	margin-bottom: 16px;
+}
+.access-bulk-user-edit-dialog .access-bulk-team-management {
+	margin: 0 0 16px;
+}
+.access-bulk-team-management .ui-card__title {
+	font-size: 14px;
+	line-height: 22px;
+}
+
+.access-bulk-all .ui-checkbox,
+.access-bulk-team-management .ui-checkbox {
+	vertical-align: middle;
+}
+.access-bulk-selected-users .ui-table-wrapper {
+	border-inline-end: 0;
+	border-bottom: 0;
+}
+.access-bulk-selected-users .ui-table th:last-child,
+.access-bulk-selected-users .ui-table td:last-child {
+	border-inline-end: 1px solid #f0f0f0;
+}
+
+.access-bulk-all {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+}
+.access-bulk-team-management > .ui-card__body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	align-items: flex-start;
+}
+
+.access-bulk-team-management .ui-card__header {
+	margin-bottom: -1px;
+}
+
+.access-users-table th {
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+.access-users-table .access-tags {
+	flex-wrap: nowrap;
+}
+.access-users-row-action {
+	padding: 6px;
+	color: #6366f1;
+	flex-shrink: 0;
+}
+.access-users-row-action:nth-child(2):hover {
+	color: #dc2626;
+}
+.access-users-row-action:nth-child(3):hover {
+	color: #16a34a;
+}
+
+.access-users-actions .access-tags {
+	gap: 8px;
+}
+.access-invite-intro a {
+	color: #1677ff;
+}
+.access-invite-personal {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+}
+.access-invite-personal > summary {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 19px 12px 16px;
+	list-style: none;
+}
+.access-invite-personal > summary::-webkit-details-marker {
+	display: none;
+}
+.access-invite-personal > summary > :is(.ui-icon, .ui-lucide-icon) {
+	color: #9ca3af;
+}
+.access-invite-personal[open] > summary > :is(.ui-icon, .ui-lucide-icon) {
+	transform: rotate(180deg);
+}
+.access-invite-personal > div {
+	padding: 16px;
+}
+.access-invitation-dialog .ui-dialog__body > p {
+	margin-bottom: 14px;
+}
+.access-invitation-dialog .access-invitation-line {
+	font: 12.4px/18.4px var(--ui-font-antd);
+	color: #6b7280;
+}
+.access-invitation-dialog .access-invitation-line:first-of-type > span:first-child {
+	font-size: 16px;
+	line-height: 24px;
+}
+.access-invitation-dialog .access-form-footer {
+	margin-top: 20px;
+}
+
+.access-user-pagination > div > button {
+	padding: 4px 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 4px;
+	background: #fff;
+	color: #000;
+	font: inherit;
+}
+.access-user-pagination > div > button:disabled {
+	opacity: 0.5;
+}
+.access-user-filters > .ui-button {
+	padding-top: 0;
+	padding-bottom: 0;
+	line-height: 21px;
+	height: 32px;
+}

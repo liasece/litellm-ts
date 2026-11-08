@@ -1,0 +1,23 @@
+.application-yaml-diff-description {
+	margin-bottom: 12px;
+}
+.application-yaml-diff-table .ui-table-scroll {
+	overflow-y: auto;
+}
+.application-yaml-diff-table .ui-table {
+	table-layout: fixed;
+	width: 100%;
+}
+.application-yaml-diff-table .ui-table :is(th, td) {
+	padding: 8px;
+	word-break: break-word;
+	white-space: normal;
+}
+.application-yaml-diff-table code {
+	word-break: break-all;
+}
+
+.application-yaml-diff-table .ui-empty-state {
+	padding: 0;
+	margin: 32px 8px;
+}

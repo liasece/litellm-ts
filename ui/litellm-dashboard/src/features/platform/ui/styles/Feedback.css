@@ -1,0 +1,109 @@
+.ui-alert {
+	display: flex;
+	align-items: center;
+	gap: 0;
+	padding: 8px 12px;
+	border: 1px solid #91caff;
+	border-radius: 8px;
+	background: #e6f4ff;
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+	color: var(--ui-text-antd);
+}
+.ui-alert__symbol {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	flex: none;
+	margin-top: 0;
+	margin-inline-end: 8px;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--ui-primary);
+	font-size: 14px;
+	font-weight: 400;
+	line-height: 0;
+}
+.ui-alert__content {
+	flex: 1;
+	min-width: 0;
+}
+.ui-alert__title {
+	margin-bottom: 0;
+}
+.ui-alert__close {
+	margin-inline-start: 8px;
+	flex: none;
+	font-size: 18px;
+	line-height: 22px;
+	color: var(--ui-text-secondary);
+}
+.ui-alert--success {
+	border-color: #b7eb8f;
+	background: #f6ffed;
+}
+.ui-alert--success .ui-alert__symbol {
+	background: transparent;
+	color: #52c41a;
+}
+.ui-alert--warning {
+	border-color: #ffe58f;
+	background: #fffbe6;
+}
+.ui-alert--warning .ui-alert__symbol {
+	background: transparent;
+	color: #faad14;
+}
+.ui-alert--error {
+	border-color: #ffa39e;
+	background: #fff2f0;
+}
+.ui-alert--error .ui-alert__symbol {
+	background: transparent;
+	color: var(--ui-danger);
+}
+
+.ui-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 32px 0;
+	color: var(--ui-text-secondary);
+	font-family: var(--ui-font-antd);
+	font-size: 14px;
+	line-height: 22px;
+}
+.ui-empty-state--compact {
+	padding: 16px 0;
+}
+.ui-empty-state__image {
+	height: 40px;
+	margin-bottom: 0;
+}
+
+.ui-alert--description {
+	padding: 20px 24px;
+	align-items: flex-start;
+}
+.ui-alert--description .ui-alert__symbol {
+	margin-inline-end: 12px;
+	width: 24px;
+	height: 24px;
+	font-size: 24px;
+}
+.ui-alert--description .ui-alert__title {
+	font-size: 16px;
+	line-height: 1.5714285714;
+	margin-bottom: 8px;
+}
+
+.ui-alert__action {
+	/* The old AntD hash selector did not match its action child: computed margin was zero. */
+	margin: 0;
+	flex: none;
+}

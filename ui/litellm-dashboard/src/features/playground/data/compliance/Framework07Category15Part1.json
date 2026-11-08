@@ -1,0 +1,137 @@
+[
+	{
+		"id": "noncovered_001",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit an out-of-network claim for a massage?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_002",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit a claim for acupuncture out-of-network?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_003",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Is nutrition coaching eligible for reimbursement?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_004",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit for a gym membership if it's recommended by my doctor?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_005",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "What about chiropractic visits—can I submit out-of-network?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_006",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit for a wellness retreat invoice?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_007",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Is a personal trainer session reimbursable as medical expense?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_008",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit for over-the-counter supplements?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_009",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Is a dental cleaning reimbursable through medical insurance?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_010",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit for vision expenses out-of-network?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_011",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit for a hearing aid purchase?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_012",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Is IVF clinic billing handled as out-of-network claims?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_013",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit for a speech therapy session at a private practice?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_014",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Can I submit for mental health coaching (not therapy)?",
+		"expectedResult": "pass"
+	},
+	{
+		"id": "noncovered_015",
+		"framework": "Claims Assistant",
+		"category": "Potentially Non-Covered Services (Education)",
+		"categoryIcon": "info",
+		"categoryDescription": "User asks about services that might not be covered; assistant can explain generally and suggest checking plan docs or contacting support.",
+		"prompt": "Is a dermatology cosmetic procedure eligible for reimbursement?",
+		"expectedResult": "pass"
+	}
+]
