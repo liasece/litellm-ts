@@ -31,6 +31,8 @@ import { liteLLM_DailyTeamSpend } from "../db/schema/dailyTeamSpend";
 import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSpend";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
+import { LiteLLM_UserTable } from "../db/schema/users";
+import { LiteLLM_TeamTable } from "../db/schema/teams";
 import { ConfigRepository } from "../repositories/ConfigRepository";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { buildModelGroupOverrides } from "../router/ModelOverrides";
@@ -1586,10 +1588,37 @@ export function registerWebUiSupportRoutes(
 		};
 	});
 	registerRoute(router, { method: "get", path: "/callbacks/configs" }, emptyList);
-	registerRoute(router, { method: "get", path: "/user/available_users" }, () => ({ users: [] }));
+	/**
+	 * WebUI 侧栏用量指示器：已用用户数/团队数。
+	 * 对齐 Python get_available_users / 前端 UsageIndicator 读取的字段；
+	 * 本部署无企业许可，上限字段为 null（前端按“无上限”展示）。
+	 */
+	registerRoute(router, { method: "get", path: "/user/available_users" }, async () => {
+		const [userRows, teamRows] = await Promise.all([
+			db.select({ value: count() }).from(LiteLLM_UserTable),
+			db.select({ value: count() }).from(LiteLLM_TeamTable),
+		]);
+		return {
+			total_users: null,
+			total_users_used: Number(userRows[0]?.value ?? 0),
+			total_users_remaining: null,
+			total_teams: null,
+			total_teams_used: Number(teamRows[0]?.value ?? 0),
+			total_teams_remaining: null,
+		};
+	});
 	registerRoute(router, { method: "get", path: "/user/available_roles" }, () => WEB_UI_AVAILABLE_ROLES);
-	// 定制：放开企业付费功能门禁，自托管全部功能对免费用户可用
-	registerRoute(router, { method: "get", path: "/health/license" }, () => ({ premium_user: true, expires: null }));
+	/**
+	 * 许可信息（前端 UsageIndicator 读取 has_license/expiration_date/limits）。
+	 * 定制：放开企业付费功能门禁，自托管全部功能对免费用户可用，因此没有许可文件。
+	 */
+	registerRoute(router, { method: "get", path: "/health/license" }, () => ({
+		has_license: false,
+		license_type: null,
+		expiration_date: null,
+		allowed_features: [],
+		limits: { max_users: null, max_teams: null },
+	}));
 	// /team/list、/v2/team/list 由 createTeamRoutes（managementRouter）提供真实 DB 查询。
 	// /organization/list 由 createOrganizationRoutes（managementRouter）提供真实 DB 查询。
 	registerRoute(router, { method: "get", path: "/project/list" }, emptyList);
