@@ -138,7 +138,9 @@ onBeforeUnmount(store.dispose);
 					:rows="rows"
 					row-key="access_group_id"
 					:loading="state.loading"
+					row-clickable
 					manual-sort
+					@row-click="open(group($event))"
 					@sort="store.sort($event.key, $event.order)"
 					><template #cell-access_group_id="{ row }"
 						><button type="button" class="access-id" :title="group(row).access_group_id" @click="open(group(row))">

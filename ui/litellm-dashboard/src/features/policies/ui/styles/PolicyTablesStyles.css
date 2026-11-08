@@ -1,3 +1,9 @@
+.policy-row {
+	cursor: pointer;
+}
+.policy-row:hover td {
+	background: #fafafa;
+}
 .policy-data-table {
 	border: 1px solid #e5e7eb;
 	border-radius: 8px;

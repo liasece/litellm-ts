@@ -14,6 +14,7 @@ import { promptsApi } from "../api/PromptsApi";
 import { extractPromptModel, promptProvider } from "../logic/PromptDisplayLogic";
 import type { PromptSpec, PromptInfoResponse, PromptModelGroup } from "../support/PromptModels";
 import PromptDetailsComponent from "./PromptDetailsComponent.vue";
+import { isTableRowInteractiveTarget } from "../../platform/logic/TableRowClick";
 import PromptEditorDialogComponent from "./PromptEditorDialogComponent.vue";
 import PromptUploadDialogComponent from "./PromptUploadDialogComponent.vue";
 import PromptDeleteDialogComponent from "./PromptDeleteDialogComponent.vue";
@@ -100,6 +101,12 @@ watch(
 	},
 	{ immediate: true },
 );
+/** 行级点击打开提示词详情；行内复制/删除按钮自行处理。 */
+function openRow(event: MouseEvent, row: Record<string, unknown>): void {
+	if (isTableRowInteractiveTarget(event)) return;
+	const id = row["prompt_id"];
+	if (typeof id === "string") selected.value = id;
+}
 function create() {
 	selected.value = "";
 	initial.value = null;
@@ -183,7 +190,7 @@ onBeforeUnmount(() => {
 						<tr v-if="loading || !ordered.length">
 							<td :colspan="columns.length" class="prompts-table-state">{{ loading ? "Loading..." : "No prompts found" }}</td>
 						</tr>
-						<tr v-for="row in loading ? [] : ordered" :key="row.prompt_id">
+						<tr v-for="row in loading ? [] : ordered" :key="row.prompt_id" class="prompt-row" @click="openRow($event, row)">
 							<td>
 								<div class="prompt-table-id">
 									<UiTooltip :title="row.prompt_id"

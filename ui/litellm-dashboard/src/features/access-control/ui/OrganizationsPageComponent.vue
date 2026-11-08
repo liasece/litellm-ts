@@ -140,7 +140,13 @@ onBeforeUnmount(store.dispose);
 					</div>
 					<UiInput v-if="expanded" v-model="orgId" placeholder="Search by Organization ID" @update:model-value="store.refresh" />
 				</div>
-				<UiTable :rows="sorted" :columns="columns" row-key="organization_id" appearance="tremor"
+				<UiTable
+					:rows="sorted"
+					:columns="columns"
+					row-key="organization_id"
+					appearance="tremor"
+					row-clickable
+					@row-click="open(organization($event))"
 					><template #cell-organization_id="{ row }"
 						><button
 							class="access-id"

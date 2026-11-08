@@ -6,6 +6,7 @@ import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import { getGuardrailLogoAndName } from "../logic/GuardrailProviderLogic";
 import { legacyGuardrailText } from "../support/GuardrailClipboardSupport";
 import type { GuardrailRecord } from "../support/GuardrailModels";
+import { isTableRowInteractiveTarget } from "../../platform/logic/TableRowClick";
 const props = defineProps<{ rows: GuardrailRecord[]; loading: boolean }>(),
 	emit = defineEmits<{ select: [id: string]; delete: [row: GuardrailRecord] }>(),
 	sort = reactive({ key: "created_at", order: "desc" as "asc" | "desc" | null }),
@@ -47,6 +48,12 @@ function toggle(key: string) {
 	else sort.order = desc ? "desc" : "asc";
 }
 const date = (value?: string) => (value ? new Date(value).toLocaleString() : "-");
+
+/** 行级点击打开详情；行内删除按钮自行处理。 */
+function openRow(event: MouseEvent, row: GuardrailRecord): void {
+	if (isTableRowInteractiveTarget(event) || !row.guardrail_id) return;
+	emit("select", row.guardrail_id);
+}
 function hide(event: Event) {
 	(event.target as HTMLImageElement).style.display = "none";
 }
@@ -81,7 +88,7 @@ function hide(event: Event) {
 					<tr v-if="loading || !rows.length">
 						<td :colspan="8" class="guardrail-table-empty">{{ loading ? "Loading..." : "No guardrails found" }}</td>
 					</tr>
-					<tr v-for="row in loading ? [] : rows" :key="row.guardrail_id">
+					<tr v-for="row in loading ? [] : rows" :key="row.guardrail_id" class="guardrail-row" @click="openRow($event, row)">
 						<td>
 							<UiButton
 								appearance="tremor"

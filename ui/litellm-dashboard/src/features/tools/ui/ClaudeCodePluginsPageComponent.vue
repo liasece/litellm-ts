@@ -107,6 +107,7 @@ onBeforeUnmount(store.dispose);
 			:sort-order="state.sortOrder"
 			empty-text="No plugins found. Add one to get started."
 			@sort="sort"
+			@row-click="selected = plugin($event).id"
 			><template #cell-name="{ row }"
 				><div class="tools-tags">
 					<UiTooltip :title="plugin(row).name"

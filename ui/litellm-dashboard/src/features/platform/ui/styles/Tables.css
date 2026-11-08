@@ -52,6 +52,9 @@
 .ui-table__row:hover td {
 	background: #fafafa;
 }
+.ui-table__row--clickable {
+	cursor: pointer;
+}
 .ui-table__row--selected td {
 	background: #e6f4ff;
 }

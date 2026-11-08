@@ -43,6 +43,12 @@
 .guardrail-add-menu > button:hover {
 	background: #0000000a;
 }
+.guardrail-row {
+	cursor: pointer;
+}
+.guardrail-row:hover td {
+	background: #fafafa;
+}
 .guardrail-table-region {
 	border: 1px solid #dcddeb;
 	border-radius: 8px;

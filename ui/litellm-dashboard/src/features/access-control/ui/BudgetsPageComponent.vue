@@ -5,6 +5,7 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
 import CodeHighlightComponent from "../../content/ui/CodeHighlightComponent.vue";
 import AccessActionComponent from "./AccessActionComponent.vue";
+import { isTableRowInteractiveTarget } from "../../platform/logic/TableRowClick";
 import AccessNoticeComponent from "./AccessNoticeComponent.vue";
 import AccessDeleteDialogComponent from "./AccessDeleteDialogComponent.vue";
 import BudgetFormDialogComponent from "./BudgetFormDialogComponent.vue";
@@ -29,6 +30,11 @@ const sorted = computed(() =>
 function create() {
 	editing.value = null;
 	formOpen.value = true;
+}
+/** 行级点击打开预算编辑；行内编辑/删除按钮自行处理。 */
+function openRow(event: MouseEvent, budget: AccessBudget): void {
+	if (isTableRowInteractiveTarget(event)) return;
+	edit(budget);
 }
 function edit(value: AccessBudget) {
 	editing.value = value;
@@ -85,7 +91,7 @@ onBeforeUnmount(store.dispose);
 							</tr>
 						</thead>
 						<tbody>
-							<tr v-for="budget in sorted" :key="budget.budget_id">
+							<tr v-for="budget in sorted" :key="budget.budget_id" class="access-budget-row" @click="openRow($event, budget)">
 								<td>{{ budget.budget_id }}</td>
 								<td>{{ budget.max_budget != null ? money(budget.max_budget) : "n/a" }}</td>
 								<td>{{ budget.tpm_limit || "n/a" }}</td>

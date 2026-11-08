@@ -137,6 +137,7 @@ onBeforeUnmount(store.dispose);
 					:sort-order="state.sortOrder"
 					empty-text="No vector stores found"
 					@sort="sort"
+					@row-click="open(item($event).vector_store_id)"
 					><template #cell-vector_store_id="{ row }"
 						><button class="tools-resource-id tools-vector-id" @click="open(item(row).vector_store_id)">
 							{{

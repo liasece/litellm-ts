@@ -170,6 +170,10 @@
 .vk-table-row {
 	height: 32px;
 	border-top: 1px solid #e5e7eb;
+	cursor: pointer;
+}
+.vk-table-row:hover td {
+	background: #fafafa;
 }
 .vk-table td {
 	max-height: 32px;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AccessHeroIconComponent from "../../access-control/ui/AccessHeroIconComponent.vue";
+import { isTableRowInteractiveTarget } from "../../platform/logic/TableRowClick";
 import type { UiTableColumn } from "../../platform/ui/UiTypes";
 withDefaults(
 	defineProps<{
@@ -15,6 +16,10 @@ withDefaults(
 	{ rowKey: "id", sortBy: "", sortOrder: "desc", emptyText: "No data", stickyActions: true },
 );
 const emit = defineEmits<{ sort: [key: string]; rowClick: [row: Record<string, unknown>] }>();
+function clickRow(event: MouseEvent, row: Record<string, unknown>): void {
+	if (isTableRowInteractiveTarget(event)) return;
+	emit("rowClick", row);
+}
 </script>
 <template>
 	<div class="tools-table-wrap">
@@ -45,7 +50,7 @@ const emit = defineEmits<{ sort: [key: string]; rowClick: [row: Record<string, u
 					<tr v-if="loading">
 						<td :colspan="columns.length" class="tools-table-empty">Loading...</td>
 					</tr>
-					<tr v-for="(row, index) in loading ? [] : rows" :key="String(row[rowKey] ?? index)" @click="emit('rowClick', row)">
+					<tr v-for="(row, index) in loading ? [] : rows" :key="String(row[rowKey] ?? index)" @click="clickRow($event, row)">
 						<td
 							v-for="column in columns"
 							:key="column.key"

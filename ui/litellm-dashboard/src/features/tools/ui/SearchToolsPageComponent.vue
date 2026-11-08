@@ -116,6 +116,8 @@ onBeforeUnmount(store.dispose);
 			row-key="search_tool_id"
 			compact
 			:loading="state.loading"
+			row-clickable
+			@row-click="selected = tool($event)"
 			><template #cell-search_tool_id="{ row }"
 				><span v-if="tool(row).is_from_config">-</span
 				><button v-else class="tools-resource-id" @click="selected = tool(row)">{{ tool(row).search_tool_id }}</button></template

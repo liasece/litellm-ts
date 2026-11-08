@@ -24,6 +24,12 @@
 .prompts-table-wrap > div {
 	overflow-x: auto;
 }
+.prompt-row {
+	cursor: pointer;
+}
+.prompt-row:hover td {
+	background: #fafafa;
+}
 .prompts-table {
 	width: 100%;
 	border-collapse: collapse;

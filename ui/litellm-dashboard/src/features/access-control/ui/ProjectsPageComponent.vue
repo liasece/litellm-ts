@@ -123,7 +123,9 @@ onBeforeUnmount(store.dispose);
 				:rows="rows"
 				row-key="project_id"
 				:loading="state.loading"
+				row-clickable
 				manual-sort
+				@row-click="open(project($event))"
 				@sort="store.sort($event.key, $event.order)"
 				><template #cell-project_id="{ row }"
 					><button type="button" class="access-id" :title="project(row).project_id" @click="open(project(row))">

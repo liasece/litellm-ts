@@ -9,6 +9,7 @@ import PolicyBadgeComponent from "../common/PolicyBadgeComponent.vue";
 import PolicyHeroIconComponent from "../common/PolicyHeroIconComponent.vue";
 import UiTooltip from "../../../platform/ui/UiTooltip.vue";
 import UiButton from "../../../platform/ui/UiButton.vue";
+import { isTableRowInteractiveTarget } from "../../../platform/logic/TableRowClick";
 const props = defineProps<{ policies: Policy[]; loading: boolean; isAdmin: boolean }>(),
 	emit = defineEmits<{ view: [id: string]; edit: [policy: Policy]; delete: [policy: Policy] }>();
 const columns = [
@@ -29,6 +30,12 @@ const sort = createPolicyTableSort<ReturnType<typeof groupPolicies>[number]>({ k
 	rows = computed(() => sort.rows(groupPolicies(props.policies)));
 const condition = (policy: Policy) =>
 	typeof policy.condition?.model === "string" ? policy.condition.model : JSON.stringify(policy.condition?.model ?? "");
+
+/** 行级点击打开策略详情；行内动作按钮自行处理。 */
+function openRow(event: MouseEvent, row: ReturnType<typeof groupPolicies>[number]): void {
+	if (isTableRowInteractiveTarget(event)) return;
+	emit("view", row.policy.policy_id);
+}
 </script>
 <template>
 	<div class="policy-data-table">
@@ -54,7 +61,7 @@ const condition = (policy: Policy) =>
 					<tr v-else-if="!rows.length">
 						<td :colspan="8" class="policy-table-empty">No policies found</td>
 					</tr>
-					<tr v-for="row in loading ? [] : rows" :key="row.name">
+					<tr v-for="row in loading ? [] : rows" :key="row.name" class="policy-row" @click="openRow($event, row)">
 						<td>
 							<div class="policy-name-cell">
 								<UiTooltip

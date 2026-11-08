@@ -640,6 +640,12 @@
 .access-budget-table-scroll {
 	overflow-x: auto;
 }
+.access-budget-row {
+	cursor: pointer;
+}
+.access-budget-row:hover td {
+	background: #fafafa;
+}
 .access-budget-table {
 	width: 100%;
 	text-align: left;

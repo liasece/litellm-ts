@@ -67,6 +67,12 @@
 	box-shadow: 0 1px 2px #d9d9e2;
 	overflow-x: auto;
 }
+.access-users-row {
+	cursor: pointer;
+}
+.access-users-row:hover td {
+	background: #fafafa;
+}
 .access-users-table {
 	width: 100%;
 	white-space: nowrap;

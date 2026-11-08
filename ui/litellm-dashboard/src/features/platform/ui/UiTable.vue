@@ -4,6 +4,7 @@ import UiCheckbox from "./UiCheckbox.vue";
 import UiEmptyState from "./UiEmptyState.vue";
 import UiSpinner from "./UiSpinner.vue";
 import { displayTableValue, readTableValue, sortTableRows } from "./UiTableLogic";
+import { isTableRowInteractiveTarget } from "../logic/TableRowClick";
 import type { UiAppearance, UiTableColumn, UiTableRow, UiTableSort } from "./UiTypes";
 
 const props = withDefaults(
@@ -21,6 +22,8 @@ const props = withDefaults(
 		selection?: "single" | "multiple";
 		selectedKeys?: readonly (string | number)[];
 		emptyText?: string;
+		/** 整行可点击打开详情：仅影响指针/悬停提示，点击事件始终按 rowClick 发出。 */
+		rowClickable?: boolean;
 	}>(),
 	{
 		bodyMaxHeight: undefined,
@@ -30,6 +33,7 @@ const props = withDefaults(
 		appearance: "antd",
 		selectedKeys: () => [],
 		emptyText: "No data",
+		rowClickable: false,
 	},
 );
 const emit = defineEmits<{
@@ -91,6 +95,10 @@ function selectAll(checked: boolean) {
 			: props.selectedKeys.filter((key) => !rowKeys.value.includes(key)),
 	);
 }
+function clickRow(event: MouseEvent, row: UiTableRow, index: number): void {
+	if (isTableRowInteractiveTarget(event)) return;
+	emit("rowClick", row, index);
+}
 function ariaSort(column: UiTableColumn): "ascending" | "descending" | "none" | undefined {
 	if (!column.sortable) return undefined;
 	return sort.value.key !== column.key || sort.value.order === null ? "none" : sort.value.order === "asc" ? "ascending" : "descending";
@@ -146,8 +154,11 @@ function ariaSort(column: UiTableColumn): "ascending" | "descending" | "none" | 
 						v-for="(row, index) in visibleRows"
 						:key="keyForRow(row, index)"
 						class="ui-table__row"
-						:class="{ 'ui-table__row--selected': selectedKeys.includes(keyForRow(row, index)) }"
-						@click="emit('rowClick', row, index)"
+						:class="{
+							'ui-table__row--selected': selectedKeys.includes(keyForRow(row, index)),
+							'ui-table__row--clickable': rowClickable,
+						}"
+						@click="clickRow($event, row, index)"
 					>
 						<td v-if="selection" class="ui-table__selection" @click.stop>
 							<UiCheckbox

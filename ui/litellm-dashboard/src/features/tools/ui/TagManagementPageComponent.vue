@@ -42,6 +42,14 @@ function tag(row: Record<string, unknown>) {
 function dynamic(row: Record<string, unknown>) {
 	return row.description === dynamicSpendTagDescription;
 }
+/**
+ * 行点击与名称按钮保持同一入口，动态 spend 标签只读不打开编辑器。
+ * @param row - 表格行
+ */
+function openRow(row: Record<string, unknown>): void {
+	if (dynamic(row)) return;
+	open(tag(row));
+}
 function open(row: ToolTag, editing = false) {
 	if (row.description === dynamicSpendTagDescription) return;
 	selectedName.value = row.name;
@@ -143,6 +151,7 @@ onBeforeUnmount(store.dispose);
 					:sort-order="state.sortOrder"
 					empty-text="No tags found"
 					@sort="sort"
+					@row-click="openRow"
 					><template #cell-name="{ row }"
 						><UiTooltip
 							:title="dynamic(row) ? 'You cannot view the information of a dynamically generated spend tag' : tag(row).name"

@@ -37,7 +37,15 @@ function hide(event: Event) {
 }
 </script>
 <template>
-	<UiTable :columns="columns" :rows="rows" row-key="server_id" appearance="tremor" :loading="loading" class="tools-mcp-table"
+	<UiTable
+		:columns="columns"
+		:rows="rows"
+		row-key="server_id"
+		appearance="tremor"
+		:loading="loading"
+		class="tools-mcp-table"
+		row-clickable
+		@row-click="emit('select', server($event))"
 		><template #empty>{{
 			loading ? "Loading MCP servers..." : "No MCP servers configured. Click '+ Add New MCP Server' to get started."
 		}}</template

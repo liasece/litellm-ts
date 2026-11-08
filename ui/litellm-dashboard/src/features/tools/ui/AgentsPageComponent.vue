@@ -106,7 +106,14 @@ onBeforeUnmount(store.dispose);
 			</div>
 		</header>
 		<UiCard
-			><UiTable appearance="tremor" :columns="columns" :rows="ordered" row-key="agent_id" :loading="state.loading"
+			><UiTable
+				appearance="tremor"
+				:columns="columns"
+				:rows="ordered"
+				row-key="agent_id"
+				:loading="state.loading"
+				row-clickable
+				@row-click="selected = agent($event).agent_id"
 				><template #cell-agent_id="{ row }"
 					><UiTooltip :title="agent(row).agent_id"
 						><button type="button" class="tools-resource-id" @click="selected = agent(row).agent_id">

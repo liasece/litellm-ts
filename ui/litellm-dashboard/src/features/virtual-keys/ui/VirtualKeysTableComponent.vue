@@ -5,6 +5,7 @@ import UiPopover from "../../platform/ui/UiPopover.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
+import { isTableRowInteractiveTarget } from "../../platform/logic/TableRowClick";
 import { keyColumns, keyDate, type KeyColumn } from "../render/KeyTablePresentation";
 import type { KeyCatalog, VirtualKey } from "../support/VirtualKeyModels";
 import KeyModelsCell from "./KeyModelsCellComponent.vue";
@@ -63,6 +64,12 @@ function finish() {
 	document.removeEventListener("pointermove", move);
 	document.removeEventListener("pointerup", finish);
 }
+/** 行级点击打开密钥详情；行内开关、按钮与工具提示自行处理。 */
+function openRow(event: MouseEvent, key: VirtualKey): void {
+	if (isTableRowInteractiveTarget(event)) return;
+	emit("select", key);
+}
+
 function teamName(key: VirtualKey) {
 	return key.team_id ? props.catalog.teams.find((team) => team.team_id === key.team_id)?.team_alias || key.team_id : "-";
 }
@@ -139,7 +146,7 @@ onBeforeUnmount(finish);
 						<tr v-else-if="!rows.length">
 							<td :colspan="columns.length" class="vk-table-state">No keys found</td>
 						</tr>
-						<tr v-for="key in loading ? [] : rows" :key="key.token" class="vk-table-row">
+						<tr v-for="key in loading ? [] : rows" :key="key.token" class="vk-table-row" @click="openRow($event, key)">
 							<td
 								v-for="column in columns"
 								:key="column.key"

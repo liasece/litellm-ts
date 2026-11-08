@@ -137,7 +137,9 @@ onBeforeUnmount(store.dispose);
 					row-key="team_id"
 					:loading="state.loading"
 					:min-width="1000"
+					row-clickable
 					manual-sort
+					@row-click="open(team($event))"
 					@sort="store.sort($event.key, $event.order)"
 					><template #header-team_alias><span class="access-team-header-label" title="Team Alias">Team Alias</span></template
 					><template #cell-team_id="{ row }"

@@ -7,6 +7,7 @@ import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import AccessHeroIconComponent from "./AccessHeroIconComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import type { AccessCatalog, AccessUser } from "../support/AccessModels";
+import { isTableRowInteractiveTarget } from "../../platform/logic/TableRowClick";
 const props = defineProps<{
 	rows: AccessUser[];
 	loading: boolean;
@@ -24,6 +25,12 @@ const emit = defineEmits<{
 	"update:selected": [values: string[]];
 }>();
 const money = useMoneyFormatter();
+
+/** 行级点击打开用户详情；行内按钮（复制/编辑/删除/重置）自行处理，不重复触发。 */
+function openRow(event: MouseEvent, user: AccessUser): void {
+	if (isTableRowInteractiveTarget(event)) return;
+	emit("open", user);
+}
 const columns = [
 	{ key: "user_id", label: "User ID", sortable: true },
 	{ key: "user_email", label: "Email", sortable: true },
@@ -96,7 +103,7 @@ async function copy(id: string) {
 				<tr v-if="loading">
 					<td :colspan="columns.length + (selection ? 1 : 0)" class="access-users-empty">🚅 Loading users...</td>
 				</tr>
-				<tr v-for="user in loading ? [] : rows" :key="user.user_id">
+				<tr v-for="user in loading ? [] : rows" :key="user.user_id" class="access-users-row" @click="openRow($event, user)">
 					<td v-if="selection">
 						<UiCheckbox
 							:model-value="selected.includes(user.user_id)"

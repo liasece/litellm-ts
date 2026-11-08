@@ -50,6 +50,12 @@
 	max-height: 32px;
 	border-bottom: 1px solid #e5e7eb;
 }
+.tools-table tbody tr {
+	cursor: pointer;
+}
+.tools-table tbody tr:hover td {
+	background: #f8fafc;
+}
 .tools-table tbody tr:last-child td {
 	border-bottom: 0;
 }
