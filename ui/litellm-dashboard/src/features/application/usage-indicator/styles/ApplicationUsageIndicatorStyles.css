@@ -1,8 +1,8 @@
 .application-usage-indicator {
-	position: fixed;
-	bottom: 16px;
-	left: 16px;
-	z-index: 50;
+	position: static;
+	flex-shrink: 0;
+	margin: 8px 12px 12px;
+	width: auto;
 	font-family: var(--ui-font-antd);
 	font-size: 14px;
 	line-height: 21px;

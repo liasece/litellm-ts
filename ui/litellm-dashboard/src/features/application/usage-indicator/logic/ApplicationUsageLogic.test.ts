@@ -21,12 +21,10 @@ const usage = (total: number | null = 10, used = 8): ApplicationUsageData => ({
 	total_teams_remaining: null,
 });
 describe("Application usage indicator semantics", () => {
-	it("hides unlimited usage even when a license is present and respects authorization/browser preference", () => {
-		expect(hideUsageIndicator(true, false, usage(null))).toBe(true);
-		expect(hideUsageIndicator(true, true, usage())).toBe(true);
-		expect(hideUsageIndicator(false, false, usage())).toBe(true);
-		expect(hideUsageIndicator(true, false, usage())).toBe(false);
-		expect(hideUsageIndicator(true, false, null)).toBe(false);
+	it("keeps the indicator visible for signed-in admins unless the browser preference disables it", () => {
+		expect(hideUsageIndicator(true, false)).toBe(false);
+		expect(hideUsageIndicator(true, true)).toBe(true);
+		expect(hideUsageIndicator(false, false)).toBe(true);
 	});
 	it("keeps 100 percent near limit, marks above 100 as over, and treats zero limits like the existing card", () => {
 		expect(quotaMetrics(10, 8)).toMatchObject({ isNearLimit: true, isOverLimit: false });

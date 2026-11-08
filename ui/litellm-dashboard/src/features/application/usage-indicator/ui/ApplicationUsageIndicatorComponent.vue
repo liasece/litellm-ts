@@ -4,7 +4,7 @@ import UiLucideIcon from "../../../platform/ui/UiLucideIcon.vue";
 import { useAuthenticationStore } from "../../../identity/stores/AuthenticationStore";
 import { useBrowserPreferences } from "../../stores/BrowserPreferencesStore";
 import { createApplicationUsageIndicatorStore } from "../stores/ApplicationUsageIndicatorStore";
-import { hideUsageIndicator, usageTone, formatLicenseExpiration } from "../logic/ApplicationUsageLogic";
+import { usageTone, formatLicenseExpiration } from "../logic/ApplicationUsageLogic";
 import ApplicationQuotaCardComponent from "./ApplicationQuotaCardComponent.vue";
 import "../styles/ApplicationUsageIndicatorStyles.css";
 const props = withDefaults(defineProps<{ collapsed?: boolean; width?: number }>(), { collapsed: false, width: 220 }),
@@ -12,7 +12,7 @@ const props = withDefaults(defineProps<{ collapsed?: boolean; width?: number }>(
 	{ preferences } = useBrowserPreferences(),
 	store = createApplicationUsageIndicatorStore(() => auth.isAuthorized.value),
 	{ state, data, license, metrics } = store,
-	hidden = computed(() => hideUsageIndicator(auth.isAuthorized.value, Boolean(preferences.disableUsageIndicator), data.value)),
+	hidden = computed(() => !auth.isAuthorized.value || Boolean(preferences.disableUsageIndicator)),
 	licenseTone = computed(() => (metrics.value.expired ? "error" : metrics.value.expiring ? "warning" : "normal"));
 watch(
 	() => [auth.isAuthorized.value, auth.state.session?.user_id],
@@ -22,7 +22,7 @@ watch(
 onBeforeUnmount(store.dispose);
 </script>
 <template>
-	<div v-if="!hidden && !props.collapsed" class="application-usage-indicator" :style="{ width: Math.min(props.width, 220) + 'px' }">
+	<div v-if="!hidden && !props.collapsed" class="application-usage-indicator" :style="{ maxWidth: Math.min(props.width, 220) + 'px' }">
 		<button
 			v-if="state.minimized"
 			type="button"
@@ -38,18 +38,14 @@ onBeforeUnmount(store.dispose);
 						:size="12"
 				/></span>
 				<div>
-					<span v-if="data && data.total_users !== null" :class="'tone-' + usageTone(metrics.user)"
-						>U: {{ data.total_users_used }}/{{ data.total_users }}</span
-					><span v-if="data && data.total_teams !== null" :class="'tone-' + usageTone(metrics.team)"
-						>T: {{ data.total_teams_used }}/{{ data.total_teams }}</span
+					<span v-if="data" :class="'tone-' + usageTone(metrics.user)"
+						>U: {{ data.total_users_used }}{{ data.total_users === null ? "" : "/" + data.total_users }}</span
+					><span v-if="data" :class="'tone-' + usageTone(metrics.team)"
+						>T: {{ data.total_teams_used }}{{ data.total_teams === null ? "" : "/" + data.total_teams }}</span
 					><span v-if="license?.expiration_date && metrics.days !== null" :class="'tone-' + licenseTone">{{
 						metrics.days < 0 ? "Exp!" : metrics.days + "d"
 					}}</span
-					><span
-						v-if="data && data.total_users === null && data.total_teams === null && !license"
-						class="application-usage-fallback"
-						>Usage</span
-					>
+					><span v-if="!data && !state.loading" class="application-usage-fallback" :title="state.error || undefined">Usage</span>
 				</div>
 			</div>
 		</button>
@@ -85,14 +81,12 @@ onBeforeUnmount(store.dispose);
 					</div>
 				</section>
 				<ApplicationQuotaCardComponent
-					v-if="data.total_users !== null"
 					kind="users"
 					:total="data.total_users"
 					:used="data.total_users_used"
 					:remaining="data.total_users_remaining"
 					:metrics="metrics.user"
 				/><ApplicationQuotaCardComponent
-					v-if="data.total_teams !== null"
 					kind="teams"
 					:total="data.total_teams"
 					:used="data.total_teams_used"

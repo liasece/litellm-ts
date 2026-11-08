@@ -11,19 +11,19 @@ defineProps<{ kind: "users" | "teams"; total: number | null; used: number; remai
 				kind === "users" ? "Users" : "Teams"
 			}}</strong
 			><span :class="'tone-' + usageTone(metrics)">{{
-				metrics.isOverLimit ? "Over limit" : metrics.isNearLimit ? "Near limit" : "OK"
+				total === null ? "No limit" : metrics.isOverLimit ? "Over limit" : metrics.isNearLimit ? "Near limit" : "OK"
 			}}</span>
 		</header>
 		<div>
-			<span>Used:</span><strong>{{ used }}/{{ total }}</strong>
+			<span>Used:</span><strong>{{ used }}{{ total === null ? "" : "/" + total }}</strong>
 		</div>
-		<div>
+		<div v-if="total !== null">
 			<span>Remaining:</span><strong :class="'quota-text-' + usageTone(metrics)">{{ remaining }}</strong>
 		</div>
-		<div>
+		<div v-if="total !== null">
 			<span>Usage:</span><strong>{{ Math.round(metrics.usagePercentage) }}%</strong>
 		</div>
-		<div class="application-usage-progress">
+		<div v-if="total !== null" class="application-usage-progress">
 			<div :class="usageTone(metrics)" :style="{ width: Math.min(metrics.usagePercentage, 100) + '%' }" />
 		</div>
 	</section>

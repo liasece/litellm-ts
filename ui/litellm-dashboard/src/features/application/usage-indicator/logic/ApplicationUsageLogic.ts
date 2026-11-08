@@ -33,5 +33,9 @@ export function applicationUsageMetrics(data: ApplicationUsageData | null, licen
 }
 export const usageTone = (metrics: UsageQuotaMetrics): "error" | "warning" | "normal" =>
 	metrics.isOverLimit ? "error" : metrics.isNearLimit ? "warning" : "normal";
-export const hideUsageIndicator = (authorized: boolean, disabled: boolean, data: ApplicationUsageData | null) =>
-	disabled || !authorized || (data?.total_users === null && data?.total_teams === null);
+/**
+ * 指示器只在未登录或用户主动关闭时隐藏；没有许可上限时仍显示已用用户数/团队数。
+ * @param authorized - 已完成登录
+ * @param disabled - 用户偏好中关闭了用量指示器
+ */
+export const hideUsageIndicator = (authorized: boolean, disabled: boolean) => disabled || !authorized;
