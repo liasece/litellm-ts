@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
-import UiPopover from "../../platform/ui/UiPopover.vue";
+import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import { getModelLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
-import { modelString, modelStrings, modelOptions, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
+import { modelString, modelStrings, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import type { ModelsStore } from "../stores/ModelsStore";
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
 const props = defineProps<{ store: ModelsStore; catalog: ModelCatalog; health: ModelHealthStore; admin: boolean; userId: string }>();
@@ -26,9 +29,15 @@ const emit = defineEmits<{
 	healthDetail: [id: string];
 }>();
 const price = usePriceDisplayStore(),
-	rows = props.store.displayed(props.catalog),
-	sortPopover = ref<InstanceType<typeof UiPopover>[]>([]);
-const columns = [
+	rows = props.store.displayed(props.catalog);
+interface ModelColumn {
+	key: string;
+	label: string;
+	width: number;
+	sortable?: boolean;
+	filters?: readonly UiTableFilterField[];
+}
+const columns: readonly ModelColumn[] = [
 	{ key: "model_info.id", label: "Model ID", width: 130 },
 	{ key: "model_name", label: "Model Information", width: 250, sortable: true },
 	{ key: "fallback", label: "Fallback", width: 180 },
@@ -40,6 +49,72 @@ const columns = [
 ];
 const groups = computed(() => [...new Set(props.store.state.rows.map((model) => model.model_name))].sort());
 const accessGroups = computed(() => [...new Set(props.store.state.rows.flatMap((model) => model.model_info.access_groups ?? []))].sort());
+const modelColumnFilters = computed<readonly UiTableFilterField[]>(() => [
+	{ key: "search", label: "Model Name", control: { kind: "text", placeholder: "Search model names…" } },
+	{
+		key: "group",
+		label: "Public Model Name",
+		control: {
+			kind: "select",
+			searchable: true,
+			options: [
+				{ value: "wildcard", label: "Wildcard Models (*)" },
+				...groups.value.map((group) => ({ value: group, label: group })),
+			],
+		},
+	},
+]);
+const accessGroupFilters = computed<readonly UiTableFilterField[]>(() => [
+	{
+		key: "accessGroup",
+		label: "Model Access Group",
+		control: {
+			kind: "select",
+			searchable: true,
+			options: accessGroups.value.map((group) => ({ value: group, label: group })),
+		},
+	},
+]);
+const activeFilters = computed<UiTableActiveFilter[]>(() => {
+	const entries: UiTableActiveFilter[] = [];
+	if (props.store.state.search)
+		entries.push({
+			key: "search",
+			label: "Model Name",
+			value: props.store.state.search,
+			text: props.store.state.search,
+			match: "fuzzy",
+		});
+	if (props.store.state.group !== "all")
+		entries.push({
+			key: "group",
+			label: "Public Model Name",
+			value: props.store.state.group,
+			text: props.store.state.group === "wildcard" ? "Wildcard Models (*)" : props.store.state.group,
+			match: "exact",
+		});
+	if (props.store.state.accessGroup)
+		entries.push({
+			key: "accessGroup",
+			label: "Model Access Group",
+			value: props.store.state.accessGroup,
+			text: props.store.state.accessGroup,
+			match: "exact",
+		});
+	return entries;
+});
+function applyModelFilters(entries: readonly UiTableActiveFilter[]): void {
+	for (const entry of entries) {
+		if (entry.key === "search") props.store.search(entry.value);
+		if (entry.key === "group") props.store.setGroup(entry.value || "all");
+		if (entry.key === "accessGroup") props.store.setAccessGroup(entry.value);
+	}
+}
+function removeModelFilter(key: string): void {
+	if (key === "search") props.store.search("");
+	if (key === "group") props.store.setGroup("all");
+	if (key === "accessGroup") props.store.setAccessGroup("");
+}
 const teamOptions = computed(() => [
 	{ value: "personal", label: "Personal" },
 	...props.catalog.teams.map((team) => ({ value: team.team_id, label: team.team_alias || team.team_id })),
@@ -50,9 +125,18 @@ const teamName = computed(() =>
 		: props.catalog.teams.find((team) => team.team_id === props.store.state.team)?.team_alias || props.store.state.team,
 );
 const tableWidth = computed(() => columns.reduce((sum, col) => sum + (props.store.state.widths[col.key] ?? col.width), 0) + 120);
-function sort(key: string, order: "asc" | "desc" | null) {
-	props.store.setSort(key, order);
-	for (const popup of sortPopover.value) popup.hide();
+function sortState(column: ModelColumn): "asc" | "desc" | false {
+	const key = column.key === "input_cost" ? "costs" : column.key;
+	return column.sortable && props.store.state.sortBy === key ? props.store.state.sortOrder : false;
+}
+function ariaSort(column: ModelColumn): "ascending" | "descending" | "none" | undefined {
+	if (!column.sortable) return undefined;
+	const key = column.key === "input_cost" ? "costs" : column.key;
+	if (props.store.state.sortBy !== key) return "none";
+	return props.store.state.sortOrder === "asc" ? "ascending" : "descending";
+}
+function changeSort(key: string, order: "asc" | "desc" | false): void {
+	props.store.setSort(key, order || null);
 }
 function resize(event: PointerEvent, key: string, width: number) {
 	event.preventDefault();
@@ -153,58 +237,12 @@ async function all() {
 		</div>
 		<div class="model-toolbar">
 			<div class="model-toolbar__row">
-				<div class="model-toolbar__controls">
-					<div class="model-search">
-						<UiHeroIcon name="SearchIcon" :size="16" /><input
-							type="search"
-							:value="store.state.search"
-							placeholder="Search model names..."
-							@input="store.search(($event.target as HTMLInputElement).value)"
-						/>
-					</div>
-					<button
-						class="model-toolbar-button"
-						:class="{ 'model-toolbar-button--active': store.state.filtersOpen }"
-						@click="store.toggleFilters"
-					>
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-							/></svg
-						>Filters</button
-					><button class="model-toolbar-button" @click="store.reset">
-						<UiHeroIcon name="RefreshIcon" :size="16" />Reset Filters
-					</button>
-				</div>
 				<div class="model-inline">
 					<UiButton :loading="health.state.allLoading" @click="all">Run All Checks</UiButton
 					><UiButton aria-label="Model settings" title="Model Settings" @click="emit('settings')"
 						><template #icon><UiIcon name="SettingOutlined" /></template
 					></UiButton>
 				</div>
-			</div>
-			<div v-if="store.state.filtersOpen" class="model-filter-row">
-				<UiSelect
-					:model-value="store.state.group"
-					@update:model-value="store.setGroup(modelString($event))"
-					:options="[
-						{ value: 'all', label: 'All Models' },
-						{ value: 'wildcard', label: 'Wildcard Models (*)' },
-						...modelOptions(groups),
-					]"
-					searchable
-					placeholder="Filter by Public Model Name"
-					aria-label="Filter by Public Model Name"
-				/><UiSelect
-					:model-value="store.state.accessGroup || 'all'"
-					:options="[{ value: 'all', label: 'All Model Access Groups' }, ...modelOptions(accessGroups)]"
-					searchable
-					aria-label="Filter by Model Access Group"
-					@update:model-value="store.setAccessGroup($event === 'all' ? '' : modelString($event))"
-				/>
 			</div>
 			<div class="model-pagination">
 				<span>{{
@@ -230,6 +268,7 @@ async function all() {
 				</div>
 			</div>
 		</div>
+		<UiActiveFilters v-if="activeFilters.length" :filters="activeFilters" @remove="removeModelFilter" @clear="store.clearFilters" />
 		<div class="model-table-overflow">
 			<table class="model-list-table" :style="{ width: tableWidth + 'px', minWidth: '100%' }">
 				<colgroup>
@@ -242,42 +281,36 @@ async function all() {
 				</colgroup>
 				<thead>
 					<tr>
-						<th v-for="column in columns" :key="column.key">
+						<th v-for="column in columns" :key="column.key" :aria-sort="ariaSort(column)">
 							<div class="model-table-header">
-								<span
+								<UiTableSortLabel
+									v-if="column.sortable"
+									:label="column.label"
+									:state="sortState(column)"
+									:initial="column.key === 'input_cost' ? 'desc' : 'asc'"
+									@change="changeSort(column.key, $event)"
+								/>
+								<span v-else class="model-table-header__label"
 									>{{ column.label
 									}}<UiTooltip
 										v-if="column.key === 'credentials'"
 										content="Reusable: A saved credential is attached to this model. Manual: Credentials are configured directly on the model."
-										><UiIcon name="InfoCircleOutlined" :size="12" /></UiTooltip></span
-								><UiPopover
-									v-if="column.sortable"
-									ref="sortPopover"
-									trigger="click"
-									placement="bottomLeft"
-									popup-role="menu"
-									popup-class="model-sort-menu"
-									><button class="model-icon-button" :aria-label="'Sort ' + column.label">
-										<UiHeroIcon
-											:name="
-												store.state.sortBy === (column.key === 'input_cost' ? 'costs' : column.key)
-													? store.state.sortOrder === 'asc'
-														? 'ChevronUpIcon'
-														: 'ChevronDownIcon'
-													: 'SwitchVerticalIcon'
-											"
-											:size="16"
-										/></button
-									><template #content
-										><button role="menuitem" @click="sort(column.key, 'asc')">
-											<UiHeroIcon name="ChevronUpIcon" :size="16" />Ascending</button
-										><button role="menuitem" @click="sort(column.key, 'desc')">
-											<UiHeroIcon name="ChevronDownIcon" :size="16" />Descending</button
-										><button role="menuitem" @click="sort(column.key, null)">
-											<UiHeroIcon name="XIcon" :size="16" />Reset
-										</button></template
-									></UiPopover
-								>
+										><UiIcon name="InfoCircleOutlined" :size="12" /></UiTooltip
+								></span>
+								<UiHeaderFilterButton
+									v-if="column.key === 'model_name'"
+									:label="column.label"
+									:fields="modelColumnFilters"
+									:active="activeFilters.filter((filter) => filter.key === 'search' || filter.key === 'group')"
+									@change="applyModelFilters"
+								/>
+								<UiHeaderFilterButton
+									v-if="column.key === 'access_groups'"
+									:label="column.label"
+									:fields="accessGroupFilters"
+									:active="activeFilters.filter((filter) => filter.key === 'accessGroup')"
+									@change="applyModelFilters"
+								/>
 							</div>
 							<span
 								class="model-column-resize"

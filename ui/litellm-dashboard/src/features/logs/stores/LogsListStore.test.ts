@@ -45,8 +45,8 @@ describe("request log browsing", () => {
 			socket: () => () => undefined,
 		});
 		store.start();
-		store.setSearch("old");
-		store.setSearch("wanted-request");
+		store.applyFilters({ "Request ID": "old" });
+		store.applyFilters({ "Request ID": "wanted-request" });
 		await vi.advanceTimersByTimeAsync(299);
 		expect(list).toHaveBeenCalledTimes(1);
 		await vi.advanceTimersByTimeAsync(1);
@@ -87,6 +87,27 @@ describe("request log browsing", () => {
 		expect(writeUrl.mock.calls.at(-1)![0].toString()).toBe("page=logs");
 		store.dispose();
 	});
+	it("clears header filters without changing the selected time range", async () => {
+		vi.useFakeTimers();
+		const list = vi.fn<ListRequest>(async () => emptyPage());
+		const store = createLogsListStore({
+			scope: () => ({ userId: "admin", role: "Admin" }),
+			api: { list },
+			socket: () => () => undefined,
+			search: "page=logs&team_id=team-1&status_filter=failure&logs_time_value=7&logs_time_unit=days",
+		});
+		store.start();
+		await tick();
+		store.clearFilters();
+		await vi.advanceTimersByTimeAsync(300);
+		const query = list.mock.calls.at(-1)![0];
+		expect(query.get("team_id")).toBeNull();
+		expect(query.get("status_filter")).toBeNull();
+		expect(store.state.filters["Team ID"]).toBe("");
+		expect(store.state.selectedTimeInterval).toEqual({ value: 7, unit: "days" });
+		store.dispose();
+	});
+
 	it("stops list requests and live notifications when another log tab is selected", async () => {
 		vi.useFakeTimers();
 		const close = vi.fn();

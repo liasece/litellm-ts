@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive } from "vue";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiPopover from "../../platform/ui/UiPopover.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
+import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { isTableRowInteractiveTarget } from "../../platform/logic/TableRowClick";
 import { keyColumns, keyDate, type KeyColumn } from "../render/KeyTablePresentation";
@@ -21,10 +25,19 @@ const props = withDefaults(
 		sortOrder: "asc" | "desc";
 		pendingToken?: string;
 		canModify?: (key: VirtualKey) => boolean;
+		filterFields?: Partial<Record<string, readonly UiTableFilterField[]>>;
+		activeFilters?: readonly UiTableActiveFilter[];
 	}>(),
-	{ scope: "global", pendingToken: "", canModify: () => false },
+	{ scope: "global", pendingToken: "", canModify: () => false, filterFields: () => ({}), activeFilters: () => [] },
 );
-const emit = defineEmits<{ select: [key: VirtualKey]; sort: [column: string]; toggleEnabled: [key: VirtualKey, enabled: boolean] }>();
+const emit = defineEmits<{
+	select: [key: VirtualKey];
+	sort: [column: string];
+	toggleEnabled: [key: VirtualKey, enabled: boolean];
+	filterChange: [entries: readonly UiTableActiveFilter[]];
+	removeFilter: [key: string];
+	clearFilters: [];
+}>();
 const formatMoney = useMoneyFormatter();
 const columns = computed(() =>
 	props.scope === "team"
@@ -77,11 +90,30 @@ function organizationName(key: VirtualKey) {
 	const id = key.org_id ?? key.organization_id;
 	return id ? props.catalog.organizations.find((org) => org.organization_id === id)?.organization_alias || id : "-";
 }
+function sortState(column: KeyColumn): "asc" | "desc" | false {
+	return column.sortable && column.key === props.sortBy ? props.sortOrder : false;
+}
+function ariaSort(column: KeyColumn): "ascending" | "descending" | "none" | undefined {
+	if (!column.sortable) return undefined;
+	if (column.key !== props.sortBy) return "none";
+	return props.sortOrder === "asc" ? "ascending" : "descending";
+}
+function filtersForColumn(key: string): readonly UiTableActiveFilter[] {
+	const keys = new Set((props.filterFields[key] ?? []).map((field) => field.key));
+	return props.activeFilters.filter((filter) => keys.has(filter.key));
+}
+const emptyText = computed(() => (props.activeFilters.length ? "No keys match the current filters" : "No keys found"));
 onBeforeUnmount(finish);
 </script>
 
 <template>
 	<div class="vk-table-viewport">
+		<UiActiveFilters
+			v-if="activeFilters.length"
+			:filters="activeFilters"
+			@remove="emit('removeFilter', $event)"
+			@clear="emit('clearFilters')"
+		/>
 		<div class="vk-table-border">
 			<div class="vk-table-scroll">
 				<table class="vk-table" :style="{ minWidth: tableWidth + 'px' }">
@@ -91,42 +123,28 @@ onBeforeUnmount(finish);
 								v-for="column in columns"
 								:key="column.key"
 								:data-header-id="column.key"
-								:style="{ width: widths[column.key] + 'px', cursor: column.sortable ? 'pointer' : 'default' }"
-								:aria-sort="
-									column.sortable
-										? column.key === sortBy
-											? sortOrder === 'asc'
-												? 'ascending'
-												: 'descending'
-											: 'none'
-										: undefined
-								"
-								@click="column.sortable && emit('sort', column.key)"
+								:style="{ width: widths[column.key] + 'px' }"
+								:aria-sort="ariaSort(column)"
 							>
 								<div class="vk-table-heading">
-									<span
-										>{{ column.label
-										}}<UiPopover v-if="column.tooltip" :content="column.tooltip"
-											><UiIcon name="InfoCircleOutlined" class="vk-column-info" /></UiPopover></span
-									><svg
+									<UiTableSortLabel
 										v-if="column.sortable"
-										class="vk-sort-icon"
-										:class="{ 'vk-sort-icon--active': column.key === sortBy }"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="2"
-									>
-										<path
-											:d="
-												column.key === sortBy
-													? sortOrder === 'asc'
-														? 'm5 15 7-7 7 7'
-														: 'm19 9-7 7-7-7'
-													: 'M7 16V4m0 0L3 8m4-4 4 4m6 0v12m0 0 4-4m-4 4-4-4'
-											"
-										/>
-									</svg>
+										:label="column.label"
+										:state="sortState(column)"
+										:allow-clear="false"
+										@change="emit('sort', column.key)"
+									/>
+									<span v-else class="vk-table-heading__label">{{ column.label }}</span>
+									<UiPopover v-if="column.tooltip" :content="column.tooltip"
+										><UiIcon name="InfoCircleOutlined" class="vk-column-info"
+									/></UiPopover>
+									<UiHeaderFilterButton
+										v-if="filterFields[column.key]?.length"
+										:label="column.label"
+										:fields="filterFields[column.key] ?? []"
+										:active="filtersForColumn(column.key)"
+										@change="emit('filterChange', $event)"
+									/>
 								</div>
 								<div
 									role="separator"
@@ -144,7 +162,7 @@ onBeforeUnmount(finish);
 							<td :colspan="columns.length" class="vk-table-state">🚅 Loading keys...</td>
 						</tr>
 						<tr v-else-if="!rows.length">
-							<td :colspan="columns.length" class="vk-table-state">No keys found</td>
+							<td :colspan="columns.length" class="vk-table-state">{{ emptyText }}</td>
 						</tr>
 						<tr v-for="key in loading ? [] : rows" :key="key.token" class="vk-table-row" @click="openRow($event, key)">
 							<td

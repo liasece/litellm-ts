@@ -1,15 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from "vue";
-import UiHeroIcon from "../../../platform/ui/UiHeroIcon.vue";
+import UiActiveFilters from "../../../platform/ui/UiActiveFilters.vue";
+import UiHeaderFilterButton from "../../../platform/ui/UiHeaderFilterButton.vue";
+import UiTableSortLabel from "../../../platform/ui/UiTableSortLabel.vue";
 import UiTag from "../../../platform/ui/UiTag.vue";
 import UiTooltip from "../../../platform/ui/UiTooltip.vue";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../../platform/ui/UiTableFilterModels";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 import type { DeletedLogColumn } from "../../support/DeletedLogColumnModels";
-const props = defineProps<{
-	rows: Record<string, unknown>[];
-	columns: readonly DeletedLogColumn[];
-	loading: boolean;
-	kind: "keys" | "teams";
+const props = withDefaults(
+	defineProps<{
+		rows: readonly Record<string, unknown>[];
+		columns: readonly DeletedLogColumn[];
+		loading: boolean;
+		kind: "keys" | "teams";
+		filterFields?: Partial<Record<string, readonly UiTableFilterField[]>>;
+		activeFilters?: readonly UiTableActiveFilter[];
+	}>(),
+	{ filterFields: () => ({}), activeFilters: () => [] },
+);
+const emit = defineEmits<{
+	filterChange: [entries: readonly UiTableActiveFilter[]];
+	removeFilter: [key: string];
+	clearFilters: [];
 }>();
 const money = useMoneyFormatter(),
 	sort = ref<{ key: string; order: "asc" | "desc" | null }>({ key: "deleted_at", order: "desc" }),
@@ -38,11 +51,19 @@ const sorted = computed(() => {
 		})
 		.map((item) => item.row);
 });
-function toggle(column: DeletedLogColumn) {
-	const first = typeof props.rows[0]?.[column.key] === "string" ? "asc" : "desc";
-	if (sort.value.key !== column.key || !sort.value.order) sort.value = { key: column.key, order: first };
-	else if (sort.value.order === (first === "asc" ? "desc" : "asc")) sort.value = { key: column.key, order: null };
-	else sort.value = { key: column.key, order: sort.value.order === "asc" ? "desc" : "asc" };
+const emptyText = computed(() =>
+	props.activeFilters.length ? "No deleted " + props.kind + " match the current filters" : "No deleted " + props.kind + " found",
+);
+function sortDirection(column: DeletedLogColumn): "asc" | "desc" | false {
+	return sort.value.key === column.key ? (sort.value.order ?? false) : false;
+}
+function initialSort(column: DeletedLogColumn): "asc" | "desc" {
+	return column.kind === "date" || column.kind === "money" || column.kind === "key-budget" || column.kind === "team-budget"
+		? "desc"
+		: "asc";
+}
+function changeSort(column: DeletedLogColumn, order: "asc" | "desc" | false): void {
+	sort.value = { key: column.key, order: order || null };
 }
 let cleanup: (() => void) | undefined;
 function resize(event: PointerEvent, column: DeletedLogColumn) {
@@ -80,6 +101,9 @@ function modelName(value: string) {
 }
 </script>
 <template>
+	<div v-if="activeFilters.length" class="deleted-records-filters">
+		<UiActiveFilters :filters="activeFilters" @remove="emit('removeFilter', $event)" @clear="emit('clearFilters')" />
+	</div>
 	<div class="deleted-records-scroll">
 		<div class="deleted-records-border">
 			<div class="deleted-records-x">
@@ -90,23 +114,25 @@ function modelName(value: string) {
 								v-for="column in columns"
 								:key="column.key"
 								:style="{ width: (widths[column.key] ?? column.width) + 'px', maxWidth: column.maxWidth + 'px' }"
-								@click="toggle(column)"
 							>
 								<div class="deleted-records-header">
-									<span>{{ column.label }}</span>
-									<div class="deleted-records-sort">
-										<UiHeroIcon
-											:name="
-												sort.key === column.key && sort.order
-													? sort.order === 'asc'
-														? 'ChevronUpIcon'
-														: 'ChevronDownIcon'
-													: 'SwitchVerticalIcon'
-											"
-											:size="16"
-											:style="{ color: sort.key === column.key && sort.order ? '#3b82f6' : '#9ca3af' }"
-										/>
-									</div>
+									<UiTableSortLabel
+										:label="column.label"
+										:state="sortDirection(column)"
+										:initial="initialSort(column)"
+										@change="changeSort(column, $event)"
+									/>
+									<UiHeaderFilterButton
+										v-if="filterFields[column.key]?.length"
+										:label="column.label"
+										:fields="filterFields[column.key] ?? []"
+										:active="
+											activeFilters.filter((filter) =>
+												filterFields[column.key]?.some((field) => field.key === filter.key),
+											)
+										"
+										@change="emit('filterChange', $event)"
+									/>
 								</div>
 								<span
 									class="deleted-records-resizer"
@@ -165,8 +191,8 @@ function modelName(value: string) {
 								>
 							</td>
 						</tr>
-						<tr v-if="!loading && !rows.length">
-							<td :colspan="columns.length" class="deleted-records-empty">No deleted {{ kind }} found</td>
+						<tr v-if="!loading && !sorted.length">
+							<td :colspan="columns.length" class="deleted-records-empty">{{ emptyText }}</td>
 						</tr>
 					</tbody>
 				</table>
@@ -175,6 +201,10 @@ function modelName(value: string) {
 	</div>
 </template>
 <style>
+.deleted-records-filters .ui-active-filters {
+	padding-top: 0;
+	padding-bottom: 10px;
+}
 .deleted-records-scroll {
 	height: 75vh;
 	overflow: auto;
@@ -200,7 +230,6 @@ function modelName(value: string) {
 	white-space: nowrap;
 	font-weight: 600;
 	color: #111827;
-	cursor: pointer;
 }
 .deleted-records-table th:hover {
 	background: #f9fafb;
@@ -209,14 +238,7 @@ function modelName(value: string) {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
-}
-.deleted-records-sort {
-	width: 16px;
-	flex: none;
-}
-.deleted-records-sort .ui-hero-icon {
-	display: block;
+	gap: 6px;
 }
 .deleted-records-table tbody tr:first-child td {
 	border-top: 0;

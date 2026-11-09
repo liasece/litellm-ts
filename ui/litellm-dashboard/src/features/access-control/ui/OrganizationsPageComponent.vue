@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
-import UiInput from "../../platform/ui/UiInput.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import AccessActionComponent from "./AccessActionComponent.vue";
 import AccessNoticeComponent from "./AccessNoticeComponent.vue";
@@ -18,6 +17,8 @@ import { createResourceStore } from "../stores/ResourceStore";
 import { accessApi } from "../api/AccessApi";
 import { buildOrganizationPayload } from "../logic/ResourceDraftLogic";
 import { loadAccessCatalog } from "../data/AccessCatalogData";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import type { UiTableColumn } from "../../platform/ui/UiTypes";
 import { emptyAccessCatalog, type AccessRecord, type AccessOrganization } from "../support/AccessModels";
 import "../styles/AccessStyles.css";
 const auth = useAuthenticationStore(),
@@ -25,7 +26,8 @@ const auth = useAuthenticationStore(),
 	money = useMoneyFormatter(),
 	orgId = ref(""),
 	alias = ref(""),
-	expanded = ref(false),
+	sortBy = ref("created_at"),
+	sortOrder = ref<"asc" | "desc">("desc"),
 	createOpen = ref(false),
 	deleting = ref<AccessOrganization | null>(null),
 	detailId = ref(""),
@@ -34,31 +36,52 @@ const auth = useAuthenticationStore(),
 	tab = ref("organizations");
 const store = createResourceStore((signal) => accessApi.organizations({ org_id: orgId.value, org_alias: alias.value }, signal)),
 	{ state, rows } = store;
-const sorted = computed(() =>
-	[...rows.value].sort((a, b) => new Date(b.created_at ?? "").getTime() - new Date(a.created_at ?? "").getTime()),
-);
-const columns = [
-	{ key: "organization_id", label: "Organization ID" },
-	{ key: "organization_alias", label: "Organization Name" },
-	{ key: "created_at", label: "Created" },
-	{ key: "spend", label: "Spend" },
+const organizationIdFilter: readonly UiTableFilterField[] = [
+	{ key: "org_id", label: "Organization ID", control: { kind: "text", placeholder: "Filter organization ID" } },
+];
+const organizationNameFilter: readonly UiTableFilterField[] = [
+	{ key: "org_alias", label: "Organization Name", control: { kind: "text", placeholder: "Filter organization name" } },
+];
+const columns: readonly UiTableColumn[] = [
+	{ key: "organization_id", label: "Organization ID", sortable: true, filters: organizationIdFilter },
+	{ key: "organization_alias", label: "Organization Name", sortable: true, filters: organizationNameFilter },
+	{ key: "created_at", label: "Created", sortable: true, initialSortOrder: "desc" },
+	{ key: "spend", label: "Spend", sortable: true, initialSortOrder: "desc" },
 	{ key: "budget", label: "Budget" },
 	{ key: "models", label: "Models" },
 	{ key: "limits", label: "TPM / RPM Limits" },
 	{ key: "info", label: "Info" },
 	{ key: "actions", label: "Actions" },
 ];
+const activeFilters = computed<UiTableActiveFilter[]>(() => {
+	const entries: UiTableActiveFilter[] = [];
+	if (orgId.value) entries.push({ key: "org_id", label: "Organization ID", value: orgId.value, text: orgId.value, match: "fuzzy" });
+	if (alias.value) entries.push({ key: "org_alias", label: "Organization Name", value: alias.value, text: alias.value, match: "fuzzy" });
+	return entries;
+});
+function applyOrganizationFilters(entries: readonly UiTableActiveFilter[]): void {
+	for (const entry of entries) {
+		if (entry.key === "org_id") orgId.value = entry.value;
+		if (entry.key === "org_alias") alias.value = entry.value;
+	}
+	void store.refresh();
+}
+function removeOrganizationFilter(key: string): void {
+	if (key === "org_id") orgId.value = "";
+	if (key === "org_alias") alias.value = "";
+	void store.refresh();
+}
+function clearOrganizationFilters(): void {
+	orgId.value = "";
+	alias.value = "";
+	void store.refresh();
+}
 function organization(row: AccessRecord) {
 	return row as AccessOrganization;
 }
 function open(org: AccessOrganization, editing = false) {
 	detailId.value = org.organization_id;
 	edit.value = editing;
-}
-function reset() {
-	orgId.value = "";
-	alias.value = "";
-	void store.refresh();
 }
 async function changed() {
 	await store.refresh();
@@ -132,21 +155,23 @@ onBeforeUnmount(store.dispose);
 			<UiCard class="access-organization-list"
 				><div class="access-organization-filters">
 					<div class="access-tags">
-						<UiInput v-model="alias" placeholder="Search by Organization Name" @update:model-value="store.refresh" /><UiButton
-							@click="expanded = !expanded"
-							>Filters</UiButton
-						><UiButton @click="reset">Reset Filters</UiButton
-						><UiButton aria-label="Refresh organizations" @click="store.refresh">↻</UiButton>
+						<UiButton aria-label="Refresh organizations" @click="store.refresh">↻ Refresh</UiButton>
 					</div>
-					<UiInput v-if="expanded" v-model="orgId" placeholder="Search by Organization ID" @update:model-value="store.refresh" />
 				</div>
 				<UiTable
-					:rows="sorted"
+					:rows="rows"
 					:columns="columns"
 					row-key="organization_id"
 					appearance="tremor"
 					row-clickable
+					:sort-by="sortBy"
+					:sort-order="sortOrder"
+					:active-filters="activeFilters"
 					@row-click="open(organization($event))"
+					@sort="($event.key && (sortBy = $event.key), (sortOrder = $event.order ?? 'desc'), store.refresh())"
+					@filter-change="applyOrganizationFilters"
+					@remove-filter="removeOrganizationFilter"
+					@clear-filters="clearOrganizationFilters"
 					><template #cell-organization_id="{ row }"
 						><button
 							class="access-id"

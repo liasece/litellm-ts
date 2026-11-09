@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import UiTable from "../../platform/ui/UiTable.vue";
+import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
@@ -20,22 +22,63 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ add: []; delete: [member: AccessMember] }>();
 const money = useMoneyFormatter();
+const emailFilter: readonly UiTableFilterField[] = [
+	{ key: "user_email", label: "User Email", control: { kind: "text", placeholder: "Filter user email" } },
+];
+const idFilter: readonly UiTableFilterField[] = [
+	{ key: "user_id", label: "User ID", control: { kind: "text", placeholder: "Filter user ID" } },
+];
+const activeFilters = ref<UiTableActiveFilter[]>([]);
+function roleValue(row: AccessRecord): string {
+	return String((props.organization ? row.user_role || row.role : row.role) ?? "");
+}
+const roleOptions = computed(() => {
+	const defaults = props.organization ? ["org_admin", "internal_user", "internal_user_viewer"] : ["admin", "user"];
+	const values = [...new Set([...defaults, ...props.members.map(roleValue)])].filter(Boolean);
+	return values.map((value) => ({
+		value,
+		label: value
+			.split("_")
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+			.join(" "),
+	}));
+});
+const roleFilter = computed<readonly UiTableFilterField[]>(() => [
+	{ key: "role", label: props.organization ? "Organization Role" : "Team Role", control: { kind: "select", options: roleOptions.value } },
+]);
 const columns = computed(() => [
-	{ key: "user_email", label: "User Email" },
-	{ key: "user_id", label: "User ID" },
-	{ key: "role", label: props.organization ? "Organization Role" : "Team Role" },
+	{ key: "user_email", label: "User Email", sortable: true, filters: emailFilter },
+	{ key: "user_id", label: "User ID", sortable: true, filters: idFilter },
+	{ key: "role", label: props.organization ? "Organization Role" : "Team Role", sortable: true, filters: roleFilter.value },
 	...(props.organization
 		? [
-				{ key: "spend", label: "Spend" },
-				{ key: "created_at", label: "Created At" },
+				{ key: "spend", label: "Spend", sortable: true },
+				{ key: "created_at", label: "Created At", sortable: true },
 			]
 		: [
-				{ key: "spend", label: "Team Member Spend" },
+				{ key: "spend", label: "Team Member Spend", sortable: true },
 				{ key: "budget", label: "Team Member Budget" },
 				{ key: "rate_limits", label: "Team Member Rate Limits" },
 			]),
 	{ key: "actions", label: "Actions", width: 120 },
 ]);
+const filteredMembers = computed(() =>
+	filterRowsByFields(props.members, activeFilters.value, (row, key) => (key === "role" ? roleValue(row) : row[key])),
+);
+const emptyText = computed(() => (activeFilters.value.length ? "No members match the current filters" : "No members found"));
+function applyMemberFilters(entries: readonly UiTableActiveFilter[]): void {
+	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
+	for (const entry of entries) {
+		if (entry.value.trim()) next.push({ ...entry, value: entry.value.trim(), text: entry.text || entry.value.trim() });
+	}
+	activeFilters.value = next;
+}
+function removeMemberFilter(key: string): void {
+	activeFilters.value = activeFilters.value.filter((filter) => filter.key !== key);
+}
+function clearMemberFilters(): void {
+	activeFilters.value = [];
+}
 function member(row: AccessRecord): AccessMember {
 	return row as AccessMember;
 }
@@ -56,14 +99,20 @@ function rateLimits(row: AccessRecord) {
 </script>
 <template>
 	<section class="access-members" :class="organization ? 'access-members--organization' : 'access-members--team'">
-		<span>{{ members.length }} Member{{ members.length !== 1 ? "s" : "" }}</span
+		<span
+			>{{ filteredMembers.length }} Member{{ filteredMembers.length !== 1 ? "s" : ""
+			}}<template v-if="activeFilters.length"> of {{ members.length }}</template></span
 		><UiTable
 			:columns="columns"
-			:rows="members"
+			:rows="filteredMembers"
 			:row-key="(row) => String(row.user_id ?? row.user_email ?? JSON.stringify(row))"
 			compact
 			min-width="max-content"
-			empty-text="No members found"
+			:empty-text="emptyText"
+			:active-filters="activeFilters"
+			@filter-change="applyMemberFilters"
+			@remove-filter="removeMemberFilter"
+			@clear-filters="clearMemberFilters"
 			><template #header-role
 				><span :class="{ 'access-member-header': !organization }"
 					>{{ organization ? "Organization Role" : "Team Role"

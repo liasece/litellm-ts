@@ -9,7 +9,6 @@ const defaults = {
 
 const createState = (): LogsUrlState => ({
 	filters: createEmptyLogFilters(),
-	searchTerm: "",
 	currentPage: 1,
 	pageSize: 100,
 	startTime: defaults.startTime,
@@ -26,7 +25,7 @@ describe("Logs URL state", () => {
 		state.filters["Team ID"] = "team/a";
 		state.filters["Key Alias"] = "production key";
 		state.filters.Status = "failure";
-		state.searchTerm = "req-123";
+		state.filters["Request ID"] = "req-123";
 		state.currentPage = 3;
 		state.pageSize = 500;
 		state.sortBy = "spend";
@@ -41,7 +40,7 @@ describe("Logs URL state", () => {
 		expect(restored.filters["Team ID"]).toBe("team/a");
 		expect(restored.filters["Key Alias"]).toBe("production key");
 		expect(restored.filters.Status).toBe("failure");
-		expect(restored.searchTerm).toBe("req-123");
+		expect(restored.filters["Request ID"]).toBe("req-123");
 		expect(restored.currentPage).toBe(3);
 		expect(restored.pageSize).toBe(500);
 		expect(restored.sortBy).toBe("spend");
@@ -69,6 +68,14 @@ describe("Logs URL state", () => {
 		expect(malformed.pageSize).toBe(100);
 		expect(malformed.sortBy).toBe("startTime");
 		expect(malformed.isCustomDate).toBe(false);
+	});
+
+	it("migrates the legacy toolbar search into the Request ID filter", () => {
+		const restored = readLogsUrlState("page=logs&logs_search=req-legacy", defaults);
+		expect(restored.filters["Request ID"]).toBe("req-legacy");
+
+		const explicit = readLogsUrlState("page=logs&request_id=req-explicit&logs_search=req-legacy", defaults);
+		expect(explicit.filters["Request ID"]).toBe("req-explicit");
 	});
 
 	it("removes reset filter parameters without disturbing the Logs route", () => {

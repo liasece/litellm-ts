@@ -5,7 +5,6 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import { LIVE_TAIL_INTERVAL_OPTIONS, QUICK_SELECT_OPTIONS } from "../support/LogsConstants";
 const props = defineProps<{
-	searchTerm: string;
 	startTime: string;
 	endTime: string;
 	customDate: boolean;
@@ -15,7 +14,6 @@ const props = defineProps<{
 	fetching: boolean;
 }>();
 const emit = defineEmits<{
-	search: [value: string];
 	interval: [value: number, unit: string];
 	custom: [start: string, end: string, custom: boolean];
 	"live-enabled": [value: boolean];
@@ -48,12 +46,6 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", outside));
 <template>
 	<div class="logs-toolbar">
 		<div class="logs-toolbar-row">
-			<div class="logs-search">
-				<input :value="searchTerm" type="text" placeholder="Search by Request ID" @input="emit('search', inputValue($event))" />
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-				</svg>
-			</div>
 			<div class="logs-toolbar-options">
 				<div ref="menuRoot" class="logs-time-select" @keydown.esc="open = false">
 					<button type="button" class="logs-native-button logs-time-button" :aria-expanded="open" @click="open = !open">

@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import { computed, ref } from "vue";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
+import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
+import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
@@ -26,6 +32,89 @@ const oauthProviders = [
 const brandFor = (provider: string) => getProviderBrand(provider);
 const managedAccount = (account: Account) => state.commandCodeAccounts.find((item) => item.filename === account.filename);
 const isTrashed = (account: Account) => account.filename.startsWith(".trash/");
+const activeFilters = ref<UiTableActiveFilter[]>([]);
+const sort = ref<{ key: string; order: "asc" | "desc" | null }>({ key: "", order: null });
+const providerFilter = computed<readonly UiTableFilterField[]>(() => [
+	{
+		key: "provider",
+		label: "Provider",
+		control: {
+			kind: "select",
+			searchable: true,
+			options: [...new Set(state.accounts.map((account) => account.provider))].filter(Boolean).map((provider) => ({
+				value: provider,
+				label: provider,
+			})),
+		},
+	},
+]);
+const accountFilter: readonly UiTableFilterField[] = [
+	{ key: "account", label: "Account", control: { kind: "text", placeholder: "Filter by account email" } },
+];
+const fileFilter: readonly UiTableFilterField[] = [
+	{ key: "file", label: "File", control: { kind: "text", placeholder: "Filter by auth file" } },
+];
+const enabledFilter: readonly UiTableFilterField[] = [
+	{
+		key: "enabled",
+		label: "Enabled",
+		control: {
+			kind: "select",
+			options: [
+				{ value: "Enabled", label: "Enabled" },
+				{ value: "Disabled", label: "Disabled" },
+			],
+		},
+	},
+];
+const columns = computed(() => [
+	{ key: "provider", label: "Provider", sortable: true, filters: providerFilter.value },
+	{ key: "account", label: "Account", sortable: true, filters: accountFilter },
+	{ key: "file", label: "File", sortable: true, filters: fileFilter },
+	{ key: "enabled", label: "Enabled", filters: enabledFilter },
+	{ key: "weight", label: "Weight", sortable: true },
+	{ key: "actions", label: "Action" },
+]);
+function accountValue(account: Account, key: string): string | number {
+	if (key === "account") return account.email ?? "";
+	if (key === "file") return account.filename;
+	if (key === "enabled") return account.disabled ? "Disabled" : "Enabled";
+	if (key === "weight") return account.weight ?? 0;
+	return account.provider ?? "";
+}
+const filteredAccounts = computed(() =>
+	filterRowsByFields(state.accounts, activeFilters.value, (row, key) => accountValue(row as Account, key)),
+);
+const sortedAccounts = computed(() => {
+	if (!sort.value.order) return filteredAccounts.value;
+	const direction = sort.value.order === "asc" ? 1 : -1;
+	return [...filteredAccounts.value].sort((a, b) => {
+		const left = accountValue(a as Account, sort.value.key);
+		const right = accountValue(b as Account, sort.value.key);
+		if (typeof left === "number" && typeof right === "number") return (left - right) * direction;
+		return String(left).localeCompare(String(right), undefined, { numeric: true }) * direction;
+	});
+});
+const emptyText = computed(() => (activeFilters.value.length ? "No accounts match the current filters" : "No data"));
+function sortState(column: { key: string; sortable?: boolean }): "asc" | "desc" | false {
+	return column.sortable && sort.value.key === column.key ? (sort.value.order ?? false) : false;
+}
+function changeSort(key: string, order: "asc" | "desc" | false): void {
+	sort.value = { key, order: order || null };
+}
+function applyAccountFilters(entries: readonly UiTableActiveFilter[]): void {
+	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
+	for (const entry of entries) {
+		if (entry.value.trim()) next.push({ ...entry, value: entry.value.trim(), text: entry.text || entry.value.trim() });
+	}
+	activeFilters.value = next;
+}
+function removeAccountFilter(key: string): void {
+	activeFilters.value = activeFilters.value.filter((filter) => filter.key !== key);
+}
+function clearAccountFilters(): void {
+	activeFilters.value = [];
+}
 function saveWeight(account: Account, event: FocusEvent) {
 	const raw = (event.target as HTMLInputElement).value;
 	void props.store.updateAccount(account, { weight: raw === "" ? null : Number(raw) });
@@ -96,20 +185,34 @@ function edit(account: Account) {
 				Stored in the LiteLLM config and materialized as a CPA auth file. Use Edit to rotate the key.
 			</p></UiCard
 		>
+		<UiActiveFilters v-if="activeFilters.length" :filters="activeFilters" @remove="removeAccountFilter" @clear="clearAccountFilters" />
 		<div class="cp-accounts-table-scroll">
 			<table class="cp-accounts-table">
 				<thead>
 					<tr>
-						<th>Provider</th>
-						<th>Account</th>
-						<th>File</th>
-						<th>Enabled</th>
-						<th>Weight</th>
-						<th>Action</th>
+						<th v-for="column in columns" :key="column.key">
+							<div class="cp-accounts-heading">
+								<UiTableSortLabel
+									v-if="column.sortable"
+									:label="column.label"
+									:state="sortState(column)"
+									:initial="column.key === 'weight' ? 'desc' : 'asc'"
+									@change="changeSort(column.key, $event)"
+								/>
+								<span v-else class="cp-accounts-heading__label">{{ column.label }}</span>
+								<UiHeaderFilterButton
+									v-if="column.filters?.length"
+									:label="column.label"
+									:fields="column.filters"
+									:active="activeFilters.filter((filter) => column.filters?.some((field) => field.key === filter.key))"
+									@change="applyAccountFilters"
+								/>
+							</div>
+						</th>
 					</tr>
 				</thead>
 				<tbody>
-					<tr v-for="account in state.accounts" :key="account.auth_index">
+					<tr v-for="account in sortedAccounts" :key="account.auth_index">
 						<td>
 							<ProviderIdentityComponent :provider="account.provider" />
 						</td>
@@ -163,8 +266,8 @@ function edit(account: Account) {
 							</div>
 						</td>
 					</tr>
-					<tr v-if="state.accounts.length === 0">
-						<td colspan="6" class="cp-table-empty">No data</td>
+					<tr v-if="sortedAccounts.length === 0">
+						<td colspan="6" class="cp-table-empty">{{ emptyText }}</td>
 					</tr>
 				</tbody>
 			</table>

@@ -155,15 +155,6 @@
 	color: #6b7280;
 	cursor: pointer;
 }
-.access-team-keys .access-key-filter {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 8px;
-}
-.access-key-filter > .ui-input-wrapper {
-	width: 200px;
-}
 
 .access-field-tooltip {
 	font-size: 14px;

@@ -5,18 +5,16 @@ import { useAuthenticationStore } from "../../identity/stores/AuthenticationStor
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
-import FilterBar from "../../filters/ui/FilterBarComponent.vue";
-import type { FilterOption } from "../../filters/support/FilterModels";
-import PaginatedChoice from "../../selectors/ui/PaginatedChoiceComponent.vue";
 import { canCreateVirtualKey, canModifyVirtualKey } from "../logic/KeyPermissionLogic";
-import { createVirtualKeysStore, emptyKeyFilters } from "../stores/VirtualKeysStore";
+import type { UiTableActiveFilter, UiTableFilterChoice, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import type { KeyFilters } from "../support/VirtualKeyModels";
+import { createVirtualKeysStore } from "../stores/VirtualKeysStore";
 import { rememberCreatedKey } from "../stores/CreatedKeysHistoryStore";
 import type { VirtualKey } from "../support/VirtualKeyModels";
 import KeyCreateDialog from "./KeyCreateDialogComponent.vue";
 import KeyDetailDrawer from "./KeyDetailDrawerComponent.vue";
 import VirtualKeysTable from "./VirtualKeysTableComponent.vue";
 import "./styles/VirtualKeysStyles.css";
-const aliasSlot = "field-Key Alias";
 const auth = useAuthenticationStore();
 const route = useRoute();
 const store = createVirtualKeysStore();
@@ -24,53 +22,89 @@ const { state } = store;
 const createOpen = ref(false);
 const detailOpen = ref(false);
 const selected = ref<VirtualKey | null>(null);
-const filterValues = ref<Record<string, string>>({ "Team ID": "", "Organization ID": "", "Key Alias": "", "User ID": "", "Key Hash": "" });
 const prefill = computed(
 	() => new URLSearchParams(Object.entries(route.query).flatMap(([key, value]) => (typeof value === "string" ? [[key, value]] : []))),
 );
-const filterOptions = computed<FilterOption[]>(() => [
-	{
-		name: "Team ID",
-		isSearchable: true,
-		searchFn: async (query) =>
-			state.catalog.teams
-				.filter((team) => [team.team_id, team.team_alias].some((value) => value?.toLowerCase().includes(query.toLowerCase())))
-				.map((team) => ({ value: team.team_id, label: (team.team_alias || team.team_id) + " (" + team.team_id + ")" })),
-	},
-	{
-		name: "Organization ID",
-		isSearchable: true,
-		searchFn: async (query) =>
-			state.catalog.organizations
-				.filter((org) => org.organization_id.toLowerCase().includes(query.toLowerCase()))
-				.map((org) => ({ value: org.organization_id, label: org.organization_id + " (" + org.organization_id + ")" })),
-	},
-	{ name: "Key Alias" },
-	{ name: "User ID" },
-	{ name: "Key Hash" },
-]);
+function teamChoices(term: string): UiTableFilterChoice[] {
+	const query = term.trim().toLowerCase();
+	return state.catalog.teams.flatMap((team) => {
+		const alias = typeof team.team_alias === "string" ? team.team_alias : "";
+		if (query && !team.team_id.toLowerCase().includes(query) && !alias.toLowerCase().includes(query)) return [];
+		return [{ value: team.team_id, label: alias || team.team_id, description: alias ? team.team_id : undefined }];
+	});
+}
+function organizationChoices(term: string): UiTableFilterChoice[] {
+	const query = term.trim().toLowerCase();
+	return state.catalog.organizations.flatMap((org) => {
+		const alias = org.organization_alias || "";
+		if (query && !org.organization_id.toLowerCase().includes(query) && !alias.toLowerCase().includes(query)) return [];
+		return [{ value: org.organization_id, label: alias || org.organization_id, description: alias ? org.organization_id : undefined }];
+	});
+}
+function teamLabel(id: string): string {
+	const team = state.catalog.teams.find((item) => item.team_id === id);
+	return team?.team_alias || id;
+}
+function organizationLabel(id: string): string {
+	const org = state.catalog.organizations.find((item) => item.organization_id === id);
+	return org?.organization_alias || id;
+}
+const filterFields = computed<Record<string, readonly UiTableFilterField[]>>(() => ({
+	token: [{ key: "hash", label: "Key Hash", control: { kind: "text", placeholder: "Filter key hash" } }],
+	key_alias: [{ key: "alias", label: "Key Alias", control: { kind: "text", placeholder: "Filter key alias" } }],
+	team_alias: [
+		{
+			key: "team",
+			label: "Team ID",
+			control: {
+				kind: "remote",
+				placeholder: "Search teams…",
+				initialOptions: teamChoices(""),
+				search: async (term) => teamChoices(term),
+			},
+		},
+	],
+	organization_alias: [
+		{
+			key: "organization",
+			label: "Organization ID",
+			control: {
+				kind: "remote",
+				placeholder: "Search organizations…",
+				initialOptions: organizationChoices(""),
+				search: async (term) => organizationChoices(term),
+			},
+		},
+	],
+	user: [{ key: "user", label: "User ID", control: { kind: "text", placeholder: "Filter user ID" } }],
+}));
+const activeFilters = computed<UiTableActiveFilter[]>(() => {
+	const filters = state.filters;
+	const entries: UiTableActiveFilter[] = [];
+	if (filters.hash) entries.push({ key: "hash", label: "Key Hash", value: filters.hash, text: filters.hash, match: "exact" });
+	if (filters.alias) entries.push({ key: "alias", label: "Key Alias", value: filters.alias, text: filters.alias, match: "fuzzy" });
+	if (filters.team) entries.push({ key: "team", label: "Team ID", value: filters.team, text: teamLabel(filters.team), match: "exact" });
+	if (filters.organization)
+		entries.push({
+			key: "organization",
+			label: "Organization ID",
+			value: filters.organization,
+			text: organizationLabel(filters.organization),
+			match: "exact",
+		});
+	if (filters.user) entries.push({ key: "user", label: "User ID", value: filters.user, text: filters.user, match: "exact" });
+	return entries;
+});
+function applyKeyFilters(entries: readonly UiTableActiveFilter[]): void {
+	const next = { ...state.filters };
+	for (const entry of entries) next[entry.key as keyof KeyFilters] = entry.value;
+	void store.filter(next);
+}
+function removeKeyFilter(key: string): void {
+	void store.filter({ ...state.filters, [key]: "" });
+}
 const pageCount = computed(() => Math.ceil(state.total / state.pageSize));
 const range = computed(() => (state.page - 1) * state.pageSize + 1 + " - " + Math.min(state.page * state.pageSize, state.total));
-let timer: ReturnType<typeof setTimeout> | null = null;
-function filters(values: Record<string, string>) {
-	filterValues.value = { ...values };
-	if (timer) clearTimeout(timer);
-	timer = setTimeout(() => {
-		timer = null;
-		void store.filter({
-			team: values["Team ID"] || "",
-			organization: values["Organization ID"] || "",
-			alias: values["Key Alias"] || "",
-			user: values["User ID"] || "",
-			hash: values["Key Hash"] || "",
-		});
-	}, 300);
-}
-function reset() {
-	if (timer) clearTimeout(timer);
-	filterValues.value = { "Team ID": "", "Organization ID": "", "Key Alias": "", "User ID": "", "Key Hash": "" };
-	void store.filter(emptyKeyFilters());
-}
 function select(key: VirtualKey) {
 	selected.value = key;
 	detailOpen.value = true;
@@ -102,7 +136,6 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
 	window.removeEventListener("storage", storage);
-	if (timer) clearTimeout(timer);
 	store.dispose();
 });
 </script>
@@ -126,16 +159,6 @@ onBeforeUnmount(() => {
 				<div class="vk-list">
 					<div class="vk-list-content">
 						<UiAlert v-if="state.error" type="error" class="vk-list-error">{{ state.error }}</UiAlert>
-						<div class="vk-filters">
-							<FilterBar :options="filterOptions" :values="filterValues" @apply="filters" @reset="reset"
-								><template #[aliasSlot]="{ value, update }"
-									><PaginatedChoice
-										:model-value="value"
-										kind="key-alias"
-										placeholder="Select a key alias"
-										@update:model-value="update" /></template
-							></FilterBar>
-						</div>
 						<div class="vk-toolbar">
 							<div class="vk-toolbar-left">
 								<span v-if="!state.loading">Showing {{ range }} of {{ state.total }} results</span
@@ -174,8 +197,13 @@ onBeforeUnmount(() => {
 							:sort-order="state.sortOrder"
 							:pending-token="state.pendingToken"
 							:can-modify="canModify"
+							:filter-fields="filterFields"
+							:active-filters="activeFilters"
 							@select="select"
 							@sort="store.sort"
+							@filter-change="applyKeyFilters"
+							@remove-filter="removeKeyFilter"
+							@clear-filters="store.resetFilters"
 							@toggle-enabled="store.toggleEnabled"
 						/>
 					</div>

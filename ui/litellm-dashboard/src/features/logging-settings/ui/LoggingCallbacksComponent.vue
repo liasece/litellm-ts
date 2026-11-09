@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
+import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
+import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import CallbackDialog from "./CallbackDialogComponent.vue";
 import { loggingSettingsApi, type LoggingCallback, type AvailableCallbacks } from "../api/LoggingSettingsApi";
@@ -21,6 +26,52 @@ function modeLabel(callback: LoggingCallback) {
 			callback.mode || "success"
 		] || callback.mode
 	);
+}
+const activeFilters = ref<UiTableActiveFilter[]>([]);
+const sort = ref<{ key: string; order: "asc" | "desc" | null }>({ key: "", order: null });
+const nameFilter: readonly UiTableFilterField[] = [
+	{ key: "name", label: "Callback Name", control: { kind: "text", placeholder: "Filter callback name" } },
+];
+const modeFilter: readonly UiTableFilterField[] = [
+	{
+		key: "mode",
+		label: "Mode",
+		control: {
+			kind: "select",
+			options: [
+				{ value: "success", label: "Success" },
+				{ value: "failure", label: "Failure" },
+				{ value: "success_and_failure", label: "Success & Failure" },
+			],
+		},
+	},
+];
+const filteredCallbacks = computed(() =>
+	filterRowsByFields(props.callbacks, activeFilters.value, (callback, key) =>
+		key === "name" ? display(callback) : callback.mode || "success",
+	),
+);
+const sortedCallbacks = computed(() => {
+	if (!sort.value.order) return filteredCallbacks.value;
+	const direction = sort.value.order === "asc" ? 1 : -1;
+	return [...filteredCallbacks.value].sort((a, b) => display(a).localeCompare(display(b)) * direction);
+});
+const emptyText = computed(() => (activeFilters.value.length ? "No callbacks match the current filters" : "No callbacks configured"));
+function changeSort(order: "asc" | "desc" | false): void {
+	sort.value = { key: "name", order: order || null };
+}
+function applyCallbackFilters(entries: readonly UiTableActiveFilter[]): void {
+	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
+	for (const entry of entries) {
+		if (entry.value.trim()) next.push({ ...entry, value: entry.value.trim(), text: entry.text || entry.value.trim() });
+	}
+	activeFilters.value = next;
+}
+function removeCallbackFilter(key: string): void {
+	activeFilters.value = activeFilters.value.filter((filter) => filter.key !== key);
+}
+function clearCallbackFilters(): void {
+	activeFilters.value = [];
 }
 async function test(callback: LoggingCallback) {
 	try {
@@ -42,16 +93,46 @@ async function test(callback: LoggingCallback) {
 			<p>Add your first callback to start logging data to external services.</p>
 		</div>
 		<div v-else class="logging-callbacks-table">
+			<UiActiveFilters
+				v-if="activeFilters.length"
+				:filters="activeFilters"
+				@remove="removeCallbackFilter"
+				@clear="clearCallbackFilters"
+			/>
 			<table>
 				<thead>
 					<tr>
-						<th>Callback Name</th>
-						<th>Mode</th>
+						<th>
+							<div class="logging-callbacks-heading-cell">
+								<UiTableSortLabel
+									label="Callback Name"
+									:state="sort.key === 'name' ? (sort.order ?? false) : false"
+									@change="changeSort"
+								/>
+								<UiHeaderFilterButton
+									label="Callback Name"
+									:fields="nameFilter"
+									:active="activeFilters.filter((filter) => filter.key === 'name')"
+									@change="applyCallbackFilters"
+								/>
+							</div>
+						</th>
+						<th>
+							<div class="logging-callbacks-heading-cell">
+								<span>Mode</span>
+								<UiHeaderFilterButton
+									label="Mode"
+									:fields="modeFilter"
+									:active="activeFilters.filter((filter) => filter.key === 'mode')"
+									@change="applyCallbackFilters"
+								/>
+							</div>
+						</th>
 						<th>Actions</th>
 					</tr>
 				</thead>
 				<tbody>
-					<tr v-for="callback in callbacks" :key="callback.name">
+					<tr v-for="callback in sortedCallbacks" :key="callback.name">
 						<td>{{ display(callback) }}</td>
 						<td>
 							<span
@@ -84,6 +165,10 @@ async function test(callback: LoggingCallback) {
 								></UiTooltip>
 							</div>
 						</td>
+					</tr>
+
+					<tr v-if="!sortedCallbacks.length">
+						<td colspan="3" class="logging-callbacks-empty-row">{{ emptyText }}</td>
 					</tr>
 				</tbody>
 			</table>

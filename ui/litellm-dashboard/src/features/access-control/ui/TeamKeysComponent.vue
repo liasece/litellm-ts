@@ -1,30 +1,56 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import VirtualKeysTableComponent from "../../virtual-keys/ui/VirtualKeysTableComponent.vue";
 import KeyDetailDrawerComponent from "../../virtual-keys/ui/KeyDetailDrawerComponent.vue";
-import UiButton from "../../platform/ui/UiButton.vue";
-import UiInput from "../../platform/ui/UiInput.vue";
 import UiPagination from "../../platform/ui/UiPagination.vue";
 import AccessNoticeComponent from "./AccessNoticeComponent.vue";
-import { createVirtualKeysStore } from "../../virtual-keys/stores/VirtualKeysStore";
-import { emptyKeyCatalog, type VirtualKey } from "../../virtual-keys/support/VirtualKeyModels";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import { createVirtualKeysStore, emptyKeyFilters } from "../../virtual-keys/stores/VirtualKeysStore";
+import { emptyKeyCatalog, type KeyFilters, type VirtualKey } from "../../virtual-keys/support/VirtualKeyModels";
 import type { AccessTeam } from "../support/AccessModels";
 const props = defineProps<{ team: AccessTeam }>();
 const store = createVirtualKeysStore(),
 	{ state } = store,
 	catalog = shallowRef(emptyKeyCatalog()),
 	selected = ref<VirtualKey | null>(null),
-	detailOpen = ref(false),
-	expanded = ref(false);
+	detailOpen = ref(false);
 state.filters.team = props.team.team_id;
+const filterFields = computed<Record<string, readonly UiTableFilterField[]>>(() => ({
+	key_alias: [{ key: "alias", label: "Key Alias", control: { kind: "text", placeholder: "Filter key alias" } }],
+	organization_alias: [
+		{ key: "organization", label: "Organization ID", control: { kind: "text", placeholder: "Filter organization ID" } },
+	],
+	user_id: [{ key: "user", label: "User ID", control: { kind: "text", placeholder: "Filter user ID" } }],
+}));
+const activeFilters = computed<UiTableActiveFilter[]>(() => {
+	const filters = state.filters;
+	const entries: UiTableActiveFilter[] = [];
+	if (filters.organization)
+		entries.push({
+			key: "organization",
+			label: "Organization ID",
+			value: filters.organization,
+			text: filters.organization,
+			match: "exact",
+		});
+	if (filters.alias) entries.push({ key: "alias", label: "Key Alias", value: filters.alias, text: filters.alias, match: "fuzzy" });
+	if (filters.user) entries.push({ key: "user", label: "User ID", value: filters.user, text: filters.user, match: "exact" });
+	return entries;
+});
+function applyFilters(entries: readonly UiTableActiveFilter[]): void {
+	const next: KeyFilters = { ...emptyKeyFilters(), team: props.team.team_id };
+	for (const entry of entries) next[entry.key as keyof KeyFilters] = entry.value;
+	void store.filter(next);
+}
+function removeFilter(key: string): void {
+	void store.filter({ ...state.filters, [key]: "" });
+}
+function clearFilters(): void {
+	void store.filter({ ...emptyKeyFilters(), team: props.team.team_id });
+}
 function select(key: VirtualKey) {
 	selected.value = key;
 	detailOpen.value = true;
-}
-function reset() {
-	state.filters = { team: props.team.team_id, organization: "", alias: "", user: "", hash: "" };
-	state.page = 1;
-	void store.refresh();
 }
 onMounted(() => {
 	void store.refresh();
@@ -41,21 +67,6 @@ onBeforeUnmount(() => {
 <template>
 	<section class="access-team-keys">
 		<AccessNoticeComponent :error="state.error" :message="state.message" />
-		<div class="access-key-filter">
-			<UiButton variant="text" @click="expanded = !expanded">Filters</UiButton
-			><template v-if="expanded"
-				><UiInput v-model="state.filters.organization" placeholder="Organization ID" /><UiInput
-					v-model="state.filters.alias"
-					placeholder="Key Alias"
-				/><UiInput v-model="state.filters.user" placeholder="User ID" /><UiButton
-					@click="
-						state.page = 1;
-						store.refresh();
-					"
-					>Apply</UiButton
-				><UiButton @click="reset">Reset</UiButton></template
-			>
-		</div>
 		<UiPagination
 			:model-value="state.page"
 			:total="state.total"
@@ -70,8 +81,13 @@ onBeforeUnmount(() => {
 			:can-modify="() => false"
 			:pending-token="state.pendingToken"
 			scope="team"
+			:filter-fields="filterFields"
+			:active-filters="activeFilters"
 			@select="select"
 			@sort="store.sort"
+			@filter-change="applyFilters"
+			@remove-filter="removeFilter"
+			@clear-filters="clearFilters"
 		/><KeyDetailDrawerComponent
 			v-model:open="detailOpen"
 			:key-data="selected"

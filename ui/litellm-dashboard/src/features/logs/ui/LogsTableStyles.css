@@ -208,3 +208,25 @@
 	font-size: 12px;
 	line-height: 16px;
 }
+
+.logs-table-heading {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+.logs-table-heading__label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.logs-table .ui-table-sort-label {
+	color: #111827;
+	font-weight: 600;
+}
+.logs-table .ui-table-sort-label.is-sorted {
+	color: #2563eb;
+}
+.logs-card .ui-active-filters {
+	padding-top: 0;
+	padding-bottom: 10px;
+}

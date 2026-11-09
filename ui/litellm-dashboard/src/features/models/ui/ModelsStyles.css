@@ -243,9 +243,6 @@
 	.models-layout {
 		padding: 16px;
 	}
-	.model-filter-row > .ui-select {
-		max-width: 100%;
-	}
 }
 
 @media (max-width: 767px) {

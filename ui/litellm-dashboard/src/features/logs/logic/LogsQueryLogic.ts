@@ -1,4 +1,4 @@
-import { FILTER_KEYS, type LogFilterState } from "./LogsFilterLogic";
+import type { LogFilterState } from "./LogsFilterLogic";
 import { utcApiDate } from "./LogsDateLogic";
 import type { LogsUrlState } from "./LogsUrlLogic";
 
@@ -28,7 +28,6 @@ export function logsQuery(state: LogsUrlState, scope: { userId: string; role: st
 		const value = state.filters[key as keyof LogFilterState];
 		if (value) params.set(param, value);
 	}
-	if (!state.filters[FILTER_KEYS.REQUEST_ID] && state.searchTerm) params.set("request_id", state.searchTerm);
 	if (["Internal User", "Internal Viewer"].includes(scope.role) && !params.has("user_id")) params.set("user_id", scope.userId);
 	return params;
 }

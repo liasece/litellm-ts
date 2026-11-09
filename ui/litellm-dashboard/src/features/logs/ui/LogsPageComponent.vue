@@ -8,16 +8,16 @@ import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
-import FilterBarComponent from "../../filters/ui/FilterBarComponent.vue";
-import PaginatedChoiceComponent from "../../selectors/ui/PaginatedChoiceComponent.vue";
-import type { FilterOption, FilterValues } from "../../filters/support/FilterModels";
+import type { UiTableActiveFilter, UiTableFilterChoice, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import { createLogsListStore } from "../stores/LogsListStore";
 import { createLogsSettingsStore } from "../stores/LogsSettingsStore";
+import { FILTER_KEYS, type LogFilterState } from "../logic/LogsFilterLogic";
 import { navigableSessionGroup } from "../logic/LogsIdentityLogic";
 import { record } from "../logic/LogsPresentationLogic";
 import { utcApiDate } from "../logic/LogsDateLogic";
 import { ERROR_CODE_OPTIONS } from "../support/LogsConstants";
 import type { LogEntry, SessionGroupRef } from "../support/LogsModels";
+import { fetchChoicePage } from "../../selectors/api/PaginatedChoiceApi";
 import LogsToolbarComponent from "./LogsToolbarComponent.vue";
 import LogsPaginationComponent from "./LogsPaginationComponent.vue";
 import LogsLiveBannerComponent from "./LogsLiveBannerComponent.vue";
@@ -86,67 +86,119 @@ function closeKey() {
 	selectedKeyInfo.value = null;
 	keyDrawerOpen.value = false;
 }
-const filterOptions = computed<FilterOption[]>(() => [
-	{
-		name: "Team ID",
-		label: "Team ID",
-		isSearchable: true,
-		searchFn: async (term) =>
-			application.state.teams.flatMap((team) => {
-				const alias = record(team).team_alias,
-					id = team.team_id;
-				if (
-					!id.toLowerCase().includes(term.toLowerCase()) &&
-					!(typeof alias === "string" && alias.toLowerCase().includes(term.toLowerCase()))
-				)
-					return [];
-				return [{ value: id, label: String(alias || id) + " (" + id + ")" }];
-			}),
-	},
-	{
-		name: "Status",
-		label: "Status",
-		options: [
-			{ label: "In Progress", value: "in_progress" },
-			{ label: "Success", value: "success" },
-			{ label: "Failure", value: "failure" },
-			{ label: "Aborted", value: "aborted" },
-		],
-	},
-	{ name: "Model", label: "Model" },
-	{ name: "Key Alias", label: "Key Alias" },
-	{
-		name: "End User",
-		label: "End User",
-		isSearchable: true,
-		searchFn: async (term) => {
-			const data = await requestJson("/customer/list");
-			return Array.isArray(data)
-				? data.flatMap((item) => {
-						const id = record(item).user_id;
-						return typeof id === "string" && id.toLowerCase().includes(term.toLowerCase()) ? [{ label: id, value: id }] : [];
-					})
-				: [];
+const STATUS_FILTER_OPTIONS: readonly UiTableFilterChoice[] = [
+	{ label: "In Progress", value: "in_progress" },
+	{ label: "Success", value: "success" },
+	{ label: "Failure", value: "failure" },
+	{ label: "Aborted", value: "aborted" },
+];
+const filterTexts = ref<Record<string, string>>({});
+
+function statusLabel(value: string): string {
+	return STATUS_FILTER_OPTIONS.find((option) => option.value === value)?.label ?? value;
+}
+function teamLabel(id: string): string {
+	const team = application.state.teams.find((item) => item.team_id === id);
+	return team?.team_alias || id;
+}
+function teamChoices(term: string): UiTableFilterChoice[] {
+	const query = term.trim().toLowerCase();
+	return application.state.teams.flatMap((team) => {
+		const alias = typeof team.team_alias === "string" ? team.team_alias : "";
+		if (query && !team.team_id.toLowerCase().includes(query) && !alias.toLowerCase().includes(query)) return [];
+		return [{ value: team.team_id, label: alias || team.team_id, description: alias ? team.team_id : undefined }];
+	});
+}
+async function modelChoices(term: string): Promise<UiTableFilterChoice[]> {
+	const page = await fetchChoicePage("model", 1, 50, term);
+	return page.options.map((option) => ({ value: option.value, label: option.label }));
+}
+async function customerChoices(term: string): Promise<UiTableFilterChoice[]> {
+	const data = await requestJson("/customer/list");
+	if (!Array.isArray(data)) return [];
+	const query = term.trim().toLowerCase();
+	return data.flatMap((item) => {
+		const id = record(item).user_id;
+		return typeof id === "string" && id.toLowerCase().includes(query) ? [{ label: id, value: id }] : [];
+	});
+}
+const filterFields = computed<Record<string, readonly UiTableFilterField[]>>(() => ({
+	status: [
+		{ key: FILTER_KEYS.STATUS, label: "Status", control: { kind: "select", options: STATUS_FILTER_OPTIONS } },
+		{
+			key: FILTER_KEYS.ERROR_CODE,
+			label: "Error Code",
+			control: { kind: "select", searchable: true, creatable: true, options: ERROR_CODE_OPTIONS },
 		},
-	},
-	{
-		name: "Error Code",
-		label: "Error Code",
-		isSearchable: true,
-		searchFn: async (term) => {
-			if (!term) return ERROR_CODE_OPTIONS;
-			const options = ERROR_CODE_OPTIONS.filter((item) => item.label.toLowerCase().includes(term.toLowerCase()));
-			return !ERROR_CODE_OPTIONS.some((item) => item.value === term.trim()) && term.trim()
-				? [...options, { label: "Use custom code: " + term.trim(), value: term.trim() }]
-				: options;
+		{ key: FILTER_KEYS.ERROR_MESSAGE, label: "Error Message", control: { kind: "text", placeholder: "Filter error message" } },
+	],
+	team_name: [
+		{
+			key: FILTER_KEYS.TEAM_ID,
+			label: "Team ID",
+			control: {
+				kind: "remote",
+				placeholder: "Search teams…",
+				initialOptions: teamChoices(""),
+				search: async (term) => teamChoices(term),
+			},
 		},
-	},
-	{ name: "Key Hash", label: "Key Hash" },
-	{ name: "Error Message", label: "Error Message" },
-]);
-const keyAliasSlot = "field-Key Alias";
-function applyFilters(values: FilterValues) {
-	list.applyFilters(values);
+	],
+	key_hash: [{ key: FILTER_KEYS.KEY_HASH, label: "Key Hash", control: { kind: "text", placeholder: "Filter key hash" } }],
+	key_name: [{ key: FILTER_KEYS.KEY_ALIAS, label: "Key Alias", control: { kind: "text", placeholder: "Filter key alias" } }],
+	model: [
+		{
+			key: FILTER_KEYS.MODEL,
+			label: "Model",
+			control: { kind: "remote", placeholder: "Search models…", search: modelChoices },
+		},
+	],
+	request_id: [{ key: FILTER_KEYS.REQUEST_ID, label: "Request ID", control: { kind: "text", placeholder: "Filter request ID" } }],
+	user: [{ key: FILTER_KEYS.USER_ID, label: "User ID", control: { kind: "text", placeholder: "Filter user ID" } }],
+	end_user: [
+		{
+			key: FILTER_KEYS.END_USER,
+			label: "End User",
+			control: { kind: "remote", placeholder: "Search end users…", search: customerChoices },
+		},
+	],
+}));
+const activeFilters = computed<UiTableActiveFilter[]>(() => {
+	const filters = list.state.filters;
+	const entries: UiTableActiveFilter[] = [];
+	const add = (key: keyof LogFilterState, label: string, text?: string, match: "fuzzy" | "exact" = "exact") => {
+		const value = filters[key];
+		if (!value) return;
+		entries.push({ key, label, value, text: text || filterTexts.value[key] || value, match });
+	};
+	add(FILTER_KEYS.STATUS, "Status", statusLabel(filters[FILTER_KEYS.STATUS]));
+	add(FILTER_KEYS.ERROR_CODE, "Error Code");
+	add(FILTER_KEYS.ERROR_MESSAGE, "Error Message", undefined, "fuzzy");
+	add(FILTER_KEYS.TEAM_ID, "Team ID", teamLabel(filters[FILTER_KEYS.TEAM_ID]));
+	add(FILTER_KEYS.KEY_HASH, "Key Hash", undefined, "fuzzy");
+	add(FILTER_KEYS.KEY_ALIAS, "Key Alias", undefined, "fuzzy");
+	add(FILTER_KEYS.MODEL, "Model");
+	add(FILTER_KEYS.REQUEST_ID, "Request ID", undefined, "fuzzy");
+	add(FILTER_KEYS.USER_ID, "User ID", undefined, "fuzzy");
+	add(FILTER_KEYS.END_USER, "End User");
+	return entries;
+});
+function applyLogFilters(entries: readonly UiTableActiveFilter[]): void {
+	const next: Partial<LogFilterState> = {};
+	for (const entry of entries) {
+		next[entry.key as keyof LogFilterState] = entry.value;
+		if (entry.value) filterTexts.value[entry.key] = entry.text || entry.value;
+		else delete filterTexts.value[entry.key];
+	}
+	list.applyFilters(next);
+}
+function removeLogFilter(key: string): void {
+	delete filterTexts.value[key];
+	list.applyFilters({ [key]: "" } as Partial<LogFilterState>);
+}
+function clearLogFilters(): void {
+	filterTexts.value = {};
+	list.clearFilters();
 }
 function selectLog(log: LogEntry) {
 	selectedLog.value = log;
@@ -218,34 +270,12 @@ watch(
 				</div>
 				<LogsProviderWarningsComponent :logs="list.page.value.data" />
 				<div :hidden="!!selectedKeyInfo">
-					<FilterBarComponent
-						:options="filterOptions"
-						:values="list.state.filters"
-						@apply="applyFilters"
-						@reset="list.resetFilters"
-					>
-						<template #field-Model="{ value, update }"
-							><PaginatedChoiceComponent
-								kind="model"
-								:model-value="value"
-								placeholder="Select Model..."
-								@update:model-value="update"
-						/></template>
-						<template #[keyAliasSlot]="{ value, update }"
-							><PaginatedChoiceComponent
-								kind="key-alias"
-								:model-value="value"
-								placeholder="Select Key Alias..."
-								@update:model-value="update"
-						/></template>
-					</FilterBarComponent>
 					<UiAlert v-if="list.state.error" type="error" style="margin-bottom: 16px">{{ list.state.error }}</UiAlert>
 					<div class="logs-card">
 						<div class="logs-controls">
 							<div class="logs-controls-row" data-testid="logs-controls-row">
 								<div class="logs-controls-toolbar">
 									<LogsToolbarComponent
-										:search-term="list.state.searchTerm"
 										:start-time="list.state.startTime"
 										:end-time="list.state.endTime"
 										:custom-date="list.state.isCustomDate"
@@ -253,7 +283,6 @@ watch(
 										:live-tail-interval-ms="list.state.liveTailIntervalMs"
 										:live-tail-enabled="list.state.liveTailEnabled"
 										:fetching="list.state.fetching"
-										@search="list.setSearch"
 										@interval="list.selectInterval"
 										@custom="list.setCustomDate"
 										@live-enabled="list.setLiveEnabled"
@@ -285,10 +314,15 @@ watch(
 							:sort-order="list.state.sortOrder"
 							:visible-columns="settings.columns.value"
 							:live="list.liveActive.value"
+							:filter-fields="filterFields"
+							:active-filters="activeFilters"
 							@sort="list.setSort"
 							@select="selectLog"
 							@key="openKey"
 							@session="simulation = $event"
+							@filter-change="applyLogFilters"
+							@remove-filter="removeLogFilter"
+							@clear-filters="clearLogFilters"
 						/>
 					</div>
 				</div>

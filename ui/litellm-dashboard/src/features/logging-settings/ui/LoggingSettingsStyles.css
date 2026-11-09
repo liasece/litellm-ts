@@ -349,3 +349,17 @@
 		padding: 16px;
 	}
 }
+
+.logging-callbacks-heading-cell {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.logging-callbacks-table > .ui-active-filters {
+	padding-top: 0;
+}
+.logging-callbacks-empty-row {
+	text-align: center;
+	color: #6b7280;
+}

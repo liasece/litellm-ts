@@ -11,7 +11,7 @@ describe("spend log settings writes", () => {
 		store.state.retention = "  ";
 		store.state.storePrompts = true;
 		store.state.storeUpstream = false;
-		store.setColumns(["request_id"]);
+		store.setColumns(["team_name"]);
 		expect(api.update).not.toHaveBeenCalled();
 		await store.save();
 		expect(api.deleteField).toHaveBeenCalledWith("general_settings", "maximum_spend_logs_retention_period");

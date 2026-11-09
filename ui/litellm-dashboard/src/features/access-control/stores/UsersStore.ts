@@ -1,6 +1,6 @@
 import { reactive, shallowRef } from "vue";
 import { accessApi, type AccessApi } from "../api/AccessApi";
-import type { AccessTeam, AccessUser } from "../support/AccessModels";
+import type { AccessUser } from "../support/AccessModels";
 export function emptyUserFilters() {
 	return {
 		email: "",
@@ -24,14 +24,12 @@ export function createUsersStore(organizationIds: string[], api: AccessApi = acc
 			pageSize: 25,
 			total: 0,
 			totalPages: 1,
-			expanded: false,
 			detailId: "",
 			editDetail: false,
 			deleting: null as AccessUser | null,
 		});
 	let generation = 0,
-		controller: AbortController | null = null,
-		timer: ReturnType<typeof setTimeout> | undefined;
+		controller: AbortController | null = null;
 	async function refresh() {
 		const current = ++generation;
 		controller?.abort();
@@ -70,8 +68,7 @@ export function createUsersStore(organizationIds: string[], api: AccessApi = acc
 	function filter(update: Partial<ReturnType<typeof emptyUserFilters>>) {
 		Object.assign(state.filters, update);
 		state.page = 1;
-		if (timer) clearTimeout(timer);
-		timer = setTimeout(() => void refresh(), 300);
+		return refresh();
 	}
 	function reset() {
 		filter(emptyUserFilters());
@@ -91,15 +88,9 @@ export function createUsersStore(organizationIds: string[], api: AccessApi = acc
 			state.pending = false;
 		}
 	}
-	function userTeams(user: AccessUser, teams: AccessTeam[]) {
-		return (user.teams ?? [])
-			.map((id) => teams.find((team) => team.team_id === id))
-			.filter((team): team is AccessTeam => Boolean(team));
-	}
 	function dispose() {
 		++generation;
 		controller?.abort();
-		if (timer) clearTimeout(timer);
 	}
-	return { state, rows, refresh, filter, reset, remove, userTeams, dispose };
+	return { state, rows, refresh, filter, reset, remove, dispose };
 }

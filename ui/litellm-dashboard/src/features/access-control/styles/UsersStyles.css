@@ -27,23 +27,6 @@
 	padding: 16px 24px;
 	border-bottom: 1px solid #e5e7eb;
 }
-.access-user-filters {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 12px;
-	align-items: center;
-}
-.access-user-search {
-	width: 256px;
-	flex: none;
-}
-.access-user-additional-filters {
-	margin-top: 16px;
-}
-.access-user-additional-filters > .ui-input-wrapper,
-.access-user-additional-filters > .ui-select {
-	width: 256px;
-}
 .access-user-pagination {
 	display: flex;
 	flex-wrap: wrap;
@@ -83,7 +66,7 @@
 }
 .access-users-table th {
 	height: 32px;
-	padding: 4px 16px;
+	padding: 4px 10px;
 	color: #111827;
 	font-size: 14px;
 	font-weight: 600;
@@ -95,7 +78,7 @@
 }
 .access-users-table td {
 	height: 32px;
-	padding: 2px 16px;
+	padding: 2px 10px;
 	max-height: 32px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -108,25 +91,6 @@
 	text-align: center;
 	color: #6b7280;
 	font-size: 14px;
-}
-.access-user-sort {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	gap: 8px;
-	min-width: 100%;
-	padding: 0;
-	border: 0;
-	background: transparent;
-	font: inherit;
-	color: inherit;
-	cursor: pointer;
-}
-.access-sort-active {
-	color: #3b82f6;
-}
-.access-sort-inactive {
-	color: #9ca3af;
 }
 .access-users-actions {
 	position: sticky;
@@ -717,4 +681,17 @@
 	padding-bottom: 0;
 	line-height: 21px;
 	height: 32px;
+}
+
+.access-users-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.access-users-heading__label {
+	display: block;
+}
+.access-users-table-section > .ui-active-filters {
+	padding-top: 0;
 }

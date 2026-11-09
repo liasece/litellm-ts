@@ -23,8 +23,7 @@ export function createTeamsStore(role: string, userId: string, onChanged: () => 
 			editDetail: false,
 		});
 	let generation = 0,
-		controller: AbortController | null = null,
-		timer: ReturnType<typeof setTimeout> | undefined;
+		controller: AbortController | null = null;
 	async function refresh() {
 		const current = ++generation;
 		controller?.abort();
@@ -55,13 +54,15 @@ export function createTeamsStore(role: string, userId: string, onChanged: () => 
 			if (current === generation) state.loading = false;
 		}
 	}
-	function search(value: string | number | null) {
-		state.query = String(value ?? "");
+	function applyFilters(update: { team_alias?: string; organization_id?: string }) {
+		if (update.team_alias !== undefined) state.query = update.team_alias;
+		if (update.organization_id !== undefined) state.organizationId = update.organization_id;
 		state.page = 1;
-		if (timer) clearTimeout(timer);
-		timer = setTimeout(() => void refresh(), 300);
+		return refresh();
 	}
-	function filter() {
+	function clearFilters() {
+		state.query = "";
+		state.organizationId = "";
 		state.page = 1;
 		return refresh();
 	}
@@ -108,7 +109,6 @@ export function createTeamsStore(role: string, userId: string, onChanged: () => 
 	function dispose() {
 		++generation;
 		controller?.abort();
-		if (timer) clearTimeout(timer);
 	}
-	return { state, rows, refresh, search, filter, sort, create, remove, dispose };
+	return { state, rows, refresh, applyFilters, clearFilters, sort, create, remove, dispose };
 }

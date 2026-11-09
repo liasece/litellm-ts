@@ -13,7 +13,7 @@ export const keyColumns: readonly KeyColumn[] = [
 	{ key: "enabled", label: "Enabled", width: 110 },
 	{ key: "key_name", label: "Secret Key", width: 120 },
 	{ key: "team_alias", label: "Team", width: 120 },
-	{ key: "organization_alias", label: "Organization", width: 140 },
+	{ key: "organization_alias", label: "Organization", width: 160 },
 	{ key: "user", label: "User", width: 160, tooltip: "Displays the first available value: User Alias, User Email, or User ID." },
 	{ key: "created_at", label: "Created At", width: 120, sortable: true },
 	{ key: "created_by", label: "Created By", width: 160 },

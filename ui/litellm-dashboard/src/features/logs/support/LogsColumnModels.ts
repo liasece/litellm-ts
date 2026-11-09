@@ -11,7 +11,7 @@ const columns: readonly LogsColumn[] = [
 	{ id: "call_type", label: "Type", width: 150, optional: "call_type" },
 	{ id: "status", label: "Status", width: 150 },
 	{ id: "session_id", label: "Session ID", width: 150 },
-	{ id: "request_id", label: "Request ID", width: 150, optional: "request_id" },
+	{ id: "request_id", label: "Request ID", width: 150 },
 	{ id: "spend", label: "Cost", width: 190, sort: "spend" },
 	{ id: "request_duration_ms", label: "Duration (s)", width: 150, sort: "request_duration_ms" },
 	{ id: "completionStartTime", label: "TTFT (s)", width: 150 },

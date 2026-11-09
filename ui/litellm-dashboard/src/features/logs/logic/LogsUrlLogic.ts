@@ -20,7 +20,6 @@ const VALID_SORT_FIELDS: LogsSortField[] = ["startTime", "spend", "total_tokens"
 
 export interface LogsUrlState {
 	filters: LogFilterState;
-	searchTerm: string;
 	currentPage: number;
 	pageSize: number;
 	startTime: string;
@@ -57,6 +56,10 @@ export function readLogsUrlState(search: string, defaults: LogsUrlDefaults): Log
 		filters[filterName] = params.get(FILTER_URL_PARAMS[filterName]) ?? "";
 	}
 
+	// 旧版工具栏的 Request ID 搜索迁移为表头筛选，保证历史链接仍指向同一条请求。
+	const legacySearch = (params.get("logs_search") ?? "").trim();
+	if (!filters[FILTER_KEYS.REQUEST_ID] && legacySearch) filters[FILTER_KEYS.REQUEST_ID] = legacySearch;
+
 	const requestedPageSize = readPositiveInteger(params.get("logs_page_size"), DEFAULT_LOGS_PAGE_SIZE);
 	const pageSize = LOGS_PAGE_SIZE_OPTIONS.includes(requestedPageSize as (typeof LOGS_PAGE_SIZE_OPTIONS)[number])
 		? requestedPageSize
@@ -79,7 +82,6 @@ export function readLogsUrlState(search: string, defaults: LogsUrlDefaults): Log
 
 	return {
 		filters,
-		searchTerm: params.get("logs_search") ?? "",
 		currentPage: readPositiveInteger(params.get("logs_page"), 1),
 		pageSize,
 		startTime: isCustomDate
@@ -120,7 +122,6 @@ export function writeLogsUrlState(params: URLSearchParams, state: LogsUrlState):
 		setOptionalParam(next, FILTER_URL_PARAMS[filterName], value, value !== "");
 	}
 
-	setOptionalParam(next, "logs_search", state.searchTerm, state.searchTerm !== "");
 	setOptionalParam(next, "logs_page", String(state.currentPage), state.currentPage !== 1);
 	setOptionalParam(next, "logs_page_size", String(state.pageSize), state.pageSize !== DEFAULT_LOGS_PAGE_SIZE);
 	setOptionalParam(next, "logs_sort_by", state.sortBy, state.sortBy !== "startTime");

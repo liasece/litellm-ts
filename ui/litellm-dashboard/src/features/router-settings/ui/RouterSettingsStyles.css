@@ -262,3 +262,13 @@
 .router-settings-page .ui-select:not(.ui-select--disabled):hover:focus-within {
 	border-color: var(--ui-primary);
 }
+
+.routing-table-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.routing-fallbacks > .ui-active-filters {
+	padding-top: 0;
+}

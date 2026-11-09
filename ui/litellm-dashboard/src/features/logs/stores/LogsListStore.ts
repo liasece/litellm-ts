@@ -177,13 +177,13 @@ export function createLogsListStore(options: LogsListOptions) {
 		state.currentPage = 1;
 		schedule();
 	}
-	function setSearch(value: string): void {
-		state.searchTerm = value;
+	function applyFilters(value: Partial<LogFilterState>): void {
+		state.filters = { ...state.filters, ...value };
 		state.currentPage = 1;
 		schedule(300);
 	}
-	function applyFilters(value: Partial<LogFilterState>): void {
-		state.filters = { ...state.filters, ...value };
+	function clearFilters(): void {
+		state.filters = createEmptyLogFilters();
 		state.currentPage = 1;
 		schedule(300);
 	}
@@ -196,7 +196,6 @@ export function createLogsListStore(options: LogsListOptions) {
 	function resetFilters(): void {
 		Object.assign(state, {
 			filters: createEmptyLogFilters(),
-			searchTerm: "",
 			currentPage: 1,
 			startTime: subtractInterval(24, "hours"),
 			endTime: localDateTime(),
@@ -277,8 +276,8 @@ export function createLogsListStore(options: LogsListOptions) {
 		refresh,
 		setPage,
 		setPageSize,
-		setSearch,
 		applyFilters,
+		clearFilters,
 		setSort,
 		resetFilters,
 		selectInterval,

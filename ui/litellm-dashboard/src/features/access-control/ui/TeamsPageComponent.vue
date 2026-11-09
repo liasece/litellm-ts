@@ -3,8 +3,6 @@ import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
 import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
-import UiInput from "../../platform/ui/UiInput.vue";
-import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiPagination from "../../platform/ui/UiPagination.vue";
@@ -22,6 +20,7 @@ import { createTeamsStore } from "../stores/TeamsStore";
 import { loadAccessCatalog } from "../data/AccessCatalogData";
 import { canManageTeams } from "../logic/AccessPermissionLogic";
 import { objectValue } from "../logic/ResourceDraftLogic";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import { emptyAccessCatalog, type AccessRecord, type AccessTeam } from "../support/AccessModels";
 import "../styles/AccessStyles.css";
 const auth = useAuthenticationStore(),
@@ -34,15 +33,63 @@ const auth = useAuthenticationStore(),
 const store = createTeamsStore(role.value, userId.value, () => application.initialize()),
 	{ state, rows } = store;
 const canCreate = computed(() => canManageTeams(role.value, userId.value, catalog.value.organizations));
-const columns = [
+const teamAliasFilter: readonly UiTableFilterField[] = [
+	{ key: "team_alias", label: "Team Alias", control: { kind: "text", placeholder: "Filter team alias" } },
+];
+const organizationFilter = computed<readonly UiTableFilterField[]>(() => [
+	{
+		key: "organization_id",
+		label: "Organization",
+		control: {
+			kind: "select",
+			searchable: true,
+			options: catalog.value.organizations.map((org) => ({
+				value: org.organization_id,
+				label: org.organization_alias || org.organization_id,
+			})),
+		},
+	},
+]);
+const columns = computed(() => [
 	{ key: "team_id", label: "Team ID", width: 170, ellipsis: true },
-	{ key: "team_alias", label: "Team Alias", sortable: true, ellipsis: true },
-	{ key: "organization", label: "Organization", width: 160, ellipsis: true },
+	{ key: "team_alias", label: "Team Alias", width: 150, sortable: true, ellipsis: true, filters: teamAliasFilter },
+	{
+		key: "organization",
+		label: "Organization",
+		width: 160,
+		ellipsis: true,
+		filters: organizationFilter.value,
+	},
 	{ key: "resources", label: "Resources", width: 240 },
 	{ key: "spend", label: "Spend / Budget", width: 200, sortable: true },
 	{ key: "created_at", label: "Created", width: 130, sortable: true, ellipsis: true },
 	{ key: "actions", label: "Actions", width: 120, align: "right" as const },
-];
+]);
+const activeFilters = computed<UiTableActiveFilter[]>(() => {
+	const entries: UiTableActiveFilter[] = [];
+	if (state.query) entries.push({ key: "team_alias", label: "Team Alias", value: state.query, text: state.query, match: "fuzzy" });
+	if (state.organizationId) {
+		const org = catalog.value.organizations.find((item) => item.organization_id === state.organizationId);
+		entries.push({
+			key: "organization_id",
+			label: "Organization",
+			value: state.organizationId,
+			text: org?.organization_alias || state.organizationId,
+			match: "exact",
+		});
+	}
+	return entries;
+});
+function applyTeamFilters(entries: readonly UiTableActiveFilter[]): void {
+	const update: { team_alias?: string; organization_id?: string } = {};
+	for (const entry of entries) update[entry.key as "team_alias" | "organization_id"] = entry.value;
+	void store.applyFilters(update);
+}
+function removeTeamFilter(key: string): void {
+	const update: { team_alias?: string; organization_id?: string } = {};
+	update[key as "team_alias" | "organization_id"] = "";
+	void store.applyFilters(update);
+}
 function team(row: AccessRecord) {
 	return row as AccessTeam;
 }
@@ -91,25 +138,6 @@ onBeforeUnmount(store.dispose);
 			</header>
 			<UiCard appearance="antd" :padding="0"
 				><div class="access-list-toolbar access-team-toolbar">
-					<div class="access-team-search">
-						<UiInput
-							:model-value="state.query"
-							placeholder="Search teams by name..."
-							clearable
-							@update:model-value="store.search"
-							><template #prefix><UiLucideIcon name="Search" :size="14" /></template
-							><template v-if="!state.query" #suffix
-								><span style="display: block; width: 12px; height: 12px" /></template></UiInput
-						><UiSelect
-							:model-value="state.organizationId || undefined"
-							@update:model-value="state.organizationId = String($event || '')"
-							:options="catalog.organizations.map((org) => ({ value: org.organization_id, label: org.organization_alias }))"
-							searchable
-							clearable
-							placeholder="All Organizations"
-							@change="store.filter"
-						/>
-					</div>
 					<div class="access-pagination">
 						<span>{{ state.total }} teams</span
 						><UiPagination
@@ -130,8 +158,14 @@ onBeforeUnmount(store.dispose);
 					:min-width="1000"
 					row-clickable
 					manual-sort
+					:sort-by="state.sortBy"
+					:sort-order="state.sortOrder"
+					:active-filters="activeFilters"
 					@row-click="open(team($event))"
 					@sort="store.sort($event.key, $event.order)"
+					@filter-change="applyTeamFilters"
+					@remove-filter="removeTeamFilter"
+					@clear-filters="store.clearFilters"
 					><template #header-team_alias><span class="access-team-header-label" title="Team Alias">Team Alias</span></template
 					><template #cell-team_id="{ row }"
 						><button type="button" class="access-id" :title="team(row).team_id" @click="open(team(row))">

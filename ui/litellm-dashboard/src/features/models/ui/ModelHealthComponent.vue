@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
+import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
+import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
+import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiCheckbox from "../../platform/ui/UiCheckbox.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
@@ -9,11 +14,51 @@ import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import { modelDisplayName } from "../logic/ModelDataLogic";
 import { modelString, type DisplayProxyModel, type ModelCatalog } from "../support/ModelModels";
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
-const healthColumns = [
-	{ key: "id", label: "Model ID", sortable: true },
-	{ key: "model", label: "Model Name", sortable: true },
-	{ key: "team", label: "Team Alias", sortable: true },
-	{ key: "status", label: "Health Status", sortable: true },
+const healthColumns: readonly {
+	key: string;
+	label: string;
+	sortable: boolean;
+	filters?: readonly UiTableFilterField[];
+}[] = [
+	{
+		key: "id",
+		label: "Model ID",
+		sortable: true,
+		filters: [{ key: "id", label: "Model ID", control: { kind: "text", placeholder: "Filter model ID" } }],
+	},
+	{
+		key: "model",
+		label: "Model Name",
+		sortable: true,
+		filters: [{ key: "model", label: "Model Name", control: { kind: "text", placeholder: "Filter model name" } }],
+	},
+	{
+		key: "team",
+		label: "Team Alias",
+		sortable: true,
+		filters: [{ key: "team", label: "Team Alias", control: { kind: "text", placeholder: "Filter team alias" } }],
+	},
+	{
+		key: "status",
+		label: "Health Status",
+		sortable: true,
+		filters: [
+			{
+				key: "status",
+				label: "Health Status",
+				control: {
+					kind: "select",
+					options: [
+						{ value: "healthy", label: "Healthy" },
+						{ value: "unhealthy", label: "Unhealthy" },
+						{ value: "checking", label: "Checking" },
+						{ value: "unknown", label: "Unknown" },
+						{ value: "none", label: "Not checked" },
+					],
+				},
+			},
+		],
+	},
 	{ key: "error", label: "Error Details", sortable: false },
 	{ key: "lastCheck", label: "Last Check", sortable: true },
 	{ key: "lastSuccess", label: "Last Success", sortable: true },
@@ -25,7 +70,8 @@ const selected = ref<string[]>([]),
 	detail = ref<{ id: string; success: boolean } | null>(null),
 	warning = ref(false),
 	sortKey = ref(""),
-	descending = ref(false);
+	sortOrder = ref<"asc" | "desc" | null>(null),
+	activeFilters = ref<UiTableActiveFilter[]>([]);
 const ids = computed(() => props.models.map((model) => modelString(model.model_info.id)).filter(Boolean));
 const allSelected = computed(() => ids.value.length > 0 && ids.value.every((id) => selected.value.includes(id)));
 function toggle(id: string, checked: boolean) {
@@ -42,27 +88,51 @@ async function run() {
 	if (selected.value.length > 0 && selected.value.length < ids.value.length) await props.health.selected(selected.value);
 	else await props.health.all();
 }
-const rows = computed(() =>
-	[...props.models].sort((a, b) => {
-		if (!sortKey.value) return 0;
-		function value(model: DisplayProxyModel) {
-			const id = modelString(model.model_info.id),
-				status = props.health.state.statuses[id];
-			if (sortKey.value === "id") return id;
-			if (sortKey.value === "model") return modelDisplayName(model);
-			if (sortKey.value === "team") return modelString(model.model_info.team_id);
-			if (sortKey.value === "status")
-				return String(
-					({ healthy: 0, checking: 1, unknown: 2, unhealthy: 3 } as Record<string, number>)[status?.status ?? "none"] ?? 4,
-				);
-			return status?.[sortKey.value === "lastCheck" ? "lastCheck" : "lastSuccess"] ?? "None";
-		}
-		return value(a).localeCompare(value(b), undefined, { numeric: true }) * (descending.value ? -1 : 1);
-	}),
-);
-function sort(key: string) {
-	descending.value = key === sortKey.value ? !descending.value : false;
-	sortKey.value = key;
+function healthValue(model: DisplayProxyModel, key: string): string {
+	const id = modelString(model.model_info.id),
+		status = props.health.state.statuses[id];
+	if (key === "id") return id;
+	if (key === "model") return modelDisplayName(model);
+	if (key === "team")
+		return (
+			props.catalog.teams.find((team) => team.team_id === model.model_info.team_id)?.team_alias ||
+			modelString(model.model_info.team_id)
+		);
+	if (key === "status") return status?.status ?? "none";
+	return String(status?.[key === "lastCheck" ? "lastCheck" : "lastSuccess"] ?? "None");
+}
+const filteredModels = computed(() => filterRowsByFields(props.models, activeFilters.value, (model, key) => healthValue(model, key)));
+const rows = computed(() => {
+	if (!sortKey.value || !sortOrder.value) return filteredModels.value;
+	const direction = sortOrder.value === "asc" ? 1 : -1;
+	const statusRank = { healthy: 0, checking: 1, unknown: 2, unhealthy: 3, none: 4 } as Record<string, number>;
+	return [...filteredModels.value].sort((a, b) => {
+		const left = sortKey.value === "status" ? (statusRank[healthValue(a, "status")] ?? 4) : healthValue(a, sortKey.value);
+		const right = sortKey.value === "status" ? (statusRank[healthValue(b, "status")] ?? 4) : healthValue(b, sortKey.value);
+		if (typeof left === "number" && typeof right === "number") return (left - right) * direction;
+		return String(left).localeCompare(String(right), undefined, { numeric: true }) * direction;
+	});
+});
+function sortState(key: string): "asc" | "desc" | false {
+	return sortKey.value === key ? (sortOrder.value ?? false) : false;
+}
+function changeSort(key: string, order: "asc" | "desc" | false) {
+	sortKey.value = order ? key : "";
+	sortOrder.value = order || null;
+}
+const emptyText = computed(() => (activeFilters.value.length ? "No models match the current filters" : "No deployments available"));
+function applyHealthFilters(entries: readonly UiTableActiveFilter[]): void {
+	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
+	for (const entry of entries) {
+		if (entry.value.trim()) next.push({ ...entry, value: entry.value.trim(), text: entry.text || entry.value.trim() });
+	}
+	activeFilters.value = next;
+}
+function removeHealthFilter(key: string): void {
+	activeFilters.value = activeFilters.value.filter((filter) => filter.key !== key);
+}
+function clearHealthFilters(): void {
+	activeFilters.value = [];
 }
 const selectedModel = computed(() => props.models.find((model) => model.model_info.id === detail.value?.id));
 const selectedStatus = computed(() => props.health.state.statuses[detail.value?.id ?? ""]);
@@ -89,6 +159,7 @@ function status(id: string) {
 				>
 			</div>
 		</header>
+		<UiActiveFilters v-if="activeFilters.length" :filters="activeFilters" @remove="removeHealthFilter" @clear="clearHealthFilters" />
 		<div class="model-table-overflow model-health-table-wrap">
 			<table class="model-simple-table model-health-table" :style="{ width: healthColumns.length * 150 + 'px' }">
 				<thead>
@@ -102,22 +173,21 @@ function status(id: string) {
 									label="Select all models"
 									@update:model-value="all"
 								/>
-								<button v-if="column.sortable" class="model-health-sort-button" @click="sort(column.key)">
-									<span>{{ column.label }}</span>
-									<UiHeroIcon
-										:name="
-											sortKey === column.key
-												? descending
-													? 'ChevronDownIcon'
-													: 'ChevronUpIcon'
-												: 'SwitchVerticalIcon'
-										"
-										:size="16"
-										class="model-health-sort-icon"
-										:class="{ 'is-active': sortKey === column.key }"
-									/>
-								</button>
+								<UiTableSortLabel
+									v-if="column.sortable"
+									:label="column.label"
+									:state="sortState(column.key)"
+									:initial="column.key === 'lastCheck' || column.key === 'lastSuccess' ? 'desc' : 'asc'"
+									@change="changeSort(column.key, $event)"
+								/>
 								<span v-else>{{ column.label }}</span>
+								<UiHeaderFilterButton
+									v-if="column.filters?.length"
+									:label="column.label"
+									:fields="column.filters"
+									:active="activeFilters.filter((filter) => column.filters?.some((field) => field.key === filter.key))"
+									@change="applyHealthFilters"
+								/>
 							</div>
 						</th>
 					</tr>
@@ -220,7 +290,7 @@ function status(id: string) {
 						</td>
 					</tr>
 					<tr v-if="!rows.length">
-						<td colspan="8" class="model-table-empty">No deployments available</td>
+						<td colspan="8" class="model-table-empty">{{ emptyText }}</td>
 					</tr>
 				</tbody>
 			</table>

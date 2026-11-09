@@ -63,10 +63,9 @@ export interface SessionLogsOptions {
 	includeContent?: boolean;
 	signal?: AbortSignal;
 }
-export type LogsOptionalColumnId = "call_type" | "request_id" | "team_name" | "key_hash" | "user" | "end_user" | "request_tags";
+export type LogsOptionalColumnId = "call_type" | "team_name" | "key_hash" | "user" | "end_user" | "request_tags";
 export const LOGS_OPTIONAL_COLUMNS: readonly { id: LogsOptionalColumnId; label: string }[] = [
 	{ id: "call_type", label: "Type" },
-	{ id: "request_id", label: "Request ID" },
 	{ id: "team_name", label: "Team Name" },
 	{ id: "key_hash", label: "Key Hash" },
 	{ id: "user", label: "Internal User" },

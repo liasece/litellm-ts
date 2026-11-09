@@ -17,7 +17,6 @@ export function createModelsStore(api: ModelsApi = modelsApi) {
 		sortOrder: "asc" as "asc" | "desc",
 		loading: false,
 		error: "",
-		filtersOpen: false,
 		expanded: [] as string[],
 		widths: {} as Record<string, number>,
 	});
@@ -109,8 +108,13 @@ export function createModelsStore(api: ModelsApi = modelsApi) {
 	function toggleExpanded(id: string) {
 		state.expanded = state.expanded.includes(id) ? state.expanded.filter((value) => value !== id) : [...state.expanded, id];
 	}
-	function toggleFilters() {
-		state.filtersOpen = !state.filtersOpen;
+	function clearFilters() {
+		state.search = "";
+		state.group = "all";
+		state.accessGroup = "";
+		state.page = 1;
+		if (timer) clearTimeout(timer);
+		void load();
 	}
 	function setView(value: string) {
 		state.viewMode = value;
@@ -146,7 +150,7 @@ export function createModelsStore(api: ModelsApi = modelsApi) {
 		displayed,
 		setColumnWidth,
 		toggleExpanded,
-		toggleFilters,
+		clearFilters,
 		setView,
 		setGroup,
 		setAccessGroup,
