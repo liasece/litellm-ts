@@ -32,8 +32,6 @@ export function registerUtilRoutes(router: Router): void {
 			model_info: { ...entry, key: model, supported_openai_params: deriveSupportedOpenaiParams(resolved, entry, model) },
 		};
 	});
-	registerRoute(router, { method: "post", path: "/utils/token_counter" }, notImpl("Token Counter"));
-
 	registerRoute(router, { method: "get", path: "/utils/supported_openai_params" }, (req) => {
 		const modelParam = req.query["model"];
 		const model = typeof modelParam === "string" ? modelParam : undefined;
@@ -49,8 +47,6 @@ export function registerUtilRoutes(router: Router): void {
 		const entry = lookupModelCostEntry(model);
 		return { supported_openai_params: deriveSupportedOpenaiParams(provider, entry, strippedModel) };
 	});
-
-	registerRoute(router, { method: "post", path: "/utils/transform_request" }, notImpl("Transform Request"));
 }
 
 /**
@@ -78,10 +74,4 @@ function resolveModelProvider(model: string): { provider: string | null; strippe
 	const entry = lookupModelCostEntry(model);
 	const entryProvider = typeof entry?.["litellm_provider"] === "string" ? entry["litellm_provider"] : null;
 	return { provider: entryProvider, strippedModel: model };
-}
-
-function notImpl(name: string) {
-	return () => {
-		throw new ApiError(503, `${name} 暂未实现`);
-	};
 }

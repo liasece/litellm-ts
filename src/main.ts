@@ -49,38 +49,13 @@ import { createModelManagementRoutes } from "./management/ModelManagementEndpoin
 // 消费端点
 import { registerSpendManagementEndpoints } from "./spend/SpendManagementEndpoint";
 
-// Stub 端点（28 个 LiteLLM API 表面）
-import { registerAssistantsRoutes } from "./proxy/AssistantsEndpoints";
-import { registerBatchesRoutes } from "./proxy/BatchesEndpoints";
-import { registerFilesRoutes } from "./proxy/FilesEndpoints";
-import { registerFineTuningRoutes } from "./proxy/FineTuningEndpoints";
-import { registerVectorStoreRoutes } from "./proxy/VectorStoreEndpoints";
+// 兼容端点（WebUI 支撑、别名与保留 API 表面）
 import { registerResponsesApiRoutes } from "./proxy/ResponsesApiEndpoints";
-import { registerRerankRoutes } from "./proxy/RerankEndpoints";
-import { registerRealtimeRoutes } from "./proxy/RealtimeEndpoints";
-import { registerAgentRoutes } from "./proxy/AgentEndpoints";
-import { registerGoogleRoutes } from "./proxy/GoogleEndpoints";
-import { registerMCPRoutes } from "./proxy/MCPEndpoints";
-import { registerSCIMRoutes } from "./proxy/SCIMEndpoints";
 import { registerSearchToolsRoutes } from "./proxy/SearchToolsEndpoints";
-import { registerPromptRoutes } from "./proxy/PromptEndpoints";
-import { registerPolicyRoutes } from "./proxy/PolicyEndpoints";
 import { registerCredentialRoutes } from "./proxy/CredentialEndpoints";
-import { registerToolRoutes } from "./proxy/ToolEndpoints";
-import { registerComplianceRoutes } from "./proxy/ComplianceEndpoints";
-import { registerAnthropicSkillsRoutes } from "./proxy/AnthropicSkillsEndpoints";
-import { registerClaudeCodeMarketplaceRoutes } from "./proxy/ClaudeCodeMarketplaceEndpoints";
 import { registerUtilRoutes } from "./proxy/UtilEndpoints";
 import { registerLoginRoutes } from "./proxy/LoginEndpoints";
 import { webUiCsrfProtection } from "./auth/UserApiKeyAuth";
-import { registerSSORoutes } from "./proxy/SSOEndpoints";
-import { registerSpendIntegrationRoutes } from "./proxy/SpendIntegrationEndpoints";
-import { registerConfigOverridesRoutes } from "./proxy/ConfigOverridesEndpoints";
-import { registerEmailEventsRoutes } from "./proxy/EmailEventsEndpoints";
-import { registerIpAllowlistRoutes } from "./proxy/IpAllowlistEndpoints";
-import { registerOCRVideoContainerRoutes } from "./proxy/OCRVideoContainerEndpoints";
-import { registerAnalyticsRoutes } from "./proxy/AnalyticsEndpoints";
-import { registerAlertingRoutes } from "./proxy/AlertingEndpoints";
 import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
@@ -413,7 +388,7 @@ export class LiteLLMServer {
 		logger.info("消费端点已注册");
 	}
 
-	// ── Stub 端点（28 个 LiteLLM API 表面） ──
+	// ── 兼容端点（WebUI 支撑与保留 API 表面） ──
 	private _registerStubRoutes(app: express.Express, container: ServiceContainer): void {
 		const stubRouter = express.Router();
 		stubRouter.use(codingClientModelMiddleware(container.router));
@@ -439,36 +414,11 @@ export class LiteLLMServer {
 		// Cost Tracking：折扣/保证金配置读写与费用估算（价格口径与 /model_group/info 一致）
 		registerCostTrackingRoutes(stubRouter, container.db.db, container.router);
 
-		registerAssistantsRoutes(stubRouter);
-		registerBatchesRoutes(stubRouter);
-		registerFilesRoutes(stubRouter);
-		registerFineTuningRoutes(stubRouter);
-		registerVectorStoreRoutes(stubRouter);
 		registerCliProxyNativeResponsesRoutes(stubRouter, container.router, container.cliProxyRuntime, container.db.db);
 		registerResponsesApiRoutes(stubRouter, container.router, container.db.db);
-		registerRerankRoutes(stubRouter);
-		registerRealtimeRoutes(stubRouter);
-		registerAgentRoutes(stubRouter);
-		registerGoogleRoutes(stubRouter);
-		registerMCPRoutes(stubRouter);
-		registerSCIMRoutes(stubRouter);
 		registerSearchToolsRoutes(stubRouter, container.db.db);
-		registerPromptRoutes(stubRouter);
-		registerPolicyRoutes(stubRouter);
 		registerCredentialRoutes(stubRouter, container.credentialService, container.router);
-		registerToolRoutes(stubRouter);
-		registerComplianceRoutes(stubRouter);
-		registerAnthropicSkillsRoutes(stubRouter);
-		registerClaudeCodeMarketplaceRoutes(stubRouter, container.db.db);
 		registerUtilRoutes(stubRouter);
-		registerSSORoutes(stubRouter);
-		registerSpendIntegrationRoutes(stubRouter);
-		registerConfigOverridesRoutes(stubRouter);
-		registerEmailEventsRoutes(stubRouter);
-		registerIpAllowlistRoutes(stubRouter);
-		registerOCRVideoContainerRoutes(stubRouter);
-		registerAnalyticsRoutes(stubRouter);
-		registerAlertingRoutes(stubRouter);
 
 		app.use(stubRouter);
 		logger.info("Stub 端点已注册");

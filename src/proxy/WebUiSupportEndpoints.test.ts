@@ -343,13 +343,6 @@ describe("WebUiSupport 契约", () => {
 			expect(res.body).toEqual({ dynamic: { input_cost_per_token: 1, output_cost_per_token: 2 } });
 		});
 
-		it("/public/model_hub/info 应包含 litellm_version", async () => {
-			const app = buildPublicApp(makeConfig());
-			const res = await request(app).get("/public/model_hub/info");
-			expect(res.status).toBe(200);
-			expect(res.body.litellm_version).toBeDefined();
-		});
-
 		it("/get_image 自定义地址返回非图片内容时应回退内置 logo", async () => {
 			const { db } = makeMockConfigDb({
 				litellm_settings: {
@@ -718,43 +711,6 @@ describe("WebUiSupport 契约", () => {
 			expect(themeRes.body.values.logo_url).toBe("https://example.com/logo.png");
 
 			delete process.env.UI_LOGO_PATH;
-		});
-
-		it("/budget/settings 缺 budget_id 应返回 422 FastAPI 风格（对齐 Python）", async () => {
-			const app = buildAuthedApp(makeConfig());
-			const res = await request(app).get("/budget/settings");
-			expect(res.status).toBe(422);
-			expect(Array.isArray(res.body.detail)).toBe(true);
-			expect(res.body.detail[0]).toMatchObject({
-				loc: ["query", "budget_id"],
-				msg: "Field required",
-				type: "missing",
-			});
-		});
-
-		it("/budget/settings 带 budget_id 应返回 ConfigList 字段数组（对齐 Python 字段顺序与形状）", async () => {
-			const app = buildAuthedApp(makeConfig());
-			const res = await request(app).get("/budget/settings?budget_id=nonexistent");
-			expect(res.status).toBe(200);
-			expect(Array.isArray(res.body)).toBe(true);
-			expect(res.body.map((f: { field_name: string }) => f.field_name)).toEqual([
-				"max_budget",
-				"soft_budget",
-				"max_parallel_requests",
-				"tpm_limit",
-				"rpm_limit",
-				"budget_duration",
-				"model_max_budget",
-			]);
-			for (const field of res.body) {
-				expect(typeof field.field_type).toBe("string");
-				expect(typeof field.field_description).toBe("string");
-				expect(field.field_value).toBeNull();
-				expect(field.stored_in_db).toBe(true);
-				expect(field.field_default_value).toBeNull();
-				expect(field.premium_field).toBe(false);
-				expect(field.nested_fields).toBeNull();
-			}
 		});
 
 		it("/active/callbacks 空配置应返回 Python 同构的空态响应", async () => {

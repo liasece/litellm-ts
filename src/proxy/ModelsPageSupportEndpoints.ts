@@ -2,7 +2,7 @@
  * Models 页面支撑端点
  *
  * Python LiteLLM Dashboard 的 Models 页面需要一批带鉴权的端点来获取
- * 模型详情、模型组信息、成本映射和 pass-through 配置。
+ * 模型详情、模型组信息和成本映射。
  * 这些端点缺失时 WebUI 会出现 client-side exception。
  * 协议源码：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/proxy_server.py
  *
@@ -987,46 +987,6 @@ export function registerModelsPageSupportRoutes(
 		);
 		return buildModelGroupInfoResponse(deployments, costMapService.getSnapshot().map, builtinCapabilities);
 	});
-
-	// ── /config/pass_through_endpoint ───────────────────────
-	//
-	// 当前为占位实现（STUB）。TS 端尚未实现 pass-through 端点的持久化与转发，
-	// 暂以兼容 WebUI 消费契约的最小响应体返回，避免触发前端 `.find` 抛错。
-	//
-	// 响应 shape 与 Python LiteLLM 对齐：
-	//   GET    /config/pass_through_endpoint
-	//     → { endpoints: passThroughItem[] }
-	//   GET    /config/pass_through_endpoint/team/:teamId
-	//     → { endpoints: passThroughItem[] }（按团队过滤；stub 不过滤，返回空）
-	//   POST   /config/pass_through_endpoint
-	//     → { success: true, endpoint: passThroughItem | undefined }
-	//   DELETE /config/pass_through_endpoint/:endpointPath
-	//     → { success: true, endpoint_id: string | undefined }
-	//
-	// 注意：
-	//   1. 这些 stub 不实际存储端点配置 — 重启后状态丢失。
-	//   2. WebUI 拿到空 endpoints 时会渲染空表格，这是预期行为。
-	//   3. 等 pass_through_endpoints 完整实现时，把内存 / DB 接入此处即可。
-	//   4. 鉴权要求由主 router 统一保证（需 PROXY_ADMIN 或 team 角色），不需要
-	//      在每个 stub 中重复校验。
-
-	/** 获取所有 pass-through 端点配置（stub：始终返回空列表） */
-	registerRoute(router, { method: "get", path: "/config/pass_through_endpoint" }, () => ({ endpoints: [] }));
-
-	/** 获取指定团队的 pass-through 端点配置（stub：不实现按团队过滤） */
-	registerRoute(router, { method: "get", path: "/config/pass_through_endpoint/team/:teamId" }, () => ({ endpoints: [] }));
-
-	/** 创建 pass-through 端点（stub：不持久化） */
-	registerRoute(router, { method: "post", path: "/config/pass_through_endpoint" }, (_req, _res) => ({
-		success: true,
-		endpoint: undefined,
-	}));
-
-	/** 删除 pass-through 端点（stub：不持久化） */
-	registerRoute(router, { method: "delete", path: "/config/pass_through_endpoint/:endpointPath" }, (_req, _res) => ({
-		success: true,
-		endpoint_id: undefined,
-	}));
 
 	// ── /config/field/info ──────────────────────────────────
 

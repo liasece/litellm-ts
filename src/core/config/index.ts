@@ -79,8 +79,6 @@ const LiteLLMSettingsSchema = z.object({
 	maxRetries: z.number().default(3),
 	/** 请求超时时间（毫秒） */
 	requestTimeoutMs: z.number().default(60000),
-	/** 是否缓存模型配置 */
-	cacheModelConfig: z.boolean().default(true),
 });
 
 /**
@@ -281,8 +279,6 @@ export interface LiteLLMSettings {
 	readonly maxRetries: number;
 	/** 请求超时时间（毫秒） */
 	readonly requestTimeoutMs: number;
-	/** 是否缓存模型配置 */
-	readonly cacheModelConfig: boolean;
 }
 
 /**

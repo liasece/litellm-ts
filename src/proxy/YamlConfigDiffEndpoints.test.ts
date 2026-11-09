@@ -30,7 +30,7 @@ function makeConfig(): ServiceConfig {
 		server: { port: 4000, host: "0.0.0.0" },
 		logging: { level: "info" },
 		database: { host: "localhost", port: 5432, database: "litellm", user: "litellm", password: "litellm" },
-		litellmSettings: { defaultModel: null, maxRetries: 0, requestTimeoutMs: null, cacheModelConfig: false },
+		litellmSettings: { defaultModel: null, maxRetries: 0, requestTimeoutMs: null },
 		routerSettings: {
 			strategy: "cost-based",
 			healthCheckIntervalSec: 300,

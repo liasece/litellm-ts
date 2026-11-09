@@ -6,8 +6,8 @@ import { usageDateRange, isUsageAdmin } from "../spend/UsageQuery";
  * 这些端点不是模型代理核心路径，但缺失会导致复制来的 WebUI 大量 401/404。
  *
  * 本文件拆分为两类：
- * - 公开端点：WebUI 启动时无 cookie 也要拉取（model cost map、provider fields、
- *   model_hub info 等），注册到 publicRouter。
+ * - 公开端点：WebUI 启动时无 cookie 也要拉取（model cost map、provider fields 等），
+ *   注册到 publicRouter。
  * - 鉴权端点：依赖 token / master_key 的配置/列表，注册到鉴权 router。
  */
 import * as fs from "node:fs";
@@ -68,8 +68,6 @@ function assertProxyAdmin(req: { readonly auth?: UserAPIKeyAuth }): void {
 
 const DAILY_ACTIVITY_DEFAULT_PAGE = 1;
 const DAILY_ACTIVITY_TOTAL_PAGES_EMPTY = 1;
-/** TypeScript 代理自报版本号（仅文件内使用）。WebUI 把它作为 litellm_version 字面量渲染。 */
-const TS_PROXY_VERSION = "0.0.1-ts";
 
 /**
  * 模型成本映射表原始 JSON 文本（对齐 Python `litellm.model_cost` 全量内容，
@@ -755,37 +753,6 @@ interface ProviderCreateInfo {
 }
 
 /**
- * Agent 类型字段元数据：WebUI 用它渲染 Agent Hub 创建表单。
- * @see https://github.com/BerriAI/litellm/blob/main/ui/litellm-dashboard/src/components/networking.tsx AgentCreateInfo
- */
-interface AgentCredentialFieldMetadata {
-	readonly key: string;
-	readonly label: string;
-	readonly placeholder?: string | null;
-	readonly tooltip?: string | null;
-	readonly required?: boolean;
-	readonly field_type?: CredentialFieldType;
-	readonly options?: string[] | null;
-	readonly default_value?: string | null;
-	readonly include_in_litellm_params?: boolean;
-}
-
-/**
- * Agent 创建表单描述，返回给 WebUI agent 字段发现接口。
- * @see https://github.com/BerriAI/litellm/blob/main/ui/litellm-dashboard/src/components/networking.tsx AgentCreateInfo
- */
-interface AgentCreateInfo {
-	readonly agent_type: string;
-	readonly agent_type_display_name: string;
-	readonly description?: string | null;
-	readonly logo_url?: string | null;
-	readonly credential_fields: AgentCredentialFieldMetadata[];
-	readonly litellm_params_template?: Record<string, string> | null;
-	readonly model_template?: string | null;
-	readonly use_a2a_form_fields?: boolean;
-}
-
-/**
  * Provider 凭据字段清单（与 Python `litellm/proxy/public_endpoints/provider_create_fields.json`
  * 同数据，109 个 provider），经 /public/providers/fields 返回。
  * JSON 中 field_type 为字符串字面量，与 CredentialFieldType 值一致，此处断言为枚举类型。
@@ -891,57 +858,6 @@ function buildActiveCallbacksResponse(config: ServiceConfig): ActiveCallbacksRes
 		"litellm.request_timeout": config.litellmSettings.requestTimeoutMs / 1000,
 	};
 }
-
-/**
- * /budget/settings 返回的可配置预算字段清单
- * （对齐 Python budget_settings：allowed_args 过滤 BudgetNewRequest.model_fields，
- * litellm/proxy/management_endpoints/budget_management_endpoints.py:252-278；
- * 字段顺序与描述以 Python 实测响应为准）。
- * TS 端预算表无数据（/budget/list 恒为空），field_value 恒为 null ——
- * 与 Python 查询不存在 budget_id 时的响应一致。
- */
-const BUDGET_SETTINGS_FIELDS: ReadonlyArray<{
-	readonly field_name: string;
-	readonly field_type: string;
-	readonly field_description: string;
-}> = [
-	{
-		field_name: "max_budget",
-		field_type: "Float",
-		field_description: "Requests will fail if this budget (in USD) is exceeded.",
-	},
-	{
-		field_name: "soft_budget",
-		field_type: "Float",
-		field_description: "Requests will NOT fail if this is exceeded. Will fire alerting though.",
-	},
-	{
-		field_name: "max_parallel_requests",
-		field_type: "Integer",
-		field_description: "Max concurrent requests allowed for this budget id.",
-	},
-	{
-		field_name: "tpm_limit",
-		field_type: "Integer",
-		field_description: "Max tokens per minute, allowed for this budget id.",
-	},
-	{
-		field_name: "rpm_limit",
-		field_type: "Integer",
-		field_description: "Max requests per minute, allowed for this budget id.",
-	},
-	{
-		field_name: "budget_duration",
-		field_type: "String",
-		field_description: "Max duration budget should be set for (e.g. '1hr', '1d', '28d')",
-	},
-	{
-		field_name: "model_max_budget",
-		field_type: "Object",
-		field_description:
-			"Max budget for each model (e.g. {'gpt-4o': {'max_budget': '0.0000001', 'budget_duration': '1d', 'tpm_limit': 1000, 'rpm_limit': 1000}})",
-	},
-];
 
 const UI_SETTINGS_FIELD_SCHEMA: UiSettingsResponse["field_schema"] = {
 	description: "Configuration for UI-specific flags",
@@ -1101,37 +1017,9 @@ export function registerWebUiSupportPublicRoutes(router: Router, costMapService:
 		res.type("application/json").send(costMapService.getSnapshot().rawJson);
 	});
 
-	/** 公开博客文章列表（无鉴权） */
-	registerRoute(router, { method: "get", path: "/public/litellm_blog_posts" }, () => ({ posts: [] }));
-
-	/** 公开模型中心（WebUI AI Hub "Model Hub" tab） */
-	registerRoute(router, { method: "get", path: "/public/model_hub" }, () => []);
-
-	/** 公开 Agent 中心（WebUI AI Hub "Agent Hub" tab） */
-	registerRoute(router, { method: "get", path: "/public/agent_hub" }, () => []);
-
-	/** 公开 MCP 中心（WebUI AI Hub "MCP Hub" tab） */
-	registerRoute(router, { method: "get", path: "/public/mcp_hub" }, () => []);
-
-	/** Claude Code 插件市场（WebUI AI Hub "Claude Code Plugin Marketplace" tab） */
-	registerRoute(router, { method: "get", path: "/claude-code/marketplace.json" }, () => ({ plugins: [] }));
-
 	/** Provider 凭据字段元数据，WebUI 用于动态渲染 provider 特定的表单 */
 	registerRoute(router, { method: "get", path: "/public/providers/fields" }, (): readonly ProviderCreateInfo[] => PROVIDER_CREATE_FIELDS);
 
-	/** Agent 类型字段元数据，WebUI 用于动态渲染 agent 特定的表单 */
-	registerRoute(router, { method: "get", path: "/public/agents/fields" }, (): AgentCreateInfo[] => []);
-
-	/**
-	 * 公开模型中心信息。
-	 * @see https://github.com/BerriAI/litellm/blob/main/ui/litellm-dashboard/src/components/networking.tsx modelHubInfoCall
-	 */
-	registerRoute(router, { method: "get", path: "/public/model_hub/info" }, () => ({
-		docs_title: "LiteLLM Proxy",
-		custom_docs_description: null,
-		litellm_version: TS_PROXY_VERSION,
-		useful_links: {},
-	}));
 }
 
 /** 管理端校验执行链所需的命名 Credential 列表。 */
@@ -1237,11 +1125,10 @@ export function registerWebUiSupportRoutes(
 	litellmRouter?: LiteLLMRouter,
 	credentialService?: BuiltinCapabilityCredentialLister,
 ): void {
-	const emptyList = (): unknown[] => [];
 	const configRepository = new ConfigRepository(db);
 
-	// 注：/get/ui_settings、/get/ui_theme_settings、/sso/get/ui_settings、/get_image、
-	// /public/litellm_blog_posts 等无需鉴权的端点已移到 registerWebUiSupportPublicRoutes
+	// 注：/get/ui_settings、/get/ui_theme_settings、/sso/get/ui_settings、/get_image
+	// 等无需鉴权的端点已移到 registerWebUiSupportPublicRoutes
 
 	/**
 	 * 列出某类配置的可用字段及当前值。
@@ -1587,7 +1474,6 @@ export function registerWebUiSupportRoutes(
 			theme_config: themeData,
 		};
 	});
-	registerRoute(router, { method: "get", path: "/callbacks/configs" }, emptyList);
 	/**
 	 * WebUI 侧栏用量指示器：已用用户数/团队数。
 	 * 对齐 Python get_available_users / 前端 UsageIndicator 读取的字段；
@@ -1621,44 +1507,12 @@ export function registerWebUiSupportRoutes(
 	}));
 	// /team/list、/v2/team/list 由 createTeamRoutes（managementRouter）提供真实 DB 查询。
 	// /organization/list 由 createOrganizationRoutes（managementRouter）提供真实 DB 查询。
-	registerRoute(router, { method: "get", path: "/project/list" }, emptyList);
-	registerRoute(router, { method: "get", path: "/tag/list" }, emptyList);
-	registerRoute(router, { method: "get", path: "/access_groups/list" }, emptyList);
-	registerRoute(router, { method: "get", path: "/v1/access_group" }, emptyList);
-	registerRoute(router, { method: "get", path: "/in_product_nudges" }, emptyList);
-	/** 预算列表（WebUI Budgets 页面 — 直接返回数组） */
-	registerRoute(router, { method: "get", path: "/budget/list" }, emptyList);
-
-	/**
-	 * 预算配置字段清单（WebUI Budgets 页面字段渲染）。
-	 * 对齐 Python budget_settings：缺 budget_id → 422 FastAPI 风格
-	 * { detail: [{ loc, msg, type }] }；返回 ConfigList 数组。
-	 */
-	registerRoute(router, { method: "get", path: "/budget/settings" }, (req) => {
-		const budgetId = req.query.budget_id as string | undefined;
-		if (budgetId === undefined) {
-			throw ApiError.unprocessableEntity([{ loc: ["query", "budget_id"], msg: "Field required", type: "missing" }]);
-		}
-		return BUDGET_SETTINGS_FIELDS.map((field) => ({
-			field_name: field.field_name,
-			field_type: field.field_type,
-			field_description: field.field_description,
-			field_value: null,
-			stored_in_db: true,
-			field_default_value: null,
-			premium_field: false,
-			nested_fields: null,
-		}));
-	});
 
 	/**
 	 * 当前生效回调清单（对齐 Python active_callbacks）。
 	 * Python 各 litellm.* 列表元素为回调对象的 str()；TS 端以配置名表示。
 	 */
 	registerRoute(router, { method: "get", path: "/active/callbacks" }, () => buildActiveCallbacksResponse(config));
-	registerRoute(router, { method: "get", path: "/guardrails/list" }, () => ({ guardrails: [] }));
-	registerRoute(router, { method: "get", path: "/v2/guardrails/list" }, () => ({ guardrails: [] }));
-	registerRoute(router, { method: "get", path: "/policies/list" }, () => ({ policies: [] }));
 	/**
 	 * 当前 WebUI 会话用户信息；登录后全局 layout 用它决定权限与菜单。
 	 * @see https://github.com/BerriAI/litellm/blob/main/ui/litellm-dashboard/src/components/networking.tsx userInfoCall
@@ -1679,71 +1533,6 @@ export function registerWebUiSupportRoutes(
 		sso_user_id: null,
 		teams: [],
 	}));
-	registerRoute(router, { method: "get", path: "/v1/agents" }, () => []);
-	registerRoute(router, { method: "get", path: "/prompts/list" }, () => ({ prompts: [], data: [] }));
-
-	// ── Playground 页面依赖的列表端点 ──
-
-	/** 列出 Vector Stores，WebUI Playground 选择器使用 */
-	registerRoute(router, { method: "get", path: "/vector_store/list" }, () => []);
-
-	/** 列出 MCP Servers（WebUI Playground MCP 列表） */
-	registerRoute(router, { method: "get", path: "/v1/mcp/server" }, () => []);
-
-	// ── 用户设置端点 ──
-
-	/** 内部用户设置（UI 偏好等） */
-	registerRoute(router, { method: "get", path: "/get/internal_user_settings" }, () => ({
-		settings: {},
-	}));
-
-	/** 更新内部用户设置 */
-	registerRoute(router, { method: "patch", path: "/update/internal_user_settings" }, () => ({
-		success: true,
-	}));
-
-	// ── Guardrails 页面依赖的子端点 ──
-
-	/** Guardrails UI 添加表单设置（Presidio / Bedrock / OpenAI 等 provider 通用选项） */
-	registerRoute(router, { method: "get", path: "/guardrails/ui/add_guardrail_settings" }, () => ({}));
-
-	/** Guardrail provider 特定参数（不同 provider 表单字段元数据） */
-	registerRoute(router, { method: "get", path: "/guardrails/ui/provider_specific_params" }, () => ({}));
-
-	/**
-	 * 用户提交的 Guardrails（WebUI Guardrails 页面 "Submitted Guardrails" tab）。
-	 * @see https://github.com/BerriAI/litellm/blob/main/ui/litellm-dashboard/src/components/networking.tsx
-	 */
-	registerRoute(router, { method: "get", path: "/guardrails/submissions" }, () => ({
-		items: [],
-		total: 0,
-		pending_review: 0,
-		active: 0,
-		rejected: 0,
-	}));
-
-	/**
-	 * Guardrails Monitor 概览（按时间范围聚合评估次数、阻止数、通过率等）。
-	 * @see https://github.com/BerriAI/litellm/blob/main/ui/litellm-dashboard/src/components/networking.tsx
-	 */
-	registerRoute(router, { method: "get", path: "/guardrails/usage/overview" }, () => ({
-		total_evaluations: 0,
-		blocked_requests: 0,
-		passed_requests: 0,
-		pass_rate: 0,
-		avg_latency_ms: 0,
-		active_guardrails: 0,
-		timeseries: [],
-		guardrails: [],
-	}));
-
-	// ── Policies 页面依赖的子端点 ──
-
-	/** 策略模板（WebUI Policies 页面 "Templates" tab，期望纯数组） */
-	registerRoute(router, { method: "get", path: "/policy/templates" }, emptyList);
-
-	/** 策略附件列表（WebUI Policies 页面 "Attachments" tab，期望纯数组） */
-	registerRoute(router, { method: "get", path: "/policies/attachments/list" }, emptyList);
 
 	// ── Usage / Logs 页面依赖的子端点 ──
 
@@ -1829,9 +1618,6 @@ export function registerWebUiSupportRoutes(
 			res.send(lines.join("\r\n"));
 		});
 	}
-
-	/** 客户列表（Customer-based usage tab） */
-	registerRoute(router, { method: "get", path: "/customer/list" }, () => []);
 
 	// ── yaml 差异对比导入窗口（批次 E3，仅 proxy_admin） ──
 
