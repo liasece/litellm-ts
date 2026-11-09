@@ -29,6 +29,7 @@ import { isCliProxyDeploymentParams } from "./cliproxy/CliProxyTypes";
 import { parseSessionDuration } from "./proxy/LoginEndpoints";
 import { DEFAULT_WEBUI_SESSION_DURATION, WEBUI_SESSION_DURATION_ENV_VAR } from "./types/webUiSession";
 import { createModuleLogger } from "./core/utils/logger";
+import { markTrace } from "./observability/RequestTrace";
 
 const logger = createModuleLogger("ServiceContainer");
 
@@ -198,9 +199,19 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 已认证请求在临期窗口内同步延长 JWT cookie 和 DB session。
 	const jwtHandler = new JWTHandler(undefined, undefined, undefined, config.generalSettings.master_key);
 	const webUiSessionDurationSeconds = parseSessionDuration(process.env[WEBUI_SESSION_DURATION_ENV_VAR] ?? DEFAULT_WEBUI_SESSION_DURATION);
-	const authMiddleware = createApiKeyAuth(authRepository, config.generalSettings.master_key, jwtHandler, undefined, {
+	const rawAuthMiddleware = createApiKeyAuth(authRepository, config.generalSettings.master_key, jwtHandler, undefined, {
 		durationSeconds: webUiSessionDurationSeconds,
 	});
+	// 鉴权链每请求最多十余次串行 SELECT，是首字耗时里最大的一块本地开销；
+	// 认证通过的那一刻打点，才能把这部分从「上游慢」里拆出来。鉴权失败不会走到 next。
+	const authMiddleware: RequestHandler = (req, res, next) => {
+		rawAuthMiddleware(req, res, (error?: unknown) => {
+			if (error === undefined) {
+				markTrace("auth_done");
+			}
+			next(error);
+		});
+	};
 	const authorizationGuard = new AuthorizationGuard(authRepository);
 
 	return {

@@ -9,6 +9,7 @@
  */
 
 import type { ProviderConfig, ProviderResponseProtocol } from "../types/provider";
+import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 
 /** 包装后的 stream 结果 */
 export interface StreamWithTtft {
@@ -62,6 +63,8 @@ function wrapStreamWithTtft(inner: AsyncGenerator<unknown>, fetchStart: number):
 			for await (const chunk of inner) {
 				if (firstChunkAt === null) {
 					firstChunkAt = Date.now();
+					// 上游真正产出首个 chunk 的时刻，用于把「上游慢」与「代理转换慢」分开。
+					noteUpstreamFirstChunk();
 				}
 				yield chunk;
 			}

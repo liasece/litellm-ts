@@ -14,6 +14,7 @@ import * as schema from "../../db/schema";
 import { createModuleLogger } from "../utils/logger";
 import type { DatabaseConfig } from "../config";
 import { runSchemaPreflight } from "./SchemaPreflight";
+import { instrumentDatabasePool } from "../../observability/DatabaseMetrics";
 
 const logger = createModuleLogger("Database");
 const MIGRATION_LOCK_ID = 741_932_611;
@@ -272,6 +273,9 @@ export class Database {
 	/** @param config - 数据库连接配置 */
 	constructor(config: DatabaseConfig) {
 		this._pool = new pg.Pool(buildPoolConfig(config));
+		// 连接池观测装在这里：所有 Repository 与 Drizzle 都经过同一个 Pool 实例，
+		// 不必在每处查询点重复埋点。
+		instrumentDatabasePool(this._pool);
 		this._db = drizzle(this._pool, { schema: schema });
 	}
 

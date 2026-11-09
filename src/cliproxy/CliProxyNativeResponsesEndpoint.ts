@@ -35,6 +35,7 @@ import {
 	type FallbackExecutionStats,
 	type UpstreamAttempt,
 } from "../proxy/AnthropicUpstreamDispatch";
+import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 
 const logger = createModuleLogger("CLIProxy:Responses");
 
@@ -223,6 +224,8 @@ async function pipeUpstreamResponse(
 			if (done) {
 				break;
 			}
+			// 透传也记下上游首块：否则这条链路的「模型什么时候开始产出」无处可查。
+			noteUpstreamFirstChunk();
 			const decoded = decoder.decode(value, { stream: true });
 			recordDecodedChunk(decoded);
 			if (!res.destroyed && !res.writableEnded) {

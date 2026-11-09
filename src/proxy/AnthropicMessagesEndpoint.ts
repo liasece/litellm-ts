@@ -1,5 +1,6 @@
 import { stripRoutingMetadata } from "../router/TagRouting";
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
+import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 import { normalizeAnthropicThinking } from "../providers/AnthropicThinkingCompatibility";
 import { startSseKeepalive } from "./SseKeepalive";
 /**
@@ -1197,6 +1198,7 @@ export function registerAnthropicMessagesEndpoints(
 							streamingCheckpointScheduler?.onChunk();
 						}
 						completionStartTime ??= new Date();
+						noteUpstreamFirstChunk();
 						res.write(sseChunk);
 					}
 				} catch (err) {

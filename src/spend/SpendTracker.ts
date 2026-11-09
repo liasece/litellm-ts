@@ -1,4 +1,7 @@
 import { normalizeUsageTokens } from "../core/utils/usage";
+import { performance } from "node:perf_hooks";
+import { llmTokensTotal, spendWriteDuration, spendWriteFailuresTotal } from "../observability/MetricCatalog";
+import { currentRequestTrace } from "../observability/RequestTrace";
 import { projectSpendMetadata, validateSpendMetadataFields } from "./SpendMetadataFields";
 /**
  * 花费追踪器
@@ -57,6 +60,9 @@ import type { CustomCostPerToken, PeakPricingConfig } from "../cost/CostCalculat
 import { normalizeRoutingTrace } from "../router/ModelResolutionTrace";
 import { resolveRequestSessionGroupKey } from "./sessionIdentity";
 import { publishSpendLogChange } from "./spendLogChangeFeed";
+
+/** 记账耗时超过该值即认为「响应后的尾巴」偏长（毫秒）。 */
+const SLOW_SPEND_WRITE_MS = 1_500;
 
 const logger = createModuleLogger("SpendTracker");
 
@@ -1816,6 +1822,26 @@ export function normalizeUsageForSpend(usage: Record<string, unknown> | undefine
  * @param logEntry - 花费日志条目
  */
 export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry: SpendLog): Promise<SpendLogTrackResult> {
+	const startedAt = performance.now();
+	try {
+		const result = await trackSpendLogMeasured(db, logEntry);
+		recordSpendOutcome(logEntry, performance.now() - startedAt, true, result.status !== "duplicate");
+		return result;
+	} catch (error) {
+		recordSpendOutcome(logEntry, performance.now() - startedAt, false, false);
+		throw error;
+	}
+}
+
+/**
+ * 记账落库的真实实现；由 trackSpendLog 包一层计时，避免在业务代码里重复埋点。
+ * @param db - Drizzle 数据库实例
+ * @param logEntry - 花费日志条目
+ */
+async function trackSpendLogMeasured(
+	db: NodePgDatabase<typeof schema>,
+	logEntry: SpendLog,
+): Promise<SpendLogTrackResult> {
 	// GAP: 入口统一 usage 归一，对齐 PY _transform_response_api_usage_to_chat_usage
 	const normalized = normalizeUsageForSpend({
 		prompt_tokens: logEntry.prompt_tokens,
@@ -2155,5 +2181,49 @@ export function calculateAndSetCost(
 export function injectResponseCostHeader(res: import("express").Response, cost: number): void {
 	if (res && !res.headersSent) {
 		res.setHeader("x-litellm-response-cost", String(cost));
+	}
+}
+
+/**
+ * 记录一次记账落库的耗时、结果与 token 用量。
+ *
+ * 记账发生在客户端响应结束之后，因此它的耗时不体现在用户感知延迟里，但会直接决定
+ * 「响应已结束、进程仍在忙」的尾部压力：并发高时这段尾部会反压事件循环与连接池，
+ * 最终表现为下一个请求的首字变慢。
+ * @param logEntry - 花费日志条目
+ * @param durationMs - 落库耗时
+ * @param ok - 是否成功
+ * @param countTokens - 是否累加 token（重复 request_id 不累加，避免用量翻倍）
+ */
+function recordSpendOutcome(logEntry: SpendLog, durationMs: number, ok: boolean, countTokens: boolean): void {
+	spendWriteDuration.observe(durationMs / 1000);
+	if (!ok) {
+		spendWriteFailuresTotal.inc();
+		return;
+	}
+	if (durationMs > SLOW_SPEND_WRITE_MS) {
+		// 记账在客户端响应之后，但并发高时这段尾部会反压事件循环与连接池。
+		const trace = currentRequestTrace();
+		logger.warn("响应结束后的记账耗时偏长", {
+			durationMs: Math.round(durationMs),
+			route: trace?.route,
+			traceId: trace?.id,
+			model: logEntry.model_group ?? logEntry.model,
+		});
+	}
+	if (!countTokens) {
+		return;
+	}
+	const model = logEntry.model_group ?? logEntry.model;
+	if (model.length === 0) {
+		return;
+	}
+	const promptTokens = logEntry.prompt_tokens;
+	if (typeof promptTokens === "number" && promptTokens > 0) {
+		llmTokensTotal.inc({ model: model, kind: "prompt" }, promptTokens);
+	}
+	const completionTokens = logEntry.completion_tokens;
+	if (typeof completionTokens === "number" && completionTokens > 0) {
+		llmTokensTotal.inc({ model: model, kind: "completion" }, completionTokens);
 	}
 }

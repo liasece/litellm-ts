@@ -16,6 +16,7 @@ import type { Deployment } from "../types/router";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { createUpstreamLogContext } from "../router/UpstreamLogContext";
 import type { ProviderRequest } from "../types/provider";
+import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 
 const MAX_PASSTHROUGH_BODY_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_CAPTURED_RESPONSE_BYTES = 24 * 1024 * 1024;
@@ -460,6 +461,8 @@ async function pipeResponse(upstream: globalThis.Response, res: Response): Promi
 			if (done) {
 				break;
 			}
+			// 透传也记下上游首块：否则这条链路的「模型什么时候开始产出」无处可查。
+			noteUpstreamFirstChunk();
 			firstChunkAt ??= new Date();
 			if (!res.destroyed && !res.writableEnded) {
 				res.write(Buffer.from(value));

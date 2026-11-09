@@ -1,6 +1,7 @@
 import { decodeUndecodeableResponse, sanitizeUpstreamRequestHeaders } from "../core/api/upstreamHeaders";
 import type { ProviderRequest } from "../types/provider";
 import { TimeoutError } from "./RouterErrors";
+import { beginUpstreamAttempt, endUpstreamAttempt, noteUpstreamHeaders, noteUpstreamPayload } from "../observability/RequestTrace";
 
 /** Provider 请求执行选项。 */
 export interface ProviderRequestExecutionOptions {
@@ -129,6 +130,8 @@ export async function executeProviderRequest(
 				}, options.timeoutMs)
 			: undefined;
 	const startedAtMs = Date.now();
+	// 上游尝试登记到请求轨迹：等待响应头、首个内容与失败都会落到同一段时间轴上。
+	const attempt = beginUpstreamAttempt(request.url);
 
 	try {
 		const upstreamResponse = await fetch(request.url, {
@@ -141,6 +144,7 @@ export async function executeProviderRequest(
 		});
 		// 兜底：上游仍返回 undici 不支持的编码时在此解码，保证调用方读到明文。
 		const response = decodeUndecodeableResponse(upstreamResponse);
+		noteUpstreamHeaders(attempt, response.status);
 		let body: unknown;
 		if (options.readJson === false) {
 			if (!response.ok) {
@@ -154,6 +158,11 @@ export async function executeProviderRequest(
 		} else {
 			body = await response.json();
 		}
+		if (options.readJson !== false) {
+			// 流式请求此刻只拿到响应头，响应体由调用方继续消费，不能在这里记「读完」。
+			noteUpstreamPayload(attempt);
+		}
+		endUpstreamAttempt(attempt, response.ok ? "ok" : "error");
 		return {
 			response: response,
 			body: body,
@@ -161,6 +170,7 @@ export async function executeProviderRequest(
 			startedAtMs: startedAtMs,
 		};
 	} catch (error) {
+		endUpstreamAttempt(attempt, "error");
 		if (timedOut) {
 			throw new TimeoutError(`Provider request timed out after ${options.timeoutMs}ms (${request.url})`);
 		}

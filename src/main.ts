@@ -22,6 +22,9 @@ import { zstdRequestDecompress } from "./middleware/ZstdRequestDecompress";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
 import { upstreamExchangeScope } from "./middleware/UpstreamExchangeScope";
 import { spendResponseCompression } from "./middleware/SpendResponseCompression";
+import { httpMetricsMiddleware, markBodyParsed } from "./observability/HttpMetrics";
+import { registerObservabilityRoutes } from "./observability/ObservabilityController";
+import { runtimeMetricsSampler } from "./observability/RuntimeMetrics";
 import { createModuleLogger } from "./core/utils/logger";
 import { registerStaticUiRoutes } from "./ui/StaticUiRoutes";
 // 核心代理端点
@@ -130,6 +133,8 @@ export class LiteLLMServer {
 	 * 启动服务器，监听指定端口和主机
 	 */
 	async start(): Promise<void> {
+		// 运行指标采集先于监听启动，启动阶段的事件循环停顿与内存峰值也要能看见。
+		runtimeMetricsSampler.start();
 		const startedAt = Date.now();
 		const port = this._config.server.port;
 		const host = this._config.server.host;
@@ -193,6 +198,7 @@ export class LiteLLMServer {
 					});
 				});
 			}
+			runtimeMetricsSampler.stop();
 			await this._container?.cliProxyRuntime.shutdown();
 			await this._container?.db.close();
 		})();
@@ -240,14 +246,19 @@ export class LiteLLMServer {
 
 		// 全局中间件
 		app.set("json replacer", jsonBigIntReplacer);
+		// 观测必须是第一个中间件：「请求到达」时刻之后才有请求体解析、鉴权与路由的分解耗时。
+		app.use(httpMetricsMiddleware);
 		app.use(zstdRequestDecompress);
 		app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+		// 请求体解析完成后打点，用于把「收包 + JSON 解析」从后续阶段里拆出来。
+		app.use(markBodyParsed);
 		app.use(accessLogFilter);
 		// 上游交换旁路作用域：所有会发起上游调用的路由之前建立，日志层据此读取上游详情。
 		app.use(upstreamExchangeScope);
 
 		// 注册路由
 		this._registerHealthRoutes(app);
+		this._registerObservabilityRoutes(app);
 		this._registerPublicProxyRoutes(app);
 		// WebUI 静态资源必须在鉴权 API 路由之前注册，避免被 API 路由抢先匹配
 		registerStaticUiRoutes(app);
@@ -259,6 +270,20 @@ export class LiteLLMServer {
 
 		// 全局错误处理
 		app.use(errorHandler);
+	}
+
+	// ── 观测端点 ──
+	/**
+	 * 注册 Prometheus 抓取、JSON 概览与慢请求明细端点。
+	 * 三个端点都要求有效密钥：观测数据含模型名与流量分布，不属于公开信息。
+	 * @param app - Express 应用
+	 */
+	private _registerObservabilityRoutes(app: express.Express): void {
+		const container = this._container!;
+		const observabilityRouter = express.Router();
+		registerObservabilityRoutes(observabilityRouter, container.authMiddleware);
+		app.use(observabilityRouter);
+		logger.info("观测端点已注册", { paths: ["/metrics", "/metrics/summary", "/metrics/slow"] });
 	}
 
 	// ── 健康检查 ──

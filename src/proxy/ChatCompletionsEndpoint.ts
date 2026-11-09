@@ -1,4 +1,5 @@
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
+import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 import { startSseKeepalive } from "./SseKeepalive";
 import { getDeploymentKey } from "../router/RouterModelGroupCache";
 import { resolveCodingClientModel } from "./CodingClientModels";
@@ -901,6 +902,7 @@ async function handleStreamingResponse(
 					}
 					if (!completionStartTime) {
 						completionStartTime = new Date();
+						noteUpstreamFirstChunk();
 						litellmRouter.recordDeploymentTtft?.(deployment, Date.now() - execution.startedAtMs);
 					}
 					accumulateChatChunk(accumulator, chunk);
