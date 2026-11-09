@@ -3,6 +3,7 @@ export const pathPages: Readonly<Record<string, string>> = {
 	"api-reference": "api-reference",
 	"builtin-capabilities": "builtin-capabilities",
 	speed: "speed",
+	privacy: "privacy",
 	logs: "logs",
 	"models-and-endpoints": "models",
 	organizations: "organizations",

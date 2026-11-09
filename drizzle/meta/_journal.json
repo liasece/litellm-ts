@@ -97,6 +97,14 @@
 			"tag": "0011_drop_dead_tables",
 			"file": "0011_drop_dead_tables.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 12,
+			"version": "7",
+			"when": 1794200000000,
+			"tag": "0012_privacy_redaction",
+			"file": "0012_privacy_redaction.sql",
+			"breakpoints": true
 		}
 	]
 }

@@ -60,6 +60,8 @@ import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
 import { registerCostTrackingRoutes } from "./proxy/CostTrackingEndpoints";
+import { registerPrivacyRoutes } from "./proxy/PrivacyEndpoints";
+import { privacyMaskingMiddleware } from "./privacy/PrivacyMiddleware";
 import { abortOrphanedActiveRequests, reapExpiredActiveRequests } from "./spend/ActiveRequestRecovery";
 import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
 import { registerProviderQuotaRoutes } from "./proxy/ProviderQuotaEndpoints";
@@ -239,6 +241,7 @@ export class LiteLLMServer {
 		registerStaticUiRoutes(app);
 		this._registerCoreProxyRoutes(app, container);
 		this._registerManagementRoutes(app, container);
+		this._registerPrivacyRoutes(app, container);
 		this._registerProviderQuotaRoutes(app, container);
 		this._registerSpendRoutes(app, container);
 		this._registerStubRoutes(app, container);
@@ -312,6 +315,7 @@ export class LiteLLMServer {
 		proxyRouter.use(container.authMiddleware);
 		proxyRouter.use(webUiCsrfProtection);
 		proxyRouter.use(container.authorizationGuard.middleware("inference"));
+		proxyRouter.use(privacyMaskingMiddleware({ router: container.router, db: container.db.db }));
 		proxyRouter.use(container.runtimeConfigService.middleware(container.router));
 		proxyRouter.use((req, _res, next) =>
 			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
@@ -364,6 +368,17 @@ export class LiteLLMServer {
 		logger.info("管理端点已注册");
 	}
 
+	// ── 脱敏观测端点 ──
+	private _registerPrivacyRoutes(app: express.Express, container: ServiceContainer): void {
+		const privacyRouter = express.Router();
+		privacyRouter.use(container.authMiddleware);
+		privacyRouter.use(webUiCsrfProtection);
+		privacyRouter.use(container.authorizationGuard.middleware("management"));
+		registerPrivacyRoutes(privacyRouter, container.db.db);
+		app.use(privacyRouter);
+		logger.info("脱敏观测端点已注册");
+	}
+
 	// ── 内置 Provider 额度端点 ──
 	private _registerProviderQuotaRoutes(app: express.Express, container: ServiceContainer): void {
 		const providerQuotaRouter = express.Router();
@@ -395,6 +410,7 @@ export class LiteLLMServer {
 		stubRouter.use(container.authMiddleware);
 		stubRouter.use(webUiCsrfProtection);
 		stubRouter.use(container.authorizationGuard.middleware("authenticated"));
+		stubRouter.use(privacyMaskingMiddleware({ router: container.router, db: container.db.db }));
 		stubRouter.use(container.runtimeConfigService.middleware(container.router));
 		stubRouter.use((req, _res, next) =>
 			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
