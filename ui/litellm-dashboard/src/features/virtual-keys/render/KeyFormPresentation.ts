@@ -1,4 +1,4 @@
-import type { KeyCatalog, KeyDraft, KeyTeam } from "../support/VirtualKeyModels";
+import type { KeyDraft, KeyTeam } from "../support/VirtualKeyModels";
 import { selectOptions } from "../support/VirtualKeyModels";
 import type { KeyField } from "../support/KeyFieldModels";
 
@@ -47,7 +47,7 @@ export function detailsFields(draft: KeyDraft, models: readonly string[], custom
 			name: "models",
 			kind: "multiple",
 			label: "Models",
-			options: [...(!draft.project_id ? [{ value: "all-team-models", label: "All Team Models" }] : []), ...selectOptions(models)],
+			options: [{ value: "all-team-models", label: "All Team Models" }, ...selectOptions(models)],
 			disabled: ["management", "read_only"].includes(draft.key_type),
 			help: ["management", "read_only"].includes(draft.key_type)
 				? "Models field is disabled for this key type"
@@ -133,159 +133,4 @@ export function budgetFields(
 			placeholder: "Select rate limit type",
 		},
 	];
-}
-export function policyFields(catalog: KeyCatalog, canEdit: boolean, premium: boolean, editing = false): KeyField[] {
-	const guardHelp = canEdit ? "Select existing guardrails or enter new ones" : "Premium feature - Upgrade to set guardrails by key";
-	const policiesEnabled = premium;
-	const fields: KeyField[] = [
-		{
-			name: "guardrails",
-			kind: "multiple",
-			label: "Guardrails",
-			options: catalog.guardrails,
-			creatable: !editing,
-			disabled: !canEdit,
-			help: guardHelp,
-			placeholder: canEdit ? "Select or enter guardrails" : guardHelp,
-			tooltip: "Apply safety guardrails to this key to filter content or enforce policies",
-		},
-		{
-			name: "disable_global_guardrails",
-			kind: "switch",
-			label: "Disable Global Guardrails",
-			disabled: !canEdit,
-			tooltip: "When enabled, this key will bypass any guardrails configured to run on every request (global guardrails)",
-			help: canEdit ? "Bypass global guardrails for this key" : "Premium feature - Upgrade to disable global guardrails by key",
-		},
-		{
-			name: "policies",
-			kind: "multiple",
-			label: "Policies",
-			tooltip: editing ? undefined : "Apply policies to this key to control guardrails and other settings",
-			tooltipHref: editing ? undefined : "https://docs.litellm.ai/docs/proxy/guardrails/guardrail_policies",
-			options: catalog.policies,
-			creatable: !editing,
-			disabled: !policiesEnabled,
-			help: policiesEnabled ? "Select existing policies or enter new ones" : "Premium feature - Upgrade to set policies by key",
-			placeholder: policiesEnabled ? "Select or enter policies" : "Premium feature - Upgrade to set policies by key",
-		},
-		{
-			name: "prompts",
-			kind: "multiple",
-			label: "Prompts",
-			tooltip: editing ? undefined : "Allow this key to use specific prompt templates",
-			tooltipHref: editing ? undefined : "https://docs.litellm.ai/docs/proxy/prompt_management",
-			options: catalog.prompts,
-			creatable: true,
-			disabled: !policiesEnabled,
-			help: policiesEnabled ? "Select existing prompts or enter new ones" : "Premium feature - Upgrade to set prompts by key",
-			placeholder: policiesEnabled ? "Select or enter prompts" : "Premium feature - Upgrade to set prompts by key",
-		},
-		{
-			name: "access_group_ids",
-			kind: "multiple",
-			label: "Access Groups",
-			tooltip: "Assign access groups to this key. Access groups control which models, MCP servers, and agents this key can use",
-			options: catalog.accessGroups,
-			placeholder: "Select access groups (optional)",
-			help: "Select access groups to assign to this key",
-		},
-		{
-			name: "allowed_passthrough_routes",
-			kind: "multiple",
-			creatable: true,
-			label: "Allowed Pass Through Routes",
-			tooltip: editing ? undefined : "Allow this key to use specific pass through routes",
-			tooltipHref: editing ? undefined : "https://docs.litellm.ai/docs/proxy/pass_through",
-			options: catalog.passThroughRoutes,
-			disabled: !premium,
-			placeholder: premium ? "Select or enter pass through routes" : "Premium feature - Upgrade to set pass through routes by key",
-			help: premium
-				? "Select existing pass through routes or enter new ones"
-				: "Premium feature - Upgrade to set pass through routes by key",
-		},
-		{
-			name: "vector_stores",
-			kind: "multiple",
-			label: editing ? "Vector Stores" : "Allowed Vector Stores",
-			tooltip: editing
-				? undefined
-				: "Select which vector stores this key can access. If none selected, the key will have access to all available vector stores",
-			options: catalog.vectorStores,
-			placeholder: "Select vector stores (optional)",
-			help: "Select vector stores this key can access. Leave empty for access to all vector stores",
-		},
-		{
-			name: "metadataText",
-			kind: "textarea",
-			label: "Metadata",
-			placeholder: "Enter metadata as JSON",
-			tooltip: "JSON object with additional information about this key. Used for tracking or custom logic",
-		},
-		{
-			name: "tags",
-			kind: "multiple",
-			label: "Tags",
-			tooltip: editing ? undefined : "Tags for tracking spend and/or doing tag-based routing. Used for analytics and filtering",
-			options: catalog.tags,
-			creatable: true,
-			placeholder: "Select or enter tags",
-			help: "Tags for tracking spend and/or doing tag-based routing.",
-		},
-	];
-	if (editing)
-		return fields
-			.filter((field) => field.name !== "metadataText")
-			.map((field) => ({
-				...field,
-				help: undefined,
-				tooltip:
-					field.name === "guardrails"
-						? undefined
-						: field.name === "policies"
-							? "Apply policies to this key to control guardrails and other settings"
-							: field.name === "access_group_ids"
-								? "Assign access groups to this key. Access groups control which models, MCP servers, and agents this key can use"
-								: field.tooltip,
-				placeholder:
-					field.name === "guardrails"
-						? canEdit
-							? "Select guardrails"
-							: "Setting guardrails is a premium feature."
-						: field.name === "policies"
-							? premium
-								? "Select policies (production or published versions)"
-								: "Setting policies is a premium feature."
-							: field.name === "allowed_passthrough_routes"
-								? premium
-									? "Select or enter allowed pass through routes"
-									: "Premium feature - Upgrade to set allowed pass through routes by key"
-								: field.name === "vector_stores"
-									? "Select vector stores"
-									: field.placeholder,
-			}))
-			.sort(
-				(a, b) =>
-					[
-						"guardrails",
-						"disable_global_guardrails",
-						"policies",
-						"tags",
-						"prompts",
-						"access_group_ids",
-						"allowed_passthrough_routes",
-						"vector_stores",
-					].indexOf(a.name) -
-					[
-						"guardrails",
-						"disable_global_guardrails",
-						"policies",
-						"tags",
-						"prompts",
-						"access_group_ids",
-						"allowed_passthrough_routes",
-						"vector_stores",
-					].indexOf(b.name),
-			);
-	return fields;
 }

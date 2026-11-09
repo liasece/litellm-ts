@@ -2,7 +2,6 @@
 import { provideKeyFormIdentity } from "../support/KeyFormIdentity";
 import { computed, ref } from "vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
-import { rolesWithWriteAccess } from "../../identity/logic/UserRoleLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import notificationManager from "../../notifications/logic/NotificationManager";
@@ -12,12 +11,11 @@ import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import { createKeyDraft, validateKeyDraft } from "../logic/KeyDraftLogic";
 import { buildKeyPayload } from "../logic/KeyPayloadLogic";
-import { budgetFields, keyTypeOptions, policyFields } from "../render/KeyFormPresentation";
+import { budgetFields, keyTypeOptions } from "../render/KeyFormPresentation";
 import { selectedString, selectOptions, type KeyCatalog, type VirtualKey } from "../support/VirtualKeyModels";
 import type { KeyField } from "../support/KeyFieldModels";
 import KeyFieldComponent from "./KeyFieldComponent.vue";
 import KeyFormFields from "./KeyFormFieldsComponent.vue";
-import KeyAccessFields from "./KeyAccessFieldsComponent.vue";
 import KeyLoggingFields from "./KeyLoggingFieldsComponent.vue";
 import KeyLifecycleFields from "./KeyLifecycleFieldsComponent.vue";
 import "./styles/VirtualKeyForms.css";
@@ -29,7 +27,6 @@ const formatMoney = useMoneyFormatter();
 const draft = ref(createKeyDraft(props.keyData));
 const errors = ref<Record<string, string>>({});
 const team = computed(() => props.catalog.teams.find((team) => team.team_id === draft.value.team_id));
-const canEdit = computed(() => auth.state.session?.premium_user || rolesWithWriteAccess.includes(auth.userRole.value));
 const models = computed(() => [...new Set([...(team.value?.models || []), ...props.catalog.models, ...props.keyData.models])]);
 const fields = computed<KeyField[]>(() => [
 	{ name: "key_alias", kind: "text", label: "Key Alias", tremor: true },
@@ -59,7 +56,6 @@ const fields = computed<KeyField[]>(() => [
 	{ name: "max_parallel_requests", kind: "number", label: "Max Parallel Requests", tremor: true },
 	{ name: "model_tpm_limit", kind: "textarea", label: "Model TPM Limit", placeholder: '{"gpt-4": 100, "claude-v1": 200}' },
 	{ name: "model_rpm_limit", kind: "textarea", label: "Model RPM Limit", placeholder: '{"gpt-4": 100, "claude-v1": 200}' },
-	...policyFields(props.catalog, Boolean(canEdit.value), Boolean(auth.state.session?.premium_user), true),
 ]);
 const teams = computed(() =>
 	props.catalog.teams
@@ -90,7 +86,6 @@ function submit() {
 			buildKeyPayload(draft.value, {
 				userId: auth.state.session?.user_id || "",
 				key: props.keyData,
-				canEditGuardrails: Boolean(canEdit.value),
 			}),
 		);
 	} catch (reason: unknown) {
@@ -111,7 +106,6 @@ const fieldId = provideKeyFormIdentity("key-edit");
 			}}</UiSwitch></KeyFieldComponent
 		>
 		<KeyFormFields v-model="draft" :fields="fields" :errors="errors" editing />
-		<KeyAccessFields v-model="draft" :catalog="catalog" />
 		<KeyFieldComponent
 			label="Organization"
 			tooltip="The organization this key belongs to. Selecting an organization filters the available teams."
@@ -128,32 +122,13 @@ const fieldId = provideKeyFormIdentity("key-edit");
 				placeholder="All Organizations"
 				@update:model-value="organization"
 		/></KeyFieldComponent>
-		<KeyFieldComponent
-			label="Team ID"
-			:help="
-				catalog.uiSettings.enable_projects_ui && keyData.project_id
-					? 'Team is locked because this key belongs to a project'
-					: undefined
-			"
+		<KeyFieldComponent label="Team ID"
 			><UiSelect
 				:model-value="draft.team_id || null"
 				:options="teams"
 				searchable
-				:disabled="Boolean(catalog.uiSettings.enable_projects_ui && keyData.project_id)"
 				placeholder="Select team"
 				@update:model-value="selectTeam"
-		/></KeyFieldComponent>
-		<KeyFieldComponent v-if="catalog.uiSettings.enable_projects_ui && keyData.project_id" label="Project"
-			><UiInput
-				:model-value="
-					catalog.projects.find((project) => project.project_id === keyData.project_id)?.project_alias
-						? catalog.projects.find((project) => project.project_id === keyData.project_id)?.project_alias +
-							' (' +
-							keyData.project_id +
-							')'
-						: keyData.project_id
-				"
-				disabled
 		/></KeyFieldComponent>
 		<KeyFieldComponent label="Logging Settings"><KeyLoggingFields v-model="draft" /></KeyFieldComponent>
 		<KeyFieldComponent label="Metadata" name="metadataText" :error="errors.metadataText"

@@ -14,7 +14,6 @@ export interface VirtualKey extends Record<string, unknown> {
 	user_id?: string | null;
 	organization_id?: string | null;
 	org_id?: string | null;
-	project_id?: string | null;
 	blocked?: boolean | null;
 	expires?: string | null;
 	created_at?: string | null;
@@ -65,44 +64,15 @@ export interface KeyTeam extends Record<string, unknown> {
 	rpm_limit?: number | null;
 	members_with_roles?: { user_id: string; role: string }[];
 }
-export interface KeyProject extends Record<string, unknown> {
-	project_id: string;
-	project_alias?: string;
-	team_id?: string;
-	models?: string[];
-}
 export interface KeyOrganization extends Record<string, unknown> {
 	organization_id: string;
 	organization_alias?: string | null;
 }
-export interface KeySchemaProperty {
-	type?: string;
-	title?: string;
-	description?: string;
-	enum?: unknown[];
-	anyOf?: { type?: string }[];
-	format?: string;
-	default?: unknown;
-}
 export interface KeyCatalog {
 	teams: KeyTeam[];
 	organizations: KeyOrganization[];
-	projects: KeyProject[];
 	models: string[];
-	guardrails: UiSelectOption[];
-	policies: UiSelectOption[];
-	prompts: UiSelectOption[];
-	tags: UiSelectOption[];
-	agents: UiSelectOption[];
-	agentGroups: UiSelectOption[];
-	mcpServers: UiSelectOption[];
-	mcpGroups: UiSelectOption[];
-	vectorStores: UiSelectOption[];
-	accessGroups: UiSelectOption[];
-	passThroughRoutes: UiSelectOption[];
-	callbacks: Record<string, unknown>[];
 	uiSettings: Record<string, unknown>;
-	advancedProperties: Record<string, KeySchemaProperty>;
 	userRoles: Record<string, unknown>;
 }
 export interface KeyLoggingConfiguration extends Record<string, unknown> {
@@ -111,12 +81,11 @@ export interface KeyLoggingConfiguration extends Record<string, unknown> {
 export interface KeyDraft {
 	presentFields: string[];
 	omitTeamOnUpdate: boolean;
-	owner: "you" | "service_account" | "another_user" | "agent";
+	owner: "you" | "another_user";
 	user_id: string;
 	agent_id: string;
 	organization_id: string;
 	team_id: string;
-	project_id: string;
 	key_alias: string;
 	key: string;
 	blocked: boolean;
@@ -132,17 +101,7 @@ export interface KeyDraft {
 	max_parallel_requests: number | null;
 	model_tpm_limit: string;
 	model_rpm_limit: string;
-	guardrails: string[];
-	disable_global_guardrails: boolean;
-	policies: string[];
-	prompts: string[];
-	tags: string[];
-	access_group_ids: string[];
-	allowed_passthrough_routes: string[];
 	vector_stores: string[];
-	mcp_servers: string[];
-	mcp_access_groups: string[];
-	mcp_tool_permissions: Record<string, string[]>;
 	allowed_agents: string[];
 	agent_access_groups: string[];
 	metadataText: string;
@@ -154,28 +113,13 @@ export interface KeyDraft {
 	never_expire: boolean;
 	auto_rotate: boolean;
 	rotation_interval: string;
-	advanced: Record<string, unknown>;
 }
 export function emptyKeyCatalog(): KeyCatalog {
 	return {
 		teams: [],
 		organizations: [],
-		projects: [],
 		models: [],
-		guardrails: [],
-		policies: [],
-		prompts: [],
-		tags: [],
-		agents: [],
-		agentGroups: [],
-		mcpServers: [],
-		mcpGroups: [],
-		vectorStores: [],
-		accessGroups: [],
-		passThroughRoutes: [],
-		callbacks: [],
 		uiSettings: {},
-		advancedProperties: {},
 		userRoles: {},
 	};
 }

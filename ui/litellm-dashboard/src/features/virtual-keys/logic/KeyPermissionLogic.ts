@@ -8,12 +8,6 @@ export function canModifyVirtualKey(key: VirtualKey, role: string, userId: strin
 		(Boolean(userId) && key.user_id === userId && role === "Internal User")
 	);
 }
-export function canResetVirtualKeySpend(key: VirtualKey, role: string, userId: string, teams: readonly KeyTeam[]): boolean {
-	return (
-		isProxyAdminRole(role) ||
-		isUserTeamAdminForSingleTeam(teams.find((team) => team.team_id === key.team_id)?.members_with_roles ?? null, userId)
-	);
-}
 export function canCreateVirtualKey(role: string): boolean {
 	return rolesWithWriteAccess.includes(role);
 }

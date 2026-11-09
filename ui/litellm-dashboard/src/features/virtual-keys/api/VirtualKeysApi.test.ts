@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createKey, deleteKey, keyInfo, listKeys, regenerateKey, resetKeySpend } from "./VirtualKeysApi";
+import { createKey, deleteKey, keyInfo, listKeys, regenerateKey } from "./VirtualKeysApi";
 afterEach(() => vi.unstubAllGlobals());
 describe("Virtual Key HTTP boundary", () => {
 	it("preserves server-side list filters, expansion and pagination", async () => {
@@ -38,34 +38,17 @@ describe("Virtual Key HTTP boundary", () => {
 		const result = await keyInfo("selected-key-hash");
 		expect(result).toMatchObject({ token: "selected-key-hash", api_key: "selected-key-hash", key_alias: "Research", models: [] });
 	});
-	it("uses the actual service-account, regeneration, delete and spend reset endpoints", async () => {
+	it("uses the real generation, regeneration and delete endpoints", async () => {
 		const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => Response.json({}));
 		vi.stubGlobal("fetch", fetch);
-		await createKey({ key_alias: "service" }, true);
+		await createKey({ key_alias: "service" });
 		await regenerateKey("hash", { grace_period: "24h" });
 		await deleteKey("hash");
-		await resetKeySpend("hash/with space");
-		expect(fetch.mock.calls.map((call) => call[0])).toEqual([
-			"/key/service-account/generate",
-			"/key/regenerate",
-			"/key/delete",
-			"/key/hash%2Fwith%20space/reset_spend",
-		]);
+		expect(fetch.mock.calls.map((call) => call[0])).toEqual(["/key/generate", "/key/regenerate", "/key/delete"]);
 		expect(fetch.mock.calls.map((call) => JSON.parse(String(call[1]?.body)))).toEqual([
 			{ key_alias: "service" },
 			{ grace_period: "24h", token: "hash" },
 			{ keys: ["hash"] },
-			{ reset_to: 0 },
 		]);
-	});
-
-	it("accepts a successful reset acknowledgement without inventing a response-body contract", async () => {
-		const fetch = vi
-			.fn<typeof globalThis.fetch>()
-			.mockResolvedValueOnce(Response.json([]))
-			.mockResolvedValueOnce(new Response(null, { status: 204 }));
-		vi.stubGlobal("fetch", fetch);
-		await expect(resetKeySpend("hash")).resolves.toBeUndefined();
-		await expect(resetKeySpend("hash")).resolves.toBeUndefined();
 	});
 });

@@ -2,7 +2,6 @@
 import { ref } from "vue";
 import NotificationLayer from "../../src/features/notifications/ui/NotificationLayerComponent.vue";
 import notificationManager from "../../src/features/notifications/logic/NotificationManager";
-import KeyCrudPermissions from "../../src/features/virtual-keys/ui/KeyCrudPermissionsComponent.vue";
 import KeyIdentityForm from "./KeyIdentityFormHarness.vue";
 import UiInputNumber from "../../src/features/platform/ui/UiInputNumber.vue";
 import UiHeroIcon from "../../src/features/platform/ui/UiHeroIcon.vue";
@@ -21,8 +20,6 @@ import type { UiTableRow, UiValue } from "../../src/features/platform/ui/UiTypes
 
 const tooltipTitle = ref<string | number | null>("Mutable help");
 const password = ref<string | number | null>("synthetic fixture");
-const allowedTools = ref<string[]>(["get_users", "get_reports"]);
-const toolSearch = ref<string | number | null>("users");
 const provider = ref<UiValue | UiValue[] | null>(null);
 const options = [
 	{ value: "openai", label: "OpenAI" },
@@ -271,16 +268,6 @@ const draft = ref<string | number | null>("");
 		<KeyIdentityForm kind="create-fixture" class="create-key-fixture" /><KeyIdentityForm kind="edit-fixture" class="edit-key-fixture" />
 		<UiInput v-model="password" appearance="tremor" type="password" aria-label="Provider password" />
 		<UiInput v-model="password" type="password" aria-label="Native password" />
-		<UiInput v-model="toolSearch" aria-label="Filter tools" />
-		<KeyCrudPermissions
-			v-model="allowedTools"
-			:tools="[
-				{ name: 'get_users', description: 'Read users' },
-				{ name: 'get_reports', description: 'Read reports' },
-			]"
-			:search-filter="String(toolSearch ?? '')"
-		/>
-		<output data-testid="allowed-tools">{{ allowedTools.join(",") }}</output>
 		<section aria-label="Tooltip content fixtures">
 			<UiTooltip><UiButton>Undefined help</UiButton></UiTooltip>
 			<UiTooltip title=""><UiButton>Empty help</UiButton></UiTooltip>

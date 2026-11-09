@@ -3,31 +3,27 @@ import notificationManager from "../../notifications/logic/NotificationManager";
 import { provideKeyFormIdentity } from "../support/KeyFormIdentity";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
-import { rolesWithWriteAccess } from "../../identity/logic/UserRoleLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { requestJson } from "../../platform/api/HttpApiClient";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
-import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import { virtualKeysApi } from "../api/VirtualKeysApi";
 import { loadKeyCatalog } from "../data/KeyCatalogData";
 import { applyKeyPrefill, createKeyDraft, validateKeyDraft } from "../logic/KeyDraftLogic";
 import { buildKeyPayload } from "../logic/KeyPayloadLogic";
-import { budgetFields, detailsFields, policyFields } from "../render/KeyFormPresentation";
+import { budgetFields, detailsFields } from "../render/KeyFormPresentation";
 import { emptyKeyCatalog, markKeyField, recordValue, type KeyCatalog, type VirtualKey } from "../support/VirtualKeyModels";
 import KeyAccordion from "./KeyAccordionComponent.vue";
 import KeyOwnershipFields from "./KeyOwnershipFieldsComponent.vue";
 import KeyFormFields from "./KeyFormFieldsComponent.vue";
 import KeyField from "./KeyFieldComponent.vue";
-import KeyAccessFields from "./KeyAccessFieldsComponent.vue";
 import KeyLoggingFields from "./KeyLoggingFieldsComponent.vue";
 import KeyRouterFields from "./KeyRouterFieldsComponent.vue";
 import KeyAliasesFields from "./KeyAliasesFieldsComponent.vue";
 import KeyLifecycleFields from "./KeyLifecycleFieldsComponent.vue";
-import KeyAdvancedFields from "./KeyAdvancedFieldsComponent.vue";
 import KeyOwnerUserDialog from "./KeyOwnerUserDialogComponent.vue";
 import KeySecretDisplay from "./KeySecretDisplayComponent.vue";
 import "./styles/VirtualKeyForms.css";
@@ -36,9 +32,7 @@ const open = defineModel<boolean>("open", { required: true });
 const props = defineProps<{
 	catalog?: KeyCatalog;
 	teamId?: string;
-	projectId?: string;
 	lockTeam?: boolean;
-	lockProject?: boolean;
 	rows?: readonly VirtualKey[];
 	prefill?: URLSearchParams;
 }>();
@@ -55,21 +49,12 @@ const secret = ref("");
 const optionalOpen = ref(false);
 const userOpen = ref(false);
 const premium = computed(() => auth.state.session?.premium_user ?? false);
-const canEditGuardrails = computed(() => premium.value || rolesWithWriteAccess.includes(auth.userRole.value));
 const customDisabled = computed(() => Boolean(catalog.value.uiSettings.disable_custom_api_keys));
 const selectedTeam = computed(() => catalog.value.teams.find((team) => team.team_id === draft.value.team_id));
-const selectedProject = computed(() => catalog.value.projects.find((project) => project.project_id === draft.value.project_id));
 const availableModels = ref<string[]>([]);
-const models = computed(() =>
-	selectedProject.value?.models?.length
-		? selectedProject.value.models
-		: availableModels.value.length
-			? availableModels.value
-			: catalog.value.models,
-);
+const models = computed(() => (availableModels.value.length ? availableModels.value : catalog.value.models));
 const disabled = computed(() => models.value.includes("no-default-models") && !draft.value.team_id);
 const budgets = computed(() => budgetFields(selectedTeam.value, true, formatMoney));
-const policies = computed(() => policyFields(catalog.value, canEditGuardrails.value, premium.value));
 let generation = 0;
 let modelRequest: AbortController | null = null;
 watch(optionalOpen, (value) => {
@@ -117,7 +102,6 @@ watch(
 		if (!props.catalog) catalogData.value = await loadKeyCatalog(props.teamId);
 		if (!open.value) return;
 		draft.value.team_id = props.teamId || "";
-		draft.value.project_id = props.projectId || "";
 		const team = catalog.value.teams.find((team) => team.team_id === props.teamId);
 		draft.value.organization_id = team?.organization_id || "";
 		if (props.prefill) applyKeyPrefill(draft.value, props.prefill, catalog.value.teams, auth.userRole.value, catalog.value.models);
@@ -144,10 +128,9 @@ async function submit() {
 	try {
 		const payload = buildKeyPayload(draft.value, {
 			userId: auth.state.session?.user_id || "",
-			canEditGuardrails: canEditGuardrails.value,
 			customKeysDisabled: customDisabled.value,
 		});
-		const response = await virtualKeysApi.createKey(payload, draft.value.owner === "service_account");
+		const response = await virtualKeysApi.createKey(payload);
 		notificationManager.success("Virtual Key Created");
 		secret.value = String(response.key || "");
 		draft.value = createKeyDraft();
@@ -199,7 +182,6 @@ provideKeyFormIdentity("key-create");
 				:role="auth.userRole.value"
 				:errors="errors"
 				:lock-team="lockTeam"
-				:lock-project="lockProject"
 				@create-user="userOpen = true"
 			/>
 			<div v-if="disabled" class="vk-team-required">
@@ -214,13 +196,6 @@ provideKeyFormIdentity("key-create");
 				<section class="vk-form-section">
 					<KeyAccordion v-model:open="optionalOpen" title="Optional Settings" large>
 						<KeyFormFields v-model="draft" :fields="budgets" :errors="errors" horizontal />
-						<KeyFormFields v-model="draft" :fields="policies" :errors="errors" horizontal />
-						<KeyAccordion title="MCP Settings"
-							><KeyAccessFields v-model="draft" :catalog="catalog" section="mcp" horizontal
-						/></KeyAccordion>
-						<KeyAccordion title="Agent Settings"
-							><KeyAccessFields v-model="draft" :catalog="catalog" section="agents" horizontal
-						/></KeyAccordion>
 						<div class="vk-create-logging-tooltip">
 							<UiTooltip
 								:title="
@@ -243,12 +218,6 @@ provideKeyFormIdentity("key-create");
 							<KeyAliasesFields v-model="draft" :models="catalog.models"
 						/></KeyAccordion>
 						<KeyAccordion title="Key Lifecycle"><KeyLifecycleFields v-model="draft" creating :errors="errors" /></KeyAccordion>
-						<KeyAccordion title="Advanced Settings"
-							><template #title
-								><span class="vk-advanced-title"
-									><b>Advanced Settings</b><UiIcon name="InfoCircleOutlined" /></span></template
-							><KeyAdvancedFields v-model="draft" :properties="catalog.advancedProperties" :errors="errors"
-						/></KeyAccordion>
 					</KeyAccordion>
 				</section>
 			</template>

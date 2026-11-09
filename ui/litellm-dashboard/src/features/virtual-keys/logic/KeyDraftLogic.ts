@@ -25,7 +25,6 @@ export function createKeyDraft(key?: VirtualKey): KeyDraft {
 		agent_id: "",
 		organization_id: key?.organization_id ?? key?.org_id ?? "",
 		team_id: key?.team_id ?? "",
-		project_id: key?.project_id ?? "",
 		key_alias: key?.key_alias ?? "",
 		key: "",
 		blocked: key?.blocked === true,
@@ -41,19 +40,7 @@ export function createKeyDraft(key?: VirtualKey): KeyDraft {
 		max_parallel_requests: key?.max_parallel_requests ?? null,
 		model_tpm_limit: tpm ? JSON.stringify(tpm) : "",
 		model_rpm_limit: rpm ? JSON.stringify(rpm) : "",
-		guardrails: stringValues(metadata.guardrails),
-		disable_global_guardrails: metadata.disable_global_guardrails === true,
-		policies: stringValues(metadata.policies),
-		prompts: stringValues(metadata.prompts),
-		tags: stringValues(metadata.tags),
-		access_group_ids: stringValues(key?.access_group_ids),
-		allowed_passthrough_routes: stringValues(metadata.allowed_passthrough_routes),
 		vector_stores: stringValues(permission.vector_stores),
-		mcp_servers: stringValues(permission.mcp_servers),
-		mcp_access_groups: stringValues(permission.mcp_access_groups),
-		mcp_tool_permissions: Object.fromEntries(
-			Object.entries(recordValue(permission.mcp_tool_permissions)).map(([name, value]) => [name, stringValues(value)]),
-		),
 		allowed_agents: stringValues(permission.agents),
 		agent_access_groups: stringValues(permission.agent_access_groups),
 		metadataText: key ? JSON.stringify(Object.fromEntries(Object.entries(metadata).filter(([name]) => name !== "tags")), null, 2) : "",
@@ -67,7 +54,6 @@ export function createKeyDraft(key?: VirtualKey): KeyDraft {
 		never_expire: !key?.expires,
 		auto_rotate: key?.auto_rotate ?? false,
 		rotation_interval: key ? key.rotation_interval || "" : "30d",
-		advanced: {},
 	};
 }
 export function validateKeyDraft(
@@ -75,12 +61,9 @@ export function validateKeyDraft(
 	options: { creating: boolean; team?: KeyTeam; customKeysDisabled?: boolean; rows?: readonly VirtualKey[] },
 ): Record<string, string> {
 	const errors: Record<string, string> = {};
-	if (options.creating && !draft.key_alias.trim())
-		errors.key_alias = "Please input a " + (draft.owner === "you" ? "key name" : "service account ID");
-	if (draft.owner === "service_account" && !draft.team_id) errors.team_id = "Please select a team for the service account";
+	if (options.creating && !draft.key_alias.trim()) errors.key_alias = "Please input a key name";
 	if (draft.owner === "another_user" && !draft.user_id)
 		errors.user_id = "Please input the user ID of the user you are assigning the key to";
-	if (draft.owner === "agent" && !draft.agent_id) errors.agent_id = "Please select an agent";
 	if (options.creating && !options.customKeysDisabled && draft.key.trim()) {
 		if (!draft.key.trim().startsWith("sk-")) errors.key = "Custom Key must start with 'sk-'";
 		else if (draft.key.trim().length < 16) errors.key = "Custom Key must be at least 16 characters long";
@@ -114,16 +97,6 @@ export function validateKeyDraft(
 			errors[field] = field === "metadataText" ? "Invalid metadata JSON" : "Must be a valid JSON object";
 		}
 	}
-	for (const name of ["config", "enforced_params", "aliases"]) {
-		const value = draft.advanced[name];
-		if (typeof value === "string" && value.trim()) {
-			try {
-				JSON.parse(value);
-			} catch {
-				errors[name] = "Enter valid JSON";
-			}
-		}
-	}
 	return errors;
 }
 export function applyKeyPrefill(
@@ -134,7 +107,7 @@ export function applyKeyPrefill(
 	allowedModels: readonly string[],
 ): void {
 	const owner = query.get("owned_by");
-	if (owner === "you" || owner === "service_account" || (owner === "another_user" && role === "Admin")) draft.owner = owner;
+	if (owner === "you" || (owner === "another_user" && role === "Admin")) draft.owner = owner;
 	const team = teams.find((team) => team.team_id === query.get("team_id"));
 	if (team) draft.team_id = team.team_id;
 	draft.key_alias = (query.get("key_alias") ?? "").trim().slice(0, 256);

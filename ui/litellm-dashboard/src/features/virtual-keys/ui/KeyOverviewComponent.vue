@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import UiCard from "../../platform/ui/UiCard.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { stringValues, type KeyCatalog, type VirtualKey } from "../support/VirtualKeyModels";
+import type { KeyCatalog, VirtualKey } from "../support/VirtualKeyModels";
 import KeyBadge from "./KeyBadgeComponent.vue";
 import KeyPermissionSummary from "./KeyPermissionSummaryComponent.vue";
 import KeyOperationalSummary from "./KeyOperationalSummaryComponent.vue";
-defineProps<{ keyData: VirtualKey; catalog: KeyCatalog; policyGuardrails: Record<string, string[]>; loadingPolicies: boolean }>();
+defineProps<{ keyData: VirtualKey; catalog: KeyCatalog }>();
 const formatMoney = useMoneyFormatter();
 </script>
 <template>
@@ -31,33 +31,7 @@ const formatMoney = useMoneyFormatter();
 				<p v-if="!keyData.models.length" class="vk-tremor-text">No models specified</p>
 			</div></UiCard
 		>
-		<UiCard><KeyPermissionSummary :key-data="keyData" :catalog="catalog" /></UiCard>
-		<UiCard
-			><p class="vk-tremor-text vk-card-heading">Guardrails</p>
-			<div v-if="stringValues(keyData.metadata.guardrails).length" class="vk-summary-badges">
-				<KeyBadge v-for="guardrail in stringValues(keyData.metadata.guardrails)" :key="guardrail">{{ guardrail }}</KeyBadge>
-			</div>
-			<p v-else class="vk-tremor-text">No guardrails configured</p>
-			<div v-if="keyData.metadata.disable_global_guardrails === true" class="vk-guards-disabled">
-				<KeyBadge color="yellow">Global Guardrails Disabled</KeyBadge>
-			</div></UiCard
-		>
-		<UiCard
-			><p class="vk-tremor-text vk-card-heading">Policies</p>
-			<div v-if="stringValues(keyData.metadata.policies).length" class="vk-policy-list">
-				<div v-for="policy in stringValues(keyData.metadata.policies)" :key="policy">
-					<KeyBadge color="purple">{{ policy }}</KeyBadge
-					><small v-if="loadingPolicies">Loading guardrails...</small>
-					<div v-else-if="policyGuardrails[policy]?.length" class="vk-policy-guards">
-						<p>Resolved Guardrails:</p>
-						<div class="vk-summary-badges">
-							<KeyBadge v-for="guardrail in policyGuardrails[policy]" :key="guardrail" small>{{ guardrail }}</KeyBadge>
-						</div>
-					</div>
-				</div>
-			</div>
-			<p v-else class="vk-tremor-text">No policies configured</p></UiCard
-		>
+		<UiCard><KeyPermissionSummary :key-data="keyData" /></UiCard>
 		<KeyOperationalSummary :key-data="keyData" mode="logging" card />
 		<KeyOperationalSummary :key-data="keyData" mode="rotation" card />
 	</div>

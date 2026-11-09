@@ -60,12 +60,8 @@ export function listKeys(query: KeyQuery, signal?: AbortSignal): Promise<KeyList
 	for (const [name, value] of Object.entries(filters)) if (value) params.set(name, value);
 	return requestJson("/key/list?" + params, { signal }, (payload) => listSchema.parse(payload) as KeyListResult);
 }
-export function createKey(payload: Record<string, unknown>, serviceAccount = false): Promise<Record<string, unknown>> {
-	return requestJson(
-		serviceAccount ? "/key/service-account/generate" : "/key/generate",
-		{ method: "POST", body: JSON.stringify(payload) },
-		(value) => recordSchema.parse(value),
-	);
+export function createKey(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+	return requestJson("/key/generate", { method: "POST", body: JSON.stringify(payload) }, (value) => recordSchema.parse(value));
 }
 export function updateKey(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
 	return requestJson("/key/update", { method: "POST", body: JSON.stringify(payload) }, (value) => recordSchema.parse(value));
@@ -78,24 +74,11 @@ export function regenerateKey(token: string, form: Record<string, unknown>): Pro
 		recordSchema.parse(value),
 	);
 }
-export function resetKeySpend(token: string): Promise<void> {
-	return requestJson(
-		"/key/" + encodeURIComponent(token) + "/reset_spend",
-		{ method: "POST", body: JSON.stringify({ reset_to: 0 }) },
-		() => undefined,
-	);
-}
 export function keyInfo(token: string): Promise<VirtualKey> {
 	return requestJson("/key/info?key=" + encodeURIComponent(token), {}, (payload) => {
 		const value = recordSchema.parse(payload);
 		return parseVirtualKey({ ...recordSchema.parse(value.info ?? value), token, api_key: token });
 	});
 }
-export function policyGuardrails(name: string): Promise<string[]> {
-	return requestJson("/policy/info/" + encodeURIComponent(name), {}, (value) => {
-		const object = recordSchema.parse(value);
-		return z.array(z.string()).parse(object.resolved_guardrails ?? []);
-	});
-}
-export const virtualKeysApi = { listKeys, createKey, updateKey, deleteKey, regenerateKey, resetKeySpend, keyInfo, policyGuardrails };
+export const virtualKeysApi = { listKeys, createKey, updateKey, deleteKey, regenerateKey, keyInfo };
 export type VirtualKeysApi = typeof virtualKeysApi;

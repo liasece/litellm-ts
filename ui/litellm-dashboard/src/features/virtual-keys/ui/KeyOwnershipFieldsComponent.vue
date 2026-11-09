@@ -3,7 +3,6 @@ import { useKeyFieldIdentity } from "../support/KeyFormIdentity";
 import { computed, onBeforeUnmount, ref } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
-import UiTag from "../../platform/ui/UiTag.vue";
 import { searchKeyOwners } from "../data/KeyCatalogData";
 import { selectedString, type KeyCatalog, type KeyDraft } from "../support/VirtualKeyModels";
 import type { UiSelectOption } from "../../platform/ui/UiTypes";
@@ -14,7 +13,6 @@ const props = defineProps<{
 	role: string;
 	errors: Record<string, string>;
 	lockTeam?: boolean;
-	lockProject?: boolean;
 }>();
 const emit = defineEmits<{ createUser: [] }>();
 const userOptions = ref<UiSelectOption[]>([]);
@@ -27,27 +25,13 @@ const teams = computed(() =>
 		.filter((team) => !draft.value.organization_id || team.organization_id === draft.value.organization_id)
 		.map((team) => ({ value: team.team_id, label: team.team_alias || team.team_id })),
 );
-const projects = computed(() =>
-	props.catalog.projects
-		.filter((project) => !draft.value.team_id || !project.team_id || project.team_id === draft.value.team_id)
-		.map((project) => ({ value: project.project_id, label: project.project_alias || project.project_id })),
-);
 function changeOrganization(value: unknown) {
 	draft.value.organization_id = selectedString(value);
 	draft.value.team_id = "";
-	draft.value.project_id = "";
 }
 function changeTeam(value: unknown) {
 	draft.value.team_id = selectedString(value);
-	draft.value.project_id = "";
 	draft.value.organization_id = props.catalog.teams.find((team) => team.team_id === draft.value.team_id)?.organization_id || "";
-}
-function changeProject(value: unknown) {
-	draft.value.project_id = selectedString(value);
-	const project = props.catalog.projects.find((project) => project.project_id === draft.value.project_id);
-	draft.value.team_id = project?.team_id || "";
-	if (project?.team_id)
-		draft.value.organization_id = props.catalog.teams.find((team) => team.team_id === project.team_id)?.organization_id || "";
 }
 function searchUsers(value: string) {
 	if (timer) clearTimeout(timer);
@@ -85,15 +69,12 @@ const fieldId = useKeyFieldIdentity();
 				<label
 					v-for="owner in [
 						{ value: 'you', label: 'You' },
-						{ value: 'service_account', label: 'Service Account' },
 						...(role === 'Admin' ? [{ value: 'another_user', label: 'Another User' }] : []),
-						{ value: 'agent', label: 'Agent' },
 					]"
 					:key="owner.value"
-					><input v-model="draft.owner" type="radio" name="key-owner" :value="owner.value" /><span class="vk-owner-radio-text"
-						>{{ owner.label }}{{ owner.value === "agent" ? " " : ""
-						}}<UiTag v-if="owner.value === 'agent'" color="purple">New</UiTag></span
-					></label
+					><input v-model="draft.owner" type="radio" name="key-owner" :value="owner.value" /><span class="vk-owner-radio-text">{{
+						owner.label
+					}}</span></label
 				>
 			</div></KeyField
 		>
@@ -120,17 +101,6 @@ const fieldId = useKeyFieldIdentity();
 			</div>
 			<small class="vk-help">Search by email to find users</small></KeyField
 		>
-		<div v-if="draft.owner === 'agent'" class="vk-agent-owner">
-			<label>Select Agent <span>*</span></label
-			><UiSelect
-				:model-value="draft.agent_id || null"
-				:options="catalog.agents"
-				searchable
-				placeholder="Select an agent"
-				@update:model-value="draft.agent_id = selectedString($event)"
-			/><small>This key will be used by the selected agent to make requests to LiteLLM</small>
-			<p v-if="errors.agent_id" class="vk-field-error">{{ errors.agent_id }}</p>
-		</div>
 		<KeyField
 			label="Organization"
 			name="organization_id"
@@ -154,36 +124,18 @@ const fieldId = useKeyFieldIdentity();
 			label="Team"
 			name="team_id"
 			tooltip="The team this key belongs to, which determines available models and budget limits"
-			:help="draft.owner === 'service_account' ? 'required' : undefined"
 			:error="errors.team_id"
-			:required="draft.owner === 'service_account'"
 			horizontal
 			><UiSelect
 				:id="fieldId('team_id')"
 				:model-value="draft.team_id || null"
 				:options="teams"
-				:disabled="lockTeam || Boolean(draft.project_id)"
+				:disabled="lockTeam"
 				searchable
 				clearable
 				placeholder="Search or select a team"
 				@update:model-value="changeTeam"
 		/></KeyField>
-		<div v-if="draft.owner === 'service_account' || errors.team_id" class="vk-create-field-margin-offset" aria-hidden="true" />
-		<KeyField
-			v-if="catalog.uiSettings.enable_projects_ui"
-			label="Project"
-			name="project_id"
-			tooltip="Assign this key to a project. Selecting a project will lock the team to the project's team."
-			horizontal
-			><UiSelect
-				:id="fieldId('project_id')"
-				:model-value="draft.project_id || null"
-				:options="projects"
-				:disabled="lockProject"
-				searchable
-				clearable
-				placeholder="Search or select a project"
-				@update:model-value="changeProject"
-		/></KeyField>
+		<div v-if="errors.team_id" class="vk-create-field-margin-offset" aria-hidden="true" />
 	</section>
 </template>

@@ -10,39 +10,17 @@ import KeyPermissionSummary from "./KeyPermissionSummaryComponent.vue";
 import KeyOperationalSummary from "./KeyOperationalSummaryComponent.vue";
 const props = defineProps<{ keyData: VirtualKey; catalog: KeyCatalog; lastRegeneratedAt?: Date | null; recentlyRegenerated?: boolean }>();
 const formatMoney = useMoneyFormatter();
-const project = computed(() => props.catalog.projects.find((project) => project.project_id === props.keyData.project_id));
 const settings = computed(() => [
 	["Key ID", props.keyData.token_id || props.keyData.token],
 	["Enabled", props.keyData.blocked === true ? "Disabled" : "Enabled"],
 	["Key Alias", props.keyData.key_alias || "Not Set"],
 	["Secret Key", props.keyData.key_name],
 	["Team ID", props.keyData.team_id || "Not Set"],
-	...(props.catalog.uiSettings.enable_projects_ui
-		? [
-				[
-					"Project",
-					props.keyData.project_id
-						? project.value?.project_alias
-							? project.value.project_alias + " (" + props.keyData.project_id + ")"
-							: props.keyData.project_id
-						: "Not Set",
-				],
-			]
-		: []),
 	["Organization", props.keyData.organization_id ?? props.keyData.org_id ?? "Not Set"],
 	["Created", keyTimestamp(props.keyData.created_at)],
 ]);
-const lists = computed(() => [
-	{ label: "Tags", values: stringValues(props.keyData.metadata.tags), empty: "No tags specified" },
-	{ label: "Prompts", values: stringValues(props.keyData.metadata.prompts), empty: "No prompts specified" },
-	{ label: "Allowed Routes", values: stringValues(props.keyData.allowed_routes), empty: "" },
-	{
-		label: "Allowed Pass Through Routes",
-		values: stringValues(props.keyData.metadata.allowed_passthrough_routes),
-		empty: "No pass through routes specified",
-	},
-]);
-const metadata = computed(() => Object.fromEntries(Object.entries(props.keyData.metadata).filter(([name]) => name !== "tags")));
+const lists = computed(() => [{ label: "Allowed Routes", values: stringValues(props.keyData.allowed_routes), empty: "" }]);
+const metadata = computed(() => Object.fromEntries(Object.entries(props.keyData.metadata)));
 </script>
 <template>
 	<UiCard class="vk-settings-card"
@@ -78,14 +56,6 @@ const metadata = computed(() => Object.fromEntries(Object.entries(props.keyData.
 				<UiTag v-else color="green">All routes allowed</UiTag>
 			</div>
 			<div>
-				<h4>Disable Global Guardrails</h4>
-				<KeyBadge :color="keyData.metadata.disable_global_guardrails ? 'yellow' : 'green'">{{
-					keyData.metadata.disable_global_guardrails
-						? "Enabled - Global guardrails bypassed"
-						: "Disabled - Global guardrails active"
-				}}</KeyBadge>
-			</div>
-			<div>
 				<h4>Models</h4>
 				<div v-if="keyData.models.length" class="vk-settings-values">
 					<UiTag v-for="model in keyData.models" :key="model">{{ model }}</UiTag>
@@ -110,7 +80,7 @@ const metadata = computed(() => Object.fromEntries(Object.entries(props.keyData.
 				<h4>Metadata</h4>
 				<pre class="vk-settings-metadata">{{ JSON.stringify(metadata, null, 2) }}</pre>
 			</div>
-			<KeyPermissionSummary :key-data="keyData" :catalog="catalog" class="vk-settings-divider" />
+			<KeyPermissionSummary :key-data="keyData" class="vk-settings-divider" />
 			<KeyOperationalSummary :key-data="keyData" mode="logging" class="vk-settings-divider" /></div
 	></UiCard>
 </template>

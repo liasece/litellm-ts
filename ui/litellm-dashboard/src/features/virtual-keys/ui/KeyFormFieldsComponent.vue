@@ -88,7 +88,6 @@ const fieldId = useKeyFieldIdentity();
 				searchable
 				clearable
 				:creatable="field.creatable"
-				:token-separators="field.name === 'tags' && !editing ? [','] : undefined"
 				:placeholder="field.placeholder || 'Select ' + field.label.toLowerCase()"
 				:disabled="field.disabled"
 				@update:model-value="update(field, $event)"
@@ -99,10 +98,7 @@ const fieldId = useKeyFieldIdentity();
 				:label="field.label"
 				:disabled="field.disabled"
 				@update:model-value="update(field, $event)"
-				><template v-if="editing && field.name === 'disable_global_guardrails'" #default>{{
-					draft[field.name] ? "Yes" : "No"
-				}}</template></UiSwitch
-			>
+			/>
 		</KeyFieldComponent>
 		<div v-if="horizontal && !editing && (field.help || errors[field.name])" class="vk-create-field-margin-offset" aria-hidden="true"
 	/></template>

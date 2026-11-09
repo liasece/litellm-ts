@@ -7,8 +7,8 @@ import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import KeyCopyableValue from "./KeyCopyableValueComponent.vue";
 import { keyTimestamp } from "../render/KeyTablePresentation";
 import type { VirtualKey } from "../support/VirtualKeyModels";
-const props = defineProps<{ keyData: VirtualKey; canModify: boolean; canReset: boolean; premium: boolean; backButtonText?: string }>();
-const emit = defineEmits<{ regenerate: []; remove: []; reset: []; back: [] }>();
+const props = defineProps<{ keyData: VirtualKey; canModify: boolean; premium: boolean; backButtonText?: string }>();
+const emit = defineEmits<{ regenerate: []; remove: []; back: [] }>();
 const copied = ref("");
 let timer: ReturnType<typeof setTimeout> | null = null;
 async function copy(label: string, value: string) {
@@ -92,8 +92,6 @@ onBeforeUnmount(() => {
 							><template #icon><UiIcon name="SyncOutlined" /></template>Regenerate Key</UiButton
 						></span
 					></UiTooltip
-				><UiButton v-if="canReset" danger @click="emit('reset')"
-					><template #icon><UiIcon name="TransactionOutlined" /></template>Reset Spend</UiButton
 				><UiButton danger @click="emit('remove')"
 					><template #icon><UiIcon name="DeleteOutlined" /></template>Delete Key</UiButton
 				>
