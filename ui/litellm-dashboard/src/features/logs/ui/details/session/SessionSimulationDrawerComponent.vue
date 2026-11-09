@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { SessionGroupRef } from "../../../support/LogsModels";
 import type { SessionTimelineEvent } from "../../../support/SessionTimelineModels";
 import { createSessionTimelineStore } from "../../../stores/SessionTimelineStore";
 import { formatSessionKey } from "../../../logic/SessionTimelineContentLogic";
+import { keepsTimelineScrollAnchor, reachesTimelineEarlierEnd, timelineAnchorShift } from "../../../logic/SessionTimelineScrollLogic";
 import { useMoneyFormatter } from "../../../../platform/stores/PriceDisplayStore";
 import UiDrawer from "../../../../platform/ui/UiDrawer.vue";
 import UiButton from "../../../../platform/ui/UiButton.vue";
@@ -28,7 +29,137 @@ watch(
 	() => store.bind(props.sessionGroup, props.teamId, props.open),
 	{ immediate: true },
 );
-onBeforeUnmount(store.dispose);
+const root = ref<HTMLElement | null>(null);
+let stopScroll: (() => void) | null = null,
+	scrollBody: HTMLElement | null = null,
+	/** 上一次已经画到页面上的排序，用来区分「来了新事件」和「读者切换了排序」。 */
+	renderedNewestFirst = state.newestFirst,
+	/** 内容变化前记下的视野内条目（顶部、中部、底部各一个），用来把读者看到的位置固定住。 */
+	scrollAnchor: Array<{ id: string; offset: number }> = [];
+const TIMELINE_EVENT_SELECTOR = "[data-event-id]";
+/**
+ * 取出滚动容器视野内的时间线条目。
+ *
+ * 条目按显示顺序纵向排列、位置单调，二分探测起点即可，长会话不必逐条量取。
+ * @param body - 滚动容器
+ * @param containerTop - 滚动容器视口顶部在页面坐标中的位置
+ * @param containerBottom - 滚动容器视口底部在页面坐标中的位置
+ */
+function visibleEvents(body: HTMLElement, containerTop: number, containerBottom: number): HTMLElement[] {
+	const nodes = body.querySelectorAll<HTMLElement>(TIMELINE_EVENT_SELECTOR);
+	let low = 0,
+		high = nodes.length - 1,
+		start = -1;
+	while (low <= high) {
+		const middle = (low + high) >> 1,
+			node = nodes[middle];
+		if (!node) break;
+		if (node.getBoundingClientRect().bottom > containerTop) {
+			start = middle;
+			high = middle - 1;
+		} else low = middle + 1;
+	}
+	if (start < 0) return [];
+	const visible: HTMLElement[] = [];
+	for (let index = start; index < nodes.length; index += 1) {
+		const node = nodes[index];
+		if (!node || node.getBoundingClientRect().top >= containerBottom) break;
+		visible.push(node);
+	}
+	return visible;
+}
+/**
+ * 记录当前阅读位置：视野顶部、中部、底部各一个条目的 id 与相对容器顶部的偏移。
+ *
+ * 实时更新会把进行中的条目换成新的 id，多个样例保证至少有一个还能对上。
+ * 最新优先且停在顶端时不记录：那里正是最新事件的位置，新事件应当直接出现。
+ */
+function captureScrollAnchor() {
+	const body = scrollBody;
+	if (!body) return;
+	const metrics = {
+		newestFirst: state.newestFirst,
+		scrollTop: body.scrollTop,
+		clientHeight: body.clientHeight,
+		scrollHeight: body.scrollHeight,
+	};
+	scrollAnchor = [];
+	// 排序切换是读者主动换看的一端，按新顺序从这一端看起，不补回旧位置。
+	if (state.newestFirst !== renderedNewestFirst) return;
+	if (!keepsTimelineScrollAnchor(metrics)) return;
+	const bounds = body.getBoundingClientRect(),
+		containerTop = bounds.top,
+		visible = visibleEvents(body, containerTop, bounds.bottom),
+		picked = [visible[0], visible[Math.floor(visible.length / 2)], visible[visible.length - 1]];
+	scrollAnchor = picked.flatMap((node) => {
+		const id = node?.dataset.eventId;
+		return node && id ? [{ id: id, offset: node.getBoundingClientRect().top - containerTop }] : [];
+	});
+}
+/**
+ * 把锚点条目放回原来的屏幕位置。
+ *
+ * 实时更新在视野上方插入事件、或往上补了更早的一页时，滚动高度会变大；只补回这段差值，
+ * 读者正在看的内容不会跳动，也不会被拉回列表顶端或末尾。
+ */
+function restoreScrollAnchor() {
+	const previous = scrollAnchor,
+		body = scrollBody;
+	scrollAnchor = [];
+	renderedNewestFirst = state.newestFirst;
+	if (!previous.length || !body) return;
+	const containerTop = body.getBoundingClientRect().top;
+	// 视野里的条目可能被实时更新替换掉 id，按顶部、中部、底部的顺序取第一个还在的。
+	for (const sample of previous) {
+		const node = body.querySelector<HTMLElement>(`${TIMELINE_EVENT_SELECTOR}[data-event-id="${CSS.escape(sample.id)}"]`);
+		if (!node) continue;
+		const shift = timelineAnchorShift(sample.offset, node.getBoundingClientRect().top - containerTop);
+		if (Math.abs(shift) >= 1) body.scrollTop += shift;
+		return;
+	}
+}
+/**
+ * 滚到「更早」的一端就直接取下一页，取代只靠面板标题旁按钮的手动翻页。
+ * @param event - 抽屉内容容器的滚动事件
+ */
+function loadEarlierWhenScrolled(event: Event) {
+	const element = event.currentTarget as HTMLElement;
+	if (state.loadingEarlier || !store.canLoadEarlier.value) return;
+	const metrics = {
+		newestFirst: state.newestFirst,
+		scrollTop: element.scrollTop,
+		clientHeight: element.clientHeight,
+		scrollHeight: element.scrollHeight,
+	};
+	if (!reachesTimelineEarlierEnd(metrics)) return;
+	void store.loadEarlier();
+}
+onMounted(() => {
+	scrollBody = root.value?.closest<HTMLElement>(".ui-drawer__body") ?? null;
+	if (!scrollBody) return;
+	const body = scrollBody,
+		listener = (event: Event) => loadEarlierWhenScrolled(event);
+	body.addEventListener("scroll", listener, { passive: true });
+	stopScroll = () => body.removeEventListener("scroll", listener);
+});
+// 列表由抽屉的插槽承载，重新渲染发生在 UiDrawer 里，所以在这里按数据变化取锚点：
+// pre 在 DOM 更新前记录位置，post 在更新后补回偏移。
+watch(
+	() => store.displayed.value,
+	() => captureScrollAnchor(),
+	{ flush: "pre" },
+);
+watch(
+	() => store.displayed.value,
+	() => restoreScrollAnchor(),
+	{ flush: "post" },
+);
+onBeforeUnmount(() => {
+	stopScroll?.();
+	scrollBody = null;
+	scrollAnchor = [];
+	store.dispose();
+});
 const tones = {
 	assistant: { dot: "#409eff", tag: "blue", icon: "Bot" },
 	user: { dot: "#67c23a", tag: "green", icon: "UserRound" },
@@ -63,7 +194,7 @@ function date(value: string) {
 			><span class="session-simulation-title">Session 模拟</span
 			><span class="session-simulation-id">{{ sessionGroup.id }}</span></template
 		>
-		<div data-testid="session-simulation-drawer" class="session-simulation">
+		<div ref="root" data-testid="session-simulation-drawer" class="session-simulation">
 			<div class="session-simulation__summary">
 				<div class="session-simulation__summary-row">
 					<div class="session-simulation__stats">
@@ -144,6 +275,7 @@ function date(value: string) {
 					:key="item.id"
 					class="session-timeline__event"
 					:class="{ 'session-timeline__event--last': index === store.displayed.value.length - 1 }"
+					:data-event-id="item.id"
 				>
 					<div
 						class="session-timeline__dot"

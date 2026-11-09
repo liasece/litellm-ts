@@ -5,6 +5,8 @@
 .session-simulation-drawer > .ui-drawer__body {
 	padding: 0;
 	background: #f8fafc;
+	/* 实时事件的上插由组件按锚点补回，交给浏览器自带的滚动锚定会与新事件同时挪动位置。 */
+	overflow-anchor: none;
 }
 .session-simulation-title {
 	display: block;
