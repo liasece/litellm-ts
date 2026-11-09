@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
+import { computeFloatingPanelPosition, type FloatingPanelPosition } from "../../platform/ui/UiFloatingPanelLogic";
 import { LIVE_TAIL_INTERVAL_OPTIONS, QUICK_SELECT_OPTIONS } from "../support/LogsConstants";
 const props = defineProps<{
 	startTime: string;
@@ -22,6 +23,10 @@ const emit = defineEmits<{
 }>();
 const open = ref(false);
 const menuRoot = ref<HTMLElement>();
+const button = ref<HTMLButtonElement>();
+const menu = ref<HTMLElement>();
+const target = ref<HTMLElement | string>("body");
+const position = ref<FloatingPanelPosition>({ top: 0, left: 0 });
 const label = computed(() => {
 	if (!props.customDate)
 		return QUICK_SELECT_OPTIONS.find((item) => item.value === props.selectedInterval.value && item.unit === props.selectedInterval.unit)
@@ -30,8 +35,51 @@ const label = computed(() => {
 		new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 	return format(props.startTime) + " - " + format(props.endTime);
 });
+/**
+ * 菜单要渲染到页面容器之外：`.logs-page` 的 overflow-x: hidden 会裁掉向上/向右溢出的浮层。
+ * 因此它只能使用视口坐标，并用与表头筛选相同的方式夹在视口内。
+ */
+function measure() {
+	const trigger = button.value;
+	if (!trigger) return;
+	position.value = computeFloatingPanelPosition(
+		trigger.getBoundingClientRect(),
+		{ width: menu.value?.offsetWidth ?? 256, height: menu.value?.offsetHeight ?? 0 },
+		{ width: window.innerWidth, height: window.innerHeight },
+	);
+}
 function outside(event: MouseEvent) {
-	if (event.target instanceof Node && !menuRoot.value?.contains(event.target)) open.value = false;
+	const node = event.target;
+	if (!(node instanceof Node)) return;
+	if (menuRoot.value?.contains(node) || menu.value?.contains(node)) return;
+	open.value = false;
+}
+function escape(event: KeyboardEvent) {
+	if (event.key !== "Escape" || !open.value) return;
+	event.stopPropagation();
+	open.value = false;
+	button.value?.focus();
+}
+/** 面板使用视口坐标，页面滚动后触发器位置失效，直接收起。 */
+function scrolled(event: Event) {
+	if (event.target instanceof Node && menu.value?.contains(event.target)) return;
+	open.value = false;
+}
+async function toggle() {
+	if (open.value) {
+		open.value = false;
+		return;
+	}
+	target.value = button.value?.closest("dialog") ?? document.body;
+	open.value = true;
+	await nextTick();
+	if (!open.value) return;
+	measure();
+	window.requestAnimationFrame(measure);
+	document.addEventListener("pointerdown", outside, true);
+	document.addEventListener("keydown", escape, true);
+	window.addEventListener("resize", measure);
+	document.addEventListener("scroll", scrolled, true);
 }
 function select(value: number, unit: string) {
 	emit("interval", value, unit);
@@ -40,15 +88,23 @@ function select(value: number, unit: string) {
 function inputValue(event: Event) {
 	return (event.target as HTMLInputElement).value;
 }
-onMounted(() => document.addEventListener("mousedown", outside));
-onBeforeUnmount(() => document.removeEventListener("mousedown", outside));
+watch(open, (value) => {
+	if (value) return;
+	document.removeEventListener("pointerdown", outside, true);
+	document.removeEventListener("keydown", escape, true);
+	window.removeEventListener("resize", measure);
+	document.removeEventListener("scroll", scrolled, true);
+});
+onBeforeUnmount(() => {
+	open.value = false;
+});
 </script>
 <template>
 	<div class="logs-toolbar">
 		<div class="logs-toolbar-row">
 			<div class="logs-toolbar-options">
-				<div ref="menuRoot" class="logs-time-select" @keydown.esc="open = false">
-					<button type="button" class="logs-native-button logs-time-button" :aria-expanded="open" @click="open = !open">
+				<div ref="menuRoot" class="logs-time-select">
+					<button ref="button" type="button" class="logs-native-button logs-time-button" :aria-expanded="open" @click="toggle">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
 							<path
 								stroke-linecap="round"
@@ -59,21 +115,32 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", outside));
 						</svg>
 						{{ label }}
 					</button>
-					<div v-if="open" class="logs-time-menu">
-						<button
-							v-for="option in QUICK_SELECT_OPTIONS"
-							:key="option.label"
-							type="button"
-							:class="{ selected: label === option.label }"
-							@click="select(option.value, option.unit)"
+					<Teleport :to="target">
+						<div
+							v-if="open"
+							ref="menu"
+							class="logs-time-menu"
+							:style="{ top: position.top + 'px', left: position.left + 'px' }"
 						>
-							{{ option.label }}
-						</button>
-						<hr />
-						<button type="button" :class="{ selected: customDate }" @click="emit('custom', startTime, endTime, !customDate)">
-							Custom Range
-						</button>
-					</div>
+							<button
+								v-for="option in QUICK_SELECT_OPTIONS"
+								:key="option.label"
+								type="button"
+								:class="{ selected: label === option.label }"
+								@click="select(option.value, option.unit)"
+							>
+								{{ option.label }}
+							</button>
+							<hr />
+							<button
+								type="button"
+								:class="{ selected: customDate }"
+								@click="emit('custom', startTime, endTime, !customDate)"
+							>
+								Custom Range
+							</button>
+						</div>
+					</Teleport>
 				</div>
 				<div class="logs-live-switch">
 					<span>Live Tail</span

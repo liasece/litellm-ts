@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from "vue";
 import UiTableFilterPanel from "./UiTableFilterPanel.vue";
+import { computeFloatingPanelPosition } from "./UiFloatingPanelLogic";
 import type { UiTableActiveFilter, UiTableFilterField } from "./UiTableFilterModels";
 
 const props = withDefaults(
@@ -20,13 +21,12 @@ const activeCount = computed(() => props.active.filter((filter) => filter.value)
 function measure(): void {
 	const trigger = button.value;
 	if (!trigger) return;
-	const rect = trigger.getBoundingClientRect();
-	const width = panel.value?.offsetWidth ?? 288;
-	const height = panel.value?.offsetHeight ?? 280;
-	const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-	let top = rect.bottom + 6;
-	if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 6);
-	position.value = { top, left };
+	position.value = computeFloatingPanelPosition(
+		trigger.getBoundingClientRect(),
+		{ width: panel.value?.offsetWidth ?? 288, height: panel.value?.offsetHeight ?? 280 },
+		{ width: window.innerWidth, height: window.innerHeight },
+		{ gap: 6, margin: 8 },
+	);
 }
 
 async function show(): Promise<void> {
