@@ -3,9 +3,6 @@ import { usageCatalogApi } from "../api/UsageCatalogApi";
 import type { EntityOption } from "../support/UsageModels";
 export function createUsageCatalogStore(api = usageCatalogApi) {
 	const state = reactive({
-		tags: [] as EntityOption[],
-		customers: [] as EntityOption[],
-		agents: [] as EntityOption[],
 		users: [] as EntityOption[],
 		maxBudget: null as number | null,
 		usersLoading: false,
@@ -76,23 +73,11 @@ export function createUsageCatalogStore(api = usageCatalogApi) {
 	}
 	async function initialize(admin: boolean): Promise<void> {
 		const tasks = [
-			api.tags(controller.signal).then((items) => {
-				if (!disposed) state.tags = items.map((t) => ({ label: t.name, value: t.name }));
-			}),
 			api.currentUser(controller.signal).then((user) => {
 				if (!disposed) state.maxBudget = user.max_budget ?? null;
 			}),
 		];
-		if (admin)
-			tasks.push(
-				users(),
-				api.customers(controller.signal).then((items) => {
-					if (!disposed) state.customers = items.map((c) => ({ value: c.user_id, label: c.alias || c.user_id }));
-				}),
-				api.agents(controller.signal).then((items) => {
-					if (!disposed) state.agents = items.map((a) => ({ label: a.agent_name, value: a.agent_id }));
-				}),
-			);
+		if (admin) tasks.push(users());
 		await Promise.allSettled(tasks);
 	}
 	function dispose() {

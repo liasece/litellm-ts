@@ -6,7 +6,6 @@ import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
-import UiAlert from "../../platform/ui/UiAlert.vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
 import { isAdminRole } from "../../identity/logic/UserRoleLogic";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
@@ -30,8 +29,6 @@ import UsageEndpoint from "./UsageEndpointComponent.vue";
 import UsageEntity from "./UsageEntityComponent.vue";
 import UsageProgress from "./UsageProgressComponent.vue";
 import UsageExport from "./UsageExportDialogComponent.vue";
-import UsageAiPanel from "./UsageAiPanelComponent.vue";
-import UsageUserAgent from "./UsageUserAgentComponent.vue";
 import UsageUpstreamQuota from "./UsageUpstreamQuotaComponent.vue";
 import "./UsageStyles.css";
 import "../styles/UsageAuxiliaryStyles.css";
@@ -45,9 +42,7 @@ const view = ref<UsageView>("global"),
 	selectedUser = ref<string | null>(admin.value ? null : (auth.state.session?.user_id ?? null));
 const modelMode = ref<"groups" | "individual">("groups"),
 	tokenBreakdown = ref(false),
-	banner = ref(true),
 	exportOpen = ref(false),
-	aiOpen = ref(false),
 	dateChanging = ref(false);
 const store = createDailyActivityStore(),
 	catalog = createUsageCatalogStore(),
@@ -108,21 +103,15 @@ const viewOptions = computed(() => [
 				{ value: "tag", label: "Tag Usage", description: "View usage grouped by tags", icon: "TagsOutlined" },
 				{ value: "agent", label: "Agent Usage (A2A)", description: "View usage by AI agents", icon: "RobotOutlined" },
 				{ value: "user", label: "User Usage", description: "View usage by individual users", icon: "UserOutlined" },
-				{
-					value: "user-agent-activity",
-					label: "User Agent Activity",
-					description: "View detailed user agent activity logs",
-					icon: "LineChartOutlined",
-				},
 			]
 		: []),
 ]);
 const entityOptions = computed<Record<string, EntityOption[]>>(() => ({
 	organization: app.state.organizations.map((o) => ({ label: o.organization_alias ?? "", value: o.organization_id })),
 	team: app.state.teams.map((t) => ({ label: t.team_alias ?? "", value: t.team_id })),
-	customer: lists.customers,
-	tag: lists.tags,
-	agent: lists.agents,
+	customer: [],
+	tag: [],
+	agent: [],
 	user: lists.users,
 }));
 const modelMetrics = computed(() => processActivityData(state.data, "models", app.state.teams)),
@@ -215,14 +204,7 @@ function daily(row: Record<string, unknown>): DailyData {
 						<UiTabs v-model="tab" :items="tabs" appearance="tremor" class="usage-solid-tabs" />
 					</div>
 					<div class="usage-global-tab-actions">
-						<UiButton size="small" @click="aiOpen = true"
-							><template #icon
-								><svg viewBox="0 0 16 16" fill="currentColor">
-									<path
-										d="M8 1l1.5 3.5L13 6l-3.5 1.5L8 11 6.5 7.5 3 6l3.5-1.5L8 1zm4 7l.75 1.75L14.5 10.5l-1.75.75L12 13l-.75-1.75L9.5 10.5l1.75-.75L12 8zM4 9l.75 1.75L6.5 11.5l-1.75.75L4 14l-.75-1.75L1.5 11.5l1.75-.75L4 9z"
-									/></svg></template
-							>Ask AI</UiButton
-						><UiButton size="small" @click="exportOpen = true"
+						<UiButton size="small" @click="exportOpen = true"
 							><template #icon
 								><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path
@@ -295,27 +277,11 @@ function daily(row: Record<string, unknown>): DailyData {
 					/>
 				</div>
 			</div>
-			<template v-else-if="view === 'user-agent-activity'"><UsageUserAgent :date-range="date" /></template>
 			<template v-else
-				><UiAlert
-					v-if="view === 'tag' && banner"
-					type="info"
-					title="Reusable credentials are automatically tracked as tags"
-					closable
-					class="usage-credential-banner"
-					@close="banner = false"
-					>When a reusable credential is used, it will appear as a tag prefixed with <code>Credential: </code>in this
-					view.</UiAlert
 				><UsageEntity :key="view" :entity-type="view" :options="entityOptions[view] ?? []" :date-range="date"
 			/></template>
 			<UsageUpstreamQuota :enabled="admin" />
 		</div>
-		<UsageExport
-			v-model:open="exportOpen"
-			entity-type="team"
-			:data="state.data"
-			:date-range="date"
-			custom-title="Export Usage Data"
-		/><UsageAiPanel v-model:open="aiOpen" />
+		<UsageExport v-model:open="exportOpen" entity-type="team" :data="state.data" :date-range="date" custom-title="Export Usage Data" />
 	</div>
 </template>

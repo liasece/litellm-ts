@@ -90,7 +90,7 @@ export interface ModelActivityData {
 	daily_data: { date: string; metrics: SpendMetrics }[];
 }
 export type EntityType = "organization" | "team" | "customer" | "tag" | "agent" | "user";
-export type UsageView = "global" | EntityType | "user-agent-activity";
+export type UsageView = "global" | EntityType;
 export interface EntityOption {
 	label: string;
 	value: string;
