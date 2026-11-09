@@ -13,6 +13,7 @@ import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS, PYTHON_NONE_FILL } from "../core/api/ApiError";
 import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
+import { runtimeConfigCacheFor } from "../repositories/RuntimeConfigCache";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
 import { buildModelGroupOverrides } from "../router/ModelOverrides";
@@ -203,6 +204,7 @@ export function createModelManagementRoutes(
 			if (insertedRow === undefined) {
 				throw new Error("Model insert did not return a row");
 			}
+			runtimeConfigCacheFor(db).invalidateModels();
 			logger.info(`代理模型已创建: ${String(modelName)} (${modelId})`);
 
 			// 批次 C3：落库后同步热更新 Router，新模型无需重启即可路由
@@ -307,6 +309,7 @@ export function createModelManagementRoutes(
 			}
 			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Authentication Error, model not found", "auth_error", PYTHON_NONE_FILL);
 		}
+		runtimeConfigCacheFor(db).invalidateModels();
 		logger.info(`代理模型已更新: ${modelId}`);
 		litellmRouter?.upsertDeployment(proxyModelRowToDeployment(updatedRow));
 		return toPythonProxyModelRow(updatedRow);
@@ -399,6 +402,7 @@ export function createModelManagementRoutes(
 			if (result.rowCount === 0) {
 				throw ApiError.badRequest(`Model with id=${modelId} not found in db`);
 			}
+			runtimeConfigCacheFor(db).invalidateModels();
 
 			logger.info(`代理模型已删除: ${modelId}`);
 

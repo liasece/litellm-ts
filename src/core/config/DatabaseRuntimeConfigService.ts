@@ -1,21 +1,26 @@
 /**
  * 请求级数据库运行时配置。
  *
- * 每个需要 Router 的 HTTP 请求都在只读、可重复读事务中读取配置、模型和凭据，
- * 然后通过 AsyncLocalStorage 绑定到该请求。这里没有跨请求 TTL 或进程级配置缓存。
+ * 每个需要 Router 的 HTTP 请求都绑定一份运行时快照（AsyncLocalStorage）。
+ * 三张热表（配置、模型部署、凭据）由 `RuntimeConfigCache` 在 repository 层维护副本：
+ * 仓库写入成功后同步或失效副本，因此 WebUI 的配置修改对下一个请求立即生效；
+ * 快照本身仍按请求重建，保证请求之间互不共享可变状态。
  */
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { ApiError } from "../api/ApiError";
 import type { DrizzleDb } from "../db/Database";
 import { createModuleLogger } from "../utils/logger";
 import type { ServiceConfig } from "./index";
-import { LiteLLM_Config } from "../../db/schema/config";
-import { LiteLLM_CredentialsTable } from "../../db/schema/credentials";
-import { LiteLLM_ProxyModelTable } from "../../db/schema/proxyModels";
 import { CredentialRuntimeAccessor } from "../../credentials/CredentialRuntimeAccessor";
 import { proxyModelRowToDeployment } from "../../router/ProxyModelDeployment";
 import type { Router, RouterRuntimeSnapshot } from "../../router/Router";
 import { RoutingStrategyName } from "../../types/router";
+import {
+	runtimeConfigCacheFor,
+	type RuntimeConfigRow,
+	type RuntimeCredentialRow,
+	type RuntimeModelRow,
+} from "../../repositories/RuntimeConfigCache";
 
 const logger = createModuleLogger("DatabaseRuntimeConfig");
 
@@ -65,21 +70,28 @@ export class DatabaseRuntimeConfigService {
 	}
 
 	/**
-	 * 在一致的数据库快照中读取一次完整运行时配置。
+	 * 读取一次完整运行时配置并构造请求级快照。
+	 * 三张表来自 repository 层缓存：命中时不产生数据库查询，失效后各装载一次。
 	 * @param router - 接收最新部署快照的 Router
 	 */
 	async loadSnapshot(router: Router): Promise<RouterRuntimeSnapshot> {
-		const result = await this._db.transaction(
-			async (tx) => {
-				const configRows = await tx.select().from(LiteLLM_Config);
-				const modelRows = await tx.select().from(LiteLLM_ProxyModelTable);
-				const credentialRows = await tx.select().from(LiteLLM_CredentialsTable);
-				return { configRows: configRows, modelRows: modelRows, credentialRows: credentialRows };
-			},
-			{ isolationLevel: "repeatable read", accessMode: "read only" },
-		);
+		const cache = runtimeConfigCacheFor(this._db);
+		const [configRows, modelRows, credentialRows] = await Promise.all([
+			cache.configRows(),
+			cache.modelRows(),
+			cache.credentialRows(),
+		]);
+		return this._buildSnapshot(router, configRows, modelRows, credentialRows, cache.revision());
+	}
 
-		const configByName = new Map(result.configRows.map((row) => [row.param_name, row.param_value]));
+	private _buildSnapshot(
+		router: Router,
+		configRows: RuntimeConfigRow[],
+		modelRows: RuntimeModelRow[],
+		credentialRows: RuntimeCredentialRow[],
+		revision: number,
+	): RouterRuntimeSnapshot {
+		const configByName = new Map(configRows.map((row) => [row.param_name, row.param_value]));
 		const dbGeneralSettings = configByName.get("general_settings");
 		const dbRouterSettings = configByName.get("router_settings");
 		const effectiveSettings: Record<string, unknown> = structuredClone(this._yamlRouterSettings);
@@ -95,23 +107,29 @@ export class DatabaseRuntimeConfigService {
 
 		const credentials = new CredentialRuntimeAccessor();
 		credentials.replaceAll(
-			result.credentialRows.map((row) => ({
+			credentialRows.map((row) => ({
 				credential_name: row.credential_name,
 				credential_values: isRecord(row.credential_values) ? structuredClone(row.credential_values) : {},
 				credential_info: isRecord(row.credential_info) ? structuredClone(row.credential_info) : {},
 			})),
 		);
 
-		return router.createRuntimeSnapshot(result.modelRows.map(proxyModelRowToDeployment), effectiveSettings, credentials);
+		return router.createRuntimeSnapshot(modelRows.map(proxyModelRowToDeployment), effectiveSettings, credentials, revision);
 	}
 
 	/**
-	 * Express 中间件：查询失败时 fail closed，绝不回退到旧内存配置。
+	 * Express 中间件：装载失败时 fail closed，绝不回退到旧内存配置。
+	 * 同一请求经过多条带该中间件的路由链时复用已绑定的快照，避免重复重建。
 	 * @param router
 	 */
 	middleware(router: Router): RequestHandler {
 		return async (_req: Request, _res: Response, next: NextFunction): Promise<void> => {
 			try {
+				const existing = router.currentRuntimeSnapshot();
+				if (existing !== undefined && existing.configRevision === runtimeConfigCacheFor(this._db).revision()) {
+					next();
+					return;
+				}
 				const snapshot = await this.loadSnapshot(router);
 				router.runWithRuntimeSnapshot(snapshot, next);
 			} catch (error) {

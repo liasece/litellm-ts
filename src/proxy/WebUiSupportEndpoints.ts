@@ -23,6 +23,7 @@ import { createModuleLogger } from "../core/utils/logger";
 import { YAML_DIFF_SETTING_SECTIONS, yamlConfigDiffService, type YamlDiffSection } from "../core/config/YamlConfigDiffService";
 import type { DrizzleDb } from "../core/db/Database";
 import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
+import { runtimeConfigCacheFor } from "../repositories/RuntimeConfigCache";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
 import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
@@ -1686,6 +1687,7 @@ export function registerWebUiSupportRoutes(
 						updated_at: new Date(),
 					},
 				});
+			runtimeConfigCacheFor(db).invalidateModels();
 		} else {
 			const existing = (await configRepository.getParam(section)) ?? {};
 			const next = { ...existing, [key]: deepMergeConfigValue(existing[key], item.yaml_value) };

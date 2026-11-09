@@ -128,6 +128,8 @@ export interface RouterRuntimeSnapshot {
 	readonly allowedFails: number | AllowedFailsPolicy | null;
 	/** 当前请求使用的凭证读取器。 */
 	readonly credentialValues: CredentialValuesAccessor | undefined;
+	/** 快照对应的运行时配置版本号；同一请求内据此复用已绑定的快照。 */
+	readonly configRevision: number;
 }
 
 /** 精确 deployment ID 不存在。 */
@@ -603,11 +605,13 @@ export class Router {
 	 * @param deployments
 	 * @param settings
 	 * @param credentialValues
+	 * @param configRevision - 构造快照时的运行时配置版本号
 	 */
 	createRuntimeSnapshot(
 		deployments: Deployment[],
 		settings: Record<string, unknown>,
 		credentialValues?: CredentialValuesAccessor,
+		configRevision = 0,
 	): RouterRuntimeSnapshot {
 		const mergedFallbacks: Record<string, string[]> = {};
 		const configuredFallbacks = settings["fallbacks"];
@@ -703,6 +707,7 @@ export class Router {
 			retryAfter: retryAfter,
 			allowedFails: allowedFails,
 			credentialValues: credentialValues,
+			configRevision: configRevision,
 		};
 	}
 
@@ -713,6 +718,11 @@ export class Router {
 	 */
 	runWithRuntimeSnapshot<T>(snapshot: RouterRuntimeSnapshot, callback: () => T): T {
 		return this._runtimeSnapshots.run(snapshot, callback);
+	}
+
+	/** 当前请求已绑定的运行时快照；未绑定（或非请求上下文）时返回 undefined。 */
+	currentRuntimeSnapshot(): RouterRuntimeSnapshot | undefined {
+		return this._runtimeSnapshots.getStore();
 	}
 
 	private _runtimeState(): RouterRuntimeSnapshot {
@@ -732,6 +742,7 @@ export class Router {
 				retryAfter: this._retryAfter,
 				allowedFails: this._allowedFails,
 				credentialValues: this._credentialValues,
+				configRevision: 0,
 			}
 		);
 	}

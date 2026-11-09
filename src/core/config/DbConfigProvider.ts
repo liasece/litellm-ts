@@ -3,12 +3,11 @@
  *
  * 对齐 Python `proxy_config.get_config()` 的 DB 配置合并语义：
  * WebUI 上的设置修改（store_prompts、logo、callbacks 等）写入 LiteLLM_Config 表，
- * 优先级高于 yaml 配置文件。数据库是唯一动态真源；每次读取都查询目标行，
- * 不保存跨请求 TTL 缓存。
+ * 优先级高于 yaml 配置文件。读取走 `RuntimeConfigCache` 的进程内副本，
+ * 由配置仓库在写入成功后同步，因此数据库仍是应用内的唯一动态真源且无需每次查询。
  */
-import { eq } from "drizzle-orm";
-import { LiteLLM_Config } from "../../db/schema/config";
 import type { DrizzleDb } from "../db/Database";
+import { runtimeConfigCacheFor } from "../../repositories/RuntimeConfigCache";
 
 /**
  *
@@ -43,9 +42,9 @@ class DbConfigProvider {
 		if (this._db === null) {
 			return {};
 		}
-		const rows = await this._db.select().from(LiteLLM_Config).where(eq(LiteLLM_Config.param_name, paramName)).limit(1);
-		const value = rows.at(0)?.param_value;
-		return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+		const rows = await runtimeConfigCacheFor(this._db).configRows();
+		const value = rows.find((row) => row.param_name === paramName)?.param_value;
+		return typeof value === "object" && value !== null && !Array.isArray(value) ? structuredClone(value as Record<string, unknown>) : {};
 	}
 
 	/**

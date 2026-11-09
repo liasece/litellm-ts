@@ -7,12 +7,13 @@ import { ApiError } from "../core/api/ApiError";
  * 对齐 Python `prisma_client.insert_data(table_name="config")`（utils.py:3171-3190）
  * 的 upsert 语义：按 param_name 冲突时更新 param_value。
  * 配置表行数极少（general_settings / litellm_settings / router_settings /
- * environment_variables 等固定 param_name），读取走全表扫描 + 内存过滤，
- * 与 DbConfigProvider 的整表缓存刷新保持一致。
+ * environment_variables 等固定 param_name），读取走 `RuntimeConfigCache` 的进程内副本；
+ * 写入成功后由本仓库同步副本，WebUI 保存的配置因此对下一个请求立即生效。
  */
 import { LiteLLM_Config } from "../db/schema/config";
 import { BaseRepository } from "../core/db/BaseRepository";
 import type { DrizzleDb } from "../core/db/Database";
+import { runtimeConfigCacheFor } from "./RuntimeConfigCache";
 
 /**
  *
@@ -50,6 +51,7 @@ export class ConfigRepository extends BaseRepository {
 				target: LiteLLM_Config.param_name,
 				set: { param_value: value },
 			});
+		runtimeConfigCacheFor(this._db).applyConfigParam(paramName, structuredClone(value));
 	}
 
 	/**
@@ -57,10 +59,10 @@ export class ConfigRepository extends BaseRepository {
 	 * @param paramName - LiteLLM_Config.param_name
 	 */
 	async getParam(paramName: string): Promise<Record<string, unknown> | null> {
-		const rows = await this._db.select().from(LiteLLM_Config);
-		const row = rows.find((r) => r.param_name === paramName);
+		const rows = await runtimeConfigCacheFor(this._db).configRows();
+		const row = rows.find((candidate) => candidate.param_name === paramName);
 		const value = row?.param_value;
-		return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+		return typeof value === "object" && value !== null && !Array.isArray(value) ? structuredClone(value as Record<string, unknown>) : null;
 	}
 
 	/**

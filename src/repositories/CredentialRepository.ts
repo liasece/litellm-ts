@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { BaseRepository } from "../core/db/BaseRepository";
 import type { DrizzleDb } from "../core/db/Database";
+import { runtimeConfigCacheFor } from "./RuntimeConfigCache";
 import { LiteLLM_CredentialsTable } from "../db/schema/credentials";
 import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
 import type { AttachedCredentialResult, CredentialAttachmentFactory } from "../credentials/CredentialService";
@@ -83,6 +84,7 @@ export class CredentialRepository extends BaseRepository {
 			if (row === undefined) {
 				throw new Error("Credential insert did not return a row");
 			}
+			runtimeConfigCacheFor(this._db).invalidateCredentials();
 			return this._toRecord(row);
 		} catch (error) {
 			this._rethrowConflict(error);
@@ -106,7 +108,11 @@ export class CredentialRepository extends BaseRepository {
 				.where(eq(LiteLLM_CredentialsTable.credential_name, credentialName))
 				.returning();
 			const row = updated.at(0);
-			return row === undefined ? null : this._toRecord(row);
+			if (row === undefined) {
+				return null;
+			}
+			runtimeConfigCacheFor(this._db).invalidateCredentials();
+			return this._toRecord(row);
 		} catch (error) {
 			this._rethrowConflict(error);
 		}
@@ -120,6 +126,9 @@ export class CredentialRepository extends BaseRepository {
 			.delete(LiteLLM_CredentialsTable)
 			.where(eq(LiteLLM_CredentialsTable.credential_name, credentialName))
 			.returning({ credential_name: LiteLLM_CredentialsTable.credential_name });
+		if (deleted.length > 0) {
+			runtimeConfigCacheFor(this._db).invalidateCredentials();
+		}
 		return deleted.length > 0;
 	}
 
@@ -129,7 +138,7 @@ export class CredentialRepository extends BaseRepository {
 	 * @param credentialName
 	 */
 	async deleteIfUnreferenced(credentialName: string): Promise<"deleted" | "not_found" | "referenced"> {
-		return await this._db.transaction(async (tx) => {
+		const result = await this._db.transaction(async (tx) => {
 			const locked = await tx.execute(
 				sql`SELECT credential_name FROM "LiteLLM_CredentialsTable" WHERE credential_name = ${credentialName} FOR UPDATE`,
 			);
@@ -144,6 +153,10 @@ export class CredentialRepository extends BaseRepository {
 			await tx.delete(LiteLLM_CredentialsTable).where(eq(LiteLLM_CredentialsTable.credential_name, credentialName));
 			return "deleted";
 		});
+		if (result === "deleted") {
+			runtimeConfigCacheFor(this._db).invalidateCredentials();
+		}
+		return result;
 	}
 
 	/**
@@ -180,7 +193,7 @@ export class CredentialRepository extends BaseRepository {
 	 */
 	async createAndAttachToModel(modelId: string, createCredential: CredentialAttachmentFactory): Promise<AttachedCredentialResult | null> {
 		try {
-			return await this._db.transaction(async (tx) => {
+			const result = await this._db.transaction(async (tx) => {
 				const locked = await tx.execute(sql`SELECT model_id FROM "LiteLLM_ProxyModelTable" WHERE model_id = ${modelId} FOR UPDATE`);
 				if (locked.rows.length === 0) {
 					return null;
@@ -225,6 +238,12 @@ export class CredentialRepository extends BaseRepository {
 					model: { ...modelRecord, litellm_params: currentParams, updated_by: credential.updated_by },
 				};
 			});
+			if (result !== null && result.credential !== null) {
+				const cache = runtimeConfigCacheFor(this._db);
+				cache.invalidateCredentials();
+				cache.invalidateModels();
+			}
+			return result;
 		} catch (error) {
 			this._rethrowConflict(error);
 		}
