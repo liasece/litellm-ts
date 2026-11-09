@@ -29,6 +29,10 @@
 	line-height: 20px;
 	color: #4b5563;
 }
+.model-heading-actions {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
 .models-request-provider {
 	display: inline-flex;
 	align-items: center;

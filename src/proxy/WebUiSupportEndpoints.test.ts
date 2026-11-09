@@ -388,12 +388,9 @@ describe("WebUiSupport 契约", () => {
 			expect(typeof field.field_type).toBe("string");
 
 			const anthropic = res.body.find((provider: { provider: string }) => provider.provider === "Anthropic");
-			const cliProxy = res.body.find((provider: { provider: string }) => provider.provider === "CLIProxy");
-			expect(cliProxy).toMatchObject({
-				provider_display_name: "CLIProxy API (Managed)",
-				litellm_provider: "cliproxy",
-				credential_fields: [],
-			});
+			const subscription = res.body.find((provider: { litellm_provider: string }) => provider.litellm_provider === "codex-subscription");
+			expect(subscription).toMatchObject({ provider_display_name: "Codex Subscription", credential_fields: [] });
+			expect(res.body.some((provider: { litellm_provider: string }) => provider.litellm_provider === "cliproxy")).toBe(false);
 			expect(anthropic.credential_fields[0]).toEqual({
 				key: "api_base",
 				label: "Upstream API Base",

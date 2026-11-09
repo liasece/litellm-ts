@@ -1,4 +1,10 @@
 import { modelRecord, modelString, modelStrings, type ProxyModel, type ModelDeploymentRequest } from "../support/ModelModels";
+import {
+	isManagedProviderSlug,
+	isSubscriptionProviderSlug,
+	providerSlugFromValue,
+	subscriptionModelName,
+} from "../../subscriptions/logic/SubscriptionProviderLogic";
 export type ModelEditDraft = Record<string, unknown>;
 export function createModelEditDraft(model: ProxyModel): ModelEditDraft {
 	const params = model.litellm_params,
@@ -66,10 +72,28 @@ export function prepareModelUpdate(values: ModelEditDraft, current: ProxyModel):
 	};
 	const credential = modelString(values.litellm_credential_name),
 		replacement = typeof values.api_key === "string" ? values.api_key.trim() : "";
-	if (values.custom_llm_provider === "cliproxy") {
+	const provider = providerSlugFromValue(values.custom_llm_provider ?? current.litellm_params.custom_llm_provider ?? "");
+	if (isManagedProviderSlug(provider)) {
+		// Managed providers own their transport credentials; keep them out of the deployment.
 		params.api_base = null;
 		params.api_key = null;
 		params.litellm_credential_name = null;
+		params.custom_llm_provider = provider;
+		if (isSubscriptionProviderSlug(provider) && modelString(params.model)) {
+			const previous = current.litellm_params;
+			if (
+				modelString(previous.model).startsWith("cliproxy/") &&
+				params.model === previous.model &&
+				provider === providerSlugFromValue(previous.custom_llm_provider ?? "")
+			) {
+				// The model API projects a subscription onto this stored legacy deployment.
+				// PATCH merges omitted fields from storage, preserving its routing and billing identity.
+				delete params.model;
+				delete params.custom_llm_provider;
+			} else {
+				params.model = subscriptionModelName(provider, modelString(params.model));
+			}
+		}
 	} else if (credential) {
 		params.litellm_credential_name = credential;
 		params.api_key = null;

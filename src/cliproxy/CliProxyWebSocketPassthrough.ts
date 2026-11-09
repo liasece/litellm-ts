@@ -4,7 +4,9 @@ import WebSocket, { WebSocketServer } from "ws";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
 import type { ServiceContainer } from "../container";
-import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
+import { resolveHostedModel } from "../subscriptions/HostedModel";
+import { enterCliProxyRequest, isCliProxyDraining } from "./CliProxyDrainGate";
+import { hostedProvider, isSubscriptionProvider, subscriptionTarget } from "../subscriptions/SubscriptionProviders";
 import type { Deployment } from "../types/router";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { expressRequest, guardUpgradeSocket, runMiddleware, writeUpgradeError } from "../core/http/UpgradeRequest";
@@ -58,36 +60,6 @@ function safeProtocols(req: IncomingMessage): string[] {
 		.filter((value) => value.length > 0 && !value.startsWith(WS_AUTH_SUBPROTOCOL_PREFIX));
 }
 
-function stripCliProxyPrefix(value: string): string {
-	return value.startsWith(`${CLIPROXY_PROVIDER}/`) ? value.slice(CLIPROXY_PROVIDER.length + 1) : value;
-}
-
-function resolveModel(
-	container: ServiceContainer,
-	requestedModel: string,
-): { publicModel: string; upstreamModel: string; deployment: Deployment } | null {
-	const candidate = container.router.getAvailableDeployment(requestedModel);
-	if (candidate?.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER) {
-		return {
-			publicModel: requestedModel,
-			upstreamModel: stripCliProxyPrefix(candidate.deployment.litellm_params.model || requestedModel),
-			deployment: candidate.deployment,
-		};
-	}
-	const deployment = (container.router.getDeployments?.() ?? []).find(
-		(item) =>
-			item.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER &&
-			stripCliProxyPrefix(item.litellm_params.model) === stripCliProxyPrefix(requestedModel),
-	);
-	return deployment
-		? {
-				publicModel: deployment.model_name,
-				upstreamModel: stripCliProxyPrefix(deployment.litellm_params.model),
-				deployment: deployment,
-			}
-		: null;
-}
-
 function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req: Request): { value: unknown; foundModel: boolean } {
 	if (Array.isArray(value)) {
 		let foundModel = false;
@@ -106,14 +78,22 @@ function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req:
 	let directDeployment: Deployment | undefined;
 	for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
 		if (key === "model" && typeof item === "string") {
-			const resolved = resolveModel(container, item);
+			const resolved = resolveHostedModel(container.router, container.cliProxyRuntime, item);
 			if (!resolved) {
 				throw ApiError.unavailable(`CLIProxy 模型 ${item} 当前没有可用 deployment`);
 			}
 			if (req.auth) {
 				runCommonChecks(req.auth, resolved.publicModel);
 			}
-			result[key] = resolved.upstreamModel;
+			const runtime = container.cliProxyRuntime;
+			const provider = hostedProvider(resolved.deployment.litellm_params);
+			const responses = req.path.endsWith("/responses");
+			const compatibility = resolved.deployment.litellm_params.subscription_transport === "compatibility";
+			// Run the same source checks as HTTP before sending a frame over an unscoped transport.
+			subscriptionTarget(runtime, resolved.deployment.litellm_params, responses ? "/v1/responses" : req.path);
+			const explicitBinding = runtime.sourceBuiltSubscriptions && !compatibility && responses &&
+				isSubscriptionProvider(provider) && runtime.subscriptionCatalog.owner(resolved.upstreamModel) !== provider;
+			result[key] = explicitBinding ? "litellm-subscription/" + provider + "/" + resolved.upstreamModel : resolved.upstreamModel;
 			directDeployment = resolved.deployment;
 			foundModel = true;
 			continue;
@@ -138,6 +118,10 @@ function rewriteClientMessage(data: WebSocket.RawData, isBinary: boolean, contai
 	} catch {
 		return data;
 	}
+	if (isCliProxyDraining() && typeof parsed === "object" && parsed !== null && "type" in parsed &&
+		(parsed.type === "response.create" || parsed.type === "response.append")) {
+		throw ApiError.unavailable("订阅运行时正在排空，请稍后重试");
+	}
 	const rewritten = rewriteWebSocketModel(parsed, container, req);
 	return rewritten.foundModel ? Buffer.from(JSON.stringify(rewritten.value)) : data;
 }
@@ -153,6 +137,11 @@ function upstreamHeaders(req: IncomingMessage, internalApiKey: string): Record<s
 	return headers;
 }
 
+// ws reports reserved status codes for transports that closed without a close frame.
+function relayCloseCode(code: number): number {
+	return code === 1005 ? 1000 : code === 1006 || code === 1015 ? 1011 : code;
+}
+
 function relayWebSocket(
 	downstream: WebSocket,
 	req: Request,
@@ -163,7 +152,8 @@ function relayWebSocket(
 	query.delete("key");
 	const upstreamBase = container.cliProxyRuntime.baseUrl.replace(/^http/, "ws");
 	const queryString = query.toString();
-	const upstreamUrl = `${upstreamBase}${targetPath}${queryString ? `?${queryString}` : ""}`;
+	const route = container.cliProxyRuntime.sourceBuiltSubscriptions && targetPath.endsWith("/responses") ? "/_litellm/ws" + targetPath : targetPath;
+	const upstreamUrl = `${upstreamBase}${route}${queryString ? `?${queryString}` : ""}`;
 	const protocols = safeProtocols(req);
 	const options = { headers: upstreamHeaders(req, container.cliProxyRuntime.internalApiKey) };
 	const upstream = protocols.length > 0 ? new WebSocket(upstreamUrl, protocols, options) : new WebSocket(upstreamUrl, options);
@@ -194,6 +184,12 @@ function relayWebSocket(
 			}
 			pending.push({ data: rewritten, isBinary: isBinary });
 		} catch (error) {
+			if (error instanceof ApiError && error.statusCode === 503 && isCliProxyDraining()) {
+				if (downstream.readyState === WebSocket.OPEN) {
+					downstream.send(JSON.stringify({ type: "error", error: { type: "server_error", message: error.message } }));
+				}
+				return;
+			}
 			const message = error instanceof Error ? error.message : "Model authorization failed";
 			if (downstream.readyState === WebSocket.OPEN) {
 				downstream.send(JSON.stringify({ type: "error", error: { type: "permission_error", message: message } }));
@@ -215,14 +211,14 @@ function relayWebSocket(
 	});
 	upstream.on("close", (code, reason) => {
 		if (downstream.readyState === WebSocket.OPEN) {
-			downstream.close(code, reason.toString());
+			downstream.close(relayCloseCode(code), reason.toString());
 		}
 	});
 	downstream.on("close", (code, reason) => {
 		// downstream 可能在 upstream 握手完成（CONNECTING）前断开；此时不关闭会让 upstream
 		// 在 open 后永久悬挂（无下游消费、pending 缓冲不清）。CONNECTING 下 close() 会中止握手。
 		if (upstream.readyState !== WebSocket.CLOSED && upstream.readyState !== WebSocket.CLOSING) {
-			upstream.close(code, reason.toString());
+			upstream.close(relayCloseCode(code), reason.toString());
 		}
 	});
 	upstream.on("error", () => closeBoth());
@@ -272,6 +268,11 @@ export function registerCliProxyWebSocketPassthrough(
 			await runMiddleware(container.authMiddleware, req);
 			await runMiddleware(container.authorizationGuard.middleware(route.capability), req);
 			const snapshot = await container.runtimeConfigService.loadSnapshot(container.router);
+			if (socket.destroyed) {return;}
+			if (route.capability === "inference") {
+				// Account handoff waits for both responses and long-lived realtime sessions.
+				socket.once("close", enterCliProxyRequest());
+			}
 			container.router.runWithRuntimeSnapshot(snapshot, () => {
 				webSocketServer.handleUpgrade(incoming, socket, head, (downstream) => {
 					relayWebSocket(downstream, req, container, route.target(url.pathname), url.searchParams);

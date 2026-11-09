@@ -19,6 +19,13 @@ export enum Providers {
 	Cerebras = "Cerebras",
 	CLARIFAI = "Clarifai",
 	CLIProxy = "CLIProxy",
+	CodexSubscription = "Codex Subscription",
+	CommandCode = "CommandCode",
+	OpenCodeGo = "OpenCode Go",
+	KimiSubscription = "Kimi Subscription",
+	ClaudeSubscription = "Claude Subscription",
+	AntigravitySubscription = "Antigravity Subscription",
+	XaiSubscription = "xAI Subscription",
 	CLOUDFLARE = "Cloudflare",
 	CODESTRAL = "Codestral",
 	Cohere = "Cohere",
@@ -106,6 +113,20 @@ export enum Providers {
 	XINFERENCE = "Xinference",
 }
 
+/**
+ * 第一方订阅 Provider 的公开 slug。
+ * 这里保持唯一来源：目录枚举、provider_map 与订阅逻辑都从它派生。
+ */
+export const subscription_provider_slugs = {
+	codex: "codex-subscription",
+	commandCode: "commandcode",
+	openCodeGo: "opencode-go",
+	kimi: "kimi-subscription",
+	claude: "claude-subscription",
+	antigravity: "antigravity-subscription",
+	xai: "xai-subscription",
+} as const;
+
 export const provider_map: Record<string, string> = {
 	A2A_Agent: "a2a_agent",
 	AI21: "ai21",
@@ -126,6 +147,13 @@ export const provider_map: Record<string, string> = {
 	Cerebras: "cerebras",
 	CLARIFAI: "clarifai",
 	CLIProxy: "cliproxy",
+	CodexSubscription: subscription_provider_slugs.codex,
+	CommandCode: subscription_provider_slugs.commandCode,
+	OpenCodeGo: subscription_provider_slugs.openCodeGo,
+	KimiSubscription: subscription_provider_slugs.kimi,
+	ClaudeSubscription: subscription_provider_slugs.claude,
+	AntigravitySubscription: subscription_provider_slugs.antigravity,
+	XaiSubscription: subscription_provider_slugs.xai,
 	CLOUDFLARE: "cloudflare",
 	CODESTRAL: "codestral",
 	Cohere: "cohere",
@@ -235,6 +263,13 @@ export const providerLogoMap: Record<string, string> = {
 	[Providers.Cerebras]: `${asset_logos_folder}cerebras.svg`,
 	[Providers.CLOUDFLARE]: `${asset_logos_folder}cloudflare.svg`,
 	[Providers.CLIProxy]: `${asset_logos_folder}openai_small.svg`,
+	[Providers.CodexSubscription]: `${asset_logos_folder}codex.svg`,
+	[Providers.CommandCode]: `${asset_logos_folder}commandcode.png`,
+	[Providers.OpenCodeGo]: `${asset_logos_folder}opencode.png`,
+	[Providers.KimiSubscription]: `${asset_logos_folder}kimi.svg`,
+	[Providers.ClaudeSubscription]: `${asset_logos_folder}claude.svg`,
+	[Providers.AntigravitySubscription]: `${asset_logos_folder}antigravity.svg`,
+	[Providers.XaiSubscription]: `${asset_logos_folder}xai.svg`,
 	[Providers.CODESTRAL]: `${asset_logos_folder}mistral.svg`,
 	[Providers.Cohere]: `${asset_logos_folder}cohere.svg`,
 	[Providers.COHERE_CHAT]: `${asset_logos_folder}cohere.svg`,

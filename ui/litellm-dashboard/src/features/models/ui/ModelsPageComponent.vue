@@ -20,6 +20,8 @@ import { modelsApi } from "../api/ModelsApi";
 import { createModelsStore } from "../stores/ModelsStore";
 import { createModelHealthStore } from "../stores/ModelHealthStore";
 import { transformModels } from "../logic/ModelDataLogic";
+import { getServerRootPath } from "../../platform/api/HttpApiClient";
+import { subscriptionAccountsHref } from "../../subscriptions/logic/SubscriptionProviderLogic";
 import "./ModelsStyles.css";
 import "./ModelFormsStyles.css";
 import "./ModelDetailsStyles.css";
@@ -40,6 +42,10 @@ const role = computed(() => auth.userRole.value),
 	userId = computed(() => auth.state.session?.user_id ?? ""),
 	premium = computed(() => Boolean(auth.state.session?.premium_user));
 const admin = computed(() => ["Admin", "Admin Viewer", "proxy_admin", "proxy_admin_viewer", "org_admin"].includes(role.value));
+const subscriptionsHref = computed(() => {
+	const root = getServerRootPath().replace(/\/+$/, "");
+	return subscriptionAccountsHref((root === "/" ? "" : root) + "/ui");
+});
 const teamAdmin = computed(() =>
 	catalog.teams.some((team) => team.members_with_roles?.some((member) => member.user_id === userId.value && member.role === "admin")),
 );
@@ -122,9 +128,14 @@ onBeforeUnmount(() => {
 					<h2>Model Management</h2>
 					<p>{{ admin ? "Add and manage models for the proxy" : "Add models for teams you are an admin for." }}</p>
 				</div>
-				<a href="https://models.litellm.ai/?request=true" target="_blank" rel="noreferrer" class="models-request-provider"
-					><UiIcon name="PlusCircleOutlined" :size="12" />Request Provider</a
-				>
+				<div class="model-inline model-heading-actions">
+					<a v-if="admin" :href="subscriptionsHref" class="models-request-provider"
+						><UiIcon name="CrownOutlined" :size="12" />Subscription accounts</a
+					>
+					<a href="https://models.litellm.ai/?request=true" target="_blank" rel="noreferrer" class="models-request-provider"
+						><UiIcon name="PlusCircleOutlined" :size="12" />Request Provider</a
+					>
+				</div>
 			</header>
 			<UiTabs :model-value="tab" :items="tabs" appearance="tremor" grouped class="models-main-tabs" @update:model-value="changeTab"
 				><template #extra

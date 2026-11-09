@@ -1,3 +1,4 @@
+import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/SubscriptionProviders";
 import { usageDateRange, isUsageAdmin } from "../spend/UsageQuery";
 /**
  * WebUI 支撑端点
@@ -759,14 +760,23 @@ interface ProviderCreateInfo {
  */
 const PROVIDER_CREATE_FIELDS: readonly ProviderCreateInfo[] = [
 	...(providerCreateFieldsJson as unknown as ProviderCreateInfo[]),
-	{
+	...Object.entries(SUBSCRIPTION_PROVIDERS).map(([slug, info]) => ({
+		provider: info.name,
+		provider_display_name: info.name,
+		litellm_provider: slug,
+		default_model_placeholder: "Select a model from your subscription",
+		credential_fields: [],
+	})),
+
+];
+
+const LEGACY_CLIPROXY_FIELDS: ProviderCreateInfo = {
 		provider: "CLIProxy",
 		provider_display_name: "CLIProxy API (Managed)",
 		litellm_provider: "cliproxy",
 		default_model_placeholder: "Select a model discovered from the managed CLIProxy runtime",
 		credential_fields: [],
-	},
-];
+	};
 
 /**
  * /active/callbacks 响应（对齐 Python active_callbacks，
@@ -1018,7 +1028,7 @@ export function registerWebUiSupportPublicRoutes(router: Router, costMapService:
 	});
 
 	/** Provider 凭据字段元数据，WebUI 用于动态渲染 provider 特定的表单 */
-	registerRoute(router, { method: "get", path: "/public/providers/fields" }, (): readonly ProviderCreateInfo[] => PROVIDER_CREATE_FIELDS);
+	registerRoute(router, { method: "get", path: "/public/providers/fields" }, (req): readonly ProviderCreateInfo[] => (req.query["include_legacy"] === "true" ? [...PROVIDER_CREATE_FIELDS, LEGACY_CLIPROXY_FIELDS] : PROVIDER_CREATE_FIELDS));
 
 }
 

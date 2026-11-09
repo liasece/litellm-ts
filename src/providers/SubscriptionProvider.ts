@@ -1,21 +1,29 @@
 import type { Message, ModelResponse } from "../types/openai";
 import type { ProviderRequest } from "../types/provider";
+import { LlmProviders } from "../types/provider";
+import { subscriptionTarget, type HostedProvider, type SubscriptionConnection } from "../subscriptions/SubscriptionProviders";
 import { OpenAICompatProvider } from "./OpenAICompatProvider";
 
-/**
- * Internal CLIProxy provider.
- *
- * Chat Completions stays OpenAI-native: the complete request body is forwarded
- * instead of being filtered through a provider parameter allow-list.
- * AnthropicMessagesEndpoint signals an Anthropic-native request by passing
- * anthropic_version and forwards its original body itself.
- */
-export class CliProxyProvider extends OpenAICompatProvider {
+/** Builds public protocol requests for one subscription account source. */
+export class SubscriptionProvider extends OpenAICompatProvider {
 	constructor(
-		apiKey = process.env["CLIPROXY_INTERNAL_API_KEY"] ?? "",
-		apiBase = process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? "http://127.0.0.1:8317",
+		private readonly _source: HostedProvider,
+		private readonly _connection: SubscriptionConnection = {
+			internalApiKey: process.env["CLIPROXY_INTERNAL_API_KEY"] ?? "",
+			baseUrl: process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? "http://127.0.0.1:8317",
+			sourceBuiltSubscriptions: _source !== LlmProviders.CLIProxy,
+		},
+		private readonly _transport?: unknown,
 	) {
-		super(apiKey, apiBase);
+		super(_connection.internalApiKey, _connection.baseUrl);
+	}
+
+	private _target(model: string, path: string): { url: string; model: string } {
+		return subscriptionTarget(
+			this._connection,
+			{ model: model, custom_llm_provider: this._source, subscription_transport: this._transport },
+			path,
+		);
 	}
 
 	/**
@@ -25,22 +33,19 @@ export class CliProxyProvider extends OpenAICompatProvider {
 	 * @param optionalParams - Protocol options and internal connection settings.
 	 */
 	override transformRequest(model: string, messages: Message[], optionalParams: Record<string, unknown>): ProviderRequest {
-		const providerModel = this.stripProviderPrefix(model);
-		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
-		// Never accept a deployment or caller key for the internal hop. The
-		// runtime key is process-local and is not part of model configuration.
-		const apiKey = process.env["CLIPROXY_INTERNAL_API_KEY"] ?? this.apiKey;
 		const anthropicNative = typeof optionalParams["anthropic_version"] === "string";
+		const target = this._target(model, anthropicNative ? "/v1/messages" : "/v1/chat/completions");
+		const apiKey = this._connection.internalApiKey;
 		if (anthropicNative) {
 			return {
-				url: `${apiBase}/v1/messages`,
+				url: target.url,
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
 					"x-api-key": apiKey,
 					"anthropic-version": optionalParams["anthropic_version"] as string,
 				},
-				body: { model: providerModel, messages: messages },
+				body: { model: target.model, messages: messages },
 				model: model,
 				stream: optionalParams["stream"] === true,
 			};
@@ -48,13 +53,14 @@ export class CliProxyProvider extends OpenAICompatProvider {
 
 		const body: Record<string, unknown> = {
 			...optionalParams,
-			model: providerModel,
+			model: target.model,
 			messages: messages,
 		};
 		for (const connectionKey of [
 			"api_base",
 			"api_key",
 			"custom_llm_provider",
+			"subscription_transport",
 			"litellm_credential_name",
 			"rpm",
 			"tpm",
@@ -66,7 +72,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			delete body[connectionKey];
 		}
 		return {
-			url: `${apiBase}/v1/chat/completions`,
+			url: target.url,
 			method: "POST",
 			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
 			body: body,
@@ -90,11 +96,11 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		body: Record<string, unknown>,
 		_optionalParams: Record<string, unknown>,
 	): ProviderRequest {
-		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
-		const apiKey = process.env["CLIPROXY_INTERNAL_API_KEY"] ?? this.apiKey;
+		const target = this._target(model, "/v1/responses");
+		const apiKey = this._connection.internalApiKey;
 		const payload: Record<string, unknown> = {
 			...body,
-			model: this.stripProviderPrefix(model),
+			model: target.model,
 			store: body["store"] ?? false,
 		};
 		// drop_params 是 LiteLLM 自身的转发策略，任何上游都不应收到；漏删会让 CLIProxy
@@ -103,6 +109,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			"api_base",
 			"api_key",
 			"custom_llm_provider",
+			"subscription_transport",
 			"supported_endpoints",
 			"litellm_credential_name",
 			"drop_params",
@@ -110,7 +117,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			delete payload[connectionKey];
 		}
 		return {
-			url: `${apiBase}/v1/responses`,
+			url: target.url,
 			method: "POST",
 			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
 			body: payload,
@@ -127,12 +134,11 @@ export class CliProxyProvider extends OpenAICompatProvider {
 	 * @param optionalParams - Image output options and internal connection settings.
 	 */
 	transformImageRequest(model: string, prompt: string, optionalParams: Record<string, unknown>): ProviderRequest {
-		const providerModel = this.stripProviderPrefix(model);
-		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
-		const apiKey = process.env["CLIPROXY_INTERNAL_API_KEY"] ?? this.apiKey;
+		const target = this._target(model, "/v1/images/generations");
+		const apiKey = this._connection.internalApiKey;
 		const body: Record<string, unknown> = {
 			...optionalParams,
-			model: providerModel,
+			model: target.model,
 			prompt: prompt,
 		};
 		for (const connectionKey of [
@@ -140,6 +146,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			"api_base",
 			"api_key",
 			"custom_llm_provider",
+			"subscription_transport",
 			"litellm_credential_name",
 			"credential_name",
 			"rpm",
@@ -152,7 +159,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			delete body[connectionKey];
 		}
 		return {
-			url: `${apiBase}/v1/images/generations`,
+			url: target.url,
 			method: "POST",
 			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
 			body: body,
@@ -174,18 +181,17 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		images: Array<{ data: Uint8Array; mediaType: string }>,
 		optionalParams: Record<string, unknown>,
 	): ProviderRequest {
-		const providerModel = this.stripProviderPrefix(model);
-		const apiBase = this._cliproxyNormalizeBase(process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? this.apiBase);
-		const apiKey = process.env["CLIPROXY_INTERNAL_API_KEY"] ?? this.apiKey;
+		const target = this._target(model, "/v1/images/edits");
+		const apiKey = this._connection.internalApiKey;
 		const form = new FormData();
-		form.append("model", providerModel);
+		form.append("model", target.model);
 		form.append("prompt", prompt);
 		images.forEach((image, index) => {
 			const extension = image.mediaType === "image/jpeg" ? "jpg" : image.mediaType === "image/webp" ? "webp" : "png";
 			form.append("image", new Blob([image.data as never], { type: image.mediaType }), `image-${index + 1}.${extension}`);
 		});
 		const logBody: Record<string, unknown> = {
-			model: providerModel,
+			model: target.model,
 			prompt: prompt,
 			image: images.map((image) => ({ media_type: image.mediaType, byte_length: image.data.byteLength })),
 		};
@@ -199,6 +205,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 					"api_base",
 					"api_key",
 					"custom_llm_provider",
+					"subscription_transport",
 					"litellm_credential_name",
 					"credential_name",
 					"rpm",
@@ -223,7 +230,7 @@ export class CliProxyProvider extends OpenAICompatProvider {
 			}
 		}
 		return {
-			url: `${apiBase}/v1/images/edits`,
+			url: target.url,
 			method: "POST",
 			headers: { Authorization: `Bearer ${apiKey}` },
 			body: form,
@@ -243,9 +250,5 @@ export class CliProxyProvider extends OpenAICompatProvider {
 		// CLIProxy already emits OpenAI-compatible responses. Preserve provider-
 		// specific fields rather than normalizing and potentially dropping them.
 		return rawResponse as ModelResponse;
-	}
-
-	private _cliproxyNormalizeBase(value: string | undefined): string {
-		return (value && value.length > 0 ? value : "http://127.0.0.1:8317").replace(/\/+$/, "");
 	}
 }

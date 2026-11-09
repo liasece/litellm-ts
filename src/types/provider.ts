@@ -30,6 +30,13 @@ export enum LlmProviders {
 	LLMux = "llmux",
 	VLLM = "vllm",
 	CLIProxy = "cliproxy",
+	CodexSubscription = "codex-subscription",
+	CommandCode = "commandcode",
+	OpenCodeGo = "opencode-go",
+	KimiSubscription = "kimi-subscription",
+	ClaudeSubscription = "claude-subscription",
+	AntigravitySubscription = "antigravity-subscription",
+	XaiSubscription = "xai-subscription",
 }
 
 /** Provider 实际使用的上游响应协议。 */

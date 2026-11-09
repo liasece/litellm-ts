@@ -1,3 +1,4 @@
+import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
 /**
  * 费用折扣与保证金配置
  *
@@ -286,7 +287,7 @@ export function applyCostDiscount(
 	provider: string,
 	config: CostDiscountConfig,
 ): { cost: number; percent: number; amount: number } {
-	const percent = provider === "" ? undefined : config[provider];
+	const percent = provider === "" ? undefined : config[provider] ?? (isSubscriptionProvider(provider) ? config["cliproxy"] : undefined);
 	if (percent === undefined) {
 		return { cost: baseCost, percent: 0, amount: 0 };
 	}
@@ -305,7 +306,7 @@ export function applyCostMargin(
 	provider: string,
 	config: CostMarginConfig,
 ): { cost: number; percent: number; fixedAmount: number; amount: number } {
-	const entry = (provider === "" ? undefined : config[provider]) ?? config[GLOBAL_MARGIN_KEY];
+	const entry = (provider === "" ? undefined : config[provider]) ?? (isSubscriptionProvider(provider) ? config["cliproxy"] : undefined) ?? config[GLOBAL_MARGIN_KEY];
 	if (entry === undefined) {
 		return { cost: baseCost, percent: 0, fixedAmount: 0, amount: 0 };
 	}

@@ -1,3 +1,4 @@
+import { hostedProvider } from "../subscriptions/SubscriptionProviders";
 /**
  * 代理模型管理端点 — CRUD 操作
  *
@@ -37,11 +38,9 @@ const MANAGED_CLIPROXY_CONNECTION_FIELDS = ["litellm_credential_name", "credenti
  */
 function normalizeManagedProviderParams(params: Record<string, unknown>): Record<string, unknown> {
 	const output = { ...params };
-	const model = output["model"];
-	const isCliProxy =
-		output["custom_llm_provider"] === "cliproxy" || (typeof model === "string" && model.startsWith("cliproxy/"));
-	if (isCliProxy) {
-		output["custom_llm_provider"] = "cliproxy";
+	const provider = hostedProvider(output);
+	if (provider) {
+		output["custom_llm_provider"] = provider;
 		for (const field of MANAGED_CLIPROXY_CONNECTION_FIELDS) {
 			delete output[field];
 		}

@@ -1,19 +1,16 @@
+import { hostedProvider } from "../subscriptions/SubscriptionProviders";
+
 export const CLIPROXY_PROVIDER = "cliproxy";
 
 /**
- * 判断部署是否由内部 CLIProxy 承载。
+ * 判断部署是否由托管订阅运行时承载。
  *
  * 升级排空时要按这个判据把流量从 CLIProxy 上摘下来，所以判定必须与 ProviderRegistry
  * 选 provider 的规则一致：显式 custom_llm_provider 优先，其次看模型名前缀。
  * @param params - deployment 的 litellm_params
  */
 export function isCliProxyDeploymentParams(params: { model?: unknown; custom_llm_provider?: unknown }): boolean {
-	const custom = typeof params.custom_llm_provider === "string" ? params.custom_llm_provider.trim().toLowerCase() : "";
-	if (custom.length > 0) {
-		return custom === CLIPROXY_PROVIDER;
-	}
-	const model = typeof params.model === "string" ? params.model : "";
-	return model.split("/")[0]?.toLowerCase() === CLIPROXY_PROVIDER;
+	return hostedProvider(params) !== undefined;
 }
 export const CLIPROXY_CONFIG_PARAM = "cliproxy_settings";
 export const CLIPROXY_DEFAULT_PORT = 8317;
@@ -46,6 +43,10 @@ export interface CliProxyRuntimeStatus {
 	 *
 	 */
 	readonly available: boolean;
+	/**
+	 *
+	 */
+	readonly engine?: "subscriptions" | "compatibility" | null;
 	/**
 	 *
 	 */

@@ -1,3 +1,4 @@
+import { isSubscriptionProvider, withoutProvider } from "../subscriptions/SubscriptionProviders";
 /**
  * 脱敏生效范围。
  *
@@ -83,7 +84,15 @@ function matchesIdentities(entries: readonly string[], identities: readonly stri
  * @param target - 范围判定目标
  */
 export function isPrivacyScopeMatch(settings: PrivacyMaskingSettings, target: PrivacyScopeTarget): boolean {
-	const providerIdentities = [target.provider, subProviderSegment(target.upstreamModel)];
+	const providerIdentities = [target.provider];
+	if (!isSubscriptionProvider(target.provider) || target.upstreamModel.startsWith("cliproxy/")) {
+		providerIdentities.push(subProviderSegment(target.upstreamModel));
+	}
 	const modelIdentities = [target.modelName, target.upstreamModel];
+	if (isSubscriptionProvider(target.provider)) {
+		providerIdentities.push("cliproxy");
+		const previous = target.provider === "commandcode" || target.provider === "opencode-go" ? target.upstreamModel : withoutProvider(target.upstreamModel, target.provider);
+		modelIdentities.push("cliproxy/" + previous);
+	}
 	return matchesIdentities(settings.providers, providerIdentities) && matchesIdentities(settings.models, modelIdentities);
 }

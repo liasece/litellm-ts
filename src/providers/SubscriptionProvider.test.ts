@@ -1,7 +1,11 @@
-import { CliProxyProvider } from "./CliProxyProvider";
+import { LlmProviders } from "../types/provider";
+import { SubscriptionProvider } from "./SubscriptionProvider";
 
-describe("CliProxyProvider", () => {
-	const provider = new CliProxyProvider("internal-secret", "http://127.0.0.1:8317");
+describe("SubscriptionProvider", () => {
+	const provider = new SubscriptionProvider(LlmProviders.CLIProxy, {
+		internalApiKey: "internal-secret",
+		baseUrl: "http://127.0.0.1:8317",
+	});
 
 	it("forwards the complete OpenAI request without leaking LiteLLM connection parameters", () => {
 		const request = provider.transformRequest("cliproxy/gpt-5.4", [{ role: "user", content: "hello" }], {
@@ -93,31 +97,34 @@ describe("CliProxyProvider", () => {
 	});
 });
 
-describe('CliProxyProvider native Responses', () => {
-	const provider = new CliProxyProvider('internal-secret', 'http://127.0.0.1:8317');
+describe("SubscriptionProvider native Responses", () => {
+	const provider = new SubscriptionProvider(LlmProviders.CLIProxy, {
+		internalApiKey: "internal-secret",
+		baseUrl: "http://127.0.0.1:8317",
+	});
 
-	it('builds a native Responses request that keeps the upstream web_search tool', () => {
+	it("builds a native Responses request that keeps the upstream web_search tool", () => {
 		const request = provider.transformResponsesRequest(
-			'cliproxy/gpt-6-luna',
+			"cliproxy/gpt-6-luna",
 			{
-				model: 'gpt-6-luna',
-				input: [{ role: 'user', content: 'search the web' }],
-				tools: [{ type: 'web_search' }],
+				model: "gpt-6-luna",
+				input: [{ role: "user", content: "search the web" }],
+				tools: [{ type: "web_search" }],
 				stream: false,
-				supported_endpoints: ['/v1/chat/completions'],
+				supported_endpoints: ["/v1/chat/completions"],
 			},
 			{},
 		);
 
-		expect(request.url).toBe('http://127.0.0.1:8317/v1/responses');
-		expect(request.responseProtocol).toBe('responses');
-		expect(request.headers.Authorization).toBe('Bearer internal-secret');
+		expect(request.url).toBe("http://127.0.0.1:8317/v1/responses");
+		expect(request.responseProtocol).toBe("responses");
+		expect(request.headers.Authorization).toBe("Bearer internal-secret");
 		expect(request.stream).toBe(false);
 		expect(request.body).toMatchObject({
-			model: 'gpt-6-luna',
+			model: "gpt-6-luna",
 			store: false,
-			tools: [{ type: 'web_search' }],
+			tools: [{ type: "web_search" }],
 		});
-		expect(request.body).not.toHaveProperty('supported_endpoints');
+		expect(request.body).not.toHaveProperty("supported_endpoints");
 	});
 });

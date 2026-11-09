@@ -618,6 +618,34 @@ describe("CLIProxy OAuth account trash/restore", () => {
 		await fs.rm(runtimeRoot, { recursive: true, force: true });
 	});
 
+	it.each(["commandcode", "opencode-go"] as const)("preserves %s account identity, settings and revocation across a restart", async provider => {
+		const config = new Map<string, Record<string, unknown>>([["cliproxy_settings", { enabled: false, config_yaml: "" }]]);
+		const repository = {
+			getParam: async (name: string) => config.get(name),
+			upsertParam: async (name: string, value: Record<string, unknown>) => { config.set(name, structuredClone(value)); },
+		} as unknown as ConfigRepository;
+		const runtime = new CliProxyRuntimeManager(repository, "fixture-vault-key");
+		await runtime.initialize();
+		const [account] = await runtime.saveSubscriptionKey(provider, undefined, "Primary", "fixture-one");
+		const filename = "subscription-" + provider + "-" + account!.id + ".json";
+		const file = path.join(authDir, filename);
+		expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+		await runtime.updateAccount(filename, { disabled: true, weight: 3 });
+		await runtime.saveSubscriptionKey(provider, account!.id, "Renamed", "fixture-two");
+		expect(JSON.parse(await fs.readFile(file, "utf8"))).toMatchObject({ api_key: "fixture-two", label: "Renamed", disabled: true, weight: 3 });
+		expect(JSON.stringify([...config.values()])).not.toContain("fixture-two");
+		await runtime.revokeSubscriptionKey(provider, account!.id);
+		expect(await runtime.listSavedKeys(provider)).toEqual([]);
+		const reopened = new CliProxyRuntimeManager(repository, "fixture-vault-key");
+		await reopened.initialize();
+		expect(await reopened.listSavedKeys(provider)).toEqual([]);
+		await expect(fs.stat(file)).rejects.toMatchObject({code: "ENOENT"});
+		const [archived] = await fs.readdir(path.join(authDir, ".trash"));
+		await reopened.restoreAccount(".trash/" + archived);
+		expect(await reopened.listSavedKeys(provider)).toEqual([{ id: account!.id, provider: provider, label: "Renamed" }]);
+		expect(JSON.parse(await fs.readFile(file, "utf8"))).toMatchObject({ api_key: "fixture-two", disabled: true, weight: 3 });
+	});
+
 	it("trashAccount 把文件移入 .trash 并加时间戳前缀", async () => {
 		await fs.writeFile(path.join(authDir, "codex-foo.json"), "{}");
 		const runtime = new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test");

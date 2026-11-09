@@ -1,3 +1,4 @@
+import { SUBSCRIPTION_PROVIDERS, isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
 import type { Router, Request, Response } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
@@ -34,8 +35,8 @@ const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
 	managementRoute(["GET"], /^\/latest-version$/),
 	managementRoute(["GET"], /^\/plugins$/),
 	managementRoute(["GET"], /^\/plugin-store$/),
-	managementRoute(["POST"], /^\/plugin-store\/[^/]+\/install$/),
-	managementRoute(["DELETE"], /^\/plugins\/[^/]+$/),
+	managementRoute(["POST"], /^\/plugin-store\/[^/]+\/install$/, true),
+	managementRoute(["DELETE"], /^\/plugins\/[^/]+$/, true),
 	managementRoute(["PATCH"], /^\/plugins\/[^/]+\/enabled$/, true),
 	managementRoute(["GET", "PUT", "PATCH"], /^\/plugins\/[^/]+\/config$/, true),
 	managementRoute(["GET", "PUT", "PATCH"], /^\/debug$/, true),
@@ -180,7 +181,8 @@ async function proxyManagementRequest(req: Request, res: Response, runtime: CliP
 	const responseBody = Buffer.from(await upstream.arrayBuffer());
 	if (upstream.ok && route.persistsConfig && req.method !== "GET") {
 		try {
-			await runtime.persistManagementConfig();
+			const removed = req.method === "DELETE" ? /^\/plugins\/([^/]+)$/.exec(resource)?.[1] : undefined;
+			await runtime.persistManagementConfig(removed);
 		} catch (error) {
 			// 变更已在上游生效，持久化失败不应把成功操作反转为客户端 500。
 			// 注意：不能把中文错误写入响应头——Node setHeader 会对非 ASCII 值抛 ERR_INVALID_CHAR，
@@ -195,6 +197,12 @@ async function proxyManagementRequest(req: Request, res: Response, runtime: CliP
 			res.setHeader(key, value);
 		}
 	});
+	if (upstream.ok && req.method === "GET" && resource === "/plugins/opencode-go-cliproxyapi/config") {
+		const config: unknown = JSON.parse(responseBody.toString("utf8"));
+		runtime.omitSavedPluginKeys(config);
+		res.json(config);
+		return;
+	}
 	res.end(responseBody);
 }
 
@@ -242,85 +250,128 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		data: (await runtime.listModels()).map((id) => ({ id: id })),
 	}));
 
+	registerRoute(router, { method: "get", path: "/subscriptions/:provider/models" }, async (req) => {
+		requireProxyAdmin(req);
+		const provider = routeParam(req, "provider");
+		if (!isSubscriptionProvider(provider)) {throw ApiError.notFound("未知订阅 Provider");}
+		return { data: (await runtime.listSubscriptionModels(provider)).map(id => ({ id: id })) };
+	});
+
 	registerRoute(router, { method: "get", path: "/cliproxy/logs" }, (req) => {
 		const value = Array.isArray(req.query.after) ? req.query.after[0] : req.query.after;
 		const after = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : 0;
 		return runtime.logs(after);
 	});
 
-	registerRoute(router, { method: "get", path: "/cliproxy/accounts" }, async (req) => ({
-		data: await runtime.listAccounts({ includeTrashed: req.query["include_trashed"] === "true" }),
+	const keyProvider = (req: Request): "commandcode" | "opencode-go" => {
+		requireProxyAdmin(req);
+		const provider = routeParam(req, "provider");
+		if (provider !== "commandcode" && provider !== "opencode-go") {throw ApiError.badRequest("此订阅使用 OAuth 登录");}
+		return provider;
+	};
+	registerRoute(router, { method: "get", path: "/subscriptions/:provider/keys" }, async req => ({
+		data: await runtime.listSavedKeys(keyProvider(req)),
 	}));
-
-	registerRoute(router, { method: "get", path: "/cliproxy/accounts/:authIndex/quota" }, (req) =>
-		runtime.getAccountQuota(routeParam(req, "authIndex")),
-	);
-
-	registerRoute(router, { method: "patch", path: "/cliproxy/accounts/:filename" }, async (req) => {
-		const body = bodyRecord(req);
-		const disabled = typeof body["disabled"] === "boolean" ? body["disabled"] : undefined;
-		const weight = body["weight"] === null || typeof body["weight"] === "number" ? body["weight"] : undefined;
-		if (disabled === undefined && weight === undefined) {
-			throw ApiError.badRequest("必须提供 disabled 或 weight");
-		}
-		await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight });
-		return { status: "ok" };
-	});
-
-	registerRoute(router, { method: "post", path: "/cliproxy/accounts/:filename/restore" }, async (req) => {
-		await runtime.restoreAccount(routeParam(req, "filename"));
-		return { status: "restored" };
-	});
-
-	registerRoute(router, { method: "delete", path: "/cliproxy/accounts/:filename" }, async (req) => {
-		await runtime.trashAccount(routeParam(req, "filename"));
+	for (const [method, suffix] of [["post", ""], ["patch", "/:id"]] as const) {
+		registerRoute(router, { method: method, path: "/subscriptions/:provider/keys" + suffix }, async req => {
+			const provider = keyProvider(req);
+			const body = bodyRecord(req);
+			if (typeof body["label"] !== "string" || (body["api_key"] !== undefined && typeof body["api_key"] !== "string")) {
+				throw ApiError.badRequest("请填写有效的订阅账号名称和密钥");
+			}
+			return { data: await runtime.saveSubscriptionKey(provider, method === "post" ? undefined : routeParam(req, "id"),
+				body["label"], typeof body["api_key"] === "string" ? body["api_key"] : undefined) };
+		});
+	}
+	registerRoute(router, { method: "delete", path: "/subscriptions/:provider/keys/:id" }, async req => {
+		await runtime.revokeSubscriptionKey(keyProvider(req), routeParam(req, "id"));
 		return { status: "trashed" };
 	});
 
-	registerRoute(router, { method: "get", path: "/cliproxy/commandcode/accounts" }, async () => ({
-		data: await runtime.listCommandCodeAccounts(),
-	}));
-
-	registerRoute(router, { method: "post", path: "/cliproxy/commandcode/accounts" }, async (req) => {
-		const body = bodyRecord(req);
-		return { data: await runtime.addCommandCodeAccount(body["api_key"], body["label"]) };
+	registerRoute(router, { method: "get", path: "/subscriptions/accounts/provider/:provider" }, async (req) => {
+		const provider = routeParam(req, "provider");
+		if (!isSubscriptionProvider(provider)) {
+			throw ApiError.notFound("未知订阅 Provider");
+		}
+		const accounts = await runtime.listAccounts({ includeTrashed: req.query["include_trashed"] === "true" });
+		return { data: accounts.filter(account => account.provider === SUBSCRIPTION_PROVIDERS[provider].source) };
 	});
 
-	registerRoute(router, { method: "patch", path: "/cliproxy/commandcode/accounts/:index" }, async (req) => {
-		const body = bodyRecord(req);
-		const patch: { apiKey?: unknown; label?: unknown } = {};
-		if (body["api_key"] !== undefined) {
-			patch.apiKey = body["api_key"];
-		}
-		if (body["label"] !== undefined) {
-			patch.label = body["label"];
-		}
-		if (patch.apiKey === undefined && patch.label === undefined) {
-			throw ApiError.badRequest("必须提供 api_key 或 label");
-		}
-		return { data: await runtime.updateCommandCodeAccount(commandCodeAccountIndex(req), patch) };
-	});
+	for (const base of ["/cliproxy", "/subscriptions"]) {
+		registerRoute(router, { method: "get", path: base + "/accounts" }, async (req) => ({
+			data: await runtime.listAccounts({ includeTrashed: req.query["include_trashed"] === "true" }),
+		}));
 
-	registerRoute(router, { method: "delete", path: "/cliproxy/commandcode/accounts/:index" }, async (req) => ({
-		data: await runtime.deleteCommandCodeAccount(commandCodeAccountIndex(req)),
-	}));
+		registerRoute(router, { method: "get", path: base + "/accounts/:authIndex/quota" }, (req) =>
+			runtime.getAccountQuota(routeParam(req, "authIndex")),
+		);
 
-	registerRoute(router, { method: "post", path: "/cliproxy/oauth" }, async (req) => {
-		const provider = bodyRecord(req)["provider"];
-		if (typeof provider !== "string" || !OAUTH_PROVIDERS.has(provider as CliProxyOAuthProvider)) {
-			throw ApiError.badRequest("不支持的 OAuth Provider");
-		}
-		return runtime.startOAuth(provider as CliProxyOAuthProvider);
-	});
+		registerRoute(router, { method: "patch", path: base + "/accounts/:filename" }, async (req) => {
+			const body = bodyRecord(req);
+			const disabled = typeof body["disabled"] === "boolean" ? body["disabled"] : undefined;
+			const weight = body["weight"] === null || typeof body["weight"] === "number" ? body["weight"] : undefined;
+			if (disabled === undefined && weight === undefined) {
+				throw ApiError.badRequest("必须提供 disabled 或 weight");
+			}
+			await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight });
+			return { status: "ok" };
+		});
 
-	registerRoute(router, { method: "get", path: "/cliproxy/oauth/:id" }, (req) => runtime.getOAuthSession(routeParam(req, "id")));
-	registerRoute(router, { method: "post", path: "/cliproxy/oauth/:id/input" }, (req) => {
-		const input = bodyRecord(req)["input"];
-		if (typeof input !== "string" || input.length > 4_096) {
-			throw ApiError.badRequest("OAuth 输入无效");
-		}
-		return runtime.sendOAuthInput(routeParam(req, "id"), input);
-	});
+		registerRoute(router, { method: "post", path: base + "/accounts/:filename/restore" }, async (req) => {
+			await runtime.restoreAccount(routeParam(req, "filename"));
+			return { status: "restored" };
+		});
+
+		registerRoute(router, { method: "delete", path: base + "/accounts/:filename" }, async (req) => {
+			await runtime.trashAccount(routeParam(req, "filename"));
+			return { status: "trashed" };
+		});
+
+		registerRoute(router, { method: "get", path: base + "/commandcode/accounts" }, async () => ({
+			data: await runtime.listCommandCodeAccounts(),
+		}));
+
+		registerRoute(router, { method: "post", path: base + "/commandcode/accounts" }, async (req) => {
+			const body = bodyRecord(req);
+			return { data: await runtime.addCommandCodeAccount(body["api_key"], body["label"]) };
+		});
+
+		registerRoute(router, { method: "patch", path: base + "/commandcode/accounts/:index" }, async (req) => {
+			const body = bodyRecord(req);
+			const patch: { apiKey?: unknown; label?: unknown } = {};
+			if (body["api_key"] !== undefined) {
+				patch.apiKey = body["api_key"];
+			}
+			if (body["label"] !== undefined) {
+				patch.label = body["label"];
+			}
+			if (patch.apiKey === undefined && patch.label === undefined) {
+				throw ApiError.badRequest("必须提供 api_key 或 label");
+			}
+			return { data: await runtime.updateCommandCodeAccount(commandCodeAccountIndex(req), patch) };
+		});
+
+		registerRoute(router, { method: "delete", path: base + "/commandcode/accounts/:index" }, async (req) => ({
+			data: await runtime.deleteCommandCodeAccount(commandCodeAccountIndex(req)),
+		}));
+
+		registerRoute(router, { method: "post", path: base + "/oauth" }, async (req) => {
+			const provider = bodyRecord(req)["provider"];
+			if (typeof provider !== "string" || !OAUTH_PROVIDERS.has(provider as CliProxyOAuthProvider)) {
+				throw ApiError.badRequest("不支持的 OAuth Provider");
+			}
+			return runtime.startOAuth(provider as CliProxyOAuthProvider);
+		});
+
+		registerRoute(router, { method: "get", path: base + "/oauth/:id" }, (req) => runtime.getOAuthSession(routeParam(req, "id")));
+		registerRoute(router, { method: "post", path: base + "/oauth/:id/input" }, (req) => {
+			const input = bodyRecord(req)["input"];
+			if (typeof input !== "string" || input.length > 4_096) {
+				throw ApiError.badRequest("OAuth 输入无效");
+			}
+			return runtime.sendOAuthInput(routeParam(req, "id"), input);
+		});
+	}
 
 	// 页面预取走缓存以节省 GitHub 未认证配额；手动 Check 传 refresh=true 强制刷新。
 	registerRoute(router, { method: "get", path: "/cliproxy/update/check" }, (req) =>

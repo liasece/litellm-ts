@@ -2,11 +2,13 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream, readdirSync, readlinkSync } from "node:fs";
-import { access, chmod, copyFile, mkdir, open, readdir, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, link, mkdir, open, readdir, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
 import { Readable } from "node:stream";
 import yaml from "js-yaml";
+import { SUBSCRIPTION_PROVIDERS, SubscriptionCatalog, withoutProvider, type SubscriptionProvider, type CatalogEntry } from "../subscriptions/SubscriptionProviders";
+import { SubscriptionAccountKeys, type KeySubscription, type SavedSubscriptionKey } from "../subscriptions/SubscriptionAccountKeys";
 import type { ConfigRepository } from "../repositories/ConfigRepository";
 import { ApiError } from "../core/api/ApiError";
 import {
@@ -58,6 +60,9 @@ const RESERVED_CONFIG_KEYS = new Set(["host", "port", "auth-dir", "api-keys", "r
 const OPENCODE_GO_PLUGIN_ID = "opencode-go-cliproxyapi";
 const OPENCODE_GO_PLUGIN_MIN_VERSION = "8.0.0";
 const OPENCODE_GO_PLUGIN_BASE_URL = "https://opencode.ai/inference/go/v1";
+// The Go runtime expands this environment reference after reading its config.
+// eslint-disable-next-line no-template-curly-in-string
+const OPENCODE_GO_ENV_REFERENCE = "${OPENCODE_GO_API_KEY}";
 const COMMANDCODE_PLUGIN_ID = "commandcode-go-cliproxyapi";
 const COMMANDCODE_PLUGIN_BASE_URL = "https://api.commandcode.ai/provider/v1";
 const MANAGED_ACCOUNTS_KEY = "managed-accounts";
@@ -545,9 +550,7 @@ export function buildCliProxyPluginConfig(userValue: unknown, plugins: CliProxyM
 			enabled: true,
 			"base-url": OPENCODE_GO_PLUGIN_BASE_URL,
 			"model-prefix": { enabled: true, value: OPENCODE_GO_MODEL_PREFIX },
-			// CLIProxy 在运行时展开该占位符，不能交给 JavaScript 模板字符串。
-			// eslint-disable-next-line no-template-curly-in-string
-			"api-keys": [{ value: "${OPENCODE_GO_API_KEY}", name: "Personal" }],
+			"api-keys": [{ value: OPENCODE_GO_ENV_REFERENCE, name: "Personal" }],
 			...entry,
 		};
 	}
@@ -598,6 +601,7 @@ function safeAccountFilename(value: string): string {
  */
 export class CliProxyRuntimeManager {
 	private readonly _repository: ConfigRepository;
+	private readonly _accountKeys: SubscriptionAccountKeys;
 	private readonly _runtimeRoot: string;
 	private readonly _versionsDir: string;
 	private readonly _authDir: string;
@@ -606,6 +610,19 @@ export class CliProxyRuntimeManager {
 	private readonly _pluginDir: string;
 	private readonly _currentLink: string;
 	private readonly _bootstrapBinary: string;
+	private readonly _subscriptionBinary = process.env["LITELLM_SUBSCRIPTIONS_BINARY"];
+	readonly subscriptionCatalog = new SubscriptionCatalog();
+	private _sourceBuiltSubscriptions = false;
+	private _catalogRefresh?: NodeJS.Timeout;
+	private _catalogRefreshChild?: ChildProcessWithoutNullStreams;
+
+	/**
+	 *
+	 */
+	get sourceBuiltSubscriptions(): boolean {
+		return this._sourceBuiltSubscriptions;
+	}
+
 	private readonly _bootstrapVersion: string;
 	private readonly _internalApiKey: string;
 	private readonly _internalManagementKey: string;
@@ -649,6 +666,7 @@ export class CliProxyRuntimeManager {
 
 	constructor(repository: ConfigRepository, masterKey: string | undefined) {
 		this._repository = repository;
+		this._accountKeys = new SubscriptionAccountKeys(repository, process.env["LITELLM_SALT_KEY"] || masterKey);
 		this._runtimeRoot = process.env["CLIPROXY_RUNTIME_ROOT"] ?? "/var/lib/litellm/cliproxy";
 		this._versionsDir = path.join(this._runtimeRoot, "versions");
 		this._authDir = path.join(this._runtimeRoot, "auths");
@@ -753,6 +771,7 @@ export class CliProxyRuntimeManager {
 				this._settings = await this._importExistingOrDefaultSettings();
 				await this._repository.upsertParam(CLIPROXY_CONFIG_PARAM, this._settings);
 			}
+			await this._accountKeys.load();
 			await this._ensurePluginArtifact();
 			await this._projectConfig();
 			if (this._desiredStop || !this._settings.enabled) {
@@ -813,6 +832,7 @@ export class CliProxyRuntimeManager {
 			this._startedAt && this._state === "running" ? Math.max(0, Math.floor((Date.now() - this._startedAt.getTime()) / 1000)) : null;
 		return {
 			available: this._state !== "unavailable",
+			engine: this._process ? (this._sourceBuiltSubscriptions ? "subscriptions" : "compatibility") : null,
 			enabled: this._settings.enabled,
 			state: this._state,
 			version: this._currentVersion(),
@@ -1001,25 +1021,146 @@ export class CliProxyRuntimeManager {
 	 *
 	 */
 	async listModels(): Promise<string[]> {
-		const response = await fetch(`${this.baseUrl}/v1/models`, {
-			headers: { Authorization: `Bearer ${this._internalApiKey}` },
+		return this._listModelsAt("/v1/models");
+	}
+
+	/**
+	 * @param provider
+	 */
+	async listSavedKeys(provider: KeySubscription): Promise<SavedSubscriptionKey[]> {
+		await this._accountKeys.load();
+		const archived = await this._archivedAccountFiles();
+		return this._accountKeys.list().filter(entry => entry.provider === provider && !archived.has(this._savedKeyFilename(entry)));
+	}
+
+	/**
+	 * @param provider
+	 * @param id
+	 * @param label
+	 * @param key
+	 */
+	async saveSubscriptionKey(provider: KeySubscription, id: string | undefined, label: string, key?: string): Promise<SavedSubscriptionKey[]> {
+		await this._serialize("save-subscription-key", async () => {
+			await this._accountKeys.load();
+			const known = this._accountKeys.records.find(r => r.provider === provider && (r.id === id || (!id && r.key === key?.trim())));
+			if (key) {await this._checkKeyNotImported(provider, key.trim(), known && this._savedKeyFilename(known));}
+			await this._accountKeys.save(provider, id, label, key);
+			await this._projectConfig();
+		});
+		return this.listSavedKeys(provider);
+	}
+
+	/**
+	 * @param provider
+	 * @param id
+	 */
+	async revokeSubscriptionKey(provider: KeySubscription, id: string): Promise<void> {
+		await this._serialize("revoke-subscription-key", async () => {
+			await this._accountKeys.load();
+			const entry = this._accountKeys.records.find(record => record.provider === provider && record.id === id);
+			if (!entry) {throw ApiError.notFound("订阅账号不存在");}
+			const filename = this._savedKeyFilename(entry);
+			if ((await this._archivedAccountFiles()).has(filename)) {return;}
+			await this._projectSavedAccounts();
+			// Archive the current projection first. A failed revocation remains recoverable.
+			const current = path.join(this._authDir, filename);
+			const trashDir = path.join(this._authDir, ".trash");
+			await mkdir(trashDir, { recursive: true });
+			await rename(current, path.join(trashDir, String(Date.now()) + "-" + filename));
+			// Keep the encrypted secret with its archived file for restoration.
+			await this._projectConfig();
+		});
+	}
+
+	private async _checkKeyNotImported(provider: KeySubscription, key: string, except?: string): Promise<void> {
+		for (const entry of await readdir(this._authDir, { withFileTypes: true })) {
+			if (!entry.isFile() || !entry.name.endsWith(".json") || entry.name === except) {continue;}
+			const record: unknown = await readFile(path.join(this._authDir, entry.name), "utf8").then(raw => {
+				try { return JSON.parse(raw) as unknown; } catch { return null; }
+			});
+			if (isRecord(record) && record["type"] === provider && record["api_key"] === key) {throw ApiError.conflict("订阅账号已存在");}
+		}
+	}
+
+
+	/**
+	 * @param provider
+	 */
+	async listSubscriptionModels(provider: SubscriptionProvider): Promise<string[]> {
+		if (!this._sourceBuiltSubscriptions) {
+			// An explicitly selected compatibility release has no scoped API.
+			// Use its per-account registrations rather than guessing from vendor names.
+			const accounts = (await this.listAccounts()).filter(a => a.provider === SUBSCRIPTION_PROVIDERS[provider].source && !a.disabled);
+			const catalogs = await Promise.all(accounts.map(async a => {
+				const result = await this._managementJson<{ models?: { id?: unknown }[] }>(
+					"/auth-files/models?name=" + encodeURIComponent(a.filename),
+				);
+				return (result.models ?? []).flatMap(m => (typeof m.id === "string" ? [m.id] : []));
+			}));
+			return [...new Set(catalogs.flat().map(id => withoutProvider(id, provider)))].sort();
+		}
+		const ids = await this._listModelsAt("/subscriptions/" + provider + "/v1/models");
+		return [...new Set(ids.map(id => withoutProvider(id, provider)))].sort();
+	}
+
+	private async _listModelsAt(resource: string): Promise<string[]> {
+		const response = await fetch(this.baseUrl + resource, {
+			headers: { Authorization: "Bearer " + this._internalApiKey },
 			signal: AbortSignal.timeout(10_000),
 		});
-		if (!response.ok) {
-			throw new ApiError(response.status, `CLIProxy 模型列表请求失败: HTTP ${response.status}`);
+		if (!response.ok) {throw new ApiError(response.status, "订阅模型目录请求失败: HTTP " + response.status);}
+		return extractModelIds(await response.json()).sort();
+	}
+
+	private async _refreshSubscriptionCatalog(child: ChildProcessWithoutNullStreams): Promise<void> {
+		if (this._catalogRefreshChild === child) {return;}
+		this._catalogRefreshChild = child;
+		try {
+			if (!this._sourceBuiltSubscriptions) {
+				const files = await this._listManagedAuthFiles();
+				const owners = new Map<string, Set<string>>();
+				for (let i = 0; i < files.length; i += 8) {
+					await Promise.all(files.slice(i, i + 8).map(async file => {
+						const name = this._stringField(file, "name", "filename");
+						const provider = this._stringField(file, "type", "provider");
+						if (!name || !provider) {return;}
+						const data = await this._managementJson<unknown>("/auth-files/models?name=" + encodeURIComponent(name));
+						for (const id of extractModelIds(data)) {
+							const sources = owners.get(id) ?? new Set<string>();
+							sources.add(provider);
+							owners.set(id, sources);
+						}
+					}));
+				}
+				if (this._process === child) {this.subscriptionCatalog.replace([...owners].map(([id, set]) => ({ id: id, providers: [...set] })));}
+				return;
+			}
+			const response = await fetch(this.baseUrl + "/_litellm/subscription-catalog", {
+				headers: { Authorization: "Bearer " + this._internalApiKey },
+				signal: AbortSignal.timeout(2_000),
+			});
+			if (!response.ok) {throw new Error(String(response.status));}
+			const body: unknown = await response.json();
+			if (!isRecord(body) || !Array.isArray(body["data"])) {throw new Error("invalid catalog");}
+			const entries: CatalogEntry[] = [];
+			for (const item of body["data"]) {
+				if (!isRecord(item) || typeof item["id"] !== "string" || !Array.isArray(item["providers"]) ||
+					!item["providers"].every((source: unknown) => typeof source === "string")) {continue;}
+				entries.push({ id: item["id"], providers: item["providers"] as string[] });
+			}
+			if (this._process === child) {this.subscriptionCatalog.replace(entries);}
+		} catch {
+			if (this._process === child) {this._appendLog("system", "订阅模型来源目录暂不可用，将重试");}
+		} finally {
+			if (this._catalogRefreshChild === child) {this._catalogRefreshChild = undefined;}
 		}
-		const body = (await response.json()) as {
-			/**
-			 *
-			 */
-			data?: Array<{
-				/**
-				 *
-				 */
-				id?: unknown;
-			}>;
-		};
-		return [...new Set((body.data ?? []).map((item) => item.id).filter((id): id is string => typeof id === "string"))].sort();
+	}
+
+	private _clearSubscriptionCatalog(): void {
+		clearInterval(this._catalogRefresh);
+		this._catalogRefresh = undefined;
+		this._sourceBuiltSubscriptions = false;
+		this.subscriptionCatalog.replace([]);
 	}
 
 	/**
@@ -1245,6 +1386,7 @@ export class CliProxyRuntimeManager {
 		const trashDir = path.join(this._authDir, ".trash");
 		await mkdir(trashDir, { recursive: true });
 		await rename(path.join(this._authDir, filename), path.join(trashDir, `${Date.now()}-${filename}`));
+		if (this._accountKeys.records.some(record => this._savedKeyFilename(record) === filename)) {await this._serialize("archive-key", () => this._projectConfig());}
 		this._appendLog("system", `OAuth 账户 ${filename} 已移入 .trash`);
 	}
 
@@ -1268,13 +1410,19 @@ export class CliProxyRuntimeManager {
 		const sourcePath = path.join(this._authDir, ".trash", filename);
 		const targetPath = path.join(this._authDir, originalName);
 		try {
-			await rename(sourcePath, targetPath);
+			// Never replace an already-active account when restoring an older archive.
+			await link(sourcePath, targetPath);
+			await unlink(sourcePath);
 		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+				throw ApiError.conflict("同名账号已在使用");
+			}
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 				throw ApiError.notFound(`trash 中的账户文件不存在: ${filename}`);
 			}
 			throw error;
 		}
+		if (this._accountKeys.records.some(record => this._savedKeyFilename(record) === originalName)) {await this._serialize("restore-key", () => this._projectConfig());}
 		this._appendLog("system", `OAuth 账户 ${filename} 已恢复为 ${originalName}`);
 	}
 
@@ -1499,11 +1647,8 @@ export class CliProxyRuntimeManager {
 			return this.status();
 		}
 		await this._serialize("update", async () => {
-			this._state = "updating";
 			await this._installRelease(version);
-			await this._activateVersion(version);
-			await this._projectConfig();
-			await this._restartProcess();
+			await this._restartProcess(version);
 			this._assertRunning();
 		});
 		return this.status();
@@ -1514,11 +1659,9 @@ export class CliProxyRuntimeManager {
 	 */
 	async rollback(versionValue: string): Promise<CliProxyRuntimeStatus> {
 		const version = normalizeVersion(versionValue);
-		await access(path.join(this._versionsDir, version, "cli-proxy-api"));
+		await access(this._bundledSubscriptionBinary(version) ?? path.join(this._versionsDir, version, "cli-proxy-api"));
 		await this._serialize("rollback", async () => {
-			await this._activateVersion(version);
-			await this._projectConfig();
-			await this._restartProcess();
+			await this._restartProcess(version);
 			this._assertRunning();
 		});
 		return this.status();
@@ -1558,6 +1701,7 @@ export class CliProxyRuntimeManager {
 	}
 
 	private async _readArtifactKind(version: string): Promise<string | null> {
+		if (this._bundledSubscriptionBinary(version)) {return "plugin";}
 		try {
 			return (await readFile(this._artifactMarkerPath(version), "utf8")).trim() || null;
 		} catch {
@@ -1566,6 +1710,7 @@ export class CliProxyRuntimeManager {
 	}
 
 	private async _pluginFileAvailable(pluginId: string): Promise<boolean> {
+		if (this._bundledSubscriptionBinary(this._currentVersion())) {return true;}
 		for (const extension of [".so", ".dylib"]) {
 			try {
 				await access(path.join(this._pluginDir, `${pluginId}${extension}`));
@@ -1644,6 +1789,7 @@ export class CliProxyRuntimeManager {
 		} catch {
 			existing = [];
 		}
+		const archived = await this._archivedAccountFiles();
 		const desired = new Map<string, ManagedCommandCodeAccount>();
 		for (const account of extractManagedCommandCodeAccounts(userConfig)) {
 			desired.set(commandCodeAccountFilename(account.apiKey), account);
@@ -1652,6 +1798,9 @@ export class CliProxyRuntimeManager {
 			existing.filter((name) => !desired.has(name)).map((name) => unlink(path.join(this._authDir, name)).catch(() => undefined)),
 		);
 		for (const [filename, account] of desired) {
+			if (archived.has(filename) && !existing.includes(filename)) {
+				continue;
+			}
 			const targetPath = path.join(this._authDir, filename);
 			let current: Record<string, unknown> | null = null;
 			try {
@@ -1691,8 +1840,55 @@ export class CliProxyRuntimeManager {
 		return { dir: this._pluginDir, opencodeGo: opencodeGo, commandcode: commandcode };
 	}
 
+	private _savedKeyFilename(entry: SavedSubscriptionKey): string {
+		return "subscription-" + entry.provider + "-" + entry.id + ".json";
+	}
+
+	private async _archivedAccountFiles(): Promise<Set<string>> {
+		const names = await readdir(path.join(this._authDir, ".trash")).catch((e: NodeJS.ErrnoException) => {
+			if (e.code === "ENOENT") {return [];}
+			throw e;
+		});
+		return new Set(names.map(name => name.replace(/^\d+-/, "")));
+	}
+
+	private async _projectSavedAccounts(): Promise<{ value: string; name: string }[]> {
+		if (this._accountKeys.records.length === 0) {return [];}
+		const archived = await this._archivedAccountFiles();
+		const openCodeKeys: { value: string; name: string }[] = [];
+		for (const record of this._accountKeys.records) {
+			const filename = this._savedKeyFilename(record);
+			const file = path.join(this._authDir, filename);
+			const contents = await readFile(file, "utf8").catch((err: NodeJS.ErrnoException) => {
+				if (err.code === "ENOENT") {return null;}
+				throw err;
+			});
+			if (!contents && archived.has(filename)) {continue;}
+			const previous: unknown = contents === null ? {} : JSON.parse(contents);
+			if (!isRecord(previous)) {throw ApiError.unavailable("订阅账号文件无效");}
+			if (previous["api_key"] !== record.key || previous["label"] !== record.label || previous["type"] !== record.provider) {
+				const next: Record<string, unknown> = { ...previous, type: record.provider, api_key: record.key, label: record.label };
+				if (record.provider === "opencode-go") {next["id"] = "opencode-go-key-" + createHash("sha256").update(record.key).digest("hex");}
+				const tmp = path.join(this._authDir, "." + filename + "." + randomUUID() + ".tmp");
+				await writeFile(tmp, JSON.stringify(next), { mode: 0o600 });
+				await rename(tmp, file);
+			}
+			if (record.provider === "opencode-go") {openCodeKeys.push({ value: record.key, name: record.label });}
+		}
+		return openCodeKeys;
+	}
+
+
 	private async _projectConfig(): Promise<void> {
 		const userConfig = parseCliProxyUserConfig(this._settings.config_yaml);
+		const nativeKeys = await this._projectSavedAccounts();
+		if (nativeKeys.length > 0) {
+			const plugins = isRecord(userConfig["plugins"]) ? userConfig["plugins"] : {};
+			const configs = isRecord(plugins["configs"]) ? plugins["configs"] : {};
+			const entry = isRecord(configs[OPENCODE_GO_PLUGIN_ID]) ? configs[OPENCODE_GO_PLUGIN_ID] : {};
+			const configured = Array.isArray(entry["api-keys"]) ? entry["api-keys"] : process.env["OPENCODE_GO_API_KEY"] ? [{ value: OPENCODE_GO_ENV_REFERENCE, name: "Personal" }] : [];
+			userConfig["plugins"] = { ...plugins, configs: { ...configs, [OPENCODE_GO_PLUGIN_ID]: { ...entry, "api-keys": [...configured, ...nativeKeys] } } };
+		}
 		await this._syncManagedCommandCodeAccounts(userConfig);
 		const plugins = await this._resolveManagedPlugins(userConfig);
 		this._pluginsEnabled = plugins !== null;
@@ -1720,20 +1916,22 @@ export class CliProxyRuntimeManager {
 
 	private async _installBootstrapIfNeeded(): Promise<void> {
 		try {
-			await access(this._bootstrapBinary);
+			await access(this._subscriptionBinary ?? this._bootstrapBinary);
 		} catch {
 			this._state = "unavailable";
 			this._lastError = `CLIProxy bootstrap binary not found: ${this._bootstrapBinary}`;
 			return;
 		}
 		const targetDir = path.join(this._versionsDir, this._bootstrapVersion);
-		const targetBinary = path.join(targetDir, "cli-proxy-api");
-		try {
-			await access(targetBinary);
-		} catch {
-			await mkdir(targetDir, { recursive: true });
-			await copyFile(this._bootstrapBinary, targetBinary);
-			await chmod(targetBinary, 0o755);
+		await mkdir(targetDir, { recursive: true });
+		if (!this._subscriptionBinary) {
+			const targetBinary = path.join(targetDir, "cli-proxy-api");
+			try {
+				await access(targetBinary);
+			} catch {
+				await copyFile(this._bootstrapBinary, targetBinary);
+				await chmod(targetBinary, 0o755);
+			}
 		}
 		try {
 			await readlink(this._currentLink);
@@ -1742,7 +1940,13 @@ export class CliProxyRuntimeManager {
 		}
 	}
 
+	private _bundledSubscriptionBinary(version: string | null): string | undefined {
+		return version === this._bootstrapVersion ? this._subscriptionBinary : undefined;
+	}
+
 	private async _resolveCurrentBinary(): Promise<string> {
+		const bundled = this._bundledSubscriptionBinary(this._currentVersion());
+		if (bundled) {return bundled;}
 		try {
 			const link = await readlink(this._currentLink);
 			return path.resolve(this._runtimeRoot, link, "cli-proxy-api");
@@ -1809,8 +2013,9 @@ export class CliProxyRuntimeManager {
 	 * Import config-backed changes made through a CLIProxy management handler
 	 * into LiteLLM's DB-owned user configuration, then regenerate the managed
 	 * runtime projection.
+	 * @param removedPlugin
 	 */
-	async persistManagementConfig(): Promise<void> {
+	async persistManagementConfig(removedPlugin?: string): Promise<void> {
 		const response = await this.managementRequest("/config.yaml");
 		if (!response.ok) {
 			throw new ApiError(response.status, `CLIProxy 配置同步失败: HTTP ${response.status}`);
@@ -1820,10 +2025,32 @@ export class CliProxyRuntimeManager {
 			throw ApiError.unavailable("CLIProxy 配置同步响应无效");
 		}
 		const userConfig = sanitizeImportedConfig(parsed);
+		// Native keys belong to the sealed key store; do not copy its projection to user YAML.
+		const plugins = isRecord(userConfig["plugins"]) ? userConfig["plugins"] : {};
+		const configs = isRecord(plugins["configs"]) ? plugins["configs"] : {};
+		if (removedPlugin === OPENCODE_GO_PLUGIN_ID || removedPlugin === COMMANDCODE_PLUGIN_ID) {
+			// Built-ins can be loaded without a file. Preserve an operator's explicit uninstall across projections.
+			configs[removedPlugin] = { enabled: false };
+			plugins["configs"] = configs;
+			userConfig["plugins"] = plugins;
+		}
+		this.omitSavedPluginKeys(configs[OPENCODE_GO_PLUGIN_ID]);
+		const managed = commandCodeAccountEntries(this.userConfig);
+		if (managed.length) {setCommandCodeAccountEntries(userConfig, managed);}
 		await this.saveSettings({
 			enabled: this._settings.enabled,
 			config_yaml: yaml.dump(userConfig, { noRefs: true, lineWidth: 120, sortKeys: false }),
 		});
+	}
+
+	/**
+	 * Removes projected account secrets from legacy editable plugin configuration.
+	 * @param config - OpenCode Go's editable plugin object.
+	 */
+	omitSavedPluginKeys(config: unknown): void {
+		if (!isRecord(config) || !Array.isArray(config["api-keys"])) {return;}
+		const keys = new Set(this._accountKeys.records.filter(record => record.provider === "opencode-go").map(record => record.key));
+		config["api-keys"] = config["api-keys"].filter(item => !keys.has(String(isRecord(item) ? item["value"] : item)));
 	}
 
 	private async _listManagedAuthFiles(authIndex?: string): Promise<Record<string, unknown>[]> {
@@ -1899,6 +2126,7 @@ export class CliProxyRuntimeManager {
 	}
 
 	private async _installRelease(version: string, force = false): Promise<void> {
+		if (this._bundledSubscriptionBinary(version)) {return;}
 		const targetBinary = path.join(this._versionsDir, version, "cli-proxy-api");
 		try {
 			await access(targetBinary);
@@ -2002,6 +2230,7 @@ export class CliProxyRuntimeManager {
 			env: { ...process.env, HOME: this._runtimeRoot, MANAGEMENT_PASSWORD: this._internalManagementKey },
 		});
 		this._process = child;
+		this._sourceBuiltSubscriptions = Boolean(this._subscriptionBinary && binary === this._subscriptionBinary);
 		this._startedAt = new Date();
 		child.stdout.on("data", (chunk: Buffer) => this._consumeProcessLog("stdout", chunk));
 		child.stderr.on("data", (chunk: Buffer) => this._consumeProcessLog("stderr", chunk));
@@ -2014,6 +2243,7 @@ export class CliProxyRuntimeManager {
 				return;
 			}
 			this._process = null;
+			this._clearSubscriptionCatalog();
 			this._lastExitCode = code;
 			this._startedAt = null;
 			this._health = "unhealthy";
@@ -2072,6 +2302,16 @@ export class CliProxyRuntimeManager {
 		} else if (catalog.waitedMs >= 200) {
 			this._appendLog("system", `CLIProxy 模型目录就绪（健康后等待 ${catalog.waitedMs}ms）`);
 		}
+		if (this._subscriptionBinary) {
+			if (this._sourceBuiltSubscriptions) {
+				await this._refreshSubscriptionCatalog(child);
+			} else {
+				void this._refreshSubscriptionCatalog(child);
+			}
+			if (this._process !== child || this._desiredStop) {return;}
+			this._catalogRefresh = setInterval(() => void this._refreshSubscriptionCatalog(child), 30_000);
+			this._catalogRefresh.unref();
+		}
 		this._state = "running";
 		this._health = "healthy";
 		this._restartCount = 0;
@@ -2099,36 +2339,62 @@ export class CliProxyRuntimeManager {
 		}
 		this._state = "stopping";
 		this._desiredStop = true;
-		child.kill("SIGTERM");
-		await Promise.race([
-			new Promise<void>((resolve) => child.once("exit", () => resolve())),
-			new Promise<void>((resolve) =>
-				setTimeout(() => {
-					if (this._process === child) {
-						child.kill("SIGKILL");
-					}
+		// The next engine must not open a rotating token while its previous
+		// owner can still write it. A timeout escalates the signal, not ownership.
+		if (child.exitCode === null && child.signalCode === null) {
+			await new Promise<void>((resolve, reject) => {
+				const force = setTimeout(() => child.kill("SIGKILL"), STOP_TIMEOUT_MS);
+				const deadline = setTimeout(() => {
+					child.off("close", closed);
+					reject(ApiError.unavailable("旧订阅进程尚未退出，未启动新的凭据写入进程"));
+				}, STOP_TIMEOUT_MS + 5_000);
+				const closed = (): void => {
+					clearTimeout(force);
+					clearTimeout(deadline);
 					resolve();
-				}, STOP_TIMEOUT_MS),
-			),
-		]);
+				};
+				child.once("close", closed);
+				child.kill("SIGTERM");
+			});
+		}
 		if (this._process === child) {
 			this._process = null;
+			this._clearSubscriptionCatalog();
 		}
 		this._startedAt = null;
 		this._state = "stopped";
 		this._health = "unknown";
 	}
 
-	private async _restartProcess(): Promise<void> {
+	private async _restartProcess(version?: string): Promise<void> {
+		const previous = this._currentVersion();
 		// 重启会掐断在途 SSE：先降级（新请求走 fallback）并等旧请求写完，再换进程。
 		// 进程本来就不在运行时没有可排空的流，timeoutMs=0 直接重启，避免崩溃恢复被拖慢。
 		await withCliProxyDrain(
 			async () => {
 				this._desiredStop = true;
 				await this._stopProcess();
-				this._desiredStop = false;
-				this._restartCount += 1;
-				await this._startProcess();
+				try {
+					if (version) {
+						await this._activateVersion(version);
+						await this._projectConfig();
+					}
+					this._desiredStop = false;
+					this._restartCount += 1;
+					await this._startProcess();
+					if (version) {this._assertRunning();}
+				} catch (error) {
+					if (version && previous && previous !== version) {
+						await this._stopProcess();
+						await this._activateVersion(previous);
+						await this._projectConfig();
+						this._desiredStop = false;
+						await this._startProcess();
+						this._assertRunning();
+						this._appendLog("system", "订阅版本启动失败，已恢复原版本与当前账号状态");
+					}
+					throw error;
+				}
 			},
 			{
 				probe: () => this._activeRequestProbe(),

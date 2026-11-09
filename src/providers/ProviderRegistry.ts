@@ -14,7 +14,8 @@ import { LLMuxProvider } from "./LLMuxProvider";
 import { MiMoProvider } from "./MiMoProvider";
 import { MiMoOpenAIProvider } from "./MiMoOpenAIProvider";
 import { OpenAICompatProvider } from "./OpenAICompatProvider";
-import { CliProxyProvider } from "./CliProxyProvider";
+import { SubscriptionProvider } from "./SubscriptionProvider";
+import { isSubscriptionProvider, type SubscriptionConnection } from "../subscriptions/SubscriptionProviders";
 
 /** 默认 API Base 映射 */
 const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
@@ -28,7 +29,6 @@ const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
 	[LlmProviders.MiMoGlobal]: "https://api.xiaomimimo.com/v1",
 	[LlmProviders.LLMux]: "http://192.168.1.220:18182",
 	[LlmProviders.VLLM]: "http://localhost:8000/v1",
-	[LlmProviders.CLIProxy]: "http://127.0.0.1:8317",
 };
 
 /**
@@ -54,6 +54,8 @@ const PREFIX_TO_PROVIDER: ReadonlyArray<{ prefixes: readonly string[]; provider:
  */
 export class ProviderRegistry {
 	private _providers: Map<string, ProviderConfig> = new Map();
+
+	constructor(private readonly _subscriptions?: SubscriptionConnection) {}
 
 	/**
 	 * 注册一个 Provider 实例
@@ -154,6 +156,9 @@ export class ProviderRegistry {
 
 		// PY: support dynamic api_base from deployment params or environment (transformation.py)
 		const dynamicApiBase = params?.["api_base"] as string | undefined;
+		if (isSubscriptionProvider(providerName) || providerName === LlmProviders.CLIProxy) {
+			return new SubscriptionProvider(providerName, this._subscriptions, params?.["subscription_transport"]);
+		}
 		switch (providerName) {
 			case LlmProviders.OpenAI:
 				return new OpenAICompatProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.OpenAI]!);
@@ -176,11 +181,6 @@ export class ProviderRegistry {
 				return new LLMuxProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.LLMux]);
 			case LlmProviders.VLLM:
 				return new OpenAICompatProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.VLLM]!);
-			case LlmProviders.CLIProxy:
-				return new CliProxyProvider(
-					effectiveApiKey || process.env["CLIPROXY_INTERNAL_API_KEY"] || "",
-					dynamicApiBase ?? process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? DEFAULT_API_BASES[LlmProviders.CLIProxy]!,
-				);
 			default:
 				return null;
 		}

@@ -1,3 +1,4 @@
+import { hostedProvider } from "../subscriptions/SubscriptionProviders";
 import { trackIteratorLifetime } from "../router/TrackedStream";
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
 /**
@@ -160,7 +161,7 @@ export function buildUpstreamAttempt(
 		upstreamHeaders: providerReq.headers,
 		deployment: deployment,
 		deploymentKey: getDeploymentKey(deployment),
-		upstreamModel: stripProviderPrefix(deploymentModel),
+		upstreamModel: hostedProvider(deployment.litellm_params) && providerReq.body && typeof providerReq.body === "object" && "model" in providerReq.body && typeof providerReq.body.model === "string" ? providerReq.body.model : stripProviderPrefix(deploymentModel),
 	};
 }
 

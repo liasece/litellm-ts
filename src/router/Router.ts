@@ -239,6 +239,7 @@ export class Router {
 		config: RouterConfig,
 		modelGroupAlias?: Record<string, RouterModelGroupAliasValue>,
 		credentialValues?: CredentialValuesAccessor,
+		providerRegistry = new ProviderRegistry(),
 	) {
 		this._deployments = [...config.model_list];
 		this._routingStrategyArgs = config.routing_strategy_args;
@@ -277,7 +278,7 @@ export class Router {
 			config.cooldown_callbacks,
 		);
 		this._tpmRpmLimiter = new TPMRPMLimiter();
-		this._providerRegistry = new ProviderRegistry();
+		this._providerRegistry = providerRegistry;
 
 		const mergedFallbacks: Record<string, string[]> = {};
 		for (const fb of config.fallbacks ?? []) {

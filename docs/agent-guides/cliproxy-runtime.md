@@ -4,7 +4,7 @@
 
 ## 找到真正的状态所有者
 
-`src/cliproxy/CliProxyRuntimeManager.ts` 管理应用容器内的 CPA 子进程。排查从应用配置、管理器与子进程证据交叉核实启动、配置投影、凭证、日志和版本归属，不因看到 CPA 名称就假设它是另一个独立部署服务。`CLIPROXY_RUNTIME_ROOT` 的默认值与挂载从当前代码和部署配置取得；镜像 bootstrap 版本和现有实例的 `current` 软链可能不同，镜像构建成功不证明运行 CPA 已升级。
+`src/cliproxy/CliProxyRuntimeManager.ts` 管理容器内的订阅执行进程。默认镜像运行本仓库构建的 `litellm-subscriptions`；显式选择其他上游版本时运行对应兼容二进制。订阅来源、内置插件和迁移验证见[订阅运行时](../../native/subscriptions/README.md)。排查从应用配置、管理器与子进程证据交叉核实启动、配置投影、凭证、日志和版本归属，不因看到 CPA 名称就假设它是另一个独立部署服务。`CLIPROXY_RUNTIME_ROOT` 的默认值与挂载从当前代码和部署配置取得；镜像 bootstrap 版本和现有实例的 `current` 软链可能不同，镜像构建成功不证明运行 CPA 已升级。
 
 ## 二进制与插件兼容
 

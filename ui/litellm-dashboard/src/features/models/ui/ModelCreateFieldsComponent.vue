@@ -6,8 +6,9 @@ import UiEmptyState from "../../platform/ui/UiEmptyState.vue";
 import ModelMappingHelp from "./ModelMappingHelpComponent.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
 import ModelProviderSelect from "./ModelProviderSelectComponent.vue";
-import { providerModels, getPlaceholder } from "../logic/ModelProviderLogic";
+import { providerModels, providerCatalogSlug, getPlaceholder } from "../logic/ModelProviderLogic";
 import { selectedModelMappings, type ModelCreateDraft } from "../logic/ModelCreateLogic";
+import { isSubscriptionProviderSlug } from "../../subscriptions/logic/SubscriptionProviderLogic";
 import { modelString, modelStrings, modelOptions, type ModelCatalog } from "../support/ModelModels";
 import { TEST_MODES } from "../data/ModelModesData";
 import { modelsApi } from "../api/ModelsApi";
@@ -26,11 +27,21 @@ const modelHelp = computed(() =>
 		? "Your deployment name will be saved as the public model name, and LiteLLM will use 'azure/deployment-name' internally"
 		: "The model name LiteLLM will send to the LLM API",
 );
+const resolvedSlug = computed(() => providerCatalogSlug(props.catalog.providerFields, provider.value));
+const subscriptionSlug = computed(() => (isSubscriptionProviderSlug(resolvedSlug.value) ? resolvedSlug.value : ""));
 const textMode = computed(() => ["Azure", "OpenAI_Compatible", "Ollama"].includes(provider.value) || !available.value.length);
 async function changeProvider(value: unknown) {
 	const next = modelString(value);
 	provider.value = next;
-	values.value = { ...values.value, custom_llm_provider: next, litellm_credential_name: undefined, model: [], model_name: undefined };
+	// Keep the catalog label here so the select keeps its selected option; the
+	// publish step resolves it to the canonical slug through the same catalog.
+	values.value = {
+		...values.value,
+		custom_llm_provider: next,
+		litellm_credential_name: undefined,
+		model: [],
+		model_name: undefined,
+	};
 	const current = ++generation;
 	loading.value = true;
 	if (next === "CLIProxy")
@@ -43,6 +54,16 @@ async function changeProvider(value: unknown) {
 				notification.fromBackend("Failed to load CLIProxy models: " + (error instanceof Error ? error.message : String(error)));
 			}
 		}
+	else if (isSubscriptionProviderSlug(providerCatalogSlug(props.catalog.providerFields, next)))
+		try {
+			const models = await modelsApi.fetchSubscriptionModels(providerCatalogSlug(props.catalog.providerFields, next));
+			if (current === generation) available.value = models;
+		} catch (error) {
+			if (current === generation) {
+				available.value = [];
+				notification.fromBackend("Failed to load subscription models: " + (error instanceof Error ? error.message : String(error)));
+			}
+		}
 	else available.value = providerModels(next, props.catalog.costs);
 	if (current === generation) loading.value = false;
 }
@@ -51,7 +72,7 @@ function models(value: unknown) {
 	values.value = {
 		...values.value,
 		model: next,
-		model_mappings: selectedModelMappings(next, provider.value, modelString(values.value.custom_model_name)),
+		model_mappings: selectedModelMappings(next, resolvedSlug.value, modelString(values.value.custom_model_name)),
 	};
 	if ((typeof next === "string" ? [next] : next).includes("all-wildcard")) values.value.model_name = undefined;
 }
@@ -59,12 +80,12 @@ function custom(value: unknown) {
 	values.value = {
 		...values.value,
 		custom_model_name: modelString(value),
-		model_mappings: selectedModelMappings(values.value.model, provider.value, modelString(value)),
+		model_mappings: selectedModelMappings(values.value.model, resolvedSlug.value, modelString(value)),
 	};
 }
 function mapping(index: number, value: unknown) {
 	const next = modelString(value);
-	if (provider.value === "Anthropic" && next.endsWith("-1m") && !modelString(values.value.litellm_extra_params).trim()) {
+	if (resolvedSlug.value === "anthropic" && next.endsWith("-1m") && !modelString(values.value.litellm_extra_params).trim()) {
 		values.value.litellm_extra_params = JSON.stringify({ extra_headers: { "anthropic-beta": "context-1m-2025-08-07" } }, null, 2);
 		values.value.model_mappings![index].public_name = next.slice(0, -3);
 	} else values.value.model_mappings![index].public_name = next;
@@ -105,7 +126,7 @@ defineExpose({
 			:model-value="modelStrings(values.model)"
 			:options="[
 				{ value: 'custom', label: 'Custom Model Name (Enter below)' },
-				{ value: 'all-wildcard', label: 'All ' + provider + ' Models (Wildcard)' },
+				...(subscriptionSlug ? [] : [{ value: 'all-wildcard', label: 'All ' + provider + ' Models (Wildcard)' }]),
 				...modelOptions(available),
 			]"
 			multiple

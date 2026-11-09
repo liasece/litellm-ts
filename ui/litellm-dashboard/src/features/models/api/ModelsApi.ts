@@ -191,6 +191,19 @@ export function cancelPriceReload(): Promise<Record<string, unknown>> {
 	return requestJson("/schedule/model_cost_map_reload", { method: "DELETE" }, (payload) => recordSchema.parse(payload));
 }
 
+/**
+ * List upstream model ids for one first-party subscription provider.
+ * The backend strips the provider prefix, so ids are passed back as-is and the
+ * UI adds the canonical `<slug>/<id>` prefix only when building a deployment.
+ */
+export function fetchSubscriptionModels(provider: string): Promise<string[]> {
+	return requestJson("/subscriptions/" + encodeURIComponent(provider) + "/models", {}, (payload) =>
+		z
+			.object({ data: z.array(z.object({ id: z.string() }).passthrough()).default([]) })
+			.parse(payload)
+			.data.map((model) => model.id),
+	);
+}
 export function fetchManagedModels(): Promise<string[]> {
 	return requestJson("/cliproxy/models", {}, (payload) =>
 		z
@@ -205,6 +218,7 @@ export function fetchModelCapabilities(): Promise<Record<string, unknown>> {
 export const modelsApi = {
 	fetchModelCapabilities,
 	fetchManagedModels,
+	fetchSubscriptionModels,
 	updateCredential,
 	fetchProviderFields,
 	fetchRoutableModels,

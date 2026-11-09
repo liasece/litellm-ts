@@ -1,3 +1,4 @@
+import { LlmProviders } from "../types/provider";
 import { codingClientModelMiddleware } from "../proxy/CodingClientModels";
 import express from "express";
 import http from "node:http";
@@ -11,7 +12,7 @@ import {
 	registerCliProxyNativeAnthropicRoutes,
 	registerCliProxyNativeResponsesRoutes,
 } from "./CliProxyNativeResponsesEndpoint";
-import { CliProxyProvider } from "../providers/CliProxyProvider";
+import { SubscriptionProvider } from "../providers/SubscriptionProvider";
 import { SpendLogStatus } from "../types/spend";
 
 const mockBuildSpendLogFromRequest = jest.fn(async (_context: unknown) => ({}));
@@ -74,7 +75,7 @@ function buildAnthropicApp(routerOverride?: LiteLLMRouter): express.Express {
 			custom_llm_provider: "cliproxy",
 		},
 	};
-	const provider = new CliProxyProvider("internal-only", "http://127.0.0.1:8317");
+	const provider = new SubscriptionProvider(LlmProviders.CLIProxy, { internalApiKey: "internal-only", baseUrl: "http://127.0.0.1:8317" });
 	const router =
 		routerOverride ??
 		({
@@ -841,7 +842,7 @@ describe("CLIProxy native Responses streaming", () => {
 			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
 			model_info: { id: "sol-deployment" },
 		};
-		const provider = new CliProxyProvider("internal-only", "http://127.0.0.1:8317");
+		const provider = new SubscriptionProvider(LlmProviders.CLIProxy, { internalApiKey: "internal-only", baseUrl: "http://127.0.0.1:8317" });
 		const recordDeploymentFailure = jest.fn();
 		const recordDeploymentSuccess = jest.fn();
 		const router = {

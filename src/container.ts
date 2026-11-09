@@ -6,8 +6,7 @@ import { validateKeyAliasSettings } from "./management/KeyAliasPolicy";
  */
 
 import { Database } from "./core/db/Database";
-import type { ProviderRegistry } from "./providers/ProviderRegistry";
-import { defaultProviderRegistry } from "./providers/ProviderRegistry";
+import { ProviderRegistry } from "./providers/ProviderRegistry";
 import { Router as LiteLLMRouter } from "./router/Router";
 import { RoutingStrategyName } from "./types/router";
 import { AuthRepository } from "./auth/AuthRepository";
@@ -138,10 +137,9 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	const { yamlConfigDiffService } = await import("./core/config/YamlConfigDiffService");
 	await yamlConfigDiffService.initialize(db.db);
 
-	// 2. ProviderRegistry — 注册默认实例（ProviderRegistry 自身不维护静态注册表，
-	//    getProvider 动态创建；保留 defaultProviderRegistry 供已有使用者）
-	//    ProviderRegistry 各 provider 的默认 API base 已由类内置。
-	const providerRegistry = defaultProviderRegistry;
+	// The router, native HTTP handlers and WebSocket relay share one account source and catalog.
+	const cliProxyRuntime = new CliProxyRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key);
+	const providerRegistry = new ProviderRegistry(cliProxyRuntime);
 
 	// 2.1 Credential 必须先于 Router 和模型初始化，确保首次 Provider 请求即可解析命名凭据。
 	const credentialRepository = new CredentialRepository(db.db);
@@ -163,15 +161,16 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 			pre_call_checks: false,
 		},
 		{}, // modelGroupAlias 通过 updateSettings 从 DB/yaml 注入
+		undefined,
+		providerRegistry,
 	);
 
 	// 3.1 模型、Router 设置与凭据不再跨请求加载到 Router。
 	// 每个需要 Router 的 HTTP 请求由 DatabaseRuntimeConfigService 建立一致的 DB 快照。
-	const runtimeConfigService = new DatabaseRuntimeConfigService(db.db, config);
+	const runtimeConfigService = new DatabaseRuntimeConfigService(db.db, config, cliProxyRuntime.subscriptionCatalog);
 
 	// 3.2 CLIProxy 是 LiteLLM 托管的内部运行时。DB 是期望配置源，生成文件与
 	// OAuth auth-dir 位于持久化卷；缺少 bootstrap binary 时不阻断网关启动。
-	const cliProxyRuntime = new CliProxyRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key);
 	// 升级 CLIProxy 前要等在途请求写完：这里把 Router 侧的 CLIProxy 在途计数接进排空逻辑。
 	cliProxyRuntime.setActiveRequestProbe(() =>
 		router.getActiveRequestCount((deployment) => isCliProxyDeploymentParams(deployment.litellm_params)),

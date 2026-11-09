@@ -18,16 +18,23 @@ import { getProviderBrand } from "../../providers/logic/ProviderBrands";
 import CliProxyConfirm from "./CliProxyConfirmComponent.vue";
 import CliProxyPasswordInput from "./CliProxyPasswordInputComponent.vue";
 import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityComponent.vue";
-const props = defineProps<{ store: CliProxyStore }>();
+const props = defineProps<{ store: CliProxyStore; sources?: readonly string[]; showCommandKeyForm?: boolean }>();
 const state = props.store.state;
-const oauthProviders = [
-	{ provider: "codex-device", label: "Codex device login", primary: true },
-	{ provider: "codex", label: "Codex browser login" },
-	{ provider: "claude", label: "Claude login" },
-	{ provider: "antigravity", label: "Antigravity login" },
-	{ provider: "kimi", label: "Kimi login" },
-	{ provider: "xai", label: "xAI login" },
+const allOauthProviders = [
+	{ provider: "codex-device", label: "Codex device login", primary: true, source: "codex" },
+	{ provider: "codex", label: "Codex browser login", source: "codex" },
+	{ provider: "claude", label: "Claude login", source: "claude" },
+	{ provider: "antigravity", label: "Antigravity login", source: "antigravity" },
+	{ provider: "kimi", label: "Kimi login", source: "kimi" },
+	{ provider: "xai", label: "xAI login", source: "xai" },
 ];
+const oauthProviders = computed(() =>
+	props.sources ? allOauthProviders.filter((provider) => props.sources!.includes(provider.source)) : allOauthProviders,
+);
+const showsCommandCode = computed(() => !props.sources || props.sources.includes("commandcode"));
+const visibleAccounts = computed(() =>
+	props.sources ? state.accounts.filter((account) => props.sources!.includes(account.provider.trim().toLowerCase())) : state.accounts,
+);
 const brandFor = (provider: string) => getProviderBrand(provider);
 const managedAccount = (account: Account) => state.commandCodeAccounts.find((item) => item.filename === account.filename);
 const isTrashed = (account: Account) => account.filename.startsWith(".trash/");
@@ -40,7 +47,7 @@ const providerFilter = computed<readonly UiTableFilterField[]>(() => [
 		control: {
 			kind: "select",
 			searchable: true,
-			options: [...new Set(state.accounts.map((account) => account.provider))].filter(Boolean).map((provider) => ({
+			options: [...new Set(visibleAccounts.value.map((account) => account.provider))].filter(Boolean).map((provider) => ({
 				value: provider,
 				label: provider,
 			})),
@@ -82,7 +89,7 @@ function accountValue(account: Account, key: string): string | number {
 	return account.provider ?? "";
 }
 const filteredAccounts = computed(() =>
-	filterRowsByFields(state.accounts, activeFilters.value, (row, key) => accountValue(row as Account, key)),
+	filterRowsByFields(visibleAccounts.value, activeFilters.value, (row, key) => accountValue(row as Account, key)),
 );
 const sortedAccounts = computed(() => {
 	if (!sort.value.order) return filteredAccounts.value;
@@ -125,7 +132,7 @@ function edit(account: Account) {
 </script>
 <template>
 	<div class="cp-stack cp-gap-8 cp-account-content">
-		<UiCard appearance="antd" size="small" title="Add OAuth account" class="cp-card cp-card-small"
+		<UiCard v-if="oauthProviders.length" appearance="antd" size="small" title="Add OAuth account" class="cp-card cp-card-small"
 			><div class="cp-inline cp-wrap cp-gap-8">
 				<UiButton
 					v-for="provider in oauthProviders"
@@ -150,7 +157,7 @@ function edit(account: Account) {
 				session output.
 			</p></UiCard
 		>
-		<UiCard appearance="antd" size="small" class="cp-card cp-card-small">
+		<UiCard v-if="showsCommandCode && showCommandKeyForm !== false" appearance="antd" size="small" class="cp-card cp-card-small">
 			<template #title>
 				<span class="cp-card-title-with-logo">
 					<ProviderLogoComponent

@@ -1,3 +1,4 @@
+import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
 /**
  * Token 费用计算器
  *
@@ -164,6 +165,12 @@ function _stripRouterAndRegionPrefix(model: string): string[] {
  * @param model
  */
 function _candidatesFor(model: string): string[] {
+	const separator = model.indexOf("/");
+	const provider = model.slice(0, separator);
+	if (separator > 0 && isSubscriptionProvider(provider)) {
+		const previous = "cliproxy/" + (provider === "commandcode" || provider === "opencode-go" ? model : model.slice(separator + 1));
+		return [...new Set([model, ..._stripRouterAndRegionPrefix(previous), ..._stripRouterAndRegionPrefix(model)])];
+	}
 	return _stripRouterAndRegionPrefix(model);
 }
 

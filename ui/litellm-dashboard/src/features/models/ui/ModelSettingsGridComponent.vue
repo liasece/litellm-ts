@@ -22,6 +22,12 @@ import {
 import { modelPriceIdentity } from "../logic/ModelDataLogic";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import { modelsApi } from "../api/ModelsApi";
+import {
+	isManagedProviderSlug,
+	isSubscriptionProviderSlug,
+	subscriptionModelName,
+} from "../../subscriptions/logic/SubscriptionProviderLogic";
+import { getServerRootPath } from "../../platform/api/HttpApiClient";
 import type { UiSelectOption } from "../../platform/ui/UiTypes";
 const draft = defineModel<Record<string, unknown>>({ required: true });
 const props = defineProps<{ model: DisplayProxyModel; catalog: ModelCatalog; editing: boolean; modelNames: string[] }>();
@@ -41,6 +47,17 @@ const params = computed(() => props.model.litellm_params),
 const provider = computed(() =>
 	modelString(props.editing ? draft.value.custom_llm_provider : params.value.custom_llm_provider).toLowerCase(),
 );
+const subscriptionSlug = computed(() => (isSubscriptionProviderSlug(provider.value) ? provider.value : ""));
+const managedProvider = computed(() => isManagedProviderSlug(provider.value));
+const visibleModelFields = computed(() =>
+	managedProvider.value ? basicModelFields.filter((field) => field.key !== "api_base") : basicModelFields,
+);
+const accountHref = computed(() => {
+	const root = getServerRootPath().replace(/\/+$/, "");
+	const query = new URLSearchParams({ page: "subscriptions" });
+	if (subscriptionSlug.value) query.set("provider", subscriptionSlug.value);
+	return (root === "/" ? "" : root) + "/ui/?" + query.toString();
+});
 const efforts = computed(() =>
 	modelOptions([
 		...(isCodexReasoningModel(provider.value, props.editing ? draft.value.litellm_model_name : props.model.litellm_model_name)
@@ -54,15 +71,17 @@ const efforts = computed(() =>
 	]),
 );
 const knownModels = computed(() =>
-	provider.value === "cliproxy"
+	subscriptionSlug.value
 		? managedModels.value
-		: Object.entries(props.catalog.costs)
-				.filter(([, entry]) => {
-					const slug = modelString(entry.litellm_provider);
-					return slug === provider.value || slug.startsWith(provider.value + "_") || slug.startsWith(provider.value + "-");
-				})
-				.map(([name]) => name)
-				.sort(),
+		: provider.value === "cliproxy"
+			? managedModels.value
+			: Object.entries(props.catalog.costs)
+					.filter(([, entry]) => {
+						const slug = modelString(entry.litellm_provider);
+						return slug === provider.value || slug.startsWith(provider.value + "_") || slug.startsWith(provider.value + "-");
+					})
+					.map(([name]) => name)
+					.sort(),
 );
 const wildcards = computed(() =>
 	props.catalog.hub
@@ -100,8 +119,10 @@ function text(value: unknown) {
 	return value == null || value === "" || value === "Not Set" ? "-" : typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 function setProvider(value: unknown) {
-	draft.value.custom_llm_provider = modelString(value);
-	if (value === "cliproxy") Object.assign(draft.value, { api_base: "", api_key: "", delete_api_key: true, litellm_credential_name: "" });
+	const next = modelString(value);
+	draft.value.custom_llm_provider = next;
+	if (isManagedProviderSlug(next))
+		Object.assign(draft.value, { api_base: "", api_key: "", delete_api_key: true, litellm_credential_name: "" });
 }
 let generation = 0;
 watch(
@@ -115,7 +136,11 @@ watch(
 		];
 		const results = await Promise.allSettled([
 			modelsApi.fetchModelCapabilities(),
-			slug === "cliproxy" ? modelsApi.fetchManagedModels() : Promise.resolve([]),
+			slug === "cliproxy"
+				? modelsApi.fetchManagedModels().then((ids) => ids.map((id) => "cliproxy/" + id))
+				: isSubscriptionProviderSlug(slug)
+					? modelsApi.fetchSubscriptionModels(slug).then((ids) => ids.map((id) => subscriptionModelName(slug, id)))
+					: Promise.resolve([]),
 		]);
 		if (current !== generation) return;
 		if (results[0].status === "fulfilled")
@@ -127,7 +152,7 @@ watch(
 					(unsupported ? " (requires function calling)" : modelRecord(value).enabled ? "" : " (globally off)"),
 				disabled: unsupported,
 			}));
-		if (results[1].status === "fulfilled") managedModels.value = results[1].value.map((model) => "cliproxy/" + model).sort();
+		if (results[1].status === "fulfilled") managedModels.value = [...results[1].value].sort();
 	},
 	{ immediate: true },
 );
@@ -135,7 +160,7 @@ watch(
 <template>
 	<div class="model-settings-grid">
 		<ModelSettingCell
-			v-for="field in basicModelFields"
+			v-for="field in visibleModelFields"
 			:key="field.key"
 			:label="editing ? (field.editLabel ?? field.label) : field.label"
 			:tooltip="field.tooltip"
@@ -205,9 +230,14 @@ watch(
 				empty-label="No groups assigned"
 				color="blue"
 		/></ModelSettingCell>
-		<ModelSettingCell v-if="editing && provider === 'cliproxy'" label="Credentials"
+		<ModelSettingCell v-if="managedProvider" label="Credentials"
 			><div class="model-managed-credential-notice">
-				CLIProxy uses the managed runtime endpoint and internal key. No API key is required.
+				{{
+					subscriptionSlug
+						? "This subscription model uses the managed account pool. Add, rotate or disable accounts in Subscription accounts; no API key or base URL is stored on the deployment."
+						: "CLIProxy uses the managed runtime endpoint and internal key. No API key is required."
+				}}
+				<a v-if="subscriptionSlug" :href="accountHref">Manage subscription accounts</a>
 			</div></ModelSettingCell
 		><template v-else
 			><ModelSettingCell label="Existing Credentials"

@@ -4,6 +4,7 @@ const modules = import.meta.glob<{ default: Component }>("../../*/ui/*Page*.vue"
 const views: Readonly<Record<string, string>> = {
 	login: "../../identity/ui/LoginPage.vue",
 	cliproxy: "../../cliproxy/ui/CliProxyPageComponent.vue",
+	subscriptions: "../../subscriptions/ui/SubscriptionsPageComponent.vue",
 	"api-keys": "../../virtual-keys/ui/VirtualKeysPageComponent.vue",
 	models: "../../models/ui/ModelsPageComponent.vue",
 	new_usage: "../../usage/ui/UsagePageComponent.vue",

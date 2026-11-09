@@ -15,6 +15,10 @@ import { prepareModelCreate, validateModelCreate, type ModelCreateDraft } from "
 import { modelString, modelStrings, modelOptions, type ModelCatalog } from "../support/ModelModels";
 import { modelsApi } from "../api/ModelsApi";
 import notification from "../../notifications/logic/NotificationManager";
+import { providerSlug } from "../logic/ModelCreateLogic";
+import { providerCatalogSlug } from "../logic/ModelProviderLogic";
+import { isSubscriptionProviderSlug, subscriptionAccountsHref } from "../../subscriptions/logic/SubscriptionProviderLogic";
+import { getServerRootPath } from "../../platform/api/HttpApiClient";
 const props = defineProps<{ catalog: ModelCatalog; admin: boolean; teamAdmin: boolean; premium: boolean; userId: string }>();
 const emit = defineEmits<{ created: [] }>();
 const values = ref<ModelCreateDraft>({ litellm_credential_name: null }),
@@ -24,7 +28,15 @@ const values = ref<ModelCreateDraft>({ litellm_credential_name: null }),
 	pending = ref(false);
 const prefix = nextUiIdentity("model-create");
 const teamRequired = computed(() => props.teamAdmin && !props.admin),
-	managed = computed(() => provider.value === "CLIProxy");
+	subscriptionSlug = computed(() => {
+		const slug = providerSlug(provider.value);
+		return isSubscriptionProviderSlug(slug) ? slug : "";
+	}),
+	managed = computed(() => provider.value === "CLIProxy" || Boolean(subscriptionSlug.value)),
+	accountHref = computed(() => {
+		const root = getServerRootPath().replace(/\/+$/, "");
+		return subscriptionAccountsHref((root === "/" ? "" : root) + "/ui", subscriptionSlug.value);
+	});
 const fields = computed(() => props.catalog.providerFields.find((item) => item.provider === provider.value)?.credential_fields ?? []);
 const teams = computed(() => props.catalog.teams.map((team) => ({ value: team.team_id, label: team.team_alias || team.team_id })));
 function teamOnlyChange(enabled: boolean) {
@@ -36,7 +48,7 @@ async function submit() {
 	if (Object.keys(errors.value).length) return;
 	pending.value = true;
 	try {
-		const requests = prepareModelCreate(values.value);
+		const requests = prepareModelCreate(values.value, (value) => providerCatalogSlug(props.catalog.providerFields, value));
 		if (!requests.length) return;
 		for (const request of requests) await modelsApi.createModel(request);
 		values.value = { litellm_credential_name: null };
@@ -71,7 +83,12 @@ async function submit() {
 				>
 				<template v-if="admin || (teamRequired && values.team_id)">
 					<ModelCreateFields v-model="values" v-model:provider="provider" :catalog="catalog" :errors="errors" :prefix="prefix" />
-					<UiAlert v-if="managed" type="info" title="Credentials are managed by the built-in CLIProxy runtime"
+					<UiAlert v-if="subscriptionSlug" type="info" title="Credentials are managed by the subscription accounts page"
+						>Select an upstream model and keep the public model name you want to expose. The managed runtime supplies the
+						internal endpoint and account authentication; no provider key is stored on this deployment.
+						<a :href="accountHref">Manage subscription accounts</a></UiAlert
+					>
+					<UiAlert v-else-if="managed" type="info" title="Credentials are managed by the built-in CLIProxy runtime"
 						>Select an upstream model and public name only. LiteLLM supplies the internal endpoint and authentication
 						automatically.</UiAlert
 					>

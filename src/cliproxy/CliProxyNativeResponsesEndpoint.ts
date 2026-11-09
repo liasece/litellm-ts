@@ -7,7 +7,7 @@ import { runCommonChecks } from "../auth/AuthChecks";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { trackCliProxyRequest } from "./CliProxyDrainGate";
-import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
+import { hostedProvider, subscriptionTarget } from "../subscriptions/SubscriptionProviders";
 import type { DrizzleDb } from "../core/db/Database";
 import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
 import { buildSpendLogFromRequest, checkpointActiveRequest, trackSpendLog } from "../spend/SpendTracker";
@@ -69,7 +69,7 @@ function isCliProxyModel(router: LiteLLMRouter, model: unknown): boolean {
 		return false;
 	}
 	const candidate = router.getAvailableDeployment(model);
-	return candidate?.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER;
+	return !!candidate && hostedProvider(candidate.deployment.litellm_params) !== undefined;
 }
 
 function hasBoundBuiltinCapability(router: LiteLLMRouter, model: unknown): boolean {
@@ -94,11 +94,8 @@ function hasBoundBuiltinCapability(router: LiteLLMRouter, model: unknown): boole
 function nativeUpstreamBody(body: Record<string, unknown>): Record<string, unknown> {
 	const forwarded = { ...body };
 	delete forwarded["drop_params"];
+	delete forwarded["subscription_transport"];
 	return forwarded;
-}
-
-function upstreamModel(value: string): string {
-	return value.startsWith(`${CLIPROXY_PROVIDER}/`) ? value.slice(CLIPROXY_PROVIDER.length + 1) : value;
 }
 
 function buildForwardHeaders(req: Request, internalApiKey: string, anthropicNative = false): Headers {
@@ -477,10 +474,10 @@ export function registerCliProxyNativeResponsesRoutes(
 			runCommonChecks(req.auth, model);
 		}
 		const candidate = router.getAvailableDeployment(model);
-		if (!candidate || candidate.deployment.litellm_params.custom_llm_provider !== CLIPROXY_PROVIDER) {
+		if (!candidate || !hostedProvider(candidate.deployment.litellm_params)) {
 			throw ApiError.unavailable(`CLIProxy 模型 ${model} 当前没有可用 deployment`);
 		}
-		const deploymentModel = candidate.deployment.litellm_params.model || model;
+
 		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
 		const startTime = requestArrivalTime(req);
 		const reservation = await reserveEndpointSpend(db, router, req, model, body, {
@@ -491,7 +488,8 @@ export function registerCliProxyNativeResponsesRoutes(
 		lifecycle.markProviderStarted();
 		const streaming = body["stream"] === true;
 		const stopKeepAlive = streaming ? startResponsesSseKeepAlive(res) : undefined;
-		const upstreamUrl = `${runtime.baseUrl}/v1/responses`;
+		const target = subscriptionTarget(runtime, candidate.deployment.litellm_params, "/v1/responses");
+		const upstreamUrl = target.url;
 		const spendInfo = buildDeploymentSpendInfo(candidate.deployment, upstreamUrl);
 		// Responses 透传只搬字节，`responses_execution` 又是诊断用的原始捕获快照（长流会被截断，
 		// 且没有可直接渲染的 output）。详情页要在流进行中看到 Response，需要一份事件级累积的
@@ -536,7 +534,7 @@ export function registerCliProxyNativeResponsesRoutes(
 				let upstreamLogContext: UpstreamLogContext | undefined;
 				let upstream: globalThis.Response | undefined;
 				const upstreamBody = applyReasoningEffortOverride(
-					{ ...nativeUpstreamBody(body), model: upstreamModel(deploymentModel) },
+					{ ...nativeUpstreamBody(body), model: target.model },
 					candidate.deployment,
 					"responses",
 				);
@@ -545,7 +543,7 @@ export function registerCliProxyNativeResponsesRoutes(
 					method: "POST",
 					headers: buildForwardHeaders(req, runtime.internalApiKey),
 					body: upstreamBody,
-					model: upstreamModel(deploymentModel),
+					model: target.model,
 				});
 				upstreamLogContext = createUpstreamLogContext(logRequest);
 				checkpointUpstreamRequest = upstreamLogContext.request as unknown as Record<string, unknown>;
@@ -740,10 +738,11 @@ async function executeNativeAnthropicWithFallback(args: {
 		requestApiKey,
 		requestAnthropicVersion,
 		async (attempt) => {
-			const cliProxyAttempt = attempt.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER;
-			const upstreamUrl = cliProxyAttempt ? `${runtime.baseUrl}${upstreamPath}` : attempt.upstreamUrl;
+			const cliProxyAttempt = hostedProvider(attempt.deployment.litellm_params) !== undefined;
+			const target = cliProxyAttempt ? subscriptionTarget(runtime, attempt.deployment.litellm_params, upstreamPath) : undefined;
+			const upstreamUrl = target?.url ?? attempt.upstreamUrl;
 			const upstreamBody = applyReasoningEffortOverride(
-				{ ...nativeUpstreamBody(body), model: attempt.upstreamModel },
+				{ ...nativeUpstreamBody(body), model: target?.model ?? attempt.upstreamModel },
 				attempt.deployment,
 				"anthropic",
 			);
@@ -756,7 +755,7 @@ async function executeNativeAnthropicWithFallback(args: {
 					method: "POST",
 					headers: upstreamHeaders,
 					body: upstreamBody,
-					model: attempt.upstreamModel,
+					model: target?.model ?? attempt.upstreamModel,
 				}),
 				stream: body["stream"] === true,
 			};
@@ -812,10 +811,10 @@ function registerNativeRoute({
 				runCommonChecks(req.auth, model);
 			}
 			const candidate = router.getAvailableDeployment(model);
-			if (!candidate || candidate.deployment.litellm_params.custom_llm_provider !== CLIPROXY_PROVIDER) {
+			if (!candidate || !hostedProvider(candidate.deployment.litellm_params)) {
 				throw ApiError.unavailable(`CLIProxy 模型 ${model} 当前没有可用 deployment`);
 			}
-			const deploymentModel = candidate.deployment.litellm_params.model || model;
+
 			const callType = anthropicNative ? CallType.AMessages : CallType.ACompletion;
 			// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
 			const startTime = requestArrivalTime(req);
@@ -864,9 +863,10 @@ function registerNativeRoute({
 					upstreamUrl = upstreamRequest.url;
 					deploymentRecorded = true;
 				} else {
-					upstreamUrl = `${runtime.baseUrl}${upstreamPath}`;
+					const target = subscriptionTarget(runtime, candidate.deployment.litellm_params, upstreamPath);
+					upstreamUrl = target.url;
 					const upstreamBody = applyReasoningEffortOverride(
-						{ ...nativeUpstreamBody(body), model: upstreamModel(deploymentModel) },
+						{ ...nativeUpstreamBody(body), model: target.model },
 						candidate.deployment,
 						"chat",
 					);
@@ -877,7 +877,7 @@ function registerNativeRoute({
 							method: "POST",
 							headers: upstreamHeaders,
 							body: upstreamBody,
-							model: upstreamModel(deploymentModel),
+							model: target.model,
 						}),
 						stream: body["stream"] === true,
 					};

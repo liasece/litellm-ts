@@ -1,3 +1,4 @@
+import { hostedProvider } from "../subscriptions/SubscriptionProviders";
 import type { Request, Response, RequestHandler } from "express";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
@@ -155,8 +156,7 @@ export function sseKeepaliveMiddleware(router: Router): RequestHandler {
 			) {
 				const deployment = getKeepaliveDeployment(router, req.body.model);
 				if (
-					deployment?.litellm_params.custom_llm_provider !== "cliproxy" &&
-					!deployment?.litellm_params.model.startsWith("cliproxy/")
+					(!deployment || !hostedProvider(deployment.litellm_params))
 				) {
 					await startSseKeepalive(
 						req,

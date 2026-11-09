@@ -12,9 +12,9 @@ import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
 import { trackCliProxyRequest } from "./CliProxyDrainGate";
-import { CLIPROXY_PROVIDER } from "./CliProxyTypes";
+import { hostedProvider, subscriptionTarget } from "../subscriptions/SubscriptionProviders";
+import { resolveHostedModel, type HostedModel } from "../subscriptions/HostedModel";
 import { buildPassthroughLogRequest } from "./CliProxyUpstreamLogging";
-import type { Deployment } from "../types/router";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { createUpstreamLogContext } from "../router/UpstreamLogContext";
 import type { ProviderRequest } from "../types/provider";
@@ -48,12 +48,6 @@ interface NativePassthroughRoute {
 	readonly recordsSpend?: boolean;
 }
 
-interface ResolvedCliProxyModel {
-	readonly publicModel: string;
-	readonly upstreamModel: string;
-	readonly deployment: Deployment;
-}
-
 interface PreparedRequestBody {
 	readonly bytes: Buffer | undefined;
 	readonly parsed: Record<string, unknown> | undefined;
@@ -72,7 +66,7 @@ interface NativeSpendContext {
 	readonly db: DrizzleDb;
 	readonly req: Request;
 	readonly router: LiteLLMRouter;
-	readonly resolved: ResolvedCliProxyModel;
+	readonly resolved: HostedModel;
 	readonly route: NativePassthroughRoute;
 	readonly upstreamUrl: string;
 	readonly startTime: Date;
@@ -164,40 +158,12 @@ const NATIVE_HTTP_ROUTES: readonly NativePassthroughRoute[] = [
 	{ method: "get", path: "/v1beta/models/*", upstreamPath: "/v1beta/models/*", modelLocation: "path" },
 ];
 
-function stripCliProxyPrefix(value: string): string {
-	return value.startsWith(`${CLIPROXY_PROVIDER}/`) ? value.slice(CLIPROXY_PROVIDER.length + 1) : value;
-}
-
 function isCliProxyDeployment(router: LiteLLMRouter, model: unknown): boolean {
 	if (typeof model !== "string") {
 		return false;
 	}
 	const candidate = router.getAvailableDeployment(model);
-	return candidate?.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER;
-}
-
-function resolveCliProxyModel(router: LiteLLMRouter, requestedModel: string): ResolvedCliProxyModel | null {
-	const direct = router.getAvailableDeployment(requestedModel);
-	if (direct?.deployment.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER) {
-		return {
-			publicModel: requestedModel,
-			upstreamModel: stripCliProxyPrefix(direct.deployment.litellm_params.model || requestedModel),
-			deployment: direct.deployment,
-		};
-	}
-	const deployment = (router.getDeployments?.() ?? []).find(
-		(item) =>
-			item.litellm_params.custom_llm_provider === CLIPROXY_PROVIDER &&
-			stripCliProxyPrefix(item.litellm_params.model) === stripCliProxyPrefix(requestedModel),
-	);
-	if (!deployment) {
-		return null;
-	}
-	return {
-		publicModel: deployment.model_name,
-		upstreamModel: stripCliProxyPrefix(deployment.litellm_params.model),
-		deployment: deployment,
-	};
+	return !!candidate && hostedProvider(candidate.deployment.litellm_params) !== undefined;
 }
 
 function requestContentType(req: Request): string | undefined {
@@ -345,7 +311,7 @@ function rewriteModelFields(value: unknown, requestedModel: string, upstreamMode
 
 function rewritePreparedBody(
 	body: PreparedRequestBody,
-	resolved: ResolvedCliProxyModel | null,
+	resolved: HostedModel | null,
 	applyResponsesEffort: boolean,
 ): PreparedRequestBody {
 	if (!resolved || !body.bytes || !body.requestedModel) {
@@ -403,7 +369,7 @@ function interpolateParams(pathTemplate: string, req: Request): string {
 function upstreamRequestPath(
 	route: NativePassthroughRoute,
 	req: Request,
-	resolved: ResolvedCliProxyModel | null,
+	resolved: HostedModel | null,
 	requestedModel: string | undefined,
 ): string {
 	let path = interpolateParams(route.upstreamPath, req);
@@ -520,6 +486,7 @@ async function sendFilteredGeminiModels(
 	res: Response,
 	req: Request,
 	router: LiteLLMRouter,
+	runtime: CliProxyRuntimeManager,
 ): Promise<CapturedResponse> {
 	if (!upstream.ok) {
 		return pipeResponse(upstream, res);
@@ -540,14 +507,14 @@ async function sendFilteredGeminiModels(
 	const seen = new Set<string>();
 	const models = (router.getDeployments?.() ?? []).flatMap((deployment) => {
 		if (
-			deployment.litellm_params.custom_llm_provider !== CLIPROXY_PROVIDER ||
+			!hostedProvider(deployment.litellm_params) ||
 			seen.has(deployment.model_name) ||
 			!canUseModel(req, deployment.model_name)
 		) {
 			return [];
 		}
 		seen.add(deployment.model_name);
-		const upstreamModel = stripCliProxyPrefix(deployment.litellm_params.model).replace(/^models\//, "");
+		const upstreamModel = subscriptionTarget(runtime, deployment.litellm_params, "").model.replace(/^models\//, "");
 		const template = templates.get(upstreamModel);
 		if (!template) {
 			return [];
@@ -649,7 +616,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		if (route.modelLocation !== "optional" && !requestedModel) {
 			throw ApiError.badRequest("model 字段缺失");
 		}
-		const resolved = requestedModel ? resolveCliProxyModel(router, requestedModel) : null;
+		const resolved = requestedModel ? resolveHostedModel(router, runtime, requestedModel) : null;
 		if (requestedModel && !resolved) {
 			throw ApiError.unavailable(`CLIProxy 模型 ${requestedModel} 当前没有可用 deployment`);
 		}
@@ -658,7 +625,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		}
 		const rewritten = rewritePreparedBody(prepared, resolved, route.path.includes("responses"));
 		const path = upstreamRequestPath(route, req, resolved, requestedModel);
-		const upstreamUrl = `${runtime.baseUrl}${path}`;
+		const upstreamUrl = resolved ? subscriptionTarget(runtime, resolved.deployment.litellm_params, path).url : runtime.baseUrl + path;
 		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
 		const startTime = requestArrivalTime(req);
 		const reservation = resolved && route.recordsSpend !== false
@@ -696,7 +663,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 			});
 			const captured =
 				route.path === "/v1beta/models"
-					? await sendFilteredGeminiModels(upstream, res, req, router)
+					? await sendFilteredGeminiModels(upstream, res, req, router, runtime)
 					: await pipeResponse(upstream, res, (at) => void markFirstContentFrame(req, at));
 			if (resolved && route.recordsSpend !== false) {
 				const candidate = router.getAvailableDeployment(resolved.publicModel);
