@@ -89,6 +89,14 @@
 			"tag": "0010_active_request_observation",
 			"file": "0010_active_request_observation.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 11,
+			"version": "7",
+			"when": 1794149494918,
+			"tag": "0011_drop_dead_tables",
+			"file": "0011_drop_dead_tables.sql",
+			"breakpoints": true
 		}
 	]
 }
