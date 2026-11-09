@@ -4,6 +4,8 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
+import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
@@ -77,6 +79,26 @@ const modelMetrics = computed(() => processActivityData(state.data, "models", ap
 const models = computed(() => modelRankings(state.data)),
 	agents = computed(() => agentRankings(agent.data)),
 	keys = computed(() => keyRankings(state.data, true));
+type ProviderUsage = ReturnType<typeof providerRankings>[number];
+const providerRow = (row: UiTableRow) => row as unknown as ProviderUsage;
+const entityColumns = computed<readonly UiTableColumn[]>(() => [
+	{ key: "alias", label: title.value, width: 160 },
+	{ key: "spend", label: "Spend", width: 90 },
+	{ key: "successful", label: "Successful", width: 100, cellClass: "usage-success" },
+	{ key: "failed", label: "Failed", width: 80, cellClass: "usage-failed" },
+	{ key: "tokens", label: "Tokens", width: 100 },
+]);
+const entityRows = computed<readonly UiTableRow[]>(
+	() => entities.value.filter((item) => item.metrics.spend > 0) as unknown as readonly UiTableRow[],
+);
+const providerColumns: readonly UiTableColumn[] = [
+	{ key: "provider", label: "Provider", width: 150 },
+	{ key: "spend", label: "Spend", width: 90 },
+	{ key: "successful_requests", label: "Successful", width: 100, cellClass: "usage-success" },
+	{ key: "failed_requests", label: "Failed", width: 80, cellClass: "usage-failed" },
+	{ key: "tokens", label: "Tokens", width: 100 },
+];
+const providerRows = computed<readonly UiTableRow[]>(() => providers.value as unknown as readonly UiTableRow[]);
 const days = computed(() => [...state.data.results].sort((a, b) => a.date.localeCompare(b.date)));
 const metrics = computed(() => [
 	{ label: "Total Spend", value: money(state.data.metadata.total_spend, 2) },
@@ -201,26 +223,25 @@ function changeSelection(value: unknown) {
 							</template>
 						</UsageChart>
 						<div class="usage-entity-breakdown-table">
-							<table class="usage-simple-table">
-								<thead>
-									<tr>
-										<th>{{ title }}</th>
-										<th>Spend</th>
-										<th class="usage-success">Successful</th>
-										<th class="usage-failed">Failed</th>
-										<th>Tokens</th>
-									</tr>
-								</thead>
-								<tbody>
-									<tr v-for="item in entities.filter((e) => e.metrics.spend > 0)" :key="item.metadata.id">
-										<td>{{ item.metadata.alias }}</td>
-										<td>{{ money(item.metrics.spend, 4) }}</td>
-										<td class="usage-success">{{ item.metrics.successful_requests.toLocaleString() }}</td>
-										<td class="usage-failed">{{ item.metrics.failed_requests.toLocaleString() }}</td>
-										<td>{{ formatNumberWithCommas(item.metrics.total_tokens, 0, false) }}</td>
-									</tr>
-								</tbody>
-							</table>
+							<UiTable
+								:columns="entityColumns"
+								:rows="entityRows"
+								:row-key="(row) => String(entityRow(row).metadata.id)"
+								fixed-layout
+								sticky-header
+								:body-max-height="176"
+								empty-text="No logs found"
+							>
+								<template #cell-alias="{ row }">{{ entityRow(row).metadata.alias }}</template>
+								<template #cell-spend="{ row }">{{ money(entityRow(row).metrics.spend, 4) }}</template>
+								<template #cell-successful="{ row }">{{
+									entityRow(row).metrics.successful_requests.toLocaleString()
+								}}</template>
+								<template #cell-failed="{ row }">{{ entityRow(row).metrics.failed_requests.toLocaleString() }}</template>
+								<template #cell-tokens="{ row }">{{
+									formatNumberWithCommas(entityRow(row).metrics.total_tokens, 0, false)
+								}}</template>
+							</UiTable>
 						</div>
 					</div>
 				</div></UiCard
@@ -249,34 +270,21 @@ function changeSelection(value: unknown) {
 						:height="160"
 						:format="(v) => money(v, 2)"
 					/>
-					<table class="usage-simple-table">
-						<thead>
-							<tr>
-								<th>Provider</th>
-								<th>Spend</th>
-								<th class="usage-success">Successful</th>
-								<th class="usage-failed">Failed</th>
-								<th>Tokens</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr v-for="p in providers" :key="p.provider">
-								<td>
-									<span class="usage-provider-name"
-										><ProviderLogo
-											v-if="p.provider"
-											:provider="p.provider"
-											:logo="getProviderLogoAndName(p.provider).logo"
-										/>{{ p.provider }}</span
-									>
-								</td>
-								<td>{{ money(p.spend, 2) }}</td>
-								<td class="usage-success">{{ p.successful_requests.toLocaleString() }}</td>
-								<td class="usage-failed">{{ p.failed_requests.toLocaleString() }}</td>
-								<td>{{ formatNumberWithCommas(p.tokens, 0, false) }}</td>
-							</tr>
-						</tbody>
-					</table>
+					<UiTable :columns="providerColumns" :rows="providerRows" row-key="provider" fixed-layout empty-text="No logs found">
+						<template #cell-provider="{ row }">
+							<span class="usage-provider-name"
+								><ProviderLogo
+									v-if="providerRow(row).provider"
+									:provider="providerRow(row).provider"
+									:logo="getProviderLogoAndName(providerRow(row).provider).logo"
+								/>{{ providerRow(row).provider }}</span
+							>
+						</template>
+						<template #cell-spend="{ row }">{{ money(providerRow(row).spend, 2) }}</template>
+						<template #cell-successful_requests="{ row }">{{ providerRow(row).successful_requests.toLocaleString() }}</template>
+						<template #cell-failed_requests="{ row }">{{ providerRow(row).failed_requests.toLocaleString() }}</template>
+						<template #cell-tokens="{ row }">{{ formatNumberWithCommas(providerRow(row).tokens, 0, false) }}</template>
+					</UiTable>
 				</div></UiCard
 			>
 		</div>

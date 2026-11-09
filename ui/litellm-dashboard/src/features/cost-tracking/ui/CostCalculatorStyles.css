@@ -299,23 +299,9 @@
 	line-height: 16px;
 	color: #6b7280;
 }
-.cost-summary-table-wrap {
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-	overflow-x: auto;
-}
-.cost-summary-table th:nth-child(2),
-.cost-summary-table th:nth-child(3),
-.cost-summary-table th:nth-child(4),
-.cost-summary-table td:nth-child(2),
-.cost-summary-table td:nth-child(3),
-.cost-summary-table td:nth-child(4) {
+.cost-summary-number {
 	text-align: right;
-}
-.cost-summary-table td:nth-child(2),
-.cost-summary-table td:nth-child(3),
-.cost-summary-table td:nth-child(4) {
-	font: 14px/20px var(--ui-font-mono);
+	font-family: var(--ui-font-mono);
 }
 .cost-summary-model {
 	display: flex;

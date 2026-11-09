@@ -2,6 +2,8 @@
 import { computed, ref } from "vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
+import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import ProviderLogoComponent from "../../providers/ui/ProviderLogoComponent.vue";
 import { provider_map } from "../../providers/data/ProviderCatalogData";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
@@ -55,6 +57,17 @@ function save(provider: string) {
 		emit("change", provider, { fixed_amount: fixedValue });
 	cancel();
 }
+const columns = computed<readonly UiTableColumn[]>(() => [
+	{ key: "provider", label: "Provider", width: 300 },
+	{ key: "value", label: props.kind === "margin" ? "Margin" : "Discount Percentage", width: props.kind === "margin" ? 350 : 250 },
+	{ key: "actions", label: "Actions", width: 100, sticky: "right" },
+]);
+const tableRows = computed<readonly UiTableRow[]>(() => rows.value as unknown as readonly UiTableRow[]);
+const emptyText = computed(() => `No provider ${props.kind === "margin" ? "margins" : "discounts"} configured`);
+type ProviderRow = { provider: string; value: MarginValue };
+function providerRow(row: UiTableRow): ProviderRow {
+	return row as unknown as ProviderRow;
+}
 function margin(value: MarginValue) {
 	if (typeof value === "number") return (value * 100).toFixed(1) + "%";
 	const parts: string[] = [];
@@ -64,92 +77,76 @@ function margin(value: MarginValue) {
 }
 </script>
 <template>
-	<div class="cost-provider-table-scroll">
-		<table class="cost-provider-table">
-			<thead>
-				<tr>
-					<th>Provider</th>
-					<th :style="{ width: kind === 'margin' ? '350px' : '250px' }">
-						{{ kind === "margin" ? "Margin" : "Discount Percentage" }}
-					</th>
-					<th style="width: 80px">Actions</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr v-for="row in rows" :key="row.provider">
-					<td>
-						<div class="cost-provider-name">
-							<ProviderLogoComponent
-								v-if="row.provider !== 'global' && logo(row.provider)"
-								:provider="providerDisplayName(row.provider)"
-								:logo="logo(row.provider)"
-								image-class="cost-provider-logo"
-								fallback-class="cost-provider-logo"
-							/><span>{{ row.provider === "global" ? "Global (All Providers)" : providerDisplayName(row.provider) }}</span>
-						</div>
-					</td>
-					<td>
-						<div class="cost-provider-edit">
-							<template v-if="editing === row.provider">
-								<UiInput
-									v-model="percentage"
+	<UiTable :columns="columns" :rows="tableRows" row-key="provider" fixed-layout :empty-text="emptyText">
+		<template #row="{ row }">
+			<tr v-for="item in [providerRow(row)]" :key="item.provider" class="ui-table__row">
+				<td>
+					<div class="cost-provider-name">
+						<ProviderLogoComponent
+							v-if="item.provider !== 'global' && logo(item.provider)"
+							:provider="providerDisplayName(item.provider)"
+							:logo="logo(item.provider)"
+							image-class="cost-provider-logo"
+							fallback-class="cost-provider-logo"
+						/><span>{{ item.provider === "global" ? "Global (All Providers)" : providerDisplayName(item.provider) }}</span>
+					</div>
+				</td>
+				<td>
+					<div class="cost-provider-edit">
+						<template v-if="editing === item.provider">
+							<UiInput
+								v-model="percentage"
+								appearance="tremor"
+								:placeholder="kind === 'margin' ? '10' : '5'"
+								class="cost-percentage-input"
+								autofocus
+								@keydown.enter="save(item.provider)"
+								@keydown.esc="cancel"
+							/><span>%</span>
+							<template v-if="kind === 'margin'"
+								><span class="cost-plus">+</span><span>$</span
+								><UiInput
+									v-model="fixed"
 									appearance="tremor"
-									:placeholder="kind === 'margin' ? '10' : '5'"
-									class="cost-percentage-input"
-									autofocus
-									@keydown.enter="save(row.provider)"
+									placeholder="0.001"
+									class="cost-fixed-input"
+									@keydown.enter="save(item.provider)"
 									@keydown.esc="cancel"
-								/><span>%</span>
-								<template v-if="kind === 'margin'"
-									><span class="cost-plus">+</span><span>$</span
-									><UiInput
-										v-model="fixed"
-										appearance="tremor"
-										placeholder="0.001"
-										class="cost-fixed-input"
-										@keydown.enter="save(row.provider)"
-										@keydown.esc="cancel"
-								/></template>
-								<button
-									type="button"
-									class="cost-icon-button cost-icon-green"
-									:aria-label="'Save ' + row.provider"
-									@click="save(row.provider)"
-								>
-									<UiHeroIcon name="CheckIcon" /></button
-								><button type="button" class="cost-icon-button" aria-label="Cancel edit" @click="cancel">
-									<UiHeroIcon name="XIcon" />
-								</button>
-							</template>
-							<template v-else
-								><span class="cost-provider-value">{{ margin(row.value) }}</span
-								><button
-									type="button"
-									class="cost-icon-button cost-icon-blue"
-									:aria-label="'Edit ' + row.provider"
-									@click="start(row.provider, row.value)"
-								>
-									<UiHeroIcon name="PencilAltIcon" /></button
-							></template>
-						</div>
-					</td>
-					<td>
-						<button
-							type="button"
-							class="cost-icon-button cost-icon-delete"
-							:aria-label="'Remove ' + row.provider"
-							@click="emit('remove', row.provider, providerDisplayName(row.provider))"
-						>
-							<UiHeroIcon name="TrashIcon" />
-						</button>
-					</td>
-				</tr>
-				<tr v-if="!rows.length">
-					<td colspan="3" class="cost-provider-empty">
-						No provider {{ kind === "margin" ? "margins" : "discounts" }} configured
-					</td>
-				</tr>
-			</tbody>
-		</table>
-	</div>
+							/></template>
+							<button
+								type="button"
+								class="cost-icon-button cost-icon-green"
+								:aria-label="'Save ' + item.provider"
+								@click="save(item.provider)"
+							>
+								<UiHeroIcon name="CheckIcon" /></button
+							><button type="button" class="cost-icon-button" aria-label="Cancel edit" @click="cancel">
+								<UiHeroIcon name="XIcon" />
+							</button>
+						</template>
+						<template v-else
+							><span class="cost-provider-value">{{ margin(item.value) }}</span
+							><button
+								type="button"
+								class="cost-icon-button cost-icon-blue"
+								:aria-label="'Edit ' + item.provider"
+								@click="start(item.provider, item.value)"
+							>
+								<UiHeroIcon name="PencilAltIcon" /></button
+						></template>
+					</div>
+				</td>
+				<td class="ui-table__cell--sticky-right">
+					<button
+						type="button"
+						class="cost-icon-button cost-icon-delete"
+						:aria-label="'Remove ' + item.provider"
+						@click="emit('remove', item.provider, providerDisplayName(item.provider))"
+					>
+						<UiHeroIcon name="TrashIcon" />
+					</button>
+				</td>
+			</tr>
+		</template>
+	</UiTable>
 </template>

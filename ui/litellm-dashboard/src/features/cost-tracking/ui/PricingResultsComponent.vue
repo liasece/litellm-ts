@@ -4,10 +4,12 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
+import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import { createPricingExports } from "../logic/PricingExportLogic";
-import type { CostEstimateResponse, MultiModelResult } from "../support/CostTrackingModels";
+import type { CostEstimateResponse, EntryEstimate, MultiModelResult } from "../support/CostTrackingModels";
 const props = defineProps<{ result: MultiModelResult; period: "day" | "month" }>();
 const money = useMoneyFormatter(),
 	exports = createPricingExports(money),
@@ -19,7 +21,18 @@ const valid = computed(() => props.result.entries.filter((row) => row.result !==
 	errors = computed(() => props.result.entries.filter((row) => row.error !== null)),
 	models = computed(() => props.result.entries.filter((row) => row.entry.model));
 const periodLabel = computed(() => (props.period === "day" ? "Daily" : "Monthly")),
-	periodCost = computed(() => (props.period === "day" ? "daily_cost" : "monthly_cost"));
+	periodCost = computed(() => (props.period === "day" ? "daily_cost" : "monthly_cost")),
+	columns: readonly UiTableColumn[] = [
+		{ key: "model", label: "Model", width: 280 },
+		{ key: "per_request", label: "Per Request", width: 160, align: "right" },
+		{ key: "margin", label: "Margin Fee", width: 160, align: "right" },
+		{ key: "period", label: periodLabel.value, width: 180, align: "right" },
+		{ key: "expand", label: "", width: 60, sticky: "right" },
+	],
+	tableRows = computed<readonly UiTableRow[]>(() => models.value as unknown as readonly UiTableRow[]);
+function pricingRow(row: UiTableRow): EntryEstimate {
+	return row as unknown as EntryEstimate;
+}
 function cost(value: number | null | undefined, model?: string) {
 	return money(value, value != null && Math.abs(value) < 1 ? 6 : 2, model);
 }
@@ -142,95 +155,86 @@ function breakdown(result: CostEstimateResponse, period: boolean) {
 					</div>
 				</div>
 			</div>
-			<div class="cost-summary-table-wrap">
-				<table class="cost-antd-table cost-summary-table">
-					<thead>
-						<tr>
-							<th>Model</th>
-							<th>Per Request</th>
-							<th>Margin Fee</th>
-							<th>{{ periodLabel }}</th>
-							<th style="width: 40px" />
+			<UiTable :columns="columns" :rows="tableRows" row-key="entry.id" fixed-layout>
+				<template #row="{ row }">
+					<template v-for="item in [pricingRow(row)]" :key="item.entry.id">
+						<tr class="ui-table__row">
+							<td>
+								<div class="cost-summary-model">
+									<span>{{ item.result?.model || item.entry.model }}</span
+									><UiTag v-if="item.result?.provider" color="blue">{{ item.result.provider }}</UiTag
+									><UiSpinner v-if="item.loading" :size="14" />
+								</div>
+								<div v-if="item.error" class="cost-result-error-inline">⚠️ {{ item.error }}</div>
+								<div v-else-if="item.result && item.result.cost_per_request === 0" class="cost-result-zero-warning">
+									⚠️ No pricing data found for this model. Set base_model in config.
+								</div>
+							</td>
+							<td class="cost-summary-number" :class="{ 'cost-result-missing': item.error }">
+								{{ item.error ? "-" : cost(item.result?.cost_per_request, item.result?.model || item.entry.model) }}
+							</td>
+							<td
+								class="cost-summary-number"
+								:class="(item.result?.margin_cost_per_request ?? 0) > 0 ? 'cost-margin-value' : 'cost-result-missing'"
+							>
+								{{ item.error ? "-" : cost(item.result?.margin_cost_per_request, item.result?.model || item.entry.model) }}
+							</td>
+							<td class="cost-summary-number" :class="{ 'cost-result-missing': item.error }">
+								{{ item.error ? "-" : cost(item.result?.[periodCost], item.result?.model || item.entry.model) }}
+							</td>
+							<td class="ui-table__cell--sticky-right">
+								<UiButton
+									v-if="!item.error"
+									appearance="tremor"
+									variant="text"
+									size="small"
+									:aria-label="'Expand ' + item.entry.model"
+									:aria-expanded="expanded.has(item.entry.id)"
+									@click="toggle(item.entry.id)"
+									><template #icon
+										><UiIcon :name="expanded.has(item.entry.id) ? 'DownOutlined' : 'RightOutlined'" /></template
+								></UiButton>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						<template v-for="row in models" :key="row.entry.id"
-							><tr>
-								<td>
-									<div class="cost-summary-model">
-										<span>{{ row.result?.model || row.entry.model }}</span
-										><UiTag v-if="row.result?.provider" color="blue">{{ row.result.provider }}</UiTag
-										><UiSpinner v-if="row.loading" :size="14" />
-									</div>
-									<div v-if="row.error" class="cost-result-error-inline">⚠️ {{ row.error }}</div>
-									<div v-else-if="row.result && row.result.cost_per_request === 0" class="cost-result-zero-warning">
-										⚠️ No pricing data found for this model. Set base_model in config.
-									</div>
-								</td>
-								<td :class="{ 'cost-result-missing': row.error }">
-									{{ row.error ? "-" : cost(row.result?.cost_per_request, row.result?.model || row.entry.model) }}
-								</td>
-								<td :class="(row.result?.margin_cost_per_request ?? 0) > 0 ? 'cost-margin-value' : 'cost-result-missing'">
-									{{ row.error ? "-" : cost(row.result?.margin_cost_per_request, row.result?.model || row.entry.model) }}
-								</td>
-								<td :class="{ 'cost-result-missing': row.error }">
-									{{ row.error ? "-" : cost(row.result?.[periodCost], row.result?.model || row.entry.model) }}
-								</td>
-								<td>
-									<UiButton
-										v-if="!row.error"
-										appearance="tremor"
-										variant="text"
-										size="small"
-										:aria-label="'Expand ' + row.entry.model"
-										:aria-expanded="expanded.has(row.entry.id)"
-										@click="toggle(row.entry.id)"
-										><template #icon
-											><UiIcon :name="expanded.has(row.entry.id) ? 'DownOutlined' : 'RightOutlined'" /></template
-									></UiButton>
-								</td>
-							</tr>
-							<tr v-if="expanded.has(row.entry.id) && row.result">
-								<td colspan="5">
-									<div class="cost-single-model">
-										<div v-if="row.loading" class="cost-single-updating"><UiSpinner :size="14" />Updating...</div>
-										<div class="cost-breakdown-grid">
-											<div v-for="field in breakdown(row.result, false)" :key="field.label">
-												<p>{{ field.label }}</p>
-												<span :class="field.className">{{ cost(field.value, row.result.model) }}</span>
-											</div>
+						<tr v-if="expanded.has(item.entry.id) && item.result" class="cost-summary-detail-row">
+							<td colspan="5">
+								<div class="cost-single-model">
+									<div v-if="item.loading" class="cost-single-updating"><UiSpinner :size="14" />Updating...</div>
+									<div class="cost-breakdown-grid">
+										<div v-for="field in breakdown(item.result, false)" :key="field.label">
+											<p>{{ field.label }}</p>
+											<span :class="field.className">{{ cost(field.value, item.result.model) }}</span>
 										</div>
-										<div
-											v-if="row.result[periodCost] !== null"
-											class="cost-breakdown-grid cost-breakdown-period"
-											:class="'cost-breakdown-' + period"
+									</div>
+									<div
+										v-if="item.result[periodCost] !== null"
+										class="cost-breakdown-grid cost-breakdown-period"
+										:class="'cost-breakdown-' + period"
+									>
+										<div v-for="field in breakdown(item.result, true)" :key="field.label">
+											<p>{{ field.label }}</p>
+											<span :class="field.className">{{ cost(field.value, item.result.model) }}</span>
+										</div>
+									</div>
+									<div
+										v-if="item.result.input_cost_per_token || item.result.output_cost_per_token"
+										class="cost-token-pricing"
+									>
+										Token Pricing:
+										<span v-if="item.result.input_cost_per_token"
+											>Input {{ money(item.result.input_cost_per_token * 1000000, 2, item.result.model) }}/1M</span
+										><template v-if="item.result.input_cost_per_token && item.result.output_cost_per_token">
+											| </template
+										><span v-if="item.result.output_cost_per_token"
+											>Output {{ money(item.result.output_cost_per_token * 1000000, 2, item.result.model) }}/1M</span
 										>
-											<div v-for="field in breakdown(row.result, true)" :key="field.label">
-												<p>{{ field.label }}</p>
-												<span :class="field.className">{{ cost(field.value, row.result.model) }}</span>
-											</div>
-										</div>
-										<div
-											v-if="row.result.input_cost_per_token || row.result.output_cost_per_token"
-											class="cost-token-pricing"
-										>
-											Token Pricing:
-											<span v-if="row.result.input_cost_per_token"
-												>Input {{ money(row.result.input_cost_per_token * 1000000, 2, row.result.model) }}/1M</span
-											><template v-if="row.result.input_cost_per_token && row.result.output_cost_per_token">
-												| </template
-											><span v-if="row.result.output_cost_per_token"
-												>Output
-												{{ money(row.result.output_cost_per_token * 1000000, 2, row.result.model) }}/1M</span
-											>
-										</div>
 									</div>
-								</td>
-							</tr>
-						</template>
-					</tbody>
-				</table>
-			</div>
+								</div>
+							</td>
+						</tr>
+					</template>
+				</template>
+			</UiTable>
 		</template>
 		<template v-else
 			><div v-for="row in errors" :key="row.entry.id" class="cost-result-error">

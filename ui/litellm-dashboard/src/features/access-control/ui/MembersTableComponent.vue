@@ -47,20 +47,20 @@ const roleFilter = computed<readonly UiTableFilterField[]>(() => [
 	{ key: "role", label: props.organization ? "Organization Role" : "Team Role", control: { kind: "select", options: roleOptions.value } },
 ]);
 const columns = computed(() => [
-	{ key: "user_email", label: "User Email", sortable: true, filters: emailFilter },
-	{ key: "user_id", label: "User ID", sortable: true, filters: idFilter },
-	{ key: "role", label: props.organization ? "Organization Role" : "Team Role", sortable: true, filters: roleFilter.value },
+	{ key: "user_email", label: "User Email", width: 220, sortable: true, filters: emailFilter },
+	{ key: "user_id", label: "User ID", width: 150, sortable: true, filters: idFilter },
+	{ key: "role", label: props.organization ? "Organization Role" : "Team Role", width: 160, sortable: true, filters: roleFilter.value },
 	...(props.organization
 		? [
-				{ key: "spend", label: "Spend", sortable: true },
-				{ key: "created_at", label: "Created At", sortable: true },
+				{ key: "spend", label: "Spend", width: 110, sortable: true },
+				{ key: "created_at", label: "Created At", width: 120, sortable: true },
 			]
 		: [
-				{ key: "spend", label: "Team Member Spend", sortable: true },
-				{ key: "budget", label: "Team Member Budget" },
-				{ key: "rate_limits", label: "Team Member Rate Limits" },
+				{ key: "spend", label: "Team Member Spend", width: 140, sortable: true },
+				{ key: "budget", label: "Team Member Budget", width: 160 },
+				{ key: "rate_limits", label: "Team Member Rate Limits", width: 190 },
 			]),
-	{ key: "actions", label: "Actions", width: 120 },
+	{ key: "actions", label: "Actions", width: 120, sticky: "right" as const },
 ]);
 const filteredMembers = computed(() =>
 	filterRowsByFields(props.members, activeFilters.value, (row, key) => (key === "role" ? roleValue(row) : row[key])),
@@ -106,7 +106,7 @@ function rateLimits(row: AccessRecord) {
 			:columns="columns"
 			:rows="filteredMembers"
 			:row-key="(row) => String(row.user_id ?? row.user_email ?? JSON.stringify(row))"
-			compact
+			fixed-layout
 			min-width="max-content"
 			:empty-text="emptyText"
 			:active-filters="activeFilters"

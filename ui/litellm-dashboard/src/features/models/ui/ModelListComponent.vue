@@ -4,18 +4,16 @@ import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
-import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
-import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
-import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
-import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import { getModelLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
 import { modelString, modelStrings, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import type { UiTableColumn, UiTableRow, UiTableSort } from "../../platform/ui/UiTypes";
 import type { ModelsStore } from "../stores/ModelsStore";
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
 const props = defineProps<{ store: ModelsStore; catalog: ModelCatalog; health: ModelHealthStore; admin: boolean; userId: string }>();
@@ -36,16 +34,24 @@ interface ModelColumn {
 	width: number;
 	sortable?: boolean;
 	filters?: readonly UiTableFilterField[];
+	tooltip?: string;
+	sticky?: "left" | "right";
 }
 const columns: readonly ModelColumn[] = [
 	{ key: "model_info.id", label: "Model ID", width: 130 },
 	{ key: "model_name", label: "Model Information", width: 250, sortable: true },
 	{ key: "fallback", label: "Fallback", width: 180 },
 	{ key: "override", label: "Model Override", width: 180 },
-	{ key: "credentials", label: "Credentials", width: 180 },
+	{
+		key: "credentials",
+		label: "Credentials",
+		width: 180,
+		tooltip: "Reusable: A saved credential is attached to this model. Manual: Credentials are configured directly on the model.",
+	},
 	{ key: "health", label: "Health Status", width: 120 },
 	{ key: "input_cost", label: "Costs", width: 120, sortable: true },
 	{ key: "access_groups", label: "Model Access Group", width: 180 },
+	{ key: "actions", label: "Actions", width: 120, sticky: "right" },
 ];
 const groups = computed(() => [...new Set(props.store.state.rows.map((model) => model.model_name))].sort());
 const accessGroups = computed(() => [...new Set(props.store.state.rows.flatMap((model) => model.model_info.access_groups ?? []))].sort());
@@ -75,6 +81,21 @@ const accessGroupFilters = computed<readonly UiTableFilterField[]>(() => [
 		},
 	},
 ]);
+const tableColumns = computed<readonly UiTableColumn[]>(() =>
+	columns.map((column) => ({
+		key: column.key,
+		label: column.label,
+		width: column.width,
+		sortable: column.sortable,
+		initialSortOrder: column.key === "input_cost" ? "desc" : "asc",
+		tooltip: column.tooltip,
+		sticky: column.sticky,
+		filters:
+			column.key === "model_name" ? modelColumnFilters.value : column.key === "access_groups" ? accessGroupFilters.value : undefined,
+	})),
+);
+const sortKey = computed(() => (props.store.state.sortBy === "costs" ? "input_cost" : props.store.state.sortBy));
+const tableRows = computed<readonly UiTableRow[]>(() => rows.value as unknown as readonly UiTableRow[]);
 const activeFilters = computed<UiTableActiveFilter[]>(() => {
 	const entries: UiTableActiveFilter[] = [];
 	if (props.store.state.search)
@@ -124,33 +145,15 @@ const teamName = computed(() =>
 		? "Personal"
 		: props.catalog.teams.find((team) => team.team_id === props.store.state.team)?.team_alias || props.store.state.team,
 );
-const tableWidth = computed(() => columns.reduce((sum, col) => sum + (props.store.state.widths[col.key] ?? col.width), 0) + 120);
-function sortState(column: ModelColumn): "asc" | "desc" | false {
-	const key = column.key === "input_cost" ? "costs" : column.key;
-	return column.sortable && props.store.state.sortBy === key ? props.store.state.sortOrder : false;
+function changeSort(next: UiTableSort): void {
+	props.store.setSort(next.key, next.order);
 }
-function ariaSort(column: ModelColumn): "ascending" | "descending" | "none" | undefined {
-	if (!column.sortable) return undefined;
-	const key = column.key === "input_cost" ? "costs" : column.key;
-	if (props.store.state.sortBy !== key) return "none";
-	return props.store.state.sortOrder === "asc" ? "ascending" : "descending";
+function modelRow(row: UiTableRow): DisplayProxyModel {
+	return row as unknown as DisplayProxyModel;
 }
-function changeSort(key: string, order: "asc" | "desc" | false): void {
-	props.store.setSort(key, order || null);
-}
-function resize(event: PointerEvent, key: string, width: number) {
-	event.preventDefault();
-	event.stopPropagation();
-	const start = event.clientX;
-	function move(next: PointerEvent) {
-		props.store.setColumnWidth(key, width + next.clientX - start);
-	}
-	function end() {
-		document.removeEventListener("pointermove", move);
-		document.removeEventListener("pointerup", end);
-	}
-	document.addEventListener("pointermove", move);
-	document.addEventListener("pointerup", end, { once: true });
+function modelRowKey(row: UiTableRow): string {
+	const model = modelRow(row);
+	return String(model.model_info.id ?? model.model_name);
 }
 function toggleExpanded(id: string) {
 	props.store.toggleExpanded(id);
@@ -268,186 +271,151 @@ async function all() {
 				</div>
 			</div>
 		</div>
-		<UiActiveFilters v-if="activeFilters.length" :filters="activeFilters" @remove="removeModelFilter" @clear="store.clearFilters" />
-		<div class="model-table-overflow">
-			<table class="model-list-table" :style="{ width: tableWidth + 'px', minWidth: '100%' }">
-				<colgroup>
-					<col
-						v-for="column in columns"
-						:key="column.key"
-						:style="{ width: (store.state.widths[column.key] ?? column.width) + 'px' }"
-					/>
-					<col style="width: 120px" />
-				</colgroup>
-				<thead>
-					<tr>
-						<th v-for="column in columns" :key="column.key" :aria-sort="ariaSort(column)">
-							<div class="model-table-header">
-								<UiTableSortLabel
-									v-if="column.sortable"
-									:label="column.label"
-									:state="sortState(column)"
-									:initial="column.key === 'input_cost' ? 'desc' : 'asc'"
-									@change="changeSort(column.key, $event)"
-								/>
-								<span v-else class="model-table-header__label"
-									>{{ column.label
-									}}<UiTooltip
-										v-if="column.key === 'credentials'"
-										content="Reusable: A saved credential is attached to this model. Manual: Credentials are configured directly on the model."
-										><UiIcon name="InfoCircleOutlined" :size="12" /></UiTooltip
-								></span>
-								<UiHeaderFilterButton
-									v-if="column.key === 'model_name'"
-									:label="column.label"
-									:fields="modelColumnFilters"
-									:active="activeFilters.filter((filter) => filter.key === 'search' || filter.key === 'group')"
-									@change="applyModelFilters"
-								/>
-								<UiHeaderFilterButton
-									v-if="column.key === 'access_groups'"
-									:label="column.label"
-									:fields="accessGroupFilters"
-									:active="activeFilters.filter((filter) => filter.key === 'accessGroup')"
-									@change="applyModelFilters"
-								/>
-							</div>
-							<span
-								class="model-column-resize"
-								@pointerdown="resize($event, column.key, store.state.widths[column.key] ?? column.width)"
+		<UiTable
+			:columns="tableColumns"
+			:rows="tableRows"
+			:row-key="modelRowKey"
+			:loading="store.state.loading"
+			loading-text="🚅 Loading models..."
+			fixed-layout
+			resizable
+			manual-sort
+			:column-widths="store.state.widths"
+			:sort-by="store.state.sortBy ? sortKey : undefined"
+			:sort-order="store.state.sortOrder"
+			:active-filters="activeFilters"
+			:empty-text="store.state.error || 'No models available'"
+			@sort="changeSort"
+			@column-resize="store.setColumnWidth"
+			@filter-change="applyModelFilters"
+			@remove-filter="removeModelFilter"
+			@clear-filters="store.clearFilters"
+		>
+			<template #row="{ row }">
+				<tr
+					v-for="model in [modelRow(row)]"
+					:key="model.model_info.id ?? model.model_name"
+					class="ui-table__row ui-table__row--clickable"
+					@click="select(model)"
+				>
+					<td>
+						<UiTooltip :title="modelString(model.model_info.id)"
+							><button class="model-id" @click.stop="select(model)">{{ model.model_info.id }}</button></UiTooltip
+						>
+					</td>
+					<td>
+						<div class="model-info-cell">
+							<img
+								v-if="getModelLogoAndName(model.provider, model.litellm_model_name || model.model_name).logo"
+								:src="getModelLogoAndName(model.provider, model.litellm_model_name || model.model_name).logo"
+								alt=""
+								class="model-provider-logo"
 							/>
-						</th>
-						<th class="model-table-actions">Actions</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr v-if="!rows.length">
-						<td colspan="9" class="model-table-empty">
-							<UiSpinner v-if="store.state.loading" /><span v-else>{{ store.state.error || "No models available" }}</span>
-						</td>
-					</tr>
-					<tr v-for="model in rows" :key="model.model_info.id ?? model.model_name" @click="select(model)">
-						<td>
-							<UiTooltip :title="modelString(model.model_info.id)"
-								><button class="model-id" @click.stop="select(model)">{{ model.model_info.id }}</button></UiTooltip
-							>
-						</td>
-						<td>
-							<div class="model-info-cell">
-								<img
-									v-if="getModelLogoAndName(model.provider, model.litellm_model_name || model.model_name).logo"
-									:src="getModelLogoAndName(model.provider, model.litellm_model_name || model.model_name).logo"
-									alt=""
-									class="model-provider-logo"
-								/>
-								<div>
-									<div class="model-information-name">
-										{{ modelDisplayName(model)
-										}}<button
-											class="model-icon-button"
-											aria-label="Copy model name"
-											@click.stop="copy(modelDisplayName(model))"
-										>
-											<UiIcon name="CopyOutlined" :size="12" />
-										</button>
-									</div>
-									<p class="model-secondary-name">{{ model.litellm_model_name }}</p>
+							<div>
+								<div class="model-information-name">
+									{{ modelDisplayName(model)
+									}}<button
+										class="model-icon-button"
+										aria-label="Copy model name"
+										@click.stop="copy(modelDisplayName(model))"
+									>
+										<UiIcon name="CopyOutlined" :size="12" />
+									</button>
 								</div>
+								<p class="model-secondary-name">{{ model.litellm_model_name }}</p>
 							</div>
-						</td>
-						<td>
-							<div class="model-inline model-muted">
-								<span>{{ fallbackNames(model).join(", ") || "-" }}</span
-								><button
-									v-if="admin"
-									class="model-icon-button"
-									:aria-label="'Edit fallbacks for ' + model.model_name"
-									@click.stop="emit('fallback', model)"
-								>
-									<UiIcon name="EditOutlined" :size="12" />
-								</button>
-							</div>
-						</td>
-						<td>
-							<div class="model-inline model-muted">
-								<span>{{ model.model_info.override_model_name || "-" }}</span
-								><button
-									v-if="admin"
-									class="model-icon-button"
-									:aria-label="'Edit override for ' + model.model_name"
-									@click.stop="emit('override', model)"
-								>
-									<UiIcon name="EditOutlined" :size="12" />
-								</button>
-							</div>
-						</td>
-						<td>
-							<button
-								v-if="model.litellm_params.litellm_credential_name"
-								class="model-link model-inline"
-								@click.stop="linkCredential(model.litellm_params.litellm_credential_name)"
+						</div>
+					</td>
+					<td>
+						<div class="model-inline model-muted">
+							<span>{{ fallbackNames(model).join(", ") || "-" }}</span
+							><button
+								v-if="admin"
+								class="model-icon-button"
+								:aria-label="'Edit fallbacks for ' + model.model_name"
+								@click.stop="emit('fallback', model)"
 							>
-								<UiIcon name="SyncOutlined" />{{ model.litellm_params.litellm_credential_name }}</button
-							><span v-else class="model-inline model-muted"><UiIcon name="EditOutlined" />Manual</span>
-						</td>
-						<td>
-							<ModelHealthBadge
-								:model-id="modelString(model.model_info.id)"
-								:status="health.state.statuses[modelString(model.model_info.id)]"
-								@check="health.one(modelString(model.model_info.id))"
-								@detail="emit('healthDetail', modelString(model.model_info.id))"
-							/>
-						</td>
-						<td class="model-cost-cell">
-							<p>In: {{ model.input_cost == null ? "-" : price.format(model.input_cost, 4, modelPriceIdentity(model)) }}</p>
-							<p>
-								Out: {{ model.output_cost == null ? "-" : price.format(model.output_cost, 4, modelPriceIdentity(model)) }}
-							</p>
-							<p v-if="model.cache_read_input_cost != null">
-								Cache read: {{ price.format(model.cache_read_input_cost, 4, modelPriceIdentity(model)) }}
-							</p>
-						</td>
-						<td>
-							<div class="model-access-badges">
-								<span
-									v-for="group in store.state.expanded.includes(modelString(model.model_info.id))
-										? model.model_info.access_groups
-										: model.model_info.access_groups?.slice(0, 1)"
-									:key="group"
-									class="model-badge model-badge--blue"
-									>{{ group }}</span
-								><button
-									v-if="(model.model_info.access_groups?.length ?? 0) > 2"
-									class="model-badge model-badge--gray"
-									@click.stop="toggleExpanded(modelString(model.model_info.id))"
-								>
-									{{
-										store.state.expanded.includes(modelString(model.model_info.id))
-											? "−"
-											: "+" + ((model.model_info.access_groups?.length ?? 0) - 1)
-									}}
-								</button>
-							</div>
-						</td>
-						<td class="model-table-actions">
-							<UiTooltip
-								:title="
-									model.model_info.db_model === false
-										? 'Config model cannot be deleted on the dashboard. Please delete it from the config file.'
-										: 'Delete model'
-								"
-								><button
-									class="model-icon-button model-delete-button"
-									:disabled="model.model_info.db_model === false || (!admin && model.model_info.created_by !== userId)"
-									:aria-label="'Delete ' + model.model_name"
-									@click.stop="emit('delete', model)"
-								>
-									<UiHeroIcon name="TrashIcon" :size="20" /></button
-							></UiTooltip>
-						</td>
-					</tr>
-				</tbody>
-			</table>
-		</div>
+								<UiIcon name="EditOutlined" :size="12" />
+							</button>
+						</div>
+					</td>
+					<td>
+						<div class="model-inline model-muted">
+							<span>{{ model.model_info.override_model_name || "-" }}</span
+							><button
+								v-if="admin"
+								class="model-icon-button"
+								:aria-label="'Edit override for ' + model.model_name"
+								@click.stop="emit('override', model)"
+							>
+								<UiIcon name="EditOutlined" :size="12" />
+							</button>
+						</div>
+					</td>
+					<td>
+						<button
+							v-if="model.litellm_params.litellm_credential_name"
+							class="model-link model-inline"
+							@click.stop="linkCredential(model.litellm_params.litellm_credential_name)"
+						>
+							<UiIcon name="SyncOutlined" />{{ model.litellm_params.litellm_credential_name }}</button
+						><span v-else class="model-inline model-muted"><UiIcon name="EditOutlined" />Manual</span>
+					</td>
+					<td>
+						<ModelHealthBadge
+							:model-id="modelString(model.model_info.id)"
+							:status="health.state.statuses[modelString(model.model_info.id)]"
+							@check="health.one(modelString(model.model_info.id))"
+							@detail="emit('healthDetail', modelString(model.model_info.id))"
+						/>
+					</td>
+					<td class="model-cost-cell">
+						<p>In: {{ model.input_cost == null ? "-" : price.format(model.input_cost, 4, modelPriceIdentity(model)) }}</p>
+						<p>Out: {{ model.output_cost == null ? "-" : price.format(model.output_cost, 4, modelPriceIdentity(model)) }}</p>
+						<p v-if="model.cache_read_input_cost != null">
+							Cache read: {{ price.format(model.cache_read_input_cost, 4, modelPriceIdentity(model)) }}
+						</p>
+					</td>
+					<td>
+						<div class="model-access-badges">
+							<span
+								v-for="group in store.state.expanded.includes(modelString(model.model_info.id))
+									? model.model_info.access_groups
+									: model.model_info.access_groups?.slice(0, 1)"
+								:key="group"
+								class="model-badge model-badge--blue"
+								>{{ group }}</span
+							><button
+								v-if="(model.model_info.access_groups?.length ?? 0) > 2"
+								class="model-badge model-badge--gray"
+								@click.stop="toggleExpanded(modelString(model.model_info.id))"
+							>
+								{{
+									store.state.expanded.includes(modelString(model.model_info.id))
+										? "−"
+										: "+" + ((model.model_info.access_groups?.length ?? 0) - 1)
+								}}
+							</button>
+						</div>
+					</td>
+					<td class="model-table-actions ui-table__cell--sticky-right">
+						<UiTooltip
+							:title="
+								model.model_info.db_model === false
+									? 'Config model cannot be deleted on the dashboard. Please delete it from the config file.'
+									: 'Delete model'
+							"
+							><button
+								class="model-icon-button model-delete-button"
+								:disabled="model.model_info.db_model === false || (!admin && model.model_info.created_by !== userId)"
+								:aria-label="'Delete ' + model.model_name"
+								@click.stop="emit('delete', model)"
+							>
+								<UiHeroIcon name="TrashIcon" :size="20" /></button
+						></UiTooltip>
+					</td>
+				</tr>
+			</template>
+		</UiTable>
 	</section>
 </template>

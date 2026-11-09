@@ -65,26 +65,6 @@
 	height: 6px;
 	margin: 2px 0 0;
 }
-.access-empty-teams {
-	padding: 64px 0;
-	text-align: center;
-	color: #d1d5db;
-}
-.access-empty-teams > svg {
-	margin: 0 auto 12px;
-}
-.access-empty-teams p {
-	margin: 4px 0;
-	color: #4b5563;
-	font-size: 15px;
-}
-.access-empty-teams p.access-muted {
-	font-size: 13px;
-	color: rgba(0, 0, 0, 0.45);
-}
-.access-empty-teams > .ui-button {
-	margin-top: 16px;
-}
 .access-team-detail {
 	padding: 16px;
 }
@@ -247,9 +227,6 @@
 }
 .access-members > span {
 	line-height: 22px;
-}
-.access-members .ui-table td {
-	height: 49px;
 }
 .access-members > .ui-table-wrapper {
 	width: 100%;
@@ -514,13 +491,6 @@
 	line-height: 18.4px;
 }
 
-.access-teams-page .ui-table th,
-.access-teams-page .ui-table td {
-	padding: 12px 8px;
-}
-.access-teams-page .ui-table {
-	table-layout: fixed;
-}
 .access-team-header-label {
 	min-width: 0;
 	overflow: hidden;
@@ -593,68 +563,4 @@
 }
 .access-team-create-dialog .access-field-tooltip {
 	color: rgb(0 0 0 /45%);
-}
-
-@media (min-width: 1200px) {
-	.access-members--team .ui-table {
-		table-layout: fixed;
-	}
-	.access-members--team .ui-table th:nth-child(1),
-	.access-members--team .ui-table td:nth-child(1) {
-		width: 167px;
-	}
-	.access-members--team .ui-table th:nth-child(2),
-	.access-members--team .ui-table td:nth-child(2) {
-		width: 100px;
-	}
-	.access-members--team .ui-table th:nth-child(3),
-	.access-members--team .ui-table td:nth-child(3) {
-		width: 112px;
-	}
-	.access-members--team .ui-table th:nth-child(4),
-	.access-members--team .ui-table td:nth-child(4) {
-		width: 185px;
-	}
-	.access-members--team .ui-table th:nth-child(5),
-	.access-members--team .ui-table td:nth-child(5) {
-		width: 168px;
-	}
-	.access-members--team .ui-table th:nth-child(6),
-	.access-members--team .ui-table td:nth-child(6) {
-		width: 222px;
-	}
-	.access-members--team .ui-table th:nth-child(7),
-	.access-members--team .ui-table td:nth-child(7) {
-		width: 112px;
-	}
-}
-
-@media (min-width: 1200px) {
-	.access-members--organization .ui-table {
-		table-layout: fixed;
-	}
-	.access-members--organization .ui-table th:nth-child(1),
-	.access-members--organization .ui-table td:nth-child(1) {
-		width: 296px;
-	}
-	.access-members--organization .ui-table th:nth-child(2),
-	.access-members--organization .ui-table td:nth-child(2) {
-		width: 176px;
-	}
-	.access-members--organization .ui-table th:nth-child(3),
-	.access-members--organization .ui-table td:nth-child(3) {
-		width: 250px;
-	}
-	.access-members--organization .ui-table th:nth-child(4),
-	.access-members--organization .ui-table td:nth-child(4) {
-		width: 123px;
-	}
-	.access-members--organization .ui-table th:nth-child(5),
-	.access-members--organization .ui-table td:nth-child(5) {
-		width: 159px;
-	}
-	.access-members--organization .ui-table th:nth-child(6),
-	.access-members--organization .ui-table td:nth-child(6) {
-		width: 118px;
-	}
 }

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import "../styles/UsageTablesStyles.css";
-import { nextTick, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref } from "vue";
 import notifications from "../../notifications/logic/NotificationManager";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
+import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { virtualKeysApi } from "../../virtual-keys/api/VirtualKeysApi";
@@ -13,15 +15,25 @@ import { emptyKeyCatalog, type VirtualKey } from "../../virtual-keys/support/Vir
 import KeyDetailDrawer from "../../virtual-keys/ui/KeyDetailDrawerComponent.vue";
 import "../../virtual-keys/ui/styles/VirtualKeysStyles.css";
 import type { KeyRanking } from "../support/UsageModels";
-defineProps<{ rows: KeyRanking[]; showTags?: boolean }>();
+const props = defineProps<{ rows: KeyRanking[]; showTags?: boolean }>();
 const money = useMoneyFormatter(),
 	mode = ref("table"),
+	columns = computed<readonly UiTableColumn[]>(() => [
+		{ key: "api_key", label: "Key ID", width: 150 },
+		{ key: "key_alias", label: "Key Alias", width: 140 },
+		...(props.showTags ? [{ key: "tags", label: "Tags", width: 180 }] : []),
+		{ key: "spend", label: "Spend", width: 90 },
+	]),
+	tableRows = computed<readonly UiTableRow[]>(() => props.rows as unknown as readonly UiTableRow[]),
 	expanded = ref(new Set<string>()),
 	key = ref<VirtualKey | null>(null),
 	catalog = ref(emptyKeyCatalog()),
 	open = ref(false),
 	detailsOpen = ref(false);
 let generation = 0;
+function keyRow(row: UiTableRow): KeyRanking {
+	return row as unknown as KeyRanking;
+}
 function tags(row: KeyRanking) {
 	const all = [...row.tags].sort((a, b) => b.usage - a.usage);
 	return expanded.value.has(row.api_key) ? all : all.slice(0, 2);
@@ -61,55 +73,36 @@ onBeforeUnmount(() => generation++);
 			><button aria-label="Chart View" :class="{ active: mode === 'chart' }" @click="mode = 'chart'">Chart</button>
 		</div>
 	</div>
-	<div v-if="mode === 'table'" class="usage-key-table usage-data-table">
-		<div class="usage-key-table-frame">
-			<table>
-				<thead>
-					<tr>
-						<th>Key ID</th>
-						<th>Key Alias</th>
-						<th v-if="showTags">Tags</th>
-						<th>Spend</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr v-for="row in rows" :key="row.api_key">
-						<td>
-							<div class="usage-key-id-cell">
-								<UiTooltip :title="row.api_key" class="usage-key-id-trigger"
-									><button class="usage-key-id" @click="show(row.api_key)">
-										<span>{{ row.api_key ? row.api_key.slice(0, 7) + "..." : "-" }}</span>
-									</button></UiTooltip
-								>
-							</div>
-						</td>
-						<td>{{ row.key_alias || "-" }}</td>
-						<td v-if="showTags">
-							<span v-if="!row.tags.length">-</span>
-							<div v-else class="usage-key-tags">
-								<UiTooltip
-									v-for="tag in tags(row)"
-									:key="tag.tag"
-									:title="'Tag Name: ' + tag.tag + '\nSpend: ' + money(tag.usage, 2)"
-									><span>{{ tag.tag.slice(0, 7) }}...</span></UiTooltip
-								><button
-									v-if="row.tags.length > 2"
-									:title="expanded.has(row.api_key) ? 'Show fewer tags' : 'Show all tags'"
-									@click="toggle(row.api_key)"
-								>
-									<UiIcon :name="expanded.has(row.api_key) ? 'UpOutlined' : 'DownOutlined'" :size="12" />
-								</button>
-							</div>
-						</td>
-						<td>{{ money(row.spend, 2) }}</td>
-					</tr>
-					<tr v-if="!rows.length">
-						<td :colspan="showTags ? 4 : 3" class="usage-no-logs">No logs found</td>
-					</tr>
-				</tbody>
-			</table>
-		</div>
-	</div>
+	<UiTable v-if="mode === 'table'" :columns="columns" :rows="tableRows" row-key="api_key" fixed-layout empty-text="No logs found">
+		<template #cell-api_key="{ row }">
+			<div class="usage-key-id-cell">
+				<UiTooltip :title="keyRow(row).api_key" class="usage-key-id-trigger"
+					><button class="usage-key-id" @click="show(keyRow(row).api_key)">
+						<span>{{ keyRow(row).api_key ? keyRow(row).api_key.slice(0, 7) + "..." : "-" }}</span>
+					</button></UiTooltip
+				>
+			</div>
+		</template>
+		<template #cell-key_alias="{ row }">{{ keyRow(row).key_alias || "-" }}</template>
+		<template v-if="showTags" #cell-tags="{ row }">
+			<span v-if="!keyRow(row).tags.length">-</span>
+			<div v-else class="usage-key-tags">
+				<UiTooltip
+					v-for="tag in tags(keyRow(row))"
+					:key="tag.tag"
+					:title="'Tag Name: ' + tag.tag + '\nSpend: ' + money(tag.usage, 2)"
+					><span>{{ tag.tag.slice(0, 7) }}...</span></UiTooltip
+				><button
+					v-if="keyRow(row).tags.length > 2"
+					:title="expanded.has(keyRow(row).api_key) ? 'Show fewer tags' : 'Show all tags'"
+					@click="toggle(keyRow(row).api_key)"
+				>
+					<UiIcon :name="expanded.has(keyRow(row).api_key) ? 'UpOutlined' : 'DownOutlined'" :size="12" />
+				</button>
+			</div>
+		</template>
+		<template #cell-spend="{ row }">{{ money(keyRow(row).spend, 2) }}</template>
+	</UiTable>
 	<div v-else class="usage-ranking-scroll">
 		<UsageChart
 			v-if="rows.length"

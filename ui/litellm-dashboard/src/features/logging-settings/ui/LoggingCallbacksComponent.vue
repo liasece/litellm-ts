@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
-import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
-import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import type { UiTableColumn, UiTableRow, UiTableSort } from "../../platform/ui/UiTypes";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import CallbackDialog from "./CallbackDialogComponent.vue";
 import { loggingSettingsApi, type LoggingCallback, type AvailableCallbacks } from "../api/LoggingSettingsApi";
@@ -57,8 +56,16 @@ const sortedCallbacks = computed(() => {
 	return [...filteredCallbacks.value].sort((a, b) => display(a).localeCompare(display(b)) * direction);
 });
 const emptyText = computed(() => (activeFilters.value.length ? "No callbacks match the current filters" : "No callbacks configured"));
-function changeSort(order: "asc" | "desc" | false): void {
-	sort.value = { key: "name", order: order || null };
+const columns: readonly UiTableColumn[] = [
+	{ key: "name", label: "Callback Name", width: 320, sortable: true, filters: nameFilter },
+	{ key: "mode", label: "Mode", width: 200, filters: modeFilter },
+	{ key: "actions", label: "Actions", width: 120, sticky: "right" },
+];
+function callbackRow(row: UiTableRow): LoggingCallback {
+	return row as unknown as LoggingCallback;
+}
+function changeSort(next: UiTableSort): void {
+	sort.value = { key: "name", order: next.order };
 }
 function applyCallbackFilters(entries: readonly UiTableActiveFilter[]): void {
 	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
@@ -88,91 +95,58 @@ async function test(callback: LoggingCallback) {
 			>+ Add Callback</UiButton
 		>
 		<div class="logging-callbacks-heading"><h4>Active Logging Callbacks</h4></div>
-		<div v-if="!callbacks.length" class="logging-callbacks-empty">
-			<h3>No callbacks configured</h3>
-			<p>Add your first callback to start logging data to external services.</p>
-		</div>
-		<div v-else class="logging-callbacks-table">
-			<UiActiveFilters
-				v-if="activeFilters.length"
-				:filters="activeFilters"
-				@remove="removeCallbackFilter"
-				@clear="clearCallbackFilters"
-			/>
-			<table>
-				<thead>
-					<tr>
-						<th>
-							<div class="logging-callbacks-heading-cell">
-								<UiTableSortLabel
-									label="Callback Name"
-									:state="sort.key === 'name' ? (sort.order ?? false) : false"
-									@change="changeSort"
-								/>
-								<UiHeaderFilterButton
-									label="Callback Name"
-									:fields="nameFilter"
-									:active="activeFilters.filter((filter) => filter.key === 'name')"
-									@change="applyCallbackFilters"
-								/>
-							</div>
-						</th>
-						<th>
-							<div class="logging-callbacks-heading-cell">
-								<span>Mode</span>
-								<UiHeaderFilterButton
-									label="Mode"
-									:fields="modeFilter"
-									:active="activeFilters.filter((filter) => filter.key === 'mode')"
-									@change="applyCallbackFilters"
-								/>
-							</div>
-						</th>
-						<th>Actions</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr v-for="callback in sortedCallbacks" :key="callback.name">
-						<td>{{ display(callback) }}</td>
-						<td>
-							<span
-								class="logging-callback-mode"
-								:class="
-									callback.mode === 'failure'
-										? 'logging-callback-mode--failure'
-										: !callback.mode || callback.mode === 'success'
-											? 'logging-callback-mode--success'
-											: 'logging-callback-mode--other'
-								"
-								>{{ modeLabel(callback) }}</span
-							>
-						</td>
-						<td>
-							<div>
-								<UiTooltip title="Test Callback"
-									><button type="button" aria-label="Test Callback" @click="test(callback)">
-										<UiHeroIcon name="PlayIcon" /></button></UiTooltip
-								><UiTooltip title="Edit Callback"
-									><button
-										type="button"
-										aria-label="Edit Callback"
-										@click="
-											selected = callback;
-											editOpen = true;
-										"
-									>
-										<UiHeroIcon name="PencilAltIcon" /></button
-								></UiTooltip>
-							</div>
-						</td>
-					</tr>
-
-					<tr v-if="!sortedCallbacks.length">
-						<td colspan="3" class="logging-callbacks-empty-row">{{ emptyText }}</td>
-					</tr>
-				</tbody>
-			</table>
-		</div>
+		<UiTable
+			:columns="columns"
+			:rows="sortedCallbacks"
+			row-key="name"
+			fixed-layout
+			manual-sort
+			:sort-by="sort.order ? 'name' : undefined"
+			:sort-order="sort.order ?? 'asc'"
+			:active-filters="activeFilters"
+			:empty-text="emptyText"
+			@sort="changeSort"
+			@filter-change="applyCallbackFilters"
+			@remove-filter="removeCallbackFilter"
+			@clear-filters="clearCallbackFilters"
+		>
+			<template #row="{ row }">
+				<tr v-for="callback in [callbackRow(row)]" :key="callback.name" class="ui-table__row">
+					<td>{{ display(callback) }}</td>
+					<td>
+						<span
+							class="logging-callback-mode"
+							:class="
+								callback.mode === 'failure'
+									? 'logging-callback-mode--failure'
+									: !callback.mode || callback.mode === 'success'
+										? 'logging-callback-mode--success'
+										: 'logging-callback-mode--other'
+							"
+							>{{ modeLabel(callback) }}</span
+						>
+					</td>
+					<td class="ui-table__cell--sticky-right">
+						<div class="logging-callback-actions">
+							<UiTooltip title="Test Callback"
+								><button type="button" aria-label="Test Callback" @click="test(callback)">
+									<UiHeroIcon name="PlayIcon" /></button></UiTooltip
+							><UiTooltip title="Edit Callback"
+								><button
+									type="button"
+									aria-label="Edit Callback"
+									@click="
+										selected = callback;
+										editOpen = true;
+									"
+								>
+									<UiHeroIcon name="PencilAltIcon" /></button
+							></UiTooltip>
+						</div>
+					</td>
+				</tr>
+			</template>
+		</UiTable>
 		<CallbackDialog v-model:open="addOpen" :available="available" @changed="emit('changed')" /><CallbackDialog
 			v-model:open="editOpen"
 			:callback="selected"

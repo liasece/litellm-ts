@@ -43,15 +43,15 @@ const organizationNameFilter: readonly UiTableFilterField[] = [
 	{ key: "org_alias", label: "Organization Name", control: { kind: "text", placeholder: "Filter organization name" } },
 ];
 const columns: readonly UiTableColumn[] = [
-	{ key: "organization_id", label: "Organization ID", sortable: true, filters: organizationIdFilter },
-	{ key: "organization_alias", label: "Organization Name", sortable: true, filters: organizationNameFilter },
-	{ key: "created_at", label: "Created", sortable: true, initialSortOrder: "desc" },
-	{ key: "spend", label: "Spend", sortable: true, initialSortOrder: "desc" },
-	{ key: "budget", label: "Budget" },
-	{ key: "models", label: "Models" },
-	{ key: "limits", label: "TPM / RPM Limits" },
-	{ key: "info", label: "Info" },
-	{ key: "actions", label: "Actions" },
+	{ key: "organization_id", label: "Organization ID", width: 180, sortable: true, filters: organizationIdFilter },
+	{ key: "organization_alias", label: "Organization Name", width: 200, sortable: true, filters: organizationNameFilter },
+	{ key: "created_at", label: "Created", width: 120, sortable: true, initialSortOrder: "desc" },
+	{ key: "spend", label: "Spend", width: 100, sortable: true, initialSortOrder: "desc" },
+	{ key: "budget", label: "Budget", width: 110 },
+	{ key: "models", label: "Models", width: 180 },
+	{ key: "limits", label: "TPM / RPM Limits", width: 150 },
+	{ key: "info", label: "Info", width: 110 },
+	{ key: "actions", label: "Actions", width: 120, sticky: "right" },
 ];
 const activeFilters = computed<UiTableActiveFilter[]>(() => {
 	const entries: UiTableActiveFilter[] = [];
@@ -164,6 +164,7 @@ onBeforeUnmount(store.dispose);
 					row-key="organization_id"
 					appearance="tremor"
 					row-clickable
+					fixed-layout
 					:sort-by="sortBy"
 					:sort-order="sortOrder"
 					:active-filters="activeFilters"

@@ -34,46 +34,6 @@
 	background: #dbeafe;
 	color: #1d4ed8;
 }
-.usage-data-table {
-	width: 100%;
-	max-width: 100%;
-	overflow: auto;
-	box-sizing: border-box;
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-}
-.usage-data-table table {
-	border-collapse: collapse;
-	width: 100%;
-	min-width: 400px;
-	table-layout: fixed;
-	text-align: left;
-	font-size: 12.4px;
-	line-height: 18.4px;
-	color: #6b7280;
-}
-.usage-data-table th {
-	padding: 4px 16px;
-	height: 32px;
-	white-space: nowrap;
-	font-weight: 600;
-	color: #111827;
-}
-.usage-data-table td {
-	padding: 2px 16px;
-	height: 33px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	border-top: 1px solid #e5e7eb;
-}
-.usage-data-table .usage-no-logs {
-	text-align: center;
-}
-.usage-key-table {
-	max-height: 320px;
-	overflow-x: hidden;
-}
 .usage-key-id {
 	max-width: 200px;
 	overflow: hidden;
@@ -181,7 +141,6 @@
 	background: #dbeafe;
 	color: #1d4ed8;
 }
-.usage-model-table,
 .usage-model-chart {
 	max-height: 600px;
 	overflow-y: auto;
@@ -192,75 +151,10 @@
 .usage-key-model > .ui-card__body > header {
 	margin-bottom: 12px;
 }
-.usage-antd-small-table {
-	overflow: auto;
-	font-family: var(--ui-font-antd);
-	font-size: 14px;
-	line-height: 22px;
-}
-.usage-antd-small-table table {
-	width: 100%;
-	border-collapse: collapse;
-	text-align: left;
-}
-.usage-antd-small-table th {
-	position: sticky;
-	top: 0;
-	background: #fafafa;
-	padding: 8px;
-	font-weight: 600;
-	color: #000000e0;
-	border-bottom: 1px solid #f0f0f0;
-}
-.usage-antd-small-table td {
-	padding: 8px;
-	border-bottom: 1px solid #f0f0f0;
-}
-
-.usage-simple-table {
-	width: 100%;
-	text-align: left;
-	border-collapse: collapse;
-	color: #6b7280;
-	font-size: 12.4px;
-	line-height: 18.4px;
-}
-
-.usage-simple-table th {
-	font-weight: 600;
-	color: #111827;
-	white-space: nowrap;
-	padding: 14px 16px;
-}
-
-.usage-simple-table td {
-	white-space: nowrap;
-	padding: 16px;
-	border-bottom: 1px solid #e5e7eb;
-}
-
-.usage-simple-table tr:last-child td {
-	border-bottom: 0;
-}
-
 dialog[data-usage-key-shell]::backdrop {
 	background: rgba(0, 0, 0, 0.5);
 }
 
-.usage-key-table-frame {
-	border: 1px solid #dcddeb;
-	border-radius: 8px;
-	overflow-x: auto;
-	width: 100%;
-	max-width: 100%;
-	box-sizing: border-box;
-}
-.usage-key-table-frame th {
-	width: 150px;
-}
-.usage-key-table-frame tbody tr:first-child td {
-	border-top: 0;
-}
 .usage-key-id-cell {
 	overflow: hidden;
 }

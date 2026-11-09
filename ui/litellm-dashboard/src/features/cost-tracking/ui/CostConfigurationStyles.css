@@ -109,52 +109,8 @@
 	line-height: 18.4px;
 	color: #6b7280;
 }
-.cost-no-config {
-	padding: 64px 24px;
-	text-align: center;
-}
-.cost-no-config svg {
-	width: 48px;
-	height: 48px;
-	margin: 0 auto 16px;
-	color: #9ca3af;
-}
-.cost-no-config p {
-	margin: 0 0 8px;
-	font-size: 12.4px;
-	line-height: 18.4px;
-	font-weight: 500;
-	color: #374151;
-}
-.cost-no-config > span {
-	color: #6b7280;
-	font-size: 14px;
-	line-height: 20px;
-}
 .cost-discount-how {
 	padding: 0 24px 16px;
-}
-.cost-provider-table-scroll {
-	overflow-x: auto;
-}
-.cost-provider-table {
-	width: 100%;
-	border-collapse: collapse;
-	font: 12.4px/18.4px var(--ui-font-sans);
-	color: #6b7280;
-	text-align: left;
-}
-.cost-provider-table th {
-	padding: 12px 24px;
-	border-bottom: 1px solid #e5e7eb;
-	font-weight: 500;
-	color: #6b7280;
-	text-align: left;
-	white-space: nowrap;
-}
-.cost-provider-table td {
-	padding: 16px 24px;
-	border-bottom: 1px solid #e5e7eb;
 }
 .cost-provider-name {
 	display: flex;
@@ -217,9 +173,6 @@
 }
 .cost-provider-edit > span {
 	color: #4b5563;
-}
-.cost-provider-empty {
-	text-align: center;
 }
 .cost-provider-dialog.ui-dialog--overlay-panel {
 	margin-top: 32px;

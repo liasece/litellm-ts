@@ -25,7 +25,7 @@ export const keyColumns: readonly KeyColumn[] = [
 		tooltip: "This is a new field and is not backfilled. Only new key usage will update this value.",
 	},
 	{ key: "expires", label: "Expires", width: 120 },
-	{ key: "spend", label: "Spend", width: 100, sortable: true },
+	{ key: "spend", label: "Spend", width: 120, sortable: true },
 	{ key: "max_budget", label: "Budget", width: 110, sortable: true },
 	{ key: "budget_reset_at", label: "Budget Reset", width: 130 },
 	{ key: "models", label: "Models", width: 200 },

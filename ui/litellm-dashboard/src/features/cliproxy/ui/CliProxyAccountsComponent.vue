@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
-import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
-import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
 import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import type { UiTableColumn, UiTableRow, UiTableSort } from "../../platform/ui/UiTypes";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
@@ -67,13 +66,13 @@ const enabledFilter: readonly UiTableFilterField[] = [
 		},
 	},
 ];
-const columns = computed(() => [
-	{ key: "provider", label: "Provider", sortable: true, filters: providerFilter.value },
-	{ key: "account", label: "Account", sortable: true, filters: accountFilter },
-	{ key: "file", label: "File", sortable: true, filters: fileFilter },
-	{ key: "enabled", label: "Enabled", filters: enabledFilter },
-	{ key: "weight", label: "Weight", sortable: true },
-	{ key: "actions", label: "Action" },
+const columns = computed<readonly UiTableColumn[]>(() => [
+	{ key: "provider", label: "Provider", width: 160, sortable: true, filters: providerFilter.value },
+	{ key: "account", label: "Account", width: 220, sortable: true, filters: accountFilter },
+	{ key: "file", label: "File", width: 320, sortable: true, filters: fileFilter },
+	{ key: "enabled", label: "Enabled", width: 100, filters: enabledFilter },
+	{ key: "weight", label: "Weight", width: 110, sortable: true, initialSortOrder: "desc" },
+	{ key: "actions", label: "Action", width: 220, sticky: "right" },
 ]);
 function accountValue(account: Account, key: string): string | number {
 	if (key === "account") return account.email ?? "";
@@ -96,11 +95,11 @@ const sortedAccounts = computed(() => {
 	});
 });
 const emptyText = computed(() => (activeFilters.value.length ? "No accounts match the current filters" : "No data"));
-function sortState(column: { key: string; sortable?: boolean }): "asc" | "desc" | false {
-	return column.sortable && sort.value.key === column.key ? (sort.value.order ?? false) : false;
+function changeSort(next: UiTableSort): void {
+	sort.value = { key: next.order ? next.key : "", order: next.order };
 }
-function changeSort(key: string, order: "asc" | "desc" | false): void {
-	sort.value = { key, order: order || null };
+function accountRow(row: UiTableRow): Account {
+	return row as unknown as Account;
 }
 function applyAccountFilters(entries: readonly UiTableActiveFilter[]): void {
 	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
@@ -185,92 +184,77 @@ function edit(account: Account) {
 				Stored in the LiteLLM config and materialized as a CPA auth file. Use Edit to rotate the key.
 			</p></UiCard
 		>
-		<UiActiveFilters v-if="activeFilters.length" :filters="activeFilters" @remove="removeAccountFilter" @clear="clearAccountFilters" />
-		<div class="cp-accounts-table-scroll">
-			<table class="cp-accounts-table">
-				<thead>
-					<tr>
-						<th v-for="column in columns" :key="column.key">
-							<div class="cp-accounts-heading">
-								<UiTableSortLabel
-									v-if="column.sortable"
-									:label="column.label"
-									:state="sortState(column)"
-									:initial="column.key === 'weight' ? 'desc' : 'asc'"
-									@change="changeSort(column.key, $event)"
-								/>
-								<span v-else class="cp-accounts-heading__label">{{ column.label }}</span>
-								<UiHeaderFilterButton
-									v-if="column.filters?.length"
-									:label="column.label"
-									:fields="column.filters"
-									:active="activeFilters.filter((filter) => column.filters?.some((field) => field.key === filter.key))"
-									@change="applyAccountFilters"
-								/>
-							</div>
-						</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr v-for="account in sortedAccounts" :key="account.auth_index">
-						<td>
-							<ProviderIdentityComponent :provider="account.provider" />
-						</td>
-						<td>{{ account.email ?? "—" }}</td>
-						<td class="cp-account-filename" :title="account.filename">
-							{{ account.filename }}<UiTag v-if="isTrashed(account)" color="orange" class="cp-ml-8">trashed</UiTag>
-						</td>
-						<td>
-							<UiSwitch
-								:model-value="!account.disabled"
-								:disabled="isTrashed(account)"
-								:label="'Enable ' + (account.email ?? account.filename)"
-								@update:model-value="store.updateAccount(account, { disabled: !$event })"
-							/>
-						</td>
-						<td>
-							<UiInputNumber
-								:min="1"
-								:max="1000000"
-								:model-value="account.weight"
-								placeholder="default"
-								:disabled="isTrashed(account)"
-								class="cp-weight-input"
-								@blur="saveWeight(account, $event)"
-							/>
-						</td>
-						<td>
-							<div class="cp-inline cp-gap-8">
-								<UiButton v-if="managedAccount(account)" size="small" @click="edit(account)">Edit</UiButton
-								><CliProxyConfirm
-									v-if="managedAccount(account)"
-									title="Delete this CommandCode account?"
-									description="It will be removed from the LiteLLM config and its CPA auth file will be deleted."
-									@confirm="store.removeAccount(account)"
-									><UiButton size="small" danger>Delete</UiButton></CliProxyConfirm
-								><CliProxyConfirm
-									v-else-if="isTrashed(account)"
-									title="Restore this account?"
-									description="The token file will be moved back to the active auth directory."
-									@confirm="store.removeAccount(account)"
-									><UiButton size="small"
-										><template #icon><UiIcon name="RollbackOutlined" /></template>Restore</UiButton
-									></CliProxyConfirm
-								><CliProxyConfirm
-									v-else
-									title="Move this account to .trash?"
-									description="The token file is retained for recovery."
-									@confirm="store.removeAccount(account)"
-									><UiButton size="small" danger>Trash</UiButton></CliProxyConfirm
-								>
-							</div>
-						</td>
-					</tr>
-					<tr v-if="sortedAccounts.length === 0">
-						<td colspan="6" class="cp-table-empty">{{ emptyText }}</td>
-					</tr>
-				</tbody>
-			</table>
-		</div>
+		<UiTable
+			:columns="columns"
+			:rows="sortedAccounts"
+			row-key="auth_index"
+			:loading="state.loading"
+			loading-text="🚅 Loading accounts..."
+			fixed-layout
+			manual-sort
+			:sort-by="sort.order ? sort.key : undefined"
+			:sort-order="sort.order ?? 'asc'"
+			:active-filters="activeFilters"
+			:empty-text="emptyText"
+			@sort="changeSort"
+			@filter-change="applyAccountFilters"
+			@remove-filter="removeAccountFilter"
+			@clear-filters="clearAccountFilters"
+		>
+			<template #row="{ row }">
+				<tr v-for="account in [accountRow(row)]" :key="account.auth_index" class="ui-table__row">
+					<td><ProviderIdentityComponent :provider="account.provider" /></td>
+					<td>{{ account.email ?? "—" }}</td>
+					<td class="cp-account-filename" :title="account.filename">
+						{{ account.filename }}<UiTag v-if="isTrashed(account)" color="orange" class="cp-ml-8">trashed</UiTag>
+					</td>
+					<td>
+						<UiSwitch
+							:model-value="!account.disabled"
+							:disabled="isTrashed(account)"
+							:label="'Enable ' + (account.email ?? account.filename)"
+							@update:model-value="store.updateAccount(account, { disabled: !$event })"
+						/>
+					</td>
+					<td>
+						<UiInputNumber
+							:min="1"
+							:max="1000000"
+							:model-value="account.weight"
+							placeholder="default"
+							:disabled="isTrashed(account)"
+							class="cp-weight-input"
+							@blur="saveWeight(account, $event)"
+						/>
+					</td>
+					<td class="ui-table__cell--sticky-right">
+						<div class="cp-inline cp-gap-8">
+							<UiButton v-if="managedAccount(account)" size="small" @click="edit(account)">Edit</UiButton
+							><CliProxyConfirm
+								v-if="managedAccount(account)"
+								title="Delete this CommandCode account?"
+								description="It will be removed from the LiteLLM config and its CPA auth file will be deleted."
+								@confirm="store.removeAccount(account)"
+								><UiButton size="small" danger>Delete</UiButton></CliProxyConfirm
+							><CliProxyConfirm
+								v-else-if="isTrashed(account)"
+								title="Restore this account?"
+								description="The token file will be moved back to the active auth directory."
+								@confirm="store.removeAccount(account)"
+								><UiButton size="small"
+									><template #icon><UiIcon name="RollbackOutlined" /></template>Restore</UiButton
+								></CliProxyConfirm
+							><CliProxyConfirm
+								v-else
+								title="Move this account to .trash?"
+								description="The token file is retained for recovery."
+								@confirm="store.removeAccount(account)"
+								><UiButton size="small" danger>Trash</UiButton></CliProxyConfirm
+							>
+						</div>
+					</td>
+				</tr>
+			</template>
+		</UiTable>
 	</div>
 </template>

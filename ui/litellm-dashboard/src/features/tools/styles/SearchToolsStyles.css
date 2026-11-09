@@ -23,17 +23,6 @@
 .tools-search-add {
 	margin: 16px 0;
 }
-.tools-search-table table {
-	border: 1px solid #f0f0f0;
-}
-.tools-search-table th,
-.tools-search-table td {
-	border-right: 1px solid #f0f0f0;
-}
-.tools-search-table th:last-child,
-.tools-search-table td:last-child {
-	border-right: 0;
-}
 .tools-search-table .tools-resource-id {
 	border-radius: 0;
 	max-width: 160px;
@@ -226,10 +215,6 @@
 .tools-search-page > .tools-search-subtitle {
 	font-size: 12.4px;
 	line-height: 18.4px;
-}
-.tools-search-table .ui-table__empty {
-	text-align: center;
-	color: rgb(0 0 0 / 25%);
 }
 
 @media (max-width: 767px) {

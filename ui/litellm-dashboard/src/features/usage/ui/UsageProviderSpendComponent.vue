@@ -2,6 +2,8 @@
 import { computed, ref } from "vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
+import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
@@ -19,6 +21,18 @@ const rows = computed(() =>
 		.filter((p) => (p.provider?.toLowerCase() === "unknown" ? includeUnknown.value : includeZero.value || p.spend > 0))
 		.sort((a, b) => b.spend - a.spend),
 );
+const tableRows = computed<readonly UiTableRow[]>(() => rows.value as unknown as readonly UiTableRow[]);
+const columns: readonly UiTableColumn[] = [
+	{ key: "provider", label: "Provider", width: 200 },
+	{ key: "spend", label: "Spend", width: 220 },
+	{ key: "requests", label: "Requests", width: 120 },
+	{ key: "successful_requests", label: "Successful", width: 130, cellClass: "usage-success" },
+	{ key: "failed_requests", label: "Failed", width: 100, cellClass: "usage-failed" },
+	{ key: "tokens", label: "Tokens", width: 140 },
+];
+function providerRow(row: UiTableRow): ProviderRanking {
+	return row as unknown as ProviderRanking;
+}
 </script>
 <template>
 	<UiCard appearance="tremor" class="usage-panel">
@@ -40,42 +54,32 @@ const rows = computed(() =>
 			</div>
 		</header>
 		<UsageChartLoader v-if="loading" :is-date-changing="isDateChanging" />
-		<div v-else class="usage-provider-table">
-			<table class="usage-simple-table">
-				<thead>
-					<tr>
-						<th>Provider</th>
-						<th>Spend</th>
-						<th>Requests</th>
-						<th class="usage-success">Successful</th>
-						<th class="usage-failed">Failed</th>
-						<th>Tokens</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr v-for="p in rows" :key="p.provider">
-						<td>
-							<span class="usage-provider-name"
-								><ProviderLogo v-if="p.provider" :provider="p.provider" :logo="getProviderLogoAndName(p.provider).logo" />{{
-									p.provider
-								}}</span
-							>
-						</td>
-						<td>
-							<div class="usage-provider-bar">
-								<span>{{ money(p.spend, 2) }}</span>
-								<div>
-									<i :style="{ width: (rows[0]?.spend > 0 ? Math.max(2, (p.spend / rows[0].spend) * 100) : 0) + '%' }" />
-								</div>
-							</div>
-						</td>
-						<td>{{ p.requests.toLocaleString() }}</td>
-						<td class="usage-success">{{ p.successful_requests.toLocaleString() }}</td>
-						<td class="usage-failed">{{ p.failed_requests.toLocaleString() }}</td>
-						<td>{{ formatNumberWithCommas(p.tokens, 0, false) }}</td>
-					</tr>
-				</tbody>
-			</table>
-		</div>
+		<UiTable v-else :columns="columns" :rows="tableRows" row-key="provider" fixed-layout empty-text="No logs found">
+			<template #cell-provider="{ row }">
+				<span class="usage-provider-name"
+					><ProviderLogo
+						v-if="providerRow(row).provider"
+						:provider="providerRow(row).provider"
+						:logo="getProviderLogoAndName(providerRow(row).provider).logo"
+					/>{{ providerRow(row).provider }}</span
+				>
+			</template>
+			<template #cell-spend="{ row }">
+				<div class="usage-provider-bar">
+					<span>{{ money(providerRow(row).spend, 2) }}</span>
+					<div>
+						<i
+							:style="{
+								width: (rows[0]?.spend > 0 ? Math.max(2, (providerRow(row).spend / rows[0].spend) * 100) : 0) + '%',
+							}"
+						/>
+					</div>
+				</div>
+			</template>
+			<template #cell-requests="{ row }">{{ providerRow(row).requests.toLocaleString() }}</template>
+			<template #cell-successful_requests="{ row }">{{ providerRow(row).successful_requests.toLocaleString() }}</template>
+			<template #cell-failed_requests="{ row }">{{ providerRow(row).failed_requests.toLocaleString() }}</template>
+			<template #cell-tokens="{ row }">{{ formatNumberWithCommas(providerRow(row).tokens, 0, false) }}</template>
+		</UiTable>
 	</UiCard>
 </template>

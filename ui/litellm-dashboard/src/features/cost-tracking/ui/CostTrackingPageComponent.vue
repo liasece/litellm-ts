@@ -90,24 +90,12 @@ onBeforeUnmount(store.dispose);
 							</div>
 							<div v-if="store.state.loading" class="cost-config-loading">Loading configuration...</div>
 							<CostProviderTableComponent
-								v-else-if="Object.keys(store.state.discounts).length"
+								v-else
 								kind="discount"
 								:config="store.state.discounts"
 								@change="changeDiscount"
 								@remove="(provider, name) => (removal = { kind: 'discount', provider, name })"
 							/>
-							<div v-else class="cost-no-config">
-								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="1.5"
-										d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-									/>
-								</svg>
-								<p>No provider discounts configured</p>
-								<span>Click "Add Provider Discount" to get started</span>
-							</div>
 						</div>
 						<div v-show="discountTab !== 'discounts'" class="cost-discount-how"><CostHowItWorksComponent /></div>
 					</UiTabs>
@@ -126,24 +114,12 @@ onBeforeUnmount(store.dispose);
 					</div>
 					<div v-if="store.state.loading" class="cost-config-loading">Loading configuration...</div>
 					<CostProviderTableComponent
-						v-else-if="Object.keys(store.state.margins).length"
+						v-else
 						kind="margin"
 						:config="store.state.margins"
 						@change="store.changeMargin"
 						@remove="(provider, name) => (removal = { kind: 'margin', provider, name })"
 					/>
-					<div v-else class="cost-no-config">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="1.5"
-								d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-							/>
-						</svg>
-						<p>No provider margins configured</p>
-						<span>Click "Add Provider Margin" to get started</span>
-					</div>
 				</div>
 			</section>
 			<section class="cost-accordion">

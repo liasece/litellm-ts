@@ -63,7 +63,7 @@ const columns = computed(() => [
 	{ key: "resources", label: "Resources", width: 240 },
 	{ key: "spend", label: "Spend / Budget", width: 200, sortable: true },
 	{ key: "created_at", label: "Created", width: 130, sortable: true, ellipsis: true },
-	{ key: "actions", label: "Actions", width: 120, align: "right" as const },
+	{ key: "actions", label: "Actions", width: 120, align: "right" as const, sticky: "right" as const },
 ]);
 const activeFilters = computed<UiTableActiveFilter[]>(() => {
 	const entries: UiTableActiveFilter[] = [];
@@ -157,6 +157,7 @@ onBeforeUnmount(store.dispose);
 					:loading="state.loading"
 					:min-width="1000"
 					row-clickable
+					fixed-layout
 					manual-sort
 					:sort-by="state.sortBy"
 					:sort-order="state.sortOrder"
@@ -166,6 +167,7 @@ onBeforeUnmount(store.dispose);
 					@filter-change="applyTeamFilters"
 					@remove-filter="removeTeamFilter"
 					@clear-filters="store.clearFilters"
+					empty-text="No teams yet"
 					><template #header-team_alias><span class="access-team-header-label" title="Team Alias">Team Alias</span></template
 					><template #cell-team_id="{ row }"
 						><button type="button" class="access-id" :title="team(row).team_id" @click="open(team(row))">
@@ -219,17 +221,8 @@ onBeforeUnmount(store.dispose);
 									data-testid="delete-team-button"
 									danger
 									@click="state.deleting = team(row)"
-							/></template></div></template
-					><template #empty
-						><div class="access-empty-teams">
-							<UiLucideIcon name="Users" :size="40" />
-							<p>No teams yet</p>
-							<p class="access-muted">Create your first team to organize members and manage access to models.</p>
-							<UiButton v-if="canCreate" variant="primary" @click="state.createOpen = true">Create Team</UiButton>
-						</div></template
-					></UiTable
-				></UiCard
-			></template
+							/></template></div
+					></template> </UiTable></UiCard></template
 		><TeamDetailsComponent
 			v-else
 			:key="state.detailId"

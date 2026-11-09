@@ -50,13 +50,13 @@ const providerFilter = computed<readonly UiTableFilterField[]>(() => [
 	},
 ]);
 const columns = computed(() => [
-	{ key: "search_tool_id", label: "Search Tool ID", sortable: true, filters: toolIdFilter },
-	{ key: "search_tool_name", label: "Name", sortable: true, filters: toolNameFilter },
-	{ key: "provider", label: "Provider", sortable: true, filters: providerFilter.value },
-	{ key: "created_at", label: "Created At", sortable: true, initialSortOrder: "desc" as const },
-	{ key: "updated_at", label: "Updated At", sortable: true, initialSortOrder: "desc" as const },
-	{ key: "source", label: "Source" },
-	{ key: "actions", label: "Actions" },
+	{ key: "search_tool_id", label: "Search Tool ID", width: 180, sortable: true, filters: toolIdFilter },
+	{ key: "search_tool_name", label: "Name", width: 200, sortable: true, filters: toolNameFilter },
+	{ key: "provider", label: "Provider", width: 160, sortable: true, filters: providerFilter.value },
+	{ key: "created_at", label: "Created At", width: 140, sortable: true, initialSortOrder: "desc" as const },
+	{ key: "updated_at", label: "Updated At", width: 140, sortable: true, initialSortOrder: "desc" as const },
+	{ key: "source", label: "Source", width: 130 },
+	{ key: "actions", label: "Actions", width: 120, sticky: "right" as const },
 ]);
 const filteredRows = computed(() =>
 	filterRowsByFields(rows.value, activeFilters.value, (row, key) =>
@@ -157,7 +157,7 @@ onBeforeUnmount(store.dispose);
 			:columns="columns"
 			:rows="filteredRows"
 			row-key="search_tool_id"
-			compact
+			fixed-layout
 			:loading="state.loading"
 			row-clickable
 			:active-filters="activeFilters"

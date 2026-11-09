@@ -443,15 +443,6 @@
 	outline-offset: 1px;
 }
 
-.cp-accounts-heading {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-}
-.cp-accounts-heading__label {
-	display: block;
-}
 .cp-account-content > .ui-active-filters {
 	padding-top: 0;
 }

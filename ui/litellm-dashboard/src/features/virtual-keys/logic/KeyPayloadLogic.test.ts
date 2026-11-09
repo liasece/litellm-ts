@@ -94,6 +94,19 @@ describe("Virtual Key request contracts", () => {
 		expect(payload).toMatchObject({ auto_rotate: true, rotation_interval: "7d", duration: "30d" });
 		expect(payload.metadata).toEqual({ logging: draft.logging, litellm_disabled_callbacks: ["s3"] });
 	});
+	it("normalizes the edit-mode reset-budget labels back to the canonical request durations", () => {
+		const draft = createKeyDraft({ ...key, budget_duration: "30d" });
+		for (const [label, canonical] of [
+			["daily", "24h"],
+			["weekly", "7d"],
+			["monthly", "30d"],
+		]) {
+			draft.budget_duration = label;
+			expect(buildKeyPayload(draft, { ...context, key }).budget_duration).toBe(canonical);
+		}
+		draft.budget_duration = "";
+		expect(buildKeyPayload(draft, { ...context, key }).budget_duration).toBeNull();
+	});
 	it("validates custom-key and team-budget constraints without rejecting empty optional fields", () => {
 		const draft = createKeyDraft();
 		draft.key_alias = "Fixture";

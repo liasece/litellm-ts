@@ -113,6 +113,10 @@ async function modelChoices(term: string): Promise<UiTableFilterChoice[]> {
 	const page = await fetchChoicePage("model", 1, 50, term);
 	return page.options.map((option) => ({ value: option.value, label: option.label }));
 }
+async function keyAliasChoices(term: string): Promise<UiTableFilterChoice[]> {
+	const page = await fetchChoicePage("key-alias", 1, 50, term);
+	return page.options.map((option) => ({ value: option.value, label: option.label }));
+}
 async function customerChoices(term: string): Promise<UiTableFilterChoice[]> {
 	const data = await requestJson("/customer/list");
 	if (!Array.isArray(data)) return [];
@@ -145,7 +149,13 @@ const filterFields = computed<Record<string, readonly UiTableFilterField[]>>(() 
 		},
 	],
 	key_hash: [{ key: FILTER_KEYS.KEY_HASH, label: "Key Hash", control: { kind: "text", placeholder: "Filter key hash" } }],
-	key_name: [{ key: FILTER_KEYS.KEY_ALIAS, label: "Key Alias", control: { kind: "text", placeholder: "Filter key alias" } }],
+	key_name: [
+		{
+			key: FILTER_KEYS.KEY_ALIAS,
+			label: "Key Alias",
+			control: { kind: "remote", placeholder: "Search key aliases…", search: keyAliasChoices },
+		},
+	],
 	model: [
 		{
 			key: FILTER_KEYS.MODEL,
@@ -154,6 +164,7 @@ const filterFields = computed<Record<string, readonly UiTableFilterField[]>>(() 
 		},
 	],
 	request_id: [{ key: FILTER_KEYS.REQUEST_ID, label: "Request ID", control: { kind: "text", placeholder: "Filter request ID" } }],
+	session_id: [{ key: FILTER_KEYS.SESSION_ID, label: "Session ID", control: { kind: "text", placeholder: "Filter session ID" } }],
 	user: [{ key: FILTER_KEYS.USER_ID, label: "User ID", control: { kind: "text", placeholder: "Filter user ID" } }],
 	end_user: [
 		{
@@ -179,6 +190,7 @@ const activeFilters = computed<UiTableActiveFilter[]>(() => {
 	add(FILTER_KEYS.KEY_ALIAS, "Key Alias", undefined, "fuzzy");
 	add(FILTER_KEYS.MODEL, "Model");
 	add(FILTER_KEYS.REQUEST_ID, "Request ID", undefined, "fuzzy");
+	add(FILTER_KEYS.SESSION_ID, "Session ID", undefined, "fuzzy");
 	add(FILTER_KEYS.USER_ID, "User ID", undefined, "fuzzy");
 	add(FILTER_KEYS.END_USER, "End User");
 	return entries;

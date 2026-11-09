@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
-import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
-import UiTableSortLabel from "../../platform/ui/UiTableSortLabel.vue";
+import UiTable from "../../platform/ui/UiTable.vue";
 import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import type { UiTableColumn, UiTableRow, UiTableSort } from "../../platform/ui/UiTypes";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import DeleteResourceDialog from "../../resource-dialogs/ui/DeleteResourceDialogComponent.vue";
 import FallbackAddDialog from "./FallbackAddDialogComponent.vue";
@@ -47,8 +46,21 @@ const emptyText = computed(() =>
 		? "No fallbacks match the current filters."
 		: "No fallbacks configured. Add fallbacks to automatically try another model when the primary fails.",
 );
-function changeSort(order: "asc" | "desc" | false): void {
-	sort.value = { key: "primary", order: order || null };
+const columns: readonly UiTableColumn[] = [
+	{ key: "primary", label: "Model Name", width: 240, sortable: true, filters: primaryFilter },
+	{ key: "fallbacks", label: "Fallbacks", width: 560, filters: fallbackFilter },
+	{ key: "actions", label: "Actions", width: 120, sticky: "right" },
+];
+interface FallbackRow {
+	entry: FallbackEntry;
+	primary: string;
+	models: string[];
+}
+function fallbackRow(row: UiTableRow): FallbackRow {
+	return row as unknown as FallbackRow;
+}
+function changeSort(next: UiTableSort): void {
+	sort.value = { key: "primary", order: next.order };
 }
 function applyFallbackFilters(entries: readonly UiTableActiveFilter[]): void {
 	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
@@ -127,99 +139,64 @@ async function test(name: string) {
 			><template #icon><span class="routing-fallback-plus">+</span></template
 			>Add Fallbacks</UiButton
 		>
-		<div v-if="!rows.length" class="routing-no-fallbacks">
-			No fallbacks configured. Add fallbacks to automatically try another model when the primary fails.
-		</div>
-		<template v-else>
-			<UiActiveFilters
-				v-if="activeFilters.length"
-				:filters="activeFilters"
-				@remove="removeFallbackFilter"
-				@clear="clearFallbackFilters"
-			/>
-			<div class="routing-table-scroll">
-				<table class="routing-table">
-					<thead>
-						<tr>
-							<th>
-								<div class="routing-table-heading">
-									<UiTableSortLabel
-										label="Model Name"
-										:state="sort.key === 'primary' ? (sort.order ?? false) : false"
-										@change="changeSort"
-									/>
-									<UiHeaderFilterButton
-										label="Model Name"
-										:fields="primaryFilter"
-										:active="activeFilters.filter((filter) => filter.key === 'primary')"
-										@change="applyFallbackFilters"
-									/>
-								</div>
-							</th>
-							<th>
-								<div class="routing-table-heading">
-									<span>Fallbacks</span>
-									<UiHeaderFilterButton
-										label="Fallbacks"
-										:fields="fallbackFilter"
-										:active="activeFilters.filter((filter) => filter.key === 'fallbacks')"
-										@change="applyFallbackFilters"
-									/>
-								</div>
-							</th>
-							<th>Actions</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="(row, index) in sortedRows" :key="index + row.primary">
-							<td>
-								<span class="routing-model-card"
-									><img v-if="logo(row.primary)" :src="logo(row.primary)!" :alt="row.primary + ' logo'" /><span>{{
-										row.primary
-									}}</span></span
+		<UiTable
+			:columns="columns"
+			:rows="sortedRows"
+			row-key="primary"
+			fixed-layout
+			manual-sort
+			:sort-by="sort.order ? 'primary' : undefined"
+			:sort-order="sort.order ?? 'asc'"
+			:active-filters="activeFilters"
+			:empty-text="emptyText"
+			@sort="changeSort"
+			@filter-change="applyFallbackFilters"
+			@remove-filter="removeFallbackFilter"
+			@clear-filters="clearFallbackFilters"
+		>
+			<template #row="{ row }">
+				<tr v-for="item in [fallbackRow(row)]" :key="item.primary" class="ui-table__row">
+					<td>
+						<span class="routing-model-card"
+							><img v-if="logo(item.primary)" :src="logo(item.primary)!" :alt="item.primary + ' logo'" /><span>{{
+								item.primary
+							}}</span></span
+						>
+					</td>
+					<td>
+						<div class="routing-fallback-row">
+							<UiHeroIcon name="ArrowRightIcon" :size="20" />
+							<div>
+								<template v-for="(name, position) in item.models" :key="name"
+									><UiHeroIcon v-if="position" name="ArrowRightIcon" :size="16" /><span class="routing-model-card"
+										><img v-if="logo(name)" :src="logo(name)!" :alt="name + ' logo'" /><span>{{ name }}</span></span
+									></template
 								>
-							</td>
-							<td>
-								<div class="routing-fallback-row">
-									<UiHeroIcon name="ArrowRightIcon" :size="20" />
-									<div>
-										<template v-for="(name, position) in row.models" :key="name"
-											><UiHeroIcon v-if="position" name="ArrowRightIcon" :size="16" /><span class="routing-model-card"
-												><img v-if="logo(name)" :src="logo(name)!" :alt="name + ' logo'" /><span>{{
-													name
-												}}</span></span
-											></template
-										>
-									</div>
-								</div>
-							</td>
-							<td>
-								<div class="routing-fallback-table-actions">
-									<UiTooltip title="Test fallback"
-										><button type="button" aria-label="Test fallback" @click="test(row.primary)">
-											<UiHeroIcon name="PlayIcon" :size="20" /></button></UiTooltip
-									><UiTooltip title="Delete fallback"
-										><button
-											type="button"
-											aria-label="Delete fallback"
-											data-testid="delete-fallback-button"
-											@click="
-												selected = row.entry;
-												deleteOpen = true;
-											"
-										>
-											<UiHeroIcon name="TrashIcon" :size="20" /></button
-									></UiTooltip>
-								</div>
-							</td>
-						</tr>
-						<tr v-if="!sortedRows.length">
-							<td colspan="3" class="routing-no-fallbacks">{{ emptyText }}</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-		</template>
+							</div>
+						</div>
+					</td>
+					<td class="ui-table__cell--sticky-right">
+						<div class="routing-fallback-table-actions">
+							<UiTooltip title="Test fallback"
+								><button type="button" aria-label="Test fallback" @click="test(item.primary)">
+									<UiHeroIcon name="PlayIcon" :size="20" /></button></UiTooltip
+							><UiTooltip title="Delete fallback"
+								><button
+									type="button"
+									aria-label="Delete fallback"
+									data-testid="delete-fallback-button"
+									@click="
+										selected = item.entry;
+										deleteOpen = true;
+									"
+								>
+									<UiHeroIcon name="TrashIcon" :size="20" /></button
+							></UiTooltip>
+						</div>
+					</td>
+				</tr>
+			</template>
+		</UiTable>
 		<FallbackAddDialog v-model:open="addOpen" :pending="saving" @save="save" />
 		<DeleteResourceDialog
 			v-model:open="deleteOpen"

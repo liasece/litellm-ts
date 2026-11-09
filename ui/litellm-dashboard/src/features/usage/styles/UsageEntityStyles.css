@@ -54,11 +54,6 @@
 	color: #6b7280;
 }
 
-.usage-entity-breakdown-table {
-	height: 208px;
-	overflow-y: auto;
-}
-
 .usage-spend-per-entity {
 	display: flex;
 	flex-direction: column;

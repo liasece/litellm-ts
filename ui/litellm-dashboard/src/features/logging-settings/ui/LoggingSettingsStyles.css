@@ -35,75 +35,22 @@
 .logging-callbacks-heading h4 {
 	margin-bottom: 10px;
 }
-.logging-callbacks-empty {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	padding: 32px;
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-	background: #f9fafb;
-	text-align: center;
-}
-.logging-callbacks-empty h3 {
-	font: 500 18px/28px var(--ui-font-antd);
-	color: #374151;
-	margin-bottom: 8px;
-}
-.logging-callbacks-empty p {
-	color: #6b7280;
-}
-.logging-callbacks-table {
-	overflow: auto;
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-}
-.logging-callbacks-table table {
-	width: 100%;
-	border-collapse: collapse;
-	text-align: left;
-	font: 14px/22px var(--ui-font-antd);
-}
-.logging-callbacks-table th,
-.logging-callbacks-table td {
-	padding: 16px;
-	border-bottom: 1px solid #f0f0f0;
-}
-.logging-callbacks-table th {
-	background: #fafafa;
-	font-weight: 500;
-	color: #374151;
-}
-.logging-callbacks-table th + th {
-	width: 240px;
-}
-.logging-callbacks-table th:last-child {
-	text-align: right;
-}
-.logging-callbacks-table td:first-child {
-	font-weight: 500;
-	color: #1f2937;
-}
-.logging-callbacks-table tbody tr:hover {
-	background: #f9fafb;
-}
-.logging-callbacks-table td:last-child > div {
+.logging-callback-actions {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
 }
-.logging-callbacks-table td:last-child button {
-	padding: 6px;
-	color: #6b7280;
+.logging-callback-actions button {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
+	padding: 6px;
+	color: #6b7280;
 }
-.logging-callbacks-table td:last-child button:hover {
+.logging-callback-actions button:hover {
 	color: #2563eb;
 }
-.logging-callbacks-table td:last-child .ui-popover-anchor:last-child button:hover {
+.logging-callback-actions .ui-popover-anchor:last-child button:hover {
 	color: #dc2626;
 }
 .logging-callback-mode {
@@ -348,18 +295,4 @@
 	.logging-settings-page > div {
 		padding: 16px;
 	}
-}
-
-.logging-callbacks-heading-cell {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-}
-.logging-callbacks-table > .ui-active-filters {
-	padding-top: 0;
-}
-.logging-callbacks-empty-row {
-	text-align: center;
-	color: #6b7280;
 }

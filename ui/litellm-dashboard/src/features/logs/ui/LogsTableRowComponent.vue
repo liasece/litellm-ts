@@ -6,7 +6,7 @@ defineProps<{ log: LogEntry; columns: readonly LogsColumn[]; live: boolean }>();
 defineEmits<{ select: [log: LogEntry]; key: [hash: string]; session: [group: SessionGroupRef] }>();
 </script>
 <template>
-	<tr @click="$emit('select', log)">
+	<tr class="ui-table__row ui-table__row--clickable" @click="$emit('select', log)">
 		<td v-for="column in columns" :key="column.id" :style="{ width: column.width + 'px' }">
 			<LogsTableCellComponent
 				:log="log"
