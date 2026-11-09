@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import ModelMappingHelp from "../../src/features/models/ui/ModelMappingHelpComponent.vue";
-import PassThroughPreview from "../../src/features/models/ui/PassThroughPreviewComponent.vue";
-import "../../src/features/models/ui/ModelPassThroughStyles.css";
 import ModelActions from "../../src/features/models/ui/ModelActionsDialogComponent.vue";
 import { normalizeModelDetails } from "../../src/features/models/logic/ModelDataLogic";
 import { emptyModelCatalog } from "../../src/features/models/support/ModelModels";
@@ -28,7 +26,6 @@ const changed = ref(0);
 		@close="mode = null"
 		@changed="changed++"
 	/>
-	<PassThroughPreview path="/research" target="https://api.example.test/research" :include-subpath="true" />
 	<div class="model-mapping-heading" style="margin: 24px">Public model naming<ModelMappingHelp kind="public" /></div>
 	<NotificationLayer />
 </template>

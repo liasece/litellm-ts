@@ -96,8 +96,6 @@ export interface ProviderMetadata {
 export interface ModelCatalog {
 	costs: Record<string, Record<string, unknown>>;
 	credentials: ModelCredential[];
-	guardrails: UiSelectOption[];
-	tags: UiSelectOption[];
 	models: string[];
 	accessGroups: string[];
 	uiSettings: Record<string, unknown>;
@@ -106,7 +104,6 @@ export interface ModelCatalog {
 	providerFields: ProviderMetadata[];
 	providerError?: string;
 	teams: import("../../virtual-keys/support/VirtualKeyModels").KeyTeam[];
-	vectorStores: UiSelectOption[];
 }
 export const modelRecord = (value: unknown): Record<string, unknown> =>
 	value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -122,8 +119,6 @@ export function emptyModelCatalog(): ModelCatalog {
 	return {
 		costs: {},
 		credentials: [],
-		guardrails: [],
-		tags: [],
 		models: [],
 		accessGroups: [],
 		uiSettings: {},
@@ -131,6 +126,5 @@ export function emptyModelCatalog(): ModelCatalog {
 		router: {},
 		providerFields: [],
 		teams: [],
-		vectorStores: [],
 	};
 }

@@ -28,7 +28,6 @@ export function createModelEditDraft(model: ProxyModel): ModelEditDraft {
 		enabled_builtin_capabilities: modelStrings(info.enabled_builtin_capabilities),
 		guardrails: modelStrings(params.guardrails),
 		vector_store_ids: modelStrings(params.vector_store_ids),
-		tags: modelStrings(params.tags),
 		health_check_model: modelString(params.model).includes("*") ? info.health_check_model : undefined,
 		litellm_credential_name: params.litellm_credential_name || "",
 		api_key: params.api_key ?? "",
@@ -64,7 +63,6 @@ export function prepareModelUpdate(values: ModelEditDraft, current: ProxyModel):
 		stream_timeout: values.stream_timeout,
 		input_cost_per_token: Number(values.input_cost) / 1_000_000,
 		output_cost_per_token: Number(values.output_cost) / 1_000_000,
-		tags: values.tags,
 	};
 	const credential = modelString(values.litellm_credential_name),
 		replacement = typeof values.api_key === "string" ? values.api_key.trim() : "";

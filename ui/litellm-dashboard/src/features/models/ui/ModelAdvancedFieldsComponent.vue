@@ -8,7 +8,7 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
 import type { ModelCreateDraft } from "../logic/ModelCreateLogic";
-import { modelInput, modelString, modelStrings, modelRecord, type ModelCatalog } from "../support/ModelModels";
+import { modelInput, modelString, modelRecord, type ModelCatalog } from "../support/ModelModels";
 const values = defineModel<ModelCreateDraft>({ required: true });
 defineProps<{ catalog: ModelCatalog; errors: Record<string, string>; prefix: string }>();
 const extraPlaceholder = '{ "rpm": 100, "timeout": 0, "stream_timeout": 0 }';
@@ -50,50 +50,6 @@ function remove(index: number) {
 					class="model-custom-pricing-toggle"
 					@update:model-value="values.custom_pricing = $event"
 			/></ModelField>
-			<ModelField
-				label="Attached Knowledge Bases (RAG)"
-				tooltip-icon="InfoCircleOutlined"
-				tooltip-href="https://docs.litellm.ai/docs/completion/knowledgebase"
-				:id="prefix + '-vector'"
-				tooltip="Vector stores to use for RAG. Every request to this model will automatically retrieve context from these knowledge bases."
-				help="Select vector stores to attach. Requests to this model will automatically use these for RAG. Set up vector stores in Tools > Vector Stores."
-				><UiSelect
-					:id="prefix + '-vector'"
-					:model-value="modelStrings(values.vector_store_ids)"
-					:options="catalog.vectorStores"
-					multiple
-					searchable
-					placeholder="Select knowledge bases (optional)"
-					@update:model-value="values.vector_store_ids = $event"
-			/></ModelField>
-			<ModelField
-				label="Guardrails"
-				tooltip-icon="InfoCircleOutlined"
-				tooltip-href="https://docs.litellm.ai/docs/proxy/guardrails/quick_start"
-				:id="prefix + '-guardrails'"
-				tooltip="Apply safety guardrails to this key to filter content or enforce policies"
-				help="Select existing guardrails. Go to 'Guardrails' tab to create new guardrails."
-				><UiSelect
-					:id="prefix + '-guardrails'"
-					:model-value="modelStrings(values.guardrails)"
-					:options="catalog.guardrails"
-					multiple
-					searchable
-					creatable
-					placeholder="Select or enter guardrails"
-					@update:model-value="values.guardrails = $event"
-			/></ModelField>
-			<ModelField label="Tags" :id="prefix + '-tags'" class="model-field--mb16"
-				><UiSelect
-					:id="prefix + '-tags'"
-					:model-value="modelStrings(values.tags)"
-					:options="catalog.tags"
-					multiple
-					searchable
-					creatable
-					placeholder="Select or enter tags"
-					@update:model-value="values.tags = $event"
-			/></ModelField>
 			<div v-if="customPricing" class="model-indented-fields">
 				<ModelField label="Pricing Model" :id="prefix + '-pricing-mode'" class="model-field--mb16"
 					><UiSelect
@@ -133,16 +89,6 @@ function remove(index: number) {
 						@update:model-value="values.input_cost_per_second = $event"
 				/></ModelField>
 			</div>
-			<ModelField
-				label="Use in pass through routes"
-				:id="prefix + '-pass-through'"
-				tooltip="Allow using these credentials in pass through routes."
-				class="model-field--mb16"
-				><UiSwitch
-					:id="prefix + '-pass-through'"
-					:model-value="Boolean(values.use_in_pass_through)"
-					@update:model-value="values.use_in_pass_through = $event"
-			/></ModelField>
 			<ModelField
 				label="Cache Control Injection Points"
 				:id="prefix + '-cache'"

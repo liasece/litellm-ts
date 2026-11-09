@@ -17,14 +17,7 @@ import ModelField from "./ModelFormFieldComponent.vue";
 import { modelsApi } from "../api/ModelsApi";
 import { normalizeModelDetails, modelDisplayName } from "../logic/ModelDataLogic";
 import { createModelEditDraft } from "../logic/ModelEditLogic";
-import {
-	modelRecord,
-	modelString,
-	type ModelCatalog,
-	type DisplayProxyModel,
-	type ModelCredential,
-	type ProxyModel,
-} from "../support/ModelModels";
+import { type ModelCatalog, type DisplayProxyModel, type ModelCredential, type ProxyModel } from "../support/ModelModels";
 import notification from "../../notifications/logic/NotificationManager";
 const props = defineProps<{ modelId: string; catalog: ModelCatalog; role: string; userId: string }>();
 const emit = defineEmits<{ close: []; updated: [model: DisplayProxyModel | null] }>();
@@ -122,30 +115,6 @@ async function remove() {
 		deleteOpen.value = false;
 	}
 }
-async function test() {
-	const value = model.value;
-	if (!value) return;
-	notification.info("Testing connection...");
-	try {
-		const response = modelRecord(
-			await modelsApi.testModelConnection(
-				{
-					custom_llm_provider: value.litellm_params.custom_llm_provider,
-					litellm_credential_name: value.litellm_params.litellm_credential_name,
-					model: value.litellm_model_name,
-				},
-				{ mode: value.model_info.mode },
-				modelString(value.model_info.mode) || undefined,
-			),
-		);
-		if (response.status !== "success")
-			throw new Error(modelString(modelRecord(response.result).error) || modelString(response.message) || "Unknown error");
-		notification.success("Connection test successful!");
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		notification.error("Error testing connection: " + (message.length > 100 ? message.slice(0, 100) + "..." : message));
-	}
-}
 async function reuse() {
 	if (!model.value || !credential.value || usingCredential.value) return;
 	const name = credentialName.value.trim();
@@ -208,9 +177,7 @@ onBeforeUnmount(() => {
 					</div>
 				</div>
 				<div class="model-details-actions">
-					<UiButton appearance="tremor" class="model-detail-test" data-testid="test-connection-button" @click="test"
-						><template #icon><UiHeroIcon name="RefreshIcon" /></template>Test Connection</UiButton
-					><UiButton
+					<UiButton
 						appearance="tremor"
 						data-testid="reuse-credentials-button"
 						:disabled="role !== 'Admin'"

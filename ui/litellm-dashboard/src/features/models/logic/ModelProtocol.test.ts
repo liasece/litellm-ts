@@ -5,7 +5,6 @@ import { createCredentialPayload, updateCredentialPayload } from "./CredentialPa
 import { createAutoRouter } from "./AutoRouterLogic";
 import { resolveAliasPath } from "./AliasResolutionLogic";
 import { transformModels } from "./ModelDataLogic";
-import { createPassThroughDraft, passThroughPayload } from "../support/PassThroughModels";
 import type { ProxyModel, ModelCredential } from "../support/ModelModels";
 const current: ProxyModel = {
 	model_name: "research",
@@ -186,28 +185,6 @@ describe("Models protocol contracts", () => {
 			reachable: false,
 			error: "Alias cycle: cycleA → cycleB → cycleA",
 		});
-	});
-	it("keeps passthrough update authentication premium-scoped and omits empty method/guardrail overrides", () => {
-		const draft = createPassThroughDraft({
-			id: "endpoint-1",
-			path: "/research",
-			target: "https://api.example.test",
-			headers: { "X-Test": "synthetic" },
-			include_subpath: true,
-			auth: true,
-			methods: ["POST"],
-		});
-		draft.methods = [];
-		draft.guardrails = {};
-		const value = JSON.parse(JSON.stringify(passThroughPayload(draft, false, true)));
-		expect(value).toEqual({
-			path: "/research",
-			target: "https://api.example.test",
-			headers: { "X-Test": "synthetic" },
-			include_subpath: true,
-		});
-		draft.headersText = "{ invalid";
-		expect(() => passThroughPayload(draft, true, true)).toThrow("Invalid JSON format for headers");
 	});
 	it("retains zero model prices when transforming display data", () => {
 		const [model] = transformModels(

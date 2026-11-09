@@ -64,34 +64,6 @@ const knownModels = computed(() =>
 				.map(([name]) => name)
 				.sort(),
 );
-const policyFields = computed(() => [
-	{
-		key: "guardrails",
-		label: "Guardrails",
-		empty: "No guardrails assigned",
-		options: props.catalog.guardrails,
-		color: "green",
-		placeholder: "Select existing guardrails or type to create new ones",
-		tooltip: "Apply safety guardrails to this model to filter content or enforce policies",
-	},
-	{
-		key: "vector_store_ids",
-		label: "Attached Knowledge Bases (RAG)",
-		empty: "No knowledge bases attached",
-		options: props.catalog.vectorStores,
-		color: "blue",
-		placeholder: "Select knowledge bases (optional)",
-		tooltip: "Vector stores used for RAG. Every request to this model will automatically retrieve context from these knowledge bases.",
-	},
-	{
-		key: "tags",
-		label: "Tags",
-		empty: "No tags assigned",
-		options: props.catalog.tags,
-		color: "purple",
-		placeholder: "Select existing tags or type to create new ones",
-	},
-]);
 const wildcards = computed(() =>
 	props.catalog.hub
 		.filter(
@@ -232,24 +204,6 @@ watch(
 				:value="info.access_groups"
 				empty-label="No groups assigned"
 				color="blue"
-		/></ModelSettingCell>
-		<ModelSettingCell v-for="field in policyFields" :key="field.key" :label="field.label" :tooltip="field.tooltip"
-			><UiSelect
-				v-if="editing"
-				:model-value="modelStrings(draft[field.key])"
-				:options="field.options"
-				:max-tag-count="field.key !== 'vector_store_ids' ? 'responsive' : undefined"
-				multiple
-				searchable
-				:creatable="field.key !== 'vector_store_ids'"
-				:token-separators="field.key !== 'vector_store_ids' ? [','] : undefined"
-				clearable
-				:placeholder="field.placeholder"
-				@update:model-value="draft[field.key] = $event" /><ModelValueList
-				v-else
-				:value="params[field.key]"
-				:empty-label="field.empty"
-				:color="field.color"
 		/></ModelSettingCell>
 		<ModelSettingCell v-if="editing && provider === 'cliproxy'" label="Credentials"
 			><div class="model-managed-credential-notice">

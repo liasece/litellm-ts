@@ -8,7 +8,6 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
 import ModelComplexityTiers from "./ModelComplexityTiersComponent.vue";
 import ModelSemanticRoutes from "./ModelSemanticRoutesComponent.vue";
-import ModelConnectionTestDialog from "./ModelConnectionTestDialogComponent.vue";
 import { nextUiIdentity } from "../../platform/ui/UiIdentity";
 import { createAutoRouter, type ComplexityTiers, type SemanticRoute } from "../logic/AutoRouterLogic";
 import type { ModelCreateDraft } from "../logic/ModelCreateLogic";
@@ -21,9 +20,7 @@ const values = ref<ModelCreateDraft>({}),
 	type = ref<"complexity" | "semantic">("complexity"),
 	tiers = ref<ComplexityTiers>({ SIMPLE: "", MEDIUM: "", COMPLEX: "", REASONING: "" }),
 	routes = ref<SemanticRoute[]>([]),
-	pending = ref(false),
-	testOpen = ref(false),
-	testing = ref(false);
+	pending = ref(false);
 const prefix = nextUiIdentity("auto-router");
 const models = computed(() => [...new Set(props.catalog.hub.map((model) => modelString(model.model_group)).filter(Boolean))].sort());
 async function submit() {
@@ -142,22 +139,10 @@ async function submit() {
 				<div class="model-form-footer">
 					<a href="https://github.com/BerriAI/litellm/issues" target="_blank" rel="noreferrer">Need Help?</a>
 					<div>
-						<UiButton
-							:loading="testing"
-							@click="
-								testing = true;
-								testOpen = true;
-							"
-							>Test Connection</UiButton
-						><UiButton variant="primary" :loading="pending" @click="submit">Add Auto Router</UiButton>
+						<UiButton variant="primary" :loading="pending" @click="submit">Add Auto Router</UiButton>
 					</div>
 				</div>
 			</form></UiCard
-		><ModelConnectionTestDialog
-			v-model:open="testOpen"
-			:values="values"
-			:model-name="modelString(values.auto_router_name)"
-			@complete="testing = false"
-		/>
+		>
 	</div>
 </template>

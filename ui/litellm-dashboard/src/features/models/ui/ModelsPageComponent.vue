@@ -8,7 +8,6 @@ import { useAuthenticationStore } from "../../identity/stores/AuthenticationStor
 import ModelList from "./ModelListComponent.vue";
 import ModelAdd from "./ModelAddComponent.vue";
 import ModelCredentials from "./ModelCredentialsComponent.vue";
-import PassThroughEndpoints from "./PassThroughEndpointsComponent.vue";
 import ModelHealth from "./ModelHealthComponent.vue";
 import ModelRetrySettings from "./ModelRetrySettingsComponent.vue";
 import ModelAliases from "./ModelAliasesComponent.vue";
@@ -24,7 +23,6 @@ import { transformModels } from "../logic/ModelDataLogic";
 import "./ModelsStyles.css";
 import "./ModelFormsStyles.css";
 import "./ModelDetailsStyles.css";
-import "./ModelPassThroughStyles.css";
 import "./ModelOperationsStyles.css";
 const auth = useAuthenticationStore(),
 	route = useRoute(),
@@ -60,7 +58,6 @@ const tabs = computed(() => [
 	...(admin.value
 		? [
 				{ key: "credentials", label: "LLM Credentials" },
-				{ key: "pass-through", label: "Pass-Through Endpoints" },
 				{ key: "health", label: "Health Status" },
 				{ key: "retries", label: "Model Retry Settings" },
 				{ key: "aliases", label: "Model Group Alias" },
@@ -159,12 +156,6 @@ onBeforeUnmount(() => {
 					@created="refresh"
 				/>
 				<ModelCredentials v-if="tab === 'credentials' && ready" :catalog="catalog" @changed="credentials" />
-				<PassThroughEndpoints
-					v-if="tab === 'pass-through' && ready"
-					:catalog="catalog"
-					:admin="role === 'Admin' || role === 'admin'"
-					:premium="premium"
-				/>
 				<ModelHealth
 					v-if="tab === 'health' && ready"
 					:models="processed"

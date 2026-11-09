@@ -10,7 +10,6 @@ import ModelField from "./ModelFormFieldComponent.vue";
 import ModelCreateFields from "./ModelCreateFieldsComponent.vue";
 import ModelProviderFields from "./ModelProviderFieldsComponent.vue";
 import ModelAdvancedFields from "./ModelAdvancedFieldsComponent.vue";
-import ModelConnectionTestDialog from "./ModelConnectionTestDialogComponent.vue";
 import { nextUiIdentity } from "../../platform/ui/UiIdentity";
 import { prepareModelCreate, validateModelCreate, type ModelCreateDraft } from "../logic/ModelCreateLogic";
 import { modelString, modelStrings, modelOptions, type ModelCatalog } from "../support/ModelModels";
@@ -22,9 +21,7 @@ const values = ref<ModelCreateDraft>({ litellm_credential_name: null }),
 	provider = ref("Anthropic"),
 	teamOnly = ref(false),
 	errors = ref<Record<string, string>>({}),
-	pending = ref(false),
-	testOpen = ref(false),
-	testing = ref(false);
+	pending = ref(false);
 const prefix = nextUiIdentity("model-create");
 const teamRequired = computed(() => props.teamAdmin && !props.admin),
 	managed = computed(() => provider.value === "CLIProxy");
@@ -49,10 +46,6 @@ async function submit() {
 	} finally {
 		pending.value = false;
 	}
-}
-function test() {
-	testing.value = true;
-	testOpen.value = true;
 }
 </script>
 <template>
@@ -164,16 +157,10 @@ function test() {
 						><a href="https://github.com/BerriAI/litellm/issues" target="_blank" rel="noreferrer">Need Help?</a></UiTooltip
 					>
 					<div>
-						<UiButton :loading="testing" @click="test">Test Connect</UiButton
-						><UiButton type="submit" :loading="pending">Add Model</UiButton>
+						<UiButton type="submit" :loading="pending">Add Model</UiButton>
 					</div>
 				</div>
 			</form></UiCard
-		><ModelConnectionTestDialog
-			v-model:open="testOpen"
-			:values="values"
-			:model-name="modelString(values.model_name) || modelString(values.model) || 'this model'"
-			@complete="testing = false"
-		/>
+		>
 	</div>
 </template>

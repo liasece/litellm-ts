@@ -1,6 +1,6 @@
 import { requestJson } from "../../platform/api/HttpApiClient";
 import { modelsApi } from "../api/ModelsApi";
-import { emptyModelCatalog, modelRecord, modelString, type ModelCatalog, type ProviderMetadata } from "../support/ModelModels";
+import { emptyModelCatalog, modelRecord, type ModelCatalog, type ProviderMetadata } from "../support/ModelModels";
 import type { KeyTeam } from "../../virtual-keys/support/VirtualKeyModels";
 let providerCache: { at: number; value: ProviderMetadata[] } | null = null;
 export async function loadProviderFields(): Promise<ProviderMetadata[]> {
@@ -15,20 +15,7 @@ function records(value: unknown, key: string): Record<string, unknown>[] {
 }
 export async function loadModelCatalog(): Promise<ModelCatalog> {
 	const result = emptyModelCatalog();
-	const keys = [
-		"costs",
-		"credentials",
-		"models",
-		"accessGroups",
-		"hub",
-		"router",
-		"providerFields",
-		"uiSettings",
-		"teams",
-		"guardrails",
-		"tags",
-		"vectorStores",
-	] as const;
+	const keys = ["costs", "credentials", "models", "accessGroups", "hub", "router", "providerFields", "uiSettings", "teams"] as const;
 	const loaded = await Promise.allSettled([
 		modelsApi.fetchModelCosts(),
 		modelsApi.fetchCredentials(),
@@ -39,9 +26,6 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
 		loadProviderFields(),
 		requestJson("/get/ui_settings"),
 		requestJson("/team/list"),
-		requestJson("/v2/guardrails/list"),
-		requestJson("/tag/list"),
-		requestJson("/vector_store/list"),
 	]);
 	for (let index = 0; index < loaded.length; index++) {
 		const outcome = loaded[index],
@@ -61,17 +45,6 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
 		else if (key === "teams") result.teams = records(value, "teams").filter((team) => typeof team.team_id === "string") as KeyTeam[];
 		else if (key === "hub") result.hub = records(value, "data");
 		else if (key === "router") result.router = modelRecord(modelRecord(value).router_settings);
-		else if (key === "guardrails")
-			result.guardrails = records(value, "guardrails")
-				.filter((item) => item.guardrail_name)
-				.map((item) => ({ value: modelString(item.guardrail_name), label: modelString(item.guardrail_name) }));
-		else if (key === "tags")
-			result.tags = records(value, "tags").map((item) => ({ value: modelString(item.name), label: modelString(item.name) }));
-		else if (key === "vectorStores")
-			result.vectorStores = records(value, "data").map((item) => ({
-				value: modelString(item.vector_store_id),
-				label: modelString(item.vector_store_name) + " (" + modelString(item.vector_store_id) + ")",
-			}));
 	}
 	return result;
 }

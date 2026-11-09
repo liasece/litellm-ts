@@ -126,12 +126,6 @@ export function fetchLatestHealth(): Promise<Record<string, unknown>> {
 export function checkModelHealth(id?: string): Promise<ModelHealthResponse> {
 	return requestJson("/health" + (id ? "?model_id=" + encodeURIComponent(id) : ""), {}, (payload) => healthSchema.parse(payload));
 }
-export function testModelConnection(params: Record<string, unknown>, info: Record<string, unknown>, mode?: string): Promise<unknown> {
-	return requestJson("/health/test_connection", {
-		method: "POST",
-		body: JSON.stringify({ litellm_params: params, model_info: info, mode }),
-	});
-}
 export function fetchGeneralSettings(): Promise<Record<string, unknown>[]> {
 	return requestJson("/config/list?config_type=general_settings", {}, (payload) => z.array(recordSchema).parse(payload));
 }
@@ -237,7 +231,6 @@ export const modelsApi = {
 	saveModelConfiguration,
 	fetchLatestHealth,
 	checkModelHealth,
-	testModelConnection,
 	fetchGeneralSettings,
 	saveModelStorage,
 };
