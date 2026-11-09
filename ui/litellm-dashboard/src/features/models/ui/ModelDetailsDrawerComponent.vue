@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiDrawer from "../../platform/ui/UiDrawer.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
@@ -87,7 +88,7 @@ watch(
 );
 async function copy() {
 	try {
-		await navigator.clipboard.writeText(props.modelId);
+		await copyText(props.modelId);
 		copied.value = true;
 		if (copyTimer) clearTimeout(copyTimer);
 		copyTimer = setTimeout(() => (copied.value = false), 2000);

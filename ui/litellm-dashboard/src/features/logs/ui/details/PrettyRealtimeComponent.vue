@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { copyText } from "../../../content/logic/ClipboardLogic";
 import { asRecord } from "../../logic/PrettyMessagesBlocksLogic";
 import { recordArray, realtimeTranscripts, tokenLabel } from "../../logic/PrettyMessagesRealtimeLogic";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
@@ -41,7 +42,7 @@ function tokenEntries(value: unknown) {
 	return Object.entries(asRecord(value) ?? {}).filter(([, item]) => typeof item === "number");
 }
 function copy() {
-	void navigator.clipboard.writeText(realtimeTranscripts(responses.value));
+	void copyText(realtimeTranscripts(responses.value)).catch(() => undefined);
 }
 </script>
 <template>

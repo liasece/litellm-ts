@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
@@ -47,8 +48,8 @@ function sort(key: string) {
 	if (props.sortOrder === first) emit("sort", key, first === "asc" ? "desc" : "asc");
 	else emit("sort", "created_at", "desc");
 }
-async function copy(id: string) {
-	await navigator.clipboard.writeText(id);
+function copy(id: string) {
+	void copyText(id).catch(() => undefined);
 }
 </script>
 <template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
@@ -12,7 +13,11 @@ const copied = ref<Record<string, boolean>>({}),
 	timers = new Set<ReturnType<typeof setTimeout>>();
 async function copy(text: string | undefined, key: string) {
 	if (!text) return;
-	await navigator.clipboard.writeText(text);
+	try {
+		await copyText(text);
+	} catch {
+		return;
+	}
 	copied.value[key] = true;
 	const timer = setTimeout(() => {
 		copied.value[key] = false;

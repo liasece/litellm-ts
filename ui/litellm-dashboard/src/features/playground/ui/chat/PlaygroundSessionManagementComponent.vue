@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { copyText } from "../../../content/logic/ClipboardLogic";
 import type { PlaygroundHistoryStore } from "../../stores/PlaygroundHistoryStore";
 import { notify } from "../../logic/PlaygroundValueLogic";
 import UiSwitch from "../../../platform/ui/UiSwitch.vue";
@@ -23,8 +24,12 @@ const sessionExample = computed(() =>
 
 async function copy() {
 	if (!props.history.state.responseId) return;
-	await navigator.clipboard.writeText(props.history.state.responseId);
-	notify("success", "Response ID copied to clipboard!");
+	try {
+		await copyText(props.history.state.responseId);
+		notify("success", "Response ID copied to clipboard!");
+	} catch {
+		// copyText 已提示失败。
+	}
 }
 </script>
 <template>

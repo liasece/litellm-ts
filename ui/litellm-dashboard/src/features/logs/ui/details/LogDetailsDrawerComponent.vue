@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { copyText } from "../../../content/logic/ClipboardLogic";
 import type { LogEntry, SessionGroupRef } from "../../support/LogsModels";
 import type { SessionTimelineEvent } from "../../support/SessionTimelineModels";
 import { createLogDetailsStore } from "../../stores/LogDetailsStore";
@@ -77,7 +78,7 @@ const copied = ref(false);
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
 async function copyId() {
 	try {
-		await navigator.clipboard.writeText(leftId.value);
+		await copyText(leftId.value);
 		copied.value = true;
 		if (copyTimer) clearTimeout(copyTimer);
 		copyTimer = setTimeout(() => (copied.value = false), 1200);

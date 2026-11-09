@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
@@ -41,7 +42,7 @@ function save() {
 	void store.save(draft.value);
 }
 async function copyId() {
-	if (data.value) await navigator.clipboard.writeText(data.value.organization_id).catch(() => undefined);
+	if (data.value) await copyText(data.value.organization_id).catch(() => undefined);
 }
 onMounted(() => void store.refresh());
 onBeforeUnmount(store.dispose);

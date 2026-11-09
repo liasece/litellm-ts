@@ -33,7 +33,11 @@ function escape(event: KeyboardEvent): void {
 }
 async function copyUserId(): Promise<void> {
 	if (!session.value?.user_id) return;
-	await copyText(session.value.user_id);
+	try {
+		await copyText(session.value.user_id);
+	} catch {
+		return;
+	}
 	copied.value = true;
 	clearTimeout(copiedTimer);
 	copiedTimer = setTimeout(() => {

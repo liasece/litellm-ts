@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 const props = defineProps<{ value: string }>();
 const copied = ref(false);
 let timer: ReturnType<typeof setTimeout> | null = null;
 async function copy() {
-	await navigator.clipboard.writeText(props.value);
+	try {
+		await copyText(props.value);
+	} catch {
+		return;
+	}
 	copied.value = true;
 	if (timer) clearTimeout(timer);
 	timer = setTimeout(() => {

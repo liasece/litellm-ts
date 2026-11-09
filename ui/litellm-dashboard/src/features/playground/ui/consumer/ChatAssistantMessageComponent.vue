@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from "vue";
+import { copyText } from "../../../content/logic/ClipboardLogic";
 import type { ChatMessage } from "../../support/ChatModels";
 import MarkdownContent from "../../../content/ui/MarkdownContent.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
@@ -12,7 +13,7 @@ const props = defineProps<{ message: ChatMessage; last: boolean; streaming: bool
 let timer: ReturnType<typeof setTimeout> | undefined;
 async function copy() {
 	try {
-		await navigator.clipboard.writeText(text.value);
+		await copyText(text.value);
 		copied.value = true;
 		if (timer) clearTimeout(timer);
 		timer = setTimeout(() => (copied.value = false), 2000);

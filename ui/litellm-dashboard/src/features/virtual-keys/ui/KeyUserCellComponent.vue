@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiPopover from "../../platform/ui/UiPopover.vue";
 const props = defineProps<{ userId?: string | null; userAlias?: string | null; userEmail?: string | null }>();
-async function copy(value: string) {
-	await navigator.clipboard.writeText(value);
+function copy(value: string) {
+	void copyText(value).catch(() => undefined);
 }
 </script>
 <template>

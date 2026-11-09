@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
@@ -82,7 +83,7 @@ function select(model: DisplayProxyModel) {
 	if (id) emit("select", id);
 }
 function copy(value: string) {
-	void navigator.clipboard.writeText(value);
+	void copyText(value).catch(() => undefined);
 }
 async function all() {
 	await props.health.all();

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import "../styles/AccessStyles.css";
 import UiDrawer from "../../platform/ui/UiDrawer.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
@@ -43,7 +44,11 @@ function add() {
 	state.memberOpen = true;
 }
 async function copy() {
-	await navigator.clipboard.writeText(props.teamId);
+	try {
+		await copyText(props.teamId);
+	} catch {
+		return;
+	}
 	copied.value = true;
 	setTimeout(() => {
 		copied.value = false;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
@@ -183,7 +184,7 @@ function remove(name: string) {
 	void save(Object.fromEntries(Object.entries(aliases.value).filter(([key]) => key !== name)));
 }
 function copy(name: string) {
-	void navigator.clipboard.writeText(name);
+	void copyText(name).catch(() => undefined);
 }
 function tick() {
 	if (timer) clearTimeout(timer);

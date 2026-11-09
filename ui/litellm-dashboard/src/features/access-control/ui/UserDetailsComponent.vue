@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiDrawer from "../../platform/ui/UiDrawer.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
@@ -34,7 +35,11 @@ const canManage = computed(() => rolesWithWriteAccess.includes(props.role)),
 	proxyAdmin = computed(() => props.role === "Admin" || props.role === "proxy_admin"),
 	availableTeams = computed(() => state.allTeams.filter((team) => !teams.value.some((current) => current.team_id === team.team_id)));
 async function copy() {
-	await navigator.clipboard.writeText(props.userId);
+	try {
+		await copyText(props.userId);
+	} catch {
+		return;
+	}
 	copied.value = true;
 	setTimeout(() => {
 		copied.value = false;

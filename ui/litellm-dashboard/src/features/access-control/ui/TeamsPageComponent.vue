@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
@@ -57,7 +58,11 @@ function org(value: AccessTeam) {
 	);
 }
 async function copy(value: AccessTeam) {
-	await navigator.clipboard.writeText(value.team_id);
+	try {
+		await copyText(value.team_id);
+	} catch {
+		return;
+	}
 	state.message = "Team ID copied";
 }
 onMounted(() => {

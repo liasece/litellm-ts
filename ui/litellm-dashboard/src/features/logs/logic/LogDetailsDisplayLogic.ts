@@ -1,4 +1,5 @@
 import type { LogEntry } from "../support/LogsModels";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import { asRecord } from "./PrettyMessagesBlocksLogic";
 export function formatData(input: unknown): unknown {
 	if (typeof input === "string") {
@@ -143,6 +144,10 @@ export function eventDisplayName(log: LogEntry): string {
 	return segment.match(/claude-[a-z0-9-]+/i)?.[0] || segment || "llm_call";
 }
 export async function copyDetail(value: string, message = "Copied!") {
-	await navigator.clipboard.writeText(value);
+	try {
+		await copyText(value);
+	} catch {
+		return;
+	}
 	window.dispatchEvent(new CustomEvent("litellm-notification", { detail: { type: "success", message } }));
 }

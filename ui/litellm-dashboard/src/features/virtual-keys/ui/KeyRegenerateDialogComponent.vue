@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import notificationManager from "../../notifications/logic/NotificationManager";
+import { copyText } from "../../content/logic/ClipboardLogic";
 import { computed, ref, watch } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
@@ -65,8 +66,12 @@ async function regenerate() {
 	}
 }
 async function copy() {
-	await navigator.clipboard.writeText(secret.value);
-	notificationManager.success("Virtual Key copied to clipboard");
+	try {
+		await copyText(secret.value);
+		notificationManager.success("Virtual Key copied to clipboard");
+	} catch {
+		// copyText 已提示失败。
+	}
 }
 </script>
 <template>

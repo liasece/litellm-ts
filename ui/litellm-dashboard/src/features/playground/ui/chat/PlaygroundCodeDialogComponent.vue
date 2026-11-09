@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { copyText } from "../../../content/logic/ClipboardLogic";
 import type { PlaygroundChatStore } from "../../stores/PlaygroundChatStore";
 import { generateCodeSnippet } from "../../logic/PlaygroundCodeLogic";
 import { notify } from "../../logic/PlaygroundValueLogic";
@@ -27,8 +28,12 @@ const code = computed(() =>
 	}),
 );
 async function copy() {
-	await navigator.clipboard.writeText(code.value);
-	notify("success", "Copied to clipboard!");
+	try {
+		await copyText(code.value);
+		notify("success", "Copied to clipboard!");
+	} catch {
+		// copyText 已提示失败。
+	}
 }
 </script>
 <template>
