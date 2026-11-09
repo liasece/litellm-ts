@@ -13,8 +13,9 @@ import type { Router as ExpressRouter } from "express";
 import { ApiError } from "../core/api/ApiError";
 import { registerRoute } from "../core/api/registerRoute";
 import type { DrizzleDb } from "../core/db/Database";
-import type { CustomWord } from "../privacy/Detector";
-import { PRIVACY_KINDS, type PrivacyKind, type PrivacyKindAction } from "../privacy/PrivacyKinds";
+import type { CustomWord, PrivacyUserRule } from "../privacy/Detector";
+import { PRIVACY_SCOPE_ENTRY_MAX_COUNT, PRIVACY_SCOPE_ENTRY_MAX_LENGTH } from "../privacy/PrivacyScope";
+import { PRIVACY_KIND_NAME_PATTERN, type PrivacyKindAction } from "../privacy/PrivacyKinds";
 import {
 	DEFAULT_PRIVACY_MASKING_SETTINGS,
 	PRIVACY_MASKING_CONFIG_KEY,
@@ -83,6 +84,10 @@ function parseListFilter(query: Record<string, unknown>): PrivacyListFilter {
 		client: parseText(query["client"]),
 		provider: parseText(query["provider"]),
 		kind: parseText(query["kind"]),
+		model: parseText(query["model"]),
+		action: parseText(query["action"]),
+		sort: parseText(query["sort"]),
+		order: query["order"] === "asc" ? "asc" : "desc",
 		limit: parseBoundedInt(query["limit"], DEFAULT_LIMIT, 1, MAX_LIMIT),
 		offset: parseBoundedInt(query["offset"], 0, 0, Number.MAX_SAFE_INTEGER),
 	};
@@ -117,20 +122,20 @@ function parseAction(value: unknown): "mask" | "warn" {
  * @param value - 原始值
  * @throws {ApiError} 类型或动作非法
  */
-function parseKinds(value: unknown): Partial<Record<PrivacyKind, PrivacyKindAction>> {
+function parseKinds(value: unknown): Record<string, PrivacyKindAction> {
 	if (!isRecord(value)) {
 		throw ApiError.badRequest("kinds must be an object");
 	}
-	const result: Partial<Record<PrivacyKind, PrivacyKindAction>> = {};
+	const result: Record<string, PrivacyKindAction> = {};
 	for (const [rawKey, rawAction] of Object.entries(value)) {
-		const kind = rawKey.toUpperCase();
-		if (!(PRIVACY_KINDS as readonly string[]).includes(kind)) {
-			throw ApiError.badRequest(`Unknown privacy kind: ${rawKey}`);
+		const kind = rawKey.trim().toUpperCase();
+		if (!PRIVACY_KIND_NAME_PATTERN.test(kind)) {
+			throw ApiError.badRequest(`Invalid privacy kind: ${rawKey}`);
 		}
-		if (rawAction !== "mask" && rawAction !== "warn" && rawAction !== "off") {
+		if (rawAction !== "mask" && rawAction !== "warn" && rawAction !== "off" && rawAction !== "block") {
 			throw ApiError.badRequest(`Invalid action for ${rawKey}: ${String(rawAction)}`);
 		}
-		result[kind as PrivacyKind] = rawAction;
+		result[kind] = rawAction;
 	}
 	return result;
 }
@@ -161,8 +166,8 @@ function parseCustomWords(value: unknown): CustomWord[] {
 		if (trimmed.length < 2 || trimmed.length > 256) {
 			throw ApiError.badRequest("custom_words entries must be 2-256 characters");
 		}
-		const rawKind = typeof item["kind"] === "string" ? item["kind"].toUpperCase() : "";
-		const kind = (PRIVACY_KINDS as readonly string[]).includes(rawKind) ? (rawKind as PrivacyKind) : undefined;
+		const rawKind = typeof item["kind"] === "string" ? item["kind"].trim().toUpperCase() : "";
+		const kind = PRIVACY_KIND_NAME_PATTERN.test(rawKind) ? rawKind : undefined;
 		words.push(kind === undefined ? { value: trimmed } : { value: trimmed, kind: kind });
 		if (words.length >= 200) {
 			throw ApiError.badRequest("custom_words supports at most 200 entries");
@@ -192,6 +197,82 @@ function parseNeverMask(value: unknown): string[] {
 		result.push(trimmed);
 		if (result.length >= 200) {
 			break;
+		}
+	}
+	return result;
+}
+
+/**
+ * 解析用户规则：前缀与正则二选一，正则需要能编译。
+ * @param value - 原始值
+ * @throws {ApiError} 规则格式非法或正则无法编译
+ */
+function parseRules(value: unknown): PrivacyUserRule[] {
+	if (!Array.isArray(value)) {
+		throw ApiError.badRequest("rules must be an array");
+	}
+	const rules: PrivacyUserRule[] = [];
+	for (const item of value) {
+		if (!isRecord(item)) {
+			throw ApiError.badRequest("rules entries must be objects");
+		}
+		const kind = typeof item["kind"] === "string" ? item["kind"].trim().toUpperCase() : "";
+		if (!PRIVACY_KIND_NAME_PATTERN.test(kind)) {
+			throw ApiError.badRequest("rules[].kind must be an upper-case identifier like ORG_ID");
+		}
+		const prefix = typeof item["prefix"] === "string" ? item["prefix"].trim() : "";
+		const regex = typeof item["regex"] === "string" ? item["regex"].trim() : "";
+		if ((prefix.length === 0) === (regex.length === 0)) {
+			throw ApiError.badRequest("each rule needs exactly one of prefix or regex");
+		}
+		if (prefix.length > 64) {
+			throw ApiError.badRequest("rules[].prefix must be at most 64 characters");
+		}
+		if (regex.length > 200) {
+			throw ApiError.badRequest("rules[].regex must be at most 200 characters");
+		}
+		if (regex.length > 0) {
+			try {
+				new RegExp(regex, "gd");
+			} catch {
+				throw ApiError.badRequest(`rules[].regex does not compile: ${regex}`);
+			}
+		}
+		rules.push(prefix.length > 0 ? { kind: kind, prefix: prefix } : { kind: kind, regex: regex });
+		if (rules.length >= 50) {
+			throw ApiError.badRequest("rules supports at most 50 entries");
+		}
+	}
+	return rules;
+}
+
+/**
+ * 解析生效范围列表（提供方 / 模型）：每项 1-64 字符，最多 50 条。
+ * @param value - 原始值
+ * @param field - 字段名，用于报错
+ * @throws {ApiError} 非数组或条目非法
+ */
+function parseScopeList(value: unknown, field: string): string[] {
+	if (!Array.isArray(value)) {
+		throw ApiError.badRequest(`${field} must be an array`);
+	}
+	const result: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "string") {
+			throw ApiError.badRequest(`${field} entries must be strings`);
+		}
+		const trimmed = item.trim();
+		if (trimmed.length === 0) {
+			throw ApiError.badRequest(`${field} entries must not be empty`);
+		}
+		if (trimmed.length > PRIVACY_SCOPE_ENTRY_MAX_LENGTH) {
+			throw ApiError.badRequest(`${field} entries must be at most ${PRIVACY_SCOPE_ENTRY_MAX_LENGTH} characters`);
+		}
+		if (!result.includes(trimmed)) {
+			result.push(trimmed);
+		}
+		if (result.length > PRIVACY_SCOPE_ENTRY_MAX_COUNT) {
+			throw ApiError.badRequest(`${field} supports at most ${PRIVACY_SCOPE_ENTRY_MAX_COUNT} entries`);
 		}
 	}
 	return result;
@@ -231,6 +312,21 @@ function buildSettingsPatch(body: Record<string, unknown>): Record<string, unkno
 		}
 		patch["fail_closed"] = body["fail_closed"];
 	}
+	if (body["rules"] !== undefined) {
+		patch["rules"] = parseRules(body["rules"]);
+	}
+	if (body["shape"] !== undefined) {
+		if (typeof body["shape"] !== "boolean") {
+			throw ApiError.badRequest("shape must be a boolean");
+		}
+		patch["shape"] = body["shape"];
+	}
+	if (body["providers"] !== undefined) {
+		patch["providers"] = parseScopeList(body["providers"], "providers");
+	}
+	if (body["models"] !== undefined) {
+		patch["models"] = parseScopeList(body["models"], "models");
+	}
 	if (body["retention_days"] !== undefined) {
 		const days = Number(body["retention_days"]);
 		if (!Number.isFinite(days) || days < 1 || days > 365) {
@@ -255,6 +351,10 @@ function serializeSettings(settings: ReturnType<typeof parsePrivacyMaskingSettin
 		mask_configured_secrets: settings.maskConfiguredSecrets,
 		fail_closed: settings.failClosed,
 		retention_days: settings.retentionDays,
+		rules: settings.rules,
+		shape: settings.shape,
+		providers: settings.providers,
+		models: settings.models,
 	};
 }
 
@@ -300,7 +400,9 @@ export function registerPrivacyRoutes(router: ExpressRouter, db: DrizzleDb): voi
 		const body = isRecord(req.body) ? req.body : {};
 		const patch = buildSettingsPatch(body);
 		const existing = (await configRepository.getParam(LITELLM_SETTINGS_PARAM)) ?? {};
-		const currentRaw = isRecord(existing[PRIVACY_MASKING_CONFIG_KEY]) ? (existing[PRIVACY_MASKING_CONFIG_KEY] as Record<string, unknown>) : {};
+		const currentRaw = isRecord(existing[PRIVACY_MASKING_CONFIG_KEY])
+			? (existing[PRIVACY_MASKING_CONFIG_KEY] as Record<string, unknown>)
+			: {};
 		const nextRaw = { ...currentRaw, ...patch };
 		await configRepository.upsertParam(LITELLM_SETTINGS_PARAM, { ...existing, [PRIVACY_MASKING_CONFIG_KEY]: nextRaw });
 		privacySettingsService.invalidate();

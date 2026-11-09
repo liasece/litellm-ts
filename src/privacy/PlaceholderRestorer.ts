@@ -15,7 +15,7 @@
  *    在序列化后的 JSON 上做字面量替换不会破坏结构，也就避免了大响应体
  *    解析 → 改写 → 重序列化带来的耗时与精度风险。
  */
-import { PLACEHOLDER_PATTERN, collectPlaceholderPrefixes } from "./PlaceholderCodec";
+import { PLACEHOLDER_PATTERN, collectPlaceholderPrefixes, isPlaceholderToken } from "./PlaceholderCodec";
 
 /**
  * 还原器构造参数
@@ -33,10 +33,14 @@ const SKIPPED_KEYS = new Set(["signature", "encrypted_content"]);
 /** 占位符还原器 */
 export class PlaceholderRestorer {
 	private readonly _tokens: ReadonlyMap<string, string>;
-	private readonly _prefixes: Set<string>;
 	private readonly _pending = new Map<string, string>();
-	private readonly _maxTokenLength: number;
 	private readonly _onUnresolved: (() => void) | undefined;
+	private _literals: readonly string[] = [];
+	private _literalPattern: RegExp | null = null;
+	private _prefixes = new Set<string>();
+	private _maxTokenLength = 0;
+	/** 派生结构对应的 token 数量；token 是后续补进来的（发往上游前才脱敏），必须按需刷新 */
+	private _tokenCount = -1;
 	private _pattern: RegExp | null = null;
 
 	/**
@@ -44,13 +48,49 @@ export class PlaceholderRestorer {
 	 */
 	constructor(init: PlaceholderRestorerInit) {
 		this._tokens = init.tokens;
-		this._prefixes = collectPlaceholderPrefixes(init.tokens.keys());
+		this._onUnresolved = init.onUnresolved;
+		this._refresh();
+	}
+
+	/**
+	 * token 表增长后重建字面量、前缀集合与最大长度。
+	 *
+	 * 响应写入器在请求早期安装，而请求体在发往上游前才被替换；构造时拿到的可能
+	 * 还是一张空表，因此每次还原前都按 token 数量检查一次。
+	 */
+	private _refresh(): void {
+		if (this._tokenCount === this._tokens.size) {
+			return;
+		}
+		this._tokenCount = this._tokens.size;
+		// 占位符与「同形态假值」共用一张表：假值也是要换回原文的字面量。
+		const placeholders: string[] = [];
+		const literals: string[] = [];
+		for (const token of this._tokens.keys()) {
+			if (isPlaceholderToken(token)) {
+				placeholders.push(token);
+			} else {
+				literals.push(token);
+			}
+		}
+		literals.sort((left, right) => right.length - left.length);
+		this._literals = literals;
+		this._literalPattern =
+			literals.length === 0
+				? null
+				: new RegExp(literals.map((literal) => literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
+		const prefixes = collectPlaceholderPrefixes(placeholders);
+		for (const literal of literals) {
+			for (let length = 2; length < literal.length; length++) {
+				prefixes.add(literal.slice(0, length));
+			}
+		}
+		this._prefixes = prefixes;
 		let maxLength = 0;
-		for (const token of init.tokens.keys()) {
+		for (const token of this._tokens.keys()) {
 			maxLength = Math.max(maxLength, token.length);
 		}
 		this._maxTokenLength = maxLength;
-		this._onUnresolved = init.onUnresolved;
 	}
 
 	/** 是否存在需要还原的占位符 */
@@ -73,6 +113,7 @@ export class PlaceholderRestorer {
 	 * @param mode - 文档类型：json 或纯文本
 	 */
 	restoreDocument(text: string, mode: "json" | "text" = "text"): string {
+		this._refresh();
 		if (this._tokens.size === 0) {
 			return text;
 		}
@@ -85,12 +126,13 @@ export class PlaceholderRestorer {
 	 * @param text - 本帧新增文本
 	 */
 	restoreStreaming(key: string, text: string): string {
+		this._refresh();
 		if (this._tokens.size === 0) {
 			return text;
 		}
 		const pending = this._pending.get(key);
-		if (pending === undefined && !text.includes("{{")) {
-			// 快速路径：不含占位符起始字符，且此前没有扣留字符
+		if (pending === undefined && this._literals.length === 0 && !text.includes("{{")) {
+			// 快速路径：不含占位符起始字符（也没有假值字面量），且此前没有扣留字符
 			return text;
 		}
 		const combined = pending === undefined ? text : `${pending}${text}`;
@@ -130,6 +172,7 @@ export class PlaceholderRestorer {
 	 * @param value - 待还原的值
 	 */
 	restoreDeep(value: unknown): unknown {
+		this._refresh();
 		if (typeof value === "string") {
 			return this._replace(value);
 		}
@@ -162,21 +205,33 @@ export class PlaceholderRestorer {
 	 * @param escapeJson - 是否按 JSON 字符串转义规则插入原值
 	 */
 	private _replace(text: string, escapeJson = false): string {
-		if (this._tokens.size === 0 || !text.includes("{{")) {
+		if (this._tokens.size === 0) {
 			return text;
 		}
-		const pattern = this._getPattern();
-		return text.replace(pattern, (matched: string) => {
-			const original = this._tokens.get(matched);
-			if (original === undefined) {
-				this._onUnresolved?.();
-				return matched;
-			}
-			if (!escapeJson) {
-				return original;
-			}
-			return JSON.stringify(original).slice(1, -1);
-		});
+		let output = text;
+		if (text.includes("{{")) {
+			const pattern = this._getPattern();
+			output = text.replace(pattern, (matched: string) => {
+				const original = this._tokens.get(matched);
+				if (original === undefined) {
+					this._onUnresolved?.();
+					return matched;
+				}
+				return escapeJson ? JSON.stringify(original).slice(1, -1) : original;
+			});
+		}
+		if (this._literalPattern !== null) {
+			const literalPattern = new RegExp(this._literalPattern.source, "g");
+			output = output.replace(literalPattern, (matched: string) => {
+				const original = this._tokens.get(matched);
+				if (original === undefined) {
+					this._onUnresolved?.();
+					return matched;
+				}
+				return escapeJson ? JSON.stringify(original).slice(1, -1) : original;
+			});
+		}
+		return output;
 	}
 
 	/**

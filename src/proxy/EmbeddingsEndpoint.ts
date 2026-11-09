@@ -25,6 +25,8 @@ import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import { executeProviderRequest } from "../router/ProviderRequestExecutor";
 import { attachUpstreamLogContext, createUpstreamLogContext, getUpstreamLogContext } from "../router/UpstreamLogContext";
+import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
+import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 import { createModuleLogger } from "../core/utils/logger";
 import {
 	appendModelResolutionTrace,
@@ -109,6 +111,8 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 		try {
 			const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...optionalParams };
 			const providerReq = provider.transformEmbeddingRequest(deployment.litellm_params.model, input, mergedParams);
+			// 与 Router 同一处语义：deployment 已确定，发往上游前才按生效范围脱敏。
+			applyPrivacyMaskingToUpstream(providerReq.body, privacyScopeTargetOf(deployment), "embeddings");
 			const requestWithHeaders = {
 				...providerReq,
 				headers: { ...providerReq.headers, ...deployment.litellm_params.extra_headers },

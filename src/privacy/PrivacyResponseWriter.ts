@@ -77,13 +77,13 @@ function splitArgs(
 
 /**
  * 安装响应还原。
+ *
+ * 这里总是安装：请求体改写发生在发往上游之前，可能晚于本函数；是否真的需要还原
+ * 由第一次写出时的 context.hasReplacements 决定，没有替换过就原样透传。
  * @param res - Express 响应
  * @param context - 本次请求的脱敏上下文
  */
 export function installPrivacyResponseWriter(res: Response, context: PrivacyContext): void {
-	if (!context.hasReplacements) {
-		return;
-	}
 	const restorer = new PlaceholderRestorer({
 		tokens: context.tokenMap,
 		onUnresolved: () => context.noteUnresolved(),
@@ -104,6 +104,9 @@ export function installPrivacyResponseWriter(res: Response, context: PrivacyCont
 	 * @param sample - 首个分片文本
 	 */
 	const resolveMode = (sample: string): WriteMode => {
+		if (!context.hasReplacements) {
+			return "passthrough";
+		}
 		const contentEncoding = String(res.getHeader("content-encoding") ?? "");
 		if (contentEncoding.length > 0 && contentEncoding !== "identity") {
 			return "passthrough";
@@ -203,7 +206,7 @@ export function installPrivacyResponseWriter(res: Response, context: PrivacyCont
 	} as typeof res.end;
 
 	res.json = function jsonWithPrivacy(body?: unknown): Response {
-		if (mode !== null) {
+		if (mode !== null || !context.hasReplacements) {
 			return originalJson(body);
 		}
 		const app = (res as unknown as { req?: Request }).req?.app;

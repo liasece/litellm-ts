@@ -93,64 +93,6 @@
 	gap: 12px;
 }
 
-.privacy-breakdown {
-	display: flex;
-	flex-direction: column;
-	gap: 14px;
-	margin: 0;
-	padding: 0;
-	list-style: none;
-}
-
-.privacy-breakdown__row {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-}
-
-.privacy-breakdown__line {
-	display: flex;
-	gap: 8px;
-	align-items: baseline;
-	justify-content: space-between;
-	font-size: 13px;
-}
-
-.privacy-breakdown__name {
-	color: var(--ui-text-antd);
-	font-weight: 500;
-}
-
-.privacy-breakdown__count {
-	color: var(--ui-text-antd);
-	font-variant-numeric: tabular-nums;
-	font-weight: 600;
-}
-
-.privacy-breakdown__bar {
-	height: 6px;
-	border-radius: 3px;
-	background: var(--ui-surface-muted);
-	overflow: hidden;
-}
-
-.privacy-breakdown__bar > span {
-	display: block;
-	height: 100%;
-	border-radius: 3px;
-	background: linear-gradient(90deg, #d46b08, #fa8c16);
-}
-
-.privacy-breakdown__note {
-	color: var(--ui-text-muted);
-	font-size: 12px;
-}
-
-.privacy-breakdown__empty {
-	color: var(--ui-text-muted);
-	font-size: 13px;
-}
-
 .privacy-details__head {
 	display: flex;
 	flex-wrap: wrap;
@@ -176,4 +118,214 @@
 	color: var(--ui-text-muted);
 	font-size: 12px;
 	line-height: 1.7;
+}
+
+/* 过滤特性面板：分组 + 每行一个处置选择。 */
+.privacy-features {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	border: 1px solid var(--ui-border-subtle);
+}
+
+.privacy-features__head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: flex-start;
+	justify-content: space-between;
+}
+
+.privacy-features__head h2 {
+	margin: 0 0 4px;
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--ui-text-antd);
+}
+
+.privacy-features__head p {
+	max-width: 760px;
+	margin: 0;
+	color: var(--ui-text-secondary);
+	font-size: 12px;
+	line-height: 1.7;
+}
+
+.privacy-features__summary {
+	padding: 2px 10px;
+	border: 1px solid var(--ui-border-subtle);
+	border-radius: 999px;
+	color: var(--ui-text-secondary);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.privacy-feature-group {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 4px;
+	border-top: 1px solid var(--ui-border-subtle);
+}
+
+.privacy-feature-group__title {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: baseline;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--ui-text-antd);
+}
+
+.privacy-feature-group__note {
+	color: var(--ui-text-secondary);
+	font-size: 12px;
+	font-weight: 400;
+}
+
+.privacy-feature-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 10px;
+	border-radius: 8px;
+	background: var(--ui-bg-subtle, transparent);
+}
+
+.privacy-feature-row__label {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: baseline;
+	min-width: 0;
+}
+
+.privacy-feature-row__name {
+	color: var(--ui-text-antd);
+	font-size: 13px;
+}
+
+.privacy-feature-row__desc {
+	color: var(--ui-text-secondary);
+	font-size: 12px;
+}
+
+.privacy-feature-row .ui-select {
+	flex: 0 0 132px;
+	width: 132px;
+	min-width: 132px;
+}
+
+.privacy-feature-row--switch {
+	background: transparent;
+	border-top: 1px solid var(--ui-border-subtle);
+	border-radius: 0;
+}
+
+.privacy-settings .privacy-features__head {
+	padding-bottom: 4px;
+}
+
+.privacy-setting-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 10px 0;
+	border-top: 1px solid var(--ui-border-subtle, rgba(120, 130, 150, 0.16));
+}
+
+.privacy-setting-row:first-of-type {
+	border-top: none;
+}
+
+.privacy-setting-row--stack {
+	align-items: flex-start;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.privacy-setting-row > .ui-select {
+	flex: 0 0 132px;
+	width: 132px;
+	min-width: 132px;
+}
+
+.privacy-words {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.privacy-words__add {
+	display: flex;
+	gap: 8px;
+	max-width: 420px;
+}
+
+.privacy-words__add .ui-input {
+	flex: 1 1 auto;
+}
+
+.privacy-words__list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.privacy-words__empty {
+	margin: 0;
+	font-size: 12px;
+	color: var(--ui-text-secondary, #6b7280);
+}
+
+.privacy-words__add--rule {
+	max-width: 880px;
+}
+
+.privacy-words__add--rule .ui-input-wrapper:first-child {
+	flex: 0 0 176px;
+	width: 176px;
+}
+
+.privacy-words__add--rule .ui-input-wrapper:nth-of-type(2) {
+	flex: 1 1 320px;
+	min-width: 240px;
+}
+
+.privacy-words__add--rule .ui-select {
+	flex: 0 0 96px;
+	width: 96px;
+	min-width: 96px;
+}
+
+.privacy-dialog {
+	display: flex;
+	flex-direction: column;
+	gap: 28px;
+	padding: 4px 2px 8px;
+}
+
+.privacy-dialog__section {
+	display: flex;
+	flex-direction: column;
+}
+
+.privacy-dialog__section + .privacy-dialog__section {
+	padding-top: 28px;
+	border-top: 1px solid var(--ui-border-subtle, rgba(120, 130, 150, 0.16));
+}
+
+.privacy-dialog__section > .privacy-features__head {
+	padding-bottom: 12px;
+}
+
+.privacy-settings-dialog .ui-dialog__body {
+	max-height: min(72vh, 760px);
+	overflow-y: auto;
+	padding-right: 6px;
 }

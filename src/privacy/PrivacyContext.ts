@@ -10,8 +10,8 @@
  * 前缀字节不变，供应商的 prompt cache 不会因为脱敏而失效。
  */
 import { isPlaceholderToken, placeholderCodec } from "./PlaceholderCodec";
-import { scanText, type CustomWord, type ScanHit } from "./Detector";
-import type { PrivacyContextStats, PrivacyKind, PrivacyKindAction } from "./PrivacyKinds";
+import { scanText, type CustomWord, type PrivacyUserRule, type ScanHit } from "./Detector";
+import { PRIVACY_SHAPED_KINDS, type PrivacyContextStats, type PrivacyKindAction, type PrivacyKindName } from "./PrivacyKinds";
 import type { PrivacyMaskingSettings } from "./PrivacyConfig";
 
 /** 单段文本允许执行规则扫描的最大长度；更长的文本只做已知值替换 */
@@ -31,12 +31,14 @@ export interface PrivacyContextInit {
 	readonly customWords: readonly CustomWord[];
 	/** 网关自身配置的凭据 */
 	readonly configuredSecrets: readonly string[];
+	/** 管理员配置的前缀 / 正则规则 */
+	readonly rules?: readonly PrivacyUserRule[];
 }
 
 /** 一次值级统计（不包含原文） */
 export interface PrivacyValueStat {
 	/** 敏感类型 */
-	readonly kind: PrivacyKind;
+	readonly kind: PrivacyKindName;
 	/** 占位符里的 8 位指纹 */
 	readonly hash: string;
 	/** 原文长度 */
@@ -50,7 +52,7 @@ export interface PrivacyValueStat {
 /** 内部：一个已登记的值 */
 interface RegisteredValue {
 	/** 敏感类型 */
-	readonly kind: PrivacyKind;
+	readonly kind: PrivacyKindName;
 	/** 对应占位符 */
 	readonly token: string;
 	/** 出现次数 */
@@ -70,6 +72,8 @@ export class PrivacyContext {
 	private readonly _settings: PrivacyMaskingSettings;
 	private readonly _customWords: readonly CustomWord[];
 	private readonly _configuredSecrets: readonly string[];
+	private readonly _rules: readonly PrivacyUserRule[];
+	private readonly _blockedKinds = new Set<string>();
 	private readonly _values = new Map<string, RegisteredValue>();
 	private readonly _tokens = new Map<string, string>();
 	private readonly _kindCounts = new Map<string, number>();
@@ -88,6 +92,7 @@ export class PrivacyContext {
 		this._settings = init.settings;
 		this._customWords = init.customWords;
 		this._configuredSecrets = init.configuredSecrets;
+		this._rules = init.rules ?? [];
 	}
 
 	/** 占位符到原文的映射（响应还原使用） */
@@ -98,6 +103,11 @@ export class PrivacyContext {
 	/** 是否产生过替换（决定是否需要包装响应写入） */
 	get hasReplacements(): boolean {
 		return this._replaced;
+	}
+
+	/** 命中「拒绝请求」的类型（去重）；非空表示本次请求不应上行 */
+	get blockedKinds(): readonly string[] {
+		return [...this._blockedKinds];
 	}
 
 	/** 生效配置 */
@@ -116,7 +126,7 @@ export class PrivacyContext {
 	 * 计算某个类型当前的处置动作。
 	 * @param kind - 敏感类型
 	 */
-	actionFor(kind: PrivacyKind): PrivacyKindAction {
+	actionFor(kind: PrivacyKindName): PrivacyKindAction {
 		const override = this._settings.kinds[kind];
 		if (override !== undefined) {
 			return override;
@@ -144,6 +154,7 @@ export class PrivacyContext {
 			customWords: this._customWords,
 			configuredSecrets: this._settings.maskConfiguredSecrets ? this._configuredSecrets : [],
 			allowlist: this._settings.neverMask,
+			rules: this._rules,
 		});
 		if (hits.length === 0) {
 			return current;
@@ -228,7 +239,12 @@ export class PrivacyContext {
 			distinctValues: this._values.size,
 			kinds: kinds,
 			unresolved: this._unresolved,
-			action: this._settings.action === "warn" || !this._replaced ? "warn" : "mask",
+			action:
+				this._blockedKinds.size > 0
+					? "block"
+					: this._settings.action === "warn" || !this._replaced
+						? "warn"
+						: "mask",
 			durationMs: Date.now() - this._startedAt,
 		};
 	}
@@ -341,6 +357,13 @@ export class PrivacyContext {
 				this._countHit(hit.kind, hit.value);
 				continue;
 			}
+			if (this.actionFor(hit.kind) === "block") {
+				// 仍然替换，避免原文因为别的原因上行；同时记下拒绝原因。
+				this._blockedKinds.add(hit.kind);
+				output += this._register(hit.kind, hit.value);
+				this._replaced = true;
+				continue;
+			}
 			output += this._register(hit.kind, hit.value);
 			this._replaced = true;
 		}
@@ -353,7 +376,7 @@ export class PrivacyContext {
 	 * @param kind - 敏感类型
 	 * @param value - 原始值
 	 */
-	private _register(kind: PrivacyKind, value: string): string {
+	private _register(kind: PrivacyKindName, value: string): string {
 		const existing = this._values.get(value);
 		if (existing !== undefined) {
 			existing.occurrences++;
@@ -361,7 +384,7 @@ export class PrivacyContext {
 			this._kindCounts.set(kind, (this._kindCounts.get(kind) ?? 0) + 1);
 			return existing.token;
 		}
-		const token = placeholderCodec.token(kind, value);
+		const token = this._tokenFor(kind, value);
 		this._values.set(value, { kind: kind, token: token, occurrences: 1 });
 		this._tokens.set(token, value);
 		this._valueVersion++;
@@ -371,11 +394,26 @@ export class PrivacyContext {
 	}
 
 	/**
+	 * 选择替换后的写法：凭据类在开启 shape 时用同形态假值，其余用占位符。
+	 * @param kind - 敏感类型
+	 * @param value - 原始值
+	 */
+	private _tokenFor(kind: PrivacyKindName, value: string): string {
+		if (this._settings.shape && PRIVACY_SHAPED_KINDS.has(kind)) {
+			const shaped = placeholderCodec.shape(kind, value);
+			if (shaped !== null) {
+				return shaped;
+			}
+		}
+		return placeholderCodec.token(kind, value);
+	}
+
+	/**
 	 * 只计数不替换（warn 模式）。
 	 * @param kind - 敏感类型
 	 * @param value - 原始值
 	 */
-	private _countHit(kind: PrivacyKind, value: string): void {
+	private _countHit(kind: PrivacyKindName, value: string): void {
 		const existing = this._values.get(value);
 		if (existing !== undefined) {
 			existing.occurrences++;

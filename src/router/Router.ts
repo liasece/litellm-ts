@@ -66,6 +66,8 @@ import { executeProviderRequest } from "./ProviderRequestExecutor";
 import { buildModelGroupOverrides } from "./ModelOverrides";
 import { applyReasoningEffortOverride } from "./ReasoningEffortOverride";
 import { attachUpstreamLogContext, createUpstreamLogContext, type UpstreamLogContext } from "./UpstreamLogContext";
+import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
+import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 
 type RouteFn = (deployments: Deployment[], ctx: RoutingContext) => Deployment | null;
 
@@ -984,6 +986,12 @@ export class Router {
 		if (providerRequest.body && typeof providerRequest.body === "object" && !Array.isArray(providerRequest.body)) {
 			providerRequest = { ...providerRequest, body: stripRoutingMetadata(providerRequest.body as Record<string, unknown>) };
 		}
+		// 脱敏放在路由、重试与 fallback 之后、真正发往上游之前：此刻 deployment 已确定，
+		// 按实际提供方与模型判定生效范围，鉴权/计费/响应还原仍由中间件负责。
+		if (callType !== "image_generation" && callType !== "image_edit") {
+			const privacyProtocol = providerRequest.responseProtocol === "responses" ? "responses" : "chat";
+			applyPrivacyMaskingToUpstream(providerRequest.body, privacyScopeTargetOf(deployment), privacyProtocol);
+		}
 		const isStream = providerRequest.stream === true;
 		const streamAbortController = isStream ? new AbortController() : undefined;
 		const responseProtocol = providerRequest.responseProtocol ?? "chat_completions";
@@ -1195,7 +1203,13 @@ export class Router {
 		try {
 			const silentModel = optionalParams["silent_model"];
 			if (typeof silentModel === "string" && silentModel.length > 0) {
-				const realResult = await this._executeWithFallbackOrDowngradeThinking(model, messages, optionalParams, 0, modelResolutionTrace);
+				const realResult = await this._executeWithFallbackOrDowngradeThinking(
+					model,
+					messages,
+					optionalParams,
+					0,
+					modelResolutionTrace,
+				);
 				this._executeWithFallback(silentModel, messages, { ...optionalParams, isSilentCall: true }, 0).catch(() => {
 					// silent_model 失败仅记录，不抛
 				});

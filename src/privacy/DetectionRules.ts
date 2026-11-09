@@ -11,6 +11,12 @@
  *   随机数字串当成证件号。
  */
 
+/** 规则命中时的上下文，用于区分「字符串字面量」与「代码里的标识符」 */
+export interface PrivacyRuleMatchContext {
+	/** 命中值在原文中是否被引号包住（说明它是字面量而不是引用、类型名） */
+	readonly quoted: boolean;
+}
+
 /** 识别规则定义 */
 export interface PrivacyRule {
 	/** 规则 ID（写入命中来源，便于诊断） */
@@ -39,7 +45,7 @@ export interface PrivacyRule {
 	/** 廉价预筛：文本必须包含其中任意一个子串才会执行正则 */
 	readonly prefilter: readonly string[];
 	/** 命中值必须满足的额外校验（如校验位） */
-	readonly validate?: (value: string) => boolean;
+	readonly validate?: (value: string, context: PrivacyRuleMatchContext) => boolean;
 	/** 是否要求前文出现语境词 */
 	readonly context?: RegExp;
 	/** 命中值自身带方言前缀时免除语境要求（如 `+86`） */
@@ -272,11 +278,22 @@ export const PRIVACY_RULES: readonly PrivacyRule[] = [
 		flags: "i",
 		group: 1,
 		prefilter: ["SECRET", "secret", "TOKEN", "token", "PASSWORD", "password", "PASSWD", "passwd", "KEY", "key", "AUTH", "auth"],
-		// 赋值右侧是代码表达式（括号、点号引用链）时不是凭据字面量，例如函数调用前缀或环境变量引用。
-		validate: (value) =>
-			!/[(){}[\]]/.test(value) &&
-			!/^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+$/.test(value) &&
-			!/^(?:Bearer|Basic|Token|bearer|basic|token)$/.test(value),
+		// 赋值右侧是代码表达式时不是凭据字面量：带引号的字符串按字面量处理；
+		// 不带引号时，纯标识符（`readonly`、`AuthContext` 这类类型名或引用）与
+		// 点号引用链（`process.env.X`）、函数调用都不是凭据。
+		validate: (value, context) => {
+			if (context.quoted) {
+				return true;
+			}
+			if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value) && !/[0-9]/.test(value)) {
+				return false;
+			}
+			return (
+				!/[(){}[\]]/.test(value) &&
+				!/^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+$/.test(value) &&
+				!/^(?:Bearer|Basic|Token|bearer|basic|token)$/.test(value)
+			);
+		},
 	},
 	{
 		id: "email",

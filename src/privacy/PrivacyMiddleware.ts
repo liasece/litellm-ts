@@ -1,11 +1,13 @@
 /**
- * 脱敏中间件。
+ * 脱敏上下文中间件。
  *
- * 挂在推理路由鉴权之后、业务端点之前，对每个请求做三件事：
+ * 挂在推理路由鉴权之后、业务端点之前，只做与「请求本身」有关的三件事：
  * 1. 解析配置，决定是否启用（总开关 / 密钥级 pii 权限 / 请求头）；
- * 2. 按协议改写请求体里的敏感内容，并把该请求的值↔占位符映射保存在内存上下文里；
+ * 2. 建立该请求的占位符上下文，并经由 AsyncLocalStorage 传给真正发往上游的调度点；
  * 3. 装上响应还原写入器，请求结束后异步写入统计。
  *
+ * 请求体改写不在这里发生：它由 Router / EmbeddingsEndpoint 在确定最终 deployment、
+ * 即将 fetch 上游时执行，这样 fallback、重试换提供方后仍按实际去向判定生效范围。
  * 脱敏自身出错时默认 fail-closed：宁可 503 也不把未脱敏的原文发给上游。
  * 所有统计只写派生信息，原文在请求结束、上下文释放后即不再存在。
  */
@@ -19,8 +21,9 @@ import { detectPrivacyClient, detectPrivacyProvider } from "./ClientAttribution"
 import { getConfiguredSecrets } from "./ConfiguredSecrets";
 import { PrivacyContext } from "./PrivacyContext";
 import { DEFAULT_PRIVACY_MASKING_SETTINGS, privacySettingsService } from "./PrivacyConfig";
+import { runWithPrivacyRequest, type PrivacyRequestState } from "./PrivacyDispatch";
 import { installPrivacyResponseWriter } from "./PrivacyResponseWriter";
-import { detectPrivacyProtocol, maskRequestBody } from "./RequestBodyMasker";
+import { detectPrivacyProtocol } from "./RequestBodyMasker";
 import { PrivacyStatsRepository } from "./PrivacyStatsRepository";
 
 const logger = createModuleLogger("privacy");
@@ -87,35 +90,36 @@ export function privacyMaskingMiddleware(deps: PrivacyMiddlewareDeps): RequestHa
 			}
 			const payload = body as Record<string, unknown>;
 			let context: PrivacyContext;
+			let state: PrivacyRequestState;
 			try {
 				context = new PrivacyContext({
 					settings: settings,
 					customWords: settings.customWords,
 					configuredSecrets: settings.maskConfiguredSecrets ? getConfiguredSecrets(deps.router) : [],
+					rules: settings.rules,
 				});
-				maskRequestBody(payload, context, protocol);
+				state = { context: context, settings: settings, provider: "", model: "", masked: false };
 				installPrivacyResponseWriter(res, context);
 			} catch (error) {
 				if (settings.failClosed) {
-					logger.error("脱敏处理失败，按 fail-closed 拒绝请求", { error: error, path: req.path });
+					logger.error("脱敏上下文初始化失败，按 fail-closed 拒绝请求", { error: error, path: req.path });
 					next(new ApiError(503, "Privacy masking failed; request rejected"));
 					return;
 				}
-				logger.error("脱敏处理失败，按 fail-open 继续转发", { error: error, path: req.path });
+				logger.error("脱敏上下文初始化失败，按 fail-open 继续转发", { error: error, path: req.path });
 				next();
 				return;
 			}
 
 			const requestId = getOrCreateSpendRequestId(req);
 			const client = detectPrivacyClient(req.headers);
-			const provider = detectPrivacyProvider(deps.router, payload["model"]);
-			const model = readModel(payload);
+			const requestedModel = readModel(payload);
 			const apiKey = req.auth?.token !== undefined && req.auth.token.length > 0 ? req.auth.token : (req.auth?.api_key ?? "");
 			const userId = req.auth?.user_id ?? null;
 			const teamId = req.auth?.team_id ?? null;
 			res.once("finish", () => {
 				const stats = context.snapshotStats();
-				if (stats.occurrences <= 0) {
+				if (!state.masked || stats.occurrences <= 0) {
 					return;
 				}
 				void repository
@@ -125,8 +129,9 @@ export function privacyMaskingMiddleware(deps: PrivacyMiddlewareDeps): RequestHa
 						userId: userId,
 						teamId: teamId,
 						client: client,
-						provider: provider,
-						model: model,
+						// 提供方与模型取实际脱敏时选中的 deployment，而不是客户端最初写的模型名。
+						provider: state.provider || detectPrivacyProvider(deps.router, requestedModel),
+						model: state.model || requestedModel,
 						kinds: stats.kinds,
 						occurrences: stats.occurrences,
 						distinctValues: stats.distinctValues,
@@ -139,7 +144,7 @@ export function privacyMaskingMiddleware(deps: PrivacyMiddlewareDeps): RequestHa
 						logger.error("写入脱敏统计失败", { error: error, requestId: requestId });
 					});
 			});
-			next();
+			runWithPrivacyRequest(state, () => next());
 		})().catch((error: unknown) => {
 			logger.error("脱敏中间件异常", { error: error, path: req.path });
 			next(error);

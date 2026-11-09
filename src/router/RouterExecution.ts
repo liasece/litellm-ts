@@ -1,4 +1,5 @@
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
+import { PrivacyBlockedError } from "../privacy/PrivacyDispatch";
 /**
  * RouterExecution — _executeWithFallback 主循环
  *
@@ -675,6 +676,10 @@ export async function executeWithFallback(
 					execResult.upstreamLogContext,
 				);
 			} catch (err) {
+				// 隐私策略拒绝的是整条请求：不重试，也不换 fallback 提供方重发一遍。
+				if (err instanceof PrivacyBlockedError) {
+					throw err;
+				}
 				lastError = err instanceof Error ? err : new Error(String(err));
 				if (req.streamAbortController?.signal.aborted) {
 					throw lastError;
@@ -751,6 +756,9 @@ export async function executeWithFallback(
 
 		throw originalError ?? lastError ?? new Error("Unknown error during completion");
 	} catch (err) {
+		if (err instanceof PrivacyBlockedError) {
+			throw err;
+		}
 		const error = err instanceof Error ? err : new Error(String(err));
 		if (req.streamAbortController?.signal.aborted) {
 			throw error;

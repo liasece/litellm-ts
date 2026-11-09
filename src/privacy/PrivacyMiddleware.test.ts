@@ -1,16 +1,31 @@
 /**
- * 中间件端到端契约：请求脱敏、响应还原、统计落库、密钥级退出。
+ * 中间件端到端契约：上下文登记、响应还原、统计落库、密钥级退出。
  *
- * 用真实的 Express + supertest 走一遍「请求进来 → 上游看到占位符 → 客户端拿到原文」，
- * 并检查落库内容不含任何原文。
+ * 请求体改写已经移到「发往上游前」的调度点，测试里的假端点代替 Router 调用
+ * applyPrivacyMaskingToUpstream，从而仍然覆盖「上游看到占位符 → 客户端拿到原文」。
  */
 import express from "express";
 import request from "supertest";
+import type { Deployment } from "../types/router";
+import { applyPrivacyMaskingToUpstream, PrivacyBlockedError } from "./PrivacyDispatch";
 import { privacyMaskingMiddleware } from "./PrivacyMiddleware";
 import { parsePrivacyMaskingSettings, privacySettingsService } from "./PrivacyConfig";
+import { privacyScopeTargetOf } from "./PrivacyScope";
+import type { PrivacyProtocol } from "./RequestBodyMasker";
 
 const EMAIL = "jansen@liasece.com";
 const API_KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz";
+
+/** 假 Router 选中的 deployment：默认落在 opencode 上 */
+const OPENCODE_DEPLOYMENT = {
+	model_name: "opencode-go/deepseek-v4.1-flash",
+	litellm_params: { custom_llm_provider: "cliproxy", model: "cliproxy/opencode-go/deepseek-v4.1-flash" },
+} as unknown as Deployment;
+
+const DEEPSEEK_DEPLOYMENT = {
+	model_name: "deepseek-v4-flash",
+	litellm_params: { custom_llm_provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
+} as unknown as Deployment;
 
 /** 捕获到的写入行 */
 interface CapturedRows {
@@ -55,6 +70,25 @@ function makeDb(captured: CapturedRows): unknown {
 }
 
 /**
+ * 模拟 Router：在发往上游前按最终 deployment 脱敏，命中 block 时拒绝整条请求。
+ * @param body - 上游请求体
+ * @param protocol - 协议
+ * @param deployment - 假 Router 选中的 deployment
+ */
+function maskForUpstream(body: Record<string, unknown>, protocol: PrivacyProtocol, deployment: Deployment = OPENCODE_DEPLOYMENT): void {
+	applyPrivacyMaskingToUpstream(body, privacyScopeTargetOf(deployment), protocol);
+}
+
+/**
+ * 按 privacy_blocked 的响应结构回写拒绝结果。
+ * @param res - Express 响应
+ * @param error - 调度点抛出的错误
+ */
+function replyBlocked(res: express.Response, error: PrivacyBlockedError): void {
+	res.status(error.statusCode).json(error.toErrorBody());
+}
+
+/**
  * 构造测试应用。
  * @param captured - 捕获数组
  */
@@ -73,12 +107,22 @@ function makeApp(captured: CapturedRows): express.Express {
 	router.use(privacyMaskingMiddleware({ router: fakeRouter as never, db: makeDb(captured) as never }));
 	router.post("/v1/chat/completions", (req, res) => {
 		const body = req.body as { messages: Array<{ content: string }> };
+		try {
+			maskForUpstream(req.body as Record<string, unknown>, "chat");
+		} catch (error) {
+			if (error instanceof PrivacyBlockedError) {
+				replyBlocked(res, error);
+				return;
+			}
+			throw error;
+		}
 		const content = body.messages[0]?.content ?? "";
-		// 模拟模型原样复述：占位符会回到客户端，但应以原文出现
+		// 模拟模型原样复述：上游看到的是占位符，客户端应拿回原文
 		res.json({ id: "chatcmpl-1", choices: [{ index: 0, message: { role: "assistant", content: content }, finish_reason: "stop" }] });
 	});
 	router.post("/v1/messages", (req, res) => {
 		const body = req.body as { messages: Array<{ content: string }> };
+		maskForUpstream(req.body as Record<string, unknown>, "anthropic");
 		const content = body.messages[0]?.content ?? "";
 		res.setHeader("Content-Type", "text/event-stream");
 		const token = content.match(/\{\{[A-Z_]+_[a-z2-7]{8}\}\}/)?.[0] ?? "";
@@ -90,8 +134,7 @@ function makeApp(captured: CapturedRows): express.Express {
 		res.end();
 	});
 	router.post("/v1/responses", (req, res) => {
-		const raw = JSON.stringify({ output: [{ type: "message", content: [{ type: "output_text", text: "x" }] }] });
-		void raw;
+		maskForUpstream(req.body as Record<string, unknown>, "responses");
 		res.setHeader("Content-Type", "application/json");
 		res.write(Buffer.from(JSON.stringify({ id: "resp_1", echoed: "placeholder" })));
 		res.end();
@@ -128,6 +171,7 @@ describe("privacyMaskingMiddleware", () => {
 		expect(serialized).not.toContain(EMAIL);
 		expect(captured.events[0]?.["client"]).toBe("other");
 		expect(captured.events[0]?.["provider"]).toBe("cliproxy");
+		expect(captured.events[0]?.["model"]).toBe("opencode-go/deepseek-v4.1-flash");
 	});
 
 	it("SSE 跨帧占位符在客户端拼接成原文", async () => {
@@ -164,6 +208,7 @@ describe("privacyMaskingMiddleware", () => {
 		const fakeRouter = { getAvailableDeployment: () => undefined, getDeployments: () => [] };
 		router.use(privacyMaskingMiddleware({ router: fakeRouter as never, db: makeDb(captured) as never }));
 		router.post("/v1/chat/completions", (req, res) => {
+			maskForUpstream(req.body as Record<string, unknown>, "chat");
 			const body = req.body as { messages: Array<{ content: string }> };
 			const payload = Buffer.from(JSON.stringify({ text: "中文片段 " + (body.messages[0]?.content ?? "") }), "utf8");
 			res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -204,6 +249,7 @@ describe("privacyMaskingMiddleware", () => {
 		const fakeRouter = { getAvailableDeployment: () => undefined, getDeployments: () => [] };
 		router.use(privacyMaskingMiddleware({ router: fakeRouter as never, db: makeDb(captured) as never }));
 		router.post("/v1/chat/completions", (req, res) => {
+			maskForUpstream(req.body as Record<string, unknown>, "chat");
 			const body = req.body as { messages: Array<{ content: string }> };
 			res.json({ echoed: body.messages[0]?.content });
 		});
@@ -230,5 +276,102 @@ describe("privacyMaskingMiddleware", () => {
 		app.use(router);
 		const response = await request(app).post("/v1/images/generations").send({ prompt: `mail ${EMAIL}` }).expect(200);
 		expect((response.body as { prompt: string }).prompt).toBe(`mail ${EMAIL}`);
+	});
+
+	it("按类型 block：请求被拒绝，上游收不到内容，统计记为 block", async () => {
+		const captured: CapturedRows = { events: [], values: [] };
+		privacySettingsService.setSnapshot(parsePrivacyMaskingSettings({ kinds: { EMAIL: "block" } }));
+		const app = express();
+		app.use(express.json());
+		app.use((req, _res, next) => {
+			req.auth = { api_key: "sk-test", token: "hashed-token" } as never;
+			next();
+		});
+		const router = express.Router();
+		const fakeRouter = { getAvailableDeployment: () => undefined, getDeployments: () => [] };
+		router.use(privacyMaskingMiddleware({ router: fakeRouter as never, db: makeDb(captured) as never }));
+		let upstreamCalled = false;
+		router.post("/v1/chat/completions", (req, res) => {
+			try {
+				maskForUpstream(req.body as Record<string, unknown>, "chat");
+			} catch (error) {
+				if (error instanceof PrivacyBlockedError) {
+					replyBlocked(res, error);
+					return;
+				}
+				throw error;
+			}
+			upstreamCalled = true;
+			res.json({ ok: true });
+		});
+		app.use(router);
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "gpt-test", messages: [{ role: "user", content: `mail ${EMAIL}` }] })
+			.expect(400);
+		const body = response.body as { error: { type: string; kinds: string[] } };
+		expect(body.error.type).toBe("privacy_blocked");
+		expect(body.error.kinds).toEqual(["EMAIL"]);
+		expect(upstreamCalled).toBe(false);
+		await settle();
+		expect(captured.events[0]?.["action"]).toBe("block");
+		expect(JSON.stringify(captured)).not.toContain(EMAIL);
+	});
+
+	it("不在生效范围的提供方：请求体原样上行，也不写统计", async () => {
+		const captured: CapturedRows = { events: [], values: [] };
+		privacySettingsService.setSnapshot(parsePrivacyMaskingSettings({ providers: ["opencode"] }));
+		const app = express();
+		app.use(express.json());
+		app.use((req, _res, next) => {
+			req.auth = { api_key: "sk-test", token: "hashed-token" } as never;
+			next();
+		});
+		const router = express.Router();
+		const fakeRouter = { getAvailableDeployment: () => undefined, getDeployments: () => [] };
+		router.use(privacyMaskingMiddleware({ router: fakeRouter as never, db: makeDb(captured) as never }));
+		let seen = "";
+		router.post("/v1/chat/completions", (req, res) => {
+			maskForUpstream(req.body as Record<string, unknown>, "chat", DEEPSEEK_DEPLOYMENT);
+			seen = (req.body as { messages: Array<{ content: string }> }).messages[0]?.content ?? "";
+			res.json({ echoed: seen });
+		});
+		app.use(router);
+		await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "gpt-test", messages: [{ role: "user", content: `mail ${EMAIL}` }] })
+			.expect(200);
+		expect(seen).toBe(`mail ${EMAIL}`);
+		await settle();
+		expect(captured.events).toHaveLength(0);
+	});
+
+	it("假值开关：上游看到的是同形态假值，客户端拿回原文", async () => {
+		const captured: CapturedRows = { events: [], values: [] };
+		privacySettingsService.setSnapshot(parsePrivacyMaskingSettings({ shape: true }));
+		const app = express();
+		app.use(express.json());
+		app.use((req, _res, next) => {
+			req.auth = { api_key: "sk-test", token: "hashed-token" } as never;
+			next();
+		});
+		const router = express.Router();
+		const fakeRouter = { getAvailableDeployment: () => undefined, getDeployments: () => [] };
+		router.use(privacyMaskingMiddleware({ router: fakeRouter as never, db: makeDb(captured) as never }));
+		let seen = "";
+		router.post("/v1/chat/completions", (req, res) => {
+			maskForUpstream(req.body as Record<string, unknown>, "chat");
+			seen = (req.body as { messages: Array<{ content: string }> }).messages[0]?.content ?? "";
+			res.json({ echoed: seen });
+		});
+		app.use(router);
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "gpt-test", messages: [{ role: "user", content: `key ${API_KEY}` }] })
+			.expect(200);
+		expect(seen).not.toContain(API_KEY);
+		expect(seen).not.toContain("{{");
+		expect(seen).toMatch(/^key [A-Za-z0-9_-]{15,}$/);
+		expect((response.body as { echoed: string }).echoed).toBe(`key ${API_KEY}`);
 	});
 });

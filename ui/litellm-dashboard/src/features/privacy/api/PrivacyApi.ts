@@ -56,11 +56,15 @@ const settingsValues = z
 		enabled: z.boolean(),
 		action: z.string(),
 		kinds: z.record(z.string(), z.string()),
-		custom_words: z.array(z.unknown()),
+		custom_words: z.array(z.union([z.string(), z.object({ value: z.string(), kind: z.string().optional() }).passthrough()])),
 		never_mask: z.array(z.string()),
 		mask_configured_secrets: z.boolean(),
 		fail_closed: z.boolean(),
 		retention_days: z.number(),
+		rules: z.array(z.object({ kind: z.string(), prefix: z.string().optional(), regex: z.string().optional() }).passthrough()),
+		shape: z.boolean(),
+		providers: z.array(z.string()),
+		models: z.array(z.string()),
 	})
 	.passthrough();
 
@@ -78,6 +82,10 @@ function toSettings(value: z.infer<typeof settingsValues>): PrivacySettings {
 		maskConfiguredSecrets: value.mask_configured_secrets,
 		failClosed: value.fail_closed,
 		retentionDays: value.retention_days,
+		rules: value.rules,
+		shape: value.shape,
+		providers: value.providers,
+		models: value.models,
 	};
 }
 
@@ -91,6 +99,10 @@ function listPath(path: string, query: PrivacyListQuery): string {
 	if (query.client) search.set("client", query.client);
 	if (query.provider) search.set("provider", query.provider);
 	if (query.kind) search.set("kind", query.kind);
+	if (query.model) search.set("model", query.model);
+	if (query.action) search.set("action", query.action);
+	if (query.sort) search.set("sort", query.sort);
+	if (query.order) search.set("order", query.order);
 	return path + "?" + search;
 }
 

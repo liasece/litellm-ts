@@ -1,3 +1,5 @@
+import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
+import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 import { stripRoutingMetadata } from "../router/TagRouting";
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
 import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
@@ -739,6 +741,8 @@ async function _openAnthropicStream(
 	onResponse?: (context: UpstreamLogContext) => void,
 ): Promise<AsyncGenerator<string>> {
 	const timeoutSec = attempt.deployment.litellm_params.stream_timeout ?? attempt.deployment.litellm_params.timeout;
+	// 原生 Anthropic 透传：deployment 已确定，发往上游前按生效范围脱敏。
+	applyPrivacyMaskingToUpstream(body, privacyScopeTargetOf(attempt.deployment), "anthropic");
 	const request = {
 		url: attempt.upstreamUrl,
 		method: "POST" as const,
@@ -1311,6 +1315,7 @@ export function registerAnthropicMessagesEndpoints(
 								body: buildAnthropicUpstreamBody(body, attempt.upstreamModel, attempt.deployment),
 								model: attempt.upstreamModel,
 							};
+							applyPrivacyMaskingToUpstream(upstreamRequest.body, privacyScopeTargetOf(attempt.deployment), "anthropic");
 							upstreamLogContext = createUpstreamLogContext(upstreamRequest, undefined, undefined, attempt.deployment);
 							const execution = await executeProviderRequest(upstreamRequest, {
 								readJson: false,
@@ -1400,6 +1405,7 @@ export function registerAnthropicMessagesEndpoints(
 									},
 									model: attempt.upstreamModel,
 								};
+								applyPrivacyMaskingToUpstream(upstreamRequest.body, privacyScopeTargetOf(attempt.deployment), "anthropic");
 								upstreamLogContext = createUpstreamLogContext(upstreamRequest, undefined, undefined, attempt.deployment);
 								const execution = await executeProviderRequest(upstreamRequest, {
 									readJson: false,

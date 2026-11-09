@@ -1,3 +1,5 @@
+import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
+import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
 import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 import { startSseKeepalive } from "./SseKeepalive";
@@ -761,6 +763,8 @@ async function handleStreamingResponse(
 				"chat",
 			),
 		);
+		// 与 /v1/chat/completions 主路径一致：deployment 已确定，发往上游前按生效范围脱敏。
+		applyPrivacyMaskingToUpstream(providerReq.body, privacyScopeTargetOf(deployment), "chat");
 		lastUpstreamLogContext = createUpstreamLogContext(providerReq, undefined, undefined, deployment);
 		litellmRouter.trackActiveRequest(getDeploymentKey(deployment), 1);
 		let stopKeepalive: () => void = () => undefined;

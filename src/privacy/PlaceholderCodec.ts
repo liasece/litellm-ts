@@ -11,7 +11,7 @@
  * 也不会命中 base64 的 `+` / `/` / `=`，因此写进 `image_url` 一类字段也不会破坏数据。
  */
 import { createHmac } from "node:crypto";
-import type { PrivacyKind } from "./PrivacyKinds";
+import type { PrivacyKindName } from "./PrivacyKinds";
 
 /** 占位符识别正则；kind 段只允许大写字母、数字与下划线，hash 段固定 8 位 base32 字符 */
 export const PLACEHOLDER_PATTERN = /\{\{([A-Z][A-Z0-9_]{1,23})_([a-z2-7]{8})\}\}/g;
@@ -82,10 +82,21 @@ export function isPlaceholderToken(value: string): boolean {
 	return match !== null && match.index === 0 && match[0].length === value.length;
 }
 
+/** 假值里各类字符的字母表（避免形近字符，方便人工核对） */
+const SHAPE_ALPHABET: Readonly<Record<"upper" | "lower" | "digit", string>> = {
+	upper: "ABCDEFGHJKLMNPQRSTUVWXYZ",
+	lower: "abcdefghijkmnopqrstuvwxyz",
+	digit: "23456789",
+};
+
+/** 允许伪造的最大长度：更长的值仍用占位符，避免假值本身成为噪声 */
+const SHAPE_MAX_LENGTH = 64;
+
 /** 占位符生成与识别器 */
 export class PlaceholderCodec {
 	private readonly _secret: string;
 	private readonly _cache = new Map<string, string>();
+	private readonly _shapes = new Map<string, string>();
 
 	/**
 	 * @param secret - HMAC 密钥材料；缺省按部署环境解析
@@ -100,7 +111,7 @@ export class PlaceholderCodec {
 	 * @param value - 原始值
 	 * @returns 形如 `{{EMAIL_k3v9x2mq}}` 的占位符
 	 */
-	token(kind: PrivacyKind, value: string): string {
+	token(kind: PrivacyKindName, value: string): string {
 		const cacheKey = `${kind}\u0000${value}`;
 		const cached = this._cache.get(cacheKey);
 		if (cached !== undefined) {
@@ -116,11 +127,69 @@ export class PlaceholderCodec {
 	}
 
 	/**
+	 * 生成「同形态假值」：保留长度与字符类别，只换字符。
+	 *
+	 * 用于上游会校验值形态的凭据类。同一个值在同一次部署里始终得到同一个假值，
+	 * 因此重复出现与多轮历史都稳定；假值只在本请求内存里能换回原文。
+	 * @param kind - 敏感类型
+	 * @param value - 原始值
+	 * @returns 假值；值太长或为空时返回 null，由调用方回退到占位符
+	 */
+	shape(kind: PrivacyKindName, value: string): string | null {
+		if (value.length === 0 || value.length > SHAPE_MAX_LENGTH) {
+			return null;
+		}
+		const cacheKey = `${kind}\u0000${value}`;
+		const cached = this._shapes.get(cacheKey);
+		if (cached !== undefined) {
+			return cached;
+		}
+		const replaced: string[] = [];
+		let stream: Buffer = Buffer.alloc(0);
+		let cursor = 0;
+		let counter = 0;
+		const nextByte = (): number => {
+			if (cursor >= stream.length) {
+				stream = createHmac("sha256", this._secret).update(`shape:${cacheKey}:${counter}`).digest();
+				cursor = 0;
+				counter++;
+			}
+			const byte = stream[cursor] ?? 0;
+			cursor++;
+			return byte;
+		};
+		for (const char of value) {
+			if (char >= "A" && char <= "Z") {
+				const alphabet = SHAPE_ALPHABET.upper;
+				replaced.push(alphabet[nextByte() % alphabet.length] ?? "A");
+				continue;
+			}
+			if (char >= "a" && char <= "z") {
+				const alphabet = SHAPE_ALPHABET.lower;
+				replaced.push(alphabet[nextByte() % alphabet.length] ?? "a");
+				continue;
+			}
+			if (char >= "0" && char <= "9") {
+				const alphabet = SHAPE_ALPHABET.digit;
+				replaced.push(alphabet[nextByte() % alphabet.length] ?? "2");
+				continue;
+			}
+			replaced.push(char);
+		}
+		const shaped = replaced.join("");
+		if (this._shapes.size >= CACHE_LIMIT) {
+			this._shapes.clear();
+		}
+		this._shapes.set(cacheKey, shaped);
+		return shaped;
+	}
+
+	/**
 	 * 只计算占位符里的 8 位指纹，用于统计（不返回完整占位符）。
 	 * @param kind - 敏感类型
 	 * @param value - 原始值
 	 */
-	hash(kind: PrivacyKind, value: string): string {
+	hash(kind: PrivacyKindName, value: string): string {
 		return this.token(kind, value).slice(kind.length + 3, kind.length + 11);
 	}
 }

@@ -80,4 +80,27 @@ describe("PlaceholderRestorer", () => {
 		expect(restorer.restoreDocument("{{EMAIL_zzzzzzzz}}")).toBe("{{EMAIL_zzzzzzzz}}");
 		expect(unresolved).toBe(1);
 	});
+
+	it("假值字面量在文档里还原成原文", () => {
+		const shaped = "Zq7-Wmrt-Bn28Ye94Se56Nt56Tf88By";
+		const restorer = new PlaceholderRestorer({ tokens: new Map([[shaped, API_KEY]]) });
+		expect(restorer.restoreDocument(`key ${shaped} end`)).toBe(`key ${API_KEY} end`);
+	});
+
+	it("假值字面量被切成多帧时只在拼接后还原", () => {
+		const shaped = "Zq7-Wmrt-Bn28Ye94Se56Nt56Tf88By";
+		const restorer = new PlaceholderRestorer({ tokens: new Map([[shaped, API_KEY]]) });
+		const first = restorer.restoreStreaming("s", `key ${shaped.slice(0, 5)}`);
+		const second = restorer.restoreStreaming("s", shaped.slice(5, 17));
+		const third = restorer.restoreStreaming("s", shaped.slice(17));
+		const combined = first + second + third + restorer.takePending("s");
+		expect(combined).toBe(`key ${API_KEY}`);
+	});
+
+	it("假值字面量不与其他文本互相干扰", () => {
+		const shaped = "Zq7-Wmrt-Bn28Ye94Se56Nt56Tf88By";
+		const restorer = new PlaceholderRestorer({ tokens: new Map([[shaped, API_KEY]]) });
+		expect(restorer.restoreDocument("plain text without key")).toBe("plain text without key");
+		expect(restorer.restoreDocument(`a ${shaped} b ${shaped}`)).toBe(`a ${API_KEY} b ${API_KEY}`);
+	});
 });

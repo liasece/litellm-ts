@@ -82,8 +82,68 @@ describe("privacy settings endpoints", () => {
 	it("非法类型或动作返回 400", async () => {
 		const mockDb = makeDb({});
 		const app = makeApp(mockDb);
-		await request(app).put("/privacy/settings").send({ kinds: { NOT_A_KIND: "off" } }).expect(400);
+		await request(app).put("/privacy/settings").send({ kinds: { "not-a-kind": "off" } }).expect(400);
+		await request(app).put("/privacy/settings").send({ kinds: { EMAIL: "explode" } }).expect(400);
+		// 全局处置只在 mask 与 warn 之间切换；拒绝请求是按类型的处置
 		await request(app).put("/privacy/settings").send({ action: "block" }).expect(400);
 		await request(app).put("/privacy/settings").send({ enabled: "yes" }).expect(400);
+		await request(app).put("/privacy/settings").send({ shape: "yes" }).expect(400);
+	});
+
+	it("允许按类型的 block 处置与自定义类型", async () => {
+		const mockDb = makeDb({});
+		const response = await request(makeApp(mockDb))
+			.put("/privacy/settings")
+			.send({ kinds: { API_KEY: "block", ORG_ID: "warn" } })
+			.expect(200);
+		const body = response.body as { values: { kinds: Record<string, string> } };
+		expect(body.values.kinds).toEqual({ API_KEY: "block", ORG_ID: "warn" });
+	});
+
+	it("生效范围可写入与清除，非法输入返回 400", async () => {
+		const mockDb = makeDb({});
+		const app = makeApp(mockDb);
+		const response = await request(app)
+			.put("/privacy/settings")
+			.send({ providers: ["opencode"], models: ["opencode-go/*"] })
+			.expect(200);
+		const body = response.body as { values: { providers: string[]; models: string[] } };
+		expect(body.values.providers).toEqual(["opencode"]);
+		expect(body.values.models).toEqual(["opencode-go/*"]);
+
+		const cleared = await request(app).put("/privacy/settings").send({ providers: [], models: [] }).expect(200);
+		const clearedValues = (cleared.body as { values: { providers: string[]; models: string[] } }).values;
+		expect(clearedValues.providers).toEqual([]);
+		expect(clearedValues.models).toEqual([]);
+
+		await request(app).put("/privacy/settings").send({ providers: "opencode" }).expect(400);
+		await request(app).put("/privacy/settings").send({ providers: [""] }).expect(400);
+		await request(app).put("/privacy/settings").send({ models: ["x".repeat(65)] }).expect(400);
+	});
+
+	it("规则与假值开关可写入，非法规则返回 400", async () => {
+		const mockDb = makeDb({});
+		const app = makeApp(mockDb);
+		const response = await request(app)
+			.put("/privacy/settings")
+			.send({
+				rules: [
+					{ kind: "TICKET", prefix: "ACME-" },
+					{ kind: "ORG_ID", regex: "org_[a-z0-9]{12}" },
+				],
+				shape: true,
+			})
+			.expect(200);
+		const body = response.body as { values: { rules: unknown[]; shape: boolean } };
+		expect(body.values.rules).toEqual([
+			{ kind: "TICKET", prefix: "ACME-" },
+			{ kind: "ORG_ID", regex: "org_[a-z0-9]{12}" },
+		]);
+		expect(body.values.shape).toBe(true);
+
+		await request(app).put("/privacy/settings").send({ rules: [{ kind: "TICKET" }] }).expect(400);
+		await request(app).put("/privacy/settings").send({ rules: [{ kind: "TICKET", prefix: "x", regex: "y" }] }).expect(400);
+		await request(app).put("/privacy/settings").send({ rules: [{ kind: "TICKET", regex: "([a-z" }] }).expect(400);
+		await request(app).put("/privacy/settings").send({ rules: [{ kind: "bad kind", prefix: "ACME-" }] }).expect(400);
 	});
 });

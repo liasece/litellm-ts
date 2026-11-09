@@ -113,4 +113,80 @@ describe("PrivacyContext", () => {
 		expect(DEFAULT_PRIVACY_MASKING_SETTINGS.enabled).toBe(true);
 		expect(DEFAULT_PRIVACY_MASKING_SETTINGS.action).toBe("mask");
 	});
+
+	it("按类型 block：照常替换，同时标记请求应被拒绝", () => {
+		const context = makeContext({ kinds: { EMAIL: "block" } });
+		const masked = context.maskText("jansen@liasece.com");
+		expect(masked).toMatch(/^\{\{EMAIL_[a-z2-7]{8}\}\}$/);
+		expect(context.blockedKinds).toEqual(["EMAIL"]);
+		const stats = context.snapshotStats();
+		expect(stats.action).toBe("block");
+		expect(stats.kinds["EMAIL"]).toBe(1);
+	});
+
+	it("没有 block 命中时不标记拒绝", () => {
+		const context = makeContext({ kinds: { EMAIL: "warn" } });
+		context.maskText("jansen@liasece.com");
+		expect(context.blockedKinds).toEqual([]);
+		expect(context.snapshotStats().action).toBe("warn");
+	});
+
+	it("用户前缀规则按自定义类型替换", () => {
+		const settings = parsePrivacyMaskingSettings({ rules: [{ kind: "TICKET", prefix: "ACME-" }] });
+		const context = new PrivacyContext({ settings: settings, customWords: [], configuredSecrets: [], rules: settings.rules });
+		const masked = context.maskText("see ACME-42f9 for details");
+		expect(masked).toMatch(/^see \{\{TICKET_[a-z2-7]{8}\}\} for details$/);
+		expect(context.snapshotStats().kinds["TICKET"]).toBe(1);
+	});
+
+	it("用户正则规则只替换捕获到的部分", () => {
+		const settings = parsePrivacyMaskingSettings({ rules: [{ kind: "ORG_ID", regex: "org_[a-z0-9]{6}" }] });
+		const context = new PrivacyContext({ settings: settings, customWords: [], configuredSecrets: [], rules: settings.rules });
+		const masked = context.maskText("tenant org_abc123 stays, org_zzz999 too");
+		expect(masked).not.toContain("org_abc123");
+		expect(masked).not.toContain("org_zzz999");
+		expect(masked.match(/\{\{ORG_ID_[a-z2-7]{8}\}\}/g)).toHaveLength(2);
+	});
+
+	it("自定义类型的 off 处置同时关闭内置规则与用户规则", () => {
+		const settings = parsePrivacyMaskingSettings({
+			kinds: { EMAIL: "off", TICKET: "off" },
+			rules: [{ kind: "TICKET", prefix: "ACME-" }],
+		});
+		const context = new PrivacyContext({ settings: settings, customWords: [], configuredSecrets: [], rules: settings.rules });
+		const masked = context.maskText("mail jansen@liasece.com and ACME-42f9");
+		expect(masked).toContain("jansen@liasece.com");
+		expect(masked).toContain("ACME-42f9");
+	});
+
+	it("开启假值开关后凭据类换成同长度同字符类别的假值，并可还原", () => {
+		const settings = parsePrivacyMaskingSettings({ shape: true });
+		const context = new PrivacyContext({ settings: settings, customWords: [], configuredSecrets: [] });
+		const original = "sk-proj-Ab12Cd34Ef56Gh78Ij90Kl";
+		const masked = context.maskText(`key ${original} here`);
+		expect(masked).not.toContain(original);
+		expect(masked).not.toContain("{{");
+		const shaped = masked.slice("key ".length, masked.length - " here".length);
+		expect(shaped).toHaveLength(original.length);
+		for (let index = 0; index < original.length; index++) {
+			const source = original.charAt(index);
+			const result = shaped.charAt(index);
+			if (/[A-Z]/.test(source)) {
+				expect(result).toMatch(/[A-Z]/);
+			} else if (/[a-z]/.test(source)) {
+				expect(result).toMatch(/[a-z]/);
+			} else if (/[0-9]/.test(source)) {
+				expect(result).toMatch(/[0-9]/);
+			} else {
+				expect(result).toBe(source);
+			}
+		}
+		expect(context.tokenMap.get(shaped)).toBe(original);
+	});
+
+	it("假值开关不影响邮箱等非凭据类型", () => {
+		const settings = parsePrivacyMaskingSettings({ shape: true });
+		const context = new PrivacyContext({ settings: settings, customWords: [], configuredSecrets: [] });
+		expect(context.maskText("jansen@liasece.com")).toMatch(/^\{\{EMAIL_/);
+	});
 });

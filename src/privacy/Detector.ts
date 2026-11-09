@@ -11,7 +11,7 @@
  */
 import { PLACEHOLDER_PATTERN } from "./PlaceholderCodec";
 import { PRIVACY_RULES, compileRulePattern, type PrivacyRule } from "./DetectionRules";
-import type { PrivacyHit, PrivacyKind, PrivacySource } from "./PrivacyKinds";
+import type { PrivacyHit, PrivacyKindName, PrivacySource } from "./PrivacyKinds";
 
 /** 扫描出的一段命中 */
 export interface ScanHit extends PrivacyHit {
@@ -26,7 +26,32 @@ export interface CustomWord {
 	/** 词条原文 */
 	readonly value: string;
 	/** 命中的类型，缺省为 CUSTOM */
-	readonly kind?: PrivacyKind;
+	readonly kind?: PrivacyKindName;
+}
+
+/**
+ * 管理员配置的规则：前缀或正则之一，命中后按 `kind` 类型替换。
+ * 规则在读取配置时编译并校验，扫描路径只管执行。
+ */
+export interface PrivacyUserRule {
+	/** 命中后写入占位符的类型名 */
+	readonly kind: PrivacyKindName;
+	/** 字面前缀：从该前缀开始向后吃掉连续的 token 字符 */
+	readonly prefix?: string;
+	/** 正则（第一组捕获或整个匹配作为值） */
+	readonly regex?: string;
+}
+
+/** 编译后的用户规则 */
+interface CompiledUserRule {
+	/** 类型名 */
+	readonly kind: PrivacyKindName;
+	/** 执行用正则（每次扫描需要新实例） */
+	readonly source: string;
+	/** 正则标志 */
+	readonly flags: string;
+	/** 规则标识（统计与诊断用） */
+	readonly id: string;
 }
 
 /** 扫描选项 */
@@ -39,6 +64,91 @@ export interface ScanOptions {
 	readonly configuredSecrets: readonly string[];
 	/** 永不脱敏的字面量 */
 	readonly allowlist: readonly string[];
+	/** 管理员配置的前缀 / 正则规则 */
+	readonly rules?: readonly PrivacyUserRule[];
+}
+
+/** 前缀规则向后吃掉的最大字符数 */
+const MAX_PREFIX_VALUE_LENGTH = 128;
+
+/** 前缀规则参与匹配的字符（凭据与 token 常见字符集） */
+const PREFIX_VALUE_CHARS = "A-Za-z0-9._~+/=:-";
+
+/**
+ * 编译用户规则；无效规则（正则可编译失败、前缀过短）直接跳过。
+ * @param rules - 配置里的用户规则
+ */
+function compileUserRules(rules: readonly PrivacyUserRule[]): CompiledUserRule[] {
+	const compiled: CompiledUserRule[] = [];
+	for (const rule of rules) {
+		const kind = rule.kind.trim().toUpperCase();
+		if (/^[A-Z][A-Z0-9_]{0,23}$/.test(kind) === false) {
+			continue;
+		}
+		const prefix = rule.prefix?.trim() ?? "";
+		const regex = rule.regex?.trim() ?? "";
+		if (prefix.length > 0) {
+			const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			compiled.push({
+				kind: kind,
+				source: escaped + "[" + PREFIX_VALUE_CHARS + "]{0," + MAX_PREFIX_VALUE_LENGTH + "}",
+				flags: "gd",
+				id: "user-prefix:" + kind,
+			});
+			continue;
+		}
+		if (regex.length === 0) {
+			continue;
+		}
+		try {
+			new RegExp(regex, "g");
+		} catch {
+			continue;
+		}
+		compiled.push({ kind: kind, source: regex, flags: "gd", id: "user-regex:" + kind });
+	}
+	return compiled;
+}
+
+/**
+ * 执行用户规则，返回命中列表（未做去重，交给 mergeHits）。
+ * @param text - 待扫描文本
+ * @param rules - 编译后的规则
+ * @param disabledKinds - 关闭的类型
+ * @param allowlist - 白名单
+ * @param spans - 占位符区间
+ */
+function scanUserRules(
+	text: string,
+	rules: readonly CompiledUserRule[],
+	disabledKinds: ReadonlySet<string>,
+	allowlist: ReadonlySet<string>,
+	spans: readonly { start: number; end: number }[],
+): ScanHit[] {
+	const hits: ScanHit[] = [];
+	for (const rule of rules) {
+		if (disabledKinds.has(rule.kind)) {
+			continue;
+		}
+		const regex = new RegExp(rule.source, rule.flags);
+		let match = regex.exec(text);
+		while (match !== null) {
+			const group = match[1] !== undefined && match[1].length > 0 ? 1 : 0;
+			const indices = match.indices?.[group];
+			const value = group === 1 ? (match[1] ?? "") : match[0];
+			if (indices !== undefined && value.length > 0) {
+				const [start, end] = indices;
+				if (!isAllowlisted(value, allowlist) && !overlaps(start, end, spans)) {
+					hits.push({ kind: rule.kind, value: value, rule: rule.id, source: "rule", start: start, end: end });
+				}
+			}
+			if (match[0].length === 0) {
+				regex.lastIndex++;
+			}
+			match = regex.exec(text);
+		}
+	}
+	return hits;
 }
 
 /** 内置规则的编译缓存（`g`/`d` 正则每次扫描仍需新实例） */
@@ -126,12 +236,27 @@ export function scanText(text: string, options: ScanOptions): ScanHit[] {
 			if (indices !== undefined) {
 				const [start, end] = indices;
 				const value = text.slice(start, end);
-				const accepted = acceptRuleMatch({ rule: rule, value: value, text: text, start: start }, allowlist, spans);
+				// 前一个字符是引号时，说明命中值来自字符串字面量而不是代码里的引用。
+				const quoted = start > 0 && (text[start - 1] === '"' || text[start - 1] === "'" || text[start - 1] === "`");
+				const accepted = acceptRuleMatch(
+					{ rule: rule, value: value, text: text, start: start, quoted: quoted },
+					allowlist,
+					spans,
+				);
 				if (accepted) {
 					hits.push({ kind: rule.kind, value: value, rule: rule.id, source: "rule", start: start, end: end });
 				}
 			}
 			match = regex.exec(text);
+		}
+	}
+
+	if (options.rules !== undefined && options.rules.length > 0) {
+		const compiled = compileUserRules(options.rules);
+		for (const hit of scanUserRules(text, compiled, options.disabledKinds, allowlist, spans)) {
+			if (!overlaps(hit.start, hit.end, hits)) {
+				hits.push(hit);
+			}
 		}
 	}
 
@@ -188,6 +313,8 @@ interface RuleCandidate {
 	readonly text: string;
 	/** 命中起始下标 */
 	readonly start: number;
+	/** 命中值是否被引号包住（字符串字面量） */
+	readonly quoted: boolean;
 }
 
 /**
@@ -228,7 +355,7 @@ function acceptRuleMatch(
 			return false;
 		}
 	}
-	if (rule.validate !== undefined && !rule.validate(value)) {
+	if (rule.validate !== undefined && !rule.validate(value, { quoted: candidate.quoted })) {
 		return false;
 	}
 	return true;

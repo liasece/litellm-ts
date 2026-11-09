@@ -120,6 +120,19 @@ describe("sensitive detection", () => {
 		expect(hits.filter((hit) => hit.kind === "SECRET")).toHaveLength(0);
 	});
 
+	it("类型注解右侧的标识符不当作凭据", () => {
+		const annotation = "  readonly configuredSecrets: readonly string[];";
+		const typeRef = "  auth: AuthContext | null;";
+		const hits = scanText(annotation + "\n" + typeRef, OPTIONS);
+		expect(hits.filter((hit) => hit.kind === "SECRET")).toHaveLength(0);
+	});
+
+	it("引号内的字面量即使没有数字也按凭据处理", () => {
+		const literal = ["correct", "horse", "battery"].join("");
+		const hits = scanText('const password = "' + literal + '";', OPTIONS);
+		expect(hits.map((hit) => hit.value)).toContain(literal);
+	});
+
 	it("赋值右侧是字面量凭据时仍然脱敏", () => {
 		const literal = ["abcd", "1234", "efgh", "5678"].join("");
 		const hits = scanText('const token = "' + literal + '";', OPTIONS);

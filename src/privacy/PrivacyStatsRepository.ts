@@ -7,7 +7,7 @@
  *
  * 写入发生在响应结束之后（异步、失败只记日志），不阻塞请求；保留期清理按小时节流。
  */
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, lt, sql } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { liteLLM_PrivacyRedactionEvents, liteLLM_PrivacyRedactionValues } from "../db/schema/privacyRedaction";
 import type { PrivacyValueStat } from "./PrivacyContext";
@@ -123,6 +123,14 @@ export interface PrivacyListFilter {
 	readonly provider?: string;
 	/** 类型过滤 */
 	readonly kind?: string;
+	/** 模型模糊过滤 */
+	readonly model?: string;
+	/** 处置过滤 */
+	readonly action?: string;
+	/** 排序字段；未知值回退默认排序 */
+	readonly sort?: string;
+	/** 排序方向 */
+	readonly order?: "asc" | "desc";
 	/** 条数上限 */
 	readonly limit: number;
 	/** 偏移 */
@@ -156,6 +164,60 @@ function toNumber(value: unknown): number {
  */
 function toText(value: unknown): string {
 	return typeof value === "string" ? value : "";
+}
+
+/**
+ * 把用户输入转成 ILIKE 的包含模式，转义通配符避免把输入当模式。
+ * @param value - 用户输入
+ */
+function containsPattern(value: string): string {
+	return `%${value.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
+/**
+ * 请求级列表的排序表达式。
+ * @param key - 排序字段
+ */
+function requestSortColumn(key: string | undefined) {
+	switch (key) {
+		case "client":
+			return liteLLM_PrivacyRedactionEvents.client;
+		case "provider":
+			return liteLLM_PrivacyRedactionEvents.provider;
+		case "model":
+			return liteLLM_PrivacyRedactionEvents.model;
+		case "occurrences":
+			return liteLLM_PrivacyRedactionEvents.occurrences;
+		case "values":
+			return liteLLM_PrivacyRedactionEvents.distinct_values;
+		case "action":
+			return liteLLM_PrivacyRedactionEvents.action;
+		case "created":
+		default:
+			return liteLLM_PrivacyRedactionEvents.created_at;
+	}
+}
+
+/**
+ * 值级聚合列表的排序表达式。
+ * @param key - 排序字段
+ */
+function valueSortExpression(key: string | undefined) {
+	switch (key) {
+		case "kind":
+			return liteLLM_PrivacyRedactionValues.kind;
+		case "hint":
+			return sql`min(${liteLLM_PrivacyRedactionValues.hint})`;
+		case "requests":
+			return sql`count(distinct ${liteLLM_PrivacyRedactionValues.request_id})`;
+		case "clients":
+			return sql`string_agg(distinct ${liteLLM_PrivacyRedactionValues.client}, ',')`;
+		case "lastSeen":
+			return sql`max(${liteLLM_PrivacyRedactionValues.created_at})`;
+		case "occurrences":
+		default:
+			return sql`sum(${liteLLM_PrivacyRedactionValues.occurrences})`;
+	}
 }
 
 /** 脱敏观测仓库 */
@@ -229,7 +291,9 @@ export class PrivacyStatsRepository {
 			.from(liteLLM_PrivacyRedactionEvents)
 			.where(gte(liteLLM_PrivacyRedactionEvents.created_at, since));
 		const distinctRows = await this._db
-			.select({ distinctValues: sql<string>`count(distinct (${liteLLM_PrivacyRedactionValues.kind}, ${liteLLM_PrivacyRedactionValues.value_hash}))` })
+			.select({
+				distinctValues: sql<string>`count(distinct (${liteLLM_PrivacyRedactionValues.kind}, ${liteLLM_PrivacyRedactionValues.value_hash}))`,
+			})
 			.from(liteLLM_PrivacyRedactionValues)
 			.where(gte(liteLLM_PrivacyRedactionValues.created_at, since));
 		const summary = summaryRows[0];
@@ -320,11 +384,26 @@ export class PrivacyStatsRepository {
 		if (filter.provider !== undefined && filter.provider.length > 0) {
 			conditions.push(eq(liteLLM_PrivacyRedactionEvents.provider, filter.provider));
 		}
+		if (filter.kind !== undefined && filter.kind.length > 0) {
+			conditions.push(sql`${liteLLM_PrivacyRedactionEvents.kinds} ? ${filter.kind}`);
+		}
+		if (filter.model !== undefined && filter.model.length > 0) {
+			conditions.push(ilike(liteLLM_PrivacyRedactionEvents.model, containsPattern(filter.model)));
+		}
+		if (filter.action !== undefined && filter.action.length > 0) {
+			conditions.push(eq(liteLLM_PrivacyRedactionEvents.action, filter.action));
+		}
+		const direction = filter.order === "asc" ? asc : desc;
+		const ordering = [direction(requestSortColumn(filter.sort))];
+		if (filter.sort !== "created") {
+			ordering.push(desc(liteLLM_PrivacyRedactionEvents.created_at));
+		}
+		ordering.push(desc(liteLLM_PrivacyRedactionEvents.request_id));
 		const rows = await this._db
 			.select()
 			.from(liteLLM_PrivacyRedactionEvents)
 			.where(and(...conditions))
-			.orderBy(desc(liteLLM_PrivacyRedactionEvents.created_at))
+			.orderBy(...ordering)
 			.limit(filter.limit)
 			.offset(filter.offset);
 		return rows.map((row) => ({
@@ -358,6 +437,10 @@ export class PrivacyStatsRepository {
 		if (filter.kind !== undefined && filter.kind.length > 0) {
 			conditions.push(eq(liteLLM_PrivacyRedactionValues.kind, filter.kind));
 		}
+		if (filter.model !== undefined && filter.model.length > 0) {
+			conditions.push(ilike(liteLLM_PrivacyRedactionValues.model, containsPattern(filter.model)));
+		}
+		const direction = filter.order === "asc" ? asc : desc;
 		const rows = await this._db
 			.select({
 				kind: liteLLM_PrivacyRedactionValues.kind,
@@ -372,7 +455,11 @@ export class PrivacyStatsRepository {
 			.from(liteLLM_PrivacyRedactionValues)
 			.where(and(...conditions))
 			.groupBy(liteLLM_PrivacyRedactionValues.kind, liteLLM_PrivacyRedactionValues.value_hash)
-			.orderBy(desc(sql`sum(${liteLLM_PrivacyRedactionValues.occurrences})`))
+			.orderBy(
+				direction(valueSortExpression(filter.sort)),
+				asc(liteLLM_PrivacyRedactionValues.kind),
+				asc(liteLLM_PrivacyRedactionValues.value_hash),
+			)
 			.limit(filter.limit)
 			.offset(filter.offset);
 		return rows.map((row) => ({
