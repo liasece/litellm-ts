@@ -7,6 +7,7 @@ const FILTER_URL_PARAMS: Record<keyof LogFilterState, string> = {
 	[FILTER_KEYS.TEAM_ID]: "team_id",
 	[FILTER_KEYS.KEY_HASH]: "api_key",
 	[FILTER_KEYS.REQUEST_ID]: "request_id",
+	[FILTER_KEYS.SESSION_ID]: "session_id",
 	[FILTER_KEYS.MODEL]: "model_id",
 	[FILTER_KEYS.USER_ID]: "user_id",
 	[FILTER_KEYS.END_USER]: "end_user",

@@ -143,6 +143,24 @@ export function parseSpendLogDate(raw: unknown, mode: "ui" | "v2"): Date {
 }
 
 /**
+ * 解析日志列表上界：`/spend/logs/ui` 的 end_date 可选。
+ *
+ * 预设区间（Last 15 Minutes…Last 7 Days）的终点恒为「现在」，而协议里的日期只有整秒。
+ * 客户端把 now 截成整秒当上界时，`startTime <= end_date` 必然排除当前这一秒内的行——
+ * 刚注册的在途行（startTime 带毫秒）查不到，列表要等下一个上游事件才刷出来。
+ * 因此缺省时直接用服务端 now（毫秒精度），既不截断也不依赖浏览器时钟。
+ * @param raw - query 中的 end_date
+ * @param now - 服务端当前时刻；缺省 end_date 时原样作为上界
+ * @returns 结束时刻
+ */
+export function resolveUiSpendLogEndDate(raw: unknown, now: Date = new Date()): Date {
+	if (typeof raw !== "string" || raw.trim().length === 0) {
+		return now;
+	}
+	return parseSpendLogDate(raw, "ui");
+}
+
+/**
  * 解析 query 中的可选 float 字段（`min_spend` / `max_spend` 等）。
  * 未传或空字符串返回 undefined；非数字返回 null（供调用方区分"未传"和"格式错误"）。
  *

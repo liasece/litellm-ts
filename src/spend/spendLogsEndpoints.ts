@@ -6,11 +6,12 @@
  * 间接调用本文件的 `registerSpendLogsEndpoints`。
  *
  * `/spend/logs/ui` 与 `/spend/logs/v2` 行为对齐 Python LiteLLM：
- *   - start_date / end_date 必填；UI 只接受 `YYYY-MM-DD HH:MM:SS`，v2 同时接受 `YYYY-MM-DD`。
+ *   - start_date 必填；`/spend/logs/ui` 的 end_date 可选（缺省取服务端 now），v2 的 end_date 必填。
+ *     UI 只接受 `YYYY-MM-DD HH:MM:SS`，v2 同时接受 `YYYY-MM-DD`。
  *   - sort_by 仅允许白名单字段；非法返回 400。
  *   - sort_order 仅允许 asc / desc；非法返回 400。
  *   - 过滤：api_key / user_id / request_id / team_id / min_spend / max_spend /
- *     status_filter / model / model_id / key_alias / end_user / error_code / error_message。
+ *     status_filter / model / model_id / key_alias / session_id / end_user / error_code / error_message。
  *   - 权限裁剪：admin 看全部；非 admin + team_id 时检查 team 可见性；
  *     internal_user 未传 team 时强制只看自己的 user；team member 看不可见 team 返回 403。
  *   - 主查询显式列投影，排除 messages / response / proxy_server_request 重 JSON 列。
@@ -38,6 +39,7 @@ import {
 	parsePageParam,
 	parsePageSizeParam,
 	parseSpendLogDate,
+	resolveUiSpendLogEndDate,
 	runWithFallback,
 } from "./spendManagementHelpers";
 import {
@@ -248,8 +250,12 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// ========== /spend/logs/ui & /spend/logs/v2 ==========
 	// 形状契约（对齐 Python ui_view_spend_logs）：
 	//   { data: Row[], total, page, page_size, total_pages, (ui-only) session_total_count? }
-	// 必填：start_date / end_date；UI 路径日期格式为 `YYYY-MM-DD HH:MM:SS`，
+	// 必填：start_date；UI 路径日期格式为 `YYYY-MM-DD HH:MM:SS`，
 	// v2 路径额外接受 `YYYY-MM-DD`。
+	// `/spend/logs/ui` 的 end_date 可选：预设区间（Last 15 Minutes…Last 7 Days）的上界
+	// 恒为「现在」，客户端只能给出整秒，永远切掉当前这一秒的毫秒部分，刚注册的在途行
+	// 因此不可见（表现为 Live Tail 要等上游首字节才刷出行）。省略时按服务端 now 补齐，
+	// 精确到毫秒且不受浏览器时钟影响；v2 保持与 Python 一致，两个日期都必填。
 	// 错误不捕获为 fallback，让 registerRoute 返回 4xx/5xx。
 
 	const handleUiSpendLogs = (isV2: boolean) => async (req: { query: Record<string, unknown>; auth?: UserAPIKeyAuth }) => {
@@ -261,7 +267,8 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		if (typeof startDateRaw !== "string" || startDateRaw.length === 0) {
 			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Start date and end date are required");
 		}
-		if (typeof endDateRaw !== "string" || endDateRaw.length === 0) {
+		const endDateProvided = typeof endDateRaw === "string" && endDateRaw.length > 0;
+		if (!endDateProvided && isV2) {
 			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Start date and end date are required");
 		}
 
@@ -273,7 +280,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			throw new ApiError(HTTP_STATUS.BAD_REQUEST, (err as Error).message);
 		}
 		try {
-			endDateObj = parseSpendLogDate(endDateRaw, isV2 ? "v2" : "ui");
+			endDateObj = isV2 ? parseSpendLogDate(endDateRaw, "v2") : resolveUiSpendLogEndDate(endDateRaw);
 		} catch (err) {
 			throw new ApiError(HTTP_STATUS.BAD_REQUEST, (err as Error).message);
 		}
@@ -303,6 +310,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const teamIdFilter = typeof req.query.team_id === "string" ? req.query.team_id : undefined;
 		const modelFilter = typeof req.query.model === "string" ? req.query.model : undefined;
 		const modelIdFilter = typeof req.query.model_id === "string" ? req.query.model_id : undefined;
+		const sessionIdFilter = typeof req.query.session_id === "string" ? req.query.session_id.trim() : undefined;
 		const endUserFilter = typeof req.query.end_user === "string" ? req.query.end_user : undefined;
 		const statusFilter = typeof req.query.status_filter === "string" ? req.query.status_filter : undefined;
 		const includeActive = !isV2 && req.query.include_active === "true";
@@ -348,6 +356,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 				model: modelFilter,
 				modelId: modelIdFilter,
 				endUser: endUserFilter,
+				sessionId: sessionIdFilter || undefined,
 				statusFilter: statusFilter,
 				minSpend: minSpendFilter ?? undefined,
 				maxSpend: maxSpendFilter ?? undefined,
@@ -376,6 +385,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 						model: modelFilter,
 						modelId: modelIdFilter,
 						endUser: endUserFilter,
+						sessionId: sessionIdFilter || undefined,
 						statusFilter: statusFilter,
 						minSpend: minSpendFilter ?? undefined,
 						maxSpend: maxSpendFilter ?? undefined,
@@ -1057,6 +1067,8 @@ interface UiSpendLogsWhereArgs {
 	model?: string;
 	modelId?: string;
 	endUser?: string;
+	/** 会话分组 ID 的包含匹配；只匹配 s:/c: 会话键，不匹配 r: 请求键。 */
+	sessionId?: string;
 	statusFilter?: string;
 	minSpend?: number;
 	maxSpend?: number;
@@ -1075,6 +1087,7 @@ interface UiSpendLogsWhereArgs {
  * - JSONB metadata：`key_alias` → `metadata->>'user_api_key_alias' LIKE`；
  *   `error_code` → `metadata->'error_information'->>'error_code' =`；
  *   `error_message` → `metadata->'error_information'->>'error_message' LIKE`
+ * - 会话：`session_id` → 生成的 `session_group_key` 包含匹配（仅 s:/c: 前缀）
  * @param args
  */
 function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
@@ -1099,6 +1112,12 @@ function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
 	}
 	if (args.endUser !== undefined) {
 		conditions.push(eq(liteLLM_SpendLogs.end_user, args.endUser));
+	}
+	if (args.sessionId !== undefined) {
+		const needle = args.sessionId.toLowerCase();
+		conditions.push(
+			sql`(${liteLLM_SpendLogs.session_group_key} LIKE ${"s:%"} OR ${liteLLM_SpendLogs.session_group_key} LIKE ${"c:%"}) AND strpos(lower(${liteLLM_SpendLogs.session_group_key}), ${needle}) > 0`,
+		);
 	}
 	if (args.statusFilter !== undefined) {
 		if (args.statusFilter === "success") {
@@ -1156,6 +1175,13 @@ function buildActiveRequestsWhereConditions(args: UiSpendLogsWhereArgs) {
 	}
 	if (args.endUser !== undefined) {
 		conditions.push(eq(liteLLM_ActiveRequests.end_user, args.endUser));
+	}
+	if (args.sessionId !== undefined) {
+		const needle = args.sessionId.toLowerCase();
+		const activeSessionKey = sql`litellm_session_group_key(${liteLLM_ActiveRequests.metadata}, ${liteLLM_ActiveRequests.session_id}, ${liteLLM_ActiveRequests.request_id})`;
+		conditions.push(
+			sql`(${activeSessionKey} LIKE ${"s:%"} OR ${activeSessionKey} LIKE ${"c:%"}) AND strpos(lower(${activeSessionKey}), ${needle}) > 0`,
+		);
 	}
 	if (args.statusFilter !== undefined && args.statusFilter !== "in_progress") {
 		conditions.push(sql`FALSE`);

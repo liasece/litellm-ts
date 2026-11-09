@@ -26,6 +26,7 @@ describe("Logs URL state", () => {
 		state.filters["Key Alias"] = "production key";
 		state.filters.Status = "failure";
 		state.filters["Request ID"] = "req-123";
+		state.filters["Session ID"] = "session-abc";
 		state.currentPage = 3;
 		state.pageSize = 500;
 		state.sortBy = "spend";
@@ -41,6 +42,8 @@ describe("Logs URL state", () => {
 		expect(restored.filters["Key Alias"]).toBe("production key");
 		expect(restored.filters.Status).toBe("failure");
 		expect(restored.filters["Request ID"]).toBe("req-123");
+		expect(restored.filters["Session ID"]).toBe("session-abc");
+		expect(params.get("session_id")).toBe("session-abc");
 		expect(restored.currentPage).toBe(3);
 		expect(restored.pageSize).toBe(500);
 		expect(restored.sortBy).toBe("spend");

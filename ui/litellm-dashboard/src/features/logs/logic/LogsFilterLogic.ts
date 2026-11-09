@@ -2,6 +2,7 @@ export const FILTER_KEYS = {
 	TEAM_ID: "Team ID",
 	KEY_HASH: "Key Hash",
 	REQUEST_ID: "Request ID",
+	SESSION_ID: "Session ID",
 	MODEL: "Model",
 	USER_ID: "User ID",
 	END_USER: "End User",
@@ -19,6 +20,7 @@ export function createEmptyLogFilters(): LogFilterState {
 		[FILTER_KEYS.TEAM_ID]: "",
 		[FILTER_KEYS.KEY_HASH]: "",
 		[FILTER_KEYS.REQUEST_ID]: "",
+		[FILTER_KEYS.SESSION_ID]: "",
 		[FILTER_KEYS.MODEL]: "",
 		[FILTER_KEYS.USER_ID]: "",
 		[FILTER_KEYS.END_USER]: "",
@@ -34,6 +36,7 @@ export function hasBackendLogFilters(filters: LogFilterState): boolean {
 		filters[FILTER_KEYS.KEY_ALIAS] ||
 		filters[FILTER_KEYS.KEY_HASH] ||
 		filters[FILTER_KEYS.REQUEST_ID] ||
+		filters[FILTER_KEYS.SESSION_ID] ||
 		filters[FILTER_KEYS.USER_ID] ||
 		filters[FILTER_KEYS.END_USER] ||
 		filters[FILTER_KEYS.ERROR_CODE] ||
