@@ -94,4 +94,4 @@ Guardrails、Policies 等旧页面对若干当前后端并未实现的接口仍�
 
 Old Usage Activity 的 Recharts 字体过渡/测量缓存会让日期刻度密度受先前图表影响。实测记录在 `.artifacts/frontend-vue/scope-review/LegacyActivityTextMeasurementReview-v1.json`：该行为在参考实现里本身就是不确定的，取决于此前图表渲染留下的状态，无法作为稳定的对齐目标。决定不在 Vue 侧复刻，改用确定性测量；刻度标签保持可读，记为有意保留的非一致性而不是缺陷。
 
-浏览器侧的 visual-baseline 采集与比对脚本（`ui/litellm-dashboard/e2e/`）只能在带 `.artifacts` 证据和 React 参考构建的工作区使用，已按用户要求从仓库移除；组件级浏览器回归仍由 `tests/platform-ui` 配合 `test:components` 保留。生产候选的构建指纹、门禁结果与线上核验记录见上述验收文件。git commit 和 push 未获授权。
+浏览器侧的 visual-baseline 采集与比对脚本（`ui/litellm-dashboard/e2e/`）只能在带 `.artifacts` 证据和 React 参考构建的工作区使用，已按用户要求从仓库移除；组件级浏览器回归仍由 `tests/platform-ui` 配合 `test:components` 保留。生产候选的构建指纹、门禁结果与线上核验记录见上述验收文件。2026-11-08，用户要求确认应跟踪的文件后提交。Vue 仪表盘迁移已在 `13adcfb` 提交，后续维护按当前任务授权执行。
