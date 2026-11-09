@@ -152,7 +152,7 @@ export function createAuthenticationStore(service: IdentityService = identitySer
 		state.pending = true;
 		state.error = null;
 		try {
-			const result = await service.login(username, password, { ...options, useV3: options.useV3 ?? Boolean(options.workerId) });
+			const result = await service.login(username, password, options);
 			const session = await service.loadSession();
 			if (!disposed && generation === current) {
 				state.session = session;

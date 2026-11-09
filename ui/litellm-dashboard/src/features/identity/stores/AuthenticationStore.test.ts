@@ -7,9 +7,7 @@ import { createAuthenticationStore, WEBUI_SESSION_KEEPALIVE_INTERVAL_MS } from "
 const config: UiConfig = {
 	server_root_path: "/",
 	proxy_base_url: null,
-	auto_redirect_to_sso: false,
 	admin_ui_disabled: false,
-	sso_configured: false,
 };
 const session: WebUiSessionInfo = {
 	authenticated: true,
@@ -29,7 +27,6 @@ function service(): IdentityService {
 		logout: vi.fn().mockResolvedValue(undefined),
 		getApiBaseUrl: () => "",
 		switchWorker: vi.fn().mockReturnValue(true),
-		exchangeCode: vi.fn().mockResolvedValue(undefined),
 	};
 }
 function deferred<T>() {
@@ -110,7 +107,7 @@ describe("Dashboard session lifecycle", () => {
 		store.dispose();
 	});
 
-	it("switches to the selected worker before v3 login and resets its API target on failure", async () => {
+	it("switches to the selected worker before login and resets its API target on failure", async () => {
 		const api = service();
 		vi.mocked(api.loadConfig).mockResolvedValue({
 			...config,
@@ -121,7 +118,7 @@ describe("Dashboard session lifecycle", () => {
 		await store.initialize();
 		await expect(store.login("fixture", "fixture", { workerId: "worker-1" })).rejects.toThrow("Invalid credentials");
 		expect(api.switchWorker).toHaveBeenCalledWith("https://worker.example");
-		expect(api.login).toHaveBeenCalledWith("fixture", "fixture", { workerId: "worker-1", useV3: true });
+		expect(api.login).toHaveBeenCalledWith("fixture", "fixture", { workerId: "worker-1" });
 		expect(api.switchWorker).toHaveBeenLastCalledWith(null);
 		expect(store.state.pending).toBe(false);
 		store.dispose();

@@ -129,37 +129,8 @@ onUnmounted(page.dispose);
 								>{{ auth.state.pending ? "Logging in..." : "Login" }}</UiButton
 							>
 						</div>
-						<div class="identity-form-item">
-							<span v-if="!auth.state.config?.sso_configured" class="identity-sso-popover" tabindex="0"
-								><UiButton size="large" class="identity-full-width" disabled>Login with SSO</UiButton
-								><span class="identity-popover-content" role="tooltip">Please configure SSO to log in with SSO.</span></span
-							>
-							<UiButton v-else size="large" class="identity-full-width" :disabled="auth.state.pending" @click="page.startSso"
-								>Login with SSO</UiButton
-							>
-						</div>
 					</form>
 				</template>
-			</div>
-			<div
-				v-if="auth.state.config?.sso_configured && !auth.state.config?.admin_ui_disabled && state.showSsoNotice"
-				class="identity-alert identity-alert--info identity-alert--compact identity-sso-notice"
-			>
-				<IdentityInfoIcon filled />
-				<div>
-					Single Sign-On (SSO) is enabled. LiteLLM no longer automatically redirects to the SSO login flow upon loading this page.
-					To re-enable auto-redirect-to-SSO, set <code>AUTO_REDIRECT_UI_LOGIN_TO_SSO=true</code> in your environment
-					configuration.
-				</div>
-				<button type="button" class="identity-alert-close" aria-label="Close" @click="state.showSsoNotice = false">
-					<svg viewBox="64 64 896 896" aria-hidden="true" focusable="false">
-						<path
-							fill="currentColor"
-							fill-rule="evenodd"
-							d="M799.86 166.31c.02 0 .04.02.08.06l57.69 57.7c.04.03.05.05.06.08a.12.12 0 010 .06c0 .03-.02.05-.06.09L569.93 512l287.7 287.7c.04.04.05.06.06.09a.12.12 0 010 .07c0 .02-.02.04-.06.08l-57.7 57.69c-.03.04-.05.05-.07.06a.12.12 0 01-.07 0c-.03 0-.05-.02-.09-.06L512 569.93l-287.7 287.7c-.04.04-.06.05-.09.06a.12.12 0 01-.07 0c-.02 0-.04-.02-.08-.06l-57.69-57.7c-.04-.03-.05-.05-.06-.07a.12.12 0 010-.07c0-.03.02-.05.06-.09L454.07 512l-287.7-287.7c-.04-.04-.05-.06-.06-.09a.12.12 0 010-.07c0-.02.02-.04.06-.08l57.7-57.69c.03-.04.05-.05.07-.06a.12.12 0 01.07 0c.03 0 .05.02.09.06L512 454.07l287.7-287.7c.04-.04.06-.05.09-.06a.12.12 0 01.07 0z"
-						/>
-					</svg>
-				</button>
 			</div>
 		</section>
 	</div>

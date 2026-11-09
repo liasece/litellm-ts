@@ -7,9 +7,7 @@ const workerSchema = z.object({ worker_id: z.string(), name: z.string(), url: z.
 const uiConfigSchema = z.object({
 	server_root_path: z.string().default("/"),
 	proxy_base_url: z.string().nullable().default(null),
-	auto_redirect_to_sso: z.boolean().default(false),
 	admin_ui_disabled: z.boolean().default(false),
-	sso_configured: z.boolean().default(false),
 	is_control_plane: z.boolean().optional(),
 	workers: z.array(workerSchema).optional(),
 });
@@ -38,56 +36,20 @@ export function getWebUiSession(): Promise<WebUiSessionInfo> {
 	return requestJson("/auth/session", {}, (payload) => sessionSchema.parse(payload));
 }
 
-export async function loginCall(username: string, password: string, useV3 = false): Promise<LoginResult> {
+export async function loginCall(username: string, password: string): Promise<LoginResult> {
 	const result = await requestJson(
-		useV3 ? "/v3/login" : "/v2/login",
+		"/v2/login",
 		{
 			method: "POST",
 			body: JSON.stringify({ username, password }),
 		},
 		(payload) => loginResultSchema.parse(payload),
 	);
-	if (useV3 && result.code) {
-		const exchanged = await requestJson(
-			"/v3/login/exchange",
-			{ method: "POST", body: JSON.stringify({ code: result.code }) },
-			(payload) => loginResultSchema.parse(payload),
-		);
-		return { ...exchanged, redirect_url: exchanged.redirect_url || "/ui/?login=success" };
-	}
-	if (!result.redirect_url && !useV3) throw new HttpApiError("Login response is missing its redirect URL", 502);
-	return { ...result, redirect_url: result.redirect_url || "/ui/?login=success" };
-}
-
-export async function exchangeLoginCode(code: string, workerBaseUrl?: string | null): Promise<void> {
-	await requestJson(
-		(workerBaseUrl || getApiBaseUrl()) + "/v3/login/exchange",
-		{
-			method: "POST",
-			body: JSON.stringify({ code }),
-		},
-		(payload) => z.unknown().parse(payload),
-	);
+	if (!result.redirect_url) throw new HttpApiError("Login response is missing its redirect URL", 502);
+	return { ...result, redirect_url: result.redirect_url };
 }
 
 export async function logoutWebUiSession(): Promise<void> {
 	const response = await dashboardFetch(getApiBaseUrl() + "/auth/logout", { method: "POST" });
 	if (!response.ok) throw new HttpApiError("Failed to logout WebUI session", response.status);
-}
-
-export async function getOnboardingCredentials(inviteId: string): Promise<{ token: string; login_url: string }> {
-	return requestJson("/onboarding/get_token?invite_link=" + encodeURIComponent(inviteId), {}, (payload) =>
-		z.object({ token: z.string(), login_url: z.string() }).parse(payload),
-	);
-}
-
-export async function claimOnboardingToken(inviteId: string, userId: string, password: string): Promise<void> {
-	await requestJson(
-		"/onboarding/claim_token",
-		{
-			method: "POST",
-			body: JSON.stringify({ invitation_link: inviteId, user_id: userId, password }),
-		},
-		(payload) => z.unknown().parse(payload),
-	);
 }

@@ -7,9 +7,7 @@ export interface WorkerInfo {
 export interface UiConfig {
 	server_root_path: string;
 	proxy_base_url: string | null;
-	auto_redirect_to_sso: boolean;
 	admin_ui_disabled: boolean;
-	sso_configured: boolean;
 	is_control_plane?: boolean;
 	workers?: WorkerInfo[];
 }
@@ -33,5 +31,4 @@ export interface LoginResult {
 
 export interface LoginOptions {
 	workerId?: string | null;
-	useV3?: boolean;
 }

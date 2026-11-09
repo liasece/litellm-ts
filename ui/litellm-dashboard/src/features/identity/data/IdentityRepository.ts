@@ -1,9 +1,1 @@
-export {
-	getUiConfig,
-	getWebUiSession,
-	loginCall,
-	logoutWebUiSession,
-	exchangeLoginCode,
-	getOnboardingCredentials,
-	claimOnboardingToken,
-} from "../api/IdentityApi";
+export { getUiConfig, getWebUiSession, loginCall, logoutWebUiSession } from "../api/IdentityApi";
