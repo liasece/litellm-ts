@@ -73,23 +73,23 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | F15 SpendLogs 内容控制 | metadata include/exclude、call/trace/session 关联、生命周期/router/预算/错误信息与日志脱敏 | 17 | 建议添加 metadata 控制与可诊断信息；保留账务上下文 | [src/spend/SpendTracker.ts](../src/spend/SpendTracker.ts) |
 | F16 费用分析与 Usage API | caller-scoped 报表、按主体有界查询/搜索/导出、prompt-cache/auto-router savings 和模型/agent 聚合 | 12 | 建议添加有界查询与必要导出；自动路由 savings 随执行链 | [src/proxy/AnalyticsEndpoints.ts](../src/proxy/AnalyticsEndpoints.ts) |
 | F17 指标、Tracing 与日志集成 | OTEL 语义/metrics、Prometheus labels/独立端口、Arize/Phoenix/Langfuse/NewRelic/Datadog/PointFive/Zerobus 等 | 61 | 按现有监控体系选择；不同时接入全部回调和存储 | [src/core/utils/logger.ts](../src/core/utils/logger.ts) |
-| F18 告警与通知 | Teams/Slack、用户 spend 异常、成员预算百分比、邮件/SMTP/GCC High、自托管邮件配置 | 9 | 按告警渠道添加；先确定发送、脱敏、去重与失败处理 | [src/proxy/AlertingEndpoints.ts](../src/proxy/AlertingEndpoints.ts) |
+| F18 告警与通知 | Teams/Slack、用户 spend 异常、成员预算百分比、邮件/SMTP/GCC High、自托管邮件配置 | 9 | 按告警渠道添加；先确定发送、脱敏、去重与失败处理 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
 | F19 Key、Team、User、Org 管理 | REST PATCH、bulk users/members、状态/过期/alias 搜索、软预算、service account、custom_key_policy | 24 | 建议添加常用查询与编辑协议；权限和预算委派必须同时验证 | [src/management/KeyManagementEndpoint.ts](../src/management/KeyManagementEndpoint.ts) |
-| F20 企业身份与访问控制 | SSO/SAML/OIDC/SCIM、JWT team/key/agent 映射、end-user/resource 权限、claim 回退 | 16 | 按企业身份需求实施；SCIM/SSO 当前为桩，缺能力不报停用 BUG | [src/auth/UserApiKeyAuth.ts](../src/auth/UserApiKeyAuth.ts) |
+| F20 企业身份与访问控制 | SSO/SAML/OIDC/SCIM、JWT team/key/agent 映射、end-user/resource 权限、claim 回退 | 16 | 按企业身份需求实施；SCIM/SSO 管理桩已在功能清理中移除，缺能力不报停用 BUG | [src/auth/UserApiKeyAuth.ts](../src/auth/UserApiKeyAuth.ts) |
 | F21 登录与启动安全配置 | 密码策略/泄漏检测/修改/强制重置、失败登录限速、SSO-only、master key 检查、mock 门禁 | 10 | 建议添加实际登录和客户端测试参数门禁；外部泄漏检测按部署需求 | [src/proxy/LoginEndpoints.ts](../src/proxy/LoginEndpoints.ts) |
 | F22 凭据、密文与 Secret Manager | display_name/不可变引用名、AES-GCM 版本迁移、OIDC workload federation、Vault/KMS/Conjur、FIPS | 15 | 建议加展示名；密文迁移/Secret Manager/联合身份需实际互操作需求 | [src/credentials/CredentialService.ts](../src/credentials/CredentialService.ts) |
-| F23 MCP 执行与发现 | session 路由、工具发现/调用/search、catalog 分页、版本/能力、描述/schema 安全、转换和会话管理 | 35 | 按需求新建真实执行子系统；现有管理桩不足以移植补丁 | [src/proxy/MCPEndpoints.ts](../src/proxy/MCPEndpoints.ts) |
-| F24 MCP OAuth 与身份委派 | OAuth M2M/OBO/ID-JAG、DCR bridge、PKCE/resource/introspection/RS256、跨实例刷新、client credentials | 45 | 随 MCP 执行添加；先定义 caller 与 upstream credential 边界 | [src/proxy/MCPEndpoints.ts](../src/proxy/MCPEndpoints.ts) |
-| F25 MCP 权限、额度与接入安全 | Key/Team/access group/tool/client allowlist、RPM/concurrency、env/Extra Headers、stdio 默认禁用 | 15 | 启用 MCP 时必需；暂不给当前桩追加表面配置 | [src/proxy/MCPEndpoints.ts](../src/proxy/MCPEndpoints.ts) |
-| F26 Guardrail 供应商集成 | Cisco AI Defense、Purview、Headroom/Compresr、Straiker、DeepKeep、Alice、Conduct、TypeSafe、Akto 等 | 24 | 按风险和供应商选择；先落地可用执行链 | [src/proxy/PolicyEndpoints.ts](../src/proxy/PolicyEndpoints.ts) |
-| F27 Guardrail 与 Policy 执行能力 | logging_only input/output、并行/stream/后台 hooks、工具改写/PII/附件/vector chunk 扫描、优先级/fallback 策略 | 33 | 需先实现真实 hook，再按场景采用；管理 API 桩不算支持 | [src/proxy/PolicyEndpoints.ts](../src/proxy/PolicyEndpoints.ts) |
+| F23 MCP 执行与发现 | session 路由、工具发现/调用/search、catalog 分页、版本/能力、描述/schema 安全、转换和会话管理 | 35 | 按需求新建真实执行子系统；现有管理桩不足以移植补丁 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
+| F24 MCP OAuth 与身份委派 | OAuth M2M/OBO/ID-JAG、DCR bridge、PKCE/resource/introspection/RS256、跨实例刷新、client credentials | 45 | 随 MCP 执行添加；先定义 caller 与 upstream credential 边界 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
+| F25 MCP 权限、额度与接入安全 | Key/Team/access group/tool/client allowlist、RPM/concurrency、env/Extra Headers、stdio 默认禁用 | 15 | 启用 MCP 时必需；暂不给当前桩追加表面配置 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
+| F26 Guardrail 供应商集成 | Cisco AI Defense、Purview、Headroom/Compresr、Straiker、DeepKeep、Alice、Conduct、TypeSafe、Akto 等 | 24 | 按风险和供应商选择；先落地可用执行链 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
+| F27 Guardrail 与 Policy 执行能力 | logging_only input/output、并行/stream/后台 hooks、工具改写/PII/附件/vector chunk 扫描、优先级/fallback 策略 | 33 | 需先实现真实 hook，再按场景采用；管理 API 桩不算支持 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
 | F28 Web Search | TinyFish/Nimble/Bing/AgentCore、objective+multi-query、拦截配置、权限默认拒绝 | 10 | 按搜索需求添加；已有查询路由不代表所有上游执行 Provider | [src/proxy/SearchToolsEndpoints.ts](../src/proxy/SearchToolsEndpoints.ts) |
-| F29 Vector Store、RAG、Skills | Valkey/MongoDB 搜索/sidecar、indexes、上传权限、语义 Agent Skills 与 well-known 注册 | 11 | 按需求新建；当前向量库和 Prompt 管理多为桩 | [src/proxy/VectorStoreEndpoints.ts](../src/proxy/VectorStoreEndpoints.ts) |
-| F30 Agent、A2A 与 SDK 工具循环 | LangFlow/Watsonx/Foundry/Databricks/AgentCore、agent card/identity/permissions/kill switch、agent()/run_tool_loop | 14 | 暂缓；需要 Agent 产品与身份/费用执行契约 | [src/proxy/AgentEndpoints.ts](../src/proxy/AgentEndpoints.ts) |
-| F31 代码执行与沙箱 | E2B/OpenSandbox、Chat/Responses code interpreter、按 session 复用 | 5 | 暂缓；引入隔离执行、费用与生命周期管理 | [src/proxy/OCRVideoContainerEndpoints.ts](../src/proxy/OCRVideoContainerEndpoints.ts) |
-| F32 Files 与 Batches | managed files/类型与数量限制、跨团队隔离、provider 批处理、下载/取消、费用/退款/后台结算 | 18 | 按真实批量任务需求添加；先核对每个入口的执行实现 | [src/proxy/BatchesEndpoints.ts](../src/proxy/BatchesEndpoints.ts) |
+| F29 Vector Store、RAG、Skills | Valkey/MongoDB 搜索/sidecar、indexes、上传权限、语义 Agent Skills 与 well-known 注册 | 11 | 按需求新建；当前向量库和 Prompt 管理多为桩 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
+| F30 Agent、A2A 与 SDK 工具循环 | LangFlow/Watsonx/Foundry/Databricks/AgentCore、agent card/identity/permissions/kill switch、agent()/run_tool_loop | 14 | 暂缓；需要 Agent 产品与身份/费用执行契约 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
+| F31 代码执行与沙箱 | E2B/OpenSandbox、Chat/Responses code interpreter、按 session 复用 | 5 | 暂缓；引入隔离执行、费用与生命周期管理 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
+| F32 Files 与 Batches | managed files/类型与数量限制、跨团队隔离、provider 批处理、下载/取消、费用/退款/后台结算 | 18 | 按真实批量任务需求添加；先核对每个入口的执行实现 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
 | F33 Audio、Speech 与 Realtime | Chirp/Gemini/xAI/Meta/Mistral 音频、Deepgram WebSocket、Transcribe/Azure Speech、duration 计费 | 12 | 按供应商和语音需求添加；通用 Audio/Realtime 路由不等于专用适配 | [src/proxy/AudioEndpoint.ts](../src/proxy/AudioEndpoint.ts) |
-| F34 Image、Video 与 OCR | Fal/Dashscope/Azure/Vertex 图像/编辑/视频、Mistral/Cohere/Textract/Reducto 等 OCR 原生格式 | 24 | 按需求增加专用 Provider；Image 已有部分，OCR/Video 多为桩 | [src/proxy/OCRVideoContainerEndpoints.ts](../src/proxy/OCRVideoContainerEndpoints.ts) |
+| F34 Image、Video 与 OCR | Fal/Dashscope/Azure/Vertex 图像/编辑/视频、Mistral/Cohere/Textract/Reducto 等 OCR 原生格式 | 24 | 按需求增加专用 Provider；Image 已有部分，OCR/Video 多为桩 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
 | F35 新增 Provider 与专用兼容 | SCX/Cortecs/Reka/Prism/EdenAI/Sail/Nadir/Meta/Tencent/GDC 等及 Fireworks/Together 专用参数 | 28 | 通用 OpenAI-compatible 优先复用；专用鉴权/协议按需求添加 | [src/providers/ProviderRegistry.ts](../src/providers/ProviderRegistry.ts) |
 | F36 云 Provider 原生能力 | Bedrock Converse/Mantle/native Responses、Azure/Vertex/Foundry、SigV4/STS/tags/区域/structured output | 32 | 有对应云需求再添加；TS 当前没有这些专用实现 | [src/providers/ProviderRegistry.ts](../src/providers/ProviderRegistry.ts) |
 | F37 Caching | Valkey/Redis/Qdrant semantic cache、end-user scope、prompt caching 自动断点/Key 开关/预测 | 14 | 建议先添加 prompt caching；semantic backend 按命中场景和隔离需求 | [src/providers/AnthropicProvider.ts](../src/providers/AnthropicProvider.ts) |
@@ -161,7 +161,7 @@ DB 配置覆盖 YAML 默认值，读取时保留显式 false/0；metadata 策略
 
 以下用于防止下次重新把功能空缺或不同机制误报成 BUG，不构成待修复问题清单：
 
-- 原 AUTH-01 / #42064：SCIM active 停用契约未实现，SCIMEndpoints 为桩；没有证明 TS 已有可操作的用户停用功能却继续放行。身份新增能力在 F20。
+- 原 AUTH-01 / #42064：SCIM active 停用契约未实现（SCIMEndpoints 桩已在功能清理中移除）；没有证明 TS 已有可操作的用户停用功能却继续放行。身份新增能力在 F20。
 - 原 SPEND-01 / #45273：TS 为单个 PostgreSQL transaction，不是上游 Redis buffer/batch flush；没有复现同一个批次丢失问题。
 - 原 COST-02 / #45472、HIST-03 / #31021/#35491：TS 自定义价走请求上下文且优先，没有上游 register_model 共享覆盖写路径；没有复现自定义价污染。
 - 原 HIST-01 / #29273：动态部署存在，部署级 budget limiter 不存在；不能把“没有 limiter”报告成“已有 limiter 在动态模型失效”。

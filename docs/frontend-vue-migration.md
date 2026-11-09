@@ -1,6 +1,6 @@
 # Dashboard Vue 重写方案与验收记录
 
-当前状态：Vue 实现已接入标准源码目录 `ui/litellm-dashboard`，尚在最终产物与逐页截图验收。生产仍运行 React，未部署、未提交或 push。
+当前状态：Vue 实现已接入标准源码目录 `ui/litellm-dashboard`，已于 2026-11-08 发布到生产；视觉验收按功能一致、无可见缺陷执行。同日完成功能清理：无后端支撑的页面、后端桩和对应的前端调用一并移除，页面清单见 `docs/cleanup-candidates.md`。未提交或 push。
 
 ## 可行性与边界
 
@@ -16,7 +16,7 @@
 
 1. 保留旧源码、对照产物来源和每轮原始截图，冻结合成数据前置基线。
 2. 实现共享控件、导航、会话、Worker、价格展示、返回地址与访问控制。
-3. 逐功能迁移 Keys、Models、Logs、Usage、CLIProxy、设置、访问管理、Playground、Hub、工具、策略、Prompts 等所有入口。
+3. 逐功能迁移 Keys、Models、Logs、Usage、CLIProxy、设置、访问管理、Playground、Search Tools 等仍需保留的入口；Hub、工具策略、Prompts、Vector Stores、Caching 等没有后端支撑的入口不再保留页面。
 4. 对齐请求方法、路径、DTO、CSRF、虚拟密钥推理认证、分页/筛选、取消、流、下载、弹窗与图表交互；区分后端原有能力缺口。
 5. 绑定源码指纹进行生产构建，重拍桌面与手机交互状态，保留逐像素原始差异，收敛可重复问题。
 6. 接入 canonical 构建目录和后端静态路由，验证深链、前缀、CSP、资源 404、旧客户端缓存资源和回退边界。
@@ -28,9 +28,9 @@
 
 保持 HttpOnly session cookie、写请求 CSRF、显式虚拟密钥推理的独立认证、六小时 keepalive、Worker 切换、登录返回 URL、取消旧请求、清理订阅/图表/流。不改变持久化或账单计算。
 
-保留原页面装配差异：旧 legacy 根页的 YAML 配置差异弹窗和 Claude Code nudge 仅在根页装配；路径式 dashboard 的 Debug 模式警告仅在路径式页面显示。UsageIndicator、浏览器偏好与其原事件名按原契约工作。
+保留原页面装配差异：旧 legacy 根页的 YAML 配置差异弹窗仅在根页装配；路径式 dashboard 的 Debug 模式警告仅在路径式页面显示。UsageIndicator、浏览器偏好与其原事件名按原契约工作。Claude Code nudge 依赖的 `/in_product_nudges` 从未实现，已随清理移除。
 
-Guardrails、Policies 等旧页面对若干当前后端并未实现的接口仍有依赖。合成浏览器用例只证明前端请求与状态契约，不能证明线上存在这些后端能力；迁移不借机扩展后端功能。
+Guardrails、Policies、Prompts、Vector Stores、Caching、MCP Servers、Projects、Budgets、Access Groups、旧 Usage 等页面依赖的接口在 TS 端多为桩或完全不存在；迁移阶段只保留了前端请求与状态契约。2026-11-08 的功能清理删除了这些页面及其桩后端，保留页面不再调用不存在的接口。
 
 ## 截图和证据
 
