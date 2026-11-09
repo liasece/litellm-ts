@@ -95,3 +95,5 @@ Guardrails、Policies、Prompts、Vector Stores、Caching、MCP Servers、Projec
 Old Usage Activity 的 Recharts 字体过渡/测量缓存会让日期刻度密度受先前图表影响。实测记录在 `.artifacts/frontend-vue/scope-review/LegacyActivityTextMeasurementReview-v1.json`：该行为在参考实现里本身就是不确定的，取决于此前图表渲染留下的状态，无法作为稳定的对齐目标。决定不在 Vue 侧复刻，改用确定性测量；刻度标签保持可读，记为有意保留的非一致性而不是缺陷。
 
 浏览器侧的 visual-baseline 采集与比对脚本（`ui/litellm-dashboard/e2e/`）只能在带 `.artifacts` 证据和 React 参考构建的工作区使用，已按用户要求从仓库移除；组件级浏览器回归仍由 `tests/platform-ui` 配合 `test:components` 保留。生产候选的构建指纹、门禁结果与线上核验记录见上述验收文件。2026-11-08，用户要求确认应跟踪的文件后提交。Vue 仪表盘迁移已在 `13adcfb` 提交，后续维护按当前任务授权执行。
+
+2026-11-09 起前端测试按可执行性分层：表单校验、请求体映射、状态流转与错误码处理由 Vitest 逻辑测试承担（`src/**/*.test.ts`，node 环境）；Playwright 组件测试（`tests/platform-ui`，`npm run test:components`）只保留浏览器语义——原生 dialog 的模态与焦点、剪贴板降级、图表指针命中、键盘与 aria、滚动分页、流式增量，并移除了对照旧布局的像素断言与随页面重写消失的死用例。同时修复 `.github/workflows/ci.yml` 的制表符缩进（YAML 无法解析、CI 从未执行），新增 `frontend`（vue-tsc、Vitest、ESLint、Prettier）与 `components`（Chromium 与组件测试）两个 job，前端门禁从此进入 CI。

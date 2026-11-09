@@ -121,7 +121,7 @@ export function chatStream() {
 	return sseFrames([
 		{ model: "fixture-chat", choices: [{ delta: { reasoning_content: "Fixture reasoning" } }] },
 		{ model: "fixture-chat", choices: [{ delta: { content: "Fixture chat answer" } }] },
-		{ usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7, cost: 0 } },
+		{ model: "fixture-chat", choices: [], usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7, cost: 0 } },
 	]);
 }
 export function responsesStream(responseId = "response-fixture") {

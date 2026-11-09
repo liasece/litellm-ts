@@ -11,7 +11,7 @@
 		"build": "node scripts/BuildRuntime.mjs",
 		"preview": "vite preview --host 0.0.0.0",
 		"typecheck": "vue-tsc --noEmit",
-		"lint": "eslint . --max-warnings=0",
+		"lint": "eslint . --max-warnings=0 --cache --cache-location node_modules/.cache/eslint",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"test": "vitest run",

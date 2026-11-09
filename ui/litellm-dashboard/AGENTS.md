@@ -10,6 +10,7 @@
 - 路径路由与 legacy ?page=... 同时兼容，导航选中映射与后端静态路径共用 src/shared/WebUiPaths.ts。HTML 回退只覆盖页面路由，资源不存在须返回 404。
 - 不得用 as any、@ts-ignore、放宽 tsconfig、关闭 ESLint 规则或新建违规基线掩盖问题。
 - 修改后至少运行相关 Vitest、npm run typecheck、npm run lint、npm run format:check、npm run build 与 git diff --check。构建含类型检查也不能代替覆盖源码及测试的独立 typecheck。
+- 测试分层：表单校验、请求体映射、状态流转和错误码处理放 Vitest 逻辑测试（node 环境，`src/**/*.test.ts`）；只有浏览器语义才写 Playwright 组件测试（`tests/platform-ui`，`npm run test:components`）——原生 dialog 的模态与焦点、剪贴板降级、图表指针命中、键盘与 aria 交互、滚动分页、流式增量。组件测试不断言像素、字号、阴影、渐变等样式数值，也不复制已由 Vitest 覆盖的 payload 断言。
 - 前后截图须使用同一浏览器、视口、时区和合成数据；保留原图、SHA、DOM、请求记录和实际构建指纹。Vite dev 的截图是诊断，不代表生产产物验收。不用占位页、遮罩或统一像素容差替代核对。
 - out 在静态截图读取期间保持不变。BuildRuntime 会校验前后源码指纹，保留上一发布产物的客户端静态资源，并写入构建来源与资源清单。
 

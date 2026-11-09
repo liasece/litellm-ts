@@ -50,11 +50,15 @@ CPA 由本应用管理为子进程，调查先确定当前管理器、配置投�
 ## 验证与交付
 
 - 从当前 `package.json` 选择与改动相称的命令。后端常用门禁为 `npm run typecheck`、相关 Jest、
-  `npm run build` 和 `npm run lint`；不要把本文列举当成替代当前脚本的第二事实源。
+  `npm run test:types` 和 `npm run lint`；`npm run build` 只在确实需要 `dist` 产物时运行，它要发射
+  declaration/declarationMap/sourceMap，比类型检查慢数倍，发布构建也由 JL3 构建容器统一执行。
+  Jest 走 `isolatedModules` 只转译不做类型检查，测试文件与 `tests/` 的类型由 `npm run test:types`
+  覆盖，改动测试或新增文件时一并运行。不要把本文列举当成替代当前脚本的第二事实源。
 - 修改后至少运行 `git diff --check`，并运行能覆盖受影响行为的最小充分检查。高风险、跨模块或发布前
   改动应扩大到完整相关测试和 production build。
 - 前端改动遵守 `ui/litellm-dashboard/AGENTS.md`，至少覆盖相关 ESLint、Vitest、TypeScript 检查、Prettier 和
-  Vue/Vite production build；已知基线问题必须与本次回归分开说明，不能用放宽配置绕过。
+  Vue/Vite production build；改动涉及浏览器语义时再跑 `npm run test:components`，它与 Vitest、vue-tsc 一起由 CI 的
+  frontend/components 两个 job 执行。已知基线问题必须与本次回归分开说明，不能用放宽配置绕过。
 - 必需检查失败时先诊断根因。若环境阻塞且不在当前授权范围内，保留现场并报告已验证、失败原因和
   未验证项；不得把未解释的失败或未执行的生产核验描述为通过。
 

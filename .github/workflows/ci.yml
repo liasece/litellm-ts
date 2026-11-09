@@ -3,31 +3,80 @@ name: CI
 on: [push, pull_request, workflow_dispatch]
 
 jobs:
-	lint:
-		runs-on: ubuntu-latest
-		steps:
-			- uses: actions/checkout@v4
-			- uses: actions/setup-node@v4
-				with: { node-version: "22" }
-			- run: npm ci
-			- run: npx eslint . --cache --cache-location .cache/eslint
-			- run: npx prettier --check "src/**/*.ts"
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      - run: npx eslint . --cache --cache-location .cache/eslint
+      - run: npx prettier --check "src/**/*.ts"
 
-	typecheck:
-		runs-on: ubuntu-latest
-		steps:
-			- uses: actions/checkout@v4
-			- uses: actions/setup-node@v4
-				with: { node-version: "22" }
-			- run: npm ci
-			- run: npx tsc --noEmit
-			- run: npx madge --circular --extensions ts src/
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx madge --circular --extensions ts src/
 
-	test:
-		runs-on: ubuntu-latest
-		steps:
-			- uses: actions/checkout@v4
-			- uses: actions/setup-node@v4
-				with: { node-version: "22" }
-			- run: npm ci
-			- run: npm test
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      - run: npm test
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui/litellm-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/litellm-dashboard/package-lock.json
+      - run: npm ci
+      - name: 类型检查
+        run: npx vue-tsc --noEmit
+      - name: 逻辑测试
+        run: npx vitest run
+      - name: ESLint
+        run: npx eslint . --max-warnings=0
+      - name: Prettier
+        run: npx prettier --check .
+
+  components:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ui/litellm-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/litellm-dashboard/package-lock.json
+      - run: npm ci
+      - name: 安装 Chromium
+        run: npx playwright install --with-deps chromium
+      - name: 浏览器语义测试
+        run: npm run test:components
+      - name: 上传失败现场
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: .artifacts/frontend-vue/browser-tests
+          retention-days: 7

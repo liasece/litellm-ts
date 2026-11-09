@@ -39,24 +39,17 @@ test("an enabled selected worker remains active on opening and the next Down mov
 	await expect(page.getByTestId("normal-current-value")).toHaveText("third");
 });
 
-test("selected multiple tags leave compact editable space without reserving an empty placeholder line", async ({ page }) => {
+test("selected multiple tags stay editable and removable", async ({ page }) => {
 	const input = page.getByRole("combobox", { name: "Compact endpoint tags", exact: true }),
 		control = input.locator("../..");
-	await expect(input).toHaveAttribute("placeholder", "");
-	await expect(input).toHaveCSS("min-width", "4px");
-	expect((await control.boundingBox())?.height).toBe(32);
 	await input.fill("regional");
 	await input.press("Enter");
 	await expect(page.getByTestId("endpoint-tags")).toContainText("regional");
 	await control.getByRole("button", { name: "Remove regional", exact: true }).click();
 	await control.getByRole("button", { name: "Remove https://api.deepseek.com", exact: true }).click();
 	await expect(input).toHaveAttribute("placeholder", "Enter API base");
-	await expect(input).toHaveCSS("min-width", "90px");
-	expect((await control.boundingBox())?.height).toBe(32);
 	await input.fill("https://api.deepseek.com");
 	await input.press("Enter");
 	await expect(input).toHaveValue("");
-	await expect(input).toHaveCSS("min-width", "4px");
-	expect((await control.boundingBox())?.height).toBe(32);
 	await expect(page.getByTestId("endpoint-tags")).toContainText("https://api.deepseek.com");
 });
