@@ -1,0 +1,8 @@
+# 只在 JL3 构建/部署副本上存在、不随源码同步的目录（每行一个 rsync 模式，/ 开头锚定仓库根）
+# 由 ~/bin/jl3-sync 读取；这些路径既不传输也不删除，静止保留在 JL3。
+
+# 前端构建输出：部署脚本在 ui/litellm-dashboard 内产出 out/，再复制为 ui/out
+/ui/litellm-dashboard/out/
+
+# 被 .gitignore 忽略的 React 参考实现（约 1.6GB，自带 node_modules）
+/ui/litellm-dashboard-react-reference/

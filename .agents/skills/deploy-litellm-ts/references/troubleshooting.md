@@ -14,7 +14,7 @@
 - 安全停止容器替换前的构建
 - 生产容器已经缺失
 - 迁移或健康检查超时
-- Samba 共享依赖的平台错配
+- 本机与镜像的平台错配
 - 脏工作区和并发 Git 活动
 
 ## 已知拓扑与事实源
@@ -24,13 +24,13 @@
 | 项目         | 已知入口                                                    | 当前事实源                           |
 | ------------ | ----------------------------------------------------------- | ------------------------------------ |
 | 远程主机     | `root@jl3ssh.gamefantasy.com`（交互中也可能称 `sshjl3`）    | SSH 配置与用户本轮指定               |
-| 远程仓库     | `/root/var/src/jtllab/litellm-ts`                           | 当前 Samba 映射与远端 `pwd`          |
+| 远程副本     | `/root/var/src/jtllab/litellm-ts`                           | 远端 `pwd` 与 `git status`           |
 | 验证容器     | `cc-server-dc`                                              | `docker inspect` 及其仓库挂载        |
 | 生产容器     | `litellm-prod`                                              | `docker inspect`、部署脚本与服务配置 |
 | 标准部署入口 | `/root/var/tools/service/ai-out-service/restart-litellm.sh` | 主机当前服务配置与脚本               |
 
-- 本地 checkout 与远端仓库是同一 Samba 内容面，不执行 `scp`、`rsync` 或二次源码同步。
-- `cc-server-dc` 只用于 Git、Node.js、类型检查、测试和构建等验证；标准部署脚本在 SSH 宿主机运行。
+- 本机 `~/src/jtllab/litellm-ts` 是唯一源码；远端副本只由 `~/bin/jl3-sync` 单向进入，不使用 `scp`、反向 `rsync` 或第二份源码副本。
+- Git、类型检查与单元测试在本机执行；`cc-server-dc` 只用于需要在 Linux 侧完成的验证，标准部署脚本在 SSH 宿主机运行。
 - 脚本、容器或路径与表格不一致时，以只读现场证据为准。不能唯一确认时停止，不同时尝试多个入口。
 
 ## 工具链与发布前验证
@@ -185,13 +185,11 @@ ps -o pid,ppid,pgid,sid,state,command -p <已确认的 PID 列表>
 
 禁止删除或重启仍有活动迁移事务的容器。
 
-## Samba 共享依赖的平台错配
+## 本机与镜像的平台错配
 
-仓库由 macOS 和 Linux 通过 Samba 共享。远程 `npm ci` 可能把 Linux 原生可选依赖写入共享 `node_modules`，导致本地 macOS Vitest、Rollup 或可执行入口报错。
+本机 `~/src/jtllab/litellm-ts` 与 JL3 副本各自安装依赖：本机按与构建镜像一致的 Node 主版本安装，JL3 继续使用 Linux 侧 `node_modules`，两侧不共用同一份依赖目录，也不再经由 Samba 工作。
 
-本机测试收集、TypeScript 扫描或构建因 Samba 小文件 I/O 明显变慢，或者出现原生依赖平台错配时，
-不要在本机反复重试或安装另一平台的依赖作为补丁。优先在挂载同一 checkout 的 `cc-server-dc` 中
-完成测试、ESLint、类型检查和构建；源码会通过 Samba 自动同步，不执行 `scp` 或 `rsync`。
+本机 Vitest、Rollup 或可执行入口报原生依赖平台错配，或本机小文件 I/O 明显变慢时，先核对本机 Node 主版本与构建镜像是否一致；不一致就在本机切换版本重装依赖，不安装另一平台的依赖作为补丁，也不删除锁文件。需要 Linux 侧行为的验证（镜像构建、容器内运行、生产探针）仍在 JL3 上执行。
 
 执行前按以下顺序确认现场：
 
@@ -217,4 +215,4 @@ ps -o pid,ppid,pgid,sid,state,command -p <已确认的 PID 列表>
 - 只执行只读检查。
 - 未获单独授权时，不执行重置、恢复、清理、暂存或提交。
 - Git index 暂时繁忙或读取失败时，不修复或覆盖 index；稍后重试只读检查并确认是否为并发活动。
-- 部署前确认目标修改已通过 Samba 出现在远端工作区。
+- 部署前先执行 `~/bin/jl3-sync <本地仓库路径>`，用同步输出里的 HEAD 与未提交项数确认远端对应本次改动。
