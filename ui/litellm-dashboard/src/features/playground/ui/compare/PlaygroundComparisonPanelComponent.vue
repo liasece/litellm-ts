@@ -4,20 +4,14 @@ import type { ComparisonInstance, ComparisonSettings } from "../../support/Playg
 import type { PlaygroundCompareStore } from "../../stores/PlaygroundCompareStore";
 import type { UiValue } from "../../../platform/ui/UiTypes";
 import { modelOptions } from "../../data/PlaygroundEndpointData";
-import { tagOptions, vectorOptions, guardrailOptions } from "../../logic/PlaygroundOptionsLogic";
 import UiSelect from "../../../platform/ui/UiSelect.vue";
 import UiCheckbox from "../../../platform/ui/UiCheckbox.vue";
 import UiPopover from "../../../platform/ui/UiPopover.vue";
 import UiLucideIcon from "../../../platform/ui/UiLucideIcon.vue";
 import PlaygroundComparisonMessagesComponent from "./PlaygroundComparisonMessagesComponent.vue";
 const props = defineProps<{ comparison: ComparisonInstance; store: PlaygroundCompareStore }>(),
-	popover = ref<InstanceType<typeof UiPopover>>(),
-	agent = computed(() => props.store.state.endpoint === "/a2a");
-const options = computed(() =>
-	agent.value
-		? props.store.catalog.state.agents.map((item) => ({ value: item.agent_name, label: item.agent_name || item.agent_id }))
-		: modelOptions(props.store.catalog.state.models),
-);
+	popover = ref<InstanceType<typeof UiPopover>>();
+const options = computed(() => modelOptions(props.store.catalog.state.models));
 function array(value: UiValue | UiValue[] | null) {
 	return value === null ? [] : (Array.isArray(value) ? value : [value]).map(String);
 }
@@ -34,14 +28,12 @@ function numeric(event: Event) {
 			<div class="pg-compare-panel__selection">
 				<div class="pg-grow">
 					<UiSelect
-						:model-value="agent ? comparison.agent || null : comparison.model || null"
+						:model-value="comparison.model || null"
 						:options="options"
 						:loading="store.catalog.state.loading"
 						searchable
-						:placeholder="agent ? 'Select an agent' : 'Select a model'"
-						@update:model-value="
-							store.update(comparison.id, agent ? { agent: String($event || '') } : { model: String($event || '') })
-						"
+						placeholder="Select a model"
+						@update:model-value="store.update(comparison.id, { model: String($event || '') })"
 					/>
 				</div>
 				<UiPopover ref="popover" trigger="click" placement="bottom"
@@ -65,31 +57,13 @@ function numeric(event: Event) {
 									:model-value="comparison.tags"
 									clearable
 									max-tag-count="responsive"
-									:options="tagOptions(store.catalog.state.tags)"
+									:options="[]"
 									multiple
 									searchable
 									creatable
 									:token-separators="[',']"
 									placeholder="Select or create tags"
-									@update:model-value="setting('tags', array($event))" /></label
-							><label
-								>Vector Stores<UiSelect
-									:model-value="comparison.vectorStores"
-									clearable
-									:options="vectorOptions(store.catalog.state.vectors)"
-									multiple
-									searchable
-									placeholder="Select vector stores"
-									@update:model-value="setting('vectorStores', array($event))" /></label
-							><label
-								>Guardrails<UiSelect
-									:model-value="comparison.guardrails"
-									clearable
-									:options="guardrailOptions(store.catalog.state.guardrails)"
-									multiple
-									searchable
-									placeholder="Select guardrails"
-									@update:model-value="setting('guardrails', array($event))"
+									@update:model-value="setting('tags', array($event))"
 							/></label>
 							<h4>Advanced Settings</h4>
 							<UiCheckbox

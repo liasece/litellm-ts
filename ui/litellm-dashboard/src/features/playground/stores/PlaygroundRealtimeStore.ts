@@ -16,18 +16,16 @@ export function realtimeSession(voice: string, recording = false) {
 		},
 	};
 }
-export function realtimeUrl(model: string, base?: string, guardrails: string[] = []) {
+export function realtimeUrl(model: string, base?: string) {
 	const url = new URL(inferenceUrl("/v1/realtime", base));
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 	url.searchParams.set("model", model);
-	if (guardrails.length) url.searchParams.set("guardrails", guardrails.join(","));
 	return url.href;
 }
 export function createPlaygroundRealtimeStore(options: {
 	auth: () => PlaygroundAuth;
 	model: () => string;
 	baseUrl: () => string | undefined;
-	guardrails: () => string[];
 	socket?: (url: string, protocols: string[]) => WebSocket;
 	audio?: ReturnType<typeof createRealtimeAudio>;
 }) {
@@ -65,7 +63,7 @@ export function createPlaygroundRealtimeStore(options: {
 			audio.initialize();
 			const auth = options.auth(),
 				ws = (options.socket ?? ((url, protocols) => new WebSocket(url, protocols)))(
-					realtimeUrl(options.model(), options.baseUrl(), options.guardrails()),
+					realtimeUrl(options.model(), options.baseUrl()),
 					auth.kind === "virtual-key" ? ["realtime", "openai-insecure-api-key." + auth.apiKey] : ["realtime"],
 				);
 			socket = ws;

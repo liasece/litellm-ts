@@ -25,8 +25,7 @@
 	word-break: break-word;
 	color: #111827;
 }
-.chat-user-message small,
-.chat-tool-message > small {
+.chat-user-message small {
 	font-size: 11px;
 	color: #9ca3af;
 	margin-top: 4px;
@@ -159,10 +158,6 @@
 .chat-assistant-message__copy button.is-copied {
 	color: #52c41a;
 }
-.chat-assistant-message > .pg-mcp-events {
-	margin-top: 8px;
-	max-width: 100%;
-}
 .chat-reasoning-toggle {
 	display: flex;
 	align-items: center;
@@ -228,64 +223,6 @@
 		transform: translateY(-4px);
 		opacity: 1;
 	}
-}
-.chat-tool-message {
-	max-width: 80%;
-}
-.chat-tool-message > details {
-	background: #fafafa;
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-}
-.chat-tool-message summary {
-	list-style: none;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	font-size: 13px;
-	padding: 8px 12px;
-	font-weight: 500;
-	color: #374151;
-	cursor: pointer;
-}
-.chat-tool-message summary > .ui-icon {
-	color: #6b7280;
-}
-.chat-tool-message details[open] summary > .ui-icon:first-child {
-	transform: rotate(90deg);
-}
-.chat-tool-message details > div {
-	padding: 12px;
-	border-top: 1px solid #e5e7eb;
-}
-.chat-tool-message section + section {
-	margin-top: 12px;
-}
-.chat-tool-message h4 {
-	font-size: 11px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	color: #9ca3af;
-	margin: 0 0 4px;
-}
-.chat-tool-message pre {
-	margin: 0;
-	padding: 8px 10px;
-	background: #f3f4f6;
-	border-radius: 6px;
-	font-size: 12px;
-	font-family: ui-monospace, SFMono-Regular, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-	white-space: pre-wrap;
-	word-break: break-word;
-	color: #374151;
-}
-.chat-tool-message section > div {
-	font-size: 13px;
-	color: #374151;
-	white-space: pre-wrap;
-	word-break: break-word;
-	font-family: ui-monospace, SFMono-Regular, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 .chat-comparison {
 	padding-bottom: 8px;

@@ -171,47 +171,6 @@
 	font: 12px/16px var(--ui-font-mono);
 	white-space: pre-wrap;
 }
-.pg-tool-restrictions {
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-	margin-top: 12px;
-}
-.pg-byok-statuses {
-	margin-top: 12px;
-}
-.pg-byok-status {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 0;
-	padding: 8px;
-	border: 1px solid #dbeafe;
-	border-radius: 4px;
-	background: #eff6ff;
-	font-size: 12px;
-	line-height: 16px;
-	color: #1d4ed8;
-	margin-top: 8px;
-}
-.pg-byok-status strong {
-	color: #16a34a;
-	font-weight: 500;
-}
-.pg-byok-status button {
-	padding: 0;
-	background: none;
-	border: 0;
-	color: #2563eb;
-	cursor: pointer;
-	font-size: 12px;
-}
-.pg-byok-status button.pg-byok-connect {
-	padding: 4px 12px;
-	color: #fff;
-	background: #3b82f6;
-	border-radius: 4px;
-}
 .pg-code-tool {
 	padding: 12px;
 	border: 1px solid #bfdbfe;
@@ -237,47 +196,11 @@
 .pg-code-tool__unavailable a {
 	color: #3b82f6;
 }
-.pg-tool-field {
-	display: flex;
-	flex-direction: column;
-	margin-bottom: 24px;
-	color: #374151;
-}
-.pg-tool-field > span:first-child {
-	font-weight: 500;
-	margin-bottom: 8px;
-	display: flex;
-	gap: 4px;
-	align-items: center;
-}
-.pg-tool-field > span:first-child .ui-icon {
-	color: #9ca3af;
-}
-.pg-tool-field .pg-error {
-	font-size: 14px;
-	margin-top: 2px;
-}
-.pg-tool-field .ui-input-number {
-	width: 100%;
-}
-.pg-tool-form__empty {
-	padding: 16px;
-	text-align: center;
-	color: #6b7280;
-	font-size: 14px;
-}
-.pg-tool-form .pg-mono textarea {
-	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
 .pg-config-tags {
 	padding-bottom: 16px;
 }
 .pg-config-spaced {
 	padding-bottom: 16px;
-}
-.pg-config-mcp__select {
-	padding-bottom: 8px;
 }
 .pg-small-label {
 	line-height: 16px;
@@ -286,21 +209,4 @@
 	width: 24px;
 	min-width: 24px;
 	padding: 0;
-}
-
-.pg-tool-form {
-	font: 14px/22px var(--ui-font-antd);
-}
-.pg-tool-field > span:first-child {
-	font-size: 14px;
-	line-height: 20px;
-}
-.pg-tool-field .pg-required-leading {
-	color: #ff4d4f;
-	font:
-		14px/22px SimSun,
-		sans-serif;
-}
-.pg-tool-field > span:first-child > .ui-popover-trigger {
-	margin-left: 4px;
 }

@@ -1,20 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { CodeInterpreterResult, EndpointType, PlaygroundEvent, PlaygroundMessage } from "../../support/PlaygroundModels";
+import type { CodeInterpreterResult, EndpointType, PlaygroundMessage } from "../../support/PlaygroundModels";
 import { json } from "../../logic/PlaygroundValueLogic";
 import MarkdownContent from "../../../content/ui/MarkdownContent.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiButton from "../../../platform/ui/UiButton.vue";
-import PlaygroundMcpEventsComponent from "./PlaygroundMcpEventsComponent.vue";
 import PlaygroundSearchResultsComponent from "./PlaygroundSearchResultsComponent.vue";
-import PlaygroundA2AMetricsComponent from "./PlaygroundA2AMetricsComponent.vue";
 import PlaygroundResponseMetricsComponent from "./PlaygroundResponseMetricsComponent.vue";
 import PlaygroundCodeOutputComponent from "./PlaygroundCodeOutputComponent.vue";
 const props = defineProps<{
 		message: PlaygroundMessage;
 		last: boolean;
 		endpoint: EndpointType;
-		events: PlaygroundEvent[];
 		codeResult?: CodeInterpreterResult | null;
 	}>(),
 	reasoning = ref(true);
@@ -38,10 +35,7 @@ const text = computed(() => (typeof props.message.content === "string" ? props.m
 					<MarkdownContent :source="message.reasoningContent" :gfm="false" highlight-code />
 				</div>
 			</div>
-			<PlaygroundMcpEventsComponent
-				v-if="assistant && last && ['chat', 'responses'].includes(endpoint)"
-				:events="events"
-			/><PlaygroundSearchResultsComponent
+			<PlaygroundSearchResultsComponent
 				v-if="message.searchResults?.length"
 				:results="message.searchResults"
 			/><PlaygroundCodeOutputComponent v-if="assistant && last && endpoint === 'responses' && codeResult" :result="codeResult" />
@@ -62,19 +56,12 @@ const text = computed(() => (typeof props.message.content === "string" ? props.m
 						class="pg-message__image pg-mt-12"
 				/></template>
 			</div>
-			<PlaygroundA2AMetricsComponent
-				v-if="assistant && message.a2aMetadata"
-				:metadata="message.a2aMetadata"
-				:time-to-first-token="message.timeToFirstToken"
-				:total-latency="message.totalLatency"
-			/>
 			<PlaygroundResponseMetricsComponent
-				v-else-if="assistant"
+				v-if="assistant"
 				:model="message.model"
 				:time-to-first-token="message.timeToFirstToken"
 				:total-latency="message.totalLatency"
 				:usage="message.usage"
-				:tool-name="message.toolName"
 			/>
 		</div>
 	</article>

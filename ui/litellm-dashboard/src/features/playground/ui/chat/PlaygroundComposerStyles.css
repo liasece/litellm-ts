@@ -150,58 +150,8 @@
 	color: #6b7280;
 	font-size: 12px;
 }
-.pg-upload-images,
 .pg-upload-audio {
 	margin-bottom: 16px;
-}
-.pg-upload-images__list {
-	display: flex;
-	gap: 8px;
-	flex-wrap: wrap;
-}
-.pg-upload-images__item {
-	position: relative;
-	max-width: 128px;
-}
-.pg-upload-images__item img {
-	max-width: 128px;
-	max-height: 128px;
-	border-radius: 6px;
-	border: 1px solid #e5e7eb;
-	object-fit: cover;
-}
-.pg-upload-images__item button {
-	position: absolute;
-	right: 4px;
-	top: 4px;
-	padding: 4px;
-	border: 1px solid #e5e7eb;
-	border-radius: 4px;
-	background: #fff;
-	box-shadow: 0 1px 2px #0000000d;
-	color: #ef4444;
-	font-size: 12px;
-	line-height: 16px;
-	cursor: pointer;
-}
-.pg-upload-images__add {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	align-items: center;
-	justify-content: center;
-	width: 128px;
-	height: 128px;
-	background: #fff;
-	border: 2px dashed #d1d5db;
-	border-radius: 6px;
-	color: #6b7280;
-	font-size: 12px;
-	cursor: pointer;
-}
-.pg-upload-images__add > .ui-icon {
-	font-size: 24px;
-	color: #666;
 }
 .pg-upload-file {
 	display: flex;

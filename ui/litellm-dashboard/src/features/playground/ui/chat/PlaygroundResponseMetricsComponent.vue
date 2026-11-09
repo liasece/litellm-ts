@@ -9,7 +9,6 @@ const props = defineProps<{
 		timeToFirstToken?: number;
 		totalLatency?: number;
 		usage?: PlaygroundResponseUsage;
-		toolName?: string;
 	}>(),
 	money = useMoneyFormatter(),
 	shown = computed(() => Boolean(props.timeToFirstToken || props.totalLatency || props.usage)),
@@ -60,11 +59,6 @@ const props = defineProps<{
 		<UiTooltip v-if="usage?.cost !== undefined" title="Cost"
 			><span
 				><UiIcon name="DollarOutlined" /><span>{{ money(usage.cost, 6, model) }}</span></span
-			></UiTooltip
-		>
-		<UiTooltip v-if="toolName" title="Tool used"
-			><span
-				><UiIcon name="ToolOutlined" /><span>Tool: {{ toolName }}</span></span
 			></UiTooltip
 		>
 	</div>

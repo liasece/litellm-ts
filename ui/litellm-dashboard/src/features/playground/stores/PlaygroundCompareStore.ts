@@ -1,17 +1,15 @@
 import { shallowReactive } from "vue";
-import type { ComparisonEndpoint, ComparisonInstance, ComparisonSettings } from "../support/PlaygroundCompareModels";
+import type { ComparisonInstance, ComparisonSettings } from "../support/PlaygroundCompareModels";
 import type { PlaygroundAuth, PlaygroundCallbacks, PlaygroundRequest } from "../support/PlaygroundModels";
 import { createPlaygroundCatalogStore } from "./PlaygroundCatalogStore";
 import { createPlaygroundHistoryStore } from "./PlaygroundHistoryStore";
 import { sendInference } from "../api/PlaygroundInferenceApi";
-import { streamAgent } from "../api/PlaygroundAgentStreamApi";
 import { browserSessionStorage, fileDataUrl, readText } from "../logic/PlaygroundStorageLogic";
 import { notify } from "../logic/PlaygroundValueLogic";
 export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false) {
 	const catalog = createPlaygroundCatalogStore(),
 		state = shallowReactive({
 			comparisons: [] as ComparisonInstance[],
-			endpoint: "/v1/chat/completions" as ComparisonEndpoint,
 			source: disabledPersonalKeyCreation ? "custom" : "session",
 			apiKey: "",
 			input: "",
@@ -26,12 +24,9 @@ export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false
 		return {
 			id,
 			model: catalog.state.models[index % Math.max(catalog.state.models.length, 1)]?.model_group ?? "",
-			agent: catalog.state.agents[index % Math.max(catalog.state.agents.length, 1)]?.agent_name ?? "",
 			history: createPlaygroundHistoryStore({ simplified: true }),
 			loading: false,
 			tags: [],
-			vectorStores: [],
-			guardrails: [],
 			temperature: 1,
 			maxTokens: 2048,
 			useAdvancedParams: false,
@@ -48,7 +43,7 @@ export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false
 			if (shared.length) {
 				const next = { ...item };
 				for (const key of shared) {
-					if (key === "tags" || key === "vectorStores" || key === "guardrails") {
+					if (key === "tags") {
 						const value = patch[key];
 						if (value) next[key] = [...value];
 					} else if (key === "useAdvancedParams") {
@@ -76,11 +71,9 @@ export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false
 				temperature: item.temperature,
 				maxTokens: item.maxTokens,
 				tags: [...item.tags],
-				vectorStores: [...item.vectorStores],
-				guardrails: [...item.guardrails],
 				useAdvancedParams: item.useAdvancedParams,
 			},
-			enabled ? ["temperature", "maxTokens", "tags", "vectorStores", "guardrails", "useAdvancedParams"] : [],
+			enabled ? ["temperature", "maxTokens", "tags", "useAdvancedParams"] : [],
 		);
 	}
 	function add() {
@@ -116,10 +109,6 @@ export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false
 			model: item.model || catalog.state.models[index % Math.max(catalog.state.models.length, 1)]?.model_group || "",
 		}));
 	}
-	async function loadAgents() {
-		if (state.source === "custom" && !state.apiKey.trim()) return;
-		await catalog.loadAgents(auth(), base || undefined);
-	}
 	async function send() {
 		const input = state.input.trim(),
 			attachment = state.file;
@@ -128,9 +117,8 @@ export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false
 			notify("error", "Please provide a Virtual Key or select Current UI Session");
 			return;
 		}
-		const agentMode = state.endpoint === "/a2a";
-		if (state.comparisons.some((item) => !(agentMode ? item.agent : item.model))) {
-			notify("error", agentMode ? "Select an agent before sending a message." : "Select a model before sending a message.");
+		if (state.comparisons.some((item) => !item.model)) {
+			notify("error", "Select a model before sending a message.");
 			return;
 		}
 		const current = generation,
@@ -180,30 +168,22 @@ export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false
 				},
 			};
 			const request: PlaygroundRequest = {
-				endpoint: agentMode ? "a2a_agents" : "chat",
+				endpoint: "chat",
 				auth: auth(),
 				model: original.model,
-				agent: original.agent,
 				input,
 				messages: [...before, apiMessage],
 				tags: [...original.tags],
-				guardrails: [...original.guardrails],
-				policies: [],
-				vectorStores: [...original.vectorStores],
-				mcpServers: [],
-				selectedMcpServers: [],
-				mcpRestrictions: {},
 				traceId,
 				temperature: original.useAdvancedParams ? original.temperature : undefined,
 				maxTokens: original.useAdvancedParams ? original.maxTokens : undefined,
 				voice: "alloy",
-				images: [],
 				audio: null,
 				customBaseUrl: base || undefined,
 				signal: controller.signal,
 			};
 			try {
-				await (agentMode ? streamAgent(request, callbacks) : sendInference(request, callbacks));
+				await sendInference(request, callbacks);
 			} catch (error) {
 				if (active()) {
 					const message = error instanceof Error ? error.message : String(error);
@@ -227,6 +207,6 @@ export function createPlaygroundCompareStore(disabledPersonalKeyCreation = false
 		state.comparisons.forEach((item) => item.history.dispose());
 		catalog.dispose();
 	}
-	return { state, catalog, auth, load, loadAgents, add, remove, update, settings, sync, file, clear, send, dispose };
+	return { state, catalog, auth, load, add, remove, update, settings, sync, file, clear, send, dispose };
 }
 export type PlaygroundCompareStore = ReturnType<typeof createPlaygroundCompareStore>;

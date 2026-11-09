@@ -1,20 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-	applyAnthropicEvent,
-	applyChatChunk,
-	applyResponsesEvent,
-	emptyChatStream,
-	emptyResponsesStream,
-	finishChatStream,
-} from "./PlaygroundStreamEventsLogic";
+import { applyAnthropicEvent, applyChatChunk, applyResponsesEvent, emptyResponsesStream } from "./PlaygroundStreamEventsLogic";
 describe("provider stream semantics", () => {
-	it("joins chat text, reasoning, zero cost and MCP results using call ids", () => {
+	it("joins chat text, reasoning, zero cost and provider search results", () => {
 		const text = vi.fn(),
 			reasoning = vi.fn(),
 			usage = vi.fn(),
-			mcp = vi.fn(),
-			state = emptyChatStream(),
-			hooks = { text, reasoning, usage, mcp };
+			search = vi.fn(),
+			hooks = { text, reasoning, usage, search };
 		applyChatChunk(
 			{
 				model: "fixture",
@@ -24,50 +16,32 @@ describe("provider stream semantics", () => {
 							content: "Hello",
 							reasoning_content: "Reason",
 							provider_specific_fields: {
-								mcp_list_tools: [{ function: { name: "lookup", parameters: { type: "object" } } }],
-								mcp_tool_calls: [{ id: "a", function: { name: "lookup", arguments: "{}" } }],
+								search_results: [{ title: "Fixture result" }],
 							},
 						},
 					},
 				],
 			},
 			hooks,
-			state,
 		);
 		applyChatChunk(
 			{
-				choices: [
-					{
-						delta: {
-							provider_specific_fields: {
-								mcp_list_tools: [{ name: "ignored" }],
-								mcp_call_results: [
-									{ tool_call_id: "b", result: "Wrong" },
-									{ tool_call_id: "a", result: "Correct" },
-								],
-							},
-						},
-					},
-				],
+				choices: [{ delta: {} }],
 				usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3, cost: "0" },
 			},
 			hooks,
-			state,
 		);
-		finishChatStream(state, hooks);
 		expect(text).toHaveBeenCalledWith("Hello", "fixture");
 		expect(reasoning).toHaveBeenCalledWith("Reason");
+		expect(search).toHaveBeenCalledWith([{ title: "Fixture result" }]);
 		expect(usage).toHaveBeenCalledWith(expect.objectContaining({ cost: 0, totalTokens: 3 }));
-		expect(mcp).toHaveBeenCalledTimes(2);
-		expect(mcp.mock.calls[1][0].item.output).toBe("Correct");
 	});
-	it("retains Responses ids, tool context and failed events", () => {
+	it("retains Responses ids and failed events", () => {
 		const text = vi.fn(),
 			responseId = vi.fn(),
 			usage = vi.fn(),
 			state = emptyResponsesStream(),
 			hooks = { text, responseId, usage };
-		applyResponsesEvent({ type: "response.output_item.done", item: { type: "mcp_call", name: "lookup" } }, "fixture", hooks, state);
 		expect(applyResponsesEvent({ type: "response.output_text.delta", delta: "Done" }, "fixture", hooks, state)).toBe(true);
 		applyResponsesEvent(
 			{
@@ -81,7 +55,6 @@ describe("provider stream semantics", () => {
 		expect(responseId).toHaveBeenCalledWith("resp-1");
 		expect(usage).toHaveBeenCalledWith(
 			expect.objectContaining({ promptTokens: 5, completionTokens: 3, reasoningTokens: 2, totalTokens: 8 }),
-			"lookup",
 		);
 		expect(() =>
 			applyResponsesEvent({ type: "response.failed", response: { error: { message: "Fixture failure" } } }, "fixture", hooks, state),

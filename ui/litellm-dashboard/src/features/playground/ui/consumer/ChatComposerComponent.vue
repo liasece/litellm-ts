@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import type { ChatInferenceStore } from "../../stores/ChatInferenceStore";
-import UiIcon from "../../../platform/ui/UiIcon.vue";
-import UiPopover from "../../../platform/ui/UiPopover.vue";
-import ChatMcpPickerComponent from "./ChatMcpPickerComponent.vue";
 const props = defineProps<{ store: ChatInferenceStore; inConversation: boolean }>(),
 	textarea = ref<HTMLTextAreaElement>();
 const state = props.store.state;
@@ -38,19 +35,8 @@ function key(event: KeyboardEvent) {
 			@keydown="key"
 		/>
 		<div>
-			<UiPopover trigger="click" placement="topLeft"
-				><button type="button" class="chat-composer__mcp" aria-label="Connect MCP tools">
-					<UiIcon name="PlusOutlined" /><span v-if="state.mcpServers.length">{{ state.mcpServers.length }}</span></button
-				><template #content><ChatMcpPickerComponent :selected="state.mcpServers" @change="state.mcpServers = $event" /></template
-			></UiPopover>
 			<div class="chat-composer__right">
-				<span v-if="!store.comparison.value">{{
-					inConversation
-						? state.mcpServers.length
-							? state.mcpServers.length + " tool" + (state.mcpServers.length > 1 ? "s" : "") + " connected"
-							: ""
-						: state.selected[0] || "No model"
-				}}</span
+				<span v-if="!store.comparison.value">{{ state.selected[0] || "No model" }}</span
 				><button
 					v-if="store.loading.value"
 					type="button"

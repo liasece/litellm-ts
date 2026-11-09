@@ -28,17 +28,6 @@ export function chatGreeting(now = new Date()) {
 	const hour = now.getHours();
 	return hour >= 5 && hour < 12 ? "Good morning" : hour >= 12 && hour < 17 ? "Good afternoon" : "Good evening";
 }
-export function redactChatToolArguments(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(redactChatToolArguments);
-	if (value && typeof value === "object")
-		return Object.fromEntries(
-			Object.entries(value).map(([key, item]) => [
-				key,
-				/token|key|secret|password|auth/i.test(key) ? "[redacted]" : redactChatToolArguments(item),
-			]),
-		);
-	return value;
-}
 export function chatTimestamp(timestamp: number) {
 	const date = new Date(timestamp);
 	return String(date.getHours()).padStart(2, "0") + ":" + String(date.getMinutes()).padStart(2, "0");

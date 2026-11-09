@@ -4,7 +4,6 @@ import type { ChatMessage } from "../../support/ChatModels";
 import MarkdownContent from "../../../content/ui/MarkdownContent.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../../platform/ui/UiTooltip.vue";
-import PlaygroundMcpEventsComponent from "../chat/PlaygroundMcpEventsComponent.vue";
 const props = defineProps<{ message: ChatMessage; last: boolean; streaming: boolean }>(),
 	reasoning = ref(true),
 	copied = ref(false),
@@ -45,6 +44,5 @@ onBeforeUnmount(() => {
 					<UiIcon :name="copied ? 'CheckOutlined' : 'CopyOutlined'" /></button
 			></UiTooltip>
 		</div>
-		<PlaygroundMcpEventsComponent v-if="message.mcpEvents?.length" :events="message.mcpEvents" />
 	</article>
 </template>

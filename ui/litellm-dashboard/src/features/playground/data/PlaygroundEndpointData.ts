@@ -4,12 +4,9 @@ export const endpointOptions = [
 	{ value: "responses", label: "/v1/responses" },
 	{ value: "anthropic_messages", label: "/v1/messages" },
 	{ value: "image", label: "/v1/images/generations" },
-	{ value: "image_edits", label: "/v1/images/edits" },
 	{ value: "embeddings", label: "/v1/embeddings" },
 	{ value: "speech", label: "/v1/audio/speech" },
 	{ value: "transcription", label: "/v1/audio/transcriptions" },
-	{ value: "a2a_agents", label: "/v1/a2a/message/send" },
-	{ value: "mcp", label: "/mcp-rest/tools/call" },
 	{ value: "realtime", label: "/v1/realtime" },
 ] as const;
 export const voiceOptions = [
@@ -29,11 +26,11 @@ const modeMapping: Record<string, EndpointType> = {
 	video_generation: "video",
 	chat: "chat",
 	responses: "responses",
-	image_edits: "image_edits",
 	anthropic_messages: "anthropic_messages",
 	audio_speech: "speech",
 	audio_transcription: "transcription",
 	embedding: "embeddings",
+	realtime: "realtime",
 };
 export const endpointForMode = (mode: string | undefined): EndpointType => modeMapping[mode ?? ""] ?? "chat";
 export function modelOptions(models: PlaygroundModel[], endpoint?: EndpointType) {
@@ -42,8 +39,7 @@ export function modelOptions(models: PlaygroundModel[], endpoint?: EndpointType)
 			!endpoint ||
 			!model.mode ||
 			endpointForMode(model.mode) === endpoint ||
-			(["responses", "anthropic_messages"].includes(endpoint) && endpointForMode(model.mode) === "chat") ||
-			(endpoint === "image_edits" && endpointForMode(model.mode) === "image"),
+			(["responses", "anthropic_messages"].includes(endpoint) && endpointForMode(model.mode) === "chat"),
 	);
 	const seen = new Set<string>();
 	return [...candidates]

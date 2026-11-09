@@ -1,49 +1,28 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { PlaygroundChatStore } from "../../stores/PlaygroundChatStore";
-import { notify } from "../../logic/PlaygroundValueLogic";
 import PlaygroundComposerInputComponent from "./PlaygroundComposerInputComponent.vue";
 import UiButton from "../../../platform/ui/UiButton.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../../platform/ui/UiTooltip.vue";
 import UiSpinner from "../../../platform/ui/UiSpinner.vue";
-import PlaygroundToolArgumentsComponent from "./PlaygroundToolArgumentsComponent.vue";
 const props = defineProps<{ store: PlaygroundChatStore }>(),
 	config = props.store.settings.state,
 	state = props.store.state,
 	fileInput = ref<HTMLInputElement>(),
-	imagesInput = ref<HTMLInputElement>(),
-	audioInput = ref<HTMLInputElement>(),
-	argumentsForm = ref<InstanceType<typeof PlaygroundToolArgumentsComponent>>();
-const mode = computed(() => config.endpoint),
-	tool = computed(() => props.store.catalog.state.tools[config.mcpServers[0]]?.find((tool) => tool.name === config.directTool));
+	audioInput = ref<HTMLInputElement>();
+const mode = computed(() => config.endpoint);
 const placeholder = computed(() =>
 	["chat", "responses", "anthropic_messages", "embeddings"].includes(mode.value)
 		? "Type your message... (Shift+Enter for new line)"
-		: mode.value === "a2a_agents"
-			? "Send a message to the A2A agent..."
-			: mode.value === "image_edits"
-				? "Describe how you want to edit the image..."
-				: mode.value === "speech"
-					? "Enter text to convert to speech..."
-					: mode.value === "transcription"
-						? "Optional: Add context or prompt for transcription..."
-						: "Describe the image you want to generate...",
-);
-const disabled = computed(
-	() =>
-		state.loading ||
-		(mode.value === "mcp"
-			? !(config.mcpServers.length === 1 && config.mcpServers[0] !== "__all__" && config.directTool)
+		: mode.value === "speech"
+			? "Enter text to convert to speech..."
 			: mode.value === "transcription"
-				? !state.audio
-				: !state.input.trim()),
+				? "Optional: Add context or prompt for transcription..."
+				: "Describe the image you want to generate...",
 );
-const suggestions = computed(() =>
-	mode.value === "a2a_agents"
-		? ["What can you help me with?", "Tell me about yourself", "What tasks can you perform?"]
-		: ["Write me a poem", "Explain quantum computing", "Draft a polite email requesting a meeting"],
-);
+const disabled = computed(() => state.loading || (mode.value === "transcription" ? !state.audio : !state.input.trim()));
+const suggestions = ["Write me a poem", "Explain quantum computing", "Draft a polite email requesting a meeting"];
 const codePrompts = [
 	"Generate sample sales data CSV and create a chart",
 	"Create a PNG bar chart comparing AI gateway providers including LiteLLM",
@@ -56,28 +35,14 @@ function chooseSingle(event: Event) {
 	props.store.singleImage(files(event)[0] ?? null);
 	(event.target as HTMLInputElement).value = "";
 }
-function chooseImages(event: Event) {
-	props.store.addImages(files(event));
-	(event.target as HTMLInputElement).value = "";
-}
 function chooseAudio(event: Event) {
 	state.audio = files(event)[0] ?? null;
 	(event.target as HTMLInputElement).value = "";
 }
-function drop(event: DragEvent, kind: "images" | "audio") {
-	const list = Array.from(event.dataTransfer?.files ?? []);
-	if (kind === "images") props.store.addImages(list);
-	else state.audio = list[0] ?? null;
+function drop(event: DragEvent) {
+	state.audio = Array.from(event.dataTransfer?.files ?? [])[0] ?? null;
 }
 async function send() {
-	if (mode.value === "mcp" && argumentsForm.value) {
-		try {
-			state.toolArguments = argumentsForm.value.getSubmitValues();
-		} catch (error) {
-			notify("error", error instanceof Error ? error.message : "Invalid tool arguments");
-			return;
-		}
-	}
 	await props.store.send();
 }
 function key(event: KeyboardEvent) {
@@ -90,43 +55,12 @@ function key(event: KeyboardEvent) {
 <template>
 	<footer class="pg-composer">
 		<input ref="fileInput" type="file" accept="image/*,.pdf" hidden @change="chooseSingle" /><input
-			ref="imagesInput"
+			ref="audioInput"
 			type="file"
-			accept="image/*"
-			multiple
+			accept="audio/*,.mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm"
 			hidden
-			@change="chooseImages"
-		/><input ref="audioInput" type="file" accept="audio/*,.mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm" hidden @change="chooseAudio" />
-		<div v-if="mode === 'image_edits'" class="pg-upload-images">
-			<div
-				v-if="!state.images.length"
-				class="pg-upload-drop"
-				role="button"
-				tabindex="0"
-				@click="imagesInput?.click()"
-				@keydown.enter="imagesInput?.click()"
-				@dragover.prevent
-				@drop.prevent="drop($event, 'images')"
-			>
-				<UiIcon name="PictureOutlined" />
-				<p>Click or drag images to upload</p>
-				<small>Support for PNG, JPG, JPEG formats. Multiple images supported.</small>
-			</div>
-			<div v-else class="pg-upload-images__list">
-				<div v-for="(file, index) in state.images" :key="state.imageUrls[index]" class="pg-upload-images__item">
-					<img :src="state.imageUrls[index]" :alt="file.name" /><button
-						type="button"
-						:aria-label="'Remove ' + file.name"
-						@click="store.removeImage(index)"
-					>
-						<UiIcon name="DeleteOutlined" />
-					</button>
-				</div>
-				<button type="button" class="pg-upload-images__add" @click="imagesInput?.click()">
-					<UiIcon name="PictureOutlined" /><span>Add more</span>
-				</button>
-			</div>
-		</div>
+			@change="chooseAudio"
+		/>
 		<div v-if="mode === 'transcription'" class="pg-upload-audio">
 			<div
 				v-if="!state.audio"
@@ -136,7 +70,7 @@ function key(event: KeyboardEvent) {
 				@click="audioInput?.click()"
 				@keydown.enter="audioInput?.click()"
 				@dragover.prevent
-				@drop.prevent="drop($event, 'audio')"
+				@drop.prevent="drop"
 			>
 				<UiIcon name="SoundOutlined" />
 				<p>Click or drag audio file to upload</p>
@@ -172,7 +106,7 @@ function key(event: KeyboardEvent) {
 				<button v-for="prompt in codePrompts" :key="prompt" type="button" @click="state.input = prompt">{{ prompt }}</button>
 			</div>
 		</div>
-		<div v-if="!store.history.state.messages.length && !state.loading && mode !== 'mcp'" class="pg-suggestions">
+		<div v-if="!store.history.state.messages.length && !state.loading" class="pg-suggestions">
 			<button v-for="suggestion in suggestions" :key="suggestion" type="button" @click="state.input = suggestion">
 				{{ suggestion }}
 			</button>
@@ -195,15 +129,7 @@ function key(event: KeyboardEvent) {
 							<UiIcon name="CodeOutlined" /></button
 					></UiTooltip>
 				</div>
-				<div
-					v-if="mode === 'mcp' && config.mcpServers.length === 1 && config.mcpServers[0] !== '__all__' && config.directTool"
-					class="pg-composer__tool-form"
-				>
-					<PlaygroundToolArgumentsComponent v-if="tool" ref="argumentsForm" :tool="tool" />
-					<div v-else>Loading tool schema...</div>
-				</div>
 				<PlaygroundComposerInputComponent
-					v-else
 					v-model="state.input"
 					:placeholder="placeholder"
 					:disabled="state.loading"

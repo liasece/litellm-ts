@@ -24,15 +24,14 @@ const blocks = computed(() => {
 				><div class="pg-compare-messages__heading">
 					<span class="is-user"><UiLucideIcon name="UserRound" :size="16" /></span><strong>You</strong>
 				</div>
-				<PlaygroundMessageComponent :message="block.user" endpoint="chat" :events="[]" :last="false"
+				<PlaygroundMessageComponent :message="block.user" endpoint="chat" :last="false"
 			/></template>
 			<hr />
 			<template v-if="block.assistant"
 				><div class="pg-compare-messages__heading">
-					<span><UiLucideIcon name="Bot" :size="16" /></span><strong>{{ block.assistant.model || "Assistant" }}</strong
-					><small v-if="block.assistant.toolName">{{ block.assistant.toolName }}</small>
+					<span><UiLucideIcon name="Bot" :size="16" /></span><strong>{{ block.assistant.model || "Assistant" }}</strong>
 				</div>
-				<PlaygroundMessageComponent :message="block.assistant" endpoint="chat" :events="[]" :last="false"
+				<PlaygroundMessageComponent :message="block.assistant" endpoint="chat" :last="false"
 			/></template>
 			<div v-else class="pg-inline pg-muted">
 				<UiSpinner v-if="loading && index === blocks.length - 1" :size="18" />{{

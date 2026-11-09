@@ -7,12 +7,11 @@ import UiInput from "../../../platform/ui/UiInput.vue";
 import UiButton from "../../../platform/ui/UiButton.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiSelect from "../../../platform/ui/UiSelect.vue";
-const props = defineProps<{ auth: PlaygroundAuth; model: string; baseUrl?: string; guardrails: string[] }>(),
+const props = defineProps<{ auth: PlaygroundAuth; model: string; baseUrl?: string }>(),
 	store = createPlaygroundRealtimeStore({
 		auth: () => props.auth,
 		model: () => props.model,
 		baseUrl: () => props.baseUrl,
-		guardrails: () => props.guardrails,
 	}),
 	state = store.state,
 	end = ref<HTMLElement>();

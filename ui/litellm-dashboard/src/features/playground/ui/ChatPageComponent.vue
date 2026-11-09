@@ -12,15 +12,11 @@ import ChatModelSelectorComponent from "./consumer/ChatModelSelectorComponent.vu
 import ChatComposerComponent from "./consumer/ChatComposerComponent.vue";
 import ChatUserMessageComponent from "./consumer/ChatUserMessageComponent.vue";
 import ChatAssistantMessageComponent from "./consumer/ChatAssistantMessageComponent.vue";
-import ChatToolMessageComponent from "./consumer/ChatToolMessageComponent.vue";
 import ChatComparisonComponent from "./consumer/ChatComparisonComponent.vue";
-import ChatMcpAppsComponent from "./consumer/ChatMcpAppsComponent.vue";
-import ChatMcpCredentialsComponent from "./consumer/ChatMcpCredentialsComponent.vue";
 import "./consumer/ChatLayoutStyles.css";
 import "./consumer/ChatModelSelectorStyles.css";
 import "./consumer/ChatConversationStyles.css";
 import "./consumer/ChatMessageStyles.css";
-import "./consumer/ChatMcpStyles.css";
 import "./chat/PlaygroundChatStyles.css";
 import "./chat/PlaygroundMessageStyles.css";
 const route = useRoute(),
@@ -32,17 +28,11 @@ const route = useRoute(),
 	}),
 	state = store.state,
 	collapsed = ref(false),
-	view = ref<"chats" | "apps" | "credentials">(route.query.mcpOauthReturn === "apps" ? "apps" : "chats"),
 	bannerDismissed = ref(false),
 	messages = ref<HTMLElement>(),
 	showScroll = ref(false),
 	scrollLock = ref<number | null>(null);
-const navigation = [
-		{ key: "chats" as const, label: "Chats", icon: "MessageOutlined" },
-		{ key: "apps" as const, label: "Apps", icon: "AppstoreOutlined" },
-		{ key: "credentials" as const, label: "Credentials", icon: "KeyOutlined" },
-	],
-	greeting = computed(() => {
+const greeting = computed(() => {
 		const session = auth.state.session,
 			name = session?.user_email?.split("@")[0] ?? session?.user_id ?? "";
 		return chatGreeting() + (name ? ", " + name : "");
@@ -91,14 +81,7 @@ function bottom() {
 function select(id: string) {
 	void router.push({ path: route.path, query: { id } });
 }
-onMounted(() => {
-	void store.load();
-	if (route.query.mcpOauthReturn) {
-		const query = { ...route.query };
-		delete query.mcpOauthReturn;
-		void router.replace({ path: route.path, query });
-	}
-});
+onMounted(() => void store.load());
 onBeforeUnmount(store.dispose);
 defineExpose({ store });
 </script>
@@ -117,21 +100,11 @@ defineExpose({ store });
 					><button type="button" @click="store.newChat">
 						<span class="chat-sidebar__nav-icon"><UiIcon name="EditOutlined" /></span><span v-if="!collapsed">New chat</span>
 					</button></UiTooltip
-				><UiTooltip :title="collapsed ? 'Search chats' : undefined" placement="right"
-					><button type="button" @click="view = 'chats'">
-						<span class="chat-sidebar__nav-icon"><UiIcon name="SearchOutlined" /></span
-						><span v-if="!collapsed">Search chats</span>
-					</button></UiTooltip
 				>
 			</nav>
 			<hr />
 			<nav>
-				<UiTooltip v-for="item in navigation" :key="item.key" :title="collapsed ? item.label : undefined" placement="right"
-					><button type="button" :class="{ 'is-active': view === item.key }" @click="view = item.key">
-						<span class="chat-sidebar__nav-icon"><UiIcon :name="item.icon" /></span
-						><span v-if="!collapsed">{{ item.label }}</span>
-					</button></UiTooltip
-				><UiTooltip :title="collapsed ? 'Back to Developer Console UI' : undefined" placement="right"
+				<UiTooltip :title="collapsed ? 'Back to Developer Console UI' : undefined" placement="right"
 					><a :href="dashboard"
 						><UiIcon name="ArrowLeftOutlined" /><span v-if="!collapsed">Back to Developer Console UI</span></a
 					></UiTooltip
@@ -139,7 +112,7 @@ defineExpose({ store });
 			</nav>
 			<hr />
 			<ChatConversationListComponent
-				v-if="!collapsed && view === 'chats'"
+				v-if="!collapsed"
 				:history="store.history"
 				@select="select"
 				@remove="store.remove"
@@ -157,17 +130,10 @@ defineExpose({ store });
 				><button type="button" aria-label="Dismiss storage warning" @click="bannerDismissed = true">×</button>
 			</div>
 			<div class="chat-page__content">
-				<div v-if="view === 'apps'" class="chat-page__apps">
-					<ChatMcpAppsComponent :selected="state.mcpServers" @change="state.mcpServers = $event" />
-				</div>
-				<div v-else-if="view === 'credentials'" class="chat-page__apps"><ChatMcpCredentialsComponent /></div>
-				<div v-else-if="blank" class="chat-blank">
+				<div v-if="blank" class="chat-blank">
 					<h1>{{ store.comparison.value ? "Compare " + state.selected.length + " models" : greeting }}</h1>
 					<p v-if="store.comparison.value">Send a message to see responses side-by-side</p>
-					<p v-else>
-						Chat with 100+ LLMs + MCP tools — authenticate once, use them here.
-						<button type="button" @click="view = 'apps'">Open Apps →</button>
-					</p>
+					<p v-else>Chat with 100+ LLMs — authenticate once, use them here.</p>
 					<div><ChatComposerComponent :store="store" :in-conversation="false" /></div>
 					<div v-if="!store.comparison.value" class="chat-blank__suggestions">
 						<button
@@ -193,9 +159,7 @@ defineExpose({ store });
 									v-if="message.role === 'user'"
 									:message="message"
 									:streaming="state.streaming"
-									@edit="store.edit" /><ChatToolMessageComponent
-									v-else-if="message.role === 'tool'"
-									:message="message" /><ChatAssistantMessageComponent
+									@edit="store.edit" /><ChatAssistantMessageComponent
 									v-else
 									:message="message"
 									:streaming="state.streaming"

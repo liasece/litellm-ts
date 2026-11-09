@@ -192,15 +192,6 @@
 	flex-direction: column;
 	background: #fff;
 }
-.chat-page__apps {
-	flex: 1;
-	min-height: 0;
-	overflow: auto;
-	max-width: 800px;
-	margin: 0 auto;
-	width: 100%;
-	padding: 32px 24px;
-}
 .chat-blank {
 	flex: 1;
 	display: flex;
@@ -337,23 +328,6 @@
 }
 .chat-composer.is-conversation > div {
 	padding: 4px 12px 10px;
-}
-.chat-composer__mcp {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	background: none;
-	border: 1px solid #d1d5db;
-	border-radius: 6px;
-	padding: 5px 10px;
-	cursor: pointer;
-	font-size: 14px;
-	color: #6b7280;
-}
-.chat-composer__mcp > span:not(.ui-icon) {
-	font-size: 12px;
-	color: #1677ff;
-	font-weight: 500;
 }
 .chat-composer__right {
 	display: flex;

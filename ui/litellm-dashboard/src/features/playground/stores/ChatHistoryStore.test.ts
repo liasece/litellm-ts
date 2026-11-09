@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { nextTick } from "vue";
 import { createChatHistoryStore } from "./ChatHistoryStore";
 import type { PlaygroundStorage } from "../logic/PlaygroundStorageLogic";
-import { redactChatToolArguments } from "../logic/ChatHistoryLogic";
 function memory() {
 	const values = new Map<string, string>(),
 		storage: PlaygroundStorage = {
@@ -40,7 +39,7 @@ describe("independent chat persistence", () => {
 		store.dispose();
 		restored.dispose();
 	});
-	it("reports storage failure and recursively redacts nested tool secrets", () => {
+	it("reports storage failure without losing the in-memory conversation", () => {
 		const store = createChatHistoryStore({
 			getItem: () => {
 				throw new Error("Blocked");
@@ -49,9 +48,6 @@ describe("independent chat persistence", () => {
 			removeItem: () => {},
 		});
 		expect(store.state.storageUnavailable).toBe(true);
-		expect(redactChatToolArguments({ input: { api_key: "sensitive", safe: [{ authToken: "hidden", query: "visible" }] } })).toEqual({
-			input: { api_key: "[redacted]", safe: [{ authToken: "[redacted]", query: "visible" }] },
-		});
 		store.dispose();
 	});
 });

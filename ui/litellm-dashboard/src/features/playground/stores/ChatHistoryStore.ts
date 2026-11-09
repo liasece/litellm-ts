@@ -31,7 +31,7 @@ export function createChatHistoryStore(storage?: PlaygroundStorage) {
 		const id = crypto.randomUUID(),
 			now = Date.now();
 		state.conversations = trimChatHistory([
-			{ id, title: "New conversation", model, messages: [], mcpServerNames: [], createdAt: now, updatedAt: now },
+			{ id, title: "New conversation", model, messages: [], createdAt: now, updatedAt: now },
 			...state.conversations,
 		]);
 		state.activeId = id;
@@ -52,7 +52,7 @@ export function createChatHistoryStore(storage?: PlaygroundStorage) {
 			updatedAt: Date.now(),
 		}));
 	}
-	function assistant(id: string, patch: Partial<Pick<ChatMessage, "content" | "reasoningContent" | "mcpEvents">>) {
+	function assistant(id: string, patch: Partial<Pick<ChatMessage, "content" | "reasoningContent">>) {
 		update(id, (item) => {
 			let index = -1;
 			for (let cursor = item.messages.length - 1; cursor >= 0; cursor--) {

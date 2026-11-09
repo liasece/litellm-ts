@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { createPlaygroundCompareStore } from "../../stores/PlaygroundCompareStore";
 import { useAuthenticationStore } from "../../../identity/stores/AuthenticationStore";
 import UiSelect from "../../../platform/ui/UiSelect.vue";
@@ -39,9 +39,6 @@ function key(event: KeyboardEvent) {
 		if (!allLoading.value && (state.input.trim() || state.file)) void store.send();
 	}
 }
-watch([() => state.endpoint, () => state.source, () => state.apiKey], () => {
-	if (state.endpoint === "/a2a") void store.loadAgents();
-});
 onMounted(() => void store.load());
 onBeforeUnmount(store.dispose);
 defineExpose({ store });
@@ -66,18 +63,6 @@ defineExpose({ store });
 						v-model="state.apiKey"
 						placeholder="Enter Virtual Key"
 						style="width: 224px"
-					/>
-				</div>
-				<div class="pg-inline">
-					<label>Endpoint</label
-					><UiSelect
-						:model-value="state.endpoint"
-						:options="[
-							{ value: '/v1/chat/completions', label: '/v1/chat/completions' },
-							{ value: '/a2a', label: '/a2a (Agents)' },
-						]"
-						style="width: 224px"
-						@update:model-value="state.endpoint = $event === '/a2a' ? '/a2a' : '/v1/chat/completions'"
 					/>
 				</div>
 				<div class="pg-inline">
@@ -113,13 +98,7 @@ defineExpose({ store });
 									{{ suggestion }}
 								</button></template
 							><span v-else>{{
-								loading
-									? state.endpoint === "/a2a"
-										? "Gathering responses from all agents..."
-										: "Gathering responses from all models..."
-									: state.endpoint === "/a2a"
-										? "Send a message to compare agents"
-										: "Send a prompt to compare models"
+								loading ? "Gathering responses from all models..." : "Send a prompt to compare models"
 							}}</span>
 						</div>
 						<div v-if="state.file" class="pg-upload-file">

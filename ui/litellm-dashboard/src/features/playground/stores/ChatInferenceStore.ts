@@ -4,7 +4,7 @@ import { createChatHistoryStore } from "./ChatHistoryStore";
 import { chatModels } from "../api/ChatCatalogApi";
 import { sendInference } from "../api/PlaygroundInferenceApi";
 import type { ChatComparisonExchange } from "../support/ChatModels";
-import type { PlaygroundEvent, PlaygroundRequest } from "../support/PlaygroundModels";
+import type { PlaygroundRequest } from "../support/PlaygroundModels";
 import { messageManager } from "../../notifications/logic/MessageManager";
 const modelKey = "litellm_chat_selected_models";
 export function createChatInferenceStore(navigate: (id: string | null, replace?: boolean) => void) {
@@ -13,7 +13,6 @@ export function createChatInferenceStore(navigate: (id: string | null, replace?:
 			models: [] as string[],
 			selected: [] as string[],
 			loadingModels: true,
-			mcpServers: [] as string[],
 			input: "",
 			streaming: false,
 			responseId: null as string | null,
@@ -91,17 +90,9 @@ export function createChatInferenceStore(navigate: (id: string | null, replace?:
 			messages,
 			customBaseUrl: undefined,
 			tags: [],
-			guardrails: [],
-			policies: [],
-			vectorStores: [],
-			mcpServers: [],
-			selectedMcpServers: [...state.mcpServers],
-			mcpRestrictions: {},
 			traceId: "",
 			voice: "alloy",
-			images: [],
 			audio: null,
-			agent: "",
 			signal,
 		};
 	}
@@ -136,10 +127,8 @@ export function createChatInferenceStore(navigate: (id: string | null, replace?:
 			controller = new AbortController();
 		singleController = controller;
 		let content = "",
-			reasoning = "",
-			complete = false;
-		const events: PlaygroundEvent[] = [],
-			conversationId = id;
+			reasoning = "";
+		const conversationId = id;
 		const currentConversation = () => generation === current && history.state.activeId === conversationId;
 		try {
 			await sendInference(
@@ -156,10 +145,8 @@ export function createChatInferenceStore(navigate: (id: string | null, replace?:
 					responseId: (value) => {
 						if (currentConversation()) state.responseId = value;
 					},
-					mcp: (event) => events.push(event),
 				},
 			);
-			complete = true;
 		} catch {
 			if (generation === current)
 				history.assistant(conversationId, {
@@ -169,7 +156,6 @@ export function createChatInferenceStore(navigate: (id: string | null, replace?:
 				});
 		} finally {
 			if (generation === current) {
-				if (events.length && complete) history.assistant(conversationId, { mcpEvents: events });
 				state.streaming = false;
 				if (singleController === controller) singleController = undefined;
 			}

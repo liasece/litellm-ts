@@ -7,24 +7,13 @@ const endpoints = z.enum([
 	"responses",
 	"anthropic_messages",
 	"image",
-	"image_edits",
 	"embeddings",
 	"speech",
 	"transcription",
-	"a2a_agents",
-	"mcp",
 	"realtime",
 	"video",
 ]);
-export function createPlaygroundSettingsStore(
-	options: {
-		storage?: PlaygroundStorage;
-		disabledPersonalKeyCreation?: boolean;
-		fixedModel?: string;
-		simplified?: boolean;
-		inferenceAuth?: () => PlaygroundAuth | undefined;
-	} = {},
-) {
+export function createPlaygroundSettingsStore(options: { storage?: PlaygroundStorage; disabledPersonalKeyCreation?: boolean } = {}) {
 	const storage = options.storage ?? browserSessionStorage();
 	const state = shallowReactive({
 		apiKeySource: readStored(
@@ -35,21 +24,12 @@ export function createPlaygroundSettingsStore(
 		),
 		apiKey: readText(storage, "apiKey"),
 		customBaseUrl: readText(storage, "customProxyBaseUrl"),
-		endpoint: options.simplified
-			? ("chat" as EndpointType)
-			: (endpoints.safeParse(readText(storage, "endpointType", "chat")).data ?? "chat"),
-		selectedModel: options.simplified ? (options.fixedModel ?? "") : "",
-		selectedAgent: "",
+		endpoint: endpoints.safeParse(readText(storage, "endpointType", "chat")).data ?? "chat",
+		selectedModel: "",
 		customModel: false,
 		customModelName: "",
 		tags: readStored(storage, "selectedTags", z.array(z.string()), []),
-		vectors: readStored(storage, "selectedVectorStores", z.array(z.string()), []),
-		guardrails: readStored(storage, "selectedGuardrails", z.array(z.string()), []),
-		policies: readStored(storage, "selectedPolicies", z.array(z.string()), []),
-		mcpServers: readStored(storage, "selectedMCPServers", z.array(z.string()), []),
-		mcpRestrictions: readStored(storage, "mcpServerToolRestrictions", z.record(z.string(), z.array(z.string())), {}),
 		voice: readText(storage, "selectedVoice", "alloy").replace(/^"|"$/g, ""),
-		directTool: "",
 		temperature: 1,
 		maxTokens: 2048,
 		advancedParams: false,
@@ -58,9 +38,8 @@ export function createPlaygroundSettingsStore(
 		codeResult: null as CodeInterpreterResult | null,
 	});
 	const auth = (): PlaygroundAuth =>
-		options.inferenceAuth?.() ??
-		(state.apiKeySource === "session" ? { kind: "session" } : { kind: "virtual-key", apiKey: state.apiKey.trim() });
-	const hasAuth = () => Boolean(options.inferenceAuth?.() || state.apiKeySource === "session" || state.apiKey.trim());
+		state.apiKeySource === "session" ? { kind: "session" } : { kind: "virtual-key", apiKey: state.apiKey.trim() };
+	const hasAuth = () => Boolean(state.apiKeySource === "session" || state.apiKey.trim());
 	const stop = watch(
 		() => ({ ...state }),
 		() => {
@@ -69,14 +48,9 @@ export function createPlaygroundSettingsStore(
 			storeValue(storage, "customProxyBaseUrl", state.customBaseUrl || null);
 			storeValue(storage, "endpointType", state.endpoint);
 			storeValue(storage, "selectedTags", state.tags);
-			storeValue(storage, "selectedVectorStores", state.vectors);
-			storeValue(storage, "selectedGuardrails", state.guardrails);
-			storeValue(storage, "selectedPolicies", state.policies);
-			storeValue(storage, "selectedMCPServers", state.mcpServers);
-			storeValue(storage, "mcpServerToolRestrictions", state.mcpRestrictions);
 			storeValue(storage, "selectedVoice", state.voice);
 			storeValue(storage, "codeInterpreterEnabled", state.codeEnabled);
-			if (!options.simplified) storeValue(storage, "selectedModel", state.selectedModel || null);
+			storeValue(storage, "selectedModel", state.selectedModel || null);
 		},
 		{ immediate: true },
 	);
@@ -97,30 +71,13 @@ export function createPlaygroundSettingsStore(
 	function selectEndpoint(value: EndpointType) {
 		state.endpoint = value;
 		state.selectedModel = "";
-		state.selectedAgent = "";
 		state.customModel = false;
-		state.directTool = "";
-		if (value === "mcp" && (state.mcpServers.length !== 1 || state.mcpServers[0] === "__all__")) state.mcpServers = [];
 		storeValue(storage, "selectedModel", null);
-		storeValue(storage, "selectedAgent", null);
-	}
-	function selectServers(ids: string[]) {
-		state.directTool = "";
-		if (ids.includes("__all__")) {
-			state.mcpServers = ["__all__"];
-			state.mcpRestrictions = {};
-		} else {
-			state.mcpServers = state.endpoint === "mcp" ? ids.slice(0, 1) : ids;
-			state.mcpRestrictions = Object.fromEntries(Object.entries(state.mcpRestrictions).filter(([id]) => ids.includes(id)));
-		}
-	}
-	function restrictTools(id: string, tools: string[]) {
-		state.mcpRestrictions = { ...state.mcpRestrictions, [id]: tools };
 	}
 	function dispose() {
 		stop();
 		if (customTimer) clearTimeout(customTimer);
 	}
-	return { state, auth, hasAuth, selectModel, customModel, selectEndpoint, selectServers, restrictTools, dispose, storage };
+	return { state, auth, hasAuth, selectModel, customModel, selectEndpoint, dispose, storage };
 }
 export type PlaygroundSettingsStore = ReturnType<typeof createPlaygroundSettingsStore>;
