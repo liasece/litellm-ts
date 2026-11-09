@@ -14,6 +14,5 @@ export interface NavigationGroup {
 export interface NavigationAccess {
 	role: string;
 	isOrganizationAdmin: boolean;
-	projectsEnabled: boolean;
 	enabledInternalPages: readonly string[] | null;
 }

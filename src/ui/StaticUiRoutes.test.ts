@@ -114,8 +114,6 @@ describe("public Vue/Vite static hosting", () => {
 			["/ui/login/", "../"],
 			["/ui/settings/router-settings", "../"],
 			["/ui/settings/router-settings/", "../../"],
-			["/ui/mcp/oauth/callback", "../../"],
-			["/ui/mcp/oauth/callback/", "../../../"],
 		] as const;
 		for (const [uri, base] of cases) {
 			const url = "https://example.test/gateway/nested" + uri;
@@ -166,8 +164,8 @@ describe("public Vue/Vite static hosting", () => {
 			"/ui/ui-base.js",
 			"/ui/settings/ui-base.js",
 			"/ui/settings/router-settings/ui-base.js",
-			"/ui/mcp/oauth/ui-base.js",
-			"/ui/model_hub_table/ui-base.js",
+			"/ui/settings/admin-settings/ui-base.js",
+			"/ui/chat/ui-base.js",
 		]) {
 			const response = await request(app).get(uri).expect(200);
 			expect(response.text).toBe("/* fixture bootstrap */");
@@ -186,7 +184,7 @@ describe("public Vue/Vite static hosting", () => {
 		await viteOutput();
 		const app = appAt("/gateway/nested");
 		await request(app).get("/gateway/nested/ui").expect(301).expect("Location", "/gateway/nested/ui/");
-		for (const uri of ["/ui/", "/ui/settings/ui-theme", "/ui/mcp/oauth/callback/"]) {
+		for (const uri of ["/ui/", "/ui/settings/ui-theme", "/ui/settings/admin-settings/"]) {
 			const response = await request(app)
 				.get("/gateway/nested" + uri)
 				.expect(200);

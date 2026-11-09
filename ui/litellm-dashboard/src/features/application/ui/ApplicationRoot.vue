@@ -7,8 +7,7 @@ import { createPriceDisplayStore, priceDisplayStoreKey } from "../../platform/st
 import { getServerRootPath } from "../../platform/api/HttpApiClient";
 import { applicationStoreKey, createApplicationStore } from "../stores/ApplicationStore";
 import { dashboardPageFromUrl } from "../logic/NavigationLogic";
-import { pageComponent } from "../data/PageRegistry";
-import ApplicationClaudeCodeNudge from "./ApplicationClaudeCodeNudgeComponent.vue";
+import { isRegisteredPage, pageComponent } from "../data/PageRegistry";
 import ApplicationYamlConfigDiff from "./ApplicationYamlConfigDiffComponent.vue";
 import ApplicationShell from "./ApplicationShell.vue";
 import NotificationLayerComponent from "../../notifications/ui/NotificationLayerComponent.vue";
@@ -29,13 +28,13 @@ const uiBase = computed(() => {
 });
 const page = computed(() => {
 	const url = new URL(route.fullPath, window.location.origin);
-	if (url.searchParams.has("invitation_id") && !auth.isAuthorized.value) return "onboarding";
 	const id = dashboardPageFromUrl(url, uiBase.value);
-	return id === "api-keys" && auth.userRole.value === "Admin Viewer" ? "usage" : id;
+	const resolved = id === "api-keys" && auth.userRole.value === "Admin Viewer" ? "new_usage" : id;
+	return isRegisteredPage(resolved) ? resolved : "api-keys";
 });
 const legacyRoot = computed(() => route.path.replace(/\/+$/, "") === uiBase.value);
-const standalone = computed(() => ["login", "onboarding", "mcp-oauth-callback", "public-model-hub", "chat"].includes(page.value));
-const publicPage = computed(() => ["login", "onboarding", "mcp-oauth-callback", "public-model-hub"].includes(page.value));
+const standalone = computed(() => ["login", "chat"].includes(page.value));
+const publicPage = computed(() => ["login"].includes(page.value));
 const view = computed(() => (!auth.state.loading && (publicPage.value || auth.isAuthorized.value) ? pageComponent(page.value) : null));
 watch(
 	() => auth.state.session?.user_id ?? null,
@@ -83,7 +82,6 @@ onUnmounted(() => {
 	<ApplicationShell v-else-if="view" :page="page" :ui-base="uiBase" :show-debug-banner="!legacyRoot"
 		><component :is="view"
 	/></ApplicationShell>
-	<ApplicationClaudeCodeNudge v-if="view && !standalone && legacyRoot" />
 	<ApplicationYamlConfigDiff v-if="view && !standalone && legacyRoot" />
 	<NotificationLayerComponent />
 	<MessageLayerComponent />

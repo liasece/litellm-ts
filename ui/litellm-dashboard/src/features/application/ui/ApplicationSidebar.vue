@@ -30,7 +30,6 @@ const groups = computed(() =>
 	visibleNavigation({
 		role: auth.userRole.value,
 		isOrganizationAdmin: isOrganizationAdmin.value,
-		projectsEnabled: Boolean(application.state.settings.enable_projects_ui),
 		enabledInternalPages: application.state.settings.enabled_ui_pages_internal_users ?? null,
 	}),
 );

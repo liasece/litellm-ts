@@ -11,7 +11,6 @@ export const navigationGroups: readonly NavigationGroup[] = [
 			{ page: "api-keys", label: "Virtual Keys", icon: "KeyOutlined" },
 			{ page: "llm-playground", label: "Playground", icon: "PlayCircleOutlined", roles: writers },
 			{ page: "models", label: "Models + Endpoints", icon: "BlockOutlined", roles: writers },
-			{ page: "mcp-servers", label: "MCP Servers", icon: "ToolOutlined" },
 			{ page: "search-tools", label: "Search Tools", icon: "SearchOutlined" },
 		],
 	},
@@ -28,21 +27,8 @@ export const navigationGroups: readonly NavigationGroup[] = [
 		collapsible: true,
 		items: [
 			{ page: "teams", label: "Teams", icon: "TeamOutlined" },
-			{ page: "projects", label: "Projects", icon: "FolderOutlined", badge: "New", roles: admins },
 			{ page: "users", label: "Internal Users", icon: "UserOutlined", roles: admins },
 			{ page: "organizations", label: "Organizations", icon: "BankOutlined", roles: admins },
-			{ page: "access-groups", label: "Access Groups", icon: "BlockOutlined", roles: admins },
-			{ page: "budgets", label: "Budgets", icon: "CreditCardOutlined", roles: admins },
-		],
-	},
-	{
-		label: "DEVELOPER TOOLS",
-		items: [
-			{ page: "model-hub-table", label: "AI Hub", icon: "AppstoreOutlined" },
-			{ page: "transform-request", label: "API Playground", icon: "ApiOutlined", roles: [...admins, ...internal] },
-			{ page: "tag-management", label: "Tag Management", icon: "TagsOutlined", roles: admins },
-			{ page: "claude-code-plugins", label: "Claude Code Plugins", icon: "ToolOutlined", roles: admins },
-			{ page: "usage", label: "Old Usage", icon: "BarChartOutlined" },
 		],
 	},
 	{

@@ -1,6 +1,14 @@
 import { migratedPathPages, navigationGroups, pathPages } from "../data/NavigationData";
 import type { NavigationAccess, NavigationGroup } from "../support/NavigationModels";
 
+/**
+ * Legacy `?page=` ids whose Vue page was retired; keep old bookmarks landing on a live page.
+ */
+const retiredPageRedirects: Readonly<Record<string, string>> = {
+	usage: "new_usage",
+	"old-usage": "new_usage",
+};
+
 export function dashboardPageFromUrl(url: URL, uiBase = "/ui"): string {
 	const base = "/" + uiBase.replace(/^\/+|\/+$/g, "");
 	const relative =
@@ -9,7 +17,8 @@ export function dashboardPageFromUrl(url: URL, uiBase = "/ui"): string {
 			: url.pathname.startsWith(base + "/")
 				? url.pathname.slice(base.length + 1).replace(/\/+$/, "")
 				: url.pathname.replace(/^\/+|\/+$/g, "");
-	return pathPages[relative] ?? url.searchParams.get("page") ?? "api-keys";
+	const page = pathPages[relative] ?? url.searchParams.get("page") ?? "api-keys";
+	return retiredPageRedirects[page] ?? page;
 }
 
 export function dashboardHref(page: string, uiBase = "/ui"): string {
@@ -25,7 +34,6 @@ export function visibleNavigation(access: NavigationAccess): NavigationGroup[] {
 		.map((group) => ({
 			...group,
 			items: group.items.filter((item) => {
-				if (item.page === "projects" && !access.projectsEnabled) return false;
 				const organizationAccess = ["users", "organizations"].includes(item.page) && access.isOrganizationAdmin;
 				if (item.roles && !item.roles.includes(access.role) && !organizationAccess) return false;
 				if (!admin && access.enabledInternalPages !== null && !access.enabledInternalPages.includes(item.page)) return false;
