@@ -4,6 +4,7 @@ import { recordArray } from "../../logic/PrettyMessagesRealtimeLogic";
 import { asRecord } from "../../logic/PrettyMessagesBlocksLogic";
 import { getProviderLogoAndName } from "../../../providers/logic/ProviderIdentityLogic";
 import LogDetailsCollapseComponent from "./LogDetailsCollapseComponent.vue";
+import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 defineProps<{ data: unknown }>();
 const expanded = reactive(new Set<string>());
 function toggle(key: string) {
@@ -72,11 +73,10 @@ const date = (value: unknown) => new Date(Number(value) * 1000).toLocaleString()
 					<div v-if="expanded.has(index + '-' + i)" class="ld-vector__content">
 						<div v-for="(content, j) in recordArray(result.content)" :key="j">
 							<span class="ld-secondary">{{ content.type }}</span>
-							<pre>{{ content.text }}</pre>
+							<pre><PrivacyPlaceholderText :text="String(content.text ?? '')" /></pre>
 						</div>
 					</div>
 				</div>
-			</div>
-		</div></LogDetailsCollapseComponent
-	>
+			</div></div
+	></LogDetailsCollapseComponent>
 </template>

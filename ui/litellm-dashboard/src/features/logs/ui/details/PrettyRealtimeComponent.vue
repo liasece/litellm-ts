@@ -5,6 +5,7 @@ import { recordArray, realtimeTranscripts, tokenLabel } from "../../logic/Pretty
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiTag from "../../../platform/ui/UiTag.vue";
 import PrettySectionHeaderComponent from "./PrettySectionHeaderComponent.vue";
+import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 const props = defineProps<{ response: unknown; metrics?: { completion_tokens?: number; output_cost?: number } }>();
 const events = computed(() => recordArray(asRecord(props.response)?.results));
 const session = computed(() =>
@@ -120,12 +121,11 @@ function copy() {
 									<template v-if="content.transcript || content.text"
 										><UiIcon
 											v-if="content.type === 'audio' || content.type === 'text'"
-											:name="content.type === 'audio' ? 'AudioOutlined' : 'MessageOutlined'"
-										/>
-										<div class="pretty-text">{{ content.transcript || content.text }}</div></template
-									>
-								</div></template
-							>
+											:name="content.type === 'audio' ? 'AudioOutlined' : 'MessageOutlined'" />
+										<div class="pretty-text">
+											<PrivacyPlaceholderText :text="String(content.transcript || content.text || '')" /></div
+									></template></div
+							></template>
 						</div>
 						<template v-for="kind in ['input', 'output']" :key="kind"
 							><div

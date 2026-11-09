@@ -20,6 +20,7 @@ export const navigationGroups: readonly NavigationGroup[] = [
 			{ page: "new_usage", label: "Usage", icon: "BarChartOutlined", roles: [...admins, ...internal] },
 			{ page: "logs", label: "Logs", icon: "LineChartOutlined" },
 			{ page: "speed", label: "Speed", icon: "ThunderboltOutlined", roles: [...admins, ...internal] },
+			{ page: "privacy", label: "Privacy", icon: "SafetyCertificateOutlined", roles: admins },
 		],
 	},
 	{
@@ -46,4 +47,4 @@ export const navigationGroups: readonly NavigationGroup[] = [
 ];
 
 export { pathPages } from "../../../../../../src/shared/WebUiPaths";
-export const migratedPathPages = new Set(["api-reference", "builtin-capabilities", "speed"]);
+export const migratedPathPages = new Set(["api-reference", "builtin-capabilities", "speed", "privacy"]);

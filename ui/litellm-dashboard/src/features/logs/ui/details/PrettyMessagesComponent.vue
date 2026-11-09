@@ -10,6 +10,7 @@ import PrettyInputToolsComponent from "./PrettyInputToolsComponent.vue";
 import PrettyRealtimeComponent from "./PrettyRealtimeComponent.vue";
 import { isRealtimeResponse } from "../../logic/PrettyMessagesRealtimeLogic";
 import UiTag from "../../../platform/ui/UiTag.vue";
+import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 const props = defineProps<{
 	request: unknown;
 	response: unknown;
@@ -73,8 +74,8 @@ const hasMeta = computed(
 							><span class="pretty-label">SYSTEM</span
 							><span class="pretty-label">({{ system.content.length.toLocaleString() }} chars)</span></template
 						>
-						<div class="pretty-text">{{ system.content }}</div></PrettyCollapsibleComponent
-					>
+						<div class="pretty-text"><PrivacyPlaceholderText :text="system.content" /></div
+					></PrettyCollapsibleComponent>
 					<PrettyCollapsibleComponent
 						v-if="history.length"
 						:label="'HISTORY (' + history.length + ' message' + (history.length === 1 ? '' : 's') + ')'"

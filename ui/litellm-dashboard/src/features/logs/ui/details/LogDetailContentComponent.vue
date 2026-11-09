@@ -15,6 +15,7 @@ import LogDetailsRoutingComponent from "./LogDetailsRoutingComponent.vue";
 import LogDetailsRequestResponseComponent from "./LogDetailsRequestResponseComponent.vue";
 import LogDetailsVectorStoreComponent from "./LogDetailsVectorStoreComponent.vue";
 import LogDetailsGuardrailComponent from "./guardrails/LogDetailsGuardrailComponent.vue";
+import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 const props = defineProps<{ log: LogEntry; loading: boolean; inProgress: boolean; upstreamLogsEnabled?: boolean }>();
 defineEmits<{ "open-settings": [] }>();
 const metadata = computed(() => props.log.metadata ?? {}),
@@ -93,7 +94,7 @@ function jump() {
 		<LogDetailsVectorStoreComponent :data="metadata.vector_store_request_metadata" />
 		<LogDetailsCollapseComponent v-if="Object.keys(metadata).length" label="Metadata"
 			><div class="ld-metadata-copy"><LogDetailsCopyComponent :text="safeJsonStringify(metadata, true)" label="Copy Metadata" /></div>
-			<pre class="ld-metadata">{{ safeJsonStringify(metadata, true) }}</pre>
+			<pre class="ld-metadata"><PrivacyPlaceholderText :text="safeJsonStringify(metadata, true)" /></pre>
 		</LogDetailsCollapseComponent>
 		<div style="height: 24px" />
 	</div>

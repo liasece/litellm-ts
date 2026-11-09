@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { nextUiIdentity } from "../../platform/ui/UiIdentity";
+import PrivacyPlaceholderText from "./PrivacyPlaceholderText.vue";
 defineOptions({ name: "JsonTreeNode" });
 const props = withDefaults(
 	defineProps<{
@@ -110,7 +111,7 @@ function keyboard(event: KeyboardEvent) {
 		</template>
 		<template v-else
 			><span v-if="field !== undefined" class="json-content__label">{{ field === "" ? '""' : field }}:</span
-			><span :class="'json-content__value--' + primitive.kind">{{ primitive.text }}</span
+			><span :class="'json-content__value--' + primitive.kind"><PrivacyPlaceholderText :text="primitive.text" /></span
 			><span v-if="!last" class="json-content__punctuation">,</span></template
 		>
 	</div>

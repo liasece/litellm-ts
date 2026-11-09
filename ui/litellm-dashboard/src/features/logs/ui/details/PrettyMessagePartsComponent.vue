@@ -5,6 +5,7 @@ import { asRecord, safeJsonStringify } from "../../logic/PrettyMessagesBlocksLog
 import MarkdownContent from "../../../content/ui/MarkdownContent.vue";
 import MarkdownImageComponent from "../../../content/ui/MarkdownImageComponent.vue";
 import PrettySimpleToolCallComponent from "./PrettySimpleToolCallComponent.vue";
+import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 const props = withDefaults(defineProps<{ parts: MessagePart[]; compact?: boolean; imageSources?: Readonly<Record<string, string>> }>(), {
 	compact: false,
 	imageSources: undefined,
@@ -108,7 +109,10 @@ function operationStyle(part: MessagePart) {
 				>
 					<MarkdownContent :source="detail(part)" :image-sources="imageSources" image-preview local-image-fallback />
 				</div>
-				<pre v-else-if="detail(part)" :style="{ maxHeight: compact ? '180px' : '320px' }">{{ detail(part) }}</pre>
+				<pre
+					v-else-if="detail(part)"
+					:style="{ maxHeight: compact ? '180px' : '320px' }"
+				><PrivacyPlaceholderText :text="detail(part)" /></pre>
 			</div>
 		</template>
 	</div>

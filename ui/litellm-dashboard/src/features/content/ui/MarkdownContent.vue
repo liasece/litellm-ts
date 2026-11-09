@@ -1,8 +1,9 @@
 <script lang="ts">
-import { computed, defineComponent, h, type PropType, type VNodeChild } from "vue";
+import { computed, defineComponent, h, type PropType, type VNode, type VNodeChild } from "vue";
 import { parseMarkdown, safeMarkdownUrl, resolveMarkdownImage, markdownDefinitions } from "../logic/MarkdownLogic";
 import CodeHighlightComponent from "./CodeHighlightComponent.vue";
 import MarkdownImageComponent from "./MarkdownImageComponent.vue";
+import PrivacyPlaceholderText from "./PrivacyPlaceholderText.vue";
 import type { MarkdownNode } from "../support/MarkdownModels";
 
 export default defineComponent({
@@ -30,6 +31,13 @@ export default defineComponent({
 			return result;
 		});
 		const footnoteNumbers = computed(() => new Map(footnotes.value.map((node, index) => [node.identifier, index + 1])));
+		/**
+		 * 文本节点里出现脱敏占位符时换成带样式的片段，其余情况保持原始字符串。
+		 * @param value - 文本
+		 */
+		function text(value: string): string | VNode {
+			return value.includes("{{") ? h(PrivacyPlaceholderText, { text: value }) : value;
+		}
 		function children(node: MarkdownNode): VNodeChild[] {
 			return (node.children ?? []).map(renderNode);
 		}
@@ -56,7 +64,7 @@ export default defineComponent({
 				case "root":
 					return children(node);
 				case "text":
-					return node.value ?? "";
+					return text(node.value ?? "");
 				case "paragraph":
 					return h("p", children(node));
 				case "heading":
@@ -68,7 +76,7 @@ export default defineComponent({
 				case "delete":
 					return h("del", children(node));
 				case "inlineCode":
-					return h("code", node.value ?? "");
+					return h("code", text(node.value ?? ""));
 				case "code":
 					if (props.highlightCode && node.lang && /^\w+/.test(node.lang)) {
 						return h(CodeHighlightComponent, {
@@ -79,7 +87,9 @@ export default defineComponent({
 							customStyle: { borderRadius: "6px", margin: "0.5em 0" },
 						});
 					}
-					return h("pre", [h("code", { class: node.lang ? "language-" + node.lang : undefined }, (node.value ?? "") + "\n")]);
+					return h("pre", [
+						h("code", { class: node.lang ? "language-" + node.lang : undefined }, text((node.value ?? "") + "\n")),
+					]);
 				case "link":
 					return h(
 						"a",
@@ -167,7 +177,7 @@ export default defineComponent({
 				case "table":
 					return renderTable(node);
 				case "html":
-					return node.value ?? "";
+					return text(node.value ?? "");
 				case "definition":
 					return null;
 				default:

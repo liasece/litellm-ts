@@ -1,0 +1,179 @@
+/* 脱敏观测页：KPI 卡片、三列分布与明细表。 */
+.privacy-page {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 4px 0 32px;
+}
+
+.privacy-header {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	align-items: flex-start;
+	justify-content: space-between;
+}
+
+.privacy-header h1 {
+	margin: 0 0 6px;
+	font-size: 24px;
+	font-weight: 600;
+	color: var(--ui-text-antd);
+}
+
+.privacy-header p {
+	max-width: 880px;
+	margin: 0;
+	color: var(--ui-text-secondary);
+	font-size: 13px;
+	line-height: 1.7;
+}
+
+.privacy-header__controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: center;
+}
+
+.privacy-switch {
+	display: inline-flex;
+	gap: 8px;
+	align-items: center;
+	color: var(--ui-text-secondary);
+	font-size: 13px;
+}
+
+.privacy-kpis {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 12px;
+}
+
+.privacy-kpi {
+	border: 1px solid var(--ui-border-subtle);
+}
+
+.privacy-kpi__label {
+	color: var(--ui-text-secondary);
+	font-size: 12px;
+	letter-spacing: 0.02em;
+}
+
+.privacy-kpi__value {
+	margin: 6px 0 4px;
+	color: var(--ui-text-antd);
+	font-size: 30px;
+	font-weight: 600;
+	line-height: 1.1;
+	font-variant-numeric: tabular-nums;
+}
+
+.privacy-kpi__hint {
+	color: var(--ui-text-muted);
+	font-size: 12px;
+}
+
+.privacy-kpi--warn .privacy-kpi__value {
+	color: #b45309;
+}
+
+.privacy-loading {
+	display: flex;
+	gap: 12px;
+	align-items: center;
+	justify-content: center;
+	padding: 48px 0;
+	color: var(--ui-text-secondary);
+}
+
+.privacy-breakdowns {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 12px;
+}
+
+.privacy-breakdown {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.privacy-breakdown__row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.privacy-breakdown__line {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+	justify-content: space-between;
+	font-size: 13px;
+}
+
+.privacy-breakdown__name {
+	color: var(--ui-text-antd);
+	font-weight: 500;
+}
+
+.privacy-breakdown__count {
+	color: var(--ui-text-antd);
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+}
+
+.privacy-breakdown__bar {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--ui-surface-muted);
+	overflow: hidden;
+}
+
+.privacy-breakdown__bar > span {
+	display: block;
+	height: 100%;
+	border-radius: 3px;
+	background: linear-gradient(90deg, #d46b08, #fa8c16);
+}
+
+.privacy-breakdown__note {
+	color: var(--ui-text-muted);
+	font-size: 12px;
+}
+
+.privacy-breakdown__empty {
+	color: var(--ui-text-muted);
+	font-size: 13px;
+}
+
+.privacy-details__head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+
+.privacy-details__count {
+	color: var(--ui-text-muted);
+	font-size: 12px;
+}
+
+.privacy-more {
+	display: flex;
+	justify-content: center;
+	padding-top: 12px;
+}
+
+.privacy-footnote {
+	margin: 0;
+	color: var(--ui-text-muted);
+	font-size: 12px;
+	line-height: 1.7;
+}

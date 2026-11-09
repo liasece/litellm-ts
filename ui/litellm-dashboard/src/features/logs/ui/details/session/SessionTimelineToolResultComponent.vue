@@ -4,6 +4,7 @@ import type { SessionTimelineEvent } from "../../../support/SessionTimelineModel
 import { safeJsonStringify } from "../../../logic/PrettyMessagesBlocksLogic";
 import UiLucideIcon from "../../../../platform/ui/UiLucideIcon.vue";
 import PrettyMessagePartsComponent from "../PrettyMessagePartsComponent.vue";
+import PrivacyPlaceholderText from "../../../../content/ui/PrivacyPlaceholderText.vue";
 const props = defineProps<{ item: SessionTimelineEvent }>();
 const expanded = ref(false),
 	result = computed(() => props.item.parts?.find((part) => part.kind === "tool_result")),
@@ -32,7 +33,8 @@ const failed = computed(
 				><span
 					><strong>{{ name }}</strong
 					><span class="session-tool-result__status">{{ failed ? "执行失败" : result?.status || "已返回" }}</span></span
-				><span class="session-tool-result__preview">{{ detail.replace(/\s+/g, " ").trim() || "（空输出）" }}</span></span
+				><span class="session-tool-result__preview"
+					><PrivacyPlaceholderText :text="detail.replace(/\s+/g, ' ').trim() || '（空输出）'" /></span></span
 			><span class="session-tool-result__control">{{ expanded ? "收起" : "展开" }}</span
 			><UiLucideIcon name="ChevronDown" :size="15" :style="{ transform: expanded ? 'rotate(180deg)' : undefined }" />
 		</button>
@@ -44,7 +46,7 @@ const failed = computed(
 			<div v-if="result?.parts?.length" class="session-tool-result__structured">
 				<PrettyMessagePartsComponent :parts="result.parts" :image-sources="item.image_sources" />
 			</div>
-			<pre v-else>{{ detail }}</pre>
+			<pre v-else><PrivacyPlaceholderText :text="detail" /></pre>
 		</div>
 	</section>
 </template>

@@ -9,6 +9,7 @@ const views: Readonly<Record<string, string>> = {
 	new_usage: "../../usage/ui/UsagePageComponent.vue",
 	logs: "../../logs/ui/LogsPageComponent.vue",
 	speed: "../../speed/ui/SpeedPageComponent.vue",
+	privacy: "../../privacy/ui/PrivacyPageComponent.vue",
 	teams: "../../access-control/ui/TeamsPageComponent.vue",
 	users: "../../access-control/ui/UsersPageComponent.vue",
 	organizations: "../../access-control/ui/OrganizationsPageComponent.vue",

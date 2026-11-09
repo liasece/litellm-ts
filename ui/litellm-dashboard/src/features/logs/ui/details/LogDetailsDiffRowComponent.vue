@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DiffRow } from "../../logic/LogDetailsDiffLogic";
+import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 defineProps<{ row: DiffRow }>();
 </script>
 <template>
@@ -16,7 +17,7 @@ defineProps<{ row: DiffRow }>();
 			<div class="ld-diff__number">{{ row[side]?.lineNumber ?? "" }}</div>
 			<pre
 				:class="{ 'ld-diff__empty': !row[side] }"
-			><span :class="side === 'right' ? 'ld-diff__plus' : 'ld-diff__minus'" v-text="row.kind === 'change' ? (side === 'left' ? '−' : '+') : ' '"></span><span v-text="row[side]?.text ?? ''"></span></pre>
+			><span :class="side === 'right' ? 'ld-diff__plus' : 'ld-diff__minus'" v-text="row.kind === 'change' ? (side === 'left' ? '−' : '+') : ' '"></span><PrivacyPlaceholderText :text="row[side]?.text ?? ''" /></pre>
 		</div>
 	</div>
 </template>

@@ -4,6 +4,7 @@ import type { ChatMessage } from "../../support/ChatModels";
 import { chatTimestamp } from "../../logic/ChatHistoryLogic";
 import UiTooltip from "../../../platform/ui/UiTooltip.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
+import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 const props = defineProps<{ message: ChatMessage; streaming: boolean }>(),
 	emit = defineEmits<{ edit: [string, string] }>(),
 	editing = ref(false),
@@ -51,7 +52,7 @@ function key(event: KeyboardEvent) {
 					><button type="button" class="chat-user-message__edit" aria-label="Edit message" @click="start">
 						<UiIcon name="EditOutlined" /></button
 				></UiTooltip>
-				<div>{{ message.content }}</div>
+				<div><PrivacyPlaceholderText :text="message.content" /></div>
 			</div>
 			<small>{{ chatTimestamp(message.timestamp) }}</small></template
 		>
