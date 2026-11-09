@@ -15,6 +15,8 @@ import { resolveCodingClientModel } from "./CodingClientModels";
 
 import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
+import { requestArrivalTime } from "../core/api/RequestArrival";
+import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { stripInternalFields } from "../core/api/stripInternalFields";
 import { ApiError } from "../core/api/ApiError";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
@@ -372,6 +374,8 @@ function getPathModel(req: import("express").Request): unknown {
  */
 function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 	return async (req: import("express").Request, res: import("express").Response) => {
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻，而不是进入本 handler 的时刻。
+		const startTime = requestArrivalTime(req);
 		const model = getPathModel(req) ?? req.body.model;
 		if (!model || typeof model !== "string") {
 			throw ApiError.badRequest("model 字段缺失");
@@ -404,6 +408,8 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		res.once("close", abortWebSearch);
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body, {
 			callType: CallType.ACompletion,
+			// 在途行与最终 SpendLog 必须共用同一个到达时刻，否则「进行中」与落账后的 TTFT 会跳变。
+			startTime: startTime,
 		});
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
@@ -451,7 +457,6 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 					};
 				},
 				write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
-				onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 			});
 		}
 
@@ -485,7 +490,6 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 
 			// === 非流式：委托 Router.completion 处理重试和降级 ===
 			if (req.body.stream !== true) {
-				const startTime = new Date();
 				let initialResult: Record<string, unknown> | undefined;
 				let usageCalculated = false;
 				try {
@@ -519,9 +523,9 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							usageCalculated = true;
 						}
 					}
-					// PY 非流式 completionStartTime：上游响应返回（completion 解析完成）的时间点，
-					// TTFT = completionStartTime - startTime（含输入处理与排队时长）
-					const completionStartTime = new Date();
+					// 非流式没有「首 token 写回下游」这一时刻：客户端一次性拿到整个响应，
+					// completionStartTime 取响应完整可用的时间点，TTFT 即端到端耗时（对齐 PY）。
+					const completionStartTime = markFirstContentFrame(req);
 					// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
 					const spendInfo = (result as unknown as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 					if (!usageCalculated) {
@@ -629,6 +633,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 			await handleStreamingResponse(litellmRouter, model, messages, optionalParams, res, {
 				req: req,
 				db: db,
+				startTime: startTime,
 				spendRequestId: spendRequestId,
 				spendLifecycle: spendLifecycle,
 				modelResolutionTrace: modelResolutionTrace,
@@ -666,6 +671,8 @@ async function handleStreamingResponse(
 	context: {
 		req: import("express").Request;
 		db: DrizzleDb;
+		/** 请求到达代理的时刻：SpendLog startTime 与 Dashboard TTFT 的起点。 */
+		startTime: Date;
 		spendRequestId?: string;
 		spendLifecycle: EndpointSpendLifecycle;
 		modelResolutionTrace: ModelResolutionTraceCollector;
@@ -674,7 +681,17 @@ async function handleStreamingResponse(
 		visionImageStore: VisionImageStore;
 	},
 ): Promise<void> {
-	const { req, db, spendRequestId, spendLifecycle, modelResolutionTrace, originalMessages, originalRequestBody, visionImageStore } =
+	const {
+		req,
+		db,
+		startTime,
+		spendRequestId,
+		spendLifecycle,
+		modelResolutionTrace,
+		originalMessages,
+		originalRequestBody,
+		visionImageStore,
+	} =
 		context;
 	const preparedVision = await prepareOpenAIVisionRequest(
 		litellmRouter,
@@ -707,7 +724,6 @@ async function handleStreamingResponse(
 	const fallbackModels: string[] = [model];
 	let lastError: unknown;
 	let lastUpstreamLogContext: UpstreamLogContext | undefined;
-	const startTime = new Date();
 	const upstreamAbortController = new AbortController();
 	const abortUpstream = (): void => {
 		// 正常写完响应后 close 也会触发；此时中止会把成功请求误记成 AbortError 失败。
@@ -798,7 +814,7 @@ async function handleStreamingResponse(
 				const rawBody = await response.json();
 				const transformed = provider.transformResponse(deployment.litellm_params.model, rawBody);
 				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, rawBody, deployment);
-				const completionStartTime = new Date();
+				const completionStartTime = markFirstContentFrame(req);
 				if (fallbackDepth === 0) {
 					transformed.model = model;
 				}
@@ -884,11 +900,11 @@ async function handleStreamingResponse(
 						};
 					},
 					write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
-					onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
-				});
+					});
 			}
 			let streamError: unknown;
 			let completionStartTime: Date | undefined;
+			let upstreamFirstChunkSeen = false;
 			let usageChunkSent = false;
 			let semanticOutputEmitted = false;
 			let retryBeforeOutput = false;
@@ -904,8 +920,8 @@ async function handleStreamingResponse(
 					if (fallbackDepth === 0) {
 						chunk.model = model;
 					}
-					if (!completionStartTime) {
-						completionStartTime = new Date();
+					if (!upstreamFirstChunkSeen) {
+						upstreamFirstChunkSeen = true;
 						noteUpstreamFirstChunk();
 						litellmRouter.recordDeploymentTtft?.(deployment, Date.now() - execution.startedAtMs);
 					}
@@ -929,6 +945,9 @@ async function handleStreamingResponse(
 									? { ...strippedChunk, usage: toOpenAIUsage(chunkUsage as Usage) }
 									: strippedChunk;
 						usageChunkSent ||= choices.length === 0 && publicChunk["usage"] !== null && publicChunk["usage"] !== undefined;
+						// TTFT 的终点是「首个内容帧写回下游」：上游 chunk 先到、被过滤或客户端已断开时，
+						// 客户端还没拿到任何东西，不能提前记为已返回；记录的同时立即补写在途行。
+						completionStartTime ??= markFirstContentFrame(req);
 						res.write(`data: ${JSON.stringify(publicChunk)}\n\n`);
 					}
 				}
@@ -1140,6 +1159,8 @@ async function handlePrivateVisionStreamingResponse(
 	context: {
 		req: import("express").Request;
 		db: DrizzleDb;
+		/** 请求到达代理的时刻：SpendLog startTime 与 Dashboard TTFT 的起点。 */
+		startTime: Date;
 		spendRequestId?: string;
 		spendLifecycle: EndpointSpendLifecycle;
 		modelResolutionTrace: ModelResolutionTraceCollector;
@@ -1152,6 +1173,7 @@ async function handlePrivateVisionStreamingResponse(
 	const {
 		req,
 		db,
+		startTime,
 		spendRequestId,
 		spendLifecycle,
 		modelResolutionTrace,
@@ -1160,7 +1182,6 @@ async function handlePrivateVisionStreamingResponse(
 		visionImageStore,
 		preparedWeb,
 	} = context;
-	const startTime = new Date();
 	const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 	const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 	const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
@@ -1169,6 +1190,9 @@ async function handlePrivateVisionStreamingResponse(
 	// complete 回调在流结束后返回累积的完整响应供 agent loop 决策（解析 tool_use）。
 	let currentAccumulator: ChatStreamAccumulator | undefined;
 	let chatSseStarted = false;
+	// TTFT 终点：首个内容帧真正写回下游的时刻。能力分支在 agent loop 内边收边发，
+	// 不能等 loop 结束再取时间，否则首字时间会被延后到整段 agent 执行完毕。
+	let completionStartTime: Date | undefined;
 	// capability 分支向上游请求流式后，从 streamResult 提取上游上下文供 checkpoint 记录
 	let currentUpstreamLogContext: UpstreamLogContext | undefined;
 	const checkpointRequestId = spendRequestId;
@@ -1203,7 +1227,6 @@ async function handlePrivateVisionStreamingResponse(
 				};
 			},
 			write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
-			onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 		});
 	}
 
@@ -1253,6 +1276,7 @@ async function handlePrivateVisionStreamingResponse(
 							};
 							if (!chatSseStarted) {
 								chatSseStarted = true;
+								completionStartTime ??= markFirstContentFrame(req);
 								if (!res.headersSent) {
 									res.setHeader("Content-Type", "text/event-stream");
 									res.setHeader("Cache-Control", "no-cache");
@@ -1279,7 +1303,8 @@ async function handlePrivateVisionStreamingResponse(
 		},
 	);
 	await streamingCheckpointScheduler?.dispose();
-	const completionStartTime = new Date();
+	// 没有任何可见增量直接收尾时，下游最后一次吐出内容就在此刻，退回当前时间。
+	completionStartTime ??= markFirstContentFrame(req);
 	const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 	calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 	if (result["_fallbackDepth"] === 0) {

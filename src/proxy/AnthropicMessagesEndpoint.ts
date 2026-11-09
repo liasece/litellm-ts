@@ -32,6 +32,8 @@ import { startSseKeepalive } from "./SseKeepalive";
  */
 import type { Router, Request, Response } from "express";
 import { registerRoute } from "../core/api/registerRoute";
+import { requestArrivalTime } from "../core/api/RequestArrival";
+import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { ApiError } from "../core/api/ApiError";
 import { createModuleLogger } from "../core/utils/logger";
 import { cleanSurrogates } from "../core/utils/text";
@@ -796,8 +798,10 @@ export function registerAnthropicMessagesEndpoints(
 			return;
 		}
 
-		// PY litellm_overhead_time_ms 基准：请求进入代理的时间
-		const requestArrivalTimeMs = Date.now();
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+		const startTime = requestArrivalTime(req);
+		// PY litellm_overhead_time_ms 基准：请求进入代理的时间，与记账起点保持一致
+		const requestArrivalTimeMs = startTime.getTime();
 
 		let cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
 		if (!cleanBody) {
@@ -859,6 +863,8 @@ export function registerAnthropicMessagesEndpoints(
 		res.once("close", abortWebSearch);
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, cleanBody, {
 			callType: CallType.AMessages,
+			// 在途行与最终 SpendLog 共用到达时刻，避免「进行中」与落账后的 TTFT 跳变。
+			startTime: startTime,
 		});
 		const spendRequestId = spendReservation?.requestId;
 		const spendLifecycle = createEndpointSpendLifecycle(spendReservation);
@@ -870,7 +876,6 @@ export function registerAnthropicMessagesEndpoints(
 		try {
 			spendLifecycle.markProviderStarted();
 			if (stream) {
-				const streamStartTime = new Date();
 				const streamAccumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
 				// capability 分支（vision/web 等）会在 agent loop 每轮用新的 accumulator 流式累积，
 				// 因此 scheduler 通过可变引用读取「当前正在累积」的 accumulator。
@@ -908,7 +913,6 @@ export function registerAnthropicMessagesEndpoints(
 						},
 						write: (checkpoint) =>
 							checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
-						onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 					});
 				}
 				let streamError: unknown;
@@ -941,7 +945,6 @@ export function registerAnthropicMessagesEndpoints(
 											upstreamLogContext = context;
 										},
 									);
-									completionStartTime = new Date();
 									executedAttempt = attempt;
 									// capability agent loop 每轮的主模型调用改为真流式（对齐真正的流式分支）：边累积边
 									// checkpoint，使「进行中」时也能看到主模型的流式中间响应；流结束后 buildNativeStreamResponse
@@ -1005,6 +1008,9 @@ export function registerAnthropicMessagesEndpoints(
 							});
 						}
 						await streamingCheckpointScheduler?.dispose();
+						// TTFT 终点：这一支只有在 agent loop 全部结束后才把内容写回下游；
+						// 首个 SSE 帧此刻才产生，不能用上游建连时刻冒充首字。记录即补写在途行。
+						completionStartTime ??= markFirstContentFrame(req);
 						const finalAccumulator = writeBufferedAnthropicResponseAsStream(res, finalResponse, requestedModel);
 						res.end();
 						if (db && auth && spendRequestId) {
@@ -1026,7 +1032,7 @@ export function registerAnthropicMessagesEndpoints(
 								fallbackModels: streamFallbackStats.fallbackModels,
 								modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 								routingTrace: copyRoutingTrace(modelResolutionTrace),
-								startTime: streamStartTime,
+								startTime: startTime,
 								endTime: new Date(),
 								completionStartTime: completionStartTime,
 								messages: originalMessages,
@@ -1051,7 +1057,7 @@ export function registerAnthropicMessagesEndpoints(
 										callType: CallType.AMessages,
 										model: requestedModel,
 										modelGroup: requestedModel,
-										startTime: streamStartTime,
+										startTime: startTime,
 										endTime: new Date(),
 										messages: originalMessages,
 										proxyServerRequestBody: originalRequestBody,
@@ -1111,7 +1117,7 @@ export function registerAnthropicMessagesEndpoints(
 										callType: CallType.AMessages,
 										model: requestedModel,
 										modelGroup: requestedModel,
-										startTime: streamStartTime,
+										startTime: startTime,
 										endTime: new Date(),
 										messages: originalMessages,
 										proxyServerRequestBody: originalRequestBody,
@@ -1201,7 +1207,7 @@ export function registerAnthropicMessagesEndpoints(
 							accumulateNativeStreamEvent(streamAccumulator, payload);
 							streamingCheckpointScheduler?.onChunk();
 						}
-						completionStartTime ??= new Date();
+						completionStartTime ??= markFirstContentFrame(req);
 						noteUpstreamFirstChunk();
 						res.write(sseChunk);
 					}
@@ -1247,7 +1253,7 @@ export function registerAnthropicMessagesEndpoints(
 							fallbackModels: streamFallbackStats.fallbackModels,
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 							routingTrace: copyRoutingTrace(modelResolutionTrace),
-							startTime: streamStartTime,
+							startTime: startTime,
 							endTime: streamEndTime,
 							completionStartTime: completionStartTime,
 							messages: originalMessages,
@@ -1280,8 +1286,7 @@ export function registerAnthropicMessagesEndpoints(
 				return;
 			}
 
-			// PY: record startTime at request start for non-streaming
-			const nonStreamingStartTime = new Date();
+			// PY: record startTime at request start for non-streaming；起点统一为请求到达时刻
 			// 批次 9: 记录实际成功的上游 attempt（spend 归因用）
 			let executedNsAttempt: UpstreamAttempt | undefined;
 			// PY 非流式 completionStartTime：上游响应返回（body 解析完成）的时间点，
@@ -1340,9 +1345,11 @@ export function registerAnthropicMessagesEndpoints(
 									upstreamLogContext,
 								);
 							}
-							nsCompletionStartTime = new Date();
 							executedNsAttempt = attempt;
 							const responseData = (await result.json()) as Record<string, unknown>;
+							// 非流式没有「首 token 写回下游」：completionStartTime 取响应完整可用的时刻，
+							// TTFT 因此等于端到端耗时（对齐 PY 非流式口径）。记录即补写在途行。
+							nsCompletionStartTime = markFirstContentFrame(req);
 							upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData, attempt.deployment);
 							Object.defineProperty(responseData, "_spendInfo", {
 								value: buildDeploymentSpendInfo(attempt.deployment, attempt.upstreamUrl),
@@ -1427,9 +1434,10 @@ export function registerAnthropicMessagesEndpoints(
 										upstreamLogContext,
 									);
 								}
-								nsCompletionStartTime = new Date();
 								executedNsAttempt = attempt;
 								const responseData = (await result.json()) as Record<string, unknown>;
+								// 同上：非流式以响应完整可用作为 TTFT 终点。
+								nsCompletionStartTime = markFirstContentFrame(req);
 								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData, attempt.deployment);
 								return attachUpstreamLogContext(responseData, upstreamLogContext);
 							},
@@ -1458,7 +1466,7 @@ export function registerAnthropicMessagesEndpoints(
 									callType: CallType.AMessages,
 									model: requestedModel,
 									modelGroup: requestedModel,
-									startTime: nonStreamingStartTime,
+									startTime: startTime,
 									endTime: new Date(),
 									messages: originalMessages,
 									proxyServerRequestBody: originalRequestBody,
@@ -1530,7 +1538,7 @@ export function registerAnthropicMessagesEndpoints(
 					modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 					routingTrace: copyRoutingTrace(modelResolutionTrace),
 					maxRetries: litellmRouter.maxFallbacks,
-					startTime: nonStreamingStartTime,
+					startTime: startTime,
 					endTime: nonStreamingEndTime,
 					completionStartTime: nsCompletionStartTime,
 					messages: originalMessages,

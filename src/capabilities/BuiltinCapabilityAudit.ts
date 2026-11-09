@@ -132,6 +132,10 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			...(call.executor === undefined ? {} : { builtin_capability_executor: call.executor }),
 			...(call.credentialName === undefined ? {} : { builtin_capability_credential: call.credentialName }),
 		};
+		// 内置能力的每一次内部调用都是本地发起的非流式子请求（Handler 直连工具连模型调用都没有），
+		// 观测不到「首个 token 写回下游」的时刻，只有请求时长（endTime - startTime）。
+		// 凭空把 endTime 当首字会让 Logs 页把整段耗时读成 TTFT，与详情页（endTime 即无 TTFT）自相矛盾；
+		// 这里显式写 NULL，列表与详情都显示 `-`。
 		const log = await buildSpendLogFromRequest({
 			req: req,
 			auth: auth,
@@ -146,7 +150,7 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			deploymentModel: spendInfo?.deploymentModel,
 			startTime: call.startTime,
 			endTime: call.endTime,
-			completionStartTime: call.endTime,
+			completionStartTime: null,
 			messages: call.messages,
 			proxyServerRequestUrl: `/internal/builtin-capabilities/${call.capability}`,
 			proxyServerRequestBody: {

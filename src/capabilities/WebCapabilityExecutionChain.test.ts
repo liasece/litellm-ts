@@ -287,6 +287,51 @@ describe("web 执行链：按次计费可观察性", () => {
 		expect(JSON.stringify(audited[0])).not.toContain("sk-direct");
 	});
 
+	it("直连工具记录真实请求耗时，而不是在返回后再补一对相同时间戳", async () => {
+		global.fetch = jest.fn(async () => {
+			// 直连调用本身就是一次真实 HTTP 交换，审计行必须带上它花掉的墙钟时间。
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			return {
+				ok: true,
+				status: 200,
+				text: async () => JSON.stringify(searchResponse([{ title: "T", url: "https://example.com", summary: "S" }])),
+			} as unknown as Response;
+		}) as unknown as typeof fetch;
+		const audited: BuiltinCapabilityModelCall[] = [];
+		const audit: BuiltinCapabilityAuditHook = async (call) => {
+			audited.push(call);
+			return { requestId: "audit-duration" };
+		};
+
+		await executeWebToolCall(
+			stubRouter(),
+			{
+				maxIterations: 3,
+				maxOutputTokens: 1024,
+				executors: [
+					{
+						type: "deepseek_tools",
+						api_base: "https://api.deepseek.com",
+						credential_name: "deepseek-prod",
+						timeout_ms: 5_000,
+						search_count: 10,
+						search_need_content: false,
+						localization: "",
+					},
+				],
+				credentialValues: credentialAccessor({ "deepseek-prod": { api_key: "sk-direct" } }),
+			},
+			PRIVATE_WEB_SEARCH_TOOL_NAME,
+			JSON.stringify({ query: "duration" }),
+			jest.fn(),
+			{ audit: audit, toolCallId: "call-duration" },
+		);
+
+		expect(audited).toHaveLength(1);
+		// Logs 页的请求耗时就是 endTime - startTime；直连工具也必须有非零值。
+		expect(audited[0]!.endTime.getTime() - audited[0]!.startTime.getTime()).toBeGreaterThanOrEqual(25);
+	});
+
 	it("模型执行者不写固定费用，避免把 token 计费重复计入按次支出", async () => {
 		const audited: BuiltinCapabilityModelCall[] = [];
 		const audit: BuiltinCapabilityAuditHook = async (call) => {

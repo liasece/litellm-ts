@@ -7,6 +7,7 @@
 
 import type { Response, Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
+import { requestArrivalTime } from "../core/api/RequestArrival";
 import { ApiError } from "../core/api/ApiError";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { EmbeddingResponse } from "../types/embedding";
@@ -85,7 +86,8 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 		delete optionalParams.model;
 		delete optionalParams.input;
 
-		const startTime = new Date();
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+		const startTime = requestArrivalTime(req);
 		const auth = req.auth;
 		const modelResolutionTrace = createModelResolutionTraceCollector();
 		appendModelResolutionTrace(modelResolutionTrace, 0, litellmRouter.resolveModelGroupWithTrace(model));

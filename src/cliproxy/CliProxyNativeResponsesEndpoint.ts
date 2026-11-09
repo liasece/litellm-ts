@@ -1,5 +1,7 @@
 import type { Router as ExpressRouter, Request, Response } from "express";
 import { registerRoute } from "../core/api/registerRoute";
+import { requestArrivalTime } from "../core/api/RequestArrival";
+import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { ApiError } from "../core/api/ApiError";
 import { runCommonChecks } from "../auth/AuthChecks";
 import type { Router as LiteLLMRouter } from "../router/Router";
@@ -479,7 +481,8 @@ export function registerCliProxyNativeResponsesRoutes(
 			throw ApiError.unavailable(`CLIProxy 模型 ${model} 当前没有可用 deployment`);
 		}
 		const deploymentModel = candidate.deployment.litellm_params.model || model;
-		const startTime = new Date();
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+		const startTime = requestArrivalTime(req);
 		const reservation = await reserveEndpointSpend(db, router, req, model, body, {
 			callType: CallType.ACompletion,
 			startTime: startTime,
@@ -502,7 +505,7 @@ export function registerCliProxyNativeResponsesRoutes(
 						requestId: reservation.requestId,
 						protocol: "responses_native",
 						currentUpstreamRequest: () => checkpointUpstreamRequest,
-						onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
+						onFirstChunk: () => void markFirstContentFrame(req),
 					})
 				: undefined;
 		const execution = new CliProxyResponsesExecution({
@@ -572,7 +575,8 @@ export function registerCliProxyNativeResponsesRoutes(
 						deploymentModel: spendInfo.deploymentModel,
 						startTime: startTime,
 						endTime: endTime,
-						completionStartTime: snapshot.firstChunkAt ?? endTime,
+						// 优先用首个内容帧补写的时间：在途行与最终日志必须是同一个时刻。
+						completionStartTime: req.litellmFirstContentFrameAt ?? snapshot.firstChunkAt ?? markFirstContentFrame(req),
 						messages: body["input"],
 						response: extracted.response,
 						usage: extracted.usage,
@@ -813,7 +817,8 @@ function registerNativeRoute({
 			}
 			const deploymentModel = candidate.deployment.litellm_params.model || model;
 			const callType = anthropicNative ? CallType.AMessages : CallType.ACompletion;
-			const startTime = new Date();
+			// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+			const startTime = requestArrivalTime(req);
 			const reservation = await reserveEndpointSpend(db, router, req, model, body, { callType: callType, startTime: startTime });
 			const lifecycle = createEndpointSpendLifecycle(reservation);
 			lifecycle.markProviderStarted();
@@ -834,7 +839,7 @@ function registerNativeRoute({
 							protocol: anthropicNative ? "anthropic_messages" : "chat_completions",
 							currentUpstreamRequest: () => upstreamLogContext?.request,
 							// 兼容端点都在首个 chunk 补写 TTFT；透传流同样写，详情页才不会整条流都显示"—"。
-							onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
+							onFirstChunk: () => void markFirstContentFrame(req),
 						})
 					: undefined;
 			try {

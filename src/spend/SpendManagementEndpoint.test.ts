@@ -8,7 +8,7 @@
  *    - 必填 start_date / end_date；UI 只接受 `YYYY-MM-DD HH:MM:SS`，v2 同时接受 `YYYY-MM-DD`。
  *    - sort_by 白名单 + 非法 400；sort_order 白名单 + 非法 400。
  *    - 过滤：api_key / user_id / request_id / team_id / model / model_id / end_user /
- *      min_spend / max_spend / status_filter / key_alias / error_code / error_message。
+ *      min_spend / max_spend / status_filter / key_alias / session_id / error_code / error_message。
  *    - 权限：proxy_admin 全可见；internal_user 未传 team 强制看自己 user；team admin 看本 team；普通用户 403。
  *    - UI 响应含 session_total_count；v2 不含。
  *    - DB 异常时不再静默返回空分页。
@@ -663,10 +663,18 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(res.status).toBe(400);
 			});
 
-			it("缺 end_date 返回 400", async () => {
+			it("/spend/logs/ui 缺 end_date 时按服务端 now 取上界并返回 200", async () => {
 				const { db } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get("/spend/logs/ui?start_date=2025-02-01 00:00:00");
+				expect(res.status).toBe(200);
+				expect(res.body.total).toBe(1);
+			});
+
+			it("/spend/logs/v2 缺 end_date 仍返回 400", async () => {
+				const { db } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get("/spend/logs/v2?start_date=2025-02-01");
 				expect(res.status).toBe(400);
 			});
 
@@ -849,6 +857,34 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					`/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&${filterKey}=${filterValue}`,
 				);
 				expect(res.status).toBe(200);
+			});
+
+			it("session_id 按会话分组键做包含过滤，不把 r: 请求键当作会话", async () => {
+				const { db, calls } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&session_id=SESSION-AbC",
+				);
+
+				expect(res.status).toBe(200);
+				const countCall = calls.find((call) => call.hasCount);
+				expect(countCall?.whereSql).toContain("session_group_key");
+				expect(countCall?.whereSql).toContain("s:%");
+				expect(countCall?.whereSql).toContain("c:%");
+				expect(countCall?.whereSql).toContain("session-abc");
+				expect(countCall?.whereSql).not.toContain("r:%");
+			});
+
+			it("include_active 时进行中请求同样按 session_id 过滤", async () => {
+				const { db, calls } = makeMockDb({ responses: [[{ count: 0 }], [{ count: 0 }], []] });
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&include_active=true&session_id=session-a",
+				);
+
+				expect(res.status).toBe(200);
+				expect(calls[1]?.whereSql).toContain("litellm_session_group_key");
+				expect(calls[1]?.whereSql).toContain("session-a");
 			});
 		});
 

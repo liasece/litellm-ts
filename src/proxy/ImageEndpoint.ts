@@ -8,6 +8,7 @@
 import type { Request } from "express";
 import { post, noAuth, body, req } from "../core/api/decorators";
 import { ApiError } from "../core/api/ApiError";
+import { requestArrivalTime } from "../core/api/RequestArrival";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { DrizzleDb } from "../core/db/Database";
 import { runCommonChecks } from "../auth/AuthChecks";
@@ -100,7 +101,8 @@ export class ImageController {
 		}
 		const optionalParams: Record<string, unknown> = { ...reqBody };
 		delete optionalParams.model;
-		const startTime = new Date();
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+		const startTime = requestArrivalTime(request);
 		const db = this._db;
 		const auth = request.auth;
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, request, model, reqBody, {

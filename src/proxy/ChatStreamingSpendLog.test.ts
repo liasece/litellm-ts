@@ -2,12 +2,21 @@ import express from "express";
 import { MiniMaxProvider } from "../providers/MiniMaxProvider";
 import request from "supertest";
 import { registerChatCompletionsRoutes } from "./ChatCompletionsEndpoint";
+import { requestArrivalMiddleware } from "../core/api/RequestArrival";
 import * as SpendTracker from "../spend/SpendTracker";
 import { SpendLogStatus } from "../types/spend";
 
 const auth = { api_key: "sk-test", user_id: "user-1" };
 
-function buildApp(provider: Record<string, unknown>, getNextFallback = jest.fn().mockReturnValue(null)) {
+function buildApp(
+	provider: Record<string, unknown>,
+	getNextFallback = jest.fn().mockReturnValue(null),
+	options: {
+		arrivalDelayMs?: number;
+		onArrival?: (at: number | undefined) => void;
+		journal?: { observeUpstream: () => boolean; markCompletionStart: (at?: Date) => void; flush: () => Promise<void> };
+	} = {},
+) {
 	const deployment = {
 		model_name: "chat-group",
 		litellm_params: { model: "anthropic/upstream-model", custom_llm_provider: "anthropic" },
@@ -32,9 +41,23 @@ function buildApp(provider: Record<string, unknown>, getNextFallback = jest.fn()
 		markFailed: jest.fn(),
 	};
 	const app = express();
+	app.use(requestArrivalMiddleware);
 	app.use(express.json());
 	app.use((req, _res, next) => {
+		options.onArrival?.(req.litellmRequestArrivalAt);
+		next();
+	});
+	if (options.arrivalDelayMs !== undefined) {
+		// 模拟鉴权 / 费用预留这类 handler 之前的本地等待，验证 TTFT 不会从等待之后才起算。
+		app.use((_req, _res, next) => {
+			setTimeout(next, options.arrivalDelayMs);
+		});
+	}
+	app.use((req, _res, next) => {
 		req.auth = auth as never;
+		if (options.journal) {
+			req.activeRequestJournal = options.journal as never;
+		}
 		next();
 	});
 	const expressRouter = express.Router();
@@ -552,5 +575,107 @@ describe("Chat streaming SpendLog", () => {
 		expect(attempts).toBe(3);
 		expect(spendSpy).toHaveBeenCalledTimes(1);
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ model_id: "fb2", status: SpendLogStatus.Success });
+	});
+});
+
+describe("Dashboard TTFT 口径", () => {
+	let spendSpy: jest.SpyInstance;
+	let previousStorePrompts: string | undefined;
+
+	beforeEach(() => {
+		previousStorePrompts = process.env["STORE_PROMPTS_IN_SPEND_LOGS"];
+		process.env["STORE_PROMPTS_IN_SPEND_LOGS"] = "true";
+		spendSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "request-1", spend: 0 });
+		jest.spyOn(global, "fetch").mockResolvedValue(new globalThis.Response("stream"));
+	});
+
+	afterEach(() => {
+		if (previousStorePrompts === undefined) {
+			delete process.env["STORE_PROMPTS_IN_SPEND_LOGS"];
+		} else {
+			process.env["STORE_PROMPTS_IN_SPEND_LOGS"] = previousStorePrompts;
+		}
+		jest.restoreAllMocks();
+	});
+
+	it("从请求到达起算，handler 之前的本地等待计入 TTFT", async () => {
+		let arrivedAt: number | undefined;
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				yield { id: "arrival", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] };
+			},
+		});
+		const { app } = buildApp(provider, jest.fn().mockReturnValue(null), {
+			arrivalDelayMs: 30,
+			onArrival: (at) => {
+				arrivedAt = at;
+			},
+		});
+		await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true })
+			.expect(200);
+		const log = spendSpy.mock.calls[0]?.[1] as unknown as { startTime: string; completionStartTime: string };
+		expect(arrivedAt).toBeDefined();
+		// 起点必须等于到达时刻；修复前这里是进入 handler 的时间，会把 30ms 的本地等待排除掉。
+		expect(log.startTime).toBe(new Date(arrivedAt!).toISOString());
+		expect(new Date(log.completionStartTime).getTime() - new Date(log.startTime).getTime()).toBeGreaterThanOrEqual(20);
+	});
+
+	it("流式 TTFT 取首个写回下游的内容帧，被过滤的上游 chunk 不算首字", async () => {
+		let afterIgnoredChunk = 0;
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				// 只有 usage、没有 choices 的 chunk 在 include_usage=false 时不会写给客户端，
+				// 上游先吐出它不代表客户端拿到了首字。
+				yield {
+					id: "ttft",
+					object: "chat.completion.chunk",
+					choices: [],
+					usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 },
+				};
+				afterIgnoredChunk = Date.now();
+				await new Promise((resolve) => setTimeout(resolve, 30));
+				yield { id: "ttft", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }] };
+			},
+		});
+		const { app } = buildApp(provider);
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true })
+			.expect(200);
+		expect(response.text).toContain('"content":"hi"');
+		const log = spendSpy.mock.calls[0]?.[1] as unknown as { completionStartTime: string; endTime: string };
+		// 修复前首字记在上游第一个 chunk 到达时（早于这里的 30ms），客户端此刻还没收到任何内容。
+		expect(new Date(log.completionStartTime).getTime()).toBeGreaterThanOrEqual(afterIgnoredChunk + 20);
+		expect(new Date(log.completionStartTime).getTime()).toBeLessThanOrEqual(new Date(log.endTime).getTime());
+	});
+
+	it("首个内容帧写出时立即把 TTFT 补写在途行，且与最终日志同一时刻", async () => {
+		let afterIgnoredChunk = 0;
+		const markCompletionStart = jest.fn();
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				// 只有 usage 的 chunk 不写回下游，上游刚吐出它时客户端还没有首字。
+				yield { id: "in-flight", object: "chat.completion.chunk", choices: [], usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 } };
+				afterIgnoredChunk = Date.now();
+				await new Promise((resolve) => setTimeout(resolve, 30));
+				yield { id: "in-flight", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }] };
+			},
+		});
+		const { app } = buildApp(provider, jest.fn().mockReturnValue(null), {
+			journal: { observeUpstream: () => false, markCompletionStart: markCompletionStart, flush: async () => undefined },
+		});
+		await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true })
+			.expect(200);
+		const log = spendSpy.mock.calls[0]?.[1] as unknown as { completionStartTime: string };
+		// 修复前补写挂在上游首个 chunk 上：这里的 usage-only chunk 会让在途行提前出现 TTFT。
+		expect(markCompletionStart).toHaveBeenCalledTimes(1);
+		const persistedAt = markCompletionStart.mock.calls[0]?.[0] as Date;
+		expect(persistedAt.getTime()).toBeGreaterThanOrEqual(afterIgnoredChunk + 20);
+		// 在途行与最终日志必须复用同一时刻，否则「进行中」与「落账后」的 TTFT 会跳变。
+		expect(persistedAt.toISOString()).toBe(log.completionStartTime);
 	});
 });

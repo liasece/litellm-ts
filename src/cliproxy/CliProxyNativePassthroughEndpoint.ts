@@ -1,6 +1,8 @@
 import type { Request, Response, Router as ExpressRouter } from "express";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
+import { requestArrivalTime } from "../core/api/RequestArrival";
+import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { registerRoute, type HttpMethodLiteral } from "../core/api/registerRoute";
 import type { DrizzleDb } from "../core/db/Database";
 import type { Router as LiteLLMRouter } from "../router/Router";
@@ -438,7 +440,11 @@ function buildForwardHeaders(req: Request, internalApiKey: string, contentType: 
 	return headers;
 }
 
-async function pipeResponse(upstream: globalThis.Response, res: Response): Promise<CapturedResponse> {
+async function pipeResponse(
+	upstream: globalThis.Response,
+	res: Response,
+	onFirstByte?: (at: Date) => void,
+): Promise<CapturedResponse> {
 	res.status(upstream.status);
 	upstream.headers.forEach((value, key) => {
 		if (!RESPONSE_BLOCKED_HEADERS.has(key.toLowerCase())) {
@@ -463,7 +469,11 @@ async function pipeResponse(upstream: globalThis.Response, res: Response): Promi
 			}
 			// 透传也记下上游首块：否则这条链路的「模型什么时候开始产出」无处可查。
 			noteUpstreamFirstChunk();
-			firstChunkAt ??= new Date();
+			if (firstChunkAt === null) {
+				firstChunkAt = new Date();
+				// 首个字节写回下游：立即补写在途行的 TTFT，最终日志复用同一时刻。
+				onFirstByte?.(firstChunkAt);
+			}
 			if (!res.destroyed && !res.writableEnded) {
 				res.write(Buffer.from(value));
 			}
@@ -619,7 +629,8 @@ async function recordSpend(context: NativeSpendContext): Promise<void> {
 		deploymentModel: spendInfo?.deploymentModel,
 		startTime: context.startTime,
 		endTime: new Date(),
-		completionStartTime: context.captured?.firstChunkAt ?? new Date(),
+		completionStartTime:
+			context.req.litellmFirstContentFrameAt ?? context.captured?.firstChunkAt ?? markFirstContentFrame(context.req),
 		messages: requestMessages(context.body),
 		proxyServerRequestBody: context.body.logBody,
 		response: parsed.response,
@@ -648,7 +659,8 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 		const rewritten = rewritePreparedBody(prepared, resolved, route.path.includes("responses"));
 		const path = upstreamRequestPath(route, req, resolved, requestedModel);
 		const upstreamUrl = `${runtime.baseUrl}${path}`;
-		const startTime = new Date();
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+		const startTime = requestArrivalTime(req);
 		const reservation = resolved && route.recordsSpend !== false
 			? await reserveEndpointSpend(db, router, req, resolved.publicModel, rewritten.parsed ?? {}, {
 					callType: route.callType ?? CallType.ACompletion,
@@ -685,7 +697,7 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 			const captured =
 				route.path === "/v1beta/models"
 					? await sendFilteredGeminiModels(upstream, res, req, router)
-					: await pipeResponse(upstream, res);
+					: await pipeResponse(upstream, res, (at) => void markFirstContentFrame(req, at));
 			if (resolved && route.recordsSpend !== false) {
 				const candidate = router.getAvailableDeployment(resolved.publicModel);
 				if (upstream.ok) {

@@ -40,11 +40,6 @@ export interface StreamingCheckpointSchedulerOptions<T> {
 	write: (checkpoint: T) => void | Promise<unknown>;
 	/** 写库失败回调；缺省吞掉错误。 */
 	onError?: (error: unknown) => void;
-	/**
-	 * 首个 chunk 到达时同步回调一次；用于补写 TTFT 这类「一确定就不再变化」的字段。
-	 * 与 onChunk 的 debounce 无关：首 token 时间必须按到达时刻记录，不能等写库窗口。
-	 */
-	onFirstChunk?: () => void;
 	/** 时间窗口（毫秒）；缺省 2000。 */
 	intervalMs?: number;
 }
@@ -112,12 +107,10 @@ export class StreamingCheckpointScheduler<T> {
 	private readonly _serialize: () => T | null;
 	private readonly _write: (checkpoint: T) => void | Promise<unknown>;
 	private readonly _onError: (error: unknown) => void;
-	private readonly _onFirstChunk: (() => void) | undefined;
 	private readonly _baseIntervalMs: number;
 	private readonly _largeIntervalMs: number;
 	private _intervalMs: number;
 	private _slowFlushes = 0;
-	private _firstChunkSeen = false;
 	private _tail: Promise<void> = Promise.resolve();
 	private _timer: ReturnType<typeof setTimeout> | undefined;
 	private _dirty = false;
@@ -126,7 +119,6 @@ export class StreamingCheckpointScheduler<T> {
 		this._serialize = options.serialize;
 		this._write = options.write;
 		this._onError = options.onError ?? (() => undefined);
-		this._onFirstChunk = options.onFirstChunk;
 		this._baseIntervalMs =
 			options.intervalMs ?? resolveStreamingCheckpointIntervalMs(process.env[STREAMING_CHECKPOINT_INTERVAL_ENV]);
 		this._intervalMs = this._baseIntervalMs;
@@ -134,19 +126,11 @@ export class StreamingCheckpointScheduler<T> {
 	}
 
 	/**
-	 * 每个 chunk 累积后调用。只置 dirty 并在首次调用时启动定时器；时间窗口内的
-	 * 后续调用只更新 dirty 标志，由定时器到期时统一 flush 一次，实现 trailing-edge
-	 * debounce，避免逐 chunk 打库。
+	 * 每个 chunk 累积后调用。只置 dirty 并启动定时器；时间窗口内的后续调用只更新
+	 * dirty 标志，由定时器到期时统一 flush 一次，实现 trailing-edge debounce，避免逐
+	 * chunk 打库。
 	 */
 	onChunk(): void {
-		if (!this._firstChunkSeen) {
-			this._firstChunkSeen = true;
-			try {
-				this._onFirstChunk?.();
-			} catch {
-				// 首 token 补写属于观测，不能影响流式转发。
-			}
-		}
 		this._dirty = true;
 		if (this._timer !== undefined) {
 			return;

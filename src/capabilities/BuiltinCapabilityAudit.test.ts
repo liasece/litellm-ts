@@ -132,6 +132,60 @@ describe("BuiltinCapabilityAudit", () => {
 		);
 	});
 
+	it("内置能力审计行只记请求耗时，不把耗时冒充成 TTFT", async () => {
+		const auth = { api_key: "sk-test", token: "key-id", user_id: "user-id", team_id: "team-id" };
+		const req = {
+			auth: auth,
+			body: { model: "deepseek-v4-flash" },
+			headers: {},
+			method: "POST",
+			originalUrl: "/v1/chat/completions",
+			url: "/v1/chat/completions",
+		} as unknown as Request;
+		const buildSpy = jest.spyOn(SpendTracker, "buildSpendLogFromRequest").mockResolvedValue({ request_id: "child-log" } as never);
+		jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "child-log", spend: 0 });
+		const audit = createVisionCapabilityAuditHook({ db: {} as DrizzleDb, req: req, parentRequestId: "parent-log" });
+		const built = () => buildSpy.mock.calls.at(-1)?.[0] as { startTime: Date; endTime: Date; completionStartTime?: Date | null };
+
+		const directStart = new Date("2026-11-09T09:00:00.000Z");
+		const directEnd = new Date("2026-11-09T09:00:01.500Z");
+		await audit!({
+			capability: "web",
+			stage: "handler",
+			callType: "asearch",
+			model: "deepseek_tools/fetch",
+			toolCallId: "call-fetch",
+			messages: [],
+			startTime: directStart,
+			endTime: directEnd,
+			response: { executor: "deepseek_tools:deepseek-prod", brief: "page body" },
+			fixedCostUsd: 0.00075,
+		});
+
+		// 直连工具只发生一次 HTTP 交换：请求时长照常记录，首字无从测起。
+		expect(built().startTime).toEqual(directStart);
+		expect(built().endTime).toEqual(directEnd);
+		expect(built().completionStartTime).toBeNull();
+
+		const workerStart = new Date("2026-11-09T09:00:02.000Z");
+		const workerEnd = new Date("2026-11-09T09:00:05.000Z");
+		await audit!({
+			capability: "web",
+			stage: "handler",
+			callType: "acompletion",
+			model: "gpt-5.4-mini",
+			toolCallId: "call-fetch",
+			messages: [],
+			startTime: workerStart,
+			endTime: workerEnd,
+			response: { model: "gpt-5.4-mini", usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+		});
+
+		// worker 模型调用同样是非流式内部子请求：整段耗时记在请求时长里，TTFT 仍然不该凭空出现。
+		expect(built().endTime.getTime() - built().startTime.getTime()).toBe(3_000);
+		expect(built().completionStartTime).toBeNull();
+	});
+
 	it("从 worker 响应或错误提取上游日志上下文", async () => {
 		const auth = { api_key: "sk-test", token: "key-id", user_id: "user-id", team_id: "team-id" };
 		const req = {

@@ -236,6 +236,9 @@ async function executeDeepSeekToolCall(
 	},
 ): Promise<{ text: string; raw: Record<string, unknown>; model: string }> {
 	const connection = resolveDeepSeekConnection(binding, executor);
+	// 直连工具也必须留下真实请求时长：审计行的 endTime - startTime 就是 Logs 页的请求耗时，
+	// 在调用前后各取一次墙钟，而不是在返回后再补一对相同的时间戳（那样永远是 0）。
+	const startTime = new Date();
 	const raw: Record<string, unknown> =
 		request.kind === "search"
 			? await callDeepSeekSearch(connection, {
@@ -245,6 +248,7 @@ async function executeDeepSeekToolCall(
 					localization: executor.localization,
 				}).then((envelope) => ({ ...envelope }))
 			: await callDeepSeekFetch(connection, request.url).then((envelope) => ({ ...envelope }));
+	const endTime = new Date();
 	const text = typeof raw["brief"] === "string" ? (raw["brief"] as string) : "";
 	if (text.trim().length === 0) {
 		throw ApiError.unavailable("DeepSeek 直连工具没有返回可用内容");
@@ -259,8 +263,8 @@ async function executeDeepSeekToolCall(
 		toolCallId: context.toolCallId,
 		messages: context.messages,
 		requestBody: context.requestBody,
-		startTime: new Date(),
-		endTime: new Date(),
+		startTime: startTime,
+		endTime: endTime,
 		executor: executorLabel(executor),
 		credentialName: executor.credential_name,
 		fixedCostUsd: billable ? DEEPSEEK_TOOLS_COST_PER_REQUEST_USD : 0,

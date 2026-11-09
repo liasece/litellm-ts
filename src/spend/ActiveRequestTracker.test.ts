@@ -227,9 +227,9 @@ describe("Active request tracking", () => {
 		const body = (inserted?.["proxy_server_request"] as { body: { messages: Array<{ content: Array<Record<string, unknown>> }> } })
 			.body;
 		const content = body.messages[0]?.content ?? [];
-		// 图片按最终 SpendLog 同规格保留，普通超长文本仍然截断。
+		// 日志侧只做 NUL 转义，不再截断：图片与超长文本都原样保留。
 		expect((content[0]?.["image_url"] as { url: string }).url).toBe(dataUri);
-		expect(String(content[1]?.["text"])).toContain("litellm_truncated");
+		expect(content[1]?.["text"]).toBe(longText);
 	});
 
 	it("keeps generated image output in the streaming checkpoint", async () => {

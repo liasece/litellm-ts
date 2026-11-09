@@ -958,7 +958,8 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		completion_tokens: usage?.completion_tokens ?? 0,
 		startTime: ctx.startTime.toISOString(),
 		endTime: ctx.endTime.toISOString(),
-		completionStartTime: (ctx.completionStartTime ?? ctx.endTime).toISOString(),
+		completionStartTime:
+			ctx.completionStartTime === null ? null : (ctx.completionStartTime ?? ctx.endTime).toISOString(),
 		// PY reconstruct_model_name：model 列记实际执行 deployment 的完整模型名
 		// （含 provider 前缀），无 deployment 信息时回退请求 model
 		model: reconstructModelName(
@@ -1932,7 +1933,12 @@ async function trackSpendLogMeasured(
 		completion_tokens: completionTokens,
 		startTime: requestStartTime,
 		endTime: requestEndTime,
-		completionStartTime: logEntry.completionStartTime ? new Date(logEntry.completionStartTime) : requestEndTime,
+		completionStartTime:
+			logEntry.completionStartTime === null
+				? null
+				: logEntry.completionStartTime
+					? new Date(logEntry.completionStartTime)
+					: requestEndTime,
 		model: logEntry.model || "",
 		model_group: logEntry.model_group || "",
 		model_id: logEntry.model_id ?? null,

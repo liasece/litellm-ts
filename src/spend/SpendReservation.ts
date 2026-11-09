@@ -217,7 +217,7 @@ export function estimateRouterSpendReservation(
  * @param req
  * @param model
  * @param requestBody
- * @param optionsOrCostMode
+ * @param optionsOrCostMode - 计费模式与记账选项；`startTime` 必须是请求到达时刻（`requestArrivalTime(req)`），在途行与最终 SpendLog 共用它作为 TTFT 起点
  */
 export async function reserveEndpointSpend(
 	db: DrizzleDb | undefined,

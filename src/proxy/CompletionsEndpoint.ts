@@ -7,6 +7,8 @@
 
 import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
+import { requestArrivalTime } from "../core/api/RequestArrival";
+import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { ApiError } from "../core/api/ApiError";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { stripInternalFields } from "../core/api/stripInternalFields";
@@ -78,7 +80,8 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		delete optionalParams.model;
 		optionalParams["prompt"] = prompt;
 
-		const startTime = new Date();
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+		const startTime = requestArrivalTime(req);
 		const spendReservation = await reserveEndpointSpend(db, litellmRouter, req, model, req.body, {
 			callType: CallType.ACompletion,
 			startTime: startTime,
@@ -101,7 +104,7 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 			try {
 				const result = await litellmRouter.completion(model, messages, optionalParams);
 				providerCompleted = true;
-				const completionStartTime = new Date();
+				const completionStartTime = markFirstContentFrame(req);
 				const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 				calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 				const usage = result["usage"] as Record<string, unknown> | undefined;

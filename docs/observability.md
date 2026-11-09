@@ -158,6 +158,17 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 - **首字口径**：`llm.ttfb_ms` 取「上游开始输出」的时刻，而不是客户端的第一个字节。原因见线上实测——`/responses` 会在
   调用上游前先给客户端写 4KB 填充帧与本地合成事件（约 150ms 到达），而上游真正开始产出在 3s 左右；若按第一个字节算首字，
   会把 3s 的模型等待读成 150ms。想区分两者就看 `llm.first_byte_ms` 与 `llm.ttfb_ms` 的差。
+- **Dashboard 的 TTFT 与上面的首字口径不同**：日志列表/详情的「TTFT (s)」来自 SpendLog 的
+  `completionStartTime - startTime`。起点是请求到达代理的时刻（含请求体解析、鉴权、运行时配置与费用预留），
+  终点是首个内容帧真正写回下游的时刻；本地包的 SSE 前言（keep-alive、`response.created` 等）不算首字。
+  非流式请求一次性返回，该值等于端到端耗时。因此 Dashboard TTFT 通常比 `llm.ttfb_ms` 多出本地预开销，
+  两者的差可对照请求的 `pre_upstream_ms`。首个内容帧一旦确定就立即补写进 `LiteLLM_ActiveRequests`，
+  整条流还没结束时日志列表（`include_active=true`）与详情已能读到同一个 TTFT；最终 SpendLog 复用同一时间戳，
+  「进行中」与「落账后」不会跳变。
+- **内置能力没有 TTFT**：内置 web / vision / image_generation 的内部子请求是本地发起的非流式调用，
+  观测不到「首个 token 写回下游」的时刻，其 SpendLog 只记请求时长（`endTime - startTime`），
+  `completionStartTime` 落 NULL，日志列表与详情的 TTFT 显示 `-`。直连工具（DeepSeek Search / Fetch）
+  同理：一次 HTTP 交换只有耗时，没有首字。
 - **百分位口径**：窗口分位来自 5 分钟内存分片，按桶上界线性插值（与 `histogram_quantile` 同口径）。桶很粗时（例如 `db` 的毫秒级桶），分位是区间估计而不是精确样本值。
 - **`upstreamPayloadMs` 只对非流式有意义**：流式请求永远读不完响应体，只有首块时刻。
 - **没有部署 Prometheus 服务端**：`/metrics` 目前供人工与临时抓取使用；接入抓取器时按上面的 curl 形式配置抓取目标与密钥头。

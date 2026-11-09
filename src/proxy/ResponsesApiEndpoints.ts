@@ -13,6 +13,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { Request, Response, Router } from "express";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
+import { requestArrivalTime } from "../core/api/RequestArrival";
+import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { registerRoute } from "../core/api/registerRoute";
 import type { DrizzleDb } from "../core/db/Database";
@@ -283,7 +285,8 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		// reasoning 增量，并把工具参数合并成单个块；不支持原生 Responses 的 provider 由
 		// 路由层回落到 chat。
 		optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(reqBody, toolRegistry);
-		const startTime = new Date();
+		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
+		const startTime = requestArrivalTime(req);
 		const reservation = await reserveEndpointSpend(db, litellmRouter, req, model, reqBody, {
 			callType: CallType.AResponses,
 			startTime: startTime,
@@ -364,7 +367,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 							)
 						: await litellmRouter.completion(model, messages as never, optionalParams);
 				providerCompleted = true;
-				const responseReceivedAt = new Date();
+				const responseReceivedAt = markFirstContentFrame(req);
 				const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 				calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 				const usage = result["usage"] as Record<string, unknown> | undefined;
@@ -1393,7 +1396,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 							if (chunk === undefined) {
 								continue;
 							}
-							capabilityFirstChunkAt ??= new Date();
+							capabilityFirstChunkAt ??= markFirstContentFrame(req);
 							capabilityVisibleDeltas = true;
 							consumeChatStreamChunk(chunk, state, res);
 						}
@@ -1421,7 +1424,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 							if (chunk === undefined) {
 								continue;
 							}
-							capabilityFirstChunkAt ??= new Date();
+							capabilityFirstChunkAt ??= markFirstContentFrame(req);
 							capabilityVisibleDeltas = true;
 							consumeChatStreamChunk(chunk, state, res);
 						}
@@ -1441,7 +1444,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				}
 				const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
 				for await (const chunk of upstreamStream as AsyncIterable<unknown>) {
-					capabilityFirstChunkAt ??= new Date();
+					capabilityFirstChunkAt ??= markFirstContentFrame(req);
 					capabilityVisibleDeltas = true;
 					consumeChatStreamChunk(stripPrivateToolDeltas(chunk), state, res);
 					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
@@ -1572,7 +1575,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				};
 			},
 			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
-			onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 		});
 	}
 
@@ -1607,7 +1609,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			if (current.done) {
 				break;
 			}
-			firstChunkAt ??= new Date();
+			firstChunkAt ??= markFirstContentFrame(req);
 			consumeChatStreamChunk(current.value, state, res);
 			streamingCheckpointScheduler?.onChunk();
 		}
@@ -1757,7 +1759,6 @@ async function relayNativeResponsesStream(
 				};
 			},
 			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
-			onFirstChunk: () => req.activeRequestJournal?.markCompletionStart(),
 		});
 	}
 	let clientAborted = false;
@@ -1809,12 +1810,14 @@ async function relayNativeResponsesStream(
 						: undefined;
 			}
 			if (firstSemanticDeltaAt === undefined && isNativeResponsesContentDelta(type)) {
-				firstSemanticDeltaAt = new Date();
+				firstSemanticDeltaAt = markFirstContentFrame(req);
 			}
 			restoreNativeResponsesPayload(event, requestBody, toolRegistry);
 			if (typeof event["sequence_number"] === "number") {
 				lastSequence = Math.max(lastSequence, event["sequence_number"] as number);
 			}
+			// TTFT 终点取「首个语义增量写回下游」的时刻：response.created 等包络事件由本端
+			// 立即转发，把它算作首字会让每次请求的 TTFT 都接近 0，反而掩盖真实的首字延迟。
 			res.write(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`);
 			nativeAccumulator.accumulate(event);
 			streamingCheckpointScheduler?.onChunk();

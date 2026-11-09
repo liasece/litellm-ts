@@ -65,12 +65,20 @@ export function createLiveStreamCheckpoint(options: {
 			};
 		},
 		write: (checkpoint) => checkpointActiveRequest(options.db, options.requestId, checkpoint, "streaming_execution"),
-		onFirstChunk: () => options.onFirstChunk?.(),
 	});
 	let disposed = false;
+	let firstChunkSeen = false;
 	return {
 		feed: (decoded: string): void => {
 			accumulator.feed(decoded);
+			if (!firstChunkSeen) {
+				firstChunkSeen = true;
+				try {
+					options.onFirstChunk?.();
+				} catch {
+					// 首个 chunk 的 TTFT 补写属于观测，不能影响透传转发。
+				}
+			}
 			scheduler.onChunk();
 		},
 		dispose: async (): Promise<void> => {

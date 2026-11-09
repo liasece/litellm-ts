@@ -153,42 +153,6 @@ describe("StreamingCheckpointScheduler", () => {
 		}
 	});
 
-	it("onFirstChunk 只在第一个 chunk 同步触发一次", async () => {
-		const onFirstChunk = jest.fn();
-		const write = jest.fn().mockResolvedValue(undefined);
-		const serialize = jest.fn().mockReturnValue({ data: 1 });
-		const scheduler = new StreamingCheckpointScheduler({
-			serialize: serialize,
-			write: write,
-			onFirstChunk: onFirstChunk,
-		});
-
-		expect(onFirstChunk).not.toHaveBeenCalled();
-		scheduler.onChunk();
-		scheduler.onChunk();
-		scheduler.onChunk();
-		await scheduler.dispose();
-
-		expect(onFirstChunk).toHaveBeenCalledTimes(1);
-	});
-
-	it("onFirstChunk 抛错不影响流式累积与写库", async () => {
-		const write = jest.fn().mockResolvedValue(undefined);
-		const serialize = jest.fn().mockReturnValue({ data: 1 });
-		const scheduler = new StreamingCheckpointScheduler({
-			serialize: serialize,
-			write: write,
-			onFirstChunk: () => {
-				throw new Error("journal down");
-			},
-		});
-
-		scheduler.onChunk();
-		await scheduler.dispose();
-
-		expect(write).toHaveBeenCalledTimes(1);
-	});
-
 	it("dispose 会 flush 尚未落库的 dirty 状态", async () => {
 		const write = jest.fn().mockResolvedValue(undefined);
 		const serialize = jest.fn().mockReturnValue({ data: 1 });
