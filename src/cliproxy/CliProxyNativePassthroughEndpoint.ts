@@ -65,7 +65,6 @@ interface CapturedResponse {
 interface NativeSpendContext {
 	readonly db: DrizzleDb;
 	readonly req: Request;
-	readonly router: LiteLLMRouter;
 	readonly resolved: HostedModel;
 	readonly route: NativePassthroughRoute;
 	readonly upstreamUrl: string;
@@ -579,8 +578,7 @@ async function recordSpend(context: NativeSpendContext): Promise<void> {
 	if (!context.req.auth) {
 		return;
 	}
-	const candidate = context.router.getAvailableDeployment(context.resolved.publicModel);
-	const spendInfo = candidate ? buildDeploymentSpendInfo(candidate.deployment, context.upstreamUrl) : undefined;
+	const spendInfo = buildDeploymentSpendInfo(context.resolved.deployment, context.upstreamUrl);
 	const parsed = context.captured ? parsedResponse(context.captured) : {};
 	const log = await buildSpendLogFromRequest({
 		req: context.req,
@@ -589,11 +587,11 @@ async function recordSpend(context: NativeSpendContext): Promise<void> {
 		callType: context.route.callType ?? CallType.ACompletion,
 		model: context.resolved.publicModel,
 		modelGroup: context.resolved.publicModel,
-		modelId: spendInfo?.modelId,
-		customLlmProvider: spendInfo?.customLlmProvider,
-		apiBase: spendInfo?.apiBase,
-		customCostPerToken: spendInfo?.customCostPerToken,
-		deploymentModel: spendInfo?.deploymentModel,
+		modelId: spendInfo.modelId,
+		customLlmProvider: spendInfo.customLlmProvider,
+		apiBase: spendInfo.apiBase,
+		customCostPerToken: spendInfo.customCostPerToken,
+		deploymentModel: spendInfo.deploymentModel,
 		startTime: context.startTime,
 		endTime: new Date(),
 		completionStartTime:
@@ -602,7 +600,7 @@ async function recordSpend(context: NativeSpendContext): Promise<void> {
 		proxyServerRequestBody: context.body.logBody,
 		response: parsed.response,
 		usage: parsed.usage,
-		upstreamLogContext: createUpstreamLogContext(context.logRequest, context.upstreamResponse, parsed.response),
+		upstreamLogContext: createUpstreamLogContext(context.logRequest, context.upstreamResponse, parsed.response, context.resolved.deployment),
 		status: context.status,
 		error: context.error,
 	});
@@ -652,33 +650,36 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 			method: route.method.toUpperCase(),
 			headers: buildForwardHeaders(req, runtime.internalApiKey, rewritten.contentType),
 			body: rewritten.logBody ?? rewritten.parsed,
-			model: resolved?.publicModel,
+			model: resolved?.upstreamModel,
 		});
+		const dispatched = resolved && route.recordsSpend !== false ? resolved.deployment : undefined;
 		try {
+			if (dispatched) {
+				createUpstreamLogContext(logRequest, undefined, undefined, dispatched);
+			}
 			const upstream = await fetch(upstreamUrl, {
 				method: route.method.toUpperCase(),
 				headers: buildForwardHeaders(req, runtime.internalApiKey, rewritten.contentType),
 				body: route.method === "get" ? undefined : rewritten.bytes,
 				signal: abortController.signal,
 			});
+			if (dispatched) {
+				createUpstreamLogContext(logRequest, upstream, undefined, dispatched);
+			}
 			const captured =
 				route.path === "/v1beta/models"
 					? await sendFilteredGeminiModels(upstream, res, req, router, runtime)
 					: await pipeResponse(upstream, res, (at) => void markFirstContentFrame(req, at));
 			if (resolved && route.recordsSpend !== false) {
-				const candidate = router.getAvailableDeployment(resolved.publicModel);
 				if (upstream.ok) {
-					if (candidate) {
-						router.recordDeploymentSuccess(candidate.deployment);
-					}
-				} else if (candidate) {
-					router.recordDeploymentFailure(candidate.deployment, new Error(`CLIProxy returned HTTP ${upstream.status}`));
+					router.recordDeploymentSuccess(resolved.deployment);
+				} else {
+					router.recordDeploymentFailure(resolved.deployment, new Error(`CLIProxy returned HTTP ${upstream.status}`));
 				}
 				await lifecycle.finalize(() =>
 					recordSpend({
 						db: db,
 						req: req,
-						router: router,
 						resolved: resolved,
 						route: route,
 						upstreamUrl: upstreamUrl,
@@ -695,15 +696,13 @@ function handlerForRoute(route: NativePassthroughRoute, router: LiteLLMRouter, r
 			}
 		} catch (error) {
 			if (resolved && route.recordsSpend !== false) {
-				const candidate = router.getAvailableDeployment(resolved.publicModel);
-				if (candidate && !(error instanceof DOMException && error.name === "AbortError")) {
-					router.recordDeploymentFailure(candidate.deployment, error instanceof Error ? error : new Error(String(error)));
+				if (!(error instanceof DOMException && error.name === "AbortError")) {
+					router.recordDeploymentFailure(resolved.deployment, error instanceof Error ? error : new Error(String(error)));
 				}
 				await lifecycle.finalize(() =>
 					recordSpend({
 						db: db,
 						req: req,
-						router: router,
 						resolved: resolved,
 						route: route,
 						upstreamUrl: upstreamUrl,

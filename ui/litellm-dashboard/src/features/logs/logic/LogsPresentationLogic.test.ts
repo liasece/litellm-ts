@@ -83,3 +83,18 @@ it("uses the recorded deployment family on a compact log row while details prefe
 		family: undefined,
 	});
 });
+
+it("shows the live deployment identity after routing and tracks a new supplier on fallback", () => {
+	const waiting = log({ model: "gpt-public-alias", status: "in_progress" });
+	expect(modelIdentity(waiting)).toMatchObject({ family: null, provider: "" });
+	const metadata = { model_map_information: { model_map_value: { model_family: "DeepSeek" } } };
+	const routed = { ...waiting, custom_llm_provider: "commandcode", metadata };
+	expect(modelIdentity(routed)).toMatchObject({ family: "DeepSeek", provider: "commandcode" });
+	const retried = {
+		...routed,
+		custom_llm_provider: "opencode-go",
+		proxy_server_request: { upstream_request: { body: { model: "gpt-previous" } } },
+	};
+	expect(modelIdentity(retried)).toMatchObject({ family: "DeepSeek", provider: "opencode-go" });
+	expect(modelIdentity({ ...routed, status: "success" })).toMatchObject({ family: "DeepSeek", provider: "commandcode" });
+});

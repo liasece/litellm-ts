@@ -182,7 +182,7 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 					model,
 					model_id,
 					model_group,
-					'',
+					custom_llm_provider,
 					'',
 					"user",
 					COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
@@ -289,7 +289,7 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 					-- 写入 0 而不是"开始到现在"（后者会把几分钟的请求记成几天）。
 					0,
 					NULL,
-					model, model_id, model_group, '', '', "user",
+					model, model_id, model_group, custom_llm_provider, '', "user",
 					COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
 						'status', 'aborted',
 						'termination_reason', 'lease_expired',

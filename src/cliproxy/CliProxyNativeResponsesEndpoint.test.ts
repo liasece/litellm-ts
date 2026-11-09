@@ -1,3 +1,6 @@
+import { upstreamExchangeScope } from "../middleware/UpstreamExchangeScope";
+import { getRecordedUpstreamExchange } from "../router/UpstreamExchange";
+import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { LlmProviders } from "../types/provider";
 import { codingClientModelMiddleware } from "../proxy/CodingClientModels";
 import express from "express";
@@ -123,9 +126,16 @@ describe("CLIProxy native Responses streaming", () => {
 		const upstream = new Promise<Response>((resolve) => {
 			resolveUpstream = resolve;
 		});
-		const fetchSpy = jest.spyOn(global, "fetch").mockReturnValue(upstream);
+		let dispatched: DeploymentSpendInfo | undefined;
+		const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(() => {
+			dispatched = getRecordedUpstreamExchange()?.spendInfo;
+			return upstream;
+		});
+		const app = express();
+		app.use(upstreamExchangeScope);
+		app.use(buildApp());
 		const server = await new Promise<http.Server>((resolve, reject) => {
-			const listening = buildApp().listen(0, "127.0.0.1", () => resolve(listening));
+			const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
 			listening.once("error", reject);
 		});
 		let client: http.ClientRequest | undefined;
@@ -173,6 +183,7 @@ describe("CLIProxy native Responses streaming", () => {
 			expect(JSON.parse((dataLine ?? "").slice("data: ".length))).toMatchObject({ type: "ping" });
 			expect(Buffer.byteLength(initialChunk)).toBeGreaterThanOrEqual(4_096);
 			expect(responseStatus).toBe(200);
+			expect(dispatched).toMatchObject({ customLlmProvider: "codex-subscription", deploymentModel: "gpt-5.6-sol" });
 			expect(responseHeaders["content-type"]).toContain("text/event-stream");
 			expect(responseHeaders["x-accel-buffering"]).toBe("no");
 			expect(fetchSpy).toHaveBeenCalledTimes(1);

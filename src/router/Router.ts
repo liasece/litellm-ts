@@ -999,6 +999,7 @@ export class Router {
 		const timeoutSec = isStream
 			? (deployment.litellm_params.stream_timeout ?? deployment.litellm_params.timeout)
 			: deployment.litellm_params.timeout;
+		const dispatched = createUpstreamLogContext(providerRequest, undefined, undefined, deployment);
 		let execution;
 		try {
 			execution = await executeProviderRequest(providerRequest, {
@@ -1011,7 +1012,7 @@ export class Router {
 			});
 		} catch (error) {
 			if (typeof error === "object" && error !== null) {
-				attachUpstreamLogContext(error, createUpstreamLogContext(providerRequest, undefined, undefined, deployment));
+				attachUpstreamLogContext(error, dispatched);
 			}
 			throw error;
 		}

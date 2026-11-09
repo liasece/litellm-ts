@@ -248,7 +248,7 @@ export async function reserveEndpointSpend(
 			requestBody: requestBody,
 		});
 		// 在途日志补写器挂在请求上：流式端点深处（首个 chunk）也能直接补写 TTFT。
-		const journal = createActiveRequestJournal(db, requestId);
+		const journal = createActiveRequestJournal(db, requestId, model);
 		journal.observeUpstream();
 		req.activeRequestJournal = journal;
 		return startActiveRequestHeartbeat(db, requestId);

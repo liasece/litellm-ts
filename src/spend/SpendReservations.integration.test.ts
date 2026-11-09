@@ -5,6 +5,12 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "../db/schema";
 import { AuthRepository } from "../auth/AuthRepository";
+import { createUpstreamLogContext } from "../router/UpstreamLogContext";
+import { runWithUpstreamExchangeScope } from "../router/UpstreamExchange";
+import { abortOrphanedActiveRequests } from "./ActiveRequestRecovery";
+import { createActiveRequestJournal } from "./ActiveRequestJournal";
+import { buildActiveRequestDetail } from "./UiLogDetail";
+import * as SpendTracker from "./SpendTracker";
 import { CallType } from "../types/spend";
 import { releaseSpend, renewSpendReservation, reserveSpend, settleSpend, trackSpendLog } from "./SpendTracker";
 
@@ -37,7 +43,7 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 			object_permission_id text,
 			blocked boolean NOT NULL DEFAULT false
 		)`);
-		for (const file of ["0001_spend_reservations.sql", "0004_active_requests.sql"]) {
+		for (const file of ["0001_spend_reservations.sql", "0004_active_requests.sql", "0008_active_requests_proxy_server_request.sql", "0010_active_request_observation.sql"]) {
 			const migrationSql = readFileSync(resolve(__dirname, "../../drizzle", file), "utf8");
 			for (const statement of migrationSql.split("--> statement-breakpoint")) {
 				await pool.query(statement);
@@ -90,6 +96,58 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 		if (pool) {
 			await pool.query(`DROP SCHEMA IF EXISTS "${testSchema}" CASCADE`);
 			await pool.end();
+		}
+	});
+
+	it("publishes the actual family and supplier before response headers and refreshes them on a shared-URL retry", async () => {
+		const id = "live-family",
+			alias = "gpt-public-alias",
+			url = "https://gateway.example/v1/chat/completions";
+		await db.execute(sql`INSERT INTO "LiteLLM_ActiveRequests" (request_id, call_type, "startTime", expires_at, model, model_group, metadata)
+			VALUES (${id}, 'acompletion', now(), now() + interval '5 minutes', ${alias}, ${alias}, '{"status":"in_progress","session_group_key":"kept"}')`);
+		const policy = jest.spyOn(SpendTracker, "shouldStoreUpstreamLogsInSpendLogs").mockResolvedValue(false);
+		try {
+			await runWithUpstreamExchangeScope(async () => {
+				const journal = createActiveRequestJournal(db, id, alias);
+				journal.observeUpstream();
+				for (const [supplier, deploymentId, upstream, family] of [
+					["commandcode", "first", "deepseek/deepseek-v4", "DeepSeek"],
+					["opencode-go", "second", "claude-sonnet-4-5", "Claude"],
+				] as const) {
+					createUpstreamLogContext(
+						{ url, method: "POST", headers: {}, model: upstream, body: { model: upstream } },
+						undefined,
+						undefined,
+						{
+							model_name: alias,
+							litellm_params: { model: "deployment-identifier", custom_llm_provider: supplier },
+							model_info: { id: deploymentId },
+						},
+					);
+					await journal.flush();
+					const active = await buildActiveRequestDetail(db, id);
+					expect(active).toMatchObject({
+						status: "in_progress",
+						model_group: alias,
+						model_id: deploymentId,
+						custom_llm_provider: supplier,
+						metadata: {
+							session_group_key: "kept",
+							model_map_information: { model_map_key: alias, model_map_value: { id: deploymentId, model_family: family } },
+						},
+					});
+					expect(active?.["proxy_server_request"]).not.toHaveProperty("upstream_request");
+				}
+			});
+			await expect(abortOrphanedActiveRequests(db)).resolves.toBe(1);
+			const settled = await pool.query(
+				`SELECT status, custom_llm_provider, metadata #>> '{model_map_information,model_map_value,model_family}' AS family
+				 FROM "LiteLLM_SpendLogs" WHERE request_id = $1`,
+				[id],
+			);
+			expect(settled.rows).toEqual([{ status: "aborted", custom_llm_provider: "opencode-go", family: "Claude" }]);
+		} finally {
+			policy.mockRestore();
 		}
 	});
 

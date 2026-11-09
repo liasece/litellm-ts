@@ -843,6 +843,30 @@ export function resolveFinalModelGroup(input: FinalModelGroupResolutionInput): s
 }
 
 /**
+ * Keep the public routing name and the actual model family identical in live and settled log metadata.
+ * @param modelGroup - Requested public model group.
+ * @param modelId - Selected deployment ID, if available.
+ * @param deploymentModel - Upstream ID configured on that deployment.
+ * @param upstreamBody - Transformed request at dispatch, including any provider model rewrite.
+ */
+export function buildSpendModelMapInformation(
+	modelGroup: string,
+	modelId: string | undefined,
+	deploymentModel: string | undefined,
+	upstreamBody: unknown,
+) {
+	const bodyModel = upstreamBody && typeof upstreamBody === "object" && "model" in upstreamBody ? upstreamBody.model : undefined;
+	const executed = typeof bodyModel === "string" && bodyModel.trim() ? bodyModel.trim() : deploymentModel;
+	return {
+		model_map_key: modelGroup,
+		model_map_value:
+			modelId || executed
+				? { ...(modelId ? { id: modelId } : {}), ...(executed ? { model_family: resolveModelFamily(executed) ?? null } : {}) }
+				: null,
+	};
+}
+
+/**
  * 构建 Python SpendLogs metadata JSON。
  * @param ctx - SpendLog 构建上下文
  */
@@ -850,9 +874,6 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 	const auth = ctx.auth;
 	const requestBody = ctx.req.body as Record<string, unknown> | undefined;
 	const requestMetadata = requestBody?.metadata;
-	const upstreamBody = ctx.upstreamLogContext?.request.body;
-	const upstreamModel = upstreamBody && typeof upstreamBody === "object" && "model" in upstreamBody ? upstreamBody.model : undefined;
-	const executedModel = typeof upstreamModel === "string" && upstreamModel ? upstreamModel : ctx.deploymentModel;
 	const usageObject = ctx.usage;
 	const normalizedUsage = normalizeUsageForSpend(usageObject);
 	const usageWithNormalizedCacheFields =
@@ -895,12 +916,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		batch_models: null,
 		cold_storage_object_key: null,
 		// PY StandardLoggingModelInformation：model_map_key=路由模型组，model_map_value=deployment ModelInfo
-		model_map_information: {
-			model_map_key: ctx.modelGroup ?? ctx.model,
-			model_map_value: ctx.modelId
-				? { id: ctx.modelId, ...(executedModel ? { model_family: resolveModelFamily(executedModel) ?? null } : {}) }
-				: null,
-		},
+		model_map_information: buildSpendModelMapInformation(ctx.modelGroup ?? ctx.model, ctx.modelId, ctx.deploymentModel, ctx.upstreamLogContext?.request.body),
 		litellm_overhead_time_ms: ctx.litellmOverheadTimeMs ?? null,
 		attempted_retries: ctx.attemptedRetries ?? null,
 		max_retries: ctx.maxRetries ?? null,

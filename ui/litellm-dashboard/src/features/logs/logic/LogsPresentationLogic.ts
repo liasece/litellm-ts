@@ -1,4 +1,5 @@
 import type { LogEntry } from "../support/LogsModels";
+import { isInProgressLog } from "./LogsIdentityLogic";
 import { modelSupplier } from "../../providers/logic/ProviderIdentityLogic";
 export function record(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -66,7 +67,13 @@ export function modelIdentity(log: LogEntry) {
 	const metadata = record(log.metadata),
 		tool = record(metadata.mcp_tool_call_metadata);
 	const storedFamily = record(record(metadata.model_map_information).model_map_value).model_family;
-	const family = !upstreamModel && (storedFamily === null || typeof storedFamily === "string") ? storedFamily : undefined;
+	const live = isInProgressLog(log);
+	let family: string | null | undefined;
+	if ((live || !upstreamModel) && (typeof storedFamily === "string" || storedFamily === null)) {
+		family = storedFamily;
+	} else if (live && !provider && !upstreamModel) {
+		family = null;
+	}
 	const toolLogo = typeof tool.mcp_server_logo_url === "string" ? tool.mcp_server_logo_url : "";
 	const builtin = metadata.internal_call_type === "builtin_capability" ? String(metadata.builtin_capability || "unknown") : null;
 	const fallback = Array.isArray(metadata.fallback_models) ? Math.max(metadata.fallback_models.length - 1, 0) : 0;

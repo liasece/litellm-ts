@@ -545,7 +545,7 @@ export function registerCliProxyNativeResponsesRoutes(
 					body: upstreamBody,
 					model: target.model,
 				});
-				upstreamLogContext = createUpstreamLogContext(logRequest);
+				upstreamLogContext = createUpstreamLogContext(logRequest, undefined, undefined, candidate.deployment);
 				checkpointUpstreamRequest = upstreamLogContext.request as unknown as Record<string, unknown>;
 
 				const finalizeLog = async (error: unknown, status: SpendLogStatus): Promise<void> => {
@@ -555,7 +555,7 @@ export function registerCliProxyNativeResponsesRoutes(
 					const snapshot = work.snapshot;
 					const extracted = extractNativeResponse(snapshot.raw);
 					if (upstream) {
-						upstreamLogContext = createUpstreamLogContext(logRequest, upstream, extracted.response);
+						upstreamLogContext = createUpstreamLogContext(logRequest, upstream, extracted.response, candidate.deployment);
 					}
 					await work.flushCheckpoints();
 					const endTime = new Date();
@@ -593,7 +593,7 @@ export function registerCliProxyNativeResponsesRoutes(
 						body: JSON.stringify(upstreamBody),
 						signal: work.signal,
 					});
-					upstreamLogContext = createUpstreamLogContext(logRequest, upstream);
+					upstreamLogContext = createUpstreamLogContext(logRequest, upstream, undefined, candidate.deployment);
 					if (upstream.ok) {
 						router.recordDeploymentSuccess(candidate.deployment);
 					} else {
@@ -759,6 +759,7 @@ async function executeNativeAnthropicWithFallback(args: {
 				}),
 				stream: body["stream"] === true,
 			};
+			createUpstreamLogContext(upstreamRequest, undefined, undefined, attempt.deployment);
 			const upstream = await fetch(upstreamUrl, {
 				method: "POST",
 				headers: upstreamHeaders,
@@ -767,7 +768,7 @@ async function executeNativeAnthropicWithFallback(args: {
 			});
 			if (!upstream.ok) {
 				const raw = await upstream.text().catch(() => "");
-				const context = createUpstreamLogContext(upstreamRequest, upstream, parsedUpstreamErrorBody(raw));
+				const context = createUpstreamLogContext(upstreamRequest, upstream, parsedUpstreamErrorBody(raw), attempt.deployment);
 				const providerName = cliProxyAttempt ? "CLIProxy" : "Provider";
 				throw attachUpstreamLogContext(
 					new ProviderUpstreamError(upstream.status, `${providerName} returned HTTP ${upstream.status}: ${raw.slice(0, 500)}`),
@@ -881,7 +882,7 @@ function registerNativeRoute({
 						}),
 						stream: body["stream"] === true,
 					};
-					upstreamLogContext = createUpstreamLogContext(upstreamRequest);
+					upstreamLogContext = createUpstreamLogContext(upstreamRequest, undefined, undefined, executedDeployment);
 					upstream = await fetch(upstreamUrl, {
 						method: "POST",
 						headers: upstreamHeaders,
@@ -895,6 +896,7 @@ function registerNativeRoute({
 					}
 					deploymentRecorded = true;
 				}
+				createUpstreamLogContext(upstreamRequest, upstream, undefined, executedDeployment);
 				const captured = await pipeUpstreamResponse(upstream, res, undefined, {
 					onDecodedChunk: (chunk) => liveCheckpoint?.feed(chunk),
 				});
@@ -905,7 +907,7 @@ function registerNativeRoute({
 							? extractAnthropicStreamResponse(captured.raw)
 							: extractChatStreamResponse(captured.raw)
 						: undefined) ?? extractNativeResponse(captured.raw);
-				upstreamLogContext = createUpstreamLogContext(upstreamRequest, upstream, extracted.response);
+				upstreamLogContext = createUpstreamLogContext(upstreamRequest, upstream, extracted.response, executedDeployment);
 				const spendInfo = buildDeploymentSpendInfo(executedDeployment, upstreamUrl);
 				if (req.auth) {
 					const log = await buildSpendLogFromRequest({

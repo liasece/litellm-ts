@@ -48,7 +48,7 @@ describe("Active request journal", () => {
 	it("persists the settled routing and upstream exchange of the first real dispatch", async () => {
 		const capture = createUpdateCapture();
 		await runWithUpstreamExchangeScope(async () => {
-			const journal = createActiveRequestJournal(capture.db as never, "req-1");
+			const journal = createActiveRequestJournal(capture.db as never, "req-1", "public-model");
 			expect(journal.observeUpstream()).toBe(true);
 			recordUpstreamExchange(upstreamContext());
 			await journal.flush();
@@ -63,8 +63,7 @@ describe("Active request journal", () => {
 		expect(Object.keys(capture.updates[0] ?? {})).toEqual(
 			expect.arrayContaining(["proxy_server_request", "updated_at"]),
 		);
-		// 还没有路由轨迹时不写 metadata，避免空对象覆盖已有内容。
-		expect(capture.updates[0]).not.toHaveProperty("metadata");
+		expect(capture.updates[0]).toHaveProperty("metadata");
 	});
 
 	it("keeps the in-progress row small when upstream logging is disabled", async () => {
@@ -74,7 +73,7 @@ describe("Active request journal", () => {
 		spendTracker.shouldStoreUpstreamLogsInSpendLogs.mockResolvedValueOnce(false);
 		const capture = createUpdateCapture();
 		await runWithUpstreamExchangeScope(async () => {
-			const journal = createActiveRequestJournal(capture.db as never, "req-2");
+			const journal = createActiveRequestJournal(capture.db as never, "req-2", "public-model");
 			journal.observeUpstream();
 			recordUpstreamExchange(upstreamContext());
 			await journal.flush();
@@ -91,12 +90,12 @@ describe("Active request journal", () => {
 			response: { status_code: 200, headers: { "content-type": "application/json" }, body: { id: "cmpl-1" } },
 		});
 		await runWithUpstreamExchangeScope(async () => {
-			const journal = createActiveRequestJournal(capture.db as never, "req-3");
+			const journal = createActiveRequestJournal(capture.db as never, "req-3", "public-model");
 			journal.observeUpstream();
 			recordUpstreamExchange(context);
 			recordUpstreamExchange(context);
 			await journal.flush();
-			// 重试到另一个 deployment：URL 变化才算一次新的补写。
+			// 同一记录不重复补写，新的上游需要更新。
 			recordUpstreamExchange(upstreamContext({ request: { ...context.request, url: "https://backup.example.com/v1/chat/completions" } }));
 			await journal.flush();
 		});
@@ -106,7 +105,7 @@ describe("Active request journal", () => {
 
 	it("records the first chunk time once, keeping the earliest observation", async () => {
 		const capture = createUpdateCapture();
-		const journal = createActiveRequestJournal(capture.db as never, "req-4");
+		const journal = createActiveRequestJournal(capture.db as never, "req-4", "public-model");
 		journal.markCompletionStart(new Date("2026-11-05T00:00:01.000Z"));
 		journal.markCompletionStart(new Date("2026-11-05T00:00:05.000Z"));
 		await journal.flush();
@@ -121,7 +120,7 @@ describe("Active request journal", () => {
 				set: jest.fn(() => ({ where: jest.fn(() => Promise.reject(new Error("db down"))) })),
 			})),
 		};
-		const journal = createActiveRequestJournal(failing as never, "req-5");
+		const journal = createActiveRequestJournal(failing as never, "req-5", "public-model");
 		expect(journal.observeUpstream()).toBe(false);
 		journal.markCompletionStart(new Date("2026-11-05T00:00:01.000Z"));
 		await expect(journal.flush()).resolves.toBeUndefined();
@@ -172,13 +171,13 @@ describe("Active request journal", () => {
 			});
 			trace.fallbackModels.push("alias-model");
 			publishModelResolutionTrace(trace);
-			const journal = createActiveRequestJournal(capture.db as never, "req-6");
+			const journal = createActiveRequestJournal(capture.db as never, "req-6", "public-model");
 			journal.observeUpstream();
 			recordUpstreamExchange(upstreamContext());
 			await journal.flush();
 		});
 
-		// 有轨迹时才写 metadata：无轨迹的用例已经断言过该键缺席。
+
 		expect(capture.updates[0]).toHaveProperty("metadata");
 	});
 });

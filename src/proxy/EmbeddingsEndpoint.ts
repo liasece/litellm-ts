@@ -119,14 +119,14 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 				...providerReq,
 				headers: { ...providerReq.headers, ...deployment.litellm_params.extra_headers },
 			};
-			upstreamLogContext = createUpstreamLogContext(requestWithHeaders);
+			upstreamLogContext = createUpstreamLogContext(requestWithHeaders, undefined, undefined, deployment);
 			const timeoutSec = deployment.litellm_params.timeout;
 			spendReservation?.heartbeat?.markProviderStarted();
 			const execution = await executeProviderRequest(requestWithHeaders, {
 				timeoutMs: timeoutSec !== undefined ? timeoutSec * 1000 : undefined,
 				readJson: true,
 			});
-			upstreamLogContext = createUpstreamLogContext(requestWithHeaders, execution.response, execution.body);
+			upstreamLogContext = createUpstreamLogContext(requestWithHeaders, execution.response, execution.body, deployment);
 			if (!execution.response.ok) {
 				throw attachUpstreamLogContext(
 					new ApiError(execution.response.status, `Provider 返回错误: ${JSON.stringify(execution.body ?? {})}`),
@@ -152,7 +152,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 						model: model,
 						modelGroup: deployment.model_name,
 						modelId: deployment.model_info?.id,
-						customLlmProvider: deployment.litellm_params.custom_llm_provider,
+						customLlmProvider: upstreamLogContext.spendInfo?.customLlmProvider,
 						apiBase: deployment.litellm_params.api_base,
 						customCostPerToken: customCost,
 						deploymentModel: deployment.litellm_params.model,

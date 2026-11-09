@@ -27,6 +27,7 @@ import {
 } from "../router/UpstreamExchange";
 import type { UpstreamLogContext } from "../router/UpstreamLogContext";
 import {
+	buildSpendModelMapInformation,
 	sanitizeSpendLogHeaders,
 	sanitizeSpendLogPayload,
 	sanitizeSpendLogResponsePayload,
@@ -104,10 +105,19 @@ export function buildActiveRequestUpstreamPatch(context: UpstreamLogContext): Re
  * 上游交换的路由签名：只在真正推进时补写，重试同一部署不重复写库。
  * @param context - 传输层记录的上游交换
  * @param trace - 当前路由解析轨迹
+ * @param family - The model family in the transformed request.
  */
-function upstreamSignature(context: UpstreamLogContext, trace: ModelResolutionTraceCollector | undefined): string {
+function upstreamSignature(
+	context: UpstreamLogContext,
+	trace: ModelResolutionTraceCollector | undefined,
+	family: string | null | undefined,
+): string {
 	return [
 		context.request.url,
+		context.spendInfo?.customLlmProvider,
+		context.spendInfo?.modelId,
+		context.spendInfo?.deploymentModel,
+		family,
 		context.response?.status_code ?? "",
 		trace?.fallbackDepth ?? 0,
 		trace?.routingTrace.length ?? 0,
@@ -119,8 +129,9 @@ function upstreamSignature(context: UpstreamLogContext, trace: ModelResolutionTr
  * 创建请求级补写器。
  * @param db - Drizzle 数据库实例
  * @param requestId - 在途行的 request_id
+ * @param modelGroup - 与在途行一起登记的公开请求名。
  */
-export function createActiveRequestJournal(db: DrizzleDb, requestId: string): ActiveRequestJournal {
+export function createActiveRequestJournal(db: DrizzleDb, requestId: string, modelGroup: string): ActiveRequestJournal {
 	let queue: Promise<void> = Promise.resolve();
 	let lastSignature: string | undefined;
 	let completionStartRequested = false;
@@ -131,21 +142,15 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string): Ac
 		});
 	};
 
-	const writeUpstream = async (context: UpstreamLogContext): Promise<void> => {
-		const trace = getRecordedModelResolutionTrace();
+	const writeUpstream = async (context: UpstreamLogContext, routingPatch: Record<string, unknown>): Promise<void> => {
 		const spendInfo = context.spendInfo;
-		const routingPatch = buildActiveRequestRoutingPatch(trace);
 		const storeUpstreamLogs = await shouldStoreUpstreamLogsInSpendLogs().catch(() => false);
 		const upstreamPatch = storeUpstreamLogs ? buildActiveRequestUpstreamPatch(context) : {};
 		const values: Record<string, unknown> = { updated_at: new Date() };
-		if (spendInfo?.customLlmProvider) {
+		if (spendInfo) {
 			values["custom_llm_provider"] = spendInfo.customLlmProvider;
-		}
-		if (spendInfo?.apiBase) {
 			values["api_base"] = spendInfo.apiBase;
-		}
-		if (spendInfo?.modelId) {
-			values["model_id"] = spendInfo.modelId;
+			values["model_id"] = spendInfo.modelId ?? "";
 		}
 		if (Object.keys(upstreamPatch).length > 0) {
 			values["proxy_server_request"] =
@@ -170,12 +175,19 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string): Ac
 			// 还没有部署信息、也没有上游响应：等真正发出请求后的那次记录再补写。
 			return;
 		}
-		const signature = upstreamSignature(context, getRecordedModelResolutionTrace());
+		const trace = getRecordedModelResolutionTrace();
+		const info = context.spendInfo;
+		const modelMap = info ? buildSpendModelMapInformation(modelGroup, info.modelId, info.deploymentModel, context.request.body) : undefined;
+		const signature = upstreamSignature(context, trace, modelMap?.model_map_value?.model_family);
 		if (signature === lastSignature) {
 			return;
 		}
 		lastSignature = signature;
-		enqueue(() => writeUpstream(context));
+		const routingPatch = buildActiveRequestRoutingPatch(trace);
+		if (modelMap) {
+			routingPatch["model_map_information"] = modelMap;
+		}
+		enqueue(() => writeUpstream(context, routingPatch));
 	};
 
 	return {
