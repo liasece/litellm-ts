@@ -51,12 +51,10 @@ const detailFiles = import.meta.glob("./details/*Component.vue") as Record<strin
 const details = detailFiles["./details/LogDetailsDrawerComponent.vue"]
 	? defineAsyncComponent(detailFiles["./details/LogDetailsDrawerComponent.vue"])
 	: null;
-const simulationDrawer = detailFiles["./details/SessionSimulationDrawerComponent.vue"]
-	? defineAsyncComponent(detailFiles["./details/SessionSimulationDrawerComponent.vue"])
-	: null;
+// The session drawer lives in details/session, which the details glob above does not match.
+const simulationDrawer = defineAsyncComponent(() => import("./details/session/SessionSimulationDrawerComponent.vue"));
 const auxiliaryComponents = Object.fromEntries(Object.entries(auxiliary).map(([name, load]) => [name, defineAsyncComponent(load)]));
 const auxiliaryTabs = [
-	{ key: "audit", file: "AuditLogsComponent" },
 	{ key: "deleted-keys", file: "DeletedKeysComponent" },
 	{ key: "deleted-teams", file: "DeletedTeamsComponent" },
 ];
@@ -206,7 +204,6 @@ watch(
 			:model-value="list.state.activeTab === 'request logs' ? 'request' : list.state.activeTab"
 			:items="[
 				{ key: 'request', label: 'Request Logs' },
-				{ key: 'audit', label: 'Audit Logs' },
 				{ key: 'deleted-keys', label: 'Deleted Keys' },
 				{ key: 'deleted-teams', label: 'Deleted Teams' },
 			]"
@@ -329,7 +326,7 @@ watch(
 		/>
 		<component
 			:is="simulationDrawer"
-			v-if="simulationDrawer && simulation"
+			v-if="simulation"
 			:key="simulation.type + '\0' + simulation.id"
 			:open="true"
 			:session-group="simulation"
