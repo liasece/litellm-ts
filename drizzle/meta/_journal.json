@@ -105,6 +105,14 @@
 			"tag": "0012_privacy_redaction",
 			"file": "0012_privacy_redaction.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 13,
+			"version": "7",
+			"when": 1794790000000,
+			"tag": "0013_spend_log_blocks",
+			"file": "0013_spend_log_blocks.sql",
+			"breakpoints": true
 		}
 	]
 }

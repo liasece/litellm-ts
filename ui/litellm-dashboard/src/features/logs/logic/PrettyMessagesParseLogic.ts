@@ -10,6 +10,7 @@ import {
 	generatedImagePart,
 } from "./PrettyMessagesBlocksLogic";
 import { PRETTY_FIELD_RULES } from "./PrettyMessagesFieldRules";
+import { isMissingSpendLogBlockRef } from "./spendLogBlockRefs";
 /**
  * 丢弃没有任何可见内容的思考分区。
  *
@@ -86,7 +87,16 @@ const normalizeRole = (role: unknown): ParsedMessage["role"] => {
 	return role === "system" || role === "assistant" || role === "tool" ? role : "user";
 };
 
+/**
+ * 缺块占位消息：保留它在数组中的位置，内容标记为不可用。
+ *
+ * 占位对象里没有 role，借用默认的 `user` 只为通过角色归一的类型约束；渲染层按
+ * `missingBlockRef` 显示提示，不会显示这个角色标签。
+ */
+const missingBlockRefMessage = (): ParsedMessage => ({ role: "user", content: "", missingBlockRef: true });
+
 const parseRequestMessage = (value: unknown): ParsedMessage => {
+	if (isMissingSpendLogBlockRef(value)) return missingBlockRefMessage();
 	const message = asRecord(value);
 	const role = normalizeRole(message?.role);
 	const parsed = parseContent(pickField(message, PRETTY_FIELD_RULES.messageContent) ?? "");
@@ -137,6 +147,12 @@ const requestMessagesFrom = (request: unknown): ParsedMessage[] => {
 			result.push(parseRequestMessage({ role: "user", content: body.input }));
 		} else if (Array.isArray(body.input)) {
 			body.input.forEach((value: unknown) => {
+				// Responses 的 input 数组元素本身就是消息条目，缺块占位也出现在这一层；
+				// 放进 content 数组会被当成未知内容块并原样输出 JSON。
+				if (isMissingSpendLogBlockRef(value)) {
+					result.push(missingBlockRefMessage());
+					return;
+				}
 				const item = asRecord(value);
 				if (item?.type === "message" || item?.role) {
 					result.push(parseRequestMessage({ role: item?.role || "user", content: item?.content ?? value }));

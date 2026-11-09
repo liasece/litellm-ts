@@ -19,6 +19,25 @@ function makeRow(overrides: Partial<SessionTimelineSourceRow>): SessionTimelineS
 }
 
 describe("SessionTimelineBuilder", () => {
+	it("缺块占位对象作为结构化部件保留，不退化成空消息", () => {
+		const builder = new SessionTimelineBuilder();
+		builder.add(
+			makeRow({
+				request_payload: [{ role: "user", content: "正常消息" }, { _litellm_ref_missing: "AAAAAAAAAAAAAAAAAAAAAA" }],
+				response_payload: {},
+			}),
+		);
+
+		const parts = builder
+			.build()
+			.data.flatMap((item) => item.parts ?? []);
+		expect(parts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ data: { _litellm_ref_missing: "AAAAAAAAAAAAAAAAAAAAAA" } }),
+			]),
+		);
+	});
+
 	it("后续快照补出的历史按请求内顺序插入已有回复之前，不受同时间戳影响", () => {
 		const builder = new SessionTimelineBuilder();
 		builder.add(makeRow({

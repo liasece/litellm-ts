@@ -6,3 +6,4 @@ export { LiteLLM_SearchToolsTable } from "./searchTools";
 export { liteLLM_SpendReservations } from "./spendReservations";
 export { liteLLM_ActiveRequests } from "./activeRequests";
 export { liteLLM_BuiltinCapabilityImages } from "./builtinCapabilityImages";
+export { liteLLM_SpendLogBlocks } from "./spendLogBlocks";

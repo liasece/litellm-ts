@@ -1,4 +1,5 @@
 import { SessionTimelineOrder } from "./sessionTimelineOrder";
+import { SPEND_LOG_REF_MISSING_KEY, isMissingSpendLogBlockRef } from "./SpendLogBlocks";
 import { CONTENT_FIELD_RULES, readFieldRule, reasoningTextFromBlock } from "../core/utils/contentFields";
 
 /**
@@ -809,6 +810,15 @@ function normalizeRole(role: unknown): ParsedMessage["role"] {
 
 function parseRequestMessage(value: unknown): ParsedMessage {
 	const message = asRecord(value) ?? {};
+	if (isMissingSpendLogBlockRef(message)) {
+		// 引用的内容块已被清理时，占位对象必须作为结构化部件原样带到前端，
+		// 否则它会退化成一条空消息，用户无法区分「内容缺失」与「内容为空」。
+		return {
+			role: "user",
+			content: "",
+			parts: [{ kind: "unknown", label: "Missing content block", sourceType: SPEND_LOG_REF_MISSING_KEY, data: message }],
+		};
+	}
 	const parsed = parseContent(message.content ?? message.parts ?? "");
 	const explicitToolCalls = parseToolCalls(message.tool_calls);
 	const toolCalls = [...(parsed.toolCalls ?? []), ...(explicitToolCalls ?? [])];

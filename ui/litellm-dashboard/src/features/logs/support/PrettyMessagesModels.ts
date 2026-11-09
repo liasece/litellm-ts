@@ -5,6 +5,13 @@
 export interface ParsedMessage {
 	role: "system" | "user" | "assistant" | "tool";
 	content: string;
+	/**
+	 * 该条消息引用的日志块已不可用。
+	 *
+	 * 后端在缺块时用占位对象保住数组位置；解析层把它标记出来，渲染层显示提示，
+	 * 而不是把空内容当成正常消息。
+	 */
+	missingBlockRef?: boolean;
 	toolCalls?: ToolCall[];
 	toolCallId?: string;
 	parts?: MessagePart[];

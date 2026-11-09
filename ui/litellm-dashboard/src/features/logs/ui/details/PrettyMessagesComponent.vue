@@ -79,17 +79,21 @@ const hasMeta = computed(
 					<PrettyCollapsibleComponent
 						v-if="history.length"
 						:label="'HISTORY (' + history.length + ' message' + (history.length === 1 ? '' : 's') + ')'"
-						><PrettySimpleMessageComponent
-							v-for="(message, index) in history"
-							:key="index"
-							:label="message.role.toUpperCase()"
-							:content="message.content"
-							:tool-calls="message.toolCalls"
-							:parts="message.parts"
-							compact
-					/></PrettyCollapsibleComponent>
-					<PrettyInputToolsComponent :tools="meta.tools" /><PrettySimpleMessageComponent
-						v-if="last"
+						><template v-for="(message, index) in history" :key="index"
+							><div v-if="message.missingBlockRef" class="pretty-block-ref-missing">该条内容在日志块存储中已不可用</div>
+							<PrettySimpleMessageComponent
+								v-else
+								:label="message.role.toUpperCase()"
+								:content="message.content"
+								:tool-calls="message.toolCalls"
+								:parts="message.parts"
+								compact
+						/></template>
+					</PrettyCollapsibleComponent>
+					<PrettyInputToolsComponent :tools="meta.tools" />
+					<div v-if="last?.missingBlockRef" class="pretty-block-ref-missing">该条内容在日志块存储中已不可用</div>
+					<PrettySimpleMessageComponent
+						v-else-if="last"
 						:label="last.role.toUpperCase()"
 						:content="last.content"
 						:tool-calls="last.toolCalls"

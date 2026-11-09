@@ -13,6 +13,7 @@ import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
+import { hydrateSpendLogRow } from "./SpendLogBlocks";
 import { toFiniteNumber } from "./spendManagementFormatters";
 
 const logger = createModuleLogger("Spend:UiLogDetail");
@@ -196,7 +197,8 @@ export async function buildUiSpendLogDetail(
 		(_coldStorageLogger, error) => logger.warn(`/spend/logs/ui/:request_id 冷存储回查失败: ${(error as Error).message}`),
 	);
 	if (coldStoragePayload !== null) {
-		return coldStoragePayload;
+		// 冷存储里的负载与落库同源，可能也是引用形态；同样按块组装。
+		return await hydrateSpendLogRow(db, coldStoragePayload);
 	}
 
 	const rows = await db
@@ -211,7 +213,9 @@ export async function buildUiSpendLogDetail(
 
 	const completed = rows.at(0);
 	if (completed) {
-		return completed;
+		// 内容寻址去重后，messages / proxy_server_request 里存的是块引用；
+		// 详情与日志流共用这一处组装，保证两种编码对外形状一致。
+		return await hydrateSpendLogRow(db, completed);
 	}
 
 	return await buildActiveRequestDetail(db, requestId);

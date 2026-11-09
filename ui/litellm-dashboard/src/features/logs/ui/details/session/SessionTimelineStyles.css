@@ -200,3 +200,9 @@
 	padding: 12px 16px;
 	box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
 }
+.session-timeline__block-ref-missing {
+	font-size: 12px;
+	line-height: 1.6;
+	font-style: italic;
+	color: #94a3b8;
+}

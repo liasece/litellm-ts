@@ -18,6 +18,14 @@ import { get_encoding } from "tiktoken";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
+import {
+	SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE,
+	collectSpendLogBlocks,
+	rememberSpendLogBlocks,
+	selectMissingSpendLogBlocks,
+	shouldDeduplicateSpendLogBlocks,
+} from "./SpendLogBlocks";
 import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
 import { liteLLM_DailyTeamSpend } from "../db/schema/dailyTeamSpend";
 import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSpend";
@@ -367,26 +375,9 @@ export function getKeyColumn(dimension: string): string {
 }
 
 /**
- * 超长字符串截断阈值（对齐 PY _get_max_string_length_prompt_in_db：
- * MAX_STRING_LENGTH_PROMPT_IN_DB env，缺省 32768）。
- */
-const MAX_STRING_LENGTH_PROMPT_IN_DB = Number(process.env.MAX_STRING_LENGTH_PROMPT_IN_DB ?? 32768) || 32768;
-
-/**
- * 图片响应需要保留完整 base64 才能在 Logs 中重放。它们不适用普通 prompt
- * 的 32KB 限制，但仍设置独立上限，避免异常 provider 响应无限放大单行 JSONB。
- */
-const MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB =
-	Number(process.env.MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB ?? 20 * 1024 * 1024) || 20 * 1024 * 1024;
-
-/** PY LITELLM_TRUNCATION_DB_SAFEGUARD_NOTE 原文（litellm/constants.py:1246） */
-const TRUNCATION_DB_SAFEGUARD_NOTE =
-	"Truncation is a DB storage safeguard. " +
-	"Full, untruncated data is logged to logging callbacks (OTEL, Datadog, etc.). " +
-	"To increase the truncation limit, set `MAX_STRING_LENGTH_PROMPT_IN_DB` in your env.";
-
-/**
  * PostgreSQL text/jsonb 无法存储 NUL；日志副本用可见转义保留其位置。
+ *
+ * 这是存储编码而不是脱敏：jsonb 里出现 NUL 会让插入直接失败，必须保留。
  * @param value - 待写入数据库的字符串
  */
 function sanitizePostgresString(value: string): string {
@@ -394,64 +385,28 @@ function sanitizePostgresString(value: string): string {
 }
 
 /**
- * 仅识别 provider 响应中的标准图片数据字段，其他长字符串继续执行普通截断。
- * @param fieldName
- * @param value
- * @param parent
- */
-function isImagePayloadString(fieldName: string, value: unknown, parent: Record<string, unknown>): boolean {
-	if (typeof value !== "string" || value.length > MAX_IMAGE_RESPONSE_BASE64_LENGTH_IN_DB) {
-		return false;
-	}
-	if (fieldName === "b64_json" || fieldName === "partial_image_b64") {
-		return true;
-	}
-	if (fieldName === "result" && parent["type"] === "image_generation_call") {
-		return true;
-	}
-	if (
-		fieldName === "data" &&
-		typeof (parent["mimeType"] ?? parent["mime_type"] ?? parent["media_type"]) === "string" &&
-		String(parent["mimeType"] ?? parent["mime_type"] ?? parent["media_type"]).startsWith("image/")
-	) {
-		return true;
-	}
-	return value.startsWith("data:image/");
-}
-
-/**
- * 递归清理 SpendLogs JSON 负载（对齐 PY _sanitize_request_body_for_spend_logs_payload）：
- * - 不做字段名黑名单（PY 无此逻辑——user_api_key_alias/total_tokens 等标识与数值字段均明文保留）
- * - 超长字符串截断：头 35% 尾 65% 保留（PY 同款，尾部通常是更重要的上下文）
+ * 递归清理 SpendLogs JSON 负载。
+ *
+ * 只做 PostgreSQL 存储必需的处理（NUL 转义），不再截断：脱敏由独立的脱敏子系统
+ * 负责，日志侧保留原文才能让 `messages` 与 `proxy_server_request.body.messages`
+ * 得到完全相同的块，跨副本的内容寻址去重才成立。
  * @param value - 待写入 SpendLogs 的任意 JSON 值
- * @param preserveImageStrings
  */
-function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: boolean): unknown {
+function sanitizeSpendLogPayloadValue(value: unknown): unknown {
 	if (value === null || value === undefined) {
 		return value;
 	}
 	if (typeof value === "string") {
-		const databaseSafeValue = sanitizePostgresString(value);
-		if (databaseSafeValue.length > MAX_STRING_LENGTH_PROMPT_IN_DB) {
-			const startChars = Math.floor(MAX_STRING_LENGTH_PROMPT_IN_DB * 0.35);
-			const endChars = MAX_STRING_LENGTH_PROMPT_IN_DB - startChars;
-			const skippedChars = databaseSafeValue.length - startChars - endChars;
-			return `${databaseSafeValue.slice(0, startChars)}... (litellm_truncated skipped ${skippedChars} chars. ${TRUNCATION_DB_SAFEGUARD_NOTE}) ...${databaseSafeValue.slice(databaseSafeValue.length - endChars)}`;
-		}
-		return databaseSafeValue;
+		return sanitizePostgresString(value);
 	}
 	if (Array.isArray(value)) {
-		return value.map((arrayValue) => sanitizeSpendLogPayloadValue(arrayValue, preserveImageStrings));
+		return value.map((arrayValue) => sanitizeSpendLogPayloadValue(arrayValue));
 	}
 	if (typeof value === "object") {
 		const sourceRecord = value as Record<string, unknown>;
 		const sanitizedRecord: Record<string, unknown> = {};
 		for (const [fieldName, fieldValue] of Object.entries(sourceRecord)) {
-			const databaseSafeFieldName = sanitizePostgresString(fieldName);
-			sanitizedRecord[databaseSafeFieldName] =
-				preserveImageStrings && isImagePayloadString(fieldName, fieldValue, sourceRecord)
-					? sanitizePostgresString(fieldValue as string)
-					: sanitizeSpendLogPayloadValue(fieldValue, preserveImageStrings);
+			sanitizedRecord[sanitizePostgresString(fieldName)] = sanitizeSpendLogPayloadValue(fieldValue);
 		}
 		return sanitizedRecord;
 	}
@@ -459,38 +414,35 @@ function sanitizeSpendLogPayloadValue(value: unknown, preserveImageStrings: bool
 }
 
 /**
- * @param value
+ * 清理写入 SpendLogs 的请求负载。
+ * @param value - 原始值
  */
 export function sanitizeSpendLogPayload(value: unknown): unknown {
-	return sanitizeSpendLogPayloadValue(value, false);
+	return sanitizeSpendLogPayloadValue(value);
 }
 
 /**
- * 清理响应负载，但为可重放的图片输出保留完整 base64。
- * @param value
+ * 清理响应负载。日志侧不再截断，图片等长内容原样保留。
+ * @param value - 原始值
  */
 export function sanitizeSpendLogResponsePayload(value: unknown): unknown {
-	return sanitizeSpendLogPayloadValue(value, true);
+	return sanitizeSpendLogPayloadValue(value);
 }
 
 /**
- * 清理请求消息，但为 Logs 与 Session 重放保留有上限的图片数据。
- * @param value
+ * 清理请求消息。与请求体走同一套处理，保证两处内容一致、可命中同一个块。
+ * @param value - 原始值
  */
 export function sanitizeSpendLogMessagesPayload(value: unknown): unknown {
-	return sanitizeSpendLogPayloadValue(value, true);
+	return sanitizeSpendLogPayloadValue(value);
 }
 
 /**
- * 清理在途日志（ActiveRequests）负载：图片 base64 与最终 SpendLog 同规格保留。
- *
- * 进行中的请求没有 messages/response 列可以回退，详情页只能读注册时的
- * `proxy_server_request.body` 与流式 checkpoint。若沿用普通文本截断（32KB），
- * 任何图片都会变成不可显示的截断标记；这里保留图片，使在途与落库后的展示一致。
+ * 清理在途日志（ActiveRequests）负载：与最终 SpendLog 同规格。
  * @param value - 待写入 ActiveRequests 的任意 JSON 值
  */
 export function sanitizeActiveRequestPayload(value: unknown): unknown {
-	return sanitizeSpendLogPayloadValue(value, true);
+	return sanitizeSpendLogPayloadValue(value);
 }
 
 /**
@@ -1910,6 +1862,13 @@ async function trackSpendLogMeasured(
 	const requestDurationMs = logEntry.request_duration_ms ?? Math.max(0, requestEndTime.getTime() - requestStartTime.getTime());
 	const protectedApiKey = _protectApiKeyForDb(logEntry.api_key || "");
 	const sanitizedProxyServerRequest = sanitizeSpendLogPayload(logEntry.proxy_server_request ?? {}) as Record<string, unknown>;
+	// 内容寻址去重：把消息数组换成块引用，正文只落一份块表。
+	// 关闭开关时保持优化前的整段 JSONB 存储，两种编码可以逐行混存。
+	const blockEncoding = (await shouldDeduplicateSpendLogBlocks())
+		? collectSpendLogBlocks({ messages: logEntry.messages ?? {}, proxyServerRequest: sanitizedProxyServerRequest })
+		: null;
+	// 写前判存：跨轮次重发的历史消息块绝大多数已存在，先过滤掉，只把真正新增的块送进事务。
+	const blocksToInsert = blockEncoding === null ? [] : await selectMissingSpendLogBlocks(db, blockEncoding.blocks);
 	const sourceMetadata = logEntry.metadata ?? {};
 	const sanitizedMetadata = sanitizeSpendLogPayload(sourceMetadata) as Record<string, unknown>;
 	const sourceUserApiKey = sourceMetadata["user_api_key"];
@@ -1991,10 +1950,10 @@ async function trackSpendLogMeasured(
 		// Python str(bool) 首字母大写，写 "True"/"False"
 		cache_hit: logEntry.cache_hit ? "True" : "False",
 		requester_ip_address: logEntry.requester_ip_address ?? null,
-		proxy_server_request: sanitizedProxyServerRequest,
+		proxy_server_request: blockEncoding?.proxyServerRequest ?? sanitizedProxyServerRequest,
 		metadata: persistedMetadata,
 		response: logEntry.response ?? {},
-		messages: logEntry.messages ?? {},
+		messages: blockEncoding?.messages ?? logEntry.messages ?? {},
 
 		session_id: logEntry.session_id ?? randomUUID(),
 		request_duration_ms: requestDurationMs,
@@ -2009,6 +1968,16 @@ async function trackSpendLogMeasured(
 	let result: SpendLogTrackResult;
 	try {
 		result = await db.transaction(async (tx) => {
+			// 块与 SpendLog 行同事务：回滚时不留下无主的块，提交后块立即可被后续请求复用。
+			// 分批写入，避免超长会话把绑定参数数量顶到 PostgreSQL 上限；只写判存确认缺失的块。
+			if (blocksToInsert.length > 0) {
+				for (let offset = 0; offset < blocksToInsert.length; offset += SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE) {
+					await tx
+						.insert(liteLLM_SpendLogBlocks)
+						.values(blocksToInsert.slice(offset, offset + SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE).map((block) => ({ ...block })))
+						.onConflictDoNothing();
+				}
+			}
 			const inserted = await tx
 				.insert(liteLLM_SpendLogs)
 				.values(insertData)
@@ -2083,6 +2052,8 @@ async function trackSpendLogMeasured(
 		// 无论落账成功、重复还是失败后清理在途行，列表都可能已经变化；通知只负责提示重查。
 		publishSpendLogChange();
 	}
+	// 事务已提交：把这些块记入进程缓存，后续同会话请求的读与写前判存都能直接命中。
+	rememberSpendLogBlocks(blocksToInsert);
 	logger.debug(`花费已记录: ${logEntry.request_id} spend=${spend}`);
 	return result;
 }

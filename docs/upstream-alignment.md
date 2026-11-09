@@ -264,6 +264,58 @@ Dashboard 的 `/ui/?page=cost-tracking` 一打开就提示读取折扣/保证金
 
 恢复边界：清空方式是 PATCH 空对象或删除 `litellm_settings` 中的对应键，无需迁移；回滚代码需重新部署。provider 取值只接受本部署 `LlmProviders` 里的真实 provider（外加 `global`），WebUI 的下拉来自上游全量目录，选到本部署没有的 provider 会得到 400 并列出可用值，而不是静默无效。
 
+## 2026-11-09 SpendLog 内容寻址去重
+
+生产库 `LiteLLM_SpendLogs` 实测 885756 行、364 GB，其中 TOAST 占 362 GB（99.4%）：`messages` 181 GB、`proxy_server_request` 157 GB。根因不是单行过大，而是同一段对话被重复存了很多份——累积式聊天快照每轮把整段历史原样重存（同一会话连续请求实测 96%~99% 重复），同一请求内 `messages` 与 `proxy_server_request.body.messages` 又是一份副本。
+
+处理方式是把「单条消息」按内容寻址存进新表 `LiteLLM_SpendLogBlocks`（`block_id` 为规范化 JSON 的 SHA-256 前 128 位 base64url，22 字符；`payload` jsonb；`byte_size`），SpendLogs 的 jsonb 里只留引用 id 数组。不迁移历史行：读侧只在值恰好是合法引用包装时组装，其余原样返回，因此旧行、`ActiveRequestRecovery` 直接复制的行都继续可用。
+
+| 存储位置 | 编码后的形态 |
+| --- | --- |
+| `SpendLogs.messages`（列根没有父对象） | `{"_litellm_ref_messages": [id...], "_litellm_ref_bytes": 123456}` |
+| `proxy_server_request.body.messages` / `.input` | 删除原键，新增 `_litellm_ref_messages` / `_litellm_ref_input` |
+| `proxy_server_request.upstream_request.body` | 同上 |
+| `response` / `metadata` / `headers` / `tools` / `body.system` | 保持内联 |
+
+关键约定：
+
+- **少于 4 条消息的数组不编码**。这类是单轮请求，几乎没有跨请求复用；保留内联数组让会话时间线的 `messages[0..1]` 分类判定（Claude Code 内部调用识别）不需要 join，也不必把前两条消息额外内联一份。
+- **`_litellm_ref_bytes` 记录逻辑字节数**。编码后 `pg_column_size(messages)` 反映的是引用数组大小，会话时间线的 24 MB 窗口预算若直接用它就会失效；预算 SQL 改为优先读这个值，不必为预算 join 块表。
+- **客户端自带的 `_litellm_ref_*` 键在写入前剥离**，否则请求体可以伪造引用。
+- **块只增不删**。块被多个请求共享，删除会让仍引用它的行失去内容。缺块时读侧返回 `{"_litellm_ref_missing": id}` 占位并记告警，Dashboard 显示「该条内容在日志块存储中已不可用」，不整页失败。缺块只可能来自手工清理、部分恢复或跨环境拷贝。
+- 去重是全库范围的，没有租户/会话作用域；因此删除某条日志不再等于删除其内容。
+
+配套改动：日志侧不再截断超长字符串（`MAX_STRING_LENGTH_PROMPT_IN_DB` 与图片的独立上限一起取消），因为 `messages`、`body.messages`、`upstream_request.body.messages` 必须产出完全相同的块才能跨副本命中；脱敏由独立子系统负责，日志侧只保留 PostgreSQL 必需的 NUL 转义与 api_key 头保护。读侧组装点覆盖详情、WebSocket 日志流、`/spend/logs/ui/batch`、`/spend/logs/session/ui?include_content=true` 与旧分页 `GET /spend/logs`；会话时间线把「消息计数 / 窗口字节预算 / 选中序号切片」三处 SQL 改成引用感知，切片只按选中序号去块表取内容。
+
+影响：默认开启（`general_settings.spend_log_block_dedup`，env `SPEND_LOG_BLOCK_DEDUP` 覆盖），关闭后回到优化前的整段 JSONB 存储，两种编码可以逐行混存、读取无差异。已知边界：图片回填查询在 `proxy_server_request.body.prompt` 缺失时会退到 `messages` 的裸字符串形态，编码后的行该字段不再是标量，这条极窄路径会失效（不产生错误数据）；会话时间线的窗口字节预算改按「逻辑内容字节」计算，不再按压缩后的落盘字节，超大会话的单页请求数会比以前略少。
+
+验证：后端 `typecheck`、`build`、全量 Jest（2073 通过）、`git diff --check`、改动文件的 ESLint 通过；前端（`ui/litellm-dashboard`）`vue-tsc`、Vitest 346 项、ESLint、Prettier 与 production build 通过。部署前在生产库用只读探针验证了迁移 DDL、`ON CONFLICT DO NOTHING` 语义与切片 SQL（在回滚事务内，事后确认表未残留）。2026-11-09 部署后线上核验：容器健康、无 OOM/重启，`/health/liveliness` 与 Logs 页面 200；迁移 14 已记账；写入侧实测 323 行中 283 行为引用形态，`messages` 列落盘 1.9 MB（同等内容的逻辑字节为 288 MB），块表 3766 行 13 MB；读侧 `/spend/logs/ui/:request_id`、`/spend/logs/ui/batch`、`/spend/logs/session/ui?include_content=true`、旧分页 `GET /spend/logs` 与 `/spend/logs/session/timeline` 全部返回正常数组、无 `_litellm_ref_*` 泄漏、无缺块占位，时间线 20 个请求 74 个事件在 250 ms 内装配完成（manifest 38 ms / classify 40 ms / payload 18 ms）。
+
+恢复边界：回滚代码不会造成数据不可读（引用行退化成可见的 JSON 结构），真正的修复是恢复 `LiteLLM_SpendLogBlocks`。历史 364 GB 不回溯处理，新写入的请求开始生效。
+
+## 2026-11-09 SpendLog 大字段块化（tools / system / 引用合并）
+
+第一轮把对话数组块化后，生产实测（部署后 396 行）暴露出新的分布：单行 86 kB 里 `proxy_server_request` 占 63 kB，而其中 `body.tools` 与 `upstream_request.body.tools` 合计约 94%（`body.tools` 在 297 行里只有 **1 个不同值**，上下游各存一份且从不相等，因为上游会注入私有工具）；`tools` 才是逐轮重发的主体重发项。另外 `SpendLogs.messages` 的 id 列表与 `body._litellm_ref_input` 在 **425/425 行完全相同**，等于把同一份引用数组存了三遍。`system`（Claude Code 每轮重发，历史采样 1040 行仅 95 个值）也是同类对象。
+
+因此把这三类一起处理，规则与消息块一致（内容寻址、只增不删、字面量永远合法）：
+
+| 字段 | 编码后的形态 |
+| --- | --- |
+| `body.tools` / `upstream_request.body.tools` | 整数组一个块：`_litellm_ref_tools: "<id>"` + `_litellm_ref_tools_count` + `_litellm_ref_tools_first` |
+| `body.system` / `upstream_request.body.system` | 整数组一个块：`_litellm_ref_system: "<id>"` + `_litellm_ref_system_count` + `_litellm_ref_system_first/second` |
+| `body.messages` / `body.input`（与 `SpendLogs.messages` 列根完全相同） | `"$messages"`，不再重复写 id 列表 |
+
+要点：
+
+- **按整个数组一块，而不是逐元素**。工具集与 system prompt 是「一次生成、逐轮重发」，跨请求命中的是整份内容；逐元素只会让引用列表膨胀 20 倍，换不到额外复用。
+- **分类投影写进行里，读侧不 join**。会话时间线判断 Claude Code 内部调用要用工具个数、首个工具名、system 段数与前两段前缀（256 字符，与 SQL 的 `LEFT(...,256)` 同按码点截断）。这些值在写入时算好存进引用旁边，时间线 SQL 只用 jsonb 取键，查询形状与编码前一致，不引入块表 join；前缀只是分类投影，组装时又从 body 里剥掉，原始请求体形状不变。
+- **`"$messages"` 只是省略重复**。写侧比较「本行 messages 列根的 id 列表」与 body 内列表，完全相同才写标记；读侧先还原列根，再用同一批 id 还原 body，任一环节不是引用就退回字面量。
+- **回收行补齐编码**。`ActiveRequestRecovery` 的两条 `INSERT ... SELECT` 直接从在途日志搬 `proxy_server_request`，绕过了正常写入路径 —— 一次重启会留下几行 1 MB 以上的完整请求体。现在在同一个事务里、按 `termination_reason` 精确定位刚插入的行补做编码，已带引用键的行跳过，异常只记日志，不影响启动恢复。
+
+影响：`tools`/`system` 缺失块时按占位对象返回，不整页失败；`body.system` 若是字符串（非 Anthropic 数组形态）保持内联。同一内容在 `body` 与 `upstream_request.body` 各存一块（两份内容通常不同，实测 425/425 不相等）。
+
+验证：后端 `typecheck`、`test:types`、全量 Jest（2101 通过）、`build`、ESLint、`git diff --check` 通过。部署前在生产库用只读探针验证了五条分类投影在「引用 / 内联 / 空」三种形态下取值一致。线上实测：Claude Code 请求的 `tools` 39 项、`upstream` 41 项、`system` 4 段经 `/spend/logs/ui/:request_id` 完整还原且无 `_litellm_ref_*` 泄漏；同类行 `proxy_server_request` 落盘从 44.7 kB 降到 11.8 kB，单行 70.2 kB → 57.9 kB（余量主要是 `response` 与 id 列表本身）；会话时间线 61 个请求 331 个事件正常装配、无缺块占位；50 分钟内新块里工具块 4 个、system 块 5 个、消息块 393 个，说明大字段只在内容变化时才新增。近 25 分钟 491 行里 449 行带工具引用、35 行带 system 引用、414 行用 `\"$messages\"` 省略重复列表，id 列表形态归零。回收路径编码同在本次上线：镜像构建阶段拉取 CLIProxyAPI 制品时 GitHub 一度持续返回 504，重试后成功；容器启动日志记录「回收行已按内容寻址去重 {"recovered":8,"blocks":1325}」，这 8 行恢复行的请求体从改造前同类行平均 1.4 MB 降到 9~17 kB，剩余未编码的 `server_restart` 行都是本次部署之前的遗留。上线后 45 行新日志全部带工具引用，`proxy_server_request` 落盘 7.8 kB/行、整行 46 kB/行。
+
 ## 后续维护规则
 
 1. 先读本文件，核实当前 TS commit/工作区，再读取对应源码和上游最终 PR/固定版本。不得覆盖用户未提交改动。
@@ -283,3 +335,4 @@ Dashboard 的 `/ui/?page=cost-tracking` 一打开就提示读取折扣/保证金
 | 2026-10-11 建议实施 | 用户选择 F02/F03/F04/F05/F06/F07/F15/F16/F19；现有 Provider/Router/DB 范围 | 9 组建议增量；7 个确认 BUG 修复，2 个未选 BUG 保留；逐条实施状态见功能索引 | 未提交工作区 / 未部署 |
 | 2026-10-12 审查与部署 | 对本批兼容、流式生命周期与生产协议进行审查 | 修复 7 项本批回归；1504 后端测试通过；生产 API 与 4 条真实调用路径通过；保留已有 lint/UI 基线与上游过期别名限制 | 未提交工作区 / 已部署（最终镜像见发布记录） |
 | 2026-11-08 Cost Tracking | Dashboard cost-tracking 页面报错，定位为 Python 有、TS 缺失的三个端点 | 实现折扣/保证金配置读写与 `/cost/estimate`，折扣→保证金口径接入落账、预算 reservation、`/spend/calculate` 与响应头；provider 校验限定本部署真实值 | 未提交工作区 / 已部署并线上核验 |
+| 2026-11-09 SpendLog 去重 | 生产 `LiteLLM_SpendLogs` 364 GB / 99.4% 是 TOAST，同一会话上下文逐轮重复存储 | 新增 `LiteLLM_SpendLogBlocks` 内容寻址块表，`messages` / `body.messages` / `body.input` 改存引用；读侧 5 个入口统一组装，时间线 SQL 引用感知；日志侧取消 32 KB 截断 | 未提交工作区 / 已部署并线上核验 |

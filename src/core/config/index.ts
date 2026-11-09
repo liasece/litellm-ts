@@ -209,6 +209,11 @@ const GeneralSettingsSchema = z.object({
 	store_prompts_in_spend_logs: z.boolean().optional(),
 	/** 是否在 SpendLogs 中存储 Provider 实际请求/响应详情，默认关闭 */
 	store_upstream_logs_in_spend_logs: z.boolean().optional(),
+	/**
+	 * 是否把 SpendLogs 的消息内容改写为内容寻址块引用，默认开启。
+	 * 关闭后回落到把完整消息数组直接写进 jsonb 列（优化前的行为）。
+	 */
+	spend_log_block_dedup: z.boolean().optional(),
 });
 
 /**
@@ -408,6 +413,11 @@ export interface GeneralSettings {
 	readonly store_prompts_in_spend_logs?: boolean;
 	/** 是否在 SpendLogs 中存储 Provider 实际请求/响应详情，默认关闭 */
 	readonly store_upstream_logs_in_spend_logs?: boolean;
+	/**
+	 * 是否把 SpendLogs 的消息内容改写为内容寻址块引用（默认开启）。
+	 * 关闭时回到优化前的整段 JSONB 存储；两种编码可以逐行混合存在。
+	 */
+	readonly spend_log_block_dedup?: boolean;
 }
 
 /** 服务配置 */
@@ -666,6 +676,10 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 			typeof generalSettingsRaw["store_upstream_logs_in_spend_logs"] === "boolean"
 				? (generalSettingsRaw["store_upstream_logs_in_spend_logs"] as boolean)
 				: config.generalSettings.store_upstream_logs_in_spend_logs,
+		spend_log_block_dedup:
+			typeof generalSettingsRaw["spend_log_block_dedup"] === "boolean"
+				? (generalSettingsRaw["spend_log_block_dedup"] as boolean)
+				: config.generalSettings.spend_log_block_dedup,
 	};
 
 	// routerSettings: snake_case router_settings 派生，camelCase 仅作兼容回退（冲突时 snake_case 优先）

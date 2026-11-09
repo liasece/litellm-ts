@@ -50,6 +50,7 @@ import {
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
 import { buildUiSpendLogDetail } from "./UiLogDetail";
+import { hydrateSpendLogRows } from "./SpendLogBlocks";
 import { spendLogStatusSql } from "./spendLogStatus";
 import {
 	DEFAULT_SESSION_TIMELINE_WINDOW,
@@ -218,13 +219,15 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		// 不再返回"本月每日 spend=0 假数据"——那是 /global/spend/logs 的职责，混用会导致
 		// Monthly Spend BarChart 与 Logs 表格口径不一致。
 		return runWithFallback(logger, "/spend/logs", makeEmptyLegacySpendLogsPage(page, pageSize), async () => {
-			const data = await db
+			const rawRows = await db
 				.select()
 				.from(liteLLM_SpendLogs)
 				.where(whereClause)
 				.orderBy(desc(liteLLM_SpendLogs.startTime))
 				.limit(pageSize)
 				.offset((page - 1) * pageSize);
+			// 旧分页是 SELECT *，同样必须组装，否则外部调用方会看到块引用。
+			const data = await hydrateSpendLogRows(db, rawRows);
 
 			const totalRow = await db
 				.select({ count: sql<number>`COUNT(*)` })
@@ -524,12 +527,16 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		}
 		const legacySkip = cursor ? 0 : (page - 1) * pageSize;
 		const detailClause = cursor ? and(boundedClause, sessionCursorClause(cursor)) : boundedClause;
-		const rows = await db
+		const selectedRows = await db
 			.select(includeContent ? uiSpendLogSelectionWithContent() : uiSpendLogSelection())
 			.from(liteLLM_SpendLogs)
 			.where(detailClause)
 			.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
 			.limit(legacySkip + pageSize + 1);
+		// 会话模拟带正文时按块组装：整批引用合并成一次块查询。
+		const rows = (includeContent
+			? await hydrateSpendLogRows(db, selectedRows as unknown as Array<Record<string, unknown>>)
+			: selectedRows) as typeof selectedRows;
 		const normalizedRows = rows.map((row) => withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)));
 		const pageRows = normalizedRows.slice(legacySkip, legacySkip + pageSize);
 		const hasMore = normalizedRows.length > legacySkip + pageSize;
@@ -601,15 +608,18 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const databaseRows =
 			databaseRequestIds.length === 0
 				? []
-				: await db
-						.select({
-							request_id: liteLLM_SpendLogs.request_id,
-							messages: liteLLM_SpendLogs.messages,
-							response: liteLLM_SpendLogs.response,
-							proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
-						})
-						.from(liteLLM_SpendLogs)
-						.where(inArray(liteLLM_SpendLogs.request_id, databaseRequestIds));
+				: await hydrateSpendLogRows(
+						db,
+						await db
+							.select({
+								request_id: liteLLM_SpendLogs.request_id,
+								messages: liteLLM_SpendLogs.messages,
+								response: liteLLM_SpendLogs.response,
+								proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
+							})
+							.from(liteLLM_SpendLogs)
+							.where(inArray(liteLLM_SpendLogs.request_id, databaseRequestIds)),
+					);
 		const databaseByRequestId = new Map(databaseRows.map((row) => [row.request_id, row] as const));
 
 		return {

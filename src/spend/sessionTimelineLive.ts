@@ -25,6 +25,17 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
+import {
+	SPEND_LOG_MESSAGE_REF_KEY,
+	SPEND_LOG_REF_BYTES_KEY,
+	SPEND_LOG_REF_MISSING_KEY,
+	SPEND_LOG_SYSTEM_COUNT_KEY,
+	SPEND_LOG_SYSTEM_FIRST_KEY,
+	SPEND_LOG_SYSTEM_SECOND_KEY,
+	SPEND_LOG_TOOLS_COUNT_KEY,
+	SPEND_LOG_TOOLS_FIRST_KEY,
+} from "./SpendLogBlocks";
 import { createModuleLogger } from "../core/utils/logger";
 import { CallType } from "../types/spend";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
@@ -235,12 +246,29 @@ interface SessionTimelineWindowScanRow {
 	readonly messages_bytes: number;
 }
 
+/**
+ * 单行消息体积（用于窗口字节预算），不读内容。
+ *
+ * 内容寻址去重后列里只剩引用，`pg_column_size` 反映的是引用数组的大小而不是正文体积；
+ * 写入侧把逻辑字节数记在 `_litellm_ref_bytes` 上，这里直接取用，避免为预算去 join 块表。
+ */
+function sessionTimelineMessagesBytesSql() {
+	const messages = liteLLM_SpendLogs.messages;
+	return sql<number>`
+		CASE
+			WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
+				THEN COALESCE((${messages} ->> ${SPEND_LOG_REF_BYTES_KEY})::numeric, 0)
+			ELSE COALESCE(pg_column_size(${messages}), 0)
+		END
+	`;
+}
+
 /** 窗口扫描只取判断窗口边界需要的字段。 */
 function sessionTimelineWindowScanSelection() {
 	return {
 		request_id: liteLLM_SpendLogs.request_id,
 		startTime: liteLLM_SpendLogs.startTime,
-		messages_bytes: sql<number>`COALESCE(pg_column_size(${liteLLM_SpendLogs.messages}), 0)`,
+		messages_bytes: sessionTimelineMessagesBytesSql(),
 	};
 }
 
@@ -818,6 +846,8 @@ function sessionTimelineDescriptorSelection() {
 		request_message_count: sql<number | null>`
 			CASE
 				WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
+				WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
+					THEN jsonb_array_length(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY})
 				ELSE NULL
 			END
 		`,
@@ -861,6 +891,8 @@ function sessionTimelineAuxiliarySelection() {
 			CASE
 				WHEN jsonb_typeof(${proxy}#>'{body,system}') = 'array'
 				THEN jsonb_array_length(${proxy}#>'{body,system}')
+				WHEN jsonb_typeof(${proxy}#>ARRAY['body', ${SPEND_LOG_SYSTEM_COUNT_KEY}]) = 'number'
+				THEN (${proxy}#>>ARRAY['body', ${SPEND_LOG_SYSTEM_COUNT_KEY}])::int
 				ELSE 0
 			END
 		`,
@@ -868,29 +900,42 @@ function sessionTimelineAuxiliarySelection() {
 			CASE
 				WHEN jsonb_typeof(${proxy}#>'{body,tools}') = 'array'
 				THEN jsonb_array_length(${proxy}#>'{body,tools}')
+				WHEN jsonb_typeof(${proxy}#>ARRAY['body', ${SPEND_LOG_TOOLS_COUNT_KEY}]) = 'number'
+				THEN (${proxy}#>>ARRAY['body', ${SPEND_LOG_TOOLS_COUNT_KEY}])::int
 				ELSE 0
 			END
 		`,
-		request_first_tool_name: sql<string | null>`${proxy}#>>'{body,tools,0,name}'`,
+		request_first_tool_name: sql<string | null>`
+			COALESCE(
+				${proxy}#>>'{body,tools,0,name}',
+				${proxy}#>>ARRAY['body', ${SPEND_LOG_TOOLS_FIRST_KEY}]
+			)
+		`,
 		// Prefix matching tolerates prompt-tail edits between Claude Code versions
 		// while the 256-character cap prevents large system prompts entering the
 		// timeline batch result solely for classification.
 		request_first_system_prompt: sql<string | null>`
-			LEFT(
-				COALESCE(
-					${proxy}#>>'{body,system,0,text}',
-					${proxy}#>>'{body,system,0}'
+			COALESCE(
+				LEFT(
+					COALESCE(
+						${proxy}#>>'{body,system,0,text}',
+						${proxy}#>>'{body,system,0}'
+					),
+					256
 				),
-				256
+				${proxy}#>>ARRAY['body', ${SPEND_LOG_SYSTEM_FIRST_KEY}]
 			)
 		`,
 		request_second_system_prompt: sql<string | null>`
-			LEFT(
-				COALESCE(
-					${proxy}#>>'{body,system,1,text}',
-					${proxy}#>>'{body,system,1}'
+			COALESCE(
+				LEFT(
+					COALESCE(
+						${proxy}#>>'{body,system,1,text}',
+						${proxy}#>>'{body,system,1}'
+					),
+					256
 				),
-				256
+				${proxy}#>>ARRAY['body', ${SPEND_LOG_SYSTEM_SECOND_KEY}]
 			)
 		`,
 		request_first_message_role: sql<string | null>`
@@ -946,6 +991,19 @@ function sessionTimelinePayloadSelection(selectedIndicesJson: string) {
 					FROM jsonb_array_elements(${messages}) WITH ORDINALITY AS timeline_item(value, ordinality)
 					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
 						@> to_jsonb((timeline_item.ordinality - 1)::int)
+				), '[]'::jsonb)
+				-- 内容寻址去重后的行：只按选中的序号去块表取内容，引用数组本身只有几 KB，
+				-- 不需要为了切一段尾巴把整段历史 detoast 出来。
+				WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array' THEN COALESCE((
+					SELECT jsonb_agg(
+						COALESCE(${liteLLM_SpendLogBlocks.payload}, jsonb_build_object(${SPEND_LOG_REF_MISSING_KEY}::text, block_ref.value))
+						ORDER BY block_ref.ordinality
+					)
+					FROM jsonb_array_elements_text(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY})
+						WITH ORDINALITY AS block_ref(value, ordinality)
+					LEFT JOIN ${liteLLM_SpendLogBlocks} ON ${liteLLM_SpendLogBlocks.blockId} = block_ref.value
+					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
+						@> to_jsonb((block_ref.ordinality - 1)::int)
 				), '[]'::jsonb)
 				WHEN ${messages} IS NOT NULL
 					AND ${messages} <> 'null'::jsonb

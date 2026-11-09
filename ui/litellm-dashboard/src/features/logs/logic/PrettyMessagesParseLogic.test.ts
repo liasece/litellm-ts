@@ -76,6 +76,25 @@ describe("provider-neutral Pretty messages", () => {
 		const image = parseResponseMessage({ data: [{ b64_json: "litellm_truncated" }] });
 		expect(image?.parts?.[0].data).toEqual({ truncated: true });
 	});
+	it("keeps missing block references at their message position instead of parsing them as content", () => {
+		const messages = parseRequestMessages({
+			body: {
+				messages: [
+					{ role: "user", content: "before" },
+					{ _litellm_ref_missing: "aB3dE6fH9jK2mN5pQ8rS1t" },
+					{ role: "assistant", content: "after" },
+				],
+			},
+		});
+		expect(messages.map((message) => message.content)).toEqual(["before", "", "after"]);
+		expect(messages[1].missingBlockRef).toBe(true);
+		expect(messages[0].missingBlockRef).toBeUndefined();
+		const inputItems = parseRequestMessages({
+			input: [{ _litellm_ref_missing: "aB3dE6fH9jK2mN5pQ8rS1t" }, { type: "message", role: "user", content: "real" }],
+		});
+		expect(inputItems.map((message) => message.missingBlockRef)).toEqual([true, undefined]);
+		expect(inputItems[1].content).toBe("real");
+	});
 	it("keeps provider tool schema and other definition fields when normalizing request metadata", () => {
 		const meta = parseRequestMeta({
 			body: {

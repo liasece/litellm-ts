@@ -1,9 +1,102 @@
-import { sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
+import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
+import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { createModuleLogger } from "../core/utils/logger";
+import {
+	SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE,
+	type SpendLogBlockRecord,
+	collectReferencedBlockIds,
+	collectSpendLogBlocks,
+	selectMissingSpendLogBlocks,
+	shouldDeduplicateSpendLogBlocks,
+} from "./SpendLogBlocks";
 import { publishSpendLogChange } from "./spendLogChangeFeed";
 
+const logger = createModuleLogger("Spend:ActiveRequestRecovery");
+
+/** 回收事务句柄，用于在同一个事务里补做内容寻址编码。 */
+type RecoveryTransaction = Parameters<Parameters<NodePgDatabase<typeof schema>["transaction"]>[0]>[0];
+
 export const ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART = "server_restart";
+/** 租约过期回收写入的终止原因（见 reapExpiredActiveRequests）。 */
+export const ACTIVE_REQUEST_ABORT_REASON_LEASE_EXPIRED = "lease_expired";
+
+/**
+ * 把刚回收的 SpendLog 行换成内容寻址引用。
+ *
+ * 两条回收 SQL 都是 `INSERT ... SELECT`，直接把 `proxy_server_request` 原样搬进
+ * SpendLogs，因此绕过了正常写入路径的块编码 —— 一次重启就能留下几行 1 MB 以上的
+ * 完整请求体。这里在同一个事务里补做编码，规则与 {@link collectSpendLogBlocks}
+ * 完全一致。
+ *
+ * 只处理本次刚插入的行（按 termination_reason 精确定位），已编码的行跳过；任何异常
+ * 只记录日志 —— 行里保留原始请求体依然可读，去重是存储优化，不应影响启动恢复。
+ * @param tx - 回收事务
+ * @param requestIds - 本次回收的 request_id
+ * @param terminationReason - 本次回收写入的 metadata.termination_reason
+ */
+async function encodeRecoveredRequestPayloads(
+	tx: RecoveryTransaction,
+	requestIds: readonly string[],
+	terminationReason: string,
+): Promise<void> {
+	if (requestIds.length === 0) {
+		return;
+	}
+	try {
+		if (!(await shouldDeduplicateSpendLogBlocks())) {
+			return;
+		}
+		const rows = await tx
+			.select({ requestId: liteLLM_SpendLogs.request_id, proxyServerRequest: liteLLM_SpendLogs.proxy_server_request })
+			.from(liteLLM_SpendLogs)
+			.where(
+				and(
+					inArray(liteLLM_SpendLogs.request_id, [...requestIds]),
+					sql`${liteLLM_SpendLogs.metadata}->>'termination_reason' = ${terminationReason}`,
+				),
+			);
+		const blocks = new Map<string, SpendLogBlockRecord>();
+		const updates: Array<{ requestId: string; proxyServerRequest: unknown }> = [];
+		for (const row of rows) {
+			// 已经带引用键的行跳过：再编码一次会把引用当成字面量剥掉，反而丢掉内容。
+			if (collectReferencedBlockIds({}, row.proxyServerRequest).length > 0) {
+				continue;
+			}
+			const encoding = collectSpendLogBlocks({ messages: {}, proxyServerRequest: row.proxyServerRequest });
+			if (encoding.blocks.length === 0) {
+				continue;
+			}
+			for (const block of encoding.blocks) {
+				blocks.set(block.blockId, block);
+			}
+			updates.push({ requestId: row.requestId, proxyServerRequest: encoding.proxyServerRequest });
+		}
+		if (updates.length === 0) {
+			return;
+		}
+		const blockList = [...blocks.values()];
+		// 回收行里的历史正文在正常写入路径上大多已经存在，先判存，只补写缺失的块。
+		const blocksToInsert = await selectMissingSpendLogBlocks(tx, blockList);
+		for (let offset = 0; offset < blocksToInsert.length; offset += SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE) {
+			await tx
+				.insert(liteLLM_SpendLogBlocks)
+				.values(blocksToInsert.slice(offset, offset + SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE).map((block) => ({ ...block })))
+				.onConflictDoNothing();
+		}
+		for (const update of updates) {
+			await tx
+				.update(liteLLM_SpendLogs)
+				.set({ proxy_server_request: update.proxyServerRequest })
+				.where(eq(liteLLM_SpendLogs.request_id, update.requestId));
+		}
+		logger.info("回收行已按内容寻址去重", { recovered: updates.length, blocks: blocksToInsert.length });
+	} catch (error) {
+		logger.warn("回收行内容寻址去重失败，保留原始请求体", { error: error, requests: requestIds.length });
+	}
+}
 
 /**
  * 将进程启动前遗留的在途请求转换为可审计的 aborted SpendLog。
@@ -130,7 +223,9 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 			WHERE active.request_id = orphaned.request_id
 			RETURNING active.request_id
 		`);
-		return result.rows.length;
+		const requestIds = result.rows.map((row) => (row as { request_id: string }).request_id);
+		await encodeRecoveredRequestPayloads(tx, requestIds, ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART);
+		return requestIds.length;
 	});
 	if (recovered > 0) {
 		publishSpendLogChange();
@@ -223,7 +318,9 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 			WHERE active.request_id = expired.request_id
 			RETURNING active.request_id
 		`);
-		return result.rows.length;
+		const requestIds = result.rows.map((row) => (row as { request_id: string }).request_id);
+		await encodeRecoveredRequestPayloads(tx, requestIds, ACTIVE_REQUEST_ABORT_REASON_LEASE_EXPIRED);
+		return requestIds.length;
 	});
 	if (recovered > 0) {
 		publishSpendLogChange();

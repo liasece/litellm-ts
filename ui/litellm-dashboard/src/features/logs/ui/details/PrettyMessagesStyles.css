@@ -85,6 +85,12 @@
 	white-space: pre-wrap;
 	word-break: break-word;
 }
+.pretty-block-ref-missing {
+	font-size: 13px;
+	line-height: 1.7;
+	font-style: italic;
+	color: rgb(0 0 0 / 45%);
+}
 .pretty-collapsible {
 	margin-bottom: 8px;
 }

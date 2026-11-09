@@ -966,7 +966,7 @@ describe("SpendTracker API key sanitization", () => {
 		expect(stringify(sanitizedPayload)).not.toContain("\0");
 	});
 
-	it("图片生成响应保留超过普通文本上限的完整 base64", async () => {
+	it("日志负载不再截断超长字符串", async () => {
 		const previousStorePrompts = process.env.STORE_PROMPTS_IN_SPEND_LOGS;
 		process.env.STORE_PROMPTS_IN_SPEND_LOGS = "true";
 		const imageBase64 = "A".repeat(32769);
@@ -984,7 +984,7 @@ describe("SpendTracker API key sanitization", () => {
 			});
 
 			expect((spendLog.response as { data: Array<{ b64_json: string }> }).data[0]?.b64_json).toBe(imageBase64);
-			expect(stringify(sanitizeSpendLogPayload({ text: imageBase64 }))).toContain("litellm_truncated");
+			expect(sanitizeSpendLogPayload({ text: imageBase64 })).toEqual({ text: imageBase64 });
 		} finally {
 			if (previousStorePrompts === undefined) {
 				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
