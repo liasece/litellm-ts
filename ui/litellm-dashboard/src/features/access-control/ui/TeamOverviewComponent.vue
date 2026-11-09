@@ -1,42 +1,13 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
-import { requestJson } from "../../platform/api/HttpApiClient";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import PermissionSummaryComponent from "./PermissionSummaryComponent.vue";
 import LoggingSummaryComponent from "./LoggingSummaryComponent.vue";
 import { objectValue, stringList } from "../logic/ResourceDraftLogic";
 import type { AccessCatalog, TeamDetail } from "../support/AccessModels";
-const props = defineProps<{ data: TeamDetail; catalog: AccessCatalog }>(),
-	money = useMoneyFormatter(),
-	resolved = ref<Record<string, string[]>>({}),
-	loading = ref(false);
-let generation = 0;
-watch(
-	() => props.data.team_info.policies,
-	async (names) => {
-		const current = ++generation;
-		loading.value = true;
-		const results = await Promise.all(
-			(names ?? []).map(async (name) => {
-				try {
-					return [
-						name,
-						stringList(objectValue(await requestJson("/policy/info/" + encodeURIComponent(name))).resolved_guardrails),
-					] as const;
-				} catch {
-					return [name, []] as const;
-				}
-			}),
-		);
-		if (current === generation) {
-			resolved.value = Object.fromEntries(results);
-			loading.value = false;
-		}
-	},
-	{ immediate: true },
-);
+defineProps<{ data: TeamDetail; catalog: AccessCatalog }>();
+const money = useMoneyFormatter();
 </script>
 <template>
 	<div class="access-overview-grid access-team-overview">
@@ -66,7 +37,7 @@ watch(
 			<p>User Keys: {{ data.keys.filter((key) => key.user_id).length }}</p>
 			<p>Service Account Keys: {{ data.keys.filter((key) => !key.user_id).length }}</p>
 			<p class="access-muted">Total: {{ data.keys.length }}</p></UiCard
-		><PermissionSummaryComponent :catalog="catalog" :permission="data.team_info.object_permission" /><UiCard
+		><PermissionSummaryComponent :permission="data.team_info.object_permission" /><UiCard
 			><strong class="access-team-overview-title access-team-overview-title--spaced">Guardrails</strong>
 			<div class="access-tags">
 				<UiTag v-for="name in stringList(data.team_info.guardrails)" :key="name" appearance="tremor" color="blue">{{ name }}</UiTag>
@@ -78,14 +49,7 @@ watch(
 		><UiCard
 			><strong class="access-team-overview-title access-team-overview-title--spaced">Policies</strong>
 			<div v-for="name in data.team_info.policies" :key="name" class="access-policy">
-				<UiTag appearance="tremor" color="purple">{{ name }}</UiTag
-				><small v-if="loading" class="access-muted">Loading guardrails...</small>
-				<div v-else-if="resolved[name]?.length">
-					<p>Resolved Guardrails:</p>
-					<div class="access-tags">
-						<UiTag v-for="guardrail in resolved[name]" :key="guardrail" appearance="tremor" color="blue">{{ guardrail }}</UiTag>
-					</div>
-				</div>
+				<UiTag appearance="tremor" color="purple">{{ name }}</UiTag>
 			</div>
 			<p v-if="!data.team_info.policies?.length" class="access-muted">No policies configured</p></UiCard
 		><LoggingSummaryComponent :configs="data.team_info.metadata?.logging" />

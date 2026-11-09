@@ -8,10 +8,8 @@ import UiDialog from "../../platform/ui/UiDialog.vue";
 import AccessHeroIconComponent from "./AccessHeroIconComponent.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import AccessNoticeComponent from "./AccessNoticeComponent.vue";
-import AccessDeleteDialogComponent from "./AccessDeleteDialogComponent.vue";
 import AccessFieldComponent from "./AccessFieldComponent.vue";
 import UserEditFieldsComponent from "./UserEditFieldsComponent.vue";
-import InvitationDialogComponent from "./InvitationDialogComponent.vue";
 import { createUserDetailStore } from "../stores/UserDetailStore";
 import { rolesWithWriteAccess } from "../../identity/logic/UserRoleLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
@@ -78,9 +76,7 @@ onBeforeUnmount(store.dispose);
 					</div>
 				</div>
 				<div v-if="canManage" class="access-user-detail-actions">
-					<UiButton appearance="tremor" @click="store.invite"
-						><template #icon><AccessHeroIconComponent name="Refresh" /></template>Reset Password</UiButton
-					><UiButton appearance="tremor" class="access-user-delete" @click="state.deleteOpen = true"
+					<UiButton appearance="tremor" class="access-user-delete" @click="state.deleteOpen = true"
 						><template #icon><AccessHeroIconComponent name="Trash" /></template>Delete User</UiButton
 					>
 				</div>
@@ -210,7 +206,7 @@ onBeforeUnmount(store.dispose);
 						<pre>{{ JSON.stringify(data.metadata || {}, null, 2) }}</pre>
 					</div>
 				</div></UiCard
-			><InvitationDialogComponent v-model:open="state.inviteOpen" :invitation="state.invitation" reset /><AccessDeleteDialogComponent
+			><UiDialog
 				v-model:open="state.deleteOpen"
 				title="Delete User?"
 				message="Are you sure you want to delete this user? This action cannot be undone."

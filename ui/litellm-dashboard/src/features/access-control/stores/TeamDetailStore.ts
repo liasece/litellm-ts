@@ -10,7 +10,6 @@ export function createTeamDetailStore(id: string, onChanged: () => void | Promis
 			error: "",
 			message: "",
 			memberOpen: false,
-			editingMember: null as AccessMember | null,
 			deletingMember: null as AccessMember | null,
 			editing: false,
 		});
@@ -57,14 +56,8 @@ export function createTeamDetailStore(id: string, onChanged: () => void | Promis
 		}
 	}
 	async function member(value: AccessMember) {
-		if (
-			await run(
-				() => (state.editingMember ? api.updateTeamMember(id, value) : api.addTeamMember(id, value)),
-				state.editingMember ? "Team member updated successfully" : "Team member added successfully",
-			)
-		) {
+		if (await run(() => api.addTeamMember(id, value), "Team member added successfully")) {
 			state.memberOpen = false;
-			state.editingMember = null;
 		}
 	}
 	async function deleteMember() {

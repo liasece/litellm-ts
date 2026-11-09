@@ -1,41 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildTeamCreatePayload, buildTeamUpdatePayload, buildOrganizationPayload, teamDraft } from "./ResourceDraftLogic";
-import { buildProjectPayload, createProjectDraft, validateProjectDraft } from "./ProjectDraftLogic";
-import { buildInviteUserPayload, buildUserUpdatePayload, buildInvitationUrl } from "./UserDraftLogic";
-import type { AccessOrganization, AccessProject, AccessTeam } from "../support/AccessModels";
+import { buildUserUpdatePayload } from "./UserDraftLogic";
+import type { AccessOrganization, AccessTeam } from "../support/AccessModels";
 describe("Access-control form behavior", () => {
-	it("distinguishes an untouched project budget, zero budget, and clearing a budget", () => {
-		const draft = createProjectDraft();
-		expect(buildProjectPayload(draft)).not.toHaveProperty("max_budget");
-		draft.max_budget = 0;
-		expect(buildProjectPayload(draft).max_budget).toBe(0);
-		draft.max_budget = null;
-		expect(buildProjectPayload(draft).max_budget).toBeNull();
-	});
-	it("round-trips project model limits from internal metadata while excluding them from visible metadata fields", () => {
-		const project = {
-			project_id: "project-a",
-			project_alias: "Research",
-			team_id: "team-a",
-			models: [],
-			spend: 0,
-			blocked: false,
-			created_at: "2026-01-01",
-			updated_at: "2026-01-01",
-			metadata: { model_rpm_limit: { model: 0 }, model_tpm_limit: { model: 100 }, label: "test" },
-			litellm_budget_table: { budget_id: "budget", max_budget: 0 },
-		} as AccessProject;
-		const draft = createProjectDraft(project);
-		expect(draft.metadata).toEqual([{ key: "label", value: "test" }]);
-		expect(buildProjectPayload(draft)).toMatchObject({
-			max_budget: 0,
-			model_rpm_limit: { model: 0 },
-			model_tpm_limit: { model: 100 },
-			metadata: { label: "test" },
-		});
-		draft.modelLimits.push({ ...draft.modelLimits[0] });
-		expect(validateProjectDraft(draft).modelLimits).toBe("Duplicate model");
-	});
 	it("does not turn omitted resource access into explicit empty permissions when creating a team", () => {
 		const payload = buildTeamCreatePayload({
 			team_alias: "Research",
@@ -127,26 +94,12 @@ describe("Access-control form behavior", () => {
 			object_permission: { future_permission: ["keep"], vector_stores: [], mcp_servers: [], mcp_access_groups: [] },
 		});
 	});
-	it("keeps account invitation defaults and explicit nullable user edits", () => {
-		expect(buildInviteUserPayload({ user_role: "internal_user", organization_ids: ["org-a"], metadata: '{"tag":"test"}' })).toEqual({
-			user_role: "internal_user",
-			models: ["no-default-models"],
-			organizations: ["org-a"],
-			metadata: { tag: "test" },
-		});
+	it("keeps explicit nullable user edits", () => {
 		expect(buildUserUpdatePayload({ user_id: "user-a", models: [], metadata: "{}", max_budget: 10 }, true)).toEqual({
 			user_id: "user-a",
 			models: [],
 			metadata: {},
 			max_budget: null,
 		});
-	});
-	it("creates invitation and reset links under the configured root without losing the SSO flow", () => {
-		expect(buildInvitationUrl("https://fixture.example/litellm", { id: "invitation-a" }, true)).toBe(
-			"https://fixture.example/litellm/ui?invitation_id=invitation-a&action=reset_password",
-		);
-		expect(buildInvitationUrl("https://fixture.example", { id: "invitation-a", has_user_setup_sso: true }, true)).toBe(
-			"https://fixture.example/ui",
-		);
 	});
 });

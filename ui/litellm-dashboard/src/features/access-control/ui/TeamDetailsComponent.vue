@@ -11,12 +11,11 @@ import TeamOverviewComponent from "./TeamOverviewComponent.vue";
 import TeamSettingsComponent from "./TeamSettingsComponent.vue";
 import MembersTableComponent from "./MembersTableComponent.vue";
 import MemberDialogComponent from "./MemberDialogComponent.vue";
-import TeamPermissionsComponent from "./TeamPermissionsComponent.vue";
 import TeamKeysComponent from "./TeamKeysComponent.vue";
 import AccessDeleteDialogComponent from "./AccessDeleteDialogComponent.vue";
 import { createTeamDetailStore } from "../stores/TeamDetailStore";
 import { canEditTeam, teamTabs } from "../logic/AccessPermissionLogic";
-import type { AccessCatalog, AccessMember } from "../support/AccessModels";
+import type { AccessCatalog } from "../support/AccessModels";
 const props = defineProps<{
 	teamId: string;
 	edit?: boolean;
@@ -41,11 +40,6 @@ const mayDeleteMember = computed(
 		!props.disableTeamAdminDelete,
 );
 function add() {
-	state.editingMember = null;
-	state.memberOpen = true;
-}
-function editMember(member: AccessMember) {
-	state.editingMember = member;
 	state.memberOpen = true;
 }
 async function copy() {
@@ -97,12 +91,7 @@ onBeforeUnmount(store.dispose);
 				:can-edit="editable"
 				:can-delete="mayDeleteMember"
 				@add="add"
-				@edit="editMember"
 				@delete="state.deletingMember = $event"
-			/><TeamPermissionsComponent
-				v-else-if="tab === 'member-permissions' && editable"
-				:team-id="teamId"
-				:can-edit="editable"
 			/><TeamSettingsComponent
 				v-else-if="tab === 'settings' && editable"
 				:team="data.team_info"
@@ -118,8 +107,6 @@ onBeforeUnmount(store.dispose);
 		</div>
 		<MemberDialogComponent
 			v-model:open="state.memberOpen"
-			:member="state.editingMember"
-			:team-id="teamId"
 			:pending="state.pending"
 			@submit="store.member" /><AccessDeleteDialogComponent
 			:open="Boolean(state.deletingMember)"

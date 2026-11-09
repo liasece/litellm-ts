@@ -5,7 +5,6 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
-import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiPagination from "../../platform/ui/UiPagination.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
@@ -15,7 +14,6 @@ import AccessNoticeComponent from "./AccessNoticeComponent.vue";
 import AccessDeleteDialogComponent from "./AccessDeleteDialogComponent.vue";
 import TeamFormDialogComponent from "./TeamFormDialogComponent.vue";
 import TeamDetailsComponent from "./TeamDetailsComponent.vue";
-import DefaultSettingsComponent from "./DefaultSettingsComponent.vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
@@ -24,7 +22,6 @@ import { loadAccessCatalog } from "../data/AccessCatalogData";
 import { canManageTeams } from "../logic/AccessPermissionLogic";
 import { objectValue } from "../logic/ResourceDraftLogic";
 import { emptyAccessCatalog, type AccessRecord, type AccessTeam } from "../support/AccessModels";
-import { isProxyAdminRole } from "../../identity/logic/UserRoleLogic";
 import "../styles/AccessStyles.css";
 const auth = useAuthenticationStore(),
 	application = useApplicationStore(),
@@ -45,11 +42,6 @@ const columns = [
 	{ key: "created_at", label: "Created", width: 130, sortable: true, ellipsis: true },
 	{ key: "actions", label: "Actions", width: 120, align: "right" as const },
 ];
-const tabs = computed(() => [
-	{ key: "your-teams", label: "Your Teams" },
-	{ key: "available-teams", label: "Available Teams" },
-	...(isProxyAdminRole(role.value) ? [{ key: "default-settings", label: "Default Team Settings" }] : []),
-]);
 function team(row: AccessRecord) {
 	return row as AccessTeam;
 }
@@ -67,9 +59,6 @@ function org(value: AccessTeam) {
 async function copy(value: AccessTeam) {
 	await navigator.clipboard.writeText(value.team_id);
 	state.message = "Team ID copied";
-}
-function tabChanged(key: string) {
-	if (key === "available-teams") void store.available();
 }
 onMounted(() => {
 	void store.refresh();
@@ -95,10 +84,7 @@ onBeforeUnmount(store.dispose);
 					><template #icon><UiIcon name="PlusOutlined" /></template>Create Team</UiButton
 				>
 			</header>
-			<UiTabs v-model="state.tab" :items="tabs" @change="tabChanged" /><UiCard
-				v-if="state.tab === 'your-teams'"
-				appearance="antd"
-				:padding="0"
+			<UiCard appearance="antd" :padding="0"
 				><div class="access-list-toolbar access-team-toolbar">
 					<div class="access-team-search">
 						<UiInput
@@ -204,48 +190,7 @@ onBeforeUnmount(store.dispose);
 						</div></template
 					></UiTable
 				></UiCard
-			><UiCard v-else-if="state.tab === 'available-teams'" class="access-available-teams"
-				><table class="access-budget-table">
-					<thead>
-						<tr>
-							<th>Team Name</th>
-							<th>Description</th>
-							<th>Members</th>
-							<th>Models</th>
-							<th>Actions</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="value in state.available" :key="value.team_id">
-							<td>{{ value.team_alias }}</td>
-							<td>{{ value.description || "No description available" }}</td>
-							<td>{{ value.members_with_roles.length }} members</td>
-							<td>
-								<UiTag v-for="model in value.models" :key="model" appearance="tremor" size="xs" color="blue">{{
-									model.length > 30 ? model.slice(0, 30) + "..." : model
-								}}</UiTag
-								><UiTag v-if="!value.models.length" appearance="tremor" size="xs" color="red">All Proxy Models</UiTag>
-							</td>
-							<td>
-								<UiButton appearance="tremor" size="small" :loading="state.pending" @click="store.join(value.team_id)"
-									>Join Team</UiButton
-								>
-							</td>
-						</tr>
-						<tr v-if="!state.available.length">
-							<td colspan="5">
-								No available teams to join. See how to set available teams
-								<a
-									href="https://docs.litellm.ai/docs/proxy/self_serve#all-settings-for-self-serve--sso-flow"
-									target="_blank"
-									rel="noopener noreferrer"
-									>here</a
-								>.
-							</td>
-						</tr>
-					</tbody>
-				</table></UiCard
-			><DefaultSettingsComponent v-else kind="team" :catalog="catalog" /></template
+			></template
 		><TeamDetailsComponent
 			v-else
 			:key="state.detailId"

@@ -1,9 +1,9 @@
 import { reactive } from "vue";
 import { requestJson } from "../../platform/api/HttpApiClient";
 import { queryPath } from "../api/AccessApi";
-import { parseUsers } from "../api/AccessApiSchemas";
+import { parseUsers, recordSchema } from "../api/AccessApiSchemas";
 import type { AccessMember, AccessUser } from "../support/AccessModels";
-export function createMemberEditorStore(teamId?: string) {
+export function createMemberEditorStore() {
 	const state = reactive({
 		draft: { role: "user" } as AccessMember,
 		options: [] as AccessUser[],
@@ -35,11 +35,10 @@ export function createMemberEditorStore(teamId?: string) {
 			controller = new AbortController();
 			state.loading = true;
 			try {
-				const options = await requestJson(
-					queryPath("/user/filter/ui", { [field]: text, team_id: teamId }),
-					{ signal: controller.signal },
-					parseUsers,
+				const response = recordSchema.parse(
+					await requestJson(queryPath("/user/list", { [field]: text, page: 1, page_size: 20 }), { signal: controller.signal }),
 				);
+				const options = parseUsers(response.users ?? []);
 				if (current === generation) state.options = options;
 			} catch (error: unknown) {
 				if (current === generation && !(error instanceof DOMException && error.name === "AbortError"))

@@ -11,7 +11,6 @@ export function createOrganizationDetailStore(id: string, onChanged: () => void 
 			message: "",
 			editing: false,
 			memberOpen: false,
-			editingMember: null as AccessMember | null,
 		});
 	let generation = 0,
 		controller: AbortController | null = null;
@@ -57,14 +56,8 @@ export function createOrganizationDetailStore(id: string, onChanged: () => void 
 		}
 	}
 	async function member(value: AccessMember) {
-		if (
-			await run(
-				() => (state.editingMember ? api.updateOrganizationMember(id, value) : api.addOrganizationMember(id, value)),
-				state.editingMember ? "Organization member updated successfully" : "Organization member added successfully",
-			)
-		) {
+		if (await run(() => api.addOrganizationMember(id, value), "Organization member added successfully")) {
 			state.memberOpen = false;
-			state.editingMember = null;
 		}
 	}
 	async function deleteMember(member: AccessMember) {

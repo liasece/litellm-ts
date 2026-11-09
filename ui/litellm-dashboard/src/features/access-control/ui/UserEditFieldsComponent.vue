@@ -10,11 +10,9 @@ import { all_admin_roles } from "../../identity/logic/UserRoleLogic";
 import { createUserDraft, buildUserUpdatePayload } from "../logic/UserDraftLogic";
 import { budgetDurationOptions } from "../support/TeamFields";
 import type { AccessCatalog, AccessRecord, AccessUser } from "../support/AccessModels";
-const props = defineProps<{ user?: AccessUser | null; catalog: AccessCatalog; role: string; bulk?: boolean; pending?: boolean }>();
+const props = defineProps<{ user?: AccessUser | null; catalog: AccessCatalog; role: string; pending?: boolean }>();
 const emit = defineEmits<{ cancel: []; submit: [value: AccessRecord] }>();
-const draft = ref<AccessRecord>(
-		props.bulk ? { models: [], user_role: "", max_budget: null, metadata: "{}" } : createUserDraft(props.user ?? undefined),
-	),
+const draft = ref<AccessRecord>(createUserDraft(props.user ?? undefined)),
 	unlimited = ref(props.user?.max_budget == null),
 	error = ref("");
 watch(
@@ -40,18 +38,18 @@ function submit() {
 </script>
 <template>
 	<form class="access-user-edit-form" @submit.prevent="submit">
-		<AccessNoticeComponent :error="error" /><template v-if="!bulk"
-			><AccessFieldComponent
-				input-appearance="tremor"
-				v-model="draft.user_id"
-				name="edit-user-id"
-				label="User ID"
-				disabled /><AccessFieldComponent
-				input-appearance="tremor"
-				v-model="draft.user_email"
-				name="edit-user-email"
-				label="Email" /></template
-		><AccessFieldComponent
+		<AccessNoticeComponent :error="error" /><AccessFieldComponent
+			input-appearance="tremor"
+			v-model="draft.user_id"
+			name="edit-user-id"
+			label="User ID"
+			disabled
+		/><AccessFieldComponent
+			input-appearance="tremor"
+			v-model="draft.user_email"
+			name="edit-user-email"
+			label="Email"
+		/><AccessFieldComponent
 			input-appearance="tremor"
 			v-model="draft.user_alias"
 			name="edit-user-alias"

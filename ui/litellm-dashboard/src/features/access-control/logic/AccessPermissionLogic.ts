@@ -21,7 +21,6 @@ export function teamTabs(canEdit: boolean) {
 		...(canEdit
 			? [
 					{ key: "members", label: "Members" },
-					{ key: "member-permissions", label: "Member Permissions" },
 					{ key: "settings", label: "Settings" },
 				]
 			: []),

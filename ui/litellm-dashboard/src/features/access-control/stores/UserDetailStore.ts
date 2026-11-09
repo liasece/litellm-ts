@@ -18,8 +18,6 @@ export function createUserDetailStore(
 			tab: "overview",
 			teamsExpanded: false,
 			deleteOpen: false,
-			inviteOpen: false,
-			invitation: null as AccessRecord | null,
 			teamOpen: false,
 			selectedTeamId: "",
 			selectedRole: "user",
@@ -74,14 +72,6 @@ export function createUserDetailStore(
 			state.error = reason instanceof Error ? reason.message : "Failed to update user";
 		} finally {
 			state.pending = false;
-		}
-	}
-	async function invite() {
-		try {
-			state.invitation = await api.invite(id);
-			state.inviteOpen = true;
-		} catch (reason) {
-			state.error = reason instanceof Error ? reason.message : "Failed to generate password reset link";
 		}
 	}
 	async function remove() {
@@ -145,5 +135,5 @@ export function createUserDetailStore(
 		++generation;
 		controller?.abort();
 	}
-	return { state, data, teams, refresh, save, invite, remove, openTeam, addTeam, removeTeam, dispose };
+	return { state, data, teams, refresh, save, remove, openTeam, addTeam, removeTeam, dispose };
 }

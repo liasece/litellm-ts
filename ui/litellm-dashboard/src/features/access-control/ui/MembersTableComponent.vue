@@ -18,7 +18,7 @@ const props = withDefaults(
 	}>(),
 	{ canDelete: true, memberships: () => [], organization: false },
 );
-const emit = defineEmits<{ add: []; edit: [member: AccessMember]; delete: [member: AccessMember] }>();
+const emit = defineEmits<{ add: []; delete: [member: AccessMember] }>();
 const money = useMoneyFormatter();
 const columns = computed(() => [
 	{ key: "user_email", label: "User Email" },
@@ -44,15 +44,6 @@ function membership(row: AccessRecord) {
 }
 function budget(row: AccessRecord) {
 	return objectValue(membership(row).litellm_budget_table);
-}
-function edit(row: AccessRecord) {
-	const limits = budget(row);
-	emit("edit", {
-		...member(row),
-		max_budget_in_team: typeof limits.max_budget === "number" ? limits.max_budget || null : null,
-		tpm_limit: typeof limits.tpm_limit === "number" ? limits.tpm_limit || null : null,
-		rpm_limit: typeof limits.rpm_limit === "number" ? limits.rpm_limit || null : null,
-	});
 }
 function rateLimits(row: AccessRecord) {
 	const value = budget(row);
@@ -111,12 +102,6 @@ function rateLimits(row: AccessRecord) {
 			><template #cell-actions="{ row }"
 				><div v-if="canEdit" class="access-member-actions">
 					<AccessActionComponent
-						appearance="tremor"
-						name="SquarePen"
-						label="Edit member"
-						data-testid="edit-member"
-						@click="organization ? emit('edit', member(row)) : edit(row)"
-					/><AccessActionComponent
 						v-if="canDelete !== false"
 						appearance="tremor"
 						name="Trash2"

@@ -6,8 +6,6 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import TeamGeneralFieldsComponent from "./TeamGeneralFieldsComponent.vue";
 import TeamAdvancedFieldsComponent from "./TeamAdvancedFieldsComponent.vue";
-import AccessPolicyFieldsComponent from "./AccessPolicyFieldsComponent.vue";
-import AccessResourcesComponent from "./AccessResourcesComponent.vue";
 import PermissionSummaryComponent from "./PermissionSummaryComponent.vue";
 import LoggingSummaryComponent from "./LoggingSummaryComponent.vue";
 import { teamDraft, objectValue, stringList, parseMetadata } from "../logic/ResourceDraftLogic";
@@ -55,11 +53,7 @@ function submit() {
 			>
 		</header>
 		<form v-if="editing" @submit.prevent="submit">
-			<TeamGeneralFieldsComponent v-model="draft" :catalog="catalog" :errors="errors" editing /><AccessPolicyFieldsComponent
-				v-model="draft"
-				:catalog="catalog"
-				premium
-			/><AccessResourcesComponent v-model="draft" :catalog="catalog" editing /><TeamAdvancedFieldsComponent
+			<TeamGeneralFieldsComponent v-model="draft" :catalog="catalog" :errors="errors" editing /><TeamAdvancedFieldsComponent
 				v-model="draft"
 				:premium="premium"
 				:errors="errors"
@@ -137,7 +131,7 @@ function submit() {
 						: "Disabled - Global guardrails active"
 				}}</UiTag>
 			</div>
-			<PermissionSummaryComponent :catalog="catalog" :permission="team.object_permission" inline /><LoggingSummaryComponent
+			<PermissionSummaryComponent :permission="team.object_permission" inline /><LoggingSummaryComponent
 				:configs="team.metadata?.logging"
 				inline
 			/>

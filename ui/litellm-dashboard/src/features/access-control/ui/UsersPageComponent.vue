@@ -1,36 +1,27 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
-import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import AccessNoticeComponent from "./AccessNoticeComponent.vue";
 import AccessDeleteDialogComponent from "./AccessDeleteDialogComponent.vue";
 import UsersTableComponent from "./UsersTableComponent.vue";
 import UserDetailsComponent from "./UserDetailsComponent.vue";
-import UserInviteDialogComponent from "./UserInviteDialogComponent.vue";
-import InvitationDialogComponent from "./InvitationDialogComponent.vue";
-import BulkUserEditDialogComponent from "./BulkUserEditDialogComponent.vue";
-import CsvUsersDialogComponent from "./CsvUsersDialogComponent.vue";
-import DefaultSettingsComponent from "./DefaultSettingsComponent.vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { isAdminRole, isProxyAdminRole } from "../../identity/logic/UserRoleLogic";
 import { createUsersStore } from "../stores/UsersStore";
 import { loadAccessCatalog } from "../data/AccessCatalogData";
 import { objectValue } from "../logic/ResourceDraftLogic";
-import { emptyAccessCatalog, type AccessRecord, type AccessUser } from "../support/AccessModels";
+import { emptyAccessCatalog, type AccessUser } from "../support/AccessModels";
 import "../styles/AccessStyles.css";
 import "../styles/UsersStyles.css";
 const auth = useAuthenticationStore(),
 	app = useApplicationStore(),
 	catalog = shallowRef(emptyAccessCatalog()),
 	role = computed(() => auth.userRole.value),
-	proxyAdmin = computed(() => isProxyAdminRole(role.value)),
-	money = useMoneyFormatter(),
-	inviteReset = ref(0);
+	money = useMoneyFormatter();
 const organizationIds =
 	role.value === "Org Admin"
 		? app.state.organizations
@@ -49,22 +40,13 @@ const organizationIds =
 		: [];
 const store = createUsersStore(organizationIds),
 	{ state, rows } = store;
-const selectedUsers = computed(() => rows.value.filter((user) => state.selected.includes(user.user_id))),
-	sso = computed(() => Boolean(app.state.proxySettings.SSO_ENABLED));
 function open(user: AccessUser, edit = false) {
 	state.detailId = user.user_id;
 	state.editDetail = edit;
 }
-function toggleSelection() {
-	state.selection = !state.selection;
-	state.selected = [];
-}
 function page(value: number) {
 	state.page = value;
 	void store.refresh();
-}
-async function invite(value: AccessRecord) {
-	if (await store.invite(value, sso.value)) inviteReset.value++;
 }
 function filter(name: keyof typeof state.filters, value: unknown) {
 	store.filter({ [name]: value == null ? "" : String(value) });
@@ -88,29 +70,12 @@ onBeforeUnmount(store.dispose);
 	<main class="access-users-page">
 		<AccessNoticeComponent :error="state.error" :message="state.message" />
 		<header class="access-user-toolbar">
-			<UiButton variant="primary" @click="state.inviteOpen = true">+ Invite User</UiButton
-			><UiButton variant="primary" @click="state.bulkInviteOpen = true">+ Bulk Invite Users</UiButton
-			><UiButton v-if="proxyAdmin" :variant="state.selection ? 'primary' : 'default'" @click="toggleSelection">{{
-				state.selection ? "Cancel Selection" : "Select Users"
-			}}</UiButton
-			><UiButton
-				v-if="proxyAdmin && state.selection"
-				variant="primary"
-				:disabled="!state.selected.length"
-				@click="state.bulkEditOpen = true"
-				>Bulk Edit ({{ state.selected.length }} selected)</UiButton
-			>
+			<div>
+				<h2>Users</h2>
+				<span class="access-muted">Manage users and their organization and team access</span>
+			</div>
 		</header>
-		<UiTabs
-			v-if="proxyAdmin"
-			v-model="state.tab"
-			appearance="tremor"
-			:items="[
-				{ key: 'users', label: 'Users' },
-				{ key: 'defaults', label: 'Default User Settings' },
-			]"
-		/><DefaultSettingsComponent v-if="proxyAdmin && state.tab === 'defaults'" kind="user" :catalog="catalog" />
-		<section v-else class="access-user-list">
+		<section class="access-user-list">
 			<div class="access-user-list-controls">
 				<div class="access-user-filters">
 					<UiInput
@@ -162,16 +127,13 @@ onBeforeUnmount(store.dispose);
 				</div>
 			</div>
 			<UsersTableComponent
-				v-model:selected="state.selected"
 				:rows="rows"
 				:loading="state.loading"
 				:catalog="catalog"
 				:sort-by="state.filters.sort_by"
 				:sort-order="state.filters.sort_order"
-				:selection="proxyAdmin && state.selection"
 				@open="open"
 				@delete="state.deleting = $event"
-				@reset="store.resetPassword"
 				@sort="(key, order) => store.filter({ sort_by: key, sort_order: order })"
 			/>
 		</section>
@@ -185,30 +147,8 @@ onBeforeUnmount(store.dispose);
 			@close="state.detailId = ''"
 			@changed="store.refresh"
 			@deleted="deleted"
-		/><UserInviteDialogComponent
-			v-model:open="state.inviteOpen"
-			:catalog="catalog"
-			:pending="state.pending"
-			:reset-key="inviteReset"
-			@submit="invite"
-		/><CsvUsersDialogComponent
-			v-model:open="state.bulkInviteOpen"
-			:catalog="catalog"
-			:sso="sso"
-			@created="store.refresh"
-		/><BulkUserEditDialogComponent
-			v-model:open="state.bulkEditOpen"
-			:users="selectedUsers"
-			:catalog="catalog"
-			:role="role"
-			:pending="state.pending"
-			:allow-all="isAdminRole(role)"
-			@submit="store.bulk"
-		/><InvitationDialogComponent
-			v-model:open="state.invitationOpen"
-			:invitation="state.invitation"
-			:reset="state.resetInvitation"
-		/><AccessDeleteDialogComponent
+		/>
+		<AccessDeleteDialogComponent
 			:open="Boolean(state.deleting)"
 			title="Delete User?"
 			message="Are you sure you want to delete this user? This action cannot be undone."

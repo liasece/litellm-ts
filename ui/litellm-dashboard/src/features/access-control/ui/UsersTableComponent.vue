@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import UiCheckbox from "../../platform/ui/UiCheckbox.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
@@ -14,15 +12,11 @@ const props = defineProps<{
 	catalog: AccessCatalog;
 	sortBy: string;
 	sortOrder: "asc" | "desc";
-	selection: boolean;
-	selected: string[];
 }>();
 const emit = defineEmits<{
 	open: [user: AccessUser, edit?: boolean];
 	delete: [user: AccessUser];
-	reset: [id: string];
 	sort: [key: string, order: "asc" | "desc"];
-	"update:selected": [values: string[]];
 }>();
 const money = useMoneyFormatter();
 
@@ -44,11 +38,6 @@ const columns = [
 	{ key: "updated_at", label: "Updated At" },
 	{ key: "actions", label: "Actions" },
 ];
-const allSelected = computed(() => props.rows.length > 0 && props.selected.length === props.rows.length),
-	someSelected = computed(() => props.selected.length > 0 && props.selected.length < props.rows.length);
-function select(id: string, checked: boolean) {
-	emit("update:selected", checked ? [...props.selected, id] : props.selected.filter((value) => value !== id));
-}
 function sort(key: string) {
 	const first = typeof props.rows[0]?.[key] === "string" ? "asc" : "desc";
 	if (props.sortBy !== key) {
@@ -67,14 +56,6 @@ async function copy(id: string) {
 		<table class="access-users-table">
 			<thead>
 				<tr>
-					<th v-if="selection">
-						<UiCheckbox
-							:model-value="allSelected"
-							:indeterminate="someSelected"
-							label="Select all users"
-							@update:model-value="emit('update:selected', $event ? rows.map((user) => user.user_id) : [])"
-						/>
-					</th>
 					<th
 						v-for="column in columns"
 						:key="column.key"
@@ -101,16 +82,9 @@ async function copy(id: string) {
 			</thead>
 			<tbody>
 				<tr v-if="loading">
-					<td :colspan="columns.length + (selection ? 1 : 0)" class="access-users-empty">🚅 Loading users...</td>
+					<td :colspan="columns.length" class="access-users-empty">🚅 Loading users...</td>
 				</tr>
 				<tr v-for="user in loading ? [] : rows" :key="user.user_id" class="access-users-row" @click="openRow($event, user)">
-					<td v-if="selection">
-						<UiCheckbox
-							:model-value="selected.includes(user.user_id)"
-							:label="'Select user ' + user.user_id"
-							@update:model-value="select(user.user_id, $event)"
-						/>
-					</td>
 					<td>
 						<div class="access-user-id-cell">
 							<button type="button" class="access-user-id" :title="user.user_id" @click="emit('open', user)">
@@ -153,21 +127,13 @@ async function copy(id: string) {
 								aria-label="Delete user"
 								@click="emit('delete', user)"
 							>
-								<AccessHeroIconComponent name="Trash" :size="20" /></button
-							><button
-								type="button"
-								class="access-users-row-action"
-								title="Reset Password"
-								aria-label="Reset Password"
-								@click="emit('reset', user.user_id)"
-							>
-								<AccessHeroIconComponent name="Refresh" :size="20" />
+								<AccessHeroIconComponent name="Trash" :size="20" />
 							</button>
 						</div>
 					</td>
 				</tr>
 				<tr v-if="!loading && !rows.length">
-					<td :colspan="columns.length + (selection ? 1 : 0)" class="access-users-empty">No users found</td>
+					<td :colspan="columns.length" class="access-users-empty">No users found</td>
 				</tr>
 			</tbody>
 		</table>

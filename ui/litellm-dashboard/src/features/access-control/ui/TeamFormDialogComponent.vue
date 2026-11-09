@@ -8,8 +8,6 @@ import UiAlert from "../../platform/ui/UiAlert.vue";
 import AccessFieldComponent from "./AccessFieldComponent.vue";
 import TeamGeneralFieldsComponent from "./TeamGeneralFieldsComponent.vue";
 import TeamAdvancedFieldsComponent from "./TeamAdvancedFieldsComponent.vue";
-import AccessPolicyFieldsComponent from "./AccessPolicyFieldsComponent.vue";
-import AccessResourcesComponent from "./AccessResourcesComponent.vue";
 import RouterSettingsFormComponent from "./RouterSettingsFormComponent.vue";
 import ModelAliasesComponent from "./ModelAliasesComponent.vue";
 import KeyLoggingFieldsComponent from "../../virtual-keys/ui/KeyLoggingFieldsComponent.vue";
@@ -160,12 +158,7 @@ function submit() {
 					</svg>
 				</summary>
 				<div>
-					<TeamAdvancedFieldsComponent v-model="draft" :premium="premium" :errors="errors" /><AccessPolicyFieldsComponent
-						v-model="draft"
-						:catalog="catalog"
-						:premium="premium"
-						horizontal
-					/>
+					<TeamAdvancedFieldsComponent v-model="draft" :premium="premium" :errors="errors" />
 				</div>
 			</details>
 			<details class="access-tremor-accordion">
@@ -184,7 +177,6 @@ function submit() {
 						/>
 					</svg>
 				</summary>
-				<div><AccessResourcesComponent v-model="draft" :catalog="catalog" /></div>
 			</details>
 			<details class="access-tremor-accordion" :open="loggingOpen">
 				<summary @click.prevent="loggingOpen = !loggingOpen">

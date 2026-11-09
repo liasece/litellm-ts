@@ -17,7 +17,6 @@ export function createTeamsStore(role: string, userId: string, onChanged: () => 
 			sortBy: "created_at",
 			sortOrder: "desc" as "asc" | "desc",
 			tab: "your-teams",
-			available: [] as AccessTeam[],
 			createOpen: false,
 			deleting: null as AccessTeam | null,
 			detailId: "",
@@ -106,21 +105,10 @@ export function createTeamsStore(role: string, userId: string, onChanged: () => 
 			state.deleting = null;
 		}
 	}
-	async function available() {
-		try {
-			state.available = await api.availableTeams();
-		} catch (reason) {
-			state.error = reason instanceof Error ? reason.message : "Failed to load available teams";
-		}
-	}
-	async function join(teamId: string) {
-		if (await run(() => api.addTeamMember(teamId, { user_id: userId, role: "user" }), "Successfully joined team"))
-			state.available = state.available.filter((team) => team.team_id !== teamId);
-	}
 	function dispose() {
 		++generation;
 		controller?.abort();
 		if (timer) clearTimeout(timer);
 	}
-	return { state, rows, refresh, search, filter, sort, create, remove, available, join, dispose };
+	return { state, rows, refresh, search, filter, sort, create, remove, dispose };
 }

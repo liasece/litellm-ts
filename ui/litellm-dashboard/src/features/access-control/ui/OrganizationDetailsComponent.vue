@@ -14,7 +14,7 @@ import PermissionSummaryComponent from "./PermissionSummaryComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { createOrganizationDetailStore } from "../stores/OrganizationDetailStore";
 import { organizationDraft } from "../logic/ResourceDraftLogic";
-import type { AccessCatalog, AccessMember } from "../support/AccessModels";
+import type { AccessCatalog } from "../support/AccessModels";
 const props = defineProps<{ organizationId: string; catalog: AccessCatalog; edit?: boolean; canEdit: boolean }>(),
 	emit = defineEmits<{ back: []; changed: [] }>();
 const store = createOrganizationDetailStore(props.organizationId, () => emit("changed")),
@@ -30,12 +30,7 @@ watch(
 		error.value = "";
 	},
 );
-function editMember(member: AccessMember) {
-	state.editingMember = member;
-	state.memberOpen = true;
-}
 function addMember() {
-	state.editingMember = null;
 	state.memberOpen = true;
 }
 function save() {
@@ -118,7 +113,7 @@ onBeforeUnmount(store.dispose);
 						catalog.teams.find((value) => value.team_id === team.team_id)?.team_alias || team.team_id
 					}}</UiTag>
 				</div></UiCard
-			><PermissionSummaryComponent :catalog="catalog" :permission="data.object_permission" />
+			><PermissionSummaryComponent :permission="data.object_permission" />
 		</div>
 		<MembersTableComponent
 			v-else-if="tab === 'members'"
@@ -126,7 +121,6 @@ onBeforeUnmount(store.dispose);
 			:can-edit="canEdit"
 			organization
 			@add="addMember"
-			@edit="editMember"
 			@delete="store.deleteMember"
 		/><UiCard v-else class="access-team-settings"
 			><header>
@@ -174,13 +168,7 @@ onBeforeUnmount(store.dispose);
 					</div>
 					<div>Reset: {{ data.litellm_budget_table.budget_duration || "Never" }}</div>
 				</div>
-				<PermissionSummaryComponent :catalog="catalog" :permission="data.object_permission" inline /></div></UiCard
-		><MemberDialogComponent
-			v-model:open="state.memberOpen"
-			:member="state.editingMember"
-			:pending="state.pending"
-			organization
-			@submit="store.member"
-		/>
+				<PermissionSummaryComponent :permission="data.object_permission" inline /></div></UiCard
+		><MemberDialogComponent v-model:open="state.memberOpen" :pending="state.pending" organization @submit="store.member" />
 	</div>
 </template>

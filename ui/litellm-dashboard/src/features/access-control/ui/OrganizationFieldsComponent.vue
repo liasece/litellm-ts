@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import AccessFieldComponent from "./AccessFieldComponent.vue";
 import AccessModelOverflowComponent from "./AccessModelOverflowComponent.vue";
-import AccessResourcesComponent from "./AccessResourcesComponent.vue";
 import { organizationFields, budgetDurationOptions } from "../support/TeamFields";
 import type { AccessCatalog, AccessRecord } from "../support/AccessModels";
 const draft = defineModel<AccessRecord>({ required: true });
@@ -46,7 +45,7 @@ defineProps<{ catalog: AccessCatalog; editing?: boolean; errors?: Record<string,
 			:horizontal="!editing"
 			><template v-if="field.name === 'models'" #overflow="{ options: omitted, count }"
 				><AccessModelOverflowComponent :options="omitted" :count="count" /></template></AccessFieldComponent
-		><AccessResourcesComponent v-model="draft" :catalog="catalog" organization :editing="editing" /><AccessFieldComponent
+		><AccessFieldComponent
 			v-model="draft.metadata"
 			name="organization-metadata"
 			label="Metadata"

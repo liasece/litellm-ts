@@ -1,9 +1,6 @@
-import { notificationManager } from "../../notifications/logic/NotificationManager";
 import { reactive, shallowRef } from "vue";
 import { accessApi, type AccessApi } from "../api/AccessApi";
-import { objectValue } from "../logic/ResourceDraftLogic";
-import { buildBulkUserPayload, buildInviteUserPayload } from "../logic/UserDraftLogic";
-import type { AccessRecord, AccessTeam, AccessUser } from "../support/AccessModels";
+import type { AccessTeam, AccessUser } from "../support/AccessModels";
 export function emptyUserFilters() {
 	return {
 		email: "",
@@ -28,18 +25,9 @@ export function createUsersStore(organizationIds: string[], api: AccessApi = acc
 			total: 0,
 			totalPages: 1,
 			expanded: false,
-			selection: false,
-			selected: [] as string[],
 			detailId: "",
 			editDetail: false,
 			deleting: null as AccessUser | null,
-			inviteOpen: false,
-			bulkInviteOpen: false,
-			bulkEditOpen: false,
-			invitationOpen: false,
-			invitation: null as AccessRecord | null,
-			resetInvitation: false,
-			tab: "users",
 		});
 	let generation = 0,
 		controller: AbortController | null = null,
@@ -103,95 +91,6 @@ export function createUsersStore(organizationIds: string[], api: AccessApi = acc
 			state.pending = false;
 		}
 	}
-	async function resetPassword(id: string) {
-		notificationManager.success("Generating password reset link...");
-		try {
-			state.invitation = await api.invite(id);
-			state.resetInvitation = true;
-			state.invitationOpen = true;
-		} catch (reason) {
-			state.error = reason instanceof Error ? reason.message : "Failed to generate password reset link";
-		}
-	}
-	async function invite(value: AccessRecord, sso: boolean) {
-		state.pending = true;
-		state.error = "";
-		try {
-			const response = objectValue(await api.createUser(buildInviteUserPayload(value)));
-			const userId = String(objectValue(response.data).user_id ?? response.user_id ?? "");
-			if (!userId) throw new Error("User creation did not return a user ID");
-			await refresh();
-			state.invitation = sso
-				? { id: crypto.randomUUID(), user_id: userId, has_user_setup_sso: true }
-				: { ...(await api.invite(userId)), has_user_setup_sso: false };
-			state.resetInvitation = false;
-			state.invitationOpen = true;
-			state.message = "API user Created";
-			return true;
-		} catch (reason) {
-			state.error = reason instanceof Error ? reason.message : "Error creating the user";
-			return false;
-		} finally {
-			state.pending = false;
-		}
-	}
-	async function bulk(value: AccessRecord, teamIds: string[], budget: number | null, all: boolean) {
-		const body = buildBulkUserPayload(value);
-		if (!Object.keys(body).length && !teamIds.length) {
-			state.error = "Please modify at least one field or select teams to add users to";
-			return false;
-		}
-		state.pending = true;
-		state.error = "";
-		try {
-			const messages: string[] = [];
-			if (Object.keys(body).length) {
-				const result = objectValue(await api.bulkUpdateUsers(body, state.selected, all));
-				messages.push(
-					all ? "Updated all users (" + result.total_requested + " total)" : "Updated " + state.selected.length + " user(s)",
-				);
-			}
-			let successful = 0,
-				failed = 0,
-				additions = 0;
-			for (const id of teamIds) {
-				try {
-					const result = objectValue(
-						await api.bulkTeamMembers(
-							id,
-							state.selected.map((userId) => ({
-								user_id: userId,
-								role: "user",
-								user_email: rows.value.find((user) => user.user_id === userId)?.user_email ?? null,
-							})),
-							budget || null,
-							all,
-						),
-					);
-					successful++;
-					additions += Number(result.successful_additions ?? 0);
-				} catch {
-					failed++;
-				}
-			}
-			if (successful) messages.push("Added users to " + successful + " team(s) (" + additions + " total additions)");
-			if (failed) state.error = "Failed to add users to " + failed + " team(s)";
-			state.message = messages.join(". ");
-			state.selected = [];
-			state.selection = false;
-			state.bulkEditOpen = false;
-			await refresh();
-			return true;
-		} catch (reason) {
-			state.error = reason instanceof Error ? reason.message : "Failed to perform bulk operations";
-			return false;
-		} finally {
-			state.pending = false;
-		}
-	}
-	function selectedUsers() {
-		return rows.value.filter((user) => state.selected.includes(user.user_id));
-	}
 	function userTeams(user: AccessUser, teams: AccessTeam[]) {
 		return (user.teams ?? [])
 			.map((id) => teams.find((team) => team.team_id === id))
@@ -202,5 +101,5 @@ export function createUsersStore(organizationIds: string[], api: AccessApi = acc
 		controller?.abort();
 		if (timer) clearTimeout(timer);
 	}
-	return { state, rows, refresh, filter, reset, remove, resetPassword, invite, bulk, selectedUsers, userTeams, dispose };
+	return { state, rows, refresh, filter, reset, remove, userTeams, dispose };
 }
