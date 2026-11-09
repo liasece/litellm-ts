@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { BaseRepository } from "../core/db/BaseRepository";
 import type { DrizzleDb } from "../core/db/Database";
-import { runtimeConfigCacheFor } from "./RuntimeConfigCache";
 import { LiteLLM_CredentialsTable } from "../db/schema/credentials";
-import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
+import { revisionCounterFor, TableCache } from "./internal/TableCache";
+import { modelRepositoryFor } from "./ModelRepository";
 import type { AttachedCredentialResult, CredentialAttachmentFactory } from "../credentials/CredentialService";
+
+/** 数据库明文存储的 Credential 行。 */
+export type CredentialRow = typeof LiteLLM_CredentialsTable.$inferSelect;
 
 /** 数据库明文存储的 Credential。 */
 export interface CredentialRecord {
@@ -47,15 +50,62 @@ export class CredentialRepositoryConflictError extends Error {
 	}
 }
 
+const caches = new WeakMap<object, TableCache<CredentialRow>>();
+const repositories = new WeakMap<object, CredentialRepository>();
+
+function cacheFor(db: DrizzleDb): TableCache<CredentialRow> {
+	const key = db as unknown as object;
+	const existing = caches.get(key);
+	if (existing !== undefined) {
+		return existing;
+	}
+	const created = new TableCache<CredentialRow>(() => db.select().from(LiteLLM_CredentialsTable), revisionCounterFor(key));
+	caches.set(key, created);
+	return created;
+}
+
+/**
+ * 取得与数据库连接绑定的凭据仓库；同一连接上的所有调用方共享同一份副本。
+ * @param db - Drizzle 数据库实例
+ */
+export function credentialRepositoryFor(db: DrizzleDb): CredentialRepository {
+	const key = db as unknown as object;
+	const existing = repositories.get(key);
+	if (existing !== undefined) {
+		return existing;
+	}
+	const created = new CredentialRepository(db);
+	repositories.set(key, created);
+	return created;
+}
+
 /** 复用 LiteLLM_CredentialsTable 的凭据持久层。 */
 export class CredentialRepository extends BaseRepository {
+	private readonly _cache: TableCache<CredentialRow>;
+
 	constructor(db: DrizzleDb) {
 		super(db);
+		this._cache = cacheFor(db);
+	}
+
+	/** 当前副本版本号，供请求级快照判重。 */
+	revision(): number {
+		return this._cache.revision();
+	}
+
+	/** 读取全部凭据行；返回共享副本，调用方只读。 */
+	async snapshotRows(): Promise<CredentialRow[]> {
+		return await this._cache.rows();
+	}
+
+	/** 外部直接改库后强制重新装载；应用内写路径不需要调用。 */
+	invalidateCache(): void {
+		this._cache.invalidate();
 	}
 
 	/** 返回全部持久化 Credential 记录。 */
 	async list(): Promise<CredentialRecord[]> {
-		const rows = await this._db.select().from(LiteLLM_CredentialsTable);
+		const rows = await this._cache.rows();
 		return rows.map((row) => this._toRecord(row));
 	}
 
@@ -64,12 +114,8 @@ export class CredentialRepository extends BaseRepository {
 	 * @param credentialName
 	 */
 	async findByName(credentialName: string): Promise<CredentialRecord | null> {
-		const rows = await this._db
-			.select()
-			.from(LiteLLM_CredentialsTable)
-			.where(eq(LiteLLM_CredentialsTable.credential_name, credentialName))
-			.limit(1);
-		const row = rows.at(0);
+		const rows = await this._cache.rows();
+		const row = rows.find((candidate) => candidate.credential_name === credentialName);
 		return row === undefined ? null : this._toRecord(row);
 	}
 
@@ -84,7 +130,7 @@ export class CredentialRepository extends BaseRepository {
 			if (row === undefined) {
 				throw new Error("Credential insert did not return a row");
 			}
-			runtimeConfigCacheFor(this._db).invalidateCredentials();
+			this._cache.invalidate();
 			return this._toRecord(row);
 		} catch (error) {
 			this._rethrowConflict(error);
@@ -111,7 +157,7 @@ export class CredentialRepository extends BaseRepository {
 			if (row === undefined) {
 				return null;
 			}
-			runtimeConfigCacheFor(this._db).invalidateCredentials();
+			this._cache.invalidate();
 			return this._toRecord(row);
 		} catch (error) {
 			this._rethrowConflict(error);
@@ -127,9 +173,10 @@ export class CredentialRepository extends BaseRepository {
 			.where(eq(LiteLLM_CredentialsTable.credential_name, credentialName))
 			.returning({ credential_name: LiteLLM_CredentialsTable.credential_name });
 		if (deleted.length > 0) {
-			runtimeConfigCacheFor(this._db).invalidateCredentials();
+			this._cache.invalidate();
+			return true;
 		}
-		return deleted.length > 0;
+		return false;
 	}
 
 	/**
@@ -138,23 +185,22 @@ export class CredentialRepository extends BaseRepository {
 	 * @param credentialName
 	 */
 	async deleteIfUnreferenced(credentialName: string): Promise<"deleted" | "not_found" | "referenced"> {
+		const modelRepository = modelRepositoryFor(this._db);
 		const result = await this._db.transaction(async (tx) => {
 			const locked = await tx.execute(
 				sql`SELECT credential_name FROM "LiteLLM_CredentialsTable" WHERE credential_name = ${credentialName} FOR UPDATE`,
 			);
 			if (locked.rows.length === 0) {
-				return "not_found";
+				return "not_found" as const;
 			}
-			const models = await tx.select().from(LiteLLM_ProxyModelTable);
-			const referenced = models.some((model) => this._asRecord(model.litellm_params).litellm_credential_name === credentialName);
-			if (referenced) {
-				return "referenced";
+			if (await modelRepository.isCredentialReferenced(credentialName, tx)) {
+				return "referenced" as const;
 			}
 			await tx.delete(LiteLLM_CredentialsTable).where(eq(LiteLLM_CredentialsTable.credential_name, credentialName));
-			return "deleted";
+			return "deleted" as const;
 		});
 		if (result === "deleted") {
-			runtimeConfigCacheFor(this._db).invalidateCredentials();
+			this._cache.invalidate();
 		}
 		return result;
 	}
@@ -163,17 +209,15 @@ export class CredentialRepository extends BaseRepository {
 	 * @param credentialName
 	 */
 	async isReferenced(credentialName: string): Promise<boolean> {
-		const models = await this._db.select().from(LiteLLM_ProxyModelTable);
-		return models.some((model) => this._asRecord(model.litellm_params).litellm_credential_name === credentialName);
+		return await modelRepositoryFor(this._db).isCredentialReferenced(credentialName);
 	}
 
 	/**
 	 * @param modelId
 	 */
 	async findModelById(modelId: string): Promise<CredentialModelRecord | null> {
-		const rows = await this._db.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1);
-		const row = rows.at(0);
-		if (row === undefined) {
+		const row = await modelRepositoryFor(this._db).findById(modelId);
+		if (row === null) {
 			return null;
 		}
 		return {
@@ -193,15 +237,11 @@ export class CredentialRepository extends BaseRepository {
 	 */
 	async createAndAttachToModel(modelId: string, createCredential: CredentialAttachmentFactory): Promise<AttachedCredentialResult | null> {
 		try {
+			const modelRepository = modelRepositoryFor(this._db);
 			const result = await this._db.transaction(async (tx) => {
-				const locked = await tx.execute(sql`SELECT model_id FROM "LiteLLM_ProxyModelTable" WHERE model_id = ${modelId} FOR UPDATE`);
-				if (locked.rows.length === 0) {
+				const model = await modelRepository.lockRowInTx(tx, modelId);
+				if (model === null) {
 					return null;
-				}
-				const rows = await tx.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1);
-				const model = rows.at(0);
-				if (model === undefined) {
-					throw new Error("Locked model is unavailable");
 				}
 				const currentParams = { ...this._asRecord(model.litellm_params) };
 				const credential = createCredential(currentParams);
@@ -225,12 +265,12 @@ export class CredentialRepository extends BaseRepository {
 				if (insertedCredential === undefined) {
 					throw new Error("Credential insert did not return a row");
 				}
-				const updated = await tx
-					.update(LiteLLM_ProxyModelTable)
-					.set({ litellm_params: currentParams, updated_by: credential.updated_by, updated_at: new Date() })
-					.where(eq(LiteLLM_ProxyModelTable.model_id, modelId))
-					.returning();
-				if (updated.length === 0) {
+				const updated = await modelRepository.updateInTx(tx, modelId, {
+					litellm_params: currentParams,
+					updated_by: credential.updated_by,
+					updated_at: new Date(),
+				});
+				if (updated === null) {
 					throw new Error("Locked model update did not return a row");
 				}
 				return {
@@ -239,9 +279,8 @@ export class CredentialRepository extends BaseRepository {
 				};
 			});
 			if (result !== null && result.credential !== null) {
-				const cache = runtimeConfigCacheFor(this._db);
-				cache.invalidateCredentials();
-				cache.invalidateModels();
+				this._cache.invalidate();
+				modelRepository.invalidateCache();
 			}
 			return result;
 		} catch (error) {
@@ -260,7 +299,7 @@ export class CredentialRepository extends BaseRepository {
 		};
 	}
 
-	private _toRecord(row: typeof LiteLLM_CredentialsTable.$inferSelect): CredentialRecord {
+	private _toRecord(row: CredentialRow): CredentialRecord {
 		return {
 			credential_name: row.credential_name,
 			credential_values: { ...this._asRecord(row.credential_values) },

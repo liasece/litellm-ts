@@ -1,5 +1,5 @@
 import { dbConfigProvider } from "./DbConfigProvider";
-import { runtimeConfigCacheFor } from "../../repositories/RuntimeConfigCache";
+import { configRepositoryFor } from "../../repositories/ConfigRepository";
 
 type ConfigRow = { param_name: string; param_value: unknown };
 
@@ -29,7 +29,7 @@ describe("DbConfigProvider", () => {
 		expect(calls.config).toBe(1);
 
 		state[0] = { param_name: "general_settings", param_value: { store_prompts_in_spend_logs: true } };
-		runtimeConfigCacheFor(db).invalidateConfig();
+		configRepositoryFor(db).invalidateCache();
 
 		expect(await dbConfigProvider.getParam("general_settings")).toEqual({ store_prompts_in_spend_logs: true });
 		expect(calls.config).toBe(2);
@@ -47,7 +47,7 @@ describe("DbConfigProvider", () => {
 		expect(await dbConfigProvider.getEffectiveParam("litellm_settings")).toEqual({ enabled: false, keepalive_seconds: 0 });
 
 		state[0] = { param_name: "litellm_settings", param_value: {} };
-		runtimeConfigCacheFor(db).invalidateConfig();
+		configRepositoryFor(db).invalidateCache();
 		expect(await dbConfigProvider.getEffectiveParam("litellm_settings")).toEqual({ enabled: true, keepalive_seconds: 10 });
 		dbConfigProvider.setDefaults({});
 	});

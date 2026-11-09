@@ -54,9 +54,10 @@ describe("CredentialRepository", () => {
 
 	it("createAndAttachToModel 先锁定模型，模型 update 零行显式失败", async () => {
 		const tx = {
-			execute: jest.fn().mockResolvedValue({ rows: [{ model_id: "model-1" }] }),
 			select: jest.fn().mockReturnValue({
-				from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([model]) }) }),
+				from: jest.fn().mockReturnValue({
+					where: jest.fn().mockReturnValue({ limit: jest.fn().mockReturnValue({ for: jest.fn().mockResolvedValue([model]) }) }),
+				}),
 			}),
 			insert: jest.fn().mockReturnValue({ values: jest.fn().mockReturnValue({ returning: jest.fn().mockResolvedValue([stored]) }) }),
 			update: jest.fn().mockReturnValue({
@@ -75,7 +76,7 @@ describe("CredentialRepository", () => {
 				updated_by: "user-a",
 			})),
 		).rejects.toThrow("Locked model update did not return a row");
-		expect(tx.execute).toHaveBeenCalledTimes(1);
+		expect(tx.select).toHaveBeenCalledTimes(1);
 	});
 
 	it("将 PostgreSQL 唯一约束冲突转换为可识别错误且不泄露值", async () => {

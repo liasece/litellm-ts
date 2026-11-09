@@ -167,6 +167,18 @@ export default [
 					},
 				},
 			],
+			"no-restricted-imports": [
+				"error",
+				{
+					patterns: [
+						{
+							group: ["**/db/schema/config", "**/db/schema/credentials", "**/db/schema/proxyModels"],
+							message:
+								"运行时配置表只能由拥有它的 repository 访问（ConfigRepository / ModelRepository / CredentialRepository）",
+						},
+					],
+				},
+			],
 			"no-restricted-syntax": [
 				"error",
 				{
@@ -178,6 +190,16 @@ export default [
 					message: "禁止使用 export * 桶导出，请直接从源文件导入",
 				},
 			],
+		},
+	},
+	{
+		files: [
+			"src/repositories/ConfigRepository.ts",
+			"src/repositories/ModelRepository.ts",
+			"src/repositories/CredentialRepository.ts",
+		],
+		rules: {
+			"no-restricted-imports": "off",
 		},
 	},
 	{

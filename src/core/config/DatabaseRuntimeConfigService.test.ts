@@ -3,7 +3,9 @@ import { DatabaseRuntimeConfigService } from "./DatabaseRuntimeConfigService";
 import { Router } from "../../router/Router";
 import { RoutingStrategyName } from "../../types/router";
 import { ConfigRepository } from "../../repositories/ConfigRepository";
-import { runtimeConfigCacheFor } from "../../repositories/RuntimeConfigCache";
+import { configRepositoryFor } from "../../repositories/ConfigRepository";
+import { modelRepositoryFor } from "../../repositories/ModelRepository";
+import { credentialRepositoryFor } from "../../repositories/CredentialRepository";
 
 interface TableState {
 	config: Array<{ param_name: string; param_value: Record<string, unknown> }>;
@@ -99,7 +101,9 @@ describe("DatabaseRuntimeConfigService", () => {
 					model_info: {},
 				},
 			];
-			runtimeConfigCacheFor(db).invalidateAll();
+			configRepositoryFor(db).invalidateCache();
+			modelRepositoryFor(db).invalidateCache();
+			credentialRepositoryFor(db).invalidateCache();
 
 			const second = await service.loadSnapshot(router);
 			router.runWithRuntimeSnapshot(second, () => {
@@ -139,7 +143,7 @@ describe("DatabaseRuntimeConfigService", () => {
 				model_info: {},
 			},
 		];
-		runtimeConfigCacheFor(db).invalidateModels();
+		modelRepositoryFor(db).invalidateCache();
 		await new ConfigRepository(db).upsertParam("router_settings", {
 			model_group_alias: { alias_new: "group-new" },
 			routing_strategy: "simple-shuffle",
@@ -168,7 +172,7 @@ describe("DatabaseRuntimeConfigService", () => {
 				credential_info: { custom_llm_provider: "openai" },
 			},
 		];
-		runtimeConfigCacheFor(db).invalidateCredentials();
+		credentialRepositoryFor(db).invalidateCache();
 
 		const snapshot = await service.loadSnapshot(router);
 		await router.runWithRuntimeSnapshot(snapshot, async () => {

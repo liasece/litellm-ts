@@ -22,8 +22,7 @@ import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { createModuleLogger } from "../core/utils/logger";
 import { YAML_DIFF_SETTING_SECTIONS, yamlConfigDiffService, type YamlDiffSection } from "../core/config/YamlConfigDiffService";
 import type { DrizzleDb } from "../core/db/Database";
-import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
-import { runtimeConfigCacheFor } from "../repositories/RuntimeConfigCache";
+import { modelRepositoryFor } from "../repositories/ModelRepository";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
 import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
@@ -1667,27 +1666,14 @@ export function registerWebUiSupportRoutes(
 			const modelId = existingModelId ?? generateModelId(key, litellmParams);
 			const modelInfo = { ...yamlModelInfo, id: modelId, db_model: false };
 			const updatedBy = req.auth?.user_id ?? PROXY_ADMIN_USER_ID;
-			await db
-				.insert(LiteLLM_ProxyModelTable)
-				.values({
-					model_id: modelId,
-					model_name: key,
-					litellm_params: litellmParams,
-					model_info: modelInfo,
-					created_by: updatedBy,
-					updated_by: updatedBy,
-				})
-				.onConflictDoUpdate({
-					target: LiteLLM_ProxyModelTable.model_id,
-					set: {
-						model_name: key,
-						litellm_params: litellmParams,
-						model_info: modelInfo,
-						updated_by: updatedBy,
-						updated_at: new Date(),
-					},
-				});
-			runtimeConfigCacheFor(db).invalidateModels();
+			await modelRepositoryFor(db).upsertFromYaml({
+				model_id: modelId,
+				model_name: key,
+				litellm_params: litellmParams,
+				model_info: modelInfo,
+				created_by: updatedBy,
+				updated_by: updatedBy,
+			});
 		} else {
 			const existing = (await configRepository.getParam(section)) ?? {};
 			const next = { ...existing, [key]: deepMergeConfigValue(existing[key], item.yaml_value) };

@@ -18,7 +18,7 @@
  *   （那是网页新增的模型，DB 优先语义下合法）。
  */
 import * as crypto from "node:crypto";
-import { LiteLLM_ProxyModelTable } from "../../db/schema/proxyModels";
+import { modelRepositoryFor } from "../../repositories/ModelRepository";
 import { ConfigRepository } from "../../repositories/ConfigRepository";
 import type { DrizzleDb } from "../db/Database";
 import { createModuleLogger } from "../utils/logger";
@@ -245,7 +245,7 @@ export class YamlConfigDiffService {
 			}
 			let dbModels: ProxyModelRowLike[] = [];
 			try {
-				dbModels = await db.select().from(LiteLLM_ProxyModelTable);
+				dbModels = await modelRepositoryFor(db).snapshotRows();
 			} catch {
 				// LiteLLM_ProxyModelTable 不存在（全新部署）：视为空表
 			}

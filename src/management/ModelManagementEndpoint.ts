@@ -2,18 +2,16 @@
  * 代理模型管理端点 — CRUD 操作
  *
  * 工厂函数：createModelManagementRoutes(router, db, authMiddleware)
- * 注册所有 /model/* 路由，针对 LiteLLM_ProxyModelTable。
+ * 注册所有 /model/* 路由；模型行统一经 ModelRepository 读写。
  * 写操作响应逐字段对齐 Python 版实测结构（litellm/proxy/management_endpoints/model_management_endpoints.py）。
  */
 
 import { randomUUID } from "crypto";
 import type { Router, Request, RequestHandler } from "express";
-import { eq } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS, PYTHON_NONE_FILL } from "../core/api/ApiError";
-import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
-import { runtimeConfigCacheFor } from "../repositories/RuntimeConfigCache";
+import { modelRepositoryFor, type ModelRow, type ModelUpdateValues } from "../repositories/ModelRepository";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
 import { buildModelGroupOverrides } from "../router/ModelOverrides";
@@ -22,7 +20,7 @@ import { PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 
 const logger = createModuleLogger("Management:Model");
 
-type ProxyModelRow = typeof LiteLLM_ProxyModelTable.$inferSelect;
+type ProxyModelRow = ModelRow;
 
 /** Python LiteLLM_Params pydantic 缺省值：/model/new 实测响应中自动补齐的布尔字段。 */
 const LITELLM_PARAMS_DEFAULTS: Readonly<Record<string, boolean>> = {
@@ -185,26 +183,18 @@ export function createModelManagementRoutes(
 				updated_at: new Date(),
 				updated_by: createdBy,
 			} satisfies ProxyModelRow;
-			const currentRows = await db.select().from(LiteLLM_ProxyModelTable);
+			const modelRepository = modelRepositoryFor(db);
+			const currentRows = await modelRepository.snapshotRows();
 			validateModelOverrides([...currentRows, candidate]);
 
-			const inserted = await db
-				.insert(LiteLLM_ProxyModelTable)
-				.values({
-					model_id: candidate.model_id,
-					model_name: candidate.model_name,
-					litellm_params: candidate.litellm_params,
-					model_info: candidate.model_info,
-					created_by: candidate.created_by,
-					updated_by: candidate.updated_by,
-				})
-				.returning();
-
-			const insertedRow = inserted.at(0);
-			if (insertedRow === undefined) {
-				throw new Error("Model insert did not return a row");
-			}
-			runtimeConfigCacheFor(db).invalidateModels();
+			const insertedRow = await modelRepository.create({
+				model_id: candidate.model_id,
+				model_name: candidate.model_name,
+				litellm_params: candidate.litellm_params,
+				model_info: candidate.model_info,
+				created_by: candidate.created_by,
+				updated_by: candidate.updated_by,
+			});
 			logger.info(`代理模型已创建: ${String(modelName)} (${modelId})`);
 
 			// 批次 C3：落库后同步热更新 Router，新模型无需重启即可路由
@@ -220,9 +210,9 @@ export function createModelManagementRoutes(
 		updatedBy: string,
 		deleteNull: boolean,
 	): Promise<Record<string, unknown>> {
-		const existingRows = await db.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1);
-		const existing = existingRows[0];
-		if (existing === undefined) {
+		const modelRepository = modelRepositoryFor(db);
+		const existing = await modelRepository.findById(modelId);
+		if (existing === null) {
 			if (deleteNull) {
 				throw ApiError.notFound("Model not found");
 			}
@@ -283,7 +273,7 @@ export function createModelManagementRoutes(
 			};
 		}
 
-		const allRows = await db.select().from(LiteLLM_ProxyModelTable);
+		const allRows = await modelRepository.snapshotRows();
 		validateModelOverrides(
 			allRows.map((row) =>
 				(row.model_id === modelId
@@ -297,19 +287,13 @@ export function createModelManagementRoutes(
 			),
 		);
 
-		const updated = await db
-			.update(LiteLLM_ProxyModelTable)
-			.set(values)
-			.where(eq(LiteLLM_ProxyModelTable.model_id, modelId))
-			.returning();
-		const updatedRow = updated.at(0);
-		if (updatedRow === undefined) {
+		const updatedRow = await modelRepository.update(modelId, values as ModelUpdateValues);
+		if (updatedRow === null) {
 			if (deleteNull) {
 				throw ApiError.notFound("Model not found");
 			}
 			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Authentication Error, model not found", "auth_error", PYTHON_NONE_FILL);
 		}
-		runtimeConfigCacheFor(db).invalidateModels();
 		logger.info(`代理模型已更新: ${modelId}`);
 		litellmRouter?.upsertDeployment(proxyModelRowToDeployment(updatedRow));
 		return toPythonProxyModelRow(updatedRow);
@@ -375,9 +359,8 @@ export function createModelManagementRoutes(
 			if (typeof modelId !== "string" || modelId.length === 0) {
 				throw ApiError.badRequest("必须提供 modelId");
 			}
-			const rows = await db.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1);
-			const row = rows.at(0);
-			if (row === undefined) {
+			const row = await modelRepositoryFor(db).findById(modelId);
+			if (row === null) {
 				throw ApiError.notFound("Model not found");
 			}
 			return toPythonProxyModelRow(row);
@@ -397,12 +380,11 @@ export function createModelManagementRoutes(
 				throw ApiError.badRequest("必须提供 id");
 			}
 
-			const result = await db.delete(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId));
+			const deleted = await modelRepositoryFor(db).remove(modelId);
 
-			if (result.rowCount === 0) {
+			if (!deleted) {
 				throw ApiError.badRequest(`Model with id=${modelId} not found in db`);
 			}
-			runtimeConfigCacheFor(db).invalidateModels();
 
 			logger.info(`代理模型已删除: ${modelId}`);
 

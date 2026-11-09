@@ -2,7 +2,7 @@
  * 请求级数据库运行时配置。
  *
  * 每个需要 Router 的 HTTP 请求都绑定一份运行时快照（AsyncLocalStorage）。
- * 三张热表（配置、模型部署、凭据）由 `RuntimeConfigCache` 在 repository 层维护副本：
+ * 三张热表（配置、模型部署、凭据）各自由拥有该表的 repository 维护进程内副本：
  * 仓库写入成功后同步或失效副本，因此 WebUI 的配置修改对下一个请求立即生效；
  * 快照本身仍按请求重建，保证请求之间互不共享可变状态。
  */
@@ -15,12 +15,9 @@ import { CredentialRuntimeAccessor } from "../../credentials/CredentialRuntimeAc
 import { proxyModelRowToDeployment } from "../../router/ProxyModelDeployment";
 import type { Router, RouterRuntimeSnapshot } from "../../router/Router";
 import { RoutingStrategyName } from "../../types/router";
-import {
-	runtimeConfigCacheFor,
-	type RuntimeConfigRow,
-	type RuntimeCredentialRow,
-	type RuntimeModelRow,
-} from "../../repositories/RuntimeConfigCache";
+import { configRepositoryFor, type ConfigRow } from "../../repositories/ConfigRepository";
+import { modelRepositoryFor, type ModelRow } from "../../repositories/ModelRepository";
+import { credentialRepositoryFor, type CredentialRow } from "../../repositories/CredentialRepository";
 
 const logger = createModuleLogger("DatabaseRuntimeConfig");
 
@@ -71,24 +68,24 @@ export class DatabaseRuntimeConfigService {
 
 	/**
 	 * 读取一次完整运行时配置并构造请求级快照。
-	 * 三张表来自 repository 层缓存：命中时不产生数据库查询，失效后各装载一次。
+	 * 三张表来自各自的 repository 副本：命中时不产生数据库查询，失效后各装载一次。
 	 * @param router - 接收最新部署快照的 Router
 	 */
 	async loadSnapshot(router: Router): Promise<RouterRuntimeSnapshot> {
-		const cache = runtimeConfigCacheFor(this._db);
+		const configRepository = configRepositoryFor(this._db);
 		const [configRows, modelRows, credentialRows] = await Promise.all([
-			cache.configRows(),
-			cache.modelRows(),
-			cache.credentialRows(),
+			configRepository.snapshotRows(),
+			modelRepositoryFor(this._db).snapshotRows(),
+			credentialRepositoryFor(this._db).snapshotRows(),
 		]);
-		return this._buildSnapshot(router, configRows, modelRows, credentialRows, cache.revision());
+		return this._buildSnapshot(router, configRows, modelRows, credentialRows, configRepository.revision());
 	}
 
 	private _buildSnapshot(
 		router: Router,
-		configRows: RuntimeConfigRow[],
-		modelRows: RuntimeModelRow[],
-		credentialRows: RuntimeCredentialRow[],
+		configRows: ConfigRow[],
+		modelRows: ModelRow[],
+		credentialRows: CredentialRow[],
 		revision: number,
 	): RouterRuntimeSnapshot {
 		const configByName = new Map(configRows.map((row) => [row.param_name, row.param_value]));
@@ -126,7 +123,7 @@ export class DatabaseRuntimeConfigService {
 		return async (_req: Request, _res: Response, next: NextFunction): Promise<void> => {
 			try {
 				const existing = router.currentRuntimeSnapshot();
-				if (existing !== undefined && existing.configRevision === runtimeConfigCacheFor(this._db).revision()) {
+				if (existing !== undefined && existing.configRevision === configRepositoryFor(this._db).revision()) {
 					next();
 					return;
 				}
