@@ -10,7 +10,7 @@ import (
 )
 
 // This catalog includes every registered source, including third-party plugins.
-// A legacy model can be assigned to a subscription only when its owner is unique.
+// Account-bound SDK operations use this index to reject ambiguous native model IDs.
 func registerCatalog(engine *gin.Engine, _ *handlers.BaseAPIHandler, cfg *config.Config) {
 	engine.GET("/_litellm/subscription-catalog", func(c *gin.Context) {
 		if !authorized(c, cfg) {

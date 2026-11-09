@@ -140,11 +140,11 @@ describe("upstream Router regressions and strategy additions", () => {
 
 	it("degrades away from CLIProxy deployments while the runtime drains", () => {
 		const managed = deployment("group", "managed");
-		managed.litellm_params.custom_llm_provider = "cliproxy";
+		managed.litellm_params.custom_llm_provider = "codex-subscription";
 		const direct = deployment("group", "direct");
 		const instance = router([managed, direct]);
 		const managedOnly = deployment("managed-only", "managed-only");
-		managedOnly.litellm_params.custom_llm_provider = "cliproxy";
+		managedOnly.litellm_params.custom_llm_provider = "codex-subscription";
 		const managedOnlyInstance = router([managedOnly]);
 
 		instance.trackActiveRequest("managed", 1);

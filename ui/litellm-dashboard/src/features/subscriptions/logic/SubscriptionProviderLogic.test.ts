@@ -3,7 +3,6 @@ import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLo
 import {
 	SUBSCRIPTION_PROVIDER_ACCOUNT_SOURCES,
 	SUBSCRIPTION_PROVIDER_SLUGS,
-	isManagedProviderSlug,
 	isSubscriptionProviderSlug,
 	providerSlugFromValue,
 	subscriptionModelName,
@@ -41,10 +40,7 @@ describe("subscription provider registry", () => {
 		expect(providerSlugFromValue("")).toBe("");
 	});
 
-	it("treats legacy CLIProxy as managed but not as a first-party subscription", () => {
-		expect(isManagedProviderSlug("cliproxy")).toBe(true);
-		expect(isManagedProviderSlug("codex-subscription")).toBe(true);
-		expect(isManagedProviderSlug("openai")).toBe(false);
+	it("recognizes only active subscription providers", () => {
 		expect(isSubscriptionProviderSlug("cliproxy")).toBe(false);
 		expect(isSubscriptionProviderSlug("codex-subscription")).toBe(true);
 	});
@@ -67,9 +63,9 @@ describe("subscription provider registry", () => {
 	});
 
 	it("builds canonical model names without duplicating the provider prefix", () => {
-		expect(subscriptionModelName("codex-subscription", "gpt-5.4-codex")).toBe("codex-subscription/gpt-5.4-codex");
-		expect(subscriptionModelName("commandcode", "glm-5.3")).toBe("commandcode/glm-5.3");
-		expect(subscriptionModelName("opencode-go", "opencode-go/deepseek-v4.1-flash")).toBe("opencode-go/deepseek-v4.1-flash");
-		expect(subscriptionModelName(" Codex-Subscription ", "gpt-5.4")).toBe("codex-subscription/gpt-5.4");
+		expect(subscriptionModelName("codex-subscription", "gpt-5.4-codex")).toBe("gpt-5.4-codex");
+		expect(subscriptionModelName("commandcode", "glm-5.3")).toBe("glm-5.3");
+		expect(subscriptionModelName("opencode-go", "opencode-go/deepseek-v4.1-flash")).toBe("deepseek-v4.1-flash");
+		expect(subscriptionModelName(" Codex-Subscription ", "gpt-5.4")).toBe("gpt-5.4");
 	});
 });

@@ -1,5 +1,5 @@
 import type { LogEntry } from "../support/LogsModels";
-import { getModelLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
+import { modelSupplier } from "../../providers/logic/ProviderIdentityLogic";
 export function record(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -55,16 +55,22 @@ export function logStatus(log: LogEntry): string {
 	return String(log.metadata?.status || log.status || "success").toLowerCase();
 }
 export function modelIdentity(log: LogEntry) {
-	const provider = log.custom_llm_provider || "",
-		model = log.model || "";
-	const displayName = provider && model.toLowerCase().startsWith(provider.toLowerCase() + "/") ? model.slice(provider.length + 1) : model;
+	const model = log.model || "";
+	const request = record(record(log.proxy_server_request).upstream_request);
+	const upstream = record(request.body).model;
+	const upstreamModel = typeof upstream === "string" ? upstream.trim() : "";
+	const executed = upstreamModel || model;
+	const provider = modelSupplier(model, log.custom_llm_provider) || modelSupplier(executed, log.custom_llm_provider);
+	const prefix = log.custom_llm_provider || "";
+	const displayName = prefix && model.toLowerCase().startsWith(prefix.toLowerCase() + "/") ? model.slice(prefix.length + 1) : model;
 	const metadata = record(log.metadata),
 		tool = record(metadata.mcp_tool_call_metadata);
-	const logo =
-		typeof tool.mcp_server_logo_url === "string" ? tool.mcp_server_logo_url : provider ? getModelLogoAndName(provider, model).logo : "";
+	const storedFamily = record(record(metadata.model_map_information).model_map_value).model_family;
+	const family = !upstreamModel && (storedFamily === null || typeof storedFamily === "string") ? storedFamily : undefined;
+	const toolLogo = typeof tool.mcp_server_logo_url === "string" ? tool.mcp_server_logo_url : "";
 	const builtin = metadata.internal_call_type === "builtin_capability" ? String(metadata.builtin_capability || "unknown") : null;
 	const fallback = Array.isArray(metadata.fallback_models) ? Math.max(metadata.fallback_models.length - 1, 0) : 0;
-	return { provider, model, displayName, logo, builtin, fallback };
+	return { provider, executed, family, displayName, toolLogo, builtin, fallback };
 }
 export function outputTps(log: LogEntry): { value: number; duration: number; tokens: number } | "-" | null {
 	const tokens = Number(log.completion_tokens || 0);

@@ -134,6 +134,21 @@ func run(outDir string, allowOtherVersion bool) error {
 	}}); err != nil {
 		return err
 	}
+	// The public SDK accepts the router's decision per WebSocket turn. Extract
+	// LiteLLM's authenticated source alongside the original frame, before the
+	// SDK records it or forwards it to an executor.
+	if err := patchFile(filepath.Join(patchedDir, "sdk", "api", "handlers", "openai", "openai_responses_websocket.go"), []replacement{
+		{old: "\t\twsTimelineLog.BeginRequest()", new: `		turnParent := c.Request.Context()
+		if callback, ok := c.Get("litellm.subscriptionTurn"); ok {
+			if bind, ok := callback.(func(context.Context, []byte) (context.Context, []byte)); ok {
+				turnParent, payload = bind(turnParent, payload)
+			}
+		}
+		wsTimelineLog.BeginRequest()`},
+		{old: `executionParent := context.WithValue(c.Request.Context(), "gin", c)`, new: `executionParent := context.WithValue(turnParent, "gin", c)`},
+	}); err != nil {
+		return err
+	}
 	templateDir, err := overlayTemplateDir()
 	if err != nil {
 		return err

@@ -22,11 +22,7 @@ import {
 import { modelPriceIdentity } from "../logic/ModelDataLogic";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import { modelsApi } from "../api/ModelsApi";
-import {
-	isManagedProviderSlug,
-	isSubscriptionProviderSlug,
-	subscriptionModelName,
-} from "../../subscriptions/logic/SubscriptionProviderLogic";
+import { isSubscriptionProviderSlug } from "../../subscriptions/logic/SubscriptionProviderLogic";
 import { getServerRootPath } from "../../platform/api/HttpApiClient";
 import type { UiSelectOption } from "../../platform/ui/UiTypes";
 const draft = defineModel<Record<string, unknown>>({ required: true });
@@ -48,7 +44,7 @@ const provider = computed(() =>
 	modelString(props.editing ? draft.value.custom_llm_provider : params.value.custom_llm_provider).toLowerCase(),
 );
 const subscriptionSlug = computed(() => (isSubscriptionProviderSlug(provider.value) ? provider.value : ""));
-const managedProvider = computed(() => isManagedProviderSlug(provider.value));
+const managedProvider = computed(() => isSubscriptionProviderSlug(provider.value));
 const visibleModelFields = computed(() =>
 	managedProvider.value ? basicModelFields.filter((field) => field.key !== "api_base") : basicModelFields,
 );
@@ -73,15 +69,13 @@ const efforts = computed(() =>
 const knownModels = computed(() =>
 	subscriptionSlug.value
 		? managedModels.value
-		: provider.value === "cliproxy"
-			? managedModels.value
-			: Object.entries(props.catalog.costs)
-					.filter(([, entry]) => {
-						const slug = modelString(entry.litellm_provider);
-						return slug === provider.value || slug.startsWith(provider.value + "_") || slug.startsWith(provider.value + "-");
-					})
-					.map(([name]) => name)
-					.sort(),
+		: Object.entries(props.catalog.costs)
+				.filter(([, entry]) => {
+					const slug = modelString(entry.litellm_provider);
+					return slug === provider.value || slug.startsWith(provider.value + "_") || slug.startsWith(provider.value + "-");
+				})
+				.map(([name]) => name)
+				.sort(),
 );
 const wildcards = computed(() =>
 	props.catalog.hub
@@ -121,7 +115,7 @@ function text(value: unknown) {
 function setProvider(value: unknown) {
 	const next = modelString(value);
 	draft.value.custom_llm_provider = next;
-	if (isManagedProviderSlug(next))
+	if (isSubscriptionProviderSlug(next))
 		Object.assign(draft.value, { api_base: "", api_key: "", delete_api_key: true, litellm_credential_name: "" });
 }
 let generation = 0;
@@ -136,11 +130,7 @@ watch(
 		];
 		const results = await Promise.allSettled([
 			modelsApi.fetchModelCapabilities(),
-			slug === "cliproxy"
-				? modelsApi.fetchManagedModels().then((ids) => ids.map((id) => "cliproxy/" + id))
-				: isSubscriptionProviderSlug(slug)
-					? modelsApi.fetchSubscriptionModels(slug).then((ids) => ids.map((id) => subscriptionModelName(slug, id)))
-					: Promise.resolve([]),
+			isSubscriptionProviderSlug(slug) ? modelsApi.fetchSubscriptionModels(slug) : Promise.resolve([]),
 		]);
 		if (current !== generation) return;
 		if (results[0].status === "fulfilled")
@@ -232,12 +222,8 @@ watch(
 		/></ModelSettingCell>
 		<ModelSettingCell v-if="managedProvider" label="Credentials"
 			><div class="model-managed-credential-notice">
-				{{
-					subscriptionSlug
-						? "This subscription model uses the managed account pool. Add, rotate or disable accounts in Subscription accounts; no API key or base URL is stored on the deployment."
-						: "CLIProxy uses the managed runtime endpoint and internal key. No API key is required."
-				}}
-				<a v-if="subscriptionSlug" :href="accountHref">Manage subscription accounts</a>
+				This model uses the selected subscription’s account pool.
+				<a :href="accountHref">Manage subscription accounts</a>
 			</div></ModelSettingCell
 		><template v-else
 			><ModelSettingCell label="Existing Credentials"

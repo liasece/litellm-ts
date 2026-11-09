@@ -28,8 +28,8 @@ describe("CLIProxy WebSocket passthrough", () => {
 		const deployment: Deployment = {
 			model_name: "public-codex",
 			litellm_params: {
-				model: "cliproxy/gpt-5.6-sol",
-				custom_llm_provider: "cliproxy",
+				model: "gpt-5.6-sol",
+				custom_llm_provider: "codex-subscription",
 			},
 			model_info: { override_reasoning_effort: "max" },
 		};
@@ -93,6 +93,7 @@ describe("CLIProxy WebSocket passthrough", () => {
 			await upstreamReceived;
 			expect(upstreamAuthorization).toBe("Bearer internal-only");
 			expect(JSON.parse(upstreamMessage)).toMatchObject({
+				_litellm_subscription: "codex-subscription",
 				response: {
 					model: "gpt-5.6-sol",
 					input: "hello",

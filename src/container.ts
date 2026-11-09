@@ -167,7 +167,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 
 	// 3.1 模型、Router 设置与凭据不再跨请求加载到 Router。
 	// 每个需要 Router 的 HTTP 请求由 DatabaseRuntimeConfigService 建立一致的 DB 快照。
-	const runtimeConfigService = new DatabaseRuntimeConfigService(db.db, config, cliProxyRuntime.subscriptionCatalog);
+	const runtimeConfigService = new DatabaseRuntimeConfigService(db.db, config);
 
 	// 3.2 CLIProxy 是 LiteLLM 托管的内部运行时。DB 是期望配置源，生成文件与
 	// OAuth auth-dir 位于持久化卷；缺少 bootstrap binary 时不阻断网关启动。

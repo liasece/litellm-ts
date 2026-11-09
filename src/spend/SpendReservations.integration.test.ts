@@ -37,12 +37,11 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 			object_permission_id text,
 			blocked boolean NOT NULL DEFAULT false
 		)`);
-		const migrationSql = readFileSync(resolve(__dirname, "../../drizzle/0001_spend_reservations.sql"), "utf8");
-		for (const statement of migrationSql
-			.split("--> statement-breakpoint")
-			.map((value) => value.trim())
-			.filter(Boolean)) {
-			await pool.query(statement);
+		for (const file of ["0001_spend_reservations.sql", "0004_active_requests.sql"]) {
+			const migrationSql = readFileSync(resolve(__dirname, "../../drizzle", file), "utf8");
+			for (const statement of migrationSql.split("--> statement-breakpoint")) {
+				await pool.query(statement);
+			}
 		}
 		await db.execute(sql`CREATE TABLE "LiteLLM_SpendLogs" (
 			request_id text PRIMARY KEY,
@@ -82,7 +81,7 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 
 	beforeEach(async () => {
 		await db.execute(
-			sql`TRUNCATE "LiteLLM_SpendLogs", "LiteLLM_SpendReservations", "LiteLLM_VerificationToken", "LiteLLM_UserTable", "LiteLLM_EndUserTable", "LiteLLM_BudgetTable"`,
+			sql`TRUNCATE "LiteLLM_SpendLogs", "LiteLLM_SpendReservations", "LiteLLM_ActiveRequests", "LiteLLM_VerificationToken", "LiteLLM_UserTable", "LiteLLM_EndUserTable", "LiteLLM_BudgetTable"`,
 		);
 		await db.execute(sql`INSERT INTO "LiteLLM_VerificationToken" (token, max_budget, spend) VALUES ('key-a', 10, 0)`);
 	});

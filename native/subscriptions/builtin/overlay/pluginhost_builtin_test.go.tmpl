@@ -1,10 +1,6 @@
 package pluginhost
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"os"
-	"path/filepath"
 	"testing"
 
 	subbuiltin "github.com/jtllab/litellm-ts/subscriptions/builtin"
@@ -63,32 +59,6 @@ func TestBuiltinPluginFilesPreferDynamicLibrary(t *testing.T) {
 // The exact compatibility copy shipped alongside an older image must yield to
 // the compiled implementation; an operator-replaced library (different hash)
 // still wins through TestBuiltinPluginFilesPreferDynamicLibrary.
-func TestBuiltinPluginFilesReplaceShippedCompatibilityCopy(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "opencode-go-cliproxyapi.so")
-	payload := []byte("shipped compatibility copy")
-	if err := os.WriteFile(path, payload, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(payload)
-	if err := os.WriteFile(path+".litellm-sha256", []byte(hex.EncodeToString(sum[:])), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	files := appendBuiltinPluginFiles([]pluginFile{{ID: "opencode-go-cliproxyapi", Path: path, Version: "0.2.2"}})
-	for _, file := range files {
-		if file.ID != "opencode-go-cliproxyapi" {
-			continue
-		}
-		if !isBuiltinPluginFile(file) {
-			t.Fatalf("shipped copy was not replaced by the built-in: %+v", file)
-		}
-		return
-	}
-	t.Fatal("built-in was not appended for the shipped compatibility copy")
-}
-
-// plugins.configs.<id>.store.version pins must not silently be served by a
-// different built-in version.
 func TestBuiltinPluginFilesRespectVersionPin(t *testing.T) {
 	entry := builtinTestEntry(t, "opencode-go-cliproxyapi")
 	files := appendBuiltinPluginFiles(nil, map[string]string{entry.ID: "9.9.9"})

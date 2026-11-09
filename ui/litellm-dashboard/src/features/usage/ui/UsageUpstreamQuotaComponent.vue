@@ -40,7 +40,7 @@ function balance(value: { used: number; limit: number; unit: string }) {
 		<header>
 			<div>
 				<h4>Upstream account quota</h4>
-				<p>Remaining quota and balance for CLIProxy accounts and built-in provider keys.</p>
+				<p>Remaining quota and balance for subscription accounts and built-in provider keys.</p>
 			</div>
 			<UiButton :loading="state.refreshing" data-testid="upstream-quota-refresh" @click="store.load(true)"
 				><template #icon><UiIcon name="ReloadOutlined" /></template>Refresh</UiButton

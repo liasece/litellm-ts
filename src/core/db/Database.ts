@@ -163,6 +163,26 @@ interface MigrationRecord {
 	readonly created_at: string | null;
 }
 
+// Dry-run the same SELECT used to build migration 0014's transaction-local plan.
+async function checkPendingSubscriptionIdentities(client: PoolClient, pending: ReturnType<typeof readMigrationFiles>): Promise<void> {
+	const prefix = "CREATE TEMPORARY VIEW litellm_subscription_identity_plan AS";
+	const statement = pending.flatMap((migration) => migration.sql).map((part) => part.trim()).find((part) => part.startsWith(prefix));
+	if (!statement) {
+		return;
+	}
+	const select = statement.slice(prefix.length).trim().replace(/;$/, "");
+	const result = await client.query<{ unresolved: boolean }>(
+		"SELECT EXISTS (SELECT 1 FROM (" + select + ") AS plan WHERE provider IS NULL OR coalesce(upstream, '') = '' OR upstream ~* '^(cliproxy|codex-subscription|commandcode|opencode-go|kimi-subscription|claude-subscription|antigravity-subscription|xai-subscription)/') AS unresolved",
+	);
+	if (result.rows[0]?.unresolved) {
+		throw new ReadOnlyPreflightError(
+			"migrations",
+			"SUBSCRIPTION_PROVIDER_REQUIRED",
+			"Assign an explicit subscription provider and upstream model to unidentified deployments before upgrading",
+		);
+	}
+}
+
 async function inspectMigrationState(
 	client: PoolClient,
 	schemaName: string,
@@ -176,6 +196,7 @@ async function inspectMigrationState(
 		"SELECT to_regclass(format('%I.%I', current_schema(), '__drizzle_migrations')) IS NOT NULL AS exists",
 	);
 	if (existence.rows[0]?.exists !== true) {
+		await checkPendingSubscriptionIdentities(client, localMigrations);
 		return "unadopted";
 	}
 
@@ -204,6 +225,7 @@ async function inspectMigrationState(
 			throw new ReadOnlyPreflightError("migrations", "MIGRATION_ORDER_MISMATCH", "Registered migration order is invalid");
 		}
 	}
+	await checkPendingSubscriptionIdentities(client, localMigrations.slice(registered.rows.length));
 	return "managed";
 }
 

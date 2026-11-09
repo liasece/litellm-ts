@@ -1,4 +1,3 @@
-import type { SubscriptionCatalog } from "../../subscriptions/SubscriptionProviders";
 /**
  * 请求级数据库运行时配置。
  *
@@ -63,7 +62,6 @@ export class DatabaseRuntimeConfigService {
 	constructor(
 		private readonly _db: DrizzleDb,
 		config: ServiceConfig,
-		private readonly _subscriptions?: SubscriptionCatalog,
 	) {
 		this._yamlRouterSettings = buildYamlRouterSettings(config);
 	}
@@ -113,10 +111,7 @@ export class DatabaseRuntimeConfigService {
 			})),
 		);
 
-		const deployments = modelRows.map(row => {
-			const deployment = proxyModelRowToDeployment(row);
-			return this._subscriptions?.deployment(deployment) ?? deployment;
-		});
+		const deployments = modelRows.map(proxyModelRowToDeployment);
 		return router.createRuntimeSnapshot(deployments, effectiveSettings, credentials, revision);
 	}
 

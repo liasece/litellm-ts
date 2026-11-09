@@ -1,6 +1,5 @@
 import { ApiError } from "../core/api/ApiError";
 import { LlmProviders } from "../types/provider";
-import type { Deployment } from "../types/router";
 
 /** Public provider IDs and their account sources in the subscription runtime. */
 export const SUBSCRIPTION_PROVIDERS = {
@@ -15,16 +14,12 @@ export const SUBSCRIPTION_PROVIDERS = {
 
 /** Public subscription provider slug. */
 export type SubscriptionProvider = keyof typeof SUBSCRIPTION_PROVIDERS;
-/** An explicit subscription or the legacy resolver. */
-export type HostedProvider = SubscriptionProvider | LlmProviders.CLIProxy;
 /** Deployment fields used to select the account source. */
 export interface SubscriptionModelParams {
 	/** Configured upstream model with an optional provider prefix. */
 	readonly model?: unknown;
 	/** Explicit provider override from the deployment. */
 	readonly custom_llm_provider?: unknown;
-	/** Administrator-selected compatibility transport for this deployment. */
-	readonly subscription_transport?: unknown;
 }
 
 /**
@@ -38,21 +33,76 @@ export function isSubscriptionProvider(value: unknown): value is SubscriptionPro
  * An explicit deployment provider takes precedence over the first model segment.
  * @param params
  */
-export function hostedProvider(params: SubscriptionModelParams): HostedProvider | undefined {
-	const explicit = typeof params.custom_llm_provider === "string" ? params.custom_llm_provider.trim() : "";
+export function hostedProvider(params: SubscriptionModelParams): SubscriptionProvider | undefined {
+	const explicit = typeof params.custom_llm_provider === "string" ? params.custom_llm_provider.trim().toLowerCase() : "";
 	const model = typeof params.model === "string" ? params.model : "";
-	const prefix = model.includes("/") || model === LlmProviders.CLIProxy ? model.split("/", 1)[0] : "";
-	const name = (explicit || prefix || "").toLowerCase();
-	return isSubscriptionProvider(name) || name === LlmProviders.CLIProxy ? name : undefined;
+	const candidate = explicit || (model.includes("/") ? model.split("/", 1)[0]?.toLowerCase() : undefined);
+	return isSubscriptionProvider(candidate) ? candidate : undefined;
 }
 
 /**
- * Remove only the known transport prefix. A vendor segment inside a model ID is significant.
- * @param model
- * @param provider
+ * Accept a provider-qualified model at the configuration boundary and retain its actual vendor path.
+ * @param model - User-supplied upstream model.
+ * @param provider - Account source selected independently of the name.
  */
-export function withoutProvider(model: string, provider: HostedProvider): string {
-	return model.startsWith(provider + "/") ? model.slice(provider.length + 1) : model;
+export function withoutProvider(model: string, provider: SubscriptionProvider): string {
+	return model.toLowerCase().startsWith(provider + "/") ? model.slice(provider.length + 1) : model;
+}
+
+/**
+ * Canonical fields shared by model creation, model updates and YAML imports.
+ * @param params - A complete deployment configuration after merging a PATCH.
+ * @throws If the retired generic source is requested or the upstream ID is missing.
+ */
+export function subscriptionModelParams(params: Record<string, unknown>): Record<string, unknown> {
+	const model = typeof params["model"] === "string" ? params["model"].trim() : "";
+	const explicit = typeof params["custom_llm_provider"] === "string" ? params["custom_llm_provider"].trim().toLowerCase() : "";
+	if (explicit === "cliproxy" || /^cliproxy\//i.test(model) || Object.hasOwn(params, "subscription_transport")) {
+		throw ApiError.badRequest("请选择具体订阅 Provider，并填写上游模型 ID");
+	}
+	const provider = hostedProvider(params);
+	if (!provider) {
+		return params;
+	}
+	const upstream = withoutProvider(model, provider);
+	if (
+		!upstream ||
+		/^cliproxy\//i.test(upstream) ||
+		(upstream.includes("/") && isSubscriptionProvider(upstream.split("/", 1)[0]?.toLowerCase()))
+	) {
+		throw ApiError.badRequest("订阅模型需要独立的 Provider 和上游模型 ID");
+	}
+	const result = { ...params, model: upstream, custom_llm_provider: provider } as Record<string, unknown>;
+	if ("litellm_model_name" in result) {
+		result["litellm_model_name"] = upstream;
+	}
+	for (const field of ["api_base", "api_key", "litellm_credential_name", "credential_name"]) {
+		delete result[field];
+	}
+	return result;
+}
+
+/**
+ * Keep model metadata references consistent with the stored deployment, preserving independent price overrides.
+ * @param info - Model metadata copied from an input or merged update.
+ * @param params - Canonical deployment parameters.
+ */
+export function subscriptionModelInfo(info: Record<string, unknown>, params: Record<string, unknown>): Record<string, unknown> {
+	const source = hostedProvider(params);
+	if (!source) {
+		return info;
+	}
+	const result = { ...info };
+	for (const key of ["key", "base_model"]) {
+		const value = result[key];
+		if (typeof value === "string") {
+			result[key] = withoutProvider(value.replace(/^cliproxy\//i, ""), source);
+		}
+	}
+	if (result["litellm_provider"] === "cliproxy") {
+		result["litellm_provider"] = source;
+	}
+	return result;
 }
 
 /** One model and every account source that currently registers it. */
@@ -85,53 +135,6 @@ export class SubscriptionCatalog {
 		const sources = this._sources.get(model);
 		return sources?.length === 1 ? BY_SOURCE.get(sources[0]!) : undefined;
 	}
-
-	/**
-	 * @param provider
-	 * @param model
-	 */
-	wireModel(provider: HostedProvider, model: string): string {
-		const stored = withoutProvider(model, LlmProviders.CLIProxy);
-		if (provider === LlmProviders.CLIProxy) {
-			return stored;
-		}
-		const id = withoutProvider(stored, provider);
-		// The two plugins publish prefixed IDs by default, but operators can
-		// disable or customize that prefix. The current catalog decides.
-		if (provider === LlmProviders.CommandCode || provider === LlmProviders.OpenCodeGo) {
-			const qualified = provider + "/" + id;
-			if (this._sources.get(qualified)?.includes(SUBSCRIPTION_PROVIDERS[provider].source)) {
-				return qualified;
-			}
-			if (this._sources.get(id)?.includes(SUBSCRIPTION_PROVIDERS[provider].source)) {
-				return id;
-			}
-			return qualified;
-		}
-		return id;
-	}
-
-	/**
-	 * Project stored legacy deployments at request time without changing their IDs or database rows.
-	 * @param deployment
-	 */
-	deployment(deployment: Deployment): Deployment {
-		const params = deployment.litellm_params;
-		if (hostedProvider(params) !== LlmProviders.CLIProxy || params.subscription_transport === "compatibility") {
-			return deployment;
-		}
-		const id = withoutProvider(params.model, LlmProviders.CLIProxy);
-		const provider = this.owner(id);
-		if (!provider) {
-			return deployment;
-		}
-		return {
-			...deployment,
-			// Prices, historic Logs filters and model policies can refer to the
-			// exact stored model. Only the executing account source changes.
-			litellm_params: { ...params, custom_llm_provider: provider },
-		};
-	}
 }
 
 /** Process-local transport and source registry for the subscription worker. */
@@ -140,13 +143,10 @@ export interface SubscriptionConnection {
 	readonly baseUrl: string;
 	/** Ingress credential for the private listener. */
 	readonly internalApiKey: string;
-	/** Whether the running worker supports provider-qualified routes. */
-	readonly sourceBuiltSubscriptions?: boolean;
 	/** Latest provider registrations for this worker. */
 	readonly subscriptionCatalog?: SubscriptionCatalog;
 }
 
-const DEFAULT_CATALOG = new SubscriptionCatalog();
 const SCOPED_PATHS = new Set([
 	"/v1/responses",
 	"/v1/chat/completions",
@@ -156,6 +156,7 @@ const SCOPED_PATHS = new Set([
 	"/v1/completions",
 	"/v1/responses/compact",
 	"/v1/messages/count_tokens",
+	"/v1beta/interactions",
 ]);
 
 /**
@@ -163,40 +164,31 @@ const SCOPED_PATHS = new Set([
  * @param connection
  * @param params
  * @param path
- * @throws If an older runtime cannot bind an explicit subscription to this model.
+ * @throws If the selected account source cannot execute this operation.
  */
 export function subscriptionTarget(
 	connection: SubscriptionConnection,
 	params: SubscriptionModelParams,
 	path: string,
 ): { url: string; model: string } {
-	const provider = hostedProvider(params) ?? LlmProviders.CLIProxy;
-	const catalog = connection.subscriptionCatalog ?? DEFAULT_CATALOG;
-	const model = catalog.wireModel(provider, typeof params.model === "string" ? params.model : "");
-	const owner = provider === LlmProviders.CLIProxy ? catalog.owner(model) : provider;
-	const base = connection.baseUrl.replace(/\/+$/, "");
+	const provider = hostedProvider(params);
+	if (!provider || typeof params.model !== "string") {
+		throw ApiError.badRequest("订阅请求缺少 Provider 或上游模型 ID");
+	}
+	const model = withoutProvider(params.model, provider);
 	const pathname = path.split("?", 1)[0]!;
-	const compatibility = params.subscription_transport === "compatibility" || connection.sourceBuiltSubscriptions === false;
-	// Some SDK routes address a specific service or recover the account that owns an
-	// existing video or live call. Honor those bindings for new explicit deployments.
-	if (provider !== LlmProviders.CLIProxy && !(typeof params.model === "string" && params.model.startsWith("cliproxy/"))) {
-		const codexOnly = pathname === "/v1/alpha/search" || /^\/v1\/(?:live|realtime)(?:\/|$)/.test(pathname);
-		const xaiOnly = /^\/v1\/videos(?:\/|$)/.test(pathname);
-		if ((codexOnly && provider !== LlmProviders.CodexSubscription) || (xaiOnly && provider !== LlmProviders.XaiSubscription)) {
-			throw ApiError.badRequest("所选订阅不提供此接口");
-		}
+	const base = connection.baseUrl.replace(/\/+$/, "");
+	if (SCOPED_PATHS.has(pathname) || pathname.startsWith("/v1beta/models/")) {
+		return { url: base + "/subscriptions/" + provider + path, model: model };
 	}
-	if (
-		path &&
-		(compatibility || (connection.sourceBuiltSubscriptions && !SCOPED_PATHS.has(pathname))) &&
-		provider !== LlmProviders.CLIProxy &&
-		catalog.owner(model) !== provider
-	) {
-		throw ApiError.unavailable("当前兼容运行时无法唯一确定此模型的订阅账号来源");
+	const codexOnly = pathname === "/v1/alpha/search" || /^\/v1\/(?:live|realtime)(?:\/|$)/.test(pathname);
+	const xaiOnly = /^\/v1\/videos(?:\/|$)/.test(pathname);
+	if ((codexOnly && provider !== LlmProviders.CodexSubscription) || (xaiOnly && provider !== LlmProviders.XaiSubscription)) {
+		throw ApiError.badRequest("所选订阅不提供此接口");
 	}
-	const route =
-		!compatibility && connection.sourceBuiltSubscriptions && owner && SCOPED_PATHS.has(pathname)
-			? "/subscriptions/" + owner + path
-			: path;
-	return { url: base + route, model: model };
+	// The SDK binds calls and generated resources to the account that created them.
+	if (pathname && !codexOnly && !xaiOnly && connection.subscriptionCatalog?.owner(model) !== provider) {
+		throw ApiError.unavailable("无法确定此操作对应的订阅账号来源");
+	}
+	return { url: base + path, model: model };
 }

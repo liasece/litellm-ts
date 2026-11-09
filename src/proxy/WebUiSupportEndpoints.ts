@@ -1,4 +1,4 @@
-import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/SubscriptionProviders";
+import { SUBSCRIPTION_PROVIDERS, subscriptionModelInfo, subscriptionModelParams } from "../subscriptions/SubscriptionProviders";
 import { usageDateRange, isUsageAdmin } from "../spend/UsageQuery";
 /**
  * WebUI 支撑端点
@@ -770,14 +770,6 @@ const PROVIDER_CREATE_FIELDS: readonly ProviderCreateInfo[] = [
 
 ];
 
-const LEGACY_CLIPROXY_FIELDS: ProviderCreateInfo = {
-		provider: "CLIProxy",
-		provider_display_name: "CLIProxy API (Managed)",
-		litellm_provider: "cliproxy",
-		default_model_placeholder: "Select a model discovered from the managed CLIProxy runtime",
-		credential_fields: [],
-	};
-
 /**
  * /active/callbacks 响应（对齐 Python active_callbacks，
  * litellm/proxy/health_endpoints/_health_endpoints.py:1184-1260）。
@@ -1028,7 +1020,7 @@ export function registerWebUiSupportPublicRoutes(router: Router, costMapService:
 	});
 
 	/** Provider 凭据字段元数据，WebUI 用于动态渲染 provider 特定的表单 */
-	registerRoute(router, { method: "get", path: "/public/providers/fields" }, (req): readonly ProviderCreateInfo[] => (req.query["include_legacy"] === "true" ? [...PROVIDER_CREATE_FIELDS, LEGACY_CLIPROXY_FIELDS] : PROVIDER_CREATE_FIELDS));
+	registerRoute(router, { method: "get", path: "/public/providers/fields" }, (): readonly ProviderCreateInfo[] => PROVIDER_CREATE_FIELDS);
 
 }
 
@@ -1674,12 +1666,13 @@ export function registerWebUiSupportRoutes(
 			const dbValue = isRecord(item.db_value) ? item.db_value : null;
 			const existingModelId = typeof dbValue?.["model_id"] === "string" ? dbValue["model_id"] : null;
 			const modelId = existingModelId ?? generateModelId(key, litellmParams);
-			const modelInfo = { ...yamlModelInfo, id: modelId, db_model: false };
+			const params = subscriptionModelParams(litellmParams);
+			const modelInfo = { ...subscriptionModelInfo(yamlModelInfo, params), id: modelId, db_model: false };
 			const updatedBy = req.auth?.user_id ?? PROXY_ADMIN_USER_ID;
 			await modelRepositoryFor(db).upsertFromYaml({
 				model_id: modelId,
 				model_name: key,
-				litellm_params: litellmParams,
+				litellm_params: params,
 				model_info: modelInfo,
 				created_by: updatedBy,
 				updated_by: updatedBy,

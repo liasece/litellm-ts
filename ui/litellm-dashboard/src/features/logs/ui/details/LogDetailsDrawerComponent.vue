@@ -289,7 +289,7 @@ onBeforeUnmount(() => {
 			</aside>
 			<main class="ld-main">
 				<LogDetailsHeaderComponent
-					:log="current"
+					:log="details.enriched.value ?? current"
 					:in-progress="details.inProgress.value"
 					@close="emit('close')"
 					@previous="navigate(-1)"

@@ -149,7 +149,7 @@ function collectReachableModelGroups(model: string, fallbacks: Record<string, st
 function conservativeDeploymentCost(deployment: Deployment): CustomCostPerToken {
 	const deploymentModel = deployment.litellm_params.model;
 	const custom = extractDeploymentCustomCost(deployment);
-	const modelPrice = lookupModelCostPerToken(deploymentModel);
+	const modelPrice = lookupModelCostPerToken(deploymentModel, undefined, deployment.litellm_params.custom_llm_provider);
 	const inputPrice = custom?.input_cost_per_token ?? modelPrice?.input_cost_per_token;
 	const outputPrice = custom?.output_cost_per_token ?? modelPrice?.output_cost_per_token;
 	if (inputPrice === undefined || outputPrice === undefined) {

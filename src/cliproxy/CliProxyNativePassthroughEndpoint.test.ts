@@ -22,15 +22,15 @@ function buildApp(authenticated = false): express.Express {
 		{
 			model_name: "public-image",
 			litellm_params: {
-				model: "cliproxy/gpt-image-2",
-				custom_llm_provider: "cliproxy",
+				model: "gpt-image-2",
+				custom_llm_provider: "codex-subscription",
 			},
 		},
 		{
 			model_name: "public-gemini",
 			litellm_params: {
-				model: "cliproxy/gemini-3-pro",
-				custom_llm_provider: "cliproxy",
+				model: "gemini-3-pro",
+				custom_llm_provider: "antigravity-subscription",
 			},
 		},
 		{
@@ -146,7 +146,7 @@ describe("CLIProxy native passthrough", () => {
 		expect(spendContext.response?.data?.[0]?.b64_json).toHaveLength(imageBase64.length);
 		expect(spendContext.upstreamLogContext).toMatchObject({
 			request: {
-				url: "http://127.0.0.1:8317/v1/images/edits",
+				url: "http://127.0.0.1:8317/subscriptions/codex-subscription/v1/images/edits",
 				method: "POST",
 				headers: { authorization: "Bearer internal-only" },
 				body: expectedRequestLog,
@@ -169,7 +169,7 @@ describe("CLIProxy native passthrough", () => {
 			};
 		};
 		expect(spendContext.upstreamLogContext?.request).toMatchObject({
-			url: "http://127.0.0.1:8317/v1/completions",
+			url: "http://127.0.0.1:8317/subscriptions/codex-subscription/v1/completions",
 			method: "POST",
 		});
 		expect(spendContext.upstreamLogContext?.response).toBeUndefined();
@@ -183,7 +183,7 @@ describe("CLIProxy native passthrough", () => {
 			.send({ contents: [{ role: "user", parts: [{ text: "hello" }] }] });
 
 		expect(response.status).toBe(200);
-		expect(fetchSpy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:8317/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse");
+		expect(fetchSpy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:8317/subscriptions/antigravity-subscription/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse");
 	});
 
 	it("lists only configured CLIProxy Gemini aliases instead of leaking the child model catalog", async () => {

@@ -136,10 +136,6 @@
 	gap: 8px;
 	padding: 0;
 }
-.model-info-cell > .model-provider-logo {
-	width: 16px;
-	height: 16px;
-}
 .model-info-cell > div {
 	min-width: 0;
 	flex: 1;

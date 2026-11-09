@@ -6,7 +6,7 @@ import { ApiError } from "../core/api/ApiError";
 import type { ServiceContainer } from "../container";
 import { resolveHostedModel } from "../subscriptions/HostedModel";
 import { enterCliProxyRequest, isCliProxyDraining } from "./CliProxyDrainGate";
-import { hostedProvider, isSubscriptionProvider, subscriptionTarget } from "../subscriptions/SubscriptionProviders";
+import { hostedProvider, type SubscriptionProvider, subscriptionTarget } from "../subscriptions/SubscriptionProviders";
 import type { Deployment } from "../types/router";
 import { applyReasoningEffortOverride } from "../router/ReasoningEffortOverride";
 import { expressRequest, guardUpgradeSocket, runMiddleware, writeUpgradeError } from "../core/http/UpgradeRequest";
@@ -60,23 +60,27 @@ function safeProtocols(req: IncomingMessage): string[] {
 		.filter((value) => value.length > 0 && !value.startsWith(WS_AUTH_SUBPROTOCOL_PREFIX));
 }
 
-function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req: Request): { value: unknown; foundModel: boolean } {
+function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req: Request): { value: unknown; foundModel: boolean; provider?: SubscriptionProvider } {
 	if (Array.isArray(value)) {
 		let foundModel = false;
+	let provider: SubscriptionProvider | undefined;
 		const result = value.map((item) => {
 			const rewritten = rewriteWebSocketModel(item, container, req);
 			foundModel ||= rewritten.foundModel;
+		provider ??= rewritten.provider;
 			return rewritten.value;
 		});
-		return { value: result, foundModel: foundModel };
+		return { value: result, foundModel: foundModel, provider: provider };
 	}
 	if (typeof value !== "object" || value === null) {
 		return { value: value, foundModel: false };
 	}
 	let foundModel = false;
+	let provider: SubscriptionProvider | undefined;
 	const result: Record<string, unknown> = {};
 	let directDeployment: Deployment | undefined;
 	for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+		if (key === "_litellm_subscription") {continue;}
 		if (key === "model" && typeof item === "string") {
 			const resolved = resolveHostedModel(container.router, container.cliProxyRuntime, item);
 			if (!resolved) {
@@ -86,14 +90,9 @@ function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req:
 				runCommonChecks(req.auth, resolved.publicModel);
 			}
 			const runtime = container.cliProxyRuntime;
-			const provider = hostedProvider(resolved.deployment.litellm_params);
-			const responses = req.path.endsWith("/responses");
-			const compatibility = resolved.deployment.litellm_params.subscription_transport === "compatibility";
-			// Run the same source checks as HTTP before sending a frame over an unscoped transport.
-			subscriptionTarget(runtime, resolved.deployment.litellm_params, responses ? "/v1/responses" : req.path);
-			const explicitBinding = runtime.sourceBuiltSubscriptions && !compatibility && responses &&
-				isSubscriptionProvider(provider) && runtime.subscriptionCatalog.owner(resolved.upstreamModel) !== provider;
-			result[key] = explicitBinding ? "litellm-subscription/" + provider + "/" + resolved.upstreamModel : resolved.upstreamModel;
+			provider = hostedProvider(resolved.deployment.litellm_params);
+			subscriptionTarget(runtime, resolved.deployment.litellm_params, req.path.endsWith("/responses") ? "/v1/responses" : req.path);
+			result[key] = resolved.upstreamModel;
 			directDeployment = resolved.deployment;
 			foundModel = true;
 			continue;
@@ -101,17 +100,17 @@ function rewriteWebSocketModel(value: unknown, container: ServiceContainer, req:
 		const rewritten = rewriteWebSocketModel(item, container, req);
 		result[key] = rewritten.value;
 		foundModel ||= rewritten.foundModel;
+		provider ??= rewritten.provider;
 	}
 	const outbound =
 		directDeployment && req.path.includes("responses") ? applyReasoningEffortOverride(result, directDeployment, "responses") : result;
-	return { value: outbound, foundModel: foundModel };
+	return { value: outbound, foundModel: foundModel, provider: provider };
 }
 
 function rewriteClientMessage(data: WebSocket.RawData, isBinary: boolean, container: ServiceContainer, req: Request): WebSocket.RawData {
-	if (isBinary) {
-		return data;
-	}
-	const source = Buffer.isBuffer(data) ? data.toString("utf8") : String(data);
+	const responses = req.path.endsWith("/responses");
+	if (isBinary && !responses) {return data;}
+	const source = (Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data)).toString("utf8");
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(source);
@@ -123,6 +122,9 @@ function rewriteClientMessage(data: WebSocket.RawData, isBinary: boolean, contai
 		throw ApiError.unavailable("订阅运行时正在排空，请稍后重试");
 	}
 	const rewritten = rewriteWebSocketModel(parsed, container, req);
+	if (responses && rewritten.value && typeof rewritten.value === "object" && !Array.isArray(rewritten.value)) {
+		return Buffer.from(JSON.stringify({ ...rewritten.value, _litellm_subscription: rewritten.provider }));
+	}
 	return rewritten.foundModel ? Buffer.from(JSON.stringify(rewritten.value)) : data;
 }
 
@@ -152,7 +154,7 @@ function relayWebSocket(
 	query.delete("key");
 	const upstreamBase = container.cliProxyRuntime.baseUrl.replace(/^http/, "ws");
 	const queryString = query.toString();
-	const route = container.cliProxyRuntime.sourceBuiltSubscriptions && targetPath.endsWith("/responses") ? "/_litellm/ws" + targetPath : targetPath;
+	const route = targetPath.endsWith("/responses") ? "/_litellm/ws" + targetPath : targetPath;
 	const upstreamUrl = `${upstreamBase}${route}${queryString ? `?${queryString}` : ""}`;
 	const protocols = safeProtocols(req);
 	const options = { headers: upstreamHeaders(req, container.cliProxyRuntime.internalApiKey) };

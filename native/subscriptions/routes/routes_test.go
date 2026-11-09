@@ -120,8 +120,9 @@ func (e *fakeExecutor) modelCalls() []string {
 
 // testProvider describes one account source plus the model IDs it publishes.
 type testProvider struct {
-	provider string
-	models   []string
+	provider    string
+	models      []string
+	nativeNames map[string]string
 }
 
 type harness struct {
@@ -152,7 +153,7 @@ func newHarness(t *testing.T, providers ...testProvider) *harness {
 
 		infos := make([]*cliproxy.ModelInfo, 0, len(provider.models))
 		for _, id := range provider.models {
-			infos = append(infos, &cliproxy.ModelInfo{ID: id, Object: "model", OwnedBy: provider.provider})
+			infos = append(infos, &cliproxy.ModelInfo{ID: id, Name: provider.nativeNames[id], Object: "model", OwnedBy: provider.provider})
 		}
 		registry.RegisterClient(authID, provider.provider, infos)
 		clientID := authID
@@ -282,8 +283,7 @@ func TestSubscriptionRoutesRejectUnknownProviderSlug(t *testing.T) {
 	}
 }
 
-// The catalog is provider-scoped and keeps registry IDs verbatim, so a plugin
-// namespace such as `commandcode/` survives the round trip.
+// Discovery returns the upstream ID without the plugin registry namespace.
 func TestProviderScopedModelsCatalog(t *testing.T) {
 	h := newHarness(t,
 		testProvider{provider: "commandcode", models: []string{"commandcode/shared", "commandcode/only"}},
@@ -291,12 +291,12 @@ func TestProviderScopedModelsCatalog(t *testing.T) {
 	)
 
 	commandcode := decodeCatalog(t, h.do(t, http.MethodGet, "/subscriptions/commandcode/v1/models", testIngressKey, nil))
-	if want := []string{"commandcode/only", "commandcode/shared"}; !equalStrings(commandcode, want) {
+	if want := []string{"only", "shared"}; !equalStrings(commandcode, want) {
 		t.Fatalf("commandcode models = %v, want %v", commandcode, want)
 	}
 
 	opencode := decodeCatalog(t, h.do(t, http.MethodGet, "/subscriptions/opencode-go/v1/models", testIngressKey, nil))
-	if want := []string{"opencode-go/shared"}; !equalStrings(opencode, want) {
+	if want := []string{"shared"}; !equalStrings(opencode, want) {
 		t.Fatalf("opencode-go models = %v, want %v", opencode, want)
 	}
 }
@@ -467,4 +467,23 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func TestConfiguredPluginPrefixStaysInsideWorker(t *testing.T) {
+	const model = "vendor/shared"
+	h := newHarness(t,
+		testProvider{provider: "commandcode", models: []string{"team-a/" + model}, nativeNames: map[string]string{"team-a/" + model: model}},
+		testProvider{provider: "opencode-go", models: []string{"team-b/" + model}, nativeNames: map[string]string{"team-b/" + model: model}},
+	)
+	for source, prefix := range map[string]string{"commandcode": "team-a/", "opencode-go": "team-b/"} {
+		executor := h.executors[source]
+		executor.payload = []byte(`{"id":"ok","choices":[]}`)
+		if ids := decodeCatalog(t, h.do(t, http.MethodGet, "/subscriptions/"+source+"/v1/models", testIngressKey, nil)); !equalStrings(ids, []string{model}) {
+			t.Fatalf("unexpected catalog %v", ids)
+		}
+		got := h.do(t, http.MethodPost, "/subscriptions/"+source+"/v1/chat/completions", testIngressKey, map[string]any{"model": model, "messages": []map[string]any{{"role": "user", "content": "hi"}}})
+		if got.Code != http.StatusOK || !equalStrings(executor.modelCalls(), []string{prefix + model}) {
+			t.Fatalf("incorrect binding: %s %d %v", source, got.Code, executor.modelCalls())
+		}
+	}
 }

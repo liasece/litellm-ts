@@ -44,6 +44,7 @@ describeWithDatabase("Credential PostgreSQL persistence integration", () => {
 	});
 
 	beforeEach(async () => {
+		db = drizzle(pool, { schema: schema });
 		await db.execute(sql`DROP TRIGGER IF EXISTS credential_test_skip_model_update ON "LiteLLM_ProxyModelTable"`);
 		await db.execute(sql`DROP FUNCTION IF EXISTS credential_test_skip_model_update()`);
 		await db.execute(sql`TRUNCATE "LiteLLM_CredentialsTable", "LiteLLM_ProxyModelTable"`);

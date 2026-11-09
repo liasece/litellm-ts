@@ -38,12 +38,6 @@ const log = z
 		message: z.string(),
 	})
 	.passthrough();
-const release = z
-	.object({ version: z.string(), published_at: z.string().nullable(), release_url: z.string(), notes: z.string() })
-	.passthrough();
-const update = z
-	.object({ current: z.string().nullable(), latest: z.string(), update_available: z.boolean(), releases: z.array(release) })
-	.passthrough();
 const config = z
 	.object({
 		settings: z.object({ enabled: z.boolean(), config_yaml: z.string() }).passthrough(),
@@ -85,28 +79,30 @@ const oauth = z
 
 export function parseCliProxyResponse(path: string, method: string, payload: unknown): unknown {
 	const pathname = path.split("?")[0];
-	if (pathname === "/cliproxy/config" && ["GET", "PUT"].includes(method)) return config.parse(payload);
+	if (pathname === "/subscriptions/config" && ["GET", "PUT"].includes(method)) return config.parse(payload);
 	if (method === "GET") {
-		if (pathname === "/cliproxy/status") return runtimeStatus.parse(payload);
-		if (pathname === "/cliproxy/accounts")
+		if (pathname === "/subscriptions/status") return runtimeStatus.parse(payload);
+		if (pathname === "/subscriptions/accounts")
 			return z
 				.object({ data: z.array(account) })
 				.passthrough()
 				.parse(payload);
-		if (pathname === "/cliproxy/commandcode/accounts")
+		if (pathname === "/subscriptions/commandcode/accounts")
 			return z
 				.object({ data: z.array(managedAccount) })
 				.passthrough()
 				.parse(payload);
-		if (pathname === "/cliproxy/logs")
+		if (pathname === "/subscriptions/logs")
 			return z
 				.object({ entries: z.array(log), cursor: z.number() })
 				.passthrough()
 				.parse(payload);
-		if (pathname === "/cliproxy/update/check") return update.parse(payload);
-		if (/^\/cliproxy\/accounts\/[^/]+\/quota$/.test(pathname)) return quota.parse(payload);
+		if (/^\/subscriptions\/accounts\/[^/]+\/quota$/.test(pathname)) return quota.parse(payload);
 	}
-	if ((pathname === "/cliproxy/oauth" && method === "POST") || (/^\/cliproxy\/oauth\/[^/]+$/.test(pathname) && method === "GET"))
+	if (
+		(pathname === "/subscriptions/oauth" && method === "POST") ||
+		(/^\/subscriptions\/oauth\/[^/]+$/.test(pathname) && method === "GET")
+	)
 		return oauth.parse(payload);
 	return payload;
 }

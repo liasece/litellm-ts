@@ -418,6 +418,7 @@ func (m *Manager) handleModels() ([]byte, error) {
 		for _, rec := range mgr.Models() {
 			models = append(models, pluginapi.ModelInfo{
 				ID:                        rec.PublicID,
+				Name:                      rec.UpstreamID,
 				Object:                    "model",
 				OwnedBy:                   ProviderID,
 				DisplayName:               rec.DisplayName,

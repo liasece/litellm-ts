@@ -58,7 +58,7 @@ function makeDeployments(): Deployment[] {
 	return [
 		{
 			model_name: "glm-5.2",
-			litellm_params: { model: "cliproxy/glm-5.2", custom_llm_provider: "cliproxy" },
+			litellm_params: { model: "codex-subscription/glm-5.2", custom_llm_provider: "codex-subscription" },
 			model_info: { id: "dep-glm", input_cost_per_token: 0.001, output_cost_per_token: 0.002 },
 		} as unknown as Deployment,
 	];
@@ -93,11 +93,11 @@ describe("cost discount config endpoint", () => {
 
 		await request(app).get("/config/cost_discount_config").expect(200, { values: {} });
 
-		const patched = await request(app).patch("/config/cost_discount_config").send({ cliproxy: 0.25 }).expect(200);
-		expect(patched.body).toEqual({ values: { cliproxy: 0.25 } });
-		expect(mockDb.stored()).toEqual({ cache: true, cost_discount_config: { cliproxy: 0.25 } });
+		const patched = await request(app).patch("/config/cost_discount_config").send({ "codex-subscription": 0.25 }).expect(200);
+		expect(patched.body).toEqual({ values: { "codex-subscription": 0.25 } });
+		expect(mockDb.stored()).toEqual({ cache: true, cost_discount_config: { "codex-subscription": 0.25 } });
 
-		await request(app).get("/config/cost_discount_config").expect(200, { values: { cliproxy: 0.25 } });
+		await request(app).get("/config/cost_discount_config").expect(200, { values: { "codex-subscription": 0.25 } });
 	});
 
 	it("rejects invalid provider and range with a 400 that names the problem", async () => {
@@ -106,7 +106,7 @@ describe("cost discount config endpoint", () => {
 
 		const invalidProvider = await request(app).patch("/config/cost_discount_config").send({ groq: 0.1 }).expect(400);
 		expect(JSON.stringify(invalidProvider.body)).toContain("Invalid provider(s): groq");
-		await request(app).patch("/config/cost_discount_config").send({ cliproxy: 1.5 }).expect(400);
+		await request(app).patch("/config/cost_discount_config").send({ "codex-subscription": 1.5 }).expect(400);
 		expect(mockDb.stored()).toBeNull();
 	});
 });
@@ -118,11 +118,11 @@ describe("cost margin config endpoint", () => {
 
 		await request(app)
 			.patch("/config/cost_margin_config")
-			.send({ cliproxy: { percentage: 0.1, fixed_amount: 0.000001 }, global: 0.05 })
+			.send({ "codex-subscription": { percentage: 0.1, fixed_amount: 0.000001 }, global: 0.05 })
 			.expect(200);
 
 		const response = await request(app).get("/config/cost_margin_config").expect(200);
-		expect(response.body).toEqual({ values: { cliproxy: { fixed_amount: 0.000001, percentage: 0.1 }, global: 0.05 } });
+		expect(response.body).toEqual({ values: { "codex-subscription": { fixed_amount: 0.000001, percentage: 0.1 }, global: 0.05 } });
 	});
 
 	it("lets any authenticated reader read but only proxy_admin write real billing amounts", async () => {
@@ -132,13 +132,13 @@ describe("cost margin config endpoint", () => {
 		await request(app).get("/config/cost_margin_config").expect(200);
 		await request(app).get("/config/cost_discount_config").expect(200);
 		await request(app).patch("/config/cost_margin_config").send({ global: 0.1 }).expect(403);
-		await request(app).patch("/config/cost_discount_config").send({ cliproxy: 0.1 }).expect(403);
+		await request(app).patch("/config/cost_discount_config").send({ "codex-subscription": 0.1 }).expect(403);
 		expect(mockDb.stored()).toBeNull();
 	});
 
 	it("rejects negative fixed amounts so billed amounts cannot silently shrink", async () => {
 		const mockDb = makeDb(null);
-		await request(makeApp(mockDb)).patch("/config/cost_margin_config").send({ cliproxy: { fixed_amount: -0.01 } }).expect(400);
+		await request(makeApp(mockDb)).patch("/config/cost_margin_config").send({ "codex-subscription": { fixed_amount: -0.01 } }).expect(400);
 		expect(mockDb.stored()).toBeNull();
 	});
 });
@@ -146,7 +146,7 @@ describe("cost margin config endpoint", () => {
 describe("cost estimate endpoint", () => {
 	it("prices tokens like /model_group/info and applies the configured margin", async () => {
 		const app = makeApp(makeDb(null));
-		costTrackingConfigService.setValues({}, { cliproxy: 0.1 });
+		costTrackingConfigService.setValues({}, { "codex-subscription": 0.1 });
 
 		const response = await request(app)
 			.post("/cost/estimate")
@@ -160,12 +160,12 @@ describe("cost estimate endpoint", () => {
 		expect(body["cost_per_request"]).toBeCloseTo(0.22, 10);
 		expect(body["daily_cost"]).toBeCloseTo(2.2, 10);
 		expect(body["monthly_cost"]).toBeNull();
-		expect(body["provider"]).toBe("cliproxy");
+		expect(body["provider"]).toBe("codex-subscription");
 	});
 
 	it("applies discounts before margins and reports per-token prices", async () => {
 		const app = makeApp(makeDb(null));
-		costTrackingConfigService.setValues({ cliproxy: 0.5 }, { global: 0.1 });
+		costTrackingConfigService.setValues({ "codex-subscription": 0.5 }, { global: 0.1 });
 
 		const response = await request(app)
 			.post("/cost/estimate")

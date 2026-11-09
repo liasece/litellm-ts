@@ -9,8 +9,8 @@ import UiTable from "../../platform/ui/UiTable.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
-import { getModelLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
-import { modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
+import ModelLogo from "../../providers/ui/ModelLogoComponent.vue";
+import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
 import { modelString, modelStrings, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import type { UiTableColumn, UiTableRow, UiTableSort } from "../../platform/ui/UiTypes";
@@ -305,12 +305,7 @@ async function all() {
 					</td>
 					<td>
 						<div class="model-info-cell">
-							<img
-								v-if="getModelLogoAndName(model.provider, model.litellm_model_name || model.model_name).logo"
-								:src="getModelLogoAndName(model.provider, model.litellm_model_name || model.model_name).logo"
-								alt=""
-								class="model-provider-logo"
-							/>
+							<ModelLogo v-bind="deploymentIconProps(model)" :size="24" />
 							<div>
 								<div class="model-information-name">
 									{{ modelDisplayName(model)

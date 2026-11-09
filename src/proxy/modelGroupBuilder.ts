@@ -1,3 +1,7 @@
+import { resolveModelFamily, type ModelFamily } from "../shared/ModelFamily";
+import { resolveDeploymentProvider } from "../router/RouterSpendInfo";
+import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
+import { modelPriceKeys } from "../cost/CostCalculator";
 /**
  * 模型 info 推导与 /model_group/info 聚合逻辑
  *
@@ -106,6 +110,9 @@ export const MODEL_INFO_CANONICAL_KEYS: readonly string[] = [
 
 /** /model_group/info 单元素（对齐 Python ModelGroupInfoProxy，22 键） */
 export interface ModelGroupInfoItem {
+	/** Agreed model family and account provider across deployments, when requested by the dashboard. */
+	model_identity?: { family: ModelFamily | null; provider: string | null };
+
 	/** 模型组名称（即 model_name） */
 	model_group: string;
 	/** 该模型组下所有 provider 去重列表 */
@@ -202,11 +209,19 @@ export type { ModelCostEntry };
  * 2. 最后一个 `/` 后段匹配（Python split_model，如 "gpt-4o"）
  * @param model - litellm_params.model（可含 provider 前缀）
  * @param modelCostMap
+ * @param provider
  */
 export function lookupModelCostEntry(
 	model: string,
 	modelCostMap: ModelCostMap = modelCostMapService.getSnapshot().map,
+	provider?: string,
 ): ModelCostEntry | undefined {
+	if (isSubscriptionProvider(provider)) {
+		for (const key of modelPriceKeys(model, provider)) {
+			if (modelCostMap[key]) {return modelCostMap[key];}
+		}
+		return undefined;
+	}
 	const exact = modelCostMap[model];
 	if (exact !== undefined) {
 		return exact;
@@ -384,7 +399,7 @@ export function buildEnrichedModelInfo(
 	modelCostMap: ModelCostMap = modelCostMapService.getSnapshot().map,
 	builtinCapabilities?: BuiltinCapabilitiesConfig,
 ): Record<string, unknown> {
-	const entry = lookupModelCostEntry(dep.litellm_params.model, modelCostMap);
+	const entry = lookupModelCostEntry(dep.litellm_params.model, modelCostMap, dep.litellm_params.custom_llm_provider);
 	const provider = resolveProvider(dep, entry);
 
 	const out: Record<string, unknown> = {};
@@ -469,6 +484,7 @@ function pickDeploymentLimit(dep: Deployment, info: Record<string, unknown>, fie
 }
 
 interface GroupBucket {
+	identity?: ModelGroupInfoItem["model_identity"];
 	readonly providers: string[];
 	maxInput: number | null;
 	maxOutput: number | null;
@@ -565,11 +581,13 @@ function addLimit(total: number | null, value: number | null): number | null {
  * @param deployments - Router 全部 deployment
  * @param modelCostMap
  * @param builtinCapabilities - 在聚合前补充各部署内置能力的配置。
+ * @param includeModelIdentity - Return the model family and supplier shared by the group for the dashboard.
  */
 export function buildModelGroupInfoResponse(
 	deployments: Deployment[],
 	modelCostMap: ModelCostMap = modelCostMapService.getSnapshot().map,
 	builtinCapabilities?: BuiltinCapabilitiesConfig,
+	includeModelIdentity = false,
 ): { data: ModelGroupInfoItem[] } {
 	const groups = new Map<string, GroupBucket>();
 	for (const dep of deployments) {
@@ -582,6 +600,15 @@ export function buildModelGroupInfoResponse(
 		} else {
 			mergeDeploymentIntoBucket(groupBucket, info, provider);
 		}
+		if (includeModelIdentity) {
+			const family = resolveModelFamily(dep.litellm_params.model, dep.model_info?.["base_model"] ?? dep.litellm_params["base_model"]) ?? null;
+			const supplier = resolveDeploymentProvider(dep);
+			const previous = groupBucket.identity;
+			groupBucket.identity = {
+				family: previous && previous.family !== family ? null : family,
+				provider: previous && previous.provider !== supplier ? null : supplier,
+			};
+		}
 		groupBucket.tpm = addLimit(groupBucket.tpm, pickDeploymentLimit(dep, info, "tpm"));
 		groupBucket.rpm = addLimit(groupBucket.rpm, pickDeploymentLimit(dep, info, "rpm"));
 	}
@@ -590,6 +617,7 @@ export function buildModelGroupInfoResponse(
 	for (const [groupName, groupBucket] of groups) {
 		data.push({
 			model_group: groupName,
+			...(groupBucket.identity ? { model_identity: groupBucket.identity } : {}),
 			providers: groupBucket.providers,
 			max_input_tokens: groupBucket.maxInput,
 			max_output_tokens: groupBucket.maxOutput,

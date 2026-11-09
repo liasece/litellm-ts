@@ -10,7 +10,7 @@ export const ADVANCED_MANAGEMENT_RESOURCES = [
 	{ value: "/api-key-usage", label: "API key usage" },
 	{ value: "/usage-queue", label: "Usage queue" },
 	{ value: "/request-error-logs", label: "Request error logs" },
-	{ value: "/logs", label: "CLIProxy file logs" },
+	{ value: "/logs", label: "Runtime file logs" },
 	{ value: "/plugins", label: "Installed plugins" },
 	{ value: "/plugin-store", label: "Plugin store" },
 	{ value: "/openai-compatibility", label: "OpenAI compatibility providers" },

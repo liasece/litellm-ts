@@ -1,4 +1,4 @@
-import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
+import { isSubscriptionProvider, SUBSCRIPTION_PROVIDERS } from "../subscriptions/SubscriptionProviders";
 /**
  * 费用折扣与保证金配置
  *
@@ -198,6 +198,13 @@ export function normalizeMarginConfig(raw: unknown): CostMarginConfig {
 	return config;
 }
 
+// Existing YAML may apply one rate to every formerly hosted subscription.
+function storedProviderRates(raw: Record<string, unknown>): Record<string, unknown> {
+	const { cliproxy, ...rates } = raw;
+	if (cliproxy === undefined) {return rates;}
+	return { ...Object.fromEntries(Object.keys(SUBSCRIPTION_PROVIDERS).map(provider => [provider, cliproxy])), ...rates };
+}
+
 /**
  * 宽容读取折扣配置：单条非法只跳过该条并留痕，不让历史脏值整体失效。
  * @param raw - DB/yaml 中的原始值
@@ -207,7 +214,7 @@ export function readDiscountConfig(raw: unknown): CostDiscountConfig {
 		return {};
 	}
 	const config: CostDiscountConfig = {};
-	for (const [key, value] of Object.entries(raw)) {
+	for (const [key, value] of Object.entries(storedProviderRates(raw))) {
 		if (!VALID_PROVIDERS.has(key) || !isValidDiscountValue(value)) {
 			logger.warn(`忽略非法的 ${COST_DISCOUNT_CONFIG_KEY} 条目`, { provider: key, value: value as unknown });
 			continue;
@@ -226,7 +233,7 @@ export function readMarginConfig(raw: unknown): CostMarginConfig {
 		return {};
 	}
 	const config: CostMarginConfig = {};
-	for (const [key, value] of Object.entries(raw)) {
+	for (const [key, value] of Object.entries(storedProviderRates(raw))) {
 		if (!VALID_PROVIDERS.has(key) && key !== GLOBAL_MARGIN_KEY) {
 			logger.warn(`忽略非法的 ${COST_MARGIN_CONFIG_KEY} 条目`, { provider: key, value: value as unknown });
 			continue;

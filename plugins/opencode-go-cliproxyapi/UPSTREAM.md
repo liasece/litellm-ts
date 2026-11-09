@@ -5,11 +5,11 @@ This directory is the upstream source of
 imported at tag **v0.2.2** (module `opencode-go-cliproxyapi`, `pluginVersion = "0.2.2"`).
 
 The upstream `LICENSE` is kept verbatim: MIT, Copyright (c) 2026 massiveits.
-Upstream README, `main.go`, `internal/` and `tests/` are unmodified imports;
+Upstream README, `main.go` and `tests/` are imported verbatim;
 packaging artifacts (release zips, CI workflows, changelog files) are not
 included.
 
-The only local addition is `builtin/`, a thin package that exposes the same
+The model catalog also sets the SDK’s provider-native `Name` to the upstream model ID so account routing prefixes stay out of LiteLLM configuration. The local `builtin/` directory is a thin package that exposes the same
 RPC dispatcher `main.go` runs behind the c-shared export
 (`cliproxy_plugin_init` / `cliproxyPluginCall`) as an importable Go entry
 point. `main.go` remains the supported way to build the standalone `.so` for

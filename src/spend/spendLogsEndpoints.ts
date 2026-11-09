@@ -665,6 +665,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	registerRoute(router, { method: "post", path: "/spend/calculate" }, async (req) => {
 		const body = req.body ?? {};
 		const model = (body.model as string) ?? "";
+		const provider = typeof body.custom_llm_provider === "string" ? body.custom_llm_provider : undefined;
 		const promptTokens = (body.prompt_tokens as number) ?? 0;
 		const completionTokens = (body.completion_tokens as number) ?? 0;
 		// GAP 6: 支持请求体传 custom_cost_per_token，对齐 PY deployment 级 override。
@@ -681,6 +682,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		try {
 			({ totalCost } = costPerToken(model, promptTokens, completionTokens, 0, 0, {
 				customCostPerToken: customBody,
+				provider: provider,
 			}));
 		} catch (err) {
 			logger.warn(`/spend/calculate cost query failed: ${(err as Error).message}`);
@@ -688,7 +690,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		}
 		// 与落账/响应头同口径：按 provider 折扣与保证金调整（默认空配置不改变金额）。
 		// 这里没有 deployment 上下文，provider 只能从模型名前缀解析。
-		totalCost = adjustCost(totalCost, resolveCostProvider(undefined, model), costTrackingConfigService.getSnapshot()).total;
+		totalCost = adjustCost(totalCost, resolveCostProvider(provider, model), costTrackingConfigService.getSnapshot()).total;
 		return {
 			cost: totalCost,
 			model: model,

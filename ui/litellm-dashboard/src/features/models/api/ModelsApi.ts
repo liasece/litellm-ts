@@ -204,20 +204,12 @@ export function fetchSubscriptionModels(provider: string): Promise<string[]> {
 			.data.map((model) => model.id),
 	);
 }
-export function fetchManagedModels(): Promise<string[]> {
-	return requestJson("/cliproxy/models", {}, (payload) =>
-		z
-			.object({ data: z.array(z.object({ id: z.string() }).passthrough()).default([]) })
-			.parse(payload)
-			.data.map((model) => model.id),
-	);
-}
+
 export function fetchModelCapabilities(): Promise<Record<string, unknown>> {
 	return requestJson("/builtin-capabilities", {}, (payload) => recordSchema.parse(payload));
 }
 export const modelsApi = {
 	fetchModelCapabilities,
-	fetchManagedModels,
 	fetchSubscriptionModels,
 	updateCredential,
 	fetchProviderFields,

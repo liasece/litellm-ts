@@ -980,12 +980,12 @@ export function registerModelsPageSupportRoutes(
 	 * （注意：WebUI 端 modelHubData?.data?.filter / .find，必须有 data 数组，否则报
 	 * "n.find is not a function"）
 	 */
-	registerRoute(router, { method: "get", path: "/model_group/info" }, async () => {
+	registerRoute(router, { method: "get", path: "/model_group/info" }, async (req) => {
 		const deployments = resolveDeployments(routerOrAccessor);
 		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
 			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
 		);
-		return buildModelGroupInfoResponse(deployments, costMapService.getSnapshot().map, builtinCapabilities);
+		return buildModelGroupInfoResponse(deployments, costMapService.getSnapshot().map, builtinCapabilities, req.query.include_model_identity === "true");
 	});
 
 	// ── /config/field/info ──────────────────────────────────

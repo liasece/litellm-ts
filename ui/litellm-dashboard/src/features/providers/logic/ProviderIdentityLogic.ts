@@ -1,4 +1,5 @@
-import { Providers, provider_map, providerLogoMap } from "../data/ProviderCatalogData";
+import { isModelFamily, resolveModelFamily, type ModelFamily } from "../../../../../../src/shared/ModelFamily";
+import { Providers, provider_map, providerLogoMap, subscription_provider_slugs } from "../data/ProviderCatalogData";
 import { getServerRootPath } from "../../platform/support/ApiEnvironmentSupport";
 export { Providers, provider_map, providerLogoMap } from "../data/ProviderCatalogData";
 
@@ -8,10 +9,25 @@ export function resolveProviderLogo(url: string | undefined): string {
 	return getServerRootPath().replace(/\/+$/, "") + url;
 }
 
+const directProviderBrands: Record<string, { displayName: string; asset: string }> = {
+	glm: { displayName: "Z.ai", asset: "zai.svg" },
+	zai: { displayName: "Z.ai", asset: "zai.svg" },
+	mimo: { displayName: "Xiaomi MiMo", asset: "mimo.svg" },
+	"mimo-global": { displayName: "Xiaomi MiMo Global", asset: "mimo.svg" },
+};
+
 export const getProviderLogoAndName = (providerValue: string): { logo: string; displayName: string } => {
 	if (!providerValue) {
 		return { logo: "", displayName: "-" };
 	}
+
+	const direct = Object.hasOwn(directProviderBrands, providerValue.toLowerCase())
+		? directProviderBrands[providerValue.toLowerCase()]
+		: undefined;
+	if (direct) return { logo: resolveProviderLogo("/ui/assets/logos/" + direct.asset), displayName: direct.displayName };
+
+	// Persisted historical logs may still carry the retired provider name.
+	if (providerValue.toLowerCase() === "cliproxy") return { logo: "", displayName: "CLIProxy" };
 
 	// Handle special case for "gemini" provider value
 	if (providerValue.toLowerCase() === "gemini") {
@@ -34,66 +50,43 @@ export const getProviderLogoAndName = (providerValue: string): { logo: string; d
 	return { logo, displayName };
 };
 
-const MODEL_FAMILY_PROVIDER_RULES: ReadonlyArray<{
-	provider: string;
-	pattern: RegExp;
-}> = [
-	{ provider: "openai", pattern: /^(?:gpt|chatgpt|codex|o[1-9])(?:[-_.:]|$)/ },
-	{ provider: "moonshot", pattern: /^(?:kimi|moonshot)(?:[-_.:]|$)/ },
-	{ provider: "anthropic", pattern: /^claude(?:[-_.:]|$)/ },
-	{ provider: "gemini", pattern: /^(?:gemini|imagen|veo)(?:[-_.:]|$)/ },
-	{ provider: "xai", pattern: /^(?:grok|xai)(?:[-_.:]|$)/ },
-	{ provider: "deepseek", pattern: /^deepseek(?:[-_.:]|$)/ },
-	{ provider: "minimax", pattern: /^minimax(?:[-_.:]|$)/ },
-	{ provider: "dashscope", pattern: /^(?:qwen|qwq|wan)(?:[0-9]|[-_.:]|$)/ },
-	{ provider: "meta_llama", pattern: /^llama(?:[0-9]|[-_.:]|$)/ },
-	{ provider: "mistral", pattern: /^(?:mistral|mixtral|codestral)(?:[0-9]|[-_.:]|$)/ },
-	{ provider: "cohere", pattern: /^(?:command|embed-(?:english|multilingual))(?:[-_.:]|$)/ },
-	{ provider: "bedrock", pattern: /^(?:amazon-)?(?:nova|titan)(?:[-_.:]|$)/ },
-];
+const familyAssets: Record<ModelFamily, string> = {
+	"OpenAI": "openai_small.svg",
+	"Claude": "claude.svg",
+	"DeepSeek": "deepseek.svg",
+	"Kimi": "kimi.svg",
+	"Gemini": "gemini.svg",
+	"Gemma": "gemma.svg",
+	"Google": "google.svg",
+	"Grok": "grok.svg",
+	"MiniMax": "minimax.svg",
+	"Qwen": "qwen.png",
+	"GLM": "glm.svg",
+	"Llama": "meta_llama.svg",
+	"Mistral": "mistral.svg",
+	"Cohere": "cohere.svg",
+	"Amazon": "aws.svg",
+	"Perplexity": "perplexity-ai.svg",
+	"MiMo": "mimo.svg",
+};
 
-function normalizedModelFamilyName(modelValue: string): string {
-	let value = modelValue.trim().toLowerCase();
-	while (value.startsWith("models/") || value.startsWith("cliproxy/")) {
-		value = value.slice(value.indexOf("/") + 1);
+const subscriptionProviders = new Set<string>(Object.values(subscription_provider_slugs));
+
+export function modelSupplier(model: string, provider?: string | null): string {
+	const supplier = provider?.trim() ?? "";
+	if (supplier.toLowerCase() === "cliproxy") {
+		const segments = model.trim().toLowerCase().split("/");
+		const prefix = segments[0] === "cliproxy" ? segments[1] : segments[0];
+		return prefix && subscriptionProviders.has(prefix) ? prefix : "";
 	}
-	const slashIndex = value.lastIndexOf("/");
-	return slashIndex >= 0 ? value.slice(slashIndex + 1) : value;
+	return supplier === "-" ? "" : supplier;
 }
 
-/**
- * Resolve the model vendor independently from its transport provider.
- *
- * CLIProxy is a routing layer, so a `cliproxy/gpt-*` deployment should use
- * OpenAI branding while a `cliproxy/kimi-*` deployment should use Moonshot
- * branding. Provider-specific routes keep their configured provider branding.
- */
-export const getModelProvider = (providerValue: string | null | undefined, modelValue: string): string => {
-	const provider = providerValue?.trim().toLowerCase() ?? "";
-	if (provider && provider !== provider_map.CLIProxy) {
-		return provider;
-	}
-
-	const modelFamilyName = normalizedModelFamilyName(modelValue);
-	const inferred = MODEL_FAMILY_PROVIDER_RULES.find((rule) => rule.pattern.test(modelFamilyName))?.provider;
-	if (inferred) {
-		return inferred;
-	}
-
-	if (!provider) {
-		const modelPrefix = modelValue.trim().toLowerCase().split("/")[0] ?? "";
-		if (Object.values(provider_map).some((value) => value.toLowerCase() === modelPrefix)) {
-			return modelPrefix;
-		}
-	}
-	return provider;
-};
-
-export const getModelLogoAndName = (
-	providerValue: string | null | undefined,
-	modelValue: string,
-): { logo: string; displayName: string; provider: string } => {
-	const provider = getModelProvider(providerValue, modelValue);
-	const { logo, displayName } = getProviderLogoAndName(provider);
-	return { logo, displayName, provider };
-};
+export function getModelIconIdentity(model: string, provider?: string | null, baseModel?: string, groupFamily?: string | null) {
+	const family = groupFamily === undefined ? resolveModelFamily(model, baseModel) : isModelFamily(groupFamily) ? groupFamily : undefined;
+	const supplier = modelSupplier(model, provider);
+	return {
+		family: family ? { displayName: family, logo: resolveProviderLogo("/ui/assets/logos/" + familyAssets[family]) } : null,
+		supplier: supplier ? getProviderLogoAndName(supplier) : null,
+	};
+}

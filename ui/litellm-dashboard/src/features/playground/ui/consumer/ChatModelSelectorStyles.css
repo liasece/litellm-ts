@@ -17,13 +17,7 @@
 .chat-model-trigger:hover {
 	background: #f5f5f5;
 }
-.chat-model-trigger > img {
-	width: 18px;
-	height: 18px;
-	object-fit: contain;
-	flex-shrink: 0;
-}
-.chat-model-trigger > span:not(.ui-icon) {
+.chat-model-trigger > span:not(.ui-icon, .model-logo) {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -55,12 +49,7 @@
 	font-weight: 500;
 	flex-shrink: 0;
 }
-.chat-model-trigger__multiple img {
-	width: 13px;
-	height: 13px;
-	object-fit: contain;
-}
-.chat-model-trigger__multiple > span > span {
+.chat-model-trigger__multiple > span > span:last-child {
 	max-width: 120px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -149,13 +138,6 @@
 .chat-model-options__list button.is-selected i {
 	border-color: #1677ff;
 	background: #1677ff;
-}
-.chat-model-options__list img,
-.chat-model-options__logo-space {
-	width: 16px;
-	height: 16px;
-	object-fit: contain;
-	flex-shrink: 0;
 }
 .chat-model-options__list button > span:last-child {
 	font-size: 13px;

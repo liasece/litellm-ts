@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { getServerRootPath } from "../../platform/support/ApiEnvironmentSupport";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
@@ -56,7 +57,10 @@ onBeforeUnmount(store.dispose);
 	<div v-if="state.loading" class="cp-loading"><UiSpinner :size="32" /></div>
 	<div v-else class="cliproxy-page subscriptions-page">
 		<div class="cp-page-heading">
-			<h2>Subscriptions</h2>
+			<div class="cp-between cp-wrap cp-gap-12">
+				<h2>Subscriptions</h2>
+				<a :href="getServerRootPath().replace(/\/+$/, '') + '/ui/subscriptions/runtime'">Manage runtime</a>
+			</div>
 			<span class="cp-secondary"
 				>First-party subscription accounts for Codex, Claude, Kimi, Antigravity, xAI, CommandCode and OpenCode Go. Model deployments
 				use these accounts; API keys and base URLs stay out of the model configuration.</span

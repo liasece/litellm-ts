@@ -1,5 +1,4 @@
 import {
-	isManagedProviderSlug,
 	isSubscriptionProviderSlug,
 	providerSlugFromValue,
 	subscriptionModelName,
@@ -14,19 +13,14 @@ export interface ModelCreateDraft extends Record<string, unknown> {
 export function providerSlug(provider: string): string {
 	return providerSlugFromValue(provider);
 }
-/**
- * Canonical deployment model name.
- *
- * Subscription providers use `<slug>/<upstreamId>` so the runtime can route the
- * request to the account source; legacy Azure and CLIProxy keep their prefixes.
- */
+/** Build the upstream model field independently of its public alias. */
 export function providerModelName(model: string, provider: string): string {
 	const slug = providerSlugFromValue(provider);
 	// Azure deployments are stored as `azure/<deployment>` even though the catalog
 	// value is the catalog key; accept both spellings.
 	if (provider === "Azure" || slug === "azure") return "azure/" + model;
 	if (isSubscriptionProviderSlug(slug)) return subscriptionModelName(slug, model);
-	return isManagedProviderSlug(slug) ? slug + "/" + model : model;
+	return model;
 }
 export function selectedModelMappings(models: string | string[] | undefined, provider: string, customName = ""): ModelMapping[] {
 	const values = typeof models === "string" ? [models] : (models ?? []);
@@ -78,12 +72,12 @@ export function prepareModelCreate(
 		}
 		// Managed providers resolve credentials from the account store; deployments must
 		// not carry a provider key or api_base of their own.
-		if (isManagedProviderSlug(params.custom_llm_provider))
-			for (const key of ["litellm_credential_name", "credential_name", "api_base", "api_key"]) delete params[key];
-		// Subscription models must stay canonical `<slug>/<upstreamId>` even when a custom
-		// model name was typed or a wildcard reset left a bare name behind.
-		if (isSubscriptionProviderSlug(params.custom_llm_provider) && modelString(params.model))
-			params.model = subscriptionModelName(modelString(params.custom_llm_provider), modelString(params.model));
+		const subscription = resolveProvider(values.custom_llm_provider ?? "");
+		if (isSubscriptionProviderSlug(subscription)) {
+			params.custom_llm_provider = subscription;
+			params.model = subscriptionModelName(subscription, mapping.litellm_model);
+			for (const key of ["litellm_credential_name", "credential_name", "api_key", "api_base"]) delete params[key];
+		}
 		return { model_name: mapping.public_name, litellm_params: params, model_info: info };
 	});
 }
@@ -106,7 +100,7 @@ export function validateModelCreate(
 			? "All model mappings must have valid public names"
 			: "At least one model mapping is required";
 	if (teamRequired && !values.team_id) errors.team_id = "Please select a team";
-	const managedProvider = isManagedProviderSlug(providerSlug(values.custom_llm_provider ?? ""));
+	const managedProvider = isSubscriptionProviderSlug(providerSlug(values.custom_llm_provider ?? ""));
 	if (!values.litellm_credential_name && !managedProvider)
 		for (const field of providerFields) if (field.required && !values[field.key]) errors[field.key] = "Required";
 	for (const name of ["litellm_extra_params", "model_info_params"]) {

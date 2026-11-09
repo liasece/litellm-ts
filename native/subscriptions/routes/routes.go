@@ -10,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/claude"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/gemini"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
@@ -24,6 +25,19 @@ func accountSource(slug string) string {
 		return strings.TrimSuffix(slug, "-subscription")
 	}
 	return ""
+}
+
+// RequireSource prevents callers of the private worker from bypassing the
+// selected subscription through the SDK's default inference routes.
+func RequireSource(c *gin.Context) {
+	switch c.FullPath() {
+	case "/v1/chat/completions", "/v1/completions", "/v1/messages", "/v1/messages/count_tokens",
+		"/v1/responses", "/v1/responses/compact", "/backend-api/codex/responses", "/backend-api/codex/responses/compact",
+		"/v1/images/generations", "/v1/images/edits", "/v1beta/interactions", "/v1beta/models/*action":
+		c.AbortWithStatus(http.StatusNotFound)
+	default:
+		c.Next()
+	}
 }
 
 func authorized(c *gin.Context, cfg *config.Config) bool {
@@ -44,10 +58,6 @@ func authorized(c *gin.Context, cfg *config.Config) bool {
 	return true
 }
 
-// A WebSocket can carry successive turns for different models. The TypeScript
-// gateway binds ambiguous IDs after authorizing each frame, not at handshake.
-const scopedWSModel = "litellm-subscription/"
-
 type subscriptionRouter struct {
 	source string
 	compat handlers.PluginModelRouterHost
@@ -58,10 +68,7 @@ func (subscriptionRouter) HasModelRouters() bool { return true }
 func (r subscriptionRouter) RouteModel(ctx context.Context, req pluginapi.ModelRouteRequest) (pluginapi.ModelRouteResponse, bool) {
 	source, model := r.source, req.RequestedModel
 	if source == "" {
-		if id, tagged := strings.CutPrefix(model, scopedWSModel); tagged {
-			slug, name, _ := strings.Cut(id, "/")
-			source, model = accountSource(slug), name
-		}
+		source, _ = ctx.Value(turnSourceKey{}).(string)
 		if source == "" {
 			if r.compat != nil {
 				return r.compat.RouteModel(ctx, req)
@@ -69,7 +76,7 @@ func (r subscriptionRouter) RouteModel(ctx context.Context, req pluginapi.ModelR
 			return pluginapi.ModelRouteResponse{}, false
 		}
 	}
-	return pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: source, TargetModel: model}, true
+	return pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: source, TargetModel: registeredModel(source, model)}, true
 }
 
 // Register adapts LiteLLM's private provider-qualified routes to the SDK's
@@ -109,7 +116,7 @@ func Register(engine *gin.Engine, base *handlers.BaseAPIHandler, cfg *config.Con
 		items := make([]item, 0, len(models))
 		for _, model := range models {
 			if model != nil {
-				items = append(items, item{ID: model.ID})
+				items = append(items, item{ID: upstreamModel(source, model.ID, model.Name)})
 			}
 		}
 		c.JSON(http.StatusOK, gin.H{"data": items})
@@ -124,9 +131,13 @@ func Register(engine *gin.Engine, base *handlers.BaseAPIHandler, cfg *config.Con
 		claude.NewClaudeCodeAPIHandler(b).ClaudeCountTokens(c)
 	}))
 	inner.POST("/v1/completions", dispatch(func(b *handlers.BaseAPIHandler, c *gin.Context) { openai.NewOpenAIAPIHandler(b).Completions(c) }))
+	inner.POST("/v1beta/interactions", dispatch(func(b *handlers.BaseAPIHandler, c *gin.Context) { gemini.NewGeminiAPIHandler(b).Interactions(c) }))
+	inner.POST("/v1beta/models/*action", dispatch(func(b *handlers.BaseAPIHandler, c *gin.Context) { gemini.NewGeminiAPIHandler(b).GeminiHandler(c) }))
+	inner.GET("/v1beta/models/*action", dispatch(func(b *handlers.BaseAPIHandler, c *gin.Context) { gemini.NewGeminiAPIHandler(b).GeminiGetHandler(c) }))
 	ws := dispatch(func(b *handlers.BaseAPIHandler, c *gin.Context) {
 		h := openai.NewOpenAIResponsesAPIHandler(b)
 		h.AccessManager = accessManager
+		c.Set("litellm.subscriptionTurn", bindWebsocketTurns())
 		h.ResponsesWebsocket(c)
 	})
 	inner.GET("/v1/responses", ws)

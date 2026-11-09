@@ -113,3 +113,26 @@ test("recorded images preview with working controls and restore nested drawer fo
 	await expect(trigger).toBeFocused();
 	await expect(page.getByRole("dialog", { name: "Log details", exact: true })).toBeVisible();
 });
+
+test("the header uses the final upstream model from request details and the supplier of each selected row", async ({ page }) => {
+	await page.route("**/spend/logs/ui/log-*?**", (route) =>
+		route.fulfill({ json: { proxy_server_request: { upstream_request: { body: { model: "deepseek/deepseek-v4.1-flash" } } } } }),
+	);
+	await page.getByRole("button", { name: "Open request", exact: true }).click();
+	const header = page.locator(".ld-header__model");
+	await expect(header.getByRole("img", { name: "DeepSeek via OpenAI" })).toBeVisible();
+	await page.getByRole("button", { name: "Next log" }).click();
+	await expect(header.getByRole("img", { name: "DeepSeek via Anthropic" })).toBeVisible();
+});
+
+test("suppresses a duplicate supplier image and restores a distinct one on navigation", async ({ page }) => {
+	await page.route("**/spend/logs/ui/log-*?**", (route) => {
+		const model = route.request().url().includes("log-two?") ? "deepseek-v4" : "gpt-4o";
+		return route.fulfill({ json: { proxy_server_request: { upstream_request: { body: { model } } } } });
+	});
+	await page.getByRole("button", { name: "Open request", exact: true }).click();
+	const header = page.locator(".ld-header__model");
+	await expect(header.getByRole("img", { name: "OpenAI", exact: true }).locator("img")).toHaveCount(1);
+	await page.getByRole("button", { name: "Next log" }).click();
+	await expect(header.getByRole("img", { name: "DeepSeek via Anthropic" }).locator("img")).toHaveCount(2);
+});

@@ -2,7 +2,6 @@ import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { registerCliProxyManagementRoutes } from "./CliProxyEndpoints";
 import { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
-import type { ConfigRepository } from "../repositories/ConfigRepository";
 
 function makeRuntime() {
 	return {
@@ -104,26 +103,15 @@ describe("CLIProxy protected management bridge", () => {
 	});
 });
 
-describe("CLIProxy release check endpoint", () => {
-	afterEach(() => {
-		jest.restoreAllMocks();
-	});
-
-	it("页面预取复用缓存，手动检查强制刷新", async () => {
-		const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(
-			async () =>
-				new Response(
-					JSON.stringify([{ tag_name: "v8.0.52", body: "## Changelog\n\n- change", draft: false, prerelease: false }]),
-					{ status: 200, headers: { "Content-Type": "application/json" } },
-				),
-		);
-		const app = makeApp(new CliProxyRuntimeManager({} as ConfigRepository, "master-key-for-test"));
-
-		await request(app).get("/cliproxy/update/check").expect(200);
-		await request(app).get("/cliproxy/update/check").expect(200);
-		expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-		await request(app).get("/cliproxy/update/check?refresh=true").expect(200);
-		expect(fetchSpy).toHaveBeenCalledTimes(2);
+describe("bundled subscription runtime", () => {
+	it("reports the same packaged version to existing clients and rejects standalone binary updates", async () => {
+		const runtime=makeRuntime();
+		runtime.status=jest.fn().mockReturnValue({version:"8.0.57", state:"running",engine:"subscriptions"});
+		const app=makeApp(runtime);
+		for (const path of ["/cliproxy","/subscriptions"]) {
+			await request(app).get(path+"/update/check").expect(200,{current:"8.0.57", latest:"8.0.57",update_available:false,releases:[]});
+			await request(app).post(path+"/update").send({version:"9.9.9"}).expect(410);
+			await request(app).post(path+"/rollback").send({version:"7.0.0"}).expect(410);
+		}
 	});
 });

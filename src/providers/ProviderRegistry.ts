@@ -156,8 +156,8 @@ export class ProviderRegistry {
 
 		// PY: support dynamic api_base from deployment params or environment (transformation.py)
 		const dynamicApiBase = params?.["api_base"] as string | undefined;
-		if (isSubscriptionProvider(providerName) || providerName === LlmProviders.CLIProxy) {
-			return new SubscriptionProvider(providerName, this._subscriptions, params?.["subscription_transport"]);
+		if (isSubscriptionProvider(providerName)) {
+			return new SubscriptionProvider(providerName, this._subscriptions);
 		}
 		switch (providerName) {
 			case LlmProviders.OpenAI:

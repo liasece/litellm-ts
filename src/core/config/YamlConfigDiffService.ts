@@ -17,6 +17,7 @@
  *   litellm_params/model_info 不同 → params_differ；DB 有 yaml 无不列为冲突
  *   （那是网页新增的模型，DB 优先语义下合法）。
  */
+import { hostedProvider, subscriptionModelParams, subscriptionModelInfo } from "../../subscriptions/SubscriptionProviders";
 import * as crypto from "node:crypto";
 import { modelRepositoryFor } from "../../repositories/ModelRepository";
 import { ConfigRepository } from "../../repositories/ConfigRepository";
@@ -189,9 +190,19 @@ export function computeYamlConfigDiff(
 				items.push({ section: "model_list", key: modelName, yaml_value: yamlModel, db_value: null, diff_kind: "db_missing" });
 				continue;
 			}
-			const paramsDiffer = !deepEqualConfigValue(yamlModel["litellm_params"] ?? {}, dbModel.litellm_params ?? {});
+			const input = yamlModel["litellm_params"];
+			let params = isRecord(input) ? input : {};
+			let info = stripInjectedModelInfo(yamlModel["model_info"]);
+			if (hostedProvider(params)) {
+				// Keep invalid input visible as a difference; the apply endpoint returns its validation error.
+				try {
+					params = subscriptionModelParams(params);
+					info = subscriptionModelInfo(info, params);
+				} catch { /* Compare invalid YAML verbatim. */ }
+			}
+			const paramsDiffer = !deepEqualConfigValue(params, dbModel.litellm_params ?? {});
 			const infoDiffer = !deepEqualConfigValue(
-				stripInjectedModelInfo(yamlModel["model_info"]),
+				info,
 				stripInjectedModelInfo(dbModel.model_info),
 			);
 			if (paramsDiffer || infoDiffer) {

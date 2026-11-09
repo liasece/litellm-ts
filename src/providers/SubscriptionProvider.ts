@@ -1,29 +1,26 @@
 import type { Message, ModelResponse } from "../types/openai";
 import type { ProviderRequest } from "../types/provider";
-import { LlmProviders } from "../types/provider";
-import { subscriptionTarget, type HostedProvider, type SubscriptionConnection } from "../subscriptions/SubscriptionProviders";
+import {
+	subscriptionTarget,
+	type SubscriptionProvider as SubscriptionSource,
+	type SubscriptionConnection,
+} from "../subscriptions/SubscriptionProviders";
 import { OpenAICompatProvider } from "./OpenAICompatProvider";
 
 /** Builds public protocol requests for one subscription account source. */
 export class SubscriptionProvider extends OpenAICompatProvider {
 	constructor(
-		private readonly _source: HostedProvider,
+		private readonly _source: SubscriptionSource,
 		private readonly _connection: SubscriptionConnection = {
 			internalApiKey: process.env["CLIPROXY_INTERNAL_API_KEY"] ?? "",
 			baseUrl: process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? "http://127.0.0.1:8317",
-			sourceBuiltSubscriptions: _source !== LlmProviders.CLIProxy,
 		},
-		private readonly _transport?: unknown,
 	) {
 		super(_connection.internalApiKey, _connection.baseUrl);
 	}
 
 	private _target(model: string, path: string): { url: string; model: string } {
-		return subscriptionTarget(
-			this._connection,
-			{ model: model, custom_llm_provider: this._source, subscription_transport: this._transport },
-			path,
-		);
+		return subscriptionTarget(this._connection, { model: model, custom_llm_provider: this._source }, path);
 	}
 
 	/**

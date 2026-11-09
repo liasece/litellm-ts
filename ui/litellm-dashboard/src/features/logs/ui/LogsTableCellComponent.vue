@@ -5,7 +5,8 @@ import UiPopover from "../../platform/ui/UiPopover.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import ProviderLogoComponent from "../../providers/ui/ProviderLogoComponent.vue";
-import { getModelLogoAndName, getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
+import ModelLogo from "../../providers/ui/ModelLogoComponent.vue";
+import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import {
 	buildModelResolutionLines,
@@ -35,7 +36,7 @@ const tokens = computed(() => tokenMetrics(props.log));
 const ttft = computed(() => ttftMs(props.log));
 const tps = computed(() => outputTps(props.log));
 const route = computed(() =>
-	buildModelResolutionLines(props.log.metadata?.fallback_models, props.log.metadata?.model_resolution_chain, props.log.model || ""),
+	buildModelResolutionLines(props.log.metadata?.fallback_models, props.log.metadata?.model_resolution_chain, model.value.executed),
 );
 const tags = computed(() => Object.entries(record(props.log.request_tags)));
 const fallbackText = computed(() =>
@@ -145,7 +146,8 @@ const costFields = computed(() => [
 		></template
 	>
 	<div v-else-if="column === 'model'" class="logs-model">
-		<ProviderLogoComponent v-if="model.provider" :provider="model.provider" :logo="model.logo" />
+		<ProviderLogoComponent v-if="model.toolLogo" :provider="model.displayName" :logo="model.toolLogo" />
+		<ModelLogo v-else-if="model.executed || model.provider" :model="model.executed" :family="model.family" :provider="model.provider" />
 		<UiTag v-if="model.builtin" color="purple" style="margin: 0; flex-shrink: 0">Built-in · {{ model.builtin }}</UiTag>
 		<UiPopover placement="bottomLeft" popup-class="logs-model-popover-shell">
 			<span class="logs-model-name"
@@ -167,7 +169,7 @@ const costFields = computed(() => [
 									:logo="getProviderLogoAndName(model.provider).logo"
 									image-class="logs-route-logo"
 									fallback-class="logs-route-logo"
-								/>{{ model.provider || "-" }}
+								/>{{ model.provider || log.custom_llm_provider || "-" }}
 							</div>
 						</div>
 						<div>
@@ -180,13 +182,12 @@ const costFields = computed(() => [
 							<span class="logs-field-label">{{ line.label }}</span>
 							<div class="logs-route-model">
 								<template v-for="(name, i) in line.path" :key="i"
-									><span v-if="i" style="margin: 0 8px; color: #94a3b8">→</span
-									><ProviderLogoComponent
-										v-if="model.provider"
-										:provider="model.provider"
-										:logo="getModelLogoAndName(model.provider, name).logo"
-										image-class="logs-route-logo"
-										fallback-class="logs-route-logo"
+									><span v-if="i" style="margin: 0 8px; color: #94a3b8">→</span>
+									<ModelLogo
+										:model="name"
+										:family="line.label === 'Executed' ? model.family : undefined"
+										:provider="line.label === 'Executed' ? model.provider : undefined"
+										:size="16"
 									/>{{ name }}</template
 								>
 							</div>

@@ -3,7 +3,7 @@ import { defineAsyncComponent, type Component } from "vue";
 const modules = import.meta.glob<{ default: Component }>("../../*/ui/*Page*.vue");
 const views: Readonly<Record<string, string>> = {
 	login: "../../identity/ui/LoginPage.vue",
-	cliproxy: "../../cliproxy/ui/CliProxyPageComponent.vue",
+	"subscription-runtime": "../../subscriptions/ui/SubscriptionRuntimePageComponent.vue",
 	subscriptions: "../../subscriptions/ui/SubscriptionsPageComponent.vue",
 	"api-keys": "../../virtual-keys/ui/VirtualKeysPageComponent.vue",
 	models: "../../models/ui/ModelsPageComponent.vue",

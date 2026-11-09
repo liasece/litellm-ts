@@ -1,7 +1,7 @@
 import { computed, shallowReactive } from "vue";
 import { z } from "zod";
 import { createChatHistoryStore } from "./ChatHistoryStore";
-import { chatModels } from "../api/ChatCatalogApi";
+import { fetchModelGroupIcons, type ModelGroupIcons } from "../../providers/api/ModelGroupIconsApi";
 import { sendInference } from "../api/PlaygroundInferenceApi";
 import type { ChatComparisonExchange } from "../support/ChatModels";
 import type { PlaygroundRequest } from "../support/PlaygroundModels";
@@ -11,6 +11,7 @@ export function createChatInferenceStore(navigate: (id: string | null, replace?:
 	const history = createChatHistoryStore(),
 		state = shallowReactive({
 			models: [] as string[],
+			modelIcons: new Map() as ModelGroupIcons,
 			selected: [] as string[],
 			loadingModels: true,
 			input: "",
@@ -35,7 +36,9 @@ export function createChatInferenceStore(navigate: (id: string | null, replace?:
 	async function load() {
 		modelController = new AbortController();
 		try {
-			const models = await chatModels(modelController.signal);
+			const icons = await fetchModelGroupIcons(modelController.signal);
+			const models = [...icons.keys()].sort((a, b) => a.localeCompare(b));
+			state.modelIcons = icons;
 			state.models = models;
 			let saved: string[] = [];
 			try {

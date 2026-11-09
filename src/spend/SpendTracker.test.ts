@@ -1572,7 +1572,7 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		});
 		const metadata = spendLog.metadata ?? {};
 		expect(metadata["user_api_key_team_alias"]).toBe("team-alpha");
-		expect(metadata["model_map_information"]).toEqual({ model_map_key: "glm", model_map_value: { id: "deployment-id-1" } });
+		expect(metadata["model_map_information"]).toEqual({ model_map_key: "glm", model_map_value: { id: "deployment-id-1", model_family: "GLM" } });
 		expect(metadata["litellm_overhead_time_ms"]).toBe(12);
 		expect(metadata["attempted_retries"]).toBe(1);
 		expect(metadata["max_retries"]).toBe(3);
@@ -1637,6 +1637,20 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 				response: { id: "resp_partial", status: "in_progress", partial_output_text: "hello" },
 			},
 		});
+	});
+
+	it("订阅的首选部署按上游模型记账，并保留公开别名和账号来源", async () => {
+		const alias = "opencode-go/deepseek-v4.1-flash";
+		const log = await buildSpendLogFromRequest({
+			callType: CallType.ACompletion,
+			model: alias,
+			deploymentModel: "deepseek-v4.1-flash",
+			customLlmProvider: "opencode-go",
+			req: createMinimalRequest(),
+			startTime: new Date("2026-11-09T00:00:00Z"),
+			endTime: new Date("2026-11-09T00:00:01Z"),
+		});
+		expect(log).toMatchObject({ model: "deepseek-v4.1-flash", model_group: alias, custom_llm_provider: "opencode-go" });
 	});
 
 	it("fallback 到无 provider 前缀 deployment 时，model 用最终模型且 model_group 保留原请求", async () => {

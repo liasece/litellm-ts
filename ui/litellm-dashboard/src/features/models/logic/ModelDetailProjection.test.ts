@@ -8,9 +8,9 @@ const raw: ProxyModel = {
 	model_info: { id: "model-1", input_cost_per_token: 0.000002, output_cost_per_token: 0.000008 },
 };
 describe("raw model details", () => {
-	it("keeps the legacy overview empty while the settings retain configured token prices", () => {
+	it("reads the configured provider while retaining separate overview and settings prices", () => {
 		const detail = normalizeModelDetails(raw);
-		expect(detail).toMatchObject({ provider: "", litellm_model_name: "openai/gpt-4.1", input_cost: null, output_cost: null });
+		expect(detail).toMatchObject({ provider: "openai", litellm_model_name: "openai/gpt-4.1", input_cost: null, output_cost: null });
 		expect(createModelEditDraft(detail)).toMatchObject({ input_cost: 2, output_cost: 8 });
 		expect(transformModels([raw], {})[0]).toMatchObject({ provider: "openai", input_cost: 2, output_cost: 8 });
 	});

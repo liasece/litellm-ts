@@ -1,59 +1,29 @@
 import { DEFAULT_PRIVACY_MASKING_SETTINGS } from "../privacy/PrivacyConfig";
 import { LlmProviders } from "../types/provider";
-import type { Deployment } from "../types/router";
 import { ProviderRegistry } from "../providers/ProviderRegistry";
 import { adjustCost } from "../cost/CostTrackingConfig";
 import { isPrivacyScopeMatch } from "../privacy/PrivacyScope";
-import { SubscriptionCatalog } from "./SubscriptionProviders";
+import { subscriptionModelParams } from "./SubscriptionProviders";
 
-const catalog = new SubscriptionCatalog();
-catalog.replace([
-	{ id: "gpt-model", providers: ["codex"] },
-	{ id: "commandcode/vendor/model", providers: ["commandcode"] },
-	{ id: "custom/catalog-id", providers: ["commandcode"] },
-	{ id: "shared", providers: ["codex", "another-plugin"] },
-]);
-const registry = new ProviderRegistry({
-	baseUrl: "http://127.0.0.1:8317",
-	internalApiKey: "local-test-ingress",
-	sourceBuiltSubscriptions: true,
-	subscriptionCatalog: catalog,
-});
-function legacy(model: string): Deployment {
-	return {
-		model_name: "my-public-alias",
-		model_info: { id: "original-deployment" },
-		litellm_params: { model, custom_llm_provider: "cliproxy" },
-	};
-}
+const registry = new ProviderRegistry({ baseUrl: "http://127.0.0.1:8317", internalApiKey: "fixture" });
 
-it("routes an existing deployment to its registered subscription, keeping its billing model and public ID", () => {
-	const original = legacy("cliproxy/commandcode/vendor/model");
-	const deployment = catalog.deployment(original);
-	expect(deployment.litellm_params).toEqual({ model: original.litellm_params.model, custom_llm_provider: "commandcode" });
-	expect(deployment.model_info?.id).toBe("original-deployment");
-	expect(deployment.model_name).toBe("my-public-alias");
-	const params = deployment.litellm_params;
-	const request = registry.getProvider(params.model, params.custom_llm_provider).transformResponsesRequest!(
-		params.model,
-		{ input: "test", tools: [{ type: "web_search" }] },
-		{},
-	);
-	expect(request?.url).toBe("http://127.0.0.1:8317/subscriptions/commandcode/v1/responses");
-	expect(request?.body).toMatchObject({ model: "commandcode/vendor/model", tools: [{ type: "web_search" }] });
-	expect(original.litellm_params.custom_llm_provider).toBe("cliproxy");
-});
-
-it("keeps ambiguous or unregistered legacy models on their existing resolver and honors an explicitly selected subscription", () => {
-	for (const model of ["shared", "unknown"]) {
-		const deployment = legacy("cliproxy/" + model);
-		expect(catalog.deployment(deployment)).toBe(deployment);
+it("stores only the upstream ID and addresses the configured subscription when multiple sources publish it", () => {
+	for (const source of [LlmProviders.CommandCode, LlmProviders.OpenCodeGo]) {
+		const params = subscriptionModelParams({ model: source + "/vendor/model", custom_llm_provider: source, api_key: "fixture" });
+		expect(params).toEqual({ model: "vendor/model", custom_llm_provider: source });
+		const request = registry.getProvider("vendor/model", source).transformRequest("vendor/model", [], {});
+		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/" + source + "/v1/chat/completions");
+		expect(request.body).toMatchObject({ model: "vendor/model" });
 	}
-	const request = registry.getProvider("codex-subscription/shared").transformRequest("codex-subscription/shared", [], {});
-	expect(request.url).toContain("/subscriptions/codex-subscription/");
-	expect(request.body).toMatchObject({ model: "shared" });
-	const custom = registry.getProvider("commandcode/custom/catalog-id").transformRequest("commandcode/custom/catalog-id", [], {});
-	expect(custom.body).toMatchObject({ model: "custom/catalog-id" });
+});
+
+it("rejects retired deployment configuration without offering generic execution", () => {
+	expect(() => subscriptionModelParams({ model: "cliproxy/vendor/model" })).toThrow();
+	expect(() => subscriptionModelParams({ model: "vendor/model", custom_llm_provider: "cliproxy" })).toThrow();
+	expect(() => registry.getProvider("cliproxy/vendor/model")).toThrow(/Unknown provider/);
+	expect(() =>
+		subscriptionModelParams({ model: "vendor/model", custom_llm_provider: "commandcode", subscription_transport: "compatibility" }),
+	).toThrow();
 });
 
 it("inherits existing discount, margin and privacy rules and gives explicit subscription pricing precedence", () => {

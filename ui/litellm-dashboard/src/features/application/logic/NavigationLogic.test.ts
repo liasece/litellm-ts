@@ -15,7 +15,8 @@ describe("existing dashboard URLs and access", () => {
 
 	it("opens path and legacy query entries without leaking another page's filters", () => {
 		expect(dashboardPageFromUrl(new URL("https://example.test/ui/logs?request_id=r"))).toBe("logs");
-		expect(dashboardPageFromUrl(new URL("https://example.test/ui/?page=cliproxy"))).toBe("cliproxy");
+		expect(dashboardPageFromUrl(new URL("https://example.test/ui/?page=cliproxy"))).toBe("subscription-runtime");
+		expect(dashboardPageFromUrl(new URL("https://example.test/ui/subscriptions/runtime"))).toBe("subscription-runtime");
 		expect(dashboardPageFromUrl(new URL("https://example.test/proxy/ui/usage"), "/proxy/ui")).toBe("new_usage");
 		expect(dashboardHref("models")).toBe("/ui/?page=models");
 		expect(dashboardHref("speed")).toBe("/ui/speed");

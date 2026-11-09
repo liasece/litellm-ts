@@ -143,19 +143,16 @@ func (c *builtinPluginClient) callbackInstance() *hostCallbackInstance {
 // through plugins.configs.<id>.store.version.
 func appendBuiltinPluginFiles(files []pluginFile, desiredVersions ...map[string]string) []pluginFile {
 	desired := normalizeDesiredPluginVersions(desiredVersions...)
-	selected := make(map[string]int, len(files))
-	for i, file := range files {
-		selected[file.ID] = i
+	selected := make(map[string]bool, len(files))
+	for _, file := range files {
+		selected[file.ID] = true
 	}
 	for _, entry := range subbuiltin.Plugins() {
 		if version := desired[entry.ID]; version != "" && version != entry.Version {
 			continue
 		}
 		compiled := pluginFile{ID: entry.ID, Path: builtinPluginPathPrefix + entry.ID, Version: entry.Version}
-		if index, ok := selected[entry.ID]; ok {
-			if subbuiltin.ShippedLibrary(files[index].Path) {
-				files[index] = compiled
-			}
+		if selected[entry.ID] {
 			continue
 		}
 		files = append(files, compiled)

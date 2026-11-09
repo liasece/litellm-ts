@@ -487,3 +487,14 @@ describe("峰谷定价", () => {
 		expect(offPeak.totalCost).toBeCloseTo(2, 10);
 	});
 });
+
+it("prices identical upstream models by their selected subscription and honors a vendor-qualified legacy tariff", () => {
+	const rate = (price: number) => ({input_cost_per_token: price,output_cost_per_token: 0});
+	const prices = {
+		"commandcode/vendor/model":rate(1), "cliproxy/commandcode/vendor/model":rate(2),
+		"cliproxy/opencode-go/vendor/model":rate(3), "vendor/model":rate(4),
+	};
+	for (const [provider, expected] of [["commandcode",1],["opencode-go",3],["openai",4]] as const) {
+		expect(costPerToken("vendor/model", 1, 0, 0, 0, {provider, modelCostMap:prices}).totalCost).toBe(expected);
+	}
+});

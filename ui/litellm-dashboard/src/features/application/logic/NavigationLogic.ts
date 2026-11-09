@@ -5,6 +5,7 @@ import type { NavigationAccess, NavigationGroup } from "../support/NavigationMod
  * Legacy `?page=` ids whose Vue page was retired; keep old bookmarks landing on a live page.
  */
 const retiredPageRedirects: Readonly<Record<string, string>> = {
+	cliproxy: "subscription-runtime",
 	usage: "new_usage",
 	"old-usage": "new_usage",
 };

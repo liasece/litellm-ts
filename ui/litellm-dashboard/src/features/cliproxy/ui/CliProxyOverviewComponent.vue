@@ -1,17 +1,13 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
-import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
-import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import { cliProxyApi } from "../api/CliProxyApi";
 import type { CliProxyStore } from "../stores/CliProxyStore";
-import CliProxyConfirm from "./CliProxyConfirmComponent.vue";
 import CliProxyQuotaCard from "./CliProxyQuotaCardComponent.vue";
 import CliProxyLogViewer from "./CliProxyLogViewerComponent.vue";
-import CliProxyReleaseHistory from "./CliProxyReleaseHistoryComponent.vue";
 const props = defineProps<{ store: CliProxyStore }>();
 const state = props.store.state;
 const stateColor = computed(() =>
@@ -22,11 +18,6 @@ const stateColor = computed(() =>
 			: state.status?.state === "stopped"
 				? "default"
 				: "red",
-);
-const installedVersions = computed(() =>
-	(state.status?.installed_versions ?? [])
-		.filter((version) => version !== state.status?.version)
-		.map((value) => ({ value, label: value })),
 );
 const quotaRefreshing = computed(() => state.accounts.some((account) => state.quotaStates[account.auth_index]?.status === "loading"));
 </script>
@@ -75,86 +66,23 @@ const quotaRefreshing = computed(() => state.accounts.some((account) => state.qu
 							variant="primary"
 							:disabled="state.status?.state === 'running' || state.busy !== null"
 							:loading="state.busy === 'start'"
-							@click="store.runOperation('start', () => cliProxyApi('/cliproxy/start', { method: 'POST' }))"
+							@click="store.runOperation('start', () => cliProxyApi('/subscriptions/start', { method: 'POST' }))"
 							>Start</UiButton
 						><UiButton
 							size="small"
 							:disabled="state.status?.state !== 'running' || state.busy !== null"
 							:loading="state.busy === 'restart'"
-							@click="store.runOperation('restart', () => cliProxyApi('/cliproxy/restart', { method: 'POST' }))"
+							@click="store.runOperation('restart', () => cliProxyApi('/subscriptions/restart', { method: 'POST' }))"
 							>Restart</UiButton
 						><UiButton
 							size="small"
 							danger
 							:disabled="state.status?.state === 'stopped' || state.busy !== null"
 							:loading="state.busy === 'stop'"
-							@click="store.runOperation('stop', () => cliProxyApi('/cliproxy/stop', { method: 'POST' }))"
+							@click="store.runOperation('stop', () => cliProxyApi('/subscriptions/stop', { method: 'POST' }))"
 							>Stop</UiButton
 						>
 					</div>
-				</div>
-				<div class="cp-release-channel">
-					<div class="cp-between cp-wrap cp-gap-8 cp-mb-8">
-						<div>
-							<div class="cp-inline cp-gap-8">
-								<strong>Release channel</strong
-								><UiTag v-if="state.updateInfo" :color="state.updateInfo.update_available ? 'orange' : 'green'">{{
-									state.updateInfo.update_available ? "Update available" : "Up to date"
-								}}</UiTag
-								><UiTag v-else>Not checked</UiTag>
-							</div>
-							<span class="cp-secondary cp-xs"
-								>Current {{ state.status?.version ?? "—" }} · Latest {{ state.updateInfo?.latest ?? "—" }}</span
-							>
-						</div>
-						<UiButton
-							size="small"
-							:loading="state.busy === 'update check'"
-							:disabled="state.busy !== null && state.busy !== 'update check'"
-							@click="store.checkUpdate"
-							><template #icon><UiIcon name="ReloadOutlined" /></template>Check</UiButton
-						>
-					</div>
-					<div class="cp-inline cp-wrap cp-gap-8">
-						<UiButton
-							size="small"
-							variant="primary"
-							:loading="state.busy === 'update'"
-							:disabled="!state.updateInfo?.update_available || state.busy !== null"
-							@click="store.installUpdate"
-							><template #icon><UiIcon name="CloudDownloadOutlined" /></template
-							>{{
-								state.updateInfo?.update_available ? "Install " + state.updateInfo.latest : "Latest version installed"
-							}}</UiButton
-						><UiSelect
-							v-model="state.rollbackVersion"
-							clearable
-							placeholder="Select installed version"
-							size="small"
-							class="cp-rollback-select"
-							:disabled="state.busy !== null"
-							:options="installedVersions"
-						/><CliProxyConfirm
-							:title="'Roll back to ' + state.rollbackVersion + '?'"
-							description="CLIProxy will restart after the selected version is activated."
-							:disabled="!state.rollbackVersion"
-							@confirm="store.rollback"
-							><UiButton
-								size="small"
-								:disabled="!state.rollbackVersion || state.busy !== null"
-								:loading="state.busy === 'rollback'"
-								><template #icon><UiIcon name="RollbackOutlined" /></template>Roll back</UiButton
-							></CliProxyConfirm
-						>
-					</div>
-					<CliProxyReleaseHistory
-						v-if="state.updateInfo"
-						:key="state.updateInfo.latest"
-						class="cp-mt-12"
-						:releases="state.updateInfo.releases"
-						:current="state.updateInfo.current"
-						:latest="state.updateInfo.latest"
-					/>
 				</div>
 			</div>
 			<UiAlert v-if="state.status?.operation" class="cp-mt-16" :title="'Operation in progress: ' + state.status.operation" />

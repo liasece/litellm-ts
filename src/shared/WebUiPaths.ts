@@ -5,6 +5,7 @@ export const pathPages: Readonly<Record<string, string>> = {
 	speed: "speed",
 	privacy: "privacy",
 	subscriptions: "subscriptions",
+	"subscriptions/runtime": "subscription-runtime",
 	logs: "logs",
 	"models-and-endpoints": "models",
 	organizations: "organizations",

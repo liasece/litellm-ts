@@ -297,8 +297,8 @@ describe("Responses API contract matrix", () => {
 			const nativeDeployment = {
 				model_name: "cliproxy-cached",
 				litellm_params: {
-					model: "cliproxy/opencode-go/deepseek-v4.1-flash",
-					custom_llm_provider: "cliproxy",
+					model: "deepseek-v4.1-flash",
+					custom_llm_provider: "opencode-go",
 					input_cost_per_token: 1.5e-7,
 					output_cost_per_token: 6e-7,
 					cache_read_input_token_cost: 1.5e-8,
@@ -396,8 +396,8 @@ describe("Responses API contract matrix", () => {
 			const nativeDeployment = {
 				model_name: "cliproxy-tail",
 				litellm_params: {
-					model: "cliproxy/opencode-go/deepseek-v4.1-flash",
-					custom_llm_provider: "cliproxy",
+					model: "deepseek-v4.1-flash",
+					custom_llm_provider: "opencode-go",
 				},
 				model_info: { id: "cliproxy-tail-deployment", enabled_builtin_capabilities: ["image_generation"] },
 			};
@@ -458,7 +458,7 @@ describe("Responses API contract matrix", () => {
 			);
 			const deployment = {
 				model_name: "cliproxy-native",
-				litellm_params: { model: "cliproxy/opencode-go/deepseek-v4.1-flash", custom_llm_provider: "cliproxy" },
+				litellm_params: { model: "deepseek-v4.1-flash", custom_llm_provider: "opencode-go" },
 				model_info: { id: "cliproxy-native-deployment" },
 			};
 			const app = buildApp(buildDeploymentRouter([deployment]), true);

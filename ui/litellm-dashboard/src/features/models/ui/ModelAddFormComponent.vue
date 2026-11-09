@@ -32,7 +32,6 @@ const teamRequired = computed(() => props.teamAdmin && !props.admin),
 		const slug = providerSlug(provider.value);
 		return isSubscriptionProviderSlug(slug) ? slug : "";
 	}),
-	managed = computed(() => provider.value === "CLIProxy" || Boolean(subscriptionSlug.value)),
 	accountHref = computed(() => {
 		const root = getServerRootPath().replace(/\/+$/, "");
 		return subscriptionAccountsHref((root === "/" ? "" : root) + "/ui", subscriptionSlug.value);
@@ -87,10 +86,6 @@ async function submit() {
 						>Select an upstream model and keep the public model name you want to expose. The managed runtime supplies the
 						internal endpoint and account authentication; no provider key is stored on this deployment.
 						<a :href="accountHref">Manage subscription accounts</a></UiAlert
-					>
-					<UiAlert v-else-if="managed" type="info" title="Credentials are managed by the built-in CLIProxy runtime"
-						>Select an upstream model and public name only. LiteLLM supplies the internal endpoint and authentication
-						automatically.</UiAlert
 					>
 					<template v-else
 						><p class="model-credential-hint">Either select existing credentials OR enter new provider credentials below</p>

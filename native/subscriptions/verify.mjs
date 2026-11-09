@@ -11,7 +11,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const [nativeBinary, pluginDirectory, referenceBinary] = process.argv.slice(2);
-if (!nativeBinary || !pluginDirectory) throw new Error("usage: node verify.mjs <native binary> <compatibility plugin directory> [reference binary]");
+if (!nativeBinary || (referenceBinary && !pluginDirectory)) throw new Error("usage: node verify.mjs <native binary> [reference plugin directory] [reference binary]");
 const seen = [];
 const output = { id: "resp_fixture", object: "response", status: "completed", model: "fixture", output: [{ id: "msg_fixture", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "fixture ok", annotations: [] }] }], usage: { input_tokens: 13, output_tokens: 2, total_tokens: 15 } };
 const events = [
@@ -33,6 +33,7 @@ const remote = createServer(async (req, res) => {
 	if (operation === "models") {
 		return json({ data: source === "cc" ? [{ id: "vendor/fixture" }, { id: "anthropic/claude-sonnet-4-6" }] : [{ id: "gpt-fixture" }] });
 	}
+	assert(!Object.hasOwn(body,"_litellm_subscription"), "private routing metadata leaked to upstream");
 	seen.push({ source, operation, model: body.model, tools: body.tools, session: Boolean(req.headers["x-commandcode-session"] || req.headers["x-opencode-session"]) });
 	if (operation === "responses") {
 		if (!body.stream) return json(output);
@@ -111,8 +112,11 @@ async function exercise(binary, scoped, plugins) {
 		assert(ids.includes("commandcode/vendor/fixture") && ids.includes("opencode-go/gpt-fixture") && ids.includes("fixture-codex-model"), "source catalogs did not warm: " + ids.filter(id=>id.includes("fixture")).join(","));
 		const results=[];
 		if(scoped) {
+			const attempts=seen.length;
+			assert.equal((await send("/v1/responses",{model:"fixture-codex-model",input:"unscoped"})).status,404);
+			assert.equal(seen.length,attempts);
 			for(const [slug,id] of [["codex-subscription","fixture-codex-model"],["commandcode","commandcode/vendor/fixture"],["opencode-go","opencode-go/gpt-fixture"]]) {
-				assert((await (await send("/subscriptions/"+slug+"/v1/models")).json()).data.some(m=>m.id===id));
+				assert((await (await send("/subscriptions/"+slug+"/v1/models")).json()).data.some(m=>m.id===id.replace(new RegExp("^"+slug+"/"),"")));
 			}
 			assert.equal((await fetch(base+"/subscriptions/commandcode/v1/models")).status,401);
 		}
@@ -120,7 +124,8 @@ async function exercise(binary, scoped, plugins) {
 			const path=(scoped?"/subscriptions/"+slug:"")+"/v1/responses";
 			for(const stream of [false,true]) {
 				const start=seen.length;
-				const r=await send(path,{model,input:"synthetic fixture",tools:[tool],stream});
+				const apiModel = scoped ? model.replace(new RegExp("^"+slug+"/"),"") : model;
+				const r=await send(path,{model:apiModel,input:"synthetic fixture",tools:[tool],stream});
 				const raw=await r.text();
 				assert.equal(r.status,200,slug+" "+r.status+" "+raw.slice(0,180));
 				const attempts=seen.slice(start);
@@ -138,7 +143,8 @@ async function exercise(binary, scoped, plugins) {
 			const prefix=scoped?"/subscriptions/"+slug:"";
 			for(const endpoint of ["chat/completions", "messages"]) {
 				const start=seen.length;
-				const r=await send(prefix+"/v1/"+endpoint,{model,messages:[{role:"user",content:"synthetic fixture"}], max_tokens:32});
+				const apiModel = scoped ? model.replace(new RegExp("^"+slug+"/"),"") : model;
+				const r=await send(prefix+"/v1/"+endpoint,{model:apiModel,messages:[{role:"user",content:"synthetic fixture"}], max_tokens:32});
 				const raw=await r.text();
 				assert.equal(r.status,200,slug+" "+endpoint+" "+r.status+" "+raw.slice(0,160));
 				const message=JSON.parse(raw);
@@ -162,7 +168,7 @@ async function exercise(binary, scoped, plugins) {
 		const received=[];
 		await new Promise((resolve,reject)=>{
 			const timer=setTimeout(()=>{ws.terminate();reject(new Error("websocket turn timed out"));},8000);
-			ws.once("open",()=>ws.send(JSON.stringify({type:"response.create",model:"fixture-codex-model",input:[{role:"user",content:"fixture"}]})));
+			ws.once("open",()=>ws.send(JSON.stringify({type:"response.create",model:"fixture-codex-model",...(scoped?{_litellm_subscription:"codex-subscription"}:{}),input:[{role:"user",content:"fixture"}]})));
 			ws.once("error",err=>{clearTimeout(timer);reject(err);});
 			ws.on("message",raw=>{
 				const frame=JSON.parse(raw.toString());received.push(frame.type);
@@ -185,7 +191,7 @@ async function exercise(binary, scoped, plugins) {
 	}
 }
 try {
-	const pluginPath=resolve(pluginDirectory);
+	const pluginPath=pluginDirectory ? resolve(pluginDirectory) : undefined;
 	const baseline=referenceBinary ? await exercise(referenceBinary,false,pluginPath) : undefined;
 	const actual=await exercise(nativeBinary,true,process.env.SUBSCRIPTIONS_FIXTURE_DYNAMIC ? pluginPath : undefined);
 	if(baseline) assert.deepEqual(actual,baseline);

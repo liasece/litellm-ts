@@ -1,5 +1,5 @@
 import { SUBSCRIPTION_PROVIDERS, isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
-import type { Router, Request, Response } from "express";
+import { Router, type Request, type Response } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
@@ -208,19 +208,22 @@ async function proxyManagementRequest(req: Request, res: Response, runtime: CliP
 
 /**
  * Register the admin-only CLIProxy control-plane API.
- * @param router
+ * @param parent - Authenticated management router.
  * @param runtime
  */
-export function registerCliProxyManagementRoutes(router: Router, runtime: CliProxyRuntimeManager): void {
-	registerRoute(router, { method: "get", path: "/cliproxy/status" }, () => runtime.status());
+export function registerCliProxyManagementRoutes(parent: Router, runtime: CliProxyRuntimeManager): void {
+	const router = Router();
+	// Older management clients reach the same handlers as the subscription dashboard.
+	parent.use(["/subscriptions", "/cliproxy"], router);
+	registerRoute(router, { method: "get", path: "/status" }, () => runtime.status());
 
-	registerRoute(router, { method: "get", path: "/cliproxy/config" }, () => ({
+	registerRoute(router, { method: "get", path: "/config" }, () => ({
 		settings: runtime.settings,
 		user_config: runtime.userConfig,
 		status: runtime.status(),
 	}));
 
-	registerRoute(router, { method: "put", path: "/cliproxy/config" }, async (req) => {
+	registerRoute(router, { method: "put", path: "/config" }, async (req) => {
 		const body = bodyRecord(req);
 		const enabled = body["enabled"] !== false;
 		let status: CliProxyRuntimeStatus;
@@ -242,22 +245,22 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		};
 	});
 
-	registerRoute(router, { method: "post", path: "/cliproxy/start" }, () => runtime.start());
-	registerRoute(router, { method: "post", path: "/cliproxy/stop" }, () => runtime.stop());
-	registerRoute(router, { method: "post", path: "/cliproxy/restart" }, () => runtime.restart());
+	registerRoute(router, { method: "post", path: "/start" }, () => runtime.start());
+	registerRoute(router, { method: "post", path: "/stop" }, () => runtime.stop());
+	registerRoute(router, { method: "post", path: "/restart" }, () => runtime.restart());
 
-	registerRoute(router, { method: "get", path: "/cliproxy/models" }, async () => ({
+	registerRoute(router, { method: "get", path: "/models" }, async () => ({
 		data: (await runtime.listModels()).map((id) => ({ id: id })),
 	}));
 
-	registerRoute(router, { method: "get", path: "/subscriptions/:provider/models" }, async (req) => {
+	registerRoute(router, { method: "get", path: "/:provider/models" }, async (req) => {
 		requireProxyAdmin(req);
 		const provider = routeParam(req, "provider");
 		if (!isSubscriptionProvider(provider)) {throw ApiError.notFound("未知订阅 Provider");}
 		return { data: (await runtime.listSubscriptionModels(provider)).map(id => ({ id: id })) };
 	});
 
-	registerRoute(router, { method: "get", path: "/cliproxy/logs" }, (req) => {
+	registerRoute(router, { method: "get", path: "/logs" }, (req) => {
 		const value = Array.isArray(req.query.after) ? req.query.after[0] : req.query.after;
 		const after = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : 0;
 		return runtime.logs(after);
@@ -269,11 +272,11 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		if (provider !== "commandcode" && provider !== "opencode-go") {throw ApiError.badRequest("此订阅使用 OAuth 登录");}
 		return provider;
 	};
-	registerRoute(router, { method: "get", path: "/subscriptions/:provider/keys" }, async req => ({
+	registerRoute(router, { method: "get", path: "/:provider/keys" }, async req => ({
 		data: await runtime.listSavedKeys(keyProvider(req)),
 	}));
 	for (const [method, suffix] of [["post", ""], ["patch", "/:id"]] as const) {
-		registerRoute(router, { method: method, path: "/subscriptions/:provider/keys" + suffix }, async req => {
+		registerRoute(router, { method: method, path: "/:provider/keys" + suffix }, async req => {
 			const provider = keyProvider(req);
 			const body = bodyRecord(req);
 			if (typeof body["label"] !== "string" || (body["api_key"] !== undefined && typeof body["api_key"] !== "string")) {
@@ -283,12 +286,12 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 				body["label"], typeof body["api_key"] === "string" ? body["api_key"] : undefined) };
 		});
 	}
-	registerRoute(router, { method: "delete", path: "/subscriptions/:provider/keys/:id" }, async req => {
+	registerRoute(router, { method: "delete", path: "/:provider/keys/:id" }, async req => {
 		await runtime.revokeSubscriptionKey(keyProvider(req), routeParam(req, "id"));
 		return { status: "trashed" };
 	});
 
-	registerRoute(router, { method: "get", path: "/subscriptions/accounts/provider/:provider" }, async (req) => {
+	registerRoute(router, { method: "get", path: "/accounts/provider/:provider" }, async (req) => {
 		const provider = routeParam(req, "provider");
 		if (!isSubscriptionProvider(provider)) {
 			throw ApiError.notFound("未知订阅 Provider");
@@ -297,102 +300,92 @@ export function registerCliProxyManagementRoutes(router: Router, runtime: CliPro
 		return { data: accounts.filter(account => account.provider === SUBSCRIPTION_PROVIDERS[provider].source) };
 	});
 
-	for (const base of ["/cliproxy", "/subscriptions"]) {
-		registerRoute(router, { method: "get", path: base + "/accounts" }, async (req) => ({
-			data: await runtime.listAccounts({ includeTrashed: req.query["include_trashed"] === "true" }),
-		}));
+	registerRoute(router, { method: "get", path: "/accounts" }, async (req) => ({
+		data: await runtime.listAccounts({ includeTrashed: req.query["include_trashed"] === "true" }),
+	}));
 
-		registerRoute(router, { method: "get", path: base + "/accounts/:authIndex/quota" }, (req) =>
-			runtime.getAccountQuota(routeParam(req, "authIndex")),
-		);
+	registerRoute(router, { method: "get", path: "/accounts/:authIndex/quota" }, (req) =>
+		runtime.getAccountQuota(routeParam(req, "authIndex")),
+	);
 
-		registerRoute(router, { method: "patch", path: base + "/accounts/:filename" }, async (req) => {
-			const body = bodyRecord(req);
-			const disabled = typeof body["disabled"] === "boolean" ? body["disabled"] : undefined;
-			const weight = body["weight"] === null || typeof body["weight"] === "number" ? body["weight"] : undefined;
-			if (disabled === undefined && weight === undefined) {
-				throw ApiError.badRequest("必须提供 disabled 或 weight");
-			}
-			await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight });
-			return { status: "ok" };
-		});
+	registerRoute(router, { method: "patch", path: "/accounts/:filename" }, async (req) => {
+		const body = bodyRecord(req);
+		const disabled = typeof body["disabled"] === "boolean" ? body["disabled"] : undefined;
+		const weight = body["weight"] === null || typeof body["weight"] === "number" ? body["weight"] : undefined;
+		if (disabled === undefined && weight === undefined) {
+			throw ApiError.badRequest("必须提供 disabled 或 weight");
+		}
+		await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight });
+		return { status: "ok" };
+	});
 
-		registerRoute(router, { method: "post", path: base + "/accounts/:filename/restore" }, async (req) => {
-			await runtime.restoreAccount(routeParam(req, "filename"));
-			return { status: "restored" };
-		});
+	registerRoute(router, { method: "post", path: "/accounts/:filename/restore" }, async (req) => {
+		await runtime.restoreAccount(routeParam(req, "filename"));
+		return { status: "restored" };
+	});
 
-		registerRoute(router, { method: "delete", path: base + "/accounts/:filename" }, async (req) => {
-			await runtime.trashAccount(routeParam(req, "filename"));
-			return { status: "trashed" };
-		});
+	registerRoute(router, { method: "delete", path: "/accounts/:filename" }, async (req) => {
+		await runtime.trashAccount(routeParam(req, "filename"));
+		return { status: "trashed" };
+	});
 
-		registerRoute(router, { method: "get", path: base + "/commandcode/accounts" }, async () => ({
-			data: await runtime.listCommandCodeAccounts(),
-		}));
+	registerRoute(router, { method: "get", path: "/commandcode/accounts" }, async () => ({
+		data: await runtime.listCommandCodeAccounts(),
+	}));
 
-		registerRoute(router, { method: "post", path: base + "/commandcode/accounts" }, async (req) => {
-			const body = bodyRecord(req);
-			return { data: await runtime.addCommandCodeAccount(body["api_key"], body["label"]) };
-		});
+	registerRoute(router, { method: "post", path: "/commandcode/accounts" }, async (req) => {
+		const body = bodyRecord(req);
+		return { data: await runtime.addCommandCodeAccount(body["api_key"], body["label"]) };
+	});
 
-		registerRoute(router, { method: "patch", path: base + "/commandcode/accounts/:index" }, async (req) => {
-			const body = bodyRecord(req);
-			const patch: { apiKey?: unknown; label?: unknown } = {};
-			if (body["api_key"] !== undefined) {
-				patch.apiKey = body["api_key"];
-			}
-			if (body["label"] !== undefined) {
-				patch.label = body["label"];
-			}
-			if (patch.apiKey === undefined && patch.label === undefined) {
-				throw ApiError.badRequest("必须提供 api_key 或 label");
-			}
-			return { data: await runtime.updateCommandCodeAccount(commandCodeAccountIndex(req), patch) };
-		});
+	registerRoute(router, { method: "patch", path: "/commandcode/accounts/:index" }, async (req) => {
+		const body = bodyRecord(req);
+		const patch: { apiKey?: unknown; label?: unknown } = {};
+		if (body["api_key"] !== undefined) {
+			patch.apiKey = body["api_key"];
+		}
+		if (body["label"] !== undefined) {
+			patch.label = body["label"];
+		}
+		if (patch.apiKey === undefined && patch.label === undefined) {
+			throw ApiError.badRequest("必须提供 api_key 或 label");
+		}
+		return { data: await runtime.updateCommandCodeAccount(commandCodeAccountIndex(req), patch) };
+	});
 
-		registerRoute(router, { method: "delete", path: base + "/commandcode/accounts/:index" }, async (req) => ({
-			data: await runtime.deleteCommandCodeAccount(commandCodeAccountIndex(req)),
-		}));
+	registerRoute(router, { method: "delete", path: "/commandcode/accounts/:index" }, async (req) => ({
+		data: await runtime.deleteCommandCodeAccount(commandCodeAccountIndex(req)),
+	}));
 
-		registerRoute(router, { method: "post", path: base + "/oauth" }, async (req) => {
-			const provider = bodyRecord(req)["provider"];
-			if (typeof provider !== "string" || !OAUTH_PROVIDERS.has(provider as CliProxyOAuthProvider)) {
-				throw ApiError.badRequest("不支持的 OAuth Provider");
-			}
-			return runtime.startOAuth(provider as CliProxyOAuthProvider);
-		});
+	registerRoute(router, { method: "post", path: "/oauth" }, async (req) => {
+		const provider = bodyRecord(req)["provider"];
+		if (typeof provider !== "string" || !OAUTH_PROVIDERS.has(provider as CliProxyOAuthProvider)) {
+			throw ApiError.badRequest("不支持的 OAuth Provider");
+		}
+		return runtime.startOAuth(provider as CliProxyOAuthProvider);
+	});
 
-		registerRoute(router, { method: "get", path: base + "/oauth/:id" }, (req) => runtime.getOAuthSession(routeParam(req, "id")));
-		registerRoute(router, { method: "post", path: base + "/oauth/:id/input" }, (req) => {
-			const input = bodyRecord(req)["input"];
-			if (typeof input !== "string" || input.length > 4_096) {
-				throw ApiError.badRequest("OAuth 输入无效");
-			}
-			return runtime.sendOAuthInput(routeParam(req, "id"), input);
+	registerRoute(router, { method: "get", path: "/oauth/:id" }, (req) => runtime.getOAuthSession(routeParam(req, "id")));
+	registerRoute(router, { method: "post", path: "/oauth/:id/input" }, (req) => {
+		const input = bodyRecord(req)["input"];
+		if (typeof input !== "string" || input.length > 4_096) {
+			throw ApiError.badRequest("OAuth 输入无效");
+		}
+		return runtime.sendOAuthInput(routeParam(req, "id"), input);
+	});
+
+	// The runtime is released with the application. Older clients can still read its version.
+	registerRoute(router, { method: "get", path: "/update/check" }, () => {
+		const version = runtime.status().version;
+		return { current: version, latest: version, update_available: false, releases: [] };
+	});
+	for (const path of ["/update","/rollback"]) {
+		registerRoute(router, { method: "post", path: path }, () => {
+			throw new ApiError(410, "订阅运行时随应用镜像发布，请使用应用发布流程升级或回滚");
 		});
 	}
 
-	// 页面预取走缓存以节省 GitHub 未认证配额；手动 Check 传 refresh=true 强制刷新。
-	registerRoute(router, { method: "get", path: "/cliproxy/update/check" }, (req) =>
-		runtime.checkLatestVersion({ refresh: req.query["refresh"] === "true" }),
-	);
-	registerRoute(router, { method: "post", path: "/cliproxy/update" }, (req) => {
-		const version = bodyRecord(req)["version"];
-		if (version !== undefined && typeof version !== "string") {
-			throw ApiError.badRequest("version 必须是字符串");
-		}
-		return runtime.installAndActivate(version as string | undefined);
-	});
-	registerRoute(router, { method: "post", path: "/cliproxy/rollback" }, (req) => {
-		const version = bodyRecord(req)["version"];
-		if (typeof version !== "string") {
-			throw ApiError.badRequest("version 必须是字符串");
-		}
-		return runtime.rollback(version);
-	});
-
 	for (const method of ["get", "post", "put", "patch", "delete"] as const) {
-		registerRoute(router, { method: method, path: "/cliproxy/management/*" }, (req, res) => proxyManagementRequest(req, res, runtime));
+		registerRoute(router, { method: method, path: "/management/*" }, (req, res) => proxyManagementRequest(req, res, runtime));
 	}
 }

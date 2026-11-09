@@ -21,7 +21,7 @@ export async function advancedManagementApi(resource: string, method: string, re
 	if (["POST", "PUT", "PATCH"].includes(method) && requestBody.trim()) {
 		body = JSON.stringify(JSON.parse(requestBody) as unknown);
 	}
-	const response = await dashboardFetch("/cliproxy/management" + normalized, {
+	const response = await dashboardFetch("/subscriptions/management" + normalized, {
 		method,
 		headers: body === undefined ? undefined : { "Content-Type": "application/json" },
 		body,

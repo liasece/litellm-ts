@@ -1,13 +1,11 @@
 /* eslint-disable jsdoc/check-alignment, jsdoc/require-throws */
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createWriteStream, readdirSync, readlinkSync } from "node:fs";
-import { access, chmod, copyFile, link, mkdir, open, readdir, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, link, mkdir, open, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { finished } from "node:stream/promises";
-import { Readable } from "node:stream";
 import yaml from "js-yaml";
-import { SUBSCRIPTION_PROVIDERS, SubscriptionCatalog, withoutProvider, type SubscriptionProvider, type CatalogEntry } from "../subscriptions/SubscriptionProviders";
+import { SUBSCRIPTION_PROVIDERS, isSubscriptionProvider, SubscriptionCatalog, type SubscriptionProvider, type CatalogEntry } from "../subscriptions/SubscriptionProviders";
 import { SubscriptionAccountKeys, type KeySubscription, type SavedSubscriptionKey } from "../subscriptions/SubscriptionAccountKeys";
 import type { ConfigRepository } from "../repositories/ConfigRepository";
 import { ApiError } from "../core/api/ApiError";
@@ -20,10 +18,8 @@ import {
 	type CliProxyOAuthProvider,
 	type CliProxyOAuthSession,
 	type CliProxyProcessState,
-	type CliProxyReleaseInfo,
 	type CliProxyRuntimeStatus,
 	type CliProxyStoredSettings,
-	type CliProxyUpdateInfo,
 } from "./CliProxyTypes";
 import {
 	buildCliProxyQuotaRequests,
@@ -55,10 +51,8 @@ const HEALTH_TIMEOUT_MS = 15_000;
 // 固定多等最多 250ms，同时仍远低于一次健康探针的 1.5 秒超时。
 const HEALTH_POLL_INTERVAL_MS = 50;
 const MAX_OAUTH_SESSIONS = 32;
-const RELEASE_REPOSITORY = "router-for-me/CLIProxyAPI";
 const RESERVED_CONFIG_KEYS = new Set(["host", "port", "auth-dir", "api-keys", "remote-management"]);
 const OPENCODE_GO_PLUGIN_ID = "opencode-go-cliproxyapi";
-const OPENCODE_GO_PLUGIN_MIN_VERSION = "8.0.0";
 const OPENCODE_GO_PLUGIN_BASE_URL = "https://opencode.ai/inference/go/v1";
 // The Go runtime expands this environment reference after reading its config.
 // eslint-disable-next-line no-template-curly-in-string
@@ -128,185 +122,6 @@ export function serializeCliProxyUserConfig(value: unknown): string {
 	const source = yaml.dump(value, { noRefs: true, lineWidth: 120, sortKeys: false });
 	parseCliProxyUserConfig(source);
 	return source;
-}
-
-/**
- * Compare normalized CLIProxy release versions.
- * @param left
- * @param right
- */
-export function compareCliProxyVersions(left: string | null, right: string | null): number | null {
-	if (!left || !right) {
-		return null;
-	}
-	const parse = (value: string): { core: number[]; prerelease: string[] | null } => {
-		const normalized = normalizeVersion(value);
-		const [versionAndPrerelease] = normalized.split("+", 1);
-		const [coreValue, prereleaseValue] = versionAndPrerelease!.split("-", 2);
-		return {
-			core: coreValue!.split(".").map((segment) => Number(segment)),
-			prerelease: prereleaseValue ? prereleaseValue.split(".") : null,
-		};
-	};
-	const leftVersion = parse(left);
-	const rightVersion = parse(right);
-	const length = Math.max(leftVersion.core.length, rightVersion.core.length);
-	for (let index = 0; index < length; index += 1) {
-		const leftPart = leftVersion.core[index] ?? 0;
-		const rightPart = rightVersion.core[index] ?? 0;
-		if (leftPart !== rightPart) {
-			return leftPart > rightPart ? 1 : -1;
-		}
-	}
-	if (leftVersion.prerelease === null && rightVersion.prerelease === null) {
-		return 0;
-	}
-	if (leftVersion.prerelease === null) {
-		return 1;
-	}
-	if (rightVersion.prerelease === null) {
-		return -1;
-	}
-	const prereleaseLength = Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length);
-	for (let index = 0; index < prereleaseLength; index += 1) {
-		const leftPart = leftVersion.prerelease[index];
-		const rightPart = rightVersion.prerelease[index];
-		if (leftPart === undefined) {
-			return -1;
-		}
-		if (rightPart === undefined) {
-			return 1;
-		}
-		if (leftPart === rightPart) {
-			continue;
-		}
-		const leftNumber = /^\d+$/.test(leftPart) ? Number(leftPart) : null;
-		const rightNumber = /^\d+$/.test(rightPart) ? Number(rightPart) : null;
-		if (leftNumber !== null && rightNumber !== null) {
-			return leftNumber > rightNumber ? 1 : -1;
-		}
-		if (leftNumber !== null) {
-			return -1;
-		}
-		if (rightNumber !== null) {
-			return 1;
-		}
-		return leftPart.localeCompare(rightPart) > 0 ? 1 : -1;
-	}
-	return 0;
-}
-
-/**
- * Prefer the concise changelog portion of GitHub release notes. CLIProxy also
- * repeats platform asset documentation in every release, which does not
- * describe what changed in that version.
- * @param source
- */
-export function extractCliProxyReleaseNotes(source: string): string {
-	const cleaned = source.replace(/<!--[\s\S]*?-->/g, "").trim();
-	if (!cleaned) {
-		return "";
-	}
-	const headings = [...cleaned.matchAll(/^##\s+(.+?)\s*$/gm)];
-	for (const title of ["changelog", "what's changed"]) {
-		const headingIndex = headings.findIndex((heading) => heading[1]?.trim().toLowerCase() === title);
-		if (headingIndex < 0) {
-			continue;
-		}
-		const heading = headings[headingIndex]!;
-		const start = (heading.index ?? 0) + heading[0].length;
-		const end = headings[headingIndex + 1]?.index ?? cleaned.length;
-		const section = cleaned.slice(start, end).trim();
-		if (section) {
-			return section;
-		}
-	}
-	return cleaned;
-}
-
-/** GitHub 未认证 REST 配额：每小时 60 次，按出口 IP 共享，耗尽后返回 403。 */
-const GITHUB_ANONYMOUS_HOURLY_LIMIT = 60;
-
-/**
- * 版本检查结果缓存时长。
- *
- * 每次打开 CLIProxy 页面都会预取一次最新版本，而 GitHub 未认证配额按出口 IP 共享，
- * 没有缓存时多开几个页面就会耗尽额度。手动检查通过 refresh 绕过缓存。
- */
-const UPDATE_CHECK_CACHE_TTL_MS = 5 * 60_000;
-
-/** checkLatestVersion 的调用意图。 */
-export interface CliProxyUpdateCheckOptions {
-	/** 手动操作（Check 按钮、安装/回滚后的复核）绕过缓存，直接请求 GitHub 并刷新缓存。 */
-	readonly refresh?: boolean;
-}
-
-interface CliProxyReleaseCache {
-	readonly fetchedAt: number;
-	readonly releases: readonly CliProxyReleaseInfo[];
-}
-
-const EMPTY_RELEASE_MESSAGE = "GitHub 上没有可用的正式版 CLIProxy release";
-
-/**
- * 识别 GitHub 的限流响应，避免把 403 限流当成普通的网关故障。
- * @param response - GitHub 响应
- * @param bodyText - 已读取的响应正文，用于识别 403 的限流文案
- */
-function isGitHubRateLimited(response: Response, bodyText: string): boolean {
-	if (response.status === 429) {
-		return true;
-	}
-	if (response.status !== 403) {
-		return false;
-	}
-	return response.headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(bodyText);
-}
-
-/**
- * 按 x-ratelimit-reset 说明配额何时恢复。
- * @param response - GitHub 响应
- */
-function describeRateLimitReset(response: Response): string {
-	const header = response.headers.get("x-ratelimit-reset");
-	if (!header || !/^\d+$/.test(header)) {
-		return "请稍后重试";
-	}
-	const waitSeconds = Number(header) - Math.floor(Date.now() / 1000);
-	if (waitSeconds <= 0) {
-		return "现在可以重试";
-	}
-	return `约 ${Math.max(1, Math.ceil(waitSeconds / 60))} 分钟后恢复`;
-}
-
-/**
- * 把 GitHub 的非成功响应翻译成可执行说明：限流要说清原因和恢复时间，其余要给状态码。
- * @param response - GitHub 响应
- * @param bodyText - 已读取的响应正文
- */
-function cliProxyReleaseResponseError(response: Response, bodyText: string): ApiError {
-	if (isGitHubRateLimited(response, bodyText)) {
-		return new ApiError(
-			502,
-			`GitHub API 限流：这台服务器与其它服务共用出口 IP，每小时 ${GITHUB_ANONYMOUS_HOURLY_LIMIT} 次未认证请求额度已用完，${describeRateLimitReset(response)}。请稍后重试。`,
-			"rate_limit_exceeded",
-		);
-	}
-	return new ApiError(502, `GitHub 返回 HTTP ${response.status}，暂时无法获取 CLIProxy 版本列表，请稍后重试`);
-}
-
-/**
- * 把 fetch 的连接层失败翻译成可执行说明，避免只抛出 "fetch failed"。
- * @param error - fetch 抛出的异常
- */
-function cliProxyReleaseFetchError(error: unknown): ApiError {
-	const name = isRecord(error) ? error["name"] : undefined;
-	if (name === "TimeoutError" || name === "AbortError") {
-		return new ApiError(502, "连接 GitHub 超时（15 秒），请确认服务器出网正常后重试");
-	}
-	const cause = isRecord(error) && isRecord(error["cause"]) ? error["cause"]["message"] : undefined;
-	const detail = typeof cause === "string" && cause.length > 0 ? `（${cause}）` : "";
-	return new ApiError(502, `无法连接 GitHub，请确认服务器出网正常后重试${detail}`);
 }
 
 /**
@@ -505,36 +320,6 @@ export function buildCliProxyProjection(
 }
 
 /**
- * 判断当前 CLIProxy 版本是否支持动态插件。
- * @param version
- */
-export function supportsCliProxyPlugins(version: string | null): boolean {
-	if (!version) {
-		return false;
-	}
-	const comparison = compareCliProxyVersions(version, OPENCODE_GO_PLUGIN_MIN_VERSION);
-	return comparison !== null && comparison >= 0;
-}
-
-/**
- * 只有插件版二进制才能加载托管插件；no-plugin 静态构建一律不注入插件配置。
- * @param version
- * @param artifact
- */
-export function shouldEnableCliProxyPlugin(version: string | null, artifact: string | null): boolean {
-	return supportsCliProxyPlugins(version) && artifact === "plugin";
-}
-
-/**
- * 计算托管 CLIProxy 运行时的发布归档名。
- * @param version
- * @param architecture
- */
-export function cliProxyReleaseArchiveName(version: string, architecture: "amd64" | "aarch64"): string {
-	return `CLIProxyAPI_${version}_linux_${architecture}${supportsCliProxyPlugins(version) ? "" : "_no-plugin"}.tar.gz`;
-}
-
-/**
  * 合并托管插件的配置，允许用户在页面上覆盖密钥等字段。
  * @param userValue
  * @param plugins
@@ -581,14 +366,6 @@ function sanitizeImportedConfig(value: Record<string, unknown>): Record<string, 
 	return result;
 }
 
-function normalizeVersion(value: string): string {
-	const trimmed = value.trim().replace(/^v/, "");
-	if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(trimmed)) {
-		throw ApiError.badRequest("CLIProxy 版本格式无效");
-	}
-	return trimmed;
-}
-
 function safeAccountFilename(value: string): string {
 	if (path.basename(value) !== value || !value.endsWith(".json") || value.includes("\0")) {
 		throw ApiError.badRequest("OAuth 账户文件名无效");
@@ -603,27 +380,17 @@ export class CliProxyRuntimeManager {
 	private readonly _repository: ConfigRepository;
 	private readonly _accountKeys: SubscriptionAccountKeys;
 	private readonly _runtimeRoot: string;
-	private readonly _versionsDir: string;
 	private readonly _authDir: string;
 	private readonly _logsDir: string;
 	private readonly _configPath: string;
 	private readonly _pluginDir: string;
-	private readonly _currentLink: string;
-	private readonly _bootstrapBinary: string;
-	private readonly _subscriptionBinary = process.env["LITELLM_SUBSCRIPTIONS_BINARY"];
+	private readonly _subscriptionBinary = process.env["LITELLM_SUBSCRIPTIONS_BINARY"] ?? "/opt/cliproxy/litellm-subscriptions";
+	private _binaryAvailable = false;
 	readonly subscriptionCatalog = new SubscriptionCatalog();
-	private _sourceBuiltSubscriptions = false;
 	private _catalogRefresh?: NodeJS.Timeout;
 	private _catalogRefreshChild?: ChildProcessWithoutNullStreams;
 
-	/**
-	 *
-	 */
-	get sourceBuiltSubscriptions(): boolean {
-		return this._sourceBuiltSubscriptions;
-	}
-
-	private readonly _bootstrapVersion: string;
+	private readonly _runtimeVersion = process.env["LITELLM_SUBSCRIPTIONS_VERSION"] ?? "8.0.57";
 	private readonly _internalApiKey: string;
 	private readonly _internalManagementKey: string;
 	private readonly _port: number;
@@ -635,7 +402,6 @@ export class CliProxyRuntimeManager {
 	private _lastExitCode: number | null = null;
 	private _lastError: string | null = null;
 	private _configHash: string | null = null;
-	private _pluginsEnabled = false;
 	// 本次投影启用的托管插件：启动后据此等待插件模型前缀出现在模型目录里。
 	private _plugins: CliProxyManagedPlugins | null = null;
 	private _health: CliProxyRuntimeStatus["health"] = "unknown";
@@ -646,8 +412,6 @@ export class CliProxyRuntimeManager {
 	private _restartTimer: NodeJS.Timeout | null = null;
 	private _operationTail: Promise<void> = Promise.resolve();
 	private _logSequence = 0;
-	private _releaseCache: CliProxyReleaseCache | null = null;
-	private _releaseFetch: Promise<readonly CliProxyReleaseInfo[]> | null = null;
 	// 由容器注入：返回 Router 侧在途的 CLIProxy 请求数，用于升级前排空。
 	private _activeRequestProbe: () => number = () => 0;
 	private readonly _logs: CliProxyLogEntry[] = [];
@@ -668,14 +432,10 @@ export class CliProxyRuntimeManager {
 		this._repository = repository;
 		this._accountKeys = new SubscriptionAccountKeys(repository, process.env["LITELLM_SALT_KEY"] || masterKey);
 		this._runtimeRoot = process.env["CLIPROXY_RUNTIME_ROOT"] ?? "/var/lib/litellm/cliproxy";
-		this._versionsDir = path.join(this._runtimeRoot, "versions");
 		this._authDir = path.join(this._runtimeRoot, "auths");
 		this._logsDir = path.join(this._runtimeRoot, "logs");
 		this._configPath = path.join(this._runtimeRoot, "config.yaml");
 		this._pluginDir = process.env["CLIPROXY_PLUGIN_DIR"] ?? path.join(this._runtimeRoot, "plugins");
-		this._currentLink = path.join(this._runtimeRoot, "current");
-		this._bootstrapBinary = process.env["CLIPROXY_BOOTSTRAP_BINARY"] ?? "/opt/cliproxy/cli-proxy-api";
-		this._bootstrapVersion = normalizeVersion(process.env["CLIPROXY_BOOTSTRAP_VERSION"] ?? "7.2.110");
 		this._port = Number(process.env["CLIPROXY_INTERNAL_PORT"] ?? CLIPROXY_DEFAULT_PORT);
 		const keyMaterial = masterKey && masterKey.length > 0 ? masterKey : randomUUID();
 		this._internalApiKey =
@@ -753,14 +513,18 @@ export class CliProxyRuntimeManager {
 		await this._serialize("initialize", async () => {
 			await Promise.all([
 				mkdir(this._runtimeRoot, { recursive: true }),
-				mkdir(this._versionsDir, { recursive: true }),
 				mkdir(this._authDir, { recursive: true }),
 				mkdir(this._logsDir, { recursive: true }),
+				mkdir(this._pluginDir, {recursive: true}),
 			]);
 			if (this._desiredStop) {
 				return;
 			}
-			await this._installBootstrapIfNeeded();
+			this._binaryAvailable = await access(this._subscriptionBinary, constants.X_OK).then(() => true, () => false);
+			if (!this._binaryAvailable) {
+				this._state = "unavailable";
+				this._lastError = "订阅运行时可执行文件未安装";
+			}
 			const stored = await this._repository.getParam(CLIPROXY_CONFIG_PARAM);
 			if (stored) {
 				this._settings = {
@@ -772,9 +536,8 @@ export class CliProxyRuntimeManager {
 				await this._repository.upsertParam(CLIPROXY_CONFIG_PARAM, this._settings);
 			}
 			await this._accountKeys.load();
-			await this._ensurePluginArtifact();
 			await this._projectConfig();
-			if (this._desiredStop || !this._settings.enabled) {
+			if (this._desiredStop || !this._settings.enabled || !this._binaryAvailable) {
 				return;
 			}
 			// 直接起进程而不是走 start()：start() 会再次进入串行队列，在这里会自等待。
@@ -831,12 +594,12 @@ export class CliProxyRuntimeManager {
 		const uptime =
 			this._startedAt && this._state === "running" ? Math.max(0, Math.floor((Date.now() - this._startedAt.getTime()) / 1000)) : null;
 		return {
-			available: this._state !== "unavailable",
-			engine: this._process ? (this._sourceBuiltSubscriptions ? "subscriptions" : "compatibility") : null,
+			available: this._binaryAvailable,
+			engine: this._process ? "subscriptions" : null,
 			enabled: this._settings.enabled,
 			state: this._state,
-			version: this._currentVersion(),
-			installed_versions: this._installedVersionsSync(),
+			version: this._binaryAvailable ? this._runtimeVersion : null,
+			installed_versions: this._binaryAvailable ? [this._runtimeVersion] : [],
 			pid: this._process?.pid ?? null,
 			started_at: this._startedAt?.toISOString() ?? null,
 			uptime_seconds: uptime,
@@ -859,22 +622,10 @@ export class CliProxyRuntimeManager {
 		await this._serialize("apply-config", async () => {
 			this._settings = { enabled: next.enabled, config_yaml: next.config_yaml };
 			await this._repository.upsertParam(CLIPROXY_CONFIG_PARAM, this._settings);
-			const pluginsEnabledBefore = this._pluginsEnabled;
 			await this._projectConfig();
 			if (!next.enabled) {
 				this._desiredStop = true;
 				await this._stopProcess();
-				return;
-			}
-			if (this._process && pluginsEnabledBefore !== this._pluginsEnabled) {
-				this._appendLog(
-					"system",
-					this._pluginsEnabled ? "已启用 OpenCode Go 插件，重启 CLIProxy" : "已停用 OpenCode Go 插件，重启 CLIProxy",
-				);
-				await this._restartProcess();
-				if (this._state !== "running") {
-					throw ApiError.unavailable(this._lastError ?? "CLIProxy 重启后健康检查未通过");
-				}
 				return;
 			}
 			if (!this._process) {
@@ -1021,7 +772,8 @@ export class CliProxyRuntimeManager {
 	 *
 	 */
 	async listModels(): Promise<string[]> {
-		return this._listModelsAt("/v1/models");
+		const catalogs = await Promise.all(Object.keys(SUBSCRIPTION_PROVIDERS).filter(isSubscriptionProvider).map(source => this.listSubscriptionModels(source)));
+		return [...new Set(catalogs.flat())].sort();
 	}
 
 	/**
@@ -1087,20 +839,7 @@ export class CliProxyRuntimeManager {
 	 * @param provider
 	 */
 	async listSubscriptionModels(provider: SubscriptionProvider): Promise<string[]> {
-		if (!this._sourceBuiltSubscriptions) {
-			// An explicitly selected compatibility release has no scoped API.
-			// Use its per-account registrations rather than guessing from vendor names.
-			const accounts = (await this.listAccounts()).filter(a => a.provider === SUBSCRIPTION_PROVIDERS[provider].source && !a.disabled);
-			const catalogs = await Promise.all(accounts.map(async a => {
-				const result = await this._managementJson<{ models?: { id?: unknown }[] }>(
-					"/auth-files/models?name=" + encodeURIComponent(a.filename),
-				);
-				return (result.models ?? []).flatMap(m => (typeof m.id === "string" ? [m.id] : []));
-			}));
-			return [...new Set(catalogs.flat().map(id => withoutProvider(id, provider)))].sort();
-		}
-		const ids = await this._listModelsAt("/subscriptions/" + provider + "/v1/models");
-		return [...new Set(ids.map(id => withoutProvider(id, provider)))].sort();
+		return this._listModelsAt("/subscriptions/" + provider + "/v1/models");
 	}
 
 	private async _listModelsAt(resource: string): Promise<string[]> {
@@ -1116,25 +855,6 @@ export class CliProxyRuntimeManager {
 		if (this._catalogRefreshChild === child) {return;}
 		this._catalogRefreshChild = child;
 		try {
-			if (!this._sourceBuiltSubscriptions) {
-				const files = await this._listManagedAuthFiles();
-				const owners = new Map<string, Set<string>>();
-				for (let i = 0; i < files.length; i += 8) {
-					await Promise.all(files.slice(i, i + 8).map(async file => {
-						const name = this._stringField(file, "name", "filename");
-						const provider = this._stringField(file, "type", "provider");
-						if (!name || !provider) {return;}
-						const data = await this._managementJson<unknown>("/auth-files/models?name=" + encodeURIComponent(name));
-						for (const id of extractModelIds(data)) {
-							const sources = owners.get(id) ?? new Set<string>();
-							sources.add(provider);
-							owners.set(id, sources);
-						}
-					}));
-				}
-				if (this._process === child) {this.subscriptionCatalog.replace([...owners].map(([id, set]) => ({ id: id, providers: [...set] })));}
-				return;
-			}
 			const response = await fetch(this.baseUrl + "/_litellm/subscription-catalog", {
 				headers: { Authorization: "Bearer " + this._internalApiKey },
 				signal: AbortSignal.timeout(2_000),
@@ -1159,7 +879,6 @@ export class CliProxyRuntimeManager {
 	private _clearSubscriptionCatalog(): void {
 		clearInterval(this._catalogRefresh);
 		this._catalogRefresh = undefined;
-		this._sourceBuiltSubscriptions = false;
 		this.subscriptionCatalog.replace([]);
 	}
 
@@ -1438,7 +1157,12 @@ export class CliProxyRuntimeManager {
 			kimi: "-kimi-login",
 			xai: "-xai-login",
 		};
-		const binary = await this._resolveCurrentBinary();
+		const binary = this._subscriptionBinary;
+		await access(binary, constants.X_OK).catch(() => {
+			this._binaryAvailable = false;
+			throw ApiError.unavailable("订阅运行时可执行文件未安装");
+		});
+		this._binaryAvailable = true;
 		const id = randomUUID();
 		const args = [flagMap[provider], "-no-browser", "-config", this._configPath];
 		const child = spawn(binary, args, { cwd: this._runtimeRoot, stdio: ["pipe", "pipe", "pipe"] });
@@ -1533,140 +1257,6 @@ export class CliProxyRuntimeManager {
 		return session.snapshot;
 	}
 
-	/**
-	 * 从 GitHub 拉取正式版列表，并刷新缓存。
-	 */
-	private async _fetchReleases(): Promise<readonly CliProxyReleaseInfo[]> {
-		let response: Response;
-		try {
-			response = await fetch(`https://api.github.com/repos/${RELEASE_REPOSITORY}/releases?per_page=100`, {
-				headers: { Accept: "application/vnd.github+json", "User-Agent": "litellm-ts-cliproxy-manager" },
-				signal: AbortSignal.timeout(15_000),
-			});
-		} catch (error) {
-			throw cliProxyReleaseFetchError(error);
-		}
-		if (!response.ok) {
-			const bodyText = await response.text().catch(() => "");
-			throw cliProxyReleaseResponseError(response, bodyText);
-		}
-		let body: unknown;
-		try {
-			body = (await response.json()) as unknown;
-		} catch {
-			throw new ApiError(502, "GitHub 返回的 CLIProxy release 数据不是有效 JSON，请稍后重试");
-		}
-		if (!Array.isArray(body)) {
-			throw new ApiError(502, "GitHub 返回的 CLIProxy release 数据格式异常，请稍后重试");
-		}
-		const releases = body
-			.flatMap((value): CliProxyReleaseInfo[] => {
-				if (!isRecord(value) || value["draft"] === true || value["prerelease"] === true || typeof value["tag_name"] !== "string") {
-					return [];
-				}
-				try {
-					const version = normalizeVersion(value["tag_name"]);
-					return [
-						{
-							version: version,
-							published_at: typeof value["published_at"] === "string" ? value["published_at"] : null,
-							release_url:
-								typeof value["html_url"] === "string"
-									? value["html_url"]
-									: `https://github.com/${RELEASE_REPOSITORY}/releases/tag/v${version}`,
-							notes: extractCliProxyReleaseNotes(typeof value["body"] === "string" ? value["body"] : ""),
-						},
-					];
-				} catch {
-					return [];
-				}
-			})
-			.sort((left, right) => compareCliProxyVersions(right.version, left.version) ?? 0);
-		if (releases.length === 0) {
-			throw new ApiError(502, EMPTY_RELEASE_MESSAGE);
-		}
-		this._releaseCache = { fetchedAt: Date.now(), releases: releases };
-		return releases;
-	}
-
-	/**
-	 * 读取版本列表；TTL 内复用缓存，并发请求合并为一次。
-	 */
-	private async _releasesWithCache(): Promise<readonly CliProxyReleaseInfo[]> {
-		if (this._releaseCache && Date.now() - this._releaseCache.fetchedAt < UPDATE_CHECK_CACHE_TTL_MS) {
-			return this._releaseCache.releases;
-		}
-		if (!this._releaseFetch) {
-			this._releaseFetch = this._fetchReleases().finally(() => {
-				this._releaseFetch = null;
-			});
-		}
-		return this._releaseFetch;
-	}
-
-	/**
-	 * 查询 CLIProxy 最新正式版。
-	 *
-	 * 页面打开时的预取会反复读取 GitHub，而未认证配额按出口 IP 共享，因此默认复用短周期缓存；
-	 * 手动检查（Check 按钮、安装/回滚后的复核）通过 refresh 绕过缓存并刷新它。
-	 * @param options - refresh 为 true 时强制请求 GitHub
-	 */
-	async checkLatestVersion(options: CliProxyUpdateCheckOptions = {}): Promise<CliProxyUpdateInfo> {
-		const releases = options.refresh === true ? await this._fetchReleases() : await this._releasesWithCache();
-		const latest = releases[0]?.version;
-		if (latest === undefined) {
-			throw new ApiError(502, EMPTY_RELEASE_MESSAGE);
-		}
-		const current = this._currentVersion();
-		const installedVersions = this._installedVersionsSync();
-		const relevantVersions = [current, ...installedVersions].filter((version): version is string => version !== null);
-		const oldestRelevant = relevantVersions.reduce<string | null>((oldest, version) => {
-			if (oldest === null || compareCliProxyVersions(version, oldest) === -1) {
-				return version;
-			}
-			return oldest;
-		}, null);
-		const relevantReleases =
-			oldestRelevant === null
-				? releases.slice(0, 20)
-				: releases.filter((release) => (compareCliProxyVersions(release.version, oldestRelevant) ?? -1) >= 0);
-		return {
-			current: current,
-			latest: latest,
-			update_available: current === null || compareCliProxyVersions(latest, current) === 1,
-			releases: relevantReleases,
-		};
-	}
-
-	/**
-	 * @param versionValue
-	 */
-	async installAndActivate(versionValue?: string): Promise<CliProxyRuntimeStatus> {
-		const version = versionValue ? normalizeVersion(versionValue) : (await this.checkLatestVersion()).latest;
-		if (this._currentVersion() === version) {
-			return this.status();
-		}
-		await this._serialize("update", async () => {
-			await this._installRelease(version);
-			await this._restartProcess(version);
-			this._assertRunning();
-		});
-		return this.status();
-	}
-
-	/**
-	 * @param versionValue
-	 */
-	async rollback(versionValue: string): Promise<CliProxyRuntimeStatus> {
-		const version = normalizeVersion(versionValue);
-		await access(this._bundledSubscriptionBinary(version) ?? path.join(this._versionsDir, version, "cli-proxy-api"));
-		await this._serialize("rollback", async () => {
-			await this._restartProcess(version);
-			this._assertRunning();
-		});
-		return this.status();
-	}
-
 	private async _importExistingOrDefaultSettings(): Promise<CliProxyStoredSettings> {
 		try {
 			const source = await readFile(this._configPath, "utf8");
@@ -1696,36 +1286,6 @@ export class CliProxyRuntimeManager {
 		};
 	}
 
-	private _artifactMarkerPath(version: string): string {
-		return path.join(this._versionsDir, version, ".artifact");
-	}
-
-	private async _readArtifactKind(version: string): Promise<string | null> {
-		if (this._bundledSubscriptionBinary(version)) {return "plugin";}
-		try {
-			return (await readFile(this._artifactMarkerPath(version), "utf8")).trim() || null;
-		} catch {
-			return null;
-		}
-	}
-
-	private async _pluginFileAvailable(pluginId: string): Promise<boolean> {
-		if (this._bundledSubscriptionBinary(this._currentVersion())) {return true;}
-		for (const extension of [".so", ".dylib"]) {
-			try {
-				await access(path.join(this._pluginDir, `${pluginId}${extension}`));
-				return true;
-			} catch {
-				// 继续探测其他平台扩展名。
-			}
-		}
-		return false;
-	}
-
-	private async _hasAnyPluginFile(): Promise<boolean> {
-		return (await this._pluginFileAvailable(OPENCODE_GO_PLUGIN_ID)) || (await this._pluginFileAvailable(COMMANDCODE_PLUGIN_ID));
-	}
-
 	private _hasPluginCredential(userConfig: Record<string, unknown>): boolean {
 		if ((process.env["OPENCODE_GO_API_KEY"] ?? "").trim() !== "") {
 			return true;
@@ -1737,39 +1297,6 @@ export class CliProxyRuntimeManager {
 		return Array.isArray(keys) && keys.length > 0;
 	}
 
-	private async _ensurePluginArtifact(): Promise<void> {
-		const version = this._currentVersion();
-		if (!version || !supportsCliProxyPlugins(version)) {
-			return;
-		}
-		if ((await this._readArtifactKind(version)) === "plugin") {
-			return;
-		}
-		if (!(await this._hasAnyPluginFile())) {
-			return;
-		}
-		if (version === this._bootstrapVersion) {
-			try {
-				await access(this._bootstrapBinary);
-				const targetBinary = path.join(this._versionsDir, version, "cli-proxy-api");
-				await copyFile(this._bootstrapBinary, targetBinary);
-				await chmod(targetBinary, 0o755);
-				await writeFile(this._artifactMarkerPath(version), "plugin", { mode: 0o600 });
-				this._appendLog("system", `CLIProxy ${version} 已使用镜像内置的插件版二进制`);
-				return;
-			} catch {
-				// 回退到在线安装。
-			}
-		}
-		try {
-			await this._installRelease(version, true);
-			this._appendLog("system", `CliProxy ${version} 已切换为插件版二进制`);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			this._appendLog("system", `CliProxy ${version} 插件版二进制安装失败: ${message}`);
-		}
-	}
-
 	private async _saveCommandCodeAccountEntries(userConfig: Record<string, unknown>, entries: Record<string, unknown>[]): Promise<void> {
 		setCommandCodeAccountEntries(userConfig, entries);
 		await this.saveSettings({
@@ -1779,9 +1306,7 @@ export class CliProxyRuntimeManager {
 	}
 
 	private async _syncManagedCommandCodeAccounts(userConfig: Record<string, unknown>): Promise<void> {
-		if (!(await this._pluginFileAvailable(COMMANDCODE_PLUGIN_ID))) {
-			return;
-		}
+
 		const prefix = "commandcode-managed-";
 		let existing: string[] = [];
 		try {
@@ -1820,24 +1345,6 @@ export class CliProxyRuntimeManager {
 			await writeFile(temporary, JSON.stringify(payload), { mode: 0o600 });
 			await rename(temporary, targetPath);
 		}
-	}
-
-	private async _resolveManagedPlugins(userConfig: Record<string, unknown>): Promise<CliProxyManagedPlugins | null> {
-		const version = this._currentVersion();
-		if (!version || !supportsCliProxyPlugins(version)) {
-			return null;
-		}
-		if ((await this._readArtifactKind(version)) !== "plugin") {
-			return null;
-		}
-		// 两个插件开关独立：OpenCode Go 需要凭据，CommandCode 只看插件文件
-		// （它的账户来自 CPA auth 文件，不经配置）。
-		const opencodeGo = (await this._pluginFileAvailable(OPENCODE_GO_PLUGIN_ID)) && this._hasPluginCredential(userConfig);
-		const commandcode = await this._pluginFileAvailable(COMMANDCODE_PLUGIN_ID);
-		if (!opencodeGo && !commandcode) {
-			return null;
-		}
-		return { dir: this._pluginDir, opencodeGo: opencodeGo, commandcode: commandcode };
 	}
 
 	private _savedKeyFilename(entry: SavedSubscriptionKey): string {
@@ -1890,8 +1397,7 @@ export class CliProxyRuntimeManager {
 			userConfig["plugins"] = { ...plugins, configs: { ...configs, [OPENCODE_GO_PLUGIN_ID]: { ...entry, "api-keys": [...configured, ...nativeKeys] } } };
 		}
 		await this._syncManagedCommandCodeAccounts(userConfig);
-		const plugins = await this._resolveManagedPlugins(userConfig);
-		this._pluginsEnabled = plugins !== null;
+		const plugins = { dir: this._pluginDir, opencodeGo: this._hasPluginCredential(userConfig), commandcode: true };
 		this._plugins = plugins;
 		const projected = buildCliProxyProjection(userConfig, {
 			port: this._port,
@@ -1912,56 +1418,6 @@ export class CliProxyRuntimeManager {
 			await handle.close();
 		}
 		this._configHash = createHash("sha256").update(contents).digest("hex");
-	}
-
-	private async _installBootstrapIfNeeded(): Promise<void> {
-		try {
-			await access(this._subscriptionBinary ?? this._bootstrapBinary);
-		} catch {
-			this._state = "unavailable";
-			this._lastError = `CLIProxy bootstrap binary not found: ${this._bootstrapBinary}`;
-			return;
-		}
-		const targetDir = path.join(this._versionsDir, this._bootstrapVersion);
-		await mkdir(targetDir, { recursive: true });
-		if (!this._subscriptionBinary) {
-			const targetBinary = path.join(targetDir, "cli-proxy-api");
-			try {
-				await access(targetBinary);
-			} catch {
-				await copyFile(this._bootstrapBinary, targetBinary);
-				await chmod(targetBinary, 0o755);
-			}
-		}
-		try {
-			await readlink(this._currentLink);
-		} catch {
-			await this._activateVersion(this._bootstrapVersion);
-		}
-	}
-
-	private _bundledSubscriptionBinary(version: string | null): string | undefined {
-		return version === this._bootstrapVersion ? this._subscriptionBinary : undefined;
-	}
-
-	private async _resolveCurrentBinary(): Promise<string> {
-		const bundled = this._bundledSubscriptionBinary(this._currentVersion());
-		if (bundled) {return bundled;}
-		try {
-			const link = await readlink(this._currentLink);
-			return path.resolve(this._runtimeRoot, link, "cli-proxy-api");
-		} catch {
-			throw ApiError.unavailable("CLIProxy 二进制尚未安装");
-		}
-	}
-
-	private _currentVersion(): string | null {
-		try {
-			const link = readlinkSync(this._currentLink);
-			return path.basename(link);
-		} catch {
-			return null;
-		}
 	}
 
 	private _stringField(value: Record<string, unknown>, ...keys: string[]): string | null {
@@ -2100,108 +1556,6 @@ export class CliProxyRuntimeManager {
 		return result.body;
 	}
 
-	private _installedVersionsSync(): string[] {
-		try {
-			const values = readdirSync(this._versionsDir, { withFileTypes: true });
-			return values
-				.filter((entry) => entry.isDirectory() && /^\d+\.\d+\.\d+/.test(entry.name))
-				.map((entry) => entry.name)
-				.sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
-		} catch {
-			return [];
-		}
-	}
-
-	private async _activateVersion(version: string): Promise<void> {
-		const temporaryLink = `${this._currentLink}.${randomUUID()}.tmp`;
-		await symlink(path.relative(this._runtimeRoot, path.join(this._versionsDir, version)), temporaryLink);
-		await rename(temporaryLink, this._currentLink).catch(async (error: NodeJS.ErrnoException) => {
-			if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") {
-				throw error;
-			}
-			await unlink(this._currentLink);
-			await rename(temporaryLink, this._currentLink);
-		});
-		this._appendLog("system", `已激活 CLIProxy ${version}`);
-	}
-
-	private async _installRelease(version: string, force = false): Promise<void> {
-		if (this._bundledSubscriptionBinary(version)) {return;}
-		const targetBinary = path.join(this._versionsDir, version, "cli-proxy-api");
-		try {
-			await access(targetBinary);
-			if (!force) {
-				return;
-			}
-		} catch {
-			// Continue with installation.
-		}
-		const architecture = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "amd64" : null;
-		if (!architecture) {
-			throw ApiError.badRequest(`不支持的 CPU 架构: ${process.arch}`);
-		}
-		const archiveName = cliProxyReleaseArchiveName(version, architecture);
-		const releaseBase = `https://github.com/${RELEASE_REPOSITORY}/releases/download/v${version}`;
-		const [checksumsResponse, archiveResponse] = await Promise.all([
-			fetch(`${releaseBase}/checksums.txt`, { signal: AbortSignal.timeout(30_000) }),
-			fetch(`${releaseBase}/${archiveName}`, { signal: AbortSignal.timeout(120_000) }),
-		]);
-		if (!checksumsResponse.ok || !archiveResponse.ok || !archiveResponse.body) {
-			throw new ApiError(502, `下载 CLIProxy ${version} 失败`);
-		}
-		const checksums = await checksumsResponse.text();
-		const expected = checksums
-			.split(/\r?\n/)
-			.map((line) => line.trim().split(/\s+/))
-			.find((parts) => parts[1] === archiveName)?.[0];
-		if (!expected || !/^[a-f0-9]{64}$/i.test(expected)) {
-			throw new ApiError(502, `CLIProxy ${version} 校验文件中缺少目标归档`);
-		}
-		const staging = path.join(this._runtimeRoot, `.install-${version}-${randomUUID()}`);
-		const archivePath = path.join(staging, archiveName);
-		await mkdir(staging, { recursive: true });
-		const output = createWriteStream(archivePath, { mode: 0o600 });
-		await finished(Readable.fromWeb(archiveResponse.body as never).pipe(output));
-		const actual = createHash("sha256")
-			.update(await readFile(archivePath))
-			.digest("hex");
-		if (actual.toLowerCase() !== expected.toLowerCase()) {
-			throw new ApiError(502, `CLIProxy ${version} SHA256 校验失败`);
-		}
-		const extractDir = path.join(staging, "extract");
-		await mkdir(extractDir, { recursive: true });
-		await this._runCommand("tar", ["-xzf", archivePath, "-C", extractDir]);
-		const extractedBinary = path.join(extractDir, "cli-proxy-api");
-		await access(extractedBinary);
-		const targetDir = path.join(this._versionsDir, version);
-		await mkdir(targetDir, { recursive: true });
-		await copyFile(extractedBinary, targetBinary);
-		await chmod(targetBinary, 0o755);
-		await writeFile(this._artifactMarkerPath(version), supportsCliProxyPlugins(version) ? "plugin" : "no-plugin", {
-			mode: 0o600,
-		});
-		await this._runCommand(targetBinary, ["-h"]);
-		this._appendLog("system", `CLIProxy ${version} 下载并校验完成`);
-	}
-
-	private async _runCommand(command: string, args: string[]): Promise<void> {
-		await new Promise<void>((resolve, reject) => {
-			const child = spawn(command, args, { cwd: this._runtimeRoot, stdio: ["ignore", "pipe", "pipe"] });
-			let errorText = "";
-			child.stderr.on("data", (chunk: Buffer) => {
-				errorText += chunk.toString("utf8");
-			});
-			child.once("error", reject);
-			child.once("exit", (code) => {
-				if (code === 0) {
-					resolve();
-				} else {
-					reject(new Error(`${command} exited with ${code}: ${errorText.slice(-1_000)}`));
-				}
-			});
-		});
-	}
-
 	/**
 	 * 启动子进程并等待健康检查。
 	 * @param respectStopIntent - 为 true 时，把停机意图当成放弃启动的理由；供后台预热使用，
@@ -2215,7 +1569,12 @@ export class CliProxyRuntimeManager {
 			this._state = "stopped";
 			return;
 		}
-		const binary = await this._resolveCurrentBinary();
+		const binary = this._subscriptionBinary;
+		await access(binary, constants.X_OK).catch(() => {
+			this._binaryAvailable = false;
+			throw ApiError.unavailable("订阅运行时可执行文件未安装");
+		});
+		this._binaryAvailable = true;
 		if (respectStopIntent && this._desiredStop) {
 			this._state = "stopped";
 			return;
@@ -2223,14 +1582,13 @@ export class CliProxyRuntimeManager {
 		this._desiredStop = false;
 		this._state = "starting";
 		this._health = "unknown";
-		this._appendLog("system", `启动 CLIProxy ${this._currentVersion() ?? "unknown"}`);
+		this._appendLog("system", `启动订阅运行时 ${this._runtimeVersion}`);
 		const child = spawn(binary, ["-config", this._configPath], {
 			cwd: this._runtimeRoot,
 			stdio: ["pipe", "pipe", "pipe"],
 			env: { ...process.env, HOME: this._runtimeRoot, MANAGEMENT_PASSWORD: this._internalManagementKey },
 		});
 		this._process = child;
-		this._sourceBuiltSubscriptions = Boolean(this._subscriptionBinary && binary === this._subscriptionBinary);
 		this._startedAt = new Date();
 		child.stdout.on("data", (chunk: Buffer) => this._consumeProcessLog("stdout", chunk));
 		child.stderr.on("data", (chunk: Buffer) => this._consumeProcessLog("stderr", chunk));
@@ -2302,16 +1660,10 @@ export class CliProxyRuntimeManager {
 		} else if (catalog.waitedMs >= 200) {
 			this._appendLog("system", `CLIProxy 模型目录就绪（健康后等待 ${catalog.waitedMs}ms）`);
 		}
-		if (this._subscriptionBinary) {
-			if (this._sourceBuiltSubscriptions) {
-				await this._refreshSubscriptionCatalog(child);
-			} else {
-				void this._refreshSubscriptionCatalog(child);
-			}
-			if (this._process !== child || this._desiredStop) {return;}
-			this._catalogRefresh = setInterval(() => void this._refreshSubscriptionCatalog(child), 30_000);
-			this._catalogRefresh.unref();
-		}
+		await this._refreshSubscriptionCatalog(child);
+		if (this._process !== child || this._desiredStop) {return;}
+		this._catalogRefresh = setInterval(() => void this._refreshSubscriptionCatalog(child), 30_000);
+		this._catalogRefresh.unref();
 		this._state = "running";
 		this._health = "healthy";
 		this._restartCount = 0;
@@ -2366,35 +1718,16 @@ export class CliProxyRuntimeManager {
 		this._health = "unknown";
 	}
 
-	private async _restartProcess(version?: string): Promise<void> {
-		const previous = this._currentVersion();
+	private async _restartProcess(): Promise<void> {
 		// 重启会掐断在途 SSE：先降级（新请求走 fallback）并等旧请求写完，再换进程。
 		// 进程本来就不在运行时没有可排空的流，timeoutMs=0 直接重启，避免崩溃恢复被拖慢。
 		await withCliProxyDrain(
 			async () => {
 				this._desiredStop = true;
 				await this._stopProcess();
-				try {
-					if (version) {
-						await this._activateVersion(version);
-						await this._projectConfig();
-					}
-					this._desiredStop = false;
-					this._restartCount += 1;
-					await this._startProcess();
-					if (version) {this._assertRunning();}
-				} catch (error) {
-					if (version && previous && previous !== version) {
-						await this._stopProcess();
-						await this._activateVersion(previous);
-						await this._projectConfig();
-						this._desiredStop = false;
-						await this._startProcess();
-						this._assertRunning();
-						this._appendLog("system", "订阅版本启动失败，已恢复原版本与当前账号状态");
-					}
-					throw error;
-				}
+				this._desiredStop = false;
+				this._restartCount += 1;
+				await this._startProcess();
 			},
 			{
 				probe: () => this._activeRequestProbe(),

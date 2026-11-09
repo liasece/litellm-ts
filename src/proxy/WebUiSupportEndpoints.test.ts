@@ -1598,6 +1598,27 @@ describe("ModelsPageSupport 契约", () => {
 	});
 
 	describe("/model_group/info", () => {
+		it("exposes a shared family or supplier only when the deployments in a group agree", async () => {
+			const source = (group: string, provider: string, model: string): Deployment => ({
+				model_name: group, litellm_params: { custom_llm_provider: provider, model }, model_info: {},
+			});
+			const app = buildAuthedApp(makeConfig(), [
+				source("opaque", "commandcode", "deepseek/deepseek-v4"),
+				source("opaque", "opencode-go", "deepseek-v4"),
+				source("gpt-alias", "commandcode", "claude-sonnet-4-5"),
+				source("mixed", "commandcode", "gpt-6-luna"),
+				source("mixed", "commandcode", "gemini-3-pro"),
+			]);
+			const plain = await request(app).get("/model_group/info").expect(200);
+			expect(plain.body.data[0]).not.toHaveProperty("model_identity");
+			const marked = await request(app).get("/model_group/info?include_model_identity=true").expect(200);
+			expect(marked.body.data).toEqual(expect.arrayContaining([
+				expect.objectContaining({ model_group: "opaque", model_identity: { family: "DeepSeek", provider: null } }),
+				expect.objectContaining({ model_group: "gpt-alias", model_identity: { family: "Claude", provider: "commandcode" } }),
+				expect.objectContaining({ model_group: "mixed", model_identity: { family: null, provider: "commandcode" } }),
+			]));
+		});
+
 		it("应返回 data 数组且每项包含 model_group", async () => {
 			const config = makeConfig();
 			const app = buildAuthedApp(config, makeTestDeployments());

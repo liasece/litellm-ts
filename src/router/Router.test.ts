@@ -74,7 +74,7 @@ describe("Router smoke", () => {
 			model_list: [
 				{
 					model_name: "image",
-					litellm_params: { model: "cliproxy/gpt-image-2", custom_llm_provider: "cliproxy" },
+					litellm_params: { model: "gpt-image-2", custom_llm_provider: "codex-subscription" },
 				},
 			],
 			routing_strategy: RoutingStrategyName.SimpleShuffle,
@@ -88,7 +88,7 @@ describe("Router smoke", () => {
 			});
 
 			expect(response).toMatchObject({ data: [{ b64_json: "AA==" }] });
-			expect(mockFetch.mock.calls[0]?.[0]).toBe("http://cliproxy.internal/v1/images/generations");
+			expect(mockFetch.mock.calls[0]?.[0]).toBe("http://cliproxy.internal/subscriptions/codex-subscription/v1/images/generations");
 			expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body))).toEqual({
 				model: "gpt-image-2",
 				prompt: "draw a cat",
@@ -363,10 +363,10 @@ describe("Router runtime credential resolution", () => {
 describe("Router CLIProxy 启动等待候选判定", () => {
 	/** 构造一个由内部 CLIProxy 承载的 deployment。 */
 	function cliproxyDeployment(): ReturnType<typeof mkDeployment> {
-		return mkDeployment("commandcode/deepseek/deepseek-v4.1-flash", "cliproxy/commandcode/deepseek/deepseek-v4.1-flash", {
+		return mkDeployment("commandcode/deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", {
 			litellm_params: {
-				model: "cliproxy/commandcode/deepseek/deepseek-v4.1-flash",
-				custom_llm_provider: "cliproxy",
+				model: "deepseek/deepseek-v4.1-flash",
+				custom_llm_provider: "commandcode",
 			},
 		});
 	}

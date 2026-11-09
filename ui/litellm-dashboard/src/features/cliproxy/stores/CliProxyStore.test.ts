@@ -24,14 +24,12 @@ const quota: AccountQuota = {
 };
 const emptyStatus = { state: "running", version: "8.0.47", installed_versions: ["8.0.47"], health: "healthy" };
 function defaults(path: string): Promise<unknown> {
-	if (path === "/cliproxy/config")
+	if (path === "/subscriptions/config")
 		return Promise.resolve({ settings: { enabled: true, config_yaml: "" }, user_config: {}, status: emptyStatus });
-	if (path.startsWith("/cliproxy/accounts") && !path.endsWith("/quota")) return Promise.resolve({ data: [account] });
+	if (path.startsWith("/subscriptions/accounts") && !path.endsWith("/quota")) return Promise.resolve({ data: [account] });
 	if (path.endsWith("/quota")) return Promise.resolve(quota);
-	if (path === "/cliproxy/commandcode/accounts") return Promise.resolve({ data: [] });
-	if (path.startsWith("/cliproxy/logs")) return Promise.resolve({ entries: [firstLog], cursor: 1 });
-	if (path.startsWith("/cliproxy/update/check"))
-		return Promise.resolve({ current: "8.0.47", latest: "8.0.47", update_available: false, releases: [] });
+	if (path === "/subscriptions/commandcode/accounts") return Promise.resolve({ data: [] });
+	if (path.startsWith("/subscriptions/logs")) return Promise.resolve({ entries: [firstLog], cursor: 1 });
 	return Promise.resolve(emptyStatus);
 }
 function deferred<T>() {
@@ -75,7 +73,7 @@ describe("CLIProxy account and activity lifecycle", () => {
 		api.mockImplementation((path) =>
 			path.includes("?after=")
 				? pending.promise
-				: path === "/cliproxy/logs"
+				: path === "/subscriptions/logs"
 					? Promise.resolve({ entries: [{ ...firstLog, id: 10, message: "fresh" }], cursor: 10 })
 					: defaults(path),
 		);
@@ -102,7 +100,7 @@ describe("CLIProxy account and activity lifecycle", () => {
 		store.editCommandCodeAccount({ index: 2, label: "old", filename: "managed.json" });
 		store.state.editingCommandCodeLabel = "renamed";
 		await store.saveCommandCodeAccount();
-		const call = api.mock.calls.find(([path]) => path === "/cliproxy/commandcode/accounts/2");
+		const call = api.mock.calls.find(([path]) => path === "/subscriptions/commandcode/accounts/2");
 		expect(call?.[1]?.method).toBe("PATCH");
 		expect(JSON.parse(String(call?.[1]?.body))).toEqual({ label: "renamed" });
 		expect(store.state.editingCommandCode).toBeNull();

@@ -29,7 +29,6 @@ export enum LlmProviders {
 	MiMoGlobal = "mimo_global",
 	LLMux = "llmux",
 	VLLM = "vllm",
-	CLIProxy = "cliproxy",
 	CodexSubscription = "codex-subscription",
 	CommandCode = "commandcode",
 	OpenCodeGo = "opencode-go",

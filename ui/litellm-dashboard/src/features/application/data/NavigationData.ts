@@ -39,7 +39,6 @@ export const navigationGroups: readonly NavigationGroup[] = [
 			{ page: "builtin-capabilities", label: "Built-in Capabilities", icon: "ToolOutlined", roles: admins },
 			{ page: "router-settings", label: "Router Settings", icon: "SettingOutlined", roles: admins },
 			{ page: "subscriptions", label: "Subscriptions", icon: "CrownOutlined", roles: admins },
-			{ page: "cliproxy", label: "CLIProxy API", icon: "ApiOutlined", roles: admins },
 			{ page: "logging-and-alerts", label: "Logging & Alerts", icon: "SettingOutlined", roles: admins },
 			{ page: "admin-panel", label: "Admin Settings", icon: "SettingOutlined", roles: admins },
 			{ page: "cost-tracking", label: "Cost Tracking", icon: "BarChartOutlined", roles: admins },

@@ -163,15 +163,16 @@ function _stripRouterAndRegionPrefix(model: string): string[] {
  * 提取 model 名称的候选匹配列表（单次 _stripRouterAndRegionPrefix 调用）。
  * 集中原本在 lookupPrice / costPerToken 多处重复调用的逻辑。
  * @param model
+ * @param source
  */
-function _candidatesFor(model: string): string[] {
-	const separator = model.indexOf("/");
-	const provider = model.slice(0, separator);
-	if (separator > 0 && isSubscriptionProvider(provider)) {
-		const previous = "cliproxy/" + (provider === "commandcode" || provider === "opencode-go" ? model : model.slice(separator + 1));
-		return [...new Set([model, ..._stripRouterAndRegionPrefix(previous), ..._stripRouterAndRegionPrefix(model)])];
-	}
-	return _stripRouterAndRegionPrefix(model);
+export function modelPriceKeys(model: string, source?: string): string[] {
+	const prefix = model.includes("/") ? model.split("/", 1)[0] : undefined;
+	const provider = isSubscriptionProvider(source) ? source : source === undefined && isSubscriptionProvider(prefix) ? prefix : undefined;
+	if (!provider) {return _stripRouterAndRegionPrefix(model);}
+	const upstream = model.startsWith(provider + "/") ? model.slice(provider.length + 1) : model;
+	const scoped = provider + "/" + upstream;
+	const historical = "cliproxy/" + (provider === "commandcode" || provider === "opencode-go" ? scoped : upstream);
+	return [...new Set([scoped, historical, ..._stripRouterAndRegionPrefix(upstream)])];
 }
 
 /**
@@ -181,10 +182,11 @@ function _candidatesFor(model: string): string[] {
  * `litellm.model_cost` 字典查，再回退到内置 PRICE_TABLE。
  * @param model - 完整模型名称（如 "deepseek-v4-flash/xxx"）
  * @param modelCostMap - 可选 litellm.model_cost 透传（PY: litellm.model_cost[model]）
+ * @param source
  * @returns 匹配的价格，找不到时返回 undefined
  */
-function lookupCostMapEntry(model: string, modelCostMap?: Record<string, ModelCostMapEntry>): ModelCostMapEntry | undefined {
-	const candidates = _candidatesFor(model);
+function lookupCostMapEntry(model: string, modelCostMap?: Record<string, ModelCostMapEntry>, source?: string): ModelCostMapEntry | undefined {
+	const candidates = modelPriceKeys(model, source);
 	if (modelCostMap) {
 		for (const candidate of candidates) {
 			const entry = modelCostMap[candidate];
@@ -203,8 +205,8 @@ function lookupCostMapEntry(model: string, modelCostMap?: Record<string, ModelCo
 	return undefined;
 }
 
-function lookupPrice(model: string, modelCostMap?: Record<string, ModelCostMapEntry>): ModelPrice | undefined {
-	const costMapEntry = lookupCostMapEntry(model, modelCostMap);
+function lookupPrice(model: string, modelCostMap?: Record<string, ModelCostMapEntry>, source?: string): ModelPrice | undefined {
+	const costMapEntry = lookupCostMapEntry(model, modelCostMap, source);
 	if (costMapEntry !== undefined) {
 		return {
 			inputPerMillion: (costMapEntry.input_cost_per_token ?? 0) * PER_MILLION,
@@ -217,7 +219,7 @@ function lookupPrice(model: string, modelCostMap?: Record<string, ModelCostMapEn
 				costMapEntry.cache_read_input_token_cost === undefined ? undefined : costMapEntry.cache_read_input_token_cost * PER_MILLION,
 		};
 	}
-	for (const candidate of _candidatesFor(model)) {
+	for (const candidate of modelPriceKeys(model, source)) {
 		const lower = candidate.toLowerCase();
 		for (const entry of PRICE_TABLE) {
 			if (lower.includes(entry.pattern)) {
@@ -235,12 +237,14 @@ function lookupPrice(model: string, modelCostMap?: Record<string, ModelCostMapEn
  * Used by costBasedRouting as fallback when user-provided model_cost_map misses.
  * @param model
  * @param modelCostMap - 可选 litellm.model_cost 透传
+ * @param source
  */
 export function lookupModelCostPerToken(
 	model: string,
 	modelCostMap?: Record<string, ModelCostMapEntry>,
+	source?: string,
 ): { input_cost_per_token: number; output_cost_per_token: number } | undefined {
-	const price = lookupPrice(model, modelCostMap);
+	const price = lookupPrice(model, modelCostMap, source);
 	if (price === undefined) {
 		return undefined;
 	}
@@ -414,7 +418,8 @@ export function costPerToken(
 				/** 跳过上游 token 统计，按字符数启发式估算 */
 				skipProviderTokenCounting?: boolean;
 				/** 部署级 per-token 价格（含可选峰谷配置） */
-				customCostPerToken?: CustomCostPerToken;
+				provider?: string;
+		customCostPerToken?: CustomCostPerToken;
 				/** 服务等级，决定价格表字段后缀 */
 				service_tier?: ServiceTier;
 				/** 模型价格表快照 */
@@ -429,6 +434,7 @@ export function costPerToken(
 		| boolean,
 ): CostResult {
 	// 向后兼容：原签名最后一个参数是 `skipProviderTokenCounting?: boolean`
+	const source = typeof options === "object" ? options.provider : undefined;
 	const skipProviderTokenCounting = typeof options === "boolean" ? options : options?.skipProviderTokenCounting;
 	const customCostPerToken = typeof options === "object" ? options?.customCostPerToken : undefined;
 	const serviceTier: ServiceTier = typeof options === "object" ? (options?.service_tier ?? ServiceTier.Standard) : ServiceTier.Standard;
@@ -458,7 +464,7 @@ export function costPerToken(
 		customCostPerToken?.cache_read_input_token_cost,
 	].filter((value): value is number => value !== undefined);
 	const customIsAllZero = customPrices.length > 0 && customPrices.every((value) => value === 0);
-	const zeroFallbackEntry = customIsAllZero ? lookupCostMapEntry(model, modelCostMap) : undefined;
+	const zeroFallbackEntry = customIsAllZero ? lookupCostMapEntry(model, modelCostMap, source) : undefined;
 	const zeroFallbackHasPrice =
 		zeroFallbackEntry !== undefined &&
 		((zeroFallbackEntry.input_cost_per_token ?? 0) > 0 || (zeroFallbackEntry.output_cost_per_token ?? 0) > 0);
@@ -482,7 +488,7 @@ export function costPerToken(
 		return { cacheInputCost: cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
 	}
 
-	const costMapEntry = lookupCostMapEntry(model, modelCostMap);
+	const costMapEntry = lookupCostMapEntry(model, modelCostMap, source);
 
 	// DIFF-COST-01: service_tier 联动 modelCostMap 字段
 	// tier=flex     → input_cost_per_token_flex     / output_cost_per_token_flex
@@ -542,7 +548,7 @@ export function costPerToken(
 			}
 		}
 		if (!above200kHit) {
-			const price = lookupPrice(model, modelCostMap);
+			const price = lookupPrice(model, modelCostMap, source);
 			if (price === undefined) {
 				// llmux 模型仅在统一 snapshot 与显式 override 都未命中时沿用订阅零计费兼容行为。
 				if (isLlmuxModel(model)) {
@@ -555,7 +561,7 @@ export function costPerToken(
 				// deployment 补价 —— 生产上正是因为缺这条线索，MiniMax 漏记持续了三个月。
 				logger.warn(`未找到模型价格: ${model}，按 0 计费`, {
 					model: model,
-					candidates: _candidatesFor(model),
+					candidates: modelPriceKeys(model, source),
 					customCostProvided: customPrices.length > 0,
 				});
 				return { cacheInputCost: 0, inputCost: 0, outputCost: 0, totalCost: 0 };

@@ -85,7 +85,7 @@ func run(ctx context.Context, configPath, login string, noBrowser bool) error {
 	auth.StartAntigravityVersionUpdater(ctx)
 	accessManager := access.NewManager()
 	host, err := cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(configPath).WithRequestAccessManager(accessManager).
-		WithServerOptions(api.WithRouterConfigurator(func(engine *gin.Engine, base *handlers.BaseAPIHandler, current *config.Config) {
+		WithServerOptions(api.WithMiddleware(routes.RequireSource), api.WithRouterConfigurator(func(engine *gin.Engine, base *handlers.BaseAPIHandler, current *config.Config) {
 			routes.Register(engine, base, current, accessManager)
 		})).Build()
 	if err != nil {

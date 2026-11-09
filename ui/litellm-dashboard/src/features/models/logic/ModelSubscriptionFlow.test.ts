@@ -37,7 +37,7 @@ const catalog: ProviderMetadata[] = [
 describe("subscription model form behaviour", () => {
 	it("creates canonical deployments with the upstream id and no deployment credentials", () => {
 		const mappings = selectedModelMappings(["gpt-5.4-codex"], "Codex Subscription");
-		expect(mappings).toEqual([{ public_name: "gpt-5.4-codex", litellm_model: "codex-subscription/gpt-5.4-codex" }]);
+		expect(mappings).toEqual([{ public_name: "gpt-5.4-codex", litellm_model: "gpt-5.4-codex" }]);
 		const [request] = prepareModelCreate({
 			custom_llm_provider: "Codex Subscription",
 			model: ["gpt-5.4-codex"],
@@ -50,14 +50,14 @@ describe("subscription model form behaviour", () => {
 		});
 		expect(request).toEqual({
 			model_name: "gpt-5.4-codex",
-			litellm_params: { model: "codex-subscription/gpt-5.4-codex", custom_llm_provider: "codex-subscription" },
+			litellm_params: { model: "gpt-5.4-codex", custom_llm_provider: "codex-subscription" },
 			model_info: {},
 		});
 	});
 
 	it("keeps the user-editable public model name while using the upstream id for routing", () => {
 		const custom = selectedModelMappings(["custom"], "OpenCode Go", "deepseek-v4.1-flash");
-		expect(custom).toEqual([{ public_name: "deepseek-v4.1-flash", litellm_model: "opencode-go/deepseek-v4.1-flash" }]);
+		expect(custom).toEqual([{ public_name: "deepseek-v4.1-flash", litellm_model: "deepseek-v4.1-flash" }]);
 		custom[0].public_name = "team-coder";
 		const [request] = prepareModelCreate({
 			custom_llm_provider: "OpenCode Go",
@@ -67,22 +67,22 @@ describe("subscription model form behaviour", () => {
 		});
 		expect(request.model_name).toBe("team-coder");
 		expect(request.litellm_params).toEqual({
-			model: "opencode-go/deepseek-v4.1-flash",
+			model: "deepseek-v4.1-flash",
 			custom_llm_provider: "opencode-go",
 		});
 	});
 
 	it("does not repeat a provider prefix the upstream catalog already returned", () => {
-		expect(providerModelName("commandcode/glm-5.3", "CommandCode")).toBe("commandcode/glm-5.3");
-		expect(providerModelName("opencode-go/deepseek-v4.1-flash", "opencode-go")).toBe("opencode-go/deepseek-v4.1-flash");
-		expect(providerModelName("gpt-5.4-codex", "codex-subscription")).toBe("codex-subscription/gpt-5.4-codex");
+		expect(providerModelName("commandcode/glm-5.3", "CommandCode")).toBe("glm-5.3");
+		expect(providerModelName("opencode-go/deepseek-v4.1-flash", "opencode-go")).toBe("deepseek-v4.1-flash");
+		expect(providerModelName("gpt-5.4-codex", "codex-subscription")).toBe("gpt-5.4-codex");
 	});
 
 	it("keeps subscription edits canonical and clears deployment credentials", () => {
 		const model: ProxyModel = {
 			model_name: "team-codex",
 			litellm_params: {
-				model: "codex-subscription/gpt-5.4-codex",
+				model: "gpt-5.4-codex",
 				custom_llm_provider: "codex-subscription",
 				api_base: "https://example.invalid",
 				api_key: "synthetic",
@@ -94,7 +94,7 @@ describe("subscription model form behaviour", () => {
 		const request = prepareModelUpdate(draft, model);
 		expect(request.model_name).toBe("team-codex");
 		expect(request.litellm_params).toMatchObject({
-			model: "codex-subscription/gpt-5.4-codex",
+			model: "gpt-5.4-codex",
 			custom_llm_provider: "codex-subscription",
 			api_base: null,
 			api_key: null,
@@ -105,20 +105,20 @@ describe("subscription model form behaviour", () => {
 	it("edits the limits of an existing deployment without rewriting the stored account source or billing model", () => {
 		const current: ProxyModel = {
 			model_name: "team-coder",
-			litellm_params: { model: "cliproxy/commandcode/vendor/model", custom_llm_provider: "commandcode" },
+			litellm_params: { model: "vendor/model", custom_llm_provider: "commandcode" },
 			model_info: { id: "original-deployment" },
 		};
 		const draft = createModelEditDraft(current);
 		draft.rpm = 120;
 		const patch = prepareModelUpdate(draft, current).litellm_params;
 		expect(patch).toMatchObject({ rpm: 120 });
-		expect(patch).not.toHaveProperty("model");
-		expect(patch).not.toHaveProperty("custom_llm_provider");
-		draft.litellm_model_name = "cliproxy/commandcode/vendor/new-model";
-		expect(prepareModelUpdate(draft, current).litellm_params.model).toBe("commandcode/vendor/new-model");
+		expect(patch.model).toBe("vendor/model");
+		expect(patch.custom_llm_provider).toBe("commandcode");
+		draft.litellm_model_name = "vendor/new-model";
+		expect(prepareModelUpdate(draft, current).litellm_params.model).toBe("vendor/new-model");
 	});
 
-	it("offers subscription providers separately and keeps CLIProxy only for legacy edits", () => {
+	it("offers subscription providers on create and edit and excludes retired options", () => {
 		const createOptions = providerSelectOptions(catalog, "provider", null);
 		expect(createOptions.map((option) => option.value)).not.toContain("CLIProxy");
 		expect(createOptions.filter((option) => option.group === "Subscriptions").map((option) => option.value)).toEqual([
@@ -127,10 +127,6 @@ describe("subscription model form behaviour", () => {
 			"OpenCode Go",
 		]);
 		const editOptions = providerSelectOptions(catalog, "litellm_provider", "cliproxy");
-		expect(editOptions.find((option) => option.value === "cliproxy")).toEqual({
-			value: "cliproxy",
-			label: "CLIProxy API (Managed)",
-			group: "Legacy",
-		});
+		expect(editOptions.some((option) => option.value === "cliproxy")).toBe(false);
 	});
 });

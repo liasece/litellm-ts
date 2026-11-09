@@ -3,7 +3,6 @@ import { requestJson } from "../../platform/api/HttpApiClient";
 import { proxyConfigApi } from "../../proxy-config/api/ProxyConfigApi";
 const record = z.record(z.string(), z.unknown());
 export const routerSettingsApi = {
-	costs: () => requestJson("/public/litellm_model_cost_map", {}, (value) => record.parse(value)),
 	load: () => requestJson("/get/config/callbacks", {}, (value) => record.parse(value)),
 	metadata: () => requestJson("/router/settings", {}, (value) => record.parse(value)),
 	general: () => proxyConfigApi.list(),

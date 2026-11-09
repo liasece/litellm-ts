@@ -1,4 +1,4 @@
-import { hostedProvider } from "../subscriptions/SubscriptionProviders";
+import { subscriptionModelInfo, subscriptionModelParams } from "../subscriptions/SubscriptionProviders";
 /**
  * 代理模型管理端点 — CRUD 操作
  *
@@ -29,31 +29,12 @@ const LITELLM_PARAMS_DEFAULTS: Readonly<Record<string, boolean>> = {
 	use_in_pass_through: false,
 	merge_reasoning_content_in_choices: false,
 };
-const MANAGED_CLIPROXY_CONNECTION_FIELDS = ["litellm_credential_name", "credential_name", "api_base", "api_key"] as const;
-
-/**
- * The built-in CLIProxy provider owns its loopback endpoint and internal key.
- * Deployment-level credentials must never override or depend on that boundary.
- * @param params - Deployment parameters copied before managed connection fields are removed.
- */
-function normalizeManagedProviderParams(params: Record<string, unknown>): Record<string, unknown> {
-	const output = { ...params };
-	const provider = hostedProvider(output);
-	if (provider) {
-		output["custom_llm_provider"] = provider;
-		for (const field of MANAGED_CLIPROXY_CONNECTION_FIELDS) {
-			delete output[field];
-		}
-	}
-	return output;
-}
-
 /**
  * 补齐 litellm_params 的 Python pydantic 缺省字段（仅在缺省时填充 false）。
  * @param params - 请求/合并后的 litellm_params
  */
 function withLitellmParamsDefaults(params: Record<string, unknown>): Record<string, unknown> {
-	const output = normalizeManagedProviderParams(params);
+	const output = { ...subscriptionModelParams(params) };
 	for (const [name, defaultValue] of Object.entries(LITELLM_PARAMS_DEFAULTS)) {
 		if (output[name] === undefined || output[name] === null) {
 			output[name] = defaultValue;
@@ -172,11 +153,12 @@ export function createModelManagementRoutes(
 			const requestModelInfo = modelInfo !== null && typeof modelInfo === "object" ? (modelInfo as Record<string, unknown>) : {};
 			const requestModelId = requestModelInfo["id"];
 			const modelId = typeof requestModelId === "string" && requestModelId.length > 0 ? requestModelId : randomUUID();
+			const params = withLitellmParamsDefaults(litellmParams as Record<string, unknown>);
 			const candidate = {
 				model_id: modelId,
 				model_name: modelName as string,
-				litellm_params: withLitellmParamsDefaults(litellmParams as Record<string, unknown>),
-				model_info: { ...requestModelInfo, id: modelId, db_model: false },
+				litellm_params: params,
+				model_info: { ...subscriptionModelInfo(requestModelInfo, params), id: modelId, db_model: false },
 				created_at: new Date(),
 				created_by: createdBy,
 				updated_at: new Date(),
@@ -263,10 +245,9 @@ export function createModelManagementRoutes(
 				throw ApiError.badRequest("model_info.id must match modelId");
 			}
 			values["model_info"] = {
-				...mergeObjectPatch(
-					(existing.model_info ?? {}) as Record<string, unknown>,
-					modelInfoPatch as Record<string, unknown>,
-					deleteNull,
+				...subscriptionModelInfo(
+					mergeObjectPatch((existing.model_info ?? {}) as Record<string, unknown>, modelInfoPatch as Record<string, unknown>, deleteNull),
+					(values["litellm_params"] ?? existing.litellm_params) as Record<string, unknown>,
 				),
 				id: modelId,
 			};

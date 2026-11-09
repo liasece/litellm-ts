@@ -32,7 +32,7 @@ COPY --from=subscription-build /out/ /opt/cliproxy/
 
 ENV CLIPROXY_PLUGIN_DIR=/opt/cliproxy/plugins
 ENV LITELLM_SUBSCRIPTIONS_BINARY=/opt/cliproxy/litellm-subscriptions
-ENV CLIPROXY_BOOTSTRAP_VERSION=8.0.57
+ENV LITELLM_SUBSCRIPTIONS_VERSION=8.0.57
 ENV CLIPROXY_RUNTIME_ROOT=/var/lib/litellm/cliproxy
 
 RUN node -e "const { readMigrationFiles } = require('drizzle-orm/migrator'); const migrations = readMigrationFiles({ migrationsFolder: '/app/drizzle' }); if (migrations.length === 0) throw new Error('Drizzle migrations are missing from runtime image');" \

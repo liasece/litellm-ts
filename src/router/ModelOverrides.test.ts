@@ -23,7 +23,7 @@ describe("buildModelGroupOverrides", () => {
 			buildModelGroupOverrides([
 				{
 					model_name: "model-a",
-					litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+					litellm_params: { model: "gpt-5.6-sol", custom_llm_provider: "codex-subscription" },
 					model_info: { override_reasoning_effort: "ultra" as never },
 				},
 			]),

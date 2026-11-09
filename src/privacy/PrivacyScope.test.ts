@@ -72,3 +72,10 @@ describe("isPrivacyScopeMatch", () => {
 		expect(isPrivacyScopeMatch(blank, privacyScopeTargetOf(GPT))).toBe(true);
 	});
 });
+
+it("keeps a historical provider and model filter on its original subscription when providers share an upstream model", () => {
+	const settings = parsePrivacyMaskingSettings({providers:["cliproxy"],models:["cliproxy/commandcode/vendor/model"]});
+	const target = {modelName:"team-alias",upstreamModel:"vendor/model"};
+	expect(isPrivacyScopeMatch(settings,{...target,provider:"commandcode"})).toBe(true);
+	expect(isPrivacyScopeMatch(settings,{...target,provider:"opencode-go"})).toBe(false);
+});

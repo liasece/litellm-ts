@@ -9,7 +9,6 @@ import type {
 	CliProxyLogEntry,
 	OAuthSession,
 	RuntimeStatus,
-	UpdateInfo,
 } from "../support/CliProxyModels";
 
 export function createCliProxyStore() {
@@ -32,8 +31,6 @@ export function createCliProxyStore() {
 		loading: true,
 		busy: null as string | null,
 		activeTab: "overview",
-		updateInfo: null as UpdateInfo | null,
-		rollbackVersion: null as string | null,
 		oauthSession: null as OAuthSession | null,
 		oauthInput: "",
 		quotaStates: {} as Record<string, AccountQuotaState>,
@@ -55,11 +52,11 @@ export function createCliProxyStore() {
 	};
 	const fail = (error: unknown) => notify("error", error instanceof Error ? error.message : String(error));
 	const refreshStatus = async () => {
-		const value = await cliProxyApi<RuntimeStatus>("/cliproxy/status");
+		const value = await cliProxyApi<RuntimeStatus>("/subscriptions/status");
 		if (!disposed) state.status = value;
 	};
 	const refreshAccounts = async () => {
-		const value = await cliProxyApi<{ data: Account[] }>("/cliproxy/accounts?include_trashed=true");
+		const value = await cliProxyApi<{ data: Account[] }>("/subscriptions/accounts?include_trashed=true");
 		if (!disposed) {
 			state.accounts = value.data;
 			if (state.accounts.length && !quotaLoadedOnce) {
@@ -69,7 +66,7 @@ export function createCliProxyStore() {
 		}
 	};
 	const refreshCommandCodeAccounts = async () => {
-		const value = await cliProxyApi<{ data: CommandCodeAccount[] }>("/cliproxy/commandcode/accounts");
+		const value = await cliProxyApi<{ data: CommandCodeAccount[] }>("/subscriptions/commandcode/accounts");
 		if (!disposed) state.commandCodeAccounts = value.data;
 	};
 	const refreshLogs = async () => {
@@ -78,7 +75,9 @@ export function createCliProxyStore() {
 		const generation = ++logsRequestGeneration;
 		logsFetchInFlight = request;
 		try {
-			const value = await cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>("/cliproxy/logs?after=" + state.logCursor);
+			const value = await cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>(
+				"/subscriptions/logs?after=" + state.logCursor,
+			);
 			if (!disposed && generation === logsRequestGeneration) {
 				state.logCursor = value.cursor;
 				if (value.entries.length) state.logs = [...state.logs, ...value.entries].slice(-2000);
@@ -91,7 +90,7 @@ export function createCliProxyStore() {
 		state.busy = "logs refresh";
 		const generation = ++logsRequestGeneration;
 		try {
-			const value = await cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>("/cliproxy/logs");
+			const value = await cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>("/subscriptions/logs");
 			if (!disposed && generation === logsRequestGeneration) {
 				state.logs = value.entries;
 				state.logCursor = value.cursor;
@@ -106,7 +105,7 @@ export function createCliProxyStore() {
 		const previous = state.quotaStates[account.auth_index]?.data;
 		state.quotaStates[account.auth_index] = { status: "loading", data: previous };
 		try {
-			const value = await cliProxyApi<AccountQuota>("/cliproxy/accounts/" + encodeURIComponent(account.auth_index) + "/quota");
+			const value = await cliProxyApi<AccountQuota>("/subscriptions/accounts/" + encodeURIComponent(account.auth_index) + "/quota");
 			if (!disposed) state.quotaStates[account.auth_index] = { status: "success", data: value };
 		} catch (error) {
 			if (!disposed)
@@ -123,12 +122,11 @@ export function createCliProxyStore() {
 	const load = async () => {
 		state.loading = true;
 		try {
-			const [config, accounts, managed, logs, updates] = await Promise.all([
-				cliProxyApi<ConfigResponse>("/cliproxy/config"),
-				cliProxyApi<{ data: Account[] }>("/cliproxy/accounts"),
-				cliProxyApi<{ data: CommandCodeAccount[] }>("/cliproxy/commandcode/accounts"),
-				cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>("/cliproxy/logs"),
-				cliProxyApi<UpdateInfo>("/cliproxy/update/check").catch(() => null),
+			const [config, accounts, managed, logs] = await Promise.all([
+				cliProxyApi<ConfigResponse>("/subscriptions/config"),
+				cliProxyApi<{ data: Account[] }>("/subscriptions/accounts"),
+				cliProxyApi<{ data: CommandCodeAccount[] }>("/subscriptions/commandcode/accounts"),
+				cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>("/subscriptions/logs"),
 			]);
 			if (disposed) return;
 			state.status = config.status;
@@ -139,7 +137,6 @@ export function createCliProxyStore() {
 			state.commandCodeAccounts = managed.data;
 			state.logs = logs.entries;
 			state.logCursor = logs.cursor;
-			state.updateInfo = updates;
 			if (state.accounts.length && !quotaLoadedOnce) {
 				quotaLoadedOnce = true;
 				void refreshAllQuotas();
@@ -155,7 +152,7 @@ export function createCliProxyStore() {
 		try {
 			await operation();
 			await refreshStatus();
-			notify("success", "CLIProxy " + name + " completed");
+			notify("success", "Subscription runtime " + name + " completed");
 		} catch (error) {
 			fail(error);
 		} finally {
@@ -171,7 +168,7 @@ export function createCliProxyStore() {
 	const saveRawConfig = () =>
 		runOperation("configuration apply", async () => {
 			applyConfigResponse(
-				await cliProxyApi<ConfigResponse>("/cliproxy/config", {
+				await cliProxyApi<ConfigResponse>("/subscriptions/config", {
 					method: "PUT",
 					body: JSON.stringify({ enabled: state.enabled, config_yaml: state.rawConfigDraft }),
 				}),
@@ -181,33 +178,16 @@ export function createCliProxyStore() {
 	const saveVisualConfig = (enabled: boolean, userConfig: Record<string, unknown>) =>
 		runOperation("configuration apply", async () => {
 			applyConfigResponse(
-				await cliProxyApi<ConfigResponse>("/cliproxy/config", {
+				await cliProxyApi<ConfigResponse>("/subscriptions/config", {
 					method: "PUT",
 					body: JSON.stringify({ enabled, user_config: userConfig }),
 				}),
 			);
 		});
-	const refreshUpdate = async () => {
-		state.updateInfo = await cliProxyApi<UpdateInfo>("/cliproxy/update/check?refresh=true");
-	};
-	const checkUpdate = () => runOperation("update check", refreshUpdate);
-	const installUpdate = () =>
-		runOperation("update", async () => {
-			if (!state.updateInfo?.update_available) return;
-			await cliProxyApi("/cliproxy/update", { method: "POST", body: JSON.stringify({ version: state.updateInfo.latest }) });
-			await refreshUpdate();
-		});
-	const rollback = () =>
-		runOperation("rollback", async () => {
-			if (!state.rollbackVersion) return;
-			await cliProxyApi("/cliproxy/rollback", { method: "POST", body: JSON.stringify({ version: state.rollbackVersion }) });
-			state.rollbackVersion = null;
-			await refreshUpdate();
-		});
 	const startOAuth = async (provider: string) => {
 		state.busy = "oauth-" + provider;
 		try {
-			state.oauthSession = await cliProxyApi<OAuthSession>("/cliproxy/oauth", {
+			state.oauthSession = await cliProxyApi<OAuthSession>("/subscriptions/oauth", {
 				method: "POST",
 				body: JSON.stringify({ provider }),
 			});
@@ -220,7 +200,7 @@ export function createCliProxyStore() {
 	const sendOAuthInput = async () => {
 		if (!state.oauthSession) return;
 		try {
-			await cliProxyApi("/cliproxy/oauth/" + state.oauthSession.id + "/input", {
+			await cliProxyApi("/subscriptions/oauth/" + state.oauthSession.id + "/input", {
 				method: "POST",
 				body: JSON.stringify({ input: state.oauthInput }),
 			});
@@ -232,7 +212,7 @@ export function createCliProxyStore() {
 	const addCommandCodeAccount = async () => {
 		state.busy = "add commandcode account";
 		try {
-			await cliProxyApi("/cliproxy/commandcode/accounts", {
+			await cliProxyApi("/subscriptions/commandcode/accounts", {
 				method: "POST",
 				body: JSON.stringify({ api_key: state.commandCodeKey, label: state.commandCodeLabel }),
 			});
@@ -257,7 +237,7 @@ export function createCliProxyStore() {
 		try {
 			const payload: Record<string, string> = { label: state.editingCommandCodeLabel };
 			if (state.editingCommandCodeKey.trim()) payload.api_key = state.editingCommandCodeKey;
-			await cliProxyApi("/cliproxy/commandcode/accounts/" + state.editingCommandCode.index, {
+			await cliProxyApi("/subscriptions/commandcode/accounts/" + state.editingCommandCode.index, {
 				method: "PATCH",
 				body: JSON.stringify(payload),
 			});
@@ -273,7 +253,7 @@ export function createCliProxyStore() {
 	};
 	const updateAccount = async (account: Account, changes: Record<string, unknown>) => {
 		try {
-			await cliProxyApi("/cliproxy/accounts/" + encodeURIComponent(account.filename), {
+			await cliProxyApi("/subscriptions/accounts/" + encodeURIComponent(account.filename), {
 				method: "PATCH",
 				body: JSON.stringify(changes),
 			});
@@ -286,12 +266,12 @@ export function createCliProxyStore() {
 		const managed = state.commandCodeAccounts.find((item) => item.filename === account.filename);
 		try {
 			if (managed) {
-				await cliProxyApi("/cliproxy/commandcode/accounts/" + managed.index, { method: "DELETE" });
+				await cliProxyApi("/subscriptions/commandcode/accounts/" + managed.index, { method: "DELETE" });
 				notify("success", "CommandCode account " + managed.label + " deleted");
 				await Promise.all([refreshAccounts(), refreshCommandCodeAccounts()]);
 			} else {
 				const trashed = account.filename.startsWith(".trash/");
-				await cliProxyApi("/cliproxy/accounts/" + encodeURIComponent(account.filename) + (trashed ? "/restore" : ""), {
+				await cliProxyApi("/subscriptions/accounts/" + encodeURIComponent(account.filename) + (trashed ? "/restore" : ""), {
 					method: trashed ? "POST" : "DELETE",
 				});
 				notify("success", "Account " + account.filename + (trashed ? " restored" : " moved to trash"));
@@ -306,7 +286,7 @@ export function createCliProxyStore() {
 		try {
 			state.managementResult = await advancedManagementApi(state.managementResource, state.managementMethod, state.managementBody);
 			if (state.managementMethod !== "GET") await load();
-			notify("success", "CLIProxy management request completed");
+			notify("success", "Subscription management request completed");
 		} catch (error) {
 			fail(error);
 		} finally {
@@ -319,7 +299,7 @@ export function createCliProxyStore() {
 		const session = state.oauthSession;
 		if (session?.state === "running") {
 			try {
-				const value = await cliProxyApi<OAuthSession>("/cliproxy/oauth/" + session.id);
+				const value = await cliProxyApi<OAuthSession>("/subscriptions/oauth/" + session.id);
 				if (disposed || state.oauthSession?.id !== session.id) return;
 				state.oauthSession = value;
 				if (value.state !== "running") await refreshAccounts();
@@ -351,9 +331,6 @@ export function createCliProxyStore() {
 		runOperation,
 		saveRawConfig,
 		saveVisualConfig,
-		checkUpdate,
-		installUpdate,
-		rollback,
 		startOAuth,
 		sendOAuthInput,
 		addCommandCodeAccount,

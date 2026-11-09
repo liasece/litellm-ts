@@ -155,8 +155,8 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 			.send({
 				model_name: "codex",
 				litellm_params: {
-					model: "cliproxy/gpt-5.4",
-					custom_llm_provider: "cliproxy",
+					model: "gpt-5.4",
+					custom_llm_provider: "codex-subscription",
 					litellm_credential_name: "legacy-cli-proxy",
 					credential_name: "legacy-cli-proxy",
 					api_base: "http://legacy.example",
@@ -166,8 +166,8 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body.litellm_params).toMatchObject({
-			model: "cliproxy/gpt-5.4",
-			custom_llm_provider: "cliproxy",
+			model: "gpt-5.4",
+			custom_llm_provider: "codex-subscription",
 		});
 		for (const field of ["litellm_credential_name", "credential_name", "api_base", "api_key"]) {
 			expect((inserted[0]?.litellm_params as Record<string, unknown>)).not.toHaveProperty(field);
@@ -296,11 +296,11 @@ describe("ModelManagementEndpoint /model/update 契约", () => {
 
 		const res = await request(app)
 			.patch("/model/model-1/update")
-			.send({ litellm_params: { model: "cliproxy/gpt-5.4", custom_llm_provider: "cliproxy" } });
+			.send({ litellm_params: { model: "gpt-5.4", custom_llm_provider: "codex-subscription" } });
 
 		expect(res.status).toBe(200);
 		const params = updated[0]?.litellm_params as Record<string, unknown>;
-		expect(params).toMatchObject({ model: "cliproxy/gpt-5.4", custom_llm_provider: "cliproxy" });
+		expect(params).toMatchObject({ model: "gpt-5.4", custom_llm_provider: "codex-subscription" });
 		expect(params).not.toHaveProperty("litellm_credential_name");
 		expect(params).not.toHaveProperty("api_base");
 		expect(params).not.toHaveProperty("api_key");

@@ -10,11 +10,12 @@ import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import DeleteResourceDialog from "../../resource-dialogs/ui/DeleteResourceDialogComponent.vue";
 import FallbackAddDialog from "./FallbackAddDialogComponent.vue";
 import { routerSettingsApi } from "../api/RouterSettingsApi";
-import { routerRecord, routerString, routerSettingsOnly, fallbackEntries, type FallbackEntry } from "../support/RouterSettingsModels";
-import { getModelLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
+import { routerString, routerSettingsOnly, fallbackEntries, type FallbackEntry } from "../support/RouterSettingsModels";
+import ModelLogo from "../../providers/ui/ModelLogoComponent.vue";
+import { fetchModelGroupIcons, type ModelGroupIcons } from "../../providers/api/ModelGroupIconsApi";
 import notification from "../../notifications/logic/NotificationManager";
 const values = ref<Record<string, unknown>>({}),
-	costs = ref<Record<string, unknown>>({}),
+	modelIcons = ref<ModelGroupIcons>(new Map()),
 	addOpen = ref(false),
 	deleteOpen = ref(false),
 	deleting = ref(false),
@@ -76,13 +77,10 @@ function clearFallbackFilters(): void {
 	activeFilters.value = [];
 }
 onMounted(async () => {
-	const results = await Promise.allSettled([routerSettingsApi.load(), routerSettingsApi.costs()]);
+	const results = await Promise.allSettled([routerSettingsApi.load(), fetchModelGroupIcons()]);
 	if (results[0].status === "fulfilled") values.value = routerSettingsOnly(results[0].value);
-	if (results[1].status === "fulfilled") costs.value = results[1].value;
+	if (results[1].status === "fulfilled") modelIcons.value = results[1].value;
 });
-function logo(name: string) {
-	return getModelLogoAndName(routerString(routerRecord(costs.value[name]).litellm_provider), name).logo;
-}
 async function save(groups: FallbackEntry[]) {
 	saving.value = true;
 	try {
@@ -158,9 +156,7 @@ async function test(name: string) {
 				<tr v-for="item in [fallbackRow(row)]" :key="item.primary" class="ui-table__row">
 					<td>
 						<span class="routing-model-card"
-							><img v-if="logo(item.primary)" :src="logo(item.primary)!" :alt="item.primary + ' logo'" /><span>{{
-								item.primary
-							}}</span></span
+							><ModelLogo :model="item.primary" v-bind="modelIcons.get(item.primary)" /><span>{{ item.primary }}</span></span
 						>
 					</td>
 					<td>
@@ -169,7 +165,7 @@ async function test(name: string) {
 							<div>
 								<template v-for="(name, position) in item.models" :key="name"
 									><UiHeroIcon v-if="position" name="ArrowRightIcon" :size="16" /><span class="routing-model-card"
-										><img v-if="logo(name)" :src="logo(name)!" :alt="name + ' logo'" /><span>{{ name }}</span></span
+										><ModelLogo :model="name" v-bind="modelIcons.get(name)" /><span>{{ name }}</span></span
 									></template
 								>
 							</div>

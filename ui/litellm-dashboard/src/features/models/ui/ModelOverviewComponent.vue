@@ -5,8 +5,9 @@ import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
-import { getModelLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
-import { modelPriceIdentity } from "../logic/ModelDataLogic";
+import ModelLogo from "../../providers/ui/ModelLogoComponent.vue";
+import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
+import { deploymentIconProps, modelPriceIdentity } from "../logic/ModelDataLogic";
 import { modelOptions, type DisplayProxyModel } from "../support/ModelModels";
 const props = defineProps<{ model: DisplayProxyModel }>();
 const price = usePriceDisplayStore(),
@@ -70,7 +71,12 @@ function date(value: string | null | undefined) {
 						<ProviderLogo
 							v-if="item.label === 'Provider' && item.value"
 							:provider="model.provider"
-							:logo="getModelLogoAndName(model.provider, model.litellm_model_name ?? '').logo"
+							:logo="getProviderLogoAndName(model.provider).logo"
+						/>
+						<ModelLogo
+							v-else-if="item.label === 'LiteLLM Model' && item.value"
+							v-bind="deploymentIconProps(model)"
+							:size="24"
 						/>{{ item.value || "-" }}
 					</div></UiTooltip
 				>

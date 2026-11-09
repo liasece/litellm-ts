@@ -24,6 +24,13 @@ export function transformModels(rows: readonly ProxyModel[], costs: Record<strin
 		};
 	});
 }
+export function deploymentIconProps(model: DisplayProxyModel) {
+	return {
+		model: modelString(model.litellm_params.model) || model.litellm_model_name || model.model_name,
+		provider: modelString(model.litellm_params.custom_llm_provider) || model.provider,
+		baseModel: modelString(model.model_info.base_model) || modelString(model.litellm_params.base_model),
+	};
+}
 export function modelDisplayName(model: ProxyModel): string {
 	const info = modelRecord(model.model_info);
 	return modelString(info.team_public_model_name) || model.model_name || "-";
@@ -39,7 +46,7 @@ export function normalizeModelDetails(source: ProxyModel): DisplayProxyModel {
 		...source,
 		litellm_params: { ...source.litellm_params },
 		model_info: { ...source.model_info },
-		provider: modelString(source.provider),
+		provider: modelString(source.provider) || modelString(source.litellm_params.custom_llm_provider),
 		litellm_model_name:
 			modelString(source.litellm_model_name) ||
 			modelString(source.litellm_params.litellm_model_name) ||

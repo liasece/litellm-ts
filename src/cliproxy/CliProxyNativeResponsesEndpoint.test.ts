@@ -34,8 +34,8 @@ function buildApp(
 	const deployment: Deployment = {
 		model_name: "gpt-5.6-sol",
 		litellm_params: {
-			model: "cliproxy/gpt-5.6-sol",
-			custom_llm_provider: "cliproxy",
+			model: "gpt-5.6-sol",
+			custom_llm_provider: "codex-subscription",
 		},
 		model_info: reasoningEffortOverride ? { override_reasoning_effort: reasoningEffortOverride } : undefined,
 	};
@@ -71,11 +71,11 @@ function buildAnthropicApp(routerOverride?: LiteLLMRouter): express.Express {
 	const deployment: Deployment = {
 		model_name: "gpt-5.6-sol",
 		litellm_params: {
-			model: "cliproxy/gpt-5.6-sol",
-			custom_llm_provider: "cliproxy",
+			model: "gpt-5.6-sol",
+			custom_llm_provider: "codex-subscription",
 		},
 	};
-	const provider = new SubscriptionProvider(LlmProviders.CLIProxy, { internalApiKey: "internal-only", baseUrl: "http://127.0.0.1:8317" });
+	const provider = new SubscriptionProvider(LlmProviders.CodexSubscription, { internalApiKey: "internal-only", baseUrl: "http://127.0.0.1:8317" });
 	const router =
 		routerOverride ??
 		({
@@ -241,7 +241,7 @@ describe("CLIProxy native Responses streaming", () => {
 		});
 		const deployment: Deployment = {
 			model_name: "gpt-5.6-sol",
-			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+			litellm_params: { model: "gpt-5.6-sol", custom_llm_provider: "codex-subscription" },
 		};
 		const router = {
 			getAvailableDeployment: () => ({ deployment: deployment }),
@@ -361,7 +361,7 @@ describe("CLIProxy native Responses streaming", () => {
 		});
 		const deployment: Deployment = {
 			model_name: "gpt-5.6-sol",
-			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+			litellm_params: { model: "gpt-5.6-sol", custom_llm_provider: "codex-subscription" },
 		};
 		const router = {
 			getAvailableDeployment: () => ({ deployment: deployment }),
@@ -428,8 +428,8 @@ describe("CLIProxy native Responses streaming", () => {
 			expect(spendContext).toMatchObject({
 				status: "cancelled",
 				modelGroup: "gpt-5.6-sol",
-				deploymentModel: "cliproxy/gpt-5.6-sol",
-				customLlmProvider: "cliproxy",
+				deploymentModel: "gpt-5.6-sol",
+				customLlmProvider: "codex-subscription",
 				response: {
 					id: "resp_partial",
 					status: "in_progress",
@@ -478,7 +478,7 @@ describe("CLIProxy native Responses streaming", () => {
 		});
 		const deployment: Deployment = {
 			model_name: "gpt-5.6-sol",
-			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+			litellm_params: { model: "gpt-5.6-sol", custom_llm_provider: "codex-subscription" },
 		};
 		const router = {
 			getAvailableDeployment: () => ({ deployment: deployment }),
@@ -508,7 +508,7 @@ describe("CLIProxy native Responses streaming", () => {
 		};
 		expect(spendContext.upstreamLogContext).toMatchObject({
 			request: {
-				url: "http://127.0.0.1:8317/v1/responses",
+				url: "http://127.0.0.1:8317/subscriptions/codex-subscription/v1/responses",
 				method: "POST",
 				headers: { authorization: "Bearer internal-only" },
 				body: { model: "gpt-5.6-sol", input: "hello" },
@@ -527,7 +527,7 @@ describe("CLIProxy native Responses streaming", () => {
 		});
 		const deployment: Deployment = {
 			model_name: "gpt-5.6-sol",
-			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+			litellm_params: { model: "gpt-5.6-sol", custom_llm_provider: "codex-subscription" },
 		};
 		const router = {
 			getAvailableDeployment: () => ({ deployment: deployment }),
@@ -556,7 +556,7 @@ describe("CLIProxy native Responses streaming", () => {
 			};
 		};
 		expect(spendContext.upstreamLogContext?.request).toMatchObject({
-			url: "http://127.0.0.1:8317/v1/responses",
+			url: "http://127.0.0.1:8317/subscriptions/codex-subscription/v1/responses",
 			method: "POST",
 		});
 		expect(spendContext.upstreamLogContext?.response).toBeUndefined();
@@ -686,7 +686,7 @@ describe("CLIProxy native Responses streaming", () => {
 			});
 			expect(spendContext.upstreamLogContext).toMatchObject({
 				request: {
-					url: "http://127.0.0.1:8317/v1/messages",
+					url: "http://127.0.0.1:8317/subscriptions/codex-subscription/v1/messages",
 					method: "POST",
 					headers: { authorization: "Bearer internal-only", "x-api-key": "internal-only" },
 					body: { model: "gpt-5.6-sol", stream: true },
@@ -834,15 +834,15 @@ describe("CLIProxy native Responses streaming", () => {
 	it("falls back before forwarding an Anthropic upstream 403 response", async () => {
 		const primary: Deployment = {
 			model_name: "k3",
-			litellm_params: { model: "cliproxy/kimi-k3", custom_llm_provider: "cliproxy" },
+			litellm_params: { model: "kimi-k3", custom_llm_provider: "kimi-subscription" },
 			model_info: { id: "k3-deployment" },
 		};
 		const fallback: Deployment = {
 			model_name: "gpt-5.6-sol",
-			litellm_params: { model: "cliproxy/gpt-5.6-sol", custom_llm_provider: "cliproxy" },
+			litellm_params: { model: "gpt-5.6-sol", custom_llm_provider: "codex-subscription" },
 			model_info: { id: "sol-deployment" },
 		};
-		const provider = new SubscriptionProvider(LlmProviders.CLIProxy, { internalApiKey: "internal-only", baseUrl: "http://127.0.0.1:8317" });
+		const provider = new SubscriptionProvider(LlmProviders.CodexSubscription, { internalApiKey: "internal-only", baseUrl: "http://127.0.0.1:8317" });
 		const recordDeploymentFailure = jest.fn();
 		const recordDeploymentSuccess = jest.fn();
 		const router = {
@@ -960,8 +960,8 @@ describe('CLIProxy native Responses route and builtin capabilities', () => {
 		const deployment: Deployment = {
 			model_name: 'opencode-go/deepseek-v4.1-flash',
 			litellm_params: {
-				model: 'cliproxy/opencode-go/deepseek-v4.1-flash',
-				custom_llm_provider: 'cliproxy',
+				model: 'deepseek-v4.1-flash',
+				custom_llm_provider: 'opencode-go',
 			},
 			model_info: { enabled_builtin_capabilities: ['image_generation', 'web'] },
 		};
@@ -1046,8 +1046,8 @@ describe('CLIProxy native chat route and builtin capabilities', () => {
 			const deployment: Deployment = {
 				model_name: 'opencode-go/deepseek-v4.1-flash',
 				litellm_params: {
-					model: 'cliproxy/opencode-go/deepseek-v4.1-flash',
-					custom_llm_provider: 'cliproxy',
+					model: 'deepseek-v4.1-flash',
+					custom_llm_provider: 'opencode-go',
 				},
 				model_info: { enabled_builtin_capabilities: ['image_generation', 'web'] },
 			};
@@ -1076,8 +1076,8 @@ describe('CLIProxy native chat route and builtin capabilities', () => {
 		const deployment: Deployment = {
 			model_name: 'opencode-go/plain-model',
 			litellm_params: {
-				model: 'cliproxy/opencode-go/plain-model',
-				custom_llm_provider: 'cliproxy',
+				model: 'plain-model',
+				custom_llm_provider: 'opencode-go',
 			},
 		};
 		const router = {
@@ -1147,8 +1147,8 @@ describe('CLIProxy native Anthropic route and builtin capabilities', () => {
 		const deployment: Deployment = {
 			model_name: 'opencode-go/deepseek-v4.1-flash',
 			litellm_params: {
-				model: 'cliproxy/opencode-go/deepseek-v4.1-flash',
-				custom_llm_provider: 'cliproxy',
+				model: 'deepseek-v4.1-flash',
+				custom_llm_provider: 'opencode-go',
 			},
 			model_info: { enabled_builtin_capabilities: ['web'] },
 		};

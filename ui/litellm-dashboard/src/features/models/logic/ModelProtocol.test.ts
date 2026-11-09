@@ -48,9 +48,9 @@ describe("Models protocol contracts", () => {
 		const draft = createModelEditDraft(current);
 		expect(prepareModelUpdate(draft, current).model_info).not.toHaveProperty("health_check_model");
 	});
-	it("preserves zero prices and keeps managed CLIProxy credentials out of new models", () => {
+	it("preserves zero prices and keeps subscription credentials out of new models", () => {
 		const [request] = prepareModelCreate({
-			custom_llm_provider: "CLIProxy",
+			custom_llm_provider: "Codex Subscription",
 			model: ["all-wildcard"],
 			model_mappings: [],
 			api_key: "synthetic",
@@ -62,8 +62,8 @@ describe("Models protocol contracts", () => {
 			team_id: "team-1",
 		});
 		expect(request).toEqual({
-			model_name: "cliproxy/*",
-			litellm_params: { model: "cliproxy/*", custom_llm_provider: "cliproxy", input_cost_per_token: 0 },
+			model_name: "codex-subscription/*",
+			litellm_params: { model: "*", custom_llm_provider: "codex-subscription", input_cost_per_token: 0 },
 			model_info: { access_groups: ["research"], team_id: "team-1" },
 		});
 	});

@@ -91,8 +91,9 @@ export function isPrivacyScopeMatch(settings: PrivacyMaskingSettings, target: Pr
 	const modelIdentities = [target.modelName, target.upstreamModel];
 	if (isSubscriptionProvider(target.provider)) {
 		providerIdentities.push("cliproxy");
-		const previous = target.provider === "commandcode" || target.provider === "opencode-go" ? target.upstreamModel : withoutProvider(target.upstreamModel, target.provider);
-		modelIdentities.push("cliproxy/" + previous);
+		const raw = withoutProvider(target.upstreamModel, target.provider);
+		const scoped = target.provider + "/" + raw;
+		modelIdentities.push(scoped, "cliproxy/" + (target.provider === "commandcode" || target.provider === "opencode-go" ? scoped : raw));
 	}
 	return matchesIdentities(settings.providers, providerIdentities) && matchesIdentities(settings.models, modelIdentities);
 }

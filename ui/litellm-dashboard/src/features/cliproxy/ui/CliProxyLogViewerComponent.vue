@@ -66,8 +66,8 @@ const date = (value: string) => new Date(value).toLocaleString();
 				</div>
 				<span class="cp-secondary cp-xs">{{
 					compact
-						? "Latest CLIProxy process and management events."
-						: "Structured view of CLIProxy stdout, stderr, OAuth and LiteLLM management events."
+						? "Latest subscription process and management events."
+						: "Structured view of runtime stdout, stderr, OAuth and LiteLLM management events."
 				}}</span>
 			</div></template
 		>
@@ -145,7 +145,7 @@ const date = (value: string) => new Date(value).toLocaleString();
 			><span v-if="compact && entries.length > visible.length">Showing newest {{ visible.length }}</span>
 		</div>
 	</UiCard>
-	<UiDialog v-model:open="rawOpen" title="Raw CLIProxy log" scroll-mode="overlay" :width="960" :show-footer="false">
+	<UiDialog v-model:open="rawOpen" title="Raw runtime log" scroll-mode="overlay" :width="960" :show-footer="false">
 		<pre class="cp-terminal cp-raw-log">{{ formatRawLogs(entries) || "No runtime logs yet." }}</pre>
 	</UiDialog>
 </template>

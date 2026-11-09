@@ -34,7 +34,7 @@ export const runtimeToggles: ToggleDefinition[] = [
 	{
 		key: "usageStatisticsEnabled",
 		title: "Usage statistics",
-		description: "Aggregates request usage in memory for CLIProxy management and usage reporting.",
+		description: "Aggregates request usage in memory for runtime management and usage reporting.",
 	},
 	{
 		key: "requestLog",
@@ -92,7 +92,7 @@ export const routingFields: FieldDefinition[] = [
 	{
 		key: "authAutoRefreshWorkers",
 		label: "Token refresh workers",
-		description: "Leave empty for CLIProxy's default worker pool (currently 16).",
+		description: "Leave empty for the default worker pool (currently 16).",
 		type: "number",
 		min: 1,
 		placeholder: "Default",
@@ -142,7 +142,7 @@ export const routingToggles: ToggleDefinition[] = [
 	{
 		key: "wsAuth",
 		title: "WebSocket authentication",
-		description: "Requires authentication for CLIProxy WebSocket endpoints such as /v1/ws.",
+		description: "Requires authentication for runtime WebSocket endpoints such as /v1/ws.",
 	},
 ];
 export const quotaToggles: ToggleDefinition[] = [

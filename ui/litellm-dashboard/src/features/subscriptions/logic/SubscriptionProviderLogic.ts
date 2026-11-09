@@ -29,13 +29,6 @@ export function isSubscriptionProviderSlug(value: unknown): boolean {
 	return typeof value === "string" && subscriptionSlugs.has(value.trim().toLowerCase());
 }
 
-/** 是否由托管运行时提供凭据的 Provider（含兼容期通用 CLIProxy）。 */
-export function isManagedProviderSlug(value: unknown): boolean {
-	if (typeof value !== "string") return false;
-	const slug = value.trim().toLowerCase();
-	return slug === provider_map[Providers.CLIProxy] || subscriptionSlugs.has(slug);
-}
-
 /**
  * 解析 Provider 选择值到公开 slug。
  * 目录接口发布 provider 名与 litellm_provider slug，两种输入都要能落到 slug。
@@ -50,13 +43,11 @@ export function providerSlugFromValue(value: unknown): string {
 	return provider_map[raw] ?? raw.toLowerCase();
 }
 
-/** 订阅模型在 deployment 中的规范名：`<slug>/<upstreamId>`，避免重复前缀。 */
+/** Persist the upstream ID separately from its subscription account source. */
 export function subscriptionModelName(providerSlug: string, upstreamId: string): string {
 	const slug = providerSlug.trim().toLowerCase();
-	const id = upstreamId.trim().replace(/^cliproxy\//i, "");
-	if (!slug || !id) return id;
-	if (id.toLowerCase().startsWith(slug + "/")) return slug + "/" + id.slice(slug.length + 1);
-	return slug + "/" + id;
+	const id = upstreamId.trim();
+	return slug && id.toLowerCase().startsWith(slug + "/") ? id.slice(slug.length + 1) : id;
 }
 
 /** 模型页到订阅账号管理页的 URL（保持 dashboard 的 uiBase 与 legacy ?page= 路由）。 */

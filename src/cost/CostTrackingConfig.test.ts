@@ -22,14 +22,14 @@ import {
 
 describe("normalizeDiscountConfig", () => {
 	it("accepts discount fractions between 0 and 1 and sorts providers", () => {
-		expect(normalizeDiscountConfig({ openai: 0.5, cliproxy: 0 })).toEqual({ cliproxy: 0, openai: 0.5 });
+		expect(normalizeDiscountConfig({ openai: 0.5, "codex-subscription": 0 })).toEqual({ "codex-subscription": 0, openai: 0.5 });
 	});
 
 	it("rejects providers this deployment does not run, listing valid ones", () => {
 		expect(() => normalizeDiscountConfig({ groq: 0.1 })).toThrow(ApiError);
 		expect(() => normalizeDiscountConfig({ groq: 0.1 })).toThrow(/Invalid provider\(s\): groq/);
 		// 错误信息要让用户知道本部署可配置哪些 provider
-		expect(() => normalizeDiscountConfig({ groq: 0.1 })).toThrow(/cliproxy/);
+		expect(() => normalizeDiscountConfig({ groq: 0.1 })).toThrow(/codex-subscription/);
 	});
 
 	it("rejects non-numeric and out-of-range discounts", () => {
@@ -79,7 +79,7 @@ describe("read*Config", () => {
 
 describe("resolveCostProvider", () => {
 	it("prefers the explicit provider and otherwise uses the model prefix", () => {
-		expect(resolveCostProvider("cliproxy", "glm-5.2")).toBe("cliproxy");
+		expect(resolveCostProvider("codex-subscription", "glm-5.2")).toBe("codex-subscription");
 		expect(resolveCostProvider(undefined, "openai/gpt-5")).toBe("openai");
 		expect(resolveCostProvider("", "gpt-5")).toBe("");
 	});
@@ -92,7 +92,7 @@ describe("cost adjustments", () => {
 	});
 
 	it("prefers the provider margin over the global fallback and supports both margin forms", () => {
-		expect(applyCostMargin(10, "cliproxy", { cliproxy: 0.1, global: 0.5 })).toEqual({
+		expect(applyCostMargin(10, "codex-subscription", { "codex-subscription": 0.1, global: 0.5 })).toEqual({
 			cost: 11,
 			percent: 0.1,
 			fixedAmount: 0,
@@ -107,7 +107,7 @@ describe("cost adjustments", () => {
 	});
 
 	it("applies discount before margin so the margin percentage uses the discounted amount", () => {
-		const adjustment = adjustCost(10, "cliproxy", { discount: { cliproxy: 0.5 }, margin: { global: 0.1 } });
+		const adjustment = adjustCost(10, "codex-subscription", { discount: { "codex-subscription": 0.5 }, margin: { global: 0.1 } });
 		expect(adjustment.total).toBeCloseTo(5.5, 10);
 		expect(adjustment.discountAmount).toBeCloseTo(5, 10);
 		expect(adjustment.marginAmount).toBeCloseTo(0.5, 10);
@@ -115,7 +115,7 @@ describe("cost adjustments", () => {
 	});
 
 	it("leaves zero-cost requests untouched", () => {
-		expect(adjustCost(0, "cliproxy", { discount: { cliproxy: 1 }, margin: { global: 0.5 } })).toEqual({
+		expect(adjustCost(0, "codex-subscription", { discount: { "codex-subscription": 1 }, margin: { global: 0.5 } })).toEqual({
 			total: 0,
 			discountPercent: 0,
 			discountAmount: 0,

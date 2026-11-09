@@ -12,7 +12,7 @@ const props = defineProps<{ store: CliProxyStore }>();
 const state = props.store.state;
 </script>
 <template>
-	<UiDialog v-model:open="state.rawConfigOpen" title="Edit raw CLIProxy feature config" scroll-mode="overlay" :width="900"
+	<UiDialog v-model:open="state.rawConfigOpen" title="Edit runtime configuration" scroll-mode="overlay" :width="900"
 		><div class="cp-stack cp-gap-16">
 			<UiAlert type="warning" title="Advanced YAML editor" class="cp-alert-with-description"
 				>The document must be a YAML object. LiteLLM rejects host, port, auth-dir, api-keys and remote-management because those
@@ -42,7 +42,7 @@ const state = props.store.state;
 		<UiTag :color="state.oauthSession?.state === 'succeeded' ? 'green' : state.oauthSession?.state === 'running' ? 'blue' : 'red'">{{
 			state.oauthSession?.state
 		}}</UiTag>
-		<pre class="cp-terminal cp-oauth-output">{{ state.oauthSession?.output.join("\n") || "Waiting for CLIProxy login output..." }}</pre>
+		<pre class="cp-terminal cp-oauth-output">{{ state.oauthSession?.output.join("\n") || "Waiting for login output..." }}</pre>
 		<div v-if="state.oauthSession?.state === 'running'" class="cp-oauth-input">
 			<UiInput v-model="state.oauthInput" placeholder="Input requested by CLIProxy (if any)" /><UiButton @click="store.sendOAuthInput"
 				>Send</UiButton

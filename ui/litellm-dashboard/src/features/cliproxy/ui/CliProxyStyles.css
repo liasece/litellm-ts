@@ -1,4 +1,3 @@
-@import "./CliProxyReleaseNotesStyles.css";
 @import "./CliProxyLogStyles.css";
 @import "./CliProxyConfigurationStyles.css";
 @import "./CliProxyAccountDialogStyles.css";
@@ -224,60 +223,7 @@
 	border: 1px solid #e2e8f0;
 	border-radius: 8px;
 }
-.cp-release-channel {
-	padding: 12px;
-	border: 1px solid #e2e8f0;
-	border-radius: 8px;
-	background: #f8fafc;
-}
-.cp-rollback-select {
-	min-width: 180px;
-	width: 180px;
-	flex: none;
-}
-.cp-release-history {
-	border-top: 1px solid #e2e8f0;
-	padding-top: 12px;
-}
-.cp-link-button.ui-button {
-	height: auto;
-	padding: 0;
-}
-.cp-release-collapse {
-	border: 1px solid #d9d9d9;
-	border-radius: 8px;
-	background: rgba(0, 0, 0, 0.02);
-	overflow: hidden;
-}
-.cp-release-collapse details + details {
-	border-top: 1px solid #d9d9d9;
-}
-.cp-release-collapse summary {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	padding: 8px 12px;
-	cursor: pointer;
-	list-style: none;
-	font-weight: 400;
-}
-.cp-release-collapse summary::-webkit-details-marker {
-	display: none;
-}
-.cp-collapse-caret {
-	flex: none;
-}
-.cp-release-collapse details[open] > summary .cp-collapse-caret {
-	transform: rotate(90deg);
-}
-.cp-release-content {
-	padding: 12px;
-	border-top: 1px solid #d9d9d9;
-	background: #fff;
-	color: #334155;
-	font-size: 14px;
-	line-height: 20px;
-}
+
 .cp-quota-toolbar {
 	padding-top: 4px;
 }
@@ -399,17 +345,10 @@
 	}
 }
 @media (min-width: 1200px) {
-	.cp-runtime-grid {
-		grid-template-columns: minmax(0, calc(29.1666666667% - 11.3333333333px)) minmax(0, 1fr);
-	}
 	.cp-quota-grid,
 	.cp-boundary-grid {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
-}
-
-.cp-release-channel > .cp-between:first-child {
-	align-items: flex-start;
 }
 
 .cp-page-heading {

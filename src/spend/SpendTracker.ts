@@ -1,4 +1,6 @@
 import { normalizeUsageTokens } from "../core/utils/usage";
+import { resolveModelFamily } from "../shared/ModelFamily";
+import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
 import { performance } from "node:perf_hooks";
 import { llmTokensTotal, spendWriteDuration, spendWriteFailuresTotal } from "../observability/MetricCatalog";
 import { currentRequestTrace } from "../observability/RequestTrace";
@@ -741,6 +743,7 @@ const BEDROCK_PROVIDER_NAME = "bedrock";
 
 /**
  * 重建 SpendLogs.model 列的完整模型名（对齐 PY reconstruct_model_name）：
+ * - 订阅部署使用上游模型 ID，账号来源单独记录在 custom_llm_provider
  * - 实际执行 deployment 的 litellm_params.model 含 "/" → 用它（保留原始 provider 前缀）
  * - 发生 fallback 时，即使 deployment model 不含 "/" 也必须用实际 deployment；
  *   否则会把最终请求错误归因并计费到原始 model group
@@ -757,7 +760,7 @@ export function reconstructModelName(
 	deploymentModel: string | undefined,
 	fallbackOccurred = false,
 ): string {
-	if (deploymentModel && (deploymentModel.includes("/") || fallbackOccurred)) {
+	if (deploymentModel && (isSubscriptionProvider(customLlmProvider) || deploymentModel.includes("/") || fallbackOccurred)) {
 		return deploymentModel;
 	}
 	if (customLlmProvider === BEDROCK_PROVIDER_NAME && model.length > 0 && !model.includes("/")) {
@@ -847,6 +850,9 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 	const auth = ctx.auth;
 	const requestBody = ctx.req.body as Record<string, unknown> | undefined;
 	const requestMetadata = requestBody?.metadata;
+	const upstreamBody = ctx.upstreamLogContext?.request.body;
+	const upstreamModel = upstreamBody && typeof upstreamBody === "object" && "model" in upstreamBody ? upstreamBody.model : undefined;
+	const executedModel = typeof upstreamModel === "string" && upstreamModel ? upstreamModel : ctx.deploymentModel;
 	const usageObject = ctx.usage;
 	const normalizedUsage = normalizeUsageForSpend(usageObject);
 	const usageWithNormalizedCacheFields =
@@ -891,7 +897,9 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		// PY StandardLoggingModelInformation：model_map_key=路由模型组，model_map_value=deployment ModelInfo
 		model_map_information: {
 			model_map_key: ctx.modelGroup ?? ctx.model,
-			model_map_value: ctx.modelId ? { id: ctx.modelId } : null,
+			model_map_value: ctx.modelId
+				? { id: ctx.modelId, ...(executedModel ? { model_family: resolveModelFamily(executedModel) ?? null } : {}) }
+				: null,
 		},
 		litellm_overhead_time_ms: ctx.litellmOverheadTimeMs ?? null,
 		attempted_retries: ctx.attemptedRetries ?? null,
@@ -960,8 +968,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		endTime: ctx.endTime.toISOString(),
 		completionStartTime:
 			ctx.completionStartTime === null ? null : (ctx.completionStartTime ?? ctx.endTime).toISOString(),
-		// PY reconstruct_model_name：model 列记实际执行 deployment 的完整模型名
-		// （含 provider 前缀），无 deployment 信息时回退请求 model
+		// model 记录实际执行模型，model_group 记录客户端请求的公开名称。
 		model: reconstructModelName(
 			ctx.model,
 			ctx.customLlmProvider,
@@ -1320,7 +1327,7 @@ export function estimateSpendReservation(
 		(value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
 	);
 	const completionTokens = configuredLimits.length > 0 ? Math.ceil(Math.max(...configuredLimits)) : DEFAULT_RESERVATION_COMPLETION_TOKENS;
-	const baseCost = costPerToken(model, promptTokens, completionTokens, 0, 0, { customCostPerToken: customCost }).totalCost;
+	const baseCost = costPerToken(model, promptTokens, completionTokens, 0, 0, { customCostPerToken: customCost, provider: provider }).totalCost;
 	const estimate = adjustCost(
 		baseCost,
 		resolveCostProvider(provider, model),
@@ -1844,6 +1851,7 @@ async function trackSpendLogMeasured(
 		: costPerToken(logEntry.model, promptTokens, completionTokens, cacheCreationTokens, cacheReadTokens, {
 				// 批次 9: 实际执行 deployment 的 model_info/litellm_params 自定义价格优先于内置价格表
 				customCostPerToken: logEntry.custom_cost_per_token,
+				provider: logEntry.custom_llm_provider ?? undefined,
 				modelCostMap: modelCostMapEntry as never,
 				reasoningTokens: reasoningTokens,
 				// 峰谷：以请求开始时刻判定，避免长请求跨越峰谷边界后计费漂移
@@ -2130,7 +2138,10 @@ export function calculateAndSetCost(
 			: undefined;
 	// GAP (COST-001): costPerToken 未知模型返回 0,0,0 静默（对齐 PY），无需 try/catch
 	const modelCostMapEntry = (response as unknown as { _modelCostMap?: Record<string, unknown> })._modelCostMap;
-	const { totalCost } = costPerToken(model, promptTokens, completionTokens, cacheCreationTokens, cachedTokens, {
+	const info = (response as unknown as { _spendInfo?: { customLlmProvider?: string; deploymentModel?: string } })._spendInfo;
+	const spendInfoProvider = info?.customLlmProvider;
+	const { totalCost } = costPerToken(info?.deploymentModel ?? model, promptTokens, completionTokens, cacheCreationTokens, cachedTokens, {
+		provider: spendInfoProvider,
 		customCostPerToken: customObj,
 		modelCostMap: modelCostMapEntry as never,
 		// DIFF-003: 透传 reasoning_tokens
@@ -2138,7 +2149,6 @@ export function calculateAndSetCost(
 	});
 
 	// 折扣/保证金：与落账同口径（provider 来自 Router 透传的 _spendInfo）
-	const spendInfoProvider = (response as unknown as { _spendInfo?: { customLlmProvider?: string } })._spendInfo?.customLlmProvider;
 	const adjustedCost = adjustCost(
 		totalCost,
 		resolveCostProvider(spendInfoProvider, model),

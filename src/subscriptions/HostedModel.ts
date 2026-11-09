@@ -1,7 +1,6 @@
 import type { Router } from "../router/Router";
 import type { Deployment } from "../types/router";
-import { LlmProviders } from "../types/provider";
-import { hostedProvider, subscriptionTarget, withoutProvider, type SubscriptionConnection } from "./SubscriptionProviders";
+import { hostedProvider, subscriptionTarget, type SubscriptionConnection } from "./SubscriptionProviders";
 
 /** The public alias and exact upstream model selected for a native request. */
 export interface HostedModel {
@@ -28,14 +27,14 @@ export function resolveHostedModel(router: Router, connection: SubscriptionConne
 			deployment: selected,
 		};
 	}
-	const id = withoutProvider(requested, LlmProviders.CLIProxy);
+
 	let match: HostedModel | null = null;
 	for (const deployment of router.getDeployments?.() ?? []) {
 		if (!hostedProvider(deployment.litellm_params)) {
 			continue;
 		}
 		const upstreamModel = subscriptionTarget(connection, deployment.litellm_params, "").model;
-		if (id === upstreamModel || requested === deployment.litellm_params.model) {
+		if (requested === upstreamModel) {
 			// A raw ID cannot choose between different subscriptions sharing it.
 			if (match && hostedProvider(match.deployment.litellm_params) !== hostedProvider(deployment.litellm_params)) {
 				return null;

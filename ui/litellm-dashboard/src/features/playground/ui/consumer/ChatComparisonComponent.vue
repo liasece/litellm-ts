@@ -1,14 +1,8 @@
 <script setup lang="ts">
 import type { ChatInferenceStore } from "../../stores/ChatInferenceStore";
-import { getModelLogoAndName } from "../../../providers/logic/ProviderIdentityLogic";
+import ModelLogo from "../../../providers/ui/ModelLogoComponent.vue";
 import MarkdownContent from "../../../content/ui/MarkdownContent.vue";
 defineProps<{ store: ChatInferenceStore }>();
-function logo(model: string) {
-	return getModelLogoAndName("", model).logo;
-}
-function hide(event: Event) {
-	(event.target as HTMLImageElement).style.display = "none";
-}
 </script>
 <template>
 	<div class="chat-comparison">
@@ -19,8 +13,7 @@ function hide(event: Event) {
 			<div class="chat-comparison__cards">
 				<article v-for="(model, modelIndex) in store.state.selected" :key="model">
 					<header v-if="index === 0">
-						<img v-if="logo(model)" :src="logo(model)" alt="" @error="hide" /><i v-else></i
-						><strong>Response {{ modelIndex + 1 }}</strong
+						<ModelLogo :model="model" v-bind="store.state.modelIcons.get(model)" /><strong>Response {{ modelIndex + 1 }}</strong
 						><span>{{ model }}</span>
 					</header>
 					<div>

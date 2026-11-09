@@ -71,24 +71,10 @@ export interface OAuthSession {
 	output: string[];
 }
 
-export interface UpdateInfo {
-	current: string | null;
-	latest: string;
-	update_available: boolean;
-	releases: CliProxyReleaseInfo[];
-}
-
 export interface ConfigResponse {
 	settings: { enabled: boolean; config_yaml: string };
 	user_config: Record<string, unknown>;
 	status: RuntimeStatus;
-}
-
-export interface CliProxyReleaseInfo {
-	version: string;
-	published_at: string | null;
-	release_url: string;
-	notes: string;
 }
 
 export interface CliProxyLogEntry {

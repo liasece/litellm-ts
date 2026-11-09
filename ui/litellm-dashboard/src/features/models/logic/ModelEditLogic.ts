@@ -1,6 +1,5 @@
 import { modelRecord, modelString, modelStrings, type ProxyModel, type ModelDeploymentRequest } from "../support/ModelModels";
 import {
-	isManagedProviderSlug,
 	isSubscriptionProviderSlug,
 	providerSlugFromValue,
 	subscriptionModelName,
@@ -73,27 +72,13 @@ export function prepareModelUpdate(values: ModelEditDraft, current: ProxyModel):
 	const credential = modelString(values.litellm_credential_name),
 		replacement = typeof values.api_key === "string" ? values.api_key.trim() : "";
 	const provider = providerSlugFromValue(values.custom_llm_provider ?? current.litellm_params.custom_llm_provider ?? "");
-	if (isManagedProviderSlug(provider)) {
+	if (isSubscriptionProviderSlug(provider)) {
 		// Managed providers own their transport credentials; keep them out of the deployment.
 		params.api_base = null;
 		params.api_key = null;
 		params.litellm_credential_name = null;
 		params.custom_llm_provider = provider;
-		if (isSubscriptionProviderSlug(provider) && modelString(params.model)) {
-			const previous = current.litellm_params;
-			if (
-				modelString(previous.model).startsWith("cliproxy/") &&
-				params.model === previous.model &&
-				provider === providerSlugFromValue(previous.custom_llm_provider ?? "")
-			) {
-				// The model API projects a subscription onto this stored legacy deployment.
-				// PATCH merges omitted fields from storage, preserving its routing and billing identity.
-				delete params.model;
-				delete params.custom_llm_provider;
-			} else {
-				params.model = subscriptionModelName(provider, modelString(params.model));
-			}
-		}
+		params.model = subscriptionModelName(provider, modelString(params.model));
 	} else if (credential) {
 		params.litellm_credential_name = credential;
 		params.api_key = null;
@@ -140,12 +125,10 @@ export function mergeModelUpdate(current: ProxyModel, response: Record<string, u
 	};
 }
 export function isCodexReasoningModel(provider: unknown, model: unknown): boolean {
-	const name = modelString(model)
-			.toLowerCase()
-			.replace(/^cliproxy\//, ""),
+	const name = modelString(model).toLowerCase(),
 		slug = modelString(provider).toLowerCase();
 	if (slug === "anthropic" || name.includes("claude")) return false;
-	return slug === "openai" || slug === "cliproxy" || name.includes("codex") || name.startsWith("gpt-") || /^o\d/.test(name);
+	return slug === "openai" || slug === "codex-subscription" || name.includes("codex") || name.startsWith("gpt-") || /^o\d/.test(name);
 }
 export interface ModelBasicField {
 	key: string;

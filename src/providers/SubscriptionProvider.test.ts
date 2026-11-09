@@ -2,22 +2,22 @@ import { LlmProviders } from "../types/provider";
 import { SubscriptionProvider } from "./SubscriptionProvider";
 
 describe("SubscriptionProvider", () => {
-	const provider = new SubscriptionProvider(LlmProviders.CLIProxy, {
+	const provider = new SubscriptionProvider(LlmProviders.CodexSubscription, {
 		internalApiKey: "internal-secret",
 		baseUrl: "http://127.0.0.1:8317",
 	});
 
 	it("forwards the complete OpenAI request without leaking LiteLLM connection parameters", () => {
-		const request = provider.transformRequest("cliproxy/gpt-5.4", [{ role: "user", content: "hello" }], {
+		const request = provider.transformRequest("gpt-5.4", [{ role: "user", content: "hello" }], {
 			stream: true,
 			reasoning: { effort: "xhigh" },
 			custom_future_field: { enabled: true },
 			api_base: "http://127.0.0.1:8317",
 			api_key: "must-not-appear-in-body",
-			custom_llm_provider: "cliproxy",
+			custom_llm_provider: "codex-subscription",
 		});
 
-		expect(request.url).toBe("http://127.0.0.1:8317/v1/chat/completions");
+		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/chat/completions");
 		expect(request.headers.Authorization).toBe("Bearer internal-secret");
 		expect(request.body).toMatchObject({
 			model: "gpt-5.4",
@@ -35,21 +35,21 @@ describe("SubscriptionProvider", () => {
 			anthropic_version: "2023-06-01",
 		});
 
-		expect(request.url).toBe("http://127.0.0.1:8317/v1/messages");
+		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/messages");
 		expect(request.headers["x-api-key"]).toBe("internal-secret");
 		expect(request.headers["anthropic-version"]).toBe("2023-06-01");
 	});
 
 	it("builds a standard image-generation upstream request without connection fields", () => {
-		const request = provider.transformImageRequest("cliproxy/gpt-image-2", "draw a cat", {
+		const request = provider.transformImageRequest("gpt-image-2", "draw a cat", {
 			response_format: "b64_json",
 			output_format: "png",
 			api_key: "must-not-appear-in-body",
 			api_base: "http://wrong.example",
-			custom_llm_provider: "cliproxy",
+			custom_llm_provider: "codex-subscription",
 		});
 
-		expect(request.url).toBe("http://127.0.0.1:8317/v1/images/generations");
+		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/images/generations");
 		expect(request.headers.Authorization).toBe("Bearer internal-secret");
 		expect(request.body).toEqual({
 			model: "gpt-image-2",
@@ -75,13 +75,13 @@ describe("SubscriptionProvider", () => {
 
 	it("builds a multipart image-edit request without logging image bytes", async () => {
 		const request = provider.transformImageEditRequest(
-			"cliproxy/gpt-image-2",
+			"gpt-image-2",
 			"add a red hat",
 			[{ data: Buffer.from("source"), mediaType: "image/png" }],
 			{ quality: "high", api_key: "must-not-appear" },
 		);
 
-		expect(request.url).toBe("http://127.0.0.1:8317/v1/images/edits");
+		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/images/edits");
 		expect(request.bodyEncoding).toBe("raw");
 		expect(request.headers).toEqual({ Authorization: "Bearer internal-secret" });
 		expect(request.logBody).toEqual({
@@ -98,14 +98,14 @@ describe("SubscriptionProvider", () => {
 });
 
 describe("SubscriptionProvider native Responses", () => {
-	const provider = new SubscriptionProvider(LlmProviders.CLIProxy, {
+	const provider = new SubscriptionProvider(LlmProviders.CodexSubscription, {
 		internalApiKey: "internal-secret",
 		baseUrl: "http://127.0.0.1:8317",
 	});
 
 	it("builds a native Responses request that keeps the upstream web_search tool", () => {
 		const request = provider.transformResponsesRequest(
-			"cliproxy/gpt-6-luna",
+			"gpt-6-luna",
 			{
 				model: "gpt-6-luna",
 				input: [{ role: "user", content: "search the web" }],
@@ -116,7 +116,7 @@ describe("SubscriptionProvider native Responses", () => {
 			{},
 		);
 
-		expect(request.url).toBe("http://127.0.0.1:8317/v1/responses");
+		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/responses");
 		expect(request.responseProtocol).toBe("responses");
 		expect(request.headers.Authorization).toBe("Bearer internal-secret");
 		expect(request.stream).toBe(false);

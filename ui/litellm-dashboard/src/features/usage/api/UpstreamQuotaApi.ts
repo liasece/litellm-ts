@@ -39,9 +39,9 @@ export type BuiltInQuotaAccount = z.infer<typeof builtIn>;
 export type QuotaWindow = z.infer<typeof window>;
 export const upstreamQuotaApi = {
 	accounts: (signal?: AbortSignal) =>
-		requestJson("/cliproxy/accounts", { signal }, (v) => z.object({ data: z.array(account) }).parse(v).data),
+		requestJson("/subscriptions/accounts", { signal }, (v) => z.object({ data: z.array(account) }).parse(v).data),
 	quota: (id: string, signal?: AbortSignal) =>
-		requestJson("/cliproxy/accounts/" + encodeURIComponent(id) + "/quota", { signal }, (v) => quota.parse(v)),
+		requestJson("/subscriptions/accounts/" + encodeURIComponent(id) + "/quota", { signal }, (v) => quota.parse(v)),
 	builtIn: (force: boolean, signal?: AbortSignal) =>
 		requestJson(
 			"/provider/quota" + (force ? "?refresh=true" : ""),

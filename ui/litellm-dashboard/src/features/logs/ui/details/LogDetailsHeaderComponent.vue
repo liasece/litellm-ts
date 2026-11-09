@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
-import { getModelLogoAndName } from "../../../providers/logic/ProviderIdentityLogic";
+import ModelLogo from "../../../providers/ui/ModelLogoComponent.vue";
+import ProviderLogo from "../../../providers/ui/ProviderLogoComponent.vue";
+import { getProviderLogoAndName } from "../../../providers/logic/ProviderIdentityLogic";
+import { modelIdentity } from "../../logic/LogsPresentationLogic";
 import { detailDate, relativeDetailDate } from "../../logic/LogDetailsDisplayLogic";
 import UiButton from "../../../platform/ui/UiButton.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
@@ -9,25 +12,24 @@ import UiTag from "../../../platform/ui/UiTag.vue";
 import LogDetailsCopyComponent from "./LogDetailsCopyComponent.vue";
 const props = defineProps<{ log: LogEntry; inProgress: boolean }>();
 defineEmits<{ close: []; next: []; previous: []; refresh: [] }>();
-const provider = computed(() =>
-	props.log.custom_llm_provider ? getModelLogoAndName(props.log.custom_llm_provider, props.log.model ?? "") : null,
-);
-function imageFailed(event: Event) {
-	if (event.target instanceof HTMLElement) event.target.style.display = "none";
-}
+const model = computed(() => modelIdentity(props.log));
+const providerName = computed(() => {
+	const source = model.value.provider || props.log.custom_llm_provider;
+	return source ? getProviderLogoAndName(source).displayName : "";
+});
 </script>
 <template>
 	<header class="ld-header">
 		<div class="ld-header__model">
-			<img
-				v-if="provider?.logo"
-				:src="provider.logo"
-				:alt="provider.displayName || 'Provider'"
-				width="24"
-				height="24"
-				@error="imageFailed"
+			<ProviderLogo v-if="model.toolLogo" :provider="model.displayName" :logo="model.toolLogo" />
+			<ModelLogo
+				v-else-if="model.executed || model.provider"
+				:model="model.executed"
+				:family="model.family"
+				:provider="model.provider"
+				:size="28"
 			/><strong>{{ log.model }}</strong
-			><span v-if="provider?.displayName" class="ld-secondary">{{ provider.displayName }}</span>
+			><span v-if="providerName" class="ld-secondary">{{ providerName }}</span>
 		</div>
 		<div class="ld-header__request">
 			<span class="ld-header__request-id" :title="log.request_id"

@@ -319,7 +319,7 @@ export function costBasedRouting(deployments: Deployment[], ctx: RoutingContext)
 		const modelName = params.model;
 		// 显式 RouterConfig.model_cost_map 优先；未命中时读取当前服务快照。
 		const snapshotCost =
-			inputCost === undefined || outputCost === undefined ? lookupModelCostPerToken(modelName, ctx.modelCostMap) : undefined;
+			inputCost === undefined || outputCost === undefined ? lookupModelCostPerToken(modelName, ctx.modelCostMap, params.custom_llm_provider) : undefined;
 		if (inputCost === undefined) {
 			inputCost = snapshotCost?.input_cost_per_token;
 		}

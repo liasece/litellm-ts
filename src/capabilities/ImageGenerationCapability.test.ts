@@ -28,7 +28,7 @@ function fakeRouter(overrides: Partial<Router> = {}): Router {
 		getDeployments: () => [
 			{
 				model_name: "text-model",
-				litellm_params: { model: "cliproxy/gpt-5.6" },
+				litellm_params: { model: "gpt-5.6" },
 				model_info: { supports_function_calling: true, enabled_builtin_capabilities: ["image_generation"] },
 			},
 		],

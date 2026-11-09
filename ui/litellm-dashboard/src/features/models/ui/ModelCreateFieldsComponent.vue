@@ -44,17 +44,7 @@ async function changeProvider(value: unknown) {
 	};
 	const current = ++generation;
 	loading.value = true;
-	if (next === "CLIProxy")
-		try {
-			const models = await modelsApi.fetchManagedModels();
-			if (current === generation) available.value = models;
-		} catch (error) {
-			if (current === generation) {
-				available.value = [];
-				notification.fromBackend("Failed to load CLIProxy models: " + (error instanceof Error ? error.message : String(error)));
-			}
-		}
-	else if (isSubscriptionProviderSlug(providerCatalogSlug(props.catalog.providerFields, next)))
+	if (isSubscriptionProviderSlug(providerCatalogSlug(props.catalog.providerFields, next)))
 		try {
 			const models = await modelsApi.fetchSubscriptionModels(providerCatalogSlug(props.catalog.providerFields, next));
 			if (current === generation) available.value = models;
