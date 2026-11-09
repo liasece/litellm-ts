@@ -158,7 +158,10 @@ describe("ImageGenerationCapability", () => {
 			},
 		];
 		const prepared = await prepareOpenAIImageGenerationRequest(router, "text-model", sourceMessages, store);
-		expect(prepared!.messages.slice(1)).toEqual(sourceMessages);
+		expect(prepared!.messages.slice(1, -1)).toEqual(sourceMessages);
+		expect(prepared!.tailMessageCount).toBe(1);
+		expect(JSON.stringify(prepared!.messages[0])).not.toContain("sha256:");
+		expect(JSON.stringify(prepared!.messages.at(-1))).toContain("sha256:");
 		const ref = [...prepared!.images.keys()][0]!;
 		const complete = jest
 			.fn()
@@ -211,7 +214,7 @@ describe("ImageGenerationCapability", () => {
 		const imageGeneration = jest.fn();
 		const router = fakeRouter({ imageEdit, imageGeneration } as unknown as Partial<Router>);
 		const complete = jest.fn(async (_model, messages) => {
-			expect(messages.slice(1)).toEqual(originalMessages);
+			expect(messages.slice(1, -1)).toEqual(originalMessages);
 			return completion({ role: "assistant", content: "A cat." });
 		});
 
@@ -224,6 +227,41 @@ describe("ImageGenerationCapability", () => {
 		expect(imageGeneration).not.toHaveBeenCalled();
 		expect(result["choices"]).toMatchObject([{ message: { role: "assistant", content: "A cat." } }]);
 		expect(sourceMessages).toEqual(originalMessages);
+	});
+
+	it("keeps the prompt prefix identical when a new image enters the request", async () => {
+		const store = new MemoryVisionImageStore();
+		const router = fakeRouter();
+		const base = [
+			{ role: "system", content: "You review UI screenshots." },
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "Check this screenshot" },
+					{ type: "image_url", image_url: { url: "data:image/png;base64,YWJj" } },
+				],
+			},
+		];
+		const first = await prepareOpenAIImageGenerationRequest(router, "text-model", base, store);
+		const withSecondImage = [
+			...base,
+			{
+				role: "tool",
+				tool_call_id: "call-read-image",
+				content: [{ type: "image_url", image_url: { url: "data:image/png;base64,ZGVm" } }],
+			},
+		];
+		const second = await prepareOpenAIImageGenerationRequest(router, "text-model", withSecondImage, store);
+		const refsOf = (prepared: typeof first): string[] =>
+			String(prepared!.messages.at(-1)?.["content"]).match(/sha256:[a-f0-9]{64}/g) ?? [];
+
+		// 读到新图片时只有末尾的引用清单变化：系统说明与客户端消息必须逐字相同，
+		// 否则上游前缀缓存会在第一个 token 处整段失效。
+		expect(second!.messages.slice(0, first!.messages.length - 1)).toEqual(first!.messages.slice(0, -1));
+		expect(second!.messages.at(-2)).toEqual(withSecondImage.at(-1));
+		expect(first!.messages.at(-1)).not.toEqual(second!.messages.at(-1));
+		expect(refsOf(first)).toHaveLength(1);
+		expect(refsOf(second)).toHaveLength(2);
 	});
 
 	it("preserves native and tool-result images in ordinary Anthropic conversations", async () => {
@@ -247,8 +285,15 @@ describe("ImageGenerationCapability", () => {
 		const imageEdit = jest.fn();
 		const router = fakeRouter({ imageEdit } as unknown as Partial<Router>);
 		const complete = jest.fn(async (requestBody) => {
-			expect(requestBody["messages"]).toEqual(originalBody.messages);
+			const requestMessages = requestBody["messages"] as Array<Record<string, unknown>>;
+			expect(requestMessages).toHaveLength(originalBody.messages.length);
+			expect(requestMessages.slice(0, -1)).toEqual(originalBody.messages.slice(0, -1));
+			const originalLastContent = originalBody.messages.at(-1)?.content as Array<Record<string, unknown>>;
+			const lastContent = requestMessages.at(-1)?.["content"] as Array<Record<string, unknown>>;
+			expect(lastContent.slice(0, originalLastContent.length)).toEqual(originalLastContent);
+			expect(String(lastContent.at(-1)?.["text"])).toContain("sha256:");
 			expect(requestBody["system"]).toEqual(expect.arrayContaining(originalBody.system));
+			expect(JSON.stringify(requestBody["system"])).not.toContain("sha256:");
 			expect(requestBody["max_tokens"]).toBe(256);
 			return { content: [{ type: "text", text: "A cat." }] };
 		});
@@ -283,9 +328,11 @@ describe("ImageGenerationCapability", () => {
 		const router = fakeRouter({ imageEdit } as unknown as Partial<Router>);
 		let mainTurn = 0;
 		const complete = jest.fn(async (requestBody) => {
-			expect((requestBody["messages"] as unknown[]).slice(0, 1)).toEqual(sourceMessages);
+			const requestMessages = requestBody["messages"] as Array<Record<string, unknown>>;
 			if (mainTurn++ === 0) {
-				const refs = String(requestBody["system"]).match(/sha256:[a-f0-9]{64}/g)!;
+				expect(requestMessages).toHaveLength(sourceMessages.length);
+				const lastContent = requestMessages.at(-1)?.["content"] as Array<Record<string, unknown>>;
+				const refs = String(lastContent.at(-1)?.["text"]).match(/sha256:[a-f0-9]{64}/g)!;
 				return {
 					content: [
 						{

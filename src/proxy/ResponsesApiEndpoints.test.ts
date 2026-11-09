@@ -343,6 +343,96 @@ describe("Responses API contract matrix", () => {
 			}
 		});
 
+		test("built-in image references stay at the end of the native Responses input", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							image_generation: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "image-worker",
+								fallback_models: [],
+								max_iterations: 3,
+							},
+						}
+					: {},
+			);
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-cliproxy-tail",
+				reserved: 1,
+				actual: null,
+			});
+			jest.spyOn(SpendTracker, "checkpointActiveRequest").mockResolvedValue(true);
+			jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({
+				status: "committed",
+				requestId: "request-cliproxy-tail",
+				spend: 0,
+			});
+			const bodies: Record<string, unknown>[] = [];
+			jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+				bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+				return new Response(
+					JSON.stringify({
+						id: "resp_native_tail",
+						object: "response",
+						created_at: 1,
+						status: "completed",
+						model: "deepseek-v4.1-flash",
+						output: [
+							{
+								id: "msg_tail",
+								type: "message",
+								status: "completed",
+								role: "assistant",
+								content: [{ type: "output_text", text: "OK", annotations: [] }],
+							},
+						],
+						usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			});
+			const nativeDeployment = {
+				model_name: "cliproxy-tail",
+				litellm_params: {
+					model: "cliproxy/opencode-go/deepseek-v4.1-flash",
+					custom_llm_provider: "cliproxy",
+				},
+				model_info: { id: "cliproxy-tail-deployment", enabled_builtin_capabilities: ["image_generation"] },
+			};
+			const app = buildApp(buildDeploymentRouter([nativeDeployment]), true, null);
+			await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "cliproxy-tail",
+					store: false,
+					input: [
+						{
+							type: "message",
+							role: "user",
+							content: [
+								{ type: "input_text", text: "Describe this screenshot." },
+								{ type: "input_image", image_url: "data:image/png;base64,YWJj" },
+							],
+						},
+					],
+				})
+				.expect(200);
+
+			expect(bodies).toHaveLength(1);
+			const forwarded = bodies[0]!["input"] as Record<string, unknown>[];
+			// 客户端输入逐项保留在最前面，能力说明紧随其后且不含 sha256 清单。
+			expect(forwarded[0]).toMatchObject({ type: "message", role: "system" });
+			expect(JSON.stringify(forwarded[0])).not.toContain("sha256:");
+			expect(forwarded[1]).toMatchObject({ type: "message", role: "user" });
+			expect(JSON.stringify(forwarded[1])).toContain("Describe this screenshot.");
+			// 随图片变化的引用清单必须落在最后一项，新增图片才不会改写前缀。
+			const last = forwarded.at(-1)!;
+			expect(last).toMatchObject({ type: "message", role: "system" });
+			expect(JSON.stringify(last)).toContain("sha256:");
+		});
+
 		test("CLIProxy streaming Responses keeps the native Responses transport", async () => {
 			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
 				status: "reserved",

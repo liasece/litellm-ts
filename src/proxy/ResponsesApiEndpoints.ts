@@ -354,7 +354,13 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 								capabilityMessages,
 								optionalParams,
 								nativeResponses
-									? createNativeResponsesCapabilityCompletion(litellmRouter, reqBody, capabilityMessages, toolRegistry)
+									? createNativeResponsesCapabilityCompletion(
+											litellmRouter,
+											reqBody,
+											capabilityMessages,
+											toolRegistry,
+											preparedImageGeneration?.tailMessageCount ?? 0,
+										)
 									: undefined,
 								{
 									visionAudit: visionAudit,
@@ -663,6 +669,14 @@ function buildNativeResponsesRequestBody(body: ResponsesCreateRequest, toolRegis
 	return nativeBody;
 }
 
+/** 能力层相对客户端消息插入的位置：头部说明在前，随图片变化的引用清单在后。 */
+interface NativeCapabilityWindow {
+	/** 客户端消息之前的注入条数。 */
+	readonly headCount: number;
+	/** 客户端消息之后、能力续写之前的注入条数。 */
+	readonly tailCount: number;
+}
+
 /**
  * 构造原生 Responses 能力调用。stream=false 用于 worker 与兼容回退；stream=true 用于主模型轮流式。
  * @param litellmRouter - 执行底层调用的 Router
@@ -670,6 +684,7 @@ function buildNativeResponsesRequestBody(body: ResponsesCreateRequest, toolRegis
  * @param originalMessages - 客户端原始消息，用于计算能力循环追加消息的偏移
  * @param toolRegistry - 工具名在 chat 与 Responses 协议间的映射表
  * @param streaming - 是否以流式方式发起
+ * @param tailInjectedCount - 追加在客户端消息之后的能力注入条数（图片引用清单）
  */
 function createNativeCapabilityCaller(
 	litellmRouter: LiteLLMRouter,
@@ -677,15 +692,19 @@ function createNativeCapabilityCaller(
 	originalMessages: Array<Record<string, unknown>>,
 	toolRegistry: ResponsesToolRegistry,
 	streaming: boolean,
+	tailInjectedCount = 0,
 ): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
-	let originalMessagesOffset: number | undefined;
+	let window: NativeCapabilityWindow | undefined;
 	return async (model, messages, optionalParams) => {
-		originalMessagesOffset ??= Math.max(0, messages.length - originalMessages.length);
+		window ??= {
+			headCount: Math.max(0, messages.length - originalMessages.length - tailInjectedCount),
+			tailCount: tailInjectedCount,
+		};
 		const nativeBody = buildNativeResponsesCapabilityBody(
 			requestBody,
 			messages as unknown as Array<Record<string, unknown>>,
 			originalMessages,
-			originalMessagesOffset,
+			window,
 			optionalParams,
 			toolRegistry,
 		);
@@ -707,8 +726,16 @@ function createNativeResponsesCapabilityCompletion(
 	requestBody: ResponsesCreateRequest,
 	originalMessages: Array<Record<string, unknown>>,
 	toolRegistry: ResponsesToolRegistry,
+	tailInjectedCount = 0,
 ): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
-	const call = createNativeCapabilityCaller(litellmRouter, requestBody, originalMessages, toolRegistry, false);
+	const call = createNativeCapabilityCaller(
+		litellmRouter,
+		requestBody,
+		originalMessages,
+		toolRegistry,
+		false,
+		tailInjectedCount,
+	);
 	return async (model, messages, optionalParams) => {
 		const result = await call(model, messages, optionalParams);
 		return result["_responseProtocol"] === "responses"
@@ -717,16 +744,24 @@ function createNativeResponsesCapabilityCompletion(
 	};
 }
 
+/**
+ * @param requestBody - 客户端原始 Responses 请求体
+ * @param messages - 能力循环当前的 chat 消息
+ * @param originalMessages - 客户端原始消息
+ * @param window - 能力注入相对客户端消息的位置
+ * @param optionalParams - 本轮可选参数
+ * @param toolRegistry - 工具名映射表
+ */
 function buildNativeResponsesCapabilityBody(
 	requestBody: ResponsesCreateRequest,
 	messages: Array<Record<string, unknown>>,
 	originalMessages: Array<Record<string, unknown>>,
-	originalMessagesOffset: number,
+	window: NativeCapabilityWindow,
 	optionalParams: Record<string, unknown>,
 	toolRegistry: ResponsesToolRegistry,
 ): Record<string, unknown> {
 	const body = structuredClone(requestBody) as Record<string, unknown>;
-	body["input"] = buildPreservedNativeResponsesInput(requestBody, messages, originalMessages, originalMessagesOffset, toolRegistry);
+	body["input"] = buildPreservedNativeResponsesInput(requestBody, messages, originalMessages, window, toolRegistry);
 	body["stream"] = false;
 	body["parallel_tool_calls"] = false;
 	const privateTools = chatToolsToPrivateResponsesTools(optionalParams["tools"]);
@@ -736,16 +771,28 @@ function buildNativeResponsesCapabilityBody(
 	return body;
 }
 
+/**
+ * 按「头部注入 → 客户端原始输入 → 尾部注入 → 能力续写」重排原生 Responses input。
+ * @param requestBody - 客户端原始 Responses 请求体
+ * @param messages - 能力循环当前的 chat 消息
+ * @param originalMessages - 客户端原始消息
+ * @param window - 能力注入相对客户端消息的位置
+ * @param toolRegistry - 工具名映射表
+ */
 function buildPreservedNativeResponsesInput(
 	requestBody: ResponsesCreateRequest,
 	messages: Array<Record<string, unknown>>,
 	originalMessages: Array<Record<string, unknown>>,
-	originalMessagesOffset: number,
+	window: NativeCapabilityWindow,
 	toolRegistry: ResponsesToolRegistry,
 ): Record<string, unknown>[] {
-	const injectedMessages = messages.slice(0, originalMessagesOffset);
-	const currentOriginalMessages = messages.slice(originalMessagesOffset, originalMessagesOffset + originalMessages.length);
-	const continuationMessages = messages.slice(originalMessagesOffset + originalMessages.length);
+	const injectedMessages = messages.slice(0, window.headCount);
+	const originalEnd = window.headCount + originalMessages.length;
+	const currentOriginalMessages = messages.slice(window.headCount, originalEnd);
+	// 尾部注入（图片引用清单）跟在原始消息之后、能力续写的对话之前：
+	// 它每次请求都会变，放在这里不会影响前面的前缀缓存。
+	const tailInjectedMessages = window.tailCount > 0 ? messages.slice(originalEnd, originalEnd + window.tailCount) : [];
+	const continuationMessages = messages.slice(originalEnd + window.tailCount);
 	const instructionsCount = typeof requestBody.instructions === "string" && requestBody.instructions.length > 0 ? 1 : 0;
 	const originalInput =
 		typeof requestBody.input === "string"
@@ -768,6 +815,7 @@ function buildPreservedNativeResponsesInput(
 	return [
 		...chatMessagesToResponsesInput(injectedMessages, toolRegistry),
 		...preservedInput,
+		...chatMessagesToResponsesInput(tailInjectedMessages, toolRegistry),
 		...chatMessagesToResponsesInput(continuationMessages, toolRegistry),
 	];
 }
@@ -1335,13 +1383,26 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				response: buildStreamResponse(state, requestBody, "in_progress", null),
 			});
 			const nativeCompletion = nativeResponses
-				? createNativeResponsesCapabilityCompletion(litellmRouter, requestBody, capabilityMessages, toolRegistry)
+				? createNativeResponsesCapabilityCompletion(
+						litellmRouter,
+						requestBody,
+						capabilityMessages,
+						toolRegistry,
+						preparedImageGeneration?.tailMessageCount ?? 0,
+					)
 				: undefined;
 			// 支持原生 Responses 的 provider：能力主轮也走原生协议。能力循环内部仍以 chat 形态
 			// 记账，但每一轮都用原生 Responses 请求体发往上游，客户端收到的就是上游的
 			// reasoning/文本增量，而不是“responses→chat→responses”往返后的合成结果。
 			const nativeStreaming = nativeResponses
-				? createNativeCapabilityCaller(litellmRouter, requestBody, capabilityMessages, toolRegistry, true)
+				? createNativeCapabilityCaller(
+						litellmRouter,
+						requestBody,
+						capabilityMessages,
+						toolRegistry,
+						true,
+						preparedImageGeneration?.tailMessageCount ?? 0,
+					)
 				: undefined;
 			const chatStreamingMainTurn = async (
 				completionModel: string,

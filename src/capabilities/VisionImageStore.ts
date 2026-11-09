@@ -56,6 +56,112 @@ function normalizeImage(image: Omit<StoredVisionImage, "ref" | "contentHash" | "
 	};
 }
 
+/** 进程内图片副本上限（按 base64 字符数计）。 */
+const DEFAULT_CACHE_BYTES = 64 * 1024 * 1024;
+/** 单张图片超过该大小时不进入缓存，避免一张大图挤掉整个工作集。 */
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+
+/**
+ * 图片引用 → 字节的进程内副本。
+ *
+ * 图片按内容哈希寻址且写入后不可变，因此副本不会过期；上限按总字节数淘汰最久未用的图片，
+ * 避免把 1GB 量级的图片表整体拉进内存。并发读取同一引用时只向数据库装载一次。
+ */
+class VisionImageCache {
+	private readonly _images = new Map<string, StoredVisionImage>();
+	private readonly _inflight = new Map<string, Promise<StoredVisionImage | undefined>>();
+	private readonly _maxBytes: number;
+	private _bytes = 0;
+
+	/** @param maxBytes - 副本总字节上限 */
+	constructor(maxBytes: number) {
+		this._maxBytes = maxBytes;
+	}
+
+	/**
+	 * 读取图片，未命中时调用装载器并缓存结果。
+	 * @param contentHash - 图片内容哈希
+	 * @param load - 未命中时的数据库装载回调
+	 */
+	async getOrLoad(contentHash: string, load: () => Promise<StoredVisionImage | undefined>): Promise<StoredVisionImage | undefined> {
+		const cached = this._images.get(contentHash);
+		if (cached !== undefined) {
+			this._images.delete(contentHash);
+			this._images.set(contentHash, cached);
+			return cached;
+		}
+		const pending = this._inflight.get(contentHash);
+		if (pending !== undefined) {
+			return await pending;
+		}
+		const task = load()
+			.then((image) => {
+				if (image !== undefined) {
+					this.store(image);
+				}
+				return image;
+			})
+			.finally(() => {
+				this._inflight.delete(contentHash);
+			});
+		this._inflight.set(contentHash, task);
+		return await task;
+	}
+
+	/**
+	 * 缓存一张图片，超出总上限时淘汰最久未使用的条目。
+	 * @param image - 已完成归一化的图片
+	 */
+	store(image: StoredVisionImage): void {
+		const size = image.base64Data.length;
+		if (size > MAX_ENTRY_BYTES) {
+			return;
+		}
+		const existing = this._images.get(image.contentHash);
+		if (existing !== undefined) {
+			this._bytes -= existing.base64Data.length;
+			this._images.delete(image.contentHash);
+		}
+		this._images.set(image.contentHash, image);
+		this._bytes += size;
+		while (this._bytes > this._maxBytes && this._images.size > 0) {
+			const oldest = this._images.keys().next();
+			if (oldest.done === true) {
+				break;
+			}
+			const evicted = this._images.get(oldest.value);
+			this._images.delete(oldest.value);
+			if (evicted !== undefined) {
+				this._bytes -= evicted.base64Data.length;
+			}
+		}
+	}
+}
+
+const imageCaches = new WeakMap<object, VisionImageCache>();
+
+/** @returns 进程内副本的字节上限，可用 LITELLM_VISION_IMAGE_CACHE_BYTES 覆盖 */
+function cacheLimitFromEnv(): number {
+	const raw = process.env["LITELLM_VISION_IMAGE_CACHE_BYTES"];
+	if (raw === undefined) {
+		return DEFAULT_CACHE_BYTES;
+	}
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_CACHE_BYTES;
+}
+
+/** @param db - 数据库连接，作为进程内副本的共享范围 */
+function imageCacheFor(db: DrizzleDb): VisionImageCache {
+	const key = db as unknown as object;
+	const existing = imageCaches.get(key);
+	if (existing !== undefined) {
+		return existing;
+	}
+	const created = new VisionImageCache(cacheLimitFromEnv());
+	imageCaches.set(key, created);
+	return created;
+}
+
 /** PostgreSQL-backed content-addressed image store. */
 export class DatabaseVisionImageStore implements VisionImageStore {
 	/** @param _db - Drizzle connection for the existing LiteLLM database. */
@@ -73,6 +179,7 @@ export class DatabaseVisionImageStore implements VisionImageStore {
 				byteSize: normalized.byteSize,
 			})
 			.onConflictDoNothing();
+		imageCacheFor(this._db).store(normalized);
 		return normalized;
 	}
 
@@ -82,6 +189,10 @@ export class DatabaseVisionImageStore implements VisionImageStore {
 		if (!contentHash) {
 			return undefined;
 		}
+		return await imageCacheFor(this._db).getOrLoad(contentHash, () => this._loadRow(contentHash));
+	}
+
+	private async _loadRow(contentHash: string): Promise<StoredVisionImage | undefined> {
 		const rows = await this._db
 			.select()
 			.from(liteLLM_BuiltinCapabilityImages)
