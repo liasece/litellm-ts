@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from "vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
-import EmailEvents from "./EmailEventsComponent.vue";
 import { loggingSettingsApi, type LoggingCallback } from "../api/LoggingSettingsApi";
 import { emailServerPayload } from "../logic/LoggingPayloadLogic";
 import { emailDescriptions } from "../data/EmailFieldDescriptionsData";
@@ -41,7 +40,6 @@ async function test() {
 </script>
 <template>
 	<div class="logging-email-settings">
-		<div class="logging-email-events-wrap"><EmailEvents /></div>
 		<UiCard appearance="tremor" class="logging-email-server-card"
 			><h4>Email Server Settings</h4>
 			<p>

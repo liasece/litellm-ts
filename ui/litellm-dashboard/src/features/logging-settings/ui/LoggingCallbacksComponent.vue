@@ -3,16 +3,13 @@ import { ref } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
-import DeleteResourceDialog from "../../resource-dialogs/ui/DeleteResourceDialogComponent.vue";
 import CallbackDialog from "./CallbackDialogComponent.vue";
-import { loggingSettingsApi, type LoggingCallback, type CallbackConfiguration } from "../api/LoggingSettingsApi";
+import { loggingSettingsApi, type LoggingCallback, type AvailableCallbacks } from "../api/LoggingSettingsApi";
 import notification from "../../notifications/logic/NotificationManager";
-const props = defineProps<{ callbacks: LoggingCallback[]; available: Record<string, unknown>; configurations: CallbackConfiguration[] }>();
+const props = defineProps<{ callbacks: LoggingCallback[]; available: AvailableCallbacks }>();
 const emit = defineEmits<{ changed: [] }>();
 const editOpen = ref(false),
 	addOpen = ref(false),
-	deleteOpen = ref(false),
-	pending = ref(false),
 	selected = ref<LoggingCallback | null>(null);
 function display(callback: LoggingCallback) {
 	const raw = props.available[callback.name];
@@ -33,25 +30,12 @@ async function test(callback: LoggingCallback) {
 		notification.fromBackend(error);
 	}
 }
-async function remove() {
-	if (!selected.value) return;
-	pending.value = true;
-	try {
-		await loggingSettingsApi.remove(selected.value.name);
-		notification.success("Callback " + selected.value.name + " deleted successfully");
-		deleteOpen.value = false;
-		selected.value = null;
-		emit("changed");
-	} catch (error) {
-		notification.fromBackend(error);
-	} finally {
-		pending.value = false;
-	}
-}
 </script>
 <template>
 	<div class="logging-callbacks">
-		<UiButton appearance="tremor" variant="primary" @click="addOpen = true">+ Add Callback</UiButton>
+		<UiButton v-if="Object.keys(available).length" appearance="tremor" variant="primary" @click="addOpen = true"
+			>+ Add Callback</UiButton
+		>
 		<div class="logging-callbacks-heading"><h4>Active Logging Callbacks</h4></div>
 		<div v-if="!callbacks.length" class="logging-callbacks-empty">
 			<h3>No callbacks configured</h3>
@@ -96,17 +80,7 @@ async function remove() {
 											editOpen = true;
 										"
 									>
-										<UiHeroIcon name="PencilAltIcon" /></button></UiTooltip
-								><UiTooltip title="Delete Callback"
-									><button
-										type="button"
-										aria-label="Delete Callback"
-										@click="
-											selected = callback;
-											deleteOpen = true;
-										"
-									>
-										<UiHeroIcon name="TrashIcon" /></button
+										<UiHeroIcon name="PencilAltIcon" /></button
 								></UiTooltip>
 							</div>
 						</td>
@@ -114,22 +88,11 @@ async function remove() {
 				</tbody>
 			</table>
 		</div>
-		<CallbackDialog v-model:open="addOpen" :configurations="configurations" @changed="emit('changed')" /><CallbackDialog
+		<CallbackDialog v-model:open="addOpen" :available="available" @changed="emit('changed')" /><CallbackDialog
 			v-model:open="editOpen"
 			:callback="selected"
-			:configurations="configurations"
+			:available="available"
 			@changed="emit('changed')"
-		/><DeleteResourceDialog
-			v-model:open="deleteOpen"
-			title="Delete Callback"
-			message="Are you sure you want to delete this callback? This action cannot be undone."
-			information-title="Callback Information"
-			:information="[
-				{ label: 'Callback Name', value: selected?.name },
-				{ label: 'Mode', value: selected?.mode || 'success' },
-			]"
-			:pending="pending"
-			@confirm="remove"
 		/>
 	</div>
 </template>

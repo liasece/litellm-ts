@@ -5,11 +5,11 @@ import UiInput from "../../platform/ui/UiInput.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import { nextUiIdentity } from "../../platform/ui/UiIdentity";
-import { loggingSettingsApi, type LoggingCallback, type CallbackConfiguration } from "../api/LoggingSettingsApi";
+import { loggingSettingsApi, type LoggingCallback, type AvailableCallbacks } from "../api/LoggingSettingsApi";
 import { callbackParameters, callbackPayload } from "../logic/LoggingPayloadLogic";
 import notification from "../../notifications/logic/NotificationManager";
 const open = defineModel<boolean>("open", { default: false });
-const props = defineProps<{ callback?: LoggingCallback | null; configurations: CallbackConfiguration[] }>();
+const props = defineProps<{ callback?: LoggingCallback | null; available: AvailableCallbacks }>();
 const emit = defineEmits<{ changed: [] }>();
 const values = ref<Record<string, unknown>>({}),
 	selected = ref(""),
@@ -18,13 +18,15 @@ const values = ref<Record<string, unknown>>({}),
 const prefix = nextUiIdentity("callback-form");
 const query = ref("");
 const choices = computed(() =>
-	props.configurations
-		.filter((config) => config.id.toLowerCase().includes(query.value.toLowerCase()))
-		.map((config) => ({ value: config.id, label: config.displayName })),
+	Object.entries(props.available)
+		.filter(([id]) => id.toLowerCase().includes(query.value.toLowerCase()))
+		.map(([id, info]) => ({
+			value: id,
+			label: info && typeof info === "object" && "ui_callback_name" in info ? String(info.ui_callback_name) : id,
+		})),
 );
 const edit = computed(() => Boolean(props.callback));
-const params = computed(() => callbackParameters(selected.value, props.configurations, props.callback?.variables));
-const config = computed(() => props.configurations.find((config) => config.id === selected.value));
+const params = computed(() => callbackParameters(selected.value, props.available, props.callback?.variables));
 watch(open, (value) => {
 	if (!value) return;
 	errors.value = {};
@@ -37,22 +39,12 @@ function change(value: unknown) {
 	selected.value = String(value ?? "");
 	values.value.callback = selected.value;
 }
-function logo(value: string | null | undefined) {
-	return !value ? "" : value.includes("/") || value.startsWith("data:") || value.startsWith("http") ? value : "/ui/assets/logos/" + value;
-}
 function label(name: string) {
-	const value = config.value?.dynamic_params?.[name]?.ui_name;
-	return typeof value === "string" ? value : name.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-function fieldType(name: string) {
-	return config.value?.dynamic_params?.[name]?.type || "text";
+	return name.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 async function save() {
 	errors.value = {};
 	if (!selected.value) errors.value.callback = "Please select a callback";
-	for (const name of params.value)
-		if (config.value?.dynamic_params?.[name]?.required && !values.value[name])
-			errors.value[name] = "Please enter the " + label(name).toLowerCase();
 	if (Object.keys(errors.value).length) return;
 	pending.value = true;
 	try {
@@ -97,48 +89,22 @@ async function save() {
 						@search="query = $event"
 						@open-change="!$event && (query = '')"
 						@update:model-value="change"
-						><template #option="{ option }"
-							><span class="logging-callback-option"
-								><span class="logging-callback-logo"
-									><img
-										:src="logo(configurations.find((config) => config.id === option.value)?.logo)"
-										:alt="option.label + ' logo'"
-										@error="($event.target as HTMLImageElement).style.display = 'none'" /></span
-								><strong>{{ option.label }}</strong></span
-							></template
-						><template #value="{ option }"
-							><span class="logging-callback-option logging-callback-option--value"
-								><span class="logging-callback-logo"
-									><img
-										:src="logo(configurations.find((config) => config.id === option.value)?.logo)"
-										:alt="option.label + ' logo'"
-										@error="($event.target as HTMLImageElement).style.display = 'none'" /></span
-								><strong>{{ option.label }}</strong></span
-							></template
-						></UiSelect
-					>
+					/>
 					<p v-if="errors.callback" class="logging-error">{{ errors.callback }}</p>
 				</div>
 			</div>
 			<div v-if="params.length" class="logging-dynamic-fields">
-				<div v-for="name in params" :key="name" class="logging-field" :class="{ 'logging-field--error': errors[name] }">
-					<label :for="prefix + '-' + name" :class="{ 'logging-required': Boolean(config?.dynamic_params?.[name]?.required) }">{{
-						label(name)
-					}}</label>
+				<div v-for="name in params" :key="name" class="logging-field">
+					<label :for="prefix + '-' + name">{{ label(name) }}</label>
 					<div>
 						<UiInput
 							:id="prefix + '-' + name"
 							:model-value="values[name] == null ? '' : String(values[name])"
-							:type="fieldType(name) === 'password' ? 'password' : fieldType(name) === 'number' ? 'number' : 'text'"
-							:visibility-toggle="fieldType(name) === 'password'"
+							type="text"
 							size="large"
-							:placeholder="(fieldType(name) === 'number' ? 'Enter ' : 'Enter your ') + label(name).toLowerCase()"
-							:min="fieldType(name) === 'number' ? 0 : undefined"
-							:max="fieldType(name) === 'number' ? 1 : undefined"
-							:step="fieldType(name) === 'number' ? 0.1 : undefined"
+							:placeholder="'Enter ' + label(name).toLowerCase()"
 							@update:model-value="values[name] = $event == null ? '' : String($event)"
 						/>
-						<p v-if="errors[name]" class="logging-error">{{ errors[name] }}</p>
 					</div>
 				</div>
 			</div>

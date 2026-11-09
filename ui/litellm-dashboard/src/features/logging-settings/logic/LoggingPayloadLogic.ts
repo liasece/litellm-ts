@@ -1,11 +1,11 @@
-import type { LoggingCallback, CallbackConfiguration } from "../api/LoggingSettingsApi";
-export function callbackParameters(
-	name: string,
-	configurations: CallbackConfiguration[],
-	fallback: Record<string, unknown> = {},
-): string[] {
-	const config = configurations.find((config) => config.id === name);
-	return config?.dynamic_params ? Object.keys(config.dynamic_params) : Object.keys(fallback);
+import type { LoggingCallback, AvailableCallbacks } from "../api/LoggingSettingsApi";
+export function callbackParameters(name: string, available: AvailableCallbacks, fallback: Record<string, unknown> = {}): string[] {
+	const info = available[name];
+	const raw =
+		info && typeof info === "object" && !Array.isArray(info) ? (info as Record<string, unknown>).litellm_callback_params : undefined;
+	const params: unknown[] = Array.isArray(raw) ? raw : [];
+	const names = params.filter((value): value is string => typeof value === "string");
+	return names.length ? names : Object.keys(fallback);
 }
 export function callbackPayload(values: Record<string, unknown>, name: string) {
 	return { environment_variables: { ...values }, litellm_settings: { success_callback: [name] } };
@@ -18,25 +18,3 @@ export function emailServerPayload(alerts: LoggingCallback[], values: Record<str
 		}
 	return { general_settings: { alerting: ["email"] }, environment_variables: environment };
 }
-export function emailEventDescription(event: string): string {
-	if (event.includes("Virtual Key Created"))
-		return "An email will be sent to the user when a new virtual key is created with their user ID";
-	if (event.includes("New User Invitation")) return "An email will be sent to the email address of the user when a new user is created";
-	return (
-		"Receive an email notification when " +
-		event
-			.split(/(?=[A-Z])/)
-			.join(" ")
-			.toLowerCase()
-	);
-}
-export const alertNames: Record<string, string> = {
-	llm_exceptions: "LLM Exceptions",
-	llm_too_slow: "LLM Responses Too Slow",
-	llm_requests_hanging: "LLM Requests Hanging",
-	budget_alerts: "Budget Alerts (API Keys, Users)",
-	db_exceptions: "Database Exceptions (Read/Write)",
-	daily_reports: "Weekly/Monthly Spend Reports",
-	outage_alerts: "Outage Alerts",
-	region_outage_alerts: "Region Outage Alerts",
-};

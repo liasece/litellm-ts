@@ -3,7 +3,6 @@ import { computed } from "vue";
 import type { LogEntry } from "../../../support/LogsModels";
 import { guardrailLifecycle, guardrailPassed } from "../../../logic/LogDetailsGuardrailLogic";
 import LogDetailsGuardrailIconComponent from "./LogDetailsGuardrailIconComponent.vue";
-import LogDetailsComplianceComponent from "./LogDetailsComplianceComponent.vue";
 import LogDetailsGuardrailEvaluationComponent from "./LogDetailsGuardrailEvaluationComponent.vue";
 import "./LogDetailsGuardrailStyles.css";
 const props = defineProps<{ entries: Record<string, unknown>[]; log: LogEntry }>();
@@ -49,7 +48,6 @@ function exportLog() {
 				><button type="button" @click="exportLog"><LogDetailsGuardrailIconComponent name="download" />Export Compliance Log</button>
 			</div>
 		</div>
-		<div class="ld-guardrail__compliance"><LogDetailsComplianceComponent :log="log" /></div>
 		<div class="ld-guardrail__body">
 			<div class="ld-guardrail__lifecycle">
 				<h4>Request Lifecycle</h4>
