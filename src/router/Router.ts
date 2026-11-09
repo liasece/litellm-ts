@@ -1387,6 +1387,19 @@ export class Router {
 	}
 
 	/**
+	 * 该模型组当前是否可能落到 CLIProxy deployment。
+	 *
+	 * 启动窗口的请求路径用它在「等子进程就绪」与「立即 fallback」之间选择：组内含 CLIProxy
+	 * deployment 时等待是有意义的，否则不必占用请求时间。判定与 ProviderRegistry 一致
+	 * （{@link isCliProxyDeploymentParams}），并且沿用冷却过滤，全部署冷却时不再等。
+	 * @param model - 客户端请求的逻辑模型名或 alias
+	 * @returns 组内是否存在可用的 CLIProxy deployment
+	 */
+	hasCliProxyDeploymentForModel(model: string): boolean {
+		return this._getDeploymentsForModel(model).some((deployment) => isCliProxyDeploymentParams(deployment.litellm_params));
+	}
+
+	/**
 	 * 返回模型组的冷却上下文，供端点构造 Python 风格 no-deployments 错误
 	 * （对齐 PY router.py get_available_deployment 抛 RouterRateLimitError 的字段来源）：
 	 * - cooldownSeconds：组内冷却 deployment 的最小配置 cooldown_time（PY get_min_cooldown 取

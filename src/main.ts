@@ -17,6 +17,7 @@ import { loadConfig, type ServiceConfig } from "./core/config";
 import { createServiceContainer, type ServiceContainer } from "./container";
 import { registerController } from "./core/api/registerController";
 import { jsonBigIntReplacer } from "./core/api/jsonBigInt";
+import { requestArrivalMiddleware } from "./core/api/RequestArrival";
 import { errorHandler } from "./middleware/ErrorHandler";
 import { zstdRequestDecompress } from "./middleware/ZstdRequestDecompress";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
@@ -64,6 +65,7 @@ import { registerPrivacyRoutes } from "./proxy/PrivacyEndpoints";
 import { privacyMaskingMiddleware } from "./privacy/PrivacyMiddleware";
 import { abortOrphanedActiveRequests, reapExpiredActiveRequests } from "./spend/ActiveRequestRecovery";
 import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
+import { cliProxyStartupGate } from "./cliproxy/CliProxyStartupGate";
 import { registerProviderQuotaRoutes } from "./proxy/ProviderQuotaEndpoints";
 import {
 	registerCliProxyNativeAnthropicRoutes,
@@ -223,7 +225,10 @@ export class LiteLLMServer {
 
 		// 全局中间件
 		app.set("json replacer", jsonBigIntReplacer);
-		// 观测必须是第一个中间件：「请求到达」时刻之后才有请求体解析、鉴权与路由的分解耗时。
+		// 记账口径的「请求到达」时刻必须先于一切中间件落地：SpendLog 的 startTime 与 Dashboard
+		// 的 TTFT 都从这里起算，晚一步就会把 body 解析、鉴权与费用预留排除在 TTFT 之外。
+		app.use(requestArrivalMiddleware);
+		// 观测必须是第一个中间件之后的观测入口：「请求到达」时刻之后才有请求体解析、鉴权与路由的分解耗时。
 		app.use(httpMetricsMiddleware);
 		app.use(zstdRequestDecompress);
 		app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
@@ -317,6 +322,8 @@ export class LiteLLMServer {
 		proxyRouter.use(container.authorizationGuard.middleware("inference"));
 		proxyRouter.use(privacyMaskingMiddleware({ router: container.router, db: container.db.db }));
 		proxyRouter.use(container.runtimeConfigService.middleware(container.router));
+		// 启动窗口内先等托管 CLIProxy 就绪，避免把请求静默换成 fallback 模型；稳态是零开销直通。
+		proxyRouter.use(cliProxyStartupGate(container.router, container.cliProxyRuntime));
 		proxyRouter.use((req, _res, next) =>
 			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
 		);
@@ -412,6 +419,8 @@ export class LiteLLMServer {
 		stubRouter.use(container.authorizationGuard.middleware("authenticated"));
 		stubRouter.use(privacyMaskingMiddleware({ router: container.router, db: container.db.db }));
 		stubRouter.use(container.runtimeConfigService.middleware(container.router));
+		// Response API 等直连 CLIProxy 的兼容端点同样在启动窗口内等待子进程就绪。
+		stubRouter.use(cliProxyStartupGate(container.router, container.cliProxyRuntime));
 		stubRouter.use((req, _res, next) =>
 			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
 		);

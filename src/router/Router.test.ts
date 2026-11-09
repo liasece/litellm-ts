@@ -359,3 +359,38 @@ describe("Router runtime credential resolution", () => {
 		expect(JSON.stringify(mockFetch.mock.calls[0])).not.toContain("litellm_credential_name");
 	});
 });
+
+describe("Router CLIProxy 启动等待候选判定", () => {
+	/** 构造一个由内部 CLIProxy 承载的 deployment。 */
+	function cliproxyDeployment(): ReturnType<typeof mkDeployment> {
+		return mkDeployment("commandcode/deepseek/deepseek-v4.1-flash", "cliproxy/commandcode/deepseek/deepseek-v4.1-flash", {
+			litellm_params: {
+				model: "cliproxy/commandcode/deepseek/deepseek-v4.1-flash",
+				custom_llm_provider: "cliproxy",
+			},
+		});
+	}
+
+	it("组内含 CLIProxy deployment 时返回 true，alias 解析后同样命中", () => {
+		const router = new Router({
+			model_list: [cliproxyDeployment()],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+			model_group_alias: { "cc-flash": "commandcode/deepseek/deepseek-v4.1-flash" },
+		});
+
+		expect(router.hasCliProxyDeploymentForModel("commandcode/deepseek/deepseek-v4.1-flash")).toBe(true);
+		expect(router.hasCliProxyDeploymentForModel("cc-flash")).toBe(true);
+	});
+
+	it("非 CLIProxy 模型组与未知模型都返回 false，不触发多余的启动等待", () => {
+		const router = new Router({
+			model_list: [mkDeployment("gpt-4", "openai/gpt-4")],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+		});
+
+		expect(router.hasCliProxyDeploymentForModel("gpt-4")).toBe(false);
+		expect(router.hasCliProxyDeploymentForModel("unknown-model")).toBe(false);
+	});
+});

@@ -47,7 +47,18 @@
   `listen()` 并行；「已启动」日志带 `startupMs`，即真正可以接客的时刻。
 - `src/cliproxy/CliProxyRuntimeManager.ts`：`initialize()` 进入与管理操作共用的串行队列
   （监听之后管理接口已经可以访问，避免配置投影/版本安装与手工操作互相踩），每一步之前检查
-  停止意图；`_waitForHealth()` 在停止意图下发或子进程退出后立即返回，不再空转到超时。
+  停止意图；`_waitForHealth()` 在停止意图下发或子进程退出后立即返回，不再空转到超时；
+  健康轮询间隔 50ms，就绪判定不再固定多等最多 250ms。
+- `src/cliproxy/CliProxyModelCatalog.ts`：健康之后还要等「模型可解析」。`/healthz` 只代表 HTTP
+  服务已在听，托管插件是在 listen 之后才把模型注册进目录的；这期间用插件前缀的模型会被 CPA
+  判成 `unknown provider`，请求先吃一次 400 再走 fallback。启动流程用 `/v1/models` 等到
+  `opencode-go/`、`commandcode/` 前缀出现（上限 `MODEL_CATALOG_TIMEOUT_MS`，3 秒），
+  再置 `running`；超时只记日志、不阻断启动，未就绪模型仍由 fallback 兜底。
+- `src/cliproxy/CliProxyStartupGate.ts`：请求侧的启动等待。挂在绑定请求级运行时配置之后，
+  当请求解析到的模型组包含 CLIProxy deployment 且子进程仍在预热时，最多等待
+  `CLIPROXY_STARTUP_WAIT_MS`（默认 5000，0 关闭）让子进程就绪，再继续原请求；已经
+  `running`、已禁用、已停止、崩溃循环、升级排空或超时都按原逻辑 fallback。
+  覆盖核心代理链与 stub 链（含原生 Responses/passthrough 端点），WebSocket passthrough 不在其中。
 
 启动日志里新增两类可核对字段：
 
@@ -60,15 +71,17 @@
    `启动预热完成` 之前；`启动预热完成` 的两段耗时之和应接近原来那 3.7 秒。
 2. 用 `/health/liveliness` 观察端口可用时刻（Docker healthcheck 用的就是它），
    用 `/cliproxy/status` 的 `state` 观察子进程就绪时刻：前者会明显早于后者。
-3. 在预热窗口内直接请求一个 `commandcode/` 模型，预期是上游连接错误（CLIProxy 还没监听）
-   而不是网关自身不可用；窗口结束后同一请求恢复正常。
+3. 在预热窗口内直接请求一个 `commandcode/` 模型：预期请求多等约 1~3 秒后由 CLIProxy 正常返回，
+   日志出现 `CLIProxy 启动窗口内已就绪，继续使用请求的模型` 与 `CLIProxy 模型目录就绪（健康后等待 …ms）`，
+   SpendLogs 的 `model` 是 `cliproxy/commandcode/...`、`attempted_retries` 为 0。
+   若 CPA 启动失败或超时，则记录 `CLIProxy 启动窗口内未就绪，按 fallback 继续`
+   与 `CLIProxy 模型目录 …ms 内未就绪（缺少 …）`，并维持原 fallback 行为。
 
 ## 已知边界
 
-- 预热把 CLIProxy 的就绪时间从「服务不可用」改成「该子进程路由短暂不可用」。本次发布的
-  切换本身就是一次性停机，因此这段窗口不劣于原状态，但不是零成本：预热期间走 CLIProxy 的
-  请求会失败或落到 Router fallback。要彻底消除这段窗口，需要在 CLIProxy 请求路径上加
-  bounded wait（等就绪但不无限等），这会改动请求链路的超时语义，属于独立改动。
+- 预热把 CLIProxy 的就绪时间从「服务不可用」改成「该子进程路由短暂不可用」。启动等待闸门
+  在这段窗口里让请求等子进程就绪而不是静默换成 fallback 模型，代价是启动后的首批请求各多
+  1~2 秒延迟；等待有上限，CPA 起不来时仍然 fallback。直连 WebSocket passthrough 不经过该闸门。
 - 预热期间 `/cliproxy/status` 会短暂显示 `starting`；Dashboard 的 CLIProxy 页面此时刷新
   可能看到未就绪状态，不需要处理。
 - 如需回滚：把 `warmUp()` 里的两段 `run` 改回在 `createServiceContainer()` 中直接 `await`

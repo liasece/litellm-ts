@@ -35,11 +35,23 @@ import {
 	resolveCliProxyDrainTimeoutMs,
 	withCliProxyDrain,
 } from "./CliProxyDrainGate";
+import { waitForCliProxyReady } from "./CliProxyStartupGate";
+import {
+	COMMANDCODE_MODEL_PREFIX,
+	MODEL_CATALOG_TIMEOUT_MS,
+	OPENCODE_GO_MODEL_PREFIX,
+	expectedModelPrefixes,
+	extractModelIds,
+	waitForModelCatalog,
+} from "./CliProxyModelCatalog";
 
 const MAX_LOG_ENTRIES = 4_000;
 const MAX_OAUTH_OUTPUT_LINES = 500;
 const STOP_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 15_000;
+// 健康轮询间隔直接决定「进程已能接客」与实际判定的偏差：50ms 让启动窗口的尾部不再
+// 固定多等最多 250ms，同时仍远低于一次健康探针的 1.5 秒超时。
+const HEALTH_POLL_INTERVAL_MS = 50;
 const MAX_OAUTH_SESSIONS = 32;
 const RELEASE_REPOSITORY = "router-for-me/CLIProxyAPI";
 const RESERVED_CONFIG_KEYS = new Set(["host", "port", "auth-dir", "api-keys", "remote-management"]);
@@ -532,7 +544,7 @@ export function buildCliProxyPluginConfig(userValue: unknown, plugins: CliProxyM
 		configs[OPENCODE_GO_PLUGIN_ID] = {
 			enabled: true,
 			"base-url": OPENCODE_GO_PLUGIN_BASE_URL,
-			"model-prefix": { enabled: true, value: "opencode-go" },
+			"model-prefix": { enabled: true, value: OPENCODE_GO_MODEL_PREFIX },
 			// CLIProxy 在运行时展开该占位符，不能交给 JavaScript 模板字符串。
 			// eslint-disable-next-line no-template-curly-in-string
 			"api-keys": [{ value: "${OPENCODE_GO_API_KEY}", name: "Personal" }],
@@ -545,7 +557,7 @@ export function buildCliProxyPluginConfig(userValue: unknown, plugins: CliProxyM
 		configs[COMMANDCODE_PLUGIN_ID] = {
 			enabled: true,
 			"base-url": COMMANDCODE_PLUGIN_BASE_URL,
-			"model-prefix": { enabled: true, value: "commandcode" },
+			"model-prefix": { enabled: true, value: COMMANDCODE_MODEL_PREFIX },
 			...entry,
 		};
 	}
@@ -607,9 +619,13 @@ export class CliProxyRuntimeManager {
 	private _lastError: string | null = null;
 	private _configHash: string | null = null;
 	private _pluginsEnabled = false;
+	// 本次投影启用的托管插件：启动后据此等待插件模型前缀出现在模型目录里。
+	private _plugins: CliProxyManagedPlugins | null = null;
 	private _health: CliProxyRuntimeStatus["health"] = "unknown";
 	private _operation: string | null = null;
 	private _desiredStop = false;
+	// 预热是否仍在进行：请求侧的启动等待据此区分「马上就会 running」与「继续等也没有意义」。
+	private _startupPending = false;
 	private _restartTimer: NodeJS.Timeout | null = null;
 	private _operationTail: Promise<void> = Promise.resolve();
 	private _logSequence = 0;
@@ -685,6 +701,34 @@ export class CliProxyRuntimeManager {
 	 *
 	 */
 	async initialize(): Promise<void> {
+		this._startupPending = true;
+		try {
+			await this._initializeSerially();
+		} finally {
+			this._startupPending = false;
+		}
+	}
+
+	/**
+	 * 等待 CLIProxy 进入可服务状态，供启动窗口内的请求路径调用。
+	 *
+	 * 只在预热仍在进行时等待：已经在 `running` 时立即返回，已禁用/已停止/崩溃循环/超时
+	 * 也立即返回 false，让调用方按原逻辑走 fallback，而不是把请求拖满一个无意义的预算。
+	 * @param timeoutMs - 等待上限（毫秒）
+	 * @returns 是否在期限内变为 `running`
+	 */
+	async waitUntilReady(timeoutMs: number): Promise<boolean> {
+		return await waitForCliProxyReady({
+			readState: () => this._state,
+			isStartupInProgress: () => this._startupPending && !this._desiredStop && this._settings.enabled,
+			timeoutMs: timeoutMs,
+		});
+	}
+
+	/**
+	 * 预热主体：装文件、投影配置、拉起子进程；调用方负责维护启动等待标志。
+	 */
+	private async _initializeSerially(): Promise<void> {
 		// 这段初始化在网关监听之后的后台预热里执行，管理接口此时已经可以进来，
 		// 因此和其它改配置/改进程的操作共用同一个串行队列。每一步之前检查停止意图：
 		// 停机过程中（SIGTERM 常落在启动这几秒内）不再继续装文件或拉起子进程。
@@ -1652,6 +1696,7 @@ export class CliProxyRuntimeManager {
 		await this._syncManagedCommandCodeAccounts(userConfig);
 		const plugins = await this._resolveManagedPlugins(userConfig);
 		this._pluginsEnabled = plugins !== null;
+		this._plugins = plugins;
 		const projected = buildCliProxyProjection(userConfig, {
 			port: this._port,
 			authDir: this._authDir,
@@ -2003,6 +2048,30 @@ export class CliProxyRuntimeManager {
 			this._lastError = "CLIProxy 启动后健康检查超时";
 			return;
 		}
+		// /healthz 只代表 HTTP 服务已经在听。托管插件是在 listen 之后才把模型注册进目录的，
+		// 这期间带插件前缀的模型会被判成 unknown provider，请求只能先吃一次 400 再走 fallback。
+		// 等模型目录出现这些前缀再宣布 running；超时只记日志、不阻断启动，未就绪时仍由 fallback 兜底。
+		const catalog = await waitForModelCatalog({
+			prefixes: expectedModelPrefixes(this._plugins),
+			fetchModelIds: async () => await this._fetchModelIds(),
+			isAborted: () => this._desiredStop || this._process === null,
+			timeoutMs: MODEL_CATALOG_TIMEOUT_MS,
+		});
+		if (catalog.aborted) {
+			if (this._desiredStop) {
+				// 停机意图落在模型目录等待期间：与健康等待一致，不覆盖 shutdown 已经写好的状态。
+				this._state = "stopped";
+			}
+			return;
+		}
+		if (catalog.missing.length > 0) {
+			this._appendLog(
+				"system",
+				`CLIProxy 模型目录 ${MODEL_CATALOG_TIMEOUT_MS}ms 内未就绪（缺少 ${catalog.missing.join("、")}），先恢复运行；命中未就绪模型的请求由 fallback 兜底`,
+			);
+		} else if (catalog.waitedMs >= 200) {
+			this._appendLog("system", `CLIProxy 模型目录就绪（健康后等待 ${catalog.waitedMs}ms）`);
+		}
 		this._state = "running";
 		this._health = "healthy";
 		this._restartCount = 0;
@@ -2097,10 +2166,28 @@ export class CliProxyRuntimeManager {
 			} catch {
 				// Still starting.
 			}
-			await new Promise((resolve) => setTimeout(resolve, 250));
+			await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_INTERVAL_MS));
 		}
 		this._health = "unhealthy";
 		return false;
+	}
+
+	/**
+	 * 读取 CPA 当前可解析的模型 id 列表（`/v1/models`）。
+	 *
+	 * 用内部 API key 鉴权；任何非 2xx 或解析失败都按「还没就绪」返回空列表，
+	 * 由 {@link waitForModelCatalog} 继续轮询到上限。
+	 * @returns 模型 id 列表
+	 */
+	private async _fetchModelIds(): Promise<string[]> {
+		const response = await fetch(`${this.baseUrl}/v1/models`, {
+			headers: { Authorization: `Bearer ${this._internalApiKey}` },
+			signal: AbortSignal.timeout(1_500),
+		});
+		if (!response.ok) {
+			return [];
+		}
+		return extractModelIds(await response.json().catch(() => null));
 	}
 
 	private _consumeProcessLog(stream: "stdout" | "stderr", chunk: Buffer): void {
