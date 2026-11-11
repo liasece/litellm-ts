@@ -282,88 +282,98 @@ export class PrivacyStatsRepository {
 	 */
 	async overview(days: number): Promise<PrivacyOverview> {
 		const since = new Date(Date.now() - days * 24 * 60 * 60 * 1_000);
-		const summaryRows = await this._db
-			.select({
-				occurrences: sql<string>`coalesce(sum(${liteLLM_PrivacyRedactionEvents.occurrences}), 0)`,
-				requests: sql<string>`count(*)`,
-				unresolved: sql<string>`coalesce(sum(${liteLLM_PrivacyRedactionEvents.unresolved}), 0)`,
-			})
-			.from(liteLLM_PrivacyRedactionEvents)
-			.where(gte(liteLLM_PrivacyRedactionEvents.created_at, since));
-		const distinctRows = await this._db
-			.select({
-				distinctValues: sql<string>`count(distinct (${liteLLM_PrivacyRedactionValues.kind}, ${liteLLM_PrivacyRedactionValues.value_hash}))`,
-			})
-			.from(liteLLM_PrivacyRedactionValues)
-			.where(gte(liteLLM_PrivacyRedactionValues.created_at, since));
-		const summary = summaryRows[0];
-		const distinct = distinctRows[0];
-
-		const byClientRows = await this._db
-			.select({
-				name: liteLLM_PrivacyRedactionEvents.client,
-				occurrences: sql<string>`coalesce(sum(${liteLLM_PrivacyRedactionEvents.occurrences}), 0)`,
-				requests: sql<string>`count(*)`,
-			})
-			.from(liteLLM_PrivacyRedactionEvents)
-			.where(gte(liteLLM_PrivacyRedactionEvents.created_at, since))
-			.groupBy(liteLLM_PrivacyRedactionEvents.client)
-			.orderBy(desc(sql`sum(${liteLLM_PrivacyRedactionEvents.occurrences})`));
-
-		const byProviderRows = await this._db
-			.select({
-				name: liteLLM_PrivacyRedactionEvents.provider,
-				occurrences: sql<string>`coalesce(sum(${liteLLM_PrivacyRedactionEvents.occurrences}), 0)`,
-				requests: sql<string>`count(*)`,
-			})
-			.from(liteLLM_PrivacyRedactionEvents)
-			.where(gte(liteLLM_PrivacyRedactionEvents.created_at, since))
-			.groupBy(liteLLM_PrivacyRedactionEvents.provider)
-			.orderBy(desc(sql`sum(${liteLLM_PrivacyRedactionEvents.occurrences})`));
-
-		const byKindRows = await this._db
-			.select({
-				name: liteLLM_PrivacyRedactionValues.kind,
-				occurrences: sql<string>`coalesce(sum(${liteLLM_PrivacyRedactionValues.occurrences}), 0)`,
-				values: sql<string>`count(distinct ${liteLLM_PrivacyRedactionValues.value_hash})`,
-			})
-			.from(liteLLM_PrivacyRedactionValues)
-			.where(gte(liteLLM_PrivacyRedactionValues.created_at, since))
-			.groupBy(liteLLM_PrivacyRedactionValues.kind)
-			.orderBy(desc(sql`sum(${liteLLM_PrivacyRedactionValues.occurrences})`));
-
-		const seriesRows = await this._db
-			.select({
-				bucket: sql<string>`to_char(date_trunc('hour', ${liteLLM_PrivacyRedactionEvents.created_at}), 'YYYY-MM-DD HH24:00')`,
-				occurrences: sql<string>`coalesce(sum(${liteLLM_PrivacyRedactionEvents.occurrences}), 0)`,
-			})
-			.from(liteLLM_PrivacyRedactionEvents)
-			.where(gte(liteLLM_PrivacyRedactionEvents.created_at, new Date(Date.now() - 24 * 60 * 60 * 1_000)))
-			.groupBy(sql`date_trunc('hour', ${liteLLM_PrivacyRedactionEvents.created_at})`)
-			.orderBy(sql`date_trunc('hour', ${liteLLM_PrivacyRedactionEvents.created_at})`);
+		// events 和 values 各用一次 GROUPING SETS 同时算出总量与两个维度的分布，
+		// series 只依赖 events 的最近 24 小时。三条查询互不依赖，并发执行。
+		const [eventResult, valueResult, seriesRows] = await Promise.all([
+			this._db.execute(sql`
+				SELECT
+					CASE
+						WHEN GROUPING(${liteLLM_PrivacyRedactionEvents.client}) = 1
+							AND GROUPING(${liteLLM_PrivacyRedactionEvents.provider}) = 1 THEN 'total'
+						WHEN GROUPING(${liteLLM_PrivacyRedactionEvents.client}) = 0 THEN 'client'
+						ELSE 'provider'
+					END AS scope,
+					CASE
+						WHEN GROUPING(${liteLLM_PrivacyRedactionEvents.client}) = 0 THEN ${liteLLM_PrivacyRedactionEvents.client}
+						WHEN GROUPING(${liteLLM_PrivacyRedactionEvents.provider}) = 0 THEN ${liteLLM_PrivacyRedactionEvents.provider}
+						ELSE ''
+					END AS name,
+					COALESCE(SUM(${liteLLM_PrivacyRedactionEvents.occurrences}), 0)::text AS occurrences,
+					COUNT(*)::text AS requests,
+					COALESCE(SUM(${liteLLM_PrivacyRedactionEvents.unresolved}), 0)::text AS unresolved
+				FROM ${liteLLM_PrivacyRedactionEvents}
+				WHERE ${liteLLM_PrivacyRedactionEvents.created_at} >= ${since}
+				GROUP BY GROUPING SETS (
+					(${liteLLM_PrivacyRedactionEvents.client}),
+					(${liteLLM_PrivacyRedactionEvents.provider}),
+					()
+				)
+			`),
+			this._db.execute(sql`
+				SELECT
+					CASE WHEN GROUPING(${liteLLM_PrivacyRedactionValues.kind}) = 1 THEN 'total' ELSE 'kind' END AS scope,
+					CASE WHEN GROUPING(${liteLLM_PrivacyRedactionValues.kind}) = 1 THEN '' ELSE ${liteLLM_PrivacyRedactionValues.kind} END AS name,
+					COALESCE(SUM(${liteLLM_PrivacyRedactionValues.occurrences}), 0)::text AS occurrences,
+					CASE
+						WHEN GROUPING(${liteLLM_PrivacyRedactionValues.kind}) = 1
+							THEN COUNT(DISTINCT (${liteLLM_PrivacyRedactionValues.kind}, ${liteLLM_PrivacyRedactionValues.value_hash}))
+						ELSE COUNT(DISTINCT ${liteLLM_PrivacyRedactionValues.value_hash})
+					END::text AS values
+				FROM ${liteLLM_PrivacyRedactionValues}
+				WHERE ${liteLLM_PrivacyRedactionValues.created_at} >= ${since}
+				GROUP BY GROUPING SETS (
+					(${liteLLM_PrivacyRedactionValues.kind}),
+					()
+				)
+			`),
+			this._db
+				.select({
+					bucket: sql<string>`to_char(date_trunc('hour', ${liteLLM_PrivacyRedactionEvents.created_at}), 'YYYY-MM-DD HH24:00')`,
+					occurrences: sql<string>`coalesce(sum(${liteLLM_PrivacyRedactionEvents.occurrences}), 0)`,
+				})
+				.from(liteLLM_PrivacyRedactionEvents)
+				.where(gte(liteLLM_PrivacyRedactionEvents.created_at, new Date(Date.now() - 24 * 60 * 60 * 1_000)))
+				.groupBy(sql`date_trunc('hour', ${liteLLM_PrivacyRedactionEvents.created_at})`)
+				.orderBy(sql`date_trunc('hour', ${liteLLM_PrivacyRedactionEvents.created_at})`),
+		]);
+		const eventRows = (eventResult as unknown as { rows: Array<Record<string, unknown>> }).rows;
+		const valueRows = (valueResult as unknown as { rows: Array<Record<string, unknown>> }).rows;
+		const totalEvent = eventRows.find((row) => row.scope === "total");
+		const totalValue = valueRows.find((row) => row.scope === "total");
+		const byOccurrences = (a: Record<string, unknown>, b: Record<string, unknown>): number =>
+			toNumber(b.occurrences) - toNumber(a.occurrences);
 
 		return {
 			summary: {
-				occurrences: toNumber(summary?.occurrences),
-				distinctValues: toNumber(distinct?.distinctValues),
-				requests: toNumber(summary?.requests),
-				unresolved: toNumber(summary?.unresolved),
+				occurrences: toNumber(totalEvent?.occurrences),
+				distinctValues: toNumber(totalValue?.values),
+				requests: toNumber(totalEvent?.requests),
+				unresolved: toNumber(totalEvent?.unresolved),
 			},
-			byClient: byClientRows.map((row) => ({
-				name: toText(row.name),
-				occurrences: toNumber(row.occurrences),
-				requests: toNumber(row.requests),
-			})),
-			byProvider: byProviderRows.map((row) => ({
-				name: toText(row.name),
-				occurrences: toNumber(row.occurrences),
-				requests: toNumber(row.requests),
-			})),
-			byKind: byKindRows.map((row) => ({
-				name: toText(row.name),
-				occurrences: toNumber(row.occurrences),
-				values: toNumber(row.values),
-			})),
+			byClient: eventRows
+				.filter((row) => row.scope === "client")
+				.sort(byOccurrences)
+				.map((row) => ({
+					name: toText(row.name),
+					occurrences: toNumber(row.occurrences),
+					requests: toNumber(row.requests),
+				})),
+			byProvider: eventRows
+				.filter((row) => row.scope === "provider")
+				.sort(byOccurrences)
+				.map((row) => ({
+					name: toText(row.name),
+					occurrences: toNumber(row.occurrences),
+					requests: toNumber(row.requests),
+				})),
+			byKind: valueRows
+				.filter((row) => row.scope === "kind")
+				.sort(byOccurrences)
+				.map((row) => ({
+					name: toText(row.name),
+					occurrences: toNumber(row.occurrences),
+					values: toNumber(row.values),
+				})),
 			series: seriesRows.map((row) => ({
 				bucket: toText(row.bucket),
 				occurrences: toNumber(row.occurrences),

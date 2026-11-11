@@ -162,11 +162,17 @@ export function createPrivacyStore(api: PrivacyApi = privacyApi) {
 		state.loading = state.overview === null;
 		state.error = null;
 		try {
-			const [overview, settings] = await Promise.all([api.overview(state.rangeDays, request.signal), api.settings(request.signal)]);
+			// 概览、配置和首个列表页互不依赖，同时发出请求，避免慢概览把列表串行拖住。
+			const overviewPromise = api.overview(state.rangeDays, request.signal).then((overview) => {
+				if (!disposed && current === generation) state.overview = overview;
+				return overview;
+			});
+			const settingsPromise = api.settings(request.signal).then((settings) => {
+				if (!disposed && current === generation) state.settings = settings;
+				return settings;
+			});
+			await Promise.all([overviewPromise, settingsPromise, fetchActivePage(0, current, request.signal)]);
 			if (disposed || current !== generation) return;
-			state.overview = overview;
-			state.settings = settings;
-			await fetchActivePage(0, current, request.signal);
 			state.loading = false;
 		} catch (error: unknown) {
 			if (disposed || current !== generation || request.signal.aborted) return;

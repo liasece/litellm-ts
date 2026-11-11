@@ -93,6 +93,7 @@ describe("privacy list filtering and sorting", () => {
 		const store = createPrivacyStore(api);
 		store.initialize();
 		await waitFor(() => requestQueries.length === 1);
+		await waitFor(() => !store.state.loading);
 		expect(requestQueries[0]).toMatchObject({ days: 7, limit: 50, offset: 0, sort: "created", order: "desc" });
 
 		await store.loadMore();
@@ -131,5 +132,30 @@ describe("privacy list filtering and sorting", () => {
 		expect(valueQueries[1]).toMatchObject({ offset: 0, kind: "EMAIL", sort: "occurrences", order: "desc" });
 		expect(store.state.valueFilters).toHaveLength(1);
 		expect(store.state.requestFilters).toHaveLength(0);
+	});
+
+	it("概览未返回时先加载列表，避免慢概览串行拖住表格", async () => {
+		const { api } = makeApi();
+		let resolveOverview: ((value: PrivacyOverview) => void) | undefined;
+		let resolveRequest: ((value: { rows: PrivacyRequestRow[]; hasMore: boolean }) => void) | undefined;
+		const slowApi: PrivacyApi = {
+			...api,
+			overview: () =>
+				new Promise<PrivacyOverview>((resolve) => {
+					resolveOverview = resolve;
+				}),
+			requests: () =>
+				new Promise<{ rows: PrivacyRequestRow[]; hasMore: boolean }>((resolve) => {
+					resolveRequest = resolve;
+				}),
+		};
+		const store = createPrivacyStore(slowApi);
+		store.initialize();
+		await waitFor(() => resolveRequest !== undefined);
+		resolveRequest?.({ rows: [requestRow], hasMore: false });
+		await waitFor(() => store.state.requests.length === 1);
+		expect(store.state.overview).toBeNull();
+		resolveOverview?.(overview);
+		await waitFor(() => store.state.overview !== null);
 	});
 });
