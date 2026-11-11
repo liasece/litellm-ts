@@ -5,6 +5,7 @@
  * { error: { message, type, param, code } }（code 为状态码字符串）
  * - ApiError / LitellmError → 经 mapToApiError 映射对应状态码
  * - SyntaxError (JSON parse failure) → 400 invalid_request_error
+ * - 客户端在请求体读完前断开 → 400 invalid_request_error，仅 warn 记录（不是服务端缺陷）
  * - 其他错误 → 500 + 日志记录
  */
 
@@ -15,6 +16,38 @@ import { sendProtocolError } from "../core/api/ProtocolErrorResponse";
 import { createModuleLogger } from "../core/utils/logger";
 
 const logger = createModuleLogger("ErrorHandler");
+
+/** body-parser / raw-body 在客户端中断请求体时写入错误的 type 字段。 */
+const REQUEST_ABORTED_ERROR_TYPE = "request.aborted";
+
+/** 连接级中断错误的典型消息：raw-body 的 "request aborted"，Node 流的 "aborted" / "Premature close"。 */
+const ABORTED_MESSAGE_PATTERN = /^(?:request aborted|aborted|premature close|socket hang up)$/i;
+
+/**
+ * 判断异常是否来自「客户端在请求体传完之前断开」。
+ *
+ * raw-body 的 onAborted 会抛出 `BadRequestError: request aborted`
+ * （status 400、code ECONNABORTED、type request.aborted）：请求还没被处理，
+ * 断开方是客户端，按 500 + 堆栈记录会把每次客户端取消/超时都写成服务端错误。
+ * 只有消息形似中断、且请求连接确实已中断时才算，避免把恰好同时发生的真实故障降级；
+ * 业务异常（ApiError）有自己的状态语义，不参与改判。
+ * @param err - 捕获到的异常
+ * @param req - 当前请求；连接级中断时 Node 会把 req.aborted 置为 true
+ */
+export function isRequestAbortedError(err: unknown, req: Request): boolean {
+	if (err instanceof ApiError) {
+		return false;
+	}
+	const candidate = (typeof err === "object" && err !== null ? err : {}) as { type?: unknown; message?: unknown };
+	if (candidate.type === REQUEST_ABORTED_ERROR_TYPE) {
+		return true;
+	}
+	const message = typeof candidate.message === "string" ? candidate.message : "";
+	if (!ABORTED_MESSAGE_PATTERN.test(message)) {
+		return false;
+	}
+	return (req as Request & { aborted?: boolean }).aborted === true;
+}
 
 /**
  * Express 全局错误处理中间件
@@ -28,8 +61,15 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
 	// JSON 解析错误检测
 	const bodyParserErr = err as Error & { status?: number; body?: unknown };
 	const isJsonParseError = err instanceof SyntaxError && "body" in bodyParserErr && bodyParserErr.status === 400;
+	const isClientAbort = isRequestAbortedError(err, req);
 
-	if (isJsonParseError) {
+	if (isClientAbort) {
+		logger.warn("客户端在请求体传输中断开", {
+			method: req.method,
+			url: req.originalUrl,
+			error: err.message,
+		});
+	} else if (isJsonParseError) {
 		logger.warn("请求体 JSON 解析失败", {
 			method: req.method,
 			url: req.originalUrl,
@@ -60,6 +100,25 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
 	}
 
 	if (res.headersSent) {
+		return;
+	}
+
+	if (isClientAbort) {
+		// 客户端已断开：套接字通常也写不回去了，这里只把状态码对齐到 400，
+		// 让访问日志与指标不再把「客户端取消」记成 200/500；连接仍可写时才真正回包。
+		res.statusCode = HTTP_STATUS.BAD_REQUEST;
+		if (!res.writableEnded && !res.destroyed) {
+			sendProtocolError(
+				req,
+				res,
+				new ApiError(
+					HTTP_STATUS.BAD_REQUEST,
+					"Client closed request before the request body was fully received",
+					"invalid_request_error",
+					"request_body",
+				),
+			);
+		}
 		return;
 	}
 

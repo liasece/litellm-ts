@@ -24,8 +24,14 @@ import {
 
 const logger = createModuleLogger("Observability:Database");
 
-/** 超过该耗时的语句计入慢语句并打日志（毫秒）。 */
-const SLOW_QUERY_THRESHOLD_MS = 200;
+/**
+ * 超过该耗时的语句计入慢语句并打日志（毫秒）。
+ *
+ * 取 800ms 而不是 200ms：Dashboard 日志页每次翻页都会跑 `COUNT(*) … key_alias LIKE`，
+ * 在 91 万行的 LiteLLM_SpendLogs 上常态 300ms 左右，200ms 阈值等于给每次翻页各记一条 warn。
+ * 直方图与 p95/p99 仍按全部语句统计，调阈值只影响日志噪音。
+ */
+const SLOW_QUERY_THRESHOLD_MS = 800;
 
 /** 形态指纹最大长度。 */
 const MAX_FINGERPRINT_LENGTH = 160;

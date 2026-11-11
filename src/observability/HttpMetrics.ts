@@ -41,8 +41,14 @@ const logger = createModuleLogger("Observability:HTTP");
 /** 非推理请求超过该耗时记为慢请求（毫秒）。 */
 export const SLOW_REQUEST_MS = 2_000;
 
-/** 推理请求首字节超过该耗时记为慢请求（毫秒）：上游首包慢会直接拖垮客户端体验。 */
-export const SLOW_LLM_TTFB_MS = 3_000;
+/**
+ * 推理请求首字节超过该耗时记为慢请求（毫秒）：上游首包慢会直接拖垮客户端体验。
+ *
+ * 取 10s 而不是 3s：主力上游（commandcode/deepseek-v4.1-flash）首包常态就在 3~6s，
+ * 3s 阈值让一半以上的成功请求都记一条 warn，真正需要人看的长尾（>30s）反而被淹没。
+ * 分位与明细仍按全部请求记录，调阈值只影响日志噪音。
+ */
+export const SLOW_LLM_TTFB_MS = 10_000;
 
 /** 推理请求总耗时超过该值记为慢请求（毫秒）。 */
 export const SLOW_LLM_TOTAL_MS = 120_000;

@@ -38,6 +38,8 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 ```
 
 `/metrics/summary` 的窗口统计来自内存里的 5 分钟环形分片，不查库，因此可以在事故现场高频调用。
+`/metrics/slow` 与慢请求日志共用同一个判定（首字 > 10s、总耗时 > 120s、其他请求 > 2s，或失败），
+阈值以下的请求只进入分位统计，不进明细。
 
 ## 请求时间轴
 
@@ -101,7 +103,7 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 | `litellm_db_query_duration_seconds` | histogram | `op` | 语句耗时 |
 | `litellm_db_pool_wait_seconds` | histogram | — | 从池里取连接的等待 |
 | `litellm_db_pool_connections` | gauge | `state` | `total` / `idle` / `waiting` / `max` |
-| `litellm_db_slow_queries_total` | counter | `op` | 超过 200ms 的语句 |
+| `litellm_db_slow_queries_total` | counter | `op` | 超过 800ms 的语句 |
 
 ### 进程
 
@@ -130,11 +132,12 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 
 | 级别 | 触发条件 | 关键字段 |
 | --- | --- | --- |
-| `warn` | 推理请求首字 > 3s 或总耗时 > 120s；其他请求总耗时 > 2s | `totalMs` `ttfbMs` `preUpstreamMs` `upstreamHeadersMs` `proxyOverheadMs` `streamMs` `dbQueries` `attempts` |
+| `warn` | 推理请求首字 > 10s 或总耗时 > 120s；其他请求总耗时 > 2s | `totalMs` `ttfbMs` `preUpstreamMs` `upstreamHeadersMs` `proxyOverheadMs` `streamMs` `dbQueries` `attempts` |
 | `error` | 推理路径 4xx/5xx 且未断开 | 同上 |
-| `warn` | 语句 > 200ms | `op` `durationMs` `sql`（形态指纹：字面量与参数替换成 `?`，不泄露内容） |
+| `warn` | 语句 > 800ms | `op` `durationMs` `sql`（形态指纹：字面量与参数替换成 `?`，不泄露内容） |
 | `warn` | 记账 > 1.5s | `durationMs` `route` `model` |
 | `warn` | 事件循环单次停顿 > 200ms | `maxMs` `p99Ms` |
+| `warn` | 客户端在请求体读完前断开 | `method` `url` `error` |
 | `error` | 连接池空闲连接异常 | `error` |
 | `debug` | 每个请求（仅 debug 级别开启时） | 完整阶段分解 |
 
@@ -154,6 +157,9 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 
 ## 已知边界
 
+- **客户端中断的记账口径**：请求体还没读完就断开（客户端取消、关页面、网络中断）由
+  `ErrorHandler` 按 400 `invalid_request_error` 收口，只记一条 `warn`（不带堆栈），不再以
+  500 + 堆栈进入服务端错误；响应已经开始写、之后才断开的，仍按推理指标的 `aborted` 记录。
 - **CLIProxy 透传**：直接 pipe 上游字节，没有「上游尝试」记录，因此这类请求的 `provider` 标签是 `unknown`、也没有 `upstream_headers` 指标；首字、总耗时、流时长、数据库与进程指标仍然完整。
 - **首字口径**：`llm.ttfb_ms` 取「上游开始输出」的时刻，而不是客户端的第一个字节。原因见线上实测——`/responses` 会在
   调用上游前先给客户端写 4KB 填充帧与本地合成事件（约 150ms 到达），而上游真正开始产出在 3s 左右；若按第一个字节算首字，
