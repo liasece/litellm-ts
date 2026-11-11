@@ -130,3 +130,77 @@ describe("negotiated discovery and access scope", () => {
 		expect(legacy.data.map((model) => model.id)).not.toContain("hidden");
 	});
 });
+
+describe("OpenAI model shape and capacity extensions", () => {
+	it("emits standard Model fields plus stable capacity metadata", async () => {
+		const router = new Router({
+			model_list: [
+				{
+					model_name: "capacity-model",
+					litellm_params: { model: "openai/gpt-capacity" },
+					model_info: {
+						created: 1_700_000_000,
+						shutdown_date: "2026-10-23",
+						max_input_tokens: 128_000,
+						max_output_tokens: 16_384,
+					},
+				},
+			],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+		});
+		const controller = new ModelsController(router);
+
+		const first = await controller.listModels();
+		const second = await controller.listModels();
+		expect(first.object).toBe("list");
+		expect(first.data).toHaveLength(1);
+		expect(first.data[0]).toMatchObject({
+			id: "capacity-model",
+			object: "model",
+			created: 1_700_000_000,
+			owned_by: "openai",
+			shutdown_date: "2026-10-23",
+			context_window: 128_000,
+			max_output_tokens: 16_384,
+		});
+		expect(second.data[0]?.created).toBe(first.data[0]?.created);
+
+		const detail = await controller.getModel({ params: { model_id: "capacity-model" } } as never);
+		expect(detail).toMatchObject({
+			id: "capacity-model",
+			object: "model",
+			created: 1_700_000_000,
+			owned_by: "openai",
+			shutdown_date: "2026-10-23",
+			context_window: 128_000,
+			max_output_tokens: 16_384,
+		});
+	});
+
+	it("keeps created stable and reports null extensions when metadata is absent", async () => {
+		const router = new Router({
+			model_list: [
+				{
+					model_name: "unknown-model",
+					litellm_params: { model: "unknown/unknown-model" },
+				},
+			],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+		});
+		const controller = new ModelsController(router);
+
+		const first = await controller.listModels();
+		const second = await controller.listModels();
+		expect(first.data[0]?.created).toBe(second.data[0]?.created);
+		expect(first.data[0]).toMatchObject({
+			id: "unknown-model",
+			object: "model",
+			owned_by: "unknown",
+			shutdown_date: null,
+			context_window: null,
+			max_output_tokens: null,
+		});
+	});
+});
