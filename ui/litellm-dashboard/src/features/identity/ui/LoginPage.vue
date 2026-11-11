@@ -7,6 +7,7 @@ import { createLoginPageStore } from "../stores/LoginPageStore";
 import "./IdentityStyles.css";
 import IdentityPasswordToggle from "./IdentityPasswordToggle.vue";
 import IdentityInfoIcon from "./IdentityInfoIcon.vue";
+import ApplicationBrandLogo from "../../application/ui/ApplicationBrandLogo.vue";
 
 const auth = useAuthenticationStore();
 const router = useRouter();
@@ -25,13 +26,15 @@ onUnmounted(page.dispose);
 
 <template>
 	<div v-if="auth.state.loading || state.loading" class="identity-loading" role="status" aria-label="Loading">
-		<div class="identity-loading-brand">🚅 LiteLLM</div>
+		<div class="identity-loading-brand"><ApplicationBrandLogo class="identity-loading-logo" /></div>
 		<div class="identity-loading-progress"><span class="identity-spinner identity-spinner--small"></span><span>Loading...</span></div>
 	</div>
 	<div v-else class="identity-login-background">
 		<section class="identity-login-card">
 			<div class="identity-login-stack">
-				<div class="identity-center"><h2 class="identity-brand">🚅 LiteLLM</h2></div>
+				<div class="identity-center">
+					<h2 class="identity-brand"><ApplicationBrandLogo class="identity-brand-logo" /></h2>
+				</div>
 				<template v-if="auth.state.config?.admin_ui_disabled">
 					<div class="identity-alert identity-alert--warning">
 						<IdentityInfoIcon tone="warning" filled />

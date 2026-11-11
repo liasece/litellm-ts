@@ -37,10 +37,17 @@
 	width: 100%;
 }
 .identity-brand {
+	display: flex;
 	margin: 0 0 15px;
-	font-size: 30px;
-	font-weight: 600;
-	line-height: 38px;
+	justify-content: center;
+}
+.identity-brand-logo {
+	height: 40px;
+	width: auto;
+}
+.identity-loading-logo {
+	height: 24px;
+	width: auto;
 }
 .identity-login-card h3,
 .identity-onboarding-card h3 {

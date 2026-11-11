@@ -6,7 +6,9 @@
 		<title>LiteLLM Dashboard</title>
 		<base data-ui-base href="/ui/" />
 		<script src="./ui-base.js"></script>
-		<link rel="icon" href="favicon.ico" />
+		<!-- Hash the public icons so updated artwork invalidates browser caches; the public copies still serve /favicon.ico. -->
+		<link rel="icon" href="./public/favicon.ico" />
+		<link rel="apple-touch-icon" sizes="180x180" href="./public/apple-touch-icon.png" />
 	</head>
 	<body>
 		<div id="app"></div>

@@ -28,13 +28,7 @@ export function createApplicationStore() {
 		if (settings.status === "fulfilled") state.settings = settings.value;
 		if (organizations.status === "fulfilled") state.organizations = organizations.value;
 		if (teams.status === "fulfilled") state.teams = teams.value;
-		if (theme.status === "fulfilled") {
-			state.theme = theme.value;
-			if (theme.value.favicon_url) {
-				const icon = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-				if (icon) icon.href = theme.value.favicon_url;
-			}
-		}
+		if (theme.status === "fulfilled") state.theme = theme.value;
 		if (proxy.status === "fulfilled") state.proxySettings = proxy.value;
 		state.errors = results
 			.filter((result): result is PromiseRejectedResult => result.status === "rejected")

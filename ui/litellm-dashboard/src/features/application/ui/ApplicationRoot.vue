@@ -8,10 +8,12 @@ import { getServerRootPath } from "../../platform/api/HttpApiClient";
 import { applicationStoreKey, createApplicationStore } from "../stores/ApplicationStore";
 import { dashboardPageFromUrl } from "../logic/NavigationLogic";
 import { isRegisteredPage, pageComponent } from "../data/PageRegistry";
+import ApplicationBrandLogo from "./ApplicationBrandLogo.vue";
 import ApplicationYamlConfigDiff from "./ApplicationYamlConfigDiffComponent.vue";
 import ApplicationShell from "./ApplicationShell.vue";
 import NotificationLayerComponent from "../../notifications/ui/NotificationLayerComponent.vue";
 import MessageLayerComponent from "../../notifications/ui/MessageLayerComponent.vue";
+import { applyConfiguredThemeFavicon } from "../logic/ThemeFaviconLogic";
 import "./ApplicationShellStyles.css";
 
 const auth = createAuthenticationStore();
@@ -64,7 +66,10 @@ watch([() => auth.state.loading, () => auth.isAuthorized.value], ([loading, auth
 		window.location.replace(destination);
 });
 onMounted(() => {
-	void auth.initialize();
+	void auth
+		.initialize()
+		.catch(() => undefined)
+		.then(() => applyConfiguredThemeFavicon());
 });
 onUnmounted(() => {
 	auth.dispose();
@@ -75,7 +80,7 @@ onUnmounted(() => {
 
 <template>
 	<div v-if="auth.state.loading" class="application-loading-screen" role="status">
-		<div class="application-loading-title">🚅 LiteLLM</div>
+		<div class="application-loading-title"><ApplicationBrandLogo class="application-loading-logo" /></div>
 		<span>Loading...</span>
 	</div>
 	<component :is="view" v-else-if="standalone && view" />
@@ -100,8 +105,11 @@ onUnmounted(() => {
 	font-size: 14px;
 }
 .application-loading-title {
-	font-size: 30px;
-	font-weight: 700;
-	color: #111827;
+	display: flex;
+	justify-content: center;
+}
+.application-loading-logo {
+	height: 48px;
+	width: auto;
 }
 </style>

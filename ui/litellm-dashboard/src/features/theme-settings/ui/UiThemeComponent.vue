@@ -5,6 +5,7 @@ import UiInput from "../../platform/ui/UiInput.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
 import { themeSettingsApi } from "../api/ThemeSettingsApi";
+import { applyThemeFavicon } from "../../application/logic/ThemeFaviconLogic";
 import notification from "../../notifications/logic/NotificationManager";
 import "./UiThemeStyles.css";
 const application = useApplicationStore(),
@@ -13,16 +14,7 @@ const application = useApplicationStore(),
 	pending = ref(false);
 function preview() {
 	application.state.theme = { logo_url: logo.value || null, favicon_url: favicon.value || null };
-	if (favicon.value) {
-		const links = document.querySelectorAll<HTMLLinkElement>("link[rel*='icon']");
-		if (links.length) links.forEach((link) => (link.href = favicon.value));
-		else {
-			const link = document.createElement("link");
-			link.rel = "icon";
-			link.href = favicon.value;
-			document.head.append(link);
-		}
-	}
+	applyThemeFavicon(favicon.value);
 }
 function input(type: "logo" | "favicon", value: unknown) {
 	if (type === "logo") logo.value = String(value ?? "");

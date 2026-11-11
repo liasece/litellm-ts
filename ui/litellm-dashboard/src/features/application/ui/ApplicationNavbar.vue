@@ -7,19 +7,13 @@ import UiSelect from "../../platform/ui/UiSelect.vue";
 import { createSessionNavigation } from "../logic/ApplicationSessionNavigationLogic";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import { useApplicationStore } from "../stores/ApplicationStore";
+import ApplicationBrandLogo from "./ApplicationBrandLogo.vue";
 import ApplicationUserMenu from "./ApplicationUserMenu.vue";
 
 defineProps<{ collapsed: boolean; mobileOpen: boolean; publicPage?: boolean }>();
 defineEmits<{ toggleSidebar: []; toggleMobile: [] }>();
 const auth = useAuthenticationStore();
 const application = useApplicationStore();
-
-const logo = computed(() => application.state.theme.logo_url || getApiBaseUrl() + "/get_image");
-const fallbackLogo = computed(() => getApiBaseUrl() + "/get_image");
-function logoError(event: Event): void {
-	const image = event.target as HTMLImageElement;
-	if (image.getAttribute("src") !== fallbackLogo.value) image.src = fallbackLogo.value;
-}
 const navigation = createSessionNavigation({
 	logout: auth.logout,
 	disconnectWorker: auth.disconnectWorker,
@@ -73,8 +67,7 @@ function switchWorker(value: unknown): void {
 				</button>
 				<a :href="getApiBaseUrl() || '/'" class="application-navbar-brand"
 					><span class="application-navbar-brand-relative"
-						><span class="application-navbar-brand-image-box"
-							><img :src="logo" alt="LiteLLM Brand" @error="logoError" /></span></span
+						><span class="application-navbar-brand-image-box"><ApplicationBrandLogo /></span></span
 				></a>
 			</div>
 			<div class="application-navbar-actions">
