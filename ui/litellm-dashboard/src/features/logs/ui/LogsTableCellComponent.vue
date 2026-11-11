@@ -16,6 +16,7 @@ import {
 	outputTps,
 	record,
 	tokenCostBreakdown,
+	tokenDataPending,
 	tokenMetrics,
 	ttftMs,
 } from "../logic/LogsPresentationLogic";
@@ -33,6 +34,7 @@ const group = computed(() => sessionGroupRef(props.log));
 const costs = computed(() => tokenCostBreakdown(props.log));
 const model = computed(() => modelIdentity(props.log));
 const tokens = computed(() => tokenMetrics(props.log));
+const pendingTokens = computed(() => tokenDataPending(props.log));
 const ttft = computed(() => ttftMs(props.log));
 const tps = computed(() => outputTps(props.log));
 const route = computed(() =>
@@ -198,7 +200,10 @@ const costFields = computed(() => [
 		</UiPopover>
 	</div>
 	<template v-else-if="column === 'total_tokens'">
-		<UiTooltip :content="tokenTooltip"
+		<UiTooltip v-if="pendingTokens" :content="'请求进行中，暂无 token 数据'"
+			><span class="logs-tokens logs-mono" data-testid="tokens-pending">-</span></UiTooltip
+		>
+		<UiTooltip v-else :content="tokenTooltip"
 			><span
 				class="logs-tokens logs-mono"
 				:aria-label="'Cache read ' + tokens.cacheRead + ', input ' + tokens.input + ', output ' + tokens.output"

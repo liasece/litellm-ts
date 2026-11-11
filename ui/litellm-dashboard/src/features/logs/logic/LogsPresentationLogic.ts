@@ -26,7 +26,13 @@ export function cacheTokens(metadata: LogEntry["metadata"], creation = false): n
 	}
 	return 0;
 }
-export function tokenMetrics(log: LogEntry) {
+export interface TokenMetrics {
+	cacheRead: number;
+	creation: number;
+	input: number;
+	output: number;
+}
+export function tokenMetrics(log: LogEntry): TokenMetrics {
 	const safe = (value: unknown) => {
 		const n = Number(value ?? 0);
 		return Number.isFinite(n) ? Math.max(n, 0) : 0;
@@ -34,6 +40,15 @@ export function tokenMetrics(log: LogEntry) {
 	const cacheRead = cacheTokens(log.metadata),
 		creation = cacheTokens(log.metadata, true);
 	return { cacheRead, creation, input: Math.max(safe(log.prompt_tokens) - cacheRead, 0), output: safe(log.completion_tokens) };
+}
+/**
+ * 进行中的请求还没有 usage，列表投影里的 token 字段只是占位 0。
+ * 三段用量都为 0 时视为无数据，避免把占位值当成实测用量展示。
+ * @param log - 待展示的日志行
+ */
+export function tokenDataPending(log: LogEntry): boolean {
+	const metrics = tokenMetrics(log);
+	return isInProgressLog(log) && metrics.cacheRead === 0 && metrics.input === 0 && metrics.output === 0;
 }
 export function localLogTime(value: string): string {
 	try {

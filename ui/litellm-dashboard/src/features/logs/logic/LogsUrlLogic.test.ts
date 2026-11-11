@@ -14,7 +14,8 @@ const createState = (): LogsUrlState => ({
 	startTime: defaults.startTime,
 	endTime: defaults.endTime,
 	isCustomDate: false,
-	selectedTimeInterval: { value: 24, unit: "hours" },
+	// 默认档位是 All Time（不写时间参数，读回时也是不过滤）。
+	selectedTimeInterval: { value: 0, unit: "all" },
 	sortBy: "startTime",
 	sortOrder: "desc",
 });
@@ -48,6 +49,21 @@ describe("Logs URL state", () => {
 		expect(restored.pageSize).toBe(500);
 		expect(restored.sortBy).toBe("spend");
 		expect(restored.sortOrder).toBe("asc");
+	});
+
+	it("All Time 是默认档位：没有时间参数即不过滤，选中预设区间后才写回 URL", () => {
+		const restored = readLogsUrlState("page=logs", defaults);
+		expect(restored.selectedTimeInterval).toEqual({ value: 0, unit: "all" });
+		// startTime 只作为自定义输入框的预填值保留，不参与查询。
+		expect(restored.startTime).toBe(defaults.startTime);
+
+		const hourly = createState();
+		hourly.selectedTimeInterval = { value: 24, unit: "hours" };
+		hourly.startTime = "2026-07-30T12:00";
+		const params = writeLogsUrlState(new URLSearchParams("page=logs"), hourly);
+		expect(params.get("logs_time_value")).toBe("24");
+		expect(params.get("logs_time_unit")).toBe("hours");
+		expect(readLogsUrlState(params.toString(), defaults).selectedTimeInterval).toEqual({ value: 24, unit: "hours" });
 	});
 
 	it("restores a custom time range and discards malformed URL state", () => {

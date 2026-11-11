@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildModelResolutionLines, durationMs, modelIdentity, outputTps, tokenCostBreakdown, tokenMetrics } from "./LogsPresentationLogic";
+import {
+	buildModelResolutionLines,
+	durationMs,
+	modelIdentity,
+	outputTps,
+	tokenCostBreakdown,
+	tokenDataPending,
+	tokenMetrics,
+} from "./LogsPresentationLogic";
 import type { LogEntry } from "../support/LogsModels";
 const log = (data: Partial<LogEntry>): LogEntry => ({ request_id: "fixture", startTime: "2026-11-07T00:00:00Z", ...data });
 describe("request log presentation contracts", () => {
@@ -12,6 +20,13 @@ describe("request log presentation contracts", () => {
 			}),
 		);
 		expect(value).toEqual({ cacheRead: 600, creation: 100, input: 400, output: 0 });
+	});
+	it("shows no token data while a request is still in progress", () => {
+		const pending = log({ status: "in_progress", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+		expect(tokenDataPending(pending)).toBe(true);
+		expect(tokenDataPending({ ...pending, metadata: { status: "in_progress" } })).toBe(true);
+		expect(tokenDataPending({ ...pending, prompt_tokens: 320 })).toBe(false);
+		expect(tokenDataPending(log({ prompt_tokens: 0, completion_tokens: 0 }))).toBe(false);
 	});
 	it("uses the complete request duration for TPS and hides small outputs", () => {
 		expect(

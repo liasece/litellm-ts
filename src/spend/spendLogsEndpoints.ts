@@ -251,12 +251,12 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// ========== /spend/logs/ui & /spend/logs/v2 ==========
 	// 形状契约（对齐 Python ui_view_spend_logs）：
 	//   { data: Row[], total, page, page_size, total_pages, (ui-only) session_total_count? }
-	// 必填：start_date；UI 路径日期格式为 `YYYY-MM-DD HH:MM:SS`，
-	// v2 路径额外接受 `YYYY-MM-DD`。
-	// `/spend/logs/ui` 的 end_date 可选：预设区间（Last 15 Minutes…Last 7 Days）的上界
-	// 恒为「现在」，客户端只能给出整秒，永远切掉当前这一秒的毫秒部分，刚注册的在途行
-	// 因此不可见（表现为 Live Tail 要等上游首字节才刷出行）。省略时按服务端 now 补齐，
-	// 精确到毫秒且不受浏览器时钟影响；v2 保持与 Python 一致，两个日期都必填。
+	// UI 路径日期格式为 `YYYY-MM-DD HH:MM:SS`，v2 路径额外接受 `YYYY-MM-DD`。
+	// `/spend/logs/ui` 的两个日期都可选：都缺省表示「不过滤时间」（Dashboard 默认的
+	// All Time），只给 end_date 表示上界，只给 start_date 时上界取服务端 now。
+	// 上界取 now 而不是客户端整秒，是因为预设区间的上界恒为「现在」，客户端补整秒会切掉
+	// 当前这一秒的毫秒部分，刚注册的在途行因此不可见（表现为 Live Tail 要等上游首字节才
+	// 刷出行）；now 也避免受浏览器时钟影响。v2 保持与 Python 一致，两个日期都必填。
 	// 错误不捕获为 fallback，让 registerRoute 返回 4xx/5xx。
 
 	const handleUiSpendLogs = (isV2: boolean) => async (req: { query: Record<string, unknown>; auth?: UserAPIKeyAuth }) => {
@@ -265,25 +265,30 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 		const startDateRaw = req.query.start_date;
 		const endDateRaw = req.query.end_date;
-		if (typeof startDateRaw !== "string" || startDateRaw.length === 0) {
-			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Start date and end date are required");
-		}
+		const startDateProvided = typeof startDateRaw === "string" && startDateRaw.length > 0;
 		const endDateProvided = typeof endDateRaw === "string" && endDateRaw.length > 0;
-		if (!endDateProvided && isV2) {
+		if (isV2 && (!startDateProvided || !endDateProvided)) {
 			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Start date and end date are required");
 		}
 
-		let startDateObj: Date;
-		let endDateObj: Date;
-		try {
-			startDateObj = parseSpendLogDate(startDateRaw, isV2 ? "v2" : "ui");
-		} catch (err) {
-			throw new ApiError(HTTP_STATUS.BAD_REQUEST, (err as Error).message);
+		// UI 路径：两个日期都缺省即「不过滤时间」；只给 start_date 时上界取服务端 now。
+		let startDateObj: Date | undefined;
+		let endDateObj: Date | undefined;
+		if (startDateProvided) {
+			try {
+				startDateObj = parseSpendLogDate(startDateRaw, isV2 ? "v2" : "ui");
+			} catch (err) {
+				throw new ApiError(HTTP_STATUS.BAD_REQUEST, (err as Error).message);
+			}
 		}
-		try {
-			endDateObj = isV2 ? parseSpendLogDate(endDateRaw, "v2") : resolveUiSpendLogEndDate(endDateRaw);
-		} catch (err) {
-			throw new ApiError(HTTP_STATUS.BAD_REQUEST, (err as Error).message);
+		if (endDateProvided) {
+			try {
+				endDateObj = isV2 ? parseSpendLogDate(endDateRaw, "v2") : resolveUiSpendLogEndDate(endDateRaw);
+			} catch (err) {
+				throw new ApiError(HTTP_STATUS.BAD_REQUEST, (err as Error).message);
+			}
+		} else if (startDateProvided && !isV2) {
+			endDateObj = new Date();
 		}
 
 		const sortByRaw = req.query.sort_by;
@@ -345,28 +350,30 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		// Drizzle 会把 NULL 暴露给调用方（前端无需补 0 即可展示）。
 		const visibilityClause = await resolveSpendVisibilityClause(db, auth, effectiveTeamId);
 
-		// where 条件（一次构造复用于 count + select）
-		const spendLogsWhereClause = and(
-			buildUiSpendLogsWhereConditions({
-				startDate: startDateObj,
-				endDate: endDateObj,
-				teamId: effectiveTeamId,
-				apiKey: effectiveApiKey,
-				user: effectiveUserId,
-				requestId: requestIdFilter,
-				model: modelFilter,
-				modelId: modelIdFilter,
-				endUser: endUserFilter,
-				sessionId: sessionIdFilter || undefined,
-				statusFilter: statusFilter,
-				minSpend: minSpendFilter ?? undefined,
-				maxSpend: maxSpendFilter ?? undefined,
-				keyAlias: keyAliasFilter,
-				errorCode: errorCodeFilter,
-				errorMessage: errorMessageFilter,
-			}),
-			visibilityClause,
-		);
+		// where 条件（一次构造复用于 count + select）。可见性裁剪恒有返回值，这里再兜底一次
+		// FALSE，避免条件意外变空时读到全表（All Time 只去掉时间谓词，不放宽可见性）。
+		const spendLogsWhereClause =
+			and(
+				buildUiSpendLogsWhereConditions({
+					startDate: startDateObj,
+					endDate: endDateObj,
+					teamId: effectiveTeamId,
+					apiKey: effectiveApiKey,
+					user: effectiveUserId,
+					requestId: requestIdFilter,
+					model: modelFilter,
+					modelId: modelIdFilter,
+					endUser: endUserFilter,
+					sessionId: sessionIdFilter || undefined,
+					statusFilter: statusFilter,
+					minSpend: minSpendFilter ?? undefined,
+					maxSpend: maxSpendFilter ?? undefined,
+					keyAlias: keyAliasFilter,
+					errorCode: errorCodeFilter,
+					errorMessage: errorMessageFilter,
+				}),
+				visibilityClause,
+			) ?? sql`FALSE`;
 
 		// count 查询：使用同一 whereClause，避免总数与明细不一致。
 		const completedCountRow = await db
@@ -1231,8 +1238,10 @@ function resolveSortColumn(sortBy: SpendLogSortField): Column {
 
 /** UI 路径 where 条件构造入参 */
 interface UiSpendLogsWhereArgs {
-	startDate: Date;
-	endDate: Date;
+	/** 下界；缺省表示不限下界（Dashboard 的 All Time）。 */
+	startDate?: Date;
+	/** 上界；缺省表示不限上界。 */
+	endDate?: Date;
 	teamId?: string;
 	apiKey?: string;
 	user?: string;
@@ -1265,7 +1274,7 @@ function exactSessionGroupKeys(sessionId: string): [string, string] | null {
 /**
  * 构造 /spend/logs/ui 与 /spend/logs/v2 共用的 where 条件。
  * 对齐 Python `ui_view_spend_logs` 的 SQL 拼接：
- * - 时间范围：`startTime >= ... AND startTime <= ...`
+ * - 时间范围：`startTime >= ... AND startTime <= ...`，两端都可缺省（All Time 不带时间谓词）
  * - 普通列等值：`team_id` / `user` / `api_key` / `request_id` / `model` / `model_id` / `end_user`
  * - status_filter=success → `(status = 'success' OR status IS NULL)`；其它精确匹配
  * - spend 范围
@@ -1278,7 +1287,13 @@ function exactSessionGroupKeys(sessionId: string): [string, string] | null {
  * @param args
  */
 function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
-	const conditions = [sql`${liteLLM_SpendLogs.startTime} >= ${args.startDate}`, sql`${liteLLM_SpendLogs.startTime} <= ${args.endDate}`];
+	const conditions = [];
+	if (args.startDate !== undefined) {
+		conditions.push(sql`${liteLLM_SpendLogs.startTime} >= ${args.startDate}`);
+	}
+	if (args.endDate !== undefined) {
+		conditions.push(sql`${liteLLM_SpendLogs.startTime} <= ${args.endDate}`);
+	}
 	if (args.teamId !== undefined) {
 		conditions.push(eq(liteLLM_SpendLogs.team_id, args.teamId));
 	}
@@ -1344,12 +1359,13 @@ function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
  * @param args
  */
 function buildActiveRequestsWhereConditions(args: UiSpendLogsWhereArgs) {
-	const conditions = [
-		sql`${liteLLM_ActiveRequests.startTime} >= ${args.startDate}`,
-		sql`${liteLLM_ActiveRequests.startTime} <= ${args.endDate}`,
-		gt(liteLLM_ActiveRequests.expires_at, new Date()),
-		eq(liteLLM_ActiveRequests.status, "in_progress"),
-	];
+	const conditions = [gt(liteLLM_ActiveRequests.expires_at, new Date()), eq(liteLLM_ActiveRequests.status, "in_progress")];
+	if (args.startDate !== undefined) {
+		conditions.push(sql`${liteLLM_ActiveRequests.startTime} >= ${args.startDate}`);
+	}
+	if (args.endDate !== undefined) {
+		conditions.push(sql`${liteLLM_ActiveRequests.startTime} <= ${args.endDate}`);
+	}
 	if (args.teamId !== undefined) {
 		conditions.push(eq(liteLLM_ActiveRequests.team_id, args.teamId));
 	}

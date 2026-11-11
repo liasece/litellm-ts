@@ -15,15 +15,19 @@ const log = {
 	metadata: { status: "success" },
 };
 
-async function openLogs(page: Page): Promise<void> {
-	await page.route("**/spend/logs/ui**", (route) =>
-		route.fulfill({ json: { data: [log], total: 1, page: 1, page_size: 25, total_pages: 1, session_total_count: 0 } }),
-	);
+/** 记录列表请求的 URL，用来核对时间范围是否真的下发给服务端。 */
+type ListRequests = URL[];
+
+async function openLogs(page: Page, requests: ListRequests = []): Promise<void> {
+	await page.route("**/spend/logs/ui**", (route) => {
+		requests.push(new URL(route.request().url()));
+		return route.fulfill({ json: { data: [log], total: 1, page: 1, page_size: 25, total_pages: 1, session_total_count: 0 } });
+	});
 	await page.route("**/config/list**", (route) => route.fulfill({ json: [] }));
 	await page.route("**/key/list**", (route) => route.fulfill({ json: { keys: [], total_count: 0 } }));
 	await page.route("**/v2/team/list**", (route) => route.fulfill({ json: { teams: [] } }));
 	await page.goto("/ui/tests/logs/logs.html");
-	await expect(page.getByRole("button", { name: /Last 24 Hours/ })).toBeVisible();
+	await expect(page.locator(".logs-time-button")).toHaveText(/All Time/);
 }
 
 /**
@@ -62,18 +66,46 @@ async function expectMenuInsideViewport(page: Page): Promise<void> {
 	}
 }
 
+test("默认时间范围是 All Time：列表请求不带 start_date", async ({ page }) => {
+	const requests: ListRequests = [];
+	await openLogs(page, requests);
+
+	await expect.poll(() => requests.length).toBeGreaterThan(0);
+	expect(requests[0].searchParams.has("start_date")).toBe(false);
+	expect(requests[0].searchParams.has("end_date")).toBe(false);
+});
+
+test("选择预设区间后按该区间请求，切回 All Time 又不再带时间参数", async ({ page }) => {
+	const requests: ListRequests = [];
+	await openLogs(page, requests);
+	const trigger = page.locator(".logs-time-button");
+
+	await trigger.click();
+	await page.getByRole("button", { name: "Last 24 Hours", exact: true }).click();
+	await expect(trigger).toHaveText(/Last 24 Hours/);
+	await expect.poll(() => requests.at(-1)?.searchParams.has("start_date") ?? false).toBe(true);
+
+	await trigger.click();
+	await page.getByRole("button", { name: "All Time", exact: true }).click();
+	await expect(trigger).toHaveText(/All Time/);
+	await expect.poll(() => requests.at(-1)?.searchParams.has("start_date") ?? true).toBe(false);
+});
+
 test("time range menu stays inside the page instead of being clipped by the logs container", async ({ page }) => {
 	await openLogs(page);
-	await page.getByRole("button", { name: /Last 24 Hours/ }).click();
+	await page.locator(".logs-time-button").click();
 	await expect(page.locator(".logs-time-menu")).toBeVisible();
 	await expectMenuInsideViewport(page);
-	await expect(page.getByRole("button", { name: "Last 15 Minutes", exact: true })).toBeVisible();
+	// All Time 排在第一位，历史档位保持原有顺序。
+	const menu = page.locator(".logs-time-menu");
+	await expect(menu.getByRole("button", { name: "All Time", exact: true })).toBeVisible();
+	await expect(menu.getByRole("button", { name: "Last 15 Minutes", exact: true })).toBeVisible();
 });
 
 test("narrow viewport keeps the whole time range menu on screen", async ({ page }) => {
 	await page.setViewportSize({ width: 380, height: 640 });
 	await openLogs(page);
-	await page.getByRole("button", { name: /Last 24 Hours/ }).click();
+	await page.locator(".logs-time-button").click();
 	await expect(page.locator(".logs-time-menu")).toBeVisible();
 	await expectMenuInsideViewport(page);
 });

@@ -1,6 +1,12 @@
 import { isLocalDateTime, subtractInterval } from "./LogsDateLogic";
 import type { LogsSortField } from "../support/LogsModels";
-import { DEFAULT_LOGS_PAGE_SIZE, LOGS_PAGE_SIZE_OPTIONS, QUICK_SELECT_OPTIONS } from "../support/LogsConstants";
+import {
+	ALL_TIME_INTERVAL,
+	DEFAULT_LOGS_PAGE_SIZE,
+	isAllTimeInterval,
+	LOGS_PAGE_SIZE_OPTIONS,
+	QUICK_SELECT_OPTIONS,
+} from "../support/LogsConstants";
 import { createEmptyLogFilters, FILTER_KEYS, type LogFilterState } from "./LogsFilterLogic";
 
 const FILTER_URL_PARAMS: Record<keyof LogFilterState, string> = {
@@ -70,16 +76,19 @@ export function readLogsUrlState(search: string, defaults: LogsUrlDefaults): Log
 	const sortBy = VALID_SORT_FIELDS.includes(requestedSortBy as LogsSortField) ? (requestedSortBy as LogsSortField) : "startTime";
 	const sortOrder = params.get("logs_sort_order") === "asc" ? "asc" : "desc";
 
-	const requestedIntervalValue = readPositiveInteger(params.get("logs_time_value"), 24);
-	const requestedIntervalUnit = params.get("logs_time_unit") ?? "hours";
-	const selectedTimeInterval =
-		QUICK_SELECT_OPTIONS.find((option) => option.value === requestedIntervalValue && option.unit === requestedIntervalUnit) ??
-		QUICK_SELECT_OPTIONS.find((option) => option.value === 24 && option.unit === "hours")!;
+	// 时间范围的默认档位是 All Time：不带 logs_time_* 参数即不过滤时间。
+	const requestedIntervalUnit = params.get("logs_time_unit") ?? ALL_TIME_INTERVAL.unit;
+	const requestedIntervalValue =
+		requestedIntervalUnit === ALL_TIME_INTERVAL.unit ? ALL_TIME_INTERVAL.value : readPositiveInteger(params.get("logs_time_value"), 24);
+	const selectedTimeInterval = QUICK_SELECT_OPTIONS.find(
+		(option) => option.value === requestedIntervalValue && option.unit === requestedIntervalUnit,
+	) ?? { value: ALL_TIME_INTERVAL.value, unit: ALL_TIME_INTERVAL.unit };
 
 	const requestedStartTime = params.get("logs_start");
 	const requestedEndTime = params.get("logs_end");
 	const isCustomDate = params.get("logs_custom_date") === "1" && isValidDateTime(requestedStartTime) && isValidDateTime(requestedEndTime);
-	const isDefaultInterval = selectedTimeInterval.value === 24 && selectedTimeInterval.unit === "hours";
+	// All Time 不参与区间换算：startTime 仅作为自定义输入的默认值与详情回查提示保留。
+	const isDefaultInterval = isAllTimeInterval(selectedTimeInterval);
 
 	return {
 		filters,
@@ -131,7 +140,7 @@ export function writeLogsUrlState(params: URLSearchParams, state: LogsUrlState):
 	setOptionalParam(next, "logs_start", state.startTime, state.isCustomDate);
 	setOptionalParam(next, "logs_end", state.endTime, state.isCustomDate);
 
-	const isDefaultInterval = state.selectedTimeInterval.value === 24 && state.selectedTimeInterval.unit === "hours";
+	const isDefaultInterval = isAllTimeInterval(state.selectedTimeInterval);
 	setOptionalParam(next, "logs_time_value", String(state.selectedTimeInterval.value), !state.isCustomDate && !isDefaultInterval);
 	setOptionalParam(next, "logs_time_unit", state.selectedTimeInterval.unit, !state.isCustomDate && !isDefaultInterval);
 

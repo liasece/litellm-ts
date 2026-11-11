@@ -29,8 +29,10 @@ const target = ref<HTMLElement | string>("body");
 const position = ref<FloatingPanelPosition>({ top: 0, left: 0 });
 const label = computed(() => {
 	if (!props.customDate)
-		return QUICK_SELECT_OPTIONS.find((item) => item.value === props.selectedInterval.value && item.unit === props.selectedInterval.unit)
-			?.label;
+		return (
+			QUICK_SELECT_OPTIONS.find((item) => item.value === props.selectedInterval.value && item.unit === props.selectedInterval.unit)
+				?.label ?? "All Time"
+		);
 	const format = (value: string) =>
 		new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 	return format(props.startTime) + " - " + format(props.endTime);

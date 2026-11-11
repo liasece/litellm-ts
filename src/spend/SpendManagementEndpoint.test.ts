@@ -5,7 +5,7 @@
  * 1. SpendManagementEndpoint 返回的字段类型与 WebUI Tremor BarChart 期望一致，
  *    避免 `<rect> attribute y: Expected length, "NaN"` 之类的运行时错误。
  * 2. `/spend/logs/ui` 与 `/spend/logs/v2` 严格对齐 Python LiteLLM：
- *    - 必填 start_date / end_date；UI 只接受 `YYYY-MM-DD HH:MM:SS`，v2 同时接受 `YYYY-MM-DD`。
+ *    - UI 两个日期都可选（都不传即不限制时间范围）；v2 仍必填。UI 只接受 `YYYY-MM-DD HH:MM:SS`，v2 同时接受 `YYYY-MM-DD`。
  *    - sort_by 白名单 + 非法 400；sort_order 白名单 + 非法 400。
  *    - 过滤：api_key / user_id / request_id / team_id / model / model_id / end_user /
  *      min_spend / max_spend / status_filter / key_alias / session_id / error_code / error_message。
@@ -656,10 +656,33 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 		});
 
 		describe("参数校验", () => {
-			it("缺 start_date 返回 400", async () => {
-				const { db } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
+			it("UI 缺 start_date 时不过滤时间下界并返回 200", async () => {
+				// Dashboard 的 All Time 档位：两个日期都不传，列表与总数都不带时间谓词。
+				const { db, calls } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get("/spend/logs/ui");
+
+				expect(res.status).toBe(200);
+				expect(res.body.total).toBe(1);
+				const countCall = calls.find((call) => call.hasCount);
+				expect(countCall?.whereSql).not.toContain("startTime");
+			});
+
+			it("UI 只给 end_date 时按上界过滤并返回 200", async () => {
+				const { db, calls } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get("/spend/logs/ui?end_date=2025-02-15 23:59:59");
+
+				expect(res.status).toBe(200);
+				const countCall = calls.find((call) => call.hasCount);
+				expect(countCall?.whereSql).toContain("startTime");
+				expect(countCall?.whereSql).not.toContain(">=");
+			});
+
+			it("/spend/logs/v2 缺 start_date 仍返回 400", async () => {
+				const { db } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get("/spend/logs/v2?end_date=2025-02-15 23:59:59");
 				expect(res.status).toBe(400);
 			});
 
@@ -785,6 +808,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				const activeRow = {
 					...SAMPLE_UI_ROW,
 					request_id: "req-active",
+					startTime: new Date("2025-02-09T23:59:00Z"),
 					spend: 0,
 					total_tokens: 0,
 					prompt_tokens: 0,
@@ -798,7 +822,16 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					request_duration_ms: 30_000,
 				};
 				const { db } = makeMockDb({
-					responses: [[{ count: 1 }], [{ count: 1 }], [SAMPLE_UI_ROW, activeRow], []],
+					// 两表各取分页键后在内存归并，再按主键回表。
+					responses: [
+						[{ count: 1 }],
+						[{ count: 1 }],
+						[{ request_id: "req-active", startTime: activeRow.startTime }],
+						[{ request_id: "req-1", startTime: SAMPLE_UI_ROW.startTime }],
+						[SAMPLE_UI_ROW],
+						[activeRow],
+						[],
+					],
 				});
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get(
@@ -833,7 +866,15 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					request_duration_ms: 30_000,
 				};
 				const { db } = makeMockDb({
-					responses: [[{ count: 1 }], [{ count: 1 }], [activeRow], [SAMPLE_UI_ROW], []],
+					responses: [
+						[{ count: 1 }],
+						[{ count: 1 }],
+						[{ request_id: "req-active" }],
+						[activeRow],
+						[{ request_id: "req-1" }],
+						[SAMPLE_UI_ROW],
+						[],
+					],
 				});
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get(
@@ -850,13 +891,30 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				["key_alias", "alias"],
 				["error_code", "404"],
 				["error_message", "timeout"],
-			])("metadata 过滤 %s 通过", async (filterKey, filterValue) => {
+			])("表头过滤 %s 通过", async (filterKey, filterValue) => {
 				const { db } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get(
 					`/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&${filterKey}=${filterValue}`,
 				);
 				expect(res.status).toBe(200);
+			});
+
+			it("key_alias / error_code 过滤读冗余列，error_message 仍读 metadata", async () => {
+				// 这两个过滤原先直接读 metadata，要为窗口内每一行解压整份 TOAST（24h 冷缓存 9–40 s）。
+				// 改读写入时同源落库的列后，谓词里不应再出现 metadata 的别名路径。
+				const { db, calls } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&key_alias=alias&error_code=404&error_message=timeout",
+				);
+
+				expect(res.status).toBe(200);
+				const countCall = calls.find((call) => call.hasCount);
+				expect(countCall?.whereSql).toContain("key_alias");
+				expect(countCall?.whereSql).not.toContain("user_api_key_alias");
+				// error_message 仍是自由文本，保留 metadata 路径
+				expect(countCall?.whereSql).toContain("error_information");
 			});
 
 			it("session_id 按会话分组键做包含过滤，不把 r: 请求键当作会话", async () => {
@@ -873,6 +931,23 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(countCall?.whereSql).toContain("c:%");
 				expect(countCall?.whereSql).toContain("session-abc");
 				expect(countCall?.whereSql).not.toContain("r:%");
+			});
+
+			it("完整会话 UUID 使用规范键精确匹配，避免全表 contains 扫描", async () => {
+				const { db, calls } = makeMockDb({ data: [SAMPLE_UI_ROW], count: [{ count: 1 }] });
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const sessionUuid = "988bc49c-ec74-4edd-a81d-5f06ff670b0d";
+				const res = await request(app).get(
+					`/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&session_id=${sessionUuid}`,
+				);
+
+				expect(res.status).toBe(200);
+				const countCall = calls.find((call) => call.hasCount);
+				expect(countCall?.whereSql).toContain("session_group_key");
+				expect(countCall?.whereSql).toContain(`s:${sessionUuid}`);
+				expect(countCall?.whereSql).toContain(`c:${sessionUuid}`);
+				expect(countCall?.whereSql).not.toContain("strpos");
+				expect(countCall?.whereSql).not.toContain("LIKE");
 			});
 
 			it("include_active 时进行中请求同样按 session_id 过滤", async () => {
@@ -1032,7 +1107,12 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					session_group_id: CLAUDE_CODE_USER_ID,
 				};
 				const { db, calls } = makeMockDb({
-					responses: [[{ count: 1 }], [claudeRow], [{ session_group_key: `c:${CLAUDE_CODE_USER_ID}`, total: 3 }]],
+					responses: [
+						[{ count: 1 }],
+						[{ request_id: claudeRow.request_id }],
+						[claudeRow],
+						[{ session_group_key: `c:${CLAUDE_CODE_USER_ID}`, total: 3 }],
+					],
 				});
 
 				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
@@ -1068,7 +1148,12 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					},
 				};
 				const { db, calls } = makeMockDb({
-					responses: [[{ count: 1 }], [row], [{ session_group_key: `s:${embeddedSessionId}`, total: 105 }]],
+					responses: [
+						[{ count: 1 }],
+						[{ request_id: row.request_id }],
+						[row],
+						[{ session_group_key: `s:${embeddedSessionId}`, total: 105 }],
+					],
 				});
 
 				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
@@ -1096,7 +1181,12 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					metadata: { session_group_key: `s:${threadId}` },
 				};
 				const { db, calls } = makeMockDb({
-					responses: [[{ count: 1 }], [row], [{ session_group_key: `s:${threadId}`, total: 18 }]],
+					responses: [
+						[{ count: 1 }],
+						[{ request_id: row.request_id }],
+						[row],
+						[{ session_group_key: `s:${threadId}`, total: 18 }],
+					],
 				});
 
 				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
@@ -1156,6 +1246,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				const { db } = makeMockDb({
 					responses: [
 						[{ count: 2 }],
+						rows.map((row) => ({ request_id: row.request_id })),
 						rows,
 						[
 							{ session_group_key: `s:${CLAUDE_CODE_USER_ID}`, total: 2 },
@@ -1317,8 +1408,8 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					data: [SAMPLE_UI_ROW],
 					count: [{ count: 1 }],
 				});
-				// count(1) + data(2) 后，enrichment 的 select 是第 3 次
-				failAfter(3);
+				// count(1) + 分页键(2) + 回表(3) 后，enrichment 的 select 是第 4 次
+				failAfter(4);
 				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 				const res = await request(app).get("/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59");
 				expect(res.status).toBe(200);
@@ -1731,17 +1822,30 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 	describe("/spend/logs/session/timeline", () => {
 		it("压缩请求中的历史顺序优先于日志时间，补出的消息排在已有回复之前", async () => {
 			const baseRow = {
-				call_type: "completion", spend: 0.01, total_tokens: 10, model: "claude",
-				status: "success", metadata_status: null, error_information: null,
-				request_payload: null, request_payload_available: true, response_payload_available: true,
+				call_type: "completion",
+				spend: 0.01,
+				total_tokens: 10,
+				model: "claude",
+				status: "success",
+				metadata_status: null,
+				error_information: null,
+				request_payload: null,
+				request_payload_available: true,
+				response_payload_available: true,
 			};
 			const descriptors = [
-				{ ...baseRow, request_id: "req-1", request_message_count: 1,
+				{
+					...baseRow,
+					request_id: "req-1",
+					request_message_count: 1,
 					startTime: new Date("2026-07-24T10:00:00.000Z"),
 					endTime: new Date("2026-07-24T10:00:01.000Z"),
 					response_payload: { choices: [{ message: { role: "assistant", content: "已有回复" } }] },
 				},
-				{ ...baseRow, request_id: "req-2", request_message_count: 4,
+				{
+					...baseRow,
+					request_id: "req-2",
+					request_message_count: 4,
 					startTime: new Date("2026-07-24T10:00:02.000Z"),
 					endTime: new Date("2026-07-24T10:00:03.000Z"),
 					response_payload: { choices: [{ message: { role: "assistant", content: "下一答" } }] },
@@ -1749,12 +1853,15 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			];
 			const payloads = [
 				{ request_id: "req-1", request_payload: [{ role: "user", content: "开始" }] },
-				{ request_id: "req-2", request_payload: [
-					{ role: "user", content: "开始" },
-					{ role: "user", content: "补出的上下文" },
-					{ role: "assistant", content: "已有回复" },
-					{ role: "user", content: "下一问" },
-				] },
+				{
+					request_id: "req-2",
+					request_payload: [
+						{ role: "user", content: "开始" },
+						{ role: "user", content: "补出的上下文" },
+						{ role: "assistant", content: "已有回复" },
+						{ role: "user", content: "下一问" },
+					],
+				},
 			];
 			// 时间线快照先读会话总数，再切窗口、读清单、分类与选中消息。
 			const { db } = makeMockDb({
@@ -1764,8 +1871,13 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
 			);
 			expect(res.status).toBe(200);
-			expect(res.body.data.map((item: { content: string }) => item.content))
-				.toEqual(["开始", "补出的上下文", "已有回复", "下一问", "下一答"]);
+			expect(res.body.data.map((item: { content: string }) => item.content)).toEqual([
+				"开始",
+				"补出的上下文",
+				"已有回复",
+				"下一问",
+				"下一答",
+			]);
 			expect(res.body.summary).toMatchObject({ request_count: 2, event_count: 5, total_spend: 0.02 });
 		});
 
@@ -1838,9 +1950,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			// 快照的总数查询必须落在会话范围内，不能退化成全表计数。
 			expect(calls.find((call) => call.hasCount)?.whereSql).toContain("session_group_key");
 			const dataCall = calls.find((call) => call.projection.includes("request_payload"));
-			expect(dataCall?.projection).not.toEqual(
-				expect.arrayContaining(["messages", "response", "proxy_server_request", "metadata"]),
-			);
+			expect(dataCall?.projection).not.toEqual(expect.arrayContaining(["messages", "response", "proxy_server_request", "metadata"]));
 			expect(dataCall?.projection).toContain("request_message_count");
 			expect(dataCall?.projectionSql).toMatch(/jsonb_array_length/i);
 			expect(dataCall?.projectionSql).not.toMatch(/sha256/i);
@@ -1930,20 +2040,26 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				["assistant", "第二次回复"],
 			]);
 			expect(res.body.summary).toMatchObject({ request_count: 2, filtered_request_count: 1 });
-			const payloadCall = calls.find(
-				(call) => call.projection.length === 2 && call.projection.includes("request_payload"),
-			);
+			const payloadCall = calls.find((call) => call.projection.length === 2 && call.projection.includes("request_payload"));
 			expect(payloadCall?.projectionSql).toMatch(/jsonb_agg/i);
 			expect(payloadCall?.whereSql).toMatch(/request_id/i);
 		});
 
-
 		it("压缩快照超过字节预算时只返回最新一行，并把剩余请求留给翻页", async () => {
 			const baseRow = {
-				call_type: "completion", api_key: "hash-qiran", key_alias: "qiran", spend: 0.01,
-				total_tokens: 10, model: "claude", status: "success", metadata_status: null,
-				error_information: null, request_payload: null, request_payload_available: true,
-				response_payload: null, response_payload_available: true,
+				call_type: "completion",
+				api_key: "hash-qiran",
+				key_alias: "qiran",
+				spend: 0.01,
+				total_tokens: 10,
+				model: "claude",
+				status: "success",
+				metadata_status: null,
+				error_information: null,
+				request_payload: null,
+				request_payload_available: true,
+				response_payload: null,
+				response_payload_available: true,
 			};
 			// 累积式会话的最近几行各自就有几十 MB：只按条数切窗口仍会把它们全读出来。
 			const scanRows = [
@@ -1951,16 +2067,22 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				{ request_id: "req-2", startTime: new Date("2026-07-24T10:00:02.000Z"), messages_bytes: 70 * 1024 * 1024 },
 				{ request_id: "req-1", startTime: new Date("2026-07-24T10:00:00.000Z"), messages_bytes: 1024 },
 			];
-			const descriptors = [{
-				...baseRow, request_id: "req-3", request_message_count: 200,
-				startTime: new Date("2026-07-24T10:00:04.000Z"),
-				endTime: new Date("2026-07-24T10:00:05.000Z"),
-				response_payload: { choices: [{ message: { role: "assistant", content: "最新一答" } }] },
-			}];
-			const payloads = [{
-				request_id: "req-3",
-				request_payload: [{ role: "user", content: "最新一问" }],
-			}];
+			const descriptors = [
+				{
+					...baseRow,
+					request_id: "req-3",
+					request_message_count: 200,
+					startTime: new Date("2026-07-24T10:00:04.000Z"),
+					endTime: new Date("2026-07-24T10:00:05.000Z"),
+					response_payload: { choices: [{ message: { role: "assistant", content: "最新一答" } }] },
+				},
+			];
+			const payloads = [
+				{
+					request_id: "req-3",
+					request_payload: [{ role: "user", content: "最新一问" }],
+				},
+			];
 			const { db } = makeMockDb({ responses: [[{ count: 3 }], scanRows, descriptors, payloads] });
 
 			const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH)).get(
@@ -1979,30 +2101,64 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			const prompt = "一只金毛幼犬";
 			const command = `node /skills/run-generate.mjs --prompt '${prompt}' --out ${path}`;
 			const baseRow = {
-				call_type: "completion", api_key: "hash-owner", spend: 0.01, total_tokens: 10, model: "assistant",
-				status: "success", metadata_status: null, error_information: null, request_payload: {},
+				call_type: "completion",
+				api_key: "hash-owner",
+				spend: 0.01,
+				total_tokens: 10,
+				model: "assistant",
+				status: "success",
+				metadata_status: null,
+				error_information: null,
+				request_payload: {},
 			};
 			const rows = [
-				{ ...baseRow, request_id: "command", startTime: new Date("2026-11-03T09:19:14Z"),
+				{
+					...baseRow,
+					request_id: "command",
+					startTime: new Date("2026-11-03T09:19:14Z"),
 					endTime: new Date("2026-11-03T09:19:15Z"),
-					response_payload: { output: [{ type: "custom_tool_call", name: "exec", call_id: "generate",
-						input: `text(await tools.exec_command({cmd:${JSON.stringify(command)}}));` }] },
+					response_payload: {
+						output: [
+							{
+								type: "custom_tool_call",
+								name: "exec",
+								call_id: "generate",
+								input: `text(await tools.exec_command({cmd:${JSON.stringify(command)}}));`,
+							},
+						],
+					},
 				},
-				{ ...baseRow, request_id: "output", startTime: new Date("2026-11-03T09:19:46Z"),
+				{
+					...baseRow,
+					request_id: "output",
+					startTime: new Date("2026-11-03T09:19:46Z"),
 					endTime: new Date("2026-11-03T09:19:47Z"),
 					response_payload: { choices: [{ message: { role: "assistant", content: `![幼犬](${path})` } }] },
 				},
 			];
 			// 图片回填排在在途读取之后，先占住进行中变更指纹与在途行两轮查询。
-			const { db, calls } = makeMockDb({ responses: [[{ count: 2 }], rows, rows, [], [], [{
-				requestId: "image", response: { data: [{ b64_json: "iVBORw0KGgoAAA" }] },
-			}]] });
+			const { db, calls } = makeMockDb({
+				responses: [
+					[{ count: 2 }],
+					rows,
+					rows,
+					[],
+					[],
+					[
+						{
+							requestId: "image",
+							response: { data: [{ b64_json: "iVBORw0KGgoAAA" }] },
+						},
+					],
+				],
+			});
 			const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get(
 				"/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A",
 			);
 			expect(res.status).toBe(200);
 			expect(res.body.data.find((event: { request_id: string }) => event.request_id === "output")).toMatchObject({
-				content: `![幼犬](${path})`, image_sources: { [path]: "data:image/png;base64,iVBORw0KGgoAAA" },
+				content: `![幼犬](${path})`,
+				image_sources: { [path]: "data:image/png;base64,iVBORw0KGgoAAA" },
 			});
 			expect(res.body.summary).toMatchObject({ request_count: 2, total_spend: 0.02, total_tokens: 20 });
 			const imageLookup = calls.find((call) => call.projection.includes("requestId"));
@@ -2078,10 +2234,7 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(res.body.active_requests).toHaveLength(1);
 			expect(res.body.active_requests[0].request_id).toBe("req-2");
 			// 进行中请求的请求体带完整历史，叠加层只保留尚未落库的消息与当前输出。
-			expect(res.body.active_requests[0].events.map((event: { content: string }) => event.content)).toEqual([
-				"第二问",
-				"生成中",
-			]);
+			expect(res.body.active_requests[0].events.map((event: { content: string }) => event.content)).toEqual(["第二问", "生成中"]);
 			expect(res.body.summary.in_progress_request_count).toBe(1);
 			expect(res.body.summary.request_count).toBe(2);
 		});
@@ -2100,7 +2253,27 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			const { db, calls } = makeMockDb();
 			const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
 
-			for (const query of ["limit=0", "limit=501", "limit=abc", "before=not-a-cursor"]) {
+			for (const query of ["limit=0", "limit=501", "limit=abc", "before=not-a-cursor", "after=not-a-cursor", "direction=sideways"]) {
+				const res = await request(app).get(
+					`/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A&${query}`,
+				);
+				expect([query, res.status]).toEqual([query, 400]);
+			}
+			expect(calls).toHaveLength(0);
+		});
+
+		it("同一请求的翻页方向与游标互斥，冲突时返回 400", async () => {
+			const { db, calls } = makeMockDb();
+			const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+			const cursor = Buffer.from(JSON.stringify({ startTime: "2026-01-01T00:00:00.000Z", requestId: "req-1" }), "utf8").toString(
+				"base64url",
+			);
+
+			for (const query of [
+				`before=${cursor}&after=${cursor}`,
+				`direction=forward&before=${cursor}`,
+				`direction=backward&after=${cursor}`,
+			]) {
 				const res = await request(app).get(
 					`/spend/logs/session/timeline?session_group_type=session_id&session_group_id=session-A&${query}`,
 				);

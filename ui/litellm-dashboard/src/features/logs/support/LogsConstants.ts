@@ -18,7 +18,18 @@ export const MCP_CALL_TYPES = ["call_mcp_tool", "list_mcp_tools"];
 /** Call types that represent agent/A2A requests (e.g. asend_message). */
 export const AGENT_CALL_TYPES = ["asend_message"];
 
+/**
+ * 时间范围「不过滤」档位：`unit` 为 `all` 时不向服务端发送 start_date，
+ * 列表按时间倒序取第一页，翻页与总数覆盖全部历史。
+ */
+export const ALL_TIME_INTERVAL = { label: "All Time", value: 0, unit: "all" } as const;
+
+export function isAllTimeInterval(interval: { value: number; unit: string }): boolean {
+	return interval.unit === ALL_TIME_INTERVAL.unit;
+}
+
 export const QUICK_SELECT_OPTIONS: { label: string; value: number; unit: string }[] = [
+	{ label: ALL_TIME_INTERVAL.label, value: ALL_TIME_INTERVAL.value, unit: ALL_TIME_INTERVAL.unit },
 	{ label: "Last 15 Minutes", value: 15, unit: "minutes" },
 	{ label: "Last Hour", value: 1, unit: "hours" },
 	{ label: "Last 4 Hours", value: 4, unit: "hours" },

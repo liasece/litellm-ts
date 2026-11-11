@@ -7,7 +7,13 @@ import { logsQuery } from "../logic/LogsQueryLogic";
 import { readLogsUrlState, writeLogsUrlState, type LogsUrlState } from "../logic/LogsUrlLogic";
 import { shareLogRows } from "../logic/LogsIdentityLogic";
 import { createLiveTailScheduler } from "../logic/LiveTailSchedulerLogic";
-import { DEFAULT_LIVE_TAIL_INTERVAL_MS, isLiveTailIntervalMs, QUICK_SELECT_OPTIONS } from "../support/LogsConstants";
+import {
+	ALL_TIME_INTERVAL,
+	DEFAULT_LIVE_TAIL_INTERVAL_MS,
+	isAllTimeInterval,
+	isLiveTailIntervalMs,
+	QUICK_SELECT_OPTIONS,
+} from "../support/LogsConstants";
 import type { LogsPage, LogsSortField } from "../support/LogsModels";
 
 interface LogsListOptions {
@@ -193,14 +199,21 @@ export function createLogsListStore(options: LogsListOptions) {
 		state.currentPage = 1;
 		schedule();
 	}
+	/**
+	 * 时间档位对应的输入框起点。
+	 * All Time 不过滤时间，这里只保留一个看得见的默认值（最近 24 小时）供自定义区间预填。
+	 */
+	function intervalStartTime(value: number, unit: string): string {
+		return isAllTimeInterval({ value, unit }) ? subtractInterval(24, "hours") : subtractInterval(value, unit);
+	}
 	function resetFilters(): void {
 		Object.assign(state, {
 			filters: createEmptyLogFilters(),
 			currentPage: 1,
-			startTime: subtractInterval(24, "hours"),
+			startTime: intervalStartTime(ALL_TIME_INTERVAL.value, ALL_TIME_INTERVAL.unit),
 			endTime: localDateTime(),
 			isCustomDate: false,
-			selectedTimeInterval: { value: 24, unit: "hours" },
+			selectedTimeInterval: { value: ALL_TIME_INTERVAL.value, unit: ALL_TIME_INTERVAL.unit },
 		});
 		schedule();
 	}
@@ -208,7 +221,7 @@ export function createLogsListStore(options: LogsListOptions) {
 		if (!QUICK_SELECT_OPTIONS.some((option) => option.value === value && option.unit === unit)) return;
 		Object.assign(state, {
 			currentPage: 1,
-			startTime: subtractInterval(value, unit),
+			startTime: intervalStartTime(value, unit),
 			endTime: localDateTime(),
 			selectedTimeInterval: { value, unit },
 			isCustomDate: false,
@@ -216,7 +229,12 @@ export function createLogsListStore(options: LogsListOptions) {
 		schedule();
 	}
 	function setCustomDate(start: string, end: string, custom = true): void {
-		Object.assign(state, { currentPage: 1, startTime: start, endTime: end, isCustomDate: custom });
+		// 关掉自定义区间就回到当前预设档位，避免把自定义的起点留在状态下继续生效。
+		if (!custom) {
+			selectInterval(state.selectedTimeInterval.value, state.selectedTimeInterval.unit);
+			return;
+		}
+		Object.assign(state, { currentPage: 1, startTime: start, endTime: end, isCustomDate: true });
 		schedule();
 	}
 	function setLiveEnabled(value: boolean): void {

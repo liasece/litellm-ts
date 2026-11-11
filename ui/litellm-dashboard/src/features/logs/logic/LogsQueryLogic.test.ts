@@ -35,6 +35,14 @@ describe("logsQuery 时间范围", () => {
 		expect(params.get("start_date")).toBe(apiTime(state.startTime));
 	});
 
+	it("All Time 档位不发送 start_date，由服务端返回全部历史", () => {
+		const state = createState({ selectedTimeInterval: { value: 0, unit: "all" } });
+		const params = logsQuery(state, adminScope);
+
+		expect(params.has("start_date")).toBe(false);
+		expect(params.has("end_date")).toBe(false);
+	});
+
 	it("自定义区间仍发送精确的 end_date", () => {
 		const state = createState({ isCustomDate: true, endTime: "2026-11-09T07:15" });
 		const params = logsQuery(state, adminScope);
