@@ -116,6 +116,20 @@ export class DatabaseRuntimeConfigService {
 	}
 
 	/**
+	 * 在请求级运行时快照中执行回调；供 WebSocket 等非 Express 链路复用同一套部署与凭据。
+	 * @param router - Router
+	 * @param callback - 在快照 ALS 上下文中执行
+	 */
+	async runWithSnapshot<T>(router: Router, callback: () => Promise<T> | T): Promise<T> {
+		const existing = router.currentRuntimeSnapshot();
+		const snapshot =
+			existing !== undefined && existing.configRevision === configRepositoryFor(this._db).revision()
+				? existing
+				: await this.loadSnapshot(router);
+		return await router.runWithRuntimeSnapshot(snapshot, callback);
+	}
+
+	/**
 	 * Express 中间件：装载失败时 fail closed，绝不回退到旧内存配置。
 	 * 同一请求经过多条带该中间件的路由链时复用已绑定的快照，避免重复重建。
 	 * @param router

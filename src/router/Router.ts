@@ -30,7 +30,6 @@ import { TPMRPMLimiter } from "./TPMRPMLimiter";
 import { FallbackHandler } from "./FallbackHandler";
 import { RedisCooldownBackend } from "./RedisCooldownBackend";
 import { extractProviderHeaders } from "./RouterResponseHeaders";
-import { isCliProxyDraining } from "../cliproxy/CliProxyDrainGate";
 import { isCliProxyDeploymentParams } from "../cliproxy/CliProxyTypes";
 import { buildStreamWithTtft } from "./RouterStreamWrapper";
 import {
@@ -859,16 +858,11 @@ export class Router {
 	getAvailableDeployment(model: string, messages?: Message[], optionalParams: Record<string, unknown> = {}): AvailDeployment | null {
 		const routingParams = { ...this._requestRoutingParams.getStore(), ...optionalParams };
 		const deployments = filterDeploymentsByTags(this._getDeploymentsForModel(model), routingParams);
-		// CLIProxy 升级排空期间降级：不再选中 CLIProxy deployment，请求自然落到 fallback 链；
-		// 若整个组只有 CLIProxy deployment，这里返回 null，由调用方按「无可用部署」处理。
-		const usableDeployments = isCliProxyDraining()
-			? deployments.filter((deployment) => !isCliProxyDeploymentParams(deployment.litellm_params))
-			: deployments;
-		if (usableDeployments.length === 0) {
+		if (deployments.length === 0) {
 			return null;
 		}
 		const estimatedInputTokens = messages ? this._estimateInputTokens(messages, optionalParams) : undefined;
-		const ctx = this._buildRoutingContext(usableDeployments, estimatedInputTokens);
+		const ctx = this._buildRoutingContext(deployments, estimatedInputTokens);
 		ctx.isStream = routingParams["stream"] === true;
 		const selected = this._runtimeState().routeFn(usableDeployments, ctx);
 		if (!selected) {

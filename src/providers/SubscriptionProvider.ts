@@ -1,77 +1,96 @@
 import type { Message, ModelResponse } from "../types/openai";
 import type { ProviderRequest } from "../types/provider";
 import {
-	subscriptionTarget,
-	type SubscriptionProvider as SubscriptionSource,
+	SUBSCRIPTION_PROVIDERS,
+	hostedProvider,
+	withoutProvider,
 	type SubscriptionConnection,
+	type SubscriptionProvider as SubscriptionProviderId,
 } from "../subscriptions/SubscriptionProviders";
+import { subscriptionBridgeUrl } from "../subscriptions/native/bridge";
 import { OpenAICompatProvider } from "./OpenAICompatProvider";
 
-/** Builds public protocol requests for one subscription account source. */
-export class SubscriptionProvider extends OpenAICompatProvider {
-	constructor(
-		private readonly _source: SubscriptionSource,
-		private readonly _connection: SubscriptionConnection = {
-			internalApiKey: process.env["CLIPROXY_INTERNAL_API_KEY"] ?? "",
-			baseUrl: process.env["CLIPROXY_INTERNAL_BASE_URL"] ?? "http://127.0.0.1:8317",
-		},
-	) {
-		super(_connection.internalApiKey, _connection.baseUrl);
-	}
+/** 不应进入订阅请求体的 LiteLLM/Router 内部字段。 */
+const CONNECTION_KEYS = [
+	"api_base",
+	"api_key",
+	"custom_llm_provider",
+	"subscription_transport",
+	"litellm_credential_name",
+	"credential_name",
+	"rpm",
+	"tpm",
+	"timeout",
+	"stream_timeout",
+	"num_retries",
+	"custom_cost_per_token",
+	"supported_endpoints",
+	"drop_params",
+	"__litellm_call_type",
+	"__litellm_responses_body",
+	"__litellm_image_edit_inputs",
+] as const;
 
-	private _target(model: string, path: string): { url: string; model: string } {
-		return subscriptionTarget(this._connection, { model: model, custom_llm_provider: this._source }, path);
+/**
+ * 构造订阅 Provider 请求。
+ *
+ * 这里只负责把客户端请求整理成入口协议请求体，并把地址标记为进程内 bridge；
+ * 账号选择、OAuth 刷新、协议转换与上游 HTTP 都在 SubscriptionBridge 内完成。
+ */
+export class SubscriptionProvider extends OpenAICompatProvider {
+	private readonly _provider: SubscriptionProviderId;
+	private readonly _source: (typeof SUBSCRIPTION_PROVIDERS)[SubscriptionProviderId]["source"];
+
+	constructor(providerId: SubscriptionProviderId, _connection?: SubscriptionConnection) {
+		super("", "litellm-subscription://");
+		this._provider = providerId;
+		this._source = SUBSCRIPTION_PROVIDERS[providerId].source;
 	}
 
 	/**
-	 * Build the internal CLIProxy request while keeping connection settings out of its body.
-	 * @param model - Configured model name, including any provider prefix.
-	 * @param messages - Conversation history to forward to CLIProxy.
-	 * @param optionalParams - Protocol options and internal connection settings.
+	 * 去掉公开 provider 前缀，得到上游模型 ID。
+	 * @param model - 配置中的模型
+	 */
+	private _model(model: string): string {
+		const explicit = hostedProvider({ model: model, custom_llm_provider: this._provider });
+		return withoutProvider(model, explicit ?? this._provider);
+	}
+
+	/**
+	 * 清理 Router/LiteLLM 内部字段。
+	 * @param body - 原始请求体
+	 */
+	private _cleanBody(body: Record<string, unknown>): Record<string, unknown> {
+		const result = { ...body };
+		for (const key of CONNECTION_KEYS) {
+			delete result[key];
+		}
+		return result;
+	}
+
+	/**
+	 * 构造 Chat/Messages 入口请求。
+	 * @param model - 配置模型
+	 * @param messages - 会话
+	 * @param optionalParams - 协议参数
 	 */
 	override transformRequest(model: string, messages: Message[], optionalParams: Record<string, unknown>): ProviderRequest {
+		const upstreamModel = this._model(model);
 		const anthropicNative = typeof optionalParams["anthropic_version"] === "string";
-		const target = this._target(model, anthropicNative ? "/v1/messages" : "/v1/chat/completions");
-		const apiKey = this._connection.internalApiKey;
-		if (anthropicNative) {
-			return {
-				url: target.url,
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"x-api-key": apiKey,
-					"anthropic-version": optionalParams["anthropic_version"] as string,
-				},
-				body: { model: target.model, messages: messages },
-				model: model,
-				stream: optionalParams["stream"] === true,
-			};
-		}
-
-		const body: Record<string, unknown> = {
-			...optionalParams,
-			model: target.model,
-			messages: messages,
-		};
-		for (const connectionKey of [
-			"api_base",
-			"api_key",
-			"custom_llm_provider",
-			"subscription_transport",
-			"litellm_credential_name",
-			"rpm",
-			"tpm",
-			"timeout",
-			"stream_timeout",
-			"num_retries",
-			"custom_cost_per_token",
-		]) {
-			delete body[connectionKey];
-		}
+		const operation = anthropicNative ? "messages" : "chat";
+		const body = anthropicNative
+			? { model: upstreamModel, messages: messages }
+			: {
+					...this._cleanBody(optionalParams),
+					model: upstreamModel,
+					messages: messages,
+				};
 		return {
-			url: target.url,
+			url: subscriptionBridgeUrl(this._source, operation),
 			method: "POST",
-			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+			headers: anthropicNative
+				? { "Content-Type": "application/json", "anthropic-version": String(optionalParams["anthropic_version"]) }
+				: { "Content-Type": "application/json" },
 			body: body,
 			model: model,
 			stream: optionalParams["stream"] === true,
@@ -79,44 +98,45 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 	}
 
 	/**
-	 * Build a native Responses request for CLIProxy.
-	 *
-	 * CLIProxy 的 \`/v1/responses\` 对其模型始终可用，不受 deployment 的
-	 * \`supported_endpoints\` 元数据约束；web capability worker 依赖该出口取得
-	 * 上游托管的 \`web_search\` 工具，因此这里不复用 OpenAI-compat 的门禁判断。
-	 * @param model - Configured model name, including any provider prefix.
-	 * @param body - Responses request body.
-	 * @param _optionalParams - 内部连接参数（CLIProxy 内网出口不接受按 deployment 覆盖）。
+	 * 构造 Anthropic Messages 入口请求；请求体由端点替换为完整的 Messages body。
+	 * @param model - 配置模型
+	 * @param optionalParams - 协议参数
+	 */
+	override transformAnthropicRequest(model: string, optionalParams: Record<string, unknown>): ProviderRequest {
+		return {
+			url: subscriptionBridgeUrl(this._source, "messages"),
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"anthropic-version":
+					typeof optionalParams["anthropic_version"] === "string" ? optionalParams["anthropic_version"] : "2023-06-01",
+			},
+			body: { model: this._model(model) },
+			model: model,
+			stream: true,
+		};
+	}
+
+	/**
+	 * 构造 Responses 入口请求。
+	 * @param model - 配置模型
+	 * @param body - Responses 请求体
+	 * @param _optionalParams - 协议参数（订阅上游不接受按 deployment 覆盖连接）
 	 */
 	override transformResponsesRequest(
 		model: string,
 		body: Record<string, unknown>,
 		_optionalParams: Record<string, unknown>,
 	): ProviderRequest {
-		const target = this._target(model, "/v1/responses");
-		const apiKey = this._connection.internalApiKey;
 		const payload: Record<string, unknown> = {
-			...body,
-			model: target.model,
+			...this._cleanBody(body),
+			model: this._model(model),
 			store: body["store"] ?? false,
 		};
-		// drop_params 是 LiteLLM 自身的转发策略，任何上游都不应收到；漏删会让 CLIProxy
-		// 在 fallback 场景下返回 400 Unsupported parameter: drop_params。
-		for (const connectionKey of [
-			"api_base",
-			"api_key",
-			"custom_llm_provider",
-			"subscription_transport",
-			"supported_endpoints",
-			"litellm_credential_name",
-			"drop_params",
-		]) {
-			delete payload[connectionKey];
-		}
 		return {
-			url: target.url,
+			url: subscriptionBridgeUrl(this._source, "responses"),
 			method: "POST",
-			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+			headers: { "Content-Type": "application/json" },
 			body: payload,
 			model: model,
 			stream: body["stream"] === true,
@@ -125,40 +145,21 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 	}
 
 	/**
-	 * Build a native image generation request with internal CLIProxy credentials.
-	 * @param model - Configured image model name.
-	 * @param prompt - Image generation prompt.
-	 * @param optionalParams - Image output options and internal connection settings.
+	 * 构造图片生成入口请求。
+	 * @param model - 配置模型
+	 * @param prompt - 提示词
+	 * @param optionalParams - 输出参数
 	 */
 	transformImageRequest(model: string, prompt: string, optionalParams: Record<string, unknown>): ProviderRequest {
-		const target = this._target(model, "/v1/images/generations");
-		const apiKey = this._connection.internalApiKey;
 		const body: Record<string, unknown> = {
-			...optionalParams,
-			model: target.model,
+			...this._cleanBody(optionalParams),
+			model: this._model(model),
 			prompt: prompt,
 		};
-		for (const connectionKey of [
-			"__litellm_call_type",
-			"api_base",
-			"api_key",
-			"custom_llm_provider",
-			"subscription_transport",
-			"litellm_credential_name",
-			"credential_name",
-			"rpm",
-			"tpm",
-			"timeout",
-			"stream_timeout",
-			"num_retries",
-			"custom_cost_per_token",
-		]) {
-			delete body[connectionKey];
-		}
 		return {
-			url: target.url,
+			url: subscriptionBridgeUrl(this._source, "images/generations"),
 			method: "POST",
-			headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+			headers: { "Content-Type": "application/json" },
 			body: body,
 			model: model,
 			stream: false,
@@ -166,11 +167,11 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 	}
 
 	/**
-	 * Build the multipart request used by the native OpenAI-compatible image edit endpoint.
-	 * @param model - Image model name
-	 * @param prompt - Editing prompt
-	 * @param images - Source image bytes
-	 * @param optionalParams - Image output and mask options
+	 * 构造图片编辑入口请求；multipart body 由桥接层原样转发。
+	 * @param model - 配置模型
+	 * @param prompt - 编辑提示
+	 * @param images - 源图
+	 * @param optionalParams - 输出/掩码参数
 	 */
 	transformImageEditRequest(
 		model: string,
@@ -178,17 +179,15 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 		images: Array<{ data: Uint8Array; mediaType: string }>,
 		optionalParams: Record<string, unknown>,
 	): ProviderRequest {
-		const target = this._target(model, "/v1/images/edits");
-		const apiKey = this._connection.internalApiKey;
 		const form = new FormData();
-		form.append("model", target.model);
+		form.append("model", this._model(model));
 		form.append("prompt", prompt);
 		images.forEach((image, index) => {
 			const extension = image.mediaType === "image/jpeg" ? "jpg" : image.mediaType === "image/webp" ? "webp" : "png";
 			form.append("image", new Blob([image.data as never], { type: image.mediaType }), `image-${index + 1}.${extension}`);
 		});
 		const logBody: Record<string, unknown> = {
-			model: target.model,
+			model: this._model(model),
 			prompt: prompt,
 			image: images.map((image) => ({ media_type: image.mediaType, byte_length: image.data.byteLength })),
 		};
@@ -196,22 +195,7 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 			if (
 				value === undefined ||
 				value === null ||
-				[
-					"__litellm_call_type",
-					"__litellm_image_edit_inputs",
-					"api_base",
-					"api_key",
-					"custom_llm_provider",
-					"subscription_transport",
-					"litellm_credential_name",
-					"credential_name",
-					"rpm",
-					"tpm",
-					"timeout",
-					"stream_timeout",
-					"num_retries",
-					"custom_cost_per_token",
-				].includes(key)
+				(CONNECTION_KEYS as readonly string[]).includes(key)
 			) {
 				continue;
 			}
@@ -227,9 +211,9 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 			}
 		}
 		return {
-			url: target.url,
+			url: subscriptionBridgeUrl(this._source, "images/edits"),
 			method: "POST",
-			headers: { Authorization: `Bearer ${apiKey}` },
+			headers: {},
 			body: form,
 			bodyEncoding: "raw",
 			logBody: logBody,
@@ -239,13 +223,11 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 	}
 
 	/**
-	 * Preserve CLIProxy's response body, including provider-specific extensions.
-	 * @param model - Configured model name required by the provider interface.
-	 * @param rawResponse - OpenAI-compatible response returned by CLIProxy.
+	 * 桥接层已经把响应翻译回入口协议，这里保持原样。
+	 * @param _model - 配置模型
+	 * @param rawResponse - 入口协议响应
 	 */
-	override transformResponse(model: string, rawResponse: unknown): ModelResponse {
-		// CLIProxy already emits OpenAI-compatible responses. Preserve provider-
-		// specific fields rather than normalizing and potentially dropping them.
+	override transformResponse(_model: string, rawResponse: unknown): ModelResponse {
 		return rawResponse as ModelResponse;
 	}
 }

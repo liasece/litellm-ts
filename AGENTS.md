@@ -11,13 +11,13 @@
 - 生产部署、线上核验和故障恢复使用 `$deploy-litellm-ts`。生产拓扑与诊断信号只在该 Skill 的
   reference 中维护，不复制到根指令。
 
-## 托管 CLIProxy（CPA）运行时
+## 订阅 Provider 运行时
 
-订阅执行器由本应用管理为子进程。仅运行本仓库随镜像构建的订阅宿主。Provider 与原始上游模型 ID 分开持久化。调查核对管理器、配置投影、镜像版本、持久目录和真实进程。插件版运行依赖 glibc，runtime 不改回 Alpine/musl。升级、回滚和重启保持在途请求降级与排空，版本及超时从当前实现和环境声明核实。
+订阅执行器在 LiteLLM 进程内运行，不再启动 Go 子进程、不维护 CPA 配置或插件管理面。七家 Provider（Codex、Claude、Kimi、Antigravity、xAI、CommandCode、OpenCode Go）共享 `src/subscriptions/native/` 的账号、调度与协议桥，各自在 `providers/` 实现上游协议、目录与额度。Provider 与原始上游模型 ID 分开持久化；auth 文件目录和格式保持旧镜像可读，回滚不依赖数据库结构变更。
 
-插件 fork、本地兼容修复与托管账号边界不能被上游发布物直接覆盖；密钥不进日志或样例。服务监听不等待 CPA 或远端价格快照，预热在监听后异步进行；数据库迁移、在途请求回收和路由装配仍在必要关键路径。
+账号文件、`.trash`、托管 CommandCode 账号与 OpenCode key 投影是运维边界；密钥不进日志或样例。服务监听不等待订阅运行时或远端价格快照，预热在监听后异步进行；数据库迁移、在途请求回收和路由装配仍在必要关键路径。
 
-[CPA 运行专题](docs/agent-guides/cliproxy-runtime.md)提供二进制、插件、账号和升级调查方法，可按问题参考；真实版本选择与配置规则由当前 `src/cliproxy/CliProxyRuntimeManager.ts`、构建及部署配置表达。
+[订阅运行时专题](docs/agent-guides/subscription-runtime.md)提供请求链路、账号与排查方法；真实行为由当前 `src/subscriptions/native/`、`src/providers/SubscriptionProvider.ts` 和 `src/cliproxy/CliProxyEndpoints.ts` 表达。
 
 ## 工作判断
 

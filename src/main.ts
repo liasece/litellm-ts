@@ -65,21 +65,12 @@ import { registerPrivacyRoutes } from "./proxy/PrivacyEndpoints";
 import { privacyMaskingMiddleware } from "./privacy/PrivacyMiddleware";
 import { abortOrphanedActiveRequests, reapExpiredActiveRequests } from "./spend/ActiveRequestRecovery";
 import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
-import { cliProxyStartupGate } from "./cliproxy/CliProxyStartupGate";
+import { registerSubscriptionSpecialRoutes } from "./subscriptions/native/SubscriptionSpecialEndpoints";
 import { registerProviderQuotaRoutes } from "./proxy/ProviderQuotaEndpoints";
-import {
-	registerCliProxyNativeAnthropicRoutes,
-	registerCliProxyNativeChatRoutes,
-	registerCliProxyNativeResponsesRoutes,
-} from "./cliproxy/CliProxyNativeResponsesEndpoint";
-import { registerCliProxyNativePassthroughRoutes } from "./cliproxy/CliProxyNativePassthroughEndpoint";
-import { registerCliProxyWebSocketPassthrough } from "./cliproxy/CliProxyWebSocketPassthrough";
-import { registerSpendLogStreamWebSocket, SPEND_LOG_STREAM_PATH } from "./spend/logStreamWebSocket";
-import { registerSpendLogUpdatesWebSocket, SPEND_LOG_UPDATES_PATH } from "./spend/logUpdatesWebSocket";
-import {
-	registerSpendSessionTimelineStreamWebSocket,
-	SPEND_SESSION_TIMELINE_STREAM_PATH,
-} from "./spend/sessionTimelineWebSocket";
+import { registerSpendLogStreamWebSocket } from "./spend/logStreamWebSocket";
+import { registerSubscriptionResponsesWebSocket } from "./subscriptions/native/SubscriptionResponsesWebSocket";
+import { registerSpendLogUpdatesWebSocket } from "./spend/logUpdatesWebSocket";
+import { registerSpendSessionTimelineStreamWebSocket } from "./spend/sessionTimelineWebSocket";
 
 const logger = createModuleLogger("Server");
 
@@ -121,8 +112,8 @@ export class LiteLLMServer {
 		logger.info("LiteLLM TS Gateway 启动中...", { port: port, host: host, modelCount: this._config.modelList.length });
 
 		this._container = await createServiceContainer(this._config);
-		// 预热与启动收尾并行：远端模型价格快照和 CLIProxy 子进程都不是监听的前提，
-		// 在这里尽早开始，它们的秒级耗时（及各自超时预算）不再计入服务不可用窗口。
+		// 预热与启动收尾并行：远端模型价格快照和订阅设置投影都不是监听的前提，
+		// 在这里尽早开始，它们的耗时（及各自超时预算）不再计入服务不可用窗口。
 		void this._container.warmUp();
 		const abortedRequestCount = await abortOrphanedActiveRequests(this._container.db.db);
 		if (abortedRequestCount > 0) {
@@ -138,12 +129,9 @@ export class LiteLLMServer {
 				logger.info(`LiteLLM TS Gateway 已启动: http://${host}:${port}`, { startupMs: Date.now() - startedAt });
 				resolve();
 			});
-			// CLIProxy 透传负责清理无人认领的升级连接，先声明日志流的路径，避免它误断订阅。
-			registerCliProxyWebSocketPassthrough(server, this._container!, {
-				additionalUpgradePaths: [SPEND_LOG_STREAM_PATH, SPEND_LOG_UPDATES_PATH, SPEND_SESSION_TIMELINE_STREAM_PATH],
-			});
 			registerSpendLogStreamWebSocket(server, this._container!);
 			registerSpendLogUpdatesWebSocket(server, this._container!);
+			registerSubscriptionResponsesWebSocket(server, this._container!);
 			registerSpendSessionTimelineStreamWebSocket(server, this._container!);
 			server.once("error", reject);
 			server.keepAliveTimeout = 120_000;
@@ -322,26 +310,21 @@ export class LiteLLMServer {
 		proxyRouter.use(container.authorizationGuard.middleware("inference"));
 		proxyRouter.use(privacyMaskingMiddleware({ router: container.router, db: container.db.db }));
 		proxyRouter.use(container.runtimeConfigService.middleware(container.router));
-		// 启动窗口内先等托管 CLIProxy 就绪，避免把请求静默换成 fallback 模型；稳态是零开销直通。
-		proxyRouter.use(cliProxyStartupGate(container.router, container.cliProxyRuntime));
 		proxyRouter.use((req, _res, next) =>
 			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
 		);
 		proxyRouter.use(sseKeepaliveMiddleware(container.router));
 
 		// Chat completions
-		registerCliProxyNativeChatRoutes(proxyRouter, container.router, container.cliProxyRuntime, container.db.db);
 		registerChatCompletionsRoutes(proxyRouter, container.router, container.db.db);
-		// Remaining CLIProxy-native protocols must run before LiteLLM compatibility
-		// endpoints with overlapping paths.
-		registerCliProxyNativePassthroughRoutes(proxyRouter, container.router, container.cliProxyRuntime, container.db.db);
 		// Embeddings
 		registerEmbeddingsRoutes(proxyRouter, container.router, container.db.db);
 		// Text completions
 		registerCompletionsRoutes(proxyRouter, container.router, container.db.db);
 		// Anthropic Messages
-		registerCliProxyNativeAnthropicRoutes(proxyRouter, container.router, container.cliProxyRuntime, container.db.db);
 		registerAnthropicMessagesEndpoints(proxyRouter, container.router, undefined, container.db.db);
+		// 订阅特殊端点（Responses compact / alpha search / 视频 / 语音 / live）；先于通用 Audio 注册
+		registerSubscriptionSpecialRoutes(proxyRouter, container.router, container.db.db);
 		// Models (decorator controller)
 		registerController(proxyRouter, new ModelsController(container.router));
 		// Moderations
@@ -419,8 +402,6 @@ export class LiteLLMServer {
 		stubRouter.use(container.authorizationGuard.middleware("authenticated"));
 		stubRouter.use(privacyMaskingMiddleware({ router: container.router, db: container.db.db }));
 		stubRouter.use(container.runtimeConfigService.middleware(container.router));
-		// Response API 等直连 CLIProxy 的兼容端点同样在启动窗口内等待子进程就绪。
-		stubRouter.use(cliProxyStartupGate(container.router, container.cliProxyRuntime));
 		stubRouter.use((req, _res, next) =>
 			container.router.runWithRequestRoutingParams({ metadata: req.body?.metadata, stream: req.body?.stream }, next),
 		);
@@ -439,7 +420,6 @@ export class LiteLLMServer {
 		// Cost Tracking：折扣/保证金配置读写与费用估算（价格口径与 /model_group/info 一致）
 		registerCostTrackingRoutes(stubRouter, container.db.db, container.router);
 
-		registerCliProxyNativeResponsesRoutes(stubRouter, container.router, container.cliProxyRuntime, container.db.db);
 		registerResponsesApiRoutes(stubRouter, container.router, container.db.db);
 		registerSearchToolsRoutes(stubRouter, container.db.db);
 		registerCredentialRoutes(stubRouter, container.credentialService, container.router);

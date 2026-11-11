@@ -54,6 +54,7 @@ import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/Ro
 import { copyModelResolutionChain, copyRoutingTrace } from "../router/ModelResolutionTrace";
 import { createPublishedModelResolutionTrace } from "../router/UpstreamExchange";
 import { describeUpstreamErrorBody, executeProviderRequest, isClientAbortError } from "../router/ProviderRequestExecutor";
+import { isSubscriptionBridgeUrl } from "../subscriptions/native/bridge";
 import {
 	buildAnthropicSearchContinuation,
 	mergeAgenticLoopUsage,
@@ -150,6 +151,15 @@ function rewriteBatchModels(
 	};
 }
 
+/** 透传给订阅桥的客户端会话/调用方头，用于账号亲和和上游指纹。 */
+const ANTHROPIC_FORWARDED_CLIENT_HEADERS: readonly string[] = [
+	"user-agent",
+	"x-claude-code-session-id",
+	"x-client-request-id",
+	"x-session-id",
+	"session-id",
+];
+
 function buildAnthropicUpstreamHeaders(
 	baseHeaders: Record<string, string>,
 	req: Request,
@@ -173,6 +183,12 @@ function buildAnthropicUpstreamHeaders(
 	}
 	if (betas.size > 0) {
 		headers["anthropic-beta"] = [...betas].join(",");
+	}
+	for (const name of ANTHROPIC_FORWARDED_CLIENT_HEADERS) {
+		const value = req.headers[name];
+		if (typeof value === "string" && value.length > 0 && headers[name] === undefined) {
+			headers[name] = value;
+		}
 	}
 	return headers;
 }
@@ -1596,16 +1612,38 @@ export function registerAnthropicMessagesEndpoints(
 			preparedBody["api_key"] as string | undefined,
 			preparedBody["anthropic_version"] as string | undefined,
 		);
-		const countUrl = withForwardedQuery(attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens"), req);
+		const countUrl = isSubscriptionBridgeUrl(attempt.upstreamUrl)
+			? withForwardedQuery(`${attempt.upstreamUrl.replace(/\/messages$/, "")}/messages/count_tokens`, req)
+			: withForwardedQuery(attempt.upstreamUrl.replace(/\/v1\/messages$/, "/v1/messages/count_tokens"), req);
+		const countHeaders = {
+			...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["token-counting-2024-11-01"]),
+			"Content-Type": "application/json",
+		};
+		// body.model 替换为剥离 provider 前缀后的上游 model 名，并应用
+		// deployment 级 reasoning/output_config override，与 /v1/messages 保持一致。
+		const upstreamCountBody = buildAnthropicUpstreamBody(preparedBody, attempt.upstreamModel, attempt.deployment);
+		if (isSubscriptionBridgeUrl(countUrl)) {
+			const execution = await executeProviderRequest({
+				url: countUrl,
+				method: "POST",
+				headers: countHeaders,
+				body: upstreamCountBody,
+				model: model,
+				stream: false,
+			});
+			if (!execution.response.ok) {
+				const errBody = execution.body === undefined ? "" : JSON.stringify(execution.body);
+				throw new ApiError(execution.response.status, `CountTokens 返回错误 (${execution.response.status}): ${errBody.slice(0, 200)}`);
+			}
+			if (execution.body !== undefined) {
+				return execution.body;
+			}
+			return (await execution.response.json()) as unknown;
+		}
 		const result = await fetch(countUrl, {
 			method: "POST",
-			headers: {
-				...buildAnthropicUpstreamHeaders(attempt.upstreamHeaders, req, ["token-counting-2024-11-01"]),
-				"Content-Type": "application/json",
-			},
-			// body.model 替换为剥离 provider 前缀后的上游 model 名，并应用
-			// deployment 级 reasoning/output_config override，与 /v1/messages 保持一致。
-			body: JSON.stringify(buildAnthropicUpstreamBody(preparedBody, attempt.upstreamModel, attempt.deployment)),
+			headers: countHeaders,
+			body: JSON.stringify(upstreamCountBody),
 		});
 		if (!result.ok) {
 			const errBody = await result.text().catch(() => "");

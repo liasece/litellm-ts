@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cliProxyApi } from "../api/CliProxyApi";
 import { createCliProxyStore } from "./CliProxyStore";
 import type { Account, AccountQuota, CliProxyLogEntry } from "../support/CliProxyModels";
-vi.mock("../api/CliProxyApi", () => ({ cliProxyApi: vi.fn(), advancedManagementApi: vi.fn() }));
+vi.mock("../api/CliProxyApi", () => ({ cliProxyApi: vi.fn() }));
 const api = vi.mocked(cliProxyApi<unknown>);
 const account: Account = {
 	auth_index: "account-1",
@@ -24,8 +24,7 @@ const quota: AccountQuota = {
 };
 const emptyStatus = { state: "running", version: "8.0.47", installed_versions: ["8.0.47"], health: "healthy" };
 function defaults(path: string): Promise<unknown> {
-	if (path === "/subscriptions/config")
-		return Promise.resolve({ settings: { enabled: true, config_yaml: "" }, user_config: {}, status: emptyStatus });
+	if (path === "/subscriptions/status") return Promise.resolve(emptyStatus);
 	if (path.startsWith("/subscriptions/accounts") && !path.endsWith("/quota")) return Promise.resolve({ data: [account] });
 	if (path.endsWith("/quota")) return Promise.resolve(quota);
 	if (path === "/subscriptions/commandcode/accounts") return Promise.resolve({ data: [] });

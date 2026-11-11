@@ -210,6 +210,24 @@ describe("DatabaseRuntimeConfigService", () => {
 		expect(calls.credentials).toBe(1);
 	});
 
+	it("runWithSnapshot 为 WebSocket 链路绑定同一份请求级快照", async () => {
+		const state = createState();
+		const { db, calls } = createDb(state);
+		const router = createRouter();
+		const service = new DatabaseRuntimeConfigService(db, validateAndTransform({}));
+
+		const visible = await service.runWithSnapshot(router, () => {
+			expect(router.getAvailableDeployment("group-old")?.deployment.model_name).toBe("group-old");
+			return true;
+		});
+		expect(visible).toBe(true);
+
+		await service.runWithSnapshot(router, () => undefined);
+		expect(calls.config).toBe(1);
+		expect(calls.models).toBe(1);
+		expect(calls.credentials).toBe(1);
+	});
+
 	it("装载失败时 fail closed 返回 503", async () => {
 		const db = {
 			select: () => ({

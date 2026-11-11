@@ -7,8 +7,6 @@ import { buildStreamWithTtft } from "./RouterStreamWrapper";
 import { filterDeploymentsByTags } from "./TagRouting";
 import { getRetryPolicyOverride } from "./RouterRetryPolicy";
 import { NotFoundError, ServiceUnavailableError } from "./RouterErrors";
-import { beginCliProxyDrain, endCliProxyDrain } from "../cliproxy/CliProxyDrainGate";
-import { isCliProxyDeploymentParams } from "../cliproxy/CliProxyTypes";
 
 function deployment(name: string, id = name): Deployment {
 	return { model_name: name, litellm_params: { model: `openai/${name}`, api_key: "test-provider-secret" }, model_info: { id: id } };
@@ -136,41 +134,6 @@ describe("upstream Router regressions and strategy additions", () => {
 			{ choices: [{ index: 0, delta: { content: "ok" } }] },
 		]);
 		expect((result["_spendInfo"] as { modelId: string }).modelId).toBe("b");
-	});
-
-	it("degrades away from CLIProxy deployments while the runtime drains", () => {
-		const managed = deployment("group", "managed");
-		managed.litellm_params.custom_llm_provider = "codex-subscription";
-		const direct = deployment("group", "direct");
-		const instance = router([managed, direct]);
-		const managedOnly = deployment("managed-only", "managed-only");
-		managedOnly.litellm_params.custom_llm_provider = "codex-subscription";
-		const managedOnlyInstance = router([managedOnly]);
-
-		instance.trackActiveRequest("managed", 1);
-		expect(instance.getActiveRequestCount((dep) => isCliProxyDeploymentParams(dep.litellm_params))).toBe(1);
-		expect(instance.getActiveRequestCount((dep) => !isCliProxyDeploymentParams(dep.litellm_params))).toBe(0);
-		instance.trackActiveRequest("managed", -1);
-
-		beginCliProxyDrain();
-		try {
-			for (let attempt = 0; attempt < 5; attempt++) {
-				expect(instance.getAvailableDeployment("group")?.deployment.model_info?.id).toBe("direct");
-			}
-			// 组内只有 CLIProxy deployment 时没有候选，由调用方走 fallback 链。
-			expect(managedOnlyInstance.getAvailableDeployment("managed-only")).toBeNull();
-		} finally {
-			endCliProxyDrain();
-		}
-
-		const restored = new Set<string>();
-		for (let attempt = 0; attempt < 40; attempt++) {
-			const candidate = instance.getAvailableDeployment("group");
-			if (candidate?.deployment.model_info?.id) {
-				restored.add(candidate.deployment.model_info.id);
-			}
-		}
-		expect(restored.has("managed")).toBe(true);
 	});
 
 	it("measures first chunk latency lazily without dividing by output token count", async () => {

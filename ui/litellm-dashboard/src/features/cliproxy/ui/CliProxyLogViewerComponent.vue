@@ -67,7 +67,7 @@ const date = (value: string) => new Date(value).toLocaleString();
 				<span class="cp-secondary cp-xs">{{
 					compact
 						? "Latest subscription process and management events."
-						: "Structured view of runtime stdout, stderr, OAuth and LiteLLM management events."
+						: "Structured view of subscription OAuth and runtime events emitted by LiteLLM."
 				}}</span>
 			</div></template
 		>

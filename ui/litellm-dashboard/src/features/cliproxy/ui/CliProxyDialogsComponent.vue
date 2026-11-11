@@ -3,29 +3,13 @@ import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
-import UiAlert from "../../platform/ui/UiAlert.vue";
 import type { CliProxyStore } from "../stores/CliProxyStore";
 import CliProxyPasswordInput from "./CliProxyPasswordInputComponent.vue";
 import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityComponent.vue";
-import CliProxyRawConfigInput from "./CliProxyRawConfigInputComponent.vue";
 const props = defineProps<{ store: CliProxyStore }>();
 const state = props.store.state;
 </script>
 <template>
-	<UiDialog v-model:open="state.rawConfigOpen" title="Edit runtime configuration" scroll-mode="overlay" :width="900"
-		><div class="cp-stack cp-gap-16">
-			<UiAlert type="warning" title="Advanced YAML editor" class="cp-alert-with-description"
-				>The document must be a YAML object. LiteLLM rejects host, port, auth-dir, api-keys and remote-management because those
-				fields define the private security boundary.</UiAlert
-			><CliProxyRawConfigInput v-model="state.rawConfigDraft" :open="state.rawConfigOpen" />
-		</div>
-		<template #footer
-			><UiButton @click="state.rawConfigOpen = false">Cancel</UiButton
-			><UiButton variant="primary" :loading="state.busy === 'configuration apply'" @click="store.saveRawConfig"
-				>Apply config</UiButton
-			></template
-		></UiDialog
-	>
 	<UiDialog
 		:open="state.oauthSession !== null"
 		:title="'OAuth login: ' + (state.oauthSession?.provider ?? '')"
@@ -44,7 +28,8 @@ const state = props.store.state;
 		}}</UiTag>
 		<pre class="cp-terminal cp-oauth-output">{{ state.oauthSession?.output.join("\n") || "Waiting for login output..." }}</pre>
 		<div v-if="state.oauthSession?.state === 'running'" class="cp-oauth-input">
-			<UiInput v-model="state.oauthInput" placeholder="Input requested by CLIProxy (if any)" /><UiButton @click="store.sendOAuthInput"
+			<UiInput v-model="state.oauthInput" placeholder="Input requested by the login flow (if any)" /><UiButton
+				@click="store.sendOAuthInput"
 				>Send</UiButton
 			>
 		</div>

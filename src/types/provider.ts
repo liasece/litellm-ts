@@ -46,7 +46,7 @@ export interface ProviderRequest {
 	/** 上游 API URL */
 	url: string;
 	/** HTTP 方法 */
-	method: "POST";
+	method: "POST" | "GET";
 	/** 请求头 */
 	headers: Record<string, string>;
 	/** 请求体（JSON 序列化前的对象） */

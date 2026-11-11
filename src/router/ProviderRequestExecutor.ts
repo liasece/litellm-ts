@@ -1,6 +1,8 @@
 import { decodeUndecodeableResponse, sanitizeUpstreamRequestHeaders } from "../core/api/upstreamHeaders";
 import type { ProviderRequest } from "../types/provider";
 import { TimeoutError } from "./RouterErrors";
+import { getSubscriptionRequestHandler } from "./SubscriptionDispatch";
+import { ApiError } from "../core/api/ApiError";
 import { beginUpstreamAttempt, endUpstreamAttempt, noteUpstreamHeaders, noteUpstreamPayload } from "../observability/RequestTrace";
 
 /** Provider 请求执行选项。 */
@@ -118,6 +120,13 @@ export async function executeProviderRequest(
 	request: ProviderRequest,
 	options: ProviderRequestExecutionOptions = {},
 ): Promise<ProviderRequestExecutionResult> {
+	if (request.url.startsWith("litellm-subscription://")) {
+		const handler = getSubscriptionRequestHandler();
+		if (!handler) {
+			throw ApiError.unavailable("订阅运行时尚未初始化");
+		}
+		return handler(request, options);
+	}
 	const abortController = new AbortController();
 	let timedOut = false;
 	// Fetch retains this signal while reading the response body after headers arrive.

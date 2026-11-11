@@ -5,10 +5,8 @@ import CliProxyTabs from "../../cliproxy/ui/CliProxyTabsComponent.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import { createCliProxyStore } from "../../cliproxy/stores/CliProxyStore";
 import CliProxyOverview from "../../cliproxy/ui/CliProxyOverviewComponent.vue";
-import CliProxyConfigEditor from "../../cliproxy/ui/CliProxyConfigEditorComponent.vue";
 import CliProxyAccounts from "../../cliproxy/ui/CliProxyAccountsComponent.vue";
 import CliProxyLogViewer from "../../cliproxy/ui/CliProxyLogViewerComponent.vue";
-import CliProxyAdvanced from "../../cliproxy/ui/CliProxyAdvancedComponent.vue";
 import CliProxyDialogs from "../../cliproxy/ui/CliProxyDialogsComponent.vue";
 import "../../cliproxy/ui/CliProxyStyles.css";
 const store = createCliProxyStore();
@@ -20,15 +18,9 @@ watch(
 );
 const tabs = computed(() => [
 	{ key: "overview", label: "Overview" },
-	{ key: "configuration", label: "Configuration" },
-	{ key: "accounts", label: "OAuth accounts (" + state.accounts.length + ")" },
+	{ key: "accounts", label: "Accounts (" + state.accounts.length + ")" },
 	{ key: "logs", label: "Logs" },
-	{ key: "advanced", label: "Advanced" },
 ]);
-function openRaw() {
-	state.rawConfigDraft = state.configYaml;
-	state.rawConfigOpen = true;
-}
 onMounted(store.start);
 onBeforeUnmount(store.dispose);
 </script>
@@ -37,21 +29,11 @@ onBeforeUnmount(store.dispose);
 	<div v-else class="cliproxy-page">
 		<div class="cp-page-heading">
 			<h2>Subscription runtime</h2>
-			<span class="cp-secondary">The runtime version ships with the application.</span>
+			<span class="cp-secondary">Subscription execution runs inside LiteLLM; accounts, quota, models and logs are managed here.</span>
 		</div>
 		<UiAlert v-if="state.status?.last_error" class="cp-mb-16" type="warning" :title="state.status.last_error" />
 		<CliProxyTabs v-model="state.activeTab" :items="tabs" />
 		<CliProxyOverview v-show="state.activeTab === 'overview'" :store="store" />
-		<CliProxyConfigEditor
-			v-if="visitedTabs.has('configuration')"
-			v-show="state.activeTab === 'configuration'"
-			:key="state.enabled + '-' + (state.status?.config_hash ?? 'config')"
-			:enabled="state.enabled"
-			:user-config="state.userConfig"
-			:saving="state.busy === 'configuration apply'"
-			@save="store.saveVisualConfig"
-			@open-raw="openRaw"
-		/>
 		<CliProxyAccounts v-show="state.activeTab === 'accounts'" :store="store" />
 		<CliProxyLogViewer
 			v-if="visitedTabs.has('logs')"
@@ -63,7 +45,6 @@ onBeforeUnmount(store.dispose);
 			@refresh="store.reloadLogs"
 			@clear="state.logs = []"
 		/>
-		<CliProxyAdvanced v-show="state.activeTab === 'advanced'" :store="store" />
 		<CliProxyDialogs :store="store" />
 	</div>
 </template>

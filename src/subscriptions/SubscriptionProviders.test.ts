@@ -12,7 +12,7 @@ it("stores only the upstream ID and addresses the configured subscription when m
 		const params = subscriptionModelParams({ model: source + "/vendor/model", custom_llm_provider: source, api_key: "fixture" });
 		expect(params).toEqual({ model: "vendor/model", custom_llm_provider: source });
 		const request = registry.getProvider("vendor/model", source).transformRequest("vendor/model", [], {});
-		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/" + source + "/v1/chat/completions");
+		expect(request.url).toBe("litellm-subscription://" + source + "/chat");
 		expect(request.body).toMatchObject({ model: "vendor/model" });
 	}
 });

@@ -20,11 +20,11 @@ const mockDbModelRows: Array<Record<string, unknown>> = [];
 /** 测试可控的 LiteLLM_CredentialsTable 行（Database mock 数据源），每个用例前重置 */
 const mockCredentialRows: Array<Record<string, unknown>> = [];
 
-/** 测试记录的 CLIProxy 运行时初始化调用；装配阶段不应触发，只有 warmUp 才触发。 */
+/** 测试记录的订阅运行时初始化调用；装配阶段不应触发，只有 warmUp 才触发。 */
 const mockCliProxyInitialize = jest.fn().mockResolvedValue(undefined);
 
-jest.mock("./cliproxy/CliProxyRuntimeManager", () => ({
-	CliProxyRuntimeManager: jest.fn().mockImplementation(() => ({
+jest.mock("./subscriptions/native/SubscriptionRuntimeManager", () => ({
+	SubscriptionRuntimeManager: jest.fn().mockImplementation(() => ({
 		initialize: mockCliProxyInitialize,
 		setActiveRequestProbe: jest.fn(),
 		shutdown: jest.fn().mockResolvedValue(undefined),
@@ -121,7 +121,7 @@ describe("createServiceContainer — 启动关键路径", () => {
 	});
 
 	it("预热失败只降级对应能力，不向调用方抛错", async () => {
-		mockCliProxyInitialize.mockRejectedValueOnce(new Error("CLIProxy 二进制缺失"));
+		mockCliProxyInitialize.mockRejectedValueOnce(new Error("订阅运行时初始化失败"));
 		const container = await createServiceContainer(buildConfig());
 		await expect(container.warmUp()).resolves.toBeUndefined();
 		expect(modelCostMapService.initialize).toHaveBeenCalledTimes(1);

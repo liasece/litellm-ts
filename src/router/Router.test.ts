@@ -10,6 +10,8 @@
 import { DeploymentNotFoundError, Router } from "./Router";
 import { installMockFetch, mkDeployment, okResponse, errorResponse } from "./RouterTestHelpers";
 import { RoutingStrategyName } from "../types/router";
+import { setSubscriptionRequestHandler } from "./SubscriptionDispatch";
+import type { ProviderRequest } from "../types/provider";
 
 let mockFetch: jest.Mock;
 
@@ -64,48 +66,49 @@ describe("Router smoke", () => {
 		expect((caught as { max_retries?: number }).max_retries).toBe(0);
 	});
 
-	it("imageGeneration 通过 Provider 图片协议而不是 Chat Completions", async () => {
-		const previousBase = process.env["CLIPROXY_INTERNAL_BASE_URL"];
-		const previousKey = process.env["CLIPROXY_INTERNAL_API_KEY"];
-		process.env["CLIPROXY_INTERNAL_BASE_URL"] = "http://cliproxy.internal";
-		process.env["CLIPROXY_INTERNAL_API_KEY"] = "internal-image-key";
-		mockFetch.mockResolvedValueOnce(okResponse({ created: 1, data: [{ b64_json: "AA==" }] }));
-		const router = new Router({
-			model_list: [
-				{
-					model_name: "image",
-					litellm_params: { model: "gpt-image-2", custom_llm_provider: "codex-subscription" },
-				},
-			],
-			routing_strategy: RoutingStrategyName.SimpleShuffle,
-			num_retries: 0,
+	it("imageGeneration 通过订阅桥而不是 Chat Completions", async () => {
+		const captured: ProviderRequest[] = [];
+		setSubscriptionRequestHandler(async (request) => {
+			captured.push(request);
+			return {
+			response: new Response(JSON.stringify({ created: 1, data: [{ b64_json: "AA==" }] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+			body: { created: 1, data: [{ b64_json: "AA==" }] },
+			latencyMs: 0,
+			startedAtMs: Date.now(),
+			};
 		});
-
 		try {
+			const router = new Router({
+				model_list: [
+					{
+						model_name: "image",
+						litellm_params: { model: "gpt-image-2", custom_llm_provider: "codex-subscription" },
+					},
+				],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+			});
+
 			const response = await router.imageGeneration("image", "draw a cat", {
 				response_format: "b64_json",
 				output_format: "png",
 			});
 
 			expect(response).toMatchObject({ data: [{ b64_json: "AA==" }] });
-			expect(mockFetch.mock.calls[0]?.[0]).toBe("http://cliproxy.internal/subscriptions/codex-subscription/v1/images/generations");
-			expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body))).toEqual({
+			expect(captured).toHaveLength(1);
+			expect(captured[0]?.url).toBe("litellm-subscription://codex/images/generations");
+			expect(captured[0]?.body).toEqual({
 				model: "gpt-image-2",
 				prompt: "draw a cat",
 				response_format: "b64_json",
 				output_format: "png",
 			});
+			expect(mockFetch).not.toHaveBeenCalled();
 		} finally {
-			if (previousBase === undefined) {
-				delete process.env["CLIPROXY_INTERNAL_BASE_URL"];
-			} else {
-				process.env["CLIPROXY_INTERNAL_BASE_URL"] = previousBase;
-			}
-			if (previousKey === undefined) {
-				delete process.env["CLIPROXY_INTERNAL_API_KEY"];
-			} else {
-				process.env["CLIPROXY_INTERNAL_API_KEY"] = previousKey;
-			}
+			setSubscriptionRequestHandler(undefined);
 		}
 	});
 });
@@ -360,7 +363,7 @@ describe("Router runtime credential resolution", () => {
 	});
 });
 
-describe("Router CLIProxy 启动等待候选判定", () => {
+describe("Router 订阅 deployment 候选判定", () => {
 	/** 构造一个由内部 CLIProxy 承载的 deployment。 */
 	function cliproxyDeployment(): ReturnType<typeof mkDeployment> {
 		return mkDeployment("commandcode/deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", {
@@ -371,7 +374,7 @@ describe("Router CLIProxy 启动等待候选判定", () => {
 		});
 	}
 
-	it("组内含 CLIProxy deployment 时返回 true，alias 解析后同样命中", () => {
+	it("组内含订阅 deployment 时返回 true，alias 解析后同样命中", () => {
 		const router = new Router({
 			model_list: [cliproxyDeployment()],
 			routing_strategy: RoutingStrategyName.SimpleShuffle,
@@ -383,7 +386,7 @@ describe("Router CLIProxy 启动等待候选判定", () => {
 		expect(router.hasCliProxyDeploymentForModel("cc-flash")).toBe(true);
 	});
 
-	it("非 CLIProxy 模型组与未知模型都返回 false，不触发多余的启动等待", () => {
+	it("非订阅模型组与未知模型都返回 false，不触发启动等待", () => {
 		const router = new Router({
 			model_list: [mkDeployment("gpt-4", "openai/gpt-4")],
 			routing_strategy: RoutingStrategyName.SimpleShuffle,

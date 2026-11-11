@@ -1,11 +1,10 @@
 import { reactive } from "vue";
-import { advancedManagementApi, cliProxyApi } from "../api/CliProxyApi";
+import { cliProxyApi } from "../api/CliProxyApi";
 import type {
 	Account,
 	AccountQuota,
 	AccountQuotaState,
 	CommandCodeAccount,
-	ConfigResponse,
 	CliProxyLogEntry,
 	OAuthSession,
 	RuntimeStatus,
@@ -14,11 +13,6 @@ import type {
 export function createCliProxyStore() {
 	const state = reactive({
 		status: null as RuntimeStatus | null,
-		configYaml: "",
-		rawConfigDraft: "",
-		rawConfigOpen: false,
-		userConfig: {} as Record<string, unknown>,
-		enabled: true,
 		accounts: [] as Account[],
 		commandCodeAccounts: [] as CommandCodeAccount[],
 		commandCodeLabel: "",
@@ -34,10 +28,6 @@ export function createCliProxyStore() {
 		oauthSession: null as OAuthSession | null,
 		oauthInput: "",
 		quotaStates: {} as Record<string, AccountQuotaState>,
-		managementResource: "/debug",
-		managementMethod: "GET",
-		managementBody: "{}",
-		managementResult: null as unknown,
 		notice: null as { type: "error" | "success"; message: string } | null,
 	});
 	let disposed = false;
@@ -122,17 +112,14 @@ export function createCliProxyStore() {
 	const load = async () => {
 		state.loading = true;
 		try {
-			const [config, accounts, managed, logs] = await Promise.all([
-				cliProxyApi<ConfigResponse>("/subscriptions/config"),
+			const [status, accounts, managed, logs] = await Promise.all([
+				cliProxyApi<RuntimeStatus>("/subscriptions/status"),
 				cliProxyApi<{ data: Account[] }>("/subscriptions/accounts"),
 				cliProxyApi<{ data: CommandCodeAccount[] }>("/subscriptions/commandcode/accounts"),
 				cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>("/subscriptions/logs"),
 			]);
 			if (disposed) return;
-			state.status = config.status;
-			state.enabled = config.settings.enabled;
-			state.configYaml = config.settings.config_yaml;
-			state.userConfig = config.user_config;
+			state.status = status;
 			state.accounts = accounts.data;
 			state.commandCodeAccounts = managed.data;
 			state.logs = logs.entries;
@@ -147,43 +134,6 @@ export function createCliProxyStore() {
 			if (!disposed) state.loading = false;
 		}
 	};
-	const runOperation = async (name: string, operation: () => Promise<unknown>) => {
-		state.busy = name;
-		try {
-			await operation();
-			await refreshStatus();
-			notify("success", "Subscription runtime " + name + " completed");
-		} catch (error) {
-			fail(error);
-		} finally {
-			if (!disposed) state.busy = null;
-		}
-	};
-	const applyConfigResponse = (response: ConfigResponse) => {
-		state.status = response.status;
-		state.enabled = response.settings.enabled;
-		state.configYaml = response.settings.config_yaml;
-		state.userConfig = response.user_config;
-	};
-	const saveRawConfig = () =>
-		runOperation("configuration apply", async () => {
-			applyConfigResponse(
-				await cliProxyApi<ConfigResponse>("/subscriptions/config", {
-					method: "PUT",
-					body: JSON.stringify({ enabled: state.enabled, config_yaml: state.rawConfigDraft }),
-				}),
-			);
-			state.rawConfigOpen = false;
-		});
-	const saveVisualConfig = (enabled: boolean, userConfig: Record<string, unknown>) =>
-		runOperation("configuration apply", async () => {
-			applyConfigResponse(
-				await cliProxyApi<ConfigResponse>("/subscriptions/config", {
-					method: "PUT",
-					body: JSON.stringify({ enabled, user_config: userConfig }),
-				}),
-			);
-		});
 	const startOAuth = async (provider: string) => {
 		state.busy = "oauth-" + provider;
 		try {
@@ -281,18 +231,6 @@ export function createCliProxyStore() {
 			fail(error);
 		}
 	};
-	const executeManagementRequest = async () => {
-		state.busy = "management request";
-		try {
-			state.managementResult = await advancedManagementApi(state.managementResource, state.managementMethod, state.managementBody);
-			if (state.managementMethod !== "GET") await load();
-			notify("success", "Subscription management request completed");
-		} catch (error) {
-			fail(error);
-		} finally {
-			state.busy = null;
-		}
-	};
 	const poll = async () => {
 		void refreshStatus().catch(() => undefined);
 		void refreshLogs().catch(() => undefined);
@@ -328,9 +266,6 @@ export function createCliProxyStore() {
 		reloadLogs,
 		refreshAllQuotas,
 		loadQuota,
-		runOperation,
-		saveRawConfig,
-		saveVisualConfig,
 		startOAuth,
 		sendOAuthInput,
 		addCommandCodeAccount,
@@ -338,7 +273,6 @@ export function createCliProxyStore() {
 		saveCommandCodeAccount,
 		updateAccount,
 		removeAccount,
-		executeManagementRequest,
 	};
 }
 export type CliProxyStore = ReturnType<typeof createCliProxyStore>;

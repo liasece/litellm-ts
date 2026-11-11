@@ -1,91 +1,18 @@
-import { SUBSCRIPTION_PROVIDERS, isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
-import { Router, type Request, type Response } from "express";
-import { registerRoute } from "../core/api/registerRoute";
+import { Router, type Request } from "express";
 import { ApiError } from "../core/api/ApiError";
+import { registerRoute } from "../core/api/registerRoute";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
-import type { CliProxyRuntimeManager } from "./CliProxyRuntimeManager";
-import type { CliProxyOAuthProvider, CliProxyRuntimeStatus, CliProxyStoredSettings } from "./CliProxyTypes";
+import { SUBSCRIPTION_PROVIDERS, isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
+import type { SubscriptionRuntimeManager } from "../subscriptions/native/SubscriptionRuntimeManager";
+import type { CliProxyOAuthProvider } from "./CliProxyTypes";
 
 const OAUTH_PROVIDERS = new Set<CliProxyOAuthProvider>(["codex-device", "codex", "claude", "antigravity", "kimi", "xai"]);
-const MAX_MANAGEMENT_BODY_BYTES = 64 * 1024 * 1024;
-const MANAGEMENT_RESPONSE_BLOCKED_HEADERS = new Set([
-	"connection",
-	"transfer-encoding",
-	"content-length",
-	"content-encoding",
-	"keep-alive",
-]);
-
-interface ManagementRoute {
-	readonly methods: ReadonlySet<string>;
-	readonly pattern: RegExp;
-	readonly persistsConfig?: boolean;
-}
-
-function managementRoute(methods: readonly string[], pattern: RegExp, persistsConfig = false): ManagementRoute {
-	return { methods: new Set(methods), pattern: pattern, persistsConfig: persistsConfig };
-}
 
 /**
- * CLIProxyAPI v7.2.110 management surface. Config/config.yaml and api-keys are
- * intentionally absent: LiteLLM owns the generated config and the child
- * process ingress key must never cross the loopback trust boundary.
+ * 读取 JSON 对象请求体。
+ * @param req - 请求
+ * @throws {ApiError} 请求体不是 JSON 对象时抛出
  */
-const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
-	managementRoute(["GET"], /^\/latest-version$/),
-	managementRoute(["GET"], /^\/plugins$/),
-	managementRoute(["GET"], /^\/plugin-store$/),
-	managementRoute(["POST"], /^\/plugin-store\/[^/]+\/install$/, true),
-	managementRoute(["DELETE"], /^\/plugins\/[^/]+$/, true),
-	managementRoute(["PATCH"], /^\/plugins\/[^/]+\/enabled$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/plugins\/[^/]+\/config$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/debug$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/logging-to-file$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/logs-max-total-size-mb$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/error-logs-max-files$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/usage-statistics-enabled$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/proxy-url$/, true),
-	managementRoute(["POST"], /^\/api-call$/),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/quota-exceeded\/switch-project$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/quota-exceeded\/switch-preview-model$/, true),
-	managementRoute(["POST"], /^\/reset-quota$/),
-	managementRoute(["GET"], /^\/api-key-usage$/),
-	managementRoute(["GET"], /^\/usage-queue$/),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/gemini-api-key$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/interactions-api-key$/, true),
-	managementRoute(["GET", "DELETE"], /^\/logs$/),
-	managementRoute(["GET"], /^\/request-error-logs$/),
-	managementRoute(["GET"], /^\/request-error-logs\/[^/]+$/),
-	managementRoute(["GET"], /^\/request-log-by-id\/[^/]+$/),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/request-log$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/ws-auth$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/request-retry$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/max-retry-interval$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/force-model-prefix$/, true),
-	managementRoute(["GET", "PUT", "PATCH"], /^\/routing\/strategy$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/claude-api-key$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/codex-api-key$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/xai-api-key$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/openai-compatibility$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/vertex-api-key$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/oauth-excluded-models$/, true),
-	managementRoute(["GET", "PUT", "PATCH", "DELETE"], /^\/oauth-model-alias$/, true),
-	managementRoute(["GET", "POST", "DELETE"], /^\/auth-files$/),
-	managementRoute(["GET"], /^\/auth-files\/models$/),
-	managementRoute(["GET"], /^\/model-definitions\/[^/]+$/),
-	managementRoute(["GET"], /^\/auth-files\/download$/),
-	managementRoute(["PATCH"], /^\/auth-files\/status$/),
-	managementRoute(["PATCH"], /^\/auth-files\/fields$/),
-	managementRoute(["POST"], /^\/vertex\/import$/),
-	managementRoute(["GET"], /^\/anthropic-auth-url$/),
-	managementRoute(["GET"], /^\/codex-auth-url$/),
-	managementRoute(["GET"], /^\/antigravity-auth-url$/),
-	managementRoute(["GET"], /^\/kimi-auth-url$/),
-	managementRoute(["GET"], /^\/xai-auth-url$/),
-	managementRoute(["GET"], /^\/get-auth-status$/),
-	managementRoute(["DELETE"], /^\/oauth-session$/),
-];
-
 function bodyRecord(req: Request): Record<string, unknown> {
 	if (typeof req.body !== "object" || req.body === null || Array.isArray(req.body)) {
 		throw ApiError.badRequest("请求体必须是 JSON 对象");
@@ -93,18 +20,12 @@ function bodyRecord(req: Request): Record<string, unknown> {
 	return req.body as Record<string, unknown>;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function commandCodeAccountIndex(req: Request): number {
-	const value = routeParam(req, "index");
-	if (!/^\d+$/.test(value)) {
-		throw ApiError.badRequest("CommandCode 账户索引无效");
-	}
-	return Number(value);
-}
-
+/**
+ * 读取路由参数。
+ * @param req - 请求
+ * @param name - 参数名
+ * @throws {ApiError} 参数缺失时抛出
+ */
 function routeParam(req: Request, name: string): string {
 	const value = req.params[name];
 	if (typeof value !== "string" || value.length === 0) {
@@ -113,107 +34,27 @@ function routeParam(req: Request, name: string): string {
 	return value;
 }
 
+/**
+ * 要求 proxy_admin。
+ * @param req - 请求
+ * @throws {ApiError} 非 proxy_admin 时抛出
+ */
 function requireProxyAdmin(req: Request): void {
 	if (req.auth?.user_role !== PROXY_ADMIN_ROLE) {
-		throw ApiError.forbidden("CLIProxy management endpoint requires proxy_admin access");
+		throw ApiError.forbidden("订阅管理接口需要 proxy_admin 权限");
 	}
-}
-
-function managementResource(req: Request): string {
-	const wildcard = req.params[0];
-	const path = `/${Array.isArray(wildcard) ? (wildcard[0] ?? "") : (wildcard ?? "")}`;
-	if (path.includes("..") || path.includes("\0")) {
-		throw ApiError.badRequest("CLIProxy 管理资源路径无效");
-	}
-	return path;
-}
-
-function findManagementRoute(method: string, resource: string): ManagementRoute {
-	const route = MANAGEMENT_ROUTES.find((candidate) => candidate.methods.has(method) && candidate.pattern.test(resource));
-	if (!route) {
-		throw new ApiError(404, "CLIProxy 管理接口不存在或由 LiteLLM 接管", "not_found");
-	}
-	return route;
-}
-
-async function readManagementBody(req: Request): Promise<Buffer | undefined> {
-	if (req.method === "GET" || req.method === "HEAD") {
-		return undefined;
-	}
-	const contentType = req.headers["content-type"];
-	if (typeof contentType === "string" && contentType.includes("application/json")) {
-		return req.body === undefined ? undefined : Buffer.from(JSON.stringify(req.body));
-	}
-	const chunks: Buffer[] = [];
-	let size = 0;
-	for await (const chunk of req) {
-		const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-		size += value.length;
-		if (size > MAX_MANAGEMENT_BODY_BYTES) {
-			throw new ApiError(413, "CLIProxy 管理请求体超过 64 MB", "request_too_large");
-		}
-		chunks.push(value);
-	}
-	return chunks.length > 0 ? Buffer.concat(chunks) : undefined;
-}
-
-async function proxyManagementRequest(req: Request, res: Response, runtime: CliProxyRuntimeManager): Promise<void> {
-	requireProxyAdmin(req);
-	const resource = managementResource(req);
-	const route = findManagementRoute(req.method, resource);
-	const queryIndex = req.originalUrl.indexOf("?");
-	const resourceWithQuery = queryIndex >= 0 ? `${resource}${req.originalUrl.slice(queryIndex)}` : resource;
-	const body = await readManagementBody(req);
-	const headers = new Headers();
-	const contentType = req.headers["content-type"];
-	const accept = req.headers["accept"];
-	if (typeof contentType === "string") {
-		headers.set("Content-Type", contentType);
-	}
-	if (typeof accept === "string") {
-		headers.set("Accept", accept);
-	}
-	const upstream = await runtime.managementRequest(resourceWithQuery, {
-		method: req.method,
-		headers: headers,
-		body: body,
-	});
-	const responseBody = Buffer.from(await upstream.arrayBuffer());
-	if (upstream.ok && route.persistsConfig && req.method !== "GET") {
-		try {
-			const removed = req.method === "DELETE" ? /^\/plugins\/([^/]+)$/.exec(resource)?.[1] : undefined;
-			await runtime.persistManagementConfig(removed);
-		} catch (error) {
-			// 变更已在上游生效，持久化失败不应把成功操作反转为客户端 500。
-			// 注意：不能把中文错误写入响应头——Node setHeader 会对非 ASCII 值抛 ERR_INVALID_CHAR，
-			// 反而破坏成功响应；仅记录到系统日志。
-			const message = error instanceof Error ? error.message : String(error);
-			runtime.appendSystemLog(`CLIProxy 配置持久化失败（变更已生效）: ${message}`);
-		}
-	}
-	res.status(upstream.status);
-	upstream.headers.forEach((value, key) => {
-		if (!MANAGEMENT_RESPONSE_BLOCKED_HEADERS.has(key.toLowerCase())) {
-			res.setHeader(key, value);
-		}
-	});
-	if (upstream.ok && req.method === "GET" && resource === "/plugins/opencode-go-cliproxyapi/config") {
-		const config: unknown = JSON.parse(responseBody.toString("utf8"));
-		runtime.omitSavedPluginKeys(config);
-		res.json(config);
-		return;
-	}
-	res.end(responseBody);
 }
 
 /**
- * Register the admin-only CLIProxy control-plane API.
- * @param parent - Authenticated management router.
- * @param runtime
+ * 注册订阅管理 API。
+ *
+ * 保留账号、额度、目录、日志与 OAuth；CPA 配置编辑、插件商店、启动/停止/重启、
+ * 在线升级与高级管理代理均已下线并返回 410。
+ * @param parent - 已鉴权的管理路由
+ * @param runtime - 原生订阅运行时
  */
-export function registerCliProxyManagementRoutes(parent: Router, runtime: CliProxyRuntimeManager): void {
+export function registerCliProxyManagementRoutes(parent: Router, runtime: SubscriptionRuntimeManager): void {
 	const router = Router();
-	// Older management clients reach the same handlers as the subscription dashboard.
 	parent.use(["/subscriptions", "/cliproxy"], router);
 	registerRoute(router, { method: "get", path: "/status" }, () => runtime.status());
 
@@ -225,19 +66,10 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 
 	registerRoute(router, { method: "put", path: "/config" }, async (req) => {
 		const body = bodyRecord(req);
-		const enabled = body["enabled"] !== false;
-		let status: CliProxyRuntimeStatus;
-		if (typeof body["config_yaml"] === "string") {
-			const settings: CliProxyStoredSettings = {
-				enabled: enabled,
-				config_yaml: body["config_yaml"],
-			};
-			status = await runtime.saveSettings(settings);
-		} else if (isRecord(body["user_config"])) {
-			status = await runtime.saveUserConfig(enabled, body["user_config"]);
-		} else {
-			throw ApiError.badRequest("必须提供 config_yaml 或 user_config");
+		if (body["config_yaml"] !== undefined || body["user_config"] !== undefined) {
+			throw new ApiError(410, "订阅配置编辑已下线；账号仍可在账户页管理");
 		}
+		const status = await runtime.setEnabled(body["enabled"] !== false);
 		return {
 			settings: runtime.settings,
 			user_config: runtime.userConfig,
@@ -245,19 +77,28 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 		};
 	});
 
-	registerRoute(router, { method: "post", path: "/start" }, () => runtime.start());
-	registerRoute(router, { method: "post", path: "/stop" }, () => runtime.stop());
-	registerRoute(router, { method: "post", path: "/restart" }, () => runtime.restart());
+	for (const path of ["/start", "/stop", "/restart", "/update", "/rollback"]) {
+		registerRoute(router, { method: "post", path: path }, () => {
+			throw new ApiError(410, "订阅运行时为进程内实现，无需启停或在线升级");
+		});
+	}
+	registerRoute(router, { method: "get", path: "/update/check" }, () => ({
+		current: "native",
+		latest: "native",
+		update_available: false,
+		releases: [],
+	}));
 
 	registerRoute(router, { method: "get", path: "/models" }, async () => ({
 		data: (await runtime.listModels()).map((id) => ({ id: id })),
 	}));
 
 	registerRoute(router, { method: "get", path: "/:provider/models" }, async (req) => {
-		requireProxyAdmin(req);
 		const provider = routeParam(req, "provider");
-		if (!isSubscriptionProvider(provider)) {throw ApiError.notFound("未知订阅 Provider");}
-		return { data: (await runtime.listSubscriptionModels(provider)).map(id => ({ id: id })) };
+		if (!isSubscriptionProvider(provider)) {
+			throw ApiError.notFound("未知订阅 Provider");
+		}
+		return { data: (await runtime.listSubscriptionModels(provider)).map((id) => ({ id: id })) };
 	});
 
 	registerRoute(router, { method: "get", path: "/logs" }, (req) => {
@@ -269,24 +110,45 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 	const keyProvider = (req: Request): "commandcode" | "opencode-go" => {
 		requireProxyAdmin(req);
 		const provider = routeParam(req, "provider");
-		if (provider !== "commandcode" && provider !== "opencode-go") {throw ApiError.badRequest("此订阅使用 OAuth 登录");}
+		if (provider !== "commandcode" && provider !== "opencode-go") {
+			throw ApiError.badRequest("此订阅使用 OAuth 登录");
+		}
 		return provider;
 	};
-	registerRoute(router, { method: "get", path: "/:provider/keys" }, async req => ({
+	registerRoute(router, { method: "get", path: "/:provider/keys" }, async (req) => ({
 		data: await runtime.listSavedKeys(keyProvider(req)),
 	}));
-	for (const [method, suffix] of [["post", ""], ["patch", "/:id"]] as const) {
-		registerRoute(router, { method: method, path: "/:provider/keys" + suffix }, async req => {
-			const provider = keyProvider(req);
-			const body = bodyRecord(req);
-			if (typeof body["label"] !== "string" || (body["api_key"] !== undefined && typeof body["api_key"] !== "string")) {
-				throw ApiError.badRequest("请填写有效的订阅账号名称和密钥");
-			}
-			return { data: await runtime.saveSubscriptionKey(provider, method === "post" ? undefined : routeParam(req, "id"),
-				body["label"], typeof body["api_key"] === "string" ? body["api_key"] : undefined) };
-		});
-	}
-	registerRoute(router, { method: "delete", path: "/:provider/keys/:id" }, async req => {
+	registerRoute(router, { method: "post", path: "/:provider/keys" }, async (req) => {
+		const provider = keyProvider(req);
+		const body = bodyRecord(req);
+		if (typeof body["label"] !== "string" || (body["api_key"] !== undefined && typeof body["api_key"] !== "string")) {
+			throw ApiError.badRequest("请填写有效的订阅账号名称和密钥");
+		}
+		return {
+			data: await runtime.saveSubscriptionKey(
+				provider,
+				undefined,
+				body["label"],
+				typeof body["api_key"] === "string" ? body["api_key"] : undefined,
+			),
+		};
+	});
+	registerRoute(router, { method: "patch", path: "/:provider/keys/:id" }, async (req) => {
+		const provider = keyProvider(req);
+		const body = bodyRecord(req);
+		if (typeof body["label"] !== "string" || (body["api_key"] !== undefined && typeof body["api_key"] !== "string")) {
+			throw ApiError.badRequest("请填写有效的订阅账号名称和密钥");
+		}
+		return {
+			data: await runtime.saveSubscriptionKey(
+				provider,
+				routeParam(req, "id"),
+				body["label"],
+				typeof body["api_key"] === "string" ? body["api_key"] : undefined,
+			),
+		};
+	});
+	registerRoute(router, { method: "delete", path: "/:provider/keys/:id" }, async (req) => {
 		await runtime.revokeSubscriptionKey(keyProvider(req), routeParam(req, "id"));
 		return { status: "trashed" };
 	});
@@ -297,7 +159,7 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 			throw ApiError.notFound("未知订阅 Provider");
 		}
 		const accounts = await runtime.listAccounts({ includeTrashed: req.query["include_trashed"] === "true" });
-		return { data: accounts.filter(account => account.provider === SUBSCRIPTION_PROVIDERS[provider].source) };
+		return { data: accounts.filter((account) => account.provider === SUBSCRIPTION_PROVIDERS[provider].source) };
 	});
 
 	registerRoute(router, { method: "get", path: "/accounts" }, async (req) => ({
@@ -339,6 +201,10 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 	});
 
 	registerRoute(router, { method: "patch", path: "/commandcode/accounts/:index" }, async (req) => {
+		const index = Number(routeParam(req, "index"));
+		if (!Number.isInteger(index)) {
+			throw ApiError.badRequest("CommandCode 账户索引无效");
+		}
 		const body = bodyRecord(req);
 		const patch: { apiKey?: unknown; label?: unknown } = {};
 		if (body["api_key"] !== undefined) {
@@ -350,12 +216,16 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 		if (patch.apiKey === undefined && patch.label === undefined) {
 			throw ApiError.badRequest("必须提供 api_key 或 label");
 		}
-		return { data: await runtime.updateCommandCodeAccount(commandCodeAccountIndex(req), patch) };
+		return { data: await runtime.updateCommandCodeAccount(index, patch) };
 	});
 
-	registerRoute(router, { method: "delete", path: "/commandcode/accounts/:index" }, async (req) => ({
-		data: await runtime.deleteCommandCodeAccount(commandCodeAccountIndex(req)),
-	}));
+	registerRoute(router, { method: "delete", path: "/commandcode/accounts/:index" }, async (req) => {
+		const index = Number(routeParam(req, "index"));
+		if (!Number.isInteger(index)) {
+			throw ApiError.badRequest("CommandCode 账户索引无效");
+		}
+		return { data: await runtime.deleteCommandCodeAccount(index) };
+	});
 
 	registerRoute(router, { method: "post", path: "/oauth" }, async (req) => {
 		const provider = bodyRecord(req)["provider"];
@@ -366,7 +236,7 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 	});
 
 	registerRoute(router, { method: "get", path: "/oauth/:id" }, (req) => runtime.getOAuthSession(routeParam(req, "id")));
-	registerRoute(router, { method: "post", path: "/oauth/:id/input" }, (req) => {
+	registerRoute(router, { method: "post", path: "/oauth/:id/input" }, async (req) => {
 		const input = bodyRecord(req)["input"];
 		if (typeof input !== "string" || input.length > 4_096) {
 			throw ApiError.badRequest("OAuth 输入无效");
@@ -374,18 +244,9 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: CliPro
 		return runtime.sendOAuthInput(routeParam(req, "id"), input);
 	});
 
-	// The runtime is released with the application. Older clients can still read its version.
-	registerRoute(router, { method: "get", path: "/update/check" }, () => {
-		const version = runtime.status().version;
-		return { current: version, latest: version, update_available: false, releases: [] };
-	});
-	for (const path of ["/update","/rollback"]) {
-		registerRoute(router, { method: "post", path: path }, () => {
-			throw new ApiError(410, "订阅运行时随应用镜像发布，请使用应用发布流程升级或回滚");
-		});
-	}
-
 	for (const method of ["get", "post", "put", "patch", "delete"] as const) {
-		registerRoute(router, { method: method, path: "/management/*" }, (req, res) => proxyManagementRequest(req, res, runtime));
+		registerRoute(router, { method: method, path: "/management/*" }, () => {
+			throw new ApiError(410, "高级管理面已下线");
+		});
 	}
 }

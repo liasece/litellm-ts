@@ -100,6 +100,19 @@ export class SubscriptionAccountKeys {
 		return entry;
 	}
 
+	/**
+	 * 移除一条已保存的 key 记录；用于管理面彻底删除。
+	 * @param provider - 来源
+	 * @param id - 记录 ID
+	 */
+	async remove(provider: KeySubscription, id: string): Promise<void> {
+		await this.load();
+		if (!this._records.some((record) => record.provider === provider && record.id === id)) {
+			throw ApiError.notFound("订阅账号不存在");
+		}
+		await this._persist(this._records.filter((record) => !(record.provider === provider && record.id === id)));
+	}
+
 	private async _persist(records: SubscriptionKey[]): Promise<void> {
 		if (!this._box) {
 			throw ApiError.unavailable("请先设置 LITELLM_SALT_KEY 或 master key 以保存订阅凭据");

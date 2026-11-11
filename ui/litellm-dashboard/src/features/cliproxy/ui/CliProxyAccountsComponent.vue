@@ -18,7 +18,18 @@ import { getProviderBrand } from "../../providers/logic/ProviderBrands";
 import CliProxyConfirm from "./CliProxyConfirmComponent.vue";
 import CliProxyPasswordInput from "./CliProxyPasswordInputComponent.vue";
 import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityComponent.vue";
-const props = defineProps<{ store: CliProxyStore; sources?: readonly string[]; showCommandKeyForm?: boolean }>();
+const props = withDefaults(
+	defineProps<{
+		store: CliProxyStore;
+		sources?: readonly string[];
+		showCommandKeyForm?: boolean;
+		/** 单 Provider 板块内账号表已限定来源，隐藏重复的 Provider 列与筛选。 */
+		showProviderColumn?: boolean;
+		/** 没有账号时不渲染空表：订阅页按 Provider 分板块，空板块只保留添加入口。 */
+		hideTableWhenEmpty?: boolean;
+	}>(),
+	{ sources: undefined, showCommandKeyForm: undefined, showProviderColumn: true, hideTableWhenEmpty: false },
+);
 const state = props.store.state;
 const allOauthProviders = [
 	{ provider: "codex-device", label: "Codex device login", primary: true, source: "codex" },
@@ -38,6 +49,13 @@ const visibleAccounts = computed(() =>
 const brandFor = (provider: string) => getProviderBrand(provider);
 const managedAccount = (account: Account) => state.commandCodeAccounts.find((item) => item.filename === account.filename);
 const isTrashed = (account: Account) => account.filename.startsWith(".trash/");
+const rateLimitTitle = (account: Account): string => {
+	const snapshot = account.rate_limit;
+	if (!snapshot) return "";
+	return Object.entries(snapshot.headers)
+		.map(([key, value]) => key + ": " + value)
+		.join("\n");
+};
 const activeFilters = ref<UiTableActiveFilter[]>([]);
 const sort = ref<{ key: string; order: "asc" | "desc" | null }>({ key: "", order: null });
 const providerFilter = computed<readonly UiTableFilterField[]>(() => [
@@ -73,19 +91,27 @@ const enabledFilter: readonly UiTableFilterField[] = [
 		},
 	},
 ];
-const columns = computed<readonly UiTableColumn[]>(() => [
-	{ key: "provider", label: "Provider", width: 160, sortable: true, filters: providerFilter.value },
-	{ key: "account", label: "Account", width: 220, sortable: true, filters: accountFilter },
-	{ key: "file", label: "File", width: 320, sortable: true, filters: fileFilter },
-	{ key: "enabled", label: "Enabled", width: 100, filters: enabledFilter },
-	{ key: "weight", label: "Weight", width: 110, sortable: true, initialSortOrder: "desc" },
-	{ key: "actions", label: "Action", width: 220, sticky: "right" },
-]);
+const columns = computed<readonly UiTableColumn[]>(() => {
+	const providerColumn: UiTableColumn[] = props.showProviderColumn
+		? [{ key: "provider", label: "Provider", width: 160, sortable: true, filters: providerFilter.value }]
+		: [];
+	return [
+		...providerColumn,
+		{ key: "account", label: "Account", width: 220, sortable: true, filters: accountFilter },
+		{ key: "file", label: "File", width: 320, sortable: true, filters: fileFilter },
+		{ key: "enabled", label: "Enabled", width: 100, filters: enabledFilter },
+		{ key: "status", label: "Status", width: 180, sortable: true },
+		{ key: "weight", label: "Weight", width: 110, sortable: true, initialSortOrder: "desc" },
+		{ key: "actions", label: "Action", width: 220, sticky: "right" },
+	];
+});
 function accountValue(account: Account, key: string): string | number {
 	if (key === "account") return account.email ?? "";
 	if (key === "file") return account.filename;
 	if (key === "enabled") return account.disabled ? "Disabled" : "Enabled";
 	if (key === "weight") return account.weight ?? 0;
+	if (key === "status") return account.status ?? account.last_error ?? "";
+	if (key === "rate_limit") return account.rate_limit?.limited ? "Rate limited" : "";
 	return account.provider ?? "";
 }
 const filteredAccounts = computed(() =>
@@ -102,6 +128,7 @@ const sortedAccounts = computed(() => {
 	});
 });
 const emptyText = computed(() => (activeFilters.value.length ? "No accounts match the current filters" : "No data"));
+const tableVisible = computed(() => !props.hideTableWhenEmpty || visibleAccounts.value.length > 0);
 function changeSort(next: UiTableSort): void {
 	sort.value = { key: next.order ? next.key : "", order: next.order };
 }
@@ -188,10 +215,11 @@ function edit(account: Account) {
 				>
 			</div>
 			<p class="cp-secondary cp-mt-12 cp-no-margin-bottom">
-				Stored in the LiteLLM config and materialized as a CPA auth file. Use Edit to rotate the key.
+				Stored in the LiteLLM config and materialized as a subscription auth file. Use Edit to rotate the key.
 			</p></UiCard
 		>
 		<UiTable
+			v-if="tableVisible"
 			:columns="columns"
 			:rows="sortedAccounts"
 			row-key="auth_index"
@@ -210,10 +238,15 @@ function edit(account: Account) {
 		>
 			<template #row="{ row }">
 				<tr v-for="account in [accountRow(row)]" :key="account.auth_index" class="ui-table__row">
-					<td><ProviderIdentityComponent :provider="account.provider" /></td>
+					<td v-if="showProviderColumn"><ProviderIdentityComponent :provider="account.provider" /></td>
 					<td>{{ account.email ?? "—" }}</td>
 					<td class="cp-account-filename" :title="account.filename">
 						{{ account.filename }}<UiTag v-if="isTrashed(account)" color="orange" class="cp-ml-8">trashed</UiTag>
+					</td>
+					<td :title="account.last_error ?? rateLimitTitle(account)">
+						<UiTag v-if="account.status" color="red">{{ account.status }}</UiTag>
+						<UiTag v-else-if="account.rate_limit?.limited" color="orange">rate limited</UiTag>
+						<span v-else>—</span>
 					</td>
 					<td>
 						<UiSwitch
@@ -225,7 +258,7 @@ function edit(account: Account) {
 					</td>
 					<td>
 						<UiInputNumber
-							:min="1"
+							:min="0"
 							:max="1000000"
 							:model-value="account.weight"
 							placeholder="default"
@@ -240,7 +273,7 @@ function edit(account: Account) {
 							><CliProxyConfirm
 								v-if="managedAccount(account)"
 								title="Delete this CommandCode account?"
-								description="It will be removed from the LiteLLM config and its CPA auth file will be deleted."
+								description="It will be removed from the LiteLLM config and its subscription auth file will be deleted."
 								@confirm="store.removeAccount(account)"
 								><UiButton size="small" danger>Delete</UiButton></CliProxyConfirm
 							><CliProxyConfirm

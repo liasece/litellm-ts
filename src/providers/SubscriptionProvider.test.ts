@@ -2,10 +2,7 @@ import { LlmProviders } from "../types/provider";
 import { SubscriptionProvider } from "./SubscriptionProvider";
 
 describe("SubscriptionProvider", () => {
-	const provider = new SubscriptionProvider(LlmProviders.CodexSubscription, {
-		internalApiKey: "internal-secret",
-		baseUrl: "http://127.0.0.1:8317",
-	});
+	const provider = new SubscriptionProvider(LlmProviders.CodexSubscription);
 
 	it("forwards the complete OpenAI request without leaking LiteLLM connection parameters", () => {
 		const request = provider.transformRequest("gpt-5.4", [{ role: "user", content: "hello" }], {
@@ -17,8 +14,8 @@ describe("SubscriptionProvider", () => {
 			custom_llm_provider: "codex-subscription",
 		});
 
-		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/chat/completions");
-		expect(request.headers.Authorization).toBe("Bearer internal-secret");
+		expect(request.url).toBe("litellm-subscription://codex/chat");
+		expect(request.headers.Authorization).toBeUndefined();
 		expect(request.body).toMatchObject({
 			model: "gpt-5.4",
 			messages: [{ role: "user", content: "hello" }],
@@ -35,9 +32,9 @@ describe("SubscriptionProvider", () => {
 			anthropic_version: "2023-06-01",
 		});
 
-		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/messages");
-		expect(request.headers["x-api-key"]).toBe("internal-secret");
+		expect(request.url).toBe("litellm-subscription://codex/messages");
 		expect(request.headers["anthropic-version"]).toBe("2023-06-01");
+		expect(request.headers["x-api-key"]).toBeUndefined();
 	});
 
 	it("builds a standard image-generation upstream request without connection fields", () => {
@@ -49,8 +46,8 @@ describe("SubscriptionProvider", () => {
 			custom_llm_provider: "codex-subscription",
 		});
 
-		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/images/generations");
-		expect(request.headers.Authorization).toBe("Bearer internal-secret");
+		expect(request.url).toBe("litellm-subscription://codex/images/generations");
+		expect(request.headers.Authorization).toBeUndefined();
 		expect(request.body).toEqual({
 			model: "gpt-image-2",
 			prompt: "draw a cat",
@@ -81,9 +78,9 @@ describe("SubscriptionProvider", () => {
 			{ quality: "high", api_key: "must-not-appear" },
 		);
 
-		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/images/edits");
+		expect(request.url).toBe("litellm-subscription://codex/images/edits");
 		expect(request.bodyEncoding).toBe("raw");
-		expect(request.headers).toEqual({ Authorization: "Bearer internal-secret" });
+		expect(request.headers).toEqual({});
 		expect(request.logBody).toEqual({
 			model: "gpt-image-2",
 			prompt: "add a red hat",
@@ -98,10 +95,7 @@ describe("SubscriptionProvider", () => {
 });
 
 describe("SubscriptionProvider native Responses", () => {
-	const provider = new SubscriptionProvider(LlmProviders.CodexSubscription, {
-		internalApiKey: "internal-secret",
-		baseUrl: "http://127.0.0.1:8317",
-	});
+	const provider = new SubscriptionProvider(LlmProviders.CodexSubscription);
 
 	it("builds a native Responses request that keeps the upstream web_search tool", () => {
 		const request = provider.transformResponsesRequest(
@@ -116,9 +110,9 @@ describe("SubscriptionProvider native Responses", () => {
 			{},
 		);
 
-		expect(request.url).toBe("http://127.0.0.1:8317/subscriptions/codex-subscription/v1/responses");
+		expect(request.url).toBe("litellm-subscription://codex/responses");
 		expect(request.responseProtocol).toBe("responses");
-		expect(request.headers.Authorization).toBe("Bearer internal-secret");
+		expect(request.headers.Authorization).toBeUndefined();
 		expect(request.stream).toBe(false);
 		expect(request.body).toMatchObject({
 			model: "gpt-6-luna",

@@ -1,5 +1,5 @@
 import { hostedProvider } from "../subscriptions/SubscriptionProviders";
-
+import type { SubscriptionRateLimitSnapshot } from "../subscriptions/native/types";
 
 /**
  * 判断部署是否由托管订阅运行时承载。
@@ -156,6 +156,26 @@ export interface CliProxyAccountSummary {
 	 *
 	 */
 	readonly weight: number | null;
+	/**
+	 *
+	 */
+	readonly priority: number;
+	/**
+	 *
+	 */
+	readonly status: string | null;
+	/**
+	 *
+	 */
+	readonly last_error: string | null;
+	/**
+	 *
+	 */
+	readonly refresh_failures: number;
+	/**
+	 *
+	 */
+	readonly rate_limit: SubscriptionRateLimitSnapshot | null;
 	/**
 	 *
 	 */

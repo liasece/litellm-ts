@@ -22,7 +22,9 @@ import { CredentialService } from "./credentials/CredentialService";
 import { CredentialRepository } from "./repositories/CredentialRepository";
 import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfigService";
 import { ConfigRepository } from "./repositories/ConfigRepository";
-import { CliProxyRuntimeManager } from "./cliproxy/CliProxyRuntimeManager";
+import { SubscriptionAccountStore, defaultSubscriptionAuthDir } from "./subscriptions/native/accountStore";
+import { SubscriptionRuntimeManager } from "./subscriptions/native/SubscriptionRuntimeManager";
+import { createSubscriptionProviderLookup } from "./subscriptions/native/providers/index";
 import { ProviderQuotaService } from "./providerusage/ProviderQuotaService";
 import { isCliProxyDeploymentParams } from "./cliproxy/CliProxyTypes";
 import { parseSessionDuration } from "./proxy/LoginEndpoints";
@@ -52,18 +54,17 @@ export interface ServiceContainer {
 	readonly credentialService: CredentialService;
 	/** 每请求从数据库读取 Router 配置的运行时服务 */
 	readonly runtimeConfigService: DatabaseRuntimeConfigService;
-	/** 内置 CLIProxy 二进制、配置、OAuth 文件与进程生命周期。 */
-	readonly cliProxyRuntime: CliProxyRuntimeManager;
+	/** 原生订阅运行时：账号、OAuth、额度、目录与进程内协议执行。 */
+	readonly cliProxyRuntime: SubscriptionRuntimeManager;
 	/** 内置 Provider（DeepSeek / MiniMax）账户额度查询。 */
 	readonly providerQuotaService: ProviderQuotaService;
 	/**
-	 * 并行预热不在启动关键路径上的外部依赖：远端模型价格快照与内置 CLIProxy 子进程。
+	 * 并行预热不在启动关键路径上的外部依赖：远端模型价格快照与订阅运行时的设置投影。
 	 *
 	 * 两者都不是「可以开始监听」的前提：价格快照拉取失败本来就回退镜像内置数据，
-	 * CLIProxy 是多秒级的子进程启动（生产实测 3.6 秒，健康等待上限 15 秒）。把它们
-	 * 留在启动链上只会把外部网络和子进程时间叠加成服务的不可用窗口，因此改到监听
-	 * 之后、与请求处理并行完成。失败只降级对应能力，不抛错；幂等，重复调用返回同
-	 * 一个 Promise。
+	 * 订阅运行时在执行期就绪，设置、托管账号投影与凭据刷新可以在监听后完成。把它们
+	 * 留在启动链上只会把外部网络时间叠加成服务的不可用窗口，因此改到监听之后、与
+	 * 请求处理并行完成。失败只降级对应能力，不抛错；幂等，重复调用返回同一个 Promise。
 	 */
 	readonly warmUp: () => Promise<void>;
 }
@@ -137,9 +138,13 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	const { yamlConfigDiffService } = await import("./core/config/YamlConfigDiffService");
 	await yamlConfigDiffService.initialize(db.db);
 
-	// The router, native HTTP handlers and WebSocket relay share one account source and catalog.
-	const cliProxyRuntime = new CliProxyRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key);
-	const providerRegistry = new ProviderRegistry(cliProxyRuntime);
+	// 订阅执行在进程内完成：账号仓库、Provider 适配器与运行时共享一个 auth 目录。
+	const subscriptionAccounts = new SubscriptionAccountStore({ authDir: defaultSubscriptionAuthDir() });
+	const cliProxyRuntime = new SubscriptionRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key, {
+		accounts: subscriptionAccounts,
+		providers: createSubscriptionProviderLookup({ accounts: subscriptionAccounts }),
+	});
+	const providerRegistry = new ProviderRegistry();
 
 	// 2.1 Credential 必须先于 Router 和模型初始化，确保首次 Provider 请求即可解析命名凭据。
 	const credentialRepository = new CredentialRepository(db.db);
@@ -169,14 +174,14 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 每个需要 Router 的 HTTP 请求由 DatabaseRuntimeConfigService 建立一致的 DB 快照。
 	const runtimeConfigService = new DatabaseRuntimeConfigService(db.db, config);
 
-	// 3.2 CLIProxy 是 LiteLLM 托管的内部运行时。DB 是期望配置源，生成文件与
-	// OAuth auth-dir 位于持久化卷；缺少 bootstrap binary 时不阻断网关启动。
-	// 升级 CLIProxy 前要等在途请求写完：这里把 Router 侧的 CLIProxy 在途计数接进排空逻辑。
+	// 3.2 订阅运行时在 LiteLLM 进程内执行。DB 是设置源，auth 文件位于持久化卷；
+	// 执行处理器在构造时即注册，设置加载与账号投影不阻断监听。
+	// 这里把 Router 侧的订阅在途计数接进排空逻辑。
 	cliProxyRuntime.setActiveRequestProbe(() =>
 		router.getActiveRequestCount((deployment) => isCliProxyDeploymentParams(deployment.litellm_params)),
 	);
-	// 这里的 initialize() 会安装/校验二进制、投影配置并等待子进程健康检查通过，
-	// 不在关键路径上执行，交给 warmUp() 与监听并行；子进程状态仍在 runtime status 里。
+	// 这里的 initialize() 会加载设置、投影托管账号并启动后台刷新，
+	// 不在关键路径上执行，交给 warmUp() 与监听并行；状态仍在 runtime status 里。
 	let warmUpPromise: Promise<void> | null = null;
 	const warmUp = (): Promise<void> =>
 		(warmUpPromise ??= runWarmUp([
@@ -186,7 +191,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 					await modelCostMapService.initialize();
 				},
 			},
-			{ name: "cliproxy_runtime", run: () => cliProxyRuntime.initialize() },
+			{ name: "subscription_runtime", run: () => cliProxyRuntime.initialize() },
 			{ name: "cost_tracking_config", run: () => costTrackingConfigService.refresh(true) },
 		]));
 

@@ -22,6 +22,16 @@ export interface Account {
 	email: string | null;
 	disabled: boolean;
 	weight: number | null;
+	priority?: number;
+	status?: string | null;
+	last_error?: string | null;
+	refresh_failures?: number;
+	rate_limit?: {
+		capturedAt: string;
+		limited: boolean;
+		retryAfterSeconds?: number;
+		headers: Record<string, string>;
+	} | null;
 	modified_at: string;
 }
 
@@ -69,12 +79,6 @@ export interface OAuthSession {
 	finished_at: string | null;
 	exit_code: number | null;
 	output: string[];
-}
-
-export interface ConfigResponse {
-	settings: { enabled: boolean; config_yaml: string };
-	user_config: Record<string, unknown>;
-	status: RuntimeStatus;
 }
 
 export interface CliProxyLogEntry {

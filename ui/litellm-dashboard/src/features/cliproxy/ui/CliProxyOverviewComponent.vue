@@ -4,7 +4,6 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
-import { cliProxyApi } from "../api/CliProxyApi";
 import type { CliProxyStore } from "../stores/CliProxyStore";
 import CliProxyQuotaCard from "./CliProxyQuotaCardComponent.vue";
 import CliProxyLogViewer from "./CliProxyLogViewerComponent.vue";
@@ -36,57 +35,14 @@ const quotaRefreshing = computed(() => state.accounts.some((account) => state.qu
 					}}</UiTag>
 				</div>
 				<div class="cp-status-cell">
-					<span class="cp-secondary cp-xs cp-block">Version</span
-					><strong class="cp-block cp-mt-4 cp-ellipsis">{{ state.status?.version ?? "Not installed" }}</strong>
+					<span class="cp-secondary cp-xs cp-block">Engine</span><strong class="cp-block cp-mt-4 cp-ellipsis">In-process</strong>
 				</div>
 				<div class="cp-status-cell">
-					<span class="cp-secondary cp-xs cp-block">Process</span
-					><strong class="cp-block cp-mt-4 cp-ellipsis">{{
-						state.status?.pid ? "PID " + state.status.pid : "Not running"
-					}}</strong>
+					<span class="cp-secondary cp-xs cp-block">Accounts</span
+					><strong class="cp-block cp-mt-4 cp-ellipsis">{{ state.accounts.length }}</strong>
 				</div>
 			</div></UiCard
 		>
-		<UiCard
-			appearance="antd"
-			size="small"
-			title="Runtime and updates"
-			class="cp-card cp-card-small"
-			data-cliproxy-runtime-operations="true"
-		>
-			<div class="cp-runtime-grid">
-				<div class="cp-runtime-controls">
-					<div class="cp-mb-8">
-						<strong>Service controls</strong
-						><span class="cp-secondary cp-xs cp-block cp-mt-2">Manage the private child process without stopping LiteLLM.</span>
-					</div>
-					<div class="cp-inline cp-wrap cp-gap-8">
-						<UiButton
-							size="small"
-							variant="primary"
-							:disabled="state.status?.state === 'running' || state.busy !== null"
-							:loading="state.busy === 'start'"
-							@click="store.runOperation('start', () => cliProxyApi('/subscriptions/start', { method: 'POST' }))"
-							>Start</UiButton
-						><UiButton
-							size="small"
-							:disabled="state.status?.state !== 'running' || state.busy !== null"
-							:loading="state.busy === 'restart'"
-							@click="store.runOperation('restart', () => cliProxyApi('/subscriptions/restart', { method: 'POST' }))"
-							>Restart</UiButton
-						><UiButton
-							size="small"
-							danger
-							:disabled="state.status?.state === 'stopped' || state.busy !== null"
-							:loading="state.busy === 'stop'"
-							@click="store.runOperation('stop', () => cliProxyApi('/subscriptions/stop', { method: 'POST' }))"
-							>Stop</UiButton
-						>
-					</div>
-				</div>
-			</div>
-			<UiAlert v-if="state.status?.operation" class="cp-mt-16" :title="'Operation in progress: ' + state.status.operation" />
-		</UiCard>
 		<div class="cp-between cp-wrap cp-gap-12 cp-quota-toolbar">
 			<div>
 				<strong>Subscription quota</strong
