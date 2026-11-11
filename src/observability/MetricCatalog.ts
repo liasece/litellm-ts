@@ -172,6 +172,10 @@ export const spendSettlementPending = metricsRegistry.register(
 	new Gauge("litellm_spend_settlement_pending", "结算队列积压条数"),
 );
 
+/** 流式 checkpoint 写库结果：written 实际写入，skipped 内容未变跳过，failed 写失败。 */
+export const streamCheckpointWrites = metricsRegistry.register(
+	new Counter("litellm_llm_stream_checkpoint_writes_total", "流式 checkpoint 写库次数", ["outcome"]),
+);
 
 /** 事件循环延迟分位数（最近一次采样区间）。 */
 export const eventLoopDelay = metricsRegistry.register(

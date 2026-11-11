@@ -54,6 +54,60 @@ describe("StreamingCheckpointScheduler", () => {
 		expect(onError).toHaveBeenCalledWith(expect.any(Error));
 	});
 
+	it("内容未变化时不重复写库", async () => {
+		const write = jest.fn().mockResolvedValue(undefined);
+		const serialize = jest.fn().mockImplementation(() => ({ response: { text: "abc" }, usage: null }));
+		const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write });
+
+		await scheduler.flush();
+		await scheduler.flush();
+
+		expect(write).toHaveBeenCalledTimes(1);
+		expect(scheduler.skippedUnchanged).toBe(1);
+	});
+
+	it("内容变化后再次写库", async () => {
+		let text = "a";
+		const write = jest.fn().mockResolvedValue(undefined);
+		const serialize = jest.fn().mockImplementation(() => ({ response: { text: text } }));
+		const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write });
+
+		await scheduler.flush();
+		text = "ab";
+		await scheduler.flush();
+
+		expect(write).toHaveBeenCalledTimes(2);
+		expect(scheduler.skippedUnchanged).toBe(0);
+	});
+
+	it("写失败后相同内容会重试，不被判为未变化", async () => {
+		const write = jest.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue(undefined);
+		const onError = jest.fn();
+		const serialize = jest.fn().mockReturnValue({ response: { text: "abc" } });
+		const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write, onError: onError });
+
+		await scheduler.flush();
+		await scheduler.flush();
+
+		expect(write).toHaveBeenCalledTimes(2);
+		expect(scheduler.skippedUnchanged).toBe(0);
+		expect(onError).toHaveBeenCalledTimes(1);
+	});
+
+	it("dispose 时内容未变化则不补写", async () => {
+		const write = jest.fn().mockResolvedValue(undefined);
+		const serialize = jest.fn().mockReturnValue({ response: { text: "a" } });
+		const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write, intervalMs: 10_000 });
+
+		await scheduler.flush();
+		scheduler.onChunk();
+		await scheduler.dispose();
+
+		expect(write).toHaveBeenCalledTimes(1);
+		expect(scheduler.skippedUnchanged).toBe(1);
+	});
+
+
 	it("多次 flush 串行执行，不并发", async () => {
 		const events: string[] = [];
 		let releaseFirst: () => void = () => undefined;
@@ -70,7 +124,8 @@ describe("StreamingCheckpointScheduler", () => {
 			.mockImplementationOnce(async () => {
 				events.push("write2");
 			});
-		const serialize = jest.fn().mockReturnValue({});
+		let sequence = 0;
+		const serialize = jest.fn().mockImplementation(() => ({ sequence: ++sequence }));
 		const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write });
 
 		const first = scheduler.flush();
@@ -89,7 +144,8 @@ describe("StreamingCheckpointScheduler", () => {
 		jest.useFakeTimers();
 		try {
 			const write = jest.fn().mockResolvedValue(undefined);
-			const serialize = jest.fn().mockReturnValue({ data: 1 });
+			let sequence = 0;
+			const serialize = jest.fn().mockImplementation(() => ({ data: ++sequence }));
 			const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write, intervalMs: 1000 });
 
 			scheduler.onChunk();
@@ -110,8 +166,11 @@ describe("StreamingCheckpointScheduler", () => {
 		jest.useFakeTimers();
 		try {
 			const write = jest.fn().mockResolvedValue(undefined);
-			const big = { response: "x".repeat(MAX_FAST_CHECKPOINT_BYTES + 1) };
-			const serialize = jest.fn().mockReturnValue(big);
+			let sequence = 0;
+			const serialize = jest.fn().mockImplementation(() => ({
+				response: "x".repeat(MAX_FAST_CHECKPOINT_BYTES + 1),
+				sequence: ++sequence,
+			}));
 			const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write, intervalMs: 400 });
 
 			await scheduler.flush();

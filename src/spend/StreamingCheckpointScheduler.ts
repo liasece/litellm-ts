@@ -13,6 +13,8 @@
  * - 失败不阻断流：write 抛错由 onError 吞掉，flush 绝不 throw。
  */
 
+import { streamCheckpointWrites } from "../observability/MetricCatalog";
+
 /** 流式 checkpoint 的统一中间响应结构。 */
 export interface StreamingCheckpoint {
 	/** 流式协议。 */
@@ -81,14 +83,15 @@ export function resolveStreamingCheckpointIntervalMs(raw: string | undefined): n
 }
 
 /**
- * 估算 checkpoint 的字节数；只用于选择写库窗口，失败时按小负载处理。
+ * 把 checkpoint 序列化成可比较的字符串；只用于选择写库窗口和判断内容是否变化，
+ * 序列化失败时返回 undefined，调用方按「有变化」处理，宁可多写一次也不漏写。
  * @param checkpoint - 序列化后的 checkpoint
  */
-function estimateCheckpointBytes(checkpoint: unknown): number {
+function stringifyCheckpoint(checkpoint: unknown): string | undefined {
 	try {
-		return JSON.stringify(checkpoint)?.length ?? 0;
+		return JSON.stringify(checkpoint) ?? undefined;
 	} catch {
-		return 0;
+		return undefined;
 	}
 }
 
@@ -114,6 +117,9 @@ export class StreamingCheckpointScheduler<T> {
 	private _tail: Promise<void> = Promise.resolve();
 	private _timer: ReturnType<typeof setTimeout> | undefined;
 	private _dirty = false;
+	/** 上一次成功排队写入的负载签名；内容没变就不再重复写同一条 jsonb。 */
+	private _lastSignature: string | undefined;
+	private _skippedUnchanged = 0;
 
 	constructor(options: StreamingCheckpointSchedulerOptions<T>) {
 		this._serialize = options.serialize;
@@ -149,6 +155,10 @@ export class StreamingCheckpointScheduler<T> {
 	 * 立即序列化当前状态并写入。写入通过 _tail 串行队列排队，保证多次 flush 按调用
 	 * 顺序落库、不并发；write 抛错由 onError 吞掉，本方法绝不 reject。serialize 返回
 	 * null（尚无内容）时跳过写库。
+	 *
+	 * 内容与上一次写入完全相同时跳过写库：checkpoint 只承载「已经累积的 response」，
+	 * 没有新 chunk（或只有定时器到点）时重复 UPDATE 只会制造行锁与 WAL，页面看到的
+	 * 内容并不会变化。写失败时清空签名，下一次 flush 会重试同一份内容。
 	 */
 	flush(): Promise<void> {
 		this._clearTimer();
@@ -157,11 +167,23 @@ export class StreamingCheckpointScheduler<T> {
 		if (checkpoint === null) {
 			return this._tail;
 		}
-		this._adaptWindow(checkpoint);
+		const serialized = stringifyCheckpoint(checkpoint);
+		this._adaptWindow(serialized?.length ?? 0);
+		if (serialized !== undefined && serialized === this._lastSignature) {
+			this._skippedUnchanged += 1;
+			streamCheckpointWrites.inc({ outcome: "skipped" });
+			return this._tail;
+		}
+		this._lastSignature = serialized;
 		this._tail = this._tail
 			.then(() => this._write(checkpoint))
-			.then(() => undefined)
+			.then(() => {
+				streamCheckpointWrites.inc({ outcome: "written" });
+			})
 			.catch((error: unknown) => {
+				// 本次没写成，签名不能代表「已落库」，否则后续相同内容会被误判为无变化。
+				this._lastSignature = undefined;
+				streamCheckpointWrites.inc({ outcome: "failed" });
 				this._onError(error);
 			});
 		return this._tail;
@@ -185,14 +207,14 @@ export class StreamingCheckpointScheduler<T> {
 	 *
 	 * 快速窗口下每次写库顺带量一次大小（文本负载只有几十 KB，代价可忽略）；一旦超过阈值
 	 * 就退回慢窗口。慢窗口下每隔 SLOW_WINDOW_RECHECK_FLUSHES 次复测，负载回落后恢复。
-	 * @param checkpoint - 本次即将写库的 checkpoint
+	 * @param bytes - 本次 checkpoint 序列化后的字节数
 	 */
-	private _adaptWindow(checkpoint: T): void {
+	private _adaptWindow(bytes: number): void {
 		if (this._largeIntervalMs === this._baseIntervalMs) {
 			return;
 		}
 		if (this._intervalMs === this._baseIntervalMs) {
-			if (estimateCheckpointBytes(checkpoint) > MAX_FAST_CHECKPOINT_BYTES) {
+			if (bytes > MAX_FAST_CHECKPOINT_BYTES) {
 				this._intervalMs = this._largeIntervalMs;
 				this._slowFlushes = 0;
 			}
@@ -203,7 +225,7 @@ export class StreamingCheckpointScheduler<T> {
 			return;
 		}
 		this._slowFlushes = 0;
-		if (estimateCheckpointBytes(checkpoint) <= MAX_FAST_CHECKPOINT_BYTES) {
+		if (bytes <= MAX_FAST_CHECKPOINT_BYTES) {
 			this._intervalMs = this._baseIntervalMs;
 		}
 	}
@@ -213,5 +235,10 @@ export class StreamingCheckpointScheduler<T> {
 			clearTimeout(this._timer);
 			this._timer = undefined;
 		}
+	}
+
+	/** 因内容未变化而跳过的写库次数；用于诊断与测试。 */
+	get skippedUnchanged(): number {
+		return this._skippedUnchanged;
 	}
 }
