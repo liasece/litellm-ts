@@ -35,6 +35,15 @@ export interface SpeedPoint {
 export interface SpeedModelSeries {
 	/** 模型名，与 SpendLogs.model 一致 */
 	readonly model: string;
+	/**
+	 * 归一化后的实际供应商。
+	 *
+	 * 同一个上游模型名可能由多个订阅账号或 Provider 执行（例如同一模型同时挂在
+	 * OpenCode 与 Claude 订阅下），速度差异属于供应商而不是模型本身；因此序列按
+	 * 「模型 × 供应商」归组，这里保存该组对应的供应商。历史行记录为 cliproxy 时，
+	 * 按模型串前缀还原成真实订阅供应商；无法确定供应商时为空字符串。
+	 */
+	readonly provider: string;
 	/** 区间内全部调用数 */
 	readonly calls: number;
 	/** 参与统计的可测算请求数（只含达到样本门槛的时间桶） */
@@ -51,6 +60,8 @@ export interface SpeedModelSeries {
 export interface SpeedModelWithoutSeries {
 	/** 模型名，与 SpendLogs.model 一致 */
 	readonly model: string;
+	/** 实际执行请求的供应商；无法确定时为空字符串 */
+	readonly provider: string;
 	/** 区间内全部调用数 */
 	readonly calls: number;
 }

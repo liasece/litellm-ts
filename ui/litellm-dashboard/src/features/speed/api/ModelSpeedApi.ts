@@ -13,6 +13,7 @@ const report = z
 		models: z.array(
 			z.object({
 				model: z.string(),
+				provider: z.string(),
 				calls: z.number(),
 				requests: z.number(),
 				avg_tps: z.number().finite(),
@@ -20,7 +21,7 @@ const report = z
 				points: z.array(point),
 			}),
 		),
-		models_without_speed: z.array(z.object({ model: z.string(), calls: z.number() })),
+		models_without_speed: z.array(z.object({ model: z.string(), provider: z.string(), calls: z.number() })),
 	})
 	.passthrough();
 export function modelSpeed(query: { startDate: string; endDate: string; timezone: string }, signal?: AbortSignal) {

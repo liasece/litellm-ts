@@ -7,6 +7,7 @@ import {
 	formatTps,
 	resolveSpeedAxisMax,
 	resolveSpeedRange,
+	speedModelKey,
 	speedStrokeColor,
 } from "./ModelSpeedLogic";
 import type { SpeedModelSeries, SpeedPoint } from "../support/SpeedModels";
@@ -99,6 +100,7 @@ describe("buildSpeedChartRows", () => {
 describe("resolveSpeedAxisMax", () => {
 	const series = (model: string, values: number[]): SpeedModelSeries => ({
 		model,
+		provider: "minimax",
 		calls: values.length,
 		requests: values.length,
 		avg_tps: values.length > 0 ? values[0]! : 0,
@@ -131,17 +133,23 @@ describe("resolveSpeedAxisMax", () => {
 
 describe("filterSpeedModels", () => {
 	const models: SpeedModelSeries[] = [
-		{ model: "MiniMax-M3", calls: 10, requests: 9, avg_tps: 90, p50_tps: 80, points: [] },
-		{ model: "cliproxy/gpt-6-astra", calls: 5, requests: 5, avg_tps: 20, p50_tps: 18, points: [] },
+		{ model: "MiniMax-M3", provider: "minimax", calls: 10, requests: 9, avg_tps: 90, p50_tps: 80, points: [] },
+		{ model: "claude-opus-4-5", provider: "opencode-go", calls: 5, requests: 5, avg_tps: 95, p50_tps: 90, points: [] },
+		{ model: "claude-opus-4-5", provider: "claude-subscription", calls: 4, requests: 4, avg_tps: 40, p50_tps: 38, points: [] },
 	];
 
 	it("空搜索词返回全部模型", () => {
-		expect(filterSpeedModels(models, "  ")).toHaveLength(2);
+		expect(filterSpeedModels(models, "  ")).toHaveLength(3);
 	});
 
 	it("大小写不敏感地匹配模型名", () => {
 		expect(filterSpeedModels(models, "minimax").map((entry) => entry.model)).toEqual(["MiniMax-M3"]);
-		expect(filterSpeedModels(models, "GPT-6").map((entry) => entry.model)).toEqual(["cliproxy/gpt-6-astra"]);
+		expect(filterSpeedModels(models, "CLAUDE-OPUS").map((entry) => entry.model)).toEqual(["claude-opus-4-5", "claude-opus-4-5"]);
+	});
+
+	it("也能按供应商筛选同名模型，找到具体是哪一条曲线", () => {
+		expect(filterSpeedModels(models, "opencode").map(speedModelKey)).toEqual(["opencode-go\u0000claude-opus-4-5"]);
+		expect(filterSpeedModels(models, "claude-subscription").map(speedModelKey)).toEqual(["claude-subscription\u0000claude-opus-4-5"]);
 	});
 });
 

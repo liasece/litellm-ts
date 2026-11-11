@@ -13,6 +13,7 @@ function report(model: string): ModelSpeedReport {
 		models: [
 			{
 				model,
+				provider: "minimax",
 				calls: 3,
 				requests: 3,
 				avg_tps: 30,

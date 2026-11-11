@@ -18,6 +18,15 @@
  * 或在选到部署前就失败时，model 会退化成请求名，此时以 resolved_model_group 为准。
  * 否则一次 claude-opus → gpt-6-astra 的 fallback 会被算成 claude-opus 的速度。
  *
+ * 模型相同不代表速度相同：同一个上游 ID 可能由不同订阅账号或 Provider 执行（例如
+ * 同一模型同时挂在 OpenCode 和 Claude 订阅下）。归属维度因此是「模型 × 供应商」，
+ * 页面才能把供应商图标和速度对应起来，而不是把两条来源不同的曲线合成一条。
+ *
+ * 供应商取归一化后的身份：历史行会把 custom_llm_provider 记成 cliproxy，真实供应商
+ * 在模型串前缀里（cliproxy/opencode-go/deepseek-v4）。只按原始列分组会把同一模型拆成
+ * 「cliproxy」和真实供应商两张看起来一样的卡片，所以这里与 Dashboard 的 modelSupplier
+ * 保持同一规则。供应商为空或无法确定时按空供应商单独归组。
+ *
  * 单个时间桶还要有至少 MIN_BUCKET_REQUESTS 个可测算请求才作为数据点：一两个样本的
  * TPS 波动极大，画出来会让人误判趋势；样本不足的桶按「没有数据」处理。
  *
@@ -36,6 +45,7 @@ import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
+import { LlmProviders } from "../types/provider";
 import {
 	addDays,
 	currentDayInTimeZone,
@@ -69,14 +79,16 @@ const TIME_ZONE_PATTERN = /^[A-Za-z0-9_+/-]{1,64}$/;
 const DATE_ONLY_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
 /** 统一把时间投影格式化成 UTC ISO 文本，避免驱动层对 timestamptz 的表示差异 */
-const ISO_TEXT_FORMAT = "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'";
+const ISO_TEXT_FORMAT = '\'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"\'';
 
-/** 单个「模型 × 时间桶」聚合结果（直接来自 SQL） */
+/** 单个「模型 × 供应商 × 时间桶」聚合结果（直接来自 SQL） */
 export interface SpeedAggregateRow {
 	/** 桶起点，SQL 已格式化为 UTC ISO 文本 */
 	readonly bucket: string;
 	/** 模型名 */
 	readonly model: string;
+	/** 实际执行请求的供应商原始值（custom_llm_provider）；cliproxy 行由 speedProviderIdentity 归一 */
+	readonly provider: string | null;
 	/** 桶内全部调用数（含不可测算的请求） */
 	readonly calls: number;
 	/** 桶内可测算请求数 */
@@ -86,7 +98,6 @@ export interface SpeedAggregateRow {
 	/** 桶内可测算请求的输出 TPS 中位数；无样本时为 null */
 	readonly p50_tps: number | null;
 }
-
 
 /**
  * 校验时区名并返回规范值。
@@ -167,12 +178,9 @@ export function parseSpeedDateRange(
 ): { startDate: string; endDate: string; rangeDays: number } {
 	const rawEnd = query["end_date"];
 	const rawStart = query["start_date"];
-	const endDate =
-		typeof rawEnd === "string" && rawEnd.trim().length > 0 ? rawEnd.trim() : currentDayInTimeZone(timezone, now);
+	const endDate = typeof rawEnd === "string" && rawEnd.trim().length > 0 ? rawEnd.trim() : currentDayInTimeZone(timezone, now);
 	const startDate =
-		typeof rawStart === "string" && rawStart.trim().length > 0
-			? rawStart.trim()
-			: addDays(endDate, -(DEFAULT_SPEED_RANGE_DAYS - 1));
+		typeof rawStart === "string" && rawStart.trim().length > 0 ? rawStart.trim() : addDays(endDate, -(DEFAULT_SPEED_RANGE_DAYS - 1));
 	assertValidDay(startDate, "start_date");
 	assertValidDay(endDate, "end_date");
 	const rangeDays = daysBetween(startDate, endDate);
@@ -203,13 +211,10 @@ export function resolveSpeedBucket(rangeDays: number, requested: unknown): Speed
 	}
 	const bucket = requested as SpeedBucket;
 	if (bucket === "hour" && rangeDays > HOUR_BUCKET_MAX_RANGE_DAYS) {
-		throw ApiError.badRequest(
-			"hourly buckets are only available for ranges up to " + HOUR_BUCKET_MAX_RANGE_DAYS + " days",
-		);
+		throw ApiError.badRequest("hourly buckets are only available for ranges up to " + HOUR_BUCKET_MAX_RANGE_DAYS + " days");
 	}
 	return bucket;
 }
-
 
 /**
  * 把 SQL 时间值归一为 UTC ISO 字符串。
@@ -257,6 +262,7 @@ function finiteOr(value: unknown, fallback: number): number {
 
 interface Accumulator {
 	model: string;
+	provider: string;
 	calls: number;
 	requests: number;
 	tpsSum: number;
@@ -264,11 +270,43 @@ interface Accumulator {
 	points: SpeedPoint[];
 }
 
+/** 与 Dashboard 的 subscription_provider_slugs 一致的订阅供应商集合 */
+const SUBSCRIPTION_PROVIDERS = new Set<string>([
+	LlmProviders.CodexSubscription,
+	LlmProviders.CommandCode,
+	LlmProviders.OpenCodeGo,
+	LlmProviders.KimiSubscription,
+	LlmProviders.ClaudeSubscription,
+	LlmProviders.AntigravitySubscription,
+	LlmProviders.XaiSubscription,
+]);
 
 /**
- * 把「模型 × 时间桶」聚合行整理成按模型分组的时间序列。
+ * 归一化供应商身份，与 Dashboard 的 `modelSupplier` 保持同一规则。
+ *
+ * 历史行把 custom_llm_provider 记成 cliproxy，真实供应商在模型前缀里
+ * （cliproxy/opencode-go/deepseek-v4 → opencode-go）。不归一化就会把同一模型拆成
+ * 「cliproxy」和真实供应商两张看起来一样的卡片。非 cliproxy 行原样返回，
+ * "-" 和空值归一为空字符串。
+ * @param model - 模型名，可能带 cliproxy/ 前缀
+ * @param provider - custom_llm_provider 原始值
+ */
+export function speedProviderIdentity(model: string, provider: string | null | undefined): string {
+	const raw = typeof provider === "string" ? provider.trim() : "";
+	if (raw.toLowerCase() === "cliproxy") {
+		const segments = model.trim().toLowerCase().split("/");
+		const prefix = segments[0] === "cliproxy" ? segments[1] : segments[0];
+		return prefix && SUBSCRIPTION_PROVIDERS.has(prefix) ? prefix : "";
+	}
+	return raw === "-" ? "" : raw;
+}
+
+/**
+ * 把「模型 × 供应商 × 时间桶」聚合行整理成按「模型 × 供应商」分组的时间序列。
  *
  * 纯函数：便于在不连数据库的情况下验证分组、样本门槛、排序与空模型归类。
+ * - 同一模型由不同供应商执行时分成独立序列，不能把两者的速度混在一起；
+ * - 历史 cliproxy 行按上游前缀归一成真实订阅供应商，避免同名卡片重复；
  * - 单个桶的可测算请求少于 MIN_BUCKET_REQUESTS 时按「没有数据」处理，不进入序列，
  *   也不计入模型级平均；
  * - 有数据点的模型进入 models，按平均输出 TPS 降序；
@@ -290,10 +328,13 @@ export function buildModelSpeedReport(
 
 	for (const row of rows) {
 		const model = typeof row.model === "string" && row.model.length > 0 ? row.model : "(unknown)";
-		let entry = byModel.get(model);
+		const provider = speedProviderIdentity(model, row.provider);
+		// 模型名里可能带分隔符，用不可见字符拼 key 避免 model/provider 边界串组
+		const key = model + "\u0000" + provider;
+		let entry = byModel.get(key);
 		if (!entry) {
-			entry = { model: model, calls: 0, requests: 0, tpsSum: 0, tpsWeight: 0, points: [] };
-			byModel.set(model, entry);
+			entry = { model: model, provider: provider, calls: 0, requests: 0, tpsSum: 0, tpsWeight: 0, points: [] };
+			byModel.set(key, entry);
 		}
 		const requests = Math.max(0, finiteOr(row.requests, 0));
 		entry.calls += Math.max(0, finiteOr(row.calls, 0));
@@ -324,14 +365,14 @@ export function buildModelSpeedReport(
 
 	for (const entry of byModel.values()) {
 		if (entry.requests <= 0 || entry.tpsWeight <= 0 || entry.points.length === 0) {
-			modelsWithoutSpeed.push({ model: entry.model, calls: entry.calls });
+			modelsWithoutSpeed.push({ model: entry.model, provider: entry.provider, calls: entry.calls });
 			continue;
 		}
 		entry.points.sort((left, right) => left.bucket.localeCompare(right.bucket));
-		const p50Weighted =
-			entry.points.reduce((sum, point) => sum + point.p50_tps * point.requests, 0) / entry.tpsWeight;
+		const p50Weighted = entry.points.reduce((sum, point) => sum + point.p50_tps * point.requests, 0) / entry.tpsWeight;
 		models.push({
 			model: entry.model,
+			provider: entry.provider,
 			calls: entry.calls,
 			requests: entry.requests,
 			avg_tps: entry.tpsSum / entry.tpsWeight,
@@ -340,12 +381,17 @@ export function buildModelSpeedReport(
 		});
 	}
 
-	// 展示顺序：平均输出 TPS 降序，快的模型排在前面；同速时按样本量、再按名字稳定排序
+	// 展示顺序：平均输出 TPS 降序，快的模型排在前面；同速时按样本量、再按模型名与供应商稳定排序
 	models.sort(
 		(left, right) =>
-			right.avg_tps - left.avg_tps || right.requests - left.requests || left.model.localeCompare(right.model),
+			right.avg_tps - left.avg_tps ||
+			right.requests - left.requests ||
+			left.model.localeCompare(right.model) ||
+			left.provider.localeCompare(right.provider),
 	);
-	modelsWithoutSpeed.sort((left, right) => right.calls - left.calls || left.model.localeCompare(right.model));
+	modelsWithoutSpeed.sort(
+		(left, right) => right.calls - left.calls || left.model.localeCompare(right.model) || left.provider.localeCompare(right.provider),
+	);
 
 	return {
 		start_date: options.startDate,
@@ -359,7 +405,6 @@ export function buildModelSpeedReport(
 		models_without_speed: modelsWithoutSpeed,
 	};
 }
-
 
 /**
  * 注册 Speed 页面所需的模型输出速率端点。
@@ -392,30 +437,48 @@ export function registerModelSpeedEndpoints(router: Router, db: NodePgDatabase<t
 		const startBound = sql`((${range.startDate}::timestamp AT TIME ZONE ${timezone}::text) AT TIME ZONE 'UTC')`;
 		const endBound = sql`((${endDateExclusive}::timestamp AT TIME ZONE ${timezone}::text) AT TIME ZONE 'UTC')`;
 
-		const conditions: SQL[] = [
-			sql`${liteLLM_SpendLogs.startTime} >= ${startBound}`,
-			sql`${liteLLM_SpendLogs.startTime} < ${endBound}`,
-		];
+		const conditions: SQL[] = [sql`${liteLLM_SpendLogs.startTime} >= ${startBound}`, sql`${liteLLM_SpendLogs.startTime} < ${endBound}`];
 		// internal_user / internal_user_viewer 只能看到自己产生的调用，与其他 /global 端点一致
 		const internalUserId = getInternalUserId(req.auth);
 		if (internalUserId !== undefined) {
 			conditions.push(eq(liteLLM_SpendLogs.user, internalUserId));
 		}
 
-		const rows = await db
-			.select({
-				bucket: sql<string>`${bucketTextExpr}`,
-				model: sql<string>`${attributedModelExpr}`,
-				calls: sql<number>`(COUNT(*))::int`,
-				requests: sql<number>`(COUNT(*) FILTER (WHERE ${eligible}))::int`,
-				avg_tps: sql<number | null>`AVG(${tpsExpr}) FILTER (WHERE ${eligible})`,
-				p50_tps: sql<number | null>`(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ${tpsExpr}) FILTER (WHERE ${eligible}))`,
-			})
-			.from(liteLLM_SpendLogs)
-			.where(and(...conditions))
-			// 按投影位置分组：bucket 表达式带绑定参数，重复书写会生成不同的参数编号，
-			// PostgreSQL 不会把两次出现当成同一个表达式，必须用 1/2 而不是重写表达式。
-			.groupBy(sql.raw("1"), sql.raw("2"));
+		// Speed 的原始行分两条来源：
+		// - 有 deployment（99% 的行）只读普通列，可走覆盖索引的 index-only scan；
+		// - 没有 deployment 的行（约 1%）才读 metadata 的 resolved_model_group。
+		// 两段 UNION ALL 后再聚合，p50 仍在完整样本上计算，不是两个分位数的加权近似。
+		const hasDeployment = sql`COALESCE(${liteLLM_SpendLogs.model_id}, '') <> ''`;
+		const lacksDeployment = sql`COALESCE(${liteLLM_SpendLogs.model_id}, '') = ''`;
+		const providerExpr = sql`COALESCE(${liteLLM_SpendLogs.custom_llm_provider}, '')`;
+		const speedRowSelect = (model: SQL, predicate: SQL): SQL => sql`
+			SELECT
+				${bucketTextExpr} AS bucket,
+				${model} AS model,
+				${providerExpr} AS provider,
+				CASE WHEN ${eligible} THEN ${tpsExpr} END AS tps
+			FROM ${liteLLM_SpendLogs}
+			WHERE ${and(...conditions, predicate)!}
+		`;
+		const speedRowsQuery = sql`
+			WITH speed_rows AS (
+				${speedRowSelect(sql`${liteLLM_SpendLogs.model}`, hasDeployment)}
+				UNION ALL
+				${speedRowSelect(attributedModelExpr, lacksDeployment)}
+			)
+			SELECT
+				bucket,
+				model,
+				provider,
+				(COUNT(*))::int AS calls,
+				(COUNT(*) FILTER (WHERE tps IS NOT NULL))::int AS requests,
+				AVG(tps) FILTER (WHERE tps IS NOT NULL) AS avg_tps,
+				(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tps) FILTER (WHERE tps IS NOT NULL)) AS p50_tps
+			FROM speed_rows
+			GROUP BY 1, 2, 3
+		`;
+		const speedResult = (await db.execute(speedRowsQuery)) as unknown as { rows: SpeedAggregateRow[] };
+		const rows = speedResult.rows;
 
 		// 完整的桶时间轴：让页面能在没有数据的时段断开曲线，而不是把两端直接连起来。
 		// generate_series 走「当地墙钟」，再换回 UTC，夏令时切换日的 23/25 小时也能对齐。
@@ -431,9 +494,7 @@ export function registerModelSpeedEndpoints(router: Router, db: NodePgDatabase<t
 				${step}
 			) AS series(bucket_local)
 		`)) as unknown as { rows: Array<{ bucket_start: string }> };
-		const buckets = axisResult.rows
-			.map((row) => toBucketIso(row.bucket_start))
-			.filter((value) => value.length > 0);
+		const buckets = axisResult.rows.map((row) => toBucketIso(row.bucket_start)).filter((value) => value.length > 0);
 
 		return buildModelSpeedReport(rows, {
 			startDate: range.startDate,

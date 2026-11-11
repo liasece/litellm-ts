@@ -89,7 +89,13 @@
 .speed-card-name {
 	min-width: 0;
 }
-.speed-card-name > div {
+.speed-card-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+.speed-card-model {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -98,11 +104,42 @@
 	font-weight: 500;
 	color: #1f2937;
 }
-.speed-card-name > p {
+.speed-card-meta {
+	display: flex;
+	align-items: center;
+	gap: 4px;
 	margin-top: 2px;
+	min-width: 0;
 	font-size: 12px;
 	line-height: 16px;
 	color: #6b7280;
+}
+.speed-card-provider {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	color: #4b5563;
+}
+.speed-card-provider-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.speed-card-meta-separator {
+	color: #d1d5db;
+}
+.speed-card-requests {
+	white-space: nowrap;
+}
+.speed-card-provider-logo.provider-logo-image,
+.speed-card-provider-logo.provider-logo-fallback {
+	flex: none;
+	width: 12px;
+	height: 12px;
+	border-radius: 2px;
+	font-size: 8px;
+	line-height: 12px;
 }
 .speed-card-metric {
 	flex-shrink: 0;
@@ -205,9 +242,21 @@
 	font: 11px/16.5px var(--ui-font-mono);
 	color: #374151;
 }
-.speed-without-models > span > span {
-	margin-left: 4px;
+.speed-without-model {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 100%;
+}
+.speed-without-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.speed-without-provider,
+.speed-without-calls {
 	color: #6b7280;
+	white-space: nowrap;
 }
 @media (min-width: 640px) {
 	.speed-grid {

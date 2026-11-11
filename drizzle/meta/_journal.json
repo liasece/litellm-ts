@@ -137,6 +137,22 @@
 			"tag": "0016_spend_log_filter_columns",
 			"file": "0016_spend_log_filter_columns.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 17,
+			"version": "7",
+			"when": 1794790000004,
+			"tag": "0017_spend_log_speed_covering_index",
+			"file": "0017_spend_log_speed_covering_index.sql",
+			"breakpoints": true
+		},
+		{
+			"idx": 18,
+			"version": "7",
+			"when": 1794790000005,
+			"tag": "0018_spend_log_speed_fallback_index",
+			"file": "0018_spend_log_speed_fallback_index.sql",
+			"breakpoints": true
 		}
 	]
 }

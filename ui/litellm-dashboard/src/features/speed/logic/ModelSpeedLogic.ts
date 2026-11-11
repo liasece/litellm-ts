@@ -141,7 +141,19 @@ export function resolveSpeedAxisMax(models: readonly SpeedModelSeries[]): number
 }
 
 /**
- * 按模型名过滤（大小写不敏感）。
+ * 一组序列的稳定标识：模型名与供应商一起参与，避免同一模型的不同供应商在列表里
+ * 被当成同一个条目（v-for key、单卡状态都以它为准）。
+ * @param entry - 模型序列
+ */
+export function speedModelKey(entry: Pick<SpeedModelSeries, "model" | "provider">): string {
+	return entry.provider + "\u0000" + entry.model;
+}
+
+/**
+ * 按模型名或供应商过滤（大小写不敏感）。
+ *
+ * 供应商同样是可见身份的一部分：两张卡片模型名相同、供应商不同时，用户会直接搜索
+ * 供应商来找到其中一张。
  * @param models - 模型序列
  * @param query - 搜索词
  */
@@ -151,7 +163,7 @@ export function filterSpeedModels(models: readonly SpeedModelSeries[], query: st
 	if (needle.length === 0) {
 		return list;
 	}
-	return list.filter((entry) => entry.model.toLowerCase().includes(needle));
+	return list.filter((entry) => entry.model.toLowerCase().includes(needle) || entry.provider.toLowerCase().includes(needle));
 }
 
 /**
