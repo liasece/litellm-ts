@@ -28,6 +28,15 @@ describe("buildModelGroupOverrides", () => {
 				},
 			]),
 		).toThrow("override_reasoning_effort must be one of");
+		expect(() =>
+			buildModelGroupOverrides([
+				{
+					model_name: "model-a",
+					litellm_params: { model: "gpt-5.6-sol", custom_llm_provider: "codex-subscription" },
+					model_info: { force_reasoning_effort: "ultra" as never },
+				},
+			]),
+		).toThrow("force_reasoning_effort must be one of");
 	});
 
 	it("rejects Codex-only minimal effort for Anthropic deployments", () => {
@@ -37,6 +46,15 @@ describe("buildModelGroupOverrides", () => {
 					model_name: "claude",
 					litellm_params: { model: "anthropic/claude-sonnet-5", custom_llm_provider: "anthropic" },
 					model_info: { override_reasoning_effort: "minimal" },
+				},
+			]),
+		).toThrow("Anthropic reasoning effort override does not support minimal");
+		expect(() =>
+			buildModelGroupOverrides([
+				{
+					model_name: "claude",
+					litellm_params: { model: "anthropic/claude-sonnet-5", custom_llm_provider: "anthropic" },
+					model_info: { force_reasoning_effort: "minimal" },
 				},
 			]),
 		).toThrow("Anthropic reasoning effort override does not support minimal");

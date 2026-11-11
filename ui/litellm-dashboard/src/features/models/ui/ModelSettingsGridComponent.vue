@@ -89,6 +89,9 @@ const wildcards = computed(() =>
 function inherited(field: ModelBasicField) {
 	return !!field.source && credential.value !== undefined && Object.prototype.hasOwnProperty.call(credential.value, field.source);
 }
+function modelInfoField(key: string) {
+	return key.startsWith("override_") || key === "force_reasoning_effort";
+}
 function display(field: ModelBasicField): unknown {
 	const source = field.source ?? field.key,
 		fromCredential = inherited(field),
@@ -98,7 +101,7 @@ function display(field: ModelBasicField): unknown {
 				? props.model.model_name
 				: source === "model"
 					? props.model.litellm_model_name
-					: source.startsWith("override_")
+					: modelInfoField(source)
 						? info.value[source]
 						: (params.value[source] ?? info.value[source]);
 	if (field.key === "input_cost" || field.key === "output_cost") {
@@ -175,12 +178,12 @@ watch(
 				placeholder="No override"
 				@update:model-value="draft.override_model_name = $event" /><UiSelect
 				v-else-if="field.kind === 'effort'"
-				:model-value="modelString(draft.override_reasoning_effort) || null"
+				:model-value="modelString(draft[field.key]) || null"
 				:options="efforts"
 				clearable
-				placeholder="Preserve request value"
-				aria-label="Override Reasoning Effort"
-				@update:model-value="draft.override_reasoning_effort = $event" /><ModelProviderSelect
+				:placeholder="field.placeholder ?? 'Preserve request value'"
+				:aria-label="field.label"
+				@update:model-value="draft[field.key] = $event" /><ModelProviderSelect
 				v-else-if="field.kind === 'provider'"
 				clearable
 				:model-value="modelString(draft.custom_llm_provider) || null"

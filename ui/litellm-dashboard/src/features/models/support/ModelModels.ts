@@ -10,6 +10,7 @@ export interface ProxyModelInfo extends Record<string, unknown> {
 	fallbacks?: string[];
 	override_model_name?: string | null;
 	override_reasoning_effort?: string | null;
+	force_reasoning_effort?: string | null;
 	input_cost_per_token?: number | string | null;
 	output_cost_per_token?: number | string | null;
 	cache_read_input_token_cost?: number | string | null;

@@ -13,8 +13,10 @@ export interface ModelInfo {
 	id?: string;
 	/** 强制把该逻辑模型无条件解析为另一个模型组，语义等同 alias。 */
 	override_model_name?: string;
-	/** 最终出站请求的思考强度覆盖；不同协议会映射到各自的请求字段。 */
+	/** 默认思考强度：仅当请求没有指定思考强度时，才映射到各协议的请求字段。 */
 	override_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	/** 强制思考强度：无论请求是否指定思考强度，都替换为这里的值。 */
+	force_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	/** 模型模式： "chat" | "completion" | "embedding" | "image_generation" | "audio_transcription" | "responses" */
 	mode?: string;
 	/**

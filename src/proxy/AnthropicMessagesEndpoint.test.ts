@@ -18,14 +18,21 @@ function sseResponse(events: Record<string, unknown>[]): Response {
 	return new globalThis.Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-function buildApp(reasoningEffortOverride?: string, enabledBuiltinCapabilities?: Array<"vision" | "web" | "image_generation">) {
+interface BuildAppSettings {
+	reasoningEffortOverride?: string;
+	forcedReasoningEffort?: string;
+	enabledBuiltinCapabilities?: Array<"vision" | "web" | "image_generation">;
+}
+
+function buildApp(settings: BuildAppSettings = {}) {
 	const deployment = {
 		model_name: "native-group",
 		litellm_params: { model: "anthropic/upstream-model", api_key: "provider-key", custom_llm_provider: "anthropic" },
 		model_info: {
 			id: "dep-native",
-			...(reasoningEffortOverride ? { override_reasoning_effort: reasoningEffortOverride } : {}),
-			...(enabledBuiltinCapabilities ? { enabled_builtin_capabilities: enabledBuiltinCapabilities } : {}),
+			...(settings.reasoningEffortOverride ? { override_reasoning_effort: settings.reasoningEffortOverride } : {}),
+			...(settings.forcedReasoningEffort ? { force_reasoning_effort: settings.forcedReasoningEffort } : {}),
+			...(settings.enabledBuiltinCapabilities ? { enabled_builtin_capabilities: settings.enabledBuiltinCapabilities } : {}),
 		},
 	};
 	const provider = {
@@ -94,15 +101,11 @@ function buildApp(reasoningEffortOverride?: string, enabledBuiltinCapabilities?:
 	return app;
 }
 
-
 /** 读取 fetch 收到的请求头：上游改写成 Headers 后对象断言不再成立（键统一小写）。 */
 function sentHeaders(call: unknown[] | undefined): Record<string, string> {
 	const init = call?.[1] as { headers?: unknown } | undefined;
 	const headers = init?.headers;
-	const entries =
-		headers instanceof Headers
-			? [...headers.entries()]
-			: Object.entries((headers ?? {}) as Record<string, string>);
+	const entries = headers instanceof Headers ? [...headers.entries()] : Object.entries((headers ?? {}) as Record<string, string>);
 	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
 }
 
@@ -358,7 +361,7 @@ describe("native Anthropic streaming SpendLog", () => {
 		});
 	});
 
-	it("在最终 Anthropic 请求中覆盖调用方的 effort 并保留 output_config 其他字段", async () => {
+	it("强制思考强度覆盖调用方的 effort 并保留 output_config 其他字段", async () => {
 		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
 			new globalThis.Response(
 				JSON.stringify({
@@ -374,7 +377,7 @@ describe("native Anthropic streaming SpendLog", () => {
 			),
 		);
 
-		await request(buildApp("xhigh"))
+		await request(buildApp({ forcedReasoningEffort: "xhigh" }))
 			.post("/v1/messages")
 			.send({
 				model: "native-group",
@@ -387,6 +390,38 @@ describe("native Anthropic streaming SpendLog", () => {
 		expect(JSON.parse(String(init?.body))).toMatchObject({
 			output_config: { effort: "xhigh", format: { type: "json_schema" } },
 		});
+	});
+
+	it("默认思考强度只在请求未指定 effort 时生效", async () => {
+		const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(
+			async () =>
+				new globalThis.Response(
+					JSON.stringify({
+						id: "msg-default-effort",
+						type: "message",
+						role: "assistant",
+						model: "upstream-model",
+						content: [{ type: "text", text: "ok" }],
+						stop_reason: "end_turn",
+						usage: { input_tokens: 1, output_tokens: 1 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+		);
+		const app = buildApp({ reasoningEffortOverride: "xhigh" });
+
+		await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }] })
+			.expect(200);
+		await request(app)
+			.post("/v1/messages")
+			.send({ model: "native-group", messages: [{ role: "user", content: "hello" }], output_config: { effort: "low" } })
+			.expect(200);
+
+		const sentBodies = fetchSpy.mock.calls.map((call) => JSON.parse(String((call[1] as RequestInit | undefined)?.body)));
+		expect(sentBodies[0]).toMatchObject({ output_config: { effort: "xhigh" } });
+		expect(sentBodies[1]).toMatchObject({ output_config: { effort: "low" } });
 	});
 
 	it("流失败时保存 partial response，非法 tool JSON 保留原始字符串", async () => {
@@ -697,7 +732,7 @@ describe("Anthropic/OpenAI Files protocol routing", () => {
 		expect(JSON.parse(String(init?.body))).not.toHaveProperty("api_key");
 	});
 
-	it("count_tokens 计入内置能力注入并应用 deployment reasoning override", async () => {
+	it("count_tokens 计入内置能力注入并应用 deployment 强制思考强度", async () => {
 		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param: string) =>
 			param === "builtin_capabilities"
 				? {
@@ -719,7 +754,7 @@ describe("Anthropic/OpenAI Files protocol routing", () => {
 			}),
 		);
 
-		await request(buildApp("xhigh", ["vision"]))
+		await request(buildApp({ forcedReasoningEffort: "xhigh", enabledBuiltinCapabilities: ["vision"] }))
 			.post("/v1/messages/count_tokens")
 			.send({
 				model: "native-group",
@@ -823,20 +858,18 @@ describe("Anthropic web-search target model override", () => {
 
 it("does not forward routing tags inside native Anthropic metadata", async () => {
 	jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "request-1", spend: 0 });
-	const fetch = jest
-		.spyOn(global, "fetch")
-		.mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					id: "msg-test",
-					type: "message",
-					role: "assistant",
-					model: "upstream-model",
-					content: [{ type: "text", text: "ok" }],
-					usage: { input_tokens: 1, output_tokens: 1 },
-				}),
-			),
-		);
+	const fetch = jest.spyOn(global, "fetch").mockResolvedValue(
+		new Response(
+			JSON.stringify({
+				id: "msg-test",
+				type: "message",
+				role: "assistant",
+				model: "upstream-model",
+				content: [{ type: "text", text: "ok" }],
+				usage: { input_tokens: 1, output_tokens: 1 },
+			}),
+		),
+	);
 	try {
 		const response = await request(buildApp())
 			.post("/v1/messages")
@@ -852,7 +885,6 @@ it("does not forward routing tags inside native Anthropic metadata", async () =>
 		jest.restoreAllMocks();
 	}
 });
-
 
 describe("Anthropic private web tool call recovery", () => {
 	afterEach(() => {
@@ -903,7 +935,7 @@ describe("Anthropic private web tool call recovery", () => {
 				),
 			);
 
-		const response = await request(buildApp(undefined, ["web"]))
+		const response = await request(buildApp({ enabledBuiltinCapabilities: ["web"] }))
 			.post("/v1/messages")
 			.send({ model: "native-group", max_tokens: 64, messages: [{ role: "user", content: "Any news?" }] })
 			.expect(200);

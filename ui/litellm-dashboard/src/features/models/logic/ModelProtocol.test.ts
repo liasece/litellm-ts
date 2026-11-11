@@ -92,8 +92,22 @@ describe("Models protocol contracts", () => {
 			custom: "preserved",
 			override_model_name: null,
 			override_reasoning_effort: null,
+			force_reasoning_effort: null,
 			access_groups: ["research"],
 			enabled_builtin_capabilities: [],
+		});
+	});
+	it("carries both reasoning effort settings from model info into the update payload", () => {
+		const configured: ProxyModel = {
+			...current,
+			model_info: { ...current.model_info, override_reasoning_effort: "low", force_reasoning_effort: "high" },
+		};
+		const draft = createModelEditDraft(configured);
+		expect(draft.override_reasoning_effort).toBe("low");
+		expect(draft.force_reasoning_effort).toBe("high");
+		expect(prepareModelUpdate(draft, configured).model_info).toMatchObject({
+			override_reasoning_effort: "low",
+			force_reasoning_effort: "high",
 		});
 	});
 	it("requires a replacement before a reused credential can become manual", () => {

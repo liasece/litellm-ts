@@ -17,6 +17,7 @@ export function createModelEditDraft(model: ProxyModel): ModelEditDraft {
 		litellm_model_name: params.litellm_model_name ?? params.model ?? info.key ?? null,
 		override_model_name: info.override_model_name ?? undefined,
 		override_reasoning_effort: info.override_reasoning_effort ?? undefined,
+		force_reasoning_effort: info.force_reasoning_effort ?? undefined,
 		api_base: params.api_base,
 		custom_llm_provider: params.custom_llm_provider,
 		organization: params.organization,
@@ -108,6 +109,7 @@ export function prepareModelUpdate(values: ModelEditDraft, current: ProxyModel):
 		...info,
 		override_model_name: values.override_model_name || null,
 		override_reasoning_effort: values.override_reasoning_effort || null,
+		force_reasoning_effort: values.force_reasoning_effort || null,
 		enabled_builtin_capabilities: Array.isArray(values.enabled_builtin_capabilities) ? values.enabled_builtin_capabilities : [],
 	};
 	return { model_name: modelString(values.model_name), litellm_params: params, model_info: info };
@@ -150,10 +152,20 @@ export const basicModelFields: readonly ModelBasicField[] = [
 			"Always route requests for this model to the selected target first, then fall back along the chain configured on that target.",
 	},
 	{
-		key: "override_reasoning_effort",
-		label: "Override Reasoning Effort",
+		key: "force_reasoning_effort",
+		label: "Forced Reasoning Effort",
 		kind: "effort",
-		tooltip: "When set, replaces the caller's reasoning effort on the final request sent to the model server.",
+		placeholder: "Do not force",
+		tooltip:
+			"When set, replaces the caller's reasoning effort on the final request sent to the model server, whether or not the request sets one. Takes precedence over the default.",
+	},
+	{
+		key: "override_reasoning_effort",
+		label: "Default Reasoning Effort",
+		kind: "effort",
+		placeholder: "Preserve request value",
+		tooltip:
+			"Applies to the final request sent to the model server only when the request does not set a reasoning effort; a caller that chose an effort keeps it.",
 	},
 	{
 		key: "input_cost",

@@ -864,7 +864,7 @@ export class Router {
 		const estimatedInputTokens = messages ? this._estimateInputTokens(messages, optionalParams) : undefined;
 		const ctx = this._buildRoutingContext(deployments, estimatedInputTokens);
 		ctx.isStream = routingParams["stream"] === true;
-		const selected = this._runtimeState().routeFn(usableDeployments, ctx);
+		const selected = this._runtimeState().routeFn(deployments, ctx);
 		if (!selected) {
 			return null;
 		}
@@ -966,11 +966,11 @@ export class Router {
 			const rawBody = responsesBodyRaw as Record<string, unknown>;
 			const streamAdjustedBody =
 				typeof mergedParams["stream"] === "boolean" ? { ...rawBody, stream: mergedParams["stream"] } : rawBody;
-			const responsesBody = applyReasoningEffortOverride(streamAdjustedBody, deployment, "responses");
+			const responsesBody = applyReasoningEffortOverride(streamAdjustedBody, deployment, "responses", rawBody);
 			providerRequest = provider.transformResponsesRequest?.(deployment.litellm_params.model, responsesBody, mergedParams);
 		}
 		if (!providerRequest && callType !== "image_generation" && callType !== "image_edit") {
-			const outboundParams = applyReasoningEffortOverride(mergedParams, deployment, "chat");
+			const outboundParams = applyReasoningEffortOverride(mergedParams, deployment, "chat", requestParams);
 			providerRequest = provider.transformRequest(deployment.litellm_params.model, messages as Message[], outboundParams);
 		}
 		if (!providerRequest) {
