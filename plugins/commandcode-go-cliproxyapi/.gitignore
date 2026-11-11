@@ -1,6 +1,0 @@
-dist/
-plugins/
-*.so
-*.dylib
-*.dll
-*.h

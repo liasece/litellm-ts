@@ -22,14 +22,6 @@ COPY ui/litellm-dashboard/ ./
 COPY src/shared/ ./../../src/shared/
 RUN npm run build
 
-FROM golang:1.26-bookworm AS subscription-build
-WORKDIR /src
-COPY plugins/ ./plugins/
-COPY native/subscriptions/ ./native/subscriptions/
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/go/pkg/mod \
-    sh native/subscriptions/build.sh /out
-
 FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update \
@@ -48,11 +40,6 @@ RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 COPY --from=backend-build /build/dist/ ./dist/
 COPY drizzle/ ./drizzle/
 COPY --from=dashboard-build /build/ui/litellm-dashboard/out/ ./ui/out/
-COPY --from=subscription-build /out/ /opt/cliproxy/
-
-ENV CLIPROXY_PLUGIN_DIR=/opt/cliproxy/plugins
-ENV LITELLM_SUBSCRIPTIONS_BINARY=/opt/cliproxy/litellm-subscriptions
-ENV LITELLM_SUBSCRIPTIONS_VERSION=8.0.57
 ENV CLIPROXY_RUNTIME_ROOT=/var/lib/litellm/cliproxy
 
 RUN node -e "const { readMigrationFiles } = require('drizzle-orm/migrator'); const migrations = readMigrationFiles({ migrationsFolder: '/app/drizzle' }); if (migrations.length === 0) throw new Error('Drizzle migrations are missing from runtime image');" \

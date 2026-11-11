@@ -8,8 +8,3 @@
 !ui/
 !ui/out/
 !ui/out/**
-!plugins/
-!plugins/**
-!native/
-!native/subscriptions/
-!native/subscriptions/**
