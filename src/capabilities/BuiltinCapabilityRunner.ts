@@ -1,3 +1,5 @@
+import { ImageGenerationTargets } from "./ImageGenerationTargets";
+import type { ImageCompletionHistory } from "./ImageCompletionHistory";
 import { ApiError } from "../core/api/ApiError";
 import type { Router } from "../router/Router";
 import type { Message } from "../types/openai";
@@ -56,6 +58,8 @@ export async function runOpenAIBuiltinCapabilityAgentLoop(
 	options: {
 		visionAudit?: BuiltinCapabilityAuditHook;
 		imageGenerationAudit?: BuiltinCapabilityAuditHook;
+		/** Authenticated upstream history and image operation bookkeeping. */
+		imageHistory?: ImageCompletionHistory;
 		webAudit?: BuiltinCapabilityAuditHook;
 		visionImageStore: VisionImageStore;
 		preparedWeb?: PreparedWebRequest<Record<string, unknown>>;
@@ -91,6 +95,7 @@ export async function runOpenAIBuiltinCapabilityAgentLoop(
 		guardMainModelTurn?.();
 		return complete(completionModel, completionMessages, params);
 	};
+	const imageTargets = new ImageGenerationTargets(options.imageHistory?.continuingAssets);
 	const completeWithImageGeneration: Completion = (completionModel, completionMessages, params) =>
 		runOpenAIImageGenerationAgentLoop(
 			router,
@@ -100,6 +105,8 @@ export async function runOpenAIBuiltinCapabilityAgentLoop(
 			completeMainModel,
 			{
 				audit: options.imageGenerationAudit,
+				imageHistory: options.imageHistory,
+				targets: imageTargets,
 				imageStore: options.visionImageStore,
 				preparedRequest: options.preparedImageGeneration,
 			},
@@ -143,6 +150,8 @@ export async function runAnthropicBuiltinCapabilityAgentLoop(
 	options: {
 		visionAudit?: BuiltinCapabilityAuditHook;
 		imageGenerationAudit?: BuiltinCapabilityAuditHook;
+		/** Authenticated upstream history and image operation bookkeeping. */
+		imageHistory?: ImageCompletionHistory;
 		webAudit?: BuiltinCapabilityAuditHook;
 		visionImageStore: VisionImageStore;
 		preparedWeb?: PreparedWebRequest<Record<string, unknown>> & { body: Record<string, unknown> };
@@ -168,9 +177,12 @@ export async function runAnthropicBuiltinCapabilityAgentLoop(
 		guardMainModelTurn?.();
 		return complete(requestBody);
 	};
+	const imageTargets = new ImageGenerationTargets(options.imageHistory?.continuingAssets);
 	const completeWithImageGeneration = async (requestBody: Record<string, unknown>): Promise<Record<string, unknown>> => {
 		const result = await runAnthropicImageGenerationAgentLoop(router, model, requestBody, completeMainModel, {
 			audit: options.imageGenerationAudit,
+			imageHistory: options.imageHistory,
+			targets: imageTargets,
 			imageStore: options.visionImageStore,
 		});
 		return result.response;

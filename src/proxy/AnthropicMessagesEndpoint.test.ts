@@ -283,6 +283,7 @@ describe("native Anthropic streaming SpendLog", () => {
 				stop_reason: "end_turn",
 				usage: { input_tokens: 2, output_tokens: 1 },
 				generated_images: [generatedImage],
+				_builtinPrivateImageToolCalls: [{ id: "call-create", name: "litellm__image_create", arguments: { prompt: "a poster" } }],
 			},
 		});
 		const app = buildApp();
@@ -296,6 +297,9 @@ describe("native Anthropic streaming SpendLog", () => {
 		expect(response.text).toContain("event: message_start");
 		expect(response.text).toContain(`"generated_images":[${JSON.stringify(generatedImage)}]`);
 		expect(response.text).toContain("event: message_stop");
+		// 主模型的私有工具调用只进 SpendLog，不能随 SSE 下发给客户端。
+		expect(response.text).not.toContain("_builtinPrivateImageToolCalls");
+		expect(response.text).not.toContain("call-create");
 	});
 
 	it("非流式成功日志保存 alias 解析链并保留原始 fallback 首项", async () => {

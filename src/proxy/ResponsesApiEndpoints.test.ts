@@ -10,6 +10,8 @@ import { createEndpointSpendLifecycle } from "../spend/SpendReservation";
 import * as SpendTracker from "../spend/SpendTracker";
 import { upstreamExchangeScope } from "../middleware/UpstreamExchangeScope";
 import { registerResponsesApiRoutes } from "./ResponsesApiEndpoints";
+import { registerChatCompletionsRoutes } from "./ChatCompletionsEndpoint";
+import { setSubscriptionRequestHandler } from "../router/SubscriptionDispatch";
 
 function buildRouter(completion: jest.Mock): LiteLLMRouter {
 	return {
@@ -87,6 +89,22 @@ function buildApp(router: LiteLLMRouter, authenticated = false, database: unknow
 	return app;
 }
 
+/**
+ * 旧测试只验证端点行为：订阅桥用透传桩代替真实运行时，让 fetch mock 继续观察上游。
+ */
+function installBridgeStub(): void {
+	setSubscriptionRequestHandler(async (request) => {
+		const init: RequestInit = { method: request.method, headers: request.headers };
+		if (request.body !== undefined) {
+			init.body = request.bodyEncoding === "raw" ? String(request.body) : JSON.stringify(request.body);
+		}
+		const response = await globalThis.fetch("https://bridge.test/v1/responses", init);
+		const contentType = response.headers.get("content-type") ?? "";
+		const body = contentType.includes("application/json") ? ((await response.clone().json()) as unknown) : undefined;
+		return { response: response, body: body, latencyMs: 0, startedAtMs: Date.now() };
+	});
+}
+
 function parseSseEvents(body: string): Array<Record<string, unknown>> {
 	return body
 		.split("\n\n")
@@ -146,6 +164,55 @@ function nativeResponsesSse(options: {
 }
 
 describe("Responses API contract matrix", () => {
+	beforeEach(() => {
+		installBridgeStub();
+	});
+
+	afterEach(() => {
+		setSubscriptionRequestHandler(undefined);
+	});
+
+	test("Codex can resend a legacy router image through create and input_tokens without passing a local ID to the provider", async () => {
+		const result = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcLkAAAAASUVORK5CYII=";
+		const localImage = { type: "image_generation_call", id: "imggen_" + "a".repeat(32), status: "completed", result };
+		const input = [
+			{ type: "message", role: "user", content: "Draw" },
+			localImage,
+			{ type: "function_call", call_id: "call_read", name: "read", arguments: "{}" },
+			{ type: "function_call_output", call_id: "call_read", output: "ok" },
+			{ type: "message", role: "user", content: "Continue" },
+		];
+		const completed = jest.fn().mockResolvedValue({
+			id: "completion",
+			model: "responses-model",
+			choices: [{ message: { role: "assistant", content: "Ready" }, finish_reason: "stop" }],
+		});
+		const app = buildApp(buildRouter(completed), false, null);
+		const body = { model: "responses-model", input };
+		const counted = await request(app).post("/v1/responses/input_tokens").send(body).expect(200);
+		expect(counted.body.input_tokens).toBeGreaterThan(0);
+		const reply = await request(app).post("/v1/responses").send(body).expect(200);
+		expect(reply.body.output.map((item: { type: string }) => item.type)).toEqual(["message"]);
+		const [, messages, params] = completed.mock.calls[0]!;
+		expect(messages.map((m: { role: string }) => m.role)).toEqual(["user", "assistant", "tool", "user", "user"]);
+		expect(JSON.stringify(params)).not.toContain(localImage.id);
+		expect(messages[3].content[1].image_url.url).toBe("data:image/png;base64," + result);
+		for (const endpoint of ["/v1/responses", "/v1/responses/input_tokens"]) {
+			await request(app)
+				.post(endpoint)
+				.send({ ...body, input: [{ ...localImage, result: null }] })
+				.expect(400);
+			await request(app)
+				.post(endpoint)
+				.send({ ...body, input: [{ ...localImage, result: "YWJj" }] })
+				.expect(400);
+			await request(app)
+				.post(endpoint)
+				.send({ ...body, input: [null] })
+				.expect(400);
+		}
+	});
+
 	test("shared endpoint lifecycle commits only one terminal accounting action", async () => {
 		const stop = jest.fn();
 		const markProviderStarted = jest.fn();
@@ -343,7 +410,7 @@ describe("Responses API contract matrix", () => {
 			}
 		});
 
-		test("built-in image references stay at the end of the native Responses input", async () => {
+		test("native Responses keeps the source image and its permanent reference together", async () => {
 			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
 				param === "builtin_capabilities"
 					? {
@@ -407,6 +474,7 @@ describe("Responses API contract matrix", () => {
 				.send({
 					model: "cliproxy-tail",
 					store: false,
+					instructions: "Inspect the original screenshot.",
 					input: [
 						{
 							type: "message",
@@ -422,15 +490,17 @@ describe("Responses API contract matrix", () => {
 
 			expect(bodies).toHaveLength(1);
 			const forwarded = bodies[0]!["input"] as Record<string, unknown>[];
-			// 客户端输入逐项保留在最前面，能力说明紧随其后且不含 sha256 清单。
-			expect(forwarded[0]).toMatchObject({ type: "message", role: "system" });
-			expect(JSON.stringify(forwarded[0])).not.toContain("sha256:");
-			expect(forwarded[1]).toMatchObject({ type: "message", role: "user" });
-			expect(JSON.stringify(forwarded[1])).toContain("Describe this screenshot.");
-			// 随图片变化的引用清单必须落在最后一项，新增图片才不会改写前缀。
-			const last = forwarded.at(-1)!;
-			expect(last).toMatchObject({ type: "message", role: "system" });
-			expect(JSON.stringify(last)).toContain("sha256:");
+			expect(bodies[0]!.instructions).toBe("Inspect the original screenshot.");
+			expect(forwarded).toHaveLength(1);
+			expect(forwarded[0]).toMatchObject({
+				type: "message",
+				role: "user",
+				content: [
+					{ type: "input_text", text: "Describe this screenshot." },
+					{ type: "input_image", image_url: "data:image/png;base64,YWJj" },
+					{ type: "input_text", text: expect.stringMatching(/sha256:[a-f0-9]{64}/) },
+				],
+			});
 		});
 
 		test("CLIProxy streaming Responses keeps the native Responses transport", async () => {
@@ -2157,6 +2227,89 @@ describe("Responses API contract matrix", () => {
 		expect(ttftMs).toBeGreaterThanOrEqual(0);
 		expect(ttftMs).toBeLessThan(totalMs);
 	});
+	test.each(["/v1/responses", "/v1/chat/completions"])(
+		"streams the successful image caption exactly once after a live reasoning delta on %s",
+		async (endpoint) => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							image_generation: { enabled: true, always_inject: true, handler_model: "worker", max_iterations: 3 },
+						}
+					: {},
+			);
+			const caption = "A green leaf on white.";
+			async function* decision() {
+				const head = { id: "image-decision", object: "chat.completion.chunk", model: "responses-model", created: 1 };
+				yield {
+					...head,
+					choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "Preparing." }, finish_reason: null }],
+				};
+				yield {
+					...head,
+					choices: [
+						{
+							index: 0,
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: "image",
+										type: "function",
+										function: {
+											name: "litellm__image_create",
+											arguments: JSON.stringify({
+												prompt: "green leaf",
+												output_count: 1,
+												output_index: 1,
+												final_response: "image_and_caption",
+												final_caption: caption,
+											}),
+										},
+									},
+								],
+							},
+							finish_reason: "tool_calls",
+						},
+					],
+					usage: { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 },
+				};
+			}
+			const completion = jest.fn().mockImplementation(async () => ({ _stream: true, stream: decision() }));
+			const router = buildRouter(completion);
+			router.getDeployments = () => [
+				{
+					model_name: "responses-model",
+					litellm_params: { model: "openai/provider-model" },
+					model_info: { supports_function_calling: true, enabled_builtin_capabilities: ["image_generation"] },
+				},
+			];
+			router.resolveModelGroupWithTrace = (m: string) => ({ inputModel: m, resolvedModel: m, resolutionPath: [m] });
+			router.imageGeneration = jest.fn().mockResolvedValue({ data: [{ b64_json: "AA==" }] });
+			const app = buildApp(router, false, null);
+			const routes = express.Router();
+			registerChatCompletionsRoutes(routes, router, undefined as never);
+			app.use(routes);
+			const message = { role: "user", content: "Draw a green leaf and provide a short caption." };
+			const responsesApi = endpoint === "/v1/responses";
+			const result = await request(app)
+				.post(endpoint)
+				.send({ model: "responses-model", stream: true, ...(responsesApi ? { input: [message] } : { messages: [message] }) })
+				.expect(200);
+			const chunks = result.text
+				.split("\n")
+				.filter((l) => l.startsWith("data: {"))
+				.map((l) => JSON.parse(l.slice(6)));
+			const texts = responsesApi
+				? chunks.filter((c) => c.type === "response.output_text.delta").map((c) => c.delta)
+				: chunks.flatMap((c) => (c.choices ?? []).map((x: { delta: { content?: string } }) => x.delta.content ?? ""));
+			expect(texts.join("")).toBe(caption);
+			expect(completion).toHaveBeenCalledTimes(1);
+			expect(router.imageGeneration).toHaveBeenCalledTimes(1);
+			expect(result.text).not.toContain("_builtinImageCaption");
+			expect(result.text).not.toContain("litellm__image_create");
+		},
+	);
+
 	test("built-in image creation streams an image_generation_call without failing the terminal event", async () => {
 		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) => param === "builtin_capabilities"
 			? {
@@ -2228,6 +2381,12 @@ describe("Responses API contract matrix", () => {
 		expect(terminal).toHaveLength(1);
 		expect(terminal[0]?.type).toBe("response.completed");
 		expect(events.map((event) => event.type)).toContain("response.image_generation_call.completed");
+		expect(
+			events.filter(
+				(event) =>
+					event.type === "response.output_item.done" && (event.item as Record<string, unknown>)?.type === "image_generation_call",
+			),
+		).toHaveLength(1);
 		const completed = terminal[0]?.response as Record<string, unknown>;
 		expect(completed["output"]).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image_generation_call", status: "completed", result: "AA==" })]));
 		expect(JSON.stringify(events)).not.toContain("litellm__image_create");

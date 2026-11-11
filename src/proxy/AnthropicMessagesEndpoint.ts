@@ -1,3 +1,4 @@
+import { createImageCompletionHistory } from "../capabilities/ImageCompletionHistory";
 import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
 import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 import { stripRoutingMetadata } from "../router/TagRouting";
@@ -845,6 +846,12 @@ export function registerAnthropicMessagesEndpoints(
 			runCommonChecks(req.auth, requestedModel);
 		}
 
+		const publicHistory = Array.isArray(originalMessages) ? (originalMessages as Array<Record<string, unknown>>) : [];
+		const imageHistory = createImageCompletionHistory(db, req, "anthropic", publicHistory);
+		if (imageHistory) {
+			cleanBody = { ...cleanBody, messages: await imageHistory.restore() };
+		}
+
 		// Patch 7: websearch override。仅该读取路径叠加 DB 覆盖，避免改变其他静态配置消费者。
 		const generalSettings = {
 			...(getConfig().generalSettings as unknown as Record<string, unknown>),
@@ -1009,12 +1016,14 @@ export function registerAnthropicMessagesEndpoints(
 						const agentResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
 							visionAudit: visionAudit,
 							imageGenerationAudit: imageGenerationAudit,
+							imageHistory: imageHistory,
 							webAudit: webAudit,
 							visionImageStore: visionImageStore,
 							preparedWeb: preparedWeb,
 						});
 						cleanBody = agentResult.body;
 						const finalResponse = agentResult.response;
+						await imageHistory?.bind(finalResponse);
 						finalResponse["model"] = requestedModel;
 						const spendInfo = executedAttempt
 							? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
@@ -1385,6 +1394,7 @@ export function registerAnthropicMessagesEndpoints(
 					const capabilityResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
 						visionAudit: visionAudit,
 						imageGenerationAudit: imageGenerationAudit,
+						imageHistory: imageHistory,
 						webAudit: webAudit,
 						visionImageStore: visionImageStore,
 						preparedWeb: preparedWeb,
@@ -1572,6 +1582,7 @@ export function registerAnthropicMessagesEndpoints(
 				await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
 			}
 
+			await imageHistory?.bind(responseData);
 			return responseData;
 		} finally {
 			req.removeListener("aborted", abortWebSearch);
@@ -1605,7 +1616,9 @@ export function registerAnthropicMessagesEndpoints(
 			}
 		}
 		const model = cleanBody.model as string;
-		const preparedBody = await prepareAnthropicTokenCountBody(litellmRouter, model, cleanBody, db);
+		const history = createImageCompletionHistory(db, req, "anthropic", Array.isArray(cleanBody.messages) ? cleanBody.messages : []);
+		const countBody = history ? { ...cleanBody, messages: await history.restore() } : cleanBody;
+		const preparedBody = await prepareAnthropicTokenCountBody(litellmRouter, model, countBody, db);
 		const attempt = requireUpstreamAttempt(
 			litellmRouter,
 			model,

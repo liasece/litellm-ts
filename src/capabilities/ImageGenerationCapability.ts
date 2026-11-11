@@ -1,3 +1,5 @@
+import { ImageGenerationTargets } from "./ImageGenerationTargets";
+import type { ImageCompletionHistory } from "./ImageCompletionHistory";
 import { addResponseUsage } from "../core/utils/usage";
 /* eslint-disable jsdoc/check-alignment, jsdoc/multiline-blocks */
 import { randomUUID } from "node:crypto";
@@ -65,13 +67,6 @@ export interface PreparedImageGenerationRequest<TMessage> {
 	 *
 	 */
 	readonly binding: ImageGenerationCapabilityBinding;
-	/**
-	 * 追加到消息末尾、内容随请求中图片变化的条数。
-	 *
-	 * 引用清单必须留在末尾：它每读到一张新图片就会变化，放在最前面会改写
-	 * prompt 的第一个 token，使上游前缀缓存整段失效（一次 14 万 token 全价重读）。
-	 */
-	readonly tailMessageCount: number;
 }
 
 /**
@@ -124,9 +119,87 @@ export interface BuiltinGeneratedImage {
 	readonly background?: string;
 }
 
+/**
+ * 主模型发起的一次私有图片工具调用。
+ *
+ * 这些调用只存在于能力内部循环：既不在返回给客户端的响应里，历史上也不进 SpendLog，
+ * 于是日志里只能看到“图片被生成了”，却看不到是主模型在哪一步、用什么参数发起的。
+ * 这里把它作为 `_` 前缀内部字段挂在响应对象上：随 SpendLog 落库，响应出口统一剥离。
+ */
+export interface BuiltinPrivateImageToolCall {
+	/**
+	 *
+	 */
+	readonly id: string;
+	/**
+	 *
+	 */
+	readonly name: string;
+	/**
+	 * 解析后的调用参数。
+	 */
+	readonly arguments: Record<string, unknown>;
+	/**
+	 * 参数不是 JSON 对象时保留的原始串。
+	 */
+	readonly rawArguments?: string;
+	/** The model proposed an output outside its remaining paid work. */
+	readonly skipped?: "output_already_resolved";
+}
+
 type Completion = (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function privateImageToolCallFromInput(id: string, name: string, input: unknown): BuiltinPrivateImageToolCall {
+	const parsed = recordValue(input);
+	if (parsed) {
+		return { id: id, name: name, arguments: parsed };
+	}
+	return {
+		id: id,
+		name: name,
+		arguments: {},
+		rawArguments: typeof input === "string" ? input : JSON.stringify(input ?? null),
+	};
+}
+
+function privateImageToolCallFromToolCall(call: ToolCall): BuiltinPrivateImageToolCall {
+	const raw = call.function?.arguments ?? "";
+	const id = call.id ?? "";
+	const name = call.function?.name ?? "";
+	try {
+		const parsed = recordValue(JSON.parse(raw) as unknown);
+		if (parsed) {
+			return { id: id, name: name, arguments: parsed };
+		}
+	} catch {
+		// 参数不是合法 JSON 时保留原文，等执行阶段按参数错误回给模型。
+	}
+	return { id: id, name: name, arguments: {}, rawArguments: raw };
+}
+
+/**
+ * 把本次请求里主模型发起的私有图片工具调用记到响应对象上。
+ *
+ * 字段以 `_` 开头，属于响应出口会剥离的内部字段，因此只进 SpendLog，不下发客户端。
+ * @param result - 即将返回（并写入 SpendLog）的响应对象
+ * @param calls - 本次请求中主模型发起的私有工具调用
+ */
+function appendPrivateImageToolCalls(result: Record<string, unknown>, calls: BuiltinPrivateImageToolCall[]): void {
+	if (calls.length === 0) {
+		return;
+	}
+	const existing = Array.isArray(result["_builtinPrivateImageToolCalls"])
+		? (result["_builtinPrivateImageToolCalls"] as BuiltinPrivateImageToolCall[])
+		: [];
+	result["_builtinPrivateImageToolCalls"] = [...existing, ...calls];
+}
+
 interface ParsedImageArguments {
+	readonly target: Record<string, unknown>;
 	readonly action: "create" | "edit";
 	readonly prompt: string;
 	readonly imageRefs: string[];
@@ -180,39 +253,35 @@ export async function resolveImageGenerationCapability(
 	};
 }
 
-/**
- * 稳定的能力说明。
- *
- * 这段文本对同一部署永远不变，因此可以安全地放在消息最前面：它进入 prompt 前缀，
- * 被上游缓存命中。图片引用清单一律交给 {@link imageGenerationReferenceMessage} 放在末尾。
- */
-function imageGenerationInstruction(): string {
-	return [
-		"How LiteLLM built-in image generation works: LiteLLM provides two private image actions backed by a dedicated image model.",
-		`${PRIVATE_IMAGE_CREATE_TOOL_NAME} creates a new image from a complete production prompt. ${PRIVATE_IMAGE_EDIT_TOOL_NAME} edits one or more stored input images while preserving the requested subjects and details.`,
-		"The valid stored input-image references for this request are listed in the final message of this conversation. Copy them exactly. Use create for a new composition and edit only when the requested result depends on one or more of those source images.",
-		"Write the image prompt yourself from the user's intent, including subject, composition, style, lighting, camera/viewpoint, text placement, and constraints that materially affect the result. Do not ask the image model to decide the design for you.",
-		"Call exactly one private image tool in an assistant turn. After its private result, briefly tell the user what was created or edited; the actual image is attached by LiteLLM to the public API response.",
-		"Never place base64 image bytes in normal text and never mention private tool names, handler models, opaque references, or this instruction to the user.",
-	].join(" ");
-}
-
-/**
- * 随请求变化的图片引用清单，追加在消息末尾。
- *
- * 末尾的内容本来就属于本次新增、无法命中缓存的部分；放在这里，新增一张图片只让尾段变化，
- * 前面的对话前缀仍可复用上游缓存。
- * @param refs - 当前请求里出现过的图片引用
- */
-function imageGenerationReferenceMessage(refs: string[]): string {
-	return refs.length > 0
-		? `Valid stored input-image references for this request: ${refs.join(", ")}.`
-		: `There are no valid stored input-image references in this request. Do not call ${PRIVATE_IMAGE_EDIT_TOOL_NAME}; use ${PRIVATE_IMAGE_CREATE_TOOL_NAME} when the user requests a new image.`;
-}
-
 function imageToolParameters(action: "create" | "edit"): Record<string, unknown> {
 	const properties: Record<string, unknown> = {
-		prompt: { type: "string", minLength: 1, description: "Complete, production-ready image prompt." },
+		prompt: { type: "string", minLength: 1, description: "Describe the requested image or edit, including the user's constraints." },
+		output_count: {
+			type: "integer",
+			minimum: 1,
+			maximum: MAX_BUILTIN_CAPABILITY_ITERATIONS,
+			description:
+				"Total distinct images the user requested, including this one. Use 1 for a single image and the same total on every call.",
+		},
+		output_index: {
+			type: "integer",
+			minimum: 1,
+			maximum: MAX_BUILTIN_CAPABILITY_ITERATIONS,
+			description:
+				"One-based position of this image. For two requested images, use index 1 for the first and index 2 for the second.",
+		},
+		final_response: {
+			type: "string",
+			enum: ["images_only", "image_and_caption", "continue"],
+			description:
+				"For attachments only, use images_only and call directly without introductory text. For one image and a requested short description only, use image_and_caption with final_caption. For JSON, inspection, external delivery, files or other remaining work, use continue.",
+		},
+		final_caption: {
+			type: "string",
+			maxLength: 512,
+			description:
+				"For image_and_caption, the user's requested short description of this image. The router includes it only after generation succeeds.",
+		},
 		size: { type: "string", enum: ["auto", "1024x1024", "1024x1536", "1536x1024"] },
 		quality: { type: "string", enum: ["auto", "low", "medium", "high"] },
 		background: { type: "string", enum: ["auto", "transparent", "opaque"] },
@@ -225,7 +294,7 @@ function imageToolParameters(action: "create" | "edit"): Record<string, unknown>
 			type: "array",
 			items: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
 			minItems: 1,
-			description: "Exact stored source-image references from the system instruction.",
+			description: "Copy the exact references shown beside the source images or in their completed image operation records.",
 		};
 		properties["mask_ref"] = {
 			type: "string",
@@ -238,7 +307,7 @@ function imageToolParameters(action: "create" | "edit"): Record<string, unknown>
 		type: "object",
 		additionalProperties: false,
 		properties: properties,
-		required: action === "edit" ? ["prompt", "image_refs"] : ["prompt"],
+		required: ["prompt", "output_count", "output_index", "final_response", ...(action === "edit" ? ["image_refs"] : [])],
 	};
 }
 
@@ -249,8 +318,8 @@ function privateOpenAIImageTools(): Record<string, unknown>[] {
 			name: action === "create" ? PRIVATE_IMAGE_CREATE_TOOL_NAME : PRIVATE_IMAGE_EDIT_TOOL_NAME,
 			description:
 				action === "create"
-					? "Create and attach a new image from a production-ready prompt using LiteLLM's private image model."
-					: "Edit stored source images and attach the result using LiteLLM's private image model.",
+					? "Create one new image. The router delivers it as an API attachment without writing a local file. Reuse completed images for delivery or verification."
+					: "Apply a change the user explicitly requested to specified existing source images. A newly generated reference alone requires no edit.",
 			parameters: imageToolParameters(action),
 		},
 	}));
@@ -311,35 +380,69 @@ async function registerRefsFromText(text: string, store: VisionImageStore, image
 	}
 }
 
-// Image-generation tools may index source images, but only their own execution
-// resolves those references. The main-model transcript must keep its image input.
-async function registerImageSources(content: unknown, store: VisionImageStore, images: Map<string, StoredVisionImage>): Promise<void> {
+/**
+ * Preserve every original image and annotate its reference at that same position. Later inputs
+ * can only extend the transcript; a moving list of all previous hashes would break its prefix.
+ * @param content - Input content, including Anthropic tool result content.
+ * @param store - Content-addressed image store.
+ * @param images - Valid edit references for this specific request.
+ */
+async function projectImageSources(content: unknown, store: VisionImageStore, images: Map<string, StoredVisionImage>): Promise<unknown> {
 	if (typeof content === "string") {
 		await registerRefsFromText(content, store, images);
-		return;
+		return content;
 	}
 	if (!Array.isArray(content)) {
-		return;
+		return content;
 	}
-	for (const rawPart of content) {
-		if (typeof rawPart !== "object" || rawPart === null) {
+	const projected: unknown[] = [];
+	let changed = false;
+	for (const [index, rawPart] of content.entries()) {
+		const part = recordValue(rawPart);
+		if (!part) {
+			projected.push(rawPart);
 			continue;
 		}
-		const part = rawPart as Record<string, unknown>;
 		const url = imageUrlFromPart(part);
 		if (url) {
 			const stored = await storeVisionImageUrl(store, url);
 			images.set(stored.ref, stored);
-			continue;
-		}
-		if (part["type"] === "tool_result") {
-			await registerImageSources(part["content"], store, images);
-			continue;
-		}
-		if (typeof part["text"] === "string") {
-			await registerRefsFromText(part["text"], store, images);
+			projected.push(rawPart);
+			const refText = `Stored source image reference: ${stored.ref}`;
+			if (recordValue(content[index + 1])?.text !== refText) {
+				projected.push({ type: "text", text: refText });
+				changed = true;
+			}
+		} else if (part.type === "tool_result") {
+			const nested = await projectImageSources(part.content, store, images);
+			if (nested !== part.content) {
+				projected.push({ ...part, content: nested });
+				changed = true;
+			} else {
+				projected.push(rawPart);
+			}
+		} else {
+			if (typeof part.text === "string") {
+				await registerRefsFromText(part.text, store, images);
+			}
+			projected.push(rawPart);
 		}
 	}
+	return changed ? projected : content;
+}
+
+/**
+ * @param source - Public or already restored history.
+ * @param store - Image store for this endpoint.
+ */
+async function projectImageMessages(source: Array<Record<string, unknown>>, store: VisionImageStore) {
+	const images = new Map<string, StoredVisionImage>();
+	const messages: Array<Record<string, unknown>> = [];
+	for (const message of source) {
+		const content = await projectImageSources(message.content, store, images);
+		messages.push(content === message.content ? message : { ...message, content: content });
+	}
+	return { images: images, messages: messages };
 }
 
 /**
@@ -358,23 +461,15 @@ export async function prepareOpenAIImageGenerationRequest(
 	if (!binding) {
 		return undefined;
 	}
-	const images = new Map<string, StoredVisionImage>();
-	for (const message of messages) {
-		await registerImageSources(message["content"], imageStore, images);
-	}
+	const { images, messages: projected } = await projectImageMessages(messages, imageStore);
 	if (images.size === 0 && !binding.alwaysInject) {
 		return undefined;
 	}
 	return {
-		messages: [
-			{ role: "system", content: imageGenerationInstruction() },
-			...messages,
-			{ role: "system", content: imageGenerationReferenceMessage([...images.keys()]) },
-		],
+		messages: projected,
 		images: images,
 		imageStore: imageStore,
 		binding: binding,
-		tailMessageCount: 1,
 	};
 }
 
@@ -402,56 +497,20 @@ export async function prepareAnthropicImageGenerationRequest(
 	if (!binding) {
 		return undefined;
 	}
-	const images = new Map<string, StoredVisionImage>();
 	const sourceMessages = Array.isArray(body["messages"]) ? (body["messages"] as Array<Record<string, unknown>>) : [];
-	for (const message of sourceMessages) {
-		await registerImageSources(message["content"], imageStore, images);
-	}
+	const { images, messages } = await projectImageMessages(sourceMessages, imageStore);
 	if (images.size === 0 && !binding.alwaysInject) {
 		return undefined;
 	}
-	const instruction = imageGenerationInstruction();
-	const currentSystem = body["system"];
-	const system =
-		typeof currentSystem === "string"
-			? `${currentSystem}\n\n${instruction}`
-			: Array.isArray(currentSystem)
-				? [...currentSystem, { type: "text", text: instruction }]
-				: instruction;
-	const messages = appendAnthropicReferenceMessage(sourceMessages, imageGenerationReferenceMessage([...images.keys()]));
 	const tools = Array.isArray(body["tools"]) ? body["tools"] : [];
 	assertToolNamesAvailable(tools, "anthropic");
 	return {
-		body: { ...body, system: system, messages: messages, tools: [...tools, ...privateAnthropicImageTools()] },
+		body: { ...body, messages: messages, tools: [...tools, ...privateAnthropicImageTools()] },
 		messages: messages,
 		images: images,
 		imageStore: imageStore,
 		binding: binding,
-		tailMessageCount: 1,
 	};
-}
-
-/**
- * 把随图片变化的引用清单挂到 Messages 请求末尾。
- *
- * Anthropic 的 system 位于 prompt 最前面，引用清单一放进去就破坏前缀缓存；
- * 因此清单追加到最后一条 user 消息的 content 里，必要时新增一条 user 消息。
- * @param messages - 客户端原始消息
- * @param text - 引用清单文本
- */
-function appendAnthropicReferenceMessage(
-	messages: Array<Record<string, unknown>>,
-	text: string,
-): Array<Record<string, unknown>> {
-	const reference = { type: "text", text: text };
-	const last = messages.length > 0 ? messages[messages.length - 1] : undefined;
-	if (last === undefined || last["role"] !== "user") {
-		return [...messages, { role: "user", content: [reference] }];
-	}
-	const content = last["content"];
-	const merged =
-		typeof content === "string" ? [{ type: "text", text: content }, reference] : Array.isArray(content) ? [...content, reference] : [reference];
-	return [...messages.slice(0, -1), { ...last, content: merged }];
 }
 
 function parseArguments(toolName: string, raw: string): ParsedImageArguments {
@@ -480,7 +539,19 @@ function parseArguments(toolName: string, raw: string): ParsedImageArguments {
 			params[key] = record[key];
 		}
 	}
-	return { action: action, prompt: prompt, imageRefs: imageRefs, maskRef: maskRef, params: params };
+	return {
+		action: action,
+		prompt: prompt,
+		imageRefs: imageRefs,
+		maskRef: maskRef,
+		params: params,
+		target: {
+			output_index: record.output_index,
+			output_count: record.output_count,
+			final_response: record.final_response,
+			final_caption: record.final_caption,
+		},
+	};
 }
 
 function mediaTypeForFormat(format: string): string {
@@ -531,6 +602,22 @@ async function normalizeGeneratedImages(
 	return result;
 }
 
+function finalizeImageReply(
+	result: Record<string, unknown>,
+	previous: readonly Record<string, unknown>[],
+	images: BuiltinGeneratedImage[],
+	calls: BuiltinPrivateImageToolCall[],
+	attachImages: (result: Record<string, unknown>, images: BuiltinGeneratedImage[]) => void,
+): Record<string, unknown> {
+	for (const turn of previous) {
+		if (turn !== result) {
+			addResponseUsage(result, turn);
+		}
+	}
+	attachImages(result, images);
+	appendPrivateImageToolCalls(result, calls);
+	return result;
+}
 
 function appendGeneratedImages(result: Record<string, unknown>, images: BuiltinGeneratedImage[]): void {
 	const existing = Array.isArray(result["_builtinGeneratedImages"]) ? (result["_builtinGeneratedImages"] as BuiltinGeneratedImage[]) : [];
@@ -577,6 +664,10 @@ export async function executeImageGenerationToolCall(
 		 *
 		 */
 		imageStore?: VisionImageStore;
+		/** Per-request router-owned completion history. */
+		imageHistory?: ImageCompletionHistory;
+		/** Shared output positions for fresh and idempotently replayed results. */
+		targets?: ImageGenerationTargets;
 	} = {},
 ): Promise<{
 	/**
@@ -594,6 +685,8 @@ export async function executeImageGenerationToolCall(
 	images: BuiltinGeneratedImage[];
 }> {
 	const args = parseArguments(toolName, rawArguments);
+	const targets = options.targets ?? new ImageGenerationTargets(options.imageHistory?.continuingAssets);
+	const target = targets.validate(args.target);
 	const store = options.imageStore ?? createVisionImageStore();
 	const sourceImages: StoredVisionImage[] = [];
 	for (const ref of args.imageRefs) {
@@ -607,82 +700,100 @@ export async function executeImageGenerationToolCall(
 	if (args.maskRef && !mask) {
 		throw ApiError.badRequest(`图片编辑 mask 引用不可用: ${args.maskRef}`);
 	}
-	let lastError: unknown;
-	let workerUpstream: UpstreamLogContext | undefined;
-	for (const capabilityModel of [...new Set([binding.handlerModel, ...binding.fallbackModels])]) {
-		const startTime = new Date();
-		try {
-			const optionalParams = {
-				...args.params,
-				...(mask ? { mask: { data: Buffer.from(mask.base64Data, "base64"), mediaType: mask.mediaType } } : {}),
-			};
-			// 图片执行者调用走独立的旁路子作用域，捕获它自己的上游交换。
-			const runExecutor = async (): Promise<Record<string, unknown>> => {
-				if (args.action === "create") {
-					return await router.imageGeneration(capabilityModel, args.prompt, optionalParams);
-				}
-				return await router.imageEdit(
-					capabilityModel,
-					args.prompt,
-					sourceImages.map((image) => ({ data: Buffer.from(image.base64Data, "base64"), mediaType: image.mediaType })),
-					optionalParams,
-				);
-			};
-			const captured = await captureUpstreamExchange(runExecutor);
+	const generate = async () => {
+		let lastError: unknown;
+		let workerUpstream: UpstreamLogContext | undefined;
+		for (const capabilityModel of [...new Set([binding.handlerModel, ...binding.fallbackModels])]) {
+			const startTime = new Date();
+			let captured: Awaited<ReturnType<typeof captureUpstreamExchange<Record<string, unknown>>>>;
+			try {
+				const optionalParams = {
+					...args.params,
+					...(mask ? { mask: { data: Buffer.from(mask.base64Data, "base64"), mediaType: mask.mediaType } } : {}),
+				};
+				// 图片执行者调用走独立的旁路子作用域，捕获它自己的上游交换。
+				const runExecutor = async (): Promise<Record<string, unknown>> => {
+					if (args.action === "create") {
+						return await router.imageGeneration(capabilityModel, args.prompt, optionalParams);
+					}
+					return await router.imageEdit(
+						capabilityModel,
+						args.prompt,
+						sourceImages.map((image) => ({ data: Buffer.from(image.base64Data, "base64"), mediaType: image.mediaType })),
+						optionalParams,
+					);
+				};
+				captured = await captureUpstreamExchange(runExecutor);
+			} catch (error) {
+				lastError = error;
+				await options.audit?.({
+					capability: "image_generation",
+					stage: "handler",
+					callType: "aimage_generation",
+					model: capabilityModel,
+					toolCallId: options.toolCallId ?? "image_generation_call",
+					imageRefs: args.imageRefs,
+					action: args.action,
+					prompt: args.prompt,
+					messages: [{ role: "user", content: args.prompt }],
+					requestBody: { model: capabilityModel, prompt: args.prompt, image_refs: args.imageRefs, ...args.params },
+					startTime: startTime,
+					endTime: new Date(),
+					error: error,
+					upstreamLogContext: getAttachedUpstreamLogContext(error),
+				});
+				continue;
+			}
 			const raw = captured.result;
 			workerUpstream = captured.context;
-			const spendInfo = raw["_spendInfo"] as
-				| { customCostPerToken?: Parameters<typeof calculateAndSetCost>[2] }
-				| undefined;
+			const spendInfo = raw["_spendInfo"] as { customCostPerToken?: Parameters<typeof calculateAndSetCost>[2] } | undefined;
 			calculateAndSetCost(raw as unknown as ModelResponse, capabilityModel, spendInfo?.customCostPerToken);
-			const generated = await normalizeGeneratedImages(raw, args.action, args.prompt, capabilityModel, store);
-			await options.audit?.({
-				capability: "image_generation",
-				stage: "handler",
-				callType: "aimage_generation",
-				model: capabilityModel,
-				toolCallId: options.toolCallId ?? "image_generation_call",
-				imageRefs: args.imageRefs,
-				action: args.action,
-				prompt: args.prompt,
-				messages: [{ role: "user", content: args.prompt }],
-				requestBody: { model: capabilityModel, prompt: args.prompt, image_refs: args.imageRefs, ...args.params },
-				startTime: startTime,
-				endTime: new Date(),
-				response: raw,
-				upstreamLogContext: workerUpstream,
-			});
-			return {
-				text: JSON.stringify({
-					status: "completed",
+			let generated: BuiltinGeneratedImage[];
+			try {
+				await options.audit?.({
+					capability: "image_generation",
+					stage: "handler",
+					callType: "aimage_generation",
+					model: capabilityModel,
+					toolCallId: options.toolCallId ?? "image_generation_call",
+					imageRefs: args.imageRefs,
 					action: args.action,
-					images: generated.map((image) => ({ ref: image.ref, media_type: image.mediaType })),
-				}),
+					prompt: args.prompt,
+					messages: [{ role: "user", content: args.prompt }],
+					requestBody: { model: capabilityModel, prompt: args.prompt, image_refs: args.imageRefs, ...args.params },
+					startTime: startTime,
+					endTime: new Date(),
+					response: raw,
+					upstreamLogContext: workerUpstream,
+				});
+				generated = await normalizeGeneratedImages(raw, args.action, args.prompt, capabilityModel, store);
+			} catch (error) {
+				if (error instanceof ApiError && error.statusCode === 400) {
+					throw ApiError.unavailable("Image executor completed, but its result could not be recorded");
+				}
+				throw error;
+			}
+			return {
 				raw: raw,
 				model: capabilityModel,
 				images: generated,
 			};
-		} catch (error) {
-			lastError = error;
-			await options.audit?.({
-				capability: "image_generation",
-				stage: "handler",
-				callType: "aimage_generation",
-				model: capabilityModel,
-				toolCallId: options.toolCallId ?? "image_generation_call",
-				imageRefs: args.imageRefs,
-				action: args.action,
-				prompt: args.prompt,
-				messages: [{ role: "user", content: args.prompt }],
-				requestBody: { model: capabilityModel, prompt: args.prompt, image_refs: args.imageRefs, ...args.params },
-				startTime: startTime,
-				endTime: new Date(),
-				error: error,
-				upstreamLogContext: getAttachedUpstreamLogContext(error),
-			});
 		}
-	}
-	throw lastError ?? ApiError.unavailable("图片生成能力没有可用的执行模型");
+		throw lastError ?? ApiError.unavailable("图片生成能力没有可用的执行模型");
+	};
+	const execution = options.imageHistory
+		? await options.imageHistory.execute(
+				options.toolCallId ?? "image_generation_call",
+				args.action,
+				args.prompt,
+				store,
+				generate,
+				target.index,
+				target.count,
+			)
+		: await generate();
+	targets.complete(args.target, execution.images);
+	return { ...execution, text: targets.receipt(args.target, "completed") };
 }
 
 function extractAssistant(result: Record<string, unknown>): Record<string, unknown> {
@@ -692,6 +803,43 @@ function extractAssistant(result: Record<string, unknown>): Record<string, unkno
 		throw ApiError.unavailable("主模型没有返回可解析的 assistant message");
 	}
 	return message as Record<string, unknown>;
+}
+
+/**
+ * Honor structured output and required public tool choices even if the private call proposes a caption.
+ * @param body
+ */
+function needsModelReply(body: Record<string, unknown>): boolean {
+	const format =
+		recordValue(body.response_format) ??
+		recordValue(body.output_format) ??
+		recordValue(recordValue(body.output_config)?.format) ??
+		recordValue(recordValue(body.text)?.format);
+	const choice = recordValue(body.tool_choice)?.type ?? body.tool_choice;
+	return (
+		format?.type === "json_schema" ||
+		format?.type === "json_object" ||
+		choice === "required" ||
+		choice === "any" ||
+		choice === "tool" ||
+		choice === "function"
+	);
+}
+
+function hasPublicReplyContent(content: unknown): boolean {
+	if (!Array.isArray(content)) {
+		return typeof content === "string" ? content.trim().length > 0 : content != null;
+	}
+	return content.some((block) => {
+		const part = recordValue(block);
+		if (!part) {
+			return typeof block === "string" && block.trim().length > 0;
+		}
+		if (part.type === "thinking" || part.type === "redacted_thinking") {
+			return false;
+		}
+		return typeof part.text === "string" ? part.text.trim().length > 0 : part.type !== "text";
+	});
 }
 
 function privateCallsFromAssistant(message: Record<string, unknown>): ToolCall[] {
@@ -724,6 +872,10 @@ export async function runOpenAIImageGenerationAgentLoop(
 		 *
 		 */
 		imageStore?: VisionImageStore;
+		/** Per-request router-owned completion history. */
+		imageHistory?: ImageCompletionHistory;
+		/** Shared by all hidden main-model continuations in this incoming request. */
+		targets?: ImageGenerationTargets;
 		/**
 		 *
 		 */
@@ -739,10 +891,13 @@ export async function runOpenAIImageGenerationAgentLoop(
 	assertToolNamesAvailable(tools, "openai");
 	const params = { ...optionalParams, stream: false, tools: [...tools, ...privateOpenAIImageTools()], parallel_tool_calls: false };
 	const transcript = [...prepared.messages];
-	const generated: BuiltinGeneratedImage[] = [];
+	const targets = options.targets ?? new ImageGenerationTargets(options.imageHistory?.continuingAssets);
+	const privateToolCalls: BuiltinPrivateImageToolCall[] = [];
 	const consumed: Record<string, unknown>[] = [];
 	let pendingToolCallIds: string[] = [];
-	for (let iteration = 0; iteration < prepared.binding.maxIterations; iteration++) {
+	let retriedFinalReply = false;
+	let maxTurns = prepared.binding.maxIterations;
+	for (let iteration = 0; iteration < maxTurns || (iteration === maxTurns && targets.finished); iteration++) {
 		const requestMessages = [...transcript] as unknown as Message[];
 		const startTime = new Date();
 		let result: Record<string, unknown>;
@@ -783,39 +938,105 @@ export async function runOpenAIImageGenerationAgentLoop(
 			pendingToolCallIds = [];
 		}
 		const assistant = extractAssistant(result);
-		const calls = privateCallsFromAssistant(assistant);
-		if (calls.length === 0) {
-			for (const prior of consumed) {
-				addResponseUsage(result, prior);
+		const allCalls = privateCallsFromAssistant(assistant);
+		const calls = allCalls
+			.map((call) => ({ call: call, descriptor: privateImageToolCallFromToolCall(call) }))
+			.filter(({ descriptor }) => {
+				if (targets.accepts(descriptor.arguments)) {
+					return true;
+				}
+				privateToolCalls.push({ ...descriptor, skipped: "output_already_resolved" });
+				return false;
+			});
+		if (allCalls.length && !calls.length) {
+			const publicCalls = (assistant["tool_calls"] as ToolCall[]).filter((call) => !allCalls.includes(call));
+			// A repeated private call can otherwise swallow the caption or JSON that the user requested.
+			if (
+				targets.finished &&
+				!retriedFinalReply &&
+				!publicCalls.length &&
+				!hasPublicReplyContent(assistant.content) &&
+				!assistant.refusal &&
+				!assistant.audio
+			) {
+				retriedFinalReply = true;
+				maxTurns++;
+				consumed.push(result);
+				transcript.push({ ...assistant, tool_calls: allCalls });
+				for (const call of allCalls) {
+					const input = privateImageToolCallFromToolCall(call).arguments;
+					transcript.push({ role: "tool", tool_call_id: call.id, content: targets.receipt(input, "skipped") });
+					pendingToolCallIds.push(call.id);
+				}
+				continue;
 			}
-			appendGeneratedImages(result, generated);
-			return result;
+			const choice = (result["choices"] as Record<string, unknown>[])[0]!;
+			if (publicCalls.length) {
+				assistant["tool_calls"] = publicCalls;
+				choice["finish_reason"] = "tool_calls";
+			} else {
+				delete assistant["tool_calls"];
+				choice["finish_reason"] = "stop";
+			}
 		}
-		transcript.push({ ...assistant, tool_calls: calls });
+		if (calls.length === 0) {
+			return finalizeImageReply(result, consumed, targets.images, privateToolCalls, appendGeneratedImages);
+		}
+		const batchError = targets.batchError(calls.map(({ descriptor }) => descriptor.arguments));
+		const handled: ToolCall[] = [];
+		transcript.push({ ...assistant, tool_calls: handled });
 		consumed.push(result);
-		for (const call of calls) {
-			const outcome = await capturePrivateToolCallOutcome(() =>
-				executeImageGenerationToolCall(
+		for (const { call, descriptor } of calls) {
+			if (!targets.accepts(descriptor.arguments)) {
+				privateToolCalls.push({ ...descriptor, skipped: "output_already_resolved" });
+				continue;
+			}
+			handled.push(call);
+			privateToolCalls.push(descriptor);
+			const outcome = await capturePrivateToolCallOutcome(() => {
+				if (batchError) {
+					throw ApiError.badRequest(batchError);
+				}
+				return executeImageGenerationToolCall(
 					router,
 					prepared.binding,
 					prepared.images,
 					call.function.name,
 					call.function.arguments,
-					{ audit: options.audit, toolCallId: call.id, imageStore: prepared.imageStore },
-				),
-			);
+					{
+						audit: options.audit,
+						toolCallId: call.id,
+						imageStore: prepared.imageStore,
+						imageHistory: options.imageHistory,
+						targets: targets,
+					},
+				);
+			});
 			pendingToolCallIds.push(call.id);
 			if (outcome.status === "argument_error") {
 				transcript.push({ role: "tool", tool_call_id: call.id, content: outcome.text });
 				continue;
 			}
 			const executed = outcome.result;
-			generated.push(...executed.images);
 			consumed.push(executed.raw);
 			for (const image of executed.images) {
 				prepared.images.set(image.ref, (await prepared.imageStore.get(image.ref))!);
 			}
 			transcript.push({ role: "tool", tool_call_id: call.id, content: executed.text });
+		}
+		const directReply = targets.directReply;
+		if (
+			directReply !== undefined &&
+			!needsModelReply(optionalParams) &&
+			(assistant.tool_calls as ToolCall[]).length === allCalls.length
+		) {
+			delete assistant.tool_calls;
+			assistant.content = directReply;
+			if (directReply !== null) {
+				result["_builtinImageCaption"] = directReply;
+			}
+			(result.choices as Record<string, unknown>[])[0]!.finish_reason = "stop";
+			return finalizeImageReply(result, consumed, targets.images, privateToolCalls, appendGeneratedImages);
 		}
 	}
 	throw ApiError.unavailable(`图片生成处理超过 ${prepared.binding.maxIterations} 轮仍未完成`);
@@ -855,6 +1076,10 @@ export async function runAnthropicImageGenerationAgentLoop(
 		 *
 		 */
 		imageStore?: VisionImageStore;
+		/** Per-request router-owned completion history. */
+		imageHistory?: ImageCompletionHistory;
+		/** Shared by all hidden main-model continuations in this incoming request. */
+		targets?: ImageGenerationTargets;
 	} = {},
 ): Promise<{
 	/**
@@ -870,54 +1095,109 @@ export async function runAnthropicImageGenerationAgentLoop(
 		return { response: await complete(body), body: body };
 	}
 	let requestBody = prepared.body;
-	const generated: BuiltinGeneratedImage[] = [];
+	const targets = options.targets ?? new ImageGenerationTargets(options.imageHistory?.continuingAssets);
+	const privateToolCalls: BuiltinPrivateImageToolCall[] = [];
 	const consumed: Record<string, unknown>[] = [];
-	for (let iteration = 0; iteration < prepared.binding.maxIterations; iteration++) {
+	let retriedFinalReply = false;
+	let maxTurns = prepared.binding.maxIterations;
+	for (let iteration = 0; iteration < maxTurns || (iteration === maxTurns && targets.finished); iteration++) {
 		const response = await complete(requestBody);
 		const content = Array.isArray(response["content"]) ? (response["content"] as Array<Record<string, unknown>>) : [];
-		const toolUses = content.filter(
+		const allUses = content.filter(
 			(block) =>
 				block["type"] === "tool_use" &&
 				(block["name"] === PRIVATE_IMAGE_CREATE_TOOL_NAME || block["name"] === PRIVATE_IMAGE_EDIT_TOOL_NAME),
 		);
-		if (toolUses.length === 0) {
-			for (const prior of consumed) {
-				addResponseUsage(response, prior);
+		const toolUses = allUses
+			.map((use) => ({ use: use, descriptor: privateImageToolCallFromInput(String(use.id ?? ""), String(use.name), use.input) }))
+			.filter(({ descriptor }) => {
+				if (targets.accepts(descriptor.arguments)) {
+					return true;
+				}
+				privateToolCalls.push({ ...descriptor, skipped: "output_already_resolved" });
+				return false;
+			});
+		if (allUses.length && !toolUses.length) {
+			const visible = content.filter((block) => !allUses.includes(block));
+			if (targets.finished && !retriedFinalReply && !hasPublicReplyContent(visible)) {
+				retriedFinalReply = true;
+				maxTurns++;
+				consumed.push(response);
+				const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+				const results = allUses.map((use) => {
+					const input = recordValue(use.input);
+					return { type: "tool_result", tool_use_id: use.id, content: targets.receipt(input ?? {}, "skipped") };
+				});
+				requestBody = {
+					...requestBody,
+					messages: [...messages, { role: "assistant", content: content }, { role: "user", content: results }],
+				};
+				continue;
 			}
-			appendAnthropicGeneratedImages(response, generated);
-			return { response: response, body: requestBody };
+			response["content"] = visible;
+			response["stop_reason"] = visible.some((block) => block.type === "tool_use") ? "tool_use" : "end_turn";
 		}
+		if (toolUses.length === 0) {
+			return {
+				response: finalizeImageReply(response, consumed, targets.images, privateToolCalls, appendAnthropicGeneratedImages),
+				body: requestBody,
+			};
+		}
+		const batchError = targets.batchError(toolUses.map(({ descriptor }) => descriptor.arguments));
 		consumed.push(response);
 		const toolResults = [];
-		for (const use of toolUses) {
-			const outcome = await capturePrivateToolCallOutcome(() =>
-				executeImageGenerationToolCall(
+		const handled = new Set<unknown>();
+		for (const { use, descriptor } of toolUses) {
+			if (!targets.accepts(descriptor.arguments)) {
+				privateToolCalls.push({ ...descriptor, skipped: "output_already_resolved" });
+				continue;
+			}
+			handled.add(use.id);
+			privateToolCalls.push(descriptor);
+			const outcome = await capturePrivateToolCallOutcome(() => {
+				if (batchError) {
+					throw ApiError.badRequest(batchError);
+				}
+				return executeImageGenerationToolCall(
 					router,
 					prepared.binding,
 					prepared.images,
 					String(use["name"]),
 					anthropicInputArguments(use["input"]),
-					{ audit: options.audit, toolCallId: String(use["id"] ?? "image_generation_call"), imageStore: prepared.imageStore },
-				),
-			);
+					{
+						audit: options.audit,
+						toolCallId: String(use["id"] ?? "image_generation_call"),
+						imageStore: prepared.imageStore,
+						imageHistory: options.imageHistory,
+						targets: targets,
+					},
+				);
+			});
 			if (outcome.status === "argument_error") {
 				toolResults.push({ type: "tool_result", tool_use_id: use["id"], content: outcome.text, is_error: true });
 				continue;
 			}
 			const executed = outcome.result;
-			generated.push(...executed.images);
 			consumed.push(executed.raw);
 			for (const image of executed.images) {
 				prepared.images.set(image.ref, (await prepared.imageStore.get(image.ref))!);
 			}
 			toolResults.push({ type: "tool_result", tool_use_id: use["id"], content: executed.text });
 		}
-		const privateContent = content.filter(
-			(block) =>
-				block["type"] !== "tool_use" ||
-				block["name"] === PRIVATE_IMAGE_CREATE_TOOL_NAME ||
-				block["name"] === PRIVATE_IMAGE_EDIT_TOOL_NAME,
-		);
+		const directReply = targets.directReply;
+		if (
+			directReply !== undefined &&
+			!needsModelReply(body) &&
+			!content.some((block) => block.type === "tool_use" && !allUses.includes(block))
+		) {
+			response["content"] = directReply === null ? [] : [{ type: "text", text: directReply }];
+			response["stop_reason"] = "end_turn";
+			return {
+				response: finalizeImageReply(response, consumed, targets.images, privateToolCalls, appendAnthropicGeneratedImages),
+				body: requestBody,
+			};
+		}
+		const privateContent = content.filter((block) => block["type"] !== "tool_use" || handled.has(block.id));
 		const messages = Array.isArray(requestBody["messages"]) ? requestBody["messages"] : [];
 		requestBody = {
 			...requestBody,

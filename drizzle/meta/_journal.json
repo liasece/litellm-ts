@@ -121,6 +121,14 @@
 			"tag": "0014_subscription_model_identity",
 			"file": "0014_subscription_model_identity.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 15,
+			"version": "7",
+			"when": 1794790000002,
+			"tag": "0015_image_completion_history",
+			"file": "0015_image_completion_history.sql",
+			"breakpoints": true
 		}
 	]
 }

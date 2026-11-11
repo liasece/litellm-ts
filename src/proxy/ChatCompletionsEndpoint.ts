@@ -1,3 +1,4 @@
+import { createImageCompletionHistory, type ImageCompletionHistory } from "../capabilities/ImageCompletionHistory";
 import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
 import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
@@ -386,12 +387,14 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 			runCommonChecks(req.auth, model);
 		}
 
-		const messages = req.body.messages as Message[] | undefined;
-		if (!messages) {
+		const publicMessages = req.body.messages as Message[] | undefined;
+		if (!publicMessages) {
 			throw ApiError.badRequest("messages 字段缺失");
 		}
 		const originalRequestBody = structuredClone(req.body) as Record<string, unknown>;
 		const originalMessages = originalRequestBody["messages"] as Message[];
+		const imageHistory = createImageCompletionHistory(db, req, "chat", publicMessages as unknown as Array<Record<string, unknown>>);
+		const messages = imageHistory ? ((await imageHistory.restore()) as unknown as Message[]) : publicMessages;
 
 		const optionalParams: Record<string, unknown> = { ...req.body };
 		delete optionalParams.messages;
@@ -502,6 +505,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 						{
 							visionAudit: visionAudit,
 							imageGenerationAudit: imageGenerationAudit,
+							imageHistory: imageHistory,
 							webAudit: webAudit,
 							visionImageStore: visionImageStore,
 						},
@@ -580,6 +584,10 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 					if (result._fallbackDepth === 0) {
 						result.model = model;
 					}
+					const reply = (result as unknown as ModelResponse).choices?.[0]?.message;
+					if (reply) {
+						await imageHistory?.bind(reply as unknown as Record<string, unknown>);
+					}
 					return result;
 				} catch (error) {
 					if (spendLifecycle.isFinalized()) {
@@ -631,6 +639,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 
 			// === 流式响应 (SSE) ===
 			await handleStreamingResponse(litellmRouter, model, messages, optionalParams, res, {
+				imageHistory: imageHistory,
 				req: req,
 				db: db,
 				startTime: startTime,
@@ -678,6 +687,7 @@ async function handleStreamingResponse(
 		modelResolutionTrace: ModelResolutionTraceCollector;
 		originalMessages: Message[];
 		originalRequestBody: Record<string, unknown>;
+		imageHistory?: ImageCompletionHistory;
 		visionImageStore: VisionImageStore;
 	},
 ): Promise<void> {
@@ -777,6 +787,7 @@ async function handleStreamingResponse(
 				},
 				deployment,
 				"chat",
+				optionalParams,
 			),
 		);
 		// 与 /v1/chat/completions 主路径一致：deployment 已确定，发往上游前按生效范围脱敏。
@@ -1166,6 +1177,7 @@ async function handlePrivateVisionStreamingResponse(
 		modelResolutionTrace: ModelResolutionTraceCollector;
 		originalMessages: Message[];
 		originalRequestBody: Record<string, unknown>;
+		imageHistory?: ImageCompletionHistory;
 		visionImageStore: VisionImageStore;
 		preparedWeb?: PreparedWebRequest<Record<string, unknown>>;
 	},
@@ -1180,6 +1192,7 @@ async function handlePrivateVisionStreamingResponse(
 		originalMessages,
 		originalRequestBody,
 		visionImageStore,
+		imageHistory,
 		preparedWeb,
 	} = context;
 	const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
@@ -1190,6 +1203,7 @@ async function handlePrivateVisionStreamingResponse(
 	// complete 回调在流结束后返回累积的完整响应供 agent loop 决策（解析 tool_use）。
 	let currentAccumulator: ChatStreamAccumulator | undefined;
 	let chatSseStarted = false;
+	let visibleText = "";
 	// TTFT 终点：首个内容帧真正写回下游的时刻。能力分支在 agent loop 内边收边发，
 	// 不能等 loop 结束再取时间，否则首字时间会被延后到整段 agent 执行完毕。
 	let completionStartTime: Date | undefined;
@@ -1261,6 +1275,7 @@ async function handlePrivateVisionStreamingResponse(
 							const visible: Record<string, unknown> = {};
 							if (typeof delta["content"] === "string" && delta["content"].length > 0) {
 								visible["content"] = delta["content"];
+								visibleText += delta["content"];
 							}
 							if (typeof delta["reasoning_content"] === "string" && delta["reasoning_content"].length > 0) {
 								visible["reasoning_content"] = delta["reasoning_content"];
@@ -1297,6 +1312,7 @@ async function handlePrivateVisionStreamingResponse(
 		{
 			visionAudit: visionAudit,
 			imageGenerationAudit: imageGenerationAudit,
+			imageHistory: imageHistory,
 			webAudit: webAudit,
 			visionImageStore: visionImageStore,
 			preparedWeb: preparedWeb,
@@ -1315,6 +1331,7 @@ async function handlePrivateVisionStreamingResponse(
 	if (!choice) {
 		throw ApiError.unavailable("识图 Agent Loop 没有返回 completion choice");
 	}
+
 	const usage = response.usage;
 	if (!res.headersSent) {
 		const providerHeaders = (result as { _providerHeaders?: Record<string, string> })._providerHeaders;
@@ -1357,7 +1374,25 @@ async function handlePrivateVisionStreamingResponse(
 	if (generatedMessage["images"] !== undefined) {
 		delta["images"] = generatedMessage["images"];
 	}
-	if (!chatSseStarted && Object.keys(delta).length > 0) {
+	// Text may already be on the wire. A newly generated image and its final public
+	// tool calls still have to be delivered exactly once, including in that case.
+	if (chatSseStarted && Array.isArray(generatedMessage.images) && generatedMessage.images.length) {
+		const caption = result["_builtinImageCaption"];
+		if (typeof caption !== "string" || visibleText.endsWith(caption)) {
+			delete delta.content;
+		}
+		delete delta.reasoning_content;
+	} else if (chatSseStarted) {
+		for (const field of Object.keys(delta)) {
+			delete delta[field];
+		}
+	}
+	await imageHistory?.bind({
+		role: "assistant",
+		content: chatSseStarted ? visibleText + (typeof delta.content === "string" ? delta.content : "") : choice.message.content,
+		tool_calls: delta.tool_calls,
+	});
+	if (Object.keys(delta).length > 0) {
 		res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] })}\n\n`);
 	}
 	res.write(

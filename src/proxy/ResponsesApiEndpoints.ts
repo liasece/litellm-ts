@@ -1,3 +1,5 @@
+import { createImageCompletionHistory, type ImageCompletionHistory } from "../capabilities/ImageCompletionHistory";
+import { projectHistoricalResponseImages } from "./ResponsesImageHistory";
 import { toChatUsage } from "../core/utils/usage";
 import { startSseKeepalive, getKeepaliveDeployment } from "./SseKeepalive";
 import { countInputTokens } from "../core/utils/inputTokens";
@@ -57,13 +59,13 @@ type ResponsesContentPart =
 	| { type: "input_image"; image_url?: string; file_id?: string; detail?: string }
 	| Record<string, unknown>;
 
-interface ResponsesMessageItem {
+interface ResponsesMessageItem extends Record<string, unknown> {
 	type?: "message";
 	role: string;
 	content: string | ResponsesContentPart[];
 }
 
-interface ResponsesFunctionCallItem {
+interface ResponsesFunctionCallItem extends Record<string, unknown> {
 	type: "function_call";
 	call_id?: string;
 	id?: string;
@@ -72,7 +74,7 @@ interface ResponsesFunctionCallItem {
 	arguments: string;
 }
 
-interface ResponsesFunctionCallOutputItem {
+interface ResponsesFunctionCallOutputItem extends Record<string, unknown> {
 	type: "function_call_output";
 	call_id: string;
 	output: unknown;
@@ -198,6 +200,10 @@ interface ResponsesStreamState {
 }
 
 interface ResponsesStreamContext {
+	/** Private projection for upstream calls only. */
+	upstreamBody: ResponsesCreateRequest;
+	/** Per-request authenticated completion repository. */
+	imageHistory?: ImageCompletionHistory;
 	litellmRouter: LiteLLMRouter;
 	model: string;
 	messages: ChatMessage[];
@@ -222,7 +228,7 @@ interface ResponsesStreamContext {
 export function registerResponsesApiRoutes(router: Router, litellmRouter?: LiteLLMRouter, db?: DrizzleDb): void {
 	const createHandler = createResponsesHandler(litellmRouter, db);
 	for (const path of ["/v1/responses/input_tokens", "/responses/input_tokens", "/openai/v1/responses/input_tokens"]) {
-		registerRoute(router, { method: "post", path: path }, (req) => {
+		registerRoute(router, { method: "post", path: path }, async (req) => {
 			const body = req.body as ResponsesCreateRequest;
 			if (!body?.model || typeof body.model !== "string") {
 				throw ApiError.badRequest("Missing required parameter: 'model'.");
@@ -237,7 +243,13 @@ export function registerResponsesApiRoutes(router: Router, litellmRouter?: LiteL
 				throw ApiError.forbidden("API key cannot access this model");
 			}
 			const registry = buildResponsesToolRegistry(body.tools);
-			const messages = buildResponsesMessages(body.input, body.instructions, registry);
+			const { body: upstream } = await restoreResponsesInput(db, req, body);
+			const messages = buildResponsesMessages(
+				upstream.input,
+				upstream.instructions,
+				registry,
+				litellmRouter?.supportsNativeResponses?.(body.model) ?? false,
+			);
 			return { object: "response.input_tokens", input_tokens: countInputTokens(messages, registry.chatTools) };
 		});
 	}
@@ -256,6 +268,28 @@ export function registerResponsesApiRoutes(router: Router, litellmRouter?: LiteL
 	registerRoute(router, { method: "get", path: "/responses/:id" }, responseStorageNotImplemented);
 	registerRoute(router, { method: "delete", path: "/v1/responses/:id" }, responseStorageNotImplemented);
 	registerRoute(router, { method: "delete", path: "/responses/:id" }, responseStorageNotImplemented);
+}
+
+/**
+ * Restore only the upstream copy; public request logging and client output retain the original input.
+ * @param db - Router database.
+ * @param req - Authenticated request.
+ * @param body - Public Responses request.
+ */
+async function restoreResponsesInput(db: DrizzleDb | undefined, req: Request, body: ResponsesCreateRequest) {
+	const items =
+		typeof body.input === "string"
+			? [{ type: "message", role: "user", content: [{ type: "input_text", text: body.input }] }]
+			: body.input;
+	if (!Array.isArray(items)) {
+		return { body: body, imageHistory: undefined };
+	}
+	if (!items.every(isRecord)) {
+		throw ApiError.badRequest("input item 格式无效");
+	}
+	const imageHistory = createImageCompletionHistory(db, req, "responses", items);
+	const projected = projectHistoricalResponseImages((await imageHistory?.restore()) ?? items, true, false);
+	return { body: projected === items ? body : { ...body, input: projected }, imageHistory: imageHistory };
 }
 
 function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: DrizzleDb | undefined) {
@@ -277,14 +311,20 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		}
 
 		const toolRegistry = buildResponsesToolRegistry(reqBody.tools);
-		const messages = buildResponsesMessages(reqBody.input, reqBody.instructions, toolRegistry);
+		const { body: upstreamBody, imageHistory } = await restoreResponsesInput(db, req, reqBody);
+		const messages = buildResponsesMessages(
+			upstreamBody.input,
+			upstreamBody.instructions,
+			toolRegistry,
+			litellmRouter.supportsNativeResponses?.(model) ?? false,
+		);
 		const optionalParams = buildResponsesOptionalParams(reqBody, toolRegistry);
 		optionalParams[ROUTER_CALL_TYPE_PARAM] = "responses";
 		// 原生 Responses 请求体总是随参数下发：支持原生 Responses 的 provider（含 CLIProxy）
 		// 会原样转发，客户端与上游之间不再因为兼容端点优先而降级成 chat——降级会丢掉
 		// reasoning 增量，并把工具参数合并成单个块；不支持原生 Responses 的 provider 由
 		// 路由层回落到 chat。
-		optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(reqBody, toolRegistry);
+		optionalParams[ROUTER_RESPONSES_BODY_PARAM] = buildNativeResponsesRequestBody(upstreamBody, toolRegistry);
 		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
 		const startTime = requestArrivalTime(req);
 		const reservation = await reserveEndpointSpend(db, litellmRouter, req, model, reqBody, {
@@ -302,6 +342,8 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 		try {
 			if (reqBody.stream === true) {
 				await handleResponsesStream({
+					imageHistory: imageHistory,
+					upstreamBody: upstreamBody,
 					litellmRouter: litellmRouter,
 					model: model,
 					messages: messages,
@@ -356,15 +398,15 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 								nativeResponses
 									? createNativeResponsesCapabilityCompletion(
 											litellmRouter,
-											reqBody,
+											upstreamBody,
 											capabilityMessages,
 											toolRegistry,
-											preparedImageGeneration?.tailMessageCount ?? 0,
 										)
 									: undefined,
 								{
 									visionAudit: visionAudit,
 									imageGenerationAudit: imageGenerationAudit,
+									imageHistory: imageHistory,
 									webAudit: webAudit,
 									visionImageStore: visionImageStore,
 									preparedVision: preparedWeb ? undefined : preparedVision,
@@ -386,6 +428,9 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 				}
 				copyProviderHeaders(result, res);
 				const responseFailed = response["status"] === "failed";
+				if (!responseFailed && Array.isArray(response.output)) {
+					await imageHistory?.bind(response.output);
+				}
 				await lifecycle.finalize(() =>
 					recordSpend(db, req, requestId, {
 						model: model,
@@ -440,9 +485,10 @@ function validateResponsesPersistenceOptions(body: ResponsesCreateRequest): void
 }
 
 function buildResponsesMessages(
-	input: string | ResponsesInputItem[],
+	input: string | ResponsesInputItem[] | undefined,
 	instructions: string | undefined,
 	toolRegistry: ResponsesToolRegistry,
+	nativeImages = false,
 ): ChatMessage[] {
 	const messages: ChatMessage[] = [];
 	if (instructions) {
@@ -455,7 +501,7 @@ function buildResponsesMessages(
 	if (!Array.isArray(input)) {
 		throw ApiError.badRequest("input 必须是字符串或 item 数组");
 	}
-	for (const item of input) {
+	for (const item of projectHistoricalResponseImages(input as Record<string, unknown>[], false, nativeImages)) {
 		if (!item || typeof item !== "object") {
 			throw ApiError.badRequest("input item 格式无效");
 		}
@@ -669,12 +715,10 @@ function buildNativeResponsesRequestBody(body: ResponsesCreateRequest, toolRegis
 	return nativeBody;
 }
 
-/** 能力层相对客户端消息插入的位置：头部说明在前，随图片变化的引用清单在后。 */
+/** 能力层相对客户端消息插入的位置：固定说明位于客户端消息之前。 */
 interface NativeCapabilityWindow {
 	/** 客户端消息之前的注入条数。 */
 	readonly headCount: number;
-	/** 客户端消息之后、能力续写之前的注入条数。 */
-	readonly tailCount: number;
 }
 
 /**
@@ -684,7 +728,6 @@ interface NativeCapabilityWindow {
  * @param originalMessages - 客户端原始消息，用于计算能力循环追加消息的偏移
  * @param toolRegistry - 工具名在 chat 与 Responses 协议间的映射表
  * @param streaming - 是否以流式方式发起
- * @param tailInjectedCount - 追加在客户端消息之后的能力注入条数（图片引用清单）
  */
 function createNativeCapabilityCaller(
 	litellmRouter: LiteLLMRouter,
@@ -692,14 +735,10 @@ function createNativeCapabilityCaller(
 	originalMessages: Array<Record<string, unknown>>,
 	toolRegistry: ResponsesToolRegistry,
 	streaming: boolean,
-	tailInjectedCount = 0,
 ): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
 	let window: NativeCapabilityWindow | undefined;
 	return async (model, messages, optionalParams) => {
-		window ??= {
-			headCount: Math.max(0, messages.length - originalMessages.length - tailInjectedCount),
-			tailCount: tailInjectedCount,
-		};
+		window ??= { headCount: Math.max(0, messages.length - originalMessages.length) };
 		const nativeBody = buildNativeResponsesCapabilityBody(
 			requestBody,
 			messages as unknown as Array<Record<string, unknown>>,
@@ -726,16 +765,8 @@ function createNativeResponsesCapabilityCompletion(
 	requestBody: ResponsesCreateRequest,
 	originalMessages: Array<Record<string, unknown>>,
 	toolRegistry: ResponsesToolRegistry,
-	tailInjectedCount = 0,
 ): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
-	const call = createNativeCapabilityCaller(
-		litellmRouter,
-		requestBody,
-		originalMessages,
-		toolRegistry,
-		false,
-		tailInjectedCount,
-	);
+	const call = createNativeCapabilityCaller(litellmRouter, requestBody, originalMessages, toolRegistry, false);
 	return async (model, messages, optionalParams) => {
 		const result = await call(model, messages, optionalParams);
 		return result["_responseProtocol"] === "responses"
@@ -772,7 +803,7 @@ function buildNativeResponsesCapabilityBody(
 }
 
 /**
- * 按「头部注入 → 客户端原始输入 → 尾部注入 → 能力续写」重排原生 Responses input。
+ * 保留原生 Responses 项、固定前缀与能力续写的顺序。
  * @param requestBody - 客户端原始 Responses 请求体
  * @param messages - 能力循环当前的 chat 消息
  * @param originalMessages - 客户端原始消息
@@ -789,33 +820,42 @@ function buildPreservedNativeResponsesInput(
 	const injectedMessages = messages.slice(0, window.headCount);
 	const originalEnd = window.headCount + originalMessages.length;
 	const currentOriginalMessages = messages.slice(window.headCount, originalEnd);
-	// 尾部注入（图片引用清单）跟在原始消息之后、能力续写的对话之前：
-	// 它每次请求都会变，放在这里不会影响前面的前缀缓存。
-	const tailInjectedMessages = window.tailCount > 0 ? messages.slice(originalEnd, originalEnd + window.tailCount) : [];
-	const continuationMessages = messages.slice(originalEnd + window.tailCount);
-	const instructionsCount = typeof requestBody.instructions === "string" && requestBody.instructions.length > 0 ? 1 : 0;
+	const continuationMessages = messages.slice(originalEnd);
 	const originalInput =
 		typeof requestBody.input === "string"
 			? [{ type: "message", role: "user", content: [{ type: "input_text", text: requestBody.input }] }]
 			: Array.isArray(requestBody.input)
 				? requestBody.input
 				: [];
-	const preservedInput = originalInput.map((item, index) => {
-		const originalMessage = originalMessages[index + instructionsCount];
-		const currentMessage = currentOriginalMessages[index + instructionsCount];
-		const clonedItem = structuredClone(item) as Record<string, unknown>;
-		if (!originalMessage || !currentMessage || isDeepStrictEqual(originalMessage, currentMessage)) {
-			return clonedItem;
+	// Reasoning items disappear and consecutive assistant items merge in the Chat view. Match
+	// changed content by its public identity, never by its native array offset.
+	const changed = new Map<string, unknown>();
+	const changedRoles = new Set<unknown>();
+	const keyFor = (role: unknown, id: unknown, content: unknown) => JSON.stringify([role, id, content]);
+	for (const [index, original] of originalMessages.entries()) {
+		const current = currentOriginalMessages[index];
+		if (current && !isDeepStrictEqual(original["content"], current["content"])) {
+			changedRoles.add(original["role"]);
+			changed.set(keyFor(original["role"], original["tool_call_id"], original["content"]), current["content"]);
 		}
-		if ((item.type === undefined || item.type === "message") && "content" in item) {
-			clonedItem["content"] = chatContentToResponsesContent(currentMessage["content"], String(item["role"] ?? "user"));
+	}
+	const preservedInput = originalInput.map((item) => {
+		const cloned = structuredClone(item) as Record<string, unknown>;
+		const tool = item.type === "function_call_output";
+		const role = tool ? "tool" : cloned.role;
+		if (!changedRoles.has(role) || (!tool && cloned.type !== undefined && cloned.type !== "message")) {
+			return cloned;
 		}
-		return clonedItem;
+		const source = tool ? cloned.output : cloned.content;
+		const key = keyFor(role, tool ? cloned.call_id : undefined, responseContentToChatContent(source));
+		if (changed.has(key)) {
+			cloned[tool ? "output" : "content"] = chatContentToResponsesContent(changed.get(key), String(role));
+		}
+		return cloned;
 	});
 	return [
 		...chatMessagesToResponsesInput(injectedMessages, toolRegistry),
 		...preservedInput,
-		...chatMessagesToResponsesInput(tailInjectedMessages, toolRegistry),
 		...chatMessagesToResponsesInput(continuationMessages, toolRegistry),
 	];
 }
@@ -913,7 +953,8 @@ function chatContentToResponsesContent(content: unknown, role: string): unknown 
 						? (imageUrl as Record<string, unknown>)["url"]
 						: undefined;
 			if (typeof url === "string") {
-				return { type: "input_image", image_url: url };
+				const detail = typeof imageUrl === "object" && imageUrl !== null ? (imageUrl as Record<string, unknown>).detail : undefined;
+				return { type: "input_image", image_url: url, ...(detail === undefined ? {} : { detail: detail }) };
 			}
 		}
 		return structuredClone(part);
@@ -1383,26 +1424,13 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				response: buildStreamResponse(state, requestBody, "in_progress", null),
 			});
 			const nativeCompletion = nativeResponses
-				? createNativeResponsesCapabilityCompletion(
-						litellmRouter,
-						requestBody,
-						capabilityMessages,
-						toolRegistry,
-						preparedImageGeneration?.tailMessageCount ?? 0,
-					)
+				? createNativeResponsesCapabilityCompletion(litellmRouter, context.upstreamBody, capabilityMessages, toolRegistry)
 				: undefined;
 			// 支持原生 Responses 的 provider：能力主轮也走原生协议。能力循环内部仍以 chat 形态
 			// 记账，但每一轮都用原生 Responses 请求体发往上游，客户端收到的就是上游的
 			// reasoning/文本增量，而不是“responses→chat→responses”往返后的合成结果。
 			const nativeStreaming = nativeResponses
-				? createNativeCapabilityCaller(
-						litellmRouter,
-						requestBody,
-						capabilityMessages,
-						toolRegistry,
-						true,
-						preparedImageGeneration?.tailMessageCount ?? 0,
-					)
+				? createNativeCapabilityCaller(litellmRouter, context.upstreamBody, capabilityMessages, toolRegistry, true)
 				: undefined;
 			const chatStreamingMainTurn = async (
 				completionModel: string,
@@ -1519,6 +1547,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				optionalParams,
 				streamingMainTurn,
 				{
+					imageHistory: context.imageHistory,
 					visionAudit: createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: requestId }),
 					imageGenerationAudit: createImageGenerationCapabilityAuditHook({
 						db: db,
@@ -1535,6 +1564,22 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 								litellmRouter.completion(workerModel, workerMessages as never, workerParams),
 				},
 			);
+			// All visible text is already accumulated. The synthetic stream will emit the
+			// final public tools and images next, so register their exact branch first.
+			const imageCaption = finalResult["_builtinImageCaption"];
+			if (typeof imageCaption === "string" && state.text.endsWith(imageCaption)) {
+				delete finalResult["_builtinImageCaption"];
+			}
+			const finalChoice = (finalResult as unknown as ModelResponse).choices?.[0];
+			if (finalChoice?.message && context.imageHistory) {
+				const publicMessage = {
+					...finalChoice.message,
+					content: capabilityVisibleDeltas
+						? state.text + (typeof finalResult["_builtinImageCaption"] === "string" ? finalResult["_builtinImageCaption"] : "")
+						: finalChoice.message.content,
+				};
+				await context.imageHistory.bind(chatMessagesToResponsesInput([publicMessage], toolRegistry));
+			}
 			if (finalResult["usage"] !== undefined) {
 				state.usage = finalResult["usage"] as Usage;
 			}
@@ -2013,7 +2058,11 @@ async function* modelResponseToSyntheticStream(
 	};
 	yield { ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] };
 	const delta: Record<string, unknown> = {};
-	if (!skipVisibleText && typeof choice.message.content === "string" && choice.message.content.length > 0) {
+	if (
+		(!skipVisibleText || typeof result["_builtinImageCaption"] === "string") &&
+		typeof choice.message.content === "string" &&
+		choice.message.content.length > 0
+	) {
 		delta["content"] = choice.message.content;
 	}
 	if (!skipVisibleText && choice.message.reasoning_content) {
@@ -2437,7 +2486,11 @@ function writeCompletedEvents(res: Response, state: ResponsesStreamState): void 
 				});
 			}
 		}
-		// 其余类型（如 image_generation_call）在加入 output 时已是终态，无需再补工具参数。
+		// Image items were closed when their bytes were delivered. Codex persists one
+		// history item per output_item.done, so closing it again duplicates the image.
+		if (item.type === "image_generation_call") {
+			continue;
+		}
 		writeEvent(res, state, "response.output_item.done", { output_index: outputIndex, item: item });
 	}
 }
