@@ -29,16 +29,65 @@ export interface HistogramWindowSnapshot {
 /** 分位值结果；没有样本时为 undefined。 */
 export type Quantile = number | undefined;
 
-/** 直方图的滑动窗口配置。 */
+/**
+ * 滑动窗口配置。
+ *
+ * 单层环形分片只能在一个尺度上精确：5 秒分片能给出「最近 5 分钟」的细粒度分位数，
+ * 但撑不到一小时。报表接口的 `window` 参数最高允许 3600 秒，因此这里维护两层：
+ * 细粒度层负责短窗口，粗粒度层负责长窗口；两层同时写入，查询时按窗口长度二选一，
+ * 不会重复计数。
+ */
 export interface HistogramWindowOptions {
-	/** 每个分片的毫秒宽度 */
+	/** 细粒度层每个分片的毫秒宽度 */
 	readonly slotMs: number;
-	/** 环形分片数量；窗口长度 = slotMs * slotCount */
+	/** 细粒度层环形分片数量；细窗口长度 = slotMs * slotCount */
 	readonly slotCount: number;
+	/** 粗粒度层每个分片的毫秒宽度，缺省 60 秒 */
+	readonly longSlotMs?: number;
+	/** 粗粒度层环形分片数量，缺省 60 片（配合 60 秒分片即 1 小时） */
+	readonly longSlotCount?: number;
 }
 
-/** 默认滑动窗口：60 个 5 秒分片，共 5 分钟。 */
-export const DEFAULT_HISTOGRAM_WINDOW: HistogramWindowOptions = { slotMs: 5_000, slotCount: 60 };
+/** 解析后的滑动窗口配置，两层都带具体数值与跨度。 */
+interface ResolvedWindow {
+	/** 细粒度层分片宽度 */
+	readonly slotMs: number;
+	/** 细粒度层分片数量 */
+	readonly slotCount: number;
+	/** 细粒度层总跨度 */
+	readonly fineSpanMs: number;
+	/** 粗粒度层分片宽度 */
+	readonly longSlotMs: number;
+	/** 粗粒度层分片数量 */
+	readonly longSlotCount: number;
+	/** 粗粒度层总跨度，也是报表窗口的上限 */
+	readonly longSpanMs: number;
+}
+
+/** 默认滑动窗口：5 秒 × 60 片（5 分钟）＋ 60 秒 × 60 片（1 小时）。 */
+export const DEFAULT_HISTOGRAM_WINDOW: HistogramWindowOptions = {
+	slotMs: 5_000,
+	slotCount: 60,
+	longSlotMs: 60_000,
+	longSlotCount: 60,
+};
+
+/**
+ * 补齐两层窗口的默认值。
+ * @param window - 调用方传入的窗口配置
+ */
+function resolveWindow(window: HistogramWindowOptions): ResolvedWindow {
+	const longSlotMs = window.longSlotMs ?? 60_000;
+	const longSlotCount = window.longSlotCount ?? 60;
+	return {
+		slotMs: window.slotMs,
+		slotCount: window.slotCount,
+		fineSpanMs: window.slotMs * window.slotCount,
+		longSlotMs: longSlotMs,
+		longSlotCount: longSlotCount,
+		longSpanMs: longSlotMs * longSlotCount,
+	};
+}
 
 /** 标签值最大长度；超长值被截断，避免把整段请求体塞进标签。 */
 const MAX_LABEL_VALUE_LENGTH = 120;
@@ -112,9 +161,10 @@ interface HistogramSlot {
 /** 直方图单序列：累计统计 + 滑动窗口分片。 */
 class HistogramSeries {
 	private readonly _buckets: readonly number[];
-	private readonly _window: HistogramWindowOptions;
+	private readonly _window: ResolvedWindow;
 	private readonly _counts: Float64Array;
 	private readonly _slots: Array<HistogramSlot | undefined>;
+	private readonly _longSlots: Array<HistogramSlot | undefined>;
 	private _sum = 0;
 	private _count = 0;
 
@@ -122,11 +172,12 @@ class HistogramSeries {
 	 * @param buckets - 桶上界（升序，单位与观测值相同）
 	 * @param window - 滑动窗口配置
 	 */
-	constructor(buckets: readonly number[], window: HistogramWindowOptions) {
+	constructor(buckets: readonly number[], window: ResolvedWindow) {
 		this._buckets = buckets;
 		this._window = window;
 		this._counts = new Float64Array(buckets.length + 1);
 		this._slots = new Array<HistogramSlot | undefined>(window.slotCount);
+		this._longSlots = new Array<HistogramSlot | undefined>(window.longSlotCount);
 	}
 
 	/**
@@ -135,7 +186,8 @@ class HistogramSeries {
 	 * @param nowMs - 当前毫秒时间戳，取进程单调时钟
 	 */
 	observe(value: number, nowMs: number): void {
-		const slot = this._slotFor(nowMs);
+		const slot = this._slotFor(this._slots, nowMs, this._window.slotMs, this._window.slotCount);
+		const longSlot = this._slotFor(this._longSlots, nowMs, this._window.longSlotMs, this._window.longSlotCount);
 		let bucketIndex = this._buckets.length;
 		for (let index = 0; index < this._buckets.length; index += 1) {
 			const upper = this._buckets[index];
@@ -147,9 +199,11 @@ class HistogramSeries {
 		this._counts[bucketIndex] = (this._counts[bucketIndex] ?? 0) + 1;
 		this._sum += value;
 		this._count += 1;
-		slot.counts[bucketIndex] = (slot.counts[bucketIndex] ?? 0) + 1;
-		slot.sum += value;
-		slot.count += 1;
+		for (const target of [slot, longSlot]) {
+			target.counts[bucketIndex] = (target.counts[bucketIndex] ?? 0) + 1;
+			target.sum += value;
+			target.count += 1;
+		}
 	}
 
 	/** 累计样本数。 */
@@ -176,11 +230,16 @@ class HistogramSeries {
 		const merged = new Float64Array(this._buckets.length + 1);
 		let count = 0;
 		let sum = 0;
-		const currentEpoch = Math.floor(nowMs / this._window.slotMs);
-		const reachableSlots = Math.max(1, Math.min(this._window.slotCount, Math.ceil(windowMs / this._window.slotMs)));
+		// 长窗口读粗粒度层：两层同时写入，但一次查询只取一层，避免同一观测被计两次。
+		const long = windowMs > this._window.fineSpanMs;
+		const slots = long ? this._longSlots : this._slots;
+		const slotMs = long ? this._window.longSlotMs : this._window.slotMs;
+		const slotCount = long ? this._window.longSlotCount : this._window.slotCount;
+		const currentEpoch = Math.floor(nowMs / slotMs);
+		const reachableSlots = Math.max(1, Math.min(slotCount, Math.ceil(windowMs / slotMs)));
 		for (let offset = 0; offset < reachableSlots; offset += 1) {
 			const epoch = currentEpoch - offset;
-			const slot = this._slots[epoch % this._window.slotCount];
+			const slot = slots[((epoch % slotCount) + slotCount) % slotCount];
 			if (slot === undefined || slot.epoch !== epoch) {
 				continue;
 			}
@@ -195,12 +254,20 @@ class HistogramSeries {
 
 	/**
 	 * 取当前时间片对应的槽位，必要时清空复用。
+	 * @param slots - 目标环形分片数组
 	 * @param nowMs - 当前毫秒时间戳
+	 * @param slotMs - 分片毫秒宽度
+	 * @param slotCount - 分片数量
 	 */
-	private _slotFor(nowMs: number): HistogramSlot {
-		const epoch = Math.floor(nowMs / this._window.slotMs);
-		const index = epoch % this._window.slotCount;
-		const existing = this._slots[index];
+	private _slotFor(
+		slots: Array<HistogramSlot | undefined>,
+		nowMs: number,
+		slotMs: number,
+		slotCount: number,
+	): HistogramSlot {
+		const epoch = Math.floor(nowMs / slotMs);
+		const index = ((epoch % slotCount) + slotCount) % slotCount;
+		const existing = slots[index];
 		if (existing !== undefined && existing.epoch === epoch) {
 			return existing;
 		}
@@ -210,7 +277,7 @@ class HistogramSeries {
 			sum: 0,
 			count: 0,
 		};
-		this._slots[index] = slot;
+		slots[index] = slot;
 		return slot;
 	}
 }
@@ -237,21 +304,82 @@ export interface MetricLike {
 	readonly labelNames: readonly string[];
 }
 
-/** 计数器单序列状态：累计值 + 滑动窗口分片。 */
+/**
+ * 在环形分片中累加一次增量；时间片推进时先清零复用。
+ * @param values - 分片数值
+ * @param epochs - 每个分片所属时间片序号
+ * @param slotMs - 分片毫秒宽度
+ * @param slotCount - 分片数量
+ * @param value - 增量
+ * @param nowMs - 当前单调时钟（毫秒）
+ */
+function incSlot(
+	values: Float64Array,
+	epochs: Int32Array,
+	slotMs: number,
+	slotCount: number,
+	value: number,
+	nowMs: number,
+): void {
+	const epoch = Math.floor(nowMs / slotMs);
+	const index = ((epoch % slotCount) + slotCount) % slotCount;
+	if (epochs[index] !== epoch) {
+		epochs[index] = epoch;
+		values[index] = 0;
+	}
+	values[index] = (values[index] ?? 0) + value;
+}
+
+/**
+ * 汇总环形分片在窗口内的增量；超出该层跨度时按该层全部可达分片计算。
+ * @param values - 分片数值
+ * @param epochs - 每个分片所属时间片序号
+ * @param slotMs - 分片毫秒宽度
+ * @param slotCount - 分片数量
+ * @param requestedMs - 请求的窗口长度
+ * @param nowMs - 当前单调时钟（毫秒）
+ */
+function sumSlots(
+	values: Float64Array,
+	epochs: Int32Array,
+	slotMs: number,
+	slotCount: number,
+	requestedMs: number,
+	nowMs: number,
+): number {
+	const currentEpoch = Math.floor(nowMs / slotMs);
+	const reachable = Math.max(1, Math.min(slotCount, Math.ceil(requestedMs / slotMs)));
+	let total = 0;
+	for (let offset = 0; offset < reachable; offset += 1) {
+		const epoch = currentEpoch - offset;
+		const index = ((epoch % slotCount) + slotCount) % slotCount;
+		if (epochs[index] !== epoch) {
+			continue;
+		}
+		total += values[index] ?? 0;
+	}
+	return total;
+}
+
+/** 计数器单序列状态：累计值 + 两层滑动窗口分片。 */
 interface CounterSeries {
 	/** 自进程启动以来的累计值 */
 	total: number;
-	/** 每个分片的增量 */
+	/** 细粒度层每个分片的增量 */
 	readonly values: Float64Array;
-	/** 每个分片所属时间片序号 */
+	/** 细粒度层每个分片所属时间片序号 */
 	readonly epochs: Int32Array;
+	/** 粗粒度层每个分片的增量 */
+	readonly longValues: Float64Array;
+	/** 粗粒度层每个分片所属时间片序号 */
+	readonly longEpochs: Int32Array;
 }
 
 /** 单调递增计数器；同时维护累计值与滑动窗口增量，供「最近几分钟」报表使用。 */
 export class Counter implements MetricLike {
 	public readonly kind = "counter";
 	private readonly _series = new Map<string, CounterSeries>();
-	private readonly _window: HistogramWindowOptions;
+	private readonly _window: ResolvedWindow;
 
 	/**
 	 * @param name - 指标名
@@ -265,7 +393,7 @@ export class Counter implements MetricLike {
 		public readonly labelNames: readonly string[] = [],
 		window: HistogramWindowOptions = DEFAULT_HISTOGRAM_WINDOW,
 	) {
-		this._window = window;
+		this._window = resolveWindow(window);
 	}
 
 	/**
@@ -277,13 +405,8 @@ export class Counter implements MetricLike {
 	inc(labels?: MetricLabels, value = 1, nowMs: number = performance.now()): void {
 		const series = this._seriesFor(labels);
 		series.total += value;
-		const epoch = Math.floor(nowMs / this._window.slotMs);
-		const index = ((epoch % this._window.slotCount) + this._window.slotCount) % this._window.slotCount;
-		if (series.epochs[index] !== epoch) {
-			series.epochs[index] = epoch;
-			series.values[index] = 0;
-		}
-		series.values[index] = (series.values[index] ?? 0) + value;
+		incSlot(series.values, series.epochs, this._window.slotMs, this._window.slotCount, value, nowMs);
+		incSlot(series.longValues, series.longEpochs, this._window.longSlotMs, this._window.longSlotCount, value, nowMs);
 	}
 
 	/**
@@ -369,19 +492,11 @@ export class Counter implements MetricLike {
 	 * @param nowMs - 当前单调时钟（毫秒）
 	 */
 	private _windowSum(series: CounterSeries, windowMs: number | undefined, nowMs: number): number {
-		const currentEpoch = Math.floor(nowMs / this._window.slotMs);
-		const requested = windowMs ?? this._window.slotMs * this._window.slotCount;
-		const reachable = Math.max(1, Math.min(this._window.slotCount, Math.ceil(requested / this._window.slotMs)));
-		let total = 0;
-		for (let offset = 0; offset < reachable; offset += 1) {
-			const epoch = currentEpoch - offset;
-			const index = ((epoch % this._window.slotCount) + this._window.slotCount) % this._window.slotCount;
-			if (series.epochs[index] !== epoch) {
-				continue;
-			}
-			total += series.values[index] ?? 0;
+		const requested = windowMs ?? this._window.fineSpanMs;
+		if (requested > this._window.fineSpanMs) {
+			return sumSlots(series.longValues, series.longEpochs, this._window.longSlotMs, this._window.longSlotCount, requested, nowMs);
 		}
-		return total;
+		return sumSlots(series.values, series.epochs, this._window.slotMs, this._window.slotCount, requested, nowMs);
 	}
 
 	/**
@@ -398,6 +513,8 @@ export class Counter implements MetricLike {
 			total: 0,
 			values: new Float64Array(this._window.slotCount),
 			epochs: new Int32Array(this._window.slotCount).fill(Number.MIN_SAFE_INTEGER),
+			longValues: new Float64Array(this._window.longSlotCount),
+			longEpochs: new Int32Array(this._window.longSlotCount).fill(Number.MIN_SAFE_INTEGER),
 		};
 		this._series.set(key, created);
 		return created;
@@ -460,7 +577,7 @@ export class Gauge implements MetricLike {
 export class Histogram implements MetricLike {
 	public readonly kind = "histogram";
 	public readonly buckets: readonly number[];
-	private readonly _window: HistogramWindowOptions;
+	private readonly _window: ResolvedWindow;
 	private readonly _series = new Map<string, HistogramSeries>();
 	private _dropped = 0;
 
@@ -479,7 +596,7 @@ export class Histogram implements MetricLike {
 		window: HistogramWindowOptions = DEFAULT_HISTOGRAM_WINDOW,
 	) {
 		this.buckets = [...buckets].sort((left, right) => left - right);
-		this._window = window;
+		this._window = resolveWindow(window);
 	}
 
 	/**

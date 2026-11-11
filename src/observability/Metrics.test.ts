@@ -90,3 +90,51 @@ describe("MetricRegistry 基座", () => {
 		expect(counter.labelNames).toEqual([]);
 	});
 });
+
+describe("两层滑动窗口", () => {
+	it("直方图的长窗口仍能读到一小时前的样本，短窗口不会读到", () => {
+		const histogram = new Histogram("long_seconds", "help", [], [1, 2], {
+			slotMs: 1_000,
+			slotCount: 60,
+			longSlotMs: 60_000,
+			longSlotCount: 60,
+		});
+		const now = performance.now();
+		// 30 分钟前的一次观测：细粒度层早已过期，粗粒度层仍在
+		histogram.observe(0.5, undefined, now - 30 * 60_000);
+		const longWindow = histogram.windowSnapshot(3_600_000)[0];
+		expect(longWindow?.count).toBe(1);
+		expect(histogram.windowSnapshot(300_000)[0]?.count ?? 0).toBe(0);
+	});
+
+	it("直方图在两层边界处只使用一层，不会重复计数", () => {
+		const histogram = new Histogram("boundary_seconds", "help", [], [1], {
+			slotMs: 1_000,
+			slotCount: 60,
+			longSlotMs: 60_000,
+			longSlotCount: 60,
+		});
+		const now = performance.now();
+		histogram.observe(0.5, undefined, now - 2_000);
+		// 60 秒窗口正好等于细粒度层跨度：只读细粒度层
+		expect(histogram.windowSnapshot(60_000)[0]?.count).toBe(1);
+		// 61 秒窗口切换到粗粒度层，两秒前的样本仍在同一分钟分片内
+		expect(histogram.windowSnapshot(61_000)[0]?.count).toBe(1);
+	});
+
+	it("计数器的一小时窗口统计到较早的增量，五分钟窗口不重复计入", () => {
+		const counter = new Counter("long_total", "help", ["route"], {
+			slotMs: 5_000,
+			slotCount: 60,
+			longSlotMs: 60_000,
+			longSlotCount: 60,
+		});
+		const now = performance.now();
+		counter.inc({ route: "/a" }, 2, now - 40 * 60_000);
+		counter.inc({ route: "/a" }, 3, now);
+		expect(counter.windowValue({ route: "/a" }, 3_600_000)).toBe(5);
+		expect(counter.windowValue({ route: "/a" }, 300_000)).toBe(3);
+		// 窗口超过粗粒度层跨度时按该层全部可达分片计算
+		expect(counter.windowValue({ route: "/a" }, 24 * 3_600_000)).toBe(5);
+	});
+});

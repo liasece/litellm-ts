@@ -37,7 +37,8 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metrics/slow?limit=20"
 ```
 
-`/metrics/summary` 的窗口统计来自内存里的 5 分钟环形分片，不查库，因此可以在事故现场高频调用。
+`/metrics/summary` 的窗口统计来自内存里的两层环形分片（5 秒 × 60 片覆盖最近 5 分钟，60 秒 × 60 片覆盖最近 1 小时），
+不查库，因此可以在事故现场高频调用；`window` ≤ 300 读细粒度层，> 300 读粗粒度层，两层同时写入但一次查询只读一层。
 `/metrics/slow` 与慢请求日志共用同一个判定（首字 > 10s、总耗时 > 120s、其他请求 > 2s，或失败），
 阈值以下的请求只进入分位统计，不进明细。
 
@@ -175,7 +176,7 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
   观测不到「首个 token 写回下游」的时刻，其 SpendLog 只记请求时长（`endTime - startTime`），
   `completionStartTime` 落 NULL，日志列表与详情的 TTFT 显示 `-`。直连工具（DeepSeek Search / Fetch）
   同理：一次 HTTP 交换只有耗时，没有首字。
-- **百分位口径**：窗口分位来自 5 分钟内存分片，按桶上界线性插值（与 `histogram_quantile` 同口径）。桶很粗时（例如 `db` 的毫秒级桶），分位是区间估计而不是精确样本值。
+- **百分位口径**：窗口分位来自内存分片（≤ 300 秒用 5 秒分片，更长用 60 秒分片），按桶上界线性插值（与 `histogram_quantile` 同口径）。桶很粗时（例如 `db` 的毫秒级桶），分位是区间估计而不是精确样本值；粗粒度层让 1 小时窗口只损失时间分辨率、不损失样本数。
 - **`upstreamPayloadMs` 只对非流式有意义**：流式请求永远读不完响应体，只有首块时刻。
 - **没有部署 Prometheus 服务端**：`/metrics` 目前供人工与临时抓取使用；接入抓取器时按上面的 curl 形式配置抓取目标与密钥头。
 - **序列上限**：单个直方图 1000 条序列，超出丢弃并计入 `litellm_observability_dropped_series`；`route`、`model`、`provider` 都是低基数标签，不会随请求参数增长。
