@@ -26,7 +26,7 @@ const snapshot = (data = [event("one")]): SessionTimelineResponse => ({
 	data,
 	summary,
 	active_requests: [],
-	window: { returned_requests: 1, total_requests: 3, has_more: true, before: "older-cursor", limit: 1 },
+	window: { returned_requests: 1, total_requests: 3, has_more: true, before: "older-cursor", after: "newer-cursor", limit: 1 },
 });
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -53,7 +53,7 @@ describe("Session simulation timeline", () => {
 		await vi.advanceTimersByTimeAsync(0);
 		h.fetch.mockResolvedValueOnce({
 			...snapshot([event("earlier")]),
-			window: { returned_requests: 1, total_requests: 3, has_more: false, before: null, limit: 1 },
+			window: { returned_requests: 1, total_requests: 3, has_more: false, before: null, after: "earlier-newest", limit: 1 },
 		});
 		await h.store.loadEarlier();
 		expect(h.store.canLoadEarlier.value).toBe(false);
@@ -79,6 +79,58 @@ describe("Session simulation timeline", () => {
 		expect(h.store.combined.value[2].content).toBe("stored");
 		h.store.dispose();
 	});
+	it("最早优先从最早的窗口开始，滚到底部按 after 游标追加更新页", async () => {
+		const h = harness();
+		h.store.bind(group, undefined);
+		await vi.advanceTimersByTimeAsync(0);
+		await h.store.setNewestFirst(false);
+
+		expect(h.fetch).toHaveBeenLastCalledWith(group, undefined, expect.objectContaining({ direction: "forward" }));
+		expect(h.store.displayed.value.map((item) => item.id)).toEqual(["one"]);
+		expect(h.store.canLoadLater.value).toBe(true);
+
+		const newer = deferred<SessionTimelineResponse>();
+		h.fetch.mockReturnValueOnce(newer.promise);
+		const pending = h.store.loadLater();
+		expect(h.fetch).toHaveBeenLastCalledWith(
+			group,
+			undefined,
+			expect.objectContaining({ direction: "forward", after: "newer-cursor" }),
+		);
+		h.callbacks[0].frame({ type: "snapshot", group, data: snapshot([event("live")]) });
+		newer.resolve({
+			...snapshot([event("two")]),
+			window: { returned_requests: 1, total_requests: 3, has_more: false, before: null, after: "last-cursor", limit: 1 },
+		});
+		await pending;
+
+		expect(h.store.displayed.value.map((item) => item.id)).toEqual(["one", "two"]);
+		expect(h.store.canLoadLater.value).toBe(false);
+		h.store.dispose();
+	});
+
+	it("切换排序会清空相反方向的分页并从对应一端重读", async () => {
+		const h = harness();
+		h.store.bind(group, undefined);
+		await vi.advanceTimersByTimeAsync(0);
+		h.fetch.mockResolvedValueOnce({
+			...snapshot([event("older")]),
+			window: { returned_requests: 1, total_requests: 3, has_more: false, before: null, after: "older-newest", limit: 1 },
+		});
+		await h.store.loadEarlier();
+		expect(h.store.displayed.value.map((item) => item.id)).toEqual(["one", "older"]);
+
+		await h.store.setNewestFirst(false);
+		expect(h.store.state.earlier).toEqual([]);
+		expect(h.store.canLoadEarlier.value).toBe(false);
+
+		await h.store.setNewestFirst(true);
+		expect(h.store.state.later).toEqual([]);
+		expect(h.fetch).toHaveBeenLastCalledWith(group, undefined, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+		expect(h.fetch.mock.calls.at(-1)?.[2]).not.toHaveProperty("direction");
+		h.store.dispose();
+	});
+
 	it("rejects a late initial read and a frame belonging to another session", async () => {
 		const pending = deferred<SessionTimelineResponse>(),
 			h = harness();

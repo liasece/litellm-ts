@@ -4,6 +4,7 @@ import {
 	TIMELINE_NEWEST_END_TOLERANCE,
 	keepsTimelineScrollAnchor,
 	reachesTimelineEarlierEnd,
+	reachesTimelineNewerEnd,
 	timelineAnchorShift,
 	type TimelineScrollMetrics,
 } from "./SessionTimelineScrollLogic";
@@ -32,6 +33,19 @@ describe("session timeline earlier page trigger", () => {
 	it("内容撑不满面板时不自动取页，避免一次拉完整段历史", () => {
 		expect(reachesTimelineEarlierEnd(viewport({ clientHeight: 3000 }))).toBe(false);
 		expect(reachesTimelineEarlierEnd(viewport({ clientHeight: 0, scrollHeight: 0 }))).toBe(false);
+	});
+});
+
+describe("session timeline newer page trigger", () => {
+	it("最早优先时贴近列表末尾取更新的一页", () => {
+		expect(reachesTimelineNewerEnd(viewport({ newestFirst: false, scrollTop: 2000 }))).toBe(false);
+		expect(reachesTimelineNewerEnd(viewport({ newestFirst: false, scrollTop: 2400 - TIMELINE_EARLIER_TRIGGER_DISTANCE }))).toBe(true);
+		expect(reachesTimelineNewerEnd(viewport({ newestFirst: false, scrollTop: 2400 }))).toBe(true);
+	});
+
+	it("内容撑不满面板时不自动取页，交给「加载更多」按钮", () => {
+		expect(reachesTimelineNewerEnd(viewport({ newestFirst: false, clientHeight: 3000 }))).toBe(false);
+		expect(reachesTimelineNewerEnd(viewport({ newestFirst: false, clientHeight: 0, scrollHeight: 0 }))).toBe(false);
 	});
 });
 

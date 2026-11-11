@@ -164,11 +164,18 @@
 	gap: 4px;
 }
 .session-timeline__model {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
 	max-width: 320px;
+	min-width: 0;
+	color: #94a3b8;
+}
+.session-timeline__model-name {
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: #94a3b8;
 }
 .session-timeline__log-link {
 	margin-left: auto;
@@ -207,4 +214,14 @@
 	line-height: 1.6;
 	font-style: italic;
 	color: #94a3b8;
+}
+.session-timeline__lazy-preview {
+	display: -webkit-box;
+	overflow: hidden;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	font-size: 13px;
+	line-height: 1.6;
+	color: #64748b;
+	overflow-wrap: anywhere;
 }

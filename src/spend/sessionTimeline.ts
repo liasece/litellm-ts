@@ -135,6 +135,13 @@ export interface SessionTimelineSourceRow {
 	readonly request_message_delta_flags?: readonly boolean[];
 	/** Whether request content is already available, including history intentionally compacted away. */
 	readonly request_payload_available?: boolean;
+	/**
+	 * 请求内容取自最终上游请求（模型实际收到的消息），而不是客户端请求快照。
+	 *
+	 * 内部处理（能力注入、协议转换、私有工具循环）会改变请求消息；读取侧优先使用
+	 * 传输层记录的最终上游请求，使时间线展示模型真正看到的输入。
+	 */
+	readonly request_payload_upstream?: boolean;
 	/** Whether response content is available without a cold-storage lookup. */
 	readonly response_payload_available?: boolean;
 	/** Internal request category; builtin_capability marks proxy-generated capability calls. */
@@ -173,6 +180,12 @@ export interface SessionTimelineItem {
 	readonly builtin_capability?: string;
 	/** Parent request identity for a proxy-generated capability call. */
 	readonly parent_request_id?: string;
+	/**
+	 * True for a private tool call the model issued against a built-in
+	 * capability. Only SpendLog retains these calls; neither the public
+	 * response nor downstream requests contain them.
+	 */
+	readonly private_tool_call?: boolean;
 }
 
 /**
@@ -187,10 +200,12 @@ export interface SessionTimelineWindow {
 	readonly returned_requests: number;
 	/** Total settled requests in the session, including the ones left for older pages. */
 	readonly total_requests: number;
-	/** Whether settled requests older than this window still exist. */
+	/** Whether settled requests exist beyond this window in the read direction. */
 	readonly has_more: boolean;
 	/** Cursor for the next older page; null when the window already reaches the session start. */
 	readonly before: string | null;
+	/** Cursor for the next newer page; null when the window is empty. */
+	readonly after: string | null;
 	/** Server-side window size; null when the whole session was returned. */
 	readonly limit: number | null;
 }
@@ -241,9 +256,7 @@ export interface SessionTimelineBuilderOptions {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
+	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function safeJsonStringify(value: unknown, pretty = false): string {
@@ -261,8 +274,8 @@ function internalTimelineFields(
 	const internalCall = row.internal_call_type === "builtin_capability";
 	return {
 		internal_call: internalCall || undefined,
-		builtin_capability: internalCall ? row.builtin_capability ?? undefined : undefined,
-		parent_request_id: internalCall ? row.parent_request_id ?? undefined : undefined,
+		builtin_capability: internalCall ? (row.builtin_capability ?? undefined) : undefined,
+		parent_request_id: internalCall ? (row.parent_request_id ?? undefined) : undefined,
 	};
 }
 
@@ -327,6 +340,41 @@ function toolCallPart(
 		},
 		toolCall: toolCall,
 	};
+}
+
+/** 内置能力把模型真实的私有工具调用记录在响应内部字段里；公开响应与下游都看不到。 */
+const PRIVATE_IMAGE_TOOL_CALLS_KEY = "_builtinPrivateImageToolCalls";
+
+/**
+ * 从记录的响应里还原模型发起的私有图片工具调用。
+ *
+ * 这些调用由模型发起、由 Proxy 执行，公开响应只保留最终内容，只有 SpendLog
+ * 保留了调用本身；时间线用它回答「模型是否真的调用了图片工具」。
+ * @param payload - 记录的响应体
+ */
+function privateImageToolCallParts(payload: unknown): SessionTimelinePart[] {
+	const calls = asRecord(payload)?.[PRIVATE_IMAGE_TOOL_CALLS_KEY];
+	if (!Array.isArray(calls)) {
+		return [];
+	}
+	const parts: SessionTimelinePart[] = [];
+	for (const call of calls) {
+		const record = asRecord(call);
+		if (!record) {
+			continue;
+		}
+		const id = record.id;
+		const name = record.name;
+		parts.push({
+			kind: "tool_call",
+			label: "内置图片工具",
+			sourceType: "tool_use",
+			id: typeof id === "string" && id ? id : undefined,
+			name: typeof name === "string" && name ? name : "unknown",
+			data: parseToolArguments(record.arguments),
+		});
+	}
+	return parts;
 }
 
 /**
@@ -395,11 +443,7 @@ function generatedImagePart(value: unknown, outputFormat?: unknown, sourceType =
 		sourceType: sourceType,
 		id: typeof image.id === "string" ? image.id : undefined,
 		status: typeof image.status === "string" ? image.status : undefined,
-		text: wasTruncated
-			? TRUNCATED_IMAGE_MESSAGE
-			: typeof image.revised_prompt === "string"
-				? image.revised_prompt
-				: undefined,
+		text: wasTruncated ? TRUNCATED_IMAGE_MESSAGE : typeof image.revised_prompt === "string" ? image.revised_prompt : undefined,
 		data: source ? { src: source, mimeType: mimeType } : { truncated: true },
 	};
 }
@@ -526,7 +570,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 			part: {
 				kind: "image",
 				label: "Media",
-				sourceType: block.inlineData ?? block.inline_data ? "inlineData" : "fileData",
+				sourceType: (block.inlineData ?? block.inline_data) ? "inlineData" : "fileData",
 				text: String(media.mimeType ?? media.mime_type ?? media.fileUri ?? media.file_uri ?? "Attached media"),
 				data: source ? { src: source, mimeType: mimeType } : undefined,
 			},
@@ -588,11 +632,7 @@ function parseContentBlock(rawBlock: unknown): { part: SessionTimelinePart; tool
 			pickField(block, CONTENT_FIELD_RULES.toolArguments),
 		);
 	}
-	if (
-		["tool_result", "function_call_output", "custom_tool_call_output", "mcp_call_output", "computer_call_output"].includes(
-			type,
-		)
-	) {
+	if (["tool_result", "function_call_output", "custom_tool_call_output", "mcp_call_output", "computer_call_output"].includes(type)) {
 		const result = pickField(block, CONTENT_FIELD_RULES.toolResult);
 		const parts = structuredToolResultParts(result);
 		return {
@@ -952,19 +992,20 @@ function requestMessagesFrom(value: unknown): ParsedMessage[] {
 	}
 	const request = Array.isArray(value) ? { messages: value } : (asRecord(value) ?? {});
 	const body = asRecord(request.body) ?? request;
-	const rawMessages = Array.isArray(body.messages)
-		? body.messages
-		: Array.isArray(request.messages)
-			? request.messages
-			: null;
+	const rawMessages = Array.isArray(body.messages) ? body.messages : Array.isArray(request.messages) ? request.messages : null;
 	const result = rawMessages
 		? looksLikeResponsesInputItems(rawMessages)
 			? parseResponsesInputItems(rawMessages)
 			: rawMessages.map(parseRequestMessage)
 		: [];
 	const systemContent = body.system ?? body.instructions;
-	if (systemContent !== undefined && !result.some((message) => message.role === "system")) {
-		result.unshift(parseRequestMessage({ role: "system", content: systemContent }));
+	// 上游 payload 会显式带 `system: null` / `instructions: null`；`null` 是「没有 system」，
+	// 不能当成一条空 system 消息注入，否则时间线每个窗口的首个请求会多出一条空白系统事件。
+	if (systemContent !== undefined && systemContent !== null && !result.some((message) => message.role === "system")) {
+		const systemMessage = parseRequestMessage({ role: "system", content: systemContent });
+		if (hasRenderableMessageContent(systemMessage)) {
+			result.unshift(systemMessage);
+		}
 	}
 	if (!rawMessages && body.input !== undefined) {
 		if (typeof body.input === "string") {
@@ -985,7 +1026,10 @@ function requestMessagesFrom(value: unknown): ParsedMessage[] {
 	return result;
 }
 
-function parseMessages(request: unknown, responseValue: unknown): {
+function parseMessages(
+	request: unknown,
+	responseValue: unknown,
+): {
 	requestMessages: ParsedMessage[];
 	responseMessage: ParsedMessage | null;
 } {
@@ -1352,7 +1396,11 @@ export class SessionTimelineBuilder {
 	 * @param row - Logged request and optional compact-history classification metadata.
 	 */
 	public add(row: SessionTimelineSourceRow): void {
-		if (!this._options.includeAuxiliary && isClaudeCodeAuxiliaryTimelineRequest(row)) {
+		if (
+			!this._options.includeAuxiliary &&
+			row.internal_call_type !== "builtin_capability" &&
+			isClaudeCodeAuxiliaryTimelineRequest(row)
+		) {
 			this._filteredRequestCount += 1;
 			return;
 		}
@@ -1382,6 +1430,24 @@ export class SessionTimelineBuilder {
 		if (Number.isFinite(endMs)) {
 			this._endMs = this._endMs === null ? endMs : Math.max(this._endMs, endMs);
 		}
+		if (row.internal_call_type === "builtin_capability") {
+			// 内置能力的内部调用是 Proxy 自己发起的旁路请求，不是会话中的一轮对话。
+			// 这些消息已经由父请求的最终上游请求带回（私有工具调用与工具结果都在里面），
+			// 再展开一次只会让同一段对话重复；这里只保留可回溯审计行的标记。
+			this._items.push({
+				id: `${row.request_id}:internal`,
+				request_id: row.request_id,
+				role: "request",
+				label: "内部调用",
+				timestamp: startTimestamp,
+				model: row.model,
+				content: [row.builtin_capability ?? "unknown", row.call_type || "call"].join(" · "),
+				status: row.status ?? row.metadata_status ?? undefined,
+				...internalTimelineFields(row),
+			});
+			this._order.addSequence([this._items.length - 1]);
+			return;
+		}
 
 		const { requestMessages, responseMessage } = parseMessages(row.request_payload, row.response_payload);
 		let addedMessage = false;
@@ -1402,9 +1468,7 @@ export class SessionTimelineBuilder {
 				// preceding response event. Other tail positions are genuine new
 				// history occurrences, including intentionally repeated user text.
 				occurrence =
-					(message.role === "assistant" || message.role === "system") && seenOccurrence > 0
-						? seenOccurrence
-						: seenOccurrence + 1;
+					(message.role === "assistant" || message.role === "system") && seenOccurrence > 0 ? seenOccurrence : seenOccurrence + 1;
 			}
 			snapshotOccurrences.set(fingerprint, Math.max(snapshotOccurrence, occurrence));
 			if (message.role === "system" && this._seenSystemMessages.has(fingerprint)) {
@@ -1465,12 +1529,30 @@ export class SessionTimelineBuilder {
 			addedMessage = true;
 			const responseFingerprint = messageHistoryFingerprint(responseMessage);
 			const seenResponseOccurrence = this._seenHistoryOccurrences.get(responseFingerprint) ?? 0;
-			const responseOccurrence = Math.max(
-				(snapshotOccurrences.get(responseFingerprint) ?? 0) + 1,
-				seenResponseOccurrence + 1,
-			);
+			const responseOccurrence = Math.max((snapshotOccurrences.get(responseFingerprint) ?? 0) + 1, seenResponseOccurrence + 1);
 			this._seenHistoryOccurrences.set(responseFingerprint, responseOccurrence);
 			const firstItemIndex = this._items.length;
+			// 上游请求已包含模型真实发出的私有工具调用时，不再从响应内部字段补一条：
+			// 两者语义相同，重复展示会让同一轮对话出现两次工具调用。
+			const privateToolCallParts = row.request_payload_upstream ? [] : privateImageToolCallParts(row.response_payload);
+			if (privateToolCallParts.length > 0) {
+				requestItemIndices.push(this._items.length);
+				this._items.push({
+					id: `${row.request_id}:private-tool-call`,
+					request_id: row.request_id,
+					role: "assistant",
+					label: "内置能力调用",
+					timestamp: startTimestamp,
+					model: row.model,
+					content: privateToolCallParts
+						.map((part) => `${part.name ?? "unknown"} ${safeJsonStringify(part.data, true)}`)
+						.join("\n"),
+					parts: privateToolCallParts,
+					status: row.status ?? row.metadata_status ?? undefined,
+					private_tool_call: true,
+					builtin_capability: "image_generation",
+				});
+			}
 			const responseParts = responseMessage.parts ?? [];
 			const toolResults = responseParts.filter((part) => part.kind === "tool_result");
 			const remainingParts = responseParts.filter((part) => part.kind !== "tool_result");
@@ -1482,10 +1564,7 @@ export class SessionTimelineBuilder {
 					label: roleLabel(responseMessage.role),
 					timestamp: endTimestamp,
 					model: row.model,
-					content:
-						toolResults.length > 0
-							? contentFromParts(remainingParts) || responseMessage.content
-							: responseMessage.content,
+					content: toolResults.length > 0 ? contentFromParts(remainingParts) || responseMessage.content : responseMessage.content,
 					parts: remainingParts.length > 0 ? remainingParts : undefined,
 					status: row.status ?? row.metadata_status ?? undefined,
 					...internalTimelineFields(row),
@@ -1566,8 +1645,7 @@ export class SessionTimelineBuilder {
 				event_count: this._items.length,
 				total_spend: this._totalSpend,
 				total_tokens: this._totalTokens,
-				duration_seconds:
-					this._startMs === null || this._endMs === null ? 0 : Math.max(0, (this._endMs - this._startMs) / 1000),
+				duration_seconds: this._startMs === null || this._endMs === null ? 0 : Math.max(0, (this._endMs - this._startMs) / 1000),
 				start_time: startTime,
 				end_time: endTime,
 				filtered_request_count: this._filteredRequestCount,

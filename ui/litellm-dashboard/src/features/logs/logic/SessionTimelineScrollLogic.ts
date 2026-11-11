@@ -29,6 +29,21 @@ export function reachesTimelineEarlierEnd(metrics: TimelineScrollMetrics, distan
 }
 
 /**
+ * 判断读者是否已经到达「更新」的一端。
+ *
+ * 最早优先时更新的事件追加在列表末尾，读者滚到底部就继续向后取页；最新优先时新事件由
+ * 实时推送补在顶端，不走分页，因此调用方只在最早优先时使用本函数。
+ * @param metrics - 滚动容器的当前尺寸与偏移
+ * @param distance - 触发距离，默认取 `TIMELINE_EARLIER_TRIGGER_DISTANCE`
+ */
+export function reachesTimelineNewerEnd(metrics: TimelineScrollMetrics, distance = TIMELINE_EARLIER_TRIGGER_DISTANCE): boolean {
+	const span = metrics.scrollHeight - metrics.clientHeight;
+	if (!(span > 0)) return false;
+	const remaining = span - metrics.scrollTop;
+	return Number.isFinite(remaining) && remaining <= distance;
+}
+
+/**
  * 内容变化后是否要用锚点补回滚动位置。
  *
  * 最新优先时列表顶端就是最新事件：读者停在顶端说明正在追最新内容，新事件应当直接出现在视野

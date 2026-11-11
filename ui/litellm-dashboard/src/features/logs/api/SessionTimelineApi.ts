@@ -47,6 +47,7 @@ const eventSchema = z.object({
 	internal_call: z.boolean().optional(),
 	builtin_capability: z.string().optional(),
 	parent_request_id: z.string().optional(),
+	private_tool_call: z.boolean().optional(),
 });
 const activeSchema = z.object({ request_id: z.string(), events: z.array(eventSchema) });
 const summarySchema = z.object({
@@ -66,6 +67,7 @@ const windowSchema = z.object({
 	total_requests: z.number(),
 	has_more: z.boolean(),
 	before: z.string().nullable(),
+	after: z.string().nullable().optional(),
 	limit: z.number().nullable(),
 });
 const responseSchema = z.object({
@@ -93,7 +95,7 @@ export interface SessionTimelineApi {
 	fetch(
 		group: SessionGroupRef,
 		teamId?: string,
-		options?: { before?: string | null; signal?: AbortSignal },
+		options?: { before?: string | null; after?: string | null; direction?: "forward" | "backward"; signal?: AbortSignal },
 	): Promise<SessionTimelineResponse>;
 }
 export const sessionTimelineApi: SessionTimelineApi = {
@@ -101,6 +103,8 @@ export const sessionTimelineApi: SessionTimelineApi = {
 		const params = new URLSearchParams({ session_group_type: group.type, session_group_id: group.id });
 		if (teamId) params.set("team_id", teamId);
 		if (options.before) params.set("before", options.before);
+		if (options.after) params.set("after", options.after);
+		if (options.direction) params.set("direction", options.direction);
 		const response = await dashboardFetch(getApiBaseUrl() + "/spend/logs/session/timeline?" + params.toString().replace(/\+/g, "%20"), {
 			signal: options.signal,
 		});

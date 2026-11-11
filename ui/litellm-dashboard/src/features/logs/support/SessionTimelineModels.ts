@@ -13,6 +13,7 @@ export interface SessionTimelineEvent {
 	internal_call?: boolean;
 	builtin_capability?: string;
 	parent_request_id?: string;
+	private_tool_call?: boolean;
 }
 export interface SessionActiveTimelineRequest {
 	request_id: string;
@@ -35,6 +36,7 @@ export interface SessionTimelineWindow {
 	total_requests: number;
 	has_more: boolean;
 	before: string | null;
+	after?: string | null;
 	limit: number | null;
 }
 export interface SessionTimelineResponse {

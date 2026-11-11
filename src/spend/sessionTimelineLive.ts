@@ -27,14 +27,18 @@ import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
 import {
+	SPEND_LOG_INPUT_REF_KEY,
 	SPEND_LOG_MESSAGE_REF_KEY,
 	SPEND_LOG_REF_BYTES_KEY,
 	SPEND_LOG_REF_MISSING_KEY,
+	SPEND_LOG_SAME_AS_MESSAGES,
 	SPEND_LOG_SYSTEM_COUNT_KEY,
 	SPEND_LOG_SYSTEM_FIRST_KEY,
+	SPEND_LOG_SYSTEM_REF_KEY,
 	SPEND_LOG_SYSTEM_SECOND_KEY,
 	SPEND_LOG_TOOLS_COUNT_KEY,
 	SPEND_LOG_TOOLS_FIRST_KEY,
+	hydrateSpendLogRows,
 } from "./SpendLogBlocks";
 import { createModuleLogger } from "../core/utils/logger";
 import { CallType } from "../types/spend";
@@ -48,15 +52,12 @@ import {
 	SessionTimelineBuilder,
 	isClaudeCodeAuxiliaryTimelineRequest,
 	type SessionTimelineItem,
+	type SessionTimelinePart,
 	type SessionTimelineResponse,
 	type SessionTimelineSourceRow,
 	type SessionTimelineWindow,
 } from "./sessionTimeline";
-import {
-	hydrateSessionTimelineImages,
-	type SessionImageCandidate,
-	type SessionImageLookup,
-} from "./sessionTimelineImages";
+import { hydrateSessionTimelineImages, type SessionImageCandidate, type SessionImageLookup } from "./sessionTimelineImages";
 import {
 	encodeSessionPosition,
 	sessionBeforeClause,
@@ -152,7 +153,11 @@ export interface SessionTimelineBatch {
 /** 可替换的读取依赖，便于测试构造确定的数据而不依赖数据库。 */
 export interface SessionTimelineStreamDeps {
 	/** 读取一批已落库行，默认走数据库 */
-	readonly readBatch?: (db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope, options: SessionTimelineBatchOptions) => Promise<SessionTimelineBatch>;
+	readonly readBatch?: (
+		db: NodePgDatabase<typeof schema>,
+		scope: SessionTimelineScope,
+		options: SessionTimelineBatchOptions,
+	) => Promise<SessionTimelineBatch>;
 	/** 读取会话内已落库行总数，用于发现新写入，默认走数据库 */
 	readonly readSettledCount?: (db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope) => Promise<number>;
 	/** 读取进行中行，默认走数据库 */
@@ -179,7 +184,11 @@ export interface SessionTimelineBatchOptions {
 	readonly since?: SessionPosition | null;
 	/** 只读该位置之前的行；用于向更早翻页 */
 	readonly before?: SessionPosition | null;
-	/** 最多读多少行（取最新的 N 行）；缺省表示不限制 */
+	/** 只读该位置之后的行；用于向更新翻页 */
+	readonly after?: SessionPosition | null;
+	/** 翻页方向；缺省读最新窗口，`forward` 读最早窗口并向后翻页 */
+	readonly direction?: "forward" | "backward";
+	/** 最多读多少行；向后翻页取最早的 N 行，否则取最新的 N 行 */
 	readonly limit?: number | null;
 	/** 窗口的压缩消息体积预算；缺省用 {@link SESSION_TIMELINE_WINDOW_BYTE_BUDGET} */
 	readonly byteBudget?: number | null;
@@ -191,9 +200,11 @@ export interface SessionTimelineBatchOptions {
 
 interface SessionTimelineDescriptorRow extends SessionTimelineSourceRow {
 	readonly request_message_count: number | null;
+	/** 最终上游请求里的消息条数；未记录上游时为 null。 */
+	readonly upstream_message_count: number | null;
 }
 
-/** 时间线窗口参数：长会话只读最近一段，其余按 `before` 游标向更早翻页。 */
+/** 时间线窗口参数：长会话只读一段，其余按 `before`/`after` 游标翻页。 */
 export interface SessionTimelineWindowOptions {
 	/** 最多返回多少个已落库请求；null/undefined 表示读取整个会话 */
 	readonly limit?: number | null;
@@ -201,6 +212,10 @@ export interface SessionTimelineWindowOptions {
 	readonly byteBudget?: number | null;
 	/** 只读该位置之前的请求 */
 	readonly before?: SessionPosition | null;
+	/** 只读该位置之后的请求 */
+	readonly after?: SessionPosition | null;
+	/** 翻页方向；缺省从最新请求往前读，`forward` 从最早请求往后读 */
+	readonly direction?: "forward" | "backward";
 }
 
 interface SessionTimelinePayloadPlan {
@@ -283,9 +298,11 @@ function sessionTimelineWindowScanSelection() {
  * @param limit - 最多保留多少行
  * @param byteBudget - 压缩消息体积预算
  */
-export function selectTimelineWindow<
-	T extends { readonly request_id: string; readonly startTime: Date; readonly messages_bytes: number },
->(descRows: readonly T[], limit: number, byteBudget: number): { rows: T[]; hasMore: boolean; predecessor: T | null } {
+export function selectTimelineWindow<T extends { readonly request_id: string; readonly startTime: Date; readonly messages_bytes: number }>(
+	descRows: readonly T[],
+	limit: number,
+	byteBudget: number,
+): { rows: T[]; hasMore: boolean; predecessor: T | null } {
 	// 显式排序，调用方给的顺序不影响窗口边界（数据库按位置倒序返回，测试夹具常用升序）。
 	const ordered = [...descRows].sort((left, right) => compareTimelinePositions(right, left));
 	const rows: T[] = [];
@@ -303,6 +320,36 @@ export function selectTimelineWindow<
 	}
 	const predecessor = index < ordered.length ? ordered[index]! : null;
 	return { rows: rows.reverse(), hasMore: predecessor !== null, predecessor: predecessor };
+}
+
+/**
+ * 从按位置升序的候选行里切出最早的窗口：先按请求数，再按压缩后的字节预算。
+ *
+ * 与 {@link selectTimelineWindow} 对称，供「最早优先」从会话开头向后翻页；最新一行永远保留，
+ * 保证窗口不会为空。字节预算用 `pg_column_size` 判断，不读内容。
+ * @template T - 行类型，需带位置与压缩后的消息体积
+ * @param ascRows - 按 (startTime, request_id) 升序的候选行
+ * @param limit - 最多保留多少行
+ * @param byteBudget - 压缩消息体积预算
+ */
+export function selectForwardTimelineWindow<
+	T extends { readonly request_id: string; readonly startTime: Date; readonly messages_bytes: number },
+>(ascRows: readonly T[], limit: number, byteBudget: number): { rows: T[]; hasMore: boolean } {
+	const ordered = [...ascRows].sort(compareTimelinePositions);
+	const rows: T[] = [];
+	let usedBytes = 0;
+	let index = 0;
+	while (index < ordered.length && rows.length < limit) {
+		const row = ordered[index]!;
+		const bytes = Number.isFinite(row.messages_bytes) ? row.messages_bytes : 0;
+		if (rows.length > 0 && usedBytes + bytes > byteBudget) {
+			break;
+		}
+		rows.push(row);
+		usedBytes += bytes;
+		index += 1;
+	}
+	return { rows: rows, hasMore: index < ordered.length };
 }
 
 /**
@@ -346,9 +393,75 @@ async function readWindowedDescriptorRows(
 	return {
 		rows: rows,
 		hasMore: window.hasMore,
-		baselineMessageCount:
-			baselineRow && typeof baselineRow.request_message_count === "number" ? baselineRow.request_message_count : null,
+		baselineMessageCount: baselineRow ? effectiveTimelineMessageCount(baselineRow) : null,
 	};
+}
+
+/**
+ * 从会话开头读取窗口内的清单行，并取游标行的消息计数作为向后翻页的去重基线。
+ *
+ * 游标行是上一页最后一条请求，也是本页首行之前的紧邻行；只在体积允许时读取它的计数，
+ * 体积过大或行已不可见时返回 null，调用方退回有界尾部重扫。第一页没有游标，基线为 0。
+ * @param db - 数据库实例
+ * @param boundedClause - 快照上界内的会话范围
+ * @param rangeClause - 已限制的读取范围（含 `after` 游标）
+ * @param after - 上一页最后一条请求的位置；第一页为 null
+ * @param limit - 窗口内的最大请求数
+ * @param byteBudget - 压缩消息体积预算
+ */
+async function readForwardWindowedDescriptorRows(
+	db: NodePgDatabase<typeof schema>,
+	boundedClause: SQL,
+	rangeClause: SQL,
+	after: SessionPosition | null,
+	limit: number,
+	byteBudget: number,
+): Promise<{ rows: SessionTimelineDescriptorRow[]; hasMore: boolean; baselineMessageCount: number | null }> {
+	const scanRows = (await db
+		.select(sessionTimelineWindowScanSelection())
+		.from(liteLLM_SpendLogs)
+		.where(rangeClause)
+		.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
+		.limit(limit + 1)) as SessionTimelineWindowScanRow[];
+	const window = selectForwardTimelineWindow(scanRows, limit, byteBudget);
+	const windowRequestIds = window.rows.map((row) => row.request_id);
+	const descriptorRows =
+		windowRequestIds.length > 0
+			? ((await db
+					.select(sessionTimelineDescriptorSelection())
+					.from(liteLLM_SpendLogs)
+					.where(
+						and(rangeClause, inArray(liteLLM_SpendLogs.request_id, windowRequestIds)) as SQL,
+					)) as SessionTimelineDescriptorRow[])
+			: [];
+	const byRequestId = new Map(descriptorRows.map((row) => [row.request_id, row]));
+	const rows = windowRequestIds
+		.map((requestId) => byRequestId.get(requestId))
+		.filter((row): row is SessionTimelineDescriptorRow => row !== undefined);
+	let baselineMessageCount: number | null = 0;
+	if (after) {
+		const cursorScanRows = (await db
+			.select(sessionTimelineWindowScanSelection())
+			.from(liteLLM_SpendLogs)
+			.where(and(boundedClause, eq(liteLLM_SpendLogs.request_id, after.requestId)) as SQL)
+			.limit(1)) as SessionTimelineWindowScanRow[];
+		const cursorRow = cursorScanRows[0];
+		const readableCursor =
+			cursorRow !== undefined &&
+			(!Number.isFinite(cursorRow.messages_bytes) || cursorRow.messages_bytes <= SESSION_TIMELINE_BASELINE_MAX_BYTES);
+		if (readableCursor) {
+			const baselineRows = (await db
+				.select(sessionTimelineDescriptorSelection())
+				.from(liteLLM_SpendLogs)
+				.where(and(boundedClause, eq(liteLLM_SpendLogs.request_id, after.requestId)) as SQL)
+				.limit(1)) as SessionTimelineDescriptorRow[];
+			const baselineRow = baselineRows[0];
+			baselineMessageCount = baselineRow ? effectiveTimelineMessageCount(baselineRow) : null;
+		} else {
+			baselineMessageCount = null;
+		}
+	}
+	return { rows: rows, hasMore: window.hasMore, baselineMessageCount: baselineMessageCount };
 }
 
 /**
@@ -383,7 +496,7 @@ export async function readSessionTimelineBatch(
 		options.recordTiming?.("total", countStartedAt);
 		return {
 			rows: [],
-			position: options.since ?? options.before ?? null,
+			position: options.since ?? options.before ?? options.after ?? null,
 			total: 0,
 			seenMessageCount: options.seenMessageCount ?? 0,
 			oldest: null,
@@ -391,14 +504,20 @@ export async function readSessionTimelineBatch(
 		};
 	}
 	const boundedClause = and(baseClause, sessionSnapshotClause(snapshot)) as SQL;
-	const countRows = await db.select({ count: sql<number>`COUNT(*)` }).from(liteLLM_SpendLogs).where(boundedClause);
+	const countRows = await db
+		.select({ count: sql<number>`COUNT(*)` })
+		.from(liteLLM_SpendLogs)
+		.where(boundedClause);
 	const total = toFiniteNumber(countRows[0]?.count);
 	options.recordTiming?.("total", countStartedAt);
+	const direction: "forward" | "backward" = options.direction === "forward" || Boolean(options.after) ? "forward" : "backward";
 	const rangeClause = options.since
 		? (and(boundedClause, sessionCursorClause(options.since)) as SQL)
 		: options.before
 			? (and(boundedClause, sessionBeforeClause(options.before)) as SQL)
-			: boundedClause;
+			: options.after
+				? (and(boundedClause, sessionCursorClause(options.after)) as SQL)
+				: boundedClause;
 	// 增量读取只追新行，不需要窗口；一次性读取用窗口把整段累积快照挡在数据库里。
 	const windowed = !options.since && options.limit !== null && options.limit !== undefined;
 
@@ -407,12 +526,22 @@ export async function readSessionTimelineBatch(
 	let windowHasMore = false;
 	let windowBaselineMessageCount: number | null = null;
 	if (windowed) {
-		const windowedRows = await readWindowedDescriptorRows(
-			db,
-			rangeClause,
-			options.limit as number,
-			options.byteBudget ?? SESSION_TIMELINE_WINDOW_BYTE_BUDGET,
-		);
+		const windowedRows =
+			direction === "forward"
+				? await readForwardWindowedDescriptorRows(
+						db,
+						boundedClause,
+						rangeClause,
+						options.after ?? null,
+						options.limit as number,
+						options.byteBudget ?? SESSION_TIMELINE_WINDOW_BYTE_BUDGET,
+					)
+				: await readWindowedDescriptorRows(
+						db,
+						rangeClause,
+						options.limit as number,
+						options.byteBudget ?? SESSION_TIMELINE_WINDOW_BYTE_BUDGET,
+					);
 		rawDescriptorRows = windowedRows.rows;
 		windowHasMore = windowedRows.hasMore;
 		windowBaselineMessageCount = windowedRows.baselineMessageCount;
@@ -429,8 +558,7 @@ export async function readSessionTimelineBatch(
 	const auxiliaryCandidateRequestIds = rawDescriptorRows
 		.filter(
 			(row) =>
-				(typeof row.request_message_count === "number" && row.request_message_count <= 2) ||
-				row.request_message_count === null,
+				(typeof row.request_message_count === "number" && row.request_message_count <= 2) || row.request_message_count === null,
 		)
 		.map((row) => row.request_id);
 	const classificationByRequestId = new Map<string, Partial<SessionTimelineSourceRow>>();
@@ -464,7 +592,7 @@ export async function readSessionTimelineBatch(
 		(requestId) => (payloadPlan.indicesByRequestId.get(requestId)?.length ?? 0) > 0,
 	);
 	const fallbackPayloadRequestIds = descriptorRows
-		.filter((row) => row.request_message_count === null)
+		.filter((row) => row.internal_call_type !== "builtin_capability" && row.request_message_count === null)
 		.map((row) => row.request_id);
 	const payloadRequestIds = Array.from(new Set([...compactArrayPayloadRequestIds, ...fallbackPayloadRequestIds]));
 	options.recordTiming?.("plan", planningStartedAt);
@@ -491,7 +619,8 @@ export async function readSessionTimelineBatch(
 	options.recordTiming?.("payload", payloadStartedAt);
 
 	const compactRows = descriptorRows.map((row): SessionTimelineSourceRow => {
-		const messageCount = row.request_message_count;
+		const messageCount = effectiveTimelineMessageCount(row);
+		const upstream = typeof row.upstream_message_count === "number" && row.upstream_message_count > 0;
 		if (messageCount === null || messageCount === undefined) {
 			return {
 				...row,
@@ -504,6 +633,7 @@ export async function readSessionTimelineBatch(
 			request_message_occurrences: payloadPlan.occurrencesByRequestId.get(row.request_id) ?? [],
 			request_message_delta_flags: payloadPlan.deltaFlagsByRequestId.get(row.request_id) ?? [],
 			request_payload_available: messageCount > 0,
+			request_payload_upstream: upstream || undefined,
 		};
 	});
 	const hydrationStartedAt = performance.now();
@@ -513,7 +643,7 @@ export async function readSessionTimelineBatch(
 	const lastDescriptorRow = rawDescriptorRows.at(-1);
 	const position: SessionPosition | null = lastDescriptorRow
 		? { startTime: new Date(lastDescriptorRow.startTime), requestId: lastDescriptorRow.request_id }
-		: (options.since ?? options.before ?? null);
+		: (options.since ?? options.before ?? options.after ?? null);
 	const firstDescriptorRow = rawDescriptorRows[0];
 	const oldest: SessionPosition | null = firstDescriptorRow
 		? { startTime: new Date(firstDescriptorRow.startTime), requestId: firstDescriptorRow.request_id }
@@ -534,7 +664,10 @@ export async function readSessionTimelineBatch(
  * @param scope - 读取范围
  */
 export async function readSettledSessionCount(db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope): Promise<number> {
-	const rows = await db.select({ count: sql<number>`COUNT(*)` }).from(liteLLM_SpendLogs).where(sessionBaseClause(scope));
+	const rows = await db
+		.select({ count: sql<number>`COUNT(*)` })
+		.from(liteLLM_SpendLogs)
+		.where(sessionBaseClause(scope));
 	return toFiniteNumber(rows[0]?.count);
 }
 
@@ -578,7 +711,10 @@ export async function readInProgressSessionRows(
 		.from(liteLLM_ActiveRequests)
 		.where(sessionActiveClause(scope))
 		.orderBy(sql`${liteLLM_ActiveRequests.startTime} ASC, ${liteLLM_ActiveRequests.request_id} ASC`);
-	return rows.map((row): SessionTimelineSourceRow => buildInProgressTimelineRow(row));
+	// 在途行正文按内容寻址存块：先组装回完整请求体，分类判定与负载装配才看得到 messages/tools/system。
+	// 块在注册提交后已进入进程缓存，正常路径不会多一次查询。
+	const hydratedRows = await hydrateSpendLogRows(db, rows);
+	return hydratedRows.map((row): SessionTimelineSourceRow => buildInProgressTimelineRow(row));
 }
 
 /**
@@ -589,10 +725,7 @@ export async function readInProgressSessionRows(
  * @param db - 数据库实例
  * @param scope - 读取范围
  */
-export async function readInProgressSessionRevision(
-	db: NodePgDatabase<typeof schema>,
-	scope: SessionTimelineScope,
-): Promise<string> {
+export async function readInProgressSessionRevision(db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope): Promise<string> {
 	const rows = await db
 		.select({
 			count: sql<number>`COUNT(*)`,
@@ -618,10 +751,29 @@ interface SessionActiveRequestSourceRow {
 }
 
 /**
+ * 从 `proxy_server_request` 里取出已补写的最终上游请求体。
+ *
+ * 在途行没有块编码；只有真正带有消息的上游体才算可用，否则继续展示下游请求。
+ * @param proxyServerRequest - 在途行保存的请求结构
+ */
+function activeUpstreamRequestBody(proxyServerRequest: unknown): Record<string, unknown> | undefined {
+	const proxy = isRecord(proxyServerRequest) ? proxyServerRequest : undefined;
+	const upstream = isRecord(proxy?.["upstream_request"]) ? proxy["upstream_request"] : undefined;
+	const body = isRecord(upstream?.["body"]) ? upstream["body"] : undefined;
+	if (!body) {
+		return undefined;
+	}
+	const messages = body["messages"];
+	const input = body["input"];
+	return (Array.isArray(messages) && messages.length > 0) || (Array.isArray(input) && input.length > 0) ? body : undefined;
+}
+
+/**
  * 把在途行转换成时间线行。
  *
  * 在途行没有最终 spend/状态；响应与用量来自最近一次 checkpoint，`updated_at` 当作当前结束
- * 位置，使进行中的事件时间戳与结算后的行保持同一时间轴。
+ * 位置，使进行中的事件时间戳与结算后的行保持同一时间轴。请求消息优先取已补写的上游请求，
+ * 与已落库行使用同一套展示语义。
  * @param row - ActiveRequests 行
  */
 function buildInProgressTimelineRow(row: SessionActiveRequestSourceRow): SessionTimelineSourceRow {
@@ -634,6 +786,7 @@ function buildInProgressTimelineRow(row: SessionActiveRequestSourceRow): Session
 			: undefined;
 	const usage = readInProgressUsage(checkpoint);
 	const response = checkpoint?.["response"] ?? null;
+	const upstreamBody = activeUpstreamRequestBody(row.proxy_server_request);
 	return {
 		request_id: row.request_id,
 		call_type: row.call_type,
@@ -647,8 +800,9 @@ function buildInProgressTimelineRow(row: SessionActiveRequestSourceRow): Session
 		status: "in_progress",
 		metadata_status: "in_progress",
 		error_information: null,
-		request_payload: row.proxy_server_request,
+		request_payload: upstreamBody ?? row.proxy_server_request,
 		request_payload_available: true,
+		request_payload_upstream: upstreamBody !== undefined || undefined,
 		response_payload: response,
 		response_payload_available: response !== null,
 		...classifyActiveRequest(row.proxy_server_request),
@@ -679,9 +833,7 @@ function classifyActiveRequest(proxyServerRequest: unknown): Partial<SessionTime
 	const firstTool = isRecord(tools?.[0]) ? tools[0] : undefined;
 	return {
 		request_client:
-			headers["x-app"] === CLAUDE_CODE_CLI_APP && userAgent.startsWith(CLAUDE_CODE_CLI_USER_AGENT_PREFIX)
-				? "claude_code"
-				: null,
+			headers["x-app"] === CLAUDE_CODE_CLI_APP && userAgent.startsWith(CLAUDE_CODE_CLI_USER_AGENT_PREFIX) ? "claude_code" : null,
 		request_message_count: messages?.length ?? null,
 		request_system_count: system?.length ?? null,
 		request_tool_count: tools?.length ?? null,
@@ -696,8 +848,7 @@ function classifyActiveRequest(proxyServerRequest: unknown): Partial<SessionTime
  * @param block - system 块
  */
 function promptPrefix(block: unknown): string | null {
-	const text =
-		typeof block === "string" ? block : isRecord(block) && typeof block["text"] === "string" ? block["text"] : null;
+	const text = typeof block === "string" ? block : isRecord(block) && typeof block["text"] === "string" ? block["text"] : null;
 	return text === null ? null : text.slice(0, CLASSIFICATION_PROMPT_PREFIX_LENGTH);
 }
 
@@ -707,6 +858,102 @@ function promptPrefix(block: unknown): string | null {
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 时间线响应中单张内联图片允许的最大字符数。
+ *
+ * 工具结果常把截图以 base64 内联在消息里，一次 50 条窗口的响应可达数十 MB；首屏只需要
+ * 可读的对话，原图仍保留在日志详情中，因此超过该阈值的时间线图片改为占位。
+ */
+export const SESSION_TIMELINE_MAX_INLINE_IMAGE_CHARS = 256 * 1024;
+const SESSION_TIMELINE_OMITTED_IMAGE_MESSAGE = "图片过大，时间线中已省略原图。";
+
+/**
+ * 压缩单个时间线部分，只改传输形态，不改事件语义。
+ *
+ * 体积主要来自两处：图片的 base64 文本；工具结果的原始 `data` 与结构化 `parts` 表达同一份
+ * 内容。图片超过阈值时换为占位，已有结构化 `parts` 时省略重复的原始 `data`。
+ * @param part - 原始内容块
+ */
+function compactSessionTimelinePart(part: SessionTimelinePart): SessionTimelinePart {
+	const nestedParts = part.parts?.map(compactSessionTimelinePart);
+	const nestedChanged = part.parts?.some((child, index) => nestedParts?.[index] !== child) ?? false;
+	const source = isRecord(part.data) ? part.data.src : undefined;
+	const omitImage = part.kind === "image" && typeof source === "string" && source.length > SESSION_TIMELINE_MAX_INLINE_IMAGE_CHARS;
+	const dropData = part.kind === "tool_result" && part.data !== undefined && (nestedParts?.length ?? 0) > 0;
+	if (!nestedChanged && !omitImage && !dropData) {
+		return part;
+	}
+	const { data: _data, ...rest } = part;
+	if (omitImage) {
+		return {
+			...rest,
+			text: SESSION_TIMELINE_OMITTED_IMAGE_MESSAGE,
+			data: { truncated: true },
+			...(nestedParts ? { parts: nestedParts } : {}),
+		};
+	}
+	return { ...rest, ...(nestedParts ? { parts: nestedParts } : {}) };
+}
+
+/**
+ * 已压缩事件的缓存：已落库事件在多次快照/增量间保持同一引用，避免每帧重新扫描大内容块。
+ */
+const compactedTimelineEvents = new WeakMap<SessionTimelineItem, SessionTimelineItem>();
+
+/**
+ * 压缩一批时间线事件的内容块。
+ * @param events - 原始事件
+ */
+function compactSessionTimelineEvents(events: readonly SessionTimelineItem[]): SessionTimelineItem[] {
+	return events.map((event) => {
+		const cached = compactedTimelineEvents.get(event);
+		if (cached) {
+			return cached;
+		}
+		if (!event.parts?.length) {
+			compactedTimelineEvents.set(event, event);
+			return event;
+		}
+		const parts = event.parts.map(compactSessionTimelinePart);
+		const compacted = parts.some((part, index) => part !== event.parts?.[index]) ? { ...event, parts: parts } : event;
+		compactedTimelineEvents.set(event, compacted);
+		return compacted;
+	});
+}
+
+/**
+ * 压缩时间线响应中重复或过大的内容，降低长会话的传输、解析与首屏渲染成本。
+ * @param payload - 完整装配结果
+ */
+export function compactSessionTimelinePayload(payload: SessionTimelinePayload): SessionTimelinePayload {
+	return {
+		...payload,
+		data: compactSessionTimelineEvents(payload.data),
+		active_requests: payload.active_requests.map((request) => ({
+			...request,
+			events: compactSessionTimelineEvents(request.events),
+		})),
+	};
+}
+
+/**
+ * 时间线实际读取的消息条数。
+ *
+ * 请求消息优先来自最终上游请求，因此累计快照的推进也应按上游条数计算；只有上游未记录
+ * （或没有可渲染消息）时才回退到下游 `messages` 列。
+ * @param row - 清单行或进行中的行
+ */
+function effectiveTimelineMessageCount(row: {
+	readonly request_message_count?: number | null;
+	readonly upstream_message_count?: number | null;
+}): number | null {
+	const upstream = row.upstream_message_count;
+	if (typeof upstream === "number" && Number.isSafeInteger(upstream) && upstream > 0) {
+		return upstream;
+	}
+	return row.request_message_count ?? null;
 }
 
 /**
@@ -729,7 +976,14 @@ function planSessionTimelinePayloads(
 	const deltaFlagsByRequestId = new Map<string, readonly boolean[]>();
 
 	for (const row of rows) {
-		const messageCount = row.request_message_count;
+		// 内置能力调用只保留审计标记，消息已经由父请求的最终上游请求带回，不再读取。
+		if (row.internal_call_type === "builtin_capability") {
+			indicesByRequestId.set(row.request_id, []);
+			occurrencesByRequestId.set(row.request_id, []);
+			deltaFlagsByRequestId.set(row.request_id, []);
+			continue;
+		}
+		const messageCount = effectiveTimelineMessageCount(row);
 		if (messageCount === null || !Number.isSafeInteger(messageCount) || messageCount < 0) {
 			continue;
 		}
@@ -768,10 +1022,7 @@ function planSessionTimelinePayloads(
 			// tail. Only positions at/after the old high-water mark are flagged
 			// as genuinely new occurrences.
 			const selectedStart = Math.max(0, seenMessageCount - 2);
-			const selectedIndices = Array.from(
-				{ length: messageCount - selectedStart },
-				(_unused, offset) => selectedStart + offset,
-			);
+			const selectedIndices = Array.from({ length: messageCount - selectedStart }, (_unused, offset) => selectedStart + offset);
 			indicesByRequestId.set(row.request_id, selectedIndices);
 			occurrencesByRequestId.set(row.request_id, []);
 			deltaFlagsByRequestId.set(
@@ -803,6 +1054,123 @@ function planSessionTimelinePayloads(
 		deltaFlagsByRequestId: deltaFlagsByRequestId,
 		seenMessageCount: seenMessageCount,
 	};
+}
+
+/**
+ * 最终上游请求体：传输层记录的最后一次真实交换。
+ *
+ * 上游请求只在开启 `store_upstream_logs_in_spend_logs` 时落库；未记录时所有读取都回退到
+ * 客户端请求快照，时间线仍能工作，只是看不到模型实际收到的内部处理结果。
+ */
+function sessionTimelineUpstreamBodySql(): SQL {
+	return sql`${liteLLM_SpendLogs.proxy_server_request}->'upstream_request'->'body'`;
+}
+
+/**
+ * 上游请求里可渲染的消息条数。
+ *
+ * 与下游 `messages` 列一样，数组可能内联、已编码成引用列表，或在行里写成 `"$messages"`
+ * 表示与列根引用相同。没有上游消息时返回 null，调用方据此回退到下游计数。
+ */
+function sessionTimelineUpstreamMessageCountSql(): SQL<number | null> {
+	const messages = liteLLM_SpendLogs.messages;
+	const body = sessionTimelineUpstreamBodySql();
+	return sql<number | null>`
+		CASE
+			WHEN jsonb_typeof(${body} -> 'messages') = 'array' THEN jsonb_array_length(${body} -> 'messages')
+			WHEN jsonb_typeof(${body} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
+				THEN jsonb_array_length(${body} -> ${SPEND_LOG_MESSAGE_REF_KEY})
+			WHEN ${body} ->> ${SPEND_LOG_MESSAGE_REF_KEY} = ${SPEND_LOG_SAME_AS_MESSAGES} THEN
+				CASE
+					WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
+					WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
+						THEN jsonb_array_length(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY})
+					ELSE NULL
+				END
+			WHEN jsonb_typeof(${body} -> 'input') = 'array' THEN jsonb_array_length(${body} -> 'input')
+			WHEN jsonb_typeof(${body} -> ${SPEND_LOG_INPUT_REF_KEY}) = 'array'
+				THEN jsonb_array_length(${body} -> ${SPEND_LOG_INPUT_REF_KEY})
+			ELSE NULL
+		END
+	`;
+}
+
+/** 是否以最终上游请求作为请求消息来源；与计数 SQL 共用同一判定。 */
+function sessionTimelineUsesUpstreamSql(): SQL {
+	const count = sessionTimelineUpstreamMessageCountSql();
+	return sql`COALESCE(${count}, 0) > 0`;
+}
+
+/**
+ * 从消息数组或块引用列表中取出时间线选中的序号。
+ *
+ * 内联数组直接按序号过滤；引用列表只 join 选中的块，避免长会话为读一段尾巴把整段历史
+ * 都取出来。`"$messages"` 引用与下游列相同，按列根引用展开。
+ * @param arrayExpr - 内联消息数组表达式
+ * @param refsExpr - 块引用列表表达式
+ * @param selectedIndicesJson - request_id → 选中序号数组的 JSON
+ */
+function sessionTimelineSelectedMessagesSql(arrayExpr: SQL, refsExpr: SQL, selectedIndicesJson: string): SQL {
+	const requestId = liteLLM_SpendLogs.request_id;
+	const blocks = liteLLM_SpendLogBlocks;
+	// 引用列表也可能是 `"$messages"` 字符串。jsonb 与 text 参数直接比较会被 PostgreSQL
+	// 解析成 `text::jsonb`，把哨兵值当成 JSON 文本；先用 `#>> '{}'` 取出标量文本再比较。
+	const refs = sql`CASE
+		WHEN (${refsExpr}) #>> '{}' = ${SPEND_LOG_SAME_AS_MESSAGES}
+			THEN ${liteLLM_SpendLogs.messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}
+		ELSE ${refsExpr}
+	END`;
+	// 规划器只取尾部一小段或整段消息。按选中序号反向取数组元素 / 块引用，
+	// 避免把整段历史 refs 展开后再逐项过滤后 join 所有块；长会话下这是 payload 阶段的主要浪费。
+	const selectedIndexes = sql`(
+		SELECT (entry.value #>> '{}')::int AS idx
+		FROM jsonb_array_elements(${selectedIndicesJson}::jsonb -> ${requestId}) WITH ORDINALITY AS entry(value, ordinality)
+	) AS selected_index`;
+	return sql`
+		CASE
+			WHEN jsonb_typeof(${arrayExpr}) = 'array' THEN COALESCE((
+				SELECT jsonb_agg(item.value ORDER BY selected_index.idx)
+				FROM ${selectedIndexes}
+				CROSS JOIN LATERAL (SELECT ${arrayExpr} -> selected_index.idx AS value) AS item
+				WHERE item.value IS NOT NULL
+			), '[]'::jsonb)
+			WHEN jsonb_typeof(${refs}) = 'array' THEN COALESCE((
+				SELECT jsonb_agg(
+					COALESCE(${blocks.payload}, jsonb_build_object(${SPEND_LOG_REF_MISSING_KEY}::text, ref.ref_id))
+					ORDER BY selected_index.idx
+				)
+				FROM ${selectedIndexes}
+				CROSS JOIN LATERAL (SELECT ${refs} ->> selected_index.idx AS ref_id) AS ref
+				LEFT JOIN ${blocks} ON ${blocks.blockId} = ref.ref_id
+				WHERE ref.ref_id IS NOT NULL
+			), '[]'::jsonb)
+			ELSE NULL
+		END
+	`;
+}
+
+/**
+ * 上游请求的 system 段：可能是内联数组，也可能是整数组块引用。
+ * @returns 无法还原时返回 null，由解析器忽略
+ */
+function sessionTimelineUpstreamSystemSql(): SQL {
+	const body = sessionTimelineUpstreamBodySql();
+	const blocks = liteLLM_SpendLogBlocks;
+	return sql`
+		CASE
+			WHEN jsonb_typeof(${body} -> 'system') IN ('array', 'string', 'object')
+				THEN ${body} -> 'system'
+			WHEN jsonb_typeof(${body} -> ${SPEND_LOG_SYSTEM_REF_KEY}) = 'string' THEN COALESCE((
+				SELECT ${blocks.payload}
+				FROM ${blocks}
+				WHERE ${blocks.blockId} = ${body} ->> ${SPEND_LOG_SYSTEM_REF_KEY}
+			), jsonb_build_array(jsonb_build_object(
+				${SPEND_LOG_REF_MISSING_KEY}::text,
+				${body} ->> ${SPEND_LOG_SYSTEM_REF_KEY}
+			)))
+			ELSE NULL
+		END
+	`;
 }
 
 /**
@@ -851,6 +1219,7 @@ function sessionTimelineDescriptorSelection() {
 				ELSE NULL
 			END
 		`,
+		upstream_message_count: sessionTimelineUpstreamMessageCountSql(),
 		response_payload: liteLLM_SpendLogs.response,
 		response_payload_available: sql<boolean>`
 			${liteLLM_SpendLogs.response} IS NOT NULL
@@ -971,11 +1340,26 @@ function sessionTimelineAuxiliarySelection() {
 
 /**
  * Fetch only the message indexes selected from the compact manifest.
+ *
+ * 请求侧优先返回最终上游请求的 message：内部处理（能力注入、协议转换、私有工具循环）
+ * 会改写模型实际收到的输入，客户端快照看不到这些变化。响应侧仍只取下下游 `response`，
+ * 两者共同组成用户在时间线里看到的对话。上游未记录或没有消息时保持原有下游读取路径。
  * @param selectedIndicesJson - request_id to zero-based message indexes.
  */
 function sessionTimelinePayloadSelection(selectedIndicesJson: string) {
 	const proxy = liteLLM_SpendLogs.proxy_server_request;
 	const messages = liteLLM_SpendLogs.messages;
+	const upstreamBody = sessionTimelineUpstreamBodySql();
+	const upstreamMessages = sessionTimelineSelectedMessagesSql(
+		sql`${upstreamBody} -> 'messages'`,
+		sql`${upstreamBody} -> ${SPEND_LOG_MESSAGE_REF_KEY}`,
+		selectedIndicesJson,
+	);
+	const upstreamInput = sessionTimelineSelectedMessagesSql(
+		sql`${upstreamBody} -> 'input'`,
+		sql`${upstreamBody} -> ${SPEND_LOG_INPUT_REF_KEY}`,
+		selectedIndicesJson,
+	);
 	const fallbackPayload = sql<unknown>`
 		CASE
 			WHEN jsonb_typeof(${proxy}) = 'object' AND ${proxy}->'body' IS NOT NULL THEN ${proxy}->'body'
@@ -986,6 +1370,12 @@ function sessionTimelinePayloadSelection(selectedIndicesJson: string) {
 		request_id: liteLLM_SpendLogs.request_id,
 		request_payload: sql<unknown>`
 			CASE
+				WHEN ${sessionTimelineUsesUpstreamSql()} THEN jsonb_build_object(
+					'messages', NULLIF(${upstreamMessages}, '[]'::jsonb),
+					'input', ${upstreamInput},
+					'system', ${sessionTimelineUpstreamSystemSql()},
+					'instructions', ${upstreamBody} -> 'instructions'
+				)
 				WHEN jsonb_typeof(${messages}) = 'array' THEN COALESCE((
 					SELECT jsonb_agg(timeline_item.value ORDER BY timeline_item.ordinality)
 					FROM jsonb_array_elements(${messages}) WITH ORDINALITY AS timeline_item(value, ordinality)
@@ -1023,19 +1413,23 @@ function sessionTimelinePayloadSelection(selectedIndicesJson: string) {
 }
 
 function hasTimelinePayload(value: unknown): boolean {
-	if (value === null || value === undefined) {return false;}
+	if (value === null || value === undefined) {
+		return false;
+	}
 	if (typeof value === "string") {
 		const trimmed = value.trim();
 		return trimmed !== "" && trimmed !== "null" && trimmed !== "{}" && trimmed !== "[]";
 	}
-	if (Array.isArray(value)) {return value.length > 0;}
-	if (typeof value === "object") {return Object.keys(value).length > 0;}
+	if (Array.isArray(value)) {
+		return value.length > 0;
+	}
+	if (typeof value === "object") {
+		return Object.keys(value).length > 0;
+	}
 	return true;
 }
 
-async function hydrateTimelineRowsFromColdStorage(
-	rows: readonly SessionTimelineSourceRow[],
-): Promise<SessionTimelineSourceRow[]> {
+async function hydrateTimelineRowsFromColdStorage(rows: readonly SessionTimelineSourceRow[]): Promise<SessionTimelineSourceRow[]> {
 	return mapWithConcurrency(rows, COLD_STORAGE_BATCH_CONCURRENCY, async (row) => {
 		const requestPayloadAvailable = row.request_payload_available ?? hasTimelinePayload(row.request_payload);
 		const responsePayloadAvailable = row.response_payload_available ?? hasTimelinePayload(row.response_payload);
@@ -1046,13 +1440,12 @@ async function hydrateTimelineRowsFromColdStorage(
 			row.request_id,
 			new Date(row.startTime),
 			new Date(row.endTime),
-			(_coldStorageLogger, error) =>
-				logger.warn(`/spend/logs/session/timeline 冷存储回查失败: ${(error as Error).message}`),
+			(_coldStorageLogger, error) => logger.warn(`/spend/logs/session/timeline 冷存储回查失败: ${(error as Error).message}`),
 		);
-		if (!payload) {return row;}
-		const coldRequestPayload = hasTimelinePayload(payload.proxy_server_request)
-			? payload.proxy_server_request
-			: payload.messages;
+		if (!payload) {
+			return row;
+		}
+		const coldRequestPayload = hasTimelinePayload(payload.proxy_server_request) ? payload.proxy_server_request : payload.messages;
 		return {
 			...row,
 			request_payload: requestPayloadAvailable ? row.request_payload : coldRequestPayload,
@@ -1185,17 +1578,21 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 
 	/** 重新读取整个已落库部分；首次快照与乱序落库时的一致性重建都走这里。 */
 	private async _reloadSettled(): Promise<void> {
+		const forward = this._window.direction === "forward" || Boolean(this._window.after);
 		const batch = await this._readBatch(this._db, this._scope, {
 			limit: this._window.limit ?? null,
 			byteBudget: this._window.byteBudget ?? null,
-			before: this._window.before ?? null,
+			before: forward ? null : (this._window.before ?? null),
+			after: forward ? (this._window.after ?? null) : null,
+			direction: forward ? "forward" : "backward",
 			recordTiming: this._recordTiming,
 		});
 		this._windowInfo = {
 			returned_requests: batch.rows.length,
 			total_requests: batch.total,
 			has_more: batch.hasMore,
-			before: batch.hasMore && batch.oldest ? encodeSessionPosition(batch.oldest) : null,
+			before: !forward && batch.hasMore && batch.oldest ? encodeSessionPosition(batch.oldest) : null,
+			after: batch.position ? encodeSessionPosition(batch.position) : null,
 			limit: this._window.limit ?? null,
 		};
 		this._settledBuilder = new SessionTimelineBuilder({ includeAuxiliary: this._scope.includeAuxiliary });
@@ -1273,11 +1670,7 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 		}
 		const pending = built.data.filter((event) => !hydratedById.has(event.id));
 		if (pending.length > 0) {
-			const hydrated = await hydrateSessionTimelineImages(
-				{ data: pending, summary: built.summary },
-				keyRows,
-				this._findImages,
-			);
+			const hydrated = await hydrateSessionTimelineImages({ data: pending, summary: built.summary }, keyRows, this._findImages);
 			for (const event of hydrated.data) {
 				hydratedById.set(event.id, event);
 			}
@@ -1291,7 +1684,7 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 	private async _compose(): Promise<SessionTimelinePayload> {
 		const settled = await this._settledTimeline();
 		if (this._activeRows.length === 0) {
-			return { data: settled.data, summary: settled.summary, active_requests: [] };
+			return compactSessionTimelinePayload({ data: settled.data, summary: settled.summary, active_requests: [] });
 		}
 		const overlay = this._settledBuilder.fork();
 		const activeIds = new Set<string>();
@@ -1323,7 +1716,7 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 				events: await this._hydrateActiveEvents(row, events, overlaid.summary),
 			});
 		}
-		return { data: settled.data, summary: overlaid.summary, active_requests: activeRequests };
+		return compactSessionTimelinePayload({ data: settled.data, summary: overlaid.summary, active_requests: activeRequests });
 	}
 
 	/**
@@ -1364,8 +1757,7 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 		}
 		const removed = [...this._publishedSignatures.keys()].filter((id) => !nextSignatures.has(id));
 		const order = payload.data.map((event) => event.id);
-		const orderChanged =
-			order.length !== this._publishedOrder.length || order.some((id, index) => id !== this._publishedOrder[index]);
+		const orderChanged = order.length !== this._publishedOrder.length || order.some((id, index) => id !== this._publishedOrder[index]);
 		const activeSignature = this._activeSignature(payload.active_requests);
 		const summarySignature = JSON.stringify(payload.summary);
 		if (

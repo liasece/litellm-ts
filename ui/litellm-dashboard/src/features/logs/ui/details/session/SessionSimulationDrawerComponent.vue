@@ -4,7 +4,12 @@ import type { SessionGroupRef } from "../../../support/LogsModels";
 import type { SessionTimelineEvent } from "../../../support/SessionTimelineModels";
 import { createSessionTimelineStore } from "../../../stores/SessionTimelineStore";
 import { formatSessionKey } from "../../../logic/SessionTimelineContentLogic";
-import { keepsTimelineScrollAnchor, reachesTimelineEarlierEnd, timelineAnchorShift } from "../../../logic/SessionTimelineScrollLogic";
+import {
+	keepsTimelineScrollAnchor,
+	reachesTimelineEarlierEnd,
+	reachesTimelineNewerEnd,
+	timelineAnchorShift,
+} from "../../../logic/SessionTimelineScrollLogic";
 import { useMoneyFormatter } from "../../../../platform/stores/PriceDisplayStore";
 import UiDrawer from "../../../../platform/ui/UiDrawer.vue";
 import UiButton from "../../../../platform/ui/UiButton.vue";
@@ -14,7 +19,8 @@ import UiAlert from "../../../../platform/ui/UiAlert.vue";
 import UiSpinner from "../../../../platform/ui/UiSpinner.vue";
 import UiEmptyState from "../../../../platform/ui/UiEmptyState.vue";
 import UiLucideIcon from "../../../../platform/ui/UiLucideIcon.vue";
-import SessionTimelineEventContentComponent from "./SessionTimelineEventContentComponent.vue";
+import ModelName from "../../../../providers/ui/ModelNameComponent.vue";
+import SessionTimelineLazyContentComponent from "./SessionTimelineLazyContentComponent.vue";
 import "./SessionTimelineStyles.css";
 import "./SessionContextStyles.css";
 const props = defineProps<{ open: boolean; sessionGroup: SessionGroupRef; teamId?: string }>();
@@ -119,26 +125,33 @@ function restoreScrollAnchor() {
 	}
 }
 /**
- * 滚到「更早」的一端就直接取下一页，取代只靠面板标题旁按钮的手动翻页。
+ * 滚到当前排列对应的分页端就直接取下一页，取代只靠面板标题旁按钮的手动翻页。
+ *
+ * 最新优先向更早翻页（列表末尾），最早优先向更新翻页（列表末尾）：两者的读取方向相反，
+ * 所以按当前排序选择游标和触发判定。
  * @param event - 抽屉内容容器的滚动事件
  */
-function loadEarlierWhenScrolled(event: Event) {
+function loadPageWhenScrolled(event: Event) {
 	const element = event.currentTarget as HTMLElement;
-	if (state.loadingEarlier || !store.canLoadEarlier.value) return;
 	const metrics = {
 		newestFirst: state.newestFirst,
 		scrollTop: element.scrollTop,
 		clientHeight: element.clientHeight,
 		scrollHeight: element.scrollHeight,
 	};
-	if (!reachesTimelineEarlierEnd(metrics)) return;
-	void store.loadEarlier();
+	if (state.newestFirst) {
+		if (state.loadingEarlier || !store.canLoadEarlier.value || !reachesTimelineEarlierEnd(metrics)) return;
+		void store.loadEarlier();
+		return;
+	}
+	if (state.loadingLater || !store.canLoadLater.value || !reachesTimelineNewerEnd(metrics)) return;
+	void store.loadLater();
 }
 onMounted(() => {
 	scrollBody = root.value?.closest<HTMLElement>(".ui-drawer__body") ?? null;
 	if (!scrollBody) return;
 	const body = scrollBody,
-		listener = (event: Event) => loadEarlierWhenScrolled(event);
+		listener = (event: Event) => loadPageWhenScrolled(event);
 	body.addEventListener("scroll", listener, { passive: true });
 	stopScroll = () => body.removeEventListener("scroll", listener);
 });
@@ -213,13 +226,18 @@ function date(value: string) {
 						><strong>{{ (summary?.duration_seconds ?? 0).toFixed(2) }}s</strong>
 					</div>
 					<div class="ld-inline">
-						<UiTag v-if="state.streaming" color="processing" data-testid="session-simulation-streaming">实时更新</UiTag
-						><UiTag
-							v-if="(summary?.in_progress_request_count ?? state.response?.active_requests?.length ?? 0) > 0"
+						<UiTag v-if="state.streaming && state.newestFirst" color="processing" data-testid="session-simulation-streaming"
+							>实时更新</UiTag
+						>
+						<UiTag
+							v-if="
+								state.newestFirst &&
+								(summary?.in_progress_request_count ?? state.response?.active_requests?.length ?? 0) > 0
+							"
 							color="blue"
 							data-testid="session-simulation-in-progress"
 							>{{ summary?.in_progress_request_count ?? state.response?.active_requests?.length }} 个请求进行中</UiTag
-						><UiButton size="small" @click="state.newestFirst = !state.newestFirst"
+						><UiButton size="small" @click="store.setNewestFirst(!state.newestFirst)"
 							><template #icon
 								><UiIcon :name="state.newestFirst ? 'SortDescendingOutlined' : 'SortAscendingOutlined'" /></template
 							>{{ state.newestFirst ? "最新优先" : "最早优先" }}</UiButton
@@ -228,24 +246,35 @@ function date(value: string) {
 				</div>
 				<div class="session-simulation__explanation">
 					{{
-						state.streaming
-							? "按历史 Spend Logs 重放并实时更新，进行中的请求会随推送补全；仅用于查看，不会重新调用模型。"
-							: "按历史 Spend Logs 重放，仅用于查看，不会重新调用模型。"
+						!state.newestFirst
+							? "最早优先：从最早的请求开始按页回放，滚到底部加载更新的请求；切回最新优先后恢复实时更新。仅用于查看，不会重新调用模型。"
+							: state.streaming
+								? "按历史 Spend Logs 重放并实时更新，进行中的请求会随推送补全；仅用于查看，不会重新调用模型。"
+								: "按历史 Spend Logs 重放，仅用于查看，不会重新调用模型。"
 					}}
 				</div>
 			</div>
 			<div
-				v-if="state.response?.window && (store.canLoadEarlier.value || state.earlier.length)"
+				v-if="
+					state.response?.window &&
+					(store.canLoadEarlier.value || store.canLoadLater.value || state.earlier.length || state.later.length)
+				"
 				class="session-simulation__window"
 				data-testid="session-simulation-window"
 			>
-				<span
+				<span v-if="state.newestFirst"
 					>长会话按窗口加载：已显示最近 {{ state.response.window.returned_requests }} 个请求（会话共
 					{{ state.response.window.total_requests }} 个）{{
 						state.earlier.length ? "，另外加载了更早的 " + state.earlier.length + " 个事件" : ""
 					}}</span
+				><span v-else
+					>长会话按窗口加载：已显示最早 {{ state.response.window.returned_requests }} 个请求（会话共
+					{{ state.response.window.total_requests }} 个）{{
+						state.later.length ? "，另外加载了更新的 " + state.later.length + " 个事件" : ""
+					}}</span
 				><span class="ld-inline"
 					><span v-if="state.earlierError" class="ld-danger">{{ state.earlierError }}</span
+					><span v-if="state.laterError" class="ld-danger">{{ state.laterError }}</span
 					><UiButton
 						v-if="store.canLoadEarlier.value"
 						size="small"
@@ -253,6 +282,13 @@ function date(value: string) {
 						data-testid="session-simulation-load-earlier"
 						@click="store.loadEarlier"
 						>加载更早</UiButton
+					><UiButton
+						v-if="store.canLoadLater.value"
+						size="small"
+						:loading="state.loadingLater"
+						data-testid="session-simulation-load-later"
+						@click="store.loadLater"
+						>加载更多</UiButton
 					></span
 				>
 			</div>
@@ -292,8 +328,10 @@ function date(value: string) {
 							><UiTag :color="tones[item.role].tag"
 								><UiLucideIcon :name="tones[item.role].icon" :size="13" />{{ item.label }}</UiTag
 							><UiTag v-if="item.internal_call" color="purple">内置能力 · {{ item.builtin_capability ?? "unknown" }}</UiTag
+							><UiTag v-if="item.private_tool_call" color="blue">模型发起</UiTag
 							><UiTag v-if="item.status === 'in_progress'" color="processing">进行中</UiTag
-							><span class="session-timeline__model">{{ item.model }}</span
+							><ModelName v-if="item.model" class="session-timeline__model" :model="item.model" :size="14" :title="item.model"
+								><span class="session-timeline__model-name">{{ item.model }}</span></ModelName
 							><button
 								type="button"
 								class="session-timeline__log-link"
@@ -308,7 +346,7 @@ function date(value: string) {
 							:class="item.role === 'tool' ? '' : 'session-timeline__content'"
 							:style="{ borderColor: item.role === 'error' ? '#fecaca' : undefined }"
 						>
-							<SessionTimelineEventContentComponent :item="item" />
+							<SessionTimelineLazyContentComponent :item="item" />
 						</div>
 					</div>
 				</div>

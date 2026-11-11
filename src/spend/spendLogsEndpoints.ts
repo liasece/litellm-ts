@@ -577,6 +577,16 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const visibilityStartedAt = performance.now();
 		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
 		recordTiming("visibility", visibilityStartedAt);
+		const before = parseSessionPosition(req.query.before, "before");
+		const after = parseSessionPosition(req.query.after, "after");
+		const rawDirection = req.query.direction;
+		if (rawDirection !== undefined && rawDirection !== "forward" && rawDirection !== "backward") {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "invalid direction");
+		}
+		const direction = rawDirection === "forward" ? "forward" : "backward";
+		if ((before && after) || (direction === "forward" && before) || (direction === "backward" && after)) {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "before and after are mutually exclusive");
+		}
 		const payload = await loadSessionTimeline(
 			db,
 			{
@@ -588,7 +598,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			{ findImages: createSessionImageLookup(db, visibilityClause), recordTiming: recordTiming },
 			{
 				limit: parseSessionTimelineWindow(req.query.limit),
-				before: parseSessionPosition(req.query.before, "before"),
+				before: direction === "backward" ? before : null,
+				after: direction === "forward" ? after : null,
+				direction: direction,
 			},
 		);
 		res.setHeader("Server-Timing", timings.map((timing) => `${timing.name};dur=${timing.durationMs.toFixed(1)}`).join(", "));
