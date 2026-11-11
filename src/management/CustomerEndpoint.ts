@@ -6,7 +6,7 @@
  */
 
 import type { Router, Request, RequestHandler } from "express";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, ilike, inArray } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
@@ -18,8 +18,32 @@ import { pythonListRepr, toPythonEndUserWriteRow, toPythonObjectPermission } fro
 
 const logger = createModuleLogger("Management:Customer");
 
+/** `/customer/list?size=` 的上限：只服务于下拉候选，不需要更大的页。 */
+const END_USER_LIST_MAX_SIZE = 200;
+
 type EndUserRow = typeof LiteLLM_EndUserTable.$inferSelect;
 type ObjectPermissionRow = typeof LiteLLM_ObjectPermissionTable.$inferSelect;
+
+/**
+ * 解析 `/customer/list` 的可选 `size`；缺省或非法时返回 undefined（表示不截断）。
+ * @param value - query 里的原始值
+ */
+function endUserListLimit(value: unknown): number | undefined {
+	const raw = typeof value === "string" ? value.trim() : "";
+	if (!/^\d+$/.test(raw)) {
+		return undefined;
+	}
+	const parsed = Number.parseInt(raw, 10);
+	return parsed > 0 ? Math.min(parsed, END_USER_LIST_MAX_SIZE) : undefined;
+}
+
+/**
+ * 大小写不敏感包含匹配的 LIKE 模式；转义用户输入里的通配符。
+ * @param value - 已 trim 的搜索词
+ */
+function containsPattern(value: string): string {
+	return `%${value.replace(/[\\%_]/g, "\\$&")}%`;
+}
 
 /**
  * 按 budget_id 加载关联预算行；budgetId 为 null 或行不存在时返回 null。
@@ -280,12 +304,23 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 
 	// ─── GET /customer/list ─────────────────────────────────────
 	// Python 实测：返回裸数组（无 {success,data} 包装），字段 snake_case。
+	// `search` / `size` 是可选参数：WebUI 的 Logs 页 End User 表头过滤器只在下拉里展示
+	// 少量候选，端用户表到数万行后全量下发（实测 22 MB）会让每次输入都要重下一遍。
+	// 缺省两个参数时仍返回完整数组，保持与 Python 一致的协议行为。
 	registerRoute(
 		router,
 		{ method: "get", path: "/customer/list" },
-		authed(async () => {
-			const [rows, budgets, permissions] = await Promise.all([
-				db.select().from(LiteLLM_EndUserTable),
+		authed(async (req) => {
+			const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+			const size = endUserListLimit(req.query.size);
+			const conditions = search.length > 0 ? [ilike(LiteLLM_EndUserTable.userId, containsPattern(search))] : [];
+			const endUserQuery = db
+				.select()
+				.from(LiteLLM_EndUserTable)
+				.where(and(...conditions))
+				.orderBy(LiteLLM_EndUserTable.userId);
+			const rows = size === undefined ? await endUserQuery : await endUserQuery.limit(size);
+			const [budgets, permissions] = await Promise.all([
 				db.select().from(LiteLLM_BudgetTable),
 				db.select().from(LiteLLM_ObjectPermissionTable),
 			]);

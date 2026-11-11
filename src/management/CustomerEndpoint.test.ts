@@ -36,13 +36,60 @@ function rowsForTable(tables: MockTables, table: unknown): unknown[] {
 	return [];
 }
 
-function makeApp(tables: MockTables): express.Express {
+/** 展开 drizzle SQL 里的字符串片段与绑定值，便于断言过滤条件落在数据库侧。 */
+function describeSql(node: unknown): string {
+	if (node === null || node === undefined) {
+		return "";
+	}
+	if (typeof node === "string" || typeof node === "number" || typeof node === "boolean") {
+		return String(node);
+	}
+	if (typeof node === "object") {
+		const chunks = (node as { queryChunks?: unknown[] }).queryChunks;
+		if (Array.isArray(chunks)) {
+			return chunks.map(describeSql).join("");
+		}
+		const value = (node as { value?: unknown }).value;
+		if (value !== undefined) {
+			return describeSql(value);
+		}
+	}
+	try {
+		return JSON.stringify(node) ?? "";
+	} catch {
+		return "";
+	}
+}
+
+/**
+ * 可链式 select mock：记录 where SQL，按 limit 截断结果，使 `/customer/list`
+ * 的「服务端搜索 + 截断」行为可以直接断言。
+ */
+function makeApp(tables: MockTables, recorded: { whereSql: string[]; limits: number[] } = { whereSql: [], limits: [] }): express.Express {
 	const app = express();
 	app.use(express.json());
 	const router = express.Router();
 	const db = {
 		select: () => ({
-			from: (table: unknown) => Promise.resolve(rowsForTable(tables, table)),
+			from: (table: unknown) => {
+				const rows = rowsForTable(tables, table);
+				let limit: number | null = null;
+				const query = {
+					where: (condition: unknown) => {
+						recorded.whereSql.push(describeSql(condition));
+						return query;
+					},
+					orderBy: () => query,
+					limit: (value: number) => {
+						limit = value;
+						recorded.limits.push(value);
+						return query;
+					},
+					then: (resolve: (value: unknown[]) => unknown, reject?: (reason: unknown) => unknown) =>
+						Promise.resolve(limit === null ? rows : rows.slice(0, limit)).then(resolve, reject),
+				};
+				return query;
+			},
 		}),
 	};
 	createCustomerRoutes(router, db as never, null);
@@ -119,6 +166,31 @@ describe("CustomerEndpoint /customer/list 契约", () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body).toEqual([]);
+	});
+
+	it("search 在数据库侧过滤，不再整表下发", async () => {
+		const recorded = { whereSql: [] as string[], limits: [] as number[] };
+		const app = makeApp({ endUsers: [makeEndUser({ userId: "alice" })] }, recorded);
+
+		const res = await request(app).get("/customer/list?search=ali");
+
+		expect(res.status).toBe(200);
+		expect(recorded.whereSql.join("\n")).toContain("ilike");
+		expect(recorded.whereSql.join("\n")).toContain("ali");
+	});
+
+	it("size 截断候选数量，供表头过滤器只取一页", async () => {
+		const recorded = { whereSql: [] as string[], limits: [] as number[] };
+		const app = makeApp(
+			{ endUsers: [makeEndUser({ userId: "user-1" }), makeEndUser({ userId: "user-2" }), makeEndUser({ userId: "user-3" })] },
+			recorded,
+		);
+
+		const res = await request(app).get("/customer/list?size=2");
+
+		expect(res.status).toBe(200);
+		expect(recorded.limits).toContain(2);
+		expect(res.body.map((row: { user_id: string }) => row.user_id)).toEqual(["user-1", "user-2"]);
 	});
 });
 

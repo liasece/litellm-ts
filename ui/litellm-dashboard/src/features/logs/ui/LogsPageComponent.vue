@@ -13,7 +13,7 @@ import { createLogsListStore } from "../stores/LogsListStore";
 import { createLogsSettingsStore } from "../stores/LogsSettingsStore";
 import { FILTER_KEYS, type LogFilterState } from "../logic/LogsFilterLogic";
 import { navigableSessionGroup } from "../logic/LogsIdentityLogic";
-import { record } from "../logic/LogsPresentationLogic";
+import { endUserChoices, endUserChoicesQuery } from "../logic/LogsFilterChoicesLogic";
 import { utcApiDate } from "../logic/LogsDateLogic";
 import { ERROR_CODE_OPTIONS } from "../support/LogsConstants";
 import type { LogEntry, SessionGroupRef } from "../support/LogsModels";
@@ -118,13 +118,7 @@ async function keyAliasChoices(term: string): Promise<UiTableFilterChoice[]> {
 	return page.options.map((option) => ({ value: option.value, label: option.label }));
 }
 async function customerChoices(term: string): Promise<UiTableFilterChoice[]> {
-	const data = await requestJson("/customer/list");
-	if (!Array.isArray(data)) return [];
-	const query = term.trim().toLowerCase();
-	return data.flatMap((item) => {
-		const id = record(item).user_id;
-		return typeof id === "string" && id.toLowerCase().includes(query) ? [{ label: id, value: id }] : [];
-	});
+	return endUserChoices(await requestJson(endUserChoicesQuery(term)));
 }
 const filterFields = computed<Record<string, readonly UiTableFilterField[]>>(() => ({
 	status: [
