@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import type { ChatInferenceStore } from "../../stores/ChatInferenceStore";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 const props = defineProps<{ store: ChatInferenceStore; inConversation: boolean }>(),
 	textarea = ref<HTMLTextAreaElement>();
 const state = props.store.state;
@@ -36,7 +37,15 @@ function key(event: KeyboardEvent) {
 		/>
 		<div>
 			<div class="chat-composer__right">
-				<span v-if="!store.comparison.value">{{ state.selected[0] || "No model" }}</span
+				<ModelName
+					v-if="!store.comparison.value"
+					class="chat-composer__model"
+					:model="state.selected[0]"
+					:name="state.selected[0] || 'No model'"
+					v-bind="store.state.modelIcons.get(state.selected[0])"
+					:size="14"
+					:truncate="true"
+				/>
 				><button
 					v-if="store.loading.value"
 					type="button"

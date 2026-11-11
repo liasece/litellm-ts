@@ -4,6 +4,7 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageChartLoader from "./UsageChartLoaderComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import { cacheHitRate } from "../logic/UsageChartLogic";
@@ -61,7 +62,7 @@ const mode = computed({
 				>
 
 				<template #tooltip="{ row }"
-					><b>{{ row.key }}</b>
+					><ModelName class="usage-tooltip-model" :model="String(row.key)" :size="14" variant="strong" />
 					<p class="usage-cyan">Spend: {{ money(Number(row.spend), 2, String(row.key)) }}</p>
 					<p>Total Requests: {{ Number(row.requests).toLocaleString() }}</p>
 					<p class="usage-success">Successful: {{ Number(row.successful_requests).toLocaleString() }}</p>

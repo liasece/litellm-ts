@@ -4,6 +4,7 @@ import { ref, watch } from "vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import TeamGeneralFieldsComponent from "./TeamGeneralFieldsComponent.vue";
 import TeamAdvancedFieldsComponent from "./TeamAdvancedFieldsComponent.vue";
 import PermissionSummaryComponent from "./PermissionSummaryComponent.vue";
@@ -83,7 +84,9 @@ function submit() {
 			<div>
 				<p>Models</p>
 				<div class="access-tags">
-					<UiTag v-for="model in team.models" :key="model" appearance="tremor" color="red">{{ model }}</UiTag>
+					<UiTag v-for="model in team.models" :key="model" appearance="tremor" color="red"
+						><ModelName class="access-model-item" :model="model" :size="12" :truncate="true"
+					/></UiTag>
 				</div>
 			</div>
 			<div>

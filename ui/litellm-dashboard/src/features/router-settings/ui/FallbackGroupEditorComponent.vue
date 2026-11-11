@@ -4,6 +4,7 @@ import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import type { FallbackGroup } from "../support/RouterSettingsModels";
 const props = defineProps<{ models: string[] }>();
 const groups = defineModel<FallbackGroup[]>({ required: true });
@@ -50,8 +51,7 @@ function changeFallbackModels(value: unknown) {
 				:class="{ active: active === group.id }"
 				@click="active = group.id"
 			>
-				{{ group.primary || "Group " + (index + 1)
-				}}<span
+				<ModelName :model="group.primary" :name="group.primary || 'Group ' + (index + 1)" :size="14" /><span
 					v-if="groups.length > 1"
 					role="button"
 					tabindex="0"
@@ -124,9 +124,8 @@ function changeFallbackModels(value: unknown) {
 							<span>No fallback models selected</span><small>Add models from the dropdown above</small>
 						</div>
 						<div v-for="(model, index) in current.models" :key="model" class="routing-fallback-model">
-							<span>{{ index + 1 }}</span
-							><strong>{{ model }}</strong
-							><button
+							<span class="routing-fallback-index">{{ index + 1 }}</span
+							><ModelName :model="model" :size="16" variant="strong" /><button
 								type="button"
 								:aria-label="'Remove fallback ' + model"
 								@click="changeFallbackModels(current.models.filter((_, position) => position !== index))"

@@ -2,6 +2,9 @@
 	padding: 24px 24px 0;
 }
 .ld-secondary {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 	color: rgb(0 0 0 / 45%);
 }
 .ld-danger {
@@ -125,6 +128,14 @@
 .ld-descriptions > div > :nth-child(2) {
 	min-width: 0;
 	overflow-wrap: break-word;
+}
+.ld-model-value {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 .ld-copy {
 	display: inline-flex;

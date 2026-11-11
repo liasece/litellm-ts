@@ -7,6 +7,7 @@ import type { UiTableActiveFilter, UiTableFilterField } from "../../../platform/
 import type { UiTableColumn, UiTableRow, UiTableSort } from "../../../platform/ui/UiTypes";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 import type { DeletedLogColumn } from "../../support/DeletedLogColumnModels";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 const props = withDefaults(
 	defineProps<{
 		rows: readonly Record<string, unknown>[];
@@ -125,13 +126,19 @@ function rowKey(row: UiTableRow): string {
 								appearance="tremor"
 								size="xs"
 								:color="model === 'all-proxy-models' ? 'red' : 'blue'"
-								><span class="deleted-model-label">{{
-									model === "all-proxy-models"
-										? "All Proxy Models"
-										: model.length > 30
-											? modelName(model).slice(0, 30) + "..."
-											: modelName(model)
-								}}</span></UiTag
+								><ModelName
+									class="deleted-model-label"
+									:model="modelName(model) || model"
+									:show-icon="model !== 'all-proxy-models'"
+									:size="12"
+									>{{
+										model === "all-proxy-models"
+											? "All Proxy Models"
+											: model.length > 30
+												? modelName(model).slice(0, 30) + "..."
+												: modelName(model)
+									}}</ModelName
+								></UiTag
 							><UiTag v-if="models(row.models).length > 3" appearance="tremor" size="xs" color="gray"
 								><span class="deleted-model-label"
 									>+{{ models(row.models).length - 3 }} more model{{
@@ -164,7 +171,9 @@ function rowKey(row: UiTableRow): string {
 	overflow: auto;
 }
 .deleted-model-label {
-	display: block;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 	color: #6b7280;
 	font-size: 12.4px;
 	line-height: 18.4px;

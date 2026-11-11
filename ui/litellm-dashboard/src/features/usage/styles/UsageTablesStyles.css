@@ -166,3 +166,16 @@ dialog[data-usage-key-shell]::backdrop {
 	line-height: 18.4px;
 	white-space: nowrap;
 }
+
+.usage-model-cell {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.usage-tooltip-model {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}

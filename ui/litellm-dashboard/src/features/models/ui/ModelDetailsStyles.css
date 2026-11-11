@@ -23,6 +23,17 @@
 	font: 600 16px/24px var(--ui-font-antd);
 	color: rgb(0 0 0/0.88);
 }
+.model-drawer-title-line {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+.model-title--with-icon {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
 .model-drawer-title small {
 	display: block;
 	overflow: hidden;
@@ -380,6 +391,8 @@
 }
 .model-resource-delete__information dd {
 	display: flex;
+	align-items: center;
+	gap: 6px;
 	flex: 1;
 	min-width: 0;
 	overflow-wrap: anywhere;

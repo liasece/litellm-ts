@@ -10,6 +10,7 @@ import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { modelsApi } from "../api/ModelsApi";
 import { modelRecord, type ModelCatalog } from "../support/ModelModels";
 import { objectAlias, resolveAliasPath } from "../logic/AliasResolutionLogic";
@@ -247,8 +248,11 @@ onBeforeUnmount(() => {
 					<tr v-for="(value, name) in aliases" :key="name" :class="{ 'model-alias-unreachable': !resolutions[name].reachable }">
 						<td>
 							<div class="model-inline">
-								<strong>{{ name }}</strong
-								><button class="model-icon-button" :aria-label="'Copy alias ' + name" @click="copy(name)">
+								<ModelName :model="String(name)" :size="16" variant="strong" /><button
+									class="model-icon-button"
+									:aria-label="'Copy alias ' + name"
+									@click="copy(name)"
+								>
 									<UiIcon name="CopyOutlined" />
 								</button>
 							</div>
@@ -256,13 +260,16 @@ onBeforeUnmount(() => {
 						<td>
 							<div v-if="objectAlias(value)?.schedule?.length" class="model-alias-schedule-summary">
 								<p>
-									Default: <code>{{ objectAlias(value)?.model }}</code>
+									Default:
+									<ModelName class="model-alias-target" :model="objectAlias(value)?.model" :size="14" variant="code" />
 								</p>
 								<strong>Daily · {{ objectAlias(value)?.timezone }}</strong>
 								<p v-for="(window, index) in objectAlias(value)?.schedule" :key="index">
-									<code
-										>{{ window.start }}–{{ window.end }}{{ window.end < window.start ? " (+1 day)" : "" }} →
-										{{ window.model }}</code
+									<ModelName class="model-alias-target" :model="window.model" :size="14"
+										><code
+											>{{ window.start }}–{{ window.end }}{{ window.end < window.start ? " (+1 day)" : "" }} →
+											{{ window.model }}</code
+										></ModelName
 									>
 								</p>
 							</div>
@@ -273,15 +280,17 @@ onBeforeUnmount(() => {
 									>Now:</span
 								><template v-for="(node, index) in resolutions[name].path.slice(1)" :key="index"
 									><span v-if="index">→</span
-									><code
-										:class="
-											index < resolutions[name].path.length - 2
-												? 'model-alias-chain'
-												: resolutions[name].reachable
-													? ''
-													: 'model-error'
-										"
-										>{{ node }}</code
+									><ModelName class="model-alias-target" :model="node" :size="14"
+										><code
+											:class="
+												index < resolutions[name].path.length - 2
+													? 'model-alias-chain'
+													: resolutions[name].reachable
+														? ''
+														: 'model-error'
+											"
+											>{{ node }}</code
+										></ModelName
 									></template
 								>
 							</div>

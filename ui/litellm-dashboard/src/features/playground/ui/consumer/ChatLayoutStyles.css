@@ -376,3 +376,15 @@
 	background: #374151;
 	border-radius: 2px;
 }
+
+.chat-composer__model {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+.chat-composer__model-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

@@ -126,3 +126,9 @@
 .usage-cache-totals {
 	margin-bottom: 8px;
 }
+
+.usage-activity-model {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}

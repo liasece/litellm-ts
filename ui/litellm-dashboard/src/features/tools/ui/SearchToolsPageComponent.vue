@@ -9,6 +9,7 @@ import AccessNoticeComponent from "../../access-control/ui/AccessNoticeComponent
 import { objectValue } from "../../access-control/logic/ResourceDraftLogic";
 import SearchToolFormDialogComponent from "./SearchToolFormDialogComponent.vue";
 import SearchToolDetailsComponent from "./SearchToolDetailsComponent.vue";
+import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import { createResourceStore } from "../../platform/stores/ResourceStore";
 import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
@@ -28,6 +29,17 @@ const auth = useAuthenticationStore(),
 	editing = ref<SearchTool | null>(null),
 	formOpen = ref(false),
 	deleting = ref<SearchTool | null>(null);
+function providerName(value: SearchTool) {
+	return (
+		providers.value.find((provider) => provider.provider_name === value.litellm_params.search_provider)?.ui_friendly_name ||
+		value.litellm_params.search_provider ||
+		"-"
+	);
+}
+function providerLogo(value: SearchTool) {
+	const name = value.litellm_params.search_provider;
+	return name ? "/ui/assets/logos/" + name + ".png" : null;
+}
 const activeFilters = ref<UiTableActiveFilter[]>([]);
 const toolIdFilter: readonly UiTableFilterField[] = [
 	{ key: "search_tool_id", label: "Search Tool ID", control: { kind: "text", placeholder: "Filter search tool ID" } },
@@ -170,10 +182,10 @@ onBeforeUnmount(store.dispose);
 				><button v-else class="tools-resource-id" @click="selected = tool(row)">{{ tool(row).search_tool_id }}</button></template
 			><template #cell-search_tool_name="{ value }"
 				><span style="font-weight: 500">{{ value }}</span></template
-			><template #cell-provider="{ row }">{{
-				providers.find((p) => p.provider_name === tool(row).litellm_params.search_provider)?.ui_friendly_name ||
-				tool(row).litellm_params.search_provider
-			}}</template
+			><template #cell-provider="{ row }"
+				><span class="tools-provider-cell"
+					><ProviderLogo :provider="providerName(tool(row))" :logo="providerLogo(tool(row))" />{{ providerName(tool(row)) }}</span
+				></template
 			><template v-for="key in ['created_at', 'updated_at']" :key="key" #[`cell-${key}`]="{ value }"
 				><span class="tools-search-date">{{ value ? new Date(String(value)).toLocaleDateString() : "-" }}</span></template
 			><template #cell-source="{ row }"

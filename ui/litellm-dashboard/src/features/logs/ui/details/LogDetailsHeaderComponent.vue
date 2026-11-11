@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
-import ModelLogo from "../../../providers/ui/ModelLogoComponent.vue";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import ProviderLogo from "../../../providers/ui/ProviderLogoComponent.vue";
 import { getProviderLogoAndName } from "../../../providers/logic/ProviderIdentityLogic";
 import { modelIdentity } from "../../logic/LogsPresentationLogic";
@@ -13,23 +13,27 @@ import LogDetailsCopyComponent from "./LogDetailsCopyComponent.vue";
 const props = defineProps<{ log: LogEntry; inProgress: boolean }>();
 defineEmits<{ close: []; next: []; previous: []; refresh: [] }>();
 const model = computed(() => modelIdentity(props.log));
-const providerName = computed(() => {
+const provider = computed(() => {
 	const source = model.value.provider || props.log.custom_llm_provider;
-	return source ? getProviderLogoAndName(source).displayName : "";
+	return source ? getProviderLogoAndName(source) : null;
 });
+const providerName = computed(() => provider.value?.displayName || "");
 </script>
 <template>
 	<header class="ld-header">
 		<div class="ld-header__model">
 			<ProviderLogo v-if="model.toolLogo" :provider="model.displayName" :logo="model.toolLogo" />
-			<ModelLogo
-				v-else-if="model.executed || model.provider"
+			<ModelName
 				:model="model.executed"
+				:name="log.model"
 				:family="model.family"
 				:provider="model.provider"
 				:size="28"
-			/><strong>{{ log.model }}</strong
-			><span v-if="providerName" class="ld-secondary">{{ providerName }}</span>
+				:show-icon="!model.toolLogo"
+				variant="strong"
+			/><span v-if="providerName" class="ld-secondary"
+				><ProviderLogo v-if="provider?.logo" :provider="providerName" :logo="provider.logo" />{{ providerName }}</span
+			>
 		</div>
 		<div class="ld-header__request">
 			<span class="ld-header__request-id" :title="log.request_id"

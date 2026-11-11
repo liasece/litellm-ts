@@ -6,6 +6,7 @@ import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import UsageChart from "./charts/UsageChartComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import type { ModelRanking } from "../support/UsageModels";
 const props = defineProps<{ rows: ModelRanking[] }>();
 const limit = ref(5),
@@ -35,7 +36,9 @@ function modelRow(row: UiTableRow): ModelRanking {
 		</div>
 	</div>
 	<UiTable v-if="mode === 'table'" :columns="columns" :rows="tableRows" row-key="key" fixed-layout empty-text="No logs found">
-		<template #cell-key="{ row }">{{ modelRow(row).key || "-" }}</template>
+		<template #cell-key="{ row }"
+			><ModelName class="usage-model-cell" :model="modelRow(row).key" :size="16" :truncate="true"
+		/></template>
 		<template #cell-spend="{ row }">{{ money(modelRow(row).spend, 2, modelRow(row).key) }}</template>
 		<template #cell-successful_requests="{ row }">{{ modelRow(row).successful_requests.toLocaleString() }}</template>
 		<template #cell-failed_requests="{ row }">{{ modelRow(row).failed_requests.toLocaleString() }}</template>
@@ -45,6 +48,7 @@ function modelRow(row: UiTableRow): ModelRanking {
 		<UsageChart
 			:data="visible as unknown as Record<string, unknown>[]"
 			index="key"
+			model-tooltip
 			:categories="['spend']"
 			horizontal
 			:height="visible.length * 52"

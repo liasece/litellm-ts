@@ -5,6 +5,7 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import UsageChart from "./charts/UsageChartComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import type { TopModelData } from "../support/UsageModels";
@@ -43,6 +44,7 @@ function modelRow(row: UiTableRow): TopModelData {
 					<UsageChart
 						:data="(kind === 'spend' ? bySpend : byTokens).map((row) => ({ ...row, key: row.model }))"
 						index="key"
+						model-tooltip
 						:categories="[kind]"
 						:colors="[kind === 'spend' ? 'cyan' : 'indigo']"
 						horizontal
@@ -63,7 +65,15 @@ function modelRow(row: UiTableRow): TopModelData {
 			:body-max-height="models.length > 5 ? 202 : undefined"
 			empty-text="No logs found"
 		>
-			<template #cell-model="{ row }">{{ modelRow(row).model || "-" }}</template>
+			<template #cell-model="{ row }"
+				><ModelName
+					v-if="modelRow(row).model"
+					class="usage-model-cell"
+					:model="modelRow(row).model"
+					:size="16"
+					:truncate="true"
+				/><span v-else>-</span></template
+			>
 			<template #cell-spend="{ row }">{{ money(modelRow(row).spend, 2, modelRow(row).model) }}</template>
 			<template #cell-requests="{ row }">{{ modelRow(row).requests?.toLocaleString() || 0 }}</template>
 			<template #cell-successful_requests="{ row }">{{ modelRow(row).successful_requests?.toLocaleString() || 0 }}</template>

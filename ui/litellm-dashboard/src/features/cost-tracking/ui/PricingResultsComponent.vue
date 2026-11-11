@@ -9,6 +9,7 @@ import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import { createPricingExports } from "../logic/PricingExportLogic";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import type { CostEstimateResponse, EntryEstimate, MultiModelResult } from "../support/CostTrackingModels";
 const props = defineProps<{ result: MultiModelResult; period: "day" | "month" }>();
 const money = useMoneyFormatter(),
@@ -161,8 +162,14 @@ function breakdown(result: CostEstimateResponse, period: boolean) {
 						<tr class="ui-table__row">
 							<td>
 								<div class="cost-summary-model">
-									<span>{{ item.result?.model || item.entry.model }}</span
-									><UiTag v-if="item.result?.provider" color="blue">{{ item.result.provider }}</UiTag
+									<ModelName
+										class="cost-summary-model__name"
+										:model="item.result?.model || item.entry.model"
+										:provider="item.result?.provider"
+										:size="16"
+										:truncate="true"
+									/>
+									<UiTag v-if="item.result?.provider" color="blue">{{ item.result.provider }}</UiTag
 									><UiSpinner v-if="item.loading" :size="14" />
 								</div>
 								<div v-if="item.error" class="cost-result-error-inline">⚠️ {{ item.error }}</div>
@@ -238,7 +245,9 @@ function breakdown(result: CostEstimateResponse, period: boolean) {
 		</template>
 		<template v-else
 			><div v-for="row in errors" :key="row.entry.id" class="cost-result-error">
-				<strong>{{ row.entry.model || "Unknown model" }}: </strong>{{ row.error }}
+				<ModelName :model="row.entry.model" :name="(row.entry.model || 'Unknown model') + ':'" :size="16" variant="strong" /><span>
+				</span
+				>{{ row.error }}
 			</div></template
 		>
 	</div>

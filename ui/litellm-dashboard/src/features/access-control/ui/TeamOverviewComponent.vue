@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import PermissionSummaryComponent from "./PermissionSummaryComponent.vue";
 import LoggingSummaryComponent from "./LoggingSummaryComponent.vue";
@@ -29,7 +30,8 @@ const money = useMoneyFormatter();
 		><UiCard
 			><p>Models</p>
 			<div class="access-tags">
-				<UiTag v-for="model in data.team_info.models" :key="model" appearance="tremor" color="red">{{ model }}</UiTag
+				<UiTag v-for="model in data.team_info.models" :key="model" appearance="tremor" color="red"
+					><ModelName class="access-model-item" :model="model" :size="12" :truncate="true" /></UiTag
 				><UiTag v-if="!data.team_info.models.length" appearance="tremor" color="red">All proxy models</UiTag>
 			</div></UiCard
 		><UiCard

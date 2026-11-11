@@ -9,6 +9,7 @@ import ModelValueList from "./ModelValueListComponent.vue";
 import ModelSuggestionInput from "./ModelSuggestionInputComponent.vue";
 import ModelProviderSelect from "./ModelProviderSelectComponent.vue";
 import ModelCacheControl from "./ModelCacheControlComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { basicModelFields, isCodexReasoningModel, type ModelBasicField } from "../logic/ModelEditLogic";
 import {
 	modelInput,
@@ -45,6 +46,9 @@ const provider = computed(() =>
 );
 const subscriptionSlug = computed(() => (isSubscriptionProviderSlug(provider.value) ? provider.value : ""));
 const managedProvider = computed(() => isSubscriptionProviderSlug(provider.value));
+function modelNameField(key: string) {
+	return key === "model_name" || key === "litellm_model_name" || key === "override_model_name";
+}
 const visibleModelFields = computed(() =>
 	managedProvider.value ? basicModelFields.filter((field) => field.key !== "api_base") : basicModelFields,
 );
@@ -159,10 +163,18 @@ watch(
 			:tooltip="field.tooltip"
 			><template v-if="inherited(field)"
 				><div class="model-inherited-value" :class="{ 'model-inherited-value--editing': editing }">
-					{{ text(display(field)) }}<small>(from Credentials)</small>
+					<ModelName :model="modelNameField(field.key) ? text(display(field)) : ''" :provider="model.provider" :size="14"
+						>{{ text(display(field)) }}<small>(from Credentials)</small></ModelName
+					>
 				</div></template
 			><template v-else-if="!editing"
-				><span :class="display(field) == null ? 'model-unset' : ''">{{ text(display(field)) }}</span></template
+				><ModelName
+					:class="display(field) == null ? 'model-unset' : ''"
+					:model="modelNameField(field.key) ? text(display(field)) : ''"
+					:provider="model.provider"
+					:size="14"
+					>{{ text(display(field)) }}</ModelName
+				></template
 			><ModelSuggestionInput
 				v-else-if="field.kind === 'suggestion'"
 				:model-value="modelString(draft[field.key])"
@@ -270,7 +282,13 @@ watch(
 				clearable
 				placeholder="Select existing health check model"
 				@update:model-value="draft.health_check_model = $event"
-			/><span v-else>{{ info.health_check_model || "-" }}</span></ModelSettingCell
+			/><ModelName
+				v-else-if="info.health_check_model"
+				class="model-setting-model"
+				:model="String(info.health_check_model)"
+				:provider="model.provider"
+				:size="14"
+			/><span v-else>-</span></ModelSettingCell
 		>
 		<ModelSettingCell label="Cache Control" :full-width="editing"
 			><ModelCacheControl v-if="editing" v-model="draft" /><template v-else

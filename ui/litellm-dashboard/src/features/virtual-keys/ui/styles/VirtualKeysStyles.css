@@ -153,6 +153,9 @@
 	padding-block: 0;
 }
 .vk-model-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 	font-family: inherit;
 	font-size: 12.4px;
 	line-height: 18.4px;
@@ -199,4 +202,10 @@
 	line-height: 46px;
 	font-weight: 600;
 	margin-bottom: 20px;
+}
+
+.vk-model-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 }

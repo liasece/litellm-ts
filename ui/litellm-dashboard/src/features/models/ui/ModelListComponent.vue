@@ -9,7 +9,7 @@ import UiTable from "../../platform/ui/UiTable.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
-import ModelLogo from "../../providers/ui/ModelLogoComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
 import { modelString, modelStrings, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
@@ -105,6 +105,7 @@ const activeFilters = computed<UiTableActiveFilter[]>(() => {
 			value: props.store.state.search,
 			text: props.store.state.search,
 			match: "fuzzy",
+			iconModel: props.store.state.search,
 		});
 	if (props.store.state.group !== "all")
 		entries.push({
@@ -113,6 +114,7 @@ const activeFilters = computed<UiTableActiveFilter[]>(() => {
 			value: props.store.state.group,
 			text: props.store.state.group === "wildcard" ? "Wildcard Models (*)" : props.store.state.group,
 			match: "exact",
+			...(props.store.state.group === "wildcard" ? {} : { iconModel: props.store.state.group }),
 		});
 	if (props.store.state.accessGroup)
 		entries.push({
@@ -305,11 +307,14 @@ async function all() {
 					</td>
 					<td>
 						<div class="model-info-cell">
-							<ModelLogo v-bind="deploymentIconProps(model)" :size="24" />
 							<div>
 								<div class="model-information-name">
-									{{ modelDisplayName(model)
-									}}<button
+									<ModelName
+										v-bind="deploymentIconProps(model)"
+										:name="modelDisplayName(model)"
+										:size="24"
+										:truncate="true"
+									/><button
 										class="model-icon-button"
 										aria-label="Copy model name"
 										@click.stop="copy(modelDisplayName(model))"
@@ -317,13 +322,28 @@ async function all() {
 										<UiIcon name="CopyOutlined" :size="12" />
 									</button>
 								</div>
-								<p class="model-secondary-name">{{ model.litellm_model_name }}</p>
+								<ModelName
+									v-if="model.litellm_model_name"
+									class="model-secondary-name"
+									:model="model.litellm_model_name"
+									:provider="model.provider"
+									:size="14"
+									:truncate="true"
+								/>
 							</div>
 						</div>
 					</td>
 					<td>
 						<div class="model-inline model-muted">
-							<span>{{ fallbackNames(model).join(", ") || "-" }}</span
+							<span v-if="fallbackNames(model).length" class="model-fallback-list"
+								><ModelName
+									v-for="fallback in fallbackNames(model)"
+									:key="fallback"
+									class="model-fallback-name"
+									:model="fallback"
+									:size="14"
+									:truncate="true" /></span
+							><span v-else>-</span
 							><button
 								v-if="admin"
 								class="model-icon-button"
@@ -336,7 +356,13 @@ async function all() {
 					</td>
 					<td>
 						<div class="model-inline model-muted">
-							<span>{{ model.model_info.override_model_name || "-" }}</span
+							<ModelName
+								v-if="model.model_info.override_model_name"
+								class="model-fallback-name"
+								:model="model.model_info.override_model_name"
+								:size="14"
+								:truncate="true"
+							/><span v-else>-</span
 							><button
 								v-if="admin"
 								class="model-icon-button"

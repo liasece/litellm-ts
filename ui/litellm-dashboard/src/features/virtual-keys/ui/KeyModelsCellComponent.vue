@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 const props = defineProps<{ models: readonly string[] }>();
 const expanded = ref(false);
 function label(model: string) {
@@ -32,7 +33,7 @@ function label(model: string) {
 					appearance="tremor"
 					size="xs"
 				>
-					<p class="vk-model-label">{{ label(model) }}</p>
+					<ModelName class="vk-model-label" :model="model" :name="label(model)" :size="12" :truncate="true" />
 				</UiTag>
 				<UiTag v-if="models.length > 3 && !expanded" appearance="tremor" size="xs" color="gray" class="vk-models-more">
 					<p class="vk-model-label">+{{ models.length - 3 }} {{ models.length === 4 ? "more model" : "more models" }}</p>

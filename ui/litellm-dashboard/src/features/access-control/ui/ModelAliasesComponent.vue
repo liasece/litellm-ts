@@ -5,6 +5,7 @@ import UiInput from "../../platform/ui/UiInput.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import AccessActionComponent from "./AccessActionComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import type { ResourceOption } from "../support/AccessModels";
 const aliases = defineModel<Record<string, string>>({ required: true });
 defineProps<{ models: ResourceOption[] }>();
@@ -76,8 +77,12 @@ function remove(name: string) {
 							><UiButton size="small" @click="editing = null">Cancel</UiButton>
 						</td></template
 					><template v-else
-						><td>{{ name }}</td>
-						<td>{{ target }}</td>
+						><td>
+							<ModelName class="access-model-item" :model="String(name)" :size="14" />
+						</td>
+						<td>
+							<ModelName class="access-model-item" :model="String(target)" :size="14" />
+						</td>
 						<td>
 							<AccessActionComponent
 								name="Pencil"

@@ -82,6 +82,20 @@ export function modelSupplier(model: string, provider?: string | null): string {
 	return supplier === "-" ? "" : supplier;
 }
 
+/**
+ * 从模型串自带的 provider 段推断图标供应商。
+ *
+ * 展示位常常只有模型名、没有 provider 字段（路由链、限额列表、模型别名等）。只识别
+ * 明确的订阅 provider 前缀（cliproxy/commandcode/... 或 commandcode/...），避免把任意
+ * 模型命名空间误标成供应商。
+ * @param model - 模型名，可能带 cliproxy/ 或 provider 前缀
+ */
+export function modelProviderHint(model: string): string {
+	const segments = model.trim().toLowerCase().split("/");
+	const prefix = segments[0] === "cliproxy" ? segments[1] : segments[0];
+	return prefix && subscriptionProviders.has(prefix) ? prefix : "";
+}
+
 export function getModelIconIdentity(model: string, provider?: string | null, baseModel?: string, groupFamily?: string | null) {
 	const family = groupFamily === undefined ? resolveModelFamily(model, baseModel) : isModelFamily(groupFamily) ? groupFamily : undefined;
 	const supplier = modelSupplier(model, provider);

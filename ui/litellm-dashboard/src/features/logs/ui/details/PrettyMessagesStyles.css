@@ -346,6 +346,12 @@
 	gap: 8px 24px;
 	font-size: 13px;
 }
+.pretty-realtime-model,
+.pretty-realtime-config__model {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
 .pretty-realtime-instructions {
 	font-size: 12px;
 	line-height: 1.6;

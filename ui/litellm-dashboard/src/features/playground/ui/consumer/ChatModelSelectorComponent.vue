@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { ChatInferenceStore } from "../../stores/ChatInferenceStore";
-import ModelLogo from "../../../providers/ui/ModelLogoComponent.vue";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiPopover from "../../../platform/ui/UiPopover.vue";
 const props = defineProps<{ store: ChatInferenceStore }>(),
@@ -18,13 +18,10 @@ const props = defineProps<{ store: ChatInferenceStore }>(),
 		><button type="button" class="chat-model-trigger">
 			<span v-if="!store.state.selected.length" class="chat-muted">Select model</span
 			><template v-else-if="store.state.selected.length === 1"
-				><ModelLogo :model="store.state.selected[0]" v-bind="store.state.modelIcons.get(store.state.selected[0])" /><span>{{
-					store.state.selected[0]
-				}}</span></template
+				><ModelName :model="store.state.selected[0]" v-bind="store.state.modelIcons.get(store.state.selected[0])" /></template
 			><span v-else class="chat-model-trigger__multiple"
 				><span v-for="model in store.state.selected" :key="model"
-					><ModelLogo :model="model" v-bind="store.state.modelIcons.get(model)" /><span>{{ model }}</span></span
-				></span
+					><ModelName :model="model" v-bind="store.state.modelIcons.get(model)" /></span></span
 			><UiIcon name="DownOutlined" /></button
 		><template #content
 			><div class="chat-model-options">
@@ -40,10 +37,8 @@ const props = defineProps<{ store: ChatInferenceStore }>(),
 						@click="store.toggleModel(model)"
 					>
 						<i><UiIcon v-if="store.state.selected.includes(model)" name="CheckOutlined" /></i
-						><ModelLogo :model="model" v-bind="store.state.modelIcons.get(model)" /><span>{{ model }}</span>
+						><ModelName :model="model" v-bind="store.state.modelIcons.get(model)" />
 					</button>
-				</div>
-			</div></template
-		></UiPopover
-	>
+				</div></div></template
+	></UiPopover>
 </template>

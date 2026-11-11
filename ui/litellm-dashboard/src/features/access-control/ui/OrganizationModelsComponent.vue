@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 defineProps<{ models: string[] }>();
 const expanded = ref(false);
 function label(model: string) {
@@ -27,7 +28,7 @@ function label(model: string) {
 				appearance="tremor"
 				size="xs"
 				:color="model === 'all-proxy-models' ? 'red' : 'blue'"
-				>{{ label(model) }}</UiTag
+				><ModelName class="access-model-item" :model="model" :name="label(model)" :size="12" :truncate="true" /></UiTag
 			><button v-if="models.length > 3 && !expanded" type="button" class="access-more-models" @click="expanded = true">
 				+{{ models.length - 3 }} more model{{ models.length - 3 === 1 ? "" : "s" }}
 			</button>

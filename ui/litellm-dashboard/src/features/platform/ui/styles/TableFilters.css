@@ -396,3 +396,7 @@
 	background: #eff6ff;
 	text-decoration: underline;
 }
+
+.ui-active-filters__model {
+	max-width: 200px;
+}

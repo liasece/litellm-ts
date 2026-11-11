@@ -315,3 +315,10 @@
 .pg-compare-messages .pg-metrics {
 	margin-top: 12px;
 }
+
+.pg-compare-model {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}

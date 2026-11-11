@@ -8,6 +8,7 @@ import UiInputNumber from "../../platform/ui/UiInputNumber.vue";
 import UiEmptyState from "../../platform/ui/UiEmptyState.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { nextUiIdentity } from "../../platform/ui/UiIdentity";
 import { modelOptions, type ModelCatalog } from "../support/ModelModels";
 import type { SemanticRoute } from "../logic/AutoRouterLogic";
@@ -56,7 +57,8 @@ function config() {
 				@click="expanded = expanded.includes(route.id) ? expanded.filter((value) => value !== route.id) : [...expanded, route.id]"
 			>
 				<UiIcon name="RightOutlined" :class="{ 'model-rotated': expanded.includes(route.id) }" /><span
-					>Route {{ index + 1 }}: {{ route.name || "Unnamed" }}</span
+					class="model-semantic-route__title"
+					><ModelName :model="route.name" :size="14">Route {{ index + 1 }}: {{ route.name || "Unnamed" }}</ModelName></span
 				><span
 					class="model-semantic-delete"
 					role="button"

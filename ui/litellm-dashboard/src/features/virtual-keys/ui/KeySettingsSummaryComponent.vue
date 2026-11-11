@@ -6,6 +6,7 @@ import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { keyTimestamp } from "../render/KeyTablePresentation";
 import { stringValues, type KeyCatalog, type VirtualKey } from "../support/VirtualKeyModels";
 import KeyBadge from "./KeyBadgeComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import KeyPermissionSummary from "./KeyPermissionSummaryComponent.vue";
 import KeyOperationalSummary from "./KeyOperationalSummaryComponent.vue";
 const props = defineProps<{ keyData: VirtualKey; catalog: KeyCatalog; lastRegeneratedAt?: Date | null; recentlyRegenerated?: boolean }>();
@@ -58,7 +59,9 @@ const metadata = computed(() => Object.fromEntries(Object.entries(props.keyData.
 			<div>
 				<h4>Models</h4>
 				<div v-if="keyData.models.length" class="vk-settings-values">
-					<UiTag v-for="model in keyData.models" :key="model">{{ model }}</UiTag>
+					<UiTag v-for="model in keyData.models" :key="model"
+						><ModelName class="vk-model-tag" :model="model" :size="12" :truncate="true"
+					/></UiTag>
 				</div>
 				<p v-else>No models specified</p>
 			</div>

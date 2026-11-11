@@ -7,6 +7,9 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
+import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
+import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 const props = withDefaults(
 	defineProps<{
 		open: boolean;
@@ -14,7 +17,7 @@ const props = withDefaults(
 		message: string;
 		alertMessage?: string;
 		informationTitle?: string;
-		information?: { label: string; value: unknown }[];
+		information?: { label: string; value: unknown; model?: string; provider?: string }[];
 		requiredConfirmation?: string;
 		pending?: boolean;
 	}>(),
@@ -51,7 +54,19 @@ function confirm() {
 							<span>{{ entry.label }}</span>
 						</dt>
 						<dd>
-							<span>{{ entry.value ?? "-" }}</span>
+							<ModelName
+								v-if="entry.model"
+								:model="entry.model"
+								:provider="entry.provider"
+								:name="String(entry.value ?? '')"
+								:size="16"
+							/>
+							<template v-else-if="entry.provider"
+								><ProviderLogo
+									:provider="getProviderLogoAndName(entry.provider).displayName"
+									:logo="getProviderLogoAndName(entry.provider).logo"
+								/><span>{{ entry.value ?? "-" }}</span></template
+							><span v-else>{{ entry.value ?? "-" }}</span>
 						</dd>
 					</div>
 				</dl></UiCard

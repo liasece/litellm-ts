@@ -5,6 +5,7 @@ import { json } from "../../logic/PlaygroundValueLogic";
 import MarkdownContent from "../../../content/ui/MarkdownContent.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiButton from "../../../platform/ui/UiButton.vue";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import PlaygroundSearchResultsComponent from "./PlaygroundSearchResultsComponent.vue";
 import PlaygroundResponseMetricsComponent from "./PlaygroundResponseMetricsComponent.vue";
 import PlaygroundCodeOutputComponent from "./PlaygroundCodeOutputComponent.vue";
@@ -24,7 +25,7 @@ const text = computed(() => (typeof props.message.content === "string" ? props.m
 			<div class="pg-message__heading">
 				<span class="pg-message__avatar"><UiIcon :name="message.role === 'user' ? 'UserOutlined' : 'RobotOutlined'" /></span
 				><strong>{{ message.role }}</strong
-				><span v-if="assistant && message.model" class="pg-message__model">{{ message.model }}</span>
+				><ModelName v-if="assistant && message.model" class="pg-message__model" :model="message.model" :size="12" />
 			</div>
 			<div v-if="message.reasoningContent" class="pg-message__reasoning">
 				<UiButton variant="text" @click="reasoning = !reasoning"

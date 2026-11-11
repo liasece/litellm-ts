@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { chartValue, type ChartRow } from "../../logic/UsageChartLogic";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 defineProps<{
 	row: ChartRow;
 	index: string;
@@ -7,6 +8,7 @@ defineProps<{
 	colors: string[];
 	format: (value: number) => string;
 	compact: boolean;
+	modelTooltip?: boolean;
 }>();
 function label(value: string) {
 	return value
@@ -17,7 +19,11 @@ function label(value: string) {
 </script>
 <template>
 	<div class="usage-default-tooltip" :class="{ 'usage-default-tooltip--compact': compact }">
-		<p class="usage-default-tooltip-label">{{ chartValue(row, index) }}</p>
+		<p class="usage-default-tooltip-label">
+			<ModelName v-if="modelTooltip" :model="String(chartValue(row, index))" :size="14" :gap="6" /><template v-else>{{
+				chartValue(row, index)
+			}}</template>
+		</p>
 		<div class="usage-default-tooltip-rows">
 			<div v-for="(category, i) in categories" :key="category">
 				<div>
@@ -35,6 +41,9 @@ function label(value: string) {
 	line-height: 18.4px;
 }
 .usage-default-tooltip-label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
 	padding: 8px 16px;
 	border-bottom: 1px solid #e5e7eb;
 	font-weight: 500;

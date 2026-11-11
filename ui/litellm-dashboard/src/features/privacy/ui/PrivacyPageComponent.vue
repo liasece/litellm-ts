@@ -12,6 +12,9 @@ import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
+import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
+import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import type { UiTableActiveFilter, UiTableFilterChoice } from "../../platform/ui/UiTableFilterModels";
 import type { UiTableColumn } from "../../platform/ui/UiTypes";
 import { privacyKindLabel } from "../../content/logic/PrivacyPlaceholderLogic";
@@ -396,12 +399,12 @@ onBeforeUnmount(store.dispose);
 								<UiButton size="small" :disabled="!canAddProvider" @click="submitProvider">添加</UiButton>
 							</div>
 							<div v-if="scopeProviders.length" class="privacy-words__list">
-								<UiTag
-									v-for="provider in scopeProviders"
-									:key="provider"
-									closable
-									@close="store.removeProvider(provider)"
-									>{{ provider }}</UiTag
+								<UiTag v-for="provider in scopeProviders" :key="provider" closable @close="store.removeProvider(provider)"
+									><span class="privacy-tag"
+										><ProviderLogo :provider="provider" :logo="getProviderLogoAndName(provider).logo" />{{
+											provider
+										}}</span
+									></UiTag
 								>
 							</div>
 							<p v-else class="privacy-words__empty">不限提供方</p>
@@ -426,9 +429,9 @@ onBeforeUnmount(store.dispose);
 								<UiButton size="small" :disabled="!canAddModel" @click="submitModel">添加</UiButton>
 							</div>
 							<div v-if="scopeModels.length" class="privacy-words__list">
-								<UiTag v-for="model in scopeModels" :key="model" closable @close="store.removeModel(model)">{{
-									model
-								}}</UiTag>
+								<UiTag v-for="model in scopeModels" :key="model" closable @close="store.removeModel(model)"
+									><ModelName class="privacy-tag" :model="model" :size="12" :truncate="true"
+								/></UiTag>
 							</div>
 							<p v-else class="privacy-words__empty">不限模型</p>
 						</div>

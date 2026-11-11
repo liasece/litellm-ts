@@ -49,6 +49,9 @@
 	color: #2563eb;
 }
 .pg-message__model {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 	font-size: 12px;
 	padding: 2px 8px;
 	border-radius: 4px;

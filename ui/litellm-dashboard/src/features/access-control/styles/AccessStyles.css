@@ -911,3 +911,10 @@
 		margin-left: 1.75px;
 	}
 }
+
+.access-model-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}

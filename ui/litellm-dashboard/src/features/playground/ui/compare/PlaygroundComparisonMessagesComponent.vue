@@ -4,6 +4,7 @@ import type { PlaygroundMessage } from "../../support/PlaygroundModels";
 import PlaygroundMessageComponent from "../chat/PlaygroundMessageComponent.vue";
 import UiLucideIcon from "../../../platform/ui/UiLucideIcon.vue";
 import UiSpinner from "../../../platform/ui/UiSpinner.vue";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 const props = defineProps<{ messages: PlaygroundMessage[]; loading: boolean }>();
 const blocks = computed(() => {
 	const result: { user?: PlaygroundMessage; assistant?: PlaygroundMessage }[] = [];
@@ -29,7 +30,14 @@ const blocks = computed(() => {
 			<hr />
 			<template v-if="block.assistant"
 				><div class="pg-compare-messages__heading">
-					<span><UiLucideIcon name="Bot" :size="16" /></span><strong>{{ block.assistant.model || "Assistant" }}</strong>
+					<span><UiLucideIcon name="Bot" :size="16" /></span
+					><ModelName
+						class="pg-compare-model"
+						:model="block.assistant.model"
+						:name="block.assistant.model || 'Assistant'"
+						:size="16"
+						variant="strong"
+					/>
 				</div>
 				<PlaygroundMessageComponent :message="block.assistant" endpoint="chat" :last="false"
 			/></template>

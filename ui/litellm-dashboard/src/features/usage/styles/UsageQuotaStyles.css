@@ -167,3 +167,17 @@
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 }
+
+.usage-quota-models {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 10px;
+	overflow: visible;
+	white-space: normal;
+}
+.usage-quota-model {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}

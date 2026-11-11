@@ -13,6 +13,7 @@ import UiButton from "../../../platform/ui/UiButton.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiLucideIcon from "../../../platform/ui/UiLucideIcon.vue";
 import UiAlert from "../../../platform/ui/UiAlert.vue";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import LogDetailsHeaderComponent from "./LogDetailsHeaderComponent.vue";
 import LogDetailContentComponent from "./LogDetailContentComponent.vue";
 import SessionSimulationDrawerComponent from "./session/SessionSimulationDrawerComponent.vue";
@@ -135,6 +136,9 @@ watch(
 watch([current, () => props.startTime, () => props.open], () => details.bind(current.value, props.startTime, props.open), {
 	immediate: true,
 });
+function isModelRow(row: LogEntry) {
+	return !isMcp(row) && !isAgent(row) && row.metadata?.internal_call_type !== "builtin_capability" && Boolean(row.model);
+}
 function select(row: LogEntry) {
 	if (sessionMode.value) selectedId.value = row.request_id;
 	emit("select", row);
@@ -271,9 +275,18 @@ onBeforeUnmount(() => {
 								@click="select(row)"
 							>
 								<span class="ld-trace-row__model"
-									><UiLucideIcon :name="isMcp(row) ? 'Wrench' : isAgent(row) ? 'Bot' : 'Sparkles'" :size="12" /><span>{{
-										eventDisplayName(row)
-									}}</span></span
+									><ModelName
+										v-if="isModelRow(row)"
+										:model="row.model"
+										:name="eventDisplayName(row)"
+										:provider="row.custom_llm_provider"
+										:size="12"
+									/><template v-else
+										><UiLucideIcon
+											:name="isMcp(row) ? 'Wrench' : isAgent(row) ? 'Bot' : 'Sparkles'"
+											:size="12"
+										/><span>{{ eventDisplayName(row) }}</span></template
+									></span
 								><span class="ld-trace-row__metrics"
 									><span>{{ duration(row) }}s</span
 									><template v-if="row.spend"

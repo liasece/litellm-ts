@@ -6,6 +6,7 @@ import UiEmptyState from "../../platform/ui/UiEmptyState.vue";
 import ModelMappingHelp from "./ModelMappingHelpComponent.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
 import ModelProviderSelect from "./ModelProviderSelectComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { providerModels, providerCatalogSlug, getPlaceholder } from "../logic/ModelProviderLogic";
 import { selectedModelMappings, type ModelCreateDraft } from "../logic/ModelCreateLogic";
 import { isSubscriptionProviderSlug } from "../../subscriptions/logic/SubscriptionProviderLogic";
@@ -170,7 +171,15 @@ defineExpose({
 								@update:model-value="mapping(index, $event)"
 							/>
 						</td>
-						<td>{{ item.litellm_model }}</td>
+						<td>
+							<ModelName
+								v-if="item.litellm_model"
+								class="model-deployment-target"
+								:model="item.litellm_model"
+								:provider="provider"
+								:size="14"
+							/><span v-else>-</span>
+						</td>
 					</tr>
 					<tr v-if="!values.model_mappings?.length">
 						<td colspan="2"><UiEmptyState description="No data" /></td>

@@ -329,3 +329,9 @@
 	overflow-y: auto;
 	padding-right: 6px;
 }
+
+.privacy-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}

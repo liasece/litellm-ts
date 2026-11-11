@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChatInferenceStore } from "../../stores/ChatInferenceStore";
-import ModelLogo from "../../../providers/ui/ModelLogoComponent.vue";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import MarkdownContent from "../../../content/ui/MarkdownContent.vue";
 defineProps<{ store: ChatInferenceStore }>();
 </script>
@@ -13,8 +13,10 @@ defineProps<{ store: ChatInferenceStore }>();
 			<div class="chat-comparison__cards">
 				<article v-for="(model, modelIndex) in store.state.selected" :key="model">
 					<header v-if="index === 0">
-						<ModelLogo :model="model" v-bind="store.state.modelIcons.get(model)" /><strong>Response {{ modelIndex + 1 }}</strong
-						><span>{{ model }}</span>
+						<ModelName :model="model" v-bind="store.state.modelIcons.get(model)" :size="16"
+							><strong>Response {{ modelIndex + 1 }}</strong
+							><span>{{ model }}</span></ModelName
+						>
 					</header>
 					<div>
 						<span

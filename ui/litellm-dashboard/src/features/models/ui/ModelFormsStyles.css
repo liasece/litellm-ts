@@ -478,3 +478,24 @@
 	font-size: 12px;
 	line-height: 16px;
 }
+
+.model-routing-action__name,
+.model-deployment-target {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.model-setting-model {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.model-retry-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}

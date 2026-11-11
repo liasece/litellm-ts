@@ -11,7 +11,7 @@ import DeleteResourceDialog from "../../resource-dialogs/ui/DeleteResourceDialog
 import FallbackAddDialog from "./FallbackAddDialogComponent.vue";
 import { routerSettingsApi } from "../api/RouterSettingsApi";
 import { routerString, routerSettingsOnly, fallbackEntries, type FallbackEntry } from "../support/RouterSettingsModels";
-import ModelLogo from "../../providers/ui/ModelLogoComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { fetchModelGroupIcons, type ModelGroupIcons } from "../../providers/api/ModelGroupIconsApi";
 import notification from "../../notifications/logic/NotificationManager";
 const values = ref<Record<string, unknown>>({}),
@@ -155,19 +155,18 @@ async function test(name: string) {
 			<template #row="{ row }">
 				<tr v-for="item in [fallbackRow(row)]" :key="item.primary" class="ui-table__row">
 					<td>
-						<span class="routing-model-card"
-							><ModelLogo :model="item.primary" v-bind="modelIcons.get(item.primary)" /><span>{{ item.primary }}</span></span
-						>
+						<ModelName class="routing-model-card" :model="item.primary" v-bind="modelIcons.get(item.primary)" />
 					</td>
 					<td>
 						<div class="routing-fallback-row">
 							<UiHeroIcon name="ArrowRightIcon" :size="20" />
 							<div>
 								<template v-for="(name, position) in item.models" :key="name"
-									><UiHeroIcon v-if="position" name="ArrowRightIcon" :size="16" /><span class="routing-model-card"
-										><ModelLogo :model="name" v-bind="modelIcons.get(name)" /><span>{{ name }}</span></span
-									></template
-								>
+									><UiHeroIcon v-if="position" name="ArrowRightIcon" :size="16" /><ModelName
+										class="routing-model-card"
+										:model="name"
+										v-bind="modelIcons.get(name)"
+								/></template>
 							</div>
 						</div>
 					</td>

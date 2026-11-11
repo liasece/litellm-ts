@@ -3,6 +3,7 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import type { KeyCatalog, VirtualKey } from "../support/VirtualKeyModels";
 import KeyBadge from "./KeyBadgeComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import KeyPermissionSummary from "./KeyPermissionSummaryComponent.vue";
 import KeyOperationalSummary from "./KeyOperationalSummaryComponent.vue";
 defineProps<{ keyData: VirtualKey; catalog: KeyCatalog }>();
@@ -27,7 +28,9 @@ const formatMoney = useMoneyFormatter();
 		<UiCard
 			><p class="vk-tremor-text">Models</p>
 			<div class="vk-card-body vk-summary-badges">
-				<KeyBadge v-for="model in keyData.models" :key="model" color="red">{{ model }}</KeyBadge>
+				<KeyBadge v-for="model in keyData.models" :key="model" color="red"
+					><ModelName :model="model" :size="12" :truncate="true"
+				/></KeyBadge>
 				<p v-if="!keyData.models.length" class="vk-tremor-text">No models specified</p>
 			</div></UiCard
 		>

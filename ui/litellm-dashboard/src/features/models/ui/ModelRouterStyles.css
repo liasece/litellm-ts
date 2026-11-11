@@ -165,3 +165,9 @@
 .model-auto-router-edit > .model-field {
 	margin-top: 16px;
 }
+
+.model-semantic-route__title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}

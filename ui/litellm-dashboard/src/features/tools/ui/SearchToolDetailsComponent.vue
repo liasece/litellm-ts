@@ -6,9 +6,21 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import AccessHeroIconComponent from "../../access-control/ui/AccessHeroIconComponent.vue";
 import SearchToolTesterComponent from "./SearchToolTesterComponent.vue";
+import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import type { SearchTool, SearchProvider } from "../support/SearchToolModels";
-defineProps<{ tool: SearchTool; providers: SearchProvider[] }>();
+const props = defineProps<{ tool: SearchTool; providers: SearchProvider[] }>();
 defineEmits<{ back: []; error: [message: string]; notice: [message: string] }>();
+function providerName() {
+	return (
+		props.providers.find((provider) => provider.provider_name === props.tool.litellm_params.search_provider)?.ui_friendly_name ||
+		props.tool.litellm_params.search_provider ||
+		"-"
+	);
+}
+function providerLogo() {
+	const name = props.tool.litellm_params.search_provider;
+	return name ? "/ui/assets/logos/" + name + ".png" : null;
+}
 const copied = ref<Record<string, boolean>>({}),
 	timers = new Set<ReturnType<typeof setTimeout>>();
 async function copy(text: string | undefined, key: string) {
@@ -60,11 +72,8 @@ onBeforeUnmount(() => timers.forEach(clearTimeout));
 		<div class="tools-search-cards">
 			<UiCard
 				><p>Provider</p>
-				<h3>
-					{{
-						providers.find((p) => p.provider_name === tool.litellm_params.search_provider)?.ui_friendly_name ||
-						tool.litellm_params.search_provider
-					}}
+				<h3 class="tools-provider-cell">
+					<ProviderLogo :provider="providerName()" :logo="providerLogo()" />{{ providerName() }}
 				</h3></UiCard
 			><UiCard
 				><p>API Key</p>

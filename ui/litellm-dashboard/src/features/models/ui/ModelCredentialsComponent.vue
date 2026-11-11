@@ -12,6 +12,8 @@ import KeyHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
 import ModelProviderFields from "./ModelProviderFieldsComponent.vue";
 import ModelResourceDelete from "./ModelResourceDeleteDialogComponent.vue";
+import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
+import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { nextUiIdentity } from "../../platform/ui/UiIdentity";
 import { Providers, providerLogoMap } from "../../providers/data/ProviderCatalogData";
 import notification from "../../notifications/logic/NotificationManager";
@@ -30,6 +32,12 @@ const values = ref<Record<string, unknown>>({}),
 	errors = ref<Record<string, string>>({}),
 	pending = ref(false);
 const prefix = nextUiIdentity("credential");
+const detailsProvider = computed(() => modelString(details.value?.credential_info.custom_llm_provider) || "");
+const detailsProviderInfo = computed(() => (detailsProvider.value ? getProviderLogoAndName(detailsProvider.value) : null));
+function credentialProvider(credential: ModelCredential) {
+	const value = modelString(credential.credential_info.custom_llm_provider);
+	return value ? getProviderLogoAndName(value) : null;
+}
 const detailEntries = computed(() => [
 	{ label: "Name", value: details.value?.credential_name ?? "—", mono: false },
 	{ label: "Provider", value: details.value?.credential_info.custom_llm_provider ?? "—", mono: false },
@@ -151,7 +159,11 @@ function toggleDelete(key: string, checked: boolean) {
 											modelString(credential.credential_info.custom_llm_provider).toLowerCase()
 										] ?? 'gray')
 									"
-									>{{ credential.credential_info.custom_llm_provider || "-" }}</span
+									><ProviderLogo
+										v-if="credentialProvider(credential)?.logo"
+										:provider="credentialProvider(credential)?.displayName || ''"
+										:logo="credentialProvider(credential)?.logo"
+									/>{{ credential.credential_info.custom_llm_provider || "-" }}</span
 								>
 							</td>
 							<td>
@@ -272,7 +284,11 @@ function toggleDelete(key: string, checked: boolean) {
 				<div v-for="entry in detailEntries" :key="entry.label">
 					<dt>{{ entry.label }}</dt>
 					<dd>
-						<span :class="{ 'model-mono model-credential-value': entry.mono }">{{ entry.value }}</span>
+						<ProviderLogo
+							v-if="entry.label === 'Provider' && detailsProviderInfo?.logo"
+							:provider="detailsProviderInfo.displayName"
+							:logo="detailsProviderInfo.logo"
+						/><span :class="{ 'model-mono model-credential-value': entry.mono }">{{ entry.value }}</span>
 					</dd>
 				</div>
 			</dl></UiDrawer

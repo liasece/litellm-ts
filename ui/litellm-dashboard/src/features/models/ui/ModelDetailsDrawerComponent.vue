@@ -15,8 +15,9 @@ import ModelResourceDelete from "./ModelResourceDeleteDialogComponent.vue";
 import ModelOverview from "./ModelOverviewComponent.vue";
 import ModelAutoRouterEditDialog from "./ModelAutoRouterEditDialogComponent.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { modelsApi } from "../api/ModelsApi";
-import { normalizeModelDetails, modelDisplayName } from "../logic/ModelDataLogic";
+import { normalizeModelDetails, modelDisplayName, deploymentIconProps } from "../logic/ModelDataLogic";
 import { createModelEditDraft } from "../logic/ModelEditLogic";
 import { type ModelCatalog, type DisplayProxyModel, type ModelCredential, type ProxyModel } from "../support/ModelModels";
 import notification from "../../notifications/logic/NotificationManager";
@@ -158,7 +159,12 @@ onBeforeUnmount(() => {
 		><template #title>
 			<span class="model-drawer-heading"
 				><span class="model-drawer-title"
-					>{{ model ? "Model: " + modelDisplayName(model) : "Model" }}<small>{{ modelId }}</small></span
+					><span class="model-drawer-title-line"
+						><ModelName v-if="model" v-bind="deploymentIconProps(model)" :size="24">{{
+							"Model: " + modelDisplayName(model)
+						}}</ModelName
+						><span v-else>Model</span></span
+					><small>{{ modelId }}</small></span
 				><span v-if="canEdit" class="model-drawer-actions"
 					><UiButton variant="primary" @click="editOpen = true">Edit</UiButton></span
 				></span
@@ -169,7 +175,11 @@ onBeforeUnmount(() => {
 		<div v-else class="model-details-content">
 			<header class="model-details-heading">
 				<div>
-					<h3 class="model-title">Public Model Name: {{ modelDisplayName(model) }}</h3>
+					<h3 class="model-title model-title--with-icon">
+						<ModelName v-bind="deploymentIconProps(model)" :size="20"
+							>Public Model Name: {{ modelDisplayName(model) }}</ModelName
+						>
+					</h3>
 					<div class="model-inline model-details-id">
 						<span>{{ modelId }}</span
 						><UiButton variant="text" size="small" aria-label="Copy model ID" :class="{ 'model-copied': copied }" @click="copy"
@@ -251,9 +261,19 @@ onBeforeUnmount(() => {
 				message="Are you sure you want to delete this model?"
 				information-title="Model Information"
 				:information="[
-					{ label: 'Model Name', value: model.model_name || 'Not Set' },
-					{ label: 'LiteLLM Model Name', value: model.litellm_model_name || 'Not Set' },
-					{ label: 'Provider', value: model.provider || 'Not Set' },
+					{
+						label: 'Model Name',
+						value: model.model_name || 'Not Set',
+						model: model.model_name ?? undefined,
+						provider: model.provider ?? undefined,
+					},
+					{
+						label: 'LiteLLM Model Name',
+						value: model.litellm_model_name || 'Not Set',
+						model: model.litellm_model_name ?? undefined,
+						provider: model.provider,
+					},
+					{ label: 'Provider', value: model.provider || 'Not Set', provider: model.provider ?? undefined },
 					{ label: 'Created By', value: model.model_info.created_by || 'Not Set' },
 				]"
 				:pending="pending"

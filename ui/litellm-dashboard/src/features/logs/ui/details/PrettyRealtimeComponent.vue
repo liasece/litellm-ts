@@ -5,6 +5,7 @@ import { asRecord } from "../../logic/PrettyMessagesBlocksLogic";
 import { recordArray, realtimeTranscripts, tokenLabel } from "../../logic/PrettyMessagesRealtimeLogic";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiTag from "../../../platform/ui/UiTag.vue";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import PrettySectionHeaderComponent from "./PrettySectionHeaderComponent.vue";
 import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
 const props = defineProps<{ response: unknown; metrics?: { completion_tokens?: number; output_cost?: number } }>();
@@ -53,8 +54,11 @@ function copy() {
 					<UiIcon :name="sessionCollapsed ? 'DownOutlined' : 'UpOutlined'" class="pretty-section-header__arrow" /><span
 						class="pretty-section-header__title"
 						><UiIcon name="SettingOutlined" /> Session</span
-					><span class="pretty-section-header__metric">{{ session.model }}</span
-					><UiTag v-if="responses.length" color="purple"
+					><ModelName
+						class="pretty-section-header__metric pretty-realtime-model"
+						:model="String(session.model)"
+						:size="14"
+					/><UiTag v-if="responses.length" color="purple"
 						>{{ responses.length }} {{ responses.length === 1 ? "turn" : "turns" }}</UiTag
 					><UiTag v-if="session.voice" color="blue"><UiIcon name="SoundOutlined" /> {{ session.voice }}</UiTag
 					><UiTag v-for="modality in Array.isArray(session.modalities) ? session.modalities : []" :key="String(modality)"
@@ -70,7 +74,13 @@ function copy() {
 					<div class="pretty-realtime-config">
 						<div v-for="[label, value] in configRows" :key="String(label)">
 							<span class="ld-secondary" style="font-size: 11px">{{ label }}</span>
-							<div>{{ String(value) }}</div>
+							<ModelName
+								v-if="label === 'Model' && typeof value === 'string'"
+								:class="{ 'pretty-realtime-config__model': label === 'Model' }"
+								:model="value"
+								:size="14"
+							/>
+							<div v-else :class="{ 'pretty-realtime-config__model': label === 'Model' }">{{ String(value) }}</div>
 						</div>
 					</div>
 					<div v-if="session.instructions" style="margin-top: 12px">

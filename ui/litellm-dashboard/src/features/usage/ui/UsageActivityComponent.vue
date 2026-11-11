@@ -5,6 +5,7 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageLegend from "./charts/UsageLegendComponent.vue";
 import UsageActivitySection from "./UsageActivitySectionComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { overallActivity } from "../logic/UsageSummaryLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
@@ -87,7 +88,9 @@ function toggle(name: string) {
 			<section v-for="name in names" :key="name">
 				<button :aria-expanded="open.has(name)" @click="toggle(name)">
 					<UiIcon :name="open.has(name) ? 'DownOutlined' : 'RightOutlined'" :size="12" /><span
-						><h2>{{ modelMetrics[name].label || "Unknown Item" }}</h2>
+						><h2 class="usage-activity-model">
+							<ModelName :model="name" :name="modelMetrics[name].label || 'Unknown Item'" :size="16" />
+						</h2>
 						<span
 							>{{ money(modelMetrics[name].total_spend, 2, name)
 							}}<span>{{ modelMetrics[name].total_requests.toLocaleString() }} requests</span></span

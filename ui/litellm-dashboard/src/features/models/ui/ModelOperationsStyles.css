@@ -455,3 +455,10 @@
 	flex-shrink: 1;
 	vertical-align: middle;
 }
+
+.model-alias-target {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}

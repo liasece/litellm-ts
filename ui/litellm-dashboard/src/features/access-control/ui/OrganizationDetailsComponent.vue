@@ -6,6 +6,7 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import AccessHeroIconComponent from "./AccessHeroIconComponent.vue";
 import AccessNoticeComponent from "./AccessNoticeComponent.vue";
 import MembersTableComponent from "./MembersTableComponent.vue";
@@ -104,7 +105,8 @@ onBeforeUnmount(store.dispose);
 			><UiCard
 				><p>Models</p>
 				<div class="access-tags">
-					<UiTag v-for="model in data.models" :key="model" appearance="tremor" color="red">{{ model }}</UiTag
+					<UiTag v-for="model in data.models" :key="model" appearance="tremor" color="red"
+						><ModelName class="access-model-item" :model="model" :size="12" :truncate="true" /></UiTag
 					><UiTag v-if="!data.models.length" appearance="tremor" color="red">All proxy models</UiTag>
 				</div></UiCard
 			><UiCard
@@ -153,7 +155,14 @@ onBeforeUnmount(store.dispose);
 				<div>
 					<p>Models</p>
 					<div class="access-tags">
-						<span v-for="model in data.models" :key="model">{{ model }}</span>
+						<ModelName
+							v-for="model in data.models"
+							:key="model"
+							class="access-model-item"
+							:model="model"
+							:size="12"
+							:truncate="true"
+						/>
 					</div>
 				</div>
 				<div>

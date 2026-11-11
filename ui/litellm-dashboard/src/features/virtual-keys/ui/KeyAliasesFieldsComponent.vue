@@ -5,6 +5,7 @@ import { useKeyFieldIdentity } from "../support/KeyFormIdentity";
 import notificationManager from "../../notifications/logic/NotificationManager";
 import "./styles/KeyAliasesForms.css";
 import UiSelect from "../../platform/ui/UiSelect.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { selectedString, selectOptions, type KeyDraft } from "../support/VirtualKeyModels";
 const draft = defineModel<KeyDraft>({ required: true });
 const fieldIdentity = useKeyFieldIdentity();
@@ -130,8 +131,12 @@ function remove(name: string) {
 								</td>
 							</template>
 							<template v-else>
-								<td class="vk-alias-name">{{ name }}</td>
-								<td>{{ model }}</td>
+								<td class="vk-alias-name">
+									<ModelName class="vk-alias-target" :model="String(name)" :size="14" />
+								</td>
+								<td>
+									<ModelName class="vk-alias-target" :model="model" :size="14" />
+								</td>
 								<td>
 									<div class="vk-alias-row-actions">
 										<button

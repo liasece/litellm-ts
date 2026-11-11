@@ -155,3 +155,10 @@
 .vk-alias-delete:hover {
 	background: #fee2e2;
 }
+
+.vk-alias-target {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}

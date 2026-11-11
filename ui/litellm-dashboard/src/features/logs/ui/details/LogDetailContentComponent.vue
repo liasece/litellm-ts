@@ -3,6 +3,9 @@ import { computed } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
 import { guardrailEntries, guardrailLabel, hasMessages, hasResponse, maskedEntityCount } from "../../logic/LogDetailsDisplayLogic";
 import { asRecord, safeJsonStringify } from "../../logic/PrettyMessagesBlocksLogic";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
+import ProviderLogo from "../../../providers/ui/ProviderLogoComponent.vue";
+import { getProviderLogoAndName, modelSupplier } from "../../../providers/logic/ProviderIdentityLogic";
 import UiAlert from "../../../platform/ui/UiAlert.vue";
 import UiTag from "../../../platform/ui/UiTag.vue";
 import UiSpinner from "../../../platform/ui/UiSpinner.vue";
@@ -22,6 +25,8 @@ const metadata = computed(() => props.log.metadata ?? {}),
 	error = computed(() => (metadata.value.status === "failure" ? asRecord(metadata.value.error_information) : null)),
 	entries = computed(() => guardrailEntries(metadata.value.guardrail_information));
 const tags = computed(() => asRecord(props.log.request_tags) ?? {});
+const requestProvider = computed(() => modelSupplier(props.log.model ?? "", props.log.custom_llm_provider));
+const requestProviderInfo = computed(() => (requestProvider.value ? getProviderLogoAndName(requestProvider.value) : null));
 const missing = computed(
 	() =>
 		!hasMessages(props.log.messages) &&
@@ -50,10 +55,18 @@ function jump() {
 			<div class="ld-request-details__header">Request Details</div>
 			<div class="ld-request-details__body ld-descriptions">
 				<div>
-					<span>Model</span><span>{{ log.model }}</span>
+					<span>Model</span
+					><ModelName class="ld-model-value" :model="log.model" :provider="requestProvider" :size="16" :truncate="true" />
 				</div>
 				<div>
-					<span>Provider</span><span>{{ log.custom_llm_provider || "-" }}</span>
+					<span>Provider</span
+					><span class="ld-model-value" :title="log.custom_llm_provider || undefined"
+						><ProviderLogo
+							v-if="requestProviderInfo"
+							:provider="requestProviderInfo.displayName"
+							:logo="requestProviderInfo.logo"
+						/>{{ requestProviderInfo?.displayName || log.custom_llm_provider || "-" }}</span
+					>
 				</div>
 				<template v-if="metadata.internal_call_type === 'builtin_capability'"
 					><div>

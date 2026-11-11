@@ -5,7 +5,7 @@ import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
-import ModelLogo from "../../providers/ui/ModelLogoComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { deploymentIconProps, modelPriceIdentity } from "../logic/ModelDataLogic";
 import { modelOptions, type DisplayProxyModel } from "../support/ModelModels";
@@ -68,16 +68,16 @@ function date(value: string | null | undefined) {
 				<p>{{ item.label }}</p>
 				<UiTooltip :title="String(item.value || '-')"
 					><div class="model-overview-value" :class="{ 'model-unset': !item.value }">
-						<ProviderLogo
-							v-if="item.label === 'Provider' && item.value"
-							:provider="model.provider"
-							:logo="getProviderLogoAndName(model.provider).logo"
-						/>
-						<ModelLogo
+						<template v-if="item.label === 'Provider' && item.value"
+							><ProviderLogo :provider="model.provider" :logo="getProviderLogoAndName(model.provider).logo" /><span>{{
+								item.value
+							}}</span></template
+						><ModelName
 							v-else-if="item.label === 'LiteLLM Model' && item.value"
 							v-bind="deploymentIconProps(model)"
+							:name="String(item.value)"
 							:size="24"
-						/>{{ item.value || "-" }}
+						/><span v-else>{{ item.value || "-" }}</span>
 					</div></UiTooltip
 				>
 			</div>

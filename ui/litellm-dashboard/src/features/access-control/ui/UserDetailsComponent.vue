@@ -6,6 +6,7 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import AccessHeroIconComponent from "./AccessHeroIconComponent.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import AccessNoticeComponent from "./AccessNoticeComponent.vue";
@@ -142,8 +143,14 @@ onBeforeUnmount(store.dispose);
 					><p>Personal Models</p>
 					<div class="access-overview-values">
 						<template v-if="data.models.length"
-							><p v-for="model in data.models" :key="model">{{ model }}</p></template
-						>
+							><ModelName
+								v-for="model in data.models"
+								:key="model"
+								class="access-model-item"
+								:model="model"
+								:size="12"
+								:truncate="true"
+						/></template>
 						<p v-else>All proxy models</p>
 					</div></UiCard
 				>
@@ -194,8 +201,14 @@ onBeforeUnmount(store.dispose);
 					<div>
 						<p>Personal Models</p>
 						<div class="access-tags">
-							<span v-for="model in data.models" :key="model" class="access-model-label">{{ model }}</span
-							><span v-if="!data.models.length">All proxy models</span>
+							<ModelName
+								v-for="model in data.models"
+								:key="model"
+								class="access-model-label access-model-item"
+								:model="model"
+								:size="12"
+								:truncate="true"
+							/><span v-if="!data.models.length">All proxy models</span>
 						</div>
 					</div>
 					<div>

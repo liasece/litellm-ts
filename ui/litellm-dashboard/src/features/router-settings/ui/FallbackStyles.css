@@ -292,7 +292,7 @@
 	border-color: #a5b4fc;
 	box-shadow: 0 1px 2px rgb(0 0 0/0.05);
 }
-.routing-fallback-model > span {
+.routing-fallback-model > span.routing-fallback-index {
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -302,6 +302,15 @@
 	color: #9ca3af;
 	border-radius: 4px;
 	font: 700 12px/16px var(--ui-font-sans);
+	flex: none;
+}
+.routing-fallback-model > .model-logo {
+	flex: none;
+}
+.routing-fallback-tabs button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
 }
 .routing-fallback-model strong {
 	font-weight: 500;

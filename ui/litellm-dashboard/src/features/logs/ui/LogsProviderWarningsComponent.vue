@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
+import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
+import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { collectProviderStatusWarnings } from "../logic/ProviderStatusWarningLogic";
 import type { LogEntry } from "../support/LogsModels";
 const props = defineProps<{ logs: LogEntry[] }>();
@@ -16,15 +18,25 @@ function time(date: Date) {
 			:key="warning.provider"
 			:data-testid="'provider-status-warning-' + warning.provider"
 			type="warning"
-			:title="warning.displayName + ' may be experiencing a service issue'"
-			><div class="logs-provider-warning-description">
+			><template #title
+				><span class="logs-provider-warning-title"
+					><ProviderLogo
+						:provider="getProviderLogoAndName(warning.provider).displayName"
+						:logo="getProviderLogoAndName(warning.provider).logo"
+					/>{{ warning.displayName }} may be experiencing a service issue</span
+				></template
+			>
+			<div class="logs-provider-warning-description">
 				{{ warning.errorCount }} recent request{{ warning.errorCount === 1 ? "" : "s" }} returned server errors ({{
 					warning.errorCodes.join(", ")
 				}}). Latest at {{ time(warning.latestErrorAt) }}.
 			</div>
 			<template v-if="warning.statusPageUrl" #action>
 				<a class="logs-provider-warning-link" :href="warning.statusPageUrl" target="_blank" rel="noopener noreferrer"
-					>View {{ warning.displayName }} status</a
+					><ProviderLogo
+						:provider="getProviderLogoAndName(warning.provider).displayName"
+						:logo="getProviderLogoAndName(warning.provider).logo"
+					/>View {{ warning.displayName }} status</a
 				>
 			</template></UiAlert
 		>
@@ -40,8 +52,15 @@ function time(date: Date) {
 .logs-provider-warnings .ui-alert {
 	position: relative;
 }
+.logs-provider-warning-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
 .logs-provider-warning-link {
 	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 	align-items: center;
 	justify-content: center;
 	height: 24px;

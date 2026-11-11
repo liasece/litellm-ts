@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
 import { routingView, routingReasonLabels, routingTypeLabels } from "../../logic/LogDetailsRoutingLogic";
+import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import UiTag from "../../../platform/ui/UiTag.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import LogDetailsCollapseComponent from "./LogDetailsCollapseComponent.vue";
@@ -18,8 +19,18 @@ const view = computed(() => routingView(props.log));
 		>
 		<div class="ld-routing" data-testid="routing-details">
 			<div class="ld-routing__original">
-				<span class="ld-routing__caption">Original request</span><code>{{ view.originalModel }}</code>
-				<div v-if="view.original.length" class="ld-routing__resolution">Resolution: {{ view.original.join(" → ") }}</div>
+				<span class="ld-routing__caption">Original request</span
+				><ModelName class="ld-routing__model" :model="view.originalModel" :size="16" variant="code" />
+				<div v-if="view.original.length" class="ld-routing__resolution ld-routing__chain">
+					<span>Resolution:</span
+					><template v-for="(name, index) in view.original" :key="index"
+						><UiIcon v-if="index" name="ArrowRightOutlined" /><ModelName
+							class="ld-routing__model"
+							:model="name"
+							:size="14"
+							variant="code"
+					/></template>
+				</div>
 			</div>
 			<div v-for="hop in view.hops" :key="hop.index" class="ld-routing__hop">
 				<div class="ld-inline">
@@ -27,12 +38,23 @@ const view = computed(() => routingView(props.log));
 					><UiTag v-if="hop.trace" color="blue">{{ routingTypeLabels[hop.trace.routing_type] }}</UiTag>
 				</div>
 				<div class="ld-routing__path">
-					<code>{{ hop.from }}</code
-					><UiIcon name="ArrowRightOutlined" /><code>{{ hop.to }}</code>
+					<ModelName class="ld-routing__model" :model="hop.from" :size="16" variant="code" /><UiIcon
+						name="ArrowRightOutlined"
+					/><ModelName class="ld-routing__model" :model="hop.to" :size="16" variant="code" />
 				</div>
-				<div v-if="hop.path.length > 1" class="ld-routing__resolution">Resolution: {{ hop.path.join(" → ") }}</div>
+				<div v-if="hop.path.length > 1" class="ld-routing__resolution ld-routing__chain">
+					<span>Resolution:</span
+					><template v-for="(name, index) in hop.path" :key="index"
+						><UiIcon v-if="index" name="ArrowRightOutlined" /><ModelName
+							class="ld-routing__model"
+							:model="name"
+							:size="14"
+							variant="code"
+					/></template>
+				</div>
 				<div v-if="hop.trace?.attempted_deployment" class="ld-routing__resolution">
-					Failed upstream: <code>{{ hop.trace.attempted_deployment }}</code>
+					Failed upstream:
+					<ModelName class="ld-routing__model" :model="hop.trace.attempted_deployment" :size="14" variant="code" />
 				</div>
 				<div class="ld-routing__error">
 					<template v-if="hop.trace"
@@ -55,8 +77,7 @@ const view = computed(() => routingView(props.log));
 						log.metadata?.status === "failure" ? "Final attempted upstream" : "Final upstream model"
 					}}</strong>
 				</div>
-				<code>{{ log.model }}</code>
-			</div>
-		</div></LogDetailsCollapseComponent
-	>
+				<ModelName class="ld-routing__model" :model="log.model" :provider="log.custom_llm_provider" :size="18" variant="code" />
+			</div></div
+	></LogDetailsCollapseComponent>
 </template>

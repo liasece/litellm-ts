@@ -140,7 +140,7 @@
 .logs-model-name:hover {
 	background: #eff6ff;
 }
-.logs-model-name > span:first-child {
+.logs-model-name > .logs-model-name__text {
 	display: block;
 	max-width: 34ch;
 	overflow: hidden;

@@ -61,6 +61,12 @@
 	color: #1e293b;
 	overflow-wrap: anywhere;
 }
+.logs-field-value--icon {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+}
 .logs-model-popover {
 	width: 440px;
 	max-width: 100%;

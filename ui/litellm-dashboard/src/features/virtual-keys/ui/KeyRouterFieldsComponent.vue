@@ -6,6 +6,7 @@ import UiInput from "../../platform/ui/UiInput.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { recordValue, selectedString, selectOptions, stringValues, type KeyDraft } from "../support/VirtualKeyModels";
 const draft = defineModel<KeyDraft>({ required: true });
 defineProps<{ models: readonly string[] }>();
@@ -208,8 +209,7 @@ onBeforeUnmount(() => controller.abort());
 						:class="{ active: group.id === activeGroup }"
 						@click="activeGroup = group.id"
 					>
-						{{ group.primary || "Group " + (index + 1)
-						}}<span
+						<ModelName :model="group.primary" :name="group.primary || 'Group ' + (index + 1)" :size="14" /><span
 							v-if="groups.length > 1"
 							role="button"
 							aria-label="Remove fallback group"
@@ -259,9 +259,8 @@ onBeforeUnmount(() => controller.abort());
 								<span>No fallback models selected</span><small>Add models from the dropdown above</small>
 							</div>
 							<div v-for="(model, index) in currentGroup.models" :key="model" class="vk-fallback-model">
-								<span>{{ index + 1 }}</span
-								><strong>{{ model }}</strong
-								><button
+								<span class="vk-fallback-index">{{ index + 1 }}</span
+								><ModelName :model="model" :size="16" variant="strong" /><button
 									type="button"
 									:aria-label="'Remove fallback ' + model"
 									@click="fallbacks(currentGroup.models.filter((_, position) => position !== index))"

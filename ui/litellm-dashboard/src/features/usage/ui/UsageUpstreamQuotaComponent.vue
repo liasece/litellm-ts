@@ -6,6 +6,7 @@ import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import { createUpstreamQuotaStore } from "../stores/UpstreamQuotaStore";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
@@ -61,8 +62,15 @@ function balance(value: { used: number; limit: number; unit: string }) {
 								account.label
 							}}</strong>
 						</div>
-						<small v-if="account.models.length" :title="account.models.join(', ')">{{ account.models.join(", ") }}</small>
-					</div></template
+						<small v-if="account.models.length" :title="account.models.join(', ')" class="usage-quota-models"
+							><ModelName
+								v-for="model in account.models"
+								:key="model"
+								class="usage-quota-model"
+								:model="model"
+								:provider="account.provider"
+								:size="12"
+						/></small></div></template
 				><template #extra
 					><div class="usage-quota-account-kind">
 						<UiTag>{{ kind(account.account_kind) }}</UiTag

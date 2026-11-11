@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import { searchToolsApi } from "../api/SearchToolsApi";
 import { cleanSearchError } from "../logic/SearchToolLogic";
+import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import type { SearchConnectionResult } from "../support/SearchToolModels";
 const props = defineProps<{ params: Record<string, unknown> }>();
 const emit = defineEmits<{ complete: []; success: [] }>();
+const providerName = computed(() => String(props.params.search_provider || ""));
+const providerLogo = computed(() => (providerName.value ? "/ui/assets/logos/" + providerName.value + ".png" : null));
 const loading = ref(true),
 	result = ref<SearchConnectionResult | null>(null),
 	details = ref(false),
@@ -32,13 +35,19 @@ onBeforeUnmount(() => controller.abort());
 <template>
 	<div class="tools-connection-result">
 		<div v-if="loading" class="tools-connection-loading">
-			<span class="tools-connection-spinner" /><span>Testing connection to {{ params.search_provider || "search provider" }}...</span>
+			<span class="tools-connection-spinner" /><span class="tools-provider-cell"
+				><ProviderLogo v-if="providerName" :provider="providerName" :logo="providerLogo" />Testing connection to
+				{{ providerName || "search provider" }}...</span
+			>
 		</div>
 		<template v-else-if="result"
 			><div v-if="result.status === 'success'" class="tools-connection-success">
 				<UiIcon name="CheckCircleFilled" :size="24" />
 				<div>
-					<strong>Connection to {{ params.search_provider }} successful!</strong>
+					<strong class="tools-provider-cell"
+						><ProviderLogo v-if="providerName" :provider="providerName" :logo="providerLogo" />Connection to
+						{{ providerName }} successful!</strong
+					>
 					<p v-if="result.test_query">
 						Test query: <code>{{ result.test_query }}</code>
 					</p>
@@ -46,7 +55,13 @@ onBeforeUnmount(() => controller.abort());
 				</div>
 			</div>
 			<div v-else>
-				<h3><UiIcon name="WarningOutlined" :size="24" />Connection to {{ params.search_provider || "search provider" }} failed</h3>
+				<h3 class="tools-provider-cell">
+					<UiIcon name="WarningOutlined" :size="24" /><ProviderLogo
+						v-if="providerName"
+						:provider="providerName"
+						:logo="providerLogo"
+					/>Connection to {{ providerName || "search provider" }} failed
+				</h3>
 				<div class="tools-connection-error">
 					<strong>Error:</strong>
 					<p>{{ cleanSearchError(result.message) }}</p>

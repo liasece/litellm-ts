@@ -6,6 +6,8 @@ import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
 import ModelResourceDelete from "./ModelResourceDeleteDialogComponent.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
+import { deploymentIconProps } from "../logic/ModelDataLogic";
 import { modelsApi } from "../api/ModelsApi";
 import { updateModelFallbacks } from "../logic/ModelFallbackLogic";
 import { modelString, modelStrings, modelOptions, type DisplayProxyModel, type ModelCatalog } from "../support/ModelModels";
@@ -124,9 +126,19 @@ async function remove() {
 		message="Are you sure you want to delete this model?"
 		information-title="Model Information"
 		:information="[
-			{ label: 'Model Name', value: model?.model_name || 'Not Set' },
-			{ label: 'LiteLLM Model Name', value: model?.litellm_model_name || 'Not Set' },
-			{ label: 'Provider', value: model?.provider || 'Not Set' },
+			{
+				label: 'Model Name',
+				value: model?.model_name || 'Not Set',
+				model: model?.model_name ?? undefined,
+				provider: model?.provider ?? undefined,
+			},
+			{
+				label: 'LiteLLM Model Name',
+				value: model?.litellm_model_name || 'Not Set',
+				model: model?.litellm_model_name ?? undefined,
+				provider: model?.provider,
+			},
+			{ label: 'Provider', value: model?.provider || 'Not Set', provider: model?.provider ?? undefined },
 			{ label: 'Created By', value: model?.model_info.created_by || 'Not Set' },
 		]"
 		:pending="pending"
@@ -153,9 +165,14 @@ async function remove() {
 				<div>
 					<span class="model-routing-action__secondary">Model</span>
 					<div>
-						<span
-							><strong>{{ model?.model_name ?? "-" }}</strong></span
-						>
+						<ModelName
+							v-if="model"
+							class="model-routing-action__name"
+							v-bind="deploymentIconProps(model)"
+							:name="model.model_name"
+							:size="16"
+							variant="strong"
+						/><span v-else class="model-routing-action__name">-</span>
 					</div>
 				</div>
 				<div>

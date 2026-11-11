@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiInputNumber from "../../platform/ui/UiInputNumber.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { modelsApi } from "../api/ModelsApi";
 import { modelOptions, modelRecord, type ModelCatalog } from "../support/ModelModels";
 import notification from "../../notifications/logic/NotificationManager";
@@ -57,7 +58,11 @@ async function save() {
 				aria-label="Retry Policy Scope"
 			/>
 		</div>
-		<h3 class="model-title">{{ scope === "global" ? "Global Retry Policy" : "Retry Policy for " + (scope ?? "") }}</h3>
+		<h3 class="model-title model-retry-title">
+			<ModelName :model="scope === 'global' ? '' : scope" :size="16">{{
+				scope === "global" ? "Global Retry Policy" : "Retry Policy for " + (scope ?? "")
+			}}</ModelName>
+		</h3>
 		<p class="model-text model-retry-description">
 			{{
 				scope === "global"

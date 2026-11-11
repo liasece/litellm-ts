@@ -9,7 +9,8 @@ import type { UiTableColumn, UiTableRow, UiTableSort } from "../../platform/ui/U
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
-import { modelDisplayName } from "../logic/ModelDataLogic";
+import { deploymentIconProps, modelDisplayName } from "../logic/ModelDataLogic";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { modelString, type DisplayProxyModel, type ModelCatalog } from "../support/ModelModels";
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
 const healthColumns: readonly {
@@ -142,7 +143,13 @@ const emptyText = computed(() => (activeFilters.value.length ? "No models match 
 function applyHealthFilters(entries: readonly UiTableActiveFilter[]): void {
 	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
 	for (const entry of entries) {
-		if (entry.value.trim()) next.push({ ...entry, value: entry.value.trim(), text: entry.text || entry.value.trim() });
+		if (entry.value.trim())
+			next.push({
+				...entry,
+				value: entry.value.trim(),
+				text: entry.text || entry.value.trim(),
+				...(entry.key === "model" ? { iconModel: entry.value.trim() } : {}),
+			});
 	}
 	activeFilters.value = next;
 }
@@ -203,7 +210,12 @@ function status(id: string) {
 				</button>
 			</template>
 			<template #cell-model="{ row }">
-				<strong>{{ modelDisplayName(modelRow(row)) }}</strong>
+				<ModelName
+					v-bind="deploymentIconProps(modelRow(row))"
+					:name="modelDisplayName(modelRow(row))"
+					:size="16"
+					variant="strong"
+				/>
 			</template>
 			<template #cell-team="{ row }">
 				<span class="model-health-team" :class="{ 'model-health-team--empty': !modelRow(row).model_info.team_id }">

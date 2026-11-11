@@ -174,7 +174,14 @@ const activeFilters = computed<UiTableActiveFilter[]>(() => {
 	const add = (key: keyof LogFilterState, label: string, text?: string, match: "fuzzy" | "exact" = "exact") => {
 		const value = filters[key];
 		if (!value) return;
-		entries.push({ key, label, value, text: text || filterTexts.value[key] || value, match });
+		entries.push({
+			key,
+			label,
+			value,
+			text: text || filterTexts.value[key] || value,
+			match,
+			...(key === FILTER_KEYS.MODEL ? { iconModel: value } : {}),
+		});
 	};
 	add(FILTER_KEYS.STATUS, "Status", statusLabel(filters[FILTER_KEYS.STATUS]));
 	add(FILTER_KEYS.ERROR_CODE, "Error Code");

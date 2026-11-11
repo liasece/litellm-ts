@@ -37,6 +37,7 @@ const props = withDefaults(
 		ranking?: boolean;
 		tooltipTone?: "light" | "dark";
 		showXAxis?: boolean;
+		modelTooltip?: boolean;
 	}>(),
 	{
 		colors: () => ["cyan"],
@@ -44,6 +45,7 @@ const props = withDefaults(
 		curve: "linear",
 		tooltipTone: "light",
 		showXAxis: true,
+		modelTooltip: false,
 		height: 320,
 		yAxisWidth: 56,
 		legendHeight: 60,
@@ -305,6 +307,7 @@ function select(params: unknown) {
 						:colors="palette"
 						:format="format"
 						:compact="kind === 'area'"
+						:model-tooltip="modelTooltip"
 				/></slot></div
 		></Teleport>
 	</div>

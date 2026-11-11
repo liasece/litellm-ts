@@ -143,7 +143,7 @@
 	border: 1px solid #e5e7eb;
 	border-radius: 6px;
 }
-.vk-fallback-model > span {
+.vk-fallback-model > span.vk-fallback-index {
 	display: grid;
 	place-items: center;
 	width: 24px;
@@ -152,6 +152,15 @@
 	background: #dbeafe;
 	color: #2563eb;
 	font-size: 12px;
+	flex: none;
+}
+.vk-fallback-model > .model-logo {
+	flex: none;
+}
+.vk-fallback-tabs button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
 }
 .vk-fallback-model strong {
 	flex: 1;

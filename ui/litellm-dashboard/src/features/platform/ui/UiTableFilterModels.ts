@@ -50,6 +50,10 @@ export interface UiTableActiveFilter {
 	/** 标签中展示的文本；枚举显示友好名称，ID 显示原值。 */
 	text: string;
 	match: UiTableFilterMatch;
+	/** 筛选值本身是模型名时用于显示模型图标。 */
+	iconModel?: string;
+	/** 筛选值本身是供应商时用于显示供应商图标。 */
+	iconProvider?: string;
 }
 
 /** 读取字段声明的默认匹配方式：文本默认包含，枚举和远程候选项默认等值。 */
