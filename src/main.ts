@@ -68,6 +68,7 @@ import { registerCliProxyManagementRoutes } from "./cliproxy/CliProxyEndpoints";
 import { registerSubscriptionSpecialRoutes } from "./subscriptions/native/SubscriptionSpecialEndpoints";
 import { registerProviderQuotaRoutes } from "./proxy/ProviderQuotaEndpoints";
 import { registerSpendLogStreamWebSocket } from "./spend/logStreamWebSocket";
+import { authRepositoryCache, logAuthCacheConfiguration } from "./auth/AuthRepositoryCache";
 import { registerSubscriptionResponsesWebSocket } from "./subscriptions/native/SubscriptionResponsesWebSocket";
 import { registerSpendLogUpdatesWebSocket } from "./spend/logUpdatesWebSocket";
 import { registerSpendSessionTimelineStreamWebSocket } from "./spend/sessionTimelineWebSocket";
@@ -112,6 +113,8 @@ export class LiteLLMServer {
 		logger.info("LiteLLM TS Gateway 启动中...", { port: port, host: host, modelCount: this._config.modelList.length });
 
 		this._container = await createServiceContainer(this._config);
+		// 缓存是「可关」的运维开关，启动时打一条配置，线上可直接从日志确认是否生效。
+		logAuthCacheConfiguration();
 		// 预热与启动收尾并行：远端模型价格快照和订阅设置投影都不是监听的前提，
 		// 在这里尽早开始，它们的耗时（及各自超时预算）不再计入服务不可用窗口。
 		void this._container.warmUp();
@@ -344,6 +347,19 @@ export class LiteLLMServer {
 		managementRouter.use(container.authMiddleware);
 		managementRouter.use(webUiCsrfProtection);
 		managementRouter.use(container.authorizationGuard.middleware("management"));
+		// 管理端点的写请求会改动 key/team/user 等鉴权实体（含 key 删除、封禁、预算调整）。
+		// 这些写入绕过 AuthRepository，直接在完成后清空进程内鉴权缓存，保证下一次鉴权
+		// 读到新状态；读请求不触发，避免仪表盘轮询把缓存打空。
+		managementRouter.use((req, res, next) => {
+			if (req.method !== "GET" && req.method !== "HEAD") {
+				res.once("finish", () => {
+					if (res.statusCode < 400) {
+						authRepositoryCache.clear();
+					}
+				});
+			}
+			next();
+		});
 
 		registerEntityPatchRoutes(managementRouter, container.db.db);
 		createKeyManagementRoutes(managementRouter, container.db.db, container.authorizationGuard);

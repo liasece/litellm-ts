@@ -1,4 +1,5 @@
 import { normalizeUsageTokens } from "../core/utils/usage";
+import { invalidateAuthCacheForSpendSubjects } from "../auth/AuthRepositoryCache";
 import { resolveModelFamily } from "../shared/ModelFamily";
 import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
 import { performance } from "node:perf_hooks";
@@ -2121,6 +2122,17 @@ async function trackSpendLogMeasured(
 		// 无论落账成功、重复还是失败后清理在途行，列表都可能已经变化；通知只负责提示重查。
 		publishSpendLogChange();
 	}
+	// 事务已提交：按主体失效鉴权缓存，让下一次鉴权立即读到刚累加的 spend/预算状态。
+	// 不依赖 TTL，避免「刚刚超预算仍被放行」的窗口。
+	const projectIdFromMetadata = logEntry.metadata?.["user_api_key_project_id"];
+	invalidateAuthCacheForSpendSubjects({
+		tokenHash: protectedApiKey,
+		userId: logEntry.user ?? null,
+		teamId: logEntry.team_id ?? null,
+		organizationId: logEntry.organization_id ?? null,
+		projectId: logEntry.project_id ?? (typeof projectIdFromMetadata === "string" ? projectIdFromMetadata : null),
+		endUserId: logEntry.end_user_id ?? null,
+	});
 	// 事务已提交：把这些块记入进程缓存，后续同会话请求的读与写前判存都能直接命中。
 	rememberSpendLogBlocks(blocksToInsert);
 	logger.debug(`花费已记录: ${logEntry.request_id} spend=${spend}`);

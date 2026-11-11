@@ -3,6 +3,9 @@
  *
  * 提供 API 密钥（VerificationToken）、团队、用户、组织等实体的查找方法。
  * 使用 Drizzle ORM 的 eq() 条件查询，返回 first() 结果或 null。
+ *
+ * 读路径全部经过进程级缓存（见 AuthRepositoryCache）：鉴权链每请求会串行读同一批
+ * 实体，缓存命中即可省掉这部分往返。写方法与记账提交都会主动失效，不依赖 TTL 生效。
  */
 
 import { and, eq } from "drizzle-orm";
@@ -16,6 +19,17 @@ import { LiteLLM_BudgetTable } from "../db/schema/budgets";
 import { liteLLM_DeprecatedVerificationToken } from "../db/schema/deprecated-tokens";
 import { LiteLLM_TeamMembership } from "../db/schema/team-memberships";
 import { LiteLLM_ProjectTable } from "../db/schema/projects";
+import { authCacheKey, authCacheTag, authRepositoryCache } from "./AuthRepositoryCache";
+
+type VerificationTokenRow = typeof LiteLLM_VerificationToken.$inferSelect;
+type DeprecatedVerificationTokenRow = typeof liteLLM_DeprecatedVerificationToken.$inferSelect;
+type TeamRow = typeof LiteLLM_TeamTable.$inferSelect;
+type UserRow = typeof LiteLLM_UserTable.$inferSelect;
+type OrganizationRow = typeof LiteLLM_OrganizationTable.$inferSelect;
+type EndUserRow = typeof LiteLLM_EndUserTable.$inferSelect;
+type BudgetRow = typeof LiteLLM_BudgetTable.$inferSelect;
+type TeamMembershipRow = typeof LiteLLM_TeamMembership.$inferSelect;
+type ProjectRow = typeof LiteLLM_ProjectTable.$inferSelect;
 
 /**
  * AuthRepository
@@ -30,9 +44,25 @@ export class AuthRepository {
 	 * @param tokenHash - SHA-256 哈希后的 API 密钥
 	 * @returns 验证令牌记录或 null
 	 */
-	async findVerificationTokenByHash(tokenHash: string) {
+	async findVerificationTokenByHash(tokenHash: string): Promise<VerificationTokenRow | null> {
+		const key = authCacheKey.verificationToken(tokenHash);
+		const cached = authRepositoryCache.get<VerificationTokenRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db.select().from(LiteLLM_VerificationToken).where(eq(LiteLLM_VerificationToken.token, tokenHash)).limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		if (row !== null) {
+			const tags: string[] = [];
+			if (row.userId) {
+				tags.push(authCacheTag.user(row.userId));
+			}
+			if (row.teamId) {
+				tags.push(authCacheTag.team(row.teamId));
+			}
+			authRepositoryCache.set(key, row, tags);
+		}
+		return row;
 	}
 
 	/**
@@ -41,6 +71,7 @@ export class AuthRepository {
 	 */
 	async revokeVerificationTokenByHash(tokenHash: string): Promise<void> {
 		await this._db.update(LiteLLM_VerificationToken).set({ blocked: true }).where(eq(LiteLLM_VerificationToken.token, tokenHash));
+		authRepositoryCache.delete(authCacheKey.verificationToken(tokenHash));
 	}
 
 	/**
@@ -53,6 +84,7 @@ export class AuthRepository {
 			.update(LiteLLM_VerificationToken)
 			.set({ expires: expiresAt, updatedAt: new Date() })
 			.where(eq(LiteLLM_VerificationToken.token, tokenHash));
+		authRepositoryCache.delete(authCacheKey.verificationToken(tokenHash));
 	}
 
 	/**
@@ -60,13 +92,20 @@ export class AuthRepository {
 	 * @param tokenHash - SHA-256 哈希后的旧 API 密钥
 	 * @returns deprecated token 记录或 null
 	 */
-	async findDeprecatedVerificationTokenByHash(tokenHash: string) {
+	async findDeprecatedVerificationTokenByHash(tokenHash: string): Promise<DeprecatedVerificationTokenRow | null> {
+		const key = authCacheKey.deprecatedToken(tokenHash);
+		const cached = authRepositoryCache.get<DeprecatedVerificationTokenRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db
 			.select()
 			.from(liteLLM_DeprecatedVerificationToken)
 			.where(eq(liteLLM_DeprecatedVerificationToken.token, tokenHash))
 			.limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row);
+		return row;
 	}
 
 	/**
@@ -74,9 +113,16 @@ export class AuthRepository {
 	 * @param teamId - 团队 UUID
 	 * @returns 团队记录或 null
 	 */
-	async findTeamById(teamId: string) {
+	async findTeamById(teamId: string): Promise<TeamRow | null> {
+		const key = authCacheKey.team(teamId);
+		const cached = authRepositoryCache.get<TeamRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, teamId)).limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row, [authCacheTag.team(teamId)]);
+		return row;
 	}
 
 	/**
@@ -84,9 +130,16 @@ export class AuthRepository {
 	 * @param userId - 用户 ID
 	 * @returns 用户记录或 null
 	 */
-	async findUserById(userId: string) {
+	async findUserById(userId: string): Promise<UserRow | null> {
+		const key = authCacheKey.user(userId);
+		const cached = authRepositoryCache.get<UserRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, userId)).limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row, [authCacheTag.user(userId)]);
+		return row;
 	}
 
 	/**
@@ -94,13 +147,20 @@ export class AuthRepository {
 	 * @param orgId - 组织 UUID
 	 * @returns 组织记录或 null
 	 */
-	async findOrganizationById(orgId: string) {
+	async findOrganizationById(orgId: string): Promise<OrganizationRow | null> {
+		const key = authCacheKey.organization(orgId);
+		const cached = authRepositoryCache.get<OrganizationRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db
 			.select()
 			.from(LiteLLM_OrganizationTable)
 			.where(eq(LiteLLM_OrganizationTable.organizationId, orgId))
 			.limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row);
+		return row;
 	}
 
 	/**
@@ -108,9 +168,16 @@ export class AuthRepository {
 	 * @param userId - 端用户 ID
 	 * @returns 端用户记录或 null
 	 */
-	async findEndUserById(userId: string) {
+	async findEndUserById(userId: string): Promise<EndUserRow | null> {
+		const key = authCacheKey.endUser(userId);
+		const cached = authRepositoryCache.get<EndUserRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db.select().from(LiteLLM_EndUserTable).where(eq(LiteLLM_EndUserTable.userId, userId)).limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row);
+		return row;
 	}
 
 	/**
@@ -118,9 +185,16 @@ export class AuthRepository {
 	 * @param budgetId - 预算 UUID
 	 * @returns 预算记录或 null
 	 */
-	async findBudgetById(budgetId: string) {
+	async findBudgetById(budgetId: string): Promise<BudgetRow | null> {
+		const key = authCacheKey.budget(budgetId);
+		const cached = authRepositoryCache.get<BudgetRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db.select().from(LiteLLM_BudgetTable).where(eq(LiteLLM_BudgetTable.budget_id, budgetId)).limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row);
+		return row;
 	}
 
 	/**
@@ -128,21 +202,35 @@ export class AuthRepository {
 	 * @param userId
 	 * @param teamId
 	 */
-	async findTeamMembership(userId: string, teamId: string) {
+	async findTeamMembership(userId: string, teamId: string): Promise<TeamMembershipRow | null> {
+		const key = authCacheKey.teamMembership(userId, teamId);
+		const cached = authRepositoryCache.get<TeamMembershipRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db
 			.select()
 			.from(LiteLLM_TeamMembership)
 			.where(and(eq(LiteLLM_TeamMembership.userId, userId), eq(LiteLLM_TeamMembership.teamId, teamId)))
 			.limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row, [authCacheTag.user(userId), authCacheTag.team(teamId)]);
+		return row;
 	}
 
 	/**
 	 * 根据项目 ID 读取项目账务主体。
 	 * @param projectId
 	 */
-	async findProjectById(projectId: string) {
+	async findProjectById(projectId: string): Promise<ProjectRow | null> {
+		const key = authCacheKey.project(projectId);
+		const cached = authRepositoryCache.get<ProjectRow>(key);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const rows = await this._db.select().from(LiteLLM_ProjectTable).where(eq(LiteLLM_ProjectTable.projectId, projectId)).limit(1);
-		return rows.at(0) ?? null;
+		const row = rows.at(0) ?? null;
+		authRepositoryCache.set(key, row);
+		return row;
 	}
 }
