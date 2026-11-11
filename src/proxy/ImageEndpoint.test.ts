@@ -58,19 +58,20 @@ describe("ImageController spend lifecycle", () => {
 		expect(SpendTracker.trackSpendLog).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ request_id: "request-1" }));
 	});
 
-	it("provider 成功后的账务错误不会被改写为失败日志", async () => {
+	it("provider 成功后的账务错误不会影响响应，也不会写失败日志", async () => {
 		const accountingError = new Error("accounting unavailable");
 		jest.spyOn(SpendTracker, "trackSpendLog").mockRejectedValueOnce(accountingError);
 
-		await expect(
-			new ImageController(router as never, {} as never).generate({ model: "image-model", prompt: "draw" }, request),
-		).rejects.toBe(accountingError);
+		// 结算已异步化：账务写失败由后台队列重试，不再抛给调用方。
+		const result = await new ImageController(router as never, {} as never).generate({ model: "image-model", prompt: "draw" }, request);
+
+		expect(result).toEqual(expect.objectContaining({ usage: expect.any(Object) }));
 		expect(router.imageGeneration).toHaveBeenCalledTimes(1);
 		expect(SpendTracker.trackSpendLog).toHaveBeenCalledTimes(1);
 		expect(SpendTracker.trackSpendLog).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: "success" }));
 	});
 
-	it("provider 失败后 SpendLog 与 reservation release 的 503 均不覆盖原错误", async () => {
+	it("provider 失败后账务与 reservation release 的失败均不覆盖原错误", async () => {
 		const providerError = Object.assign(new Error("provider failed"), { statusCode: 429 });
 		router.imageGeneration.mockRejectedValueOnce(providerError);
 		jest.spyOn(SpendTracker, "trackSpendLog").mockRejectedValueOnce(Object.assign(new Error("track unavailable"), { statusCode: 503 }));

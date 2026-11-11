@@ -41,7 +41,8 @@ import { createModuleLogger } from "../core/utils/logger";
 import { cleanSurrogates } from "../core/utils/text";
 import { getConfig } from "../core/config";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
-import { buildSpendLogFromRequest, calculateAndSetCost, checkpointActiveRequest, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost, checkpointActiveRequest, releaseSpend } from "../spend/SpendTracker";
+import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
@@ -1072,13 +1073,13 @@ export function registerAnthropicMessagesEndpoints(
 								usage: finalAccumulator.usage as Record<string, unknown> | undefined,
 								status: SpendLogStatus.Success,
 							});
-							await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+							await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 						}
 						return;
 					} catch (error) {
 						if (db && auth && spendRequestId) {
 							await spendLifecycle.finalize(async () =>
-								trackSpendLog(
+								queueSpendLog(
 									db,
 									await buildSpendLogFromRequest({
 										req: req,
@@ -1138,7 +1139,7 @@ export function registerAnthropicMessagesEndpoints(
 					if (db && auth && spendRequestId) {
 						try {
 							await spendLifecycle.finalize(async () =>
-								trackSpendLog(
+								queueSpendLog(
 									db,
 									await buildSpendLogFromRequest({
 										req: req,
@@ -1295,7 +1296,7 @@ export function registerAnthropicMessagesEndpoints(
 							status: streamError === undefined ? SpendLogStatus.Success : SpendLogStatus.Failure,
 						});
 						try {
-							await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+							await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 						} catch (accountingError) {
 							// SSE headers 已发送，无法改写为 503；记录错误供账务补偿处理。
 							logger.error("Anthropic 流式花费账务提交失败", {
@@ -1488,7 +1489,7 @@ export function registerAnthropicMessagesEndpoints(
 				if (db && auth && spendRequestId) {
 					try {
 						await spendLifecycle.finalize(async () =>
-							trackSpendLog(
+							queueSpendLog(
 								db,
 								await buildSpendLogFromRequest({
 									req: req,
@@ -1579,7 +1580,7 @@ export function registerAnthropicMessagesEndpoints(
 					upstreamLogContext: upstreamLogContext,
 					status: SpendLogStatus.Success,
 				});
-				await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+				await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 			}
 
 			await imageHistory?.bind(responseData);

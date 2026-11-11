@@ -370,7 +370,7 @@ describe("core proxy alias routes", () => {
 			expect(SpendTracker.releaseSpend).toHaveBeenCalledTimes(1);
 		});
 
-		it("Completions provider success keeps accounting error and does not write a failure log", async () => {
+		it("Completions provider success 不受账务失败影响，也不写失败日志", async () => {
 			spendSpy.mockRejectedValueOnce(ApiError.unavailable("accounting unavailable"));
 			const completion = jest.fn().mockResolvedValue({
 				id: "cmpl-test",
@@ -379,7 +379,8 @@ describe("core proxy alias routes", () => {
 			const router = withSpendReservationRouter({ completion: completion });
 			const app = buildAuthenticatedApp((expressRouter) => registerCompletionsRoutes(expressRouter, router, {} as never));
 
-			await request(app).post("/v1/completions").send({ model: "text-model", prompt: "hello" }).expect(503);
+			// 结算已异步化：账务写失败不再体现在响应上，由后台队列重试。
+			await request(app).post("/v1/completions").send({ model: "text-model", prompt: "hello" }).expect(200);
 
 			expect(completion).toHaveBeenCalledTimes(1);
 			expect(spendSpy).toHaveBeenCalledTimes(1);
@@ -420,7 +421,7 @@ describe("core proxy alias routes", () => {
 				{ model: "gpt-4.1", input: "hello" },
 				(expressRouter: express.Router, router: LiteLLMRouter) => registerResponsesApiRoutes(expressRouter, router, {} as never),
 			],
-		] as const)("%s provider 成功后的账务 503 不会被改写为失败日志", async (_name, path, body, register) => {
+		] as const)("%s provider 成功不受账务失败影响，也不写失败日志", async (_name, path, body, register) => {
 			const accountingError = ApiError.unavailable("accounting unavailable");
 			spendSpy.mockRejectedValueOnce(accountingError);
 			const completion = jest.fn().mockResolvedValue({
@@ -430,7 +431,8 @@ describe("core proxy alias routes", () => {
 			const router = withSpendReservationRouter({ completion: completion });
 			const app = buildAuthenticatedApp((expressRouter) => register(expressRouter, router));
 
-			await request(app).post(path).send(body).expect(503);
+			// 结算已异步化：账务写失败不再体现在响应上，由后台队列重试。
+			await request(app).post(path).send(body).expect(200);
 
 			expect(completion).toHaveBeenCalledTimes(1);
 			expect(spendSpy).toHaveBeenCalledTimes(1);
@@ -492,7 +494,7 @@ describe("core proxy alias routes", () => {
 			});
 		});
 
-		it("Embeddings provider 成功后的账务 503 不会被改写为失败日志", async () => {
+		it("Embeddings provider 成功不受账务失败影响，也不写失败日志", async () => {
 			spendSpy.mockRejectedValueOnce(ApiError.unavailable("accounting unavailable"));
 			const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
 				ok: true,
@@ -512,7 +514,8 @@ describe("core proxy alias routes", () => {
 			const router = withSpendReservationRouter({ getAvailableDeployment: getAvailableDeployment });
 			const app = buildAuthenticatedApp((expressRouter) => registerEmbeddingsRoutes(expressRouter, router, {} as never));
 
-			await request(app).post("/embeddings").send({ model: "body-model", input: "hello" }).expect(503);
+			// 结算已异步化：账务写失败不再体现在响应上，由后台队列重试。
+			await request(app).post("/embeddings").send({ model: "body-model", input: "hello" }).expect(200);
 
 			expect(fetchMock).toHaveBeenCalledTimes(1);
 			expect(spendSpy).toHaveBeenCalledTimes(1);

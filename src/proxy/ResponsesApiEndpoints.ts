@@ -31,8 +31,8 @@ import {
 	checkpointActiveRequest,
 	injectResponseCostHeader,
 	releaseSpend,
-	trackSpendLog,
 } from "../spend/SpendTracker";
+import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { NativeResponsesAccumulator, isRecord } from "./NativeResponsesAccumulator";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
@@ -2560,7 +2560,7 @@ async function recordSpend(
 		return;
 	}
 	try {
-		await trackSpendLog(
+		await queueSpendLog(
 			db,
 			await buildSpendLogFromRequest({
 				req: req,
@@ -2597,12 +2597,14 @@ async function recordSpend(
 		);
 	} catch (accountingError) {
 		logger.error("Responses 花费账务提交失败", { accountingError: accountingError, requestId: requestId });
+	}
+	// 账务在后台队列写。失败/中断的请求立即释放 reservation；成功请求交给结算事务处理。
+	if (context.status !== SpendLogStatus.Success) {
 		try {
 			await releaseSpend(db, requestId);
 		} catch (releaseError) {
 			logger.error("Responses reservation 释放失败", { error: releaseError, requestId: requestId });
 		}
-		throw accountingError;
 	}
 }
 

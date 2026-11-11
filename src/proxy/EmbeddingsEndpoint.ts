@@ -18,8 +18,8 @@ import {
 	calculateAndSetCost,
 	injectResponseCostHeader,
 	releaseSpend,
-	trackSpendLog,
 } from "../spend/SpendTracker";
+import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { extractDeploymentCustomCost } from "../router/RouterSpendInfo";
 import { CallType, SpendLogStatus } from "../types/spend";
@@ -142,7 +142,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 				injectResponseCostHeader(res, usage["cost"] as number);
 			}
 			if (db && auth && requestId) {
-				await trackSpendLog(
+				await queueSpendLog(
 					db,
 					await buildSpendLogFromRequest({
 						req: req,
@@ -176,7 +176,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 			}
 			if (db && auth && requestId) {
 				try {
-					await trackSpendLog(
+					await queueSpendLog(
 						db,
 						await buildSpendLogFromRequest({
 							req: req,
@@ -197,11 +197,13 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 					);
 				} catch (accountingError) {
 					logger.error("Provider 失败后的花费账务提交失败", { accountingError: accountingError, requestId: requestId });
-					try {
-						await releaseSpend(db, requestId);
-					} catch (releaseError) {
-						logger.error("Provider 失败后释放 reservation 失败", { error: releaseError, requestId: requestId });
-					}
+				}
+				// 账务写已挪到后台队列：失败请求不再等账务结果，reservation 必须在这里立即释放，
+				// 否则预算槽位会一直占到租约过期。
+				try {
+					await releaseSpend(db, requestId);
+				} catch (releaseError) {
+					logger.error("Provider 失败后释放 reservation 失败", { error: releaseError, requestId: requestId });
 				}
 			}
 			throw error;

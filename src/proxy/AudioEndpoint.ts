@@ -12,7 +12,8 @@ import { requestArrivalTime } from "../core/api/RequestArrival";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { DrizzleDb } from "../core/db/Database";
 import { runCommonChecks } from "../auth/AuthChecks";
-import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend, trackSpendLog } from "../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost, releaseSpend } from "../spend/SpendTracker";
+import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
@@ -187,7 +188,7 @@ export class AudioController {
 			calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 			const usage = (result as Record<string, unknown>)?.usage as Record<string, unknown> | undefined;
 			if (db && auth && requestId) {
-				await trackSpendLog(
+				await queueSpendLog(
 					db,
 					await buildSpendLogFromRequest({
 						req: request,
@@ -219,7 +220,7 @@ export class AudioController {
 			}
 			if (db && auth && requestId) {
 				try {
-					await trackSpendLog(
+					await queueSpendLog(
 						db,
 						await buildSpendLogFromRequest({
 							req: request,
@@ -238,11 +239,13 @@ export class AudioController {
 					);
 				} catch (accountingError) {
 					logger.error("Provider 失败后的花费账务提交失败", { accountingError: accountingError, requestId: requestId });
-					try {
-						await releaseSpend(db, requestId);
-					} catch (releaseError) {
-						logger.error("Provider 失败后释放 reservation 失败", { error: releaseError, requestId: requestId });
-					}
+				}
+				// 账务写已挪到后台队列：失败请求不再等账务结果，reservation 必须在这里立即释放，
+				// 否则预算槽位会一直占到租约过期。
+				try {
+					await releaseSpend(db, requestId);
+				} catch (releaseError) {
+					logger.error("Provider 失败后释放 reservation 失败", { error: releaseError, requestId: requestId });
 				}
 			}
 			throw error;

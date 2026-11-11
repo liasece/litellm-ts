@@ -22,8 +22,8 @@ import {
 	calculateAndSetCost,
 	injectResponseCostHeader,
 	releaseSpend,
-	trackSpendLog,
 } from "../spend/SpendTracker";
+import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
@@ -109,7 +109,7 @@ function createCompletionsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 				calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 				const usage = result["usage"] as Record<string, unknown> | undefined;
 				if (req.auth && requestId) {
-					await trackSpendLog(
+					await queueSpendLog(
 						db,
 						await buildSpendLogFromRequest({
 							req: req,
@@ -222,7 +222,7 @@ async function handleStreamingCompletion(
 	if (req.auth && requestId) {
 		const spendInfo = (streamResult as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 		try {
-			await trackSpendLog(
+			await queueSpendLog(
 				db,
 				await buildSpendLogFromRequest({
 					req: req,
@@ -268,7 +268,7 @@ async function recordProviderFailure(
 		return;
 	}
 	try {
-		await trackSpendLog(
+		await queueSpendLog(
 			db,
 			await buildSpendLogFromRequest({
 				req: req,
@@ -291,11 +291,13 @@ async function recordProviderFailure(
 			accountingError: accountingError,
 			requestId: requestId,
 		});
-		try {
-			await releaseSpend(db, requestId);
-		} catch (releaseError) {
-			logger.error("Provider 失败后释放 Completions reservation 失败", { error: releaseError, requestId: requestId });
-		}
+	}
+	// 账务已改为后台写：失败请求不再等账务结果，立即释放 reservation，
+	// 否则预算槽位会一直占到租约过期。
+	try {
+		await releaseSpend(db, requestId);
+	} catch (releaseError) {
+		logger.error("Provider 失败后释放 Completions reservation 失败", { error: releaseError, requestId: requestId });
 	}
 }
 

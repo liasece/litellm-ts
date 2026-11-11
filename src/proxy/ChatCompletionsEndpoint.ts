@@ -31,12 +31,12 @@ import type { ProviderConfig } from "../types/provider";
 import type { DrizzleDb } from "../core/db/Database";
 import {
 	calculateAndSetCost,
-	trackSpendLog,
 	injectResponseCostHeader,
 	buildSpendLogFromRequest,
 	checkpointActiveRequest,
 	releaseSpend,
 } from "../spend/SpendTracker";
+import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendLifecycle } from "../spend/SpendReservation";
@@ -565,7 +565,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 							routingTrace: copyRoutingTrace(modelResolutionTrace),
 						});
-						await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+						await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 					}
 					if (usage && (usage as unknown as Record<string, unknown>)["cost"] !== undefined) {
 						injectResponseCostHeader(res, (usage as unknown as Record<string, unknown>)["cost"] as number);
@@ -617,7 +617,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							fallbackModels: [...modelResolutionTrace.fallbackModels],
 						});
 						try {
-							await spendLifecycle.finalize(() => trackSpendLog(db, failureSpendLog).then(() => undefined));
+							await spendLifecycle.finalize(() => queueSpendLog(db, failureSpendLog).then(() => undefined));
 						} catch (accountingError) {
 							logger.error("Provider 失败后的花费账务提交失败", {
 								accountingError: accountingError,
@@ -857,7 +857,7 @@ async function handleStreamingResponse(
 						modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 						routingTrace: copyRoutingTrace(modelResolutionTrace),
 					});
-					await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+					await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 				}
 				res.json(stripInternalFields(transformed));
 				return;
@@ -1042,7 +1042,7 @@ async function handleStreamingResponse(
 							routingTrace: copyRoutingTrace(modelResolutionTrace),
 						});
 						try {
-							await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+							await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 						} catch (accountingError) {
 							// SSE headers 已发送，无法再返回 503；保留错误日志供运维重试账务。
 							logger.error("流式花费账务提交失败", { error: accountingError, requestId: spendRequestId });
@@ -1111,7 +1111,7 @@ async function handleStreamingResponse(
 	if (req.auth && spendRequestId) {
 		try {
 			await spendLifecycle.finalize(async () =>
-				trackSpendLog(
+				queueSpendLog(
 					db,
 					await buildSpendLogFromRequest({
 						req: req,
@@ -1436,6 +1436,6 @@ async function handlePrivateVisionStreamingResponse(
 			modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 			routingTrace: metadata.routingTrace ?? copyRoutingTrace(modelResolutionTrace),
 		});
-		await spendLifecycle.finalize(() => trackSpendLog(db, spendLog).then(() => undefined));
+		await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 	}
 }

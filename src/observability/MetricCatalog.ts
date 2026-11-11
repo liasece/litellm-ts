@@ -162,6 +162,17 @@ export const spendWriteFailuresTotal = metricsRegistry.register(
 	new Counter("litellm_spend_write_failures_total", "记账落库失败数"),
 );
 
+/** 结算队列写库结果：written 落库成功，failed 失败并重排，overflow 队列满改同步写。 */
+export const spendSettlementWrites = metricsRegistry.register(
+	new Counter("litellm_spend_settlement_writes_total", "结算队列写库次数", ["outcome"]),
+);
+
+/** 结算队列当前积压条数；持续 >0 说明落库跟不上请求。 */
+export const spendSettlementPending = metricsRegistry.register(
+	new Gauge("litellm_spend_settlement_pending", "结算队列积压条数"),
+);
+
+
 /** 事件循环延迟分位数（最近一次采样区间）。 */
 export const eventLoopDelay = metricsRegistry.register(
 	new Gauge("litellm_process_event_loop_delay_seconds", "事件循环延迟分位数（最近采样区间）", ["quantile"]),

@@ -92,13 +92,17 @@ describe("AudioController spend lifecycle", () => {
 		expect(buildSpy).toHaveBeenCalledWith(expect.objectContaining({ upstreamLogContext: upstreamLogContext }));
 	});
 
-	it("provider 成功后的账务错误不会被改写为失败日志", async () => {
+	it("provider 成功后的账务错误不会影响响应，也不会写失败日志", async () => {
 		const accountingError = new Error("accounting unavailable");
 		jest.spyOn(SpendTracker, "trackSpendLog").mockRejectedValueOnce(accountingError);
 
-		await expect(
-			new AudioController(router as never, {} as never).speech({ model: "tts-model", input: "hello", voice: "alloy" }, request),
-		).rejects.toBe(accountingError);
+		// 结算已异步化：账务写失败由后台队列重试，不再抛给调用方。
+		const result = await new AudioController(router as never, {} as never).speech(
+			{ model: "tts-model", input: "hello", voice: "alloy" },
+			request,
+		);
+
+		expect(result).toBeDefined();
 		expect(router.completion).toHaveBeenCalledTimes(1);
 		expect(SpendTracker.trackSpendLog).toHaveBeenCalledTimes(1);
 		expect(SpendTracker.trackSpendLog).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: "success" }));

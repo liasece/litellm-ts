@@ -13,7 +13,8 @@ import { registerRoute } from "../../core/api/registerRoute";
 import { executeProviderRequest } from "../../router/ProviderRequestExecutor";
 import type { Router } from "../../router/Router";
 import { buildDeploymentSpendInfo } from "../../router/RouterSpendInfo";
-import { buildSpendLogFromRequest, calculateAndSetCost, getOrCreateSpendRequestId, trackSpendLog } from "../../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost, getOrCreateSpendRequestId } from "../../spend/SpendTracker";
+import { queueSpendLog } from "../../spend/SpendSettlementQueue";
 import type { DrizzleDb } from "../../core/db/Database";
 import type { Deployment } from "../../types/router";
 import type { ModelResponse } from "../../types/openai";
@@ -233,7 +234,7 @@ async function recordGeminiSpend(input: GeminiSpendInput): Promise<void> {
 	calculateAndSetCost(costResponse, model, spendInfo.customCostPerToken);
 	try {
 		const requestId = getOrCreateSpendRequestId(req);
-		await trackSpendLog(
+		await queueSpendLog(
 			db,
 			await buildSpendLogFromRequest({
 				req: req,
@@ -328,7 +329,7 @@ async function recordSpecialSpend(input: {
 	calculateAndSetCost(costResponse, model, spendInfo.customCostPerToken);
 	try {
 		const requestId = getOrCreateSpendRequestId(req);
-		await trackSpendLog(
+		await queueSpendLog(
 			db,
 			await buildSpendLogFromRequest({
 				req: req,

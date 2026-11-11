@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import type { Request } from "express";
 import type { DrizzleDb } from "../core/db/Database";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
-import { buildSpendLogFromRequest, trackSpendLog } from "../spend/SpendTracker";
+import { buildSpendLogFromRequest } from "../spend/SpendTracker";
+import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { getAttachedUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import { CallType, SpendLogStatus } from "../types/spend";
 
@@ -175,7 +176,7 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			...(call.fixedCostUsd === undefined ? {} : { fixedCostUsd: call.fixedCostUsd }),
 			metadataOverrides: { ...auditMetadata, cache_namespace: `builtin:${call.capability}` },
 		});
-		await trackSpendLog(db, log);
+		await queueSpendLog(db, log);
 		return { requestId: requestId };
 	};
 }

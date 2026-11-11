@@ -69,6 +69,7 @@ import { registerSubscriptionSpecialRoutes } from "./subscriptions/native/Subscr
 import { registerProviderQuotaRoutes } from "./proxy/ProviderQuotaEndpoints";
 import { registerSpendLogStreamWebSocket } from "./spend/logStreamWebSocket";
 import { authRepositoryCache, logAuthCacheConfiguration } from "./auth/AuthRepositoryCache";
+import { flushSpendSettlementQueue } from "./spend/SpendSettlementQueue";
 import { registerSubscriptionResponsesWebSocket } from "./subscriptions/native/SubscriptionResponsesWebSocket";
 import { registerSpendLogUpdatesWebSocket } from "./spend/logUpdatesWebSocket";
 import { registerSpendSessionTimelineStreamWebSocket } from "./spend/sessionTimelineWebSocket";
@@ -169,6 +170,8 @@ export class LiteLLMServer {
 				});
 			}
 			runtimeMetricsSampler.stop();
+			// 先清空结算队列再关数据库：退出瞬间还在队列里的账目必须落库，否则会随进程消失。
+			await flushSpendSettlementQueue(5000);
 			await this._container?.cliProxyRuntime.shutdown();
 			await this._container?.db.close();
 		})();

@@ -18,7 +18,8 @@ import type { ServiceContainer } from "../../container";
 import { executeProviderRequest } from "../../router/ProviderRequestExecutor";
 import type { Router } from "../../router/Router";
 import { buildDeploymentSpendInfo } from "../../router/RouterSpendInfo";
-import { buildSpendLogFromRequest, calculateAndSetCost, trackSpendLog } from "../../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost } from "../../spend/SpendTracker";
+import { queueSpendLog } from "../../spend/SpendSettlementQueue";
 import type { DrizzleDb } from "../../core/db/Database";
 import type { Deployment } from "../../types/router";
 import type { ModelResponse } from "../../types/openai";
@@ -360,7 +361,7 @@ async function recordTurnSpend(
 	const costResponse = { usage: usage, _spendInfo: spendInfo } as unknown as ModelResponse;
 	calculateAndSetCost(costResponse, model, spendInfo.customCostPerToken);
 	try {
-		await trackSpendLog(
+		await queueSpendLog(
 			db,
 			await buildSpendLogFromRequest({
 				req: req,
