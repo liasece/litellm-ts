@@ -1,10 +1,42 @@
 import type { Request } from "express";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
 import { CallType } from "../types/spend";
 import { checkpointActiveRequest, registerActiveRequest, startActiveRequestHeartbeat, trackSpendLog } from "./SpendTracker";
 import { SPEND_LOG_MESSAGE_REF_KEY, restoreSpendLogPayload } from "./SpendLogBlocks";
 import { subscribeSpendLogChanges } from "./spendLogChangeFeed";
+
+/**
+ * 在途登记把「已结算判存 + 过期行接管 + 登记」合并成一条语句：这里按 SELECT 列顺序
+ * 还原绑定值，让断言继续面向行内容而不是 SQL 文本。
+ * @param statement - drizzle 生成的 SQL 对象
+ */
+function capturedActiveRequestRow(statement: unknown): Record<string, unknown> {
+	const chunks = (statement as { queryChunks?: { constructor: { name: string } }[] }).queryChunks ?? [];
+	const [requestId, callType, apiKey, startTime, model, modelGroup, user, teamId, organizationId, endUser, ip, sessionId, metadata, proxyServerRequest, expiresAt, updatedAt] =
+		chunks.filter((chunk) => chunk?.constructor?.name !== "StringChunk") as unknown[];
+	return {
+		request_id: requestId,
+		call_type: callType,
+		api_key: apiKey,
+		startTime: startTime,
+		model: model,
+		model_group: modelGroup,
+		user: user,
+		team_id: teamId,
+		organization_id: organizationId,
+		end_user: endUser,
+		requester_ip_address: ip,
+		session_id: sessionId,
+		metadata: JSON.parse(String(metadata)),
+		proxy_server_request: JSON.parse(String(proxyServerRequest)),
+		status: "in_progress",
+		expires_at: expiresAt,
+		updated_at: updatedAt,
+	};
+}
 
 /** 按注册时写入的块还原在途行正文：断言面向内容，不锁定行内存储形态。 */
 function restoreInProgressBody(
@@ -33,6 +65,10 @@ describe("Active request tracking", () => {
 			delete: jest.fn(() => ({
 				where: jest.fn(() => Promise.resolve()),
 			})),
+			execute: jest.fn((statement: unknown) => {
+				inserted = capturedActiveRequestRow(statement);
+				return Promise.resolve({ rows: [{ request_id: String(inserted["request_id"]) }] });
+			}),
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn((values: unknown) => {
 					if (table === liteLLM_ActiveRequests) {
@@ -120,6 +156,10 @@ describe("Active request tracking", () => {
 			delete: jest.fn(() => ({
 				where: jest.fn(() => Promise.resolve()),
 			})),
+			execute: jest.fn((statement: unknown) => {
+				inserted = capturedActiveRequestRow(statement);
+				return Promise.resolve({ rows: [{ request_id: String(inserted["request_id"]) }] });
+			}),
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn((values: Record<string, unknown>) => {
 					if (table === liteLLM_ActiveRequests) {
@@ -202,6 +242,10 @@ describe("Active request tracking", () => {
 			delete: jest.fn(() => ({
 				where: jest.fn(() => Promise.resolve()),
 			})),
+			execute: jest.fn((statement: unknown) => {
+				inserted = capturedActiveRequestRow(statement);
+				return Promise.resolve({ rows: [{ request_id: String(inserted["request_id"]) }] });
+			}),
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn((values: unknown) => {
 					if (table === liteLLM_ActiveRequests) {
@@ -277,6 +321,10 @@ describe("Active request tracking", () => {
 			delete: jest.fn(() => ({
 				where: jest.fn(() => Promise.resolve()),
 			})),
+			execute: jest.fn((statement: unknown) => {
+				inserted = capturedActiveRequestRow(statement);
+				return Promise.resolve({ rows: [{ request_id: String(inserted["request_id"]) }] });
+			}),
 			insert: jest.fn((table: unknown) => ({
 				values: jest.fn((values: unknown) => {
 					if (table === liteLLM_ActiveRequests) {
@@ -465,8 +513,9 @@ describe("Active request tracking", () => {
 				})),
 			})),
 			update: jest.fn(() => ({
-				set: jest.fn(() => ({ where: jest.fn(() => Promise.resolve()) })),
+				set: jest.fn(() => ({ where: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([])) })) })),
 			})),
+			execute: jest.fn(() => Promise.resolve({ rows: [] })),
 			delete: jest.fn((table: unknown) => {
 				deletedTables.push(table);
 				return { where: jest.fn(() => Promise.resolve()) };
@@ -502,6 +551,7 @@ describe("Active request tracking", () => {
 		const changes: string[] = [];
 		const unsubscribe = subscribeSpendLogChanges(() => changes.push("changed"));
 		try {
+			let registered: Record<string, unknown> | undefined;
 			let db: Record<string, unknown>;
 			db = {
 				transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
@@ -515,6 +565,10 @@ describe("Active request tracking", () => {
 				delete: jest.fn(() => ({
 					where: jest.fn(() => Promise.resolve()),
 				})),
+				execute: jest.fn((statement: unknown) => {
+					registered = capturedActiveRequestRow(statement);
+					return Promise.resolve({ rows: [{ request_id: String(registered["request_id"]) }] });
+				}),
 				insert: jest.fn(() => ({
 					values: jest.fn(() => ({
 						onConflictDoNothing: jest.fn(() => ({
@@ -560,5 +614,48 @@ describe("Active request tracking", () => {
 		} finally {
 			unsubscribe();
 		}
+	});
+
+	it("登记语句同时承担已结算判存与过期行接管，未命中时仍按重复 request_id 拒绝", async () => {
+		let statementText = "";
+		let db: Record<string, unknown>;
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({
+				from: jest.fn(() => ({ where: jest.fn(() => ({ limit: jest.fn(() => Promise.resolve([])) })) })),
+			})),
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({ onConflictDoNothing: jest.fn(() => Promise.resolve()) })),
+			})),
+			execute: jest.fn((statement: unknown) => {
+				statementText = new PgDialect().sqlToQuery(statement as SQL).sql;
+				return Promise.resolve({ rows: [] });
+			}),
+		};
+		const req = {
+			auth: { api_key: "raw-key", token: "hashed-key", user_id: "user-1" },
+			body: {},
+			method: "POST",
+			originalUrl: "/v1/chat/completions",
+			headers: {},
+			socket: {},
+		} as unknown as Request;
+
+		await expect(
+			registerActiveRequest(db as never, {
+				req: req,
+				requestId: "req-duplicate",
+				model: "model-a",
+				callType: CallType.ACompletion,
+				startTime: new Date("2026-07-27T00:00:00Z"),
+				requestBody: { model: "model-a" },
+			}),
+		).rejects.toMatchObject({ statusCode: 409 });
+
+		// 已结算判存、过期接管、幂等插入必须落在同一条语句里：任何一步单独一条都会多一次往返。
+		expect(statementText).toContain('INSERT INTO "LiteLLM_ActiveRequests"');
+		expect(statementText).toContain('WHERE NOT EXISTS (SELECT 1 FROM "LiteLLM_SpendLogs" WHERE request_id = $17)');
+		expect(statementText).toContain("ON CONFLICT (request_id) DO UPDATE SET");
+		expect(statementText).toContain("WHERE active.expires_at <= $18::timestamp");
 	});
 });

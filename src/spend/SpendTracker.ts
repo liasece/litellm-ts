@@ -38,7 +38,7 @@ import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSp
 import { liteLLM_DailyTagSpend } from "../db/schema/dailyTagSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { LiteLLM_UserTable } from "../db/schema/users";
 import { LiteLLM_TeamTable } from "../db/schema/teams";
@@ -279,56 +279,78 @@ async function upsertDailySpend(
  * @param spend
  */
 async function updateSpendSubjects(db: NodePgDatabase<typeof schema>, log: SpendLog, spend: number): Promise<void> {
-	const spendIncrement = sql`${spend}`;
 	const now = new Date();
-	await db
-		.update(LiteLLM_VerificationToken)
-		.set({ spend: sql`COALESCE(${LiteLLM_VerificationToken.spend}, 0) + ${spendIncrement}`, lastActive: now })
-		.where(eq(LiteLLM_VerificationToken.token, _protectApiKeyForDb(log.api_key)));
+	// 各主体各自只增不改同一列，串行 UPDATE 会把「条数 × 往返」叠加到结算事务上；
+	// 用一条 WITH 语句把全部主体放在同一次往返里，事务与行锁持有时间也随之缩短。
+	// SET 左侧必须是裸列名：PostgreSQL 不接受 `SET "表"."列"` 这种限定写法。
+	const updates: SQL[] = [
+		sql`token_spend AS (
+			UPDATE ${LiteLLM_VerificationToken}
+			SET spend = COALESCE(${LiteLLM_VerificationToken.spend}, 0) + ${spend},
+				last_active = ${now}
+			WHERE ${LiteLLM_VerificationToken.token} = ${_protectApiKeyForDb(log.api_key)}
+			RETURNING 1
+		)`,
+	];
 	if (log.user) {
-		await db
-			.update(LiteLLM_UserTable)
-			.set({ spend: sql`COALESCE(${LiteLLM_UserTable.spend}, 0) + ${spendIncrement}` })
-			.where(eq(LiteLLM_UserTable.userId, log.user));
+		updates.push(sql`user_spend AS (
+			UPDATE ${LiteLLM_UserTable}
+			SET spend = COALESCE(${LiteLLM_UserTable.spend}, 0) + ${spend}
+			WHERE ${LiteLLM_UserTable.userId} = ${log.user}
+			RETURNING 1
+		)`);
 	}
 	if (log.team_id) {
-		await db
-			.update(LiteLLM_TeamTable)
-			.set({ spend: sql`COALESCE(${LiteLLM_TeamTable.spend}, 0) + ${spendIncrement}` })
-			.where(eq(LiteLLM_TeamTable.teamId, log.team_id));
+		updates.push(sql`team_spend AS (
+			UPDATE ${LiteLLM_TeamTable}
+			SET spend = COALESCE(${LiteLLM_TeamTable.spend}, 0) + ${spend}
+			WHERE ${LiteLLM_TeamTable.teamId} = ${log.team_id}
+			RETURNING 1
+		)`);
 	}
 	if (log.organization_id) {
-		await db
-			.update(LiteLLM_OrganizationTable)
-			.set({ spend: sql`COALESCE(${LiteLLM_OrganizationTable.spend}, 0) + ${spendIncrement}` })
-			.where(eq(LiteLLM_OrganizationTable.organizationId, log.organization_id));
+		updates.push(sql`organization_spend AS (
+			UPDATE ${LiteLLM_OrganizationTable}
+			SET spend = COALESCE(${LiteLLM_OrganizationTable.spend}, 0) + ${spend}
+			WHERE ${LiteLLM_OrganizationTable.organizationId} = ${log.organization_id}
+			RETURNING 1
+		)`);
 	}
 	const metadataProjectId = log.metadata?.["user_api_key_project_id"];
 	const projectId = log.project_id ?? (typeof metadataProjectId === "string" ? metadataProjectId : undefined);
 	if (projectId) {
-		await db
-			.update(LiteLLM_ProjectTable)
-			.set({ spend: sql`COALESCE(${LiteLLM_ProjectTable.spend}, 0) + ${spendIncrement}` })
-			.where(eq(LiteLLM_ProjectTable.projectId, projectId));
+		updates.push(sql`project_spend AS (
+			UPDATE ${LiteLLM_ProjectTable}
+			SET spend = COALESCE(${LiteLLM_ProjectTable.spend}, 0) + ${spend}
+			WHERE ${LiteLLM_ProjectTable.projectId} = ${projectId}
+			RETURNING 1
+		)`);
 	}
 	if (log.user && log.team_id) {
-		await db
-			.update(LiteLLM_TeamMembership)
-			.set({ spend: sql`COALESCE(${LiteLLM_TeamMembership.spend}, 0) + ${spendIncrement}` })
-			.where(and(eq(LiteLLM_TeamMembership.userId, log.user), eq(LiteLLM_TeamMembership.teamId, log.team_id)));
+		updates.push(sql`membership_spend AS (
+			UPDATE ${LiteLLM_TeamMembership}
+			SET spend = COALESCE(${LiteLLM_TeamMembership.spend}, 0) + ${spend}
+			WHERE ${LiteLLM_TeamMembership.userId} = ${log.user} AND ${LiteLLM_TeamMembership.teamId} = ${log.team_id}
+			RETURNING 1
+		)`);
 	}
 	if (log.end_user_id) {
-		await db
-			.update(LiteLLM_EndUserTable)
-			.set({ spend: sql`COALESCE(${LiteLLM_EndUserTable.spend}, 0) + ${spendIncrement}` })
-			.where(eq(LiteLLM_EndUserTable.userId, log.end_user_id));
+		updates.push(sql`end_user_spend AS (
+			UPDATE ${LiteLLM_EndUserTable}
+			SET spend = COALESCE(${LiteLLM_EndUserTable.spend}, 0) + ${spend}
+			WHERE ${LiteLLM_EndUserTable.userId} = ${log.end_user_id}
+			RETURNING 1
+		)`);
 	}
 	if (log.agent_id) {
-		await db
-			.update(liteLLM_AgentsTable)
-			.set({ spend: sql`COALESCE(${liteLLM_AgentsTable.spend}, 0) + ${spendIncrement}` })
-			.where(eq(liteLLM_AgentsTable.agentId, log.agent_id));
+		updates.push(sql`agent_spend AS (
+			UPDATE ${liteLLM_AgentsTable}
+			SET spend = COALESCE(${liteLLM_AgentsTable.spend}, 0) + ${spend}
+			WHERE ${liteLLM_AgentsTable.agentId} = ${log.agent_id}
+			RETURNING 1
+		)`);
 	}
+	await db.execute(sql`WITH ${sql.join(updates, sql`, `)} SELECT 1`);
 }
 
 /**
@@ -1140,6 +1162,8 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 		return;
 	}
 	const now = new Date();
+	const apiKey = auth.token ?? _protectApiKeyForDb(auth.api_key || "");
+	const expiresAt = new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS);
 	const rawProxyServerRequest = buildActiveRequestProxyServerRequest(input);
 	let proxyServerRequest: unknown = rawProxyServerRequest;
 	let blocksToInsert: readonly SpendLogBlockRecord[] = [];
@@ -1160,44 +1184,52 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 			}
 		}
 		await db.transaction(async (tx) => {
-			const completed = await tx
-				.select({ requestId: liteLLM_SpendLogs.request_id })
-				.from(liteLLM_SpendLogs)
-				.where(eq(liteLLM_SpendLogs.request_id, input.requestId))
-				.limit(1);
-			if (completed.length > 0) {
-				throw ApiError.conflict(`重复的 request_id: ${input.requestId}`);
-			}
-			await tx
-				.delete(liteLLM_ActiveRequests)
-				.where(and(eq(liteLLM_ActiveRequests.request_id, input.requestId), lte(liteLLM_ActiveRequests.expires_at, now)));
 			// 块与行同事务：回滚时不留下无主的块，提交后进行中的详情页即可组装正文。
 			await writeSpendLogBlocks(tx, blocksToInsert);
-			const inserted = await tx
-				.insert(liteLLM_ActiveRequests)
-				.values({
-					request_id: input.requestId,
-					call_type: input.callType,
-					api_key: auth.token ?? _protectApiKeyForDb(auth.api_key || ""),
-					startTime: input.startTime ?? now,
-					model: input.model,
-					model_group: input.model,
-					user: auth.user_id ?? "",
-					team_id: auth.team_id ?? null,
-					organization_id: auth.organization_id ?? null,
-					end_user: auth.end_user_id ?? null,
-					requester_ip_address: getRequesterIpAddress(input.req) ?? null,
-					session_id: getOrCreateSpendSessionId(input.req),
-					metadata: buildActiveRequestMetadata(input.req),
-					request_tags: [],
-					proxy_server_request: proxyServerRequest,
-					status: "in_progress",
-					expires_at: new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS),
-					updated_at: now,
-				})
-				.onConflictDoNothing()
-				.returning({ requestId: liteLLM_ActiveRequests.request_id });
-			if (inserted.length === 0) {
+			// 一次往返完成「已结算判存 + 过期行接管 + 登记」：
+			// - 已结算的 request_id 不再登记（历史 SpendLog 已代表这次 attempt 的归属）；
+			// - 同 id 的在途行只有租约过期才允许被本次请求接管，未过期说明并发重复；
+			// - 判存失败与冲突都返回空行，调用方统一按重复 request_id 拒绝。
+			// 过期行不再逐请求 DELETE：运行期巡检（reapExpiredActiveRequests）负责清理，
+			// 这里只接管「同 id 且已过期」的那一行，正常路径因此少一次往返。
+			const registered = (await tx.execute(sql`
+				INSERT INTO "LiteLLM_ActiveRequests" AS active (
+					request_id, call_type, api_key, "startTime", model, model_group, "user",
+					team_id, organization_id, end_user, requester_ip_address, session_id,
+					metadata, request_tags, proxy_server_request, status, expires_at, updated_at
+				)
+				SELECT
+					${input.requestId}, ${input.callType}, ${apiKey},
+					${(input.startTime ?? now).toISOString()}::timestamp, ${input.model}, ${input.model},
+					${auth.user_id ?? ""}, ${auth.team_id ?? null}, ${auth.organization_id ?? null},
+					${auth.end_user_id ?? null}, ${getRequesterIpAddress(input.req) ?? null},
+					${getOrCreateSpendSessionId(input.req)},
+					${JSON.stringify(buildActiveRequestMetadata(input.req))}::jsonb, '[]'::jsonb,
+					${JSON.stringify(proxyServerRequest ?? {})}::jsonb,
+					'in_progress', ${expiresAt.toISOString()}::timestamp, ${now.toISOString()}::timestamp
+				WHERE NOT EXISTS (SELECT 1 FROM "LiteLLM_SpendLogs" WHERE request_id = ${input.requestId})
+				ON CONFLICT (request_id) DO UPDATE SET
+					call_type = EXCLUDED.call_type,
+					api_key = EXCLUDED.api_key,
+					"startTime" = EXCLUDED."startTime",
+					model = EXCLUDED.model,
+					model_group = EXCLUDED.model_group,
+					"user" = EXCLUDED."user",
+					team_id = EXCLUDED.team_id,
+					organization_id = EXCLUDED.organization_id,
+					end_user = EXCLUDED.end_user,
+					requester_ip_address = EXCLUDED.requester_ip_address,
+					session_id = EXCLUDED.session_id,
+					metadata = EXCLUDED.metadata,
+					request_tags = EXCLUDED.request_tags,
+					proxy_server_request = EXCLUDED.proxy_server_request,
+					status = 'in_progress',
+					expires_at = EXCLUDED.expires_at,
+					updated_at = EXCLUDED.updated_at
+				WHERE active.expires_at <= ${now.toISOString()}::timestamp
+				RETURNING request_id
+			`)) as unknown as { rows: Array<{ request_id?: string }> };
+			if (registered.rows.length === 0) {
 				throw ApiError.conflict(`重复的 request_id: ${input.requestId}`);
 			}
 		});
@@ -2061,9 +2093,22 @@ async function trackSpendLogMeasured(
 				return { status: "duplicate" as const, requestId: logEntry.request_id, spend: spend };
 			}
 
-			const reservation = await readReservation(tx, logEntry.request_id);
-			if (reservation?.status === "reserved") {
-				await assertReservationFits(tx, reservation.scope_ids.map(parseReservationScopeKey), spend, logEntry.request_id);
+			// 终结预留与余额校验合并成一次往返：只有原本仍是 reserved 的行才会被本次更新命中，
+			// 没有预留的请求（当前全部按 key 计费且未设 max_budget）因此只付一条空更新的成本，
+			// 不再额外读一次。校验在主体 spend 累加前执行，且 SUM 排除本 request_id，语义不变。
+			const settledReservations = await tx
+				.update(liteLLM_SpendReservations)
+				.set({ status: reservationStatus, actual: reservationStatus === "settled" ? spend : null, updated_at: new Date() })
+				.where(
+					and(
+						eq(liteLLM_SpendReservations.request_id, logEntry.request_id),
+						eq(liteLLM_SpendReservations.status, "reserved"),
+					),
+				)
+				.returning({ scopeIds: liteLLM_SpendReservations.scope_ids });
+			const reservedScopeIds = settledReservations[0]?.scopeIds;
+			if (reservedScopeIds) {
+				await assertReservationFits(tx, reservedScopeIds.map(parseReservationScopeKey), spend, logEntry.request_id);
 			}
 			await updateSpendSubjects(tx, logEntry, spend);
 
@@ -2091,12 +2136,6 @@ async function trackSpendLogMeasured(
 			}
 			await upsertDailySpend(tx, liteLLM_DailyAgentSpend, "agent_id", logEntry.agent_id ?? null, normalizedLog, spend);
 			await upsertDailySpend(tx, liteLLM_DailyEndUserSpend, "end_user_id", logEntry.end_user_id ?? null, normalizedLog, spend);
-			await tx
-				.update(liteLLM_SpendReservations)
-				.set({ status: reservationStatus, actual: reservationStatus === "settled" ? spend : null, updated_at: new Date() })
-				.where(
-					and(eq(liteLLM_SpendReservations.request_id, logEntry.request_id), eq(liteLLM_SpendReservations.status, "reserved")),
-				);
 			return { status: "committed" as const, requestId: logEntry.request_id, spend: spend };
 		});
 	} catch (error) {

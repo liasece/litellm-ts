@@ -12,7 +12,8 @@ import { liteLLM_DailyTeamSpend } from "../db/schema/dailyTeamSpend";
 import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSpend";
 import { liteLLM_DailyTagSpend } from "../db/schema/dailyTagSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
-import { getTableConfig } from "drizzle-orm/pg-core";
+import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
@@ -170,11 +171,26 @@ function sqlLiteralText(value: unknown): string {
 	return "";
 }
 
+/**
+ * 结算事务里的 UPDATE 之后既可能直接 await，也可能继续链式 `.returning()`；
+ * 统一返回带 returning 的空结果对象，两种用法都能走通。
+ * @param rows - returning 返回的行
+ */
+function emptyUpdateResult(rows: unknown[] = []): { returning: () => Promise<unknown[]> } {
+	return { returning: () => Promise.resolve(rows) };
+}
+
+/** 主体累计已合并为单条 WITH 语句（db.execute），测试里记录调用并返回空结果。 */
+function executeRecorder(): jest.Mock {
+	return jest.fn(() => Promise.resolve({ rows: [] }));
+}
+
 function withTransaction(db: Record<string, unknown>): Record<string, unknown> {
 	const insert = db["insert"] as (table: unknown) => { values: (values: Record<string, unknown>) => unknown };
 	db["transaction"] = jest.fn((callback: (tx: Record<string, unknown>) => Promise<unknown>) => callback(db));
 	db["select"] = () => ({ from: () => ({ where: () => Promise.resolve([]) }) });
-	db["update"] = () => ({ set: () => ({ where: () => Promise.resolve() }) });
+	db["update"] = () => ({ set: () => ({ where: () => emptyUpdateResult() }) });
+	db["execute"] = executeRecorder();
 	db["insert"] = (table: unknown) => {
 		const builder = insert(table);
 		return {
@@ -575,18 +591,15 @@ describe("Spend reservation 事务", () => {
 describe("trackSpendLog 原子提交", () => {
 	it("所有实体 spend 累计都以 COALESCE 兼容 NULL", async () => {
 		let db: Record<string, unknown>;
-		const spendExpressions: unknown[] = [];
+		const executedStatements: string[] = [];
 		db = {
 			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
 			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
-			update: jest.fn(() => ({
-				set: jest.fn((values: Record<string, unknown>) => {
-					if (values["spend"] !== undefined) {
-						spendExpressions.push(values["spend"]);
-					}
-					return { where: jest.fn(() => Promise.resolve()) };
-				}),
-			})),
+			execute: jest.fn((statement: unknown) => {
+				executedStatements.push(new PgDialect().sqlToQuery(statement as SQL).sql);
+				return Promise.resolve({ rows: [] });
+			}),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => emptyUpdateResult()) })) })),
 			insert: jest.fn(() => ({
 				values: jest.fn(() => ({
 					onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ requestId: "req-coalesce" }])) })),
@@ -614,10 +627,23 @@ describe("trackSpendLog 原子提交", () => {
 			user: "user-id",
 		});
 
-		expect(spendExpressions).toHaveLength(8);
-		for (const expression of spendExpressions) {
-			expect(sqlLiteralText(expression)).toContain("COALESCE(");
+		// 八个主体合并为一条 WITH 语句：既保证只付一次往返，也保证每个主体都做 NULL 兼容累加。
+		expect(executedStatements).toHaveLength(1);
+		const statement = executedStatements[0]!;
+		for (const table of [
+			"LiteLLM_VerificationToken",
+			"LiteLLM_UserTable",
+			"LiteLLM_TeamTable",
+			"LiteLLM_OrganizationTable",
+			"LiteLLM_ProjectTable",
+			"LiteLLM_TeamMembership",
+			"LiteLLM_EndUserTable",
+			"LiteLLM_AgentsTable",
+		]) {
+			expect(statement).toContain(`UPDATE "${table}"`);
 		}
+		expect(statement.match(/COALESCE\(/g)).toHaveLength(8);
+		expect(statement).toContain("last_active");
 	});
 
 	it("先删除在途行再写预算主体与汇总，避免大行锁等待占住预算行锁", async () => {
@@ -630,13 +656,12 @@ describe("trackSpendLog 原子提交", () => {
 				return { where: jest.fn(() => Promise.resolve()) };
 			}),
 			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
-			update: jest.fn((table: unknown) => ({
-				set: jest.fn(() => {
-					if (table === LiteLLM_VerificationToken) {
-						order.push("update:VerificationToken");
-					}
-					return { where: jest.fn(() => Promise.resolve()) };
-				}),
+			execute: jest.fn(() => {
+				order.push("execute:spendSubjects");
+				return Promise.resolve({ rows: [] });
+			}),
+			update: jest.fn(() => ({
+				set: jest.fn(() => ({ where: jest.fn(() => emptyUpdateResult()) })),
 			})),
 			insert: jest.fn(() => ({
 				values: jest.fn(() => ({
@@ -662,8 +687,8 @@ describe("trackSpendLog 原子提交", () => {
 
 		// 在途行删除会等待同请求补写的行锁（大行整列重写可达秒级）；它必须发生在
 		// 预算主体累计之前，否则这段时间预算行锁与汇总行锁一直被持有。
-		expect(order.indexOf("delete:ActiveRequests")).toBeGreaterThanOrEqual(0);
-		expect(order.indexOf("delete:ActiveRequests")).toBeLessThan(order.indexOf("update:VerificationToken"));
+		expect(order[0]).toBe("delete:ActiveRequests");
+		expect(order.indexOf("delete:ActiveRequests")).toBeLessThan(order.indexOf("execute:spendSubjects"));
 	});
 
 	it("首次 request_id 仅在整个事务提交后返回 committed", async () => {
@@ -672,7 +697,8 @@ describe("trackSpendLog 原子提交", () => {
 		db = {
 			transaction: transaction,
 			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
-			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => Promise.resolve()) })) })),
+			execute: executeRecorder(),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => emptyUpdateResult()) })) })),
 			insert: jest.fn(() => ({
 				values: jest.fn(() => ({
 					onConflictDoNothing: jest.fn(() => ({
@@ -705,12 +731,13 @@ describe("trackSpendLog 原子提交", () => {
 		db = {
 			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
 			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			execute: executeRecorder(),
 			update: jest.fn((table: unknown) => ({
 				set: jest.fn((values: Record<string, unknown>) => {
 					if (table === liteLLM_SpendReservations) {
 						reservationSets.push(values);
 					}
-					return { where: jest.fn(() => Promise.resolve()) };
+					return { where: jest.fn(() => emptyUpdateResult()) };
 				}),
 			})),
 			insert: jest.fn(() => ({
@@ -740,12 +767,13 @@ describe("trackSpendLog 原子提交", () => {
 		db = {
 			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
 			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			execute: executeRecorder(),
 			update: jest.fn((table: unknown) => ({
 				set: jest.fn((values: Record<string, unknown>) => {
 					if (table === liteLLM_SpendReservations) {
 						reservationSets.push(values);
 					}
-					return { where: jest.fn(() => Promise.resolve()) };
+					return { where: jest.fn(() => emptyUpdateResult()) };
 				}),
 			})),
 			insert: jest.fn(() => ({
@@ -776,12 +804,13 @@ describe("trackSpendLog 原子提交", () => {
 		db = {
 			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
 			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			execute: executeRecorder(),
 			update: jest.fn((table: unknown) => ({
 				set: jest.fn((values: Record<string, unknown>) => {
 					if (table === liteLLM_SpendReservations) {
 						reservationSets.push(values);
 					}
-					return { where: jest.fn(() => Promise.resolve()) };
+					return { where: jest.fn(() => emptyUpdateResult()) };
 				}),
 			})),
 			insert: jest.fn(() => ({
@@ -814,7 +843,8 @@ describe("trackSpendLog 原子提交", () => {
 		const db: Record<string, unknown> = {
 			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
 			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
-			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => Promise.resolve()) })) })),
+			execute: executeRecorder(),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => emptyUpdateResult()) })) })),
 			insert: jest.fn(() => ({
 				values: jest.fn((values: Record<string, unknown>) => {
 					insertedValues.push(values);
@@ -863,6 +893,7 @@ describe("trackSpendLog 原子提交", () => {
 		const releaseWhere = jest.fn(() => Promise.resolve());
 		const db = {
 			transaction: jest.fn(() => Promise.reject(new Error("connection lost"))),
+			execute: executeRecorder(),
 			update: jest.fn(() => ({ set: jest.fn(() => ({ where: releaseWhere })) })),
 		};
 		await expect(
@@ -890,7 +921,7 @@ describe("trackSpendLog 原子提交", () => {
 				if (table === liteLLM_SpendReservations) {
 					reservationSets.push(values);
 				}
-				return { where: jest.fn(() => Promise.resolve()) };
+				return { where: jest.fn(() => emptyUpdateResult()) };
 			}),
 		}));
 		db = {
