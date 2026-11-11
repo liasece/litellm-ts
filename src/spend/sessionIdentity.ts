@@ -91,7 +91,7 @@ export function matchClaudeCodeSessionUserId(value: unknown): string | null {
 
 /** 部分客户端把会话信息塞进 user_id，形如 `{"session_id":"<uuid>"}`。 */
 const EMBEDDED_SESSION_ID_PATTERN =
-	/"session_id"[[:space:]]*:[[:space:]]*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i;
+	/"session_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i;
 
 /**
  * `user_id` 里内嵌的会话 UUID。

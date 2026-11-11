@@ -129,6 +129,14 @@
 			"tag": "0015_image_completion_history",
 			"file": "0015_image_completion_history.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 16,
+			"version": "7",
+			"when": 1794790000003,
+			"tag": "0016_spend_log_filter_columns",
+			"file": "0016_spend_log_filter_columns.sql",
+			"breakpoints": true
 		}
 	]
 }

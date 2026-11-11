@@ -23,6 +23,15 @@ export const liteLLM_SpendLogs = pgTable(
 		api_base: text("api_base").default(""),
 		user: text("user").default(""),
 		metadata: jsonb("metadata").default("{}"),
+		/**
+		 * 过滤用冗余列，取值与 metadata 中的同名字段一致（`user_api_key_alias` /
+		 * `error_information.error_code`）。metadata 平均 3 KB 且存放在 TOAST，
+		 * 直接用它做表头过滤要为窗口内每一行解压整份 JSON（冷缓存下 24h 窗口 9–40 s）；
+		 * 这两列让过滤只读小列，写入时由服务端填好，历史行由
+		 * `scripts/backfill-spend-log-filter-columns.cjs` 回填。
+		 */
+		key_alias: text("key_alias"),
+		error_code: text("error_code"),
 		cache_hit: text("cache_hit").default(""),
 		cache_key: text("cache_key").default(""),
 		request_tags: jsonb("request_tags").default("[]"),
@@ -47,5 +56,8 @@ export const liteLLM_SpendLogs = pgTable(
 		endUserIdx: index("idx_spend_logs_end_user").on(table.end_user),
 		sessionIdIdx: index("idx_spend_logs_session_id").on(table.session_id),
 		sessionGroupTimeIdx: index("idx_spend_logs_session_group_time").on(table.session_group_key, table.startTime, table.request_id),
+		// Error Code 过滤是等值匹配，索引能把「窗口内逐行解压 metadata」换成精确查找。
+		// key_alias 过滤保持 Python 的 LIKE '%x%' 语义，btree 用不上，因此不为它建索引。
+		errorCodeTimeIdx: index("idx_spend_logs_error_code_time").on(table.error_code, table.startTime),
 	}),
 );

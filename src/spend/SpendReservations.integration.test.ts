@@ -43,12 +43,6 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 			object_permission_id text,
 			blocked boolean NOT NULL DEFAULT false
 		)`);
-		for (const file of ["0001_spend_reservations.sql", "0004_active_requests.sql", "0008_active_requests_proxy_server_request.sql", "0010_active_request_observation.sql"]) {
-			const migrationSql = readFileSync(resolve(__dirname, "../../drizzle", file), "utf8");
-			for (const statement of migrationSql.split("--> statement-breakpoint")) {
-				await pool.query(statement);
-			}
-		}
 		await db.execute(sql`CREATE TABLE "LiteLLM_SpendLogs" (
 			request_id text PRIMARY KEY,
 			call_type text NOT NULL,
@@ -83,6 +77,18 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 			agent_id text,
 			proxy_server_request jsonb
 		)`);
+		for (const file of [
+			"0001_spend_reservations.sql",
+			"0004_active_requests.sql",
+			"0008_active_requests_proxy_server_request.sql",
+			"0010_active_request_observation.sql",
+			"0016_spend_log_filter_columns.sql",
+		]) {
+			const migrationSql = readFileSync(resolve(__dirname, "../../drizzle", file), "utf8");
+			for (const statement of migrationSql.split("--> statement-breakpoint")) {
+				await pool.query(statement);
+			}
+		}
 	});
 
 	beforeEach(async () => {

@@ -15,6 +15,8 @@
  *   - 权限裁剪：admin 看全部；非 admin + team_id 时检查 team 可见性；
  *     internal_user 未传 team 时强制只看自己的 user；team member 看不可见 team 返回 403。
  *   - 主查询显式列投影，排除 messages / response / proxy_server_request 重 JSON 列。
+ *   - 列表先按索引取当前页的行键，再按主键回表算重投影：metadata 剥载荷等表达式
+ *     不会对整个时间窗逐行执行（见 selectMixedUiPageRowKeys / hydrateUiPageRows）。
  *   - UI 路径 enrichment session_total_count；v2 路径不 enrichment。
  *   - DB 异常抛 5xx，不返回空分页伪装成功。
  */
@@ -84,7 +86,7 @@ import {
 	sessionSnapshotClause,
 	type SessionPosition,
 } from "./sessionPosition";
-import { spendLogDurationSql, spendLogExecutionModelSql, spendLogMetadataJsonSql } from "./spendLogProjections";
+import { spendLogDurationSql, spendLogExecutionModelSql, spendLogListMetadataSql, spendLogMetadataJsonSql } from "./spendLogProjections";
 
 const logger = createModuleLogger("SpendLogs");
 
@@ -93,7 +95,6 @@ const SPEND_LOG_SORT_FIELDS = ["spend", "total_tokens", "startTime", "endTime", 
 type SpendLogSortField = (typeof SPEND_LOG_SORT_FIELDS)[number];
 
 const SPEND_LOG_DETAIL_BATCH_SIZE = 100;
-
 
 /**
  * /spend/logs/ui 响应包络 — 对齐 Python `ui_view_spend_logs` 返回。
@@ -411,19 +412,13 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const pageOffset = (page - 1) * pageSize;
 		let data: Record<string, unknown>[];
 		if (activeWhereClause && sortBy === "startTime") {
-			// startTime 是 ActiveRequests 与 SpendLogs 共有的真实字段，交给 PostgreSQL
-			// 在同一 MVCC 快照内 UNION ALL 后统一排序。request_id 用作时间相同时的
-			// 稳定排序键，避免两表在分页边界处产生不确定顺序。
-			const mixedOrderExpr =
-				sortOrder === SpendSortOrder.ASC ? sql`"startTime" ASC, "request_id" ASC` : sql`"startTime" DESC, "request_id" DESC`;
-			const mixedRows = await db
-				.select(uiActiveRequestSelection())
-				.from(liteLLM_ActiveRequests)
-				.where(activeWhereClause)
-				.unionAll(db.select(uiSpendLogSelection()).from(liteLLM_SpendLogs).where(spendLogsWhereClause))
-				.orderBy(mixedOrderExpr)
-				.limit(pageSize)
-				.offset(pageOffset);
+			// startTime 是 ActiveRequests 与 SpendLogs 共有的真实字段：两表各自按
+			// (startTime, request_id) 取当前页的行键后归并，request_id 作为时间相同时的
+			// 稳定排序键，避免两表在分页边界处产生不确定顺序。重投影在回表时才算。
+			const mixedRows = await hydrateUiPageRows(
+				db,
+				await selectMixedUiPageRowKeys(db, activeWhereClause, spendLogsWhereClause, sortOrder, pageSize, pageOffset),
+			);
 			const normalizedRows = mixedRows.map((row) => normalizeUiSpendLogRow(row as Record<string, unknown>));
 			const completedRows = normalizedRows.filter((row) => row.status !== "in_progress").map((row) => withSessionGroup(row));
 			const enrichedCompletedRows = await enrichSessionCounts(db, completedRows, visibilityClause);
@@ -443,28 +438,34 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			// spend / tokens / endTime / duration 等字段在 ActiveRequests 中没有最终值。
 			// 选择这些排序字段时进行中请求固定置顶，已完成请求再按所选字段排序。
 			const activeOffset = Math.min(pageOffset, activeTotal);
-			const activeRows =
+			const activeKeys =
 				activeWhereClause && activeOffset < activeTotal
-					? await db
-							.select(uiActiveRequestSelection())
-							.from(liteLLM_ActiveRequests)
-							.where(activeWhereClause)
-							.orderBy(desc(liteLLM_ActiveRequests.startTime))
-							.limit(pageSize)
-							.offset(activeOffset)
+					? (
+							await db
+								.select({ request_id: liteLLM_ActiveRequests.request_id })
+								.from(liteLLM_ActiveRequests)
+								.where(activeWhereClause)
+								.orderBy(desc(liteLLM_ActiveRequests.startTime))
+								.limit(pageSize)
+								.offset(activeOffset)
+						).map((row) => ({ request_id: row.request_id, source: "active" as const }))
 					: [];
+			const activeRows = await hydrateUiPageRows(db, activeKeys);
 			const completedLimit = Math.max(0, pageSize - activeRows.length);
 			const completedOffset = Math.max(0, pageOffset - activeTotal);
-			const completedRows =
+			const completedKeys =
 				completedLimit > 0
-					? await db
-							.select(uiSpendLogSelection())
-							.from(liteLLM_SpendLogs)
-							.where(spendLogsWhereClause)
-							.orderBy(orderExpr)
-							.limit(completedLimit)
-							.offset(completedOffset)
+					? (
+							await db
+								.select({ request_id: liteLLM_SpendLogs.request_id })
+								.from(liteLLM_SpendLogs)
+								.where(spendLogsWhereClause)
+								.orderBy(orderExpr)
+								.limit(completedLimit)
+								.offset(completedOffset)
+						).map((row) => ({ request_id: row.request_id, source: "spend" as const }))
 					: [];
+			const completedRows = await hydrateUiPageRows(db, completedKeys);
 
 			const normalizedCompletedRows = completedRows.map((row) =>
 				withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)),
@@ -544,9 +545,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
 			.limit(legacySkip + pageSize + 1);
 		// 会话模拟带正文时按块组装：整批引用合并成一次块查询。
-		const rows = (includeContent
-			? await hydrateSpendLogRows(db, selectedRows as unknown as Array<Record<string, unknown>>)
-			: selectedRows) as typeof selectedRows;
+		const rows = (
+			includeContent ? await hydrateSpendLogRows(db, selectedRows as unknown as Array<Record<string, unknown>>) : selectedRows
+		) as typeof selectedRows;
 		const normalizedRows = rows.map((row) => withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)));
 		const pageRows = normalizedRows.slice(legacySkip, legacySkip + pageSize);
 		const hasMore = normalizedRows.length > legacySkip + pageSize;
@@ -565,8 +566,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			timings.push({ name: name, durationMs: performance.now() - startedAt });
 		};
 		const group = parseSessionGroupQuery(req.query as Record<string, unknown>);
-		const requestedTeamId =
-			typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
+		const requestedTeamId = typeof req.query.team_id === "string" && req.query.team_id.length > 0 ? req.query.team_id : undefined;
 		const visibilityStartedAt = performance.now();
 		const visibilityClause = await resolveSpendVisibilityClause(db, req.auth, requestedTeamId);
 		recordTiming("visibility", visibilityStartedAt);
@@ -584,10 +584,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 				before: parseSessionPosition(req.query.before, "before"),
 			},
 		);
-		res.setHeader(
-			"Server-Timing",
-			timings.map((timing) => `${timing.name};dur=${timing.durationMs.toFixed(1)}`).join(", "),
-		);
+		res.setHeader("Server-Timing", timings.map((timing) => `${timing.name};dur=${timing.durationMs.toFixed(1)}`).join(", "));
 		return payload;
 	});
 
@@ -596,20 +593,15 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// 未命中的 request_id 合并成一次 DB 查询，避免大 Session 产生数百次 HTTP/SQL 往返。
 	registerRoute(router, { method: "post", path: "/spend/logs/ui/batch" }, async (req) => {
 		const requests = parseSpendLogDetailBatch(req.body);
-		const coldStoragePayloads = await mapWithConcurrency(
-			requests,
-			COLD_STORAGE_BATCH_CONCURRENCY,
-			async (detailRequest) => {
-				const payload = await getRequestResponsePayloadFromColdStorage(
-					detailRequest.request_id,
-					parseOptionalDetailDate(detailRequest.start_date),
-					parseOptionalDetailDate(detailRequest.end_date),
-					(_coldStorageLogger, error) =>
-						logger.warn(`/spend/logs/ui/batch 冷存储回查失败: ${(error as Error).message}`),
-				);
-				return [detailRequest.request_id, payload] as const;
-			},
-		);
+		const coldStoragePayloads = await mapWithConcurrency(requests, COLD_STORAGE_BATCH_CONCURRENCY, async (detailRequest) => {
+			const payload = await getRequestResponsePayloadFromColdStorage(
+				detailRequest.request_id,
+				parseOptionalDetailDate(detailRequest.start_date),
+				parseOptionalDetailDate(detailRequest.end_date),
+				(_coldStorageLogger, error) => logger.warn(`/spend/logs/ui/batch 冷存储回查失败: ${(error as Error).message}`),
+			);
+			return [detailRequest.request_id, payload] as const;
+		});
 		const coldStorageByRequestId = new Map(coldStoragePayloads);
 		const databaseRequestIds = requests
 			.map((detailRequest) => detailRequest.request_id)
@@ -634,9 +626,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 		return {
 			data: requests.map((detailRequest) => ({
-				...(coldStorageByRequestId.get(detailRequest.request_id) ??
-					databaseByRequestId.get(detailRequest.request_id) ??
-					{}),
+				...(coldStorageByRequestId.get(detailRequest.request_id) ?? databaseByRequestId.get(detailRequest.request_id) ?? {}),
 				request_id: detailRequest.request_id,
 			})),
 		};
@@ -778,7 +768,9 @@ function uiSpendLogSelection() {
 		custom_llm_provider: sql<string | null>`${liteLLM_SpendLogs.custom_llm_provider}`,
 		api_base: sql<string | null>`${liteLLM_SpendLogs.api_base}`,
 		user: liteLLM_SpendLogs.user,
-		metadata: sql<unknown | null>`${liteLLM_SpendLogs.metadata}`,
+		// 列表不下发流式 checkpoint 累计正文：回收行会把整份累计响应塞进 metadata，
+		// 单行可达数兆，既撑大每页响应也让客户端多解析几十毫秒。
+		metadata: spendLogListMetadataSql(),
 		cache_hit: sql<string | null>`${liteLLM_SpendLogs.cache_hit}`,
 		cache_key: liteLLM_SpendLogs.cache_key,
 		request_tags: sql<unknown | null>`${liteLLM_SpendLogs.request_tags}`,
@@ -803,6 +795,183 @@ function uiSpendLogSelectionWithContent() {
 		response: liteLLM_SpendLogs.response,
 		proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
 	};
+}
+
+/** 列表页的一行定位：来源表 + 主键，投影推迟到取回当前页之后。 */
+interface UiPageRowKey {
+	readonly request_id: string;
+	readonly source: "active" | "spend";
+}
+
+/** 分页键 + 排序键；两张表都用同一组字段确定混排顺序。 */
+interface UiPageRowKeyWithTime extends UiPageRowKey {
+	readonly startTime: Date;
+}
+
+/**
+ * 取当前页的行键：两张表各自按 (startTime, request_id) 取前 N 行，再在内存里归并分页。
+ *
+ * 列表投影会剥掉 metadata 里的流式 checkpoint 载荷，而 `jsonb - 键` 要求 detoast 并
+ * 重建整份 JSON。这个表达式一旦留在 UNION/ORDER BY 里，PostgreSQL 就必须对时间窗内的
+ * 每一行计算一次：24 小时窗口约 1.6 万行时实测多花 40 秒以上，窗口越大越慢，首页也随之
+ * 不可用。改成先分页再回表（见 hydrateUiPageRows），重表达式只作用于当前页。
+ *
+ * 分页键仍然单独归并而不是交给 `UNION ALL ... ORDER BY ... LIMIT`：两表各取
+ * (offset + limit) 行即可提前终止，代价只与页深有关；UNION 则要把整个时间窗的索引项和
+ * 堆页都读一遍（24 小时约 1.6 万行，冷缓存下数秒级），并随窗口线性变慢。
+ * @param db - Drizzle 数据库实例
+ * @param activeWhereClause - 进行中请求的过滤条件
+ * @param spendLogsWhereClause - 已落库日志的过滤条件
+ * @param sortOrder - 与接口一致的正/倒序
+ * @param pageSize - 每页行数
+ * @param pageOffset - 分页偏移
+ */
+async function selectMixedUiPageRowKeys(
+	db: NodePgDatabase<typeof schema>,
+	activeWhereClause: SQL,
+	spendLogsWhereClause: SQL,
+	sortOrder: SpendSortOrder,
+	pageSize: number,
+	pageOffset: number,
+): Promise<UiPageRowKey[]> {
+	const needed = pageOffset + pageSize;
+	const descending = sortOrder !== SpendSortOrder.ASC;
+	const direction = (column: Column): SQL => (descending ? sql`${column} DESC` : sql`${column} ASC`);
+	const activeKeys = await db
+		.select({ request_id: liteLLM_ActiveRequests.request_id, startTime: liteLLM_ActiveRequests.startTime })
+		.from(liteLLM_ActiveRequests)
+		.where(activeWhereClause)
+		.orderBy(direction(liteLLM_ActiveRequests.startTime), direction(liteLLM_ActiveRequests.request_id))
+		.limit(needed);
+	const spendKeys = await db
+		.select({ request_id: liteLLM_SpendLogs.request_id, startTime: liteLLM_SpendLogs.startTime })
+		.from(liteLLM_SpendLogs)
+		.where(spendLogsWhereClause)
+		.orderBy(direction(liteLLM_SpendLogs.startTime), direction(liteLLM_SpendLogs.request_id))
+		.limit(needed);
+	const merged = mergePageRowKeys(
+		activeKeys.map((key) => ({ request_id: key.request_id, startTime: key.startTime, source: "active" as const })),
+		spendKeys.map((key) => ({ request_id: key.request_id, startTime: key.startTime, source: "spend" as const })),
+		descending,
+	);
+	return merged.slice(pageOffset, needed).map((key) => ({ request_id: key.request_id, source: key.source }));
+}
+
+/**
+ * 归并两路已按 (startTime, request_id) 排好序的分页键，保持全局顺序与分页边界稳定。
+ * @param left - 进行中请求的分页键
+ * @param right - 已落库日志的分页键
+ * @param descending - 是否与接口倒序一致
+ */
+function mergePageRowKeys(left: UiPageRowKeyWithTime[], right: UiPageRowKeyWithTime[], descending: boolean): UiPageRowKeyWithTime[] {
+	const direction = descending ? -1 : 1;
+	const merged: UiPageRowKeyWithTime[] = [];
+	let leftIndex = 0;
+	let rightIndex = 0;
+	while (leftIndex < left.length && rightIndex < right.length) {
+		const leftKey = left.at(leftIndex);
+		const rightKey = right.at(rightIndex);
+		if (leftKey === undefined || rightKey === undefined) {
+			break;
+		}
+		if (comparePageRowKeys(leftKey, rightKey) * direction <= 0) {
+			merged.push(leftKey);
+			leftIndex += 1;
+		} else {
+			merged.push(rightKey);
+			rightIndex += 1;
+		}
+	}
+	return merged.concat(left.slice(leftIndex), right.slice(rightIndex));
+}
+
+/**
+ * 分页键的升序比较：startTime 优先，同一时刻用 request_id 保持稳定顺序。
+ * @param left - 左分页键
+ * @param right - 右分页键
+ */
+function comparePageRowKeys(left: UiPageRowKeyWithTime, right: UiPageRowKeyWithTime): number {
+	const byTime = left.startTime.getTime() - right.startTime.getTime();
+	if (byTime !== 0) {
+		return byTime;
+	}
+	return left.request_id < right.request_id ? -1 : left.request_id > right.request_id ? 1 : 0;
+}
+
+/**
+ * 按主键回表读取当前页的列表投影。
+ *
+ * 调用方先分页再回表，因此 metadata 剥载荷、失败调用的模型回退和状态兼容这些重表达式
+ * 只对每页几十行各计算一次，与时间窗大小、日志总量无关。分页键与回表之间可能正好有
+ * 请求落库或租约回收，来源表查不到时再用另一张表的同一行兜底，避免页面上少一行。
+ * @param db - Drizzle 数据库实例
+ * @param keys - 已排好序的分页键
+ */
+async function hydrateUiPageRows(db: NodePgDatabase<typeof schema>, keys: UiPageRowKey[]): Promise<Record<string, unknown>[]> {
+	if (keys.length === 0) {
+		return [];
+	}
+	const bySource = new Map<string, Record<string, unknown>>();
+	const spendIds = uniqueRequestIds(keys.filter((key) => key.source === "spend"));
+	const activeIds = uniqueRequestIds(keys.filter((key) => key.source === "active"));
+	if (spendIds.length > 0) {
+		const rows = await db.select(uiSpendLogSelection()).from(liteLLM_SpendLogs).where(inArray(liteLLM_SpendLogs.request_id, spendIds));
+		for (const row of rows) {
+			bySource.set(`spend:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
+		}
+	}
+	if (activeIds.length > 0) {
+		const rows = await db
+			.select(uiActiveRequestSelection())
+			.from(liteLLM_ActiveRequests)
+			.where(inArray(liteLLM_ActiveRequests.request_id, activeIds));
+		for (const row of rows) {
+			bySource.set(`active:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
+		}
+	}
+	// 分页键与回表之间跨越了提交边界：进行中行已落库，或已落库行被租约回收。
+	const migratedToSpend = missingRequestIds(keys, bySource, "active");
+	if (migratedToSpend.length > 0) {
+		const rows = await db
+			.select(uiSpendLogSelection())
+			.from(liteLLM_SpendLogs)
+			.where(inArray(liteLLM_SpendLogs.request_id, migratedToSpend));
+		for (const row of rows) {
+			bySource.set(`fallback:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
+		}
+	}
+	const migratedToActive = missingRequestIds(keys, bySource, "spend");
+	if (migratedToActive.length > 0) {
+		const rows = await db
+			.select(uiActiveRequestSelection())
+			.from(liteLLM_ActiveRequests)
+			.where(inArray(liteLLM_ActiveRequests.request_id, migratedToActive));
+		for (const row of rows) {
+			bySource.set(`fallback:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
+		}
+	}
+	return keys.flatMap((key) => {
+		const row = bySource.get(`${key.source}:${key.request_id}`) ?? bySource.get(`fallback:${key.request_id}`);
+		return row === undefined ? [] : [row];
+	});
+}
+
+/**
+ * 分页键里某一来源的 request_id，保持首次出现顺序并去重。
+ * @param keys - 分页键
+ */
+function uniqueRequestIds(keys: UiPageRowKey[]): string[] {
+	return Array.from(new Set(keys.map((key) => key.request_id)));
+}
+
+/**
+ * 找出主投影没有命中的某一来源 request_id。
+ * @param keys - 分页键
+ * @param bySource - 已回表的结果（按 `来源:request_id` 索引）
+ * @param source - 需要检查的来源
+ */
+function missingRequestIds(keys: UiPageRowKey[], bySource: Map<string, Record<string, unknown>>, source: UiPageRowKey["source"]): string[] {
+	return uniqueRequestIds(keys.filter((key) => key.source === source && !bySource.has(`${source}:${key.request_id}`)));
 }
 
 /**
@@ -852,7 +1021,9 @@ function uiActiveRequestSelection() {
 		api_base: sql<string | null>`${liteLLM_ActiveRequests.api_base}`,
 		user: liteLLM_ActiveRequests.user,
 		// 聚合中的响应正文只属于详情页，列表不重复下发（见 /spend/logs/ui/:request_id）。
-		metadata: sql<unknown | null>`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) - 'streaming_execution' - 'responses_execution'`,
+		metadata: sql<
+			unknown | null
+		>`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) - 'streaming_execution' - 'responses_execution'`,
 		cache_hit: sql<string | null>`'False'`,
 		cache_key: sql<string | null>`NULL`,
 		request_tags: sql<unknown | null>`${liteLLM_ActiveRequests.request_tags}`,
@@ -1080,15 +1251,29 @@ interface UiSpendLogsWhereArgs {
 }
 
 /**
+ * 完整会话 UUID 对应的规范会话键；输入不是可识别 UUID 时返回 null。
+ *
+ * `s:` 是当前写入的规范键；`c:` 兼容历史上按会话 UUID 落库的分组键。
+ * 只有完整 UUID 才走这条精确路径，部分 ID 搜索仍保留原有包含语义。
+ * @param sessionId - 用户传入的会话 ID
+ */
+function exactSessionGroupKeys(sessionId: string): [string, string] | null {
+	const uuid = normalizeSessionUuid(sessionId);
+	return uuid === null ? null : [`s:${uuid}`, `c:${uuid}`];
+}
+
+/**
  * 构造 /spend/logs/ui 与 /spend/logs/v2 共用的 where 条件。
  * 对齐 Python `ui_view_spend_logs` 的 SQL 拼接：
  * - 时间范围：`startTime >= ... AND startTime <= ...`
  * - 普通列等值：`team_id` / `user` / `api_key` / `request_id` / `model` / `model_id` / `end_user`
  * - status_filter=success → `(status = 'success' OR status IS NULL)`；其它精确匹配
  * - spend 范围
- * - JSONB metadata：`key_alias` → `metadata->>'user_api_key_alias' LIKE`；
- *   `error_code` → `metadata->'error_information'->>'error_code' =`；
- *   `error_message` → `metadata->'error_information'->>'error_message' LIKE`
+ * - `key_alias` → 冗余列 `key_alias` 的 LIKE；`error_code` → 冗余列 `error_code` 的等值匹配。
+ *   这两列在写入时由服务进程从 metadata 同源填入（历史行见
+ *   `scripts/backfill-spend-log-filter-columns.cjs`），过滤窗口内每行只需读两个小列，
+ *   不再解压整份 metadata（24h 窗口冷缓存下原先要 9–40 s）。
+ * - `error_message` 仍是自由文本，保持 `metadata->'error_information'->>'error_message' LIKE`。
  * - 会话：`session_id` → 生成的 `session_group_key` 包含匹配（仅 s:/c: 前缀）
  * @param args
  */
@@ -1116,10 +1301,17 @@ function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
 		conditions.push(eq(liteLLM_SpendLogs.end_user, args.endUser));
 	}
 	if (args.sessionId !== undefined) {
-		const needle = args.sessionId.toLowerCase();
-		conditions.push(
-			sql`(${liteLLM_SpendLogs.session_group_key} LIKE ${"s:%"} OR ${liteLLM_SpendLogs.session_group_key} LIKE ${"c:%"}) AND strpos(lower(${liteLLM_SpendLogs.session_group_key}), ${needle}) > 0`,
-		);
+		const exactKeys = exactSessionGroupKeys(args.sessionId);
+		if (exactKeys !== null) {
+			// 会话详情传入完整 UUID 时直接命中规范键，走 (session_group_key, startTime, request_id)
+			// 索引；原来的 %contains% 谓词无法使用该索引，All Time 下要扫完整张表。
+			conditions.push(inArray(liteLLM_SpendLogs.session_group_key, exactKeys));
+		} else {
+			const needle = args.sessionId.toLowerCase();
+			conditions.push(
+				sql`(${liteLLM_SpendLogs.session_group_key} LIKE ${"s:%"} OR ${liteLLM_SpendLogs.session_group_key} LIKE ${"c:%"}) AND strpos(lower(${liteLLM_SpendLogs.session_group_key}), ${needle}) > 0`,
+			);
+		}
 	}
 	if (args.statusFilter !== undefined) {
 		if (args.statusFilter === "success") {
@@ -1135,10 +1327,11 @@ function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
 		conditions.push(sql`${liteLLM_SpendLogs.spend} <= ${args.maxSpend}`);
 	}
 	if (args.keyAlias !== undefined) {
-		conditions.push(sql`${spendLogMetadataJsonSql()}->>'user_api_key_alias' LIKE ${"%" + args.keyAlias + "%"}`);
+		// 与 Python `ui_view_spend_logs` 一致保留 LIKE 包含匹配，但改为读冗余列。
+		conditions.push(sql`${liteLLM_SpendLogs.key_alias} LIKE ${"%" + args.keyAlias + "%"}`);
 	}
 	if (args.errorCode !== undefined) {
-		conditions.push(sql`${spendLogMetadataJsonSql()}->'error_information'->>'error_code' = ${args.errorCode}`);
+		conditions.push(eq(liteLLM_SpendLogs.error_code, args.errorCode));
 	}
 	if (args.errorMessage !== undefined) {
 		conditions.push(sql`${spendLogMetadataJsonSql()}->'error_information'->>'error_message' LIKE ${"%" + args.errorMessage + "%"}`);
@@ -1239,9 +1432,7 @@ async function enrichInProgressSessionCounts(
  * @param groups - 行对应的会话分组（可能为空）
  */
 function collectSessionGroupKeys(groups: (SessionGroupRef | null)[]): string[] {
-	return Array.from(
-		new Set(groups.filter((group): group is SessionGroupRef => group !== null).map((group) => sessionGroupKey(group))),
-	);
+	return Array.from(new Set(groups.filter((group): group is SessionGroupRef => group !== null).map((group) => sessionGroupKey(group))));
 }
 
 /**

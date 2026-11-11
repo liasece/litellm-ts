@@ -66,6 +66,7 @@ describe("会话身份解析", () => {
 	it("user_id 里内嵌的会话 UUID 参与分组，且让位给显式会话标识", () => {
 		const embedded = { metadata: { user_id: `{"device_id":"d-1","session_id":"${SESSION}"}` }, prompt_cache_key: `session-${SESSION}` };
 		expect(resolveRequestSessionGroupKey({ body: embedded, headers: {} })).toBe(`s:${SESSION}`);
+		expect(resolveRequestSessionGroupKey({ body: { metadata: embedded.metadata } })).toBe(`s:${SESSION}`);
 		expect(resolveRequestSessionGroupKey({ body: embedded, headers: { session_id: THREAD } })).toBe(`s:${THREAD}`);
 	});
 

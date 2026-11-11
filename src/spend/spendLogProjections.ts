@@ -32,3 +32,16 @@ export function spendLogDurationSql() {
 export function spendLogMetadataJsonSql() {
 	return sql`CASE WHEN jsonb_typeof(${liteLLM_SpendLogs.metadata}) = 'object' THEN ${liteLLM_SpendLogs.metadata} ELSE '{}'::jsonb END`;
 }
+
+/**
+ * 列表投影里的 metadata：剥掉流式 checkpoint 载荷。
+ *
+ * 流式过程把累计的 response/usage 写进 ActiveRequests 的 `streaming_execution`
+ * （CLIProxy 写 `responses_execution`）。请求被重启或租约回收时，那整份累计正文会随行
+ * 搬进 SpendLogs.metadata，单行可达数兆；列表读它只会放大每页响应与客户端解析，
+ * 详情页的正文来自 response 列与内容寻址块，不依赖这两个内部键。
+ * 因此列表读取统一剥除，与在途行列表的同一处理保持一致。
+ */
+export function spendLogListMetadataSql() {
+	return sql<unknown | null>`${liteLLM_SpendLogs.metadata} - 'streaming_execution' - 'responses_execution'`;
+}
