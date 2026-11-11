@@ -19,6 +19,23 @@ import { instrumentDatabasePool } from "../../observability/DatabaseMetrics";
 const logger = createModuleLogger("Database");
 const MIGRATION_LOCK_ID = 741_932_611;
 
+/** 启动期数据库尚未接受连接时的等待预算（毫秒）。 */
+const STARTUP_WAIT_MS = 60_000;
+
+/** 启动期重试间隔（毫秒）；PostgreSQL 冷启动通常在数秒内完成。 */
+const STARTUP_RETRY_MS = 1_000;
+
+/**
+ * 可以在启动期安全重试的连接错误码。
+ *
+ * - `57P03`：数据库还在启动，暂时不接收连接（"the database system is not yet accepting connections"）；
+ * - `57P01`：管理员关停数据库，重启期间同样值得等待；
+ * - `ECONNREFUSED` / `ENOENT` / `ETIMEDOUT` / `ECONNRESET`：端口尚未监听或连接在建连阶段被断开。
+ *
+ * 认证失败、库不存在、schema 错误等属于配置问题，不在其列：它们等再久也不会恢复。
+ */
+const STARTUP_RETRYABLE_CODES = new Set(["57P03", "57P01", "ECONNREFUSED", "ENOENT", "ETIMEDOUT", "ECONNRESET"]);
+
 /** Drizzle 数据库实例类型（带 schema 类型推导） */
 export type DrizzleDb = NodePgDatabase<typeof schema>;
 
@@ -313,10 +330,9 @@ export class Database {
 	async initialize(): Promise<void> {
 		this._initialized = false;
 		const migrationsFolder = path.join(__dirname, "../../../drizzle");
-		const client = await this._pool.connect();
+		const client = await this._acquireReadyClient();
 		let locked = false;
 		try {
-			await client.query("SELECT 1");
 			await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_ID]);
 			locked = true;
 			const migrationSchema = await currentSchema(client);
@@ -336,6 +352,43 @@ export class Database {
 				await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_ID]).catch(() => undefined);
 			}
 			client.release();
+		}
+	}
+
+	/**
+	 * 取得一条已经能执行查询的连接；启动期数据库还没接受连接时有限重试。
+	 *
+	 * 网关与 PostgreSQL 常在同一台机器上一起冷启动。数据库先起、应用后起是常态，
+	 * 反过来（例如机器重启后容器几乎同时拉起）应用会先于数据库可用而退出，
+	 * 只能靠容器的 restart 策略再拉一次。这里在启动关键路径上等待一小段时间，
+	 * 把「数据库还在启动」与「数据库不可用」分开：前者等待，后者仍然立即失败。
+	 * @returns 已通过 `SELECT 1` 的连接，调用方负责 release
+	 */
+	private async _acquireReadyClient(): Promise<PoolClient> {
+		const deadline = Date.now() + STARTUP_WAIT_MS;
+		for (let attempt = 1; ; attempt++) {
+			try {
+				const client = await this._pool.connect();
+				try {
+					await client.query("SELECT 1");
+				} catch (error) {
+					// 连上了但查询失败（数据库正在恢复/关停）：连接已不可信，丢弃后重试。
+					client.release(error as Error);
+					throw error;
+				}
+				if (attempt > 1) {
+					logger.info("数据库已就绪，继续启动", { attempts: attempt });
+				}
+				return client;
+			} catch (error) {
+				const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+				const retryable = typeof code === "string" && STARTUP_RETRYABLE_CODES.has(code);
+				if (!retryable || Date.now() + STARTUP_RETRY_MS > deadline) {
+					throw error;
+				}
+				logger.warn("数据库尚未就绪，稍后重试", { attempt: attempt, code: code, retryInMs: STARTUP_RETRY_MS });
+				await new Promise<void>((resolve) => setTimeout(resolve, STARTUP_RETRY_MS));
+			}
 		}
 	}
 

@@ -27,7 +27,8 @@
 必须阻塞到监听之前（正确性依赖）：
 
 - 配置加载与校验；
-- 数据库连接、接管与迁移（多实例/多进程互斥依赖迁移锁）；
+- 数据库连接、接管与迁移（多实例/多进程互斥依赖迁移锁）；数据库可能与本进程几乎同时
+  冷启动，连接在有限预算内等待其就绪，超时或配置类错误仍然立即失败；
 - `abortOrphanedActiveRequests()`：必须在本进程开始服务前把旧进程的在途行标成 aborted，
   否则本进程新写入的在途行会被同一条语句误伤，或遗留行永久占用 `LiteLLM_ActiveRequests`；
 - 路由装配与 `listen()`。
@@ -45,6 +46,11 @@
   `cliproxy_runtime` 两段预热，异常统一收敛成日志，不会向调用方抛错。
 - `src/main.ts`：容器创建后立刻 `void container.warmUp()`，与遗留在途请求回收、路由装配、
   `listen()` 并行；「已启动」日志带 `startupMs`，即真正可以接客的时刻。
+- `src/core/db/Database.ts`：`initialize()` 先取得一条已通过 `SELECT 1` 的连接。数据库报
+  `57P03`（尚未接受连接）、`57P01`（管理员关停）或建连阶段出现 `ECONNREFUSED`/`ENOENT`/
+  `ETIMEDOUT`/`ECONNRESET` 时按 1 秒间隔重试，预算 60 秒；认证失败、库不存在一类配置错误
+  不等待。机器重启后应用与 PostgreSQL 同时拉起时，不再先启动失败一次、再依赖容器 restart
+  策略拉起（2026-11-10 21:17 的生产重启出现过该失败）。
 - `src/cliproxy/CliProxyRuntimeManager.ts`：`initialize()` 进入与管理操作共用的串行队列
   （监听之后管理接口已经可以访问，避免配置投影/版本安装与手工操作互相踩），每一步之前检查
   停止意图；`_waitForHealth()` 在停止意图下发或子进程退出后立即返回，不再空转到超时；

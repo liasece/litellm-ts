@@ -123,6 +123,47 @@ describe("Database initialization takeover", () => {
 		await expect(migrationFailed.initialize()).rejects.toThrow("migration failed");
 		await expect(migrationFailed.probeReadiness()).resolves.toEqual({ ready: false, reason: "not_initialized" });
 	});
+
+	it("数据库冷启动尚未接受连接时等待重试后再初始化", async () => {
+		jest.useFakeTimers();
+		try {
+			mockPoolConnect.mockRejectedValueOnce(
+				Object.assign(new Error("the database system is not yet accepting connections"), { code: "57P03" }),
+			);
+			const database = new Database(config);
+			const initialization = database.initialize();
+			await jest.advanceTimersByTimeAsync(1_000);
+			await expect(initialization).resolves.toBeUndefined();
+			expect(mockPoolConnect).toHaveBeenCalledTimes(2);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	it("配置类连接错误不进入启动等待", async () => {
+		mockPoolConnect.mockRejectedValueOnce(Object.assign(new Error("password authentication failed"), { code: "28P01" }));
+		const database = new Database(config);
+		await expect(database.initialize()).rejects.toThrow("password authentication failed");
+		expect(mockPoolConnect).toHaveBeenCalledTimes(1);
+	});
+
+	it("数据库长期不可用时在等待预算耗尽后失败，而不是无限重试", async () => {
+		jest.useFakeTimers();
+		try {
+			mockPoolConnect.mockImplementation(() =>
+				Promise.reject(Object.assign(new Error("the database system is not yet accepting connections"), { code: "57P03" })),
+			);
+			const database = new Database(config);
+			const initialization = database.initialize();
+			const assertion = expect(initialization).rejects.toThrow("not yet accepting connections");
+			await jest.advanceTimersByTimeAsync(60_000);
+			await assertion;
+			expect(mockPoolConnect.mock.calls.length).toBeGreaterThan(1);
+		} finally {
+			mockPoolConnect.mockResolvedValue({ query: mockClientQuery, release: mockClientRelease });
+			jest.useRealTimers();
+		}
+	});
 });
 
 describe("runReadOnlySchemaPreflight", () => {
