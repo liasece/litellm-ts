@@ -47,10 +47,10 @@ import {
 	appendRoutingTrace,
 	copyModelResolutionChain,
 	copyRoutingTrace,
-	createModelResolutionTraceCollector,
 	getResultModelResolutionMetadata,
 	type ModelResolutionTraceCollector,
 } from "../router/ModelResolutionTrace";
+import { createPublishedModelResolutionTrace } from "../router/UpstreamExchange";
 import { getConfig } from "../core/config";
 import {
 	buildOpenAISearchContinuation,
@@ -418,7 +418,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 
 		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const visionImageStore = createVisionImageStore(db);
-		const modelResolutionTrace = createModelResolutionTraceCollector();
+		const modelResolutionTrace = createPublishedModelResolutionTrace();
 		// 非流式路径同样向上游请求流式（需求：litellm 自身需要流式输出以做 checkpoint），
 		// completeWithResolutionTrace 在流结束后返回累积的完整响应，下游仍拿到一次性非流式响应。
 		let currentAccumulator: ChatStreamAccumulator | undefined;

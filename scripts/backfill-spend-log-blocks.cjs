@@ -269,6 +269,9 @@ async function main() {
 			 FROM "LiteLLM_SpendLogs"
 			 WHERE ("startTime", request_id) > ($1::timestamptz, $2::text)
 			   AND ($3::timestamptz IS NULL OR "startTime" < $3::timestamptz)
+			   -- 超大的单行（压缩后 >32MB）跳过：JSON.parse 会撑爆进程，且这类行占比极小。
+			   AND pg_column_size(messages) < 33554432
+			   AND pg_column_size(proxy_server_request) < 33554432
 			 ORDER BY "startTime", request_id
 			 LIMIT $4`,
 			[cursorTime.toISOString(), cursorId, options.to, options.batch],

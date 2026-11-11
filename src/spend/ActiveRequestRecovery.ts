@@ -106,6 +106,9 @@ async function encodeRecoveredRequestPayloads(
  * response/usage 会保留（checkpoint 双 key 兼容：普通流式写 streaming_execution、
  * CLIProxy 写 responses_execution，前者优先），未知 usage 与费用保持为 0。proxy_server_request
  * 列随行保留，使 aborted 日志仍能查看原始 request。
+ *
+ * checkpoint 载荷只用于还原 response 列与用量列，写日志 metadata 前必须剥掉：那份累计正文
+ * 单行可达数兆，留在 metadata 会让列表响应、Session 读取和 metadata 过滤一起背上整份正文。
  * @param db - Drizzle 数据库实例
  * @param abortedAt - 本次恢复发生的时间
  * @returns 已回收的请求数量
@@ -139,6 +142,8 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 					api_base,
 					"user",
 					metadata,
+					key_alias,
+					error_code,
 					cache_hit,
 					cache_key,
 					request_tags,
@@ -185,7 +190,7 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 					custom_llm_provider,
 					'',
 					"user",
-					COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+					(COALESCE(metadata, '{}'::jsonb) - 'streaming_execution' - 'responses_execution') || jsonb_build_object(
 						'status', 'aborted',
 						'termination_reason', ${ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART}::text,
 						'aborted_at', ${abortedAt}::timestamp,
@@ -195,6 +200,9 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 							'error_message', 'Request aborted because the gateway restarted before completion.'
 						)
 					),
+					-- 过滤列与 metadata 同源：别名取行内 metadata，错误码即本次恢复写入的常量。
+					metadata ->> 'user_api_key_alias',
+					'SERVER_RESTART',
 					'',
 					'',
 					request_tags,
@@ -262,6 +270,7 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 					prompt_tokens, completion_tokens, "startTime", "endTime",
 					request_duration_ms, "completionStartTime", model, model_id,
 					model_group, custom_llm_provider, api_base, "user", metadata,
+					key_alias, error_code,
 					cache_hit, cache_key, request_tags, team_id, organization_id,
 					end_user, requester_ip_address, messages, response, session_id,
 					status, proxy_server_request
@@ -290,7 +299,7 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 					0,
 					NULL,
 					model, model_id, model_group, custom_llm_provider, '', "user",
-					COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+					(COALESCE(metadata, '{}'::jsonb) - 'streaming_execution' - 'responses_execution') || jsonb_build_object(
 						'status', 'aborted',
 						'termination_reason', 'lease_expired',
 						'aborted_at', ${now}::timestamp,
@@ -300,6 +309,8 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 							'error_message', 'Request lease expired without a terminal write; reaped by periodic sweep.'
 						)
 					),
+					metadata ->> 'user_api_key_alias',
+					'LEASE_EXPIRED',
 					'', '', request_tags, team_id, organization_id, end_user,
 					requester_ip_address, '{}'::jsonb,
 					COALESCE(metadata #> '{streaming_execution,response}', metadata #> '{responses_execution,response}', '{}'::jsonb),

@@ -15,6 +15,7 @@ import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_SpendReservations } from "../db/schema/spendReservations";
 import type { Request } from "express";
 import {
@@ -619,6 +620,52 @@ describe("trackSpendLog 原子提交", () => {
 		}
 	});
 
+	it("先删除在途行再写预算主体与汇总，避免大行锁等待占住预算行锁", async () => {
+		const order: string[] = [];
+		let db: Record<string, unknown>;
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			delete: jest.fn(() => {
+				order.push("delete:ActiveRequests");
+				return { where: jest.fn(() => Promise.resolve()) };
+			}),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			update: jest.fn((table: unknown) => ({
+				set: jest.fn(() => {
+					if (table === LiteLLM_VerificationToken) {
+						order.push("update:VerificationToken");
+					}
+					return { where: jest.fn(() => Promise.resolve()) };
+				}),
+			})),
+			insert: jest.fn(() => ({
+				values: jest.fn(() => ({
+					onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ requestId: "req-lock-order" }])) })),
+					onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+				})),
+			})),
+		};
+
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			api_key: "key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			endTime: "2026-01-01T00:00:01.000Z",
+			model: "unknown-model-cost-zero",
+			prompt_tokens: 1,
+			request_id: "req-lock-order",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			total_tokens: 2,
+			user: "user-id",
+		});
+
+		// 在途行删除会等待同请求补写的行锁（大行整列重写可达秒级）；它必须发生在
+		// 预算主体累计之前，否则这段时间预算行锁与汇总行锁一直被持有。
+		expect(order.indexOf("delete:ActiveRequests")).toBeGreaterThanOrEqual(0);
+		expect(order.indexOf("delete:ActiveRequests")).toBeLessThan(order.indexOf("update:VerificationToken"));
+	});
+
 	it("首次 request_id 仅在整个事务提交后返回 committed", async () => {
 		let db: Record<string, unknown>;
 		const transaction = jest.fn((callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => callback(db));
@@ -1214,6 +1261,50 @@ describe("SpendTracker API key sanitization", () => {
 		expect(metadata["user_api_key"]).toBe(insertData["api_key"]);
 		expect(stringify(insertData)).toContain(rawApiKey);
 		expect(stringify(insertData["proxy_server_request"])).toContain(rawApiKey);
+	});
+
+	it("过滤列 key_alias / error_code 与 metadata 同源写入，缺失时保持 NULL", async () => {
+		// 写入侧契约：Logs 表头过滤读这两列（不再解压 metadata），因此它们必须与服务端
+		// 实际暴露的 metadata 值一致，且不能写空串冒充“有值”。
+		const withFailure: Record<string, unknown>[] = [];
+		await trackSpendLog(createMockDb(withFailure), {
+			api_key: rawApiKey,
+			call_type: CallType.ACompletion,
+			completion_tokens: 0,
+			endTime: "2026-01-01T00:00:01.000Z",
+			metadata: {
+				user_api_key_alias: "team-alpha",
+				error_information: { error_code: 429, error_message: "rate limited" },
+			},
+			model: "gpt-4o-mini",
+			prompt_tokens: 0,
+			request_id: "req-filter-columns-failure",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			total_tokens: 0,
+		});
+		expect(withFailure).toHaveLength(1);
+		expect(withFailure[0]!["key_alias"]).toBe("team-alpha");
+		// 数字错误码按 jsonb -> text 的文本形态落库，与读侧比较口径一致。
+		expect(withFailure[0]!["error_code"]).toBe("429");
+
+		const withoutFilters: Record<string, unknown>[] = [];
+		await trackSpendLog(createMockDb(withoutFilters), {
+			api_key: rawApiKey,
+			call_type: CallType.ACompletion,
+			completion_tokens: 0,
+			endTime: "2026-01-01T00:00:01.000Z",
+			metadata: { trace_id: "trace-without-filters" },
+			model: "gpt-4o-mini",
+			prompt_tokens: 0,
+			request_id: "req-filter-columns-empty",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			total_tokens: 0,
+		});
+		expect(withoutFilters).toHaveLength(1);
+		expect(withoutFilters[0]!["key_alias"]).toBeNull();
+		expect(withoutFilters[0]!["error_code"]).toBeNull();
 	});
 });
 

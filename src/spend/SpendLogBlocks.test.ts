@@ -13,6 +13,7 @@ import {
 	SPEND_LOG_TOOLS_REF_KEY,
 	canonicalJson,
 	collectReferencedBlockIds,
+	encodeActiveRequestPayload,
 	collectSpendLogBlocks,
 	restoreSpendLogPayload,
 	spendLogBlockId,
@@ -350,5 +351,71 @@ describe("restoreSpendLogPayload：tools / system / $messages", () => {
 		);
 		const restoredBody = (restored.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
 		expect(restoredBody["messages"]).toEqual(bodyMessages);
+	});
+});
+
+describe("encodeActiveRequestPayload", () => {
+	it("在途行的短消息数组也换成引用，最终 SpendLogs 的同形请求仍保持内联", () => {
+		const messages = makeMessages(2);
+		const proxyServerRequest = { url: "/v1/messages", body: { model: "claude", messages } };
+
+		const active = encodeActiveRequestPayload(proxyServerRequest);
+		const activeBody = (active.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(activeBody["messages"]).toBeUndefined();
+		expect(activeBody[SPEND_LOG_MESSAGE_REF_KEY]).toHaveLength(2);
+		expect(active.blocks).toHaveLength(2);
+
+		// 同一个请求体走最终落库：2 条消息低于阈值，仍然内联。
+		const spendLog = collectSpendLogBlocks({ messages: {}, proxyServerRequest: proxyServerRequest });
+		const spendLogBody = (spendLog.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(spendLogBody["messages"]).toEqual(messages);
+		expect(spendLog.blocks).toHaveLength(0);
+	});
+
+	it("下游与上游正文、tools、system 都能组装回原样", () => {
+		const messages = makeMessages(3);
+		const tools = makeTools(2);
+		const system = makeSystem();
+		const proxyServerRequest = {
+			url: "/v1/messages",
+			method: "POST",
+			headers: { authorization: "Bearer upstream-secret" },
+			body: { model: "claude", messages, tools, system, stream: true },
+			upstream_request: { url: "https://api.example.com/v1/messages", body: { messages, tools } },
+		};
+
+		const encoded = encodeActiveRequestPayload(proxyServerRequest);
+		const payloads = new Map(encoded.blocks.map((block) => [block.blockId, block.payload] as const));
+		const restored = restoreSpendLogPayload(
+			{ proxy_server_request: encoded.proxyServerRequest },
+			(blockId) => payloads.get(blockId),
+		);
+		const restoredProxy = restored.proxyServerRequest as Record<string, unknown>;
+		const body = restoredProxy["body"] as Record<string, unknown>;
+		expect(body["messages"]).toEqual(messages);
+		expect(body["tools"]).toEqual(tools);
+		expect(body["system"]).toEqual(system);
+		expect(body["model"]).toBe("claude");
+		expect(body["stream"]).toBe(true);
+		expect((restoredProxy["headers"] as Record<string, unknown>)["authorization"]).toBe("Bearer upstream-secret");
+		const upstreamBody = (restoredProxy["upstream_request"] as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(upstreamBody["messages"]).toEqual(messages);
+		expect(upstreamBody["tools"]).toEqual(tools);
+		expect(restored.missingBlockIds).toEqual([]);
+	});
+
+	it("响应式 input 数组同样引用，短数组不再受 4 条阈值限制", () => {
+		const input = [{ role: "user", content: "只问一句" }];
+		const encoded = encodeActiveRequestPayload({ url: "/v1/responses", body: { input, model: "gpt" } });
+		const body = (encoded.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(body["input"]).toBeUndefined();
+		expect(body[SPEND_LOG_INPUT_REF_KEY]).toHaveLength(1);
+		const payloads = new Map(encoded.blocks.map((block) => [block.blockId, block.payload] as const));
+		const restored = restoreSpendLogPayload(
+			{ proxy_server_request: encoded.proxyServerRequest },
+			(blockId) => payloads.get(blockId),
+		);
+		const restoredBody = (restored.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(restoredBody["input"]).toEqual(input);
 	});
 });

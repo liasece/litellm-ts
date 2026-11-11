@@ -123,10 +123,12 @@ export async function buildActiveRequestDetail(
 		(metadata["responses_execution"] as Record<string, unknown> | undefined);
 	// 进行中请求的 proxy_server_request 含传输层补写的 upstream 信息；早期 checkpoint 里
 	// 记录的 upstream 字段作为兜底，保证升级前写入的行也能看到上游视图。
+	// 在途行正文按内容寻址存块，这里先组装回完整请求体再与 checkpoint 合并。
+	const hydratedActive = await hydrateSpendLogRow(db, { proxy_server_request: activeRow.proxy_server_request });
 	const upstreamRequest = checkpoint?.["upstream_request"] as Record<string, unknown> | undefined;
 	const upstreamResponse = checkpoint?.["upstream_response"] as Record<string, unknown> | undefined;
 	const proxyServerRequest = {
-		...(activeRow.proxy_server_request ?? {}),
+		...((hydratedActive.proxy_server_request as Record<string, unknown> | null | undefined) ?? {}),
 		...(upstreamRequest ? { upstream_request: upstreamRequest } : {}),
 		...(upstreamResponse ? { upstream_response: upstreamResponse } : {}),
 	};

@@ -50,7 +50,8 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import type { ModelResponse } from "../types/openai";
 import { ProviderUpstreamError, executeWithFallbackChain, requireUpstreamAttempt, type UpstreamAttempt } from "./AnthropicUpstreamDispatch";
 import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
-import { copyModelResolutionChain, copyRoutingTrace, createModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
+import { copyModelResolutionChain, copyRoutingTrace } from "../router/ModelResolutionTrace";
+import { createPublishedModelResolutionTrace } from "../router/UpstreamExchange";
 import { describeUpstreamErrorBody, executeProviderRequest, isClientAbortError } from "../router/ProviderRequestExecutor";
 import {
 	buildAnthropicSearchContinuation,
@@ -871,7 +872,7 @@ export function registerAnthropicMessagesEndpoints(
 		const visionAudit = createVisionCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const imageGenerationAudit = createImageGenerationCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
 		const webAudit = createWebCapabilityAuditHook({ db: db, req: req, parentRequestId: spendRequestId });
-		const modelResolutionTrace = createModelResolutionTraceCollector();
+		const modelResolutionTrace = createPublishedModelResolutionTrace();
 
 		try {
 			spendLifecycle.markProviderStarted();

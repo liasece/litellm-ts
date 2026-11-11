@@ -1,12 +1,25 @@
 import type { Request } from "express";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
+import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
 import { CallType } from "../types/spend";
 import { checkpointActiveRequest, registerActiveRequest, startActiveRequestHeartbeat, trackSpendLog } from "./SpendTracker";
+import { SPEND_LOG_MESSAGE_REF_KEY, restoreSpendLogPayload } from "./SpendLogBlocks";
 import { subscribeSpendLogChanges } from "./spendLogChangeFeed";
+
+/** 按注册时写入的块还原在途行正文：断言面向内容，不锁定行内存储形态。 */
+function restoreInProgressBody(
+	proxyServerRequest: unknown,
+	blocks: readonly { blockId: string; payload: unknown }[],
+): Record<string, unknown> {
+	const payloads = new Map(blocks.map((block) => [block.blockId, block.payload] as const));
+	return restoreSpendLogPayload({ proxy_server_request: proxyServerRequest }, (blockId) => payloads.get(blockId))
+		.proxyServerRequest as Record<string, unknown>;
+}
 
 describe("Active request tracking", () => {
 	it("registers a lightweight in-progress row before provider execution", async () => {
 		let inserted: Record<string, unknown> | undefined;
+		const blocks: { blockId: string; payload: unknown }[] = [];
 		let db: Record<string, unknown>;
 		db = {
 			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
@@ -21,9 +34,12 @@ describe("Active request tracking", () => {
 				where: jest.fn(() => Promise.resolve()),
 			})),
 			insert: jest.fn((table: unknown) => ({
-				values: jest.fn((values: Record<string, unknown>) => {
+				values: jest.fn((values: unknown) => {
 					if (table === liteLLM_ActiveRequests) {
-						inserted = values;
+						inserted = values as Record<string, unknown>;
+					}
+					if (table === liteLLM_SpendLogBlocks) {
+						blocks.push(...(values as { blockId: string; payload: unknown }[]));
 					}
 					return {
 						onConflictDoNothing: jest.fn(() => ({
@@ -75,11 +91,16 @@ describe("Active request tracking", () => {
 				url: "/v1/chat/completions",
 				method: "POST",
 				headers: { authorization: "Bearer secret" },
-				body: {
-					model: "model-a",
-					messages: [{ role: "user", content: [{ type: "tool_result", content: "---\n\\u0000binary output" }] }],
-				},
 			},
+		});
+		// 正文按内容寻址落在块表：行里只有引用，读取时再组装。
+		const storedProxyServerRequest = inserted?.["proxy_server_request"] as Record<string, unknown>;
+		const storedBody = storedProxyServerRequest["body"] as Record<string, unknown>;
+		expect(storedBody[SPEND_LOG_MESSAGE_REF_KEY]).toHaveLength(1);
+		expect(blocks).toHaveLength(1);
+		expect(restoreInProgressBody(storedProxyServerRequest, blocks)["body"]).toEqual({
+			model: "model-a",
+			messages: [{ role: "user", content: [{ type: "tool_result", content: "---\n\\u0000binary output" }] }],
 		});
 		expect(requestBody.messages[0]?.content[0]?.content).toBe("---\n\0binary output");
 	});
@@ -167,6 +188,7 @@ describe("Active request tracking", () => {
 
 	it("keeps image attachments in the in-progress request body", async () => {
 		let inserted: Record<string, unknown> | undefined;
+		const blocks: { blockId: string; payload: unknown }[] = [];
 		let db: Record<string, unknown>;
 		db = {
 			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
@@ -181,9 +203,12 @@ describe("Active request tracking", () => {
 				where: jest.fn(() => Promise.resolve()),
 			})),
 			insert: jest.fn((table: unknown) => ({
-				values: jest.fn((values: Record<string, unknown>) => {
+				values: jest.fn((values: unknown) => {
 					if (table === liteLLM_ActiveRequests) {
-						inserted = values;
+						inserted = values as Record<string, unknown>;
+					}
+					if (table === liteLLM_SpendLogBlocks) {
+						blocks.push(...(values as { blockId: string; payload: unknown }[]));
 					}
 					return {
 						onConflictDoNothing: jest.fn(() => ({
@@ -224,12 +249,78 @@ describe("Active request tracking", () => {
 			},
 		});
 
-		const body = (inserted?.["proxy_server_request"] as { body: { messages: Array<{ content: Array<Record<string, unknown>> }> } })
-			.body;
-		const content = body.messages[0]?.content ?? [];
+		const storedProxyServerRequest = inserted?.["proxy_server_request"] as Record<string, unknown>;
+		// 图片与超长文本不进在途行：行里只有消息引用，读取时组装回原内容。
+		expect(JSON.stringify(storedProxyServerRequest)).not.toContain(dataUri);
+		const restoredBody = restoreInProgressBody(storedProxyServerRequest, blocks)["body"] as {
+			messages: Array<{ content: Array<Record<string, unknown>> }>;
+		};
+		const content = restoredBody.messages[0]?.content ?? [];
 		// 日志侧只做 NUL 转义，不再截断：图片与超长文本都原样保留。
 		expect((content[0]?.["image_url"] as { url: string }).url).toBe(dataUri);
 		expect(content[1]?.["text"]).toBe(longText);
+	});
+
+	it("把几十 KB 的在途正文落成引用，行宽不再随会话增长", async () => {
+		let inserted: Record<string, unknown> | undefined;
+		const blocks: { blockId: string; payload: unknown }[] = [];
+		let db: Record<string, unknown>;
+		db = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({
+				from: jest.fn(() => ({
+					where: jest.fn(() => ({
+						limit: jest.fn(() => Promise.resolve([])),
+					})),
+				})),
+			})),
+			delete: jest.fn(() => ({
+				where: jest.fn(() => Promise.resolve()),
+			})),
+			insert: jest.fn((table: unknown) => ({
+				values: jest.fn((values: unknown) => {
+					if (table === liteLLM_ActiveRequests) {
+						inserted = values as Record<string, unknown>;
+					}
+					if (table === liteLLM_SpendLogBlocks) {
+						blocks.push(...(values as { blockId: string; payload: unknown }[]));
+					}
+					return {
+						onConflictDoNothing: jest.fn(() => ({
+							returning: jest.fn(() => Promise.resolve([{ requestId: "req-wide" }])),
+						})),
+					};
+				}),
+			})),
+		};
+		const messages = Array.from({ length: 6 }, (_unused, index) => ({
+			role: index % 2 === 0 ? "user" : "assistant",
+			content: [{ type: "text", text: `${index}:` + "H".repeat(8_000) }],
+		}));
+
+		await registerActiveRequest(db as never, {
+			req: {
+				auth: { api_key: "raw-key", token: "hashed-key", user_id: "user-1" },
+				body: {},
+				method: "POST",
+				originalUrl: "/v1/messages",
+				headers: {},
+				socket: {},
+			} as unknown as Request,
+			requestId: "req-wide",
+			model: "model-a",
+			callType: CallType.ACompletion,
+			startTime: new Date("2026-07-27T00:00:00Z"),
+			requestBody: { model: "model-a", messages },
+		});
+
+		// 48 KB 的正文不再进入行：只有 6 个 22 字符引用。
+		expect(JSON.stringify(messages).length).toBeGreaterThan(40_000);
+		expect(JSON.stringify(inserted?.["proxy_server_request"]).length).toBeLessThan(2_000);
+		expect(blocks).toHaveLength(6);
+		expect((restoreInProgressBody(inserted?.["proxy_server_request"], blocks)["body"] as Record<string, unknown>)["messages"]).toEqual(
+			messages,
+		);
 	});
 
 	it("keeps generated image output in the streaming checkpoint", async () => {

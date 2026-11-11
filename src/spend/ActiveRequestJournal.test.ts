@@ -12,9 +12,10 @@ jest.mock("./SpendTracker", () => {
 	};
 });
 
-/** 记录每次 update().set() 的载荷，忽略 where 细节。 */
+/** 记录每次 update().set() 的载荷与块插入，忽略 where 细节。 */
 function createUpdateCapture() {
 	const updates: Record<string, unknown>[] = [];
+	const blocks: { blockId: string; payload: unknown }[] = [];
 	const db = {
 		update: jest.fn(() => ({
 			set: jest.fn((values: Record<string, unknown>) => {
@@ -22,8 +23,46 @@ function createUpdateCapture() {
 				return { where: jest.fn(() => Promise.resolve()) };
 			}),
 		})),
+		select: jest.fn(() => ({
+			from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })),
+		})),
+		insert: jest.fn(() => ({
+			values: jest.fn((values: unknown) => {
+				blocks.push(...(values as { blockId: string; payload: unknown }[]));
+				return { onConflictDoNothing: jest.fn(() => Promise.resolve()) };
+			}),
+		})),
 	};
-	return { db: db, updates: updates };
+	return { db: db, updates: updates, blocks: blocks };
+}
+
+/** 取出 SQL 表达式里的字面量文本（drizzle 把内联参数放在 queryChunks 里）。 */
+function collectSqlText(value: unknown): string {
+	const texts: string[] = [];
+	const collect = (node: unknown): void => {
+		if (typeof node === "string") {
+			texts.push(node);
+			return;
+		}
+		if (!node || typeof node !== "object") {
+			return;
+		}
+		const record = node as { value?: unknown; queryChunks?: unknown[] };
+		if (Array.isArray(record.value)) {
+			for (const entry of record.value) {
+				if (typeof entry === "string") {
+					texts.push(entry);
+				}
+			}
+		}
+		if (Array.isArray(record.queryChunks)) {
+			for (const chunk of record.queryChunks) {
+				collect(chunk);
+			}
+		}
+	};
+	collect(value);
+	return texts.join("");
 }
 
 function upstreamContext(overrides: Partial<UpstreamLogContext> = {}): UpstreamLogContext {
@@ -59,11 +98,33 @@ describe("Active request journal", () => {
 			custom_llm_provider: "openai",
 			api_base: "https://api.example.com/v1",
 			model_id: "deployment-1",
+			model: "openai/gpt-4o",
 		});
 		expect(Object.keys(capture.updates[0] ?? {})).toEqual(
 			expect.arrayContaining(["proxy_server_request", "updated_at"]),
 		);
 		expect(capture.updates[0]).toHaveProperty("metadata");
+	});
+
+	it("shows the executed deployment model on the in-progress row instead of the requested alias", async () => {
+		const capture = createUpdateCapture();
+		await runWithUpstreamExchangeScope(async () => {
+			const journal = createActiveRequestJournal(capture.db as never, "req-alias", "minimax-latest-anthropic");
+			journal.observeUpstream();
+			recordUpstreamExchange(
+				upstreamContext({
+					spendInfo: {
+						customLlmProvider: "commandcode",
+						apiBase: "https://api.example.com/v1/messages",
+						modelId: "deployment-1",
+						deploymentModel: "deepseek/deepseek-v4.1-flash",
+					},
+				}),
+			);
+			await journal.flush();
+		});
+
+		expect(capture.updates[0]).toMatchObject({ model: "deepseek/deepseek-v4.1-flash" });
 	});
 
 	it("keeps the in-progress row small when upstream logging is disabled", async () => {
@@ -81,7 +142,41 @@ describe("Active request journal", () => {
 
 		expect(capture.updates).toHaveLength(1);
 		expect(capture.updates[0]).not.toHaveProperty("proxy_server_request");
-		expect(capture.updates[0]).toMatchObject({ custom_llm_provider: "openai" });
+		// 详细上游请求不落库时，进行中行仍要显示实际执行模型。
+		expect(capture.updates[0]).toMatchObject({ custom_llm_provider: "openai", model: "openai/gpt-4o" });
+	});
+
+	it("stores the upstream body as block references so in-flight rows stay narrow", async () => {
+		const capture = createUpdateCapture();
+		const longText = "U".repeat(20_000);
+		const upstreamBody = {
+			model: "gpt-4o",
+			messages: [
+				{ role: "user", content: longText },
+				{ role: "assistant", content: "上游回复" },
+			],
+		};
+		await runWithUpstreamExchangeScope(async () => {
+			const journal = createActiveRequestJournal(capture.db as never, "req-ref", "public-model");
+			journal.observeUpstream();
+			recordUpstreamExchange(
+				upstreamContext({
+					request: {
+						url: "https://api.example.com/v1/chat/completions",
+						method: "POST",
+						headers: { authorization: "Bearer upstream-secret" },
+						body: upstreamBody,
+					},
+				}),
+			);
+			await journal.flush();
+		});
+
+		expect(capture.blocks).toHaveLength(2);
+		const updateText = collectSqlText(capture.updates[0]?.["proxy_server_request"]);
+		// 20 KB 的正文不再进入 UPDATE 文本：行里只合并引用 id。
+		expect(updateText).not.toContain("UUUUUUUUUU");
+		expect(updateText).toContain("_litellm_ref_messages");
 	});
 
 	it("writes each routing progress once and never repeats an identical exchange", async () => {

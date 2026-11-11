@@ -26,6 +26,10 @@
  * - `proxy_server_request.body` → 删除 `system`，新增 `_litellm_ref_system: "<id>"` +
  *   `_litellm_ref_system_count: N`（`_litellm_ref_system_first/second` 是前两段前缀）
  * - 引用列表与 `SpendLogs.messages` 列根完全相同时写成字符串 `"$messages"`
+ *
+ * `LiteLLM_ActiveRequests.proxy_server_request` 复用同一套编码（见
+ * {@link encodeActiveRequestPayload}）：在途行在请求生命周期里被 `jsonb ||` 整值重写多次，
+ * 正文留在行里会让每次补写都退化成「解压-重建-重压缩」几十 MB 的整列写入。
  */
 
 import { createHash } from "node:crypto";
@@ -83,6 +87,14 @@ const BLOCK_ID_DIGEST_BYTES = 16;
  * 保留内联数组可以让这条判定完全不用改，也不必把前两条消息额外内联一份。
  */
 const MIN_REFERENCED_MESSAGE_COUNT = 4;
+
+/**
+ * 在途行用的短数组阈值：只要有一条消息就引用。
+ *
+ * 在途行不走会话时间线的 SQL 分类（时间线只读最终 SpendLogs），因此没有「保留前两条
+ * 消息内联」的约束；而它每轮都会被 `jsonb ||` 整值重写，正文越窄收益越大。
+ */
+export const ACTIVE_REQUEST_MIN_REFERENCED_MESSAGE_COUNT = 1;
 
 /** 一条待写入的块记录。 */
 export interface SpendLogBlockRecord {
@@ -267,13 +279,15 @@ class SpendLogBlockCollector {
  * 把一个消息数组改写成引用 id 列表；短数组保持内联。
  * @param messages - 消息数组
  * @param collector - 块收集器
+ * @param minMessageCount - 触发引用的最少消息条数
  * @returns 需要引用时返回 id 列表与逻辑字节数，否则返回 null
  */
 function encodeMessageArray(
 	messages: readonly unknown[],
 	collector: SpendLogBlockCollector,
+	minMessageCount: number = MIN_REFERENCED_MESSAGE_COUNT,
 ): { ids: string[]; bytes: number } | null {
-	if (messages.length < MIN_REFERENCED_MESSAGE_COUNT) {
+	if (messages.length < minMessageCount) {
 		return null;
 	}
 	const ids: string[] = [];
@@ -384,8 +398,14 @@ function encodeMessagesColumn(messages: unknown, collector: SpendLogBlockCollect
  * @param body - 请求体
  * @param collector - 块收集器
  * @param columnIds - 同一行 `SpendLogs.messages` 列根的引用列表（可能为 null）
+ * @param minMessageCount - 触发引用的最少消息条数
  */
-function encodeRequestBody(body: unknown, collector: SpendLogBlockCollector, columnIds: readonly string[] | null): unknown {
+function encodeRequestBody(
+	body: unknown,
+	collector: SpendLogBlockCollector,
+	columnIds: readonly string[] | null,
+	minMessageCount: number = MIN_REFERENCED_MESSAGE_COUNT,
+): unknown {
 	if (!isRecord(body)) {
 		return body;
 	}
@@ -398,7 +418,7 @@ function encodeRequestBody(body: unknown, collector: SpendLogBlockCollector, col
 		if (!Array.isArray(value)) {
 			continue;
 		}
-		const encodedArray = encodeMessageArray(value, collector);
+		const encodedArray = encodeMessageArray(value, collector, minMessageCount);
 		if (encodedArray === null) {
 			continue;
 		}
@@ -437,24 +457,26 @@ function encodeRequestBody(body: unknown, collector: SpendLogBlockCollector, col
  * @param proxyServerRequest - 原始值
  * @param collector - 块收集器
  * @param columnIds - 同一行 `SpendLogs.messages` 列根的引用列表（可能为 null）
+ * @param minMessageCount - 触发引用的最少消息条数
  */
 function encodeProxyServerRequest(
 	proxyServerRequest: unknown,
 	collector: SpendLogBlockCollector,
 	columnIds: readonly string[] | null,
+	minMessageCount: number = MIN_REFERENCED_MESSAGE_COUNT,
 ): unknown {
 	if (!isRecord(proxyServerRequest)) {
 		return proxyServerRequest;
 	}
 	const encoded: Record<string, unknown> = { ...proxyServerRequest };
 	if ("body" in encoded) {
-		encoded["body"] = encodeRequestBody(encoded["body"], collector, columnIds);
+		encoded["body"] = encodeRequestBody(encoded["body"], collector, columnIds, minMessageCount);
 	}
 	const upstreamRequest = encoded["upstream_request"];
 	if (isRecord(upstreamRequest) && "body" in upstreamRequest) {
 		encoded["upstream_request"] = {
 			...upstreamRequest,
-			body: encodeRequestBody(upstreamRequest["body"], collector, columnIds),
+			body: encodeRequestBody(upstreamRequest["body"], collector, columnIds, minMessageCount),
 		};
 	}
 	return encoded;
@@ -465,15 +487,61 @@ function encodeProxyServerRequest(
  *
  * 非数组值（图像 prompt 的裸字符串、历史对象、`{}`）保持内联，读取成本可忽略。
  * @param input - 原始 `messages` 列值与 `proxy_server_request`
+ * @param options - `minMessageCount`：触发引用的最少消息条数，默认 4
  */
-export function collectSpendLogBlocks(input: {
-	readonly messages: unknown;
-	readonly proxyServerRequest: unknown;
-}): SpendLogBlockEncoding {
+export function collectSpendLogBlocks(
+	input: {
+		readonly messages: unknown;
+		readonly proxyServerRequest: unknown;
+	},
+	options: { readonly minMessageCount?: number } = {},
+): SpendLogBlockEncoding {
 	const collector = new SpendLogBlockCollector();
 	const messages = encodeMessagesColumn(input.messages, collector);
-	const proxyServerRequest = encodeProxyServerRequest(input.proxyServerRequest, collector, readMessagesColumnRefs(messages));
+	const proxyServerRequest = encodeProxyServerRequest(
+		input.proxyServerRequest,
+		collector,
+		readMessagesColumnRefs(messages),
+		options.minMessageCount ?? MIN_REFERENCED_MESSAGE_COUNT,
+	);
 	return { messages: messages, proxyServerRequest: proxyServerRequest, blocks: collector.list() };
+}
+
+/**
+ * 在途行正文引用化的体量预算。
+ *
+ * 引用化把「一次整列写入」拆成「多条块行 + 一次引用写入」，同样字数下写出量级相当、
+ * 但多出分块与 id 生成的开销。超过这个预算的请求体属于极端输入（线上 p95 约 20 MB，
+ * 最大观察值 45 MB），在请求路径上回退为内联更稳妥；回退后行会变宽，但不会把一次
+ * 上游调用前的写入拖成几秒。
+ */
+export const ACTIVE_REQUEST_BLOCK_BUDGET_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 统计一批块的内容字节数，用于引用化前的体量预算判断。
+ * @param blocks - 块列表
+ */
+export function spendLogBlockBytes(blocks: readonly SpendLogBlockRecord[]): number {
+	let total = 0;
+	for (const block of blocks) {
+		total += block.byteSize;
+	}
+	return total;
+}
+
+/**
+ * 编码在途行的 `proxy_server_request`：只处理该列，短数组也引用。
+ * @param proxyServerRequest - 原始 `proxy_server_request`
+ */
+export function encodeActiveRequestPayload(proxyServerRequest: unknown): {
+	readonly proxyServerRequest: unknown;
+	readonly blocks: readonly SpendLogBlockRecord[];
+} {
+	const encoding = collectSpendLogBlocks(
+		{ messages: {}, proxyServerRequest: proxyServerRequest },
+		{ minMessageCount: ACTIVE_REQUEST_MIN_REFERENCED_MESSAGE_COUNT },
+	);
+	return { proxyServerRequest: encoding.proxyServerRequest, blocks: encoding.blocks };
 }
 
 /**
@@ -892,6 +960,26 @@ export async function selectMissingSpendLogBlocks(
 export function rememberSpendLogBlocks(blocks: readonly SpendLogBlockRecord[]): void {
 	for (const block of blocks) {
 		spendLogBlockCache.remember(block.blockId, block.payload, block.byteSize);
+	}
+}
+
+/** 写块所需的最小数据库能力：普通连接与事务句柄都满足。 */
+type SpendLogBlockWriteDb = Pick<NodePgDatabase<typeof schema>, "insert">;
+
+/**
+ * 分批写入块。
+ *
+ * 分批是为了避免超长会话把绑定参数数量顶到 PostgreSQL 上限；块由内容寻址，
+ * 并发重复写入按冲突丢弃即可。
+ * @param db - 数据库实例或事务句柄
+ * @param blocks - 需要写入的块（应为判存确认缺失的部分）
+ */
+export async function writeSpendLogBlocks(db: SpendLogBlockWriteDb, blocks: readonly SpendLogBlockRecord[]): Promise<void> {
+	for (let offset = 0; offset < blocks.length; offset += SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE) {
+		await db
+			.insert(liteLLM_SpendLogBlocks)
+			.values(blocks.slice(offset, offset + SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE).map((block) => ({ ...block })))
+			.onConflictDoNothing();
 	}
 }
 

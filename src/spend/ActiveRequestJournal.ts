@@ -28,14 +28,67 @@ import {
 import type { UpstreamLogContext } from "../router/UpstreamLogContext";
 import {
 	buildSpendModelMapInformation,
+	reconstructModelName,
 	sanitizeSpendLogHeaders,
 	sanitizeSpendLogPayload,
 	sanitizeSpendLogResponsePayload,
 	shouldStoreUpstreamLogsInSpendLogs,
 } from "./SpendTracker";
+import {
+	ACTIVE_REQUEST_BLOCK_BUDGET_BYTES,
+	encodeActiveRequestPayload,
+	rememberSpendLogBlocks,
+	selectMissingSpendLogBlocks,
+	shouldDeduplicateSpendLogBlocks,
+	spendLogBlockBytes,
+	writeSpendLogBlocks,
+} from "./SpendLogBlocks";
 import { publishSpendLogChange } from "./spendLogChangeFeed";
 
 const logger = createModuleLogger("ActiveRequestJournal");
+
+/**
+ * 把上游补写片段里的正文换成块引用，并写入缺失的块。
+ *
+ * 先落块再更新行：两次写入各自自动提交，块由内容寻址，重复写按冲突丢弃；反过来
+ * （先更新行再落块）会让详情页短暂读到缺块占位。编码失败时回退为内联正文——补写
+ * 失败只影响列表实时性，不能因此丢掉上游视图。
+ * @param db - 数据库实例
+ * @param patch - 待合并进 `proxy_server_request` 的片段
+ */
+async function encodeAndStoreActiveRequestPatch(
+	db: DrizzleDb,
+	patch: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	try {
+		const encoding = encodeActiveRequestPayload(patch);
+		const encodedPatch = encoding.proxyServerRequest;
+		if (!isPlainRecord(encodedPatch)) {
+			return patch;
+		}
+		if (spendLogBlockBytes(encoding.blocks) > ACTIVE_REQUEST_BLOCK_BUDGET_BYTES) {
+			logger.warn("在途日志上游正文超过引用化预算，保留内联", { bytes: spendLogBlockBytes(encoding.blocks) });
+			return patch;
+		}
+		if (encoding.blocks.length > 0) {
+			const blocksToInsert = await selectMissingSpendLogBlocks(db, encoding.blocks);
+			await writeSpendLogBlocks(db, blocksToInsert);
+			rememberSpendLogBlocks(blocksToInsert);
+		}
+		return encodedPatch;
+	} catch (error) {
+		logger.warn("在途日志上游正文引用化失败，回退为内联", { error: error });
+		return patch;
+	}
+}
+
+/**
+ * 仅接受非 null、非数组的对象。
+ * @param value - 待判断的值
+ */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /**
  * 请求级在途日志补写器。
@@ -142,7 +195,11 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 		});
 	};
 
-	const writeUpstream = async (context: UpstreamLogContext, routingPatch: Record<string, unknown>): Promise<void> => {
+	const writeUpstream = async (
+		context: UpstreamLogContext,
+		routingPatch: Record<string, unknown>,
+		fallbackOccurred: boolean,
+	): Promise<void> => {
 		const spendInfo = context.spendInfo;
 		const storeUpstreamLogs = await shouldStoreUpstreamLogsInSpendLogs().catch(() => false);
 		const upstreamPatch = storeUpstreamLogs ? buildActiveRequestUpstreamPatch(context) : {};
@@ -151,10 +208,24 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 			values["custom_llm_provider"] = spendInfo.customLlmProvider;
 			values["api_base"] = spendInfo.apiBase;
 			values["model_id"] = spendInfo.modelId ?? "";
+			// `model` 与最终 SpendLog 同义：部署选定后即为实际执行模型（含 fallback 归因），
+			// 请求时的公开名继续保留在 `model_group`。否则进行中的行只显示请求别名，
+			// 请求结束后才换成真实模型，同一个请求在列表里前后显示不同的名字。
+			values["model"] = reconstructModelName(
+				modelGroup,
+				spendInfo.customLlmProvider,
+				spendInfo.deploymentModel,
+				fallbackOccurred,
+			);
 		}
 		if (Object.keys(upstreamPatch).length > 0) {
+			// 上游请求体同样按内容寻址：patch 里的 body 先换块引用再合并，
+			// 否则 `psr || patch` 会把几十 MB 的上游正文整列重写一遍。
+			const encodedPatch = (await shouldDeduplicateSpendLogBlocks())
+				? await encodeAndStoreActiveRequestPatch(db, upstreamPatch)
+				: upstreamPatch;
 			values["proxy_server_request"] =
-				sql`COALESCE(${liteLLM_ActiveRequests.proxy_server_request}, '{}'::jsonb) || ${JSON.stringify(upstreamPatch)}::jsonb`;
+				sql`COALESCE(${liteLLM_ActiveRequests.proxy_server_request}, '{}'::jsonb) || ${JSON.stringify(encodedPatch)}::jsonb`;
 		}
 		if (Object.keys(routingPatch).length > 0) {
 			values["metadata"] =
@@ -187,7 +258,7 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 		if (modelMap) {
 			routingPatch["model_map_information"] = modelMap;
 		}
-		enqueue(() => writeUpstream(context, routingPatch));
+		enqueue(() => writeUpstream(context, routingPatch, (trace?.fallbackDepth ?? 0) > 0));
 	};
 
 	return {

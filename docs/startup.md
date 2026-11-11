@@ -92,5 +92,8 @@
 - `LiteLLM_SpendLogs` 的 TOAST 段约 321GB（主表 1.2GB、索引 419MB，84 万行），
   `LiteLLM_ActiveRequests` 8 行占 60MB。启动时的 aborted 回收只搬运个位数行（每行约 250KB），
   不是启动瓶颈，但会让备份、`VACUUM`、日志详情查询持续变重，需要单独评估清理策略。
+  其中在途行正文已在 2026-11-10 改为内容寻址块引用（见
+  [upstream-alignment.md](upstream-alignment.md)），行宽不再随会话增长；`LiteLLM_SpendLogs`
+  的历史 TOAST 段仍需要单独评估清理策略。
 - CLIProxy 运行目录下 `logs/` 已积累 312MB / 55 个文件（`error-v1-responses-*.log` 每个约
   3.3MB，没有轮转），`versions/` 有 634MB 历史二进制。与启动无关，属于磁盘治理。

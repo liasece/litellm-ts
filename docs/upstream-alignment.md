@@ -316,6 +316,38 @@ Dashboard 的 `/ui/?page=cost-tracking` 一打开就提示读取折扣/保证金
 
 验证：后端 `typecheck`、`test:types`、全量 Jest（2101 通过）、`build`、ESLint、`git diff --check` 通过。部署前在生产库用只读探针验证了五条分类投影在「引用 / 内联 / 空」三种形态下取值一致。线上实测：Claude Code 请求的 `tools` 39 项、`upstream` 41 项、`system` 4 段经 `/spend/logs/ui/:request_id` 完整还原且无 `_litellm_ref_*` 泄漏；同类行 `proxy_server_request` 落盘从 44.7 kB 降到 11.8 kB，单行 70.2 kB → 57.9 kB（余量主要是 `response` 与 id 列表本身）；会话时间线 61 个请求 331 个事件正常装配、无缺块占位；50 分钟内新块里工具块 4 个、system 块 5 个、消息块 393 个，说明大字段只在内容变化时才新增。近 25 分钟 491 行里 449 行带工具引用、35 行带 system 引用、414 行用 `\"$messages\"` 省略重复列表，id 列表形态归零。回收路径编码同在本次上线：镜像构建阶段拉取 CLIProxyAPI 制品时 GitHub 一度持续返回 504，重试后成功；容器启动日志记录「回收行已按内容寻址去重 {"recovered":8,"blocks":1325}」，这 8 行恢复行的请求体从改造前同类行平均 1.4 MB 降到 9~17 kB，剩余未编码的 `server_restart` 行都是本次部署之前的遗留。上线后 45 行新日志全部带工具引用，`proxy_server_request` 落盘 7.8 kB/行、整行 46 kB/行。
 
+## 2026-11-10 在途行正文内容寻址与记账事务锁顺序
+
+线上 `insert into "LiteLLM_SpendLogs"` 偶发 1~2 秒，调查结论是**语句本身不慢**：回滚事务探针实测整行（24 KB）插入平均 1.4 ms，`EXPLAIN (ANALYZE, BUFFERS)` 为 194 buffer 命中 / 5 次磁盘读 / WAL 56 KB。慢的是等待——3 分钟 20 Hz 采样中该语句的 15 个活跃样本有 11 个停在 `IO | DataFileRead`；而同窗口慢语句日志里 `update "LiteLLM_ActiveRequests"` 有 129 条、平均 991 ms。
+
+根因在两处：
+
+- **在途行正文未去重**。`LiteLLM_ActiveRequests.proxy_server_request` 存整包请求体（实测单行 45.7 MB，近期对话 p95 20 MB），而上游补写用 `COALESCE(psr,'{}') || patch` 整列重建——`jsonb_concat` 是 O(整列) 的「解压-重建-重压缩」，每次约 1 秒。80 分钟内该表 14,869 次 UPDATE、43 次 autovacuum，表体积在 259 MB↔1.4 GB 之间摆动，把 shared_buffers 与 WAL 变成公共竞争（`wal_buffers_full` 约 618 次/秒），最终连累同库其它表的热页被挤出缓存。最终 SpendLog 已经有块去重，唯独这份「进行中」的副本没有。
+- **记账事务的锁顺序**。`trackSpendLog` 的 10~12 条语句里，`DELETE LiteLLM_ActiveRequests` 原先排在最后，而它可能被同请求的补写阻塞在行锁上；这段时间事务已经持有预算主体的 `pg_advisory_xact_lock` 与 `SELECT … FOR UPDATE`、以及每日汇总热行，于是同 key/user 的所有记账一起排队。
+
+处理：
+
+| 改动 | 内容 |
+| --- | --- |
+| 在途行正文块化 | `registerActiveRequest` 与 `ActiveRequestJournal.writeUpstream` 都走 `encodeActiveRequestPayload`：正文换 22 字符引用，块在写行前落库（注册：同事务；补写：先落块再 UPDATE，避免读到缺块占位） |
+| 短数组也引用 | 在途行用 `ACTIVE_REQUEST_MIN_REFERENCED_MESSAGE_COUNT = 1`；最终 SpendLogs 仍是 4 条阈值，时间线 SQL 不受影响 |
+| 体量预算 | 新块正文合计超过 64 MiB（线上最大观察 45 MB）时回退内联并记 warn，避免把极端请求的上游调用前写入拖成多段大插入 |
+| 读侧组装 | `buildActiveRequestDetail` 先 `hydrateSpendLogRow` 再合并 checkpoint 兜底字段；`ActiveRequestRecovery` 原有的「已带引用键就跳过」逻辑保证回收行不被二次编码 |
+| 锁顺序 | `DELETE LiteLLM_ActiveRequests` 移到事务首条语句，等待不再发生在持有预算/汇总行锁期间 |
+
+影响：`ActiveRequestRecovery` 回收的行会带上引用，块表是全局的，读侧组装即可还原；回滚代码不会造成不可读（引用退化成可见 JSON）。`spend_log_block_dedup` 关闭时两条路径都保持旧的内联行为，与最终 SpendLogs 的开关一致。
+
+验证：`typecheck`、`test:types`、全量 Jest、ESLint、`git diff --check` 通过；新增回归覆盖在途行落引用（20 KB 正文编码后行内 JSON < 2 KB）、详情页组装无 `_litellm_ref_*` 泄漏、补写 UPDATE 文本不含正文、以及删除先于预算主体累计。
+
+第一次部署在 2026-11-10 23:12 撞上主机 NVMe 故障（根分区 ext4 因 I/O error 被重挂只读，镜像构建在写 `buildkit/metadata_v2.db` 时失败，旧容器未切换、服务在 23:26 随主机恢复），11-11 09:17 重新部署成功（镜像 `5e411ed5`，健康检查 6 秒通过，`dmesg` 无 I/O error，SMART `media_errors=0`）。上线后核验：
+
+- **在途行宽度**：100 次/1 秒采样真实流量，`proxy_server_request` 最大 29.4 kB、无一行超过 256 kB，且全部带 `_litellm_ref_messages`（改造前单行最大 45.7 MB、p95 对话 20 MB）。
+- **读侧组装**：流式请求进行中经 `/spend/logs/ui/:request_id` 取回，`proxy_server_request` 含 `body`/`upstream_request`/`upstream_response`、`body.messages` 2 条完整、无 `_litellm_ref_*` 泄漏与缺块占位。
+- **等待消失**：30 分钟内慢语句日志 0 条（改造前 25 分钟有 129 条约 1 秒的 `update "LiteLLM_ActiveRequests"`）；`/metrics/summary?window=600` 中 `spend.p95 = 89.7 ms`（77 次写入、0 失败）、`db.p95 = 8.9 ms`、`slow_queries = 0`。
+- **无回退日志**：40 分钟内无「引用化预算」「缺块」告警，容器 healthy、无 OOM、无重启。
+
+历史膨胀另行回收：改造前每次补写都整列重写 45 MB 级的 jsonb，`LiteLLM_ActiveRequests` 累计发生 178 万次 TOAST chunk 删除，autovacuum 只能复用页、文件停在峰值（表里当时只有 3 行在途数据，却占 209 MB，其中 TOAST 索引 191 MB）。11-11 09:31 执行 `VACUUM FULL "LiteLLM_ActiveRequests"`，53 ms 完成：总大小 209 MB → 3.3 MB（heap 16 kB、TOAST heap 3.1 MB、TOAST 索引 56 kB），在途注册与删除无感知。
+
 ## 后续维护规则
 
 1. 先读本文件，核实当前 TS commit/工作区，再读取对应源码和上游最终 PR/固定版本。不得覆盖用户未提交改动。

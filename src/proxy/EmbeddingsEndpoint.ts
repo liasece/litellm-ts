@@ -32,8 +32,8 @@ import { createModuleLogger } from "../core/utils/logger";
 import {
 	appendModelResolutionTrace,
 	copyModelResolutionChain,
-	createModelResolutionTraceCollector,
 } from "../router/ModelResolutionTrace";
+import { createPublishedModelResolutionTrace } from "../router/UpstreamExchange";
 
 const logger = createModuleLogger("Proxy:Embeddings");
 
@@ -89,7 +89,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 		// 记账与 Dashboard TTFT 的起点：请求到达代理的时刻（含 body 解析、鉴权与费用预留）。
 		const startTime = requestArrivalTime(req);
 		const auth = req.auth;
-		const modelResolutionTrace = createModelResolutionTraceCollector();
+		const modelResolutionTrace = createPublishedModelResolutionTrace();
 		appendModelResolutionTrace(modelResolutionTrace, 0, litellmRouter.resolveModelGroupWithTrace(model));
 
 		// 部署选择不调用上游；reservation 随后覆盖当前组与所有 fallback deployment。

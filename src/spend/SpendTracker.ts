@@ -20,13 +20,16 @@ import { get_encoding } from "tiktoken";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
-import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
 import {
-	SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE,
+	ACTIVE_REQUEST_BLOCK_BUDGET_BYTES,
+	type SpendLogBlockRecord,
 	collectSpendLogBlocks,
+	encodeActiveRequestPayload,
 	rememberSpendLogBlocks,
 	selectMissingSpendLogBlocks,
 	shouldDeduplicateSpendLogBlocks,
+	spendLogBlockBytes,
+	writeSpendLogBlocks,
 } from "./SpendLogBlocks";
 import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
 import { liteLLM_DailyTeamSpend } from "../db/schema/dailyTeamSpend";
@@ -384,6 +387,23 @@ export function getKeyColumn(dimension: string): string {
  */
 function sanitizePostgresString(value: string): string {
 	return value.replaceAll("\0", "\\u0000");
+}
+
+/**
+ * 从 metadata 提取冗余过滤列的文本值。
+ *
+ * 列值与 metadata 中对应字段同一来源，避免表头过滤（读列）与列表展示（读 metadata）
+ * 给出不一致的结果；数字型错误码按 `->>` 的文本形态落库。
+ * @param value - metadata 里的原始字段值
+ */
+function filterColumnText(value: unknown): string | null {
+	if (typeof value === "string") {
+		return value;
+	}
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return String(value);
+	}
+	return null;
 }
 
 /**
@@ -1119,7 +1139,25 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 		return;
 	}
 	const now = new Date();
+	const rawProxyServerRequest = buildActiveRequestProxyServerRequest(input);
+	let proxyServerRequest: unknown = rawProxyServerRequest;
+	let blocksToInsert: readonly SpendLogBlockRecord[] = [];
 	try {
+		// 在途行正文走内容寻址：注册时落块，行里只留 22 字符的引用。
+		// 否则整包请求体（实测最大 45 MB）会留在行里，后续每次上游补写都要重写整列。
+		if (await shouldDeduplicateSpendLogBlocks()) {
+			const encoding = encodeActiveRequestPayload(rawProxyServerRequest);
+			// 极端体量（超过预算的请求体）保留内联：不把一次上游调用前的写入拖成多段大插入。
+			if (spendLogBlockBytes(encoding.blocks) > ACTIVE_REQUEST_BLOCK_BUDGET_BYTES) {
+				logger.warn("在途请求正文超过引用化预算，保留内联", {
+					requestId: input.requestId,
+					bytes: spendLogBlockBytes(encoding.blocks),
+				});
+			} else {
+				proxyServerRequest = encoding.proxyServerRequest;
+				blocksToInsert = await selectMissingSpendLogBlocks(db, encoding.blocks);
+			}
+		}
 		await db.transaction(async (tx) => {
 			const completed = await tx
 				.select({ requestId: liteLLM_SpendLogs.request_id })
@@ -1132,6 +1170,8 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 			await tx
 				.delete(liteLLM_ActiveRequests)
 				.where(and(eq(liteLLM_ActiveRequests.request_id, input.requestId), lte(liteLLM_ActiveRequests.expires_at, now)));
+			// 块与行同事务：回滚时不留下无主的块，提交后进行中的详情页即可组装正文。
+			await writeSpendLogBlocks(tx, blocksToInsert);
 			const inserted = await tx
 				.insert(liteLLM_ActiveRequests)
 				.values({
@@ -1149,7 +1189,7 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 					session_id: getOrCreateSpendSessionId(input.req),
 					metadata: buildActiveRequestMetadata(input.req),
 					request_tags: [],
-					proxy_server_request: buildActiveRequestProxyServerRequest(input),
+					proxy_server_request: proxyServerRequest,
 					status: "in_progress",
 					expires_at: new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS),
 					updated_at: now,
@@ -1166,6 +1206,7 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 		}
 		throw ApiError.unavailable("活跃请求记录数据库暂不可用");
 	}
+	rememberSpendLogBlocks(blocksToInsert);
 	publishSpendLogChange();
 }
 
@@ -1982,6 +2023,9 @@ async function trackSpendLogMeasured(
 		requester_ip_address: logEntry.requester_ip_address ?? null,
 		proxy_server_request: blockEncoding?.proxyServerRequest ?? sanitizedProxyServerRequest,
 		metadata: persistedMetadata,
+		// 表头过滤用的冗余列：与 metadata 同源，读取侧据此避免为过滤解压整份 metadata。
+		key_alias: filterColumnText(persistedMetadata["user_api_key_alias"]),
+		error_code: filterColumnText(errorInfo?.["error_code"]),
 		response: logEntry.response ?? {},
 		messages: blockEncoding?.messages ?? logEntry.messages ?? {},
 
@@ -1998,16 +2042,13 @@ async function trackSpendLogMeasured(
 	let result: SpendLogTrackResult;
 	try {
 		result = await db.transaction(async (tx) => {
+			// 在途行删除放在事务最前：它可能被同一请求的补写阻塞（大行整列重写在途时可达秒级），
+			// 放在预算锁与每日汇总更新之后会把这条链路的行锁持有时长一起放大，串行化同 key/user
+			// 的全部记账。前置后这次等待不再持有任何预算/汇总行锁。
+			await removeActiveRequestIfSupported(tx, logEntry.request_id);
 			// 块与 SpendLog 行同事务：回滚时不留下无主的块，提交后块立即可被后续请求复用。
 			// 分批写入，避免超长会话把绑定参数数量顶到 PostgreSQL 上限；只写判存确认缺失的块。
-			if (blocksToInsert.length > 0) {
-				for (let offset = 0; offset < blocksToInsert.length; offset += SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE) {
-					await tx
-						.insert(liteLLM_SpendLogBlocks)
-						.values(blocksToInsert.slice(offset, offset + SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE).map((block) => ({ ...block })))
-						.onConflictDoNothing();
-				}
-			}
+			await writeSpendLogBlocks(tx, blocksToInsert);
 			const inserted = await tx
 				.insert(liteLLM_SpendLogs)
 				.values(insertData)
@@ -2016,7 +2057,6 @@ async function trackSpendLogMeasured(
 			if (inserted.length === 0) {
 				// 历史 SpendLog 已经代表另一次已提交 attempt；不得用当前 attempt 的 spend
 				// 终结一个来源不明的 reservation。
-				await removeActiveRequestIfSupported(tx, logEntry.request_id);
 				return { status: "duplicate" as const, requestId: logEntry.request_id, spend: spend };
 			}
 
@@ -2056,7 +2096,6 @@ async function trackSpendLogMeasured(
 				.where(
 					and(eq(liteLLM_SpendReservations.request_id, logEntry.request_id), eq(liteLLM_SpendReservations.status, "reserved")),
 				);
-			await removeActiveRequestIfSupported(tx, logEntry.request_id);
 			return { status: "committed" as const, requestId: logEntry.request_id, spend: spend };
 		});
 	} catch (error) {

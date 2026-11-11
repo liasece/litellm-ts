@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ModelResolutionTraceCollector } from "./ModelResolutionTrace";
+import { createModelResolutionTraceCollector, type ModelResolutionTraceCollector } from "./ModelResolutionTrace";
 import type { UpstreamLogContext } from "./UpstreamLogContext";
 
 /**
@@ -94,6 +94,22 @@ export function publishModelResolutionTrace(collector: ModelResolutionTraceColle
  */
 export function getRecordedModelResolutionTrace(): ModelResolutionTraceCollector | undefined {
 	return channels.getStore()?.resolutionTrace;
+}
+
+/**
+ * 创建请求级路由解析轨迹并立即发布到当前请求作用域。
+ *
+ * `Router._executeWithFallback` 会在每次尝试前发布自己持有的轨迹，但 endpoint 自己的
+ * fallback 循环（流式 chat、/v1/messages、embeddings）不经过它：只创建不发布的轨迹会让
+ * 上游交换观察者读不到进度，在途日志因此缺 `fallback_models` / `routing_trace`，
+ * 列表里的 fallback 计数要等落账后才出现。endpoint 建立请求作用域时统一用它，
+ * 之后对同一容器的追加会被观察者同步看到。
+ * @returns 已发布（无请求作用域时仅创建）的轨迹容器
+ */
+export function createPublishedModelResolutionTrace(): ModelResolutionTraceCollector {
+	const collector = createModelResolutionTraceCollector();
+	publishModelResolutionTrace(collector);
+	return collector;
 }
 
 /**
