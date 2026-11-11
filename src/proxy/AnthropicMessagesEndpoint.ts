@@ -3,6 +3,7 @@ import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 import { stripRoutingMetadata } from "../router/TagRouting";
 import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
 import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
+import { projectDeepSeekClaudeCodePrefix } from "../providers/DeepSeekAnthropicCache";
 import { normalizeAnthropicThinking } from "../providers/AnthropicThinkingCompatibility";
 import { startSseKeepalive } from "./SseKeepalive";
 /**
@@ -198,7 +199,10 @@ function buildAnthropicUpstreamBody(
 		delete result[internalKey];
 	}
 	return normalizeAnthropicThinking(
-		stripRoutingMetadata(deployment ? applyReasoningEffortOverride(result, deployment, "anthropic") : result),
+		projectDeepSeekClaudeCodePrefix(
+			stripRoutingMetadata(deployment ? applyReasoningEffortOverride(result, deployment, "anthropic") : result),
+			upstreamModel,
+		),
 		upstreamModel,
 	);
 }
