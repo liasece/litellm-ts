@@ -18,6 +18,7 @@ import { getProviderBrand } from "../../providers/logic/ProviderBrands";
 import CliProxyConfirm from "./CliProxyConfirmComponent.vue";
 import CliProxyPasswordInput from "./CliProxyPasswordInputComponent.vue";
 import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityComponent.vue";
+import { accountIdentity } from "../logic/AccountIdentityLogic";
 const props = withDefaults(
 	defineProps<{
 		store: CliProxyStore;
@@ -31,6 +32,7 @@ const props = withDefaults(
 	{ sources: undefined, showCommandKeyForm: undefined, showProviderColumn: true, hideTableWhenEmpty: false },
 );
 const state = props.store.state;
+const identity = (account: Account) => accountIdentity(account, state.quotaStates[account.auth_index]?.data?.email);
 const allOauthProviders = [
 	{ provider: "codex-device", label: "Codex device login", primary: true, source: "codex" },
 	{ provider: "codex", label: "Codex browser login", source: "codex" },
@@ -73,7 +75,7 @@ const providerFilter = computed<readonly UiTableFilterField[]>(() => [
 	},
 ]);
 const accountFilter: readonly UiTableFilterField[] = [
-	{ key: "account", label: "Account", control: { kind: "text", placeholder: "Filter by account email" } },
+	{ key: "account", label: "Account", control: { kind: "text", placeholder: "Filter by account email or label" } },
 ];
 const fileFilter: readonly UiTableFilterField[] = [
 	{ key: "file", label: "File", control: { kind: "text", placeholder: "Filter by auth file" } },
@@ -106,7 +108,7 @@ const columns = computed<readonly UiTableColumn[]>(() => {
 	];
 });
 function accountValue(account: Account, key: string): string | number {
-	if (key === "account") return account.email ?? "";
+	if (key === "account") return identity(account) ?? "";
 	if (key === "file") return account.filename;
 	if (key === "enabled") return account.disabled ? "Disabled" : "Enabled";
 	if (key === "weight") return account.weight ?? 0;
@@ -239,7 +241,7 @@ function edit(account: Account) {
 			<template #row="{ row }">
 				<tr v-for="account in [accountRow(row)]" :key="account.auth_index" class="ui-table__row">
 					<td v-if="showProviderColumn"><ProviderIdentityComponent :provider="account.provider" /></td>
-					<td>{{ account.email ?? "—" }}</td>
+					<td>{{ identity(account) ?? "—" }}</td>
 					<td class="cp-account-filename" :title="account.filename">
 						{{ account.filename }}<UiTag v-if="isTrashed(account)" color="orange" class="cp-ml-8">trashed</UiTag>
 					</td>
@@ -252,7 +254,7 @@ function edit(account: Account) {
 						<UiSwitch
 							:model-value="!account.disabled"
 							:disabled="isTrashed(account)"
-							:label="'Enable ' + (account.email ?? account.filename)"
+							:label="'Enable ' + (identity(account) ?? account.filename)"
 							@update:model-value="store.updateAccount(account, { disabled: !$event })"
 						/>
 					</td>

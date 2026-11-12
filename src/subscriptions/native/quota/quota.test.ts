@@ -158,6 +158,7 @@ describe("原生订阅额度查询", () => {
 		]);
 		expect(calls[0]?.headers["Authorization"]).toBe("Bearer cc-key");
 		expect(quota.provider).toBe("commandcode");
+		expect(quota.email).toBe("ops@example.com");
 		expect(quota.plan).toBe("GOAT");
 		expect(quota.windows.map((window) => window.label)).toEqual(["5 小时", "周", "月"]);
 		expect(quota.windows[0]).toMatchObject({ used_percent: 10, remaining_percent: 90, resets_at: "2026-11-01T10:00:00.000Z" });

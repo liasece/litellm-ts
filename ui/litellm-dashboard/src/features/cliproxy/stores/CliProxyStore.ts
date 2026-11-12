@@ -96,6 +96,11 @@ export function createCliProxyStore() {
 		state.quotaStates[account.auth_index] = { status: "loading", data: previous };
 		try {
 			const value = await cliProxyApi<AccountQuota>("/subscriptions/accounts/" + encodeURIComponent(account.auth_index) + "/quota");
+			const email = value.email?.trim();
+			if (email) {
+				const target = state.accounts.find((candidate) => candidate.auth_index === account.auth_index);
+				if (target) target.email = email;
+			}
 			if (!disposed) state.quotaStates[account.auth_index] = { status: "success", data: value };
 		} catch (error) {
 			if (!disposed)

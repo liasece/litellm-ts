@@ -523,11 +523,13 @@ export function normalizeCliProxyCommandCodeQuota(
 		balances.push({ label: "剩余额度", used: 0, limit: creditsLeft, unit: "$" });
 	}
 	const month = record(usage["month"]);
+	const email = stringValue(card["email"]);
 	return {
 		plan: stringValue(usage["plan"]) ?? null,
 		subscription_expires_at: normalizeDate(month?.["resets_at"]),
 		windows: windows,
 		balances: balances,
+		...(email ? { email: email } : {}),
 	};
 }
 

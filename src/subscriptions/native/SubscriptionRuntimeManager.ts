@@ -608,6 +608,7 @@ export class SubscriptionRuntimeManager {
 			filename: trashed ? `.trash/${path.basename(account.path)}` : account.fileName,
 			provider: account.source,
 			email: account.email ?? null,
+			label: account.label ?? null,
 			disabled: account.disabled,
 			weight: account.raw["weight"] === undefined ? null : account.weight,
 			priority: account.priority ?? 0,

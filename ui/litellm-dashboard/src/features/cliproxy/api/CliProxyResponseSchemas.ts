@@ -24,6 +24,7 @@ const account = z
 		filename: z.string(),
 		provider: z.string(),
 		email: z.string().nullable(),
+		label: z.string().nullable().optional(),
 		disabled: z.boolean(),
 		weight: z.number().nullable(),
 		modified_at: z.string(),
@@ -62,6 +63,7 @@ const quota = z
 				.passthrough(),
 		),
 		balances: z.array(z.object({ label: z.string(), used: z.number(), limit: z.number(), unit: z.string() }).passthrough()),
+		email: z.string().nullable().optional(),
 		fetched_at: z.string(),
 	})
 	.passthrough();

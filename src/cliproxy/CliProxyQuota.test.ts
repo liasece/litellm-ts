@@ -187,6 +187,7 @@ describe("CLIProxy CommandCode quota normalization", () => {
 					{
 						key_id: "cc-1",
 						status: "active",
+						email: "ops@example.com",
 						usage: {
 							plan: "GOAT",
 							plan_credits: 70,
@@ -202,6 +203,7 @@ describe("CLIProxy CommandCode quota normalization", () => {
 		);
 
 		expect(quota?.plan).toBe("GOAT");
+		expect(quota?.email).toBe("ops@example.com");
 		expect(quota?.windows.map((window) => window.label)).toEqual(["5 小时", "周", "月"]);
 		expect(quota?.windows[0]).toMatchObject({ used_percent: 10, remaining_percent: 90 });
 		expect(quota?.balances[0]).toMatchObject({ label: "剩余计划额度", used: 17.5, limit: 70, unit: "$" });

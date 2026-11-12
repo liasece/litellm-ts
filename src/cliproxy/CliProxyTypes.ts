@@ -149,6 +149,10 @@ export interface CliProxyAccountSummary {
 	 */
 	readonly email: string | null;
 	/**
+	 * 管理面自定义的账号标签；Key 型账号通常只有标签没有邮箱。
+	 */
+	readonly label: string | null;
+	/**
 	 *
 	 */
 	readonly disabled: boolean;
@@ -252,6 +256,10 @@ export interface CliProxyAccountQuota {
 	 *
 	 */
 	readonly balances: CliProxyQuotaBalance[];
+	/**
+	 * 额度接口返回的账号邮箱；仅部分 Key 型 Provider（当前为 CommandCode）提供。
+	 */
+	readonly email?: string | null;
 	/**
 	 *
 	 */

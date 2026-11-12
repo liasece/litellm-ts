@@ -20,6 +20,7 @@ export interface Account {
 	filename: string;
 	provider: string;
 	email: string | null;
+	label?: string | null;
 	disabled: boolean;
 	weight: number | null;
 	priority?: number;
@@ -62,6 +63,7 @@ export interface AccountQuota {
 	subscription_expires_at: string | null;
 	windows: QuotaWindow[];
 	balances: QuotaBalance[];
+	email?: string | null;
 	fetched_at: string;
 }
 

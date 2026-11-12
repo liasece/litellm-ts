@@ -12,6 +12,7 @@ const quota = z
 		subscription_expires_at: z.string().nullable(),
 		windows: z.array(window),
 		balances: z.array(balance),
+		email: z.string().nullable().optional(),
 		fetched_at: z.string(),
 	})
 	.passthrough();

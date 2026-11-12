@@ -5,6 +5,7 @@ import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityCompon
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import type { Account, AccountQuotaState } from "../support/CliProxyModels";
+import { accountIdentity } from "../logic/AccountIdentityLogic";
 defineProps<{ account: Account; quotaState: AccountQuotaState }>();
 defineEmits<{ refresh: [] }>();
 const quotaColor = (remaining: number | null) =>
@@ -25,8 +26,8 @@ const exhaustedClass = (remaining: number | null) => (remaining !== null && rema
 				<div class="cp-inline cp-gap-8">
 					<ProviderIdentityComponent :provider="account.provider" /><strong
 						class="cp-ellipsis"
-						:title="account.email ?? account.filename"
-						>{{ account.email ?? account.filename }}</strong
+						:title="accountIdentity(account, quotaState.data?.email) ?? account.filename"
+						>{{ accountIdentity(account, quotaState.data?.email) ?? account.filename }}</strong
 					>
 				</div>
 				<span class="cp-secondary cp-xs cp-ellipsis cp-quota-filename">{{ account.filename }}</span>
