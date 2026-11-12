@@ -7,6 +7,9 @@ import { sourceFingerprint } from "./SourceFingerprint.mjs";
 import { retainClientAssets } from "./RetainClientAssets.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+// CI runs vue-tsc in its own frontend job, so local builds can skip the repeated
+// check without dropping the rest of the runtime (licenses, fingerprints, provenance).
+const skipTypecheck = process.argv.includes("--skip-typecheck");
 async function copySourceLicenses(directory, licenseRoot) {
 	for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
 		const source = path.join(directory, entry.name);
@@ -24,8 +27,9 @@ try {
 	let priorClientAssets = await retainClientAssets(path.resolve(root, "../out"), compatibilityDirectory);
 	// A full image build may receive the last package artifact instead of ui/out.
 	if (!priorClientAssets.available) priorClientAssets = await retainClientAssets(path.join(root, "out"), compatibilityDirectory);
+	if (skipTypecheck) console.log("Skipping vue-tsc type check (--skip-typecheck).");
 	for (const args of [
-		[path.join(root, "node_modules/vue-tsc/bin/vue-tsc.js"), "--noEmit"],
+		...(skipTypecheck ? [] : [[path.join(root, "node_modules/vue-tsc/bin/vue-tsc.js"), "--noEmit"]]),
 		[path.join(root, "node_modules/vite/bin/vite.js"), "build"],
 	]) {
 		const result = spawnSync(process.execPath, args, { cwd: root, stdio: "inherit" });

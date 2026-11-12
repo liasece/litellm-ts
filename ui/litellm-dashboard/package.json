@@ -9,6 +9,7 @@
 	"scripts": {
 		"dev": "vite --host 0.0.0.0",
 		"build": "node scripts/BuildRuntime.mjs",
+		"build:nocheck": "node scripts/BuildRuntime.mjs --skip-typecheck",
 		"preview": "vite preview --host 0.0.0.0",
 		"typecheck": "vue-tsc --noEmit",
 		"lint": "eslint . --max-warnings=0 --cache --cache-location node_modules/.cache/eslint",
