@@ -39,8 +39,7 @@ export function modelRankings(data: DailyActivityResponse, groups = false): Mode
 			successful_requests: m.successful_requests,
 			failed_requests: m.failed_requests,
 			tokens: m.total_tokens,
-			prompt_tokens: m.prompt_tokens,
-			cache_read_input_tokens: m.cache_read_input_tokens,
+			metrics: m,
 		}))
 		.sort((a, b) => b.spend - a.spend);
 }
@@ -59,6 +58,7 @@ export function providerRankings(data: DailyActivityResponse): ProviderRanking[]
 		successful_requests: m.successful_requests,
 		failed_requests: m.failed_requests,
 		tokens: m.total_tokens,
+		metrics: m,
 	}));
 }
 export function keyRankings(data: DailyActivityResponse, entityTags = false): KeyRanking[] {
@@ -109,6 +109,8 @@ export function overallActivity(models: Record<string, ModelActivityData>) {
 	const total = {
 		total_requests: 0,
 		total_successful_requests: 0,
+		total_prompt_tokens: 0,
+		total_completion_tokens: 0,
 		total_tokens: 0,
 		total_spend: 0,
 		total_cache_read_input_tokens: 0,
@@ -116,7 +118,14 @@ export function overallActivity(models: Record<string, ModelActivityData>) {
 	};
 	const days = new Map<string, SpendMetrics>();
 	for (const model of Object.values(models)) {
-		for (const key of Object.keys(total) as (keyof typeof total)[]) total[key] += model[key] || 0;
+		total.total_requests += model.total_requests;
+		total.total_successful_requests += model.total_successful_requests;
+		total.total_prompt_tokens += model.prompt_tokens;
+		total.total_completion_tokens += model.completion_tokens;
+		total.total_tokens += model.total_tokens;
+		total.total_spend += model.total_spend;
+		total.total_cache_read_input_tokens += model.total_cache_read_input_tokens;
+		total.total_cache_creation_input_tokens += model.total_cache_creation_input_tokens;
 		for (const day of model.daily_data) {
 			const m = days.get(day.date) ?? emptyMetrics();
 			addMetrics(m, day.metrics);

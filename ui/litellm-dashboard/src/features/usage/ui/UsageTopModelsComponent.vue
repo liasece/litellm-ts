@@ -27,6 +27,9 @@ const mode = computed({
 	}),
 	money = useMoneyFormatter(),
 	rows = computed(() => (mode.value === "groups" ? props.groups : props.individual));
+function modelRow(row: Record<string, unknown>): ModelRanking {
+	return row as unknown as ModelRanking;
+}
 </script>
 <template>
 	<UiCard appearance="tremor" class="usage-panel">
@@ -53,10 +56,18 @@ const mode = computed({
 				<template #annotation="{ row }"
 					><span
 						:aria-label="
-							'Input cache hit rate: ' + cacheHitRate(Number(row.cache_read_input_tokens), Number(row.prompt_tokens)) + '%'
+							'Input cache hit rate: ' +
+							cacheHitRate(
+								Number(modelRow(row).metrics.cache_read_input_tokens),
+								Number(modelRow(row).metrics.prompt_tokens),
+							) +
+							'%'
 						"
 						><UiIcon name="DatabaseOutlined" :size="11" />{{
-							cacheHitRate(Number(row.cache_read_input_tokens), Number(row.prompt_tokens))
+							cacheHitRate(
+								Number(modelRow(row).metrics.cache_read_input_tokens),
+								Number(modelRow(row).metrics.prompt_tokens),
+							)
 						}}%</span
 					></template
 				>
@@ -68,7 +79,15 @@ const mode = computed({
 					<p class="usage-success">Successful: {{ Number(row.successful_requests).toLocaleString() }}</p>
 					<p class="usage-failed">Failed: {{ Number(row.failed_requests).toLocaleString() }}</p>
 					<p>Tokens: {{ formatNumberWithCommas(Number(row.tokens), 0, false) }}</p>
-					<p>Input Cache Hit: {{ cacheHitRate(Number(row.cache_read_input_tokens), Number(row.prompt_tokens)) }}%</p></template
+					<p>
+						Input Cache Hit:
+						{{
+							cacheHitRate(
+								Number(modelRow(row).metrics.cache_read_input_tokens),
+								Number(modelRow(row).metrics.prompt_tokens),
+							)
+						}}%
+					</p></template
 				>
 			</UsageChart>
 		</div>

@@ -59,7 +59,22 @@ describe("usage wire and aggregation contracts", () => {
 		expect(keys.hash.label).toBe("Build (team: Engineering)");
 		expect(keys.hash.total_spend).toBe(4);
 		expect(keys.hash.top_models).toEqual([
-			{ model: "model-a", spend: 4, requests: 6, successful_requests: 4, failed_requests: 2, tokens: 80 },
+			{
+				model: "model-a",
+				spend: 4,
+				requests: 6,
+				successful_requests: 4,
+				failed_requests: 2,
+				tokens: 80,
+				metrics: {
+					...emptyMetrics(),
+					spend: 4,
+					api_requests: 6,
+					successful_requests: 4,
+					failed_requests: 2,
+					total_tokens: 80,
+				},
+			},
 		]);
 		expect(keys.hash.daily_data.map((x) => x.date)).toEqual(["2026-11-01", "2026-11-02"]);
 		expect(processActivityData(data, "models")["model-a"].top_api_keys[0]).toMatchObject({

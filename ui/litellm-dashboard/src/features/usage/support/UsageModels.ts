@@ -73,6 +73,7 @@ export interface TopModelData {
 	successful_requests: number;
 	failed_requests: number;
 	tokens: number;
+	metrics: SpendMetrics;
 }
 export interface ModelActivityData {
 	label: string;
@@ -116,8 +117,7 @@ export interface ModelRanking {
 	successful_requests: number;
 	failed_requests: number;
 	tokens: number;
-	prompt_tokens: number;
-	cache_read_input_tokens: number;
+	metrics: SpendMetrics;
 }
 export interface ProviderRanking {
 	provider: string;
@@ -126,6 +126,7 @@ export interface ProviderRanking {
 	successful_requests: number;
 	failed_requests: number;
 	tokens: number;
+	metrics: SpendMetrics;
 }
 export interface KeyRanking {
 	api_key: string;

@@ -36,8 +36,7 @@ export function agentRankings(data: DailyActivityResponse): ModelRanking[] {
 			successful_requests: m.successful_requests,
 			failed_requests: m.failed_requests,
 			tokens: m.total_tokens,
-			prompt_tokens: m.prompt_tokens,
-			cache_read_input_tokens: m.cache_read_input_tokens,
+			metrics: m,
 		}))
 		.sort((a, b) => b.spend - a.spend);
 }

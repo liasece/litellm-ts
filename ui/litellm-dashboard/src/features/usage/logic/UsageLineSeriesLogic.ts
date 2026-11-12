@@ -53,3 +53,40 @@ export function usageLineSeries(layout: ReturnType<typeof usageLineGeometry>, pa
 		};
 	});
 }
+export function usageSecondaryLineSeries(layout: ReturnType<typeof usageLineGeometry>, palette: string[], dashed = true) {
+	return layout.secondarySeries.map((series, index) => {
+		const color = palette[index % palette.length];
+		return {
+			name: series.key,
+			type: "custom",
+			coordinateSystem: "none",
+			emphasis: { disabled: true },
+			data: series.points.map((point, rowIndex) => [rowIndex, point?.y ?? null]),
+			renderItem: (params: { dataIndex: number }) => {
+				const point = series.points[params.dataIndex],
+					children: object[] = [];
+				if (params.dataIndex === 0)
+					for (const path of series.linePaths)
+						children.push({
+							type: "path",
+							shape: { pathData: path },
+							style: {
+								fill: null,
+								stroke: color,
+								lineWidth: 2,
+								lineDash: dashed ? [6, 4] : undefined,
+								lineJoin: "round",
+								lineCap: "round",
+							},
+						});
+				if (point && series.showDots)
+					children.push({
+						type: "circle",
+						shape: { cx: point.x, cy: point.y, r: 4 },
+						style: { fill: color, stroke: "#fff", lineWidth: 2 },
+					});
+				return { type: "group", children };
+			},
+		};
+	});
+}

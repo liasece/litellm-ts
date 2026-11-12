@@ -15,7 +15,7 @@ import UsageDonutChart from "./UsageDonutChartComponent.vue";
 import UsageDefaultTooltip from "./UsageDefaultTooltipComponent.vue";
 import { usageChartRowAt, usageCategoryCoordinate } from "../../logic/UsageChartPointerLogic";
 import { usageLineGeometry } from "../../logic/UsageLineGeometryLogic";
-import { usageLineSeries } from "../../logic/UsageLineSeriesLogic";
+import { usageLineSeries, usageSecondaryLineSeries } from "../../logic/UsageLineSeriesLogic";
 import { usageRankingViewport, usageDrawingPoint } from "../../logic/UsageRankingViewportLogic";
 import UsageChartDrawingLayer from "../../render/UsageChartDrawingLayerRender";
 const props = withDefaults(
@@ -38,6 +38,11 @@ const props = withDefaults(
 		tooltipTone?: "light" | "dark";
 		showXAxis?: boolean;
 		modelTooltip?: boolean;
+		secondaryCategories?: string[];
+		secondaryMax?: number;
+		secondaryFormat?: (value: number) => string;
+		secondaryColors?: string[];
+		secondaryDashed?: boolean;
 	}>(),
 	{
 		colors: () => ["cyan"],
@@ -50,6 +55,11 @@ const props = withDefaults(
 		yAxisWidth: 56,
 		legendHeight: 60,
 		format: (v: number) => v.toLocaleString(),
+		secondaryCategories: () => [],
+		secondaryMax: 100,
+		secondaryFormat: (v: number) => v + "%",
+		secondaryColors: () => ["amber"],
+		secondaryDashed: true,
 	},
 );
 const emit = defineEmits<{ select: [row: ChartRow] }>();
@@ -83,6 +93,7 @@ const lineGeometry = computed(() =>
 				...props,
 				width: width.value,
 				legendHeight: props.legend ? props.legendHeight : 0,
+				rightAxisWidth: props.secondaryCategories.length ? 48 : 0,
 				measureText: measureUsageTickText,
 			})
 		: null,
@@ -110,8 +121,14 @@ watch(
 	{ flush: "post" },
 );
 const palette = computed(() => props.colors.map((c) => usageColors[c] ?? c));
+const secondaryPalette = computed(() => props.secondaryColors.map((c) => usageColors[c] ?? c));
 const option = computed(() => {
-	if (lineGeometry.value) return { animation: false, series: usageLineSeries(lineGeometry.value, palette.value, props.kind === "area") };
+	if (lineGeometry.value) {
+		const series: object[] = usageLineSeries(lineGeometry.value, palette.value, props.kind === "area");
+		if (lineGeometry.value.secondarySeries.length)
+			series.push(...usageSecondaryLineSeries(lineGeometry.value, secondaryPalette.value, props.secondaryDashed));
+		return { animation: false, series };
+	}
 	if (geometry.value) {
 		const layout = geometry.value;
 		return {
@@ -308,6 +325,9 @@ function select(params: unknown) {
 						:format="format"
 						:compact="kind === 'area'"
 						:model-tooltip="modelTooltip"
+						:secondary-categories="secondaryCategories"
+						:secondary-format="secondaryFormat"
+						:secondary-colors="secondaryPalette"
 				/></slot></div
 		></Teleport>
 	</div>

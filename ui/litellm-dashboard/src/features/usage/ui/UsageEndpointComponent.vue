@@ -4,9 +4,9 @@ import UiTable from "../../platform/ui/UiTable.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageLegend from "./charts/UsageLegendComponent.vue";
+import UsageTokensCell from "./UsageTokensCellComponent.vue";
 import { emptyMetrics, addMetrics } from "../logic/UsageSummaryLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import type { DailyActivityResponse, SpendMetrics } from "../support/UsageModels";
 const props = defineProps<{ data: DailyActivityResponse }>();
 const money = useMoneyFormatter(),
@@ -30,7 +30,11 @@ const columns = [
 	{ key: "requests", label: "Successful / Failed" },
 	{ key: "api_requests", label: "Total Request" },
 	{ key: "successRate", label: "Success Rate" },
-	{ key: "total_tokens", label: "Total Tokens" },
+	{
+		key: "total_tokens",
+		label: "Tokens",
+		tooltip: "Cache read, input (excluding cache reads) and output tokens, plus the cache hit rate.",
+	},
 	{ key: "spend", label: "Spend" },
 ];
 const trends = computed(() => {
@@ -84,7 +88,7 @@ function successColor(rate: number) {
 				><span class="usage-endpoint-rate" :style="{ color: successColor(rateFor(row)) }"
 					>{{ rateFor(row).toFixed(2) }}%</span
 				></template
-			><template #cell-total_tokens="{ row }">{{ formatNumberWithCommas(metricsFor(row).total_tokens, 0, false) }}</template
+			><template #cell-total_tokens="{ row }"><UsageTokensCell :metrics="metricsFor(row)" /></template
 			><template #cell-spend="{ row }">{{ money(metricsFor(row).spend, 2) }}</template></UiTable
 		>
 		<UiCard appearance="tremor"

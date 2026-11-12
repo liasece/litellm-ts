@@ -40,8 +40,10 @@
 .usage-overall header,
 .usage-model-section header {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
+	gap: 8px 16px;
 }
 
 .usage-overall .usage-chart,
@@ -101,6 +103,16 @@
 	gap: 8px;
 }
 
+@media (max-width: 767px) {
+	.usage-grid-two {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.usage-grid-four,
+	.usage-grid-five {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
 .usage-activity-key-charts {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
@@ -108,17 +120,56 @@
 	margin-top: 16px;
 }
 
+@media (min-width: 1024px) {
+	.usage-activity-key-charts {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
 .usage-activity-key-charts > * > div {
-	max-height: 234px;
+	max-height: 200px;
 	overflow-y: auto;
 	margin-top: 12px;
 }
 
-.usage-model-section > .usage-grid-two {
+.usage-model-key-charts {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 16px;
 	margin-top: 16px;
 }
 
-.usage-activity-daily,
+.usage-model-key-charts > * {
+	flex: 1 1 300px;
+	min-width: 0;
+}
+
+.usage-model-key-bars {
+	max-height: 200px;
+	overflow-y: auto;
+	margin-top: 12px;
+}
+
+.usage-model-time-charts {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 16px;
+	margin-top: 16px;
+}
+
+@media (min-width: 768px) {
+	.usage-model-time-charts {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+@media (min-width: 1280px) {
+	.usage-model-time-charts {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
 .usage-key-model {
 	margin-top: 16px;
 }

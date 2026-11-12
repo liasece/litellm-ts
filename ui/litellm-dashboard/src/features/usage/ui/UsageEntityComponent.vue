@@ -23,6 +23,7 @@ import UsageEndpoint from "./UsageEndpointComponent.vue";
 import UsageProgress from "./UsageProgressComponent.vue";
 import UsageTopKeys from "./UsageTopKeysComponent.vue";
 import UsageModelTable from "./UsageModelTableComponent.vue";
+import UsageTokensCell from "./UsageTokensCellComponent.vue";
 import UsageExport from "./UsageExportDialogComponent.vue";
 const props = defineProps<{ entityType: EntityType; options: EntityOption[]; dateRange: DateRangeValue }>();
 const selected = ref<string[]>([]),
@@ -86,7 +87,12 @@ const entityColumns = computed<readonly UiTableColumn[]>(() => [
 	{ key: "spend", label: "Spend", width: 90 },
 	{ key: "successful", label: "Successful", width: 100, cellClass: "usage-success" },
 	{ key: "failed", label: "Failed", width: 80, cellClass: "usage-failed" },
-	{ key: "tokens", label: "Tokens", width: 100 },
+	{
+		key: "tokens",
+		label: "Tokens",
+		width: 140,
+		tooltip: "Cache read, input (excluding cache reads) and output tokens, plus the cache hit rate.",
+	},
 ]);
 const entityRows = computed<readonly UiTableRow[]>(
 	() => entities.value.filter((item) => item.metrics.spend > 0) as unknown as readonly UiTableRow[],
@@ -96,7 +102,12 @@ const providerColumns: readonly UiTableColumn[] = [
 	{ key: "spend", label: "Spend", width: 90 },
 	{ key: "successful_requests", label: "Successful", width: 100, cellClass: "usage-success" },
 	{ key: "failed_requests", label: "Failed", width: 80, cellClass: "usage-failed" },
-	{ key: "tokens", label: "Tokens", width: 100 },
+	{
+		key: "tokens",
+		label: "Tokens",
+		width: 140,
+		tooltip: "Cache read, input (excluding cache reads) and output tokens, plus the cache hit rate.",
+	},
 ];
 const providerRows = computed<readonly UiTableRow[]>(() => providers.value as unknown as readonly UiTableRow[]);
 const days = computed(() => [...state.data.results].sort((a, b) => a.date.localeCompare(b.date)));
@@ -238,14 +249,11 @@ function changeSelection(value: unknown) {
 									entityRow(row).metrics.successful_requests.toLocaleString()
 								}}</template>
 								<template #cell-failed="{ row }">{{ entityRow(row).metrics.failed_requests.toLocaleString() }}</template>
-								<template #cell-tokens="{ row }">{{
-									formatNumberWithCommas(entityRow(row).metrics.total_tokens, 0, false)
-								}}</template>
+								<template #cell-tokens="{ row }"><UsageTokensCell :metrics="entityRow(row).metrics" /></template>
 							</UiTable>
 						</div>
-					</div>
-				</div></UiCard
-			>
+					</div></div
+			></UiCard>
 			<UiCard appearance="tremor"
 				><h2>Top Virtual Keys</h2>
 				<UsageTopKeys :rows="keys" :show-tags="entityType === 'tag'"
@@ -283,10 +291,9 @@ function changeSelection(value: unknown) {
 						<template #cell-spend="{ row }">{{ money(providerRow(row).spend, 2) }}</template>
 						<template #cell-successful_requests="{ row }">{{ providerRow(row).successful_requests.toLocaleString() }}</template>
 						<template #cell-failed_requests="{ row }">{{ providerRow(row).failed_requests.toLocaleString() }}</template>
-						<template #cell-tokens="{ row }">{{ formatNumberWithCommas(providerRow(row).tokens, 0, false) }}</template>
-					</UiTable>
-				</div></UiCard
-			>
+						<template #cell-tokens="{ row }"><UsageTokensCell :metrics="providerRow(row).metrics" /></template>
+					</UiTable></div
+			></UiCard>
 		</div>
 		<UsageActivity v-show="tab === 'models'" :model-metrics="modelMetrics" :hide-prompt-caching-metrics="entityType === 'agent'" />
 		<UsageActivity v-if="entityType === 'team'" v-show="tab === 'agents'" :model-metrics="agentMetrics" />

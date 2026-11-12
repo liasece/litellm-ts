@@ -5,6 +5,7 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import UsageChart from "./charts/UsageChartComponent.vue";
+import UsageTokensCell from "./UsageTokensCellComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
@@ -21,7 +22,12 @@ const bySpend = computed(() => [...props.models].sort((a, b) => b.spend - a.spen
 		{ key: "requests", label: "Requests", width: 120 },
 		{ key: "successful_requests", label: "Successful", width: 120, cellClass: "usage-success" },
 		{ key: "failed_requests", label: "Failed", width: 100, cellClass: "usage-failed" },
-		{ key: "tokens", label: "Tokens", width: 140 },
+		{
+			key: "tokens",
+			label: "Tokens",
+			width: 150,
+			tooltip: "Cache read, input (excluding cache reads) and output tokens, plus the cache hit rate.",
+		},
 	],
 	tableRows = computed<readonly UiTableRow[]>(() => bySpend.value as unknown as readonly UiTableRow[]);
 function modelRow(row: UiTableRow): TopModelData {
@@ -48,8 +54,8 @@ function modelRow(row: UiTableRow): TopModelData {
 						:categories="[kind]"
 						:colors="[kind === 'spend' ? 'cyan' : 'indigo']"
 						horizontal
-						:height="models.length * 40 + 34"
-						:y-axis-width="180"
+						:height="models.length * 36 + 30"
+						:y-axis-width="160"
 						:format="kind === 'spend' ? (v) => money(v, 2) : number"
 					/>
 				</div>
@@ -78,7 +84,6 @@ function modelRow(row: UiTableRow): TopModelData {
 			<template #cell-requests="{ row }">{{ modelRow(row).requests?.toLocaleString() || 0 }}</template>
 			<template #cell-successful_requests="{ row }">{{ modelRow(row).successful_requests?.toLocaleString() || 0 }}</template>
 			<template #cell-failed_requests="{ row }">{{ modelRow(row).failed_requests?.toLocaleString() || 0 }}</template>
-			<template #cell-tokens="{ row }">{{ number(modelRow(row).tokens ?? 0) }}</template>
-		</UiTable></UiCard
-	>
+			<template #cell-tokens="{ row }"><UsageTokensCell :metrics="modelRow(row).metrics" /></template> </UiTable
+	></UiCard>
 </template>

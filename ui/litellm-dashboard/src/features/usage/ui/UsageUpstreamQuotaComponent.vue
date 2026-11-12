@@ -9,6 +9,7 @@ import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityCompon
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import { createUpstreamQuotaStore } from "../stores/UpstreamQuotaStore";
+import { accountIdentity } from "../../cliproxy/logic/AccountIdentityLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import UsageQuotaWindows from "./UsageQuotaWindowsComponent.vue";
 const props = defineProps<{ enabled: boolean }>(),
@@ -104,9 +105,10 @@ function balance(value: { used: number; limit: number; unit: string }) {
 				<template #title
 					><div class="usage-quota-account-title">
 						<div>
-							<ProviderIdentityComponent :provider="account.provider" /><strong :title="account.email ?? account.filename">{{
-								account.email ?? account.filename
-							}}</strong>
+							<ProviderIdentityComponent :provider="account.provider" /><strong
+								:title="accountIdentity(account, state.quotas[account.auth_index]?.data?.email) ?? account.filename"
+								>{{ accountIdentity(account, state.quotas[account.auth_index]?.data?.email) ?? account.filename }}</strong
+							>
 						</div>
 					</div></template
 				><template v-if="state.quotas[account.auth_index]?.data?.plan" #extra

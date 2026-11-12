@@ -5,7 +5,7 @@ export interface UsageAxisTick {
 	y: number;
 	text: string;
 	transform?: string;
-	anchor: "middle" | "end";
+	anchor: "middle" | "end" | "start";
 	dy: string;
 }
 export interface UsageBarShape {
@@ -31,6 +31,7 @@ export interface UsageBarGeometry {
 	scale: { min: number; max: number; step: number; ticks: number[] };
 	xTicks: UsageAxisTick[];
 	yTicks: UsageAxisTick[];
+	rightTicks: UsageAxisTick[];
 	grid: { x1: number; y1: number; x2: number; y2: number }[];
 	bars: UsageBarShape[];
 }
@@ -46,6 +47,7 @@ export interface UsageBarGeometryInput {
 	stack?: boolean;
 	legendHeight?: number;
 	showXAxis: boolean;
+	rightAxisWidth?: number;
 	format: (value: number) => string;
 	measureText: (text: string, fontSize: number) => number;
 }

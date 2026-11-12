@@ -9,8 +9,8 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import UsageChartLoader from "./UsageChartLoaderComponent.vue";
+import UsageTokensCell from "./UsageTokensCellComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import type { ProviderRanking } from "../support/UsageModels";
 const props = defineProps<{ providerSpend: ProviderRanking[]; loading: boolean; isDateChanging: boolean }>();
 const includeZero = ref(false),
@@ -28,7 +28,12 @@ const columns: readonly UiTableColumn[] = [
 	{ key: "requests", label: "Requests", width: 120 },
 	{ key: "successful_requests", label: "Successful", width: 130, cellClass: "usage-success" },
 	{ key: "failed_requests", label: "Failed", width: 100, cellClass: "usage-failed" },
-	{ key: "tokens", label: "Tokens", width: 140 },
+	{
+		key: "tokens",
+		label: "Tokens",
+		width: 150,
+		tooltip: "Cache read, input (excluding cache reads) and output tokens, plus the cache hit rate.",
+	},
 ];
 function providerRow(row: UiTableRow): ProviderRanking {
 	return row as unknown as ProviderRanking;
@@ -79,7 +84,7 @@ function providerRow(row: UiTableRow): ProviderRanking {
 			<template #cell-requests="{ row }">{{ providerRow(row).requests.toLocaleString() }}</template>
 			<template #cell-successful_requests="{ row }">{{ providerRow(row).successful_requests.toLocaleString() }}</template>
 			<template #cell-failed_requests="{ row }">{{ providerRow(row).failed_requests.toLocaleString() }}</template>
-			<template #cell-tokens="{ row }">{{ formatNumberWithCommas(providerRow(row).tokens, 0, false) }}</template>
+			<template #cell-tokens="{ row }"><UsageTokensCell :metrics="providerRow(row).metrics" /></template>
 		</UiTable>
 	</UiCard>
 </template>

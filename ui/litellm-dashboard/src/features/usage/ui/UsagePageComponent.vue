@@ -41,7 +41,6 @@ const view = ref<UsageView>("global"),
 	tab = ref("cost"),
 	selectedUser = ref<string | null>(admin.value ? null : (auth.state.session?.user_id ?? null));
 const modelMode = ref<"groups" | "individual">("groups"),
-	tokenBreakdown = ref(false),
 	exportOpen = ref(false),
 	dateChanging = ref(false);
 const store = createDailyActivityStore(),
@@ -225,8 +224,6 @@ function daily(row: Record<string, unknown>): DailyData {
 							:total-spend="state.data.metadata.total_spend || 0"
 							:max-budget="lists.maxBudget"
 							:date-range-label="dateRangeLabel(date.from, date.to)"
-							:show-token-breakdown="tokenBreakdown"
-							@toggle="tokenBreakdown = !tokenBreakdown"
 						/>
 						<UiCard class="usage-panel usage-global-left" appearance="tremor"
 							><h2>Daily Spend</h2>

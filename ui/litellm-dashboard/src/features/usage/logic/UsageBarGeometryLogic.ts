@@ -8,7 +8,7 @@ function finite(value: unknown) {
 export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry {
 	const { data, categories, horizontal = false, ranking = false, width, height, yAxisWidth, showXAxis, format, measureText } = input;
 	const left = yAxisWidth,
-		right = ranking ? 16 : 0,
+		right = ranking ? 16 : (input.rightAxisWidth ?? 0),
 		top = ranking ? 4 : 5 + (input.legendHeight ?? 0),
 		bottom = (ranking ? 4 : 0) + (showXAxis ? 30 : 0),
 		plotWidth = Math.max(0, width - left - right),
@@ -145,5 +145,22 @@ export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry
 					? { x1: numericPositions[tick.index], y1: top, x2: numericPositions[tick.index], y2: top + plotHeight }
 					: { x1: left, y1: numericPositions[tick.index], x2: left + plotWidth, y2: numericPositions[tick.index] },
 			);
-	return { width, height, left, right, top, bottom, plotWidth, plotHeight, horizontal, ranking, scale, xTicks, yTicks, grid, bars };
+	return {
+		width,
+		height,
+		left,
+		right,
+		top,
+		bottom,
+		plotWidth,
+		plotHeight,
+		horizontal,
+		ranking,
+		scale,
+		xTicks,
+		yTicks,
+		rightTicks: [],
+		grid,
+		bars,
+	};
 }

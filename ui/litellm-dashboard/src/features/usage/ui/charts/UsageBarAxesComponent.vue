@@ -44,6 +44,16 @@ defineProps<{ geometry: UsageBarGeometry }>();
 			>
 				<tspan :x="tick.x" :dy="tick.dy">{{ tick.text }}</tspan>
 			</text>
+			<text
+				v-for="(tick, index) in geometry.rightTicks"
+				:key="'right-' + index"
+				class="usage-native-right-tick"
+				:x="tick.x"
+				:y="tick.y"
+				:text-anchor="tick.anchor"
+			>
+				<tspan :x="tick.x" :dy="tick.dy">{{ tick.text }}</tspan>
+			</text>
 		</g>
 	</svg>
 </template>

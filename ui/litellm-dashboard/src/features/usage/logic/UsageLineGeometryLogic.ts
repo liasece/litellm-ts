@@ -12,6 +12,9 @@ export interface UsageLinePoint {
 export interface UsageLineGeometryInput extends UsageBarGeometryInput {
 	curve?: "linear" | "natural";
 	connectNulls?: boolean;
+	secondaryCategories?: string[];
+	secondaryMax?: number;
+	secondaryFormat?: (value: number) => string;
 }
 export function usageLineGeometry(input: UsageLineGeometryInput) {
 	const axes = usageBarGeometry(input);
@@ -36,10 +39,10 @@ export function usageLineGeometry(input: UsageLineGeometryInput) {
 				dy: "0.71em",
 			}))
 		: [];
-	const y = (value: number) =>
+	const project = (value: number) =>
 		axes.top + axes.plotHeight - ((value - axes.scale.min) / (axes.scale.max - axes.scale.min)) * axes.plotHeight;
-	const baseline = y(0);
-	const series = input.categories.map((key) => {
+	const baseline = project(0);
+	function buildSeries(key: string, y: (value: number) => number) {
 		const points = input.data.map((row, rowIndex): UsageLinePoint | null => {
 			const value = chartValue(row, key);
 			return value != null && Number.isFinite(Number(value)) ? { x: positions[rowIndex], y: y(Number(value)), rowIndex, row } : null;
@@ -72,6 +75,24 @@ export function usageLineGeometry(input: UsageLineGeometryInput) {
 		// Tremor checks literal own keys to decide whether to show isolated dots.
 		const showDots = input.data.filter((row) => Object.hasOwn(row, key)).length <= 1;
 		return { key, points, linePaths, areaPaths, showDots };
-	});
-	return { axes, series, positions, baseline };
+	}
+	const series = input.categories.map((key) => buildSeries(key, project));
+	const secondaryMax = Math.max(1, input.secondaryMax ?? 100);
+	const secondarySeries = (input.secondaryCategories ?? []).map((key) =>
+		buildSeries(
+			key,
+			(value) => axes.top + axes.plotHeight - (Math.min(Math.max(value, 0), secondaryMax) / secondaryMax) * axes.plotHeight,
+		),
+	);
+	if (secondarySeries.length) {
+		const format = input.secondaryFormat ?? ((value: number) => value + "%");
+		axes.rightTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+			x: axes.left + axes.plotWidth + 8,
+			y: axes.top + axes.plotHeight - ratio * axes.plotHeight,
+			text: format(secondaryMax * ratio),
+			anchor: "start" as const,
+			dy: "0.355em",
+		}));
+	}
+	return { axes, series, secondarySeries, positions, baseline };
 }

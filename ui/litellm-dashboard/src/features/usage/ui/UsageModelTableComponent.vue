@@ -4,8 +4,8 @@ import { computed, ref } from "vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import type { UiTableColumn, UiTableRow } from "../../platform/ui/UiTypes";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import UsageChart from "./charts/UsageChartComponent.vue";
+import UsageTokensCell from "./UsageTokensCellComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import type { ModelRanking } from "../support/UsageModels";
 const props = defineProps<{ rows: ModelRanking[] }>();
@@ -19,7 +19,12 @@ const columns: readonly UiTableColumn[] = [
 	{ key: "spend", label: "Spend", width: 160 },
 	{ key: "successful_requests", label: "Successful", width: 130, cellClass: "usage-success" },
 	{ key: "failed_requests", label: "Failed", width: 100, cellClass: "usage-failed" },
-	{ key: "tokens", label: "Tokens", width: 140 },
+	{
+		key: "tokens",
+		label: "Tokens",
+		width: 150,
+		tooltip: "Cache read, input (excluding cache reads) and output tokens, plus the cache hit rate.",
+	},
 ];
 function modelRow(row: UiTableRow): ModelRanking {
 	return row as unknown as ModelRanking;
@@ -35,14 +40,23 @@ function modelRow(row: UiTableRow): ModelRanking {
 			><button :class="{ active: mode === 'chart' }" @click="mode = 'chart'">Chart View</button>
 		</div>
 	</div>
-	<UiTable v-if="mode === 'table'" :columns="columns" :rows="tableRows" row-key="key" fixed-layout empty-text="No logs found">
+	<UiTable
+		v-if="mode === 'table'"
+		:columns="columns"
+		:rows="tableRows"
+		row-key="key"
+		fixed-layout
+		:sticky-header="limit > 5"
+		:body-max-height="limit > 5 ? 360 : undefined"
+		empty-text="No logs found"
+	>
 		<template #cell-key="{ row }"
 			><ModelName class="usage-model-cell" :model="modelRow(row).key" :size="16" :truncate="true"
 		/></template>
 		<template #cell-spend="{ row }">{{ money(modelRow(row).spend, 2, modelRow(row).key) }}</template>
 		<template #cell-successful_requests="{ row }">{{ modelRow(row).successful_requests.toLocaleString() }}</template>
 		<template #cell-failed_requests="{ row }">{{ modelRow(row).failed_requests.toLocaleString() }}</template>
-		<template #cell-tokens="{ row }">{{ formatNumberWithCommas(modelRow(row).tokens, 0, false) }}</template>
+		<template #cell-tokens="{ row }"><UsageTokensCell :metrics="modelRow(row).metrics" /></template>
 	</UiTable>
 	<div v-else class="usage-model-chart">
 		<UsageChart

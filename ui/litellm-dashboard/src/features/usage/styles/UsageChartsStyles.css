@@ -73,9 +73,10 @@
 }
 .usage-chart-legend {
 	display: flex;
+	flex-wrap: wrap;
 	justify-content: flex-end;
 	align-items: center;
-	gap: 16px;
+	gap: 4px 16px;
 }
 .usage-chart-legend > span {
 	display: flex;
@@ -91,6 +92,14 @@
 	height: 8px;
 	flex-shrink: 0;
 	box-shadow: 0 0 0 4px #fff;
+}
+.usage-chart-legend i.usage-chart-legend-dash {
+	width: 14px;
+	height: 0;
+	border-top: 2px dashed currentColor;
+	border-radius: 0;
+	background: none;
+	box-shadow: none;
 }
 
 .usage-success {

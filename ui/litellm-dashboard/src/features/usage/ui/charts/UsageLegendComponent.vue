@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import "../../styles/UsageChartsStyles.css";
 import { usageColors } from "../../logic/UsageChartLogic";
-defineProps<{ categories: string[]; colors: string[] }>();
+defineProps<{ categories: string[]; colors: string[]; dashed?: boolean[] }>();
 function label(value: string) {
 	return value
 		.replace("metrics.", "")
@@ -15,9 +15,16 @@ function label(value: string) {
 	<div class="usage-chart-legend">
 		<span v-for="(category, i) in categories" :key="category"
 			><i
+				:class="{ 'usage-chart-legend-dash': dashed?.[i] }"
 				:style="{
-					backgroundColor:
-						colors[i] === 'purple' ? '#8b5cf6' : colors[i] === 'emerald' ? '#37bc7d' : (usageColors[colors[i]] ?? colors[i]),
+					color: colors[i] === 'purple' ? '#8b5cf6' : colors[i] === 'emerald' ? '#37bc7d' : (usageColors[colors[i]] ?? colors[i]),
+					backgroundColor: dashed?.[i]
+						? undefined
+						: colors[i] === 'purple'
+							? '#8b5cf6'
+							: colors[i] === 'emerald'
+								? '#37bc7d'
+								: (usageColors[colors[i]] ?? colors[i]),
 				}"
 			/>{{ label(category) }}</span
 		>

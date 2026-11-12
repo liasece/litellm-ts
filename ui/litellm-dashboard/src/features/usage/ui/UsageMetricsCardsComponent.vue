@@ -5,17 +5,17 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
+import { usageTokenBreakdown } from "../logic/UsageTokenLogic";
 import type { UsageMetadata } from "../support/UsageModels";
 const props = defineProps<{
 	metadata: UsageMetadata;
 	totalSpend: number;
 	maxBudget: number | null;
 	dateRangeLabel: string;
-	showTokenBreakdown: boolean;
 }>();
-const emit = defineEmits<{ toggle: [] }>();
 const money = useMoneyFormatter(),
-	number = (v: number) => formatNumberWithCommas(v, 0, false);
+	number = (v: number) => formatNumberWithCommas(v, 0, false),
+	percent = (v: number) => formatNumberWithCommas(v, 1) + "%";
 const tiles = computed(() => [
 	{ label: "Total Spend", value: money(props.totalSpend, 4) },
 	{ label: "Max Budget", value: props.maxBudget === null ? "No limit" : money(props.maxBudget, 4) },
@@ -40,11 +40,19 @@ const tiles = computed(() => [
 	},
 	{ label: "Avg. Cost / Request", value: money(props.totalSpend / (props.metadata.total_api_requests || 1), 4) },
 ]);
-const tokens = computed(() => [
-	{ label: "Input Tokens", value: number(props.metadata.total_prompt_tokens), color: "#2563eb" },
-	{ label: "Output Tokens", value: number(props.metadata.total_completion_tokens), color: "#0891b2" },
-	{ label: "Cache Read", value: number(props.metadata.total_cache_read_input_tokens), color: "#059669" },
-	{ label: "Cache Write", value: number(props.metadata.total_cache_creation_input_tokens), color: "#7c3aed" },
+const tokens = computed(() =>
+	usageTokenBreakdown({
+		prompt_tokens: props.metadata.total_prompt_tokens,
+		completion_tokens: props.metadata.total_completion_tokens,
+		total_tokens: props.metadata.total_tokens,
+		cache_read_input_tokens: props.metadata.total_cache_read_input_tokens,
+		cache_creation_input_tokens: props.metadata.total_cache_creation_input_tokens,
+	}),
+);
+const tokenLines = computed(() => [
+	{ key: "input", label: "Input", value: tokens.value.input, share: tokens.value.inputShare, color: "#2563eb" },
+	{ key: "output", label: "Output", value: tokens.value.output, share: tokens.value.outputShare, color: "#0891b2" },
+	{ key: "cache", label: "Cache read", value: tokens.value.cacheRead, share: tokens.value.cacheReadShare, color: "#059669" },
 ]);
 </script>
 <template>
@@ -61,16 +69,43 @@ const tokens = computed(() => [
 				></label>
 				<div :style="{ color: tile.color }" :title="tile.value">{{ tile.value }}</div>
 			</div>
-			<button type="button" class="usage-metric usage-token-toggle" :aria-expanded="showTokenBreakdown" @click="emit('toggle')">
-				<label>Total Tokens<UiIcon :name="showTokenBreakdown ? 'DownOutlined' : 'RightOutlined'" :size="10" /></label>
-				<div>{{ number(metadata.total_tokens) }}</div>
-			</button>
 		</div>
-		<div v-if="showTokenBreakdown" class="usage-token-breakdown">
-			<div v-for="tile in tokens" :key="tile.label" class="usage-metric">
-				<label>{{ tile.label }}</label>
-				<div :style="{ color: tile.color }" :title="tile.value">{{ tile.value }}</div>
+		<section class="usage-token-panel" aria-label="Token usage">
+			<div class="usage-token-summary">
+				<div class="usage-token-total">
+					<label>Total Tokens</label>
+					<strong>{{ number(metadata.total_tokens) }}</strong>
+				</div>
+				<div class="usage-token-rate">
+					<UiTooltip
+						title="Cache reads divided by all input tokens. Cache writes are not counted as hits, and they stay part of input."
+						><span class="usage-token-rate-value">{{ tokens.hitRate }}%</span></UiTooltip
+					>
+					<span class="usage-token-rate-label">cache hit rate</span>
+					<span class="usage-token-rate-track" aria-hidden="true"
+						><i :style="{ width: Math.min(Math.max(tokens.hitRate, 0), 100) + '%' }"
+					/></span>
+				</div>
 			</div>
-		</div>
+			<div class="usage-token-lines">
+				<div v-for="line in tokenLines" :key="line.key" class="usage-token-line">
+					<span class="usage-token-line-label"
+						><i :style="{ backgroundColor: line.color }" aria-hidden="true" />{{ line.label }}</span
+					>
+					<b>{{ number(line.value) }}</b>
+					<small>{{ percent(line.share) }}</small>
+				</div>
+			</div>
+			<div class="usage-token-composition" aria-hidden="true">
+				<i
+					v-for="line in tokenLines"
+					:key="line.key"
+					:style="{ width: Math.max(line.share, 0) + '%', backgroundColor: line.color }"
+				/>
+			</div>
+			<p v-if="tokens.cacheWrite > 0" class="usage-token-note">
+				Cache write {{ number(tokens.cacheWrite) }} tokens (included in input, excluded from the hit rate).
+			</p>
+		</section>
 	</UiCard>
 </template>

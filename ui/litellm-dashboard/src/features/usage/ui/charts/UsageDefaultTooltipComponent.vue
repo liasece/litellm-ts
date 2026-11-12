@@ -9,6 +9,9 @@ defineProps<{
 	format: (value: number) => string;
 	compact: boolean;
 	modelTooltip?: boolean;
+	secondaryCategories?: string[];
+	secondaryFormat?: (value: number) => string;
+	secondaryColors?: string[];
 }>();
 function label(value: string) {
 	return value
@@ -31,6 +34,13 @@ function label(value: string) {
 					<p>{{ compact ? label(category) : category }}</p>
 				</div>
 				<p>{{ format(Number(chartValue(row, category))) }}</p>
+			</div>
+			<div v-for="(category, i) in secondaryCategories" :key="category">
+				<div>
+					<i class="usage-default-tooltip-dash" :style="{ color: secondaryColors?.[i % (secondaryColors?.length || 1)] }" />
+					<p>{{ compact ? label(category) : category }}</p>
+				</div>
+				<p>{{ secondaryFormat?.(Number(chartValue(row, category))) }}</p>
 			</div>
 		</div>
 	</div>
@@ -110,5 +120,15 @@ function label(value: string) {
 }
 .usage-default-tooltip--compact .usage-default-tooltip-rows p {
 	font-weight: 500;
+}
+.usage-default-tooltip-rows i.usage-default-tooltip-dash {
+	width: 12px;
+	height: 0;
+	border: 0;
+	border-top: 2px dashed currentColor;
+	border-radius: 0;
+	background: none;
+	box-shadow: none;
+	filter: none;
 }
 </style>

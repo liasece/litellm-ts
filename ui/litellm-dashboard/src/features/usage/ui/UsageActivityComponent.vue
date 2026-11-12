@@ -7,6 +7,7 @@ import UsageLegend from "./charts/UsageLegendComponent.vue";
 import UsageActivitySection from "./UsageActivitySectionComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { overallActivity } from "../logic/UsageSummaryLogic";
+import { tokenChartFields, usageTokenBreakdown } from "../logic/UsageTokenLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import type { ModelActivityData } from "../support/UsageModels";
@@ -20,7 +21,17 @@ const names = computed(() =>
 );
 const open = ref(new Set(names.value.length ? [names.value[0]] : [])),
 	visited = ref(new Set(open.value));
-const total = computed(() => overallActivity(props.modelMetrics));
+const total = computed(() => overallActivity(props.modelMetrics)),
+	tokens = computed(() =>
+		usageTokenBreakdown({
+			prompt_tokens: total.value.total_prompt_tokens,
+			completion_tokens: total.value.total_completion_tokens,
+			total_tokens: total.value.total_tokens,
+			cache_read_input_tokens: total.value.total_cache_read_input_tokens,
+			cache_creation_input_tokens: total.value.total_cache_creation_input_tokens,
+		}),
+	),
+	tokenDays = computed(() => total.value.daily_data.map((row) => ({ date: row.date, ...tokenChartFields(row.metrics) })));
 function toggle(name: string) {
 	const next = new Set(open.value);
 	if (next.has(name)) next.delete(name);
@@ -44,7 +55,8 @@ function toggle(name: string) {
 					<h2>{{ total.total_successful_requests.toLocaleString() }}</h2></UiCard
 				><UiCard appearance="tremor"
 					><p>Total Tokens</p>
-					<h2>{{ number(total.total_tokens) }}</h2></UiCard
+					<h2>{{ number(total.total_tokens) }}</h2>
+					<p>{{ tokens.hitRate }}% cache hit rate</p></UiCard
 				><UiCard appearance="tremor"
 					><p>Total Spend</p>
 					<h2>{{ money(total.total_spend, 2) }}</h2></UiCard
@@ -53,18 +65,21 @@ function toggle(name: string) {
 			<div class="usage-grid-two">
 				<UiCard appearance="tremor"
 					><header>
-						<h2>Total Tokens Over Time</h2>
+						<h2>Token Usage Over Time</h2>
 						<UsageLegend
-							:categories="['metrics.prompt_tokens', 'metrics.completion_tokens', 'metrics.total_tokens']"
-							:colors="['blue', 'cyan', 'indigo']"
+							:categories="['input', 'output', 'cache_read', 'hit_rate']"
+							:colors="['blue', 'cyan', 'emerald', 'amber']"
+							:dashed="[false, false, false, true]"
 						/>
 					</header>
 					<UsageChart
-						:data="total.daily_data"
+						:data="tokenDays"
 						index="date"
-						:categories="['metrics.prompt_tokens', 'metrics.completion_tokens', 'metrics.total_tokens']"
-						:colors="['blue', 'cyan', 'indigo']"
+						:categories="['input', 'output', 'cache_read']"
+						:colors="['blue', 'cyan', 'emerald']"
 						kind="area"
+						:y-axis-width="104"
+						:secondary-categories="['hit_rate']"
 						:format="number" /></UiCard
 				><UiCard appearance="tremor"
 					><header>

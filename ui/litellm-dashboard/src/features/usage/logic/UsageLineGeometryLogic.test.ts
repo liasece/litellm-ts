@@ -45,3 +45,20 @@ describe("usage area behaviour", () => {
 		expect(usageLineGeometry({ ...input, data, curve: "natural" }).series[0].linePaths).toHaveLength(2);
 	});
 });
+
+describe("secondary hit rate axis", () => {
+	it("maps percentages onto the right axis and reserves a right gutter", () => {
+		const data = [
+			{ date: "2026-11-05", metrics: { total_tokens: 3000 }, hit_rate: 50 },
+			{ date: "2026-11-06", metrics: { total_tokens: 6000 }, hit_rate: 100 },
+		];
+		const result = usageLineGeometry({ ...input, data, rightAxisWidth: 48, secondaryCategories: ["hit_rate"] });
+		const primary = usageLineGeometry({ ...input, data });
+
+		expect(result.axes.rightTicks.map((tick) => tick.text)).toEqual(["0%", "25%", "50%", "75%", "100%"]);
+		expect(result.axes.rightTicks[0].x).toBe(result.axes.left + result.axes.plotWidth + 8);
+		expect(result.axes.plotWidth).toBe(primary.axes.plotWidth - 48);
+		expect(result.secondarySeries[0].points[0]!.y).toBeCloseTo(result.axes.top + result.axes.plotHeight / 2, 6);
+		expect(result.secondarySeries[0].points[1]!.y).toBeCloseTo(result.axes.top, 6);
+	});
+});

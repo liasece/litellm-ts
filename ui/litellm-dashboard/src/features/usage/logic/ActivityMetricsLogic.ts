@@ -7,7 +7,7 @@ import type {
 	TopModelData,
 	UsageTeam,
 } from "../support/UsageModels";
-import { formatKeyLabel } from "./UsageSummaryLogic";
+import { addMetrics, emptyMetrics, formatKeyLabel } from "./UsageSummaryLogic";
 export const processActivityData = (
 	dailyActivity: { results: DailyData[] },
 	key: "models" | "api_keys" | "mcp_servers" | "entities",
@@ -125,6 +125,7 @@ export const processActivityData = (
 									successful_requests: 0,
 									failed_requests: 0,
 									tokens: 0,
+									metrics: emptyMetrics(),
 								};
 							}
 
@@ -133,6 +134,7 @@ export const processActivityData = (
 							modelBreakdown[modelName].successful_requests += keyDataForModel.metrics.successful_requests || 0;
 							modelBreakdown[modelName].failed_requests += keyDataForModel.metrics.failed_requests || 0;
 							modelBreakdown[modelName].tokens += keyDataForModel.metrics.total_tokens;
+							addMetrics(modelBreakdown[modelName].metrics, keyDataForModel.metrics);
 						}
 					}
 				});
