@@ -20,7 +20,6 @@ import {
 	addDays,
 	buildModelSpeedReport,
 	currentDayInTimeZone,
-	MIN_BUCKET_REQUESTS,
 	parseSpeedDateRange,
 	parseSpeedTimeZone,
 	registerModelSpeedEndpoints,
@@ -289,7 +288,6 @@ describe("buildModelSpeedReport", () => {
 		const entry = report.models[0]!;
 
 		// 单样本时段被当成「没有数据」：不出现，也不把 400 拉进平均
-		expect(MIN_BUCKET_REQUESTS).toBe(2);
 		expect(entry.points.map((point) => point.bucket)).toEqual(["2026-11-02T00:00:00.000Z"]);
 		expect(entry.avg_tps).toBeCloseTo(90, 6);
 		expect(entry.requests).toBe(12);

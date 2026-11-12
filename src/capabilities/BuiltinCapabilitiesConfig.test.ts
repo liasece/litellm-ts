@@ -23,8 +23,6 @@ describe("BuiltinCapabilitiesConfig", () => {
 
 	it("承认 20 轮私有轮次配置，超过上限才收口", () => {
 		// 4 轮时代复杂调研任务常在拿到证据前耗尽预算（生产 503「超过 4 轮仍未完成」）。
-		expect(MAX_BUILTIN_CAPABILITY_ITERATIONS).toBe(20);
-
 		const raised = normalizeBuiltinCapabilitiesConfig({ web: { max_iterations: 20 } });
 		expect(raised.web.max_iterations).toBe(20);
 

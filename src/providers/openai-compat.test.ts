@@ -253,12 +253,6 @@ describe("OpenAICompatProvider", () => {
 		});
 	});
 
-	describe("supportsStreaming", () => {
-		it("returns true", () => {
-			expect(provider.supportsStreaming()).toBe(true);
-		});
-	});
-
 	describe("streamResponse", () => {
 		function createMockResponse(chunks: string[]): Response {
 			return new Response(

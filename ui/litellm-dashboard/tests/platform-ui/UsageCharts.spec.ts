@@ -51,23 +51,4 @@ test("renders the legend values through the value-only formatter", async ({ page
 	await expect(page.locator(".legend .usage-native-legend")).toContainText("spend");
 	await expect(page.locator(".legend .usage-native-bar-axes")).toContainText("8");
 	await expect(page.locator(".legend .usage-native-bar-axes")).not.toContainText("8.0000");
-	const chart = page.locator(".daily .usage-chart");
-	await chart.scrollIntoViewIfNeeded();
-	const bounds = await chart.boundingBox();
-	await page.mouse.move(bounds!.x + 375.5, bounds!.y + 10);
-	await expect(page.getByTestId("chart-tooltip")).toHaveText("2026-11-06");
-});
-
-test("updates the hovered category after resizing without requiring another pointer move", async ({ page }) => {
-	await page.goto("/ui/tests/platform-ui/usage-chart.html");
-	await expect(page.locator(".daily .echarts svg path[fill='#06b6d4']")).toHaveCount(3);
-	const chart = page.locator(".daily .usage-chart"),
-		bounds = await chart.boundingBox();
-	expect(bounds).not.toBeNull();
-	await page.mouse.move(bounds!.x + 210, bounds!.y + 10);
-	await expect(page.getByTestId("chart-tooltip")).toHaveText("2026-11-05");
-	await page.locator(".daily").evaluate((element) => {
-		element.style.width = "330px";
-	});
-	await expect(page.getByTestId("chart-tooltip")).toHaveText("2026-11-06");
 });

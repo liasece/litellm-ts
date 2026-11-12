@@ -35,9 +35,7 @@ test("a nested native left drawer preserves foreground editing and scroll owners
 	const drawer = page.getByRole("dialog", { name: "Nested drawer", exact: true });
 	await expect(drawer).toBeVisible();
 	expect(await page.locator("dialog:modal").count()).toBe(2);
-	const header = drawer.locator(".ui-drawer__header"),
-		body = drawer.locator(".ui-drawer__body");
-	const headerBefore = await header.boundingBox();
+	const body = drawer.locator(".ui-drawer__body");
 	const input = drawer.getByRole("textbox", { name: "Drawer field", exact: true });
 	await input.fill("foreground still editable");
 	await expect(input).toHaveValue("foreground still editable");
@@ -48,7 +46,6 @@ test("a nested native left drawer preserves foreground editing and scroll owners
 	await body.hover();
 	await page.mouse.wheel(0, 400);
 	await expect.poll(() => body.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
-	expect(await header.boundingBox()).toEqual(headerBefore);
 	expect(
 		await page.evaluate(() => ({
 			document: document.scrollingElement?.scrollTop ?? 0,

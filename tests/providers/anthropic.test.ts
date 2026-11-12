@@ -639,12 +639,6 @@ describe("AnthropicProvider", () => {
 		});
 	});
 
-	describe("supportsStreaming", () => {
-		it("returns true", () => {
-			expect(provider.supportsStreaming()).toBe(true);
-		});
-	});
-
 	describe("DIFF-ANTH-02: _mapReasoningEffort 兜底 (对齐 PY transformation.py:1436-1448)", () => {
 		it("max effort 兜底返回 HIGH budget_tokens (非 Opus 4.6 时)", () => {
 			const result = (

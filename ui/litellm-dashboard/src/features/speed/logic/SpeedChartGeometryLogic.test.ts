@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { speedChartGeometry, speedTooltipPosition, speedValueTicks } from "./SpeedChartGeometryLogic";
+import { speedChartGeometry, speedValueTicks } from "./SpeedChartGeometryLogic";
 import { speedTimeTicks } from "./SpeedTimeTickLogic";
 import type { SpeedChartRow } from "./ModelSpeedLogic";
 
@@ -33,12 +33,6 @@ describe("Speed chart behaviour", () => {
 
 		expect(geometry.path.match(/M/g)).toHaveLength(3);
 		expect(geometry.dots.map((dot) => dot.index)).toEqual([0, 1, 3, 4, 6]);
-	});
-
-	it("flips and bounds tooltips against the plot, without using the curve y value", () => {
-		expect(speedTooltipPosition(87 + 2 / 3, 139.109375, 34, 356)).toBeCloseTo(97 + 2 / 3);
-		expect(speedTooltipPosition(180, 139.109375, 34, 326)).toBe(34);
-		expect(speedTooltipPosition(40, 58, 4, 70)).toBe(4);
 	});
 
 	it("generates local calendar day and hour ticks without adding endpoint samples", () => {

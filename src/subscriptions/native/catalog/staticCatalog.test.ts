@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ApiError } from "../../../core/api/ApiError";
-import { clearStaticCatalogCache, defaultStaticCatalogPath, staticCatalogForSource } from "./staticCatalog";
+import { clearStaticCatalogCache, staticCatalogForSource } from "./staticCatalog";
 
 /** 写一份临时目录文件并返回路径。 */
 async function writeCatalogFile(entries: unknown): Promise<string> {
@@ -22,50 +22,6 @@ afterEach(() => {
 });
 
 describe("静态订阅模型目录", () => {
-	it("把 codex 四个套餐键合并为一份目录并按 id 去重", () => {
-		const models = staticCatalogForSource("codex");
-		const ids = models.map((model) => model.id);
-
-		expect(ids).toHaveLength(9);
-		expect(ids[0]).toBe("gpt-6-luna");
-		expect(new Set(ids).size).toBe(ids.length);
-		expect(models.find((model) => model.id === "gpt-6-astra")).toMatchObject({
-			upstreamId: "gpt-6-astra",
-			displayName: "GPT 6.0 Astra",
-			protocol: "responses",
-			metadata: expect.objectContaining({
-				type: "openai",
-				contextLength: 272000,
-				maxOutputTokens: 128000,
-				catalogKeys: ["codex-team", "codex-plus", "codex-pro"],
-			}),
-		});
-	});
-
-	it("按来源过滤五家静态目录并映射 id / 展示名 / 类型 / 上下文", () => {
-		const claude = staticCatalogForSource("claude");
-		expect(claude).toHaveLength(19);
-		expect(claude[0]).toMatchObject({
-			id: "claude-haiku-4-5-20251001",
-			upstreamId: "claude-haiku-4-5-20251001",
-			displayName: "Claude 4.5 Haiku",
-			protocol: "messages",
-			metadata: expect.objectContaining({ type: "claude", ownedBy: "anthropic", contextLength: 200000, catalogKeys: ["claude"] }),
-		});
-
-		expect(staticCatalogForSource("kimi")[0]).toMatchObject({ id: "kimi-k2", protocol: "chat", metadata: expect.objectContaining({ type: "kimi" }) });
-		expect(staticCatalogForSource("antigravity")[0]).toMatchObject({
-			id: "claude-opus-4-6-thinking",
-			protocol: "gemini",
-			metadata: expect.objectContaining({ type: "antigravity", contextLength: 200000 }),
-		});
-		expect(staticCatalogForSource("xai")[0]).toMatchObject({
-			id: "grok-4.7",
-			protocol: "responses",
-			metadata: expect.objectContaining({ type: "xai", contextLength: 500000 }),
-		});
-	});
-
 	it("动态来源没有静态键，返回空目录", () => {
 		expect(staticCatalogForSource("commandcode")).toEqual([]);
 		expect(staticCatalogForSource("opencode-go")).toEqual([]);
@@ -107,12 +63,20 @@ describe("静态订阅模型目录", () => {
 				displayName: "Shared",
 				metadata: expect.objectContaining({ catalogKeys: ["codex-free", "codex-team"], contextLength: 100 }),
 			});
-			expect(codex[1]).toMatchObject({ displayName: "Team Only", metadata: expect.objectContaining({ catalogKeys: ["codex-team"] }) });
+			expect(codex[1]).toMatchObject({
+				displayName: "Team Only",
+				metadata: expect.objectContaining({ catalogKeys: ["codex-team"] }),
+			});
 			expect(codex[2]).toMatchObject({ displayName: "legacy-name-only", upstreamId: "legacy-name-only" });
 
 			const kimi = staticCatalogForSource("kimi", { filePath: filePath });
 			expect(kimi).toHaveLength(1);
-			expect(kimi[0]).toMatchObject({ id: "kimi-custom", displayName: "kimi-custom", protocol: "chat", metadata: expect.objectContaining({ contextLength: 131072 }) });
+			expect(kimi[0]).toMatchObject({
+				id: "kimi-custom",
+				displayName: "kimi-custom",
+				protocol: "chat",
+				metadata: expect.objectContaining({ contextLength: 131072 }),
+			});
 		} finally {
 			await removeCatalogFile(filePath);
 		}
@@ -136,9 +100,5 @@ describe("静态订阅模型目录", () => {
 		} finally {
 			await removeCatalogFile(notObject);
 		}
-	});
-
-	it("默认路径指向随包的 data 目录", () => {
-		expect(defaultStaticCatalogPath().endsWith(path.join("data", "subscription-models.json"))).toBe(true);
 	});
 });

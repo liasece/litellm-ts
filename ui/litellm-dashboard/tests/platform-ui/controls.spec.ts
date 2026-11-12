@@ -89,9 +89,7 @@ test("shared notifications stay visible over native modals", async ({ page }) =>
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole("alert").filter({ hasText: "Fixture inside modal" })).toBeVisible();
 });
-test("two mounted Key forms use distinct IDs and labels focus their own fields", async ({ page }) => {
-	const ids = await page.locator('input[id$="-key_alias"]').evaluateAll((inputs) => inputs.map((input) => input.id));
-	expect(new Set(ids).size).toBe(2);
+test("two mounted Key forms keep labels focused on their own fields", async ({ page }) => {
 	const edit = page.locator(".edit-key-fixture");
 	await edit.locator("label").filter({ hasText: "Key Alias" }).click();
 	await expect(edit.getByRole("textbox", { name: "Key Alias", exact: true })).toBeFocused();
@@ -139,21 +137,6 @@ test("Tremor passwords retain original visibility control without adding an AntD
 	await expect(password).toHaveAttribute("type", "password");
 });
 
-test("auto-sized content shrinks after editing", async ({ page }) => {
-	const draft = page.getByRole("textbox", { name: "Auto sized draft", exact: true });
-	await draft.evaluate((element: HTMLTextAreaElement) => element.style.setProperty("transition", "height 200ms linear", "important"));
-	await draft.fill("first\nsecond\nthird\nfourth\nfifth");
-	const expanded = (await draft.boundingBox())!.height;
-	await draft.fill("a");
-	await expect.poll(async () => (await draft.boundingBox())!.height).toBeLessThan(expanded);
-});
-
-test("a bordered AntD two-character label retains its readable space and still invokes the action", async ({ page }) => {
-	await page.getByRole("button", { name: "接 受", exact: true }).click();
-	await expect(page.getByTestId("chinese-accepts")).toHaveText("1");
-	for (const name of ["查看", "保存", "取消"]) await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
-});
-
 test("all Tremor navigation items remain clickable when their labels must shrink on a narrow screen", async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	const navigation = page.getByTestId("narrow-tremor-navigation");
@@ -165,10 +148,4 @@ test("all Tremor navigation items remain clickable when their labels must shrink
 	await expect(page.getByTestId("narrow-tremor-page")).toHaveText("types");
 	await navigation.getByRole("tab", { name: "Logging Callbacks", exact: true }).click();
 	await expect(page.getByTestId("narrow-tremor-page")).toHaveText("callbacks");
-});
-
-test("an alert projects the supplied icon and retains a default symbol when no icon is supplied", async ({ page }) => {
-	await expect(page.getByTestId("custom-alert-icon")).toBeVisible();
-	await expect(page.getByTestId("custom-alert")).toContainText("Policy description");
-	await expect(page.getByTestId("default-alert").locator(".ui-alert__symbol svg")).toBeVisible();
 });

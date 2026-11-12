@@ -284,12 +284,6 @@ describe("AnthropicProvider", () => {
 		});
 	});
 
-	describe("supportsStreaming", () => {
-		it("支持流式", () => {
-			expect(provider.supportsStreaming()).toBe(true);
-		});
-	});
-
 	describe("structured-outputs beta 注入 (output_format 触发)", () => {
 		it("output_format 存在时注入 structured-outputs-2025-09-25", () => {
 			const messages: Message[] = [{ role: "user", content: "Hi" }];

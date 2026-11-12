@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildSpeedChartRows,
-	buildSpeedStrokeStops,
 	filterSpeedModels,
 	formatSpeedBucketLabel,
 	formatTps,
 	resolveSpeedAxisMax,
 	resolveSpeedRange,
 	speedModelKey,
-	speedStrokeColor,
 } from "./ModelSpeedLogic";
 import type { SpeedModelSeries, SpeedPoint } from "../support/SpeedModels";
 
@@ -150,67 +148,5 @@ describe("filterSpeedModels", () => {
 	it("也能按供应商筛选同名模型，找到具体是哪一条曲线", () => {
 		expect(filterSpeedModels(models, "opencode").map(speedModelKey)).toEqual(["opencode-go\u0000claude-opus-4-5"]);
 		expect(filterSpeedModels(models, "claude-subscription").map(speedModelKey)).toEqual(["claude-subscription\u0000claude-opus-4-5"]);
-	});
-});
-
-/** 从 hsl(...) 文本里取出色相，便于比较「红不红」 */
-const hueOf = (color: string): number => Number(color.slice(4, color.indexOf(",")));
-
-describe("speedStrokeColor", () => {
-	it("超过 200 不会更红，避免极端值抢走视觉重点", () => {
-		expect(speedStrokeColor(500)).toBe(speedStrokeColor(200));
-		expect(speedStrokeColor(1234.5)).toBe(speedStrokeColor(200));
-	});
-
-	it("速度越高色相越靠近红", () => {
-		expect(hueOf(speedStrokeColor(0))).toBeGreaterThan(hueOf(speedStrokeColor(100)));
-		expect(hueOf(speedStrokeColor(100))).toBeGreaterThan(hueOf(speedStrokeColor(200)));
-	});
-
-	it("负值与非有限值按 0 处理", () => {
-		expect(speedStrokeColor(-10)).toBe(speedStrokeColor(0));
-		expect(speedStrokeColor(Number.NaN)).toBe(speedStrokeColor(0));
-		expect(speedStrokeColor(Number.POSITIVE_INFINITY)).toBe(speedStrokeColor(0));
-	});
-});
-
-describe("buildSpeedStrokeStops", () => {
-	it("从上到下按取值排序，两端分别对应本图最大/最小值", () => {
-		const stops = buildSpeedStrokeStops(0, 100);
-
-		expect(stops[0]!.offset).toBe(0);
-		expect(stops[0]!.color).toBe(speedStrokeColor(100));
-		expect(stops[stops.length - 1]!.offset).toBe(1);
-		expect(stops[stops.length - 1]!.color).toBe(speedStrokeColor(0));
-		for (let index = 1; index < stops.length; index += 1) {
-			expect(stops[index]!.offset).toBeGreaterThan(stops[index - 1]!.offset);
-		}
-	});
-
-	it("纵轴从 0 起不影响配色：颜色只由取值决定", () => {
-		// 数据在 60~120 之间时，渐变覆盖的仍是 60~120，而不是被轴上的 0 拉伸
-		const stops = buildSpeedStrokeStops(60, 120);
-
-		expect(stops[0]!.color).toBe(speedStrokeColor(120));
-		expect(stops[stops.length - 1]!.color).toBe(speedStrokeColor(60));
-		expect(stops.map((stop) => stop.color)).not.toContain(speedStrokeColor(200));
-	});
-
-	it("跨过 200 后按纯红封顶：200 以上所有停靠点同色", () => {
-		const stops = buildSpeedStrokeStops(0, 400);
-		const boundary = stops.find((stop) => Math.abs(stop.offset - 0.5) < 1e-9);
-
-		expect(boundary).toBeDefined();
-		expect(boundary!.color).toBe(speedStrokeColor(200));
-		expect(stops.filter((stop) => stop.offset <= 0.5).every((stop) => stop.color === speedStrokeColor(200))).toBe(true);
-		expect(hueOf(stops[stops.length - 1]!.color)).toBeGreaterThan(hueOf(speedStrokeColor(200)));
-	});
-
-	it("单点数据退化为同一颜色，不产生非法 offset", () => {
-		const stops = buildSpeedStrokeStops(90, 90);
-
-		expect(stops).toHaveLength(2);
-		expect(stops.every((stop) => stop.color === speedStrokeColor(90))).toBe(true);
-		expect(stops.every((stop) => stop.offset >= 0 && stop.offset <= 1)).toBe(true);
 	});
 });

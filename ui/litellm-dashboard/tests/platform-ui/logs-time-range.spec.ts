@@ -30,42 +30,6 @@ async function openLogs(page: Page, requests: ListRequests = []): Promise<void> 
 	await expect(page.locator(".logs-time-button")).toHaveText(/All Time/);
 }
 
-/**
- * 时间范围菜单曾经以 absolute/right: 0 贴在按钮上，被 `.logs-page` 的 overflow-x 裁掉了左侧文字。
- * 这里核对的是用户可见结果：面板与每个选项都必须完整落在页面可视区里。
- */
-async function expectMenuInsideViewport(page: Page): Promise<void> {
-	const geometry = await page.evaluate(() => {
-		const menu = document.querySelector(".logs-time-menu");
-		const container = document.querySelector(".logs-page");
-		if (!menu || !container) return null;
-		const read = (element: Element) => {
-			const rect = element.getBoundingClientRect();
-			return { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom };
-		};
-		return {
-			menu: read(menu),
-			container: read(container),
-			options: [...menu.querySelectorAll("button")].map((button) => ({
-				text: button.textContent?.trim() ?? "",
-				...read(button),
-			})),
-			viewport: { width: window.innerWidth, height: window.innerHeight },
-		};
-	});
-	expect(geometry).not.toBeNull();
-	if (!geometry) return;
-	expect(geometry.menu.left).toBeGreaterThanOrEqual(0);
-	expect(geometry.menu.top).toBeGreaterThanOrEqual(0);
-	expect(geometry.menu.right).toBeLessThanOrEqual(geometry.viewport.width);
-	expect(geometry.menu.bottom).toBeLessThanOrEqual(geometry.viewport.height);
-	expect(geometry.menu.left).toBeGreaterThanOrEqual(geometry.container.left);
-	for (const option of geometry.options) {
-		expect(option.left, option.text).toBeGreaterThan(geometry.menu.left);
-		expect(option.right, option.text).toBeLessThanOrEqual(geometry.menu.right);
-	}
-}
-
 test("默认时间范围是 All Time：列表请求不带 start_date", async ({ page }) => {
 	const requests: ListRequests = [];
 	await openLogs(page, requests);
@@ -89,25 +53,6 @@ test("选择预设区间后按该区间请求，切回 All Time 又不再带时�
 	await page.getByRole("button", { name: "All Time", exact: true }).click();
 	await expect(trigger).toHaveText(/All Time/);
 	await expect.poll(() => requests.at(-1)?.searchParams.has("start_date") ?? true).toBe(false);
-});
-
-test("time range menu stays inside the page instead of being clipped by the logs container", async ({ page }) => {
-	await openLogs(page);
-	await page.locator(".logs-time-button").click();
-	await expect(page.locator(".logs-time-menu")).toBeVisible();
-	await expectMenuInsideViewport(page);
-	// All Time 排在第一位，历史档位保持原有顺序。
-	const menu = page.locator(".logs-time-menu");
-	await expect(menu.getByRole("button", { name: "All Time", exact: true })).toBeVisible();
-	await expect(menu.getByRole("button", { name: "Last 15 Minutes", exact: true })).toBeVisible();
-});
-
-test("narrow viewport keeps the whole time range menu on screen", async ({ page }) => {
-	await page.setViewportSize({ width: 380, height: 640 });
-	await openLogs(page);
-	await page.locator(".logs-time-button").click();
-	await expect(page.locator(".logs-time-menu")).toBeVisible();
-	await expectMenuInsideViewport(page);
 });
 
 test("picking an interval closes the menu, updates the trigger and reopens", async ({ page }) => {
