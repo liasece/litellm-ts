@@ -44,6 +44,7 @@ import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { buildSpendLogFromRequest, calculateAndSetCost, checkpointActiveRequest, releaseSpend } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
+import { bindLiveCheckpoint } from "../spend/LiveCheckpointBinding";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import { createEndpointSpendLifecycle, reserveEndpointSpend } from "../spend/SpendReservation";
 import { runCommonChecks } from "../auth/AuthChecks";
@@ -916,33 +917,36 @@ export function registerAnthropicMessagesEndpoints(
 				const checkpointDb = db;
 				let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
 				if (checkpointRequestId !== undefined && checkpointDb !== undefined) {
-					streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
-						serialize: () => {
-							const response = buildNativeStreamResponse(currentAccumulator, requestedModel);
-							const inputTokens = currentAccumulator.usage["input_tokens"] ?? 0;
-							const outputTokens = currentAccumulator.usage["output_tokens"] ?? 0;
-							if (response === undefined && inputTokens === 0 && outputTokens === 0) {
-								return null;
-							}
-							return {
-								protocol: "anthropic_messages",
-								state: "in_progress",
-								response: response ?? null,
-								usage:
-									inputTokens > 0 || outputTokens > 0
-										? {
-												prompt_tokens: inputTokens,
-												completion_tokens: outputTokens,
-												total_tokens: inputTokens + outputTokens,
-											}
-										: null,
-								upstream_request: (upstreamLogContext?.request ?? null) as Record<string, unknown> | null,
-								upstream_response: (upstreamLogContext?.response ?? null) as Record<string, unknown> | null,
-							};
-						},
-						write: (checkpoint) =>
-							checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
-					});
+					streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>(
+						bindLiveCheckpoint<StreamingCheckpoint>(
+							checkpointRequestId,
+							() => {
+								const response = buildNativeStreamResponse(currentAccumulator, requestedModel);
+								const inputTokens = currentAccumulator.usage["input_tokens"] ?? 0;
+								const outputTokens = currentAccumulator.usage["output_tokens"] ?? 0;
+								if (response === undefined && inputTokens === 0 && outputTokens === 0) {
+									return null;
+								}
+								return {
+									protocol: "anthropic_messages",
+									state: "in_progress",
+									response: response ?? null,
+									usage:
+										inputTokens > 0 || outputTokens > 0
+											? {
+													prompt_tokens: inputTokens,
+													completion_tokens: outputTokens,
+													total_tokens: inputTokens + outputTokens,
+												}
+											: null,
+									upstream_request: (upstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+									upstream_response: (upstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+								};
+							},
+							(checkpoint) =>
+								checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+						),
+					);
 				}
 				let streamError: unknown;
 				let completionStartTime: Date | undefined;

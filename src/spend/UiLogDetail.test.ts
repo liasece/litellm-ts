@@ -1,6 +1,7 @@
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { encodeActiveRequestPayload } from "./SpendLogBlocks";
 import { buildActiveRequestDetail } from "./UiLogDetail";
+import { publishLiveResponse, registerLiveResponse, resetLiveResponseRegistry } from "./LiveResponseRegistry";
 
 /** 链式查询替身：既能被 await（块查询），也能 .limit()（在途行查询）。 */
 function selectChain(rows: readonly unknown[]) {
@@ -31,6 +32,49 @@ function createDb(activeRow: Record<string, unknown>, blockRows: readonly Record
 }
 
 describe("buildActiveRequestDetail", () => {
+	afterEach(() => {
+		resetLiveResponseRegistry();
+	});
+
+	it("内存实时快照优先于数据库里的 checkpoint", async () => {
+		const db = createDb(
+			{
+				request_id: "req-mem",
+				call_type: "aresponses",
+				startTime: new Date("2026-01-01T00:00:00.000Z"),
+				model: "gpt",
+				model_id: null,
+				model_group: null,
+				custom_llm_provider: null,
+				api_base: null,
+				user: null,
+				team_id: null,
+				organization_id: null,
+				end_user: null,
+				requester_ip_address: null,
+				session_id: null,
+				request_tags: [],
+				completion_start_time: null,
+				proxy_server_request: { url: "/v1/responses", method: "POST", headers: {}, body: { model: "gpt" } },
+				metadata: {
+					status: "in_progress",
+					streaming_execution: { response: { text: "来自数据库" }, usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+				},
+				request_duration_ms: 10,
+			},
+			[],
+		);
+		registerLiveResponse("req-mem", () => ({
+			response: { text: "来自内存" },
+			usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
+		}));
+
+		const detail = await buildActiveRequestDetail(db as never, "req-mem");
+
+		expect((detail?.["response"] as Record<string, unknown>)["text"]).toBe("来自内存");
+		expect(detail?.["total_tokens"]).toBe(12);
+	});
+
 	it("把在途行的正文引用组装回完整请求体", async () => {
 		const messages = [
 			{ role: "user", content: [{ type: "text", text: "V".repeat(20_000) }] },

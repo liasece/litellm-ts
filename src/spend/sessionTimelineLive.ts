@@ -24,6 +24,7 @@ import { and, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
+import { readLiveResponseSequence, readLiveResponseSnapshot } from "./LiveResponseRegistry";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
 import {
@@ -784,6 +785,7 @@ function buildInProgressTimelineRow(row: SessionActiveRequestSourceRow): Session
 		: isRecord(metadata["responses_execution"])
 			? metadata["responses_execution"]
 			: undefined;
+	// 数据库里的同名字段是进程重启后的兜底；实时内容由 _applyLiveSnapshots 叠加。
 	const usage = readInProgressUsage(checkpoint);
 	const response = checkpoint?.["response"] ?? null;
 	const upstreamBody = activeUpstreamRequestBody(row.proxy_server_request);
@@ -1521,6 +1523,8 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 	private _activeRows: SessionTimelineSourceRow[] = [];
 	/** 上次读取进行中行时的指纹 */
 	private _activeRevision: string | null = null;
+	/** 进行中行在进程内存里的发布序号；正文变化不推进 updated_at，用它能发现新内容 */
+	private _activeLiveSequence = "";
 	/** 窗口参数：快照只读最近一段，长会话因此不会被整段累积快照拖慢 */
 	private readonly _window: SessionTimelineWindowOptions;
 	/** 上次快照返回的窗口信息；追加增量不改变它 */
@@ -1553,6 +1557,7 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 	public async snapshot(): Promise<SessionTimelinePayload> {
 		await this._reloadSettled();
 		await this._reloadActive();
+		this._activeLiveSequence = this._collectLiveSequence();
 		const payload = await this._compose();
 		this._publish(payload);
 		return this._windowInfo ? { ...payload, window: this._windowInfo } : payload;
@@ -1564,7 +1569,10 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 		const activeRevision = await this._readInProgressRevision(this._db, this._scope);
 		const settledChanged = settledCount !== this._loadedCount;
 		const activeChanged = activeRevision !== this._activeRevision;
-		if (!settledChanged && !activeChanged) {
+		// 流式正文只在进程内存里更新，不再推进 updated_at，需要单独看发布序号。
+		const liveSequence = this._collectLiveSequence();
+		const liveChanged = liveSequence !== this._activeLiveSequence;
+		if (!settledChanged && !activeChanged && !liveChanged) {
 			return null;
 		}
 		if (settledChanged) {
@@ -1572,6 +1580,7 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 		}
 		// 落库与在途只在结算事务里同时变化：已落库有新行时也重读在途行，避免两边同时保留同一请求。
 		await this._reloadActive();
+		this._activeLiveSequence = this._collectLiveSequence();
 		const payload = await this._compose();
 		return this._publish(payload);
 	}
@@ -1642,10 +1651,56 @@ class SQLSessionTimelineStreamState implements SessionTimelineStreamState {
 	}
 
 	/** 重新读取进行中的行，并剔除已经落库的 request_id。 */
+	/**
+	 * 用进程内存里的实时快照覆盖进行中行的正文与 token 数。
+	 *
+	 * 流式内容不再写进 ActiveRequests，所以数据库里的行只有注册时的静态信息；正文、usage
+	 * 都在执行流的内存快照里（LiveResponseRegistry）。这里统一叠加，SQL 路径与测试替身
+	 * 走同一条逻辑。
+	 */
+	private _applyLiveSnapshots(): void {
+		if (this._activeRows.length === 0) {
+			return;
+		}
+		this._activeRows = this._activeRows.map((row) => {
+			const snapshot = readLiveResponseSnapshot(row.request_id);
+			if (snapshot === null) {
+				return row;
+			}
+			const live = snapshot as Record<string, unknown>;
+			const usage = readInProgressUsage(live);
+			const response = live["response"] ?? null;
+			return {
+				...row,
+				response_payload: response,
+				response_payload_available: response !== null,
+				total_tokens: usage?.total_tokens ?? row.total_tokens,
+			};
+		});
+	}
+
+	/**
+	 * 采集进行中行的内存发布序号。只做整数比较，不序列化正文，可以每秒调用。
+	 */
+	private _collectLiveSequence(): string {
+		if (this._activeRows.length === 0) {
+			return "";
+		}
+		const parts: string[] = [];
+		for (const row of this._activeRows) {
+			const sequence = readLiveResponseSequence(row.request_id);
+			if (sequence > 0) {
+				parts.push(`${row.request_id}#${sequence}`);
+			}
+		}
+		return parts.join(",");
+	}
+
 	private async _reloadActive(): Promise<void> {
 		const revision = await this._readInProgressRevision(this._db, this._scope);
 		const rows = await this._readInProgress(this._db, this._scope);
 		this._activeRows = rows.filter((row) => !this._keyByRequestId.has(row.request_id));
+		this._applyLiveSnapshots();
 		this._activeRevision = revision;
 	}
 

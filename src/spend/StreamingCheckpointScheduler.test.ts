@@ -30,7 +30,7 @@ describe("StreamingCheckpointScheduler", () => {
 		await scheduler.flush();
 
 		expect(serialize).toHaveBeenCalledTimes(1);
-		expect(write).toHaveBeenCalledWith({ data: 1 });
+		expect(write).toHaveBeenCalledWith({ data: 1 }, { final: false });
 	});
 
 	it("serialize 返回 null 时跳过写入", async () => {
@@ -94,7 +94,7 @@ describe("StreamingCheckpointScheduler", () => {
 		expect(onError).toHaveBeenCalledTimes(1);
 	});
 
-	it("dispose 时内容未变化则不补写", async () => {
+	it("dispose 总会补写一次 final，即使内容与上一次相同", async () => {
 		const write = jest.fn().mockResolvedValue(undefined);
 		const serialize = jest.fn().mockReturnValue({ response: { text: "a" } });
 		const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write, intervalMs: 10_000 });
@@ -103,10 +103,24 @@ describe("StreamingCheckpointScheduler", () => {
 		scheduler.onChunk();
 		await scheduler.dispose();
 
-		expect(write).toHaveBeenCalledTimes(1);
-		expect(scheduler.skippedUnchanged).toBe(1);
+		// 内容与上一次相同时，收尾落库仍必须发生：崩溃恢复依赖它拿到最终 usage。
+		expect(write).toHaveBeenCalledTimes(2);
+		expect(write).toHaveBeenNthCalledWith(1, { response: { text: "a" } }, { final: false });
+		expect(write).toHaveBeenNthCalledWith(2, { response: { text: "a" } }, { final: true });
 	});
 
+	it("dispose 后调用 onDispose 注销实时快照", async () => {
+		const onDispose = jest.fn();
+		const scheduler = new StreamingCheckpointScheduler({
+			serialize: () => ({ data: 1 }),
+			write: jest.fn(),
+			onDispose: onDispose,
+		});
+
+		await scheduler.dispose();
+
+		expect(onDispose).toHaveBeenCalledTimes(1);
+	});
 
 	it("多次 flush 串行执行，不并发", async () => {
 		const events: string[] = [];
@@ -212,7 +226,7 @@ describe("StreamingCheckpointScheduler", () => {
 		}
 	});
 
-	it("dispose 会 flush 尚未落库的 dirty 状态", async () => {
+	it("dispose 会 flush 尚未发布的内容", async () => {
 		const write = jest.fn().mockResolvedValue(undefined);
 		const serialize = jest.fn().mockReturnValue({ data: 1 });
 		const scheduler = new StreamingCheckpointScheduler({ serialize: serialize, write: write });
@@ -221,5 +235,6 @@ describe("StreamingCheckpointScheduler", () => {
 		await scheduler.dispose();
 
 		expect(write).toHaveBeenCalledTimes(1);
+		expect(write).toHaveBeenCalledWith({ data: 1 }, { final: true });
 	});
 });

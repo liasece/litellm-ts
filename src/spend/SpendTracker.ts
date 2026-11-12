@@ -1269,6 +1269,9 @@ export type ActiveRequestCheckpointKey = "responses_execution" | "streaming_exec
  * part of the provider success path. The final SpendLog transaction still owns
  * accounting; this journal only preserves already observed request state for
  * diagnostics and restart recovery.
+ *
+ * 流式过程中详情页读的是进程内存里的实时快照（LiveResponseRegistry），不再每 400ms
+ * 整体重写 jsonb；这里只在流结束时写一次，用于崩溃恢复与「刚结束、还没结算」的短暂窗口。
  * @param db
  * @param requestId
  * @param checkpoint

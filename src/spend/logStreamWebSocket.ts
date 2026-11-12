@@ -5,8 +5,9 @@
  * 订阅通道：客户端连上后先收到当前快照，之后只收到变化的顶层字段，请求结束时收到
  * 最终帧并主动断开，前端据此停掉轮询。
  *
- * 复用同一份负载构造（UiLogDetail）保证推送帧与一次性拉取同形；服务器先看
- * `updated_at` 修订号决定是否重读整份负载，空闲时只有一个主键查询。
+ * 首帧读一次库（复用 UiLogDetail 的负载构造，保证推送帧与一次性拉取同形），之后的内容
+ * 变更全部来自执行流在进程内存里的实时快照（LiveResponseRegistry）：不再为「有人看」
+ * 每 400ms 重写一次 jsonb，也不再按修订号回读整行。数据库只剩每 500ms 一次的结束检查。
  */
 
 import type { Server as HttpServer } from "node:http";
@@ -16,7 +17,8 @@ import { expressRequest, guardUpgradeSocket, runMiddleware, writeUpgradeError } 
 import type { ServiceContainer } from "../container";
 import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
-import { buildActiveRequestDetail, buildUiSpendLogDetail, readActiveRequestRevision } from "./UiLogDetail";
+import { applyLiveCheckpointToDetail, buildActiveRequestDetail, buildUiSpendLogDetail, readActiveRequestRevision } from "./UiLogDetail";
+import { subscribeLiveResponse } from "./LiveResponseRegistry";
 import { LOG_STREAM_SUBPROTOCOL } from "./logStreamProtocol";
 
 const logger = createModuleLogger("Spend:LogStream");
@@ -24,8 +26,11 @@ const logger = createModuleLogger("Spend:LogStream");
 /** 订阅日志详情流的路径。 */
 export const SPEND_LOG_STREAM_PATH = "/spend/logs/ui/stream";
 
-/** 修订号轮询周期：checkpoint 最快 400ms 落库一次，250ms 的探询让推送紧随写入。 */
-const REVISION_POLL_INTERVAL_MS = 250;
+/**
+ * 结束检查周期：实时内容由内存推送，这个轮询只用来发现「请求已结算、在途行消失」，
+ * 500ms 足够让终帧紧跟结算，又不会给数据库带来持续压力。
+ */
+const REVISION_POLL_INTERVAL_MS = 500;
 
 /** 单个订阅的最长存活时间，避免浏览器异常退出后连接长期占用。 */
 const MAX_STREAM_DURATION_MS = 15 * 60 * 1_000;
@@ -47,8 +52,10 @@ export interface SpendLogStreamDeps {
 	readonly loadActiveDetail?: typeof buildActiveRequestDetail;
 	/** 构造最终（已落库）负载 */
 	readonly loadSettledDetail?: typeof buildUiSpendLogDetail;
-	/** 修订号轮询周期 */
+	/** 结束检查周期 */
 	readonly pollIntervalMs?: number;
+	/** 订阅进程内实时快照（测试可替换） */
+	readonly subscribeLive?: (requestId: string, listener: (snapshot: unknown | null) => void) => () => void;
 	/** 单个订阅最长存活时间 */
 	readonly maxDurationMs?: number;
 }
@@ -115,7 +122,7 @@ function sendFrame(socket: WebSocket, frame: StreamFrame): void {
 }
 
 /**
- * 订阅单个请求的日志进展，直到它结束、超时或客户端断开。
+ * 订阅单个请求的日志进展：首帧读一次库，之后由进程内存推送增量，数据库只用于判断结束。
  * @param socket - 已建立的 WebSocket
  * @param requestId - 目标请求 ID
  * @param db - 数据库实例
@@ -130,13 +137,14 @@ async function streamSpendLogDetail(
 	const readRevision = deps.readRevision ?? readActiveRequestRevision;
 	const loadActiveDetail = deps.loadActiveDetail ?? buildActiveRequestDetail;
 	const loadSettledDetail = deps.loadSettledDetail ?? buildUiSpendLogDetail;
+	const subscribeLive = deps.subscribeLive ?? subscribeLiveResponse;
 	const pollIntervalMs = deps.pollIntervalMs ?? REVISION_POLL_INTERVAL_MS;
 	const deadline = Date.now() + (deps.maxDurationMs ?? MAX_STREAM_DURATION_MS);
 
 	let stopped = false;
 	let busy = false;
-	let lastRevision: string | null = null;
 	let lastPayload: Record<string, unknown> | null = null;
+	let unsubscribe: () => void = () => undefined;
 	let timer: NodeJS.Timeout | null = null;
 	let heartbeat: NodeJS.Timeout | null = null;
 	let awaitingPong = false;
@@ -146,6 +154,8 @@ async function streamSpendLogDetail(
 			return;
 		}
 		stopped = true;
+		unsubscribe();
+		unsubscribe = () => undefined;
 		if (timer !== null) {
 			clearInterval(timer);
 			timer = null;
@@ -171,7 +181,28 @@ async function streamSpendLogDetail(
 		stop(1000, "settled");
 	};
 
-	const tick = async (): Promise<void> => {
+	/**
+	 * 内存推送：只把静态快照与最新 checkpoint 合成一帧，不读写数据库。
+	 * @param checkpoint - 流式调度器发布的最新快照
+	 */
+	const push = (checkpoint: Record<string, unknown> | null): void => {
+		if (stopped || lastPayload === null || checkpoint === null) {
+			return;
+		}
+		try {
+			const next = applyLiveCheckpointToDetail(lastPayload, checkpoint);
+			const patch = diffLogDetailPayload(lastPayload, next);
+			if (Object.keys(patch).length > 0) {
+				sendFrame(socket, { type: "patch", request_id: requestId, data: patch });
+			}
+			lastPayload = next;
+		} catch (error) {
+			logger.warn(`日志流推送失败: ${(error as Error).message}`);
+		}
+	};
+
+	/** 兜底轮询：只判断请求是否已经结束，正常情况下实时内容由内存推送。 */
+	const poll = async (): Promise<void> => {
 		if (stopped || busy) {
 			return;
 		}
@@ -185,29 +216,6 @@ async function streamSpendLogDetail(
 			const revision = await readRevision(db, requestId);
 			if (!revision.present) {
 				await settle();
-				return;
-			}
-			const revisionKey = `${revision.updatedAt ?? ""}|${revision.status ?? ""}`;
-			if (revisionKey === lastRevision) {
-				return;
-			}
-			lastRevision = revisionKey;
-			const detail = await loadActiveDetail(db, requestId);
-			if (detail === null) {
-				await settle();
-				return;
-			}
-			if (lastPayload === null) {
-				sendFrame(socket, { type: "snapshot", request_id: requestId, data: detail });
-			} else {
-				const patch = diffLogDetailPayload(lastPayload, detail);
-				if (Object.keys(patch).length > 0) {
-					sendFrame(socket, { type: "patch", request_id: requestId, data: patch });
-				}
-			}
-			lastPayload = detail;
-			if (String(detail["status"] ?? "") !== "in_progress") {
-				await settle();
 			}
 		} catch (error) {
 			logger.warn(`日志流读取失败: ${(error as Error).message}`);
@@ -220,6 +228,8 @@ async function streamSpendLogDetail(
 
 	socket.on("close", () => {
 		stopped = true;
+		unsubscribe();
+		unsubscribe = () => undefined;
 		if (timer !== null) {
 			clearInterval(timer);
 			timer = null;
@@ -246,8 +256,25 @@ async function streamSpendLogDetail(
 	}, HEARTBEAT_INTERVAL_MS);
 	heartbeat.unref?.();
 
-	await tick();
-	timer = setInterval(() => void tick(), pollIntervalMs);
+	let detail: Record<string, unknown> | null;
+	try {
+		detail = await loadActiveDetail(db, requestId);
+	} catch (error) {
+		logger.warn(`日志流首帧读取失败: ${(error as Error).message}`);
+		sendFrame(socket, { type: "error", request_id: requestId, message: "读取日志进展失败" });
+		stop(1011, "error");
+		return;
+	}
+	if (detail === null) {
+		await settle();
+		return;
+	}
+	sendFrame(socket, { type: "snapshot", request_id: requestId, data: detail });
+	lastPayload = detail;
+	// 之后的内容变更只从内存推送；数据库只用来判断这条请求是否已经结束。
+	unsubscribe = subscribeLive(requestId, (snapshot) => push(snapshot as Record<string, unknown> | null));
+	await poll();
+	timer = setInterval(() => void poll(), pollIntervalMs);
 	timer.unref?.();
 }
 

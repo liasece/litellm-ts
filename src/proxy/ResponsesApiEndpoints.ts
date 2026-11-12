@@ -35,6 +35,7 @@ import {
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { NativeResponsesAccumulator, isRecord } from "./NativeResponsesAccumulator";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
+import { bindLiveCheckpoint } from "../spend/LiveCheckpointBinding";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import type { Message, ModelResponse, ModelResponseStream, ThinkingBlock, ToolCall, Usage } from "../types/openai";
 import { CallType, SpendLogStatus } from "../types/spend";
@@ -1667,21 +1668,25 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 	const checkpointDb = db;
 	let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
 	if (checkpointRequestId !== undefined && checkpointDb !== undefined) {
-		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
-			serialize: () => {
-				const response = buildStreamResponse(state, requestBody, "in_progress", null);
-				const upstream = getUpstreamLogContext(streamResult);
-				return {
-					protocol: "responses",
-					state: "in_progress",
-					response: response as unknown as Record<string, unknown>,
-					usage: (state.usage ?? null) as unknown as Record<string, unknown> | null,
-					upstream_request: (upstream?.request ?? null) as Record<string, unknown> | null,
-					upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
-				};
-			},
-			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
-		});
+		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>(
+			bindLiveCheckpoint<StreamingCheckpoint>(
+				checkpointRequestId,
+				() => {
+					const response = buildStreamResponse(state, requestBody, "in_progress", null);
+					const upstream = getUpstreamLogContext(streamResult);
+					return {
+						protocol: "responses",
+						state: "in_progress",
+						response: response as unknown as Record<string, unknown>,
+						usage: (state.usage ?? null) as unknown as Record<string, unknown> | null,
+						upstream_request: (upstream?.request ?? null) as Record<string, unknown> | null,
+						upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
+					};
+				},
+				(checkpoint) =>
+					checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+			),
+		);
 	}
 
 	if (!capabilitySseStarted) {
@@ -1801,7 +1806,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 	}
 }
 
-
 /** 原生 Responses 的语义增量事件：只有这些 type 才能反映「模型开始产出内容」。 */
 const NATIVE_RESPONSES_CONTENT_DELTA_TYPES = new Set<string>([
 	"response.output_text.delta",
@@ -1848,24 +1852,28 @@ async function relayNativeResponsesStream(
 	const checkpointDb = db;
 	let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
 	if (checkpointRequestId !== undefined && checkpointDb !== undefined) {
-		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
-			serialize: () => {
-				const response = nativeAccumulator.snapshot();
-				if (response === null) {
-					return null;
-				}
-				const upstream = getUpstreamLogContext(streamResult);
-				return {
-					protocol: "responses_native",
-					state: "in_progress",
-					response: response,
-					usage: isRecord(response["usage"]) ? response["usage"] : null,
-					upstream_request: (upstream?.request ?? null) as Record<string, unknown> | null,
-					upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
-				};
-			},
-			write: (checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
-		});
+		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>(
+			bindLiveCheckpoint<StreamingCheckpoint>(
+				checkpointRequestId,
+				() => {
+					const response = nativeAccumulator.snapshot();
+					if (response === null) {
+						return null;
+					}
+					const upstream = getUpstreamLogContext(streamResult);
+					return {
+						protocol: "responses_native",
+						state: "in_progress",
+						response: response,
+						usage: isRecord(response["usage"]) ? response["usage"] : null,
+						upstream_request: (upstream?.request ?? null) as Record<string, unknown> | null,
+						upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
+					};
+				},
+				(checkpoint) =>
+					checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+			),
+		);
 	}
 	let clientAborted = false;
 	const clientAbortError = Object.assign(new Error("client aborted"), { name: "AbortError" });

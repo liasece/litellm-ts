@@ -38,6 +38,7 @@ import {
 } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
+import { bindLiveCheckpoint } from "../spend/LiveCheckpointBinding";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
 import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendLifecycle } from "../spend/SpendReservation";
 import { runCommonChecks } from "../auth/AuthChecks";
@@ -431,36 +432,40 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 		const checkpointRequestId = spendRequestId;
 		let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
 		if (checkpointRequestId !== undefined && db !== undefined) {
-			streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
-				serialize: () => {
-					const acc = currentAccumulator;
-					if (!acc) {
-						return null;
-					}
-					const response = buildAggregatedChatResponse(acc, model);
-					const usage =
-						acc.usage ??
-						(acc.estimatedCompletionTokens > 0
-							? {
-									prompt_tokens: 0,
-									completion_tokens: acc.estimatedCompletionTokens,
-									total_tokens: acc.estimatedCompletionTokens,
-								}
-							: undefined);
-					if (response === undefined && usage === undefined) {
-						return null;
-					}
-					return {
-						protocol: "chat_completions",
-						state: "in_progress",
-						response: (response ?? null) as Record<string, unknown> | null,
-						usage: (usage ?? null) as Record<string, unknown> | null,
-						upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
-						upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
-					};
-				},
-				write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
-			});
+			streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>(
+				bindLiveCheckpoint<StreamingCheckpoint>(
+					checkpointRequestId,
+					() => {
+						const acc = currentAccumulator;
+						if (!acc) {
+							return null;
+						}
+						const response = buildAggregatedChatResponse(acc, model);
+						const usage =
+							acc.usage ??
+							(acc.estimatedCompletionTokens > 0
+								? {
+										prompt_tokens: 0,
+										completion_tokens: acc.estimatedCompletionTokens,
+										total_tokens: acc.estimatedCompletionTokens,
+									}
+								: undefined);
+						if (response === undefined && usage === undefined) {
+							return null;
+						}
+						return {
+							protocol: "chat_completions",
+							state: "in_progress",
+							response: (response ?? null) as Record<string, unknown> | null,
+							usage: (usage ?? null) as Record<string, unknown> | null,
+							upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+							upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+						};
+					},
+					(checkpoint) =>
+						checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+				),
+			);
 		}
 
 		const completeWithResolutionTrace = async (
@@ -886,32 +891,36 @@ async function handleStreamingResponse(
 			const checkpointRequestId = spendRequestId;
 			let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
 			if (checkpointRequestId !== undefined) {
-				streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
-					serialize: () => {
-						const response = buildAggregatedChatResponse(accumulator, fallbackDepth === 0 ? model : currentModel);
-						const usage =
-							accumulator.usage ??
-							(accumulator.estimatedCompletionTokens > 0
-								? {
-										prompt_tokens: 0,
-										completion_tokens: accumulator.estimatedCompletionTokens,
-										total_tokens: accumulator.estimatedCompletionTokens,
-									}
-								: undefined);
-						if (response === undefined && usage === undefined) {
-							return null;
-						}
-						return {
-							protocol: "chat_completions",
-							state: "in_progress",
-							response: (response ?? null) as Record<string, unknown> | null,
-							usage: (usage ?? null) as Record<string, unknown> | null,
-							upstream_request: (lastUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
-							upstream_response: (lastUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
-						};
-					},
-					write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
-					});
+				streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>(
+					bindLiveCheckpoint<StreamingCheckpoint>(
+						checkpointRequestId,
+						() => {
+							const response = buildAggregatedChatResponse(accumulator, fallbackDepth === 0 ? model : currentModel);
+							const usage =
+								accumulator.usage ??
+								(accumulator.estimatedCompletionTokens > 0
+									? {
+											prompt_tokens: 0,
+											completion_tokens: accumulator.estimatedCompletionTokens,
+											total_tokens: accumulator.estimatedCompletionTokens,
+										}
+									: undefined);
+							if (response === undefined && usage === undefined) {
+								return null;
+							}
+							return {
+								protocol: "chat_completions",
+								state: "in_progress",
+								response: (response ?? null) as Record<string, unknown> | null,
+								usage: (usage ?? null) as Record<string, unknown> | null,
+								upstream_request: (lastUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+								upstream_response: (lastUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+							};
+						},
+						(checkpoint) =>
+							checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+					),
+				);
 			}
 			let streamError: unknown;
 			let completionStartTime: Date | undefined;
@@ -1212,36 +1221,40 @@ async function handlePrivateVisionStreamingResponse(
 	const checkpointRequestId = spendRequestId;
 	let streamingCheckpointScheduler: StreamingCheckpointScheduler<StreamingCheckpoint> | undefined;
 	if (checkpointRequestId !== undefined && db !== undefined) {
-		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>({
-			serialize: () => {
-				const acc = currentAccumulator;
-				if (!acc) {
-					return null;
-				}
-				const response = buildAggregatedChatResponse(acc, model);
-				const usage =
-					acc.usage ??
-					(acc.estimatedCompletionTokens > 0
-						? {
-								prompt_tokens: 0,
-								completion_tokens: acc.estimatedCompletionTokens,
-								total_tokens: acc.estimatedCompletionTokens,
-							}
-						: undefined);
-				if (response === undefined && usage === undefined) {
-					return null;
-				}
-				return {
-					protocol: "chat_completions",
-					state: "in_progress",
-					response: (response ?? null) as Record<string, unknown> | null,
-					usage: (usage ?? null) as Record<string, unknown> | null,
-					upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
-					upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
-				};
-			},
-			write: (checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
-		});
+		streamingCheckpointScheduler = new StreamingCheckpointScheduler<StreamingCheckpoint>(
+			bindLiveCheckpoint<StreamingCheckpoint>(
+				checkpointRequestId,
+				() => {
+					const acc = currentAccumulator;
+					if (!acc) {
+						return null;
+					}
+					const response = buildAggregatedChatResponse(acc, model);
+					const usage =
+						acc.usage ??
+						(acc.estimatedCompletionTokens > 0
+							? {
+									prompt_tokens: 0,
+									completion_tokens: acc.estimatedCompletionTokens,
+									total_tokens: acc.estimatedCompletionTokens,
+								}
+							: undefined);
+					if (response === undefined && usage === undefined) {
+						return null;
+					}
+					return {
+						protocol: "chat_completions",
+						state: "in_progress",
+						response: (response ?? null) as Record<string, unknown> | null,
+						usage: (usage ?? null) as Record<string, unknown> | null,
+						upstream_request: (currentUpstreamLogContext?.request ?? null) as Record<string, unknown> | null,
+						upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
+					};
+				},
+				(checkpoint) =>
+					checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+			),
+		);
 	}
 
 	const result = await runOpenAIBuiltinCapabilityAgentLoop(

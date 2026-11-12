@@ -2,6 +2,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import type * as schema from "../db/schema";
 import type { SessionTimelineItem, SessionTimelinePart, SessionTimelineSourceRow } from "./sessionTimeline";
+import { publishLiveResponse, registerLiveResponse, resetLiveResponseRegistry } from "./LiveResponseRegistry";
 import { parseSessionPosition, type SessionPosition } from "./sessionPosition";
 import {
 	SESSION_TIMELINE_MAX_INLINE_IMAGE_CHARS,
@@ -281,6 +282,29 @@ describe("session timeline stream state", () => {
 		const contents = update!.active_requests[0]!.events.map((event) => event.content);
 		expect(contents).toContain("streaming partial output");
 		expect(update!.summary.in_progress_request_count).toBe(1);
+	});
+
+	it("进行中请求的正文只更新在内存里时也会推送", async () => {
+		resetLiveResponseRegistry();
+		const store = new FakeSessionStore([settledRequest], [runningRequest]);
+		const state = createState(store);
+		await state.snapshot();
+
+		// 数据库指纹没变（updated_at 不会被内存推送推进），只有执行流发布了新正文。
+		registerLiveResponse("req-running", () => ({
+			response: { choices: [{ message: { role: "assistant", content: "memory only output" } }] },
+			usage: { prompt_tokens: 3, completion_tokens: 9, total_tokens: 12 },
+		}));
+		publishLiveResponse("req-running", {
+			response: { choices: [{ message: { role: "assistant", content: "memory only output" } }] },
+			usage: { prompt_tokens: 3, completion_tokens: 9, total_tokens: 12 },
+		});
+
+		const update = await state.refresh();
+
+		expect(update).not.toBeNull();
+		const contents = update!.active_requests[0]!.events.map((event) => event.content);
+		expect(contents).toContain("memory only output");
 	});
 
 	it("rebuilds from a full scan when a late request settles before the cursor", async () => {

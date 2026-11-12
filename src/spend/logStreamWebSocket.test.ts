@@ -4,6 +4,7 @@ import type { NextFunction, Request, Response } from "express";
 import WebSocket from "ws";
 import { ApiError } from "../core/api/ApiError";
 import type { ServiceContainer } from "../container";
+import { publishLiveResponse, registerLiveResponse, resetLiveResponseRegistry } from "./LiveResponseRegistry";
 import { registerSpendLogStreamWebSocket, SPEND_LOG_STREAM_PATH } from "./logStreamWebSocket";
 
 interface StreamFrame {
@@ -29,6 +30,23 @@ async function terminate(socket: WebSocket): Promise<void> {
 		}
 		socket.once("close", () => resolve());
 		socket.terminate();
+	});
+}
+
+/** 等下一条帧；超时即失败，避免测试挂住。 */
+function nextFrame(socket: WebSocket): Promise<StreamFrame> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error("no frame")), 5_000);
+		const onMessage = (data: WebSocket.RawData): void => {
+			clearTimeout(timer);
+			socket.off("message", onMessage);
+			resolve(JSON.parse(data.toString()) as StreamFrame);
+		};
+		socket.on("message", onMessage);
+		socket.once("error", (error: Error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
 	});
 }
 
@@ -60,34 +78,33 @@ function createContainer(onAuth?: (req: Request) => void): ServiceContainer {
 
 describe("spend log detail stream", () => {
 	it("pushes a snapshot, then only changed fields, then the final payload", async () => {
+		resetLiveResponseRegistry();
 		const server = http.createServer();
 		const revisions = [
 			{ present: true, updatedAt: "2026-11-05T00:00:00.000Z", status: "in_progress" },
-			{ present: true, updatedAt: "2026-11-05T00:00:02.000Z", status: "in_progress" },
 			{ present: false, updatedAt: null, status: null },
 		];
-		const details = [
-			{
-				status: "in_progress",
-				request_id: "req-stream",
-				response: { text: "he" },
-				proxy_server_request: { body: { model: "m" } },
-				metadata: { status: "in_progress" },
-			},
-			{
-				status: "in_progress",
-				request_id: "req-stream",
-				response: { text: "hello" },
-				proxy_server_request: { body: { model: "m" } },
-				metadata: { status: "in_progress" },
-			},
-		];
-		let detailIndex = 0;
 		let revisionCursor = 0;
+		let liveText = "he";
+		const activeDetail = {
+			status: "in_progress",
+			request_id: "req-stream",
+			startTime: new Date(Date.now() - 2_000).toISOString(),
+			request_duration_ms: 2_000,
+			response: { text: "he" },
+			usage: null,
+			prompt_tokens: 0,
+			completion_tokens: 0,
+			total_tokens: 0,
+			proxy_server_request: { body: { model: "m" } },
+			metadata: { status: "in_progress" },
+		};
+		// 端点视角：流开始时就登记内存快照；订阅者连上后拿到的是同一份内容。
+		registerLiveResponse("req-stream", () => ({ response: { text: liveText } }));
 		registerSpendLogStreamWebSocket(server, createContainer(), {
 			pollIntervalMs: 10,
 			readRevision: async () => revisions[Math.min(revisionCursor, revisions.length - 1)]!,
-			loadActiveDetail: async () => details[Math.min(detailIndex++, details.length - 1)]!,
+			loadActiveDetail: async () => activeDetail,
 			loadSettledDetail: async () => ({ messages: [{ role: "user" }], response: { text: "hello" } }),
 		});
 		const port = await listen(server);
@@ -101,11 +118,12 @@ describe("spend log detail stream", () => {
 			await new Promise<void>((resolve, reject) => {
 				socket.on("message", (data) => {
 					frames.push(JSON.parse(data.toString()) as StreamFrame);
-					// 第一次快照之后推进修订号，模拟 checkpoint 补写。
+					// 第一次快照之后：内存里出现新内容（patch），随后在途行消失（final）。
 					if (frames.length === 1) {
-						revisionCursor = 1;
+						liveText = "hello";
+						publishLiveResponse("req-stream", { response: { text: "hello" } });
 						setTimeout(() => {
-							revisionCursor = 2;
+							revisionCursor = 1;
 						}, 40);
 					}
 					if (frames.at(-1)?.type === "final") {
@@ -117,21 +135,109 @@ describe("spend log detail stream", () => {
 			});
 
 			expect(socket.protocol).toBe("litellm-log-stream");
-			expect(frames[0]).toEqual({
-				type: "snapshot",
-				request_id: "req-stream",
-				data: details[0],
-			});
-			expect(frames[1]).toEqual({
-				type: "patch",
-				request_id: "req-stream",
-				data: { response: { text: "hello" } },
-			});
+			expect(frames[0]).toEqual({ type: "snapshot", request_id: "req-stream", data: activeDetail });
+			expect(frames[1]?.type).toBe("patch");
+			expect(frames[1]?.data).toMatchObject({ response: { text: "hello" } });
+			// 静态字段（metadata、请求体）不随每个 chunk 重复推送。
+			expect(frames[1]?.data).not.toHaveProperty("metadata");
+			expect(frames[1]?.data).not.toHaveProperty("proxy_server_request");
 			expect(frames[2]).toEqual({
 				type: "final",
 				request_id: "req-stream",
 				data: { messages: [{ role: "user" }], response: { text: "hello" } },
 			});
+		} finally {
+			await terminate(socket);
+			await close(server);
+		}
+	});
+
+	it("实时内容由内存推送，数据库只负责判断结束", async () => {
+		resetLiveResponseRegistry();
+		// 与端点一样：流开始时就登记快照，页面连上后订阅到的是同一份内容。
+		let liveText = "he";
+		registerLiveResponse("req-mem", () => ({ response: { text: liveText } }));
+		const server = http.createServer();
+		registerSpendLogStreamWebSocket(server, createContainer(), {
+			pollIntervalMs: 60_000,
+			readRevision: async () => ({ present: true, updatedAt: "2026-11-05T00:00:00.000Z", status: "in_progress" }),
+			loadActiveDetail: async () => ({
+				status: "in_progress",
+				request_id: "req-mem",
+				startTime: new Date(Date.now() - 1_000).toISOString(),
+				request_duration_ms: 1_000,
+				response: { text: "he" },
+				usage: null,
+				prompt_tokens: 0,
+				completion_tokens: 0,
+				total_tokens: 0,
+				proxy_server_request: { body: { model: "m" } },
+				metadata: { status: "in_progress" },
+			}),
+			loadSettledDetail: async () => null,
+		});
+		const port = await listen(server);
+		const socket = new WebSocket(`ws://127.0.0.1:${port}${SPEND_LOG_STREAM_PATH}?request_id=req-mem`, [
+			"litellm_test-key",
+			"litellm-log-stream",
+		]);
+		try {
+			const snapshot = await nextFrame(socket);
+			expect(snapshot.type).toBe("snapshot");
+
+			// 数据库修订号没有任何变化，只有执行流发布到内存的新快照。
+			liveText = "hello";
+			publishLiveResponse("req-mem", { response: { text: "hello" } });
+			const patch = await nextFrame(socket);
+
+			expect(patch.type).toBe("patch");
+			expect(patch.data).toMatchObject({ response: { text: "hello" } });
+			expect(patch.data).toHaveProperty("endTime");
+			// 静态字段（metadata、请求体）不随每个 chunk 重复推送。
+			expect(patch.data).not.toHaveProperty("metadata");
+		} finally {
+			await terminate(socket);
+			await close(server);
+		}
+	});
+
+	it("执行流登记晚于订阅时仍能收到推送", async () => {
+		resetLiveResponseRegistry();
+		const server = http.createServer();
+		registerSpendLogStreamWebSocket(server, createContainer(), {
+			pollIntervalMs: 500,
+			readRevision: async () => ({ present: true, updatedAt: "2026-11-05T00:00:00.000Z", status: "in_progress" }),
+			loadActiveDetail: async () => ({
+				status: "in_progress",
+				request_id: "req-late",
+				startTime: new Date().toISOString(),
+				request_duration_ms: 0,
+				response: { text: "" },
+				usage: null,
+				prompt_tokens: 0,
+				completion_tokens: 0,
+				total_tokens: 0,
+				proxy_server_request: {},
+				metadata: { status: "in_progress" },
+			}),
+			loadSettledDetail: async () => null,
+		});
+		const port = await listen(server);
+		const socket = new WebSocket(`ws://127.0.0.1:${port}${SPEND_LOG_STREAM_PATH}?request_id=req-late`, [
+			"litellm_test-key",
+			"litellm-log-stream",
+		]);
+
+		try {
+			expect((await nextFrame(socket)).type).toBe("snapshot");
+
+			// 页面先连上，执行流稍后才开始（登记的时机是上游响应返回）。
+			registerLiveResponse("req-late", () => ({ response: { text: "late" } }));
+			publishLiveResponse("req-late", { response: { text: "late" } });
+			const patch = await nextFrame(socket);
+
+			expect(patch.type).toBe("patch");
+			expect(patch.data).toMatchObject({ response: { text: "late" } });
 		} finally {
 			await terminate(socket);
 			await close(server);
@@ -160,6 +266,7 @@ describe("spend log detail stream", () => {
 		registerSpendLogStreamWebSocket(server, createContainer(), {
 			pollIntervalMs: 10,
 			readRevision: async () => ({ present: false, updatedAt: null, status: null }),
+			loadActiveDetail: async () => null,
 			loadSettledDetail: async () => null,
 		});
 		const port = await listen(server);
@@ -204,6 +311,7 @@ describe("spend log detail stream", () => {
 		registerSpendLogStreamWebSocket(server, slowContainer, {
 			pollIntervalMs: 10,
 			readRevision: async () => ({ present: false, updatedAt: null, status: null }),
+			loadActiveDetail: async () => null,
 			loadSettledDetail: async () => ({ messages: [], response: null }),
 		});
 		const port = await listen(server);

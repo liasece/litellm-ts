@@ -10,6 +10,7 @@ import { eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
+import { readLiveResponseSnapshot } from "./LiveResponseRegistry";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
@@ -117,8 +118,11 @@ export async function buildActiveRequestDetail(
 		return null;
 	}
 	const metadata = (activeRow.metadata ?? {}) as Record<string, unknown>;
+	// 实时快照优先：流式内容只存在于本进程内存，数据库里的同名字段仅作为进程重启后的兜底。
+	const liveSnapshot = readLiveResponseSnapshot(requestId) as Record<string, unknown> | null;
 	// checkpoint 双 key 兼容——普通流式写 streaming_execution，CLIProxy 写 responses_execution，前者优先。
 	const checkpoint =
+		liveSnapshot ??
 		(metadata["streaming_execution"] as Record<string, unknown> | undefined) ??
 		(metadata["responses_execution"] as Record<string, unknown> | undefined);
 	// 进行中请求的 proxy_server_request 含传输层补写的 upstream 信息；早期 checkpoint 里
@@ -172,6 +176,49 @@ export async function buildActiveRequestDetail(
 		total_tokens: usage?.total_tokens ?? 0,
 		usage: checkpoint?.["usage"] ?? null,
 		metadata: settledMetadata,
+	};
+}
+
+/**
+ * 把内存里的最新快照合并进详情负载。
+ *
+ * 日志流订阅期间不再回读数据库：静态字段沿用订阅时读到的那份，只有随流变化的字段
+ * （响应正文、usage、上游交换、时长与结束时间）按快照替换。纯 CPU 操作，调用方可以
+ * 在每次推送时执行。
+ * @param payload - 订阅时读取的详情负载
+ * @param checkpoint - 内存快照（缺失时原样返回）
+ * @param now - 当前时间，用于重算时长
+ */
+export function applyLiveCheckpointToDetail(
+	payload: UiLogDetailPayload,
+	checkpoint: Record<string, unknown> | null | undefined,
+	now: Date = new Date(),
+): UiLogDetailPayload {
+	if (checkpoint === null || checkpoint === undefined) {
+		return payload;
+	}
+	const usage = readInProgressUsage(checkpoint);
+	const previousProxy = (payload["proxy_server_request"] as Record<string, unknown> | null | undefined) ?? {};
+	const upstreamRequest = checkpoint["upstream_request"] as Record<string, unknown> | undefined;
+	const upstreamResponse = checkpoint["upstream_response"] as Record<string, unknown> | undefined;
+	const startTime = typeof payload["startTime"] === "string" ? Date.parse(payload["startTime"]) : Number.NaN;
+	const checkpointFirstChunk =
+		typeof checkpoint["first_chunk_at"] === "string" ? checkpoint["first_chunk_at"] : undefined;
+	return {
+		...payload,
+		response: (checkpoint["response"] as Record<string, unknown> | undefined) ?? null,
+		usage: checkpoint["usage"] ?? null,
+		prompt_tokens: usage?.prompt_tokens ?? 0,
+		completion_tokens: usage?.completion_tokens ?? 0,
+		total_tokens: usage?.total_tokens ?? 0,
+		proxy_server_request: {
+			...previousProxy,
+			...(upstreamRequest ? { upstream_request: upstreamRequest } : {}),
+			...(upstreamResponse ? { upstream_response: upstreamResponse } : {}),
+		},
+		completionStartTime: payload["completionStartTime"] ?? checkpointFirstChunk ?? null,
+		endTime: now.toISOString(),
+		request_duration_ms: Number.isNaN(startTime) ? payload["request_duration_ms"] : Math.max(0, now.getTime() - startTime),
 	};
 }
 

@@ -32,18 +32,30 @@ export interface StreamingCheckpoint {
 }
 
 /**
+ * 写入时的收尾标记。
+ */
+export interface StreamingCheckpointWriteOptions {
+	/** `final` 为 true 表示流结束的补写，调用方应无视订阅兴趣。 */
+	readonly final: boolean;
+}
+
+/**
  * 调度器配置。
  * @template T - checkpoint 载荷类型
  */
 export interface StreamingCheckpointSchedulerOptions<T> {
 	/** 把当前 accumulator 序列化为纯 JSON；返回 null 表示尚无内容，跳过本次写库。 */
 	serialize: () => T | null;
-	/** 把序列化结果写入存储（通常是 checkpointActiveRequest 包装）。 */
-	write: (checkpoint: T) => void | Promise<unknown>;
+	/**
+	 * 交出一份快照：流式过程中发布到内存供详情页读取，final 时额外落库一次。
+	 */
+	write: (checkpoint: T, options: StreamingCheckpointWriteOptions) => void | Promise<unknown>;
 	/** 写库失败回调；缺省吞掉错误。 */
 	onError?: (error: unknown) => void;
-	/** 时间窗口（毫秒）；缺省 2000。 */
+	/** 时间窗口（毫秒）；缺省 400。 */
 	intervalMs?: number;
+	/** dispose 完成后的收尾回调（用于注销进程内实时快照）。 */
+	onDispose?: () => void;
 }
 
 /** 进行中日志的刷新窗口；400ms 下详情页约每秒更新 2~3 次，接近实时。 */
@@ -108,8 +120,9 @@ function stringifyCheckpoint(checkpoint: unknown): string | undefined {
  */
 export class StreamingCheckpointScheduler<T> {
 	private readonly _serialize: () => T | null;
-	private readonly _write: (checkpoint: T) => void | Promise<unknown>;
+	private readonly _write: (checkpoint: T, options: StreamingCheckpointWriteOptions) => void | Promise<unknown>;
 	private readonly _onError: (error: unknown) => void;
+	private readonly _onDispose: (() => void) | undefined;
 	private readonly _baseIntervalMs: number;
 	private readonly _largeIntervalMs: number;
 	private _intervalMs: number;
@@ -125,6 +138,7 @@ export class StreamingCheckpointScheduler<T> {
 		this._serialize = options.serialize;
 		this._write = options.write;
 		this._onError = options.onError ?? (() => undefined);
+		this._onDispose = options.onDispose;
 		this._baseIntervalMs =
 			options.intervalMs ?? resolveStreamingCheckpointIntervalMs(process.env[STREAMING_CHECKPOINT_INTERVAL_ENV]);
 		this._intervalMs = this._baseIntervalMs;
@@ -152,32 +166,34 @@ export class StreamingCheckpointScheduler<T> {
 	}
 
 	/**
-	 * 立即序列化当前状态并写入。写入通过 _tail 串行队列排队，保证多次 flush 按调用
-	 * 顺序落库、不并发；write 抛错由 onError 吞掉，本方法绝不 reject。serialize 返回
-	 * null（尚无内容）时跳过写库。
+	 * 立即序列化当前状态并交出去。写入通过 _tail 串行队列排队，保证多次 flush 按调用
+	 * 顺序执行、不并发；write 抛错由 onError 吞掉，本方法绝不 reject。serialize 返回
+	 * null（尚无内容）时跳过本次。
 	 *
-	 * 内容与上一次写入完全相同时跳过写库：checkpoint 只承载「已经累积的 response」，
-	 * 没有新 chunk（或只有定时器到点）时重复 UPDATE 只会制造行锁与 WAL，页面看到的
-	 * 内容并不会变化。写失败时清空签名，下一次 flush 会重试同一份内容。
+	 * 流式过程中这份内容只发布到进程内存供详情页读取（见 LiveResponseRegistry），
+	 * 只有 final（流结束）才需要真正落库；因此 final 必须绕过去重，否则内容与上一次
+	 * 相同时会漏掉收尾落库，崩溃恢复就拿不到最终 usage。
+	 * @param options - final 为 true 表示流结束的收尾写入
 	 */
-	flush(): Promise<void> {
+	flush(options: { readonly final?: boolean } = {}): Promise<void> {
 		this._clearTimer();
 		this._dirty = false;
+		const final = options.final === true;
 		const checkpoint = this._serialize();
 		if (checkpoint === null) {
 			return this._tail;
 		}
 		const serialized = stringifyCheckpoint(checkpoint);
 		this._adaptWindow(serialized?.length ?? 0);
-		if (serialized !== undefined && serialized === this._lastSignature) {
+		if (!final && serialized !== undefined && serialized === this._lastSignature) {
 			this._skippedUnchanged += 1;
 			streamCheckpointWrites.inc({ outcome: "skipped" });
 			return this._tail;
 		}
-		this._lastSignature = serialized;
 		this._tail = this._tail
-			.then(() => this._write(checkpoint))
+			.then(() => this._write(checkpoint, { final: final }))
 			.then(() => {
+				this._lastSignature = serialized;
 				streamCheckpointWrites.inc({ outcome: "written" });
 			})
 			.catch((error: unknown) => {
@@ -190,16 +206,17 @@ export class StreamingCheckpointScheduler<T> {
 	}
 
 	/**
-	 * 流结束前调用：停止定时器，若仍有未落库的 dirty 状态则做最后一次 flush，并等待
-	 * 串行队列清空。必须在 finalize（删除 ActiveRequests 行）之前 await，保证最后一段
-	 * partial 在行删除前有机会落库。
+	 * 流结束前调用：停止定时器，做最后一次 final flush 并等待串行队列清空。必须放在
+	 * finalize（删除 ActiveRequests 行）之前 await，保证最后一次落库先于行删除，
+	 * 进程崩溃时恢复流程仍能拿到最终 usage。
 	 */
-	dispose(): Promise<void> {
+	async dispose(): Promise<void> {
 		this._clearTimer();
-		if (this._dirty) {
-			return this.flush();
+		try {
+			await this.flush({ final: true });
+		} finally {
+			this._onDispose?.();
 		}
-		return this._tail;
 	}
 
 	/**

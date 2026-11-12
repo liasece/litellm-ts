@@ -502,6 +502,9 @@ describe("Active request tracking", () => {
 		expect(sqlText).not.toContain("\0");
 	});
 
+
+
+
 	it("deletes the active row in the same transaction as the final SpendLog", async () => {
 		const deletedTables: unknown[] = [];
 		let db: Record<string, unknown>;
