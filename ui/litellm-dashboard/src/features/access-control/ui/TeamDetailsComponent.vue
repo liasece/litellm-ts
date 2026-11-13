@@ -58,7 +58,7 @@ onMounted(() => void store.refresh());
 onBeforeUnmount(store.dispose);
 </script>
 <template>
-	<UiDrawer open :title="data?.team_info.team_alias || 'Team'" @close="emit('close')"
+	<UiDrawer open class="access-team-drawer" :title="data?.team_info.team_alias || 'Team'" @close="emit('close')"
 		><template #title
 			><div class="access-drawer-resource-title">
 				<div class="access-drawer-resource-identity">

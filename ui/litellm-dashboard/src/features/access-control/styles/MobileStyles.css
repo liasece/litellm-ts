@@ -1,0 +1,551 @@
+/**
+ * Teams / Users / Organizations 的手机端排版。
+ *
+ * 只在 <1024px 生效：≥1024px 的桌面排版是验收基线，这里不改动。
+ * 表格卡片化使用平台 UiTable 的 mobile-cards（≤640px），本文件负责把卡片内容
+ * 排成“实体身份 + 关键字段 + 操作”的结构，并保证触屏命中区 ≥32/40px。
+ */
+
+/* 桌面与平板共用的隐藏辅助：移动端才展示的完整标识 / 文案。 */
+.access-user-id-long,
+.access-org-id-long,
+.access-resource-unit,
+.access-enterprise-note__mobile {
+	display: none;
+}
+
+/* 桌面保持原有的“一行说明”外观：标题区只在 ≤1023px 出现。 */
+.access-organizations-locked .access-list-header.access-organizations-locked-header {
+	display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Teams                                                               */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+	.access-page.access-teams-page {
+		padding: 12px 12px 24px;
+	}
+	.access-teams-page .access-list-header {
+		margin-bottom: 12px;
+		gap: 10px;
+	}
+	.access-teams-page .access-list-header h2 {
+		font-size: 24px;
+		line-height: 32px;
+		white-space: normal;
+	}
+	.access-teams-page .access-list-header > div {
+		min-width: 0;
+	}
+	.access-teams-page .access-list-header .ui-button {
+		width: 100%;
+		min-height: 40px;
+	}
+	.access-teams-page .access-list-toolbar {
+		padding: 10px 12px;
+	}
+	.access-teams-page .access-pagination {
+		width: 100%;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		white-space: normal;
+		gap: 8px;
+	}
+	.access-teams-page .access-pagination > .ui-pagination {
+		margin: 0;
+		flex: 1;
+		justify-content: flex-end;
+	}
+	.access-teams-page .access-pagination .ui-pagination__item {
+		min-width: 40px;
+		height: 40px;
+		line-height: 38px;
+		font-size: 14px;
+	}
+	.access-teams-page .access-pagination .ui-pagination__size {
+		display: none;
+	}
+}
+
+@media (max-width: 640px) {
+	.access-teams-page .ui-table-wrapper--mobile-cards .ui-table-frame {
+		border: 0;
+		border-radius: 0;
+	}
+	.access-teams-page .ui-table--cards tbody tr {
+		padding: 6px 0 8px;
+	}
+	.access-teams-page .ui-table--cards td,
+	.access-teams-page .ui-table--cards td.ui-table__cell--ellipsis {
+		grid-template-columns: minmax(84px, 30%) minmax(0, 1fr);
+		align-items: center;
+		padding: 6px 12px;
+		font-size: 13px;
+		line-height: 20px;
+	}
+	.access-teams-page .ui-table--cards td::before {
+		font-size: 12px;
+		line-height: 20px;
+	}
+	.access-teams-page .ui-table--cards td[data-label="Team ID"] {
+		padding-top: 2px;
+	}
+	.access-teams-page .access-id {
+		display: inline-flex;
+		align-items: center;
+		justify-self: start;
+		min-height: 32px;
+		max-width: 100%;
+		font-size: 14px;
+	}
+	.access-teams-page .access-resource-tags {
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.access-teams-page .access-resource-tags .ui-tag {
+		font-size: 12px;
+		padding: 2px 8px;
+	}
+	.access-teams-page .access-resource-unit {
+		display: inline;
+		margin-left: 4px;
+	}
+	.access-teams-page .access-team-spend {
+		font-size: 13px;
+	}
+	.access-teams-page .access-team-spend small {
+		font-size: 12px;
+	}
+	.access-teams-page .access-icon-action {
+		min-width: 40px;
+		min-height: 40px;
+		padding: 0;
+	}
+	/* 操作统一放在卡片底部的页脚行：图标靠右，不再让“Actions”标签把一行撑出中段空白。 */
+	.access-teams-page .ui-table--cards td[data-label="Actions"] {
+		grid-column: 1 / -1;
+		grid-template-columns: 1fr;
+		justify-items: end;
+		margin-top: 2px;
+		padding-top: 8px;
+		border-top: 1px solid #f3f4f6;
+	}
+	.access-teams-page .ui-table--cards td[data-label="Actions"]::before {
+		content: none;
+		display: none;
+	}
+	.access-teams-page .ui-table--cards td[data-label="Actions"] .access-tags {
+		gap: 8px;
+		justify-content: flex-end;
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* Users                                                               */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+	.access-users-page {
+		padding: 12px 12px 24px;
+	}
+	.access-user-toolbar {
+		margin-bottom: 12px;
+		gap: 4px;
+	}
+	.access-user-toolbar h2 {
+		margin: 0 0 2px;
+		font-size: 24px;
+		line-height: 32px;
+	}
+	.access-user-toolbar > div {
+		min-width: 0;
+	}
+	.access-user-list-controls {
+		padding: 12px;
+	}
+	.access-user-pagination {
+		margin-top: 0;
+		gap: 12px;
+	}
+	.access-user-pagination > div {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.access-user-pagination > div > button {
+		min-height: 40px;
+		padding: 8px 16px;
+	}
+}
+
+@media (max-width: 640px) {
+	.access-users-table-section .ui-table-wrapper--mobile-cards .ui-table-frame {
+		border: 0;
+		border-radius: 0;
+	}
+	.access-users-table-section .ui-table--cards tbody tr {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 10px 12px;
+		margin: 0 0 10px;
+		padding: 12px;
+		border: 1px solid #e5e7eb;
+		border-radius: 12px;
+		background: #fff;
+	}
+	.access-users-table-section .ui-table--cards tbody tr:last-child {
+		margin-bottom: 0;
+	}
+	.access-users-table-section .ui-table--cards td,
+	.access-users-table-section .ui-table--cards td.ui-table__cell--ellipsis {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		min-width: 0;
+		height: auto;
+		padding: 0;
+		border: 0;
+		overflow: visible;
+		white-space: normal;
+		text-overflow: clip;
+		font-size: 13px;
+		line-height: 18px;
+	}
+	.access-users-table-section .ui-table--cards td::before {
+		content: attr(data-label);
+		font-size: 12px;
+		line-height: 16px;
+		font-weight: 500;
+		color: #6b7280;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="User ID"],
+	.access-users-table-section .ui-table--cards td[data-label="Email"],
+	.access-users-table-section .ui-table--cards td[data-label="Teams"],
+	.access-users-table-section .ui-table--cards td[data-label="Actions"] {
+		grid-column: 1 / -1;
+	}
+	/* 卡片的阅读顺序：身份 → 角色/花费 → 团队 → 预算/密钥 → 其余信息 → 操作。 */
+	.access-users-table-section .ui-table--cards td[data-label="User ID"] {
+		order: 1;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Email"] {
+		order: 2;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Global Proxy Role"] {
+		order: 3;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Spend"] {
+		order: 4;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Teams"] {
+		order: 5;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Budget"] {
+		order: 6;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Virtual Keys"] {
+		order: 7;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="User Alias"] {
+		order: 8;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="SSO ID"] {
+		order: 9;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Created At"] {
+		order: 10;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Updated At"] {
+		order: 11;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Actions"] {
+		order: 12;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="User ID"]::before,
+	.access-users-table-section .ui-table--cards td[data-label="Email"]::before,
+	.access-users-table-section .ui-table--cards td[data-label="Actions"]::before {
+		content: none;
+		display: none;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Email"] {
+		font-size: 13px;
+		color: #4b5563;
+		overflow-wrap: anywhere;
+	}
+	.access-users-table-section .access-user-id-cell {
+		gap: 8px;
+		max-width: 100%;
+	}
+	.access-users-table-section .access-user-id {
+		min-height: 32px;
+		font-size: 15px;
+		line-height: 22px;
+		font-weight: 600;
+		text-align: left;
+		overflow-wrap: anywhere;
+	}
+	.access-users-table-section .access-user-id-short {
+		display: none;
+	}
+	.access-users-table-section .access-user-id-long {
+		display: inline;
+	}
+	.access-users-table-section .access-user-copy {
+		width: 32px;
+		height: 32px;
+		flex: none;
+	}
+	.access-users-page .access-users-table-section .ui-table--cards .access-tags {
+		flex-wrap: wrap;
+		gap: 4px;
+		min-width: 0;
+		width: 100%;
+		max-width: 100%;
+	}
+	/* 团队名很长：卡片内每个标签独占一行，最多两行后省略，完整名称由 title 提供。 */
+	.access-users-page .access-users-table-section .ui-table--cards .ui-tag {
+		display: -webkit-box;
+		justify-self: start;
+		max-width: 100%;
+		min-width: 0;
+		padding-block: 2px;
+		overflow: hidden;
+		line-height: 16px;
+		white-space: normal;
+		overflow-wrap: anywhere;
+		text-align: left;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+	}
+	.access-users-table-section .ui-table--cards td[data-label="Actions"] {
+		align-items: flex-end;
+		padding-top: 2px;
+	}
+	.access-users-table-section .ui-table--cards td.access-users-actions .access-tags {
+		gap: 8px;
+		justify-content: flex-end;
+	}
+	.access-users-table-section .access-users-row-action {
+		width: 40px;
+		height: 40px;
+		padding: 0;
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* Organizations                                                       */
+/* ------------------------------------------------------------------ */
+
+/* 修复企业版组织列表在容器内被 width:100% + 左右外边距撑宽的问题。 */
+.access-organizations-page {
+	width: auto;
+	min-width: 0;
+}
+
+@media (max-width: 1023px) {
+	.access-organizations-locked {
+		padding: 16px 16px 32px;
+		min-width: 0;
+	}
+	.access-organizations-locked .access-list-header.access-organizations-locked-header {
+		display: flex;
+		margin-bottom: 16px;
+	}
+	.access-organizations-locked-header h2 {
+		font-size: 24px;
+		line-height: 32px;
+	}
+	.access-organizations-locked-header > div {
+		min-width: 0;
+	}
+	.access-enterprise-note-card {
+		padding: 16px;
+		border: 1px solid #e5e7eb;
+		border-radius: 12px;
+		background: #fff;
+		box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+	}
+	.access-enterprise-note {
+		font-size: 14px;
+		line-height: 22px;
+		color: #4b5563;
+	}
+	.access-enterprise-note__sentence {
+		display: none;
+	}
+	.access-enterprise-note__mobile {
+		display: block;
+	}
+	.access-enterprise-gate-link {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: fit-content;
+		min-height: 40px;
+		margin-top: 12px;
+		padding: 0 16px;
+		border-radius: 8px;
+		background: #eff6ff;
+		color: #1d4ed8;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.access-enterprise-gate-link:active {
+		background: #dbeafe;
+	}
+	.access-organizations-page {
+		margin: 0;
+		padding: 16px 16px 32px;
+	}
+	.access-organization-list {
+		max-height: none;
+	}
+}
+
+@media (max-width: 640px) {
+	.access-organizations-page {
+		padding: 12px 12px 24px;
+	}
+	.access-organizations-page > .ui-button {
+		width: 100%;
+		min-height: 40px;
+		margin-bottom: 12px;
+	}
+	.access-organizations-page .access-organization-filters {
+		padding: 12px;
+	}
+	.access-organizations-page .access-organization-filters .ui-button {
+		min-height: 40px;
+	}
+	.access-organizations-page .ui-table--cards tbody tr {
+		padding: 6px 0 8px;
+	}
+	.access-organizations-page .ui-table--cards td,
+	.access-organizations-page .ui-table--cards td.ui-table__cell--ellipsis {
+		grid-template-columns: minmax(96px, 32%) minmax(0, 1fr);
+		align-items: center;
+		padding: 6px 12px;
+		font-size: 13px;
+		line-height: 20px;
+	}
+	.access-organizations-page .ui-table--cards td::before {
+		font-size: 12px;
+		line-height: 20px;
+	}
+	.access-organizations-page .ui-table--cards .access-org-id-short {
+		display: none;
+	}
+	.access-organizations-page .ui-table--cards .access-org-id-long {
+		display: inline;
+	}
+	.access-organizations-page .access-id {
+		display: inline-flex;
+		align-items: center;
+		justify-self: start;
+		min-height: 32px;
+		max-width: 100%;
+		font-size: 13px;
+	}
+	.access-organizations-page .access-id .access-org-id-long {
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.access-organizations-page .ui-table--cards .access-tags {
+		flex-wrap: wrap;
+		gap: 4px;
+		min-width: 0;
+		max-width: 100%;
+	}
+	.access-organizations-page .ui-table--cards .ui-tag {
+		max-width: 100%;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.access-organizations-page .ui-table--cards .access-icon-action {
+		min-width: 40px;
+		min-height: 40px;
+		padding: 0;
+	}
+	.access-organizations-page .ui-table--cards td[data-label="Actions"] .access-tags {
+		justify-content: flex-end;
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* 对话框 / 抽屉里的表单控件                                           */
+/* ------------------------------------------------------------------ */
+
+/* 数字输入的 +/- 在手机上只有 30×36；放大到 40×40，避免误触。 */
+@media (max-width: 767px) {
+	.access-team-create-dialog .ui-input-number--tremor,
+	.access-organization-create-dialog .ui-input-number--tremor,
+	.access-user-drawer .ui-input-number--tremor {
+		height: 44px;
+	}
+	.access-team-create-dialog .ui-input-number__tremor-handlers,
+	.access-organization-create-dialog .ui-input-number__tremor-handlers,
+	.access-user-drawer .ui-input-number__tremor-handlers {
+		height: 100%;
+	}
+	.access-team-create-dialog .ui-input-number__tremor-handlers > button,
+	.access-organization-create-dialog .ui-input-number__tremor-handlers > button,
+	.access-user-drawer .ui-input-number__tremor-handlers > button {
+		min-width: 40px;
+		padding: 0;
+	}
+}
+
+/* 详情抽屉在手机上占满整宽：平台默认 width: clamp(50vw, 1200px, 80vw) 会留下 20% 的页面，
+   内容（模型名、预算卡）被挤到裁切。平台若统一处理可删除本段。 */
+@media (max-width: 767px) {
+	.ui-drawer.access-user-drawer,
+	.ui-drawer.access-team-drawer {
+		width: 100vw !important;
+		max-width: 100vw;
+	}
+	.access-user-drawer .access-user-detail-id .ui-button,
+	.access-team-drawer .access-user-detail-id .ui-button {
+		min-width: 40px;
+		min-height: 40px;
+	}
+	/* 抽屉里的标签（模型名、团队名）在整宽后仍可能比卡片宽，限制在容器内并省略。 */
+	.access-user-drawer .access-tags,
+	.access-team-drawer .access-tags {
+		width: 100%;
+	}
+	.access-user-drawer .access-tags > .ui-tag,
+	.access-team-drawer .access-tags > .ui-tag {
+		max-width: 100%;
+		min-width: 0;
+		overflow: hidden;
+	}
+	/* 超长邮箱/ID 标题在整宽抽屉里仍要能收缩，否则会把右侧内容推出视口。 */
+	.access-user-drawer .ui-drawer__title,
+	.access-team-drawer .ui-drawer__title {
+		min-width: 0;
+	}
+	.access-user-drawer .access-drawer-resource-identity,
+	.access-team-drawer .access-drawer-resource-identity {
+		overflow: hidden;
+	}
+	.access-user-drawer .access-drawer-resource-identity > div:first-child,
+	.access-team-drawer .access-drawer-resource-identity > div:first-child {
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+	.access-user-drawer .access-user-detail-header {
+		flex-wrap: wrap;
+		gap: 12px;
+	}
+	.access-user-drawer .access-user-detail-header > div {
+		min-width: 0;
+		flex: 1 1 100%;
+	}
+	.access-user-drawer .access-user-detail-header h2 {
+		overflow-wrap: anywhere;
+	}
+}

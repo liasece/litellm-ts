@@ -94,6 +94,7 @@ function copy(id: string) {
 			:loading="loading"
 			loading-text="🚅 Loading users..."
 			fixed-layout
+			mobile-cards
 			:sort-by="sortBy || undefined"
 			:sort-order="sortOrder"
 			:sort-clearable="false"
@@ -111,20 +112,29 @@ function copy(id: string) {
 					class="ui-table__row ui-table__row--clickable"
 					@click="openRow($event, user)"
 				>
-					<td>
+					<td data-label="User ID" class="access-users-cell access-users-cell--id">
 						<div class="access-user-id-cell">
 							<button type="button" class="access-user-id" :title="user.user_id" @click="emit('open', user)">
-								{{ user.user_id ? user.user_id.slice(0, 7) + "..." : "-" }}</button
+								<span class="access-user-id-short">{{ user.user_id ? user.user_id.slice(0, 7) + "..." : "-" }}</span
+								><span class="access-user-id-long">{{ user.user_id || "-" }}</span></button
 							><UiTooltip v-if="user.user_id" title="Copy User ID"
-								><button type="button" class="access-user-copy" aria-label="Copy User ID" @click.stop="copy(user.user_id)">
+								><button
+									type="button"
+									class="access-user-copy"
+									aria-label="Copy User ID"
+									:title="'Copy ' + user.user_id"
+									@click.stop="copy(user.user_id)"
+								>
 									<UiIcon name="CopyOutlined" :size="12" /></button
 							></UiTooltip>
 						</div>
 					</td>
-					<td>{{ user.user_email || "-" }}</td>
-					<td>{{ catalog.roles[user.user_role ?? ""]?.ui_label || "-" }}</td>
-					<td>{{ user.user_alias || "-" }}</td>
-					<td>
+					<td data-label="Email" class="access-users-cell access-users-cell--email">{{ user.user_email || "-" }}</td>
+					<td data-label="Global Proxy Role" class="access-users-cell">
+						{{ catalog.roles[user.user_role ?? ""]?.ui_label || "-" }}
+					</td>
+					<td data-label="User Alias" class="access-users-cell">{{ user.user_alias || "-" }}</td>
+					<td data-label="Teams" class="access-users-cell access-users-cell--teams">
 						<div v-if="userTeams(user).length" class="access-tags">
 							<UiTag
 								v-for="team in userTeams(user).slice(0, 2)"
@@ -132,6 +142,7 @@ function copy(id: string) {
 								appearance="tremor"
 								size="xs"
 								color="blue"
+								:title="team.team_alias || team.team_id"
 								>{{ team.team_alias || team.team_id }}</UiTag
 							>
 							<UiTag v-if="userTeams(user).length > 2" appearance="tremor" size="xs" color="gray"
@@ -140,19 +151,25 @@ function copy(id: string) {
 						</div>
 						<span v-else>-</span>
 					</td>
-					<td>{{ user.spend ? money(user.spend, 4) : "-" }}</td>
-					<td>{{ user.max_budget !== null ? money(user.max_budget) : "Unlimited" }}</td>
-					<td>{{ user.sso_user_id !== null ? user.sso_user_id : "-" }}</td>
-					<td>
+					<td data-label="Spend" class="access-users-cell">{{ user.spend ? money(user.spend, 4) : "-" }}</td>
+					<td data-label="Budget" class="access-users-cell">
+						{{ user.max_budget !== null ? money(user.max_budget) : "Unlimited" }}
+					</td>
+					<td data-label="SSO ID" class="access-users-cell">{{ user.sso_user_id !== null ? user.sso_user_id : "-" }}</td>
+					<td data-label="Virtual Keys" class="access-users-cell">
 						<UiTag appearance="tremor" size="xs" :color="user.key_count && user.key_count > 0 ? 'indigo' : 'gray'">{{
 							user.key_count && user.key_count > 0
 								? user.key_count + " " + (user.key_count === 1 ? "Key" : "Keys")
 								: "No Keys"
 						}}</UiTag>
 					</td>
-					<td>{{ user.created_at ? new Date(user.created_at).toLocaleDateString() : "-" }}</td>
-					<td>{{ user.updated_at ? new Date(user.updated_at).toLocaleDateString() : "-" }}</td>
-					<td class="access-users-actions ui-table__cell--sticky-right">
+					<td data-label="Created At" class="access-users-cell">
+						{{ user.created_at ? new Date(user.created_at).toLocaleDateString() : "-" }}
+					</td>
+					<td data-label="Updated At" class="access-users-cell">
+						{{ user.updated_at ? new Date(user.updated_at).toLocaleDateString() : "-" }}
+					</td>
+					<td data-label="Actions" class="access-users-actions ui-table__cell--sticky-right">
 						<div class="access-tags">
 							<button
 								type="button"

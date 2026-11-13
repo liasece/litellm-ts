@@ -129,10 +129,28 @@ onMounted(() => {
 onBeforeUnmount(store.dispose);
 </script>
 <template>
-	<p v-if="!auth.state.session?.premium_user" class="access-enterprise-note">
-		This is a LiteLLM Enterprise feature, and requires a valid key to use. Get a trial key
-		<a href="https://www.litellm.ai/#pricing" target="_blank" rel="noopener noreferrer">here</a>.
-	</p>
+	<main v-if="!auth.state.session?.premium_user" class="access-organizations-locked">
+		<header class="access-list-header access-organizations-locked-header">
+			<div>
+				<h2>Organizations</h2>
+				<span class="access-muted">Manage organizations, their members, models, and shared budgets</span>
+			</div>
+		</header>
+		<div class="access-enterprise-note-card">
+			<p class="access-enterprise-note">
+				<span class="access-enterprise-note__sentence"
+					>This is a LiteLLM Enterprise feature, and requires a valid key to use. Get a trial key
+					<a href="https://www.litellm.ai/#pricing" target="_blank" rel="noopener noreferrer">here</a>.</span
+				>
+				<span class="access-enterprise-note__mobile"
+					>This is a LiteLLM Enterprise feature and requires a valid key to use.
+					<a class="access-enterprise-gate-link" href="https://www.litellm.ai/#pricing" target="_blank" rel="noopener noreferrer"
+						>Get a trial key</a
+					></span
+				>
+			</p>
+		</div>
+	</main>
 	<main v-else class="access-organizations-page">
 		<AccessNoticeComponent :error="state.error" :message="state.message" /><OrganizationDetailsComponent
 			v-if="detailId"
@@ -165,6 +183,7 @@ onBeforeUnmount(store.dispose);
 					appearance="tremor"
 					row-clickable
 					fixed-layout
+					mobile-cards
 					:sort-by="sortBy"
 					:sort-order="sortOrder"
 					:active-filters="activeFilters"
@@ -180,7 +199,8 @@ onBeforeUnmount(store.dispose);
 							:title="organization(row).organization_id"
 							@click="open(organization(row))"
 						>
-							{{ organization(row).organization_id.slice(0, 7) }}...
+							<span class="access-org-id-short">{{ organization(row).organization_id.slice(0, 7) }}...</span
+							><span class="access-org-id-long">{{ organization(row).organization_id }}</span>
 						</button></template
 					><template #cell-created_at="{ value }">{{ value ? new Date(String(value)).toLocaleDateString() : "N/A" }}</template
 					><template #cell-spend="{ row }">{{ money(organization(row).spend, 4) }}</template

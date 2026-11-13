@@ -1,5 +1,6 @@
 @import "./MembershipStyles.css";
 @import "./ResourceDetailHeaderStyles.css";
+@import "./MobileStyles.css";
 .access-page {
 	padding: 24px 48px;
 	color: rgba(0, 0, 0, 0.88);

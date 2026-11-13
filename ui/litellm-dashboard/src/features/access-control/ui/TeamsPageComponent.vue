@@ -158,6 +158,7 @@ onBeforeUnmount(store.dispose);
 					:min-width="1000"
 					row-clickable
 					fixed-layout
+					mobile-cards
 					manual-sort
 					:sort-by="state.sortBy"
 					:sort-order="state.sortOrder"
@@ -180,9 +181,21 @@ onBeforeUnmount(store.dispose);
 						><span :class="{ 'access-muted': !team(row).organization_id }">{{ org(team(row)) }}</span></template
 					><template #cell-resources="{ row }"
 						><div class="access-tags access-resource-tags">
-							<UiTag color="purple"><UiLucideIcon name="Users" :size="14" />{{ team(row).members_with_roles.length }}</UiTag
-							><UiTag color="blue"><UiLucideIcon name="LayersIcon" :size="14" />{{ team(row).models.length }}</UiTag
-							><UiTag color="cyan"><UiLucideIcon name="KeyIcon" :size="14" />{{ team(row).keys.length }}</UiTag>
+							<UiTag
+								color="purple"
+								:title="
+									team(row).members_with_roles.length +
+									(team(row).members_with_roles.length === 1 ? ' member' : ' members')
+								"
+								><UiLucideIcon name="Users" :size="14" />{{ team(row).members_with_roles.length
+								}}<span class="access-resource-unit">members</span></UiTag
+							><UiTag color="blue" :title="team(row).models.length + (team(row).models.length === 1 ? ' model' : ' models')"
+								><UiLucideIcon name="LayersIcon" :size="14" />{{ team(row).models.length
+								}}<span class="access-resource-unit">models</span></UiTag
+							><UiTag color="cyan" :title="team(row).keys.length + (team(row).keys.length === 1 ? ' key' : ' keys')"
+								><UiLucideIcon name="KeyIcon" :size="14" />{{ team(row).keys.length
+								}}<span class="access-resource-unit">keys</span></UiTag
+							>
 						</div></template
 					><template #cell-spend="{ row }"
 						><div class="access-team-spend">
