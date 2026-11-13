@@ -256,4 +256,38 @@
 	.usage-token-rate-track {
 		width: 72px;
 	}
+
+	.usage-token-line small,
+	.usage-token-note {
+		font-size: 12px;
+		line-height: 18px;
+	}
+
+	.usage-token-line-label {
+		font-size: 13px;
+	}
+}
+
+/* 320px 级别：去掉卡片内额外内边距，并把指标数值降一档，避免 “$231.14…” 这类截断。 */
+@media (max-width: 359px) {
+	.usage-metrics {
+		padding: 0 !important;
+	}
+
+	.usage-metric {
+		padding: 10px 12px;
+	}
+
+	.usage-metric > div {
+		font-size: 18px;
+		line-height: 26px;
+	}
+
+	.usage-token-panel {
+		padding-inline: 12px;
+	}
+
+	.usage-token-rate-track {
+		width: 56px;
+	}
 }

@@ -222,7 +222,7 @@
 
 .usage-ranking-scroll {
 	position: relative;
-	max-height: 320px;
+	max-height: 250px;
 	overflow-y: auto;
 }
 
@@ -277,4 +277,86 @@
 
 .usage-solid-tabs .ui-tabs__tab + .ui-tabs__tab {
 	margin-left: 0;
+}
+
+/* 标签条：横向溢出时用两侧渐隐提示还有内容，渐隐宽度由 UsageTabStripScroll 按滚动位置写入。 */
+.usage-tab-strip {
+	position: relative;
+	min-width: 0;
+	-webkit-mask-image: linear-gradient(
+		90deg,
+		transparent 0,
+		#000 var(--usage-tab-fade-start, 0px),
+		#000 calc(100% - var(--usage-tab-fade-end, 0px)),
+		transparent 100%
+	);
+	mask-image: linear-gradient(
+		90deg,
+		transparent 0,
+		#000 var(--usage-tab-fade-start, 0px),
+		#000 calc(100% - var(--usage-tab-fade-end, 0px)),
+		transparent 100%
+	);
+}
+
+/* 手机端：工具条纵向排列，日期区间独占一行；标签条可横向滑动，导出按钮不与其争宽。 */
+@media (max-width: 767px) {
+	.usage-toolbar {
+		flex-direction: column;
+		flex-wrap: nowrap;
+		align-items: stretch;
+		gap: 10px;
+	}
+	.usage-view-select,
+	.usage-view-control,
+	.usage-user-filter {
+		width: 100%;
+		min-width: 0;
+		max-width: none;
+	}
+	.usage-view-control {
+		flex: 1 1 auto;
+	}
+	.usage-toolbar-date {
+		margin-left: 0;
+		width: 100%;
+		min-width: 0;
+	}
+	/* 手机端下拉框抬高到 40px，和按钮、日期触发器的触控高度一致。 */
+	.usage-page .ui-select,
+	.usage-entity .ui-select {
+		min-height: 40px;
+	}
+	.usage-global-tabs-toolbar {
+		flex-direction: column;
+		flex-wrap: nowrap;
+		align-items: stretch;
+		gap: 8px;
+	}
+	.usage-global-tabs-scroll,
+	.usage-entity-tabs {
+		overflow-x: auto;
+		overflow-y: hidden;
+		overscroll-behavior-inline: contain;
+		scrollbar-width: none;
+	}
+	.usage-global-tabs-scroll::-webkit-scrollbar,
+	.usage-entity-tabs::-webkit-scrollbar {
+		display: none;
+	}
+	.usage-global-tab-actions {
+		justify-content: flex-end;
+	}
+	.usage-global-tab-actions .ui-button {
+		min-height: 40px;
+		padding-inline: 14px;
+	}
+	.usage-tab-strip {
+		scroll-padding-inline: 12px;
+	}
+	/* 页面级 tab 保持单行横向滑动（配两侧渐隐），不必为换行多占一行高度。 */
+	.usage-tab-strip .ui-tabs__list,
+	.usage-tab-strip .ui-tabs__group {
+		flex-wrap: nowrap;
+	}
 }

@@ -155,7 +155,7 @@ const charts = computed(() => [
 					:kind="chart.kind"
 					:y-axis-width="chart.yAxisWidth"
 					:secondary-categories="chart.secondaryCategories"
-					:height="280"
+					:height="240"
 					:format="chart.format"
 			/></UiCard>
 		</div>

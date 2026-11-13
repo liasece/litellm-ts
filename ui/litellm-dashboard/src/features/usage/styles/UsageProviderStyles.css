@@ -59,3 +59,19 @@
 	border-radius: 9999px;
 	background: #06b6d4;
 }
+
+/* 手机端：开关已由平台抬到 40px 命中区，这里只让标题和开关允许换行、字号抬到正文大小。 */
+@media (max-width: 767px) {
+	.usage-provider-toggles {
+		flex-wrap: wrap;
+		gap: 8px 16px;
+	}
+	.usage-provider-toggle,
+	.usage-provider-unknown {
+		min-height: 40px;
+	}
+	.usage-provider-toggles label {
+		font-size: 13px;
+		line-height: 18px;
+	}
+}

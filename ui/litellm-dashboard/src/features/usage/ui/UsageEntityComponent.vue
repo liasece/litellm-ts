@@ -25,6 +25,7 @@ import UsageTopKeys from "./UsageTopKeysComponent.vue";
 import UsageModelTable from "./UsageModelTableComponent.vue";
 import UsageTokensCell from "./UsageTokensCellComponent.vue";
 import UsageExport from "./UsageExportDialogComponent.vue";
+import { useTabStripScroll } from "./UsageTabStripScroll";
 const props = defineProps<{ entityType: EntityType; options: EntityOption[]; dateRange: DateRangeValue }>();
 const selected = ref<string[]>([]),
 	tab = ref("cost"),
@@ -129,6 +130,8 @@ function tooltipEntities(row: Record<string, unknown>) {
 function changeSelection(value: unknown) {
 	selected.value = Array.isArray(value) ? value.map(String) : value == null ? [] : [String(value)];
 }
+const tabsStrip = ref<HTMLElement>();
+const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.value);
 </script>
 <template>
 	<div class="usage-entity">
@@ -165,7 +168,9 @@ function changeSelection(value: unknown) {
 				>Export Data</UiButton
 			>
 		</div>
-		<UiTabs v-model="tab" :items="tabs" appearance="tremor" class="usage-solid-tabs" />
+		<div ref="tabsStrip" class="usage-entity-tabs usage-tab-strip" :style="tabsFadeStyle">
+			<UiTabs v-model="tab" :items="tabs" appearance="tremor" class="usage-solid-tabs" />
+		</div>
 		<div v-show="tab === 'cost'" class="usage-entity-cost">
 			<UiCard appearance="tremor" class="usage-entity-wide"
 				><h2>{{ title }} Spend Overview</h2>
@@ -182,6 +187,7 @@ function changeSelection(value: unknown) {
 					:data="days"
 					index="date"
 					:categories="['metrics.spend']"
+					:height="220"
 					:y-axis-width="100"
 					:format="(v) => money(v, 'compact')"
 					><template #tooltip="{ row }"
@@ -220,7 +226,7 @@ function changeSelection(value: unknown) {
 							index="metadata.alias_display"
 							:categories="['metrics.spend']"
 							horizontal
-							:height="208"
+							:height="190"
 							:y-axis-width="150"
 							:format="(v) => money(v, 'compact')"
 						>
@@ -240,6 +246,7 @@ function changeSelection(value: unknown) {
 								:row-key="(row) => String(entityRow(row).metadata.id)"
 								fixed-layout
 								sticky-header
+								mobile-cards
 								:body-max-height="176"
 								empty-text="No logs found"
 							>
@@ -278,7 +285,14 @@ function changeSelection(value: unknown) {
 						:height="160"
 						:format="(v) => money(v, 2)"
 					/>
-					<UiTable :columns="providerColumns" :rows="providerRows" row-key="provider" fixed-layout empty-text="No logs found">
+					<UiTable
+						:columns="providerColumns"
+						:rows="providerRows"
+						row-key="provider"
+						fixed-layout
+						mobile-cards
+						empty-text="No logs found"
+					>
 						<template #cell-provider="{ row }">
 							<span class="usage-provider-name"
 								><ProviderLogo

@@ -109,3 +109,22 @@
 .usage-tokens-tooltip-rate {
 	color: #047857;
 }
+
+/* 手机端表格折叠成卡片后，token 明细是正文内容，字号抬到 12px 以上。 */
+@media (max-width: 767px) {
+	.usage-tokens-cell {
+		font-size: 12px;
+		line-height: 17px;
+		gap: 2px;
+	}
+
+	.usage-tokens-cell-line {
+		gap: 6px;
+	}
+
+	.usage-tokens-cell-hit {
+		font-size: 12px;
+		line-height: 18px;
+		padding: 0 6px;
+	}
+}

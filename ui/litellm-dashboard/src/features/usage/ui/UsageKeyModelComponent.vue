@@ -68,6 +68,7 @@ function modelRow(row: UiTableRow): TopModelData {
 			row-key="model"
 			fixed-layout
 			sticky-header
+			mobile-cards
 			:body-max-height="models.length > 5 ? 202 : undefined"
 			empty-text="No logs found"
 		>

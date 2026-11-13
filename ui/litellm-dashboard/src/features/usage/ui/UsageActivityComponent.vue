@@ -80,6 +80,7 @@ function toggle(name: string) {
 						kind="area"
 						:y-axis-width="104"
 						:secondary-categories="['hit_rate']"
+						:height="240"
 						:format="number" /></UiCard
 				><UiCard appearance="tremor"
 					><header>
@@ -95,6 +96,7 @@ function toggle(name: string) {
 						:categories="['metrics.successful_requests', 'metrics.failed_requests']"
 						:colors="['emerald', 'red']"
 						kind="area"
+						:height="240"
 						:format="(v) => v.toLocaleString()"
 				/></UiCard>
 			</div>

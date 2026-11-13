@@ -59,7 +59,7 @@ function providerRow(row: UiTableRow): ProviderRanking {
 			</div>
 		</header>
 		<UsageChartLoader v-if="loading" :is-date-changing="isDateChanging" />
-		<UiTable v-else :columns="columns" :rows="tableRows" row-key="provider" fixed-layout empty-text="No logs found">
+		<UiTable v-else :columns="columns" :rows="tableRows" row-key="provider" fixed-layout mobile-cards empty-text="No logs found">
 			<template #cell-provider="{ row }">
 				<span class="usage-provider-name"
 					><ProviderLogo

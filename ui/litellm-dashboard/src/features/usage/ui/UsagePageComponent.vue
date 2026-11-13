@@ -30,6 +30,7 @@ import UsageEntity from "./UsageEntityComponent.vue";
 import UsageProgress from "./UsageProgressComponent.vue";
 import UsageExport from "./UsageExportDialogComponent.vue";
 import UsageUpstreamQuota from "./UsageUpstreamQuotaComponent.vue";
+import { useTabStripScroll } from "./UsageTabStripScroll";
 import "./UsageStyles.css";
 import "../styles/UsageAuxiliaryStyles.css";
 const auth = useAuthenticationStore(),
@@ -144,6 +145,8 @@ function icon(value: unknown) {
 function daily(row: Record<string, unknown>): DailyData {
 	return row as unknown as DailyData;
 }
+const tabsStrip = ref<HTMLElement>();
+const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.value);
 </script>
 <template>
 	<div class="usage-page">
@@ -199,7 +202,7 @@ function daily(row: Record<string, unknown>): DailyData {
 			/>
 			<div v-if="view === 'global'">
 				<div class="usage-global-tabs-toolbar">
-					<div class="usage-global-tabs-scroll">
+					<div ref="tabsStrip" class="usage-global-tabs-scroll usage-tab-strip" :style="tabsFadeStyle">
 						<UiTabs v-model="tab" :items="tabs" appearance="tremor" class="usage-solid-tabs" />
 					</div>
 					<div class="usage-global-tab-actions">
@@ -225,14 +228,14 @@ function daily(row: Record<string, unknown>): DailyData {
 							:max-budget="lists.maxBudget"
 							:date-range-label="dateRangeLabel(date.from, date.to)"
 						/>
-						<UiCard class="usage-panel usage-global-left" appearance="tremor"
+						<UiCard class="usage-panel usage-global-right" appearance="tremor"
 							><h2>Daily Spend</h2>
 							<UsageChartLoader v-if="state.loading" :is-date-changing="dateChanging" /><UsageChart
 								v-else
 								:data="days"
 								index="date"
 								:categories="['metrics.spend']"
-								:height="288"
+								:height="240"
 								:y-axis-width="100"
 								:format="(v) => money(v, 'compact')"
 								class="usage-daily-spend-chart"
@@ -248,7 +251,7 @@ function daily(row: Record<string, unknown>): DailyData {
 						>
 						<UsageTopModels
 							v-model="modelMode"
-							class="usage-global-right"
+							class="usage-global-left"
 							:groups="groups"
 							:individual="models"
 							:loading="state.loading"

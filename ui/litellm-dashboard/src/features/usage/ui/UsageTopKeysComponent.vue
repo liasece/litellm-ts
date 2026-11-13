@@ -73,7 +73,15 @@ onBeforeUnmount(() => generation++);
 			><button aria-label="Chart View" :class="{ active: mode === 'chart' }" @click="mode = 'chart'">Chart</button>
 		</div>
 	</div>
-	<UiTable v-if="mode === 'table'" :columns="columns" :rows="tableRows" row-key="api_key" fixed-layout empty-text="No logs found">
+	<UiTable
+		v-if="mode === 'table'"
+		:columns="columns"
+		:rows="tableRows"
+		row-key="api_key"
+		fixed-layout
+		mobile-cards
+		empty-text="No logs found"
+	>
 		<template #cell-api_key="{ row }">
 			<div class="usage-key-id-cell">
 				<UiTooltip :title="keyRow(row).api_key" class="usage-key-id-trigger"
@@ -118,7 +126,7 @@ onBeforeUnmount(() => generation++);
 			horizontal
 			ranking
 			tooltip-tone="dark"
-			:height="Math.max(40, rows.length * 40)"
+			:height="Math.max(36, rows.length * 34)"
 			:y-axis-width="120"
 			:format="(v) => money(v, 2)"
 			@select="(row) => show(String(row.api_key))"

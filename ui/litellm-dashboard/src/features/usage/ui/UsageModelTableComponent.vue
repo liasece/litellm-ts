@@ -46,6 +46,7 @@ function modelRow(row: UiTableRow): ModelRanking {
 		:rows="tableRows"
 		row-key="key"
 		fixed-layout
+		mobile-cards
 		:sticky-header="limit > 5"
 		:body-max-height="limit > 5 ? 360 : undefined"
 		empty-text="No logs found"
@@ -65,7 +66,7 @@ function modelRow(row: UiTableRow): ModelRanking {
 			model-tooltip
 			:categories="['spend']"
 			horizontal
-			:height="visible.length * 52"
+			:height="visible.length * 40"
 			:y-axis-width="200"
 			:format="(v) => money(v, 2)"
 		/>

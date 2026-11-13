@@ -70,7 +70,16 @@ const slots = useSlots(),
 	tooltipBox = ref<HTMLElement>();
 const width = ref(0),
 	viewportSize = ref({ width: 0, height: 0 });
+/** 手机端排行榜每行至少容纳一条柱子加注释，否则柱子会压住类目名和数值注释。 */
+const RANKING_ROW = 22,
+	RANKING_CHROME = 38,
+	RANKING_MIN = 150;
 let observer: ResizeObserver | undefined;
+const narrow = ref(false);
+let media: MediaQueryList | undefined;
+function syncNarrow(event?: MediaQueryListEvent) {
+	narrow.value = event ? event.matches : Boolean(media?.matches);
+}
 let lastPointer: Pick<MouseEvent, "clientX" | "clientY"> | null = null;
 function measureChart() {
 	const element = root.value;
@@ -85,12 +94,25 @@ onMounted(() => {
 		observer = new ResizeObserver(measureChart);
 		observer.observe(root.value);
 	}
+	if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+		media = window.matchMedia("(max-width: 767px)");
+		syncNarrow();
+		media.addEventListener("change", syncNarrow);
+	}
 });
-onBeforeUnmount(() => observer?.disconnect());
+onBeforeUnmount(() => {
+	observer?.disconnect();
+	media?.removeEventListener("change", syncNarrow);
+});
+const chartHeight = computed(() => {
+	if (!props.ranking || !narrow.value) return props.height;
+	return Math.max(props.height, props.data.length * RANKING_ROW + RANKING_CHROME, RANKING_MIN);
+});
 const lineGeometry = computed(() =>
 	["area", "line"].includes(props.kind)
 		? usageLineGeometry({
 				...props,
+				height: chartHeight.value,
 				width: width.value,
 				legendHeight: props.legend ? props.legendHeight : 0,
 				rightAxisWidth: props.secondaryCategories.length ? 48 : 0,
@@ -102,6 +124,7 @@ const geometry = computed(() =>
 	props.kind === "bar"
 		? usageBarGeometry({
 				...props,
+				height: chartHeight.value,
 				width: width.value,
 				legendHeight: props.legend ? props.legendHeight : 0,
 				measureText: measureUsageTickText,
@@ -247,7 +270,7 @@ function select(params: unknown) {
 		v-else
 		ref="root"
 		class="usage-chart"
-		:style="{ height: height + 'px' }"
+		:style="{ height: chartHeight + 'px' }"
 		@mouseleave="leavePlot"
 		@mouseenter="plotPointer"
 		@mousemove="plotPointer"

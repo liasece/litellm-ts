@@ -21,7 +21,8 @@
 	justify-self: end;
 }
 
-.usage-entity > .usage-solid-tabs {
+.usage-entity > .usage-solid-tabs,
+.usage-entity-tabs {
 	margin-top: 0;
 	padding-top: 4px;
 }
@@ -42,6 +43,15 @@
 	grid-column: span 2;
 }
 
+@media (max-width: 767px) {
+	.usage-entity-cost {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.usage-entity-wide {
+		grid-column: span 1;
+	}
+}
+
 .usage-entity .usage-grid-five {
 	margin-top: 16px;
 }
@@ -52,6 +62,33 @@
 	font-weight: 700;
 	margin-top: 8px;
 	color: #6b7280;
+}
+
+/* 手机端两列统计块较窄，数值降一档，避免 "40,207,218" 溢出卡片边框。 */
+@media (max-width: 767px) {
+	.usage-entity .usage-grid-five {
+		gap: 12px;
+	}
+	.usage-entity .usage-grid-five p {
+		font-size: 20px;
+		line-height: 27px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+}
+
+@media (max-width: 359px) {
+	.usage-entity .usage-grid-five {
+		gap: 10px;
+	}
+	.usage-entity .usage-grid-five p {
+		font-size: 18px;
+		line-height: 24px;
+	}
+	.usage-entity .usage-grid-five > .ui-card {
+		padding: 10px;
+	}
 }
 
 .usage-spend-per-entity {

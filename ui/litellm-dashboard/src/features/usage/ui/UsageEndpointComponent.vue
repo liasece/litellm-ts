@@ -60,7 +60,7 @@ function successColor(rate: number) {
 </script>
 <template>
 	<div class="usage-endpoints">
-		<UiTable :columns="columns" :rows="rows" row-key="endpoint"
+		<UiTable :columns="columns" :rows="rows" row-key="endpoint" mobile-cards
 			><template #cell-endpoint="{ row }"
 				><span class="usage-endpoint-name">{{ row.endpoint }}</span></template
 			><template #cell-requests="{ row }"
@@ -102,6 +102,7 @@ function successColor(rate: number) {
 				:categories="['metrics.successful_requests', 'metrics.failed_requests']"
 				:colors="['green', 'red']"
 				stack
+				:height="220"
 				:y-axis-width="60"
 				:format="(v) => v.toLocaleString()"
 		/></UiCard>
@@ -115,7 +116,7 @@ function successColor(rate: number) {
 				kind="line"
 				curve="natural"
 				connect-nulls
-				:height="320"
+				:height="240"
 				:y-axis-width="60"
 				legend
 				:format="(v) => v.toLocaleString()"

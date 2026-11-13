@@ -142,7 +142,7 @@
 	color: #1d4ed8;
 }
 .usage-model-chart {
-	max-height: 600px;
+	max-height: 420px;
 	overflow-y: auto;
 }
 .usage-model-chart {
@@ -178,4 +178,48 @@ dialog[data-usage-key-shell]::backdrop {
 	display: flex;
 	align-items: center;
 	gap: 6px;
+}
+
+/* 手机端：表格折叠成卡片后不再需要横向拖拽；受限高度的滚动区放宽到接近一屏。 */
+@media (max-width: 767px) {
+	.usage-model-table-toolbar {
+		flex-wrap: wrap;
+		gap: 8px 12px;
+		margin-bottom: 12px;
+	}
+	.usage-model-table-toolbar > div:last-child,
+	.usage-view-buttons {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.usage-segmented {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.usage-segmented button,
+	.usage-model-table-toolbar > div:last-child button,
+	.usage-view-buttons button {
+		min-height: 38px;
+		padding: 6px 12px;
+		font-size: 13px;
+	}
+	.usage-segmented button {
+		min-width: 40px;
+		flex: 1 1 auto;
+	}
+	.usage-key-id {
+		min-height: 32px;
+		max-width: 100%;
+	}
+	.usage-key-mode {
+		margin-top: 0;
+		margin-bottom: 8px;
+	}
+	.usage-key-model .ui-table-scroll,
+	.usage-entity-breakdown-table .ui-table-scroll {
+		max-height: 58dvh !important;
+	}
+	.usage-model-table-toolbar + .ui-table-wrapper .ui-table-scroll {
+		max-height: 58dvh !important;
+	}
 }
