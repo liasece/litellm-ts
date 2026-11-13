@@ -11,6 +11,12 @@
 - 生产部署、线上核验和故障恢复使用 `$deploy-litellm-ts`。生产拓扑与诊断信号只在该 Skill 的
   reference 中维护，不复制到根指令。
 
+## 实时通知
+
+- 面向 dashboard 的 WebSocket 只发资源更新通知，不承载日志正文、详情字段或时间线事件。日志列表通道 `/spend/logs/ui/live` 已按这个形态实现（帧里只有 `logs_changed`）；日志详情流与 Session 时间线仍在推送业务数据，属于待收敛范围。
+- 前端收到通知后经既有 `/spend/logs/...` 接口重新取数；通知可以合并、重复或丢失，断线重连后重新拉取当前视图。进行中的实时进展若改用拉取，需要让接口与推送共用同一个组装函数，并按 400–500ms 节流。
+- Responses API 等外部协议入口不属于本条；新增面向 dashboard 的实时通道按[公司约定](/Users/jansen/src/liasece/OPC/organization/shared-guidance.md#实时通知与业务数据分离)设计。
+
 ## 订阅 Provider 运行时
 
 订阅执行器在 LiteLLM 进程内运行，不再启动 Go 子进程、不维护 CPA 配置或插件管理面。七家 Provider（Codex、Claude、Kimi、Antigravity、xAI、CommandCode、OpenCode Go）共享 `src/subscriptions/native/` 的账号、调度与协议桥，各自在 `providers/` 实现上游协议、目录与额度。Provider 与原始上游模型 ID 分开持久化；auth 文件目录和格式保持旧镜像可读，回滚不依赖数据库结构变更。
