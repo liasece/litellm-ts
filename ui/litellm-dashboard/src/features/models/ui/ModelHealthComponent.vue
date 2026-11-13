@@ -196,6 +196,7 @@ function status(id: string) {
 			:empty-text="emptyText"
 			fixed-layout
 			manual-sort
+			mobile-cards
 			:sort-by="sortKey || undefined"
 			:sort-order="sortOrder ?? 'asc'"
 			@update:selected-keys="selectModel"

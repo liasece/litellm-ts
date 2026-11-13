@@ -2,17 +2,22 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
+import UiSelect from "../../platform/ui/UiSelect.vue";
 import { canCreateVirtualKey, canModifyVirtualKey } from "../logic/KeyPermissionLogic";
 import type { UiTableActiveFilter, UiTableFilterChoice, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import type { KeyFilters } from "../support/VirtualKeyModels";
 import { createVirtualKeysStore } from "../stores/VirtualKeysStore";
 import { rememberCreatedKey } from "../stores/CreatedKeysHistoryStore";
+import { keyColumns } from "../render/KeyTablePresentation";
 import type { VirtualKey } from "../support/VirtualKeyModels";
 import KeyCreateDialog from "./KeyCreateDialogComponent.vue";
 import KeyDetailDrawer from "./KeyDetailDrawerComponent.vue";
+import VirtualKeysCards from "./VirtualKeysCardsComponent.vue";
 import VirtualKeysTable from "./VirtualKeysTableComponent.vue";
 import "./styles/VirtualKeysStyles.css";
 const auth = useAuthenticationStore();
@@ -105,6 +110,22 @@ function removeKeyFilter(key: string): void {
 }
 const pageCount = computed(() => Math.ceil(state.total / state.pageSize));
 const range = computed(() => (state.page - 1) * state.pageSize + 1 + " - " + Math.min(state.page * state.pageSize, state.total));
+/** 手机端没有表头，筛选与排序入口集中到工具条；两者都映射到同一份状态。 */
+const mobileFilterFields = computed<readonly UiTableFilterField[]>(() => Object.values(filterFields.value).flat());
+const mobileSortOptions = computed(() =>
+	keyColumns
+		.filter((column) => column.sortable)
+		.flatMap((column) => [
+			{ value: column.key + ":asc", label: column.label + " ↑" },
+			{ value: column.key + ":desc", label: column.label + " ↓" },
+		]),
+);
+const mobileSortValue = computed(() => (state.sortBy ? state.sortBy + ":" + state.sortOrder : ""));
+function changeSort(value: unknown): void {
+	const [key, order] = typeof value === "string" ? value.split(":") : [];
+	if (!key || (order !== "asc" && order !== "desc")) return;
+	void store.setSort(key, order);
+}
 function select(key: VirtualKey) {
 	selected.value = key;
 	detailOpen.value = true;
@@ -189,7 +210,43 @@ onBeforeUnmount(() => {
 								</button>
 							</div>
 						</div>
+						<div class="vk-mobile-only">
+							<div class="vk-mobile-controls">
+								<UiHeaderFilterButton
+									label="Keys"
+									:fields="mobileFilterFields"
+									:active="activeFilters"
+									@change="applyKeyFilters"
+								/>
+								<UiSelect
+									class="vk-mobile-sort"
+									size="large"
+									:model-value="mobileSortValue || null"
+									:options="mobileSortOptions"
+									placeholder="Sort keys"
+									aria-label="Sort keys"
+									@update:model-value="changeSort"
+								/>
+							</div>
+							<UiActiveFilters
+								v-if="activeFilters.length"
+								:filters="activeFilters"
+								@remove="removeKeyFilter"
+								@clear="store.resetFilters"
+							/>
+							<VirtualKeysCards
+								:rows="state.rows"
+								:catalog="state.catalog"
+								:loading="state.loading"
+								:empty-text="activeFilters.length ? 'No keys match the current filters' : 'No keys found'"
+								:pending-token="state.pendingToken"
+								:can-modify="canModify"
+								@select="select"
+								@toggle-enabled="store.toggleEnabled"
+							/>
+						</div>
 						<VirtualKeysTable
+							class="vk-table-desktop"
 							:rows="state.rows"
 							:catalog="state.catalog"
 							:loading="state.loading"

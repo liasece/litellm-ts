@@ -79,6 +79,12 @@ export function createVirtualKeysStore(api: VirtualKeysApi = virtualKeysApi) {
 		state.sortBy = key;
 		return refresh();
 	}
+	function setSort(key: string, order: "asc" | "desc") {
+		state.sortBy = key;
+		state.sortOrder = order;
+		state.page = 1;
+		return refresh();
+	}
 	function page(value: number) {
 		state.page = Math.max(1, Math.min(value, Math.max(1, Math.ceil(state.total / state.pageSize))));
 		return refresh();
@@ -99,6 +105,6 @@ export function createVirtualKeysStore(api: VirtualKeysApi = virtualKeysApi) {
 		generation = -1;
 		controller?.abort();
 	}
-	return { state, refresh, catalog, filter, resetFilters, sort, page, toggleEnabled, dispose };
+	return { state, refresh, catalog, filter, resetFilters, sort, setSort, page, toggleEnabled, dispose };
 }
 export type VirtualKeysStore = ReturnType<typeof createVirtualKeysStore>;

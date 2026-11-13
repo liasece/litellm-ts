@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from "vue";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
+import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import AccessActionComponent from "../../access-control/ui/AccessActionComponent.vue";
@@ -8,10 +11,13 @@ import AccessDeleteDialogComponent from "../../access-control/ui/AccessDeleteDia
 import AccessNoticeComponent from "../../access-control/ui/AccessNoticeComponent.vue";
 import { objectValue } from "../../access-control/logic/ResourceDraftLogic";
 import SearchToolFormDialogComponent from "./SearchToolFormDialogComponent.vue";
+import SearchToolsCardsComponent from "./SearchToolsCardsComponent.vue";
 import SearchToolDetailsComponent from "./SearchToolDetailsComponent.vue";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import { createResourceStore } from "../../platform/stores/ResourceStore";
 import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
+import { sortTableRows } from "../../platform/ui/UiTableLogic";
+import type { UiTableSort } from "../../platform/ui/UiTypes";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
 import { isAdminRole } from "../../identity/logic/UserRoleLogic";
@@ -70,11 +76,29 @@ const columns = computed(() => [
 	{ key: "source", label: "Source", width: 130 },
 	{ key: "actions", label: "Actions", width: 120, sticky: "right" as const },
 ]);
+/** 手机端卡片与表格共用同一份排序状态；默认保持接口顺序。 */
+const sort = ref<UiTableSort>({ key: "", order: null });
+const mobileFilterFields = computed<readonly UiTableFilterField[]>(() => [...toolIdFilter, ...toolNameFilter, ...providerFilter.value]);
+const mobileSortOptions = computed(() =>
+	columns.value
+		.filter((column) => column.sortable)
+		.flatMap((column) => [
+			{ value: column.key + ":asc", label: column.label + " \u2191" },
+			{ value: column.key + ":desc", label: column.label + " \u2193" },
+		]),
+);
+const mobileSortValue = computed(() => (sort.value.key && sort.value.order ? sort.value.key + ":" + sort.value.order : ""));
+function changeSort(value: unknown): void {
+	const [key, order] = typeof value === "string" ? value.split(":") : [];
+	if (!key || (order !== "asc" && order !== "desc")) return;
+	sort.value = { key, order };
+}
 const filteredRows = computed(() =>
 	filterRowsByFields(rows.value, activeFilters.value, (row, key) =>
 		key === "provider" ? objectValue(row.litellm_params).search_provider : row[key],
 	),
 );
+const cardRows = computed(() => sortTableRows(filteredRows.value, columns.value, sort.value) as SearchTool[]);
 const emptyText = computed(() => (activeFilters.value.length ? "No records match the current filters" : "No search tools configured"));
 function applyToolFilters(entries: readonly UiTableActiveFilter[]): void {
 	const next = activeFilters.value.filter((filter) => !entries.some((entry) => entry.key === filter.key));
@@ -163,9 +187,43 @@ onBeforeUnmount(store.dispose);
 			"
 			@error="state.error = $event"
 			@notice="state.message = $event"
-		/><UiTable
-			v-else
-			class="tools-search-table"
+		/>
+		<div v-if="!selected" class="tools-mobile-only">
+			<div class="tools-mobile-controls">
+				<UiHeaderFilterButton
+					label="Search tools"
+					:fields="mobileFilterFields"
+					:active="activeFilters"
+					@change="applyToolFilters"
+				/>
+				<UiSelect
+					class="tools-mobile-sort"
+					size="large"
+					:model-value="mobileSortValue || null"
+					:options="mobileSortOptions"
+					placeholder="Sort search tools"
+					aria-label="Sort search tools"
+					@update:model-value="changeSort"
+				/>
+			</div>
+			<UiActiveFilters v-if="activeFilters.length" :filters="activeFilters" @remove="removeToolFilter" @clear="clearToolFilters" />
+			<div v-if="state.loading" class="tools-cards-state">Loading search tools...</div>
+			<div v-else-if="!cardRows.length" class="tools-cards-state">{{ emptyText }}</div>
+			<SearchToolsCardsComponent
+				v-else
+				:rows="cardRows"
+				:providers="providers"
+				@select="selected = $event"
+				@edit="edit"
+				@delete="deleting = $event"
+			/>
+		</div>
+		<UiTable
+			v-if="!selected"
+			class="tools-search-table tools-search-desktop"
+			:sort-by="sort.key || undefined"
+			:sort-order="sort.order ?? 'asc'"
+			@sort="sort = $event"
 			:columns="columns"
 			:rows="filteredRows"
 			row-key="search_tool_id"

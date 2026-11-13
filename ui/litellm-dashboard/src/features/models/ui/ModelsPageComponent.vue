@@ -72,6 +72,19 @@ const tabs = computed(() => [
 		: []),
 ]);
 const tab = computed(() => (tabs.value.some((item) => item.key === route.query.tab) ? String(route.query.tab) : "models"));
+/** 手机端七个标签挤在三行里，短文案把它们压回两行。 */
+const shortTabLabels: Record<string, string> = {
+	models: "Models",
+	"add-model": "Add",
+	credentials: "Credentials",
+	health: "Health",
+	retries: "Retry",
+	aliases: "Aliases",
+	"price-data": "Prices",
+};
+function shortTab(key: string) {
+	return shortTabLabels[key] ?? key;
+}
 const modelGroups = computed(() => [...new Set(store.state.rows.map((model) => model.model_name))].sort());
 const processed = computed(() => transformModels(store.state.rows, catalog.costs));
 function changeTab(value: string) {
@@ -138,6 +151,9 @@ onBeforeUnmount(() => {
 				</div>
 			</header>
 			<UiTabs :model-value="tab" :items="tabs" appearance="tremor" grouped class="models-main-tabs" @update:model-value="changeTab"
+				><template v-for="item in tabs" #[`tab-${item.key}`] :key="item.key"
+					><span class="models-tab-label models-tab-label--long">{{ item.label }}</span
+					><span class="models-tab-label models-tab-label--short">{{ shortTab(item.key) }}</span></template
 				><template #extra
 					><span v-if="lastRefreshed" class="models-last-refreshed">Last Refreshed: {{ lastRefreshed }}</span
 					><button class="models-refresh" aria-label="Refresh models" @click="refresh">
@@ -156,6 +172,7 @@ onBeforeUnmount(() => {
 					@delete="actions('delete', $event)"
 					@settings="actions('settings')"
 					@credential="credential"
+					@refresh="refresh"
 				/>
 				<ModelAdd
 					v-if="tab === 'add-model' && ready"

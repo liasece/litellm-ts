@@ -314,3 +314,267 @@
 .model-list-card > .ui-active-filters {
 	padding-top: 0;
 }
+
+/* 手机端：模型列表改成卡片行，筛选与排序移入工具条。 */
+.model-mobile-only {
+	display: none;
+}
+.model-mobile-controls,
+.model-mobile-active {
+	display: none;
+}
+.model-mobile-controls > .ui-header-filter {
+	width: auto;
+	min-width: 40px;
+	height: 40px;
+	margin-inline: 0;
+	padding-inline: 12px;
+	gap: 6px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #fff;
+	color: #374151;
+}
+.model-mobile-controls > .ui-header-filter svg {
+	width: 15px;
+	height: 15px;
+}
+.model-mobile-controls > .ui-header-filter::after {
+	content: "Filter";
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 500;
+}
+.model-mobile-controls > .ui-header-filter--active {
+	border-color: var(--ui-primary);
+	background: var(--ui-primary);
+	color: #fff;
+}
+.model-mobile-refresh {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 40px;
+	height: 40px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	color: #374151;
+	background: #fff;
+}
+.model-mobile-sort {
+	flex: 1;
+	min-width: 0;
+}
+.model-mobile-active {
+	padding-bottom: 0;
+}
+.model-cards {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 12px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.model-card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	background: #fff;
+	cursor: pointer;
+}
+.model-card:active {
+	background: #f9fafb;
+}
+.model-card__head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+.model-card__name {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	flex-direction: column;
+	gap: 4px;
+}
+.model-card__title.model-name {
+	flex-wrap: nowrap;
+	align-items: flex-start;
+}
+.model-card__title .model-name__text {
+	min-width: 0;
+	font-size: 14px;
+	line-height: 20px;
+	overflow-wrap: anywhere;
+	white-space: normal;
+}
+.model-card__upstream.model-name {
+	display: inline-flex;
+	min-width: 0;
+	color: #8c8c8c;
+	font-size: 12px;
+	line-height: 16px;
+}
+.model-card__tools {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+}
+.model-card__icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	color: #374151;
+	background: #fff;
+}
+.model-card__icon--sm {
+	width: 32px;
+	height: 32px;
+	border-color: transparent;
+	color: #6366f1;
+	background: transparent;
+}
+.model-card__icon--danger {
+	color: #6366f1;
+}
+.model-card__icon:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+.model-card__facts {
+	display: grid;
+	gap: 4px;
+	margin: 0;
+}
+.model-card__fact {
+	display: grid;
+	grid-template-columns: 64px minmax(0, 1fr);
+	align-items: baseline;
+	gap: 8px;
+	font-size: 12px;
+	line-height: 18px;
+}
+.model-card__fact dt {
+	color: #6b7280;
+}
+.model-card__fact dd {
+	min-width: 0;
+	margin: 0;
+	color: #111827;
+	overflow-wrap: anywhere;
+}
+.model-card__inline {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+.model-card__cost {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 12px;
+	font-size: 12px;
+	line-height: 18px;
+}
+.model-card__cost > span:first-child {
+	color: #111827;
+	font-weight: 500;
+}
+.model-card__fact .model-health-badge {
+	gap: 6px;
+}
+.model-card__fact .model-health-refresh {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	margin: -7px 0;
+}
+.model-cards-state {
+	padding: 24px 12px;
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 18px;
+	text-align: center;
+}
+
+@media (max-width: 767px) {
+	.model-scope__row {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 12px;
+	}
+	.model-scope__choice {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 6px;
+	}
+	.model-scope__choice > label {
+		font-size: 14px;
+		line-height: 20px;
+	}
+	.model-team-select,
+	.model-view-select {
+		width: 100%;
+	}
+	.model-toolbar__row {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.model-toolbar .ui-button {
+		min-height: 40px;
+	}
+	/* 计数与翻页在手机上分两行居中，避免按钮被挤到右侧只占半个屏幕。 */
+	.model-pagination {
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+	}
+	.model-pagination > div {
+		margin-left: 0;
+	}
+	.model-pagination button {
+		min-height: 40px;
+		padding-inline: 16px;
+	}
+}
+
+@media (max-width: 640px) {
+	.model-desktop-table {
+		display: none !important;
+	}
+	.model-mobile-only {
+		display: block;
+	}
+	.model-mobile-controls {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 12px;
+	}
+	.model-mobile-active {
+		display: flex;
+	}
+}
+
+@media (max-width: 767px) {
+	/* 说明文案里的链接是唯一的次要跳转入口，补足垂直命中区而不撑开段落。 */
+	.model-scope__hint a {
+		display: inline-block;
+		padding-block: 8px;
+		margin-block: -8px;
+	}
+}

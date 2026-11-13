@@ -229,3 +229,157 @@
 	gap: 6px;
 	min-width: 0;
 }
+
+/* 手机端：搜索工具列表改成卡片行，筛选与排序移入工具条。 */
+.tools-mobile-only {
+	display: none;
+}
+.tools-mobile-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 16px 0 8px;
+}
+.tools-mobile-controls > .ui-header-filter {
+	width: auto;
+	min-width: 40px;
+	height: 40px;
+	margin-inline: 0;
+	padding-inline: 12px;
+	gap: 6px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #fff;
+	color: #374151;
+}
+.tools-mobile-controls > .ui-header-filter svg {
+	width: 15px;
+	height: 15px;
+}
+.tools-mobile-controls > .ui-header-filter::after {
+	content: "Filter";
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 500;
+}
+.tools-mobile-controls > .ui-header-filter--active {
+	border-color: var(--ui-primary);
+	background: var(--ui-primary);
+	color: #fff;
+}
+.tools-mobile-sort {
+	flex: 1;
+	min-width: 0;
+}
+.tools-mobile-active {
+	padding-bottom: 0;
+}
+.tools-tool-cards {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.tools-tool-card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	background: #fff;
+	cursor: pointer;
+}
+.tools-tool-card:active {
+	background: #f9fafb;
+}
+.tools-tool-card__head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+.tools-tool-card__identity {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	flex-direction: column;
+	gap: 2px;
+}
+.tools-tool-card__name {
+	overflow-wrap: anywhere;
+	color: #111827;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+}
+.tools-tool-card__provider {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 18px;
+}
+.tools-tool-card__facts {
+	display: grid;
+	gap: 4px;
+}
+.tools-tool-card__fact {
+	display: grid;
+	grid-template-columns: 92px minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	line-height: 18px;
+}
+.tools-tool-card__fact > span:first-child {
+	color: #6b7280;
+}
+.tools-tool-card__fact .tools-resource-id {
+	justify-self: start;
+	max-width: 100%;
+	min-height: 32px;
+	padding: 6px 8px;
+}
+.tools-tool-card__muted {
+	color: #9ca3af;
+}
+.tools-tool-card__actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding-top: 8px;
+	border-top: 1px solid #f3f4f6;
+}
+.tools-tool-card__actions .access-icon-action {
+	width: 36px;
+	height: 36px;
+	border: 1px solid #e5e7eb;
+}
+.tools-cards-state {
+	padding: 24px 12px;
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 18px;
+	text-align: center;
+}
+
+@media (max-width: 767px) {
+	.tools-search-add {
+		min-height: 40px;
+	}
+}
+
+@media (max-width: 640px) {
+	.tools-search-desktop {
+		display: none !important;
+	}
+	.tools-mobile-only {
+		display: block;
+	}
+}

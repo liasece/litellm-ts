@@ -67,6 +67,9 @@
 	display: flex;
 	justify-content: flex-end;
 }
+.vk-create-title {
+	display: none;
+}
 .vk-create-form .vk-form-submit {
 	margin-top: 10px;
 }
@@ -362,6 +365,32 @@
 	}
 	.vk-lifecycle {
 		padding: 0;
+	}
+	/* 手机端弹窗没有标题栏，表单又很长：补一个可见标题，并把 Create 固定在贴底操作区。 */
+	.vk-create-title {
+		display: block;
+		margin: 0 0 12px;
+		color: #111827;
+		font-size: 18px;
+		line-height: 26px;
+		font-weight: 600;
+	}
+	/* 面板自身的下内边距会露出滚动内容，交给贴底操作区承担。 */
+	.vk-create-modal.ui-dialog--overlay-panel {
+		padding-bottom: 0;
+	}
+	.vk-create-form .vk-form-submit {
+		position: sticky;
+		bottom: 0;
+		z-index: 2;
+		margin: 0 -16px;
+		padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+		border-top: 1px solid #e5e7eb;
+		background: #fff;
+	}
+	.vk-create-form .vk-form-submit .ui-button {
+		width: 100%;
+		min-height: 44px;
 	}
 }
 

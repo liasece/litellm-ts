@@ -240,6 +240,36 @@
 	height: 6px;
 	border-radius: 50%;
 }
+@media (max-width: 1023px) {
+	/* 平板竖屏下 width:100% 叠加左右 16px 外边距会把页面推宽 16px；桌面基线保持不变。 */
+	.models-page {
+		width: auto;
+	}
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+	/* 平板竖屏沿用桌面的 tremor 标签栏，而它是 overflow-x: clip：后三个标签和刷新按钮被裁掉、也滑不到。
+	   这一段把标签改为换行、操作区单独一行（与平台 ≤767 的行为一致），桌面基线（≥1024）不受影响。 */
+	.models-main-tabs > .ui-tabs__list {
+		flex-wrap: wrap;
+		gap: 0 20px;
+		overflow: visible;
+	}
+	.models-main-tabs > .ui-tabs__list > .ui-tabs__group {
+		flex: 1 1 auto;
+		flex-wrap: wrap;
+		gap: 0 20px;
+		min-width: 0;
+	}
+	.models-main-tabs > .ui-tabs__list > .ui-tabs__extra {
+		flex-basis: 100%;
+		margin: 4px 0 0;
+		justify-content: flex-end;
+	}
+	.models-main-tabs .ui-tabs__tab {
+		min-height: 40px;
+	}
+}
 @media (max-width: 639px) {
 	.models-page {
 		margin: 0;
@@ -308,4 +338,58 @@
 .model-credentials .ui-button--small .ui-button__tremor-icon {
 	width: 20px;
 	height: 20px;
+}
+
+/* 手机端：标题区与刷新入口换行排列，刷新按钮达到触屏命中尺寸。 */
+@media (max-width: 767px) {
+	.models-heading {
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-bottom: 12px;
+	}
+	.model-heading-actions {
+		width: 100%;
+		justify-content: flex-start;
+	}
+	.models-request-provider {
+		white-space: nowrap;
+	}
+	.models-refresh {
+		width: 40px;
+		height: 40px;
+	}
+	/* 卡片里的行内链接只有 18px 高，用内边距把命中区撑到 32px，视觉位置不变。 */
+	.model-card .model-link {
+		padding: 7px 4px;
+		margin: -7px -4px;
+		border-radius: 6px;
+	}
+}
+
+/* 别名、凭据等原生表格列宽由内容决定，手机端让表格自己横向滚动，页面不再被撑宽。 */
+.model-table-overflow {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.models-tab-label--short {
+	display: none;
+}
+
+@media (max-width: 640px) {
+	/* 七个标签在手机上换行占三行，短文案把它压回两行；列表页的刷新按钮移进筛选工具条，不再独占一行。 */
+	.models-tab-label--long {
+		display: none;
+	}
+	.models-tab-label--short {
+		display: inline;
+	}
+	/* 短文案把 tab 宽度压到 30px 以下，补一个最小可点宽度。 */
+	.models-main-tabs .ui-tabs__tab {
+		min-width: 44px;
+		justify-content: center;
+	}
+	.models-main-tabs > .ui-tabs__list > .ui-tabs__extra {
+		display: none;
+	}
 }

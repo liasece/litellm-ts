@@ -439,6 +439,20 @@
 	.vk-overview-grid {
 		grid-template-columns: minmax(0, 1fr);
 	}
+	/* 三列事实区在手机上会把值挤成一字一行，改为纵向堆叠。 */
+	.vk-key-facts {
+		flex-direction: column;
+		gap: 16px;
+		margin-bottom: 24px;
+	}
+	.vk-key-fact-divider {
+		width: auto;
+		height: 1px;
+		margin-inline: 0;
+	}
+	.vk-key-fact-truncate {
+		max-width: none;
+	}
 }
 
 .vk-detail-content .ui-card--tremor {
@@ -457,4 +471,43 @@
 }
 .vk-edit-form .vk-field-info {
 	margin-left: 4px;
+}
+
+@media (max-width: 767px) {
+	/* 抽屉默认 80vw，标题、令牌与操作区并排时会把别名挤成一列，手机端整宽并改为纵向堆叠。 */
+	.vk-detail-drawer {
+		width: 100vw !important;
+		max-width: 100vw;
+	}
+	.vk-detail-content {
+		padding: 12px;
+	}
+	.vk-detail-heading {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 12px;
+	}
+	.vk-detail-heading h3 {
+		font-size: 20px;
+		line-height: 28px;
+	}
+	.vk-detail-actions {
+		flex-wrap: wrap;
+		white-space: normal;
+		gap: 8px;
+	}
+	.vk-detail-actions .ui-button {
+		flex: 1 1 auto;
+		min-height: 40px;
+	}
+	.vk-drawer-heading {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.vk-drawer-heading .ui-button {
+		min-height: 40px;
+	}
+	.vk-overview-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
 }

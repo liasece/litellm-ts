@@ -139,6 +139,21 @@
 .vk-user-popover button {
 	color: #1677ff;
 }
+/* 弹层里的复制图标只有 12px，触屏上给足命中区。 */
+@media (hover: none), (max-width: 767px) {
+	.vk-user-popover button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		margin: -8px 0;
+		padding: 0;
+		border: 0;
+		background: none;
+		cursor: pointer;
+	}
+}
 .vk-models-cell {
 	display: flex;
 	align-items: flex-start;
@@ -175,6 +190,27 @@
 	width: 12px;
 	height: 12px;
 }
+@media (max-width: 1023px) {
+	/* 平板竖屏下 width:100% 叠加左右 16px 外边距会把页面推宽 16px；桌面基线保持不变。 */
+	.vk-page {
+		width: auto;
+	}
+}
+
+@media (max-width: 1023px) {
+	/* 正文变窄后“Showing…/Fetch/Page x of y/Previous/Next”挤在一行会把页码折成两行，
+	   让工具条整组换行、页码不折行。桌面（≥1024）不变。 */
+	.vk-toolbar {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.vk-toolbar-right {
+		flex-wrap: nowrap;
+	}
+	.vk-toolbar-right > span {
+		white-space: nowrap;
+	}
+}
 @media (min-width: 640px) {
 	.vk-page {
 		margin-inline: 16px;
@@ -208,4 +244,238 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
+}
+
+/* 手机端：列表改成卡片行，筛选与排序移入工具条。 */
+.vk-mobile-only {
+	display: none;
+}
+.vk-mobile-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.vk-mobile-controls > .ui-header-filter {
+	width: auto;
+	min-width: 40px;
+	height: 40px;
+	margin-inline: 0;
+	padding-inline: 12px;
+	gap: 6px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #fff;
+	color: #374151;
+}
+.vk-mobile-controls > .ui-header-filter svg {
+	width: 15px;
+	height: 15px;
+}
+.vk-mobile-controls > .ui-header-filter::after {
+	content: "Filter";
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 500;
+}
+.vk-mobile-controls > .ui-header-filter--active {
+	border-color: var(--ui-primary);
+	background: var(--ui-primary);
+	color: #fff;
+}
+.vk-mobile-sort {
+	flex: 1;
+	min-width: 0;
+}
+.vk-cards {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 8px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.vk-card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	background: #fff;
+	cursor: pointer;
+}
+.vk-card:active {
+	background: #f9fafb;
+}
+.vk-card__head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+.vk-card__identity {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	flex-direction: column;
+	gap: 4px;
+}
+.vk-card__alias {
+	color: #111827;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.vk-card__id {
+	overflow: hidden;
+	color: #6b7280;
+	font-family: var(--ui-font-mono);
+	font-size: 12px;
+	line-height: 16px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.vk-card__status {
+	flex: none;
+	padding-top: 2px;
+}
+.vk-card__status .ui-switch {
+	height: 32px;
+}
+.vk-card__status .ui-switch__handle {
+	top: 7px;
+}
+.vk-card__status .ui-switch__label {
+	line-height: 32px;
+}
+.vk-card__facts {
+	display: grid;
+	gap: 4px;
+	margin: 0;
+}
+.vk-card__fact {
+	display: grid;
+	grid-template-columns: 52px minmax(0, 1fr);
+	align-items: baseline;
+	gap: 8px;
+	font-size: 12px;
+	line-height: 18px;
+}
+.vk-card__fact dt {
+	color: #6b7280;
+}
+.vk-card__fact dd {
+	min-width: 0;
+	margin: 0;
+	color: #111827;
+	overflow-wrap: anywhere;
+}
+.vk-card__fact dd.vk-card__ellipsis {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.vk-card__money {
+	font-variant-numeric: tabular-nums;
+}
+.vk-card__budget {
+	color: #6b7280;
+}
+.vk-card__foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 10px;
+	padding-top: 8px;
+	border-top: 1px solid #f3f4f6;
+}
+.vk-card__meta {
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 16px;
+}
+.vk-card__copy {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-height: 32px;
+	margin-left: auto;
+	padding: 0 8px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	color: #374151;
+	background: #fff;
+	font-size: 12px;
+	line-height: 16px;
+}
+.vk-cards-state {
+	padding: 24px 12px;
+	color: #6b7280;
+	font-size: 12px;
+	line-height: 18px;
+	text-align: center;
+}
+
+@media (max-width: 767px) {
+	.vk-grid {
+		padding: 12px;
+	}
+	.vk-list-content {
+		padding-block: 12px;
+	}
+	.vk-toolbar {
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-bottom: 12px;
+	}
+	.vk-toolbar-left,
+	.vk-toolbar-right {
+		flex: 1 1 100%;
+		flex-wrap: wrap;
+	}
+	.vk-toolbar-left {
+		justify-content: space-between;
+	}
+	.vk-toolbar-right {
+		justify-content: center;
+		gap: 8px;
+	}
+	/* 手机端分页按 “Previous / Page x of y / Next” 居中，和平台其它列表一致。 */
+	.vk-toolbar-right > span {
+		order: 2;
+		font-size: 13px;
+		white-space: nowrap;
+	}
+	.vk-toolbar-right > .vk-page-button:first-of-type {
+		order: 1;
+	}
+	.vk-toolbar-right > .vk-page-button:last-of-type {
+		order: 3;
+	}
+	.vk-toolbar-left > span,
+	.vk-toolbar-right > span {
+		font-size: 12px;
+		line-height: 18px;
+	}
+	.vk-toolbar .ui-button {
+		min-height: 40px;
+	}
+	.vk-page-button {
+		min-height: 40px;
+		padding-inline: 14px;
+	}
+}
+
+@media (max-width: 640px) {
+	.vk-table-desktop {
+		display: none;
+	}
+	.vk-mobile-only {
+		display: block;
+	}
+	.vk-mobile-controls {
+		margin-bottom: 4px;
+	}
 }

@@ -166,6 +166,7 @@ provideKeyFormIdentity("key-create");
 		class="vk-create-modal"
 	>
 		<form class="vk-create-form" @submit.prevent="submit">
+			<h2 class="vk-create-title">Create New Key</h2>
 			<UiAlert v-if="error" type="error" class="vk-form-error">{{ error }}</UiAlert>
 			<KeyField
 				label="Enabled"

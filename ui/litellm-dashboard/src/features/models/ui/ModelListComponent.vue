@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { copyText } from "../../content/logic/ClipboardLogic";
+import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
+import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
+import ModelListCards from "./ModelListCardsComponent.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
@@ -25,6 +28,7 @@ const emit = defineEmits<{
 	settings: [];
 	credential: [name: string];
 	healthDetail: [id: string];
+	refresh: [];
 }>();
 const price = usePriceDisplayStore(),
 	rows = props.store.displayed(props.catalog);
@@ -81,6 +85,22 @@ const accessGroupFilters = computed<readonly UiTableFilterField[]>(() => [
 		},
 	},
 ]);
+/** 手机端没有表头：筛选与排序入口移到工具条，数据与列定义保持同一来源。 */
+const mobileFilterFields = computed<readonly UiTableFilterField[]>(() => [...modelColumnFilters.value, ...accessGroupFilters.value]);
+const mobileSortOptions = computed(() => [
+	{ value: "model_name:asc", label: "Model Name \u2191" },
+	{ value: "model_name:desc", label: "Model Name \u2193" },
+	{ value: "costs:asc", label: "Costs \u2191" },
+	{ value: "costs:desc", label: "Costs \u2193" },
+]);
+const mobileSortValue = computed(() =>
+	props.store.state.sortBy ? (props.store.state.sortBy === "costs" ? "costs" : "model_name") + ":" + props.store.state.sortOrder : "",
+);
+function changeMobileSort(value: unknown): void {
+	const [key, order] = typeof value === "string" ? value.split(":") : [];
+	if (!key || (order !== "asc" && order !== "desc")) return;
+	props.store.setSort(key === "costs" ? "input_cost" : key, order);
+}
 const tableColumns = computed<readonly UiTableColumn[]>(() =>
 	columns.map((column) => ({
 		key: column.key,
@@ -249,6 +269,28 @@ async function all() {
 					></UiButton>
 				</div>
 			</div>
+			<div class="model-mobile-controls">
+				<button type="button" class="model-mobile-refresh" aria-label="Refresh models" @click="emit('refresh')">
+					<UiHeroIcon name="RefreshIcon" :size="14" />
+				</button>
+				<UiHeaderFilterButton label="Models" :fields="mobileFilterFields" :active="activeFilters" @change="applyModelFilters" />
+				<UiSelect
+					class="model-mobile-sort"
+					size="large"
+					:model-value="mobileSortValue || null"
+					:options="mobileSortOptions"
+					placeholder="Sort models"
+					aria-label="Sort models"
+					@update:model-value="changeMobileSort"
+				/>
+			</div>
+			<UiActiveFilters
+				v-if="activeFilters.length"
+				class="model-mobile-active"
+				:filters="activeFilters"
+				@remove="removeModelFilter"
+				@clear="store.clearFilters"
+			/>
 			<div class="model-pagination">
 				<span>{{
 					store.state.total > 0
@@ -274,6 +316,7 @@ async function all() {
 			</div>
 		</div>
 		<UiTable
+			class="model-desktop-table"
 			:columns="tableColumns"
 			:rows="tableRows"
 			:row-key="modelRowKey"
@@ -438,5 +481,21 @@ async function all() {
 				</tr>
 			</template>
 		</UiTable>
+		<div class="model-mobile-only">
+			<div v-if="store.state.loading" class="model-cards-state">🚅 Loading models...</div>
+			<div v-else-if="!rows.length" class="model-cards-state">{{ store.state.error || "No models available" }}</div>
+			<ModelListCards
+				v-else
+				:rows="rows"
+				:health="health"
+				:admin="admin"
+				:user-id="userId"
+				@select="emit('select', $event)"
+				@fallback="emit('fallback', $event)"
+				@override="emit('override', $event)"
+				@delete="emit('delete', $event)"
+				@credential="emit('credential', $event)"
+			/>
+		</div>
 	</section>
 </template>
