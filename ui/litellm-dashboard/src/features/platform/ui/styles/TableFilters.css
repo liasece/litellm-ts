@@ -70,6 +70,22 @@
 	height: 13px;
 }
 
+/* 触屏上把筛选按钮和排序标签的命中区扩到 32px，避免表头难以点中。 */
+@media (hover: none), (max-width: 767px) {
+	.ui-header-filter {
+		width: 32px;
+		height: 32px;
+		margin-inline: -6px;
+	}
+	.ui-header-filter svg {
+		width: 14px;
+		height: 14px;
+	}
+	.ui-table-sort-label {
+		min-height: 32px;
+	}
+}
+
 .ui-header-filter:hover,
 .ui-header-filter:focus-visible {
 	color: var(--ui-primary);
@@ -399,4 +415,29 @@
 
 .ui-active-filters__model {
 	max-width: 200px;
+}
+
+/* 手机端匹配方式（Contains/Equals）撑成两段 40px，字号回到 12px。 */
+@media (max-width: 640px) {
+	.ui-filter-match {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 4px;
+		justify-self: stretch;
+	}
+	.ui-filter-match button {
+		min-height: 40px;
+		padding: 0 8px;
+		font-size: 12px;
+		line-height: 20px;
+	}
+	.ui-filter-field__input,
+	.ui-filter-field__select {
+		min-height: 40px;
+	}
+	.ui-filter-panel__clear,
+	.ui-filter-panel__apply {
+		height: 40px;
+		font-size: 13px;
+	}
 }

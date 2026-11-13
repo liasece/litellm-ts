@@ -420,6 +420,27 @@
 		visibility: visible;
 		transform: translateX(0);
 	}
+	.application-user-popup {
+		width: min(330px, calc(100vw - 16px));
+	}
+	.application-navigation-item {
+		height: 40px;
+		line-height: 40px;
+		margin: 2px 8px;
+		padding-inline: 16px;
+	}
+	.application-navigation-heading {
+		/* 分组小标题在手机上要能看清，10px 太小。 */
+		font-size: 12px;
+		line-height: 18px;
+	}
+	.application-navigation-heading--collapsible {
+		height: 40px;
+	}
+	.application-sidebar-menu--collapsed .application-navigation-item {
+		height: 40px;
+		padding: 9px 24px 0;
+	}
 	.application-workspace > .application-navigation-overlay {
 		display: block;
 		position: absolute;

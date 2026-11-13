@@ -147,6 +147,28 @@ video {
 	display: none !important;
 }
 
+/* 手机端表单控件和主按钮的可点高度，避免 32px 控件在触屏上难以命中。 */
+@media (max-width: 767px) {
+	.ui-input,
+	.ui-select,
+	.ui-input-number,
+	.ui-textarea,
+	input.ui-input,
+	select.ui-select,
+	.ui-button--middle,
+	.ui-button--large {
+		min-height: 40px;
+	}
+	.ui-button--small {
+		min-height: 32px;
+	}
+	/* 选择器内层输入撑到 32px，避免外框 40px 而内层仍是 22px 的命中区。 */
+	.ui-select__input,
+	.ui-select input.ui-input {
+		min-height: 32px;
+	}
+}
+
 .ui-icon {
 	display: inline-block;
 	width: 1em;

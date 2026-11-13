@@ -147,3 +147,13 @@
 .notification-notice--behind > * {
 	visibility: hidden;
 }
+
+/* 触屏上 22px 的关闭按钮难以点中，扩大命中区并保持图标尺寸。 */
+@media (hover: none), (max-width: 767px) {
+	.notification-notice__close {
+		top: 12px;
+		right: 12px;
+		width: 32px;
+		height: 32px;
+	}
+}

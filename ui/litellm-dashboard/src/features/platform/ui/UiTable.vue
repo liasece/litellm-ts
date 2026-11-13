@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import UiActiveFilters from "./UiActiveFilters.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiHeaderFilterButton from "./UiHeaderFilterButton.vue";
@@ -44,6 +44,11 @@ const props = withDefaults(
 		/** 排序是否允许通过再次点击取消；默认允许。 */
 		sortClearable?: boolean;
 		columnWidths?: Readonly<Record<string, number>>;
+		/**
+		 * 手机端把每行折叠成“标签 / 值”卡片；仅适用于自动渲染单元格的实体列表。
+		 * 自定义 #row 的表格需要自己在单元格上补 data-label。
+		 */
+		mobileCards?: boolean;
 	}>(),
 	{
 		bodyMaxHeight: undefined,
@@ -63,6 +68,7 @@ const props = withDefaults(
 		sortClearable: true,
 		columnWidths: undefined,
 		loadingText: undefined,
+		mobileCards: false,
 	},
 );
 const emit = defineEmits<{
@@ -118,6 +124,26 @@ const tableMinWidth = computed(() => {
 	return numericWidth.value;
 });
 const colspan = computed(() => props.columns.length + (props.selection ? 1 : 0));
+const scroller = ref<HTMLElement>();
+const scrollable = ref(false);
+const scrollAtEnd = ref(true);
+function measureScroll(): void {
+	const element = scroller.value;
+	if (!element) return;
+	scrollable.value = element.scrollWidth > element.clientWidth + 4;
+	scrollAtEnd.value = element.scrollLeft + element.clientWidth >= element.scrollWidth - 4;
+}
+let scrollObserver: ResizeObserver | undefined;
+onMounted(() => {
+	measureScroll();
+	scrollObserver = new ResizeObserver(measureScroll);
+	if (scroller.value) scrollObserver.observe(scroller.value);
+	if (scroller.value) scrollObserver.observe(scroller.value.firstElementChild ?? scroller.value);
+});
+onBeforeUnmount(() => {
+	scrollObserver?.disconnect();
+});
+watch([() => props.rows, () => props.columns, () => props.loading], measureScroll, { flush: "post" });
 function keyForRow(row: UiTableRow, index: number): string | number {
 	const key = typeof props.rowKey === "function" ? props.rowKey(row) : row[props.rowKey];
 	return typeof key === "string" || typeof key === "number" ? key : index;
@@ -139,6 +165,17 @@ function changeSort(column: UiTableColumn, order: "asc" | "desc" | false): void 
 function filtersForColumn(column: UiTableColumn): readonly UiTableActiveFilter[] {
 	const keys = new Set((column.filters ?? []).map((field) => field.key));
 	return props.activeFilters.filter((filter) => keys.has(filter.key));
+}
+const mobileSortable = computed(() => props.columns.filter((column) => column.sortable));
+const mobileFilterable = computed(() => props.columns.filter((column) => (column.filters?.length ?? 0) > 0));
+const mobileSortValue = computed(() => {
+	const sort = effectiveSort.value;
+	return sort.key && sort.order ? sort.key + ":" + sort.order : "";
+});
+function mobileSort(event: Event): void {
+	const [key, order] = String((event.target as HTMLSelectElement).value).split(":");
+	const column = props.columns.find((candidate) => candidate.key === key);
+	if (column && (order === "asc" || order === "desc")) changeSort(column, order);
 }
 function selectRow(key: string | number, checked: boolean) {
 	if (props.selection === "single") emit("update:selectedKeys", checked ? [key] : []);
@@ -206,7 +243,10 @@ function resetWidth(column: UiTableColumn) {
 <template>
 	<div
 		class="ui-table-wrapper"
-		:class="['ui-table-wrapper--' + appearance, { 'ui-table-wrapper--compact': compact }]"
+		:class="[
+			'ui-table-wrapper--' + appearance,
+			{ 'ui-table-wrapper--compact': compact, 'ui-table-wrapper--mobile-cards': mobileCards },
+		]"
 		:aria-busy="loading || undefined"
 	>
 		<UiActiveFilters
@@ -215,11 +255,38 @@ function resetWidth(column: UiTableColumn) {
 			@remove="emit('removeFilter', $event)"
 			@clear="emit('clearFilters')"
 		/>
-		<div class="ui-table-frame">
-			<div class="ui-table-scroll" :style="scrollStyle">
+		<div v-if="mobileCards && (mobileSortable.length || mobileFilterable.length)" class="ui-table__mobile-bar">
+			<label v-if="mobileSortable.length" class="ui-table__mobile-sort">
+				<span class="ui-table__mobile-sort-label">Sort</span>
+				<select class="ui-table__mobile-sort-select" :value="mobileSortValue" @change="mobileSort">
+					<option value="" disabled>Choose a column…</option>
+					<template v-for="column in mobileSortable" :key="column.key">
+						<option :value="column.key + ':asc'">{{ column.label }} (A→Z)</option>
+						<option :value="column.key + ':desc'">{{ column.label }} (Z→A)</option>
+					</template>
+				</select>
+			</label>
+			<div v-if="mobileFilterable.length" class="ui-table__mobile-filters">
+				<div v-for="column in mobileFilterable" :key="column.key" class="ui-table__mobile-filter">
+					<span class="ui-table__mobile-filter-label">{{ column.label }}</span>
+					<UiHeaderFilterButton
+						:label="column.label"
+						:fields="column.filters ?? []"
+						:active="filtersForColumn(column)"
+						@change="emit('filterChange', $event)"
+					/>
+				</div>
+			</div>
+		</div>
+		<div class="ui-table-frame" :class="{ 'ui-table-frame--scrollable': scrollable, 'ui-table-frame--at-end': scrollAtEnd }">
+			<div ref="scroller" class="ui-table-scroll" :style="scrollStyle" @scroll.passive="measureScroll">
 				<table
 					class="ui-table"
-					:class="{ 'ui-table--sticky': stickyHeader, 'ui-table--fixed': fixedLayout }"
+					:class="{
+						'ui-table--sticky': stickyHeader,
+						'ui-table--fixed': fixedLayout,
+						'ui-table--cards': mobileCards,
+					}"
 					:style="{ minWidth: typeof tableMinWidth === 'number' ? tableMinWidth + 'px' : tableMinWidth }"
 				>
 					<thead ref="header">
@@ -304,7 +371,7 @@ function resetWidth(column: UiTableColumn) {
 								}"
 								@click="clickRow($event, row, index)"
 							>
-								<td v-if="selection" class="ui-table__selection" @click.stop>
+								<td v-if="selection" class="ui-table__selection" data-label="Select" @click.stop>
 									<UiCheckbox
 										:model-value="selectedKeys.includes(keyForRow(row, index))"
 										:label="selectionLabel ? selectionLabel(row, index) : 'Select row ' + (index + 1)"
@@ -322,6 +389,7 @@ function resetWidth(column: UiTableColumn) {
 										},
 									]"
 									:style="{ textAlign: column.align }"
+									:data-label="column.label"
 								>
 									<slot :name="'cell-' + column.key" :row="row" :value="readTableValue(row, column)" :index="index">{{
 										displayTableValue(readTableValue(row, column))

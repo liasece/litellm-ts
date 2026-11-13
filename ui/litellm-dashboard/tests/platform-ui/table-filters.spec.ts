@@ -38,3 +38,27 @@ test("select filters and sortable headers drive the same table state", async ({ 
 	await page.getByRole("button", { name: "Model", exact: true }).click();
 	await expect(rows.first()).toContainText("zeta");
 });
+
+test.describe("phone card mode", () => {
+	test.use({ viewport: { width: 390, height: 844 } });
+
+	test("the card toolbar sorts and filters where the header is not reachable", async ({ page }) => {
+		await page.goto("/ui/tests/platform-ui/table-filters.html");
+		const cards = page.locator(".ui-table__row");
+		await expect(page.locator(".ui-table--cards")).toHaveCount(1);
+		await expect(page.locator(".ui-table__mobile-bar")).toBeVisible();
+		await expect(cards).toHaveCount(3);
+		await expect(cards.first()).toContainText("zeta");
+
+		await page.locator(".ui-table__mobile-sort-select").selectOption("name:asc");
+		await expect(cards.first()).toContainText("alpha");
+
+		await page.getByRole("button", { name: "Model filters", exact: true }).click();
+		const panel = page.getByRole("dialog", { name: "Model filters", exact: true });
+		await panel.getByRole("searchbox", { name: "Model", exact: true }).fill("beta");
+		await panel.getByRole("button", { name: "Apply", exact: true }).click();
+		await expect(cards).toHaveCount(1);
+		await expect(cards.first()).toContainText("beta");
+		await expect(page.locator(".ui-table__mobile-filter").filter({ hasText: "Model" })).toHaveCount(1);
+	});
+});

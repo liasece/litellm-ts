@@ -144,3 +144,41 @@
 	opacity: 1;
 	cursor: not-allowed;
 }
+
+/* 手机端把开关的可点区域撑到 40px 高，轨道仍保持 22px 视觉高度。 */
+@media (hover: none), (max-width: 767px) {
+	.ui-switch {
+		height: 40px;
+		background: transparent;
+		border-radius: 0;
+	}
+	.ui-switch::before {
+		content: "";
+		position: absolute;
+		inset-inline: 0;
+		top: 9px;
+		height: 22px;
+		border-radius: 100px;
+		background: rgb(0 0 0 / 25%);
+	}
+	.ui-switch--checked::before {
+		background: var(--ui-primary);
+	}
+	.ui-switch__handle {
+		top: 11px;
+	}
+	.ui-switch__label {
+		position: relative;
+		line-height: 40px;
+	}
+	.ui-switch--small {
+		height: 32px;
+	}
+	.ui-switch--small::before {
+		top: 8px;
+		height: 16px;
+	}
+	.ui-switch--small .ui-switch__handle {
+		top: 10px;
+	}
+}

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-test.use({ viewport: { width: 390, height: 844 }, contextOptions: { reducedMotion: "reduce" } });
+// 手机端抽屉铺满视口后不再有可点击的遮罩，遮罩语义在桌面宽度下验证。
+test.use({ viewport: { width: 1024, height: 800 }, contextOptions: { reducedMotion: "reduce" } });
 const harness = "/ui/tests/drawer-paint/drawer-paint.html";
 test("native modality, focus isolation, Tab, Escape and mask clicks keep their behavior", async ({ page }) => {
 	await page.goto(harness + "?renderer=native&maskClosable=false");

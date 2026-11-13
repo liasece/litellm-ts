@@ -8,9 +8,26 @@
 	color: #6b7280;
 }
 .ui-table-frame {
+	position: relative;
 	border: 1px solid #dcddeb;
 	border-radius: 9px;
 	overflow: hidden;
+}
+/* 手机端横向滚动提示：右侧渐隐，滚动到末端后消失。 */
+@media (max-width: 767px) {
+	.ui-table-frame--scrollable::after {
+		content: "";
+		position: absolute;
+		inset-block: 1px;
+		inset-inline-end: 1px;
+		width: 28px;
+		pointer-events: none;
+		background: linear-gradient(to right, rgb(255 255 255 / 0%), rgb(255 255 255 / 92%));
+		transition: opacity 120ms ease-out;
+	}
+	.ui-table-frame--scrollable.ui-table-frame--at-end::after {
+		opacity: 0;
+	}
 }
 .ui-table-scroll {
 	overflow-x: auto;
@@ -210,6 +227,172 @@
 }
 @media (max-width: 767px) {
 	.ui-pagination {
+		justify-content: center;
 		row-gap: 8px;
+		margin: 12px 0;
+	}
+	.ui-pagination__total {
+		flex-basis: 100%;
+		margin-bottom: 2px;
+		text-align: center;
+	}
+	.ui-pagination__item {
+		min-width: 40px;
+		height: 40px;
+		line-height: 38px;
+	}
+	.ui-pagination__size {
+		height: 40px;
+	}
+	.ui-pagination__jump {
+		display: none;
+	}
+}
+
+/* 手机端卡片排版：每行折叠成“标签 / 值”，避免横向拖拽才能看到整行内容。 */
+@media (max-width: 640px) {
+	.ui-table-wrapper--mobile-cards .ui-table-frame {
+		border: 0;
+		background: transparent;
+	}
+	.ui-table--cards,
+	.ui-table--cards tbody {
+		display: block;
+		width: 100%;
+		min-width: 0 !important;
+	}
+	.ui-table--cards thead {
+		display: none;
+	}
+	.ui-table--cards tbody tr {
+		display: block;
+		margin-bottom: 8px;
+		padding: 6px 0;
+		border: 1px solid #e5e7eb;
+		border-radius: 10px;
+		background: #fff;
+	}
+	.ui-table--cards tbody tr:first-child td {
+		border-top: 0;
+	}
+	.ui-table--cards tbody tr.ui-table__state {
+		padding: 16px;
+		border: 1px solid #e5e7eb;
+		text-align: center;
+	}
+	.ui-table--cards tbody tr.ui-table__state td {
+		display: block;
+		padding: 0;
+		border: 0;
+	}
+	.ui-table--cards td,
+	.ui-table--cards td.ui-table__cell--ellipsis {
+		display: grid;
+		grid-template-columns: minmax(72px, 34%) minmax(0, 1fr);
+		align-items: baseline;
+		gap: 4px 10px;
+		height: auto;
+		min-height: 0;
+		padding: 5px 12px;
+		border: 0;
+		overflow: visible;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.ui-table--cards td::before {
+		content: attr(data-label);
+		text-align: left;
+		color: #6b7280;
+		font-size: 12px;
+		line-height: 20px;
+		font-weight: 500;
+	}
+	/* 自定义 #row 未提供 data-label 时退回整行显示，避免留下半列空白。 */
+	.ui-table--cards td:not([data-label]) {
+		display: block;
+	}
+	.ui-table--cards td:empty {
+		display: none;
+	}
+	.ui-table--cards td.ui-table__selection {
+		display: block;
+		padding-block: 2px 6px;
+	}
+	.ui-table--cards td.ui-table__selection::before {
+		content: "";
+		display: none;
+	}
+	.ui-table--cards th.ui-table__cell--sticky-right,
+	.ui-table--cards td.ui-table__cell--sticky-right {
+		position: static;
+		box-shadow: none;
+	}
+	.ui-table--cards .ui-cell-stack,
+	.ui-table--cards .ui-table__cell-inline {
+		min-width: 0;
+	}
+}
+
+/* 卡片模式隐藏了表头，排序/筛选入口单独给一行；≥641px 不参与布局。 */
+.ui-table__mobile-bar {
+	display: none;
+}
+
+@media (max-width: 640px) {
+	.ui-table-wrapper--mobile-cards .ui-table__mobile-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 10px;
+	}
+	.ui-table__mobile-sort {
+		display: flex;
+		flex: 1 1 100%;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.ui-table__mobile-sort-label {
+		font-size: 12px;
+		color: #64748b;
+	}
+	.ui-table__mobile-sort-select {
+		flex: 1 1 auto;
+		min-width: 0;
+		min-height: 40px;
+		padding: 0 10px;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		background: #fff;
+		color: inherit;
+		font: inherit;
+	}
+	.ui-table__mobile-filters {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.ui-table__mobile-filter {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		min-height: 40px;
+		padding: 0 0 0 12px;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		background: #fff;
+	}
+	.ui-table__mobile-filter-label {
+		font-size: 13px;
+		color: #475569;
+	}
+	/* 图标按钮撑满 chip 右侧 40px，整块可点。 */
+	.ui-table__mobile-filter .ui-header-filter {
+		width: 40px;
+		height: 40px;
+		margin: 0;
+		border: 0;
+		background: none;
 	}
 }

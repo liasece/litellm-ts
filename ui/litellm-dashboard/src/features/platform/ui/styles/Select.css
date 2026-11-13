@@ -552,3 +552,24 @@
 .ui-select--antd .ui-select__input::-webkit-search-decoration {
 	appearance: none;
 }
+
+/* 下拉面板 Teleport 到 body，页面内无法覆盖；触屏/窄屏统一 40px 行高便于点选。 */
+/* 触屏上标签里的移除按钮只有 20px，用透明内边距把命中区撑到 32px，视觉尺寸不变。 */
+@media (hover: none), (max-width: 767px) {
+	/* 多选标签模式下输入框会收缩到 4px，手机上留一个能点到的最小宽度。 */
+	.ui-select--multiple .ui-select__input {
+		min-width: 32px;
+	}
+	.ui-select__tag button {
+		width: 32px;
+		height: 32px;
+		justify-content: center;
+		margin: -6px -8px -6px -6px;
+	}
+}
+@media (max-width: 1023px) {
+	.ui-select-popup__option {
+		min-height: 40px;
+		padding: 8px 12px;
+	}
+}

@@ -23,7 +23,8 @@ function dialogAttrs() {
 	return { ...attrs, class: undefined, style: undefined };
 }
 function dialogStyle(): StyleValue {
-	return [attrs.style as StyleValue, { width: typeof props.width === "number" ? props.width + "px" : props.width }];
+	// 宽度经 CSS 变量下发，手机端才能在不使用 !important 的情况下铺满视口。
+	return [attrs.style as StyleValue, { "--ui-drawer-width": typeof props.width === "number" ? props.width + "px" : props.width }];
 }
 function close() {
 	emit("update:open", false);

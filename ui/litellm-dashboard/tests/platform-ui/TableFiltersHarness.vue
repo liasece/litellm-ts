@@ -46,6 +46,7 @@ function remove(key: string): void {
 		<UiTable
 			:columns="columns"
 			:rows="filteredRows"
+			mobile-cards
 			:active-filters="activeFilters"
 			@filter-change="apply"
 			@remove-filter="remove"

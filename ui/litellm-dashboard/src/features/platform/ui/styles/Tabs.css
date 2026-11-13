@@ -130,3 +130,60 @@
 .ui-tabs__group {
 	display: flex;
 }
+
+/* 平板宽度下 tremor 标签条原本是 clip，尾部标签和操作区被裁掉又滑不到。 */
+@media (max-width: 1023px) {
+	.ui-tabs--tremor .ui-tabs__list {
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+		overscroll-behavior-inline: contain;
+	}
+	.ui-tabs--tremor .ui-tabs__list::-webkit-scrollbar {
+		display: none;
+	}
+}
+
+/* 手机端标签换行而不是被裁掉，操作区单独占一行，避免“后面的 tab / 按钮看不到”。 */
+@media (max-width: 767px) {
+	.ui-tabs__list,
+	.ui-tabs--tremor .ui-tabs__list {
+		flex-wrap: wrap;
+		gap: 0 20px;
+		overflow-x: auto;
+		overflow-y: hidden;
+		overscroll-behavior-inline: contain;
+		-webkit-overflow-scrolling: touch;
+		scrollbar-width: none;
+	}
+	.ui-tabs__list::-webkit-scrollbar {
+		display: none;
+	}
+	.ui-tabs__group {
+		flex: 1 1 auto;
+		flex-wrap: wrap;
+		gap: 0 20px;
+		min-width: 0;
+	}
+	.ui-tabs__tab {
+		min-width: 56px;
+		min-height: 44px;
+		padding-block: 10px;
+		justify-content: center;
+	}
+	.ui-tabs--tremor .ui-tabs__tab {
+		min-height: 40px;
+		max-width: none;
+		padding: 10px 2px;
+		align-items: center;
+	}
+	.ui-tabs--tremor .ui-tabs__tab + .ui-tabs__tab {
+		margin-left: 18px;
+	}
+	/* 操作区（导出、刷新等）不能跟随横向滚动被推到屏幕外。 */
+	.ui-tabs__extra {
+		flex-basis: 100%;
+		margin: 4px 0 0;
+		justify-content: flex-end;
+	}
+}
