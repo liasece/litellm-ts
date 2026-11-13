@@ -9,6 +9,9 @@
 	margin-top: 8px;
 	margin-bottom: 24px;
 }
+.pg-configuration__toggle {
+	display: none;
+}
 .pg-configuration__fields {
 	display: flex;
 	flex-direction: column;
@@ -209,4 +212,79 @@
 	width: 24px;
 	min-width: 24px;
 	padding: 0;
+}
+
+/*
+ * Phones and portrait tablets: the settings column is a stacked panel above the
+ * chat instead of a 25% side rail that clips its own controls. It starts
+ * collapsed so the composer owns the viewport, and the toggle row always shows
+ * the current model and endpoint.
+ */
+@media (max-width: 1023px) {
+	.pg-configuration {
+		width: 100%;
+		padding: 0;
+		overflow: visible;
+		border: 1px solid #e5e7eb;
+		border-radius: 10px;
+		background: #f9fafb;
+	}
+	.pg-configuration h2 {
+		display: none;
+	}
+	.pg-configuration__toggle {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		min-height: 48px;
+		padding: 8px 12px;
+		border: 0;
+		background: none;
+		color: #111827;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.pg-configuration__toggle-title {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-shrink: 0;
+		font-size: 14px;
+		font-weight: 600;
+	}
+	.pg-configuration__toggle-title > .ui-icon {
+		color: #6b7280;
+	}
+	.pg-configuration__toggle-summary {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 12px;
+		color: #6b7280;
+		text-align: right;
+	}
+	.pg-configuration__toggle-chevron {
+		flex-shrink: 0;
+		color: #9ca3af;
+		font-size: 12px;
+	}
+	.pg-configuration__fields {
+		display: none;
+		padding: 4px 12px 12px;
+	}
+	.pg-configuration__fields.is-expanded {
+		display: flex;
+	}
+	.pg-config-gear.ui-button {
+		width: 40px;
+		min-width: 40px;
+		min-height: 40px;
+	}
+	.pg-config-tags {
+		padding-bottom: 4px;
+	}
 }

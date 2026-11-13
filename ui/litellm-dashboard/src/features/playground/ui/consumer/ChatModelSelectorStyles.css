@@ -146,3 +146,13 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
+/* Phones: the model list opens as a full popover, so its rows need 40px targets. */
+@media (max-width: 767px) {
+	.chat-model-options__list button {
+		min-height: 40px;
+	}
+	.chat-model-options > div:first-child input {
+		min-height: 40px;
+	}
+}

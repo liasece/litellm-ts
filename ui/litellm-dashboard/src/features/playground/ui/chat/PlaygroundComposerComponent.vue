@@ -6,21 +6,25 @@ import UiButton from "../../../platform/ui/UiButton.vue";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../../platform/ui/UiTooltip.vue";
 import UiSpinner from "../../../platform/ui/UiSpinner.vue";
+import { useCompactViewport } from "../../../platform/logic/CompactViewport";
 const props = defineProps<{ store: PlaygroundChatStore }>(),
 	config = props.store.settings.state,
 	state = props.store.state,
 	fileInput = ref<HTMLInputElement>(),
 	audioInput = ref<HTMLInputElement>();
 const mode = computed(() => config.endpoint);
-const placeholder = computed(() =>
-	["chat", "responses", "anthropic_messages", "embeddings"].includes(mode.value)
-		? "Type your message... (Shift+Enter for new line)"
+/** Phones drop the desktop keyboard hint so the placeholder stays on one line. */
+const compact = useCompactViewport();
+const placeholder = computed(() => {
+	const hint = compact.value ? "" : " (Shift+Enter for new line)";
+	return ["chat", "responses", "anthropic_messages", "embeddings"].includes(mode.value)
+		? "Type your message..." + hint
 		: mode.value === "speech"
 			? "Enter text to convert to speech..."
 			: mode.value === "transcription"
 				? "Optional: Add context or prompt for transcription..."
-				: "Describe the image you want to generate...",
-);
+				: "Describe the image you want to generate...";
+});
 const disabled = computed(() => state.loading || (mode.value === "transcription" ? !state.audio : !state.input.trim()));
 const suggestions = ["Write me a poem", "Explain quantum computing", "Draft a polite email requesting a meeting"];
 const codePrompts = [

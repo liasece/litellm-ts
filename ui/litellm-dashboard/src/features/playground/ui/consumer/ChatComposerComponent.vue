@@ -46,13 +46,7 @@ function key(event: KeyboardEvent) {
 					:size="14"
 					:truncate="true"
 				/>
-				><button
-					v-if="store.loading.value"
-					type="button"
-					class="chat-composer__stop"
-					aria-label="Stop response"
-					@click="store.stop"
-				>
+				<button v-if="store.loading.value" type="button" class="chat-composer__stop" aria-label="Stop response" @click="store.stop">
 					<i></i></button
 				><button
 					v-else

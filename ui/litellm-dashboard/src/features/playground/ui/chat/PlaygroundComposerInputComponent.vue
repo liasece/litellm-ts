@@ -62,4 +62,10 @@ onBeforeUnmount(() => observer?.disconnect());
 .pg-composer__textarea--empty textarea {
 	text-overflow: ellipsis;
 }
+/* 占位文案保持单行：窄屏换行会被 1 行高的输入框裁掉半个字。 */
+.pg-composer__textarea--empty textarea::placeholder {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
 </style>

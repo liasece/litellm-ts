@@ -301,3 +301,71 @@
 		padding: 16px;
 	}
 }
+
+/*
+ * Phones and portrait tablets: the config rail becomes a stacked panel (see
+ * PlaygroundConfigurationStyles.css) so the chat keeps the full content width.
+ * Nothing here applies at 1024px and above.
+ */
+@media (max-width: 1023px) {
+	.pg-chat {
+		padding: 12px 12px 0;
+	}
+	.pg-chat__card {
+		padding: 12px;
+	}
+	.pg-chat__layout {
+		flex-direction: column;
+		gap: 12px;
+		height: auto;
+	}
+	.pg-chat__main {
+		width: 100%;
+		min-width: 0;
+		height: clamp(360px, 62vh, 560px);
+	}
+	.pg-chat__header {
+		flex-wrap: wrap;
+		gap: 8px 12px;
+		padding: 12px;
+	}
+	.pg-chat__header > div {
+		flex: 1 1 100%;
+		flex-wrap: wrap;
+	}
+	.pg-chat__header .pg-chat__action {
+		flex: 1 1 120px;
+		min-height: 40px;
+		justify-content: center;
+		white-space: nowrap;
+	}
+	.pg-chat__messages {
+		padding: 12px 12px 0;
+	}
+	.pg-chat__empty {
+		padding: 12px 0;
+	}
+	.pg-realtime > header {
+		flex-wrap: wrap;
+	}
+}
+
+/*
+ * The shared highlighter lets its theme override the wrap-long-lines prop, so
+ * inside the phone-width dialog the code was clipped with no way to scroll to
+ * the rest of the line. Wrapping keeps every token reachable.
+ */
+@media (max-width: 1023px) {
+	.pg-code-dialog pre code {
+		/* The highlighter sets these inline from its theme, hence !important. */
+		white-space: pre-wrap !important;
+		overflow-wrap: anywhere !important;
+	}
+	.pg-code-dialog__toolbar {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.pg-code-dialog__toolbar .ui-button {
+		min-height: 40px;
+	}
+}

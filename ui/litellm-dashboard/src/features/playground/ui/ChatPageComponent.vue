@@ -28,6 +28,8 @@ const route = useRoute(),
 	}),
 	state = store.state,
 	collapsed = ref(false),
+	/** Phones show the conversation rail as an overlay drawer instead of a fixed column. */
+	mobileOpen = ref(false),
 	bannerDismissed = ref(false),
 	messages = ref<HTMLElement>(),
 	showScroll = ref(false),
@@ -79,7 +81,12 @@ function bottom() {
 	}
 }
 function select(id: string) {
+	mobileOpen.value = false;
 	void router.push({ path: route.path, query: { id } });
+}
+function newChat() {
+	mobileOpen.value = false;
+	store.newChat();
 }
 onMounted(() => void store.load());
 onBeforeUnmount(store.dispose);
@@ -87,17 +94,26 @@ defineExpose({ store });
 </script>
 <template>
 	<div class="chat-page">
-		<aside class="chat-sidebar" :class="{ 'is-collapsed': collapsed }">
+		<div v-if="mobileOpen" class="chat-sidebar-backdrop" @click="mobileOpen = false"></div>
+		<aside class="chat-sidebar" :class="{ 'is-collapsed': collapsed, 'is-mobile-open': mobileOpen }">
 			<header>
 				<div v-if="!collapsed"><img :src="logo" alt="LiteLLM" /><strong>LiteLLM</strong></div>
 				<UiTooltip :title="collapsed ? 'Expand sidebar' : 'Collapse sidebar'" placement="right"
-					><button type="button" :aria-label="collapsed ? 'Expand sidebar' : 'Collapse sidebar'" @click="collapsed = !collapsed">
+					><button
+						type="button"
+						class="chat-sidebar__collapse"
+						:aria-label="collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+						@click="collapsed = !collapsed"
+					>
 						<UiIcon :name="collapsed ? 'MenuUnfoldOutlined' : 'MenuFoldOutlined'" /></button
 				></UiTooltip>
+				<button type="button" class="chat-sidebar__close" aria-label="Close conversations" @click="mobileOpen = false">
+					<UiIcon name="CloseOutlined" />
+				</button>
 			</header>
 			<nav>
 				<UiTooltip :title="collapsed ? 'New chat' : undefined" placement="right"
-					><button type="button" @click="store.newChat">
+					><button type="button" @click="newChat">
 						<span class="chat-sidebar__nav-icon"><UiIcon name="EditOutlined" /></span><span v-if="!collapsed">New chat</span>
 					</button></UiTooltip
 				>
@@ -116,11 +132,20 @@ defineExpose({ store });
 				:history="store.history"
 				@select="select"
 				@remove="store.remove"
-				@new="store.newChat"
+				@new="newChat"
 			/>
 		</aside>
 		<main>
 			<header>
+				<button
+					type="button"
+					class="chat-mobile-menu"
+					aria-label="Open conversations"
+					:aria-expanded="mobileOpen"
+					@click="mobileOpen = true"
+				>
+					<UiIcon name="MenuUnfoldOutlined" />
+				</button>
 				<ChatModelSelectorComponent :store="store" /><UiTooltip title="Settings"
 					><button type="button" aria-label="Settings"><UiIcon name="SettingOutlined" /></button
 				></UiTooltip>

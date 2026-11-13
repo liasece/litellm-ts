@@ -315,3 +315,20 @@
 	padding: 0;
 	background: none;
 }
+
+/*
+ * Phones: message actions are the only way to edit or copy a message, so they
+ * need a visible 40px target instead of the desktop hover reveal.
+ */
+@media (max-width: 767px) {
+	.chat-user-message__edit,
+	.chat-assistant-message__copy button {
+		justify-content: center;
+		min-width: 40px;
+		min-height: 40px;
+		padding: 8px;
+	}
+	.chat-user-message__edit {
+		visibility: visible;
+	}
+}

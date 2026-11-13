@@ -322,3 +322,98 @@
 	gap: 6px;
 	min-width: 0;
 }
+
+/*
+ * Phones and portrait tablets: the comparison panels stack vertically and the
+ * controls wrap, so nothing is pushed past the viewport edge. The inline
+ * grid-template-columns and control widths from the template are desktop
+ * geometry, hence the !important overrides inside this block only.
+ */
+@media (max-width: 1023px) {
+	.pg-compare {
+		padding: 12px;
+	}
+	.pg-compare__card {
+		min-height: calc(100dvh - 180px);
+	}
+	.pg-compare__card > header {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 8px;
+		padding: 12px;
+	}
+	.pg-compare__card > header > .pg-inline {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.pg-compare__card > header > .pg-inline > label {
+		flex: 1 1 100%;
+	}
+	.pg-compare__card > header > .pg-inline > .ui-select,
+	.pg-compare__card > header > .pg-inline > .ui-input {
+		width: 100% !important;
+		min-width: 0;
+	}
+	.pg-compare__panels {
+		grid-template-columns: minmax(0, 1fr) !important;
+	}
+	.pg-compare-panel {
+		border-left: 0;
+		border-top: 1px solid #e5e7eb;
+	}
+	.pg-compare-panel:first-child {
+		border-top: 0;
+	}
+	.pg-compare-panel > header {
+		gap: 8px;
+		padding: 10px 12px;
+	}
+	.pg-compare-panel__selection {
+		gap: 8px;
+		min-width: 0;
+	}
+	.pg-compare-panel__selection > .pg-grow {
+		flex: 1 1 auto;
+		width: auto;
+		min-width: 0;
+	}
+	.pg-compare-panel__messages {
+		max-height: none;
+	}
+	.pg-compare-panel header button:not(.ui-select__trigger) {
+		min-width: 40px;
+		min-height: 40px;
+	}
+	.pg-compare-messages {
+		gap: 16px;
+		padding: 12px;
+	}
+	.pg-compare__card > footer {
+		padding-bottom: 12px;
+	}
+	.pg-compare__card > footer > div {
+		padding: 0 12px;
+	}
+	.pg-compare__composer {
+		padding: 12px;
+	}
+	.pg-compare__suggestions {
+		flex-wrap: wrap;
+		overflow-x: visible;
+	}
+	.pg-compare__suggestions button {
+		max-width: 100%;
+		min-height: 40px;
+		padding: 8px 12px;
+		text-align: left;
+		white-space: normal;
+	}
+	.pg-compare__send {
+		width: 40px !important;
+		height: 40px !important;
+	}
+	.pg-compare .pg-composer__tools .pg-attachment {
+		width: 40px;
+		height: 40px;
+	}
+}

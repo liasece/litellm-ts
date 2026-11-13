@@ -9,6 +9,7 @@ import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiButton from "../../../platform/ui/UiButton.vue";
 import UiTooltip from "../../../platform/ui/UiTooltip.vue";
 import PlaygroundComparisonPanelComponent from "./PlaygroundComparisonPanelComponent.vue";
+import { useCompactViewport } from "../../../platform/logic/CompactViewport";
 import "./PlaygroundCompareStyles.css";
 const auth = useAuthenticationStore(),
 	disabled =
@@ -19,6 +20,9 @@ const auth = useAuthenticationStore(),
 	hasMessages = computed(() => state.comparisons.some((item) => item.history.state.messages.length)),
 	loading = computed(() => state.comparisons.some((item) => item.loading)),
 	allLoading = computed(() => state.comparisons.every((item) => item.loading)),
+	/** Phones drop the desktop keyboard hint so the placeholder stays on one line. */
+	compact = useCompactViewport(),
+	placeholder = computed(() => (compact.value ? "Type your message..." : "Type your message... (Shift+Enter for new line)")),
 	allResponses = computed(() =>
 		state.comparisons.every((item) => !item.loading && item.history.state.messages.some((message) => message.role === "assistant")),
 	);
@@ -132,7 +136,7 @@ defineExpose({ store });
 							<PlaygroundComposerInputComponent
 								v-model="state.input"
 								:disabled="allLoading"
-								placeholder="Type your message... (Shift+Enter for new line)"
+								:placeholder="placeholder"
 								class="pg-composer__textarea"
 								@keydown="key"
 							/><UiButton

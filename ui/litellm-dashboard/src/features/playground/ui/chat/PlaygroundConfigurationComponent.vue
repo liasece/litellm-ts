@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { PlaygroundChatStore } from "../../stores/PlaygroundChatStore";
 import type { EndpointType } from "../../support/PlaygroundModels";
 import { endpointOptions, voiceOptions, modelOptions } from "../../data/PlaygroundEndpointData";
@@ -21,6 +21,12 @@ const settings = props.store.settings,
 	catalog = props.store.catalog,
 	history = props.store.history;
 const models = computed(() => [{ value: "custom", label: "Enter custom model" }, ...modelOptions(catalog.state.models, config.endpoint)]);
+/** Phone layout collapses the panel; the toggle row keeps the current target visible. */
+const expanded = ref(false);
+const summary = computed(() => {
+	const endpoint = endpointOptions.find((option) => option.value === config.endpoint);
+	return [config.selectedModel || "Select a model", endpoint?.label].filter(Boolean).join(" · ");
+});
 const isChatModel = computed(() => {
 	const model = catalog.state.models.find((model) => model.model_group === config.selectedModel);
 	return Boolean(model && (!model.mode || model.mode === "chat"));
@@ -48,8 +54,13 @@ function source(value: UiValue | UiValue[] | null) {
 </script>
 <template>
 	<aside class="pg-configuration">
+		<button type="button" class="pg-configuration__toggle" :aria-expanded="expanded" @click="expanded = !expanded">
+			<span class="pg-configuration__toggle-title"><UiIcon name="SettingOutlined" /> Configurations</span
+			><span class="pg-configuration__toggle-summary">{{ summary }}</span
+			><UiIcon class="pg-configuration__toggle-chevron" :name="expanded ? 'UpOutlined' : 'DownOutlined'" />
+		</button>
 		<h2>Configurations</h2>
-		<div class="pg-configuration__fields">
+		<div class="pg-configuration__fields" :class="{ 'is-expanded': expanded }">
 			<div>
 				<label class="pg-field-label"><UiIcon name="KeyOutlined" /> Virtual Key Source</label
 				><UiSelect
