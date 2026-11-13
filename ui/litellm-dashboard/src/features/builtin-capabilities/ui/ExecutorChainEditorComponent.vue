@@ -56,7 +56,7 @@ function last(value: string | number | (string | number)[] | null) {
 						:model-value="executor.type"
 						:options="options.filter((row) => allowDeepSeekTools || row.value !== 'deepseek_tools')"
 						:aria-label="'Executor type ' + (index + 1)"
-						style="width: 288px"
+						class="builtin-executor-type"
 						@update:model-value="
 							replace(index, convertExecutor($event === 'deepseek_tools' ? 'deepseek_tools' : 'model', executor))
 						"

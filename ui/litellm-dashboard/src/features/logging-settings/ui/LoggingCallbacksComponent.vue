@@ -100,6 +100,7 @@ async function test(callback: LoggingCallback) {
 			:rows="sortedCallbacks"
 			row-key="name"
 			fixed-layout
+			mobile-cards
 			manual-sort
 			:sort-by="sort.order ? 'name' : undefined"
 			:sort-order="sort.order ?? 'asc'"
@@ -112,8 +113,8 @@ async function test(callback: LoggingCallback) {
 		>
 			<template #row="{ row }">
 				<tr v-for="callback in [callbackRow(row)]" :key="callback.name" class="ui-table__row">
-					<td>{{ display(callback) }}</td>
-					<td>
+					<td data-label="Callback Name">{{ display(callback) }}</td>
+					<td data-label="Mode">
 						<span
 							class="logging-callback-mode"
 							:class="
@@ -126,7 +127,7 @@ async function test(callback: LoggingCallback) {
 							>{{ modeLabel(callback) }}</span
 						>
 					</td>
-					<td class="ui-table__cell--sticky-right">
+					<td class="ui-table__cell--sticky-right" data-label="Actions">
 						<div class="logging-callback-actions">
 							<UiTooltip title="Test Callback"
 								><button type="button" aria-label="Test Callback" @click="test(callback)">

@@ -408,3 +408,43 @@
 	color: #111827;
 	border-bottom: 0;
 }
+
+@media (max-width: 640px) {
+	.routing-fallbacks {
+		gap: 12px;
+	}
+	/* 卡片里“箭头 + 回退模型列表”要能换行，否则长模型名把卡片撑宽。 */
+	.routing-fallbacks .routing-fallback-row {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.routing-fallbacks .routing-fallback-row > .ui-hero-icon {
+		display: none;
+	}
+	/* 回退链在卡片里改成自上而下的列表；夹在模型名之间的“→”换行后会单独成行，隐藏。 */
+	.routing-fallbacks .routing-fallback-row > div {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 6px;
+		min-width: 0;
+	}
+	.routing-fallbacks .routing-fallback-row > div > .ui-hero-icon {
+		display: none;
+	}
+	.routing-fallbacks .routing-model-card {
+		min-width: 0;
+		max-width: 100%;
+		white-space: normal;
+		word-break: break-word;
+	}
+	.routing-fallbacks .routing-fallback-table-actions {
+		justify-content: flex-start;
+		gap: 8px;
+	}
+	.routing-fallbacks .routing-fallback-table-actions button {
+		min-width: 40px;
+		min-height: 40px;
+	}
+	.routing-fallbacks > .ui-button {
+		min-height: 40px;
+	}
+}

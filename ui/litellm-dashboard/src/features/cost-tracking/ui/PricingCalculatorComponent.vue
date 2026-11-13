@@ -57,7 +57,7 @@ onBeforeUnmount(store.dispose);
 				</thead>
 				<tbody>
 					<tr v-for="entry in store.state.entries" :key="entry.id">
-						<td>
+						<td data-label="Model">
 							<UiSelect
 								:model-value="entry.model || null"
 								:options="models.map((model) => ({ value: model, label: model }))"
@@ -67,7 +67,7 @@ onBeforeUnmount(store.dispose);
 								@update:model-value="store.change(entry.id, 'model', String($event ?? ''))"
 							/>
 						</td>
-						<td>
+						<td data-label="Input Tokens">
 							<UiInputNumber
 								:model-value="entry.input_tokens"
 								:min="0"
@@ -77,7 +77,7 @@ onBeforeUnmount(store.dispose);
 								@update:model-value="store.change(entry.id, 'input_tokens', $event ?? 0)"
 							/>
 						</td>
-						<td>
+						<td data-label="Output Tokens">
 							<UiInputNumber
 								:model-value="entry.output_tokens"
 								:min="0"
@@ -87,7 +87,7 @@ onBeforeUnmount(store.dispose);
 								@update:model-value="store.change(entry.id, 'output_tokens', $event ?? 0)"
 							/>
 						</td>
-						<td>
+						<td :data-label="'Requests/' + (store.state.period === 'day' ? 'Day' : 'Month')">
 							<UiInputNumber
 								:model-value="
 									(store.state.period === 'day' ? entry.num_requests_per_day : entry.num_requests_per_month) ?? null
@@ -106,7 +106,7 @@ onBeforeUnmount(store.dispose);
 								"
 							/>
 						</td>
-						<td>
+						<td class="cost-pricing-table__remove">
 							<UiButton
 								variant="text"
 								size="small"

@@ -142,6 +142,7 @@ async function test(name: string) {
 			:rows="sortedRows"
 			row-key="primary"
 			fixed-layout
+			mobile-cards
 			manual-sort
 			:sort-by="sort.order ? 'primary' : undefined"
 			:sort-order="sort.order ?? 'asc'"
@@ -154,10 +155,10 @@ async function test(name: string) {
 		>
 			<template #row="{ row }">
 				<tr v-for="item in [fallbackRow(row)]" :key="item.primary" class="ui-table__row">
-					<td>
+					<td data-label="Model Name">
 						<ModelName class="routing-model-card" :model="item.primary" v-bind="modelIcons.get(item.primary)" />
 					</td>
-					<td>
+					<td data-label="Fallbacks">
 						<div class="routing-fallback-row">
 							<UiHeroIcon name="ArrowRightIcon" :size="20" />
 							<div>
@@ -170,7 +171,7 @@ async function test(name: string) {
 							</div>
 						</div>
 					</td>
-					<td class="ui-table__cell--sticky-right">
+					<td class="ui-table__cell--sticky-right" data-label="Actions">
 						<div class="routing-fallback-table-actions">
 							<UiTooltip title="Test fallback"
 								><button type="button" aria-label="Test fallback" @click="test(item.primary)">

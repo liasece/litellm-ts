@@ -218,6 +218,145 @@
 .router-general-card .ui-input-number__input {
 	font-family: var(--ui-font-antd);
 }
+@media (max-width: 767px) {
+	/* General 页的路由表格原来有 677px 最小内容宽度，把 .application-main 撑到 709px。
+	   手机上改成“每条设置一张卡片”：名称+说明做标题，值/状态/操作各占一行。 */
+	.routing-table-scroll {
+		overflow-x: visible;
+	}
+	.routing-table,
+	.routing-table tbody,
+	.routing-table tr,
+	.routing-table td {
+		display: block;
+		width: 100%;
+	}
+	.routing-table thead {
+		display: none;
+	}
+	.routing-table tr {
+		padding: 12px 0;
+		border-bottom: 1px solid #f3f4f6;
+	}
+	.routing-table tr:last-child {
+		border-bottom: 0;
+	}
+	.routing-table td {
+		padding: 0 0 10px;
+		border: 0;
+	}
+	.routing-table td::before {
+		content: attr(data-label);
+		display: block;
+		margin-bottom: 4px;
+		font: 500 12px/16px var(--ui-font-sans);
+		color: #6b7280;
+	}
+	.routing-table td:first-child {
+		padding-bottom: 8px;
+	}
+	.routing-table td:first-child::before {
+		display: none;
+	}
+	.routing-table td:first-child p {
+		font: 600 14px/20px var(--ui-font-sans);
+		color: #111827;
+		word-break: break-word;
+	}
+	.routing-table td:first-child small {
+		display: block;
+		margin-top: 2px;
+		font: 12px/18px var(--ui-font-sans);
+		color: #6b7280;
+	}
+	.routing-table td:last-child {
+		padding-bottom: 0;
+	}
+	.routing-table td:last-child::before {
+		display: none;
+	}
+	.routing-table .ui-input,
+	.routing-table .ui-select,
+	.routing-table .ui-input-number {
+		width: 100%;
+	}
+	.router-general-card .ui-select,
+	.router-general-card .ui-select__values,
+	.router-general-card .ui-select--antd:not(.ui-select--small) .ui-select__single {
+		height: auto;
+		min-height: 40px;
+	}
+	.router-general-card .ui-select--antd:not(.ui-select--small) .ui-select__single {
+		display: flex;
+		align-items: center;
+		padding-block: 8px;
+		line-height: 20px;
+		white-space: normal;
+	}
+	.router-general-card .ui-input-number__handlers {
+		display: none;
+	}
+	/* 桌面样式里 "In DB" 是白色文字落在透明底上（等于看不见）；手机断点补上可见的药丸样式，
+	   桌面像素保持原样，见报告里的平台/桌面待修项。 */
+	.routing-status--db {
+		padding: 2px 10px;
+		outline: 0;
+		background: rgb(99 102 241/0.12);
+		box-shadow: inset 0 0 0 1px rgb(99 102 241/0.35);
+		color: #4338ca;
+	}
+	.routing-status > .ui-hero-icon {
+		color: #4f46e5;
+	}
+	.routing-field-actions {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.routing-field-actions .ui-button {
+		flex: 1 1 auto;
+		min-height: 40px;
+	}
+	.routing-field-actions > button:last-child {
+		min-width: 40px;
+		min-height: 40px;
+	}
+	/* 平台把 .ui-switch 的命中区抬到 40px，但 tremor 变体用 (0,2,0) 的
+	   “.ui-switch--tremor.ui-switch--checked” 写死 height:20px，选中状态仍只有 20px。
+	   这里按同一套几何补回 40px 命中区：12px 轨道居中(14px)、20px 旋钮居中(10px)。 */
+	.router-settings-page .ui-switch--tremor,
+	.router-settings-page .ui-switch--tremor.ui-switch--checked {
+		height: 40px;
+	}
+	.router-settings-page .ui-switch--tremor::before {
+		top: 14px;
+		height: 12px;
+	}
+	.router-settings-page .ui-switch--tremor .ui-switch__handle {
+		top: 10px;
+	}
+	.routing-tag-filter {
+		flex-wrap: wrap;
+		gap: 8px 16px;
+	}
+	.routing-tag-filter > .ui-switch {
+		margin-left: 0;
+	}
+	.routing-tag-filter a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 40px;
+	}
+	.routing-actions {
+		flex-wrap: wrap;
+	}
+	.routing-actions .ui-button {
+		flex: 1 1 140px;
+		min-height: 40px;
+		justify-content: center;
+	}
+}
+
 @media (min-width: 1024px) {
 	.routing-grid {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -233,4 +372,13 @@
    ui-select hover rule has higher specificity than its focus rule. */
 .router-settings-page .ui-select:not(.ui-select--disabled):hover:focus-within {
 	border-color: var(--ui-primary);
+}
+
+/* 平板：General 页表格保持桌面列宽（677px），改由自身容器横向滚动，
+   不再把 .application-main 撑宽。桌面 1024+ 表格本来就放得下，不受影响。 */
+@media (max-width: 1023px) {
+	.routing-table-scroll {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
 }

@@ -41,6 +41,9 @@
 	}
 	.cost-accordion-header {
 		padding: 16px;
+		/* 标题按钮继承了 text-align:center；桌面下发散描述只有一行、看不出差别，
+		   手机上折行后每行都会被居中，改成左对齐。 */
+		text-align: left;
 	}
 	.cost-accordion-inner {
 		padding: 16px;
@@ -51,6 +54,123 @@
 	}
 	.cost-accordion-body.cost-accordion-inner {
 		padding-bottom: 28px;
+	}
+	/* 价格计算表在手机上折叠成“一个模型一张卡片”，输入框不再被横向裁切。 */
+	.cost-pricing-table-wrap {
+		overflow-x: visible;
+	}
+	.cost-pricing-table,
+	.cost-pricing-table tbody,
+	.cost-pricing-table tr,
+	.cost-pricing-table td {
+		display: block;
+		width: 100%;
+	}
+	.cost-pricing-table colgroup,
+	.cost-pricing-table thead {
+		display: none;
+	}
+	.cost-pricing-table tbody {
+		counter-reset: pricing-row;
+	}
+	.cost-pricing-table tbody tr {
+		counter-increment: pricing-row;
+		margin-bottom: 12px;
+		padding: 12px;
+		border: 1px solid #f0f0f0;
+		border-radius: 8px;
+		background: #fff;
+	}
+	.cost-pricing-table tbody tr::before {
+		content: "Model " counter(pricing-row);
+		display: block;
+		margin-bottom: 10px;
+		font: 600 13px/18px var(--ui-font-antd);
+		color: #111827;
+	}
+	.cost-pricing-table td {
+		padding: 0 0 12px;
+		border: 0;
+	}
+	.cost-pricing-table td::before {
+		content: attr(data-label);
+		display: block;
+		margin-bottom: 4px;
+		font: 500 12px/16px var(--ui-font-sans);
+		color: #6b7280;
+	}
+	.cost-pricing-table td.cost-pricing-table__remove {
+		padding-bottom: 0;
+	}
+	.cost-pricing-table td.cost-pricing-table__remove::before {
+		display: none;
+	}
+	.cost-pricing-table td.cost-pricing-table__remove .ui-button {
+		width: 100%;
+		min-height: 40px;
+		justify-content: flex-start;
+		padding-inline: 8px;
+	}
+	.cost-pricing-table td.cost-pricing-table__remove .ui-button::after {
+		content: "Remove model";
+	}
+	.cost-pricing-table td:first-child .ui-select {
+		min-width: 0;
+	}
+	/* 手机断点下数字键盘已经能完成输入，隐藏在触屏上难以命中的 21x19 上下调节按钮。 */
+	.cost-tracking-page .ui-input-number__handlers {
+		display: none;
+	}
+	.cost-pricing-table .ui-input-number__input {
+		padding-inline: 11px;
+	}
+	.cost-time-period {
+		justify-content: stretch;
+		margin-bottom: 12px;
+	}
+	.cost-time-period button {
+		flex: 1 1 0;
+		height: 40px;
+		padding: 0 12px;
+		font-size: 13px;
+	}
+	.cost-time-period button:first-child {
+		border-radius: 8px 0 0 8px;
+	}
+	.cost-time-period button:last-child {
+		border-radius: 0 8px 8px 0;
+	}
+	.cost-tracking-title {
+		flex-wrap: wrap;
+		gap: 4px 8px;
+	}
+	.cost-tracking-title .ui-button,
+	.cost-tracking-title .docs-menu > button {
+		min-height: 40px;
+	}
+	.cost-tracking-title .docs-menu > button {
+		padding-inline: 10px;
+	}
+	.cost-pricing-table-footer {
+		padding: 8px 0 0;
+		background: transparent;
+	}
+	.cost-add-model {
+		min-height: 40px;
+	}
+	/* 供应商折扣/保证金表格折叠成卡片后，行内编辑控件需要占满整行。 */
+	.cost-provider-edit {
+		flex-wrap: wrap;
+	}
+	.cost-percentage-input,
+	.cost-fixed-input {
+		flex: 1 1 80px;
+		width: auto;
+		min-width: 0;
+	}
+	.cost-icon-button {
+		min-width: 40px;
+		min-height: 40px;
 	}
 }
 

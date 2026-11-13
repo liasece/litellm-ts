@@ -64,3 +64,25 @@
 		padding: 24px;
 	}
 }
+
+@media (max-width: 767px) {
+	.theme-settings {
+		padding: 12px 16px 24px;
+	}
+	.theme-settings > header {
+		margin-bottom: 20px;
+	}
+	/* 320px 下 “Save Changes / Reset to Default” 并排会顶到卡片边缘，改成一列整宽按钮。 */
+	.theme-settings-actions {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.theme-settings-actions > .ui-button {
+		flex: 1 1 140px;
+		min-height: 40px;
+		justify-content: center;
+	}
+	.theme-settings-fields strong {
+		font-size: 13px;
+	}
+}

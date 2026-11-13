@@ -57,11 +57,11 @@ async function reset(field: ProxyConfigField) {
 				</thead>
 				<tbody>
 					<tr v-for="field in fields.filter((field) => field.field_type !== 'TypedDictionary')" :key="field.field_name">
-						<td>
+						<td data-label="Setting">
 							<p>{{ field.field_name }}</p>
 							<small>{{ field.field_description }}</small>
 						</td>
-						<td>
+						<td data-label="Value">
 							<UiInputNumber
 								v-if="field.field_type === 'Integer'"
 								:model-value="typeof field.field_value === 'number' ? field.field_value : null"
@@ -86,14 +86,14 @@ async function reset(field: ProxyConfigField) {
 								@update:model-value="field.field_value = $event"
 							/>
 						</td>
-						<td>
+						<td data-label="Status">
 							<span class="routing-status" :class="{ 'routing-status--db': field.stored_in_db === true }"
 								><UiHeroIcon v-if="field.stored_in_db === true" name="CheckCircleIcon" :size="16" />{{
 									field.stored_in_db === true ? "In DB" : field.stored_in_db === false ? "In Config" : "Not Set"
 								}}</span
 							>
 						</td>
-						<td>
+						<td data-label="Action">
 							<div class="routing-field-actions">
 								<UiButton appearance="tremor" variant="primary" @click="update(field)">Update</UiButton
 								><button type="button" :aria-label="'Reset ' + field.field_name" @click="reset(field)">

@@ -180,8 +180,59 @@
 	font-weight: 400;
 }
 
+.builtin-executor-kind > .builtin-executor-type {
+	width: 288px;
+}
+
 @media (max-width: 767px) {
 	.builtin-capabilities-page {
-		padding: 16px;
+		padding: 12px 16px 24px;
+	}
+	/* 执行器抬头里的 288px 固定宽度选择器 + 排序按钮在 390/320 下会挤出卡片，改成换行布局。 */
+	.builtin-executor-header {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.builtin-executor-kind {
+		flex: 1 1 100%;
+		min-width: 0;
+	}
+	.builtin-executor-kind > .builtin-executor-type {
+		width: 100%;
+		min-width: 0;
+	}
+	.builtin-executor-actions {
+		flex: 1 1 100%;
+		justify-content: flex-end;
+		gap: 8px;
+	}
+	.builtin-executor-actions .ui-button,
+	.builtin-executor-actions .ui-button.ui-button--icon-only {
+		min-width: 40px;
+		min-height: 40px;
+	}
+	.builtin-add-executor .ui-button {
+		min-height: 40px;
+	}
+	.builtin-chain-section > .ui-form-field {
+		margin-bottom: 16px;
+	}
+	/* 触屏上 21x19 的上下微调按钮几乎点不中，数字键盘足够完成输入。 */
+	.builtin-capabilities-page .ui-input-number__handlers {
+		display: none;
+	}
+	.builtin-executor-include {
+		flex-wrap: wrap;
+	}
+	/* 多选标签的 × 只有 10x10，触屏上基本点不中。 */
+	.builtin-capabilities-page .ui-select__tag {
+		height: 28px;
+	}
+	.builtin-capabilities-page .ui-select__tag button {
+		min-width: 20px;
+		min-height: 20px;
+	}
+	.builtin-save .ui-button {
+		width: 100%;
 	}
 }

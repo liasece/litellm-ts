@@ -77,10 +77,10 @@ function margin(value: MarginValue) {
 }
 </script>
 <template>
-	<UiTable :columns="columns" :rows="tableRows" row-key="provider" fixed-layout :empty-text="emptyText">
+	<UiTable :columns="columns" :rows="tableRows" row-key="provider" fixed-layout mobile-cards :empty-text="emptyText">
 		<template #row="{ row }">
 			<tr v-for="item in [providerRow(row)]" :key="item.provider" class="ui-table__row">
-				<td>
+				<td data-label="Provider">
 					<div class="cost-provider-name">
 						<ProviderLogoComponent
 							v-if="item.provider !== 'global' && logo(item.provider)"
@@ -91,7 +91,7 @@ function margin(value: MarginValue) {
 						/><span>{{ item.provider === "global" ? "Global (All Providers)" : providerDisplayName(item.provider) }}</span>
 					</div>
 				</td>
-				<td>
+				<td :data-label="kind === 'margin' ? 'Margin' : 'Discount'">
 					<div class="cost-provider-edit">
 						<template v-if="editing === item.provider">
 							<UiInput
@@ -136,7 +136,7 @@ function margin(value: MarginValue) {
 						></template>
 					</div>
 				</td>
-				<td class="ui-table__cell--sticky-right">
+				<td class="ui-table__cell--sticky-right" data-label="Actions">
 					<button
 						type="button"
 						class="cost-icon-button cost-icon-delete"

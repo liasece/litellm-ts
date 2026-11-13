@@ -176,9 +176,47 @@
 .admin-skeleton > span:last-child {
 	width: 61%;
 }
+@media (max-width: 767px) {
+	/* 手机断点不再叠水平外边距（桌面断点的 width:100% + margin:8px 是既有的 16px 溢出源，保持原样）。 */
+	.admin-settings-page {
+		margin-top: 0;
+		padding: 12px 16px 24px;
+	}
+	.admin-price-currency {
+		align-items: stretch;
+		gap: 6px;
+	}
+	/* 币种选择器在 320px 下与标签同行会被压到 154px，改成整宽单列。 */
+	.admin-price-currency > .ui-select {
+		width: 100%;
+		min-width: 0;
+	}
+	.admin-price-actions,
+	.admin-visibility-actions {
+		flex-direction: column;
+		align-items: stretch;
+	}
+	.admin-price-actions > .ui-button,
+	.admin-visibility-actions > .ui-button {
+		min-height: 40px;
+		justify-content: center;
+		text-align: center;
+	}
+	.admin-settings-page .ui-input-number__handlers {
+		display: none;
+	}
+}
+
 @media (min-width: 640px) {
 	.admin-settings-page {
 		margin: 8px;
 		padding: 32px;
+	}
+}
+
+/* 同上：.admin-settings-page 是 width:100% + 8px 外边距，1023px 及以下会撑出主区。 */
+@media (max-width: 1023px) {
+	.admin-settings-page {
+		width: auto;
 	}
 }
