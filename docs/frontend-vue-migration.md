@@ -97,3 +97,28 @@ Old Usage Activity 的 Recharts 字体过渡/测量缓存会让日期刻度密�
 浏览器侧的 visual-baseline 采集与比对脚本（`ui/litellm-dashboard/e2e/`）只能在带 `.artifacts` 证据和 React 参考构建的工作区使用，已按用户要求从仓库移除；组件级浏览器回归仍由 `tests/platform-ui` 配合 `test:components` 保留。生产候选的构建指纹、门禁结果与线上核验记录见上述验收文件。2026-11-08，用户要求确认应跟踪的文件后提交。Vue 仪表盘迁移已在 `13adcfb` 提交，后续维护按当前任务授权执行。
 
 2026-11-09 起前端测试按可执行性分层：表单校验、请求体映射、状态流转与错误码处理由 Vitest 逻辑测试承担（`src/**/*.test.ts`，node 环境）；Playwright 组件测试（`tests/platform-ui`，`npm run test:components`）只保留浏览器语义——原生 dialog 的模态与焦点、剪贴板降级、图表指针命中、键盘与 aria、滚动分页、流式增量，并移除了对照旧布局的像素断言与随页面重写消失的死用例。同时修复 `.github/workflows/ci.yml` 的制表符缩进（YAML 无法解析、CI 从未执行），新增 `frontend`（vue-tsc、Vitest、ESLint、Prettier）与 `components`（Chromium 与组件测试）两个 job，前端门禁从此进入 CI。
+
+## 手机端排版专项（2026-11-13）
+
+用户要求检查全部页面的手机端排版并优化。范围是 23 个页面在 390×844 与 320×720 下的页面级横向滚动、被裁切的表格与工具条、过小的点击区与字号；平板 768 只要求页面级与主区不横滚，桌面 1440 保持基线几何。
+
+判定用同一套 Playwright 脚本对同一份合成 fixture 逐页实测：改前基线来自 `git worktree` 的 pristine HEAD（5198 端口），改后来自当前工作树（5199），两侧同浏览器、同 fixture、同时区。手机端标准为 `documentElement.scrollWidth == innerWidth`、`.application-main.scrollWidth == clientWidth`、无 <30×30 点击区、可见文字 ≥12px；平板只看前两条；桌面比较几何并对差异逐项归因。产物在 `.artifacts/frontend-vue/mobile-audit-20261113/`（`runs/before2-*`、`runs/after-*`、`runs/report/mobile-layout-report.html`）。
+
+平台层收敛（`src/features/platform`、`application`、`notifications`）：
+
+- `UiTable` 增加 `mobile-cards` 卡片模式，`<td>` 用 `data-label` 生成字段名；≤640px 渲染“排序下拉 + 带文字标签的筛选 chip”工具条（chip 42px、内部按钮 40×40），分页居中，横向滚动时右缘渐隐表示还有内容。
+- `Tabs.css` 手机端换行、`#extra` 操作区独占一行、标签最小宽度 56px、行高 44px；≤1023 让 tremor 标签条可横滑，不再 `overflow-x: clip` 把尾部标签裁掉。
+- `Overlays.css` 对话框变底部 sheet（最大高度 `100dvh - 32px`、安全区、页脚吸底、关闭按钮贴顶）；抽屉手机端满宽（宽度由组件注入 `--ui-drawer-width`）。
+- `Choices.css` 开关保留 22px 轨道视觉、命中区 40px；`Select.css` 选项行 40px、标签移除按钮 32px、多选输入框最小宽度 32px；`Foundation.css` ≤767px 输入框与主按钮 40px；`TableFilters.css` 表头漏斗 32px、匹配方式两段 40px、面板内输入与 Clear/Apply 40px。
+- `ApplicationShell` 用户弹层限宽 `min(330px, 100vw - 16px)`、导航行 40px、分组小标题 12px。
+- `useCompactViewport` 从 playground/logs/privacy 三份副本收敛到 `platform/logic/CompactViewport.ts`。
+
+分组改动（7 个子代理并行，各自目录内）：keys/models/search-tools 卡片化并给创建密钥弹窗补可见标题与常驻底栏；logs 三列表改单列卡片、speed 排行图去掉固定 88px 高度、privacy 规则表卡片化；usage 工具栏纵向、标签条横滑渐隐、指标两列、图表按容器高度重算；teams/users/organizations 表格卡片化与危险操作底部 sheet；六张设置页单列并去掉根节点 `width:100%`+外边距的 32px 推宽；playground 抽屉满宽与占位文案单行；subscriptions 按 Provider 折叠（深链仍展开并定位）、额度卡头纵向、状态徽标改语义色；api-reference 代码块横滑加右缘渐隐；login 密码可见性按钮 40px。
+
+上线后按真实生产数据又补了 5 处 mock 数据覆盖不到的点击区：日志卡行内字段链接（14–37×18 → 32×32，并把字段行抬到 32px 避免命中区重叠）、模型卡内凭据链接 18px 行高、用户 ID 复制按钮 12×16、密钥用户弹层复制按钮 12×16、多选标签输入框 4px 宽；侧栏分组小标题 10px 改 12px。生产环境 8 个代表页面 × 390/320 复测：`doc == innerWidth`、`main` 390/390 与 320/320、6 个页面 small=0。
+
+结果：390 与 320 下 23 页全部零页面级横向溢出、零 <30px 点击区、零 <12px 文字（改前分别为 6/8 页内容被裁、396/397 个小点击区、69 处小字）；768 的 5 页主区溢出清零（保持桌面密度，不把 28px 图标当回归）；1440 仅 organizations 由 1252/1220 收敛到 1220/1220（修掉根节点自身推宽）、订阅页状态徽标由写死红色改为语义色（1146 像素，属修正）；playground/test-key 的文本差异来自 fixture 里新增的已选模型，usage 页高度差来自另一并行改动的图表高度与 34px 行高，均非本次引入。
+
+门禁：`git diff --check`、后端 `npm run typecheck`、前端 `vue-tsc --noEmit`、ESLint（`--max-warnings=0`）、Prettier、Vitest 96 文件/396 项、`npm run build`、组件测试 63 通过；`logs-session-paging.spec.ts:159` 与 `logs-session-scroll.spec.ts:183` 为改动前既有失败（滚动位置断言对时序敏感），未放宽。新增 `table-filters.spec.ts` 的手机卡片用例验证“表头不可达时用卡片工具条排序与筛选”，该用例在修复前会因缺少 `.ui-table__mobile-bar` 失败。
+
+生产已通过标准入口 `/root/var/tools/service/ai-out-service/restart-litellm.sh` 发布两次（容器 `litellm-prod` 健康、无 OOM、无异常重启，`/health/liveliness` 与 `/ui/?page=logs` 均 200），并在真实生产页面按 390/320 实测上述 8 页。已知边界：桌面榜单图长标签重叠与 router-settings 的空 “Reliability & Retries” 区块是改动前既有问题，未纳入本次范围；768 与桌面保留桌面密度，因此仍有 <30px 图标。
