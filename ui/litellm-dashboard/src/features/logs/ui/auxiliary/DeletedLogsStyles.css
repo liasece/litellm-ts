@@ -20,3 +20,45 @@
 	align-items: center;
 	gap: 8px;
 }
+
+/* 手机：分页与结果计数上下排列，删除记录表切成带字段名的卡片。 */
+@media (max-width: 767px) {
+	.deleted-log-header {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 8px;
+	}
+	.deleted-log-pages {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 8px;
+	}
+	.deleted-log-pages > span {
+		grid-column: 1 / -1;
+	}
+	.deleted-log-pages .logs-native-button {
+		min-height: 40px;
+	}
+	.ui-table--cards .deleted-models {
+		max-width: 100%;
+	}
+	.ui-table--cards .deleted-models .ui-tag {
+		max-width: 100%;
+		min-width: 0;
+	}
+	.ui-table--cards .deleted-model-label {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.ui-table--cards .deleted-records-value {
+		max-width: 100% !important;
+		overflow: visible;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.deleted-records-scroll--cards {
+		height: auto;
+		overflow: visible;
+	}
+}

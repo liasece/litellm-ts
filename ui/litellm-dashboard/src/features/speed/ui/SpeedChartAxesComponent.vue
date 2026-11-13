@@ -9,6 +9,7 @@ const coordinate = (value: number) => String(Math.round(value * 1000) / 1000);
 		:width="geometry.width"
 		:height="geometry.height"
 		:viewBox="'0 0 ' + geometry.width + ' ' + geometry.height"
+		:style="'--speed-axis-font:' + geometry.labelSize + 'px'"
 		aria-hidden="true"
 	>
 		<g stroke="#9ca3af" fill="none">
@@ -36,7 +37,7 @@ const coordinate = (value: number) => String(Math.round(value * 1000) / 1000);
 				:y2="tick.coordinate"
 			/>
 		</g>
-		<g fill="#9ca3af" stroke="none" font-size="10">
+		<g fill="#9ca3af" stroke="none">
 			<text
 				v-for="tick in geometry.xTicks"
 				:key="'x-label-' + tick.value"

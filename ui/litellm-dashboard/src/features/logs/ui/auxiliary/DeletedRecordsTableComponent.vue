@@ -7,6 +7,7 @@ import type { UiTableActiveFilter, UiTableFilterField } from "../../../platform/
 import type { UiTableColumn, UiTableRow, UiTableSort } from "../../../platform/ui/UiTypes";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 import type { DeletedLogColumn } from "../../support/DeletedLogColumnModels";
+import { useCompactViewport } from "../../../platform/logic/CompactViewport";
 import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 const props = withDefaults(
 	defineProps<{
@@ -24,7 +25,8 @@ const emit = defineEmits<{
 	removeFilter: [key: string];
 	clearFilters: [];
 }>();
-const money = useMoneyFormatter(),
+const compact = useCompactViewport(),
+	money = useMoneyFormatter(),
 	sort = ref<{ key: string; order: "asc" | "desc" | null }>({ key: "deleted_at", order: "desc" });
 const tableColumns = computed<readonly UiTableColumn[]>(() =>
 	props.columns.map((column) => ({
@@ -90,7 +92,7 @@ function rowKey(row: UiTableRow): string {
 }
 </script>
 <template>
-	<div class="deleted-records-scroll">
+	<div class="deleted-records-scroll" :class="{ 'deleted-records-scroll--cards': compact }">
 		<UiTable
 			:columns="tableColumns"
 			:rows="sorted"
@@ -101,6 +103,7 @@ function rowKey(row: UiTableRow): string {
 			resizable
 			manual-sort
 			sticky-header
+			:mobile-cards="compact"
 			:sort-by="sort.order ? sort.key : undefined"
 			:sort-order="sort.order ?? 'desc'"
 			:active-filters="activeFilters"
@@ -115,7 +118,8 @@ function rowKey(row: UiTableRow): string {
 					<td
 						v-for="column in columns"
 						:key="column.key"
-						:style="{ width: column.width + 'px', maxWidth: column.maxWidth + 'px' }"
+						:data-label="column.label"
+						:style="compact ? undefined : { width: column.width + 'px', maxWidth: column.maxWidth + 'px' }"
 					>
 						<div v-if="column.kind === 'models'" class="deleted-models">
 							<UiTag v-if="!models(row.models).length" appearance="tremor" size="xs" color="red"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { use, graphic, type ComposeOption } from "echarts/core";
 import { CustomChart, type CustomSeriesOption } from "echarts/charts";
 import { SVGRenderer } from "echarts/renderers";
@@ -14,6 +14,12 @@ const props = defineProps<{ rows: SpeedChartRow[]; bucket: SpeedBucket; timezone
 const root = ref<HTMLElement>(),
 	tooltip = ref<HTMLElement>(),
 	width = ref(0);
+// 手机版需要更高的图和更大的轴标签；桌面版保持原有的 88px/10px。
+const narrow = ref(false);
+let media: MediaQueryList | undefined;
+function syncNarrow(): void {
+	narrow.value = Boolean(media?.matches);
+}
 const hover = ref<{ index: number; y: number } | null>(null),
 	tooltipSize = ref({ width: 0, height: 0 });
 const values = computed(() => props.rows.flatMap((row) => (row.tps === null ? [] : [row.tps])));
@@ -25,6 +31,8 @@ const geometry = computed(() =>
 		maximum: props.yMax,
 		width: width.value,
 		measureLabel: measureSpeedTickText,
+		height: narrow.value ? 180 : undefined,
+		labelSize: narrow.value ? 12 : undefined,
 	}),
 );
 let observer: ResizeObserver | undefined;
@@ -46,7 +54,16 @@ watch(
 	},
 	{ flush: "post" },
 );
-onBeforeUnmount(() => observer?.disconnect());
+onMounted(() => {
+	if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+	media = window.matchMedia("(max-width: 767px)");
+	syncNarrow();
+	media.addEventListener("change", syncNarrow);
+});
+onBeforeUnmount(() => {
+	observer?.disconnect();
+	media?.removeEventListener("change", syncNarrow);
+});
 const option = computed<ComposeOption<CustomSeriesOption>>(() => {
 	const layout = geometry.value;
 	const gradient = new graphic.LinearGradient(0, 0, 0, 1, buildSpeedStrokeStops(Math.min(...values.value), Math.max(...values.value)));
@@ -125,10 +142,25 @@ watch(
 );
 </script>
 <template>
-	<div v-if="values.length" ref="root" class="speed-chart" data-testid="model-speed-chart" @mousemove="move" @mouseleave="hover = null">
+	<div
+		v-if="values.length"
+		ref="root"
+		class="speed-chart"
+		:style="{ height: geometry.height + 'px' }"
+		data-testid="model-speed-chart"
+		@mousemove="move"
+		@mouseleave="hover = null"
+	>
 		<SpeedChartAxesComponent v-if="width" :geometry="geometry" :cursor-x="hover ? geometry.coordinates[hover.index] : undefined" />
 		<VChart v-if="width" class="speed-chart-drawing" :option="option" :init-options="{ renderer: 'svg' }" autoresize />
-		<svg v-if="width" class="speed-chart-dots" :width="width" height="88" :viewBox="'0 0 ' + width + ' 88'" aria-hidden="true">
+		<svg
+			v-if="width"
+			class="speed-chart-dots"
+			:width="width"
+			:height="geometry.height"
+			:viewBox="'0 0 ' + width + ' ' + geometry.height"
+			aria-hidden="true"
+		>
 			<circle
 				v-for="dot in geometry.dots"
 				:key="dot.index"

@@ -8,6 +8,37 @@
 	font-size: 14px;
 	line-height: 20px;
 }
+/* 手机端：触发按钮独占一行，快捷区间退到它下面，避免两者争抢宽度把日期挤成竖排。 */
+@media (max-width: 639px) {
+	.date-range-picker {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 8px;
+		width: 100%;
+	}
+	.date-range-dropdown {
+		order: 1;
+		flex: 1 1 auto;
+		width: 100%;
+	}
+	.date-range-quick {
+		order: 2;
+		flex: 1 1 auto;
+		width: 100%;
+	}
+}
+.date-range-scrim {
+	display: none;
+}
+@media (max-width: 639px) {
+	.date-range-scrim {
+		display: block;
+		position: fixed;
+		inset: 0;
+		z-index: 9998;
+		background: #0f172a66;
+	}
+}
 .date-range-picker > label {
 	font-size: 14px;
 	line-height: 20px;
@@ -33,6 +64,28 @@
 	font-weight: 500;
 	padding: 8px 10px;
 	white-space: nowrap;
+}
+/* 手机上三个快捷区间排成一行并保持整行可点，空间不足时横向滑动而不是换行。 */
+@media (max-width: 639px) {
+	.date-range-quick {
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		overflow-y: hidden;
+		overscroll-behavior-inline: contain;
+		scrollbar-width: none;
+	}
+	.date-range-quick::-webkit-scrollbar {
+		display: none;
+	}
+	.date-range-quick > button {
+		flex: 1 1 0;
+		min-width: 0;
+		min-height: 40px;
+		padding: 8px 6px;
+		font-size: 13px;
+		line-height: 18px;
+		text-align: center;
+	}
 }
 .date-range-quick > button:hover {
 	border-color: #9ca3af;
@@ -61,6 +114,24 @@
 	font-size: 14px;
 	line-height: 20px;
 	text-align: left;
+}
+/* 手机端日期触发区：48px 高、整行可点、单行省略，不再把日期折成竖排。 */
+@media (max-width: 639px) {
+	.date-range-trigger {
+		min-height: 48px;
+		padding: 10px 12px;
+	}
+	.date-range-trigger-content {
+		gap: 8px;
+	}
+	.date-range-trigger-main {
+		min-width: 0;
+	}
+	.date-range-trigger-label {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 }
 .date-range-trigger:hover {
 	border-color: #9ca3af;
@@ -98,24 +169,73 @@
 }
 .date-range-popup {
 	position: fixed;
-	left: 12px;
-	right: 12px;
-	top: 80px;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	top: auto;
 	z-index: 9999;
-	max-height: calc(100dvh - 96px);
+	max-height: min(88dvh, 720px);
 	min-width: 0;
-	overflow-y: auto;
 	border: 1px solid #e5e7eb;
-	border-radius: 8px;
+	border-bottom: 0;
+	border-radius: 16px 16px 0 0;
 	background: #fff;
 	box-shadow:
-		0 20px 25px -5px #0000001a,
-		0 8px 10px -6px #0000001a;
+		0 -20px 25px -5px #00000026,
+		0 -8px 10px -6px #0000001a;
 	display: flex;
 	flex-direction: column;
+	overflow: hidden;
+}
+.date-range-sheet-head {
+	position: relative;
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+	padding: 18px 12px 10px;
+	border-bottom: 1px solid #e5e7eb;
+	font-size: 15px;
+	line-height: 22px;
+	font-weight: 600;
+	color: #111827;
+}
+.date-range-sheet-head strong {
+	flex: 1;
+	min-width: 0;
+	padding-left: 4px;
+}
+.date-range-sheet-grabber {
+	position: absolute;
+	top: 6px;
+	left: 50%;
+	width: 36px;
+	height: 4px;
+	border-radius: 9999px;
+	background: #d1d5db;
+	transform: translateX(-50%);
+}
+.date-range-sheet-close {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	margin: -6px -4px -6px 0;
+	border: 0;
+	border-radius: 8px;
+	background: none;
+	color: #4b5563;
+	cursor: pointer;
+}
+.date-range-sheet-close:hover {
+	background: #f3f4f6;
+	color: #111827;
 }
 .date-range-relative {
 	width: 100%;
+	flex: none;
 	border-bottom: 1px solid #e5e7eb;
 }
 .date-range-relative > header {
@@ -127,8 +247,9 @@
 	color: #111827;
 }
 .date-range-relative > div {
-	max-height: 192px;
+	max-height: 30dvh;
 	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 .date-range-relative button {
 	display: flex;
@@ -177,7 +298,11 @@
 }
 .date-range-custom {
 	position: relative;
+	flex: 1 1 auto;
 	width: 100%;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 .date-range-custom > header {
 	display: flex;
@@ -268,10 +393,74 @@
 	font-weight: 500;
 }
 .date-range-custom > footer {
+	position: sticky;
+	bottom: 0;
 	display: flex;
 	justify-content: flex-end;
-	padding: 0 16px 16px;
 	gap: 8px;
+	padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0));
+	border-top: 1px solid #e5e7eb;
+	background: #fff;
+}
+.date-range-custom > footer .ui-button {
+	flex: 1 1 0;
+	min-height: 40px;
+}
+@media (max-width: 639px) {
+	.date-range-fields {
+		gap: 12px;
+		padding: 12px 16px 8px;
+	}
+	.date-range-fields input {
+		width: 100%;
+		min-height: 44px;
+	}
+	.date-range-selection {
+		margin: 0 16px 8px;
+		padding: 10px 12px;
+		font-size: 12px;
+		line-height: 18px;
+	}
+	/* 相对区间改成两列大按钮，全部可见，不再出现被裁掉半行、需要小窗内滚动的选项。 */
+	.date-range-relative > header {
+		padding: 10px 16px;
+		font-size: 13px;
+		color: #4b5563;
+	}
+	.date-range-relative > div {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 6px;
+		max-height: none;
+		overflow: visible;
+		padding: 10px 16px 12px;
+	}
+	.date-range-relative button {
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: center;
+		gap: 2px;
+		min-height: 46px;
+		padding: 8px 12px;
+		border: 1px solid #e5e7eb;
+		border-radius: 10px;
+		background: #fff;
+	}
+	.date-range-relative button > span {
+		font-size: 13px;
+		line-height: 18px;
+		white-space: nowrap;
+	}
+	.date-range-relative button > small {
+		display: none;
+	}
+	.date-range-relative button.selected {
+		border-color: #93c5fd;
+		background: #eff6ff;
+	}
+	.date-range-relative button.selected:hover {
+		background: #dbeafe;
+	}
 }
 @media (min-width: 640px) {
 	.date-range-dropdown {
@@ -285,14 +474,24 @@
 		left: auto;
 		right: 0;
 		top: 100%;
+		bottom: auto;
 		margin-top: 4px;
 		max-height: none;
 		min-width: 600px;
 		overflow: visible;
 		flex-direction: row;
+		border-bottom: 1px solid #e5e7eb;
+		border-radius: 8px;
+		box-shadow:
+			0 20px 25px -5px #0000001a,
+			0 8px 10px -6px #0000001a;
+	}
+	.date-range-sheet-head {
+		display: none;
 	}
 	.date-range-relative {
 		width: 50%;
+		flex: none;
 		border-bottom: 0;
 		border-right: 1px solid #e5e7eb;
 	}
@@ -301,7 +500,10 @@
 		max-height: none;
 	}
 	.date-range-custom {
+		flex: none;
 		width: 50%;
+		min-height: 0;
+		overflow: visible;
 	}
 	.date-range-fields {
 		gap: 24px;
@@ -312,5 +514,11 @@
 		right: 16px;
 		bottom: 16px;
 		padding: 0;
+		border-top: 0;
+		background: transparent;
+	}
+	.date-range-custom > footer .ui-button {
+		flex: none;
+		min-height: 0;
 	}
 }

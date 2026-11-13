@@ -23,7 +23,7 @@ const tableRows = computed<readonly UiTableRow[]>(() =>
 );
 </script>
 <template>
-	<UiTable :columns="columns" :rows="tableRows" row-key="id" :empty-text="emptyText" compact>
+	<UiTable class="privacy-breakdown" :columns="columns" :rows="tableRows" row-key="id" :empty-text="emptyText" compact>
 		<template #cell-name="{ row }">
 			<UiTag v-if="dimension === 'kind'" :color="privacyKindTone(String(row.id))">{{ row.name }}</UiTag>
 			<template v-else>{{ row.name }}</template>

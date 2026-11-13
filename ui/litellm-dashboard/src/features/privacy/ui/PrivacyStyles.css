@@ -335,3 +335,167 @@
 	align-items: center;
 	gap: 4px;
 }
+
+/* 手机：页面留出边距，表头操作收进工具条，宽表切成带字段名的卡片。 */
+@media (max-width: 767px) {
+	.privacy-page {
+		padding: 4px 16px 32px;
+	}
+	.privacy-header {
+		flex-direction: column;
+		gap: 12px;
+	}
+	.privacy-header__controls {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 10px;
+		align-items: center;
+		width: 100%;
+	}
+	.privacy-header__controls .privacy-switch {
+		grid-area: 1 / 1;
+		min-height: 40px;
+		font-size: 14px;
+	}
+	.privacy-header__controls > .ui-button {
+		grid-area: 1 / 2;
+		min-height: 40px;
+		padding-inline: 16px;
+	}
+	.privacy-header__controls .ui-select {
+		grid-area: 2 / 1 / 3 / 3;
+		min-height: 40px;
+	}
+	.privacy-kpis {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 10px;
+	}
+	.privacy-kpi__value {
+		font-size: 26px;
+	}
+	.privacy-kpi__hint {
+		font-size: 12px;
+		line-height: 16px;
+	}
+	.privacy-details__head {
+		align-items: flex-start;
+	}
+	.privacy-details__head .ui-tabs__tab {
+		min-width: 64px;
+		min-height: 40px;
+	}
+	.privacy-token {
+		font-size: 12px;
+	}
+	.privacy-details .ui-table--cards td::before {
+		text-align: left;
+	}
+	/* 平台自带的手机工具条是英文 Sort/A→Z 且筛选按钮 20px；这里改用本页的 40px 中文工具条。 */
+	.privacy-details .ui-table__mobile-bar {
+		display: none;
+	}
+	.privacy-mobile-controls {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 8px;
+		margin-bottom: 10px;
+	}
+	.privacy-mobile-control {
+		display: flex;
+		grid-column: 1 / -1;
+		align-items: center;
+		gap: 8px;
+	}
+	.privacy-mobile-control__label {
+		flex: 0 0 auto;
+		color: var(--ui-text-secondary);
+		font-size: 14px;
+	}
+	.privacy-native-select,
+	.privacy-native-button {
+		box-sizing: border-box;
+		min-height: 40px;
+		padding: 0 12px;
+		border: 1px solid var(--ui-border);
+		border-radius: 6px;
+		background: #fff;
+		color: var(--ui-text-antd);
+		font: inherit;
+		font-size: 14px;
+	}
+	.privacy-native-select {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.privacy-native-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		cursor: pointer;
+	}
+	.privacy-filter-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: #2563eb;
+		color: #fff;
+		font-size: 12px;
+		font-weight: 600;
+	}
+	.privacy-filter-panel {
+		box-sizing: border-box;
+		width: 100%;
+		max-height: min(72dvh, 560px);
+		overflow-y: auto;
+		border: 0;
+		box-shadow: none;
+	}
+	.privacy-filter-panel .ui-input-wrapper,
+	.privacy-filter-panel .ui-select {
+		min-height: 40px;
+	}
+	.privacy-filter-panel .ui-filter-option {
+		min-height: 40px;
+		font-size: 14px;
+	}
+	.privacy-filter-panel .ui-filter-option__description {
+		font-size: 12px;
+	}
+	.privacy-filter-panel .ui-filter-panel__actions {
+		position: sticky;
+		bottom: 0;
+		background: #fff;
+		padding-top: 8px;
+	}
+	.privacy-filter-panel .ui-filter-panel__clear,
+	.privacy-filter-panel .ui-filter-panel__apply {
+		height: 40px;
+		font-size: 14px;
+	}
+	.privacy-settings-dialog .privacy-features__summary {
+		max-width: 100%;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.privacy-settings-dialog .privacy-words__add .ui-button {
+		min-height: 40px;
+	}
+	/* 分布卡片里的三列表格在窄屏换行，避免出现横向滚动。 */
+	.privacy-breakdown td,
+	.privacy-breakdown th {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.privacy-breakdown td {
+		font-size: 12px;
+	}
+	.privacy-more .ui-button {
+		min-height: 40px;
+		padding-inline: 20px;
+	}
+}

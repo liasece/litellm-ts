@@ -185,7 +185,7 @@
 }
 .speed-chart-axes text {
 	font-family: var(--ui-font-sans);
-	font-size: 10px;
+	font-size: var(--speed-axis-font, 10px);
 	line-height: 1.5;
 }
 .speed-chart-tooltip {
@@ -266,5 +266,74 @@
 @media (min-width: 1280px) {
 	.speed-grid {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+/* 手机：摘要拆行、搜索框和区间选择放大、图表加高、模型名允许两行，避免横向溢出和挤在一起的轴标签。 */
+@media (max-width: 767px) {
+	.speed-header .ui-select {
+		min-height: 40px;
+	}
+	.speed-summary {
+		display: grid;
+		gap: 6px;
+	}
+	.speed-separator {
+		display: none;
+	}
+	.speed-legend {
+		flex-wrap: wrap;
+	}
+	.speed-page .ui-input-wrapper {
+		min-height: 40px;
+	}
+	.speed-page .ui-input {
+		min-height: 32px;
+		font-size: 14px;
+	}
+	.speed-card-title {
+		align-items: flex-start;
+	}
+	.speed-card-model {
+		overflow: visible;
+		white-space: normal;
+	}
+	.speed-card-model .model-name__text {
+		display: -webkit-box;
+		overflow: hidden;
+		overflow-wrap: anywhere;
+		white-space: normal !important;
+		text-overflow: clip;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+	}
+	.speed-card-metric > div:last-child {
+		font-size: 12px;
+		line-height: 16px;
+	}
+	.speed-card-footer {
+		font-size: 12px;
+		line-height: 18px;
+	}
+	.speed-without > p {
+		font-size: 12px;
+		line-height: 18px;
+	}
+	.speed-without-models > span {
+		font-size: 12px;
+		line-height: 18px;
+	}
+	/* 手机端只保留供应商名称；单字母兜底徽标最小只有 5–11px，读不清。 */
+	.speed-page .provider-logo-fallback,
+	.speed-page .model-logo__provider {
+		display: none;
+	}
+	.speed-without-name {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.speed-without-provider,
+	.speed-without-calls {
+		white-space: normal;
 	}
 }

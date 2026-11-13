@@ -292,3 +292,30 @@
 	color: rgb(0 0 0 / 45%);
 	font-size: 12px;
 }
+
+/* 手机：抽屉内先列出 trace/session 再读详情，避免 224px 侧栏把正文压成一列字符。 */
+@media (max-width: 767px) {
+	.ld-layout {
+		flex-direction: column;
+	}
+	.ld-sidebar {
+		width: 100%;
+		max-height: 32dvh;
+		border-right: 0;
+		border-bottom: 1px solid #e2e8f0;
+	}
+	.ld-sidebar__scroll {
+		min-height: 0;
+	}
+	.ld-main {
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+	.ld-main__scroll {
+		padding-bottom: 16px;
+	}
+	/* 详情字段在手机上单列排布，避免值被挤成两行单词断字。 */
+	.ld-descriptions {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}

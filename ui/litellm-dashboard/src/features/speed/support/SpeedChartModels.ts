@@ -17,6 +17,8 @@ export interface SpeedChartGeometry {
 	right: number;
 	top: number;
 	bottom: number;
+	/** 轴标签字号；手机版用更大字号，桌面版保持 10。 */
+	labelSize: number;
 	path: string;
 	coordinates: number[];
 	dots: SpeedChartDot[];

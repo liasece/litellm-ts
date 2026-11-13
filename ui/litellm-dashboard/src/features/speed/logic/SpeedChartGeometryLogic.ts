@@ -50,13 +50,24 @@ export function speedChartGeometry(input: {
 	bucket: SpeedBucket;
 	timezone: string;
 	measureLabel: (label: string) => { width: number; height: number };
+	/** 图形高度；默认沿用桌面的 88px，手机版传入更高的值。 */
+	height?: number;
+	/** 轴标签字号；默认 10，手机版传 12。 */
+	labelSize?: number;
 }): SpeedChartGeometry {
 	const { rows, width, bucket, timezone, measureLabel } = input;
-	const height = 88,
-		left = 34,
+	const labelSize = input.labelSize ?? 10,
+		height = input.height ?? 88,
+		scale = labelSize / 10,
+		left = 34 + (labelSize - 10) * 2,
 		right = 6,
 		top = 4,
-		bottom = 18;
+		bottom = 18 + (labelSize - 10) * 2;
+	// 标签变宽后按同一比例放大测量结果，避免把放不下的刻度也画上去。
+	const measure = (label: string) => {
+		const size = measureLabel(label);
+		return { width: size.width * scale, height: size.height * scale };
+	};
 	const plotWidth = Math.max(0, width - left - right),
 		plotHeight = height - top - bottom;
 	const first = rows[0]?.timestamp ?? 0,
@@ -85,11 +96,12 @@ export function speedChartGeometry(input: {
 		right,
 		top,
 		bottom,
+		labelSize,
 		path: buildMonotonePath(points),
 		coordinates: rows.map((row) => x(row.timestamp)),
 		dots,
-		xTicks: visibleTicks(xCandidates, width, (tick) => measureLabel(tick.label).width, 28),
-		yTicks: visibleTicks(yCandidates, height, (tick) => measureLabel(tick.label).height, 5),
+		xTicks: visibleTicks(xCandidates, width, (tick) => measure(tick.label).width, 28 * scale),
+		yTicks: visibleTicks(yCandidates, height, (tick) => measure(tick.label).height, 5),
 	};
 }
 export function speedTooltipPosition(coordinate: number, size: number, start: number, end: number): number {

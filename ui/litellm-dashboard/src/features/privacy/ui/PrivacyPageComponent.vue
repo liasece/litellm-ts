@@ -10,13 +10,14 @@ import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
+import UiTableFilterPanel from "../../platform/ui/UiTableFilterPanel.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
-import type { UiTableActiveFilter, UiTableFilterChoice } from "../../platform/ui/UiTableFilterModels";
-import type { UiTableColumn } from "../../platform/ui/UiTypes";
+import type { UiTableActiveFilter, UiTableFilterChoice, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
+import type { UiTableColumn, UiTableSort } from "../../platform/ui/UiTypes";
 import { privacyKindLabel } from "../../content/logic/PrivacyPlaceholderLogic";
 import {
 	PRIVACY_ACTION_OPTIONS,
@@ -47,10 +48,12 @@ import {
 import { createPrivacyStore } from "../stores/PrivacyStore";
 import type { PrivacyRuleRow } from "../support/PrivacyModels";
 import PrivacyBreakdownComponent from "./PrivacyBreakdownComponent.vue";
+import { useCompactViewport } from "../../platform/logic/CompactViewport";
 import "./PrivacyStyles.css";
 defineOptions({ name: "PrivacyPageComponent" });
 const store = createPrivacyStore(),
-	state = store.state;
+	state = store.state,
+	compact = useCompactViewport();
 const summary = computed(() => state.overview?.summary ?? { occurrences: 0, distinctValues: 0, requests: 0, unresolved: 0 });
 const rows = computed(() =>
 	state.tab === "requests" ? state.requests.map(privacyRequestTableRow) : state.values.map(privacyValueTableRow),
@@ -136,6 +139,24 @@ const sort = computed(() => (state.tab === "requests" ? state.requestSort : stat
 const empty = computed(() => (state.tab === "requests" ? "所选区间内没有发生脱敏的请求" : "所选区间内没有脱敏值"));
 const exhausted = computed(() => (state.tab === "requests" ? state.requestsExhausted : state.valuesExhausted));
 const maskingOff = computed(() => state.settings !== null && !state.settings.enabled);
+/** 手机版把表头排序/筛选收进工具条，面板与筛选状态同桌面一致。 */
+const filterOpen = ref(false);
+const mobileFilterFields = computed<readonly UiTableFilterField[]>(() => {
+	const seen = new Set<string>();
+	return columns.value.flatMap((column) => column.filters ?? []).filter((field) => !seen.has(field.key) && Boolean(seen.add(field.key)));
+});
+const mobileSortColumns = computed(() => columns.value.filter((column) => column.sortable));
+function changeMobileSort(event: Event): void {
+	const key = (event.target as HTMLSelectElement).value;
+	store.setSort({ key, order: sort.value.order } satisfies UiTableSort);
+}
+function toggleMobileSortOrder(): void {
+	store.setSort({ key: sort.value.key, order: sort.value.order === "desc" ? "asc" : "desc" } satisfies UiTableSort);
+}
+function applyMobileFilters(entries: readonly UiTableActiveFilter[]): void {
+	store.applyFilters(entries);
+	filterOpen.value = false;
+}
 /** 展示用的占位符样例（模板里不能直接写双花括号字面量）。 */
 const samplePlaceholder = "{{EMAIL_abcd2fgh}}";
 /** 设置对话框是否打开 */
@@ -333,25 +354,51 @@ onBeforeUnmount(store.dispose);
 					<UiTabs :model-value="state.tab" :items="PRIVACY_TABS" aria-label="明细视图" @update:model-value="store.setTab" />
 					<span class="privacy-details__count">已加载 {{ privacyCount(rows.length) }} 条</span>
 				</div>
+				<div v-if="compact" class="privacy-mobile-controls">
+					<label class="privacy-mobile-control"
+						><span class="privacy-mobile-control__label">排序</span
+						><select class="privacy-native-select" :value="sort.key" aria-label="排序字段" @change="changeMobileSort">
+							<option v-for="column in mobileSortColumns" :key="column.key" :value="column.key">{{ column.label }}</option>
+						</select></label
+					>
+					<button type="button" class="privacy-native-button" @click="toggleMobileSortOrder">
+						{{ sort.order === "desc" ? "降序 ↓" : "升序 ↑" }}
+					</button>
+					<button type="button" class="privacy-native-button" @click="filterOpen = true">
+						筛选<span v-if="activeFilters.length" class="privacy-filter-count">{{ activeFilters.length }}</span>
+					</button>
+				</div>
 				<UiTable
 					:columns="columns"
 					:rows="rows"
 					row-key="id"
 					:loading="state.loading"
 					:empty-text="empty"
-					:min-width="state.tab === 'requests' ? 1080 : 880"
-					:body-max-height="520"
+					:min-width="compact ? undefined : state.tab === 'requests' ? 1080 : 880"
+					:body-max-height="compact ? undefined : 520"
 					:sort-by="sort.key"
 					:sort-order="sort.order"
 					:active-filters="activeFilters"
+					:mobile-cards="compact"
 					manual-sort
-					fixed-layout
-					sticky-header
+					:fixed-layout="!compact"
+					:sticky-header="!compact"
 					@sort="store.setSort"
 					@filter-change="store.applyFilters"
 					@remove-filter="store.removeFilter"
 					@clear-filters="store.clearFilters"
 				/>
+				<UiDialog v-if="compact" v-model:open="filterOpen" class="privacy-filter-dialog" title="筛选明细" :show-footer="false">
+					<UiTableFilterPanel
+						v-if="filterOpen"
+						class="privacy-filter-panel"
+						label="明细"
+						:fields="mobileFilterFields"
+						:active="activeFilters"
+						@commit="applyMobileFilters"
+						@cancel="filterOpen = false"
+					/>
+				</UiDialog>
 				<div v-if="!exhausted && rows.length > 0" class="privacy-more">
 					<UiButton :loading="state.loadingMore" @click="store.loadMore">加载更多</UiButton>
 				</div>

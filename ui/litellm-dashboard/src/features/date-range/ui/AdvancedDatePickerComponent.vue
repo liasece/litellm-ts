@@ -66,18 +66,32 @@ onBeforeUnmount(() => {
 			</button>
 		</div>
 		<div ref="root" class="date-range-dropdown">
-			<button type="button" class="date-range-trigger" :aria-expanded="state.open" @click="state.open = !state.open">
+			<button
+				type="button"
+				class="date-range-trigger"
+				:aria-expanded="state.open"
+				:title="displayDateRange(external)"
+				@click="state.open = !state.open"
+			>
 				<span class="date-range-trigger-content">
 					<span class="date-range-trigger-main"
 						><span class="date-range-clock"><UiIcon name="ClockCircleOutlined" /></span
-						><span>{{ displayDateRange(external) }}</span></span
+						><span class="date-range-trigger-label">{{ displayDateRange(external) }}</span></span
 					>
 					<svg viewBox="0 0 24 24" :class="{ open: state.open }" fill="none" stroke="currentColor">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 					</svg>
 				</span>
 			</button>
+			<div v-if="state.open" class="date-range-scrim" aria-hidden="true" />
 			<div v-if="state.open" class="date-range-popup">
+				<header class="date-range-sheet-head">
+					<span class="date-range-sheet-grabber" aria-hidden="true" />
+					<strong>Select time range</strong>
+					<button type="button" class="date-range-sheet-close" aria-label="Close time range" @click="state.open = false">
+						<UiIcon name="CloseOutlined" :size="18" />
+					</button>
+				</header>
 				<div class="date-range-relative">
 					<header>Relative time</header>
 					<div>
