@@ -154,6 +154,13 @@ function saveWeight(account: Account, event: FocusEvent) {
 	const raw = (event.target as HTMLInputElement).value;
 	void props.store.updateAccount(account, { weight: raw === "" ? null : Number(raw) });
 }
+/** auth 文件里的 status 是自由文本（active / expired / ...），按含义着色，未知值用提示色。 */
+function statusColor(status: string): string {
+	const value = status.toLowerCase();
+	if (/(inactive|expired|revoked|invalid|fail|error|banned|suspended|disabled)/.test(value)) return "red";
+	if (/(active|valid|ready|enabled|healthy|ok)/.test(value)) return "green";
+	return "gold";
+}
 function edit(account: Account) {
 	const managed = managedAccount(account);
 	if (managed) props.store.editCommandCodeAccount(managed);
@@ -228,6 +235,7 @@ function edit(account: Account) {
 			:loading="state.loading"
 			loading-text="🚅 Loading accounts..."
 			fixed-layout
+			mobile-cards
 			manual-sort
 			:sort-by="sort.order ? sort.key : undefined"
 			:sort-order="sort.order ?? 'asc'"
@@ -240,17 +248,28 @@ function edit(account: Account) {
 		>
 			<template #row="{ row }">
 				<tr v-for="account in [accountRow(row)]" :key="account.auth_index" class="ui-table__row">
-					<td v-if="showProviderColumn"><ProviderIdentityComponent :provider="account.provider" /></td>
-					<td>{{ identity(account) ?? "—" }}</td>
-					<td class="cp-account-filename" :title="account.filename">
-						{{ account.filename }}<UiTag v-if="isTrashed(account)" color="orange" class="cp-ml-8">trashed</UiTag>
+					<td v-if="showProviderColumn" data-label="Provider"><ProviderIdentityComponent :provider="account.provider" /></td>
+					<td
+						data-label="Account"
+						:title="identity(account) ?? undefined"
+						:class="{ 'ui-table__cell--empty': !identity(account) }"
+					>
+						{{ identity(account) ?? "—" }}
 					</td>
-					<td :title="account.last_error ?? rateLimitTitle(account)">
-						<UiTag v-if="account.status" color="red">{{ account.status }}</UiTag>
+					<td class="cp-account-filename" data-label="File" :title="account.filename">
+						<span class="cp-account-filename-text">{{ account.filename }}</span
+						><UiTag v-if="isTrashed(account)" color="orange" class="cp-ml-8">trashed</UiTag>
+					</td>
+					<td
+						data-label="Status"
+						:class="{ 'ui-table__cell--empty': !account.status && !account.rate_limit?.limited }"
+						:title="account.last_error ?? rateLimitTitle(account)"
+					>
+						<UiTag v-if="account.status" :color="statusColor(account.status)">{{ account.status }}</UiTag>
 						<UiTag v-else-if="account.rate_limit?.limited" color="orange">rate limited</UiTag>
 						<span v-else>—</span>
 					</td>
-					<td>
+					<td data-label="Enabled">
 						<UiSwitch
 							:model-value="!account.disabled"
 							:disabled="isTrashed(account)"
@@ -258,7 +277,7 @@ function edit(account: Account) {
 							@update:model-value="store.updateAccount(account, { disabled: !$event })"
 						/>
 					</td>
-					<td>
+					<td data-label="Weight">
 						<UiInputNumber
 							:min="0"
 							:max="1000000"
@@ -269,7 +288,7 @@ function edit(account: Account) {
 							@blur="saveWeight(account, $event)"
 						/>
 					</td>
-					<td class="ui-table__cell--sticky-right">
+					<td class="ui-table__cell--sticky-right" data-label="Action">
 						<div class="cp-inline cp-gap-8">
 							<UiButton v-if="managedAccount(account)" size="small" @click="edit(account)">Edit</UiButton
 							><CliProxyConfirm

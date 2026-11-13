@@ -502,3 +502,45 @@
 .identity-form-item--error .identity-input:focus {
 	box-shadow: 0 0 0 2px rgba(255, 38, 5, 0.06);
 }
+
+/* 手机端：卡片留出页面内边距、表单从顶部排布，并放大密码可见性按钮的触屏命中区。 */
+@media (max-width: 640px) {
+	.identity-login-background {
+		min-height: 100dvh;
+		padding: 16px;
+		align-items: flex-start;
+	}
+	.identity-login-card {
+		padding: 20px 16px;
+	}
+	.identity-alert {
+		padding: 16px;
+	}
+	.identity-alert code {
+		font-size: 12px;
+	}
+	.identity-alert a {
+		padding-block: 12px;
+	}
+	.identity-password-toggle,
+	.identity-password-toggle--large {
+		width: 40px;
+		height: 40px;
+		right: 4px;
+		margin-right: 0;
+	}
+	.identity-password-toggle svg,
+	.identity-password-toggle--large svg {
+		width: 16px;
+		height: 16px;
+	}
+	.identity-password .identity-input {
+		padding-right: 48px;
+	}
+	.identity-brand-logo {
+		height: 32px;
+	}
+	.identity-login-stack {
+		gap: 14px;
+	}
+}

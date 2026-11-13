@@ -384,3 +384,49 @@
 .cp-account-content > .ui-active-filters {
 	padding-top: 0;
 }
+
+/* 手机端触屏命中高度与额度卡标题：标题换行显示完整账号，不再只靠省略号。 */
+@media (max-width: 640px) {
+	.cliproxy-page .ui-button--small {
+		min-height: 40px;
+	}
+	.cp-quota-card > .ui-card__header {
+		flex-wrap: wrap;
+		min-height: 0;
+		padding: 8px 12px;
+		gap: 4px 8px;
+	}
+	.cp-quota-card > .ui-card__header > .ui-card__title {
+		flex: 1 1 100%;
+		min-width: 0;
+		overflow: visible;
+		white-space: normal;
+	}
+	.cp-quota-card > .ui-card__header > :not(.ui-card__title) {
+		margin-inline-start: auto;
+	}
+	.cp-quota-card .cp-quota-heading {
+		padding: 0;
+	}
+	.cp-quota-card .cp-quota-heading .cp-inline > .cp-ellipsis {
+		flex: 1 1 100%;
+		min-width: 0;
+		overflow-wrap: anywhere;
+		white-space: normal;
+		overflow: visible;
+		font-size: 13px;
+		line-height: 18px;
+	}
+	/* 文件名是次要信息，手机卡片里保持单行省略，完整值仍在 title 中。 */
+	.cp-quota-card .cp-quota-filename {
+		display: block;
+		max-width: 100%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.cp-quota-card .cp-quota-heading .cp-inline {
+		flex-wrap: wrap;
+		min-width: 0;
+	}
+}

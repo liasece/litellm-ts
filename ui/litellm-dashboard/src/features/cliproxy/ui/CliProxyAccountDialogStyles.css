@@ -133,3 +133,86 @@
 .cp-account-dialog .cp-field {
 	margin-bottom: 0;
 }
+
+/* 手机端：密码可见性按钮与命令式账号表单的触屏尺寸。 */
+@media (max-width: 640px) {
+	.cp-password-eye {
+		width: 40px;
+		height: 40px;
+		margin: -8px -8px -8px 0;
+		align-items: center;
+		justify-content: center;
+	}
+	.cp-password-eye .ui-icon {
+		width: 18px;
+		height: 18px;
+	}
+	.cp-commandcode-label,
+	.cp-commandcode-key {
+		width: 100%;
+	}
+	.cp-oauth-input {
+		gap: 8px;
+	}
+	.cp-oauth-input > .ui-input-wrapper,
+	.cp-oauth-input > .ui-button {
+		border-radius: 8px;
+	}
+	.cp-oauth-input > .ui-button {
+		margin-left: 0;
+	}
+	.cp-confirm-actions .ui-button {
+		min-height: 40px;
+		flex: 1;
+	}
+}
+
+/* 账号表在手机端折叠成卡片后，开关与空状态行保持紧凑且可点。 */
+@media (max-width: 640px) {
+	.cp-account-content .ui-table--cards .ui-switch {
+		justify-self: start;
+	}
+	.cp-account-content .ui-table--cards td.ui-table__cell--empty {
+		display: none;
+	}
+	/* 邮箱这类长标识符需要更宽的值列，标签列收窄到 28% 仍能放下 Enabled/Weight。 */
+	.cp-account-content .ui-table--cards td {
+		grid-template-columns: minmax(56px, 20%) minmax(0, 1fr);
+		gap: 4px 8px;
+	}
+	/* 卡片网格会把行内块拉满，标签类徽标保持自身宽度。 */
+	.cp-account-content .ui-table--cards td > .ui-tag {
+		justify-self: start;
+	}
+	.cp-account-content .ui-table--cards td[data-label="Account"] {
+		word-break: break-word;
+		text-wrap: balance;
+	}
+}
+
+/*
+ * 手机端权重用数字键盘输入即可；上下步进按钮每格只有 ~20px，
+ * 在卡片里既难点也会让视觉变重，卡片内隐藏，输入框本身保留 40px 命中高度。
+ */
+@media (max-width: 640px) {
+	.cp-account-content .ui-table--cards .ui-input-number {
+		width: 96px;
+	}
+	.cp-account-content .ui-table--cards .ui-input-number__input {
+		min-height: 40px;
+	}
+	.cp-account-content .ui-table--cards .ui-input-number__handlers {
+		display: none;
+	}
+}
+
+/* 手机卡片里文件名占 2 行即可辨认，完整值保留在 title 与编辑对话框。 */
+@media (max-width: 640px) {
+	.cp-account-content .ui-table--cards .cp-account-filename-text {
+		display: -webkit-box;
+		overflow: hidden;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+	}
+}

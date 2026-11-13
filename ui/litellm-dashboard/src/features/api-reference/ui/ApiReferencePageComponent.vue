@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
@@ -8,13 +8,38 @@ import { apiReferenceBaseUrl } from "../logic/ApiReferenceLogic";
 import type { ApiReferenceExample } from "../support/ApiReferenceModels";
 import ApiReferenceCodeComponent from "./ApiReferenceCodeComponent.vue";
 const application = useApplicationStore(),
-	active = ref("0");
+	active = ref("0"),
+	block = ref<HTMLElement>();
+const scrollCleanups: (() => void)[] = [];
+function syncCodeScroll(pre: HTMLElement) {
+	const frame = pre.closest(".content-code-block");
+	if (!frame) return;
+	// 隐藏的 tab 面板宽度为 0，保持渐隐，等切换后再按真实滚动位置判断。
+	const atEnd = pre.clientWidth > 0 && pre.scrollLeft + pre.clientWidth >= pre.scrollWidth - 2;
+	frame.classList.toggle("content-code-block--at-end", atEnd);
+}
+/** 代码块在窄屏内横向滚动；pre 可聚焦，右缘渐隐提示还有内容，滑到底后撤掉渐隐。 */
+onMounted(() => {
+	for (const pre of block.value?.querySelectorAll<HTMLElement>(".content-code-block pre") ?? []) {
+		pre.tabIndex = 0;
+		pre.setAttribute("role", "region");
+		pre.setAttribute("aria-label", "Code sample, scroll horizontally to read full lines");
+		const onScroll = () => syncCodeScroll(pre);
+		pre.addEventListener("scroll", onScroll, { passive: true });
+		scrollCleanups.push(() => pre.removeEventListener("scroll", onScroll));
+		syncCodeScroll(pre);
+	}
+});
+onBeforeUnmount(() => {
+	for (const cleanup of scrollCleanups) cleanup();
+	scrollCleanups.length = 0;
+});
 const examples: readonly ApiReferenceExample[] = examplesData;
 const baseUrl = computed(() => apiReferenceBaseUrl(application.state.proxySettings));
 </script>
 <template>
 	<div class="api-reference-grid">
-		<div class="api-reference-block">
+		<div ref="block" class="api-reference-block">
 			<div class="api-reference-heading">
 				<p>OpenAI Compatible Proxy: API Reference</p>
 				<a
@@ -58,9 +83,12 @@ const baseUrl = computed(() => apiReferenceBaseUrl(application.state.proxySettin
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 8px 12px;
 }
 .api-reference-heading > p {
 	margin: 0;
+	min-width: 0;
 	font-size: 24px;
 	line-height: 32px;
 	font-weight: 600;
@@ -71,7 +99,7 @@ const baseUrl = computed(() => apiReferenceBaseUrl(application.state.proxySettin
 	flex-shrink: 0;
 	align-items: center;
 	gap: 8px;
-	margin-left: 12px;
+	margin-left: 0;
 	padding: 8px 14px;
 	border: 1px solid #e4e4e7;
 	border-radius: 12px;
@@ -114,6 +142,60 @@ const baseUrl = computed(() => apiReferenceBaseUrl(application.state.proxySettin
 	.api-reference-grid {
 		height: 80vh;
 		padding: 32px;
+	}
+}
+/* 手机端：标题与文档链接纵向排列，标签页换行而不是被裁切，复制按钮放大到触屏尺寸。 */
+@media (max-width: 640px) {
+	.api-reference-heading {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+	.api-reference-heading > p {
+		font-size: 22px;
+		line-height: 30px;
+	}
+	.api-reference-doc-link {
+		min-height: 40px;
+	}
+	.api-reference-block .ui-tabs__list {
+		flex-wrap: wrap;
+		overflow-x: visible;
+		overflow-y: visible;
+		row-gap: 2px;
+	}
+	.api-reference-block .ui-tabs--tremor .ui-tabs__tab {
+		flex: 0 0 auto;
+		max-width: 100%;
+		white-space: nowrap;
+		overflow: visible;
+		text-overflow: clip;
+	}
+	.api-reference-block .content-code-block > button {
+		width: 40px;
+		height: 40px;
+		padding: 12px;
+	}
+	/* 复制按钮悬浮在代码块右上角，给首行留出空间避免遮住代码。 */
+	.api-reference-block .content-code-block pre {
+		padding-top: 3.5rem !important;
+		-webkit-overflow-scrolling: touch;
+		overscroll-behavior-x: contain;
+	}
+	/* 右缘渐隐提示代码可以横向滑动，避免看起来像被切断。 */
+	.api-reference-block .content-code-block::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: 32px;
+		border-radius: 0 8px 8px 0;
+		background: linear-gradient(to right, rgb(250 250 250 / 0%), #fafafa);
+		pointer-events: none;
+		transition: opacity 0.15s ease;
+	}
+	.api-reference-block .content-code-block--at-end::after {
+		opacity: 0;
 	}
 }
 </style>

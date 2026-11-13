@@ -129,3 +129,47 @@
 .cp-log-viewer > .ui-card__header {
 	gap: 0;
 }
+
+/* 手机端：卡片头与日志行改为纵向排布，长标题、长消息不再被 nowrap 截断。 */
+@media (max-width: 640px) {
+	.cp-log-viewer > .ui-card__header {
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 12px;
+	}
+	.cp-log-viewer > .ui-card__header > .ui-card__title {
+		flex: 1 1 100%;
+		overflow: visible;
+		white-space: normal;
+		text-overflow: clip;
+	}
+	.cp-log-viewer .ui-card__extra {
+		flex: 1 1 100%;
+		margin-inline-start: 0;
+	}
+	.cp-log-viewer .ui-card__extra > .cp-inline {
+		flex-wrap: wrap;
+	}
+	.cp-log-viewer .ui-card__extra .ui-button--small {
+		flex: 1 1 auto;
+	}
+	.cp-log-entries {
+		max-height: 60vh;
+	}
+	.cp-log-entries--compact {
+		max-height: 320px;
+	}
+	.cp-log-row,
+	.cp-log-row--compact {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 4px;
+		padding: 10px 12px;
+	}
+	.cp-log-path-wrapper {
+		max-width: 100%;
+	}
+	.cp-log-path {
+		max-width: 100%;
+		overflow-wrap: anywhere;
+	}
+}

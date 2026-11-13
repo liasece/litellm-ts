@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, watch } from "vue";
 import { useRoute } from "vue-router";
 import { getServerRootPath } from "../../platform/support/ApiEnvironmentSupport";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
+import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import ProviderLogoComponent from "../../providers/ui/ProviderLogoComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
@@ -55,12 +56,37 @@ function refreshQuota(source: string) {
 	void Promise.all(activeAccountsFor(source).map((account) => store.loadQuota(account)));
 }
 const sectionId = (slug: string) => "subscription-provider-" + slug;
+const bodyId = (slug: string) => "subscription-provider-body-" + slug;
+/**
+ * 手机端把每个 Provider 板块折起来：头部保留名称、账号数与额度刷新入口，
+ * 详情（账号表、额度卡、添加入口）展开后可操作。桌面端 CSS 不隐藏内容，
+ * 因此折叠状态只影响 ≤640px。
+ */
+const expandedProviders = reactive(new Set<string>());
+const isExpanded = (slug: string) => expandedProviders.has(slug);
+function toggleProvider(slug: string) {
+	if (expandedProviders.has(slug)) expandedProviders.delete(slug);
+	else expandedProviders.add(slug);
+}
+let expansionInitialized = false;
 /** 模型页通过 ?provider= 深链到某个 Provider 板块，列表本身始终展示全部 Provider。 */
 const targetProvider = computed(() => {
 	const value = route.query.provider;
 	const slug = providerSlugFromValue(Array.isArray(value) ? value[0] : value);
 	return providers.some((provider) => provider.value === slug) ? slug : "";
 });
+watch(
+	[() => state.loading, () => state.accounts.length, targetProvider],
+	() => {
+		if (state.loading) return;
+		if (targetProvider.value) expandedProviders.add(targetProvider.value);
+		if (expansionInitialized) return;
+		expansionInitialized = true;
+		const firstWithAccounts = providers.find((provider) => activeAccountsFor(provider.source).length > 0);
+		if (firstWithAccounts) expandedProviders.add(firstWithAccounts.value);
+	},
+	{ immediate: true },
+);
 function revealTargetProvider() {
 	const slug = targetProvider.value;
 	if (state.loading || !slug) return;
@@ -95,7 +121,17 @@ onBeforeUnmount(store.dispose);
 				:data-subscription-provider="provider.value"
 			>
 				<div class="subscription-provider-heading">
-					<div class="cp-inline cp-gap-8 cp-min-width">
+					<button
+						type="button"
+						class="subscription-provider-toggle"
+						:aria-expanded="isExpanded(provider.value)"
+						:aria-controls="bodyId(provider.value)"
+						:aria-label="(isExpanded(provider.value) ? 'Collapse ' : 'Expand ') + provider.label"
+						@click="toggleProvider(provider.value)"
+					>
+						<UiIcon :name="isExpanded(provider.value) ? 'DownOutlined' : 'RightOutlined'" :size="14" />
+					</button>
+					<div class="cp-inline cp-gap-8 cp-min-width subscription-provider-identity">
 						<ProviderLogoComponent
 							:provider="provider.label"
 							:logo="provider.logo"
@@ -108,51 +144,59 @@ onBeforeUnmount(store.dispose);
 							<span class="cp-secondary cp-xs">{{ accountSummary(provider.source) }}</span>
 						</div>
 					</div>
-					<UiButton
-						size="small"
-						:loading="quotaRefreshing(provider.source)"
-						:disabled="activeAccountsFor(provider.source).length === 0"
-						@click="refreshQuota(provider.source)"
-						>Refresh quota</UiButton
-					>
+					<div class="subscription-provider-actions">
+						<UiButton
+							size="small"
+							:loading="quotaRefreshing(provider.source)"
+							:disabled="activeAccountsFor(provider.source).length === 0"
+							@click="refreshQuota(provider.source)"
+							>Refresh quota</UiButton
+						>
+					</div>
 				</div>
-				<SubscriptionKeys
-					v-if="KEYED_PROVIDER_SLUGS.has(provider.value)"
-					:provider="provider.value"
-					@changed="store.refreshAccounts()"
-				/>
-				<CliProxyAccounts
-					:store="store"
-					:sources="[provider.source]"
-					:show-command-key-form="provider.value === 'commandcode'"
-					:show-provider-column="false"
-					:hide-table-when-empty="true"
-				/>
-				<div v-if="activeAccountsFor(provider.source).length" class="subscription-provider-quota">
-					<div class="cp-quota-toolbar">
-						<div>
-							<strong>Quota</strong>
-							<span class="cp-secondary cp-xs cp-block"
-								>Plan and remaining usage for this subscription's managed accounts.</span
-							>
+				<div
+					:id="bodyId(provider.value)"
+					class="subscription-provider-body"
+					:class="{ 'subscription-provider-body--collapsed': !isExpanded(provider.value) }"
+				>
+					<SubscriptionKeys
+						v-if="KEYED_PROVIDER_SLUGS.has(provider.value)"
+						:provider="provider.value"
+						@changed="store.refreshAccounts()"
+					/>
+					<CliProxyAccounts
+						:store="store"
+						:sources="[provider.source]"
+						:show-command-key-form="provider.value === 'commandcode'"
+						:show-provider-column="false"
+						:hide-table-when-empty="true"
+					/>
+					<div v-if="activeAccountsFor(provider.source).length" class="subscription-provider-quota">
+						<div class="cp-quota-toolbar">
+							<div>
+								<strong>Quota</strong>
+								<span class="cp-secondary cp-xs cp-block subscription-provider-quota-description"
+									>Plan and remaining usage for this subscription's managed accounts.</span
+								>
+							</div>
+						</div>
+						<div class="cp-quota-grid">
+							<CliProxyQuotaCard
+								v-for="account in activeAccountsFor(provider.source)"
+								:key="account.auth_index"
+								:account="account"
+								:quota-state="state.quotaStates[account.auth_index] ?? { status: 'idle' }"
+								@refresh="store.loadQuota(account)"
+							/>
 						</div>
 					</div>
-					<div class="cp-quota-grid">
-						<CliProxyQuotaCard
-							v-for="account in activeAccountsFor(provider.source)"
-							:key="account.auth_index"
-							:account="account"
-							:quota-state="state.quotaStates[account.auth_index] ?? { status: 'idle' }"
-							@refresh="store.loadQuota(account)"
-						/>
-					</div>
+					<UiAlert
+						v-else-if="accountsFor(provider.source).length === 0"
+						class="cp-alert-with-description subscription-provider-empty"
+						title="No accounts for this subscription"
+						>Add an account with the controls above, then refresh its quota.</UiAlert
+					>
 				</div>
-				<UiAlert
-					v-else-if="accountsFor(provider.source).length === 0"
-					class="cp-alert-with-description subscription-provider-empty"
-					title="No accounts for this subscription"
-					>Add an account with the controls above, then refresh its quota.</UiAlert
-				>
 			</section>
 		</div>
 		<CliProxyDialogs :store="store" />
@@ -183,6 +227,17 @@ onBeforeUnmount(store.dispose);
 	gap: 12px;
 	margin-bottom: 12px;
 }
+.subscription-provider-identity {
+	flex: 1 1 auto;
+}
+.subscription-provider-actions {
+	display: flex;
+	align-items: center;
+	flex: none;
+}
+.subscription-provider-toggle {
+	display: none;
+}
 .subscription-provider-title {
 	min-width: 0;
 }
@@ -190,11 +245,54 @@ onBeforeUnmount(store.dispose);
 	margin: 0;
 	font-size: 16px;
 	line-height: 24px;
+	overflow-wrap: anywhere;
 }
 .subscription-provider-quota {
 	margin-top: 16px;
 }
 .subscription-provider-empty {
 	margin-top: 12px;
+}
+@media (max-width: 640px) {
+	.subscriptions-page.cliproxy-page {
+		padding: 12px;
+	}
+	.subscription-provider {
+		padding: 12px;
+	}
+	.subscription-provider-toggle {
+		display: inline-flex;
+		width: 40px;
+		height: 40px;
+		margin: -8px 0 -8px -8px;
+		align-items: center;
+		justify-content: center;
+		flex: none;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: rgba(0, 0, 0, 0.65);
+		cursor: pointer;
+	}
+	.subscription-provider-toggle:hover {
+		background: rgba(0, 0, 0, 0.04);
+	}
+	.subscription-provider-actions {
+		margin-inline-start: auto;
+	}
+	.subscription-provider-body--collapsed {
+		display: none;
+	}
+	.subscription-provider-quota-description {
+		display: none;
+	}
+	.subscriptions-page .cp-page-heading a {
+		display: inline-flex;
+		min-height: 40px;
+		align-items: center;
+	}
+	.subscription-provider-quota {
+		margin-top: 12px;
+	}
 }
 </style>
