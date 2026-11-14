@@ -160,3 +160,82 @@
 	padding-top: 0;
 	padding-bottom: 10px;
 }
+
+/* Feature 列：同族同色系，图标格内换行，不推挤其它列 */
+.logs-features {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+.logs-feature {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	min-width: 22px;
+	height: 22px;
+	padding: 0 4px;
+	border-radius: 6px;
+	line-height: 1;
+	cursor: default;
+}
+.logs-feature--privacy {
+	background: #ccfbf1;
+	color: #0f766e;
+}
+.logs-feature--redirect {
+	background: #ffedd5;
+	color: #c2410c;
+}
+.logs-feature--resolve {
+	background: #ede9fe;
+	color: #6d28d9;
+}
+.logs-feature--params {
+	background: #dbeafe;
+	color: #1d4ed8;
+}
+.logs-feature--select {
+	background: #cffafe;
+	color: #0e7490;
+}
+.logs-feature-count {
+	font-size: 10px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+.logs-feature-empty {
+	color: #94a3b8;
+}
+/* 共用的深色气泡是 85% 黑，压在表头上会透出底下文字；这一列的气泡用实色，避免看起来像重影。 */
+.ui-popover--dark.logs-feature-tip {
+	background: #16181d;
+}
+.logs-feature-popover {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	max-width: 320px;
+}
+.logs-feature-popover-title {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 600;
+	color: #f8fafc;
+}
+.logs-feature-popover-count {
+	color: #cbd5e1;
+	font-weight: 500;
+}
+.logs-feature-popover-desc {
+	color: #cbd5e1;
+	line-height: 1.5;
+}
+.logs-feature-popover-detail {
+	color: #e2e8f0;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+	font-size: 12px;
+	word-break: break-all;
+}

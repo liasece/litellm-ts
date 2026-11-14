@@ -25,6 +25,7 @@ import type { LogEntry, SessionGroupRef } from "../support/LogsModels";
 import LogsMetricComponent from "./LogsMetricComponent.vue";
 import LogsLiveDurationComponent from "./LogsLiveDurationComponent.vue";
 import LogsTypeBadgeComponent from "./LogsTypeBadgeComponent.vue";
+import LogsFeatureCellComponent from "./LogsFeatureCellComponent.vue";
 const props = defineProps<{ log: LogEntry; column: string; live: boolean }>();
 const emit = defineEmits<{ key: [hash: string]; session: [group: SessionGroupRef] }>();
 const money = useMoneyFormatter();
@@ -211,6 +212,7 @@ const costFields = computed(() => [
 			</template>
 		</UiPopover>
 	</div>
+	<LogsFeatureCellComponent v-else-if="column === 'features'" :log="log" />
 	<template v-else-if="column === 'total_tokens'">
 		<UiTooltip v-if="pendingTokens" :content="'请求进行中，暂无 token 数据'"
 			><span class="logs-tokens logs-mono" data-testid="tokens-pending">-</span></UiTooltip

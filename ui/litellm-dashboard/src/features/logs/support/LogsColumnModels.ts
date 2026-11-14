@@ -19,6 +19,8 @@ const columns: readonly LogsColumn[] = [
 	{ id: "key_hash", label: "Key Hash", width: 150, optional: "key_hash" },
 	{ id: "key_name", label: "Key Name", width: 150 },
 	{ id: "model", label: "Model", width: 280 },
+	// 本请求被哪些路由能力处理过；常驻列，不做可选项：它是排查路由问题的第一列。
+	{ id: "features", label: "Feature", width: 180 },
 	{ id: "total_tokens", label: "Tokens", width: 320, sort: "total_tokens" },
 	{ id: "output_tps", label: "输出 TPS", width: 150 },
 	{ id: "user", label: "Internal User", width: 150, optional: "user" },

@@ -16,6 +16,7 @@
 | --- | --- |
 | [订阅运行时](agent-guides/subscription-runtime.md) | 进程内订阅 Provider 的账号、调度、协议桥与排查方法 |
 | [隐私脱敏](privacy-redaction.md) | 请求发出前的占位符替换与响应还原、生效范围、已知边界 |
+| [日志能力标记](logs-applied-features.md) | Logs 列表 Feature 列的 id 契约、记录点、fallback 派生与前端呈现 |
 | [观测性](observability.md) | 指标目录、请求阶段划分、日志分级、排查顺序；`/metrics` 三端点的语义 |
 | [启动链路](startup.md) | 启动关键路径与预热划分、一次冷启动的时间线；其中 CLIProxy 子进程段落已过期 |
 | [Model Group Alias](model-group-alias.md) | 每日时段路由的配置格式、时间边界与校验规则 |
