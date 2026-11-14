@@ -273,6 +273,10 @@
 		grid-column: span 5;
 		min-width: 0;
 	}
+	.usage-global-half {
+		grid-column: span 6;
+		min-width: 0;
+	}
 }
 
 .usage-solid-tabs .ui-tabs__tab + .ui-tabs__tab {

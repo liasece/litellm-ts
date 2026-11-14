@@ -9,13 +9,18 @@ import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import { cacheHitRate } from "../logic/UsageChartLogic";
 import type { ModelRanking } from "../support/UsageModels";
-const props = defineProps<{
-	modelValue?: "groups" | "individual";
-	groups: ModelRanking[];
-	individual: ModelRanking[];
-	loading: boolean;
-	isDateChanging: boolean;
-}>();
+const props = withDefaults(
+	defineProps<{
+		modelValue?: "groups" | "individual";
+		groups: ModelRanking[];
+		individual: ModelRanking[];
+		loading: boolean;
+		isDateChanging: boolean;
+		dimension?: "spend" | "tokens";
+		showModeToggle?: boolean;
+	}>(),
+	{ modelValue: undefined, dimension: "spend", showModeToggle: true },
+);
 const emit = defineEmits<{ "update:modelValue": [value: "groups" | "individual"] }>();
 const localMode = ref<"groups" | "individual">("groups");
 const mode = computed({
@@ -26,7 +31,15 @@ const mode = computed({
 		},
 	}),
 	money = useMoneyFormatter(),
-	rows = computed(() => (mode.value === "groups" ? props.groups : props.individual));
+	rows = computed(() => {
+		const source = mode.value === "groups" ? props.groups : props.individual;
+		const field = props.dimension === "tokens" ? "tokens" : "spend";
+		return [...source].sort((a, b) => Number(b[field]) - Number(a[field]));
+	}),
+	title = computed(
+		() =>
+			`${mode.value === "groups" ? "Top Public Model Names" : "Top Litellm Models"} by ${props.dimension === "tokens" ? "Tokens" : "Spend"}`,
+	);
 function modelRow(row: Record<string, unknown>): ModelRanking {
 	return row as unknown as ModelRanking;
 }
@@ -34,8 +47,8 @@ function modelRow(row: Record<string, unknown>): ModelRanking {
 <template>
 	<UiCard appearance="tremor" class="usage-panel">
 		<header class="usage-panel-heading">
-			<h2>{{ mode === "groups" ? "Top Public Model Names" : "Top Litellm Models" }}</h2>
-			<div class="usage-segmented">
+			<h2>{{ title }}</h2>
+			<div v-if="showModeToggle" class="usage-segmented">
 				<button :class="{ active: mode === 'groups' }" @click="mode = 'groups'">Public Model Name</button
 				><button :class="{ active: mode === 'individual' }" @click="mode = 'individual'">Litellm Model Name</button>
 			</div>
@@ -46,12 +59,17 @@ function modelRow(row: Record<string, unknown>): ModelRanking {
 				v-if="rows.length"
 				:data="rows as unknown as Record<string, unknown>[]"
 				index="key"
-				:categories="['spend']"
+				:categories="[dimension]"
+				:colors="[dimension === 'tokens' ? 'indigo' : 'cyan']"
 				horizontal
 				ranking
-				:height="Math.max(40, rows.length * 40)"
+				:height="Math.max(36, rows.length * 34)"
 				:y-axis-width="160"
-				:format="(v) => money(v, 'compact')"
+				:format="
+					dimension === 'tokens'
+						? (v) => (v >= 1e9 ? formatNumberWithCommas(v, 1, true) : formatNumberWithCommas(v, 0, true))
+						: (v) => money(v, 'compact')
+				"
 			>
 				<template #annotation="{ row }"
 					><span

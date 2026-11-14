@@ -228,7 +228,7 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 							:max-budget="lists.maxBudget"
 							:date-range-label="dateRangeLabel(date.from, date.to)"
 						/>
-						<UiCard class="usage-panel usage-global-right" appearance="tremor"
+						<UiCard class="usage-panel usage-global-half" appearance="tremor"
 							><h2>Daily Spend</h2>
 							<UsageChartLoader v-if="state.loading" :is-date-changing="dateChanging" /><UsageChart
 								v-else
@@ -249,9 +249,39 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 								></UsageChart
 							></UiCard
 						>
+						<UiCard class="usage-panel usage-global-half" appearance="tremor"
+							><h2>Daily Tokens</h2>
+							<UsageChartLoader v-if="state.loading" :is-date-changing="dateChanging" /><UsageChart
+								v-else
+								:data="days"
+								index="date"
+								:categories="['metrics.total_tokens']"
+								:colors="['indigo']"
+								:height="240"
+								:y-axis-width="80"
+								:format="(v) => (v >= 1e9 ? formatNumberWithCommas(v, 1, true) : formatNumberWithCommas(v, 0, true))"
+								><template #tooltip="{ row }"
+									><b>{{ row.date }}</b>
+									<p>Tokens: {{ formatNumberWithCommas(daily(row).metrics.total_tokens, 0, false) }}</p>
+									<p>Requests: {{ daily(row).metrics.api_requests }}</p>
+									<p>Spend: {{ money(daily(row).metrics.spend, 2) }}</p></template
+								></UsageChart
+							></UiCard
+						>
 						<UsageTopModels
 							v-model="modelMode"
-							class="usage-global-left"
+							class="usage-global-half"
+							dimension="spend"
+							:groups="groups"
+							:individual="models"
+							:loading="state.loading"
+							:is-date-changing="dateChanging"
+						/>
+						<UsageTopModels
+							v-model="modelMode"
+							class="usage-global-half"
+							dimension="tokens"
+							:show-mode-toggle="false"
 							:groups="groups"
 							:individual="models"
 							:loading="state.loading"
