@@ -82,15 +82,18 @@ describe("log detail streaming and lazy reads", () => {
 		expect(h.detail).toHaveBeenCalledTimes(3);
 		h.store.dispose();
 	});
-	it("does not let an older HTTP read overwrite a final frame and refetches the settled payload once", async () => {
+	it("treats the final frame as a signal and refetches the settled payload from the detail API", async () => {
 		const pending = deferred<Record<string, unknown> | null>(),
 			h = harness();
 		h.detail.mockReturnValueOnce(pending.promise).mockResolvedValue({ response: { text: "stored final" } });
 		h.store.bind(row(), "day");
 		h.callbacks().open();
 		h.callbacks().frame({ type: "snapshot", data: { status: "in_progress", response: { text: "partial" } } });
+		// 兼容滚动升级：旧服务端仍可能在终帧带 data，客户端也不写进负载。
 		h.callbacks().frame({ type: "final", data: { response: { text: "frame final" } } });
-		expect(h.store.enriched.value?.response).toEqual({ text: "frame final" });
+		// 终帧不写入负载：界面保留进行中的内容，等详情接口返回结算结果。
+		await vi.advanceTimersByTimeAsync(0);
+		expect(h.store.enriched.value?.response).toEqual({ text: "partial" });
 		pending.resolve({ status: "in_progress", response: { text: "old read" } });
 		await vi.advanceTimersByTimeAsync(0);
 		expect(h.store.enriched.value?.response).toEqual({ text: "stored final" });

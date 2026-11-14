@@ -2,8 +2,8 @@
  * 日志详情实时流（WebSocket）。
  *
  * 详情页过去靠 2 秒轮询 `/spend/logs/ui/:request_id` 拿进行中的进展；这里提供同源的
- * 订阅通道：客户端连上后先收到当前快照，之后只收到变化的顶层字段，请求结束时收到
- * 最终帧并主动断开，前端据此停掉轮询。
+ * 订阅通道：客户端连上后先收到当前快照，之后只收到变化的顶层字段，请求结束时只收到
+ * 完成信号并主动断开，前端据此停掉轮询、改由详情接口取结算后的数据。
  *
  * 首帧读一次库（复用 UiLogDetail 的负载构造，保证推送帧与一次性拉取同形），之后的内容
  * 变更全部来自执行流在进程内存里的实时快照（LiveResponseRegistry）：不再为「有人看」
@@ -64,7 +64,7 @@ export interface SpendLogStreamDeps {
 type StreamFrame =
 	| { readonly type: "snapshot"; readonly request_id: string; readonly data: Record<string, unknown> }
 	| { readonly type: "patch"; readonly request_id: string; readonly data: Record<string, unknown> }
-	| { readonly type: "final"; readonly request_id: string; readonly data: Record<string, unknown> | null }
+	| { readonly type: "final"; readonly request_id: string }
 	| { readonly type: "gone"; readonly request_id: string }
 	| { readonly type: "timeout"; readonly request_id: string }
 	| { readonly type: "error"; readonly request_id: string; readonly message: string };
@@ -170,14 +170,15 @@ async function streamSpendLogDetail(
 	};
 
 	const settle = async (): Promise<void> => {
-		// 已经在途行消失：最终负载只取一次，取到后交给客户端，让前端停掉订阅改走详情接口。
+		// 在途行消失：只确认结算后的详情已经可读。内容由 `/spend/logs/ui/:request_id`
+		// 返回，终帧不再携带数据，避免同一份资源在实时通道与接口各有一份输出。
 		const settled = await loadSettledDetail(db, requestId);
 		if (settled === null) {
 			sendFrame(socket, { type: "gone", request_id: requestId });
 			stop(1000, "gone");
 			return;
 		}
-		sendFrame(socket, { type: "final", request_id: requestId, data: settled });
+		sendFrame(socket, { type: "final", request_id: requestId });
 		stop(1000, "settled");
 	};
 

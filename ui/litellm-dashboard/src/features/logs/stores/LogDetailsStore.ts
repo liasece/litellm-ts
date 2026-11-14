@@ -164,9 +164,8 @@ export function createLogDetailsStore(options: LogDetailsStoreOptions = {}) {
 						remember(state.payload);
 						updatePolling();
 					} else if (frame.type === "final") {
+						// 终帧只是完成信号：不写入负载，结算后的内容由详情接口返回。
 						frameVersion++;
-						state.payload = record;
-						remember(record);
 						disconnect();
 						notifySettled();
 						refreshFinal();

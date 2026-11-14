@@ -77,7 +77,7 @@ function createContainer(onAuth?: (req: Request) => void): ServiceContainer {
 }
 
 describe("spend log detail stream", () => {
-	it("pushes a snapshot, then only changed fields, then the final payload", async () => {
+	it("pushes a snapshot, then only changed fields, then a final signal without payload", async () => {
 		resetLiveResponseRegistry();
 		const server = http.createServer();
 		const revisions = [
@@ -141,11 +141,9 @@ describe("spend log detail stream", () => {
 			// 静态字段（metadata、请求体）不随每个 chunk 重复推送。
 			expect(frames[1]?.data).not.toHaveProperty("metadata");
 			expect(frames[1]?.data).not.toHaveProperty("proxy_server_request");
-			expect(frames[2]).toEqual({
-				type: "final",
-				request_id: "req-stream",
-				data: { messages: [{ role: "user" }], response: { text: "hello" } },
-			});
+			// 终帧只表示"已结算"，不带结算后的详情：内容由详情接口返回。
+			expect(frames[2]).toEqual({ type: "final", request_id: "req-stream" });
+			expect(frames[2]).not.toHaveProperty("data");
 		} finally {
 			await terminate(socket);
 			await close(server);
