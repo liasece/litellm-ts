@@ -1,4 +1,5 @@
 import type { Deployment } from "../types/router";
+import { noteAppliedFeature } from "./AppliedFeatures";
 
 /** Model-level default effort; used only when the caller request sets no effort. */
 export const REASONING_EFFORT_OVERRIDE_FIELD = "override_reasoning_effort";
@@ -127,6 +128,12 @@ export function applyReasoningEffortOverride(
 	if (effort === undefined) {
 		return body;
 	}
+	// 改写发生在发往上游前的唯一出口，日志里没有别的痕迹：在这里记账，被拒绝的请求
+	// （例如 Anthropic 不支持 minimal）也已经说明这次能力生效过。
+	noteAppliedFeature({
+		id: forced === undefined ? "reasoning_effort:default" : "reasoning_effort:forced",
+		detail: effort,
+	});
 
 	if (protocol === "responses") {
 		const reasoning = isRecord(body["reasoning"]) ? body["reasoning"] : {};

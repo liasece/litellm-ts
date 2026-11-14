@@ -5,9 +5,9 @@
  * Supports model_group_alias and deployment override_model_name resolution (Patch 14).
  */
 
-import type { ModelGroupResolution } from "./ModelResolutionTrace";
+import type { ModelGroupResolution, ModelGroupResolutionHop } from "./ModelResolutionTrace";
 
-import { getModelGroupAliasTarget, validateModelGroupAliases } from "../shared/ModelGroupAlias";
+import { selectModelGroupAliasTarget, validateModelGroupAliases } from "../shared/ModelGroupAlias";
 import type { ModelGroupAliases } from "../shared/ModelGroupAlias";
 
 /**
@@ -282,7 +282,37 @@ export class FallbackHandler {
 	 * @param at
 	 */
 	private _getAliasTarget(model: string, aliases: ModelGroupAliases, at: Date): string | undefined {
-		return Object.prototype.hasOwnProperty.call(aliases, model) ? getModelGroupAliasTarget(aliases[model], at) : undefined;
+		return this._selectAliasTarget(model, aliases, at)?.target;
+	}
+
+	/**
+	 * 解析一条 alias 边，并指出目标是默认目标还是每日时段选中的目标。
+	 *
+	 * 时段 alias（峰谷价路由）与静态改名在日志里是两种能力，这里保留判定结果，
+	 * 避免展示层重新实现一遍时段规则。
+	 * @param model - 当前模型组
+	 * @param aliases - 待查询的 alias 映射
+	 * @param at - 请求快照固定的时间
+	 */
+	private _selectAliasTarget(
+		model: string,
+		aliases: ModelGroupAliases,
+		at: Date,
+	): { target: string; scheduled: boolean } | undefined {
+		return Object.prototype.hasOwnProperty.call(aliases, model) ? selectModelGroupAliasTarget(aliases[model], at) : undefined;
+	}
+
+	/**
+	 * 判定一条已解析的 alias 边来自哪个能力：模型级 override 优先，其次是普通 alias，
+	 * 时段命中的 alias 单独标记。
+	 * @param from - 边起点
+	 * @param selection - 该边的解析结果
+	 */
+	private _hopKind(from: string, selection: { scheduled: boolean }): ModelGroupResolutionHop["kind"] {
+		if (Object.prototype.hasOwnProperty.call(this._modelOverrides, from)) {
+			return "override";
+		}
+		return selection.scheduled ? "alias:scheduled" : "alias";
 	}
 
 	private _resolveAliasWithTrace(
@@ -291,20 +321,27 @@ export class FallbackHandler {
 		at = this._referenceTime ?? new Date(),
 	): ModelGroupResolution {
 		const path = [model];
+		const hops: ModelGroupResolutionHop[] = [];
 		const seen = new Set(path);
 		let current = model;
 
 		while (true) {
-			const target = this._getAliasTarget(current, aliases, at);
-			if (target === undefined) {
-				return { inputModel: model, resolvedModel: current, resolutionPath: path };
+			const selection = this._selectAliasTarget(current, aliases, at);
+			if (selection === undefined) {
+				return {
+					inputModel: model,
+					resolvedModel: current,
+					resolutionPath: path,
+					...(hops.length > 0 ? { hops: hops } : {}),
+				};
 			}
-			if (seen.has(target)) {
-				throw new Error(`Model group alias cycle detected: ${[...path, target].join(" -> ")}`);
+			if (seen.has(selection.target)) {
+				throw new Error(`Model group alias cycle detected: ${[...path, selection.target].join(" -> ")}`);
 			}
-			path.push(target);
-			seen.add(target);
-			current = target;
+			hops.push({ from: current, to: selection.target, kind: this._hopKind(current, selection) });
+			path.push(selection.target);
+			seen.add(selection.target);
+			current = selection.target;
 		}
 	}
 

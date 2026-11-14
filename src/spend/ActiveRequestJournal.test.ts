@@ -3,6 +3,7 @@ import { createModelResolutionTraceCollector } from "../router/ModelResolutionTr
 import { publishModelResolutionTrace, recordUpstreamExchange, runWithUpstreamExchangeScope } from "../router/UpstreamExchange";
 import type { UpstreamLogContext } from "../router/UpstreamLogContext";
 import { buildActiveRequestRoutingPatch, buildActiveRequestUpstreamPatch, createActiveRequestJournal } from "./ActiveRequestJournal";
+import { noteAppliedFeature, runWithAppliedFeatures, snapshotAppliedFeatures as snapshotForTest } from "../router/AppliedFeatures";
 
 jest.mock("./SpendTracker", () => {
 	const actual = jest.requireActual("./SpendTracker");
@@ -252,6 +253,39 @@ describe("Active request journal", () => {
 			},
 		]);
 		expect(patch["fallback_models"]).toEqual(["alias-model"]);
+	});
+
+	it("carries the feature marks into the in-flight row, including derived fallback", () => {
+		const trace = createModelResolutionTraceCollector();
+		trace.routingTrace.push({
+			fallback_index: 1,
+			from_model: "primary",
+			to_model: "backup",
+			to_resolved_model: "backup-model",
+			resolution_path: ["backup", "backup-model"],
+			routing_type: "general_fallback",
+			reason: "rate_limit",
+			error_information: {
+				error_type: "RateLimitError",
+				error_code: 429,
+				error_message: "RPM exhausted",
+				provider: "openai",
+				model: "gpt-4o",
+			},
+		} as never);
+		const patch = runWithAppliedFeatures(() => {
+			noteAppliedFeature({ id: "privacy", count: 2, detail: "EMAIL×2" });
+			return buildActiveRequestRoutingPatch(trace, snapshotForTest());
+		});
+		expect(patch["applied_features"]).toEqual([
+			{ id: "privacy", detail: "EMAIL×2", count: 2 },
+			{ id: "fallback", detail: "primary → backup-model", count: 1 },
+		]);
+	});
+
+	it("omits the feature key when nothing was applied", () => {
+		const trace = createModelResolutionTraceCollector();
+		expect(buildActiveRequestRoutingPatch(trace, [])["applied_features"]).toBeUndefined();
 	});
 
 	it("publishes the request trace for the journal to read", async () => {

@@ -5,6 +5,7 @@ import {
 	REASONING_EFFORT_OVERRIDE_VALUES,
 } from "./ReasoningEffortOverride";
 import type { Deployment } from "../types/router";
+import { runWithAppliedFeatures, snapshotAppliedFeatures } from "./AppliedFeatures";
 
 function deployment(settings: { defaultEffort?: unknown; forcedEffort?: unknown } = {}): Deployment {
 	const modelInfo: Record<string, unknown> = {};
@@ -119,5 +120,45 @@ describe("reasoning effort override", () => {
 		expect(() => applyReasoningEffortOverride({}, deployment({ forcedEffort: "minimal" }), "anthropic")).toThrow(
 			"Anthropic reasoning effort override does not support minimal",
 		);
+	});
+
+	it("records the forced capability even when the protocol rejects the value", () => {
+		expect(() =>
+			runWithAppliedFeatures(() => applyReasoningEffortOverride({}, deployment({ forcedEffort: "minimal" }), "anthropic")),
+		).toThrow("Anthropic reasoning effort override does not support minimal");
+		const marked = runWithAppliedFeatures(() => {
+			try {
+				applyReasoningEffortOverride({}, deployment({ forcedEffort: "minimal" }), "anthropic");
+			} catch {
+				return snapshotAppliedFeatures();
+			}
+			return undefined;
+		});
+		expect(marked).toEqual([{ id: "reasoning_effort:forced", detail: "minimal" }]);
+	});
+
+	it("distinguishes a forced effort from a default that only fills an empty caller", () => {
+		expect(
+			runWithAppliedFeatures(() => {
+				applyReasoningEffortOverride({ reasoning_effort: "low" }, deployment({ forcedEffort: "xhigh" }), "chat");
+				return snapshotAppliedFeatures();
+			}),
+		).toEqual([{ id: "reasoning_effort:forced", detail: "xhigh" }]);
+
+		expect(
+			runWithAppliedFeatures(() => {
+				applyReasoningEffortOverride({ messages: [] }, deployment({ defaultEffort: "high" }), "chat");
+				return snapshotAppliedFeatures();
+			}),
+		).toEqual([{ id: "reasoning_effort:default", detail: "high" }]);
+	});
+
+	it("records nothing when the caller already chose an effort and only a default exists", () => {
+		expect(
+			runWithAppliedFeatures(() => {
+				applyReasoningEffortOverride({ reasoning_effort: "low" }, deployment({ defaultEffort: "high" }), "chat");
+				return snapshotAppliedFeatures();
+			}),
+		).toBeUndefined();
 	});
 });

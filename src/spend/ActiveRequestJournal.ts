@@ -20,6 +20,8 @@ import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
 import type { ModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
 import { copyModelResolutionChain, copyRoutingTrace } from "../router/ModelResolutionTrace";
+import { mergeAppliedFeatures, snapshotAppliedFeatures } from "../router/AppliedFeatures";
+import type { AppliedFeatureRecord } from "../types/spend";
 import {
 	getRecordedModelResolutionTrace,
 	observeUpstreamExchange,
@@ -113,13 +115,23 @@ export interface ActiveRequestJournal {
 /**
  * 构建写进在途行 metadata 的路由信息，形状与最终 SpendLog 的 metadata 一致。
  * @param trace - 当前路由解析轨迹
+ * @param features - 请求级能力账本快照；省略表示这次落账不记录能力标记
  * @returns 尚未产生任何路由信息时为空对象
  */
-export function buildActiveRequestRoutingPatch(trace: ModelResolutionTraceCollector | undefined): Record<string, unknown> {
+export function buildActiveRequestRoutingPatch(
+	trace: ModelResolutionTraceCollector | undefined,
+	features?: readonly AppliedFeatureRecord[],
+): Record<string, unknown> {
 	if (trace === undefined) {
 		return {};
 	}
 	const patch: Record<string, unknown> = {};
+	// 在途行与结算行同一份口径：现场记录的能力 + 由路由轨迹派生的 fallback，
+	// 这样流式请求进行中就能看到图标，而不是等结算后才出现。
+	const appliedFeatures = mergeAppliedFeatures(features, trace.routingTrace);
+	if (appliedFeatures !== undefined) {
+		patch["applied_features"] = appliedFeatures;
+	}
 	const modelResolutionChain = copyModelResolutionChain(trace);
 	if (modelResolutionChain !== undefined) {
 		patch["model_resolution_chain"] = modelResolutionChain;
@@ -254,7 +266,7 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 			return;
 		}
 		lastSignature = signature;
-		const routingPatch = buildActiveRequestRoutingPatch(trace);
+		const routingPatch = buildActiveRequestRoutingPatch(trace, snapshotAppliedFeatures());
 		if (modelMap) {
 			routingPatch["model_map_information"] = modelMap;
 		}

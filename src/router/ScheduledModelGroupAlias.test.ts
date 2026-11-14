@@ -94,6 +94,10 @@ describe("daily model group alias routing", () => {
 			inputModel: "nested",
 			resolvedModel: "deepseek",
 			resolutionPath: ["nested", "flexible", "deepseek"],
+			hops: [
+				{ from: "nested", to: "flexible", kind: "alias" },
+				{ from: "flexible", to: "deepseek", kind: "alias:scheduled" },
+			],
 		});
 		expect(handler.getFallbackChain("flexible")).toEqual(["backup-night"]);
 		jest.setSystemTime(new Date("2026-10-25T00:30:00Z"));

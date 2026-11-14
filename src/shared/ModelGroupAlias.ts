@@ -50,17 +50,32 @@ function containsMinute(start: number, end: number, minute: number): boolean {
 	return start < end ? minute >= start && minute < end : minute >= start || minute < end;
 }
 
+/** One alias evaluation: the selected target and whether a daily window chose it. */
+export interface ModelGroupAliasSelection {
+	/** Model group reached by this alias edge. */
+	target: string;
+	/** True when a schedule window (not the default target) produced the target. */
+	scheduled: boolean;
+}
+
 /**
- * Select one target at the supplied instant; alias traversal is handled by the caller.
+ * Select one target at the supplied instant, reporting whether a schedule window decided it.
+ *
+ * The distinction is only used for observability: an alias that silently switches models by
+ * time of day is a different routing capability from a static rename, so the logs must be
+ * able to tell them apart without re-implementing the window rules.
  * @param value
  * @param at
  */
-export function getModelGroupAliasTarget(value: ModelGroupAliasValue | undefined, at = new Date()): string | undefined {
+export function selectModelGroupAliasTarget(
+	value: ModelGroupAliasValue | undefined,
+	at = new Date(),
+): ModelGroupAliasSelection | undefined {
 	if (typeof value === "string") {
-		return value;
+		return { target: value, scheduled: false };
 	}
 	if (Array.isArray(value)) {
-		return value[0];
+		return value[0] === undefined ? undefined : { target: value[0], scheduled: false };
 	}
 	if (!value) {
 		return undefined;
@@ -71,10 +86,19 @@ export function getModelGroupAliasTarget(value: ModelGroupAliasValue | undefined
 		const minute = hour * 60 + Number(parts.find((part) => part.type === "minute")?.value);
 		const window = value.schedule.find((entry) => containsMinute(minutes(entry.start), minutes(entry.end), minute));
 		if (window) {
-			return window.model;
+			return { target: window.model, scheduled: true };
 		}
 	}
-	return value.model;
+	return { target: value.model, scheduled: false };
+}
+
+/**
+ * Select one target at the supplied instant; alias traversal is handled by the caller.
+ * @param value
+ * @param at
+ */
+export function getModelGroupAliasTarget(value: ModelGroupAliasValue | undefined, at = new Date()): string | undefined {
+	return selectModelGroupAliasTarget(value, at)?.target;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

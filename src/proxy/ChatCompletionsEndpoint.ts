@@ -5,6 +5,7 @@ import { redactConfiguredSecrets } from "../core/api/redactConfiguredSecrets";
 import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 import { startSseKeepalive } from "./SseKeepalive";
 import { getDeploymentKey } from "../router/RouterModelGroupCache";
+import { noteResolutionAppliedFeatures } from "../router/AppliedFeatures";
 import { resolveCodingClientModel } from "./CodingClientModels";
 /**
  * Chat Completions 代理端点
@@ -758,6 +759,7 @@ async function handleStreamingResponse(
 			resolutionPath: [currentModel],
 		};
 		appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, resolution);
+		noteResolutionAppliedFeatures(resolution);
 		const candidate = litellmRouter.getAvailableDeployment(currentModel, messages, optionalParams);
 		if (!candidate) {
 			const nextFallback = getNextStreamingFallback(litellmRouter, currentModel, model, fallbackModels);

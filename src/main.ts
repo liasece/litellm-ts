@@ -21,6 +21,7 @@ import { requestArrivalMiddleware } from "./core/api/RequestArrival";
 import { errorHandler } from "./middleware/ErrorHandler";
 import { zstdRequestDecompress } from "./middleware/ZstdRequestDecompress";
 import { accessLogFilter } from "./middleware/AccessLogFilter";
+import { appliedFeaturesScope } from "./middleware/AppliedFeaturesScope";
 import { upstreamExchangeScope } from "./middleware/UpstreamExchangeScope";
 import { spendResponseCompression } from "./middleware/SpendResponseCompression";
 import { httpMetricsMiddleware, markBodyParsed } from "./observability/HttpMetrics";
@@ -231,6 +232,8 @@ export class LiteLLMServer {
 		app.use(accessLogFilter);
 		// 上游交换旁路作用域：所有会发起上游调用的路由之前建立，日志层据此读取上游详情。
 		app.use(upstreamExchangeScope);
+		// 能力标记账本作用域：与上游交换同一条请求边界，记录本请求被哪些路由能力处理过。
+		app.use(appliedFeaturesScope);
 
 		// 注册路由
 		this._registerHealthRoutes(app);

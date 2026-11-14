@@ -604,6 +604,7 @@ describe("Router execution chain", () => {
 				inputModel: "expensive-model",
 				resolvedModel: "temporary-model",
 				resolutionPath: ["expensive-model", "temporary-model"],
+				hops: [{ from: "expensive-model", to: "temporary-model", kind: "override" }],
 			});
 		});
 

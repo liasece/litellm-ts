@@ -15,6 +15,17 @@ describe("persisted SpendLogs metadata projection", () => {
 			cost_breakdown: { total_cost: 3 },
 		});
 	});
+	it("keeps the applied feature column whatever the field projection says", () => {
+		const features = [{ id: "privacy", detail: "EMAIL×2", count: 2 }];
+		const metadata = { status: "success", applied_features: features, cost_breakdown: { total_cost: 3 } };
+		// Feature 是日志列表的固定列，不能被 metadata 字段裁剪静默清空。
+		expect(projectSpendMetadata(metadata, { include: [] })).toEqual({ status: "success", applied_features: features });
+		expect(projectSpendMetadata(metadata, { exclude: ["applied_features", "status"] })).toEqual({
+			status: "success",
+			applied_features: features,
+			cost_breakdown: { total_cost: 3 },
+		});
+	});
 	it.each([{ include: [], exclude: [] }, { include: "trace_id" }, { include: [12] }, { unsupported: true }])(
 		"rejects malformed configuration %j",
 		(config) => {

@@ -7,6 +7,7 @@ import { installMockFetch, okResponse } from "./RouterTestHelpers";
 import { PrivacyBlockedError, runWithPrivacyRequest, type PrivacyRequestState } from "../privacy/PrivacyDispatch";
 import { PrivacyContext } from "../privacy/PrivacyContext";
 import { parsePrivacyMaskingSettings, privacySettingsService, type PrivacyMaskingSettings } from "../privacy/PrivacyConfig";
+import { runWithAppliedFeatures, snapshotAppliedFeatures } from "./AppliedFeatures";
 
 const EMAIL = "probe@jit-mail.com";
 
@@ -119,5 +120,51 @@ describe("路由链里的脱敏调度", () => {
 			errorType: "privacy_blocked",
 			toErrorBody: expect.any(Function) as unknown,
 		});
+	});
+
+	it("真正替换后记下 privacy，detail 是类型与次数而不是命中值", async () => {
+		mockFetch.mockResolvedValueOnce(okBody());
+		const settings = parsePrivacyMaskingSettings({ providers: ["deepseek"] });
+		let features: unknown;
+		const { result } = withPrivacy(settings, () =>
+			runWithAppliedFeatures(async () => {
+				await makeRouter().completion("primary-model", [{ role: "user", content: `mail ${EMAIL}` }]);
+				features = snapshotAppliedFeatures();
+			}),
+		);
+		await result;
+		// 次数为 1 时不写 count，前端也就不显示次数徽标。
+		expect(features).toEqual([{ id: "privacy", detail: "EMAIL×1" }]);
+		expect(JSON.stringify(features)).not.toContain(EMAIL);
+	});
+
+	it("warn 模式只计数不替换，不算隐私能力生效", async () => {
+		mockFetch.mockResolvedValueOnce(okBody());
+		const settings = parsePrivacyMaskingSettings({ providers: ["deepseek"], action: "warn" });
+		const { result } = withPrivacy(settings, () =>
+			runWithAppliedFeatures(() =>
+				makeRouter().completion("primary-model", [{ role: "user", content: `mail ${EMAIL}` }]),
+			),
+		);
+		await result;
+		expect(runWithAppliedFeatures(() => snapshotAppliedFeatures())).toBeUndefined();
+		expect(JSON.stringify(upstreamBody())).toContain(EMAIL);
+	});
+
+	it("命中 block 只记 privacy:blocked，不记替换", async () => {
+		const settings = parsePrivacyMaskingSettings({ providers: ["deepseek"], kinds: { EMAIL: "block" } });
+		let marked: unknown;
+		const { result } = withPrivacy(settings, () =>
+			runWithAppliedFeatures(async () => {
+				try {
+					await makeRouter().completion("primary-model", [{ role: "user", content: `mail ${EMAIL}` }]);
+				} catch {
+					marked = snapshotAppliedFeatures();
+				}
+			}),
+		);
+		await result;
+		expect(marked).toEqual([{ id: "privacy:blocked", detail: "EMAIL" }]);
+		expect(mockFetch).not.toHaveBeenCalled();
 	});
 });

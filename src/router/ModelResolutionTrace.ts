@@ -50,6 +50,16 @@ export interface RoutingTraceEntry {
 	readonly error_information: RoutingTraceErrorInformation;
 }
 
+/** 一次解析跨过的 alias / override 边；只用于能力标记，不进入日志。 */
+export interface ModelGroupResolutionHop {
+	/** 边起点（别名或模型组名） */
+	readonly from: string;
+	/** 边终点 */
+	readonly to: string;
+	/** 命中模型级 override、普通 alias，或 alias 的每日时段分支 */
+	readonly kind: "alias" | "alias:scheduled" | "override";
+}
+
 /** FallbackHandler 返回的单次结构化解析结果。 */
 export interface ModelGroupResolution {
 	/**
@@ -64,6 +74,11 @@ export interface ModelGroupResolution {
 	 *
 	 */
 	readonly resolutionPath: readonly string[];
+	/**
+	 * 解析跨过的边及其类型，供能力标记区分 alias / 时段 alias / override。
+	 * 不写进 `model_resolution_chain`：那里只保存路径本身。
+	 */
+	readonly hops?: readonly ModelGroupResolutionHop[];
 }
 
 /** 请求级可变轨迹容器，由 endpoint 持有以覆盖成功和失败日志。 */

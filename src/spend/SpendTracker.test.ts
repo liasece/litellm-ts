@@ -43,6 +43,7 @@ import { costTrackingConfigService } from "../cost/CostTrackingConfig";
 import { logger } from "../core/utils/logger";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { BadRequestError } from "../router/RouterErrors";
+import { noteAppliedFeature, runWithAppliedFeatures } from "../router/AppliedFeatures";
 
 describe("Spend reservation 请求 helper", () => {
 	it("同 key 与幂等 header 生成稳定 request id，不同 key 隔离 namespace", () => {
@@ -1918,6 +1919,62 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 				error_information: { error_type: "RateLimitError", error_code: 429, error_message: "RPM exhausted" },
 			}),
 		]);
+	});
+
+	it("applied_features 合并现场记录与 routing_trace 派生的 fallback", async () => {
+		const spendLog = await runWithAppliedFeatures(() => {
+			noteAppliedFeature({ id: "override", detail: "gpt-4o → claude-sonnet-4" });
+			noteAppliedFeature({ id: "reasoning_effort:forced", detail: "high" });
+			return buildSpendLogFromRequest({
+				callType: CallType.ACompletion,
+				endTime: new Date("2026-01-01T00:00:01.000Z"),
+				model: "gpt-4o",
+				req: createMinimalRequest(),
+				startTime: new Date("2026-01-01T00:00:00.000Z"),
+				routingTrace: [
+					{
+						fallback_index: 1,
+						from_model: "claude-sonnet-4",
+						to_model: "backup",
+						to_resolved_model: "backup-model",
+						resolution_path: ["backup", "backup-model"],
+						routing_type: "context_window_fallback",
+						reason: "context_window_exceeded",
+						error_information: { error_type: "ContextWindowError", error_code: 400, error_message: "too long" },
+					},
+				],
+			});
+		});
+
+		expect(spendLog.metadata?.applied_features).toEqual([
+			{ id: "override", detail: "gpt-4o → claude-sonnet-4" },
+			{ id: "reasoning_effort:forced", detail: "high" },
+			{ id: "fallback:context_window", detail: "claude-sonnet-4 → backup-model", count: 1 },
+		]);
+	});
+
+	it("没有能力生效时 applied_features 落 null，内部审计行不读外层账本", async () => {
+		const plain = await buildSpendLogFromRequest({
+			callType: CallType.ACompletion,
+			endTime: new Date("2026-01-01T00:00:01.000Z"),
+			model: "plain-model",
+			req: createMinimalRequest(),
+			startTime: new Date("2026-01-01T00:00:00.000Z"),
+		});
+		expect(plain.metadata?.applied_features).toBeNull();
+
+		const audit = await runWithAppliedFeatures(() => {
+			noteAppliedFeature({ id: "privacy", count: 3, detail: "EMAIL×3" });
+			return buildSpendLogFromRequest({
+				appliedFeatures: [],
+				callType: CallType.ACompletion,
+				endTime: new Date("2026-01-01T00:00:01.000Z"),
+				model: "vision-worker",
+				req: createMinimalRequest(),
+				startTime: new Date("2026-01-01T00:00:00.000Z"),
+			});
+		});
+		expect(audit.metadata?.applied_features).toBeNull();
 	});
 
 	it("无 team_alias 时 user_api_key_team_alias 落 null", async () => {

@@ -36,6 +36,7 @@ import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
 import { appendModelResolutionTrace, appendRoutingTrace, copyModelResolutionChain, copyRoutingTrace } from "./ModelResolutionTrace";
 import { publishModelResolutionTrace } from "./UpstreamExchange";
+import { noteResolutionAppliedFeatures } from "./AppliedFeatures";
 import { attachUpstreamLogContext, getUpstreamLogContext } from "./UpstreamLogContext";
 import { hasCommittedStreamOutput } from "./StreamOutputVisibility";
 import { streamErrorPayloadMessage } from "./StreamErrorPayload";
@@ -151,6 +152,7 @@ export async function executeWithFallback(
 
 	const modelResolution = ctx.fallbackHandler.resolveModelGroupWithTrace(model);
 	appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, modelResolution);
+	noteResolutionAppliedFeatures(modelResolution);
 	// 路由已解析：把请求级轨迹发布到请求作用域，在途日志补写器据此补写 alias 展开链与 fallback 决策。
 	if (modelResolutionTrace !== undefined) {
 		publishModelResolutionTrace(modelResolutionTrace);

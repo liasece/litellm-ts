@@ -72,6 +72,7 @@ import { getConfig } from "../core/config";
 import type { UserAPIKeyAuth } from "../types/auth";
 import type { CustomCostPerToken, PeakPricingConfig } from "../cost/CostCalculator";
 import { normalizeRoutingTrace } from "../router/ModelResolutionTrace";
+import { mergeAppliedFeatures, snapshotAppliedFeatures } from "../router/AppliedFeatures";
 import { resolveRequestSessionGroupKey } from "./sessionIdentity";
 import { publishSpendLogChange } from "./spendLogChangeFeed";
 
@@ -934,6 +935,12 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 	const requesterIpAddress = getRequesterIpAddress(ctx.req);
 	const modelResolutionChain = normalizeModelResolutionChain(ctx);
 	const routingTrace = normalizeRoutingTrace(ctx.routingTrace);
+	// fallback 不单独埋点（routing_trace 是唯一事实源），其余能力由各改写点记进账本；
+	// 内部调用的审计行显式传空集合，避免把外层主请求的能力记到旁路调用上。
+	const appliedFeatures = mergeAppliedFeatures(
+		ctx.appliedFeatures ?? snapshotAppliedFeatures(),
+		routingTrace,
+	);
 	return {
 		session_group_key: getCanonicalSessionGroupKey(ctx.req),
 		user_api_key: getAuthApiKeyForSpendLog(ctx),
@@ -966,6 +973,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		fallback_models: ctx.fallbackModels ?? null,
 		model_resolution_chain: modelResolutionChain,
 		routing_trace: routingTrace.length > 0 ? routingTrace : null,
+		applied_features: appliedFeatures ?? null,
 		resolved_model_group:
 			resolveFinalModelGroup({
 				modelGroup: ctx.modelGroup ?? ctx.model,

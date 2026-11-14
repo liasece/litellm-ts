@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createModelResolutionTraceCollector, type ModelResolutionTraceCollector } from "./ModelResolutionTrace";
+import { runWithAppliedFeatures } from "./AppliedFeatures";
 import type { UpstreamLogContext } from "./UpstreamLogContext";
 
 /**
@@ -124,16 +125,21 @@ export function getRecordedUpstreamExchange(): UpstreamLogContext | undefined {
  * 在独立子作用域内执行一次内部能力调用，并在结束后取回它产生的上游交换。
  *
  * worker 调用属于当前请求内部的旁路调用：它必须记录到自己那行审计日志，
- * 但不能覆盖外层请求的上游交换，因此用子作用域隔离。
+ * 但不能覆盖外层请求的上游交换，因此用子作用域隔离；能力账本按同一理由隔离——
+ * worker 自己的 alias / override / 档位注入不属于用户的这次请求。
  * @template T - 内部调用返回类型
  * @param callback - 发起内部上游调用的逻辑
  */
 export async function captureUpstreamExchange<T>(
 	callback: () => Promise<T>,
 ): Promise<{ result: T; context: UpstreamLogContext | undefined }> {
-	return channels.run({}, async () => {
-		const channel = channels.getStore();
-		const result = await callback();
-		return { result: result, context: channel?.latest };
-	});
+	return channels.run({}, () =>
+		// 能力账本在同一边界开子作用域：内部调用自己的 alias / override / 档位注入
+		// 不能记到外层用户请求上，否则审计行的路由会被写成主请求的能力。
+		runWithAppliedFeatures(async () => {
+			const channel = channels.getStore();
+			const result = await callback();
+			return { result: result, context: channel?.latest };
+		}),
+	);
 }

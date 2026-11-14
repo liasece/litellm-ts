@@ -1,5 +1,6 @@
 import { ApiError } from "../core/api/ApiError";
 import type { Deployment } from "../types/router";
+import { noteAppliedFeature } from "./AppliedFeatures";
 
 /**
  * Required (&), excluded (!) and ordinary (OR) tags are evaluated before strategy selection.
@@ -17,6 +18,9 @@ export function filterDeploymentsByTags(deployments: Deployment[], params: Recor
 		throw ApiError.badRequest("metadata.tags must be a string array");
 	}
 	const requested = (raw ?? []) as string[];
+	// 只有真的带了 tags 才过滤候选；这一步改变了「哪些 deployment 可能被选中」，
+	// 属于路由能力，记进请求账本，详情带上生效的 tags。
+	noteAppliedFeature({ id: "tag_routing", ...(requested.length > 0 ? { detail: requested.join(", ") } : {}) });
 	const excluded = requested.filter((tag) => tag.startsWith("!")).map((tag) => tag.slice(1));
 	const required = requested.filter((tag) => tag.startsWith("&")).map((tag) => tag.slice(1));
 	const positive = requested.filter((tag) => !tag.startsWith("!") && !tag.startsWith("&"));

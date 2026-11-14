@@ -34,6 +34,7 @@ import {
 	copyModelResolutionChain,
 } from "../router/ModelResolutionTrace";
 import { createPublishedModelResolutionTrace } from "../router/UpstreamExchange";
+import { noteResolutionAppliedFeatures } from "../router/AppliedFeatures";
 
 const logger = createModuleLogger("Proxy:Embeddings");
 
@@ -90,7 +91,9 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 		const startTime = requestArrivalTime(req);
 		const auth = req.auth;
 		const modelResolutionTrace = createPublishedModelResolutionTrace();
-		appendModelResolutionTrace(modelResolutionTrace, 0, litellmRouter.resolveModelGroupWithTrace(model));
+		const resolution = litellmRouter.resolveModelGroupWithTrace(model);
+		appendModelResolutionTrace(modelResolutionTrace, 0, resolution);
+		noteResolutionAppliedFeatures(resolution);
 
 		// 部署选择不调用上游；reservation 随后覆盖当前组与所有 fallback deployment。
 		const candidate = litellmRouter.getAvailableDeployment(model);

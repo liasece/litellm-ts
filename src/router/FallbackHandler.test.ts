@@ -211,6 +211,11 @@ describe("FallbackHandler", () => {
 				inputModel: "A",
 				resolvedModel: "C",
 				resolutionPath: ["A", "B", "C"],
+				// 每一跳都带上类型，日志的能力标记据此区分 alias 与 override。
+				hops: [
+					{ from: "A", to: "B", kind: "alias" },
+					{ from: "B", to: "C", kind: "alias" },
+				],
 			});
 		});
 
@@ -221,6 +226,7 @@ describe("FallbackHandler", () => {
 					inputModel: "fallback-alias",
 					resolvedModel: "fallback-model",
 					resolutionPath: ["fallback-alias", "fallback-model"],
+					hops: [{ from: "fallback-alias", to: "fallback-model", kind: "alias" }],
 				},
 			]);
 			expect(fh.getFallbackChain("source")).toEqual(["fallback-model"]);

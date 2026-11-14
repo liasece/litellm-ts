@@ -28,6 +28,7 @@ import { createModuleLogger } from "../core/utils/logger";
 import { APIConnectionError } from "../router/RouterErrors";
 import { buildInvalidModelError, formatInvalidModelMessage } from "../router/RouterExecution";
 import { getDeploymentKey } from "../router/RouterModelGroupCache";
+import { noteResolutionAppliedFeatures } from "../router/AppliedFeatures";
 import {
 	appendModelResolutionTrace,
 	appendRoutingTrace,
@@ -274,6 +275,7 @@ export async function executeWithFallbackChain<T>(
 			resolutionPath: [currentModel],
 		};
 		appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, resolution);
+		noteResolutionAppliedFeatures(resolution);
 		if (fallbackStats) {
 			fallbackStats.fallbackDepth = fallbackDepth;
 			fallbackStats.fallbackModels = [...fallbackModels];

@@ -12,6 +12,7 @@ import { createModuleLogger } from "../core/utils/logger";
 import type { PrivacyMaskingSettings } from "./PrivacyConfig";
 import type { PrivacyContext } from "./PrivacyContext";
 import { maskRequestBody, type PrivacyProtocol } from "./RequestBodyMasker";
+import { noteAppliedFeature } from "../router/AppliedFeatures";
 import { isPrivacyScopeMatch, type PrivacyScopeTarget } from "./PrivacyScope";
 
 const logger = createModuleLogger("privacy");
@@ -119,6 +120,9 @@ export function applyPrivacyMaskingToUpstream(body: unknown, target: PrivacyScop
 	state.masked = true;
 	const blockedKinds = state.context.blockedKinds;
 	if (blockedKinds.length > 0) {
+		// 被拒绝的请求没有上行、也没有把替换结果发出去，因此只标「拦截」而不标「替换」：
+		// 两个标记互斥，复盘时一眼能分清是改写生效还是请求被拒。
+		noteAppliedFeature({ id: "privacy:blocked", detail: blockedKinds.join(", ") });
 		logger.warn("请求包含拒绝替换的内容，按 privacy_masking 配置拒绝", {
 			provider: target.provider,
 			model: target.modelName,
@@ -126,5 +130,38 @@ export function applyPrivacyMaskingToUpstream(body: unknown, target: PrivacyScop
 		});
 		throw new PrivacyBlockedError(blockedKinds);
 	}
+	notePrivacyReplacement(state.context);
 	return true;
+}
+
+/**
+ * 把「真的发生了替换」记进请求的能力账本。
+ *
+ * warn 模式只计数不替换，未命中时也没有改写，两者都不算隐私能力生效——这与
+ * `PrivacyStatsRepository` 只统计 `masked && occurrences > 0` 的口径一致。
+ * @param context - 本请求的脱敏上下文
+ */
+function notePrivacyReplacement(context: PrivacyContext): void {
+	if (!context.hasReplacements) {
+		return;
+	}
+	const stats = context.snapshotStats();
+	if (stats.occurrences <= 0) {
+		return;
+	}
+	noteAppliedFeature({ id: "privacy", count: stats.occurrences, detail: summarizeKinds(stats.kinds) });
+}
+
+/**
+ * 把命中类型压缩成一行摘要，按次数从多到少，最多四类，其余折叠为 `+N`。
+ * 只写类型与次数，不写任何命中值。
+ * @param kinds - 类型 → 命中次数
+ */
+function summarizeKinds(kinds: Record<string, number>): string {
+	const entries = Object.entries(kinds).sort((left, right) => right[1] - left[1]);
+	const shown = entries.slice(0, 4).map(([kind, count]) => `${kind}×${count}`);
+	if (entries.length > 4) {
+		shown.push(`+${entries.length - 4}`);
+	}
+	return shown.join(", ");
 }

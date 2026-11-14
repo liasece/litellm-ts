@@ -171,6 +171,9 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			upstreamLogContext: call.upstreamLogContext ?? getAttachedUpstreamLogContext(call.response) ?? getAttachedUpstreamLogContext(call.error),
 			// 内部调用只记录自己的上游交换，禁止借用外层请求的通道记录。
 			disableAmbientUpstreamContext: true,
+			// 审计行描述的是网关自己发起的旁路调用，不是用户的请求：Feature 列只标记
+			// 用户请求被哪些能力处理过，因此这里显式写入空集合，绝不读外层主请求的账本。
+			appliedFeatures: [],
 			status: status,
 			requestTags: ["litellm:internal", `builtin:${call.capability}`],
 			...(call.fixedCostUsd === undefined ? {} : { fixedCostUsd: call.fixedCostUsd }),

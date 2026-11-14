@@ -175,6 +175,46 @@ export interface SpendLog {
 	completion_tokens_details?: Record<string, unknown>;
 }
 
+/**
+ * 本请求真正用到的路由能力标记。
+ *
+ * 每个 id 对应一种能力，前端据此显示图标；id 是稳定契约，展示文案与图标只是它的映射。
+ * fallback 的三种类型由 `routing_trace` 派生，其余由各改写点现场记录。
+ */
+export type AppliedFeatureId =
+	/** 发生了敏感数据替换（含 shape 假值） */
+	| "privacy"
+	/** 命中 block 规则，请求被拒绝且没有上行 */
+	| "privacy:blocked"
+	/** 发生了跨模型 fallback */
+	| "fallback"
+	/** 因上下文窗口超限触发的 fallback */
+	| "fallback:context_window"
+	/** 因内容策略拒绝触发的 fallback */
+	| "fallback:content_policy"
+	/** override_model_name 强制改投目标模型组 */
+	| "override"
+	/** model_group_alias 展开 */
+	| "alias"
+	/** alias 按每日时段选中的目标（峰谷价路由） */
+	| "alias:scheduled"
+	/** force_reasoning_effort 覆盖调用方档位 */
+	| "reasoning_effort:forced"
+	/** 调用方未选档位时补 override_reasoning_effort */
+	| "reasoning_effort:default"
+	/** 按 metadata.tags 过滤候选 deployment */
+	| "tag_routing";
+
+/** 写入 `metadata.applied_features` 的一条记录。 */
+export interface AppliedFeatureRecord {
+	/** 能力标识 */
+	readonly id: AppliedFeatureId;
+	/** 面向人的具体取值，例如 `gpt-4o → claude-sonnet-4`、`high`、`EMAIL×2` */
+	readonly detail?: string;
+	/** 同一能力在一次请求内的次数（替换处数、fallback 跳数）；为 1 时省略 */
+	readonly count?: number;
+}
+
 /** Python SpendLogs metadata JSON 负载。 */
 export interface SpendLogsMetadata {
 	/**
@@ -243,6 +283,13 @@ export interface SpendLogsMetadata {
 	readonly model_resolution_chain?: ModelResolutionChainEntry[] | null;
 	/** 跨模型 fallback 的逐跳路由类型、原因与错误摘要；无 fallback 时为 null。 */
 	readonly routing_trace?: RoutingTraceEntry[] | null;
+	/**
+	 * 本请求真正用到的路由能力（脱敏替换、fallback、定向、档位注入、tag 过滤等）。
+	 *
+	 * 没有能力生效时为 null，与「这一行还没记录过」区分开。历史行没有这个键，
+	 * 列表只按 `routing_trace` 派生通用 fallback 标记。
+	 */
+	readonly applied_features?: AppliedFeatureRecord[] | null;
 	/** alias、fallback、Model Override 全部解析完成后的最终公共模型组。 */
 	readonly resolved_model_group?: string | null;
 	/**
@@ -314,6 +361,13 @@ export interface SpendLogBuildContext {
 	 * 读取外层请求通道，避免把主请求的上游详情写进内部调用的日志。
 	 */
 	readonly disableAmbientUpstreamContext?: boolean;
+	/**
+	 * 本次 SpendLog 自己的能力标记；省略时读取请求作用域账本。
+	 *
+	 * 内置能力审计行传入内部调用子作用域的快照（没有能力时传空数组）：置空是有意义的
+	 * 取值，表示「这次内部调用确实没有能力生效」，不能回退到外层主请求的账本。
+	 */
+	readonly appliedFeatures?: readonly AppliedFeatureRecord[];
 	/** 上游 usage 对象 */
 	readonly usage?: Record<string, unknown>;
 	/** 捕获到的请求错误 */
