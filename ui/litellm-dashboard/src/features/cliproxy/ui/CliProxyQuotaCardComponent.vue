@@ -6,12 +6,12 @@ import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import type { Account, AccountQuotaState } from "../support/CliProxyModels";
 import { accountIdentity } from "../logic/AccountIdentityLogic";
+import { QUOTA_TONE_COLORS, isRemainingExhausted, remainingTone, roundedRemainingPercent } from "../../platform/logic/QuotaDisplayLogic";
 defineProps<{ account: Account; quotaState: AccountQuotaState }>();
 defineEmits<{ refresh: [] }>();
-const quotaColor = (remaining: number | null) =>
-	remaining !== null && remaining < 20 ? "#ff4d4f" : remaining !== null && remaining < 50 ? "#faad14" : "#52c41a";
+const quotaColor = (remaining: number | null) => QUOTA_TONE_COLORS[remainingTone(remaining)];
 const date = (value: string) => new Date(value).toLocaleString();
-const exhaustedClass = (remaining: number | null) => (remaining !== null && remaining <= 0 ? "cp-quota-window-name--exhausted" : "");
+const exhaustedClass = (remaining: number | null) => (isRemainingExhausted(remaining) ? "cp-quota-window-name--exhausted" : "");
 </script>
 <template>
 	<UiCard
@@ -60,19 +60,23 @@ const exhaustedClass = (remaining: number | null) => (remaining !== null && rema
 			<div v-for="window in quotaState.data.windows" :key="window.id">
 				<div class="cp-between cp-mb-4">
 					<strong :class="exhaustedClass(window.remaining_percent)">{{ window.label }}</strong
-					><span>{{ window.remaining_percent === null ? "—" : Math.round(window.remaining_percent) + "% remaining" }}</span>
+					><span>{{
+						roundedRemainingPercent(window.remaining_percent) === null
+							? "—"
+							: roundedRemainingPercent(window.remaining_percent) + "% remaining"
+					}}</span>
 				</div>
 				<div
 					class="cp-progress"
 					role="progressbar"
 					:aria-label="window.label"
-					:aria-valuenow="window.remaining_percent ?? 0"
+					:aria-valuenow="roundedRemainingPercent(window.remaining_percent) ?? 0"
 					aria-valuemin="0"
 					aria-valuemax="100"
 				>
 					<div
 						:style="{
-							width: (window.remaining_percent === null ? 0 : Math.round(window.remaining_percent)) + '%',
+							width: (roundedRemainingPercent(window.remaining_percent) ?? 0) + '%',
 							backgroundColor: quotaColor(window.remaining_percent),
 						}"
 					/>

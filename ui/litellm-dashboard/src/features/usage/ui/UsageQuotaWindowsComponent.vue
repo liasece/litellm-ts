@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { QuotaWindow } from "../api/UpstreamQuotaApi";
+import { QUOTA_TONE_COLORS, isRemainingExhausted, remainingTone, roundedRemainingPercent } from "../../platform/logic/QuotaDisplayLogic";
 defineProps<{ windows: QuotaWindow[] }>();
 function exhaustedClass(value: number | null) {
-	return value !== null && value <= 0 ? "usage-quota-window-name--exhausted" : "";
+	return isRemainingExhausted(value) ? "usage-quota-window-name--exhausted" : "";
 }
 function color(value: number | null) {
-	return value !== null && value < 20 ? "#ff4d4f" : value !== null && value < 50 ? "#faad14" : "#52c41a";
+	return QUOTA_TONE_COLORS[remainingTone(value)];
 }
 </script>
 <template>
@@ -18,7 +19,7 @@ function color(value: number | null) {
 			<div class="usage-quota-progress">
 				<i
 					:style="{
-						width: Math.max(0, Math.min(100, Math.round(window.remaining_percent ?? 0))) + '%',
+						width: (roundedRemainingPercent(window.remaining_percent) ?? 0) + '%',
 						background: color(window.remaining_percent),
 					}"
 				/>
