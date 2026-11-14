@@ -113,9 +113,15 @@ Old Usage Activity 的 Recharts 字体过渡/测量缓存会让日期刻度密�
 - `ApplicationShell` 用户弹层限宽 `min(330px, 100vw - 16px)`、导航行 40px、分组小标题 12px。
 - `useCompactViewport` 从 playground/logs/privacy 三份副本收敛到 `platform/logic/CompactViewport.ts`。
 
-分组改动（7 个子代理并行，各自目录内）：keys/models/search-tools 卡片化并给创建密钥弹窗补可见标题与常驻底栏；logs 三列表改单列卡片、speed 排行图去掉固定 88px 高度、privacy 规则表卡片化；usage 工具栏纵向、标签条横滑渐隐、指标两列、图表按容器高度重算；teams/users/organizations 表格卡片化与危险操作底部 sheet；六张设置页单列并去掉根节点 `width:100%`+外边距的 32px 推宽；playground 抽屉满宽与占位文案单行；subscriptions 按 Provider 折叠（深链仍展开并定位）、额度卡头纵向、状态徽标改语义色；api-reference 代码块横滑加右缘渐隐；login 密码可见性按钮 40px。
+分组改动（7 个子代理并行，各自目录内）：keys/models/search-tools 卡片化并给创建密钥弹窗补可见标题与常驻底栏；logs 三列表改单行请求列表、speed 排行图去掉固定 88px 高度、privacy 规则表卡片化；usage 工具栏纵向、标签条横滑渐隐、指标两列、图表按容器高度重算；teams/users/organizations 表格卡片化与危险操作底部 sheet；六张设置页单列并去掉根节点 `width:100%`+外边距的 32px 推宽；playground 抽屉满宽与占位文案单行；subscriptions 按 Provider 折叠（深链仍展开并定位）、额度卡头纵向、状态徽标改语义色；api-reference 代码块横滑加右缘渐隐；login 密码可见性按钮 40px。
 
-上线后按真实生产数据又补了 5 处 mock 数据覆盖不到的点击区：日志卡行内字段链接（14–37×18 → 32×32，并把字段行抬到 32px 避免命中区重叠）、模型卡内凭据链接 18px 行高、用户 ID 复制按钮 12×16、密钥用户弹层复制按钮 12×16、多选标签输入框 4px 宽；侧栏分组小标题 10px 改 12px。生产环境 8 个代表页面 × 390/320 复测：`doc == innerWidth`、`main` 390/390 与 320/320、6 个页面 small=0。
+上线后按真实生产数据又补了 4 处 mock 数据覆盖不到的点击区：模型卡内凭据链接 18px 行高、用户 ID 复制按钮 12×16、密钥用户弹层复制按钮 12×16、多选标签输入框 4px 宽；侧栏分组小标题 10px 改 12px。日志卡行内字段链接的 32×32 修复随后随卡片改版一并移除（见下段）。生产环境 8 个代表页面 × 390/320 复测：`doc == innerWidth`、`main` 390/390 与 320/320、6 个页面 small=0。
+
+（这段卡片/单行列表随后被用户整段撤回：日志列表恢复成未适配手机的桌面表格，见本节末尾。）
+
+日志列表随后按用户反馈改回“一行一条请求”：手机端不再把每条请求展开成多字段卡片，而是单行「时间 · 状态 · 模型 · 成本」，行高 44px，整行可点开详情抽屉（时长、TTFT、TPS、Token、Session 与 Request 跳转都在抽屉里）；状态成功时只留 8px 绿点，进行中/失败/中止保留文字标签。320px 下日期与模型图标让位给模型名，完整时间与模型名仍在 `title` 里。生产 390/320 各 100 行实测行高恒为 44px、`doc == innerWidth`、`.application-main` 390/390 与 320/320，点首行能打开 Request Details。
+
+日志列表最终按用户要求恢复为未适配手机的原样：手机上也直接渲染桌面表格，15 列在 `.ui-table-scroll` 内横向滚动（390 下 2020px 内容 / 356px 视口，320 下 2020px / 286px），页面级仍无横向溢出。相应移除了 `LogsMobileCardComponent`、卡片与单行列表的样式和手机排序/筛选工具条；`LogsTableComponent.vue`、`LogsTableStyles.css` 回到手机化之前的版本。代价是该表在手机上保留原有 65×16 的日志链接与 10px 的 `logs-cost-extra` 小字，审计复核会在这两项上报（仅日志页）。列表之外的工具条、标签条、分页、实时提示与删除记录表仍保留手机适配。
 
 结果：390 与 320 下 23 页全部零页面级横向溢出、零 <30px 点击区、零 <12px 文字（改前分别为 6/8 页内容被裁、396/397 个小点击区、69 处小字）；768 的 5 页主区溢出清零（保持桌面密度，不把 28px 图标当回归）；1440 仅 organizations 由 1252/1220 收敛到 1220/1220（修掉根节点自身推宽）、订阅页状态徽标由写死红色改为语义色（1146 像素，属修正）；playground/test-key 的文本差异来自 fixture 里新增的已选模型，usage 页高度差来自另一并行改动的图表高度与 34px 行高，均非本次引入。
 
