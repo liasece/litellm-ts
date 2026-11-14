@@ -1,5 +1,10 @@
 # Dashboard Vite 8 测试链评估
 
+> 状态说明（2026-11-14 核对）：本文是 **Next.js 前端时期**（2026-11-04）针对 Vitest 测试链的评估，
+> 当时结论是保留 Vite 7.3.1 / Vitest 3.2.4。前端已在 2026-11-08 迁移到 Vue 3 + Vite，当前
+> `ui/litellm-dashboard/package.json` 使用 Vite 8.3.5 / Vitest 4.1.12，因此本文的版本结论已作废，
+> 只保留为测量方法与历史记录。当前工具链以子目录 `package.json` 与锁文件为准。
+
 评估日期：2026-11-04（Asia/Shanghai）。
 
 本轮保留 Vite 7.3.1 / Vitest 3.2.4。候选 Vite 8.3.5 / Vitest 4.1.10 的定向兼容检查通过，但普通测试只观察到约 0.25 秒的差异，watch 没有改善，收益不足以支持本轮为测试反馈提速进行 Vitest 大版本迁移。测试依赖、锁文件、配置和临时调整的 7 个测试文件均已恢复原内容，最终只新增本报告与[测量摘要](vite8-test-chain-results.json)。
