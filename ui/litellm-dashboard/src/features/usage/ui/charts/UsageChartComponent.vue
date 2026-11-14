@@ -37,6 +37,7 @@ const props = withDefaults(
 		ranking?: boolean;
 		tooltipTone?: "light" | "dark";
 		showXAxis?: boolean;
+		xAxisLabelAngle?: number;
 		modelTooltip?: boolean;
 		secondaryCategories?: string[];
 		secondaryMax?: number;
@@ -50,6 +51,7 @@ const props = withDefaults(
 		curve: "linear",
 		tooltipTone: "light",
 		showXAxis: true,
+		xAxisLabelAngle: 0,
 		modelTooltip: false,
 		height: 320,
 		yAxisWidth: 56,

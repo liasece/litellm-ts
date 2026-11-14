@@ -48,6 +48,7 @@ export interface UsageBarGeometryInput {
 	legendHeight?: number;
 	showXAxis: boolean;
 	rightAxisWidth?: number;
+	xAxisLabelAngle?: number;
 	format: (value: number) => string;
 	measureText: (text: string, fontSize: number) => number;
 }

@@ -31,6 +31,27 @@ describe("usage chart behaviour", () => {
 		expect(g.scale.min).toBeLessThanOrEqual(-2);
 		expect(g.scale.max).toBeGreaterThanOrEqual(7);
 	});
+	it("rotates vertical category labels and reserves room below the plot", () => {
+		const geometry = usageBarGeometry({
+			...base,
+			height: 280,
+			yAxisWidth: 64,
+			xAxisLabelAngle: 60,
+			data: [
+				{ date: "gpt-6-astra", spend: 4 },
+				{ date: "/deepseek-v4.1-flash", spend: 3 },
+				{ date: "MiniMax-M3.1-Flash", spend: 2 },
+			],
+		});
+		const labels = geometry.xTicks.filter(
+			(tick) => tick.text.startsWith("gpt") || tick.text.startsWith("/") || tick.text.startsWith("Mini"),
+		);
+		expect(geometry.bottom).toBeGreaterThan(30);
+		expect(labels).toHaveLength(3);
+		expect(labels.every((tick) => tick.transform?.startsWith("rotate(-60"))).toBe(true);
+		expect(labels.every((tick) => tick.anchor === "end")).toBe(true);
+		expect(geometry.plotHeight).toBeGreaterThan(0);
+	});
 	it("does not pass array indices as optional formatter precision", () => {
 		const geometry = usageBarGeometry({
 			...base,

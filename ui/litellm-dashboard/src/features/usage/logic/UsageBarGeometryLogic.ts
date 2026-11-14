@@ -9,8 +9,13 @@ export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry
 	const { data, categories, horizontal = false, ranking = false, width, height, yAxisWidth, showXAxis, format, measureText } = input;
 	const left = yAxisWidth,
 		right = ranking ? 16 : (input.rightAxisWidth ?? 0),
-		top = ranking ? 4 : 5 + (input.legendHeight ?? 0),
-		bottom = (ranking ? 4 : 0) + (showXAxis ? 30 : 0),
+		top = ranking ? 4 : 5 + (input.legendHeight ?? 0);
+	const labels = data.map((row) => String(chartValue(row, input.index) ?? "")),
+		labelAngle = horizontal || !showXAxis ? 0 : Math.abs(input.xAxisLabelAngle ?? 0),
+		labelBottom = labelAngle
+			? Math.sin((labelAngle * Math.PI) / 180) * Math.max(0, ...labels.map((label) => measureText(label, 12))) + 18
+			: 30,
+		bottom = (ranking ? 4 : 0) + (showXAxis ? Math.max(30, labelBottom) : 0),
 		plotWidth = Math.max(0, width - left - right),
 		plotHeight = Math.max(0, height - top - bottom);
 	const rows = data.map((row) => categories.map((key) => finite(chartValue(row, key))));
@@ -39,8 +44,7 @@ export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry
 				: top + plotHeight - ((value - scale.min) / (scale.max - scale.min)) * plotHeight;
 	const padding = horizontal ? 0 : 20,
 		band = Math.max(0, ((horizontal ? plotHeight : plotWidth) - 2 * padding) / Math.max(1, data.length));
-	const categoryPositions = data.map((_, index) => (horizontal ? top : left) + padding + band * (index + 0.5)),
-		labels = data.map((row) => String(chartValue(row, input.index) ?? ""));
+	const categoryPositions = data.map((_, index) => (horizontal ? top : left) + padding + band * (index + 0.5));
 	const numericPositions = scale.ticks.map(valuePosition),
 		numericLabels = scale.ticks.map((value) => format(value)),
 		font = ranking ? 16 : 12;
@@ -55,14 +59,16 @@ export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry
 				labels.map(() => 24),
 				height,
 			)
-		: equidistantStartTicks(
-				categoryPositions,
-				labels.map((text) => measureText(text, usageCategoryMetricSize)),
-				/* Recharts bounds the axis against the plot box: it starts after the left
-				   gutter and ends at the chart width. */
-				left,
-				width,
-			);
+		: labelAngle
+			? categoryPositions.map((coordinate, index) => ({ index, coordinate }))
+			: equidistantStartTicks(
+					categoryPositions,
+					labels.map((text) => measureText(text, usageCategoryMetricSize)),
+					/* Recharts bounds the axis against the plot box: it starts after the left
+					   gutter and ends at the chart width. */
+					left,
+					width,
+				);
 	const xTicks: UsageAxisTick[] = [],
 		yTicks: UsageAxisTick[] = [];
 	for (const tick of numbers) {
@@ -97,15 +103,17 @@ export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry
 				anchor: "end",
 				dy: "0.355em",
 			});
-		else if (showXAxis)
+		else if (showXAxis) {
+			const labelY = top + plotHeight + 10;
 			xTicks.push({
 				x: tick.coordinate,
-				y: top + plotHeight + 8,
+				y: labelY,
 				text: labels[tick.index],
-				transform: "translate(0, 6)",
-				anchor: "middle",
+				transform: labelAngle ? `rotate(-${labelAngle} ${tick.coordinate} ${labelY})` : "translate(0, 6)",
+				anchor: labelAngle ? "end" : "middle",
 				dy: "0.71em",
 			});
+		}
 	}
 	const groups = input.stack ? 1 : Math.max(1, categories.length),
 		categoryGap = band * 0.1,
