@@ -11,6 +11,20 @@
 - 生产部署、线上核验和故障恢复使用 `$deploy-litellm-ts`。生产拓扑与诊断信号只在该 Skill 的
   reference 中维护，不复制到根指令。
 
+## 文档入口
+
+按问题选取。每类问题只有一份主文档，其余位置只留一行引用，细节留在专题。
+
+| 问题 | 文档 |
+| --- | --- |
+| 为什么做、服务谁、什么算做对、能力边界与常见误解 | [docs/product.md](docs/product.md) |
+| 目录职责与分层、关键逻辑入口、加功能改哪里、规范与门禁、选型理由 | [docs/development.md](docs/development.md) |
+| 外部依赖、发布与回滚判断、日志与监控入口、按现象排查、运维事件 | [docs/operations.md](docs/operations.md) |
+
+专题细节仍由各专题维护，[docs/README.md](docs/README.md) 是一句话用途的文档地图。常用的有：订阅运行时 [docs/agent-guides/subscription-runtime.md](docs/agent-guides/subscription-runtime.md)、观测性与指标语义 [docs/observability.md](docs/observability.md)、隐私脱敏 [docs/privacy-redaction.md](docs/privacy-redaction.md)、上游对齐状态 [docs/upstream-alignment.md](docs/upstream-alignment.md)、功能清理判定 [docs/cleanup-candidates.md](docs/cleanup-candidates.md)、前端契约 [ui/litellm-dashboard/AGENTS.md](ui/litellm-dashboard/AGENTS.md)。
+
+三份文档与专题不复制本文件的授权与协作规则；需要时引用本文件与公司共同工作约定。生产拓扑、部署命令与诊断阈值只在 `$deploy-litellm-ts` 的 reference 维护。
+
 ## 实时通知
 
 - 面向 dashboard 的 WebSocket 对已成型数据只发资源更新通知（日志列表通道 `/spend/logs/ui/live` 即此形态）；进行中的日志详情与活动请求属于流式内容，可以携带正文，但结算帧只发完成信号（不带简化结果或完整详情），由客户端经 `/spend/logs/...` 重新取数。Session 时间线的初始快照与已结算事件仍属成型资源，待收敛为通知加分页拉取。
