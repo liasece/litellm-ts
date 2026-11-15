@@ -60,7 +60,7 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | F02 模型发现与信息查询 | Anthropic/Codex 模型发现、service_tiers、display_name、可发现/健康过滤、未注册模型信息和公共模型 Hub | 14 | 建议添加客户端兼容与 /utils/model_info；过滤/公共 Hub 按需要 | [src/proxy/ModelsEndpoint.ts](../src/proxy/ModelsEndpoint.ts) |
 | F03 Chat 与工具参数兼容 | 新模型 reasoning/effort、tool streaming、系统消息排序、cache breakpoint 和 provider 参数映射 | 13 | 建议对当前 Provider 逐项补齐；不认定通用透传已经覆盖全部 | [src/providers/OpenAICompatProvider.ts](../src/providers/OpenAICompatProvider.ts) |
 | F04 Responses API 扩展 | Responses input_tokens、新的 supported_endpoints 原生 opt-in、Fireworks/Bedrock 原生 Responses 分发 | 4 | 建议先加 input_tokens 与原生兼容；持久化、后台和续接另定范围 | [src/proxy/ResponsesApiEndpoints.ts](../src/proxy/ResponsesApiEndpoints.ts) |
-| F05 Claude Code、Codex、Cursor 网关 | Claude-shaped 模型 ID、gateway 协议、OAuth/刷新撤销、Cursor 模型后缀、coding-agent 发现 | 8 | 建议添加有实际客户端需求的协议；已有 CLIProxy 路径需复用 | [src/cliproxy/CliProxyNativeResponsesEndpoint.ts](../src/cliproxy/CliProxyNativeResponsesEndpoint.ts) |
+| F05 Claude Code、Codex、Cursor 网关 | Claude-shaped 模型 ID、gateway 协议、OAuth/刷新撤销、Cursor 模型后缀、coding-agent 发现 | 8 | 建议添加有实际客户端需求的协议；已有 CLIProxy 路径需复用 | [旧 CLIProxy 入口已移除；现行订阅协议入口](agent-guides/subscription-runtime.md) |
 | F06 SSE 心跳 | 全局及 deployment SSE keepalive，等待首 token/工具执行期间 ping | 2 | 建议添加到普通 Chat/Messages/Responses；CLIProxy 已有局部实现 | [src/proxy/ChatCompletionsEndpoint.ts](../src/proxy/ChatCompletionsEndpoint.ts) |
 | F07 路由策略与参数 | 上下文 compact-to-fit、标签 required/deny、分组 priority、percentile TTFT、deployment cooldown/并发拒绝、模型额度发现 | 12 | 建议选择性添加；先修现有路由 BUG，再新增策略 | [src/router/RoutingStrategies.ts](../src/router/RoutingStrategies.ts) |
 | F08 自动分类路由 | LLM/heuristic v2/hybrid/capability/Fuse/Jev/custom classifier，复杂度档位及虚拟 routing group | 13 | 按实际需求分期添加；当前没有完整 classifier 执行链 | [src/router/Router.ts](../src/router/Router.ts) |
@@ -71,7 +71,7 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | F13 Fallback 与拒绝策略 | Key budget_fallbacks、候选模型授权、safeguard refusal、默认策略和未知模型回退规则 | 6 | 建议先添加候选权限校验；预算/refusal 路由按需求 | [src/router/FallbackHandler.ts](../src/router/FallbackHandler.ts) |
 | F14 新计费与成本诊断 | 未定价阻断、零费用分类计数、off-peak、按秒/PTU、分项成本、cache 成本预测与账单捕获率 | 15 | 建议添加未定价可选阻断和诊断；PTU/新价格模式按真实合同 | [src/cost/CostCalculator.ts](../src/cost/CostCalculator.ts) |
 | F15 SpendLogs 内容控制 | metadata include/exclude、call/trace/session 关联、生命周期/router/预算/错误信息与日志脱敏 | 17 | 建议添加 metadata 控制与可诊断信息；保留账务上下文 | [src/spend/SpendTracker.ts](../src/spend/SpendTracker.ts) |
-| F16 费用分析与 Usage API | caller-scoped 报表、按主体有界查询/搜索/导出、prompt-cache/auto-router savings 和模型/agent 聚合 | 12 | 建议添加有界查询与必要导出；自动路由 savings 随执行链 | [src/proxy/AnalyticsEndpoints.ts](../src/proxy/AnalyticsEndpoints.ts) |
+| F16 费用分析与 Usage API | caller-scoped 报表、按主体有界查询/搜索/导出、prompt-cache/auto-router savings 和模型/agent 聚合 | 12 | 建议添加有界查询与必要导出；自动路由 savings 随执行链 | [旧 AnalyticsEndpoints 桩已移除，见清理记录](cleanup-candidates.md) |
 | F17 指标、Tracing 与日志集成 | OTEL 语义/metrics、Prometheus labels/独立端口、Arize/Phoenix/Langfuse/NewRelic/Datadog/PointFive/Zerobus 等 | 61 | 按现有监控体系选择；不同时接入全部回调和存储 | [src/core/utils/logger.ts](../src/core/utils/logger.ts) |
 | F18 告警与通知 | Teams/Slack、用户 spend 异常、成员预算百分比、邮件/SMTP/GCC High、自托管邮件配置 | 9 | 按告警渠道添加；先确定发送、脱敏、去重与失败处理 | （管理桩已在功能清理中移除，见 [cleanup-candidates.md](cleanup-candidates.md)） |
 | F19 Key、Team、User、Org 管理 | REST PATCH、bulk users/members、状态/过期/alias 搜索、软预算、service account、custom_key_policy | 24 | 建议添加常用查询与编辑协议；权限和预算委派必须同时验证 | [src/management/KeyManagementEndpoint.ts](../src/management/KeyManagementEndpoint.ts) |
@@ -94,18 +94,18 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | F36 云 Provider 原生能力 | Bedrock Converse/Mantle/native Responses、Azure/Vertex/Foundry、SigV4/STS/tags/区域/structured output | 32 | 有对应云需求再添加；TS 当前没有这些专用实现 | [src/providers/ProviderRegistry.ts](../src/providers/ProviderRegistry.ts) |
 | F37 Caching | Valkey/Redis/Qdrant semantic cache、end-user scope、prompt caching 自动断点/Key 开关/预测 | 14 | 建议先添加 prompt caching；semantic backend 按命中场景和隔离需求 | [src/providers/AnthropicProvider.ts](../src/providers/AnthropicProvider.ts) |
 | F38 Dashboard 管理能力 | Key/Team/Org/credential/路由/供应商配置、权限/预算字段、批量操作和服务端来源展示 | 88 | 按已实现后端逐项添加；不能只复制未工作的上游表单 | [src/management/ModelManagementEndpoint.ts](../src/management/ModelManagementEndpoint.ts) |
-| F39 Dashboard Usage 与 Logs | 日志过滤/deep links/session/cache/batch、指标/导出/Guardrail monitor 与 savings | 44 | 建议添加常用过滤和链接；特殊分析依赖后端能力 | [src/proxy/AnalyticsEndpoints.ts](../src/proxy/AnalyticsEndpoints.ts) |
+| F39 Dashboard Usage 与 Logs | 日志过滤/deep links/session/cache/batch、指标/导出/Guardrail monitor 与 savings | 44 | 建议添加常用过滤和链接；特殊分析依赖后端能力 | [旧 AnalyticsEndpoints 桩已移除，见清理记录](cleanup-candidates.md) |
 | F40 Dashboard Chat 与 Playground | 流/非流、headers、请求指标、聊天 Key/Usage、Decisions 表单/预设/示例 | 13 | 建议按调用需求补齐；Decisions 控件随 F44 | [src/proxy/ChatCompletionsEndpoint.ts](../src/proxy/ChatCompletionsEndpoint.ts) |
 | F41 Dashboard 导航、主题与表格 | Cmd+K、URL 状态/页面路径、table 搜索/筛选/列/选择、主题/logo、Home 和关联导航 | 64 | 建议常用导航与 URL 状态；技术组件迁移按 TS UI 约束 | [src/proxy/DiscoveryEndpoints.ts](../src/proxy/DiscoveryEndpoints.ts) |
 | F42 CLI 与开发者接入 | lite login/keychain/PKCE/configure、coding-agent 包装、模型同步、debug/report、VS Code extension | 26 | 按客户端接入需求添加；不复制 Python entrypoint 机制 | [src/main.ts](../src/main.ts) |
-| F43 Lens、LiteAdmin 与 ROI 产品 | trace investigation/worker/datasets/feedback、Slack/LiteAdmin 助手、Moyai/ROI 产品 | 49 | 暂缓；新增运维分析产品和 ClickHouse/Rust/worker 依赖，集成式 ROI 已撤销 | [src/proxy/AnalyticsEndpoints.ts](../src/proxy/AnalyticsEndpoints.ts) |
+| F43 Lens、LiteAdmin 与 ROI 产品 | trace investigation/worker/datasets/feedback、Slack/LiteAdmin 助手、Moyai/ROI 产品 | 49 | 暂缓；新增运维分析产品和 ClickHouse/Rust/worker 依赖，集成式 ROI 已撤销 | [旧 AnalyticsEndpoints 桩已移除，见清理记录](cleanup-candidates.md) |
 | F44 Decisions 与 System One | /v1/decisions、/v1/systemone；OpenAI/TypeSafe/Microsoft-Decision-1/Databricks/hosted_vllm/Strands Decider | 9 | 有 decision 调用需求再添加；当前没有 API/Provider，不能只加 UI | [src/providers/ProviderRegistry.ts](../src/providers/ProviderRegistry.ts) |
 | F45 Proxy 配置与 HTTP 运维能力 | response headers、root_path、reload/source/config sync、gzip/HTTP2、custom auth 检查、请求投影 | 18 | 建议选择有需求的小功能；已有 Express compression 等先排除重复实现 | [src/main.ts](../src/main.ts) |
 | F46 健康、排空与容量控制 | /health/drain、worker admission、有界排队、健康保留/allowlist、过载行为 | 6 | 建议有界 drain/admission；需覆盖 SSE/断开/readiness，生产配置另授权 | [src/proxy/HealthEndpoint.ts](../src/proxy/HealthEndpoint.ts) |
 | F47 数据库与账务基础设施 | SpendLogs partition/retention、lock/statement 时间、PgBouncer/Entra IAM/副本、sidecar spend 与账本写入 | 8 | 规模和数据库需求驱动；当前单事务账务，不复制 Python 异步批次机制 | [src/spend/SpendTracker.ts](../src/spend/SpendTracker.ts) |
 | F48 部署与基础设施功能 | Helm/Terraform、独立 Redis/metrics/HPA、Quickstart Docker/Windows、一键 gateway+DB+UI | 29 | 参考运维目标；不直接复制到当前部署，不属于业务复刻 | [src/main.ts](../src/main.ts) |
 | F49 Rust 核心、原生后端与 SDK 架构 | Rust OCR/router/realtime/tokenizer/secret/cache/tracing 与独立打包/开关 | 74 | 不建议整体复刻；TS/Node 先复用现有运行时，仅性能证据充分时引入原生依赖 | [src/main.ts](../src/main.ts) |
-| F50 Interactions API | Vertex 原生 Interactions、background interaction 跨实例计费、queued 状态扩展 | 3 | 有 Google agent/interaction 需求再添加；当前无专用执行 Provider | [src/proxy/GoogleEndpoints.ts](../src/proxy/GoogleEndpoints.ts) |
+| F50 Interactions API | Vertex 原生 Interactions、background interaction 跨实例计费、queued 状态扩展 | 3 | 有 Google agent/interaction 需求再添加；当前无专用执行 Provider | [旧 GoogleEndpoints 桩已移除，见清理记录](cleanup-candidates.md) |
 
 重点采用建议是 F02 模型发现/信息查询、F04 input_tokens、F06 SSE 心跳、F13 fallback 权限、F14 未定价阻断/零费用诊断、F15 metadata 控制、F37 prompt caching 和 F41 常用导航。它们不等于本次全部授权实施的清单。自动路由、多窗口预算、MCP、Guardrails、Agent、沙箱和 Lens 等需明确范围再实施。
 

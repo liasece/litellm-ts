@@ -22,7 +22,7 @@
 | [Model Group Alias](model-group-alias.md) | 每日时段路由的配置格式、时间边界与校验规则 |
 | [Provider 账户额度](provider-account-quota.md) | DeepSeek / MiniMax 账户额度卡片的数据来源与 Key 类型识别 |
 | [上游对齐记录](upstream-alignment.md) | 与 BerriAI/litellm 的 BUG 与能力对齐状态、发布记录、维护规则；对齐状态以这里为准 |
-| [上游功能索引](upstream-features.md) | 逐条 PR 的功能清单与采用建议；核对入口链接可能指向清理后已删除的文件 |
+| [上游功能索引](upstream-features.md) | 逐条 PR 的功能清单与采用建议；已退役的核对入口指向清理记录或接替它的专题 |
 | [无用功能清理记录](cleanup-candidates.md) | 2026-11-08 删除页面、桩接口与表的判定依据与保留清单 |
 | [前端 Vue 重写记录](frontend-vue-migration.md) | 迁移范围、截图证据、发布门禁与手机端排版专项 |
 | [Vite 8 测试链评估](vite8-test-chain-evaluation.md) | 2026-11-04 的测试链版本评估结论；Next.js 时期的历史记录，当前版本已不同 |

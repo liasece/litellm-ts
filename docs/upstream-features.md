@@ -393,7 +393,7 @@ input_tokens、supported_endpoints 原生 opt-in、Fireworks/Bedrock 原生 Resp
 
 Claude-shaped 模型 ID、gateway 协议、OAuth/刷新撤销、Cursor 模型后缀、coding-agent 发现。
 
-建议：建议添加有实际客户端需求的协议；已有 CLIProxy 路径需复用。TS 核对入口：[src/cliproxy/CliProxyNativeResponsesEndpoint.ts](../src/cliproxy/CliProxyNativeResponsesEndpoint.ts)。
+建议：建议添加有实际客户端需求的协议；已有 CLIProxy 路径需复用。TS 核对入口：[旧 CLIProxy 入口已移除；现行订阅协议入口](agent-guides/subscription-runtime.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 | 本批实施状态（未提交、未部署） |
 | --- | --- | --- | --- | --- |
@@ -671,7 +671,7 @@ metadata include/exclude、call/trace/session 关联、生命周期/router/预�
 
 caller-scoped 报表、按主体有界查询/搜索/导出、prompt-cache/auto-router savings 和模型/agent 聚合。
 
-建议：建议添加有界查询与必要导出；自动路由 savings 随执行链。TS 核对入口：[src/proxy/AnalyticsEndpoints.ts](../src/proxy/AnalyticsEndpoints.ts)。
+建议：建议添加有界查询与必要导出；自动路由 savings 随执行链。TS 核对入口：[旧 AnalyticsEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 | 本批实施状态（未提交、未部署） |
 | --- | --- | --- | --- | --- |
@@ -762,7 +762,7 @@ OTEL 语义/metrics、Prometheus labels/独立端口、Arize/Phoenix/Langfuse/Ne
 
 Teams/Slack、用户 spend 异常、成员预算百分比、邮件/SMTP/GCC High、自托管邮件配置。
 
-建议：按告警渠道添加；先确定发送、脱敏、去重与失败处理。TS 核对入口：[src/proxy/AlertingEndpoints.ts](../src/proxy/AlertingEndpoints.ts)。
+建议：按告警渠道添加；先确定发送、脱敏、去重与失败处理。TS 核对入口：[旧 AlertingEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -881,7 +881,7 @@ display_name/不可变引用名、AES-GCM 版本迁移、OIDC workload federatio
 
 session 路由、工具发现/调用/search、catalog 分页、版本/能力、描述/schema 安全、转换和会话管理。
 
-建议：按需求新建真实执行子系统；现有管理桩不足以移植补丁。TS 核对入口：[src/proxy/MCPEndpoints.ts](../src/proxy/MCPEndpoints.ts)。
+建议：按需求新建真实执行子系统；现有管理桩不足以移植补丁。TS 核对入口：[旧 MCPEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -925,7 +925,7 @@ session 路由、工具发现/调用/search、catalog 分页、版本/能力、�
 
 OAuth M2M/OBO/ID-JAG、DCR bridge、PKCE/resource/introspection/RS256、跨实例刷新、client credentials。
 
-建议：随 MCP 执行添加；先定义 caller 与 upstream credential 边界。TS 核对入口：[src/proxy/MCPEndpoints.ts](../src/proxy/MCPEndpoints.ts)。
+建议：随 MCP 执行添加；先定义 caller 与 upstream credential 边界。TS 核对入口：[旧 MCPEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -979,7 +979,7 @@ OAuth M2M/OBO/ID-JAG、DCR bridge、PKCE/resource/introspection/RS256、跨实�
 
 Key/Team/access group/tool/client allowlist、RPM/concurrency、env/Extra Headers、stdio 默认禁用。
 
-建议：启用 MCP 时必需；暂不给当前桩追加表面配置。TS 核对入口：[src/proxy/MCPEndpoints.ts](../src/proxy/MCPEndpoints.ts)。
+建议：启用 MCP 时必需；暂不给当前桩追加表面配置。TS 核对入口：[旧 MCPEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1003,7 +1003,7 @@ Key/Team/access group/tool/client allowlist、RPM/concurrency、env/Extra Header
 
 Cisco AI Defense、Purview、Headroom/Compresr、Straiker、DeepKeep、Alice、Conduct、TypeSafe、Akto 等。
 
-建议：按风险和供应商选择；先落地可用执行链。TS 核对入口：[src/proxy/PolicyEndpoints.ts](../src/proxy/PolicyEndpoints.ts)。
+建议：按风险和供应商选择；先落地可用执行链。TS 核对入口：[旧 PolicyEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1036,7 +1036,7 @@ Cisco AI Defense、Purview、Headroom/Compresr、Straiker、DeepKeep、Alice、C
 
 logging_only input/output、并行/stream/后台 hooks、工具改写/PII/附件/vector chunk 扫描、优先级/fallback 策略。
 
-建议：需先实现真实 hook，再按场景采用；管理 API 桩不算支持。TS 核对入口：[src/proxy/PolicyEndpoints.ts](../src/proxy/PolicyEndpoints.ts)。
+建议：需先实现真实 hook，再按场景采用；管理 API 桩不算支持。TS 核对入口：[旧 PolicyEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1097,7 +1097,7 @@ TinyFish/Nimble/Bing/AgentCore、objective+multi-query、拦截配置、权限�
 
 Valkey/MongoDB 搜索/sidecar、indexes、上传权限、语义 Agent Skills 与 well-known 注册。
 
-建议：按需求新建；当前向量库和 Prompt 管理多为桩。TS 核对入口：[src/proxy/VectorStoreEndpoints.ts](../src/proxy/VectorStoreEndpoints.ts)。
+建议：按需求新建；当前向量库和 Prompt 管理多为桩。TS 核对入口：[旧 VectorStoreEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1117,7 +1117,7 @@ Valkey/MongoDB 搜索/sidecar、indexes、上传权限、语义 Agent Skills 与
 
 LangFlow/Watsonx/Foundry/Databricks/AgentCore、agent card/identity/permissions/kill switch、agent()/run_tool_loop。
 
-建议：暂缓；需要 Agent 产品与身份/费用执行契约。TS 核对入口：[src/proxy/AgentEndpoints.ts](../src/proxy/AgentEndpoints.ts)。
+建议：暂缓；需要 Agent 产品与身份/费用执行契约。TS 核对入口：[旧 AgentEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1140,7 +1140,7 @@ LangFlow/Watsonx/Foundry/Databricks/AgentCore、agent card/identity/permissions/
 
 E2B/OpenSandbox、Chat/Responses code interpreter、按 session 复用。
 
-建议：暂缓；引入隔离执行、费用与生命周期管理。TS 核对入口：[src/proxy/OCRVideoContainerEndpoints.ts](../src/proxy/OCRVideoContainerEndpoints.ts)。
+建议：暂缓；引入隔离执行、费用与生命周期管理。TS 核对入口：[旧 OCRVideoContainerEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1154,7 +1154,7 @@ E2B/OpenSandbox、Chat/Responses code interpreter、按 session 复用。
 
 managed files/类型与数量限制、跨团队隔离、provider 批处理、下载/取消、费用/退款/后台结算。
 
-建议：按真实批量任务需求添加；先核对每个入口的执行实现。TS 核对入口：[src/proxy/BatchesEndpoints.ts](../src/proxy/BatchesEndpoints.ts)。
+建议：按真实批量任务需求添加；先核对每个入口的执行实现。TS 核对入口：[旧 BatchesEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1202,7 +1202,7 @@ Chirp/Gemini/xAI/Meta/Mistral 音频、Deepgram WebSocket、Transcribe/Azure Spe
 
 Fal/Dashscope/Azure/Vertex 图像/编辑/视频、Mistral/Cohere/Textract/Reducto 等 OCR 原生格式。
 
-建议：按需求增加专用 Provider；Image 已有部分，OCR/Video 多为桩。TS 核对入口：[src/proxy/OCRVideoContainerEndpoints.ts](../src/proxy/OCRVideoContainerEndpoints.ts)。
+建议：按需求增加专用 Provider；Image 已有部分，OCR/Video 多为桩。TS 核对入口：[旧 OCRVideoContainerEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1433,7 +1433,7 @@ Key/Team/Org/credential/路由/供应商配置、权限/预算字段、批量操
 
 日志过滤/deep links/session/cache/batch、指标/导出/Guardrail monitor 与 savings。
 
-建议：建议添加常用过滤和链接；特殊分析依赖后端能力。TS 核对入口：[src/proxy/AnalyticsEndpoints.ts](../src/proxy/AnalyticsEndpoints.ts)。
+建议：建议添加常用过滤和链接；特殊分析依赖后端能力。TS 核对入口：[旧 AnalyticsEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1616,7 +1616,7 @@ lite login/keychain/PKCE/configure、coding-agent 包装、模型同步、debug/
 
 trace investigation/worker/datasets/feedback、Slack/LiteAdmin 助手、Moyai/ROI 产品。
 
-建议：暂缓；新增运维分析产品和 ClickHouse/Rust/worker 依赖，集成式 ROI 已撤销。TS 核对入口：[src/proxy/AnalyticsEndpoints.ts](../src/proxy/AnalyticsEndpoints.ts)。
+建议：暂缓；新增运维分析产品和 ClickHouse/Rust/worker 依赖，集成式 ROI 已撤销。TS 核对入口：[旧 AnalyticsEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |
@@ -1872,7 +1872,7 @@ Rust OCR/router/realtime/tokenizer/secret/cache/tracing 与独立打包/开关�
 
 Vertex 原生 Interactions、background interaction 跨实例计费、queued 状态扩展。
 
-建议：有 Google agent/interaction 需求再添加；当前无专用执行 Provider。TS 核对入口：[src/proxy/GoogleEndpoints.ts](../src/proxy/GoogleEndpoints.ts)。
+建议：有 Google agent/interaction 需求再添加；当前无专用执行 Provider。TS 核对入口：[旧 GoogleEndpoints 桩已移除，见清理记录](cleanup-candidates.md)。
 
 | 合并日期（北京时间） | 原始 PR 与变更 | 发布证据 | 是否添加及边界 |
 | --- | --- | --- | --- |

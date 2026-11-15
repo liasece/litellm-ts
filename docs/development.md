@@ -153,7 +153,6 @@
 - `docs/vite8-test-chain-evaluation.md` 是 Next.js 时期针对 Vitest 测试链的版本评估，结论已被 Vue 迁移后的工具链取代；当前版本看该文顶部状态说明与 `ui/litellm-dashboard/package.json`。
 - 前端 provider 目录含 Ollama / Ollama Chat，后端 `ProviderRegistry.createProvider` 没有对应分支，未知 provider 直接抛错。是要走 OpenAI 兼容路径接入，还是从目录移除，待产品确认。
 - post-upstream 是否迁到 `worker_threads`：2026-11-12 提出，语料无采纳或实施记录。
-- `docs/upstream-features.md` 与 `docs/upstream-alignment.md` 里部分「TS 核对入口」链接指向 2026-11-08 清理时删除的桩端点文件，读这些表时按当前 `src/` 判断存在性。
 
 ## 这份文档不写什么
 
