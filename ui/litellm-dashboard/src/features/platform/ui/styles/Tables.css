@@ -95,6 +95,10 @@
 .ui-table__row--selected:hover td {
 	background: #dbeafe;
 }
+.ui-table__spacer td {
+	padding: 0 !important;
+	border: 0 !important;
+}
 .ui-table__cell--ellipsis {
 	overflow: hidden;
 	white-space: nowrap;

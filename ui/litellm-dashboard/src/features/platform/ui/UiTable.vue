@@ -7,6 +7,7 @@ import UiIcon from "./UiIcon.vue";
 import UiPopover from "./UiPopover.vue";
 import UiTableSortLabel from "./UiTableSortLabel.vue";
 import { displayTableValue, readTableValue, sortTableRows } from "./UiTableLogic";
+import { computeUiTableVirtualWindow } from "./UiTableVirtualLogic";
 import { isTableRowInteractiveTarget } from "../logic/TableRowClick";
 import type { UiTableActiveFilter } from "./UiTableFilterModels";
 import type { UiAppearance, UiTableColumn, UiTableRow, UiSortOrder, UiTableSort } from "./UiTypes";
@@ -49,6 +50,12 @@ const props = withDefaults(
 		 * 自定义 #row 的表格需要自己在单元格上补 data-label。
 		 */
 		mobileCards?: boolean;
+		/** 只挂载视口附近的行；使用最近的纵向滚动祖先（没有则 window），适合行高固定的大列表。 */
+		virtual?: boolean;
+		/** 虚拟滚动使用的固定行高（px）。 */
+		rowHeight?: number;
+		/** 视口上下额外挂载的行数，减少快速滚动白屏。 */
+		overscan?: number;
 	}>(),
 	{
 		bodyMaxHeight: undefined,
@@ -69,6 +76,9 @@ const props = withDefaults(
 		columnWidths: undefined,
 		loadingText: undefined,
 		mobileCards: false,
+		virtual: false,
+		rowHeight: 33,
+		overscan: 8,
 	},
 );
 const emit = defineEmits<{
@@ -109,6 +119,97 @@ const internalSort = ref<UiTableSort>({ key: "", order: null });
 const effectiveSort = computed<UiTableSort>(() => (props.sortBy ? { key: props.sortBy, order: props.sortOrder } : internalSort.value));
 const visibleRows = computed(() => (props.manualSort ? props.rows : sortTableRows(props.rows, props.columns, effectiveSort.value)));
 const emptyDescription = computed(() => (props.activeFilters.length ? "No records match the current filters" : props.emptyText));
+const tableBody = ref<HTMLTableSectionElement>();
+const virtualStart = ref(0);
+const virtualEnd = ref(0);
+const virtualMeasured = ref(false);
+const INITIAL_VIRTUAL_ROWS = 40;
+type VirtualScrollRoot = HTMLElement | Window;
+function isWindowScrollRoot(root: VirtualScrollRoot): root is Window {
+	return root === window;
+}
+let virtualFrame: number | null = null;
+let virtualScrollRoot: VirtualScrollRoot | null = null;
+const virtualRowHeight = computed(() => Math.max(1, Math.round(props.rowHeight)));
+const virtualWindow = computed(() => {
+	const total = visibleRows.value.length;
+	if (!props.virtual) return { start: 0, end: total, top: 0, bottom: 0 };
+	const start = Math.min(Math.max(0, virtualStart.value), total);
+	// 数据从空变为有值或首次挂载时，先渲染一屏，避免在测量完成前出现空白表体。
+	const rawEnd = virtualMeasured.value && virtualEnd.value > 0 ? virtualEnd.value : Math.min(total, INITIAL_VIRTUAL_ROWS);
+	const end = Math.min(Math.max(start, rawEnd), total);
+	return { start, end, top: start * virtualRowHeight.value, bottom: (total - end) * virtualRowHeight.value };
+});
+const renderedRows = computed(() => {
+	const window = virtualWindow.value;
+	return props.virtual ? visibleRows.value.slice(window.start, window.end) : visibleRows.value;
+});
+function renderedIndex(index: number): number {
+	return props.virtual ? virtualWindow.value.start + index : index;
+}
+/** 最近的纵向滚动祖先；日志页的主滚动容器是 application-main，而不是 window。 */
+function findVirtualScrollRoot(): VirtualScrollRoot {
+	let node = scroller.value?.parentElement ?? null;
+	while (node && node !== document.body) {
+		const style = getComputedStyle(node);
+		const scrolls = /(auto|scroll|overlay)/.test(style.overflowY);
+		if (scrolls && node.scrollHeight > node.clientHeight + 1) return node;
+		node = node.parentElement;
+	}
+	return window;
+}
+function unbindVirtualScrollRoot(): void {
+	if (virtualScrollRoot === null || typeof window === "undefined") return;
+	if (virtualScrollRoot === window) window.removeEventListener("scroll", scheduleVirtualMeasure);
+	else virtualScrollRoot.removeEventListener("scroll", scheduleVirtualMeasure);
+	window.removeEventListener("resize", handleVirtualViewportChange);
+	virtualScrollRoot = null;
+}
+function bindVirtualScrollRoot(): void {
+	if (!props.virtual || typeof window === "undefined") return;
+	const next = findVirtualScrollRoot();
+	if (next === virtualScrollRoot) return;
+	unbindVirtualScrollRoot();
+	virtualScrollRoot = next;
+	if (next === window) next.addEventListener("scroll", scheduleVirtualMeasure, { passive: true });
+	else next.addEventListener("scroll", scheduleVirtualMeasure, { passive: true });
+	window.addEventListener("resize", handleVirtualViewportChange);
+}
+function handleVirtualViewportChange(): void {
+	bindVirtualScrollRoot();
+	scheduleVirtualMeasure();
+}
+/** 用滚动容器坐标系测量，窗口滚动和应用内 main 滚动共用同一套行区间计算。 */
+function virtualMeasurements(): { bodyTop: number; viewportHeight: number } | null {
+	const body = tableBody.value;
+	if (!body || typeof window === "undefined") return null;
+	if (virtualScrollRoot && !isWindowScrollRoot(virtualScrollRoot)) {
+		const rootRect = virtualScrollRoot.getBoundingClientRect();
+		return { bodyTop: body.getBoundingClientRect().top - rootRect.top, viewportHeight: virtualScrollRoot.clientHeight };
+	}
+	return { bodyTop: body.getBoundingClientRect().top, viewportHeight: window.innerHeight };
+}
+/** 每次只测量一次，并在下一帧统一更新，避免滚动期间连续触发布局和渲染。 */
+function scheduleVirtualMeasure(): void {
+	if (!props.virtual || typeof window === "undefined") return;
+	if (virtualFrame !== null) return;
+	virtualFrame = window.requestAnimationFrame(() => {
+		virtualFrame = null;
+		if (!props.virtual) return;
+		const geometry = virtualMeasurements();
+		if (!geometry) return;
+		const next = computeUiTableVirtualWindow({
+			total: visibleRows.value.length,
+			rowHeight: virtualRowHeight.value,
+			overscan: props.overscan,
+			bodyTop: geometry.bodyTop,
+			viewportHeight: geometry.viewportHeight,
+		});
+		virtualStart.value = next.start;
+		virtualEnd.value = next.end;
+		virtualMeasured.value = true;
+	});
+}
 const internalWidths = reactive<Record<string, number>>({});
 function columnWidth(column: UiTableColumn): number | undefined {
 	return props.columnWidths?.[column.key] ?? internalWidths[column.key] ?? (typeof column.width === "number" ? column.width : undefined);
@@ -136,14 +237,37 @@ function measureScroll(): void {
 let scrollObserver: ResizeObserver | undefined;
 onMounted(() => {
 	measureScroll();
-	scrollObserver = new ResizeObserver(measureScroll);
+	// 隐藏/显示 tab 时窗口尺寸会变化；重新测量，避免恢复显示后只剩 overscan 行。
+	scrollObserver = new ResizeObserver(() => {
+		measureScroll();
+		handleVirtualViewportChange();
+	});
 	if (scroller.value) scrollObserver.observe(scroller.value);
 	if (scroller.value) scrollObserver.observe(scroller.value.firstElementChild ?? scroller.value);
+	bindVirtualScrollRoot();
+	scheduleVirtualMeasure();
 });
 onBeforeUnmount(() => {
 	scrollObserver?.disconnect();
+	unbindVirtualScrollRoot();
+	if (virtualFrame !== null && typeof window !== "undefined") window.cancelAnimationFrame(virtualFrame);
+	virtualFrame = null;
 });
-watch([() => props.rows, () => props.columns, () => props.loading], measureScroll, { flush: "post" });
+watch(
+	[() => props.rows, () => props.columns, () => props.loading, () => props.virtual, () => props.rowHeight, () => props.overscan],
+	() => {
+		if (!props.virtual) {
+			unbindVirtualScrollRoot();
+			measureScroll();
+			return;
+		}
+		// 数据加载后页面才可能出现纵向溢出；此时重新识别滚动容器，不能一直等 window。
+		bindVirtualScrollRoot();
+		measureScroll();
+		scheduleVirtualMeasure();
+	},
+	{ flush: "post" },
+);
 function keyForRow(row: UiTableRow, index: number): string | number {
 	const key = typeof props.rowKey === "function" ? props.rowKey(row) : row[props.rowKey];
 	return typeof key === "string" || typeof key === "number" ? key : index;
@@ -351,50 +475,72 @@ function resetWidth(column: UiTableColumn) {
 							</th>
 						</tr>
 					</thead>
-					<tbody>
+					<tbody ref="tableBody">
 						<tr v-if="loading" class="ui-table__state">
 							<td :colspan="colspan">
 								<slot name="loading">{{ loadingText ?? "Loading..." }}</slot>
 							</td>
 						</tr>
-						<template v-else-if="$slots.row">
-							<slot v-for="(row, index) in visibleRows" :key="keyForRow(row, index)" name="row" :row="row" :index="index" />
-						</template>
 						<template v-else>
-							<tr
-								v-for="(row, index) in visibleRows"
-								:key="keyForRow(row, index)"
-								class="ui-table__row"
-								:class="{
-									'ui-table__row--selected': selectedKeys.includes(keyForRow(row, index)),
-									'ui-table__row--clickable': rowClickable,
-								}"
-								@click="clickRow($event, row, index)"
-							>
-								<td v-if="selection" class="ui-table__selection" data-label="Select" @click.stop>
-									<UiCheckbox
-										:model-value="selectedKeys.includes(keyForRow(row, index))"
-										:label="selectionLabel ? selectionLabel(row, index) : 'Select row ' + (index + 1)"
-										@update:model-value="selectRow(keyForRow(row, index), $event)"
-									/>
-								</td>
-								<td
-									v-for="column in columns"
-									:key="column.key"
-									:class="[
-										column.cellClass,
-										{
-											'ui-table__cell--ellipsis': column.ellipsis,
-											'ui-table__cell--sticky-right': column.sticky === 'right',
-										},
-									]"
-									:style="{ textAlign: column.align }"
-									:data-label="column.label"
+							<tr v-if="virtual && virtualWindow.top > 0" class="ui-table__spacer" aria-hidden="true">
+								<td :colspan="colspan" :style="{ height: virtualWindow.top + 'px', padding: 0, border: 0 }"></td>
+							</tr>
+							<template v-if="$slots.row">
+								<slot
+									v-for="(row, index) in renderedRows"
+									:key="keyForRow(row, renderedIndex(index))"
+									name="row"
+									:row="row"
+									:index="renderedIndex(index)"
+								/>
+							</template>
+							<template v-else>
+								<tr
+									v-for="(row, index) in renderedRows"
+									:key="keyForRow(row, renderedIndex(index))"
+									class="ui-table__row"
+									:class="{
+										'ui-table__row--selected': selectedKeys.includes(keyForRow(row, renderedIndex(index))),
+										'ui-table__row--clickable': rowClickable,
+									}"
+									@click="clickRow($event, row, renderedIndex(index))"
 								>
-									<slot :name="'cell-' + column.key" :row="row" :value="readTableValue(row, column)" :index="index">{{
-										displayTableValue(readTableValue(row, column))
-									}}</slot>
-								</td>
+									<td v-if="selection" class="ui-table__selection" data-label="Select" @click.stop>
+										<UiCheckbox
+											:model-value="selectedKeys.includes(keyForRow(row, renderedIndex(index)))"
+											:label="
+												selectionLabel
+													? selectionLabel(row, renderedIndex(index))
+													: 'Select row ' + (renderedIndex(index) + 1)
+											"
+											@update:model-value="selectRow(keyForRow(row, renderedIndex(index)), $event)"
+										/>
+									</td>
+									<td
+										v-for="column in columns"
+										:key="column.key"
+										:class="[
+											column.cellClass,
+											{
+												'ui-table__cell--ellipsis': column.ellipsis,
+												'ui-table__cell--sticky-right': column.sticky === 'right',
+											},
+										]"
+										:style="{ textAlign: column.align }"
+										:data-label="column.label"
+									>
+										<slot
+											:name="'cell-' + column.key"
+											:row="row"
+											:value="readTableValue(row, column)"
+											:index="renderedIndex(index)"
+											>{{ displayTableValue(readTableValue(row, column)) }}</slot
+										>
+									</td>
+								</tr>
+							</template>
+							<tr v-if="virtual && virtualWindow.bottom > 0" class="ui-table__spacer" aria-hidden="true">
+								<td :colspan="colspan" :style="{ height: virtualWindow.bottom + 'px', padding: 0, border: 0 }"></td>
 							</tr>
 						</template>
 						<tr v-if="!loading && !visibleRows.length" class="ui-table__state">

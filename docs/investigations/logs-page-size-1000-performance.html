@@ -1,0 +1,1702 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>日志页 1000 行性能调查与已上线优化</title>
+    <style>
+      :root {
+        --ink: #102033;
+        --muted: #5f6f80;
+        --line: #dfe6ee;
+        --paper: #f4f6f9;
+        --card: #ffffff;
+        --blue: #1f5eff;
+        --blue-soft: #eaf0ff;
+        --cyan: #0e7490;
+        --orange: #c2410c;
+        --orange-soft: #fff3e8;
+        --red: #b42318;
+        --red-soft: #fff0ef;
+        --green: #067647;
+        --green-soft: #eaf8f0;
+        --shadow: 0 14px 40px rgba(16, 32, 51, 0.08);
+        --radius: 18px;
+        --mono:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        --sans:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--sans);
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: var(--blue);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 0.88em;
+        background: #eef2f7;
+        border: 1px solid #e1e8f0;
+        border-radius: 5px;
+        padding: 0.12em 0.38em;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .wrap {
+        width: min(1180px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+      .hero {
+        position: relative;
+        overflow: hidden;
+        margin: 24px auto 0;
+        width: min(1180px, calc(100% - 40px));
+        border-radius: 28px;
+        padding: 58px 56px 46px;
+        color: #fff;
+        background:
+          radial-gradient(
+            circle at 86% 10%,
+            rgba(89, 151, 255, 0.55),
+            transparent 31%
+          ),
+          radial-gradient(
+            circle at 16% 104%,
+            rgba(18, 194, 160, 0.2),
+            transparent 34%
+          ),
+          linear-gradient(135deg, #0b1b33 0%, #122c52 56%, #173e68 100%);
+        box-shadow: var(--shadow);
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.18;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.15) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: linear-gradient(to bottom, black, transparent 74%);
+      }
+      .hero > * {
+        position: relative;
+        z-index: 1;
+      }
+      .eyebrow {
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #a9c4f7;
+        margin-bottom: 22px;
+      }
+      h1 {
+        margin: 0;
+        max-width: 900px;
+        font-size: clamp(34px, 5.2vw, 62px);
+        line-height: 1.06;
+        letter-spacing: -0.035em;
+        font-weight: 760;
+      }
+      h1 span {
+        color: #9dc0ff;
+      }
+      .hero-lead {
+        max-width: 770px;
+        margin: 22px 0 0;
+        color: #d6e3f6;
+        font-size: 16px;
+      }
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 30px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.08);
+        color: #eaf2ff;
+        border-radius: 999px;
+        padding: 7px 12px;
+        font-size: 12px;
+        font-family: var(--mono);
+      }
+      .pill i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #6ee7b7;
+        display: inline-block;
+      }
+      main {
+        padding: 42px 0 64px;
+      }
+      section {
+        margin: 0 0 54px;
+      }
+      h2 {
+        margin: 0 0 8px;
+        font-size: clamp(24px, 3vw, 34px);
+        line-height: 1.18;
+        letter-spacing: -0.025em;
+      }
+      h3 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin: 0 0 14px;
+      }
+      .section-kicker {
+        color: var(--blue);
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+      .lead {
+        color: var(--muted);
+        max-width: 850px;
+        font-size: 15px;
+      }
+      .callout {
+        margin: 20px 0 0;
+        padding: 22px 24px;
+        border: 1px solid #cfe0ff;
+        border-left: 5px solid var(--blue);
+        border-radius: 14px;
+        background: linear-gradient(135deg, #f7faff, #eef5ff);
+      }
+      .callout strong {
+        color: #123b8f;
+      }
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 22px;
+      }
+      .metric-card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px 18px 16px;
+        box-shadow: 0 4px 14px rgba(16, 32, 51, 0.035);
+      }
+      .metric-card .value {
+        font-size: 30px;
+        font-weight: 760;
+        letter-spacing: -0.04em;
+        line-height: 1.1;
+      }
+      .metric-card .label {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 7px;
+      }
+      .metric-card.hot .value {
+        color: var(--red);
+      }
+      .metric-card.warm .value {
+        color: var(--orange);
+      }
+      .metric-card.cool .value {
+        color: var(--blue);
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 18px;
+        align-items: stretch;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 24px;
+        box-shadow: 0 6px 22px rgba(16, 32, 51, 0.045);
+      }
+      .card-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+        margin-bottom: 14px;
+      }
+      .card-head h3 {
+        margin: 0;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .small {
+        font-size: 12px;
+      }
+      .chart-title {
+        font-size: 14px;
+        font-weight: 680;
+        margin-bottom: 4px;
+      }
+      .chart-sub {
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 18px;
+      }
+      .bar-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .bar-row {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr) 76px;
+        gap: 12px;
+        align-items: center;
+      }
+      .bar-label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .bar-track {
+        height: 12px;
+        border-radius: 999px;
+        background: #e9eef5;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #477dff, #8bb2ff);
+      }
+      .bar-fill.bad {
+        background: linear-gradient(90deg, #e36a3a, #f4a789);
+      }
+      .bar-fill.good {
+        background: linear-gradient(90deg, #1c9b68, #74d2a7);
+      }
+      .bar-value {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--ink);
+        text-align: right;
+        white-space: nowrap;
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin: 14px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .legend span {
+        display: inline-flex;
+        gap: 7px;
+        align-items: center;
+      }
+      .swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        display: inline-block;
+      }
+      .swatch.blue {
+        background: #5b8dff;
+      }
+      .swatch.orange {
+        background: #e9784a;
+      }
+      .swatch.green {
+        background: #2fae7a;
+      }
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--card);
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 680px;
+        font-size: 13px;
+      }
+      th,
+      td {
+        padding: 11px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: #425466;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        background: #f8fafc;
+        font-weight: 700;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      td.num {
+        font-family: var(--mono);
+        white-space: nowrap;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+      .tag.red {
+        color: #8f1d16;
+        background: var(--red-soft);
+      }
+      .tag.orange {
+        color: #8a3a12;
+        background: var(--orange-soft);
+      }
+      .tag.blue {
+        color: #1646a8;
+        background: var(--blue-soft);
+      }
+      .tag.green {
+        color: #086044;
+        background: var(--green-soft);
+      }
+      .tag.gray {
+        color: #536170;
+        background: #eef2f6;
+      }
+      .flow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 9px;
+        align-items: stretch;
+        margin: 18px 0 6px;
+      }
+      .flow-node {
+        flex: 1 1 155px;
+        min-height: 76px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        background: #fbfcfe;
+      }
+      .flow-node b {
+        display: block;
+        font-size: 13px;
+      }
+      .flow-node span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .flow-node.hot {
+        border-color: #f2c9b8;
+        background: #fff8f4;
+      }
+      .flow-arrow {
+        align-self: center;
+        color: #9aa9ba;
+        font-family: var(--mono);
+        font-size: 16px;
+        padding: 0 1px;
+      }
+      .root-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 18px;
+      }
+      .root-card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+        background: #fff;
+      }
+      .root-card .no {
+        font-family: var(--mono);
+        color: var(--orange);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+      }
+      .root-card h3 {
+        font-size: 15px;
+        margin: 7px 0 5px;
+      }
+      .root-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .note {
+        margin-top: 16px;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: #f8fafc;
+        border: 1px dashed #cfd9e5;
+        color: #536170;
+        font-size: 12px;
+      }
+      .options {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .option {
+        display: grid;
+        grid-template-columns: 52px minmax(0, 1fr) 160px;
+        gap: 16px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+      }
+      .option.recommended {
+        border-color: #a8c5ff;
+        box-shadow: 0 0 0 3px #edf3ff inset;
+      }
+      .option-rank {
+        width: 40px;
+        height: 40px;
+        border-radius: 11px;
+        display: grid;
+        place-items: center;
+        background: #eef3fb;
+        color: #46627f;
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .option.recommended .option-rank {
+        background: var(--blue);
+        color: #fff;
+      }
+      .option h3 {
+        font-size: 16px;
+        margin-bottom: 4px;
+      }
+      .option p {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0;
+      }
+      .option-side {
+        text-align: right;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .option-side b {
+        display: block;
+        color: var(--ink);
+        font-size: 16px;
+        letter-spacing: -0.02em;
+        margin-bottom: 3px;
+      }
+      .roadmap {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 18px;
+      }
+      .phase {
+        position: relative;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+        padding: 20px;
+      }
+      .phase::before {
+        content: "";
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        top: 0;
+        height: 3px;
+        border-radius: 3px;
+        background: var(--blue);
+      }
+      .phase.p2::before {
+        background: var(--cyan);
+      }
+      .phase.p3::before {
+        background: var(--green);
+      }
+      .phase .phase-label {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--blue);
+        letter-spacing: 0.08em;
+        margin-bottom: 9px;
+      }
+      .phase.p2 .phase-label {
+        color: var(--cyan);
+      }
+      .phase.p3 .phase-label {
+        color: var(--green);
+      }
+      .phase h3 {
+        font-size: 16px;
+        margin-bottom: 8px;
+      }
+      .phase p {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0 0 10px;
+      }
+      .phase ul {
+        margin: 0;
+        padding-left: 18px;
+        color: #46586b;
+        font-size: 12.5px;
+      }
+      .phase li {
+        margin: 5px 0;
+      }
+      .code {
+        margin: 14px 0 0;
+        border-radius: 12px;
+        background: #0e1b2d;
+        color: #dbe8f7;
+        padding: 16px 18px;
+        overflow-x: auto;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.7;
+        white-space: pre;
+      }
+      .code .k {
+        color: #86b4ff;
+      }
+      .code .c {
+        color: #88a1bb;
+      }
+      .code .s {
+        color: #9be2b6;
+      }
+      .checklist {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 22px;
+        margin: 14px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .checklist li {
+        position: relative;
+        padding-left: 24px;
+        color: #33475b;
+        font-size: 13px;
+      }
+      .checklist li::before {
+        content: "✓";
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: var(--green);
+        font-weight: 800;
+      }
+      .risk-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 14px;
+      }
+      .risk {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 15px 16px;
+        background: #fff;
+      }
+      .risk b {
+        display: block;
+        font-size: 13px;
+        margin-bottom: 3px;
+      }
+      .risk span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .sources {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px 24px;
+        margin: 16px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .sources li {
+        font-size: 12.5px;
+        color: #425466;
+      }
+      .sources li code {
+        white-space: normal;
+      }
+      footer {
+        border-top: 1px solid var(--line);
+        color: #7b8a9a;
+        font-size: 12px;
+        padding: 24px 0 8px;
+      }
+      .toc {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 22px 0 0;
+      }
+      .toc a {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: #46627f;
+      }
+      @media (max-width: 900px) {
+        .hero {
+          padding: 42px 30px 36px;
+        }
+        .metric-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .grid-2,
+        .root-grid,
+        .checklist,
+        .risk-list,
+        .sources {
+          grid-template-columns: 1fr;
+        }
+        .roadmap {
+          grid-template-columns: 1fr;
+        }
+        .option {
+          grid-template-columns: 44px minmax(0, 1fr);
+        }
+        .option-side {
+          grid-column: 2;
+          text-align: left;
+        }
+      }
+      @media (max-width: 560px) {
+        .wrap,
+        .hero {
+          width: min(100% - 24px, 1180px);
+        }
+        .hero {
+          margin-top: 12px;
+          border-radius: 20px;
+          padding: 32px 22px 28px;
+        }
+        .metric-grid {
+          grid-template-columns: 1fr 1fr;
+          gap: 9px;
+        }
+        .metric-card {
+          padding: 14px;
+        }
+        .metric-card .value {
+          font-size: 24px;
+        }
+        .card {
+          padding: 18px;
+        }
+        .bar-row {
+          grid-template-columns: 92px minmax(0, 1fr) 66px;
+          gap: 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="eyebrow">Performance investigation · Logs table</div>
+      <h1>日志页 1000 行<br /><span>前端性能调查与优化方案</span></h1>
+      <p class="hero-lead">
+        结论先说：慢的不是“1000 条数据”本身，而是 1000 行被完整挂载成了约 6.7
+        万个 DOM 元素、1.2 万个单元格组件和 8,338 个 tooltip / popover
+        锚点。只做缓存或重试不会解决结构性问题。第一阶段 opt-in
+        虚拟滚动已实施、部署并在生产页面完成核验。
+      </p>
+      <div class="hero-meta">
+        <span class="pill"><i></i>已实施并上线 · 2026-11-15</span>
+        <span class="pill">100 vs 1000 行对照基准</span>
+        <span class="pill">Chromium / Vue dev harness</span>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <nav class="toc" aria-label="目录">
+        <a href="#summary">摘要</a>
+        <a href="#evidence">测量数据</a>
+        <a href="#profile">CPU 画像</a>
+        <a href="#root">根因</a>
+        <a href="#options">候选方案</a>
+        <a href="#plan">建议落地</a>
+        <a href="#implementation">实施记录</a>
+        <a href="#acceptance">验收标准</a>
+        <a href="#risks">风险</a>
+      </nav>
+
+      <section id="summary">
+        <div class="section-kicker">01 · Executive summary</div>
+        <h2>先给出判断</h2>
+        <p class="lead">
+          1000 行页面从进入路由到最后一个数据行可见约 <b>1.95s</b>，期间出现
+          <b>1,256ms</b> 的长任务；滚动到列表底部也能产生 125–284ms
+          的长任务。把行数降到 100 后，首屏约 <b>0.56s</b>、DOM 从 66,914 降到
+          7,130。行数与 DOM /
+          组件数近似线性，说明问题在“全量渲染”而不是某个单点格式化函数。
+        </p>
+        <div class="callout">
+          <strong>已落地方向：</strong>保留 1000
+          行的分页能力，但只渲染视口附近的行；第一阶段已在日志表启用 opt-in
+          虚拟滚动，并适配生产 Dashboard 的
+          <code>.application-main</code> 内层滚动容器。生产 1000 行页面只挂载
+          27–33 个数据行、约 2.8k 个 DOM
+          元素；URL、筛选和深链接抽屉保持原契约。行级 view model 与轻量 tooltip
+          属于第二阶段，未在本轮实施。
+        </div>
+        <div class="metric-grid">
+          <div class="metric-card hot">
+            <div class="value">1.95s</div>
+            <div class="label">1000 行首屏（本地 dev harness）</div>
+          </div>
+          <div class="metric-card hot">
+            <div class="value">1,256ms</div>
+            <div class="label">初始化最长长任务</div>
+          </div>
+          <div class="metric-card warm">
+            <div class="value">66,914</div>
+            <div class="label">DOM 元素数（1000 行）</div>
+          </div>
+          <div class="metric-card cool">
+            <div class="value">8,338</div>
+            <div class="label">tooltip / popover 锚点</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="evidence">
+        <div class="section-kicker">02 · Evidence</div>
+        <h2>DOM 与组件数线性增长，首屏被行挂载主导</h2>
+        <p class="lead">
+          在同一个 Playwright Chromium、同一个 Vite 开发服务器、同一组默认 12
+          列和合成数据下，仅改变 <code>logs_page_size</code>。100 行是基线，1000
+          行是用户报告的场景。
+        </p>
+
+        <div class="grid-2" style="margin-top: 18px">
+          <div class="card">
+            <div class="card-head">
+              <h3>首屏与最长长任务</h3>
+              <span class="tag orange">单次基准运行</span>
+            </div>
+            <div class="chart-title">从 goto 到最后一个数据行可见</div>
+            <div class="chart-sub">
+              同一台机器、同一浏览器进程配置；不是生产绝对值
+            </div>
+            <div
+              class="bar-list"
+              role="img"
+              aria-label="100 行首屏 564 毫秒，1000 行首屏 1945 毫秒"
+            >
+              <div class="bar-row">
+                <div class="bar-label">100 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 29%"></div>
+                </div>
+                <div class="bar-value">564 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">1000 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill bad" style="width: 100%"></div>
+                </div>
+                <div class="bar-value">1,945 ms</div>
+              </div>
+            </div>
+            <div class="chart-sub" style="margin-top: 18px">最长单个长任务</div>
+            <div
+              class="bar-list"
+              role="img"
+              aria-label="100 行最长长任务 155 毫秒，1000 行 1256 毫秒"
+            >
+              <div class="bar-row">
+                <div class="bar-label">100 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 12.3%"></div>
+                </div>
+                <div class="bar-value">155 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">1000 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill bad" style="width: 100%"></div>
+                </div>
+                <div class="bar-value">1,256 ms</div>
+              </div>
+            </div>
+            <div class="legend">
+              <span><i class="swatch blue"></i>100 行</span
+              ><span><i class="swatch orange"></i>1000 行</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>DOM 规模</h3>
+              <span class="tag red">结构性</span>
+            </div>
+            <div class="chart-title">元素数量</div>
+            <div class="chart-sub">
+              document.querySelectorAll("*")，含表格外壳
+            </div>
+            <div
+              class="bar-list"
+              role="img"
+              aria-label="100 行 7130 个 DOM 元素，1000 行 66914 个"
+            >
+              <div class="bar-row">
+                <div class="bar-label">100 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 10.7%"></div>
+                </div>
+                <div class="bar-value">7,130</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">1000 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill bad" style="width: 100%"></div>
+                </div>
+                <div class="bar-value">66,914</div>
+              </div>
+            </div>
+            <div class="chart-sub" style="margin-top: 18px">
+              tooltip / popover 锚点
+            </div>
+            <div
+              class="bar-list"
+              role="img"
+              aria-label="100 行 838 个 tooltip 锚点，1000 行 8338 个"
+            >
+              <div class="bar-row">
+                <div class="bar-label">100 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 10%"></div>
+                </div>
+                <div class="bar-value">838</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">1000 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill bad" style="width: 100%"></div>
+                </div>
+                <div class="bar-value">8,338</div>
+              </div>
+            </div>
+            <div class="chart-sub" style="margin-top: 18px">单元格组件</div>
+            <div
+              class="bar-list"
+              role="img"
+              aria-label="100 行 1202 个单元格，1000 行 12000 个"
+            >
+              <div class="bar-row">
+                <div class="bar-label">100 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 10%"></div>
+                </div>
+                <div class="bar-value">1,202</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">1000 行</div>
+                <div class="bar-track">
+                  <div class="bar-fill bad" style="width: 100%"></div>
+                </div>
+                <div class="bar-value">12,000</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="margin-top: 18px">
+          <table>
+            <thead>
+              <tr>
+                <th>观测项</th>
+                <th>100 行</th>
+                <th>1000 行</th>
+                <th>变化</th>
+                <th>解读</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>首屏到最后一个数据行</td>
+                <td class="num">564 ms</td>
+                <td class="num">1,945 ms</td>
+                <td class="num">3.4×</td>
+                <td>
+                  行数 10×，时间 3.4×；约 1.5ms/行增量，表格外壳仍有固定成本
+                </td>
+              </tr>
+              <tr>
+                <td>DOM 元素</td>
+                <td class="num">7,130</td>
+                <td class="num">66,914</td>
+                <td class="num">9.4×</td>
+                <td>每多一行约多 60–70 个元素</td>
+              </tr>
+              <tr>
+                <td>单元格组件</td>
+                <td class="num">1,202</td>
+                <td class="num">12,000</td>
+                <td class="num">10.0×</td>
+                <td>12 个默认列 × 行数</td>
+              </tr>
+              <tr>
+                <td>tooltip / popover 锚点</td>
+                <td class="num">838</td>
+                <td class="num">8,338</td>
+                <td class="num">10.0×</td>
+                <td>约 8 个交互包装器/行</td>
+              </tr>
+              <tr>
+                <td>最长长任务</td>
+                <td class="num">155 ms</td>
+                <td class="num">1,256 ms</td>
+                <td class="num">8.1×</td>
+                <td>主线程被挂载/布局长时间占用</td>
+              </tr>
+              <tr>
+                <td>滚动到底部</td>
+                <td class="num">—</td>
+                <td class="num">330 ms</td>
+                <td class="num">—</td>
+                <td>观测到 284 / 189 / 125ms 长任务</td>
+              </tr>
+              <tr>
+                <td>手动刷新后重绘</td>
+                <td class="num">—</td>
+                <td class="num">393 ms</td>
+                <td class="num">—</td>
+                <td>观测到长任务；测量窗口跨刷新边界，需用严格基准复测</td>
+              </tr>
+              <tr>
+                <td>排序后重绘</td>
+                <td class="num">—</td>
+                <td class="num">396 ms</td>
+                <td class="num">—</td>
+                <td>观测到 101 / 73ms 长任务</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          口径：本地 Playwright Chromium / Vite dev / 默认 12 列 / 1000
+          条合成日志 / live tail 关闭；首屏时间为 goto 到最后一个
+          <code>tbody tr</code> 可见。生产构建会更快，但 DOM
+          数量、组件数量和线性增长关系不会改变；不要把这里的绝对值当作生产 SLA。
+        </div>
+      </section>
+
+      <section id="profile">
+        <div class="section-kicker">03 · CPU profile</div>
+        <h2>主线程在忙什么</h2>
+        <p class="lead">
+          对 1000 行首次渲染做 Chrome CPU
+          profile。除了浏览器原生布局/绘制（<code>(program)</code>）之外，最大的一项不是业务格式化，而是
+          <code>UiTable</code> 的滚动尺寸测量触发的强制布局；随后是 GC、Vue
+          组件实例化和每行时间格式化。
+        </p>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <h3>Top self time</h3>
+              <span class="tag gray">采样 ≈ 1000µs</span>
+            </div>
+            <div class="bar-list" role="img" aria-label="CPU 采样主要函数耗时">
+              <div class="bar-row">
+                <div class="bar-label">(program)</div>
+                <div class="bar-track">
+                  <div class="bar-fill bad" style="width: 100%"></div>
+                </div>
+                <div class="bar-value">616 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">measureScroll</div>
+                <div class="bar-track">
+                  <div class="bar-fill bad" style="width: 49.5%"></div>
+                </div>
+                <div class="bar-value">305 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">GC</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 23.9%"></div>
+                </div>
+                <div class="bar-value">147 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">createReactiveObject</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 10.2%"></div>
+                </div>
+                <div class="bar-value">63 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">createComponentInstance</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 6.7%"></div>
+                </div>
+                <div class="bar-value">41 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">localLogTime</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 6.5%"></div>
+                </div>
+                <div class="bar-value">40 ms</div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-label">formatPrice</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 2.9%"></div>
+                </div>
+                <div class="bar-value">18 ms</div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>为什么测量会这么贵</h3>
+              <span class="tag orange">可单独优化</span>
+            </div>
+            <p class="muted small" style="margin-bottom: 12px">
+              <code>UiTable</code> 在 <code>onMounted</code>、<code
+                >ResizeObserver</code
+              >
+              和 rows / columns / loading 的 watcher 中调用
+              <code>measureScroll()</code>。它读取 <code>scrollWidth</code> /
+              <code>clientWidth</code> / <code>scrollLeft</code>，在 1000
+              行、6.7 万 DOM 上每次读取都可能迫使浏览器同步布局。
+            </p>
+            <div class="flow">
+              <div class="flow-node hot">
+                <b>数据替换</b><span>1000 行</span>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node hot">
+                <b>Vue 补丁</b><span>rows / slots</span>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node hot">
+                <b>同步测量</b><span>scrollWidth</span>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node hot">
+                <b>强制布局</b><span>305 ms</span>
+              </div>
+            </div>
+            <p class="muted small" style="margin-top: 14px">
+              这不是唯一根因，但属于低风险、可独立拿到的收益：合并到
+              <code>requestAnimationFrame</code
+              >、只观察必要节点、值没变不写回，就能避免重复布局。真正把 1000
+              行成本压下来的仍是虚拟化。
+            </p>
+          </div>
+        </div>
+
+        <div class="callout" style="margin-top: 18px">
+          <strong>数据层不是这次的主因：</strong>列表页的 <code>page</code> 是
+          <code>shallowRef</code>，不是把 1000 行全部变成深层响应式；API
+          列表投影排除了 <code>messages</code> / <code>response</code> /
+          <code>proxy_server_request</code> 大字段；profile 中 zod 解析约
+          3ms、<code>shareLogRows</code> 约
+          2ms。先重写接口或改数据库通常拿不到这次的收益。
+        </div>
+      </section>
+
+      <section id="root">
+        <div class="section-kicker">04 · Root causes</div>
+        <h2>四个叠加的结构性成本</h2>
+        <div class="root-grid">
+          <div class="root-card">
+            <div class="no">R1 / DOM</div>
+            <h3>所有行一次性挂载</h3>
+            <p>
+              <code>UiTable</code> 的 <code>#row</code> 插槽对全部
+              <code>visibleRows</code> 做 <code>v-for</code>，日志表把 1000
+              条数据直接交给它；没有窗口化、没有分片。表里每一行都是真实 DOM。
+            </p>
+          </div>
+          <div class="root-card">
+            <div class="no">R2 / COMPONENTS</div>
+            <h3>每个单元格都是一个重组件</h3>
+            <p>
+              12 列 × 1000 行 = 12,000 个
+              <code>LogsTableCellComponent</code>。每个实例都会注入价格
+              store，并创建约 16 个
+              computed（价格、状态、session、模型、token、TTFT、TPS、路由、标签、tooltip
+              等），不管当前列是否用到。
+            </p>
+          </div>
+          <div class="root-card">
+            <div class="no">R3 / OVERLAYS</div>
+            <h3>约 8,300 个 tooltip / popover 包装器</h3>
+            <p>
+              request ID、session、key、token 等用
+              <code>UiTooltip</code> 包一层，成本和模型用
+              <code>UiPopover</code
+              >；时间和状态则直接渲染文本。每个包装器都有自己的
+              setup、ref、事件和
+              <code>onUpdated</code> hook，放大挂载与更新成本。
+            </p>
+          </div>
+          <div class="root-card">
+            <div class="no">R4 / LAYOUT &amp; GC</div>
+            <h3>布局、滚动测量和分配压力</h3>
+            <p>
+              6.7 万元素、12,000
+              个内联宽度样式、固定表格布局，使布局/绘制本身很重；<code
+                >measureScroll</code
+              >
+              强制同步布局，GC 采样 147ms 也说明短命对象很多。
+            </p>
+          </div>
+        </div>
+        <div class="note" style="margin-top: 16px">
+          补充：<code>localLogTime</code> 每行调用
+          <code>new Date().toLocaleString(...)</code>，profile 占 40ms；<code
+            >formatPrice</code
+          >
+          占 18ms。这些是容易拿的“小钱”，但不是 1.95s 的主因。把 1000 行限制成
+          500 行只能把问题减半，不能把曲线变平。
+        </div>
+      </section>
+
+      <section id="options">
+        <div class="section-kicker">05 · Options</div>
+        <h2>候选方案与取舍</h2>
+        <p class="lead">
+          按“是否能消除全量
+          DOM”排序。推荐把虚拟化作为主方案，其余作为配套或过渡。
+        </p>
+        <div class="options">
+          <div class="option recommended">
+            <div class="option-rank">A</div>
+            <div>
+              <h3>
+                窗口化 / 虚拟滚动 + 行级 view model
+                <span class="tag green">推荐</span>
+              </h3>
+              <p>
+                只挂载视口附近 30–50 行，上下用 spacer
+                行维持滚动高度；数据、筛选、分页、URL
+                语义不变。再把每行重复计算收敛一次，普通 tooltip
+                改为轻量实现。这是唯一能让 1000 行与 100 行的 DOM
+                成本接近的方案。
+              </p>
+            </div>
+            <div class="option-side">
+              <b>DOM -85–95%</b><span>改动中等 / 收益最大</span>
+            </div>
+          </div>
+          <div class="option">
+            <div class="option-rank">B</div>
+            <div>
+              <h3>
+                分批渲染 / content-visibility
+                <span class="tag orange">过渡</span>
+              </h3>
+              <p>
+                先渲染 100 行，空闲时继续追加；或对行加
+                <code>content-visibility: auto</code
+                >。能改善首次长任务和部分绘制，但最终 DOM 仍会到 6.7
+                万，内存和后续交互成本仍在，不能作为 1000 行的最终解。
+              </p>
+            </div>
+            <div class="option-side">
+              <b>首屏部分改善</b><span>改动小 / 上限低</span>
+            </div>
+          </div>
+          <div class="option">
+            <div class="option-rank">C</div>
+            <div>
+              <h3>
+                限制每页 500 / 改成无限加载
+                <span class="tag gray">产品取舍</span>
+              </h3>
+              <p>
+                把 1000 选项拿掉或默认 200，是最快的止血；但用户失去一次查看
+                1000 条的能力。若 1000
+                行主要用于审计/导出，更合适的是提供导出，而不是在页面渲染 1000
+                行。
+              </p>
+            </div>
+            <div class="option-side">
+              <b>立即止血</b><span>产品能力受限</span>
+            </div>
+          </div>
+          <div class="option">
+            <div class="option-rank">D</div>
+            <div>
+              <h3>
+                只做 formatter 缓存 / measureScroll 合并
+                <span class="tag blue">配套</span>
+              </h3>
+              <p>
+                把 <code>Intl.DateTimeFormat</code>、金额 formatter
+                缓存起来，合并滚动测量，减少重复布局。低风险，但只覆盖约 10–25%
+                的首屏时间，不改变 12,000 个单元格的事实。
+              </p>
+            </div>
+            <div class="option-side">
+              <b>10–25%</b><span>低风险 / 必做配套</span>
+            </div>
+          </div>
+          <div class="option">
+            <div class="option-rank">E</div>
+            <div>
+              <h3>
+                服务端 keyset + 无限滚动 <span class="tag blue">长期</span>
+              </h3>
+              <p>
+                如果以后要浏览远超 1000 条的历史，可把“一页 1000 行”改成 keyset
+                游标 + 增量加载。它与虚拟化互补，但对当前的 1000
+                行问题不是必需的第一步，且会扩大 API/产品改动面。
+              </p>
+            </div>
+            <div class="option-side">
+              <b>可扩展</b><span>范围大 / 非当前必需</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="plan">
+        <div class="section-kicker">06 · Recommended plan</div>
+        <h2>建议按三个阶段落地</h2>
+        <p class="lead">
+          不要先做大规模重构再验证。先用一个可回退的 opt-in
+          虚拟化把曲线压平，再用行级模型和轻量 tooltip
+          拿第二段收益；每一步都能独立发布、独立回滚。
+        </p>
+        <div class="roadmap">
+          <div class="phase">
+            <div class="phase-label">PHASE 0 · 0.5–1 天</div>
+            <h3>低风险止血</h3>
+            <p>不改变 DOM 结构，先减少明显浪费。</p>
+            <ul>
+              <li>
+                合并 <code>measureScroll</code> 到
+                rAF，避免在挂载/观察回调中重复强制布局；值未变化不写回。
+              </li>
+              <li>
+                缓存
+                <code>Intl.DateTimeFormat</code> 和金额格式化器；避免每行创建
+                formatter。
+              </li>
+              <li>
+                建立 1000 行基准脚本，记录首屏、DOM、长任务，作为后续对照。
+              </li>
+            </ul>
+          </div>
+          <div class="phase p2">
+            <div class="phase-label">PHASE 1 · 2–4 天</div>
+            <h3>虚拟化行（主方案）</h3>
+            <p>只改表格渲染层，保留数据与 URL 契约。</p>
+            <ul>
+              <li>
+                给 <code>UiTable</code> 增加 opt-in 的 <code>virtual</code> /
+                <code>rowHeight</code> /
+                <code>overscan</code>，默认关闭，先只让日志表启用。
+              </li>
+              <li>
+                窗口滚动方案：沿用页面滚动，按表体位置计算可见区间；上下 spacer
+                行维持总高度。
+              </li>
+              <li>
+                固定行高 33px（现有 CSS 已是固定高度），过扫 8 行；resize /
+                数据变化时钳制范围。
+              </li>
+              <li>
+                保留
+                <code>request_id</code>
+                key、点击、键盘、横向滚动、深链接抽屉；补充 aria-rowcount 和
+                spacer 的 aria-hidden。
+              </li>
+            </ul>
+          </div>
+          <div class="phase p3">
+            <div class="phase-label">PHASE 2 · 1–2 天</div>
+            <h3>单元格与 tooltip 收敛</h3>
+            <p>让虚拟化后的每行也更轻。</p>
+            <ul>
+              <li>
+                每行计算一次
+                <code>LogsRowView</code
+                >（时间、状态、模型、token、成本、session、hash
+                等），单元格只消费结果。
+              </li>
+              <li>
+                按列拆分单元格，避免 16 个无关 computed 都挂到每个单元格上。
+              </li>
+              <li>
+                普通文本用轻量 title 或表格级事件委托；仅 token / feature / cost
+                / model 保留富浮层，并延迟到交互时挂载。
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="code" aria-label="虚拟化接入示意代码">
+          <span class="c"
+            >// 目标：调用方只增加 opt-in 参数，数据/URL/抽屉语义不变</span
+          >
+          &lt;<span class="k">UiTable</span>
+          :columns="tableColumns" :rows="data" row-key="request_id"
+          <span class="s">virtual</span>
+          :row-height="33" :overscan="8" fixed-layout manual-sort &gt;
+          &lt;template #row="{ row }"&gt; &lt;<span class="k"
+            >LogsTableRowComponent</span
+          >
+          :log="row" ... /&gt; &lt;/template&gt; &lt;/<span class="k"
+            >UiTable</span
+          >&gt;
+
+          <span class="c"
+            >// 表体只渲染窗口内的行；spacer 行只承担高度，不进入读屏/交互</span
+          >
+          &lt;tr aria-hidden="true"&gt;&lt;td :colspan="colspan" :style="{
+          height: topSpacer + 'px' }"&gt;&lt;/td&gt;&lt;/tr&gt; &lt;LogsRow
+          v-for="row in windowRows" :key="row.request_id" ... /&gt; &lt;tr
+          aria-hidden="true"&gt;&lt;td :colspan="colspan" :style="{ height:
+          bottomSpacer + 'px' }"&gt;&lt;/td&gt;&lt;/tr&gt;
+        </div>
+
+        <div class="note">
+          第一阶段的实现顺序已按此执行：先加 opt-in
+          开关和窗口计算，再迁移日志表；没有把
+          <code>UiTable</code> 改成默认虚拟化。日志表行高已经是 33px（<code
+            >.ui-table td</code
+          >），适合固定行高窗口化；手机端仍保留横向表格，不改现有布局。第二阶段的行级
+          view model 和轻量 tooltip 尚未开始。
+        </div>
+      </section>
+
+      <section id="implementation">
+        <div class="section-kicker">
+          07 · Implementation &amp; production verification
+        </div>
+        <h2>第一阶段已经上线，行数与 DOM 的线性关系被切断</h2>
+        <p class="lead">
+          实现边界很窄：<code>UiTable</code>
+          增加默认关闭的虚拟化选项，日志表显式开启；数据、分页、URL
+          查询参数、筛选和深链接抽屉都不改。上线核验时发现生产页面的滚动不在
+          <code>window</code>，而在
+          <code>.application-main</code>
+          内层，因此补充了“最近的纵向滚动祖先”识别和对应的内层滚动回归测试。
+        </p>
+        <div class="metric-grid">
+          <div class="metric-card cool">
+            <div class="value">27</div>
+            <div class="label">生产首次挂载的数据行（1000 行/页）</div>
+          </div>
+          <div class="metric-card cool">
+            <div class="value">2,812</div>
+            <div class="label">生产页面 DOM 元素总数</div>
+          </div>
+          <div class="metric-card cool">
+            <div class="value">33,032px</div>
+            <div class="label">表格总高度，spacer 维持滚动范围</div>
+          </div>
+          <div class="metric-card cool">
+            <div class="value">33</div>
+            <div class="label">滚到底部后的数据行数，仍远小于 1000</div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>代码改动</h3>
+            <ul class="clean">
+              <li>
+                <code>UiTable.vue</code>：新增 <code>virtual</code>（默认
+                <code>false</code
+                >）、<code>rowHeight</code>、<code>overscan</code>；用上下
+                spacer 行保持 <code>tbody</code> 总高度，只渲染窗口内的数据行。
+              </li>
+              <li>
+                窗口计算抽成纯函数
+                <code>UiTableVirtualLogic.ts</code>；滚动测量按
+                <code>requestAnimationFrame</code> 合并，并复用
+                <code>ResizeObserver</code> 处理标签页隐藏/显示。
+              </li>
+              <li>
+                自动寻找最近的纵向滚动祖先；生产实测为
+                <code>.application-main</code>，不是
+                window。窗口滚动与内层滚动共用同一套相对可视区计算。
+              </li>
+              <li>
+                <code>LogsTableComponent.vue</code> 启用
+                <code>virtual</code
+                >、<code>row-height="33"</code>、<code>overscan="8"</code>；保留
+                <code>request_id</code> key、点击、深链接和全部列行为。
+              </li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>生产核验结果</h3>
+            <ul class="clean">
+              <li>
+                页面参数保持 <code>logs_page_size=1000</code>；列表接口返回 1000
+                行、分页总数约 7k（随时段变化）。
+              </li>
+              <li>
+                首次进入：27 个数据行、1 个 spacer、2,812 个 DOM、325
+                个表格单元格；表格高度 33,032px，滚动范围未丢。
+              </li>
+              <li>
+                滚动到内层容器底部：数据行 33 个，顶部 spacer 31,911px，可视区内
+                25 行，首行已切换；没有一次挂载 1000 行。
+              </li>
+              <li>
+                状态筛选可以应用并清除；点击数据行会写入
+                <code>log=</code> 深链接并打开详情抽屉，关闭后清除参数。
+              </li>
+              <li>
+                390px 视口下页面宽度保持 390，横向滚动留在表格内部；纵向滚到底部仍只挂载
+                32 行，首行已切换。
+              </li>
+              <li>
+                部署容器健康、<code>OOMKilled=false</code>、<code>RestartCount=0</code>；外部健康入口与
+                <code>/ui/?page=logs</code> 均返回 200。
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="note">
+          <strong>本地合成数据基准（1000 行，最终实现复测）：</strong>首行可见
+          347ms；DOM 从 66,914 降到 1,986；数据行 24 个；tooltip/popover 锚点从
+          8,338 降到 168；初始最长长任务从 1,256ms 降到 73ms；滚到底部
+          67ms，滚动后挂载 30
+          行。生产读数受登录、接口、实时刷新和数据量影响，因此这里不把本地毫秒数当作生产
+          SLA。
+        </div>
+        <div class="callout">
+          <strong>验证覆盖：</strong>5 个纯窗口计算用例；3 个 Playwright
+          日志表用例（窗口滚动、标签页往返、内层滚动容器）；既有日志筛选、URL
+          深链接、抽屉和会话行为测试继续通过。完整组件套件中，两个会话时间线的既有基线失败仍按原样单独记录，不能归因于本次表格改动。
+        </div>
+        <div class="note">
+          <strong>取舍不变：</strong>原生
+          <code>Ctrl+F</code> 只能命中当前挂载的行；日志页仍以 Request ID
+          筛选作为权威查找方式。行高必须保持固定；当前不支持
+          <code>bodyMaxHeight</code> 与
+          <code>virtual</code> 的组合。第二阶段的行级 view model 和轻量 tooltip
+          尚未实施。
+        </div>
+      </section>
+
+      <section id="acceptance">
+        <div class="section-kicker">08 · Acceptance criteria</div>
+        <h2>怎么证明真的变快</h2>
+        <p class="lead">
+          性能优化不能只看“感觉”。下面保留可重复的 1000
+          行基准口径，并给出这一轮在本地合成数据和真实生产页面上的结果；生产页面只做结构与行为核验，不用登录和网络耗时冒充渲染指标。
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <h3>本轮结果</h3>
+            <ul class="checklist">
+              <li>1000 行时只挂载 24 行、1,986 个 DOM 元素，低于 8k 上限</li>
+              <li>首行可见 347ms（本地合成数据，目标 &lt; 0.7s）</li>
+              <li>初始最长长任务 73ms；没有出现 &gt; 500ms 的单个任务</li>
+              <li>从顶部滚到底部 67ms，滚动后只挂载 30 行</li>
+              <li>生产 1000 行页面挂载 27–33 行，URL、筛选和深链接保持</li>
+              <li>
+                100 / 500 / 1000
+                三档曲线未在本轮重跑；不把单档结果外推为三档结论
+              </li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>必须同时守住的契约</h3>
+            <ul class="checklist">
+              <li>默认 12 列、最多 18 列的显示与横向滚动不变</li>
+              <li>
+                <code>request_id</code> 筛选、分页、排序、时间范围、URL 回填不变
+              </li>
+              <li>点击行打开详情、J/K 切换、session 时间线、深链接刷新恢复</li>
+              <li>live tail 更新后滚动位置不跳、选中行不丢</li>
+              <li>键盘可达、aria 行数/表头语义正确；spacer 不被读屏</li>
+              <li>移动端 390px 仍无页面级横向溢出</li>
+            </ul>
+          </div>
+        </div>
+        <div class="note">
+          本轮用的是临时 Playwright 基准（固定视口、合成数据、关闭 live
+          tail），不作为 CI
+          硬门槛；日常门禁仍跑日志筛选、深链接、抽屉和会话行为测试。后续可把该基准固化成独立性能脚本，用宽松阈值避免
+          CI 抖动。
+        </div>
+      </section>
+
+      <section id="risks">
+        <div class="section-kicker">09 · Risks &amp; product notes</div>
+        <h2>需要提前说清楚的取舍</h2>
+        <div class="risk-list">
+          <div class="risk">
+            <b>浏览器 Ctrl+F 只能找到已挂载行</b
+            ><span
+              >虚拟化后原生页内查找不再覆盖全部 1000 行。日志已有 request_id
+              表头筛选，应把它作为查找入口；如审计依赖
+              Ctrl+F，需要在方案评审时确认。</span
+            >
+          </div>
+          <div class="risk">
+            <b>固定行高假设</b
+            ><span
+              >当前 td 为 33px 且 nowrap；若未来
+              badge/错误信息允许换行，窗口高度会失真。需要保留“行高变化则回退到非虚拟/动态测量”的开关。</span
+            >
+          </div>
+          <div class="risk">
+            <b>无障碍与表格语义</b
+            ><span
+              >spacer 行必须 aria-hidden；总行数用 aria-rowcount
+              表达；键盘焦点进入屏幕外行时要先滚入视口。不能只做视觉窗口化。</span
+            >
+          </div>
+          <div class="risk">
+            <b>live tail 与滚动位置</b
+            ><span
+              >1000 行 + 默认 10s live tail
+              会周期性替换数据。虚拟化后只补视口，但仍要验证“读者正在看的位置不被拉走”，沿用现有滚动位置策略。</span
+            >
+          </div>
+          <div class="risk">
+            <b>UiTable 是多页共用组件</b
+            ><span
+              >把虚拟化做成
+              opt-in，先只接日志页；其他实体表继续走原路径，降低一次性回归面。测试要覆盖默认关闭时的行为不变。</span
+            >
+          </div>
+          <div class="risk">
+            <b>产品是否真的需要 1000 行同屏</b
+            ><span
+              >本轮保留了 1000
+              行/页的浏览能力，但不再全量挂载；如果后续确认用户主要用导出/审计，可以再下调默认
+              page size，虚拟化不需要因此回退。</span
+            >
+          </div>
+        </div>
+      </section>
+
+      <section id="sources">
+        <div class="section-kicker">10 · References</div>
+        <h2>调查依据</h2>
+        <ul class="sources">
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/logs/ui/LogsTableComponent.vue</code
+            >
+            — 把完整 data 交给 UiTable，使用自定义 #row 插槽；日志表显式启用
+            virtual / 33px / overscan 8。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/platform/ui/UiTable.vue</code
+            >
+            — 虚拟窗口、上下 spacer、最近滚动祖先识别、rAF 测量与
+            ResizeObserver 恢复；默认关闭。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/platform/ui/UiTableVirtualLogic.ts</code
+            >
+            — 纯窗口计算与边界钳制，配套 5 个 Vitest 用例。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/tests/platform-ui/logs-virtualization.spec.ts</code
+            >
+            — 窗口滚动、标签页往返、内层滚动容器三组 Playwright 回归。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/logs/ui/LogsTableCellComponent.vue</code
+            >
+            — 每个单元格的 computed、UiTooltip / UiPopover。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/platform/ui/styles/Tables.css</code
+            >
+            — td 33px、nowrap、fixed layout。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/logs/stores/LogsListStore.ts</code
+            >
+            — page 使用 shallowRef；shareLogRows 保留未变行引用。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/logs/logic/LogsPresentationLogic.ts</code
+            >
+            — localLogTime 每行创建 Date/toLocaleString。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/platform/logic/PriceDisplayLogic.ts</code
+            >
+            — formatPrice 每单元格调用 toLocaleString。
+          </li>
+          <li>
+            <code
+              >ui/litellm-dashboard/src/features/logs/support/LogsColumnModels.ts</code
+            >
+            — 默认 12 列，全部可选列打开后 18 列。
+          </li>
+        </ul>
+        <footer>
+          调查与第一阶段实施完成于
+          2026-11-15。基准为本地开发态合成数据；生产读数是登录后一次真实页面观测，行数、总数和耗时随数据量与网络变化。Phase
+          2 的行级 view model 与轻量 tooltip
+          尚未实施；已知基线测试失败与本次表格改动分开记录。
+        </footer>
+      </section>
+    </main>
+  </body>
+</html>

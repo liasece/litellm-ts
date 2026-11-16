@@ -58,6 +58,9 @@ function changeSort(sort: UiTableSort): void {
 		loading-text="🚅 Loading logs..."
 		fixed-layout
 		manual-sort
+		virtual
+		:row-height="33"
+		:overscan="8"
 		:sort-by="sortBy"
 		:sort-order="sortOrder"
 		:min-width="width"
