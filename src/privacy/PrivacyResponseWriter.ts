@@ -11,9 +11,12 @@
  */
 import type { Request, Response } from "express";
 import { StringDecoder } from "node:string_decoder";
+import { createModuleLogger } from "../core/utils/logger";
 import { PlaceholderRestorer } from "./PlaceholderRestorer";
 import { SseRewriter } from "./SseRewriter";
 import type { PrivacyContext } from "./PrivacyContext";
+
+const logger = createModuleLogger("privacy");
 
 /** 写回模式 */
 type WriteMode = "sse" | "document" | "passthrough";
@@ -104,13 +107,14 @@ export function installPrivacyResponseWriter(res: Response, context: PrivacyCont
 	 * @param sample - 首个分片文本
 	 */
 	const resolveMode = (sample: string): WriteMode => {
-		if (!context.hasReplacements) {
-			return "passthrough";
-		}
 		const contentEncoding = String(res.getHeader("content-encoding") ?? "");
 		if (contentEncoding.length > 0 && contentEncoding !== "identity") {
 			return "passthrough";
 		}
+		// SSE 必须先于 hasReplacements 判定：部分协议入口（如 Responses 原生流）会在
+		// 发往上游前就写出 response.created 等首帧，此时 token 表还是空的。若在这里
+		// 锁定 passthrough，整条流都会绕过还原器，占位符直接发给客户端。
+		// 无 token 时还原器本身是恒等函数，按流式处理没有额外代价。
 		const contentType = String(res.getHeader("content-type") ?? "").toLowerCase();
 		if (contentType.includes("text/event-stream")) {
 			return "sse";
@@ -119,6 +123,9 @@ export function installPrivacyResponseWriter(res: Response, context: PrivacyCont
 			return sample.startsWith("data:") || sample.startsWith("event:") ? "sse" : "passthrough";
 		}
 		if (isBinaryContentType(contentType)) {
+			return "passthrough";
+		}
+		if (!context.hasReplacements) {
 			return "passthrough";
 		}
 		documentIsJson = isJsonContentType(contentType);
@@ -140,6 +147,15 @@ export function installPrivacyResponseWriter(res: Response, context: PrivacyCont
 		const text = typeof chunk === "string" ? chunk : isBuffer ? (decoder ??= new StringDecoder("utf8")).write(chunk) : String(chunk);
 		if (mode === null) {
 			mode = resolveMode(text);
+			if (mode === "passthrough" && context.hasReplacements) {
+				// 脱敏已经发生却按透传写回，说明还原器被绕开；保留告警让这类路径可被观测。
+				logger.warn("已脱敏请求的响应未经还原直接透传", {
+					path: (res as unknown as { req?: Request }).req?.path,
+					contentType: String(res.getHeader("content-type") ?? ""),
+					bytes: text.length,
+					frameLike: text.startsWith("data:") || text.startsWith("event:"),
+				});
+			}
 		}
 		if (mode === "passthrough") {
 			return originalWrite(chunk, encoding, callback);
@@ -148,6 +164,10 @@ export function installPrivacyResponseWriter(res: Response, context: PrivacyCont
 			documentBuffer += text;
 			invokeCallback(callback);
 			return true;
+		}
+		if (!context.hasReplacements && !sse.hasPending()) {
+			// 尚无替换时保持原来的直通成本；token 出现在后续分片时再进入逐帧还原。
+			return originalWrite(chunk, encoding, callback);
 		}
 		const output = sse.push(text);
 		if (output.length > 0) {

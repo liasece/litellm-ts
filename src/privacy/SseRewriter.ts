@@ -198,6 +198,12 @@ export class SseRewriter {
 				return this._flushKey(`r:${itemId}:text`);
 			}
 		}
+		if (protocol === "responses" && type === "response.reasoning_text.done") {
+			const itemId = typeof payload["item_id"] === "string" ? payload["item_id"] : "";
+			if (itemId.length > 0) {
+				return this._flushKey(`r:${itemId}:reasoning`);
+			}
+		}
 		void eventName;
 		return "";
 	}
@@ -501,6 +507,20 @@ export class SseRewriter {
 			this._frameBuilders.set(key, (text: string) => this._buildResponsesFrame(payload, text));
 			return true;
 		}
+		if (type === "response.reasoning_text.delta") {
+			const delta = payload["delta"];
+			if (typeof delta !== "string" || delta.length === 0) {
+				return false;
+			}
+			const key = `r:${itemId}:reasoning`;
+			const restored = this._restorer.restoreStreaming(key, delta);
+			if (restored === delta) {
+				return false;
+			}
+			payload["delta"] = restored;
+			this._frameBuilders.set(key, (text: string) => this._buildResponsesFrame(payload, text));
+			return true;
+		}
 		if (type === "response.function_call_arguments.delta") {
 			const delta = payload["delta"];
 			if (typeof delta !== "string" || delta.length === 0) {
@@ -526,6 +546,17 @@ export class SseRewriter {
 			}
 			payload["delta"] = restored;
 			return true;
+		}
+		if (type === "response.reasoning_text.done") {
+			const value = payload["text"];
+			if (typeof value !== "string" || value.length === 0) {
+				return false;
+			}
+			const key = `r:${itemId}:reasoning`;
+			const carry = this._restorer.takePending(key);
+			const restored = this._restorer.restoreDocument(`${carry}${value}`);
+			payload["text"] = restored;
+			return restored !== value;
 		}
 		if (type === "response.output_text.done" || type === "response.function_call_arguments.done") {
 			const field = type === "response.output_text.done" ? "text" : "arguments";
@@ -556,6 +587,15 @@ export class SseRewriter {
 			const before = JSON.stringify(response);
 			payload["response"] = this._restorer.restoreDeep(response);
 			return JSON.stringify(payload["response"]) !== before;
+		}
+		if (type === "response.content_part.added" || type === "response.content_part.done") {
+			const part = asRecord(payload["part"]);
+			if (part === null) {
+				return false;
+			}
+			const before = JSON.stringify(part);
+			payload["part"] = this._restorer.restoreDeep(part);
+			return JSON.stringify(payload["part"]) !== before;
 		}
 		if (type === "response.reasoning_summary_part.added" || type === "response.reasoning_summary_text.done") {
 			const part = asRecord(payload["part"]);

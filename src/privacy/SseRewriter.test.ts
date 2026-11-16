@@ -146,3 +146,48 @@ describe("SseRewriter", () => {
 		expect(rewriter.finish()).toBe("data: ");
 	});
 });
+
+describe("SseRewriter Responses 推理正文", () => {
+	/**
+	 * 拼出增量帧文本。
+	 * @param items - 增量片段
+	 */
+	function joinDeltas(items: string[]): string {
+		let joined = "";
+		for (const item of items) {
+			for (const line of item.split("\n")) {
+				if (!line.startsWith("data: ")) {
+					continue;
+				}
+				const payload = JSON.parse(line.slice(6)) as { delta?: string; text?: string };
+				joined += payload.delta ?? payload.text ?? "";
+			}
+		}
+		return joined;
+	}
+
+	it("还原推理正文增量与终态文本", () => {
+		const rewriter = makeRewriter();
+		const cut = Math.floor(TOKEN.length / 2);
+		const frame = (payload: Record<string, unknown>) => `event: ${String(payload["type"])}\ndata: ${JSON.stringify(payload)}\n\n`;
+		const output = [
+			rewriter.push(frame({ type: "response.reasoning_text.delta", item_id: "reasoning_0", delta: `key ${TOKEN.slice(0, cut)}` })),
+			rewriter.push(frame({ type: "response.reasoning_text.delta", item_id: "reasoning_0", delta: TOKEN.slice(cut) })),
+			rewriter.push(frame({ type: "response.reasoning_text.done", item_id: "reasoning_0", text: `key ${TOKEN}` })),
+			rewriter.finish(),
+		].join("");
+
+		const restored = joinDeltas([output]);
+		expect(restored).toContain(API_KEY);
+		expect(restored).not.toContain(TOKEN);
+	});
+
+	it("还原 content_part 里的推理文本", () => {
+		const rewriter = makeRewriter();
+		const payload = { type: "response.content_part.done", item_id: "reasoning_0", part: { type: "reasoning_text", text: `key ${TOKEN}` } };
+		const output = rewriter.push(`event: response.content_part.done\ndata: ${JSON.stringify(payload)}\n\n`) + rewriter.finish();
+
+		expect(output).toContain(API_KEY);
+		expect(output).not.toContain(TOKEN);
+	});
+});

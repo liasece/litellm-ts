@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Responses 流式占位符泄漏：根因、修复与线上核验</title>
+<style>
+	:root {
+		--bg: #f6f7f9;
+		--card: #ffffff;
+		--ink: #1c2430;
+		--muted: #5b6776;
+		--line: #e3e7ed;
+		--accent: #2f6fed;
+		--ok: #1f8a4c;
+		--bad: #c0392b;
+		--warn: #b26a00;
+		--mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+	}
+	* { box-sizing: border-box; }
+	body {
+		margin: 0;
+		background: var(--bg);
+		color: var(--ink);
+		font: 15px/1.7 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+	}
+	main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 72px; }
+	h1 { font-size: 28px; line-height: 1.3; margin: 0 0 8px; letter-spacing: -0.01em; }
+	h2 { font-size: 20px; margin: 40px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+	h3 { font-size: 16px; margin: 24px 0 8px; }
+	p { margin: 0 0 12px; }
+	.sub { color: var(--muted); margin-bottom: 24px; }
+	.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin: 16px 0; }
+	.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+	.kpi { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; }
+	.kpi.bad { color: var(--bad); }
+	.kpi.ok { color: var(--ok); }
+	.label { color: var(--muted); font-size: 13px; }
+	table { width: 100%; border-collapse: collapse; font-size: 14px; }
+	th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+	th { color: var(--muted); font-weight: 600; background: #fafbfc; }
+	tr:last-child td { border-bottom: none; }
+	code, .mono { font-family: var(--mono); font-size: 13px; background: #f1f3f6; padding: 1px 5px; border-radius: 4px; }
+	pre {
+		font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+		background: #0f1722; color: #dbe4ef; padding: 14px 16px; border-radius: 10px;
+		overflow-x: auto; margin: 10px 0 16px;
+	}
+	pre .bad { color: #ff8d80; }
+	pre .ok { color: #7ee2a8; }
+	pre .dim { color: #7c8ea3; }
+	.badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+	.badge.bad { background: #fdecea; color: var(--bad); }
+	.badge.ok { background: #e8f6ee; color: var(--ok); }
+	.badge.warn { background: #fdf3e3; color: var(--warn); }
+	.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 4px; font-size: 13px; }
+	.flow .box { border: 1px solid var(--line); background: #fbfcfe; border-radius: 8px; padding: 8px 10px; }
+	.flow .arrow { color: var(--muted); }
+	.flow .box.hit { border-color: #f0b6ae; background: #fdf0ee; }
+	.note { border-left: 3px solid var(--accent); background: #f2f6ff; padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+	.small { font-size: 13px; color: var(--muted); }
+	ul { margin: 6px 0 12px; padding-left: 22px; }
+	li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+	<h1>Responses 流式占位符泄漏：根因、修复与线上核验</h1>
+	<p class="sub">litellm-ts 隐私脱敏 · opencode-go /v1/responses 流式路径 · 2026-11-15</p>
+
+	<div class="grid">
+		<div class="card">
+			<div class="label">修复前</div>
+			<div class="kpi bad">占位符直发客户端</div>
+			<p class="small">客户端历史里出现 <code>ssh {{EMAIL_2wgytxs6}}</code>，Agent 执行后 <code>hostname contains invalid characters</code>。</p>
+		</div>
+		<div class="card">
+			<div class="label">修复后</div>
+			<div class="kpi ok">全帧还原</div>
+			<p class="small">同路径探针中正文、推理、内容分片、终态汇总均无占位符，客户端拿回原文。</p>
+		</div>
+		<div class="card">
+			<div class="label">可观测性</div>
+			<div class="kpi ok">0 → 8</div>
+			<p class="small">未知占位符现在会计入「未还原」；修复前该路径恒为 0，故障不可见。</p>
+		</div>
+	</div>
+
+	<h2>现象与影响链</h2>
+	<p>11-15 03:59–04:01Z，模型组 <code>commandcode/deepseek/deepseek-v4.1-flash</code> 经 opencode-go 走 <code>aresponses</code> 流式：上游只看到占位符，模型把占位符原样写进工具参数，网关没有换回原文，Agent 拿到 <code>ssh {{EMAIL_2wgytxs6}} …</code> 并实际执行，ssh 把主机名判为非法。</p>
+	<div class="flow">
+		<span class="box">请求体</span><span class="arrow">→</span>
+		<span class="box">调度点脱敏<br><span class="small">明文 → 占位符</span></span><span class="arrow">→</span>
+		<span class="box">opencode-go<br>原生 Responses 流</span><span class="arrow">→</span>
+		<span class="box hit">响应写入器<br><span class="small">模式锁定为 passthrough</span></span><span class="arrow">→</span>
+		<span class="box hit">客户端拿到占位符<br><span class="small">unresolved = 0</span></span>
+	</div>
+	<p class="small">统计只记录「看到了占位符但查不到原文」；整条流没进还原器时，这个计数不会增长，所以监控此前完全无感。</p>
+
+	<h2>根因</h2>
+	<div class="card">
+		<p><code>PrivacyResponseWriter</code> 在<strong>第一次</strong> <code>res.write</code> 时解析一次模式并锁定整条响应。原判定顺序是：只要 <code>context.hasReplacements</code> 为 false 就返回 <code>passthrough</code>。</p>
+		<p>Responses 协议入口会在发往上游之前先写出 <code>response.created</code> / <code>response.in_progress</code> 等首帧；此刻请求体还没脱敏，token 表为空。首帧把模式锁成 passthrough 后，后续所有帧（包括已含 token 的正文）都原样写回，还原器从未运行。</p>
+		<p>修复前探针捕获到的帧（<code>{{EMAIL_ossjvd5w}}</code> 正是该请求自己的映射）：</p>
+		<pre><span class="dim">event: response.output_text.done</span>
+data: {"type":"response.output_text.done", …, "text":"ssh root@<span class="bad">{{EMAIL_ossjvd5w}}</span> 'echo ok'"}</pre>
+		<p>另一处独立缺口：Responses 的推理正文（<code>response.reasoning_text.delta/.done</code>）与内容分片（<code>response.content_part.*</code>）不在改写范围内，即使模式正确，思考过程里仍会残留 token。</p>
+	</div>
+
+	<h2>修复</h2>
+	<table>
+		<tr><th style="width:26%">位置</th><th>改动</th><th style="width:30%">原因</th></tr>
+		<tr>
+			<td><code>PrivacyResponseWriter.resolveMode</code></td>
+			<td>SSE 判定提前到 <code>hasReplacements</code> 之前；无替换时 SSE 分片仍原样直通以保持成本；非 SSE 保持原逻辑。</td>
+			<td>首帧可能早于脱敏完成；模式不能按「此刻有没有替换」锁定。</td>
+		</tr>
+		<tr>
+			<td><code>SseRewriter._rewriteResponses</code></td>
+			<td>新增 <code>reasoning_text.delta/.done</code> 与 <code>content_part.added/.done</code> 的还原；<code>reasoning_text.done</code> 前补发 carry。</td>
+			<td>推理与分片同样是客户端可见内容，且会被部分客户端写回历史。</td>
+		</tr>
+		<tr>
+			<td><code>PrivacyResponseWriter</code> 告警</td>
+			<td>已脱敏却解析成 passthrough 时记录一条 <code>warn</code>（只带路径、内容类型、字节数）。</td>
+			<td>同类回归不再静默。</td>
+		</tr>
+		<tr>
+			<td>测试与文档</td>
+			<td>新增 5 个写入器测试（首帧早于脱敏、跨帧切开、未知 token、gzip 透传、直通成本）与 2 个推理还原测试；更新 <code>docs/privacy-redaction.md</code>。</td>
+			<td>锁定「SSE 不依赖替换状态」这一契约。</td>
+		</tr>
+	</table>
+
+	<h2>线上核验</h2>
+	<h3>探针矩阵（生产 127.0.0.1:4000，合成邮箱）</h3>
+	<table>
+		<tr><th>场景</th><th>修复前</th><th>修复后</th></tr>
+		<tr><td>responses 流式 · opencode-go</td><td><span class="badge bad">拿到占位符</span> unresolved 0</td><td><span class="badge ok">原文</span> 所有帧 0 个 token</td></tr>
+		<tr><td>responses 流式 · 模型组 commandcode/deepseek/deepseek-v4.1-flash</td><td><span class="badge bad">拿到占位符</span></td><td><span class="badge ok">原文</span></td></tr>
+		<tr><td>chat 流式 · opencode-go</td><td><span class="badge ok">正常</span></td><td><span class="badge ok">原文</span></td></tr>
+		<tr><td>responses 非流式 · opencode-go</td><td><span class="badge ok">正常</span></td><td><span class="badge ok">原文</span></td></tr>
+		<tr><td>响应中回显未知占位符 <code>{{EMAIL_zzzzzzzz}}</code></td><td><span class="badge bad">不计入、不可见</span></td><td><span class="badge warn">计入未还原 = 8</span></td></tr>
+	</table>
+
+	<h3>修复后的 SSE 帧分布</h3>
+	<pre>response.created           0 token
+response.reasoning_text.*  0 token   <span class="ok">← 修复前会残留</span>
+response.output_text.*    0 token
+response.content_part.*    0 token   <span class="ok">← 修复前会残留</span>
+response.completed         0 token
+
+data: {…,"text":"ssh root@<span class="ok">probe-m4x8q@probe-mail.com</span> 'echo ok'"}</pre>
+
+	<h3>统计与部署</h3>
+	<table>
+		<tr><th>项目</th><th>结果</th></tr>
+		<tr><td>脱敏事件（三个对照探针）</td><td>occurrences 1，<strong>unresolved 0</strong>，provider opencode-go</td></tr>
+		<tr><td>未知占位符探针</td><td>unresolved 8（正文 + 推理 + 分片 + 终态），说明计数已覆盖该路径</td></tr>
+		<tr><td>容器</td><td>running / healthy，restarts 0，OOM false，镜像 <code>sha256:0fc5caa9…</code></td></tr>
+		<tr><td>部署日志</td><td>数据库预检 ok、迁移 ok、健康检查 6s 通过；无隐私告警、无 error</td></tr>
+		<tr><td>外部入口</td><td><code>/health/liveliness</code> 200，<code>/ui/?page=logs</code> 200</td></tr>
+		<tr><td>门禁</td><td>privacy Jest 103 项、typecheck、test:types、lint、<code>git diff --check</code> 全过</td></tr>
+	</table>
+
+	<h2>遗留问题</h2>
+	<div class="note">
+		<p><strong>历史会话里的占位符无法还原。</strong>映射表只在单个请求的内存里存在，从不落库；泄漏期间写进客户端历史的 <code>{{EMAIL_2wgytxs6}}</code> 没有反向表可查。修复后这些请求会以「未还原」计数暴露出来（部署后窗口内已看到若干真实流量 <code>unresolved 2–4</code>），但网关无法替客户端还原。</p>
+	</div>
+	<ul>
+		<li>受影响的 Agent 会话需要人工清理：把历史里的 <code>ssh {{EMAIL_…}}</code> 等改回真实值，或直接开新会话。</li>
+		<li>可选加固（需另行确认）：请求体里出现「形如占位符但不在本次映射」的文本时，是否统一替换成中性占位（如 <code>[REDACTED_EMAIL]</code>），避免模型把模板当变量回显。</li>
+		<li>监控口径：<code>unresolved &gt; 0</code> 现在能反映真实未还原；但仍无法区分「历史残留」与「本请求异常」，后续可在事件里拆分来源。</li>
+	</ul>
+
+	<h2>证据摘要</h2>
+	<pre><span class="dim"># 修复前：客户端字节</span>
+{"type":"response.output_text.delta", … "delta":" root@<span class="bad">{{EMAIL</span>"}
+{"type":"response.output_text.done",  … "text":"ssh root@<span class="bad">{{EMAIL_ossjvd5w}}</span> 'echo ok'"}
+
+<span class="dim"># 修复前：事件行</span>
+request_id 6365b573-…  kinds {"EMAIL":1}  occurrences 1  <span class="bad">unresolved 0</span>  provider opencode-go
+
+<span class="dim"># 修复后：未知占位符探针的事件行</span>
+request_id 3d6eed60-…  occurrences 1  <span class="ok">unresolved 8</span>  provider opencode-go</pre>
+	<p class="small">探针均使用合成邮箱（<code>@probe-mail.com</code>）与容器内临时脚本；未输出任何凭据。</p>
+</main>
+</body>
+</html>
