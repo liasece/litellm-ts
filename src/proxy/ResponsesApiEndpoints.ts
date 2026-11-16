@@ -33,7 +33,7 @@ import {
 	releaseSpend,
 } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
-import { NativeResponsesAccumulator, isRecord } from "./NativeResponsesAccumulator";
+import { NativeResponsesAccumulator, hasNativeResponsesContent, isRecord } from "./NativeResponsesAccumulator";
 import { StreamingCheckpointScheduler } from "../spend/StreamingCheckpointScheduler";
 import { bindLiveCheckpoint } from "../spend/LiveCheckpointBinding";
 import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler";
@@ -1382,8 +1382,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		toolRegistry: toolRegistry,
 	};
 	let capabilitySseStarted = false;
-	let capabilityFirstChunkAt: Date | undefined;
-	let capabilityVisibleDeltas = false;
 	let streamResult: Record<string, unknown>;
 	try {
 		const capabilityMessages = messages as unknown as Array<Record<string, unknown>>;
@@ -1486,8 +1484,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 							if (chunk === undefined) {
 								continue;
 							}
-							capabilityFirstChunkAt ??= markFirstContentFrame(req);
-							capabilityVisibleDeltas = true;
 							consumeChatStreamChunk(chunk, state, res);
 						}
 						const bufferedSnapshot = bufferedAccumulator.snapshot();
@@ -1514,8 +1510,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 							if (chunk === undefined) {
 								continue;
 							}
-							capabilityFirstChunkAt ??= markFirstContentFrame(req);
-							capabilityVisibleDeltas = true;
 							consumeChatStreamChunk(chunk, state, res);
 						}
 					}
@@ -1534,8 +1528,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				}
 				const accumulator: ChatStreamAccumulator = { choices: new Map(), estimatedCompletionTokens: 0 };
 				for await (const chunk of upstreamStream as AsyncIterable<unknown>) {
-					capabilityFirstChunkAt ??= markFirstContentFrame(req);
-					capabilityVisibleDeltas = true;
 					consumeChatStreamChunk(stripPrivateToolDeltas(chunk), state, res);
 					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
 				}
@@ -1572,6 +1564,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				delete finalResult["_builtinImageCaption"];
 			}
 			const finalChoice = (finalResult as unknown as ModelResponse).choices?.[0];
+			const capabilityVisibleDeltas = state.messageItem !== undefined || state.reasoningItem !== undefined;
 			if (finalChoice?.message && context.imageHistory) {
 				const publicMessage = {
 					...finalChoice.message,
@@ -1611,7 +1604,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				requestBody: requestBody,
 				startTime: startTime,
 				response: failureBody,
-				completionStartTime: capabilityFirstChunkAt,
 				error: error,
 				upstreamLogContext: getUpstreamLogContext(error),
 				status: SpendLogStatus.Failure,
@@ -1712,7 +1704,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 		}
 	};
 	res.once("close", onClose);
-	let firstChunkAt: Date | undefined;
 	let terminalError: unknown;
 	try {
 		while (true) {
@@ -1720,7 +1711,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			if (current.done) {
 				break;
 			}
-			firstChunkAt ??= markFirstContentFrame(req);
 			consumeChatStreamChunk(current.value, state, res);
 			streamingCheckpointScheduler?.onChunk();
 		}
@@ -1751,9 +1741,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				model: model,
 				requestBody: requestBody,
 				startTime: startTime,
-				// 能力分支已经把真实上游增量边收边发，capabilityFirstChunkAt 才是用户看到首字的时刻；
-				// 收尾时下游读到的是事后合成流，它的 firstChunkAt 会晚到总耗时末尾。
-				completionStartTime: capabilityFirstChunkAt ?? firstChunkAt,
 				response: loggedCompleted,
 				usage: state.usage as unknown as Record<string, unknown> | undefined,
 				spendInfo: spendInfo,
@@ -1782,7 +1769,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 				model: model,
 				requestBody: requestBody,
 				startTime: startTime,
-				completionStartTime: firstChunkAt,
 				response: buildStreamResponse(state, requestBody, "failed", {
 					code: errorCode,
 					message: errorMessage(error),
@@ -1804,24 +1790,6 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			res.end();
 		}
 	}
-}
-
-/** 原生 Responses 的语义增量事件：只有这些 type 才能反映「模型开始产出内容」。 */
-const NATIVE_RESPONSES_CONTENT_DELTA_TYPES = new Set<string>([
-	"response.output_text.delta",
-	"response.reasoning_text.delta",
-	"response.reasoning_summary_text.delta",
-	"response.refusal.delta",
-	"response.function_call_arguments.delta",
-	"response.custom_tool_call_input.delta",
-]);
-
-/**
- * 判断原生 Responses 事件是否是承载模型产出的增量事件。
- * @param type
- */
-function isNativeResponsesContentDelta(type: string): boolean {
-	return NATIVE_RESPONSES_CONTENT_DELTA_TYPES.has(type);
 }
 
 async function relayNativeResponsesStream(
@@ -1923,9 +1891,6 @@ async function relayNativeResponsesStream(
 						? structuredClone(upstreamEvent["response"] as Record<string, unknown>)
 						: undefined;
 			}
-			if (firstSemanticDeltaAt === undefined && isNativeResponsesContentDelta(type)) {
-				firstSemanticDeltaAt = markFirstContentFrame(req);
-			}
 			restoreNativeResponsesPayload(event, requestBody, toolRegistry);
 			if (typeof event["sequence_number"] === "number") {
 				lastSequence = Math.max(lastSequence, event["sequence_number"] as number);
@@ -1933,6 +1898,9 @@ async function relayNativeResponsesStream(
 			// TTFT 终点取「首个语义增量写回下游」的时刻：response.created 等包络事件由本端
 			// 立即转发，把它算作首字会让每次请求的 TTFT 都接近 0，反而掩盖真实的首字延迟。
 			res.write(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`);
+			if (firstSemanticDeltaAt === undefined && hasNativeResponsesContent(event)) {
+				firstSemanticDeltaAt = markFirstContentFrame(req);
+			}
 			nativeAccumulator.accumulate(event);
 			streamingCheckpointScheduler?.onChunk();
 			if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") {
@@ -1974,7 +1942,7 @@ async function relayNativeResponsesStream(
 				usage: usage,
 				spendInfo: spendInfo,
 				error: terminalError,
-				completionStartTime: firstSemanticDeltaAt,
+				completionStartTime: firstSemanticDeltaAt ?? null,
 				upstreamLogContext: withUpstreamResponseBody(getUpstreamLogContext(streamResult), upstreamTerminalResponse),
 				status: terminalType === "response.failed" ? SpendLogStatus.Failure : SpendLogStatus.Success,
 				...getResultModelResolutionMetadata(streamResult),
@@ -2015,7 +1983,7 @@ async function relayNativeResponsesStream(
 				requestBody: requestBody,
 				startTime: startTime,
 				error: error,
-				completionStartTime: firstSemanticDeltaAt,
+				completionStartTime: firstSemanticDeltaAt ?? null,
 				upstreamLogContext: getUpstreamLogContext(streamResult),
 				status: status,
 				...getResultModelResolutionMetadata(streamResult),
@@ -2524,10 +2492,15 @@ function buildStreamResponse(
 }
 
 function writeEvent(res: Response, state: ResponsesStreamState, type: string, payload: Record<string, unknown>): void {
-	if (state.terminalSent || res.writableEnded) {
+	if (state.terminalSent || res.writableEnded || res.destroyed) {
 		return;
 	}
-	res.write(`event: ${type}\ndata: ${JSON.stringify({ type: type, sequence_number: state.sequence++, ...payload })}\n\n`);
+	const event = { type: type, sequence_number: state.sequence++, ...payload };
+	res.write(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`);
+	// Conversion can consume private tools, usage and role chunks without delivering any content.
+	if (res.req.litellmFirstContentFrameAt === undefined && hasNativeResponsesContent(event)) {
+		markFirstContentFrame(res.req);
+	}
 }
 
 function writeTerminalEvent(
@@ -2560,7 +2533,7 @@ async function recordSpend(
 		attemptedRetries?: number;
 		error?: unknown;
 		upstreamLogContext?: UpstreamLogContext;
-		completionStartTime?: Date;
+		completionStartTime?: Date | null;
 		status: SpendLogStatus;
 	},
 ): Promise<void> {

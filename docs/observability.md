@@ -165,13 +165,13 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 - **首字口径**：`llm.ttfb_ms` 取「上游开始输出」的时刻，而不是客户端的第一个字节。原因见线上实测——`/responses` 会在
   调用上游前先给客户端写 4KB 填充帧与本地合成事件（约 150ms 到达），而上游真正开始产出在 3s 左右；若按第一个字节算首字，
   会把 3s 的模型等待读成 150ms。想区分两者就看 `llm.first_byte_ms` 与 `llm.ttfb_ms` 的差。
-- **Dashboard 的 TTFT 与上面的首字口径不同**：日志列表/详情的「TTFT (s)」来自 SpendLog 的
-  `completionStartTime - startTime`。起点是请求到达代理的时刻（含请求体解析、鉴权、运行时配置与费用预留），
-  终点是首个内容帧真正写回下游的时刻；本地包的 SSE 前言（keep-alive、`response.created` 等）不算首字。
-  非流式请求一次性返回，该值等于端到端耗时。因此 Dashboard TTFT 通常比 `llm.ttfb_ms` 多出本地预开销，
-  两者的差可对照请求的 `pre_upstream_ms`。首个内容帧一旦确定就立即补写进 `LiteLLM_ActiveRequests`，
-  整条流还没结束时日志列表（`include_active=true`）与详情已能读到同一个 TTFT；最终 SpendLog 复用同一时间戳，
-  「进行中」与「落账后」不会跳变。
+- **Dashboard 的 TTFT** 是从请求到达代理（WebSocket 按每轮请求起算）到代理首次向客户端写出内容的时间：
+  `completionStartTime - startTime`。它与 `llm.ttfb_ms` 的区别在终点：上游已开始输出，不代表客户端已收到内容。
+  正文、思考和公开工具调用都可以是首个输出；心跳、协议开始事件、空增量、用量和仅在网关内部执行的工具不算。
+  Messages 启用内置工具时也逐步下发公开内容。仅发送用量的空流或在首个输出前失败的请求没有 TTFT；
+  已经发出内容后再失败则保留首次写出的时间。非流式成功请求一次交付整份结果，TTFT 可以与总耗时相同。
+  对登记了在途行的请求，首次交付即更新 `LiteLLM_ActiveRequests`；进行中的日志列表（`include_active=true`）
+  和最终 SpendLog 读取同一次观测。历史行里缺失的首帧时间无法由结束时间反推。
 - **内置能力没有 TTFT**：内置 web / vision / image_generation 的内部子请求是本地发起的非流式调用，
   观测不到「首个 token 写回下游」的时刻，其 SpendLog 只记请求时长（`endTime - startTime`），
   `completionStartTime` 落 NULL，日志列表与详情的 TTFT 显示 `-`。直连工具（DeepSeek Search / Fetch）

@@ -3,6 +3,7 @@ import { MiniMaxProvider } from "../providers/MiniMaxProvider";
 import request from "supertest";
 import { registerChatCompletionsRoutes } from "./ChatCompletionsEndpoint";
 import { requestArrivalMiddleware } from "../core/api/RequestArrival";
+import * as WebCapability from "../capabilities/WebCapability";
 import * as SpendTracker from "../spend/SpendTracker";
 import { SpendLogStatus } from "../types/spend";
 
@@ -23,6 +24,7 @@ function buildApp(
 		model_info: { id: "dep-1" },
 	};
 	const router = {
+		completion: jest.fn(),
 		getAvailableDeployment: jest.fn().mockReturnValue({ deployment: deployment, provider: provider }),
 		resolveModelGroupWithTrace: jest.fn((model: string) => ({
 			inputModel: model,
@@ -651,31 +653,64 @@ describe("Dashboard TTFT 口径", () => {
 		expect(new Date(log.completionStartTime).getTime()).toBeLessThanOrEqual(new Date(log.endTime).getTime());
 	});
 
-	it("首个内容帧写出时立即把 TTFT 补写在途行，且与最终日志同一时刻", async () => {
-		let afterIgnoredChunk = 0;
+	it.each([
+		["正文", { content: "hello" }],
+		["思考", { reasoning_content: "thinking" }],
+		["拒绝", { refusal: "declined" }],
+		["工具", { tool_calls: [{ index: 0, id: "call", function: { name: "lookup", arguments: "" } }] }],
+	])("首个%s增量出现时补写在途 TTFT，保留已经写出的角色和用量帧", async (_kind, delta) => {
 		const markCompletionStart = jest.fn();
+		let marksBeforeContent = -1;
+		let marksAfterContent = -1;
 		const provider = baseProvider({
 			streamResponse: async function* () {
-				// 只有 usage 的 chunk 不写回下游，上游刚吐出它时客户端还没有首字。
+				yield { id: "in-flight", choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] };
 				yield { id: "in-flight", object: "chat.completion.chunk", choices: [], usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 } };
-				afterIgnoredChunk = Date.now();
-				await new Promise((resolve) => setTimeout(resolve, 30));
-				yield { id: "in-flight", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }] };
+				marksBeforeContent = markCompletionStart.mock.calls.length;
+				yield { id: "in-flight", choices: [{ index: 0, delta: delta, finish_reason: null }] };
+				marksAfterContent = markCompletionStart.mock.calls.length;
+				yield { id: "in-flight", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
 			},
 		});
 		const { app } = buildApp(provider, jest.fn().mockReturnValue(null), {
 			journal: { observeUpstream: () => false, markCompletionStart: markCompletionStart, flush: async () => undefined },
 		});
-		await request(app)
+		const response = await request(app)
 			.post("/v1/chat/completions")
-			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true })
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true, stream_options: { include_usage: true } })
 			.expect(200);
+		expect(response.text).toContain('"role":"assistant"');
+		expect(response.text).toContain('"total_tokens":1');
+		expect(marksBeforeContent).toBe(0);
+		expect(marksAfterContent).toBe(1);
 		const log = spendSpy.mock.calls[0]?.[1] as unknown as { completionStartTime: string };
-		// 修复前补写挂在上游首个 chunk 上：这里的 usage-only chunk 会让在途行提前出现 TTFT。
 		expect(markCompletionStart).toHaveBeenCalledTimes(1);
 		const persistedAt = markCompletionStart.mock.calls[0]?.[0] as Date;
-		expect(persistedAt.getTime()).toBeGreaterThanOrEqual(afterIgnoredChunk + 20);
-		// 在途行与最终日志必须复用同一时刻，否则「进行中」与「落账后」的 TTFT 会跳变。
 		expect(persistedAt.toISOString()).toBe(log.completionStartTime);
+	});
+
+	it("内置能力轮次只有角色、用量和终止帧时保留空 TTFT", async () => {
+		jest.spyOn(WebCapability, "prepareOpenAIWebRequest").mockResolvedValue({
+			messages: [{ role: "user", content: "hi" }],
+			binding: { executors: [], maxIterations: 1, maxOutputTokens: 10 },
+		});
+		const markCompletionStart = jest.fn();
+		const { app, router } = buildApp(baseProvider(), jest.fn(), {
+			journal: { observeUpstream: () => false, markCompletionStart: markCompletionStart, flush: async () => undefined },
+		});
+		router.completion.mockResolvedValue({
+			stream: (async function* () {
+				yield { id: "no-output", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: "stop" }] };
+				yield { id: "no-output", choices: [], usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 } };
+			})(),
+		});
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true, stream_options: { include_usage: true } })
+			.expect(200);
+		expect(response.text).toContain("data: [DONE]");
+		expect(response.text).toContain('"finish_reason":"stop"');
+		expect(markCompletionStart).not.toHaveBeenCalled();
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ status: SpendLogStatus.Success, total_tokens: 1, completionStartTime: null });
 	});
 });

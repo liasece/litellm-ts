@@ -1021,6 +1021,13 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
 	const metadata = buildSpendLogsMetadata(ctx);
 	const requestDurationMs = Math.max(0, ctx.endTime.getTime() - ctx.startTime.getTime());
+	// Only a successful one-shot response can use completion as its first delivery.
+	// Failures and empty streams keep NULL; a failure after output keeps the observed first frame.
+	const completionStartTime =
+		ctx.completionStartTime !== undefined
+			? ctx.completionStartTime
+			: (ctx.req.litellmFirstContentFrameAt ??
+				(status === SpendLogStatus.Success && ctx.req.body?.stream !== true ? ctx.endTime : null));
 	const downstreamResponse = ctx.response ?? (ctx.error ? mapToApiError(ctx.error).toErrorBody() : undefined);
 	return {
 		request_id: ctx.requestId ?? randomUUID(),
@@ -1033,8 +1040,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		completion_tokens: usage?.completion_tokens ?? 0,
 		startTime: ctx.startTime.toISOString(),
 		endTime: ctx.endTime.toISOString(),
-		completionStartTime:
-			ctx.completionStartTime === null ? null : (ctx.completionStartTime ?? ctx.endTime).toISOString(),
+		completionStartTime: completionStartTime?.toISOString() ?? null,
 		// model 记录实际执行模型，model_group 记录客户端请求的公开名称。
 		model: reconstructModelName(
 			ctx.model,
@@ -2042,12 +2048,7 @@ async function trackSpendLogMeasured(
 		completion_tokens: completionTokens,
 		startTime: requestStartTime,
 		endTime: requestEndTime,
-		completionStartTime:
-			logEntry.completionStartTime === null
-				? null
-				: logEntry.completionStartTime
-					? new Date(logEntry.completionStartTime)
-					: requestEndTime,
+		completionStartTime: logEntry.completionStartTime ? new Date(logEntry.completionStartTime) : null,
 		model: logEntry.model || "",
 		model_group: logEntry.model_group || "",
 		model_id: logEntry.model_id ?? null,

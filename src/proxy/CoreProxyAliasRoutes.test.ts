@@ -328,9 +328,16 @@ describe("core proxy alias routes", () => {
 			});
 		});
 
-		it("Completions streams provider chunks and records final usage", async () => {
+		it("Completions records the first non-empty text and the final usage independently", async () => {
+			let beforeText = 0;
+			let afterText = 0;
 			async function* stream() {
+				yield { id: "cmpl-stream", choices: [{ text: "" }] };
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				beforeText = Date.now();
 				yield { id: "cmpl-stream", choices: [{ text: "hello" }] };
+				afterText = Date.now();
+				await new Promise((resolve) => setTimeout(resolve, 20));
 				yield { id: "cmpl-stream", choices: [], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } };
 			}
 			const completion = jest.fn().mockResolvedValue({ _stream: true, stream: stream() });
@@ -346,7 +353,12 @@ describe("core proxy alias routes", () => {
 			expect(response.text).toContain('data: {"id":"cmpl-stream","choices":[{"text":"hello"}]}');
 			expect(response.text).toContain("data: [DONE]");
 			expect(spendSpy).toHaveBeenCalledTimes(1);
-			expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			const log = spendSpy.mock.calls[0]?.[1];
+			const firstAt = Date.parse(log.completionStartTime);
+			expect(firstAt).toBeGreaterThanOrEqual(beforeText);
+			expect(firstAt).toBeLessThanOrEqual(afterText);
+			expect(firstAt).toBeLessThan(Date.parse(log.endTime));
+			expect(log).toMatchObject({
 				status: "success",
 				prompt_tokens: 2,
 				completion_tokens: 1,

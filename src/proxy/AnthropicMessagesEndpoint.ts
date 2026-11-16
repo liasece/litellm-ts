@@ -7,6 +7,7 @@ import { noteUpstreamFirstChunk } from "../observability/RequestTrace";
 import { projectDeepSeekClaudeCodePrefix } from "../providers/DeepSeekAnthropicCache";
 import { normalizeAnthropicThinking } from "../providers/AnthropicThinkingCompatibility";
 import { startSseKeepalive } from "./SseKeepalive";
+import { AnthropicCapabilityStream, hasAnthropicContent } from "./AnthropicCapabilityStream";
 /**
  * Anthropic Messages API 原生端点
  *
@@ -524,101 +525,6 @@ export function formatAnthropicPingEvent(): string {
 }
 
 /**
- * Convert a completed native Anthropic response into protocol-valid SSE.
- * Generated images are carried as a public extension on message_start so a
- * streaming client receives the same result as a non-streaming client.
- * @param res - Express response receiving SSE frames
- * @param response - Completed Anthropic response to serialize
- * @param requestedModel - Public logical model name
- * @returns Accumulated standard Anthropic message state for spend logging
- */
-export function writeBufferedAnthropicResponseAsStream(
-	res: Response,
-	response: Record<string, unknown>,
-	requestedModel: string,
-): NativeStreamAccumulator {
-	const accumulator: NativeStreamAccumulator = { content: new Map(), toolInputJson: new Map(), usage: {} };
-	const syntheticId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-	const usage = (response["usage"] as Record<string, unknown> | undefined) ?? {};
-	const generatedImages = Array.isArray(response["generated_images"])
-		? (response["generated_images"] as Array<Record<string, unknown>>)
-		: [];
-	const emit = (payload: Record<string, unknown>): void => {
-		accumulateNativeStreamEvent(accumulator, payload);
-		res.write(formatSSE(String(payload["type"] ?? "message"), JSON.stringify(payload)));
-	};
-	emit({
-		type: "message_start",
-		message: {
-			id: syntheticId,
-			type: "message",
-			role: "assistant",
-			model: requestedModel,
-			content: [],
-			...(generatedImages.length > 0 ? { generated_images: generatedImages } : {}),
-			stop_reason: null,
-			stop_sequence: null,
-			usage: {
-				input_tokens: numberValue(usage["input_tokens"]),
-				cache_creation_input_tokens: numberValue(usage["cache_creation_input_tokens"]),
-				cache_read_input_tokens: numberValue(usage["cache_read_input_tokens"]),
-				output_tokens: 0,
-			},
-		},
-	});
-	const content = Array.isArray(response["content"]) ? (response["content"] as Array<Record<string, unknown>>) : [];
-	for (const [index, block] of content.entries()) {
-		const type = block["type"];
-		if (type === "text") {
-			emit({ type: "content_block_start", index: index, content_block: { type: "text", text: "" } });
-			emit({ type: "content_block_delta", index: index, delta: { type: "text_delta", text: String(block["text"] ?? "") } });
-		} else if (type === "thinking") {
-			emit({ type: "content_block_start", index: index, content_block: { type: "thinking", thinking: "", signature: "" } });
-			emit({
-				type: "content_block_delta",
-				index: index,
-				delta: { type: "thinking_delta", thinking: String(block["thinking"] ?? "") },
-			});
-			if (typeof block["signature"] === "string" && block["signature"]) {
-				emit({
-					type: "content_block_delta",
-					index: index,
-					delta: { type: "signature_delta", signature: block["signature"] },
-				});
-			}
-		} else if (type === "tool_use") {
-			emit({
-				type: "content_block_start",
-				index: index,
-				content_block: { type: "tool_use", id: block["id"], name: block["name"], input: {} },
-			});
-			emit({
-				type: "content_block_delta",
-				index: index,
-				delta: { type: "input_json_delta", partial_json: JSON.stringify(block["input"] ?? {}) },
-			});
-		} else {
-			continue;
-		}
-		emit({ type: "content_block_stop", index: index });
-	}
-	emit({
-		type: "message_delta",
-		delta: {
-			stop_reason: response["stop_reason"] ?? "end_turn",
-			stop_sequence: response["stop_sequence"] ?? null,
-		},
-		usage: { output_tokens: numberValue(usage["output_tokens"]) },
-	});
-	emit({ type: "message_stop" });
-	return accumulator;
-}
-
-function numberValue(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-/**
  * 已经通过 Anthropic SSE 转发给客户端的上游错误。
  *
  * 这类错误发生在上游已经返回 HTTP 200 并开始流式响应之后。客户端可以根据
@@ -961,9 +867,13 @@ export function registerAnthropicMessagesEndpoints(
 				// PY litellm_overhead_time_ms：请求进入→上游发起前的代理层开销
 				const streamOverheadTimeMs = Date.now() - requestArrivalTimeMs;
 				if (preparedVision || preparedWeb || imageGenerationBinding) {
+					const publicStream = new AnthropicCapabilityStream(res, requestedModel, () => {
+						completionStartTime ??= markFirstContentFrame(req);
+					});
 					try {
-						const completeNative = (body: Record<string, unknown>) =>
-							executeWithFallbackChain(
+						const completeNative = (body: Record<string, unknown>) => {
+							const publishedBeforeTurn = publicStream.publishedCount;
+							return executeWithFallbackChain(
 								litellmRouter,
 								model,
 								requestApiKey,
@@ -988,6 +898,7 @@ export function registerAnthropicMessagesEndpoints(
 										usage: {},
 									};
 									currentAccumulator = accumulator;
+									const forwardPublicContent = publicStream.beginAttempt();
 									for await (const sseChunk of opened) {
 										const payload = parseSsePayload(sseChunk);
 										if (payload?.["type"] === "error") {
@@ -999,6 +910,7 @@ export function registerAnthropicMessagesEndpoints(
 										}
 										if (payload) {
 											accumulateNativeStreamEvent(accumulator, payload);
+											forwardPublicContent(payload, accumulator.content, accumulator.usage);
 											streamingCheckpointScheduler?.onChunk();
 										}
 									}
@@ -1016,8 +928,9 @@ export function registerAnthropicMessagesEndpoints(
 									});
 									return attachUpstreamLogContext(responseData, upstreamLogContext);
 								},
-								streamFallbackStats,
+								{ stats: streamFallbackStats, canReplay: () => publicStream.publishedCount === publishedBeforeTurn },
 							);
+						};
 						const agentResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
 							visionAudit: visionAudit,
 							imageGenerationAudit: imageGenerationAudit,
@@ -1027,27 +940,16 @@ export function registerAnthropicMessagesEndpoints(
 							preparedWeb: preparedWeb,
 						});
 						cleanBody = agentResult.body;
-						const finalResponse = agentResult.response;
+						const finalResponse = publicStream.publicResponse(agentResult.response);
 						await imageHistory?.bind(finalResponse);
-						finalResponse["model"] = requestedModel;
 						const spendInfo = executedAttempt
 							? buildDeploymentSpendInfo(executedAttempt.deployment, executedAttempt.upstreamUrl)
 							: undefined;
 						calculateAndSetCost(finalResponse as unknown as ModelResponse, requestedModel, spendInfo?.customCostPerToken);
-						if (!res.headersSent) {
-							res.writeHead(200, {
-								"Content-Type": "text/event-stream",
-								"Cache-Control": "no-cache",
-								Connection: "keep-alive",
-								"X-Accel-Buffering": "no",
-							});
-						}
-						await streamingCheckpointScheduler?.dispose();
-						// TTFT 终点：这一支只有在 agent loop 全部结束后才把内容写回下游；
-						// 首个 SSE 帧此刻才产生，不能用上游建连时刻冒充首字。记录即补写在途行。
-						completionStartTime ??= markFirstContentFrame(req);
-						const finalAccumulator = writeBufferedAnthropicResponseAsStream(res, finalResponse, requestedModel);
+						publicStream.finish(finalResponse);
 						res.end();
+						const streamEndTime = new Date();
+						await streamingCheckpointScheduler?.dispose();
 						if (db && auth && spendRequestId) {
 							const spendLog = await buildSpendLogFromRequest({
 								req: req,
@@ -1068,19 +970,20 @@ export function registerAnthropicMessagesEndpoints(
 								modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 								routingTrace: copyRoutingTrace(modelResolutionTrace),
 								startTime: startTime,
-								endTime: new Date(),
-								completionStartTime: completionStartTime,
+								endTime: streamEndTime,
+								completionStartTime: completionStartTime ?? null,
 								messages: originalMessages,
 								proxyServerRequestBody: originalRequestBody,
 								response: finalResponse,
 								upstreamLogContext: upstreamLogContext,
-								usage: finalAccumulator.usage as Record<string, unknown> | undefined,
+								usage: finalResponse["usage"] as Record<string, unknown> | undefined,
 								status: SpendLogStatus.Success,
 							});
 							await spendLifecycle.finalize(() => queueSpendLog(db, spendLog).then(() => undefined));
 						}
 						return;
 					} catch (error) {
+						await streamingCheckpointScheduler?.dispose();
 						if (db && auth && spendRequestId) {
 							await spendLifecycle.finalize(async () =>
 								queueSpendLog(
@@ -1094,6 +997,8 @@ export function registerAnthropicMessagesEndpoints(
 										modelGroup: requestedModel,
 										startTime: startTime,
 										endTime: new Date(),
+										completionStartTime: completionStartTime ?? null,
+										response: publicStream.publishedCount > 0 ? publicStream.publicResponse({ type: "message", role: "assistant" }) : undefined,
 										messages: originalMessages,
 										proxyServerRequestBody: originalRequestBody,
 										error: error,
@@ -1137,7 +1042,7 @@ export function registerAnthropicMessagesEndpoints(
 							executedAttempt = attempt;
 							return opened;
 						},
-						streamFallbackStats,
+						{ stats: streamFallbackStats },
 					);
 				} catch (error) {
 					if (db && auth && spendRequestId) {
@@ -1242,9 +1147,11 @@ export function registerAnthropicMessagesEndpoints(
 							accumulateNativeStreamEvent(streamAccumulator, payload);
 							streamingCheckpointScheduler?.onChunk();
 						}
-						completionStartTime ??= markFirstContentFrame(req);
 						noteUpstreamFirstChunk();
 						res.write(sseChunk);
+						if (payload && hasAnthropicContent(payload) && !res.destroyed) {
+							completionStartTime ??= markFirstContentFrame(req);
+						}
 					}
 				} catch (err) {
 					streamError = err;
@@ -1258,12 +1165,12 @@ export function registerAnthropicMessagesEndpoints(
 					}
 				} finally {
 					stopKeepalive();
-					await streamingCheckpointScheduler?.dispose();
 					res.end();
+					const streamEndTime = new Date();
+					await streamingCheckpointScheduler?.dispose();
 
 					// 即使无 usage 也提交零费用失败/成功日志，确保 reservation 不会遗留。
 					if (db && auth && spendRequestId) {
-						const streamEndTime = new Date();
 						const response = buildNativeStreamResponse(streamAccumulator, requestedModel);
 						// 批次 9: 实际执行 deployment 的 spend 归因（provider/api_base/model_id/model_info 价格）
 						const spendInfo: DeploymentSpendInfo | undefined = executedAttempt
@@ -1290,7 +1197,7 @@ export function registerAnthropicMessagesEndpoints(
 							routingTrace: copyRoutingTrace(modelResolutionTrace),
 							startTime: startTime,
 							endTime: streamEndTime,
-							completionStartTime: completionStartTime,
+							completionStartTime: completionStartTime ?? null,
 							messages: originalMessages,
 							proxyServerRequestBody: originalRequestBody,
 							response: response,
@@ -1393,7 +1300,7 @@ export function registerAnthropicMessagesEndpoints(
 							});
 							return attachUpstreamLogContext(responseData, upstreamLogContext);
 						},
-						nsFallbackStats,
+						{ stats: nsFallbackStats },
 					);
 				if (preparedVision || preparedWeb || imageGenerationBinding) {
 					const capabilityResult = await runAnthropicBuiltinCapabilityAgentLoop(litellmRouter, model, cleanBody, completeNative, {
@@ -1477,7 +1384,7 @@ export function registerAnthropicMessagesEndpoints(
 								upstreamLogContext = createUpstreamLogContext(upstreamRequest, result, responseData, attempt.deployment);
 								return attachUpstreamLogContext(responseData, upstreamLogContext);
 							},
-							followUpStats,
+							{ stats: followUpStats },
 						);
 						nsFallbackStats.fallbackDepth += followUpStats.fallbackDepth;
 						nsFallbackStats.fallbackModels.push(...followUpStats.fallbackModels);

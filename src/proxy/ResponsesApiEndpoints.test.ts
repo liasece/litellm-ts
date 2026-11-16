@@ -2200,7 +2200,11 @@ describe("Responses API contract matrix", () => {
 		const trackSpy = jest
 			.spyOn(SpendTracker, "trackSpendLog")
 			.mockResolvedValue({ status: "committed", requestId: "request-ttft", spend: 0 });
+		let contentProducedAt = 0;
 		async function* streamingWithGap() {
+			yield { choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] };
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			contentProducedAt = Date.now();
 			yield {
 				id: "chatcmpl-ttft",
 				model: "provider-model",
@@ -2224,7 +2228,7 @@ describe("Responses API contract matrix", () => {
 		const ttftMs = new Date(spendLog.completionStartTime).getTime() - new Date(spendLog.startTime).getTime();
 		const totalMs = new Date(spendLog.endTime).getTime() - new Date(spendLog.startTime).getTime();
 		expect(spendLog.completionStartTime).not.toBe(spendLog.endTime);
-		expect(ttftMs).toBeGreaterThanOrEqual(0);
+		expect(Date.parse(spendLog.completionStartTime)).toBeGreaterThanOrEqual(contentProducedAt);
 		expect(ttftMs).toBeLessThan(totalMs);
 	});
 	test.each(["/v1/responses", "/v1/chat/completions"])(

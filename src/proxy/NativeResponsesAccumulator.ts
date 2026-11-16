@@ -13,6 +13,70 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const responseContentFields = new Map<string, string>([
+	["response.output_text", "text"],
+	["response.reasoning_text", "text"],
+	["response.reasoning_summary_text", "text"],
+	["response.refusal", "refusal"],
+	["response.function_call_arguments", "arguments"],
+	["response.custom_tool_call_input", "input"],
+]);
+
+function nonEmpty(value: unknown): boolean {
+	return typeof value === "string" && value.length > 0;
+}
+
+function hasResponsePartContent(part: unknown): boolean {
+	return isRecord(part) && (nonEmpty(part["text"]) || nonEmpty(part["refusal"]));
+}
+
+function hasResponseItemContent(item: unknown): boolean {
+	if (!isRecord(item)) {
+		return false;
+	}
+	const kind = item["type"];
+	return (
+		((kind === "function_call" || kind === "custom_tool_call" || kind === "mcp_call") && nonEmpty(item["name"])) ||
+		(Array.isArray(item["content"]) && item["content"].some(hasResponsePartContent)) ||
+		(Array.isArray(item["summary"]) && item["summary"].some(hasResponsePartContent)) ||
+		nonEmpty(item["arguments"]) ||
+		nonEmpty(item["input"]) ||
+		nonEmpty(item["result"])
+	);
+}
+
+/**
+ * Some providers send a complete item without deltas. Its content is observable on the
+ * wire just like a delta; an empty item, lifecycle event or usage summary has no TTFT.
+ * @param event - Responses event written to an HTTP or WebSocket client
+ */
+export function hasNativeResponsesContent(event: Record<string, unknown>): boolean {
+	const type = event["type"];
+	if (typeof type !== "string") {
+		return false;
+	}
+	if (type === "response.output_item.added" || type === "response.output_item.done") {
+		return hasResponseItemContent(event["item"]);
+	}
+	if (type === "response.content_part.added" || type === "response.content_part.done") {
+		return hasResponsePartContent(event["part"]);
+	}
+	if (type === "response.image_generation_call.partial_image" || type === "response.image_generation_call.completed") {
+		return nonEmpty(event["partial_image_b64"]) || nonEmpty(event["result"]);
+	}
+	if (type === "response.completed" || type === "response.incomplete") {
+		const response = event["response"];
+		return isRecord(response) && Array.isArray(response["output"]) && response["output"].some(hasResponseItemContent);
+	}
+	const split = type.lastIndexOf(".");
+	const field = responseContentFields.get(type.slice(0, split));
+	if (!field) {
+		return false;
+	}
+	const suffix = type.slice(split + 1);
+	return (suffix === "delta" && nonEmpty(event["delta"])) || (suffix === "done" && nonEmpty(event[field]));
+}
+
 /**
  * 累积标准 output item 结构，供流式进行中的 checkpoint 产出可展示的部分 response。
  *

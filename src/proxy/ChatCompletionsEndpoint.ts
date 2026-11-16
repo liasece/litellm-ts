@@ -19,6 +19,7 @@ import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { requestArrivalTime } from "../core/api/RequestArrival";
 import { markFirstContentFrame } from "../spend/FirstContentFrame";
+import { hasOpenAICompletionContent, writeOpenAICompletionChunk } from "./OpenAICompletionStream";
 import { stripInternalFields } from "../core/api/stripInternalFields";
 import { ApiError } from "../core/api/ApiError";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
@@ -832,7 +833,7 @@ async function handleStreamingResponse(
 				const rawBody = await response.json();
 				const transformed = provider.transformResponse(deployment.litellm_params.model, rawBody);
 				lastUpstreamLogContext = createUpstreamLogContext(providerReq, response, rawBody, deployment);
-				const completionStartTime = markFirstContentFrame(req);
+				const completionStartTime = hasOpenAICompletionContent(transformed) ? markFirstContentFrame(req) : null;
 				if (fallbackDepth === 0) {
 					transformed.model = model;
 				}
@@ -925,7 +926,6 @@ async function handleStreamingResponse(
 				);
 			}
 			let streamError: unknown;
-			let completionStartTime: Date | undefined;
 			let upstreamFirstChunkSeen = false;
 			let usageChunkSent = false;
 			let semanticOutputEmitted = false;
@@ -967,10 +967,7 @@ async function handleStreamingResponse(
 									? { ...strippedChunk, usage: toOpenAIUsage(chunkUsage as Usage) }
 									: strippedChunk;
 						usageChunkSent ||= choices.length === 0 && publicChunk["usage"] !== null && publicChunk["usage"] !== undefined;
-						// TTFT 的终点是「首个内容帧写回下游」：上游 chunk 先到、被过滤或客户端已断开时，
-						// 客户端还没拿到任何东西，不能提前记为已返回；记录的同时立即补写在途行。
-						completionStartTime ??= markFirstContentFrame(req);
-						res.write(`data: ${JSON.stringify(publicChunk)}\n\n`);
+						writeOpenAICompletionChunk(req, res, publicChunk);
 					}
 				}
 				if (!clientDisconnected) {
@@ -1039,7 +1036,6 @@ async function handleStreamingResponse(
 							deploymentModel: spendInfo.deploymentModel,
 							startTime: startTime,
 							endTime: new Date(),
-							completionStartTime: completionStartTime,
 							messages: originalMessages,
 							proxyServerRequestBody: originalRequestBody,
 							response: responseForLog,
@@ -1215,9 +1211,6 @@ async function handlePrivateVisionStreamingResponse(
 	let currentAccumulator: ChatStreamAccumulator | undefined;
 	let chatSseStarted = false;
 	let visibleText = "";
-	// TTFT 终点：首个内容帧真正写回下游的时刻。能力分支在 agent loop 内边收边发，
-	// 不能等 loop 结束再取时间，否则首字时间会被延后到整段 agent 执行完毕。
-	let completionStartTime: Date | undefined;
 	// capability 分支向上游请求流式后，从 streamResult 提取上游上下文供 checkpoint 记录
 	let currentUpstreamLogContext: UpstreamLogContext | undefined;
 	const checkpointRequestId = spendRequestId;
@@ -1306,7 +1299,6 @@ async function handlePrivateVisionStreamingResponse(
 							};
 							if (!chatSseStarted) {
 								chatSseStarted = true;
-								completionStartTime ??= markFirstContentFrame(req);
 								if (!res.headersSent) {
 									res.setHeader("Content-Type", "text/event-stream");
 									res.setHeader("Cache-Control", "no-cache");
@@ -1315,7 +1307,7 @@ async function handlePrivateVisionStreamingResponse(
 								}
 								res.write(`data: ${JSON.stringify({ ...head, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
 							}
-							res.write(`data: ${JSON.stringify({ ...head, choices: [{ index: 0, delta: visible, finish_reason: null }] })}\n\n`);
+							writeOpenAICompletionChunk(req, res, { ...head, choices: [{ index: 0, delta: visible, finish_reason: null }] });
 						}
 					}
 					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
@@ -1334,8 +1326,6 @@ async function handlePrivateVisionStreamingResponse(
 		},
 	);
 	await streamingCheckpointScheduler?.dispose();
-	// 没有任何可见增量直接收尾时，下游最后一次吐出内容就在此刻，退回当前时间。
-	completionStartTime ??= markFirstContentFrame(req);
 	const spendInfo = (result as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 	calculateAndSetCost(result as unknown as ModelResponse, model, spendInfo?.customCostPerToken);
 	if (result["_fallbackDepth"] === 0) {
@@ -1365,7 +1355,7 @@ async function handlePrivateVisionStreamingResponse(
 	const publicModel = response.model || model;
 	const base = { id: id, object: "chat.completion.chunk", created: created, model: publicModel };
 	if (!chatSseStarted) {
-	res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
+		res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
 	}
 	const delta: Record<string, unknown> = {};
 	if (typeof choice.message.content === "string" && choice.message.content.length > 0) {
@@ -1408,7 +1398,7 @@ async function handlePrivateVisionStreamingResponse(
 		tool_calls: delta.tool_calls,
 	});
 	if (Object.keys(delta).length > 0) {
-		res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] })}\n\n`);
+		writeOpenAICompletionChunk(req, res, { ...base, choices: [{ index: 0, delta: delta, finish_reason: null }] });
 	}
 	res.write(
 		`data: ${JSON.stringify({
@@ -1439,7 +1429,6 @@ async function handlePrivateVisionStreamingResponse(
 			deploymentModel: spendInfo?.deploymentModel,
 			startTime: startTime,
 			endTime: new Date(),
-			completionStartTime: completionStartTime,
 			messages: originalMessages,
 			proxyServerRequestBody: originalRequestBody,
 			response: result,

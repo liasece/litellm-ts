@@ -99,7 +99,7 @@ export interface SpendLog {
 	startTime: string;
 	/** 请求结束时间 */
 	endTime: string;
-	/** 首次补全时间（流式响应）；null 表示这次调用没有可测的首字（非模型调用） */
+	/** 首次向下游交付内容的时间；无可测首字时为 null。 */
 	completionStartTime?: string | null;
 	/** 模型名称 */
 	model: string;
@@ -336,11 +336,8 @@ export interface SpendLogBuildContext {
 	/** 请求完成或失败时间 */
 	readonly endTime: Date;
 	/**
-	 * 首个有效流式 chunk 到达时间。
-	 *
-	 * `null` 表示这次调用本来就没有可测的首字（例如直连 Search / Fetch 工具：
-	 * 只发生一次 HTTP 交换，没有模型生成过程），落库为 NULL，Logs 页的 TTFT 显示 `-`；
-	 * 不传则沿用「非流式请求一次返回」的旧口径，取 `endTime`。
+	 * 首个内容帧写回下游的时刻。省略时复用请求上已观测的首帧；仅一次性成功返回
+	 * 可用结束时刻表示首次交付。显式 null 表示没有可测的首字（例如内部工具子请求）。
 	 */
 	readonly completionStartTime?: Date | null;
 	/** 原始请求消息或输入 */

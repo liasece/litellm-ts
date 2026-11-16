@@ -1677,6 +1677,22 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		} as unknown as Request;
 	}
 
+	it("settles a stream with the first frame observed before a later failure, and no TTFT before any output", async () => {
+		const req = createMinimalRequest();
+		req.body.stream = true;
+		const startTime = new Date("2026-01-01T00:00:00Z");
+		const endTime = new Date("2026-01-01T00:00:09Z");
+		const context = { req, startTime, endTime, callType: CallType.AMessages, model: "glm" };
+		expect((await buildSpendLogFromRequest(context)).completionStartTime).toBeNull();
+		const error = new Error("upstream disconnected");
+		expect((await buildSpendLogFromRequest({ ...context, error })).completionStartTime).toBeNull();
+		req.litellmFirstContentFrameAt = new Date("2026-01-01T00:00:02Z");
+		expect((await buildSpendLogFromRequest({ ...context, error })).completionStartTime).toBe("2026-01-01T00:00:02.000Z");
+		// 工具子请求与父请求共用 req，但没有自己的下游首帧。
+		expect((await buildSpendLogFromRequest({ ...context, completionStartTime: null })).completionStartTime).toBeNull();
+		expect((await buildSpendLogFromRequest({ ...context, req: createMinimalRequest() })).completionStartTime).toBe(endTime.toISOString());
+	});
+
 	it("metadata 键集对齐 Python：team_alias / model_map_information / null 占位键", async () => {
 		const spendLog = await buildSpendLogFromRequest({
 			auth: { api_key: "sk-test", team_id: "team-1", team_alias: "team-alpha", project_id: "project-1" },

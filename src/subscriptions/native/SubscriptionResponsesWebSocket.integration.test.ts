@@ -1,8 +1,12 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import WebSocket from "ws";
 import { ApiError } from "../../core/api/ApiError";
+import type { DrizzleDb } from "../../core/db/Database";
 import { setSubscriptionRequestHandler } from "../../router/SubscriptionDispatch";
+import * as settlement from "../../spend/SpendSettlementQueue";
+import type { SpendLog } from "../../types/spend";
 import { SubscriptionBridge } from "./bridge";
 import { SubscriptionAccountScheduler } from "./scheduler";
 import { registerSubscriptionResponsesWebSocket } from "./SubscriptionResponsesWebSocket";
@@ -61,7 +65,7 @@ function adapter(calls: Array<Record<string, unknown>>): SubscriptionProviderAda
 	};
 }
 
-async function buildHarness(): Promise<Harness> {
+async function buildHarness(db?: DrizzleDb): Promise<Harness> {
 	const calls: Array<Record<string, unknown>> = [];
 	const provider = adapter(calls);
 	const bridge = new SubscriptionBridge({
@@ -84,6 +88,7 @@ async function buildHarness(): Promise<Harness> {
 	};
 	const container = {
 		router: router,
+		db: { db: db },
 		runtimeConfigService: { runWithSnapshot: async (_router: unknown, callback: () => Promise<unknown>) => await callback() },
 		authMiddleware: (req: { auth?: unknown }, _res: unknown, next: (error?: unknown) => void) => {
 			if (!harness.allow) {
@@ -152,6 +157,65 @@ function sse(events: unknown[]): Response {
 afterEach(() => {
 	setSubscriptionRequestHandler(undefined);
 	jest.restoreAllMocks();
+});
+
+function nextSettledLog(): Promise<SpendLog> {
+	return new Promise((resolve) => {
+		jest.spyOn(settlement, "queueSpendLog").mockImplementationOnce(async (_db, entry) => resolve(entry));
+	});
+}
+
+it.each([
+	{ type: "response.reasoning_summary_text.delta", delta: "thinking" },
+	{ type: "response.output_item.added", item: { type: "function_call", name: "weather", arguments: "" } },
+	{ type: "response.image_generation_call.completed", result: "AA==" },
+])("按 WebSocket 每轮计时，只在实际内容帧 $type 写出后记录 TTFT", async (content) => {
+	const harness = await buildHarness({} as DrizzleDb);
+	const socket = await open(harness.url);
+	const messages = new MessageQueue(socket);
+	const stream = new TransformStream<Uint8Array, Uint8Array>();
+	const writer = stream.writable.getWriter();
+	const frame = (event: unknown) => writer.write(Buffer.from(`data: ${JSON.stringify(event)}\n\n`));
+	const create = () => socket.send(JSON.stringify({ type: "response.create", model: "client-model", input: [] }));
+	try {
+		const fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(stream.readable, { headers: { "content-type": "text/event-stream" } }),
+		);
+		const settled = nextSettledLog();
+		await delay(12);
+		const submittedAt = Date.now();
+		create();
+		await frame({ type: "response.created", response: { status: "in_progress", output: [] } });
+		expect((await messages.next())["type"]).toBe("response.created");
+		await frame({ type: "response.output_text.delta", delta: "" });
+		expect((await messages.next())["delta"]).toBe("");
+		await frame({ type: "response.output_item.added", item: { type: "message", id: "shell", status: "in_progress", content: [] } });
+		expect((await messages.next())["type"]).toBe("response.output_item.added");
+		await delay(12);
+		const beforeContent = Date.now();
+		await frame(content);
+		expect(await messages.next()).toEqual(content);
+		const deliveredAt = Date.now();
+		await delay(12);
+		const complete = { type: "response.completed", response: { id: "resp_t", output: [], usage: { output_tokens: 2 } } };
+		await frame(complete);
+		await writer.close();
+		expect((await messages.next())["type"]).toBe("response.completed");
+		const log = await settled;
+		const first = Date.parse(log.completionStartTime ?? "");
+		expect(Date.parse(log.startTime)).toBeGreaterThanOrEqual(submittedAt);
+		expect(first).toBeGreaterThanOrEqual(beforeContent);
+		expect(first).toBeLessThanOrEqual(deliveredAt);
+		expect(first).toBeLessThan(Date.parse(log.endTime));
+		const empty = nextSettledLog();
+		fetchSpy.mockResolvedValueOnce(sse([complete]));
+		create();
+		expect((await messages.next())["type"]).toBe("response.completed");
+		expect((await empty).completionStartTime).toBeNull();
+	} finally {
+		socket.close();
+		await harness.close();
+	}
 });
 
 it("WebSocket 逐帧转发 Responses 事件并支持 previous_response_id 合并", async () => {

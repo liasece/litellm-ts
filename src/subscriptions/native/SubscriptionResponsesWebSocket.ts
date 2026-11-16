@@ -18,6 +18,8 @@ import type { ServiceContainer } from "../../container";
 import { executeProviderRequest } from "../../router/ProviderRequestExecutor";
 import type { Router } from "../../router/Router";
 import { buildDeploymentSpendInfo } from "../../router/RouterSpendInfo";
+import { hasNativeResponsesContent } from "../../proxy/NativeResponsesAccumulator";
+import { markFirstContentFrame } from "../../spend/FirstContentFrame";
 import { buildSpendLogFromRequest, calculateAndSetCost } from "../../spend/SpendTracker";
 import { queueSpendLog } from "../../spend/SpendSettlementQueue";
 import type { DrizzleDb } from "../../core/db/Database";
@@ -26,6 +28,7 @@ import type { ModelResponse } from "../../types/openai";
 import { CallType, SpendLogStatus } from "../../types/spend";
 import { createModuleLogger } from "../../core/utils/logger";
 import { subscriptionBridgeUrl } from "./bridge";
+import { readSseEvents } from "./protocol/sse";
 import { SUBSCRIPTION_PROVIDER_TO_SOURCE } from "./types";
 import type { SubscriptionSource } from "./types";
 
@@ -80,11 +83,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * @param socket - 客户端连接
  * @param payload - 事件或错误对象
  */
-function send(socket: WebSocket, payload: unknown): void {
+function send(socket: WebSocket, payload: unknown): boolean {
 	if (socket.readyState !== WebSocket.OPEN) {
-		return;
+		return false;
 	}
 	socket.send(typeof payload === "string" ? payload : JSON.stringify(payload));
+	return true;
 }
 
 /**
@@ -136,30 +140,6 @@ function replayableOutput(value: unknown): unknown[] {
  */
 function continueTranscript(previousInput: unknown[], previousOutput: unknown[], nextInput: unknown[]): unknown[] {
 	return [...previousInput, ...replayableOutput(previousOutput), ...nextInput];
-}
-
-/**
- * 从 SSE data 中取事件对象。
- * @param block - 一个 SSE 事件块
- */
-function parseSseData(block: string): Record<string, unknown> | undefined {
-	const data: string[] = [];
-	for (const rawLine of block.split("\n")) {
-		const line = rawLine.replace(/\r$/, "");
-		if (line.startsWith("data:")) {
-			data.push(line.slice(5).trimStart());
-		}
-	}
-	const payload = data.join("\n").trim();
-	if (!payload || payload === "[DONE]") {
-		return undefined;
-	}
-	try {
-		const parsed = JSON.parse(payload) as unknown;
-		return asRecord(parsed);
-	} catch {
-		return undefined;
-	}
 }
 
 /**
@@ -255,24 +235,22 @@ async function streamTurn(
 		router.recordDeploymentFailure(selected.deployment, new Error(`Responses 上游返回 ${status}`));
 		throw new ApiError(status, message || `Responses WebSocket 上游返回 ${status}`);
 	}
-	const reader = execution.response.body?.getReader();
-	if (!reader) {
+	const stream = execution.response.body;
+	if (!stream) {
 		throw ApiError.unavailable("Responses 上游没有返回流");
 	}
-	const decoder = new TextDecoder();
-	let buffer = "";
 	let result: TurnResult | undefined;
 	let failed = false;
 	const outputByIndex = new Map<number, unknown>();
 	const codexClient = isCodexClient(turnReq);
-	const processBlock = (block: string): void => {
-		const event = parseSseData(block);
+	for await (const frame of readSseEvents(stream)) {
+		const event = asRecord(frame.data);
 		if (!event) {
-			return;
+			continue;
 		}
 		const type = typeof event["type"] === "string" ? event["type"] : "";
 		if (type === "response.subscription_usage" || (type === "response.metadata" && !codexClient)) {
-			return;
+			continue;
 		}
 		if (type === "response.output_item.done") {
 			const index = typeof event["output_index"] === "number" ? event["output_index"] : outputByIndex.size;
@@ -281,8 +259,8 @@ async function streamTurn(
 				outputByIndex.set(index, item);
 			}
 		}
-		if (!failed) {
-			send(socket, event);
+		if (!failed && send(socket, event) && !turnReq.litellmFirstContentFrameAt && hasNativeResponsesContent(event)) {
+			markFirstContentFrame(turnReq);
 		}
 		const completed = turnResult(event, outputByIndex);
 		if (completed) {
@@ -291,29 +269,6 @@ async function streamTurn(
 		if (type === "response.failed" || type === "error") {
 			failed = true;
 		}
-	};
-	try {
-		for (;;) {
-			const next = await reader.read();
-			if (next.done) {
-				break;
-			}
-			buffer += decoder.decode(next.value, { stream: true });
-			buffer = buffer.replace(/\r\n/g, "\n");
-			let boundary = buffer.indexOf("\n\n");
-			while (boundary >= 0) {
-				const block = buffer.slice(0, boundary);
-				buffer = buffer.slice(boundary + 2);
-				processBlock(block);
-				boundary = buffer.indexOf("\n\n");
-			}
-		}
-		buffer += decoder.decode();
-		if (buffer.trim()) {
-			processBlock(buffer);
-		}
-	} finally {
-		reader.releaseLock();
 	}
 	if (!result && !failed) {
 		throw ApiError.unavailable("Responses 上游流在完成事件前结束");
@@ -377,6 +332,7 @@ async function recordTurnSpend(
 				deploymentModel: spendInfo.deploymentModel,
 				startTime: startedAt,
 				endTime: new Date(),
+				completionStartTime: req.litellmFirstContentFrameAt ?? null,
 				messages: request,
 				response: { output: turn.output, usage: turn.usage },
 				usage: usage,
@@ -480,6 +436,8 @@ async function runSession(socket: WebSocket, container: ServiceContainer, req: E
 				yield value;
 			}
 		})()) {
+			// 每个客户端消息独立计时，鉴权与路由等待都属于本轮请求。
+			const turnStartedAt = new Date();
 			const text = message.toString();
 			let payload: Record<string, unknown>;
 			try {
@@ -600,7 +558,6 @@ async function runSession(socket: WebSocket, container: ServiceContainer, req: E
 			active = controller;
 			interrupted = false;
 			const timeout = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
-			const turnStartedAt = new Date();
 			try {
 				const result = await container.runtimeConfigService.runWithSnapshot(container.router, async () => {
 					return await streamTurn(socket, router, turnReq, request, controller.signal);

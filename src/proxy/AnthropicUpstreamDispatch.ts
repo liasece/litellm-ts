@@ -246,8 +246,7 @@ export interface FallbackExecutionStats {
  * @param requestAnthropicVersion - 客户端请求透传的 anthropic-version
  * @param execute - 对单个 deployment 执行上游调用；provider 失败必须抛
  * ProviderUpstreamError，其余异常按连接错误处理（均可 fallback）
- * @param fallbackStats - 可选输出参数：回写最终 fallback 跳数
- * （SpendLogs metadata.attempted_retries 数据源），也可携带请求级 alias trace collector
+ * @param options - 可传入账务路由统计。流式尝试对外写出内容后不能重播。
  * @returns execute 的成功结果
  * @throws {ApiError} 链耗尽后抛最后一个 provider 错误（保留其 HTTP 状态码）；
  *   模型不存在抛 400（PY ProxyModelNotFoundError）；
@@ -259,8 +258,9 @@ export async function executeWithFallbackChain<T>(
 	requestApiKey: string | undefined,
 	requestAnthropicVersion: string | undefined,
 	execute: (attempt: UpstreamAttempt) => Promise<T>,
-	fallbackStats?: FallbackExecutionStats,
+	options: { stats?: FallbackExecutionStats; canReplay?: () => boolean } = {},
 ): Promise<T> {
+	const { stats: fallbackStats, canReplay } = options;
 	const modelResolutionTrace = fallbackStats?.modelResolutionTrace ?? createModelResolutionTraceCollector();
 	const attemptedDeploymentKeys = new Set<string>();
 	let currentModel: string | null = model;
@@ -321,6 +321,9 @@ export async function executeWithFallbackChain<T>(
 				groupLastError = failure;
 				lastAttemptedDeployment = attempt.deployment.model_name;
 				router.recordDeploymentFailure(attempt.deployment, failure);
+				if (canReplay && !canReplay()) {
+					throw attachUpstreamLogContext(failure, getUpstreamLogContext(err));
+				}
 				// 上游错误不是本服务的逻辑错误：只要还能换 deployment / 走 fallback，
 				// 就没到需要人介入的程度，降到 debug 只留排障线索。
 				// 真正会返回给调用方的那次失败由下方统一 warn 记录（避免每跳刷屏）。

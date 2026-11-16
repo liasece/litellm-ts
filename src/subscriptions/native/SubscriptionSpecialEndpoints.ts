@@ -6,15 +6,18 @@
  * 具体上游路径、鉴权和协议由 Provider 适配器负责。
  */
 
+import { once } from "node:events";
 import type { Request as ExpressRequest, Response as ExpressResponse, Router as ExpressRouter } from "express";
 import { ApiError } from "../../core/api/ApiError";
 import { runCommonChecks } from "../../auth/AuthChecks";
 import { registerRoute } from "../../core/api/registerRoute";
+import { requestArrivalTime } from "../../core/api/RequestArrival";
 import { executeProviderRequest } from "../../router/ProviderRequestExecutor";
 import type { Router } from "../../router/Router";
 import { buildDeploymentSpendInfo } from "../../router/RouterSpendInfo";
 import { buildSpendLogFromRequest, calculateAndSetCost, getOrCreateSpendRequestId } from "../../spend/SpendTracker";
 import { queueSpendLog } from "../../spend/SpendSettlementQueue";
+import { markFirstContentFrame } from "../../spend/FirstContentFrame";
 import type { DrizzleDb } from "../../core/db/Database";
 import type { Deployment } from "../../types/router";
 import type { ModelResponse } from "../../types/openai";
@@ -25,6 +28,8 @@ const logger = createModuleLogger("Subscription:Special");
 import { SUBSCRIPTION_PROVIDER_TO_SOURCE } from "./types";
 import type { SubscriptionOperation, SubscriptionSource } from "./types";
 import { subscriptionBridgeUrl } from "./bridge";
+import { readSseEvents } from "./protocol/sse";
+import { asRecordArray, recordAt, stringAt } from "./protocol/convert/shared";
 
 /** 单次转发的结果。 */
 interface DispatchResult {
@@ -167,32 +172,20 @@ function geminiUsage(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * 从 Gemini SSE 文本中取最后一个 usageMetadata。
- * @param text - 完整 SSE 文本
+ * Gemini 的时钟止于首个带生成内容的候选；空候选、finishReason 与单独的 usage 都可能先到。
+ * @param payload - 已写回客户端的 Gemini SSE 数据
  */
-function geminiStreamUsage(text: string): Record<string, unknown> | undefined {
-	let usage: Record<string, unknown> | undefined;
-	for (const block of text.split(/\r?\n\r?\n/)) {
-		for (const line of block.split(/\r?\n/)) {
-			if (!line.startsWith("data:")) {
-				continue;
-			}
-			const payload = line.slice(5).trim();
-			if (!payload || payload === "[DONE]") {
-				continue;
-			}
-			try {
-				const parsed = asRecord(JSON.parse(payload) as unknown);
-				const meta = parsed ? asRecord(parsed["usageMetadata"]) : undefined;
-				if (meta) {
-					usage = meta;
-				}
-			} catch {
-				// 上游可能发送非 JSON 的 keepalive 行；账务只关心可解析的 usage。
-			}
-		}
-	}
-	return usage;
+function hasGeminiContent(payload: Record<string, unknown>): boolean {
+	return asRecordArray(payload["candidates"]).some((candidate) =>
+		asRecordArray(recordAt(candidate, "content")?.["parts"]).some((part) => Boolean(
+			stringAt(part, "text") ||
+			stringAt(recordAt(part, "functionCall"), "name") ||
+			stringAt(recordAt(part, "inlineData"), "data") ||
+			stringAt(recordAt(part, "fileData"), "fileUri") ||
+			stringAt(recordAt(part, "executableCode"), "code") ||
+			stringAt(recordAt(part, "codeExecutionResult"), "output")
+		)),
+	);
 }
 
 /** Gemini 账务输入。 */
@@ -209,6 +202,8 @@ interface GeminiSpendInput {
 	readonly requestBody: Record<string, unknown>;
 	/** 请求开始时间。 */
 	readonly startedAt: Date;
+	/** 首个内容帧已写回；无内容的流没有 TTFT。 */
+	readonly completionStartTime: Date | null;
 	/** Gemini usageMetadata。 */
 	readonly usageMetadata: unknown;
 	/** 非流式响应体。 */
@@ -250,6 +245,7 @@ async function recordGeminiSpend(input: GeminiSpendInput): Promise<void> {
 				deploymentModel: spendInfo.deploymentModel,
 				startTime: startedAt,
 				endTime: new Date(),
+				completionStartTime: input.completionStartTime,
 				messages: requestBody["contents"] ?? requestBody,
 				response: responseBody,
 				usage: usage,
@@ -376,33 +372,46 @@ async function pipeGeminiStream(
 		res.end();
 		return undefined;
 	}
-	const reader = body.getReader();
-	const decoder = new TextDecoder();
-	let text = "";
-	const abort = (): void => {
-		if (!res.writableEnded) {
-			void reader.cancel().catch(() => undefined);
-		}
-	};
-	res.on("close", abort);
+	const disconnect = new AbortController();
+	const abort = (): void => disconnect.abort();
+	res.once("close", abort);
+	if (res.destroyed) {
+		abort();
+	}
+	// 原字节（含注释心跳和分块）先下发，同一份字节增量解析；慢客户端的背压也限制上游读取。
+	const delivered = body.pipeThrough(
+		new TransformStream<Uint8Array, Uint8Array>({
+			transform: async (chunk, controller) => {
+				const writable = res.write(Buffer.from(chunk));
+				controller.enqueue(chunk);
+				if (!writable) {
+					await once(res, "drain", { signal: disconnect.signal });
+				}
+			},
+		}),
+		{ signal: disconnect.signal },
+	);
+	let usage: Record<string, unknown> | undefined;
 	try {
-		for (;;) {
-			const next = await reader.read();
-			if (next.done) {
-				break;
+		for await (const frame of readSseEvents(delivered)) {
+			const payload = asRecord(frame.data);
+			if (!payload) {
+				continue;
 			}
-			text += decoder.decode(next.value, { stream: true });
-			if (!res.write(Buffer.from(next.value))) {
-				await new Promise<void>((resolve) => res.once("drain", resolve));
+			usage = asRecord(payload["usageMetadata"]) ?? usage;
+			if (!req.litellmFirstContentFrameAt && hasGeminiContent(payload)) {
+				markFirstContentFrame(req);
 			}
 		}
-		text += decoder.decode();
 		res.end();
-		return geminiStreamUsage(text);
+	} catch (error) {
+		if (!disconnect.signal.aborted) {
+			throw error;
+		}
 	} finally {
 		res.off("close", abort);
-		reader.releaseLock();
 	}
+	return usage;
 }
 
 /**
@@ -428,7 +437,7 @@ async function handleGeminiGenerate(
 	if (action !== "generateContent" && action !== "streamGenerateContent") {
 		throw ApiError.badRequest(`不支持的 Gemini 操作：${action || "空"}`);
 	}
-	const startedAt = new Date();
+	const startedAt = requestArrivalTime(req);
 	const rawBody = (req.body ?? {}) as Record<string, unknown>;
 	const body = { ...rawBody, model: model };
 	if (req.auth) {
@@ -451,6 +460,7 @@ async function handleGeminiGenerate(
 			model: model,
 			requestBody: rawBody,
 			startedAt: startedAt,
+			completionStartTime: markFirstContentFrame(req),
 			usageMetadata: asRecord(result.body)?.["usageMetadata"],
 			responseBody: result.body,
 		});
@@ -464,6 +474,7 @@ async function handleGeminiGenerate(
 		model: model,
 		requestBody: rawBody,
 		startedAt: startedAt,
+		completionStartTime: req.litellmFirstContentFrameAt ?? null,
 		usageMetadata: usageMetadata,
 	});
 	return undefined;

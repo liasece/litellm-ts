@@ -270,7 +270,7 @@ describe("executeWithFallbackChain", () => {
 				seen.push(attempt.deploymentKey);
 				throw new ProviderUpstreamError(500, "failed");
 			},
-			stats,
+			{ stats: stats },
 		).catch(() => "failed");
 		expect(result).toBe("failed");
 		expect(stats.modelResolutionChain).toEqual([

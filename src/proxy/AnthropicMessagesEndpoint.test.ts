@@ -22,6 +22,7 @@ interface BuildAppSettings {
 	reasoningEffortOverride?: string;
 	forcedReasoningEffort?: string;
 	enabledBuiltinCapabilities?: Array<"vision" | "web" | "image_generation">;
+	sendEarlyKeepalive?: boolean;
 }
 
 function buildApp(settings: BuildAppSettings = {}) {
@@ -64,9 +65,14 @@ function buildApp(settings: BuildAppSettings = {}) {
 	};
 	const app = express();
 	app.use(express.json());
-	app.use((req, _res, next) => {
+	app.use((req, res, next) => {
 		req.auth = { api_key: "sk-test", user_id: "user-1" } as never;
 		next();
+		if (settings.sendEarlyKeepalive) {
+			// Model selection is now waiting upstream, as when the keepalive timer fires.
+			res.setHeader("Content-Type", "text/event-stream");
+			res.write(formatAnthropicPingEvent());
+		}
 	});
 	const expressRouter = express.Router();
 	const db: {
@@ -260,7 +266,55 @@ describe("native Anthropic streaming SpendLog", () => {
 		expect(formatAnthropicPingEvent()).toBe('event: ping\ndata: {"type":"ping"}\n\n');
 	});
 
-	it("仅启用图片能力时进入私有循环，并在合成 SSE message_start 暴露生成图片", async () => {
+	function enableWebCapability(): void {
+		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param: string) =>
+			param === "builtin_capabilities"
+				? {
+						web: {
+							enabled: true,
+							handler_model: "network-model",
+							fallback_models: [],
+							max_iterations: 3,
+							max_output_tokens: 1024,
+						},
+					}
+				: {},
+		);
+	}
+
+	const firstMessage = {
+		type: "message_start",
+		message: {
+			id: "upstream",
+			type: "message",
+			role: "assistant",
+			content: [],
+			usage: { input_tokens: 3 },
+		},
+	};
+	const messageEnd = { type: "message_stop" };
+	const textStart = {
+		type: "content_block_start",
+		index: 0,
+		content_block: { type: "text", text: "" },
+	};
+	interface ClientStreamEvent {
+		type: string;
+		index?: number;
+		message?: { id: string; generated_images?: unknown[] };
+		content_block?: { type: string; id?: string };
+		delta?: { text?: string; generated_images?: unknown[] };
+		usage?: Record<string, number>;
+	}
+	const eventsFrom = (text: string): ClientStreamEvent[] =>
+		text
+			.split("\n")
+			.filter((line) => line.startsWith("data: "))
+			.map((line) => JSON.parse(line.slice(6)));
+	const asSse = (events: Record<string, unknown>[]): Uint8Array =>
+		new TextEncoder().encode(events.map((event) => "event: " + event.type + "\ndata: " + JSON.stringify(event) + "\n\n").join(""));
+
+	it.each([false, true])("公开正文是否已发送=%s 时，生成图片在同一条 Messages 流交付一次", async (startedEarly) => {
 		jest.spyOn(WebCapability, "prepareAnthropicWebRequest").mockResolvedValue(undefined);
 		jest.spyOn(VisionCapability, "prepareAnthropicVisionRequest").mockResolvedValue(undefined);
 		jest.spyOn(ImageGenerationCapability, "resolveImageGenerationCapability").mockResolvedValue({
@@ -276,33 +330,289 @@ describe("native Anthropic streaming SpendLog", () => {
 			source: { type: "base64", media_type: "image/png", data: "cG5n" },
 			action: "create",
 		};
-		const runnerSpy = jest.spyOn(BuiltinCapabilityRunner, "runAnthropicBuiltinCapabilityAgentLoop").mockResolvedValue({
-			body: { model: "native-group", messages: [] },
-			response: {
-				id: "msg-image",
-				type: "message",
-				role: "assistant",
-				content: [{ type: "text", text: "done" }],
-				stop_reason: "end_turn",
-				usage: { input_tokens: 2, output_tokens: 1 },
-				generated_images: [generatedImage],
-				_builtinPrivateImageToolCalls: [{ id: "call-create", name: "litellm__image_create", arguments: { prompt: "a poster" } }],
-			},
-		});
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			sseResponse([
+				firstMessage,
+				textStart,
+				{
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "done" },
+				},
+				{ type: "content_block_stop", index: 0 },
+				messageEnd,
+			]),
+		);
+		const runnerSpy = jest
+			.spyOn(BuiltinCapabilityRunner, "runAnthropicBuiltinCapabilityAgentLoop")
+			.mockImplementation(async (_router, _model, body, complete) => {
+				const response = startedEarly
+					? await complete(body)
+					: {
+							id: "msg-image",
+							type: "message",
+							role: "assistant",
+							content: [{ type: "text", text: "done" }],
+							stop_reason: "end_turn",
+							usage: { input_tokens: 2, output_tokens: 1 },
+						};
+				return {
+					body: body,
+					response: {
+						...response,
+						generated_images: [generatedImage],
+						_builtinPrivateImageToolCalls: [
+							{
+								id: "call-create",
+								name: "litellm__image_create",
+								arguments: { prompt: "a poster" },
+							},
+						],
+					},
+				};
+			});
 		const app = buildApp();
 
 		const response = await request(app)
 			.post("/v1/messages")
-			.send({ model: "native-group", messages: [{ role: "user", content: "create an image" }], stream: true })
+			.send({
+				model: "native-group",
+				messages: [{ role: "user", content: "create an image" }],
+				stream: true,
+			})
 			.expect(200);
 
 		expect(runnerSpy).toHaveBeenCalledTimes(1);
-		expect(response.text).toContain("event: message_start");
-		expect(response.text).toContain(`"generated_images":[${JSON.stringify(generatedImage)}]`);
-		expect(response.text).toContain("event: message_stop");
+		const events = eventsFrom(response.text);
+		const start = events.find((event) => event.type === "message_start")!.message!;
+		const end = events.find((event) => event.type === "message_delta")!.delta!;
+		expect(start.generated_images ?? end.generated_images).toEqual([generatedImage]);
+		expect(startedEarly ? start.generated_images : end.generated_images).toBeUndefined();
+		expect(events.at(-1)?.type).toBe("message_stop");
+		const log = spendSpy.mock.calls[0]?.[1];
+		expect(log.response).toMatchObject({
+			id: start.id,
+			content: [{ type: "text", text: "done" }],
+			generated_images: [generatedImage],
+		});
 		// 主模型的私有工具调用只进 SpendLog，不能随 SSE 下发给客户端。
 		expect(response.text).not.toContain("_builtinPrivateImageToolCalls");
 		expect(response.text).not.toContain("call-create");
+	});
+
+	it("能力分支在上游尚未结束时向客户端写出思考，私有续轮最终只下发选中的公开工具", async () => {
+		enableWebCapability();
+		const thinking = {
+			type: "content_block_delta",
+			index: 0,
+			delta: { type: "thinking_delta", thinking: "working" },
+		};
+		const tool = (index: number, id: string, name: string) => ({
+			type: "content_block_start",
+			index: index,
+			content_block: { type: "tool_use", id: id, name: name, input: {} },
+		});
+		const stop = (index: number) => ({
+			type: "content_block_stop",
+			index: index,
+		});
+		const toolReason = {
+			type: "message_delta",
+			delta: { stop_reason: "tool_use" },
+			usage: { output_tokens: 5 },
+		};
+		let control!: ReadableStreamDefaultController<Uint8Array>;
+		const upstream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				control = controller;
+				controller.enqueue(
+					asSse([
+						firstMessage,
+						{
+							type: "content_block_start",
+							index: 0,
+							content_block: { type: "thinking", thinking: "" },
+						},
+						thinking,
+					]),
+				);
+			},
+		});
+		const fetch = jest
+			.spyOn(global, "fetch")
+			.mockResolvedValueOnce(
+				new Response(upstream, {
+					headers: { "content-type": "text/event-stream" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				sseResponse([
+					firstMessage,
+					textStart,
+					{
+						type: "content_block_delta",
+						index: 0,
+						delta: { type: "text_delta", text: "ready" },
+					},
+					stop(0),
+					tool(1, "public-final", "lookup"),
+					{
+						type: "content_block_delta",
+						index: 1,
+						delta: { type: "input_json_delta", partial_json: '{"q":"x"}' },
+					},
+					stop(1),
+					toolReason,
+					messageEnd,
+				]),
+			);
+		let released = false;
+		const release = (): void => {
+			if (released) return;
+			released = true;
+			control.enqueue(
+				asSse([
+					stop(0),
+					tool(1, "public-sibling", "lookup"),
+					stop(1),
+					tool(2, "private-call", "litellm__web_search"),
+					stop(2),
+					toolReason,
+					messageEnd,
+				]),
+			);
+			control.close();
+		};
+		const deadline = setTimeout(release, 2000);
+		let readBeforeRelease = false;
+		try {
+			const response = await request(buildApp({ enabledBuiltinCapabilities: ["web"], sendEarlyKeepalive: true }))
+				.post("/v1/messages")
+				.send({
+					model: "native-group",
+					stream: true,
+					messages: [{ role: "user", content: "Search" }],
+					tools: [{ name: "lookup", input_schema: { type: "object" } }],
+				})
+				.buffer(true)
+				.parse((incoming, done) => {
+					let text = "";
+					incoming.on("data", (data) => {
+						text += data.toString();
+						if (!readBeforeRelease && !released && text.includes("working")) {
+							readBeforeRelease = true;
+							setTimeout(release, 20);
+						}
+					});
+					incoming.on("end", () => done(null, { text }));
+				})
+				.expect(200);
+			expect(readBeforeRelease).toBe(true);
+			expect(fetch).toHaveBeenCalledTimes(2);
+			const text = response.body.text as string;
+			const events = eventsFrom(text);
+			expect(events[0]?.type).toBe("ping");
+			expect(events.filter((event) => event.type === "message_start")).toHaveLength(1);
+			expect(events.filter((event) => event.type === "message_stop")).toHaveLength(1);
+			expect(events.filter((event) => event.type === "content_block_start").map((event) => event.index)).toEqual([0, 1, 2]);
+			expect(events.filter((event) => event.type === "content_block_stop").map((event) => event.index)).toEqual([0, 1, 2]);
+			expect(events.filter((event) => event.type === "content_block_delta").map((event) => event.delta)).toEqual([
+				thinking.delta,
+				{ type: "text_delta", text: "ready" },
+				{ type: "input_json_delta", partial_json: '{"q":"x"}' },
+			]);
+			expect(text).not.toMatch(/public-sibling|private-call|litellm__web_search/);
+			expect(events.find((event) => event.content_block?.type === "tool_use")?.content_block?.id).toBe("public-final");
+			const terminal = events.find((event) => event.type === "message_delta");
+			expect(terminal?.usage).toMatchObject({
+				input_tokens: 6,
+				output_tokens: 10,
+			});
+			const log = spendSpy.mock.calls.map((call) => call[1]).find((log) => log.proxy_server_request?.url === "/v1/messages");
+			expect(log.response.content).toEqual([
+				{ type: "thinking", thinking: "working" },
+				{ type: "text", text: "ready" },
+				{
+					type: "tool_use",
+					id: "public-final",
+					name: "lookup",
+					input: { q: "x" },
+				},
+			]);
+			expect(new Date(log.endTime).getTime() - new Date(log.completionStartTime).getTime()).toBeGreaterThanOrEqual(15);
+		} finally {
+			clearTimeout(deadline);
+			release();
+		}
+	});
+
+	it("公开增量之后上游失败，已写内容保留且不会重试或发出成功终态", async () => {
+		enableWebCapability();
+		const app = buildApp({ enabledBuiltinCapabilities: ["web"] });
+		const router = (app as unknown as { __router: { getNextFallback: jest.Mock } }).__router;
+		router.getNextFallback.mockReturnValue("other-group");
+		const fetch = jest.spyOn(global, "fetch").mockResolvedValueOnce(
+			sseResponse([
+				firstMessage,
+				textStart,
+				{
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "partial" },
+				},
+				{
+					type: "error",
+					error: { type: "overloaded_error", message: "unavailable" },
+				},
+			]),
+		);
+		const response = await request(app)
+			.post("/v1/messages")
+			.send({
+				model: "native-group",
+				stream: true,
+				messages: [{ role: "user", content: "hi" }],
+			})
+			.expect(200);
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(router.getNextFallback).not.toHaveBeenCalled();
+		const events = eventsFrom(response.text);
+		expect(events.filter((e) => e.type === "content_block_delta").map((e) => e.delta?.text)).toEqual(["partial"]);
+		expect(events.at(-1)?.type).toBe("error");
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: SpendLogStatus.Failure,
+			completionStartTime: expect.any(String),
+			response: { content: [{ type: "text", text: "partial" }] },
+		});
+	});
+
+	it("只有 message_start、空文本和终态的 Messages 流没有首字", async () => {
+		jest.spyOn(global, "fetch").mockResolvedValue(
+			sseResponse([
+				firstMessage,
+				textStart,
+				{ type: "ping" },
+				{
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "" },
+				},
+				{ type: "content_block_stop", index: 0 },
+				messageEnd,
+			]),
+		);
+		await request(buildApp())
+			.post("/v1/messages")
+			.send({
+				model: "native-group",
+				stream: true,
+				messages: [{ role: "user", content: "hi" }],
+			})
+			.expect(200);
+		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
+			status: SpendLogStatus.Success,
+			completionStartTime: null,
+		});
 	});
 
 	it("非流式成功日志保存 alias 解析链并保留原始 fallback 首项", async () => {

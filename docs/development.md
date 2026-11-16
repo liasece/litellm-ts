@@ -72,6 +72,11 @@
 
 **记账与日志**：在途登记 `src/spend/ActiveRequestJournal.ts`，结算走 `SpendSettlementQueue`，最终落 `LiteLLM_SpendLogs`；重复正文按内容寻址进 `LiteLLM_SpendLogBlocks`（`src/spend/SpendLogBlocks.ts`），读侧在 DTO 层统一组装，业务代码不应直接碰 `_litellm_ref_*` 键。
 
+**Messages 的内置工具**：`src/proxy/AnthropicCapabilityStream.ts` 把多轮上游调用组织成一条公开的 Messages 流。
+文本和思考可以直接下发；混合工具轮里的调用要等能力循环确定哪些交给客户端，避免客户端执行已由网关接管的工具。
+若使用生成图片扩展，首帧前已就绪的图片在 `message_start.message.generated_images`；
+已发出文字或思考后才生成的图片在 `message_delta.delta.generated_images`，同一批图片只交付一次。
+
 ## 关键逻辑入口
 
 | 想改的东西 | 从这里进 |

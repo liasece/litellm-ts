@@ -9,6 +9,7 @@ import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { requestArrivalTime } from "../core/api/RequestArrival";
 import { markFirstContentFrame } from "../spend/FirstContentFrame";
+import { writeOpenAICompletionChunk } from "./OpenAICompletionStream";
 import { ApiError } from "../core/api/ApiError";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { stripInternalFields } from "../core/api/stripInternalFields";
@@ -208,7 +209,7 @@ async function handleStreamingCompletion(
 			if (typeof chunkUsage === "object" && chunkUsage !== null) {
 				usage = chunkUsage as Record<string, unknown>;
 			}
-			res.write(`data: ${JSON.stringify(stripInternalFields(current.value))}\n\n`);
+			writeOpenAICompletionChunk(req, res, stripInternalFields(current.value));
 			current = await iterator.next();
 		}
 		res.write("data: [DONE]\n\n");

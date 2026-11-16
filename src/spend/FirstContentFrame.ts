@@ -2,7 +2,7 @@
  * 首个内容帧写回下游的时刻（Dashboard TTFT 的终点）。
  *
  * 流式请求的 TTFT 只有在「第一个内容帧真正写给客户端」时才成立：上游先到的 chunk 可能被过滤
- * （例如只有 usage）、客户端可能已经断开、能力分支还要等 agent loop 收尾才整体写出。这个时刻
+ * （例如只有 usage 或私有工具参数），客户端也可能已经断开。这个时刻
  * 一旦确定就不会再变，因此记录的同时立即补写进 `LiteLLM_ActiveRequests.completion_start_time`：
  * 外界在整条流还没结束时就能从日志列表/详情读到 TTFT，不必等最终 SpendLog 落账。
  *
