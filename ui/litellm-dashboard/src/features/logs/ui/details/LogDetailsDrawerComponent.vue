@@ -6,6 +6,7 @@ import type { SessionTimelineEvent } from "../../support/SessionTimelineModels";
 import { createLogDetailsStore } from "../../stores/LogDetailsStore";
 import { loadCompleteSessionLogs } from "../../logic/SessionLogsLogic";
 import { eventDisplayName, guardrailEntries, isAgent, isMcp, sessionStats } from "../../logic/LogDetailsDisplayLogic";
+import { sessionGroupRef } from "../../logic/LogsIdentityLogic";
 import { safeSessionError } from "../../logic/SessionTimelineMergeLogic";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 import UiDrawer from "../../../platform/ui/UiDrawer.vue";
@@ -46,13 +47,26 @@ const selectedId = ref<string | null>(null),
 let sessionController: AbortController | undefined,
 	sessionEpoch = 0;
 const sessionMode = computed(() => Boolean(props.sessionGroup));
+/**
+ * Session 列表在抽屉打开时一次性拉全量；之后日志列表仍会随 live tail 更新。
+ * 把当前页里同 Session 的新行合并进来，J/K 和侧栏才不会停留在打开时的那份快照。
+ */
+function mergeLatestSessionRows(rows: LogEntry[]): LogEntry[] {
+	const group = props.sessionGroup;
+	if (!group) return rows;
+	const byId = new Map(rows.map((row) => [row.request_id, row]));
+	for (const row of props.allLogs) {
+		const rowGroup = sessionGroupRef(row);
+		if (rowGroup?.type === group.type && rowGroup.id === group.id) byId.set(row.request_id, row);
+	}
+	return [...byId.values()].sort((a, b) => {
+		const delta = Date.parse(b.startTime) - Date.parse(a.startTime);
+		return delta !== 0 ? delta : b.request_id.localeCompare(a.request_id);
+	});
+}
 const rows = computed(() =>
 	sessionMode.value
-		? sessionRows.value.length
-			? sessionRows.value
-			: props.log
-				? [props.log]
-				: []
+		? mergeLatestSessionRows(sessionRows.value.length ? sessionRows.value : props.log ? [props.log] : [])
 		: current.value
 			? [current.value]
 			: [],

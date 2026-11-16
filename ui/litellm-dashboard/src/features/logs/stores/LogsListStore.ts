@@ -1,7 +1,7 @@
 import { computed, reactive, shallowRef } from "vue";
 import { logsApi, type LogsApi } from "../api/LogsApi";
 import { openLogsSocket } from "../api/LogsSocketApi";
-import { createEmptyLogFilters, type LogFilterState } from "../logic/LogsFilterLogic";
+import { createEmptyLogFilters, FILTER_KEYS, type LogFilterState } from "../logic/LogsFilterLogic";
 import { localDateTime, subtractInterval } from "../logic/LogsDateLogic";
 import { logsQuery } from "../logic/LogsQueryLogic";
 import { readLogsUrlState, writeLogsUrlState, type LogsUrlState } from "../logic/LogsUrlLogic";
@@ -14,7 +14,7 @@ import {
 	isLiveTailIntervalMs,
 	QUICK_SELECT_OPTIONS,
 } from "../support/LogsConstants";
-import type { LogsPage, LogsSortField } from "../support/LogsModels";
+import type { LogEntry, LogsPage, LogsSortField } from "../support/LogsModels";
 
 interface LogsListOptions {
 	scope: () => { userId: string; role: string };
@@ -183,6 +183,34 @@ export function createLogsListStore(options: LogsListOptions) {
 		state.currentPage = 1;
 		schedule();
 	}
+	function setSelectedRequestId(requestId: string): void {
+		state.selectedRequestId = requestId;
+		syncUrl();
+	}
+	/**
+	 * 通过 request ID 找回当前页之外的日志，供 URL 深链接恢复详情抽屉。
+	 * 列表筛选保持当前视图不变；查询只带精确 request_id，并使用 All Time 避免旧日志被默认时间窗排除。
+	 */
+	async function findLog(requestId: string): Promise<LogEntry | null> {
+		if (!requestId) return null;
+		const filters = createEmptyLogFilters();
+		filters[FILTER_KEYS.REQUEST_ID] = requestId;
+		const lookup: LogsUrlState = {
+			...state,
+			filters,
+			selectedRequestId: requestId,
+			currentPage: 1,
+			pageSize: 25,
+			startTime: subtractInterval(24, "hours"),
+			endTime: localDateTime(),
+			isCustomDate: false,
+			selectedTimeInterval: { value: ALL_TIME_INTERVAL.value, unit: ALL_TIME_INTERVAL.unit },
+			sortBy: "startTime",
+			sortOrder: "desc",
+		};
+		const result = await api.list(logsQuery(lookup, options.scope()));
+		return result.data.find((row) => row.request_id === requestId) ?? null;
+	}
 	function applyFilters(value: Partial<LogFilterState>): void {
 		state.filters = { ...state.filters, ...value };
 		state.currentPage = 1;
@@ -304,6 +332,8 @@ export function createLogsListStore(options: LogsListOptions) {
 		setLiveInterval,
 		setTab,
 		restoreUrl,
+		setSelectedRequestId,
+		findLog,
 		dispose,
 	};
 }

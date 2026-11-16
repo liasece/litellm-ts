@@ -5,6 +5,7 @@ import type { LogsUrlState } from "./LogsUrlLogic";
 
 const createState = (overrides: Partial<LogsUrlState> = {}): LogsUrlState => ({
 	filters: createEmptyLogFilters(),
+	selectedRequestId: "",
 	currentPage: 1,
 	pageSize: 100,
 	startTime: "2026-11-08T08:34",

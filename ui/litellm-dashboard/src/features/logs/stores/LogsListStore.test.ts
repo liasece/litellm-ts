@@ -64,6 +64,37 @@ describe("request log browsing", () => {
 		expect(store.page.value.data.map((row) => row.request_id)).toEqual(["wanted-request"]);
 		store.dispose();
 	});
+	it("persists the selected log in the URL and can look it up outside the current page", async () => {
+		vi.useFakeTimers();
+		const writeUrl = vi.fn();
+		const list = vi.fn<ListRequest>(async (query) =>
+			query.get("request_id") === "wanted-request"
+				? {
+						...emptyPage(),
+						data: [{ request_id: "wanted-request", startTime: "2026-11-07T02:00:00Z" }],
+						total: 1,
+						total_pages: 1,
+					}
+				: emptyPage(),
+		);
+		const store = createLogsListStore({
+			scope: () => ({ userId: "admin", role: "Admin" }),
+			api: { list },
+			socket: () => () => undefined,
+			search: "page=logs",
+			writeUrl,
+		});
+		store.start();
+		await tick();
+		store.setSelectedRequestId("wanted-request");
+		expect(writeUrl.mock.calls.at(-1)![0].get("log")).toBe("wanted-request");
+
+		const found = await store.findLog("wanted-request");
+		expect(found?.request_id).toBe("wanted-request");
+		expect(list.mock.calls.at(-1)![0].get("request_id")).toBe("wanted-request");
+		store.dispose();
+	});
+
 	it("keeps internal-user requests scoped and clears view filters without losing their identity scope", async () => {
 		vi.useFakeTimers();
 		const list = vi.fn<ListRequest>(async () => emptyPage());

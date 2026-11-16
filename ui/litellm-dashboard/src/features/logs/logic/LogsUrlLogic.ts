@@ -27,6 +27,8 @@ const VALID_SORT_FIELDS: LogsSortField[] = ["startTime", "spend", "total_tokens"
 
 export interface LogsUrlState {
 	filters: LogFilterState;
+	/** 当前打开的日志详情；仅用于深链接，不参与列表筛选。 */
+	selectedRequestId: string;
 	currentPage: number;
 	pageSize: number;
 	startTime: string;
@@ -92,6 +94,7 @@ export function readLogsUrlState(search: string, defaults: LogsUrlDefaults): Log
 
 	return {
 		filters,
+		selectedRequestId: params.get("log") ?? "",
 		currentPage: readPositiveInteger(params.get("logs_page"), 1),
 		pageSize,
 		startTime: isCustomDate
@@ -131,6 +134,9 @@ export function writeLogsUrlState(params: URLSearchParams, state: LogsUrlState):
 		const value = state.filters[filterName] ?? "";
 		setOptionalParam(next, FILTER_URL_PARAMS[filterName], value, value !== "");
 	}
+
+	// The selected log is UI state, not a list filter; keep it across refreshes.
+	setOptionalParam(next, "log", state.selectedRequestId, state.selectedRequestId !== "");
 
 	setOptionalParam(next, "logs_page", String(state.currentPage), state.currentPage !== 1);
 	setOptionalParam(next, "logs_page_size", String(state.pageSize), state.pageSize !== DEFAULT_LOGS_PAGE_SIZE);

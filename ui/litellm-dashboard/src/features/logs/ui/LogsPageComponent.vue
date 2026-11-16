@@ -213,14 +213,56 @@ function clearLogFilters(): void {
 	filterTexts.value = {};
 	list.clearFilters();
 }
-function selectLog(log: LogEntry) {
+function openLog(log: LogEntry, writeUrl = true) {
 	selectedLog.value = log;
 	selectedSession.value = navigableSessionGroup(log);
 	drawerOpen.value = true;
+	if (writeUrl) list.setSelectedRequestId(log.request_id);
+}
+function selectLog(log: LogEntry) {
+	openLog(log);
 }
 function closeDrawer() {
 	drawerOpen.value = false;
 	selectedSession.value = null;
+	list.setSelectedRequestId("");
+}
+
+let selectedLookupId = "",
+	selectedLookupEpoch = 0;
+/**
+ * 从 URL 恢复选中日志。列表当前页能找到时直接打开；找不到时按 request_id 精确回查一次，
+ * 这样即使深链接指向旧分页或默认首页之外，刷新后仍能恢复抽屉。
+ */
+async function restoreSelectedLog(): Promise<void> {
+	const requestId = list.state.selectedRequestId;
+	if (!requestId) {
+		selectedLookupId = "";
+		selectedLookupEpoch++;
+		if (drawerOpen.value) {
+			drawerOpen.value = false;
+			selectedSession.value = null;
+		}
+		return;
+	}
+	if (drawerOpen.value && selectedLog.value?.request_id === requestId) return;
+	const row = list.page.value.data.find((log) => log.request_id === requestId);
+	if (row) {
+		selectedLookupId = "";
+		openLog(row, false);
+		return;
+	}
+	if (list.state.loading || selectedLookupId === requestId) return;
+	selectedLookupId = requestId;
+	const epoch = ++selectedLookupEpoch;
+	try {
+		const found = await list.findLog(requestId);
+		if (epoch === selectedLookupEpoch && list.state.selectedRequestId === requestId && found) openLog(found, false);
+	} catch {
+		/* The URL stays selected; the next list refresh can retry. */
+	} finally {
+		if (epoch === selectedLookupEpoch) selectedLookupId = "";
+	}
 }
 function selectSessionEvent(event: { request_id: string; timestamp: string; model?: string; status?: string }) {
 	const group = simulation.value;
@@ -243,10 +285,14 @@ function selectSessionEvent(event: { request_id: string; timestamp: string; mode
 	selectedSession.value = group;
 	simulation.value = null;
 	drawerOpen.value = true;
+	list.setSelectedRequestId(event.request_id);
 }
 function tab(value: string) {
 	list.setTab(value === "request" ? "request logs" : value);
 }
+watch([() => list.state.selectedRequestId, () => list.page.value.data, () => list.state.loading], () => void restoreSelectedLog(), {
+	immediate: true,
+});
 onMounted(() => {
 	list.start();
 	void settings.load();
@@ -367,7 +413,7 @@ watch(
 			:start-time="utcApiDate(list.state.startTime)"
 			:upstream-logs-enabled="settings.state.storeUpstream"
 			@close="closeDrawer"
-			@select="selectedLog = $event"
+			@select="selectLog"
 			@refresh="list.refresh"
 			@open-settings="settings.show"
 		/>

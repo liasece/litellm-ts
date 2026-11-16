@@ -53,6 +53,7 @@ export const first: LogEntry = {
 			url: "https://example.test/v1/responses",
 			body: {
 				model: "provider-fixture",
+				instructions: "Contact {{EMAIL_abcd2345}} for details.",
 				input: messages,
 				tools: [
 					{
@@ -72,6 +73,7 @@ export const first: LogEntry = {
 	},
 	metadata: {
 		status: "success",
+		applied_features: [{ id: "privacy", count: 1, detail: "EMAIL×1" }],
 		user_api_key_team_alias: "Fixture team",
 		cost_breakdown: {
 			input_cost: 0.001,

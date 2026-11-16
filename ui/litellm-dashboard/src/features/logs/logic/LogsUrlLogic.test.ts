@@ -9,6 +9,7 @@ const defaults = {
 
 const createState = (): LogsUrlState => ({
 	filters: createEmptyLogFilters(),
+	selectedRequestId: "",
 	currentPage: 1,
 	pageSize: 100,
 	startTime: defaults.startTime,
@@ -49,6 +50,18 @@ describe("Logs URL state", () => {
 		expect(restored.pageSize).toBe(500);
 		expect(restored.sortBy).toBe("spend");
 		expect(restored.sortOrder).toBe("asc");
+	});
+
+	it("keeps the selected log in the URL without turning it into a list filter", () => {
+		const state = createState();
+		state.selectedRequestId = "req-selected";
+
+		const params = writeLogsUrlState(new URLSearchParams("page=logs"), state);
+		const restored = readLogsUrlState(params.toString(), defaults);
+
+		expect(params.get("log")).toBe("req-selected");
+		expect(restored.selectedRequestId).toBe("req-selected");
+		expect(restored.filters["Request ID"]).toBe("");
 	});
 
 	it("All Time 是默认档位：没有时间参数即不过滤，选中预设区间后才写回 URL", () => {
