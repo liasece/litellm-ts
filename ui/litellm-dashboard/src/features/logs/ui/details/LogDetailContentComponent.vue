@@ -11,6 +11,7 @@ import UiTag from "../../../platform/ui/UiTag.vue";
 import UiSpinner from "../../../platform/ui/UiSpinner.vue";
 import LogDetailsConfigInfoComponent from "./LogDetailsConfigInfoComponent.vue";
 import LogDetailsCollapseComponent from "./LogDetailsCollapseComponent.vue";
+import LogDetailsPrivacyComponent from "./LogDetailsPrivacyComponent.vue";
 import LogDetailsCopyComponent from "./LogDetailsCopyComponent.vue";
 import LogDetailsTruncatedComponent from "./LogDetailsTruncatedComponent.vue";
 import LogDetailsInfoComponent from "./LogDetailsInfoComponent.vue";
@@ -103,6 +104,7 @@ function jump() {
 			:upstream-logs-enabled="upstreamLogsEnabled"
 			@open-settings="$emit('open-settings')"
 		/>
+		<LogDetailsPrivacyComponent :log="log" />
 		<div v-if="entries.length" id="guardrail-section"><LogDetailsGuardrailComponent :entries="entries" :log="log" /></div>
 		<LogDetailsVectorStoreComponent :data="metadata.vector_store_request_metadata" />
 		<LogDetailsCollapseComponent v-if="Object.keys(metadata).length" label="Metadata"

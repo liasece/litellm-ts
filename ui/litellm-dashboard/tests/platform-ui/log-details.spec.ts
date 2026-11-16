@@ -41,6 +41,14 @@ test("Pretty, JSON, upstream and actual Diff remain navigable", async ({ page })
 	await page.getByRole("button", { name: "Open request", exact: true }).click();
 	const drawer = page.getByRole("dialog", { name: "Log details", exact: true });
 	await expect(drawer).toBeVisible();
+	await expect(drawer.getByRole("button", { name: "Request & Response", exact: true })).toHaveAttribute("aria-expanded", "true");
+	for (const label of ["Routing", "Detail Info", "Privacy", "Vector Store Requests", "Metadata"]) {
+		await expect(drawer.getByRole("button", { name: label, exact: true })).toHaveAttribute("aria-expanded", "false");
+	}
+	// 折叠栏的整块标题区域都应是点击目标，而不是只有箭头或文字。
+	const metadataHeader = drawer.locator(".ld-collapse__header").filter({ hasText: "Metadata" });
+	await metadataHeader.click({ position: { x: 4, y: 4 } });
+	await expect(drawer.getByRole("button", { name: "Metadata", exact: true })).toHaveAttribute("aria-expanded", "true");
 	await expect(drawer.getByText("Current request", { exact: true })).toBeVisible();
 	await drawer.getByRole("button", { name: "TOOLS (1)", exact: true }).click();
 	await drawer.getByRole("button", { name: /1\. lookup/ }).click();
@@ -67,15 +75,19 @@ test("detail panels reveal routing, costs, provider guardrail results and vector
 	await expect(drawer.getByText("HATE", { exact: true })).toBeVisible();
 	await drawer.getByRole("button", { name: /Filter fixture/ }).click();
 	await expect(drawer.getByText("Fixture pattern", { exact: true })).toBeVisible();
+	await drawer.getByRole("button", { name: "Vector Store Requests", exact: true }).click();
 	await drawer.getByRole("button", { name: /Result 1.*Score/ }).click();
 	await expect(drawer.getByText("Retrieved fixture text", { exact: true })).toBeVisible();
 });
 test("J/K navigation selects another request and Escape restores the trigger focus", async ({ page }) => {
 	const trigger = page.getByRole("button", { name: "Open request", exact: true });
 	await trigger.click();
+	const requestResponse = page.getByRole("button", { name: "Request & Response", exact: true });
 	await page.keyboard.press("j");
+	if ((await requestResponse.getAttribute("aria-expanded")) === "false") await requestResponse.click();
 	await expect(page.getByText("Second prompt", { exact: true })).toBeVisible();
 	await page.keyboard.press("k");
+	if ((await requestResponse.getAttribute("aria-expanded")) === "false") await requestResponse.click();
 	await expect(page.getByText("Current request", { exact: true })).toBeVisible();
 	await page.keyboard.press("Escape");
 	await expect(page.getByRole("dialog", { name: "Log details", exact: true })).toBeHidden();
@@ -102,6 +114,9 @@ test("Session simulation replays context, tool output and older pages without ca
 
 test("recorded images preview with working controls and restore nested drawer focus", async ({ page }) => {
 	await page.getByRole("button", { name: "Open request", exact: true }).click();
+	const drawer = page.getByRole("dialog", { name: "Log details", exact: true });
+	const requestResponse = drawer.getByRole("button", { name: "Request & Response", exact: true });
+	if ((await requestResponse.getAttribute("aria-expanded")) === "false") await requestResponse.click();
 	const trigger = page.getByRole("button", { name: "预览图片 Generated", exact: true });
 	await trigger.click();
 	const preview = page.getByRole("dialog", { name: "Image preview", exact: true });
@@ -135,4 +150,16 @@ test("suppresses a duplicate supplier image and restores a distinct one on navig
 	await expect(header.getByRole("img", { name: "OpenAI", exact: true }).locator("img")).toHaveCount(1);
 	await page.getByRole("button", { name: "Next log" }).click();
 	await expect(header.getByRole("img", { name: "DeepSeek via Anthropic" }).locator("img")).toHaveCount(2);
+});
+
+test("Privacy stays below Request & Response and reveals placeholders on demand", async ({ page }) => {
+	await page.getByRole("button", { name: "Open request", exact: true }).click();
+	const drawer = page.getByRole("dialog", { name: "Log details", exact: true });
+	const privacy = drawer.getByRole("button", { name: "Privacy", exact: true });
+	await expect(privacy).toHaveAttribute("aria-expanded", "false");
+	const labels = await drawer.locator(".ld-collapse__label h3").allTextContents();
+	expect(labels.indexOf("Privacy")).toBe(labels.indexOf("Request & Response") + 1);
+	await privacy.click();
+	await expect(drawer.getByTestId("privacy-replacement")).toHaveCount(1);
+	await expect(drawer.getByText("{{EMAIL_abcd2345}}", { exact: true }).first()).toBeVisible();
 });

@@ -7,20 +7,30 @@ const props = withDefaults(defineProps<{ label?: string; defaultOpen?: boolean; 
 	bodyClass: undefined,
 });
 const expanded = ref(props.defaultOpen);
+function toggle(): void {
+	expanded.value = !expanded.value;
+}
+/** 标题栏整行都是点击区域；内嵌按钮（如 Pretty/JSON）自己处理点击，不能顺带折叠。 */
+function onHeaderClick(event: MouseEvent): void {
+	const target = event.target;
+	if (!(target instanceof Element)) return;
+	if (target.closest("button, a, input, select, textarea, summary, [role='button'], [role='link']")) return;
+	toggle();
+}
 </script>
 <template>
 	<section class="ld-collapse">
-		<div class="ld-collapse__header">
+		<div class="ld-collapse__header" @click="onHeaderClick">
 			<button
 				type="button"
 				class="ld-collapse__toggle"
 				:aria-label="label || 'Toggle section'"
 				:aria-expanded="expanded"
-				@click="expanded = !expanded"
+				@click="toggle"
 			>
 				<UiIcon :name="expanded ? 'DownOutlined' : 'RightOutlined'" />
 			</button>
-			<div class="ld-collapse__label" @click="expanded = !expanded">
+			<div class="ld-collapse__label">
 				<slot name="label"
 					><h3>{{ label }}</h3></slot
 				>

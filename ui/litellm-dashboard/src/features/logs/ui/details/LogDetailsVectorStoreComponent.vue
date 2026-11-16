@@ -14,7 +14,7 @@ function toggle(key: string) {
 const date = (value: unknown) => new Date(Number(value) * 1000).toLocaleString();
 </script>
 <template>
-	<LogDetailsCollapseComponent v-if="Array.isArray(data) && data.length" label="Vector Store Requests" default-open
+	<LogDetailsCollapseComponent v-if="Array.isArray(data) && data.length" label="Vector Store Requests"
 		><div class="ld-vector">
 			<div v-for="(request, index) in recordArray(data)" :key="index" class="ld-vector__request">
 				<div class="ld-vector__summary ld-grid-two">
