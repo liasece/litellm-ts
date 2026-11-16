@@ -298,10 +298,11 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 							<UsageTopKeys :rows="keys"
 						/></UiCard>
 					</div>
-					<UsageActivity v-show="tab === 'models'" :model-metrics="modelMetrics" /><UsageActivity
+					<UsageActivity v-show="tab === 'models'" :model-metrics="modelMetrics" entity-kind="model" /><UsageActivity
 						v-show="tab === 'keys'"
 						:model-metrics="keyMetrics"
-					/><UsageActivity v-show="tab === 'mcp'" :model-metrics="mcpMetrics" /><UsageEndpoint
+						entity-kind="key"
+					/><UsageActivity v-show="tab === 'mcp'" :model-metrics="mcpMetrics" entity-kind="mcp" /><UsageEndpoint
 						v-show="tab === 'endpoints'"
 						:data="state.data"
 					/>

@@ -309,9 +309,19 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 					</UiTable></div
 			></UiCard>
 		</div>
-		<UsageActivity v-show="tab === 'models'" :model-metrics="modelMetrics" :hide-prompt-caching-metrics="entityType === 'agent'" />
-		<UsageActivity v-if="entityType === 'team'" v-show="tab === 'agents'" :model-metrics="agentMetrics" />
-		<UsageActivity v-show="tab === 'keys'" :model-metrics="keyMetrics" :hide-prompt-caching-metrics="entityType === 'agent'" />
+		<UsageActivity
+			v-show="tab === 'models'"
+			:model-metrics="modelMetrics"
+			:hide-prompt-caching-metrics="entityType === 'agent'"
+			entity-kind="model"
+		/>
+		<UsageActivity v-if="entityType === 'team'" v-show="tab === 'agents'" :model-metrics="agentMetrics" entity-kind="agent" />
+		<UsageActivity
+			v-show="tab === 'keys'"
+			:model-metrics="keyMetrics"
+			:hide-prompt-caching-metrics="entityType === 'agent'"
+			entity-kind="key"
+		/>
 		<UsageEndpoint v-show="tab === 'endpoints'" :data="state.data" />
 		<UsageExport
 			v-model:open="exportOpen"
