@@ -38,6 +38,7 @@ import { registerRoute } from "../core/api/registerRoute";
 import { requestArrivalTime } from "../core/api/RequestArrival";
 import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { ApiError } from "../core/api/ApiError";
+import { classifyClientError } from "../core/api/ClientErrorCode";
 import { createModuleLogger } from "../core/utils/logger";
 import { cleanSurrogates } from "../core/utils/text";
 import { getConfig } from "../core/config";
@@ -1155,7 +1156,17 @@ export function registerAnthropicMessagesEndpoints(
 					}
 				} catch (err) {
 					streamError = err;
-					res.write(formatSSE("error", JSON.stringify({ type: "error", error: { type: "api_error", message: String(err) } })));
+					// SSE 已开始后失败只能以 error 事件收尾，type 是下游判断可重试性（尤其 429
+					// 限流退避）的唯一依据，按真实错误分类而不是统一 api_error。
+					res.write(
+						formatSSE(
+							"error",
+							JSON.stringify({
+								type: "error",
+								error: { type: classifyClientError(err).anthropicType, message: String(err) },
+							}),
+						),
+					);
 					// 客户端主动断开（取消、关页、超时）不是本服务的逻辑错误，降到 info；
 					// 其余（上游流损坏、SSE 协议异常）仍按 error 记录。
 					if (isClientAbortError(err)) {

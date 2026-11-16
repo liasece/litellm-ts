@@ -6,6 +6,7 @@ import { requestArrivalMiddleware } from "../core/api/RequestArrival";
 import * as WebCapability from "../capabilities/WebCapability";
 import * as SpendTracker from "../spend/SpendTracker";
 import { SpendLogStatus } from "../types/spend";
+import { RateLimitError } from "../router/RouterErrors";
 
 const auth = { api_key: "sk-test", user_id: "user-1" };
 
@@ -513,7 +514,8 @@ describe("Chat streaming SpendLog", () => {
 			.send({ model: "chat-group", messages: [{ role: "user", content: "hello" }], stream: true })
 			.expect(200);
 
-		expect(response.text).toContain("stream_error");
+		// 通用异常按 server_error 下发；旧实现固定 "stream_error"，下游无法判断可重试性。
+		expect(response.text).toContain('"code":"server_error"');
 		expect(getNextFallback).not.toHaveBeenCalled();
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({
 			status: SpendLogStatus.Failure,
@@ -525,6 +527,30 @@ describe("Chat streaming SpendLog", () => {
 			}),
 			error_information: expect.objectContaining({ error_message: expect.stringContaining("stream broke") }),
 		});
+	});
+
+	it("流内失败的 429 保留可重试分类而不是通用 server_error", async () => {
+		// 生产回归：上游 429 在 SSE 已开始后只能走流内错误帧，若压成 server_error
+		// 下游不会按限流退避重试。这里验证分类真的落到了线上帧里。
+		const provider = baseProvider({
+			streamResponse: async function* () {
+				yield {
+					id: "chatcmpl-429",
+					object: "chat.completion.chunk",
+					choices: [{ index: 0, delta: { role: "assistant", content: "partial" }, finish_reason: null }],
+				};
+				throw new RateLimitError("upstream overloaded", { status_code: 429 });
+			},
+		});
+		const { app } = buildApp(provider);
+
+		const response = await request(app)
+			.post("/v1/chat/completions")
+			.send({ model: "chat-group", messages: [{ role: "user", content: "hello" }], stream: true })
+			.expect(200);
+
+		expect(response.text).toContain('"code":"rate_limit_exceeded"');
+		expect(response.text).toContain('"type":"rate_limit_error"');
 	});
 
 	it("preserves cost supplied by the final streaming usage", async () => {
@@ -573,7 +599,7 @@ describe("Chat streaming SpendLog", () => {
 			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true });
 		expect(response.status).toBe(200);
 		expect(response.text).toContain("recovered");
-		expect(response.text).not.toContain("stream_error");
+		expect(response.text).not.toContain('"error"');
 		expect(attempts).toBe(3);
 		expect(spendSpy).toHaveBeenCalledTimes(1);
 		expect(spendSpy.mock.calls[0]?.[1]).toMatchObject({ model_id: "fb2", status: SpendLogStatus.Success });

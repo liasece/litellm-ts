@@ -62,6 +62,10 @@ function anthropicErrorType(statusCode: number): string {
  * @param error - API error carrying the HTTP status and public message.
  */
 export function sendProtocolError(req: Request, res: Response, error: ApiError): void {
+	// 429 的等待秒数既要给人看（错误文案），也要给客户端 SDK 的自动重试读。
+	if (error.retryAfterSeconds !== undefined) {
+		res.setHeader("Retry-After", String(error.retryAfterSeconds));
+	}
 	if (!isAnthropicProtocolRequest(req)) {
 		res.status(error.statusCode).json(error.toErrorBody());
 		return;

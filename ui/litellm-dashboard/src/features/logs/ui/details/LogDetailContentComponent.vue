@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
 import { guardrailEntries, guardrailLabel, hasMessages, hasResponse, maskedEntityCount } from "../../logic/LogDetailsDisplayLogic";
+import { upstreamErrorViews } from "../../logic/LogDetailsUpstreamErrorsLogic";
 import { asRecord, safeJsonStringify } from "../../logic/PrettyMessagesBlocksLogic";
 import ModelName from "../../../providers/ui/ModelNameComponent.vue";
 import ProviderLogo from "../../../providers/ui/ProviderLogoComponent.vue";
@@ -17,6 +18,7 @@ import LogDetailsTruncatedComponent from "./LogDetailsTruncatedComponent.vue";
 import LogDetailsInfoComponent from "./LogDetailsInfoComponent.vue";
 import LogDetailsRoutingComponent from "./LogDetailsRoutingComponent.vue";
 import LogDetailsRequestResponseComponent from "./LogDetailsRequestResponseComponent.vue";
+import LogDetailsUpstreamErrorsComponent from "./LogDetailsUpstreamErrorsComponent.vue";
 import LogDetailsVectorStoreComponent from "./LogDetailsVectorStoreComponent.vue";
 import LogDetailsGuardrailComponent from "./guardrails/LogDetailsGuardrailComponent.vue";
 import PrivacyPlaceholderText from "../../../content/ui/PrivacyPlaceholderText.vue";
@@ -24,6 +26,7 @@ const props = defineProps<{ log: LogEntry; loading: boolean; inProgress: boolean
 defineEmits<{ "open-settings": [] }>();
 const metadata = computed(() => props.log.metadata ?? {}),
 	error = computed(() => (metadata.value.status === "failure" ? asRecord(metadata.value.error_information) : null)),
+	upstreamErrors = computed(() => upstreamErrorViews(props.log)),
 	entries = computed(() => guardrailEntries(metadata.value.guardrail_information));
 const tags = computed(() => asRecord(props.log.request_tags) ?? {});
 const requestProvider = computed(() => modelSupplier(props.log.model ?? "", props.log.custom_llm_provider));
@@ -46,6 +49,7 @@ function jump() {
 			><div v-if="error.error_code"><strong>Error Code:</strong> {{ error.error_code }}</div>
 			<div v-if="error.error_message"><strong>Message:</strong> {{ error.error_message }}</div></UiAlert
 		>
+		<LogDetailsUpstreamErrorsComponent v-if="upstreamErrors.length" :errors="upstreamErrors" />
 		<section v-if="Object.keys(tags).length" class="ld-tags ld-surface">
 			<strong>Tags</strong>
 			<div class="ld-inline ld-wrap">

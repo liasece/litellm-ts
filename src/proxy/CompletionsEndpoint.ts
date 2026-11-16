@@ -11,6 +11,7 @@ import { requestArrivalTime } from "../core/api/RequestArrival";
 import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { writeOpenAICompletionChunk } from "./OpenAICompletionStream";
 import { ApiError } from "../core/api/ApiError";
+import { classifyClientError } from "../core/api/ClientErrorCode";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { stripInternalFields } from "../core/api/stripInternalFields";
 import type { DrizzleDb } from "../core/db/Database";
@@ -216,6 +217,21 @@ async function handleStreamingCompletion(
 		res.end();
 	} catch (error) {
 		await recordProviderFailure({ db: db, req: req, model: model, requestId: requestId, startTime: startTime }, error);
+		// 旧实现直接结束响应，下游只看到被截断的流、拿不到任何错误分类；补一帧标准
+		// OpenAI 错误帧，让客户端能按 429/5xx 等真实分类决定是否重试。
+		const classification = classifyClientError(error);
+		if (!res.writableEnded) {
+			res.write(
+				`data: ${JSON.stringify({
+					error: {
+						message: error instanceof Error ? error.message : String(error),
+						type: classification.openAiType,
+						param: null,
+						code: classification.code,
+					},
+				})}\n\n`,
+			);
+		}
 		res.end();
 		return;
 	}

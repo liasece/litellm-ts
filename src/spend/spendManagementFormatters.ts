@@ -1,3 +1,4 @@
+import { annotateMasterKeyAlias } from "./spendLogKeyIdentity";
 import { isLegacyClientAbort } from "./spendLogStatus";
 
 /**
@@ -125,7 +126,13 @@ export function normalizeSpendLogRow(row: Record<string, unknown>): Record<strin
 		prompt_tokens: toFiniteNumber(row.prompt_tokens),
 		completion_tokens: toFiniteNumber(row.completion_tokens),
 		request_duration_ms: toFiniteNumber(row.request_duration_ms),
-		metadata: clientAborted ? { ...(metadata as Record<string, unknown>), status: "aborted" } : metadata,
+		// 主密钥行没有别名可读，这里补成可读标签；虚拟密钥行不受影响。
+		metadata: clientAborted
+			? {
+					...((annotateMasterKeyAlias(row.api_key, metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
+					status: "aborted",
+				}
+			: annotateMasterKeyAlias(row.api_key, metadata as Record<string, unknown> | null),
 		request_tags: parseJsonLikeValue(row.request_tags),
 	};
 }

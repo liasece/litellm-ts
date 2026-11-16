@@ -62,7 +62,7 @@ import type {
 	SpendReservationScope,
 } from "../types/spend";
 import { CallType, SpendLogStatus } from "../types/spend";
-import { getRecordedUpstreamExchange } from "../router/UpstreamExchange";
+import { describeUpstreamError, getRecordedUpstreamErrors, getRecordedUpstreamExchange } from "../router/UpstreamExchange";
 import type { ModelResponse, ModelResponseStream, Usage } from "../types/openai";
 import { costPerToken, resolvePeakMultiplier } from "../cost/CostCalculator";
 import { adjustCost, costTrackingConfigService, resolveCostProvider } from "../cost/CostTrackingConfig";
@@ -935,6 +935,13 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 	const requesterIpAddress = getRequesterIpAddress(ctx.req);
 	const modelResolutionChain = normalizeModelResolutionChain(ctx);
 	const routingTrace = normalizeRoutingTrace(ctx.routingTrace);
+	// 主请求读请求作用域的累积错误；内部审计行显式禁用环境读取，只能用自带的那次交换。
+	const upstreamErrors =
+		ctx.disableAmbientUpstreamContext === true
+			? ctx.upstreamLogContext
+				? [describeUpstreamError(ctx.upstreamLogContext)].filter((error) => error !== undefined)
+				: []
+			: getRecordedUpstreamErrors();
 	// fallback 不单独埋点（routing_trace 是唯一事实源），其余能力由各改写点记进账本；
 	// 内部调用的审计行显式传空集合，避免把外层主请求的能力记到旁路调用上。
 	const appliedFeatures = mergeAppliedFeatures(
@@ -973,6 +980,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		fallback_models: ctx.fallbackModels ?? null,
 		model_resolution_chain: modelResolutionChain,
 		routing_trace: routingTrace.length > 0 ? routingTrace : null,
+		upstream_errors: upstreamErrors.length > 0 ? upstreamErrors : null,
 		applied_features: appliedFeatures ?? null,
 		resolved_model_group:
 			resolveFinalModelGroup({

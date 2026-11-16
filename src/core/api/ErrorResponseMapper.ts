@@ -96,6 +96,28 @@ function inferTypeParamFromType(error: LitellmError): { type: string | null; par
 }
 
 /**
+ * 从异常推导建议的重试等待秒数，用于下发 `Retry-After`。
+ *
+ * 优先上游自带的 `Retry-After` 头（透传供应商的真实退避意图），否则用 Router
+ * 冷却时长 `cooldown_time`（毫秒，即「Try again in N seconds」里的 N）。
+ * @param error - Router 抛出的 LitellmError
+ */
+function inferRetryAfterSeconds(error: LitellmError): number | undefined {
+	const upstream = error.response?.headers?.["retry-after"];
+	if (typeof upstream === "string" && /^\d+$/.test(upstream.trim())) {
+		const seconds = Number(upstream.trim());
+		if (seconds > 0) {
+			return seconds;
+		}
+	}
+	const cooldownMs = error.cooldown_time;
+	if (typeof cooldownMs === "number" && Number.isFinite(cooldownMs) && cooldownMs > 0) {
+		return Math.max(1, Math.ceil(cooldownMs / 1000));
+	}
+	return undefined;
+}
+
+/**
  * 将任意异常映射为 ApiError。
  * @param error - 路由处理中抛出的异常
  */
@@ -106,7 +128,9 @@ export function mapToApiError(error: unknown): ApiError {
 	if (error instanceof LitellmError) {
 		const statusCode = error.status_code ?? inferStatusCodeFromType(error);
 		const { type, param } = inferTypeParamFromType(error);
-		return new ApiError(statusCode, error.message, type, param);
+		const apiError = new ApiError(statusCode, error.message, type, param);
+		apiError.retryAfterSeconds = inferRetryAfterSeconds(error);
+		return apiError;
 	}
 	return new ApiError(HTTP_STATUS.INTERNAL_SERVER_ERROR, toErrorMessage(error));
 }

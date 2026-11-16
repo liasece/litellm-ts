@@ -15,6 +15,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Request, Response, Router } from "express";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { ApiError } from "../core/api/ApiError";
+import { classifyClientError } from "../core/api/ClientErrorCode";
 import { requestArrivalTime } from "../core/api/RequestArrival";
 import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
@@ -2618,8 +2619,16 @@ function errorMessage(error: unknown): string {
 	return String(error);
 }
 
+/**
+ * 流内 `response.failed` 的 error.code。
+ *
+ * SSE 已开始后 HTTP 状态行固定为 200，code 是下游唯一能判断"限流可重试"还是
+ * "服务端故障"的依据，因此按真实错误分类取值（429 → rate_limit_exceeded），
+ * 不能一律压成 server_error。上游中断沿用既有 provider_timeout 语义。
+ * @param error - 终止本次流的异常
+ */
 function streamErrorCode(error: unknown): string {
-	return error instanceof Error && error.name === "AbortError" ? "provider_timeout" : "server_error";
+	return error instanceof Error && error.name === "AbortError" ? "provider_timeout" : classifyClientError(error).code;
 }
 
 function responseStorageNotImplemented(): never {

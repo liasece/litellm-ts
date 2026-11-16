@@ -95,6 +95,17 @@ describe("ApiError.noDeploymentsAvailable", () => {
 			},
 		});
 	});
+
+	it("冷却秒数同时成为 Retry-After，供客户端自动重试", () => {
+		const error = ApiError.noDeploymentsAvailable("hy3", {
+			cooldownSeconds: 5,
+			cooldownList: [],
+			preCallChecks: true,
+		});
+		// 文案说 5 秒，头也必须是 5；无冷却条目时文案回退默认值，头同样不能缺席。
+		expect(error.message).toContain("Try again in 5 seconds");
+		expect(error.retryAfterSeconds).toBe(5);
+	});
 });
 
 describe("ApiError.unprocessableEntity", () => {

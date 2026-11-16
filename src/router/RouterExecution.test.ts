@@ -386,6 +386,9 @@ describe("Router execution chain", () => {
 				// 消息含冷却列表与配置冷却时长（markFailed 5000ms → 5 秒）
 				expect(e.message).toContain("Try again in 5 seconds. Passed model=only-model.");
 				expect(e.message).toContain("cooldown_list=['only-model']");
+				// 字段与文案必须同源：客户端自动重试读的 Retry-After 由 cooldown_time 换算，
+				// 两者不一致时下游要么等错时长，要么完全拿不到提示。
+				expect((e.cooldown_time as number) / 1000).toBe(5);
 			}
 		});
 	});

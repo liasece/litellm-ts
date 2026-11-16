@@ -3,6 +3,7 @@ import {
 	captureUpstreamExchange,
 	createPublishedModelResolutionTrace,
 	getRecordedModelResolutionTrace,
+	getRecordedUpstreamErrors,
 	getRecordedUpstreamExchange,
 	observeUpstreamExchange,
 	recordUpstreamExchange,
@@ -14,6 +15,13 @@ function context(url: string): UpstreamLogContext {
 	return {
 		request: { url: url, method: "POST", headers: {}, body: { model: "provider-model" } },
 		response: { status_code: 200, headers: {}, body: { ok: true } },
+	};
+}
+
+function upstreamError(url: string, status_code: number, body: unknown): UpstreamLogContext {
+	return {
+		request: { url: url, method: "POST", headers: {}, body: { model: "provider-model" } },
+		response: { status_code: status_code, headers: {}, body: body },
 	};
 }
 
@@ -108,5 +116,53 @@ describe("upstream exchange channel", () => {
 
 		expect(trace.fallbackModels).toEqual([]);
 		expect(getRecordedModelResolutionTrace()).toBeUndefined();
+	});
+
+	test("重试与 fallback 的上游错误按发生顺序累积，成功交换与重复错误不进入列表", () => {
+		runWithUpstreamExchangeScope(() => {
+			recordUpstreamExchange(
+				upstreamError("https://provider.example/a", 429, { error: { type: "server_error", message: "overloaded" } }),
+			);
+			recordUpstreamExchange(
+				upstreamError("https://provider.example/b", 500, { error: { type: "server_error", message: "bad gateway" } }),
+			);
+			recordUpstreamExchange(context("https://provider.example/ok"));
+			// 同一 URL/状态/类别/文案只算一次，避免重试风暴把日志详情刷屏。
+			recordUpstreamExchange(
+				upstreamError("https://provider.example/a", 429, { error: { type: "server_error", message: "overloaded" } }),
+			);
+
+			expect(getRecordedUpstreamErrors()).toEqual([
+				{ url: "https://provider.example/a", status_code: 429, type: "server_error", message: "overloaded" },
+				{ url: "https://provider.example/b", status_code: 500, type: "server_error", message: "bad gateway" },
+			]);
+		});
+	});
+
+	test("上游错误体为 JSON 字符串或标量错误时也能提取可读文案", () => {
+		runWithUpstreamExchangeScope(() => {
+			recordUpstreamExchange(
+				upstreamError("https://provider.example/a", 429, '{"error":{"type":"rate_limit","message":"quota exceeded"}}'),
+			);
+			recordUpstreamExchange(upstreamError("https://provider.example/b", 502, { error: "upstream unavailable" }));
+
+			expect(getRecordedUpstreamErrors()).toEqual([
+				{ url: "https://provider.example/a", status_code: 429, type: "rate_limit", message: "quota exceeded" },
+				{ url: "https://provider.example/b", status_code: 502, type: "upstream_error", message: "upstream unavailable" },
+			]);
+		});
+	});
+
+	test("不同请求作用域的上游错误互不串扰，返回值修改不影响后续读取", () => {
+		runWithUpstreamExchangeScope(() => {
+			recordUpstreamExchange(upstreamError("https://provider.example/a", 500, { error: { message: "failed" } }));
+			expect(getRecordedUpstreamErrors()).toHaveLength(1);
+		});
+		runWithUpstreamExchangeScope(() => {
+			const errors = getRecordedUpstreamErrors();
+			expect(errors).toEqual([]);
+			errors.push({ url: "x", status_code: 500, type: "x", message: "x" });
+			expect(getRecordedUpstreamErrors()).toEqual([]);
+		});
 	});
 });

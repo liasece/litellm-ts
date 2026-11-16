@@ -5,6 +5,7 @@ import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { Router } from "../router/Router";
 import type { Router as LiteLLMRouter } from "../router/Router";
+import { RouterRateLimitErrorBasic } from "../router/RouterErrors";
 import { RoutingStrategyName, type Deployment } from "../types/router";
 import { createEndpointSpendLifecycle } from "../spend/SpendReservation";
 import * as SpendTracker from "../spend/SpendTracker";
@@ -1938,6 +1939,31 @@ describe("Responses API contract matrix", () => {
 		expect(events.at(-1)?.type).toBe("response.failed");
 		expect(trackSpy).toHaveBeenCalledTimes(1);
 		expect(trackSpy.mock.calls[0]?.[1]).toMatchObject({ status: "failure" });
+	});
+
+	test("stream 429 在终态事件里保留 rate_limit_exceeded 而不是 server_error", async () => {
+		// 生产回归（请求 3ff51003）：上游 429 经 pre_call_checks 变成 RouterRateLimitErrorBasic，
+		// SSE 已开始后 HTTP 状态行固定 200，error.code 是下游判断"限流可重试"的唯一依据。
+		jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+			status: "reserved",
+			requestId: "request-1",
+			reserved: 1,
+			actual: null,
+		});
+		jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({ status: "committed", requestId: "request-1", spend: 0 });
+		async function* limitedStream() {
+			yield { type: "response.created", response: { id: "resp-429", status: "in_progress", output: [] } };
+			throw new RouterRateLimitErrorBasic("No deployments available for selected model", { status_code: 429 });
+		}
+		const completion = jest.fn().mockResolvedValue({ _stream: true, _responseProtocol: "responses", stream: limitedStream() });
+		const response = await request(buildApp(buildRouter(completion), true))
+			.post("/v1/responses")
+			.send({ model: "responses-model", input: "hello", stream: true })
+			.expect(200);
+
+		const terminal = parseSseEvents(response.text).at(-1);
+		expect(terminal?.type).toBe("response.failed");
+		expect((terminal?.response as { error?: { code?: string } }).error?.code).toBe("rate_limit_exceeded");
 	});
 
 	test("capability stream failure without an available fallback ends with one Responses terminal event", async () => {

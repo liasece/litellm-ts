@@ -44,6 +44,7 @@ import { logger } from "../core/utils/logger";
 import { CallType, SpendLogStatus } from "../types/spend";
 import { BadRequestError } from "../router/RouterErrors";
 import { noteAppliedFeature, runWithAppliedFeatures } from "../router/AppliedFeatures";
+import { recordUpstreamExchange, runWithUpstreamExchangeScope } from "../router/UpstreamExchange";
 
 describe("Spend reservation 请求 helper", () => {
 	it("同 key 与幂等 header 生成稳定 request id，不同 key 隔离 namespace", () => {
@@ -2213,6 +2214,59 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 		await trackSpendLog(mockDb, createMinimalLogEntry({ request_id: "req-cache-hit-true", cache_hit: true }));
 		expect(insertedSpendLogs[0]!["cache_hit"]).toBe("False");
 		expect(insertedSpendLogs[1]!["cache_hit"]).toBe("True");
+	});
+});
+
+describe("upstream_errors 上游错误列表", () => {
+	const upstreamError = (url: string, status_code: number, message: string) => ({
+		request: { url, method: "POST", headers: {}, body: {} },
+		response: { status_code, headers: {}, body: { error: { type: "server_error", message } } },
+	});
+	const minimalRequest = () =>
+		({
+			body: { model: "hy4-flash" },
+			headers: {},
+			ip: "127.0.0.1",
+			method: "POST",
+			originalUrl: "/responses",
+			url: "/responses",
+		}) as unknown as Request;
+	const context = () => ({
+		auth: { api_key: "key-a" },
+		callType: CallType.AResponses,
+		endTime: new Date("2026-11-16T13:55:08.000Z"),
+		model: "hy4-flash",
+		req: minimalRequest(),
+		requestId: "req-upstream-errors",
+		startTime: new Date("2026-11-16T13:55:05.000Z"),
+	});
+
+	it("把请求内的全部上游错误按顺序写进 metadata，不只留最后一次交换", async () => {
+		const spendLog = await runWithUpstreamExchangeScope(async () => {
+			recordUpstreamExchange(upstreamError("https://provider.example/a", 429, "overloaded"));
+			recordUpstreamExchange(upstreamError("https://provider.example/b", 500, "bad gateway"));
+			return await buildSpendLogFromRequest(context());
+		});
+
+		expect(spendLog.metadata?.["upstream_errors"]).toEqual([
+			{ url: "https://provider.example/a", status_code: 429, type: "server_error", message: "overloaded" },
+			{ url: "https://provider.example/b", status_code: 500, type: "server_error", message: "bad gateway" },
+		]);
+	});
+
+	it("内部审计行禁用环境读取时只记录自带的那次上游交换", async () => {
+		const spendLog = await runWithUpstreamExchangeScope(async () => {
+			recordUpstreamExchange(upstreamError("https://provider.example/a", 429, "overloaded"));
+			return await buildSpendLogFromRequest({
+				...context(),
+				disableAmbientUpstreamContext: true,
+				upstreamLogContext: upstreamError("https://provider.example/b", 500, "bad gateway"),
+			});
+		});
+
+		expect(spendLog.metadata?.["upstream_errors"]).toEqual([
+			{ url: "https://provider.example/b", status_code: 500, type: "server_error", message: "bad gateway" },
+		]);
 	});
 });
 

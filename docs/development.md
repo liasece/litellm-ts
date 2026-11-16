@@ -27,7 +27,7 @@
 | `src/container.ts` | 服务容器：按依赖顺序建 Database / Credential / Router / 订阅运行时，并暴露幂等 `warmUp()` |
 | `src/core/config/` | YAML 加载与校验、DB 配置覆盖（`DbConfigProvider`）、每请求运行时快照（`DatabaseRuntimeConfigService`） |
 | `src/core/db/` | 连接池、启动重试、迁移与 `ProductionPreflight`（部署契约产物） |
-| `src/core/api/` | 路由注册、错误映射、请求到达打点、响应头与脱敏辅助 |
+| `src/core/api/` | 路由注册、错误映射（含流式错误码分类 `ClientErrorCode` 与 `Retry-After` 下发）、请求到达打点、响应头与脱敏辅助 |
 | `src/auth/` | 虚拟密钥、JWT、WebUI 会话、对象授权（`AuthorizationGuard`）、仓库层缓存 |
 | `src/router/` | 路由决策：部署选择、重试策略、冷却、fallback、流式包装、标签路由、限流 |
 | `src/providers/` | 各上游 Provider 适配器与 `ProviderRegistry`（前缀解析、动态构造、订阅分发） |
@@ -70,7 +70,7 @@
 
 **路由与记账**：`DatabaseRuntimeConfigService` 每请求建立一致快照 → `Router` 选 deployment、执行 retry / cooldown / fallback（`RouterExecution`、`FallbackHandler`、`CooldownManager`）→ `ProviderRequestExecutor` → Provider `build()` 出上游请求体 → 上游响应经协议 translator 回到入口协议。流式 fallback 的判据是「客户端是否已拿到答案内容」，实现见 `src/router/StreamOutputVisibility.ts`：包络块、思考增量与错误透传不算「已给出答案」，正文、拒绝文本与工具调用增量才算。
 
-**记账与日志**：在途登记 `src/spend/ActiveRequestJournal.ts`，结算走 `SpendSettlementQueue`，最终落 `LiteLLM_SpendLogs`；重复正文按内容寻址进 `LiteLLM_SpendLogBlocks`（`src/spend/SpendLogBlocks.ts`），读侧在 DTO 层统一组装，业务代码不应直接碰 `_litellm_ref_*` 键。
+**记账与日志**：在途登记 `src/spend/ActiveRequestJournal.ts`，结算走 `SpendSettlementQueue`，最终落 `LiteLLM_SpendLogs`；重复正文按内容寻址进 `LiteLLM_SpendLogBlocks`（`src/spend/SpendLogBlocks.ts`），读侧在 DTO 层统一组装，业务代码不应直接碰 `_litellm_ref_*` 键。日志行的 `metadata.user_api_key_alias` 是虚拟密钥的真实别名；主密钥没有 token 行可查，读侧由 `src/spend/spendLogKeyIdentity.ts` 按 `api_key == hash(主密钥)` 补成 `Master Key`，属展示补充、不回写库。
 
 **Messages 的内置工具**：`src/proxy/AnthropicCapabilityStream.ts` 把多轮上游调用组织成一条公开的 Messages 流。
 文本和思考可以直接下发；混合工具轮里的调用要等能力循环确定哪些交给客户端，避免客户端执行已由网关接管的工具。

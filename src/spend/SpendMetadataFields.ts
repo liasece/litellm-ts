@@ -47,7 +47,9 @@ export function projectSpendMetadata(metadata: Record<string, unknown>, fields?:
 	}
 	// 能力标记与 status 同等地位：include/exclude 只裁剪可配置的明细，不能把「这条请求
 	// 被哪些路由能力处理过」裁掉，否则列表的 Feature 列会随配置静默变空。
-	const keep = new Set(["status", "cold_storage_object_key", "applied_features"]);
+	// upstream_errors 同样是诊断事实而非可配置明细，被裁掉后日志详情就无法在最终错误
+	// 下方列出全部上游错误。
+	const keep = new Set(["status", "cold_storage_object_key", "applied_features", "upstream_errors"]);
 	const include = fields.include && new Set(fields.include);
 	const exclude = new Set(fields.exclude);
 	return Object.fromEntries(

@@ -7,6 +7,7 @@
 
 import type { Request } from "express";
 import type { UpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamErrorRecord } from "../router/UpstreamExchange";
 import type { ModelResolutionChainEntry, RoutingTraceEntry } from "../router/ModelResolutionTrace";
 import type { UserAPIKeyAuth } from "./auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
@@ -265,6 +266,13 @@ export interface SpendLogsMetadata {
 	readonly batch_models?: unknown;
 	/** 失败请求的错误信息 */
 	readonly error_information?: Record<string, unknown>;
+	/**
+	 * 本请求所有上游错误响应的摘要，按发生顺序（重试与 fallback 都算）。
+	 *
+	 * 与只保留最后一次交换的 upstream_response 互补：日志详情据此在最终显示的错误
+	 * 下方列出全部上游错误。无上游错误时为 null。
+	 */
+	readonly upstream_errors?: UpstreamErrorRecord[] | null;
 	/** 原始 usage 对象脱敏副本 */
 	readonly usage_object?: Record<string, unknown>;
 	/** 模型映射信息（PY StandardLoggingModelInformation：model_map_key/model_map_value） */

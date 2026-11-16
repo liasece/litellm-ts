@@ -16,13 +16,98 @@ import type { UpstreamLogContext } from "./UpstreamLogContext";
 /** 上游交换的只读观察者；在传输层记录后同步调用，异常不影响请求。 */
 export type UpstreamExchangeObserver = (context: UpstreamLogContext) => void;
 
+/**
+ * 一次上游错误响应的可展示摘要。
+ *
+ * 只保留定位所需的字段：上游地址、状态码、错误类别与文案。响应体在
+ * `createUpstreamLogContext` 里已经过 `redactErrorPayload` 脱敏，这里不再重复处理正文。
+ */
+export interface UpstreamErrorRecord {
+	/** 发出该次请求的上游地址。 */
+	readonly url: string;
+	/** 上游返回的 HTTP 状态码。 */
+	readonly status_code: number;
+	/** 上游错误类别或供应商错误码。 */
+	readonly type: string;
+	/** 已脱敏的错误文案，过长时截断。 */
+	readonly message: string;
+}
+
 interface UpstreamExchangeChannel {
 	/** 当前作用域最近一次真实上游交换。 */
 	latest?: UpstreamLogContext;
+	/** 请求内观测到的全部上游错误，按发生顺序；重试与 fallback 的错误都要保留。 */
+	errors?: UpstreamErrorRecord[];
 	/** 请求级观察者，用于把已确定的上游信息补写进在途日志。 */
 	observer?: UpstreamExchangeObserver;
 	/** 请求级路由解析轨迹，供观察者读取当前进度。 */
 	resolutionTrace?: ModelResolutionTraceCollector;
+}
+
+function firstString(...values: unknown[]): string | undefined {
+	for (const value of values) {
+		if (typeof value === "string" && value.trim().length > 0) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+/**
+ * 流式终态事件或传输层可能把响应体留成 JSON 字符串，读取前先尝试解析。
+ * @param value - 上游响应体原文
+ */
+function parseBody(value: unknown): unknown {
+	if (typeof value !== "string") {
+		return value;
+	}
+	try {
+		return JSON.parse(value) as unknown;
+	} catch {
+		return value;
+	}
+}
+
+/**
+ * 从一次上游交换中提取错误摘要；成功交换返回 undefined。
+ * @param context - 传输层记录的上游请求/响应上下文
+ */
+export function describeUpstreamError(context: UpstreamLogContext): UpstreamErrorRecord | undefined {
+	const response = context.response;
+	if (response === undefined) {
+		return undefined;
+	}
+	const body = parseBody(response.body);
+	const bodyRecord = asRecord(body);
+	const rawError = bodyRecord?.["error"];
+	const error = asRecord(rawError);
+	const errorCode = error?.["code"];
+	const type =
+		firstString(
+			error?.["type"],
+			errorCode !== undefined && typeof errorCode !== "object" ? String(errorCode) : undefined,
+			bodyRecord?.["type"],
+		) ?? "upstream_error";
+	const message = firstString(
+		error?.["message"],
+		typeof rawError === "string" ? rawError : undefined,
+		error?.["error_message"],
+		asRecord(error?.["error"])?.["message"],
+		bodyRecord?.["message"],
+	);
+	if (message === undefined || (response.status_code < 400 && error === undefined && typeof rawError !== "string")) {
+		return undefined;
+	}
+	return {
+		url: context.request.url,
+		status_code: response.status_code,
+		type: type,
+		message: message.slice(0, 2_000),
+	};
 }
 
 const channels = new AsyncLocalStorage<UpstreamExchangeChannel>();
@@ -49,6 +134,23 @@ export function recordUpstreamExchange(context: UpstreamLogContext): void {
 		return;
 	}
 	channel.latest = context;
+	const error = describeUpstreamError(context);
+	if (error !== undefined) {
+		// latest 只留最后一次交换，重试与 fallback 的中途错误会被覆盖；
+		// 日志详情要在最终显示的错误下方列出全部上游错误，因此单独累积。
+		const errors = (channel.errors ??= []);
+		if (
+			!errors.some(
+				(entry) =>
+					entry.url === error.url &&
+					entry.status_code === error.status_code &&
+					entry.type === error.type &&
+					entry.message === error.message,
+			)
+		) {
+			errors.push(error);
+		}
+	}
 	const observer = channel.observer;
 	if (observer === undefined) {
 		return;
@@ -119,6 +221,16 @@ export function createPublishedModelResolutionTrace(): ModelResolutionTraceColle
  */
 export function getRecordedUpstreamExchange(): UpstreamLogContext | undefined {
 	return channels.getStore()?.latest;
+}
+
+/**
+ * 读取当前请求内观测到的全部上游错误（按发生顺序）。
+ *
+ * 返回副本，调用方修改不会影响请求作用域里的记录。
+ * @returns 没有上游错误时返回空数组
+ */
+export function getRecordedUpstreamErrors(): UpstreamErrorRecord[] {
+	return [...(channels.getStore()?.errors ?? [])];
 }
 
 /**

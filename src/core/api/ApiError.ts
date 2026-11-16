@@ -79,6 +79,15 @@ export class ApiError extends Error {
 	readonly errorType: string | null;
 
 	/**
+	 * 建议的重试等待秒数；有值时以 `Retry-After` 头下发。
+	 *
+	 * 429 的文案已经写了「Try again in N seconds」，但那是给人看的；客户端 SDK
+	 * 的退避与自动重试读的是 `Retry-After`。缺少该头时下游只能按默认策略退避，
+	 * 或干脆放弃重试。
+	 */
+	retryAfterSeconds?: number;
+
+	/**
 	 * 响应体覆盖：设置后 toErrorBody 直接返回该对象（用于 FastAPI 422 detail 等非标准 error 包装）
 	 */
 	private _bodyOverride?: Record<string, unknown>;
@@ -202,12 +211,16 @@ export class ApiError extends Error {
 	 * @param info - 冷却上下文（见 Router.getNoAvailableDeploymentInfo）
 	 */
 	static noDeploymentsAvailable(model: string, info: NoDeploymentsErrorInfo): ApiError {
-		return new ApiError(
+		const error = new ApiError(
 			HTTP_STATUS.TOO_MANY_REQUESTS,
 			formatNoDeploymentsAvailableMessage(model, info),
 			PYTHON_NONE_FILL,
 			PYTHON_NONE_FILL,
 		);
+		// 文案里的「Try again in N seconds」与 Retry-After 同源：前者给人看，
+		// 后者是客户端 SDK 决定何时自动重试的唯一机器可读依据。
+		error.retryAfterSeconds = Math.max(1, Math.ceil(info.cooldownSeconds));
+		return error;
 	}
 
 	/**

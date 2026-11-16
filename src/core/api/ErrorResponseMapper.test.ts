@@ -90,3 +90,27 @@ describe("mapToApiError", () => {
 		expect((mapToApiError("string error").toErrorBody().error as { message: string }).message).toBe("string error");
 	});
 });
+
+describe("mapToApiError 重试等待提示", () => {
+	it("Router 冷却时长换算成 Retry-After 秒数", () => {
+		// 429 文案里的「Try again in N seconds」来自 cooldown_time；
+		// 客户端自动重试读的是 Retry-After，两者必须一致。
+		const error = new RouterRateLimitErrorBasic("No deployments available", { cooldown_time: 5000 });
+		expect(mapToApiError(error).retryAfterSeconds).toBe(5);
+	});
+
+	it("不足一秒的冷却向上取整到 1 秒，避免下发 0", () => {
+		const error = new RouterRateLimitErrorBasic("No deployments available", { cooldown_time: 400 });
+		expect(mapToApiError(error).retryAfterSeconds).toBe(1);
+	});
+
+	it("上游自带 Retry-After 时优先透传供应商的退避意图", () => {
+		const error = new RateLimitError("upstream slow down", { response: { headers: { "retry-after": "12" } } });
+		expect(mapToApiError(error).retryAfterSeconds).toBe(12);
+	});
+
+	it("没有冷却或上游提示时不下发 Retry-After", () => {
+		expect(mapToApiError(new RateLimitError("rate limit")).retryAfterSeconds).toBeUndefined();
+		expect(mapToApiError(new BadRequestError("bad")).retryAfterSeconds).toBeUndefined();
+	});
+});

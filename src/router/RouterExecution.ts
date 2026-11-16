@@ -230,7 +230,6 @@ export async function executeWithFallback(
 		// 抛 RouterRateLimitErrorBasic 携带 cooldown_time + cooldown_list 字段。
 		// 消息文本对齐 PY RouterRateLimitError（types/router.py:688）实测格式。
 		const activeCooldowns = ctx.cooldownManager.getActiveCooldowns(candidateKeys);
-		const minCooldownMs = ctx.cooldownManager.getMinCooldown(candidateKeys);
 		const cooldownList = activeCooldowns.length > 0 ? maskCooldownEntries(activeCooldowns) : undefined;
 		// PY cooldown_time 取 CooldownCacheValue.cooldown_time（配置时长）的最小值，无冷却条目时回退默认 cooldown_time
 		const cooldownSeconds =
@@ -248,7 +247,10 @@ export async function executeWithFallback(
 			}),
 			{
 				model: model,
-				cooldown_time: minCooldownMs > 0 ? minCooldownMs : undefined,
+				// 无冷却条目时消息回退 Router 默认 cooldown_time，该字段必须同源同值：
+				// 客户端自动重试读的 Retry-After 由它换算，缺省会让「Try again in N seconds」
+				// 只剩人读得懂、下游拿不到任何退避提示。
+				cooldown_time: cooldownSeconds * 1000,
 
 				cooldown_list: cooldownList,
 			},

@@ -22,6 +22,7 @@ import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { hasOpenAICompletionContent, writeOpenAICompletionChunk } from "./OpenAICompletionStream";
 import { stripInternalFields } from "../core/api/stripInternalFields";
 import { ApiError } from "../core/api/ApiError";
+import { classifyClientError } from "../core/api/ClientErrorCode";
 import { isForwardableUpstreamHeader } from "../core/api/upstreamHeaders";
 import { buildInvalidModelError, formatInvalidModelMessage, CHAT_COMPLETIONS_ROUTE_NAME } from "../router/RouterExecution";
 import { describeUpstreamErrorBody, executeProviderRequest } from "../router/ProviderRequestExecutor";
@@ -1002,7 +1003,19 @@ async function handleStreamingResponse(
 				}
 				logger.error("流式响应处理异常", { error: streamFailure });
 				if (!retryBeforeOutput && !clientDisconnected) {
-					res.write(`data: ${JSON.stringify({ error: { message: String(streamFailure), type: "stream_error" } })}\n\n`);
+					// SSE 已开始写出，错误只能以流内帧下发；这里给下游保留真实分类
+					// （429 → rate_limit_exceeded），否则流式与同错误的非流式 429 响应行为不一致。
+					const classification = classifyClientError(streamFailure);
+					res.write(
+						`data: ${JSON.stringify({
+							error: {
+								message: String(streamFailure),
+								type: classification.openAiType,
+								param: null,
+								code: classification.code,
+							},
+						})}\n\n`,
+					);
 				}
 			} finally {
 				stopKeepalive();
