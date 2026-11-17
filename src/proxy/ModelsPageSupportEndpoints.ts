@@ -127,7 +127,8 @@ const ROUTER_SETTINGS_FIELD_DEFS: ReadonlyArray<{
 	{
 		field_name: "fallbacks",
 		field_type: "List",
-		field_description: "List of fallback model mappings",
+		// 条目可以是 [模型名...] 或 { targets: [...], recurse?: false }；recurse:false 表示不进入目标自身的链。
+		field_description: "List of fallback model mappings (targets, optionally with recurse flag)",
 		field_default: [],
 		ui_field_name: "Fallbacks",
 	},

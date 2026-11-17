@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
-import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
+import UiEntryCard from "../../platform/ui/UiEntryCard.vue";
+import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
+import UiSectionCard from "../../platform/ui/UiSectionCard.vue";
+import UiSwitchRow from "../../platform/ui/UiSwitchRow.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import type { FallbackGroup } from "../support/RouterSettingsModels";
 const props = defineProps<{ models: string[] }>();
@@ -21,7 +24,7 @@ watch(
 function add() {
 	if (groups.value.length >= 5) return;
 	const id = "fallback-" + ++sequence;
-	groups.value = [...groups.value, { id, primary: "", models: [] }];
+	groups.value = [...groups.value, { id, primary: "", models: [], recurse: true }];
 	active.value = id;
 }
 function remove(id: string) {
@@ -34,9 +37,16 @@ function primary(value: unknown) {
 	current.value.primary = typeof value === "string" ? value : "";
 	current.value.models = current.value.models.filter((model) => model !== current.value?.primary);
 }
-function changeFallbackModels(value: unknown) {
-	if (current.value)
-		current.value.models = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 10) : [];
+const fallbackCandidates = computed(() =>
+	props.models.filter((model) => model !== current.value?.primary && !current.value?.models.includes(model)),
+);
+function addFallbackModel(value: unknown) {
+	if (!current.value || typeof value !== "string" || !value) return;
+	if (current.value.models.includes(value) || current.value.models.length >= 10) return;
+	current.value.models = [...current.value.models, value];
+}
+function removeFallbackModel(name: string) {
+	if (current.value) current.value.models = current.value.models.filter((model) => model !== name);
 }
 </script>
 <template>
@@ -65,9 +75,8 @@ function changeFallbackModels(value: unknown) {
 			</button>
 		</div>
 		<div v-if="current" class="routing-fallback-group">
-			<section>
-				<label>Primary Model <b>*</b></label
-				><UiSelect
+			<UiSectionCard title="Primary model" required>
+				<UiSelect
 					:model-value="current.primary || null"
 					:options="props.models.map((value) => ({ value, label: value }))"
 					size="large"
@@ -79,63 +88,41 @@ function changeFallbackModels(value: unknown) {
 				<p v-if="!current.primary" class="routing-fallback-warning">
 					<UiLucideIcon name="AlertCircle" :size="16" />Select a model to begin configuring fallbacks
 				</p>
-			</section>
+			</UiSectionCard>
 			<div class="routing-fallback-connection">
 				<span><UiLucideIcon name="ArrowDown" :size="16" />IF FAILS, TRY...</span>
 			</div>
-			<section :class="{ 'routing-fallback-disabled': !current.primary }">
-				<label>Fallback Chain <b>*</b><small>(Max 10 fallbacks at a time)</small></label>
-				<div class="routing-fallback-chain">
-					<UiSelect
-						:model-value="current.models"
-						max-tag-count="responsive"
-						:options="props.models.filter((model) => model !== current?.primary).map((value) => ({ value, label: value }))"
-						multiple
-						searchable
-						size="large"
+			<UiSectionCard title="Fallback chain" description="Models are tried top to bottom after the primary model fails.">
+				<template #actions>
+					<span class="routing-fallback-count">{{ current.models.length }}/10</span>
+				</template>
+				<UiSelect
+					:model-value="null"
+					:options="fallbackCandidates.map((value) => ({ value, label: value }))"
+					searchable
+					size="large"
+					:disabled="!current.primary || current.models.length >= 10"
+					:placeholder="current.models.length >= 10 ? 'Maximum 10 fallbacks reached' : 'Add a fallback model'"
+					aria-label="Add fallback model"
+					@update:model-value="addFallbackModel"
+				/>
+				<p v-if="!current.models.length" class="routing-fallback-hint">No fallback models yet — add one above.</p>
+				<UiEntryCard v-for="(model, index) in current.models" :key="model" :index="index + 1">
+					<template #title><ModelName :model="model" :size="16" variant="strong" /></template>
+					<template #actions>
+						<UiEntryRemove :label="'Remove fallback ' + model" @click="removeFallbackModel(model)" />
+					</template>
+				</UiEntryCard>
+				<template #footer>
+					<UiSwitchRow
+						:model-value="current.recurse"
 						:disabled="!current.primary"
-						:placeholder="current.models.length < 10 ? 'Select fallback models to add...' : 'Maximum 10 fallbacks reached'"
-						aria-label="Fallback Chain"
-						@update:model-value="changeFallbackModels"
-						><template #option="{ option }"
-							><span v-if="current.models.includes(String(option.value))" class="routing-fallback-option-order">{{
-								current.models.indexOf(String(option.value)) + 1
-							}}</span
-							>{{ option.label }}</template
-						><template #overflow="{ options, count }"
-							><UiTooltip
-								:title="options.map((option) => option.value).join(', ')"
-								popup-class="routing-fallback-overflow-tooltip"
-								><span>+{{ count }} more</span></UiTooltip
-							></template
-						></UiSelect
-					>
-					<p>
-						{{
-							current.models.length < 10
-								? "Search and select multiple models. Selected models will appear below in order. (" +
-									current.models.length +
-									"/10 used)"
-								: "Maximum 10 fallbacks reached. Remove some to add more."
-						}}
-					</p>
-					<div class="routing-fallback-selected">
-						<div v-if="!current.models.length" class="routing-fallback-empty">
-							<span>No fallback models selected</span><small>Add models from the dropdown above</small>
-						</div>
-						<div v-for="(model, index) in current.models" :key="model" class="routing-fallback-model">
-							<span class="routing-fallback-index">{{ index + 1 }}</span
-							><ModelName :model="model" :size="16" variant="strong" /><button
-								type="button"
-								:aria-label="'Remove fallback ' + model"
-								@click="changeFallbackModels(current.models.filter((_, position) => position !== index))"
-							>
-								<UiLucideIcon name="X" :size="16" />
-							</button>
-						</div>
-					</div>
-				</div>
-			</section>
+						label="Let each fallback use its own chain"
+						description="When off, a target that fails stops here instead of continuing to whatever that model falls back to."
+						@update:model-value="current.recurse = $event"
+					/>
+				</template>
+			</UiSectionCard>
 		</div>
 	</div>
 </template>

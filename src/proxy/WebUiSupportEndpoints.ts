@@ -47,6 +47,7 @@ import { ConfigRepository } from "../repositories/ConfigRepository";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { buildModelGroupOverrides } from "../router/ModelOverrides";
 import { validateModelGroupAliases } from "../shared/ModelGroupAlias";
+import { validateFallbackEntries } from "../shared/FallbackEntry";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
 import providerCreateFieldsJson from "../data/provider_create_fields.json";
@@ -2185,6 +2186,15 @@ export function registerWebUiSupportRoutes(
 					});
 				} catch (error) {
 					throw ApiError.badRequest(error instanceof Error ? error.message : "Invalid model group aliases");
+				}
+			}
+			// fallbacks 是运行期直接决定请求落到哪个模型的配置，写坏一次就可能把流量送到
+			// 没有额度的模型上，因此在入库前校验条目形态（目标列表 / targets + recurse）。
+			if (isRecord(incoming) && Object.prototype.hasOwnProperty.call(incoming, "fallbacks")) {
+				try {
+					validateFallbackEntries(incoming.fallbacks);
+				} catch (error) {
+					throw ApiError.badRequest(error instanceof Error ? error.message : "Invalid fallbacks");
 				}
 			}
 		}

@@ -8,6 +8,7 @@
 - 与网络、浏览器事件、计时器、订阅、流、图表实例同步时明确初始化与销毁；取消旧请求，避免过期响应覆盖新状态。
 - 保持 HttpOnly session cookie、写请求 CSRF、显式虚拟密钥推理的认证边界；不在截图、日志或示例中使用真实凭据。
 - 路径路由与 legacy ?page=... 同时兼容，导航选中映射与后端静态路径共用 src/shared/WebUiPaths.ts。HTML 回退只覆盖页面路由，资源不存在须返回 404。
+- 表单类弹窗复用 `src/features/platform/ui/` 的分区组件，不要为每个对话框重写边框和间距：`UiSectionCard` 提供标题/说明/右上角操作/底部开关条，`UiEntryCard` 是带序号的条目框（`primary` 变体强调首项），`UiSwitchRow` 是「左说明、右开关」的一行，`UiEntryRemove` 是条目右侧统一的移除按钮。列表类配置（Fallback 目标、别名目标、时段）都按这个结构表达顺序：序号即执行顺序，不另设排序控件。
 - 不得用 as any、@ts-ignore、放宽 tsconfig、关闭 ESLint 规则或新建违规基线掩盖问题。
 - 修改后至少运行相关 Vitest、npm run typecheck、npm run lint、npm run format:check、npm run build 与 git diff --check。构建含类型检查也不能代替覆盖源码及测试的独立 typecheck。
 - 测试分层：表单校验、请求体映射、状态流转和错误码处理放 Vitest 逻辑测试（node 环境，`src/**/*.test.ts`）；只有浏览器语义才写 Playwright 组件测试（`tests/platform-ui`，`npm run test:components`）——原生 dialog 的模态与焦点、剪贴板降级、图表指针命中、键盘与 aria 交互、滚动分页、流式增量。组件测试不断言像素、字号、阴影、渐变等样式数值，也不复制已由 Vitest 覆盖的 payload 断言。

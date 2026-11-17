@@ -22,7 +22,9 @@
 	overflow-y: auto;
 }
 .ui-popover.logs-model-popover-shell {
-	--ui-popover-max-width: 464px;
+	/* 路由行要放下 provider/model 这种长名字（如 commandcode/deepseek/deepseek-v4.1-flash），
+	   卡片比默认宽度再宽一些，避免最后一个字符被挤到第二行。 */
+	--ui-popover-max-width: 520px;
 	max-height: calc(100vh - 8px);
 	overflow-y: auto;
 }
@@ -68,7 +70,7 @@
 	gap: 6px;
 }
 .logs-model-popover {
-	width: 440px;
+	width: 496px;
 	max-width: 100%;
 }
 .logs-model-summary {

@@ -10,7 +10,13 @@ import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import DeleteResourceDialog from "../../resource-dialogs/ui/DeleteResourceDialogComponent.vue";
 import FallbackAddDialog from "./FallbackAddDialogComponent.vue";
 import { routerSettingsApi } from "../api/RouterSettingsApi";
-import { routerString, routerSettingsOnly, fallbackEntries, type FallbackEntry } from "../support/RouterSettingsModels";
+import {
+	routerString,
+	routerSettingsOnly,
+	fallbackEntries,
+	fallbackEntriesWire,
+	type FallbackEntry,
+} from "../support/RouterSettingsModels";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { fetchModelGroupIcons, type ModelGroupIcons } from "../../providers/api/ModelGroupIconsApi";
 import notification from "../../notifications/logic/NotificationManager";
@@ -23,7 +29,12 @@ const values = ref<Record<string, unknown>>({}),
 	selected = ref<FallbackEntry | null>(null);
 const rows = computed(() =>
 	fallbackEntries(values.value.fallbacks).flatMap((entry) =>
-		Object.entries(entry).map(([primary, models]) => ({ entry, primary, models })),
+		Object.entries(entry).map(([primary, config]) => ({
+			entry,
+			primary,
+			models: config.targets,
+			recurse: config.recurse,
+		})),
 	),
 );
 const activeFilters = ref<UiTableActiveFilter[]>([]);
@@ -49,13 +60,15 @@ const emptyText = computed(() =>
 );
 const columns: readonly UiTableColumn[] = [
 	{ key: "primary", label: "Model Name", width: 240, sortable: true, filters: primaryFilter },
-	{ key: "fallbacks", label: "Fallbacks", width: 560, filters: fallbackFilter },
+	{ key: "fallbacks", label: "Fallbacks", width: 440, filters: fallbackFilter },
+	{ key: "recurse", label: "Recursive", width: 120 },
 	{ key: "actions", label: "Actions", width: 120, sticky: "right" },
 ];
 interface FallbackRow {
 	entry: FallbackEntry;
 	primary: string;
 	models: string[];
+	recurse: boolean;
 }
 function fallbackRow(row: UiTableRow): FallbackRow {
 	return row as unknown as FallbackRow;
@@ -84,7 +97,7 @@ onMounted(async () => {
 async function save(groups: FallbackEntry[]) {
 	saving.value = true;
 	try {
-		const next = { ...values.value, fallbacks: [...fallbackEntries(values.value.fallbacks), ...groups] };
+		const next = { ...values.value, fallbacks: fallbackEntriesWire([...fallbackEntries(values.value.fallbacks), ...groups]) };
 		await routerSettingsApi.update({ router_settings: next });
 		values.value = next;
 		notification.success(groups.length + " fallback configuration(s) added successfully!");
@@ -101,13 +114,15 @@ async function remove() {
 	const name = Object.keys(selected.value)[0];
 	if (!name) return;
 	deleting.value = true;
-	const fallbacks = fallbackEntries(values.value.fallbacks)
-		.map((entry) => {
-			const next = { ...entry };
-			if (Array.isArray(next[name])) delete next[name];
-			return next;
-		})
-		.filter((entry) => Object.keys(entry).length);
+	const fallbacks = fallbackEntriesWire(
+		fallbackEntries(values.value.fallbacks)
+			.map((entry) => {
+				const next = { ...entry };
+				delete next[name];
+				return next;
+			})
+			.filter((entry) => Object.keys(entry).length),
+	);
 	try {
 		const next = { ...values.value, fallbacks };
 		await routerSettingsApi.update({ router_settings: next });
@@ -159,17 +174,23 @@ async function test(name: string) {
 						<ModelName class="routing-model-card" :model="item.primary" v-bind="modelIcons.get(item.primary)" />
 					</td>
 					<td data-label="Fallbacks">
-						<div class="routing-fallback-row">
-							<UiHeroIcon name="ArrowRightIcon" :size="20" />
-							<div>
-								<template v-for="(name, position) in item.models" :key="name"
-									><UiHeroIcon v-if="position" name="ArrowRightIcon" :size="16" /><ModelName
-										class="routing-model-card"
-										:model="name"
-										v-bind="modelIcons.get(name)"
-								/></template>
-							</div>
-						</div>
+						<ol v-if="item.models.length" class="routing-fallback-chain">
+							<li v-for="(name, position) in item.models" :key="name">
+								<span class="routing-fallback-chain-index" aria-hidden="true">{{ position + 1 }}</span
+								><ModelName class="routing-model-card" :model="name" v-bind="modelIcons.get(name)" />
+							</li>
+						</ol>
+						<span v-else class="routing-fallback-none">-</span>
+					</td>
+					<td data-label="Recursive">
+						<UiTooltip
+							:title="
+								item.recurse
+									? 'A failed target continues along its own fallback chain'
+									: 'Targets stop here; the proxy does not use their own fallback chains'
+							"
+							><span class="routing-fallback-recursive-state">{{ item.recurse ? "Yes" : "No" }}</span></UiTooltip
+						>
 					</td>
 					<td class="ui-table__cell--sticky-right" data-label="Actions">
 						<div class="routing-fallback-table-actions">

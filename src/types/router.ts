@@ -6,6 +6,7 @@
 
 import type { ModelInfo } from "./config";
 import type { ModelGroupAliasConfig, ModelGroupAliasValue } from "../shared/ModelGroupAlias";
+import type { FallbackEntryValue } from "../shared/FallbackEntry";
 
 /** 路由策略名称（单一来源，消除与 RoutingStrategies.ts 重复字符串联合） */
 export enum RoutingStrategyName {
@@ -110,10 +111,10 @@ export interface Deployment {
 	rpm?: number;
 }
 
-/** 降级配置：模型名到备选模型名列表的映射 */
+/** 降级配置：模型名到条目（备选列表或带递归开关的 targets 对象）的映射 */
 export interface FallbackConfig {
-	/** 模型名到降级目标列表的映射 */
-	[model_name: string]: string[];
+	/** 模型名到 fallback 条目的映射；`recurse: false` 表示不进入目标的自身链 */
+	[model_name: string]: FallbackEntryValue;
 }
 
 /** 按异常类型的重试策略配置，每种异常可独立设置重试次数 */
@@ -259,8 +260,8 @@ export interface RouterConfig {
 	 * 之前别名只通过 Router constructor 第二个参数注入，配置文件中无法声明。
 	 * 键为逻辑名（如 "gpt-4o"），值为 `RouterModelGroupAliasValue`：
 	 *   - `string`               — 单一目标模型名
-	 *   - `string[]`             — 候选列表（取首个派发）
-	 *   - `RouterModelGroupAliasItem` — `{ model, hidden }` 对象
+	 *   - `string[]`             — 有序目标：首项派发，其余在失败后按顺序尝试
+	 *   - `RouterModelGroupAliasItem` — `{ targets, recurse?, hidden?, timezone?, schedule? }`
 	 *
 	 * 当 Router constructor 同时收到第二参数时，constructor 参数优先；否则用本字段。
 	 */

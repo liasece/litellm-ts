@@ -52,6 +52,7 @@ import { z } from "zod";
 import type { ModelInfo } from "../../types/config";
 import { validateModelGroupAliases } from "../../shared/ModelGroupAlias";
 import type { ModelGroupAliases } from "../../shared/ModelGroupAlias";
+import type { FallbackEntryValue } from "../../shared/FallbackEntry";
 
 // ============ Zod Schema 定义 ============
 
@@ -145,8 +146,20 @@ const ModelListItemSchema = z.object({
 	model_info: ModelInfoSchema.optional(),
 });
 
-/** Fallback config: { model_name: string[] } */
-const FallbackConfigSchema = z.record(z.string(), z.array(z.string()));
+/**
+ * 一条 fallback 条目：目标数组，或带 `recurse` 的 `{ targets }` 对象。
+ * `recurse: false` 让该条目的目标成为叶子，避免目标自身的链把请求带到配置者没有预期的模型。
+ */
+const FallbackEntryValueSchema = z.union([
+	z.array(z.string()),
+	z.object({
+		targets: z.array(z.string()),
+		recurse: z.boolean().optional(),
+	}),
+]);
+
+/** Fallback config: { model_name: FallbackEntryValue } */
+const FallbackConfigSchema = z.record(z.string(), FallbackEntryValueSchema);
 
 const ModelGroupAliasesSchema = z.unknown().transform((value, context): ModelGroupAliases => {
 	try {
@@ -369,8 +382,8 @@ export interface RouterSettings {
 	readonly max_fallbacks?: number;
 	/** 路由策略名称 */
 	readonly routing_strategy?: string;
-	/** 降级配置列表 */
-	readonly fallbacks: Record<string, string[]>[];
+	/** 降级配置列表（每个元素是一个模型的条目；条目可带 recurse 开关） */
+	readonly fallbacks: Array<Record<string, FallbackEntryValue>>;
 	/** 模型组别名映射 */
 	readonly model_group_alias: ModelGroupAliases;
 	/** 启用请求前预检 */

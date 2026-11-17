@@ -14,7 +14,7 @@ const groups = ref<FallbackGroup[]>([]),
 	models = ref<string[]>([]);
 watch(open, async (value) => {
 	if (!value) return;
-	groups.value = [{ id: "1", primary: "", models: [] }];
+	groups.value = [{ id: "1", primary: "", models: [], recurse: true }];
 	try {
 		models.value = [...new Set((await routerSettingsApi.hub()).map((model) => routerString(model.model_group)).filter(Boolean))].sort();
 	} catch {
@@ -27,9 +27,10 @@ function save() {
 		message.error("Please complete configuration for all groups. " + incomplete.length + " group(s) incomplete.");
 		return;
 	}
+	// 交给上层用 fallbackEntriesWire 统一序列化，这里只把编辑状态换成规范化条目。
 	emit(
 		"save",
-		groups.value.map((group) => ({ [group.primary]: [...group.models] })),
+		groups.value.map((group) => ({ [group.primary]: { targets: [...group.models], recurse: group.recurse } })),
 	);
 }
 </script>

@@ -65,6 +65,8 @@ interface MockFacadeOptions {
 	deploymentsByModel: Record<string, Deployment[]>;
 	/** fallback 链：model → 下一跳列表（按 depth 取） */
 	fallbackChains?: Record<string, string[]>;
+	/** 展开后的 fallback 计划：model → 候选顺序（提供时优先于 fallbackChains） */
+	fallbackPlans?: Record<string, string[]>;
 	/** recordDeploymentFailure 是否模拟冷却生效（true 时该 deployment 从可用列表移除） */
 	cooldownOnFailure?: boolean;
 	/** model → alias 解析结果 */
@@ -82,6 +84,11 @@ class MockRouterFacade implements FallbackRouterFacade {
 
 	constructor(options: MockFacadeOptions) {
 		this._options = options;
+		const plans = options.fallbackPlans;
+		if (plans !== undefined) {
+			this.getFallbackPlan = (model: string) =>
+				(plans[model] ?? []).map((target) => ({ inputModel: target, resolvedModel: target, resolutionPath: [target] }));
+		}
 	}
 
 	getAvailableDeployment(model: string): { deployment: Deployment; provider: ProviderConfig } | null {
@@ -97,6 +104,9 @@ class MockRouterFacade implements FallbackRouterFacade {
 		const chain = this._options.fallbackChains?.[model] ?? [];
 		return chain[fallbackDepth] ?? null;
 	}
+
+	/** 仅当用例显式提供计划时才实现；缺省让被测代码退回链式接口。 */
+	getFallbackPlan?: (model: string) => Array<{ inputModel: string; resolvedModel: string; resolutionPath: string[] }>;
 
 	resolveModelGroupWithTrace(model: string) {
 		return this._options.modelResolutions?.[model] ?? { inputModel: model, resolvedModel: model, resolutionPath: [model] };
@@ -288,6 +298,36 @@ describe("executeWithFallbackChain", () => {
 			},
 		]);
 		expect(seen).toEqual(["dep-1", "dep-2", "fallback-model"]);
+	});
+
+	it("按请求级计划推进：目标的兄弟候选不会被跳过", async () => {
+		const facade = new MockRouterFacade({
+			deploymentsByModel: {
+				"glm-4-7-anthropic": [makeDeployment("glm-4-7-anthropic", "anthropic/glm-4.7")],
+				"deepseek-coder-anthropic": [makeDeployment("deepseek-coder-anthropic", "anthropic/deepseek-v4-flash")],
+				"qwen-anthropic": [makeDeployment("qwen-anthropic", "anthropic/qwen3.8")],
+			},
+			// 计划里 deepseek 之后还有同级候选 qwen；链式接口只认得 deepseek 的链首。
+			fallbackChains: { "glm-4-7-anthropic": ["deepseek-coder-anthropic"], "deepseek-coder-anthropic": [] },
+			fallbackPlans: { "glm-4-7-anthropic": ["deepseek-coder-anthropic", "qwen-anthropic"] },
+			cooldownOnFailure: false,
+		});
+		const seenModels: string[] = [];
+		const result = await executeWithFallbackChain(
+			facade,
+			"glm-4-7-anthropic",
+			undefined,
+			undefined,
+			async (attempt: UpstreamAttempt) => {
+				seenModels.push(attempt.upstreamModel);
+				if (attempt.upstreamModel !== "qwen3.8") {
+					throw new ProviderUpstreamError(500, "upstream down");
+				}
+				return "qwen-ok";
+			},
+		);
+		expect(result).toBe("qwen-ok");
+		expect(seenModels).toEqual(["glm-4.7", "deepseek-v4-flash", "qwen3.8"]);
 	});
 
 	it("provider 400 失败 → fallback 链下一跳成功（GLM 1211 场景）", async () => {

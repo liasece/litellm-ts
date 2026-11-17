@@ -19,6 +19,7 @@
 | [日志能力标记](logs-applied-features.md) | Logs 列表 Feature 列的 id 契约、记录点、fallback 派生与前端呈现 |
 | [观测性](observability.md) | 指标目录、请求阶段划分、日志分级、排查顺序；`/metrics` 三端点的语义 |
 | [启动链路](startup.md) | 启动关键路径与预热划分、一次冷启动的时间线；其中 CLIProxy 子进程段落已过期 |
+| [Fallback 与 Alias 候选树](fallback-routing.md) | fallback / alias 的有序目标与 `recurse` 开关、展开顺序、请求级计划 |
 | [Model Group Alias](model-group-alias.md) | 每日时段路由的配置格式、时间边界与校验规则 |
 | [Provider 账户额度](provider-account-quota.md) | DeepSeek / MiniMax 账户额度卡片的数据来源与 Key 类型识别 |
 | [上游对齐记录](upstream-alignment.md) | 与 BerriAI/litellm 的 BUG 与能力对齐状态、发布记录、维护规则；对齐状态以这里为准 |

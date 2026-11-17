@@ -336,10 +336,14 @@ export function registerChatCompletionsRoutes(expressRouter: Router, litellmRout
 }
 
 /**
- * Find unvisited own-chain or root-chain fallbacks without switching after semantic output.
+ * Find the next unvisited candidate in the request's fallback plan.
+ *
+ * 流式响应已经在对外写出内容后不能重放流，但「还没写出答案内容」时仍可换候选。
+ * 候选顺序沿用请求级计划（深度优先、遵守 recurse 开关），不再按「当前模型的链首 +
+ * 原模型链」自行拼接——那样会在换过一跳之后丢掉原模型其余的兄弟目标。
  * @param router
- * @param current
- * @param original
+ * @param current - 当前正在执行的模型组
+ * @param original - 请求最初指定的模型组（计划按它展开）
  * @param visited
  */
 function getNextStreamingFallback(router: LiteLLMRouter, current: string, original: string, visited: string[]) {
@@ -347,6 +351,16 @@ function getNextStreamingFallback(router: LiteLLMRouter, current: string, origin
 	if (visited.length >= limit) {
 		return null;
 	}
+	const plan = router.getFallbackPlan?.(original, limit);
+	if (plan) {
+		for (const entry of plan) {
+			if (!visited.includes(entry.resolvedModel)) {
+				return entry;
+			}
+		}
+		return null;
+	}
+	// 只实现链式接口的 router 替身：退回「当前模型链首 → 原模型链」的历史查找方式。
 	const fallbackResult = (fallback: string | null) => {
 		if (fallback === null) {
 			return null;

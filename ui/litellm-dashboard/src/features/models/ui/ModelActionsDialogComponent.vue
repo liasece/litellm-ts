@@ -4,12 +4,16 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
+import UiEntryCard from "../../platform/ui/UiEntryCard.vue";
+import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
+import UiSectionCard from "../../platform/ui/UiSectionCard.vue";
+import UiSwitchRow from "../../platform/ui/UiSwitchRow.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
 import ModelResourceDelete from "./ModelResourceDeleteDialogComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { deploymentIconProps } from "../logic/ModelDataLogic";
 import { modelsApi } from "../api/ModelsApi";
-import { updateModelFallbacks } from "../logic/ModelFallbackLogic";
+import { modelFallbackEntry, updateModelFallbacks } from "../logic/ModelFallbackLogic";
 import { modelString, modelStrings, modelOptions, type DisplayProxyModel, type ModelCatalog } from "../support/ModelModels";
 import notification from "../../notifications/logic/NotificationManager";
 const props = defineProps<{
@@ -20,11 +24,22 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: []; changed: [] }>();
 const selected = ref<string[]>([]),
+	recurse = ref(true),
+	loadingFallbacks = ref(false),
 	override = ref(""),
 	storeInDb = ref(false),
 	loadingSettings = ref(false),
 	storageDescription = ref("If enabled, models and config are stored in and loaded from the database."),
 	pendingActions = ref(new Set<string>());
+const fallbackCandidates = computed(() =>
+	modelOptions(props.modelGroups.filter((name) => name !== props.model?.model_name && !selected.value.includes(name))),
+);
+function addFallback(value: unknown) {
+	if (typeof value === "string" && value && !selected.value.includes(value)) selected.value = [...selected.value, value];
+}
+function removeFallback(index: number) {
+	selected.value = selected.value.filter((_, position) => position !== index);
+}
 const actionIdentity = computed(() => `${props.mode}:${props.model?.model_info.id ?? props.model?.model_name ?? ""}`);
 const pending = computed(() => pendingActions.value.has(actionIdentity.value));
 function setPending(identity: string, value: boolean) {
@@ -41,9 +56,27 @@ watch(
 	() => [props.mode, props.model] as const,
 	async () => {
 		selected.value = modelStrings(props.model?.model_info.fallbacks);
+		recurse.value = true;
 		override.value = modelString(props.model?.model_info.override_model_name);
 		const request = ++settingsRequest;
 		loadingSettings.value = props.mode === "settings";
+		// 递归开关只存在于 router_settings 里，model_info 的 fallback 链不带它；编辑前读一次原始条目。
+		loadingFallbacks.value = props.mode === "fallback";
+		if (props.mode === "fallback" && props.model?.model_name)
+			try {
+				const current = await modelsApi.fetchCallbacks();
+				if (request !== settingsRequest) return;
+				const entry = modelFallbackEntry(current.router_settings, props.model.model_name);
+				if (entry) {
+					selected.value = [...entry.targets];
+					recurse.value = entry.recurse;
+				}
+			} catch (error) {
+				if (request === settingsRequest)
+					notification.error(error instanceof Error ? error.message : "Failed to load fallback settings");
+			} finally {
+				if (request === settingsRequest) loadingFallbacks.value = false;
+			}
 		if (props.mode === "settings")
 			try {
 				const config = await modelsApi.fetchGeneralSettings();
@@ -67,6 +100,7 @@ async function save() {
 		modelName = props.model?.model_name,
 		modelId = props.model?.model_info.id,
 		fallbacks = [...selected.value],
+		nextRecurse = recurse.value,
 		nextOverride = override.value,
 		nextStoreInDb = storeInDb.value;
 	if (mode !== "settings" && mode !== "override" && mode !== "fallback") return;
@@ -84,7 +118,7 @@ async function save() {
 		} else if (mode === "fallback" && modelName) {
 			const current = await modelsApi.fetchCallbacks();
 			await modelsApi.saveModelConfiguration({
-				router_settings: updateModelFallbacks(current.router_settings, modelName, fallbacks),
+				router_settings: updateModelFallbacks(current.router_settings, modelName, fallbacks, nextRecurse),
 			});
 			notification.success("Fallbacks updated successfully");
 		}
@@ -162,7 +196,7 @@ async function remove() {
 		</template>
 		<template v-else>
 			<div class="model-routing-action" :class="{ 'model-routing-action--fallback': mode === 'fallback' }">
-				<div>
+				<div class="model-routing-action__model">
 					<span class="model-routing-action__secondary">Model</span>
 					<div>
 						<ModelName
@@ -175,19 +209,9 @@ async function remove() {
 						/><span v-else class="model-routing-action__name">-</span>
 					</div>
 				</div>
-				<div>
-					<span class="model-routing-action__secondary">{{ mode === "fallback" ? "Fallback Models" : "Override Target" }}</span>
+				<template v-if="mode === 'override'">
+					<span class="model-routing-action__secondary">Override Target</span>
 					<UiSelect
-						v-if="mode === 'fallback'"
-						v-model="selected"
-						:options="modelOptions(modelGroups.filter((name) => name !== model?.model_name))"
-						multiple
-						searchable
-						aria-label="Fallback Models"
-						placeholder="Select fallback models"
-					/>
-					<UiSelect
-						v-else
 						v-model="override"
 						:options="modelOptions(modelGroups.filter((name) => name !== model?.model_name))"
 						searchable
@@ -195,15 +219,41 @@ async function remove() {
 						aria-label="Override Target"
 						placeholder="No override"
 					/>
-				</div>
-				<span v-if="mode === 'fallback'" class="model-routing-action__secondary">
-					When this model fails, the proxy retries the selected fallbacks in order. Leave empty to remove the fallback entry for
-					this model.
-				</span>
-				<span v-else class="model-routing-action__secondary">
-					All requests for this model are forced to the target before the first attempt, then fall back along the chain configured
-					on the target. Clear the selection to restore normal routing.
-				</span>
+					<span class="model-routing-action__secondary">
+						All requests for this model are forced to the target before the first attempt, then fall back along the chain
+						configured on the target. Clear the selection to restore normal routing.
+					</span>
+				</template>
+				<UiSectionCard
+					v-else-if="mode === 'fallback'"
+					title="Fallback models"
+					description="Tried top to bottom after this model fails. Leave empty to remove the entry."
+				>
+					<UiSelect
+						:model-value="null"
+						:options="fallbackCandidates"
+						searchable
+						:disabled="loadingFallbacks || !fallbackCandidates.length"
+						:placeholder="fallbackCandidates.length ? 'Add a fallback model' : 'No more models to add'"
+						aria-label="Add fallback model"
+						@update:model-value="addFallback"
+					/>
+					<UiEntryCard v-for="(name, index) in selected" :key="name" :index="index + 1">
+						<template #title><ModelName :model="name" :size="16" variant="strong" /></template>
+						<template #actions>
+							<UiEntryRemove :label="'Remove fallback ' + name" @click="removeFallback(index)" />
+						</template>
+					</UiEntryCard>
+					<p v-if="!selected.length" class="model-routing-action__hint">No fallback models yet — add one above.</p>
+					<template #footer>
+						<UiSwitchRow
+							v-model="recurse"
+							:disabled="loadingFallbacks"
+							label="Recursive fallback"
+							description="Off keeps these models the final answer: if one of them fails, the proxy stops instead of using that model's own fallbacks."
+						/>
+					</template>
+				</UiSectionCard>
 			</div>
 		</template>
 		<template v-if="mode === 'settings'" #footer>
@@ -230,8 +280,16 @@ async function remove() {
 	line-height: 16px;
 	color: rgb(0 0 0 / 0.45);
 }
-.model-routing-action--fallback .model-routing-action__secondary {
-	line-height: 1.5714285714285714;
+.model-routing-action__model {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.model-routing-action__hint {
+	margin: 0;
+	font-size: 12px;
+	line-height: 16px;
+	color: #9ca3af;
 }
 </style>
 

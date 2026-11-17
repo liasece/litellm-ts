@@ -14,6 +14,7 @@ import { ContextWindowExceededError, ContentPolicyViolationError } from "./Route
 import { logger } from "../core/utils/logger";
 import type { RouterExecContext, ExecutionRequest, ExecutionHelpers } from "./RouterExecutionTypes";
 import { appendRoutingTrace } from "./ModelResolutionTrace";
+import { fallbackPlanFor, nextPlannedFallback } from "./FallbackPlanCursor";
 
 /** 触发 fallback 派发的错误来源，仅用于日志后缀 */
 export enum FallbackErrorKind {
@@ -97,13 +98,13 @@ export function tryRouteToFallbackForMock(args: {
 			);
 		}
 	}
-	// 每个 model 查自身 fallback 链的链首（depth 恒为 0）；
-	// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
-	const general = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
-	if (general) {
+	// 请求级计划游标：按配置的树顺序推进候选，兄弟目标不会被跳过。
+	// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）。
+	const planned = nextPlannedFallback(ctx, req);
+	if (planned) {
 		appendRoutingTrace(req.modelResolutionTrace, {
 			fromModel: model,
-			toResolution: general,
+			toResolution: planned.entry,
 			routingType: "general_fallback",
 			error: error,
 		});
@@ -112,8 +113,10 @@ export function tryRouteToFallbackForMock(args: {
 			{
 				...req,
 				fallbackDepth: req.fallbackDepth + 1,
-				model: general.inputModel,
-				fallbackModels: [...req.fallbackModels, general.resolvedModel],
+				model: planned.entry.inputModel,
+				fallbackModels: [...req.fallbackModels, planned.entry.resolvedModel],
+				fallbackPlan: fallbackPlanFor(ctx, req),
+				fallbackCursor: planned.cursor,
 			},
 			helpers,
 		);
@@ -200,12 +203,12 @@ export function tryRouteToFallback(args: {
 			);
 		}
 	}
-	// 每个 model 查自身 fallback 链的链首（depth 恒为 0）
-	const general = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
-	if (general) {
+	// 请求级计划游标：按配置的树顺序推进候选，兄弟目标不会被跳过。
+	const planned = nextPlannedFallback(ctx, req);
+	if (planned) {
 		appendRoutingTrace(req.modelResolutionTrace, {
 			fromModel: model,
-			toResolution: general,
+			toResolution: planned.entry,
 			routingType: "general_fallback",
 			error: error,
 			attemptedDeployment: deployment.model_name,
@@ -215,9 +218,11 @@ export function tryRouteToFallback(args: {
 			{
 				...req,
 				fallbackDepth: req.fallbackDepth + 1,
-				model: general.inputModel,
-				fallbackModels: [...req.fallbackModels, general.resolvedModel],
+				model: planned.entry.inputModel,
+				fallbackModels: [...req.fallbackModels, planned.entry.resolvedModel],
 				previousError: error,
+				fallbackPlan: fallbackPlanFor(ctx, req),
+				fallbackCursor: planned.cursor,
 			},
 			helpers,
 		);

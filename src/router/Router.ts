@@ -28,6 +28,8 @@ import { ProviderRegistry } from "../providers/ProviderRegistry";
 import { CooldownManager } from "./CooldownManager";
 import { TPMRPMLimiter } from "./TPMRPMLimiter";
 import { FallbackHandler } from "./FallbackHandler";
+import type { FallbackPlanEntry } from "./FallbackHandler";
+import type { FallbackEntries } from "../shared/FallbackEntry";
 import { RedisCooldownBackend } from "./RedisCooldownBackend";
 import { extractProviderHeaders } from "./RouterResponseHeaders";
 import { isCliProxyDeploymentParams } from "../cliproxy/CliProxyTypes";
@@ -279,7 +281,7 @@ export class Router {
 		this._tpmRpmLimiter = new TPMRPMLimiter();
 		this._providerRegistry = providerRegistry;
 
-		const mergedFallbacks: Record<string, string[]> = {};
+		const mergedFallbacks: FallbackEntries = {};
 		for (const fb of config.fallbacks ?? []) {
 			for (const [key, vals] of Object.entries(fb)) {
 				if (!(key in mergedFallbacks)) {
@@ -513,7 +515,7 @@ export class Router {
 			}
 			switch (key) {
 				case "fallbacks":
-					this._fallbackHandler.setFallbacks(value as Array<Record<string, string[]>> | Record<string, string[]>);
+					this._fallbackHandler.setFallbacks(value as FallbackEntries);
 					break;
 				case "context_window_fallbacks":
 					this._fallbackHandler.setContextWindowFallbacks(value as Record<string, string[]>);
@@ -615,7 +617,7 @@ export class Router {
 		credentialValues?: CredentialValuesAccessor,
 		configRevision = 0,
 	): RouterRuntimeSnapshot {
-		const mergedFallbacks: Record<string, string[]> = {};
+		const mergedFallbacks: FallbackEntries = {};
 		const configuredFallbacks = settings["fallbacks"];
 		if (Array.isArray(configuredFallbacks)) {
 			for (const entry of configuredFallbacks) {
@@ -1361,6 +1363,18 @@ export class Router {
 	 */
 	getNextFallback(model: string, fallbackDepth: number): string | null {
 		return this._runtimeState().fallbackHandler.getNextFallback(model, fallbackDepth);
+	}
+
+	/**
+	 * 按配置展开整棵 fallback 树，返回请求失败后依次尝试的候选。
+	 * 直连端点（Anthropic Messages / Chat 流式中途切换）没有 RouterExecution 的请求上下文，
+	 * 由它们按这份序列自行推进。
+	 * @param model - 请求的模型组
+	 * @param limit - 展开上限，缺省用 max_fallbacks
+	 */
+	getFallbackPlan(model: string, limit?: number): FallbackPlanEntry[] {
+		const runtime = this._runtimeState();
+		return runtime.fallbackHandler.getFallbackPlan(model, limit ?? runtime.maxFallbacks);
 	}
 
 	/** fallback 链最大跳数上限（max_fallbacks 配置，防环型配置死循环） */

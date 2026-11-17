@@ -30,34 +30,33 @@
 .routing-fallbacks .routing-model-card {
 	min-width: max-content;
 }
-.routing-fallback-row {
+.routing-fallback-chain {
 	display: grid;
-	grid-template-columns: auto 1fr;
-	align-items: start;
-	gap: 8px;
-	width: 100%;
-	min-width: 0;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
 }
-.routing-fallback-row > .ui-hero-icon {
-	width: 32px;
-	height: 32px;
-	padding: 6px;
-	color: #2563eb;
-	stroke-width: 2.5;
-}
-.routing-fallback-row > div {
+.routing-fallback-chain > li {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: flex-start;
-	gap: 4px;
+	align-items: center;
+	gap: 8px;
 	min-width: 0;
 }
-.routing-fallback-row > div > .ui-hero-icon {
+.routing-fallback-chain-index {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
+	background: #e0e7ff;
+	color: #4338ca;
+	font: 700 10px/1 var(--ui-font-sans);
+}
+.routing-fallback-none {
 	color: #9ca3af;
-	padding: 6px;
-	width: 28px;
-	height: 28px;
-	box-sizing: content-box;
 }
 .routing-fallback-table-actions {
 	display: inline-flex;
@@ -194,32 +193,15 @@
 .routing-fallback-group {
 	display: flex;
 	flex-direction: column;
-	gap: 32px;
+	gap: 16px;
 	padding: 16px 0;
 	font: 14px/22px var(--ui-font-sans);
-}
-.routing-fallback-group section > label {
-	display: block;
-	font: 600 14px/20px var(--ui-font-sans);
-	color: #374151;
-	margin-bottom: 8px;
-}
-.routing-fallback-group b {
-	color: #ef4444;
-}
-.routing-fallback-group label > small {
-	font: 400 12px/16px var(--ui-font-sans);
-	color: #6b7280;
-	margin-left: 8px;
-}
-.routing-fallback-group section:first-child > .ui-select .ui-select__control {
-	height: 48px;
 }
 .routing-fallback-warning {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-top: 8px;
+	margin: 0;
 	background: #fffbeb;
 	color: #d97706;
 	padding: 8px;
@@ -229,7 +211,7 @@
 .routing-fallback-connection {
 	display: flex;
 	justify-content: center;
-	margin-block: -16px;
+	margin-block: -8px;
 	z-index: 1;
 }
 .routing-fallback-connection > span {
@@ -244,99 +226,22 @@
 	font: 700 12px/16px var(--ui-font-sans);
 	box-shadow: 0 1px 2px rgb(0 0 0/0.05);
 }
-.routing-fallback-disabled {
-	opacity: 0.5;
-	pointer-events: none;
-}
-.routing-fallback-chain {
-	padding: 16px;
-	border: 1px solid #e5e7eb;
-	border-radius: 12px;
-	background: #f9fafb;
-}
-.routing-fallback-chain > p {
-	font: 12px/16px var(--ui-font-sans);
-	color: #6b7280;
-	margin: 4px 0 16px 4px;
-}
-.routing-fallback-selected {
-	min-height: 100px;
-	display: grid;
-	gap: 8px;
-}
-.routing-fallback-empty {
-	height: 128px;
-	border: 2px dashed #d1d5db;
-	border-radius: 8px;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	color: #9ca3af;
-}
-.routing-fallback-empty small {
-	font-size: 12px;
-	line-height: 16px;
-	margin-top: 4px;
-}
-.routing-fallback-model {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	padding: 12px;
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-	background: white;
-}
-.routing-fallback-model:hover {
-	border-color: #a5b4fc;
-	box-shadow: 0 1px 2px rgb(0 0 0/0.05);
-}
-.routing-fallback-model > span.routing-fallback-index {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 24px;
-	height: 24px;
-	background: #f3f4f6;
-	color: #9ca3af;
-	border-radius: 4px;
+.routing-fallback-count {
 	font: 700 12px/16px var(--ui-font-sans);
-	flex: none;
+	color: #6366f1;
+	background: #eef2ff;
+	border-radius: 9999px;
+	padding: 2px 10px;
 }
-.routing-fallback-model > .model-logo {
-	flex: none;
+.routing-fallback-hint {
+	margin: 0;
+	font: 12px/16px var(--ui-font-sans);
+	color: #9ca3af;
 }
 .routing-fallback-tabs button {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-}
-.routing-fallback-model strong {
-	font-weight: 500;
-	color: #1f2937;
-}
-.routing-fallback-model > button {
-	margin-left: auto;
-	padding: 4px;
-	color: #9ca3af;
-	opacity: 0;
-}
-.routing-fallback-model:hover > button,
-.routing-fallback-model > button:focus-visible {
-	opacity: 1;
-}
-.routing-fallback-option-order {
-	display: inline-flex;
-	width: 20px;
-	height: 20px;
-	align-items: center;
-	justify-content: center;
-	background: #e0e7ff;
-	color: #4f46e5;
-	border-radius: 4px;
-	font: 700 12px/16px var(--ui-font-sans);
-	margin-right: 8px;
 }
 .routing-fallback-delete .ui-card__head {
 	font-size: 14px;
@@ -354,34 +259,14 @@
 	margin: 16px 0;
 }
 
-.routing-fallback-overflow-tooltip {
-	pointer-events: none;
-}
-
-/* React renders the fallback dialog inside AntD's Modal, so every text node
-   inherits the Ant Design font stack instead of the app sans stack. */
+/* AntD 弹窗里的文本节点沿用 Ant Design 字族，与分区卡片里的自绘标题保持一致。 */
 .routing-fallback-dialog .routing-fallback-dialog-title h2,
 .routing-fallback-dialog .routing-fallback-dialog-title p,
 .routing-fallback-dialog .routing-fallback-tabs > button,
-.routing-fallback-dialog .routing-fallback-group,
-.routing-fallback-dialog .routing-fallback-group section > label,
-.routing-fallback-dialog .routing-fallback-group label > small,
 .routing-fallback-dialog .routing-fallback-warning,
 .routing-fallback-dialog .routing-fallback-connection > span,
-.routing-fallback-dialog .routing-fallback-chain > p,
-.routing-fallback-dialog .routing-fallback-empty span,
-.routing-fallback-dialog .routing-fallback-empty small,
-.routing-fallback-dialog .routing-fallback-model {
+.routing-fallback-dialog .routing-fallback-hint {
 	font-family: var(--ui-font-antd);
-}
-/* Tailwind text-sm/text-xs metrics used by the React empty state. */
-.routing-fallback-dialog .routing-fallback-empty span {
-	font-size: 14px;
-	line-height: 20px;
-}
-.routing-fallback-dialog .routing-fallback-empty small {
-	font-size: 12px;
-	line-height: 16px;
 }
 
 /* The AntD modal title block is a full-width row; the shared header is
@@ -413,28 +298,27 @@
 	.routing-fallbacks {
 		gap: 12px;
 	}
-	/* 卡片里“箭头 + 回退模型列表”要能换行，否则长模型名把卡片撑宽。 */
-	.routing-fallbacks .routing-fallback-row {
-		grid-template-columns: minmax(0, 1fr);
-	}
-	.routing-fallbacks .routing-fallback-row > .ui-hero-icon {
-		display: none;
-	}
-	/* 回退链在卡片里改成自上而下的列表；夹在模型名之间的“→”换行后会单独成行，隐藏。 */
-	.routing-fallbacks .routing-fallback-row > div {
-		flex-direction: column;
-		align-items: stretch;
-		gap: 6px;
+	/* 卡片里模型名可能很长：让药丸占满剩余宽度并允许内部换行，否则文本会溢出药丸被卡片裁掉。 */
+	.routing-fallbacks .routing-fallback-chain {
 		min-width: 0;
+		max-width: 100%;
 	}
-	.routing-fallbacks .routing-fallback-row > div > .ui-hero-icon {
-		display: none;
+	.routing-fallbacks .routing-fallback-chain > li {
+		min-width: 0;
+		max-width: 100%;
 	}
 	.routing-fallbacks .routing-model-card {
+		flex: 1 1 auto;
 		min-width: 0;
 		max-width: 100%;
 		white-space: normal;
-		word-break: break-word;
+		overflow-wrap: anywhere;
+	}
+	.routing-fallbacks .routing-model-card > .model-name__text {
+		min-width: 0;
+		max-width: 100%;
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 	.routing-fallbacks .routing-fallback-table-actions {
 		justify-content: flex-start;

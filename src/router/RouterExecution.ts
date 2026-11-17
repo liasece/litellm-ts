@@ -33,6 +33,7 @@ import { buildDeploymentSpendInfo } from "./RouterSpendInfo";
 import { maskCooldownEntries } from "./CooldownMasking";
 import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
+import { fallbackPlanFor, nextPlannedFallback } from "./FallbackPlanCursor";
 import { computeSleepBeforeRetry } from "./RouterExecutionBackoff";
 import { appendModelResolutionTrace, appendRoutingTrace, copyModelResolutionChain, copyRoutingTrace } from "./ModelResolutionTrace";
 import { publishModelResolutionTrace } from "./UpstreamExchange";
@@ -194,10 +195,11 @@ export async function executeWithFallback(
 	const candidate = getCandidate(resolvedModel, messages);
 
 	if (!candidate) {
-		// 每个 model 查自身 fallback 链的链首（depth 恒为 0）；
-		// fallbackDepth 仅是跳数计数器（max_fallbacks 上限 / 响应头 attemptedFallbacks）
-		const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
-		if (nextFallback) {
+		// 计划游标保证「同一棵树的所有兄弟候选」按配置顺序推进；fallbackDepth 只是跳数计数器
+		// （max_fallbacks 上限 / 响应头 attemptedFallbacks）。
+		const planned = nextPlannedFallback(ctx, req);
+		if (planned) {
+			const nextFallback = planned.entry;
 			const noDeploymentError = Object.assign(new Error(`No available deployment for model "${resolvedModel}"`), {
 				name: "NoAvailableDeploymentError",
 				statusCode: 429,
@@ -216,6 +218,8 @@ export async function executeWithFallback(
 					fallbackDepth: fallbackDepth + 1,
 					model: nextFallback.inputModel,
 					fallbackModels: [...effectiveFallbackModels, nextFallback.resolvedModel],
+					fallbackPlan: fallbackPlanFor(ctx, req),
+					fallbackCursor: planned.cursor,
 				},
 				helpers,
 			);
@@ -288,8 +292,9 @@ export async function executeWithFallback(
 					logger.warn(
 						`Rate limit reached on ${deployment.model_name} (rpm=${usage.rpm}/${rpmLimit ?? "-"}, tpm=${usage.tpm}/${tpmLimit ?? "-"}), trying fallback`,
 					);
-					const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
-					if (nextFallback) {
+					const planned = nextPlannedFallback(ctx, req);
+					if (planned) {
+						const nextFallback = planned.entry;
 						const rateLimitError = Object.assign(
 							new Error(
 								`Rate limit reached on ${deployment.model_name} (rpm=${usage.rpm}/${rpmLimit ?? "-"}, tpm=${usage.tpm}/${tpmLimit ?? "-"})`,
@@ -311,6 +316,8 @@ export async function executeWithFallback(
 								fallbackDepth: fallbackDepth + 1,
 								model: nextFallback.inputModel,
 								fallbackModels: [...effectiveFallbackModels, nextFallback.resolvedModel],
+								fallbackPlan: fallbackPlanFor(ctx, req),
+								fallbackCursor: planned.cursor,
 							},
 							helpers,
 						);
@@ -544,13 +551,15 @@ export async function executeWithFallback(
 							// Share attempts across nested streams; siblings must never be replayed.
 							const attemptedModels = req.streamAttemptedModels ?? new Set(effectiveFallbackModels);
 							attemptedModels.add(resolvedModel);
-							const remaining = ctx.fallbackHandler.getFallbackChain(effectiveFallbackModels[0] ?? model);
+							// 计划里已经按深度优先排好兄弟与下游候选，这里只需从游标继续；
+							// 旧的「重新查当前模型的第一层链」会丢掉配置里靠后的兄弟目标。
+							const plan = fallbackPlanFor(ctx, req);
 							releaseSlot();
-							for (const next of remaining) {
+							for (let cursor = req.fallbackCursor ?? 0; cursor < plan.length; cursor++) {
 								if (closingStream || req.streamAbortController?.signal.aborted) {
 									return;
 								}
-								const nextResolution = ctx.fallbackHandler.resolveModelGroupWithTrace(next);
+								const nextResolution = plan[cursor]!;
 								if (attemptedModels.has(nextResolution.resolvedModel) || attemptedModels.size >= ctx.maxFallbacks) {
 									continue;
 								}
@@ -568,10 +577,12 @@ export async function executeWithFallback(
 										ctx,
 										{
 											...req,
-											model: next,
+											model: nextResolution.inputModel,
 											fallbackDepth: fallbackDepth + 1,
 											fallbackModels: [...effectiveFallbackModels, nextResolution.resolvedModel],
 											streamAttemptedModels: attemptedModels,
+											fallbackPlan: plan,
+											fallbackCursor: cursor + 1,
 										},
 										helpers,
 									);
@@ -807,8 +818,9 @@ export async function executeWithFallback(
 			ctx.cooldownManager.recordFailure(depKey);
 		}
 
-		const nextFallback = ctx.fallbackHandler.getNextFallbackWithTrace(model, 0);
-		if (nextFallback) {
+		const planned = nextPlannedFallback(ctx, req);
+		if (planned) {
+			const nextFallback = planned.entry;
 			appendRoutingTrace(modelResolutionTrace, {
 				fromModel: model,
 				toResolution: nextFallback,
@@ -824,6 +836,8 @@ export async function executeWithFallback(
 					model: nextFallback.inputModel,
 					fallbackModels: [...effectiveFallbackModels, nextFallback.resolvedModel],
 					previousError: error,
+					fallbackPlan: fallbackPlanFor(ctx, req),
+					fallbackCursor: planned.cursor,
 				},
 				helpers,
 			);

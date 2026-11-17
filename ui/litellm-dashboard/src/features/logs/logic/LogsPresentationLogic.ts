@@ -212,23 +212,28 @@ export function normalizeModelResolutionChain(value: unknown): ModelResolutionCh
 		];
 	});
 }
+/**
+ * 把一次请求的 fallback 计划与 alias 解析轨迹铺成卡片里的几行。
+ *
+ * 每行只写这一跳真正尝试的模型；来源模型由上一行说明，重复写会让同一串长名字挤满两行。
+ * alias 展开额外占一行，表达「这个名字解析成了哪个名字」。
+ * @param fallbackValue - metadata.fallback_models（计划中的尝试顺序，首项是主模型）
+ * @param chainValue - metadata.model_resolution_chain（每一跳的 alias 展开路径）
+ * @param executed - 实际执行的模型名
+ */
 export function buildModelResolutionLines(fallbackValue: unknown, chainValue: unknown, executed: string): ModelResolutionLine[] {
 	const fallbacks = Array.isArray(fallbackValue) ? fallbackValue.filter((v): v is string => typeof v === "string" && v.length > 0) : [];
 	const entries = normalizeModelResolutionChain(chainValue).sort((a, b) => a.fallback_index - b.fallback_index);
 	const byIndex = new Map(entries.map((entry) => [entry.fallback_index, entry]));
 	const max = Math.max(fallbacks.length - 1, ...entries.map((entry) => entry.fallback_index), 0),
 		lines: ModelResolutionLine[] = [];
-	let previous: string | undefined;
 	for (let i = 0; i <= max; i++) {
 		const path = byIndex.get(i)?.resolution_path ?? (fallbacks[i] ? [fallbacks[i]] : []);
 		if (!path.length) continue;
-		const first = path[0];
-		lines.push({
-			label: i === 0 ? "Request" : "Fallback " + i,
-			path: i > 0 && previous && previous !== first ? [previous, first] : [first],
-		});
+		// 每一行只显示这一跳实际尝试的模型。来源模型已经由上一行（Request 或上一个 Fallback）说明过，
+		// 再写一遍会让同一串模型名在卡片里出现两次，长名字还会被挤成两行。
+		lines.push({ label: i === 0 ? "Request" : "Fallback " + i, path: [path[0]] });
 		for (let hop = 1; hop < path.length; hop++) lines.push({ label: "Alias", path: [path[hop - 1], path[hop]] });
-		previous = path[path.length - 1];
 	}
 	if (executed) lines.push({ label: "Executed", path: [executed] });
 	return lines;

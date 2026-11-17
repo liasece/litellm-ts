@@ -31,6 +31,7 @@
 | 峰值期换便宜模型 | 「Deepseek 谷价时用 Deepseek，峰价时用 Minimax…这个功能应该做在 Model Group Alias 中」（2026-10-24） | Model Group Alias 的每日时段路由，见[专题](model-group-alias.md) |
 | 直连客户端缺能力 | 「某些模型是纯文本模型…我们无感嫁接起来」（2026-08-05） | 内置能力：视觉、Web Search & Fetch、图片生成，由网关注入并在内部代理执行 |
 | 上游异常要能判断 | 「上游错误需要判断是该 fallback 还是透传给下游」（2026-11-01） | Router 的 retry / cooldown / fallback 与日志里的路由轨迹 |
+| 换模型不能换出预期 | 「防止意料之外的模型 Fallback……禁止递归，防止在目标模型失败时 fallback 到不便宜的模型上」（2026-11-17） | fallback 与 alias 都支持有序目标 + `recurse` 开关，见[候选树专题](fallback-routing.md) |
 | 出问题要看得到当时发生了什么 | 按 session 看时间线、按请求看上下游差异、按模型看 TPS | Logs（列表 + 详情 + session 时间线）、Speed 页、`/metrics` 三端点 |
 
 ## 设计理念与取舍

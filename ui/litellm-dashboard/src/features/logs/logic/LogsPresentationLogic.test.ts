@@ -127,7 +127,7 @@ describe("request log presentation contracts", () => {
 				.cacheInputCost,
 		).toBe(3);
 	});
-	it("rejects malformed resolution paths and preserves fallback/alias ordering", () => {
+	it("rejects malformed resolution paths and shows each hop without repeating the source model", () => {
 		expect(
 			buildModelResolutionLines(
 				["alias", "fallback"],
@@ -140,7 +140,8 @@ describe("request log presentation contracts", () => {
 		).toEqual([
 			{ label: "Request", path: ["alias"] },
 			{ label: "Alias", path: ["alias", "routed"] },
-			{ label: "Fallback 1", path: ["routed", "fallback"] },
+			// 来源模型 "routed" 已由上一行显示，Fallback 行只说明换到了 "fallback"。
+			{ label: "Fallback 1", path: ["fallback"] },
 			{ label: "Executed", path: ["executed"] },
 		]);
 	});

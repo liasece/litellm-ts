@@ -1,3 +1,16 @@
+/**
+ * model_group_alias 的共享契约（后端与 Dashboard 各一份实现，语义必须一致）。
+ *
+ * alias 值有三种写法：
+ *   - `string`    —— 单一目标；
+ *   - `string[]`  —— 有序目标：首项是主目标，其余是失败后按顺序尝试的同级候选；
+ *   - 对象        —— `targets`（同上）、`recurse`（目标失败后是否继续目标自身的 fallback），
+ *                    以及 `hidden` / `timezone` / `schedule`（按每日时段切换主目标）。
+ *
+ * `model` 是对象形态的历史字段，等价于只有一项的 `targets`；新写入统一用 `targets`，
+ * 两者互斥，避免同一个目标既写在 `model` 又写在 `targets` 里产生歧义。
+ */
+
 /** A daily interval in the alias's configured time zone. */
 export interface ModelGroupAliasWindow {
 	/** Inclusive local start, HH:mm. */
@@ -8,10 +21,14 @@ export interface ModelGroupAliasWindow {
 	model: string;
 }
 
-/** Object form of a model group alias, preserving the legacy default target. */
+/** Object form of a model group alias. */
 export interface ModelGroupAliasConfig {
-	/** Target outside the configured intervals. */
-	model: string;
+	/** Legacy single default target; mutually exclusive with `targets`. */
+	model?: string;
+	/** Ordered targets: the first is the primary target, the rest are same-level candidates. */
+	targets?: string[];
+	/** Whether a failed target may continue along its own fallback entry; defaults to true. */
+	recurse?: boolean;
 	/** Whether the alias should be hidden from model listings. */
 	hidden?: boolean;
 	/** IANA time zone; required for a nonempty schedule. */
@@ -50,20 +67,70 @@ function containsMinute(start: number, end: number, minute: number): boolean {
 	return start < end ? minute >= start && minute < end : minute >= start || minute < end;
 }
 
-/** One alias evaluation: the selected target and whether a daily window chose it. */
+/** One alias evaluation: ordered targets and whether a daily window chose the primary. */
 export interface ModelGroupAliasSelection {
-	/** Model group reached by this alias edge. */
+	/** Primary target for this evaluation; the first element of `targets`. */
 	target: string;
-	/** True when a schedule window (not the default target) produced the target. */
+	/** True when a schedule window (not the default target) produced the primary target. */
 	scheduled: boolean;
+	/** Primary first, then the same-level candidates declared by the alias. */
+	targets: string[];
+}
+
+function orderedTargets(value: ModelGroupAliasConfig): string[] {
+	if (value.targets !== undefined) {
+		return [...value.targets];
+	}
+	return value.model === undefined ? [] : [value.model];
+}
+
+function activeWindow(value: ModelGroupAliasConfig, at: Date): ModelGroupAliasWindow | undefined {
+	if (!value.schedule?.length || !value.timezone) {
+		return undefined;
+	}
+	const parts = formatter(value.timezone).formatToParts(at);
+	const hour = Number(parts.find((part) => part.type === "hour")?.value);
+	const minute = hour * 60 + Number(parts.find((part) => part.type === "minute")?.value);
+	return value.schedule.find((entry) => containsMinute(minutes(entry.start), minutes(entry.end), minute));
+}
+
+/**
+ * Select the ordered targets at the supplied instant.
+ *
+ * The distinction `scheduled` is only used for observability: an alias that silently switches
+ * models by time of day is a different routing capability from a static rename.
+ * @param value
+ * @param at
+ */
+export function selectModelGroupAliasTargets(
+	value: ModelGroupAliasValue | undefined,
+	at = new Date(),
+): ModelGroupAliasSelection | undefined {
+	if (typeof value === "string") {
+		return value.trim() ? { target: value, scheduled: false, targets: [value] } : undefined;
+	}
+	if (Array.isArray(value)) {
+		const [primary] = value;
+		return primary === undefined ? undefined : { target: primary, scheduled: false, targets: [...value] };
+	}
+	if (!value) {
+		return undefined;
+	}
+	const ordered = orderedTargets(value);
+	const window = activeWindow(value, at);
+	const primary = window?.model ?? ordered[0];
+	if (primary === undefined) {
+		return undefined;
+	}
+	// 时段 alias 的另一侧目标是「另一个时段的默认目标」，不是失败后的备选；
+	// 只有显式声明 targets 的别名才有同级候选。
+	const targets =
+		value.targets === undefined ? [primary] : [primary, ...ordered.filter((target) => target !== primary)];
+	return { target: primary, scheduled: window !== undefined, targets: targets };
 }
 
 /**
  * Select one target at the supplied instant, reporting whether a schedule window decided it.
- *
- * The distinction is only used for observability: an alias that silently switches models by
- * time of day is a different routing capability from a static rename, so the logs must be
- * able to tell them apart without re-implementing the window rules.
  * @param value
  * @param at
  */
@@ -71,34 +138,28 @@ export function selectModelGroupAliasTarget(
 	value: ModelGroupAliasValue | undefined,
 	at = new Date(),
 ): ModelGroupAliasSelection | undefined {
-	if (typeof value === "string") {
-		return { target: value, scheduled: false };
-	}
-	if (Array.isArray(value)) {
-		return value[0] === undefined ? undefined : { target: value[0], scheduled: false };
-	}
-	if (!value) {
-		return undefined;
-	}
-	if (value.schedule?.length && value.timezone) {
-		const parts = formatter(value.timezone).formatToParts(at);
-		const hour = Number(parts.find((part) => part.type === "hour")?.value);
-		const minute = hour * 60 + Number(parts.find((part) => part.type === "minute")?.value);
-		const window = value.schedule.find((entry) => containsMinute(minutes(entry.start), minutes(entry.end), minute));
-		if (window) {
-			return { target: window.model, scheduled: true };
-		}
-	}
-	return { target: value.model, scheduled: false };
+	return selectModelGroupAliasTargets(value, at);
 }
 
 /**
- * Select one target at the supplied instant; alias traversal is handled by the caller.
+ * Select the primary target at the supplied instant; alias traversal is handled by the caller.
  * @param value
  * @param at
  */
 export function getModelGroupAliasTarget(value: ModelGroupAliasValue | undefined, at = new Date()): string | undefined {
-	return selectModelGroupAliasTarget(value, at)?.target;
+	return selectModelGroupAliasTargets(value, at)?.target;
+}
+
+/**
+ * 该 alias 命中失败后能否继续目标自身的 fallback 条目。
+ * 只有对象形态可以声明；旧写法保持历史行为（允许向下）。
+ * @param value
+ */
+export function getModelGroupAliasRecurse(value: ModelGroupAliasValue | undefined): boolean {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return true;
+	}
+	return value.recurse !== false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,10 +176,27 @@ function validateValue(name: string, value: unknown): void {
 		if (typeof value === "string" ? !isModel(value) : !value.every(isModel)) {
 			throw new Error(`${label} requires non-empty model names`);
 		}
+		// 空数组是历史遗留的退化解（等价于没有目标），保持可读入以免旧配置无法加载。
 		return;
 	}
-	if (!isRecord(value) || !isModel(value.model)) {
+	if (!isRecord(value)) {
+		throw new Error(`${label} requires a target model`);
+	}
+	if (value.model !== undefined && value.targets !== undefined) {
+		throw new Error(`${label} must use either model or targets, not both`);
+	}
+	if (value.targets !== undefined) {
+		if (!Array.isArray(value.targets) || value.targets.length === 0) {
+			throw new Error(`${label} requires a non-empty targets list`);
+		}
+		if (!value.targets.every(isModel)) {
+			throw new Error(`${label} requires non-empty model names`);
+		}
+	} else if (!isModel(value.model)) {
 		throw new Error(`${label} requires a default model`);
+	}
+	if (value.recurse !== undefined && typeof value.recurse !== "boolean") {
+		throw new Error(`${label} recurse must be a boolean`);
 	}
 	if (value.hidden !== undefined && typeof value.hidden !== "boolean") {
 		throw new Error(`${label} hidden must be a boolean`);
@@ -172,14 +250,18 @@ function validateValue(name: string, value: unknown): void {
 	}
 }
 
-function targets(value: ModelGroupAliasValue): string[] {
+/**
+ * 所有可能出现的跳转目标，用于在任何时段配置下都做一次环检测。
+ * @param value - 别名配置
+ */
+function allTargets(value: ModelGroupAliasValue): string[] {
 	if (typeof value === "string") {
 		return [value];
 	}
 	if (Array.isArray(value)) {
-		return value.slice(0, 1);
+		return [...value];
 	}
-	return [value.model, ...(value.schedule ?? []).map((entry) => entry.model)];
+	return [...orderedTargets(value), ...(value.schedule ?? []).map((entry) => entry.model)];
 }
 
 /**
@@ -210,7 +292,7 @@ export function validateModelGroupAliases(value: unknown): asserts value is Mode
 		}
 		active.add(name);
 		path.push(name);
-		for (const target of targets(aliases[name]!)) {
+		for (const target of allTargets(aliases[name]!)) {
 			visit(target);
 		}
 		path.pop();

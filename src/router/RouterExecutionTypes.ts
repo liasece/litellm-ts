@@ -10,7 +10,7 @@ import type { AllowedFailsPolicy, Deployment, RetryPolicy, RouterCallbacks } fro
 import type { ProviderConfig } from "../types/provider";
 import type { CooldownManager } from "./CooldownManager";
 import type { TPMRPMLimiter } from "./TPMRPMLimiter";
-import type { FallbackHandler } from "./FallbackHandler";
+import type { FallbackHandler, FallbackPlanEntry } from "./FallbackHandler";
 import type { ModelResolutionTraceCollector } from "./ModelResolutionTrace";
 import type { UpstreamLogContext } from "./UpstreamLogContext";
 import type { ProviderResponseProtocol } from "../types/provider";
@@ -93,6 +93,13 @@ export interface ExecutionRequest {
 	fallbackModels: string[];
 	/** 上一轮执行的异常（mock 入口或 catch 块捕获） */
 	previousError?: Error;
+	/**
+	 * 请求级 fallback 计划：首个 hop 按原始请求模型展开整棵 fallback 树，
+	 * 之后跨递归复用，保证每个失败分支都沿同一顺序换候选。
+	 */
+	fallbackPlan?: FallbackPlanEntry[];
+	/** 计划中下一个待尝试候选的下标；每消费一个候选推进一次。 */
+	fallbackCursor?: number;
 	/** 请求级 alias 解析轨迹，由 endpoint 创建并跨递归复用。 */
 	modelResolutionTrace?: ModelResolutionTraceCollector;
 	/** Shared visited set prevents recursive streams from replaying failed sibling groups. */

@@ -8,13 +8,17 @@ import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
-import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
+import UiEntryCard from "../../platform/ui/UiEntryCard.vue";
+import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
+import UiSectionCard from "../../platform/ui/UiSectionCard.vue";
+import UiSwitchRow from "../../platform/ui/UiSwitchRow.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { modelsApi } from "../api/ModelsApi";
 import { modelRecord, type ModelCatalog } from "../support/ModelModels";
 import { objectAlias, resolveAliasPath } from "../logic/AliasResolutionLogic";
 import {
+	getModelGroupAliasRecurse,
 	validateModelGroupAliases,
 	type ModelGroupAliases,
 	type ModelGroupAliasValue,
@@ -26,7 +30,10 @@ interface Draft {
 	originalName: string | null;
 	originalValue?: ModelGroupAliasValue;
 	name: string;
-	model: string;
+	/** Ordered targets: the first is dispatched, the rest are tried after it fails. */
+	targets: string[];
+	/** Whether a failed target may continue along its own fallback entry. */
+	recurse: boolean;
 	timezone: string;
 	schedule: ModelGroupAliasWindow[];
 }
@@ -50,17 +57,19 @@ const resolutions = computed(() =>
 	Object.fromEntries(Object.keys(aliases.value).map((name) => [name, resolveAliasPath(name, aliases.value, names.value, now.value)])),
 );
 const scheduled = computed(() => Object.values(aliases.value).some((value) => objectAlias(value)?.schedule?.length));
-const targets = computed(() => {
+const targetOptions = computed(() => {
 	const values = new Set(modelOptions.value.map((option) => option.model_name));
 	for (const [name, value] of Object.entries(aliases.value)) {
 		values.add(name);
 		const config = objectAlias(value);
-		for (const target of config
-			? [config.model, ...(config.schedule ?? []).map((window) => window.model)]
-			: typeof value === "string"
-				? [value]
-				: (value as string[]))
-			values.add(target);
+		for (const target of config?.targets ??
+			(config
+				? [config.model, ...(config.schedule ?? []).map((window) => window.model)]
+				: typeof value === "string"
+					? [value]
+					: (value as string[]))) {
+			if (target) values.add(target);
+		}
 	}
 	return [...values].sort().map((value) => ({ value, label: value }));
 });
@@ -72,6 +81,17 @@ function checked(name: string): Health {
 		? { status: "none" }
 		: value;
 }
+function draftTargets(value: ModelGroupAliasValue | undefined): string[] {
+	if (value === undefined) return [""];
+	if (typeof value === "string") return [value];
+	if (Array.isArray(value)) return value.length ? [...value] : [""];
+	const declared = value.targets ?? (value.model === undefined ? [] : [value.model]);
+	return declared.length ? [...declared] : [""];
+}
+/** Declared targets in dispatch order, with blank editor rows removed. */
+function aliasTargets(value: ModelGroupAliasValue | undefined): string[] {
+	return draftTargets(value).filter((target) => target.trim().length > 0);
+}
 function open(name?: string) {
 	const value = name === undefined ? undefined : aliases.value[name],
 		config = objectAlias(value);
@@ -80,28 +100,39 @@ function open(name?: string) {
 		originalName: name ?? null,
 		originalValue: value,
 		name: name ?? "",
-		model: config?.model ?? (typeof value === "string" ? value : Array.isArray(value) ? (value[0] ?? "") : ""),
+		targets: draftTargets(value),
+		recurse: getModelGroupAliasRecurse(value),
 		timezone: config?.timezone ?? "Asia/Shanghai",
 		schedule: config?.schedule?.map((window) => ({ ...window })) ?? [],
 	};
 }
+/**
+ * Rebuild the stored value from the editor draft.
+ *
+ * 单项且未关闭递归的别名仍写成字符串，保持已有配置的形态；其余情况写对象，
+ * 因为旧形态既表达不了多个同级目标，也表达不了 recurse。
+ */
 function payload(draft: Draft): ModelGroupAliasValue {
-	const model = draft.model.trim(),
-		original = objectAlias(draft.originalValue);
-	if (draft.schedule.length)
+	const values = draft.targets.map((target) => target.trim()).filter(Boolean);
+	const rest: Record<string, unknown> = { ...objectAlias(draft.originalValue) };
+	delete rest["model"];
+	delete rest["targets"];
+	delete rest["schedule"];
+	delete rest["timezone"];
+	if (draft.recurse) delete rest["recurse"];
+	else rest["recurse"] = false;
+	if (draft.schedule.length) {
 		return {
-			...original,
-			model,
+			...rest,
+			targets: values,
 			timezone: draft.timezone.trim(),
 			schedule: draft.schedule.map((window) => ({ ...window, model: window.model.trim() })),
-		};
-	if (original) {
-		const value = { ...original, model };
-		delete value.schedule;
-		delete value.timezone;
-		return value;
+		} as ModelGroupAliasValue;
 	}
-	return Array.isArray(draft.originalValue) ? [model, ...draft.originalValue.slice(1)] : model;
+	if (values.length === 1 && Object.keys(rest).length === 0) {
+		return values[0]!;
+	}
+	return { ...rest, targets: values } as ModelGroupAliasValue;
 }
 async function save(updated: ModelGroupAliases) {
 	saving.value = true;
@@ -125,8 +156,8 @@ async function saveEditor() {
 	const draft = editor.value;
 	if (!draft) return;
 	const name = draft.name.trim();
-	if (!name || !draft.model.trim()) {
-		formError.value = "Alias name and default target are required";
+	if (!name || !draft.targets.some((target) => target.trim())) {
+		formError.value = "Alias name and at least one target are required";
 		return;
 	}
 	if (name !== draft.originalName && Object.prototype.hasOwnProperty.call(aliases.value, name)) {
@@ -224,7 +255,10 @@ onBeforeUnmount(() => {
 		><header class="model-alias-heading">
 			<div>
 				<h3>Model Group Aliases</h3>
-				<p>Choose a default model and optional daily time windows. Requests outside those windows use the default target.</p>
+				<p>
+					An alias dispatches to its first target; the remaining targets are tried only when the one above fails. Optional daily
+					time windows replace the first target while they are active.
+				</p>
 			</div>
 			<div class="model-inline">
 				<UiButton appearance="tremor" size="small" :disabled="checking || !Object.keys(aliases).length || saving" @click="all"
@@ -261,7 +295,15 @@ onBeforeUnmount(() => {
 							<div v-if="objectAlias(value)?.schedule?.length" class="model-alias-schedule-summary">
 								<p>
 									Default:
-									<ModelName class="model-alias-target" :model="objectAlias(value)?.model" :size="14" variant="code" />
+									<ModelName
+										v-for="(target, index) in aliasTargets(value)"
+										:key="index"
+										class="model-alias-target"
+										:model="target"
+										:size="14"
+										variant="code"
+										><code>{{ (index ? " → " : "") + target }}</code></ModelName
+									>
 								</p>
 								<strong>Daily · {{ objectAlias(value)?.timezone }}</strong>
 								<p v-for="(window, index) in objectAlias(value)?.schedule" :key="index">
@@ -294,6 +336,12 @@ onBeforeUnmount(() => {
 									></template
 								>
 							</div>
+							<p v-if="aliasTargets(value).length > 1" class="model-small model-muted">
+								Then: {{ aliasTargets(value).slice(1).join(" → ") }}
+							</p>
+							<p v-if="!getModelGroupAliasRecurse(value)" class="model-small model-muted">
+								No recursive fallback: these targets are the final candidates.
+							</p>
 							<p v-if="resolutions[name].error" class="model-error model-small">{{ resolutions[name].error }}</p>
 						</td>
 						<td>
@@ -362,39 +410,76 @@ onBeforeUnmount(() => {
 			scroll-mode="overlay"
 			@update:open="!$event && !saving && (editor = null)"
 			><div v-if="editor" class="model-alias-editor">
-				<div class="model-alias-basics">
-					<label>Alias name<UiInput id="alias-name" v-model="editor.name" :disabled="saving" /></label
-					><label
-						>Default target<UiSelect
-							id="alias-default"
-							:model-value="editor.model || null"
-							@update:model-value="editor.model = typeof $event === 'string' ? $event : ''"
-							:options="targets.filter((option) => option.value !== editor?.name.trim())"
+				<label class="model-alias-name">Alias name<UiInput id="alias-name" v-model="editor.name" :disabled="saving" /></label>
+				<UiSectionCard
+					title="Targets"
+					description="Tried top to bottom. The first target serves normally; the rest take over only when the one above it fails."
+				>
+					<template #actions>
+						<UiButton appearance="tremor" size="small" :disabled="saving" @click="editor.targets.push('')"
+							><template #icon><UiIcon name="PlusOutlined" /></template>Add target</UiButton
+						>
+					</template>
+					<UiEntryCard v-for="(target, index) in editor.targets" :key="index" :index="index + 1" :primary="index === 0">
+						<template #title>{{ index === 0 ? "Primary target" : "Fallback target" }}</template>
+						<UiSelect
+							:id="'alias-target-model-' + index"
+							:model-value="target || null"
+							@update:model-value="editor.targets[index] = typeof $event === 'string' ? $event : ''"
+							:options="targetOptions.filter((option) => option.value !== editor?.name.trim())"
 							searchable
-							aria-label="Resolution"
+							:aria-label="index === 0 ? 'Primary target' : 'Fallback target ' + index"
 							placeholder="Select a model or alias"
 							:disabled="saving"
-					/></label>
-				</div>
-				<div class="model-alias-windows">
-					<div class="model-inline model-between">
-						<strong>Daily time windows</strong
-						><UiButton
+						/>
+						<template #actions>
+							<UiEntryRemove
+								:label="'Remove target ' + (index + 1)"
+								:disabled="saving || editor.targets.length === 1"
+								@click="editor.targets.splice(index, 1)"
+							/>
+						</template>
+					</UiEntryCard>
+					<template #footer>
+						<UiSwitchRow
+							v-model="editor.recurse"
+							:disabled="saving"
+							label="Allow the target's own fallbacks"
+							description="Off keeps these targets as the final answer, so an unavailable model cannot drift to a different provider."
+						/>
+					</template>
+				</UiSectionCard>
+				<UiSectionCard
+					title="Daily time windows"
+					description="Start is included; end is excluded. An earlier end time continues into the next day. Windows cannot overlap."
+				>
+					<template #actions>
+						<UiButton
 							appearance="tremor"
 							size="small"
 							:disabled="saving"
 							@click="editor.schedule.push({ start: '', end: '', model: '' })"
 							><template #icon><UiIcon name="PlusOutlined" /></template>Add time window</UiButton
 						>
-					</div>
-					<p class="model-small model-muted model-alias-window-description">
-						Start is included; end is excluded. An earlier end time continues into the next day. Windows cannot overlap.
-					</p>
-					<template v-if="editor.schedule.length"
-						><label
-							>Time zone<UiInput id="alias-timezone" v-model="editor.timezone" :disabled="saving" placeholder="Asia/Shanghai"
-						/></label>
-						<div v-for="(window, index) in editor.schedule" :key="index" class="model-alias-window">
+					</template>
+					<label v-if="editor.schedule.length" class="model-alias-timezone"
+						>Time zone<UiInput id="alias-timezone" v-model="editor.timezone" :disabled="saving" placeholder="Asia/Shanghai"
+					/></label>
+					<UiEntryCard v-for="(window, index) in editor.schedule" :key="index" :index="index + 1">
+						<template #title
+							><span>Window {{ index + 1 }}</span
+							><span v-if="window.start && window.end" class="model-alias-window-range"
+								>{{ window.start }} → {{ window.end }}</span
+							></template
+						>
+						<template #actions>
+							<UiEntryRemove
+								:label="'Remove time window ' + (index + 1)"
+								:disabled="saving"
+								@click="editor.schedule.splice(index, 1)"
+							/>
+						</template>
+						<div class="model-alias-window-fields">
 							<label
 								>Start<UiInput
 									:id="'alias-start-' + index"
@@ -416,24 +501,18 @@ onBeforeUnmount(() => {
 									:id="'alias-target-' + index"
 									:model-value="window.model || null"
 									@update:model-value="window.model = typeof $event === 'string' ? $event : ''"
-									:options="targets.filter((option) => option.value !== editor?.name.trim())"
+									:options="targetOptions.filter((option) => option.value !== editor?.name.trim())"
 									searchable
 									:aria-label="'Time window target ' + (index + 1)"
 									placeholder="Select a model or alias"
-									:disabled="saving" /></label
-							><UiButton
-								appearance="tremor"
-								variant="text"
-								size="small"
-								danger
-								:disabled="saving"
-								:aria-label="'Remove time window ' + (index + 1)"
-								@click="editor.schedule.splice(index, 1)"
-								><template #icon><UiHeroIcon name="TrashIcon" /></template
-							></UiButton></div
-					></template>
-					<p v-else class="model-small model-muted">The default target is used all day.</p>
-				</div>
+									:disabled="saving"
+							/></label>
+						</div>
+					</UiEntryCard>
+					<p v-if="!editor.schedule.length" class="model-alias-empty-note">
+						No time windows yet — the primary target serves all day.
+					</p>
+				</UiSectionCard>
 				<p v-if="formError" role="alert" class="model-error">{{ formError }}</p>
 			</div>
 			<template #footer>

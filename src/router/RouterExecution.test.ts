@@ -866,6 +866,85 @@ describe("Router execution chain", () => {
 			});
 		});
 
+		describe("fallback 树：兄弟目标与 recurse 开关", () => {
+			/**
+			 * 造一个「第 n 次上游调用返回 id=n」的响应序列，最后一个是成功。
+			 * @param ids - 依次返回的响应 id
+			 */
+			const respondInOrder = (ids: string[]): void => {
+				for (const id of ids.slice(0, -1)) {
+					mockFetch.mockResolvedValueOnce(errorResponse(500, { error: `${id} failed` }));
+				}
+				mockFetch.mockResolvedValueOnce(
+					okResponse({
+						id: ids.at(-1),
+						object: "chat.completion",
+						created: 1,
+						model: "x",
+						choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					}),
+				);
+			};
+
+			it("同一段配置里靠后的兄弟目标会被继续尝试（旧实现只走链首）", async () => {
+				respondInOrder(["a-failed", "b-failed", "c-success"]);
+				const router = new Router({
+					model_list: [mkDeployment("a"), mkDeployment("b"), mkDeployment("c")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					num_retries: 0,
+					cooldown_time: 60,
+					fallbacks: [{ a: ["b", "c"] }],
+				});
+
+				const result = await router.completion("a", [{ role: "user", content: "hi" }]);
+
+				expect(result.id).toBe("c-success");
+				expect(mockFetch).toHaveBeenCalledTimes(3);
+			});
+
+			it("recurse:false 时不进入目标的自身链，但同级目标仍然尝试", async () => {
+				respondInOrder(["a-failed", "b-failed", "c-success"]);
+				const router = new Router({
+					model_list: [mkDeployment("a"), mkDeployment("b"), mkDeployment("c"), mkDeployment("d")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					num_retries: 0,
+					cooldown_time: 60,
+					fallbacks: [{ a: { targets: ["b", "c"], recurse: false } }, { b: ["d"] }],
+				});
+
+				const result = await router.completion("a", [{ role: "user", content: "hi" }]);
+
+				expect(result.id).toBe("c-success");
+				// a → b → c：d 是 b 的自身链，被 recurse:false 挡住
+				expect(mockFetch).toHaveBeenCalledTimes(3);
+				expect((result._routingTrace as Array<{ to_resolved_model: string }>).map((entry) => entry.to_resolved_model)).toEqual([
+					"b",
+					"c",
+				]);
+			});
+
+			it("默认递归时深度优先：先走完第一个目标的链，再回到兄弟目标", async () => {
+				respondInOrder(["a-failed", "b-failed", "d-success"]);
+				const router = new Router({
+					model_list: [mkDeployment("a"), mkDeployment("b"), mkDeployment("c"), mkDeployment("d")],
+					routing_strategy: RoutingStrategyName.SimpleShuffle,
+					num_retries: 0,
+					cooldown_time: 60,
+					fallbacks: [{ a: ["b", "c"] }, { b: ["d"] }],
+				});
+
+				const result = await router.completion("a", [{ role: "user", content: "hi" }]);
+
+				expect(result.id).toBe("d-success");
+				expect(mockFetch).toHaveBeenCalledTimes(3);
+				expect((result._routingTrace as Array<{ to_resolved_model: string }>).map((entry) => entry.to_resolved_model)).toEqual([
+					"b",
+					"d",
+				]);
+			});
+		});
+
 		describe("链式多跳 fallback（每跳查自身链首，depth 恒 0）", () => {
 			it("A 冷却 → B 失败 → C 成功（fallbacks: A→[B], B→[C]）", async () => {
 				// B 的上游失败一次，C 成功

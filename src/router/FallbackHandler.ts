@@ -3,12 +3,41 @@
  *
  * Manages fallback chains for model requests.
  * Supports model_group_alias and deployment override_model_name resolution (Patch 14).
+ *
+ * 一条 fallback 条目现在是一棵树的边：条目 `{ targets, recurse }` 的每个目标既可以直接尝试，
+ * 也可以在 `recurse` 允许时进入该目标自己的条目（深度优先，兄弟目标在子树之后继续）。
+ * {@link FallbackHandler.getFallbackPlan} 把这棵树展开成请求级的有序候选序列，
+ * 执行层只需要按序列推进，不再逐步查「当前模型的下一个 fallback」——那正是旧实现丢掉兄弟目标的原因。
  */
 
 import type { ModelGroupResolution, ModelGroupResolutionHop } from "./ModelResolutionTrace";
 
-import { selectModelGroupAliasTarget, validateModelGroupAliases } from "../shared/ModelGroupAlias";
+import { getModelGroupAliasRecurse, selectModelGroupAliasTargets, validateModelGroupAliases } from "../shared/ModelGroupAlias";
 import type { ModelGroupAliases } from "../shared/ModelGroupAlias";
+import { normalizeFallbackEntry } from "../shared/FallbackEntry";
+import type { FallbackEntriesSource, NormalizedFallbackEntry } from "../shared/FallbackEntry";
+
+/** 展开后的一跳候选：按发起下一步时的切模型顺序排列。 */
+export type FallbackPlanEntry = ModelGroupResolution;
+
+/** 树中一条边：目标 + 该目标失败后能否继续它自己的条目。 */
+interface FallbackEdge {
+	/** 配置里写下的目标名（可能是别名或带 provider 前缀）。 */
+	target: string;
+	/** 目标失败后是否继续目标自身的 fallback 条目。 */
+	recurse: boolean;
+	/**
+	 * `resolution` 是别名的解析边：它的目标就是本次请求真正要执行的模型组，
+	 * 只用于继续向下展开，不能作为「失败后的候选」重复排队。
+	 */
+	role: "resolution" | "fallback";
+}
+
+/**
+ * 计划展开上限。真正生效的跳数上限是 router 的 max_fallbacks；
+ * 这里只是防御配置成环或极大扇出时一次性展开出无界序列。
+ */
+const FALLBACK_PLAN_LIMIT = 50;
 
 /**
  * Fallback Handler
@@ -17,7 +46,7 @@ import type { ModelGroupAliases } from "../shared/ModelGroupAlias";
  * 对齐 PY: fallbacks 是 List[Dict[str, List[str]]]，合并时 first-match-wins。
  */
 export class FallbackHandler {
-	private _fallbacks: Record<string, string[]>;
+	private _fallbacks: Record<string, NormalizedFallbackEntry>;
 	// DIFF-RT-ALIAS-01: alias 值类型扩展为 string | string[] | { model, hidden? }
 	// 之前只支持 string | object，string[] 多值数组报 TS 错。
 	private _modelGroupAlias: ModelGroupAliases;
@@ -26,11 +55,13 @@ export class FallbackHandler {
 	private _contentPolicyFallbacks: Record<string, string[]>;
 	/** 内部缓存：getFallbackChain 计算结果，避免重复计算 */
 	private _chainCache: Map<string, ModelGroupResolution[]> = new Map();
+	/** 内部缓存：getFallbackPlan 展开结果（键含上限），随分钟与配置变更失效 */
+	private _planCache: Map<string, FallbackPlanEntry[]> = new Map();
 	private _chainCacheMinute = -1;
 
 	constructor(
 		/** PY 风格：fallbacks 是 List[Dict]，first-match-wins 合并 */
-		fallbacks?: Array<Record<string, string[]>> | Record<string, string[]>,
+		fallbacks?: FallbackEntriesSource,
 		modelGroupAlias?: ModelGroupAliases,
 		contextWindowFallbacks?: Record<string, string[]>,
 		contentPolicyFallbacks?: Record<string, string[]>,
@@ -50,24 +81,27 @@ export class FallbackHandler {
 
 	/**
 	 * 合并 fallbacks。PY 行为：List[Dict] 顺序遍历，first-match-wins。
-	 * 也兼容直接传入 Record<string, string[]>。
+	 * 也兼容直接传入 Record。条目值在这里统一成 `{ targets, recurse }`；
+	 * 非法值只跳过该条目，避免一份脏配置让整次路由装配失败。
 	 * @param fallbacks
 	 */
-	private _mergeFallbacks(fallbacks?: Array<Record<string, string[]>> | Record<string, string[]>): Record<string, string[]> {
+	private _mergeFallbacks(fallbacks?: FallbackEntriesSource): Record<string, NormalizedFallbackEntry> {
 		if (!fallbacks) {
 			return {};
 		}
-		const merged: Record<string, string[]> = {};
-		if (Array.isArray(fallbacks)) {
-			for (const fb of fallbacks) {
-				for (const [key, vals] of Object.entries(fb)) {
-					if (!(key in merged)) {
-						merged[key] = vals;
-					}
+		const merged: Record<string, NormalizedFallbackEntry> = {};
+		const groups: Array<Record<string, unknown>> = Array.isArray(fallbacks) ? fallbacks : [fallbacks];
+		for (const group of groups) {
+			for (const [key, value] of Object.entries(group ?? {})) {
+				if (key in merged) {
+					continue;
 				}
+				const entry = normalizeFallbackEntry(value);
+				if (entry.targets.length === 0) {
+					continue;
+				}
+				merged[key] = entry;
 			}
-		} else {
-			Object.assign(merged, fallbacks);
 		}
 		return merged;
 	}
@@ -172,7 +206,7 @@ export class FallbackHandler {
 	}
 
 	/**
-	 * Lookup in the given fallback map with fallback resolution:
+	 * 在给定 map 中按同样优先级查找（CW/CP 通道使用纯目标数组）：
 	 * 1. Exact model name match
 	 * 2. Provider-prefix stripped match
 	 * 3. alias 解析后的名字匹配
@@ -186,42 +220,71 @@ export class FallbackHandler {
 	 */
 	private _lookupFallback(model: string, fallbackMap: Record<string, string[]>, at = this._referenceTime ?? new Date()): string[] {
 		const lookupModel = this._forcedModelGroup(model, at);
+		const direct = this._lookupByKeys(lookupModel, fallbackMap, false, at);
+		return direct ?? [];
+	}
+
+	/**
+	 * 同一套查找优先级，但返回普通 fallback 的条目（含递归开关）。
+	 *
+	 * `skipAliasResolution` 用于别名自身：别名声明的目标列表已经由 `_fallbackEdges` 展开成
+	 * 树边走过了，这里再按「解析后的名字」查一次会把同一段链重复计入，也会绕开 `recurse` 开关。
+	 * @param model
+	 * @param at
+	 * @param skipAliasResolution
+	 */
+	private _lookupFallbackEntry(model: string, at: Date, skipAliasResolution: boolean): NormalizedFallbackEntry | undefined {
+		const lookupModel = this._forcedModelGroup(model, at);
+		return this._lookupByKeys(lookupModel, this._fallbacks, skipAliasResolution, at);
+	}
+
+	/**
+	 * 精确名 → 去 provider 前缀 → 解析别名后 → 通配符，返回首个命中的条目。
+	 * @param lookupModel
+	 * @param map
+	 * @param skipAliasResolution
+	 * @param at
+	 */
+	private _lookupByKeys<T>(
+		lookupModel: string,
+		map: Record<string, T>,
+		skipAliasResolution: boolean,
+		at: Date,
+	): T | undefined {
 		// Exact match
-		const exact = fallbackMap[lookupModel];
+		const exact = map[lookupModel];
 		if (exact) {
 			return exact;
 		}
 		// Provider-prefix stripped match
 		const stripped = this._stripProviderPrefix(lookupModel);
 		if (stripped !== lookupModel) {
-			const strippedMatch = fallbackMap[stripped];
+			const strippedMatch = map[stripped];
 			if (strippedMatch) {
 				return strippedMatch;
 			}
 		}
 		// Resolve alias and try again
-		const resolvedAlias = this._resolveAlias(lookupModel, this._redirects(), at);
-		if (resolvedAlias !== lookupModel) {
-			// Exact match on resolved alias
-			const aliasMatch = fallbackMap[resolvedAlias];
-			if (aliasMatch) {
-				return aliasMatch;
-			}
-			// Provider-prefix stripped match on resolved alias (对齐 PY get_fallback_model_group)
-			const strippedAlias = this._stripProviderPrefix(resolvedAlias);
-			if (strippedAlias !== resolvedAlias) {
-				const strippedAliasMatch = fallbackMap[strippedAlias];
-				if (strippedAliasMatch) {
-					return strippedAliasMatch;
+		if (!skipAliasResolution) {
+			const resolvedAlias = this._resolveAlias(lookupModel, this._redirects(), at);
+			if (resolvedAlias !== lookupModel) {
+				// Exact match on resolved alias
+				const aliasMatch = map[resolvedAlias];
+				if (aliasMatch) {
+					return aliasMatch;
+				}
+				// Provider-prefix stripped match on resolved alias (对齐 PY get_fallback_model_group)
+				const strippedAlias = this._stripProviderPrefix(resolvedAlias);
+				if (strippedAlias !== resolvedAlias) {
+					const strippedAliasMatch = map[strippedAlias];
+					if (strippedAliasMatch) {
+						return strippedAliasMatch;
+					}
 				}
 			}
 		}
 		// Wildcard match
-		const wildcard = fallbackMap["*"];
-		if (wildcard) {
-			return wildcard;
-		}
-		return [];
+		return map["*"];
 	}
 
 	/**
@@ -276,7 +339,7 @@ export class FallbackHandler {
 	}
 
 	/**
-	 * 读取 alias 的单跳目标。string[] 只取首项，空数组没有下一跳。
+	 * 读取 alias 的单跳主目标。目标列表靠后的候选不参与解析，只作为失败后的同级候选。
 	 * @param model - 当前模型组
 	 * @param aliases - 待查询的 alias 映射
 	 * @param at
@@ -298,8 +361,8 @@ export class FallbackHandler {
 		model: string,
 		aliases: ModelGroupAliases,
 		at: Date,
-	): { target: string; scheduled: boolean } | undefined {
-		return Object.prototype.hasOwnProperty.call(aliases, model) ? selectModelGroupAliasTarget(aliases[model], at) : undefined;
+	): { target: string; scheduled: boolean; targets: string[] } | undefined {
+		return Object.prototype.hasOwnProperty.call(aliases, model) ? selectModelGroupAliasTargets(aliases[model], at) : undefined;
 	}
 
 	/**
@@ -358,9 +421,84 @@ export class FallbackHandler {
 	}
 
 	/**
+	 * 一个节点失败后可以直接尝试的目标（树中的第一层边）。
+	 *
+	 * 顺序：先别名自身声明的有序目标（含主目标，主目标通常已作为本次尝试而由调用方去重），
+	 * 再是显式 fallbacks 条目。别名节点不再额外按「解析后的名字」查一次 fallbacks，
+	 * 那段链属于目标的子树，由计划展开时的深度优先遍历负责。
+	 * @param model - 当前节点
+	 * @param at - 请求快照固定的时间
+	 */
+	/**
+	 * 该名字是否是配置里的别名（模型级 override 不算别名：它是强制换组，不声明目标列表）。
+	 * @param model
+	 */
+	private _isAliasNode(model: string): boolean {
+		return Object.prototype.hasOwnProperty.call(this._modelGroupAlias, model);
+	}
+
+	/**
+	 * 一个节点失败后可以直接尝试的目标（树中的第一层边）。
+	 *
+	 * 顺序：先别名自身声明的有序目标（含主目标，主目标通常已作为本次尝试而由调用方去重），
+	 * 再是显式 fallbacks 条目。别名节点不再额外按「解析后的名字」查一次 fallbacks，
+	 * 那段链属于目标的子树，由计划展开时的深度优先遍历负责。
+	 * @param model - 当前节点
+	 * @param at - 请求快照固定的时间
+	 */
+	private _fallbackEdges(model: string, at: Date): FallbackEdge[] {
+		const edges: FallbackEdge[] = [];
+		const lookupModel = this._forcedModelGroup(model, at);
+		const aliasNode = this._modelGroupAliasTargetNode(model, lookupModel);
+		// 显式 fallbacks 条目排在别名自身的目标之前：历史语义是「精确配置的名字优先于
+		// 别名解析后的名字」，两者同时配置时不因为引入递归而改变谁先被尝试。
+		const entry = this._lookupFallbackEntry(model, at, aliasNode !== undefined);
+		if (entry) {
+			for (const target of entry.targets) {
+				edges.push({ target: target, recurse: entry.recurse, role: "fallback" });
+			}
+		}
+		if (aliasNode !== undefined) {
+			const value = this._modelGroupAlias[aliasNode];
+			const selection = selectModelGroupAliasTargets(value, at);
+			const recurse = getModelGroupAliasRecurse(value);
+			const targets = selection?.targets ?? [];
+			for (let index = 0; index < targets.length; index++) {
+				edges.push({ target: targets[index]!, recurse: recurse, role: index === 0 ? "resolution" : "fallback" });
+			}
+		}
+		return edges;
+	}
+
+	/**
+	 * 该名字在 alias 表里命中的节点（优先取强制换组后的名字），没有则 undefined。
+	 * 模型级 override 不是别名，不参与目标列表展开。
+	 * @param model - 请求里的模型组
+	 * @param lookupModel - 应用模型级 override 后的模型组
+	 */
+	private _modelGroupAliasTargetNode(model: string, lookupModel: string): string | undefined {
+		if (Object.prototype.hasOwnProperty.call(this._modelGroupAlias, lookupModel)) {
+			return lookupModel;
+		}
+		return Object.prototype.hasOwnProperty.call(this._modelGroupAlias, model) ? model : undefined;
+	}
+
+	/**
+	 * 按分钟刷新链缓存，保证时段 alias 在下一分钟按新目标展开。
+	 * @param at
+	 */
+	private _refreshCacheMinute(at: Date): void {
+		const minute = Math.floor(at.getTime() / 60_000);
+		if (minute !== this._chainCacheMinute) {
+			this.invalidateCache();
+			this._chainCacheMinute = minute;
+		}
+	}
+
+	/**
 	 * Get the fallback chain for a model, resolving aliases first.
-	 * The chain is ordered: first resolved alias, then direct fallbacks,
-	 * then recursively resolved fallback aliases.
+	 * 只展开第一层：用于展示、错误信息与「是否还有 fallback」判断。
+	 * 执行路径用 {@link FallbackHandler.getFallbackPlan} 取整棵树的顺序。
 	 * 支持通配符 * 匹配和 provider 前缀剥离匹配（对齐 PY fallback_event_handlers.py）。
 	 * 结果带缓存，避免 hasMoreFallbacks/getNextFallback 重复计算
 	 * @param model - original model name
@@ -368,27 +506,70 @@ export class FallbackHandler {
 	 */
 	getFallbackChainWithTrace(model: string): ModelGroupResolution[] {
 		const at = this._referenceTime ?? new Date();
-		const minute = Math.floor(at.getTime() / 60_000);
-		if (minute !== this._chainCacheMinute) {
-			this.invalidateCache();
-			this._chainCacheMinute = minute;
-		}
+		this._refreshCacheMinute(at);
 		const cached = this._chainCache.get(model);
 		if (cached) {
 			return cached.map((entry) => ({ ...entry, resolutionPath: [...entry.resolutionPath] }));
 		}
-		const directFallbacks = this._lookupFallback(model, this._fallbacks, at);
-		const chain: ModelGroupResolution[] = [];
-		const seen = new Set<string>([model, this._forcedModelGroup(model, at)]);
-		for (const fallback of directFallbacks) {
-			const resolution = this._resolveAliasWithTrace(fallback, this._redirects(), at);
-			if (!seen.has(resolution.resolvedModel)) {
-				chain.push(resolution);
-				seen.add(resolution.resolvedModel);
-			}
-		}
+		// 链就是计划本身：一段配置里靠后的兄弟目标和各目标自身的链都属于「可以换的候选」，
+		// 展示与错误信息用同一份顺序，避免执行顺序和文案说两套话。
+		const chain: ModelGroupResolution[] = this.getFallbackPlan(model, FALLBACK_PLAN_LIMIT).map((entry) => ({
+			inputModel: entry.inputModel,
+			resolvedModel: entry.resolvedModel,
+			resolutionPath: [...entry.resolutionPath],
+			...(entry.hops === undefined ? {} : { hops: entry.hops.map((hop) => ({ ...hop })) }),
+		}));
 		this._chainCache.set(model, chain);
 		return chain.map((entry) => ({ ...entry, resolutionPath: [...entry.resolutionPath] }));
+	}
+
+	/**
+	 * 把「请求模型失败后可以换谁」展开成一条有序候选序列。
+	 *
+	 * 深度优先：每个目标先作为候选，`recurse` 允许时接着展开该目标自己的条目，
+	 * 子树走完再回到下一个兄弟目标。`recurse: false` 的条目只贡献同级候选，
+	 * 目标（含别名解析到的模型组）当作叶子，因此不会有配置者没有预期的模型被带进来。
+	 *
+	 * 序列不包含请求模型自身；调用方从下标 0 开始推进。解析完成的模型组不会重复出现，
+	 * 因此同一组被多条路径引用时只尝试一次。
+	 * @param model - 请求的模型组
+	 * @param limit - 展开上限（真正的跳数上限由 router 的 max_fallbacks 控制）
+	 */
+	getFallbackPlan(model: string, limit = FALLBACK_PLAN_LIMIT): FallbackPlanEntry[] {
+		const at = this._referenceTime ?? new Date();
+		this._refreshCacheMinute(at);
+		const cacheKey = `${limit}|${model}`;
+		const cached = this._planCache.get(cacheKey);
+		if (cached) {
+			return cached.map((entry) => ({ ...entry, resolutionPath: [...entry.resolutionPath] }));
+		}
+		const capped = Math.max(0, limit);
+		const plan: FallbackPlanEntry[] = [];
+		const seenGroups = new Set<string>([this._forcedModelGroup(model, at)]);
+		const visitedNodes = new Set<string>();
+		const walk = (node: string, allowDescend: boolean): void => {
+			if (!allowDescend || plan.length >= capped || visitedNodes.has(node)) {
+				return;
+			}
+			visitedNodes.add(node);
+			for (const edge of this._fallbackEdges(node, at)) {
+				if (plan.length >= capped) {
+					return;
+				}
+				// 别名的解析边指向的就是本次尝试的模型组：只继续向下展开它的链，不作为候选排队。
+				if (edge.role !== "resolution") {
+					const resolution = this._resolveAliasWithTrace(edge.target, this._redirects(), at);
+					if (!seenGroups.has(resolution.resolvedModel)) {
+						seenGroups.add(resolution.resolvedModel);
+						plan.push(resolution);
+					}
+				}
+				walk(edge.target, edge.recurse);
+			}
+		};
+		walk(model, true);
+		this._planCache.set(cacheKey, plan);
+		return plan.map((entry) => ({ ...entry, resolutionPath: [...entry.resolutionPath] }));
 	}
 
 	/**
@@ -420,6 +601,7 @@ export class FallbackHandler {
 	 */
 	invalidateCache(): void {
 		this._chainCache.clear();
+		this._planCache.clear();
 	}
 
 	/**
@@ -427,7 +609,7 @@ export class FallbackHandler {
 	 * 接受 PY 风格 List[Dict]（first-match-wins 合并）或 Record；替换后失效链缓存。
 	 * @param fallbacks - 新的 fallback 配置
 	 */
-	setFallbacks(fallbacks?: Array<Record<string, string[]>> | Record<string, string[]>): void {
+	setFallbacks(fallbacks?: FallbackEntriesSource): void {
 		this._fallbacks = this._mergeFallbacks(fallbacks);
 		this.invalidateCache();
 	}
@@ -438,7 +620,7 @@ export class FallbackHandler {
 	 * 返回深拷贝，避免外部改写内部状态。
 	 */
 	getFallbacks(): Record<string, string[]> {
-		return Object.fromEntries(Object.entries(this._fallbacks).map(([key, chain]) => [key, [...chain]]));
+		return Object.fromEntries(Object.entries(this._fallbacks).map(([key, entry]) => [key, [...entry.targets]]));
 	}
 
 	/** 返回当前 alias key，隐藏 alias target，避免管理端泄漏底层 provider 模型。 */

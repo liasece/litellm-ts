@@ -107,57 +107,63 @@
 	gap: 4px;
 }
 .model-alias-editor {
-	padding: 8px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 4px 0;
 	font-size: 14px;
 	line-height: 20px;
 }
-.model-alias-basics {
-	display: grid;
-	grid-template-columns: 1fr;
-	gap: 16px;
-	margin-bottom: 16px;
-}
-.model-alias-editor label {
+.model-alias-editor .model-alias-name {
 	display: block;
 	font-size: 14px;
 	line-height: 20px;
 	font-weight: 500;
 }
-.model-alias-editor label > .ui-input-wrapper,
-.model-alias-editor label > .ui-select {
+.model-alias-editor .model-alias-name > .ui-input-wrapper {
 	margin-top: 4px;
 }
-.model-alias-windows {
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-	padding: 12px;
-}
-.model-alias-windows > .model-inline {
-	margin-bottom: 8px;
-	flex-wrap: wrap;
-}
-.model-alias-windows > .model-alias-window-description {
-	margin-bottom: 12px;
-}
-.model-alias-windows > label {
-	font-weight: 400;
-	margin-bottom: 12px;
-}
-.model-alias-window {
-	display: grid;
-	grid-template-columns: 1fr 1fr auto;
-	align-items: end;
-	gap: 8px;
-	margin-bottom: 12px;
-}
-.model-alias-window label {
+/* 两种条目共用表单小标签的样式：标题属于条目卡片，字段名只作提示。 */
+.model-alias-editor .model-alias-timezone,
+.model-alias-editor .model-alias-window-fields > label {
+	display: block;
 	font-size: 12px;
 	line-height: 16px;
 	font-weight: 400;
+	color: #6b7280;
 }
-.model-alias-window-target {
-	grid-column: span 2 / span 2;
-	grid-row-start: 2;
+.model-alias-editor .model-alias-timezone {
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 500;
+	color: #374151;
+}
+.model-alias-editor .model-alias-timezone > .ui-input-wrapper,
+.model-alias-editor .model-alias-window-fields > label > .ui-input-wrapper,
+.model-alias-editor .model-alias-window-fields > label > .ui-select {
+	margin-top: 4px;
+}
+.model-alias-window-range {
+	font: 500 12px/16px var(--ui-font-mono);
+	color: #6b7280;
+}
+.model-alias-window-fields {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 8px 12px;
+}
+.model-alias-window-fields > .model-alias-window-target {
+	grid-column: 1 / -1;
+}
+.model-alias-empty-note {
+	margin: 0;
+	padding: 14px;
+	border: 1px dashed #d1d5db;
+	border-radius: 10px;
+	text-align: center;
+	font-size: 12px;
+	line-height: 16px;
+	color: #9ca3af;
 }
 .model-alias-editor-footer {
 	display: flex;
@@ -377,23 +383,16 @@
 	margin-top: 8px;
 }
 @media (min-width: 640px) {
-	.model-alias-basics {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+	.model-alias-window-fields {
+		grid-template-columns: 140px 140px minmax(160px, 1fr);
 	}
-	.model-alias-window {
-		grid-template-columns: 140px 140px minmax(160px, 1fr) auto;
-	}
-	.model-alias-window-target {
+	.model-alias-window-fields > .model-alias-window-target {
 		grid-column: auto;
-		grid-row-start: auto;
 	}
 }
 
 .model-alias-editor .model-muted {
 	color: #6b7280;
-}
-.model-alias-windows > .model-inline > strong {
-	font-weight: 500;
 }
 .model-price-source > header > strong,
 .model-price-row > strong {
@@ -430,7 +429,7 @@
 .model-alias-table .model-icon-button {
 	display: block;
 }
-.model-alias-window input[type="time"] {
+.model-alias-window-fields input[type="time"] {
 	height: 22px;
 }
 

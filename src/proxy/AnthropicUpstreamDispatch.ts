@@ -27,6 +27,7 @@ import { ApiError, type NoDeploymentsErrorInfo } from "../core/api/ApiError";
 import { createModuleLogger } from "../core/utils/logger";
 import { APIConnectionError } from "../router/RouterErrors";
 import { buildInvalidModelError, formatInvalidModelMessage } from "../router/RouterExecution";
+import type { FallbackPlanEntry } from "../router/FallbackHandler";
 import { getDeploymentKey } from "../router/RouterModelGroupCache";
 import { noteResolutionAppliedFeatures } from "../router/AppliedFeatures";
 import {
@@ -99,6 +100,8 @@ export interface FallbackRouterFacade {
 	getNextFallback(model: string, fallbackDepth: number): string | null;
 	/** 结构化 fallback 解析，保留 fallback 配置中的 alias 输入。 */
 	getNextFallbackWithTrace?(model: string, fallbackDepth: number): ModelGroupResolution | null;
+	/** 展开整棵 fallback 树后的候选顺序；缺省时退回链式接口（旧调用方/测试替身）。 */
+	getFallbackPlan?(model: string, limit: number): FallbackPlanEntry[];
 	/** 单 deployment 调用成功登记（清冷却 + 失败计数清零） */
 	recordDeploymentSuccess(deployment: Deployment): void;
 	/** 单 deployment 调用失败登记（buildCooldownDecision 判定后按决策冷却） */
@@ -263,10 +266,41 @@ export async function executeWithFallbackChain<T>(
 	const { stats: fallbackStats, canReplay } = options;
 	const modelResolutionTrace = fallbackStats?.modelResolutionTrace ?? createModelResolutionTraceCollector();
 	const attemptedDeploymentKeys = new Set<string>();
+	/** 已经作为一跳尝试过的模型组，避免同一组被多条 fallback 路径重复访问。 */
+	const attemptedGroups = new Set<string>();
+	const plan = router.getFallbackPlan?.(model, router.maxFallbacks) ?? null;
+	let planCursor = 0;
 	let currentModel: string | null = model;
 	let fallbackDepth = 0;
 	const fallbackModels: string[] = [model];
 	let lastError: Error | null = null;
+
+	/**
+	 * 取下一个 fallback 候选。
+	 * 计划存在时严格按计划顺序推进（深度优先，兄弟目标不会被跳过）；
+	 * 只提供链式接口的 facade 退回「当前模型链首」的历史行为。
+	 */
+	const nextFallbackTarget = (): ModelGroupResolution | null => {
+		if (plan !== null) {
+			while (planCursor < plan.length) {
+				const entry = plan[planCursor]!;
+				planCursor += 1;
+				if (!attemptedGroups.has(entry.resolvedModel)) {
+					return entry;
+				}
+			}
+			return null;
+		}
+		if (currentModel === null) {
+			return null;
+		}
+		const fallbackResolution = router.getNextFallbackWithTrace?.(currentModel, 0);
+		const plainFallback: string | null = fallbackResolution ? null : router.getNextFallback(currentModel, 0);
+		return (
+			fallbackResolution ??
+			(plainFallback === null ? null : { inputModel: plainFallback, resolvedModel: plainFallback, resolutionPath: [plainFallback] })
+		);
+	};
 
 	while (currentModel !== null) {
 		const resolution = router.resolveModelGroupWithTrace?.(currentModel) ?? {
@@ -276,6 +310,7 @@ export async function executeWithFallbackChain<T>(
 		};
 		appendModelResolutionTrace(modelResolutionTrace, fallbackDepth, resolution);
 		noteResolutionAppliedFeatures(resolution);
+		attemptedGroups.add(resolution.resolvedModel);
 		if (fallbackStats) {
 			fallbackStats.fallbackDepth = fallbackDepth;
 			fallbackStats.fallbackModels = [...fallbackModels];
@@ -336,18 +371,14 @@ export async function executeWithFallbackChain<T>(
 				attempt = buildUpstreamAttempt(router, currentModel, requestApiKey, requestAnthropicVersion);
 			}
 		}
-		// 组内耗尽 → 查当前 model 自身 fallback 链的链首（depth 恒为 0，
-		// 与 RouterExecution / 流式端点统一；fallbackDepth 仅是跳数计数器）
+		// 组内耗尽 → 按请求级计划取下一个候选（兄弟目标与各目标自身的链都在计划里，
+		// fallbackDepth 仅是跳数计数器，与 RouterExecution 一致）
 		fallbackDepth += 1;
 		if (fallbackDepth >= router.maxFallbacks) {
 			// 对齐 PY max_fallbacks 上限：防环型配置（A→B→A）死循环
 			break;
 		}
-		const fallbackResolution: ModelGroupResolution | null | undefined = router.getNextFallbackWithTrace?.(currentModel, 0);
-		const plainFallback: string | null = fallbackResolution ? null : router.getNextFallback(currentModel, 0);
-		const nextResolution: ModelGroupResolution | null =
-			fallbackResolution ??
-			(plainFallback === null ? null : { inputModel: plainFallback, resolvedModel: plainFallback, resolutionPath: [plainFallback] });
+		const nextResolution = nextFallbackTarget();
 		if (nextResolution) {
 			const routingError =
 				groupLastError ??

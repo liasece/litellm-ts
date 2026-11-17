@@ -128,7 +128,8 @@ describe("FallbackHandler", () => {
 
 		it("纯 alias 仍按源名字优先，不套用 override 的强制语义", () => {
 			const fh = new FallbackHandler({ "model-a": ["alias-fallback"], "model-c": ["alias-target-chain"] }, { "model-a": "model-c" });
-			expect(fh.getFallbackChain("model-a")).toEqual(["alias-fallback"]);
+			// 精确名字的条目排在别名目标自己的链之前；目标链在递归默认开启时继续追加。
+			expect(fh.getFallbackChain("model-a")).toEqual(["alias-fallback", "alias-target-chain"]);
 		});
 	});
 
@@ -266,6 +267,70 @@ describe("FallbackHandler", () => {
 			expect(fh.getNextFallback("gpt-4", 2)).toBe("mistral");
 			expect(fh.hasMoreFallbacks("gpt-4", 3)).toBe(false);
 			expect(fh.getNextFallback("gpt-4", 3)).toBeNull();
+		});
+	});
+
+	describe("fallback 树展开（recurse + 兄弟目标）", () => {
+		it("默认深度优先：先走完第一个目标的链，再回到下一个兄弟", () => {
+			const fh = new FallbackHandler([{ a: ["b", "c"] }, { b: ["d"] }]);
+			expect(fh.getFallbackPlan("a").map((entry) => entry.resolvedModel)).toEqual(["b", "d", "c"]);
+		});
+
+		it("旧形态只走链首会丢掉兄弟，计划把兄弟补回来", () => {
+			const fh = new FallbackHandler({ a: ["b", "c"] });
+			expect(fh.getFallbackChain("a")).toEqual(["b", "c"]);
+			expect(fh.getFallbackPlan("a").map((entry) => entry.resolvedModel)).toEqual(["b", "c"]);
+		});
+
+		it("recurse:false 让目标成为叶子，但同级兄弟仍然要试", () => {
+			const fh = new FallbackHandler([{ a: { targets: ["b", "c"], recurse: false } }, { b: ["d"] }]);
+			expect(fh.getFallbackPlan("a").map((entry) => entry.resolvedModel)).toEqual(["b", "c"]);
+		});
+
+		it("recurse:false 也挡住别名解析目标的自身链", () => {
+			const aliases = { a: { targets: ["x"], recurse: false }, x: "g" };
+			const fh = new FallbackHandler([{ g: ["h"] }], aliases);
+			expect(fh.getFallbackPlan("a")).toEqual([]);
+			expect(fh.getFallbackPlan("a", 10)).toEqual([]);
+		});
+
+		it("recurse:true 允许沿别名解析目标继续向下", () => {
+			const fh = new FallbackHandler([{ g: ["h"] }], { a: { targets: ["x"] }, x: "g" });
+			expect(fh.getFallbackPlan("a").map((entry) => entry.resolvedModel)).toEqual(["h"]);
+		});
+
+		it("别名多目标：主目标失败后按顺序试同级目标，并保留目标的自身链", () => {
+			const fh = new FallbackHandler([{ t1: ["x"] }], { cheap: { targets: ["t1", "t2"] } });
+			// t1 是自己的主目标（解析值），计划从它的链开始，然后是同级 t2。
+			expect(fh.getFallbackPlan("cheap").map((entry) => entry.resolvedModel)).toEqual(["x", "t2"]);
+			expect(fh.getFallbackChain("cheap")).toEqual(["x", "t2"]);
+		});
+
+		it("别名多目标 + recurse:false 只保留同级目标", () => {
+			const fh = new FallbackHandler([{ t1: ["x"] }], { cheap: { targets: ["t1", "t2"], recurse: false } });
+			expect(fh.getFallbackPlan("cheap").map((entry) => entry.resolvedModel)).toEqual(["t2"]);
+		});
+
+		it("同一目标出现在多条路径时只排一次", () => {
+			const fh = new FallbackHandler([{ a: ["b", "c"] }, { b: ["c"] }, { c: ["d"] }]);
+			expect(fh.getFallbackPlan("a").map((entry) => entry.resolvedModel)).toEqual(["b", "c", "d"]);
+		});
+
+		it("条目上限截断计划，避免配置成环或扇出过大", () => {
+			const fh = new FallbackHandler({ a: ["b", "c", "d", "e"] });
+			expect(fh.getFallbackPlan("a", 2).map((entry) => entry.resolvedModel)).toEqual(["b", "c"]);
+		});
+
+		it("getFallbacks 只暴露目标名，管理端仍拿到数组视图", () => {
+			const fh = new FallbackHandler({ a: { targets: ["b", "c"], recurse: false } });
+			expect(fh.getFallbacks()).toEqual({ a: ["b", "c"] });
+			expect(fh.getNextFallback("a", 0)).toBe("b");
+		});
+
+		it("非法条目被跳过，不影响其余配置", () => {
+			const fh = new FallbackHandler({ broken: 42 as unknown as string[], ok: ["b"] });
+			expect(fh.getFallbackPlan("broken")).toEqual([]);
+			expect(fh.getNextFallback("ok", 0)).toBe("b");
 		});
 	});
 

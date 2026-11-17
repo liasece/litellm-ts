@@ -29,7 +29,7 @@
 | `src/core/db/` | 连接池、启动重试、迁移与 `ProductionPreflight`（部署契约产物） |
 | `src/core/api/` | 路由注册、错误映射（含流式错误码分类 `ClientErrorCode` 与 `Retry-After` 下发）、请求到达打点、响应头与脱敏辅助 |
 | `src/auth/` | 虚拟密钥、JWT、WebUI 会话、对象授权（`AuthorizationGuard`）、仓库层缓存 |
-| `src/router/` | 路由决策：部署选择、重试策略、冷却、fallback、流式包装、标签路由、限流 |
+| `src/router/` | 路由决策：部署选择、重试策略、冷却、fallback（候选树展开见 [Fallback 与 Alias 候选树](fallback-routing.md)）、流式包装、标签路由、限流 |
 | `src/providers/` | 各上游 Provider 适配器与 `ProviderRegistry`（前缀解析、动态构造、订阅分发） |
 | `src/subscriptions/native/` | 进程内订阅运行时：账号仓库、调度器、协议桥、七家 Provider 适配器、目录与额度 |
 | `src/proxy/` | 对外 HTTP 端点：Chat / Messages / Responses / Embeddings / Images / Audio / Files / Search / 登录 / 发现 |

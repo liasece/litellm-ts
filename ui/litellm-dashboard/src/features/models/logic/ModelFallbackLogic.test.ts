@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { updateModelFallbacks } from "./ModelFallbackLogic";
+import { modelFallbackEntry, updateModelFallbacks } from "./ModelFallbackLogic";
 
 describe("saving one model's fallback chain", () => {
 	it("preserves peer models in a shared entry and the configured routing order", () => {
@@ -32,5 +32,28 @@ describe("saving one model's fallback chain", () => {
 		const next = updateModelFallbacks({ fallbacks: null, num_retries: 2 }, "target", selected);
 		selected.push("later");
 		expect(next).toEqual({ fallbacks: [{ target: ["a"] }], num_retries: 2 });
+	});
+});
+
+describe("fallback recursion flag", () => {
+	it("writes an object entry when recursion is disabled", () => {
+		expect(updateModelFallbacks({ fallbacks: [{ peer: ["keep"] }] }, "target", ["a", "b"], false)).toEqual({
+			fallbacks: [{ peer: ["keep"] }, { target: { targets: ["a", "b"], recurse: false } }],
+		});
+	});
+	it("keeps the array form when recursion stays enabled", () => {
+		expect(updateModelFallbacks({ fallbacks: [] }, "target", ["a"], true)).toEqual({ fallbacks: [{ target: ["a"] }] });
+	});
+	it("reads the stored entry, including the default when the flag is absent", () => {
+		const routerSettings = { fallbacks: [{ old: ["x"] }, { target: { targets: ["a"], recurse: false } }, { target: ["ignored"] }] };
+		expect(modelFallbackEntry(routerSettings, "target")).toEqual({ targets: ["a"], recurse: false });
+		expect(modelFallbackEntry({ fallbacks: [{ plain: ["a", "b"] }] }, "plain")).toEqual({ targets: ["a", "b"], recurse: true });
+		expect(modelFallbackEntry(routerSettings, "missing")).toBeUndefined();
+	});
+	it("preserves an unrelated object entry's shape when editing another model", () => {
+		const current = { fallbacks: [{ locked: { targets: ["cheap"], recurse: false } }] };
+		expect(updateModelFallbacks(current, "target", ["a"])).toEqual({
+			fallbacks: [{ locked: { targets: ["cheap"], recurse: false } }, { target: ["a"] }],
+		});
 	});
 });
