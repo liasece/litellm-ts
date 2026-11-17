@@ -129,11 +129,92 @@ function maskThinkingBlock(part: Record<string, unknown>, context: PrivacyContex
 }
 
 /**
+ * 脱敏 Gemini native 请求的 parts。
+ *
+ * 带 thoughtSignature 的文本/参数一旦改写签名就失效，而文本历史的签名不是必需的，
+ * functionCall 缺签名时 Provider 会补官方占位签名；这里统一删掉被改写片段的签名，
+ * 保证上游严格校验不会因脱敏而 400。thinking 片段保持原样，理由与既有 thinking 块
+ * 一致：签名覆盖上游字节，改文本只会让下一轮校验失败。
+ * @param parts - parts 数组
+ * @param context - 脱敏上下文
+ */
+function maskGeminiParts(parts: unknown[], context: PrivacyContext): void {
+	for (const item of parts) {
+		const part = asRecord(item);
+		if (part === null) {
+			continue;
+		}
+		if (typeof part["text"] === "string") {
+			if (part["thought"] === true) {
+				continue;
+			}
+			part["text"] = context.maskText(part["text"]);
+			delete part["thoughtSignature"];
+			continue;
+		}
+		const functionCall = asRecord(part["functionCall"]);
+		if (functionCall !== null && functionCall["args"] !== undefined) {
+			functionCall["args"] = context.maskValue(functionCall["args"]);
+			delete part["thoughtSignature"];
+			continue;
+		}
+		const functionResponse = asRecord(part["functionResponse"]);
+		if (functionResponse !== null && functionResponse["response"] !== undefined) {
+			functionResponse["response"] = context.maskValue(functionResponse["response"]);
+		}
+	}
+}
+
+/**
+ * 脱敏 Gemini native 请求体。
+ * @param body - 请求体
+ * @param context - 脱敏上下文
+ */
+function maskGeminiBody(body: Record<string, unknown>, context: PrivacyContext): void {
+	const system = asRecord(body["systemInstruction"]);
+	const systemParts = system?.["parts"];
+	if (Array.isArray(systemParts)) {
+		maskGeminiParts(systemParts, context);
+	}
+	const contents = body["contents"];
+	if (Array.isArray(contents)) {
+		for (const item of contents) {
+			const content = asRecord(item);
+			const parts = content?.["parts"];
+			if (Array.isArray(parts)) {
+				maskGeminiParts(parts, context);
+			}
+		}
+	}
+	const tools = body["tools"];
+	if (Array.isArray(tools)) {
+		for (const tool of tools) {
+			const declarations = asRecord(tool)?.["functionDeclarations"];
+			if (!Array.isArray(declarations)) {
+				continue;
+			}
+			for (const declaration of declarations) {
+				const record = asRecord(declaration);
+				if (record !== null && typeof record["description"] === "string") {
+					record["description"] = context.maskText(record["description"]);
+				}
+			}
+		}
+	}
+}
+
+/**
  * 脱敏 Chat Completions 请求体。
  * @param body - 请求体
  * @param context - 脱敏上下文
  */
 function maskChatBody(body: Record<string, unknown>, context: PrivacyContext): void {
+	// 普通 Chat 入口经 Gemini Provider 转换后已是 native Gemini 结构；按同一协议类型分发，
+	// 避免按 provider 名判断时漏掉 fallback 到别的上游。
+	if (Array.isArray(body["contents"]) && body["messages"] === undefined) {
+		maskGeminiBody(body, context);
+		return;
+	}
 	const system = body["system"];
 	if (typeof system === "string") {
 		body["system"] = context.maskText(system);

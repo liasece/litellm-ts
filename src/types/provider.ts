@@ -18,6 +18,7 @@ import type { Message, ModelResponse, ModelResponseStream } from "./openai";
  * - MiMoGlobal: 小米 MiMo 海外（OpenAI 兼容）
  * - LLMux: 内部 llmux 多路复用代理
  * - VLLM: 自部署 vLLM 推理服务
+ * - Gemini: Google AI Studio 的 native generateContent / streamGenerateContent 协议
  */
 export enum LlmProviders {
 	OpenAI = "openai",
@@ -29,6 +30,7 @@ export enum LlmProviders {
 	MiMoGlobal = "mimo_global",
 	LLMux = "llmux",
 	VLLM = "vllm",
+	Gemini = "gemini",
 	CodexSubscription = "codex-subscription",
 	CommandCode = "commandcode",
 	OpenCodeGo = "opencode-go",

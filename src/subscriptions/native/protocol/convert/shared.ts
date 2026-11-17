@@ -42,6 +42,46 @@ export function asRecordArray(value: unknown): Record<string, unknown>[] {
 }
 
 /**
+ * Gemini 工具调用 ID 中携带 thoughtSignature 的分隔符。
+ *
+ * OpenAI Chat 协议没有为工具调用准备签名字段，但 Gemini 3+ 在带回函数调用历史时
+ * 要求 functionCall 携带原签名。把签名附在调用 ID 末尾，客户端按原样回传 ID 时
+ * 就能还原；未回传时由上游编码阶段补占位签名，避免直接 400。
+ */
+export const THOUGHT_SIGNATURE_SEPARATOR = "__thought__";
+
+/**
+ * Google 官方的占位签名，用于历史工具调用缺少真实签名时通过严格校验。
+ * 文档明确说明它只应作为最后手段（会影响模型表现）。
+ */
+export const DUMMY_THOUGHT_SIGNATURE = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=";
+
+/**
+ * 拆分可能内嵌了 thoughtSignature 的工具调用 ID。
+ * @param id - 客户端或上游给出的调用 ID
+ */
+export function splitThoughtSignature(id: string): { id: string; signature?: string } {
+	const index = id.indexOf(THOUGHT_SIGNATURE_SEPARATOR);
+	if (index === -1) {
+		return { id: id };
+	}
+	const signature = id.slice(index + THOUGHT_SIGNATURE_SEPARATOR.length);
+	return {
+		id: id.slice(0, index),
+		...(signature.length === 0 ? {} : { signature: signature }),
+	};
+}
+
+/**
+ * 把 thoughtSignature 附到工具调用 ID 上；没有签名时保持原样。
+ * @param id - 原始调用 ID
+ * @param signature - 上游返回的签名
+ */
+export function embedThoughtSignature(id: string, signature: string | undefined): string {
+	return signature === undefined || signature.length === 0 ? id : `${id}${THOUGHT_SIGNATURE_SEPARATOR}${signature}`;
+}
+
+/**
  * 按候选键读取字符串。
  * @param record - 源对象
  * @param keys - 候选键

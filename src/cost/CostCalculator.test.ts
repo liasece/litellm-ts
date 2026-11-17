@@ -47,6 +47,20 @@ describe("costPerToken", () => {
 		expect(r2.outputCost).toBe(0);
 	});
 
+	it("按官方价计算 gemini-4-hydrogen，并把思考 token 视为输出", () => {
+		const result = costPerToken("gemini/gemini-4-hydrogen", 1_000_000, 1_000_000);
+		expect(result.inputCost).toBeCloseTo(1.5, 6);
+		expect(result.outputCost).toBeCloseTo(7.5, 6);
+
+		// 隐式缓存命中 $0.075/1M：40% 输入走缓存价，其余走标准输入价。
+		const cached = costPerToken("gemini/gemini-4-hydrogen", 1_000_000, 0, 0, 400_000);
+		expect(cached.inputCost).toBeCloseTo(0.9, 6);
+		expect(cached.cacheInputCost).toBeCloseTo(0.03, 6);
+
+		// 不带 provider 前缀的部署模型走同一份价格。
+		expect(costPerToken("gemini-4-hydrogen", 1_000_000, 0).inputCost).toBeCloseTo(1.5, 6);
+	});
+
 	it("handles zero tokens gracefully", () => {
 		const result = costPerToken("deepseek/deepseek-v4-flash", 0, 0);
 		expect(result.inputCost).toBe(0);

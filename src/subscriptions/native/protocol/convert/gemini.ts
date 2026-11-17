@@ -883,6 +883,7 @@ export class GeminiStreamDecoder implements CanonicalStreamDecoder {
 						index: index,
 						id: part.id,
 						name: part.name,
+						...(part.signature === undefined ? {} : { signature: part.signature }),
 					});
 					if (part.arguments.length > 0) {
 						events.push({ type: "tool_call_arguments", index: index, delta: part.arguments });

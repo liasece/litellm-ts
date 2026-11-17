@@ -5,6 +5,7 @@ import { DeepSeekProvider } from "./DeepSeekProvider";
 import { MiniMaxProvider } from "./MiniMaxProvider";
 import { GLMProvider } from "./GLMProvider";
 import { MiMoProvider } from "./MiMoProvider";
+import { GeminiProvider } from "./GeminiProvider";
 
 describe("ProviderRegistry", () => {
 	let registry: ProviderRegistry;
@@ -59,6 +60,19 @@ describe("ProviderRegistry", () => {
 		it('解析 "vllm/llama-3" 返回 OpenAICompatProvider 实例', () => {
 			const provider = registry.getProvider("vllm/llama-3");
 			expect(provider).toBeInstanceOf(OpenAICompatProvider);
+		});
+
+		it('解析 "gemini/gemini-4-hydrogen" 返回 GeminiProvider 实例', () => {
+			const provider = registry.getProvider("gemini/gemini-4-hydrogen", undefined, { api_key: "google-key" });
+			expect(provider).toBeInstanceOf(GeminiProvider);
+			const req = provider.transformRequest("gemini/gemini-4-hydrogen", [{ role: "user", content: "hi" }], {});
+			expect(req.url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent");
+			expect(req.headers["x-goog-api-key"]).toBe("google-key");
+		});
+
+		it('裸模型名 "gemini-4-hydrogen" 也路由到 GeminiProvider', () => {
+			const provider = registry.getProvider("gemini-4-hydrogen");
+			expect(provider).toBeInstanceOf(GeminiProvider);
 		});
 
 		it('解析 "unknown-provider/model" 抛出错误', () => {

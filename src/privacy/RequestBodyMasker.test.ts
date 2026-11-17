@@ -61,6 +61,60 @@ describe("maskRequestBody", () => {
 		expect(tools[0]?.function.parameters).toEqual({ type: "object" });
 	});
 
+	it("Chat：Gemini native 结构按内容脱敏并丢弃被改写片段的签名", () => {
+		const context = makeContext();
+		const body: Record<string, unknown> = {
+			systemInstruction: { parts: [{ text: `agent ${EMAIL}` }] },
+			contents: [
+				{
+					role: "model",
+					parts: [
+						{ text: `contact ${EMAIL}`, thoughtSignature: "sig-text" },
+						{ text: "private reasoning", thought: true, thoughtSignature: "sig-thought" },
+						{
+							thoughtSignature: "sig-call",
+							functionCall: { id: "call_1", name: "lookup", args: { key: API_KEY } },
+						},
+					],
+				},
+				{
+					role: "user",
+					parts: [
+						{
+							functionResponse: { id: "call_1", name: "lookup", response: { result: EMAIL } },
+						},
+						{ text: `after ${EMAIL}` },
+					],
+				},
+			],
+			tools: [
+				{
+					functionDeclarations: [{ name: "lookup", description: `uses ${API_KEY}`, parameters: { type: "object" } }],
+				},
+			],
+		};
+
+		maskRequestBody(body, context, "chat");
+
+		const systemParts = (body["systemInstruction"] as { parts: Array<Record<string, unknown>> }).parts;
+		expect(systemParts[0]?.["text"]).not.toContain(EMAIL);
+		const contents = body["contents"] as Array<{ parts: Array<Record<string, unknown>> }>;
+		const modelParts = contents[0]?.parts ?? [];
+		expect(modelParts[0]?.["text"]).not.toContain(EMAIL);
+		// 文本被改写后签名失效，必须移除，否则上游会按签名校验拒绝。
+		expect(modelParts[0]).not.toHaveProperty("thoughtSignature");
+		// thinking 片段与签名保持原样，避免破坏思考回放。
+		expect(modelParts[1]).toMatchObject({ text: "private reasoning", thought: true, thoughtSignature: "sig-thought" });
+		const call = modelParts[2]?.["functionCall"] as { args: Record<string, unknown> };
+		expect(JSON.stringify(call.args)).not.toContain(API_KEY);
+		expect(modelParts[2]).not.toHaveProperty("thoughtSignature");
+		const responsePart = contents[1]?.parts[0] as { functionResponse: { response: Record<string, unknown> } };
+		expect(JSON.stringify(responsePart.functionResponse.response)).not.toContain(EMAIL);
+		const declarations = (body["tools"] as Array<{ functionDeclarations: Array<Record<string, unknown>> }>)[0]?.functionDeclarations;
+		expect(declarations?.[0]?.["description"]).not.toContain(API_KEY);
+		expect(declarations?.[0]?.["parameters"]).toEqual({ type: "object" });
+	});
+
 	it("Chat：图片块原样保留", () => {
 		const context = makeContext();
 		const body: Record<string, unknown> = {

@@ -8,6 +8,7 @@ import { LlmProviders } from "../types/provider";
 import type { ProviderConfig } from "../types/provider";
 import { AnthropicProvider } from "./AnthropicProvider";
 import { DeepSeekProvider } from "./DeepSeekProvider";
+import { GeminiProvider } from "./GeminiProvider";
 import { MiniMaxProvider } from "./MiniMaxProvider";
 import { GLMProvider } from "./GLMProvider";
 import { LLMuxProvider } from "./LLMuxProvider";
@@ -29,6 +30,7 @@ const DEFAULT_API_BASES: { [key in LlmProviders]?: string } = {
 	[LlmProviders.MiMoGlobal]: "https://api.xiaomimimo.com/v1",
 	[LlmProviders.LLMux]: "http://192.168.1.220:18182",
 	[LlmProviders.VLLM]: "http://localhost:8000/v1",
+	[LlmProviders.Gemini]: "https://generativelanguage.googleapis.com/v1beta",
 };
 
 /**
@@ -42,6 +44,8 @@ const PREFIX_TO_PROVIDER: ReadonlyArray<{ prefixes: readonly string[]; provider:
 	{ prefixes: ["minimax/", "minimax-"], provider: LlmProviders.MiniMax },
 	{ prefixes: ["glm/", "glm-", "chatglm-"], provider: LlmProviders.GLM },
 	{ prefixes: ["mimo/", "mimo-"], provider: LlmProviders.MiMo },
+	// Gemini 模型常直接以 gemini-… 出现；显式 custom_llm_provider 仍优先。
+	{ prefixes: ["gemini/", "gemini-"], provider: LlmProviders.Gemini },
 	{ prefixes: ["vllm/", "vllm-"], provider: LlmProviders.VLLM },
 	{ prefixes: ["gpt/", "gpt-", "o1/", "o1-", "o3/", "o3-"], provider: LlmProviders.OpenAI },
 ];
@@ -112,8 +116,9 @@ export class ProviderRegistry {
 	 *   3. DeepSeek 家族: deepseek/, deepseek-
 	 *   4. GLM 家族: glm/, glm-, chatglm-
 	 *   5. MiMo 家族: mimo/, mimo-（含 mimo-global / mimo-international → MiMoGlobal）
-	 *   6. OpenAI 家族: gpt/, gpt-, o1/, o1-, o3/, o3-
-	 *   7. 兜底: OpenAI
+	 *   6. Gemini 家族: gemini/, gemini-
+	 *   7. OpenAI 家族: gpt/, gpt-, o1/, o1-, o3/, o3-
+	 *   8. 兜底: OpenAI
 	 * @param model
 	 */
 	parseProviderName(model: string): string {
@@ -181,6 +186,8 @@ export class ProviderRegistry {
 				return new LLMuxProvider(dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.LLMux]);
 			case LlmProviders.VLLM:
 				return new OpenAICompatProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.VLLM]!);
+			case LlmProviders.Gemini:
+				return new GeminiProvider(effectiveApiKey, dynamicApiBase ?? DEFAULT_API_BASES[LlmProviders.Gemini]!);
 			default:
 				return null;
 		}

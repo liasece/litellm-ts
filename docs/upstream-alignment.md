@@ -118,7 +118,7 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | 项目 | 已实现、可观察结果 | 保留的能力边界与原因 | 验证入口 |
 | --- | --- | --- | --- |
 | F02 模型发现 | Anthropic/Claude Code 列表形状、配置 display_name、Codex service_tiers；Key/Team 模型权限交集、discoverable=false；GET /utils/model_info 查询未注册模型 | 未采用健康过滤、公开 Hub、leaderboard、access_windows 与回调过滤；它们涉及独立公开入口、时间授权或 callback 执行契约。Anthropic 列表当前一次返回，无分页 | ModelsEndpoint.test.ts、UtilEndpoints.test.ts |
-| F03 Chat 参数 | prompt_cache_retention；新 Claude adaptive thinking 与旧模型 effort 转换；支持 drop_params 的采样参数清理；透传有限的上游 usage.cost | 从固定 v1.104.2 数据选取 8 个当前 OpenAI/Anthropic 模型能力条目，非全量价格表同步；未新增 Gemini/AIML/W&B Provider。未生成上游未返回的成本，也未复刻 calculate_response_cost 选项 | UpstreamCompatibility.test.ts、ChatStreamingSpendLog.test.ts、ResponsesApiEndpoints.test.ts |
+| F03 Chat 参数  | prompt_cache_retention；新 Claude adaptive thinking 与旧模型 effort 转换；支持 drop_params 的采样参数清理；透传有限的上游 usage.cost                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 从固定 v1.104.2 数据选取 8 个当前 OpenAI/Anthropic 模型能力条目，非全量价格表同步；当时未新增 Gemini/AIML/W&B Provider；Gemini native 支持于 2026-11-17 单独实施（见下文）。未生成上游未返回的成本，也未复刻 calculate_response_cost 选项                                                                                                                                                                                                                                                                                                                                                                                                                                               | UpstreamCompatibility.test.ts、ChatStreamingSpendLog.test.ts、ResponsesApiEndpoints.test.ts                                                                                                            |
 | F04 Responses | /v1/responses/input_tokens（另有 /responses/input_tokens 与 /openai/v1/responses/input_tokens）；OpenAI-compatible supported_endpoints 原生 opt-in；选中部署的地址/凭据固定，默认 store=false | token 计数是本地 cl100k 估算，覆盖 instructions/input/tools，不把图片/音频/文件 base64 当作正文计数，且不含供应商专有的附件 token 成本；不调用模型、不预占费用；stored conversation/previous_response_id/prompt 计数拒绝。Fireworks/Bedrock 专用协议鉴权与存储/后台/续接未新增 | ResponsesInputTokens.test.ts、UpstreamCompatibility.test.ts、UpstreamRoutingRegression.test.ts |
 | F05 编程客户端 | Claude-shaped 模型 ID 可逆转换，调用前解析为已配置模型；Cursor thinking/fast 后缀与 Chat/Responses 分流；Codex UA 默认 drop_params；/v1/messages 原生 opt-in | 复用现有 CLIProxy；未新增 Copilot Provider、Claude OAuth 网关/刷新撤销、Claude 插件 zip 分发。它们需要专用身份或客户端插件子系统 | CodingClientModels.test.ts、UpstreamCompatibility.test.ts、CoreProxyAliasRoutes.test.ts |
 | F06 SSE 心跳 | 全局与部署配置、默认禁止客户端覆盖、部署 0 强制关闭；Chat/Messages/Responses 在连接/工具等待期间 ping；结束/断开清理；心跳后错误以 SSE 终止 | CLIProxy 保留现有局部实现。选中部署之前仅一致策略可许可客户端覆盖；mixed pool 有禁用部署则保守关闭；未做生产负载均衡器验证 | SseKeepalive.test.ts、ChatStreamingSpendLog.test.ts、AnthropicMessagesEndpoint.test.ts、ResponsesApiEndpoints.test.ts |
@@ -347,6 +347,25 @@ Dashboard 的 `/ui/?page=cost-tracking` 一打开就提示读取折扣/保证金
 - **无回退日志**：40 分钟内无「引用化预算」「缺块」告警，容器 healthy、无 OOM、无重启。
 
 历史膨胀另行回收：改造前每次补写都整列重写 45 MB 级的 jsonb，`LiteLLM_ActiveRequests` 累计发生 178 万次 TOAST chunk 删除，autovacuum 只能复用页、文件停在峰值（表里当时只有 3 行在途数据，却占 209 MB，其中 TOAST 索引 191 MB）。11-11 09:31 执行 `VACUUM FULL "LiteLLM_ActiveRequests"`，53 ms 完成：总大小 209 MB → 3.3 MB（heap 16 kB、TOAST heap 3.1 MB、TOAST 索引 56 kB），在途注册与删除无感知。
+
+## 2026-11-17 Gemini 4 Hydrogen Provider
+
+Google 于 2026-11-12 发布 `gemini-4-hydrogen`（[公告](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/)，[LiteLLM Day 0 说明](https://docs.litellm.ai/blog/gemini-4-hydrogen)）。此前 TS 只有订阅运行时内部的 Gemini 信封，普通推理链没有 `gemini` Provider，OpenAI Chat 客户端无法使用 AI Studio 模型。
+
+实现：
+
+| 范围     | 行为                                                                                                                                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider | `LlmProviders.Gemini`；`gemini/` 前缀与裸 `gemini-*` 模型名路由到 `GeminiProvider`；默认 base `https://generativelanguage.googleapis.com/v1beta`                                                                    |
+| 协议     | native `generateContent` / `streamGenerateContent?alt=sse`；请求/响应/流式复用 `src/subscriptions/native/protocol/convert` 的规范化编解码，未复制 OpenAI 兼容层                                                     |
+| 思考等级 | `reasoning_effort` / `thinking` 映射为 `thinkingConfig.thinkingLevel`（Gemini 3+）；Hydrogen 支持 `xhigh`，其它 Gemini 3/4 收敛到 `high`，Hydrogen 拒绝的 `minimal` 收敛到 `low`；Gemini 2.5 仍用 `thinkingBudget`  |
+| 工具签名 | Gemini 返回的 `thoughtSignature` 附在工具调用 ID 末尾（`__thought__<sig>`）；下一轮从 ID 还原，客户端丢弃签名时补官方占位签名，避免 functionCall 历史 400                                                           |
+| 计费     | 思考 token 保留在 `completion_tokens` 内，同时去掉 `reasoning_tokens` 明细，避免既有「reasoning 不计费」逻辑漏计 Gemini 输出；价格补丁见 `src/data/model_cost_overrides.json`（$1.50 / $7.50 / cache $0.075 每 1M） |
+| UI       | 沿用既有 `Google_AI_Studio` / `gemini` 品牌映射，无新增页面                                                                                                                                                         |
+
+边界：只覆盖 AI Studio（API key）；Vertex AI 仍需 GCP 凭据，未纳入。未实现 explicit caching（Hydrogen 本身不支持）、Interactions API、Gemini embeddings 与图片生成端点。Claude Messages 入口不会转成原生 Gemini，仍按现有 OpenAI Chat 桥接能力处理。
+
+验证：`src/providers/gemini.test.ts`、`provider-registry.test.ts`、`CostCalculator.test.ts` 覆盖请求映射、签名往返、流式帧、计费；`tests/providers/gemini.live.test.ts` 在提供 `GEMINI_API_KEY` 时对真实上游验证非流式、流式与工具签名多轮。生产以模型 `gemini-4-hydrogen` 接入 AI Studio key：非流式、流式、两轮工具调用均返回 200，调用 ID 携带 `__thought__` 签名并可继续多轮；4 条成功 SpendLog 的 $ / token 与官方价一致（如 41 输入 + 46 输出 = $0.0004065）。AI Studio key 为免费层，`gemini-4-hydrogen` 每日 20 次配额在验证过程中耗尽，之后复验会得到上游 429；配额恢复后可继续用同一模型复测。
 
 ## 后续维护规则
 

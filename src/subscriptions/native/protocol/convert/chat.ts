@@ -28,6 +28,7 @@ import {
 	cacheControlFrom,
 	cacheControlTo,
 	chatUsage,
+	embedThoughtSignature,
 	finishFromChat,
 	finishToChat,
 	generateId,
@@ -35,6 +36,7 @@ import {
 	numberAt,
 	reasoningTextOf,
 	recordAt,
+	splitThoughtSignature,
 	stringAt,
 	stringifyArguments,
 	thinkingBlockTexts,
@@ -173,11 +175,19 @@ export function decodeChatToolCalls(value: unknown): CanonicalContentPart[] {
 		if (name === undefined || name.length === 0) {
 			continue;
 		}
+		// 调用 ID 末尾可能带着 Gemini thoughtSignature；签名来自 ID 或 provider_specific_fields，
+		// 供 Gemini 编码阶段原样回放。客户端只回传 ID 时也能还原。
+		const split = splitThoughtSignature(stringAt(raw, "id") ?? generateId("call"));
+		const signature =
+			split.signature ??
+			stringAt(recordAt(raw, "provider_specific_fields"), "thought_signature") ??
+			stringAt(recordAt(fn, "provider_specific_fields"), "thought_signature");
 		parts.push({
 			type: "tool_call",
-			id: stringAt(raw, "id") ?? generateId("call"),
+			id: split.id,
 			name: name,
 			arguments: stringifyArguments(fn?.["arguments"]),
+			...(signature === undefined ? {} : { signature: signature }),
 		});
 	}
 	return parts;
@@ -348,7 +358,8 @@ export function decodeChatRequest(body: Record<string, unknown>, fallbackModel: 
 				parts: [
 					{
 						type: "tool_result",
-						toolCallId: toolCallId ?? "",
+						// 客户端会把助手工具调用的 ID 原样带回；去掉签名后缀后才能与 functionCall 的 ID 对上。
+						toolCallId: toolCallId === undefined ? "" : splitThoughtSignature(toolCallId).id,
 						content: content.length > 0 ? content : [{ type: "text", text: "" }],
 						...(booleanAt(message, "is_error") === undefined ? {} : { isError: booleanAt(message, "is_error") }),
 					},
@@ -599,7 +610,7 @@ function encodeChatMessages(request: CanonicalRequest): {
 					continue;
 				}
 				toolCalls.push({
-					id: part.id,
+					id: embedThoughtSignature(part.id, part.signature),
 					type: "function",
 					function: { name: part.name, arguments: part.arguments },
 				});
@@ -873,7 +884,8 @@ export function encodeChatResponse(response: CanonicalResponse, model: string): 
 	for (const part of response.parts) {
 		if (part.type === "tool_call") {
 			toolCalls.push({
-				id: part.id,
+				// 客户端按原样回传 ID；签名附在末尾，下一轮编码 Gemini functionCall 时还原。
+				id: embedThoughtSignature(part.id, part.signature),
 				type: "function",
 				function: { name: part.name, arguments: part.arguments },
 			});
@@ -907,7 +919,10 @@ export function encodeChatResponse(response: CanonicalResponse, model: string): 
  */
 export class ChatStreamDecoder implements CanonicalStreamDecoder {
 	private readonly _options: CanonicalStreamOptions;
-	private readonly _tools = new Map<number, { id: string; name: string; buffered: string; started: boolean }>();
+	private readonly _tools = new Map<
+		number,
+		{ id: string; signature: string; name: string; buffered: string; started: boolean }
+	>();
 	private _started = false;
 	private _finished = false;
 
@@ -980,10 +995,14 @@ export class ChatStreamDecoder implements CanonicalStreamDecoder {
 		const events: CanonicalStreamEvent[] = [];
 		const index = numberAt(rawCall, "index") ?? 0;
 		const fn = recordAt(rawCall, "function");
-		const state = this._tools.get(index) ?? { id: "", name: "", buffered: "", started: false };
+		const state = this._tools.get(index) ?? { id: "", signature: "", name: "", buffered: "", started: false };
 		const id = stringAt(rawCall, "id");
 		if (id !== undefined && id.length > 0) {
-			state.id = id;
+			const split = splitThoughtSignature(id);
+			state.id = split.id;
+			if (split.signature !== undefined) {
+				state.signature = split.signature;
+			}
 		}
 		const name = stringAt(fn, "name");
 		if (name !== undefined && name.length > 0) {
@@ -1004,6 +1023,7 @@ export class ChatStreamDecoder implements CanonicalStreamDecoder {
 				index: index,
 				id: state.id.length > 0 ? state.id : generateId("call"),
 				name: state.name,
+				...(state.signature.length === 0 ? {} : { signature: state.signature }),
 			});
 			if (state.buffered.length > 0) {
 				events.push({ type: "tool_call_arguments", index: index, delta: state.buffered });
@@ -1024,6 +1044,7 @@ export class ChatStreamDecoder implements CanonicalStreamDecoder {
 					index: index,
 					id: state.id.length > 0 ? state.id : generateId("call"),
 					name: state.name,
+					...(state.signature.length === 0 ? {} : { signature: state.signature }),
 				});
 				if (state.buffered.length > 0) {
 					events.push({ type: "tool_call_arguments", index: index, delta: state.buffered });
@@ -1098,7 +1119,7 @@ export class ChatStreamEncoder implements CanonicalStreamEncoder {
 							tool_calls: [
 								{
 									index: event.index,
-									id: event.id,
+									id: embedThoughtSignature(event.id, event.signature),
 									type: "function",
 									function: { name: event.name, arguments: "" },
 								},

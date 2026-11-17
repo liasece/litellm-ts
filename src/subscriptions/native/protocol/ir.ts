@@ -365,6 +365,8 @@ export interface CanonicalStreamToolCallStart {
 	readonly id: string;
 	/** 工具名。 */
 	readonly name: string;
+	/** Gemini thought signature；只用于随调用 ID 回传给 Gemini。 */
+	readonly signature?: string;
 }
 
 /** 工具参数增量。 */
