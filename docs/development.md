@@ -85,7 +85,7 @@
 | 订阅 Provider 行为 | `src/subscriptions/native/`（`bridge.ts` 协议、`scheduler.ts` 选号、`providers/` 上游特化、`quota/` 额度）、[订阅运行时专题](agent-guides/subscription-runtime.md) |
 | 新增对外端点 | `src/proxy/XxxEndpoint.ts`，在 `src/main.ts` 对应 `_register*Routes` 里注册；若是页面路径同时改 `src/shared/WebUiPaths.ts` |
 | 路由策略 / 重试 / 冷却 | `src/router/RouterExecution.ts`、`RouterRetryPolicy.ts`、`RouterExecutionBackoff.ts`、`CooldownManager.ts`、`RoutingStrategies.ts` |
-| 费用与价格 | `src/cost/CostCalculator.ts`、`ModelCostMapService.ts`、`CostTrackingConfig.ts` |
+| 费用与价格 | `src/cost/CostCalculator.ts`、`ModelCostMapService.ts`、`CostTrackingConfig.ts`；上游快照缺条目的模型补在 `src/data/model_cost_overrides.json` |
 | 日志字段与查询 | `src/spend/SpendMetadataFields.ts`、`SpendManagementEndpoint.ts`、`src/db/schema/spendLogs.ts` + 新迁移 |
 | 实时推送 | `src/spend/logStreamWebSocket.ts`（日志列表）、`logUpdatesWebSocket.ts`、`sessionTimelineWebSocket.ts`；契约见 `AGENTS.md` 的实时通知一节 |
 | 内置能力 | `src/capabilities/BuiltinCapabilityRunner.ts`、`BuiltinCapabilitiesConfig.ts`、各自的 `*Capability.ts` |

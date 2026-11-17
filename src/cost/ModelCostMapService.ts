@@ -5,6 +5,7 @@ import { createModuleLogger } from "../core/utils/logger";
 const logger = createModuleLogger("ModelCostMapService");
 
 const DEFAULT_MODEL_COST_MAP_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const DEFAULT_OVERRIDES_FILENAME = "model_cost_overrides.json";
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_MIN_MODELS = 1_000;
 const DEFAULT_MIN_BUNDLED_RATIO = 0.5;
@@ -82,6 +83,9 @@ export interface ModelCostMapScheduleStatus {
 interface ModelCostMapServiceOptions {
 	readonly bundledRawJson?: string;
 	readonly bundledFilePath?: string;
+	/** 本地补丁表原始 JSON；缺省时读 bundled 同目录的 model_cost_overrides.json。 */
+	readonly overridesRawJson?: string;
+	readonly overridesFilePath?: string;
 	readonly fetchImpl?: typeof fetch;
 	readonly env?: NodeJS.ProcessEnv;
 	readonly now?: () => Date;
@@ -128,6 +132,7 @@ function errorMessage(error: unknown): string {
  */
 export class ModelCostMapService {
 	private readonly _bundledMap: ModelCostMap;
+	private readonly _overrides: Record<string, Record<string, unknown>>;
 	private readonly _fetchImpl: typeof fetch;
 	private readonly _env: NodeJS.ProcessEnv;
 	private readonly _now: () => Date;
@@ -144,7 +149,8 @@ export class ModelCostMapService {
 		const bundledFilePath = options.bundledFilePath ?? path.join(__dirname, "..", "data", "model_prices_and_context_window.json");
 		const bundledRawJson = options.bundledRawJson ?? fs.readFileSync(bundledFilePath, "utf8");
 		const bundledParsed = this._parseAndValidateMap(bundledRawJson, "bundled model cost map");
-		this._bundledMap = this._expandAliases(bundledParsed);
+		this._overrides = this._loadOverrides(options, path.dirname(bundledFilePath));
+		this._bundledMap = this._expandAliases(this._applyOverrides(bundledParsed));
 		this._fetchImpl = options.fetchImpl ?? fetch;
 		this._env = options.env ?? process.env;
 		this._now = options.now ?? (() => new Date());
@@ -258,7 +264,7 @@ export class ModelCostMapService {
 			const rawJson = await response.text();
 			const parsed = this._parseAndValidateMap(rawJson, "remote model cost map");
 			this._validateRemoteIntegrity(parsed);
-			const expanded = this._expandAliases(parsed);
+			const expanded = this._expandAliases(this._applyOverrides(parsed));
 			return this._buildSnapshot(expanded, {
 				source: "remote",
 				url: url,
@@ -313,6 +319,77 @@ export class ModelCostMapService {
 				`remote model cost map shrink detected: ${modelCount} models is below bundled threshold ${minimumRelativeCount}`,
 			);
 		}
+	}
+
+	/**
+	 * 读取仓库内的价格补丁表。
+	 *
+	 * 上游快照按 provider 维护，订阅渠道（如 opencode-go）新增的模型常常几个版本都
+	 * 不会被收录，导致 dashboard 与 /model_group/info 里价格为 null。补丁表只补这些
+	 * 缺口：不删除条目、不覆盖上游已有的同名字段以外的内容，避免把价格责任留在生产
+	 * 数据库的临时配置里。文件缺失视为没有补丁，格式错误则直接阻断启动，避免带着
+	 * 半份价格静默运行。
+	 * @param options - 构造参数；测试可注入原始 JSON
+	 * @param bundledDir - bundled 快照所在目录，补丁表默认与其同级
+	 * @returns 补丁表；无文件时为空对象
+	 * @throws 补丁表不是合法 JSON 或条目不是对象时抛出
+	 */
+	private _loadOverrides(options: ModelCostMapServiceOptions, bundledDir: string): Record<string, Record<string, unknown>> {
+		let rawJson = options.overridesRawJson;
+		if (rawJson === undefined) {
+			const overridesPath = options.overridesFilePath ?? path.join(bundledDir, DEFAULT_OVERRIDES_FILENAME);
+			if (!fs.existsSync(overridesPath)) {
+				return {};
+			}
+			rawJson = fs.readFileSync(overridesPath, "utf8");
+		}
+		if (rawJson.trim().length === 0) {
+			return {};
+		}
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(rawJson);
+		} catch (error) {
+			throw new Error(`model cost overrides is invalid JSON: ${errorMessage(error)}`);
+		}
+		if (!isRecord(parsed)) {
+			throw new Error("model cost overrides must be a top-level object");
+		}
+		const overrides: Record<string, Record<string, unknown>> = {};
+		for (const [model, entry] of Object.entries(parsed)) {
+			if (!isRecord(entry)) {
+				throw new Error(`model cost overrides entry "${model}" must be an object`);
+			}
+			overrides[model] = { ...entry };
+		}
+		return overrides;
+	}
+
+	/**
+	 * 把补丁表合并进价格快照。
+	 *
+	 * 逐字段覆盖：命中的键在原条目上打补丁，未收录的键整条新增。调用发生在 alias 展开
+	 * 之前，补丁条目自带的 aliases 因此与上游条目走同一套展开规则。
+	 * @param map - 已校验的价格快照
+	 * @returns 合并后的新对象；不修改入参
+	 */
+	private _applyOverrides(map: Record<string, Record<string, unknown>>): Record<string, Record<string, unknown>> {
+		const keys = Object.keys(this._overrides);
+		if (keys.length === 0) {
+			return map;
+		}
+		const merged: Record<string, Record<string, unknown>> = {};
+		for (const [model, entry] of Object.entries(map)) {
+			merged[model] = { ...entry };
+		}
+		for (const key of keys) {
+			const overlay = this._overrides[key];
+			if (overlay === undefined) {
+				continue;
+			}
+			merged[key] = { ...merged[key], ...overlay };
+		}
+		return merged;
 	}
 
 	private _expandAliases(map: Record<string, Record<string, unknown>>): ModelCostMap {

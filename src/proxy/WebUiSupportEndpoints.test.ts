@@ -63,7 +63,8 @@ function makeConfig(overrides: Record<string, unknown> = {}, generalSettingsRaw?
 }
 
 function makeCostMapService(rawJson: string, env: NodeJS.ProcessEnv = { LITELLM_LOCAL_MODEL_COST_MAP: "true" }): ModelCostMapService {
-	return new ModelCostMapService({ bundledRawJson: rawJson, env: env });
+	// 断言按注入快照计数，屏蔽仓库价格补丁表
+	return new ModelCostMapService({ bundledRawJson: rawJson, overridesRawJson: "{}", env: env });
 }
 
 function buildAuthedApp(

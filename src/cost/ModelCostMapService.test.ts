@@ -8,6 +8,8 @@ const bundledMap = {
 function makeService(fetchImpl: typeof fetch, env: NodeJS.ProcessEnv = {}): ModelCostMapService {
 	return new ModelCostMapService({
 		bundledRawJson: JSON.stringify(bundledMap),
+		// 案例只验证快照与回退语义，屏蔽仓库补丁表，避免价格数据变化影响计数断言
+		overridesRawJson: "{}",
 		fetchImpl: fetchImpl,
 		env: {
 			LITELLM_MODEL_COST_MAP_MIN_MODELS: "1",
@@ -88,6 +90,7 @@ describe("ModelCostMapService", () => {
 		);
 		const service = new ModelCostMapService({
 			bundledRawJson: JSON.stringify(largeBundled),
+			overridesRawJson: "{}",
 			fetchImpl: jest
 				.fn()
 				.mockResolvedValue(
@@ -150,6 +153,7 @@ describe("ModelCostMapService", () => {
 		const setIntervalImpl = jest.fn().mockReturnValue(timer);
 		const service = new ModelCostMapService({
 			bundledRawJson: JSON.stringify(bundledMap),
+			overridesRawJson: "{}",
 			env: { LITELLM_LOCAL_MODEL_COST_MAP: "true" },
 			setIntervalImpl: setIntervalImpl,
 			clearIntervalImpl: clearIntervalImpl,
@@ -169,5 +173,69 @@ describe("ModelCostMapService", () => {
 	it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])("非法 schedule hours=%s 抛错", (hours) => {
 		const service = makeService(jest.fn() as unknown as typeof fetch);
 		expect(() => service.schedule(hours)).toThrow("hours");
+	});
+});
+
+describe("ModelCostMapService 价格补丁", () => {
+	const overrides = {
+		"opencode-go/patch-only": { input_cost_per_token: 0, output_cost_per_token: 0, mode: "chat" },
+		"bundled-a": { output_cost_per_token: 9 },
+	};
+
+	function makePatchedService(fetchImpl: typeof fetch = jest.fn() as unknown as typeof fetch): ModelCostMapService {
+		return new ModelCostMapService({
+			bundledRawJson: JSON.stringify(bundledMap),
+			overridesRawJson: JSON.stringify(overrides),
+			fetchImpl: fetchImpl,
+			env: { LITELLM_MODEL_COST_MAP_MIN_MODELS: "1", LITELLM_MODEL_COST_MAP_MIN_BUNDLED_RATIO: "0" },
+		});
+	}
+
+	it("上游未收录的键整条补入，已收录的键只覆盖补丁字段", async () => {
+		const service = makePatchedService();
+		const snapshot = await service.initialize();
+
+		expect(snapshot.map["opencode-go/patch-only"]).toMatchObject({ input_cost_per_token: 0, output_cost_per_token: 0 });
+		// 补丁只改 output：未提到的 input 仍来自快照
+		expect(snapshot.map["bundled-a"]).toMatchObject({ input_cost_per_token: 1, output_cost_per_token: 9 });
+		expect(snapshot.modelCount).toBe(3);
+	});
+
+	it("远端快照同样合并补丁，而不是只对 bundled 生效", async () => {
+		const remoteMap = { "remote-only": { input_cost_per_token: 5, output_cost_per_token: 6 } };
+		const fetchImpl = jest
+			.fn()
+			.mockResolvedValue(
+				new Response(JSON.stringify(remoteMap), { status: 200, headers: { "content-type": "application/json" } }),
+			) as typeof fetch;
+		const service = makePatchedService(fetchImpl);
+
+		const snapshot = await service.initialize();
+
+		expect(snapshot.source).toBe("remote");
+		expect(snapshot.map["remote-only"]).toBeDefined();
+		expect(snapshot.map["opencode-go/patch-only"]).toBeDefined();
+	});
+
+	it("补丁表格式非法时阻断构造", () => {
+		expect(
+			() => new ModelCostMapService({ bundledRawJson: JSON.stringify(bundledMap), overridesRawJson: '{"a": 1}' }),
+		).toThrow("model cost overrides");
+	});
+
+	it("仓库补丁表覆盖 opencode-go 目录里上游缺失的模型", async () => {
+		const service = new ModelCostMapService({ bundledRawJson: JSON.stringify(bundledMap) });
+		const snapshot = await service.initialize();
+		const expected = {
+			"opencode-go/hy4": [8.34e-7, 2.501e-6],
+			"opencode-go/hy4-flash-free": [0, 0],
+			"opencode-go/iceman-contributor-free": [0, 0],
+			"opencode-go/longcat-2.5-free": [0, 0],
+			"opencode-go/qwen4-max": [1.5e-6, 4.5e-6],
+		};
+
+		for (const [key, [input, output]] of Object.entries(expected)) {
+			expect(snapshot.map[key]).toMatchObject({ input_cost_per_token: input, output_cost_per_token: output });
+		}
 	});
 });
