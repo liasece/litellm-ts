@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
 import { asRecord } from "../../logic/PrettyMessagesBlocksLogic";
-import { formatData, downstreamRequest, hasResponse } from "../../logic/LogDetailsDisplayLogic";
+import { formatData, downstreamRequest, upstreamRequest, hasResponse } from "../../logic/LogDetailsDisplayLogic";
 import UiTabs from "../../../platform/ui/UiTabs.vue";
 import UiButton from "../../../platform/ui/UiButton.vue";
 import UiAlert from "../../../platform/ui/UiAlert.vue";
@@ -30,10 +30,7 @@ const raw = computed(() => {
 	}
 	return { raw: lastRaw, recorded: lastRecorded };
 });
-const upstream = computed(() => {
-	const proxy = asRecord(formatData(props.log.proxy_server_request));
-	return { request: formatData(proxy?.upstream_request), response: formatData(proxy?.upstream_response) };
-});
+const upstream = computed(() => upstreamRequest(props.log.proxy_server_request, props.log.messages));
 const downstreamResponse = computed(() => {
 	const error = asRecord(props.log.metadata?.error_information);
 	return props.log.metadata?.status === "failure" && error

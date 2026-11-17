@@ -69,3 +69,6 @@ export function parseSessionLogsPage(payload: unknown): SessionLogsPage | LogEnt
 export function parseLogDetail(payload: unknown): Record<string, unknown> | null {
 	return payload === null ? null : z.record(z.string(), z.unknown()).parse(payload);
 }
+export function parseLogDetailsBatch(payload: unknown): Record<string, unknown>[] {
+	return z.object({ data: z.array(z.record(z.string(), z.unknown())) }).parse(payload).data;
+}

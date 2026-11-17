@@ -184,6 +184,31 @@ describe("restoreSpendLogPayload", () => {
 		expect(restored.missingBlockIds).toEqual([]);
 	});
 
+	it("紧凑模式保留 $messages 标记，不重复展开 body 与 upstream 的同一份对话", () => {
+		const messages = makeMessages(5);
+		const encoded = collectSpendLogBlocks({
+			messages,
+			proxyServerRequest: {
+				body: { messages, model: "gpt" },
+				upstream_request: { body: { messages } },
+			},
+		});
+		const payloads = new Map(encoded.blocks.map((block) => [block.blockId, block.payload] as const));
+		const restored = restoreSpendLogPayload(
+			{ messages: encoded.messages, proxy_server_request: encoded.proxyServerRequest },
+			(blockId) => payloads.get(blockId),
+			{ compactAliases: true },
+		);
+		expect(restored.messages).toEqual(messages);
+		const proxy = restored.proxyServerRequest as Record<string, unknown>;
+		const body = proxy["body"] as Record<string, unknown>;
+		const upstreamBody = (proxy["upstream_request"] as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(body["messages"]).toBeUndefined();
+		expect(body[SPEND_LOG_MESSAGE_REF_KEY]).toBe(SPEND_LOG_SAME_AS_MESSAGES);
+		expect(upstreamBody["messages"]).toBeUndefined();
+		expect(upstreamBody[SPEND_LOG_MESSAGE_REF_KEY]).toBe(SPEND_LOG_SAME_AS_MESSAGES);
+	});
+
 	it("缺块时用占位对象补齐并报告缺失的 id", () => {
 		const encoded = collectSpendLogBlocks({ messages: makeMessages(4), proxyServerRequest: {} });
 		const refs = (encoded.messages as Record<string, unknown>)[SPEND_LOG_MESSAGE_REF_KEY] as string[];

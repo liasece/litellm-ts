@@ -750,12 +750,14 @@ export function redactSpendLogRowSecrets<T extends { readonly proxy_server_reque
  * @param lookup - 块内容查询
  * @param missingIds - 收集缺块 id
  * @param columnIds - 同一行 `SpendLogs.messages` 列根的引用列表（`"$messages"` 标记用）
+ * @param compactAliases - 是否保留 `"$messages"` 别名标记，而不是把同一份内容展开到 body
  */
 function restoreRequestBody(
 	body: unknown,
 	lookup: SpendLogBlockLookup,
 	missingIds: string[],
 	columnIds: readonly string[] | null,
+	compactAliases: boolean,
 ): unknown {
 	if (!isRecord(body)) {
 		return body;
@@ -774,6 +776,12 @@ function restoreRequestBody(
 			continue;
 		}
 		if (key === SPEND_LOG_MESSAGE_REF_KEY || key === SPEND_LOG_INPUT_REF_KEY) {
+			// 紧凑模式只省略「与列根相同」的别名；独立的上游快照仍然展开，否则
+			// 上游视图会丢失真实发送内容。保留内部标记，前端据此复用顶层 messages。
+			if (compactAliases && value === SPEND_LOG_SAME_AS_MESSAGES) {
+				restored[key] = value;
+				continue;
+			}
 			const ids = value === SPEND_LOG_SAME_AS_MESSAGES ? columnIds : readRefIdList(value);
 			const targetKey = key === SPEND_LOG_MESSAGE_REF_KEY ? "messages" : "input";
 			if (ids === null) {
@@ -803,10 +811,12 @@ function restoreRequestBody(
  * 不是引用包装的值原样返回，因此历史行与关闭去重后写入的行都不受影响。
  * @param row - 列值
  * @param lookup - 块内容查询
+ * @param options - `compactAliases`：body/upstream 中与列根相同的 `"$messages"` 保留为标记
  */
 export function restoreSpendLogPayload(
 	row: { readonly messages?: unknown; readonly proxy_server_request?: unknown },
 	lookup: SpendLogBlockLookup,
+	options: { readonly compactAliases?: boolean } = {},
 ): { messages: unknown; proxyServerRequest: unknown; missingBlockIds: string[] } {
 	const missingBlockIds: string[] = [];
 	const columnRefs = readMessagesColumnRefs(row.messages);
@@ -816,13 +826,25 @@ export function restoreSpendLogPayload(
 	if (isRecord(proxyServerRequest)) {
 		const restored: Record<string, unknown> = { ...proxyServerRequest };
 		if ("body" in restored) {
-			restored["body"] = restoreRequestBody(restored["body"], lookup, missingBlockIds, columnRefs);
+			restored["body"] = restoreRequestBody(
+				restored["body"],
+				lookup,
+				missingBlockIds,
+				columnRefs,
+				options.compactAliases === true,
+			);
 		}
 		const upstreamRequest = restored["upstream_request"];
 		if (isRecord(upstreamRequest) && "body" in upstreamRequest) {
 			restored["upstream_request"] = {
 				...upstreamRequest,
-				body: restoreRequestBody(upstreamRequest["body"], lookup, missingBlockIds, columnRefs),
+				body: restoreRequestBody(
+					upstreamRequest["body"],
+					lookup,
+					missingBlockIds,
+					columnRefs,
+					options.compactAliases === true,
+				),
 			};
 		}
 		proxyServerRequest = redactSpendLogProxySecrets(restored);
@@ -830,10 +852,10 @@ export function restoreSpendLogPayload(
 	return { messages: messages, proxyServerRequest: proxyServerRequest, missingBlockIds: missingBlockIds };
 }
 
-/** 块载荷缓存默认字节上限：32 MiB，约 1.5 万条 2 KB 消息（按 JSON 文本字节计）。 */
-const DEFAULT_BLOCK_CACHE_BYTES = 32 * 1024 * 1024;
-/** 写前判存保留的已知 id 上限；只存 id，不存载荷。 */
-const MAX_KNOWN_BLOCK_IDS = 100_000;
+/** 块载荷缓存默认字节上限：128 MiB，覆盖一个 50–60 MB 大会话的常用尾部块。 */
+const DEFAULT_BLOCK_CACHE_BYTES = 128 * 1024 * 1024;
+/** 写前判存保留的已知 id 默认上限；当前块表约 15 万，留一倍增长空间。 */
+const DEFAULT_MAX_KNOWN_BLOCK_IDS = 250_000;
 
 /** 缓存中的一条块。 */
 export interface CachedSpendLogBlock {
@@ -860,13 +882,17 @@ export class SpendLogBlockCache {
 
 	private readonly _limitBytes: number;
 
+	private readonly _maxKnownIds: number;
+
 	private _bytes = 0;
 
 	/**
 	 * @param limitBytes - 载荷缓存字节上限；0 表示只记录已知 id，不保留载荷
+	 * @param maxKnownIds - 已知 id 上限；0 表示不记录已知 id
 	 */
-	constructor(limitBytes: number) {
+	constructor(limitBytes: number, maxKnownIds: number = DEFAULT_MAX_KNOWN_BLOCK_IDS) {
 		this._limitBytes = limitBytes;
+		this._maxKnownIds = Math.max(0, maxKnownIds);
 	}
 
 	/**
@@ -919,11 +945,11 @@ export class SpendLogBlockCache {
 	 * @param blockId - 块 id
 	 */
 	markKnown(blockId: string): void {
-		if (this._known.has(blockId)) {
+		if (this._maxKnownIds === 0 || this._known.has(blockId)) {
 			return;
 		}
 		this._known.set(blockId, true);
-		if (this._known.size <= MAX_KNOWN_BLOCK_IDS) {
+		if (this._known.size <= this._maxKnownIds) {
 			return;
 		}
 		const oldest = this._known.keys().next().value;
@@ -974,8 +1000,21 @@ function resolveBlockCacheLimit(): number {
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BLOCK_CACHE_BYTES;
 }
 
+/**
+ * 解析已知 id 上限：`LITELLM_SPEND_LOG_BLOCK_KNOWN_IDS`。
+ * 0 表示不保留 known 集合，写前每次都向数据库确认。
+ */
+function resolveKnownBlockIdLimit(): number {
+	const raw = process.env.LITELLM_SPEND_LOG_BLOCK_KNOWN_IDS;
+	if (raw === undefined || raw.trim() === "") {
+		return DEFAULT_MAX_KNOWN_BLOCK_IDS;
+	}
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_KNOWN_BLOCK_IDS;
+}
+
 /** 进程内块缓存单例。 */
-const spendLogBlockCache = new SpendLogBlockCache(resolveBlockCacheLimit());
+const spendLogBlockCache = new SpendLogBlockCache(resolveBlockCacheLimit(), resolveKnownBlockIdLimit());
 
 /** 清空进程内块缓存（测试用）。 */
 export function clearSpendLogBlockCacheForTests(): void {
@@ -1122,10 +1161,12 @@ export async function writeSpendLogBlocks(db: SpendLogBlockWriteDb, blocks: read
  * @template T - 行类型
  * @param db - 数据库实例
  * @param rows - 需要组装的列值
+ * @param options - `compactAliases`：保留与列根相同的 `"$messages"` 标记
  */
 export async function hydrateSpendLogRows<T extends { readonly messages?: unknown; readonly proxy_server_request?: unknown }>(
 	db: NodePgDatabase<typeof schema>,
 	rows: readonly T[],
+	options: { readonly compactAliases?: boolean } = {},
 ): Promise<T[]> {
 	const idsByRow = rows.map((row) => collectReferencedBlockIds(row.messages, row.proxy_server_request));
 	const allIds = idsByRow.flat();
@@ -1139,7 +1180,7 @@ export async function hydrateSpendLogRows<T extends { readonly messages?: unknow
 		if (idsByRow[index]!.length === 0) {
 			return redactSpendLogRowSecrets(row);
 		}
-		const { messages, proxyServerRequest, missingBlockIds } = restoreSpendLogPayload(row, lookup);
+		const { messages, proxyServerRequest, missingBlockIds } = restoreSpendLogPayload(row, lookup, options);
 		missingIds.push(...missingBlockIds);
 		return redactSpendLogRowSecrets({ ...row, messages: messages, proxy_server_request: proxyServerRequest });
 	});
@@ -1157,12 +1198,14 @@ export async function hydrateSpendLogRows<T extends { readonly messages?: unknow
  * @template T - 行类型
  * @param db - 数据库实例
  * @param row - 需要组装的列值
+ * @param options - `compactAliases`：保留与列根相同的 `"$messages"` 标记
  */
 export async function hydrateSpendLogRow<T extends { readonly messages?: unknown; readonly proxy_server_request?: unknown }>(
 	db: NodePgDatabase<typeof schema>,
 	row: T,
+	options: { readonly compactAliases?: boolean } = {},
 ): Promise<T> {
-	const [hydrated] = await hydrateSpendLogRows(db, [row]);
+	const [hydrated] = await hydrateSpendLogRows(db, [row], options);
 	return hydrated ?? row;
 }
 

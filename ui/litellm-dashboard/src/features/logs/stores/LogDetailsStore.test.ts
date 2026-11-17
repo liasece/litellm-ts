@@ -133,6 +133,42 @@ describe("log detail streaming and lazy reads", () => {
 		expect(h.store.enriched.value?.response).toEqual({ text: "second request" });
 		h.store.dispose();
 	});
+	it("batch prefetches only cache misses and reuses settled details across navigation", async () => {
+		const detail = vi.fn().mockResolvedValue({ status: "success", response: { text: "single" } });
+		const detailsBatch = vi.fn().mockResolvedValue([{ request_id: "two", status: "success", response: { text: "batch" } }]);
+		const store = createLogDetailsStore({ api: { detail, detailsBatch }, socket: () => vi.fn() });
+
+		await store.prefetch([row("one", false), row("two", false)], "day", "one");
+		expect(detailsBatch).toHaveBeenCalledTimes(1);
+		expect(detailsBatch).toHaveBeenCalledWith([{ request_id: "two", start_date: "day" }]);
+
+		store.bind(row("two", false), "day");
+		await vi.advanceTimersByTimeAsync(0);
+		expect(detail).not.toHaveBeenCalled();
+		expect(store.enriched.value?.response).toEqual({ text: "batch" });
+
+		store.bind(row("two", false), "day");
+		await vi.advanceTimersByTimeAsync(0);
+		expect(detail).not.toHaveBeenCalled();
+		store.dispose();
+	});
+	it("coalesces concurrent prefetches and leaves misses to the single detail path", async () => {
+		const pending = deferred<Record<string, unknown>[]>();
+		const detail = vi.fn().mockResolvedValue({ status: "success", response: { text: "single" } });
+		const detailsBatch = vi.fn().mockReturnValue(pending.promise);
+		const store = createLogDetailsStore({ api: { detail, detailsBatch }, socket: () => vi.fn() });
+
+		const first = store.prefetch([row("two", false)], "day");
+		const second = store.prefetch([row("two", false)], "day");
+		expect(detailsBatch).toHaveBeenCalledTimes(1);
+
+		pending.resolve([]);
+		await Promise.all([first, second]);
+		store.bind(row("two", false), "day");
+		await vi.advanceTimersByTimeAsync(0);
+		expect(detail).toHaveBeenCalledTimes(1);
+		store.dispose();
+	});
 	it("retains the last valid payload when a malformed patch arrives", async () => {
 		const h = harness();
 		h.store.bind(row(), "day");

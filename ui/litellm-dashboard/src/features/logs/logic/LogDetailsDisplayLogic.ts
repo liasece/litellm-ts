@@ -35,17 +35,65 @@ export const maskedEntityCount = (entries: Record<string, unknown>[]): number =>
 	);
 export const guardrailLabel = (entries: Record<string, unknown>[]): string =>
 	!entries.length ? "-" : entries.length === 1 ? String(entries[0].guardrail_name ?? "-") : entries.length + " guardrails";
+/** compact 模式下 body 用该值标记「与顶层 log.messages 相同」。 */
+const COMPACT_MESSAGES_REF = "$messages";
+/**
+ * 还原 compact 详情里的 body 别名。
+ *
+ * 服务端只保留一份顶层 `messages`，把 `body.messages` / `body.input` 换成
+ * `_litellm_ref_messages` / `_litellm_ref_input` 标记；这里用顶层数组填回并删除标记键。
+ * 普通数组/对象（旧接口或未压缩的行）原样返回，避免改变既有图片还原与 diff 行为。
+ * @param body - 请求体对象
+ * @param messages - 顶层 log.messages
+ */
+export function resolveCompactAliases(body: unknown, messages: unknown): unknown {
+	const source = asRecord(body);
+	if (!source) return body;
+	const messagesRef = source._litellm_ref_messages === COMPACT_MESSAGES_REF,
+		inputRef = source._litellm_ref_input === COMPACT_MESSAGES_REF;
+	if (!messagesRef && !inputRef) return body;
+	const result: Record<string, unknown> = { ...source };
+	if (messagesRef) {
+		delete result._litellm_ref_messages;
+		if (messages !== undefined) result.messages = messages;
+	}
+	if (inputRef) {
+		delete result._litellm_ref_input;
+		if (messages !== undefined) result.input = messages;
+	}
+	return result;
+}
 export function downstreamRequest(proxy: unknown, messages: unknown, restoreImages = true): unknown {
 	const parsed = formatData(proxy || messages),
 		record = asRecord(parsed);
 	if (!record) return parsed;
 	const result = Object.fromEntries(Object.entries(record).filter(([key]) => key !== "upstream_request" && key !== "upstream_response"));
-	const body = asRecord(result.body);
-	if (restoreImages && body && Array.isArray(messages) && messages.length) {
-		if (Array.isArray(body.messages)) return { ...result, body: { ...body, messages } };
-		if (Array.isArray(body.input)) return { ...result, body: { ...body, input: messages } };
+	const body = resolveCompactAliases(result.body, messages);
+	if (restoreImages && Array.isArray(messages) && messages.length) {
+		const bodyRecord = asRecord(body);
+		if (bodyRecord && Array.isArray(bodyRecord.messages)) return { ...result, body: { ...bodyRecord, messages } };
+		if (bodyRecord && Array.isArray(bodyRecord.input)) return { ...result, body: { ...bodyRecord, input: messages } };
 	}
-	return result;
+	return body === result.body ? result : { ...result, body };
+}
+/**
+ * 上游请求/响应视图。
+ *
+ * 上游 body 同样带 compact 标记，直接用顶层 messages 还原，避免 Upstream / Diff 页签
+ * 显示缺失的 messages/input。响应体不参与别名还原。
+ * @param proxy - log.proxy_server_request
+ * @param messages - 顶层 log.messages
+ */
+export function upstreamRequest(proxy: unknown, messages: unknown): { request: unknown; response: unknown } {
+	const record = asRecord(formatData(proxy));
+	if (!record) return { request: undefined, response: undefined };
+	const request = formatData(record.upstream_request),
+		requestRecord = asRecord(request),
+		body = requestRecord ? resolveCompactAliases(requestRecord.body, messages) : undefined;
+	return {
+		request: requestRecord && body !== requestRecord.body ? { ...requestRecord, body } : request,
+		response: formatData(record.upstream_response),
+	};
 }
 const pad = (value: number, length = 2) => String(value).padStart(length, "0");
 export function detailDate(value: unknown, iso = false): string {

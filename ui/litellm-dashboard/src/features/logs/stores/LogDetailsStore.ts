@@ -12,13 +12,17 @@ import {
 import { isLogDetailPatch } from "../data/LogDetailsPayloadData";
 import type { LogEntry } from "../support/LogsModels";
 
-const CACHE_TIME_MS = 10 * 60 * 1000;
+/** 未结算详情仍会被流式补写，只做短缓存；已结算详情不再变化，可长期复用。 */
+const IN_PROGRESS_CACHE_TIME_MS = 10 * 1000;
+const MAX_CACHE_ENTRIES = 60;
 interface DetailCacheEntry {
 	payload: LogDetailsPayload;
 	expires: number;
 }
+/** 详情 API 的最小能力；批量补缺是可选的，测试和嵌入场景可以只提供单条读取。 */
+type LogDetailsApi = Pick<LogsApi, "detail"> & Partial<Pick<LogsApi, "detailsBatch">>;
 export interface LogDetailsStoreOptions {
-	api?: Pick<LogsApi, "detail">;
+	api?: LogDetailsApi;
 	socket?: LogDetailsSocketFactory;
 	settled?: () => void;
 	now?: () => number;
@@ -38,6 +42,7 @@ export function createLogDetailsStore(options: LogDetailsStoreOptions = {}) {
 	const enriched = computed(() => mergeLogDetails(state.row, state.payload));
 	const inProgress = computed(() => isDetailInProgress(state.row, state.payload));
 	const cache = new Map<string, DetailCacheEntry>();
+	const prefetching = new Set<string>();
 	let enabled = false;
 	let startDate = "";
 	let epoch = 0;
@@ -48,7 +53,7 @@ export function createLogDetailsStore(options: LogDetailsStoreOptions = {}) {
 	let controller: AbortController | null = null;
 	let stopSocket: (() => void) | null = null;
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
-	const key = () => (state.row ? JSON.stringify([state.row.request_id, startDate]) : "");
+	const keyFor = (requestId: string, nextStartDate: string) => JSON.stringify([requestId, nextStartDate]);
 	function clearPoll() {
 		if (pollTimer !== null) {
 			clearTimeout(pollTimer);
@@ -61,10 +66,37 @@ export function createLogDetailsStore(options: LogDetailsStoreOptions = {}) {
 		stop?.();
 		state.streaming = false;
 	}
-	function remember(payload: LogDetailsPayload) {
-		cache.set(key(), { payload, expires: now() + CACHE_TIME_MS });
-		for (const [cacheKey, entry] of cache) if (entry.expires <= now()) cache.delete(cacheKey);
-		if (cache.size > 100) cache.delete(cache.keys().next().value ?? "");
+	function hasDetailData(payload: LogDetailsPayload): boolean {
+		return payload !== null && Object.keys(payload).some((field) => field !== "request_id");
+	}
+	/**
+	 * 写入详情缓存。
+	 *
+	 * 已结算详情是只读映射，不设过期；在途详情仍会变化，只保留一个轮询周期的短缓存，
+	 * 避免 J/K 来回切换时重复读，也不会把半成品当成最终结果。
+	 */
+	function remember(payload: LogDetailsPayload, requestId = state.row?.request_id, nextStartDate = startDate) {
+		if (!requestId || !nextStartDate || !hasDetailData(payload)) return;
+		const cacheKey = keyFor(requestId, nextStartDate);
+		cache.delete(cacheKey);
+		cache.set(cacheKey, {
+			payload,
+			expires: payload?.status === "in_progress" ? now() + IN_PROGRESS_CACHE_TIME_MS : Number.POSITIVE_INFINITY,
+		});
+		while (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value ?? "");
+	}
+	function readCache(requestId: string, nextStartDate: string): LogDetailsPayload | undefined {
+		const cacheKey = keyFor(requestId, nextStartDate);
+		const entry = cache.get(cacheKey);
+		if (!entry) return undefined;
+		if (entry.expires <= now()) {
+			cache.delete(cacheKey);
+			return undefined;
+		}
+		// Map 的插入顺序就是 LRU 顺序：命中后移到末尾，淘汰时从最旧开始。
+		cache.delete(cacheKey);
+		cache.set(cacheKey, entry);
+		return entry.payload;
 	}
 	function notifySettled() {
 		if (!notifiedSettled) {
@@ -190,6 +222,51 @@ export function createLogDetailsStore(options: LogDetailsStoreOptions = {}) {
 			updatePolling();
 		}
 	}
+	/**
+	 * 批量补齐一组日志的只读详情，供 Session 中相邻行预取。
+	 *
+	 * 只写缓存，不改当前选中行：调用方仍按 bind 的既有流程切换详情。单条详情接口
+	 * 仍作为实时/未命中兜底；批量接口只负责按已知 request_id 补缺，负载能否长期复用
+	 * 由 remember 按结算状态决定。
+	 * @param rows - 需要补齐的日志行，按 request_id 去重
+	 * @param nextStartDate - 与详情 API 一致的时间窗起点
+	 * @param excludeRequestId - 当前选中行；它由 bind 走单条接口，避免和批量预取重复
+	 */
+	async function prefetch(rows: readonly LogEntry[], nextStartDate: string, excludeRequestId?: string): Promise<void> {
+		const batch = api.detailsBatch;
+		if (!batch || !nextStartDate) return;
+		const missing: { request_id: string; start_date: string }[] = [];
+		const seen = new Set<string>();
+		for (const row of rows) {
+			const requestId = row.request_id;
+			if (
+				!requestId ||
+				requestId === excludeRequestId ||
+				seen.has(requestId) ||
+				prefetching.has(requestId) ||
+				readCache(requestId, nextStartDate)
+			)
+				continue;
+			seen.add(requestId);
+			missing.push({ request_id: requestId, start_date: nextStartDate });
+		}
+		for (let offset = 0; offset < missing.length; offset += 100) {
+			const chunk = missing.slice(offset, offset + 100);
+			for (const request of chunk) prefetching.add(request.request_id);
+			try {
+				const payloads = await batch(chunk);
+				for (const payload of payloads) {
+					if (!isLogDetailPatch(payload)) continue;
+					const requestId = typeof payload.request_id === "string" ? payload.request_id : "";
+					if (requestId) remember(payload, requestId, nextStartDate);
+				}
+			} catch {
+				// 预取失败不影响当前详情；选中该行时 bind 会走单条接口重试。
+			} finally {
+				for (const request of chunk) prefetching.delete(request.request_id);
+			}
+		}
+	}
 	function bind(row: LogEntry | null, nextStartDate: string, open = true) {
 		const nextEnabled = Boolean(open && row && nextStartDate);
 		const same = nextEnabled && enabled && row?.request_id === state.row?.request_id && startDate === nextStartDate;
@@ -209,8 +286,7 @@ export function createLogDetailsStore(options: LogDetailsStoreOptions = {}) {
 		startDate = nextStartDate;
 		state.row = row;
 		notifiedSettled = false;
-		const cached = cache.get(key());
-		state.payload = cached && cached.expires > now() ? cached.payload : undefined;
+		state.payload = readCache(row.request_id, nextStartDate);
 		state.loading = state.payload === undefined;
 		connect();
 		if (state.payload === undefined) void refresh();
@@ -236,6 +312,6 @@ export function createLogDetailsStore(options: LogDetailsStoreOptions = {}) {
 		close();
 		cache.clear();
 	}
-	return { state, enriched, inProgress, bind, refresh, close, dispose };
+	return { state, enriched, inProgress, bind, prefetch, refresh, close, dispose };
 }
 export type LogDetailsStore = ReturnType<typeof createLogDetailsStore>;

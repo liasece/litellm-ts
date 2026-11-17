@@ -44,15 +44,19 @@ export function shouldSpendResponseCompress(req: Request, res: Response): boolea
 
 /**
  * Spend/Logs 返回大量高度重复的 JSON（历史 messages 与 proxy request）。
- * 仅在非流式 Spend 路由启用压缩，避免影响模型 SSE；Brotli quality 4
- * 在生产 Session 样本上兼顾了压缩率与 CPU，gzip level 1 用作旧客户端回退。
+ * 仅在非流式 Spend 路由启用压缩，避免影响模型 SSE。
+ *
+ * 生产 31 MB 详情基准：Brotli q1 142 ms / 22.4 MB，q4 321 ms / 22.0 MB，
+ * gzip level 1 639 ms / 22.3 MB。大响应里重复副本让压缩率只有约 1.4×，
+ * 继续提高 quality 的边际收益很小；这里选 q1 以降低主线程外的 CPU 占用。
+ * 去重后的详情变小，q1 仍能保持相近的传输体积。gzip level 1 作为旧客户端回退。
  */
 export const spendResponseCompression = compression({
 	threshold: "16kb",
 	level: zlibConstants.Z_BEST_SPEED,
 	brotli: {
 		params: {
-			[zlibConstants.BROTLI_PARAM_QUALITY]: 4,
+			[zlibConstants.BROTLI_PARAM_QUALITY]: 1,
 		},
 	},
 	filter: shouldSpendResponseCompress,

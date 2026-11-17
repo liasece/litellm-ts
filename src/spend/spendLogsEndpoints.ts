@@ -90,6 +90,9 @@ import { spendLogDurationSql, spendLogExecutionModelSql, spendLogListMetadataSql
 
 const logger = createModuleLogger("SpendLogs");
 
+/** 旧 `/spend/logs` 正文路径的单页硬上限；摘要路径仍沿用通用分页上限。 */
+const LEGACY_CONTENT_PAGE_SIZE = 50;
+
 /** Python LiteLLM 兼容 sort_by 白名单 */
 const SPEND_LOG_SORT_FIELDS = ["spend", "total_tokens", "startTime", "endTime", "request_duration_ms"] as const;
 type SpendLogSortField = (typeof SPEND_LOG_SORT_FIELDS)[number];
@@ -195,6 +198,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// ========== /spend/logs ==========
 	// 旧分页契约 — WebUI /spend/logs 消费方期待分页对象形状：
 	//   { data: Row[], page, pageSize, total, hasMore }
+	// 默认只返回轻量标量行；需要历史正文时显式 include_content=true（单页最多 50 行）。
 	// 行为契约：
 	//   - 不带 api_key / user_id 过滤时，返回按 startTime 降序的明细行；空/失败时返回空 data
 	//   - 带 api_key / user_id 过滤时按 filter 返回分页明细
@@ -203,8 +207,11 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 	registerRoute(router, { method: "get", path: "/spend/logs" }, async (req) => {
 		const page = parsePageParam(req.query.page);
-		// WebUI 既传 pageSize（JS camelCase）也兼容 page_size（snake_case 协议）
-		const pageSize = parsePageSizeParam(req.query.page_size, req.query.pageSize);
+		// WebUI 既传 pageSize（JS camelCase）也兼容 page_size（snake_case 协议）。
+		// 正文路径单独收紧上限：50 行的真实正文实测可达 92 MB，不能沿用通用 1000 上限。
+		const requestedPageSize = parsePageSizeParam(req.query.page_size, req.query.pageSize);
+		const includeContent = req.query.include_content === "true";
+		const pageSize = includeContent ? Math.min(requestedPageSize, LEGACY_CONTENT_PAGE_SIZE) : requestedPageSize;
 		const apiKeyFilter = req.query.api_key as string | undefined;
 		const userIdFilter = req.query.user_id as string | undefined;
 
@@ -222,15 +229,25 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		// 不再返回"本月每日 spend=0 假数据"——那是 /global/spend/logs 的职责，混用会导致
 		// Monthly Spend BarChart 与 Logs 表格口径不一致。
 		return runWithFallback(logger, "/spend/logs", makeEmptyLegacySpendLogsPage(page, pageSize), async () => {
-			const rawRows = await db
-				.select()
-				.from(liteLLM_SpendLogs)
-				.where(whereClause)
-				.orderBy(desc(liteLLM_SpendLogs.startTime))
-				.limit(pageSize)
-				.offset((page - 1) * pageSize);
-			// 旧分页是 SELECT *，同样必须组装，否则外部调用方会看到块引用。
-			const data = await hydrateSpendLogRows(db, rawRows);
+			// 默认返回与 UI 列表同形的轻量行：旧调用方多数只需要分页与标量；
+			// 正文必须显式传 include_content=true，且正文页大小有硬上限，避免一次拉回
+			// 几十 MB 的 messages/proxy/response 把主线程和客户端一起拖住。
+			const rawRows = includeContent
+				? await db
+						.select()
+						.from(liteLLM_SpendLogs)
+						.where(whereClause)
+						.orderBy(desc(liteLLM_SpendLogs.startTime))
+						.limit(pageSize)
+						.offset((page - 1) * pageSize)
+				: await db
+						.select(uiSpendLogSelection())
+						.from(liteLLM_SpendLogs)
+						.where(whereClause)
+						.orderBy(desc(liteLLM_SpendLogs.startTime))
+						.limit(pageSize)
+						.offset((page - 1) * pageSize);
+			const data = includeContent ? await hydrateSpendLogRows(db, rawRows as unknown as Array<Record<string, unknown>>) : rawRows;
 
 			const totalRow = await db
 				.select({ count: sql<number>`COUNT(*)` })
@@ -626,6 +643,25 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			.map((detailRequest) => detailRequest.request_id)
 			.filter((requestId) => coldStorageByRequestId.get(requestId) === null);
 
+		// 冷存储 payload 与落库同源，也可能带块引用；批量补缺和单条详情必须走同一套
+		// 组装与 compact 形状，否则前端缓存里会出现“有的行带引用、有的行已展开”的混合状态。
+		const coldStorageRows = coldStoragePayloads.flatMap(([requestId, payload]) => {
+			if (payload === null) {
+				return [];
+			}
+			return [
+				{
+					...payload,
+					request_id: requestId,
+					messages: payload["messages"],
+					proxy_server_request: payload["proxy_server_request"],
+				},
+			];
+		});
+		const hydratedColdStorageRows =
+			coldStorageRows.length === 0 ? [] : await hydrateSpendLogRows(db, coldStorageRows, { compactAliases: true });
+		const hydratedColdStorageByRequestId = new Map(hydratedColdStorageRows.map((row) => [String(row.request_id), row] as const));
+
 		const databaseRows =
 			databaseRequestIds.length === 0
 				? []
@@ -640,12 +676,15 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 							})
 							.from(liteLLM_SpendLogs)
 							.where(inArray(liteLLM_SpendLogs.request_id, databaseRequestIds)),
+						{ compactAliases: true },
 					);
 		const databaseByRequestId = new Map(databaseRows.map((row) => [row.request_id, row] as const));
 
 		return {
 			data: requests.map((detailRequest) => ({
-				...(coldStorageByRequestId.get(detailRequest.request_id) ?? databaseByRequestId.get(detailRequest.request_id) ?? {}),
+				...(hydratedColdStorageByRequestId.get(detailRequest.request_id) ??
+					databaseByRequestId.get(detailRequest.request_id) ??
+					{}),
 				request_id: detailRequest.request_id,
 			})),
 		};
@@ -660,12 +699,14 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			return null;
 		}
 
-		// PY: 可选 start_date / end_date 查询参数（YYYY-MM-DD HH:MM:SS），透传给冷存储 logger 收窄回查窗口
+		// PY: 可选 start_date / end_date 查询参数（YYYY-MM-DD HH:MM:SS），透传给冷存储 logger 收窄回查窗口。
+		// compact=true 是 dashboard 内部详情用的读形状：顶层 messages 只展开一次，重复别名保留标记。
 		return await buildUiSpendLogDetail(
 			db,
 			requestId,
 			parseOptionalDetailDate(req.query.start_date),
 			parseOptionalDetailDate(req.query.end_date),
+			{ compactAliases: req.query.compact === "true" },
 		);
 	});
 

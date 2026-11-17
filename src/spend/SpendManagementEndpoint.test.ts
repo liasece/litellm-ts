@@ -21,6 +21,7 @@ import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { Pool } from "pg";
 import { registerSpendManagementEndpoints } from "./SpendManagementEndpoint";
 import type { UserAPIKeyAuth } from "../types/auth";
+import { SPEND_LOG_SAME_AS_MESSAGES, collectSpendLogBlocks } from "./SpendLogBlocks";
 
 /**
  * 通用轻量 Drizzle mock。
@@ -635,6 +636,45 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 			expect(body.total).toBe(2);
 		});
 
+		it("默认返回轻量行，不读取 messages/proxy/response 正文", async () => {
+			freezeNow("2025-02-15T12:00:00Z");
+			const { db, calls } = makeMockDb({
+				data: [{ startTime: new Date("2025-02-10T00:00:00Z"), spend: 2.5, total_tokens: 500 }],
+				count: [{ count: 1 }],
+			});
+			const app = makeAppWithAuth(db);
+			const res = await request(app).get("/spend/logs?page_size=100");
+			expect(res.status).toBe(200);
+			const dataCall = calls.find((call) => call.projection.includes("request_id") && call.projection.includes("spend"));
+			expect(dataCall?.projection).not.toContain("messages");
+			expect(dataCall?.projection).not.toContain("proxy_server_request");
+			expect(dataCall?.projection).not.toContain("response");
+			expect(dataCall?.projection).toContain("cache_read_input_tokens");
+		});
+
+		it("include_content=true 才读取正文，并把单页硬限制为 50 行", async () => {
+			freezeNow("2025-02-15T12:00:00Z");
+			const { db, calls } = makeMockDb({
+				data: [
+					{
+						startTime: new Date("2025-02-10T00:00:00Z"),
+						spend: 2.5,
+						total_tokens: 500,
+						messages: {},
+						proxy_server_request: {},
+						response: {},
+					},
+				],
+				count: [{ count: 1 }],
+			});
+			const app = makeAppWithAuth(db);
+			const res = await request(app).get("/spend/logs?include_content=true&page_size=1000");
+			expect(res.status).toBe(200);
+			expect(res.body.pageSize).toBe(50);
+			const dataCall = calls.find((call) => call.projection.length === 0);
+			expect(dataCall).toBeDefined();
+		});
+
 		it("带过滤 (api_key) + DB 命中：返回分页明细", async () => {
 			freezeNow("2025-02-15T12:00:00Z");
 			const { db } = makeMockDb({
@@ -1030,6 +1070,45 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 
 				expect(res.status).toBe(200);
 				expect(res.body).toEqual(detailRow);
+			});
+
+			it("/spend/logs/ui/batch 按 compact 形状组装块引用，避免批量补缺重复展开同一份消息", async () => {
+				const messages = Array.from({ length: 5 }, (_, index) => ({
+					role: index % 2 === 0 ? "user" : "assistant",
+					content: `m-${index}`,
+				}));
+				const encoded = collectSpendLogBlocks({
+					messages,
+					proxyServerRequest: { body: { messages }, upstream_request: { body: { messages } } },
+				});
+				const { db } = makeMockDb({
+					responses: [
+						[
+							{
+								request_id: "req-compact",
+								response: {},
+								messages: encoded.messages,
+								proxy_server_request: encoded.proxyServerRequest,
+							},
+						],
+						encoded.blocks,
+					],
+				});
+
+				const res = await request(makeAppWithAuth(db, PROXY_ADMIN_AUTH))
+					.post("/spend/logs/ui/batch")
+					.send({ requests: [{ request_id: "req-compact", start_date: "2025-02-01 00:00:00" }] });
+
+				expect(res.status).toBe(200);
+				const row = res.body.data[0] as Record<string, unknown>;
+				expect(row.messages).toEqual(messages);
+				const proxy = row.proxy_server_request as {
+					body: Record<string, unknown>;
+					upstream_request: { body: Record<string, unknown> };
+				};
+				expect(proxy.body).toMatchObject({ _litellm_ref_messages: SPEND_LOG_SAME_AS_MESSAGES });
+				expect(proxy.body.messages).toBeUndefined();
+				expect(proxy.upstream_request.body).toMatchObject({ _litellm_ref_messages: SPEND_LOG_SAME_AS_MESSAGES });
 			});
 
 			it("/spend/logs/ui/batch 将多条详情合并为一次 DB 查询并保持请求顺序", async () => {

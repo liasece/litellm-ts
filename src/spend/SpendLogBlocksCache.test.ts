@@ -1,6 +1,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import {
+	SPEND_LOG_REDACTED_HEADER_VALUE,
 	SpendLogBlockCache,
 	clearSpendLogBlockCacheForTests,
 	collectSpendLogBlocks,
@@ -112,6 +113,32 @@ describe("hydrateSpendLogRows：进程内块缓存", () => {
 		// 缓存里没有载荷，下一次组装仍要回源（而不是把占位当成内容）
 		await hydrateSpendLogRows(fake.db, [{ messages: encoded.messages, proxy_server_request: encoded.proxyServerRequest }]);
 		expect(fake.queries()).toBe(2);
+	});
+});
+
+describe("hydrateSpendLogRows：读取侧脱敏", () => {
+	it("混合批次里没有块引用的行也会脱敏请求头", async () => {
+		const encoded = collectSpendLogBlocks({ messages: makeMessages(5), proxyServerRequest: {} });
+		const fake = makeFakeDb(
+			encoded.blocks.map((block) => ({ blockId: block.blockId, payload: block.payload, byteSize: block.byteSize })),
+		);
+		clearSpendLogBlockCacheForTests();
+		const [encodedRow, inlineRow] = await hydrateSpendLogRows(fake.db, [
+			{ messages: encoded.messages, proxy_server_request: {} },
+			{
+				messages: [],
+				proxy_server_request: {
+					headers: { Authorization: "Bearer secret", "x-request-id": "req-1" },
+					body: { messages: [], __litellm_responses_body: { input: [] } },
+				},
+			},
+		]);
+		expect(encodedRow?.messages).toBeDefined();
+		const headers = (inlineRow?.proxy_server_request as Record<string, unknown>)["headers"] as Record<string, unknown>;
+		expect(headers["Authorization"]).toBe(SPEND_LOG_REDACTED_HEADER_VALUE);
+		expect(headers["x-request-id"]).toBe("req-1");
+		const inlineBody = (inlineRow?.proxy_server_request as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(inlineBody["__litellm_responses_body"]).toBeUndefined();
 	});
 });
 

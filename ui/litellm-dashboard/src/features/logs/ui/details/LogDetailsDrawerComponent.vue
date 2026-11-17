@@ -150,6 +150,24 @@ watch(
 watch([current, () => props.startTime, () => props.open], () => details.bind(current.value, props.startTime, props.open), {
 	immediate: true,
 });
+/**
+ * Session 行是不可变的 request_id 映射；打开或切换选中行时，把相邻窗口里缓存缺失的
+ * 详情一次批量补齐。当前行仍走单条详情接口，避免和实时轮询/WebSocket 抢同一份负载。
+ */
+const PREFETCH_RADIUS = 2;
+function prefetchSessionWindow() {
+	// 必须用侧栏实际渲染的 rows（已合并 live 新行并重排），而不是原始 sessionRows：
+	// 两者顺序不一致时，预取窗口会和用户看到的相邻行错位。
+	const values = rows.value;
+	if (!props.open || !sessionMode.value || values.length === 0) return;
+	const currentId = current.value?.request_id ?? "";
+	const found = values.findIndex((row) => row.request_id === currentId);
+	const index = found >= 0 ? found : 0;
+	const start = Math.max(0, index - PREFETCH_RADIUS);
+	const end = Math.min(values.length, index + PREFETCH_RADIUS + 1);
+	void details.prefetch(values.slice(start, end), props.startTime, currentId || undefined);
+}
+watch([rows, selectedId, () => props.open, () => props.startTime], prefetchSessionWindow, { immediate: true });
 function isModelRow(row: LogEntry) {
 	return !isMcp(row) && !isAgent(row) && row.metadata?.internal_call_type !== "builtin_capability" && Boolean(row.model);
 }
