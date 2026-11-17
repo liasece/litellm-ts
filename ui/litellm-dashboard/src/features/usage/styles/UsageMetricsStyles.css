@@ -19,8 +19,19 @@
 	color: #64748b;
 }
 
+/*
+ * 指标卡与 Token 面板在桌面端并排：Token 固定占一半宽度，六项指标在右半边排成两列，
+ * 避免全年范围下 Token 面板单独占满整行、把关键指标挤到页面更下方。
+ */
+.usage-metrics-body {
+	display: flex;
+	flex-direction: column;
+}
+
 .usage-metrics-grid {
+	order: 1;
 	display: grid;
+	min-width: 0;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -72,7 +83,10 @@
 }
 
 .usage-token-panel {
+	order: 2;
 	display: grid;
+	min-width: 0;
+	align-content: start;
 	gap: 10px;
 	border-top: 1px solid #e2e8f0;
 	background: #f8fafcb3;
@@ -229,18 +243,46 @@
 	}
 }
 
-@media (min-width: 1280px) {
-	.usage-metrics-grid {
-		grid-template-columns: repeat(6, minmax(0, 1fr));
+@media (min-width: 1024px) {
+	.usage-metrics-body {
+		flex-direction: row;
+		align-items: stretch;
 	}
 
-	.usage-metrics-grid > .usage-metric {
+	.usage-token-panel {
+		order: 1;
+		flex: 0 0 50%;
+		width: 50%;
 		border-top: 0;
+		border-right: 1px solid #e2e8f0;
+	}
+
+	.usage-metrics-grid {
+		order: 2;
+		flex: 1 1 50%;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	/* 右栏改为两列后，重置 640px 三列布局留下的分隔线，避免出现错误竖线/缺口。 */
+	.usage-metrics-grid > .usage-metric:nth-child(3n + 1) {
 		border-left: 1px solid #e2e8f0;
 	}
 
-	.usage-metrics-grid > .usage-metric:nth-child(6n + 1) {
+	.usage-metrics-grid > .usage-metric:nth-child(-n + 3) {
+		border-top: 1px solid #e2e8f0;
+	}
+
+	.usage-metrics-grid > .usage-metric:nth-child(2n + 1) {
 		border-left: 0;
+	}
+
+	.usage-metrics-grid > .usage-metric:nth-child(-n + 2) {
+		border-top: 0;
+	}
+
+	/* 左栏变窄后，三列 Token 明细会被截断，改为单列逐行展示。 */
+	.usage-token-lines {
+		grid-template-columns: minmax(0, 1fr);
 	}
 }
 

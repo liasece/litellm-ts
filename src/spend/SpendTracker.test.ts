@@ -1339,6 +1339,38 @@ describe("SpendTracker API key sanitization", () => {
 		expect(withoutFilters[0]!["key_alias"]).toBeNull();
 		expect(withoutFilters[0]!["error_code"]).toBeNull();
 	});
+
+	it("Usage 投影列与 metadata / endpoint 同源写入", async () => {
+		const inserted: Record<string, unknown>[] = [];
+		await trackSpendLog(createMockDb(inserted), {
+			api_key: "hashed-key",
+			call_type: CallType.ACompletion,
+			cache_creation_input_tokens: 7,
+			cache_read_input_tokens: 40,
+			completion_tokens: 20,
+			endTime: "2026-01-01T00:00:01.000Z",
+			metadata: {
+				fallback_models: ["actual-group"],
+				resolved_model_group: "actual-group",
+			},
+			model: "provider/model",
+			model_group: "requested-group",
+			prompt_tokens: 100,
+			proxy_server_request: { url: "/v1/messages?beta=1" },
+			request_id: "req-usage-projection-columns",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			total_tokens: 167,
+		});
+		expect(inserted).toHaveLength(1);
+		expect(inserted[0]).toMatchObject({
+			cache_creation_input_tokens: 7,
+			cache_read_input_tokens: 40,
+			endpoint: "/v1/messages",
+			model_group: "requested-group",
+			resolved_model_group: "actual-group",
+		});
+	});
 });
 
 describe("SpendTracker DailySpend 聚合写入", () => {

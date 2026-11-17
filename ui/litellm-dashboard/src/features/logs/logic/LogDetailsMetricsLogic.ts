@@ -1,6 +1,16 @@
 import { asRecord } from "./PrettyMessagesBlocksLogic";
 import { readFieldPath } from "./PrettyMessagesFieldRules";
-export function cacheTokens(metadata: unknown, kind: "read" | "creation"): number {
+/**
+ * 读取缓存 token 数。
+ *
+ * 详情 compact 投影把缓存用量作为顶层标量列下发；有合法值（有限且非负）时优先采用，
+ * 缺失时回退 metadata，兼容旧接口与历史行。
+ * @param metadata - 日志 metadata
+ * @param kind - 读缓存或写缓存
+ * @param directValue - 顶层标量列（cache_read_input_tokens / cache_creation_input_tokens）
+ */
+export function cacheTokens(metadata: unknown, kind: "read" | "creation", directValue?: unknown): number {
+	if (typeof directValue === "number" && Number.isFinite(directValue) && directValue >= 0) return directValue;
 	const fields =
 		kind === "read"
 			? ["cache_read_input_tokens", "prompt_tokens_details.cached_tokens", "input_tokens_details.cached_tokens"]

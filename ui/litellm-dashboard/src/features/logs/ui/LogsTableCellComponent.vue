@@ -46,7 +46,7 @@ const fallbackText = computed(() =>
 	props.column === "team_name" ? String(props.log.metadata?.user_api_key_team_alias || "-") : String(props.log[props.column] || "-"),
 );
 const hash = computed(() => String(props.log.metadata?.user_api_key || ""));
-const alias = computed(() => String(props.log.metadata?.user_api_key_alias || "-"));
+const alias = computed(() => String(props.log.key_alias || props.log.metadata?.user_api_key_alias || "-"));
 const tokenTooltip = computed(
 	() =>
 		"Cache read + input / output" +

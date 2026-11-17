@@ -7,7 +7,18 @@ export function record(value: unknown): Record<string, unknown> {
 function nonNegative(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? Math.max(value, 0) : undefined;
 }
-export function cacheTokens(metadata: LogEntry["metadata"], creation = false): number {
+/**
+ * 读取缓存 token 数。
+ *
+ * 详情接口 compact 模式把标量列（cache_read_input_tokens / cache_creation_input_tokens）
+ * 单独下发；有该列时优先采用，缺失或非法值（负数、NaN、字符串）才回退解析 metadata，
+ * 保证旧接口与历史行仍按原逻辑工作。
+ * @param metadata - 日志 metadata
+ * @param creation - 是否读取 cache creation（否则 cache read）
+ * @param directValue - 接口顶层标量列的值
+ */
+export function cacheTokens(metadata: LogEntry["metadata"], creation = false, directValue?: unknown): number {
+	if (typeof directValue === "number" && Number.isFinite(directValue) && directValue >= 0) return directValue;
 	const source = record(metadata),
 		additional = record(source.additional_usage_values),
 		usage = record(source.usage_object);
@@ -37,8 +48,8 @@ export function tokenMetrics(log: LogEntry): TokenMetrics {
 		const n = Number(value ?? 0);
 		return Number.isFinite(n) ? Math.max(n, 0) : 0;
 	};
-	const cacheRead = cacheTokens(log.metadata),
-		creation = cacheTokens(log.metadata, true);
+	const cacheRead = cacheTokens(log.metadata, false, log.cache_read_input_tokens),
+		creation = cacheTokens(log.metadata, true, log.cache_creation_input_tokens);
 	return { cacheRead, creation, input: Math.max(safe(log.prompt_tokens) - cacheRead, 0), output: safe(log.completion_tokens) };
 }
 /**

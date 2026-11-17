@@ -181,6 +181,28 @@ function extractProvider(model: string): string {
 }
 
 /**
+ * 解析 SpendLog 最终实际执行的公共模型组。
+ *
+ * 日汇总和原始 SpendLogs 必须使用同一套解析顺序，否则 Usage 在本地时区路径
+ * 与 UTC 路径之间会出现模型组不一致。`model_group` 仍是客户端原始请求值。
+ * @param log - 花费日志条目
+ */
+function resolveSpendLogModelGroup(log: SpendLog): string | null {
+	const model = log.model || "";
+	return (
+		log.resolved_model_group ??
+		resolveFinalModelGroup({
+			modelGroup: log.model_group ?? model,
+			attemptedRetries: log.metadata?.["attempted_retries"],
+			fallbackModels: log.metadata?.["fallback_models"],
+			modelResolutionChain: log.metadata?.["model_resolution_chain"],
+			resolvedModelGroup: log.metadata?.["resolved_model_group"],
+		}) ??
+		null
+	);
+}
+
+/**
  * 更新一条每日花费汇总记录（upsert）
  * 使用 ON CONFLICT 实现 upsert 语义
  * @param db
@@ -203,15 +225,7 @@ async function upsertDailySpend(
 	}
 
 	const model = log.model || "";
-	const resolvedModelGroup =
-		log.resolved_model_group ??
-		resolveFinalModelGroup({
-			modelGroup: log.model_group ?? model,
-			attemptedRetries: log.metadata?.["attempted_retries"],
-			fallbackModels: log.metadata?.["fallback_models"],
-			modelResolutionChain: log.metadata?.["model_resolution_chain"],
-			resolvedModelGroup: log.metadata?.["resolved_model_group"],
-		});
+	const resolvedModelGroup = resolveSpendLogModelGroup(log);
 	const status = log.status ?? SpendLogStatus.Success;
 	const successfulRequests = status === SpendLogStatus.Success ? 1 : 0;
 	const failedRequests = status === SpendLogStatus.Failure ? 1 : 0;
@@ -1934,6 +1948,7 @@ async function trackSpendLogMeasured(
 	const totalTokens = normalized?.total_tokens ?? logEntry.total_tokens;
 	const cacheCreationTokens = normalized?.cache_creation_input_tokens ?? logEntry.cache_creation_input_tokens ?? 0;
 	const cacheReadTokens = normalized?.cache_read_input_tokens ?? logEntry.cache_read_input_tokens ?? 0;
+	const resolvedModelGroup = resolveSpendLogModelGroup(logEntry);
 	// 按次计费的直连工具调用（如 DeepSeek Search / Fetch）不产生模型调用，token 费用恒 0；
 	// 其固定单价并入 spend，并单独记入 cost_breakdown.tool_usage_cost，
 	// 保证费用统计与 Logs 页能看到这部分支出。
@@ -2059,6 +2074,7 @@ async function trackSpendLogMeasured(
 		completionStartTime: logEntry.completionStartTime ? new Date(logEntry.completionStartTime) : null,
 		model: logEntry.model || "",
 		model_group: logEntry.model_group || "",
+		resolved_model_group: resolvedModelGroup,
 		model_id: logEntry.model_id ?? null,
 		custom_llm_provider: logEntry.custom_llm_provider ?? extractProvider(logEntry.model),
 		api_base: logEntry.api_base ?? null,
@@ -2069,6 +2085,8 @@ async function trackSpendLogMeasured(
 		end_user: logEntry.end_user_id ?? null,
 
 		cache_key: logEntry.cache_key ?? null,
+		cache_read_input_tokens: cacheReadTokens,
+		cache_creation_input_tokens: cacheCreationTokens,
 
 		// PY SpendLogsPayload.cache_hit = str(cache_hit)（spend_tracking_utils.py:432）——
 		// Python str(bool) 首字母大写，写 "True"/"False"
@@ -2089,6 +2107,7 @@ async function trackSpendLogMeasured(
 
 		agent_id: logEntry.agent_id ?? null,
 		mcp_namespaced_tool_name: logEntry.mcp_namespaced_tool_name ?? null,
+		endpoint: getDailySpendEndpoint(logEntry) ?? "",
 	};
 
 	const reservationStatus = (logEntry.status ?? SpendLogStatus.Success) === SpendLogStatus.Success || spend > 0 ? "settled" : "released";

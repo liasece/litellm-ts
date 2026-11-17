@@ -155,7 +155,11 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 					response,
 					session_id,
 					status,
-					proxy_server_request
+					proxy_server_request,
+					cache_read_input_tokens,
+					cache_creation_input_tokens,
+					resolved_model_group,
+					endpoint
 				)
 				SELECT
 					request_id,
@@ -214,7 +218,31 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 					COALESCE(metadata #> '{streaming_execution,response}', metadata #> '{responses_execution,response}', '{}'::jsonb),
 					session_id,
 					'aborted',
-					COALESCE("proxy_server_request", '{}'::jsonb)
+					COALESCE("proxy_server_request", '{}'::jsonb),
+					COALESCE(
+						CASE
+							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_read_input_tokens}', metadata #> '{responses_execution,usage,cache_read_input_tokens}')) = 'number'
+								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_read_input_tokens}', metadata #>> '{responses_execution,usage,cache_read_input_tokens}'))::numeric::bigint
+						END,
+						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens')::bigint END,
+						CASE WHEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens')::bigint END,
+						0
+					),
+					COALESCE(
+						CASE
+							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #> '{responses_execution,usage,cache_creation_input_tokens}')) = 'number'
+								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #>> '{responses_execution,usage,cache_creation_input_tokens}'))::numeric::bigint
+						END,
+						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens')::bigint END,
+						CASE WHEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens')::bigint END,
+						0
+					),
+					COALESCE(NULLIF(metadata ->> 'resolved_model_group', ''), NULLIF(model_group, '')),
+					COALESCE(split_part("proxy_server_request" ->> 'url', '?', 1), '')
 				FROM orphaned
 				ON CONFLICT (request_id) DO NOTHING
 			),
@@ -273,7 +301,9 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 					key_alias, error_code,
 					cache_hit, cache_key, request_tags, team_id, organization_id,
 					end_user, requester_ip_address, messages, response, session_id,
-					status, proxy_server_request
+					status, proxy_server_request,
+					cache_read_input_tokens, cache_creation_input_tokens,
+					resolved_model_group, endpoint
 				)
 				SELECT
 					request_id, call_type, api_key, 0,
@@ -315,7 +345,31 @@ export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema
 					requester_ip_address, '{}'::jsonb,
 					COALESCE(metadata #> '{streaming_execution,response}', metadata #> '{responses_execution,response}', '{}'::jsonb),
 					session_id, 'aborted',
-					COALESCE("proxy_server_request", '{}'::jsonb)
+					COALESCE("proxy_server_request", '{}'::jsonb),
+					COALESCE(
+						CASE
+							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_read_input_tokens}', metadata #> '{responses_execution,usage,cache_read_input_tokens}')) = 'number'
+								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_read_input_tokens}', metadata #>> '{responses_execution,usage,cache_read_input_tokens}'))::numeric::bigint
+						END,
+						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens')::bigint END,
+						CASE WHEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens')::bigint END,
+						0
+					),
+					COALESCE(
+						CASE
+							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #> '{responses_execution,usage,cache_creation_input_tokens}')) = 'number'
+								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #>> '{responses_execution,usage,cache_creation_input_tokens}'))::numeric::bigint
+						END,
+						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens')::bigint END,
+						CASE WHEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
+							THEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens')::bigint END,
+						0
+					),
+					COALESCE(NULLIF(metadata ->> 'resolved_model_group', ''), NULLIF(model_group, '')),
+					COALESCE(split_part("proxy_server_request" ->> 'url', '?', 1), '')
 				FROM expired
 				ON CONFLICT (request_id) DO NOTHING
 			),

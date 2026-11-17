@@ -7,6 +7,7 @@ export interface SessionGroupRef {
 export interface LogEntry {
 	request_id: string;
 	api_key?: string | null;
+	key_alias?: string | null;
 	team_id?: string | null;
 	model?: string | null;
 	model_id?: string | null;
@@ -16,6 +17,8 @@ export interface LogEntry {
 	total_tokens?: number | null;
 	prompt_tokens?: number | null;
 	completion_tokens?: number | null;
+	cache_read_input_tokens?: number | null;
+	cache_creation_input_tokens?: number | null;
 	startTime: string;
 	endTime?: string | null;
 	user?: string | null;

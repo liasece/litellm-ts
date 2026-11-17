@@ -5,19 +5,26 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageLegend from "./charts/UsageLegendComponent.vue";
 import UsageTokensCell from "./UsageTokensCellComponent.vue";
-import { emptyMetrics, addMetrics } from "../logic/UsageSummaryLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import type { DailyActivityResponse, SpendMetrics } from "../support/UsageModels";
-const props = defineProps<{ data: DailyActivityResponse }>();
+import { addMetrics, emptyMetrics } from "../logic/UsageSummaryLogic";
+import type { DailyActivityResponse, SpendMetrics, UsageDetailResponse } from "../support/UsageModels";
+const props = defineProps<{ data?: DailyActivityResponse; detail?: UsageDetailResponse | null }>();
 const money = useMoneyFormatter(),
 	colors = ["blue", "cyan", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "red", "orange"];
 const rows = computed(() => {
+	if (props.detail) {
+		return props.detail.items.map((item) => ({
+			endpoint: item.key,
+			metrics: item.metrics,
+			successRate: item.metrics.api_requests ? (item.metrics.successful_requests / item.metrics.api_requests) * 100 : 0,
+		}));
+	}
 	const map = new Map<string, SpendMetrics>();
-	for (const day of props.data.results)
+	for (const day of props.data?.results ?? [])
 		for (const [endpoint, value] of Object.entries(day.breakdown.endpoints)) {
-			const m = map.get(endpoint) ?? emptyMetrics();
-			addMetrics(m, value.metrics);
-			map.set(endpoint, m);
+			const metrics = map.get(endpoint) ?? emptyMetrics();
+			addMetrics(metrics, value.metrics);
+			map.set(endpoint, metrics);
 		}
 	return [...map].map(([endpoint, metrics]) => ({
 		endpoint,
@@ -38,14 +45,28 @@ const columns = [
 	{ key: "spend", label: "Spend" },
 ];
 const trends = computed(() => {
-	const names = new Set<string>();
-	for (const day of props.data.results) for (const key of Object.keys(day.breakdown.endpoints)) names.add(key);
-	return props.data.results
-		.map((day) => ({
-			date: new Date(day.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-			...Object.fromEntries([...names].map((name) => [name, day.breakdown.endpoints[name]?.metrics.api_requests || 0])),
-		}))
-		.reverse();
+	const byDate = new Map<string, Record<string, number>>();
+	if (props.detail) {
+		for (const item of props.detail.items)
+			for (const day of item.daily) {
+				const row = byDate.get(day.date) ?? {};
+				row[item.key] = day.metrics.api_requests;
+				byDate.set(day.date, row);
+			}
+	} else {
+		for (const day of props.data?.results ?? [])
+			for (const [endpoint, value] of Object.entries(day.breakdown.endpoints)) {
+				const row = byDate.get(day.date) ?? {};
+				row[endpoint] = value.metrics.api_requests;
+				byDate.set(day.date, row);
+			}
+	}
+	return [...byDate.entries()]
+		.sort((left, right) => left[0].localeCompare(right[0]))
+		.map(([date, values]) => ({
+			date: new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+			...values,
+		}));
 });
 const categories = computed(() => Object.keys(trends.value[0] ?? {}).filter((k) => k !== "date"));
 function metricsFor(row: Record<string, unknown>): SpendMetrics {

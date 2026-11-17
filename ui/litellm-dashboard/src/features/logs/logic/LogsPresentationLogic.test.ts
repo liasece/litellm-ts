@@ -21,6 +21,33 @@ describe("request log presentation contracts", () => {
 		);
 		expect(value).toEqual({ cacheRead: 600, creation: 100, input: 400, output: 0 });
 	});
+	it("prefers compact cache columns over metadata and falls back when they are absent", () => {
+		const metadata = {
+			additional_usage_values: {
+				prompt_tokens_details: { cached_tokens: 600 },
+				cache_creation_input_tokens: 100,
+			},
+		};
+		expect(
+			tokenMetrics(
+				log({
+					prompt_tokens: 1000,
+					completion_tokens: 10,
+					metadata,
+					cache_read_input_tokens: 700,
+					cache_creation_input_tokens: 200,
+				}),
+			),
+		).toEqual({ cacheRead: 700, creation: 200, input: 300, output: 10 });
+		expect(tokenMetrics(log({ prompt_tokens: 1000, completion_tokens: 10, metadata }))).toEqual({
+			cacheRead: 600,
+			creation: 100,
+			input: 400,
+			output: 10,
+		});
+		// 非法列值（负数）按缺失处理，仍读 metadata。
+		expect(tokenMetrics(log({ prompt_tokens: 1000, metadata, cache_read_input_tokens: -1 })).cacheRead).toBe(600);
+	});
 	it("shows no token data while a request is still in progress", () => {
 		const pending = log({ status: "in_progress", prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
 		expect(tokenDataPending(pending)).toBe(true);

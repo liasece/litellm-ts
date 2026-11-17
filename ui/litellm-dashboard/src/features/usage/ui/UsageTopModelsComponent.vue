@@ -21,6 +21,9 @@ const props = withDefaults(
 	{ modelValue: undefined, dimension: "spend", showModeToggle: true },
 );
 const emit = defineEmits<{ "update:modelValue": [value: "groups" | "individual"] }>();
+/** 桌面端最多展示 20 个模型；手机端仍保留 5 个，避免旋转标签挤在一起。 */
+const DESKTOP_MODEL_LIMIT = 20,
+	NARROW_MODEL_LIMIT = 5;
 const localMode = ref<"groups" | "individual">("groups");
 const mode = computed({
 		get: () => props.modelValue ?? localMode.value,
@@ -40,7 +43,7 @@ const mode = computed({
 			`${mode.value === "groups" ? "Top Public Model Names" : "Top Litellm Models"} by ${props.dimension === "tokens" ? "Tokens" : "Spend"}`,
 	),
 	narrow = ref(false),
-	displayRows = computed(() => rows.value.slice(0, narrow.value ? 5 : 10)),
+	displayRows = computed(() => rows.value.slice(0, narrow.value ? NARROW_MODEL_LIMIT : DESKTOP_MODEL_LIMIT)),
 	chartRows = computed(() => displayRows.value.map((row) => ({ ...row, label: modelLabel(row.key) })));
 let media: MediaQueryList | undefined;
 function syncNarrow(event?: MediaQueryListEvent) {

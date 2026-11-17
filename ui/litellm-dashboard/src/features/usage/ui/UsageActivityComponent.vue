@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UsageChart from "./charts/UsageChartComponent.vue";
@@ -11,6 +12,7 @@ import { tokenChartFields, usageTokenBreakdown } from "../logic/UsageTokenLogic"
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import type { ModelActivityData, SpendMetrics } from "../support/UsageModels";
+import type { ActivityOverall, ActivityTopEntity } from "../logic/UsageOverviewLogic";
 type ActivityEntityKind = "model" | "key" | "mcp" | "agent";
 const props = withDefaults(
 	defineProps<{
@@ -18,9 +20,23 @@ const props = withDefaults(
 		hidePromptCachingMetrics?: boolean;
 		/** 当前 Tab 的实体类型，只用于顶部 Token 排行的标题和模型名压缩。 */
 		entityKind?: ActivityEntityKind;
+		loading?: boolean;
+		hasMore?: boolean;
+		loadingMore?: boolean;
+		overall?: ActivityOverall | null;
+		topEntities?: ActivityTopEntity[];
 	}>(),
-	{ hidePromptCachingMetrics: false, entityKind: "model" },
+	{
+		hidePromptCachingMetrics: false,
+		entityKind: "model",
+		loading: false,
+		hasMore: false,
+		loadingMore: false,
+		overall: null,
+		topEntities: () => [],
+	},
 );
+const emit = defineEmits<{ loadMore: [] }>();
 const money = useMoneyFormatter(),
 	number = (n: number) => formatNumberWithCommas(n, 0, false);
 const names = computed(() =>
@@ -30,7 +46,13 @@ const names = computed(() =>
 );
 const open = ref(new Set(names.value.length ? [names.value[0]] : [])),
 	visited = ref(new Set(open.value));
-const total = computed(() => overallActivity(props.modelMetrics)),
+// Activity 在 Tab 首次挂载时可能还没拿到 detail；数据到达后自动展开花费最高的实体。
+watch(names, (value) => {
+	if (open.value.size || !value.length) return;
+	open.value = new Set([value[0]]);
+	visited.value = new Set([value[0]]);
+});
+const total = computed(() => props.overall ?? overallActivity(props.modelMetrics)),
 	tokens = computed(() =>
 		usageTokenBreakdown({
 			prompt_tokens: total.value.total_prompt_tokens,
@@ -52,21 +74,20 @@ const total = computed(() => overallActivity(props.modelMetrics)),
 			})[props.entityKind],
 	),
 	topRows = computed(() => {
-		const rows = Object.entries(props.modelMetrics)
-			.map(([key, data]) => {
-				const fullLabel = data.label || key || "Unknown Item";
-				return {
+		const source = props.topEntities.length
+			? props.topEntities.map((item) => ({ ...item, fullLabel: item.label }))
+			: Object.entries(props.modelMetrics).map(([key, data]) => ({
 					key,
-					label: compactEntityLabel(fullLabel),
-					fullLabel,
+					fullLabel: data.label || key || "Unknown Item",
 					tokens: data.total_tokens,
 					spend: data.total_spend,
 					requests: data.total_requests,
-				};
-			})
+				}));
+		return source
+			.map((row) => ({ ...row, label: compactEntityLabel(row.fullLabel) }))
 			.filter((row) => row.tokens > 0)
-			.sort((a, b) => b.tokens - a.tokens);
-		return rows.slice(0, narrow.value ? 5 : 10);
+			.sort((a, b) => b.tokens - a.tokens)
+			.slice(0, narrow.value ? 5 : 10);
 	});
 let media: MediaQueryList | undefined;
 function syncNarrow(event?: MediaQueryListEvent) {
@@ -214,7 +235,8 @@ function toggle(name: string) {
 				>
 			</div>
 		</div>
-		<div class="usage-collapse">
+		<div v-if="loading && !names.length" class="usage-empty">Loading usage details…</div>
+		<div v-else class="usage-collapse">
 			<section v-for="name in names" :key="name">
 				<button :aria-expanded="open.has(name)" @click="toggle(name)">
 					<UiIcon :name="open.has(name) ? 'DownOutlined' : 'RightOutlined'" :size="12" /><span
@@ -231,6 +253,11 @@ function toggle(name: string) {
 					<UsageActivitySection :metrics="modelMetrics[name]" :hide-prompt-caching-metrics="hidePromptCachingMetrics" />
 				</div>
 			</section>
+			<div v-if="hasMore" class="usage-load-more">
+				<UiButton :loading="loadingMore" :disabled="loadingMore" @click="emit('loadMore')">{{
+					loadingMore ? "Loading…" : "Load more"
+				}}</UiButton>
+			</div>
 		</div>
 	</div>
 </template>

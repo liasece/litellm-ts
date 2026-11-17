@@ -54,9 +54,9 @@ describe("active request startup recovery", () => {
 		await expect(abortOrphanedActiveRequests({ transaction: transaction } as never)).resolves.toBe(0);
 	});
 
-	it("两条恢复 INSERT 都同时写入过滤列，错误码与写入的 metadata 一致", async () => {
-		// 这两条语句是近乎重复的：漏改其中一条会让被回收的行在 Logs 表头过滤里查不到
-		// （列值为空），而现象只在重启或租约过期后才出现，所以在这里锁定契约。
+	it("两条恢复 INSERT 都同时写入过滤列和 Usage 投影列", async () => {
+		// 这两条语句是近乎重复的：漏改其中一条会让被回收的行在 Logs 表头过滤或 Usage
+		// 本地时区聚合里缺失（列值为空），而现象只在重启或租约过期后才出现，所以在这里锁定契约。
 		const { execute, statements } = captureStatements();
 		await abortOrphanedActiveRequests(runWith(execute), new Date("2026-07-27T12:00:00.000Z"));
 		await reapExpiredActiveRequests(runWith(execute), new Date("2026-07-27T12:00:00.000Z"));
@@ -66,6 +66,10 @@ describe("active request startup recovery", () => {
 			expect(statement).toContain("key_alias");
 			expect(statement).toContain("error_code");
 			expect(statement).toContain("metadata ->> 'user_api_key_alias'");
+			expect(statement).toContain("cache_read_input_tokens");
+			expect(statement).toContain("cache_creation_input_tokens");
+			expect(statement).toContain("resolved_model_group");
+			expect(statement).toContain("COALESCE(split_part(\"proxy_server_request\" ->> 'url', '?', 1), '')");
 		}
 		expect(statements[0]).toContain("'SERVER_RESTART'");
 		expect(statements[1]).toContain("'LEASE_EXPIRED'");

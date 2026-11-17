@@ -83,6 +83,7 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 			"0008_active_requests_proxy_server_request.sql",
 			"0010_active_request_observation.sql",
 			"0016_spend_log_filter_columns.sql",
+			"0019_spend_log_scalar_columns.sql",
 		]) {
 			const migrationSql = readFileSync(resolve(__dirname, "../../drizzle", file), "utf8");
 			for (const statement of migrationSql.split("--> statement-breakpoint")) {
@@ -147,11 +148,22 @@ describeWithDatabase("Spend reservation PostgreSQL integration", () => {
 			});
 			await expect(abortOrphanedActiveRequests(db)).resolves.toBe(1);
 			const settled = await pool.query(
-				`SELECT status, custom_llm_provider, metadata #>> '{model_map_information,model_map_value,model_family}' AS family
+				`SELECT status, custom_llm_provider, metadata #>> '{model_map_information,model_map_value,model_family}' AS family,
+					cache_read_input_tokens, cache_creation_input_tokens, resolved_model_group, endpoint
 				 FROM "LiteLLM_SpendLogs" WHERE request_id = $1`,
 				[id],
 			);
-			expect(settled.rows).toEqual([{ status: "aborted", custom_llm_provider: "opencode-go", family: "Claude" }]);
+			expect(settled.rows).toEqual([
+				{
+					status: "aborted",
+					custom_llm_provider: "opencode-go",
+					family: "Claude",
+					cache_read_input_tokens: "0",
+					cache_creation_input_tokens: "0",
+					resolved_model_group: alias,
+					endpoint: "",
+				},
+			]);
 		} finally {
 			policy.mockRestore();
 		}

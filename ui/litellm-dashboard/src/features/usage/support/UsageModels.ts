@@ -57,6 +57,34 @@ export interface DailyActivityResponse {
 	results: DailyData[];
 	metadata: UsageMetadata;
 }
+export type UsageDetailView = "models" | "model_groups" | "providers" | "api_keys" | "mcp_servers" | "endpoints" | "entities";
+export interface UsageDayMetrics {
+	date: string;
+	metrics: SpendMetrics;
+	[key: string]: unknown;
+}
+export interface UsageDimensionItem {
+	key: string;
+	metrics: SpendMetrics;
+	metadata?: Record<string, unknown>;
+}
+export interface UsageDetailItem extends UsageDimensionItem {
+	daily: UsageDayMetrics[];
+	top_api_keys?: UsageDimensionItem[];
+	top_models?: UsageDimensionItem[];
+}
+export interface UsageSummaryResponse {
+	view: "summary";
+	results: UsageDayMetrics[];
+	dimensions: Record<UsageDetailView, UsageDimensionItem[]>;
+	metadata: UsageMetadata;
+}
+export interface UsageDetailResponse {
+	view: UsageDetailView;
+	results: UsageDayMetrics[];
+	items: UsageDetailItem[];
+	metadata: UsageMetadata & { total_count: number };
+}
 export interface TopApiKeyData {
 	api_key: string;
 	key_alias: string | null;
@@ -109,6 +137,11 @@ export interface UsageQuery {
 export interface UsageApi {
 	page(query: UsageQuery, page: number, signal?: AbortSignal): Promise<DailyActivityResponse>;
 	aggregated(query: UsageQuery, signal?: AbortSignal): Promise<DailyActivityResponse>;
+}
+export interface UsageInsightsApi {
+	summary(query: UsageQuery, signal?: AbortSignal): Promise<UsageSummaryResponse>;
+	detail(query: UsageQuery, view: UsageDetailView, page: number, signal?: AbortSignal): Promise<UsageDetailResponse>;
+	full(query: UsageQuery, signal?: AbortSignal): Promise<DailyActivityResponse>;
 }
 export interface ModelRanking {
 	key: string;

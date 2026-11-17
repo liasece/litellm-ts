@@ -1,4 +1,4 @@
-import { doublePrecision, pgTable, text, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import { bigint, doublePrecision, pgTable, text, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { CallType, SpendLogStatus } from "../../types/spend";
 
@@ -12,6 +12,13 @@ export const liteLLM_SpendLogs = pgTable(
 		total_tokens: integer("total_tokens").default(0).notNull(),
 		prompt_tokens: integer("prompt_tokens").default(0).notNull(),
 		completion_tokens: integer("completion_tokens").default(0).notNull(),
+		/**
+		 * Usage 热路径的 cache token 投影，来源与日汇总表同名字段一致：
+		 * 优先 `metadata.additional_usage_values`，回退 `metadata.usage_object`。
+		 * 原始日志按浏览器本地日聚合时不能复用 UTC 日汇总，故在这里保留一份。
+		 */
+		cache_read_input_tokens: bigint("cache_read_input_tokens", { mode: "number" }).default(0).notNull(),
+		cache_creation_input_tokens: bigint("cache_creation_input_tokens", { mode: "number" }).default(0).notNull(),
 		startTime: timestamp("startTime", { precision: 3 }).notNull(),
 		endTime: timestamp("endTime", { precision: 3 }).notNull(),
 		request_duration_ms: integer("request_duration_ms"),
@@ -19,13 +26,18 @@ export const liteLLM_SpendLogs = pgTable(
 		model: text("model").default("").notNull(),
 		model_id: text("model_id").default(""),
 		model_group: text("model_group").default(""),
+		/**
+		 * 最终实际执行的公共模型组；`model_group` 仍保留客户端原始请求值。
+		 * Usage/Speed 读取此列，避免为每个分组解压 metadata。
+		 */
+		resolved_model_group: text("resolved_model_group"),
 		custom_llm_provider: text("custom_llm_provider").default(""),
 		api_base: text("api_base").default(""),
 		user: text("user").default(""),
 		metadata: jsonb("metadata").default("{}"),
 		/**
 		 * 过滤用冗余列，取值与 metadata 中的同名字段一致（`user_api_key_alias` /
-		 * `error_information.error_code`）。metadata 平均 3 KB 且存放在 TOAST，
+		 * `error_information.error_code`）。metadata 平均约 1–3 KB 且存放在 TOAST，
 		 * 直接用它做表头过滤要为窗口内每一行解压整份 JSON（冷缓存下 24h 窗口 9–40 s）；
 		 * 这两列让过滤只读小列，写入时由服务端填好，历史行由
 		 * `scripts/backfill-spend-log-filter-columns.cjs` 回填。
@@ -47,6 +59,11 @@ export const liteLLM_SpendLogs = pgTable(
 		),
 		status: text("status").$type<SpendLogStatus>(),
 		mcp_namespaced_tool_name: text("mcp_namespaced_tool_name"),
+		/**
+		 * 代理请求端点的路径投影（去掉 query），来源 `proxy_server_request.url`。
+		 * Endpoint 聚合/导出只读此列，不再为 22 B 的 URL 解压整份 proxy JSON。
+		 */
+		endpoint: text("endpoint"),
 		agent_id: text("agent_id"),
 		proxy_server_request: jsonb("proxy_server_request").default("{}"),
 	},

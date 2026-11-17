@@ -774,10 +774,15 @@ function uiSpendLogSelection() {
 		request_id: liteLLM_SpendLogs.request_id,
 		call_type: liteLLM_SpendLogs.call_type,
 		api_key: liteLLM_SpendLogs.api_key,
+		key_alias: liteLLM_SpendLogs.key_alias,
 		spend: liteLLM_SpendLogs.spend,
 		total_tokens: liteLLM_SpendLogs.total_tokens,
 		prompt_tokens: liteLLM_SpendLogs.prompt_tokens,
 		completion_tokens: liteLLM_SpendLogs.completion_tokens,
+		// 这两个投影列已经由 0019 回填；列表直接读列，避免每行再解压
+		// metadata.additional_usage_values / usage_object。
+		cache_read_input_tokens: liteLLM_SpendLogs.cache_read_input_tokens,
+		cache_creation_input_tokens: liteLLM_SpendLogs.cache_creation_input_tokens,
 		startTime: liteLLM_SpendLogs.startTime,
 		endTime: liteLLM_SpendLogs.endTime,
 		completionStartTime: liteLLM_SpendLogs.completionStartTime,

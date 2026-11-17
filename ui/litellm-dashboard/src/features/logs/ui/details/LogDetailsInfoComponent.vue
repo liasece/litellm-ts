@@ -17,8 +17,8 @@ onBeforeUnmount(() => {
 	if (timer) clearInterval(timer);
 });
 const metadata = computed(() => props.log.metadata ?? {}),
-	readCache = computed(() => cacheTokens(metadata.value, "read")),
-	writeCache = computed(() => cacheTokens(metadata.value, "creation"));
+	readCache = computed(() => cacheTokens(metadata.value, "read", props.log.cache_read_input_tokens)),
+	writeCache = computed(() => cacheTokens(metadata.value, "creation", props.log.cache_creation_input_tokens));
 const duration = computed(() =>
 	props.inProgress
 		? Math.max(0, now.value - new Date(props.log.startTime).getTime())

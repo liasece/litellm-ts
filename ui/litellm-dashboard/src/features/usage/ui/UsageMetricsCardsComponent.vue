@@ -61,51 +61,53 @@ const tokenLines = computed(() => [
 			<h2>Usage Metrics</h2>
 			<p>{{ dateRangeLabel }}</p>
 		</header>
-		<div class="usage-metrics-grid">
-			<div v-for="tile in tiles" :key="tile.label" class="usage-metric">
-				<label
-					>{{ tile.label
-					}}<UiTooltip v-if="tile.tooltip" :title="tile.tooltip"><UiIcon name="InfoCircleOutlined" :size="11" /></UiTooltip
-				></label>
-				<div :style="{ color: tile.color }" :title="tile.value">{{ tile.value }}</div>
+		<div class="usage-metrics-body">
+			<section class="usage-token-panel" aria-label="Token usage">
+				<div class="usage-token-summary">
+					<div class="usage-token-total">
+						<label>Total Tokens</label>
+						<strong>{{ number(metadata.total_tokens) }}</strong>
+					</div>
+					<div class="usage-token-rate">
+						<UiTooltip
+							title="Cache reads divided by all input tokens. Cache writes are not counted as hits, and they stay part of input."
+							><span class="usage-token-rate-value">{{ tokens.hitRate }}%</span></UiTooltip
+						>
+						<span class="usage-token-rate-label">cache hit rate</span>
+						<span class="usage-token-rate-track" aria-hidden="true"
+							><i :style="{ width: Math.min(Math.max(tokens.hitRate, 0), 100) + '%' }"
+						/></span>
+					</div>
+				</div>
+				<div class="usage-token-lines">
+					<div v-for="line in tokenLines" :key="line.key" class="usage-token-line">
+						<span class="usage-token-line-label"
+							><i :style="{ backgroundColor: line.color }" aria-hidden="true" />{{ line.label }}</span
+						>
+						<b>{{ number(line.value) }}</b>
+						<small>{{ percent(line.share) }}</small>
+					</div>
+				</div>
+				<div class="usage-token-composition" aria-hidden="true">
+					<i
+						v-for="line in tokenLines"
+						:key="line.key"
+						:style="{ width: Math.max(line.share, 0) + '%', backgroundColor: line.color }"
+					/>
+				</div>
+				<p v-if="tokens.cacheWrite > 0" class="usage-token-note">
+					Cache write {{ number(tokens.cacheWrite) }} tokens (included in input, excluded from the hit rate).
+				</p>
+			</section>
+			<div class="usage-metrics-grid">
+				<div v-for="tile in tiles" :key="tile.label" class="usage-metric">
+					<label
+						>{{ tile.label
+						}}<UiTooltip v-if="tile.tooltip" :title="tile.tooltip"><UiIcon name="InfoCircleOutlined" :size="11" /></UiTooltip
+					></label>
+					<div :style="{ color: tile.color }" :title="tile.value">{{ tile.value }}</div>
+				</div>
 			</div>
 		</div>
-		<section class="usage-token-panel" aria-label="Token usage">
-			<div class="usage-token-summary">
-				<div class="usage-token-total">
-					<label>Total Tokens</label>
-					<strong>{{ number(metadata.total_tokens) }}</strong>
-				</div>
-				<div class="usage-token-rate">
-					<UiTooltip
-						title="Cache reads divided by all input tokens. Cache writes are not counted as hits, and they stay part of input."
-						><span class="usage-token-rate-value">{{ tokens.hitRate }}%</span></UiTooltip
-					>
-					<span class="usage-token-rate-label">cache hit rate</span>
-					<span class="usage-token-rate-track" aria-hidden="true"
-						><i :style="{ width: Math.min(Math.max(tokens.hitRate, 0), 100) + '%' }"
-					/></span>
-				</div>
-			</div>
-			<div class="usage-token-lines">
-				<div v-for="line in tokenLines" :key="line.key" class="usage-token-line">
-					<span class="usage-token-line-label"
-						><i :style="{ backgroundColor: line.color }" aria-hidden="true" />{{ line.label }}</span
-					>
-					<b>{{ number(line.value) }}</b>
-					<small>{{ percent(line.share) }}</small>
-				</div>
-			</div>
-			<div class="usage-token-composition" aria-hidden="true">
-				<i
-					v-for="line in tokenLines"
-					:key="line.key"
-					:style="{ width: Math.max(line.share, 0) + '%', backgroundColor: line.color }"
-				/>
-			</div>
-			<p v-if="tokens.cacheWrite > 0" class="usage-token-note">
-				Cache write {{ number(tokens.cacheWrite) }} tokens (included in input, excluded from the hit rate).
-			</p>
-		</section>
 	</UiCard>
 </template>

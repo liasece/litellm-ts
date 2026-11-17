@@ -34,14 +34,17 @@ export function spendLogMetadataJsonSql() {
 }
 
 /**
- * 列表投影里的 metadata：剥掉流式 checkpoint 载荷。
+ * 列表投影里的 metadata：剥掉流式 checkpoint 载荷与已投影的用量副本。
  *
  * 流式过程把累计的 response/usage 写进 ActiveRequests 的 `streaming_execution`
  * （CLIProxy 写 `responses_execution`）。请求被重启或租约回收时，那整份累计正文会随行
  * 搬进 SpendLogs.metadata，单行可达数兆；列表读它只会放大每页响应与客户端解析，
  * 详情页的正文来自 response 列与内容寻址块，不依赖这两个内部键。
- * 因此列表读取统一剥除，与在途行列表的同一处理保持一致。
+ *
+ * `additional_usage_values` / `usage_object` 是 cache token 的历史 fallback；0019
+ * 已把同一来源投影到 `cache_read_input_tokens` / `cache_creation_input_tokens`。
+ * 列表优先读列，因此这里不再重复下发；详情仍可从列表行合并到列值。
  */
 export function spendLogListMetadataSql() {
-	return sql<unknown | null>`${liteLLM_SpendLogs.metadata} - 'streaming_execution' - 'responses_execution'`;
+	return sql<unknown | null>`${liteLLM_SpendLogs.metadata} - 'streaming_execution' - 'responses_execution' - 'additional_usage_values' - 'usage_object'`;
 }

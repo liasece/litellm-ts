@@ -27,9 +27,12 @@ import { liteLLM_DailyTeamSpend } from "../db/schema/dailyTeamSpend";
 import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSpend";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
+import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
 import { ModelCostMapService } from "../cost/ModelCostMapService";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 function makeConfig(overrides: Record<string, unknown> = {}, generalSettingsRaw?: Record<string, unknown>): ServiceConfig {
 	return {
@@ -182,7 +185,10 @@ interface DailyActivityKeyMetadataTestRow {
 interface DailyActivityDbQueryLog {
 	activeQueries: number;
 	deletedQueries: number;
+	rawQueries: number;
 	readonly deletedQueryValues: string[];
+	rawQuerySql?: string;
+	rawQueryParams?: readonly unknown[];
 }
 
 /**
@@ -218,9 +224,22 @@ function makeMockDailyActivityDb(
 	activeKeys: readonly DailyActivityKeyMetadataTestRow[] = [],
 	deletedKeys: readonly DailyActivityKeyMetadataTestRow[] = [],
 	failDeletedQuery = false,
+	rawRows: readonly DailyActivityTestRow[] = [],
+	coverageFirst: Date | null = null,
 ): { readonly db: unknown; readonly queryLog: DailyActivityDbQueryLog } {
-	const queryLog: DailyActivityDbQueryLog = { activeQueries: 0, deletedQueries: 0, deletedQueryValues: [] };
+	const queryLog: DailyActivityDbQueryLog = { activeQueries: 0, deletedQueries: 0, rawQueries: 0, deletedQueryValues: [] };
 	const db = {
+		execute: (statement: SQL) => {
+			const query = new PgDialect().sqlToQuery(statement);
+			queryLog.rawQueries += 1;
+			queryLog.rawQuerySql = query.sql;
+			queryLog.rawQueryParams = query.params;
+			// 真实数据库按 SQL 投影 endpoint；mock 需要模拟非 endpoint 视图的 NULL 投影。
+			const rows = query.sql.includes("NULL::text AS endpoint")
+				? rawRows.map((row) => ({ ...row, endpoint: null }))
+				: [...rawRows];
+			return Promise.resolve({ rows });
+		},
 		select: (selection?: unknown) => ({
 			from: (table: unknown) => {
 				if (table === LiteLLM_VerificationToken || table === liteLLM_DeletedVerificationToken) {
@@ -251,8 +270,12 @@ function makeMockDailyActivityDb(
 
 				const rows = [...(rowsByTable.get(table) ?? [])];
 				if (selection !== undefined) {
+					const selected = table === liteLLM_SpendLogs ? [{ first: coverageFirst }] : [{ count: rows.length }];
 					return {
-						where: () => Promise.resolve([{ count: rows.length }]),
+						where: () => Promise.resolve(selected),
+						then: <TResult1 = Array<Record<string, unknown>>>(
+							onfulfilled?: ((value: Array<Record<string, unknown>>) => TResult1 | PromiseLike<TResult1>) | null,
+						) => Promise.resolve(selected).then(onfulfilled),
 					};
 				}
 				let limit = rows.length;
@@ -389,7 +412,9 @@ describe("WebUiSupport 契约", () => {
 			expect(typeof field.field_type).toBe("string");
 
 			const anthropic = res.body.find((provider: { provider: string }) => provider.provider === "Anthropic");
-			const subscription = res.body.find((provider: { litellm_provider: string }) => provider.litellm_provider === "codex-subscription");
+			const subscription = res.body.find(
+				(provider: { litellm_provider: string }) => provider.litellm_provider === "codex-subscription",
+			);
 			expect(subscription).toMatchObject({ provider_display_name: "Codex Subscription", credential_fields: [] });
 			expect(res.body.some((provider: { litellm_provider: string }) => provider.litellm_provider === "cliproxy")).toBe(false);
 			expect(anthropic.credential_fields[0]).toEqual({
@@ -851,6 +876,153 @@ describe("WebUiSupport 契约", () => {
 			});
 		});
 
+		it("带浏览器时区时按原始日志的本地日期聚合", async () => {
+			const row: DailyActivityTestRow = {
+				date: "2026-11-17",
+				api_key: "key-hash",
+				model: "provider/model",
+				model_group: "logical-model",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: "server/tool",
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 10,
+				completion_tokens: 4,
+				cache_read_input_tokens: 2,
+				cache_creation_input_tokens: 1,
+				spend: 0.25,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const { db, queryLog } = makeMockDailyActivityDb(new Map(), [], [], false, [row]);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.results[0]).toMatchObject({
+				date: "2026-11-17",
+				metrics: { spend: 0.25, total_tokens: 14, api_requests: 1 },
+			});
+			expect(queryLog.rawQuerySql).toContain('FROM "LiteLLM_SpendLogs"');
+			expect(queryLog.rawQuerySql).toContain("GROUP BY");
+			expect(queryLog.rawQueryParams).toContain("Asia/Shanghai");
+		});
+
+		it("带时区的 summary 与 detail 仍按本地日口径返回", async () => {
+			const row: DailyActivityTestRow = {
+				date: "2026-11-17",
+				api_key: "key-hash",
+				model: "provider/model",
+				model_group: "logical-model",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 10,
+				completion_tokens: 4,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.25,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const { db } = makeMockDailyActivityDb(new Map(), [], [], false, [row]);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const summary = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=summary",
+			);
+			expect(summary.status).toBe(200);
+			expect(summary.body.results[0]).toMatchObject({ date: "2026-11-17", metrics: { spend: 0.25 } });
+			expect(summary.body.dimensions.models[0]).toMatchObject({ key: "provider/model", metrics: { spend: 0.25 } });
+			expect(summary.body.dimensions.endpoints).toEqual([]);
+			const detail = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=models",
+			);
+			expect(detail.status).toBe(200);
+			expect(detail.body.items[0].daily[0]).toMatchObject({ date: "2026-11-17" });
+		});
+
+		it("原始日志覆盖期之前用日汇总表补齐历史", async () => {
+			const dailyRow: DailyActivityTestRow = {
+				date: "2026-11-16",
+				api_key: "key-hash",
+				model: "provider/model",
+				model_group: "logical-model",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: "server/tool",
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 10,
+				completion_tokens: 4,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 1,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const rawRow = { ...dailyRow, date: "2026-11-17", spend: 0.25 };
+			const { db } = makeMockDailyActivityDb(new Map([[liteLLM_DailyUserSpend, [dailyRow]]]), [], [], false, [rawRow]);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-16&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.results.map((item: { date: string }) => item.date)).toEqual(["2026-11-17", "2026-11-16"]);
+			expect(res.body.metadata).toMatchObject({ total_spend: 1.25, total_api_requests: 2 });
+		});
+
+		it("原始日志完全未覆盖时回落到日汇总表", async () => {
+			const dailyRow: DailyActivityTestRow = {
+				date: "2026-11-14",
+				api_key: "key-hash",
+				model: "provider/model",
+				model_group: "logical-model",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: "server/tool",
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 10,
+				completion_tokens: 4,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 1,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const { db } = makeMockDailyActivityDb(
+				new Map([[liteLLM_DailyUserSpend, [dailyRow]]]),
+				[],
+				[],
+				false,
+				[],
+				new Date("2026-11-15T01:00:00.000Z"),
+			);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-14&end_date=2026-11-14&timezone=-480&timezone_name=Asia/Shanghai",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.results[0]).toMatchObject({ date: "2026-11-14", metrics: { spend: 1 } });
+		});
+
+		it("非法 Usage 时区返回 400", async () => {
+			const { db } = makeMockDailyActivityDb(new Map());
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone_name=Mars/Olympus",
+			);
+			expect(res.status).toBe(400);
+			expect(res.body.error.message).toBe("timezone_name must be a valid IANA time zone name");
+		});
+
 		it("/user/daily/activity 应批量注入 key metadata 并生成所有 nested api_key_breakdown", async () => {
 			const makeRow = (
 				apiKey: string,
@@ -993,6 +1165,246 @@ describe("WebUiSupport 契约", () => {
 				key_name: null,
 				team_id: null,
 			});
+		});
+
+		it("YTD 超过旧一万行源明细上限仍能聚合", async () => {
+			const dayCount = 365;
+			const keysPerDay = 30;
+			const rows: DailyActivityTestRow[] = [];
+			for (let day = 0; day < dayCount; day += 1) {
+				const date = new Date(Date.UTC(2025, 10, 17 + day)).toISOString().slice(0, 10);
+				for (let key = 0; key < keysPerDay; key += 1) {
+					rows.push({
+						date,
+						api_key: `key-${key}`,
+						model: "provider/model",
+						model_group: null,
+						custom_llm_provider: "provider",
+						mcp_namespaced_tool_name: null,
+						endpoint: null,
+						prompt_tokens: 1,
+						completion_tokens: 1,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+						spend: 0.01,
+						api_requests: 1,
+						successful_requests: 1,
+						failed_requests: 0,
+						user_id: "user-1",
+					});
+				}
+			}
+			const { db } = makeMockDailyActivityDb(
+				new Map([[liteLLM_DailyUserSpend, rows]]),
+				[],
+				[],
+				false,
+				[],
+				new Date("2026-11-17T00:00:00.000Z"),
+			);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2025-11-17&end_date=2026-11-16&timezone=-480&timezone_name=Asia/Shanghai",
+			);
+
+			expect(res.status).toBe(200);
+			expect(res.body.results).toHaveLength(dayCount);
+			expect(res.body.metadata.total_spend).toBeCloseTo(dayCount * keysPerDay * 0.01, 6);
+		});
+
+		it("/user/daily/activity/aggregated view=summary 只返回日指标和维度总量", async () => {
+			const base: DailyActivityTestRow = {
+				date: "2026-01-02",
+				api_key: "key-1",
+				model: "provider/model-a",
+				model_group: "group-a",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 2,
+				completion_tokens: 1,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.1,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const rows = [base, { ...base, api_key: "key-2", model: "provider/model-b", spend: 0.2 }];
+			const { db } = makeMockDailyActivityDb(new Map([[liteLLM_DailyUserSpend, rows]]));
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get("/user/daily/activity/aggregated?start_date=2026-01-01&end_date=2026-01-31&view=summary");
+			expect(res.status).toBe(200);
+			expect(res.body.view).toBe("summary");
+			expect(res.body.results[0]).not.toHaveProperty("breakdown");
+			expect(res.body.dimensions.models.map((item: { key: string }) => item.key)).toEqual(["provider/model-b", "provider/model-a"]);
+			expect(res.body.dimensions.api_keys).toHaveLength(2);
+			expect(res.body.dimensions.endpoints).toEqual([]);
+			expect(res.body.metadata.total_spend).toBeCloseTo(0.3, 6);
+		});
+
+		it("不同起始日但原始覆盖相同时复用同一份原始行缓存", async () => {
+			const row: DailyActivityTestRow = {
+				date: "2026-11-17",
+				api_key: "key-1",
+				model: "provider/model-a",
+				model_group: "group-a",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 2,
+				completion_tokens: 1,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.1,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const { db, queryLog } = makeMockDailyActivityDb(
+				new Map(),
+				[],
+				[],
+				false,
+				[row],
+				new Date("2026-11-14T00:00:00.000Z"),
+			);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const recent = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-11&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=summary",
+			);
+			const ytd = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2025-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=summary",
+			);
+
+			expect(recent.status).toBe(200);
+			expect(ytd.status).toBe(200);
+			expect(recent.body.results[0]).toMatchObject({ date: "2026-11-17" });
+			expect(ytd.body.results[0]).toMatchObject({ date: "2026-11-17" });
+			expect(queryLog.rawQueries).toBe(1);
+		});
+
+		it("summary 跳过 endpoint 投影，endpoint 明细才读取", async () => {
+			const row: DailyActivityTestRow = {
+				date: "2026-11-17",
+				api_key: "key-1",
+				model: "provider/model-a",
+				model_group: "group-a",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 2,
+				completion_tokens: 1,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.1,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const { db, queryLog } = makeMockDailyActivityDb(
+				new Map(),
+				[],
+				[],
+				false,
+				[row],
+				new Date("2026-11-17T00:00:00.000Z"),
+			);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const summary = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=summary",
+			);
+			expect(summary.status).toBe(200);
+			const summarySql = queryLog.rawQuerySql ?? "";
+			expect(summarySql).toContain("NULL::text AS endpoint");
+			expect(summarySql).not.toContain("metadata");
+			expect(summarySql).not.toContain("proxy_server_request");
+			expect(summarySql).not.toContain("jsonb_to_record");
+
+			const endpoints = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=endpoints",
+			);
+			expect(endpoints.status).toBe(200);
+			const endpointSql = queryLog.rawQuerySql ?? "";
+			expect(endpointSql).toContain('"LiteLLM_SpendLogs"."endpoint"');
+			expect(endpointSql).not.toContain("metadata");
+			expect(endpointSql).not.toContain("proxy_server_request");
+			expect(endpointSql).not.toContain("jsonb_to_record");
+			expect(queryLog.rawQueries).toBe(2);
+		});
+
+		it("/user/daily/activity/aggregated view=models 分页返回每个模型的日序列与 Top Key", async () => {
+			const base: DailyActivityTestRow = {
+				date: "2026-01-02",
+				api_key: "key-1",
+				model: "provider/model-a",
+				model_group: "group-a",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 2,
+				completion_tokens: 1,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.2,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const rows = [base, { ...base, api_key: "key-2", model: "provider/model-b", spend: 0.1 }];
+			const { db } = makeMockDailyActivityDb(new Map([[liteLLM_DailyUserSpend, rows]]));
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-01-01&end_date=2026-01-31&view=models&page=1&page_size=1",
+			);
+			expect(res.status).toBe(200);
+			expect(res.body.view).toBe("models");
+			expect(res.body.items).toHaveLength(1);
+			expect(res.body.items[0].key).toBe("provider/model-a");
+			expect(res.body.items[0].daily).toHaveLength(1);
+			expect(res.body.items[0].top_api_keys[0].key).toBe("key-1");
+			expect(res.body.metadata).toMatchObject({ total_count: 2, page: 1, has_more: true });
+		});
+
+		it("/user/daily/activity/aggregated view=api_keys&entity 只返回指定 Key 的明细", async () => {
+			const row: DailyActivityTestRow = {
+				date: "2026-01-02",
+				api_key: "key-1",
+				model: "provider/model-a",
+				model_group: "group-a",
+				custom_llm_provider: "provider",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 2,
+				completion_tokens: 1,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.1,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+			};
+			const { db } = makeMockDailyActivityDb(new Map([[liteLLM_DailyUserSpend, [row]]]));
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-01-01&end_date=2026-01-31&view=api_keys&entity=key-1",
+			);
+			expect(res.status).toBe(200);
+			expect(res.body.items).toHaveLength(1);
+			expect(res.body.items[0].key).toBe("key-1");
+			expect(res.body.items[0].top_models[0].key).toBe("provider/model-a");
+		});
+
+		it("/user/daily/activity/aggregated 应拒绝未知 view", async () => {
+			const { db } = makeMockDailyActivityDb(new Map([[liteLLM_DailyUserSpend, []]]));
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get("/user/daily/activity/aggregated?start_date=2026-01-01&end_date=2026-01-31&view=breakdown");
+			expect(res.status).toBe(400);
 		});
 
 		it("/user/daily/activity/aggregated 应返回单页聚合响应", async () => {
@@ -1601,7 +2013,9 @@ describe("ModelsPageSupport 契约", () => {
 	describe("/model_group/info", () => {
 		it("exposes a shared family or supplier only when the deployments in a group agree", async () => {
 			const source = (group: string, provider: string, model: string): Deployment => ({
-				model_name: group, litellm_params: { custom_llm_provider: provider, model }, model_info: {},
+				model_name: group,
+				litellm_params: { custom_llm_provider: provider, model },
+				model_info: {},
 			});
 			const app = buildAuthedApp(makeConfig(), [
 				source("opaque", "commandcode", "deepseek/deepseek-v4"),
@@ -1613,11 +2027,13 @@ describe("ModelsPageSupport 契约", () => {
 			const plain = await request(app).get("/model_group/info").expect(200);
 			expect(plain.body.data[0]).not.toHaveProperty("model_identity");
 			const marked = await request(app).get("/model_group/info?include_model_identity=true").expect(200);
-			expect(marked.body.data).toEqual(expect.arrayContaining([
-				expect.objectContaining({ model_group: "opaque", model_identity: { family: "DeepSeek", provider: null } }),
-				expect.objectContaining({ model_group: "gpt-alias", model_identity: { family: "Claude", provider: "commandcode" } }),
-				expect.objectContaining({ model_group: "mixed", model_identity: { family: null, provider: "commandcode" } }),
-			]));
+			expect(marked.body.data).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ model_group: "opaque", model_identity: { family: "DeepSeek", provider: null } }),
+					expect.objectContaining({ model_group: "gpt-alias", model_identity: { family: "Claude", provider: "commandcode" } }),
+					expect.objectContaining({ model_group: "mixed", model_identity: { family: null, provider: "commandcode" } }),
+				]),
+			);
 		});
 
 		it("应返回 data 数组且每项包含 model_group", async () => {

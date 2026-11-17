@@ -13,11 +13,19 @@ import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import AdvancedDatePicker from "../../date-range/ui/AdvancedDatePickerComponent.vue";
 import type { DateRangeValue } from "../../date-range/support/DateRangeModels";
-import type { DailyData, EntityOption, UsageView } from "../support/UsageModels";
-import { createDailyActivityStore } from "../stores/DailyActivityStore";
+import type { DailyActivityResponse, DailyData, EntityOption, UsageDetailView, UsageQuery, UsageView } from "../support/UsageModels";
+import { createUsageOverviewStore } from "../stores/UsageOverviewStore";
 import { createUsageCatalogStore } from "../stores/UsageCatalogStore";
-import { dateRangeLabel, keyRankings, modelRankings, providerRankings } from "../logic/UsageSummaryLogic";
-import { processActivityData } from "../logic/ActivityMetricsLogic";
+import { dateRangeLabel } from "../logic/UsageSummaryLogic";
+import {
+	detailActivity,
+	emptyUsageMetadata,
+	summaryKeyRankings,
+	summaryModelRankings,
+	summaryOverall,
+	summaryProviderRankings,
+	summaryTopEntities,
+} from "../logic/UsageOverviewLogic";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageChartLoader from "./UsageChartLoaderComponent.vue";
 import UsageMetrics from "./UsageMetricsCardsComponent.vue";
@@ -27,7 +35,6 @@ import UsageTopKeys from "./UsageTopKeysComponent.vue";
 import UsageActivity from "./UsageActivityComponent.vue";
 import UsageEndpoint from "./UsageEndpointComponent.vue";
 import UsageEntity from "./UsageEntityComponent.vue";
-import UsageProgress from "./UsageProgressComponent.vue";
 import UsageExport from "./UsageExportDialogComponent.vue";
 import UsageUpstreamQuota from "./UsageUpstreamQuotaComponent.vue";
 import { useTabStripScroll } from "./UsageTabStripScroll";
@@ -43,26 +50,54 @@ const view = ref<UsageView>("global"),
 	selectedUser = ref<string | null>(admin.value ? null : (auth.state.session?.user_id ?? null));
 const modelMode = ref<"groups" | "individual">("groups"),
 	exportOpen = ref(false),
+	exportData = ref<DailyActivityResponse | null>(null),
+	exportLoading = ref(false),
 	dateChanging = ref(false);
-const store = createDailyActivityStore(),
+const overview = createUsageOverviewStore(),
 	catalog = createUsageCatalogStore(),
-	{ state } = store,
 	lists = catalog.state;
 const effectiveUser = computed(() => (admin.value ? selectedUser.value : (auth.state.session?.user_id ?? null)));
+function currentQuery(): UsageQuery | null {
+	const from = date.value.from,
+		to = date.value.to;
+	if (!from || !to || !auth.state.session) return null;
+	return { entity: "global", from, to, selected: effectiveUser.value ? [effectiveUser.value] : [] };
+}
+const detailView = computed<UsageDetailView | null>(() => {
+	if (view.value !== "global") return null;
+	if (tab.value === "models") return "models";
+	if (tab.value === "keys") return "api_keys";
+	if (tab.value === "mcp") return "mcp_servers";
+	if (tab.value === "endpoints") return "endpoints";
+	return null;
+});
+async function loadActiveDetail() {
+	const query = currentQuery(),
+		active = detailView.value;
+	if (!query || !active || !overview.state.summary || overview.state.detailLoading[active] || overview.state.details[active]) return;
+	await overview.loadDetail(query, active);
+}
 watch(
-	() => [date.value.from?.getTime(), date.value.to?.getTime(), effectiveUser.value, Boolean(auth.state.session)],
+	() => [date.value.from?.getTime(), date.value.to?.getTime(), effectiveUser.value, auth.state.session, view.value],
 	async () => {
-		const from = date.value.from,
-			to = date.value.to;
-		if (!from || !to || !auth.state.session) {
-			store.reset();
+		exportData.value = null;
+		const query = currentQuery();
+		if (!query || view.value !== "global") {
+			overview.reset();
+			dateChanging.value = false;
 			return;
 		}
-		await store.load({ entity: "global", from, to, selected: effectiveUser.value ? [effectiveUser.value] : [] });
-		if (!state.loading) dateChanging.value = false;
+		await overview.loadSummary(query);
+		if (!overview.state.loading) dateChanging.value = false;
+		// 日期变化时当前 Tab 的 detail 已被 summary 重置，只有仍停留在明细 Tab 才需要补拉第一页。
+		await loadActiveDetail();
 	},
 	{ immediate: true },
 );
+watch([tab, view], async () => {
+	if (view.value !== "global") return;
+	await loadActiveDetail();
+});
 watch(
 	() => [admin.value, auth.state.session?.user_id],
 	() => {
@@ -75,7 +110,7 @@ watch(view, () => {
 	tab.value = "cost";
 });
 onBeforeUnmount(() => {
-	store.dispose();
+	overview.reset();
 	catalog.dispose();
 });
 const viewOptions = computed(() => [
@@ -114,14 +149,46 @@ const entityOptions = computed<Record<string, EntityOption[]>>(() => ({
 	agent: [],
 	user: lists.users,
 }));
-const modelMetrics = computed(() => processActivityData(state.data, "models", app.state.teams)),
-	keyMetrics = computed(() => processActivityData(state.data, "api_keys", app.state.teams)),
-	mcpMetrics = computed(() => processActivityData(state.data, "mcp_servers", app.state.teams));
-const models = computed(() => modelRankings(state.data)),
-	groups = computed(() => modelRankings(state.data, true)),
-	providers = computed(() => providerRankings(state.data)),
-	keys = computed(() => keyRankings(state.data));
-const days = computed(() => [...state.data.results].sort((a, b) => a.date.localeCompare(b.date)));
+const modelMetrics = computed(() => detailActivity(overview.state.details.models ?? null, app.state.teams, false));
+const keyMetrics = computed(() => detailActivity(overview.state.details.api_keys ?? null, app.state.teams, true));
+const mcpMetrics = computed(() => detailActivity(overview.state.details.mcp_servers ?? null, app.state.teams, false));
+const models = computed(() => summaryModelRankings(overview.state.summary)),
+	groups = computed(() => summaryModelRankings(overview.state.summary, true)),
+	providers = computed(() => summaryProviderRankings(overview.state.summary)),
+	keys = computed(() => summaryKeyRankings(overview.state.summary));
+const metadata = computed(() => overview.state.summary?.metadata ?? emptyUsageMetadata());
+const days = computed(() => [...(overview.state.summary?.results ?? [])].sort((a, b) => a.date.localeCompare(b.date)));
+const overall = computed(() => summaryOverall(overview.state.summary));
+const topEntities = computed(() => {
+	const active = detailView.value;
+	return active ? summaryTopEntities(overview.state.summary, active, app.state.teams) : [];
+});
+function detailHasMore(active: UsageDetailView): boolean {
+	return Boolean(overview.state.details[active]?.metadata.has_more);
+}
+function detailLoadingMore(active: UsageDetailView): boolean {
+	return Boolean(overview.state.detailLoading[active]);
+}
+async function loadMore(active: UsageDetailView) {
+	const query = currentQuery(),
+		detail = overview.state.details[active];
+	if (!query || !detail?.metadata.has_more) return;
+	await overview.loadDetail(query, active, detail.metadata.page + 1, true);
+}
+async function openExport() {
+	const query = currentQuery();
+	if (!query) return;
+	exportLoading.value = true;
+	try {
+		const data = await overview.loadFull(query);
+		if (data) {
+			exportData.value = data;
+			exportOpen.value = true;
+		}
+	} finally {
+		exportLoading.value = false;
+	}
+}
 const tabs = [
 	{ key: "cost", label: "Cost" },
 	{ key: "models", label: "Model Activity" },
@@ -194,19 +261,13 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 				></UiSelect>
 				<div class="usage-toolbar-date"><AdvancedDatePicker :value="date" show-quick-select @value-change="changeDate" /></div>
 			</div>
-			<UsageProgress
-				:fetching="state.isFetchingMore"
-				:cancelled="state.cancelled"
-				:progress="state.progress"
-				@cancel="store.cancel"
-			/>
 			<div v-if="view === 'global'">
 				<div class="usage-global-tabs-toolbar">
 					<div ref="tabsStrip" class="usage-global-tabs-scroll usage-tab-strip" :style="tabsFadeStyle">
 						<UiTabs v-model="tab" :items="tabs" appearance="tremor" class="usage-solid-tabs" />
 					</div>
 					<div class="usage-global-tab-actions">
-						<UiButton size="small" @click="exportOpen = true"
+						<UiButton size="small" :loading="exportLoading" :disabled="exportLoading" @click="openExport"
 							><template #icon
 								><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path
@@ -223,14 +284,14 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 					<div v-show="tab === 'cost'" class="usage-global-cost">
 						<UsageMetrics
 							class="usage-global-wide"
-							:metadata="state.data.metadata"
-							:total-spend="state.data.metadata.total_spend || 0"
+							:metadata="metadata"
+							:total-spend="metadata.total_spend || 0"
 							:max-budget="lists.maxBudget"
 							:date-range-label="dateRangeLabel(date.from, date.to)"
 						/>
 						<UiCard class="usage-panel usage-global-half" appearance="tremor"
 							><h2>Daily Spend</h2>
-							<UsageChartLoader v-if="state.loading" :is-date-changing="dateChanging" /><UsageChart
+							<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
 								v-else
 								:data="days"
 								index="date"
@@ -251,7 +312,7 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 						>
 						<UiCard class="usage-panel usage-global-half" appearance="tremor"
 							><h2>Daily Tokens</h2>
-							<UsageChartLoader v-if="state.loading" :is-date-changing="dateChanging" /><UsageChart
+							<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
 								v-else
 								:data="days"
 								index="date"
@@ -274,7 +335,7 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 							dimension="spend"
 							:groups="groups"
 							:individual="models"
-							:loading="state.loading"
+							:loading="overview.state.loading"
 							:is-date-changing="dateChanging"
 						/>
 						<UsageTopModels
@@ -284,13 +345,13 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 							:show-mode-toggle="false"
 							:groups="groups"
 							:individual="models"
-							:loading="state.loading"
+							:loading="overview.state.loading"
 							:is-date-changing="dateChanging"
 						/>
 						<UsageProviderSpend
 							class="usage-global-left"
 							:provider-spend="providers"
-							:loading="state.loading"
+							:loading="overview.state.loading"
 							:is-date-changing="dateChanging"
 						/>
 						<UiCard class="usage-panel usage-global-right" appearance="tremor"
@@ -298,14 +359,40 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 							<UsageTopKeys :rows="keys"
 						/></UiCard>
 					</div>
-					<UsageActivity v-show="tab === 'models'" :model-metrics="modelMetrics" entity-kind="model" /><UsageActivity
-						v-show="tab === 'keys'"
+					<UsageActivity
+						v-if="tab === 'models'"
+						:model-metrics="modelMetrics"
+						entity-kind="model"
+						:overall="overall"
+						:top-entities="topEntities"
+						:loading="overview.state.detailLoading.models"
+						:has-more="detailHasMore('models')"
+						:loading-more="detailLoadingMore('models')"
+						@load-more="loadMore('models')"
+					/>
+					<UsageActivity
+						v-if="tab === 'keys'"
 						:model-metrics="keyMetrics"
 						entity-kind="key"
-					/><UsageActivity v-show="tab === 'mcp'" :model-metrics="mcpMetrics" entity-kind="mcp" /><UsageEndpoint
-						v-show="tab === 'endpoints'"
-						:data="state.data"
+						:overall="overall"
+						:top-entities="topEntities"
+						:loading="overview.state.detailLoading.api_keys"
+						:has-more="detailHasMore('api_keys')"
+						:loading-more="detailLoadingMore('api_keys')"
+						@load-more="loadMore('api_keys')"
 					/>
+					<UsageActivity
+						v-if="tab === 'mcp'"
+						:model-metrics="mcpMetrics"
+						entity-kind="mcp"
+						:overall="overall"
+						:top-entities="topEntities"
+						:loading="overview.state.detailLoading.mcp_servers"
+						:has-more="detailHasMore('mcp_servers')"
+						:loading-more="detailLoadingMore('mcp_servers')"
+						@load-more="loadMore('mcp_servers')"
+					/>
+					<UsageEndpoint v-if="tab === 'endpoints'" :detail="overview.state.details.endpoints ?? null" />
 				</div>
 			</div>
 			<template v-else
@@ -313,6 +400,13 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 			/></template>
 			<UsageUpstreamQuota :enabled="admin" />
 		</div>
-		<UsageExport v-model:open="exportOpen" entity-type="team" :data="state.data" :date-range="date" custom-title="Export Usage Data" />
+		<UsageExport
+			v-if="exportData"
+			v-model:open="exportOpen"
+			entity-type="team"
+			:data="exportData"
+			:date-range="date"
+			custom-title="Export Usage Data"
+		/>
 	</div>
 </template>
