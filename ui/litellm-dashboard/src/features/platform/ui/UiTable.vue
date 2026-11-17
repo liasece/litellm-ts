@@ -38,7 +38,10 @@ const props = withDefaults(
 		emptyText?: string;
 		/** 整行可点击打开详情：仅影响指针/悬停提示，点击事件始终按 rowClick 发出。 */
 		rowClickable?: boolean;
-		/** 固定列宽布局；声明了数值宽度的列表使用它保持列宽不被内容撑开。 */
+		/**
+		 * 固定列宽布局；数值列宽作为最小宽度。容器更宽时浏览器把余量平均分给各列，
+		 * 更窄时由 minWidth 触发横向滚动，避免内容把列挤成不可读的宽度。
+		 */
 		fixedLayout?: boolean;
 		/** 允许拖拽表头分隔线调整列宽；列宽由调用方持久化时传入 columnWidths。 */
 		resizable?: boolean;

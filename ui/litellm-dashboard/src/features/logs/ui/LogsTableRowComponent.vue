@@ -7,7 +7,7 @@ defineEmits<{ select: [log: LogEntry]; key: [hash: string]; session: [group: Ses
 </script>
 <template>
 	<tr class="ui-table__row ui-table__row--clickable" @click="$emit('select', log)">
-		<td v-for="column in columns" :key="column.id" :style="{ width: column.width + 'px' }">
+		<td v-for="column in columns" :key="column.id" :style="{ width: column.minWidth + 'px' }">
 			<LogsTableCellComponent
 				:log="log"
 				:column="column.id"

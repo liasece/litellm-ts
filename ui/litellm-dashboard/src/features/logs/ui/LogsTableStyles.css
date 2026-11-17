@@ -1,6 +1,27 @@
 .ui-table td .ui-popover-anchor {
 	max-width: 100%;
 }
+.logs-table-host {
+	width: 100%;
+	min-width: 0;
+}
+/* 列多且都是短值，缩小横向内边距把宽度留给 Model / Tokens / TPS 等真正需要空间的列。 */
+.logs-table .ui-table th,
+.logs-table .ui-table td {
+	padding-inline: 12px;
+}
+/* Tokens / TPS 单元格内部还有图标和数值，减少这两列的横向内边距，把像素留给数据。 */
+.logs-table .ui-table th:nth-last-child(2),
+.logs-table .ui-table td:nth-last-child(2),
+.logs-table .ui-table th:last-child,
+.logs-table .ui-table td:last-child {
+	padding-inline: 4px;
+}
+/* 窄列只允许在词间换行，避免 Session / Request 被拆成 “Sessi / on”。 */
+.logs-table .ui-table__header-label,
+.logs-table .ui-table-sort-label__text {
+	overflow-wrap: normal;
+}
 .logs-time-cell {
 	font-family: monospace;
 	width: 148px;
@@ -95,11 +116,19 @@
 	font-size: 14px;
 	line-height: 20px;
 }
+.logs-tps {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .logs-tokens .logs-metric {
 	width: 100%;
 	min-width: 0;
 	padding: 0 4px;
 	height: auto;
+}
+.logs-tps-empty {
+	align-self: center;
+	padding-left: 8px;
+	color: #94a3b8;
 }
 .logs-cost-value {
 	display: inline-flex;
