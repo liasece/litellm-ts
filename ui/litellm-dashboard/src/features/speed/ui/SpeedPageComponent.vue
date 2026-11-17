@@ -51,10 +51,13 @@ onBeforeUnmount(store.dispose);
 			<div>
 				<h1>Speed</h1>
 				<p>
-					输出 TPS = 输出 token 数 ÷ 请求总耗时，与 Logs 页「输出 TPS」列同一口径。
+					输出 TPS = 输出 token 数 ÷（总耗时 − TTFT），与 Logs 页「TPS → Output」同一口径。
 					按<strong>实际执行请求的上游模型与供应商</strong>归组： 发生 fallback 时算在真正执行的模型上，而不是客户端请求的模型名；
 					同一个上游模型由不同供应商执行时分开显示，卡片上标注实际供应商并配图标。 只统计输出不少于
-					{{ state.data?.min_output_tokens ?? 20 }} 个 token、且耗时大于 0 的调用；每个时间段至少要有
+					{{ state.data?.min_output_tokens ?? 20 }} 个 token、且 TTFT 之后仍有可测量生成窗口的调用；TTFT
+					与总耗时相等、或生成窗口不足总耗时 1% 或不足 {{ state.data?.min_generation_window_ms ?? 300 }} 毫秒的请求
+					（如非流式、上游缓冲整段回答）不计入。曲线点与卡片平均值都按 token 加权：Σ输出 token ÷ Σ生成秒数， 不是各请求 TPS
+					的算术平均。每个时间段至少要有
 					{{ state.data?.min_bucket_requests ?? 3 }} 个请求才作为数据点，样本不足的时段留空、曲线在那里断开。 纵轴固定从 0
 					起，曲线越红表示越快。
 				</p>
@@ -116,8 +119,9 @@ onBeforeUnmount(store.dispose);
 			<div v-if="without.length" class="speed-without">
 				<div>有调用但没有可测算输出速度的模型/供应商组合</div>
 				<p>
-					这些模型/供应商组合在区间内只有不可测算的调用（例如图片生成、检索工具、失败请求，或输出不足
-					{{ state.data.min_output_tokens ?? 20 }} 个 token），或者每个时段的样本都少于
+					这些模型/供应商组合在区间内只有不可测算的调用（例如图片生成、检索工具、失败请求，输出不足
+					{{ state.data.min_output_tokens ?? 20 }} 个 token，或首字之后的生成窗口短于
+					{{ state.data.min_generation_window_ms ?? 300 }} 毫秒），或者每个时段的样本都少于
 					{{ state.data.min_bucket_requests ?? 3 }} 个请求；因此没有 TPS 曲线。列出它们是为了说明「为什么这里有模型却没有图」。
 				</p>
 				<div class="speed-without-models">

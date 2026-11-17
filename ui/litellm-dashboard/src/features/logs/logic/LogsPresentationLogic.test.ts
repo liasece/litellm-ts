@@ -3,10 +3,11 @@ import {
 	buildModelResolutionLines,
 	durationMs,
 	modelIdentity,
-	outputTps,
 	tokenCostBreakdown,
 	tokenDataPending,
 	tokenMetrics,
+	tpsMetrics,
+	ttftMs,
 } from "./LogsPresentationLogic";
 import type { LogEntry } from "../support/LogsModels";
 const log = (data: Partial<LogEntry>): LogEntry => ({ request_id: "fixture", startTime: "2026-11-07T00:00:00Z", ...data });
@@ -55,12 +56,63 @@ describe("request log presentation contracts", () => {
 		expect(tokenDataPending({ ...pending, prompt_tokens: 320 })).toBe(false);
 		expect(tokenDataPending(log({ prompt_tokens: 0, completion_tokens: 0 }))).toBe(false);
 	});
-	it("uses the complete request duration for TPS and hides small outputs", () => {
+	it("measures input TPS over TTFT and output TPS over the generation window", () => {
+		const value = tpsMetrics(
+			log({
+				prompt_tokens: 1000,
+				cache_read_input_tokens: 600,
+				completion_tokens: 100,
+				completionStartTime: "2026-11-07T00:00:02Z",
+				endTime: "2026-11-07T00:00:10Z",
+			}),
+		);
+		expect(value).toEqual({
+			input: { value: 200, tokens: 400, seconds: 2 },
+			output: { value: 12.5, tokens: 100, seconds: 8 },
+		});
 		expect(
-			outputTps(log({ completion_tokens: 100, endTime: "2026-11-07T00:00:10Z", completionStartTime: "2026-11-07T00:00:09Z" })),
-		).toEqual({ value: 10, duration: 10, tokens: 100 });
-		expect(outputTps(log({ completion_tokens: 19 }))).toBeNull();
-		expect(outputTps(log({ completion_tokens: 20, endTime: "invalid" }))).toBe("-");
+			tpsMetrics(log({ completion_tokens: 19, completionStartTime: "2026-11-07T00:00:02Z", endTime: "2026-11-07T00:00:10Z" }))
+				?.output,
+		).toBeNull();
+	});
+	it("hides TPS when TTFT consumes the whole request or has no separate generation window", () => {
+		const base = { startTime: "2026-11-07T00:00:00Z", endTime: "2026-11-07T00:00:10Z", completion_tokens: 100 };
+		expect(tpsMetrics(log({ ...base, completionStartTime: "2026-11-07T00:00:10Z" }))).toBeNull();
+		expect(tpsMetrics(log({ ...base, completionStartTime: "2026-11-07T00:00:09.95Z" }))).toBeNull();
+		expect(tpsMetrics(log({ ...base, completionStartTime: "2026-11-07T00:00:11Z" }))).toBeNull();
+		expect(tpsMetrics(log({ ...base, completionStartTime: null }))).toBeNull();
+		expect(tpsMetrics(log({ ...base, completionStartTime: "invalid" }))).toBeNull();
+	});
+	it("hides TPS when the generation window is too short to measure, even if it passes the share check", () => {
+		// 12 秒的 Responses 请求里，上游一次 flush 出 1800 个 token，首字到结束只有
+		// 150 毫秒：占 1.25% 通过了比例检查，但算出来是 12000 TPS 的投递尖峰。
+		const burst = {
+			startTime: "2026-11-07T00:00:00Z",
+			completionStartTime: "2026-11-07T00:00:11.85Z",
+			endTime: "2026-11-07T00:00:12Z",
+			completion_tokens: 1800,
+		};
+		expect(tpsMetrics(log(burst))).toBeNull();
+		// 299 毫秒仍在门槛内
+		expect(tpsMetrics(log({ ...burst, completionStartTime: "2026-11-07T00:00:11.701Z" }))).toBeNull();
+		// 300 毫秒是下限本身：达到门槛就按可测算处理
+		const measured = tpsMetrics(log({ ...burst, completionStartTime: "2026-11-07T00:00:11.7Z" }));
+		expect(measured?.output).toEqual({ value: 6000, tokens: 1800, seconds: 0.3 });
+	});
+	it("reports TTFT only for requests that stream content to the client", () => {
+		// 非流式请求只有一个交付时刻：后端把它记成完成起始时间，与 Duration 重合。
+		const nonStream = log({
+			stream: false,
+			startTime: "2026-11-07T00:00:00Z",
+			completionStartTime: "2026-11-07T00:00:09.999Z",
+			endTime: "2026-11-07T00:00:10Z",
+		});
+		expect(ttftMs(nonStream)).toBeNull();
+		// 流式请求的首帧早于结束，这个值是要看的首字延迟。
+		expect(ttftMs(log({ stream: true, completionStartTime: "2026-11-07T00:00:02Z", endTime: "2026-11-07T00:00:10Z" }))).toBe(2000);
+		// 历史行没有流式标记时不能假定非流式，仍按时间戳给出观测值。
+		expect(ttftMs(log({ completionStartTime: "2026-11-07T00:00:02Z", endTime: "2026-11-07T00:00:10Z" }))).toBe(2000);
+		expect(ttftMs(log({ stream: true }))).toBeNull();
 	});
 	it("never presents discounts or tool spend as cache input cost", () => {
 		expect(tokenCostBreakdown(log({ metadata: { cost_breakdown: { total_cost: 10, input_cost: 2, output_cost: 3 } } }))).toMatchObject({

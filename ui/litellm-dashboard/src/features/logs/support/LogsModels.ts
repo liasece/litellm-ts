@@ -36,6 +36,8 @@ export interface LogEntry {
 	session_group_type?: SessionGroupType | null;
 	session_group_id?: string | null;
 	status?: string | null;
+	/** 请求是否要求流式；false 表示非流式，没有「首帧」这个时刻（后端按请求体投影）。 */
+	stream?: boolean | null;
 	completionStartTime?: string | null;
 	request_duration_ms?: number | null;
 	session_total_count?: number | null;

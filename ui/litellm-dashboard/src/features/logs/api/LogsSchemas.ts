@@ -36,6 +36,7 @@ export const logEntrySchema = z
 		session_group_type: z.enum(["session_id", "claude_code_user_id"]).nullable().optional(),
 		session_group_id: text,
 		status: text,
+		stream: z.boolean().nullable().optional(),
 		completionStartTime: text,
 		request_duration_ms: number,
 		session_total_count: number,

@@ -169,7 +169,10 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
   `completionStartTime - startTime`。它与 `llm.ttfb_ms` 的区别在终点：上游已开始输出，不代表客户端已收到内容。
   正文、思考和公开工具调用都可以是首个输出；心跳、协议开始事件、空增量、用量和仅在网关内部执行的工具不算。
   Messages 启用内置工具时也逐步下发公开内容。仅发送用量的空流或在首个输出前失败的请求没有 TTFT；
-  已经发出内容后再失败则保留首次写出的时间。非流式成功请求一次交付整份结果，TTFT 可以与总耗时相同。
+  已经发出内容后再失败则保留首次写出的时间。非流式成功请求一次交付整份结果，后端仍把整份响应就绪
+  的时刻记成 `completionStartTime`（与 PY 口径一致），但 Dashboard 不会再把它显示成 TTFT：日志行带
+  `stream` 标记（读 `proxy_server_request.body.stream`，body 缺失时为 NULL），标记为非流式时表格与详情
+  的 TTFT 显示 `-`，避免与 Duration 重复。
   对登记了在途行的请求，首次交付即更新 `LiteLLM_ActiveRequests`；进行中的日志列表（`include_active=true`）
   和最终 SpendLog 读取同一次观测。历史行里缺失的首帧时间无法由结束时间反推。
 - **内置能力没有 TTFT**：内置 web / vision / image_generation 的内部子请求是本地发起的非流式调用，

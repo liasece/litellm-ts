@@ -3,10 +3,45 @@
  *
  * 后端 `GET /global/model_speed` 与 Dashboard Speed 页面共用这里的字段定义、统计门槛
  * 和日期工具，避免两边各写一份后悄悄漂移：阈值变了页面说明却没变，会让人误读图表。
+ *
+ * 输出 TPS 的分母是 `endTime - completionStartTime`（首字之后的生成窗口），不是请求
+ * 总耗时；非流式请求的 completionStartTime 通常等于 endTime，因此不会被计入曲线。
+ *
+ * 聚合口径是 token 加权：桶内平均值与服务级平均值都取 `Σ输出 token ÷ Σ生成秒数`，
+ * 而不是「每条请求各自算出 TPS 再平均」。后者让一条 200 token 的短请求与一条 2 万
+ * token 的长请求等权，短请求里的采样误差会被放大成整个图表的波动；按秒数加权回答的是
+ * 「这些 token 平均每秒生成多少」，与只看一条长请求时的读数一致。
  */
 
-/** 与 Logs 页「输出 TPS」列一致的输出 token 下限 */
-export const MIN_OUTPUT_TOKENS_FOR_SPEED = 20;
+/** Logs TPS 与 Speed 共用的输出 token 下限：太短响应的 TPS 被首字等待主导 */
+export const MIN_OUTPUT_TOKENS_FOR_TPS = 20;
+/** 保留旧名字，Speed 端点与前端 Speed 模块仍按这个名字引用 */
+export const MIN_OUTPUT_TOKENS_FOR_SPEED = MIN_OUTPUT_TOKENS_FOR_TPS;
+/**
+ * 生成窗口至少占总耗时的比例。
+ *
+ * TTFT 与总耗时相等时没有生成窗口；但生产里也存在上游把整段回答缓冲到最后才写出、
+ * 首字和结束只差几毫秒的请求。它们按「生成窗口」算出的 TPS 是交付毛刺而不是模型速度，
+ * 与真正等于总耗时的行一起隐藏。1% 是经验门槛：低于它时首字等待已完全主导请求。
+ *
+ * 比例门槛只挡得住长请求：30 秒的请求可以有 300 毫秒窗口却只占 1%，短请求则相反。
+ * 因此再配一个绝对下限 {@link MIN_GENERATION_WINDOW_MS}，两头都挡住。
+ */
+export const MIN_GENERATION_SHARE_FOR_TPS = 0.01;
+
+/**
+ * 生成窗口的绝对下限（毫秒）。
+ *
+ * 上游把整段回答缓冲到最后才写出时，首字与结束只差几毫秒；比例门槛挡不住短请求里的
+ * 这种窗口（5 秒请求里的 50 毫秒仍占 1%），而 50 毫秒里的 20 个 token 会被算成
+ * 400 tok/s，看起来像模型突然变快。窗口短到不足以观察生成过程时，读数由采样误差
+ * 主导，按不可测算处理比给出数字更接近事实。
+ *
+ * 300 毫秒是经验值：正常流式响应首字之后的窗口通常是秒级（60 个输出 token 按
+ * 200 tok/s 也要 300 毫秒）。生产里 100 毫秒级的窗口仍在报告 9000–13000 tok/s 的读数
+ * ——那是上游一次 flush 出上千 token 的投递尖峰（Responses 通道常见），不是模型速度。
+ */
+export const MIN_GENERATION_WINDOW_MS = 300;
 
 /**
  * 单个时间桶至少要有这么多可测算请求，才作为图上的数据点。
@@ -23,9 +58,9 @@ export type SpeedBucket = "hour" | "day";
 export interface SpeedPoint {
 	/** 桶起点（UTC ISO-8601） */
 	readonly bucket: string;
-	/** 桶内可测算请求的输出 TPS 平均值 */
+	/** 桶内可测算请求按 token 加权的输出 TPS：Σ输出 token ÷ Σ生成秒数 */
 	readonly avg_tps: number;
-	/** 桶内可测算请求的输出 TPS 中位数 */
+	/** 桶内可测算请求在生成窗口内的输出 TPS 中位数 */
 	readonly p50_tps: number;
 	/** 桶内可测算请求数 */
 	readonly requests: number;
@@ -48,9 +83,9 @@ export interface SpeedModelSeries {
 	readonly calls: number;
 	/** 参与统计的可测算请求数（只含达到样本门槛的时间桶） */
 	readonly requests: number;
-	/** 按请求数加权的输出 TPS 平均值 */
+	/** 全部纳入统计的时间桶合并后的 token 加权平均：Σ输出 token ÷ Σ生成秒数 */
 	readonly avg_tps: number;
-	/** 按请求数加权的输出 TPS 中位数 */
+	/** 按请求数加权的生成窗口输出 TPS 中位数 */
 	readonly p50_tps: number;
 	/** 时间序列，按时间升序；样本不足的桶不出现 */
 	readonly points: SpeedPoint[];
@@ -78,6 +113,8 @@ export interface ModelSpeedReport {
 	readonly timezone: string;
 	/** 计入统计的输出 token 下限 */
 	readonly min_output_tokens: number;
+	/** 计入统计的生成窗口绝对下限（毫秒） */
+	readonly min_generation_window_ms: number;
 	/** 单个时间桶的样本量门槛 */
 	readonly min_bucket_requests: number;
 	/** 完整的桶时间轴（UTC ISO-8601，按时间升序），页面据此在缺口处断线 */

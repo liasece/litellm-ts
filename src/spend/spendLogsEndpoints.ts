@@ -86,7 +86,7 @@ import {
 	sessionSnapshotClause,
 	type SessionPosition,
 } from "./sessionPosition";
-import { spendLogDurationSql, spendLogExecutionModelSql, spendLogListMetadataSql, spendLogMetadataJsonSql } from "./spendLogProjections";
+import { spendLogDurationSql, spendLogExecutionModelSql, spendLogListMetadataSql, spendLogMetadataJsonSql, streamRequestedSql } from "./spendLogProjections";
 
 const logger = createModuleLogger("SpendLogs");
 
@@ -849,6 +849,8 @@ function uiSpendLogSelection() {
 		mcp_namespaced_tool_name: liteLLM_SpendLogs.mcp_namespaced_tool_name,
 		agent_id: liteLLM_SpendLogs.agent_id,
 		request_duration_ms: spendLogDurationSql(),
+		// 非流式请求没有「首帧」这个时刻，前端据此把 TTFT 显示成 `-`（见 streamRequestedSql）。
+		stream: streamRequestedSql(liteLLM_SpendLogs.proxy_server_request),
 	};
 }
 
@@ -1102,6 +1104,8 @@ function uiActiveRequestSelection() {
 		mcp_namespaced_tool_name: sql<string | null>`NULL`,
 		agent_id: sql<string | null>`NULL`,
 		request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
+		// 与 SpendLogs 侧同一表达式，进行中的非流式请求同样没有首帧时间。
+		stream: streamRequestedSql(liteLLM_ActiveRequests.proxy_server_request),
 	};
 }
 

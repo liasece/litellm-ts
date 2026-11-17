@@ -120,9 +120,36 @@ const ADMIN_AUTH: UserAPIKeyAuth = { user_id: "admin-user", user_role: "proxy_ad
 describe("buildModelSpeedReport", () => {
 	it("按模型聚合时间序列并按平均输出 TPS 降序排列", () => {
 		const rows: SpeedAggregateRow[] = [
-			{ bucket: "2026-11-02T01:00:00.000Z", model: "fast", provider: "minimax", calls: 10, requests: 8, avg_tps: 100, p50_tps: 90 },
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "fast", provider: "minimax", calls: 10, requests: 4, avg_tps: 50, p50_tps: 40 },
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "slow", provider: "minimax", calls: 3, requests: 3, avg_tps: 10, p50_tps: 9 },
+			{
+				bucket: "2026-11-02T01:00:00.000Z",
+				model: "fast",
+				provider: "minimax",
+				calls: 10,
+				requests: 8,
+				output_tokens: 8000,
+				generation_seconds: 80,
+				p50_tps: 90,
+			},
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "fast",
+				provider: "minimax",
+				calls: 10,
+				requests: 4,
+				output_tokens: 200,
+				generation_seconds: 4,
+				p50_tps: 40,
+			},
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "slow",
+				provider: "minimax",
+				calls: 3,
+				requests: 3,
+				output_tokens: 30,
+				generation_seconds: 3,
+				p50_tps: 9,
+			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
@@ -130,8 +157,9 @@ describe("buildModelSpeedReport", () => {
 		expect(report.models.map((entry) => entry.model)).toEqual(["fast", "slow"]);
 		// 时间点按时间升序，便于前端直接连线
 		expect(report.models[0]!.points.map((point) => point.bucket)).toEqual(["2026-11-02T00:00:00.000Z", "2026-11-02T01:00:00.000Z"]);
-		// 均值按请求数加权：(50*4 + 100*8) / 12
-		expect(report.models[0]!.avg_tps).toBeCloseTo(83.333, 3);
+		// 均值按生成秒数加权：(200 + 8000) / (4 + 80)；若按请求数平均会得到 (50*4 + 100*8) / 12 = 83.3，
+		// 那条短窗口的 8 个请求会把整体拉低，与「这些 token 平均每秒生成多少」不符
+		expect(report.models[0]!.avg_tps).toBeCloseTo(8200 / 84, 6);
 		expect(report.models[0]!.requests).toBe(12);
 		expect(report.models[0]!.calls).toBe(20);
 	});
@@ -144,7 +172,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "opencode-go",
 				calls: 8,
 				requests: 8,
-				avg_tps: 95,
+				output_tokens: 760,
+				generation_seconds: 8,
 				p50_tps: 90,
 			},
 			{
@@ -153,7 +182,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "claude-subscription",
 				calls: 4,
 				requests: 4,
-				avg_tps: 40,
+				output_tokens: 160,
+				generation_seconds: 4,
 				p50_tps: 38,
 			},
 		];
@@ -168,7 +198,16 @@ describe("buildModelSpeedReport", () => {
 
 	it("供应商为空的历史行仍可归组，provider 输出为空字符串", () => {
 		const rows: SpeedAggregateRow[] = [
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "legacy-model", provider: null, calls: 3, requests: 3, avg_tps: 42, p50_tps: 41 },
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "legacy-model",
+				provider: null,
+				calls: 3,
+				requests: 3,
+				output_tokens: 126,
+				generation_seconds: 3,
+				p50_tps: 41,
+			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
@@ -185,7 +224,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "cliproxy",
 				calls: 30,
 				requests: 30,
-				avg_tps: 70,
+				output_tokens: 2100,
+				generation_seconds: 300,
 				p50_tps: 68,
 			},
 			{
@@ -194,20 +234,22 @@ describe("buildModelSpeedReport", () => {
 				provider: "commandcode",
 				calls: 20,
 				requests: 20,
-				avg_tps: 90,
+				output_tokens: 1800,
+				generation_seconds: 20,
 				p50_tps: 88,
 			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
 
-		// 两行实际都由 CommandCode 执行：只应出现一张卡片，速度按请求数加权
+		// 两行实际都由 CommandCode 执行：只应出现一张卡片，速度按生成秒数加权
+		// （7 TPS × 300 秒 与 90 TPS × 20 秒 → 3900 / 320），而不是两条序列的算术平均
 		expect(report.models).toHaveLength(1);
 		const entry = report.models[0]!;
 		expect(entry.provider).toBe("commandcode");
 		expect(entry.calls).toBe(50);
 		expect(entry.requests).toBe(50);
-		expect(entry.avg_tps).toBeCloseTo((70 * 30 + 90 * 20) / 50, 6);
+		expect(entry.avg_tps).toBeCloseTo(3900 / 320, 6);
 	});
 
 	it("cliproxy 前缀不是订阅供应商时归一为空供应商，仍可与空 provider 行合并", () => {
@@ -218,7 +260,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "cliproxy",
 				calls: 5,
 				requests: 5,
-				avg_tps: 33,
+				output_tokens: 165,
+				generation_seconds: 5,
 				p50_tps: 32,
 			},
 			{
@@ -227,7 +270,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "",
 				calls: 3,
 				requests: 3,
-				avg_tps: 45,
+				output_tokens: 135,
+				generation_seconds: 3,
 				p50_tps: 44,
 			},
 		];
@@ -247,7 +291,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "minimax",
 				calls: 1000,
 				requests: 1000,
-				avg_tps: 18,
+				output_tokens: 18000,
+				generation_seconds: 1000,
 				p50_tps: 18,
 			},
 			{
@@ -256,7 +301,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "minimax",
 				calls: 5,
 				requests: 5,
-				avg_tps: 180,
+				output_tokens: 900,
+				generation_seconds: 5,
 				p50_tps: 175,
 			},
 		];
@@ -268,9 +314,36 @@ describe("buildModelSpeedReport", () => {
 
 	it("平均 TPS 相同时按样本量、再按名字稳定排序", () => {
 		const rows: SpeedAggregateRow[] = [
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "b-model", provider: "minimax", calls: 4, requests: 4, avg_tps: 60, p50_tps: 60 },
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "a-model", provider: "minimax", calls: 4, requests: 4, avg_tps: 60, p50_tps: 60 },
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "heavy", provider: "minimax", calls: 40, requests: 40, avg_tps: 60, p50_tps: 60 },
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "b-model",
+				provider: "minimax",
+				calls: 4,
+				requests: 4,
+				output_tokens: 240,
+				generation_seconds: 4,
+				p50_tps: 60,
+			},
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "a-model",
+				provider: "minimax",
+				calls: 4,
+				requests: 4,
+				output_tokens: 240,
+				generation_seconds: 4,
+				p50_tps: 60,
+			},
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "heavy",
+				provider: "minimax",
+				calls: 40,
+				requests: 40,
+				output_tokens: 2400,
+				generation_seconds: 40,
+				p50_tps: 60,
+			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
@@ -280,8 +353,26 @@ describe("buildModelSpeedReport", () => {
 
 	it("单个时段不足 2 个请求时不画点，也不计入模型级平均", () => {
 		const rows: SpeedAggregateRow[] = [
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "steady", provider: "minimax", calls: 12, requests: 12, avg_tps: 90, p50_tps: 85 },
-			{ bucket: "2026-11-02T01:00:00.000Z", model: "steady", provider: "minimax", calls: 1, requests: 1, avg_tps: 400, p50_tps: 400 },
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "steady",
+				provider: "minimax",
+				calls: 12,
+				requests: 12,
+				output_tokens: 1080,
+				generation_seconds: 12,
+				p50_tps: 85,
+			},
+			{
+				bucket: "2026-11-02T01:00:00.000Z",
+				model: "steady",
+				provider: "minimax",
+				calls: 1,
+				requests: 1,
+				output_tokens: 400,
+				generation_seconds: 1,
+				p50_tps: 400,
+			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
@@ -297,7 +388,16 @@ describe("buildModelSpeedReport", () => {
 
 	it("两个请求的时段已经算有效数据点", () => {
 		const rows: SpeedAggregateRow[] = [
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "thin", provider: "minimax", calls: 2, requests: 2, avg_tps: 120, p50_tps: 120 },
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "thin",
+				provider: "minimax",
+				calls: 2,
+				requests: 2,
+				output_tokens: 240,
+				generation_seconds: 2,
+				p50_tps: 120,
+			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
@@ -309,7 +409,16 @@ describe("buildModelSpeedReport", () => {
 
 	it("所有时段都样本不足时归入 without_speed，而不是画成空曲线", () => {
 		const rows: SpeedAggregateRow[] = [
-			{ bucket: "2026-11-02T00:00:00.000Z", model: "rare", provider: "minimax", calls: 1, requests: 1, avg_tps: 120, p50_tps: 120 },
+			{
+				bucket: "2026-11-02T00:00:00.000Z",
+				model: "rare",
+				provider: "minimax",
+				calls: 1,
+				requests: 1,
+				output_tokens: 120,
+				generation_seconds: 1,
+				p50_tps: 120,
+			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
@@ -326,7 +435,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "minimax",
 				calls: 5,
 				requests: 4,
-				avg_tps: 80,
+				output_tokens: 320,
+				generation_seconds: 4,
 				p50_tps: 75,
 			},
 			{
@@ -335,7 +445,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "minimax",
 				calls: 12,
 				requests: 0,
-				avg_tps: null,
+				output_tokens: null,
+				generation_seconds: null,
 				p50_tps: null,
 			},
 			{
@@ -344,7 +455,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "minimax",
 				calls: 7,
 				requests: 0,
-				avg_tps: null,
+				output_tokens: null,
+				generation_seconds: null,
 				p50_tps: null,
 			},
 		];
@@ -367,7 +479,8 @@ describe("buildModelSpeedReport", () => {
 				provider: "minimax",
 				calls: 31,
 				requests: 27,
-				avg_tps: 94.6,
+				output_tokens: 2538,
+				generation_seconds: 27,
 				p50_tps: 79.1,
 			},
 		];
@@ -375,14 +488,43 @@ describe("buildModelSpeedReport", () => {
 		const report = buildModelSpeedReport(rows, OPTIONS);
 
 		expect(report.models_without_speed).toHaveLength(0);
-		expect(report.models[0]!.points).toEqual([{ bucket: "2026-11-01T06:00:00.000Z", avg_tps: 94.6, p50_tps: 79.1, requests: 27 }]);
+		expect(report.models[0]!.points).toEqual([
+			{ bucket: "2026-11-01T06:00:00.000Z", avg_tps: 94, p50_tps: 79.1, requests: 27 },
+		]);
 	});
 
 	it("同时接受 ISO 与带分钟偏移的时间文本", () => {
 		const rows: SpeedAggregateRow[] = [
-			{ bucket: "2026-11-01T01:00:00.000Z", model: "a", provider: "minimax", calls: 3, requests: 3, avg_tps: 11, p50_tps: 11 },
-			{ bucket: "2026-11-01 10:00:00+08:00", model: "a", provider: "minimax", calls: 3, requests: 3, avg_tps: 12, p50_tps: 12 },
-			{ bucket: "2026-11-01 03:00:00.123", model: "a", provider: "minimax", calls: 3, requests: 3, avg_tps: 13, p50_tps: 13 },
+			{
+				bucket: "2026-11-01T01:00:00.000Z",
+				model: "a",
+				provider: "minimax",
+				calls: 3,
+				requests: 3,
+				output_tokens: 33,
+				generation_seconds: 3,
+				p50_tps: 11,
+			},
+			{
+				bucket: "2026-11-01 10:00:00+08:00",
+				model: "a",
+				provider: "minimax",
+				calls: 3,
+				requests: 3,
+				output_tokens: 36,
+				generation_seconds: 3,
+				p50_tps: 12,
+			},
+			{
+				bucket: "2026-11-01 03:00:00.123",
+				model: "a",
+				provider: "minimax",
+				calls: 3,
+				requests: 3,
+				output_tokens: 39,
+				generation_seconds: 3,
+				p50_tps: 13,
+			},
 		];
 
 		const report = buildModelSpeedReport(rows, OPTIONS);
@@ -403,6 +545,7 @@ describe("buildModelSpeedReport", () => {
 			bucket: "hour",
 			timezone: "Asia/Shanghai",
 			min_output_tokens: 20,
+			min_generation_window_ms: 300,
 			min_bucket_requests: 2,
 			buckets: OPTIONS.buckets,
 		});
@@ -512,7 +655,8 @@ describe("GET /global/model_speed", () => {
 					provider: "minimax",
 					calls: 10,
 					requests: 8,
-					avg_tps: 100,
+					output_tokens: 800,
+					generation_seconds: 8,
 					p50_tps: 90,
 				},
 			],
@@ -524,7 +668,9 @@ describe("GET /global/model_speed", () => {
 		expect(response.status).toBe(200);
 		expect(response.body.models).toHaveLength(1);
 		expect(response.body.models[0]).toMatchObject({ model: "MiniMax-M3", provider: "minimax", requests: 8, calls: 10 });
-		expect(response.body.models[0].points).toEqual([{ bucket: "2026-11-02T01:00:00.000Z", avg_tps: 100, p50_tps: 90, requests: 8 }]);
+		expect(response.body.models[0].points).toEqual([
+			{ bucket: "2026-11-02T01:00:00.000Z", avg_tps: 100, p50_tps: 90, requests: 8 },
+		]);
 		expect(response.body.buckets).toEqual(["2026-11-02T00:00:00.000Z", "2026-11-02T01:00:00.000Z"]);
 		expect(response.body.min_bucket_requests).toBe(2);
 	});
@@ -542,6 +688,17 @@ describe("GET /global/model_speed", () => {
 		expect(query).toContain("col:model");
 		// 供应商是序列身份的一部分，响应必须带上实际执行的 Provider
 		expect(query).toContain("col:custom_llm_provider");
+	});
+
+	it("只统计生成窗口至少占总耗时 1% 的调用，并用生成时长作分母", async () => {
+		const { app, handle } = createApp(ADMIN_AUTH);
+
+		await request(app).get("/global/model_speed?start_date=2026-11-01&end_date=2026-11-02");
+
+		const query = handle.sqlText();
+		expect(query).toContain("col:completionStartTime");
+		expect(query).toContain("col:endTime");
+		expect(query).toContain("0.01");
 	});
 
 	it("internal_user 只查询自己产生的调用", async () => {

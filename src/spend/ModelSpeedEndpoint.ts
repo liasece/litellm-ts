@@ -2,16 +2,27 @@
  * 模型输出速率（输出 TPS）时间序列端点
  *
  * OBSERVABILITY > Speed 页面数据源：按「模型 × 时间桶」返回输出 TPS 随时间的变化。
- * 数据来自 LiteLLM_SpendLogs，口径与 Logs 页「输出 TPS」列严格一致：
- *   TPS = completion_tokens / (endTime - startTime)
- * 两处用同一公式，同一条请求在 Logs 与 Speed 上读到的是同一个数值。
+ * 数据来自 LiteLLM_SpendLogs，口径与 Logs 页「TPS → Output」子项严格一致：
+ *   output TPS = completion_tokens / (endTime - completionStartTime)
+ * 分母是首字之后的生成窗口，不是请求总耗时；两处用同一公式，同一条请求在 Logs 与
+ * Speed 上读到的是同一个数值。Logs 的 Input TPS 则以 completionStartTime - startTime
+ * 为分母，Speed 页面仍只展示模型输出速度。
  *
- * 桶内聚合：先算桶内每条可测算请求的 TPS，再求平均（avg_tps），同时给出中位数
- * （p50_tps）。不使用 sum(tokens)/sum(duration)：那是并发吞吐，会被单条长请求主导。
+ * 桶内聚合：把可测算请求按生成耗时加权 —— avg_tps = Σ输出 token ÷ Σ生成秒数，同时
+ * 给出每条请求 TPS 的中位数（p50_tps）。不用「各请求 TPS 的算术平均」：那会让一条
+ * 200 token 的短请求与一条 2 万 token 的长请求等权，短样本的采样误差会主导整个点。
+ * 也不用 sum(tokens)/sum(总耗时)：那不是生成速度，是并发吞吐。
  *
  * 可测算请求（eligible）必须同时满足：
  *   - completion_tokens >= 20（与 Logs 列一致，过短响应的 TPS 被首字等待主导）
- *   - endTime > startTime（排除时长为 0 或负值的脏数据）
+ *   - startTime < completionStartTime < endTime（存在独立的生成窗口）
+ *   - 生成窗口至少占总耗时 MIN_GENERATION_SHARE_FOR_TPS（1%）
+ *   - 生成窗口至少 MIN_GENERATION_WINDOW_MS（300 毫秒）
+ *
+ * 非流式请求的首字时间通常等于结束时间，没有可分离的生成窗口；上游缓冲整段回答再
+ * 一次性写出时，首字与结束也只差几毫秒。这两类行按同一门槛进入 models_without_speed，
+ * 而不是把交付毛刺或请求总耗时当作生成时间参与曲线。比例门槛与绝对下限缺一不可：
+ * 前者挡长请求里的短窗口，后者挡短请求里的短窗口。
  *
  * 归属口径：按「最终实际执行的上游模型」统计，而不是客户端请求的模型名。
  * 正常情况下 model 列就是执行的 deployment 模型（带 provider 前缀）；但发生 fallback、
@@ -50,6 +61,8 @@ import {
 	addDays,
 	currentDayInTimeZone,
 	MIN_BUCKET_REQUESTS,
+	MIN_GENERATION_SHARE_FOR_TPS,
+	MIN_GENERATION_WINDOW_MS,
 	MIN_OUTPUT_TOKENS_FOR_SPEED,
 	type ModelSpeedReport,
 	type SpeedBucket,
@@ -93,8 +106,10 @@ export interface SpeedAggregateRow {
 	readonly calls: number;
 	/** 桶内可测算请求数 */
 	readonly requests: number;
-	/** 桶内可测算请求的输出 TPS 平均值；无样本时为 null */
-	readonly avg_tps: number | null;
+	/** 桶内可测算请求的输出 token 合计；无样本时为 null */
+	readonly output_tokens: number | null;
+	/** 桶内可测算请求的生成秒数合计；无样本时为 null */
+	readonly generation_seconds: number | null;
 	/** 桶内可测算请求的输出 TPS 中位数；无样本时为 null */
 	readonly p50_tps: number | null;
 }
@@ -265,8 +280,13 @@ interface Accumulator {
 	provider: string;
 	calls: number;
 	requests: number;
-	tpsSum: number;
-	tpsWeight: number;
+	/** 纳入序列的各桶输出 token 合计，模型级平均的分子 */
+	outputTokens: number;
+	/** 纳入序列的各桶生成秒数合计，模型级平均的分母 */
+	generationSeconds: number;
+	/** p50 是逐请求指标，跨桶按请求数加权 */
+	p50Sum: number;
+	p50Weight: number;
 	points: SpeedPoint[];
 }
 
@@ -309,6 +329,8 @@ export function speedProviderIdentity(model: string, provider: string | null | u
  * - 历史 cliproxy 行按上游前缀归一成真实订阅供应商，避免同名卡片重复；
  * - 单个桶的可测算请求少于 MIN_BUCKET_REQUESTS 时按「没有数据」处理，不进入序列，
  *   也不计入模型级平均；
+ * - 桶内 TPS 与模型级平均都按生成秒数加权（Σ输出 token ÷ Σ生成秒数），只有中位数
+ *   仍按请求数汇总，因为它是逐请求指标；
  * - 有数据点的模型进入 models，按平均输出 TPS 降序；
  * - 只有调用、没有可用数据点的模型进入 models_without_speed，按调用数降序。
  * @param rows - SQL 聚合结果
@@ -333,7 +355,7 @@ export function buildModelSpeedReport(
 		const key = model + "\u0000" + provider;
 		let entry = byModel.get(key);
 		if (!entry) {
-			entry = { model: model, provider: provider, calls: 0, requests: 0, tpsSum: 0, tpsWeight: 0, points: [] };
+			entry = { model: model, provider: provider, calls: 0, requests: 0, outputTokens: 0, generationSeconds: 0, p50Sum: 0, p50Weight: 0, points: [] };
 			byModel.set(key, entry);
 		}
 		const requests = Math.max(0, finiteOr(row.requests, 0));
@@ -343,15 +365,21 @@ export function buildModelSpeedReport(
 		if (requests < MIN_BUCKET_REQUESTS) {
 			continue;
 		}
-		const avgTps = finiteOr(row.avg_tps, Number.NaN);
+		// 桶内平均是 token 加权：输出 token 合计 ÷ 生成秒数合计。任一分量为空或非正
+		// 说明该桶没有可测算样本，与平均数非法一并跳过。
+		const outputTokens = finiteOr(row.output_tokens, Number.NaN);
+		const generationSeconds = finiteOr(row.generation_seconds, Number.NaN);
 		const bucketIso = toBucketIso(row.bucket);
-		if (!Number.isFinite(avgTps) || avgTps < 0 || bucketIso.length === 0) {
+		if (!Number.isFinite(outputTokens) || !Number.isFinite(generationSeconds) || outputTokens <= 0 || generationSeconds <= 0 || bucketIso.length === 0) {
 			continue;
 		}
+		const avgTps = outputTokens / generationSeconds;
 		const p50Tps = finiteOr(row.p50_tps, avgTps);
 		entry.requests += requests;
-		entry.tpsSum += avgTps * requests;
-		entry.tpsWeight += requests;
+		entry.outputTokens += outputTokens;
+		entry.generationSeconds += generationSeconds;
+		entry.p50Sum += p50Tps * requests;
+		entry.p50Weight += requests;
 		entry.points.push({
 			bucket: bucketIso,
 			avg_tps: avgTps,
@@ -364,18 +392,18 @@ export function buildModelSpeedReport(
 	const modelsWithoutSpeed: SpeedModelWithoutSeries[] = [];
 
 	for (const entry of byModel.values()) {
-		if (entry.requests <= 0 || entry.tpsWeight <= 0 || entry.points.length === 0) {
+		if (entry.requests <= 0 || entry.p50Weight <= 0 || entry.outputTokens <= 0 || entry.generationSeconds <= 0 || entry.points.length === 0) {
 			modelsWithoutSpeed.push({ model: entry.model, provider: entry.provider, calls: entry.calls });
 			continue;
 		}
 		entry.points.sort((left, right) => left.bucket.localeCompare(right.bucket));
-		const p50Weighted = entry.points.reduce((sum, point) => sum + point.p50_tps * point.requests, 0) / entry.tpsWeight;
+		const p50Weighted = entry.p50Sum / entry.p50Weight;
 		models.push({
 			model: entry.model,
 			provider: entry.provider,
 			calls: entry.calls,
 			requests: entry.requests,
-			avg_tps: entry.tpsSum / entry.tpsWeight,
+			avg_tps: entry.outputTokens / entry.generationSeconds,
 			p50_tps: p50Weighted,
 			points: entry.points,
 		});
@@ -399,6 +427,7 @@ export function buildModelSpeedReport(
 		bucket: options.bucket,
 		timezone: options.timezone,
 		min_output_tokens: MIN_OUTPUT_TOKENS_FOR_SPEED,
+		min_generation_window_ms: MIN_GENERATION_WINDOW_MS,
 		min_bucket_requests: MIN_BUCKET_REQUESTS,
 		buckets: Array.from(options.buckets),
 		models: models,
@@ -418,9 +447,20 @@ export function registerModelSpeedEndpoints(router: Router, db: NodePgDatabase<t
 		const bucket = resolveSpeedBucket(range.rangeDays, req.query["bucket"]);
 		const endDateExclusive = addDays(range.endDate, 1);
 
-		// eligible 与 Logs 页「输出 TPS」列同一门槛
-		const eligible = sql`(${liteLLM_SpendLogs.completion_tokens} >= ${MIN_OUTPUT_TOKENS_FOR_SPEED} AND ${liteLLM_SpendLogs.endTime} > ${liteLLM_SpendLogs.startTime})`;
-		const tpsExpr = sql`${liteLLM_SpendLogs.completion_tokens}::double precision / EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.startTime}))`;
+		// eligible 与 Logs 页「TPS → Output」同一门槛：输出足够长，且首字之后确实还有
+		// 可测量的生成窗口。两个条件同时存在：比例挡住「长请求里的几毫秒窗口」，绝对
+		// 下限挡住「短请求里的几十毫秒窗口」——后者按比例看仍然合法，算出来却是上万 TPS，
+		// 属于上游一次性写出的交付毛刺，不是模型速度。
+		const generationWindowExpr = sql`EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.completionStartTime}))`;
+		const requestDurationExpr = sql`EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.startTime}))`;
+		const eligible = sql`(${liteLLM_SpendLogs.completion_tokens} >= ${MIN_OUTPUT_TOKENS_FOR_SPEED}
+			AND ${liteLLM_SpendLogs.completionStartTime} IS NOT NULL
+			AND ${liteLLM_SpendLogs.completionStartTime} > ${liteLLM_SpendLogs.startTime}
+			AND ${liteLLM_SpendLogs.completionStartTime} < ${liteLLM_SpendLogs.endTime}
+			AND ${generationWindowExpr} >= ${MIN_GENERATION_SHARE_FOR_TPS} * ${requestDurationExpr}
+			AND ${generationWindowExpr} >= ${MIN_GENERATION_WINDOW_MS / 1000})`;
+		// 分子分母都下发原始合计，桶内平均与跨桶平均都按生成秒数加权；只在 SQL 里
+		// 逐行算 TPS 再平均，会让短请求与长请求等权。中位数仍是逐请求指标，按行排序取分位。
 		// 统一格式化成 UTC ISO 文本：驱动层对 timestamptz 的返回类型不一致（Date 或文本），
 		// 由 SQL 固化格式后前端才能稳定解析
 		// 归属模型：有 deployment（model_id）时它就是实际执行的模型；没有时
@@ -456,7 +496,8 @@ export function registerModelSpeedEndpoints(router: Router, db: NodePgDatabase<t
 				${bucketTextExpr} AS bucket,
 				${model} AS model,
 				${providerExpr} AS provider,
-				CASE WHEN ${eligible} THEN ${tpsExpr} END AS tps
+				CASE WHEN ${eligible} THEN ${liteLLM_SpendLogs.completion_tokens}::double precision END AS output_tokens,
+				CASE WHEN ${eligible} THEN ${generationWindowExpr} END AS generation_seconds
 			FROM ${liteLLM_SpendLogs}
 			WHERE ${and(...conditions, predicate)!}
 		`;
@@ -471,9 +512,10 @@ export function registerModelSpeedEndpoints(router: Router, db: NodePgDatabase<t
 				model,
 				provider,
 				(COUNT(*))::int AS calls,
-				(COUNT(*) FILTER (WHERE tps IS NOT NULL))::int AS requests,
-				AVG(tps) FILTER (WHERE tps IS NOT NULL) AS avg_tps,
-				(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tps) FILTER (WHERE tps IS NOT NULL)) AS p50_tps
+				(COUNT(*) FILTER (WHERE generation_seconds IS NOT NULL))::int AS requests,
+				SUM(output_tokens) AS output_tokens,
+				SUM(generation_seconds) AS generation_seconds,
+				(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY output_tokens / generation_seconds) FILTER (WHERE generation_seconds IS NOT NULL)) AS p50_tps
 			FROM speed_rows
 			GROUP BY 1, 2, 3
 		`;

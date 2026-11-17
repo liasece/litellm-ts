@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
 import { cacheTokens, costView } from "../../logic/LogDetailsMetricsLogic";
 import { detailDate } from "../../logic/LogDetailsDisplayLogic";
+import { ttftMs } from "../../logic/LogsPresentationLogic";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 import UiIcon from "../../../platform/ui/UiIcon.vue";
 import UiTag from "../../../platform/ui/UiTag.vue";
@@ -25,11 +26,7 @@ const duration = computed(() =>
 		: (props.log.request_duration_ms ??
 			(props.log.endTime ? new Date(props.log.endTime).getTime() - new Date(props.log.startTime).getTime() : null)),
 );
-const ttft = computed(() =>
-	props.log.completionStartTime && props.log.completionStartTime !== props.log.endTime
-		? new Date(props.log.completionStartTime).getTime() - new Date(props.log.startTime).getTime()
-		: null,
-);
+const ttft = computed(() => ttftMs(props.log));
 const observed = computed(() => (props.log.prompt_tokens ?? 0) + (props.log.completion_tokens ?? 0) + (props.log.total_tokens ?? 0) > 0);
 const totalTokens = computed(() => props.log.total_tokens ?? (props.log.prompt_tokens ?? 0) + (props.log.completion_tokens ?? 0));
 const costs = computed(() =>

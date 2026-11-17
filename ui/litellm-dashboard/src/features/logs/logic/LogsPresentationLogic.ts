@@ -1,6 +1,7 @@
 import type { LogEntry } from "../support/LogsModels";
 import { isInProgressLog } from "./LogsIdentityLogic";
 import { modelSupplier } from "../../providers/logic/ProviderIdentityLogic";
+import { MIN_GENERATION_SHARE_FOR_TPS, MIN_GENERATION_WINDOW_MS, MIN_OUTPUT_TOKENS_FOR_TPS } from "../../../../../../src/shared/ModelSpeed";
 export function record(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -105,17 +106,73 @@ export function modelIdentity(log: LogEntry) {
 	const fallback = Array.isArray(metadata.fallback_models) ? Math.max(metadata.fallback_models.length - 1, 0) : 0;
 	return { provider, executed, family, displayName, toolLogo, builtin, fallback };
 }
-export function outputTps(log: LogEntry): { value: number; duration: number; tokens: number } | "-" | null {
-	const tokens = Number(log.completion_tokens || 0);
-	if (!Number.isFinite(tokens) || tokens < 20) return null;
-	const duration = (new Date(log.endTime || "").getTime() - new Date(log.startTime).getTime()) / 1000;
-	return Number.isFinite(duration) && duration > 0 ? { value: tokens / duration, duration, tokens } : "-";
+/** TPS 的分母必须是可独立测量的一段耗时，不能把首字等待和生成时间混在一起。 */
+export interface TpsValue {
+	value: number;
+	tokens: number;
+	seconds: number;
+}
+export interface TpsMetrics {
+	/** 输入 TPS 覆盖首字之前的预填充阶段 */
+	input: TpsValue;
+	/** 输出不足 20 token 或没有生成窗口时为 null */
+	output: TpsValue | null;
+}
+/**
+ * 计算输入/输出 TPS。
+ *
+ * 输入 TPS 用首字等待（TTFT）作分母，输出 TPS 用首字之后的生成时间作分母；
+ * 两者不能都除以总耗时，否则输出速度会被首字等待稀释。TTFT 缺失、早于请求开始，
+ * 或不早于结束（非流式请求的 TTFT 通常等于总耗时）时没有可分离的生成窗口，整格不显示。
+ * 上游把整段回答缓冲到最后才写出时，首字与结束也只差几毫秒；生成窗口不足总耗时
+ * MIN_GENERATION_SHARE_FOR_TPS 或不足 MIN_GENERATION_WINDOW_MS 的行同样按「TTFT 已占满请求」
+ * 隐藏，避免把交付毛刺画成模型速度。两个门槛缺一不可：比例挡长请求里的几毫秒窗口，
+ * 绝对下限挡短请求里的几十毫秒窗口（按比例看合法，算出来却是上万 TPS）。
+ * 输出 TPS 继续沿用 MIN_OUTPUT_TOKENS_FOR_TPS 下限，避免极短响应的速度被首字等待主导。
+ * @param log - 日志行
+ */
+export function tpsMetrics(log: LogEntry): TpsMetrics | null {
+	const start = new Date(log.startTime).getTime();
+	const first = log.completionStartTime ? new Date(log.completionStartTime).getTime() : Number.NaN;
+	const end = log.endTime ? new Date(log.endTime).getTime() : Number.NaN;
+	if (!Number.isFinite(start) || !Number.isFinite(first) || !Number.isFinite(end) || first <= start || first >= end) {
+		return null;
+	}
+	const ttft = (first - start) / 1000;
+	const duration = (end - start) / 1000;
+	// 生成窗口按毫秒差直接换算，不用 (duration - ttft)：两个浮点秒相减会在门槛
+	// 附近放大误差（0.1 秒变成 0.09999999999999964），显示值与判断值随之不一致
+	const generationMs = end - first;
+	const generation = generationMs / 1000;
+	if (!(ttft > 0) || !(duration > 0) || !(generation > 0)) return null;
+	// 表格里的 TTFT 与 Duration 都显示两位小数；两者在显示上相等时用户看到的就是
+	// 「TTFT 占满整个请求」。生成窗口不足 1% 是同一现象在缓冲上游上的表现；不足
+	// MIN_GENERATION_WINDOW_MS 则是它在短请求上的表现，两者都属于交付毛刺。
+	if (ttft / duration >= 1 - MIN_GENERATION_SHARE_FOR_TPS || ttft.toFixed(2) === duration.toFixed(2)) return null;
+	if (generationMs < MIN_GENERATION_WINDOW_MS) return null;
+	const tokens = tokenMetrics(log);
+	const input = tokens.input / ttft;
+	const output = tokens.output >= MIN_OUTPUT_TOKENS_FOR_TPS ? tokens.output / generation : null;
+	return {
+		input: { value: input, tokens: tokens.input, seconds: ttft },
+		output: output === null ? null : { value: output, tokens: tokens.output, seconds: generation },
+	};
 }
 export function durationMs(startTime: string, server: number | null | undefined, now: number): number {
 	const start = new Date(startTime).getTime();
 	return Number.isFinite(start) ? Math.max(now - start, server ?? 0, 0) : (server ?? 0);
 }
+/**
+ * 首字延迟（TTFT）：请求到达 → 代理首次向客户端写出内容。
+ *
+ * 非流式请求没有「首帧」这个时刻：后端把整份响应就绪的时间记成完成起始时间，TTFT 因此
+ * 必然等于总耗时。这个数字不是首字等待，与 Duration 并排显示只会让人以为请求在首字上卡了
+ * 很久，所以按请求的流式开关隐藏，表格显示 `-`。历史行没有流式标记（无法判断）时仍按两个
+ * 时间戳计算，不丢弃已经观测到的值。
+ * @param log - 日志行
+ */
 export function ttftMs(log: LogEntry): number | null {
+	if (log.stream === false) return null;
 	if (!log.completionStartTime) return null;
 	const value = new Date(log.completionStartTime).getTime() - new Date(log.startTime).getTime();
 	return Number.isFinite(value) && value > 0 ? value : null;

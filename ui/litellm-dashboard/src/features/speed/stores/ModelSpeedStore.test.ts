@@ -8,6 +8,7 @@ function report(model: string): ModelSpeedReport {
 		bucket: "day",
 		timezone: "UTC",
 		min_output_tokens: 20,
+		min_generation_window_ms: 300,
 		min_bucket_requests: 2,
 		buckets: ["2026-11-07T00:00:00Z"],
 		models: [

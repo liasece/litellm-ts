@@ -7,6 +7,7 @@
  */
 
 import { sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 
 /**
@@ -26,6 +27,27 @@ export function spendLogExecutionModelSql() {
 /** Python UI logs duration expression: DB NULL fallback to endTime-startTime in milliseconds. */
 export function spendLogDurationSql() {
 	return sql<number>`COALESCE(${liteLLM_SpendLogs.request_duration_ms}, GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.startTime})) * 1000))::int)`;
+}
+
+/**
+ * 请求是否要求流式：读 `proxy_server_request.body.stream`。
+ *
+ * 非流式成功响应只在整份结果就绪时写回下游，`completionStartTime` 与 `endTime` 因此只差
+ * 毫秒。Dashboard 若照常按两个时间戳显示 TTFT，这个数字会与 Duration 重复，看起来像首字
+ * 等了整段生成时间；两种「首帧」来源只能靠请求体区分，所以投影成显式标记，而不是让每个
+ * 读取处自行比较时间戳。
+ *
+ * 客户端按 Anthropic/OpenAI 语义省略 `stream` 即非流式，因此 body 已落库但字段缺失要记
+ * `false`；只有整个请求体没有记录（历史行、不写正文的调用类型）才返回 NULL，留给前端用
+ * 时间戳兜底，避免把无法判断的行显示成非流式。
+ * @param column - `proxy_server_request` 列（SpendLogs 与 ActiveRequests 同形状）
+ */
+export function streamRequestedSql(column: AnyPgColumn) {
+	return sql<boolean | null>`CASE
+		WHEN jsonb_typeof(${column} -> 'body') = 'object'
+			THEN COALESCE((${column} -> 'body' ->> 'stream') = 'true', false)
+		ELSE NULL
+	END`;
 }
 
 /** metadata 仅在原生 JSON object 时参与通用字段过滤；历史 string 不做不安全 cast。 */

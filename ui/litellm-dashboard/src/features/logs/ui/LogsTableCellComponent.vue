@@ -13,11 +13,11 @@ import {
 	localLogTime,
 	logStatus,
 	modelIdentity,
-	outputTps,
 	record,
 	tokenCostBreakdown,
 	tokenDataPending,
 	tokenMetrics,
+	tpsMetrics,
 	ttftMs,
 } from "../logic/LogsPresentationLogic";
 import { isInProgressLog, sessionGroupRef } from "../logic/LogsIdentityLogic";
@@ -37,7 +37,7 @@ const model = computed(() => modelIdentity(props.log));
 const tokens = computed(() => tokenMetrics(props.log));
 const pendingTokens = computed(() => tokenDataPending(props.log));
 const ttft = computed(() => ttftMs(props.log));
-const tps = computed(() => outputTps(props.log));
+const tps = computed(() => tpsMetrics(props.log));
 const route = computed(() =>
 	buildModelResolutionLines(props.log.metadata?.fallback_models, props.log.metadata?.model_resolution_chain, model.value.executed),
 );
@@ -250,18 +250,38 @@ const costFields = computed(() => [
 			</span></UiTooltip
 		>
 	</template>
-	<template v-else-if="column === 'output_tps'"
-		><span v-if="tps === '-'">-</span
-		><LogsMetricComponent
-			v-else-if="tps"
-			:value="tps.value"
-			:max-value="200"
-			color="blue"
-			:label="'Output TPS ' + tps.value.toFixed(1)"
-			:display="tps.value.toFixed(1)"
-			:tooltip="tps.tokens + ' tokens / ' + tps.duration.toFixed(2) + 's'"
-			test-id="output-tps-progress"
-	/></template>
+	<template v-else-if="column === 'tps'">
+		<span
+			v-if="tps"
+			class="logs-tokens logs-tps logs-mono"
+			:aria-label="
+				'Input TPS ' + tps.input.value.toFixed(1) + ', output TPS ' + (tps.output ? tps.output.value.toFixed(1) : 'unavailable')
+			"
+		>
+			<LogsMetricComponent
+				:value="tps.input.value"
+				:max-value="2000"
+				color="blue"
+				:label="'Input TPS ' + tps.input.value.toFixed(1)"
+				:display="tps.input.value.toFixed(1)"
+				:tooltip="'Input ' + tps.input.tokens + ' tokens / ' + tps.input.seconds.toFixed(2) + 's'"
+				test-id="input-tps-progress"
+				><UiLucideIcon name="ArrowDownToLine" :size="12" />{{ tps.input.value.toFixed(1) }}</LogsMetricComponent
+			>
+			<LogsMetricComponent
+				v-if="tps.output"
+				:value="tps.output.value"
+				:max-value="200"
+				color="blue"
+				:label="'Output TPS ' + tps.output.value.toFixed(1)"
+				:display="tps.output.value.toFixed(1)"
+				:tooltip="'Output ' + tps.output.tokens + ' tokens / ' + tps.output.seconds.toFixed(2) + 's'"
+				test-id="output-tps-progress"
+				><UiLucideIcon name="ArrowUpFromLine" :size="12" />{{ tps.output.value.toFixed(1) }}</LogsMetricComponent
+			>
+			<span v-else class="logs-tps-empty" aria-hidden="true">-</span>
+		</span>
+	</template>
 	<template v-else-if="column === 'request_tags'"
 		><UiTooltip v-if="tags.length" :content="tags.map(([key, value]) => key + ': ' + String(value)).join('\n')"
 			><span class="logs-tag-summary"

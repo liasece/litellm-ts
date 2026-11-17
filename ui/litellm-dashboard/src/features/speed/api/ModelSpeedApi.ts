@@ -8,6 +8,7 @@ const report = z
 		bucket: z.enum(["hour", "day"]),
 		timezone: z.string(),
 		min_output_tokens: z.number(),
+		min_generation_window_ms: z.number(),
 		min_bucket_requests: z.number(),
 		buckets: z.array(z.string()),
 		models: z.array(
