@@ -152,16 +152,37 @@ export function privacyReplacementView(log: LogEntry): PrivacyReplacementView {
 	const kindCounts = new Map<string, number>();
 	for (const row of rows) kindCounts.set(row.kindLabel, (kindCounts.get(row.kindLabel) ?? 0) + row.occurrences);
 	const tokenOccurrences = rows.reduce((sum, row) => sum + row.occurrences, 0);
-	const featureCount = feature?.count ?? 0;
+	// 账本对「只替换了 1 处」省略 count 字段，列表徽标按 1 次展示；这里必须用同一口径，
+	// 否则单处替换的请求会在详情里显示 0 replacements。账本存在时以它为准：模型可能把
+	// 占位符复述到正文里，按内容扫描求和会比实际替换处数大，两处显示就会对不上。
+	const featureCount = feature === undefined ? 0 : Math.max(1, feature.count ?? 1);
 	const featureDetail = feature?.detail ?? "";
-	const summary = kindCounts.size > 0 ? [...kindCounts].map(([label, count]) => `${label} ×${count}`).join(" · ") : featureDetail;
+	const scanSummary = [...kindCounts].map(([label, count]) => `${label} ×${count}`).join(" · ");
+	const summary = featureDetail.length > 0 ? localizeKindsDetail(featureDetail) : scanSummary;
 
 	return {
 		visible: feature !== undefined || rows.length > 0,
-		occurrences: Math.max(featureCount, tokenOccurrences),
+		occurrences: feature === undefined ? tokenOccurrences : featureCount,
 		distinctValues: rows.length,
 		summary,
 		featureDetail,
 		replacements: rows,
 	};
+}
+
+/**
+ * 把账本里的类型摘要（`EMAIL×2, SECRET×1`）换成与行内标签一致的中文类型名。
+ * 认不出的写法原样保留，避免解析失败时把摘要清空。
+ * @param detail - 账本 detail 字段
+ */
+function localizeKindsDetail(detail: string): string {
+	const parts: string[] = [];
+	for (const match of detail.matchAll(/([A-Z][A-Z0-9_]{1,23})\s*×\s*(\d+)|(\+\d+)/g)) {
+		if (match[3] !== undefined) {
+			parts.push(match[3]);
+			continue;
+		}
+		parts.push(`${privacyKindLabel(match[1])} ×${match[2]}`);
+	}
+	return parts.length > 0 ? parts.join(" · ") : detail;
 }

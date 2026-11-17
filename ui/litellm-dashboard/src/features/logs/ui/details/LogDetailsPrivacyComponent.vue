@@ -20,7 +20,8 @@ const view = computed(() => privacyReplacementView(props.log));
 		<div class="ld-privacy">
 			<p class="ld-privacy__note">
 				Only redacted placeholders are stored. Original values are never persisted, so this shows the exact tokens sent upstream and
-				a short surrounding context.
+				a short surrounding context. The heading counts replacements recorded by the gateway, matching the Privacy badge in the logs
+				list; the ×N on each row counts how often that token appears in the stored content.
 			</p>
 			<div v-if="view.replacements.length === 0" class="ld-privacy__empty">
 				<template v-if="view.featureDetail">Recorded replacements: {{ view.featureDetail }}. </template>

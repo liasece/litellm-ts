@@ -25,9 +25,10 @@ describe("log detail privacy replacements", () => {
 	it("归并占位符并保留位置、次数和脱敏上下文", () => {
 		const view = privacyReplacementView(log());
 		expect(view.visible).toBe(true);
-		expect(view.occurrences).toBe(3);
+		// 与列表徽标同口径：账本记了 2 处替换，正文里多出来的是模型复述，不计入替换处数。
+		expect(view.occurrences).toBe(2);
 		expect(view.distinctValues).toBe(2);
-		expect(view.summary).toBe("邮箱 ×3");
+		expect(view.summary).toBe("邮箱 ×2");
 		expect(view.replacements).toHaveLength(2);
 		expect(view.replacements[0]).toMatchObject({
 			token: "{{EMAIL_abcd2345}}",
@@ -38,6 +39,20 @@ describe("log detail privacy replacements", () => {
 			field: "[0].content",
 		});
 		expect(view.replacements[0].context).toContain("{{EMAIL_abcd2345}}");
+	});
+
+	it("账本省略 count 时按 1 处替换展示，与列表徽标一致", () => {
+		const view = privacyReplacementView(
+			log({
+				metadata: { applied_features: [{ id: "privacy", detail: "EMAIL×1" }] },
+				messages: null,
+				proxy_server_request: null,
+			}),
+		);
+		expect(view.visible).toBe(true);
+		expect(view.occurrences).toBe(1);
+		expect(view.summary).toBe("邮箱 ×1");
+		expect(view.replacements).toEqual([]);
 	});
 
 	it("正文不可用时仍根据 capabilities 账本显示替换摘要", () => {
