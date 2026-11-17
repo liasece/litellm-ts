@@ -150,7 +150,13 @@ describe("buildActiveRequestDetail", () => {
 				// 升级前的行只有 checkpoint 里的上游字段。
 				metadata: {
 					status: "in_progress",
-					streaming_execution: { upstream_request: { url: "https://api.example.com/v1/messages", body: { model: "claude" } } },
+					streaming_execution: {
+						upstream_request: {
+							url: "https://api.example.com/v1/messages",
+							headers: { Authorization: "Bearer old-secret" },
+							body: { model: "claude" },
+						},
+					},
 				},
 				request_duration_ms: 12,
 			},
@@ -164,5 +170,10 @@ describe("buildActiveRequestDetail", () => {
 		expect((proxyServerRequest["upstream_request"] as Record<string, unknown>)["url"]).toBe(
 			"https://api.example.com/v1/messages",
 		);
+		expect(
+			((proxyServerRequest["upstream_request"] as Record<string, unknown>)["headers"] as Record<string, unknown>)[
+				"Authorization"
+			],
+		).toBe("[REDACTED]");
 	});
 });

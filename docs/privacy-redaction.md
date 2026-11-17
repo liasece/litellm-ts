@@ -51,6 +51,21 @@ Markdown、工具结果）都把占位符渲染成带虚线底色的 `.privacy-t
 - 媒体与文件块、JSON Schema、模型名、工具名、ID 类字段。
 - 结构化 UUID、commit hash、版本号、订单号等没有结构校验的候选值（规则做了排除与校验位检查）。
 
+## SpendLog 中的请求头
+
+请求脱敏处理的是请求体内容；日志里的 `proxy_server_request.headers` 是另一条泄露面。
+写入 SpendLog 与在途行时，`src/spend/SpendTracker.ts` 会把 `authorization`、
+`proxy-authorization`、`api-key`、`x-api-key`、`x-goog-api-key`、`x-litellm-api-key`、`cookie`、`set-cookie`
+的值替换成 `[REDACTED]`，只保留头名。历史行可能仍带原值，读侧
+`src/spend/SpendLogBlocks.ts` 的 `restoreSpendLogPayload` / `hydrateSpendLogRows` 会再兜底
+一次，因此列表、详情、Session 与 WebSocket 详情都不会把凭据值交给 dashboard。
+这条规则不依赖 Privacy 开关，也不改变发往上游的请求头；排障需要确认头是否存在时只看键名。
+
+2026-11-17 起，历史行不再只靠读侧兜底：`scripts/cleanup-spend-log-sensitive-data.cjs` 会把
+`LiteLLM_SpendLogs` 与 `LiteLLM_ActiveRequests` 的 `proxy_server_request` 中原始认证头替换成
+`[REDACTED]`，并删除 `__litellm_responses_body`。脚本复用写路径的同一 helper，幂等、批处理，
+只改这一列；读侧脱敏仍保留，用于防御外部写入或未来回填遗漏。初次统计见[清理记录](cleanup-candidates.md#2026-11-17-无读取入口对象与历史敏感字段清理)。
+
 ## 配置
 
 配置存放在 `litellm_settings.privacy_masking`。页面「Privacy」把所有配置都做成了可编辑控件：

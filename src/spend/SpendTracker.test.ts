@@ -33,6 +33,7 @@ import {
 	resolveFinalModelGroup,
 	renewSpendReservation,
 	reserveSpend,
+	sanitizeSpendLogHeaders,
 	sanitizeSpendLogPayload,
 	settleSpend,
 	startSpendReservationHeartbeat,
@@ -629,7 +630,7 @@ describe("trackSpendLog 原子提交", () => {
 			user: "user-id",
 		});
 
-		// 八个主体合并为一条 WITH 语句：既保证只付一次往返，也保证每个主体都做 NULL 兼容累加。
+		// 七个主体合并为一条 WITH 语句：既保证只付一次往返，也保证每个主体都做 NULL 兼容累加。
 		expect(executedStatements).toHaveLength(1);
 		const statement = executedStatements[0]!;
 		for (const table of [
@@ -640,11 +641,10 @@ describe("trackSpendLog 原子提交", () => {
 			"LiteLLM_ProjectTable",
 			"LiteLLM_TeamMembership",
 			"LiteLLM_EndUserTable",
-			"LiteLLM_AgentsTable",
 		]) {
 			expect(statement).toContain(`UPDATE "${table}"`);
 		}
-		expect(statement.match(/COALESCE\(/g)).toHaveLength(8);
+		expect(statement.match(/COALESCE\(/g)).toHaveLength(7);
 		expect(statement).toContain("last_active");
 	});
 
@@ -1016,6 +1016,8 @@ describe("SpendTracker API key sanitization", () => {
 			expect(spendLog.api_key.startsWith("sk-")).toBe(false);
 			expect(metadata["user_api_key"]).toBe(spendLog.api_key);
 			expect(stringify(spendLog.proxy_server_request)).toContain(rawApiKey);
+			const proxyHeaders = (spendLog.proxy_server_request as Record<string, unknown>)["headers"] as Record<string, unknown>;
+			expect(proxyHeaders["authorization"]).toBe("[REDACTED]");
 		} finally {
 			if (previousStorePrompts === undefined) {
 				delete process.env.STORE_PROMPTS_IN_SPEND_LOGS;
@@ -1199,8 +1201,8 @@ describe("SpendTracker API key sanitization", () => {
 				status_code: 400,
 				body: { error: { type: "invalid_request_error" } },
 			});
-			expect((proxy["upstream_request"]?.["headers"] as Record<string, string>)["Authorization"]).toBe(`Bearer ${rawApiKey}`);
-			expect((proxy["upstream_response"]?.["headers"] as Record<string, string>)["set-cookie"]).toBe(rawApiKey);
+			expect((proxy["upstream_request"]?.["headers"] as Record<string, string>)["Authorization"]).toBe("[REDACTED]");
+			expect((proxy["upstream_response"]?.["headers"] as Record<string, string>)["set-cookie"]).toBe("[REDACTED]");
 			expect(spendLog.response).toMatchObject({ error: { code: "400" } });
 			expect(stringify(spendLog.proxy_server_request)).toContain(rawApiKey);
 		} finally {
@@ -1294,6 +1296,25 @@ describe("SpendTracker API key sanitization", () => {
 		expect(metadata["user_api_key"]).toBe(insertData["api_key"]);
 		expect(stringify(insertData)).toContain(rawApiKey);
 		expect(stringify(insertData["proxy_server_request"])).toContain(rawApiKey);
+		const proxyHeaders = (insertData["proxy_server_request"] as Record<string, unknown>)["headers"] as Record<string, unknown>;
+		expect(proxyHeaders["authorization"]).toBe("[REDACTED]");
+	});
+
+	it("sanitizeSpendLogHeaders 只脱敏认证类头，保留排障头", () => {
+		const headers = sanitizeSpendLogHeaders({
+			authorization: "Bearer secret",
+			"X-Api-Key": "secret",
+			cookie: "session=secret",
+			"content-type": "application/json",
+			"x-request-id": "req-1",
+		});
+		expect(headers).toMatchObject({
+			authorization: "[REDACTED]",
+			"X-Api-Key": "[REDACTED]",
+			cookie: "[REDACTED]",
+			"content-type": "application/json",
+			"x-request-id": "req-1",
+		});
 	});
 
 	it("过滤列 key_alias / error_code 与 metadata 同源写入，缺失时保持 NULL", async () => {

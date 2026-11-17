@@ -51,8 +51,7 @@ describeWithDatabase("Session timeline upstream request PostgreSQL integration",
 		await db.execute(sql`CREATE TABLE "LiteLLM_SpendLogBlocks" (
 			block_id text PRIMARY KEY,
 			payload jsonb NOT NULL,
-			byte_size integer NOT NULL,
-			first_seen timestamp DEFAULT now() NOT NULL
+			byte_size integer NOT NULL
 		)`);
 	});
 

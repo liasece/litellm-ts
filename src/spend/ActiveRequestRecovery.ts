@@ -9,6 +9,7 @@ import {
 	type SpendLogBlockRecord,
 	collectReferencedBlockIds,
 	collectSpendLogBlocks,
+	prepareSpendLogProxyForStorage,
 	selectMissingSpendLogBlocks,
 	shouldDeduplicateSpendLogBlocks,
 } from "./SpendLogBlocks";
@@ -65,7 +66,9 @@ async function encodeRecoveredRequestPayloads(
 			if (collectReferencedBlockIds({}, row.proxyServerRequest).length > 0) {
 				continue;
 			}
-			const encoding = collectSpendLogBlocks({ messages: {}, proxyServerRequest: row.proxyServerRequest });
+			// 回收行可能由旧进程写入，补做一次与正常写路径相同的认证头脱敏和内部字段清理。
+			const preparedProxy = prepareSpendLogProxyForStorage(row.proxyServerRequest);
+			const encoding = collectSpendLogBlocks({ messages: {}, proxyServerRequest: preparedProxy });
 			if (encoding.blocks.length === 0) {
 				continue;
 			}

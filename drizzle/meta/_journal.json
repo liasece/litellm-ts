@@ -153,6 +153,22 @@
 			"tag": "0018_spend_log_speed_fallback_index",
 			"file": "0018_spend_log_speed_fallback_index.sql",
 			"breakpoints": true
+		},
+		{
+			"idx": 19,
+			"version": "7",
+			"when": 1794790000006,
+			"tag": "0019_spend_log_scalar_columns",
+			"file": "0019_spend_log_scalar_columns.sql",
+			"breakpoints": true
+		},
+		{
+			"idx": 20,
+			"version": "7",
+			"when": 1794790000007,
+			"tag": "0020_cleanup_unused_objects",
+			"file": "0020_cleanup_unused_objects.sql",
+			"breakpoints": true
 		}
 	]
 }

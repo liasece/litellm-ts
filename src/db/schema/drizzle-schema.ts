@@ -35,7 +35,6 @@ export { liteLLM_DailyOrganizationSpend } from "./dailyOrganizationSpend";
 export { liteLLM_DailyTagSpend } from "./dailyTagSpend";
 
 // ─── Group D: Extended Features + Deleted/Audit Tables ───────────────
-export { liteLLM_AgentsTable } from "./agents";
 export { liteLLM_DeletedVerificationToken } from "./deleted-verification-tokens";
 export { liteLLM_DeprecatedVerificationToken } from "./deprecated-tokens";
 export { liteLLM_BuiltinCapabilityImages } from "./builtinCapabilityImages";

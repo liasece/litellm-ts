@@ -14,7 +14,7 @@ import { readLiveResponseSnapshot } from "./LiveResponseRegistry";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
-import { hydrateSpendLogRow } from "./SpendLogBlocks";
+import { hydrateSpendLogRow, prepareSpendLogProxyForStorage } from "./SpendLogBlocks";
 import { toFiniteNumber } from "./spendManagementFormatters";
 
 const logger = createModuleLogger("Spend:UiLogDetail");
@@ -129,8 +129,13 @@ export async function buildActiveRequestDetail(
 	// 记录的 upstream 字段作为兜底，保证升级前写入的行也能看到上游视图。
 	// 在途行正文按内容寻址存块，这里先组装回完整请求体再与 checkpoint 合并。
 	const hydratedActive = await hydrateSpendLogRow(db, { proxy_server_request: activeRow.proxy_server_request });
-	const upstreamRequest = checkpoint?.["upstream_request"] as Record<string, unknown> | undefined;
-	const upstreamResponse = checkpoint?.["upstream_response"] as Record<string, unknown> | undefined;
+	// checkpoint 来自旧进程时可能仍带认证头，合并前按写路径同样脱敏。
+	const upstreamRequest = prepareSpendLogProxyForStorage(
+		checkpoint?.["upstream_request"],
+	) as Record<string, unknown> | undefined;
+	const upstreamResponse = prepareSpendLogProxyForStorage(
+		checkpoint?.["upstream_response"],
+	) as Record<string, unknown> | undefined;
 	const proxyServerRequest = {
 		...((hydratedActive.proxy_server_request as Record<string, unknown> | null | undefined) ?? {}),
 		...(upstreamRequest ? { upstream_request: upstreamRequest } : {}),
@@ -199,8 +204,12 @@ export function applyLiveCheckpointToDetail(
 	}
 	const usage = readInProgressUsage(checkpoint);
 	const previousProxy = (payload["proxy_server_request"] as Record<string, unknown> | null | undefined) ?? {};
-	const upstreamRequest = checkpoint["upstream_request"] as Record<string, unknown> | undefined;
-	const upstreamResponse = checkpoint["upstream_response"] as Record<string, unknown> | undefined;
+	const upstreamRequest = prepareSpendLogProxyForStorage(
+		checkpoint["upstream_request"],
+	) as Record<string, unknown> | undefined;
+	const upstreamResponse = prepareSpendLogProxyForStorage(
+		checkpoint["upstream_response"],
+	) as Record<string, unknown> | undefined;
 	const startTime = typeof payload["startTime"] === "string" ? Date.parse(payload["startTime"]) : Number.NaN;
 	const checkpointFirstChunk =
 		typeof checkpoint["first_chunk_at"] === "string" ? checkpoint["first_chunk_at"] : undefined;
@@ -232,12 +241,14 @@ export function applyLiveCheckpointToDetail(
  * @param requestId - 请求 ID
  * @param startDate - 可选起始时间（收窄冷存储回查窗口）
  * @param endDate - 可选结束时间
+ * @param options - `compactAliases`：保留与列根相同的 `"$messages"` 标记，避免详情重复展开
  */
 export async function buildUiSpendLogDetail(
 	db: NodePgDatabase<typeof schema>,
 	requestId: string,
 	startDate?: Date,
 	endDate?: Date,
+	options: { readonly compactAliases?: boolean } = {},
 ): Promise<UiLogDetailPayload | null> {
 	const coldStoragePayload = await getRequestResponsePayloadFromColdStorage(
 		requestId,
@@ -247,7 +258,7 @@ export async function buildUiSpendLogDetail(
 	);
 	if (coldStoragePayload !== null) {
 		// 冷存储里的负载与落库同源，可能也是引用形态；同样按块组装。
-		return await hydrateSpendLogRow(db, coldStoragePayload);
+		return await hydrateSpendLogRow(db, coldStoragePayload, options);
 	}
 
 	const rows = await db
@@ -264,7 +275,7 @@ export async function buildUiSpendLogDetail(
 	if (completed) {
 		// 内容寻址去重后，messages / proxy_server_request 里存的是块引用；
 		// 详情与日志流共用这一处组装，保证两种编码对外形状一致。
-		return await hydrateSpendLogRow(db, completed);
+		return await hydrateSpendLogRow(db, completed, options);
 	}
 
 	return await buildActiveRequestDetail(db, requestId);

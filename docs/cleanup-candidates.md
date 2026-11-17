@@ -1,7 +1,81 @@
 # 无用功能清理记录
 
-> 调查 2026-11-08，同日按用户确认执行清理并发布生产。本文上半部分是执行结果，末尾保留判定依据，
-> 供后续判断“某功能是否存在”时复查。清理后仓库里不再保留纯占位路由、假成功页面和无读写的表。
+> 首轮调查 2026-11-08，同日按用户确认执行清理并发布生产；2026-11-17 在读路径收紧后做第二轮对象与
+> 历史敏感字段清理。每个日期的小节记录当时的执行结果，末尾保留判定依据，供后续判断“某功能是否存在”
+> 时复查。清理后仓库里不再保留纯占位路由、假成功页面和无读取入口的表/列。
+
+## 2026-11-17 无读取入口对象与历史敏感字段清理
+
+这是 2026-11-08 清理的后续：SpendLog 读路径收紧后，历史认证头与内部 body 已经没有读取入口，原先
+「只脱敏、不删原文」的临时状态可以收口。调查与执行边界如下，详细判定沿用文末的原则。
+
+### 结构清理
+
+| 对象 | 清理前 | 判定依据 |
+| --- | --- | --- |
+| 8 个视图：`DailyTagSpend`、`Last30d*`、`LiteLLM_VerificationTokenView`、`MonthlyGlobalSpend*` | 8 个，全部 0 字节 | TS 代码、Dashboard、脚本和文档都没有查询；全局聚合直接读 `LiteLLM_SpendLogs` 与 `LiteLLM_Daily*` 表 |
+| `litellm_credential_e2e` schema | 59 张空表，约 1.9 MB | 旧测试 schema，不在 `search_path`，代码没有 schema 名引用 |
+| `drizzle` schema | 1 张空 `__drizzle_migrations` | 当前迁移在 `public`；该 schema 没有运行时入口 |
+| `LiteLLM_AgentsTable` | 0 行 | 只在 `SpendTracker` 里累加 `spend`，没有定义、列表或详情读取；`/v1/agents` 管理面已在 0011 删除，agent 日报仍由 `LiteLLM_DailyAgentSpend` 提供 |
+| `LiteLLM_AgentsTable` 的 schema/代码引用 | 1 个 schema 文件、1 个导出、1 段 spend 更新 | 随表一起删除，避免代码继续写一个无人读取的表 |
+| `public._prisma_migrations` | 162 行，约 104 kB | Python 迁移历史；TS 只使用 `public.__drizzle_migrations`，没有读取方 |
+| `LiteLLM_SpendLogBlocks.first_seen` | 1 列 + 1 个索引 | 只有默认值和索引，没有读取；块共享生命周期由引用关系决定，不能按时间清理，保留该列只会增加写放大 |
+
+迁移是 `drizzle/0020_cleanup_unused_objects.sql`，使用 `IF EXISTS`，并先在从生产 `public` schema
+克隆的临时库上执行验证：8 个视图、`LiteLLM_AgentsTable`、`_prisma_migrations` 均消失，
+`first_seen` 列不再存在。`public` 表从 34 张降到 32 张（`LiteLLM_AgentsTable` 与
+`_prisma_migrations`），视图从 8 个降到 0 个。
+
+### 历史敏感数据
+
+`LiteLLM_SpendLogs` 中仍有历史认证头和 Responses 内部请求体；读侧已对它们脱敏/忽略，但原值仍占
+TOAST。新增 [批处理脚本](../scripts/cleanup-spend-log-sensitive-data.cjs)，复用运行时
+`prepareSpendLogProxyForStorage`，只改 `proxy_server_request`：
+
+- 认证头：`authorization`、`proxy-authorization`、`api-key`、`x-api-key`、`x-goog-api-key`、
+  `x-litellm-api-key`、`cookie`、`set-cookie`，包括 `upstream_request` / `upstream_response`；
+- 内部字段：`body`、`upstream_request.body`、`upstream_response.body` 里的
+  `__litellm_responses_body`；
+- 脚本用 `SELECT ... FOR UPDATE SKIP LOCKED`、小批量短事务，幂等，可重复执行；`--write` 之前只统计。
+  执行前只读统计为 52,128 行 `LiteLLM_SpendLogs` 命中，`LiteLLM_ActiveRequests` 为 0 行。
+
+不清理 `LiteLLM_SpendLogBlocks`：块按内容跨行共享，当前没有已证明的孤儿块，也没有按时间删除的安全
+依据；`LiteLLM_SpendLogs` 正文行仍然全部是列表/详情/会话读路径的数据源。
+
+### 保留判定
+
+`public` 其余表均有当前读取方，包括 image completion、privacy redaction、deprecated/deleted tokens、
+spend reservations、end-user、team/organization memberships、search tools、credentials 等；
+`LiteLLM_DailyAgentSpend` 虽然当前无 agent 定义表，但 `/agent/daily/activity` 仍有读取入口，保留。
+视图、空测试 schema 和迁移历史没有外部契约，才进入本轮删除。
+
+列级审计以 Drizzle schema 的列名为入口，扫描 `src/`（排除 schema 与测试）中的直接引用，再对零引用列回查原始 SQL/序列化器。
+`first_seen` 同时满足“无直接引用、无间接读取、无兼容契约”，因此删除。`LiteLLM_ProjectTable` 的
+`project_alias` / `model_rpm_limit` / `model_tpm_limit` 与 `LiteLLM_ObjectPermissionTable` 的
+`blocked_tools` 目前也没有 TS 直接读取；但它们是 Python 对齐 schema 的一部分，生产数据分别为空
+（ProjectTable 0 行、ObjectPermission 4 行且目标列为空）。本轮没有把它们当成“已证明可删”，因为
+“TS 不读”不等于外部数据库契约不存在；若要继续删，应另立兼容性迁移并同步 Python 基线，而不是混在
+本次按读路径确认的清理里。
+
+### 部署与核验
+
+2026-11-17 15:46 CST 标准部署完成：source commit `0e115b8`，镜像 `sha256:fd855f53…`，容器
+`litellm-prod` healthy、`OOMKilled=false`、`RestartCount=0`；`/health/liveliness` 与
+`/ui/?page=logs` 均 200。迁移表 21 条记录，`public` 表 32 张、视图 0 个；
+`LiteLLM_AgentsTable`、`_prisma_migrations`、`litellm_credential_e2e`、`drizzle` schema 与
+`LiteLLM_SpendLogBlocks.first_seen` 均已确认不存在；`LiteLLM_DailyAgentSpend` 与
+`LiteLLM_SpendLogBlocks` 保留。
+
+历史敏感字段清理分两段执行：首段提交 12,800 行后，把脚本改为按主键游标续扫，剩余 39,328 行完成；
+两段合计 52,128 行。复查结果：`LiteLLM_SpendLogs` 中原始 Authorization 0 行、原始 x-api-key 0 行、
+`__litellm_responses_body` 0 行，53,605 行的 Authorization 为 `[REDACTED]`；`LiteLLM_ActiveRequests`
+剩余 0 行。带认证的 compact 详情抽样返回 200（16,815 B），不含内部 body 或明文 Authorization。
+清理后 `n_dead_tup=0`，但表文件大小为 `LiteLLM_SpendLogs` 1,861 MB、`LiteLLM_SpendLogBlocks`
+1,680 MB；没有执行 `VACUUM FULL`，不能把“逻辑值已删除”表述成“物理文件立即缩小”。
+
+验证：`git diff --check`、`typecheck`、`test:types`、ESLint 通过；全量 Jest 2628/2629 通过，既有
+`AnthropicMessagesEndpoint` 套件在全量运行时偶发 404，隔离连续重跑 3 次均 30/30 通过。未 `git commit`、
+未 push；工作区其他修改保持原样。
 
 ## 一、执行摘要
 
@@ -57,6 +131,7 @@ SpendLogToolIndex、SSOConfig、Tag、Tool、UISettings、UserNotifications。
 由 57 张表收缩到 24 张，与生产实际表集合一致。
 
 `0000` 基线迁移保持字节不变（已注册哈希不可改，否则 `MIGRATION_ARTIFACT_MISMATCH`），清理全部通过 `0011` 完成。
+2026-11-17 的 `0020` 又移除无读取入口的 `LiteLLM_AgentsTable`，Python 基线由 24 张进一步收缩到 23 张。
 
 ## 三、Dashboard 删除
 

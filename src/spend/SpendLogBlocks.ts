@@ -67,6 +67,19 @@ export const SPEND_LOG_SYSTEM_FIRST_KEY = "_litellm_ref_system_first";
 export const SPEND_LOG_SYSTEM_SECOND_KEY = "_litellm_ref_system_second";
 /** 引用列表与同行的 `SpendLogs.messages` 列根完全相同时用它代替整个 id 数组。 */
 export const SPEND_LOG_SAME_AS_MESSAGES = "$messages";
+/** 敏感请求头的占位值；保留键名便于排障，但不保留值。 */
+export const SPEND_LOG_REDACTED_HEADER_VALUE = "[REDACTED]";
+/** 不应进入 SpendLogs 的请求头；大小写不敏感。 */
+const SPEND_LOG_SENSITIVE_HEADER_NAMES: ReadonlySet<string> = new Set([
+	"authorization",
+	"proxy-authorization",
+	"api-key",
+	"x-api-key",
+	"x-goog-api-key",
+	"x-litellm-api-key",
+	"cookie",
+	"set-cookie",
+]);
 
 /** 与时间线 SQL 的 `LEFT(...,256)` 对齐的分类前缀长度。 */
 const SYSTEM_PROMPT_PREFIX_LENGTH = 256;
@@ -410,6 +423,9 @@ function encodeRequestBody(
 		return body;
 	}
 	const encoded: Record<string, unknown> = stripRefKeys(body);
+	// Responses 路由的内部请求副本不属于客户端请求，也不参与回放；写日志前删除，
+	// 避免详情把同一份 input 再展开一次。
+	delete encoded["__litellm_responses_body"];
 	for (const [sourceKey, refKey] of [
 		["messages", SPEND_LOG_MESSAGE_REF_KEY],
 		["input", SPEND_LOG_INPUT_REF_KEY],
@@ -612,6 +628,120 @@ function resolveWholeArrayRef(blockId: string, lookup: SpendLogBlockLookup, miss
 }
 
 /**
+ * 把敏感请求头替换成占位值。
+ *
+ * 历史行与新行都可能带有认证头；读取侧统一脱敏，保证详情、列表和流式接口不会把
+ * 凭据重新暴露给 dashboard 观众。写入侧复用同一规则，避免新数据继续落库。
+ * @param headers - 请求头对象
+ */
+export function redactSpendLogHeaders(headers: unknown): unknown {
+	if (!isRecord(headers)) {
+		return headers;
+	}
+	let redacted: Record<string, unknown> | null = null;
+	for (const name of Object.keys(headers)) {
+		if (!SPEND_LOG_SENSITIVE_HEADER_NAMES.has(name.toLowerCase())) {
+			continue;
+		}
+		redacted ??= { ...headers };
+		redacted[name] = SPEND_LOG_REDACTED_HEADER_VALUE;
+	}
+	return redacted ?? headers;
+}
+
+/**
+ * 对 `proxy_server_request` 里所有请求/响应头做脱敏。
+ * @param proxyServerRequest - 详情或列表里的 proxy 负载
+ */
+export function redactSpendLogProxySecrets(proxyServerRequest: unknown): unknown {
+	if (!isRecord(proxyServerRequest)) {
+		return proxyServerRequest;
+	}
+	let result: Record<string, unknown> | null = null;
+	const ensureResult = (): Record<string, unknown> => {
+		result ??= { ...proxyServerRequest };
+		return result;
+	};
+	if ("headers" in proxyServerRequest) {
+		const redactedHeaders = redactSpendLogHeaders(proxyServerRequest["headers"]);
+		if (redactedHeaders !== proxyServerRequest["headers"]) {
+			ensureResult()["headers"] = redactedHeaders;
+		}
+	}
+	for (const key of ["upstream_request", "upstream_response"] as const) {
+		const container = proxyServerRequest[key];
+		if (!isRecord(container) || !("headers" in container)) {
+			continue;
+		}
+		const redactedHeaders = redactSpendLogHeaders(container["headers"]);
+		if (redactedHeaders !== container["headers"]) {
+			ensureResult()[key] = { ...container, headers: redactedHeaders };
+		}
+	}
+	return result ?? proxyServerRequest;
+}
+
+/**
+ * 删除只属于路由内部协议的请求体字段。
+ *
+ * `__litellm_responses_body` 是 Responses 入口转换前的原始 body，只在路由重放时使用；
+ * 它不是客户端请求的一部分，写入 SpendLogs 只会让同一份 input 再占一份体积。
+ * @param body - 请求体或包含 body 的容器
+ */
+export function stripSpendLogInternalBodyFields(body: unknown): unknown {
+	if (!isRecord(body) || !("__litellm_responses_body" in body)) {
+		return body;
+	}
+	const stripped = { ...body };
+	delete stripped["__litellm_responses_body"];
+	return stripped;
+}
+
+/**
+ * 写入前的 proxy 负载处理：脱敏认证头，并删除 body / upstream body 的内部协议字段。
+ * @param proxyServerRequest - 下游请求快照
+ */
+export function prepareSpendLogProxyForStorage(proxyServerRequest: unknown): unknown {
+	const prepared = redactSpendLogProxySecrets(proxyServerRequest);
+	if (!isRecord(prepared)) {
+		return prepared;
+	}
+	let result: Record<string, unknown> | null = null;
+	const ensure = (): Record<string, unknown> => {
+		result ??= { ...prepared };
+		return result;
+	};
+	const body = prepared["body"];
+	const strippedBody = stripSpendLogInternalBodyFields(body);
+	if (strippedBody !== body) {
+		ensure()["body"] = strippedBody;
+	}
+	for (const key of ["upstream_request", "upstream_response"] as const) {
+		const container = prepared[key];
+		if (!isRecord(container) || !("body" in container)) {
+			continue;
+		}
+		const containerBody = container["body"];
+		const stripped = stripSpendLogInternalBodyFields(containerBody);
+		if (stripped !== containerBody) {
+			ensure()[key] = { ...container, body: stripped };
+		}
+	}
+	return result ?? prepared;
+}
+
+/**
+ * 读取侧兜底：即使某行没有块引用，也要脱敏内联 proxy 的敏感头并清掉内部协议字段。
+ * @template T - 行类型
+ * @param row - SpendLog 行
+ */
+export function redactSpendLogRowSecrets<T extends { readonly proxy_server_request?: unknown }>(row: T): T {
+	// 用写路径同一套处理：既脱敏认证头，也清掉历史行里内联的 Responses 内部 body。
+	const redacted = prepareSpendLogProxyForStorage(row.proxy_server_request);
+	return redacted === row.proxy_server_request ? row : ({ ...row, proxy_server_request: redacted } as T);
+}
+
+/**
  * 还原 body：把引用键换回 `messages` / `input` / `tools` / `system`。
  *
  * 分类投影键（`_litellm_ref_tools_count` 等）不回填到 body：它们只是时间线的读取
@@ -633,6 +763,7 @@ function restoreRequestBody(
 	const restored: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(body)) {
 		if (
+			key === "__litellm_responses_body" ||
 			key === SPEND_LOG_REF_BYTES_KEY ||
 			key === SPEND_LOG_TOOLS_COUNT_KEY ||
 			key === SPEND_LOG_TOOLS_FIRST_KEY ||
@@ -694,7 +825,7 @@ export function restoreSpendLogPayload(
 				body: restoreRequestBody(upstreamRequest["body"], lookup, missingBlockIds, columnRefs),
 			};
 		}
-		proxyServerRequest = restored;
+		proxyServerRequest = redactSpendLogProxySecrets(restored);
 	}
 	return { messages: messages, proxyServerRequest: proxyServerRequest, missingBlockIds: missingBlockIds };
 }
@@ -987,6 +1118,7 @@ export async function writeSpendLogBlocks(db: SpendLogBlockWriteDb, blocks: read
  * 组装一批 SpendLog 行。
  *
  * 引用 id 跨行合并成一次查询；缺块用占位对象补齐并记录告警，避免整页失败。
+ * 所有返回行都会经过敏感头脱敏，即使该行没有块引用。
  * @template T - 行类型
  * @param db - 数据库实例
  * @param rows - 需要组装的列值
@@ -998,18 +1130,18 @@ export async function hydrateSpendLogRows<T extends { readonly messages?: unknow
 	const idsByRow = rows.map((row) => collectReferencedBlockIds(row.messages, row.proxy_server_request));
 	const allIds = idsByRow.flat();
 	if (allIds.length === 0) {
-		return [...rows];
+		return rows.map((row) => redactSpendLogRowSecrets(row));
 	}
 	const payloads = await loadSpendLogBlocks(db, allIds);
 	const lookup: SpendLogBlockLookup = (blockId) => payloads.get(blockId);
 	const missingIds: string[] = [];
 	const hydrated = rows.map((row, index) => {
 		if (idsByRow[index]!.length === 0) {
-			return row;
+			return redactSpendLogRowSecrets(row);
 		}
 		const { messages, proxyServerRequest, missingBlockIds } = restoreSpendLogPayload(row, lookup);
 		missingIds.push(...missingBlockIds);
-		return { ...row, messages: messages, proxy_server_request: proxyServerRequest };
+		return redactSpendLogRowSecrets({ ...row, messages: messages, proxy_server_request: proxyServerRequest });
 	});
 	if (missingIds.length > 0) {
 		logger.warn("SpendLog 引用块缺失，已用占位对象补齐", {

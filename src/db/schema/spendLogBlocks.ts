@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, text, timestamp, index } from "drizzle-orm/pg-core";
+import { integer, jsonb, pgTable, text } from "drizzle-orm/pg-core";
 
 /**
  * SpendLog 内容寻址块存储。
@@ -20,9 +20,5 @@ export const liteLLM_SpendLogBlocks = pgTable(
 		blockId: text("block_id").notNull().primaryKey(),
 		payload: jsonb("payload").notNull(),
 		byteSize: integer("byte_size").notNull(),
-		firstSeen: timestamp("first_seen", { precision: 3 }).defaultNow().notNull(),
 	},
-	(table) => ({
-		firstSeenIdx: index("LiteLLM_SpendLogBlocks_first_seen_idx").on(table.firstSeen),
-	}),
 );

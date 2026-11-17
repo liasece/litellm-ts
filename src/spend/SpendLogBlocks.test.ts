@@ -3,6 +3,7 @@ import {
 	SPEND_LOG_MESSAGE_REF_KEY,
 	SPEND_LOG_REF_BYTES_KEY,
 	SPEND_LOG_REF_MISSING_KEY,
+	SPEND_LOG_REDACTED_HEADER_VALUE,
 	SPEND_LOG_SAME_AS_MESSAGES,
 	SPEND_LOG_SYSTEM_COUNT_KEY,
 	SPEND_LOG_SYSTEM_FIRST_KEY,
@@ -97,6 +98,22 @@ describe("collectSpendLogBlocks", () => {
 		expect(body["model"]).toBe("gpt");
 	});
 
+	it("路由内部 __litellm_responses_body 在编码前剥离", () => {
+		const messages = makeMessages(4);
+		const encoded = collectSpendLogBlocks({
+			messages,
+			proxyServerRequest: {
+				body: { input: messages, __litellm_responses_body: { input: messages, stream: true } },
+				upstream_request: { body: { input: messages, __litellm_responses_body: { input: messages } } },
+			},
+		});
+		const proxy = encoded.proxyServerRequest as Record<string, unknown>;
+		const body = proxy["body"] as Record<string, unknown>;
+		const upstreamBody = (proxy["upstream_request"] as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(body["__litellm_responses_body"]).toBeUndefined();
+		expect(upstreamBody["__litellm_responses_body"]).toBeUndefined();
+	});
+
 	it("input 与上游请求体同样改写，重复内容只留一条块", () => {
 		const messages = makeMessages(4);
 		const encoded = collectSpendLogBlocks({
@@ -177,6 +194,22 @@ describe("restoreSpendLogPayload", () => {
 		expect((restored.messages as unknown[])[0]).toEqual({ role: "user", content: "message-0" });
 		expect((restored.messages as unknown[])[1]).toEqual({ [SPEND_LOG_REF_MISSING_KEY]: refs[1] });
 		expect(restored.missingBlockIds).toHaveLength(3);
+	});
+
+	it("历史行的路由内部 Responses body 在读取时丢弃", () => {
+		const messages = makeMessages(2);
+		const restored = restoreSpendLogPayload(
+			{
+				messages,
+				proxy_server_request: {
+					body: { messages, __litellm_responses_body: { input: messages, stream: true } },
+				},
+			},
+			() => undefined,
+		);
+		const body = (restored.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
+		expect(body["__litellm_responses_body"]).toBeUndefined();
+		expect(body["messages"]).toEqual(messages);
 	});
 
 	it("历史行的字面量原样返回", () => {
@@ -397,7 +430,7 @@ describe("encodeActiveRequestPayload", () => {
 		expect(body["system"]).toEqual(system);
 		expect(body["model"]).toBe("claude");
 		expect(body["stream"]).toBe(true);
-		expect((restoredProxy["headers"] as Record<string, unknown>)["authorization"]).toBe("Bearer upstream-secret");
+		expect((restoredProxy["headers"] as Record<string, unknown>)["authorization"]).toBe(SPEND_LOG_REDACTED_HEADER_VALUE);
 		const upstreamBody = (restoredProxy["upstream_request"] as Record<string, unknown>)["body"] as Record<string, unknown>;
 		expect(upstreamBody["messages"]).toEqual(messages);
 		expect(upstreamBody["tools"]).toEqual(tools);

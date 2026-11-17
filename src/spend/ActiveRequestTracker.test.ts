@@ -126,7 +126,7 @@ describe("Active request tracking", () => {
 			proxy_server_request: {
 				url: "/v1/chat/completions",
 				method: "POST",
-				headers: { authorization: "Bearer secret" },
+				headers: { authorization: "[REDACTED]" },
 			},
 		});
 		// 正文按内容寻址落在块表：行里只有引用，读取时再组装。

@@ -26,9 +26,12 @@ import {
 	type SpendLogBlockRecord,
 	collectSpendLogBlocks,
 	encodeActiveRequestPayload,
+	prepareSpendLogProxyForStorage,
 	rememberSpendLogBlocks,
 	selectMissingSpendLogBlocks,
+	redactSpendLogHeaders,
 	shouldDeduplicateSpendLogBlocks,
+	stripSpendLogInternalBodyFields,
 	spendLogBlockBytes,
 	writeSpendLogBlocks,
 } from "./SpendLogBlocks";
@@ -45,7 +48,6 @@ import { LiteLLM_TeamTable } from "../db/schema/teams";
 import { LiteLLM_OrganizationTable } from "../db/schema/organizations";
 import { LiteLLM_TeamMembership } from "../db/schema/team-memberships";
 import { LiteLLM_EndUserTable } from "../db/schema/end-users";
-import { liteLLM_AgentsTable } from "../db/schema/agents";
 import { LiteLLM_ProjectTable } from "../db/schema/projects";
 import { liteLLM_SpendReservations } from "../db/schema/spendReservations";
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
@@ -357,14 +359,6 @@ async function updateSpendSubjects(db: NodePgDatabase<typeof schema>, log: Spend
 			RETURNING 1
 		)`);
 	}
-	if (log.agent_id) {
-		updates.push(sql`agent_spend AS (
-			UPDATE ${liteLLM_AgentsTable}
-			SET spend = COALESCE(${liteLLM_AgentsTable.spend}, 0) + ${spend}
-			WHERE ${liteLLM_AgentsTable.agentId} = ${log.agent_id}
-			RETURNING 1
-		)`);
-	}
 	await db.execute(sql`WITH ${sql.join(updates, sql`, `)} SELECT 1`);
 }
 
@@ -506,7 +500,10 @@ export function sanitizeActiveRequestPayload(value: unknown): unknown {
 }
 
 /**
- * 清理 proxy_server_request.headers：请求头值原样透传。
+ * 清理 proxy_server_request.headers。
+ *
+ * 认证头只保留键名、值替换为占位符：日志详情是 dashboard 的常规读取面，不能让
+ * Authorization / x-api-key / cookie 原样进入可查询数据。其他头继续保留供排障。
  * @param headers - Express req.headers
  */
 export function sanitizeSpendLogHeaders(headers: Record<string, unknown>): Record<string, unknown> {
@@ -514,7 +511,7 @@ export function sanitizeSpendLogHeaders(headers: Record<string, unknown>): Recor
 	for (const [headerName, headerValue] of Object.entries(headers)) {
 		sanitized[headerName] = sanitizeSpendLogPayload(headerValue);
 	}
-	return sanitized;
+	return redactSpendLogHeaders(sanitized) as Record<string, unknown>;
 }
 
 /**
@@ -742,17 +739,18 @@ export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promis
 		url: ctx.proxyServerRequestUrl ?? ctx.req.originalUrl ?? ctx.req.url,
 		method: ctx.req.method,
 		headers: sanitizeSpendLogHeaders(ctx.req.headers as Record<string, unknown>),
-		body: shouldStoreBody ? sanitizeSpendLogPayload(requestBody) : {},
+		body: shouldStoreBody ? stripSpendLogInternalBodyFields(sanitizeSpendLogPayload(requestBody)) : {},
 		arrival_time: ctx.startTime.toISOString(),
 	};
 	// 上游详情以请求作用域通道为准：端点显式传入时用传入值，否则读取传输层记录的真实交换。
 	// 这样任何中间层重建结果对象都不会让日志丢上游详情。
 	const upstreamLogContext = ctx.upstreamLogContext ?? (ctx.disableAmbientUpstreamContext === true ? undefined : getRecordedUpstreamExchange());
 	if (shouldStoreUpstreamLogs && upstreamLogContext) {
-		requestShape["upstream_request"] = sanitizeSpendLogPayload({
+		const upstreamRequest = sanitizeSpendLogPayload({
 			...upstreamLogContext.request,
 			headers: sanitizeSpendLogHeaders(upstreamLogContext.request.headers),
 		});
+		requestShape["upstream_request"] = stripSpendLogInternalBodyFields(upstreamRequest);
 		if (upstreamLogContext.response) {
 			requestShape["upstream_response"] = sanitizeSpendLogResponsePayload({
 				...upstreamLogContext.response,
@@ -2000,7 +1998,9 @@ async function trackSpendLogMeasured(
 	const requestEndTime = new Date(logEntry.endTime);
 	const requestDurationMs = logEntry.request_duration_ms ?? Math.max(0, requestEndTime.getTime() - requestStartTime.getTime());
 	const protectedApiKey = _protectApiKeyForDb(logEntry.api_key || "");
-	const sanitizedProxyServerRequest = sanitizeSpendLogPayload(logEntry.proxy_server_request ?? {}) as Record<string, unknown>;
+	const sanitizedProxyServerRequest = prepareSpendLogProxyForStorage(
+		sanitizeSpendLogPayload(logEntry.proxy_server_request ?? {}),
+	) as Record<string, unknown>;
 	// 内容寻址去重：把消息数组换成块引用，正文只落一份块表。
 	// 关闭开关时保持优化前的整段 JSONB 存储，两种编码可以逐行混存。
 	const blockEncoding = (await shouldDeduplicateSpendLogBlocks())

@@ -14,7 +14,7 @@
 
 - **TypeScript + strict**（`tsconfig.json`）：上游 Python 版的行为要靠类型和检查守住，`noUncheckedIndexedAccess` 与 `noImplicitOverride` 都开着。
 - **Express 4**：中间件顺序即语义，且 SSE 逐帧写出、zstd 解压、逐字节透传都要直接操作原始 `req`/`res`；`res.write` 的语义最直接，换框架要重新验证整条链的时序。
-- **pg + drizzle-orm**：迁移文件与 Python 版基线共存（`drizzle/0000_python_litellm_baseline.sql` 字节不可改），自有迁移从 `0001` 起，`src/core/db/python-schema-baseline.json` 记录与上游一致的表集合。
+- **pg + drizzle-orm**：迁移文件与 Python 版基线共存（`drizzle/0000_python_litellm_baseline.sql` 字节不可改），自有迁移从 `0001` 起，`src/core/db/python-schema-baseline.json` 记录与上游一致的表集合；被本仓库清理迁移明确移除的表（当前为 `LiteLLM_AgentsTable`）从基线同步删除。
 - **Vue 3 + Vite 的 Dashboard**：2026-11-08 完成从 React/Next 的迁移，视觉与交互按旧版复刻。当前运行时不得引入 React、Next、TanStack Query 或第二套组件设计，理由与验收记录见 [Vue 重写记录](frontend-vue-migration.md)。
 - **不引入第二套状态库**：前端用原生响应式 store，按功能分 `api / data / logic / stores / render / ui`。
 - 被评估但未采用的选项：后端改 Go（2026-11-12 用户询问性能收益，语料中没有采纳决定，现状仍是 Node/TS）；把 post-upstream 放进 `worker_threads`（同日提问，未见落地记录，见[待确认](#已知缺口与待确认)）。重写之前请先确认没有更新的一致决定。
@@ -97,7 +97,7 @@
 
 - **新供应商**：枚举 → Registry 三个映射 → Provider 实现（上游 URL、头、协议、错误分类）→ 创建字段与前端目录 → 至少一个真实请求形状的回归。普通 OpenAI 兼容供应商优先复用 `OpenAICompatProvider`，不要复制一份。
 - **新推理端点**：端点文件 + `main.ts` 注册 + 鉴权/授权/脱敏位置说明 + 是否记账（`SpendLogs.call_type`）+ 前端路径（若可达）+ 契约测试。
-- **新数据库表**：`drizzle/00NN_*.sql` + 在 `drizzle/meta/_journal.json` 注册 + `src/db/schema/` 定义与 `index.ts` 导出 + `python-schema-baseline.json` + 一个拥有该表的 repository。只增不改：已注册的迁移文件不可改字节，否则触发 `MIGRATION_ARTIFACT_MISMATCH`。
+- **新数据库表**：`drizzle/00NN_*.sql` + 在 `drizzle/meta/_journal.json` 注册 + `src/db/schema/` 定义与 `index.ts` 导出 + `python-schema-baseline.json` + 一个拥有该表的 repository。删除表则反向操作：新迁移用 `IF EXISTS` 删除，移除 schema/导出/基线引用并删除对应写路径。已注册的迁移文件不可改字节，否则触发 `MIGRATION_ARTIFACT_MISMATCH`。
 - **新 Dashboard 页面**：功能目录按 `api/data/logic/stores/render/ui` 分层 → 注册到 `PageRegistry` 与 `NavigationData` → 路径进 `src/shared/WebUiPaths.ts` → 手机端 320/390 不产生页面级横向滚动。没有后端支撑的页面不要建，参考[清理记录](cleanup-candidates.md)的判定原则。
 - **新日志字段或筛选**：先确认是否要进表（加列 + 索引 + 回填脚本），再改 DTO 与 UI；筛选列有专门的物化列与覆盖索引迁移（`0016`～`0018`），不要用函数包住列导致索引失效。
 
@@ -107,7 +107,7 @@
 - **运行时配置不缓存长 TTL**：配置改动必须下一个请求就生效，缓存只能放在 repository 层并自行失效。这是产品级约束，理由见[产品文档](product.md#设计理念与取舍)，不是可以拿来换性能的取舍点。
 - **错误分类**：自身逻辑错误才记 `error` + 堆栈；上游 4xx/5xx 属于业务分支，按「能 fallback 就 fallback，否则原样透传」处理，不能算成服务端错误率或触发无意义冷却。这条来自用户对日志语义的要求，见[产品文档](product.md#设计理念与取舍)。
 - **订阅模型命名**：`custom_llm_provider` 用订阅 slug，`model` 是原始上游模型 ID，新数据不要带 `cliproxy/`、`codex-subscription/` 一类运输前缀；历史日志的旧名只做只读兼容。
-- **迁移纪律**：`0000` 基线不变，清理类改动用一个新迁移完成；`make check-drizzle-journal` 会拦未注册的迁移文件。
+- **迁移纪律**：`0000` 基线不变，清理类改动用一个新迁移完成；删除无读取入口的表/列/视图时，在同一迁移里用 `IF EXISTS`，并同步移除代码与 Python 基线，不能留下写一个无人读取的表的路径。`make check-drizzle-journal` 会拦未注册的迁移文件。
 - **前端**：组件只装配，派生值用 computed 或纯函数；与网络、计时器、订阅、图表实例相关的生命周期要显式销毁；不得用 `as any`、`@ts-ignore`、放宽 tsconfig 或关闭 ESLint 规则掩盖问题。具体契约见 `ui/litellm-dashboard/AGENTS.md`。
 - **测试质量**：只测可观察行为、业务契约、重要分支和明确回归风险；不写复述静态配置或实现细节的断言。判据与反例见 `AGENTS.md` 的测试质量一节，不要在这里另建一套标准。
 - **注释**：解释前因后果与约束，不复述代码在做什么。历史原因不确定时写「待确认」，不要编。
@@ -152,6 +152,7 @@
 | 2026-11-10～12 | 在途行正文改内容寻址、记账事务锁顺序调整、结算异步化与结算队列 | 每请求二十多条语句与行锁争用拖慢首字 | [上游对齐记录](upstream-alignment.md#2026-11-10-在途行正文内容寻址与记账事务锁顺序) |
 | 2026-11-13 | 前端手机端排版收敛，日志表回退为桌面表格 + 横向滚动 | 手机可读但不牺牲该页信息密度 | [Vue 迁移记录](frontend-vue-migration.md) |
 | 2026-11-15 | 日志表启用 opt-in 虚拟滚动，适配 Dashboard 内层滚动容器 | 1000 行全量挂载约 6.7 万 DOM；只保留视口附近行，保留 URL/筛选/深链接 | [性能调查与实施记录](investigations/logs-page-size-1000-performance.html) |
+| 2026-11-17 | 清理无读取入口的 8 个视图、2 个空 schema、`LiteLLM_AgentsTable`、`_prisma_migrations` 与块表 `first_seen`，并物理清理历史认证头/内部 body | SpendLog 读路径已切换，历史敏感原值只剩存储成本；删除前逐项确认无读入口 | [清理记录](cleanup-candidates.md#2026-11-17-无读取入口对象与历史敏感字段清理) |
 
 ## 已知缺口与待确认
 
