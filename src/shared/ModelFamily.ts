@@ -11,6 +11,8 @@ const families = [
 	{ label: "MiniMax", model: /^minimax(?:[-_.:]|$)/, namespace: /^minimax(?:ai)?$/ },
 	{ label: "Qwen", model: /^(?:qwen|qwq|qvq|wan)(?:[0-9]|[-_.:]|$)/, namespace: /^qwen$/ },
 	{ label: "GLM", model: /^(?:chatglm|glm)(?:[0-9]|[-_.:]|$)/, namespace: /^(?:z-ai|zhipuai|thudm)$/ },
+	// 混元有两种模型名：hunyuan-turbo / HunyuanVideo 这类全称，以及 hy4-flash / hy3-preview 这类 hy+版本号短名。
+	{ label: "Hunyuan", model: /^(?:hunyuan|hy(?:[0-9]|[-_.:]|$))/, namespace: /^(?:tencent|tencentcloud|hunyuan)$/ },
 	{ label: "Llama", model: /^(?:meta-)?llama(?:[0-9]|[-_.:]|$)/, namespace: /^meta-llama$/ },
 	{
 		label: "Mistral",
@@ -25,6 +27,9 @@ const families = [
 
 /** Display name of a recognized model family. */
 export type ModelFamily = (typeof families)[number]["label"];
+
+/** Enumerated families, used by consumers that must cover every recognized brand (e.g. icon assets). */
+export const modelFamilies: readonly ModelFamily[] = families.map((item) => item.label);
 
 const rules: readonly { label: ModelFamily; model: RegExp; namespace?: RegExp }[] = families;
 

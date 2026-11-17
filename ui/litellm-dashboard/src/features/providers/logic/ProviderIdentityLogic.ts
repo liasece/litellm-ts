@@ -62,6 +62,7 @@ const familyAssets: Record<ModelFamily, string> = {
 	"MiniMax": "minimax.svg",
 	"Qwen": "qwen.png",
 	"GLM": "glm.svg",
+	"Hunyuan": "hunyuan.svg",
 	"Llama": "meta_llama.svg",
 	"Mistral": "mistral.svg",
 	"Cohere": "cohere.svg",
