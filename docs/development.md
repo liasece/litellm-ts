@@ -70,7 +70,15 @@
 
 **路由与记账**：`DatabaseRuntimeConfigService` 每请求建立一致快照 → `Router` 选 deployment、执行 retry / cooldown / fallback（`RouterExecution`、`FallbackHandler`、`CooldownManager`）→ `ProviderRequestExecutor` → Provider `build()` 出上游请求体 → 上游响应经协议 translator 回到入口协议。流式 fallback 的判据是「客户端是否已拿到答案内容」，实现见 `src/router/StreamOutputVisibility.ts`：包络块、思考增量与错误透传不算「已给出答案」，正文、拒绝文本与工具调用增量才算。
 
-**记账与日志**：在途登记 `src/spend/ActiveRequestJournal.ts`，结算走 `SpendSettlementQueue`，最终落 `LiteLLM_SpendLogs`；重复正文按内容寻址进 `LiteLLM_SpendLogBlocks`（`src/spend/SpendLogBlocks.ts`），读侧在 DTO 层统一组装，业务代码不应直接碰 `_litellm_ref_*` 键。日志行的 `metadata.user_api_key_alias` 是虚拟密钥的真实别名；主密钥没有 token 行可查，读侧由 `src/spend/spendLogKeyIdentity.ts` 按 `api_key == hash(主密钥)` 补成 `Master Key`，属展示补充、不回写库。
+**记账与日志**：在途登记 `src/spend/ActiveRequestJournal.ts`，结算走 `SpendSettlementQueue`，最终落 `LiteLLM_SpendLogs`；重复正文按内容寻址进 `LiteLLM_SpendLogBlocks`（`src/spend/SpendLogBlocks.ts`），读侧在 DTO 层统一组装，业务代码不应直接碰 `_litellm_ref_*` 键。`LiteLLM_SpendLogs` 的 `cache_read_input_tokens`、`cache_creation_input_tokens`、`resolved_model_group`、`endpoint` 是供 Usage 本地时区聚合读取的小列投影，由 `drizzle/0019_spend_log_scalar_columns.sql` 建立并回填；正常写入、启动回收和租约过期回收都与日汇总同源填充这四列，完整 metadata/proxy 仍保留供 Logs 与会话详情使用。日志行的 `metadata.user_api_key_alias` 是虚拟密钥的真实别名；主密钥没有 token 行可查，读侧由 `src/spend/spendLogKeyIdentity.ts` 按 `api_key == hash(主密钥)` 补成 `Master Key`，属展示补充、不回写库。
+
+**日志读路径**：`/spend/logs/ui` 列表只投影标量列，cache token 与 `key_alias` 直接读已有标量列（0016 的 `key_alias`、0019 的 cache token），`metadata` 会剥掉 `streaming_execution` / `responses_execution` 和已经投影的 `additional_usage_values` / `usage_object`，避免每行重复解压大 JSONB。详情接口默认返回服务端已组装的完整形状；dashboard 请求 `compact=true`，同一个对话在 `messages`、`proxy.body.messages`、`upstream.messages` 里只保留顶层一份，副本用 `_litellm_ref_messages` / `_litellm_ref_input` 的 `"$messages"` 标记表示，由前端展示层还原。这个标记是 dashboard 内部契约，外部调用方不要依赖；省略 `compact` 时仍得到完整展开。
+
+Logs 列表的 TPS 列拆成 Input 与 Output 两个子项：Input = 未缓存输入 token ÷ TTFT，Output = 输出 token ÷（总耗时 − TTFT）。TTFT 缺失、早于请求开始或等于/晚于结束时间时，没有可分离的生成窗口，整格不显示；非流式请求的 TTFT 通常等于结束时间，属于这一类。上游缓冲整段回答再一次性写出时，首字与结束只差几毫秒，按生成窗口算出的 TPS 是交付毛刺，因此生成窗口不足总耗时 1%、或短于 300 毫秒的行也按「TTFT 已占满请求」隐藏——比例挡长请求里的几毫秒窗口，绝对下限挡短请求里的百毫秒级窗口（上游一次 flush 上千 token 的投递尖峰会在此被挡掉）。Speed 页使用与 Output 子项相同的生成窗口与两个门槛，不可测算行进入 `models_without_speed` 而不是画成被首字等待稀释或放大的曲线；桶内点与卡片平均值都按生成秒数加权（Σ输出 token ÷ Σ生成秒数），不是各请求 TPS 的算术平均。 列宽把 Time、Status、Session ID、Request ID 这类内容稳定的列固定住，其余列只声明最小宽度；容器变宽时只把余量分给 Model、Tokens、TPS 等弹性列，避免固定列跟着膨胀。只有可用宽度低于最小总宽时才横向滚动，不要把弹性列写死回固定像素。
+
+前端把已结算详情当作不可变映射：`LogDetailsStore` 按 `request_id + start_date` 在内存中缓存，已结算负载不设 TTL，在途负载只保留一个轮询周期的短缓存。Session 抽屉切换选中行时，只对当前行前后各两条窗口内缺失的详情做预取，合并为一次 `/spend/logs/ui/batch`（每批最多 100）；单条详情继续承担当前行、实时更新与未命中兜底。批量接口与单条详情共用 compact 组装，冷存储 payload 也会先经过块还原与脱敏，不能把两者混成两种响应形状。
+
+旧 `/spend/logs` 分页默认只返回与 UI 列表同形的轻量行；需要历史正文时显式传 `include_content=true`，该路径单页最多 50 行，避免一次拉回几十 MB 的 messages/proxy/response。新增读侧优化优先复用已有标量列和块缓存，不要为每个 metadata 小字段再加列；块缓存的字节上限与已知 id 上限分别由 `LITELLM_SPEND_LOG_BLOCK_CACHE_BYTES`、`LITELLM_SPEND_LOG_BLOCK_KNOWN_IDS` 控制，默认 128 MiB / 250k。Spend/Logs 的非流式 JSON 响应走 `src/middleware/SpendResponseCompression.ts`，大响应使用 Brotli q1 + gzip level 1；提高 quality 对已去重正文的收益很小，不要用 CPU 换不明显的体积。
 
 **Messages 的内置工具**：`src/proxy/AnthropicCapabilityStream.ts` 把多轮上游调用组织成一条公开的 Messages 流。
 文本和思考可以直接下发；混合工具轮里的调用要等能力循环确定哪些交给客户端，避免客户端执行已由网关接管的工具。

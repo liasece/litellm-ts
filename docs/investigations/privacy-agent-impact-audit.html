@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>脱敏行为对 Agent 执行的影响审计</title>
+<style>
+  :root {
+    --ink: #1c2530; --muted: #5d6b7a; --line: #e2e8ef; --bg: #f5f7fa; --card: #ffffff;
+    --ok: #0f7b5a; --okbg: #e7f6ef; --warn: #a15c00; --warnbg: #fff3de; --bad: #b3261e; --badbg: #fdeceb;
+    --accent: #2f5fe0; --accentbg: #eaf0ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 40px 20px 80px; background: var(--bg); color: var(--ink);
+    font: 15px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -.3px; }
+  .sub { color: var(--muted); margin: 0 0 30px; font-size: 14px; }
+  h2 { font-size: 20px; margin: 38px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  p { margin: 8px 0; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .88em; background: #eef1f6;
+    padding: 1px 6px; border-radius: 5px; color: #24304a; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px;
+    box-shadow: 0 2px 10px rgba(24,39,60,.04); margin: 14px 0; }
+  .verdict { border-left: 5px solid var(--warn); background: linear-gradient(90deg, var(--warnbg), var(--card) 60%); }
+  .grid { display: grid; gap: 14px; }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .metric { text-align: center; padding: 18px 8px; }
+  .metric .n { font-size: 28px; font-weight: 700; line-height: 1.2; }
+  .metric .l { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .accent { color: var(--accent); }
+  .pill { display: inline-block; font-size: 12px; padding: 1px 9px; border-radius: 99px; font-weight: 600; }
+  .pill.ok { background: var(--okbg); } .pill.warn { background: var(--warnbg); } .pill.bad { background: var(--badbg); }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .3px; }
+  .bars { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+  .bar-row { display: grid; grid-template-columns: 92px 1fr 54px; align-items: center; gap: 10px; font-size: 13px; }
+  .track { background: #eef1f6; border-radius: 6px; height: 22px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 6px; }
+  .fill.b { background: linear-gradient(90deg, #ef9a9a, #c62828); }
+  .fill.a { background: linear-gradient(90deg, #90caf9, #2f5fe0); }
+  .tl { position: relative; padding-left: 24px; margin: 12px 0; }
+  .tl::before { content: ""; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 2px; background: var(--line); }
+  .ev { position: relative; padding: 0 0 20px 12px; }
+  .ev::before { content: ""; position: absolute; left: -22px; top: 7px; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 0 3px var(--accentbg); }
+  .ev.bad::before { background: var(--bad); box-shadow: 0 0 0 3px var(--badbg); }
+  .ev.ok::before { background: var(--ok); box-shadow: 0 0 0 3px var(--okbg); }
+  .ev .t { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .ev .h { font-weight: 600; margin: 2px 0 3px; }
+  .quote { background: #f7f9fc; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: #3a4658; margin: 8px 0; word-break: break-all; }
+  .note { font-size: 13px; color: var(--muted); }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  .foot { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>脱敏行为对 Agent 执行的影响审计</h1>
+  <p class="sub">范围：最近 24–48 小时生产请求 · 模式：只读诊断（未改代码、未写生产数据、未重启服务）· 数据时点 2026-11-17 03:27 UTC</p>
+
+  <div class="card verdict">
+    <h3 style="margin-top:0">结论先行</h3>
+    <p><b>当前脱敏网关本身没有在造成新的失败</b>：最近 24h 内 1412 个脱敏请求全部成功还原（未还原数 0），带脱敏事件而失败的请求全是模型冷却/限流，与脱敏无关。</p>
+    <p><b>但修复前发生过的一次占位符泄漏，其后果在会话历史中继续产生过影响</b>：占位符被写进会话历史后，Agent 把它当成字面主机名、路径和模板变量使用，导致命令执行失败与多轮错误推理。这属于<b>历史会话的推理偏差</b>，而非网关当前缺陷——历史会话残留的占位符无法被新请求还原。</p>
+  </div>
+
+  <h2>一、近期脱敏请求总览</h2>
+  <div class="grid g4">
+    <div class="card metric"><div class="n accent">1412</div><div class="l">近 24h 脱敏请求数</div></div>
+    <div class="card metric"><div class="n accent">24,823</div><div class="l">占位符替换处数</div></div>
+    <div class="card metric"><div class="n ok">0</div><div class="l">近 24h 未还原 token</div></div>
+    <div class="card metric"><div class="n ok">100%</div><div class="l">action = mask</div></div>
+  </div>
+  <p class="note">近 24h 全部脱敏事件来自 provider <code>opencode-go</code>，其余 provider 不在脱敏作用域内。48h 口径的 21 个未还原 token 中，17 个来自 11-15 的字面 token 探针，4 个来自本次审计脚本回显（均非真实用户会话）。</p>
+
+  <h2>二、请求失败与脱敏的关联</h2>
+  <div class="grid g2">
+    <div class="card">
+      <h3 style="margin-top:0">近 24h SpendLogs 状态</h3>
+      <table>
+        <tr><th>状态</th><th>数量</th></tr>
+        <tr><td>success</td><td class="ok">16,662</td></tr>
+        <tr><td>failure</td><td class="bad">92</td></tr>
+        <tr><td>aborted</td><td class="warn">46</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">带脱敏事件而失败的请求（14 个）</h3>
+      <table>
+        <tr><th>响应错误</th><th>数量</th></tr>
+        <tr><td colspan="2" class="note" style="padding-top:12px">全部为 <code>No deployments available for selected model</code>（模型冷却/限流），错误码 <code>rate_limit_exceeded</code> / <code>server_error</code></td></tr>
+        <tr><td>响应内含占位符</td><td class="ok">0</td></tr>
+      </table>
+    </div>
+  </div>
+  <p class="note">结论：脱敏没有造成任何可观测的请求级失败。冷却与限流是独立的路由问题。</p>
+
+  <h2>三、确认的失败与偏差（历史泄漏的下游影响）</h2>
+
+  <div class="card">
+    <h3 style="margin-top:0">1. 命令执行失败：<code>ssh</code> 主机名无效</h3>
+    <p>11-15 的 <code>/v1/responses</code> 流式泄漏把 <code>root@js3.liasece.com</code> 原样回传进客户端会话历史。后续 Agent 把这个占位符当作真实主机名写进命令：</p>
+    <div class="quote">ssh root@js3.liasece.com -p 22 'docker exec company-driver node -e …'</div>
+    <div class="quote">[stderr] hostname contains invalid characters &nbsp;[exit code: 255]</div>
+    <p class="note">同类失败时间分布（按天，含 Agent 复述该错误的推理块）：11-14 = 11，11-15 = 58，11-16 = 2，11-17 = 16（11-17 多数是本次审计脚本回显的历史文本）。真实的 <code>function_call_output</code> 错误帧：11-14 = 8、11-15 = 13、11-16 = 1、11-17 = 3。修复后（11-16 起）已降至个位数。</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">2. 路径解析失败：占位符进入文件路径</h3>
+    <div class="quote">bash: line 0: cd: /Users/{{USER_ruk6vu3q}}/src/jtllab/litellm-ts/ui/litellm-dashboard: No such file or directory &nbsp;[exit code: 1]</div>
+    <p class="note">11-15 04:12 UTC，同一会话中 Agent 把用户名占位符拼进绝对路径，命令直接失败。</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">3. 推理偏差：把脱敏占位符误判为"模板变量未展开"</h3>
+    <p>模型的推理链显示出对占位符性质的错误理解，多轮排查偏离真实任务：</p>
+    <ul>
+      <li>“the placeholder no longer expands (passes literal braces → hostname contains invalid characters)”</li>
+      <li>“the templating stopped substituting it. That's why ssh fails with hostname contains invalid characters.”</li>
+      <li>“quoting got mangled by the shell”——把脱敏标记误判为 shell 引号问题</li>
+    </ul>
+    <p class="note">这类偏差不表现为请求失败，但消耗多轮工具调用与 token，属于典型的"结果偏差"。</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">4. 关于"本地文档持久化污染"——已澄清为误报</h3>
+    <p>早前曾判断 <code>~/.jansen-mac/README.md:58</code> 与 <code>tunnel.sh</code> 残留了字面占位符。<b>字节级复核否定了这一判断</b>：工具输出层会把真实 SSH 主机脱敏渲染成 <code>root@js3.liasece.com</code>，当时误把渲染结果当成了文件原文。</p>
+    <table>
+      <tr><th>字节级检查</th><th>结果</th></tr>
+      <tr><td>README 含字面 <code>{{EMAIL_…}}</code></td><td class="ok">false</td></tr>
+      <tr><td>README 主机 == 运行中的 tunnel.sh 主机</td><td class="ok">true（真实 hostname，无花括号）</td></tr>
+      <tr><td>tunnel LaunchAgent</td><td class="ok">running</td></tr>
+    </table>
+    <p class="note">两处均为正确的真实主机，无需修改；强行"修正"反而会破坏可用配置。仓库源码内也未发现泄漏占位符（命中的均为测试 fixture 与调查文档）。</p>
+  </div>
+
+  <h2>四、事件时间线</h2>
+  <div class="tl">
+    <div class="ev bad"><div class="t">11-15 02:08 / 03:59–04:19 UTC</div><div class="h">占位符泄漏并进入会话历史</div><div class="note">ssh 主机名错误、错误路径、错误推理集中出现。</div></div>
+    <div class="ev ok"><div class="t">11-15 约 06:00 UTC</div><div class="h">修复部署：SSE Responses 路径还原占位符</div><div class="note">新增请求不再回传占位符；探针验证通过。</div></div>
+    <div class="ev warn"><div class="t">11-15 15:14 / 11-16 09:12 UTC</div><div class="h">历史残留占位符继续造成偶发失败</div><div class="note">11-16 09:12 的请求 provider 为 <code>commandcode</code>（未开启脱敏），证明失败源于旧会话残留，不是新的脱敏泄漏。</div></div>
+    <div class="ev ok"><div class="t">11-16 起（近 24h）</div><div class="h">当前脱敏行为稳定</div><div class="note">1412 个请求 0 未还原，失败请求全部与脱敏无关。</div></div>
+  </div>
+
+  <h2>五、根因与边界</h2>
+  <div class="card">
+    <ul>
+      <li><b>机制</b>：占位符与真实值的映射是<b>请求级内存映射</b>，只对当前响应生效。一旦占位符被写进客户端持久化的会话历史，后续任何请求都无法再还原它——无论该请求是否经过脱敏。</li>
+      <li><b>触发条件</b>：泄漏窗口内（修复前）的 <code>/v1/responses</code> 流式响应没有还原 reasoning 与 content_part 中的占位符，导致占位符被客户端当作正文保存。</li>
+      <li><b>影响性质</b>：网关当前的脱敏逻辑正确；问题是<b>历史污染数据的长尾</b>，表现为 Agent 执行失败、推理偏差与持久化文档污染，而不是脱敏功能本身失效。</li>
+      <li><b>不在本次范围</b>：清理会话历史与本地文档属于写入/修复动作，本轮为只读诊断，未执行。</li>
+    </ul>
+  </div>
+
+  <h2>六、建议（需另行授权）</h2>
+  <div class="card">
+    <ul>
+      <li><span class="pill ok">无需操作</span> <code>~/.jansen-mac/README.md:58</code> 与 <code>tunnel.sh</code> 均为真实主机，字节级核查无占位符，不要修改。</li>
+      <li>对长会话中的历史占位符做一次性清理或重放，消除残留污染；或在 Agent 侧增加"占位符不得作为命令/路径字面量使用"的约束。</li>
+      <li>保留当前网关行为：未还原数 0、失败与脱敏无关联，无需改动脱敏实现。</li>
+    </ul>
+  </div>
+
+  <div class="foot">
+    数据来源：生产 <code>LiteLLM_PrivacyRedactionEvents</code>、<code>LiteLLM_SpendLogs</code>、<code>LiteLLM_SpendLogBlocks</code>（容器内只读 <code>pg</code> 查询）+ 本地配置文件只读核查。全程未输出密钥、数据库连接串或认证头。
+  </div>
+
+</div>
+</body>
+</html>
