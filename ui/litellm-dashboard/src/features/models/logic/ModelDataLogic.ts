@@ -17,6 +17,8 @@ export function transformModels(rows: readonly ProxyModel[], costs: Record<strin
 			cache_read_input_cost: perMillion(model.model_info.cache_read_input_token_cost),
 			max_tokens: model.model_info.max_tokens,
 			max_input_tokens: model.model_info.max_input_tokens,
+			context_window: model.model_info.max_input_tokens ?? model.model_info.context_window ?? null,
+			max_output_tokens: model.model_info.max_output_tokens ?? null,
 			api_base: model.litellm_params.api_base,
 			cleanedLitellmParams: Object.fromEntries(
 				Object.entries(model.litellm_params).filter(([name]) => name !== "model" && name !== "api_base"),
@@ -60,5 +62,7 @@ export function normalizeModelDetails(source: ProxyModel): DisplayProxyModel {
 		cleanedLitellmParams: modelRecord(source.cleanedLitellmParams),
 		max_tokens: source.max_tokens,
 		max_input_tokens: source.max_input_tokens,
+		context_window: source.context_window ?? source.model_info.max_input_tokens ?? source.model_info.context_window ?? null,
+		max_output_tokens: source.max_output_tokens ?? source.model_info.max_output_tokens ?? null,
 	};
 }

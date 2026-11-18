@@ -1,3 +1,4 @@
+import type { UpstreamModelInfoPayload } from "./UpstreamModelInfoModels";
 import type { UiSelectOption } from "../../platform/ui/UiTypes";
 export interface ProxyModelInfo extends Record<string, unknown> {
 	id?: string | null;
@@ -21,6 +22,8 @@ export interface ProxyModel extends Record<string, unknown> {
 	model_name: string;
 	litellm_params: Record<string, unknown>;
 	model_info: ProxyModelInfo;
+	/** `/v2/model/info` 带出的上游信息；没有订阅上游或尚未抓取时缺省。 */
+	upstream_model_info?: UpstreamModelInfoPayload;
 }
 export interface DisplayProxyModel extends ProxyModel {
 	provider: string;
@@ -32,6 +35,8 @@ export interface DisplayProxyModel extends ProxyModel {
 	cleanedLitellmParams: Record<string, unknown>;
 	max_tokens: unknown;
 	max_input_tokens: unknown;
+	context_window?: unknown;
+	max_output_tokens?: unknown;
 }
 export interface ModelPage {
 	data: ProxyModel[];

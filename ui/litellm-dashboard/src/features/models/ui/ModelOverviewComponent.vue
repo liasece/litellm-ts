@@ -7,7 +7,10 @@ import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import ProviderLogo from "../../providers/ui/ProviderLogoComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
-import { deploymentIconProps, modelPriceIdentity } from "../logic/ModelDataLogic";
+import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
+import UpstreamModelHint from "./UpstreamModelHintComponent.vue";
+import { UPSTREAM_PRICE_FIELDS } from "../support/UpstreamModelInfoModels";
+import { formatTokenCount } from "../support/UpstreamModelInfoModels";
 import { modelOptions, type DisplayProxyModel } from "../support/ModelModels";
 const props = defineProps<{ model: DisplayProxyModel }>();
 const price = usePriceDisplayStore(),
@@ -37,11 +40,15 @@ const items = computed(() => [
 	{
 		label: "Input / 1M",
 		value: props.model.input_cost != null ? price.format(props.model.input_cost, 4, modelPriceIdentity(props.model)) : null,
+		hint: "input_cost_per_token",
 	},
 	{
 		label: "Output / 1M",
 		value: props.model.output_cost != null ? price.format(props.model.output_cost, 4, modelPriceIdentity(props.model)) : null,
+		hint: "output_cost_per_token",
 	},
+	{ label: "Context Window", value: formatTokenCount(props.model.context_window), hint: "max_input_tokens" },
+	{ label: "Max Output", value: formatTokenCount(props.model.max_output_tokens), hint: "max_output_tokens" },
 ]);
 function currency(value: unknown) {
 	const next = typeof value === "string" ? value : "";
@@ -65,7 +72,17 @@ function date(value: string | null | undefined) {
 	<section class="model-overview">
 		<div class="model-overview-grid">
 			<div v-for="item in items" :key="item.label">
-				<p>{{ item.label }}</p>
+				<p class="model-overview-label">
+					{{ item.label }}
+					<UpstreamModelHint
+						v-if="item.hint"
+						:model="model.model_name"
+						:record="model.upstream_model_info"
+						:field="item.hint"
+						:fields="item.hint.includes('cost') ? UPSTREAM_PRICE_FIELDS : undefined"
+						:label="modelDisplayName(model)"
+					/>
+				</p>
 				<UiTooltip :title="String(item.value || '-')"
 					><div class="model-overview-value" :class="{ 'model-unset': !item.value }">
 						<template v-if="item.label === 'Provider' && item.value"

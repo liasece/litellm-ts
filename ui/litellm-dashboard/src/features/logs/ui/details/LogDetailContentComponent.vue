@@ -5,6 +5,7 @@ import { guardrailEntries, guardrailLabel, hasMessages, hasResponse, maskedEntit
 import { upstreamErrorViews } from "../../logic/LogDetailsUpstreamErrorsLogic";
 import { asRecord, safeJsonStringify } from "../../logic/PrettyMessagesBlocksLogic";
 import ModelName from "../../../providers/ui/ModelNameComponent.vue";
+import UpstreamModelFacts from "../../../models/ui/UpstreamModelFactsComponent.vue";
 import ProviderLogo from "../../../providers/ui/ProviderLogoComponent.vue";
 import { getProviderLogoAndName, modelSupplier } from "../../../providers/logic/ProviderIdentityLogic";
 import UiAlert from "../../../platform/ui/UiAlert.vue";
@@ -83,6 +84,7 @@ function jump() {
 					<span>Call Type</span><span>{{ log.call_type }}</span>
 				</div>
 				<div><span>Model ID</span><LogDetailsTruncatedComponent :value="log.model_id" /></div>
+				<div v-if="log.model"><span>Upstream</span><UpstreamModelFacts :model="log.model" compact /></div>
 				<div><span>API Base</span><LogDetailsTruncatedComponent :value="log.api_base" :max-width="300" /></div>
 				<div v-if="log.requester_ip_address">
 					<span>IP Address</span><span>{{ log.requester_ip_address }}</span>

@@ -12,6 +12,9 @@ import type { ModelFamilyGroup } from "../../providers/logic/ModelFamilyGrouping
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
 import ModelCredentialCell from "./ModelCredentialCellComponent.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
+import UpstreamModelHint from "./UpstreamModelHintComponent.vue";
+import { UPSTREAM_PRICE_FIELDS } from "../support/UpstreamModelInfoModels";
+import { formatTokenCount } from "../support/UpstreamModelInfoModels";
 
 const props = defineProps<{
 	/** 已按品牌家族分组的行；卡片按组连续排布，组前有一条家族带。 */
@@ -119,11 +122,54 @@ function convertible(model: DisplayProxyModel): boolean {
 					<div class="model-card__fact">
 						<dt>Costs</dt>
 						<dd class="model-card__cost">
-							<span>In {{ cost(model, model.input_cost) }}</span>
-							<span>Out {{ cost(model, model.output_cost) }}</span>
+							<span
+								>In {{ cost(model, model.input_cost)
+								}}<UpstreamModelHint
+									:model="model.model_name"
+									:record="model.upstream_model_info"
+									field="input_cost_per_token"
+									:fields="UPSTREAM_PRICE_FIELDS"
+									:label="modelDisplayName(model)"
+							/></span>
+							<span
+								>Out {{ cost(model, model.output_cost)
+								}}<UpstreamModelHint
+									:model="model.model_name"
+									:record="model.upstream_model_info"
+									field="output_cost_per_token"
+									:fields="UPSTREAM_PRICE_FIELDS"
+									:label="modelDisplayName(model)"
+							/></span>
 							<span v-if="model.cache_read_input_cost != null"
-								>Cache read {{ cost(model, model.cache_read_input_cost) }}</span
-							>
+								>Cache read {{ cost(model, model.cache_read_input_cost)
+								}}<UpstreamModelHint
+									:model="model.model_name"
+									:record="model.upstream_model_info"
+									field="cache_read_input_token_cost"
+									:fields="UPSTREAM_PRICE_FIELDS"
+									:label="modelDisplayName(model)"
+							/></span>
+						</dd>
+					</div>
+					<div class="model-card__fact">
+						<dt>Limits</dt>
+						<dd class="model-card__cost">
+							<span
+								>Ctx {{ formatTokenCount(model.context_window)
+								}}<UpstreamModelHint
+									:model="model.model_name"
+									:record="model.upstream_model_info"
+									field="max_input_tokens"
+									:label="modelDisplayName(model)"
+							/></span>
+							<span
+								>Out {{ formatTokenCount(model.max_output_tokens)
+								}}<UpstreamModelHint
+									:model="model.model_name"
+									:record="model.upstream_model_info"
+									field="max_output_tokens"
+									:label="modelDisplayName(model)"
+							/></span>
 						</dd>
 					</div>
 					<div v-if="model.model_info.access_groups?.length" class="model-card__fact">

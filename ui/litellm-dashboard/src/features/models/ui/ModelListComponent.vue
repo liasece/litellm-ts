@@ -15,6 +15,9 @@ import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import ModelFamilyLabel from "../../providers/ui/ModelFamilyLabelComponent.vue";
 import ModelCredentialCell from "./ModelCredentialCellComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
+import UpstreamModelHint from "./UpstreamModelHintComponent.vue";
+import { UPSTREAM_PRICE_FIELDS } from "../support/UpstreamModelInfoModels";
+import { formatTokenCount } from "../support/UpstreamModelInfoModels";
 import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
 import { familyOfModel, groupByModelFamily, type ModelFamilyGroup } from "../../providers/logic/ModelFamilyGrouping";
 import { modelString, modelStrings, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
@@ -74,6 +77,12 @@ const columns: readonly ModelColumn[] = [
 	},
 	{ key: "health", label: "Health Status", width: 120 },
 	{ key: "input_cost", label: "Costs", width: 120, sortable: true },
+	{
+		key: "limits",
+		label: "Limits",
+		width: 150,
+		tooltip: "Context window and max output tokens. Hover the database icon to see the values the upstream reported.",
+	},
 	{ key: "access_groups", label: "Model Access Group", width: 180 },
 	{ key: "actions", label: "Actions", width: 120, sticky: "right" },
 ];
@@ -477,10 +486,55 @@ async function all() {
 						/>
 					</td>
 					<td class="model-cost-cell">
-						<p>In: {{ model.input_cost == null ? "-" : price.format(model.input_cost, 4, modelPriceIdentity(model)) }}</p>
-						<p>Out: {{ model.output_cost == null ? "-" : price.format(model.output_cost, 4, modelPriceIdentity(model)) }}</p>
+						<p>
+							In: {{ model.input_cost == null ? "-" : price.format(model.input_cost, 4, modelPriceIdentity(model)) }}
+							<UpstreamModelHint
+								:model="model.model_name"
+								:record="model.upstream_model_info"
+								field="input_cost_per_token"
+								:fields="UPSTREAM_PRICE_FIELDS"
+								:label="modelDisplayName(model)"
+							/>
+						</p>
+						<p>
+							Out: {{ model.output_cost == null ? "-" : price.format(model.output_cost, 4, modelPriceIdentity(model)) }}
+							<UpstreamModelHint
+								:model="model.model_name"
+								:record="model.upstream_model_info"
+								field="output_cost_per_token"
+								:fields="UPSTREAM_PRICE_FIELDS"
+								:label="modelDisplayName(model)"
+							/>
+						</p>
 						<p v-if="model.cache_read_input_cost != null">
 							Cache read: {{ price.format(model.cache_read_input_cost, 4, modelPriceIdentity(model)) }}
+							<UpstreamModelHint
+								:model="model.model_name"
+								:record="model.upstream_model_info"
+								field="cache_read_input_token_cost"
+								:fields="UPSTREAM_PRICE_FIELDS"
+								:label="modelDisplayName(model)"
+							/>
+						</p>
+					</td>
+					<td class="model-limits-cell">
+						<p>
+							Ctx: {{ formatTokenCount(model.context_window) }}
+							<UpstreamModelHint
+								:model="model.model_name"
+								:record="model.upstream_model_info"
+								field="max_input_tokens"
+								:label="modelDisplayName(model)"
+							/>
+						</p>
+						<p>
+							Out: {{ formatTokenCount(model.max_output_tokens) }}
+							<UpstreamModelHint
+								:model="model.model_name"
+								:record="model.upstream_model_info"
+								field="max_output_tokens"
+								:label="modelDisplayName(model)"
+							/>
 						</p>
 					</td>
 					<td>

@@ -161,6 +161,9 @@ watch(
 			:key="field.key"
 			:label="editing ? (field.editLabel ?? field.label) : field.label"
 			:tooltip="field.tooltip"
+			:hint-model="model.model_name"
+			:hint-field="field.hint"
+			:hint-record="model.upstream_model_info"
 			><template v-if="inherited(field)"
 				><div class="model-inherited-value" :class="{ 'model-inherited-value--editing': editing }">
 					<ModelName :model="modelNameField(field.key) ? text(display(field)) : ''" :provider="model.provider" :size="14"
