@@ -2352,4 +2352,33 @@ describe("getFailureErrorInformation", () => {
 			error_message: "上游请求已取消：客户端断开（/v1/messages）",
 		});
 	});
+
+	it("carries cooldown diagnostics so a short-circuit 429 keeps its upstream cause", () => {
+		const error = Object.assign(new Error("No deployments available for selected model"), {
+			name: "RouterRateLimitErrorBasic",
+			cooldown_context: [
+				{
+					deployment_id: "dep-1",
+					status_code: 429,
+					error_message: "model quota exhausted",
+					cooldown_seconds: 5,
+					started_at: "2026-11-18T02:51:07.000Z",
+					// 白名单之外的字段不能落进 metadata
+					leaked: "should-not-appear",
+				},
+			],
+		});
+
+		const information = getFailureErrorInformation(error) as Record<string, unknown>;
+
+		expect(information["cooldown_context"]).toEqual([
+			{
+				deployment_id: "dep-1",
+				status_code: 429,
+				error_message: "model quota exhausted",
+				cooldown_seconds: 5,
+				started_at: "2026-11-18T02:51:07.000Z",
+			},
+		]);
+	});
 });

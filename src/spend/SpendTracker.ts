@@ -586,6 +586,7 @@ export function getFailureErrorInformation(error: unknown): Record<string, unkno
 	// fetch/undici 的真实原因常在 cause 里（如 "fetch failed" → "connect ECONNREFUSED"），
 	// 只落 error.message 会让日志无法定位，故展开 cause 链并单独保留字段。
 	const cause = describeErrorCause(errorLike.cause);
+	const cooldownContext = projectCooldownContext(errorLike.cooldown_context);
 	return {
 		error_message: cause === undefined ? errorLike.message : `${errorLike.message} (cause: ${cause})`,
 		error_type: errorLike.name,
@@ -595,7 +596,51 @@ export function getFailureErrorInformation(error: unknown): Record<string, unkno
 		// 其余失败若留空，就无法把"客户端取消 / 上游连接中断 / 流解析失败"区分开
 		// （生产曾累计 4,530 条 abort 全部无 stage）。
 		error_stage: typeof errorLike.stage === "string" ? errorLike.stage : "proxy",
+		// 冷却短路没有上游尝试，真正原因在冷却条目里；随失败日志带出交给 Logs 详情展示。
+		...(cooldownContext.length === 0 ? {} : { cooldown_context: cooldownContext }),
 	};
+}
+
+/** 冷却诊断条目在日志里的稳定形状（与 RouterErrors.CooldownDiagnostic 同构）。 */
+export interface CooldownContextEntry {
+	/** 冷却中的 deployment 标识 */
+	deployment_id: string;
+	/** 触发冷却的上游状态码 */
+	status_code: number;
+	/** 触发冷却的错误原文 */
+	error_message: string;
+	/** 配置的冷却时长（秒） */
+	cooldown_seconds: number;
+	/** 冷却开始时间（ISO 8601） */
+	started_at: string;
+}
+
+/**
+ * 只保留冷却诊断的白名单字段，避免任意错误对象把额外内容写进 spend metadata。
+ * @param value - 错误对象上的 cooldown_context
+ */
+function projectCooldownContext(value: unknown): CooldownContextEntry[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const entries: CooldownContextEntry[] = [];
+	for (const raw of value) {
+		if (typeof raw !== "object" || raw === null) {
+			continue;
+		}
+		const item = raw as Record<string, unknown>;
+		if (typeof item["deployment_id"] !== "string" || typeof item["error_message"] !== "string") {
+			continue;
+		}
+		entries.push({
+			deployment_id: item["deployment_id"],
+			status_code: typeof item["status_code"] === "number" ? item["status_code"] : 0,
+			error_message: item["error_message"],
+			cooldown_seconds: typeof item["cooldown_seconds"] === "number" ? item["cooldown_seconds"] : 0,
+			started_at: typeof item["started_at"] === "string" ? item["started_at"] : "",
+		});
+	}
+	return entries;
 }
 
 /** 可写入 failure metadata 的错误形状（Error 与 DOMException 的公共投影）。 */
@@ -607,6 +652,8 @@ interface ErrorLike {
 	readonly code?: unknown;
 	readonly stage?: unknown;
 	readonly cause?: unknown;
+	/** 冷却短路时随错误携带的诊断（见 RouterErrors.CooldownDiagnostic） */
+	readonly cooldown_context?: unknown;
 }
 
 /**
@@ -625,6 +672,7 @@ function toErrorLike(error: unknown): ErrorLike | undefined {
 			code: extra.code,
 			stage: extra.stage,
 			cause: extra.cause,
+			cooldown_context: extra.cooldown_context,
 		};
 	}
 	if (typeof error !== "object" || error === null) {
@@ -642,6 +690,7 @@ function toErrorLike(error: unknown): ErrorLike | undefined {
 		code: candidate.code,
 		stage: candidate.stage,
 		cause: candidate.cause,
+		cooldown_context: candidate.cooldown_context,
 	};
 }
 

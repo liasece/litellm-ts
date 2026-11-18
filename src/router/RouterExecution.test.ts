@@ -391,6 +391,35 @@ describe("Router execution chain", () => {
 				expect((e.cooldown_time as number) / 1000).toBe(5);
 			}
 		});
+		it("冷却短路错误带 cooldown_context（触发冷却的上游状态码与原文）", async () => {
+			const router = new Router({
+				model_list: [mkDeployment("ctx-model")],
+				routing_strategy: RoutingStrategyName.SimpleShuffle,
+				num_retries: 0,
+				cooldown_time: 5,
+			});
+			(
+				router as unknown as {
+					_cooldownManager: { markFailed: (key: string, ms: number, status?: number, message?: string) => void };
+				}
+			)._cooldownManager.markFailed("ctx-model", 5000, 429, "upstream says: rate limited");
+			try {
+				await router.completion("ctx-model", [{ role: "user", content: "hi" }]);
+			} catch (err) {
+				// 预检短路没有自己的上游交换；诊断字段是这唯一 429 的归因线索，
+				// 缺失时 Dashboard 只能看到一句 "No deployments available"。
+				const e = err as { cooldown_context?: Array<Record<string, unknown>> };
+				expect(e.cooldown_context).toEqual([
+					expect.objectContaining({
+						deployment_id: "ctx-model",
+						status_code: 429,
+						error_message: "upstream says: rate limited",
+						cooldown_seconds: 5,
+					}),
+				]);
+				expect(Date.parse(String(e.cooldown_context![0]!.started_at))).toBeGreaterThan(0);
+			}
+		});
 	});
 	describe("冷却缺省时长：失败路径取 router.cooldown_time（而非 retry_after 的 0ms）", () => {
 		it("provider 500 失败后 deployment 按 cooldown_time 冷却，后续请求 429 不再打 fetch", async () => {

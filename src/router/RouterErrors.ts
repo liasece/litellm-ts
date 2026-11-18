@@ -62,6 +62,29 @@ export interface LitellmErrorFields {
 	 *
 	 */
 	requested_model?: string;
+	/**
+	 * 触发本次冷却短路的部署诊断（仅落日志，不进入客户端响应体）。
+	 *
+	 * 预检阶段全部署冷却时请求根本没发往上游，最终错误只剩 router 自己的
+	 * "No deployments available" 文案；把冷却条目里保存的上游状态码与错误原文带出来，
+	 * 才能在 Logs 里回答"是谁、因为什么把这个部署冷却掉了"。
+	 * PY 无对应字段，`mapToApiError` 只取 message/status/type/param，因此不会泄漏给调用方。
+	 */
+	cooldown_context?: CooldownDiagnostic[];
+}
+
+/** 单个冷却条目的诊断快照 */
+export interface CooldownDiagnostic {
+	/** 冷却中的 deployment 标识（通常是 model_info.id） */
+	deployment_id: string;
+	/** 触发冷却的上游 HTTP 状态码，未知为 0 */
+	status_code: number;
+	/** 触发冷却的错误原文（写入时已按部署参数脱敏） */
+	error_message: string;
+	/** 配置的冷却时长（秒） */
+	cooldown_seconds: number;
+	/** 冷却开始时间（ISO 8601） */
+	started_at: string;
 }
 
 /** 基础 litellm 异常类：所有 Router 异常继承自此类 */
@@ -89,6 +112,9 @@ export class LitellmError extends Error implements LitellmErrorFields {
 	/** DIFF-RT-05: 请求的模型组名，对齐 PY `router.py:5935-5964 extra_info.requested_model` */
 	// eslint-disable-next-line @typescript-eslint/naming-convention
 	requested_model?: string;
+	/** 冷却短路诊断：触发冷却的上游错误快照，仅用于日志（不进入客户端响应体） */
+	// eslint-disable-next-line @typescript-eslint/naming-convention
+	cooldown_context?: CooldownDiagnostic[];
 	constructor(message: string, fields: LitellmErrorFields = {}, errorName = "LitellmError") {
 		super(message);
 		this.name = errorName;
@@ -107,6 +133,7 @@ export class LitellmError extends Error implements LitellmErrorFields {
 		this.cooldown_time = fields.cooldown_time;
 		this.cooldown_list = fields.cooldown_list;
 		this.requested_model = fields.requested_model;
+		this.cooldown_context = fields.cooldown_context;
 	}
 }
 

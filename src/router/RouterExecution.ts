@@ -31,6 +31,7 @@ import { invokeRouterCallback } from "./RouterCallbacks";
 import { buildResponseHeaders } from "./RouterResponseHeaders";
 import { buildDeploymentSpendInfo } from "./RouterSpendInfo";
 import { maskCooldownEntries } from "./CooldownMasking";
+import { buildCooldownDiagnostics } from "./CooldownDiagnostics";
 import type { Deployment, RetryPolicy } from "../types/router";
 import { tryRouteToFallback, tryRouteToFallbackForMock, FallbackErrorKind } from "./RouterExecutionFallbackDispatch";
 import { fallbackPlanFor, nextPlannedFallback } from "./FallbackPlanCursor";
@@ -257,6 +258,9 @@ export async function executeWithFallback(
 				cooldown_time: cooldownSeconds * 1000,
 
 				cooldown_list: cooldownList,
+				// 本次请求没有触达上游，真正的失败原因只存在于冷却条目里；带进日志才能解释
+				// "为什么这一个组突然没有可用部署"（生产里出现过只剩一句 429 的日志无从定位）。
+				cooldown_context: buildCooldownDiagnostics(activeCooldowns),
 			},
 		);
 	}
