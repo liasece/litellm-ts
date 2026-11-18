@@ -34,6 +34,7 @@ import {
 	mergeUsage,
 	normalizeStopList,
 	numberAt,
+	OPENAI_MAX_PROMPT_CACHE_KEY_LENGTH,
 	parseArgumentsObject,
 	recordAt,
 	sanitizeToolId,
@@ -264,6 +265,30 @@ export function decodeMessagesToolChoice(value: unknown): CanonicalToolChoice | 
 }
 
 /**
+ * 从 `metadata.user_id` 里取 Claude Code 的会话标识。
+ *
+ * Claude Code 把 `device_id` / `account_uuid` / `session_id` 打包成 JSON 放进 `user_id`（Anthropic
+ * 规范里它只是不透明的终端用户 ID）。只有 `session_id` 标识一次会话：拿它做上游缓存键才能让
+ * 同一用户的并行会话各用各的缓存槽；拿整个 `user_id` 会把它们钉在同一个槽上，缓存效果反而变差。
+ * @param userId - metadata.user_id 原文
+ */
+function claudeSessionIdFromUserId(userId: string | undefined): string | undefined {
+	if (userId === undefined) {
+		return undefined;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(userId);
+	} catch {
+		return undefined;
+	}
+	const sessionId = stringAt(asRecord(parsed), "session_id");
+	return sessionId === undefined || sessionId.length === 0
+		? undefined
+		: sessionId.slice(0, OPENAI_MAX_PROMPT_CACHE_KEY_LENGTH);
+}
+
+/**
  * 解码 Messages 结构化输出配置。
  * @param value - output_config.format 字段
  */
@@ -275,7 +300,14 @@ export function decodeMessagesResponseFormat(value: unknown): CanonicalResponseF
 	const type = stringAt(record, "type");
 	if (type === "json_schema") {
 		const schema = record["schema"];
-		return { type: "json_schema", ...(schema === undefined ? {} : { schema: schema }) };
+		// Anthropic 的规范里没有 strict；调用方若自行带上，就当作显式意图保留下去，
+		// 不替它决定严格与否（缺省时的判定在 Responses 编码器按 schema 形态做）。
+		const strict = booleanAt(record, "strict");
+		return {
+			type: "json_schema",
+			...(schema === undefined ? {} : { schema: schema }),
+			...(strict === undefined ? {} : { strict: strict }),
+		};
 	}
 	if (type === "json_object") {
 		return { type: "json_object" };
@@ -310,10 +342,11 @@ export function decodeMessagesRequest(body: Record<string, unknown>, fallbackMod
 	const budgetTokens = numberAt(thinking, "budget_tokens");
 	const outputConfig = recordAt(body, "output_config");
 	const effort = stringAt(outputConfig, "effort");
+	const userId = stringAt(recordAt(body, "metadata"), "user_id");
+	const sessionId = stringAt(body, "prompt_cache_key") ?? claudeSessionIdFromUserId(userId);
 	const extras: CanonicalRequestExtras = {
-		...(stringAt(recordAt(body, "metadata"), "user_id") === undefined
-			? {}
-			: { user: stringAt(recordAt(body, "metadata"), "user_id") }),
+		...(userId === undefined ? {} : { user: userId }),
+		...(sessionId === undefined ? {} : { sessionId: sessionId }),
 		...(stringAt(body, "service_tier") === undefined ? {} : { serviceTier: stringAt(body, "service_tier") }),
 	};
 	const maxTokens = numberAt(body, "max_tokens");

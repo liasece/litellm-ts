@@ -26,6 +26,7 @@ import {
 	booleanAt,
 	budgetToEffort,
 	generateId,
+	isStrictJsonSchemaCompatible,
 	mergeAdjacentText,
 	numberAt,
 	partsToText,
@@ -34,6 +35,7 @@ import {
 	stringAt,
 	stringifyArguments,
 	toResponsesId,
+	truncateOpenAIUser,
 	usageFromResponses,
 } from "./shared";
 
@@ -592,7 +594,19 @@ function encodeResponsesToolChoice(choice: CanonicalToolChoice | undefined): unk
 }
 
 /**
+ * Responses 的 `text.format.name` 是必填标识，而 Anthropic 的 `output_config.format`
+ * 只有 `type` 与 `schema`，没有名称可带。缺省名让 messages→responses 的结构化输出
+ * 才能被上游接受（Codex 缺名时报 `Missing required parameter: 'text.format.name'`）。
+ */
+const DEFAULT_RESPONSES_FORMAT_NAME = "structured_output";
+
+/**
  * 编码 Responses 结构化输出。
+ *
+ * Responses 的 `text.format.name` 必填，Anthropic 的 `output_config.format` 没有这个字段，
+ * 缺名会被上游直接拒绝，所以缺省补一个稳定名称。`strict` 同样有隐含契约：省略时上游按严格
+ * 模式校验，schema 只要有一个对象节点没把属性列全或没显式禁止额外属性就 400。调用方多数
+ * 不写 `strict`，因此按 schema 形态决定：可满足就显式 `true`，否则降级 `false` 并保留原 schema。
  * @param format - 规范输出格式
  */
 function encodeResponsesFormat(format: CanonicalResponseFormat | undefined): Record<string, unknown> | undefined {
@@ -602,11 +616,14 @@ function encodeResponsesFormat(format: CanonicalResponseFormat | undefined): Rec
 	if (format.type === "json_object") {
 		return { type: "json_object" };
 	}
+	// 需要先判定再写：调用方显式给的 strict 优先，缺省时由 schema 形态决定。
+	const strict =
+		format.strict ?? (format.schema === undefined ? undefined : isStrictJsonSchemaCompatible(format.schema));
 	return {
 		type: "json_schema",
-		...(format.name === undefined ? {} : { name: format.name }),
+		name: format.name ?? DEFAULT_RESPONSES_FORMAT_NAME,
 		...(format.schema === undefined ? {} : { schema: format.schema }),
-		...(format.strict === undefined ? {} : { strict: format.strict }),
+		...(strict === undefined ? {} : { strict: strict }),
 	};
 }
 
@@ -687,8 +704,10 @@ export function encodeResponsesRequest(request: CanonicalRequest, upstreamModel:
 		};
 	}
 	const extras = request.extras;
-	if (extras.promptCacheKey !== undefined) {
-		body["prompt_cache_key"] = extras.promptCacheKey;
+	// 显式的 prompt_cache_key 优先；Anthropic 入口没有这个字段，会话亲和只能从只会话的 sessionId 取。
+	const promptCacheKey = extras.promptCacheKey ?? extras.sessionId;
+	if (promptCacheKey !== undefined) {
+		body["prompt_cache_key"] = promptCacheKey;
 	}
 	if (extras.store !== undefined) {
 		body["store"] = extras.store;
@@ -703,7 +722,9 @@ export function encodeResponsesRequest(request: CanonicalRequest, upstreamModel:
 		body["service_tier"] = extras.serviceTier;
 	}
 	if (extras.user !== undefined) {
-		body["user"] = extras.user;
+		// Anthropic 把 device_id/account_uuid/session_id 打包进 metadata.user_id，往往是上百字符的 JSON；
+		// Responses 的 user 只有 64 字符上限，原样外发是在赌上游不校验。
+		body["user"] = truncateOpenAIUser(extras.user);
 	}
 	return body;
 }

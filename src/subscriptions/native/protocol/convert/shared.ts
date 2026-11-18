@@ -776,3 +776,79 @@ export function isEmptyContent(parts: readonly CanonicalContentPart[]): boolean 
 	}
 	return true;
 }
+
+/** OpenAI 的 `user` 字段长度上限（chat 与 responses 同值）。 */
+export const OPENAI_MAX_USER_LENGTH = 64;
+
+/** OpenAI Responses 的 `prompt_cache_key` 长度上限。 */
+export const OPENAI_MAX_PROMPT_CACHE_KEY_LENGTH = 64;
+
+/**
+ * 按码位截断 `user`，避免把代理对切成半个字符让上游 JSON 解析失败。
+ * @param value - 调用方给定的终端用户标识
+ */
+export function truncateOpenAIUser(value: string): string {
+	if (value.length <= OPENAI_MAX_USER_LENGTH) {
+		return value;
+	}
+	// 只有超长时才按码位遍历；正常请求的 user 很短，不必为它付出全量数组开销。
+	return [...value].slice(0, OPENAI_MAX_USER_LENGTH).join("");
+}
+
+/** OpenAI 严格模式会递归检查的子 schema 容器。 */
+const STRICT_SUBSCHEMA_MAP_KEYS = ["properties", "patternProperties", "$defs", "definitions"] as const;
+const STRICT_SUBSCHEMA_LIST_KEYS = ["anyOf", "oneOf", "allOf", "prefixItems"] as const;
+
+/**
+ * 判断 schema 能否原样满足 OpenAI 严格结构化输出的形态要求。
+ *
+ * 严格模式要求每个声明了 `properties` 的对象节点把全部属性列进 `required`，
+ * 并且 `additionalProperties` 显式为 `false`。claude-cli 一类客户端本来就这么写，
+ * 但任意第三方客户端的 schema 未必；不满足时上游直接 400
+ * （`Invalid schema for response_format`），所以调用方要么改写 schema、要么关掉严格模式。
+ * 这里只做判定，不改写：把可选字段悄悄变成必填会改掉调用方语义。
+ * @param schema - JSON Schema
+ */
+export function isStrictJsonSchemaCompatible(schema: unknown): boolean {
+	if (Array.isArray(schema)) {
+		return schema.every((item) => isStrictJsonSchemaCompatible(item));
+	}
+	const record = asRecord(schema);
+	if (record === undefined) {
+		return true;
+	}
+	const properties = asRecord(record["properties"]);
+	if (properties !== undefined) {
+		const required = Array.isArray(record["required"]) ? record["required"] : [];
+		const requiredNames = new Set(required.filter((item): item is string => typeof item === "string"));
+		for (const name of Object.keys(properties)) {
+			if (!requiredNames.has(name)) {
+				return false;
+			}
+		}
+		if (record["additionalProperties"] !== false) {
+			return false;
+		}
+	}
+	if (record["items"] !== undefined && !isStrictJsonSchemaCompatible(record["items"])) {
+		return false;
+	}
+	for (const key of STRICT_SUBSCHEMA_MAP_KEYS) {
+		const children = asRecord(record[key]);
+		if (children === undefined) {
+			continue;
+		}
+		for (const child of Object.values(children)) {
+			if (!isStrictJsonSchemaCompatible(child)) {
+				return false;
+			}
+		}
+	}
+	for (const key of STRICT_SUBSCHEMA_LIST_KEYS) {
+		const children = record[key];
+		if (Array.isArray(children) && !isStrictJsonSchemaCompatible(children)) {
+			return false;
+		}
+	}
+	return true;
+}

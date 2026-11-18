@@ -174,6 +174,103 @@ describe("translateRequest", () => {
 		});
 	});
 
+	it("messages → responses 为无名称的结构化输出补默认名", () => {
+		// Anthropic 的 output_config.format 只有 type/schema；Responses 的 text.format.name 必填，
+		// 缺名会被上游拒绝（Codex 报 Missing required parameter: 'text.format.name'）。
+		const out = translate("messages", "responses", {
+			model: "client-model",
+			max_tokens: 64,
+			messages: [{ role: "user", content: [{ type: "text", text: "title" }] }],
+			output_config: {
+				effort: "high",
+				format: { type: "json_schema", schema: { type: "object", required: ["title"], properties: { title: { type: "string" } } } },
+			},
+		});
+		const format = asObject(asObject(out["text"])["format"]);
+		expect(format["type"]).toBe("json_schema");
+		expect(typeof format["name"]).toBe("string");
+		expect(String(format["name"]).length).toBeGreaterThan(0);
+		expect(format["schema"]).toMatchObject({ type: "object", properties: { title: { type: "string" } } });
+		expect(asObject(out["reasoning"])["effort"]).toBe("high");
+	});
+
+	it("messages → responses 对不满足严格形态的 schema 降级 strict", () => {
+		// Responses 省略 strict 时按严格模式校验：对象节点没把属性列全或没禁止额外属性，上游直接 400。
+		// 这里对齐 CLIProxyAPI 的策略——保留调用方 schema 原样，只在不可满足时发 strict=false，
+		// 而不是像 LiteLLM 那样补齐 required，把可选字段悄悄变成必填。
+		const schema = {
+			type: "object",
+			properties: { title: { type: "string" }, subtitle: { type: "string" } },
+			required: ["title"],
+		};
+		const out = translate("messages", "responses", {
+			model: "client-model",
+			max_tokens: 64,
+			messages: [{ role: "user", content: [{ type: "text", text: "title" }] }],
+			output_config: { format: { type: "json_schema", schema: schema } },
+		});
+		const format = asObject(asObject(out["text"])["format"]);
+		expect(format["strict"]).toBe(false);
+		expect(format["schema"]).toMatchObject(schema);
+	});
+
+	it("messages → responses 对严格形态的 schema 保持 strict", () => {
+		const schema = {
+			type: "object",
+			additionalProperties: false,
+			properties: { title: { type: "string" } },
+			required: ["title"],
+		};
+		const out = translate("messages", "responses", {
+			model: "client-model",
+			max_tokens: 64,
+			messages: [{ role: "user", content: [{ type: "text", text: "title" }] }],
+			output_config: { format: { type: "json_schema", schema: schema } },
+		});
+		expect(asObject(asObject(out["text"])["format"])["strict"]).toBe(true);
+	});
+
+	it("messages → responses 保留调用方显式的 strict: true", () => {
+		// 显式要求严格校验是调用方的契约；schema 不满足时由上游报错，不静默降级。
+		const out = translate("messages", "responses", {
+			model: "client-model",
+			max_tokens: 64,
+			messages: [{ role: "user", content: [{ type: "text", text: "title" }] }],
+			output_config: {
+				format: { type: "json_schema", strict: true, schema: { type: "object", properties: { a: { type: "string" } } } },
+			},
+		});
+		expect(asObject(asObject(out["text"])["format"])["strict"]).toBe(true);
+	});
+
+	it("messages → responses 截断超长 user 并取会话标识作缓存键", () => {
+		// Claude Code 把 device_id/account_uuid/session_id 打包进 metadata.user_id；
+		// Responses 的 user 上限 64 字符，缓存键应取 session_id 而不是整个 user_id。
+		const userId = JSON.stringify({
+			device_id: "d".repeat(40),
+			account_uuid: "a".repeat(40),
+			session_id: "sess-1",
+		});
+		const out = translate("messages", "responses", {
+			model: "client-model",
+			max_tokens: 16,
+			metadata: { user_id: userId },
+			messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+		});
+		expect(String(out["user"]).length).toBeLessThanOrEqual(64);
+		expect(out["prompt_cache_key"]).toBe("sess-1");
+	});
+
+	it("messages → chat 不写入会话缓存键", () => {
+		const out = translate("messages", "chat", {
+			model: "client-model",
+			max_tokens: 16,
+			metadata: { user_id: JSON.stringify({ session_id: "sess-1" }) },
+			messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+		});
+		expect(out["prompt_cache_key"]).toBeUndefined();
+	});
+
 	it("responses → chat 还原工具调用与输入项", () => {
 		const out = translate("responses", "chat", {
 			model: "client-model",

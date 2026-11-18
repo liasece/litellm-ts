@@ -212,6 +212,8 @@ export interface CanonicalRequestExtras {
 	readonly topLogprobs?: number;
 	/** 提示缓存键。 */
 	readonly promptCacheKey?: string;
+	/** 客户端会话标识；只有需要会话亲和的上游（Responses 的 prompt_cache_key、Codex Session-Id）消费它。 */
+	readonly sessionId?: string;
 	/** Responses 是否存储响应。 */
 	readonly store?: boolean;
 	/** Responses 截断策略。 */
