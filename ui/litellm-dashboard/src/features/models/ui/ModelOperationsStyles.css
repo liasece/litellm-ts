@@ -89,6 +89,59 @@
 	background: #fffbeb;
 	color: #b45309;
 }
+/* 声明的候选顺序：与 Fallbacks 表同一套序号 + chip，序号即尝试顺序，不再用灰色句子表达。 */
+.model-alias-then {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+.model-alias-then-label {
+	flex: none;
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 16px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: #9aa4b2;
+}
+.model-alias-then-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+.model-alias-then-index {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
+	background: #e0e7ff;
+	color: #4338ca;
+	font: 700 10px/1 var(--ui-font-sans);
+}
+.model-alias-final {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: 2px;
+	padding: 2px 8px;
+	border: 1px solid #e2e8f0;
+	border-radius: 999px;
+	background: #f8fafc;
+	color: #475569;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 16px;
+	white-space: nowrap;
+}
+.model-alias-final .ui-hero-icon {
+	color: #94a3b8;
+}
 .model-alias-schedule-summary {
 	font-size: 12px;
 	line-height: 16px;

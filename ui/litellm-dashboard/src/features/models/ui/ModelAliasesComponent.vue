@@ -7,6 +7,7 @@ import UiTag from "../../platform/ui/UiTag.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
+import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import UiEntryCard from "../../platform/ui/UiEntryCard.vue";
@@ -336,12 +337,27 @@ onBeforeUnmount(() => {
 									></template
 								>
 							</div>
-							<p v-if="aliasTargets(value).length > 1" class="model-small model-muted">
-								Then: {{ aliasTargets(value).slice(1).join(" → ") }}
-							</p>
-							<p v-if="!getModelGroupAliasRecurse(value)" class="model-small model-muted">
-								No recursive fallback: these targets are the final candidates.
-							</p>
+							<div v-if="aliasTargets(value).length > 1 || !getModelGroupAliasRecurse(value)" class="model-alias-then">
+								<template v-if="aliasTargets(value).length > 1">
+									<span class="model-alias-then-label">then</span>
+									<span
+										v-for="(target, index) in aliasTargets(value).slice(1)"
+										:key="index"
+										class="model-alias-then-item"
+									>
+										<span class="model-alias-then-index" aria-hidden="true">{{ index + 2 }}</span>
+										<ModelName class="model-alias-target" :model="target" :size="14"
+											><code>{{ target }}</code></ModelName
+										>
+									</span>
+								</template>
+								<UiTooltip
+									v-if="!getModelGroupAliasRecurse(value)"
+									title="A failed target stops here: its own fallback chain is not used."
+								>
+									<span class="model-alias-final"><UiHeroIcon name="BanIcon" :size="12" />No recursion</span>
+								</UiTooltip>
+							</div>
 							<p v-if="resolutions[name].error" class="model-error model-small">{{ resolutions[name].error }}</p>
 						</td>
 						<td>
