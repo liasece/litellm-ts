@@ -6,6 +6,7 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageLegend from "./charts/UsageLegendComponent.vue";
 import UsageActivitySection from "./UsageActivitySectionComponent.vue";
+import UsageActivityTrends from "./UsageActivityTrendsComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { overallActivity } from "../logic/UsageSummaryLogic";
 import { tokenChartFields, usageTokenBreakdown } from "../logic/UsageTokenLogic";
@@ -13,6 +14,7 @@ import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import type { ModelActivityData, SpendMetrics } from "../support/UsageModels";
 import type { ActivityOverall, ActivityTopEntity } from "../logic/UsageOverviewLogic";
+import type { ActivitySeries } from "../logic/UsageSeriesLogic";
 type ActivityEntityKind = "model" | "key" | "mcp" | "agent";
 const props = withDefaults(
 	defineProps<{
@@ -25,6 +27,8 @@ const props = withDefaults(
 		loadingMore?: boolean;
 		overall?: ActivityOverall | null;
 		topEntities?: ActivityTopEntity[];
+		/** 顶部随时间的 Token/花费堆叠图；Model/Key/MCP 由页面提供，Endpoint 走 UsageEndpoint。 */
+		series?: ActivitySeries | null;
 	}>(),
 	{
 		hidePromptCachingMetrics: false,
@@ -34,11 +38,14 @@ const props = withDefaults(
 		loadingMore: false,
 		overall: null,
 		topEntities: () => [],
+		series: null,
 	},
 );
 const emit = defineEmits<{ loadMore: [] }>();
 const money = useMoneyFormatter(),
 	number = (n: number) => formatNumberWithCommas(n, 0, false);
+/** 趋势组件与 Activity 的实体类型一致，直接传下去，避免两处各自维护映射。 */
+const trendKind = computed(() => props.entityKind);
 const names = computed(() =>
 	Object.keys(props.modelMetrics).sort((a, b) =>
 		a === "" ? 1 : b === "" ? -1 : props.modelMetrics[b].total_spend - props.modelMetrics[a].total_spend,
@@ -134,6 +141,7 @@ function toggle(name: string) {
 </script>
 <template>
 	<div class="usage-activity">
+		<UsageActivityTrends v-if="series && !loading" :series="series" :entity-kind="trendKind" />
 		<div class="usage-overall">
 			<h2>Overall Usage</h2>
 			<div class="usage-grid-four">

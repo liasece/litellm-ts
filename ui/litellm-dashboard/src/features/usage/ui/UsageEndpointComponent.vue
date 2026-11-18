@@ -5,10 +5,19 @@ import UiCard from "../../platform/ui/UiCard.vue";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageLegend from "./charts/UsageLegendComponent.vue";
 import UsageTokensCell from "./UsageTokensCellComponent.vue";
+import UsageActivityTrends from "./UsageActivityTrendsComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { addMetrics, emptyMetrics } from "../logic/UsageSummaryLogic";
 import type { DailyActivityResponse, SpendMetrics, UsageDetailResponse } from "../support/UsageModels";
-const props = defineProps<{ data?: DailyActivityResponse; detail?: UsageDetailResponse | null }>();
+import type { ActivitySeries } from "../logic/UsageSeriesLogic";
+const props = defineProps<{
+	data?: DailyActivityResponse;
+	detail?: UsageDetailResponse | null;
+	/** 顶部 Token/花费堆叠图：Global 用 endpoint detail，实体视图用 full breakdown。 */
+	series?: ActivitySeries | null;
+	/** 首屏加载时先不画图，避免先闪一次 “No data” 再出现柱子。 */
+	loading?: boolean;
+}>();
 const money = useMoneyFormatter(),
 	colors = ["blue", "cyan", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "red", "orange"];
 const rows = computed(() => {
@@ -81,6 +90,7 @@ function successColor(rate: number) {
 </script>
 <template>
 	<div class="usage-endpoints">
+		<UsageActivityTrends v-if="series && !loading" :series="series" entity-kind="endpoint" />
 		<UiTable :columns="columns" :rows="rows" row-key="endpoint" mobile-cards
 			><template #cell-endpoint="{ row }"
 				><span class="usage-endpoint-name">{{ row.endpoint }}</span></template

@@ -188,3 +188,135 @@
 	align-items: center;
 	gap: 6px;
 }
+
+/* Activity 顶部的 Token / 花费堆叠柱状图：两张图共用一套实体颜色。 */
+.usage-trends {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+}
+
+@media (max-width: 767px) {
+	.usage-trends {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	/* 窄屏标题所在行放不下右侧说明，改成上下排列，避免标题被挤成两行。 */
+	.usage-trends-head {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+}
+
+.usage-trends-card {
+	min-width: 0;
+}
+
+/* 自己带类名而不是依赖卡片内部的 header 结构，避免被各容器的 .ui-card__body > header 规则抢走。 */
+.usage-trends-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 4px 16px;
+}
+
+.usage-trends-hint {
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+
+.usage-trends-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	margin-top: 12px;
+}
+
+.usage-trends-legend > span {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 240px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+
+.usage-trends-legend > span > i {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 9999px;
+}
+
+.usage-trends-card .usage-chart {
+	margin-top: 12px;
+}
+
+.usage-trends-note {
+	grid-column: 1 / -1;
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+
+/* 悬浮明细沿用默认 tooltip 的视觉，但只列当天有数值的实体。 */
+.usage-trends-tooltip {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-width: 340px;
+	max-height: 240px;
+	overflow-y: auto;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}
+
+.usage-trends-tooltip-date {
+	color: #111827;
+	font-weight: 500;
+}
+
+.usage-trends-tooltip > div {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 24px;
+}
+
+.usage-trends-tooltip > div > span {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: #6b7280;
+}
+
+.usage-trends-tooltip > div > span > i {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 9999px;
+}
+
+.usage-trends-tooltip > div > b {
+	flex: none;
+	font-weight: 500;
+	color: #374151;
+}
+
+/* 该维度在当前区间没有任何用量时，卡片保留标题并给出明确空态，而不是整块消失。 */
+.usage-trends-empty {
+	padding: 28px 0;
+	text-align: center;
+	color: #6b7280;
+	font-size: 12.4px;
+	line-height: 18.4px;
+}

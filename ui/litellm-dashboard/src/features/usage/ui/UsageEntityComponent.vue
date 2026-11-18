@@ -15,6 +15,7 @@ import { createDailyActivityStore } from "../stores/DailyActivityStore";
 import { modelRankings, providerRankings, keyRankings } from "../logic/UsageSummaryLogic";
 import { processActivityData } from "../logic/ActivityMetricsLogic";
 import { agentRankings, entityBreakdown, entityLabel } from "../logic/EntityUsageLogic";
+import { activityBreakdownSeries } from "../logic/UsageSeriesLogic";
 import type { DateRangeValue } from "../../date-range/support/DateRangeModels";
 import type { EntityType, EntityOption, DailyData } from "../support/UsageModels";
 import UsageChart from "./charts/UsageChartComponent.vue";
@@ -78,6 +79,12 @@ const entities = computed(() => entityBreakdown(state.data, props.options, selec
 const modelMetrics = computed(() => processActivityData(state.data, "models", app.state.teams)),
 	keyMetrics = computed(() => processActivityData(state.data, "api_keys", app.state.teams)),
 	agentMetrics = computed(() => processActivityData(agent.data, "entities", app.state.teams));
+/** 实体视图拿的是 full 响应，breakdown 里已有全部实体与日期，不必再发请求。 */
+const modelSeries = computed(() => activityBreakdownSeries(state.data.results, "models", app.state.teams, false)),
+	keySeries = computed(() => activityBreakdownSeries(state.data.results, "api_keys", app.state.teams, true)),
+	endpointSeries = computed(() => activityBreakdownSeries(state.data.results, "endpoints", app.state.teams, false)),
+	// Agent Activity 的数据来自独立的 /agent/daily/activity，实体在 breakdown.entities 里。
+	agentSeries = computed(() => activityBreakdownSeries(agent.data.results, "entities", app.state.teams, false));
 const models = computed(() => modelRankings(state.data)),
 	agents = computed(() => agentRankings(agent.data)),
 	keys = computed(() => keyRankings(state.data, true));
@@ -314,15 +321,26 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 			:model-metrics="modelMetrics"
 			:hide-prompt-caching-metrics="entityType === 'agent'"
 			entity-kind="model"
+			:series="modelSeries"
+			:loading="state.loading"
 		/>
-		<UsageActivity v-if="entityType === 'team'" v-show="tab === 'agents'" :model-metrics="agentMetrics" entity-kind="agent" />
+		<UsageActivity
+			v-if="entityType === 'team'"
+			v-show="tab === 'agents'"
+			:model-metrics="agentMetrics"
+			entity-kind="agent"
+			:series="agentSeries"
+			:loading="agent.loading"
+		/>
 		<UsageActivity
 			v-show="tab === 'keys'"
 			:model-metrics="keyMetrics"
 			:hide-prompt-caching-metrics="entityType === 'agent'"
 			entity-kind="key"
+			:series="keySeries"
+			:loading="state.loading"
 		/>
-		<UsageEndpoint v-show="tab === 'endpoints'" :data="state.data" />
+		<UsageEndpoint v-show="tab === 'endpoints'" :data="state.data" :series="endpointSeries" :loading="state.loading" />
 		<UsageExport
 			v-model:open="exportOpen"
 			:entity-type="entityType"

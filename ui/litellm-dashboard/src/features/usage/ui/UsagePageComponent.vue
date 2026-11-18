@@ -17,6 +17,7 @@ import type { DailyActivityResponse, DailyData, EntityOption, UsageDetailView, U
 import { createUsageOverviewStore } from "../stores/UsageOverviewStore";
 import { createUsageCatalogStore } from "../stores/UsageCatalogStore";
 import { dateRangeLabel } from "../logic/UsageSummaryLogic";
+import { activitySeries } from "../logic/UsageSeriesLogic";
 import {
 	detailActivity,
 	emptyUsageMetadata,
@@ -152,6 +153,10 @@ const entityOptions = computed<Record<string, EntityOption[]>>(() => ({
 const modelMetrics = computed(() => detailActivity(overview.state.details.models ?? null, app.state.teams, false));
 const keyMetrics = computed(() => detailActivity(overview.state.details.api_keys ?? null, app.state.teams, true));
 const mcpMetrics = computed(() => detailActivity(overview.state.details.mcp_servers ?? null, app.state.teams, false));
+const modelSeries = computed(() => activitySeries(overview.state.details.models ?? null, app.state.teams, false));
+const keySeries = computed(() => activitySeries(overview.state.details.api_keys ?? null, app.state.teams, true));
+const mcpSeries = computed(() => activitySeries(overview.state.details.mcp_servers ?? null, app.state.teams, false));
+const endpointSeries = computed(() => activitySeries(overview.state.details.endpoints ?? null, app.state.teams, false));
 const models = computed(() => summaryModelRankings(overview.state.summary)),
 	groups = computed(() => summaryModelRankings(overview.state.summary, true)),
 	providers = computed(() => summaryProviderRankings(overview.state.summary)),
@@ -368,6 +373,7 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 						:loading="overview.state.detailLoading.models"
 						:has-more="detailHasMore('models')"
 						:loading-more="detailLoadingMore('models')"
+						:series="modelSeries"
 						@load-more="loadMore('models')"
 					/>
 					<UsageActivity
@@ -379,6 +385,7 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 						:loading="overview.state.detailLoading.api_keys"
 						:has-more="detailHasMore('api_keys')"
 						:loading-more="detailLoadingMore('api_keys')"
+						:series="keySeries"
 						@load-more="loadMore('api_keys')"
 					/>
 					<UsageActivity
@@ -390,9 +397,15 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 						:loading="overview.state.detailLoading.mcp_servers"
 						:has-more="detailHasMore('mcp_servers')"
 						:loading-more="detailLoadingMore('mcp_servers')"
+						:series="mcpSeries"
 						@load-more="loadMore('mcp_servers')"
 					/>
-					<UsageEndpoint v-if="tab === 'endpoints'" :detail="overview.state.details.endpoints ?? null" />
+					<UsageEndpoint
+						v-if="tab === 'endpoints'"
+						:detail="overview.state.details.endpoints ?? null"
+						:series="endpointSeries"
+						:loading="overview.state.detailLoading.endpoints"
+					/>
 				</div>
 			</div>
 			<template v-else
