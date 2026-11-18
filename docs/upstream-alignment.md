@@ -124,10 +124,10 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | F06 SSE 心跳 | 全局与部署配置、默认禁止客户端覆盖、部署 0 强制关闭；Chat/Messages/Responses 在连接/工具等待期间 ping；结束/断开清理；心跳后错误以 SSE 终止 | CLIProxy 保留现有局部实现。选中部署之前仅一致策略可许可客户端覆盖；mixed pool 有禁用部署则保守关闭；未做生产负载均衡器验证 | SseKeepalive.test.ts、ChatStreamingSpendLog.test.ts、AnthropicMessagesEndpoint.test.ts、ResponsesApiEndpoints.test.ts |
 | F07 路由 | 修复 BUG-01/02/03/04/09；required/deny/OR 标签与请求隔离；TTFT 分位数；部署 allowed_fails_policy/cooldown_time、并发满 429；ServiceUnavailable/NotFound/Default 重试继承；消费中取消中止上游 | 标签不继承 Key/Team，不开放 fail-open；未采用有损上下文 compact-to-fit、group priority、动态额度发现或 affinity header mapping，涉及新的路由/内容变更契约。并发计数为当前 Router 实例，不是跨进程信号量 | UpstreamRoutingRegression.test.ts、ProviderRequestExecutor.test.ts、Router 现有测试 |
 | F15 日志内容 | DB/YAML metadata include/exclude，费用计算后才投影；强制保留 status/cold_storage_object_key；metadata.litellm_call_id、normalized_error；配置秘密在错误中的脱敏 | 不增 DB 列；未复制企业审计默认、Sentry、OTEL/span hooks 或 OAuth 标记；请求体/响应体存储仍依现有显式开关。normalized_error 使用 TS 可得的 error_class/error_type、error_code，不宣称与 Python 聚类字符串等价 | SpendMetadataFields.test.ts、SpendTracker.test.ts、redactConfiguredSecrets.test.ts |
-| F16 Usage API  | caller-scoped Key/User/Team/Org 按模型报表；主体 daily/activity 聚合/CSV；日期默认 30 天且最多 366 天；页大小最多 1000；Key 搜索在分页之前并保持权限约束；带 timezone 的请求按浏览器本地日历分桶；`aggregated` 新增 `view=summary`（日指标 + 除 endpoint 外各维度全区间总量；Endpoint 数据由该 Tab 的 detail 单独读取）与 `view=models/model_groups/providers/api_keys/mcp_servers/endpoints/entities`（按维度分页，默认 20、最大 100，每项带日序列和 Top 10 关联 Key/Model）；不传 `view` 仍是 full 兼容响应。Global Usage 页面 Cost 只取 summary，Model/Key/MCP/Endpoint Activity 按 Tab 懒加载 detail 并支持分页 “Load more”，导出时才请求 full | 模型报表最多 1000 组；聚合查询源明细最多 100000 行、full 聚合结果最多 10000 个，超出返回错误并要求缩小区间，不静默截断；summary/detail 的源明细同样受 100000 行上限约束，但不复制 full breakdown；summary 和非 endpoint detail 不读取 proxy_server_request/metadata；cache token、resolved_model_group、endpoint 由 0019 迁移投影为 SpendLogs 小列，endpoint detail/full 读 endpoint 列，以降低主要 JSON 反序列化成本。带 timezone/timezone_name 的 daily/activity 从 SpendLogs 按本地日聚合（IANA 优先、固定偏移兼容），无时区或 UTC 仍走日汇总表；同一进程内按鉴权范围、时区、过滤条件和实际原始覆盖范围缓存近期 SpendLogs 行（30 秒新鲜、10 分钟 stale-while-revalidate，最多 4 组），起始日不同但原始覆盖相同的 7 天/30 天/YTD 请求共用缓存，summary/detail/full 也复用；进程重启或首次查询仍需扫描原始日志。日汇总表本身仍按 UTC 写入。原始日志尚未覆盖的更早日期由日汇总表补齐，避免因原始日志保留期丢失历史；这些历史日期只能保留 UTC 日粒度，边界不是精确本地日。detail 的 Top 关联项每项最多 10 个，页面通过分页加载全部实体；CSV 导出日期和费用/token/请求总量，非全部 Key 明细；没有新增 global rollup 表、cache leakage/model_top_keys、压缩/自动路由 savings | ScopedSpendReports.test.ts、UsageQuery.test.ts、WebUiSupportEndpoints.test.ts、UsageActivityCache.test.ts、DailyActivityTimezone.test.ts、SpendManagementEndpoint.test.ts、UsageContractsLogic.test.ts、UsageOverviewStore.test.ts |
+| F16 Usage API  | caller-scoped Key/User/Team/Org 按模型报表；主体 daily/activity 聚合/CSV；日期默认 30 天且最多 366 天；页大小最多 1000；Key 搜索在分页之前并保持权限约束；带 timezone 的请求按浏览器本地日历分桶；`aggregated` 新增 `view=summary`（日指标 + 除 endpoint 外各维度全区间总量；Endpoint 数据由该 Tab 的 detail 单独读取）与 `view=models/model_groups/providers/api_keys/mcp_servers/endpoints/entities`（按维度分页，默认 20、最大 100，每项带日序列和 Top 10 关联 Key/Model）；不传 `view` 仍是 full 兼容响应。Global Usage 页面 Cost 只取 summary，Model/Key/MCP/Endpoint Activity 按 Tab 懒加载 detail 并支持分页 “Load more”，导出时才请求 full；Global Model/Key/MCP Activity 顶部直接用该 detail 的 `daily`、Endpoint Activity 用 endpoint detail 画 Token/花费分色堆叠柱状图；Team/Org/User 等实体视图的 Model/Key/Endpoint Activity 改用 full 响应每日 breakdown 着色（同一页面原本就取 full，不额外请求），Team 的 Agent Activity 用 `/agent/daily/activity` 的 `entities` 维度，花费与 Token 两个榜单综合名次 Top 7 之外的实体并入 Other，日总量取响应 `results` 或当日 metrics，未加载实体也计入柱高，维度在当前区间没有用量时保留卡片并显示空态 | 模型报表最多 1000 组；聚合查询源明细最多 100000 行、full 聚合结果最多 10000 个，超出返回错误并要求缩小区间，不静默截断；summary/detail 的源明细同样受 100000 行上限约束，但不复制 full breakdown；summary 和非 endpoint detail 不读取 proxy_server_request/metadata；cache token、resolved_model_group、endpoint 由 0019 迁移投影为 SpendLogs 小列，endpoint detail/full 读 endpoint 列，以降低主要 JSON 反序列化成本。带 timezone/timezone_name 的 daily/activity 从 SpendLogs 按本地日聚合（IANA 优先、固定偏移兼容），无时区或 UTC 仍走日汇总表；同一进程内按鉴权范围、时区、过滤条件和实际原始覆盖范围缓存近期 SpendLogs 行（30 秒新鲜、10 分钟 stale-while-revalidate，最多 4 组），起始日不同但原始覆盖相同的 7 天/30 天/YTD 请求共用缓存，summary/detail/full 也复用；进程重启或首次查询仍需扫描原始日志。日汇总表本身仍按 UTC 写入。原始日志尚未覆盖的更早日期由日汇总表补齐，避免因原始日志保留期丢失历史；这些历史日期只能保留 UTC 日粒度，边界不是精确本地日。detail 的 Top 关联项每项最多 10 个，页面通过分页加载全部实体；CSV 导出日期和费用/token/请求总量，非全部 Key 明细；没有新增 global rollup 表、cache leakage/model_top_keys、压缩/自动路由 savings | ScopedSpendReports.test.ts、UsageQuery.test.ts、WebUiSupportEndpoints.test.ts、UsageActivityCache.test.ts、DailyActivityTimezone.test.ts、SpendManagementEndpoint.test.ts、UsageContractsLogic.test.ts、UsageOverviewStore.test.ts |
 | F19 管理 API | Team REST PATCH（metadata JSON merge patch）、Org REST PATCH（metadata 替换、预算同事务）；Key alias 更新/搜索/命名规则、状态/过期过滤；BUG-08 permissions 管理员门禁 | PATCH 仅 proxy_admin；不增加 team-admin 委派或 service-account 权限。bulk users/members、custom_key_policy、access-group 对象权限、删除 Key 的 /key/info 与完整 OpenAPI 发布未采用；常用字段外 strict schema 拒绝 | EntityPatchEndpoints.test.ts、KeyAliasPolicy.test.ts、KeyManagementEndpoint.test.ts、AuthorizationGuard.test.ts |
 
-新增行为无需数据库迁移。仅新增数据和 API 的配置值示例（先在开发/测试配置中启用；这不是生产写入）：
+新增行为无需数据库迁移。设置段的配置示例（先在开发/测试配置中启用；这不是生产写入）：
 
 ```yaml
 litellm_settings:
@@ -140,22 +140,28 @@ general_settings:
 router_settings:
   routing_strategy_args:
     ttft_percentile: 0.9
-model_list:
-  - model_name: my-model
-    litellm_params:
-      model: openai/provider-model
-      supported_endpoints: ['/v1/responses', '/v1/messages'] # 仅真实支持这些协议的 endpoint
-      keepalive_seconds: 10 # 0 强制关闭，负数亦视为关闭
-      allow_client_keepalive_override: false
-      max_parallel_requests: 4
-      tags: [default, eu, fast]
-    model_info:
-      display_name: My Model
-      discoverable: true
-      service_tiers: [default, priority]
 ```
 
-DB 配置覆盖 YAML 默认值，读取时保留显式 false/0；metadata 策略和 Key alias regex 在启动与保存时校验。metadata include 与 exclude 互斥，不影响计算费用或预算预占所需的源上下文。上面配置仅示范新增键，省略连接配置，不能直接当作可运行 deployment。
+模型部署只存在数据库 `LiteLLM_ProxyModelTable`，由 Dashboard 的模型编辑或管理接口写入；`config.yaml` 的 `model_list` 不再读取。每个部署新增字段的落点：
+
+```json
+{
+  "litellm_params": {
+    "supported_endpoints": ["/v1/responses", "/v1/messages"],
+    "keepalive_seconds": 10,
+    "allow_client_keepalive_override": false,
+    "max_parallel_requests": 4,
+    "tags": ["default", "eu", "fast"]
+  },
+  "model_info": {
+    "display_name": "My Model",
+    "discoverable": true,
+    "service_tiers": ["default", "priority"]
+  }
+}
+```
+
+DB 配置覆盖设置段的 YAML 默认值，读取时保留显式 false/0；metadata 策略和 Key alias regex 在启动与保存时校验。metadata include 与 exclude 互斥，不影响计算费用或预算预占所需的源上下文。上面只是新增键的形状，省略连接配置与真实凭据，不能直接当作可运行 deployment。
 
 ## 未进入 BUG 表的判定留档
 
@@ -367,6 +373,25 @@ Google 于 2026-11-12 发布 `gemini-4-hydrogen`（[公告](https://blog.google/
 
 验证：`src/providers/gemini.test.ts`、`provider-registry.test.ts`、`CostCalculator.test.ts` 覆盖请求映射、签名往返、流式帧、计费；`tests/providers/gemini.live.test.ts` 在提供 `GEMINI_API_KEY` 时对真实上游验证非流式、流式与工具签名多轮。生产以模型 `gemini-4-hydrogen` 接入 AI Studio key：非流式、流式、两轮工具调用均返回 200，调用 ID 携带 `__thought__` 签名并可继续多轮；4 条成功 SpendLog 的 $ / token 与官方价一致（如 41 输入 + 46 输出 = $0.0004065）。AI Studio key 为免费层，`gemini-4-hydrogen` 每日 20 次配额在验证过程中耗尽，之后复验会得到上游 429；配额恢复后可继续用同一模型复测。
 
+## 2026-11-18 Anthropic 结构化输出转 Responses
+
+生产请求 `d4f521d2`（`claude-opus` → Codex `/messages`，客户端 `claude-cli`）被上游 400 `Missing required parameter: 'text.format.name'` 拒绝。原因是协议层事实差异：Anthropic 的 `output_config.format` 只有 `type` 与 `schema`，Responses 的 `text.format.name` 必填，转换时字段丢失。补名后又一次 400 `Invalid schema for response_format 'structured_output'`：Responses 省略 `strict` 即按严格模式校验，要求每个对象节点把属性列全且 `additionalProperties: false`，而调用方 schema 未必这么写。
+
+上游两处实现都处理了这层语义，做法不同：
+
+| 维度 | 我们（本次） | LiteLLM Python | CLIProxyAPI |
+| --- | --- | --- | --- |
+| 入口 | `output_config.format` | `output_format` 与 `output_config.format` | `output_config.format` |
+| name 缺省 | `structured_output` | `structured_output` | `cli_proxy_structured_output` |
+| strict 缺省 | 按 schema 形态判定 | `true` | `true` |
+| 宽松 schema | 发 `strict: false`，schema 原样 | `openai_strict_json_schema()` 补齐 `required` 与 `additionalProperties: false` | `codexSchemaMissesRequired()` 命中则降级 `strict: false` |
+
+依据：[LiteLLM transformation.py](https://github.com/BerriAI/litellm/blob/main/litellm/llms/anthropic/messages/responses_adapters/transformation.py)（`_resolve_output_format_strict`、`openai_strict_json_schema`）、[CLIProxyAPI codex_claude_request.go](https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/translator/codex/claude/codex_claude_request.go)（`ConvertClaudeRequestToCodex` 的 `text.format` 段与 `codexSchemaMissesRequired`）。
+
+本次采用 CLIProxyAPI 的取向：不改写调用方 schema，只在不可满足时放弃严格保证。与它的一处差异是显式 `strict: true` 仍然保留——那是调用方明确要求的契约，schema 不满足时交给上游报错，不静默降级。顺带对齐两条同源字段：`metadata.user_id` 截断到 64 作为 `user`；从该 JSON 的 `session_id` 取 `prompt_cache_key`（LiteLLM `prompt_cache_key_from_user_id` 的同一判断：`user_id` 指人不指会话）。
+
+改动位于 `src/subscriptions/native/protocol/convert/`（`shared.ts` 的严格形态判定与截断、`responses.ts` 的格式编码与出口、`messages.ts` 的 `strict` 保留与会话标识提取）；回归用例见 `src/subscriptions/native/protocol/request.test.ts`。生产核验（`claude-opus` → Codex `/messages`）：严格形态 schema 探针返回 200 且输出符合 schema；同形宽松 schema 探针也返回 200（修复前该请求被上游以 `Invalid schema for response_format` 拒绝），两行 SpendLog 均为 `success`、无 `upstream_errors`。边界：`strict: false` 时不再有强约束保证；工具 schema 的同类严格校验未纳入本次范围。
+
 ## 后续维护规则
 
 1. 先读本文件，核实当前 TS commit/工作区，再读取对应源码和上游最终 PR/固定版本。不得覆盖用户未提交改动。
@@ -394,3 +419,4 @@ Google 于 2026-11-12 发布 `gemini-4-hydrogen`（[公告](https://blog.google/
 | 2026-11-17 前端详情缓存 | Session 切换行时反复请求单条详情；批量详情接口没有前端调用方 | `LogDetailsStore` 按 `request_id + start_date` 缓存已结算详情（在途 10 秒），抽屉按实际渲染的相邻 ±2 行预取；缺失项合并到 `/spend/logs/ui/batch`，批量接口与单条详情共用 compact 组装并对冷存储 payload 做块还原/脱敏；单条详情保留为当前行和未命中兜底 | 未提交工作区 / 2026-11-17 已部署并线上核验：J/K 往返只产生首次单条详情请求，相邻行由一次 3 条批量补齐；详情、Diff 与虚拟列表渲染正常 |
 | 2026-11-17 TPS 采样门槛 | TTFT 接近 Duration 时生成窗口只剩几毫秒，按比例算出的输出 TPS 会出现 4000 tok/s 这类读数；Speed 卡片用「各请求 TPS 的算术平均」，短请求与长请求等权 | 生成窗口增加 300 毫秒绝对下限（与 1% 比例门槛并存），Logs 格与 Speed 曲线共用同一判据；Speed 的桶内点与卡片平均值改为 token 加权（Σ输出 token ÷ Σ生成秒数），中位数仍按请求数汇总 | 未提交工作区 / 2026-11-17 已部署并线上核验：下限先取 100 毫秒仍留下 9000–13000 tok/s 的 Responses 投递尖峰，最终取 300 毫秒；近 2 天逐请求读数（无下限／100 毫秒／300 毫秒）p99 4082→992→429、最大 15891→13307→3932，Speed 首位卡片 502.5→222.0→221.0 TPS，Logs 最新 200 行中显示 TPS 的行数 141→133→98 |
 | 2026-11-17 Logs TPS | Logs 只有输出 TPS；Speed 卡片仍用总耗时，非流式与缓冲上游行混入曲线 | TPS 列拆 Input（未缓存输入 ÷ TTFT）与 Output（输出 ÷（总耗时 − TTFT））；TTFT 占满请求或生成窗口不足总耗时 1% 时整格隐藏；Speed 改用同一生成窗口与门槛，不可测算行进入 `models_without_speed` | 未提交工作区 / 2026-11-17 已部署并线上核验：Logs 当前 43 个渲染行中 17 行显示 Input、14 行显示 Output，8 行 TTFT=Duration 均不显示 TPS；Speed 返回 9 条可测算序列，top 平均 502.5 TPS，无百万级毛刺 |
+| 2026-11-18 结构化输出跨协议 | `d4f521d2` 结构化输出经 Codex `/messages` 返回 400，定位为 name 缺失与 strict 隐含严格校验；对照 LiteLLM 与 CLIProxyAPI 的 main 实现 | 补默认 `name`；`strict` 按 schema 形态判定并在不可满足时降级；`user` 截断 64、`session_id` 转 `prompt_cache_key` | 未提交工作区 / 2026-11-18 已部署并线上核验：严格与宽松 schema 探针均 200（后者修复前 400），SpendLog 全 `success`、容器 healthy 无 OOM/重启 |

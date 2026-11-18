@@ -21,38 +21,38 @@
 
 ## 目录职责
 
-| 路径 | 职责 |
-| --- | --- |
-| `src/main.ts` | 进程入口：加载配置、创建容器、装配中间件与路由、启动监听、优雅退出 |
-| `src/container.ts` | 服务容器：按依赖顺序建 Database / Credential / Router / 订阅运行时，并暴露幂等 `warmUp()` |
-| `src/core/config/` | YAML 加载与校验、DB 配置覆盖（`DbConfigProvider`）、每请求运行时快照（`DatabaseRuntimeConfigService`） |
-| `src/core/db/` | 连接池、启动重试、迁移与 `ProductionPreflight`（部署契约产物） |
-| `src/core/api/` | 路由注册、错误映射（含流式错误码分类 `ClientErrorCode` 与 `Retry-After` 下发）、请求到达打点、响应头与脱敏辅助 |
-| `src/auth/` | 虚拟密钥、JWT、WebUI 会话、对象授权（`AuthorizationGuard`）、仓库层缓存 |
-| `src/router/` | 路由决策：部署选择、重试策略、冷却、fallback（候选树展开见 [Fallback 与 Alias 候选树](fallback-routing.md)）、流式包装、标签路由、限流 |
-| `src/providers/` | 各上游 Provider 适配器与 `ProviderRegistry`（前缀解析、动态构造、订阅分发） |
-| `src/subscriptions/native/` | 进程内订阅运行时：账号仓库、调度器、协议桥、七家 Provider 适配器、目录与额度 |
-| `src/proxy/` | 对外 HTTP 端点：Chat / Messages / Responses / Embeddings / Images / Audio / Files / Search / 登录 / 发现 |
-| `src/management/` | 管理面：Key、Team、User、Organization、Customer、Model |
-| `src/spend/` | 在途登记、结算队列、块存储、日志查询与会话时间线、WebSocket 推送 |
-| `src/cost/` | 价格快照、费用计算、折扣与保证金、成本追踪 |
-| `src/capabilities/` | 内置能力：视觉、Web Search & Fetch、图片生成及其审计 |
-| `src/privacy/` | 请求脱敏与响应还原（占位符、SSE 重写、统计） |
-| `src/observability/` | 指标目录、HTTP/DB/进程采集、Prometheus 输出、慢请求日志 |
-| `src/repositories/` | 表访问边界：配置、模型部署、凭据、表级缓存的唯一入口 |
-| `src/ui/` | 后端静态托管 Dashboard 产物与 SPA 回退 |
-| `src/shared/` | 前后端共用：页面路径、模型族、Alias、速度计算 |
-| `ui/litellm-dashboard/` | Vue Dashboard；`ui/litellm-dashboard-react-reference/` 是旧 React 实现的只读对照，被 gitignore 且只在 JL3 存在，不进镜像 |
-| `drizzle/` | 迁移 SQL 与 `meta/_journal.json` |
-| `scripts/` | 迁移 journal 校验、SpendLog 回填等一次性脚本 |
-| `tests/` | 跨模块集成、Provider 与补丁回归；单元测试与被测文件同目录 |
-| `.agents/skills/` | 生产运维与提交两个专用工作流 |
+| 路径                        | 职责                                                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.ts`               | 进程入口：加载配置、创建容器、装配中间件与路由、启动监听、优雅退出                                                                     |
+| `src/container.ts`          | 服务容器：按依赖顺序建 Database / Credential / Router / 订阅运行时，并暴露幂等 `warmUp()`                                              |
+| `src/core/config/`          | 进程级 YAML 加载与校验、DB 配置覆盖（`DbConfigProvider`）、每请求运行时快照（`DatabaseRuntimeConfigService`）                          |
+| `src/core/db/`              | 连接池、启动重试、迁移与 `ProductionPreflight`（部署契约产物）                                                                         |
+| `src/core/api/`             | 路由注册、错误映射（含流式错误码分类 `ClientErrorCode` 与 `Retry-After` 下发）、请求到达打点、响应头与脱敏辅助                         |
+| `src/auth/`                 | 虚拟密钥、JWT、WebUI 会话、对象授权（`AuthorizationGuard`）、仓库层缓存                                                                |
+| `src/router/`               | 路由决策：部署选择、重试策略、冷却、fallback（候选树展开见 [Fallback 与 Alias 候选树](fallback-routing.md)）、流式包装、标签路由、限流 |
+| `src/providers/`            | 各上游 Provider 适配器与 `ProviderRegistry`（前缀解析、动态构造、订阅分发）                                                            |
+| `src/subscriptions/native/` | 进程内订阅运行时：账号仓库、调度器、协议桥、七家 Provider 适配器、目录与额度                                                           |
+| `src/proxy/`                | 对外 HTTP 端点：Chat / Messages / Responses / Embeddings / Images / Audio / Files / Search / 登录 / 发现                               |
+| `src/management/`           | 管理面：Key、Team、User、Organization、Customer、Model                                                                                 |
+| `src/spend/`                | 在途登记、结算队列、块存储、日志查询与会话时间线、WebSocket 推送                                                                       |
+| `src/cost/`                 | 价格快照、费用计算、折扣与保证金、成本追踪                                                                                             |
+| `src/capabilities/`         | 内置能力：视觉、Web Search & Fetch、图片生成及其审计                                                                                   |
+| `src/privacy/`              | 请求脱敏与响应还原（占位符、SSE 重写、统计）                                                                                           |
+| `src/observability/`        | 指标目录、HTTP/DB/进程采集、Prometheus 输出、慢请求日志                                                                                |
+| `src/repositories/`         | 表访问边界：配置、模型部署、凭据、表级缓存的唯一入口                                                                                   |
+| `src/ui/`                   | 后端静态托管 Dashboard 产物与 SPA 回退                                                                                                 |
+| `src/shared/`               | 前后端共用：页面路径、模型族、Alias、速度计算                                                                                          |
+| `ui/litellm-dashboard/`     | Vue Dashboard；`ui/litellm-dashboard-react-reference/` 是旧 React 实现的只读对照，被 gitignore 且只在 JL3 存在，不进镜像               |
+| `drizzle/`                  | 迁移 SQL 与 `meta/_journal.json`                                                                                                       |
+| `scripts/`                  | 迁移 journal 校验、SpendLog 回填等一次性脚本                                                                                           |
+| `tests/`                    | 跨模块集成、Provider 与补丁回归；单元测试与被测文件同目录                                                                              |
+| `.agents/skills/`           | 生产运维与提交两个专用工作流                                                                                                           |
 
 ## 请求链路
 
 **启动**（`src/main.ts` → `src/container.ts`）：
 
-1. 加载 YAML（`CONFIG_PATH` 或工作目录 `config.yaml`），端口与连接串可被 `APP_PORT`、`DATABASE_URL`、`LITELLM_MASTER_KEY` 覆盖。
+1. 加载进程级 YAML（`CONFIG_PATH` 或工作目录 `config.yaml`），端口与连接串可被 `APP_PORT`、`DATABASE_URL`、`LITELLM_MASTER_KEY` 覆盖。YAML 只承载启动与连接基线；模型部署、模型组 Alias 与 fallback 只从数据库读取，YAML 中的对应键会被忽略并在启动日志中告警。
 2. `createServiceContainer()` 只做关键路径：数据库接管与迁移 → DB 配置覆盖 → 凭据装载 → Router 构造 → 订阅运行时构造（执行处理器此时注册）。
 3. `listen()` 之后才 `void container.warmUp()`：远端价格快照与订阅设置投影并行执行，失败只降级对应能力。启动链上的取舍与瓶颈证据见[启动链路记录](startup.md)（其中 CLIProxy 子进程部分已过期，见[已知缺口](#已知缺口与待确认)）。
 
@@ -87,19 +87,19 @@ Logs 列表的 TPS 列拆成 Input 与 Output 两个子项：Input = 未缓存�
 
 ## 关键逻辑入口
 
-| 想改的东西 | 从这里进 |
-| --- | --- |
-| 新增上游供应商 | `src/types/provider.ts` 的 `LlmProviders`、`src/providers/ProviderRegistry.ts`（`DEFAULT_API_BASES`、`PREFIX_TO_PROVIDER`、`createProvider`）、新增 `src/providers/XxxProvider.ts`、`src/data/provider_create_fields.json`、前端 `features/providers/data/ProviderCatalogData.ts` |
-| 订阅 Provider 行为 | `src/subscriptions/native/`（`bridge.ts` 协议、`scheduler.ts` 选号、`providers/` 上游特化、`quota/` 额度）、[订阅运行时专题](agent-guides/subscription-runtime.md) |
-| 新增对外端点 | `src/proxy/XxxEndpoint.ts`，在 `src/main.ts` 对应 `_register*Routes` 里注册；若是页面路径同时改 `src/shared/WebUiPaths.ts` |
-| 路由策略 / 重试 / 冷却 | `src/router/RouterExecution.ts`、`RouterRetryPolicy.ts`、`RouterExecutionBackoff.ts`、`CooldownManager.ts`、`RoutingStrategies.ts` |
-| 费用与价格 | `src/cost/CostCalculator.ts`、`ModelCostMapService.ts`、`CostTrackingConfig.ts`；上游快照缺条目的模型补在 `src/data/model_cost_overrides.json` |
-| 日志字段与查询 | `src/spend/SpendMetadataFields.ts`、`SpendManagementEndpoint.ts`、`src/db/schema/spendLogs.ts` + 新迁移 |
-| 实时推送 | `src/spend/logStreamWebSocket.ts`（日志列表）、`logUpdatesWebSocket.ts`、`sessionTimelineWebSocket.ts`；契约见 `AGENTS.md` 的实时通知一节 |
-| 内置能力 | `src/capabilities/BuiltinCapabilityRunner.ts`、`BuiltinCapabilitiesConfig.ts`、各自的 `*Capability.ts` |
-| 脱敏 | `src/privacy/PrivacyMiddleware.ts`、`PrivacyDispatch.ts`、`SseRewriter.ts` |
-| 观测指标 | `src/observability/MetricCatalog.ts`、`HttpMetrics.ts`、`DatabaseMetrics.ts`、`RuntimeMetrics.ts`；指标语义见[观测性专题](observability.md) |
-| Dashboard 页面 | `ui/litellm-dashboard/src/features/<name>/{api,data,logic,stores,render,ui}` + `features/application/data/PageRegistry.ts`、`NavigationData.ts` |
+| 想改的东西             | 从这里进                                                                                                                                                                                                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 新增上游供应商         | `src/types/provider.ts` 的 `LlmProviders`、`src/providers/ProviderRegistry.ts`（`DEFAULT_API_BASES`、`PREFIX_TO_PROVIDER`、`createProvider`）、新增 `src/providers/XxxProvider.ts`、`src/data/provider_create_fields.json`、前端 `features/providers/data/ProviderCatalogData.ts` |
+| 订阅 Provider 行为     | `src/subscriptions/native/`（`bridge.ts` 协议、`scheduler.ts` 选号、`providers/` 上游特化、`quota/` 额度）、[订阅运行时专题](agent-guides/subscription-runtime.md)                                                                                                                |
+| 新增对外端点           | `src/proxy/XxxEndpoint.ts`，在 `src/main.ts` 对应 `_register*Routes` 里注册；若是页面路径同时改 `src/shared/WebUiPaths.ts`                                                                                                                                                        |
+| 路由策略 / 重试 / 冷却 | `src/router/RouterExecution.ts`、`RouterRetryPolicy.ts`、`RouterExecutionBackoff.ts`、`CooldownManager.ts`、`RoutingStrategies.ts`                                                                                                                                                |
+| 费用与价格             | `src/cost/CostCalculator.ts`、`ModelCostMapService.ts`、`CostTrackingConfig.ts`；上游快照缺条目的模型补在 `src/data/model_cost_overrides.json`                                                                                                                                    |
+| 日志字段与查询         | `src/spend/SpendMetadataFields.ts`、`SpendManagementEndpoint.ts`、`src/db/schema/spendLogs.ts` + 新迁移                                                                                                                                                                           |
+| 实时推送               | `src/spend/logStreamWebSocket.ts`（日志列表）、`logUpdatesWebSocket.ts`、`sessionTimelineWebSocket.ts`；契约见 `AGENTS.md` 的实时通知一节                                                                                                                                         |
+| 内置能力               | `src/capabilities/BuiltinCapabilityRunner.ts`、`BuiltinCapabilitiesConfig.ts`、各自的 `*Capability.ts`                                                                                                                                                                            |
+| 脱敏                   | `src/privacy/PrivacyMiddleware.ts`、`PrivacyDispatch.ts`、`SseRewriter.ts`                                                                                                                                                                                                        |
+| 观测指标               | `src/observability/MetricCatalog.ts`、`HttpMetrics.ts`、`DatabaseMetrics.ts`、`RuntimeMetrics.ts`；指标语义见[观测性专题](observability.md)                                                                                                                                       |
+| Dashboard 页面         | `ui/litellm-dashboard/src/features/<name>/{api,data,logic,stores,render,ui}` + `features/application/data/PageRegistry.ts`、`NavigationData.ts`                                                                                                                                   |
 
 ## 新增一个功能应改哪里
 
@@ -144,23 +144,27 @@ Logs 列表的 TPS 列拆成 Input 与 Output 两个子项：Input = 未缓存�
 
 ## 开发历史
 
-| 日期 | 变化 | 为什么 | 来源 |
-| --- | --- | --- | --- |
-| 2026-05-29 | TypeScript 重写，Express + pg + drizzle 分层成形 | 需要能自己改协议与面板的实现 | git `d5c8dbe` |
-| 2026-06-06 | 引入 Web 管理面板 | 账号与日志需要图形化 | git `34bca29` |
-| 2026-07-23 | 运行时配置改为 DB-only，删除进程内配置缓存 | 配置改动要立刻生效 | git `0795930` |
-| 2026-07-27 | 日志列表改为按开始时间混合在途与已结算两张表 | 用户要求进行中的请求也出现在列表里 | 语料 2026-07-27T07:06 |
-| 2026-08-05～08-10 | 内置能力依次引入（视觉 → 搜索 → 生图），最初在请求链内代理执行 | 客户端无法自己装能力，只能由网关注入 | 语料 2026-08-05 `codex:019fd013`、08-06 `codex:019fd4d3`、08-10 `codex:019fea43` |
-| 2026-11-02 | 内置能力重构为旁路中间件，不再侵入主流式链路 | 旧实现多次影响流式与日志，用户要求「从架构层面彻底做成旁路系统」 | 语料 2026-11-02T08:53 |
-| 2026-10-11～12 | 上游对齐批落地 9 组能力：模型发现、Chat 参数、Responses input_tokens、编程客户端、SSE 心跳、路由与限流、日志内容、Usage API、管理 API | 与上游行为对齐并修掉确认过的 BUG | [上游对齐记录](upstream-alignment.md#本批实施结果2026-10-11) |
-| 2026-11-03 | 流式 fallback 判据改为「客户端是否已拿到答案内容」 | 旧实现会在已输出部分内容后仍切模型，产生自相矛盾的响应 | [上游对齐记录](upstream-alignment.md#2026-11-03-流式-fallback-判据修正) |
-| 2026-11-08 | Dashboard 从 React/Next 迁移到 Vue 3 + Vite，同日删除桩接口与无读写表 | 前端维护成本；迁移与清理一次完成，避免长期并存 | [Vue 迁移记录](frontend-vue-migration.md)、[清理记录](cleanup-candidates.md) |
-| 2026-11-09 | SpendLog 改内容寻址块存储 | 364 GB 中 99.4% 是重复对话快照 | [上游对齐记录](upstream-alignment.md) |
-| 2026-11-09～10 | 订阅执行从 CLIProxy Go 子进程改为 `src/subscriptions/native/` 进程内实现 | 少一层子进程与配置投影，账号与调度只有一个状态 | `AGENTS.md`、语料 2026-11-10T13:30 |
-| 2026-11-10～12 | 在途行正文改内容寻址、记账事务锁顺序调整、结算异步化与结算队列 | 每请求二十多条语句与行锁争用拖慢首字 | [上游对齐记录](upstream-alignment.md#2026-11-10-在途行正文内容寻址与记账事务锁顺序) |
-| 2026-11-13 | 前端手机端排版收敛，日志表回退为桌面表格 + 横向滚动 | 手机可读但不牺牲该页信息密度 | [Vue 迁移记录](frontend-vue-migration.md) |
-| 2026-11-15 | 日志表启用 opt-in 虚拟滚动，适配 Dashboard 内层滚动容器 | 1000 行全量挂载约 6.7 万 DOM；只保留视口附近行，保留 URL/筛选/深链接 | [性能调查与实施记录](investigations/logs-page-size-1000-performance.html) |
-| 2026-11-17 | 清理无读取入口的 8 个视图、2 个空 schema、`LiteLLM_AgentsTable`、`_prisma_migrations` 与块表 `first_seen`，并物理清理历史认证头/内部 body | SpendLog 读路径已切换，历史敏感原值只剩存储成本；删除前逐项确认无读入口 | [清理记录](cleanup-candidates.md#2026-11-17-无读取入口对象与历史敏感字段清理) |
+| 日期              | 变化                                                                                                                                                                          | 为什么                                                                                                                                     | 来源                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-29        | TypeScript 重写，Express + pg + drizzle 分层成形                                                                                                                              | 需要能自己改协议与面板的实现                                                                                                               | git `d5c8dbe`                                                                                                          |
+| 2026-06-06        | 引入 Web 管理面板                                                                                                                                                             | 账号与日志需要图形化                                                                                                                       | git `34bca29`                                                                                                          |
+| 2026-07-23        | 运行时配置改为 DB-only，删除进程内配置缓存                                                                                                                                    | 配置改动要立刻生效                                                                                                                         | git `0795930`                                                                                                          |
+| 2026-07-27        | 日志列表改为按开始时间混合在途与已结算两张表                                                                                                                                  | 用户要求进行中的请求也出现在列表里                                                                                                         | 语料 2026-07-27T07:06                                                                                                  |
+| 2026-08-05～08-10 | 内置能力依次引入（视觉 → 搜索 → 生图），最初在请求链内代理执行                                                                                                                | 客户端无法自己装能力，只能由网关注入                                                                                                       | 语料 2026-08-05 `codex:019fd013`、08-06 `codex:019fd4d3`、08-10 `codex:019fea43`                                       |
+| 2026-11-02        | 内置能力重构为旁路中间件，不再侵入主流式链路                                                                                                                                  | 旧实现多次影响流式与日志，用户要求「从架构层面彻底做成旁路系统」                                                                           | 语料 2026-11-02T08:53                                                                                                  |
+| 2026-10-11～12    | 上游对齐批落地 9 组能力：模型发现、Chat 参数、Responses input_tokens、编程客户端、SSE 心跳、路由与限流、日志内容、Usage API、管理 API                                         | 与上游行为对齐并修掉确认过的 BUG                                                                                                           | [上游对齐记录](upstream-alignment.md#本批实施结果2026-10-11)                                                           |
+| 2026-11-03        | 流式 fallback 判据改为「客户端是否已拿到答案内容」                                                                                                                            | 旧实现会在已输出部分内容后仍切模型，产生自相矛盾的响应                                                                                     | [上游对齐记录](upstream-alignment.md#2026-11-03-流式-fallback-判据修正)                                                |
+| 2026-11-08        | Dashboard 从 React/Next 迁移到 Vue 3 + Vite，同日删除桩接口与无读写表                                                                                                         | 前端维护成本；迁移与清理一次完成，避免长期并存                                                                                             | [Vue 迁移记录](frontend-vue-migration.md)、[清理记录](cleanup-candidates.md)                                           |
+| 2026-11-09        | SpendLog 改内容寻址块存储                                                                                                                                                     | 364 GB 中 99.4% 是重复对话快照                                                                                                             | [上游对齐记录](upstream-alignment.md)                                                                                  |
+| 2026-11-09～10    | 订阅执行从 CLIProxy Go 子进程改为 `src/subscriptions/native/` 进程内实现                                                                                                      | 少一层子进程与配置投影，账号与调度只有一个状态                                                                                             | `AGENTS.md`、语料 2026-11-10T13:30                                                                                     |
+| 2026-11-10～12    | 在途行正文改内容寻址、记账事务锁顺序调整、结算异步化与结算队列                                                                                                                | 每请求二十多条语句与行锁争用拖慢首字                                                                                                       | [上游对齐记录](upstream-alignment.md#2026-11-10-在途行正文内容寻址与记账事务锁顺序)                                    |
+| 2026-11-13        | 前端手机端排版收敛，日志表回退为桌面表格 + 横向滚动                                                                                                                           | 手机可读但不牺牲该页信息密度                                                                                                               | [Vue 迁移记录](frontend-vue-migration.md)                                                                              |
+| 2026-11-15        | 日志表启用 opt-in 虚拟滚动，适配 Dashboard 内层滚动容器                                                                                                                       | 1000 行全量挂载约 6.7 万 DOM；只保留视口附近行，保留 URL/筛选/深链接                                                                       | [性能调查与实施记录](investigations/logs-page-size-1000-performance.html)                                              |
+| 2026-11-17        | 清理无读取入口的 8 个视图、2 个空 schema、`LiteLLM_AgentsTable`、`_prisma_migrations` 与块表 `first_seen`，并物理清理历史认证头/内部 body                                     | SpendLog 读路径已切换，历史敏感原值只剩存储成本；删除前逐项确认无读入口                                                                    | [清理记录](cleanup-candidates.md#2026-11-17-无读取入口对象与历史敏感字段清理)                                          |
+| 2026-11-18        | 模型列表与别名列表按品牌家族分组，未识别品牌的组排第一，组内保持当前排序                                                                                                      | 同一家族的条目散落在列表各处，找模型和判断品牌归属都要逐行看                                                                               | `ui/litellm-dashboard/src/features/providers/logic/ModelFamilyGrouping.ts`、`ModelFamilyLabelComponent.vue`            |
+| 2026-11-18        | 模型列表的 Credentials 列对订阅部署显示 Provider 品牌并链到对应订阅账号页                                                                                                     | 订阅部署没有可复用 credential，之前一律显示 “Manual”，容易让人以为要在这条部署上手填密钥                                                   | `ui/litellm-dashboard/src/features/models/ui/ModelCredentialCellComponent.vue`（逻辑 `logic/ModelCredentialLogic.ts`） |
+| 2026-11-18        | 模型家族识别覆盖裸名、连写版本号、品牌旧系列与 Bedrock 前缀（`opus`/`haiku`/`sonnet`、`gpt5`、`gemini3`、`grok4`、`deepseekv3`、`abab6.5`、`混元`、`sora`、`google.gemma-3`） | 别名和部署名常用不带分隔符或使用厂商旧称的简写，之前被当成未知品牌，图标与日志里的 `model_family` 都对不上；按生产 74 个真实名字核对后补齐 | `src/shared/ModelFamily.ts`（含 `ModelFamily.test.ts`）                                                                |
+| 2026-11-18        | 有序配置统一用拖拽把手改序（`UiSortableList` + `UiDragHandle`），收起各处自写的上下箭头                                                                                       | 顺序即执行顺序，逐条点箭头在多目标链路上不可用                                                                                             | `ui/litellm-dashboard/AGENTS.md`                                                                                       |
 
 ## 已知缺口与待确认
 

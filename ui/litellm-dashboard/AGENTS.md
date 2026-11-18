@@ -8,7 +8,10 @@
 - 与网络、浏览器事件、计时器、订阅、流、图表实例同步时明确初始化与销毁；取消旧请求，避免过期响应覆盖新状态。
 - 保持 HttpOnly session cookie、写请求 CSRF、显式虚拟密钥推理的认证边界；不在截图、日志或示例中使用真实凭据。
 - 路径路由与 legacy ?page=... 同时兼容，导航选中映射与后端静态路径共用 src/shared/WebUiPaths.ts。HTML 回退只覆盖页面路由，资源不存在须返回 404。
-- 表单类弹窗复用 `src/features/platform/ui/` 的分区组件，不要为每个对话框重写边框和间距：`UiSectionCard` 提供标题/说明/右上角操作/底部开关条，`UiEntryCard` 是带序号的条目框（`primary` 变体强调首项），`UiSwitchRow` 是「左说明、右开关」的一行，`UiEntryRemove` 是条目右侧统一的移除按钮。列表类配置（Fallback 目标、别名目标、时段）都按这个结构表达顺序：序号即执行顺序，不另设排序控件。
+- 表单类弹窗复用 `src/features/platform/ui/` 的分区组件，不要为每个对话框重写边框和间距：`UiSectionCard` 提供标题/说明/右上角操作/底部开关条，`UiEntryCard` 是带序号的条目框（`primary` 变体强调首项），`UiSwitchRow` 是「左说明、右开关」的一行，`UiEntryRemove` 是条目右侧统一的移除按钮。列表类配置（Fallback 目标、别名目标）都按这个结构表达顺序：序号即执行顺序，拖动把手（`UiDragHandle`）改序，键盘 ↑/↓/Home/End 等价可用；不要在序号之外再摆一组上下箭头按钮。条目按「弹窗里用 `UiEntryCard`、内联表单里用 `UiSortableRow`」二选一，两者共用 `UiSortableList` 的拖拽状态与落点高亮；无顺序语义的列表（时段、语义路由、缓存注入点）不要加这层交互。
+- 图标用 `UiLucideIcon`，名字写 `GripVertical` 或 `GripVerticalIcon` 都可以：定义表由 lucide 生成、键名混用两种后缀，`resolveIconNodes` 统一解析。名字彻底写错时只会渲染空 `<svg>`，页面看起来像「什么都没画」，所以 `IconDefinitionsLogic.test.ts` 会扫描组件里的字面量名字并要求全部可解析。
+- 模型列表的 Credentials 列按「可复用凭据 → 订阅 Provider → Manual」取值：订阅部署的账号由订阅运行时持有，没有 `litellm_credential_name`，要显示 Provider 品牌并链到该 Provider 的订阅账号页，不要退化成 “Manual”（逻辑在 `src/features/models/logic/ModelCredentialLogic.ts`，表格与手机卡片共用 `ModelCredentialCellComponent`）。
+- 列表里的品牌分组是**分组优先于排序**的：`ModelFamilyGrouping` 先按家族切段（未识别品牌排最前，其余按家族名排序），段内再保留当前排序/服务端顺序；模型表、别名表、手机端卡片用 `ModelFamilyLabel` 同一条家族带，不要各写一套分组逻辑。
 - 表格里表达「有序候选」用带序号的 chip（Fallbacks 表的候选列、别名的 Resolution 列都是这个形态），不要写成 "A → B → C" 的灰色句子；保护性开关（如禁止递归）用带图标的 pill 加 tooltip 说明后果，不要用一整句灰字。
 - 不得用 as any、@ts-ignore、放宽 tsconfig、关闭 ESLint 规则或新建违规基线掩盖问题。
 - 修改后至少运行相关 Vitest、npm run typecheck、npm run lint、npm run format:check、npm run build 与 git diff --check。构建含类型检查也不能代替覆盖源码及测试的独立 typecheck。

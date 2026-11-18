@@ -10,7 +10,7 @@
   401/402/403 与额度耗尽记在账号上（换模型也不会好，整账号避开）；额度耗尽冷却 30 分钟。
 - `bridge.ts`：解析 `litellm-subscription://<source>/<operation>`，选择账号、刷新凭据、按入口/上游协议翻译请求与响应；流式响应通过有状态 translator 转换。
 - `providers/`：七家 Provider 适配器（Codex、Claude、Kimi、Antigravity、xAI、CommandCode、OpenCode Go），负责路由、上游 URL/头、协议特化、目录与额度。
-- `protocol/`：chat / Anthropic Messages / Responses / Gemini 的请求、响应与 SSE 转换。
+- `protocol/`：chat / Anthropic Messages / Responses / Gemini 的请求、响应与 SSE 转换。跨协议转换不保证字段一一对应：Anthropic 的 `output_config.format` 没有名称，转成 Responses 时由编码器补默认 `text.format.name`（`structured_output`），否则上游按缺参拒绝（Codex 报 `Missing required parameter: 'text.format.name'`）。`strict` 在 Responses 里省略即视为严格模式，而严格模式要求每个对象节点把属性列全并显式 `additionalProperties: false`；调用方多不写 `strict`，所以编码器按 schema 形态判定：可满足就显式 `true`，否则发 `false` 并保留原 schema，避免宽松 schema 被上游以 `Invalid schema for response_format` 拒掉。这里不替调用方改写 schema（那会把可选字段变成必填，改掉语义），显式 `strict: true` 也照原样保留。另外 `user` 是 OpenAI 的字段，上限 64 字符：Anthropic 入口把 `device_id/account_uuid/session_id` 打包进 `metadata.user_id`，编码器会截断后才外发，并从其中的 `session_id` 取会话标识作 `prompt_cache_key`（`user_id` 指人不指会话，直接拿它做缓存键会让同一用户的并行会话互撞）。
 - `SubscriptionRuntimeManager.ts`：设置、账号、OAuth、目录、额度、日志与管理 API 的后端；管理面展示账号 `status`/`last_error`/`refresh_failures` 与最近限流快照。初始化时注册 `SubscriptionDispatch` 处理器。
 - `SubscriptionSpecialEndpoints.ts`：Responses compact、alpha search、xAI 视频/语音、Gemini generate/countTokens 等非标准路径；成功请求按 deployment 写入 SpendLogs。
 - `SubscriptionResponsesWebSocket.ts`：`/v1/responses` 与 `/backend-api/codex/responses` 的 WebSocket 入口，把每轮 `response.create` 还原成 HTTP SSE，逐轮重新鉴权并记账；成功的轮次记 usage，失败的轮次记 `status=failure` 与上游错误（此前失败轮次不落日志）。
@@ -27,11 +27,13 @@
    CommandCode 用 400 invalid_request_error 表达余额不足，若当成请求错误会让整个订阅判失败、跳过同 Provider 的其他账号。
 6. 上游 JSON/SSE 经适配器钩子与协议 translator 回到入口协议；Codex 的 SSE 可能不带 `Content-Type`，桥接层以流式计划和入口流式请求共同判定，不能只依赖响应头。`ProviderRequestExecutor` 之外的重试、fallback、冷却、spend 仍由 Router/端点负责。
 7. Codex auth 文件带 `use_siwc` 时，非 Codex 客户端使用嵌套 `siwc` token（`chatgpt.tokens.use.direct`），Codex 客户端固定外层 token；两层分别刷新并共用同文件锁。
+8. 模型目录：Codex 先用静态快照（`src/data/subscription-models.json`）与内置图片模型，再用账号 token 调 `GET {base}/models?client_version=…` 补入上游刚发布的模型（10 分钟缓存，`catalog/codexCatalog.ts`）；拉取失败只回退静态快照。CommandCode / OpenCode Go 同样走上游 `/models`（`catalog/dynamicCatalog.ts`），其余来源仍只有静态快照。加新模型时先看这里：静态文件是某一时刻的快照，不该靠手改 JSON 追新模型。
 
 ## 账号与持久化
 
 - 保留旧 auth 文件格式与目录，回滚旧镜像仍能读取。
 - CommandCode 托管账号仍在 `config_yaml.plugins.managed-accounts.commandcode`，运行时投影成 auth 文件；OpenCode key 在 `SubscriptionAccountKeys`，同样投影。
+- 账号身份优先取邮箱：OAuth 账号由登录流程写 auth 文件 `email`，CommandCode 由额度里的 `whoami` 提供。OpenCode Go 只按 API key 识别订阅，`/usage` 没有身份字段，所以账号表的 Account 列允许登记展示邮箱（写 auth 文件 `email`，清空即删除），账号表和额度卡片据此显示；这是展示线索，不发送给上游，也不猜测归属。
 - 删除账号进 `.trash`；恢复接受 `.trash/<ts>-<name>` 或原文件名。
 - 不要把 token、API key 或完整上游请求体写进日志。
 

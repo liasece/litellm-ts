@@ -1,33 +1,31 @@
 # Fallback 与 Alias 的候选树
 
-一条请求失败之后换哪个模型，由 `router_settings.fallbacks` 与 `router_settings.model_group_alias`
-共同描述。两者现在都表达「有序候选 + 是否继续向下」：这是为了在配置出错或上游整体故障时，
+一条请求失败之后换哪个模型，由数据库 `LiteLLM_Config.router_settings.fallbacks` 与
+`router_settings.model_group_alias` 共同描述，二者都由 Dashboard 维护，`config.yaml` 不再读取。
+两者现在都表达「有序候选 + 是否继续向下」：这是为了在配置出错或上游整体故障时，
 流量不会走到配置者没有预期的模型上（例如便宜的模型失败后一路 fallback 到最贵的模型）。
 
 ## 两种配置的写法
 
 `fallbacks` 的每个条目（按 PY 兼容形态仍是对象数组，同名键先出现者生效）：
 
-```yaml
-router_settings:
-  fallbacks:
-    # 紧凑写法：按顺序尝试，默认允许每个目标继续用它自己的 fallback
-    gpt-6-astra: [gpt-6-sol, k3]
-    # 显式写法：目标失败即停在这一层，不再沿目标自身的 fallback 继续
-    cheap-test:
-      targets: [gpt-5.6-terra, qwen3.8-27b]
-      recurse: false
+```json
+{
+  "gpt-6-astra": ["gpt-6-sol", "k3"],
+  "cheap-test": { "targets": ["gpt-5.6-terra", "qwen3.8-27b"], "recurse": false }
+}
 ```
+
+第一条是紧凑写法：按顺序尝试，默认允许每个目标继续用它自己的 fallback。第二条显式关闭递归：
+目标失败即停在这一层，不再沿目标自身的 fallback 继续。
 
 `model_group_alias` 的对象形态新增有序目标与同一个开关，`model` 是只有一项时的历史写法：
 
-```yaml
-router_settings:
-  model_group_alias:
-    cheap:
-      targets: [cheap-a, cheap-b] # 首项正常服务，失败后按顺序试 cheap-b
-      recurse: false # 不再进入 cheap-a / cheap-b 自己的 fallback
-    sonnet: gpt-5.6-terra # 旧写法仍然有效
+```json
+{
+  "cheap": { "targets": ["cheap-a", "cheap-b"], "recurse": false },
+  "sonnet": "gpt-5.6-terra"
+}
 ```
 
 `recurse` 缺省为 `true`，与既有配置的行为一致。别名写成 `string[]` 时，首项是主目标，其余是同级候选；
@@ -62,8 +60,8 @@ Fallback 和别名目标都是「有序列表 + 一个递归开关」，界面�
 首项是主目标，后面依次是失败后的候选；序号就是尝试顺序，没有单独的排序控件。递归开关放在列表下方的
 独立区域，因为它作用于整组目标而不是某一张卡片，和「继续向下」的语义一致。
 
-保存时保持配置紧凑：允许递归写回 `["a","b"]`，关闭递归才写 `{targets: ["a","b"], recurse: false}`，
-所以手工维护的旧配置不会因为经过界面而被改写成更啰嗦的形态。只读接口返回的两种形态都按同一套逻辑
+保存时保持配置紧凑：允许递归写回 `["a","b"]`，关闭递归才写 `{"targets": ["a","b"], "recurse": false}`，
+所以数据库里已有的旧配置不会因为经过界面而被改写成更啰嗦的形态。只读接口返回的两种形态都按同一套逻辑
 归一化后渲染，界面上看不出差异。
 
 ## 与请求级计划的关系

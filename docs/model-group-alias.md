@@ -9,28 +9,37 @@
 
 ## 配置格式
 
-保存在现有 `router_settings.model_group_alias` 中，不需要数据库迁移。旧字符串、数组和 `{ model, hidden }` 写法继续有效。
+配置只保存在数据库 `LiteLLM_Config.router_settings.model_group_alias`，由 Dashboard 写入，`config.yaml` 不再读取该字段。旧字符串、数组和 `{ model, hidden }` 写法继续有效。
 
 数组现在表达**有序目标**：首项是正常服务的主目标，其余项在前一项失败后按顺序尝试（此前只取首项，等同单目标）。
 对象形态用 `targets` 表达同一组有序目标，并可加 `recurse: false` 让这些目标成为最终候选；`model` 是只有一项时的历史写法，与 `targets` 互斥。
 
-下面的模型名和 22:00–06:00 仅用于说明跨午夜格式，并非供应商当前定价时间：
+下面是该数据库字段的值形状。模型名和 22:00–06:00 仅用于说明跨午夜格式，并非供应商当前定价时间：
 
-```yaml
-router_settings:
-  model_group_alias:
-    cost-aware:
-      model: minimax
-      timezone: Asia/Shanghai
-      schedule:
-        - start: "22:00"
-          end: "06:00"
-          model: deepseek
+```json
+{
+  "cost-aware": {
+    "model": "minimax",
+    "timezone": "Asia/Shanghai",
+    "schedule": [{ "start": "22:00", "end": "06:00", "model": "deepseek" }]
+  }
+}
 ```
 
 `model`（或 `targets` 的首项）是未命中任何时段时的默认目标；时段目标和默认目标都可以指向其他 Alias。删除全部时段后恢复全天使用默认目标。Dashboard 保存的是完整 Alias 映射，编辑一条记录会保留其他记录的附加字段。
 
 时段命中时，该时段的目标成为本次请求的主目标，已声明的其余 `targets` 仍然保持顺序排在它后面；未声明 `targets` 的旧式时段别名只有单一目标，不会把「另一个时段的模型」当成备选。
+
+## 从 Model Override 转成 Alias
+
+Models 列表中已设置 `override_model_name` 的模型，在 **Model Override** 列右侧有一个转换按钮（仅管理员，且必须是库内模型）。
+点击后确认弹窗预填「别名名 = 模型公共名、主目标 = 当前覆写目标」，可改名字、目标顺序、`recurse` 和时段。
+
+确认后先写 Alias，再删除该公共名下的全部部署。两者都按模型组建模，别名以公共名为键；只删一行会让剩余部署的
+覆写继续优先于新别名，所以转换以整个公共名为单位。先写后删的顺序保证任何一步失败时请求仍落在原目标上；
+若 Alias 已保存而删除失败，列表会给出提示，路由结果不变。
+
+该操作是「把固定覆写换成等价别名」的清理入口，选择不同的别名名时，原公共名删除后不再可用。
 
 ## 时间与路由边界
 

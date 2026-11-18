@@ -217,7 +217,7 @@ Usage 页保留 global / customer / tag / agent 四个真实维度（`/…/daily
 ### 曾确认“无调用”但必须保留的实现
 
 `/search_tools/*`、`/spend/logs/session/timeline`（含 `/stream` WS）、`/key/regenerate`、`/v3/login`、
-`/auth/session`、`/auth/logout`、`/config/yaml_diff*`、`/team|organization|user|customer|tag|agent/daily/activity`、
+`/auth/session`、`/auth/logout`、`/team|organization|user|customer|tag|agent/daily/activity`、
 `/provider/quota`、`/api-key-usage`、`/user/filter/ui`、`/builtin-capabilities`、`/config/routable_model/options`、
 `/public/litellm_model_cost_map`、`/credentials`、`/cliproxy/*`（含 `/cliproxy/management/*` catch-all）。
 

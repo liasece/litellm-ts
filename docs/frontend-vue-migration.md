@@ -28,7 +28,7 @@
 
 保持 HttpOnly session cookie、写请求 CSRF、显式虚拟密钥推理的独立认证、六小时 keepalive、Worker 切换、登录返回 URL、取消旧请求、清理订阅/图表/流。不改变持久化或账单计算。
 
-保留原页面装配差异：旧 legacy 根页的 YAML 配置差异弹窗仅在根页装配；路径式 dashboard 的 Debug 模式警告仅在路径式页面显示。UsageIndicator、浏览器偏好与其原事件名按原契约工作。Claude Code nudge 依赖的 `/in_product_nudges` 从未实现，已随清理移除。
+保留原页面装配差异：路径式 dashboard 的 Debug 模式警告仅在路径式页面显示（旧 legacy 根页的 YAML 配置差异弹窗已随迁移检查删除）。UsageIndicator、浏览器偏好与其原事件名按原契约工作。Claude Code nudge 依赖的 `/in_product_nudges` 从未实现，已随清理移除。
 
 Guardrails、Policies、Prompts、Vector Stores、Caching、MCP Servers、Projects、Budgets、Access Groups、旧 Usage 等页面依赖的接口在 TS 端多为桩或完全不存在；迁移阶段只保留了前端请求与状态契约。2026-11-08 的功能清理删除了这些页面及其桩后端，保留页面不再调用不存在的接口。
 
