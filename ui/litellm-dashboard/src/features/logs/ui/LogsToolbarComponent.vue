@@ -12,6 +12,8 @@ const props = defineProps<{
 	selectedInterval: { value: number; unit: string };
 	liveTailIntervalMs: number;
 	liveTailEnabled: boolean;
+	/** 实时通道是否在线；自适应布局里它只体现在 Live Tail 开关旁的小圆点上。 */
+	liveTailConnected: boolean;
 	fetching: boolean;
 }>();
 const emit = defineEmits<{
@@ -147,6 +149,19 @@ onBeforeUnmount(() => {
 				<div class="logs-live-switch">
 					<span>Live Tail</span
 					><UiSwitch label="Live Tail" :model-value="liveTailEnabled" @update:model-value="emit('live-enabled', $event)" />
+					<!-- 指示灯：绿色=通知通道在线，琥珀色=断线重连中（这段时间靠空闲轮询兜底刷新） -->
+					<span
+						v-if="liveTailEnabled"
+						class="logs-live-dot"
+						:class="liveTailConnected ? 'logs-live-dot-online' : 'logs-live-dot-offline'"
+						role="img"
+						:aria-label="liveTailConnected ? 'Live tail connected' : 'Live tail reconnecting'"
+						:title="
+							liveTailConnected
+								? 'Live tail connected: new requests stream in as they finish'
+								: 'Live tail reconnecting: the list keeps refreshing on the idle interval'
+						"
+					/>
 					<select
 						v-if="liveTailEnabled"
 						aria-label="Live Tail refresh interval"

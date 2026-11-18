@@ -20,7 +20,6 @@ import type { LogEntry, SessionGroupRef } from "../support/LogsModels";
 import { fetchChoicePage } from "../../selectors/api/PaginatedChoiceApi";
 import LogsToolbarComponent from "./LogsToolbarComponent.vue";
 import LogsPaginationComponent from "./LogsPaginationComponent.vue";
-import LogsLiveBannerComponent from "./LogsLiveBannerComponent.vue";
 import LogsTableComponent from "./LogsTableComponent.vue";
 import LogsProviderWarningsComponent from "./LogsProviderWarningsComponent.vue";
 import LogsSettingsDialogComponent from "./LogsSettingsDialogComponent.vue";
@@ -341,6 +340,7 @@ watch(
 										:selected-interval="list.state.selectedTimeInterval"
 										:live-tail-interval-ms="list.state.liveTailIntervalMs"
 										:live-tail-enabled="list.state.liveTailEnabled"
+										:live-tail-connected="list.state.connected"
 										:fetching="list.state.fetching"
 										@interval="list.selectInterval"
 										@custom="list.setCustomDate"
@@ -360,12 +360,6 @@ watch(
 								/>
 							</div>
 						</div>
-						<LogsLiveBannerComponent
-							:visible="list.liveActive.value"
-							:interval-ms="list.state.liveTailIntervalMs"
-							:connected="list.state.connected"
-							@stop="list.setLiveEnabled(false)"
-						/>
 						<LogsTableComponent
 							:data="list.page.value.data"
 							:loading="list.state.loading"
