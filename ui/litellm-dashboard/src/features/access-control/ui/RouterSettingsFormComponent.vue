@@ -6,8 +6,18 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
+import UiDragHandle from "../../platform/ui/UiDragHandle.vue";
+import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
+import UiSortableList from "../../platform/ui/UiSortableList.vue";
+import UiSortableRow from "../../platform/ui/UiSortableRow.vue";
 import { loadRouterSettings, type RouterField } from "../api/RouterSettingsApi";
-import { fallbackDraft, fallbackPayload, normalizeRouterSettings, parseRouterInput } from "../logic/RouterSettingsLogic";
+import {
+	fallbackDraft,
+	fallbackPayload,
+	normalizeRouterSettings,
+	parseRouterInput,
+	type FallbackDraft,
+} from "../logic/RouterSettingsLogic";
 import { objectValue } from "../logic/ResourceDraftLogic";
 import type { AccessRecord, ResourceOption } from "../support/AccessModels";
 const props = withDefaults(
@@ -73,10 +83,33 @@ function input(name: string, value: unknown) {
 function latency(name: string, value: unknown) {
 	update("routing_strategy_args", { ...objectValue(values.value.routing_strategy_args), [name]: Number(value) });
 }
-function updateGroup(index: number, key: "primary" | "models", value: unknown) {
+function updateGroup(index: number, key: "primary", value: unknown) {
+	// 回退模型的顺序就是尝试顺序，只能通过下方有序列表增删改，不再接受一次性的多选结果。
 	const group = groups.value[index];
 	if (key === "primary") group.primary = String(value ?? "");
-	else group.models = Array.isArray(value) ? value.map(String) : [];
+	publish();
+}
+function groupCandidates(group: FallbackDraft) {
+	// 已加入链路的模型不再出现在下拉里：重复项会被 addGroupModel 吞掉，只在列表里保留一份。
+	return props.models.filter((option) => option.value !== group.primary && !group.models.includes(option.value));
+}
+function addGroupModel(index: number, value: unknown) {
+	const group = groups.value[index],
+		model = String(value ?? "");
+	if (!group || !model || group.models.includes(model)) return;
+	group.models = [...group.models, model];
+	publish();
+}
+function removeGroupModel(index: number, name: string) {
+	const group = groups.value[index];
+	if (!group) return;
+	group.models = group.models.filter((model) => model !== name);
+	publish();
+}
+function setGroupModels(index: number, models: string[]) {
+	const group = groups.value[index];
+	if (!group) return;
+	group.models = models;
 	publish();
 }
 onMounted(() => {
@@ -193,15 +226,32 @@ onMounted(() => {
 							placeholder="Select primary model"
 							@update:model-value="updateGroup(index, 'primary', $event)" /></label
 					><label
-						>Fallback Models<UiSelect
-							:model-value="group.models"
-							:options="models.filter((model) => model.value !== group.primary)"
-							multiple
+						>Add fallback model<UiSelect
+							:model-value="null"
+							:options="groupCandidates(group)"
 							searchable
-							clearable
-							placeholder="Select fallback models"
-							@update:model-value="updateGroup(index, 'models', $event)"
+							placeholder="Select a fallback model"
+							:aria-label="'Add fallback model to group ' + (index + 1)"
+							@update:model-value="addGroupModel(index, $event)"
 					/></label>
+					<p class="access-fallback-chain-hint">Tried top to bottom after the primary model fails.</p>
+					<UiSortableList
+						:items="group.models"
+						:item-key="(model) => model"
+						:label="(position, total) => 'fallback ' + (position + 1) + ' of ' + total + ' in group ' + (index + 1)"
+						@update:items="setGroupModels(index, $event)"
+					>
+						<template #item="{ item: model, index: position, itemProps, itemClass, handleProps }">
+							<UiSortableRow :index="position + 1" :class="itemClass" v-bind="itemProps">
+								<template #handle><UiDragHandle v-bind="handleProps" /></template>
+								<span>{{ model }}</span>
+								<template #actions>
+									<UiEntryRemove :label="'Remove fallback ' + model" @click="removeGroupModel(index, model)" />
+								</template>
+							</UiSortableRow>
+						</template>
+					</UiSortableList>
+					<p v-if="!group.models.length" class="access-fallback-chain-hint">No fallback models yet.</p>
 				</div>
 				<UiButton
 					v-if="groups.length < 5"

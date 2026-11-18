@@ -133,39 +133,17 @@
 	font-size: 12px;
 	color: #9ca3af;
 }
-.vk-fallback-model {
-	display: flex;
-	gap: 12px;
-	align-items: center;
-	padding: 12px;
+/* 有序候选行由 UiSortableRow 统一提供边框、序号和拖拽把手，这里只留列表间距。 */
+.vk-fallback-chain .ui-sortable-row + .ui-sortable-row {
 	margin-top: 8px;
-	background: white;
-	border: 1px solid #e5e7eb;
-	border-radius: 6px;
 }
-.vk-fallback-model > span.vk-fallback-index {
-	display: grid;
-	place-items: center;
-	width: 24px;
-	height: 24px;
-	border-radius: 50%;
-	background: #dbeafe;
-	color: #2563eb;
-	font-size: 12px;
-	flex: none;
-}
-.vk-fallback-model > .model-logo {
+.vk-fallback-chain .ui-sortable-row > .ui-sortable-row__body > .model-logo {
 	flex: none;
 }
 .vk-fallback-tabs button {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-}
-.vk-fallback-model strong {
-	flex: 1;
-	font-size: 14px;
-	font-weight: 500;
 }
 .vk-fallback-disabled {
 	opacity: 0.5;

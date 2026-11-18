@@ -9,6 +9,7 @@ withDefaults(defineProps<{ index?: number; primary?: boolean }>(), { index: unde
 <template>
 	<article class="ui-entry-card" :class="{ 'ui-entry-card--primary': primary }">
 		<div class="ui-entry-card__head">
+			<div v-if="$slots.handle" class="ui-entry-card__handle"><slot name="handle" /></div>
 			<span v-if="index !== undefined" class="ui-entry-card__badge" aria-hidden="true">{{ index }}</span>
 			<div class="ui-entry-card__title"><slot name="title" /></div>
 			<div v-if="$slots.actions" class="ui-entry-card__actions"><slot name="actions" /></div>
@@ -40,6 +41,12 @@ withDefaults(defineProps<{ index?: number; primary?: boolean }>(), { index: unde
 	align-items: center;
 	gap: 10px;
 	min-width: 0;
+}
+.ui-entry-card__handle {
+	display: flex;
+	align-items: center;
+	flex: none;
+	margin-left: -4px;
 }
 .ui-entry-card__badge {
 	display: flex;

@@ -4,7 +4,9 @@ import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import UiEntryCard from "../../platform/ui/UiEntryCard.vue";
+import UiDragHandle from "../../platform/ui/UiDragHandle.vue";
 import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
+import UiSortableList from "../../platform/ui/UiSortableList.vue";
 import UiSectionCard from "../../platform/ui/UiSectionCard.vue";
 import UiSwitchRow from "../../platform/ui/UiSwitchRow.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
@@ -92,7 +94,10 @@ function removeFallbackModel(name: string) {
 			<div class="routing-fallback-connection">
 				<span><UiLucideIcon name="ArrowDown" :size="16" />IF FAILS, TRY...</span>
 			</div>
-			<UiSectionCard title="Fallback chain" description="Models are tried top to bottom after the primary model fails.">
+			<UiSectionCard
+				title="Fallback chain"
+				description="Models are tried top to bottom after the primary model fails. Drag a row, or use ↑/↓ on its handle, to change that order."
+			>
 				<template #actions>
 					<span class="routing-fallback-count">{{ current.models.length }}/10</span>
 				</template>
@@ -107,12 +112,22 @@ function removeFallbackModel(name: string) {
 					@update:model-value="addFallbackModel"
 				/>
 				<p v-if="!current.models.length" class="routing-fallback-hint">No fallback models yet — add one above.</p>
-				<UiEntryCard v-for="(model, index) in current.models" :key="model" :index="index + 1">
-					<template #title><ModelName :model="model" :size="16" variant="strong" /></template>
-					<template #actions>
-						<UiEntryRemove :label="'Remove fallback ' + model" @click="removeFallbackModel(model)" />
+				<UiSortableList
+					:items="current.models"
+					:item-key="(model) => model"
+					:label="(index, total) => 'fallback ' + (index + 1) + ' of ' + total"
+					@update:items="current.models = $event"
+				>
+					<template #item="{ item: model, index, itemProps, itemClass, handleProps }">
+						<UiEntryCard :index="index + 1" :class="itemClass" v-bind="itemProps">
+							<template #handle><UiDragHandle v-bind="handleProps" /></template>
+							<template #title><ModelName :model="model" :size="16" variant="strong" /></template>
+							<template #actions>
+								<UiEntryRemove :label="'Remove fallback ' + model" @click="removeFallbackModel(model)" />
+							</template>
+						</UiEntryCard>
 					</template>
-				</UiEntryCard>
+				</UiSortableList>
 				<template #footer>
 					<UiSwitchRow
 						:model-value="current.recurse"

@@ -15,6 +15,7 @@ import UiPagination from "../../src/features/platform/ui/UiPagination.vue";
 import UiSelect from "../../src/features/platform/ui/UiSelect.vue";
 import UiTable from "../../src/features/platform/ui/UiTable.vue";
 import UiTabs from "../../src/features/platform/ui/UiTabs.vue";
+import SortableHarness from "./SortableHarness.vue";
 import UiTooltip from "../../src/features/platform/ui/UiTooltip.vue";
 import type { UiTableRow, UiValue } from "../../src/features/platform/ui/UiTypes";
 
@@ -266,6 +267,7 @@ const draft = ref<string | number | null>("");
 		<UiInputNumber v-model="formattedTokens" :formatter="formatTokens" :min="0" :max="1000000" aria-label="Formatted tokens" />
 		<output data-testid="formatted-tokens">{{ formattedTokens === null ? "empty" : formattedTokens }}</output>
 		<KeyIdentityForm kind="create-fixture" class="create-key-fixture" /><KeyIdentityForm kind="edit-fixture" class="edit-key-fixture" />
+		<SortableHarness />
 		<UiInput v-model="password" appearance="tremor" type="password" aria-label="Provider password" />
 		<UiInput v-model="password" type="password" aria-label="Native password" />
 		<section aria-label="Tooltip content fixtures">

@@ -1,15 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { convertExecutor, createDeepSeekExecutor, moveExecutor, validateCapabilities } from "./ExecutorChainLogic";
-import type { Capabilities, CapabilityExecutor } from "../support/BuiltinCapabilitiesModels";
+import { convertExecutor, createDeepSeekExecutor, validateCapabilities } from "./ExecutorChainLogic";
+import type { Capabilities } from "../support/BuiltinCapabilitiesModels";
 describe("built-in executor configuration", () => {
-	it("keeps ordered fallbacks and leaves the original chain unchanged", () => {
-		const first: CapabilityExecutor = { type: "model", model: "primary" },
-			second = createDeepSeekExecutor("stored-credential"),
-			chain = [first, second];
-		expect(moveExecutor(chain, 1, -1)).toEqual([second, first]);
-		expect(chain).toEqual([first, second]);
-		expect(moveExecutor(chain, 0, -1)).toEqual(chain);
-	});
 	it("does not carry credentials or provider settings into a model executor", () => {
 		expect(convertExecutor("model", createDeepSeekExecutor("credential-name"))).toEqual({ type: "model", model: "" });
 		expect(convertExecutor("deepseek_tools", { type: "model", model: "router-model", max_output_tokens: 65536 })).toEqual(

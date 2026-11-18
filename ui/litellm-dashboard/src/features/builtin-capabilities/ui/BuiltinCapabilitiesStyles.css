@@ -89,7 +89,6 @@
 .builtin-executor-header {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
 	gap: 12px;
 	margin-bottom: 12px;
 }
@@ -101,10 +100,12 @@
 .builtin-executor-kind > .builtin-xs {
 	word-break: break-word;
 }
+/* 把手、序号和执行器类型靠左成组；移除按钮独占右侧，避免中间留出大片空白。 */
 .builtin-executor-actions {
 	display: flex;
 	align-items: center;
 	gap: 4px;
+	margin-left: auto;
 }
 .builtin-small-label {
 	display: block;

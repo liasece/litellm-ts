@@ -69,6 +69,15 @@
 	display: block;
 	margin-top: 16px;
 }
+.access-fallback-chain-hint {
+	margin: 8px 0 6px;
+	font-size: 12px;
+	line-height: 16px;
+	color: #6b7280;
+}
+.access-fallback-group .ui-sortable-row + .ui-sortable-row {
+	margin-top: 8px;
+}
 .access-alias-add {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));

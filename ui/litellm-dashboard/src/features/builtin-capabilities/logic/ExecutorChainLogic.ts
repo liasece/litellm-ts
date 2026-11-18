@@ -18,13 +18,6 @@ export function convertExecutor(type: "model" | "deepseek_tools", current?: Capa
 		...(current?.type === "model" && current.max_output_tokens !== undefined ? { max_output_tokens: current.max_output_tokens } : {}),
 	};
 }
-export function moveExecutor(values: readonly CapabilityExecutor[], index: number, direction: -1 | 1): CapabilityExecutor[] {
-	const next = [...values],
-		target = index + direction;
-	if (index < 0 || index >= next.length || target < 0 || target >= next.length) return next;
-	[next[index], next[target]] = [next[target], next[index]];
-	return next;
-}
 export function validateCapabilities(capabilities: Capabilities): Record<string, string> {
 	const errors: Record<string, string> = {};
 	for (const id of ["image_generation", "vision", "web"] as CapabilityId[]) {

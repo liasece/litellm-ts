@@ -2,7 +2,11 @@
 import "./styles/KeyRouterForms.css";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { requestJson } from "../../platform/api/HttpApiClient";
+import UiDragHandle from "../../platform/ui/UiDragHandle.vue";
 import UiInput from "../../platform/ui/UiInput.vue";
+import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
+import UiSortableList from "../../platform/ui/UiSortableList.vue";
+import UiSortableRow from "../../platform/ui/UiSortableRow.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
 import UiTabs from "../../platform/ui/UiTabs.vue";
@@ -249,7 +253,7 @@ onBeforeUnmount(() => controller.abort());
 							<p>
 								{{
 									currentGroup.models.length < 10
-										? "Search and select multiple models. Selected models will appear below in order. (" +
+										? "Search and select multiple models. Selected models appear below in order; drag a row, or use ↑/↓ on its handle, to change it. (" +
 											currentGroup.models.length +
 											"/10 used)"
 										: "Maximum 10 fallbacks reached. Remove some to add more."
@@ -258,16 +262,25 @@ onBeforeUnmount(() => controller.abort());
 							<div v-if="!currentGroup.models.length" class="vk-fallback-empty">
 								<span>No fallback models selected</span><small>Add models from the dropdown above</small>
 							</div>
-							<div v-for="(model, index) in currentGroup.models" :key="model" class="vk-fallback-model">
-								<span class="vk-fallback-index">{{ index + 1 }}</span
-								><ModelName :model="model" :size="16" variant="strong" /><button
-									type="button"
-									:aria-label="'Remove fallback ' + model"
-									@click="fallbacks(currentGroup.models.filter((_, position) => position !== index))"
-								>
-									×
-								</button>
-							</div>
+							<UiSortableList
+								:items="currentGroup.models"
+								:item-key="(model) => model"
+								:label="(index, total) => 'fallback ' + (index + 1) + ' of ' + total"
+								@update:items="fallbacks($event)"
+							>
+								<template #item="{ item: model, index, itemProps, itemClass, handleProps }">
+									<UiSortableRow :index="index + 1" :class="itemClass" v-bind="itemProps">
+										<template #handle><UiDragHandle v-bind="handleProps" /></template>
+										<ModelName :model="model" :size="16" variant="strong" />
+										<template #actions>
+											<UiEntryRemove
+												:label="'Remove fallback ' + model"
+												@click="fallbacks(currentGroup.models.filter((_, position) => position !== index))"
+											/>
+										</template>
+									</UiSortableRow>
+								</template>
+							</UiSortableList>
 						</div>
 					</section>
 				</div>

@@ -149,3 +149,38 @@ test("all Tremor navigation items remain clickable when their labels must shrink
 	await navigation.getByRole("tab", { name: "Logging Callbacks", exact: true }).click();
 	await expect(page.getByTestId("narrow-tremor-page")).toHaveText("callbacks");
 });
+
+test("sortable handles reorder with the keyboard and keep focus on the moved item", async ({ page }) => {
+	await page.goto("/ui/tests/platform-ui/controls.html");
+	const first = page.getByRole("button", { name: "Reorder target 1 of 3", exact: true });
+	await first.focus();
+	await first.press("ArrowDown");
+	await expect(page.getByTestId("sortable-order")).toHaveText("Beta,Alpha,Gamma");
+	await expect(page.getByRole("button", { name: "Reorder target 2 of 3", exact: true })).toBeFocused();
+	await page.keyboard.press("End");
+	await expect(page.getByTestId("sortable-order")).toHaveText("Beta,Gamma,Alpha");
+	await expect(page.getByRole("button", { name: "Reorder target 3 of 3", exact: true })).toBeFocused();
+	await expect(page.getByTestId("sortable-card-list").locator(".ui-sortable-status")).toHaveText(
+		"Moved target 2 of 3 to position 3 of 3.",
+	);
+});
+
+test("inline sortable rows move with the keyboard from the row handle", async ({ page }) => {
+	await page.goto("/ui/tests/platform-ui/controls.html");
+	const first = page.getByRole("button", { name: "Reorder fallback 1 of 3", exact: true });
+	await first.focus();
+	await first.press("ArrowDown");
+	await expect(page.getByTestId("sortable-row-order")).toHaveText("second,first,third");
+	await expect(page.getByRole("button", { name: "Reorder fallback 2 of 3", exact: true })).toBeFocused();
+});
+
+test("dragging a handle onto another item moves it to that position", async ({ page }) => {
+	await page.goto("/ui/tests/platform-ui/controls.html");
+	const first = page.getByRole("button", { name: "Reorder target 1 of 3", exact: true });
+	const target = page.locator("[data-sortable-item]").nth(2);
+	await first.dragTo(target);
+	await expect(page.getByTestId("sortable-order")).toHaveText("Beta,Gamma,Alpha");
+	await expect(page.getByTestId("sortable-card-list").locator(".ui-sortable-status")).toHaveText(
+		"Moved target 1 of 3 to position 3 of 3.",
+	);
+});
