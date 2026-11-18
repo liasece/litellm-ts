@@ -110,7 +110,8 @@
 | Logs 列表很慢、数据库 CPU 上涨 | 列表查询计划与索引 → 分页参数 | 缺少覆盖索引、历史行过大、TOAST 膨胀；筛选列有专门的物化列与索引迁移 |
 | 报「No available deployment for model」 | 该模型的 deployment 是否启用、健康检查、冷却状态 | 模型未配置、全部进入冷却、订阅来源缺账号或未就绪 |
 | 订阅请求 401/403 反复 | 账号 `status`、`last_error`、`refresh_failures`、auth 文件时间戳 | refresh token 失效（终态错误会自动禁用）；不要把并发重复刷新当成解法 |
-| 订阅请求 429「所有账号都在冷却中」 | 账号表 Rate limit 与上游 `Retry-After` | 配额打满或上游限流；需要加账号或等窗口 |
+| 订阅请求 429「所有账号都在冷却中」 | 账号表 Rate limit、上游 `Retry-After`，以及 429 文案里的「最近失败」 | 配额打满或上游限流；需要加账号或等窗口。冷却按模型归属（401/402/403 与额度耗尽才按账号），同账号其他模型不受影响 |
+| 请求 429「No deployments available」，日志里没有上游错误 | Logs 详情的 Cooldown cause 区块（`error_information.cooldown_context`） | 预检短路没有自己的上游交换；触发冷却的那一次错误决定原因，按它定位上游限流/鉴权/余额问题 |
 | 客户端报错但服务端看不到请求 | 客户端 UA/协议、`codingClientModelMiddleware` 的改写、Alias 解析 | 客户端用了别名或 Claude 形状 ID，日志按别名登记；只查实际模型名会漏 |
 | 流式失败而非流式成功 | 终止事件、压缩错误、连接取消顺序；区分服务端生成完成 / SSE 传输完成 / 客户端读取完成 | 仅见 `AbortError` 无法判断哪一端先失败；需要客户端侧证据 |
 | 容器 unhealthy、部署命令超时 | `docker inspect` 的 OOM、重启、健康状态；容器日志；`pg_stat_activity` | 迁移仍在跑（继续等）、健康检查窗口不足、数据库未就绪 |
