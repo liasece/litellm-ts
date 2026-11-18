@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { first, second, group, timeline, event } from "../log-details/Fixtures";
+import { cooldown, first, second, group, timeline, event } from "../log-details/Fixtures";
 test.beforeEach(async ({ page }) => {
 	await page.route("**/spend/logs/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -20,7 +20,9 @@ test.beforeEach(async ({ page }) => {
 				page_size: 1,
 				total_pages: 2,
 			};
-		else payload = url.pathname.endsWith("/log-two") ? second : first;
+		else if (url.pathname.endsWith("/log-two")) payload = second;
+		else if (url.pathname.endsWith("/log-cooldown")) payload = cooldown;
+		else payload = first;
 		await route.fulfill({ json: payload });
 	});
 	await page.route("**/compliance/**", (route) =>
@@ -162,4 +164,15 @@ test("Privacy stays below Request & Response and reveals placeholders on demand"
 	await privacy.click();
 	await expect(drawer.getByTestId("privacy-replacement")).toHaveCount(1);
 	await expect(drawer.getByText("{{EMAIL_abcd2345}}", { exact: true }).first()).toBeVisible();
+});
+
+test("冷却短路的请求在详情里显示触发冷却的上游错误", async ({ page }) => {
+	await page.getByRole("button", { name: "Open cooldown", exact: true }).click();
+	const drawer = page.getByRole("dialog", { name: "Log details", exact: true });
+	await expect(drawer).toBeVisible();
+	// 本次请求没有上游交换，标题改成 Cooldown cause，指明这条错误属于更早的一次调用
+	await expect(drawer.getByText("Cooldown cause (1)", { exact: true })).toBeVisible();
+	await expect(drawer.getByText("rate limit exceeded for model", { exact: true })).toBeVisible();
+	await expect(drawer.getByText("5s cooldown · started 2026-11-07T02:05:00.000Z", { exact: true })).toBeVisible();
+	await expect(drawer.getByText("upstream · HTTP 429", { exact: true })).toBeVisible();
 });

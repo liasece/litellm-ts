@@ -168,6 +168,39 @@ export const second: LogEntry = {
 	proxy_server_request: { body: { messages: [{ role: "user", content: "Second prompt" }] } },
 	response: { choices: [{ message: { role: "assistant", content: "Second answer" } }] },
 };
+/**
+ * 冷却短路请求：预检阶段全部署冷却，没有自己的上游交换，原因只在
+ * `metadata.error_information.cooldown_context` 里。
+ */
+export const cooldown: LogEntry = {
+	request_id: "log-cooldown",
+	model: "hy4-flash",
+	call_type: "aresponses",
+	startTime: "2026-11-07T02:05:00Z",
+	endTime: "2026-11-07T02:05:00.107Z",
+	request_duration_ms: 107,
+	status: "failure",
+	metadata: {
+		status: "failure",
+		error_information: {
+			error_message:
+				"No deployments available for selected model, Try again in 5 seconds. Passed model=hy4-flash. pre-call-checks=True",
+			error_type: "RouterRateLimitErrorBasic",
+			error_code: 429,
+			error_stage: "proxy",
+			cooldown_context: [
+				{
+					deployment_id: "e66fa119-bd69-450c-9e30-ea41e1996aef",
+					status_code: 429,
+					error_message: "rate limit exceeded for model",
+					cooldown_seconds: 5,
+					started_at: "2026-11-07T02:05:00.000Z",
+				},
+			],
+		},
+	},
+};
+
 export const group = { type: "session_id" as const, id: "session-fixture" };
 export const event = (id: string, role: "user" | "assistant" | "tool", content: string, parts?: unknown[]) => ({
 	id,

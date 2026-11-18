@@ -3,7 +3,7 @@ import { provide, ref } from "vue";
 import { createPriceDisplayStore, priceDisplayStoreKey } from "../../src/features/platform/stores/PriceDisplayStore";
 import LogDetailsDrawerComponent from "../../src/features/logs/ui/details/LogDetailsDrawerComponent.vue";
 import type { LogEntry, SessionGroupRef } from "../../src/features/logs/support/LogsModels";
-import { first, second, group } from "./Fixtures";
+import { cooldown, first, second, group } from "./Fixtures";
 provide(priceDisplayStoreKey, createPriceDisplayStore());
 const open = ref(false),
 	selected = ref<LogEntry | null>(first),
@@ -13,9 +13,15 @@ function show(withSession: boolean) {
 	session.value = withSession ? group : null;
 	open.value = true;
 }
+function showCooldown() {
+	selected.value = cooldown;
+	session.value = null;
+	open.value = true;
+}
 </script>
 <template>
 	<button @click="show(false)">Open request</button><button @click="show(true)">Open session</button
+	><button @click="showCooldown()">Open cooldown</button
 	><LogDetailsDrawerComponent
 		:open="open"
 		:log="selected"

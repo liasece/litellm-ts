@@ -105,8 +105,10 @@ function fromCooldownContext(metadata: Record<string, unknown>): UpstreamErrorVi
 		const detail = [seconds > 0 ? `${seconds}s cooldown` : "", startedAt ? `started ${startedAt}` : ""].filter(Boolean).join(" · ");
 		views.push({
 			label: "Cooldown cause",
-			type: "cooldown",
-			code: errorCode(entry["status_code"]),
+			// 状态码加 HTTP 前缀：这是上游对「上一次请求」的答复，不是本次请求的状态；
+			// 与详情里最终的 429 并列时容易被读成同一个响应。
+			type: "upstream",
+			code: errorCode(entry["status_code"]) === null ? null : `HTTP ${errorCode(entry["status_code"])}`,
 			message: message,
 			url: null,
 			...(detail ? { detail } : {}),

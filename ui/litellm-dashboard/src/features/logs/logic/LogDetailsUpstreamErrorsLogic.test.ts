@@ -29,8 +29,8 @@ describe("upstreamErrorViews", () => {
 		expect(upstreamErrorViews(log)).toEqual([
 			{
 				label: "Cooldown cause",
-				type: "cooldown",
-				code: "429",
+				type: "upstream",
+				code: "HTTP 429",
 				message: "model quota exhausted",
 				url: null,
 				detail: "5s cooldown · started 2026-11-18T02:51:07.000Z",
