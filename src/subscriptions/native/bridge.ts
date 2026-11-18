@@ -16,7 +16,7 @@ import type { ProviderRequestExecutionOptions, ProviderRequestExecutionResult } 
 import { executeProviderRequest, isClientAbortError } from "../../router/ProviderRequestExecutor";
 import type { SubscriptionAccountStore } from "./accountStore";
 import { disableInvalidAccount, isTerminalRefreshFailure } from "./auth/refreshFailure";
-import type { SubscriptionAccountScheduler } from "./scheduler";
+import type { SubscriptionAccountScheduler, SubscriptionAccountSelection } from "./scheduler";
 import { createStreamTranslator, translateRequest, translateResponse } from "./protocol/types";
 import type { ProtocolEvent, ProtocolPayload } from "./protocol/types";
 import { encodeSseEvent, isSseResponse, readSseEvents } from "./protocol/sse";
@@ -209,7 +209,84 @@ const ACCOUNT_RETRY_OPERATIONS = new Set<SubscriptionOperation>(["chat", "messag
  * @param status - HTTP 状态码
  */
 function isAccountRetryableStatus(status: number): boolean {
-	return status === 401 || status === 403 || status === 408 || status === 429 || status >= 500;
+	return status === 401 || status === 402 || status === 403 || status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * 上游用普通 4xx 表达「这个账号的额度用完了」时的错误体特征。
+ *
+ * 状态码本身分不清「请求写错了」和「这个账号没钱了」：CommandCode 对余额不足返回
+ * 400 invalid_request_error（"You have insufficient credits…"），有的 Provider 用 402。
+ * 这种失败换账号通常就能恢复，但按 400 处理会把整个订阅判成失败、直接掉到跨 Provider
+ * fallback，等于跳过了同 Provider 的其他账号。
+ */
+const CREDIT_EXHAUSTION_PATTERNS: readonly RegExp[] = [
+	/insufficient (?:credit|credits|funds|balance)/i,
+	/(?:credit|balance)[^.]{0,24}(?:too low|exhausted|depleted|is zero|zero balance)/i,
+	/no (?:remaining )?(?:credits|balance)/i,
+	/out of credits/i,
+	/(?:exceeded|reached|hit)[^.]{0,24}(?:quota|credit limit)/i,
+	/quota (?:exceeded|exhausted)/i,
+	/payment required/i,
+];
+
+/**
+ * 判断一次 4xx 是否属于账号额度耗尽。
+ *
+ * 只对 400 做错误体匹配：402/403 已经按账号级失败处理，其他状态码不是额度语义。
+ * 错误体来自 `executeProviderRequest` 对非 2xx 的解析结果（未流式时也会解析 body），
+ * 因此这里不需要再读一次响应流。
+ * @param status - 上游状态码
+ * @param body - 已解析的错误体；可能是对象也可能是纯文本
+ */
+function isCreditExhaustion(status: number, body: unknown): boolean {
+	if (status !== 400) {
+		return false;
+	}
+	let text: string;
+	if (typeof body === "string") {
+		text = body;
+	} else if (body === undefined || body === null) {
+		return false;
+	} else {
+		try {
+			text = JSON.stringify(body);
+		} catch {
+			return false;
+		}
+	}
+	if (text.length === 0) {
+		return false;
+	}
+	return CREDIT_EXHAUSTION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/**
+ * 把上游错误体压成一行摘要，供冷却原因与「都在冷却中」的 429 回显。
+ *
+ * 只要够判断原因（限流 / 余额 / 鉴权）即可，不做结构化解析；过长会被截断，
+ * 避免一条冷却原因变成几 KB 的原文。
+ * @param body - 上游错误体（对象或纯文本）
+ */
+function describeUpstreamFailure(body: unknown): string | undefined {
+	if (body === undefined || body === null) {
+		return undefined;
+	}
+	let text: string;
+	if (typeof body === "string") {
+		text = body;
+	} else {
+		try {
+			text = JSON.stringify(body);
+		} catch {
+			return undefined;
+		}
+	}
+	const compact = text.replace(/\s+/g, " ").trim();
+	if (compact.length === 0) {
+		return undefined;
+	}
+	return compact.length <= 200 ? compact : `${compact.slice(0, 200)}…`;
 }
 
 function isCredentialFailure(status: number): boolean {
@@ -349,8 +426,24 @@ export class SubscriptionBridge {
 		const retryable = ACCOUNT_RETRY_OPERATIONS.has(target.operation) && accounts.length > 1;
 		const maxAttempts = retryable ? Math.min(3, accounts.length) : 1;
 		const excluded = new Set<string>();
-		for (let attempt = 1; ; attempt += 1) {
-			const selection = await this._selectAccount(target.source, sessionKey, excluded);
+		// 额度耗尽只表示「这个账号没钱了」，换账号是确定有效的动作，不应该和其他失败共用
+		// 3 次预算：账号池里常有多个空账号，预算被它们吃掉就仍会跳过还有额度的账号。
+		// 这里只让其他账号级失败计入预算，额度耗尽只把账号排除，最坏把账号池走一遍。
+		let budgetUsed = 0;
+		let lastDispatched: ProviderRequestExecutionResult | undefined;
+		let lastPlan: SubscriptionUpstreamPlan | undefined;
+		for (;;) {
+			let selection: SubscriptionAccountSelection;
+			try {
+				selection = await this._selectAccount(target.source, sessionKey, excluded, upstreamModel);
+			} catch (error) {
+				// 账号池已走完：保留最后一次真实上游错误，让调用方看到「余额不足」这类原因，
+				// 而不是合成一个「都在冷却中」的 429。
+				if (lastDispatched && lastPlan) {
+					return this._finalize(lastDispatched, executionContext, lastPlan, startedAtMs);
+				}
+				throw error;
+			}
 			let plan = await this._buildPlan(executionContext, selection.account, upstreamModel, undefined);
 			let dispatched = await executeProviderRequest(this._planRequest(plan), plan.stream ? { ...options, readJson: false } : options);
 			if (isCredentialFailure(dispatched.response.status)) {
@@ -388,24 +481,43 @@ export class SubscriptionBridge {
 			if (snapshot) {
 				this._rateLimits.set(selection.account.id, snapshot);
 			}
-			if (dispatched.response.status < 400) {
-				this._scheduler.markSuccess(target.source, selection.account.id);
+			const status = dispatched.response.status;
+			// 额度耗尽没有 Retry-After，按账号级状态单独冷却：会话亲和已经清掉，
+			// 但账号若不冷却，下一轮加权轮询仍可能选中它，同一会话会反复撞同一个空账号。
+			const exhausted = isCreditExhaustion(status, dispatched.body);
+			// 冷却粒度跟具体模型走：429/5xx 只说明这个模型在此账号上暂时不行，
+			// 不应连带同账号下的其他模型（凭证/额度类失败仍按账号冷却）。
+			if (status < 400) {
+				this._scheduler.markSuccess(target.source, selection.account.id, upstreamModel);
+			} else if (exhausted) {
+				this._scheduler.markExhausted(target.source, selection.account.id, "额度耗尽");
+				this._scheduler.forget(target.source, sessionKey);
 			} else {
 				this._scheduler.markFailure(
 					target.source,
 					selection.account.id,
-					dispatched.response.status,
+					status,
 					retryAfterMs(dispatched.response.headers),
+					upstreamModel,
+					describeUpstreamFailure(dispatched.body),
 				);
 				this._scheduler.forget(target.source, sessionKey);
 			}
-			if (attempt < maxAttempts && isAccountRetryableStatus(dispatched.response.status)) {
+			if (!exhausted && status >= 400) {
+				budgetUsed += 1;
+			}
+			if (exhausted || isAccountRetryableStatus(status)) {
+				if (!exhausted && budgetUsed >= maxAttempts) {
+					return this._finalize(dispatched, executionContext, plan, startedAtMs);
+				}
 				excluded.add(selection.account.id);
-				logger.warn("订阅账号上游失败，切换账号重试", {
+				logger.warn(exhausted ? "订阅账号额度耗尽，切换账号重试" : "订阅账号上游失败，切换账号重试", {
 					source: target.source,
 					account: selection.account.fileName,
-					status: dispatched.response.status,
+					status: status,
 				});
+				lastDispatched = dispatched;
+				lastPlan = plan;
 				continue;
 			}
 			return this._finalize(dispatched, executionContext, plan, startedAtMs);
@@ -452,12 +564,19 @@ export class SubscriptionBridge {
 		);
 	}
 
-	private async _selectAccount(source: SubscriptionSource, sessionKey: string, exclude?: ReadonlySet<string>) {
+	/**
+	 * 选账号；`model` 让调度只看该模型自己的冷却窗口。
+	 * @param source - 来源
+	 * @param sessionKey - 会话键
+	 * @param exclude - 本次请求已经失败过的账号
+	 * @param model - 上游模型名
+	 */
+	private async _selectAccount(source: SubscriptionSource, sessionKey: string, exclude?: ReadonlySet<string>, model?: string) {
 		const accounts = await this._accounts.list(source);
 		if (accounts.length === 0) {
 			throw ApiError.unavailable(`没有可用的 ${source} 订阅账号`);
 		}
-		return this._scheduler.select(source, sessionKey, accounts, exclude);
+		return this._scheduler.select(source, sessionKey, accounts, exclude, model);
 	}
 
 	private async _buildPlan(

@@ -59,3 +59,35 @@ it("全部账号冷却时返回 429", () => {
 		expect((error as ApiError).statusCode).toBe(429);
 	}
 });
+
+it("429 只冷却被限流的模型，同账号其他模型仍可调度", () => {
+	const scheduler = new SubscriptionAccountScheduler();
+	const only = account("only");
+	scheduler.markFailure("opencode-go", "only", 429, 60_000, "hy4-flash-free");
+	// 同一账号另一个模型不受影响：修复前按账号冷却，会把整个 Provider 拖下水
+	expect(scheduler.select("opencode-go", "", [only], undefined, "deepseek-v4.1-flash").account.id).toBe("only");
+	expect(() => scheduler.select("opencode-go", "", [only], undefined, "hy4-flash-free")).toThrow(ApiError);
+	try {
+		scheduler.select("opencode-go", "", [only], undefined, "hy4-flash-free");
+	} catch (error) {
+		expect((error as ApiError).statusCode).toBe(429);
+		expect((error as ApiError).message).toContain("hy4-flash-free");
+	}
+});
+
+it("凭证失败（401/403）仍按账号冷却，所有模型一起避开", () => {
+	const scheduler = new SubscriptionAccountScheduler();
+	const only = account("only");
+	scheduler.markFailure("opencode-go", "only", 401, undefined, "hy4-flash-free");
+	expect(() => scheduler.select("opencode-go", "", [only], undefined, "deepseek-v4.1-flash")).toThrow(ApiError);
+});
+
+it("markSuccess 清掉该模型的冷却，其他模型冷却保持原样", () => {
+	const scheduler = new SubscriptionAccountScheduler();
+	const only = account("only");
+	scheduler.markFailure("opencode-go", "only", 429, 60_000, "model-a");
+	scheduler.markFailure("opencode-go", "only", 429, 60_000, "model-b");
+	scheduler.markSuccess("opencode-go", "only", "model-a");
+	expect(scheduler.select("opencode-go", "", [only], undefined, "model-a").account.id).toBe("only");
+	expect(() => scheduler.select("opencode-go", "", [only], undefined, "model-b")).toThrow(ApiError);
+});
