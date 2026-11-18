@@ -2,6 +2,9 @@ import { resolveModelFamily, type ModelFamily } from "../shared/ModelFamily";
 import { resolveDeploymentProvider } from "../router/RouterSpendInfo";
 import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
 import { modelPriceKeys } from "../cost/CostCalculator";
+import { upstreamRefForDeployment } from "../subscriptions/native/upstream/lookup";
+import { upstreamMetadataForRef } from "../subscriptions/native/upstream/runtime";
+import { applyUpstreamFills } from "./upstreamModelOverlay";
 /**
  * 模型 info 推导与 /model_group/info 聚合逻辑
  *
@@ -386,18 +389,21 @@ function resolveProvider(dep: Deployment, entry: ModelCostEntry | undefined): st
  * 2. 填入 cost map 条目推导值（key、成本、supports 能力、mode、supported_openai_params 等）
  * 3. config model_info 覆盖（Python：`if k not in model_info` —— config 优先）；
  * config 中的额外键（如 metadata）同样透传，与 Python dict 合并行为一致
- * 4. id：config model_info.id > cost map 条目 id > fallbackId（调用方生成的稳定 id）
- * 5. db_model：config 未声明时恒 false（TS 端模型均来自 config 文件）
+ * 4. 上游元信息补空缺（订阅部署；只填空值，来源记入 upstreamOut）
+ * 5. id：config model_info.id > cost map 条目 id > fallbackId（调用方生成的稳定 id）
+ * 6. db_model：config 未声明时恒 false（TS 端模型均来自 config 文件）
  * @param dep - Router deployment
  * @param fallbackId - cost map 与 config 均无 id 时的兜底 id
  * @param modelCostMap
  * @param builtinCapabilities - 用于补充代理提供的 vision 等内置能力配置。
+ * @param upstreamOut - 可选：收集本次被上游补位的字段名，供 Dashboard 标注来源。
  */
 export function buildEnrichedModelInfo(
 	dep: Deployment,
 	fallbackId: string,
 	modelCostMap: ModelCostMap = modelCostMapService.getSnapshot().map,
 	builtinCapabilities?: BuiltinCapabilitiesConfig,
+	upstreamOut?: { filledFields: string[] },
 ): Record<string, unknown> {
 	const entry = lookupModelCostEntry(dep.litellm_params.model, modelCostMap, dep.litellm_params.custom_llm_provider);
 	const provider = resolveProvider(dep, entry);
@@ -432,6 +438,11 @@ export function buildEnrichedModelInfo(
 	}
 	if (builtinCapabilities && isBuiltinCapabilityAvailable(dep, "vision", builtinCapabilities)) {
 		out["supports_vision"] = true;
+	}
+	// 上游元信息只填空缺：配置或价目表已有值时 applyUpstreamFills 不会覆盖。
+	const upstreamFilled = applyUpstreamFills(out, upstreamMetadataForRef(upstreamRefForDeployment(dep)));
+	if (upstreamOut !== undefined) {
+		upstreamOut.filledFields.push(...upstreamFilled);
 	}
 
 	out["id"] =

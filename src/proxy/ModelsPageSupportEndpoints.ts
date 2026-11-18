@@ -28,6 +28,7 @@ import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
 import { modelCostMapService, type ModelCostMapService } from "../cost/ModelCostMapService";
 import { buildEnrichedModelInfo, buildModelGroupInfoResponse } from "./modelGroupBuilder";
+import { upstreamPayloadForDeployment, type UpstreamModelInfoPayload } from "./upstreamModelOverlay";
 import {
 	BUILTIN_CAPABILITIES_CONFIG_PARAM,
 	normalizeBuiltinCapabilitiesConfig,
@@ -619,6 +620,8 @@ interface ModelInfoV2Item {
 	model_name: string;
 	litellm_params: Record<string, unknown>;
 	model_info: Record<string, unknown>;
+	/** 上游元信息（仅订阅部署、并且缓存里有记录时出现）；model_info 中由上游补位的字段见 filled_fields。 */
+	upstream_model_info?: UpstreamModelInfoPayload;
 }
 
 /** /v2/model/info 单模型查询响应 */
@@ -682,6 +685,9 @@ function buildModelInfoV2Item(
 	builtinCapabilities?: BuiltinCapabilitiesConfig,
 ): ModelInfoV2Item {
 	const fallbackId = resolveModelId(modelInfo, dep, stableIndex);
+	const upstreamOut = { filledFields: [] as string[] };
+	const enriched = buildEnrichedModelInfo(dep, fallbackId, modelCostMap, builtinCapabilities, upstreamOut);
+	const upstreamPayload = upstreamPayloadForDeployment(dep, upstreamOut.filledFields);
 	return {
 		model_name: dep.model_name,
 		litellm_params: {
@@ -691,12 +697,13 @@ function buildModelInfoV2Item(
 			use_litellm_proxy: pickBooleanParam(dep.litellm_params, "use_litellm_proxy"),
 		},
 		model_info: {
-			...buildEnrichedModelInfo(dep, fallbackId, modelCostMap, builtinCapabilities),
+			...enriched,
 			fallbacks: [...fallbacks],
 			...(typeof modelInfo?.override_model_name === "string"
 				? { override_model_name: modelInfo.override_model_name }
 				: {}),
 		},
+		...(upstreamPayload === undefined ? {} : { upstream_model_info: upstreamPayload }),
 	};
 }
 
@@ -970,6 +977,34 @@ export function registerModelsPageSupportRoutes(
 		return {
 			data: [buildModelInfoV2Item(dep, idx, dep.model_info, fallbacks, costMapService.getSnapshot().map, builtinCapabilities)],
 		};
+	});
+
+	// ── /model/upstream_info ────────────────────────────────
+
+	/**
+	 * 上游模型元信息（Dashboard 悬浮提示的数据源）
+	 *
+	 * 按模型组名或部署 id 查找订阅部署，返回每条部署对应的上游缓存记录。日志、用量、
+	 * fallback 编辑器只有模型名，没有 deployment 对象，因此需要这个按名字取的入口。
+	 * 缓存未命中时返回空数组——界面据此不显示提示图标，而不是报错。
+	 */
+	registerRoute(router, { method: "get", path: "/model/upstream_info" }, (req) => {
+		const model = firstQueryString(req.query.model ?? req.query.model_id);
+		if (!model) {
+			throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Missing model");
+		}
+		const deployments = resolveDeployments(routerOrAccessor).filter(
+			(dep) => dep.model_name === model || dep.model_info?.id === model || dep.litellm_params.model === model,
+		);
+		const data = deployments
+			.map((dep, index) => ({
+				model_name: dep.model_name,
+				model_id: resolveModelId(dep.model_info, dep, index),
+				provider: dep.litellm_params.custom_llm_provider ?? null,
+				upstream_model_info: upstreamPayloadForDeployment(dep, []) ?? null,
+			}))
+			.filter((item) => item.upstream_model_info !== null);
+		return { data: data };
 	});
 
 	// ── /model_group/info ───────────────────────────────────

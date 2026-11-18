@@ -10,6 +10,7 @@
  */
 
 import { ApiError } from "../../core/api/ApiError";
+import { assertWithinUpstreamOutputLimit } from "./upstream/limits";
 import { logger } from "../../core/utils/logger";
 import type { ProviderRequest } from "../../types/provider";
 import type { ProviderRequestExecutionOptions, ProviderRequestExecutionResult } from "../../router/ProviderRequestExecutor";
@@ -422,6 +423,8 @@ export class SubscriptionBridge {
 			adapter: adapter,
 		};
 		const upstreamModel = adapter.resolveModel?.(model) ?? model;
+		// 上游输出上限：缓存里有且请求超限时直接给出可读的 400，不再把上游的笼统错误透出去。
+		assertWithinUpstreamOutputLimit(target.source, upstreamModel, body);
 		const accounts = await this._accounts.list(target.source);
 		const retryable = ACCOUNT_RETRY_OPERATIONS.has(target.operation) && accounts.length > 1;
 		const maxAttempts = retryable ? Math.min(3, accounts.length) : 1;
