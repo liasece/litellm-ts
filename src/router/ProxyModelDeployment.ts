@@ -2,8 +2,8 @@
  * LiteLLM_ProxyModelTable 行 → Router Deployment 转换
  *
  * 对齐 Python `get_model_info_with_id(db_model=True)`（proxy_server.py:3584-3620）：
- * DB 加载的模型 model_info 强制写入 `id`（= model_id）与 `db_model: true`，
- * 供 UI 区分「DB 模型」与「yaml 配置模型」。container 启动回灌与
+ * 模型只存在 LiteLLM_ProxyModelTable，加载时 model_info 强制写入 `id`（= model_id）
+ * 与 `db_model: true`，供 UI 与日志识别部署来源。请求级运行时快照与
  * /model/new|update 热更新共用此转换，保证两条路径产出的 Deployment 一致。
  */
 

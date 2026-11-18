@@ -2,12 +2,10 @@
  * 服务容器测试
  *
  * 覆盖：
- * - router_settings.enable_pre_call_checks / max_fallbacks 传入 RouterConfig
- *   （PY router_settings → Router 构造参数对齐；未接入时 no-deployments 消息
- *   pre-call-checks=False 与 PY 实测不符）
- * - config 生成的 deployment sha256 id 流入 Router deployments
- * - 批次 C2：启动时 DB router_settings 覆盖 yaml（Python _update_dictionary DB 优先语义）
- * - 批次 C2：DB 模型回灌（LiteLLM_ProxyModelTable 与 yaml modelList 合并，同 model_id DB 优先）
+ * - router_settings.enable_pre_call_checks 从 yaml 传入 RouterConfig
+ * - max_fallbacks 只从 DB router_settings 生效（yaml 值被忽略）
+ * - 模型部署只从 LiteLLM_ProxyModelTable 加载
+ * - DB router_settings 覆盖 yaml 的非模型设置（Python _update_dictionary DB 优先语义）
  */
 import { createServiceContainer } from "./container";
 import { validateAndTransform } from "./core/config";
@@ -98,9 +96,7 @@ async function withDatabaseSnapshot<T>(container: Awaited<ReturnType<typeof crea
 
 describe("createServiceContainer — 启动关键路径", () => {
 	function buildConfig(): ReturnType<typeof validateAndTransform> {
-		return validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
-		});
+		return validateAndTransform({});
 	}
 
 	it("远端价格快照与 CLIProxy 子进程留到 warmUp，装配阶段不等待", async () => {
@@ -129,23 +125,26 @@ describe("createServiceContainer — 启动关键路径", () => {
 });
 
 describe("createServiceContainer — router_settings 接线", () => {
-	it("enable_pre_call_checks / max_fallbacks 传入 Router", async () => {
-		const config = validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
-			router_settings: { enable_pre_call_checks: true, max_fallbacks: 10 },
-		});
+	it("enable_pre_call_checks 由 yaml 传入 Router", async () => {
+		const config = validateAndTransform({ router_settings: { enable_pre_call_checks: true } });
 		const container = await createServiceContainer(config);
 		expect(container.modelCostMapService).toBe(modelCostMapService);
 		await withDatabaseSnapshot(container, () => {
 			expect(container.router.getNoAvailableDeploymentInfo("missing").preCallChecks).toBe(true);
+		});
+	});
+
+	it("max_fallbacks 只从 DB router_settings 生效，yaml 值被忽略", async () => {
+		mockConfigParams["router_settings"] = { max_fallbacks: 10 };
+		const config = validateAndTransform({ router_settings: { max_fallbacks: 99 } });
+		const container = await createServiceContainer(config);
+		await withDatabaseSnapshot(container, () => {
 			expect(container.router.maxFallbacks).toBe(10);
 		});
 	});
 
 	it("缺省时走 Router 默认（preCallChecks=false / maxFallbacks=5）", async () => {
-		const config = validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
-		});
+		const config = validateAndTransform({});
 		const container = await createServiceContainer(config);
 		await withDatabaseSnapshot(container, () => {
 			expect(container.router.getNoAvailableDeploymentInfo("missing").preCallChecks).toBe(false);
@@ -154,18 +153,7 @@ describe("createServiceContainer — router_settings 接线", () => {
 	});
 
 	it("DB 中的模型通过 ProxyModelDeployment 流入 Router deployments", async () => {
-		const config = validateAndTransform({
-			model_list: [
-				{
-					model_name: "glm-4-7-anthropic",
-					litellm_params: {
-						model: "anthropic/glm-4.7",
-						api_base: "https://open.bigmodel.cn/api/anthropic",
-						api_key: "34365d9a2acc4ffc90a944b986bd2418.qFCAYvl1GnOmUXo3",
-					},
-				},
-			],
-		});
+		const config = validateAndTransform({});
 		// 运行时模型只从 DB 加载，需要预先插入 mock DB 行
 		mockDbModelRows.push({
 			model_id: "test-glm-id",
@@ -214,10 +202,7 @@ describe("createServiceContainer — Credential 接线", () => {
 describe("createServiceContainer — 批次 C2 启动合并", () => {
 	it("DB router_settings 覆盖 yaml（num_retries 覆盖 + fallbacks 新增后 getNextFallback 走 DB 链）", async () => {
 		mockConfigParams["router_settings"] = { num_retries: 7, fallbacks: [{ "gpt-5": ["gpt-5-mini"] }] };
-		const config = validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
-			router_settings: { num_retries: 2 },
-		});
+		const config = validateAndTransform({ router_settings: { num_retries: 2 } });
 		const container = await createServiceContainer(config);
 		const snapshot = await container.runtimeConfigService.loadSnapshot(container.router);
 		expect(snapshot.numRetries).toBe(7);
@@ -227,10 +212,7 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 	});
 
 	it("DB 无 router_settings 时 yaml 值保持生效", async () => {
-		const config = validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
-			router_settings: { num_retries: 4 },
-		});
+		const config = validateAndTransform({ router_settings: { num_retries: 4 } });
 		const container = await createServiceContainer(config);
 		const snapshot = await container.runtimeConfigService.loadSnapshot(container.router);
 		expect(snapshot.numRetries).toBe(4);
@@ -238,10 +220,7 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 
 	it("DB router_settings 含非法 routing_strategy 时请求快照 fail closed", async () => {
 		mockConfigParams["router_settings"] = { routing_strategy: "not-a-strategy", num_retries: 9 };
-		const config = validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
-			router_settings: { num_retries: 2 },
-		});
+		const config = validateAndTransform({ router_settings: { num_retries: 2 } });
 		const container = await createServiceContainer(config);
 		await expect(container.runtimeConfigService.loadSnapshot(container.router)).rejects.toThrow("Unknown routing strategy");
 	});
@@ -253,9 +232,7 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 			litellm_params: { model: "openai/gpt-4o", api_key: "sk-db" },
 			model_info: {},
 		});
-		const config = validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-test" } }],
-		});
+		const config = validateAndTransform({});
 		const container = await createServiceContainer(config);
 		await withDatabaseSnapshot(container, () => {
 			expect(container.router.hasModel("db-only-model")).toBe(true);
@@ -266,10 +243,8 @@ describe("createServiceContainer — 批次 C2 启动合并", () => {
 	});
 
 	it("DB 模型回灌：模型仅从 DB 加载，DB 值为准", async () => {
-		const config = validateAndTransform({
-			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5", api_key: "sk-yaml" } }],
-		});
-		// 运行时模型仅从 DB 加载，yaml model_list 不影响 Router
+		const config = validateAndTransform({});
+		// 运行时模型仅从 DB 加载
 		mockDbModelRows.push({
 			model_id: "db-gpt-5-id",
 			model_name: "gpt-5",

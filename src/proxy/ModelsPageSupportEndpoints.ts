@@ -487,11 +487,11 @@ async function buildRouterSettingsForCallbacks(config: ServiceConfig | undefined
 		// PY Router 缺省 timeout=6000 秒（router.py __init__ 缺省值）
 		timeout: raw["timeout"] ?? raw["request_timeout"] ?? rs?.request_timeout ?? 6000,
 		retry_after: raw["retry_after"] ?? 0,
-		fallbacks: raw["fallbacks"] ?? rs?.fallbacks ?? [],
+		fallbacks: [],
 		context_window_fallbacks: raw["context_window_fallbacks"] ?? null,
 		model_group_retry_policy: raw["model_group_retry_policy"] ?? {},
 		retry_policy: raw["retry_policy"] ?? null,
-		model_group_alias: raw["model_group_alias"] ?? rs?.model_group_alias ?? {},
+		model_group_alias: {},
 	};
 	// DB 优先：DB 中出现的键覆盖 yaml 有效值（对齐 _update_dictionary DB 语义）
 	const dbRouterSettings = await dbConfigProvider.getParam("router_settings");
@@ -848,9 +848,9 @@ function buildV2ModelInfoResponse(
 /**
  * 提取 deployments 列表：仅从 Router / RouterDeploymentsAccessor 注入获取。
  *
- * main.ts 必须传 container.router：Router deployments 是运行时真实模型源，
- * 包含 config 重构过程中可能丢失的 model_info 字段与默认 deployment 元信息
- * （如 custom_llm_provider、rpm/tpm、timeout 等）。如未注入则返回空数组，
+ * main.ts 必须传 container.router：Router deployments 是数据库加载后的运行时模型源，
+ * 带有 model_info 与默认 deployment 元信息（如 custom_llm_provider、rpm/tpm、timeout 等）。
+ * 如未注入则返回空数组，
  * 让 WebUI 走空态分支而不是显示陈旧数据。
  * @param routerOrAccessor
  */

@@ -98,7 +98,7 @@ function parseOptionalNonNegativeNumber(value: unknown, field: string): number |
 }
 
 /**
- * 解析 deployments（仅从 Router / 访问器注入获取，不读 yaml 里的静态 model_list，
+ * 解析 deployments（仅从 Router / 访问器注入获取，不读进程配置，
  * 保证估算价格与 /model_group/info、真实计费来源一致）。
  * @param accessor - Router 或 deployments 访问器
  */

@@ -112,7 +112,7 @@ export class LiteLLMServer {
 		const port = this._config.server.port;
 		const host = this._config.server.host;
 
-		logger.info("LiteLLM TS Gateway 启动中...", { port: port, host: host, modelCount: this._config.modelList.length });
+		logger.info("LiteLLM TS Gateway 启动中...", { port: port, host: host });
 
 		this._container = await createServiceContainer(this._config);
 		// 缓存是「可关」的运维开关，启动时打一条配置，线上可直接从日志确认是否生效。
@@ -430,10 +430,8 @@ export class LiteLLMServer {
 		stubRouter.use(sseKeepaliveMiddleware(container.router));
 
 		// Models 页面支撑（需鉴权）
-		// 必须传 container.router：Router deployments 是运行时真实模型源，
-		// 包含 config 重构过程中可能丢失的 model_info 字段与默认 deployment 元信息
-		// （如 custom_llm_provider、rpm/tpm、timeout 等）。如果只传 config.modelList，
-		// /v2/model/info 与 /model_group/info 拿不到 id / mode / cost 等关键字段。
+		// 必须传 container.router：Router deployments 来自数据库，是运行时唯一的模型源，
+		// 带 model_info 的 id / mode / cost 与默认 deployment 元信息（custom_llm_provider、rpm/tpm、timeout 等）。
 		registerModelsPageSupportRoutes(stubRouter, container.router, this._config, container.modelCostMapService);
 
 		// WebUI 鉴权支撑端点（/get/ui_settings、/config/list、/config/update、/team/list 等）

@@ -111,7 +111,7 @@ async function runWarmUp(tasks: readonly WarmUpTask[]): Promise<void> {
  * 创建服务容器——按依赖顺序初始化所有组件
  * 1. Database
  * 2. ProviderRegistry (注册默认 provider)
- * 3. Router (传入 model_list + fallbacks + model_group_alias)
+ * 3. Router（部署、Alias 与 fallback 都由数据库请求快照注入）
  * 4. AuthRepository
  * 5. Auth middleware
  * @param config
@@ -133,11 +133,6 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	validateSpendMetadataFields((await dbConfigProvider.getEffectiveParam("general_settings"))["spend_logs_metadata_fields"]);
 	validateKeyAliasSettings(await dbConfigProvider.getEffectiveParam("litellm_settings"));
 
-	// 1.6 批次 E2：yaml ↔ DB 配置差异检测（yaml 快照 hash 比对 + 全量 diff），
-	// 结果存内存 pending 列表，供 WebUI 差异对比窗口（/config/yaml_diff）消费。
-	const { yamlConfigDiffService } = await import("./core/config/YamlConfigDiffService");
-	await yamlConfigDiffService.initialize(db.db);
-
 	// 订阅执行在进程内完成：账号仓库、Provider 适配器与运行时共享一个 auth 目录。
 	const subscriptionAccounts = new SubscriptionAccountStore({ authDir: defaultSubscriptionAuthDir() });
 	const cliProxyRuntime = new SubscriptionRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key, {
@@ -155,9 +150,9 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	await credentialService.load();
 
 	// 3. 构建 Router 并创建 Router
-	// 运行时配置来源：DB 优先，yaml 仅作缺省回退。
-	// Router 构造时使用安全默认值，所有运行时设置通过 updateSettings 统一灌入。
-	// 模型配置仅来自数据库（LiteLLM_ProxyModelTable）。
+	// 运行时配置来源：DB 优先，yaml 仅作非模型设置的缺省回退。
+	// Router 构造时使用安全默认值，所有运行时设置通过请求快照统一灌入。
+	// 模型部署、Alias 与 fallback 只来自数据库（LiteLLM_ProxyModelTable / LiteLLM_Config）。
 	const router = new LiteLLMRouter(
 		{
 			model_list: [],
@@ -165,7 +160,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 			num_retries: 2,
 			pre_call_checks: false,
 		},
-		{}, // modelGroupAlias 通过 updateSettings 从 DB/yaml 注入
+		{}, // modelGroupAlias 随请求快照从数据库注入
 		undefined,
 		providerRegistry,
 	);

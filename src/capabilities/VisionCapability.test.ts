@@ -1,5 +1,5 @@
 import type { Router } from "../router/Router";
-import type { ModelListItem } from "../types/config";
+import type { Deployment } from "../types/router";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { stripInternalFields } from "../core/api/stripInternalFields";
 import {
@@ -15,7 +15,7 @@ import { MemoryVisionImageStore } from "./VisionImageStore";
 
 const IMAGE_REF = "sha256:ce7c4f52106d5f03ccda1154a0af16baa95d222e354ca62e5f32e5e53e8180a7";
 
-function deployment(): ModelListItem {
+function deployment(): Deployment {
 	return {
 		model_name: "deepseek-v4-flash",
 		litellm_params: { model: "deepseek/deepseek-v4-flash" },

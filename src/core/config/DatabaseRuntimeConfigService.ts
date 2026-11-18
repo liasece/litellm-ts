@@ -30,11 +30,6 @@ function buildYamlRouterSettings(config: ServiceConfig): Record<string, unknown>
 	const settings: Record<string, unknown> = {
 		routing_strategy: config.routerSettings.routing_strategy ?? RoutingStrategyName.LatencyBasedRouting,
 		num_retries: config.routerSettings.num_retries ?? 2,
-		fallbacks: config.routerSettings.fallbacks,
-		model_group_alias: {
-			...config.generalSettings.model_group_alias,
-			...config.routerSettings.model_group_alias,
-		},
 		enable_pre_call_checks: config.routerSettings.enable_pre_call_checks ?? false,
 	};
 	for (const [key, value] of Object.entries(raw)) {
@@ -45,7 +40,6 @@ function buildYamlRouterSettings(config: ServiceConfig): Record<string, unknown>
 	for (const [key, value] of Object.entries({
 		allowed_fails: config.routerSettings.allowed_fails,
 		cooldown_time: config.routerSettings.cooldown_time,
-		max_fallbacks: config.routerSettings.max_fallbacks,
 		request_timeout: config.routerSettings.request_timeout,
 	})) {
 		if (value !== undefined) {

@@ -49,18 +49,14 @@ function makeConfig(overrides: Record<string, unknown> = {}, generalSettingsRaw?
 			strategy: "cost-based",
 			healthCheckIntervalSec: 300,
 			maxConsecutiveFailures: 5,
-			fallbacks: [],
-			model_group_alias: {},
 		},
 		generalSettings: {
 			environment: "development",
 			verboseErrors: false,
 			tempDir: "/tmp",
 			master_key: "sk-test-master-key",
-			model_group_alias: {},
 			...overrides,
 		},
-		modelList: [],
 		generalSettingsRaw: generalSettingsRaw ?? {},
 	} as unknown as ServiceConfig;
 }
@@ -615,7 +611,7 @@ describe("WebUiSupport 契约", () => {
 			expect(store.has("general_settings")).toBe(false);
 		});
 
-		it("/config/update 剔除 model_list 且写入 router_settings（对齐 Python save_config）", async () => {
+		it("/config/update 忽略 model_list，只写入数据库设置段", async () => {
 			const { db, store } = makeMockConfigDb();
 			await dbConfigProvider.initialize(db as never);
 			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);

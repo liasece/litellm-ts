@@ -1,6 +1,6 @@
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
-import type { ModelListItem } from "../types/config";
+import type { Deployment } from "../types/router";
 import { executeWebToolCall } from "./WebCapabilityExecution";
 import { PRIVATE_WEB_FETCH_TOOL_NAME, PRIVATE_WEB_SEARCH_TOOL_NAME } from "./WebCapabilityProtocol";
 import { prepareAnthropicWebRequest, prepareOpenAIWebRequest, runAnthropicWebAgentLoop, runOpenAIWebAgentLoop } from "./WebCapability";
@@ -10,7 +10,7 @@ import { MemoryVisionImageStore } from "./VisionImageStore";
 
 const IMAGE_REF = "sha256:ce7c4f52106d5f03ccda1154a0af16baa95d222e354ca62e5f32e5e53e8180a7";
 
-function targetDeployment(): ModelListItem {
+function targetDeployment(): Deployment {
 	return {
 		model_name: "text-model",
 		litellm_params: { model: "deepseek/text-model" },

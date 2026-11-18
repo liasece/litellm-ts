@@ -9,7 +9,6 @@ import { applicationStoreKey, createApplicationStore } from "../stores/Applicati
 import { dashboardPageFromUrl } from "../logic/NavigationLogic";
 import { isRegisteredPage, pageComponent } from "../data/PageRegistry";
 import ApplicationBrandLogo from "./ApplicationBrandLogo.vue";
-import ApplicationYamlConfigDiff from "./ApplicationYamlConfigDiffComponent.vue";
 import ApplicationShell from "./ApplicationShell.vue";
 import NotificationLayerComponent from "../../notifications/ui/NotificationLayerComponent.vue";
 import MessageLayerComponent from "../../notifications/ui/MessageLayerComponent.vue";
@@ -87,7 +86,6 @@ onUnmounted(() => {
 	<ApplicationShell v-else-if="view" :page="page" :ui-base="uiBase" :show-debug-banner="!legacyRoot"
 		><component :is="view"
 	/></ApplicationShell>
-	<ApplicationYamlConfigDiff v-if="view && !standalone && legacyRoot" />
 	<NotificationLayerComponent />
 	<MessageLayerComponent />
 </template>

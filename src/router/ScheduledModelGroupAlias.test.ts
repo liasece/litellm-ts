@@ -3,7 +3,6 @@ import type { ModelGroupAliasConfig } from "../shared/ModelGroupAlias";
 import { FallbackHandler } from "./FallbackHandler";
 import { Router } from "./Router";
 import { RoutingStrategyName } from "../types/router";
-import { validateAndTransform } from "../core/config";
 
 const scheduled: ModelGroupAliasConfig = {
 	model: "minimax",
@@ -136,7 +135,8 @@ describe("daily model group alias routing", () => {
 		});
 	});
 
-	it("retains legacy strings, arrays, hidden objects and schedules through YAML configuration", () => {
+	it("retains legacy alias shapes in runtime settings", () => {
+		jest.useFakeTimers().setSystemTime(new Date("2026-10-25T02:00:00Z"));
 		const aliases = {
 			text: "minimax",
 			list: ["deepseek", "minimax"],
@@ -144,15 +144,13 @@ describe("daily model group alias routing", () => {
 			hidden: { model: "minimax", hidden: true },
 			flexible: scheduled,
 		};
-		for (const section of ["router_settings", "routerSettings", "general_settings", "generalSettings"]) {
-			const config = validateAndTransform({ [section]: { model_group_alias: aliases } });
-			const settings = section.startsWith("router") ? config.routerSettings : config.generalSettings;
-			expect(settings.model_group_alias).toEqual(aliases);
-		}
+		const handler = new FallbackHandler(undefined, aliases);
+		expect(handler.resolveModelGroup("text")).toBe("minimax");
+		expect(handler.resolveModelGroup("list")).toBe("deepseek");
+		expect(handler.resolveModelGroup("hidden")).toBe("minimax");
+		expect(handler.resolveModelGroup("flexible")).toBe("minimax");
 		expect(getModelGroupAliasTarget(aliases.list)).toBe("deepseek");
 		expect(getModelGroupAliasTarget(aliases.empty)).toBeUndefined();
-		expect(() =>
-			validateAndTransform({ router_settings: { model_group_alias: { invalid: { ...scheduled, timezone: "invalid" } } } }),
-		).toThrow(/timezone/);
+		expect(() => new FallbackHandler(undefined, { invalid: { ...scheduled, timezone: "Invalid/Zone" } })).toThrow(/timezone/);
 	});
 });

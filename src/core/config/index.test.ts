@@ -7,110 +7,13 @@
  * - server.port/host 从 general_settings 派生
  * - router_settings 字段派生到 routerSettings
  * - snake_case 与 camelCase 冲突时 snake_case 优先
- * - litellm_params Python 字段（api_base / api_key / extra_headers / extra_body）不丢
+ * - 模型、Alias 与 fallback 的 YAML 键被忽略（只从数据库读取）
  */
 import { validateAndTransform } from "./index";
-
-describe("validateAndTransform — deployment sha256 id 生成（PY _generate_model_id 对齐）", () => {
-	it("model_info.id 缺失时按 YAML 键序生成 sha256（回归 PY 实测向量）", () => {
-		// PY litellm/router.py:6550 _generate_model_id：model_group + 键值按声明顺序拼接取 sha256。
-		// 向量为 PY 实例（同参数）实测 deployment id：glm-4-7-anthropic → 5e49c98b…
-		const raw = {
-			model_list: [
-				{
-					model_name: "glm-4-7-anthropic",
-					litellm_params: {
-						model: "anthropic/glm-4.7",
-						api_base: "https://open.bigmodel.cn/api/anthropic",
-						api_key: "34365d9a2acc4ffc90a944b986bd2418.qFCAYvl1GnOmUXo3",
-					},
-				},
-			],
-		};
-		const config = validateAndTransform(raw);
-		expect(config.modelList[0]?.model_info?.id).toBe("5e49c98b2ca1d95217d90738a5778fd169efd1c24299c69d1e2419939ae92b78");
-	});
-
-	it("锚点合并场景保持 YAML 键序（api_base, api_key, model → 另一实测向量）", () => {
-		// 锚点先声明 api_base/api_key，model 覆盖后仍保持锚点位置（与 PY yaml 合并行为一致）。
-		// 向量为 PY 实例实测：gpt-5.5 → 88685ff9…
-		const raw = {
-			model_list: [
-				{
-					model_name: "gpt-5.5",
-					litellm_params: {
-						api_base: "http://192.168.1.220:8317",
-						api_key: "sk-3G6FLwfA1xF0oOi04",
-						model: "anthropic/gpt-5.5",
-					},
-				},
-			],
-		};
-		const config = validateAndTransform(raw);
-		expect(config.modelList[0]?.model_info?.id).toBe("88685ff91660f394c2d115693ecac1cc510d871f9d1a4f0f8d864c7ee15201be");
-	});
-
-	it("显式 model_info.id 保留不覆盖（PY 仅在缺失时生成）", () => {
-		const raw = {
-			model_list: [
-				{
-					model_name: "explicit-id-model",
-					litellm_params: { model: "openai/gpt-5", api_key: "sk-test" },
-					model_info: { id: "my-custom-id" },
-				},
-			],
-		};
-		const config = validateAndTransform(raw);
-		expect(config.modelList[0]?.model_info?.id).toBe("my-custom-id");
-	});
-
-	it("model_info 整体缺失时也能生成 id 并保留其它字段", () => {
-		const raw = {
-			model_list: [
-				{
-					model_name: "no-info-model",
-					litellm_params: { model: "openai/gpt-5", api_key: "sk-test" },
-				},
-				{
-					model_name: "with-cost-model",
-					litellm_params: { model: "openai/gpt-5", api_key: "sk-test" },
-					model_info: { input_cost_per_token: 0.1 },
-				},
-			],
-		};
-		const config = validateAndTransform(raw);
-		expect(config.modelList[0]?.model_info?.id).toMatch(/^[0-9a-f]{64}$/);
-		expect(config.modelList[1]?.model_info?.id).toMatch(/^[0-9a-f]{64}$/);
-		expect(config.modelList[1]?.model_info?.input_cost_per_token).toBe(0.1);
-		// 键序不同（同值不同序）→ 不同哈希：证明顺序参与计算
-		const reordered = validateAndTransform({
-			model_list: [
-				{
-					model_name: "no-info-model",
-					litellm_params: { api_key: "sk-test", model: "openai/gpt-5" },
-				},
-			],
-		});
-		expect(reordered.modelList[0]?.model_info?.id).not.toBe(config.modelList[0]?.model_info?.id);
-	});
-});
 
 describe("validateAndTransform — Python LiteLLM style", () => {
 	it("仅 Python 风格配置能正常派生 server/database/routerSettings/generalSettings", () => {
 		const raw = {
-			model_list: [
-				{
-					model_name: "gpt-5",
-					litellm_params: {
-						model: "openai/gpt-5",
-						api_key: "sk-test",
-						api_base: "http://upstream.test",
-						custom_llm_provider: "openai",
-						extra_headers: { "X-Custom": "value" },
-						extra_body: { some_field: "value" },
-					},
-				},
-			],
 			litellm_settings: { drop_params: true },
 			router_settings: { allowed_fails: 3, cooldown_time: 60, num_retries: 2 },
 			general_settings: {
@@ -118,7 +21,6 @@ describe("validateAndTransform — Python LiteLLM style", () => {
 				port: 18183,
 				host: "127.0.0.1",
 				database_url: "postgresql://user:pass@dbhost:5432/mydb",
-				model_group_alias: { foo: "bar" },
 			},
 		};
 		const config = validateAndTransform(raw);
@@ -134,11 +36,6 @@ describe("validateAndTransform — Python LiteLLM style", () => {
 		expect(config.routerSettings.num_retries).toBe(2);
 		expect(config.generalSettings.master_key).toBe("sk-master");
 		expect(config.generalSettings.database_url).toBe("postgresql://user:pass@dbhost:5432/mydb");
-		expect(config.modelList).toHaveLength(1);
-		expect(config.modelList[0]?.litellm_params.api_base).toBe("http://upstream.test");
-		expect(config.modelList[0]?.litellm_params.api_key).toBe("sk-test");
-		expect(config.modelList[0]?.litellm_params.extra_headers).toEqual({ "X-Custom": "value" });
-		expect(config.modelList[0]?.litellm_params.extra_body).toEqual({ some_field: "value" });
 	});
 
 	it("snake_case 与 camelCase 冲突时 snake_case 优先", () => {
@@ -156,7 +53,6 @@ describe("validateAndTransform — Python LiteLLM style", () => {
 		expect(config.server.host).toBe("0.0.0.0");
 		expect(config.database.host).toBe("localhost");
 		expect(config.database.port).toBe(5432);
-		expect(config.modelList).toEqual([]);
 	});
 
 	it("database_url 非法时启动失败", () => {
@@ -167,11 +63,24 @@ describe("validateAndTransform — Python LiteLLM style", () => {
 		).toThrow(/database_url/);
 	});
 
-	it("router_settings.model_group_alias 派生到 routerSettings.model_group_alias", () => {
+	it("yaml 中的模型、Alias 与 fallback 键被忽略，不进入设置与 DB 默认值", () => {
 		const config = validateAndTransform({
-			router_settings: { model_group_alias: { foo: "bar" } },
+			model_list: [{ model_name: "gpt-5", litellm_params: { model: "openai/gpt-5" } }],
+			router_settings: {
+				model_group_alias: { foo: "bar" },
+				fallbacks: [{ "gpt-5": ["gpt-5-mini"] }],
+				max_fallbacks: 9,
+				num_retries: 3,
+			},
+			general_settings: { model_group_alias: { baz: "qux" } },
 		});
-		expect(config.routerSettings.model_group_alias).toEqual({ foo: "bar" });
+		expect(config.routerSettings).not.toHaveProperty("model_group_alias");
+		expect(config.routerSettings).not.toHaveProperty("fallbacks");
+		expect(config.routerSettings).not.toHaveProperty("max_fallbacks");
+		expect(config.routerSettings.num_retries).toBe(3);
+		expect(config.generalSettings).not.toHaveProperty("model_group_alias");
+		expect(config.routerSettingsRaw).toEqual({ num_retries: 3 });
+		expect(config.generalSettingsRaw).toEqual({});
 	});
 
 	it("litellmSettingsRaw 保留原始 Python 块", () => {
@@ -184,9 +93,8 @@ describe("validateAndTransform — Python LiteLLM style", () => {
 	it("未知 Python 顶层字段不阻断", () => {
 		const config = validateAndTransform({
 			some_unknown_top_level_field: { foo: "bar" },
-			model_list: [],
 		});
-		expect(config.modelList).toEqual([]);
+		expect(config.routerSettings).toBeDefined();
 	});
 
 	it("port 非数字时启动失败", () => {
@@ -195,26 +103,6 @@ describe("validateAndTransform — Python LiteLLM style", () => {
 				general_settings: { port: "abc" },
 			}),
 		).toThrow(/port/);
-	});
-
-	it("未知 litellm_params 字段透传（如 anthropic_version / auth_token）", () => {
-		const config = validateAndTransform({
-			model_list: [
-				{
-					model_name: "x",
-					litellm_params: {
-						model: "anthropic/claude",
-						anthropic_version: "2023-06-01",
-						auth_token: "sk-ant-oat-xx",
-						thinking: { type: "enabled" },
-					},
-				},
-			],
-		});
-		const params = config.modelList[0]?.litellm_params;
-		expect(params?.anthropic_version).toBe("2023-06-01");
-		expect(params?.auth_token).toBe("sk-ant-oat-xx");
-		expect(params?.thinking).toEqual({ type: "enabled" });
 	});
 });
 

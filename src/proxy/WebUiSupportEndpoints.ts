@@ -1,4 +1,4 @@
-import { SUBSCRIPTION_PROVIDERS, subscriptionModelInfo, subscriptionModelParams } from "../subscriptions/SubscriptionProviders";
+import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/SubscriptionProviders";
 import { usageDateRange, isUsageAdmin } from "../spend/UsageQuery";
 /**
  * WebUI 支撑端点
@@ -19,12 +19,9 @@ import { registerRoute } from "../core/api/registerRoute";
 import { UsageActivityCache } from "./UsageActivityCache";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import type { ServiceConfig } from "../core/config";
-import { generateModelId } from "../core/config";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { createModuleLogger } from "../core/utils/logger";
-import { YAML_DIFF_SETTING_SECTIONS, yamlConfigDiffService, type YamlDiffSection } from "../core/config/YamlConfigDiffService";
 import type { DrizzleDb } from "../core/db/Database";
-import { modelRepositoryFor } from "../repositories/ModelRepository";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
 import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
@@ -144,21 +141,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * /config/update 请求体（对齐 Python ConfigYAML，proxy/_types.py:2294）。
- * model_list 对齐 Python save_config 行为：剔除不入 LiteLLM_Config（模型走 ProxyModelTable）。
+ * 模型只经 LiteLLM_ProxyModelTable 与管理接口维护，请求体中的 model_list 不解析。
  */
 interface ConfigUpdateRequestBody {
 	readonly general_settings?: Record<string, unknown>;
 	readonly litellm_settings?: Record<string, unknown>;
 	readonly router_settings?: Record<string, unknown>;
 	readonly environment_variables?: Record<string, unknown>;
-	readonly model_list?: unknown;
 }
 
-/** /config/update 支持写入 DB 的配置段（model_list 除外） */
+/** /config/update 支持写入 DB 的配置段 */
 const CONFIG_UPDATE_SECTIONS = ["general_settings", "litellm_settings", "router_settings", "environment_variables"] as const;
-
-/** /config/yaml_diff/accept 合法的 section 取值（四设置段 + model_list） */
-const YAML_DIFF_SECTION_NAMES: ReadonlySet<string> = new Set<string>([...YAML_DIFF_SETTING_SECTIONS, "model_list"]);
 
 /**
  * 配置段深合并（对齐 Python update_config 的"合并不是整段替换"语义）：
@@ -1341,14 +1334,12 @@ function buildDailyActivityHandler(
 			const rawStartDay = firstRawDay && range.startDay <= firstRawDay ? firstRawDay : range.startDay;
 			const hasRawRange = firstRawDay === null || rawStartDay <= range.endDay;
 			const rawRows = hasRawRange
-				? await rowsCache.get(
-						dailyActivityRowsCacheKey(config, req, timezone, rawStartDay, range.endDay, includeEndpoint),
-						() =>
-							loadLocalDailyActivityRows(db, config, req, timezone, {
-								startDay: rawStartDay,
-								endDay: range.endDay,
-								includeEndpoint: includeEndpoint,
-							}),
+				? await rowsCache.get(dailyActivityRowsCacheKey(config, req, timezone, rawStartDay, range.endDay, includeEndpoint), () =>
+						loadLocalDailyActivityRows(db, config, req, timezone, {
+							startDay: rawStartDay,
+							endDay: range.endDay,
+							includeEndpoint: includeEndpoint,
+						}),
 					)
 				: [];
 			const rows = rawStartDay === range.startDay ? rawRows : rawRows.filter((row) => row.date >= range.startDay);
@@ -2168,8 +2159,7 @@ export function registerWebUiSupportRoutes(
 	/**
 	 * 更新配置（对齐 Python update_config，proxy_server.py:11930）。
 	 * general_settings / litellm_settings / router_settings / environment_variables
-	 * 各段深合并进现有 DB 值后 upsert（合并不是整段替换）；model_list 剔除不入库
-	 * （对齐 Python save_config，模型走 ProxyModelTable）。
+	 * 各段深合并进现有 DB 值后 upsert（合并不是整段替换）。
 	 * 后续请求会直接查询数据库，不需要刷新或热写进程内 Router。
 	 */
 	registerRoute(router, { method: "post", path: "/config/update" }, async (req) => {
@@ -2444,83 +2434,4 @@ export function registerWebUiSupportRoutes(
 			res.send(lines.join("\r\n"));
 		});
 	}
-
-	// ── yaml 差异对比导入窗口（批次 E3，仅 proxy_admin） ──
-
-	/**
-	 * 查询启动时检测到的 yaml ↔ DB 配置差异（pending 列表）。
-	 * 响应 { has_pending, items: [{section, key, yaml_value, db_value, diff_kind}] }。
-	 */
-	registerRoute(router, { method: "get", path: "/config/yaml_diff" }, (req) => {
-		assertProxyAdmin(req);
-		return { has_pending: yamlConfigDiffService.hasPending(), items: yamlConfigDiffService.getPendingItems() };
-	});
-
-	/**
-	 * 接受某项 yaml 差异（yaml 值覆盖 DB）：
-	 * - 设置段：yaml 值深合并进 DB 对应 param 并 upsert；
-	 * - model_list：该模型 upsert 进 LiteLLM_ProxyModelTable；
-	 *   DB 已有同名模型沿用其 model_id，否则按 yaml litellm_params 生成
-	 *   （与启动时 yaml deployment 的 id 一致，upsert 后运行时无变化）。
-	 * 接受后从 pending 列表移除该项。
-	 */
-	registerRoute(router, { method: "post", path: "/config/yaml_diff/accept" }, async (req) => {
-		assertProxyAdmin(req);
-		const body = (req.body ?? {}) as Record<string, unknown>;
-		const section = body["section"];
-		const key = body["key"];
-		if (typeof section !== "string" || section.length === 0) {
-			throw ApiError.unprocessableEntity([{ loc: ["body", "section"], msg: "Field required", type: "missing" }]);
-		}
-		if (typeof key !== "string" || key.length === 0) {
-			throw ApiError.unprocessableEntity([{ loc: ["body", "key"], msg: "Field required", type: "missing" }]);
-		}
-		if (!YAML_DIFF_SECTION_NAMES.has(section)) {
-			throw ApiError.badRequest(`Invalid section=${section} passed in.`);
-		}
-		const item = yamlConfigDiffService.findPendingItem(section as YamlDiffSection, key);
-		if (item === null) {
-			throw new ApiError(HTTP_STATUS.NOT_FOUND, `yaml diff item not found: section=${section} key=${key}`);
-		}
-
-		if (section === "model_list") {
-			const yamlModel = isRecord(item.yaml_value) ? item.yaml_value : {};
-			const litellmParams = isRecord(yamlModel["litellm_params"]) ? yamlModel["litellm_params"] : {};
-			const yamlModelInfo = isRecord(yamlModel["model_info"]) ? yamlModel["model_info"] : {};
-			const dbValue = isRecord(item.db_value) ? item.db_value : null;
-			const existingModelId = typeof dbValue?.["model_id"] === "string" ? dbValue["model_id"] : null;
-			const modelId = existingModelId ?? generateModelId(key, litellmParams);
-			const params = subscriptionModelParams(litellmParams);
-			const modelInfo = { ...subscriptionModelInfo(yamlModelInfo, params), id: modelId, db_model: false };
-			const updatedBy = req.auth?.user_id ?? PROXY_ADMIN_USER_ID;
-			await modelRepositoryFor(db).upsertFromYaml({
-				model_id: modelId,
-				model_name: key,
-				litellm_params: params,
-				model_info: modelInfo,
-				created_by: updatedBy,
-				updated_by: updatedBy,
-			});
-		} else {
-			const existing = (await configRepository.getParam(section)) ?? {};
-			const next = { ...existing, [key]: deepMergeConfigValue(existing[key], item.yaml_value) };
-			await configRepository.upsertParam(section, next);
-		}
-
-		yamlConfigDiffService.removePendingItem(section as YamlDiffSection, key);
-		return { status: "success", remaining_items: yamlConfigDiffService.getPendingItems().length };
-	});
-
-	/**
-	 * 「处理冲突完成」：将当前 yaml 快照 {hash, content, updated_at} upsert 到
-	 * config_yaml_snapshot 并清空 pending。之后重启不再触发差异检测。
-	 */
-	registerRoute(router, { method: "post", path: "/config/yaml_diff/resolve" }, async (req) => {
-		assertProxyAdmin(req);
-		const snapshot = await yamlConfigDiffService.resolveSnapshot(db);
-		if (snapshot === null) {
-			throw ApiError.badRequest("No yaml config loaded");
-		}
-		return { status: "success", snapshot: snapshot };
-	});
 }

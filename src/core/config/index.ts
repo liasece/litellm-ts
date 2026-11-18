@@ -1,10 +1,11 @@
 import { validateKeyAliasSettings } from "../../management/KeyAliasPolicy";
 import { validateSpendMetadataFields } from "../../spend/SpendMetadataFields";
+import { createModuleLogger } from "../utils/logger";
 /**
  * 服务配置管理模块
- * 从 YAML 文件读取配置，通过 zod schema 校验并提供类型安全的配置访问
+ * 从 YAML 文件读取进程级启动配置，通过 zod schema 校验并提供类型安全的配置访问。
  *
- * 严格对齐 Python LiteLLM 配置格式：
+ * YAML 只承载「进程如何启动与连接」的基线配置：
  * ```yaml
  * server:
  *   port: 4000
@@ -15,44 +16,100 @@ import { validateSpendMetadataFields } from "../../spend/SpendMetadataFields";
  *   database: "litellm"
  *   user: "litellm"
  *   password: "litellm"
- * model_list:
- *   - model_name: claude-opus-4-6
- *     litellm_params:
- *       model: anthropic/claude-opus-4-6
- *       api_base: http://...
- *       api_key: sk-...
- *       custom_llm_provider: anthropic
- *       extra_headers: {...}
- *       extra_body: {...}
  * litellm_settings:
  *   skip_provider_token_counting: true
  * router_settings:
+ *   routing_strategy: simple-shuffle
  *   allowed_fails: 0
  *   cooldown_time: 300
- *   ...
  * general_settings:
  *   master_key: sk-...
  *   store_model_in_db: true
  *   database_url: postgresql://user:pass@host:port/db
  *   port: 4000
  *   host: 0.0.0.0
- *   model_group_alias:
- *     claude-opus: glm-latest-anthropic
  * ```
  *
- * Python snake_case (`general_settings` / `router_settings` / `litellm_settings` /
- * `model_list`) 作为一等配置格式，camelCase 字段仅作为兼容回退。
+ * 模型部署、模型组 Alias 与 fallback 只从数据库读取，由 Dashboard 或管理接口维护；
+ * YAML 中出现 `model_list`、`router_settings.fallbacks` / `model_group_alias` 等键时
+ * 会被忽略并告警，避免两份配置互相覆盖。
+ *
+ * Python snake_case (`general_settings` / `router_settings` / `litellm_settings`)
+ * 作为一等配置格式，camelCase 字段仅作为兼容回退。
  */
 
 import * as fs from "fs";
-import * as crypto from "crypto";
 import * as yaml from "js-yaml";
 import * as path from "path";
 import { z } from "zod";
-import type { ModelInfo } from "../../types/config";
-import { validateModelGroupAliases } from "../../shared/ModelGroupAlias";
-import type { ModelGroupAliases } from "../../shared/ModelGroupAlias";
-import type { FallbackEntryValue } from "../../shared/FallbackEntry";
+
+const logger = createModuleLogger("Config");
+
+/** `model_list` 与 `router_settings`/`general_settings` 中不再从 YAML 读取的键。 */
+const UNSUPPORTED_YAML_SECTION_KEYS: Readonly<Record<string, readonly string[]>> = {
+	general_settings: ["model_group_alias"],
+	generalSettings: ["model_group_alias"],
+	router_settings: ["fallbacks", "model_group_alias", "max_fallbacks"],
+	routerSettings: ["fallbacks", "model_group_alias", "max_fallbacks"],
+};
+
+/** 模型部署只存数据库；YAML 顶层的 `model_list` 不再解析。 */
+const UNSUPPORTED_YAML_TOP_LEVEL_KEYS: readonly string[] = ["model_list"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 该设置键是否已不再从 YAML 读取（模型 / Alias / fallback）。
+ * 供启动校验与 yaml↔DB 差异检测共用，避免差异窗口把这些键重新导回数据库。
+ * @param section - `general_settings` 或 `router_settings`（snake_case / camelCase）
+ * @param key - 段内字段名
+ */
+export function isUnsupportedYamlSetting(section: string, key: string): boolean {
+	return (UNSUPPORTED_YAML_SECTION_KEYS[section] ?? []).includes(key);
+}
+
+/**
+ * 列出 YAML 中出现的、已不再支持的配置键，用于启动日志。
+ * @param raw - js-yaml 原始解析对象
+ */
+function findUnsupportedYamlKeys(raw: unknown): string[] {
+	if (!isRecord(raw)) {
+		return [];
+	}
+	const found: string[] = [];
+	for (const key of UNSUPPORTED_YAML_TOP_LEVEL_KEYS) {
+		if (key in raw) {
+			found.push(key);
+		}
+	}
+	for (const [section, keys] of Object.entries(UNSUPPORTED_YAML_SECTION_KEYS)) {
+		const value = raw[section];
+		if (!isRecord(value)) {
+			continue;
+		}
+		for (const key of keys) {
+			if (key in value) {
+				found.push(`${section}.${key}`);
+			}
+		}
+	}
+	return found;
+}
+
+/**
+ * 复制设置段并移除不再支持的键，确保下游（DB 默认值、设置页）看不到它们。
+ * @param settings - zod 解析后的设置段
+ * @param section - 段名，用于查询忽略列表
+ */
+function withoutUnsupportedSettings(settings: Record<string, unknown> | undefined, section: string): Record<string, unknown> {
+	const result: Record<string, unknown> = { ...(settings ?? {}) };
+	for (const key of UNSUPPORTED_YAML_SECTION_KEYS[section] ?? []) {
+		delete result[key];
+	}
+	return result;
+}
 
 // ============ Zod Schema 定义 ============
 
@@ -82,95 +139,6 @@ const LiteLLMSettingsSchema = z.object({
 	requestTimeoutMs: z.number().default(60000),
 });
 
-/**
- * litellm_params schema for model_list entries
- *
- * 透传 Python LiteLLM 字段（api_base / api_key / custom_llm_provider /
- * extra_headers / extra_body / stream_timeout / anthropic_version / 等）。
- * `.passthrough()` 允许未来 Python 新增字段不被 schema 拒绝。
- */
-const ModelLitellmParamsSchema = z
-	.object({
-		model: z.string(),
-		api_key: z.string().optional(),
-		api_base: z.string().optional(),
-		custom_llm_provider: z.string().optional(),
-		rpm: z.number().optional(),
-		tpm: z.number().optional(),
-		input_cost_per_token: z.number().optional(),
-		output_cost_per_token: z.number().optional(),
-		timeout: z.number().optional(),
-		max_retries: z.number().optional(),
-		stream_timeout: z.number().optional(),
-		temperature: z.number().optional(),
-		max_tokens: z.number().optional(),
-		max_completion_tokens: z.number().optional(),
-		extra_headers: z.record(z.string()).optional(),
-		extra_body: z.record(z.unknown()).optional(),
-		// Python: anthropic_version — 用户显式覆盖 anthropic-version header
-		anthropic_version: z.string().optional(),
-		// Python: auth_token — ANTHROPIC_AUTH_TOKEN 走 Bearer
-		auth_token: z.string().optional(),
-		// Python: speed / context_window / weight 等
-		speed: z.string().optional(),
-		context_window: z.number().optional(),
-		weight: z.number().optional(),
-	})
-	.passthrough();
-
-/** Model info schema */
-const ModelInfoSchema = z
-	.object({
-		id: z.string().optional(),
-		mode: z.string().optional(),
-		max_input_tokens: z.number().optional(),
-		max_output_tokens: z.number().optional(),
-		supports_function_calling: z.boolean().optional(),
-		supports_parallel_function_calling: z.boolean().optional(),
-		supports_vision: z.boolean().optional(),
-		supports_system_messages: z.boolean().optional(),
-		supports_tool_choice: z.boolean().optional(),
-		input_cost_per_token: z.number().optional(),
-		output_cost_per_token: z.number().optional(),
-		// PY model_info cache 定价字段（生产配置主要价格来源）
-		cache_creation_input_token_cost: z.number().optional(),
-		cache_read_input_token_cost: z.number().optional(),
-		litellm_provider: z.string().optional(),
-	})
-	.passthrough();
-
-/** Model list item schema */
-const ModelListItemSchema = z.object({
-	model_name: z.string(),
-	litellm_params: ModelLitellmParamsSchema,
-	model_info: ModelInfoSchema.optional(),
-});
-
-/**
- * 一条 fallback 条目：目标数组，或带 `recurse` 的 `{ targets }` 对象。
- * `recurse: false` 让该条目的目标成为叶子，避免目标自身的链把请求带到配置者没有预期的模型。
- */
-const FallbackEntryValueSchema = z.union([
-	z.array(z.string()),
-	z.object({
-		targets: z.array(z.string()),
-		recurse: z.boolean().optional(),
-	}),
-]);
-
-/** Fallback config: { model_name: FallbackEntryValue } */
-const FallbackConfigSchema = z.record(z.string(), FallbackEntryValueSchema);
-
-const ModelGroupAliasesSchema = z.unknown().transform((value, context): ModelGroupAliases => {
-	try {
-		validateModelGroupAliases(value);
-		return value;
-	} catch (error) {
-		context.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : "Invalid aliases" });
-		return z.NEVER;
-	}
-});
-
 /** Router settings schema (litellm YAML style) */
 const RouterSettingsSchema = z.object({
 	/** 路由策略：cost-based / latency-based / round-robin */
@@ -184,10 +152,7 @@ const RouterSettingsSchema = z.object({
 	allowed_fails: z.number().optional(),
 	cooldown_time: z.number().optional(),
 	num_retries: z.number().optional(),
-	max_fallbacks: z.number().optional(),
 	routing_strategy: z.string().optional(),
-	fallbacks: z.array(FallbackConfigSchema).default([]),
-	model_group_alias: ModelGroupAliasesSchema.default({}),
 	enable_pre_call_checks: z.boolean().optional(),
 	search_tools: z.array(z.record(z.unknown())).optional(),
 	redis_url: z.string().optional(),
@@ -206,7 +171,6 @@ const GeneralSettingsSchema = z.object({
 	// Litellm proxy general fields (snake_case, optional)
 	master_key: z.string().optional(),
 	store_model_in_db: z.boolean().optional(),
-	model_group_alias: ModelGroupAliasesSchema.default({}),
 	websearch_override_target_model: z.string().optional(),
 	skip_provider_token_counting: z.boolean().optional(),
 	database_url: z.string().optional(),
@@ -232,10 +196,10 @@ const GeneralSettingsSchema = z.object({
 /**
  * 顶层配置 schema
  *
- * 严格对齐 Python LiteLLM 配置：snake_case 顶层字段（model_list / litellm_settings /
- * router_settings / general_settings）作为主输入。
- * 保留 camelCase 顶层字段（server / database / generalSettings / routerSettings / litellmSettings）
+ * snake_case 顶层字段（litellm_settings / router_settings / general_settings）是主输入；
+ * camelCase 顶层字段（server / database / generalSettings / routerSettings / litellmSettings）
  * 作为兼容回退，运行时通过 validateAndTransform 派生。
+ * 模型部署不在此 schema 中：它们只存在数据库，由 Dashboard 与管理接口维护。
  */
 const RawServiceConfigSchema = z
 	.object({
@@ -248,7 +212,6 @@ const RawServiceConfigSchema = z
 		generalSettings: GeneralSettingsSchema.default({}),
 
 		// Python LiteLLM 顶层 snake_case 字段 — 一等配置格式
-		model_list: z.array(ModelListItemSchema).default([]),
 		litellm_settings: z.record(z.unknown()).optional(),
 		router_settings: z.record(z.unknown()).optional(),
 		general_settings: z.record(z.unknown()).optional(),
@@ -299,70 +262,6 @@ export interface LiteLLMSettings {
 	readonly requestTimeoutMs: number;
 }
 
-/**
- * Model litellm_params type
- *
- * 透传 Python LiteLLM 字段（api_base / api_key / custom_llm_provider /
- * extra_headers / extra_body / stream_timeout / anthropic_version / 等）。
- * 同时通过索引签名允许未知 Python 字段透传。
- */
-export interface ModelLitellmParamsConfig {
-	/** 完整模型标识符（含 provider 前缀） */
-	readonly model: string;
-	/** API 密钥 */
-	readonly api_key?: string;
-	/** API 基础 URL */
-	readonly api_base?: string;
-	/** 自定义 LLM 提供商标识 */
-	readonly custom_llm_provider?: string;
-	/** 每分钟请求数限制 */
-	readonly rpm?: number;
-	/** 每分钟 token 数限制 */
-	readonly tpm?: number;
-	/** 输入 token 单价 */
-	readonly input_cost_per_token?: number;
-	/** 输出 token 单价 */
-	readonly output_cost_per_token?: number;
-	/** 请求超时时间（秒） */
-	readonly timeout?: number;
-	/** 最大重试次数 */
-	readonly max_retries?: number;
-	/** 流式超时时间（秒） */
-	readonly stream_timeout?: number;
-	/** 温度参数 */
-	readonly temperature?: number;
-	/** 最大输出 token 数 */
-	readonly max_tokens?: number;
-	/** 最大输出 token 数（OpenAI 命名） */
-	readonly max_completion_tokens?: number;
-	/** 额外请求头 */
-	readonly extra_headers?: Record<string, string>;
-	/** Provider-specific 额外参数 */
-	readonly extra_body?: Record<string, unknown>;
-	/** Anthropic API 版本 */
-	readonly anthropic_version?: string;
-	/** Anthropic OAuth Bearer token（sk-ant-oat*） */
-	readonly auth_token?: string;
-	/** Anthropic speed 选项 */
-	readonly speed?: string;
-	/** 模型 context window（1M context 模型检测） */
-	readonly context_window?: number;
-	/** 路由权重 */
-	readonly weight?: number;
-	/** 索引签名 — 允许透传 Python 未知字段（如 thinking / reasoning_effort） */
-	readonly [key: string]: unknown;
-}
-
-/** Model list item config */
-export interface ModelListItemConfig {
-	/** 逻辑模型名称（对用户暴露的名称） */
-	readonly model_name: string;
-	/** 部署连接参数 */
-	readonly litellm_params: ModelLitellmParamsConfig;
-	/** 模型元信息 */
-	readonly model_info?: ModelInfo;
-}
-
 /** 路由设置 */
 export interface RouterSettings {
 	/** 路由策略 */
@@ -378,14 +277,8 @@ export interface RouterSettings {
 	readonly cooldown_time?: number;
 	/** 失败重试次数 */
 	readonly num_retries?: number;
-	/** 最大回退深度 */
-	readonly max_fallbacks?: number;
 	/** 路由策略名称 */
 	readonly routing_strategy?: string;
-	/** 降级配置列表（每个元素是一个模型的条目；条目可带 recurse 开关） */
-	readonly fallbacks: Array<Record<string, FallbackEntryValue>>;
-	/** 模型组别名映射 */
-	readonly model_group_alias: ModelGroupAliases;
 	/** 启用请求前预检 */
 	readonly enable_pre_call_checks?: boolean;
 	/** 搜索工具配置（websearch 拦截与 /v1/search/tools 清单） */
@@ -409,8 +302,6 @@ export interface GeneralSettings {
 	readonly master_key?: string;
 	/** 是否将模型配置存入数据库 */
 	readonly store_model_in_db?: boolean;
-	/** 模型组别名映射 */
-	readonly model_group_alias: ModelGroupAliases;
 	/** websearch 目标模型覆盖 */
 	readonly websearch_override_target_model?: string;
 	/** 是否跳过 provider token 计数 */
@@ -447,8 +338,6 @@ export interface ServiceConfig {
 	readonly routerSettings: RouterSettings;
 	/** 通用设置 */
 	readonly generalSettings: GeneralSettings;
-	/** 模型列表（litellm proxy） */
-	readonly modelList: ModelListItemConfig[];
 	/** 原始 litellm_settings 内容 */
 	readonly litellmSettingsRaw?: Record<string, unknown>;
 	/** 原始 router_settings 内容 */
@@ -458,91 +347,6 @@ export interface ServiceConfig {
 }
 
 // ============ 解析逻辑 ============
-
-/**
- * PY json.dumps ensure_ascii 字符串序列化：JSON.stringify 后把非 ASCII 的
- * UTF-16 码元转义为 \uXXXX（小写十六进制），与 CPython 输出逐字节一致
- * （CPython 对 BMP 外字符同样按 surrogate pair 逐码元转义）。
- * @param value - 待序列化字符串
- */
-function dumpsStringAscii(value: string): string {
-	const json = JSON.stringify(value);
-	let out = "";
-	for (let i = 0; i < json.length; i++) {
-		const code = json.charCodeAt(i);
-		out += code > 0x7e ? `\\u${code.toString(16).padStart(4, "0")}` : json[i];
-	}
-	return out;
-}
-
-/**
- * 复刻 PY json.dumps 默认输出（', '/': ' 分隔 + ensure_ascii），
- * 供 generateModelId 对 dict 类型 litellm_params 值取字符串。
- * 注：PY float repr 与 JS Number.toString 在极小浮点上有差异（1e-06 vs 0.000001），
- * litellm_params 实践中数值均为整数，此处不对齐该边缘情形。
- * @param value - JSON 兼容值
- */
-function pythonJsonDumps(value: unknown): string {
-	if (value === null || value === undefined) {
-		return "null";
-	}
-	if (typeof value === "string") {
-		return dumpsStringAscii(value);
-	}
-	if (typeof value === "number" || typeof value === "boolean") {
-		return String(value);
-	}
-	if (Array.isArray(value)) {
-		return `[${value.map(pythonJsonDumps).join(", ")}]`;
-	}
-	const entries = Object.entries(value as Record<string, unknown>).map(
-		([key, val]) => `${dumpsStringAscii(key)}: ${pythonJsonDumps(val)}`,
-	);
-	return `{${entries.join(", ")}}`;
-}
-
-/**
- * 复刻 PY `_generate_model_id` 对 litellm_params 值的字符串化规则
- * （litellm/router.py:6560-6576）：string 原样；dict 走 json.dumps；
- * 其余走 str()（True/False/None 首字母大写）。
- * @param value - litellm_params 单个字段值
- */
-function pythonParamValueToStr(value: unknown): string {
-	if (typeof value === "string") {
-		return value;
-	}
-	if (typeof value === "boolean") {
-		return value ? "True" : "False";
-	}
-	if (value === null || value === undefined) {
-		return "None";
-	}
-	if (typeof value === "number") {
-		return String(value);
-	}
-	if (Array.isArray(value)) {
-		// PY 走 str(list)（元素 repr 风格）；litellm_params 数组值实践中不存在，仅作兜底
-		return `[${value.map(pythonParamValueToStr).join(", ")}]`;
-	}
-	return pythonJsonDumps(value);
-}
-
-/**
- * 复刻 PY Router._generate_model_id（litellm/router.py:6550-6580）：
- * model_group 与 litellm_params 键值按 YAML 声明顺序拼接后取 sha256。
- * 必须传入 js-yaml 原始解析结果——zod 校验会按 schema 形状重排键序，
- * 重排后计算的哈希与 PY 不一致（实测 PY glm-4-7-anthropic → 5e49c98b…，可用其回归验证）。
- * @param modelGroup - deployment 的 model_name
- * @param litellmParams - js-yaml 解析出的 litellm_params（键序保持 YAML 声明顺序）
- */
-export function generateModelId(modelGroup: string, litellmParams: Record<string, unknown>): string {
-	const parts: string[] = [modelGroup];
-	for (const [key, value] of Object.entries(litellmParams)) {
-		parts.push(key);
-		parts.push(pythonParamValueToStr(value));
-	}
-	return crypto.createHash("sha256").update(parts.join(""), "utf8").digest("hex");
-}
 
 /**
  * 从 `general_settings.database_url` 解析数据库连接配置。
@@ -590,14 +394,25 @@ function parseDatabaseUrl(url: string): DatabaseConfig | null {
  * - generalSettings 派生自 general_settings（snake_case 优先，camelCase 仅作兼容回退）
  * - routerSettings 派生自 router_settings（snake_case 优先，camelCase 仅作兼容回退）
  * - litellmSettingsRaw/routerSettingsRaw/generalSettingsRaw 保留原始 Python 块
+ *   （模型 / Alias / fallback 键已被剔除，不会流入 DB 默认值与设置页）
  * @param raw - 原始 YAML 对象
  * @throws 当配置不符合 schema 时抛出 ZodError
  */
 export function validateAndTransform(raw: unknown): ServiceConfig {
 	const config = RawServiceConfigSchema.parse(raw);
 
-	const generalSettingsRaw = (config.general_settings ?? {}) as Record<string, unknown>;
-	const routerSettingsRaw = (config.router_settings ?? {}) as Record<string, unknown>;
+	const unsupportedKeys = findUnsupportedYamlKeys(raw);
+	if (unsupportedKeys.length > 0) {
+		logger.warn("config yaml 中的模型、Alias 与 fallback 配置已不再读取，已忽略；请在 Dashboard 或数据库中维护", {
+			ignoredKeys: unsupportedKeys,
+		});
+	}
+
+	const generalSettingsRaw = withoutUnsupportedSettings(
+		config.general_settings as Record<string, unknown> | undefined,
+		"general_settings",
+	);
+	const routerSettingsRaw = withoutUnsupportedSettings(config.router_settings as Record<string, unknown> | undefined, "router_settings");
 	const litellmSettingsRaw = (config.litellm_settings ?? {}) as Record<string, unknown>;
 	validateSpendMetadataFields(generalSettingsRaw["spend_logs_metadata_fields"]);
 	validateKeyAliasSettings(litellmSettingsRaw);
@@ -665,10 +480,6 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 			typeof generalSettingsRaw["store_model_in_db"] === "boolean"
 				? (generalSettingsRaw["store_model_in_db"] as boolean)
 				: config.generalSettings.store_model_in_db,
-		model_group_alias:
-			generalSettingsRaw["model_group_alias"] !== undefined
-				? ModelGroupAliasesSchema.parse(generalSettingsRaw["model_group_alias"])
-				: config.generalSettings.model_group_alias,
 		websearch_override_target_model:
 			(generalSettingsRaw["websearch_override_target_model"] as string | undefined) ??
 			config.generalSettings.websearch_override_target_model,
@@ -710,19 +521,7 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 			typeof routerSettingsRaw["num_retries"] === "number"
 				? (routerSettingsRaw["num_retries"] as number)
 				: config.routerSettings.num_retries,
-		max_fallbacks:
-			typeof routerSettingsRaw["max_fallbacks"] === "number"
-				? (routerSettingsRaw["max_fallbacks"] as number)
-				: config.routerSettings.max_fallbacks,
 		routing_strategy: (routerSettingsRaw["routing_strategy"] as string | undefined) ?? config.routerSettings.routing_strategy,
-		fallbacks:
-			Array.isArray(routerSettingsRaw["fallbacks"]) && routerSettingsRaw["fallbacks"].length > 0
-				? (routerSettingsRaw["fallbacks"] as Record<string, string[]>[])
-				: config.routerSettings.fallbacks,
-		model_group_alias:
-			routerSettingsRaw["model_group_alias"] !== undefined
-				? ModelGroupAliasesSchema.parse(routerSettingsRaw["model_group_alias"])
-				: config.routerSettings.model_group_alias,
 		enable_pre_call_checks:
 			typeof routerSettingsRaw["enable_pre_call_checks"] === "boolean"
 				? (routerSettingsRaw["enable_pre_call_checks"] as boolean)
@@ -737,21 +536,6 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 				: config.routerSettings.request_timeout,
 	};
 
-	// 为缺失 model_info.id 的 deployment 生成 sha256 id（对齐 PY Router._generate_model_id，
-	// PY 仅在 model_info.id 缺失时生成，见 litellm/router.py:6854-6857）。
-	// 必须基于 zod 校验前的 js-yaml 原始对象计算——zod 按 schema 形状重排 litellm_params
-	// 键序，重排后计算的哈希与 PY 不一致；zod 数组校验保持元素顺序且不丢项，索引对齐安全。
-	const rawModelList = (raw as { model_list?: unknown } | null)?.model_list;
-	const rawModelItems: unknown[] = Array.isArray(rawModelList) ? rawModelList : [];
-	const modelList: ModelListItemConfig[] = config.model_list.map((item, index) => {
-		if (typeof item.model_info?.id === "string" && item.model_info.id.length > 0) {
-			return item;
-		}
-		const rawItem = rawModelItems[index] as { litellm_params?: Record<string, unknown> } | undefined;
-		const generatedId = generateModelId(item.model_name, rawItem?.litellm_params ?? {});
-		return { ...item, model_info: { ...item.model_info, id: generatedId } };
-	});
-
 	return {
 		server: {
 			port: serverPort,
@@ -762,22 +546,10 @@ export function validateAndTransform(raw: unknown): ServiceConfig {
 		litellmSettings: config.litellmSettings,
 		routerSettings: routerSettings,
 		generalSettings: generalSettings,
-		modelList: modelList,
 		litellmSettingsRaw: litellmSettingsRaw,
 		routerSettingsRaw: routerSettingsRaw,
 		generalSettingsRaw: generalSettingsRaw,
 	};
-}
-
-/** 最近一次 loadYamlConfig 的原始解析对象与文件内容（供 YamlConfigDiffService 启动差异检测） */
-let lastRawYaml: { readonly raw: unknown; readonly content: string } | null = null;
-
-/**
- * 获取最近一次加载的原始 yaml 解析对象与文件内容（未加载时返回 null）。
- * 原始对象未经 zod 校验重排，键序与 yaml 文件一致。
- */
-export function getRawYamlConfig(): { readonly raw: unknown; readonly content: string } | null {
-	return lastRawYaml;
 }
 
 /**
@@ -787,9 +559,7 @@ export function getRawYamlConfig(): { readonly raw: unknown; readonly content: s
  */
 function loadYamlConfig(configPath: string): ServiceConfig {
 	const fileContents = fs.readFileSync(configPath, "utf8");
-	const raw = yaml.load(fileContents);
-	lastRawYaml = { raw: raw, content: fileContents };
-	return validateAndTransform(raw);
+	return validateAndTransform(yaml.load(fileContents));
 }
 
 /** 全局配置实例（延迟初始化） */
@@ -821,5 +591,4 @@ export function getConfig(): ServiceConfig {
  */
 export function resetConfig(): void {
 	configInstance = null;
-	lastRawYaml = null;
 }

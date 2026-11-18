@@ -156,27 +156,6 @@ export class ModelRepository extends BaseRepository {
 	}
 
 	/**
-	 * yaml 配置同步：按 model_id upsert 一行模型部署。
-	 * @param values - 可写入的列
-	 */
-	async upsertFromYaml(values: ModelInsertValues): Promise<void> {
-		await this._db
-			.insert(LiteLLM_ProxyModelTable)
-			.values(values)
-			.onConflictDoUpdate({
-				target: LiteLLM_ProxyModelTable.model_id,
-				set: {
-					model_name: values.model_name,
-					litellm_params: values.litellm_params,
-					model_info: values.model_info,
-					updated_by: values.updated_by,
-					updated_at: new Date(),
-				},
-			});
-		this._cache.invalidate();
-	}
-
-	/**
 	 * 在事务内锁定并读取模型部署行（`FOR UPDATE`），供串行的凭据挂载使用。
 	 * @param tx - 事务句柄
 	 * @param modelId - LiteLLM_ProxyModelTable.model_id
