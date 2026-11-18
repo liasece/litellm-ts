@@ -213,7 +213,8 @@ onBeforeUnmount(() => controller.abort());
 						:class="{ active: group.id === activeGroup }"
 						@click="activeGroup = group.id"
 					>
-						<ModelName :model="group.primary" :name="group.primary || 'Group ' + (index + 1)" :size="14" /><span
+						<ModelName :model="group.primary" :name="group.primary || 'Group ' + (index + 1)" :size="14" />
+						<span
 							v-if="groups.length > 1"
 							role="button"
 							aria-label="Remove fallback group"

@@ -63,7 +63,8 @@ function removeFallbackModel(name: string) {
 				:class="{ active: active === group.id }"
 				@click="active = group.id"
 			>
-				<ModelName :model="group.primary" :name="group.primary || 'Group ' + (index + 1)" :size="14" /><span
+				<ModelName :model="group.primary" :name="group.primary || 'Group ' + (index + 1)" :size="14" />
+				<span
 					v-if="groups.length > 1"
 					role="button"
 					tabindex="0"
