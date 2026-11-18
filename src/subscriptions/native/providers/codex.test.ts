@@ -550,6 +550,36 @@ describe("Codex provider", () => {
 		expect(models.find((model) => model.id === "gpt-6.1-sol")?.protocol).toBe("responses");
 	});
 
+	test("catalog 补入上游下发而静态目录还没有的新模型", async () => {
+		const requests: string[] = [];
+		const fetchMock: typeof fetch = async (input, init) => {
+			const url = input instanceof Request ? input.url : String(input);
+			requests.push(url);
+			expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer test-access-token");
+			return new Response(
+				JSON.stringify({
+					models: [
+						{ slug: "gpt-6.2-sol", display_name: "GPT-6.2-Sol", supported_in_api: true, visibility: "list" },
+						{ slug: "gpt-reserve", display_name: "GPT-Reserve", supported_in_api: true, visibility: "hide" },
+						{ slug: "gpt-6.1-sol", display_name: "GPT-6.1-Sol", supported_in_api: true, visibility: "list" },
+					],
+				}),
+				{ status: 200 },
+			);
+		};
+		const provider = providerWith(fetchMock);
+		const models = await provider.catalog();
+		const ids = models.map((model) => model.id);
+
+		expect(requests[0]).toContain("https://chatgpt.com/backend-api/codex/models?client_version=");
+		expect(ids).toEqual(expect.arrayContaining(["gpt-6.2-sol", "gpt-6.1-sol"]));
+		expect(ids).not.toContain("gpt-reserve");
+		expect(models.find((model) => model.id === "gpt-6.2-sol")?.protocol).toBe("responses");
+		// 静态条目优先，上游只补缺，不重复也不改写已有模型。
+		expect(ids.filter((id) => id === "gpt-6.1-sol")).toHaveLength(1);
+		expect(models.find((model) => model.id === "gpt-6.1-sol")?.displayName).not.toBe("GPT-6.1-Sol");
+	});
+
 	test("quota 请求 wham/usage 并映射窗口与余额", async () => {
 		const requests: Array<{ readonly url: string; readonly headers: Headers }> = [];
 		const fetchMock: typeof fetch = async (input, init) => {
@@ -665,14 +695,12 @@ describe("Codex provider", () => {
 			],
 			usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
 		};
-		const fetchSpy = jest
-			.spyOn(globalThis, "fetch")
-			.mockResolvedValue(
-				new Response(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: final })}\n\n`, {
-					status: 200,
-					headers: { "content-type": "text/event-stream" },
-				}),
-			);
+		const fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: final })}\n\n`, {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
 		try {
 			const result = await bridge.execute({
 				url: subscriptionBridgeUrl("codex", "messages"),

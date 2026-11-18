@@ -15,6 +15,7 @@ import {
 	type SubscriptionProvider as SubscriptionProviderId,
 } from "../SubscriptionProviders";
 import { SubscriptionAccountKeys, type KeySubscription, type SavedSubscriptionKey } from "../SubscriptionAccountKeys";
+import { normalizeAccountEmail } from "../accountEmail";
 import { SubscriptionAccountStore, defaultSubscriptionAuthDir } from "./accountStore";
 import { codexExpiryMs } from "./auth/codexOAuth";
 import { disableInvalidAccount, isTerminalRefreshFailure } from "./auth/refreshFailure";
@@ -260,12 +261,14 @@ export class SubscriptionRuntimeManager {
 	}
 
 	/**
-	 * 更新账号禁用/权重。
+	 * 更新账号禁用/权重/展示邮箱。
 	 * @param filename - 文件名
 	 * @param patch - 变更
 	 */
-	async updateAccount(filename: string, patch: { disabled?: boolean; weight?: number | null }): Promise<void> {
+	async updateAccount(filename: string, patch: { disabled?: boolean; weight?: number | null; email?: string | null }): Promise<void> {
 		const account = await this._accountByFilename(filename);
+		// 先校验邮箱再落盘，避免非法邮箱让同一次请求里的 disabled/weight 只写了一半。
+		const email = patch.email === undefined ? undefined : normalizeAccountEmail(patch.email);
 		if (patch.disabled !== undefined) {
 			await this._accounts.setDisabled(account.fileName, patch.disabled);
 			if (!patch.disabled) {
@@ -281,6 +284,9 @@ export class SubscriptionRuntimeManager {
 				throw ApiError.badRequest("订阅账号权重必须在 0-1000000 之间");
 			}
 			await this._accounts.setWeight(account.fileName, patch.weight);
+		}
+		if (email !== undefined) {
+			await this._accounts.setEmail(account.fileName, email);
 		}
 		this._scheduler.reset();
 		this.appendSystemLog(`订阅账号 ${account.fileName} 已更新`);

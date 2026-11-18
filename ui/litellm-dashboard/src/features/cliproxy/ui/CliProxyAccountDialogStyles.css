@@ -206,6 +206,14 @@
 	}
 }
 
+/* 手工登记的邮箱常比 Account 列宽，单行省略，完整值仍在单元格 title 上。 */
+.cp-account-content .cp-account-identity-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 /* 手机卡片里文件名占 2 行即可辨认，完整值保留在 title 与编辑对话框。 */
 @media (max-width: 640px) {
 	.cp-account-content .ui-table--cards .cp-account-filename-text {

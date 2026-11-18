@@ -31,3 +31,31 @@ export const QUOTA_TONE_COLORS: Readonly<Record<QuotaTone, string>> = {
 	warning: "#faad14",
 	ok: "#52c41a",
 };
+
+const MINUTE_MS = 60_000;
+
+/**
+ * 把配额窗口的重置时刻转成分钟级倒计时。
+ *
+ * 精确到秒没有意义：窗口通常以小时/天计，页面也只需要在跨分钟时更新。
+ * 倒数不足一分钟时向上取整为“不到一分钟”，避免刚过期前显示 0 分钟；
+ * 超过一天只保留天和小时，避免 43 分钟这种零碎单位稀释主要信息。
+ */
+export function formatResetCountdown(resetsAt: string | null | undefined, now = Date.now()): string | null {
+	if (!resetsAt) return null;
+	const resetAt = Date.parse(resetsAt);
+	if (!Number.isFinite(resetAt)) return null;
+	const remaining = resetAt - now;
+	if (remaining <= 0) return "now";
+	if (remaining < MINUTE_MS) return "in less than a minute";
+	const minutes = Math.ceil(remaining / MINUTE_MS);
+	if (minutes < 60) return `in ${minutes} minute${minutes === 1 ? "" : "s"}`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) {
+		const rest = minutes % 60;
+		return `in ${hours} hour${hours === 1 ? "" : "s"}${rest ? ` ${rest} minute${rest === 1 ? "" : "s"}` : ""}`;
+	}
+	const days = Math.floor(hours / 24);
+	const restHours = hours % 24;
+	return `in ${days} day${days === 1 ? "" : "s"}${restHours ? ` ${restHours} hour${restHours === 1 ? "" : "s"}` : ""}`;
+}

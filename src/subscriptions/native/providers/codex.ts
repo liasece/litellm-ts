@@ -18,6 +18,7 @@ import { normalizeToolNames } from "../toolNames";
 import { normalizeCodexEncryptedContent } from "../protocol/signatureCompatibility";
 import { translateRequest } from "../protocol/types";
 import { catalogForSource } from "../catalog/catalog";
+import { fetchCodexCatalog } from "../catalog/codexCatalog";
 import { quotaForAccount } from "../quota/quota";
 import type {
 	SubscriptionAccount,
@@ -42,6 +43,9 @@ const CODEX_USER_AGENT = "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6
 
 /** Responses / compact / 图片请求的 Originator。 */
 const CODEX_ORIGINATOR = "codex-tui";
+
+/** 上游模型目录缓存时长（毫秒）；新模型在该窗口内出现。 */
+const CODEX_CATALOG_TTL_MS = 10 * 60_000;
 
 /** Alpha Search 的 Originator。 */
 const CODEX_SEARCH_ORIGINATOR = "codex_cli_rs";
@@ -128,7 +132,6 @@ const INPUT_ID_PREFIXES: Readonly<Record<string, string>> = {
 /** Codex input 项 ID 长度上限。 */
 const INPUT_ITEM_ID_LIMIT = 64;
 
-
 /** Responses Lite 模型前缀。 */
 const RESPONSES_LITE_MODEL_PREFIX = "gpt-6";
 
@@ -173,6 +176,51 @@ interface CodexBodyOptions {
 export function createCodexProvider(dependencies: SubscriptionProviderDependencies): SubscriptionProviderAdapter {
 	const auth = createCodexAuth({ accounts: dependencies.accounts, fetch: dependencies.fetch });
 	const fetchImpl = dependencies.fetch ?? fetch;
+
+	/** 上游目录缓存；静态目录只是快照，新模型要靠上游下发才能出现在选择列表里。 */
+	let catalogCache: { readonly at: number; readonly models: readonly SubscriptionCatalogModel[] } | null = null;
+	let catalogInflight: Promise<readonly SubscriptionCatalogModel[]> | null = null;
+
+	/**
+	 * 用第一个可用账号拉取上游目录。
+	 *
+	 * 账号可能过期或上游暂时不可用，这时返回空数组让调用方只展示静态目录；
+	 * 目录拉取失败不能影响账号路由本身。
+	 * @returns 上游下发的模型；全部账号失败时为空
+	 */
+	async function loadUpstreamCatalog(): Promise<readonly SubscriptionCatalogModel[]> {
+		const accounts = (await dependencies.accounts.list("codex")).filter((account) => !account.disabled);
+		for (const account of accounts.slice(0, 2)) {
+			try {
+				const accessToken = await auth.ensureCredential(account);
+				const models = await fetchCodexCatalog({
+					accessToken: accessToken,
+					accountId: codexAccountId(account),
+					baseUrl: codexBaseUrl(account),
+					fetchImpl: fetchImpl,
+				});
+				catalogCache = { at: Date.now(), models: models };
+				return models;
+			} catch {
+				continue;
+			}
+		}
+		return [];
+	}
+
+	/**
+	 * 读取上游目录，按 TTL 缓存并合并并发请求。
+	 * @returns 上游下发的模型
+	 */
+	async function upstreamCatalog(): Promise<readonly SubscriptionCatalogModel[]> {
+		if (catalogCache && Date.now() - catalogCache.at < CODEX_CATALOG_TTL_MS) {
+			return catalogCache.models;
+		}
+		catalogInflight ??= loadUpstreamCatalog().finally(() => {
+			catalogInflight = null;
+		});
+		return await catalogInflight;
+	}
 
 	/**
 	 * 构造公共请求头。
@@ -391,7 +439,10 @@ export function createCodexProvider(dependencies: SubscriptionProviderDependenci
 			return countCodexTokens(body, model);
 		},
 		/**
-		 * Codex 模型目录：静态目录 + 内置图片模型。
+		 * Codex 模型目录：静态目录 + 内置图片模型 + 上游下发的新模型。
+		 *
+		 * 同名模型保留静态条目（它带运行时期望的上下文与推理档位），上游只补充
+		 * 静态快照里还没有的模型，例如新发布的 `gpt-6.2-*`。
 		 */
 		catalog: async (): Promise<readonly SubscriptionCatalogModel[]> => {
 			const models = new Map<string, SubscriptionCatalogModel>();
@@ -409,6 +460,11 @@ export function createCodexProvider(dependencies: SubscriptionProviderDependenci
 					protocol: "responses",
 					metadata: { catalogKey: "codex-image", type: "image" },
 				});
+			}
+			for (const model of await upstreamCatalog()) {
+				if (!models.has(model.id)) {
+					models.set(model.id, model);
+				}
 			}
 			return [...models.values()];
 		},

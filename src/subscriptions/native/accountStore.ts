@@ -341,6 +341,17 @@ export class SubscriptionAccountStore {
 	}
 
 	/**
+	 * 设置账号展示邮箱；null 删除该字段。
+	 *
+	 * Key 型 Provider 的上游不返回身份，管理员登记后账号页与额度卡片用它作为账号名称。
+	 * @param fileName - 文件名
+	 * @param email - 邮箱或 null
+	 */
+	async setEmail(fileName: string, email: string | null): Promise<void> {
+		await this.patchRaw(fileName, { email: email });
+	}
+
+	/**
 	 * 归档到回收站。
 	 * @param fileName - 文件名
 	 */

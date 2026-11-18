@@ -174,10 +174,15 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: Subscr
 		const body = bodyRecord(req);
 		const disabled = typeof body["disabled"] === "boolean" ? body["disabled"] : undefined;
 		const weight = body["weight"] === null || typeof body["weight"] === "number" ? body["weight"] : undefined;
-		if (disabled === undefined && weight === undefined) {
-			throw ApiError.badRequest("必须提供 disabled 或 weight");
+		// 邮箱是账号展示身份：null 表示清除，缺失表示不改；格式校验交给账号仓库。
+		const email = body["email"] === null || typeof body["email"] === "string" ? (body["email"] as string | null) : undefined;
+		if (body["email"] !== undefined && email === undefined) {
+			throw ApiError.badRequest("账号邮箱必须是字符串或 null");
 		}
-		await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight });
+		if (disabled === undefined && weight === undefined && email === undefined) {
+			throw ApiError.badRequest("必须提供 disabled、weight 或 email");
+		}
+		await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight, email: email });
 		return { status: "ok" };
 	});
 

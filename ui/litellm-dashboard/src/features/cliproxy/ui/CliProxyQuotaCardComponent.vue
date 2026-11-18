@@ -6,12 +6,24 @@ import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
 import type { Account, AccountQuotaState } from "../support/CliProxyModels";
 import { accountIdentity } from "../logic/AccountIdentityLogic";
-import { QUOTA_TONE_COLORS, isRemainingExhausted, remainingTone, roundedRemainingPercent } from "../../platform/logic/QuotaDisplayLogic";
+import {
+	formatResetCountdown,
+	QUOTA_TONE_COLORS,
+	isRemainingExhausted,
+	remainingTone,
+	roundedRemainingPercent,
+} from "../../platform/logic/QuotaDisplayLogic";
+import { useRelativeTimeClock } from "../../platform/stores/RelativeTimeClock";
 defineProps<{ account: Account; quotaState: AccountQuotaState }>();
 defineEmits<{ refresh: [] }>();
+const now = useRelativeTimeClock();
 const quotaColor = (remaining: number | null) => QUOTA_TONE_COLORS[remainingTone(remaining)];
-const date = (value: string) => new Date(value).toLocaleString();
+const date = (value: string | null) => (value ? new Date(value).toLocaleString() : undefined);
 const exhaustedClass = (remaining: number | null) => (isRemainingExhausted(remaining) ? "cp-quota-window-name--exhausted" : "");
+const resetLabel = (value: string | null) => {
+	const countdown = formatResetCountdown(value, now.value);
+	return countdown === null ? null : `Resets ${countdown}`;
+};
 </script>
 <template>
 	<UiCard
@@ -81,7 +93,9 @@ const exhaustedClass = (remaining: number | null) => (isRemainingExhausted(remai
 						}"
 					/>
 				</div>
-				<span v-if="window.resets_at" class="cp-secondary cp-xs">Resets {{ date(window.resets_at) }}</span>
+				<span v-if="resetLabel(window.resets_at)" :title="date(window.resets_at)" class="cp-secondary cp-xs">{{
+					resetLabel(window.resets_at)
+				}}</span>
 			</div>
 			<div v-for="balance in quotaState.data.balances" :key="balance.label + '-' + balance.unit" class="cp-between cp-balance">
 				<strong>{{ balance.label }}</strong

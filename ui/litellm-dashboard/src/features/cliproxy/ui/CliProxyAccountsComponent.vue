@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import { filterRowsByFields } from "../../platform/ui/UiTableFilterLogic";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
@@ -33,6 +33,39 @@ const props = withDefaults(
 );
 const state = props.store.state;
 const identity = (account: Account) => accountIdentity(account, state.quotaStates[account.auth_index]?.data?.email);
+/**
+ * 上游不返回账号身份的来源。
+ *
+ * OpenCode Go 只按 API key 识别订阅，`/usage` 没有邮箱字段；账号表允许登记展示邮箱，
+ * 其余来源的邮箱由登录流程或额度响应提供，不在这里改写。
+ */
+const MANUAL_IDENTITY_SOURCES = new Set(["opencode-go"]);
+const editingEmail = ref<string | null>(null);
+const emailDraft = ref("");
+let emailInput: HTMLInputElement | null = null;
+/** UiInput 的根节点是包装层，焦点要落到里面的原生输入框。 */
+function bindEmailInput(element: unknown) {
+	const root = element instanceof HTMLElement ? element : (element as { $el?: unknown } | null)?.$el;
+	emailInput = root instanceof HTMLInputElement ? root : root instanceof HTMLElement ? root.querySelector("input") : null;
+}
+const canEditEmail = (account: Account) => MANUAL_IDENTITY_SOURCES.has(account.provider.trim().toLowerCase()) && !isTrashed(account);
+function beginEmailEdit(account: Account) {
+	editingEmail.value = account.auth_index;
+	emailDraft.value = account.email?.trim() ?? "";
+	void nextTick(() => emailInput?.focus());
+}
+function cancelEmailEdit() {
+	editingEmail.value = null;
+	emailDraft.value = "";
+}
+function submitEmail(account: Account) {
+	if (editingEmail.value !== account.auth_index) return;
+	editingEmail.value = null;
+	const next = emailDraft.value.trim();
+	emailDraft.value = "";
+	if (next === (account.email?.trim() ?? "")) return;
+	void props.store.updateAccount(account, { email: next || null });
+}
 const allOauthProviders = [
 	{ provider: "codex-device", label: "Codex device login", primary: true, source: "codex" },
 	{ provider: "codex", label: "Codex browser login", source: "codex" },
@@ -252,9 +285,31 @@ function edit(account: Account) {
 					<td
 						data-label="Account"
 						:title="identity(account) ?? undefined"
-						:class="{ 'ui-table__cell--empty': !identity(account) }"
+						:class="{ 'ui-table__cell--empty': !identity(account) && editingEmail !== account.auth_index }"
 					>
-						{{ identity(account) ?? "—" }}
+						<UiInput
+							v-if="editingEmail === account.auth_index"
+							:ref="bindEmailInput"
+							v-model="emailDraft"
+							type="email"
+							autocomplete="off"
+							aria-label="Account email"
+							placeholder="Account email"
+							@keydown.enter.prevent="submitEmail(account)"
+							@keydown.esc.prevent="cancelEmailEdit"
+							@blur="submitEmail(account)"
+						/>
+						<div v-else class="cp-inline cp-gap-8">
+							<span class="cp-account-identity-text">{{ identity(account) ?? "—" }}</span>
+							<UiButton
+								v-if="canEditEmail(account)"
+								size="small"
+								aria-label="Edit account email"
+								title="Set the email shown for this account"
+								@click="beginEmailEdit(account)"
+								><template #icon><UiIcon name="EditOutlined" /></template
+							></UiButton>
+						</div>
 					</td>
 					<td class="cp-account-filename" data-label="File" :title="account.filename">
 						<span class="cp-account-filename-text">{{ account.filename }}</span
