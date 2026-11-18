@@ -32,6 +32,8 @@ interface Harness {
 	readonly server: Server;
 	readonly url: string;
 	readonly calls: Array<Record<string, unknown>>;
+	/** 本轮记到 router 上的部署失败（用于验证冷却原因是否保留上游原文） */
+	readonly failures: Array<{ deployment: { model_info?: { id?: string } }; error: Error }>;
 	allow: boolean;
 	close: () => Promise<void>;
 }
@@ -80,11 +82,14 @@ async function buildHarness(db?: DrizzleDb): Promise<Harness> {
 		},
 	});
 	setSubscriptionRequestHandler((req, options) => bridge.execute(req, options));
+	const failures: Array<{ deployment: { model_info?: { id?: string } }; error: Error }> = [];
 	const router = {
 		getAvailableDeployment: () => ({ deployment: DEPLOYMENT, provider: {} }),
 		getDeployments: () => [DEPLOYMENT],
 		recordDeploymentSuccess: () => undefined,
-		recordDeploymentFailure: () => undefined,
+		recordDeploymentFailure: (deployment: { model_info?: { id?: string } }, error: Error) => {
+			failures.push({ deployment, error });
+		},
 	};
 	const container = {
 		router: router,
@@ -108,6 +113,7 @@ async function buildHarness(db?: DrizzleDb): Promise<Harness> {
 		server: server,
 		url: `ws://127.0.0.1:${address.port}/v1/responses`,
 		calls: calls,
+		failures: failures,
 		allow: true,
 		close: async () => {
 			await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -296,6 +302,40 @@ it("每轮重新鉴权，撤销密钥后不再发起上游请求", async () => {
 		expect(error["type"]).toBe("error");
 		expect(error["status"]).toBe(401);
 		expect(harness.calls).toHaveLength(1);
+	} finally {
+		socket.close();
+		await harness.close();
+	}
+});
+
+it("上游 429 时保留上游原文作为冷却原因，并落一条失败日志", async () => {
+	const harness = await buildHarness({} as DrizzleDb);
+	const socket = await open(harness.url);
+	const messages = new MessageQueue(socket);
+	try {
+		jest.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify({ error: { message: "model quota exhausted", type: "rate_limit" } }), {
+				status: 429,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const settled = nextSettledLog();
+		socket.send(JSON.stringify({ type: "response.create", model: "client-model", input: [] }));
+		const error = await messages.next();
+		expect(error["type"]).toBe("error");
+		expect(error["status"]).toBe(429);
+
+		// 修复前：失败轮次不写 SpendLog，Dashboard 完全看不到这个入口的上游错误
+		const log = await settled;
+		expect(log.status).toBe("failure");
+		const information = log.metadata?.["error_information"] as Record<string, unknown> | undefined;
+		expect(String(information?.["error_message"])).toContain("model quota exhausted");
+
+		// 修复前：冷却原因只有合成的「Responses 上游返回 429」，丢失上游正文与真实状态码
+		expect(harness.failures).toHaveLength(1);
+		const failure = harness.failures[0];
+		expect(failure?.error.message).toContain("model quota exhausted");
+		expect((failure?.error as (Error & { status_code?: number }) | undefined)?.status_code).toBe(429);
 	} finally {
 		socket.close();
 		await harness.close();

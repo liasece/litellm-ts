@@ -43,6 +43,18 @@ const TURN_TIMEOUT_MS = 15 * 60 * 1_000;
 /** WebSocket 心跳周期。 */
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
+/** 上游错误原文写进冷却原因时的长度上限（超出部分截断，避免一条日志几 KB）。 */
+const UPSTREAM_MESSAGE_LIMIT = 300;
+
+/**
+ * 截断上游错误原文，保留可读的关键部分。
+ * @param message - 上游响应体文本
+ */
+function truncateUpstreamMessage(message: string): string {
+	const compact = message.replace(/\s+/g, " ").trim();
+	return compact.length <= UPSTREAM_MESSAGE_LIMIT ? compact : `${compact.slice(0, UPSTREAM_MESSAGE_LIMIT)}…`;
+}
+
 /** 支持的入口路径。 */
 export const SUBSCRIPTION_RESPONSES_WS_PATHS: ReadonlySet<string> = new Set(["/v1/responses", "/backend-api/codex/responses"]);
 
@@ -56,6 +68,18 @@ interface TurnResult {
 	readonly usage?: Record<string, unknown>;
 	/** 实际命中的 deployment；用于账务归因。 */
 	readonly deployment?: Deployment;
+}
+
+/**
+ * 单轮执行期间共享的可变状态。
+ *
+ * 失败时 streamTurn 直接抛错，没有返回值可以携带归因信息；把选中的 deployment 记在这里，
+ * runSession 才能为失败轮次写一条可归因的 SpendLog（此前失败轮次完全不落日志，上游报错
+ * 在 Dashboard 上完全不可见）。
+ */
+interface TurnState {
+	/** 本轮已经选中的 deployment */
+	deployment?: Deployment;
 }
 
 /**
@@ -180,6 +204,7 @@ function turnResult(event: Record<string, unknown>, outputByIndex: ReadonlyMap<n
  * @param turnReq - 本轮鉴权请求
  * @param request - Responses 请求体
  * @param signal - 取消信号
+ * @param state - 本轮共享状态（记录选中的 deployment 供失败归因）
  */
 async function streamTurn(
 	socket: WebSocket,
@@ -187,6 +212,7 @@ async function streamTurn(
 	turnReq: ExpressRequest,
 	request: Record<string, unknown>,
 	signal: AbortSignal,
+	state: TurnState,
 ): Promise<TurnResult> {
 	const model = typeof request["model"] === "string" ? request["model"] : "";
 	if (!model) {
@@ -202,6 +228,8 @@ async function streamTurn(
 	if (!selected || !source) {
 		throw ApiError.notFound(`没有可用的订阅 deployment：${model}`);
 	}
+	// 先登记再发请求：之后任何抛错都能被 runSession 归因到这条 deployment。
+	state.deployment = selected.deployment;
 	const body = { ...request, stream: true };
 	const headers: Record<string, string> = { "content-type": "application/json", accept: "text/event-stream" };
 	for (const name of [
@@ -232,7 +260,14 @@ async function streamTurn(
 	if (!execution.response.ok) {
 		const status = execution.response.status;
 		const message = typeof execution.body === "string" ? execution.body : JSON.stringify(execution.body ?? "");
-		router.recordDeploymentFailure(selected.deployment, new Error(`Responses 上游返回 ${status}`));
+		// 冷却原因必须保留上游原文：只写「上游返回 429」会让 Dashboard 无从判断是限流、
+		// 余额不足还是鉴权失败（生产上因此积累了一批无法定位的 5 秒冷却）。
+		const failure = new Error(`Responses 上游返回 ${status}：${truncateUpstreamMessage(message)}`) as Error & {
+			status_code?: number;
+		};
+		failure.name = "ResponsesWebSocketUpstreamError";
+		failure.status_code = status;
+		router.recordDeploymentFailure(selected.deployment, failure);
 		throw new ApiError(status, message || `Responses WebSocket 上游返回 ${status}`);
 	}
 	const stream = execution.response.body;
@@ -341,6 +376,63 @@ async function recordTurnSpend(
 		);
 	} catch (error) {
 		logger.warn("Responses WebSocket 花费提交失败", { error: error instanceof Error ? error.message : String(error) });
+	}
+}
+
+/**
+ * 把一轮失败的 Responses WebSocket 请求写入花费日志。
+ *
+ * 失败轮次没有 usage、也没有响应体，只有错误；写入一条 failure 行后，Dashboard 的
+ * Logs 才能看到这个入口的上游错误（此前这里完全静默，冷却原因因此不可追踪）。
+ * @param db - 数据库
+ * @param req - 本轮鉴权后的请求
+ * @param deployment - 本轮选中的 deployment（选部署前就失败时为空）
+ * @param request - 本轮请求体
+ * @param startedAt - 开始时间
+ * @param error - 本轮失败原因
+ */
+async function recordTurnFailureSpend(
+	db: DrizzleDb | undefined,
+	req: ExpressRequest,
+	deployment: Deployment | undefined,
+	request: Record<string, unknown>,
+	startedAt: Date,
+	error: unknown,
+): Promise<void> {
+	if (!db || !req.auth) {
+		return;
+	}
+	const model = typeof request["model"] === "string" ? request["model"] : "";
+	if (!model) {
+		return;
+	}
+	const source = deployment ? deploymentSource(deployment) : undefined;
+	const spendInfo = deployment && source ? buildDeploymentSpendInfo(deployment, subscriptionBridgeUrl(source, "responses")) : undefined;
+	try {
+		await queueSpendLog(
+			db,
+			await buildSpendLogFromRequest({
+				req: req,
+				auth: req.auth,
+				requestId: randomUUID(),
+				callType: CallType.ACompletion,
+				model: model,
+				modelGroup: model,
+				modelId: spendInfo?.modelId,
+				customLlmProvider: spendInfo?.customLlmProvider,
+				apiBase: spendInfo?.apiBase,
+				customCostPerToken: spendInfo?.customCostPerToken,
+				deploymentModel: spendInfo?.deploymentModel,
+				startTime: startedAt,
+				endTime: new Date(),
+				completionStartTime: req.litellmFirstContentFrameAt ?? null,
+				messages: request,
+				error: error,
+				status: SpendLogStatus.Failure,
+			}),
+		);
+	} catch (failure) {
+		logger.warn("Responses WebSocket 失败花费提交失败", { error: failure instanceof Error ? failure.message : String(failure) });
 	}
 }
 
@@ -558,9 +650,10 @@ async function runSession(socket: WebSocket, container: ServiceContainer, req: E
 			active = controller;
 			interrupted = false;
 			const timeout = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+			const turnState: TurnState = {};
 			try {
 				const result = await container.runtimeConfigService.runWithSnapshot(container.router, async () => {
-					return await streamTurn(socket, router, turnReq, request, controller.signal);
+					return await streamTurn(socket, router, turnReq, request, controller.signal, turnState);
 				});
 				await recordTurnSpend(container.db?.db, turnReq, result, request, turnStartedAt);
 				if (result.responseId) {
@@ -575,9 +668,13 @@ async function runSession(socket: WebSocket, container: ServiceContainer, req: E
 					if (socket.readyState === WebSocket.OPEN) {
 						send(socket, errorFrame(apiError.statusCode, apiError.message));
 					}
+					// 失败轮次同样要落账：WebSocket 入口此前只记成功，上游 429 在 SpendLogs 上
+					// 完全不可见，冷却原因也就无从追查。
+					await recordTurnFailureSpend(container.db?.db, turnReq, turnState.deployment, request, turnStartedAt, apiError);
 				}
-				logger.debug("Responses WebSocket turn 失败", {
+				logger.warn("Responses WebSocket turn 失败", {
 					model: lastModel,
+					status: error instanceof ApiError ? error.statusCode : undefined,
 					error: error instanceof Error ? error.message : String(error),
 				});
 			} finally {
