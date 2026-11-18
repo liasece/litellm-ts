@@ -33,5 +33,5 @@
 - `AGENTS.md`：协作方式、授权边界、完成定义与文档入口。不复制三份文档正文。
 - `ui/litellm-dashboard/AGENTS.md`：前端范围的工作方法与契约。
 - `.agents/skills/deploy-litellm-ts/`：生产拓扑、发布与诊断的真源（含 `references/troubleshooting.md`）。
-- `.agents/skills/commit-staged-changes/`：提交改动的两种模式（普通提交 / 仅提交暂存），用户要求提交时使用；不含 push 或部署授权。
+- 用户级 `~/.agents/skills/commit-changes/`：提交改动的两种模式（普通提交 / 仅提交暂存），用户要求提交时使用；不含 push 或部署授权。项目层不再保留副本。
 - `.artifacts/frontend-vue/`：前端迁移与手机端排版的原始截图、差异与验收记录，不进入镜像。
