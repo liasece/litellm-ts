@@ -15,7 +15,9 @@
  */
 
 import { defaultProviderRegistry } from "../providers/ProviderRegistry";
-import type { CustomCostPerToken, PeakPricingConfig } from "../cost/CostCalculator";
+import { type CustomCostPerToken, type PeakPricingConfig } from "../cost/CostCalculator";
+import { upstreamRefForDeployment } from "../subscriptions/native/upstream/lookup";
+import { upstreamSnapshotForRef } from "../subscriptions/native/upstream/runtime";
 import type { Deployment } from "../types/router";
 
 /** 实际执行 deployment 的 spend 归因信息（挂在 Router 结果的 `_spendInfo` 字段） */
@@ -42,25 +44,87 @@ export interface DeploymentSpendInfo {
  * 提取 deployment 的自定义价格（per-token）。
  * 优先级（低→高，后者覆盖，对齐 PY router.py:6604-6607 litellm_params 合并进 model_info）：
  *   model_info 价格 < litellm_params 平铺价格字段 < litellm_params.custom_cost_per_token 对象
- * 四项全未配置时返回 undefined（回退内置 PRICE_TABLE / llmux 零计费）。
+ *
+ * 订阅部署（能定位到上游来源）配置缺价时用上游目录价；价目表只有模糊匹配的启发式，
+ * 与上游实际口径不一致时不采用。非订阅部署、或上游也没有价格的模型保持原逻辑
+ * （价目表/PRICE_TABLE）。
  * @param deployment - 实际执行的 deployment
  */
 export function extractDeploymentCustomCost(deployment: Deployment): CustomCostPerToken | undefined {
 	const modelInfo = deployment.model_info;
 	const params = deployment.litellm_params;
 	const customObj = params.custom_cost_per_token;
-	const merged: CustomCostPerToken = {
-		input_cost_per_token: customObj?.input_cost_per_token ?? params.input_cost_per_token ?? modelInfo?.input_cost_per_token,
-		output_cost_per_token: customObj?.output_cost_per_token ?? params.output_cost_per_token ?? modelInfo?.output_cost_per_token,
-		cache_creation_input_token_cost:
-			customObj?.cache_creation_input_token_cost ??
-			(params["cache_creation_input_token_cost"] as number | undefined) ??
-			modelInfo?.cache_creation_input_token_cost,
-		cache_read_input_token_cost:
-			customObj?.cache_read_input_token_cost ??
-			(params["cache_read_input_token_cost"] as number | undefined) ??
-			modelInfo?.cache_read_input_token_cost,
+	// 只认正价：模型编辑表单历史上会把留空的单价写成 0，这些 0 不是「免费」而是「还没定价」，
+	// 当作已配置会让上游价永远进不来（glm-5.3 因此一直记 0 费用）。ops 要免费模型时把单价留空即可，
+	// 上游价同样是 0。
+	const configuredPrice = (value: unknown): number | undefined => {
+		return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 	};
+	const configCost: CustomCostPerToken = {
+		input_cost_per_token:
+			configuredPrice(customObj?.input_cost_per_token) ??
+			configuredPrice(params.input_cost_per_token) ??
+			configuredPrice(modelInfo?.input_cost_per_token),
+		output_cost_per_token:
+			configuredPrice(customObj?.output_cost_per_token) ??
+			configuredPrice(params.output_cost_per_token) ??
+			configuredPrice(modelInfo?.output_cost_per_token),
+		cache_creation_input_token_cost:
+			configuredPrice(customObj?.cache_creation_input_token_cost) ??
+			configuredPrice(params["cache_creation_input_token_cost"]) ??
+			configuredPrice(modelInfo?.cache_creation_input_token_cost),
+		cache_read_input_token_cost:
+			configuredPrice(customObj?.cache_read_input_token_cost) ??
+			configuredPrice(params["cache_read_input_token_cost"]) ??
+			configuredPrice(modelInfo?.cache_read_input_token_cost),
+	};
+	// 订阅部署的权威价格是上游目录：价目表只有按模型名模糊匹配的启发式（glm/deepseek 这类族名
+	// 会命中整族价格），和上游实际计费口径常常不一致，所以配置缺价时直接让上游价接管，
+	// 价目表只在上游也没有价格时兜底。
+	const upstreamRef = upstreamRefForDeployment(deployment);
+	const upstream = upstreamSnapshotForRef(upstreamRef)?.metadata;
+	const merged: CustomCostPerToken = {
+		input_cost_per_token: configCost.input_cost_per_token ?? upstream?.inputCostPerToken,
+		output_cost_per_token: configCost.output_cost_per_token ?? upstream?.outputCostPerToken,
+		cache_creation_input_token_cost: configCost.cache_creation_input_token_cost ?? upstream?.cacheWriteCostPerToken,
+		cache_read_input_token_cost: configCost.cache_read_input_token_cost ?? upstream?.cacheReadCostPerToken,
+	};
+	// 记录哪些单价真来自上游：只有「配置没给、上游给了」的字段才算，用来在 Logs 页标注费用来源。
+	const upstreamPricedFields = (
+		[
+			["input_cost_per_token", configCost.input_cost_per_token, upstream?.inputCostPerToken],
+			["output_cost_per_token", configCost.output_cost_per_token, upstream?.outputCostPerToken],
+			["cache_creation_input_token_cost", configCost.cache_creation_input_token_cost, upstream?.cacheWriteCostPerToken],
+			["cache_read_input_token_cost", configCost.cache_read_input_token_cost, upstream?.cacheReadCostPerToken],
+		] as const
+	)
+		.filter(([, configured, fromUpstream]) => configured === undefined && fromUpstream !== undefined)
+		.map(([field]) => field);
+	// 上游目录价与抓取时间一并随价格对象进入 spend 日志：上游之后调价，历史行仍能还原
+	// 「这次请求当时的上游价是多少」，而不是拿今天的目录去解释昨天的账。
+	const snapshot = upstreamSnapshotForRef(upstreamRef);
+	const upstreamCatalog: CustomCostPerToken["upstream_catalog"] =
+		snapshot === undefined
+			? undefined
+			: {
+					source: snapshot.source,
+					upstream_model: snapshot.upstreamModel,
+					fetched_at: snapshot.fetchedAt,
+					unit_prices: {
+						...(snapshot.metadata.inputCostPerToken === undefined
+							? {}
+							: { input_cost_per_token: snapshot.metadata.inputCostPerToken }),
+						...(snapshot.metadata.outputCostPerToken === undefined
+							? {}
+							: { output_cost_per_token: snapshot.metadata.outputCostPerToken }),
+						...(snapshot.metadata.cacheReadCostPerToken === undefined
+							? {}
+							: { cache_read_input_token_cost: snapshot.metadata.cacheReadCostPerToken }),
+						...(snapshot.metadata.cacheWriteCostPerToken === undefined
+							? {}
+							: { cache_creation_input_token_cost: snapshot.metadata.cacheWriteCostPerToken }),
+					},
+				};
 	const peakPricing = extractDeploymentPeakPricing(deployment);
 	if (
 		merged.input_cost_per_token === undefined &&
@@ -71,8 +135,13 @@ export function extractDeploymentCustomCost(deployment: Deployment): CustomCostP
 	) {
 		return undefined;
 	}
+	const withSource: CustomCostPerToken = {
+		...merged,
+		...(upstreamPricedFields.length === 0 ? {} : { upstream_priced_fields: upstreamPricedFields }),
+		...(upstreamCatalog === undefined ? {} : { upstream_catalog: upstreamCatalog }),
+	};
 	// 峰谷配置随价格一起透传：部分端点的 cost 计算只认 custom_cost_per_token
-	return peakPricing === undefined ? merged : { ...merged, peak_pricing: peakPricing };
+	return peakPricing === undefined ? withSource : { ...withSource, peak_pricing: peakPricing };
 }
 
 /**

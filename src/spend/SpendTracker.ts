@@ -67,6 +67,7 @@ import { CallType, SpendLogStatus } from "../types/spend";
 import { describeUpstreamError, getRecordedUpstreamErrors, getRecordedUpstreamExchange } from "../router/UpstreamExchange";
 import type { ModelResponse, ModelResponseStream, Usage } from "../types/openai";
 import { costPerToken, resolvePeakMultiplier } from "../cost/CostCalculator";
+import { buildPriceSnapshot } from "./PriceSnapshot";
 import { adjustCost, costTrackingConfigService, resolveCostProvider } from "../cost/CostTrackingConfig";
 import { createModuleLogger } from "../core/utils/logger";
 import { hashApiKey } from "../core/utils/crypto";
@@ -2065,7 +2066,11 @@ async function trackSpendLogMeasured(
 	}
 	// 峰谷：记录本次适用的价格档位，便于在 Logs 页核对是按峰时还是空闲价计费
 	const peakPricing = (logEntry.custom_cost_per_token as { peak_pricing?: PeakPricingConfig } | undefined)?.peak_pricing;
+	// 单价在请求发生时冻结：上游调价、配置修改都不会改写历史行的「当时单价」。
+	// 快照同时记录每个字段的来源（配置/上游/价目表/默认），界面据此判断是否需要提示上游信息；
+	// 只有真的用了上游价的行才显示上游图标，避免到处挂一个「上游有信息」的按钮。
 	const peakMultiplier = resolvePeakMultiplier(peakPricing, new Date(logEntry.startTime));
+	const priceSnapshot = buildPriceSnapshot(tokenCost.prices, logEntry.custom_cost_per_token, peakMultiplier);
 	// PY CostBreakdown（types/utils.py:2771）：cost 计算完成后注入 metadata.cost_breakdown。
 	// tool_usage_cost 记录按次计费的直连工具调用固定费用（无此类调用时为 0）。
 	// 折扣/保证金仅在命中配置时出现，便于 Logs 页核对"原价 → 折后 → 加价"。
@@ -2076,6 +2081,7 @@ async function trackSpendLogMeasured(
 		output_cost: outputCost,
 		total_cost: spend,
 		tool_usage_cost: fixedCost,
+		...(priceSnapshot === undefined ? {} : { price_snapshot: priceSnapshot }),
 		...(peakPricing === undefined
 			? {}
 			: { price_tier: peakMultiplier > 1 ? "peak" : "off_peak", price_multiplier: peakMultiplier }),

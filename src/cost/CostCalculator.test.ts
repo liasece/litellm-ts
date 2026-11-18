@@ -503,12 +503,46 @@ describe("峰谷定价", () => {
 });
 
 it("prices identical upstream models by their selected subscription and honors a vendor-qualified legacy tariff", () => {
-	const rate = (price: number) => ({input_cost_per_token: price,output_cost_per_token: 0});
+	const rate = (price: number) => ({ input_cost_per_token: price, output_cost_per_token: 0 });
 	const prices = {
-		"commandcode/vendor/model":rate(1), "cliproxy/commandcode/vendor/model":rate(2),
-		"cliproxy/opencode-go/vendor/model":rate(3), "vendor/model":rate(4),
+		"commandcode/vendor/model": rate(1),
+		"cliproxy/commandcode/vendor/model": rate(2),
+		"cliproxy/opencode-go/vendor/model": rate(3),
+		"vendor/model": rate(4),
 	};
-	for (const [provider, expected] of [["commandcode",1],["opencode-go",3],["openai",4]] as const) {
-		expect(costPerToken("vendor/model", 1, 0, 0, 0, {provider, modelCostMap:prices}).totalCost).toBe(expected);
+	for (const [provider, expected] of [
+		["commandcode", 1],
+		["opencode-go", 3],
+		["openai", 4],
+	] as const) {
+		expect(costPerToken("vendor/model", 1, 0, 0, 0, { provider, modelCostMap: prices }).totalCost).toBe(expected);
 	}
+});
+
+describe("costPerToken applied prices", () => {
+	it("marks configured prices as config and upstream-filled ones as upstream", () => {
+		const result = costPerToken("opencode/glm-5.3", 1_000_000, 1_000_000, 0, 0, {
+			customCostPerToken: {
+				input_cost_per_token: 1.4e-6,
+				output_cost_per_token: 4.4e-6,
+				upstream_priced_fields: ["output_cost_per_token"],
+			},
+		});
+		expect(result.prices?.input_cost_per_token).toEqual({ per_token: 1.4e-6, source: "config" });
+		expect(result.prices?.output_cost_per_token).toEqual({ per_token: 4.4e-6, source: "upstream" });
+		expect(result.prices?.cache_read_input_token_cost).toEqual({ per_token: 0, source: "unset" });
+	});
+
+	it("reports price-table prices as model_cost_map and flat-rate cache defaults separately", () => {
+		const result = costPerToken("deepseek/deepseek-v4-flash", 1_000_000, 1_000_000);
+		expect(result.prices?.input_cost_per_token?.source).toBe("model_cost_map");
+		expect(result.prices?.output_cost_per_token?.source).toBe("model_cost_map");
+		if (result.prices?.cache_creation_input_token_cost !== undefined) {
+			expect(["model_cost_map", "default"]).toContain(result.prices.cache_creation_input_token_cost.source);
+		}
+	});
+
+	it("omits prices for unknown models (nothing was priced)", () => {
+		expect(costPerToken("unknown/model", 1000, 1000).prices).toBeUndefined();
+	});
 });

@@ -2,6 +2,8 @@
 import { computed } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
 import { costView } from "../../logic/LogDetailsMetricsLogic";
+import { formatFreshness } from "../../../models/support/UpstreamModelInfoModels";
+import { priceSnapshot, priceSnapshotRows, upstreamPriceFields } from "../../support/LogsPriceModels";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 const props = defineProps<{ log: LogEntry }>();
 const money = useMoneyFormatter();
@@ -15,10 +17,30 @@ const view = computed(() =>
 	),
 );
 const format = (value: number | undefined) => money(value, 8, props.log);
+// 单价在请求发生时冻结；详情页直接铺开，不再用图标让人猜来源。
+const snapshot = computed(() => priceSnapshot(props.log));
+const priceRows = computed(() => (snapshot.value === undefined ? [] : priceSnapshotRows(snapshot.value)));
+const upstreamPriced = computed(() => upstreamPriceFields(snapshot.value).length > 0);
 const percent = (value: number | undefined) => (value === undefined ? "-" : (value * 100).toFixed(2) + "%");
 </script>
 <template>
 	<div v-if="view.visible" class="ld-costs">
+		<div v-if="snapshot && priceRows.length > 0" class="ld-costs__prices">
+			<div class="ld-costs__prices-title">
+				计费单价（请求时冻结）<span v-if="upstreamPriced" class="ld-costs__prices-badge">含上游价</span>
+			</div>
+			<div class="ld-costs__prices-rows">
+				<span v-for="row in priceRows" :key="row.field" class="ld-costs__prices-item" :class="{ 'is-upstream': row.fromUpstream }">
+					<span class="ld-costs__muted">{{ row.label }}</span>
+					<span>{{ row.perMillion }}/1M</span>
+					<span class="ld-costs__muted">{{ row.sourceLabel }}</span>
+				</span>
+			</div>
+			<div v-if="snapshot.upstream" class="ld-costs__prices-source">
+				上游 {{ snapshot.upstream.upstreamModel }} · {{ snapshot.upstream.source }} · 抓取于
+				{{ formatFreshness(snapshot.upstream.fetchedAt) }}
+			</div>
+		</div>
 		<div class="ld-costs__group">
 			<div class="ld-costs__row">
 				<span>Input Cost:</span

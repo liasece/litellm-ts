@@ -2144,6 +2144,19 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 			output_cost: 0.4,
 			total_cost: 1.04,
 			tool_usage_cost: 0,
+			// 单价随请求冻结，费用明细能还原「按什么价算的」。
+			price_snapshot: {
+				unit_prices: {
+					input_cost_per_token: 0.01,
+					output_cost_per_token: 0.02,
+					cache_read_input_token_cost: 0.001,
+				},
+				sources: {
+					input_cost_per_token: "config",
+					output_cost_per_token: "config",
+					cache_read_input_token_cost: "config",
+				},
+			},
 		});
 	});
 

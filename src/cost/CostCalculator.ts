@@ -116,6 +116,28 @@ const ABOVE_200K_FIELD_SUFFIX = "above_200k_tokens";
 /** 每百万的分母 */
 const PER_MILLION = 1_000_000;
 
+/**
+ * 单价的取值来源。费用是历史事实，单价会随上游调价、配置修改、价目表更新而变化，
+ * 所以每次请求都要把「实际用了哪个单价、它来自哪里」冻结进日志，界面才能如实回答
+ * 「这一行的钱是按什么价算的」。
+ */
+export type PriceSource = "config" | "upstream" | "model_cost_map" | "default" | "unset";
+
+/** 一个字段实际采用的单价与来源（单价为 per token，不含峰谷系数）。 */
+export interface AppliedPrice {
+	/** 实际参与计算的每 token 单价（峰谷系数之前的基础价）。 */
+	readonly per_token: number;
+	/** 该单价的来源。 */
+	readonly source: PriceSource;
+}
+
+/** 一次请求四个计费字段的单价快照；缺字段表示该字段没有参与计费。 */
+export type AppliedPrices = Readonly<
+	Partial<
+		Record<"input_cost_per_token" | "output_cost_per_token" | "cache_read_input_token_cost" | "cache_creation_input_token_cost", AppliedPrice>
+	>
+>;
+
 /** 计算结果 */
 export interface CostResult {
 	/** 缓存创建 + 缓存读取输入 token 费用 */
@@ -126,6 +148,11 @@ export interface CostResult {
 	readonly outputCost: number;
 	/** 总费用（缓存输入 + 输入 + 输出） */
 	readonly totalCost: number;
+	/**
+	 * 本次实际采用的单价与来源。调用方（SpendTracker）据此把单价冻结进 spend 日志；
+	 * 不计费路径（未知模型、llmux 零计费）不返回，表示没有可记录的单价。
+	 */
+	readonly prices?: AppliedPrices;
 }
 
 /**
@@ -273,6 +300,30 @@ export interface CustomCostPerToken {
 	 * 无需再为每个端点单独传参。
 	 */
 	readonly peak_pricing?: PeakPricingConfig;
+	/**
+	 * 这些单价不是部署配置的，而是上游模型元信息补的（配置缺价时）。
+	 * `costPerToken` 用它标注每个字段的单价来源；写日志时由 `price_snapshot` 承载，
+	 * 而不是直接把这个字段名清单落库。
+	 */
+	readonly upstream_priced_fields?: readonly string[];
+
+	/**
+	 * 上游目录里该模型的原始单价（per token）与抓取时间。
+	 * 请求发生时一并冻结进 spend 日志：上游之后调价，历史行的「当时上游价」仍然可查。
+	 */
+	readonly upstream_catalog?: UpstreamPriceCatalog;
+}
+
+/** 上游目录价格快照（请求发生时冻结）。 */
+export interface UpstreamPriceCatalog {
+	/** 上游来源（如 `opencode-go`）。 */
+	readonly source: string;
+	/** 上游规范模型 ID。 */
+	readonly upstream_model: string;
+	/** 上游信息的抓取时间（ISO 字符串）。 */
+	readonly fetched_at: string;
+	/** per-token 单价；只包含上游真的给出的字段。 */
+	readonly unit_prices: Readonly<Record<string, number>>;
 }
 
 /**
@@ -476,6 +527,13 @@ export function costPerToken(
 		const outputPerToken = (customCostPerToken?.output_cost_per_token ?? 0) * peakMultiplier;
 		const cacheCreatePerToken = (customCostPerToken?.cache_creation_input_token_cost ?? 0) * peakMultiplier;
 		const cacheReadPerToken = (customCostPerToken?.cache_read_input_token_cost ?? 0) * peakMultiplier;
+		// 单价来源：部署配置还是上游补位。上游补位的字段在 RouterSpendInfo 里已被标记，
+		// 这里只翻译成结构化快照，供日志冻结与界面展示。
+		const upstreamPriced = new Set(customCostPerToken?.upstream_priced_fields ?? []);
+		const customApplied = (field: string, value: number | undefined): AppliedPrice => ({
+			per_token: value ?? 0,
+			source: value === undefined ? "unset" : upstreamPriced.has(field) ? "upstream" : "config",
+		});
 		const nonCachePrompt = Math.max(0, effectivePrompt - cacheCreationTokens - cacheReadTokens);
 		// DIFF-003: 从 output 扣除 reasoning_tokens（PY: completion_tokens -= reasoning_tokens）
 		const nonReasoningCompletion = Math.max(0, effectiveCompletion - reasoningTokens);
@@ -485,7 +543,21 @@ export function costPerToken(
 		const cacheReadCost = cacheReadTokens * cacheReadPerToken;
 		const cacheInputCost = cacheCreationCost + cacheReadCost;
 		const totalCost = inputCost + outputCost + cacheInputCost;
-		return { cacheInputCost: cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
+		return {
+			cacheInputCost: cacheInputCost,
+			inputCost: inputCost,
+			outputCost: outputCost,
+			totalCost: totalCost,
+			prices: {
+				input_cost_per_token: customApplied("input_cost_per_token", customCostPerToken?.input_cost_per_token),
+				output_cost_per_token: customApplied("output_cost_per_token", customCostPerToken?.output_cost_per_token),
+				cache_creation_input_token_cost: customApplied(
+					"cache_creation_input_token_cost",
+					customCostPerToken?.cache_creation_input_token_cost,
+				),
+				cache_read_input_token_cost: customApplied("cache_read_input_token_cost", customCostPerToken?.cache_read_input_token_cost),
+			},
+		};
 	}
 
 	const costMapEntry = lookupCostMapEntry(model, modelCostMap, source);
@@ -609,7 +681,29 @@ export function costPerToken(
 	const cacheInputCost = cacheCreationCost + cacheReadCost;
 	const totalCost = inputCost + outputCost + cacheInputCost;
 
-	return { cacheInputCost: cacheInputCost, inputCost: inputCost, outputCost: outputCost, totalCost: totalCost };
+	// 价目表路径的单价来源：input/output 与 above_200k/tier 变体都来自价目表；
+	// 缓存价可能是价目表字段，也可能是代码里的 flat rate 兜底，分别标注，便于排查「为什么缓存这么贵」。
+	const cacheSource = (override: number | undefined, configured: number | undefined): PriceSource => {
+		return override !== undefined || configured !== undefined ? "model_cost_map" : "default";
+	};
+	return {
+		cacheInputCost: cacheInputCost,
+		inputCost: inputCost,
+		outputCost: outputCost,
+		totalCost: totalCost,
+		prices: {
+			input_cost_per_token: { per_token: inputPerMillion / PER_MILLION, source: "model_cost_map" },
+			output_cost_per_token: { per_token: outputPerMillion / PER_MILLION, source: "model_cost_map" },
+			cache_creation_input_token_cost: {
+				per_token: cacheCreationPerMillion / PER_MILLION,
+				source: cacheSource(cacheCreationOverridePerMillion, costMapEntry?.cache_creation_input_token_cost),
+			},
+			cache_read_input_token_cost: {
+				per_token: cacheReadPerMillion / PER_MILLION,
+				source: cacheSource(cacheReadOverridePerMillion, costMapEntry?.cache_read_input_token_cost),
+			},
+		},
+	};
 }
 
 /**

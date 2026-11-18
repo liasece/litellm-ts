@@ -6,8 +6,10 @@ import UiTag from "../../platform/ui/UiTag.vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import ProviderLogoComponent from "../../providers/ui/ProviderLogoComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
+import UpstreamModelFacts from "../../models/ui/UpstreamModelFactsComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
+import { priceSnapshot } from "../support/LogsPriceModels";
 import {
 	buildModelResolutionLines,
 	localLogTime,
@@ -26,6 +28,7 @@ import LogsMetricComponent from "./LogsMetricComponent.vue";
 import LogsLiveDurationComponent from "./LogsLiveDurationComponent.vue";
 import LogsTypeBadgeComponent from "./LogsTypeBadgeComponent.vue";
 import LogsFeatureCellComponent from "./LogsFeatureCellComponent.vue";
+import LogsPriceHint from "./LogsPriceHintComponent.vue";
 const props = defineProps<{ log: LogEntry; column: string; live: boolean }>();
 const emit = defineEmits<{ key: [hash: string]; session: [group: SessionGroupRef] }>();
 const money = useMoneyFormatter();
@@ -52,6 +55,8 @@ const tokenTooltip = computed(
 		"Cache read + input / output" +
 		(tokens.value.creation > 0 ? "\nCache creation: " + tokens.value.creation.toLocaleString("en-US") + " (included in input)" : ""),
 );
+// 费用来源只看请求时冻结的单价快照；没有快照的历史行不显示任何来源标记。
+const snapshot = computed(() => priceSnapshot(props.log));
 const costFields = computed(() => [
 	{ label: "缓存输入", value: costs.value.cacheInputCost, icon: "Database" },
 	{ label: "输入", value: costs.value.inputCost, icon: "ArrowDownToLine" },
@@ -83,25 +88,28 @@ const costFields = computed(() => [
 		></template
 	>
 	<div v-else-if="column === 'spend'" style="display: flex; flex-direction: column">
-		<UiPopover placement="bottomLeft" popup-class="logs-cost-popover-shell">
-			<span class="logs-cost-value logs-mono">{{ money(log.spend || null, 6, priceIdentity) }}</span>
-			<template #content>
-				<div class="logs-cost-popover-title">
-					<span><UiLucideIcon name="CircleDollarSign" :size="16" style="color: #059669" />费用明细</span
-					><span class="logs-mono" style="font-size: 12px; font-weight: 600; color: #475569">{{
-						money(log.spend || null, 6, priceIdentity)
-					}}</span>
-				</div>
-				<div class="logs-cost-popover" aria-label="Cost breakdown">
-					<div v-for="field in costFields" :key="field.label" class="logs-cost-field">
-						<div class="logs-field-label" style="display: flex; align-items: center; gap: 4px">
-							<UiLucideIcon :name="field.icon" :size="14" />{{ field.label }}
-						</div>
-						<div class="logs-field-value">{{ money(field.value, 8, priceIdentity) }}</div>
+		<div class="logs-cost-line">
+			<UiPopover placement="bottomLeft" popup-class="logs-cost-popover-shell">
+				<span class="logs-cost-value logs-mono">{{ money(log.spend || null, 6, priceIdentity) }}</span>
+				<template #content>
+					<div class="logs-cost-popover-title">
+						<span><UiLucideIcon name="CircleDollarSign" :size="16" style="color: #059669" />费用明细</span
+						><span class="logs-mono" style="font-size: 12px; font-weight: 600; color: #475569">{{
+							money(log.spend || null, 6, priceIdentity)
+						}}</span>
 					</div>
-				</div>
-			</template>
-		</UiPopover>
+					<div class="logs-cost-popover" aria-label="Cost breakdown">
+						<div v-for="field in costFields" :key="field.label" class="logs-cost-field">
+							<div class="logs-field-label" style="display: flex; align-items: center; gap: 4px">
+								<UiLucideIcon :name="field.icon" :size="14" />{{ field.label }}
+							</div>
+							<div class="logs-field-value">{{ money(field.value, 8, priceIdentity) }}</div>
+						</div>
+					</div>
+				</template>
+			</UiPopover>
+			<LogsPriceHint :snapshot="snapshot" :model="log.model ?? undefined" />
+		</div>
 		<span v-if="(log.mcp_tool_call_count || 0) > 0 && (log.mcp_tool_call_spend || 0) > 0" class="logs-cost-extra"
 			>incl. {{ money(log.mcp_tool_call_spend || null, 6, priceIdentity) }} from {{ log.mcp_tool_call_count }} MCP</span
 		>
@@ -152,16 +160,18 @@ const costFields = computed(() => [
 		<ProviderLogoComponent v-if="model.toolLogo" :provider="model.displayName" :logo="model.toolLogo" />
 		<UiTag v-if="model.builtin" color="purple" style="margin: 0; flex-shrink: 0">Built-in · {{ model.builtin }}</UiTag>
 		<UiPopover placement="bottomLeft" popup-class="logs-model-popover-shell">
-			<ModelName
-				class="logs-model-name"
-				:model="model.executed"
-				:family="model.family"
-				:provider="model.provider"
-				:size="16"
-				:show-icon="!model.toolLogo"
-				><span class="logs-model-name__text">{{ model.displayName }}</span
-				><span v-if="model.fallback > 0" class="logs-model-fallback">({{ model.fallback }})</span></ModelName
-			>
+			<div class="logs-model-trigger">
+				<ModelName
+					class="logs-model-name"
+					:model="model.executed"
+					:family="model.family"
+					:provider="model.provider"
+					:size="16"
+					:show-icon="!model.toolLogo"
+					><span class="logs-model-name__text">{{ model.displayName }}</span
+					><span v-if="model.fallback > 0" class="logs-model-fallback">({{ model.fallback }})</span></ModelName
+				>
+			</div>
 			<template #content>
 				<div class="logs-model-popover-title">
 					<span><UiLucideIcon name="GitBranch" :size="16" style="color: #2563eb" />模型路由信息</span>
@@ -192,6 +202,10 @@ const costFields = computed(() => [
 								/>
 							</div>
 						</div>
+					</div>
+					<div class="logs-upstream-facts">
+						<div class="logs-field-label">上游模型信息</div>
+						<UpstreamModelFacts :model="model.executed" compact />
 					</div>
 					<div v-if="route.length" class="logs-route-lines">
 						<div v-for="(line, index) in route" :key="index" class="logs-route-line">

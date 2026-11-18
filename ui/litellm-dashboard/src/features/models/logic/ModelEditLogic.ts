@@ -8,9 +8,11 @@ export type ModelEditDraft = Record<string, unknown>;
 export function createModelEditDraft(model: ProxyModel): ModelEditDraft {
 	const params = model.litellm_params,
 		info = model.model_info;
+	// 0 单价是表单留空留下的占位值，不是「免费」；回显成空，保存时删除，交给上游价。
 	const cost = (name: string) => {
 		const value = params[name] ?? info[name];
-		return value == null ? null : Number(value) * 1_000_000;
+		const numeric = Number(value);
+		return value == null || !Number.isFinite(numeric) || numeric <= 0 ? null : numeric * 1_000_000;
 	};
 	return {
 		model_name: model.model_name,
@@ -28,6 +30,8 @@ export function createModelEditDraft(model: ProxyModel): ModelEditDraft {
 		stream_timeout: params.stream_timeout,
 		input_cost: cost("input_cost_per_token"),
 		output_cost: cost("output_cost_per_token"),
+		max_input_tokens: info.max_input_tokens ?? null,
+		max_output_tokens: info.max_output_tokens ?? null,
 		cache_control: Boolean(params.cache_control_injection_points),
 		cache_control_injection_points: params.cache_control_injection_points || [],
 		model_access_group: modelStrings(info.access_groups),
@@ -46,6 +50,17 @@ export function createModelEditDraft(model: ProxyModel): ModelEditDraft {
 		),
 	};
 }
+/**
+ * 表单里的「每 1M token 单价」转成 per-token 单价。
+ *
+ * 留空（或 0）返回 null，PATCH 合并时删除该键，让上游价接管；只有正数才算配置了价格。
+ * @param value - 表单值（每 1M token）
+ */
+function perTokenCost(value: unknown): number | null {
+	const numeric = Number(value);
+	return Number.isFinite(numeric) && numeric > 0 ? numeric / 1_000_000 : null;
+}
+
 export function prepareModelUpdate(values: ModelEditDraft, current: ProxyModel): ModelDeploymentRequest {
 	let extra: Record<string, unknown>;
 	try {
@@ -67,8 +82,8 @@ export function prepareModelUpdate(values: ModelEditDraft, current: ProxyModel):
 		max_retries: values.max_retries,
 		timeout: values.timeout,
 		stream_timeout: values.stream_timeout,
-		input_cost_per_token: Number(values.input_cost) / 1_000_000,
-		output_cost_per_token: Number(values.output_cost) / 1_000_000,
+		input_cost_per_token: perTokenCost(values.input_cost),
+		output_cost_per_token: perTokenCost(values.output_cost),
 	};
 	const credential = modelString(values.litellm_credential_name),
 		replacement = typeof values.api_key === "string" ? values.api_key.trim() : "";
@@ -102,6 +117,12 @@ export function prepareModelUpdate(values: ModelEditDraft, current: ProxyModel):
 		info = values.model_info ? modelRecord(JSON.parse(modelString(values.model_info))) : { ...current.model_info };
 	} catch {
 		throw new Error("Invalid JSON in Model Info");
+	}
+	// 限额字段留空即删除，让上游抓到的值重新生效；填了就以配置为准。
+	for (const key of ["max_input_tokens", "max_output_tokens"] as const) {
+		const value = values[key];
+		if (typeof value === "number" && Number.isFinite(value) && value > 0) info[key] = Math.trunc(value);
+		else delete info[key];
 	}
 	if (values.model_access_group) info = { ...info, access_groups: values.model_access_group };
 	if (values.health_check_model !== undefined) info.health_check_model = values.health_check_model;
@@ -140,6 +161,8 @@ export interface ModelBasicField {
 	source?: string;
 	tooltip?: string;
 	placeholder?: string;
+	/** 上游信息里对应的字段名；设置后在标签后显示可 hover 的上游提示。 */
+	hint?: string;
 }
 export const basicModelFields: readonly ModelBasicField[] = [
 	{ key: "model_name", label: "Model Name", kind: "suggestion", source: "model_name" },
@@ -169,19 +192,41 @@ export const basicModelFields: readonly ModelBasicField[] = [
 	},
 	{
 		key: "input_cost",
-		placeholder: "Enter input cost",
+		placeholder: "Auto from upstream",
 		label: "Input Cost (per 1M tokens)",
 		editLabel: "Input Cost (USD / 1M tokens)",
 		kind: "number",
 		source: "input_cost_per_token",
+		hint: "input_cost_per_token",
+		tooltip: "Leave empty to use the upstream price; a positive value always wins. 0 is treated as unset.",
 	},
 	{
 		key: "output_cost",
-		placeholder: "Enter output cost",
+		placeholder: "Auto from upstream",
 		label: "Output Cost (per 1M tokens)",
 		editLabel: "Output Cost (USD / 1M tokens)",
 		kind: "number",
 		source: "output_cost_per_token",
+		hint: "output_cost_per_token",
+		tooltip: "Leave empty to use the upstream price; a positive value always wins. 0 is treated as unset.",
+	},
+	{
+		key: "max_input_tokens",
+		placeholder: "Auto from upstream",
+		label: "Context Window (tokens)",
+		kind: "number",
+		source: "max_input_tokens",
+		hint: "max_input_tokens",
+		tooltip: "Leave empty to use the context window fetched from the upstream; a configured value always wins.",
+	},
+	{
+		key: "max_output_tokens",
+		placeholder: "Auto from upstream",
+		label: "Max Output Tokens",
+		kind: "number",
+		source: "max_output_tokens",
+		hint: "max_output_tokens",
+		tooltip: "Leave empty to use the output limit fetched from the upstream; requests above it are rejected.",
 	},
 	{ key: "api_base", placeholder: "Enter API base", label: "API Base", kind: "text", source: "api_base" },
 	{ key: "custom_llm_provider", label: "Custom LLM Provider", kind: "provider", source: "custom_llm_provider" },

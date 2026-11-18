@@ -15,7 +15,7 @@ const columns: readonly LogsColumn[] = [
 	{ id: "status", label: "Status", minWidth: 112, fixedWidth: 112 },
 	{ id: "session_id", label: "Session ID", minWidth: 112, fixedWidth: 112 },
 	{ id: "request_id", label: "Request ID", minWidth: 120, fixedWidth: 120 },
-	{ id: "spend", label: "Cost", minWidth: 94, sort: "spend" },
+	{ id: "spend", label: "Cost", minWidth: 118, sort: "spend" },
 	{ id: "request_duration_ms", label: "Duration (s)", minWidth: 112, sort: "request_duration_ms" },
 	{ id: "completionStartTime", label: "TTFT (s)", minWidth: 84 },
 	{ id: "team_name", label: "Team Name", minWidth: 105, optional: "team_name" },

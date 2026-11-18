@@ -118,6 +118,23 @@ describe("subscription model form behaviour", () => {
 		expect(prepareModelUpdate(draft, current).litellm_params.model).toBe("vendor/new-model");
 	});
 
+	it("does not persist form-default zero prices that would block upstream pricing", () => {
+		const zeroPriced: ProxyModel = {
+			model_name: "opencode/glm-5.3",
+			litellm_params: { model: "glm-5.3", custom_llm_provider: "opencode-go", input_cost_per_token: 0, output_cost_per_token: 0 },
+			model_info: { id: "deployment" },
+		};
+		// 0 不是「免费」而是「没定价」：回显为空，保存时删除键，让上游价接管。
+		const draft = createModelEditDraft(zeroPriced);
+		expect(draft.input_cost).toBeNull();
+		expect(draft.output_cost).toBeNull();
+		const patch = prepareModelUpdate(draft, zeroPriced).litellm_params;
+		expect(patch.input_cost_per_token).toBeNull();
+		expect(patch.output_cost_per_token).toBeNull();
+		draft.input_cost = 2.5;
+		expect(prepareModelUpdate(draft, zeroPriced).litellm_params.input_cost_per_token).toBeCloseTo(2.5e-6, 12);
+	});
+
 	it("offers subscription providers on create and edit and excludes retired options", () => {
 		const createOptions = providerSelectOptions(catalog, "provider", null);
 		expect(createOptions.map((option) => option.value)).not.toContain("CLIProxy");
