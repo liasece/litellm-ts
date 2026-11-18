@@ -26,6 +26,10 @@ import { SubscriptionAccountStore, defaultSubscriptionAuthDir } from "./subscrip
 import { SubscriptionRuntimeManager } from "./subscriptions/native/SubscriptionRuntimeManager";
 import { createSubscriptionProviderLookup } from "./subscriptions/native/providers/index";
 import { ProviderQuotaService } from "./providerusage/ProviderQuotaService";
+import { UpstreamModelMetaRepository } from "./subscriptions/native/upstream/repository";
+import { UpstreamModelInfoService } from "./subscriptions/native/upstream/service";
+import { upstreamSourceAdapters } from "./subscriptions/native/upstream/registry";
+import { registerUpstreamModelInfoService } from "./subscriptions/native/upstream/runtime";
 import { isCliProxyDeploymentParams } from "./cliproxy/CliProxyTypes";
 import { parseSessionDuration } from "./proxy/LoginEndpoints";
 import { DEFAULT_WEBUI_SESSION_DURATION, WEBUI_SESSION_DURATION_ENV_VAR } from "./types/webUiSession";
@@ -140,6 +144,13 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 		providers: createSubscriptionProviderLookup({ accounts: subscriptionAccounts }),
 	});
 	const providerRegistry = new ProviderRegistry();
+	// 上游模型元信息的持久弱缓存：启动后异步刷新，查询只读内存，刷新失败只影响提示信息。
+	const upstreamModelInfoService = new UpstreamModelInfoService({
+		repository: new UpstreamModelMetaRepository(db.db),
+		accounts: subscriptionAccounts,
+		adapters: upstreamSourceAdapters,
+	});
+	registerUpstreamModelInfoService(upstreamModelInfoService);
 
 	// 2.1 Credential 必须先于 Router 和模型初始化，确保首次 Provider 请求即可解析命名凭据。
 	const credentialRepository = new CredentialRepository(db.db);
@@ -187,6 +198,7 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 				},
 			},
 			{ name: "subscription_runtime", run: () => cliProxyRuntime.initialize() },
+			{ name: "upstream_model_info", run: () => upstreamModelInfoService.initialize() },
 			{ name: "cost_tracking_config", run: () => costTrackingConfigService.refresh(true) },
 		]));
 

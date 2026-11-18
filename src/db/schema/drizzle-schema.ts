@@ -40,3 +40,6 @@ export { liteLLM_DeprecatedVerificationToken } from "./deprecated-tokens";
 export { liteLLM_BuiltinCapabilityImages } from "./builtinCapabilityImages";
 export { liteLLM_SpendLogBlocks } from "./spendLogBlocks";
 export { liteLLM_PrivacyRedactionEvents, liteLLM_PrivacyRedactionValues } from "./privacyRedaction";
+
+// ─── Subscription upstream model metadata ───────────────────────────
+export { LiteLLM_UpstreamModelMeta } from "./upstreamModelMeta";
