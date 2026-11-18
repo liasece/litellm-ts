@@ -458,6 +458,11 @@
 	line-height: 1.55;
 	overflow-wrap: anywhere;
 }
+.ld-upstream-errors__detail {
+	margin-top: 2px;
+	color: #94a3b8;
+	font-size: 11px;
+}
 .ld-upstream-errors__url {
 	margin-top: 2px;
 	color: #94a3b8;

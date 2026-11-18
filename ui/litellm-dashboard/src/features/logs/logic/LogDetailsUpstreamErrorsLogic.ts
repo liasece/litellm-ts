@@ -14,6 +14,13 @@ export interface UpstreamErrorView {
 	readonly message: string;
 	/** 发出该请求的上游地址，未知时为 null */
 	readonly url: string | null;
+	/** 补充说明（冷却原因条目用它标注冷却时长与起点） */
+	readonly detail?: string;
+	/**
+	 * 条目来源：`upstream` 表示本次请求与上游的交换，`cooldown` 表示更早的、把部署
+	 * 打入冷却的那次上游错误。冷却短路请求没有自己的上游错误，只能展示这条线索。
+	 */
+	readonly kind?: "upstream" | "cooldown";
 }
 
 function text(value: unknown): string | undefined {
@@ -78,6 +85,38 @@ function fromRoutingTrace(log: LogEntry): UpstreamErrorView[] {
 }
 
 /**
+ * 冷却短路时随失败日志落下的诊断：是谁、因为什么错误、被冷却了多久。
+ *
+ * 这类请求在预检阶段就被拦下，没有自己的上游交换；日志里只留 router 的
+ * "No deployments available" 会让人无从判断原因，所以把上游状态码与原文一并列出。
+ * @param metadata - 日志 metadata
+ */
+function fromCooldownContext(metadata: Record<string, unknown>): UpstreamErrorView[] {
+	const info = asRecord(metadata["error_information"]);
+	const raw = info?.["cooldown_context"];
+	if (!Array.isArray(raw)) return [];
+	const views: UpstreamErrorView[] = [];
+	for (const item of raw) {
+		const entry = asRecord(item);
+		const message = text(entry?.["error_message"]);
+		if (!entry || !message) continue;
+		const seconds = typeof entry["cooldown_seconds"] === "number" ? entry["cooldown_seconds"] : 0;
+		const startedAt = text(entry["started_at"]);
+		const detail = [seconds > 0 ? `${seconds}s cooldown` : "", startedAt ? `started ${startedAt}` : ""].filter(Boolean).join(" · ");
+		views.push({
+			label: "Cooldown cause",
+			type: "cooldown",
+			code: errorCode(entry["status_code"]),
+			message: message,
+			url: null,
+			...(detail ? { detail } : {}),
+			kind: "cooldown",
+		});
+	}
+	return views;
+}
+
+/**
  * 收集一次请求里全部上游错误，按发生顺序去重，供日志详情在最终显示的错误下方逐条列出。
  *
  * 新日志以后端累积的 `metadata.upstream_errors` 为准：它不受「记录上游详情」开关影响，
@@ -110,8 +149,9 @@ export function upstreamErrorViews(log: LogEntry): UpstreamErrorView[] {
 		collected.push(...fromRoutingTrace(log));
 	}
 
+	// 冷却原因优先展示：它是解释最终 429 的唯一线索。
 	const seen = new Set<string>();
-	return collected.filter((error) => {
+	return [...fromCooldownContext(metadata), ...collected].filter((error) => {
 		if (displayed !== undefined && error.message === displayed) return false;
 		const key = `${error.type}|${error.code}|${error.message}`;
 		if (seen.has(key)) return false;

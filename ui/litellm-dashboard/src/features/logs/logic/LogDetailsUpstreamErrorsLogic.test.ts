@@ -7,6 +7,38 @@ function logWith(overrides: Partial<LogEntry>): LogEntry {
 }
 
 describe("upstreamErrorViews", () => {
+	test("冷却短路时把触发冷却的上游错误排在最前，并标注冷却时长与起点", () => {
+		const log = logWith({
+			metadata: {
+				status: "failure",
+				error_information: {
+					error_message: "No deployments available for selected model, Try again in 5 seconds.",
+					cooldown_context: [
+						{
+							deployment_id: "e66fa119-bd69-450c-9e30-ea41e1996aef",
+							status_code: 429,
+							error_message: "model quota exhausted",
+							cooldown_seconds: 5,
+							started_at: "2026-11-18T02:51:07.000Z",
+						},
+					],
+				},
+			},
+		});
+
+		expect(upstreamErrorViews(log)).toEqual([
+			{
+				label: "Cooldown cause",
+				type: "cooldown",
+				code: "429",
+				message: "model quota exhausted",
+				url: null,
+				detail: "5s cooldown · started 2026-11-18T02:51:07.000Z",
+				kind: "cooldown",
+			},
+		]);
+	});
+
 	test("按后端记录顺序列出全部上游错误，并带上地址与状态码", () => {
 		const log = logWith({
 			metadata: {
