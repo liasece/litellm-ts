@@ -23,6 +23,14 @@ describe("model icons", () => {
 		expect(result.supplier?.logo.endsWith("/" + badge)).toBe(true);
 	});
 
+	it("gives alias names that are plain Anthropic tiers the Claude icon", () => {
+		// 别名表里会出现 opus / haiku / sonnet 这类纯档位名，图标应与 claude-* 部署一致。
+		for (const alias of ["opus", "haiku", "sonnet", "opus-4-6", "haiku35"]) {
+			expect(getModelIconIdentity(alias, null).family?.displayName).toBe("Claude");
+			expect(getModelIconIdentity(alias, null).family?.logo.endsWith("/claude.svg")).toBe(true);
+		}
+	});
+
 	it("uses a configured base model for an opaque deployment and gives anonymous or mixed sources no badge", () => {
 		expect(getModelIconIdentity("production-west", "azure", "gpt-4o").family?.displayName).toBe("OpenAI");
 		expect(getModelIconIdentity("hunyuan-deploy", "tencent", "Hunyuan-A13B").family?.displayName).toBe("Hunyuan");

@@ -5,38 +5,28 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiTag from "../../platform/ui/UiTag.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
-import UiInput from "../../platform/ui/UiInput.vue";
-import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
-import UiEntryCard from "../../platform/ui/UiEntryCard.vue";
-import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
-import UiSectionCard from "../../platform/ui/UiSectionCard.vue";
-import UiSwitchRow from "../../platform/ui/UiSwitchRow.vue";
+import ModelAliasEditorForm from "./ModelAliasEditorFormComponent.vue";
+import { familyOfModel, groupByModelFamily } from "../../providers/logic/ModelFamilyGrouping";
+import ModelFamilyLabel from "../../providers/ui/ModelFamilyLabelComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { modelsApi } from "../api/ModelsApi";
 import { modelRecord, type ModelCatalog } from "../support/ModelModels";
 import { objectAlias, resolveAliasPath } from "../logic/AliasResolutionLogic";
+import { aliasDraft, aliasDraftError, aliasDraftTargets, mergeAliasDraft, type ModelAliasDraft } from "../logic/ModelAliasDraftLogic";
 import {
 	getModelGroupAliasRecurse,
 	validateModelGroupAliases,
 	type ModelGroupAliases,
 	type ModelGroupAliasValue,
-	type ModelGroupAliasWindow,
 } from "../logic/ModelGroupAliasLogic";
 import notification from "../../notifications/logic/NotificationManager";
 const props = defineProps<{ catalog: ModelCatalog }>();
-interface Draft {
+interface Draft extends ModelAliasDraft {
 	originalName: string | null;
 	originalValue?: ModelGroupAliasValue;
-	name: string;
-	/** Ordered targets: the first is dispatched, the rest are tried after it fails. */
-	targets: string[];
-	/** Whether a failed target may continue along its own fallback entry. */
-	recurse: boolean;
-	timezone: string;
-	schedule: ModelGroupAliasWindow[];
 }
 interface Health {
 	status: "none" | "checking" | "healthy" | "unhealthy";
@@ -54,6 +44,13 @@ const aliases = ref<ModelGroupAliases>(modelRecord(props.catalog.router.model_gr
 let disposed = false,
 	timer: ReturnType<typeof setTimeout> | undefined;
 const names = computed(() => new Set(modelOptions.value.filter((option) => option.type === "model").map((option) => option.model_name)));
+/** 别名按品牌家族成组排布：认不出品牌的（自起名、裸名）排在最前，其余按家族名排序。 */
+const aliasGroups = computed(() =>
+	groupByModelFamily(
+		Object.entries(aliases.value).map(([name, value]) => ({ name, value })),
+		(entry) => familyOfModel(entry.name),
+	),
+);
 const resolutions = computed(() =>
 	Object.fromEntries(Object.keys(aliases.value).map((name) => [name, resolveAliasPath(name, aliases.value, names.value, now.value)])),
 );
@@ -82,58 +79,18 @@ function checked(name: string): Health {
 		? { status: "none" }
 		: value;
 }
-function draftTargets(value: ModelGroupAliasValue | undefined): string[] {
-	if (value === undefined) return [""];
-	if (typeof value === "string") return [value];
-	if (Array.isArray(value)) return value.length ? [...value] : [""];
-	const declared = value.targets ?? (value.model === undefined ? [] : [value.model]);
-	return declared.length ? [...declared] : [""];
-}
 /** Declared targets in dispatch order, with blank editor rows removed. */
 function aliasTargets(value: ModelGroupAliasValue | undefined): string[] {
-	return draftTargets(value).filter((target) => target.trim().length > 0);
+	return aliasDraftTargets(value).filter((target) => target.trim().length > 0);
 }
 function open(name?: string) {
-	const value = name === undefined ? undefined : aliases.value[name],
-		config = objectAlias(value);
+	const value = name === undefined ? undefined : aliases.value[name];
 	formError.value = "";
-	editor.value = {
-		originalName: name ?? null,
-		originalValue: value,
-		name: name ?? "",
-		targets: draftTargets(value),
-		recurse: getModelGroupAliasRecurse(value),
-		timezone: config?.timezone ?? "Asia/Shanghai",
-		schedule: config?.schedule?.map((window) => ({ ...window })) ?? [],
-	};
+	editor.value = { ...aliasDraft(name ?? "", value), originalName: name ?? null, originalValue: value };
 }
-/**
- * Rebuild the stored value from the editor draft.
- *
- * 单项且未关闭递归的别名仍写成字符串，保持已有配置的形态；其余情况写对象，
- * 因为旧形态既表达不了多个同级目标，也表达不了 recurse。
- */
-function payload(draft: Draft): ModelGroupAliasValue {
-	const values = draft.targets.map((target) => target.trim()).filter(Boolean);
-	const rest: Record<string, unknown> = { ...objectAlias(draft.originalValue) };
-	delete rest["model"];
-	delete rest["targets"];
-	delete rest["schedule"];
-	delete rest["timezone"];
-	if (draft.recurse) delete rest["recurse"];
-	else rest["recurse"] = false;
-	if (draft.schedule.length) {
-		return {
-			...rest,
-			targets: values,
-			timezone: draft.timezone.trim(),
-			schedule: draft.schedule.map((window) => ({ ...window, model: window.model.trim() })),
-		} as ModelGroupAliasValue;
-	}
-	if (values.length === 1 && Object.keys(rest).length === 0) {
-		return values[0]!;
-	}
-	return { ...rest, targets: values } as ModelGroupAliasValue;
+/** 表单只认识草稿字段，编辑时保名的原始名字和值留在这层。 */
+function updateDraft(next: ModelAliasDraft) {
+	if (editor.value) editor.value = { ...editor.value, ...next };
 }
 async function save(updated: ModelGroupAliases) {
 	saving.value = true;
@@ -156,20 +113,12 @@ async function save(updated: ModelGroupAliases) {
 async function saveEditor() {
 	const draft = editor.value;
 	if (!draft) return;
-	const name = draft.name.trim();
-	if (!name || !draft.targets.some((target) => target.trim())) {
-		formError.value = "Alias name and at least one target are required";
+	const blocking = aliasDraftError(draft, aliases.value, draft.originalName);
+	if (blocking) {
+		formError.value = blocking;
 		return;
 	}
-	if (name !== draft.originalName && Object.prototype.hasOwnProperty.call(aliases.value, name)) {
-		formError.value = "An alias with this name already exists";
-		return;
-	}
-	const updated = Object.fromEntries([
-		...Object.entries(aliases.value).filter(([key]) => key !== draft.originalName),
-		[name, payload(draft)],
-	]);
-	if (await save(updated)) {
+	if (await save(mergeAliasDraft(aliases.value, draft, draft.originalName))) {
 		editor.value = null;
 		notification.success(draft.originalName === null ? "Alias added" : "Alias updated");
 	}
@@ -280,139 +229,150 @@ onBeforeUnmount(() => {
 					</tr>
 				</thead>
 				<tbody>
-					<tr v-for="(value, name) in aliases" :key="name" :class="{ 'model-alias-unreachable': !resolutions[name].reachable }">
-						<td>
-							<div class="model-inline">
-								<ModelName :model="String(name)" :size="16" variant="strong" /><button
-									class="model-icon-button"
-									:aria-label="'Copy alias ' + name"
-									@click="copy(name)"
-								>
-									<UiIcon name="CopyOutlined" />
-								</button>
-							</div>
-						</td>
-						<td>
-							<div v-if="objectAlias(value)?.schedule?.length" class="model-alias-schedule-summary">
-								<p>
-									Default:
-									<ModelName
-										v-for="(target, index) in aliasTargets(value)"
-										:key="index"
-										class="model-alias-target"
-										:model="target"
-										:size="14"
-										variant="code"
-										><code>{{ (index ? " → " : "") + target }}</code></ModelName
-									>
-								</p>
-								<strong>Daily · {{ objectAlias(value)?.timezone }}</strong>
-								<p v-for="(window, index) in objectAlias(value)?.schedule" :key="index">
-									<ModelName class="model-alias-target" :model="window.model" :size="14"
-										><code
-											>{{ window.start }}–{{ window.end }}{{ window.end < window.start ? " (+1 day)" : "" }} →
-											{{ window.model }}</code
-										></ModelName
-									>
-								</p>
-							</div>
-							<div class="model-alias-resolution">
-								<span
-									v-if="resolutions[name].path.some((node) => objectAlias(aliases[node])?.schedule?.length)"
-									class="model-muted"
-									>Now:</span
-								><template v-for="(node, index) in resolutions[name].path.slice(1)" :key="index"
-									><span v-if="index">→</span
-									><ModelName class="model-alias-target" :model="node" :size="14"
-										><code
-											:class="
-												index < resolutions[name].path.length - 2
-													? 'model-alias-chain'
-													: resolutions[name].reachable
-														? ''
-														: 'model-error'
-											"
-											>{{ node }}</code
-										></ModelName
-									></template
-								>
-							</div>
-							<div v-if="aliasTargets(value).length > 1 || !getModelGroupAliasRecurse(value)" class="model-alias-then">
-								<template v-if="aliasTargets(value).length > 1">
-									<span class="model-alias-then-label">then</span>
-									<span
-										v-for="(target, index) in aliasTargets(value).slice(1)"
-										:key="index"
-										class="model-alias-then-item"
-									>
-										<span class="model-alias-then-index" aria-hidden="true">{{ index + 2 }}</span>
-										<ModelName class="model-alias-target" :model="target" :size="14"
-											><code>{{ target }}</code></ModelName
-										>
-									</span>
-								</template>
-								<UiTooltip
-									v-if="!getModelGroupAliasRecurse(value)"
-									title="A failed target stops here: its own fallback chain is not used."
-								>
-									<span class="model-alias-final"><UiHeroIcon name="BanIcon" :size="12" />No recursion</span>
-								</UiTooltip>
-							</div>
-							<p v-if="resolutions[name].error" class="model-error model-small">{{ resolutions[name].error }}</p>
-						</td>
-						<td>
-							<UiTooltip :title="checked(name).error ?? 'Checks the target selected at the time of the request'"
-								><div class="model-inline">
-									<UiTag
-										appearance="tremor"
-										size="xs"
-										:color="
-											checked(name).status === 'healthy'
-												? 'emerald'
-												: checked(name).status === 'unhealthy'
-													? 'red'
-													: checked(name).status === 'checking'
-														? 'blue'
-														: 'gray'
-										"
-										>{{ checked(name).status === "none" ? "not checked" : checked(name).status }}</UiTag
-									><UiIcon
-										v-if="checked(name).status === 'healthy' || checked(name).status === 'unhealthy'"
-										:name="checked(name).status === 'healthy' ? 'CheckCircleOutlined' : 'CloseCircleOutlined'"
-										:class="checked(name).status === 'healthy' ? 'model-success' : 'model-error'"
-									/><button
+					<template v-for="group in aliasGroups" :key="group.key">
+						<tr class="model-family-band">
+							<th colspan="4" scope="colgroup">
+								<ModelFamilyLabel :family="group.family" :count="group.items.length" />
+							</th>
+						</tr>
+						<tr
+							v-for="{ name, value } in group.items"
+							:key="name"
+							:class="{ 'model-alias-unreachable': !resolutions[name].reachable }"
+						>
+							<td>
+								<div class="model-inline">
+									<ModelName :model="String(name)" :size="16" variant="strong" /><button
 										class="model-icon-button"
-										:disabled="checked(name).status === 'checking' || saving"
-										:aria-label="'Check health for ' + name"
-										@click="run(name)"
+										:aria-label="'Copy alias ' + name"
+										@click="copy(name)"
 									>
-										<UiIcon :name="checked(name).status === 'checking' ? 'LoadingOutlined' : 'ReloadOutlined'" />
-									</button></div
-							></UiTooltip>
-						</td>
-						<td>
-							<div class="model-alias-actions">
-								<UiButton
-									appearance="tremor"
-									variant="text"
-									size="small"
-									:disabled="saving"
-									:aria-label="'Edit alias ' + name"
-									@click="open(name)"
-									><template #icon><UiIcon name="EditOutlined" /></template></UiButton
-								><UiButton
-									appearance="tremor"
-									variant="text"
-									size="small"
-									danger
-									:disabled="saving"
-									:aria-label="'Delete alias ' + name"
-									@click="remove(name)"
-									><template #icon><UiHeroIcon name="TrashIcon" /></template
-								></UiButton>
-							</div>
-						</td>
-					</tr>
+										<UiIcon name="CopyOutlined" />
+									</button>
+								</div>
+							</td>
+							<td>
+								<div v-if="objectAlias(value)?.schedule?.length" class="model-alias-schedule-summary">
+									<p>
+										Default:
+										<ModelName
+											v-for="(target, index) in aliasTargets(value)"
+											:key="index"
+											class="model-alias-target"
+											:model="target"
+											:size="14"
+											variant="code"
+											><code>{{ (index ? " → " : "") + target }}</code></ModelName
+										>
+									</p>
+									<strong>Daily · {{ objectAlias(value)?.timezone }}</strong>
+									<p v-for="(window, index) in objectAlias(value)?.schedule" :key="index">
+										<ModelName class="model-alias-target" :model="window.model" :size="14"
+											><code
+												>{{ window.start }}–{{ window.end }}{{ window.end < window.start ? " (+1 day)" : "" }} →
+												{{ window.model }}</code
+											></ModelName
+										>
+									</p>
+								</div>
+								<div class="model-alias-resolution">
+									<span
+										v-if="resolutions[name].path.some((node) => objectAlias(aliases[node])?.schedule?.length)"
+										class="model-muted"
+										>Now:</span
+									><template v-for="(node, index) in resolutions[name].path.slice(1)" :key="index"
+										><span v-if="index">→</span
+										><ModelName class="model-alias-target" :model="node" :size="14"
+											><code
+												:class="
+													index < resolutions[name].path.length - 2
+														? 'model-alias-chain'
+														: resolutions[name].reachable
+															? ''
+															: 'model-error'
+												"
+												>{{ node }}</code
+											></ModelName
+										></template
+									>
+								</div>
+								<div v-if="aliasTargets(value).length > 1 || !getModelGroupAliasRecurse(value)" class="model-alias-then">
+									<template v-if="aliasTargets(value).length > 1">
+										<span class="model-alias-then-label">then</span>
+										<span
+											v-for="(target, index) in aliasTargets(value).slice(1)"
+											:key="index"
+											class="model-alias-then-item"
+										>
+											<span class="model-alias-then-index" aria-hidden="true">{{ index + 2 }}</span>
+											<ModelName class="model-alias-target" :model="target" :size="14"
+												><code>{{ target }}</code></ModelName
+											>
+										</span>
+									</template>
+									<UiTooltip
+										v-if="!getModelGroupAliasRecurse(value)"
+										title="A failed target stops here: its own fallback chain is not used."
+									>
+										<span class="model-alias-final"><UiHeroIcon name="BanIcon" :size="12" />No recursion</span>
+									</UiTooltip>
+								</div>
+								<p v-if="resolutions[name].error" class="model-error model-small">{{ resolutions[name].error }}</p>
+							</td>
+							<td>
+								<UiTooltip :title="checked(name).error ?? 'Checks the target selected at the time of the request'"
+									><div class="model-inline">
+										<UiTag
+											appearance="tremor"
+											size="xs"
+											:color="
+												checked(name).status === 'healthy'
+													? 'emerald'
+													: checked(name).status === 'unhealthy'
+														? 'red'
+														: checked(name).status === 'checking'
+															? 'blue'
+															: 'gray'
+											"
+											>{{ checked(name).status === "none" ? "not checked" : checked(name).status }}</UiTag
+										><UiIcon
+											v-if="checked(name).status === 'healthy' || checked(name).status === 'unhealthy'"
+											:name="checked(name).status === 'healthy' ? 'CheckCircleOutlined' : 'CloseCircleOutlined'"
+											:class="checked(name).status === 'healthy' ? 'model-success' : 'model-error'"
+										/><button
+											class="model-icon-button"
+											:disabled="checked(name).status === 'checking' || saving"
+											:aria-label="'Check health for ' + name"
+											@click="run(name)"
+										>
+											<UiIcon :name="checked(name).status === 'checking' ? 'LoadingOutlined' : 'ReloadOutlined'" />
+										</button></div
+								></UiTooltip>
+							</td>
+							<td>
+								<div class="model-alias-actions">
+									<UiButton
+										appearance="tremor"
+										variant="text"
+										size="small"
+										:disabled="saving"
+										:aria-label="'Edit alias ' + name"
+										@click="open(name)"
+										><template #icon><UiIcon name="EditOutlined" /></template></UiButton
+									><UiButton
+										appearance="tremor"
+										variant="text"
+										size="small"
+										danger
+										:disabled="saving"
+										:aria-label="'Delete alias ' + name"
+										@click="remove(name)"
+										><template #icon><UiHeroIcon name="TrashIcon" /></template
+									></UiButton>
+								</div>
+							</td>
+						</tr>
+					</template>
 					<tr v-if="!Object.keys(aliases).length">
 						<td colspan="4" class="model-table-empty">No aliases configured</td>
 					</tr>
@@ -426,109 +386,7 @@ onBeforeUnmount(() => {
 			scroll-mode="overlay"
 			@update:open="!$event && !saving && (editor = null)"
 			><div v-if="editor" class="model-alias-editor">
-				<label class="model-alias-name">Alias name<UiInput id="alias-name" v-model="editor.name" :disabled="saving" /></label>
-				<UiSectionCard
-					title="Targets"
-					description="Tried top to bottom. The first target serves normally; the rest take over only when the one above it fails."
-				>
-					<template #actions>
-						<UiButton appearance="tremor" size="small" :disabled="saving" @click="editor.targets.push('')"
-							><template #icon><UiIcon name="PlusOutlined" /></template>Add target</UiButton
-						>
-					</template>
-					<UiEntryCard v-for="(target, index) in editor.targets" :key="index" :index="index + 1" :primary="index === 0">
-						<template #title>{{ index === 0 ? "Primary target" : "Fallback target" }}</template>
-						<UiSelect
-							:id="'alias-target-model-' + index"
-							:model-value="target || null"
-							@update:model-value="editor.targets[index] = typeof $event === 'string' ? $event : ''"
-							:options="targetOptions.filter((option) => option.value !== editor?.name.trim())"
-							searchable
-							:aria-label="index === 0 ? 'Primary target' : 'Fallback target ' + index"
-							placeholder="Select a model or alias"
-							:disabled="saving"
-						/>
-						<template #actions>
-							<UiEntryRemove
-								:label="'Remove target ' + (index + 1)"
-								:disabled="saving || editor.targets.length === 1"
-								@click="editor.targets.splice(index, 1)"
-							/>
-						</template>
-					</UiEntryCard>
-					<template #footer>
-						<UiSwitchRow
-							v-model="editor.recurse"
-							:disabled="saving"
-							label="Allow the target's own fallbacks"
-							description="Off keeps these targets as the final answer, so an unavailable model cannot drift to a different provider."
-						/>
-					</template>
-				</UiSectionCard>
-				<UiSectionCard
-					title="Daily time windows"
-					description="Start is included; end is excluded. An earlier end time continues into the next day. Windows cannot overlap."
-				>
-					<template #actions>
-						<UiButton
-							appearance="tremor"
-							size="small"
-							:disabled="saving"
-							@click="editor.schedule.push({ start: '', end: '', model: '' })"
-							><template #icon><UiIcon name="PlusOutlined" /></template>Add time window</UiButton
-						>
-					</template>
-					<label v-if="editor.schedule.length" class="model-alias-timezone"
-						>Time zone<UiInput id="alias-timezone" v-model="editor.timezone" :disabled="saving" placeholder="Asia/Shanghai"
-					/></label>
-					<UiEntryCard v-for="(window, index) in editor.schedule" :key="index" :index="index + 1">
-						<template #title
-							><span>Window {{ index + 1 }}</span
-							><span v-if="window.start && window.end" class="model-alias-window-range"
-								>{{ window.start }} → {{ window.end }}</span
-							></template
-						>
-						<template #actions>
-							<UiEntryRemove
-								:label="'Remove time window ' + (index + 1)"
-								:disabled="saving"
-								@click="editor.schedule.splice(index, 1)"
-							/>
-						</template>
-						<div class="model-alias-window-fields">
-							<label
-								>Start<UiInput
-									:id="'alias-start-' + index"
-									v-model="window.start"
-									type="time"
-									:step="60"
-									:aria-label="'Start time ' + (index + 1)"
-									:disabled="saving" /></label
-							><label
-								>End<UiInput
-									:id="'alias-end-' + index"
-									v-model="window.end"
-									type="time"
-									:step="60"
-									:aria-label="'End time ' + (index + 1)"
-									:disabled="saving" /></label
-							><label class="model-alias-window-target"
-								>Target<UiSelect
-									:id="'alias-target-' + index"
-									:model-value="window.model || null"
-									@update:model-value="window.model = typeof $event === 'string' ? $event : ''"
-									:options="targetOptions.filter((option) => option.value !== editor?.name.trim())"
-									searchable
-									:aria-label="'Time window target ' + (index + 1)"
-									placeholder="Select a model or alias"
-									:disabled="saving"
-							/></label>
-						</div>
-					</UiEntryCard>
-					<p v-if="!editor.schedule.length" class="model-alias-empty-note">
-						No time windows yet — the primary target serves all day.
-					</p>
-				</UiSectionCard>
+				<ModelAliasEditorForm :draft="editor" :target-options="targetOptions" :disabled="saving" @update:draft="updateDraft" />
 				<p v-if="formError" role="alert" class="model-error">{{ formError }}</p>
 			</div>
 			<template #footer>

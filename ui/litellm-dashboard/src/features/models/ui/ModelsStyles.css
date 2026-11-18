@@ -141,6 +141,16 @@
 	text-decoration: underline;
 	color: #1e40af;
 }
+/* 订阅部署的凭据列显示 Provider 品牌：图标与文字同基线，hover 整行可点。 */
+.model-subscription-credential {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	text-decoration: none;
+}
+.model-subscription-credential:hover {
+	text-decoration: underline;
+}
 .model-icon-button {
 	display: inline-flex;
 	align-items: center;
@@ -158,6 +168,10 @@
 .model-icon-button:disabled {
 	cursor: not-allowed;
 	opacity: 0.5;
+}
+/* 转换是「删模型 + 建别名」的入口，和铅笔那样的纯编辑图标区分开。 */
+.model-convert-button {
+	color: #6366f1;
 }
 .model-provider-logo {
 	display: inline-block;
@@ -180,6 +194,24 @@
 	padding: 14px 16px;
 	white-space: nowrap;
 	text-align: left;
+}
+/* 品牌分组带：模型表和别名表都靠它把同家族的条目隔成一段。 */
+.ui-table tbody tr.model-family-band > th,
+.model-simple-table tbody tr.model-family-band > th {
+	padding: 8px 16px;
+	background: #f8fafc;
+	border-top: 1px solid #e5e7eb;
+	font-weight: 600;
+	text-align: left;
+	white-space: nowrap;
+}
+.ui-table tbody tr.model-family-band:first-child > th,
+.model-simple-table tbody tr.model-family-band:first-child > th {
+	border-top: 0;
+}
+.model-card-family {
+	padding: 10px 4px 2px;
+	list-style: none;
 }
 .model-simple-table td {
 	padding: 16px;

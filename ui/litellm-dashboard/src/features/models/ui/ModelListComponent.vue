@@ -12,18 +12,30 @@ import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import ModelListCards from "./ModelListCardsComponent.vue";
 import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
+import ModelFamilyLabel from "../../providers/ui/ModelFamilyLabelComponent.vue";
+import ModelCredentialCell from "./ModelCredentialCellComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
+import { familyOfModel, groupByModelFamily, type ModelFamilyGroup } from "../../providers/logic/ModelFamilyGrouping";
 import { modelString, modelStrings, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
 import type { UiTableColumn, UiTableRow, UiTableSort } from "../../platform/ui/UiTypes";
 import type { ModelsStore } from "../stores/ModelsStore";
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
-const props = defineProps<{ store: ModelsStore; catalog: ModelCatalog; health: ModelHealthStore; admin: boolean; userId: string }>();
+const props = defineProps<{
+	store: ModelsStore;
+	catalog: ModelCatalog;
+	health: ModelHealthStore;
+	admin: boolean;
+	userId: string;
+	/** 订阅账号页的 `/ui` 前缀；订阅部署的 Credentials 列链到对应 Provider 的账号。 */
+	subscriptionsBase?: string;
+}>();
 const emit = defineEmits<{
 	select: [id: string];
 	fallback: [model: DisplayProxyModel];
 	override: [model: DisplayProxyModel];
+	convert: [model: DisplayProxyModel];
 	delete: [model: DisplayProxyModel];
 	settings: [];
 	credential: [name: string];
@@ -32,6 +44,13 @@ const emit = defineEmits<{
 }>();
 const price = usePriceDisplayStore(),
 	rows = props.store.displayed(props.catalog);
+/**
+ * 转换会把这条模型换成别名，先写别名再删部署，所以既要有可删的库内部署，
+ * 也要有写路由配置的权限；配置模型（db_model 为 false）只能回配置文件处理。
+ */
+function convertible(model: DisplayProxyModel): boolean {
+	return props.admin && model.model_info.db_model !== false && Boolean(modelString(model.model_info.override_model_name));
+}
 interface ModelColumn {
 	key: string;
 	label: string;
@@ -50,7 +69,8 @@ const columns: readonly ModelColumn[] = [
 		key: "credentials",
 		label: "Credentials",
 		width: 180,
-		tooltip: "Reusable: A saved credential is attached to this model. Manual: Credentials are configured directly on the model.",
+		tooltip:
+			"Reusable: A saved credential is attached to this model. Subscription: the provider account is managed on the Subscriptions page. Manual: Credentials are configured directly on the model.",
 	},
 	{ key: "health", label: "Health Status", width: 120 },
 	{ key: "input_cost", label: "Costs", width: 120, sortable: true },
@@ -115,7 +135,24 @@ const tableColumns = computed<readonly UiTableColumn[]>(() =>
 	})),
 );
 const sortKey = computed(() => (props.store.state.sortBy === "costs" ? "input_cost" : props.store.state.sortBy));
-const tableRows = computed<readonly UiTableRow[]>(() => rows.value as unknown as readonly UiTableRow[]);
+/**
+ * 列表按品牌家族成组排布：未识别品牌的条目在最前，其余按家族名排序，组内保留服务端排序。
+ * 分页是服务端行为，所以分组范围是当前页。
+ */
+const familyGroups = computed<ModelFamilyGroup<DisplayProxyModel>[]>(() =>
+	groupByModelFamily(rows.value, (model) => {
+		const identity = deploymentIconProps(model);
+		return familyOfModel(identity.model, identity.baseModel);
+	}),
+);
+const familyByRowKey = computed(
+	() => new Map(familyGroups.value.map((group) => [String(group.items[0].model_info.id ?? group.items[0].model_name), group])),
+);
+function familyBand(row: UiTableRow): ModelFamilyGroup<DisplayProxyModel> | undefined {
+	return familyByRowKey.value.get(modelRowKey(row));
+}
+const orderedRows = computed<readonly DisplayProxyModel[]>(() => familyGroups.value.flatMap((group) => group.items));
+const tableRows = computed<readonly UiTableRow[]>(() => orderedRows.value as unknown as readonly UiTableRow[]);
 const activeFilters = computed<UiTableActiveFilter[]>(() => {
 	const entries: UiTableActiveFilter[] = [];
 	if (props.store.state.search)
@@ -182,10 +219,6 @@ function toggleExpanded(id: string) {
 }
 function fallbackNames(model: DisplayProxyModel) {
 	return modelStrings(model.model_info.fallbacks);
-}
-function linkCredential(name: unknown) {
-	const value = modelString(name);
-	if (value) emit("credential", value);
 }
 function select(model: DisplayProxyModel) {
 	const id = model.model_info.id;
@@ -337,6 +370,11 @@ async function all() {
 			@clear-filters="store.clearFilters"
 		>
 			<template #row="{ row }">
+				<tr v-if="familyBand(row)" class="model-family-band">
+					<th :colspan="tableColumns.length" scope="colgroup">
+						<ModelFamilyLabel :family="familyBand(row)?.family ?? null" :count="familyBand(row)?.items.length ?? 0" />
+					</th>
+				</tr>
 				<tr
 					v-for="model in [modelRow(row)]"
 					:key="model.model_info.id ?? model.model_name"
@@ -412,18 +450,23 @@ async function all() {
 								:aria-label="'Edit override for ' + model.model_name"
 								@click.stop="emit('override', model)"
 							>
-								<UiIcon name="EditOutlined" :size="12" />
-							</button>
+								<UiIcon name="EditOutlined" :size="12" /></button
+							><UiTooltip v-if="convertible(model)" title="Convert this model into an alias with the same target"
+								><button
+									class="model-icon-button model-convert-button"
+									:aria-label="'Convert ' + model.model_name + ' to an alias'"
+									@click.stop="emit('convert', model)"
+								>
+									<UiIcon name="SwapOutlined" :size="12" /></button
+							></UiTooltip>
 						</div>
 					</td>
 					<td>
-						<button
-							v-if="model.litellm_params.litellm_credential_name"
-							class="model-link model-inline"
-							@click.stop="linkCredential(model.litellm_params.litellm_credential_name)"
-						>
-							<UiIcon name="SyncOutlined" />{{ model.litellm_params.litellm_credential_name }}</button
-						><span v-else class="model-inline model-muted"><UiIcon name="EditOutlined" />Manual</span>
+						<ModelCredentialCell
+							:model="model"
+							:subscriptions-base="subscriptionsBase"
+							@credential="emit('credential', $event)"
+						/>
 					</td>
 					<td>
 						<ModelHealthBadge
@@ -486,13 +529,15 @@ async function all() {
 			<div v-else-if="!rows.length" class="model-cards-state">{{ store.state.error || "No models available" }}</div>
 			<ModelListCards
 				v-else
-				:rows="rows"
+				:groups="familyGroups"
 				:health="health"
 				:admin="admin"
 				:user-id="userId"
+				:subscriptions-base="subscriptionsBase"
 				@select="emit('select', $event)"
 				@fallback="emit('fallback', $event)"
 				@override="emit('override', $event)"
+				@convert="emit('convert', $event)"
 				@delete="emit('delete', $event)"
 				@credential="emit('credential', $event)"
 			/>

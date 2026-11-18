@@ -13,6 +13,7 @@ import ModelRetrySettings from "./ModelRetrySettingsComponent.vue";
 import ModelAliases from "./ModelAliasesComponent.vue";
 import ModelPriceData from "./ModelPriceDataComponent.vue";
 import ModelActionsDialog from "./ModelActionsDialogComponent.vue";
+import ModelAliasConvertDialog from "./ModelAliasConvertDialogComponent.vue";
 import ModelDetailsDrawer from "./ModelDetailsDrawerComponent.vue";
 import { emptyModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
 import { loadModelCatalog } from "../data/ModelCatalogData";
@@ -36,16 +37,18 @@ const ready = ref(false),
 	lastRefreshed = ref(""),
 	selected = ref<string | null>(null),
 	action = ref<"fallback" | "override" | "settings" | "delete" | null>(null),
-	actionModel = ref<DisplayProxyModel | null>(null);
+	actionModel = ref<DisplayProxyModel | null>(null),
+	convertModel = ref<DisplayProxyModel | null>(null);
 let disposed = false;
 const role = computed(() => auth.userRole.value),
 	userId = computed(() => auth.state.session?.user_id ?? ""),
 	premium = computed(() => Boolean(auth.state.session?.premium_user));
 const admin = computed(() => ["Admin", "Admin Viewer", "proxy_admin", "proxy_admin_viewer", "org_admin"].includes(role.value));
-const subscriptionsHref = computed(() => {
+const subscriptionsBase = computed(() => {
 	const root = getServerRootPath().replace(/\/+$/, "");
-	return subscriptionAccountsHref((root === "/" ? "" : root) + "/ui");
+	return (root === "/" ? "" : root) + "/ui";
 });
+const subscriptionsHref = computed(() => subscriptionAccountsHref(subscriptionsBase.value));
 const teamAdmin = computed(() =>
 	catalog.teams.some((team) => team.members_with_roles?.some((member) => member.user_id === userId.value && member.role === "admin")),
 );
@@ -97,6 +100,14 @@ function actions(mode: typeof action.value, model: DisplayProxyModel | null = nu
 async function refresh() {
 	lastRefreshed.value = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 	await store.load();
+}
+/**
+ * 转换已经把模型换成别名，列表要重取部署；别名表也同步成刚保存的整张表，
+ * 免得「Model Group Alias」标签页还显示转换前的旧内容。
+ */
+function converted(aliases: Record<string, unknown>) {
+	catalog.router = { ...catalog.router, model_group_alias: aliases };
+	void refresh();
 }
 async function credentials() {
 	catalog.credentials = await modelsApi.fetchCredentials();
@@ -166,9 +177,11 @@ onBeforeUnmount(() => {
 					:health="health"
 					:admin="role === 'Admin'"
 					:user-id="userId"
+					:subscriptions-base="subscriptionsBase"
 					@select="selected = $event"
 					@fallback="actions('fallback', $event)"
 					@override="actions('override', $event)"
+					@convert="convertModel = $event"
 					@delete="actions('delete', $event)"
 					@settings="actions('settings')"
 					@credential="credential"
@@ -202,6 +215,12 @@ onBeforeUnmount(() => {
 				:model-groups="modelGroups"
 				@close="action = null"
 				@changed="refresh"
+			/><ModelAliasConvertDialog
+				v-if="convertModel"
+				:open="true"
+				:model="convertModel"
+				@close="convertModel = null"
+				@converted="converted"
 			/><ModelDetailsDrawer
 				v-if="selected"
 				:model-id="selected"

@@ -4,8 +4,10 @@ import UiButton from "../../platform/ui/UiButton.vue";
 import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiSwitch from "../../platform/ui/UiSwitch.vue";
+import UiDragHandle from "../../platform/ui/UiDragHandle.vue";
 import UiEntryCard from "../../platform/ui/UiEntryCard.vue";
 import UiEntryRemove from "../../platform/ui/UiEntryRemove.vue";
+import UiSortableList from "../../platform/ui/UiSortableList.vue";
 import UiSectionCard from "../../platform/ui/UiSectionCard.vue";
 import UiSwitchRow from "../../platform/ui/UiSwitchRow.vue";
 import ModelField from "./ModelFormFieldComponent.vue";
@@ -227,7 +229,7 @@ async function remove() {
 				<UiSectionCard
 					v-else-if="mode === 'fallback'"
 					title="Fallback models"
-					description="Tried top to bottom after this model fails. Leave empty to remove the entry."
+					description="Tried top to bottom after this model fails. Drag a row, or use ↑/↓ on its handle, to change that order. Leave empty to remove the entry."
 				>
 					<UiSelect
 						:model-value="null"
@@ -238,12 +240,23 @@ async function remove() {
 						aria-label="Add fallback model"
 						@update:model-value="addFallback"
 					/>
-					<UiEntryCard v-for="(name, index) in selected" :key="name" :index="index + 1">
-						<template #title><ModelName :model="name" :size="16" variant="strong" /></template>
-						<template #actions>
-							<UiEntryRemove :label="'Remove fallback ' + name" @click="removeFallback(index)" />
+					<UiSortableList
+						:items="selected"
+						:item-key="(name) => name"
+						:label="(index, total) => 'fallback ' + (index + 1) + ' of ' + total"
+						:disabled="loadingFallbacks"
+						@update:items="selected = $event"
+					>
+						<template #item="{ item: name, index, itemProps, itemClass, handleProps }">
+							<UiEntryCard :index="index + 1" :class="itemClass" v-bind="itemProps">
+								<template #handle><UiDragHandle v-bind="handleProps" /></template>
+								<template #title><ModelName :model="name" :size="16" variant="strong" /></template>
+								<template #actions>
+									<UiEntryRemove :label="'Remove fallback ' + name" @click="removeFallback(index)" />
+								</template>
+							</UiEntryCard>
 						</template>
-					</UiEntryCard>
+					</UiSortableList>
 					<p v-if="!selected.length" class="model-routing-action__hint">No fallback models yet — add one above.</p>
 					<template #footer>
 						<UiSwitchRow
