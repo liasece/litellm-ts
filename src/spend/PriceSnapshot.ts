@@ -65,3 +65,23 @@ export function buildPriceSnapshot(
 		...(usedUpstream && catalog !== undefined ? { upstream: catalog } : {}),
 	};
 }
+
+/**
+ * 本请求实收的每 token 单价（基础价 × 峰时倍率），写 `LiteLLM_SpendLogs.unit_prices`。
+ *
+ * 与 `costPerToken` 用同一个乘数、同一组字段，避免日志读侧再按「当前」配置乘一遍——
+ * 配置改了之后，历史行必须仍然解释成当时实收的单价。基础价与来源留在 metadata 快照里，
+ * 用于展示「基础价 ×倍率」这条核对信息。
+ * @param snapshot - 本次请求的单价快照；没有计费快照时为 undefined
+ */
+export function chargedUnitPrices(snapshot: PriceSnapshotPayload | undefined): Record<string, number> | undefined {
+	if (snapshot === undefined) {
+		return undefined;
+	}
+	const factor = snapshot.peak?.multiplier ?? 1;
+	const charged: Record<string, number> = {};
+	for (const [field, perToken] of Object.entries(snapshot.unit_prices)) {
+		charged[field] = perToken * factor;
+	}
+	return charged;
+}

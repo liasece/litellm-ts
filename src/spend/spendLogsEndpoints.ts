@@ -831,6 +831,10 @@ function uiSpendLogSelection() {
 		// metadata.additional_usage_values / usage_object。
 		cache_read_input_tokens: liteLLM_SpendLogs.cache_read_input_tokens,
 		cache_creation_input_tokens: liteLLM_SpendLogs.cache_creation_input_tokens,
+		// 单价与峰谷档位是请求结束时冻结的账单事实（见 drizzle/0023）；列表直接读列，
+		// 费用气泡与详情不必为每行 detoast metadata.cost_breakdown。
+		unit_prices: liteLLM_SpendLogs.unit_prices,
+		peak_tier: liteLLM_SpendLogs.peak_tier,
 		startTime: liteLLM_SpendLogs.startTime,
 		endTime: liteLLM_SpendLogs.endTime,
 		completionStartTime: liteLLM_SpendLogs.completionStartTime,
@@ -1192,6 +1196,9 @@ function uiActiveRequestSelection() {
 		>`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) - 'streaming_execution' - 'responses_execution'`,
 		cache_hit: sql<string | null>`'False'`,
 		cache_key: sql<string | null>`NULL`,
+		// 进行中的请求尚未结算，没有可冻结的单价与档位。
+		unit_prices: sql<unknown | null>`NULL`,
+		peak_tier: sql<string | null>`NULL`,
 		request_tags: sql<unknown | null>`${liteLLM_ActiveRequests.request_tags}`,
 		team_id: liteLLM_ActiveRequests.team_id,
 		organization_id: liteLLM_ActiveRequests.organization_id,

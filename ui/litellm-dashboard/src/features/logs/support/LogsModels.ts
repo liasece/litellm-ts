@@ -19,6 +19,10 @@ export interface LogEntry {
 	completion_tokens?: number | null;
 	cache_read_input_tokens?: number | null;
 	cache_creation_input_tokens?: number | null;
+	/** 本行实收的每 token 单价（已含峰时倍率）；结算时冻结，历史行可能缺省。 */
+	unit_prices?: Record<string, number> | null;
+	/** 请求开始时命中的峰谷档位；部署未配置峰谷时为 null。 */
+	peak_tier?: string | null;
 	startTime: string;
 	endTime?: string | null;
 	user?: string | null;

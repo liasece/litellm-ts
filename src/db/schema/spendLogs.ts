@@ -19,6 +19,17 @@ export const liteLLM_SpendLogs = pgTable(
 		 */
 		cache_read_input_tokens: bigint("cache_read_input_tokens", { mode: "number" }).default(0).notNull(),
 		cache_creation_input_tokens: bigint("cache_creation_input_tokens", { mode: "number" }).default(0).notNull(),
+		/**
+		 * 本行实收的每 token 单价（已含峰时倍率），键与
+		 * `metadata.cost_breakdown.price_snapshot.unit_prices` 相同。
+		 *
+		 * 单价会变（上游调价、部署改价、价目表更新），这一列是请求结束时的账单事实：
+		 * 列表投影、导出与按单价核对直接读列，不必为每行 detoast 整份 metadata。
+		 * 未乘倍率的基础价仍留在 metadata 快照里，供费用气泡展示「基础价 ×倍率」。
+		 */
+		unit_prices: jsonb("unit_prices").$type<Record<string, number>>(),
+		/** 请求开始时命中的峰谷档位；部署未配置峰谷时为 null。 */
+		peak_tier: text("peak_tier").$type<"peak" | "off_peak">(),
 		startTime: timestamp("startTime", { precision: 3 }).notNull(),
 		endTime: timestamp("endTime", { precision: 3 }).notNull(),
 		request_duration_ms: integer("request_duration_ms"),

@@ -185,6 +185,14 @@
       "tag": "0022_subscription_accounts",
       "file": "0022_subscription_accounts.sql",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794790000010,
+      "tag": "0023_spend_log_price_columns",
+      "file": "0023_spend_log_price_columns.sql",
+      "breakpoints": true
     }
   ]
 }

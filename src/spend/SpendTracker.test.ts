@@ -891,6 +891,95 @@ describe("trackSpendLog 原子提交", () => {
 		expect(breakdown["total_cost"]).toBeCloseTo(0.00165, 12);
 	});
 
+	it("峰谷请求在结算时把实收单价与档位写成两列", async () => {
+		const insertedValues: Record<string, unknown>[] = [];
+		const db: Record<string, unknown> = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			execute: executeRecorder(),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => emptyUpdateResult()) })) })),
+			insert: jest.fn(() => ({
+				values: jest.fn((values: Record<string, unknown>) => {
+					insertedValues.push(values);
+					return {
+						onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ request_id: "req-peak" }])) })),
+						onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+					};
+				}),
+			})),
+		};
+		// 2026-01-01T02:00Z = 北京时间周四 10:00，落在全天窗口内 → 峰时 ×2。
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			api_key: "key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			custom_cost_per_token: {
+				cache_read_input_token_cost: 3e-9,
+				input_cost_per_token: 1.5e-7,
+				output_cost_per_token: 6e-7,
+				peak_pricing: { multiplier: 2, windows: [{ days: [1, 2, 3, 4, 5], start: "09:00", end: "12:00" }] },
+			},
+			endTime: "2026-01-01T02:00:01.000Z",
+			model: "opencode-go/deepseek-v4.1-flash",
+			prompt_tokens: 1,
+			request_id: "req-peak",
+			spend: 0,
+			startTime: "2026-01-01T02:00:00.000Z",
+			total_tokens: 2,
+		});
+
+		const inserted = insertedValues[0];
+		expect(inserted?.["peak_tier"]).toBe("peak");
+		expect(inserted?.["unit_prices"]).toEqual({
+			input_cost_per_token: 3e-7,
+			output_cost_per_token: 1.2e-6,
+			cache_read_input_token_cost: 6e-9,
+		});
+		const breakdown = (inserted?.["metadata"] as Record<string, unknown>)["cost_breakdown"] as Record<string, unknown>;
+		expect(breakdown["price_tier"]).toBe("peak");
+		expect((breakdown["price_snapshot"] as Record<string, unknown>)["unit_prices"]).toEqual({
+			input_cost_per_token: 1.5e-7,
+			output_cost_per_token: 6e-7,
+			cache_read_input_token_cost: 3e-9,
+		});
+	});
+
+	it("未配置峰谷的请求两列为空，不伪造档位", async () => {
+		const insertedValues: Record<string, unknown>[] = [];
+		const db: Record<string, unknown> = {
+			transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => callback(db)),
+			select: jest.fn(() => ({ from: jest.fn(() => ({ where: jest.fn(() => Promise.resolve([])) })) })),
+			execute: executeRecorder(),
+			update: jest.fn(() => ({ set: jest.fn(() => ({ where: jest.fn(() => emptyUpdateResult()) })) })),
+			insert: jest.fn(() => ({
+				values: jest.fn((values: Record<string, unknown>) => {
+					insertedValues.push(values);
+					return {
+						onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ request_id: "req-flat" }])) })),
+						onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+					};
+				}),
+			})),
+		};
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			api_key: "key",
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			custom_cost_per_token: { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6 },
+			endTime: "2026-01-01T02:00:01.000Z",
+			model: "deepseek-v4-flash",
+			prompt_tokens: 1,
+			request_id: "req-flat",
+			spend: 0,
+			startTime: "2026-01-01T02:00:00.000Z",
+			total_tokens: 2,
+		});
+
+		const inserted = insertedValues[0];
+		expect(inserted?.["peak_tier"]).toBeNull();
+		expect(inserted?.["unit_prices"]).toEqual({ input_cost_per_token: 1e-6, output_cost_per_token: 2e-6 });
+	});
+
 	it("transaction 数据库错误转换为 ApiError 503，并尝试释放未决 reservation", async () => {
 		const releaseWhere = jest.fn(() => Promise.resolve());
 		const db = {

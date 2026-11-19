@@ -30,8 +30,10 @@ export interface LogPricePeak {
 
 /** 一份请求的单价快照。 */
 export interface LogPriceSnapshot {
-	/** 字段 → per-token 单价。 */
+	/** 字段 → per-token 基础单价（快照原值，不含峰谷倍率）。 */
 	readonly unitPrices: Readonly<Record<string, number>>;
+	/** 字段 → 本请求实收的 per-token 单价（已含峰谷倍率）；来自结算列时优先。 */
+	readonly appliedUnitPrices?: Readonly<Record<string, number>>;
 	/** 字段 → 单价来源。 */
 	readonly sources: Readonly<Record<string, PriceFieldSource>>;
 	/** 峰谷档位；未配置峰谷时不存在。 */
@@ -93,7 +95,11 @@ function numberMap(value: unknown): Record<string, number> {
 const PRICE_SOURCES = new Set<string>(["config", "upstream", "model_cost_map", "default", "unset"]);
 
 /**
- * 读取日志行里的单价快照；没有或格式不符时返回 undefined（历史行一律不显示来源提示）。
+ * 读取日志行里冻结的单价；没有可解释的数据时返回 undefined（历史行一律不显示来源提示）。
+ *
+ * 结算行有两处记录，各管一段：`unit_prices` / `peak_tier` 两列是请求结束时落库的账单事实
+ * （实收单价与档位），`metadata.cost_breakdown.price_snapshot` 保留基础价、来源与上游目录。
+ * 读侧以列为准，历史行没有列时回退快照里的基础价 × 倍率，两种行都能解释。
  * @param log - 日志行
  */
 export function priceSnapshot(log: LogEntry): LogPriceSnapshot | undefined {
@@ -103,18 +109,23 @@ export function priceSnapshot(log: LogEntry): LogPriceSnapshot | undefined {
 	for (const [field, source] of Object.entries(stringMap(raw["sources"]))) {
 		if (PRICE_SOURCES.has(source)) sources[field] = source as PriceFieldSource;
 	}
-	if (Object.keys(sources).length === 0) return undefined;
+	const appliedUnitPrices = numberMap(log.unit_prices);
 	const peakRecord = record(raw["peak"]);
-	const peakTier = peakRecord["tier"];
-	const peakMultiplier = finite(peakRecord["multiplier"]);
+	const frozenTier = typeof log.peak_tier === "string" ? log.peak_tier : peakRecord["tier"];
+	const frozenMultiplier = finite(peakRecord["multiplier"]);
+	const peak = typeof frozenTier === "string" ? { tier: frozenTier, multiplier: frozenMultiplier ?? 1 } : undefined;
+	if (Object.keys(sources).length === 0 && Object.keys(appliedUnitPrices).length === 0 && peak === undefined) {
+		return undefined;
+	}
 	const upstreamRecord = record(raw["upstream"]);
 	const upstreamSource = upstreamRecord["source"];
 	const upstreamModel = upstreamRecord["upstream_model"];
 	const upstreamFetchedAt = upstreamRecord["fetched_at"];
 	return {
 		unitPrices: unitPrices,
+		...(Object.keys(appliedUnitPrices).length === 0 ? {} : { appliedUnitPrices: appliedUnitPrices }),
 		sources: sources,
-		...(typeof peakTier === "string" && peakMultiplier !== undefined ? { peak: { tier: peakTier, multiplier: peakMultiplier } } : {}),
+		...(peak === undefined ? {} : { peak: peak }),
 		...(typeof upstreamSource === "string" && typeof upstreamModel === "string" && typeof upstreamFetchedAt === "string"
 			? {
 					upstream: {
@@ -195,11 +206,13 @@ export function priceSnapshotRows(snapshot: LogPriceSnapshot): PriceSnapshotRow[
 		const source = snapshot.sources[field];
 		const perToken = snapshot.unitPrices[field];
 		if (source === undefined || source === "unset" || perToken === undefined) continue;
+		// 实收价优先取结算列：它是请求结束时按当时倍率算出来的，配置改了也不会变。
+		const applied = snapshot.appliedUnitPrices?.[field] ?? perToken * factor;
 		rows.push({
 			field: field,
 			label: label,
 			perMillion: formatPerMillion(perToken),
-			appliedPerMillion: formatPerMillion(perToken * factor),
+			appliedPerMillion: formatPerMillion(applied),
 			source: source,
 			sourceLabel: priceSourceLabel(source),
 			fromUpstream: source === "upstream",

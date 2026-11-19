@@ -94,3 +94,28 @@ test("off-peak pricing shows the base price and the moon tier without a multipli
 	await expect(tier).toContainText("谷时");
 	await expect(tier).not.toContainText("×");
 });
+
+test("the settled unit price column wins over recomputing the frozen base price", async ({ page }) => {
+	// 配置事后改了倍率（1.2 → 2）时，列里记的是当时实收的单价，气泡必须用它而不是重算。
+	const settled = {
+		...log,
+		request_id: "log-cost-settled",
+		peak_tier: "peak",
+		unit_prices: {
+			input_cost_per_token: 0.00000042,
+			output_cost_per_token: 0.00000132,
+			cache_read_input_token_cost: 0.0000000078,
+		},
+	};
+	await openLogs(page, [settled]);
+	await page.locator("tbody tr").filter({ hasText: "log-cost-settled" }).locator(".logs-cost-value").hover();
+
+	const popover = page.locator(".ui-popover.logs-cost-popover-shell");
+	const prices = popover.locator(".logs-cost-prices__value");
+	await expect(prices.nth(0)).toHaveText("$0.420/1M");
+	await expect(prices.nth(1)).toHaveText("$1.32/1M");
+	await expect(prices.nth(2)).toHaveText("$0.0078/1M");
+	// 基础价仍来自快照，两个数一起给出才能核对“基础价 ×2”。
+	await expect(popover.locator(".logs-cost-prices__base").first()).toHaveText("基础价 $0.150 ×2");
+	await expect(popover.locator(".logs-price-tier")).toHaveClass(/is-peak/);
+});

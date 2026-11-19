@@ -102,6 +102,44 @@ describe("frozen price snapshot", () => {
 		expect(priceTierView({ tier: "future_tier", multiplier: 2 })).toBeUndefined();
 	});
 
+	it("reads the charged price from the settled column when it disagrees with the frozen base price", () => {
+		// 结算列是请求结束时按当时倍率算出的实收价；快照里的基础价只用于核对，不能被重新乘一遍。
+		const settled = log({
+			unit_prices: {
+				input_cost_per_token: 4.2e-6,
+				output_cost_per_token: 1.32e-5,
+				cache_read_input_token_cost: 7.8e-7,
+			},
+			peak_tier: "peak",
+			metadata: {
+				cost_breakdown: {
+					price_snapshot: {
+						unit_prices: { input_cost_per_token: 1.4e-6, output_cost_per_token: 4.4e-6, cache_read_input_token_cost: 2.6e-7 },
+						sources: {
+							input_cost_per_token: "upstream",
+							output_cost_per_token: "config",
+							cache_read_input_token_cost: "model_cost_map",
+						},
+						peak: { tier: "peak", multiplier: 2 },
+					},
+				},
+			},
+		});
+		const rows = priceSnapshotRows(priceSnapshot(settled)!);
+		expect(rows[0]).toMatchObject({ perMillion: "$1.40", appliedPerMillion: "$4.20" });
+		expect(rows[2].appliedPerMillion).toBe("$0.780");
+		expect(priceSnapshot(settled)?.peak).toEqual({ tier: "peak", multiplier: 2 });
+	});
+
+	it("keeps the tier visible when only the settled columns survived", () => {
+		// metadata 被内容控制裁掉时，峰谷档位仍在结算列里：可以没有来源明细，但不能丢掉档位。
+		const settled = log({ unit_prices: { input_cost_per_token: 3e-7 }, peak_tier: "off_peak" });
+		const snapshot = priceSnapshot(settled);
+		expect(snapshot?.appliedUnitPrices).toEqual({ input_cost_per_token: 3e-7 });
+		expect(priceSnapshotRows(snapshot!)).toEqual([]);
+		expect(priceTierView(snapshot?.peak)).toMatchObject({ label: "谷时", icon: "Moon" });
+	});
+
 	it("returns nothing for rows logged before the snapshot existed", () => {
 		expect(priceSnapshot(log({}))).toBeUndefined();
 		expect(priceSnapshot(log({ metadata: { cost_breakdown: { upstream_priced_fields: ["input_cost_per_token"] } } }))).toBeUndefined();
