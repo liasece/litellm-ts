@@ -124,7 +124,7 @@ BUG 的入表条件是：TS 已有实际执行的对应功能；TS 当前实现�
 | F06 SSE 心跳 | 全局与部署配置、默认禁止客户端覆盖、部署 0 强制关闭；Chat/Messages/Responses 在连接/工具等待期间 ping；结束/断开清理；心跳后错误以 SSE 终止 | CLIProxy 保留现有局部实现。选中部署之前仅一致策略可许可客户端覆盖；mixed pool 有禁用部署则保守关闭；未做生产负载均衡器验证 | SseKeepalive.test.ts、ChatStreamingSpendLog.test.ts、AnthropicMessagesEndpoint.test.ts、ResponsesApiEndpoints.test.ts |
 | F07 路由 | 修复 BUG-01/02/03/04/09；required/deny/OR 标签与请求隔离；TTFT 分位数；部署 allowed_fails_policy/cooldown_time、并发满 429；ServiceUnavailable/NotFound/Default 重试继承；消费中取消中止上游 | 标签不继承 Key/Team，不开放 fail-open；未采用有损上下文 compact-to-fit、group priority、动态额度发现或 affinity header mapping，涉及新的路由/内容变更契约。并发计数为当前 Router 实例，不是跨进程信号量 | UpstreamRoutingRegression.test.ts、ProviderRequestExecutor.test.ts、Router 现有测试 |
 | F15 日志内容 | DB/YAML metadata include/exclude，费用计算后才投影；强制保留 status/cold_storage_object_key；metadata.litellm_call_id、normalized_error；配置秘密在错误中的脱敏 | 不增 DB 列；未复制企业审计默认、Sentry、OTEL/span hooks 或 OAuth 标记；请求体/响应体存储仍依现有显式开关。normalized_error 使用 TS 可得的 error_class/error_type、error_code，不宣称与 Python 聚类字符串等价 | SpendMetadataFields.test.ts、SpendTracker.test.ts、redactConfiguredSecrets.test.ts |
-| F16 Usage API  | caller-scoped Key/User/Team/Org 按模型报表；主体 daily/activity 聚合/CSV；日期默认 30 天且最多 366 天；页大小最多 1000；Key 搜索在分页之前并保持权限约束；带 timezone 的请求按浏览器本地日历分桶；`aggregated` 新增 `view=summary`（日指标 + 除 endpoint 外各维度全区间总量；Endpoint 数据由该 Tab 的 detail 单独读取）与 `view=models/model_groups/providers/api_keys/mcp_servers/endpoints/entities`（按维度分页，默认 20、最大 100，每项带日序列和 Top 10 关联 Key/Model）；不传 `view` 仍是 full 兼容响应。Global Usage 页面 Cost 只取 summary，Model/Key/MCP/Endpoint Activity 按 Tab 懒加载 detail 并支持分页 “Load more”，导出时才请求 full；Global Model/Key/MCP Activity 顶部直接用该 detail 的 `daily`、Endpoint Activity 用 endpoint detail 画 Token/花费分色堆叠柱状图；Team/Org/User 等实体视图的 Model/Key/Endpoint Activity 改用 full 响应每日 breakdown 着色（同一页面原本就取 full，不额外请求），Team 的 Agent Activity 用 `/agent/daily/activity` 的 `entities` 维度，花费与 Token 两个榜单综合名次 Top 7 之外的实体并入 Other，日总量取响应 `results` 或当日 metrics，未加载实体也计入柱高，维度在当前区间没有用量时保留卡片并显示空态 | 模型报表最多 1000 组；聚合查询源明细最多 100000 行、full 聚合结果最多 10000 个，超出返回错误并要求缩小区间，不静默截断；summary/detail 的源明细同样受 100000 行上限约束，但不复制 full breakdown；summary 和非 endpoint detail 不读取 proxy_server_request/metadata；cache token、resolved_model_group、endpoint 由 0019 迁移投影为 SpendLogs 小列，endpoint detail/full 读 endpoint 列，以降低主要 JSON 反序列化成本。带 timezone/timezone_name 的 daily/activity 从 SpendLogs 按本地日聚合（IANA 优先、固定偏移兼容），无时区或 UTC 仍走日汇总表；同一进程内按鉴权范围、时区、过滤条件和实际原始覆盖范围缓存近期 SpendLogs 行（30 秒新鲜、10 分钟 stale-while-revalidate，最多 4 组），起始日不同但原始覆盖相同的 7 天/30 天/YTD 请求共用缓存，summary/detail/full 也复用；进程重启或首次查询仍需扫描原始日志。日汇总表本身仍按 UTC 写入。原始日志尚未覆盖的更早日期由日汇总表补齐，避免因原始日志保留期丢失历史；这些历史日期只能保留 UTC 日粒度，边界不是精确本地日。detail 的 Top 关联项每项最多 10 个，页面通过分页加载全部实体；CSV 导出日期和费用/token/请求总量，非全部 Key 明细；没有新增 global rollup 表、cache leakage/model_top_keys、压缩/自动路由 savings | ScopedSpendReports.test.ts、UsageQuery.test.ts、WebUiSupportEndpoints.test.ts、UsageActivityCache.test.ts、DailyActivityTimezone.test.ts、SpendManagementEndpoint.test.ts、UsageContractsLogic.test.ts、UsageOverviewStore.test.ts |
+| F16 Usage API  | caller-scoped Key/User/Team/Org 按模型报表；主体 daily/activity 聚合/CSV；日期默认 30 天且最多 366 天；页大小最多 1000；Key 搜索在分页之前并保持权限约束；带 timezone 的请求按浏览器本地日历分桶；`aggregated` 新增 `view=summary`（日指标 + 除 endpoint 外各维度全区间总量；Endpoint 数据由该 Tab 的 detail 单独读取）与 `view=models/model_groups/providers/api_keys/mcp_servers/endpoints/entities`（按维度分页，默认 20、最大 100，每项带日序列和 Top 10 关联 Key/Model）；不传 `view` 仍是 full 兼容响应。Global Usage 页面 Cost 只取 summary，Model/Key/MCP/Endpoint Activity 按 Tab 懒加载 detail 并在打开分区时取齐该维度全部分页（页大小取后端上限 100，超过时仍可用 “Load more”），导出时才请求 full；Global Model/Key/MCP Activity 顶部直接用该 detail 的 `daily`、Endpoint Activity 用 endpoint detail 画 Token/花费分色堆叠柱状图；Team/Org/User 等实体视图的 Model/Key/Endpoint Activity 改用 full 响应每日 breakdown 着色（同一页面原本就取 full，不额外请求），Team 的 Agent Activity 用 `/agent/daily/activity` 的 `entities` 维度，Token 图与花费图各自按本榜排序并列出该指标的全部实体（不再合并 Other；同一实体在两张图同色，图例各自独立），维度在当前区间没有用量时保留卡片并显示空态 | 模型报表最多 1000 组；聚合查询源明细最多 100000 行、full 聚合结果最多 10000 个，超出返回错误并要求缩小区间，不静默截断；summary/detail 的源明细同样受 100000 行上限约束，但不复制 full breakdown；summary 和非 endpoint detail 不读取 proxy_server_request/metadata；cache token、resolved_model_group、endpoint 由 0019 迁移投影为 SpendLogs 小列，endpoint detail/full 读 endpoint 列，以降低主要 JSON 反序列化成本。带 timezone/timezone_name 的 daily/activity 从 SpendLogs 按本地日聚合（IANA 优先、固定偏移兼容），无时区或 UTC 仍走日汇总表；同一进程内按鉴权范围、时区、过滤条件和实际原始覆盖范围缓存近期 SpendLogs 行（30 秒新鲜、10 分钟 stale-while-revalidate，最多 4 组），起始日不同但原始覆盖相同的 7 天/30 天/YTD 请求共用缓存，summary/detail/full 也复用；进程重启或首次查询仍需扫描原始日志。日汇总表本身仍按 UTC 写入。原始日志尚未覆盖的更早日期由日汇总表补齐，避免因原始日志保留期丢失历史；这些历史日期只能保留 UTC 日粒度，边界不是精确本地日。detail 的 Top 关联项每项最多 10 个，页面通过分页加载全部实体；CSV 导出日期和费用/token/请求总量，非全部 Key 明细；没有新增 global rollup 表、cache leakage/model_top_keys、压缩/自动路由 savings | ScopedSpendReports.test.ts、UsageQuery.test.ts、WebUiSupportEndpoints.test.ts、UsageActivityCache.test.ts、DailyActivityTimezone.test.ts、SpendManagementEndpoint.test.ts、UsageContractsLogic.test.ts、UsageOverviewStore.test.ts |
 | F19 管理 API | Team REST PATCH（metadata JSON merge patch）、Org REST PATCH（metadata 替换、预算同事务）；Key alias 更新/搜索/命名规则、状态/过期过滤；BUG-08 permissions 管理员门禁 | PATCH 仅 proxy_admin；不增加 team-admin 委派或 service-account 权限。bulk users/members、custom_key_policy、access-group 对象权限、删除 Key 的 /key/info 与完整 OpenAPI 发布未采用；常用字段外 strict schema 拒绝 | EntityPatchEndpoints.test.ts、KeyAliasPolicy.test.ts、KeyManagementEndpoint.test.ts、AuthorizationGuard.test.ts |
 
 新增行为无需数据库迁移。设置段的配置示例（先在开发/测试配置中启用；这不是生产写入）：
@@ -391,6 +391,52 @@ Google 于 2026-11-12 发布 `gemini-4-hydrogen`（[公告](https://blog.google/
 本次采用 CLIProxyAPI 的取向：不改写调用方 schema，只在不可满足时放弃严格保证。与它的一处差异是显式 `strict: true` 仍然保留——那是调用方明确要求的契约，schema 不满足时交给上游报错，不静默降级。顺带对齐两条同源字段：`metadata.user_id` 截断到 64 作为 `user`；从该 JSON 的 `session_id` 取 `prompt_cache_key`（LiteLLM `prompt_cache_key_from_user_id` 的同一判断：`user_id` 指人不指会话）。
 
 改动位于 `src/subscriptions/native/protocol/convert/`（`shared.ts` 的严格形态判定与截断、`responses.ts` 的格式编码与出口、`messages.ts` 的 `strict` 保留与会话标识提取）；回归用例见 `src/subscriptions/native/protocol/request.test.ts`。生产核验（`claude-opus` → Codex `/messages`）：严格形态 schema 探针返回 200 且输出符合 schema；同形宽松 schema 探针也返回 200（修复前该请求被上游以 `Invalid schema for response_format` 拒绝），两行 SpendLog 均为 `success`、无 `upstream_errors`。边界：`strict: false` 时不再有强约束保证；工具 schema 的同类严格校验未纳入本次范围。
+
+## 2026-11-18 上游价计费空窗与历史补记
+
+「Spend Over Time by Model」里 `glm-5.3` 长期只显示 $1.24，用户怀疑它被算进了 Other。查下来不是图表算术问题（Other = 当日总量 − 已单独着色部分，逐日可对上），而是这批请求当时真的按 $0 记账：`glm-5.3` 部署没有配置价，价格来自 `opencode-go` 上游目录，而目录快照在进程启动后异步预热（`UpstreamModelInfoService.initialize()` 与监听并行）。2026-11-18 09:21:22Z–10:34:54Z 的 380 条 `success` 请求落在这个空窗里，`spend = 0`；10:35:09Z 才有第一条按上游价记账的行，目录抓取时间为 09:53:18Z 与 13:53:58Z。
+
+处理分两部分：
+
+1. **补记历史花费**（用户授权的一次性生产数据写入）。按第一条真实冻结快照的上游单价（输入 1.4e-6、输出 4.4e-6、缓存读取 2.6e-7）重算这 380 行：`spend` 与 `metadata.cost_breakdown` 一起改写，`price_snapshot` 沿用快照形状并附 `backfill: {at, reason, billed_at_request: 0}`，同一事务内同步 `LiteLLM_DailyUserSpend` 的 4 个 (key, endpoint) 行。`glm-5.3` 区间花费 $1.2444 → $21.1820，其中 343 条大请求 $19.6857、37 条小请求 $0.4963；剩余 37 条 `aborted`/`failure` 且 0 token 的行保持 $0。改前数据备份在 JL3 `/root/backups/glm-backfill-2026-11-18T15-29-49-153Z.json`（343 行）与 `…T15-30-10-492Z.json`（37 行），本机 `.cache/backups/` 各留一份。
+2. **让补记可见**。Logs 详情在 `cost_breakdown.backfill` 存在时把标题改为「计费单价（事后补记）」并加灰色「补记」角标（含原因 tooltip），表格价签气泡的 chip 改为「按上游价补记」，不把补记冒充请求时的计费结果。
+
+同一轮修掉图表选择规则：两张图原先共用一个 7 名额池（花费名次与 Token 名次取较小值），补齐花费后 `glm-5.3` 花费排第 6 仍被两个 Token 大户挤出图例——标题写着 by model，却不含前几名花钱的模型。现在 Token 图与花费图各自按本榜取前 7，颜色仍按两榜并集分配（同一实体两图同色），各自的 `Other` 严格等于本图未单独着色的部分；文档与回归用例一并更新。已知边界：候选池仍是按花费排序的第一页 20 个模型，所以纯 Token 大户（如 `hy4-flash-free`）仍只会进入 Other。（该边界已在 2026-11-19 取消 Other 汇总时移除，见下一节。）
+
+## 2026-11-19 /v1/messages 订阅桥错误身份与 fallback 配置漂移
+
+生产请求 `38a5cf14`（`/v1/messages`，模型 `commandcode/deepseek-v4.1-flash`）在所有 commandcode 订阅账号因周额度耗尽进入冷却后，既没有走 fallback，客户端还收到 HTTP 500 `internal_server_error`。两个独立缺陷叠加：
+
+1. **fallback 配置名字漂移（主因）**：Router 只从 `LiteLLM_Config.router_settings.fallbacks` 读链（`FallbackHandler`），而库里没有 `commandcode/deepseek-v4.1-flash` 这个键——只有旧命名 `commandcode/deepseek/deepseek-v4.1-flash`（多一段 `deepseek/`）和拼写错误 `comman-code/deepseek-v4.1-flash`。用户授权后修复了 6 处死名引用（该键自身 + `glm-4-7-anthropic` / `MiniMax-M3.1-Flash` / `gpt-6.1-sol` / `minimax-latest-anthropic` 四条链的目标 + `cheap` 别名的第 4 目标）并删除拼写条目，改前备份在 JL3 `/root/backups/router-settings-2026-11-19T02-01-03.json` 与本机 `.cache/backups/`。注意 `LiteLLM_ProxyModelTable.model_info.fallbacks` 是死存储：`/v2/model/info` 展示与路由执行都只读 `router_settings.fallbacks`，不要据它判断链是否生效。
+2. **订阅桥错误身份丢失**：`AnthropicUpstreamDispatch.normalizeProviderFailure` 把桥抛出的 `ApiError`（调度器「所有订阅账号冷却中」的 429）一律包成 `APIConnectionError`，状态码语义被吞掉——链耗尽时按 500 透传，冷却判定还按「连接错误豁免」跳过。修复为 `ApiError` → `ProviderUpstreamError(statusCode, message)`，与真实上游 429 同等待遇；回归用例见 `src/proxy/AnthropicUpstreamDispatch.test.ts`。
+
+线上核验（修复后真实流量）：请求 `commandcode/deepseek-v4.1-flash` 命中冷却后沿链换到 `opencode-go/deepseek-v4.1-flash` 成功，SpendLog 的 `routing_trace` 记录 429 原因（`rate_limit`，含「所有订阅账号冷却中」原文），`fallback_models` 两跳；deployment 处于冷却时走 `no_available_deployment` 直达 fallback。链耗尽透传 429 的分支由单测覆盖（生产无法安全编排全链失败）。
+
+同轮发现并修（用户另行授权）：构建管线的 `RetainClientAssets.mjs` 对清单里已不存在的候选文件直接 `lstat` 崩溃——当时 `ui/out` 清单 12,835 条中有 526 条（全部根级 `__next.*.txt`）不在磁盘上，下一次前端构建必失败，复现两次。修复为缺失候选跳过、父链悬空同样跳过（并行会话完成编辑，本会话验证后部署）；标准部署 02:29Z 构建即以此脏清单跑通，产出清单 12,391 条、磁盘缺失 0 条，管线自愈。
+
+## 2026-11-19 Usage 趋势图取消 Other 汇总
+
+「Tokens Over Time by Model」把 `hy4-flash-free` 藏进了 Other：该模型按免费额度记账、花费为 0，detail 按花费排序且第一页只有 20 个模型，它落在第二页之外；两张图再各自取本榜前 7，于是 2026-11-19 的 409M token 只剩一条灰色 Other。生产数据核对（近 8 天 SpendLogs）：30 个模型、7 个 Key、5 个 endpoint；`hy4-flash-free` 按 token 排第 2，按花费排在最后一个分页。
+
+处理：
+
+1. **图中不再有 Other**。`UsageSeriesLogic` 去掉 top-N 与余量聚合：每个实体都是独立系列，Token 图与花费图各按本榜排序、只收该指标大于 0 的实体；颜色按两榜并集分配（同一实体两图同色），超过原有 14 个语义色后由新的 `UsageSeriesPaletteLogic` 按黄金角生成两两不同的颜色。
+2. **detail 分页取齐**。`UsageOverviewStore.loadCompleteDetail` 在打开 Global Model/Key Activity 时顺序读取剩余分页（上限 10 页，只防御 `has_more` 异常），`dailyActivityApi.detail` 的页大小改为后端上限 100。没有 Other 兜底后，缺页会让柱高小于当日总量，所以图与折叠列表共用这份完整明细；超过上限时仍保留 “Load more”。
+3. **悬浮明细容纳全部实体**。tooltip 行高 16px、间距 2px，最大高度 `min(70vh, 560px)`；19 个模型约 380px，不再被原来的 240px 截断。
+
+验证：`UsageSeriesLogic.test.ts` 覆盖「免费但用量第一的实体留在 Token 图、不进入花费图」与每张图颜色唯一；`UsageSeriesPaletteLogic.test.ts` 覆盖 40 个系列无重复、前 14 色沿用原色板；`UsageOverviewStore.test.ts` 覆盖三页明细按顺序补齐。
+
+线上核验（部署后真实生产页面，1440×1000、Asia/Shanghai、区间 2026-11-12..11-19）：Model Activity 的 Token 图图例 20 个模型、Spend 图 21 个，Key/Endpoint Activity 分别为 7/8 项，均无 Other、也无 “Other groups the rest” 说明；`hy4-flash-free` 在 2026-11-19 的 tooltip 里单独一行（417,031,429 token，颜色与图例一致）；逐个悬浮 8 根柱，Tooltip 各段之和与 summary 当日 `total_tokens` 完全相等（如 11-18 = 2,188,393,741），花费图差异只在两位小数的逐行取整范围内；detail 请求为 `page_size=100&page=1`，21 个模型一页取齐。
+
+## 2026-11-19 模型改名残留清零与引用级联
+
+`c661a22b` 诊断发现改名残留不止 fallback 配置一处：`commandcode/deepseek/deepseek-v4.1-flash` → `commandcode/deepseek-v4.1-flash` 的重建把引用留在了多个面。全面审计（30 组 + 33 别名，扫描 fallback 三段、alias 目标、override/fallbacks、团队/密钥/对象权限白名单、websearch 覆盖、能力执行模型）后修复：
+
+- `yuping` 虚拟密钥白名单锁着旧名（密钥永远用不了改名后的模型）→ 改为新名；
+- `glm-web-search-anthropic` 行上的 `model_info.fallbacks` 拼写 `gpt-5-4` → `gpt-5.4`（该字段是历史死存储，顺带改齐）；
+- 加别名 `commandcode/deepseek/deepseek-v4.1-flash` → 新名，旧名请求恢复正确路由（此前 12 小时里旧名请求一直被残留 fallback 条目静默弹到 opencode-go）。改前备份 JL3 `/root/backups/rename-leftovers-2026-11-19T04-51-11.json` 与本机 `.cache/backups/` 同名文件。
+
+机制固化（用户要求「改名必须级联修复所有引用方」）：新增 `src/management/ModelReferences.ts` 集中引用清单，三个入口共用——`/model/update` 改 `model_name` 自动级联；`POST /model/rename` 按三种语义（别名改名 / 组名善后 / 死名善后）重写引用；`GET /model/references/audit` 报告悬空。`/model/delete` 对组内最后一行设引用守卫（`force=true` 放行），`/config/update` 拦截新引入的悬空引用（既有悬空不拦，由审计端点暴露）。表边界约束保持：模型与配置仍只经 ModelRepository / ConfigRepository 读写，审计前强制失效缓存保证看到外部直改后的真实状态。规范写入 `docs/development.md` 的改名级联条目。
 
 ## 后续维护规则
 
