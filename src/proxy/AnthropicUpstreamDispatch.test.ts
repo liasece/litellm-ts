@@ -481,6 +481,60 @@ describe("executeWithFallbackChain", () => {
 		expect(facade.failures[0]!.error.name).toBe("APIConnectionError");
 	});
 
+	it("订阅桥抛「全部账号冷却中」的 ApiError 429 → 沿 fallback 链换下一候选成功", async () => {
+		// 生产回归 38a5cf14：/v1/messages 请求 commandcode/deepseek-v4.1-flash 时全部
+		// 订阅账号冷却，桥抛 429；修复前被包成 APIConnectionError，状态码语义丢失。
+		const facade = new MockRouterFacade({
+			deploymentsByModel: {
+				"commandcode/deepseek-v4.1-flash": [makeDeployment("commandcode/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash")],
+				"opencode-go/deepseek-v4.1-flash": [makeDeployment("opencode-go/deepseek-v4.1-flash", "deepseek-v4.1-flash")],
+			},
+			fallbackChains: { "commandcode/deepseek-v4.1-flash": ["opencode-go/deepseek-v4.1-flash"] },
+			cooldownOnFailure: false,
+		});
+		const seenKeys: string[] = [];
+		const result = await executeWithFallbackChain(
+			facade,
+			"commandcode/deepseek-v4.1-flash",
+			undefined,
+			undefined,
+			async (attempt: UpstreamAttempt) => {
+				seenKeys.push(attempt.deploymentKey);
+				if (attempt.deploymentKey === "commandcode/deepseek-v4.1-flash") {
+					throw ApiError.tooManyRequests(
+						"所有 commandcode 订阅账号在该模型上都处于冷却中，请稍后重试（最近失败：HTTP 429: weekly usage limit）",
+					);
+				}
+				return "fallback-ok";
+			},
+		);
+		expect(result).toBe("fallback-ok");
+		expect(seenKeys).toEqual(["commandcode/deepseek-v4.1-flash", "opencode-go/deepseek-v4.1-flash"]);
+		// 登记给冷却判定的失败保留 429 身份，而不是被当成网络错误豁免。
+		expect(facade.failures).toHaveLength(1);
+		expect(facade.failures[0]!.error).toBeInstanceOf(ProviderUpstreamError);
+		expect((facade.failures[0]!.error as ProviderUpstreamError).status).toBe(429);
+	});
+
+	it("订阅桥抛 ApiError 429 且链耗尽 → 调用方看到 429 而不是 500", async () => {
+		const facade = new MockRouterFacade({
+			deploymentsByModel: {
+				"commandcode/deepseek-v4.1-flash": [makeDeployment("commandcode/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash")],
+			},
+		});
+		let caught: unknown;
+		await executeWithFallbackChain(facade, "commandcode/deepseek-v4.1-flash", undefined, undefined, async () => {
+			throw ApiError.tooManyRequests(
+				"所有 commandcode 订阅账号在该模型上都处于冷却中，请稍后重试（最近失败：HTTP 429: weekly usage limit）",
+			);
+		}).catch((err) => {
+			caught = err;
+		});
+		expect(caught).toBeInstanceOf(ApiError);
+		expect((caught as ApiError).statusCode).toBe(429);
+		expect((caught as ApiError).message).toContain("冷却中");
+	});
+
 	it("模型不存在（无 deployment 且无 fallback）：抛 ApiError 400", async () => {
 		const facade = new MockRouterFacade({ deploymentsByModel: {} });
 		let caught: unknown;

@@ -207,14 +207,24 @@ export function requireUpstreamAttempt(
 }
 
 /**
- * 把 execute 抛出的非 ProviderUpstreamError 异常包装为 APIConnectionError
- * （fetch 网络错误 / 响应 JSON 解析失败等）。APIConnectionError 在冷却判定中豁免
- * （对齐 PY：连接错误触发 fallback 但不计冷却），且错误类别归 TimeoutError。
+ * 把 execute 抛出的异常归一为可进入 fallback 循环的错误。
+ *
+ * - `ProviderUpstreamError` 原样保留（上游 HTTP 非 2xx）。
+ * - `ApiError` 是订阅桥在进程内抛出的上游状态错误（如「所有订阅账号冷却中」的 429），
+ *   不是网络故障：包装成 `ProviderUpstreamError` 保留其状态码，链耗尽时调用方看到
+ *   真实的 429/503 而不是笼统的 500，冷却决策也能从消息里的状态码按 RateLimit 语义判定。
+ *   生产回归：commandcode 账号全部冷却时 /v1/messages 客户端收到 500 internal_server_error，
+ *   日志与客户端都无法区分「稍后重试」与「服务端 bug」。
+ * - 其余异常（fetch 网络错误 / 响应解析失败）包装为 `APIConnectionError`。它在冷却判定中
+ *   豁免（对齐 PY：连接错误触发 fallback 但不计冷却），且错误类别归 TimeoutError。
  * @param err - execute 抛出的原始异常
  */
 function normalizeProviderFailure(err: unknown): Error {
 	if (err instanceof ProviderUpstreamError) {
 		return err;
+	}
+	if (err instanceof ApiError) {
+		return new ProviderUpstreamError(err.statusCode, err.message);
 	}
 	const message = err instanceof Error ? err.message : String(err);
 	return new APIConnectionError(message);
