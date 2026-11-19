@@ -13,6 +13,13 @@ import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS, PYTHON_NONE_FILL } from "../core/api/ApiError";
 import { modelRepositoryFor, type ModelRow, type ModelUpdateValues } from "../repositories/ModelRepository";
+import {
+	auditModelReferences,
+	collectModelReferences,
+	loadModelReferenceState,
+	persistModelReferenceChanges,
+	planModelReferenceRename,
+} from "./ModelReferences";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { proxyModelRowToDeployment } from "../router/ProxyModelDeployment";
 import { buildModelGroupOverrides } from "../router/ModelOverrides";
@@ -185,6 +192,24 @@ export function createModelManagementRoutes(
 		}),
 	);
 
+	/**
+	 * 改名级联：行改名成功后重写所有引用面（fallback 键与目标、alias 目标、
+	 * override/fallbacks、团队/密钥/权限白名单、websearch 与能力执行模型）。
+	 * 失败不回滚行改名——悬空引用由审计端点暴露，POST /model/rename 可补齐。
+	 * @param from - 旧模型组名
+	 * @param to - 新模型组名
+	 * @param updatedBy - 写入者（模型行 updated_by）
+	 */
+	async function cascadeModelRenameReferences(from: string, to: string, updatedBy: string): Promise<void> {
+		const state = await loadModelReferenceState(db);
+		const changes = planModelReferenceRename(state, from, to);
+		if (changes.counts.length === 0) {
+			return;
+		}
+		await persistModelReferenceChanges(db, changes, updatedBy);
+		logger.info(`模型改名 ${from} -> ${to} 已级联重写引用: ${JSON.stringify(changes.counts)}`);
+	}
+
 	async function updateModelById(
 		modelId: string,
 		body: Record<string, unknown>,
@@ -246,7 +271,11 @@ export function createModelManagementRoutes(
 			}
 			values["model_info"] = {
 				...subscriptionModelInfo(
-					mergeObjectPatch((existing.model_info ?? {}) as Record<string, unknown>, modelInfoPatch as Record<string, unknown>, deleteNull),
+					mergeObjectPatch(
+						(existing.model_info ?? {}) as Record<string, unknown>,
+						modelInfoPatch as Record<string, unknown>,
+						deleteNull,
+					),
 					(values["litellm_params"] ?? existing.litellm_params) as Record<string, unknown>,
 				),
 				id: modelId,
@@ -255,16 +284,17 @@ export function createModelManagementRoutes(
 
 		const allRows = await modelRepository.snapshotRows();
 		validateModelOverrides(
-			allRows.map((row) =>
-				(row.model_id === modelId
-					? ({
-							...row,
-							...(values["model_name"] === undefined ? {} : { model_name: values["model_name"] }),
-							...(values["litellm_params"] === undefined ? {} : { litellm_params: values["litellm_params"] }),
-							...(values["model_info"] === undefined ? {} : { model_info: values["model_info"] }),
-						} as ProxyModelRow)
-					: row),
-			),
+			allRows.map((row) => {
+				if (row.model_id !== modelId) {
+					return row;
+				}
+				return {
+					...row,
+					...(values["model_name"] === undefined ? {} : { model_name: values["model_name"] }),
+					...(values["litellm_params"] === undefined ? {} : { litellm_params: values["litellm_params"] }),
+					...(values["model_info"] === undefined ? {} : { model_info: values["model_info"] }),
+				} as ProxyModelRow;
+			}),
 		);
 
 		const updatedRow = await modelRepository.update(modelId, values as ModelUpdateValues);
@@ -276,6 +306,18 @@ export function createModelManagementRoutes(
 		}
 		logger.info(`代理模型已更新: ${modelId}`);
 		litellmRouter?.upsertDeployment(proxyModelRowToDeployment(updatedRow));
+		if (typeof values["model_name"] === "string" && values["model_name"] !== existing.model_name) {
+			try {
+				await cascadeModelRenameReferences(existing.model_name, values["model_name"], updatedBy);
+			} catch (error) {
+				logger.error(
+					`模型改名 ${existing.model_name} -> ${String(values["model_name"])} 的引用级联失败；用 POST /model/rename 补齐`,
+					{
+						error: error instanceof Error ? error.message : String(error),
+					},
+				);
+			}
+		}
 		return toPythonProxyModelRow(updatedRow);
 	}
 
@@ -349,6 +391,9 @@ export function createModelManagementRoutes(
 
 	// ─── POST /model/delete ─────────────────────────────────────
 	// 对齐 Python delete_model：请求 { id }，响应 { message: "Model: <id> deleted successfully" }。
+	// 删除守卫：这是组内最后一个部署行时，先查引用面；仍被 fallback 链、alias 目标、
+	// 密钥白名单等引用的组直接删除会留下悬空引用（生产上一次改名残留让旧名请求
+	// 静默改道后变 400）。需要带着引用删除时传 force=true。
 	registerRoute(
 		router,
 		{ method: "post", path: "/model/delete" },
@@ -360,7 +405,29 @@ export function createModelManagementRoutes(
 				throw ApiError.badRequest("必须提供 id");
 			}
 
-			const deleted = await modelRepositoryFor(db).remove(modelId);
+			const modelRepository = modelRepositoryFor(db);
+			const row = await modelRepository.findById(modelId);
+			if (row !== null) {
+				const sameGroupRows = (await modelRepository.snapshotRows()).filter((candidate) => candidate.model_name === row.model_name);
+				if (sameGroupRows.length <= 1 && body["force"] !== true) {
+					const state = await loadModelReferenceState(db);
+					const blocking = collectModelReferences(state).filter(
+						(reference) =>
+							reference.name === row.model_name &&
+							!(reference.surface.startsWith("model_info.") && reference.path === row.model_name),
+					);
+					if (blocking.length > 0) {
+						const surfaces = [...new Set(blocking.map((reference) => reference.surface))].join(", ");
+						throw new ApiError(
+							HTTP_STATUS.CONFLICT,
+							`模型组 ${row.model_name} 仍被 ${blocking.length} 处引用（${surfaces}）。改名请先 POST /model/rename；确认无引用后传 force=true 删除`,
+							"conflict",
+						);
+					}
+				}
+			}
+
+			const deleted = await modelRepository.remove(modelId);
 
 			if (!deleted) {
 				throw ApiError.badRequest(`Model with id=${modelId} not found in db`);
@@ -372,6 +439,61 @@ export function createModelManagementRoutes(
 			litellmRouter?.removeDeployment(modelId);
 
 			return { message: `Model: ${modelId} deleted successfully` };
+		}),
+	);
+
+	// ─── POST /model/rename ─────────────────────────────────────
+	// 改名级联的补齐入口，三种语义按 from 的身份区分：
+	//   - from 是别名键：别名改名——键与所有引用一起改写，to 不能与现行名字冲突；
+	//   - from 是模型组名：行已由 /model/update 改名（那里会自动级联），此处只把
+	//     引用重写到 to，to 必须是现行名字；
+	//   - from 已不存在：手工善后——把残留引用重写到现行名字 to。
+	registerRoute(
+		router,
+		{ method: "post", path: "/model/rename" },
+		authed(async (req) => {
+			const body = (req.body ?? {}) as Record<string, unknown>;
+			const from = body["from"];
+			const to = body["to"];
+			if (typeof from !== "string" || from.length === 0 || typeof to !== "string" || to.length === 0) {
+				throw ApiError.badRequest("必须提供 from 与 to");
+			}
+			if (from === to) {
+				throw ApiError.badRequest("from 与 to 不能相同");
+			}
+			const state = await loadModelReferenceState(db);
+			const audit = auditModelReferences(state);
+			const live = new Set(audit.liveNames);
+			const isAlias = audit.aliasKeys.includes(from);
+			if (isAlias && live.has(to)) {
+				throw new ApiError(HTTP_STATUS.CONFLICT, `to=${to} 已是现行模型组或别名；别名改名不能与现有名字冲突`, "conflict");
+			}
+			if (!isAlias && !live.has(to)) {
+				throw new ApiError(HTTP_STATUS.CONFLICT, `to=${to} 不是现行模型组或别名；重写引用会造成新的悬空引用`, "conflict");
+			}
+			const changes = planModelReferenceRename(state, from, to, isAlias);
+			if (changes.counts.length > 0) {
+				await persistModelReferenceChanges(db, changes, req.auth?.user_id ?? PROXY_ADMIN_USER_ID);
+			}
+			logger.info(`模型引用改名 ${from} -> ${to}（${isAlias ? "别名" : "组名/善后"}）: ${JSON.stringify(changes.counts)}`);
+			return { from: from, to: to, kind: isAlias ? "alias" : "references", rewritten: changes.counts };
+		}),
+	);
+
+	// ─── GET /model/references/audit ────────────────────────────
+	// 悬空引用审计：模型/别名改名前后各跑一次，确认没有引用面掉队。
+	registerRoute(
+		router,
+		{ method: "get", path: "/model/references/audit" },
+		authed(async () => {
+			const state = await loadModelReferenceState(db);
+			const audit = auditModelReferences(state);
+			return {
+				groups: [...new Set(state.groups)],
+				aliases: audit.aliasKeys,
+				references: audit.references,
+				dangling: audit.dangling,
+			};
 		}),
 	);
 }

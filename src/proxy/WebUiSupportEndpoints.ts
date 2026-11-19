@@ -44,6 +44,7 @@ import { ConfigRepository } from "../repositories/ConfigRepository";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { buildModelGroupOverrides } from "../router/ModelOverrides";
 import { validateModelGroupAliases } from "../shared/ModelGroupAlias";
+import { auditModelReferences, isModelReferenceValidationPossible, loadModelReferenceState } from "../management/ModelReferences";
 import { validateFallbackEntries } from "../shared/FallbackEntry";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE, PROXY_ADMIN_USER_ID } from "../types/webUiSession";
@@ -2203,6 +2204,33 @@ export function registerWebUiSupportRoutes(
 				isRecord(incoming.model_group_alias)
 			) {
 				merged["model_group_alias"] = structuredClone(incoming.model_group_alias);
+			}
+			// 引用悬空守卫：模型组与别名是配置里被引用的名字，改配置时把引用改成
+			// 不存在的名字（改名只改一处）会在下一次路由时静默失效。只拦截本次更新
+			// 新引入的悬空——库里既有悬空由 GET /model/references/audit 报告并另行修复。
+			// 模型表为空（全新安装）时无从解析，跳过校验。
+			if (section === "router_settings" || section === "general_settings") {
+				const state = await loadModelReferenceState(db);
+				if (isModelReferenceValidationPossible(state)) {
+					const before = auditModelReferences(state);
+					const after = auditModelReferences({
+						...state,
+						...(section === "router_settings" ? { routerSettings: merged } : {}),
+						...(section === "general_settings" ? { generalSettings: merged } : {}),
+					});
+					const known = new Set(before.dangling.map((item) => `${item.surface}\0${item.path}\0${item.name}`));
+					const introduced = after.dangling.filter((item) => !known.has(`${item.surface}\0${item.path}\0${item.name}`));
+					if (introduced.length > 0) {
+						const summary = introduced
+							.slice(0, 5)
+							.map((item) => `${item.surface}: ${item.path} -> ${item.name}`)
+							.join("; ");
+						throw ApiError.badRequest(
+							`配置引用了不存在的模型或别名（${summary}${introduced.length > 5 ? ` 等 ${introduced.length} 处` : ""}）。` +
+								"先创建模型/别名，或用 POST /model/rename 级联改名",
+						);
+					}
+				}
 			}
 			await configRepository.upsertParam(section, merged);
 		}

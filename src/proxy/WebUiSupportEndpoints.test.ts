@@ -28,6 +28,8 @@ import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSp
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
+import { LiteLLM_TeamTable } from "../db/schema/teams";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
 import { ModelCostMapService } from "../cost/ModelCostMapService";
@@ -231,9 +233,7 @@ function makeMockDailyActivityDb(
 			queryLog.rawQuerySql = query.sql;
 			queryLog.rawQueryParams = query.params;
 			// 真实数据库按 SQL 投影 endpoint；mock 需要模拟非 endpoint 视图的 NULL 投影。
-			const rows = query.sql.includes("NULL::text AS endpoint")
-				? rawRows.map((row) => ({ ...row, endpoint: null }))
-				: [...rawRows];
+			const rows = query.sql.includes("NULL::text AS endpoint") ? rawRows.map((row) => ({ ...row, endpoint: null })) : [...rawRows];
 			return Promise.resolve({ rows });
 		},
 		select: (selection?: unknown) => ({
@@ -542,6 +542,51 @@ describe("WebUiSupport 契约", () => {
 			expect(stored["alerting"]).toEqual(["slack"]);
 			expect(stored["max_parallel_requests"]).toBe(10);
 			expect(stored["nested"]).toEqual({ keep: 1, drop: 2, add: 3 });
+		});
+
+		it("/config/update 拒绝把 fallback 目标改成不存在的模型（悬空守卫）", async () => {
+			const modelRows = [
+				{ model_id: "m1", model_name: "gpt-4o", litellm_params: { model: "openai/gpt-4o" }, model_info: { id: "m1" } },
+				{ model_id: "m2", model_name: "gpt-4o-mini", litellm_params: { model: "openai/gpt-4o-mini" }, model_info: { id: "m2" } },
+			];
+			const store = new Map<string, unknown>();
+			const db = {
+				select: () => ({
+					from: (table: unknown) => {
+						const rows =
+							table === LiteLLM_ProxyModelTable
+								? modelRows
+								: table === LiteLLM_TeamTable || table === LiteLLM_VerificationToken
+									? []
+									: Array.from(store, ([param_name, param_value]) => ({ param_name, param_value }));
+						const promise = Promise.resolve(rows);
+						return Object.assign(promise, { where: () => promise, limit: () => promise });
+					},
+				}),
+				insert: () => ({
+					values: (row: { param_name: string; param_value: unknown }) => ({
+						onConflictDoUpdate: () => {
+							store.set(row.param_name, row.param_value);
+							return Promise.resolve();
+						},
+					}),
+				}),
+			};
+			await dbConfigProvider.initialize(db as never);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+
+			const rejected = await request(app)
+				.post("/config/update")
+				.send({ router_settings: { fallbacks: [{ "gpt-4o": ["no-such-model"] }] } });
+			expect(rejected.status).toBe(400);
+			expect(rejected.body.error.message).toContain("no-such-model");
+			expect(store.get("router_settings")).toBeUndefined();
+
+			const accepted = await request(app)
+				.post("/config/update")
+				.send({ router_settings: { fallbacks: [{ "gpt-4o": ["gpt-4o-mini"] }] } });
+			expect(accepted.status).toBe(200);
+			expect(store.get("router_settings")).toEqual({ fallbacks: [{ "gpt-4o": ["gpt-4o-mini"] }] });
 		});
 
 		it("/config/update 对 model_group_alias 使用整体替换，允许删除旧 alias", async () => {
@@ -1259,14 +1304,7 @@ describe("WebUiSupport 契约", () => {
 				failed_requests: 0,
 				user_id: "user-1",
 			};
-			const { db, queryLog } = makeMockDailyActivityDb(
-				new Map(),
-				[],
-				[],
-				false,
-				[row],
-				new Date("2026-11-14T00:00:00.000Z"),
-			);
+			const { db, queryLog } = makeMockDailyActivityDb(new Map(), [], [], false, [row], new Date("2026-11-14T00:00:00.000Z"));
 			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
 			const recent = await request(app).get(
 				"/user/daily/activity/aggregated?start_date=2026-11-11&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=summary",
@@ -1301,14 +1339,7 @@ describe("WebUiSupport 契约", () => {
 				failed_requests: 0,
 				user_id: "user-1",
 			};
-			const { db, queryLog } = makeMockDailyActivityDb(
-				new Map(),
-				[],
-				[],
-				false,
-				[row],
-				new Date("2026-11-17T00:00:00.000Z"),
-			);
+			const { db, queryLog } = makeMockDailyActivityDb(new Map(), [], [], false, [row], new Date("2026-11-17T00:00:00.000Z"));
 			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
 			const summary = await request(app).get(
 				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=summary",

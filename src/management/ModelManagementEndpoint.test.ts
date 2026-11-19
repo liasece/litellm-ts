@@ -170,7 +170,7 @@ describe("ModelManagementEndpoint /model/new 契约", () => {
 			custom_llm_provider: "codex-subscription",
 		});
 		for (const field of ["litellm_credential_name", "credential_name", "api_base", "api_key"]) {
-			expect((inserted[0]?.litellm_params as Record<string, unknown>)).not.toHaveProperty(field);
+			expect(inserted[0]?.litellm_params as Record<string, unknown>).not.toHaveProperty(field);
 		}
 	});
 });
@@ -452,3 +452,260 @@ describe("ModelManagementEndpoint 批次 C3 — 写操作热更新 Router", () =
 		expect(litellmRouter.hasModel("m")).toBe(false);
 	});
 });
+
+// ─── 引用面：改名级联 / 审计 / 删除守卫 ───────────────────────────
+// 键控 db mock：select()/insert()/update() 按 drizzle 表对象分派，真实走
+// ModelRepository / ConfigRepository，端点逻辑不做任何打桩。
+import { LiteLLM_Config } from "../db/schema/config";
+import { LiteLLM_ObjectPermissionTable } from "../db/schema/object-permissions";
+import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
+import { LiteLLM_TeamTable } from "../db/schema/teams";
+import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
+
+interface ReferenceFixture {
+	models: Array<Record<string, unknown>>;
+	config: Array<Record<string, unknown>>;
+	teams: Array<Record<string, unknown>>;
+	tokens: Array<Record<string, unknown>>;
+	permissions: Array<Record<string, unknown>>;
+	upserts: Array<{ param_name: string; param_value: unknown }>;
+	rowUpdates: Array<{ modelId: string; model_info: unknown }>;
+	teamUpdates: Array<{ teamId: string; models: string[] }>;
+	tokenUpdates: Array<{ token: string; models: string[] }>;
+}
+
+function makeReferenceApp(fixture: ReferenceFixture): { app: express.Express; fixture: ReferenceFixture } {
+	const tableRows = (table: unknown): Array<Record<string, unknown>> => {
+		if (table === LiteLLM_ProxyModelTable) return fixture.models;
+		if (table === LiteLLM_Config) return fixture.config;
+		if (table === LiteLLM_TeamTable) return fixture.teams;
+		if (table === LiteLLM_VerificationToken) return fixture.tokens;
+		if (table === LiteLLM_ObjectPermissionTable) return fixture.permissions;
+		return [];
+	};
+	const db = {
+		select: () => ({
+			from: (table: unknown) =>
+				Object.assign(Promise.resolve(tableRows(table)), {
+					where: () => ({
+						limit: (count: number) => Promise.resolve(tableRows(table).slice(0, count)),
+					}),
+				}),
+		}),
+		insert: (table: unknown) => ({
+			values: (values: Record<string, unknown>) => ({
+				onConflictDoUpdate: (options: { set: Record<string, unknown> }) => {
+					if (table === LiteLLM_Config) {
+						fixture.upserts.push({ param_name: values.param_name as string, param_value: options.set.param_value });
+					}
+					return Promise.resolve();
+				},
+			}),
+		}),
+		update: (table: unknown) => ({
+			set: (values: Record<string, unknown>) => ({
+				where: () =>
+					Object.assign(Promise.resolve(), {
+						returning: () => {
+							if (table === LiteLLM_ProxyModelTable) {
+								const row = fixture.models.find((candidate) => candidate.model_id === "model-1") ?? fixture.models[0];
+								return Promise.resolve([{ ...(row ?? {}), ...values }]);
+							}
+							return Promise.resolve([]);
+						},
+						then: undefined,
+					}),
+			}),
+		}),
+		delete: () => ({ where: () => Promise.resolve({ rowCount: 1 }) }),
+	};
+	// persistModelReferenceChanges 的 update ... where 不取 returning：记录后 resolve。
+	const rawUpdate = db.update as unknown as (table: unknown) => { set: (v: Record<string, unknown>) => { where: () => Promise<void> } };
+	db.update = ((table: unknown) => ({
+		set: (values: Record<string, unknown>) => ({
+			where: () => {
+				if (table === LiteLLM_ProxyModelTable) fixture.rowUpdates.push({ modelId: "model-1", model_info: values.model_info });
+				if (table === LiteLLM_TeamTable) fixture.teamUpdates.push({ teamId: "team-1", models: values.models as string[] });
+				if (table === LiteLLM_VerificationToken) fixture.tokenUpdates.push({ token: "key-b", models: values.models as string[] });
+				return Object.assign(Promise.resolve(), {
+					returning: () => {
+						if (table === LiteLLM_ProxyModelTable) {
+							const row = fixture.models.find((candidate) => candidate.model_id === "model-1") ?? fixture.models[0];
+							return Promise.resolve([{ ...(row ?? {}), ...values }]);
+						}
+						return Promise.resolve([]);
+					},
+				});
+			},
+		}),
+	})) as never;
+	void rawUpdate;
+	const app = express();
+	app.use(express.json());
+	const router = express.Router();
+	createModelManagementRoutes(router, db as never, null);
+	app.use(router);
+	return { app: app, fixture: fixture };
+}
+
+function referenceFixture(): ReferenceFixture {
+	return {
+		models: [
+			{
+				model_id: "model-1",
+				model_name: "commandcode/deepseek-v4.1-flash",
+				litellm_params: { model: "deepseek/deepseek-v4.1-flash" },
+				model_info: { id: "model-1", fallbacks: ["opencode-go/deepseek-v4.1-flash"] },
+				created_at: new Date(),
+				created_by: "tester",
+				updated_at: new Date(),
+				updated_by: "tester",
+			},
+		],
+		config: [
+			{
+				param_name: "router_settings",
+				param_value: {
+					fallbacks: [{ "old-name": ["opencode-go/deepseek-v4.1-flash"] }],
+					model_group_alias: { "deepseek-v4-flash": "commandcode/deepseek-v4.1-flash" },
+				},
+			},
+		],
+		teams: [{ teamId: "team-1", models: ["old-name"] }],
+		tokens: [{ token: "key-b", models: ["old-name"] }],
+		permissions: [{ objectPermissionId: "perm-1", models: [] }],
+		upserts: [],
+		rowUpdates: [],
+		teamUpdates: [],
+		tokenUpdates: [],
+	};
+}
+
+describe("模型引用面：审计与改名级联", () => {
+	it("GET /model/references/audit 报出悬空引用（哨兵不计）", async () => {
+		const { app } = makeReferenceApp(
+			referenceFixtureWith({
+				models: [
+					{
+						model_id: "model-1",
+						model_name: "commandcode/deepseek-v4.1-flash",
+						litellm_params: { model: "deepseek/deepseek-v4.1-flash" },
+						model_info: { id: "model-1", fallbacks: [] },
+						created_at: new Date(),
+						created_by: "tester",
+						updated_at: new Date(),
+						updated_by: "tester",
+					},
+				],
+				config: [
+					{
+						param_name: "router_settings",
+						param_value: { fallbacks: [], model_group_alias: { "deepseek-v4-flash": "commandcode/deepseek-v4.1-flash" } },
+					},
+				],
+				teams: [],
+				tokens: [
+					{ token: "key-b", models: ["old-name"] },
+					{ token: "key-c", models: ["all-team-models"] },
+				],
+			}),
+		);
+		const res = await request(app).get("/model/references/audit");
+		expect(res.status).toBe(200);
+		expect(res.body.dangling).toEqual([{ surface: "VerificationToken.models", path: "key-b", name: "old-name" }]);
+		expect(res.body.aliases).toContain("deepseek-v4-flash");
+	});
+
+	it("POST /model/rename 善后模式：把所有引用面的旧名重写到现行名字", async () => {
+		const { app, fixture } = makeReferenceApp(referenceFixture());
+		const res = await request(app).post("/model/rename").send({ from: "old-name", to: "commandcode/deepseek-v4.1-flash" });
+		expect(res.status).toBe(200);
+		expect(res.body.kind).toBe("references");
+		expect(res.body.rewritten).toContainEqual({ surface: "router_settings.fallbacks", rewritten: 1 });
+		const upsert = fixture.upserts.find((candidate) => candidate.param_name === "router_settings");
+		expect(upsert?.param_value).toMatchObject({
+			fallbacks: [{ "commandcode/deepseek-v4.1-flash": ["opencode-go/deepseek-v4.1-flash"] }],
+			model_group_alias: { "deepseek-v4-flash": "commandcode/deepseek-v4.1-flash" },
+		});
+		expect(fixture.teamUpdates).toEqual([{ teamId: "team-1", models: ["commandcode/deepseek-v4.1-flash"] }]);
+		expect(fixture.tokenUpdates).toEqual([{ token: "key-b", models: ["commandcode/deepseek-v4.1-flash"] }]);
+	});
+
+	it("POST /model/rename 别名模式：别名键连同引用一起改名，目标不能撞现有名字", async () => {
+		const { app, fixture } = makeReferenceApp(referenceFixture());
+		const rejected = await request(app)
+			.post("/model/rename")
+			.send({ from: "deepseek-v4-flash", to: "commandcode/deepseek-v4.1-flash" });
+		expect(rejected.status).toBe(409);
+		expect(fixture.upserts).toEqual([]);
+
+		const res = await request(app).post("/model/rename").send({ from: "deepseek-v4-flash", to: "deepseek-v5-flash" });
+		expect(res.status).toBe(200);
+		expect(res.body.kind).toBe("alias");
+		const upsert = fixture.upserts.find((candidate) => candidate.param_name === "router_settings");
+		expect(upsert?.param_value).toMatchObject({
+			model_group_alias: { "deepseek-v5-flash": "commandcode/deepseek-v4.1-flash" },
+			fallbacks: [{ "old-name": ["opencode-go/deepseek-v4.1-flash"] }],
+		});
+	});
+
+	it("POST /model/rename 拒绝相同名字与不存在的目标", async () => {
+		const { app } = makeReferenceApp(referenceFixture());
+		expect((await request(app).post("/model/rename").send({ from: "x", to: "x" })).status).toBe(400);
+		expect((await request(app).post("/model/rename").send({ from: "old-name", to: "not-a-model" })).status).toBe(409);
+		expect((await request(app).post("/model/rename").send({})).status).toBe(400);
+	});
+
+	it("PATCH /model/:id/update 改 model_name 时自动级联重写引用", async () => {
+		const group = "commandcode/deepseek-v4.1-flash";
+		const { app, fixture } = makeReferenceApp(
+			referenceFixtureWith({
+				config: [
+					{
+						param_name: "router_settings",
+						param_value: {
+							fallbacks: [{ [group]: ["opencode-go/deepseek-v4.1-flash"] }],
+							model_group_alias: { "deepseek-v4-flash": group },
+						},
+					},
+				],
+				teams: [{ teamId: "team-1", models: [group] }],
+				tokens: [{ token: "key-b", models: [group] }],
+			}),
+		);
+		const res = await request(app).patch("/model/model-1/update").send({ model_name: "commandcode/deepseek-v5-flash" });
+		expect(res.status).toBe(200);
+		const upsert = fixture.upserts.find((candidate) => candidate.param_name === "router_settings");
+		expect(upsert?.param_value).toMatchObject({
+			fallbacks: [{ "commandcode/deepseek-v5-flash": ["opencode-go/deepseek-v4.1-flash"] }],
+			model_group_alias: { "deepseek-v4-flash": "commandcode/deepseek-v5-flash" },
+		});
+		expect(fixture.teamUpdates).toEqual([{ teamId: "team-1", models: ["commandcode/deepseek-v5-flash"] }]);
+		expect(fixture.tokenUpdates).toEqual([{ token: "key-b", models: ["commandcode/deepseek-v5-flash"] }]);
+	});
+
+	it("/model/delete 守卫：组内最后一行仍被引用时拒绝，force=true 放行", async () => {
+		const blocked = makeReferenceApp(referenceFixture());
+		const conflict = await request(blocked.app).post("/model/delete").send({ id: "model-1" });
+		expect(conflict.status).toBe(409);
+		expect(conflict.body.error.message).toContain("仍被");
+
+		const forced = await request(blocked.app).post("/model/delete").send({ id: "model-1", force: true });
+		expect(forced.status).toBe(200);
+
+		const clean = makeReferenceApp(
+			referenceFixtureWith({
+				config: [{ param_name: "router_settings", param_value: { fallbacks: [], model_group_alias: {} } }],
+				teams: [{ teamId: "team-1", models: [] }],
+				tokens: [{ token: "key-b", models: [] }],
+			}),
+		);
+		const allowed = await request(clean.app).post("/model/delete").send({ id: "model-1" });
+		expect(allowed.status).toBe(200);
+		expect(allowed.body.message).toBe("Model: model-1 deleted successfully");
+	});
+});
+
+function referenceFixtureWith(overrides: Partial<ReferenceFixture>): ReferenceFixture {
+	return { ...referenceFixture(), ...overrides };
+}
