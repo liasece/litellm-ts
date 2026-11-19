@@ -6,7 +6,7 @@ import { localDateTime, subtractInterval } from "../logic/LogsDateLogic";
 import { logsQuery } from "../logic/LogsQueryLogic";
 import { readLogsUrlState, writeLogsUrlState, type LogsUrlState } from "../logic/LogsUrlLogic";
 import { shareLogRows } from "../logic/LogsIdentityLogic";
-import { createLiveTailScheduler } from "../logic/LiveTailSchedulerLogic";
+import { createRefreshScheduler } from "../../platform/logic/RefreshSchedulerLogic";
 import {
 	ALL_TIME_INTERVAL,
 	DEFAULT_LIVE_TAIL_INTERVAL_MS,
@@ -64,7 +64,7 @@ export function createLogsListStore(options: LogsListOptions) {
 	let queued: ReturnType<typeof setTimeout> | null = null;
 	let reconnect: ReturnType<typeof setTimeout> | null = null;
 	let closeSocket: (() => void) | null = null;
-	const scheduler = createLiveTailScheduler(() => refresh(false), state.liveTailIntervalMs);
+	const scheduler = createRefreshScheduler(() => refresh(false), state.liveTailIntervalMs);
 	const liveActive = computed(() => state.liveTailEnabled && state.currentPage === 1 && state.activeTab === "request logs");
 	const pageCount = computed(() => Math.max(1, page.value.total_pages));
 	const range = computed(() => ({

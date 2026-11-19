@@ -59,3 +59,28 @@ export function formatResetCountdown(resetsAt: string | null | undefined, now = 
 	const restHours = hours % 24;
 	return `in ${days} day${days === 1 ? "" : "s"}${restHours ? ` ${restHours} hour${restHours === 1 ? "" : "s"}` : ""}`;
 }
+
+/**
+ * 同一倒计时的紧凑写法（in 5d 23h / in 10h 36m / in 42m / in <1m）。
+ *
+ * 表格里倒计时和进度条、窗口名共处一行，全称会把条挤到很短；单位缩写只用于这种
+ * 空间受限的位置，完整说法与精确时间仍由 `formatResetCountdown` 和悬停提示提供。
+ */
+export function formatShortResetCountdown(resetsAt: string | null | undefined, now = Date.now()): string | null {
+	if (!resetsAt) return null;
+	const resetAt = Date.parse(resetsAt);
+	if (!Number.isFinite(resetAt)) return null;
+	const remaining = resetAt - now;
+	if (remaining <= 0) return "now";
+	if (remaining < MINUTE_MS) return "in <1m";
+	const minutes = Math.ceil(remaining / MINUTE_MS);
+	if (minutes < 60) return `in ${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) {
+		const rest = minutes % 60;
+		return `in ${hours}h${rest ? ` ${rest}m` : ""}`;
+	}
+	const days = Math.floor(hours / 24);
+	const restHours = hours % 24;
+	return `in ${days}d${restHours ? ` ${restHours}h` : ""}`;
+}

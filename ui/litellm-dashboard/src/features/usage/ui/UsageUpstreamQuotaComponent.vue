@@ -1,148 +1,156 @@
 <script setup lang="ts">
-import { onBeforeUnmount, watch } from "vue";
-import UiButton from "../../platform/ui/UiButton.vue";
-import UiIcon from "../../platform/ui/UiIcon.vue";
+import { computed, onBeforeUnmount, watch } from "vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
-import UiCard from "../../platform/ui/UiCard.vue";
-import UiTag from "../../platform/ui/UiTag.vue";
-import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityComponent.vue";
-import ModelName from "../../providers/ui/ModelNameComponent.vue";
+import UiButton from "../../platform/ui/UiButton.vue";
+import UiEmptyState from "../../platform/ui/UiEmptyState.vue";
+import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
-import { createUpstreamQuotaStore } from "../stores/UpstreamQuotaStore";
-import { accountIdentity } from "../../cliproxy/logic/AccountIdentityLogic";
-import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
+import UiTag from "../../platform/ui/UiTag.vue";
+import ModelName from "../../providers/ui/ModelNameComponent.vue";
+import ProviderIdentityComponent from "../../providers/ui/ProviderIdentityComponent.vue";
 import UsageQuotaWindows from "./UsageQuotaWindowsComponent.vue";
+import { createUpstreamQuotaStore } from "../stores/UpstreamQuotaStore";
+import { groupQuotaAccountRows, quotaAccountRows, type QuotaAccountRow } from "../logic/UsageQuotaRowsLogic";
+import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 const props = defineProps<{ enabled: boolean }>(),
 	store = createUpstreamQuotaStore(),
 	{ state } = store,
 	money = useMoneyFormatter();
+// 进入页面先按缓存铺表再后台刷新，之后由 store 内的调度器定时轮询（间隔见 UPSTREAM_QUOTA_POLL_INTERVAL_MS）。
 watch(
 	() => props.enabled,
 	(value) => {
-		if (value) void store.load();
+		if (value) store.start();
 	},
 	{ immediate: true },
 );
 onBeforeUnmount(() => store.dispose());
-function kind(value: string) {
-	return value === "subscription" ? "Subscription key" : value === "pay_as_you_go" ? "Pay-as-you-go key" : "Unrecognized key";
-}
-function balance(value: { used: number; limit: number; unit: string }) {
-	if (value.unit === "次可用") return value.limit.toFixed(0) + " " + value.unit;
-	const remaining = Math.max(0, value.limit - value.used);
-	return value.unit === "USD" ? money(remaining, 2) + " remaining" : remaining.toFixed(2) + " " + value.unit + " remaining";
+const rows = computed(() =>
+	quotaAccountRows({
+		providers: state.providers,
+		accounts: state.accounts,
+		quotas: state.quotas,
+		formatUsd: (value) => money(value, 2),
+	}),
+);
+const groups = computed(() => groupQuotaAccountRows(rows.value));
+// 点比进度条更亮并带呼吸动画（颜色与动画都在 UsageQuotaStyles.css 里）：
+// 红=有窗口真正用完，黄=有窗口不高于 33%，绿=全部高于 33%。
+function urgencyLabel(row: QuotaAccountRow): string {
+	if (row.urgency === "critical") return "Quota exhausted · a window is used up";
+	const lowest = row.lowestPercent === null ? "" : ` · lowest window ${Math.round(row.lowestPercent)}% remaining`;
+	if (row.urgency === "warning") return "Quota low" + lowest;
+	return "Quota healthy · all windows above 33%";
 }
 </script>
 <template>
-	<section
-		v-if="enabled && (state.accounts.length || state.providers.length || state.builtInError !== null)"
-		class="usage-upstream-quota"
-		data-testid="upstream-account-quota"
-	>
+	<!-- 独立页面：没有数据时也要留住页头和刷新按钮，否则整页空白看不出是没配置还是没加载。 -->
+	<section v-if="enabled" class="usage-upstream-quota" data-testid="upstream-account-quota">
 		<header>
 			<div>
 				<h4>Upstream account quota</h4>
-				<p>Remaining quota and balance for subscription accounts and built-in provider keys.</p>
+				<p>Remaining quota and balance for subscription accounts and built-in provider keys, grouped by upstream provider.</p>
 			</div>
 			<UiButton :loading="state.refreshing" data-testid="upstream-quota-refresh" @click="store.load(true)"
 				><template #icon><UiIcon name="ReloadOutlined" /></template>Refresh</UiButton
 			>
 		</header>
+		<UiAlert v-if="state.accountsError" type="warning" title="Subscription accounts unavailable">{{ state.accountsError }}</UiAlert>
 		<UiAlert v-if="state.builtInError" type="warning" title="Built-in provider quota unavailable">{{ state.builtInError }}</UiAlert>
-		<div class="usage-quota-grid">
-			<UiCard
-				v-for="account in state.providers"
-				:key="account.id"
-				appearance="antd"
-				:data-testid="'builtin-provider-quota-' + account.provider"
-			>
-				<template #title
-					><div class="usage-quota-account-title">
-						<div>
-							<ProviderIdentityComponent :provider="account.provider" /><strong :title="account.label">{{
-								account.label
-							}}</strong>
-						</div>
-						<small v-if="account.models.length" :title="account.models.join(', ')" class="usage-quota-models"
-							><ModelName
-								v-for="model in account.models"
-								:key="model"
-								class="usage-quota-model"
-								:model="model"
-								:provider="account.provider"
-								:size="12"
-						/></small></div></template
-				><template #extra
-					><div class="usage-quota-account-kind">
-						<UiTag>{{ kind(account.account_kind) }}</UiTag
-						><UiTag v-if="account.plan" color="blue">{{ account.plan }}</UiTag>
-					</div></template
-				>
-				<UiAlert v-if="account.error" type="warning" title="Quota query failed">{{ account.error }}</UiAlert
-				><UiAlert v-if="account.warning" type="info" :title="account.warning" />
-				<UsageQuotaWindows v-if="account.windows.length" :windows="account.windows" />
-				<div v-if="account.balances.length" class="usage-quota-balances">
-					<div v-for="b in account.balances" :key="b.label + '-' + b.unit">
-						<header>
-							<strong>{{ b.label }}</strong
-							><span
-								>{{ b.unit }}
-								{{ b.remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
-								remaining</span
-							>
-						</header>
-						<small v-if="b.details?.length">{{ b.details.join(" · ") }}</small>
-					</div>
-				</div>
-				<UiAlert
-					v-if="!account.error && !account.windows.length && !account.balances.length && !account.warning"
-					type="info"
-					title="This account returned no quota details."
-				/>
-				<small class="usage-quota-updated">Updated {{ new Date(account.fetched_at).toLocaleString() }}</small>
-			</UiCard>
-			<UiCard v-for="account in state.accounts" :key="account.auth_index" appearance="antd">
-				<template #title
-					><div class="usage-quota-account-title">
-						<div>
-							<ProviderIdentityComponent :provider="account.provider" /><strong
-								:title="accountIdentity(account, state.quotas[account.auth_index]?.data?.email) ?? account.filename"
-								>{{ accountIdentity(account, state.quotas[account.auth_index]?.data?.email) ?? account.filename }}</strong
-							>
-						</div>
-					</div></template
-				><template v-if="state.quotas[account.auth_index]?.data?.plan" #extra
-					><UiTag color="blue">{{ state.quotas[account.auth_index].data?.plan }}</UiTag></template
-				>
-				<div v-if="!state.quotas[account.auth_index]?.data" class="usage-quota-initial">
-					<UiAlert v-if="state.quotas[account.auth_index]?.status === 'error'" type="warning" title="Quota unavailable">{{
-						state.quotas[account.auth_index]?.error
-					}}</UiAlert
-					><UiSpinner v-else />
-				</div>
-				<div v-else class="usage-quota-details">
-					<small v-if="state.quotas[account.auth_index].data?.subscription_expires_at"
-						>Subscription expires
-						{{ new Date(state.quotas[account.auth_index].data!.subscription_expires_at!).toLocaleString() }}</small
-					><UsageQuotaWindows :windows="state.quotas[account.auth_index].data!.windows" />
-					<div
-						v-for="b in state.quotas[account.auth_index].data!.balances"
-						:key="b.label + '-' + b.unit"
-						class="usage-quota-balance-row"
-					>
-						<strong>{{ b.label }}</strong
-						><span>{{ balance(b) }}</span>
-					</div>
-					<UiAlert
-						v-if="
-							!state.quotas[account.auth_index].data!.windows.length &&
-							!state.quotas[account.auth_index].data!.balances.length
-						"
-						type="info"
-						title="This provider returned no remaining quota details."
-					/><small>Updated {{ new Date(state.quotas[account.auth_index].data!.fetched_at).toLocaleString() }}</small>
-				</div>
-			</UiCard>
+		<UiEmptyState
+			v-if="!groups.length && !state.builtInError && !state.accountsError && state.refreshing"
+			description="Loading upstream account quota…"
+		/>
+		<UiEmptyState v-else-if="!groups.length" description="No subscription accounts or built-in provider keys to report quota for" />
+		<div v-else class="usage-quota-table-wrap">
+			<table class="usage-quota-table">
+				<colgroup>
+					<col class="usage-quota-col--account" />
+					<col class="usage-quota-col--type" />
+					<col class="usage-quota-col--windows" />
+					<col class="usage-quota-col--balances" />
+					<col class="usage-quota-col--updated" />
+				</colgroup>
+				<thead>
+					<tr>
+						<th scope="col">Account</th>
+						<th scope="col">Type</th>
+						<th scope="col">Quota windows</th>
+						<th scope="col">Balances</th>
+						<th scope="col">Updated</th>
+					</tr>
+				</thead>
+				<tbody>
+					<template v-for="group in groups" :key="group.provider">
+						<tr class="usage-quota-band">
+							<th colspan="5" scope="colgroup">
+								<span class="usage-quota-band-label"
+									><ProviderIdentityComponent :provider="group.provider" :tag="false" /><span
+										class="usage-quota-band-count"
+										:aria-label="group.rows.length + ' accounts'"
+										>{{ group.rows.length }}</span
+									></span
+								>
+							</th>
+						</tr>
+						<tr v-for="row in group.rows" :key="row.key" :data-testid="row.testid">
+							<td>
+								<div class="usage-quota-account">
+									<div class="usage-quota-account-name">
+										<strong :title="row.name">{{ row.name }}</strong>
+										<span
+											v-if="row.urgency"
+											class="usage-quota-urgency"
+											:class="'usage-quota-urgency--' + row.urgency"
+											:title="urgencyLabel(row)"
+											role="img"
+											:aria-label="urgencyLabel(row)"
+										/>
+									</div>
+									<small v-if="row.models.length" class="usage-quota-models" :title="row.models.join(', ')">
+										<ModelName
+											v-for="model in row.models"
+											:key="model"
+											class="usage-quota-model"
+											:model="model"
+											:provider="row.provider"
+											:size="12"
+										/>
+									</small>
+									<small v-if="row.warning" class="usage-quota-row-warning" :title="row.warning">{{ row.warning }}</small>
+									<small v-if="row.error" class="usage-quota-row-error" :title="row.error">{{ row.error }}</small>
+								</div>
+							</td>
+							<td>
+								<div class="usage-quota-type">
+									<UiTag>{{ row.kind }}</UiTag>
+									<UiTag v-if="row.plan" color="blue">{{ row.plan }}</UiTag>
+									<small v-if="row.expires">Expires {{ new Date(row.expires).toLocaleDateString() }}</small>
+								</div>
+							</td>
+							<td>
+								<UsageQuotaWindows v-if="row.windows.length" :windows="row.windows" />
+								<UiSpinner v-else-if="row.loading" />
+								<span v-else-if="!row.error" class="usage-quota-muted">No quota details</span>
+							</td>
+							<td>
+								<div v-if="row.balances.length" class="usage-quota-balances">
+									<div v-for="b in row.balances" :key="b.label + '-' + b.remaining">
+										<small>{{ b.label }}</small
+										><span>{{ b.remaining }}</span>
+										<small v-if="b.details?.length">{{ b.details.join(" · ") }}</small>
+									</div>
+								</div>
+								<span v-else class="usage-quota-muted">—</span>
+							</td>
+							<td>
+								<small v-if="row.updated" class="usage-quota-updated">{{ new Date(row.updated).toLocaleString() }}</small>
+								<span v-else class="usage-quota-muted">—</span>
+							</td>
+						</tr>
+					</template>
+				</tbody>
+			</table>
 		</div>
 	</section>
 </template>

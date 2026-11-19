@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLiveTailScheduler } from "./LiveTailSchedulerLogic";
+import { createRefreshScheduler } from "./RefreshSchedulerLogic";
 
 afterEach(() => vi.useRealTimers());
-describe("live log refresh scheduling", () => {
+describe("refresh scheduling", () => {
 	it("coalesces change notifications while enforcing the 500ms request start interval", async () => {
 		vi.useFakeTimers();
 		const refresh = vi.fn(async () => undefined);
-		const scheduler = createLiveTailScheduler(refresh, 10_000);
+		const scheduler = createRefreshScheduler(refresh, 10_000);
 		scheduler.start();
 		for (let index = 0; index < 10; index++) scheduler.signal();
 		await vi.advanceTimersByTimeAsync(499);
@@ -31,7 +31,7 @@ describe("live log refresh scheduling", () => {
 					}),
 			)
 			.mockResolvedValue(undefined);
-		const scheduler = createLiveTailScheduler(refresh, 10_000);
+		const scheduler = createRefreshScheduler(refresh, 10_000);
 		scheduler.start();
 		scheduler.signal();
 		await vi.advanceTimersByTimeAsync(500);
@@ -47,7 +47,7 @@ describe("live log refresh scheduling", () => {
 		vi.useFakeTimers();
 		let hidden = true;
 		const refresh = vi.fn(async () => undefined);
-		const scheduler = createLiveTailScheduler(refresh, 2000, {
+		const scheduler = createRefreshScheduler(refresh, 2000, {
 			now: () => Date.now(),
 			hidden: () => hidden,
 			setTimer: setTimeout,

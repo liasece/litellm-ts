@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatResetCountdown, isRemainingExhausted, QUOTA_TONE_COLORS, remainingTone, roundedRemainingPercent } from "./QuotaDisplayLogic";
+import {
+	formatResetCountdown,
+	formatShortResetCountdown,
+	isRemainingExhausted,
+	QUOTA_TONE_COLORS,
+	remainingTone,
+	roundedRemainingPercent,
+} from "./QuotaDisplayLogic";
 
 describe("quota display logic", () => {
 	it("把 0.21% 的浮点余量显示并标记为耗尽", () => {
@@ -45,6 +52,24 @@ describe("quota display logic", () => {
 			expect(formatResetCountdown("2026-11-18T11:59:00Z", now)).toBe("now");
 			expect(formatResetCountdown(null, now)).toBeNull();
 			expect(formatResetCountdown("not-a-date", now)).toBeNull();
+		});
+	});
+
+	describe("short quota reset countdown", () => {
+		const now = Date.parse("2026-11-18T12:00:00Z");
+
+		it("keeps the same boundaries as the long form but abbreviates units", () => {
+			expect(formatShortResetCountdown("2026-11-22T00:00:00Z", now)).toBe("in 3d 12h");
+			expect(formatShortResetCountdown("2026-11-18T13:05:00Z", now)).toBe("in 1h 5m");
+			expect(formatShortResetCountdown("2026-11-18T12:43:00Z", now)).toBe("in 43m");
+			expect(formatShortResetCountdown("2026-11-19T12:00:00Z", now)).toBe("in 1d");
+			expect(formatShortResetCountdown("2026-11-18T12:00:45Z", now)).toBe("in <1m");
+		});
+
+		it("marks elapsed and invalid reset times separately from future windows", () => {
+			expect(formatShortResetCountdown("2026-11-18T11:59:00Z", now)).toBe("now");
+			expect(formatShortResetCountdown(null, now)).toBeNull();
+			expect(formatShortResetCountdown("not-a-date", now)).toBeNull();
 		});
 	});
 });
