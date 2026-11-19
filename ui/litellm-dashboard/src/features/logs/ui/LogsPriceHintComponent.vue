@@ -57,7 +57,14 @@ const upstream = computed(() => props.snapshot?.upstream);
 					<div v-for="row in rows" :key="row.field" class="logs-price-hint__row" :class="{ 'is-upstream': row.fromUpstream }">
 						<dt>{{ row.label }}单价</dt>
 						<dd>
-							<span class="logs-price-hint__value">{{ row.perMillion }}<small>/1M</small></span
+							<span
+								class="logs-price-hint__value"
+								:title="
+									snapshot.peak && snapshot.peak.multiplier > 1
+										? `基础价 ${row.perMillion}/1M ×${snapshot.peak.multiplier}`
+										: undefined
+								"
+								>{{ row.appliedPerMillion }}<small>/1M</small></span
 							><span class="logs-price-hint__source">{{ row.sourceLabel }}</span>
 						</dd>
 					</div>
@@ -71,7 +78,7 @@ const upstream = computed(() => props.snapshot?.upstream);
 						<span v-if="upstreamRows.length === 0" class="logs-price-hint__muted">（本次单价仍来自上游补位）</span>
 					</span>
 					<span v-if="snapshot.peak && snapshot.peak.multiplier !== 1" class="logs-price-hint__muted"
-						>峰时 ×{{ snapshot.peak.multiplier }} 已计入费用</span
+						>峰时 ×{{ snapshot.peak.multiplier }} 已计入上方单价</span
 					>
 				</footer>
 			</div>

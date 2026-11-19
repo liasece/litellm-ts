@@ -5,6 +5,7 @@ import { costView } from "../../logic/LogDetailsMetricsLogic";
 import { formatFreshness } from "../../../models/support/UpstreamModelInfoModels";
 import { priceBackfill, priceSnapshot, priceSnapshotRows, upstreamPriceFields } from "../../support/LogsPriceModels";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
+import LogsPriceTierBadge from "../LogsPriceTierBadgeComponent.vue";
 const props = defineProps<{ log: LogEntry }>();
 const money = useMoneyFormatter();
 const view = computed(() =>
@@ -30,13 +31,21 @@ const percent = (value: number | undefined) => (value === undefined ? "-" : (val
 		<div v-if="snapshot && priceRows.length > 0" class="ld-costs__prices">
 			<div class="ld-costs__prices-title">
 				计费单价（{{ backfill ? "事后补记" : "请求时冻结" }}）
+				<LogsPriceTierBadge :peak="snapshot.peak" />
 				<span v-if="upstreamPriced" class="ld-costs__prices-badge">含上游价</span>
 				<span v-if="backfill" class="ld-costs__prices-badge is-backfill" :title="backfill.reason ?? backfill.at">补记</span>
 			</div>
 			<div class="ld-costs__prices-rows">
 				<span v-for="row in priceRows" :key="row.field" class="ld-costs__prices-item" :class="{ 'is-upstream': row.fromUpstream }">
 					<span class="ld-costs__muted">{{ row.label }}</span>
-					<span>{{ row.perMillion }}/1M</span>
+					<span
+						:title="
+							snapshot.peak && snapshot.peak.multiplier > 1
+								? `基础价 ${row.perMillion}/1M ×${snapshot.peak.multiplier}`
+								: undefined
+						"
+						>{{ row.appliedPerMillion }}/1M</span
+					>
 					<span class="ld-costs__muted">{{ row.sourceLabel }}</span>
 				</span>
 			</div>

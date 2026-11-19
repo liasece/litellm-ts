@@ -22,6 +22,12 @@ export interface PriceSnapshotUpstream {
 	readonly unitPrices: Readonly<Record<string, number>>;
 }
 
+/** 请求发生时命中的峰谷档位与倍率。 */
+export interface LogPricePeak {
+	readonly tier: string;
+	readonly multiplier: number;
+}
+
 /** 一份请求的单价快照。 */
 export interface LogPriceSnapshot {
 	/** 字段 → per-token 单价。 */
@@ -29,7 +35,7 @@ export interface LogPriceSnapshot {
 	/** 字段 → 单价来源。 */
 	readonly sources: Readonly<Record<string, PriceFieldSource>>;
 	/** 峰谷档位；未配置峰谷时不存在。 */
-	readonly peak?: { readonly tier: string; readonly multiplier: number };
+	readonly peak?: LogPricePeak;
 	/** 上游目录价（仅当请求时上游给了该模型价格）。 */
 	readonly upstream?: PriceSnapshotUpstream;
 }
@@ -158,33 +164,81 @@ export function upstreamPriceFields(snapshot: LogPriceSnapshot | undefined): rea
 export interface PriceSnapshotRow {
 	readonly field: string;
 	readonly label: string;
-	/** 每百万 token 的美元价格文本。 */
+	/** 每百万 token 的基础单价文本（快照里的 per-token 单价 × 1M）。 */
 	readonly perMillion: string;
+	/** 本次请求实收的每百万 token 单价；峰时已乘上快照里的倍率。 */
+	readonly appliedPerMillion: string;
 	readonly source: PriceFieldSource;
 	readonly sourceLabel: string;
 	readonly fromUpstream: boolean;
 }
 
+/** 每百万 token 单价的展示文本。 */
+function formatPerMillion(perToken: number): string {
+	const perMillion = perToken * 1_000_000;
+	const digits = perMillion >= 1 ? 2 : perMillion >= 0.01 ? 3 : 4;
+	return `$${perMillion.toFixed(digits)}`;
+}
+
 /**
  * 快照 → 展示行；只保留真正参与计费的字段（来源不是 unset）。
+ *
+ * `perMillion` 保留快照里的基础价，`appliedPerMillion` 是本次实际计费的单价
+ * （峰时乘上倍率）。费用气泡既要能核对本次金额，也要能看出峰谷价差，两者都给出。
  * @param snapshot - 单价快照
  */
 export function priceSnapshotRows(snapshot: LogPriceSnapshot): PriceSnapshotRow[] {
 	const rows: PriceSnapshotRow[] = [];
+	const multiplier = snapshot.peak?.multiplier;
+	const factor = typeof multiplier === "number" && Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
 	for (const [field, label] of PRICE_FIELDS) {
 		const source = snapshot.sources[field];
 		const perToken = snapshot.unitPrices[field];
 		if (source === undefined || source === "unset" || perToken === undefined) continue;
-		const perMillion = perToken * 1_000_000;
-		const digits = perMillion >= 1 ? 2 : perMillion >= 0.01 ? 3 : 4;
 		rows.push({
 			field: field,
 			label: label,
-			perMillion: `$${perMillion.toFixed(digits)}`,
+			perMillion: formatPerMillion(perToken),
+			appliedPerMillion: formatPerMillion(perToken * factor),
 			source: source,
 			sourceLabel: priceSourceLabel(source),
 			fromUpstream: source === "upstream",
 		});
 	}
 	return rows;
+}
+
+/** 峰谷图标的展示模型。 */
+export interface PriceTierView {
+	readonly tier: "peak" | "off_peak";
+	readonly label: string;
+	readonly icon: "Sun" | "Moon";
+	/** 峰时的倍率角标；谷时或倍率 1 时省略。 */
+	readonly multiplier?: string;
+	readonly description: string;
+}
+
+/**
+ * 峰谷档位 → 图标与文案。
+ *
+ * 后端只写 `peak` / `off_peak` 两种档位；遇到未知档位宁可不显示，也不要把
+ * 一条无法解释的价格标成谷时价。图标用太阳/月亮，和文案一起出现，不单靠颜色。
+ * @param peak - 请求时冻结的峰谷档位
+ */
+export function priceTierView(peak: LogPricePeak | undefined): PriceTierView | undefined {
+	if (peak === undefined) return undefined;
+	if (peak.tier === "peak") {
+		const scaled = peak.multiplier > 1;
+		return {
+			tier: "peak",
+			label: "峰时",
+			icon: "Sun",
+			...(scaled ? { multiplier: `×${peak.multiplier}` } : {}),
+			description: scaled ? `高峰时段，单价按基础价 ×${peak.multiplier} 计费` : "高峰时段，按基础价计费",
+		};
+	}
+	if (peak.tier === "off_peak") {
+		return { tier: "off_peak", label: "谷时", icon: "Moon", description: "空闲时段，按谷时基础价计费" };
+	}
+	return undefined;
 }

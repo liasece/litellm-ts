@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { LogEntry } from "./LogsModels";
-import { priceBackfill, priceSnapshot, priceSnapshotRows, upstreamPriceFields } from "./LogsPriceModels";
+import { priceBackfill, priceSnapshot, priceSnapshotRows, priceTierView, upstreamPriceFields } from "./LogsPriceModels";
 
 const log = (data: Partial<LogEntry>): LogEntry => ({ request_id: "fixture", startTime: "2026-11-07T00:00:00Z", ...data });
 const frozen = log({
@@ -79,6 +79,27 @@ describe("frozen price snapshot", () => {
 		expect(rows[0]).toMatchObject({ perMillion: "$1.40", sourceLabel: "上游目录", fromUpstream: true });
 		expect(rows[1]).toMatchObject({ perMillion: "$4.40", sourceLabel: "部署配置", fromUpstream: false });
 		expect(rows[2].perMillion).toBe("$0.260");
+	});
+
+	it("shows the price actually charged, not only the base price, when peak pricing applied", () => {
+		const rows = priceSnapshotRows(priceSnapshot(frozen)!);
+		expect(rows[0]).toMatchObject({ perMillion: "$1.40", appliedPerMillion: "$1.68" });
+		expect(rows[2].appliedPerMillion).toBe("$0.312");
+	});
+
+	it("labels the frozen tier with an icon and the multiplier used for this request", () => {
+		expect(priceTierView({ tier: "peak", multiplier: 2 })).toMatchObject({
+			label: "峰时",
+			icon: "Sun",
+			multiplier: "×2",
+		});
+		expect(priceTierView({ tier: "off_peak", multiplier: 1 })).toMatchObject({
+			label: "谷时",
+			icon: "Moon",
+		});
+		expect(priceTierView(undefined)).toBeUndefined();
+		// 未知档位不冒充谷时：没有可解释的档位就不显示标记。
+		expect(priceTierView({ tier: "future_tier", multiplier: 2 })).toBeUndefined();
 	});
 
 	it("returns nothing for rows logged before the snapshot existed", () => {

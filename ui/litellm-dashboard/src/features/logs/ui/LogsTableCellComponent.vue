@@ -9,7 +9,7 @@ import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import UpstreamModelFacts from "../../models/ui/UpstreamModelFactsComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { priceBackfill, priceSnapshot } from "../support/LogsPriceModels";
+import { priceBackfill, priceSnapshot, priceSnapshotRows } from "../support/LogsPriceModels";
 import {
 	buildModelResolutionLines,
 	localLogTime,
@@ -29,6 +29,7 @@ import LogsLiveDurationComponent from "./LogsLiveDurationComponent.vue";
 import LogsTypeBadgeComponent from "./LogsTypeBadgeComponent.vue";
 import LogsFeatureCellComponent from "./LogsFeatureCellComponent.vue";
 import LogsPriceHint from "./LogsPriceHintComponent.vue";
+import LogsPriceTierBadge from "./LogsPriceTierBadgeComponent.vue";
 const props = defineProps<{ log: LogEntry; column: string; live: boolean }>();
 const emit = defineEmits<{ key: [hash: string]; session: [group: SessionGroupRef] }>();
 const money = useMoneyFormatter();
@@ -57,6 +58,7 @@ const tokenTooltip = computed(
 );
 // 费用来源只看请求时冻结的单价快照；没有快照的历史行不显示任何来源标记。
 const snapshot = computed(() => priceSnapshot(props.log));
+const priceRows = computed(() => (snapshot.value === undefined ? [] : priceSnapshotRows(snapshot.value)));
 const backfill = computed(() => priceBackfill(props.log));
 const costFields = computed(() => [
 	{ label: "缓存输入", value: costs.value.cacheInputCost, icon: "Database" },
@@ -105,6 +107,27 @@ const costFields = computed(() => [
 								<UiLucideIcon :name="field.icon" :size="14" />{{ field.label }}
 							</div>
 							<div class="logs-field-value">{{ money(field.value, 8, priceIdentity) }}</div>
+						</div>
+						<div v-if="priceRows.length > 0" class="logs-cost-prices">
+							<div class="logs-cost-prices__header">
+								<span>本次单价</span>
+								<LogsPriceTierBadge :peak="snapshot?.peak" />
+							</div>
+							<dl class="logs-cost-prices__rows">
+								<div v-for="row in priceRows" :key="row.field" class="logs-cost-prices__row">
+									<dt>{{ row.label }}</dt>
+									<dd>
+										<span class="logs-cost-prices__value">{{ row.appliedPerMillion }}<small>/1M</small></span>
+										<span
+											v-if="
+												snapshot?.peak && snapshot.peak.multiplier > 1 && row.perMillion !== row.appliedPerMillion
+											"
+											class="logs-cost-prices__base"
+											>基础价 {{ row.perMillion }} ×{{ snapshot.peak.multiplier }}</span
+										>
+									</dd>
+								</div>
+							</dl>
 						</div>
 					</div>
 				</template>

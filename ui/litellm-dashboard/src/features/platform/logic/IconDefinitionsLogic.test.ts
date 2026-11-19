@@ -17,6 +17,11 @@ describe("icon definitions", () => {
 		expect(resolveIconNodes(definitions, "NotARealIcon")).toEqual([]);
 	});
 
+	it("resolves the sun and moon used by the price tier badge", () => {
+		expect(resolveIconNodes(definitions, "Sun").length).toBeGreaterThan(0);
+		expect(resolveIconNodes(definitions, "Moon").length).toBeGreaterThan(0);
+	});
+
 	it("resolves every literal icon name used by a component", () => {
 		// 名字写错只会渲染空 svg，界面看起来“什么都没有”，所以在这里把字面量名字全部解析一遍。
 		const missing: string[] = [];
