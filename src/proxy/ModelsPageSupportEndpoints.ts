@@ -23,7 +23,8 @@ import type { ServiceConfig } from "../core/config";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Deployment, LitellmParams } from "../types/router";
 import type { ModelInfo } from "../types/config";
-import type { Router } from "../router/Router";
+import type { DeploymentCooldownSnapshot, Router } from "../router/Router";
+import { getDeploymentKey } from "../router/RouterModelGroupCache";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
 import { modelCostMapService, type ModelCostMapService } from "../cost/ModelCostMapService";
@@ -575,6 +576,8 @@ export interface RouterDeploymentsAccessor {
 	getDeployments(): Deployment[];
 	/** 可选：返回当前 fallback 配置（Router.getFallbacks）；缺省时 /v2/model/info 注入空 fallbacks */
 	getFallbacks?(): Record<string, string[]>;
+	/** 可选：返回当前活跃的 deployment 冷却（Router.getActiveCooldownSnapshots）；缺省时不注入冷却 */
+	getActiveCooldownSnapshots?(): Promise<ReadonlyMap<string, DeploymentCooldownSnapshot>>;
 }
 
 /** /v2/model/info 接受的 query 形状。明确列出字段，禁止 Record<string, unknown>。 */
@@ -622,6 +625,11 @@ interface ModelInfoV2Item {
 	model_info: Record<string, unknown>;
 	/** 上游元信息（仅订阅部署、并且缓存里有记录时出现）；model_info 中由上游补位的字段见 filled_fields。 */
 	upstream_model_info?: UpstreamModelInfoPayload;
+	/**
+	 * 失败触发 fallback 后仍在生效的部署冷却。
+	 * 这是运行态，刻意放在顶层而非 model_info，避免破坏 Python model_info 的 73 键契约。
+	 */
+	cooldown?: DeploymentCooldownSnapshot;
 }
 
 /** /v2/model/info 单模型查询响应 */
@@ -664,6 +672,15 @@ function resolveModelId(modelInfo: ModelInfo | undefined, dep: Deployment, index
 }
 
 /**
+ * 只在 deployment 确实处于冷却时添加顶层运行态，未冷却的响应形状保持与 Python 一致。
+ * @param item - /v2/model/info 的单元素
+ * @param cooldown - 该 deployment 当前活跃冷却；未冷却时为 undefined
+ */
+function withDeploymentCooldown(item: ModelInfoV2Item, cooldown: DeploymentCooldownSnapshot | undefined): ModelInfoV2Item {
+	return cooldown === undefined ? item : { ...item, cooldown: cooldown };
+}
+
+/**
  * 把一个 Deployment 投影为 /v2/model/info 单元素。
  * model_info 对齐 Python `_enrich_model_info_with_litellm_data` 输出（73 键，缺省 null），
  * 另注入 `fallbacks`（该 model_group 当前 fallback 链，WebUI Fallback 列数据源，
@@ -685,6 +702,7 @@ function buildModelInfoV2Item(
 	builtinCapabilities?: BuiltinCapabilitiesConfig,
 ): ModelInfoV2Item {
 	const fallbackId = resolveModelId(modelInfo, dep, stableIndex);
+	const overrideModelName = typeof modelInfo?.override_model_name === "string" ? modelInfo.override_model_name : undefined;
 	const upstreamOut = { filledFields: [] as string[] };
 	const enriched = buildEnrichedModelInfo(dep, fallbackId, modelCostMap, builtinCapabilities, upstreamOut);
 	const upstreamPayload = upstreamPayloadForDeployment(dep, upstreamOut.filledFields);
@@ -699,9 +717,7 @@ function buildModelInfoV2Item(
 		model_info: {
 			...enriched,
 			fallbacks: [...fallbacks],
-			...(typeof modelInfo?.override_model_name === "string"
-				? { override_model_name: modelInfo.override_model_name }
-				: {}),
+			...(overrideModelName === undefined ? {} : { override_model_name: overrideModelName }),
 		},
 		...(upstreamPayload === undefined ? {} : { upstream_model_info: upstreamPayload }),
 	};
@@ -775,6 +791,7 @@ function sortItems<T extends { model_name: string; model_info: { id?: string } }
  * @param fallbacksByGroup - model_group → fallback 链（Router 当前配置）
  * @param modelCostMap
  * @param builtinCapabilities - 用于补充各部署内置能力的配置。
+ * @param cooldownsByDeployment - deployment key（model_info.id 或 model_name）→ 活跃冷却快照。
  */
 function buildV2ModelInfoResponse(
 	deployments: Deployment[],
@@ -782,6 +799,7 @@ function buildV2ModelInfoResponse(
 	fallbacksByGroup: Record<string, string[]>,
 	modelCostMap: ReturnType<ModelCostMapService["getSnapshot"]>["map"],
 	builtinCapabilities?: BuiltinCapabilitiesConfig,
+	cooldownsByDeployment?: ReadonlyMap<string, DeploymentCooldownSnapshot>,
 ): PaginatedModelInfoResponse {
 	const page = parsePositiveInt(query.page, DEFAULT_MODEL_INFO_PAGE);
 	const size = parsePositiveInt(query.size, DEFAULT_MODEL_INFO_PAGE_SIZE);
@@ -808,7 +826,12 @@ function buildV2ModelInfoResponse(
 	for (const [groupName, group] of grouped) {
 		const groupFallbacks = fallbacksByGroup[groupName] ?? [];
 		group.forEach((dep, idx) => {
-			items.push(buildModelInfoV2Item(dep, idx, dep.model_info, groupFallbacks, modelCostMap, builtinCapabilities));
+			items.push(
+				withDeploymentCooldown(
+					buildModelInfoV2Item(dep, idx, dep.model_info, groupFallbacks, modelCostMap, builtinCapabilities),
+					cooldownsByDeployment?.get(getDeploymentKey(dep)),
+				),
+			);
 		});
 	}
 
@@ -889,6 +912,24 @@ function resolveFallbacks(routerOrAccessor: Router | RouterDeploymentsAccessor |
 }
 
 /**
+ * 读取当前活跃冷却快照。测试用 accessor 可以只提供 deployments，此时返回空表；
+ * 冷却读取失败不能让模型列表整体失败，降级为不显示运行态。
+ * @param routerOrAccessor
+ */
+async function resolveActiveCooldowns(
+	routerOrAccessor: Router | RouterDeploymentsAccessor | undefined,
+): Promise<ReadonlyMap<string, DeploymentCooldownSnapshot>> {
+	if (routerOrAccessor && typeof routerOrAccessor.getActiveCooldownSnapshots === "function") {
+		try {
+			return await routerOrAccessor.getActiveCooldownSnapshots();
+		} catch {
+			return new Map();
+		}
+	}
+	return new Map();
+}
+
+/**
  * 注册 Models 页面支撑端点
  * @param router - Express Router 实例（需经过鉴权中间件）
  * @param routerOrAccessor - TS Router 或 deployments 访问器；用于构造 /v2/model/info 真实数据
@@ -923,23 +964,26 @@ export function registerModelsPageSupportRoutes(
 	// 这里复用 v2 的实现，保持响应形状一致。
 	registerRoute(router, { method: "get", path: "/model/info" }, async (req) => {
 		const deployments = resolveDeployments(routerOrAccessor);
-		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
-			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
-		);
+		const [builtinCapabilities, cooldowns] = await Promise.all([
+			dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM).then(normalizeBuiltinCapabilitiesConfig),
+			resolveActiveCooldowns(routerOrAccessor),
+		]);
 		return buildV2ModelInfoResponse(
 			deployments,
 			parseModelInfoQuery(req.query as Record<string, unknown>),
 			resolveFallbacks(routerOrAccessor),
 			costMapService.getSnapshot().map,
 			builtinCapabilities,
+			cooldowns,
 		);
 	});
 
 	registerRoute(router, { method: "get", path: "/v2/model/info" }, async (req) => {
 		const deployments = resolveDeployments(routerOrAccessor);
-		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
-			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
-		);
+		const [builtinCapabilities, cooldowns] = await Promise.all([
+			dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM).then(normalizeBuiltinCapabilitiesConfig),
+			resolveActiveCooldowns(routerOrAccessor),
+		]);
 		// 无部署时按 Python 空态返回 total_pages = 0
 		return buildV2ModelInfoResponse(
 			deployments,
@@ -947,6 +991,7 @@ export function registerModelsPageSupportRoutes(
 			resolveFallbacks(routerOrAccessor),
 			costMapService.getSnapshot().map,
 			builtinCapabilities,
+			cooldowns,
 		);
 	});
 
@@ -971,11 +1016,17 @@ export function registerModelsPageSupportRoutes(
 		const sameGroup = deployments.filter((d) => d.model_name === dep.model_name);
 		const idx = sameGroup.indexOf(dep);
 		const fallbacks = resolveFallbacks(routerOrAccessor)[dep.model_name] ?? [];
-		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
-			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
-		);
+		const [builtinCapabilities, cooldowns] = await Promise.all([
+			dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM).then(normalizeBuiltinCapabilitiesConfig),
+			resolveActiveCooldowns(routerOrAccessor),
+		]);
 		return {
-			data: [buildModelInfoV2Item(dep, idx, dep.model_info, fallbacks, costMapService.getSnapshot().map, builtinCapabilities)],
+			data: [
+				withDeploymentCooldown(
+					buildModelInfoV2Item(dep, idx, dep.model_info, fallbacks, costMapService.getSnapshot().map, builtinCapabilities),
+					cooldowns.get(getDeploymentKey(dep)),
+				),
+			],
 		};
 	});
 
@@ -1018,10 +1069,13 @@ export function registerModelsPageSupportRoutes(
 	 */
 	registerRoute(router, { method: "get", path: "/model_group/info" }, async (req) => {
 		const deployments = resolveDeployments(routerOrAccessor);
-		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(
-			await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM),
+		const builtinCapabilities = normalizeBuiltinCapabilitiesConfig(await dbConfigProvider.getParam(BUILTIN_CAPABILITIES_CONFIG_PARAM));
+		return buildModelGroupInfoResponse(
+			deployments,
+			costMapService.getSnapshot().map,
+			builtinCapabilities,
+			req.query.include_model_identity === "true",
 		);
-		return buildModelGroupInfoResponse(deployments, costMapService.getSnapshot().map, builtinCapabilities, req.query.include_model_identity === "true");
 	});
 
 	// ── /config/field/info ──────────────────────────────────

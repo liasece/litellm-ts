@@ -244,6 +244,11 @@
 	--model-badge-bg: rgb(239 68 68/0.1);
 	--model-badge-ring: rgb(239 68 68/0.2);
 }
+.model-cooldown {
+	justify-content: flex-start;
+	min-width: 82px;
+	font-variant-numeric: tabular-nums;
+}
 .model-badge--indigo {
 	--model-badge-text: #4f46e5;
 	--model-badge-bg: rgb(99 102 241/0.1);

@@ -2660,6 +2660,39 @@ describe("批次 D — /v2/model/info fallbacks 注入", () => {
 		expect(res.body.data[0].model_info.fallbacks).toEqual(["gpt-4o-mini", "claude-3-7-sonnet"]);
 	});
 
+	it("把活跃 deployment 冷却投影为顶层 cooldown，并保持 model_info 契约不变", async () => {
+		const litellmRouter = new LiteLLMRouter({
+			model_list: [
+				{ model_name: "gpt-4o", litellm_params: { model: "openai/gpt-4o" }, model_info: { id: "gpt-4o-primary" } },
+				{ model_name: "gpt-4o-mini", litellm_params: { model: "openai/gpt-4o-mini" }, model_info: { id: "gpt-4o-mini" } },
+			],
+			routing_strategy: RoutingStrategyName.SimpleShuffle,
+			num_retries: 0,
+			fallbacks: [{ "gpt-4o": ["gpt-4o-mini"] }],
+		});
+		litellmRouter.markFailed("gpt-4o-primary");
+		const app = buildAuthedApp(makeConfig(), undefined, undefined, undefined, litellmRouter);
+
+		const res = await request(app).get("/v2/model/info");
+
+		expect(res.status).toBe(200);
+		const cooled = (res.body.data as Array<{ model_info: { id: string }; cooldown?: Record<string, unknown> }>).find(
+			(item) => item.model_info.id === "gpt-4o-primary",
+		);
+		expect(cooled?.cooldown).toMatchObject({ deployment_id: "gpt-4o-primary" });
+		expect(Object.keys(cooled?.cooldown ?? {}).sort()).toEqual(["deployment_id", "duration_ms", "expires_at", "remaining_ms"]);
+		expect(Number(cooled?.cooldown?.duration_ms)).toBeGreaterThan(0);
+		expect(Number(cooled?.cooldown?.remaining_ms)).toBeGreaterThan(0);
+		expect(Number(cooled?.cooldown?.remaining_ms)).toBeLessThanOrEqual(Number(cooled?.cooldown?.duration_ms));
+		expect(Date.parse(String(cooled?.cooldown?.expires_at))).toBeGreaterThan(Date.now());
+		// 运行态不能进 model_info，否则会破坏 Python 73 键契约，也会让编辑回显看到临时字段。
+		expect(cooled?.model_info).not.toHaveProperty("cooldown");
+		const healthy = (res.body.data as Array<{ model_info: { id: string }; cooldown?: unknown }>).find(
+			(item) => item.model_info.id === "gpt-4o-mini",
+		);
+		expect(healthy).not.toHaveProperty("cooldown");
+	});
+
 	describe("websearch_override_target_model General Settings", () => {
 		const modelName = "websearch-model";
 		const aliasName = "websearch-alias";

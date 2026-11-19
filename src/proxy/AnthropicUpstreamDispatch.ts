@@ -312,6 +312,15 @@ export async function executeWithFallbackChain<T>(
 		);
 	};
 
+	/**
+	 * 构造带冷却原因的无部署错误；trace 与最终响应共用同一份解释。
+	 * @param targetModel - 无可用 deployment 的模型组
+	 */
+	const noDeploymentError = (targetModel: string): Error =>
+		Object.assign(ApiError.noDeploymentsAvailable(targetModel, router.getNoAvailableDeploymentInfo(targetModel)), {
+			name: "NoAvailableDeploymentError",
+		});
+
 	while (currentModel !== null) {
 		const resolution = router.resolveModelGroupWithTrace?.(currentModel) ?? {
 			inputModel: currentModel,
@@ -390,12 +399,7 @@ export async function executeWithFallbackChain<T>(
 		}
 		const nextResolution = nextFallbackTarget();
 		if (nextResolution) {
-			const routingError =
-				groupLastError ??
-				Object.assign(new Error(`No available deployment for model "${resolution.resolvedModel}"`), {
-					name: "NoAvailableDeploymentError",
-					statusCode: 429,
-				});
+			const routingError = groupLastError ?? noDeploymentError(resolution.resolvedModel);
 			appendRoutingTrace(modelResolutionTrace, {
 				fromModel: currentModel,
 				toResolution: nextResolution,

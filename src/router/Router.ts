@@ -53,6 +53,7 @@ import { RouterCompletionSyncRemovedError } from "./RouterErrors";
 import { getDeploymentKey, getModelGroupName } from "./RouterModelGroupCache";
 import { buildCooldownDecision } from "./RouterExecutor";
 import type { NoDeploymentsErrorInfo } from "../core/api/ApiError";
+import { buildCooldownDiagnostics } from "./CooldownDiagnostics";
 import { ApiError } from "../core/api/ApiError";
 import { normalizeMockTestingParams, tryDispatchMockTestingExceptions, shouldDispatchMockRateLimit } from "./RouterMockTesting";
 import { executeWithFallback, isKnownModel, type RouterExecContext } from "./RouterExecution";
@@ -71,6 +72,22 @@ import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
 import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 
 type RouteFn = (deployments: Deployment[], ctx: RoutingContext) => Deployment | null;
+
+/**
+ * 模型列表展示的 deployment 冷却快照。
+ * `remaining_ms` 在响应构造时计算，前端据此起本地倒计时；`expires_at` 用于排查与提示，
+ * 不把异常正文或上游错误混入模型管理接口。
+ */
+export interface DeploymentCooldownSnapshot {
+	/** deployment key（model_info.id，缺失时为 model_name） */
+	deployment_id: string;
+	/** 本次冷却配置的总时长 */
+	duration_ms: number;
+	/** 响应构造时剩余的冷却时长 */
+	remaining_ms: number;
+	/** 冷却结束的绝对时间（ISO） */
+	expires_at: string;
+}
 
 interface Message {
 	role: string;
@@ -336,6 +353,31 @@ export class Router {
 	 */
 	getFallbacks(): Record<string, string[]> {
 		return this._runtimeState().fallbackHandler.getFallbacks();
+	}
+
+	/**
+	 * 返回当前所有 deployment 的活跃冷却快照，供模型列表展示失败后的 fallback 冷却倒计时。
+	 *
+	 * 冷却属于进程内运行态；配置了 Redis 时先补一次后端 hydration，保证多实例部署下
+	 * 列表也能看到其他实例写入的冷却。没有命中或已过期的 deployment 不会出现在结果中。
+	 */
+	async getActiveCooldownSnapshots(): Promise<Map<string, DeploymentCooldownSnapshot>> {
+		const deploymentIds = this.getDeployments().map((deployment) => getDeploymentKey(deployment));
+		// 先清掉本地已过期条目；hydration 会跳过“本地有记录”的 key，否则过期条目会挡住远端状态一拍。
+		this._cooldownManager.getActiveCooldowns(deploymentIds);
+		await this._cooldownManager.hydrateFromBackend(deploymentIds);
+		const now = Date.now();
+		const snapshots = new Map<string, DeploymentCooldownSnapshot>();
+		for (const [deploymentId, value] of this._cooldownManager.getActiveCooldowns(deploymentIds)) {
+			const expiresAt = value.timestamp + value.cooldown_time;
+			snapshots.set(deploymentId, {
+				deployment_id: deploymentId,
+				duration_ms: value.cooldown_time,
+				remaining_ms: Math.max(0, expiresAt - now),
+				expires_at: new Date(expiresAt).toISOString(),
+			});
+		}
+		return snapshots;
 	}
 
 	/**
@@ -1436,6 +1478,7 @@ export class Router {
 			cooldownSeconds: cooldownMs / 1000,
 			cooldownList: allCooldowns.map(([deploymentKey]) => deploymentKey),
 			preCallChecks: runtime.preCallChecks,
+			...(groupCooldowns.length === 0 ? {} : { cooldownContext: buildCooldownDiagnostics(groupCooldowns) }),
 		};
 	}
 

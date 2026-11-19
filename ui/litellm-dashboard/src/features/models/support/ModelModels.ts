@@ -18,12 +18,25 @@ export interface ProxyModelInfo extends Record<string, unknown> {
 	max_tokens?: number | null;
 	max_input_tokens?: number | null;
 }
+/**
+ * 部署失败触发 fallback 后的活跃冷却。
+ * `remaining_ms` 是服务端构造响应时的剩余时间，前端收到后换算成本地截止时刻按秒递减；
+ * `expires_at` 保留绝对时间用于排查，不直接参与本地时钟计算，避免浏览器与服务器时钟偏差。
+ */
+export interface ModelCooldown {
+	deployment_id: string;
+	duration_ms: number;
+	remaining_ms: number;
+	expires_at: string;
+}
 export interface ProxyModel extends Record<string, unknown> {
 	model_name: string;
 	litellm_params: Record<string, unknown>;
 	model_info: ProxyModelInfo;
 	/** `/v2/model/info` 带出的上游信息；没有订阅上游或尚未抓取时缺省。 */
 	upstream_model_info?: UpstreamModelInfoPayload;
+	/** 该 deployment 当前活跃的 fallback 冷却；无冷却时缺省。 */
+	cooldown?: ModelCooldown;
 }
 export interface DisplayProxyModel extends ProxyModel {
 	provider: string;

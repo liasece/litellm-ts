@@ -14,7 +14,7 @@
  *   - 链耗尽抛最后一个 provider 错误（保留 HTTP 状态码）
  *   - 模型不存在抛 400 / 模型存在但全冷却抛 429
  */
-import { ApiError } from "../core/api/ApiError";
+import { ApiError, type NoDeploymentsErrorInfo } from "../core/api/ApiError";
 import type { Deployment } from "../types/router";
 import type { ProviderConfig, ProviderRequest } from "../types/provider";
 import type { ModelResponse } from "../types/openai";
@@ -73,6 +73,8 @@ interface MockFacadeOptions {
 	modelResolutions?: Record<string, { inputModel: string; resolvedModel: string; resolutionPath: readonly string[] }>;
 	/** model → provider；缺省使用固定测试 provider */
 	providersByModel?: Record<string, ProviderConfig>;
+	/** model → 无可用部署时的冷却诊断；缺省使用空列表 */
+	noDeploymentInfoByModel?: Record<string, NoDeploymentsErrorInfo>;
 }
 
 class MockRouterFacade implements FallbackRouterFacade {
@@ -128,8 +130,8 @@ class MockRouterFacade implements FallbackRouterFacade {
 		return model in this._options.deploymentsByModel;
 	}
 
-	getNoAvailableDeploymentInfo() {
-		return { cooldownSeconds: 60, cooldownList: [], preCallChecks: true };
+	getNoAvailableDeploymentInfo(model: string) {
+		return this._options.noDeploymentInfoByModel?.[model] ?? { cooldownSeconds: 60, cooldownList: [], preCallChecks: true };
 	}
 }
 
@@ -328,6 +330,42 @@ describe("executeWithFallbackChain", () => {
 		);
 		expect(result).toBe("qwen-ok");
 		expect(seenModels).toEqual(["glm-4.7", "deepseek-v4-flash", "qwen3.8"]);
+	});
+
+	it("无可用部署的 fallback trace 带上冷却中的上游 403，而不是只说没有部署", async () => {
+		const facade = new MockRouterFacade({
+			deploymentsByModel: {
+				"opencode-go/deepseek-v4.1-flash": [],
+				"backup-anthropic": [makeDeployment("backup-anthropic", "anthropic/deepseek-v4-flash")],
+			},
+			fallbackChains: { "opencode-go/deepseek-v4.1-flash": ["backup-anthropic"] },
+			noDeploymentInfoByModel: {
+				"opencode-go/deepseek-v4.1-flash": {
+					cooldownSeconds: 300,
+					cooldownList: ["003e7685"],
+					preCallChecks: true,
+					cooldownContext: [
+						{
+							deployment_id: "003e7685",
+							status_code: 403,
+							error_message: "Cloudflare Error 1010: Access denied",
+							cooldown_seconds: 300,
+							started_at: "2026-11-19T09:53:51.000Z",
+						},
+					],
+				},
+			},
+		});
+		const stats: FallbackExecutionStats = { fallbackDepth: 0 };
+		await executeWithFallbackChain(facade, "opencode-go/deepseek-v4.1-flash", undefined, undefined, async () => "fallback-ok", {
+			stats: stats,
+		});
+		expect(stats.routingTrace?.[0]?.error_information).toMatchObject({
+			error_type: "NoAvailableDeploymentError",
+			error_code: 429,
+		});
+		expect(stats.routingTrace?.[0]?.error_information.error_message).toContain("Most recent cooldown (003e7685): HTTP 403");
+		expect(stats.routingTrace?.[0]?.error_information.error_message).toContain("Cloudflare Error 1010");
 	});
 
 	it("provider 400 失败 → fallback 链下一跳成功（GLM 1211 场景）", async () => {

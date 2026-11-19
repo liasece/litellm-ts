@@ -1,7 +1,17 @@
 import { computed, reactive } from "vue";
+import { createRefreshScheduler } from "../../platform/logic/RefreshSchedulerLogic";
 import { modelsApi, type ModelsApi } from "../api/ModelsApi";
 import { transformModels } from "../logic/ModelDataLogic";
 import type { ModelCatalog, ProxyModel } from "../support/ModelModels";
+
+/** 冷却来自运行态而非配置；短轮询只负责发现新发生的失败，倒计时由共享时钟本地推进。 */
+const AUTO_REFRESH_MS = 5_000;
+
+interface LoadOptions {
+	/** 后台刷新不显示加载态、不清空已有列表，避免冷却轮询让整页闪烁。 */
+	background?: boolean;
+}
+
 export function createModelsStore(api: ModelsApi = modelsApi) {
 	const state = reactive({
 		rows: [] as ProxyModel[],
@@ -23,12 +33,18 @@ export function createModelsStore(api: ModelsApi = modelsApi) {
 	let generation = 0,
 		disposed = false,
 		controller: AbortController | null = null,
-		timer: ReturnType<typeof setTimeout> | null = null;
-	async function load() {
+		timer: ReturnType<typeof setTimeout> | null = null,
+		autoRefreshStarted = false;
+	// 冷却轮询复用日志/额度页的调度器：请求在途不叠加，标签页隐藏时暂停，回到前台立即补刷。
+	const scheduler = createRefreshScheduler(
+		() => (state.loading || timer !== null ? Promise.resolve() : load({ background: true })),
+		AUTO_REFRESH_MS,
+	);
+	async function load(options: LoadOptions = {}) {
 		const current = ++generation;
 		controller?.abort();
 		controller = new AbortController();
-		state.loading = true;
+		if (!options.background) state.loading = true;
 		state.error = "";
 		try {
 			const result = await api.listModels(
@@ -46,11 +62,30 @@ export function createModelsStore(api: ModelsApi = modelsApi) {
 			state.rows = result.data;
 			state.total = result.total_count || result.data.length;
 		} catch (error) {
-			if (!disposed && current === generation && !(error instanceof DOMException && error.name === "AbortError"))
+			if (
+				!disposed &&
+				current === generation &&
+				!(error instanceof DOMException && error.name === "AbortError") &&
+				(!options.background || state.rows.length === 0)
+			)
 				state.error = error instanceof Error ? error.message : "Failed to fetch models";
 		} finally {
-			if (!disposed && current === generation) state.loading = false;
+			if (!disposed && current === generation && !options.background) state.loading = false;
 		}
+	}
+	function wakeAutoRefresh() {
+		if (typeof document !== "undefined" && document.visibilityState === "visible") scheduler.wake();
+	}
+	function startAutoRefresh() {
+		if (disposed || autoRefreshStarted) return;
+		autoRefreshStarted = true;
+		scheduler.start();
+		if (typeof document !== "undefined") document.addEventListener("visibilitychange", wakeAutoRefresh);
+	}
+	function stopAutoRefresh() {
+		autoRefreshStarted = false;
+		scheduler.stop();
+		if (typeof document !== "undefined") document.removeEventListener("visibilitychange", wakeAutoRefresh);
 	}
 	function search(value: string) {
 		state.search = value;
@@ -140,10 +175,13 @@ export function createModelsStore(api: ModelsApi = modelsApi) {
 		generation++;
 		controller?.abort();
 		if (timer) clearTimeout(timer);
+		stopAutoRefresh();
 	}
 	return {
 		state,
 		load,
+		startAutoRefresh,
+		stopAutoRefresh,
 		search,
 		page,
 		team,

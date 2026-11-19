@@ -553,9 +553,7 @@ describe("Router execution chain", () => {
 			const warn = jest.spyOn(logger, "warn").mockImplementation(() => logger);
 			try {
 				const sse = 'data: {"error":{"type":"api_error","message":"upstream stream terminated"}}\n\n';
-				mockFetch.mockResolvedValueOnce(
-					new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
-				);
+				mockFetch.mockResolvedValueOnce(new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));
 				mockFetch.mockResolvedValueOnce(
 					errorResponse(400, {
 						error: { message: "The `reasoning_text` in the thinking mode must be passed back to the API." },
@@ -716,9 +714,12 @@ describe("Router execution chain", () => {
 				num_retries: 0,
 				cooldown_time: 1,
 			});
-			const cooldownManager = (router as unknown as { _cooldownManager: { markFailed: (k: string, t: number) => void } })
-				._cooldownManager;
-			cooldownManager.markFailed("m2", 8000);
+			const cooldownManager = (
+				router as unknown as {
+					_cooldownManager: { markFailed: (key: string, ms: number, status?: number, message?: string) => void };
+				}
+			)._cooldownManager;
+			cooldownManager.markFailed("m2", 8000, 403, "Cloudflare Error 1010: Access denied");
 			const info = router.getNoAvailableDeploymentInfo("m1");
 			// m1 组内无冷却 → 回退默认；m2 的冷却出现在全局 cooldownList 中（PY 为全模型组范围）
 			expect(info.cooldownSeconds).toBe(1);
@@ -728,6 +729,13 @@ describe("Router execution chain", () => {
 			const m2Info = router.getNoAvailableDeploymentInfo("m2");
 			expect(m2Info.cooldownSeconds).toBe(8);
 			expect(m2Info.cooldownList).toEqual(["m2"]);
+			expect(m2Info.cooldownContext).toEqual([
+				expect.objectContaining({
+					deployment_id: "m2",
+					status_code: 403,
+					error_message: "Cloudflare Error 1010: Access denied",
+				}),
+			]);
 		});
 	});
 	describe("DIFF-MOCK-01: mock_testing_* str-to-bool 转换", () => {

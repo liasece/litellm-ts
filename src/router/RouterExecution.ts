@@ -196,14 +196,29 @@ export async function executeWithFallback(
 	const candidate = getCandidate(resolvedModel, messages);
 
 	if (!candidate) {
+		// 同一次 no-deployments 分支内共用一份冷却快照：fallback trace、最终 429 文案与日志
+		// 必须解释同一个「为什么」，不能一处说没有部署、另一处才给出上游 403。
+		const activeCooldowns = ctx.cooldownManager.getActiveCooldowns(candidateKeys);
+		const cooldownList = activeCooldowns.length > 0 ? maskCooldownEntries(activeCooldowns) : undefined;
+		const cooldownSeconds =
+			(activeCooldowns.length > 0
+				? Math.min(...activeCooldowns.map(([, cacheValue]) => cacheValue.cooldown_time))
+				: ctx.cooldownTimeMs) / 1000;
+		const allDeploymentKeys = ctx.deployments.map((dep) => getDeploymentKey(dep));
+		const allActiveCooldownKeys = ctx.cooldownManager.getActiveCooldowns(allDeploymentKeys).map(([deploymentKey]) => deploymentKey);
+		const noDeploymentInfo = {
+			cooldownSeconds: cooldownSeconds,
+			cooldownList: allActiveCooldownKeys,
+			preCallChecks: ctx.preCallChecks,
+			...(activeCooldowns.length === 0 ? {} : { cooldownContext: buildCooldownDiagnostics(activeCooldowns) }),
+		};
 		// 计划游标保证「同一棵树的所有兄弟候选」按配置顺序推进；fallbackDepth 只是跳数计数器
 		// （max_fallbacks 上限 / 响应头 attemptedFallbacks）。
 		const planned = nextPlannedFallback(ctx, req);
 		if (planned) {
 			const nextFallback = planned.entry;
-			const noDeploymentError = Object.assign(new Error(`No available deployment for model "${resolvedModel}"`), {
+			const noDeploymentError = Object.assign(ApiError.noDeploymentsAvailable(resolvedModel, noDeploymentInfo), {
 				name: "NoAvailableDeploymentError",
-				statusCode: 429,
 			});
 			appendRoutingTrace(modelResolutionTrace, {
 				fromModel: model,
@@ -234,35 +249,18 @@ export async function executeWithFallback(
 		// DIFF-RT-02 + DIFF-RT-04: healthy=0 且无 fallback 时，对齐 PY router.py:9445,9507
 		// 抛 RouterRateLimitErrorBasic 携带 cooldown_time + cooldown_list 字段。
 		// 消息文本对齐 PY RouterRateLimitError（types/router.py:688）实测格式。
-		const activeCooldowns = ctx.cooldownManager.getActiveCooldowns(candidateKeys);
-		const cooldownList = activeCooldowns.length > 0 ? maskCooldownEntries(activeCooldowns) : undefined;
-		// PY cooldown_time 取 CooldownCacheValue.cooldown_time（配置时长）的最小值，无冷却条目时回退默认 cooldown_time
-		const cooldownSeconds =
-			(activeCooldowns.length > 0
-				? Math.min(...activeCooldowns.map(([, cacheValue]) => cacheValue.cooldown_time))
-				: ctx.cooldownTimeMs) / 1000;
-		// PY cooldown_list 为全模型组范围（cooldown_handlers.py _get_cooldown_deployments 遍历全部 model_ids）
-		const allDeploymentKeys = ctx.deployments.map((dep) => getDeploymentKey(dep));
-		const allActiveCooldownKeys = ctx.cooldownManager.getActiveCooldowns(allDeploymentKeys).map(([deploymentKey]) => deploymentKey);
-		throw new RouterRateLimitErrorBasic(
-			formatNoDeploymentsAvailableMessage(model, {
-				cooldownSeconds: cooldownSeconds,
-				cooldownList: allActiveCooldownKeys,
-				preCallChecks: ctx.preCallChecks,
-			}),
-			{
-				model: model,
-				// 无冷却条目时消息回退 Router 默认 cooldown_time，该字段必须同源同值：
-				// 客户端自动重试读的 Retry-After 由它换算，缺省会让「Try again in N seconds」
-				// 只剩人读得懂、下游拿不到任何退避提示。
-				cooldown_time: cooldownSeconds * 1000,
+		throw new RouterRateLimitErrorBasic(formatNoDeploymentsAvailableMessage(model, noDeploymentInfo), {
+			model: model,
+			// 无冷却条目时消息回退 Router 默认 cooldown_time，该字段必须同源同值：
+			// 客户端自动重试读的 Retry-After 由它换算，缺省会让「Try again in N seconds」
+			// 只剩人读得懂、下游拿不到任何退避提示。
+			cooldown_time: cooldownSeconds * 1000,
 
-				cooldown_list: cooldownList,
-				// 本次请求没有触达上游，真正的失败原因只存在于冷却条目里；带进日志才能解释
-				// "为什么这一个组突然没有可用部署"（生产里出现过只剩一句 429 的日志无从定位）。
-				cooldown_context: buildCooldownDiagnostics(activeCooldowns),
-			},
-		);
+			cooldown_list: cooldownList,
+			// 本次请求没有触达上游，真正的失败原因只存在于冷却条目里；带进日志才能解释
+			// "为什么这一个组突然没有可用部署"（生产里出现过只剩一句 429 的日志无从定位）。
+			cooldown_context: buildCooldownDiagnostics(activeCooldowns),
+		});
 	}
 
 	const { deployment, provider } = candidate;

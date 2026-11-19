@@ -96,6 +96,28 @@ describe("ApiError.noDeploymentsAvailable", () => {
 		});
 	});
 
+	it("把冷却中的上游错误带进文案与日志诊断，而不是只说没有部署", () => {
+		const error = ApiError.noDeploymentsAvailable("opencode-go/deepseek-v4.1-flash", {
+			cooldownSeconds: 300,
+			cooldownList: ["003e7685"],
+			preCallChecks: true,
+			cooldownContext: [
+				{
+					deployment_id: "003e7685",
+					status_code: 403,
+					error_message: "Cloudflare Error 1010: Access denied",
+					cooldown_seconds: 300,
+					started_at: "2026-11-19T09:53:51.000Z",
+				},
+			],
+		});
+		expect(error.message).toContain("Most recent cooldown (003e7685): HTTP 403");
+		expect(error.message).toContain("Cloudflare Error 1010");
+		const body = error.toErrorBody() as { error: { message: string } };
+		expect(body.error.message).toContain("Cloudflare Error 1010");
+		expect(error.cooldown_context).toEqual([expect.objectContaining({ deployment_id: "003e7685", status_code: 403 })]);
+	});
+
 	it("冷却秒数同时成为 Retry-After，供客户端自动重试", () => {
 		const error = ApiError.noDeploymentsAvailable("hy3", {
 			cooldownSeconds: 5,

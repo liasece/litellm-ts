@@ -9,6 +9,7 @@ import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import UiTable from "../../platform/ui/UiTable.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
+import ModelCooldownBadge from "./ModelCooldownBadgeComponent.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import ModelListCards from "./ModelListCardsComponent.vue";
 import ModelFamilyLabel from "../../providers/ui/ModelFamilyLabelComponent.vue";
@@ -77,6 +78,13 @@ const columns: readonly ModelColumn[] = [
 			"Reusable: A saved credential is attached to this model. Subscription: the provider account is managed on the Subscriptions page. Manual: Credentials are configured directly on the model.",
 	},
 	{ key: "health", label: "Health Status", minWidth: 116 },
+	{
+		key: "cooldown",
+		label: "Cooldown",
+		minWidth: 128,
+		tooltip:
+			"Active fallback cooldown after a failed request. The remaining time counts down until the deployment can be routed to again.",
+	},
 	{
 		key: "input_cost",
 		label: "Costs",
@@ -493,6 +501,10 @@ async function all() {
 							@check="health.one(modelString(model.model_info.id))"
 							@detail="emit('healthDetail', modelString(model.model_info.id))"
 						/>
+					</td>
+					<td>
+						<ModelCooldownBadge v-if="model.cooldown" :cooldown="model.cooldown" />
+						<span v-else class="model-muted">-</span>
 					</td>
 					<td class="model-cost-cell">
 						<ModelCostCell :model="model" />

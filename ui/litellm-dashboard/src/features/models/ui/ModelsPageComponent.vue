@@ -116,6 +116,18 @@ watch(
 		void health.hydrate();
 	},
 );
+/**
+ * 冷却只在 All Models 可见时轮询：页面组件切分区不会重建，但其他分区不需要模型运行态；
+ * 首次列表加载完成后再启动，避免空列表先发一次重复请求。
+ */
+watch(
+	[ready, section, denied],
+	([loaded, current, accessDenied]) => {
+		if (loaded && !accessDenied && current === "models") store.startAutoRefresh();
+		else store.stopAutoRefresh();
+	},
+	{ immediate: true },
+);
 onMounted(async () => {
 	// 旧的 `?page=models&tab=health` 书签改写到分区路径，地址栏与侧边栏选中项保持一致。
 	const legacyTab = typeof route.query.tab === "string" ? route.query.tab : null;

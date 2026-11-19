@@ -11,6 +11,7 @@ import { modelString, modelStrings, type DisplayProxyModel } from "../support/Mo
 import type { ModelFamilyGroup } from "../../providers/logic/ModelFamilyGrouping";
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
 import ModelCredentialCell from "./ModelCredentialCellComponent.vue";
+import ModelCooldownBadge from "./ModelCooldownBadgeComponent.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import UpstreamModelHint from "./UpstreamModelHintComponent.vue";
 import { UPSTREAM_PRICE_FIELDS } from "../support/UpstreamModelInfoModels";
@@ -118,6 +119,10 @@ function convertible(model: DisplayProxyModel): boolean {
 								@check="health.one(modelString(model.model_info.id))"
 							/>
 						</dd>
+					</div>
+					<div v-if="model.cooldown" class="model-card__fact">
+						<dt>Cooldown</dt>
+						<dd><ModelCooldownBadge :cooldown="model.cooldown" /></dd>
 					</div>
 					<div class="model-card__fact">
 						<dt>Costs</dt>

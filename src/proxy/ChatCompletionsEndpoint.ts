@@ -787,10 +787,13 @@ async function handleStreamingResponse(
 				toResolution: nextFallback,
 				routingType: "general_fallback",
 				reason: "no_available_deployment",
-				error: Object.assign(new Error(`No available deployment for model "${resolution.resolvedModel}"`), {
-					name: "NoAvailableDeploymentError",
-					statusCode: 429,
-				}),
+				error: Object.assign(
+					ApiError.noDeploymentsAvailable(
+						resolution.resolvedModel,
+						litellmRouter.getNoAvailableDeploymentInfo(resolution.resolvedModel),
+					),
+					{ name: "NoAvailableDeploymentError" },
+				),
 			});
 			fallbackDepth++;
 			currentModel = nextFallback.inputModel;

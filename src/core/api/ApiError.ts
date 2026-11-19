@@ -39,6 +39,22 @@ export interface NoDeploymentsErrorInfo {
 	readonly cooldownList: readonly string[];
 	/** Router pre_call_checks 开关状态（PY enable_pre_call_checks） */
 	readonly preCallChecks: boolean;
+	/** 触发本组部署冷却的最近上游错误；仅用于解释「为什么没有可用部署」 */
+	readonly cooldownContext?: readonly NoDeploymentCooldownDiagnostic[];
+}
+
+/** 无可用部署时附带的一条冷却诊断；字段与 Router 的 cooldown_context 同构。 */
+export interface NoDeploymentCooldownDiagnostic {
+	/** 冷却中的 deployment 标识 */
+	readonly deployment_id: string;
+	/** 触发冷却的上游 HTTP 状态码，未知为 0 */
+	readonly status_code: number;
+	/** 触发冷却的上游错误原文（写入前已按部署参数脱敏） */
+	readonly error_message: string;
+	/** 配置的冷却时长（秒） */
+	readonly cooldown_seconds: number;
+	/** 冷却开始时间（ISO 8601） */
+	readonly started_at: string;
 }
 
 /**
@@ -54,10 +70,16 @@ export function formatNoDeploymentsAvailableMessage(model: string, info: NoDeplo
 	const cooldownSeconds = Number.isInteger(info.cooldownSeconds) ? info.cooldownSeconds.toString() : String(info.cooldownSeconds);
 	const cooldownList = info.cooldownList.map((deploymentId) => `'${deploymentId}'`).join(", ");
 	const preCallChecks = info.preCallChecks ? "True" : "False";
-	return (
+	const base =
 		`No deployments available for selected model, Try again in ${cooldownSeconds} seconds. ` +
-		`Passed model=${model}. pre-call-checks=${preCallChecks}, cooldown_list=[${cooldownList}]`
-	);
+		`Passed model=${model}. pre-call-checks=${preCallChecks}, cooldown_list=[${cooldownList}]`;
+	const cause = info.cooldownContext?.find((entry) => entry.error_message.trim().length > 0);
+	if (!cause) {
+		return base;
+	}
+	const status = cause.status_code > 0 ? `HTTP ${cause.status_code}` : "upstream error";
+	const detail = cause.error_message.replace(/\s+/g, " ").trim().slice(0, 320);
+	return `${base}. Most recent cooldown (${cause.deployment_id}): ${status}: ${detail}`;
 }
 
 /**
@@ -91,6 +113,10 @@ export class ApiError extends Error {
 	 * 响应体覆盖：设置后 toErrorBody 直接返回该对象（用于 FastAPI 422 detail 等非标准 error 包装）
 	 */
 	private _bodyOverride?: Record<string, unknown>;
+
+	/** 冷却诊断；只写入日志，不进入客户端 error body。 */
+	// eslint-disable-next-line @typescript-eslint/naming-convention
+	cooldown_context?: NoDeploymentCooldownDiagnostic[];
 
 	/**
 	 * @param statusCode - HTTP 状态码（4xx/5xx）
@@ -220,6 +246,9 @@ export class ApiError extends Error {
 		// 文案里的「Try again in N seconds」与 Retry-After 同源：前者给人看，
 		// 后者是客户端 SDK 决定何时自动重试的唯一机器可读依据。
 		error.retryAfterSeconds = Math.max(1, Math.ceil(info.cooldownSeconds));
+		if (info.cooldownContext !== undefined && info.cooldownContext.length > 0) {
+			error.cooldown_context = info.cooldownContext.map((entry) => ({ ...entry }));
+		}
 		return error;
 	}
 

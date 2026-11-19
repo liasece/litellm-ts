@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkModelHealth, cancelPriceReload, removeCredential, saveModelStorage, schedulePriceReload } from "./ModelsApi";
+import { checkModelHealth, cancelPriceReload, listModels, removeCredential, saveModelStorage, schedulePriceReload } from "./ModelsApi";
 
 function stubFetch() {
 	const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => Response.json({}));
@@ -10,6 +10,39 @@ function stubFetch() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Models HTTP boundary", () => {
+	it("retains the runtime cooldown projection on each list row", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+				Response.json({
+					data: [
+						{
+							model_name: "gpt-4o",
+							litellm_params: { model: "openai/gpt-4o" },
+							model_info: { id: "gpt-4o-primary" },
+							cooldown: {
+								deployment_id: "gpt-4o-primary",
+								duration_ms: 60_000,
+								remaining_ms: 42_000,
+								expires_at: "2026-11-19T10:00:00.000Z",
+							},
+						},
+					],
+					total_count: 1,
+					current_page: 1,
+					total_pages: 1,
+					size: 50,
+				}),
+			),
+		);
+		const result = await listModels({ page: 1, size: 50 });
+		expect(result.data[0].cooldown).toEqual({
+			deployment_id: "gpt-4o-primary",
+			duration_ms: 60_000,
+			remaining_ms: 42_000,
+			expires_at: "2026-11-19T10:00:00.000Z",
+		});
+	});
 	it("saves the model storage toggle as the general settings field update", async () => {
 		const fetch = stubFetch();
 		await saveModelStorage(false);

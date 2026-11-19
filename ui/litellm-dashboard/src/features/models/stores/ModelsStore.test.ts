@@ -61,4 +61,32 @@ describe("Models list requests", () => {
 		expect(list.mock.calls[0][0]).toMatchObject({ sortBy: "costs", sortOrder: "desc", page: 1, size: 50 });
 		store.dispose();
 	});
+	it("polls cooldown state in the background without showing a loading state", async () => {
+		vi.useFakeTimers();
+		try {
+			const initial = page("model"),
+				withCooldown = page("model");
+			withCooldown.data[0].cooldown = {
+				deployment_id: "model",
+				duration_ms: 60_000,
+				remaining_ms: 42_000,
+				expires_at: "2026-11-19T10:00:00.000Z",
+			};
+			const list = vi.fn<typeof modelsApi.listModels>().mockResolvedValueOnce(initial).mockResolvedValueOnce(withCooldown),
+				store = createModelsStore({ ...modelsApi, listModels: list });
+			await store.load();
+			store.startAutoRefresh();
+			await vi.advanceTimersByTimeAsync(4_999);
+			expect(list).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(list).toHaveBeenCalledTimes(2);
+			expect(store.state.rows[0].cooldown?.remaining_ms).toBe(42_000);
+			expect(store.state.loading).toBe(false);
+			store.dispose();
+			await vi.advanceTimersByTimeAsync(5_000);
+			expect(list).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

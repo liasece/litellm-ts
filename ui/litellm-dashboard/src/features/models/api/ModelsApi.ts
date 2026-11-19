@@ -12,11 +12,20 @@ import type {
 	ProviderMetadata,
 } from "../support/ModelModels";
 const recordSchema = z.record(z.string(), z.unknown());
+const modelCooldownSchema = z
+	.object({
+		deployment_id: z.string(),
+		duration_ms: z.number().nonnegative(),
+		remaining_ms: z.number().nonnegative(),
+		expires_at: z.string(),
+	})
+	.passthrough();
 export const proxyModelSchema = z
 	.object({
 		model_name: z.string(),
 		litellm_params: recordSchema.nullish().transform((value) => value ?? {}),
 		model_info: recordSchema.nullish().transform((value) => value ?? {}),
+		cooldown: modelCooldownSchema.nullish().transform((value) => value ?? undefined),
 	})
 	.passthrough();
 const pageSchema = z
