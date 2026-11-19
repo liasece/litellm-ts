@@ -175,10 +175,12 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
   的 TTFT 显示 `-`，避免与 Duration 重复。
   对登记了在途行的请求，首次交付即更新 `LiteLLM_ActiveRequests`；进行中的日志列表（`include_active=true`）
   和最终 SpendLog 读取同一次观测。历史行里缺失的首帧时间无法由结束时间反推。
-- **内置能力没有 TTFT**：内置 web / vision / image_generation 的内部子请求是本地发起的非流式调用，
-  观测不到「首个 token 写回下游」的时刻，其 SpendLog 只记请求时长（`endTime - startTime`），
-  `completionStartTime` 落 NULL，日志列表与详情的 TTFT 显示 `-`。直连工具（DeepSeek Search / Fetch）
-  同理：一次 HTTP 交换只有耗时，没有首字。
+- **内置能力没有 TTFT**：内置 web / vision / image_generation 的内部调用由网关本地发起；worker 非流式，
+  continuation 即使上游流式，首字也属于主请求而不是这一行。观测不到「该行自己的首个 token 写回下游」
+  的时刻，其 SpendLog 只记请求时长（`endTime - startTime`），`completionStartTime` 落 NULL，日志列表与
+  详情的 TTFT 显示 `-`。直连工具（DeepSeek Search / Fetch）同理：一次 HTTP 交换只有耗时，没有首字。
+  审计行的 `proxy_server_request.body` 与 `response` 保存该次调用实际发往/收到的上游交换（流式
+  continuation 存终态原生响应），内部标记只写 `metadata`，不注入请求体。
 - **百分位口径**：窗口分位来自内存分片（≤ 300 秒用 5 秒分片，更长用 60 秒分片），按桶上界线性插值（与 `histogram_quantile` 同口径）。桶很粗时（例如 `db` 的毫秒级桶），分位是区间估计而不是精确样本值；粗粒度层让 1 小时窗口只损失时间分辨率、不损失样本数。
 - **`upstreamPayloadMs` 只对非流式有意义**：流式请求永远读不完响应体，只有首块时刻。
 - **没有部署 Prometheus 服务端**：`/metrics` 目前供人工与临时抓取使用；接入抓取器时按上面的 curl 形式配置抓取目标与密钥头。

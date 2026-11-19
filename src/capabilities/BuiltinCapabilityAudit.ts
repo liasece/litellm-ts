@@ -4,7 +4,7 @@ import type { DrizzleDb } from "../core/db/Database";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { buildSpendLogFromRequest } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
-import { getAttachedUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getAttachedUpstreamLogContext, UPSTREAM_STREAM_RESPONSE_KEY, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import { CallType, SpendLogStatus } from "../types/spend";
 
 /** Reference to the ordinary Spend Log row created for an internal call. */
@@ -96,6 +96,90 @@ function mapCallType(callType: BuiltinCapabilityModelCall["callType"]): CallType
 	}
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+/**
+ * 从实际请求体里取下游能看到的消息列表：chat 用 `messages`，Responses 用 `input`。
+ * 审计行的 `messages` 列与 `proxy_server_request.body` 必须描述同一次真实请求。
+ * @param body - 实际发往 provider 的请求体
+ */
+function messagesFromRequestBody(body: unknown): unknown | undefined {
+	const record = asRecord(body);
+	if (record === undefined) {
+		return undefined;
+	}
+	if (Array.isArray(record["messages"])) {
+		return record["messages"];
+	}
+	if (Array.isArray(record["input"])) {
+		return record["input"];
+	}
+	return undefined;
+}
+
+interface AuditedExchange {
+	/** 写进 proxy_server_request.body 的请求体。 */
+	readonly requestBody: unknown;
+	/** 写进 messages 列的请求消息/输入项。 */
+	readonly messages: unknown;
+	/** 写进 response 列的上游响应体。 */
+	readonly response: unknown;
+}
+
+/**
+ * 取回流式终态响应并补进这次调用的上游交换。
+ *
+ * 流式主轮先把原生响应映射成 chat 再交给能力循环，映射结果上的临时键是审计行
+ * 唯一能拿到真实上游响应的地方；读完立刻删除，避免它进入父请求的响应与日志。
+ * @param context - 该次调用的上游交换（可能没有响应体）
+ * @param response - 能力层拿到的调用结果
+ */
+function consumeStreamedUpstreamResponse(
+	context: UpstreamLogContext | undefined,
+	response: unknown,
+): UpstreamLogContext | undefined {
+	const record = asRecord(response);
+	if (record === undefined || !(UPSTREAM_STREAM_RESPONSE_KEY in record)) {
+		return context;
+	}
+	const body = record[UPSTREAM_STREAM_RESPONSE_KEY];
+	delete record[UPSTREAM_STREAM_RESPONSE_KEY];
+	if (context?.response === undefined || body === undefined) {
+		return context;
+	}
+	return { ...context, response: { ...context.response, body: body } };
+}
+
+/**
+ * 内部调用的审计行保存该次调用真实的上游交换：请求体是实际发往 provider 的 body，
+ * 响应体是 provider 实际返回的 body。只有拿不到上游交换时才退回能力层构造的调用形状，
+ * 这样直连执行者、测试桩和旧调用仍能落一行完整的审计记录。
+ *
+ * 注意：审计标记（internal_call / parent_request_id 等）只写 SpendLogs.metadata；
+ * 不要注入真实请求体，否则日志里的请求就不再是线上发出的那个请求。
+ * @param call - 一次内部能力调用
+ * @param fallbackRequestBody - 拿不到上游请求体时使用的调用层请求体
+ * @param upstreamLogContext - 该次调用自己的上游交换
+ */
+function resolveAuditedExchange(
+	call: BuiltinCapabilityModelCall,
+	fallbackRequestBody: Record<string, unknown>,
+	upstreamLogContext: UpstreamLogContext | undefined,
+): AuditedExchange {
+	const upstreamRequestBody = asRecord(upstreamLogContext?.request.body);
+	const upstreamResponseBody = upstreamLogContext?.response?.body;
+	const requestBody = upstreamRequestBody ?? fallbackRequestBody;
+	return {
+		requestBody: requestBody,
+		messages: messagesFromRequestBody(requestBody) ?? call.messages,
+		// 失败调用可能也收到 4xx 响应体，但那一行由 error 与 upstream_response 说明；
+		// response 列保持成功响应语义，避免详情页把错误当成功结果渲染。
+		response: call.error === undefined && upstreamResponseBody !== undefined ? upstreamResponseBody : call.response,
+	};
+}
+
 /**
  * Create an endpoint-owned recorder that persists every capability-model
  * attempt as an ordinary Spend Log row in the same session as its parent.
@@ -133,10 +217,26 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			...(call.executor === undefined ? {} : { builtin_capability_executor: call.executor }),
 			...(call.credentialName === undefined ? {} : { builtin_capability_credential: call.credentialName }),
 		};
-		// 内置能力的每一次内部调用都是本地发起的非流式子请求（Handler 直连工具连模型调用都没有），
-		// 观测不到「首个 token 写回下游」的时刻，只有请求时长（endTime - startTime）。
-		// 凭空把 endTime 当首字会让 Logs 页把整段耗时读成 TTFT，与详情页（endTime 即无 TTFT）自相矛盾；
-		// 这里显式写 NULL，列表与详情都显示 `-`。
+		const upstreamLogContext = consumeStreamedUpstreamResponse(
+			call.upstreamLogContext ?? getAttachedUpstreamLogContext(call.response) ?? getAttachedUpstreamLogContext(call.error),
+			call.response,
+		);
+		const audited = resolveAuditedExchange(
+			call,
+			{
+				...call.requestBody,
+				model: call.model,
+				messages: call.messages,
+				metadata: {
+					...requestMetadata,
+					...auditMetadata,
+				},
+			},
+			upstreamLogContext,
+		);
+		// 审计行描述的是网关自己发起的内部调用：worker 不向外写流，continuation 的首字
+		// 属于主请求而不是这一行，单独测不到该行自己的「首个 token 写回下游」时刻。
+		// 凭空把 endTime 当首字会让 Logs 页把整段耗时读成 TTFT；这里显式写 NULL。
 		const log = await buildSpendLogFromRequest({
 			req: req,
 			auth: auth,
@@ -152,23 +252,15 @@ export function createBuiltinCapabilityAuditHook(options: BuiltinCapabilityAudit
 			startTime: call.startTime,
 			endTime: call.endTime,
 			completionStartTime: null,
-			messages: call.messages,
+			messages: audited.messages,
 			proxyServerRequestUrl: `/internal/builtin-capabilities/${call.capability}`,
-			proxyServerRequestBody: {
-				...call.requestBody,
-				model: call.model,
-				messages: call.messages,
-				metadata: {
-					...requestMetadata,
-					...auditMetadata,
-				},
-			},
-			response: call.response,
+			proxyServerRequestBody: audited.requestBody,
+			response: audited.response,
 			usage: call.response?.["usage"] as Record<string, unknown> | undefined,
 			error: call.error,
 			// 只用该次内部调用自己的上游交换：显式捕获值，或它自己结果对象上的挂载值；
 			// 绝不借用外层请求通道，否则审计行会写成主请求的上游。
-			upstreamLogContext: call.upstreamLogContext ?? getAttachedUpstreamLogContext(call.response) ?? getAttachedUpstreamLogContext(call.error),
+			upstreamLogContext: upstreamLogContext,
 			// 内部调用只记录自己的上游交换，禁止借用外层请求的通道记录。
 			disableAmbientUpstreamContext: true,
 			// 审计行描述的是网关自己发起的旁路调用，不是用户的请求：Feature 列只标记

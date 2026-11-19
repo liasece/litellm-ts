@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createHash } from "node:crypto";
 import express from "express";
 import request from "supertest";
 import { ApiError } from "../core/api/ApiError";
@@ -163,6 +164,49 @@ function nativeResponsesSse(options: {
 	chunks.push("data: [DONE]\n\n");
 	return chunks.join("");
 }
+
+/** 原生 Responses 上游发起私有工具调用的流式帧（能力主轮在流式下使用原生协议）。 */
+function nativeResponsesVisionCallSse(options: {
+	id: string;
+	callId: string;
+	name: string;
+	arguments: string;
+	usage: Record<string, unknown>;
+}): string {
+	const event = (type: string, payload: Record<string, unknown>): string =>
+		`event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`;
+	const item = {
+		id: "fc_vision_stream",
+		type: "function_call",
+		status: "completed",
+		call_id: options.callId,
+		name: options.name,
+		arguments: options.arguments,
+	};
+	return [
+		event("response.created", {
+			response: { id: options.id, object: "response", model: "deepseek-v4-flash", status: "in_progress" },
+		}),
+		event("response.output_item.added", {
+			output_index: 0,
+			item: { ...item, status: "in_progress", arguments: "" },
+		}),
+		event("response.function_call_arguments.delta", { item_id: item.id, output_index: 0, delta: options.arguments }),
+		event("response.output_item.done", { output_index: 0, item: item }),
+		event("response.completed", {
+			response: {
+				id: options.id,
+				object: "response",
+				model: "deepseek-v4-flash",
+				status: "completed",
+				output: [item],
+				usage: options.usage,
+			},
+		}),
+		"data: [DONE]\n\n",
+	].join("");
+}
+
 
 describe("Responses API contract matrix", () => {
 	beforeEach(() => {
@@ -1155,6 +1199,320 @@ describe("Responses API contract matrix", () => {
 			]);
 		});
 
+		test("vision worker only receives its own question and image, and the parent row records all three calls", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							vision: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "vision-worker",
+								fallback_models: [],
+								max_iterations: 3,
+								max_output_tokens: 1024,
+							},
+						}
+					: param === "general_settings"
+						? { store_prompts_in_spend_logs: true }
+						: {},
+			);
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-vision-worker",
+				reserved: 1,
+				actual: null,
+			});
+			const trackSpy = jest
+				.spyOn(SpendTracker, "trackSpendLog")
+				.mockResolvedValue({ status: "committed", requestId: "request-vision-worker", spend: 0 });
+			const imageBase64 =
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcLkAAAAASUVORK5CYII=";
+			const imageRef = `sha256:${createHash("sha256").update(Buffer.from(imageBase64, "base64")).digest("hex")}`;
+			const fetchSpy = jest
+				.spyOn(global, "fetch")
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							id: "resp_vision_parent",
+							object: "response",
+							created_at: 1_700_000_400,
+							status: "completed",
+							model: "deepseek-v4-flash",
+							output: [
+								{
+									id: "fc_vision",
+									type: "function_call",
+									status: "completed",
+									call_id: "call_vision",
+									name: "litellm__vision_inspect",
+									arguments: JSON.stringify({ image_refs: [imageRef], question: "What is the dot color?" }),
+								},
+							],
+							usage: { input_tokens: 9, output_tokens: 2, total_tokens: 11 },
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					),
+				)
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							id: "chatcmpl-vision-worker",
+							object: "chat.completion",
+							model: "vision-worker",
+							choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "A red dot." } }],
+							usage: { prompt_tokens: 40, completion_tokens: 4, total_tokens: 44 },
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					),
+				)
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							id: "resp_vision_done",
+							object: "response",
+							created_at: 1_700_000_401,
+							status: "completed",
+							model: "deepseek-v4-flash",
+							output: [
+								{
+									id: "msg_vision_done",
+									type: "message",
+									status: "completed",
+									role: "assistant",
+									content: [{ type: "output_text", text: "The dot is red.", annotations: [] }],
+								},
+							],
+							usage: { input_tokens: 20, output_tokens: 5, total_tokens: 25 },
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					),
+				);
+			const nativeDeployment = deepseekDeployment();
+			nativeDeployment.model_info = {
+				...nativeDeployment.model_info,
+				supports_function_calling: true,
+				enabled_builtin_capabilities: ["vision"],
+			};
+			// 图片按内容哈希先落库再交给 worker；测试用最小可插入桩承接这一步。
+			const database = {
+				insert: () => ({ values: () => ({ onConflictDoNothing: () => Promise.resolve() }) }),
+			} as never;
+			const app = buildApp(buildDeploymentRouter([nativeDeployment, deepseekDeployment("vision-worker")]), true, database);
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "deepseek-v4-flash",
+					input: [
+						{
+							type: "message",
+							role: "user",
+							content: [
+								{ type: "input_text", text: "What color is the dot?" },
+								{ type: "input_image", image_url: `data:image/png;base64,${imageBase64}` },
+							],
+						},
+					],
+					store: false,
+				})
+				.expect(200);
+
+			expect(response.body.output).toEqual([
+				expect.objectContaining({
+					type: "message",
+					content: [expect.objectContaining({ type: "output_text", text: "The dot is red." })],
+				}),
+			]);
+			expect(fetchSpy).toHaveBeenCalledTimes(3);
+			const workerBody = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+			expect(workerBody["input"]).toBeUndefined();
+			expect(workerBody["tools"]).toBeUndefined();
+			const workerMessages = workerBody["messages"] as Array<Record<string, unknown>>;
+			expect(workerMessages).toHaveLength(1);
+			const workerParts = workerMessages[0]?.["content"] as Array<Record<string, unknown>>;
+			expect(workerParts.some((part) => part["type"] === "image_url")).toBe(true);
+			expect(JSON.stringify(workerParts)).toContain("data:image/png;base64,");
+
+			const loggedRows = trackSpy.mock.calls.map((call) => call[1] as unknown as Record<string, Record<string, unknown>>);
+			const parentRow = loggedRows.find((row) => row["metadata"]?.["internal_call"] !== true);
+			const handlerRow = loggedRows.find(
+				(row) => row["metadata"]?.["internal_call"] === true && row["metadata"]?.["builtin_capability_stage"] === "handler",
+			);
+			expect(parentRow).toBeDefined();
+			expect(handlerRow).toBeDefined();
+			const combined = parentRow?.["response"]?.["_builtinPrivateVisionToolCalls"] as Array<Record<string, unknown>>;
+			expect(combined).toHaveLength(1);
+			expect(combined[0]).toMatchObject({
+				tool_call_id: "call_vision",
+				// 记录 Router 解析后的实际部署模型，而不是 handler 组名。
+				result: { model: "deepseek/deepseek-v4-flash", content: "A red dot." },
+			});
+			expect(combined[0]?.["attempts"]).toEqual([
+				expect.objectContaining({ model: "vision-worker", status: "success", request_id: expect.any(String) }),
+			]);
+			expect(combined[0]?.["continuation"]).toMatchObject({ status: "success", request_id: expect.any(String) });
+			const handlerBody = (handlerRow?.["proxy_server_request"] as Record<string, unknown>)?.["body"] as Record<string, unknown>;
+			// 审计行保存的是实际发往 provider 的请求体：model 是上游模型 ID，且不注入审计 metadata。
+			expect(handlerBody).toEqual(workerBody);
+			expect(handlerBody["metadata"]).toBeUndefined();
+			// 响应同样是 provider 实际返回的 body，而不是带 _spendInfo 等网关包装的 Router 结果。
+			expect(handlerRow?.["response"]).toMatchObject({ id: "chatcmpl-vision-worker", object: "chat.completion" });
+			expect((handlerRow?.["response"] as Record<string, unknown>)["_spendInfo"]).toBeUndefined();
+
+			const continuationRow = loggedRows.find(
+				(row) =>
+					row["metadata"]?.["internal_call"] === true &&
+					row["metadata"]?.["builtin_capability_stage"] === "continuation",
+			);
+			expect(continuationRow).toBeDefined();
+			const continuationBody = (continuationRow?.["proxy_server_request"] as Record<string, unknown>)?.["body"] as Record<
+				string,
+				unknown
+			>;
+			// continuation 实际走原生 Responses：body 是 input，不是能力循环的 chat messages。
+			expect(continuationBody["input"]).toEqual(expect.any(Array));
+			expect(continuationBody["messages"]).toBeUndefined();
+			expect(continuationRow?.["response"]).toMatchObject({
+				id: "resp_vision_done",
+				object: "response",
+				status: "completed",
+			});
+		});
+
+		test("streaming vision worker stays isolated and the parent row records the combined calls", async () => {
+			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+				param === "builtin_capabilities"
+					? {
+							vision: {
+								enabled: true,
+								always_inject: true,
+								handler_model: "vision-worker",
+								fallback_models: [],
+								max_iterations: 3,
+								max_output_tokens: 1024,
+							},
+						}
+					: param === "general_settings"
+						? { store_prompts_in_spend_logs: true }
+						: {},
+			);
+			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+				status: "reserved",
+				requestId: "request-vision-stream",
+				reserved: 1,
+				actual: null,
+			});
+			const trackSpy = jest
+				.spyOn(SpendTracker, "trackSpendLog")
+				.mockResolvedValue({ status: "committed", requestId: "request-vision-stream", spend: 0 });
+			const imageBase64 =
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcLkAAAAASUVORK5CYII=";
+			const imageRef = `sha256:${createHash("sha256").update(Buffer.from(imageBase64, "base64")).digest("hex")}`;
+			const parentUsage = { input_tokens: 9, output_tokens: 3, total_tokens: 12 };
+			const finalUsage = { input_tokens: 21, output_tokens: 4, total_tokens: 25 };
+			const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+				const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+				if (Array.isArray(body["messages"])) {
+					return new Response(
+						JSON.stringify({
+							id: "chatcmpl-vision-worker",
+							object: "chat.completion",
+							model: "vision-worker",
+							choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "A red dot." } }],
+							usage: { prompt_tokens: 40, completion_tokens: 4, total_tokens: 44 },
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					);
+				}
+				const input = Array.isArray(body["input"]) ? (body["input"] as Array<Record<string, unknown>>) : [];
+				const continuation = input.some((item) => item["type"] === "function_call_output");
+				const sse = continuation
+					? nativeResponsesSse({ id: "resp_vision_stream_done", text: "The dot is red.", usage: finalUsage })
+					: nativeResponsesVisionCallSse({
+							id: "resp_vision_stream_parent",
+							callId: "call_vision",
+							name: "litellm__vision_inspect",
+							arguments: JSON.stringify({ image_refs: [imageRef], question: "What is the dot color?" }),
+							usage: parentUsage,
+						});
+				return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+			});
+			const nativeDeployment = deepseekDeployment();
+			nativeDeployment.model_info = {
+				...nativeDeployment.model_info,
+				supports_function_calling: true,
+				enabled_builtin_capabilities: ["vision"],
+			};
+			const database = {
+				insert: () => ({ values: () => ({ onConflictDoNothing: () => Promise.resolve() }) }),
+			} as never;
+			const app = buildApp(buildDeploymentRouter([nativeDeployment, deepseekDeployment("vision-worker")]), true, database);
+
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({
+					model: "deepseek-v4-flash",
+					input: [
+						{
+							type: "message",
+							role: "user",
+							content: [
+								{ type: "input_text", text: "What color is the dot?" },
+								{ type: "input_image", image_url: `data:image/png;base64,${imageBase64}` },
+							],
+						},
+					],
+					store: false,
+					stream: true,
+				})
+				.expect(200);
+
+			const events = parseSseEvents(response.text);
+			expect(events.at(-1)).toMatchObject({ type: "response.completed", response: { status: "completed" } });
+			const bodies = fetchSpy.mock.calls.map((call) => JSON.parse(String(call[1]?.body ?? "{}")) as Record<string, unknown>);
+			const workerBody = bodies.find((body) => Array.isArray(body["messages"]));
+			expect(workerBody).toBeDefined();
+			expect(workerBody?.["input"]).toBeUndefined();
+			expect(workerBody?.["tools"]).toBeUndefined();
+			expect(workerBody?.["messages"]).toHaveLength(1);
+			expect(JSON.stringify(workerBody?.["messages"])).toContain("data:image/png;base64,");
+			expect(bodies.filter((body) => Array.isArray(body["input"]))).toHaveLength(2);
+
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			const loggedRows = trackSpy.mock.calls.map((call) => call[1] as unknown as Record<string, Record<string, unknown>>);
+			const parentRow = loggedRows.find((row) => row["metadata"]?.["internal_call"] !== true);
+			expect(parentRow).toBeDefined();
+			// 审计用的流式终态响应只是内部临时挂载，读完要删除，不能进入父行响应。
+			expect((parentRow?.["response"] as Record<string, unknown>)["_upstreamResponseBody"]).toBeUndefined();
+			const combined = parentRow?.["response"]?.["_builtinPrivateVisionToolCalls"] as Array<Record<string, unknown>>;
+			expect(combined).toHaveLength(1);
+			expect(combined[0]).toMatchObject({
+				tool_call_id: "call_vision",
+				result: { model: "deepseek/deepseek-v4-flash", content: "A red dot." },
+			});
+			expect(combined[0]?.["continuation"]).toMatchObject({ status: "success", request_id: expect.any(String) });
+
+			const continuationRow = loggedRows.find(
+				(row) =>
+					row["metadata"]?.["internal_call"] === true &&
+					row["metadata"]?.["builtin_capability_stage"] === "continuation",
+			);
+			expect(continuationRow).toBeDefined();
+			const continuationBody = (continuationRow?.["proxy_server_request"] as Record<string, unknown>)?.["body"] as Record<
+				string,
+				unknown
+			>;
+			expect(continuationBody["input"]).toEqual(expect.any(Array));
+			expect(continuationBody["messages"]).toBeUndefined();
+			// 流式终态的原生响应对象补进上游交换后，作为审计行的 response 保存；
+			// 不能保存网关映射出来的 chat completion（choices）。
+			expect(continuationRow?.["response"]).toMatchObject({
+				id: "resp_vision_stream_done",
+				object: "response",
+				status: "completed",
+			});
+			expect((continuationRow?.["response"] as Record<string, unknown>)["choices"]).toBeUndefined();
+		});
 
 
 	test("非流式响应不会为纯空白的 reasoning 生成 output item", async () => {

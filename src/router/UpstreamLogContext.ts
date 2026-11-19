@@ -130,3 +130,11 @@ export function getAttachedUpstreamLogContext(value: unknown): UpstreamLogContex
 	}
 	return (value as { [UPSTREAM_LOG_CONTEXT]?: UpstreamLogContext })[UPSTREAM_LOG_CONTEXT];
 }
+
+/**
+ * 流式上游终态响应在能力结果对象上的临时挂载键。
+ *
+ * 流式调用把原生结果映射成 chat 后，真实响应不再挂在 `upstreamLogContext.response.body`
+ * 上；审计行通过这个键取回它，读取后立即删除，避免进入父请求的响应与日志。
+ */
+export const UPSTREAM_STREAM_RESPONSE_KEY = "_upstreamResponseBody";

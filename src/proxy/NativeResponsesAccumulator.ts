@@ -90,6 +90,8 @@ export class NativeResponsesAccumulator {
 	private _text = "";
 	private _reasoning = "";
 	private _usage: Record<string, unknown> | undefined;
+	/** 上游终态事件里的完整响应；审计行按它保存真实上游响应，而不是下游映射结果。 */
+	private _finalResponse: Record<string, unknown> | undefined;
 
 	/**
 	 * 吃进一条 Responses SSE 事件。
@@ -120,6 +122,7 @@ export class NativeResponsesAccumulator {
 		} else if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") {
 			const response = asResponseRecord(event["response"]);
 			if (response) {
+				this._finalResponse = structuredClone(response);
 				this._id = typeof response["id"] === "string" ? response["id"] : this._id;
 				this._model = typeof response["model"] === "string" ? response["model"] : this._model;
 				if (Array.isArray(response["output"])) {
@@ -131,6 +134,16 @@ export class NativeResponsesAccumulator {
 				}
 			}
 		}
+	}
+
+	/**
+	 * 上游终态事件携带的完整响应对象。
+	 *
+	 * 用于把「实际收到的上游响应」写进内部调用的审计行；映射成 chat 的 `snapshot()`
+	 * 是网关内部视图，不能当作上游响应保存。
+	 */
+	finalResponse(): Record<string, unknown> | undefined {
+		return this._finalResponse === undefined ? undefined : structuredClone(this._finalResponse);
 	}
 
 	/**
@@ -147,7 +160,9 @@ export class NativeResponsesAccumulator {
 			return null;
 		}
 		const output = [...this._output];
-		if (this._text !== "") {
+		// 上游通常既发增量、又在 output item/completed 里给出完整内容；两者描述同一段
+		// 文本，只有一个来源时才补合成 item，否则审计与映射结果会把文本拼两遍。
+		if (this._text !== "" && !output.some((item) => messageTextOf(item).length > 0)) {
 			output.push({
 				type: "message",
 				role: "assistant",
@@ -155,7 +170,7 @@ export class NativeResponsesAccumulator {
 				content: [{ type: "output_text", text: this._text }],
 			});
 		}
-		if (this._reasoning !== "") {
+		if (this._reasoning !== "" && !output.some((item) => reasoningTextOf(item).length > 0)) {
 			output.push({
 				type: "reasoning",
 				content: [{ type: "reasoning_text", text: this._reasoning }],
@@ -170,6 +185,34 @@ export class NativeResponsesAccumulator {
 			usage: this._usage ?? null,
 		};
 	}
+}
+
+/**
+ * 读取 message item 已携带的文本，用于判断增量文本是否已被 item 覆盖。
+ * @param item - output item
+ */
+function messageTextOf(item: Record<string, unknown>): string {
+	if (item["type"] !== "message" || !Array.isArray(item["content"])) {
+		return "";
+	}
+	return (item["content"] as Array<Record<string, unknown>>)
+		.filter((part) => part !== null && typeof part === "object" && (part["type"] === "output_text" || part["type"] === "text"))
+		.map((part) => (typeof part["text"] === "string" ? part["text"] : ""))
+		.join("");
+}
+
+/**
+ * 读取 reasoning item 已携带的文本（content 或 summary）。
+ * @param item - output item
+ */
+function reasoningTextOf(item: Record<string, unknown>): string {
+	if (item["type"] !== "reasoning") {
+		return "";
+	}
+	return [...(Array.isArray(item["content"]) ? item["content"] : []), ...(Array.isArray(item["summary"]) ? item["summary"] : [])]
+		.filter((part) => part !== null && typeof part === "object" && typeof (part as Record<string, unknown>)["text"] === "string")
+		.map((part) => (part as Record<string, unknown>)["text"] as string)
+		.join("");
 }
 
 /**

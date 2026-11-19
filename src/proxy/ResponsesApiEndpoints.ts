@@ -50,7 +50,7 @@ import { prepareOpenAIImageGenerationRequest, type BuiltinGeneratedImage } from 
 import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareOpenAIWebRequest } from "../capabilities/WebCapability";
-import { getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getUpstreamLogContext, UPSTREAM_STREAM_RESPONSE_KEY, type UpstreamLogContext } from "../router/UpstreamLogContext";
 import { reasoningTextFromBlock } from "../core/utils/contentFields";
 import { accumulateChatChunk, finalizeStreamedCompletion, type ChatStreamAccumulator } from "./ChatCompletionsEndpoint";
 
@@ -413,6 +413,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 									visionImageStore: visionImageStore,
 									preparedVision: preparedWeb ? undefined : preparedVision,
 									preparedWeb: preparedWeb,
+									workerComplete: createPlainWorkerCompletion(litellmRouter),
 								},
 							)
 						: await litellmRouter.completion(model, messages as never, optionalParams);
@@ -433,13 +434,15 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 				if (!responseFailed && Array.isArray(response.output)) {
 					await imageHistory?.bind(response.output);
 				}
+				const storedResponse = { ...response };
+				copyBuiltinBookkeeping(storedResponse, result);
 				await lifecycle.finalize(() =>
 					recordSpend(db, req, requestId, {
 						model: model,
 						requestBody: reqBody,
 						startTime: startTime,
 						completionStartTime: responseReceivedAt,
-						response: response,
+						response: storedResponse,
 						usage: usage,
 						spendInfo: spendInfo,
 						upstreamLogContext: getUpstreamLogContext(result),
@@ -775,6 +778,20 @@ function createNativeResponsesCapabilityCompletion(
 			? mapNativeResponsesToChatCompletion(result, toolRegistry)
 			: result;
 	};
+}
+
+/**
+ * 私有工具 worker（识图、网页执行）的调用入口。
+ *
+ * worker 只应看到自己构造的消息；复用主模型轮的 native completion 会把父对话和公共工具
+ * 带进子请求，还会覆盖掉 worker 真正的问题与图片。主模型轮继续使用原生 Responses 重建。
+ * @param litellmRouter - 执行底层调用的 Router
+ */
+function createPlainWorkerCompletion(
+	litellmRouter: LiteLLMRouter,
+): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
+	return (workerModel, workerMessages, workerParams) =>
+		litellmRouter.completion(workerModel, workerMessages as never, workerParams);
 }
 
 /**
@@ -1487,9 +1504,13 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 							}
 							consumeChatStreamChunk(chunk, state, res);
 						}
+						const bufferedFinalResponse = bufferedAccumulator.finalResponse();
 						const bufferedSnapshot = bufferedAccumulator.snapshot();
 						if (bufferedSnapshot !== null) {
 							const mapped = mapNativeResponsesToChatCompletion(bufferedSnapshot, toolRegistry);
+							if (bufferedFinalResponse !== undefined) {
+								mapped[UPSTREAM_STREAM_RESPONSE_KEY] = bufferedFinalResponse;
+							}
 							for (const [key, value] of Object.entries(streamed)) {
 								if (key.startsWith("_")) {
 									mapped[key] = value;
@@ -1514,11 +1535,15 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 							consumeChatStreamChunk(chunk, state, res);
 						}
 					}
+					const finalResponse = nativeAccumulator.finalResponse();
 					const snapshot = nativeAccumulator.snapshot();
 					if (snapshot === null) {
 						return streamed;
 					}
 					const mapped = mapNativeResponsesToChatCompletion(snapshot, toolRegistry);
+					if (finalResponse !== undefined) {
+						mapped[UPSTREAM_STREAM_RESPONSE_KEY] = finalResponse;
+					}
 					// 流式包装上的计费/追踪元数据不在累加结果里，需要显式带回。
 					for (const [key, value] of Object.entries(streamed)) {
 						if (key.startsWith("_")) {
@@ -1532,7 +1557,9 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 					consumeChatStreamChunk(stripPrivateToolDeltas(chunk), state, res);
 					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
 				}
-				return finalizeStreamedCompletion(accumulator, completionModel, streamed);
+				const finalized = finalizeStreamedCompletion(accumulator, completionModel, streamed);
+				finalized[UPSTREAM_STREAM_RESPONSE_KEY] = publicUpstreamResponseBody(finalized);
+				return finalized;
 			};
 			const finalResult = await runOpenAIBuiltinCapabilityAgentLoop(
 				litellmRouter,
@@ -1552,10 +1579,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 					visionImageStore: visionImageStore,
 					preparedVision: preparedWeb ? undefined : preparedVision,
 					preparedWeb: preparedWeb,
-					workerComplete: nativeCompletion
-						? nativeCompletion
-						: (workerModel: string, workerMessages: Message[], workerParams: Record<string, unknown>) =>
-								litellmRouter.completion(workerModel, workerMessages as never, workerParams),
+					workerComplete: createPlainWorkerCompletion(litellmRouter),
 				},
 			);
 			// All visible text is already accumulated. The synthetic stream will emit the
@@ -1735,6 +1759,8 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 			res.end();
 		}
 		const loggedCompleted = { ...completed } as Record<string, unknown>;
+		// 客户端响应由重建后的公开字段组成；能力循环的内部记账只补进落库副本。
+		copyBuiltinBookkeeping(loggedCompleted, streamResult);
 		const spendInfo = (streamResult as { _spendInfo?: DeploymentSpendInfo })._spendInfo;
 		await streamingCheckpointScheduler?.dispose();
 		await lifecycle.finalize(() =>
@@ -2472,6 +2498,25 @@ function writeCompletedEvents(res: Response, state: ResponsesStreamState): void 
 	}
 }
 
+/**
+ * 把能力循环挂在结果对象上的内部记账字段复制到落库响应里。
+ *
+ * 流式路径落库的是重建后的客户端响应，非流式路径落库的是协议映射后的对象，两者都只保留
+ * 公开字段；`_builtin` 字段仅用于日志详情，不能回流给客户端。
+ * @param target - 即将写入 SpendLog 的响应对象
+ * @param source - 能力循环返回的原始结果
+ */
+function copyBuiltinBookkeeping(target: Record<string, unknown>, source: unknown): void {
+	if (typeof source !== "object" || source === null) {
+		return;
+	}
+	for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+		if (key.startsWith("_builtin")) {
+			target[key] = value;
+		}
+	}
+}
+
 function buildStreamResponse(
 	state: ResponsesStreamState,
 	request: ResponsesCreateRequest,
@@ -2604,6 +2649,15 @@ function copyProviderHeaders(result: Record<string, unknown>, res: Response): vo
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<Record<string, unknown>> {
 	return typeof value === "object" && value !== null && Symbol.asyncIterator in value;
+}
+
+/**
+ * 流式 chat 的聚合结果会在 `_` 前缀字段上带网关计费/追踪元数据。
+ * 写上游响应前去掉它们，保存 provider 返回的 completion 形状而不是网关包装。
+ * @param result - `finalizeStreamedCompletion` 的聚合结果
+ */
+function publicUpstreamResponseBody(result: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(result).filter(([key]) => !key.startsWith("_")));
 }
 
 function errorMessage(error: unknown): string {

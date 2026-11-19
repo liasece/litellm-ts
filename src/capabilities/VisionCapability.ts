@@ -608,17 +608,25 @@ export async function executeVisionToolCall(
 		...(selected as VisionImage[]).map((image) => image.chatPart),
 	];
 	const capabilityModels = [...new Set([binding.handlerModel, ...binding.fallbackModels])];
+	// worker 只发这一轮消息；审计行按实际发送的请求体保存，便于和上游抓包逐字段对齐。
+	const workerMessages = [{ role: "user", content: content } as unknown as Message];
 	const attempts: VisionExecutionAttempt[] = [];
 	const toolCallId = options.toolCallId ?? "vision_call";
 	let lastError: unknown;
 	for (const capabilityModel of capabilityModels) {
 		const startTime = new Date();
+		const workerRequestBody = {
+			model: capabilityModel,
+			messages: workerMessages,
+			stream: false,
+			max_completion_tokens: binding.maxOutputTokens,
+		};
 		let raw: Record<string, unknown>;
 		// worker 调用在自己的子作用域里记录上游交换，写进它自己的审计行。
 		let workerUpstream: UpstreamLogContext | undefined;
 		try {
 			const captured = await captureUpstreamExchange(() =>
-				complete(capabilityModel, [{ role: "user", content: content } as unknown as Message], {
+				complete(capabilityModel, workerMessages, {
 					stream: false,
 					max_completion_tokens: binding.maxOutputTokens,
 				}),
@@ -638,7 +646,8 @@ export async function executeVisionToolCall(
 						imageRefs: args.imageRefs,
 						question: args.question,
 						detail: args.detail,
-						messages: [{ role: "user", content: content } as unknown as Message],
+						messages: workerMessages,
+						requestBody: workerRequestBody,
 						startTime: startTime,
 						endTime: endTime,
 						error: error,
@@ -666,7 +675,8 @@ export async function executeVisionToolCall(
 					imageRefs: args.imageRefs,
 					question: args.question,
 					detail: args.detail,
-					messages: [{ role: "user", content: content } as unknown as Message],
+					messages: workerMessages,
+					requestBody: workerRequestBody,
 					startTime: startTime,
 					endTime: endTime,
 					response: raw,
@@ -680,9 +690,29 @@ export async function executeVisionToolCall(
 			start_time: startTime.toISOString(),
 			end_time: endTime.toISOString(),
 		});
-		return { text: textFromCompletion(raw), raw: raw, model: capabilityModel, attempts: attempts };
+		// 记录真正应答的部署模型（可能是 handler 组的成员），组名保留在 attempts 里供对照。
+		const executedModel = typeof raw["model"] === "string" && raw["model"].length > 0 ? raw["model"] : capabilityModel;
+		return { text: textFromCompletion(raw), raw: raw, model: executedModel, attempts: attempts };
 	}
 	throw lastError ?? ApiError.unavailable("识图能力没有可用的执行模型");
+}
+
+/**
+ * 把本次请求里主模型发起的私有识图调用记到响应对象上。
+ *
+ * 字段以 `_` 开头，属于响应出口会剥离的内部字段，只进 SpendLog：主请求行因此同时带上
+ * worker 尝试（request_id、模型、耗时）与续轮 request_id，和子请求行对得上。
+ * @param result - 即将返回（并写入 SpendLog）的响应对象
+ * @param calls - 本次请求中主模型发起的私有识图调用
+ */
+function appendPrivateVisionToolCalls(result: Record<string, unknown>, calls: Record<string, unknown>[]): void {
+	if (calls.length === 0) {
+		return;
+	}
+	const existing = Array.isArray(result["_builtinPrivateVisionToolCalls"])
+		? (result["_builtinPrivateVisionToolCalls"] as Record<string, unknown>[])
+		: [];
+	result["_builtinPrivateVisionToolCalls"] = [...existing, ...calls];
 }
 
 /**
@@ -789,6 +819,7 @@ export async function runOpenAIVisionAgentLoop(
 			for (const prior of consumed) {
 				addResponseUsage(result, prior);
 			}
+			appendPrivateVisionToolCalls(result, internalCalls);
 			return result;
 		}
 		// A model may still emit the private tool beside client-provided tools
