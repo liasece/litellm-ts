@@ -46,6 +46,22 @@ describe("model family", () => {
 		expect(resolveModelFamily("apac.meta.llama3-70b")).toBe("Llama");
 	});
 
+	it("recognizes the brand when the deployment name wraps it in vendor or vLLM decorations", () => {
+		// 自建 vLLM 部署常把上游模型挂成 anthropic/vllm-qwen3.8-27b：anthropic 只是协议兼容层，
+		// 品牌要看名字里的 qwen，不能因为走 Anthropic 协议就把千问画成 Claude。
+		expect(resolveModelFamily("anthropic/vllm-qwen3.8-27b")).toBe("Qwen");
+		expect(resolveModelFamily("anthropic/qwen3.6-27b")).toBe("Qwen");
+		expect(resolveModelFamily("anthropic/glm-4.7-anthropic")).toBe("GLM");
+		expect(resolveModelFamily("anthropic/mimo-v2.5-anthropic")).toBe("MiMo");
+		expect(resolveModelFamily("strata-qwen3.8-flash-next")).toBe("Qwen");
+		expect(resolveModelFamily("openai/gpt-oss-120b")).toBe("OpenAI");
+		// 名字开头就是品牌时以开头为准，别被后面的装饰词带走。
+		expect(resolveModelFamily("deepseek-v4.1-flash-anthropic")).toBe("DeepSeek");
+		// 纯协议前缀 + 认不出的名字仍然是未知品牌，不再兜底成 Claude。
+		expect(resolveModelFamily("anthropic/some-internal-model")).toBeUndefined();
+		expect(resolveModelFamily("anthropic/")).toBeUndefined();
+	});
+
 	it("recognizes the other real short forms each brand ships", () => {
 		expect(resolveModelFamily("sora")).toBe("OpenAI");
 		expect(resolveModelFamily("sora-2")).toBe("OpenAI");
