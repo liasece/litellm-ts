@@ -258,6 +258,10 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 							return buildProxy(childState);
 						};
 					}
+					// 分页键在 REPEATABLE READ 事务里读取；测试桩直接把事务内的查询交给同一代理。
+					if (prop === "transaction") {
+						return (run: (tx: unknown) => unknown) => run(proxy);
+					}
 					if (typeof prop === "symbol") {
 						return undefined;
 					}
@@ -887,6 +891,36 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 					status: "in_progress",
 					session_total_count: 1,
 				});
+			});
+
+			it("include_active=true 时同一个 request_id 不会因为结算竞态在一页里出现两次", async () => {
+				// 两路分页键来自两次独立 SELECT：结算事务恰好提交在两次查询之间时，同一个
+				// request_id 会同时出现在 ActiveRequests 与 SpendLogs 里，且 startTime 相同。
+				// 回表兜底会把两条键都解析成同一已结算行，页面上于是出现两条一模一样的日志。
+				const settledRow = {
+					...SAMPLE_UI_ROW,
+					request_id: "req-settled",
+					startTime: new Date("2025-02-09T23:59:00Z"),
+					status: "success",
+				};
+				const { db } = makeMockDb({
+					responses: [
+						[{ count: 1 }],
+						[{ count: 1 }],
+						[{ request_id: "req-settled", startTime: settledRow.startTime }],
+						[{ request_id: "req-settled", startTime: settledRow.startTime }],
+						[settledRow],
+						[],
+					],
+				});
+				const app = makeAppWithAuth(db, PROXY_ADMIN_AUTH);
+				const res = await request(app).get(
+					"/spend/logs/ui?start_date=2025-02-01 00:00:00&end_date=2025-02-15 23:59:59&include_active=true",
+				);
+
+				expect(res.status).toBe(200);
+				expect(res.body.data.map((row: { request_id: string }) => row.request_id)).toEqual(["req-settled"]);
+				expect(res.body.data[0]).toMatchObject({ status: "success", spend: 0.5 });
 			});
 
 			it("include_active=true 且排序字段无进行中值时仍将进行中请求固定置顶", async () => {

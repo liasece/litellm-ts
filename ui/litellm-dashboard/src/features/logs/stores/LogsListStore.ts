@@ -23,6 +23,15 @@ interface LogsListOptions {
 	api?: Pick<LogsApi, "list">;
 	socket?: typeof openLogsSocket;
 }
+/**
+ * 列表请求的硬上限。
+ *
+ * fetch 本身没有超时：一次卡住的连接会让 refresh 永远停在 await 上，调度器把
+ * inFlight 一直当成在途，后续 logs_changed 通知与定时器都进不来，列表就停在旧数据上
+ * （多条进行中的行看起来一样），只有整页刷新才恢复。超时后主动 abort，把错误如实报到
+ * 工具栏，调度器照常排下一次重试。
+ */
+export const LOGS_LIST_REQUEST_TIMEOUT_MS = 20_000;
 function savedLiveSettings(): { enabled: boolean; interval: number } {
 	if (typeof sessionStorage === "undefined") return { enabled: true, interval: DEFAULT_LIVE_TAIL_INTERVAL_MS };
 	const savedInterval = Number(sessionStorage.getItem("liveTailIntervalMs"));
@@ -87,18 +96,28 @@ export function createLogsListStore(options: LogsListOptions) {
 		if (disposed || state.activeTab !== "request logs") return;
 		const current = ++generation;
 		request?.abort();
-		request = new AbortController();
+		const controller = new AbortController();
+		request = controller;
+		let timedOut = false;
+		const timeout = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, LOGS_LIST_REQUEST_TIMEOUT_MS);
 		state.fetching = manual;
 		state.error = null;
 		try {
-			const next = await api.list(logsQuery(state, options.scope()), request.signal);
+			const next = await api.list(logsQuery(state, options.scope()), controller.signal);
 			if (disposed || generation !== current) return;
 			page.value = shareLogRows(page.value, next);
 		} catch (error: unknown) {
-			if (!disposed && generation === current && !(error instanceof DOMException && error.name === "AbortError")) {
-				state.error = error instanceof Error ? error.message : "Failed to fetch logs";
+			if (!disposed && generation === current) {
+				// 被更新的一次刷新 abort 属于正常替换，只在超时与真实失败时提示。
+				if (timedOut) state.error = "Log list request timed out; retrying on the next refresh";
+				else if (!(error instanceof DOMException && error.name === "AbortError"))
+					state.error = error instanceof Error ? error.message : "Failed to fetch logs";
 			}
 		} finally {
+			clearTimeout(timeout);
 			if (!disposed && generation === current) {
 				state.loading = false;
 				state.fetching = false;

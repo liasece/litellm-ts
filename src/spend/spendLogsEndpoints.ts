@@ -22,7 +22,7 @@
  */
 
 import type { Router } from "express";
-import { eq, sql, and, desc, gt, inArray, type SQL } from "drizzle-orm";
+import { asc, eq, sql, and, desc, gt, inArray, type AnyColumn, type SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
@@ -469,7 +469,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 								.select({ request_id: liteLLM_ActiveRequests.request_id })
 								.from(liteLLM_ActiveRequests)
 								.where(activeWhereClause)
-								.orderBy(desc(liteLLM_ActiveRequests.startTime))
+								// request_id 兜底排序：同一 startTime 的行在两次查询之间可能换位，
+								// 偏移分页于是重复或跳到上一页已经出现过的行。
+								.orderBy(desc(liteLLM_ActiveRequests.startTime), directionOf(liteLLM_ActiveRequests.request_id, sortOrder))
 								.limit(pageSize)
 								.offset(activeOffset)
 						).map((row) => ({ request_id: row.request_id, source: "active" as const }))
@@ -484,7 +486,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 								.select({ request_id: liteLLM_SpendLogs.request_id })
 								.from(liteLLM_SpendLogs)
 								.where(spendLogsWhereClause)
-								.orderBy(orderExpr)
+								// 所选排序字段大量并列（如 spend/tokens 相同），只有加 request_id
+								// 兜底才是全序；否则翻页会把同一行返回两次。
+								.orderBy(orderExpr, directionOf(liteLLM_SpendLogs.request_id, sortOrder))
 								.limit(completedLimit)
 								.offset(completedOffset)
 						).map((row) => ({ request_id: row.request_id, source: "spend" as const }))
@@ -500,11 +504,14 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			const activeData = isV2
 				? normalizedActiveRows.map((row) => ({ ...row, session_total_count: 1 }))
 				: await enrichInProgressSessionCounts(db, normalizedActiveRows, visibilityClause);
-			data = [...activeData, ...completedData];
+			// 在途行与已结算行可能短暂同名（结算提交落在两次查询之间），并集后再收敛一次。
+			data = dedupeSpendLogRows([...activeData, ...completedData]);
 		}
 
+		// 最后一层保险：任何分支都不把同一个 request_id 的两行交给前端。前端以 request_id
+		// 作为行标识，重复标识会让虚拟表格复用错位、渲染成多条一模一样的行。
 		const response: UiSpendLogsPage = {
-			data: data,
+			data: dedupeSpendLogRows(data),
 			total: total,
 			page: page,
 			page_size: pageSize,
@@ -902,20 +909,32 @@ async function selectMixedUiPageRowKeys(
 	pageOffset: number,
 ): Promise<UiPageRowKey[]> {
 	const needed = pageOffset + pageSize;
+	// 两路键合并后要按 request_id 去重，多取一页才能保证去重后仍填满当前页。
+	const fetchLimit = needed + pageSize;
 	const descending = sortOrder !== SpendSortOrder.ASC;
 	const direction = (column: Column): SQL => (descending ? sql`${column} DESC` : sql`${column} ASC`);
-	const activeKeys = await db
-		.select({ request_id: liteLLM_ActiveRequests.request_id, startTime: liteLLM_ActiveRequests.startTime })
-		.from(liteLLM_ActiveRequests)
-		.where(activeWhereClause)
-		.orderBy(direction(liteLLM_ActiveRequests.startTime), direction(liteLLM_ActiveRequests.request_id))
-		.limit(needed);
-	const spendKeys = await db
-		.select({ request_id: liteLLM_SpendLogs.request_id, startTime: liteLLM_SpendLogs.startTime })
-		.from(liteLLM_SpendLogs)
-		.where(spendLogsWhereClause)
-		.orderBy(direction(liteLLM_SpendLogs.startTime), direction(liteLLM_SpendLogs.request_id))
-		.limit(needed);
+	// 两路键必须在同一快照里读：结算事务是「删在途行 + 插 SpendLog」一次提交，若它正好
+	// 落在两条 SELECT 之间，同一个 request_id 会同时出现在两路里，归并后成为相邻的两行。
+	// REPEATABLE READ 只在这里包住两条键查询，代价是每个列表请求多一次 BEGIN/COMMIT。
+	const { activeKeys, spendKeys } = await db.transaction(
+		async (tx) => {
+			const snapshot = tx as unknown as NodePgDatabase<typeof schema>;
+			const activeKeys = await snapshot
+				.select({ request_id: liteLLM_ActiveRequests.request_id, startTime: liteLLM_ActiveRequests.startTime })
+				.from(liteLLM_ActiveRequests)
+				.where(activeWhereClause)
+				.orderBy(direction(liteLLM_ActiveRequests.startTime), direction(liteLLM_ActiveRequests.request_id))
+				.limit(fetchLimit);
+			const spendKeys = await snapshot
+				.select({ request_id: liteLLM_SpendLogs.request_id, startTime: liteLLM_SpendLogs.startTime })
+				.from(liteLLM_SpendLogs)
+				.where(spendLogsWhereClause)
+				.orderBy(direction(liteLLM_SpendLogs.startTime), direction(liteLLM_SpendLogs.request_id))
+				.limit(fetchLimit);
+			return { activeKeys: activeKeys, spendKeys: spendKeys };
+		},
+		{ isolationLevel: "repeatable read", accessMode: "read only" },
+	);
 	const merged = mergePageRowKeys(
 		activeKeys.map((key) => ({ request_id: key.request_id, startTime: key.startTime, source: "active" as const })),
 		spendKeys.map((key) => ({ request_id: key.request_id, startTime: key.startTime, source: "spend" as const })),
@@ -949,7 +968,87 @@ function mergePageRowKeys(left: UiPageRowKeyWithTime[], right: UiPageRowKeyWithT
 			rightIndex += 1;
 		}
 	}
-	return merged.concat(left.slice(leftIndex), right.slice(rightIndex));
+	return dedupePageRowKeys(merged.concat(left.slice(leftIndex), right.slice(rightIndex)));
+}
+
+/**
+ * 同一个 request_id 在归并后的分页键里只能占一个位置。
+ *
+ * 正常路径下两路键在同一个 `REPEATABLE READ` 事务里读取，同一次结算不会同时出现在
+ * ActiveRequests 与 SpendLogs 两路结果里。这里仍做收敛，兜住事务边界之外的来源：
+ * 历史版本曾把两次键查询分开执行，结算提交落在两次查询之间时同一个 request_id 会
+ * 同时出现在两路里（startTime 相同，归并后相邻），回表时“在途键找不到就回落到
+ * SpendLogs”会把两条键都解析成同一行，列表于是出现两条内容完全一样、request_id
+ * 也相同的日志。去重保留首次出现的位置，来源选已结算（spend）的那一条。
+ * @param keys - 已归并的分页键
+ */
+function dedupePageRowKeys(keys: UiPageRowKeyWithTime[]): UiPageRowKeyWithTime[] {
+	if (keys.length < 2) {
+		return keys;
+	}
+	const byId = new Map<string, number>();
+	const result: UiPageRowKeyWithTime[] = [];
+	let dropped = 0;
+	for (const key of keys) {
+		const index = byId.get(key.request_id);
+		if (index === undefined) {
+			byId.set(key.request_id, result.length);
+			result.push(key);
+			continue;
+		}
+		dropped += 1;
+		if (result[index]?.source !== "spend" && key.source === "spend") {
+			result[index] = key;
+		}
+	}
+	if (dropped > 0) {
+		logger.warn("列表分页键命中同一 request_id 的两条来源，已按已结算行收敛", { dropped: dropped });
+	}
+	return result;
+}
+
+/**
+ * 一页里同一个 request_id 只能出现一行，已结算的那一行优先。
+ *
+ * 与 {@link dedupePageRowKeys} 同一类竞态的兜底：即使分页键去重后，回表兜底与 session
+ * 计数补充之间仍可能跨越提交边界。这里放在响应出口，保证前端拿到的每页行标识唯一。
+ * @param rows - 拼装完成的行
+ */
+function dedupeSpendLogRows(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+	if (rows.length < 2) {
+		return rows;
+	}
+	const byId = new Map<string, number>();
+	const result: Array<Record<string, unknown>> = [];
+	let dropped = 0;
+	for (const row of rows) {
+		const id = typeof row.request_id === "string" ? row.request_id : "";
+		const index = id ? byId.get(id) : undefined;
+		if (index === undefined) {
+			if (id) {
+				byId.set(id, result.length);
+			}
+			result.push(row);
+			continue;
+		}
+		dropped += 1;
+		if (result[index]?.status === "in_progress" && row.status !== "in_progress") {
+			result[index] = row;
+		}
+	}
+	if (dropped > 0) {
+		logger.warn("列表页内出现重复 request_id，已收敛为一行", { dropped: dropped });
+	}
+	return dropped > 0 ? result : rows;
+}
+
+/**
+ * 排序列的兜底次序：与主排序同向，保证「主列并列」时仍是全序。
+ * @param column - 兜底列
+ * @param sortOrder - 接口的排序方向
+ */
+function directionOf(column: AnyColumn, sortOrder: SpendSortOrder): SQL {
+	return sortOrder === SpendSortOrder.ASC ? asc(column) : desc(column);
 }
 
 /**

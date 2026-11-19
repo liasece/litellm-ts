@@ -38,19 +38,47 @@ export function shareEqualJson(previous: unknown, next: unknown): unknown {
 	}
 	return next;
 }
+/**
+ * 一页日志里同一个 request_id 只能出现一行，已结算的那一行优先。
+ *
+ * 服务端已经按 request_id 收敛过，这里仍再兜一层：行标识是虚拟表格的复用单位，
+ * 一旦重复，两条不同位置的行会绑定同一个 key，渲染成内容完全一样的两行；而
+ * “进行中的那一行”只是结算前的临时快照，遇到重复应让位给最终结果。
+ * @param page - 接口返回的一页日志
+ */
+export function uniqueLogRows(page: LogsPage): LogsPage {
+	if (page.data.length < 2) return page;
+	const byId = new Map<string, number>();
+	const data: LogEntry[] = [];
+	let changed = false;
+	for (const entry of page.data) {
+		const index = entry.request_id ? byId.get(entry.request_id) : undefined;
+		if (index === undefined) {
+			if (entry.request_id) byId.set(entry.request_id, data.length);
+			data.push(entry);
+			continue;
+		}
+		changed = true;
+		const kept = data[index];
+		if (kept && isInProgressLog(kept) && !isInProgressLog(entry)) data[index] = entry;
+	}
+	return changed ? { ...page, data } : page;
+}
 export function shareLogRows(previous: LogsPage | undefined, next: LogsPage): LogsPage {
-	if (!previous) return next;
-	const byId = new Map(previous.data.map((entry) => [entry.request_id, entry]));
-	const data = next.data.map((entry) => shareEqualJson(byId.get(entry.request_id), entry) as LogEntry);
+	const nextRows = uniqueLogRows(next);
+	if (!previous) return nextRows;
+	const base = uniqueLogRows(previous);
+	const byId = new Map(base.data.map((entry) => [entry.request_id, entry]));
+	const data = nextRows.data.map((entry) => shareEqualJson(byId.get(entry.request_id), entry) as LogEntry);
 	if (
-		previous.data.length === data.length &&
-		data.every((entry, index) => entry === previous.data[index]) &&
-		previous.total === next.total &&
-		previous.page === next.page &&
-		previous.page_size === next.page_size &&
-		previous.total_pages === next.total_pages &&
-		previous.session_total_count === next.session_total_count
+		base.data.length === data.length &&
+		data.every((entry, index) => entry === base.data[index]) &&
+		base.total === next.total &&
+		base.page === next.page &&
+		base.page_size === next.page_size &&
+		base.total_pages === next.total_pages &&
+		base.session_total_count === next.session_total_count
 	)
-		return previous;
-	return { ...next, data };
+		return base;
+	return { ...nextRows, data };
 }

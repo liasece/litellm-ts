@@ -286,7 +286,9 @@ watch(
 );
 function keyForRow(row: UiTableRow, index: number): string | number {
 	const key = typeof props.rowKey === "function" ? props.rowKey(row) : row[props.rowKey];
-	return typeof key === "string" || typeof key === "number" ? key : index;
+	// 空串不是可用行键：多行共享同一个 "" 会让 keyed diff 把不同行打到同一个 vnode 上。
+	if (typeof key === "number") return key;
+	return typeof key === "string" && key.length > 0 ? key : index;
 }
 const rowKeys = computed(() => visibleRows.value.map(keyForRow));
 const allSelected = computed(() => rowKeys.value.length > 0 && rowKeys.value.every((key) => props.selectedKeys.includes(key)));

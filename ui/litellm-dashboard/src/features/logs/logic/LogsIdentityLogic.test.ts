@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isInProgressLog, navigableSessionGroup, shareLogRows } from "./LogsIdentityLogic";
+import { isInProgressLog, navigableSessionGroup, shareLogRows, uniqueLogRows } from "./LogsIdentityLogic";
 import type { LogsPage } from "../support/LogsModels";
 
 describe("live log identity and session navigation", () => {
@@ -37,6 +37,44 @@ describe("live log identity and session navigation", () => {
 			"b",
 			"a",
 		]);
+	});
+	it("collapses a request that the page reports twice and keeps the settled row", () => {
+		const page: LogsPage = {
+			data: [
+				{ request_id: "dup", startTime: "2026-11-07T02:00:00Z", status: "in_progress" },
+				{ request_id: "dup", startTime: "2026-11-07T02:00:00Z", status: "success", spend: 0.2 },
+				{ request_id: "other", startTime: "2026-11-07T03:00:00Z" },
+			],
+			total: 3,
+			page: 1,
+			page_size: 100,
+			total_pages: 1,
+		};
+		const unique = uniqueLogRows(page);
+		expect(unique.data.map((row) => [row.request_id, row.status])).toEqual([
+			["dup", "success"],
+			["other", undefined],
+		]);
+		expect(unique.total).toBe(3);
+		expect(uniqueLogRows(unique)).toBe(unique);
+	});
+	it("never aliases two rows of a duplicated request while sharing identities", () => {
+		const first: LogsPage = {
+			data: [{ request_id: "dup", startTime: "2026-11-07T02:00:00Z", status: "in_progress" }],
+			total: 1,
+			page: 1,
+			page_size: 100,
+			total_pages: 1,
+		};
+		const next = shareLogRows(first, {
+			...first,
+			data: [
+				{ request_id: "dup", startTime: "2026-11-07T02:00:00Z", status: "in_progress" },
+				{ request_id: "dup", startTime: "2026-11-07T02:00:00Z", status: "success", spend: 0.2 },
+			],
+		});
+		expect(next.data).toHaveLength(1);
+		expect(next.data[0].status).toBe("success");
 	});
 	it("keeps an in-progress request out of the persisted session-detail path", () => {
 		const log = { request_id: "active", startTime: "2026-11-07T02:00:00Z", session_id: "s", metadata: { status: "in_progress" } };

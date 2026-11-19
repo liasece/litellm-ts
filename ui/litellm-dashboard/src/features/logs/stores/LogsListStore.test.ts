@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLogsListStore } from "./LogsListStore";
+import { createLogsListStore, LOGS_LIST_REQUEST_TIMEOUT_MS } from "./LogsListStore";
 import type { LogsPage } from "../support/LogsModels";
 
 const emptyPage = (): LogsPage => ({ data: [], page: 1, page_size: 100, total: 0, total_pages: 0 });
@@ -139,6 +139,53 @@ describe("request log browsing", () => {
 		store.dispose();
 	});
 
+	it("drops a duplicated row in a page returned by the API", async () => {
+		const list = vi.fn<ListRequest>(async () => ({
+			...emptyPage(),
+			data: [
+				{ request_id: "dup", startTime: "2026-11-07T02:00:00Z", status: "in_progress" },
+				{ request_id: "dup", startTime: "2026-11-07T02:00:00Z", status: "success" },
+			],
+			total: 2,
+			total_pages: 1,
+		}));
+		const store = createLogsListStore({
+			scope: () => ({ userId: "admin", role: "Admin" }),
+			api: { list },
+			socket: () => () => undefined,
+		});
+		store.start();
+		await tick();
+		await tick();
+		expect(store.page.value.data.map((row) => [row.request_id, row.status])).toEqual([["dup", "success"]]);
+		store.dispose();
+	});
+	it("aborts a list request that never returns and reports the timeout", async () => {
+		vi.useFakeTimers();
+		const signals: AbortSignal[] = [];
+		const list = vi.fn<ListRequest>((_query, signal) => {
+			if (signal) signals.push(signal);
+			return new Promise<LogsPage>((_resolve, reject) => {
+				signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+			});
+		});
+		const store = createLogsListStore({
+			scope: () => ({ userId: "admin", role: "Admin" }),
+			api: { list },
+			socket: () => () => undefined,
+		});
+		store.start();
+		await tick();
+		store.setLiveEnabled(false);
+		await vi.advanceTimersByTimeAsync(LOGS_LIST_REQUEST_TIMEOUT_MS);
+		await tick();
+		expect(signals[0]?.aborted).toBe(true);
+		expect(store.state.error).toMatch(/timed out/i);
+		void store.refresh();
+		await tick();
+		expect(list).toHaveBeenCalledTimes(2);
+		store.dispose();
+	});
 	it("stops list requests and live notifications when another log tab is selected", async () => {
 		vi.useFakeTimers();
 		const close = vi.fn();
