@@ -9,7 +9,7 @@ export const quotaWindowSchema = z.object({
 });
 const balance = z.object({ label: z.string(), used: z.number(), limit: z.number(), unit: z.string() });
 export const upstreamAccountSchema = z
-	.object({ auth_index: z.string(), filename: z.string(), provider: z.string(), email: z.string().nullable() })
+	.object({ auth_index: z.string(), key: z.string(), provider: z.string(), email: z.string().nullable() })
 	.passthrough();
 export const accountQuotaSchema = z
 	.object({

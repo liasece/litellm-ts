@@ -311,13 +311,13 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 			const target = await this._resolveLoginTarget(email, tokens);
 			const raw = buildLoginAuthFile(target.previous, tokens, refreshToken, email, projectId, this._now());
 			try {
-				await this._accounts.writeRaw(target.fileName, raw);
+				await this._accounts.writeRaw(target.key, raw);
 			} catch (error) {
 				return this._failSession(record, `保存 Antigravity 账号失败：${errorMessage(error)}`);
 			}
 			record.state = "success";
 			record.prompt = undefined;
-			record.output.push(`Antigravity 账号 ${email} 已保存为 ${target.fileName}。`);
+			record.output.push(`Antigravity 账号 ${email} 已保存为 ${target.key}。`);
 			return snapshotSession(record);
 		} finally {
 			record.busy = false;
@@ -338,7 +338,7 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 	 */
 	private async _readSnapshot(account: SubscriptionAccount): Promise<Record<string, unknown>> {
 		try {
-			return await this._accounts.readRaw(account.fileName);
+			return await this._accounts.readRaw(account.key);
 		} catch {
 			return account.raw;
 		}
@@ -349,7 +349,7 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 	 * @param account - 账号
 	 */
 	private async _refreshWithLock(account: SubscriptionAccount): Promise<RefreshedCredential> {
-		return await singleFlight(this._inflight, account.fileName, async () => {
+		return await singleFlight(this._inflight, account.key, async () => {
 			return await this._refreshSerialized(account);
 		});
 	}
@@ -359,8 +359,8 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 	 * @param account - 账号
 	 */
 	private async _refreshSerialized(account: SubscriptionAccount): Promise<RefreshedCredential> {
-		return this._accounts.withFileLock(account.fileName, FILE_LOCK_TIMEOUT_MS, async () => {
-			const raw = await this._accounts.readRaw(account.fileName);
+		return this._accounts.withAccountLock(account.key, FILE_LOCK_TIMEOUT_MS, async () => {
+			const raw = await this._accounts.readRaw(account.key);
 			const refreshToken = trimmedString(raw["refresh_token"]);
 			if (!refreshToken) {
 				throw ApiError.unauthorized("Antigravity 账号缺少 refresh token，请重新登录");
@@ -397,10 +397,10 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 					raw["project_id"] = projectId;
 				} catch (error) {
 					projectError = redactSecrets(errorMessage(error), [tokens.accessToken, refreshToken, tokens.refreshToken]);
-					logger.warn(`Antigravity 账号 ${account.fileName} 刷新后缺少 project_id：${projectError}`);
+					logger.warn(`Antigravity 账号 ${account.key} 刷新后缺少 project_id：${projectError}`);
 				}
 			}
-			await this._accounts.writeRaw(account.fileName, raw);
+			await this._accounts.writeRaw(account.key, raw);
 			return { accessToken: tokens.accessToken, projectId: projectId, projectError: projectError };
 		});
 	}
@@ -411,8 +411,8 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 	 * @param accessToken - 当前 access token
 	 */
 	private async _fillMissingProject(account: SubscriptionAccount, accessToken: string): Promise<void> {
-		await this._accounts.withFileLock(account.fileName, FILE_LOCK_TIMEOUT_MS, async () => {
-			const raw = await this._accounts.readRaw(account.fileName);
+		await this._accounts.withAccountLock(account.key, FILE_LOCK_TIMEOUT_MS, async () => {
+			const raw = await this._accounts.readRaw(account.key);
 			if (trimmedString(raw["project_id"])) {
 				return;
 			}
@@ -429,7 +429,7 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 				throw ApiError.unavailable(`Antigravity 获取 project_id 失败：${redactSecrets(errorMessage(error), [currentToken])}`);
 			}
 			raw["project_id"] = projectId;
-			await this._accounts.writeRaw(account.fileName, raw);
+			await this._accounts.writeRaw(account.key, raw);
 		});
 	}
 
@@ -441,32 +441,32 @@ class AntigravityAuthHandler implements SubscriptionAuthHandler {
 	private async _resolveLoginTarget(
 		email: string,
 		tokens: AntigravityTokenSet,
-	): Promise<{ readonly fileName: string; readonly previous: Record<string, unknown> | undefined }> {
+	): Promise<{ readonly key: string; readonly previous: Record<string, unknown> | undefined }> {
 		const accounts = await this._accounts.list(ANTIGRAVITY_AUTH_TYPE);
 		const existing =
 			accounts.find((account) => sameEmail(account.raw["email"], email)) ??
 			accounts.find((account) => sameToken(account.raw, tokens));
-		let fileName: string;
+		let key: string;
 		if (existing) {
-			fileName = existing.fileName;
+			key = existing.key;
 		} else {
 			const segment = fileNameSegment(email);
-			const taken = new Set(accounts.map((account) => account.fileName));
-			fileName = `antigravity-${segment}${ACCOUNT_SUFFIX}`;
-			for (let index = 2; taken.has(fileName) && index <= 99; index += 1) {
-				fileName = `antigravity-${segment}-${index}${ACCOUNT_SUFFIX}`;
+			const taken = new Set(accounts.map((account) => account.key));
+			key = `antigravity-${segment}${ACCOUNT_SUFFIX}`;
+			for (let index = 2; taken.has(key) && index <= 99; index += 1) {
+				key = `antigravity-${segment}-${index}${ACCOUNT_SUFFIX}`;
 			}
-			if (taken.has(fileName)) {
+			if (taken.has(key)) {
 				throw ApiError.conflict("Antigravity 账号文件名冲突，请先清理重复账号");
 			}
 		}
 		let previous: Record<string, unknown> | undefined;
 		try {
-			previous = await this._accounts.readRaw(fileName);
+			previous = await this._accounts.readRaw(key);
 		} catch {
 			previous = undefined;
 		}
-		return { fileName: fileName, previous: previous };
+		return { key: key, previous: previous };
 	}
 
 	/**

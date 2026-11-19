@@ -82,8 +82,8 @@ const visibleAccounts = computed(() =>
 	props.sources ? state.accounts.filter((account) => props.sources!.includes(account.provider.trim().toLowerCase())) : state.accounts,
 );
 const brandFor = (provider: string) => getProviderBrand(provider);
-const managedAccount = (account: Account) => state.commandCodeAccounts.find((item) => item.filename === account.filename);
-const isTrashed = (account: Account) => account.filename.startsWith(".trash/");
+const managedAccount = (account: Account) => state.commandCodeAccounts.find((item) => item.key === account.key);
+const isTrashed = (account: Account) => account.trashed === true;
 const rateLimitTitle = (account: Account): string => {
 	const snapshot = account.rate_limit;
 	if (!snapshot) return "";
@@ -110,9 +110,6 @@ const providerFilter = computed<readonly UiTableFilterField[]>(() => [
 const accountFilter: readonly UiTableFilterField[] = [
 	{ key: "account", label: "Account", control: { kind: "text", placeholder: "Filter by account email or label" } },
 ];
-const fileFilter: readonly UiTableFilterField[] = [
-	{ key: "file", label: "File", control: { kind: "text", placeholder: "Filter by auth file" } },
-];
 const enabledFilter: readonly UiTableFilterField[] = [
 	{
 		key: "enabled",
@@ -132,8 +129,7 @@ const columns = computed<readonly UiTableColumn[]>(() => {
 		: [];
 	return [
 		...providerColumn,
-		{ key: "account", label: "Account", width: 220, sortable: true, filters: accountFilter },
-		{ key: "file", label: "File", width: 320, sortable: true, filters: fileFilter },
+		{ key: "account", label: "Account", width: 320, sortable: true, filters: accountFilter },
 		{ key: "enabled", label: "Enabled", width: 100, filters: enabledFilter },
 		{ key: "status", label: "Status", width: 180, sortable: true },
 		{ key: "weight", label: "Weight", width: 110, sortable: true, initialSortOrder: "desc" },
@@ -142,7 +138,6 @@ const columns = computed<readonly UiTableColumn[]>(() => {
 });
 function accountValue(account: Account, key: string): string | number {
 	if (key === "account") return identity(account) ?? "";
-	if (key === "file") return account.filename;
 	if (key === "enabled") return account.disabled ? "Disabled" : "Enabled";
 	if (key === "weight") return account.weight ?? 0;
 	if (key === "status") return account.status ?? account.last_error ?? "";
@@ -257,7 +252,7 @@ function edit(account: Account) {
 				>
 			</div>
 			<p class="cp-secondary cp-mt-12 cp-no-margin-bottom">
-				Stored in the LiteLLM config and materialized as a subscription auth file. Use Edit to rotate the key.
+				Stored in the LiteLLM config and synced to the subscription account table. Use Edit to rotate the key.
 			</p></UiCard
 		>
 		<UiTable
@@ -300,7 +295,8 @@ function edit(account: Account) {
 							@blur="submitEmail(account)"
 						/>
 						<div v-else class="cp-inline cp-gap-8">
-							<span class="cp-account-identity-text">{{ identity(account) ?? "—" }}</span>
+							<span class="cp-account-identity-text">{{ identity(account) ?? account.label ?? "—" }}</span>
+							<UiTag v-if="isTrashed(account)" color="orange">trashed</UiTag>
 							<UiButton
 								v-if="canEditEmail(account)"
 								size="small"
@@ -310,10 +306,6 @@ function edit(account: Account) {
 								><template #icon><UiIcon name="EditOutlined" /></template
 							></UiButton>
 						</div>
-					</td>
-					<td class="cp-account-filename" data-label="File" :title="account.filename">
-						<span class="cp-account-filename-text">{{ account.filename }}</span
-						><UiTag v-if="isTrashed(account)" color="orange" class="cp-ml-8">trashed</UiTag>
 					</td>
 					<td
 						data-label="Status"
@@ -328,7 +320,7 @@ function edit(account: Account) {
 						<UiSwitch
 							:model-value="!account.disabled"
 							:disabled="isTrashed(account)"
-							:label="'Enable ' + (identity(account) ?? account.filename)"
+							:label="'Enable ' + (identity(account) ?? account.key)"
 							@update:model-value="store.updateAccount(account, { disabled: !$event })"
 						/>
 					</td>
@@ -345,25 +337,34 @@ function edit(account: Account) {
 					</td>
 					<td class="ui-table__cell--sticky-right" data-label="Action">
 						<div class="cp-inline cp-gap-8">
-							<UiButton v-if="managedAccount(account)" size="small" @click="edit(account)">Edit</UiButton
-							><CliProxyConfirm
-								v-if="managedAccount(account)"
-								title="Delete this CommandCode account?"
-								description="It will be removed from the LiteLLM config and its subscription auth file will be deleted."
-								@confirm="store.removeAccount(account)"
-								><UiButton size="small" danger>Delete</UiButton></CliProxyConfirm
-							><CliProxyConfirm
-								v-else-if="isTrashed(account)"
-								title="Restore this account?"
-								description="The token file will be moved back to the active auth directory."
-								@confirm="store.removeAccount(account)"
-								><UiButton size="small"
-									><template #icon><UiIcon name="RollbackOutlined" /></template>Restore</UiButton
-								></CliProxyConfirm
-							><CliProxyConfirm
+							<template v-if="isTrashed(account)">
+								<CliProxyConfirm
+									title="Restore this account?"
+									description="The account will become active again."
+									@confirm="store.removeAccount(account)"
+									><UiButton size="small"
+										><template #icon><UiIcon name="RollbackOutlined" /></template>Restore</UiButton
+									></CliProxyConfirm
+								><CliProxyConfirm
+									title="Delete this account permanently?"
+									description="Its row is removed from the database and cannot be restored; its CommandCode entry or saved key is removed too."
+									@confirm="store.purgeAccount(account)"
+									><UiButton size="small" danger>Delete</UiButton></CliProxyConfirm
+								>
+							</template>
+							<template v-else-if="managedAccount(account)">
+								<UiButton size="small" @click="edit(account)">Edit</UiButton
+								><CliProxyConfirm
+									title="Delete this CommandCode account?"
+									description="It will be removed from the LiteLLM config and its subscription account will be trashed."
+									@confirm="store.removeAccount(account)"
+									><UiButton size="small" danger>Delete</UiButton></CliProxyConfirm
+								>
+							</template>
+							<CliProxyConfirm
 								v-else
-								title="Move this account to .trash?"
-								description="The token file is retained for recovery."
+								title="Move this account to trash?"
+								description="The account is kept in the trash and can be restored."
 								@confirm="store.removeAccount(account)"
 								><UiButton size="small" danger>Trash</UiButton></CliProxyConfirm
 							>

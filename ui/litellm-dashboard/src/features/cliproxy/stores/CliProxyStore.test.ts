@@ -6,7 +6,7 @@ vi.mock("../api/CliProxyApi", () => ({ cliProxyApi: vi.fn() }));
 const api = vi.mocked(cliProxyApi<unknown>);
 const account: Account = {
 	auth_index: "account-1",
-	filename: "fixture.json",
+	key: "fixture.json",
 	provider: "codex",
 	email: "fixture@example.test",
 	disabled: false,
@@ -47,6 +47,54 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
 	api.mockReset();
+});
+
+describe("CLIProxy trashed accounts", () => {
+	it("lists trashed accounts on page load so they can be restored, without loading their quota", async () => {
+		const trashed: Account = {
+			...account,
+			auth_index: "trashed00000001",
+			key: "trashed.json",
+			trashed: true,
+			trashed_at: "2026-11-19T00:00:00Z",
+		};
+		api.mockImplementation((path) => {
+			if (path.startsWith("/subscriptions/accounts")) {
+				return Promise.resolve({ data: path.includes("include_trashed=true") ? [account, trashed] : [account] });
+			}
+			return defaults(path);
+		});
+		const store = createCliProxyStore();
+		await store.load();
+		expect(store.state.accounts.map((entry) => entry.auth_index)).toEqual([account.auth_index, trashed.auth_index]);
+		expect(store.state.quotaStates[trashed.auth_index]).toBeUndefined();
+	});
+
+	it("purges a trashed account and drops it from the refreshed list", async () => {
+		const trashed: Account = {
+			...account,
+			auth_index: "purged",
+			key: "trashed.json",
+			trashed: true,
+			trashed_at: "2026-11-19T00:00:00Z",
+		};
+		let listed = [account, trashed];
+		api.mockImplementation((path) => {
+			if (path === "/subscriptions/accounts/purged/purge") {
+				listed = [account];
+				return Promise.resolve({ status: "deleted" });
+			}
+			if (path.startsWith("/subscriptions/accounts")) return Promise.resolve({ data: listed });
+			return defaults(path);
+		});
+		const store = createCliProxyStore();
+		await store.load();
+		await store.purgeAccount(trashed);
+		const purgeCall = api.mock.calls.find(([path]) => path === "/subscriptions/accounts/purged/purge");
+		expect(purgeCall?.[1]?.method).toBe("DELETE");
+		expect(store.state.accounts.map((entry) => entry.auth_index)).toEqual([account.auth_index]);
+		store.dispose();
+	});
 });
 
 describe("CLIProxy account and activity lifecycle", () => {
@@ -96,7 +144,7 @@ describe("CLIProxy account and activity lifecycle", () => {
 
 	it("does not send an empty replacement secret when only the managed account label changes", async () => {
 		const store = createCliProxyStore();
-		store.editCommandCodeAccount({ index: 2, label: "old", filename: "managed.json" });
+		store.editCommandCodeAccount({ index: 2, label: "old", key: "managed.json" });
 		store.state.editingCommandCodeLabel = "renamed";
 		await store.saveCommandCodeAccount();
 		const call = api.mock.calls.find(([path]) => path === "/subscriptions/commandcode/accounts/2");

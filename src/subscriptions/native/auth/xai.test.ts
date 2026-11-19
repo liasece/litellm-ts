@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -122,12 +122,12 @@ async function delay(ms: number): Promise<void> {
 /**
  * 读取磁盘上的账号。
  * @param store - 账号仓库
- * @param fileName - 文件名
+ * @param key - 文件名
  */
-async function loadAccount(store: SubscriptionAccountStore, fileName: string): Promise<SubscriptionAccount> {
-	const account = await store.findByFileName(fileName);
+async function loadAccount(store: SubscriptionAccountStore, key: string): Promise<SubscriptionAccount> {
+	const account = await store.findByKey(key);
 	if (!account) {
-		throw new Error(`账号文件不存在：${fileName}`);
+		throw new Error(`账号文件不存在：${key}`);
 	}
 	return account;
 }
@@ -356,7 +356,7 @@ describe("createXaiAuth", () => {
 				expired: new Date(Date.now() - 60_000).toISOString(),
 				note: "preserved",
 			});
-			const before = await readFile(path.join(directory, "xai-fail.json"), "utf8");
+			const before = JSON.stringify(await store.readRaw("xai-fail.json"));
 			const account = await loadAccount(store, "xai-fail.json");
 			const auth = createXaiAuth({ accounts: store });
 			let failure: unknown;
@@ -368,7 +368,7 @@ describe("createXaiAuth", () => {
 			expect(failure).toBeInstanceOf(ApiError);
 			expect(String(failure)).toMatch(/xAI 凭据刷新失败/);
 			expect(String(failure)).not.toContain("old-refresh");
-			const after = await readFile(path.join(directory, "xai-fail.json"), "utf8");
+			const after = JSON.stringify(await store.readRaw("xai-fail.json"));
 			expect(after).toBe(before);
 		} finally {
 			await server.close();
@@ -439,7 +439,7 @@ describe("createXaiAuth", () => {
 			expect(pollCalls).toBe(2);
 			const accounts = await store.list("xai");
 			expect(accounts).toHaveLength(1);
-			expect(accounts[0]?.fileName).toBe(xaiCredentialFileName("device@example.com", "sub-device"));
+			expect(accounts[0]?.key).toBe(xaiCredentialFileName("device@example.com", "sub-device"));
 			const raw = accounts[0]?.raw ?? {};
 			expect(raw["type"]).toBe("xai");
 			expect(raw["auth_kind"]).toBe("oauth");
@@ -515,7 +515,7 @@ describe("createXaiAuth", () => {
 			expect(pollCalls).toBe(1);
 			const accounts = await store.list("xai");
 			expect(accounts).toHaveLength(1);
-			expect(accounts[0]?.fileName).toBe("xai-legacy.json");
+			expect(accounts[0]?.key).toBe("xai-legacy.json");
 			const raw = accounts[0]?.raw ?? {};
 			expect(raw["access_token"]).toBe("relogin-access");
 			expect(raw["note"]).toBe("legacy-note");

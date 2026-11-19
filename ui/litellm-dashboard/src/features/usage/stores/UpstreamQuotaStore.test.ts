@@ -3,7 +3,7 @@ import { createUpstreamQuotaStore } from "./UpstreamQuotaStore";
 import { readUpstreamQuotaCache, writeUpstreamQuotaCache, type UpstreamQuotaStorage } from "../data/UpstreamQuotaCacheData";
 import type { AccountQuota, UpstreamAccount } from "../api/UpstreamQuotaApi";
 
-const account: UpstreamAccount = { auth_index: "a", filename: "fixture", provider: "codex", email: "a@example.com" };
+const account: UpstreamAccount = { auth_index: "a", key: "fixture", provider: "codex", email: "a@example.com" };
 const quota: AccountQuota = {
 	provider: "codex",
 	plan: null,
@@ -41,7 +41,7 @@ function fakeEnvironment(initialHidden = false) {
 describe("optional upstream quota", () => {
 	it("refreshes quotas without reloading the account list and forces only the built-in quota cache", async () => {
 		const api = {
-			accounts: vi.fn().mockResolvedValue([{ auth_index: "a", filename: "fixture", provider: "codex", email: null }]),
+			accounts: vi.fn().mockResolvedValue([{ auth_index: "a", key: "fixture", provider: "codex", email: null }]),
 			quota: vi.fn().mockResolvedValue(quota),
 			builtIn: vi.fn().mockResolvedValue([]),
 		};

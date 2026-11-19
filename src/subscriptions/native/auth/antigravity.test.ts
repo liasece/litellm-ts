@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { logger } from "../../../core/utils/logger";
@@ -139,18 +139,18 @@ function expiredAuthFile(overrides: Record<string, unknown> = {}): Record<string
 }
 
 /**
- * 读取磁盘上的 auth JSON。
- * @param fileName - 文件名
+ * 读取账号正文。
+ * @param key - 账号键
  */
-async function readAuthFile(fileName: string): Promise<Record<string, unknown>> {
-	return JSON.parse(await readFile(path.join(authDir, fileName), "utf8")) as Record<string, unknown>;
+async function readAuthFile(key: string): Promise<Record<string, unknown>> {
+	return await store.readRaw(key);
 }
 
 /**
- * 列出目录中的账号文件。
+ * 列出有效账号的键。
  */
 async function listAuthFiles(): Promise<string[]> {
-	return (await readdir(authDir)).filter((name) => name.endsWith(".json")).sort();
+	return (await store.list("antigravity")).map((account) => account.key).sort();
 }
 
 /**
@@ -162,12 +162,12 @@ function queryOf(value: string): URLSearchParams {
 }
 
 it("刷新过期 token 时在锁内重读文件、原子写回并保留未知字段", async () => {
-	const fileName = "antigravity-user@example.com.json";
-	await store.writeRaw(fileName, expiredAuthFile());
-	const staleAccount = await store.findByFileName(fileName);
+	const key = "antigravity-user@example.com.json";
+	await store.writeRaw(key, expiredAuthFile());
+	const staleAccount = await store.findByKey(key);
 	expect(staleAccount).toBeDefined();
 	// 模拟另一个进程已经轮换了 refresh token：实现必须重读文件而不是用快照。
-	await store.patchRaw(fileName, { refresh_token: "file-refresh" });
+	await store.patchRaw(key, { refresh_token: "file-refresh" });
 	const recorder = routeFetch({
 		[ENDPOINTS.token]: () =>
 			jsonResponse({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3599, token_type: "Bearer" }),
@@ -181,7 +181,7 @@ it("刷新过期 token 时在锁内重读文件、原子写回并保留未知字
 
 	await auth.refresh(staleAccount as SubscriptionAccount);
 
-	const saved = await readAuthFile(fileName);
+	const saved = await readAuthFile(key);
 	expect(saved).toMatchObject({
 		type: "antigravity",
 		access_token: "new-access",
@@ -204,14 +204,14 @@ it("刷新过期 token 时在锁内重读文件、原子写回并保留未知字
 	expect(form.get("client_id")).toBe(ANTIGRAVITY_CLIENT_ID);
 	expect(form.get("client_secret")).toBeTruthy();
 	// 刷新链路不应把 token 写进日志或错误信息；这里确认没有额外请求。
-	expect(await listAuthFiles()).toEqual([fileName]);
+	expect(await listAuthFiles()).toEqual([key]);
 });
 
 it("刷新失败时保留旧 auth 文件", async () => {
-	const fileName = "antigravity-user@example.com.json";
-	await store.writeRaw(fileName, expiredAuthFile());
-	const before = await readAuthFile(fileName);
-	const account = await store.findByFileName(fileName);
+	const key = "antigravity-user@example.com.json";
+	await store.writeRaw(key, expiredAuthFile());
+	const before = await readAuthFile(key);
+	const account = await store.findByKey(key);
 	const recorder = routeFetch({
 		[ENDPOINTS.token]: () => new Response('{"error":"invalid_grant"}', { status: 400 }),
 	});
@@ -219,17 +219,17 @@ it("刷新失败时保留旧 auth 文件", async () => {
 
 	await expect(auth.refresh(account as SubscriptionAccount)).rejects.toThrow(/token 刷新失败/);
 
-	expect(await readAuthFile(fileName)).toEqual(before);
-	expect(await listAuthFiles()).toEqual([fileName]);
+	expect(await readAuthFile(key)).toEqual(before);
+	expect(await listAuthFiles()).toEqual([key]);
 });
 
 it("access token 剩余时间充足时直接返回，不发网络请求", async () => {
-	const fileName = "antigravity-user@example.com.json";
+	const key = "antigravity-user@example.com.json";
 	await store.writeRaw(
-		fileName,
+		key,
 		expiredAuthFile({ expired: new Date(FIXED_NOW + 600_000).toISOString(), project_id: "project-existing" }),
 	);
-	const account = await store.findByFileName(fileName);
+	const account = await store.findByKey(key);
 	const recorder = routeFetch({});
 	const auth = createAntigravityAuth({ accounts: store, fetch: recorder.fetchImpl, now: () => FIXED_NOW });
 
@@ -238,12 +238,12 @@ it("access token 剩余时间充足时直接返回，不发网络请求", async 
 });
 
 it("access token 距到期不足 5 分钟时先刷新再返回", async () => {
-	const fileName = "antigravity-user@example.com.json";
+	const key = "antigravity-user@example.com.json";
 	await store.writeRaw(
-		fileName,
+		key,
 		expiredAuthFile({ expired: new Date(FIXED_NOW + 4 * 60_000).toISOString(), project_id: "project-existing" }),
 	);
-	const account = await store.findByFileName(fileName);
+	const account = await store.findByKey(key);
 	const recorder = routeFetch({
 		[ENDPOINTS.token]: () => jsonResponse({ access_token: "fresh-access", refresh_token: "fresh-refresh", expires_in: 3599 }),
 	});
@@ -256,19 +256,19 @@ it("access token 距到期不足 5 分钟时先刷新再返回", async () => {
 
 	await expect(auth.ensureCredential(account as SubscriptionAccount)).resolves.toBe("fresh-access");
 	expect(recorder.calls).toHaveLength(1);
-	expect((await readAuthFile(fileName))["access_token"]).toBe("fresh-access");
+	expect((await readAuthFile(key))["access_token"]).toBe("fresh-access");
 });
 
 it("缺少到期信息时保守刷新而不是直接使用 token", async () => {
-	const fileName = "antigravity-user@example.com.json";
-	await store.writeRaw(fileName, {
+	const key = "antigravity-user@example.com.json";
+	await store.writeRaw(key, {
 		type: "antigravity",
 		access_token: "unknown-expiry-access",
 		refresh_token: "unknown-expiry-refresh",
 		email: "user@example.com",
 		project_id: "project-existing",
 	});
-	const account = await store.findByFileName(fileName);
+	const account = await store.findByKey(key);
 	const recorder = routeFetch({
 		[ENDPOINTS.token]: () => jsonResponse({ access_token: "refreshed-access", expires_in: 3599 }),
 	});
@@ -281,22 +281,22 @@ it("缺少到期信息时保守刷新而不是直接使用 token", async () => {
 
 	await expect(auth.ensureCredential(account as SubscriptionAccount)).resolves.toBe("refreshed-access");
 	expect(recorder.calls).toHaveLength(1);
-	const saved = await readAuthFile(fileName);
+	const saved = await readAuthFile(key);
 	expect(saved["access_token"]).toBe("refreshed-access");
 	expect(saved["refresh_token"]).toBe("unknown-expiry-refresh");
 	expect(saved["expired"]).toBe(REFRESHED_EXPIRED);
 });
 
 it("有效 token 缺少 project_id 时通过 loadCodeAssist 补齐并写回", async () => {
-	const fileName = "antigravity-user@example.com.json";
+	const key = "antigravity-user@example.com.json";
 	await store.writeRaw(
-		fileName,
+		key,
 		expiredAuthFile({
 			project_id: undefined,
 			expired: new Date(FIXED_NOW + 600_000).toISOString(),
 		}),
 	);
-	const account = await store.findByFileName(fileName);
+	const account = await store.findByKey(key);
 	const recorder = routeFetch({
 		[ENDPOINTS.loadCodeAssist]: () => jsonResponse({ projectId: "project-from-load" }),
 	});
@@ -316,16 +316,16 @@ it("有效 token 缺少 project_id 时通过 loadCodeAssist 补齐并写回", as
 	expect(loadCall.headers["x-goog-api-client"]).toBeUndefined();
 	expect(JSON.parse(loadCall.body)).toEqual({ metadata: { ideType: "ANTIGRAVITY" } });
 
-	const saved = await readAuthFile(fileName);
+	const saved = await readAuthFile(key);
 	expect(saved["project_id"]).toBe("project-from-load");
 	expect(saved["label"]).toBe("Ops");
 	expect(saved["custom_flag"]).toBe("keep-me");
 });
 
 it("刷新后缺 project_id 时用 onboardUser 轮询并写回", async () => {
-	const fileName = "antigravity-user@example.com.json";
-	await store.writeRaw(fileName, expiredAuthFile({ project_id: undefined }));
-	const account = await store.findByFileName(fileName);
+	const key = "antigravity-user@example.com.json";
+	await store.writeRaw(key, expiredAuthFile({ project_id: undefined }));
+	const account = await store.findByKey(key);
 	let onboardCalls = 0;
 	const sleep = jest.fn(async () => undefined);
 	const recorder = routeFetch({
@@ -351,7 +351,7 @@ it("刷新后缺 project_id 时用 onboardUser 轮询并写回", async () => {
 
 	await auth.refresh(account as SubscriptionAccount);
 
-	const saved = await readAuthFile(fileName);
+	const saved = await readAuthFile(key);
 	expect(saved["project_id"]).toBe("project-onboarded");
 	expect(saved["access_token"]).toBe("new-access");
 	expect(onboardCalls).toBe(2);
@@ -371,9 +371,9 @@ it("刷新后缺 project_id 时用 onboardUser 轮询并写回", async () => {
 });
 
 it("onboarding 失败时仍保存新 token，随后 ensureCredential 给出明确错误", async () => {
-	const fileName = "antigravity-user@example.com.json";
-	await store.writeRaw(fileName, expiredAuthFile({ project_id: undefined }));
-	const account = await store.findByFileName(fileName);
+	const key = "antigravity-user@example.com.json";
+	await store.writeRaw(key, expiredAuthFile({ project_id: undefined }));
+	const account = await store.findByKey(key);
 	const warn = jest.spyOn(logger, "warn").mockImplementation(() => logger);
 	const recorder = routeFetch({
 		[ENDPOINTS.token]: () => jsonResponse({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3599 }),
@@ -388,12 +388,12 @@ it("onboarding 失败时仍保存新 token，随后 ensureCredential 给出明�
 
 	await auth.refresh(account as SubscriptionAccount);
 
-	const saved = await readAuthFile(fileName);
+	const saved = await readAuthFile(key);
 	expect(saved["access_token"]).toBe("new-access");
 	expect(saved["project_id"]).toBeUndefined();
 	expect(warn).toHaveBeenCalledTimes(1);
 	const warning = String(warn.mock.calls[0]?.[0]);
-	expect(warning).toContain(fileName);
+	expect(warning).toContain(key);
 	expect(warning).not.toContain("new-access");
 	expect(warning).not.toContain("new-refresh");
 
@@ -469,8 +469,8 @@ it("Google OAuth PKCE 登录成功后写入稳定的 auth 文件和 project_id",
 });
 
 it("重复登录同一邮箱时复用既有账号文件并保留其未知字段", async () => {
-	const fileName = "legacy-antigravity.json";
-	await store.writeRaw(fileName, {
+	const key = "legacy-antigravity.json";
+	await store.writeRaw(key, {
 		type: "antigravity",
 		access_token: "stale-access",
 		refresh_token: "stale-refresh",
@@ -499,8 +499,8 @@ it("重复登录同一邮箱时复用既有账号文件并保留其未知字段"
 	const result = await auth.submitLoginInput?.(started?.id as string, callback.toString());
 
 	expect(result?.state).toBe("success");
-	expect(await listAuthFiles()).toEqual([fileName]);
-	const saved = await readAuthFile(fileName);
+	expect(await listAuthFiles()).toEqual([key]);
+	const saved = await readAuthFile(key);
 	expect(saved).toMatchObject({
 		type: "antigravity",
 		access_token: "login-access",
@@ -537,15 +537,15 @@ it("也接受直接粘贴的授权码", async () => {
 });
 
 it("缺少 refresh token 的账号无法刷新且不发请求", async () => {
-	const fileName = "antigravity-user@example.com.json";
-	await store.writeRaw(fileName, expiredAuthFile({ refresh_token: undefined }));
-	const account = await store.findByFileName(fileName);
+	const key = "antigravity-user@example.com.json";
+	await store.writeRaw(key, expiredAuthFile({ refresh_token: undefined }));
+	const account = await store.findByKey(key);
 	const recorder = routeFetch({});
 	const auth = createAntigravityAuth({ accounts: store, fetch: recorder.fetchImpl, now: () => FIXED_NOW });
 
 	await expect(auth.refresh(account as SubscriptionAccount)).rejects.toThrow(/缺少 refresh token/);
 	expect(recorder.calls).toHaveLength(0);
-	expect(await listAuthFiles()).toEqual([fileName]);
+	expect(await listAuthFiles()).toEqual([key]);
 });
 
 it("Google 拒绝授权码时登录会话报错且不写文件", async () => {

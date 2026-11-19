@@ -34,8 +34,7 @@ function codexAccount(overrides: Record<string, unknown> = {}): SubscriptionAcco
 	return {
 		id: "codex-test",
 		source: "codex",
-		fileName: "codex-test.json",
-		path: "/tmp/codex-test.json",
+		key: "codex-test.json",
 		disabled: false,
 		weight: 1,
 		expiresAt: typeof raw["expires_at"] === "number" ? raw["expires_at"] : undefined,
@@ -47,7 +46,7 @@ function codexAccount(overrides: Record<string, unknown> = {}): SubscriptionAcco
 function fakeAccountStore(account: SubscriptionAccount): SubscriptionAccountStore {
 	return {
 		list: async (source?: string) => (source === undefined || source === "codex" ? [account] : []),
-		findByFileName: async (fileName: string) => (fileName === account.fileName ? account : undefined),
+		findByKey: async (key: string) => (key === account.key ? account : undefined),
 	} as unknown as SubscriptionAccountStore;
 }
 

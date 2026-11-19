@@ -102,14 +102,14 @@ export function formatRfc3339(timestampMs: number): string {
 /**
  * 读取已有账号 JSON；文件不存在时返回 undefined。
  * @param accounts - 账号仓库
- * @param fileName - 文件名
+ * @param key - 文件名
  */
 export async function readAccountFile(
 	accounts: SubscriptionAccountStore,
-	fileName: string,
+	key: string,
 ): Promise<Record<string, unknown> | undefined> {
 	try {
-		return await accounts.readRaw(fileName);
+		return await accounts.readRaw(key);
 	} catch (error) {
 		if (error instanceof ApiError && error.statusCode === 404) {
 			return undefined;
@@ -123,19 +123,18 @@ export async function readAccountFile(
  *
  * 返回合并后的完整 JSON；写入失败时旧文件保持不变。
  * @param accounts - 账号仓库
- * @param fileName - 文件名
+ * @param key - 文件名
  * @param patch - 需要覆盖的字段
  */
 export async function mergeWriteAccountFile(
 	accounts: SubscriptionAccountStore,
-	fileName: string,
+	key: string,
 	patch: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	await accounts.ensureDirectories();
-	return await accounts.withFileLock(fileName, SUBSCRIPTION_FILE_LOCK_TIMEOUT_MS, async () => {
-		const existing = await readAccountFile(accounts, fileName);
+	return await accounts.withAccountLock(key, SUBSCRIPTION_FILE_LOCK_TIMEOUT_MS, async () => {
+		const existing = await readAccountFile(accounts, key);
 		const merged: Record<string, unknown> = existing ? { ...existing, ...patch } : { ...patch };
-		await accounts.writeRaw(fileName, merged);
+		await accounts.writeRaw(key, merged);
 		return merged;
 	});
 }

@@ -22,8 +22,7 @@ function kimiAccount(overrides: Record<string, unknown> = {}): SubscriptionAccou
 	return {
 		id: "kimi-test",
 		source: "kimi",
-		fileName: "kimi-test.json",
-		path: "/tmp/kimi-test.json",
+		key: "kimi-test.json",
 		disabled: false,
 		weight: 1,
 		expiresAt: typeof raw["expires_at"] === "number" ? raw["expires_at"] : undefined,
@@ -35,7 +34,7 @@ function kimiAccount(overrides: Record<string, unknown> = {}): SubscriptionAccou
 function fakeAccountStore(account: SubscriptionAccount): SubscriptionAccountStore {
 	return {
 		list: async (source?: string) => (source === undefined || source === "kimi" ? [account] : []),
-		findByFileName: async (fileName: string) => (fileName === account.fileName ? account : undefined),
+		findByKey: async (key: string) => (key === account.key ? account : undefined),
 	} as unknown as SubscriptionAccountStore;
 }
 

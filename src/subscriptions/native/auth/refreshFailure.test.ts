@@ -26,7 +26,7 @@ it("终态失败会禁用账号并累计失败次数", async () => {
 			access_token: "opaque-access-token-value",
 			refresh_token: "opaque-refresh-token-value",
 		});
-		const account = await store.findByFileName("codex-bad.json");
+		const account = await store.findByKey("codex-bad.json");
 		if (!account) {
 			throw new Error("账号未加载");
 		}

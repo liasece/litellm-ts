@@ -459,7 +459,7 @@ export class SubscriptionBridge {
 					// refresh 只写入磁盘；必须重新读取账号，否则 ensureCredential 仍会拿旧 token
 					// 按旧 exp 判定"未过期"并原样返回，重试必然再次 401。
 					const refreshed =
-						(await this._accounts.findByFileName(selection.account.fileName).catch(() => undefined)) ?? selection.account;
+						(await this._accounts.findByKey(selection.account.key).catch(() => undefined)) ?? selection.account;
 					const refreshedCredential = adapter.auth.ensureCredentialForRequest
 						? await adapter.auth.ensureCredentialForRequest(refreshed, context.headers)
 						: await adapter.auth.ensureCredential(refreshed);
@@ -475,7 +475,7 @@ export class SubscriptionBridge {
 					}
 					logger.warn("订阅凭据刷新失败，保留上游错误", {
 						source: target.source,
-						account: selection.account.fileName,
+						account: selection.account.key,
 						error: error instanceof Error ? error.message : String(error),
 					});
 				}
@@ -516,7 +516,7 @@ export class SubscriptionBridge {
 				excluded.add(selection.account.id);
 				logger.warn(exhausted ? "订阅账号额度耗尽，切换账号重试" : "订阅账号上游失败，切换账号重试", {
 					source: target.source,
-					account: selection.account.fileName,
+					account: selection.account.key,
 					status: status,
 				});
 				lastDispatched = dispatched;
@@ -595,7 +595,7 @@ export class SubscriptionBridge {
 				? await adapter.auth.ensureCredentialForRequest(account, context.headers)
 				: await adapter.auth.ensureCredential(account));
 		// ensureCredential 可能刷新 token 或补齐 project_id；重新读取磁盘快照，避免 build 用旧 raw。
-		const latest = (await this._accounts.findByFileName(account.fileName).catch(() => undefined)) ?? account;
+		const latest = (await this._accounts.findByKey(account.key).catch(() => undefined)) ?? account;
 		const upstream = adapter.route(context);
 		let upstreamBody = context.body;
 		if (

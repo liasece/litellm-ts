@@ -64,8 +64,7 @@ function makeAccount(overrides: Partial<SubscriptionAccount> = {}): Subscription
 	return {
 		id: "acct-commandcode-1",
 		source: "commandcode",
-		fileName: "commandcode-1.json",
-		path: "/tmp/auths/commandcode-1.json",
+		key: "commandcode-1.json",
 		disabled: false,
 		weight: 1,
 		raw: { type: "commandcode", api_key: "cc-test-key" },
@@ -765,9 +764,9 @@ describe("CommandCode 模型目录", () => {
 	});
 
 	it("跳过禁用账号，并在缺少 key 时继续尝试下一个账号", async () => {
-		const disabled = makeAccount({ id: "disabled", fileName: "a.json", disabled: true });
-		const noKey = makeAccount({ id: "no-key", fileName: "b.json", raw: { type: "commandcode" } });
-		const usable = makeAccount({ id: "usable", fileName: "c.json", raw: { type: "commandcode", api_key: "key-2" } });
+		const disabled = makeAccount({ id: "disabled", key: "a.json", disabled: true });
+		const noKey = makeAccount({ id: "no-key", key: "b.json", raw: { type: "commandcode" } });
+		const usable = makeAccount({ id: "usable", key: "c.json", raw: { type: "commandcode", api_key: "key-2" } });
 		const fetch = mockFetch(() => ({ status: 200, body: { data: [{ id: "z-ai/glm-5.3-flash" }] } }));
 		const provider = makeProvider({ accounts: [disabled, noKey, usable], fetch: fetch.fetchImpl });
 

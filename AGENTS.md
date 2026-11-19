@@ -33,9 +33,9 @@
 
 ## 订阅 Provider 运行时
 
-订阅执行器在 LiteLLM 进程内运行，不再启动 Go 子进程、不维护 CPA 配置或插件管理面。七家 Provider（Codex、Claude、Kimi、Antigravity、xAI、CommandCode、OpenCode Go）共享 `src/subscriptions/native/` 的账号、调度与协议桥，各自在 `providers/` 实现上游协议、目录与额度。Provider 与原始上游模型 ID 分开持久化；auth 文件目录和格式保持旧镜像可读，回滚不依赖数据库结构变更。
+订阅执行器在 LiteLLM 进程内运行，不再启动 Go 子进程、不维护 CPA 配置或插件管理面。七家 Provider（Codex、Claude、Kimi、Antigravity、xAI、CommandCode、OpenCode Go）共享 `src/subscriptions/native/` 的账号、调度与协议桥，各自在 `providers/` 实现上游协议、目录与额度。Provider 与原始上游模型 ID 分开持久化；订阅账号正文与有效性在 `LiteLLM_SubscriptionAccount`（`trashed_at` 决定是否参与调度），旧 auth 文件目录只在启动时一次性导入并保留为冷备份。
 
-账号文件、`.trash`、托管 CommandCode 账号与 OpenCode key 投影是运维边界；密钥不进日志或样例。服务监听不等待订阅运行时或远端价格快照，预热在监听后异步进行；数据库迁移、在途请求回收和路由装配仍在必要关键路径。
+订阅账号表、旧 auth 文件冷备份、托管 CommandCode 账号与 OpenCode key 投影是运维边界；密钥不进日志或样例。服务监听不等待订阅运行时或远端价格快照，预热在监听后异步进行；数据库迁移、在途请求回收和路由装配仍在必要关键路径。
 
 [订阅运行时专题](docs/agent-guides/subscription-runtime.md)提供请求链路、账号与排查方法；真实行为由当前 `src/subscriptions/native/`、`src/providers/SubscriptionProvider.ts` 和 `src/cliproxy/CliProxyEndpoints.ts` 表达。
 

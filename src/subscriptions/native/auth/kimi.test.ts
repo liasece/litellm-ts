@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { SubscriptionAccountStore } from "../accountStore";
@@ -92,11 +92,11 @@ describe("kimi subscription auth", () => {
 		await rm(authDir, { recursive: true, force: true });
 	});
 
-	async function seed(raw: Record<string, unknown>, fileName: string): Promise<SubscriptionAccount> {
-		await store.writeRaw(fileName, raw);
-		const account = await store.findByFileName(fileName);
+	async function seed(raw: Record<string, unknown>, key: string): Promise<SubscriptionAccount> {
+		await store.writeRaw(key, raw);
+		const account = await store.findByKey(key);
 		if (!account) {
-			throw new Error(`failed to seed ${fileName}`);
+			throw new Error(`failed to seed ${key}`);
 		}
 		return account;
 	}
@@ -171,8 +171,8 @@ describe("kimi subscription auth", () => {
 		if (!account) {
 			throw new Error("expected a saved account");
 		}
-		expect(account.fileName).toBe(`kimi-${nowMs}.json`);
-		const raw = await store.readRaw(account.fileName);
+		expect(account.key).toBe(`kimi-${nowMs}.json`);
+		const raw = await store.readRaw(account.key);
 		expect(raw["access_token"]).toBe("kimi-access");
 		expect(raw["refresh_token"]).toBe("kimi-refresh");
 		expect(raw["token_type"]).toBe("Bearer");
@@ -353,7 +353,7 @@ describe("kimi subscription auth", () => {
 			},
 			"kimi-failing.json",
 		);
-		const before = await readFile(path.join(authDir, failing.fileName), "utf8");
+		const before = JSON.stringify(await store.readRaw(failing.key));
 		const failingAuth = createAuth(
 			createFetchMock((call) => {
 				if (call.url === TOKEN_URL) {
@@ -363,7 +363,7 @@ describe("kimi subscription auth", () => {
 			}).fetchImpl,
 		);
 		await expect(failingAuth.refresh(failing)).rejects.toThrow(/invalid_grant/);
-		expect(await readFile(path.join(authDir, failing.fileName), "utf8")).toBe(before);
+		expect(JSON.stringify(await store.readRaw(failing.key))).toBe(before);
 
 		const noRefresh = await seed(
 			{

@@ -38,11 +38,10 @@ const resetLabel = (value: string | null) => {
 				<div class="cp-inline cp-gap-8">
 					<ProviderIdentityComponent :provider="account.provider" /><strong
 						class="cp-ellipsis"
-						:title="accountIdentity(account, quotaState.data?.email) ?? account.filename"
-						>{{ accountIdentity(account, quotaState.data?.email) ?? account.filename }}</strong
+						:title="accountIdentity(account, quotaState.data?.email) ?? account.label ?? account.key"
+						>{{ accountIdentity(account, quotaState.data?.email) ?? account.label ?? account.key }}</strong
 					>
 				</div>
-				<span class="cp-secondary cp-xs cp-ellipsis cp-quota-filename">{{ account.filename }}</span>
 			</div></template
 		>
 		<template #extra

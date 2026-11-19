@@ -29,12 +29,7 @@ import type {
 } from "../types";
 import type { SubscriptionProviderDependencies } from "./types";
 import { JSON_HEADERS, SSE_HEADERS, asBodyRecord, asString, bearerHeaders, joinUrl, jsonPlan } from "./shared";
-import {
-	normalizeResponsesRequest,
-	restoreResponsesBody,
-	restoreResponsesEvent,
-	type ResponseToolRegistry,
-} from "./opencodeResponses";
+import { normalizeResponsesRequest, restoreResponsesBody, restoreResponsesEvent, type ResponseToolRegistry } from "./opencodeResponses";
 
 /** 账号来源。 */
 export const OPENCODE_SOURCE: SubscriptionSource = "opencode-go";
@@ -42,7 +37,14 @@ export const OPENCODE_SOURCE: SubscriptionSource = "opencode-go";
 /** 展示名。 */
 export const OPENCODE_DISPLAY_NAME = "OpenCode Go";
 
-/** 没有下游客户端标识时使用的 User-Agent。 */
+/**
+ * 网关访问 OpenCode 时使用的固定 User-Agent。
+ *
+ * 不能透传任意下游 UA：OpenCode 的 Cloudflare 会对 `Python-urllib`、`python-requests`
+ * 等通用 HTTP 客户端返回 1010 Access denied，随后网关会把整个账号当作 403 失败冷却，
+ * 即使额度仍然充足。下游客户端身份通过 `x-opencode-client` / `x-opencode-project`
+ * 保留，不靠可伪造的 UA 识别。
+ */
 export const OPENCODE_USER_AGENT = "litellm-ts";
 
 /** Anthropic 兼容端点要求的版本头。 */
@@ -170,10 +172,7 @@ export function createOpenCodeProvider(dependencies: SubscriptionProviderDepende
 	 * @param body - 上游响应体
 	 * @returns 同一个响应体；没有需要还原的条目时原样返回
 	 */
-	function transformUpstreamBody(
-		context: SubscriptionRequestContext,
-		body: Record<string, unknown>,
-	): Record<string, unknown> {
+	function transformUpstreamBody(context: SubscriptionRequestContext, body: Record<string, unknown>): Record<string, unknown> {
 		const registry = registries.get(context.body);
 		if (!registry || registry.identities.size === 0 || routeOfModel(context.model) !== "responses") {
 			return body;
@@ -187,10 +186,7 @@ export function createOpenCodeProvider(dependencies: SubscriptionProviderDepende
 	 * @param event - 上游事件数据
 	 * @returns 原事件或改写后的事件
 	 */
-	function transformUpstreamEvent(
-		context: SubscriptionRequestContext,
-		event: Record<string, unknown>,
-	): Record<string, unknown> {
+	function transformUpstreamEvent(context: SubscriptionRequestContext, event: Record<string, unknown>): Record<string, unknown> {
 		const registry = registries.get(context.body);
 		if (!registry || registry.identities.size === 0 || routeOfModel(context.model) !== "responses") {
 			return event;
@@ -344,7 +340,9 @@ function isGptModel(model: string): boolean {
 function upstreamHeaders(context: SubscriptionUpstreamContext, route: OpenCodeRoute): Record<string, string> {
 	const headers: Record<string, string> = context.stream ? { ...SSE_HEADERS } : { ...JSON_HEADERS };
 	headers["x-opencode-session"] = sessionHeaderValue(context.sessionKey);
-	headers["User-Agent"] = clientUserAgent(context.headers);
+	// 固定网关标识：Cloudflare 会按 UA 拦截通用 Python/CLI 客户端，透传客户端 UA 等于
+	// 把上游 WAF 的封禁面扩大到所有使用该客户端的账号。
+	headers["User-Agent"] = OPENCODE_USER_AGENT;
 	const client = headerValue(context.headers, "x-opencode-client");
 	if (client !== undefined) {
 		headers["x-opencode-client"] = sanitizeHeaderValue(client);
@@ -373,20 +371,6 @@ function upstreamHeaders(context: SubscriptionUpstreamContext, route: OpenCodeRo
 function sessionHeaderValue(sessionKey: string): string {
 	const sanitized = sanitizeHeaderValue(sessionKeyValue(sessionKey));
 	return sanitized.length > 0 ? sanitized : stableDeviceId("");
-}
-
-/**
- * 选择下游客户端标识。
- * @param headers - 下游请求头
- * @returns 下游 User-Agent；缺失时使用默认标识
- */
-function clientUserAgent(headers: Record<string, string>): string {
-	const value = headerValue(headers, "user-agent");
-	if (value === undefined) {
-		return OPENCODE_USER_AGENT;
-	}
-	const sanitized = sanitizeHeaderValue(value);
-	return sanitized.length > 0 ? sanitized : OPENCODE_USER_AGENT;
 }
 
 /**
@@ -551,7 +535,5 @@ function mergeSystemField(existing: unknown, folded: readonly string[]): unknown
  * @returns 对象记录；不是对象时为 undefined
  */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
+	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }

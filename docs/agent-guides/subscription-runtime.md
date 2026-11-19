@@ -4,7 +4,7 @@
 
 ## 结构
 
-- `accountStore.ts`：扫描、写入 `CLIPROXY_RUNTIME_ROOT/auths` 下的 auth JSON；ID 为 `sha256(source + "\0" + filename)` 前 16 位；支持 `.trash`、禁用、权重与文件锁。
+- `accountStore.ts`：账号仓库，正文与有效性都在数据库（`LiteLLM_SubscriptionAccount`）；ID 为 `sha256(source + "\0" + key)` 前 16 位（沿用旧 `auth_index`，额度接口与书签不变）。首次启动时导入 `CLIPROXY_RUNTIME_ROOT/auths` 与 `.trash` 的旧 JSON，完成后不再扫描或写回账号文件（永久删除时例外，见下）。
 - `scheduler.ts`：会话亲和 + priority 分层 + 平滑加权轮询；权重 0 暂停调度，账号列表来自 `accountStore`。
   冷却按失败归属分两级：408/429/5xx 记在「账号 + 上游模型」上（同账号其他模型不受影响），
   401/402/403 与额度耗尽记在账号上（换模型也不会好，整账号避开）；额度耗尽冷却 30 分钟。
@@ -21,13 +21,13 @@
 1. 标准端点（`/v1/chat/completions`、`/v1/messages`、`/v1/responses`、图片）选择 deployment；Gemini 客户端通过 `/v1beta/models/<model>:generateContent` 或 `:streamGenerateContent` 进入同一桥接层，`GET /v1beta/models` 返回 Antigravity 目录；Gemini 请求也按 `acompletion` 记录 SpendLogs。
 2. `SubscriptionProvider` 生成 `litellm-subscription://` 请求，不携带内部 key。
 3. `ProviderRequestExecutor` 把请求交给已注册的运行时处理器。
-4. `SubscriptionBridge` 选账号，`auth.ensureCredential` 刷新后重读 auth 文件，按 `route()` 选择上游协议；不同协议先转换。
+4. `SubscriptionBridge` 选账号，`auth.ensureCredential` 刷新后重读账号行，按 `route()` 选择上游协议；不同协议先转换。
 5. 适配器 `build()` 生成上游 URL/头/体；401/403 刷新凭据后重试一次。
    账号级失败换下一个账号重试（最多 3 个账号、仅 chat/messages/responses/compact/alpha.search）：
    401/402/403/408/429/5xx 按状态码判定，另外 400 错误体命中「余额/额度耗尽」文案时也按账号级处理——
    CommandCode 用 400 invalid_request_error 表达余额不足，若当成请求错误会让整个订阅判失败、跳过同 Provider 的其他账号。
 6. 上游 JSON/SSE 经适配器钩子与协议 translator 回到入口协议；Codex 的 SSE 可能不带 `Content-Type`，桥接层以流式计划和入口流式请求共同判定，不能只依赖响应头。`ProviderRequestExecutor` 之外的重试、fallback、冷却、spend 仍由 Router/端点负责。
-7. Codex auth 文件带 `use_siwc` 时，非 Codex 客户端使用嵌套 `siwc` token（`chatgpt.tokens.use.direct`），Codex 客户端固定外层 token；两层分别刷新并共用同文件锁。
+7. Codex 凭据带 `use_siwc` 时，非 Codex 客户端使用嵌套 `siwc` token（`chatgpt.tokens.use.direct`），Codex 客户端固定外层 token；两层分别刷新并共用同一账号的进程内锁。
 8. 模型目录：Codex 先用静态快照（`src/data/subscription-models.json`）与内置图片模型，再用账号 token 调 `GET {base}/models?client_version=…` 补入上游刚发布的模型（10 分钟缓存，`catalog/codexCatalog.ts`）；拉取失败只回退静态快照。CommandCode / OpenCode Go 同样走上游 `/models`（`catalog/dynamicCatalog.ts`），其余来源仍只有静态快照。加新模型时先看这里：静态文件是某一时刻的快照，不该靠手改 JSON 追新模型。
 
 ## 上游模型元信息（持久弱缓存）
@@ -45,18 +45,24 @@
 
 ## 账号与持久化
 
-- 保留旧 auth 文件格式与目录，回滚旧镜像仍能读取。
-- CommandCode 托管账号仍在 `config_yaml.plugins.managed-accounts.commandcode`，运行时投影成 auth 文件；OpenCode key 在 `SubscriptionAccountKeys`，同样投影。
-- 账号身份优先取邮箱：OAuth 账号由登录流程写 auth 文件 `email`，CommandCode 由额度里的 `whoami` 提供。OpenCode Go 只按 API key 识别订阅，`/usage` 没有身份字段，所以账号表的 Account 列允许登记展示邮箱（写 auth 文件 `email`，清空即删除），账号表和额度卡片据此显示；这是展示线索，不发送给上游，也不猜测归属。
-- 删除账号进 `.trash`；恢复接受 `.trash/<ts>-<name>` 或原文件名。
+- 表 `LiteLLM_SubscriptionAccount`：`account_id`（即 `auth_index`）、`provider`、`account_key`（沿用旧 auth 文件名）、`payload`（旧 auth JSON 原文）、`trashed_at`、时间戳。**有效性只看 `trashed_at`**：为 `NULL` 才参与调度与管理面默认列表；回收站账号仍在表里，恢复就是清空该字段。
+- 部分唯一索引 `(provider, account_key) WHERE trashed_at IS NULL`：同一来源同一个键最多一个有效账号；回收站里允许同名旧行，和旧 `.trash` 目录并存语义一致。`account_id` 仍按 `sha256(source + "\0" + key)` 派生，所以同一 `(source, key)` 在回收站与有效区并存会撞主键——登录与导入都先查重，不会制造这种组合。
+- 一次性迁移：首次启动时 `importLegacyFiles()` 扫描旧 `auths` 目录与 `.trash`，把文件名与正文写成账号行（回收站文件名去掉 `<epochMs>-` 前缀），已存在的行跳过。完成后把 `LiteLLM_Config.subscription_account_legacy_import_state.completed` 落库；后续启动只看标记，不再扫描目录，避免已彻底删除的账号被旧文件带回来。同一个键在两边都有时按回收站导入：旧实现的设置保存会把已撤销的 key 投影回有效文件，只认目录里的文件就会让刚回收的账号复活；正文取磁盘上的最新副本，`trashed_at` 取最近一次回收时间。之后运行时不再读写账号文件；磁盘上的旧文件保留为冷备份，不再被更新。**回滚到旧镜像只能看到部署时刻的 token**，新的刷新结果不会写回文件。
+- 托管投影：CommandCode 托管账号仍在 `config_yaml.plugins.managed-accounts.commandcode`，OpenCode key 在 `SubscriptionAccountKeys`，运行时把两者投影成账号行（更新正文，不改有效性）。从配置移除的托管账号进回收站并打 `managed_removed` 标记，重新加回配置时会恢复；管理面手工回收的账号不会被投影复活。保存设置不会把已撤销的 key 或已回收的账号重新变成有效。
+- 删除分两步：先回收（`DELETE /subscriptions/accounts/:auth_index`），再从回收站彻底删除（`DELETE .../purge`）。purge 同时移除它在 `config_yaml` 的 CommandCode 条目或 `SubscriptionAccountKeys` 里的 key，否则下次投影会重建账号行；并删除 auth 根目录及 `.trash` 中与该账号键匹配的冷备份，防止回滚旧镜像或重新导入时复活。活跃账号不能直接 purge，必须先回收；恢复是 `POST .../restore`。旧文件名路由已由稳定账号 ID 取代，兼容入口 `/cliproxy/*` 同样接受账号 ID 或账号键。
+- 回收站账号不参与调度、额度查询（`GET .../quota` 返回 404）与上游账号额度页（`GET /subscriptions/accounts` 只回有效账号）；它们只出现在 `include_trashed=true` 的管理面列表里，等人工恢复或彻底删除。
+- 账号身份优先取邮箱：OAuth 账号由登录流程写 `payload.email`，CommandCode 由额度里的 `whoami` 提供。OpenCode Go 只按 API key 识别订阅，`/usage` 没有身份字段，所以账号表的 Account 列允许登记展示邮箱（写 `payload.email`，清空即删除），账号表和额度卡片据此显示；这是展示线索，不发送给上游，也不猜测归属。
+- 并发刷新用进程内账号锁（按账号 ID 串行）；锁超时返回「订阅账号正在刷新，请稍后重试」，不要靠并发重试。
+- OpenCode Go 上游固定使用 `User-Agent: litellm-ts`，不透传下游 UA：OpenCode 的 Cloudflare 会对 `Python-urllib`、`python-requests` 等通用 HTTP 客户端返回 1010 Access denied，网关会把 403 当成账号级失败并冷却，表现为「额度还有但整个 Provider 没有可用部署」。客户端类型仍通过 `x-opencode-client` / `x-opencode-project` 保留。
+- `No deployments available` 文案末尾会附上 `Most recent cooldown (<deployment>): HTTP <status>: <上游原文>`，并在日志 `error_information.cooldown_context` 保留完整冷却诊断；排查时先看这段原因，不要只按「模型不存在」处理。fallback trace 也复用同一份原因。
 - 不要把 token、API key 或完整上游请求体写进日志。
 
 ## 排查
 
 - `/subscriptions/status`、`/subscriptions/accounts`、`/subscriptions/logs`、`/subscriptions/models`、`/subscriptions/oauth/*` 是当前管理面；`/cliproxy/*` 保留兼容。
 - 请求报「订阅运行时尚未初始化」：容器 warmUp 未完成或初始化失败。
-- 请求报「没有可用的 <source> 订阅账号」：auth 目录无该来源账号，或全部 disabled。
-- 上游 401 反复出现：检查账号 refresh_token 与 auth 文件 `expired`/`timestamp`；`invalid_grant` 一类终态错误会自动禁用账号并在账号表显示 `disabled (invalid grant)`，重新启用会清除状态。
+- 请求报「没有可用的 <source> 订阅账号」：数据库里没有该来源的有效账号，或全部 disabled。
+- 上游 401 反复出现：检查账号行 `payload` 的 refresh_token 与 `expired`/`timestamp`；`invalid_grant` 一类终态错误会自动禁用账号并在账号表显示 `disabled (invalid grant)`，重新启用会清除状态。
 - 请求返回 429「所有账号都在冷却中」：文案里带「该模型（<model>）」「最近失败：HTTP 429: <上游摘要>」，
   先按摘要判断是限流、余额还是鉴权；再看账号表的 Rate limit 状态与上游 `Retry-After`，不要并发重复刷新。
   只有全部模型都被挡时才是账号级冷却（凭证或额度），单个模型冷却不影响同账号其他模型。

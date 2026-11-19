@@ -61,8 +61,7 @@ function makeAccount(overrides: Partial<SubscriptionAccount> = {}): Subscription
 	return {
 		id: "acct-claude-1",
 		source: "claude",
-		fileName: "claude-1.json",
-		path: "/tmp/auths/claude-1.json",
+		key: "claude-1.json",
 		disabled: false,
 		weight: 1,
 		raw: {

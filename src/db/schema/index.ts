@@ -9,3 +9,4 @@ export { liteLLM_BuiltinCapabilityImages } from "./builtinCapabilityImages";
 export { liteLLM_SpendLogBlocks } from "./spendLogBlocks";
 export { imageCompletions, imageCompletionAnchors } from "./imageCompletions";
 export { LiteLLM_UpstreamModelMeta } from "./upstreamModelMeta";
+export { LiteLLM_SubscriptionAccount } from "./subscriptionAccounts";

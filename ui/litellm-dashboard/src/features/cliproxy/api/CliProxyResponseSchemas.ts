@@ -21,7 +21,9 @@ const runtimeStatus = z
 const account = z
 	.object({
 		auth_index: z.string(),
-		filename: z.string(),
+		key: z.string(),
+		trashed: z.boolean().optional(),
+		trashed_at: z.string().nullable().optional(),
 		provider: z.string(),
 		email: z.string().nullable(),
 		label: z.string().nullable().optional(),
@@ -30,7 +32,7 @@ const account = z
 		modified_at: z.string(),
 	})
 	.passthrough();
-const managedAccount = z.object({ index: z.number(), label: z.string(), filename: z.string() }).passthrough();
+const managedAccount = z.object({ index: z.number(), label: z.string(), key: z.string() }).passthrough();
 const log = z
 	.object({
 		id: z.number(),

@@ -14,7 +14,7 @@ import type { UpstreamModelMetaRecord, UpstreamModelMetadataMap, UpstreamSourceA
 
 /** 造一个账号对象。 */
 function account(source: SubscriptionSource, raw: Record<string, unknown> = { api_key: "k" }): SubscriptionAccount {
-	return { id: "a1", source, fileName: "a.json", path: "/tmp/a.json", disabled: false, weight: 1, raw };
+	return { id: "a1", source, key: "a.json", disabled: false, weight: 1, raw };
 }
 
 /** 内存仓库。 */

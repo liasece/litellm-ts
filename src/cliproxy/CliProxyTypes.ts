@@ -133,13 +133,21 @@ export interface CliProxyLogEntry {
  */
 export interface CliProxyAccountSummary {
 	/**
-	 *
+	 * 稳定账号 ID；管理面按它操作账号。
 	 */
 	readonly auth_index: string;
 	/**
-	 *
+	 * 来源内账号键（沿用旧 auth 文件名），仅用于兼容旧链接与托管账号匹配。
 	 */
-	readonly filename: string;
+	readonly key: string;
+	/**
+	 * 是否在回收站。
+	 */
+	readonly trashed: boolean;
+	/**
+	 * 回收站时间（ISO）；未回收为 null。
+	 */
+	readonly trashed_at: string | null;
 	/**
 	 *
 	 */

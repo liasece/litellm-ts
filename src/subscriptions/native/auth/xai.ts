@@ -7,8 +7,6 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { access } from "node:fs/promises";
-import path from "node:path";
 import { ApiError } from "../../../core/api/ApiError";
 import type { SubscriptionAccountStore } from "../accountStore";
 import type {
@@ -140,19 +138,6 @@ function redactSecrets(message: string, secrets: readonly (string | undefined)[]
 		}
 	}
 	return redacted;
-}
-
-/**
- * 判断文件是否存在。
- * @param filePath - 绝对路径
- */
-async function fileExists(filePath: string): Promise<boolean> {
-	try {
-		await access(filePath);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 /**
@@ -304,7 +289,7 @@ class XaiAuth implements XaiAuthHandler {
 	 * @param skipIfFresh - 其他调用已刷新出可用 token 时跳过 POST；`ensureCredential` 使用
 	 */
 	private async _refreshOnce(account: SubscriptionAccount, skipIfFresh: boolean): Promise<Record<string, unknown>> {
-		const key = account.fileName;
+		const key = account.key;
 		const existing = this._inflight.get(key);
 		if (existing) {
 			return existing;
@@ -323,8 +308,8 @@ class XaiAuth implements XaiAuthHandler {
 	 * @throws {ApiError} 缺少 refresh_token、刷新失败或写回失败
 	 */
 	private async _refreshUnderLock(account: SubscriptionAccount, skipIfFresh: boolean): Promise<Record<string, unknown>> {
-		return this._accounts.withFileLock(account.fileName, FILE_LOCK_TIMEOUT_MS, async () => {
-			const disk = await this._accounts.readRaw(account.fileName);
+		return this._accounts.withAccountLock(account.key, FILE_LOCK_TIMEOUT_MS, async () => {
+			const disk = await this._accounts.readRaw(account.key);
 			const diskAccess = nonEmptyXaiString(disk["access_token"]);
 			const diskRefresh = nonEmptyXaiString(disk["refresh_token"]);
 			const baselineAccess = nonEmptyXaiString(account.raw["access_token"]);
@@ -381,7 +366,7 @@ class XaiAuth implements XaiAuthHandler {
 				next["expires_at"] = next["expired"];
 			}
 			next["last_refresh"] = formatXaiRfc3339(now);
-			await this._accounts.writeRaw(account.fileName, next);
+			await this._accounts.writeRaw(account.key, next);
 			return next;
 		});
 	}
@@ -502,7 +487,7 @@ class XaiAuth implements XaiAuthHandler {
 				const saved = await this._persistLoginCredential(response.body, session.tokenEndpoint);
 				session.state = "success";
 				session.error = undefined;
-				session.output = [...session.output, `xAI 登录成功：${saved.email ?? saved.subject ?? saved.fileName}`];
+				session.output = [...session.output, `xAI 登录成功：${saved.email ?? saved.subject ?? saved.key}`];
 				return;
 			}
 		} catch (error) {
@@ -522,15 +507,15 @@ class XaiAuth implements XaiAuthHandler {
 	private async _persistLoginCredential(
 		response: Record<string, unknown>,
 		tokenEndpoint: string,
-	): Promise<{ fileName: string; email?: string; subject?: string }> {
+	): Promise<{ key: string; email?: string; subject?: string }> {
 		const accessToken = nonEmptyXaiString(response["access_token"]);
 		if (!accessToken) {
 			throw ApiError.unavailable("xAI 登录响应缺少 access_token");
 		}
 		const idToken = nonEmptyXaiString(response["id_token"]);
 		const identity = xaiIdentityFromToken(idToken);
-		const fileName = await this._resolveCredentialFile(identity.email, identity.subject);
-		const existing = await this._accounts.findByFileName(fileName);
+		const key = await this._resolveCredentialFile(identity.email, identity.subject);
+		const existing = await this._accounts.findByKey(key);
 		const previous = existing?.raw ?? {};
 		const email = identity.email ?? nonEmptyXaiString(previous["email"]);
 		const subject = identity.subject ?? nonEmptyXaiString(previous["sub"]);
@@ -565,8 +550,8 @@ class XaiAuth implements XaiAuthHandler {
 		raw["base_url"] = nonEmptyXaiString(previous["base_url"]) ?? XAI_OAUTH.defaultApiBaseUrl;
 		raw["token_endpoint"] = tokenEndpoint;
 		raw["auth_kind"] = "oauth";
-		await this._accounts.writeRaw(fileName, raw);
-		return { fileName: fileName, email: email, subject: subject };
+		await this._accounts.writeRaw(key, raw);
+		return { key: key, email: email, subject: subject };
 	}
 
 	/**
@@ -575,20 +560,20 @@ class XaiAuth implements XaiAuthHandler {
 	 * @param subject - 登录 subject
 	 */
 	private async _resolveCredentialFile(email: string | undefined, subject: string | undefined): Promise<string> {
-		const accounts = await this._accounts.list("xai");
+		const accounts = await this._accounts.list("xai", true);
 		const existing = accounts.find((account) => xaiIdentityMatches(account.raw, email, subject));
 		if (existing) {
-			return existing.fileName;
+			// 曾经回收过的同一账号重新登录：恢复原行，避免出现两条同名账号。
+			if (existing.trashedAt !== undefined) {
+				await this._accounts.restore(existing.id);
+			}
+			return existing.key;
 		}
 		const base = xaiCredentialFileName(email ?? "", subject ?? "");
 		for (let attempt = 0; attempt < FILE_NAME_ATTEMPTS; attempt += 1) {
 			const candidate = attempt === 0 ? base : base.replace(/\.json$/, `-${attempt + 1}.json`);
-			const absolute = path.join(this._accounts.authDir, candidate);
-			if (!(await fileExists(absolute))) {
-				return candidate;
-			}
-			const parsed = await this._accounts.findByFileName(candidate);
-			if (parsed?.source === "xai" && xaiIdentityMatches(parsed.raw, email, subject)) {
+			// 账号键在数据库里唯一（含回收站），生成新键前先确认没被占用。
+			if (!(await this._accounts.keyExists(candidate, "xai"))) {
 				return candidate;
 			}
 		}

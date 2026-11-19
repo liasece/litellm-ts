@@ -9,8 +9,7 @@ import type { SubscriptionAccount, SubscriptionProviderAdapter } from "./types";
 const ACCOUNT: SubscriptionAccount = {
 	id: "xai-1",
 	source: "xai",
-	fileName: "xai-test.json",
-	path: "/tmp/xai-test.json",
+	key: "xai-test.json",
 	disabled: false,
 	weight: 1,
 	raw: { type: "xai", access_token: "token" },
@@ -53,7 +52,7 @@ function buildApp(): express.Express {
 	const bridge = new SubscriptionBridge({
 		accounts: {
 			list: async () => [ACCOUNT],
-			findByFileName: async () => ACCOUNT,
+			findByKey: async () => ACCOUNT,
 		} as never,
 		scheduler: new SubscriptionAccountScheduler(),
 		providers: {

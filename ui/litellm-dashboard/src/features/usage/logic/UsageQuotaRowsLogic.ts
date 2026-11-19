@@ -137,8 +137,8 @@ export function quotaAccountRows(input: {
 			key: "account-" + account.auth_index,
 			provider: brand.key,
 			label: brand.label,
-			// 认证文件只有 slug 时退回文件名，至少能让人对上账号。
-			name: accountIdentity(account, quota?.data?.email) ?? account.filename,
+			// 认证文件只有 slug 时退回账号键，至少能让人对上账号。
+			name: accountIdentity(account, quota?.data?.email) ?? account.key,
 			models: [],
 			kind: "Subscription account",
 			plan: quota?.data?.plan ?? null,

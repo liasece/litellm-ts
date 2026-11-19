@@ -57,8 +57,7 @@ function stubFetch(responses: readonly StubResponse[]): { calls: RecordedCall[];
 		return {
 			ok: status >= 200 && status < 300,
 			status: status,
-			text: async (): Promise<string> =>
-				typeof response.body === "string" ? response.body : JSON.stringify(response.body ?? {}),
+			text: async (): Promise<string> => (typeof response.body === "string" ? response.body : JSON.stringify(response.body ?? {})),
 		} as unknown as Response;
 	}) as unknown as typeof fetch;
 	return { calls: calls, fetchImpl: fetchImpl };
@@ -69,8 +68,7 @@ function fakeAccount(overrides: Partial<SubscriptionAccount> = {}): Subscription
 	return {
 		id: "acct-1",
 		source: "opencode-go",
-		fileName: "opencode-go-key.json",
-		path: "/var/lib/litellm/cliproxy/auths/opencode-go-key.json",
+		key: "opencode-go-key.json",
 		disabled: false,
 		weight: 1,
 		raw: { api_key: "oc_sk_test" },
@@ -83,8 +81,7 @@ function fakeStore(accounts: readonly SubscriptionAccount[]): SubscriptionAccoun
 	return {
 		list: async (source?: SubscriptionSource): Promise<SubscriptionAccount[]> =>
 			accounts.filter((account) => source === undefined || account.source === source),
-		findByFileName: async (fileName: string): Promise<SubscriptionAccount | undefined> =>
-			accounts.find((account) => account.fileName === fileName),
+		findByKey: async (key: string): Promise<SubscriptionAccount | undefined> => accounts.find((account) => account.key === key),
 	} as unknown as SubscriptionAccountStore;
 }
 
@@ -285,9 +282,7 @@ describe("Chat 路由请求构造", () => {
 		expect(plan.headers["Content-Type"]).toBe("application/json");
 		expect(plan.headers["x-api-key"]).toBeUndefined();
 		expect(plan.headers["anthropic-version"]).toBeUndefined();
-		expect(plan.headers["x-opencode-session"]).toBe(
-			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-		);
+		expect(plan.headers["x-opencode-session"]).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 		expect(plan.headers["User-Agent"]).toBe(OPENCODE_USER_AGENT);
 	});
 
@@ -308,7 +303,7 @@ describe("Chat 路由请求构造", () => {
 		expect(recordAt(body["messages"], 0)["reasoning_content"]).toBe("思考过程");
 	});
 
-	it("流式请求设置 SSE Accept，并转发会话与客户端标识", async () => {
+	it("流式请求设置 SSE Accept，并保留会话与客户端标识（不转发下游 UA）", async () => {
 		const context = upstreamContext({
 			stream: true,
 			sessionKey: "x-opencode-session:sess-1",
@@ -323,11 +318,19 @@ describe("Chat 路由请求构造", () => {
 		expect(plan.stream).toBe(true);
 		expect(plan.headers["Accept"]).toBe("text/event-stream");
 		expect(plan.headers["x-opencode-session"]).toBe("sess-1");
-		expect(plan.headers["User-Agent"]).toBe("OpenCode/1.2.3");
+		expect(plan.headers["User-Agent"]).toBe(OPENCODE_USER_AGENT);
 		expect(plan.headers["x-opencode-client"]).toBe("cli");
 		expect(plan.headers["x-opencode-project"]).toBe("my-project");
 		expect(plan.headers["Authorization"]).toBe("Bearer oc_sk_test");
 		expect(JSON.stringify(plan.headers)).not.toContain("client-key");
+	});
+
+	it("不透传会触发 Cloudflare 1010 的 Python-urllib User-Agent", async () => {
+		const context = upstreamContext({
+			headers: { "User-Agent": "Python-urllib/3.14" },
+		});
+		const plan = await adapter.build(context);
+		expect(plan.headers["User-Agent"]).toBe(OPENCODE_USER_AGENT);
 	});
 });
 
@@ -390,7 +393,10 @@ describe("Messages 路由请求构造", () => {
 			body: {
 				model: "qwen3.7-max",
 				system: [{ type: "text", text: "块指令" }],
-				messages: [{ role: "system", content: "消息指令" }, { role: "user", content: "hi" }],
+				messages: [
+					{ role: "system", content: "消息指令" },
+					{ role: "user", content: "hi" },
+				],
 			},
 		});
 		const body = record((await adapter.build(context)).body);
@@ -433,7 +439,13 @@ describe("Responses 路由请求构造", () => {
 			],
 			tools: [{ type: "namespace", name: "subagents", tools: [{ type: "function", name: "spawn_agent" }] }],
 		};
-		const context = upstreamContext({ operation: "responses", inbound: "responses", upstream: "responses", model: "gpt-6-luna", body: body });
+		const context = upstreamContext({
+			operation: "responses",
+			inbound: "responses",
+			upstream: "responses",
+			model: "gpt-6-luna",
+			body: body,
+		});
 		const plan = await adapter.build(context);
 		expect(plan.url).toBe("https://opencode.ai/zen/go/v1/responses");
 		const upstreamBody = record(plan.body);
@@ -666,9 +678,7 @@ describe("Responses 工具标识还原", () => {
 			transform(context, {
 				type: "response.completed",
 				response: {
-					output: [
-						{ type: "function_call", id: "item-1", call_id: "call-1", name: "subagents__spawn_agent", arguments: "{}" },
-					],
+					output: [{ type: "function_call", id: "item-1", call_id: "call-1", name: "subagents__spawn_agent", arguments: "{}" }],
 				},
 			}),
 		);
@@ -700,13 +710,11 @@ describe("custom 工具输入展开", () => {
 
 describe("模型目录", () => {
 	it("用第一个可用账号的 key 拉取动态目录并标记协议", async () => {
-		const { calls, fetchImpl } = stubFetch([
-			{ body: { data: [{ id: "glm-5.3" }, { id: "kimi-k3" }, { id: "claude-haiku-5-5" }] } },
-		]);
+		const { calls, fetchImpl } = stubFetch([{ body: { data: [{ id: "glm-5.3" }, { id: "kimi-k3" }, { id: "claude-haiku-5-5" }] } }]);
 		const adapter = createOpenCodeProvider({
 			accounts: fakeStore([
-				fakeAccount({ id: "disabled", fileName: "a.json", disabled: true, raw: { api_key: "disabled-key" } }),
-				fakeAccount({ id: "active", fileName: "b.json", raw: { api_key: "oc_sk_active" } }),
+				fakeAccount({ id: "disabled", key: "a.json", disabled: true, raw: { api_key: "disabled-key" } }),
+				fakeAccount({ id: "active", key: "b.json", raw: { api_key: "oc_sk_active" } }),
 			]),
 			fetch: fetchImpl,
 		});
@@ -744,14 +752,11 @@ describe("模型目录", () => {
 	});
 
 	it("第一个账号失败时尝试下一个账号", async () => {
-		const { calls, fetchImpl } = stubFetch([
-			{ status: 500, body: "upstream error" },
-			{ body: { data: [{ id: "minimax-m3" }] } },
-		]);
+		const { calls, fetchImpl } = stubFetch([{ status: 500, body: "upstream error" }, { body: { data: [{ id: "minimax-m3" }] } }]);
 		const adapter = createOpenCodeProvider({
 			accounts: fakeStore([
-				fakeAccount({ id: "first", fileName: "a.json", raw: { api_key: "oc_sk_first" } }),
-				fakeAccount({ id: "second", fileName: "b.json", raw: { api_key: "oc_sk_second" } }),
+				fakeAccount({ id: "first", key: "a.json", raw: { api_key: "oc_sk_first" } }),
+				fakeAccount({ id: "second", key: "b.json", raw: { api_key: "oc_sk_second" } }),
 			]),
 			fetch: fetchImpl,
 		});

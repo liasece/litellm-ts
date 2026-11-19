@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { SubscriptionAccountStore } from "../accountStore";
@@ -88,11 +88,11 @@ describe("claude subscription auth", () => {
 		await rm(authDir, { recursive: true, force: true });
 	});
 
-	async function seed(raw: Record<string, unknown>, fileName: string): Promise<SubscriptionAccount> {
-		await store.writeRaw(fileName, raw);
-		const account = await store.findByFileName(fileName);
+	async function seed(raw: Record<string, unknown>, key: string): Promise<SubscriptionAccount> {
+		await store.writeRaw(key, raw);
+		const account = await store.findByKey(key);
 		if (!account) {
-			throw new Error(`failed to seed ${fileName}`);
+			throw new Error(`failed to seed ${key}`);
 		}
 		return account;
 	}
@@ -147,7 +147,7 @@ describe("claude subscription auth", () => {
 
 		await expect(auth.ensureCredential(account)).resolves.toBe("new-access");
 
-		const raw = await store.readRaw(account.fileName);
+		const raw = await store.readRaw(account.key);
 		expect(raw["access_token"]).toBe("new-access");
 		expect(raw["refresh_token"]).toBe("new-refresh");
 		expect(raw["expired"]).toBe("2026-01-02T11:04:05Z");
@@ -237,7 +237,7 @@ describe("claude subscription auth", () => {
 			},
 			"claude-no-refresh@example.com.json",
 		);
-		const before = await readFile(path.join(authDir, account.fileName), "utf8");
+		const before = JSON.stringify(await store.readRaw(account.key));
 		const { fetchImpl, calls } = createFetchMock(() => {
 			throw new Error("network must not be used");
 		});
@@ -246,7 +246,7 @@ describe("claude subscription auth", () => {
 		await expect(auth.ensureCredential(account)).rejects.toThrow(/refresh_token/);
 		await expect(auth.refresh(account)).rejects.toThrow(/refresh_token/);
 		expect(calls).toHaveLength(0);
-		expect(await readFile(path.join(authDir, account.fileName), "utf8")).toBe(before);
+		expect(JSON.stringify(await store.readRaw(account.key))).toBe(before);
 	});
 
 	it("keeps the previous credential when the token endpoint rejects the refresh", async () => {
@@ -259,7 +259,7 @@ describe("claude subscription auth", () => {
 			},
 			"claude-broken@example.com.json",
 		);
-		const before = await readFile(path.join(authDir, account.fileName), "utf8");
+		const before = JSON.stringify(await store.readRaw(account.key));
 		const { fetchImpl } = createFetchMock((call) => {
 			if (call.url === TOKEN_URL) {
 				return jsonResponse({ error: "invalid_grant", error_description: "refresh token revoked" }, 400);
@@ -269,7 +269,7 @@ describe("claude subscription auth", () => {
 		const auth = createAuth(fetchImpl);
 
 		await expect(auth.refresh(account)).rejects.toThrow(/invalid_grant/);
-		expect(await readFile(path.join(authDir, account.fileName), "utf8")).toBe(before);
+		expect(JSON.stringify(await store.readRaw(account.key))).toBe(before);
 	});
 
 	it("starts a PKCE login and exchanges the pasted callback URL", async () => {
@@ -341,8 +341,8 @@ describe("claude subscription auth", () => {
 		if (!account) {
 			throw new Error("expected a saved account");
 		}
-		expect(account.fileName).toMatch(/^claude-[0-9a-f]{8}-user@example\.com\.json$/);
-		const raw = await store.readRaw(account.fileName);
+		expect(account.key).toMatch(/^claude-[0-9a-f]{8}-user@example\.com\.json$/);
+		const raw = await store.readRaw(account.key);
 		expect(raw["type"]).toBe("claude");
 		expect(raw["access_token"]).toBe("access-1");
 		expect(raw["refresh_token"]).toBe("refresh-1");
@@ -388,7 +388,7 @@ describe("claude subscription auth", () => {
 
 		const accounts = await store.list("claude");
 		expect(accounts).toHaveLength(1);
-		expect(accounts[0]?.fileName).toMatch(/^claude-[0-9a-f]{8}-bare@example\.com\.json$/);
+		expect(accounts[0]?.key).toMatch(/^claude-[0-9a-f]{8}-bare@example\.com\.json$/);
 	});
 
 	it("splits a state fragment embedded in the callback code", async () => {
@@ -443,7 +443,7 @@ describe("claude subscription auth", () => {
 		if (!account) {
 			throw new Error("expected a saved account");
 		}
-		const raw = await store.readRaw(account.fileName);
+		const raw = await store.readRaw(account.key);
 		expect(raw["email"]).toBe("token@example.com");
 		expect(raw["account_uuid"]).toBe("acct-token");
 		expect(raw["access_token"]).toBe("token-only-access");
@@ -481,7 +481,7 @@ describe("claude subscription auth", () => {
 		expect(completed.state).toBe("success");
 
 		const accounts = await store.list("claude");
-		expect(accounts.map((account) => account.fileName)).toEqual(["claude-user@example.com.json"]);
+		expect(accounts.map((account) => account.key)).toEqual(["claude-user@example.com.json"]);
 		const raw = await store.readRaw("claude-user@example.com.json");
 		expect(raw["label"]).toBe("Ops");
 		expect(raw["disabled"]).toBe(true);

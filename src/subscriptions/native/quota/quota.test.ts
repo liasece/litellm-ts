@@ -255,8 +255,7 @@ describe("原生订阅额度查询", () => {
 		const account: SubscriptionAccount = {
 			id: "acc-1",
 			source: "codex",
-			fileName: "codex-acc-1.json",
-			path: "/var/lib/litellm/cliproxy/auths/codex-acc-1.json",
+			key: "codex-acc-1.json",
 			disabled: false,
 			weight: 1,
 			raw: { chatgpt_account_id: "acc-1" },

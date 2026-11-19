@@ -16,7 +16,8 @@ import {
  * 覆盖并重写快照，请求失败保留旧数值并在行上写明真实错误。
  */
 const STORAGE_KEY = "upstreamAccountQuotaCache";
-const CACHE_VERSION = 1;
+/** 快照结构变化时递增：旧版本整条丢弃，避免用已经不符合接口的数据铺表。 */
+const CACHE_VERSION = 2;
 /** 超过一天的快照不再展示：剩余额度和重置时间都已失真，不如直接等真实请求。 */
 export const UPSTREAM_QUOTA_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

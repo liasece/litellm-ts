@@ -5,8 +5,6 @@
  * 但不再启动 Go 子进程、不维护 CPA 配置、不暴露插件管理面。
  */
 
-import { readdir, stat } from "node:fs/promises";
-import path from "node:path";
 import { ApiError } from "../../core/api/ApiError";
 import type { ConfigRepository } from "../../repositories/ConfigRepository";
 import {
@@ -16,7 +14,7 @@ import {
 } from "../SubscriptionProviders";
 import { SubscriptionAccountKeys, type KeySubscription, type SavedSubscriptionKey } from "../SubscriptionAccountKeys";
 import { normalizeAccountEmail } from "../accountEmail";
-import { SubscriptionAccountStore, defaultSubscriptionAuthDir } from "./accountStore";
+import { LEGACY_ACCOUNT_IMPORT_STATE_PARAM, SubscriptionAccountStore, defaultSubscriptionAuthDir } from "./accountStore";
 import { codexExpiryMs } from "./auth/codexOAuth";
 import { disableInvalidAccount, isTerminalRefreshFailure } from "./auth/refreshFailure";
 import { SubscriptionAccountScheduler } from "./scheduler";
@@ -165,7 +163,19 @@ export class SubscriptionRuntimeManager {
 	 * 初始化：加载设置、投影托管账号、注册执行处理器并启动后台刷新。
 	 */
 	async initialize(): Promise<void> {
-		await this._accounts.ensureDirectories();
+		const importState = await this._repository.getParam(LEGACY_ACCOUNT_IMPORT_STATE_PARAM);
+		if (importState?.["completed"] !== true) {
+			const imported = await this._accounts.importLegacyFiles();
+			if (imported.imported > 0 || imported.trashed > 0) {
+				this.appendSystemLog(
+					`已从旧 auth 目录导入 ${imported.imported} 个账号、${imported.trashed} 个回收站账号（跳过 ${imported.skipped} 个已存在或无法解析的文件）`,
+				);
+			}
+			await this._repository.upsertParam(LEGACY_ACCOUNT_IMPORT_STATE_PARAM, {
+				completed: true,
+				completed_at: new Date().toISOString(),
+			});
+		}
 		await this._loadSettings();
 		await this._projectManagedAccounts();
 		this._startedAt = new Date().toISOString();
@@ -257,22 +267,22 @@ export class SubscriptionRuntimeManager {
 				result.push(await this._summary(account, true));
 			}
 		}
-		return result.sort((left, right) => left.filename.localeCompare(right.filename));
+		return result.sort((left, right) => left.key.localeCompare(right.key));
 	}
 
 	/**
 	 * 更新账号禁用/权重/展示邮箱。
-	 * @param filename - 文件名
+	 * @param ref - 账号 ID 或账号键
 	 * @param patch - 变更
 	 */
-	async updateAccount(filename: string, patch: { disabled?: boolean; weight?: number | null; email?: string | null }): Promise<void> {
-		const account = await this._accountByFilename(filename);
+	async updateAccount(ref: string, patch: { disabled?: boolean; weight?: number | null; email?: string | null }): Promise<void> {
+		const account = await this._accountByRef(ref);
 		// 先校验邮箱再落盘，避免非法邮箱让同一次请求里的 disabled/weight 只写了一半。
 		const email = patch.email === undefined ? undefined : normalizeAccountEmail(patch.email);
 		if (patch.disabled !== undefined) {
-			await this._accounts.setDisabled(account.fileName, patch.disabled);
+			await this._accounts.setDisabled(account.id, patch.disabled);
 			if (!patch.disabled) {
-				await this._accounts.patchRaw(account.fileName, {
+				await this._accounts.patchRaw(account.id, {
 					status: null,
 					last_error: null,
 					refresh_failures: null,
@@ -283,39 +293,55 @@ export class SubscriptionRuntimeManager {
 			if (patch.weight !== null && (!Number.isFinite(patch.weight) || patch.weight < 0 || patch.weight > 1_000_000)) {
 				throw ApiError.badRequest("订阅账号权重必须在 0-1000000 之间");
 			}
-			await this._accounts.setWeight(account.fileName, patch.weight);
+			await this._accounts.setWeight(account.id, patch.weight);
 		}
 		if (email !== undefined) {
-			await this._accounts.setEmail(account.fileName, email);
+			await this._accounts.setEmail(account.id, email);
 		}
 		this._scheduler.reset();
-		this.appendSystemLog(`订阅账号 ${account.fileName} 已更新`);
+		this.appendSystemLog(`订阅账号 ${account.key} 已更新`);
 	}
 
 	/**
 	 * 移入回收站。
-	 * @param filename - 文件名
+	 * @param ref - 账号 ID 或账号键
 	 */
-	async trashAccount(filename: string): Promise<void> {
-		const account = await this._accountByFilename(filename);
-		await this._accounts.archive(account.fileName);
+	async trashAccount(ref: string): Promise<void> {
+		const account = await this._accountByRef(ref);
+		await this._accounts.archive(account.id);
 		this._scheduler.reset();
-		this.appendSystemLog(`订阅账号 ${account.fileName} 已移入回收站`);
+		this.appendSystemLog(`订阅账号 ${account.key} 已移入回收站`);
 	}
 
 	/**
 	 * 从回收站恢复。
-	 * @param filename - `.trash/<ts>-<name>` 或原始文件名
+	 * @param ref - 账号 ID 或账号键
 	 */
-	async restoreAccount(filename: string): Promise<void> {
-		if (filename.includes("\0") || filename.includes("..")) {
-			throw ApiError.badRequest("订阅账号文件名无效");
-		}
-		const base = path.basename(filename);
-		const original = base.replace(/^\d+-/, "");
-		await this._accounts.restore(original);
+	async restoreAccount(ref: string): Promise<void> {
+		const account = await this._accountByRef(ref, true);
+		await this._accounts.restore(account.id);
 		this._scheduler.reset();
-		this.appendSystemLog(`订阅账号 ${original} 已恢复`);
+		this.appendSystemLog(`订阅账号 ${account.key} 已恢复`);
+	}
+
+	/**
+	 * 彻底删除回收站里的账号。
+	 *
+	 * 账号行删除后不可恢复，所以要求先进入回收站；同时移除它在配置里的来源（托管的
+	 * CommandCode 条目或已保存的 OpenCode key），否则下次投影会把账号重新建出来。
+	 * @param ref - 账号 ID 或账号键
+	 */
+	async purgeAccount(ref: string): Promise<void> {
+		const account = await this._accountByRef(ref, true);
+		if (account.trashedAt === undefined) {
+			throw ApiError.conflict("请先将订阅账号移入回收站");
+		}
+		await this._detachAccountSource(account);
+		// 旧目录虽然只是冷备份，但若留着，永久删除后仍可能被回滚或后续导入恢复。
+		await this._accounts.removeLegacyBackups(account.key);
+		await this._accounts.remove(account.id);
+		this._scheduler.reset();
+		this.appendSystemLog(`订阅账号 ${account.key} 已彻底删除`);
 	}
 
 	/**
@@ -395,7 +421,9 @@ export class SubscriptionRuntimeManager {
 	 */
 	async listSavedKeys(provider: KeySubscription): Promise<SavedSubscriptionKey[]> {
 		await this._accountKeys.load();
-		const archived = await this._archivedFilenames();
+		const archived = new Set(
+			(await this._accounts.list(undefined, true)).filter((account) => account.trashedAt !== undefined).map((account) => account.key),
+		);
 		return this._accountKeys
 			.list()
 			.filter((entry) => entry.provider === provider && !archived.has(savedKeyAccountFilename(provider, entry.id)));
@@ -421,8 +449,14 @@ export class SubscriptionRuntimeManager {
 				throw ApiError.conflict("该订阅账号已存在");
 			}
 		}
-		await this._accountKeys.save(provider, id, label, key);
-		await projectSavedKeyAccounts(this._accounts.authDir, this._accountKeys);
+		const entry = await this._accountKeys.save(provider, id, label, key);
+		// 显式重新保存同一密钥是对已撤销账号的恢复；恢复失败（例如键被别的行占用）不覆盖保存结果。
+		await this._accounts.restore(savedKeyAccountFilename(provider, entry.id)).catch((error: unknown) => {
+			if (!(error instanceof ApiError) || error.statusCode !== 404) {
+				throw error;
+			}
+		});
+		await projectSavedKeyAccounts(this._accounts, this._accountKeys);
 		this._scheduler.reset();
 		this.appendSystemLog(`订阅密钥 ${label} 已保存`);
 		return this.listSavedKeys(provider);
@@ -447,11 +481,11 @@ export class SubscriptionRuntimeManager {
 	/**
 	 * 列出托管的 CommandCode 账户。
 	 */
-	async listCommandCodeAccounts(): Promise<{ index: number; label: string; filename: string }[]> {
+	async listCommandCodeAccounts(): Promise<{ index: number; label: string; key: string }[]> {
 		return extractManagedCommandCodeAccounts(this.userConfig).map((account, index) => ({
 			index: index,
 			label: account.label,
-			filename: commandCodeAccountFilename(account.apiKey),
+			key: commandCodeAccountFilename(account.apiKey),
 		}));
 	}
 
@@ -460,7 +494,7 @@ export class SubscriptionRuntimeManager {
 	 * @param key - API key
 	 * @param label - 展示名
 	 */
-	async addCommandCodeAccount(key: unknown, label?: unknown): Promise<{ index: number; label: string; filename: string }[]> {
+	async addCommandCodeAccount(key: unknown, label?: unknown): Promise<{ index: number; label: string; key: string }[]> {
 		const account = normalizeCommandCodeAccount(key, label);
 		const config = this.userConfig;
 		if (extractManagedCommandCodeAccounts(config).some((entry) => entry.apiKey === account.apiKey)) {
@@ -480,7 +514,7 @@ export class SubscriptionRuntimeManager {
 	async updateCommandCodeAccount(
 		index: number,
 		patch: { apiKey?: unknown; label?: unknown },
-	): Promise<{ index: number; label: string; filename: string }[]> {
+	): Promise<{ index: number; label: string; key: string }[]> {
 		const config = this.userConfig;
 		const entries = commandCodeEntries(config);
 		if (!Number.isInteger(index) || index < 0 || index >= entries.length) {
@@ -505,7 +539,7 @@ export class SubscriptionRuntimeManager {
 	 * 删除 CommandCode 账户。
 	 * @param index - 配置数组下标
 	 */
-	async deleteCommandCodeAccount(index: number): Promise<{ index: number; label: string; filename: string }[]> {
+	async deleteCommandCodeAccount(index: number): Promise<{ index: number; label: string; key: string }[]> {
 		const config = this.userConfig;
 		const entries = commandCodeEntries(config);
 		if (!Number.isInteger(index) || index < 0 || index >= entries.length) {
@@ -603,15 +637,11 @@ export class SubscriptionRuntimeManager {
 	}
 
 	private async _summary(account: SubscriptionAccount, trashed = false): Promise<CliProxyAccountSummary> {
-		let modifiedAt = new Date().toISOString();
-		try {
-			modifiedAt = (await stat(account.path)).mtime.toISOString();
-		} catch {
-			// 文件在列举与 stat 之间消失时保留当前时间。
-		}
 		return {
 			auth_index: account.id,
-			filename: trashed ? `.trash/${path.basename(account.path)}` : account.fileName,
+			key: account.key,
+			trashed: trashed || account.trashedAt !== undefined,
+			trashed_at: account.trashedAt ?? null,
 			provider: account.source,
 			email: account.email ?? null,
 			label: account.label ?? null,
@@ -622,24 +652,42 @@ export class SubscriptionRuntimeManager {
 			last_error: account.lastError ?? null,
 			refresh_failures: account.refreshFailures ?? 0,
 			rate_limit: this._bridge.rateLimit(account.id) ?? null,
-			modified_at: modifiedAt,
+			modified_at: account.updatedAt ?? new Date().toISOString(),
 		};
 	}
 
-	private async _accountByFilename(filename: string): Promise<SubscriptionAccount> {
-		if (filename.startsWith(".trash/") || filename.includes("/") || filename.includes("..")) {
-			throw ApiError.badRequest("订阅账号文件名无效");
+	/**
+	 * 移除账号在配置里的来源，避免彻底删除后被投影重建。
+	 * @param account - 已回收的账号
+	 */
+	private async _detachAccountSource(account: SubscriptionAccount): Promise<void> {
+		const config = this.userConfig;
+		const entries = commandCodeEntries(config);
+		const managedIndex = entries.findIndex(
+			(entry) => typeof entry["api-key"] === "string" && commandCodeAccountFilename(entry["api-key"]) === account.key,
+		);
+		if (managedIndex >= 0) {
+			entries.splice(managedIndex, 1);
+			await this._saveCommandCodeEntries(config, entries);
+			return;
 		}
-		const account = await this._accounts.findByFileName(filename);
-		if (!account) {
+		await this._accountKeys.load();
+		const saved = this._accountKeys.list().find((entry) => savedKeyAccountFilename(entry.provider, entry.id) === account.key);
+		if (saved) {
+			await this._accountKeys.remove(saved.provider, saved.id);
+		}
+	}
+
+	private async _accountByRef(ref: string, includeTrashed = false): Promise<SubscriptionAccount> {
+		const value = typeof ref === "string" ? ref.trim() : "";
+		if (!value || value.includes("\0") || value.includes("/") || value.includes("..")) {
+			throw ApiError.badRequest("订阅账号标识无效");
+		}
+		const account = (await this._accounts.findById(value)) ?? (await this._accounts.findByKey(value, undefined, includeTrashed));
+		if (!account || (!includeTrashed && account.trashedAt !== undefined)) {
 			throw ApiError.notFound("订阅账号不存在");
 		}
 		return account;
-	}
-
-	private async _archivedFilenames(): Promise<Set<string>> {
-		const names = await readdir(this._accounts.trashDir).catch(() => [] as string[]);
-		return new Set(names.map((name) => name.replace(/^\d+-/, "")));
 	}
 
 	private async _loadSettings(): Promise<void> {
@@ -663,8 +711,8 @@ export class SubscriptionRuntimeManager {
 	}
 
 	private async _projectManagedAccounts(): Promise<void> {
-		await projectCommandCodeAccounts(this._accounts.authDir, extractManagedCommandCodeAccounts(this.userConfig));
-		await projectSavedKeyAccounts(this._accounts.authDir, this._accountKeys);
+		await projectCommandCodeAccounts(this._accounts, extractManagedCommandCodeAccounts(this.userConfig));
+		await projectSavedKeyAccounts(this._accounts, this._accountKeys);
 	}
 
 	private async _saveCommandCodeEntries(config: Record<string, unknown>, entries: Record<string, unknown>[]): Promise<void> {
@@ -704,10 +752,10 @@ export class SubscriptionRuntimeManager {
 					.catch(async (error: unknown) => {
 						if (isTerminalRefreshFailure(error)) {
 							await disableInvalidAccount(this._accounts, account, error).catch(() => undefined);
-							this.appendSystemLog(`账号凭据已失效，已自动禁用（${account.fileName}）：${messageOf(error)}`);
+							this.appendSystemLog(`账号凭据已失效，已自动禁用（${account.key}）：${messageOf(error)}`);
 							return;
 						}
-						this.appendSystemLog(`凭据刷新失败（${account.fileName}）：${messageOf(error)}`);
+						this.appendSystemLog(`凭据刷新失败（${account.key}）：${messageOf(error)}`);
 					})
 					.finally(() => this._refreshing.delete(account.id));
 			}

@@ -6,8 +6,8 @@ function account(id: string, overrides: Partial<SubscriptionAccount> = {}): Subs
 	return {
 		id: id,
 		source: "codex",
-		fileName: `${id}.json`,
-		path: `/tmp/${id}.json`,
+		key: `${id}.json`,
+
 		disabled: false,
 		weight: 1,
 		priority: 0,

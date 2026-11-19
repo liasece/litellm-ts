@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -130,12 +130,12 @@ async function delay(ms: number): Promise<void> {
 /**
  * 读取磁盘上的账号。
  * @param store - 账号仓库
- * @param fileName - 文件名
+ * @param key - 文件名
  */
-async function loadAccount(store: SubscriptionAccountStore, fileName: string): Promise<SubscriptionAccount> {
-	const account = await store.findByFileName(fileName);
+async function loadAccount(store: SubscriptionAccountStore, key: string): Promise<SubscriptionAccount> {
+	const account = await store.findByKey(key);
 	if (!account) {
-		throw new Error(`账号文件不存在：${fileName}`);
+		throw new Error(`账号文件不存在：${key}`);
 	}
 	return account;
 }
@@ -341,7 +341,7 @@ describe("createCodexAuth", () => {
 				expired: new Date(Date.now() - 60_000).toISOString(),
 				note: "preserved",
 			});
-			const before = await readFile(path.join(directory, "codex-fail.json"), "utf8");
+			const before = JSON.stringify(await store.readRaw("codex-fail.json"));
 			const account = await loadAccount(store, "codex-fail.json");
 			const auth = createCodexAuth({ accounts: store, tokenUrl: `${server.url}/oauth/token` });
 			let failure: unknown;
@@ -353,7 +353,7 @@ describe("createCodexAuth", () => {
 			expect(failure).toBeInstanceOf(ApiError);
 			expect(String(failure)).toMatch(/Codex 凭据刷新失败/);
 			expect(String(failure)).not.toContain("old-refresh");
-			const after = await readFile(path.join(directory, "codex-fail.json"), "utf8");
+			const after = JSON.stringify(await store.readRaw("codex-fail.json"));
 			expect(after).toBe(before);
 		} finally {
 			await server.close();
@@ -443,7 +443,7 @@ describe("createCodexAuth", () => {
 			expect(pollCalls).toBe(3);
 			const accounts = await store.list("codex");
 			expect(accounts).toHaveLength(1);
-			expect(accounts[0]?.fileName).toBe(codexCredentialFileName("device@example.com", "plus", "acct-device"));
+			expect(accounts[0]?.key).toBe(codexCredentialFileName("device@example.com", "plus", "acct-device"));
 			const raw = accounts[0]?.raw ?? {};
 			expect(raw["type"]).toBe("codex");
 			expect(raw["access_token"]).toBe("device-access");
@@ -512,7 +512,7 @@ describe("createCodexAuth", () => {
 			expect(finished.error).toBeUndefined();
 			const accounts = await store.list("codex");
 			expect(accounts).toHaveLength(1);
-			expect(accounts[0]?.fileName).toBe("legacy-codex.json");
+			expect(accounts[0]?.key).toBe("legacy-codex.json");
 			const raw = accounts[0]?.raw ?? {};
 			expect(raw["access_token"]).toBe("login-access");
 			expect(raw["refresh_token"]).toBe("login-refresh");

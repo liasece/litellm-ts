@@ -47,7 +47,7 @@ describe("quotaAccountRows", () => {
 	});
 
 	it("订阅账号行取额度里的邮箱、计划与到期时间，余额按上限减已用折算", () => {
-		const account: UpstreamAccount = { auth_index: "7", filename: "claude-7.json", provider: "anthropic", email: null };
+		const account: UpstreamAccount = { auth_index: "7", key: "claude-7.json", provider: "anthropic", email: null };
 		const [row] = quotaAccountRows({
 			providers: [],
 			accounts: [account],
@@ -72,8 +72,8 @@ describe("quotaAccountRows", () => {
 
 	it("没有邮箱时退回文件名，加载与失败只落在这一行上", () => {
 		const accounts: UpstreamAccount[] = [
-			{ auth_index: "a", filename: "claude-a.json", provider: "claude", email: null },
-			{ auth_index: "b", filename: "claude-b.json", provider: "claude", email: null },
+			{ auth_index: "a", key: "claude-a.json", provider: "claude", email: null },
+			{ auth_index: "b", key: "claude-b.json", provider: "claude", email: null },
 		];
 		const [loading, failed] = quotaAccountRows({
 			providers: [],
@@ -148,9 +148,9 @@ describe("groupQuotaAccountRows", () => {
 			},
 		];
 		const accounts: UpstreamAccount[] = [
-			{ auth_index: "z", filename: "z.json", provider: "claude", email: "zed@example.com" },
-			{ auth_index: "m", filename: "m.json", provider: "anthropic", email: "mary@example.com" },
-			{ auth_index: "x", filename: "x.json", provider: "xai", email: "xavier@example.com" },
+			{ auth_index: "z", key: "z.json", provider: "claude", email: "zed@example.com" },
+			{ auth_index: "m", key: "m.json", provider: "anthropic", email: "mary@example.com" },
+			{ auth_index: "x", key: "x.json", provider: "xai", email: "xavier@example.com" },
 		];
 		const rows = quotaAccountRows({ providers, accounts, quotas: {}, formatUsd: (v) => String(v) });
 		const groups = groupQuotaAccountRows(rows);

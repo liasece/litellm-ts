@@ -17,8 +17,7 @@ import type { SubscriptionAccount, SubscriptionProviderAdapter } from "./types";
 const ACCOUNT: SubscriptionAccount = {
 	id: "account-1",
 	source: "codex",
-	fileName: "codex-test.json",
-	path: "/tmp/codex-test.json",
+	key: "codex-test.json",
 	disabled: false,
 	weight: 1,
 	raw: { type: "codex", access_token: "token", account_id: "acct" },
@@ -56,7 +55,7 @@ function buildApp(db?: DrizzleDb, protocol: "chat" | "gemini" = "chat"): express
 	const bridge = new SubscriptionBridge({
 		accounts: {
 			list: async () => [ACCOUNT],
-			findByFileName: async () => ACCOUNT,
+			findByKey: async () => ACCOUNT,
 		} as never,
 		scheduler: new SubscriptionAccountScheduler(),
 		providers: {

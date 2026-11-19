@@ -57,9 +57,9 @@ export async function disableInvalidAccount(
 	account: SubscriptionAccount,
 	error: unknown,
 ): Promise<void> {
-	const current = await accounts.readRaw(account.fileName);
+	const current = await accounts.readRaw(account.key);
 	const previous = typeof current["refresh_failures"] === "number" ? current["refresh_failures"] : 0;
-	await accounts.patchRaw(account.fileName, {
+	await accounts.patchRaw(account.key, {
 		disabled: true,
 		status: "disabled (invalid grant)",
 		last_error: refreshFailureMessage(error),

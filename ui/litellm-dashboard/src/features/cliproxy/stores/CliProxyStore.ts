@@ -112,14 +112,14 @@ export function createCliProxyStore() {
 		}
 	};
 	const refreshAllQuotas = async () => {
-		await Promise.all(state.accounts.filter((account) => !account.filename.startsWith(".trash/")).map(loadQuota));
+		await Promise.all(state.accounts.filter((account) => !account.trashed).map(loadQuota));
 	};
 	const load = async () => {
 		state.loading = true;
 		try {
 			const [status, accounts, managed, logs] = await Promise.all([
 				cliProxyApi<RuntimeStatus>("/subscriptions/status"),
-				cliProxyApi<{ data: Account[] }>("/subscriptions/accounts"),
+				cliProxyApi<{ data: Account[] }>("/subscriptions/accounts?include_trashed=true"),
 				cliProxyApi<{ data: CommandCodeAccount[] }>("/subscriptions/commandcode/accounts"),
 				cliProxyApi<{ entries: CliProxyLogEntry[]; cursor: number }>("/subscriptions/logs"),
 			]);
@@ -208,7 +208,7 @@ export function createCliProxyStore() {
 	};
 	const updateAccount = async (account: Account, changes: Record<string, unknown>) => {
 		try {
-			await cliProxyApi("/subscriptions/accounts/" + encodeURIComponent(account.filename), {
+			await cliProxyApi("/subscriptions/accounts/" + encodeURIComponent(account.auth_index), {
 				method: "PATCH",
 				body: JSON.stringify(changes),
 			});
@@ -217,21 +217,33 @@ export function createCliProxyStore() {
 			fail(error);
 		}
 	};
+	const accountName = (account: Account) => account.email?.trim() || account.label?.trim() || account.key;
 	const removeAccount = async (account: Account) => {
-		const managed = state.commandCodeAccounts.find((item) => item.filename === account.filename);
+		const managed = state.commandCodeAccounts.find((item) => item.key === account.key);
 		try {
 			if (managed) {
 				await cliProxyApi("/subscriptions/commandcode/accounts/" + managed.index, { method: "DELETE" });
 				notify("success", "CommandCode account " + managed.label + " deleted");
 				await Promise.all([refreshAccounts(), refreshCommandCodeAccounts()]);
 			} else {
-				const trashed = account.filename.startsWith(".trash/");
-				await cliProxyApi("/subscriptions/accounts/" + encodeURIComponent(account.filename) + (trashed ? "/restore" : ""), {
+				const trashed = account.trashed === true;
+				await cliProxyApi("/subscriptions/accounts/" + encodeURIComponent(account.auth_index) + (trashed ? "/restore" : ""), {
 					method: trashed ? "POST" : "DELETE",
 				});
-				notify("success", "Account " + account.filename + (trashed ? " restored" : " moved to trash"));
+				notify("success", "Account " + accountName(account) + (trashed ? " restored" : " moved to trash"));
 				await refreshAccounts();
 			}
+		} catch (error) {
+			fail(error);
+		}
+	};
+	/** 彻底删除：只对回收站里的账号开放，连同配置里的来源一起删除，避免下次投影重建。 */
+	const purgeAccount = async (account: Account) => {
+		const managed = state.commandCodeAccounts.some((item) => item.key === account.key);
+		try {
+			await cliProxyApi("/subscriptions/accounts/" + encodeURIComponent(account.auth_index) + "/purge", { method: "DELETE" });
+			notify("success", "Account " + accountName(account) + " permanently deleted");
+			await Promise.all([refreshAccounts(), managed ? refreshCommandCodeAccounts() : Promise.resolve()]);
 		} catch (error) {
 			fail(error);
 		}
@@ -278,6 +290,7 @@ export function createCliProxyStore() {
 		saveCommandCodeAccount,
 		updateAccount,
 		removeAccount,
+		purgeAccount,
 	};
 }
 export type CliProxyStore = ReturnType<typeof createCliProxyStore>;

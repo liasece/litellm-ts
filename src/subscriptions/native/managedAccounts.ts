@@ -5,12 +5,13 @@
  * 同一存储位置；这里只保留账号投影所需的最小 YAML 读写，不再生成 CPA 运行配置。
  */
 
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import { ApiError } from "../../core/api/ApiError";
 import type { SubscriptionAccountKeys } from "../SubscriptionAccountKeys";
+import type { SubscriptionAccountStore } from "./accountStore";
 
 /** 配置参数名（保持旧值，回滚可读）。 */
 export const SUBSCRIPTION_SETTINGS_PARAM = "cliproxy_settings";
@@ -77,10 +78,7 @@ export function extractManagedCommandCodeAccounts(userConfig: Record<string, unk
  * @param userConfig - 用户配置
  * @param entries - 账户条目
  */
-export function setManagedCommandCodeAccounts(
-	userConfig: Record<string, unknown>,
-	entries: Record<string, unknown>[],
-): void {
+export function setManagedCommandCodeAccounts(userConfig: Record<string, unknown>, entries: Record<string, unknown>[]): void {
 	const plugins = isRecord(userConfig["plugins"]) ? { ...userConfig["plugins"] } : {};
 	const accounts = isRecord(plugins["managed-accounts"]) ? { ...plugins["managed-accounts"] } : {};
 	if (entries.length > 0) {
@@ -145,88 +143,76 @@ export async function importLegacyManagedConfig(authDir: string): Promise<string
 }
 
 /**
- * 把 CommandCode 托管账户投影为 auth 文件。
- * @param authDir - auth 目录
- * @param accounts - 托管账户
+ * 把 CommandCode 托管账户投影为账号行。
+ *
+ * 配置是托管账号的唯一事实源：新增或改 key 就写入正文；从配置里删掉的账号进回收站，
+ * 而不是删行——回收站保留正文才能人工恢复。已存在且完全一致的账号跳过写入，避免每次
+ * 保存设置都重写 token。
+ * @param accounts - 账号仓库
+ * @param managed - 托管账户
  */
 export async function projectCommandCodeAccounts(
-	authDir: string,
-	accounts: readonly ManagedCommandCodeAccount[],
+	accounts: SubscriptionAccountStore,
+	managed: readonly ManagedCommandCodeAccount[],
 ): Promise<void> {
-	await mkdir(authDir, { recursive: true, mode: 0o700 });
 	const desired = new Map<string, ManagedCommandCodeAccount>();
-	for (const account of accounts) {
+	for (const account of managed) {
 		desired.set(commandCodeAccountFilename(account.apiKey), account);
 	}
-	const existing = (await readdir(authDir).catch(() => [] as string[])).filter(
-		(name) => name.startsWith("commandcode-managed-") && name.endsWith(".json"),
+	const existing = (await accounts.list("commandcode", true)).filter(
+		(account) => account.source === "commandcode" && account.key.startsWith("commandcode-managed-"),
 	);
-	await Promise.all(
-		existing.filter((name) => !desired.has(name)).map((name) => unlink(path.join(authDir, name)).catch(() => undefined)),
-	);
-	for (const [filename, account] of desired) {
-		const target = path.join(authDir, filename);
-		let current: Record<string, unknown> | null = null;
-		try {
-			const parsed: unknown = JSON.parse(await readFile(target, "utf8"));
-			if (isRecord(parsed)) {
-				current = parsed;
-			}
-		} catch {
-			current = null;
+	for (const account of existing) {
+		if (!desired.has(account.key) && account.trashedAt === undefined) {
+			// 打标后再回收：只有「从配置里移除」的账号会在重新加入配置时自动恢复，
+			// 管理面手工回收的账号必须由人显式恢复。
+			await accounts.patchRaw(account.id, { managed_removed: true });
+			await accounts.archive(account.id);
 		}
-		if (current?.["type"] === "commandcode" && current["api_key"] === account.apiKey && current["label"] === account.label) {
+	}
+	for (const [key, account] of desired) {
+		const current = existing.find((candidate) => candidate.key === key && candidate.trashedAt === undefined);
+		if (current && current.raw["api_key"] === account.apiKey && current.raw["label"] === account.label) {
 			continue;
 		}
-		const payload = { ...(current ?? {}), type: "commandcode", api_key: account.apiKey, label: account.label };
-		await atomicWrite(target, payload);
+		const payload = { ...(current?.raw ?? {}), type: "commandcode", api_key: account.apiKey, label: account.label };
+		await accounts.writeRaw(key, payload);
+		if (current === undefined) {
+			const trashed = existing.find((candidate) => candidate.key === key);
+			// 配置里重新加回同一个 key：恢复由配置移除时回收的账号行。
+			if (trashed !== undefined && trashed.raw["managed_removed"] === true) {
+				await accounts.restore(trashed.id);
+			}
+			if (trashed !== undefined) {
+				await accounts.patchRaw(trashed.id, { managed_removed: null });
+			}
+		}
 	}
 }
 
 /**
- * 把加密保存的 API key 记录投影为 auth 文件。
- * @param authDir - auth 目录
+ * 把加密保存的 API key 记录投影为账号行。
+ *
+ * 已撤销的 key 在回收站里，投影只更新正文、不改变有效性，因此保存设置不会把撤销过的
+ * key 复活（旧实现写文件时会把 .trash 里的同名账号重新生成一份有效副本）。
+ * @param accounts - 账号仓库
  * @param keys - key 仓库
  */
-export async function projectSavedKeyAccounts(authDir: string, keys: SubscriptionAccountKeys): Promise<void> {
+export async function projectSavedKeyAccounts(accounts: SubscriptionAccountStore, keys: SubscriptionAccountKeys): Promise<void> {
 	await keys.load();
-	await mkdir(authDir, { recursive: true, mode: 0o700 });
 	for (const record of keys.records) {
-		const filename = savedKeyAccountFilename(record.provider, record.id);
-		const target = path.join(authDir, filename);
-		let previous: Record<string, unknown> = {};
-		try {
-			const parsed: unknown = JSON.parse(await readFile(target, "utf8"));
-			if (isRecord(parsed)) {
-				previous = parsed;
-			}
-		} catch {
-			previous = {};
-		}
-		if (
-			previous["api_key"] === record.key &&
-			previous["label"] === record.label &&
-			previous["type"] === record.provider
-		) {
+		const key = savedKeyAccountFilename(record.provider, record.id);
+		const existing = (await accounts.list())?.find((account) => account.key === key);
+		const previous = existing?.raw ?? {};
+		if (previous["api_key"] === record.key && previous["label"] === record.label && previous["type"] === record.provider) {
 			continue;
 		}
 		const next: Record<string, unknown> = { ...previous, type: record.provider, api_key: record.key, label: record.label };
 		if (record.provider === "opencode-go") {
 			next["id"] = `opencode-go-key-${createHash("sha256").update(record.key).digest("hex")}`;
 		}
-		await atomicWrite(target, next);
+		await accounts.writeRaw(key, next);
 	}
-}
-
-/**
- * 原子写入 JSON。
- * @param target - 目标路径
- * @param payload - JSON 对象
- */
-export async function atomicWrite(target: string, payload: Record<string, unknown>): Promise<void> {
-	const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.tmp`);
-	await writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-	await rename(temporary, target);
 }
 
 /**

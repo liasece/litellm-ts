@@ -177,6 +177,14 @@
       "tag": "0021_upstream_model_metadata",
       "file": "0021_upstream_model_metadata.sql",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794790000009,
+      "tag": "0022_subscription_accounts",
+      "file": "0022_subscription_accounts.sql",
+      "breakpoints": true
     }
   ]
 }

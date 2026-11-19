@@ -170,7 +170,7 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: Subscr
 		runtime.getAccountQuota(routeParam(req, "authIndex")),
 	);
 
-	registerRoute(router, { method: "patch", path: "/accounts/:filename" }, async (req) => {
+	registerRoute(router, { method: "patch", path: "/accounts/:account" }, async (req) => {
 		const body = bodyRecord(req);
 		const disabled = typeof body["disabled"] === "boolean" ? body["disabled"] : undefined;
 		const weight = body["weight"] === null || typeof body["weight"] === "number" ? body["weight"] : undefined;
@@ -182,18 +182,23 @@ export function registerCliProxyManagementRoutes(parent: Router, runtime: Subscr
 		if (disabled === undefined && weight === undefined && email === undefined) {
 			throw ApiError.badRequest("必须提供 disabled、weight 或 email");
 		}
-		await runtime.updateAccount(routeParam(req, "filename"), { disabled: disabled, weight: weight, email: email });
+		await runtime.updateAccount(routeParam(req, "account"), { disabled: disabled, weight: weight, email: email });
 		return { status: "ok" };
 	});
 
-	registerRoute(router, { method: "post", path: "/accounts/:filename/restore" }, async (req) => {
-		await runtime.restoreAccount(routeParam(req, "filename"));
+	registerRoute(router, { method: "post", path: "/accounts/:account/restore" }, async (req) => {
+		await runtime.restoreAccount(routeParam(req, "account"));
 		return { status: "restored" };
 	});
 
-	registerRoute(router, { method: "delete", path: "/accounts/:filename" }, async (req) => {
-		await runtime.trashAccount(routeParam(req, "filename"));
+	registerRoute(router, { method: "delete", path: "/accounts/:account" }, async (req) => {
+		await runtime.trashAccount(routeParam(req, "account"));
 		return { status: "trashed" };
+	});
+
+	registerRoute(router, { method: "delete", path: "/accounts/:account/purge" }, async (req) => {
+		await runtime.purgeAccount(routeParam(req, "account"));
+		return { status: "deleted" };
 	});
 
 	registerRoute(router, { method: "get", path: "/commandcode/accounts" }, async () => ({

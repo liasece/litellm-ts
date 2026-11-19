@@ -45,7 +45,7 @@ const accountsBySource = computed(() => {
 	return grouped;
 });
 const accountsFor = (source: string): Account[] => accountsBySource.value[source] ?? [];
-const activeAccountsFor = (source: string): Account[] => accountsFor(source).filter((account) => !account.filename.startsWith(".trash/"));
+const activeAccountsFor = (source: string): Account[] => accountsFor(source).filter((account) => !account.trashed);
 const accountSummary = (source: string): string => {
 	const count = activeAccountsFor(source).length;
 	return `${count} active ${count === 1 ? "account" : "accounts"}`;

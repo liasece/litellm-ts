@@ -17,7 +17,11 @@ export interface RuntimeStatus {
 
 export interface Account {
 	auth_index: string;
-	filename: string;
+	/** 来源内账号键，仅用于托管账号匹配与兼容旧链接。 */
+	key: string;
+	/** 是否在回收站。 */
+	trashed?: boolean;
+	trashed_at?: string | null;
 	provider: string;
 	email: string | null;
 	label?: string | null;
@@ -39,7 +43,7 @@ export interface Account {
 export interface CommandCodeAccount {
 	index: number;
 	label: string;
-	filename: string;
+	key: string;
 }
 
 export interface QuotaWindow {

@@ -185,9 +185,9 @@ function isKimiComHost(value: string): boolean {
 /**
  * 从已有 auth JSON 判断域；依次看 domain、base_url、type，最后看文件名。
  * @param raw - auth JSON
- * @param fileName - 文件名
+ * @param key - 文件名
  */
-function resolveKimiDomain(raw: Record<string, unknown>, fileName: string): KimiDomain {
+function resolveKimiDomain(raw: Record<string, unknown>, key: string): KimiDomain {
 	const domain = readStringField(raw, "domain");
 	if (domain) {
 		if (isKimiAiDomain(domain)) {
@@ -215,7 +215,7 @@ function resolveKimiDomain(raw: Record<string, unknown>, fileName: string): Kimi
 			return "kimi.com";
 		}
 	}
-	const normalizedFileName = fileName.toLowerCase();
+	const normalizedFileName = key.toLowerCase();
 	if (normalizedFileName.includes("kimi-ai") || normalizedFileName.includes("kimi.ai")) {
 		return "kimi.ai";
 	}
@@ -403,7 +403,7 @@ function uniqueKimiFileName(existing: readonly SubscriptionAccount[], desired: s
 	const base = desired.replace(/\.json$/i, "");
 	for (let index = 2; ; index += 1) {
 		const candidate = `${base}-${index}.json`;
-		if (!existing.some((account) => account.fileName.toLowerCase() === candidate.toLowerCase())) {
+		if (!existing.some((account) => account.key.toLowerCase() === candidate.toLowerCase())) {
 			return candidate;
 		}
 	}
@@ -436,11 +436,11 @@ async function resolveKimiFileName(
 		);
 	});
 	if (duplicate) {
-		return duplicate.fileName;
+		return duplicate.key;
 	}
 	const prefix = domain === "kimi.ai" ? "kimi-ai" : "kimi";
 	const desired = `${prefix}-${nowMs}.json`;
-	if (!existing.some((account) => account.fileName.toLowerCase() === desired.toLowerCase())) {
+	if (!existing.some((account) => account.key.toLowerCase() === desired.toLowerCase())) {
 		return desired;
 	}
 	return uniqueKimiFileName(existing, desired);
@@ -482,7 +482,7 @@ class KimiAuthHandler implements SubscriptionAuthHandler {
 			return accessToken;
 		}
 		await this._refreshLocked(account, true);
-		const updated = await this._accounts.readRaw(account.fileName);
+		const updated = await this._accounts.readRaw(account.key);
 		const nextAccessToken = readStringField(updated, "access_token");
 		if (!nextAccessToken) {
 			throw ApiError.unavailable("Kimi 订阅账号刷新后仍缺少 access_token，请重新登录 Kimi");
@@ -649,7 +649,7 @@ class KimiAuthHandler implements SubscriptionAuthHandler {
 	 * @param skipIfFresh - 其他调用已经刷新出可用 token 时跳过 POST
 	 */
 	private async _refreshLocked(account: SubscriptionAccount, skipIfFresh: boolean): Promise<void> {
-		return await singleFlight(this._inflight, `${account.fileName}:${skipIfFresh ? "fresh" : "force"}`, async () => {
+		return await singleFlight(this._inflight, `${account.key}:${skipIfFresh ? "fresh" : "force"}`, async () => {
 			await this._refreshSerialized(account, skipIfFresh);
 		});
 	}
@@ -661,8 +661,8 @@ class KimiAuthHandler implements SubscriptionAuthHandler {
 	 */
 	private async _refreshSerialized(account: SubscriptionAccount, skipIfFresh: boolean): Promise<void> {
 		const snapshotAccessToken = readStringField(account.raw, "access_token");
-		await this._accounts.withFileLock(account.fileName, SUBSCRIPTION_FILE_LOCK_TIMEOUT_MS, async () => {
-			const raw = await this._accounts.readRaw(account.fileName);
+		await this._accounts.withAccountLock(account.key, SUBSCRIPTION_FILE_LOCK_TIMEOUT_MS, async () => {
+			const raw = await this._accounts.readRaw(account.key);
 			const currentAccessToken = readStringField(raw, "access_token");
 			if (skipIfFresh && currentAccessToken && currentAccessToken !== snapshotAccessToken) {
 				const currentExpiry = credentialExpiryMs(raw);
@@ -670,21 +670,21 @@ class KimiAuthHandler implements SubscriptionAuthHandler {
 					return;
 				}
 			}
-			await this._postRefresh(account.fileName, raw);
+			await this._postRefresh(account.key, raw);
 		});
 	}
 
 	/**
 	 * 用文件中的 refresh token 换取新凭据并原子写回。
-	 * @param fileName - 账号文件名
+	 * @param key - 账号文件名
 	 * @param raw - 刚重读的 auth JSON
 	 */
-	private async _postRefresh(fileName: string, raw: Record<string, unknown>): Promise<void> {
+	private async _postRefresh(key: string, raw: Record<string, unknown>): Promise<void> {
 		const refreshToken = readStringField(raw, "refresh_token");
 		if (!refreshToken) {
 			throw ApiError.unavailable("Kimi 订阅账号缺少 refresh_token，请重新登录 Kimi");
 		}
-		const domain = resolveKimiDomain(raw, fileName);
+		const domain = resolveKimiDomain(raw, key);
 		const deviceId = readStringField(raw, "device_id") ?? randomUUID();
 		const response = await requestKimiForm(
 			kimiOAuthHost(domain) + KIMI_TOKEN_PATH,
@@ -727,7 +727,7 @@ class KimiAuthHandler implements SubscriptionAuthHandler {
 		if (!readStringField(merged, "base_url")) {
 			merged["base_url"] = kimiApiBaseUrl(domain);
 		}
-		await this._accounts.writeRaw(fileName, merged);
+		await this._accounts.writeRaw(key, merged);
 	}
 
 	/**
@@ -735,9 +735,9 @@ class KimiAuthHandler implements SubscriptionAuthHandler {
 	 * @param token - token 响应
 	 * @param payload - 登录会话私有状态
 	 */
-	private async _persistLogin(token: KimiTokenPayload, payload: KimiLoginPayload): Promise<{ readonly fileName: string }> {
+	private async _persistLogin(token: KimiTokenPayload, payload: KimiLoginPayload): Promise<{ readonly key: string }> {
 		const nowMs = this._now();
-		const fileName = await resolveKimiFileName(this._accounts, token, payload.domain, nowMs);
+		const key = await resolveKimiFileName(this._accounts, token, payload.domain, nowMs);
 		const record: Record<string, unknown> = {
 			access_token: token.accessToken,
 			refresh_token: token.refreshToken ?? "",
@@ -754,7 +754,7 @@ class KimiAuthHandler implements SubscriptionAuthHandler {
 		if (token.expiresInSeconds !== undefined) {
 			record["expired"] = formatRfc3339(nowMs + token.expiresInSeconds * 1000);
 		}
-		await mergeWriteAccountFile(this._accounts, fileName, record);
-		return { fileName: fileName };
+		await mergeWriteAccountFile(this._accounts, key, record);
+		return { key: key };
 	}
 }

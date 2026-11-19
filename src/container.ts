@@ -23,6 +23,7 @@ import { CredentialRepository } from "./repositories/CredentialRepository";
 import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfigService";
 import { ConfigRepository } from "./repositories/ConfigRepository";
 import { SubscriptionAccountStore, defaultSubscriptionAuthDir } from "./subscriptions/native/accountStore";
+import { SubscriptionAccountRepository } from "./repositories/SubscriptionAccountRepository";
 import { SubscriptionRuntimeManager } from "./subscriptions/native/SubscriptionRuntimeManager";
 import { createSubscriptionProviderLookup } from "./subscriptions/native/providers/index";
 import { ProviderQuotaService } from "./providerusage/ProviderQuotaService";
@@ -138,7 +139,10 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	validateKeyAliasSettings(await dbConfigProvider.getEffectiveParam("litellm_settings"));
 
 	// 订阅执行在进程内完成：账号仓库、Provider 适配器与运行时共享一个 auth 目录。
-	const subscriptionAccounts = new SubscriptionAccountStore({ authDir: defaultSubscriptionAuthDir() });
+	const subscriptionAccounts = new SubscriptionAccountStore({
+		authDir: defaultSubscriptionAuthDir(),
+		persistence: new SubscriptionAccountRepository(db.db),
+	});
 	const cliProxyRuntime = new SubscriptionRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key, {
 		accounts: subscriptionAccounts,
 		providers: createSubscriptionProviderLookup({ accounts: subscriptionAccounts }),

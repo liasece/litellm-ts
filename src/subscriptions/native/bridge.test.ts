@@ -51,15 +51,15 @@ function stubFetch(responses: readonly { status: number; body: unknown }[]): {
 
 /**
  * 构造一个账号。
- * @param fileName - auth 文件名
+ * @param key - auth 文件名
  * @param weight - 调度权重
  */
-function account(fileName: string, weight = 1): SubscriptionAccount {
+function account(key: string, weight = 1): SubscriptionAccount {
 	return {
-		id: `id-${fileName}`,
+		id: `id-${key}`,
 		source: "commandcode" as SubscriptionSource,
-		fileName: fileName,
-		path: `/tmp/auths/${fileName}`,
+		key: key,
+
 		disabled: false,
 		weight: weight,
 		priority: 0,
@@ -77,7 +77,7 @@ function harness(accounts: readonly SubscriptionAccount[]): {
 } {
 	const store = {
 		list: async () => accounts,
-		findByFileName: async (fileName: string) => accounts.find((item) => item.fileName === fileName),
+		findByKey: async (key: string) => accounts.find((item) => item.key === key),
 	} as unknown as SubscriptionAccountStore;
 	const adapter: SubscriptionProviderAdapter = {
 		source: "commandcode",

@@ -31,16 +31,14 @@ export type SubscriptionOperation =
 	| "realtime"
 	| "models";
 
-/** 一个磁盘上的订阅账号。 */
+/** 一个订阅账号（正文存数据库，有效性与回收站状态由 `trashedAt` 表达）。 */
 export interface SubscriptionAccount {
-	/** 稳定账号标识，跨重启与文件改名保持不变。 */
+	/** 稳定账号标识，跨重启与导入保持不变。 */
 	readonly id: string;
 	/** 账号来源。 */
 	readonly source: SubscriptionSource;
-	/** 文件名（不含目录）。 */
-	readonly fileName: string;
-	/** 绝对路径。 */
-	readonly path: string;
+	/** 来源内账号键（沿用旧 auth 文件名，仅作稳定标识与去重）。 */
+	readonly key: string;
 	/** 运维是否显式禁用。 */
 	readonly disabled: boolean;
 	/** 调度权重；0 表示暂停参与调度，缺省为 1。 */
@@ -59,6 +57,10 @@ export interface SubscriptionAccount {
 	readonly label?: string;
 	/** access token 到期时间（毫秒时间戳）。 */
 	readonly expiresAt?: number;
+	/** 最近写入时间（ISO）。 */
+	readonly updatedAt?: string;
+	/** 回收站时间（ISO）；为空表示账号有效。 */
+	readonly trashedAt?: string;
 	/** 原始 auth JSON，保留所有未知字段以便无损写回。 */
 	readonly raw: Record<string, unknown>;
 }

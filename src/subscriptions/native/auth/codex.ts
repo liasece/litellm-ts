@@ -11,8 +11,6 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { access } from "node:fs/promises";
-import path from "node:path";
 import { ApiError } from "../../../core/api/ApiError";
 import type { SubscriptionAccountStore } from "../accountStore";
 import type {
@@ -190,19 +188,6 @@ function redactSecrets(message: string, secrets: readonly (string | undefined)[]
 		}
 	}
 	return redacted;
-}
-
-/**
- * 判断文件是否存在。
- * @param filePath - 绝对路径
- */
-async function fileExists(filePath: string): Promise<boolean> {
-	try {
-		await access(filePath);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 /**
@@ -399,7 +384,7 @@ class CodexAuth implements CodexAuthHandler {
 			const saved = await this._persistLoginCredential(response);
 			session.state = "success";
 			session.prompt = undefined;
-			session.output = [...session.output, `Codex 登录成功：${saved.email}（${saved.fileName}）`];
+			session.output = [...session.output, `Codex 登录成功：${saved.email}（${saved.key}）`];
 			return this._toLoginSession(session);
 		} catch (error) {
 			session.state = "error";
@@ -477,7 +462,7 @@ class CodexAuth implements CodexAuthHandler {
 		skipIfFresh: boolean,
 		kind: "outer" | "siwc",
 	): Promise<Record<string, unknown>> {
-		const key = `${account.fileName}:${kind}`;
+		const key = `${account.key}:${kind}`;
 		const existing = this._inflight.get(key);
 		if (existing) {
 			return existing;
@@ -501,8 +486,8 @@ class CodexAuth implements CodexAuthHandler {
 		skipIfFresh: boolean,
 		kind: "outer" | "siwc",
 	): Promise<Record<string, unknown>> {
-		return this._accounts.withFileLock(account.fileName, FILE_LOCK_TIMEOUT_MS, async () => {
-			const disk = await this._accounts.readRaw(account.fileName);
+		return this._accounts.withAccountLock(account.key, FILE_LOCK_TIMEOUT_MS, async () => {
+			const disk = await this._accounts.readRaw(account.key);
 			if (kind === "siwc") {
 				return await this._refreshSiwcLocked(account, disk, skipIfFresh);
 			}
@@ -550,7 +535,7 @@ class CodexAuth implements CodexAuthHandler {
 				next["expires_at"] = expired;
 			}
 			next["last_refresh"] = formatRfc3339(now);
-			await this._accounts.writeRaw(account.fileName, next);
+			await this._accounts.writeRaw(account.key, next);
 			return next;
 		});
 	}
@@ -665,7 +650,7 @@ class CodexAuth implements CodexAuthHandler {
 			updated["id_token"] = idToken;
 		}
 		next["siwc"] = updated;
-		await this._accounts.writeRaw(account.fileName, next);
+		await this._accounts.writeRaw(account.key, next);
 		return next;
 	}
 
@@ -744,15 +729,15 @@ class CodexAuth implements CodexAuthHandler {
 	 * @param response - token 端点响应
 	 * @throws {ApiError} 响应缺少必要字段或写入失败
 	 */
-	private async _persistLoginCredential(response: TokenEndpointResponse): Promise<{ fileName: string; email: string }> {
+	private async _persistLoginCredential(response: TokenEndpointResponse): Promise<{ key: string; email: string }> {
 		const accessToken = nonEmptyString(response.access_token);
 		if (!accessToken) {
 			throw ApiError.unavailable("Codex 登录响应缺少 access_token");
 		}
 		const idToken = nonEmptyString(response.id_token);
 		const identity = codexIdentityFromTokens(idToken, accessToken);
-		const fileName = await this._resolveCredentialFile(identity);
-		const existing = await this._accounts.findByFileName(fileName);
+		const key = await this._resolveCredentialFile(identity);
+		const existing = await this._accounts.findByKey(key);
 		const previous = existing?.raw ?? {};
 		const email = identity.email ?? nonEmptyString(previous["email"]);
 		if (!email) {
@@ -773,8 +758,8 @@ class CodexAuth implements CodexAuthHandler {
 		if (Object.hasOwn(previous, "expires_at")) {
 			raw["expires_at"] = raw["expired"];
 		}
-		await this._accounts.writeRaw(fileName, raw);
-		return { fileName: fileName, email: email };
+		await this._accounts.writeRaw(key, raw);
+		return { key: key, email: email };
 	}
 
 	/**
@@ -782,20 +767,20 @@ class CodexAuth implements CodexAuthHandler {
 	 * @param identity - 登录身份
 	 */
 	private async _resolveCredentialFile(identity: CodexIdentity): Promise<string> {
-		const accounts = await this._accounts.list("codex");
+		const accounts = await this._accounts.list("codex", true);
 		const existing = accounts.find((account) => codexIdentityMatches(account.raw, identity));
 		if (existing) {
-			return existing.fileName;
+			// 曾经回收过的同一账号重新登录：恢复原行，避免出现两条同名账号。
+			if (existing.trashedAt !== undefined) {
+				await this._accounts.restore(existing.id);
+			}
+			return existing.key;
 		}
 		const base = codexCredentialFileName(identity.email ?? "", identity.planType ?? "free", identity.accountId ?? "");
 		for (let attempt = 0; attempt < FILE_NAME_ATTEMPTS; attempt += 1) {
 			const candidate = attempt === 0 ? base : base.replace(/\.json$/, `-${attempt + 1}.json`);
-			const absolute = path.join(this._accounts.authDir, candidate);
-			if (!(await fileExists(absolute))) {
-				return candidate;
-			}
-			const parsed = await this._accounts.findByFileName(candidate);
-			if (parsed?.source === "codex" && codexIdentityMatches(parsed.raw, identity)) {
+			// 账号键在数据库里唯一（含回收站），生成新键前先确认没被占用。
+			if (!(await this._accounts.keyExists(candidate, "codex"))) {
 				return candidate;
 			}
 		}
@@ -842,7 +827,7 @@ class CodexAuth implements CodexAuthHandler {
 					const saved = await this._persistLoginCredential(tokenResponse);
 					session.state = "success";
 					session.error = undefined;
-					session.output = [...session.output, `Codex 设备码登录成功：${saved.email}（${saved.fileName}）`];
+					session.output = [...session.output, `Codex 设备码登录成功：${saved.email}（${saved.key}）`];
 					return;
 				}
 				if (response.status === 403 || response.status === 404) {

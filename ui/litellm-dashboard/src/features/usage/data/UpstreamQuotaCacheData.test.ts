@@ -10,7 +10,7 @@ import {
 import type { AccountQuota, BuiltInQuotaAccount, UpstreamAccount } from "../api/UpstreamQuotaApi";
 
 const NOW = Date.parse("2026-11-19T03:30:00Z");
-const account: UpstreamAccount = { auth_index: "7", filename: "claude-7.json", provider: "claude", email: "a@example.com" };
+const account: UpstreamAccount = { auth_index: "7", key: "claude-7.json", provider: "claude", email: "a@example.com" };
 const quota: AccountQuota = {
 	provider: "claude",
 	plan: "Max 20x",

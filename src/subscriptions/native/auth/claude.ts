@@ -325,7 +325,7 @@ function uniqueClaudeFileName(existing: readonly SubscriptionAccount[], desired:
 	const base = desired.replace(/\.json$/i, "");
 	for (let index = 2; ; index += 1) {
 		const candidate = `${base}-${index}.json`;
-		if (!existing.some((account) => account.fileName.toLowerCase() === candidate.toLowerCase())) {
+		if (!existing.some((account) => account.key.toLowerCase() === candidate.toLowerCase())) {
 			return candidate;
 		}
 	}
@@ -349,13 +349,13 @@ async function resolveClaudeFileName(
 ): Promise<string> {
 	const existing = await accounts.list("claude");
 	const normalizedEmail = email.trim().toLowerCase();
-	const exact = existing.find((account) => account.fileName.toLowerCase() === targetName.toLowerCase());
+	const exact = existing.find((account) => account.key.toLowerCase() === targetName.toLowerCase());
 	if (exact && isSameClaudeAccount(exact.raw, identity, normalizedEmail)) {
-		return exact.fileName;
+		return exact.key;
 	}
 	const match = existing.find((account) => isSameClaudeAccount(account.raw, identity, normalizedEmail));
 	if (match) {
-		return match.fileName;
+		return match.key;
 	}
 	if (exact) {
 		return uniqueClaudeFileName(existing, targetName);
@@ -399,7 +399,7 @@ class ClaudeAuthHandler implements SubscriptionAuthHandler {
 			return accessToken;
 		}
 		await this._refreshLocked(account, true);
-		const updated = await this._accounts.readRaw(account.fileName);
+		const updated = await this._accounts.readRaw(account.key);
 		const nextAccessToken = readStringField(updated, "access_token");
 		if (!nextAccessToken) {
 			throw ApiError.unavailable("Claude 订阅账号刷新后仍缺少 access_token，请重新登录 Claude");
@@ -514,7 +514,7 @@ class ClaudeAuthHandler implements SubscriptionAuthHandler {
 	 * @param skipIfFresh - 其他调用已经刷新出可用 token 时跳过 POST
 	 */
 	private async _refreshLocked(account: SubscriptionAccount, skipIfFresh: boolean): Promise<void> {
-		return await singleFlight(this._inflight, `${account.fileName}:${skipIfFresh ? "fresh" : "force"}`, async () => {
+		return await singleFlight(this._inflight, `${account.key}:${skipIfFresh ? "fresh" : "force"}`, async () => {
 			await this._refreshSerialized(account, skipIfFresh);
 		});
 	}
@@ -526,8 +526,8 @@ class ClaudeAuthHandler implements SubscriptionAuthHandler {
 	 */
 	private async _refreshSerialized(account: SubscriptionAccount, skipIfFresh: boolean): Promise<void> {
 		const snapshotAccessToken = readStringField(account.raw, "access_token");
-		const accessToken = await this._accounts.withFileLock(account.fileName, SUBSCRIPTION_FILE_LOCK_TIMEOUT_MS, async () => {
-			const raw = await this._accounts.readRaw(account.fileName);
+		const accessToken = await this._accounts.withAccountLock(account.key, SUBSCRIPTION_FILE_LOCK_TIMEOUT_MS, async () => {
+			const raw = await this._accounts.readRaw(account.key);
 			const currentAccessToken = readStringField(raw, "access_token");
 			if (skipIfFresh && currentAccessToken && currentAccessToken !== snapshotAccessToken) {
 				const currentExpiry = credentialExpiryMs(raw);
@@ -535,14 +535,14 @@ class ClaudeAuthHandler implements SubscriptionAuthHandler {
 					return currentAccessToken;
 				}
 			}
-			return await this._postRefresh(account.fileName, raw);
+			return await this._postRefresh(account.key, raw);
 		});
 		// profile 查询是额外网络往返，放到文件锁外；仅当 token 未被其他刷新轮换时合并身份字段。
 		const profile = await this._fetchProfile(accessToken);
 		if (!profile) {
 			return;
 		}
-		const latest = await this._accounts.readRaw(account.fileName);
+		const latest = await this._accounts.readRaw(account.key);
 		if (readStringField(latest, "access_token") !== accessToken) {
 			return;
 		}
@@ -560,7 +560,7 @@ class ClaudeAuthHandler implements SubscriptionAuthHandler {
 			patch["organization_name"] = profile.organizationName;
 		}
 		if (Object.keys(patch).length > 0) {
-			await this._accounts.patchRaw(account.fileName, patch);
+			await this._accounts.patchRaw(account.key, patch);
 		}
 	}
 
