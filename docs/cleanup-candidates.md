@@ -4,6 +4,21 @@
 > 历史敏感字段清理。每个日期的小节记录当时的执行结果，末尾保留判定依据，供后续判断“某功能是否存在”
 > 时复查。清理后仓库里不再保留纯占位路由、假成功页面和无读取入口的表/列。
 
+## 2026-11-19 Dashboard 页面精简
+
+按用户要求下线四个页面，删除只被它们使用的前端代码；后端管理端点保留，它们是公开管理 API 的一部分，
+配置仓库与 API 调用方仍在用。
+
+| 页面 | 删除内容 | 保留原因 |
+| --- | --- | --- |
+| Health Status（`models-health`） | 页面与 `ModelHealthComponent.vue`；模型列表的健康检查、徽标与重跑仍用 `ModelHealthStore` | 健康状态已在 All Models 列表内可见，独立表格只是同一批数据的重复视角 |
+| MCP Server Activity（`usage-mcp`） | 页面与 `UsageActivity` 的 MCP 实例；`summary`/`detail` 的 `mcp_servers` 维度仍在用量响应里 | 该维度没有可用实体数据，页面长期是空表；Cost 页仍展示 MCP 花费 |
+| Cost Tracking（`cost-tracking`） | `features/cost-tracking`（页面、计算器、折扣与保证金表单、store、逻辑测试） | 折扣、保证金与估算由 `/config/cost_discount_config`、`/config/cost_margin_config`、`/cost/estimate` 提供，配置由 API 管理 |
+| Logging & Alerts（`logging-and-alerts`） | `features/logging-settings` 与页面 | 回调与告警配置由 `/get/config/callbacks` 提供，配置仓库与 API 调用方在用 |
+
+旧地址不断链：`/ui/models/health` 与 `/ui/usage/mcp` 保留为路径别名，`?page=models-health|usage-mcp|cost-tracking|logging-and-alerts`
+经 `retiredPageRedirects` 落到 All Models、Cost 或 Admin Settings；`?page=models&tab=health` 同样落到 All Models。
+
 ## 2026-11-17 无读取入口对象与历史敏感字段清理
 
 这是 2026-11-08 清理的后续：SpendLog 读路径收紧后，历史认证头与内部 body 已经没有读取入口，原先

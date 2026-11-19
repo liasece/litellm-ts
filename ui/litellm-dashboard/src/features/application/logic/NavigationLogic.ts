@@ -1,4 +1,4 @@
-import { migratedPathPages, navigationGroups, pathPages } from "../data/NavigationData";
+import { navigationGroups, pageAccessAlias, pagePaths, pathPages } from "../data/NavigationData";
 import type { NavigationAccess, NavigationGroup } from "../support/NavigationModels";
 
 /**
@@ -8,6 +8,11 @@ const retiredPageRedirects: Readonly<Record<string, string>> = {
 	cliproxy: "subscription-runtime",
 	usage: "new_usage",
 	"old-usage": "new_usage",
+	// 2026-11-19 下线的页面：留一条落点，旧链接不会停在空白页。
+	"models-health": "models",
+	"usage-mcp": "new_usage",
+	"logging-and-alerts": "admin-panel",
+	"cost-tracking": "admin-panel",
 };
 
 export function dashboardPageFromUrl(url: URL, uiBase = "/ui"): string {
@@ -23,8 +28,10 @@ export function dashboardPageFromUrl(url: URL, uiBase = "/ui"): string {
 }
 
 export function dashboardHref(page: string, uiBase = "/ui"): string {
-	if (migratedPathPages.has(page)) return uiBase.replace(/\/$/, "") + "/" + page;
-	return uiBase.replace(/\/$/, "") + "/?" + new URLSearchParams({ page }).toString();
+	const base = uiBase.replace(/\/$/, "");
+	const path = pagePaths[page];
+	if (path) return base + "/" + path;
+	return base + "/?" + new URLSearchParams({ page }).toString();
 }
 
 export function visibleNavigation(access: NavigationAccess): NavigationGroup[] {
@@ -37,7 +44,16 @@ export function visibleNavigation(access: NavigationAccess): NavigationGroup[] {
 			items: group.items.filter((item) => {
 				const organizationAccess = ["users", "organizations"].includes(item.page) && access.isOrganizationAdmin;
 				if (item.roles && !item.roles.includes(access.role) && !organizationAccess) return false;
-				if (!admin && access.enabledInternalPages !== null && !access.enabledInternalPages.includes(item.page)) return false;
+				// 拆分出来的页面沿用原页面 id 判断内部用户可见性，老配置不必改。
+				const alias = pageAccessAlias(item.page);
+				const configuredPages = access.enabledInternalPages;
+				if (
+					!admin &&
+					configuredPages !== null &&
+					!configuredPages.includes(item.page) &&
+					!(alias && configuredPages.includes(alias))
+				)
+					return false;
 				return true;
 			}),
 		}))

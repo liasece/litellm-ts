@@ -233,13 +233,6 @@
 .vk-skeleton--range {
 	width: 200px;
 }
-.vk-access-denied h1 {
-	font-size: 38px;
-	line-height: 46px;
-	font-weight: 600;
-	margin-bottom: 20px;
-}
-
 .vk-model-tag {
 	display: inline-flex;
 	align-items: center;

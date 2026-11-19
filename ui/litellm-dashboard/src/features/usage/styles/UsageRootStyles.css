@@ -25,8 +25,7 @@
 	gap: 12px;
 }
 
-.usage-toolbar,
-.usage-global-tabs-toolbar {
+.usage-toolbar {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
@@ -132,26 +131,12 @@
 	margin-left: auto;
 }
 
-.usage-global-tabs-toolbar {
-	justify-content: space-between;
-	gap: 8px;
-	padding: 8px 12px;
-}
-
-.usage-global-tabs-scroll {
-	min-width: 0;
-	overflow-x: auto;
-}
-
-.usage-global-tab-actions {
+.usage-heading {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px;
-}
-
-.usage-global-tab-actions svg {
-	width: 16px;
-	height: 16px;
+	justify-content: space-between;
+	gap: 8px 12px;
 }
 
 .usage-solid-tabs .ui-tabs__list {
@@ -331,29 +316,14 @@
 	.usage-entity .ui-select {
 		min-height: 40px;
 	}
-	.usage-global-tabs-toolbar {
-		flex-direction: column;
-		flex-wrap: nowrap;
-		align-items: stretch;
-		gap: 8px;
-	}
-	.usage-global-tabs-scroll,
 	.usage-entity-tabs {
 		overflow-x: auto;
 		overflow-y: hidden;
 		overscroll-behavior-inline: contain;
 		scrollbar-width: none;
 	}
-	.usage-global-tabs-scroll::-webkit-scrollbar,
 	.usage-entity-tabs::-webkit-scrollbar {
 		display: none;
-	}
-	.usage-global-tab-actions {
-		justify-content: flex-end;
-	}
-	.usage-global-tab-actions .ui-button {
-		min-height: 40px;
-		padding-inline: 14px;
 	}
 	.usage-tab-strip {
 		scroll-padding-inline: 12px;

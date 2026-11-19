@@ -107,3 +107,12 @@
 	margin: 0;
 	flex: none;
 }
+
+/* 角色不足时各页面统一用这个版式占位，不再每页复制一份 38px 标题。 */
+.ui-access-denied h1 {
+	font: 600 38px/46px var(--ui-font-antd);
+	margin: 0 0 20px;
+}
+.ui-access-denied p {
+	font: 14px/22px var(--ui-font-antd);
+}

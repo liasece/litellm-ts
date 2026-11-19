@@ -7,20 +7,58 @@ export const pathPages: Readonly<Record<string, string>> = {
 	subscriptions: "subscriptions",
 	"subscriptions/runtime": "subscription-runtime",
 	logs: "logs",
+	models: "models",
+	"models/credentials": "models-credentials",
+	// Health Status 页面已移除，旧书签落在 All Models。
+	"models/health": "models",
+	"models/retries": "models-retries",
+	"models/aliases": "models-aliases",
+	"models/prices": "models-prices",
 	"models-and-endpoints": "models",
 	organizations: "organizations",
 	playground: "llm-playground",
 	teams: "teams",
 	usage: "new_usage",
+	"usage/cost": "new_usage",
+	"usage/models": "usage-models",
+	"usage/keys": "usage-keys",
+	// MCP Server Activity 页面已移除，旧书签落在 Cost。
+	"usage/mcp": "new_usage",
+	"usage/endpoints": "usage-endpoints",
+	"usage/quota": "usage-quota",
 	users: "users",
 	"virtual-keys": "api-keys",
 	"test-key": "test-key",
-	"settings/logging-and-alerts": "logging-and-alerts",
+	// Logging & Alerts 页面已移除，旧书签落在 Admin Settings。
+	"settings/logging-and-alerts": "admin-panel",
 	"settings/ui-theme": "ui-theme",
 	"settings/router-settings": "router-settings",
 	"settings/admin-settings": "admin-panel",
 	login: "login",
 	chat: "chat",
+};
+
+/**
+ * Browser path for page ids that use path routing; absent ids keep the legacy `?page=` form.
+ *
+ * Separate from {@link pathPages} because page ids must stay stable (`enabled_ui_pages_internal_users`
+ * and old bookmarks use them) while the URL keeps the readable nested path.
+ */
+export const pagePaths: Readonly<Record<string, string>> = {
+	"api-reference": "api-reference",
+	"builtin-capabilities": "builtin-capabilities",
+	speed: "speed",
+	privacy: "privacy",
+	models: "models",
+	"models-credentials": "models/credentials",
+	"models-retries": "models/retries",
+	"models-aliases": "models/aliases",
+	"models-prices": "models/prices",
+	new_usage: "usage/cost",
+	"usage-models": "usage/models",
+	"usage-keys": "usage/keys",
+	"usage-endpoints": "usage/endpoints",
+	"usage-quota": "usage/quota",
 };
 
 /**

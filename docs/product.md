@@ -26,7 +26,7 @@
 | 场景 | 用户当时怎么描述 | 产品应答 |
 | --- | --- | --- |
 | 客户端只配一个入口 | 在 Claude Code、Codex、DSH 里连同一个网关，用同一套虚拟密钥 | 多协议入口（Chat / Anthropic Messages / Responses / Gemini / 图像 / 音频 / embeddings）与虚拟密钥、团队、用户、组织 |
-| 费用能算清 | 「把价格改对，注意搜索获取真正的价格」「注意峰谷价」（2026-11-01） | 每模型价格、峰谷价、折扣与保证金、`/cost/estimate`、Usage 与 Cost Tracking 页面 |
+| 费用能算清 | 「把价格改对，注意搜索获取真正的价格」「注意峰谷价」（2026-11-01） | 每模型价格、峰谷价、折扣与保证金经 `/config/cost_discount_config`、`/config/cost_margin_config` 与 `/cost/estimate` 参与落账，费用报表在 Usage 页面 |
 | 订阅套餐要被治理 | 「增加允许**多个相同供应商的账号**」「需要显示买几个什么档位的账号」（2026-11-08） | 七家订阅 Provider 的账号池、额度窗口、调度与状态告警 |
 | 峰值期换便宜模型 | 「Deepseek 谷价时用 Deepseek，峰价时用 Minimax…这个功能应该做在 Model Group Alias 中」（2026-10-24） | Model Group Alias 的每日时段路由，见[专题](model-group-alias.md) |
 | 直连客户端缺能力 | 「某些模型是纯文本模型…我们无感嫁接起来」（2026-08-05） | 内置能力：视觉、Web Search & Fetch、图片生成，由网关注入并在内部代理执行 |
@@ -48,12 +48,20 @@
 
 当前对外承诺的推理面：`/v1/chat/completions`、`/v1/messages`、`/v1/responses`、`/v1/completions`、`/v1/embeddings`、`/v1/moderations`、`/v1/audio/*`、`/v1/images/*`、`/v1/files*`（Anthropic Files 转发）、`/v1/search/tools`、`/v1/models`。
 
-管理面按 Dashboard 导航分四组（`ui/litellm-dashboard/src/features/application/data/NavigationData.ts`）：
+管理面按 Dashboard 导航分六组（`ui/litellm-dashboard/src/features/application/data/NavigationData.ts`）：
 
-- **AI GATEWAY**：Virtual Keys、Playground、Models + Endpoints、Search Tools。
-- **OBSERVABILITY**：Usage、Logs、Speed、Privacy。
+- **AI GATEWAY**：Virtual Keys、Playground、Search Tools。
+- **MODEL MANAGEMENT**：All Models、LLM Credentials、Model Retry Settings、Model Group Alias、Price Data Reload。
+- **USAGE**：Cost、Model Activity、Key Activity、Endpoint Activity、Upstream Account Quota。
+- **OBSERVABILITY**：Logs、Speed、Privacy。
 - **ACCESS CONTROL**：Teams、Internal Users、Organizations。
-- **SETTINGS**：Built-in Capabilities、Router Settings、Subscriptions、Logging & Alerts、Admin Settings、Cost Tracking。
+- **SETTINGS**：Built-in Capabilities、Router Settings、Subscriptions、Admin Settings。
+
+模型管理与用量统计原先各自是一页里的标签栏，现在每个标签都是独立页面与独立地址（2026-11-19）。理由是这两组页面的筛选条件（用量视图、日期范围）和加载状态在标签切换时应当保留，而地址要能直接指向某一项、也能被收藏和分享；`Add Model` 因此从标签变成 All Models 页右上角的按钮，点开是弹窗而不是又一个页面。
+
+同一天按用户要求下线了 Health Status、MCP Server Activity、Cost Tracking、Logging & Alerts 四个页面：它们要么只是同一批数据的重复视角，要么对应的配置管理已经有管理 API 与配置仓库，留在导航里反而让人以为这是唯一的操作入口。折扣、保证金、`/cost/estimate` 与 `/get/config/callbacks` 这些后端能力保留，旧地址按上文的重定向落在活着的页面上；`Upstream Account Quota` 从用量页底部的区段升为 USAGE 下的独立页面（仅管理员），因为它与日期范围、用量视图无关，挂在底部既容易被筛选条件误导，也要滚过整页才看得到；页面按上游供应商分组、一行一个账号，账号数量增长时纵向浏览比卡片网格更省空间。
+
+同一轮还按用户要求把 USAGE 提到 OBSERVABILITY 之前，并去掉 Model Activity、Key Activity 顶部的 Overall Usage 板块：那四张总量卡片和「Token Usage Over Time」等图是 Cost 页的汇总视角，在按模型/按 Key 的页面上与实体列表重复，切到该页的人真正要看的是逐实体的明细。
 
 明确不做：多租户 SaaS 与对外计费；集群、灰度和跨副本一致性；MCP 执行、Guardrails、Prompts、Vector Store、Caching 管理面（2026-11-08 清理）；SSO/SCIM 管理面；Agent/A2A/沙箱。语义缓存与自动分类路由目前只是[上游对齐记录](upstream-alignment.md)里的候选建议（F37、F08），没有执行链，不算已承诺能力。
 

@@ -7,6 +7,7 @@ import { createPriceDisplayStore, priceDisplayStoreKey } from "../../platform/st
 import { getServerRootPath } from "../../platform/api/HttpApiClient";
 import { applicationStoreKey, createApplicationStore } from "../stores/ApplicationStore";
 import { dashboardPageFromUrl } from "../logic/NavigationLogic";
+import { currentPageKey } from "../logic/PageContext";
 import { isRegisteredPage, pageComponent } from "../data/PageRegistry";
 import ApplicationBrandLogo from "./ApplicationBrandLogo.vue";
 import ApplicationShell from "./ApplicationShell.vue";
@@ -34,6 +35,7 @@ const page = computed(() => {
 	return isRegisteredPage(resolved) ? resolved : "api-keys";
 });
 const legacyRoot = computed(() => route.path.replace(/\/+$/, "") === uiBase.value);
+provide(currentPageKey, page);
 const standalone = computed(() => ["login", "chat"].includes(page.value));
 const publicPage = computed(() => ["login"].includes(page.value));
 const view = computed(() => (!auth.state.loading && (publicPage.value || auth.isAuthorized.value) ? pageComponent(page.value) : null));

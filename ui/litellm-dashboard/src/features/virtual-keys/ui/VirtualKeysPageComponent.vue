@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
 import UiActiveFilters from "../../platform/ui/UiActiveFilters.vue";
 import UiAlert from "../../platform/ui/UiAlert.vue";
+import UiAccessDenied from "../../platform/ui/UiAccessDenied.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
 import UiHeaderFilterButton from "../../platform/ui/UiHeaderFilterButton.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
@@ -161,10 +162,7 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-	<div v-if="auth.userRole.value === 'Admin Viewer'" class="vk-access-denied">
-		<h1>Access Denied</h1>
-		<p>Ask your proxy admin for access to create keys</p>
-	</div>
+	<UiAccessDenied v-if="auth.userRole.value === 'Admin Viewer'" message="Ask your proxy admin for access to create keys" />
 	<div v-else class="vk-page">
 		<div class="vk-grid">
 			<div class="vk-column">

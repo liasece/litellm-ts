@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import UiTabs from "../../platform/ui/UiTabs.vue";
+import UiAccessDenied from "../../platform/ui/UiAccessDenied.vue";
+import UiButton from "../../platform/ui/UiButton.vue";
+import UiDialog from "../../platform/ui/UiDialog.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiHeroIcon from "../../platform/ui/UiHeroIcon.vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
+import { currentPageKey } from "../../application/logic/PageContext";
+import { dashboardHref } from "../../application/logic/NavigationLogic";
 import ModelList from "./ModelListComponent.vue";
 import ModelAdd from "./ModelAddComponent.vue";
 import ModelCredentials from "./ModelCredentialsComponent.vue";
-import ModelHealth from "./ModelHealthComponent.vue";
 import ModelRetrySettings from "./ModelRetrySettingsComponent.vue";
 import ModelAliases from "./ModelAliasesComponent.vue";
 import ModelPriceData from "./ModelPriceDataComponent.vue";
@@ -20,7 +23,7 @@ import { loadModelCatalog } from "../data/ModelCatalogData";
 import { modelsApi } from "../api/ModelsApi";
 import { createModelsStore } from "../stores/ModelsStore";
 import { createModelHealthStore } from "../stores/ModelHealthStore";
-import { transformModels } from "../logic/ModelDataLogic";
+import { modelManagementSection, modelSectionFromLegacyTab, pageByModelSection } from "../logic/ModelManagementSections";
 import { getServerRootPath } from "../../platform/api/HttpApiClient";
 import { subscriptionAccountsHref } from "../../subscriptions/logic/SubscriptionProviderLogic";
 import "./ModelsStyles.css";
@@ -38,17 +41,18 @@ const ready = ref(false),
 	selected = ref<string | null>(null),
 	action = ref<"fallback" | "override" | "settings" | "delete" | null>(null),
 	actionModel = ref<DisplayProxyModel | null>(null),
-	convertModel = ref<DisplayProxyModel | null>(null);
+	convertModel = ref<DisplayProxyModel | null>(null),
+	addOpen = ref(false);
 let disposed = false;
 const role = computed(() => auth.userRole.value),
 	userId = computed(() => auth.state.session?.user_id ?? ""),
 	premium = computed(() => Boolean(auth.state.session?.premium_user));
 const admin = computed(() => ["Admin", "Admin Viewer", "proxy_admin", "proxy_admin_viewer", "org_admin"].includes(role.value));
-const subscriptionsBase = computed(() => {
+const uiBase = computed(() => {
 	const root = getServerRootPath().replace(/\/+$/, "");
 	return (root === "/" ? "" : root) + "/ui";
 });
-const subscriptionsHref = computed(() => subscriptionAccountsHref(subscriptionsBase.value));
+const subscriptionsHref = computed(() => subscriptionAccountsHref(uiBase.value));
 const teamAdmin = computed(() =>
 	catalog.teams.some((team) => team.members_with_roles?.some((member) => member.user_id === userId.value && member.role === "admin")),
 );
@@ -61,38 +65,23 @@ const addAllowed = computed(
 				catalog.uiSettings.disable_model_add_for_internal_users === true
 			)),
 );
-const tabs = computed(() => [
-	{ key: "models", label: admin.value ? "All Models" : "Your Models" },
-	...(addAllowed.value ? [{ key: "add-model", label: "Add Model" }] : []),
-	...(admin.value
-		? [
-				{ key: "credentials", label: "LLM Credentials" },
-				{ key: "health", label: "Health Status" },
-				{ key: "retries", label: "Model Retry Settings" },
-				{ key: "aliases", label: "Model Group Alias" },
-				{ key: "price-data", label: "Price Data Reload" },
-			]
-		: []),
-]);
-const tab = computed(() => (tabs.value.some((item) => item.key === route.query.tab) ? String(route.query.tab) : "models"));
-/** 手机端七个标签挤在三行里，短文案把它们压回两行。 */
-const shortTabLabels: Record<string, string> = {
-	models: "Models",
-	"add-model": "Add",
-	credentials: "Credentials",
-	health: "Health",
-	retries: "Retry",
-	aliases: "Aliases",
-	"price-data": "Prices",
+/** 同一个组件承载多个页面，分区来自 URL 解析出的页面 id；切页面不会重建组件，数据与筛选都还在。 */
+const page = inject(currentPageKey, null);
+const section = computed(() => modelManagementSection(page?.value ?? "models"));
+const titles: Readonly<Record<ReturnType<typeof modelManagementSection>, string>> = {
+	models: "",
+	credentials: "LLM Credentials",
+	retries: "Model Retry Settings",
+	aliases: "Model Group Alias",
+	prices: "Price Data Reload",
 };
-function shortTab(key: string) {
-	return shortTabLabels[key] ?? key;
-}
+const title = computed(() => (section.value === "models" ? (admin.value ? "All Models" : "Your Models") : titles[section.value]));
+const subtitle = computed(() =>
+	section.value === "models" ? (admin.value ? "Add and manage models for the proxy" : "Add models for teams you are an admin for.") : "",
+);
+/** 管理页只对管理员开放；Admin Viewer 与 All Models 一致地显示无权访问，而不是给出空白页面。 */
+const denied = computed(() => role.value === "Admin Viewer" || (section.value !== "models" && !admin.value));
 const modelGroups = computed(() => [...new Set(store.state.rows.map((model) => model.model_name))].sort());
-const processed = computed(() => transformModels(store.state.rows, catalog.costs));
-function changeTab(value: string) {
-	void router.replace({ query: { ...route.query, tab: value } });
-}
 function actions(mode: typeof action.value, model: DisplayProxyModel | null = null) {
 	actionModel.value = model;
 	action.value = mode;
@@ -103,7 +92,7 @@ async function refresh() {
 }
 /**
  * 转换已经把模型换成别名，列表要重取部署；别名表也同步成刚保存的整张表，
- * 免得「Model Group Alias」标签页还显示转换前的旧内容。
+ * 免得「Model Group Alias」页面还显示转换前的旧内容。
  */
 function converted(aliases: Record<string, unknown>) {
 	catalog.router = { ...catalog.router, model_group_alias: aliases };
@@ -112,8 +101,13 @@ function converted(aliases: Record<string, unknown>) {
 async function credentials() {
 	catalog.credentials = await modelsApi.fetchCredentials();
 }
+/** 列表里的凭据链接跳到凭据页面；非管理员原本也切不过去，这里直接忽略。 */
 function credential() {
-	changeTab("credentials");
+	if (admin.value) void router.push(dashboardHref("models-credentials", uiBase.value));
+}
+function created() {
+	addOpen.value = false;
+	void refresh();
 }
 watch(
 	() => store.state.rows.map((model) => model.model_info.id ?? "").join("|"),
@@ -122,13 +116,14 @@ watch(
 		void health.hydrate();
 	},
 );
-watch(
-	() => [ready.value, route.query.tab, tabs.value.map((item) => item.key).join("|")] as const,
-	() => {
-		if (ready.value && route.query.tab && route.query.tab !== tab.value) changeTab(tab.value);
-	},
-);
 onMounted(async () => {
+	// 旧的 `?page=models&tab=health` 书签改写到分区路径，地址栏与侧边栏选中项保持一致。
+	const legacyTab = typeof route.query.tab === "string" ? route.query.tab : null;
+	const legacySection = legacyTab === null ? undefined : modelSectionFromLegacyTab(legacyTab);
+	if (legacySection) {
+		if (legacyTab === "add-model") addOpen.value = true;
+		await router.replace(dashboardHref(pageByModelSection[legacySection], uiBase.value));
+	}
 	const result = await Promise.allSettled([loadModelCatalog(), store.load()]);
 	if (disposed) return;
 	if (result[0].status === "fulfilled") Object.assign(catalog, result[0].value);
@@ -141,18 +136,23 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-	<div v-if="role === 'Admin Viewer'" class="model-access-denied">
-		<h1>Access Denied</h1>
-		<p>Ask your proxy admin for access to view all models</p>
-	</div>
+	<UiAccessDenied v-if="denied" message="Ask your proxy admin for access to view all models" />
 	<div v-else class="models-page">
 		<div class="models-layout">
 			<header class="models-heading">
 				<div>
-					<h2>Model Management</h2>
-					<p>{{ admin ? "Add and manage models for the proxy" : "Add models for teams you are an admin for." }}</p>
+					<h2>{{ title }}</h2>
+					<p v-if="subtitle">{{ subtitle }}</p>
 				</div>
 				<div class="model-inline model-heading-actions">
+					<template v-if="section === 'models'">
+						<span v-if="lastRefreshed" class="models-last-refreshed">Last Refreshed: {{ lastRefreshed }}</span>
+						<button class="models-refresh" aria-label="Refresh models" @click="refresh">
+							<UiHeroIcon name="RefreshIcon" :size="12" /></button
+						><UiButton v-if="addAllowed" appearance="tremor" size="small" variant="primary" @click="addOpen = true"
+							><template #icon><UiIcon name="PlusOutlined" /></template>Add Model</UiButton
+						>
+					</template>
 					<a v-if="admin" :href="subscriptionsHref" class="models-request-provider"
 						><UiIcon name="CrownOutlined" :size="12" />Subscription accounts</a
 					>
@@ -161,23 +161,15 @@ onBeforeUnmount(() => {
 					>
 				</div>
 			</header>
-			<UiTabs :model-value="tab" :items="tabs" appearance="tremor" grouped class="models-main-tabs" @update:model-value="changeTab"
-				><template v-for="item in tabs" #[`tab-${item.key}`] :key="item.key"
-					><span class="models-tab-label models-tab-label--long">{{ item.label }}</span
-					><span class="models-tab-label models-tab-label--short">{{ shortTab(item.key) }}</span></template
-				><template #extra
-					><span v-if="lastRefreshed" class="models-last-refreshed">Last Refreshed: {{ lastRefreshed }}</span
-					><button class="models-refresh" aria-label="Refresh models" @click="refresh">
-						<UiHeroIcon name="RefreshIcon" :size="12" /></button
-				></template>
+			<div class="models-section">
 				<ModelList
-					v-if="tab === 'models'"
+					v-if="section === 'models'"
 					:store="store"
 					:catalog="catalog"
 					:health="health"
 					:admin="role === 'Admin'"
 					:user-id="userId"
-					:subscriptions-base="subscriptionsBase"
+					:subscriptions-base="uiBase"
 					@select="selected = $event"
 					@fallback="actions('fallback', $event)"
 					@override="actions('override', $event)"
@@ -187,27 +179,23 @@ onBeforeUnmount(() => {
 					@credential="credential"
 					@refresh="refresh"
 				/>
+				<ModelCredentials v-else-if="section === 'credentials' && ready" :catalog="catalog" @changed="credentials" />
+				<ModelRetrySettings v-else-if="section === 'retries' && ready" :catalog="catalog" :model-groups="modelGroups" />
+				<ModelAliases v-else-if="section === 'aliases' && ready" :catalog="catalog" />
+				<ModelPriceData v-else-if="section === 'prices'" @reloaded="refresh" />
+			</div>
+			<UiDialog :open="addOpen" title="Add Model" width="900" scroll-mode="overlay" @update:open="addOpen = $event">
 				<ModelAdd
-					v-if="tab === 'add-model' && ready"
+					v-if="addOpen && ready"
 					:catalog="catalog"
 					:admin="admin"
 					:team-admin="teamAdmin"
 					:premium="premium"
 					:user-id="userId"
-					@created="refresh"
+					@created="created"
 				/>
-				<ModelCredentials v-if="tab === 'credentials' && ready" :catalog="catalog" @changed="credentials" />
-				<ModelHealth
-					v-if="tab === 'health' && ready"
-					:models="processed"
-					:catalog="catalog"
-					:health="health"
-					@select="selected = $event"
-				/>
-				<ModelRetrySettings v-if="tab === 'retries' && ready" :catalog="catalog" :model-groups="modelGroups" />
-				<ModelAliases v-if="tab === 'aliases' && ready" :catalog="catalog" />
-				<ModelPriceData v-if="tab === 'price-data'" @reloaded="refresh" /> </UiTabs
-			><ModelActionsDialog
+			</UiDialog>
+			<ModelActionsDialog
 				v-if="action"
 				:mode="action"
 				:model="actionModel"
@@ -215,13 +203,15 @@ onBeforeUnmount(() => {
 				:model-groups="modelGroups"
 				@close="action = null"
 				@changed="refresh"
-			/><ModelAliasConvertDialog
+			/>
+			<ModelAliasConvertDialog
 				v-if="convertModel"
 				:open="true"
 				:model="convertModel"
 				@close="convertModel = null"
 				@converted="converted"
-			/><ModelDetailsDrawer
+			/>
+			<ModelDetailsDrawer
 				v-if="selected"
 				:model-id="selected"
 				:catalog="catalog"
