@@ -88,10 +88,11 @@ const columns: readonly ModelColumn[] = [
 	{
 		key: "input_cost",
 		label: "Costs",
-		minWidth: 272,
+		// 峰谷模型每格两排：档位标签 + 三个价格芯片；下限按最长内容（含标签）定。
+		minWidth: 330,
 		sortable: true,
 		tooltip:
-			"Cost per 1M tokens: input, output and cache read. The database icon appears when a price came from the upstream model info.",
+			"Cost per 1M tokens: input, output and cache read. Models with peak pricing show the off-peak and peak rows. The database icon appears when a price came from the upstream model info.",
 	},
 	{
 		key: "limits",

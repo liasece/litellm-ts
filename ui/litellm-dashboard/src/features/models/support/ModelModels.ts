@@ -38,12 +38,27 @@ export interface ProxyModel extends Record<string, unknown> {
 	/** 该 deployment 当前活跃的 fallback 冷却；无冷却时缺省。 */
 	cooldown?: ModelCooldown;
 }
+/** 模型峰谷定价窗口；days 为 ISO 星期（1=周一 … 7=周日），start/end 为时区内 HH:mm，左闭右开。 */
+export interface ModelPeakWindow {
+	days: number[];
+	start: string;
+	end: string;
+}
+/** 模型峰谷定价：基础价按空闲时段配置，峰时乘 `multiplier`。 */
+export interface ModelPeakPricing {
+	windows: ModelPeakWindow[];
+	/** IANA 时区；缺省 Asia/Shanghai。 */
+	timezone?: string;
+	multiplier: number;
+}
 export interface DisplayProxyModel extends ProxyModel {
 	provider: string;
 	litellm_model_name: string | null;
 	input_cost: number | null;
 	output_cost: number | null;
 	cache_read_input_cost: number | null;
+	/** 校验过的峰谷配置；没有或不合法时为 null（列表据此决定单档还是两档）。 */
+	peak_pricing?: ModelPeakPricing | null;
 	api_base: unknown;
 	cleanedLitellmParams: Record<string, unknown>;
 	max_tokens: unknown;

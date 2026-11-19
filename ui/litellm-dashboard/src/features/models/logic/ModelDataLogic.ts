@@ -1,5 +1,6 @@
 import type { DisplayProxyModel, ProxyModel } from "../support/ModelModels";
 import { modelRecord, modelString } from "../support/ModelModels";
+import { parsePeakPricing } from "./ModelPriceTierLogic";
 export function transformModels(rows: readonly ProxyModel[], costs: Record<string, Record<string, unknown>>): DisplayProxyModel[] {
 	return rows.map((source) => {
 		const model: ProxyModel = { ...source, litellm_params: { ...source.litellm_params }, model_info: { ...source.model_info } };
@@ -15,6 +16,7 @@ export function transformModels(rows: readonly ProxyModel[], costs: Record<strin
 			input_cost: perMillion(model.model_info.input_cost_per_token),
 			output_cost: perMillion(model.model_info.output_cost_per_token),
 			cache_read_input_cost: perMillion(model.model_info.cache_read_input_token_cost),
+			peak_pricing: parsePeakPricing(model.model_info.peak_pricing) ?? null,
 			max_tokens: model.model_info.max_tokens,
 			max_input_tokens: model.model_info.max_input_tokens,
 			context_window: model.model_info.max_input_tokens ?? model.model_info.context_window ?? null,
@@ -58,6 +60,7 @@ export function normalizeModelDetails(source: ProxyModel): DisplayProxyModel {
 		input_cost: numeric(source.input_cost),
 		output_cost: numeric(source.output_cost),
 		cache_read_input_cost: numeric(source.cache_read_input_cost),
+		peak_pricing: parsePeakPricing(source.model_info.peak_pricing) ?? null,
 		api_base: source.api_base,
 		cleanedLitellmParams: modelRecord(source.cleanedLitellmParams),
 		max_tokens: source.max_tokens,

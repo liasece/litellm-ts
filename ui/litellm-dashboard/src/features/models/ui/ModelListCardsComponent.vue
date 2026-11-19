@@ -7,6 +7,7 @@ import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import ModelFamilyLabel from "../../providers/ui/ModelFamilyLabelComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
+import { modelCostTiers, peakPricingSummary } from "../logic/ModelPriceTierLogic";
 import { modelString, modelStrings, type DisplayProxyModel } from "../support/ModelModels";
 import type { ModelFamilyGroup } from "../../providers/logic/ModelFamilyGrouping";
 import type { ModelHealthStore } from "../stores/ModelHealthStore";
@@ -38,8 +39,17 @@ const price = usePriceDisplayStore();
 function fallbackNames(model: DisplayProxyModel): string[] {
 	return modelStrings(model.model_info.fallbacks);
 }
-function cost(model: DisplayProxyModel, value: number | null): string {
-	return value == null ? "-" : price.format(value, 4, modelPriceIdentity(model));
+function cost(model: DisplayProxyModel, value: number | null, factor = 1): string {
+	return value == null ? "-" : price.format(value * factor, 4, modelPriceIdentity(model));
+}
+/** 手机卡片的单价行：有峰谷定价时按档位各出一排。 */
+function costTiers(model: DisplayProxyModel) {
+	return modelCostTiers(model.peak_pricing ?? undefined);
+}
+/** 峰时窗口说明，挂在档位文字上。 */
+function tierHint(model: DisplayProxyModel): string | undefined {
+	const peak = model.peak_pricing;
+	return peak === undefined || peak === null ? undefined : peakPricingSummary(peak);
 }
 function copy(value: string): void {
 	void copyText(value).catch(() => undefined);
@@ -126,34 +136,40 @@ function convertible(model: DisplayProxyModel): boolean {
 					</div>
 					<div class="model-card__fact">
 						<dt>Costs</dt>
-						<dd class="model-card__cost">
-							<span
-								>In {{ cost(model, model.input_cost)
-								}}<UpstreamModelHint
-									:model="model.model_name"
-									:record="model.upstream_model_info"
-									field="input_cost_per_token"
-									:fields="UPSTREAM_PRICE_FIELDS"
-									:label="modelDisplayName(model)"
-							/></span>
-							<span
-								>Out {{ cost(model, model.output_cost)
-								}}<UpstreamModelHint
-									:model="model.model_name"
-									:record="model.upstream_model_info"
-									field="output_cost_per_token"
-									:fields="UPSTREAM_PRICE_FIELDS"
-									:label="modelDisplayName(model)"
-							/></span>
-							<span v-if="model.cache_read_input_cost != null"
-								>Cache read {{ cost(model, model.cache_read_input_cost)
-								}}<UpstreamModelHint
-									:model="model.model_name"
-									:record="model.upstream_model_info"
-									field="cache_read_input_token_cost"
-									:fields="UPSTREAM_PRICE_FIELDS"
-									:label="modelDisplayName(model)"
-							/></span>
+						<dd class="model-card__cost" :class="{ 'model-card__cost--tiered': costTiers(model).length > 1 }">
+							<div v-for="tier in costTiers(model)" :key="tier.key" class="model-card__cost-row" :data-tier="tier.key">
+								<span v-if="tier.label" class="model-card__cost-tier" :title="tierHint(model)">{{ tier.label }}</span>
+								<span
+									>In {{ cost(model, model.input_cost, tier.multiplier)
+									}}<UpstreamModelHint
+										v-if="tier.key === 'base'"
+										:model="model.model_name"
+										:record="model.upstream_model_info"
+										field="input_cost_per_token"
+										:fields="UPSTREAM_PRICE_FIELDS"
+										:label="modelDisplayName(model)"
+								/></span>
+								<span
+									>Out {{ cost(model, model.output_cost, tier.multiplier)
+									}}<UpstreamModelHint
+										v-if="tier.key === 'base'"
+										:model="model.model_name"
+										:record="model.upstream_model_info"
+										field="output_cost_per_token"
+										:fields="UPSTREAM_PRICE_FIELDS"
+										:label="modelDisplayName(model)"
+								/></span>
+								<span v-if="model.cache_read_input_cost != null"
+									>Cache read {{ cost(model, model.cache_read_input_cost, tier.multiplier)
+									}}<UpstreamModelHint
+										v-if="tier.key === 'base'"
+										:model="model.model_name"
+										:record="model.upstream_model_info"
+										field="cache_read_input_token_cost"
+										:fields="UPSTREAM_PRICE_FIELDS"
+										:label="modelDisplayName(model)"
+								/></span>
+							</div>
 						</dd>
 					</div>
 					<div class="model-card__fact">
