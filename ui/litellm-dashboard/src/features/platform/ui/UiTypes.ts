@@ -21,6 +21,11 @@ export interface UiTableColumn {
 	label: string;
 	dataIndex?: string | readonly string[];
 	width?: number | string;
+	/**
+	 * 自适应布局的列宽下限：表头单行放得下、常规内容不截断即可。
+	 * 容器更宽时各列按下限等比放大；更窄时保持下限、由表格横向滚动。
+	 */
+	minWidth?: number;
 	align?: "left" | "center" | "right";
 	sortable?: boolean;
 	/** 首次点击表头时的排序方向；再次点击切换方向，第三次取消排序。 */

@@ -8,6 +8,7 @@ import UiPopover from "./UiPopover.vue";
 import UiTableSortLabel from "./UiTableSortLabel.vue";
 import { displayTableValue, readTableValue, sortTableRows } from "./UiTableLogic";
 import { computeUiTableVirtualWindow } from "./UiTableVirtualLogic";
+import { computeUiTableColumnWidths } from "./UiTableWidthLogic";
 import { isTableRowInteractiveTarget } from "../logic/TableRowClick";
 import type { UiTableActiveFilter } from "./UiTableFilterModels";
 import type { UiAppearance, UiTableColumn, UiTableRow, UiSortOrder, UiTableSort } from "./UiTypes";
@@ -214,8 +215,19 @@ function scheduleVirtualMeasure(): void {
 	});
 }
 const internalWidths = reactive<Record<string, number>>({});
+/** 滚动容器内容宽度；固定布局的自适应列宽按它等比放大。 */
+const frameWidth = ref(0);
+/** 任一声明了 minWidth 的列都会让整表切换成自适应列宽。 */
+const adaptiveLayout = computed(() => props.columns.some((column) => column.minWidth != null));
+const adaptiveWidths = computed<Record<string, number>>(() =>
+	adaptiveLayout.value ? computeUiTableColumnWidths({ columns: props.columns, frameWidth: frameWidth.value }) : {},
+);
 function columnWidth(column: UiTableColumn): number | undefined {
-	return props.columnWidths?.[column.key] ?? internalWidths[column.key] ?? (typeof column.width === "number" ? column.width : undefined);
+	// 用户拖拽过的列宽优先，其次才是按容器分配的自适应宽度。
+	const explicit = props.columnWidths?.[column.key] ?? internalWidths[column.key];
+	if (explicit != null) return explicit;
+	if (adaptiveLayout.value) return adaptiveWidths.value[column.key];
+	return typeof column.width === "number" ? column.width : undefined;
 }
 const numericWidth = computed(() =>
 	props.columns.every((column) => columnWidth(column) != null)
@@ -234,6 +246,7 @@ const scrollAtEnd = ref(true);
 function measureScroll(): void {
 	const element = scroller.value;
 	if (!element) return;
+	frameWidth.value = element.clientWidth;
 	scrollable.value = element.scrollWidth > element.clientWidth + 4;
 	scrollAtEnd.value = element.scrollLeft + element.clientWidth >= element.scrollWidth - 4;
 }
@@ -336,6 +349,14 @@ function updateWidth(key: string, width: number) {
 	emit("columnResize", key, next);
 	emit("update:columnWidths", { ...(props.columnWidths ?? {}), [key]: next });
 }
+/** 0 表示交回自适应：调用方的宽度表里删掉这一列，窗口变化时它重新参与分配。 */
+function clearWidth(key: string) {
+	if (!props.columnWidths) delete internalWidths[key];
+	const next = { ...(props.columnWidths ?? {}) };
+	delete next[key];
+	emit("columnResize", key, 0);
+	emit("update:columnWidths", next);
+}
 function beginResize(event: PointerEvent, column: UiTableColumn) {
 	if (!props.resizable) return;
 	event.preventDefault();
@@ -360,7 +381,11 @@ function stopResize() {
 	document.removeEventListener("pointerup", stopResize);
 }
 function resetWidth(column: UiTableColumn) {
-	if (typeof column.width !== "number") return;
+	// 自适应表格没有固定宽度可回退，清掉手动宽度后重新参与分配。
+	if (typeof column.width !== "number") {
+		clearWidth(column.key);
+		return;
+	}
 	if (!props.columnWidths) delete internalWidths[column.key];
 	emit("columnResize", column.key, column.width);
 	emit("update:columnWidths", { ...(props.columnWidths ?? {}), [column.key]: column.width });

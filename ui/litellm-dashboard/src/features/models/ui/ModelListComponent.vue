@@ -11,14 +11,13 @@ import UiTable from "../../platform/ui/UiTable.vue";
 import UiTooltip from "../../platform/ui/UiTooltip.vue";
 import ModelHealthBadge from "./ModelHealthBadgeComponent.vue";
 import ModelListCards from "./ModelListCardsComponent.vue";
-import { usePriceDisplayStore } from "../../platform/stores/PriceDisplayStore";
 import ModelFamilyLabel from "../../providers/ui/ModelFamilyLabelComponent.vue";
+import ModelCostCell from "./ModelCostCellComponent.vue";
 import ModelCredentialCell from "./ModelCredentialCellComponent.vue";
 import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import UpstreamModelHint from "./UpstreamModelHintComponent.vue";
-import { UPSTREAM_PRICE_FIELDS } from "../support/UpstreamModelInfoModels";
 import { formatTokenCount } from "../support/UpstreamModelInfoModels";
-import { deploymentIconProps, modelDisplayName, modelPriceIdentity } from "../logic/ModelDataLogic";
+import { deploymentIconProps, modelDisplayName } from "../logic/ModelDataLogic";
 import { familyOfModel, groupByModelFamily, type ModelFamilyGroup } from "../../providers/logic/ModelFamilyGrouping";
 import { modelString, modelStrings, type ModelCatalog, type DisplayProxyModel } from "../support/ModelModels";
 import type { UiTableActiveFilter, UiTableFilterField } from "../../platform/ui/UiTableFilterModels";
@@ -45,8 +44,7 @@ const emit = defineEmits<{
 	healthDetail: [id: string];
 	refresh: [];
 }>();
-const price = usePriceDisplayStore(),
-	rows = props.store.displayed(props.catalog);
+const rows = props.store.displayed(props.catalog);
 /**
  * 转换会把这条模型换成别名，先写别名再删部署，所以既要有可删的库内部署，
  * 也要有写路由配置的权限；配置模型（db_model 为 false）只能回配置文件处理。
@@ -57,34 +55,45 @@ function convertible(model: DisplayProxyModel): boolean {
 interface ModelColumn {
 	key: string;
 	label: string;
-	width: number;
+	/** 列宽下限：表头单行放得下、常规内容不截断；容器更宽时各列按下限等比放大。 */
+	minWidth: number;
 	sortable?: boolean;
 	filters?: readonly UiTableFilterField[];
 	tooltip?: string;
 	sticky?: "left" | "right";
 }
 const columns: readonly ModelColumn[] = [
-	{ key: "model_info.id", label: "Model ID", width: 130 },
-	{ key: "model_name", label: "Model Information", width: 250, sortable: true },
-	{ key: "fallback", label: "Fallback", width: 180 },
-	{ key: "override", label: "Model Override", width: 180 },
+	// 下限按每列最长的真实内容与单行表头定：Costs 要放下三个价格芯片，
+	// 而 Fallback / Override 常常只有「-」，按内容最长的列反而留下大块空白。
+	{ key: "model_info.id", label: "Model ID", minWidth: 118 },
+	{ key: "model_name", label: "Model Information", minWidth: 230, sortable: true },
+	{ key: "fallback", label: "Fallback", minWidth: 152 },
+	{ key: "override", label: "Model Override", minWidth: 126 },
 	{
 		key: "credentials",
 		label: "Credentials",
-		width: 180,
+		minWidth: 134,
 		tooltip:
 			"Reusable: A saved credential is attached to this model. Subscription: the provider account is managed on the Subscriptions page. Manual: Credentials are configured directly on the model.",
 	},
-	{ key: "health", label: "Health Status", width: 120 },
-	{ key: "input_cost", label: "Costs", width: 120, sortable: true },
+	{ key: "health", label: "Health Status", minWidth: 116 },
+	{
+		key: "input_cost",
+		label: "Costs",
+		minWidth: 272,
+		sortable: true,
+		tooltip:
+			"Cost per 1M tokens: input, output and cache read. The database icon appears when a price came from the upstream model info.",
+	},
 	{
 		key: "limits",
 		label: "Limits",
-		width: 150,
+		minWidth: 126,
 		tooltip: "Context window and max output tokens. Hover the database icon to see the values the upstream reported.",
 	},
-	{ key: "access_groups", label: "Model Access Group", width: 180 },
-	{ key: "actions", label: "Actions", width: 120, sticky: "right" },
+	// 表头保持单行：「Model Access Group」单行要 181px，短名 + 筛选图标实测 140px。
+	{ key: "access_groups", label: "Access Group", minWidth: 142 },
+	{ key: "actions", label: "Actions", minWidth: 88, sticky: "right" },
 ];
 const groups = computed(() => [...new Set(props.store.state.rows.map((model) => model.model_name))].sort());
 const accessGroups = computed(() => [...new Set(props.store.state.rows.flatMap((model) => model.model_info.access_groups ?? []))].sort());
@@ -106,7 +115,7 @@ const modelColumnFilters = computed<readonly UiTableFilterField[]>(() => [
 const accessGroupFilters = computed<readonly UiTableFilterField[]>(() => [
 	{
 		key: "accessGroup",
-		label: "Model Access Group",
+		label: "Access Group",
 		control: {
 			kind: "select",
 			searchable: true,
@@ -134,7 +143,7 @@ const tableColumns = computed<readonly UiTableColumn[]>(() =>
 	columns.map((column) => ({
 		key: column.key,
 		label: column.label,
-		width: column.width,
+		minWidth: column.minWidth,
 		sortable: column.sortable,
 		initialSortOrder: column.key === "input_cost" ? "desc" : "asc",
 		tooltip: column.tooltip,
@@ -185,7 +194,7 @@ const activeFilters = computed<UiTableActiveFilter[]>(() => {
 	if (props.store.state.accessGroup)
 		entries.push({
 			key: "accessGroup",
-			label: "Model Access Group",
+			label: "Access Group",
 			value: props.store.state.accessGroup,
 			text: props.store.state.accessGroup,
 			match: "exact",
@@ -486,36 +495,7 @@ async function all() {
 						/>
 					</td>
 					<td class="model-cost-cell">
-						<p>
-							In: {{ model.input_cost == null ? "-" : price.format(model.input_cost, 4, modelPriceIdentity(model)) }}
-							<UpstreamModelHint
-								:model="model.model_name"
-								:record="model.upstream_model_info"
-								field="input_cost_per_token"
-								:fields="UPSTREAM_PRICE_FIELDS"
-								:label="modelDisplayName(model)"
-							/>
-						</p>
-						<p>
-							Out: {{ model.output_cost == null ? "-" : price.format(model.output_cost, 4, modelPriceIdentity(model)) }}
-							<UpstreamModelHint
-								:model="model.model_name"
-								:record="model.upstream_model_info"
-								field="output_cost_per_token"
-								:fields="UPSTREAM_PRICE_FIELDS"
-								:label="modelDisplayName(model)"
-							/>
-						</p>
-						<p v-if="model.cache_read_input_cost != null">
-							Cache read: {{ price.format(model.cache_read_input_cost, 4, modelPriceIdentity(model)) }}
-							<UpstreamModelHint
-								:model="model.model_name"
-								:record="model.upstream_model_info"
-								field="cache_read_input_token_cost"
-								:fields="UPSTREAM_PRICE_FIELDS"
-								:label="modelDisplayName(model)"
-							/>
-						</p>
+						<ModelCostCell :model="model" />
 					</td>
 					<td class="model-limits-cell">
 						<p>

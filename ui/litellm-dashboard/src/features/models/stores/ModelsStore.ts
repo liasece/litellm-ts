@@ -103,7 +103,9 @@ export function createModelsStore(api: ModelsApi = modelsApi) {
 		);
 	}
 	function setColumnWidth(key: string, width: number) {
-		state.widths[key] = Math.max(40, Math.min(500, width));
+		// 0 表示恢复自适应列宽，不再用手动宽度覆盖这一列。
+		if (!Number.isFinite(width) || width <= 0) delete state.widths[key];
+		else state.widths[key] = Math.max(40, Math.min(500, width));
 	}
 	function toggleExpanded(id: string) {
 		state.expanded = state.expanded.includes(id) ? state.expanded.filter((value) => value !== id) : [...state.expanded, id];

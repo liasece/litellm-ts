@@ -175,14 +175,33 @@
 .model-delete-button:hover {
 	color: #4f46e5;
 }
-.model-list-card .ui-table td.model-cost-cell {
-	padding-block: 4px;
-	overflow: visible;
-	white-space: normal;
+/* 单价一格一行：图标 + 数值的小块，和日志 token 列同一套读法。 */
+.model-costs {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	min-width: 0;
+	max-width: 100%;
 }
-.model-cost-cell p {
+.model-costs__metric {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	height: 22px;
+	padding: 0 4px;
+	border-radius: 4px;
+	background: #f8fafc;
+	color: #334155;
+}
+.model-costs__icon {
+	flex-shrink: 0;
+	color: #94a3b8;
+}
+.model-costs__value {
 	font-size: 12px;
 	line-height: 16px;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
 }
 .model-access-badges {
 	display: flex;
@@ -284,13 +303,6 @@
 .model-icon-button.model-delete-button {
 	padding: 6px;
 	color: #6366f1;
-}
-.model-cost-cell p + p {
-	margin-top: 2px;
-}
-.model-cost-cell p:first-child {
-	color: #111827;
-	font-weight: 500;
 }
 .model-list-card .ui-table td:nth-child(3) .model-inline,
 .model-list-card .ui-table td:nth-child(4) .model-inline {

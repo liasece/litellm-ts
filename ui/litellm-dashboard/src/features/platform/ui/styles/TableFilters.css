@@ -7,9 +7,12 @@
 	min-width: 0;
 }
 
+/* 表头始终保持单行：列比文字窄时省略，不靠折行撑高表头。 */
 .ui-table__header-label {
 	min-width: 0;
-	overflow-wrap: anywhere;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .ui-table-sort-label {
@@ -29,7 +32,9 @@
 
 .ui-table-sort-label__text {
 	min-width: 0;
-	overflow-wrap: anywhere;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .ui-table-sort-label:hover,
