@@ -122,6 +122,29 @@ export function priceSnapshot(log: LogEntry): LogPriceSnapshot | undefined {
 	};
 }
 
+/** 事后补记标记：这一行的费用不是请求发生时算出来的，而是后来按上游目录价补上的。 */
+export interface PriceBackfill {
+	/** 补记时间（ISO）。 */
+	readonly at: string;
+	readonly reason?: string;
+}
+
+/**
+ * 读取事后补记标记。
+ *
+ * 计费口径上线前的一批订阅请求在库里是 spend=0；为了让历史花费可解释，这些行按当时
+ * 上游目录价补记，并带上这个标记。界面据此把「请求时冻结」改成「事后补记」，不冒充
+ * 原始计费结果。
+ * @param log - 日志行
+ */
+export function priceBackfill(log: LogEntry): PriceBackfill | undefined {
+	const raw = record(record(record(log.metadata?.cost_breakdown)["backfill"]));
+	const at = raw["at"];
+	if (typeof at !== "string") return undefined;
+	const reason = raw["reason"];
+	return { at, ...(typeof reason === "string" ? { reason } : {}) };
+}
+
 /**
  * 本次请求里哪些单价来自上游（按展示顺序）。页面据此决定是否显示上游图标。
  * @param snapshot - 单价快照

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { LogEntry } from "./LogsModels";
-import { priceSnapshot, priceSnapshotRows, upstreamPriceFields } from "./LogsPriceModels";
+import { priceBackfill, priceSnapshot, priceSnapshotRows, upstreamPriceFields } from "./LogsPriceModels";
 
 const log = (data: Partial<LogEntry>): LogEntry => ({ request_id: "fixture", startTime: "2026-11-07T00:00:00Z", ...data });
 const frozen = log({
@@ -30,6 +30,26 @@ const frozen = log({
 			},
 		},
 	},
+});
+
+describe("backfilled price rows", () => {
+	it("marks rows whose cost was filled in later instead of at request time", () => {
+		const backfilled = log({
+			metadata: {
+				cost_breakdown: {
+					price_snapshot: {
+						unit_prices: { input_cost_per_token: 1.4e-6 },
+						sources: { input_cost_per_token: "upstream" },
+					},
+					backfill: { at: "2026-11-18T15:29:49.153Z", reason: "upstream catalog price was not in effect" },
+				},
+			},
+		});
+		expect(priceBackfill(backfilled)).toEqual({ at: "2026-11-18T15:29:49.153Z", reason: "upstream catalog price was not in effect" });
+		// 快照本身仍是上游价，费用来源图标的门槛不变。
+		expect(upstreamPriceFields(priceSnapshot(backfilled))).toEqual(["input_cost_per_token"]);
+		expect(priceBackfill(frozen)).toBeUndefined();
+	});
 });
 
 describe("frozen price snapshot", () => {

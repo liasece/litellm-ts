@@ -3,7 +3,7 @@ import { computed } from "vue";
 import type { LogEntry } from "../../support/LogsModels";
 import { costView } from "../../logic/LogDetailsMetricsLogic";
 import { formatFreshness } from "../../../models/support/UpstreamModelInfoModels";
-import { priceSnapshot, priceSnapshotRows, upstreamPriceFields } from "../../support/LogsPriceModels";
+import { priceBackfill, priceSnapshot, priceSnapshotRows, upstreamPriceFields } from "../../support/LogsPriceModels";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 const props = defineProps<{ log: LogEntry }>();
 const money = useMoneyFormatter();
@@ -21,13 +21,17 @@ const format = (value: number | undefined) => money(value, 8, props.log);
 const snapshot = computed(() => priceSnapshot(props.log));
 const priceRows = computed(() => (snapshot.value === undefined ? [] : priceSnapshotRows(snapshot.value)));
 const upstreamPriced = computed(() => upstreamPriceFields(snapshot.value).length > 0);
+// 补记行不冒充“请求时冻结”：标题与角标都标出来，鼠标悬停给出补记原因。
+const backfill = computed(() => priceBackfill(props.log));
 const percent = (value: number | undefined) => (value === undefined ? "-" : (value * 100).toFixed(2) + "%");
 </script>
 <template>
 	<div v-if="view.visible" class="ld-costs">
 		<div v-if="snapshot && priceRows.length > 0" class="ld-costs__prices">
 			<div class="ld-costs__prices-title">
-				计费单价（请求时冻结）<span v-if="upstreamPriced" class="ld-costs__prices-badge">含上游价</span>
+				计费单价（{{ backfill ? "事后补记" : "请求时冻结" }}）
+				<span v-if="upstreamPriced" class="ld-costs__prices-badge">含上游价</span>
+				<span v-if="backfill" class="ld-costs__prices-badge is-backfill" :title="backfill.reason ?? backfill.at">补记</span>
 			</div>
 			<div class="ld-costs__prices-rows">
 				<span v-for="row in priceRows" :key="row.field" class="ld-costs__prices-item" :class="{ 'is-upstream': row.fromUpstream }">

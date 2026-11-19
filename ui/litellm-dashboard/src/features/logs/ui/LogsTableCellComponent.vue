@@ -9,7 +9,7 @@ import ModelName from "../../providers/ui/ModelNameComponent.vue";
 import UpstreamModelFacts from "../../models/ui/UpstreamModelFactsComponent.vue";
 import { getProviderLogoAndName } from "../../providers/logic/ProviderIdentityLogic";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { priceSnapshot } from "../support/LogsPriceModels";
+import { priceBackfill, priceSnapshot } from "../support/LogsPriceModels";
 import {
 	buildModelResolutionLines,
 	localLogTime,
@@ -57,6 +57,7 @@ const tokenTooltip = computed(
 );
 // 费用来源只看请求时冻结的单价快照；没有快照的历史行不显示任何来源标记。
 const snapshot = computed(() => priceSnapshot(props.log));
+const backfill = computed(() => priceBackfill(props.log));
 const costFields = computed(() => [
 	{ label: "缓存输入", value: costs.value.cacheInputCost, icon: "Database" },
 	{ label: "输入", value: costs.value.inputCost, icon: "ArrowDownToLine" },
@@ -108,7 +109,7 @@ const costFields = computed(() => [
 					</div>
 				</template>
 			</UiPopover>
-			<LogsPriceHint :snapshot="snapshot" :model="log.model ?? undefined" />
+			<LogsPriceHint :snapshot="snapshot" :model="log.model ?? undefined" :backfill="backfill" />
 		</div>
 		<span v-if="(log.mcp_tool_call_count || 0) > 0 && (log.mcp_tool_call_spend || 0) > 0" class="logs-cost-extra"
 			>incl. {{ money(log.mcp_tool_call_spend || null, 6, priceIdentity) }} from {{ log.mcp_tool_call_count }} MCP</span

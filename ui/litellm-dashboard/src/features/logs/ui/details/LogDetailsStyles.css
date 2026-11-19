@@ -244,6 +244,11 @@
 	color: var(--color-success, #0f9d58);
 	font-size: 11px;
 }
+/* 补记行用中性色：它不是请求时算出来的费用，不该和「含上游价」抢同一个绿色语义。 */
+.ld-costs__prices-badge.is-backfill {
+	background: rgba(107, 114, 128, 0.14);
+	color: var(--text-secondary, #5b6270);
+}
 .ld-costs__prices-rows {
 	display: flex;
 	flex-wrap: wrap;

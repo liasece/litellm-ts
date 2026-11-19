@@ -11,7 +11,13 @@ import { computed } from "vue";
 import UiLucideIcon from "../../platform/ui/UiLucideIcon.vue";
 import UiPopover from "../../platform/ui/UiPopover.vue";
 import { formatFreshness } from "../../models/support/UpstreamModelInfoModels";
-import { priceSnapshotRows, upstreamPriceFields, type LogPriceSnapshot, type PriceSnapshotRow } from "../support/LogsPriceModels";
+import {
+	priceSnapshotRows,
+	upstreamPriceFields,
+	type LogPriceSnapshot,
+	type PriceBackfill,
+	type PriceSnapshotRow,
+} from "../support/LogsPriceModels";
 
 const props = withDefaults(
 	defineProps<{
@@ -19,8 +25,10 @@ const props = withDefaults(
 		snapshot?: LogPriceSnapshot | undefined;
 		/** 模型组名，仅用于气泡标题。 */
 		model?: string;
+		/** 事后补记标记；有值时气泡说明这一行不是请求时计费的结果。 */
+		backfill?: PriceBackfill | undefined;
 	}>(),
-	{ snapshot: undefined, model: undefined },
+	{ snapshot: undefined, model: undefined, backfill: undefined },
 );
 
 const upstreamFields = computed(() => upstreamPriceFields(props.snapshot));
@@ -39,9 +47,12 @@ const upstream = computed(() => props.snapshot?.upstream);
 			<div class="logs-price-hint">
 				<header class="logs-price-hint__header">
 					<span class="logs-price-hint__title">{{ title }}</span>
-					<span class="logs-price-hint__chip">本次按上游价计费</span>
+					<span class="logs-price-hint__chip">{{ backfill ? "按上游价补记" : "本次按上游价计费" }}</span>
 				</header>
-				<p class="logs-price-hint__note">单价在请求发生时记录，之后上游调价不会改变这次费用。</p>
+				<p v-if="backfill" class="logs-price-hint__note">
+					该行费用是按上游目录价事后补记的（原始请求发生在计费口径生效前），之后上游调价不会改变它。
+				</p>
+				<p v-else class="logs-price-hint__note">单价在请求发生时记录，之后上游调价不会改变这次费用。</p>
 				<dl class="logs-price-hint__rows">
 					<div v-for="row in rows" :key="row.field" class="logs-price-hint__row" :class="{ 'is-upstream': row.fromUpstream }">
 						<dt>{{ row.label }}单价</dt>
