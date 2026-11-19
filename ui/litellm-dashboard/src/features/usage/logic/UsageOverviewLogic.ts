@@ -13,7 +13,6 @@ import type {
 	UsageMetadata,
 	UsageSummaryResponse,
 	UsageTeam,
-	UsageDetailView,
 } from "../support/UsageModels";
 import { formatKeyLabel } from "./UsageSummaryLogic";
 
@@ -179,40 +178,6 @@ export function summaryOverall(summary: UsageSummaryResponse | null): ActivityOv
 		total_cache_creation_input_tokens: summary.metadata.total_cache_creation_input_tokens,
 		daily_data: [...summary.results].sort((left, right) => left.date.localeCompare(right.date)),
 	};
-}
-
-export interface ActivityTopEntity {
-	key: string;
-	label: string;
-	tokens: number;
-	spend: number;
-	requests: number;
-}
-
-/** 顶部 Token 排行使用 summary 的全量维度，避免“Top”只覆盖当前 20 个分页实体。 */
-export function summaryTopEntities(summary: UsageSummaryResponse | null, view: UsageDetailView, teams: UsageTeam[]): ActivityTopEntity[] {
-	if (!summary) return [];
-	return summary.dimensions[view].map((item) => {
-		const metadata = (item.metadata ?? {}) as Partial<KeyMetadata>;
-		return {
-			key: item.key,
-			label:
-				view === "api_keys"
-					? formatKeyLabel(
-							{
-								key_alias: metadata.key_alias ?? null,
-								key_name: metadata.key_name ?? null,
-								team_id: metadata.team_id ?? null,
-							},
-							item.key,
-							teams,
-						)
-					: item.key,
-			tokens: item.metrics.total_tokens,
-			spend: item.metrics.spend,
-			requests: item.metrics.api_requests,
-		};
-	});
 }
 
 export function metricsFromDetail(detail: UsageDetailResponse | null): SpendMetrics[] {

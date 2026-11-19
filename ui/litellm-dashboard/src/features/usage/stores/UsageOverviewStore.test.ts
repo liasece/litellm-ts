@@ -35,7 +35,7 @@ function summary(): UsageSummaryResponse {
 	};
 }
 
-function detail(page: number): UsageDetailResponse {
+function detail(page: number, hasMore = page === 1, totalPages = 2): UsageDetailResponse {
 	return {
 		view: "models",
 		results: [{ date: "2026-11-01", metrics }],
@@ -47,7 +47,7 @@ function detail(page: number): UsageDetailResponse {
 				top_api_keys: [{ key: "key-" + page, metrics }],
 			},
 		],
-		metadata: { ...summary().metadata, page, total_pages: 2, has_more: page === 1, total_count: 2 },
+		metadata: { ...summary().metadata, page, total_pages: totalPages, has_more: hasMore, total_count: totalPages },
 	};
 }
 
@@ -66,6 +66,23 @@ describe("UsageOverviewStore", () => {
 		await store.loadDetail(query, "models", 2, true);
 		expect(store.state.details.models?.items.map((item) => item.key)).toEqual(["model-1", "model-2"]);
 		expect(store.state.details.models?.metadata.has_more).toBe(false);
+		store.reset();
+	});
+	it("loads every detail page so the chart covers entities beyond the first spend page", async () => {
+		const api: UsageInsightsApi = {
+			summary: vi.fn().mockResolvedValue(summary()),
+			detail: vi
+				.fn()
+				.mockResolvedValueOnce(detail(1, true, 3))
+				.mockResolvedValueOnce(detail(2, true, 3))
+				.mockResolvedValueOnce(detail(3, false, 3)),
+			full: vi.fn(),
+		};
+		const store = createUsageOverviewStore(api);
+		const loaded = await store.loadCompleteDetail(query, "models");
+		expect(api.detail).toHaveBeenCalledTimes(3);
+		expect(store.state.details.models?.items.map((item) => item.key)).toEqual(["model-1", "model-2", "model-3"]);
+		expect(loaded?.metadata.has_more).toBe(false);
 		store.reset();
 	});
 	it("ignores an obsolete summary response after a newer filter", async () => {

@@ -162,15 +162,17 @@ async function get<T>(path: string, signal: AbortSignal | undefined, parse: (val
 		throw error;
 	}
 }
+/**
+ * detail 的页大小取后端上限（`buildDailyActivityDetail` 里 Math.min(100, …)）。
+ *
+ * 趋势图与折叠列表共用这份明细，且不再把余量并成 “Other”：实体按花费排序，免费却用量
+ * 很大的模型会落在第一页之外，一次多取一些能少一轮补齐分页的请求。
+ */
+const DETAIL_PAGE_SIZE = 100;
 export const dailyActivityApi: UsageApi & UsageInsightsApi = {
 	page: (query, page, signal) => get(dailyActivityPath(query, page), signal, parseDailyActivity),
 	aggregated: (query, signal) => get(dailyActivityPath(query), signal, parseDailyActivity),
 	summary: (query, signal) => get(dailyActivityPath(query, undefined, "summary"), signal, parseDailyActivitySummary),
-	detail: (query, view, page, signal) =>
-		get(
-			dailyActivityPath(query, page, view, view === "endpoints" || view === "mcp_servers" ? 100 : 20),
-			signal,
-			parseDailyActivityDetail,
-		),
+	detail: (query, view, page, signal) => get(dailyActivityPath(query, page, view, DETAIL_PAGE_SIZE), signal, parseDailyActivityDetail),
 	full: (query, signal) => get(dailyActivityPath(query), signal, parseDailyActivity),
 };

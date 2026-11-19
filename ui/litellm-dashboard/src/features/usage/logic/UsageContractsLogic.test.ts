@@ -3,7 +3,7 @@ import { dailyActivityPath, parseDailyActivity, parseDailyActivityDetail, parseD
 import { emptyDailyActivity } from "../stores/DailyActivityStore";
 import { processActivityData } from "./ActivityMetricsLogic";
 import { emptyMetrics, modelRankings } from "./UsageSummaryLogic";
-import { detailActivity, summaryOverall, summaryTopEntities } from "./UsageOverviewLogic";
+import { detailActivity, summaryOverall } from "./UsageOverviewLogic";
 describe("usage wire and aggregation contracts", () => {
 	it("sends local calendar dates, offset minutes, comma separated IDs and the dashboard-team exclusion", () => {
 		const query = {
@@ -143,10 +143,6 @@ describe("usage wire and aggregation contracts", () => {
 			},
 		});
 		expect(summaryOverall(summary)).toMatchObject({ total_spend: 2, total_tokens: 40 });
-		expect(summaryTopEntities(summary, "models", [])[0]).toMatchObject({ key: "model-b", tokens: 90 });
-		expect(summaryTopEntities(summary, "api_keys", [{ team_id: "t1", team_alias: "Engineering" }])[0].label).toBe(
-			"Build (team: Engineering)",
-		);
 		const detail = parseDailyActivityDetail({
 			view: "models",
 			results: [{ date: "2026-11-02", metrics }],

@@ -1,12 +1,19 @@
 import type { BreakdownMetrics, DailyData, SpendMetrics, UsageDetailItem, UsageDetailResponse, UsageTeam } from "../support/UsageModels";
-import { usageColors, type ChartRow } from "./UsageChartLogic";
+import type { ChartRow } from "./UsageChartLogic";
+import { activitySeriesColors } from "./UsageSeriesPaletteLogic";
 import { formatKeyLabel } from "./UsageSummaryLogic";
 
 /**
  * Activity 顶部堆叠柱状图的数据。
  *
- * 每个系列就是一条柱子中的一段，颜色由实体在页面中的先后顺序决定，Token 图与
- * 花费图共用同一套颜色，方便横向对照“这个实体花的 token 与钱”。
+ * Token 图与花费图回答的是两个不同问题，所以各自按本榜排序：花费图不被“Token 很多但
+ * 便宜”的实体挤乱，Token 图也不按价格排序。两张图都列出全部实体，颜色按两榜并集分配，
+ * 同一实体在两图里同色同名，方便横向对照“这个实体花的 token 与钱”。
+ *
+ * 曾经只给前 7 名单独着色、余量并成 “Other”。问题在于 detail 按花费排序分页，免费却
+ * 用量很大的模型（生产上是 `hy4-flash-free`）既进不了花费榜，也落在第二页之外，于是整段
+ * Token 被 “Other” 吞掉，图上再也看不出是谁在用。现在没有聚合兜底，每个实体都是独立
+ * 系列；调用方必须把该维度的分页取齐，否则柱子会比当日总量矮。
  */
 export interface ActivitySeriesSlice {
 	/** 图表系列名，同时也是柱状图数据对象的键。 */
@@ -14,31 +21,22 @@ export interface ActivitySeriesSlice {
 	color: string;
 	tokens: number;
 	spend: number;
-	/** 余量合并出来的 “Other”，没有余量时不生成。 */
-	other: boolean;
 }
 
+/** 一张图的数据：本图只包含该指标有数值的实体，图例顺序即本图排序。 */
 export interface ActivitySeriesChart {
 	rows: ChartRow[];
 	categories: string[];
 	colors: string[];
+	/** 本图图例：按本图榜单顺序排列的实体。 */
+	slices: ActivitySeriesSlice[];
 }
 
 export interface ActivitySeries {
-	slices: ActivitySeriesSlice[];
 	tokens: ActivitySeriesChart;
 	spend: ActivitySeriesChart;
 }
 
-/** 颜色按顺序分配：前几个用现有调色板，超出后循环，保证同一张图内尽量可区分。 */
-const SERIES_COLORS = ["indigo", "cyan", "emerald", "amber", "rose", "violet", "orange", "blue"];
-const OTHER_COLOR = "#9ca3af";
-const OTHER_LABEL = "Other";
-/** 图例一行放得下的系列数；多出的实体并入 Other，避免柱子碎得看不出趋势。 */
-export const ACTIVITY_SERIES_LIMIT = 7;
-/** 花费是浮点累加，余量可能只剩 1e-15；低于这两个阈值说明只是误差，不该长出一个 Other 图例。 */
-const SPEND_NOISE = 1e-6;
-const TOKEN_NOISE = 0.5;
 /** 支持绘制堆叠图的 breakdown 维度；providers/model_groups 等维度没有对应 Activity Tab。 */
 export type ActivitySeriesDimension = "models" | "api_keys" | "mcp_servers" | "endpoints" | "entities";
 
@@ -58,11 +56,11 @@ interface EntityTotal {
 }
 
 function emptyChart(): ActivitySeriesChart {
-	return { rows: [], categories: [], colors: [] };
+	return { rows: [], categories: [], colors: [], slices: [] };
 }
 
 function emptySeries(): ActivitySeries {
-	return { slices: [], tokens: emptyChart(), spend: emptyChart() };
+	return { tokens: emptyChart(), spend: emptyChart() };
 }
 
 /** 同名实体（例如两个 key 用了同一个别名）必须各自成段，否则会被合并成一根柱子。 */
@@ -73,36 +71,24 @@ function uniqueLabel(label: string, used: Map<string, number>): string {
 }
 
 /**
- * 按花费与 Token 两个榜单挑选要单独着色的实体。
+ * 按某个指标从高到低排实体。
  *
- * 只按花费排序会让“Token 很多但便宜”的实体沉到 Other 里；只按 Token 排序又会
- * 漏掉贵的实体。取两个名次的较小值，等于保留“至少在一个榜上靠前”的实体。
+ * 两名相同时按 key 排序，保证同一份数据每次渲染的图例顺序一致。
  */
-function rankedEntities(entities: EntityTotal[], limit: number): EntityTotal[] {
-	const rank = (value: (entity: EntityTotal) => number) => {
-		const order = [...entities].sort((left, right) => value(right) - value(left) || left.key.localeCompare(right.key));
-		return new Map(order.map((entity, index) => [entity.key, index]));
-	};
-	const spendRank = rank((entity) => entity.spend),
-		tokenRank = rank((entity) => entity.tokens);
-	return (
-		[...entities]
-			.map((entity) => ({ entity, best: Math.min(spendRank.get(entity.key) ?? 0, tokenRank.get(entity.key) ?? 0) }))
-			.sort((left, right) => left.best - right.best || right.entity.spend - left.entity.spend)
-			.slice(0, limit)
-			// 图例按花费从高到低，与页面下方的实体列表顺带对齐。
-			.sort((left, right) => right.entity.spend - left.entity.spend)
-			.map((entry) => entry.entity)
-	);
+function rankedBy(entities: EntityTotal[], value: (entity: EntityTotal) => number): EntityTotal[] {
+	return [...entities].sort((left, right) => value(right) - value(left) || left.key.localeCompare(right.key));
 }
+
+/** 一张图的取数指标；每张图只列该指标大于 0 的实体，避免图例里出现与这张图无关的名字。 */
+type SeriesMetric = "tokens" | "spend";
 
 /**
  * 把“实体 → 每日指标”摊平成两张堆叠柱状图。
  *
- * `dayTotals` 是每天的真实总量；没被单独着色的实体由它减去已选实体得到，所以
- * 柱高总和始终等于当天用量。缺数据的日子按 0 处理，保证所有系列形状一致。
+ * 两个榜单各按自己的指标排序，并集只用来分配颜色：先给 Token 榜的实体排色，再给只在
+ * 花费榜出现的实体顺延。每张图的图例与柱段顺序都取自本榜，图内不再合并任何余量。
  */
-function buildSeries(entities: EntityDaily[], dates: string[], dayTotals: Map<string, SpendMetrics>, limit: number): ActivitySeries {
+function buildSeries(entities: EntityDaily[], dates: string[]): ActivitySeries {
 	const totals: EntityTotal[] = entities
 		.map((entity) => ({
 			key: entity.key,
@@ -113,63 +99,39 @@ function buildSeries(entities: EntityDaily[], dates: string[], dayTotals: Map<st
 		}))
 		.filter((entity) => entity.tokens > 0 || entity.spend > 0);
 	if (totals.length === 0) return emptySeries();
-	const selected = rankedEntities(totals, limit),
+	const tokenRanked = rankedBy(totals, (entity) => entity.tokens),
+		spendRanked = rankedBy(totals, (entity) => entity.spend);
+	const union = [...tokenRanked, ...spendRanked.filter((entity) => entity.tokens <= 0)],
+		palette = activitySeriesColors(union.length),
 		usedLabels = new Map<string, number>(),
-		labels = new Map(selected.map((entity) => [entity.key, uniqueLabel(entity.rawLabel, usedLabels)]));
+		labels = new Map<string, string>(),
+		colors = new Map<string, string>();
+	union.forEach((entity, index) => {
+		labels.set(entity.key, uniqueLabel(entity.rawLabel, usedLabels));
+		colors.set(entity.key, palette[index]!);
+	});
 
 	const orderedDates = [...new Set(dates)].sort((left, right) => left.localeCompare(right));
-	const tokenRows: ChartRow[] = [],
-		spendRows: ChartRow[] = [],
-		otherRow = { tokens: 0, spend: 0 };
-	for (const date of orderedDates) {
-		const tokenRow: ChartRow = { date },
-			spendRow: ChartRow = { date };
-		let tokenSum = 0,
-			spendSum = 0;
-		for (const entity of selected) {
-			const metrics = entity.daily.get(date),
-				tokens = metrics?.total_tokens ?? 0,
-				spend = metrics?.spend ?? 0,
-				label = labels.get(entity.key)!;
-			tokenRow[label] = tokens;
-			spendRow[label] = spend;
-			tokenSum += tokens;
-			spendSum += spend;
-		}
-		const total = dayTotals.get(date);
-		// 浮点误差会让余量出现 -0.0000001，夹到 0 免得堆叠出现负段。
-		const restTokens = Math.max(0, (total?.total_tokens ?? tokenSum) - tokenSum),
-			restSpend = Math.max(0, (total?.spend ?? spendSum) - spendSum),
-			meaningful = restTokens >= TOKEN_NOISE || restSpend >= SPEND_NOISE;
-		// 每天都写 Other 键，图表系列在所有列上形状一致；只有真实余量才生成图例项。
-		tokenRow[OTHER_LABEL] = meaningful ? restTokens : 0;
-		spendRow[OTHER_LABEL] = meaningful ? restSpend : 0;
-		if (meaningful) {
-			otherRow.tokens += restTokens;
-			otherRow.spend += restSpend;
-		}
-		tokenRows.push(tokenRow);
-		spendRows.push(spendRow);
-	}
-
-	const slices: ActivitySeriesSlice[] = selected.map((entity, index) => {
-		const label = labels.get(entity.key)!;
-		return {
-			label,
-			color: usageColors[SERIES_COLORS[index % SERIES_COLORS.length]]!,
-			tokens: tokenRows.reduce((sum, row) => sum + Number(row[label] ?? 0), 0),
-			spend: spendRows.reduce((sum, row) => sum + Number(row[label] ?? 0), 0),
-			other: false,
-		};
-	});
-	if (otherRow.tokens > 0 || otherRow.spend > 0)
-		slices.push({ label: OTHER_LABEL, color: OTHER_COLOR, tokens: otherRow.tokens, spend: otherRow.spend, other: true });
-
-	return {
-		slices,
-		tokens: { rows: tokenRows, categories: slices.map((slice) => slice.label), colors: slices.map((slice) => slice.color) },
-		spend: { rows: spendRows, categories: slices.map((slice) => slice.label), colors: slices.map((slice) => slice.color) },
+	const buildChart = (ranked: EntityTotal[], metric: SeriesMetric): ActivitySeriesChart => {
+		const selected = ranked.filter((entity) => (metric === "tokens" ? entity.tokens : entity.spend) > 0);
+		const rows = orderedDates.map((date) => {
+			const row: ChartRow = { date };
+			for (const entity of selected) {
+				const metrics = entity.daily.get(date);
+				row[labels.get(entity.key)!] = metric === "tokens" ? (metrics?.total_tokens ?? 0) : (metrics?.spend ?? 0);
+			}
+			return row;
+		});
+		const slices: ActivitySeriesSlice[] = selected.map((entity) => ({
+			label: labels.get(entity.key)!,
+			color: colors.get(entity.key)!,
+			tokens: entity.tokens,
+			spend: entity.spend,
+		}));
+		return { rows, categories: slices.map((slice) => slice.label), colors: slices.map((slice) => slice.color), slices };
 	};
+
+	return { tokens: buildChart(tokenRanked, "tokens"), spend: buildChart(spendRanked, "spend") };
 }
 
 function detailLabel(item: UsageDetailItem, teams: UsageTeam[], keys: boolean): string {
@@ -183,22 +145,16 @@ function detailLabel(item: UsageDetailItem, teams: UsageTeam[], keys: boolean): 
 }
 
 /**
- * 把某维度 detail 响应的已加载实体转成堆叠图（Global 的 Model/Key/MCP/Endpoint Tab）。
+ * 把某维度 detail 响应的实体转成堆叠图（Global 的 Model/Key/MCP/Endpoint Tab）。
  *
- * 数据来自当前已加载的实体（默认按花费排序的第一页，加载更多后会补进新实体），
- * 每天的总量取自响应里的 `results`，因此未加载的实体仍然计入柱子总高度，不会
- * 出现“图上总量小于实际用量”的错觉。
+ * 数据来自该维度的完整明细：调用方要先把分页取齐（见 `UsageOverviewStore.loadCompleteDetail`），
+ * 否则靠后的实体会缺段，柱高对不上当日总量。
  *
  * @param detail - 当前维度 detail 响应；为空时返回空图
  * @param teams - 团队别名，用于 Key 展示
  * @param keys - 当前维度是否为 API Key
  */
-export function activitySeries(
-	detail: UsageDetailResponse | null,
-	teams: UsageTeam[],
-	keys: boolean,
-	limit = ACTIVITY_SERIES_LIMIT,
-): ActivitySeries {
+export function activitySeries(detail: UsageDetailResponse | null, teams: UsageTeam[], keys: boolean): ActivitySeries {
 	if (!detail || detail.items.length === 0) return emptySeries();
 	const entities: EntityDaily[] = detail.items.map((item) => ({
 		key: item.key,
@@ -206,7 +162,7 @@ export function activitySeries(
 		daily: new Map(item.daily.map((day) => [day.date, day.metrics])),
 	}));
 	const dates = [...detail.results.map((row) => row.date), ...detail.items.flatMap((item) => item.daily.map((day) => day.date))];
-	return buildSeries(entities, dates, new Map(detail.results.map((row) => [row.date, row.metrics])), limit);
+	return buildSeries(entities, dates);
 }
 
 /**
@@ -225,7 +181,6 @@ export function activityBreakdownSeries(
 	dimension: ActivitySeriesDimension,
 	teams: UsageTeam[],
 	keys: boolean,
-	limit = ACTIVITY_SERIES_LIMIT,
 ): ActivitySeries {
 	if (days.length === 0) return emptySeries();
 	const grouped = new Map<string, EntityDaily>();
@@ -244,8 +199,6 @@ export function activityBreakdownSeries(
 	return buildSeries(
 		[...grouped.values()],
 		days.map((day) => day.date),
-		new Map(days.map((day) => [day.date, day.metrics])),
-		limit,
 	);
 }
 
@@ -265,12 +218,12 @@ export interface ActivityTooltipRow {
 }
 
 /**
- * 堆叠柱状图的悬浮明细：只列出当天有数值的系列，按数值从大到小。
+ * 堆叠柱状图的悬浮明细：列出当天有数值的全部系列，按数值从大到小。
  * 直接复用默认 tooltip 会把整张图的系列全列一遍，鼠标停在空柱子上时尤其吵。
  */
 export function activityTooltipRows(chart: ActivitySeriesChart, row: ChartRow): ActivityTooltipRow[] {
 	return chart.categories
-		.map((label, index) => ({ label, color: chart.colors[index] ?? OTHER_COLOR, value: Number(row[label] ?? 0) }))
+		.map((label, index) => ({ label, color: chart.colors[index] ?? chart.colors[0] ?? "#9ca3af", value: Number(row[label] ?? 0) }))
 		.filter((entry) => Number.isFinite(entry.value) && entry.value > 0)
 		.sort((left, right) => right.value - left.value);
 }

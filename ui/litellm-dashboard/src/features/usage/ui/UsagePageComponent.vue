@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
 import UiSelect from "../../platform/ui/UiSelect.vue";
 import UiButton from "../../platform/ui/UiButton.vue";
-import UiTabs from "../../platform/ui/UiTabs.vue";
 import UiCard from "../../platform/ui/UiCard.vue";
 import UiIcon from "../../platform/ui/UiIcon.vue";
 import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
+import { currentPageKey } from "../../application/logic/PageContext";
+import { usageSection } from "../logic/UsageSections";
 import { isAdminRole } from "../../identity/logic/UserRoleLogic";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
@@ -23,9 +24,7 @@ import {
 	emptyUsageMetadata,
 	summaryKeyRankings,
 	summaryModelRankings,
-	summaryOverall,
 	summaryProviderRankings,
-	summaryTopEntities,
 } from "../logic/UsageOverviewLogic";
 import UsageChart from "./charts/UsageChartComponent.vue";
 import UsageChartLoader from "./UsageChartLoaderComponent.vue";
@@ -38,7 +37,7 @@ import UsageEndpoint from "./UsageEndpointComponent.vue";
 import UsageEntity from "./UsageEntityComponent.vue";
 import UsageExport from "./UsageExportDialogComponent.vue";
 import UsageUpstreamQuota from "./UsageUpstreamQuotaComponent.vue";
-import { useTabStripScroll } from "./UsageTabStripScroll";
+import UiAccessDenied from "../../platform/ui/UiAccessDenied.vue";
 import "./UsageStyles.css";
 import "../styles/UsageAuxiliaryStyles.css";
 const auth = useAuthenticationStore(),
@@ -47,7 +46,6 @@ const auth = useAuthenticationStore(),
 const admin = computed(() => isAdminRole(auth.userRole.value));
 const date = ref<DateRangeValue>({ from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), to: new Date() });
 const view = ref<UsageView>("global"),
-	tab = ref("cost"),
 	selectedUser = ref<string | null>(admin.value ? null : (auth.state.session?.user_id ?? null));
 const modelMode = ref<"groups" | "individual">("groups"),
 	exportOpen = ref(false),
@@ -57,6 +55,16 @@ const modelMode = ref<"groups" | "individual">("groups"),
 const overview = createUsageOverviewStore(),
 	catalog = createUsageCatalogStore(),
 	lists = catalog.state;
+/** 同一个组件承载多个页面：分区来自 URL 解析出的页面 id，切页面时组件实例不重建，日期与视图选择都留着。 */
+const page = inject(currentPageKey, null);
+const section = computed(() => usageSection(page?.value ?? "new_usage"));
+const sectionTitles = {
+	cost: "Cost",
+	models: "Model Activity",
+	keys: "Key Activity",
+	endpoints: "Endpoint Activity",
+	quota: "Upstream Account Quota",
+} as const;
 const effectiveUser = computed(() => (admin.value ? selectedUser.value : (auth.state.session?.user_id ?? null)));
 function currentQuery(): UsageQuery | null {
 	const from = date.value.from,
@@ -66,17 +74,18 @@ function currentQuery(): UsageQuery | null {
 }
 const detailView = computed<UsageDetailView | null>(() => {
 	if (view.value !== "global") return null;
-	if (tab.value === "models") return "models";
-	if (tab.value === "keys") return "api_keys";
-	if (tab.value === "mcp") return "mcp_servers";
-	if (tab.value === "endpoints") return "endpoints";
+	if (section.value === "models") return "models";
+	if (section.value === "keys") return "api_keys";
+	if (section.value === "endpoints") return "endpoints";
 	return null;
 });
 async function loadActiveDetail() {
 	const query = currentQuery(),
 		active = detailView.value;
 	if (!query || !active || !overview.state.summary || overview.state.detailLoading[active] || overview.state.details[active]) return;
-	await overview.loadDetail(query, active);
+	// 图与折叠列表共用同一份明细；detail 按花费排序，只取第一页会让免费但用量大的模型
+	// 从趋势图里整段消失，所以这里一次把该维度的分页取齐。
+	await overview.loadCompleteDetail(query, active);
 }
 watch(
 	() => [date.value.from?.getTime(), date.value.to?.getTime(), effectiveUser.value, auth.state.session, view.value],
@@ -90,12 +99,12 @@ watch(
 		}
 		await overview.loadSummary(query);
 		if (!overview.state.loading) dateChanging.value = false;
-		// 日期变化时当前 Tab 的 detail 已被 summary 重置，只有仍停留在明细 Tab 才需要补拉第一页。
+		// 日期变化时当前分区的 detail 已被 summary 重置，只有仍停在明细分区才需要补拉第一页。
 		await loadActiveDetail();
 	},
 	{ immediate: true },
 );
-watch([tab, view], async () => {
+watch([section, view], async () => {
 	if (view.value !== "global") return;
 	await loadActiveDetail();
 });
@@ -107,9 +116,6 @@ watch(
 	{ immediate: true },
 );
 void catalog.initialize(admin.value);
-watch(view, () => {
-	tab.value = "cost";
-});
 onBeforeUnmount(() => {
 	overview.reset();
 	catalog.dispose();
@@ -152,10 +158,8 @@ const entityOptions = computed<Record<string, EntityOption[]>>(() => ({
 }));
 const modelMetrics = computed(() => detailActivity(overview.state.details.models ?? null, app.state.teams, false));
 const keyMetrics = computed(() => detailActivity(overview.state.details.api_keys ?? null, app.state.teams, true));
-const mcpMetrics = computed(() => detailActivity(overview.state.details.mcp_servers ?? null, app.state.teams, false));
 const modelSeries = computed(() => activitySeries(overview.state.details.models ?? null, app.state.teams, false));
 const keySeries = computed(() => activitySeries(overview.state.details.api_keys ?? null, app.state.teams, true));
-const mcpSeries = computed(() => activitySeries(overview.state.details.mcp_servers ?? null, app.state.teams, false));
 const endpointSeries = computed(() => activitySeries(overview.state.details.endpoints ?? null, app.state.teams, false));
 const models = computed(() => summaryModelRankings(overview.state.summary)),
 	groups = computed(() => summaryModelRankings(overview.state.summary, true)),
@@ -163,11 +167,6 @@ const models = computed(() => summaryModelRankings(overview.state.summary)),
 	keys = computed(() => summaryKeyRankings(overview.state.summary));
 const metadata = computed(() => overview.state.summary?.metadata ?? emptyUsageMetadata());
 const days = computed(() => [...(overview.state.summary?.results ?? [])].sort((a, b) => a.date.localeCompare(b.date)));
-const overall = computed(() => summaryOverall(overview.state.summary));
-const topEntities = computed(() => {
-	const active = detailView.value;
-	return active ? summaryTopEntities(overview.state.summary, active, app.state.teams) : [];
-});
 function detailHasMore(active: UsageDetailView): boolean {
 	return Boolean(overview.state.details[active]?.metadata.has_more);
 }
@@ -194,13 +193,6 @@ async function openExport() {
 		exportLoading.value = false;
 	}
 }
-const tabs = [
-	{ key: "cost", label: "Cost" },
-	{ key: "models", label: "Model Activity" },
-	{ key: "keys", label: "Key Activity" },
-	{ key: "mcp", label: "MCP Server Activity" },
-	{ key: "endpoints", label: "Endpoint Activity" },
-];
 function changeView(value: unknown) {
 	if (typeof value === "string" && viewOptions.value.some((v) => v.value === value)) view.value = value as UsageView;
 }
@@ -217,201 +209,186 @@ function icon(value: unknown) {
 function daily(row: Record<string, unknown>): DailyData {
 	return row as unknown as DailyData;
 }
-const tabsStrip = ref<HTMLElement>();
-const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.value);
 </script>
 <template>
 	<div class="usage-page">
 		<div class="usage-page-content">
-			<div class="usage-toolbar">
-				<div class="usage-view-select">
-					<div class="usage-view-label">
-						<h3>Usage View</h3>
-						<p>Select the usage data you want to view</p>
-					</div>
-					<UiSelect class="usage-view-control" :model-value="view" :options="viewOptions" @update:model-value="changeView"
-						><template #value="{ option }"
-							><div class="usage-view-value">
-								<div>
-									<span class="usage-view-value-icon"><UiIcon :name="icon(option.value)" :size="16" /></span>
-								</div>
-								<span class="usage-view-value-label">{{ option.label }}</span>
-							</div></template
-						><template #option="{ option }"
-							><span class="usage-view-option"
-								><UiIcon :name="icon(option.value)" :size="16" /><span
-									><b>{{ option.label }}</b
-									><small>{{ option.description }}</small></span
-								></span
-							></template
-						></UiSelect
-					>
+			<header v-if="section !== 'quota'" class="usage-heading">
+				<div>
+					<h2>{{ view === "global" ? sectionTitles[section] : viewOptions.find((option) => option.value === view)?.label }}</h2>
 				</div>
-				<UiSelect
-					v-if="view === 'global' && admin"
-					class="usage-user-filter"
-					:model-value="selectedUser"
-					:options="lists.users"
-					placeholder="Select user to filter..."
-					searchable
-					clearable
-					:filterable="false"
-					:loading="lists.usersLoading"
-					:empty-text="lists.usersLoading ? '' : 'No users found'"
-					@update:model-value="changeUser"
-					@search="catalog.searchUsers"
-					@popup-scroll="catalog.scrollUsers"
-					><template #footer
-						><div v-if="lists.usersFetchingMore" class="usage-user-loading"><UiSpinner :size="14" /></div></template
-				></UiSelect>
-				<div class="usage-toolbar-date"><AdvancedDatePicker :value="date" show-quick-select @value-change="changeDate" /></div>
-			</div>
-			<div v-if="view === 'global'">
-				<div class="usage-global-tabs-toolbar">
-					<div ref="tabsStrip" class="usage-global-tabs-scroll usage-tab-strip" :style="tabsFadeStyle">
-						<UiTabs v-model="tab" :items="tabs" appearance="tremor" class="usage-solid-tabs" />
-					</div>
-					<div class="usage-global-tab-actions">
-						<UiButton size="small" :loading="exportLoading" :disabled="exportLoading" @click="openExport"
-							><template #icon
-								><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-									/></svg></template
-							>Export Data</UiButton
+				<UiButton v-if="view === 'global'" size="small" :loading="exportLoading" :disabled="exportLoading" @click="openExport"
+					><template #icon
+						><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+							/></svg></template
+					>Export Data</UiButton
+				>
+			</header>
+			<template v-if="section === 'quota'">
+				<UiAccessDenied v-if="!admin" message="Ask your proxy admin for access to upstream account quota" />
+				<UsageUpstreamQuota v-else :enabled="true" />
+			</template>
+			<template v-else>
+				<div class="usage-toolbar">
+					<div class="usage-view-select">
+						<div class="usage-view-label">
+							<h3>Usage View</h3>
+							<p>Select the usage data you want to view</p>
+						</div>
+						<UiSelect class="usage-view-control" :model-value="view" :options="viewOptions" @update:model-value="changeView"
+							><template #value="{ option }"
+								><div class="usage-view-value">
+									<div>
+										<span class="usage-view-value-icon"><UiIcon :name="icon(option.value)" :size="16" /></span>
+									</div>
+									<span class="usage-view-value-label">{{ option.label }}</span>
+								</div></template
+							><template #option="{ option }"
+								><span class="usage-view-option"
+									><UiIcon :name="icon(option.value)" :size="16" /><span
+										><b>{{ option.label }}</b
+										><small>{{ option.description }}</small></span
+									></span
+								></template
+							></UiSelect
 						>
 					</div>
+					<UiSelect
+						v-if="view === 'global' && admin"
+						class="usage-user-filter"
+						:model-value="selectedUser"
+						:options="lists.users"
+						placeholder="Select user to filter..."
+						searchable
+						clearable
+						:filterable="false"
+						:loading="lists.usersLoading"
+						:empty-text="lists.usersLoading ? '' : 'No users found'"
+						@update:model-value="changeUser"
+						@search="catalog.searchUsers"
+						@popup-scroll="catalog.scrollUsers"
+						><template #footer
+							><div v-if="lists.usersFetchingMore" class="usage-user-loading"><UiSpinner :size="14" /></div></template
+					></UiSelect>
+					<div class="usage-toolbar-date"><AdvancedDatePicker :value="date" show-quick-select @value-change="changeDate" /></div>
 				</div>
-				<div class="usage-global-panels">
-					<div v-show="tab === 'cost'" class="usage-global-cost">
-						<UsageMetrics
-							class="usage-global-wide"
-							:metadata="metadata"
-							:total-spend="metadata.total_spend || 0"
-							:max-budget="lists.maxBudget"
-							:date-range-label="dateRangeLabel(date.from, date.to)"
+				<div v-if="view === 'global'">
+					<div class="usage-global-panels">
+						<div v-show="section === 'cost'" class="usage-global-cost">
+							<UsageMetrics
+								class="usage-global-wide"
+								:metadata="metadata"
+								:total-spend="metadata.total_spend || 0"
+								:max-budget="lists.maxBudget"
+								:date-range-label="dateRangeLabel(date.from, date.to)"
+							/>
+							<UiCard class="usage-panel usage-global-half" appearance="tremor"
+								><h2>Daily Spend</h2>
+								<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
+									v-else
+									:data="days"
+									index="date"
+									:categories="['metrics.spend']"
+									:height="240"
+									:y-axis-width="100"
+									:format="(v) => money(v, 'compact')"
+									class="usage-daily-spend-chart"
+									><template #tooltip="{ row }"
+										><b>{{ row.date }}</b>
+										<p class="usage-cyan">Spend: {{ money(daily(row).metrics.spend, 2) }}</p>
+										<p>Requests: {{ daily(row).metrics.api_requests }}</p>
+										<p>Successful: {{ daily(row).metrics.successful_requests }}</p>
+										<p>Failed: {{ daily(row).metrics.failed_requests }}</p>
+										<p>Tokens: {{ formatNumberWithCommas(daily(row).metrics.total_tokens, 0, false) }}</p></template
+									></UsageChart
+								></UiCard
+							>
+							<UiCard class="usage-panel usage-global-half" appearance="tremor"
+								><h2>Daily Tokens</h2>
+								<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
+									v-else
+									:data="days"
+									index="date"
+									:categories="['metrics.total_tokens']"
+									:colors="['indigo']"
+									:height="240"
+									:y-axis-width="80"
+									:format="(v) => (v >= 1e9 ? formatNumberWithCommas(v, 1, true) : formatNumberWithCommas(v, 0, true))"
+									><template #tooltip="{ row }"
+										><b>{{ row.date }}</b>
+										<p>Tokens: {{ formatNumberWithCommas(daily(row).metrics.total_tokens, 0, false) }}</p>
+										<p>Requests: {{ daily(row).metrics.api_requests }}</p>
+										<p>Spend: {{ money(daily(row).metrics.spend, 2) }}</p></template
+									></UsageChart
+								></UiCard
+							>
+							<UsageTopModels
+								v-model="modelMode"
+								class="usage-global-half"
+								dimension="spend"
+								:groups="groups"
+								:individual="models"
+								:loading="overview.state.loading"
+								:is-date-changing="dateChanging"
+							/>
+							<UsageTopModels
+								v-model="modelMode"
+								class="usage-global-half"
+								dimension="tokens"
+								:show-mode-toggle="false"
+								:groups="groups"
+								:individual="models"
+								:loading="overview.state.loading"
+								:is-date-changing="dateChanging"
+							/>
+							<UsageProviderSpend
+								class="usage-global-left"
+								:provider-spend="providers"
+								:loading="overview.state.loading"
+								:is-date-changing="dateChanging"
+							/>
+							<UiCard class="usage-panel usage-global-right" appearance="tremor"
+								><h2>Top Virtual Keys</h2>
+								<UsageTopKeys :rows="keys"
+							/></UiCard>
+						</div>
+						<UsageActivity
+							v-if="section === 'models'"
+							:model-metrics="modelMetrics"
+							entity-kind="model"
+							:loading="overview.state.detailLoading.models"
+							:has-more="detailHasMore('models')"
+							:loading-more="detailLoadingMore('models')"
+							:series="modelSeries"
+							@load-more="loadMore('models')"
 						/>
-						<UiCard class="usage-panel usage-global-half" appearance="tremor"
-							><h2>Daily Spend</h2>
-							<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
-								v-else
-								:data="days"
-								index="date"
-								:categories="['metrics.spend']"
-								:height="240"
-								:y-axis-width="100"
-								:format="(v) => money(v, 'compact')"
-								class="usage-daily-spend-chart"
-								><template #tooltip="{ row }"
-									><b>{{ row.date }}</b>
-									<p class="usage-cyan">Spend: {{ money(daily(row).metrics.spend, 2) }}</p>
-									<p>Requests: {{ daily(row).metrics.api_requests }}</p>
-									<p>Successful: {{ daily(row).metrics.successful_requests }}</p>
-									<p>Failed: {{ daily(row).metrics.failed_requests }}</p>
-									<p>Tokens: {{ formatNumberWithCommas(daily(row).metrics.total_tokens, 0, false) }}</p></template
-								></UsageChart
-							></UiCard
-						>
-						<UiCard class="usage-panel usage-global-half" appearance="tremor"
-							><h2>Daily Tokens</h2>
-							<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
-								v-else
-								:data="days"
-								index="date"
-								:categories="['metrics.total_tokens']"
-								:colors="['indigo']"
-								:height="240"
-								:y-axis-width="80"
-								:format="(v) => (v >= 1e9 ? formatNumberWithCommas(v, 1, true) : formatNumberWithCommas(v, 0, true))"
-								><template #tooltip="{ row }"
-									><b>{{ row.date }}</b>
-									<p>Tokens: {{ formatNumberWithCommas(daily(row).metrics.total_tokens, 0, false) }}</p>
-									<p>Requests: {{ daily(row).metrics.api_requests }}</p>
-									<p>Spend: {{ money(daily(row).metrics.spend, 2) }}</p></template
-								></UsageChart
-							></UiCard
-						>
-						<UsageTopModels
-							v-model="modelMode"
-							class="usage-global-half"
-							dimension="spend"
-							:groups="groups"
-							:individual="models"
-							:loading="overview.state.loading"
-							:is-date-changing="dateChanging"
+						<UsageActivity
+							v-if="section === 'keys'"
+							:model-metrics="keyMetrics"
+							entity-kind="key"
+							:loading="overview.state.detailLoading.api_keys"
+							:has-more="detailHasMore('api_keys')"
+							:loading-more="detailLoadingMore('api_keys')"
+							:series="keySeries"
+							@load-more="loadMore('api_keys')"
 						/>
-						<UsageTopModels
-							v-model="modelMode"
-							class="usage-global-half"
-							dimension="tokens"
-							:show-mode-toggle="false"
-							:groups="groups"
-							:individual="models"
-							:loading="overview.state.loading"
-							:is-date-changing="dateChanging"
+						<UsageEndpoint
+							v-if="section === 'endpoints'"
+							:detail="overview.state.details.endpoints ?? null"
+							:series="endpointSeries"
+							:loading="overview.state.detailLoading.endpoints"
 						/>
-						<UsageProviderSpend
-							class="usage-global-left"
-							:provider-spend="providers"
-							:loading="overview.state.loading"
-							:is-date-changing="dateChanging"
-						/>
-						<UiCard class="usage-panel usage-global-right" appearance="tremor"
-							><h2>Top Virtual Keys</h2>
-							<UsageTopKeys :rows="keys"
-						/></UiCard>
 					</div>
-					<UsageActivity
-						v-if="tab === 'models'"
-						:model-metrics="modelMetrics"
-						entity-kind="model"
-						:overall="overall"
-						:top-entities="topEntities"
-						:loading="overview.state.detailLoading.models"
-						:has-more="detailHasMore('models')"
-						:loading-more="detailLoadingMore('models')"
-						:series="modelSeries"
-						@load-more="loadMore('models')"
-					/>
-					<UsageActivity
-						v-if="tab === 'keys'"
-						:model-metrics="keyMetrics"
-						entity-kind="key"
-						:overall="overall"
-						:top-entities="topEntities"
-						:loading="overview.state.detailLoading.api_keys"
-						:has-more="detailHasMore('api_keys')"
-						:loading-more="detailLoadingMore('api_keys')"
-						:series="keySeries"
-						@load-more="loadMore('api_keys')"
-					/>
-					<UsageActivity
-						v-if="tab === 'mcp'"
-						:model-metrics="mcpMetrics"
-						entity-kind="mcp"
-						:overall="overall"
-						:top-entities="topEntities"
-						:loading="overview.state.detailLoading.mcp_servers"
-						:has-more="detailHasMore('mcp_servers')"
-						:loading-more="detailLoadingMore('mcp_servers')"
-						:series="mcpSeries"
-						@load-more="loadMore('mcp_servers')"
-					/>
-					<UsageEndpoint
-						v-if="tab === 'endpoints'"
-						:detail="overview.state.details.endpoints ?? null"
-						:series="endpointSeries"
-						:loading="overview.state.detailLoading.endpoints"
-					/>
 				</div>
-			</div>
-			<template v-else
-				><UsageEntity :key="view" :entity-type="view" :options="entityOptions[view] ?? []" :date-range="date"
-			/></template>
-			<UsageUpstreamQuota :enabled="admin" />
+				<template v-else
+					><UsageEntity :key="view" :entity-type="view" :options="entityOptions[view] ?? []" :date-range="date"
+				/></template>
+			</template>
 		</div>
 		<UsageExport
 			v-if="exportData"

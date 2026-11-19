@@ -20,24 +20,12 @@
 	gap: 32px;
 }
 
-.usage-overall {
-	padding: 16px;
-	border: 1px solid #e5e7eb;
-	border-radius: 8px;
-}
-
-.usage-overall > .usage-grid-four {
-	margin-bottom: 16px;
-}
-
-.usage-overall .ui-card p,
 .usage-model-section .ui-card p {
 	color: #6b7280;
 	font-size: 12.4px;
 	line-height: 18.4px;
 }
 
-.usage-overall header,
 .usage-model-section header {
 	display: flex;
 	flex-wrap: wrap;
@@ -46,7 +34,6 @@
 	gap: 8px 16px;
 }
 
-.usage-overall .usage-chart,
 .usage-model-section .usage-chart {
 	margin-top: 16px;
 }
@@ -257,23 +244,20 @@
 	margin-top: 12px;
 }
 
-.usage-trends-note {
-	grid-column: 1 / -1;
-	color: #6b7280;
-	font-size: 12.4px;
-	line-height: 18.4px;
-}
-
-/* 悬浮明细沿用默认 tooltip 的视觉，但只列当天有数值的实体。 */
+/*
+ * 悬浮明细沿用默认 tooltip 的视觉，列当天有数值的全部实体（不再有 Other 汇总项）。
+ * 一行 16px、间距 2px：19 个模型也只需要约 380px，在 70vh 以内不会被截断；
+ * tooltip 固定在图表顶端（见 UsageChartComponent 的 tooltipPosition），所以高度不受光标位置影响。
+ */
 .usage-trends-tooltip {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
-	max-width: 340px;
-	max-height: 240px;
+	gap: 2px;
+	max-width: 380px;
+	max-height: min(70vh, 560px);
 	overflow-y: auto;
 	font-size: 12.4px;
-	line-height: 18.4px;
+	line-height: 16px;
 }
 
 .usage-trends-tooltip-date {

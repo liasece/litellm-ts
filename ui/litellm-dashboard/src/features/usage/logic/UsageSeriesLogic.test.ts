@@ -53,7 +53,7 @@ function detail(items: UsageDetailItem[], days: Array<[string, Partial<SpendMetr
 }
 
 describe("activity series charts", () => {
-	it("splits each day into one bar segment per entity and keeps the daily total in Other", () => {
+	it("draws every entity instead of folding the tail into one bucket", () => {
 		const response = detail(
 			[
 				item("model-a", [
@@ -61,21 +61,40 @@ describe("activity series charts", () => {
 					["2026-11-17", { total_tokens: 50, spend: 0.5 }],
 				]),
 				item("model-b", [["2026-11-17", { total_tokens: 30, spend: 0.25 }]]),
-				// 未出现在 items 里的用量由当天总量减去已选实体得到，保证柱子总和等于真实总量。
+				item("model-c", [["2026-11-17", { total_tokens: 5, spend: 0.05 }]]),
 			],
 			[
 				["2026-11-16", { total_tokens: 100, spend: 1 }],
-				["2026-11-17", { total_tokens: 90, spend: 1 }],
+				["2026-11-17", { total_tokens: 85, spend: 0.8 }],
 			],
 		);
 		const series = activitySeries(response, [], false);
-		expect(series.slices.map((slice) => slice.label)).toEqual(["model-a", "model-b", "Other"]);
-		expect(series.slices.at(-1)).toMatchObject({ other: true, tokens: 10, spend: 0.25 });
+		expect(series.spend.slices.map((slice) => slice.label)).toEqual(["model-a", "model-b", "model-c"]);
 		expect(series.tokens.rows).toEqual([
-			{ date: "2026-11-16", "model-a": 100, "model-b": 0, Other: 0 },
-			{ date: "2026-11-17", "model-a": 50, "model-b": 30, Other: 10 },
+			{ date: "2026-11-16", "model-a": 100, "model-b": 0, "model-c": 0 },
+			{ date: "2026-11-17", "model-a": 50, "model-b": 30, "model-c": 5 },
 		]);
-		expect(series.spend.rows[1]!["Other"]).toBeCloseTo(0.25);
+		// 每个实体都有独立颜色，柱段、图例与 tooltip 能一一对应。
+		expect(new Set(series.tokens.colors).size).toBe(3);
+		expect(series.tokens.categories).not.toContain("Other");
+	});
+
+	it("keeps a free model that tops the token ranking out of the spend chart", () => {
+		// 生产回归：hy4-flash-free 花费为 0，按花费排序时排在 detail 末尾；前 7 名 + Other 的
+		// 画法会把 409M token 并进 Other，图上再也看不出是谁在用量。
+		const paid = Array.from({ length: 8 }, (_, index) =>
+			item("paid-" + index, [["2026-11-19", { total_tokens: 100_000_000 - index * 1_000_000, spend: 10 - index }]]),
+		);
+		const response = detail(
+			[...paid, item("hy4-flash-free", [["2026-11-19", { total_tokens: 409_216_161, spend: 0 }]])],
+			[["2026-11-19", { total_tokens: 1_100_000_000, spend: 44 }]],
+		);
+		const series = activitySeries(response, [], false);
+		expect(series.tokens.categories[0]).toBe("hy4-flash-free");
+		expect(series.tokens.slices[0]).toMatchObject({ label: "hy4-flash-free", tokens: 409_216_161, spend: 0 });
+		expect(new Set(series.tokens.colors).size).toBe(series.tokens.categories.length);
+		// 这张图只看花费，免费模型没有花费可画，图例里不该出现一个恒为 0 的名字。
+		expect(series.spend.categories).not.toContain("hy4-flash-free");
 	});
 
 	it("colors the same entity identically in both charts and never repeats a legend entry", () => {
@@ -84,12 +103,14 @@ describe("activity series charts", () => {
 			[["2026-11-17", { total_tokens: 30, spend: 5 }]],
 		);
 		const series = activitySeries(response, [], false);
-		expect(series.tokens.categories).toEqual(["a", "b"]);
+		// 图例顺序各按本榜排列，但同一实体在两张图里必须同色。
+		expect(series.tokens.categories).toEqual(["b", "a"]);
 		expect(series.spend.categories).toEqual(["a", "b"]);
-		expect(series.tokens.colors).toEqual(series.spend.colors);
+		const colors = (chart: { categories: string[]; colors: string[] }) =>
+			Object.fromEntries(chart.categories.map((label, index) => [label, chart.colors[index]]));
+		expect(colors(series.tokens)).toEqual(colors(series.spend));
 		expect(new Set(series.tokens.colors).size).toBe(2);
-		// 当天全部用量都能对上已选实体时不再生成空的 Other 段。
-		expect(series.slices.some((slice) => slice.other)).toBe(false);
+		expect(new Set(series.spend.colors).size).toBe(2);
 	});
 
 	it("labels api keys with their alias and keeps same-named keys apart", () => {
@@ -102,10 +123,12 @@ describe("activity series charts", () => {
 			[["2026-11-17", { total_tokens: 22, spend: 1.7 }]],
 		);
 		const series = activitySeries(response, [{ team_id: "team-1", team_alias: "Alpha" }], true);
-		expect(series.slices.map((slice) => slice.label)).toEqual(["shared", "shared (2)", "team-key (team: Alpha)"]);
+		expect(series.tokens.slices.map((slice) => slice.label)).toEqual(["shared", "shared (2)", "team-key (team: Alpha)"]);
+		// 两张图的图例文案保持一致：同名 key 的序号只按并集算一次。
+		expect(series.spend.slices.map((slice) => slice.label)).toEqual(["shared", "shared (2)", "team-key (team: Alpha)"]);
 	});
 
-	it("keeps the best entities from both the spend and token rankings", () => {
+	it("ranks each chart by its own metric", () => {
 		const response = detail(
 			[
 				item("cheap-but-huge", [["2026-11-17", { total_tokens: 1000, spend: 0.01 }]]),
@@ -114,28 +137,25 @@ describe("activity series charts", () => {
 			],
 			[["2026-11-17", { total_tokens: 1510, spend: 101.01 }]],
 		);
-		const series = activitySeries(response, [], false, 2);
-		// 花费榜第一与 Token 榜第一都保留，`middle` 两个榜都不靠前，并入 Other。
-		expect(series.slices.map((slice) => slice.label)).toEqual(["expensive", "cheap-but-huge", "Other"]);
+		const series = activitySeries(response, [], false);
+		expect(series.spend.categories).toEqual(["expensive", "middle", "cheap-but-huge"]);
+		expect(series.tokens.categories).toEqual(["cheap-but-huge", "middle", "expensive"]);
 	});
 
-	it("ignores float noise instead of growing an Other legend entry", () => {
+	it("omits entities that have no value for the chart's metric", () => {
 		const response = detail(
-			[item("only", [["2026-11-17", { total_tokens: 10, spend: 1 }]])],
-			[["2026-11-17", { total_tokens: 10.0000000001, spend: 1.0000000000000002 }]],
+			[item("only", [["2026-11-17", { total_tokens: 10, spend: 1 }]]), item("idle", [["2026-11-17", {}]])],
+			[["2026-11-17", { total_tokens: 10, spend: 1 }]],
 		);
 		const series = activitySeries(response, [], false);
-		expect(series.slices.map((slice) => slice.label)).toEqual(["only"]);
-		expect(series.spend.rows[0]!["Other"]).toBe(0);
+		expect(series.tokens.slices.map((slice) => slice.label)).toEqual(["only"]);
+		expect(series.spend.slices.map((slice) => slice.label)).toEqual(["only"]);
 	});
 
 	it("returns empty charts when the response has no usable items", () => {
-		expect(activitySeries(null, [], false)).toEqual({
-			slices: [],
-			tokens: { rows: [], categories: [], colors: [] },
-			spend: { rows: [], categories: [], colors: [] },
-		});
-		expect(activitySeries(detail([item("idle", [["2026-11-17", {}]])], [["2026-11-17", {}]]), [], false).slices).toEqual([]);
+		const empty = { rows: [], categories: [], colors: [], slices: [] };
+		expect(activitySeries(null, [], false)).toEqual({ tokens: empty, spend: empty });
+		expect(activitySeries(detail([item("idle", [["2026-11-17", {}]])], [["2026-11-17", {}]]), [], false).spend.slices).toEqual([]);
 	});
 
 	it("lists only the non-zero slices of the hovered day, largest first", () => {
@@ -188,10 +208,10 @@ describe("activity breakdown series", () => {
 			day("2026-11-16", { total_tokens: 10, spend: 0.2 }, { models: { "model-a": modelEntry({ total_tokens: 10, spend: 0.2 }) } }),
 		];
 		const series = activityBreakdownSeries(days, "models", [], false);
-		expect(series.slices.map((slice) => slice.label)).toEqual(["model-a", "model-b"]);
+		expect(series.spend.slices.map((slice) => slice.label)).toEqual(["model-a", "model-b"]);
 		expect(series.tokens.rows).toEqual([
-			{ date: "2026-11-16", "model-a": 10, "model-b": 0, Other: 0 },
-			{ date: "2026-11-17", "model-a": 40, "model-b": 50, Other: 0 },
+			{ date: "2026-11-16", "model-a": 10, "model-b": 0 },
+			{ date: "2026-11-17", "model-a": 40, "model-b": 50 },
 		]);
 	});
 
@@ -202,18 +222,18 @@ describe("activity breakdown series", () => {
 		});
 		const days = [day("2026-11-17", { total_tokens: 30, spend: 2 }, { api_keys: { "sk-1": entry(20), "sk-2": entry(10) } })];
 		const series = activityBreakdownSeries(days, "api_keys", [], true);
-		expect(series.slices.map((slice) => slice.label)).toEqual(["shared", "shared (2)"]);
+		expect(series.spend.slices.map((slice) => slice.label)).toEqual(["shared", "shared (2)"]);
 	});
 
-	it("groups endpoints beyond the limit into Other", () => {
+	it("lists every endpoint instead of grouping the tail", () => {
 		const endpoints = Object.fromEntries(
 			Array.from({ length: 9 }, (_, index) => ["/v1/e" + index, modelEntry({ total_tokens: 100 - index * 10, spend: 1 })]),
 		);
 		const days = [day("2026-11-17", { total_tokens: 540, spend: 9 }, { endpoints })];
-		const series = activityBreakdownSeries(days, "endpoints", [], false, 3);
-		expect(series.slices).toHaveLength(4);
-		expect(series.slices.at(-1)).toMatchObject({ label: "Other", other: true });
-		expect(series.slices.at(-1)!.tokens).toBeGreaterThan(0);
+		const series = activityBreakdownSeries(days, "endpoints", [], false);
+		expect(series.tokens.slices).toHaveLength(9);
+		expect(series.tokens.categories).toEqual(Array.from({ length: 9 }, (_, index) => "/v1/e" + index));
+		expect(new Set(series.tokens.colors).size).toBe(9);
 	});
 
 	it("keeps agent names as labels for the entities dimension", () => {
@@ -221,11 +241,11 @@ describe("activity breakdown series", () => {
 			day("2026-11-17", { total_tokens: 30, spend: 2 }, { entities: { "agent-a": modelEntry({ total_tokens: 30, spend: 2 }) } }),
 		];
 		const series = activityBreakdownSeries(days, "entities", [], false);
-		expect(series.slices.map((slice) => slice.label)).toEqual(["agent-a"]);
+		expect(series.spend.slices.map((slice) => slice.label)).toEqual(["agent-a"]);
 	});
 
 	it("returns empty charts when the response has no breakdown", () => {
-		expect(activityBreakdownSeries([], "models", [], false).slices).toEqual([]);
-		expect(activityBreakdownSeries([day("2026-11-17", { total_tokens: 5, spend: 1 })], "models", [], false).slices).toEqual([]);
+		expect(activityBreakdownSeries([], "models", [], false).spend.slices).toEqual([]);
+		expect(activityBreakdownSeries([day("2026-11-17", { total_tokens: 5, spend: 1 })], "models", [], false).spend.slices).toEqual([]);
 	});
 });
