@@ -36,6 +36,15 @@ try {
 		if (result.error) throw result.error;
 		if (result.status !== 0) throw new Error("Frontend build failed with status " + (result.status ?? 1));
 	}
+	// 入口 CSS 是 index.html 里唯一长期同名的资源：内容不变时文件名的哈希也不变，边缘缓存
+	// 如果在部署窗口里存下过 404，整套基础样式就会对特定浏览器一直失效。把源码指纹挂到链接上，
+	// 每次源码变化都得到新 URL，旧缓存既不会命中，也不会把 404 钉在新构建上。
+	const buildId = initial.sha256.slice(0, 12);
+	const shellPath = path.join(root, "out/index.html");
+	const shell = await fs.readFile(shellPath, "utf8");
+	const versionedShell = shell.replace(/(<link\b[^>]*\brel="stylesheet"[^>]*\bhref="[^"]+?\.css)"/g, `$1?b=${buildId}"`);
+	if (versionedShell !== shell) await fs.writeFile(shellPath, versionedShell);
+
 	// Keep notices for bundled dependencies and source-ported native assets in the
 	// distributed artifact, including when the host only ships the static output.
 	const licenseRoot = path.join(root, "out/licenses");

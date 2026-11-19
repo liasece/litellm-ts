@@ -13,6 +13,14 @@ function publicAssetPath(value) {
 		throw new Error("Invalid retained client asset path");
 	return value;
 }
+async function statOrNull(file) {
+	try {
+		return await fs.lstat(file);
+	} catch (error) {
+		if (error.code === "ENOENT") return null;
+		throw error;
+	}
+}
 async function optionalJson(file) {
 	try {
 		return JSON.parse(await fs.readFile(file, "utf8"));
@@ -80,12 +88,22 @@ export async function retainClientAssets(previousDirectory, outputDirectory) {
 		publicAssetPath(name);
 		const source = path.join(previousDirectory, name),
 			destination = path.join(outputDirectory, name);
+		// 上一版清单可能列出早已清理掉的兼容资源（例如旧 Next 导出的 `__next.*` 占位），
+		// 目录遍历也可能与外部清理并发。缺失即跳过：它是可选的历史资产，不能让之后每次构建都失败。
+		const present = await statOrNull(source);
+		if (present === null) continue;
 		// Never follow a link introduced by a nested asset directory or manifest.
+		let linked = false;
 		for (let relative = name; relative; relative = path.posix.dirname(relative) === "." ? "" : path.posix.dirname(relative)) {
-			if ((await fs.lstat(path.join(previousDirectory, relative))).isSymbolicLink())
-				throw new Error("Retained client assets cannot contain symbolic links: " + relative);
+			const ancestor = await statOrNull(path.join(previousDirectory, relative));
+			if (ancestor === null) {
+				linked = true;
+				break;
+			}
+			if (ancestor.isSymbolicLink()) throw new Error("Retained client assets cannot contain symbolic links: " + relative);
 		}
-		if (!(await fs.lstat(source)).isFile()) throw new Error("Retained client asset is not a file: " + name);
+		if (linked) continue;
+		if (!present.isFile()) throw new Error("Retained client asset is not a file: " + name);
 		const content = await fs.readFile(source);
 		try {
 			const present = await fs.readFile(destination);
