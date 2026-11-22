@@ -101,9 +101,7 @@ describe("Active request journal", () => {
 			model_id: "deployment-1",
 			model: "openai/gpt-4o",
 		});
-		expect(Object.keys(capture.updates[0] ?? {})).toEqual(
-			expect.arrayContaining(["proxy_server_request", "updated_at"]),
-		);
+		expect(Object.keys(capture.updates[0] ?? {})).toEqual(expect.arrayContaining(["proxy_server_request", "updated_at"]));
 		expect(capture.updates[0]).toHaveProperty("metadata");
 	});
 
@@ -192,7 +190,9 @@ describe("Active request journal", () => {
 			recordUpstreamExchange(context);
 			await journal.flush();
 			// 同一记录不重复补写，新的上游需要更新。
-			recordUpstreamExchange(upstreamContext({ request: { ...context.request, url: "https://backup.example.com/v1/chat/completions" } }));
+			recordUpstreamExchange(
+				upstreamContext({ request: { ...context.request, url: "https://backup.example.com/v1/chat/completions" } }),
+			);
 			await journal.flush();
 		});
 
@@ -305,7 +305,6 @@ describe("Active request journal", () => {
 			recordUpstreamExchange(upstreamContext());
 			await journal.flush();
 		});
-
 
 		expect(capture.updates[0]).toHaveProperty("metadata");
 	});

@@ -9,11 +9,7 @@ import type { ServiceConfig } from "../core/config";
 import type { DrizzleDb } from "../core/db/Database";
 import { hashApiKey } from "../core/utils/crypto";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
-import {
-	clearWebUiSessionCookies,
-	setWebUiSessionCookies,
-	signWebUiSessionToken,
-} from "../auth/WebUiSessionLifecycle";
+import { clearWebUiSessionCookies, setWebUiSessionCookies, signWebUiSessionToken } from "../auth/WebUiSessionLifecycle";
 import {
 	DEFAULT_WEBUI_SESSION_DURATION,
 	LOGIN_METHOD_USERNAME_PASSWORD,

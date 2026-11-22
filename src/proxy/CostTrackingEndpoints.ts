@@ -152,11 +152,7 @@ function resolveEstimatePricing(
  * @param db - Drizzle 数据库实例（读写 litellm_settings）
  * @param deploymentsAccessor - Router / deployments 访问器（估算取真实价格）
  */
-export function registerCostTrackingRoutes(
-	router: ExpressRouter,
-	db: DrizzleDb,
-	deploymentsAccessor?: RouterDeploymentsAccessor,
-): void {
+export function registerCostTrackingRoutes(router: ExpressRouter, db: DrizzleDb, deploymentsAccessor?: RouterDeploymentsAccessor): void {
 	const configRepository = new ConfigRepository(db);
 
 	// GET 读「DB 覆盖 + yaml 默认」的有效配置（对齐 PY 读取进程内 litellm_settings）；
@@ -206,7 +202,11 @@ export function registerCostTrackingRoutes(
 		const inputCostPerRequest = inputTokens * pricing.inputCostPerToken;
 		const outputCostPerRequest = outputTokens * pricing.outputCostPerToken;
 		// 与真实计费同口径：先折扣、后保证金（见 CostTrackingConfig.adjustCost）
-		const adjusted = adjustCost(inputCostPerRequest + outputCostPerRequest, pricing.provider ?? "", costTrackingConfigService.getSnapshot());
+		const adjusted = adjustCost(
+			inputCostPerRequest + outputCostPerRequest,
+			pricing.provider ?? "",
+			costTrackingConfigService.getSnapshot(),
+		);
 		const costPerRequest = adjusted.total;
 		const marginCostPerRequest = adjusted.marginAmount;
 

@@ -71,9 +71,7 @@ describe("translateResponse", () => {
 		expect(out["created"]).toEqual(expect.any(Number));
 		const message = recordAt(itemsAt(out, "choices")[0] ?? {}, "message");
 		expect(message).toMatchObject({ role: "assistant", content: "hello", reasoning_content: "plan" });
-		expect(message["tool_calls"]).toEqual([
-			{ id: "toolu_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } },
-		]);
+		expect(message["tool_calls"]).toEqual([{ id: "toolu_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } }]);
 		expect(itemsAt(out, "choices")[0]?.["finish_reason"]).toBe("tool_calls");
 		expect(out["usage"]).toEqual({
 			prompt_tokens: 13,
@@ -126,11 +124,7 @@ describe("translateResponse", () => {
 				{
 					content: {
 						role: "model",
-						parts: [
-							{ text: "plan", thought: true },
-							{ text: "hi" },
-							{ functionCall: { name: "lookup", args: { q: "x" } } },
-						],
+						parts: [{ text: "plan", thought: true }, { text: "hi" }, { functionCall: { name: "lookup", args: { q: "x" } } }],
 					},
 					finishReason: "STOP",
 				},
@@ -170,9 +164,7 @@ describe("translateResponse", () => {
 						role: "assistant",
 						content: "hi",
 						reasoning_content: "plan",
-						tool_calls: [
-							{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } },
-						],
+						tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } }],
 					},
 					finish_reason: "length",
 				},
@@ -256,9 +248,7 @@ describe("translateResponse", () => {
 					message: {
 						role: "assistant",
 						content: "hi",
-						tool_calls: [
-							{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } },
-						],
+						tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } }],
 					},
 					finish_reason: "tool_calls",
 				},

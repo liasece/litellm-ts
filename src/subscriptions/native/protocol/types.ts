@@ -5,10 +5,7 @@
  * 转换只在协议不一致时发生，同协议请求由桥接层原样透传。
  */
 
-import type {
-	SubscriptionInboundProtocol,
-	SubscriptionWireProtocol,
-} from "../types";
+import type { SubscriptionInboundProtocol, SubscriptionWireProtocol } from "../types";
 import { translateProtocolRequest } from "./request";
 import { translateProtocolResponse } from "./response";
 import { createProtocolStreamTranslator } from "./stream";

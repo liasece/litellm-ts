@@ -95,10 +95,7 @@ function payloadSignature(key: string, value: unknown): string {
  * @param previous - 上一帧负载
  * @param next - 当前负载
  */
-export function diffLogDetailPayload(
-	previous: Record<string, unknown>,
-	next: Record<string, unknown>,
-): Record<string, unknown> {
+export function diffLogDetailPayload(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
 	const patch: Record<string, unknown> = {};
 	const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
 	for (const key of keys) {
@@ -128,12 +125,7 @@ function sendFrame(socket: WebSocket, frame: StreamFrame): void {
  * @param db - 数据库实例
  * @param deps - 可注入的数据面
  */
-async function streamSpendLogDetail(
-	socket: WebSocket,
-	requestId: string,
-	db: DrizzleDb,
-	deps: SpendLogStreamDeps,
-): Promise<void> {
+async function streamSpendLogDetail(socket: WebSocket, requestId: string, db: DrizzleDb, deps: SpendLogStreamDeps): Promise<void> {
 	const readRevision = deps.readRevision ?? readActiveRequestRevision;
 	const loadActiveDetail = deps.loadActiveDetail ?? buildActiveRequestDetail;
 	const loadSettledDetail = deps.loadSettledDetail ?? buildUiSpendLogDetail;
@@ -288,11 +280,7 @@ async function streamSpendLogDetail(
  * @param container - 服务容器
  * @param deps - 可注入的数据面（测试用）
  */
-export function registerSpendLogStreamWebSocket(
-	server: HttpServer,
-	container: ServiceContainer,
-	deps: SpendLogStreamDeps = {},
-): void {
+export function registerSpendLogStreamWebSocket(server: HttpServer, container: ServiceContainer, deps: SpendLogStreamDeps = {}): void {
 	const webSocketServer = new WebSocketServer({
 		noServer: true,
 		perMessageDeflate: false,

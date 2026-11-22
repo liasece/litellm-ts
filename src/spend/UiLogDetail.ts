@@ -84,10 +84,7 @@ export async function readActiveRequestRevision(
  * @param db - 数据库实例
  * @param requestId - 请求 ID
  */
-export async function buildActiveRequestDetail(
-	db: NodePgDatabase<typeof schema>,
-	requestId: string,
-): Promise<UiLogDetailPayload | null> {
+export async function buildActiveRequestDetail(db: NodePgDatabase<typeof schema>, requestId: string): Promise<UiLogDetailPayload | null> {
 	const activeRows = await db
 		.select({
 			request_id: liteLLM_ActiveRequests.request_id,
@@ -130,12 +127,8 @@ export async function buildActiveRequestDetail(
 	// 在途行正文按内容寻址存块，这里先组装回完整请求体再与 checkpoint 合并。
 	const hydratedActive = await hydrateSpendLogRow(db, { proxy_server_request: activeRow.proxy_server_request });
 	// checkpoint 来自旧进程时可能仍带认证头，合并前按写路径同样脱敏。
-	const upstreamRequest = prepareSpendLogProxyForStorage(
-		checkpoint?.["upstream_request"],
-	) as Record<string, unknown> | undefined;
-	const upstreamResponse = prepareSpendLogProxyForStorage(
-		checkpoint?.["upstream_response"],
-	) as Record<string, unknown> | undefined;
+	const upstreamRequest = prepareSpendLogProxyForStorage(checkpoint?.["upstream_request"]) as Record<string, unknown> | undefined;
+	const upstreamResponse = prepareSpendLogProxyForStorage(checkpoint?.["upstream_response"]) as Record<string, unknown> | undefined;
 	const proxyServerRequest = {
 		...((hydratedActive.proxy_server_request as Record<string, unknown> | null | undefined) ?? {}),
 		...(upstreamRequest ? { upstream_request: upstreamRequest } : {}),
@@ -160,9 +153,7 @@ export async function buildActiveRequestDetail(
 		startTime: activeRow.startTime.toISOString(),
 		endTime: new Date().toISOString(),
 		completionStartTime:
-			completionStartTime instanceof Date && !Number.isNaN(completionStartTime.getTime())
-				? completionStartTime.toISOString()
-				: null,
+			completionStartTime instanceof Date && !Number.isNaN(completionStartTime.getTime()) ? completionStartTime.toISOString() : null,
 		model: activeRow.model,
 		model_id: activeRow.model_id,
 		model_group: activeRow.model_group,
@@ -204,15 +195,10 @@ export function applyLiveCheckpointToDetail(
 	}
 	const usage = readInProgressUsage(checkpoint);
 	const previousProxy = (payload["proxy_server_request"] as Record<string, unknown> | null | undefined) ?? {};
-	const upstreamRequest = prepareSpendLogProxyForStorage(
-		checkpoint["upstream_request"],
-	) as Record<string, unknown> | undefined;
-	const upstreamResponse = prepareSpendLogProxyForStorage(
-		checkpoint["upstream_response"],
-	) as Record<string, unknown> | undefined;
+	const upstreamRequest = prepareSpendLogProxyForStorage(checkpoint["upstream_request"]) as Record<string, unknown> | undefined;
+	const upstreamResponse = prepareSpendLogProxyForStorage(checkpoint["upstream_response"]) as Record<string, unknown> | undefined;
 	const startTime = typeof payload["startTime"] === "string" ? Date.parse(payload["startTime"]) : Number.NaN;
-	const checkpointFirstChunk =
-		typeof checkpoint["first_chunk_at"] === "string" ? checkpoint["first_chunk_at"] : undefined;
+	const checkpointFirstChunk = typeof checkpoint["first_chunk_at"] === "string" ? checkpoint["first_chunk_at"] : undefined;
 	return {
 		...payload,
 		response: (checkpoint["response"] as Record<string, unknown> | undefined) ?? null,
@@ -250,11 +236,8 @@ export async function buildUiSpendLogDetail(
 	endDate?: Date,
 	options: { readonly compactAliases?: boolean } = {},
 ): Promise<UiLogDetailPayload | null> {
-	const coldStoragePayload = await getRequestResponsePayloadFromColdStorage(
-		requestId,
-		startDate,
-		endDate,
-		(_coldStorageLogger, error) => logger.warn(`/spend/logs/ui/:request_id 冷存储回查失败: ${(error as Error).message}`),
+	const coldStoragePayload = await getRequestResponsePayloadFromColdStorage(requestId, startDate, endDate, (_coldStorageLogger, error) =>
+		logger.warn(`/spend/logs/ui/:request_id 冷存储回查失败: ${(error as Error).message}`),
 	);
 	if (coldStoragePayload !== null) {
 		// 冷存储里的负载与落库同源，可能也是引用形态；同样按块组装。

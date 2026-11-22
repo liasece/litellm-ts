@@ -850,8 +850,7 @@ export function registerAnthropicMessagesEndpoints(
 									upstream_response: (upstreamLogContext?.response ?? null) as Record<string, unknown> | null,
 								};
 							},
-							(checkpoint) =>
-								checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+							(checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
 						),
 					);
 				}
@@ -999,7 +998,10 @@ export function registerAnthropicMessagesEndpoints(
 										startTime: startTime,
 										endTime: new Date(),
 										completionStartTime: completionStartTime ?? null,
-										response: publicStream.publishedCount > 0 ? publicStream.publicResponse({ type: "message", role: "assistant" }) : undefined,
+										response:
+											publicStream.publishedCount > 0
+												? publicStream.publicResponse({ type: "message", role: "assistant" })
+												: undefined,
 										messages: originalMessages,
 										proxyServerRequestBody: originalRequestBody,
 										error: error,
@@ -1569,7 +1571,10 @@ export function registerAnthropicMessagesEndpoints(
 			});
 			if (!execution.response.ok) {
 				const errBody = execution.body === undefined ? "" : JSON.stringify(execution.body);
-				throw new ApiError(execution.response.status, `CountTokens 返回错误 (${execution.response.status}): ${errBody.slice(0, 200)}`);
+				throw new ApiError(
+					execution.response.status,
+					`CountTokens 返回错误 (${execution.response.status}): ${errBody.slice(0, 200)}`,
+				);
 			}
 			if (execution.body !== undefined) {
 				return execution.body;

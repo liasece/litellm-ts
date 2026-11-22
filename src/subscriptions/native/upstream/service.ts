@@ -17,12 +17,7 @@ import type { SubscriptionSource } from "../types";
 import { createModuleLogger } from "../../../core/utils/logger";
 import { slimRawEntry } from "./normalize";
 import type { UpstreamModelMetaRepository, UpstreamModelMetaWrite } from "./repository";
-import {
-	UPSTREAM_SOURCE_STATUS_ID,
-	type UpstreamModelMetaRecord,
-	type UpstreamModelMetadata,
-	type UpstreamSourceAdapter,
-} from "./types";
+import { UPSTREAM_SOURCE_STATUS_ID, type UpstreamModelMetaRecord, type UpstreamModelMetadata, type UpstreamSourceAdapter } from "./types";
 
 /** 默认过期时间：4 小时。 */
 export const UPSTREAM_META_TTL_MS = 4 * 60 * 60_000;

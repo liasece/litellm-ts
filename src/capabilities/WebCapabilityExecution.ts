@@ -94,7 +94,7 @@ function textFromCompletion(result: Record<string, unknown>): string {
  */
 function supportsNativeResponses(router: Router, model: string): boolean {
 	const probe = (router as unknown as { supportsNativeResponses?: (value: string) => boolean }).supportsNativeResponses;
-	if (typeof probe !== 'function') {
+	if (typeof probe !== "function") {
 		return false;
 	}
 	try {
@@ -110,29 +110,29 @@ function supportsNativeResponses(router: Router, model: string): boolean {
  * @throws ApiError 上游没有返回任何文本时抛出，交由 fallback 链继续尝试
  */
 function textFromResponsesCompletion(result: Record<string, unknown>): string {
-	const outputText = result['output_text'];
-	if (typeof outputText === 'string' && outputText.trim()) {
+	const outputText = result["output_text"];
+	if (typeof outputText === "string" && outputText.trim()) {
 		return outputText.trim();
 	}
-	const output = Array.isArray(result['output']) ? (result['output'] as Array<Record<string, unknown>>) : [];
+	const output = Array.isArray(result["output"]) ? (result["output"] as Array<Record<string, unknown>>) : [];
 	const parts: string[] = [];
 	for (const item of output) {
-		if (typeof item !== 'object' || item === null || item['type'] !== 'message') {
+		if (typeof item !== "object" || item === null || item["type"] !== "message") {
 			continue;
 		}
-		const content = Array.isArray(item['content']) ? (item['content'] as Array<Record<string, unknown>>) : [];
+		const content = Array.isArray(item["content"]) ? (item["content"] as Array<Record<string, unknown>>) : [];
 		for (const part of content) {
-			const text = part?.['text'];
-			if (typeof text === 'string' && text.trim()) {
+			const text = part?.["text"];
+			if (typeof text === "string" && text.trim()) {
 				parts.push(text);
 			}
 		}
 	}
-	const joined = parts.join('\n').trim();
+	const joined = parts.join("\n").trim();
 	if (joined) {
 		return joined;
 	}
-	throw ApiError.unavailable('联网执行模型没有返回文本结果');
+	throw ApiError.unavailable("联网执行模型没有返回文本结果");
 }
 
 function workerPrompt(request: WebToolRequest): string {

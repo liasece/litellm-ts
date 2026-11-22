@@ -458,8 +458,7 @@ export class SubscriptionBridge {
 					}
 					// refresh 只写入磁盘；必须重新读取账号，否则 ensureCredential 仍会拿旧 token
 					// 按旧 exp 判定"未过期"并原样返回，重试必然再次 401。
-					const refreshed =
-						(await this._accounts.findByKey(selection.account.key).catch(() => undefined)) ?? selection.account;
+					const refreshed = (await this._accounts.findByKey(selection.account.key).catch(() => undefined)) ?? selection.account;
 					const refreshedCredential = adapter.auth.ensureCredentialForRequest
 						? await adapter.auth.ensureCredentialForRequest(refreshed, context.headers)
 						: await adapter.auth.ensureCredential(refreshed);

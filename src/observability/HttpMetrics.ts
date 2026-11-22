@@ -27,12 +27,7 @@ import {
 	llmUpstreamHeaders,
 } from "./MetricCatalog";
 import { classifyRoute } from "./RouteClassifier";
-import {
-	annotateRequestTrace,
-	computeTimingBreakdown,
-	createRequestTrace,
-	runWithRequestTrace,
-} from "./RequestTrace";
+import { annotateRequestTrace, computeTimingBreakdown, createRequestTrace, runWithRequestTrace } from "./RequestTrace";
 import type { RequestTimingBreakdown, RequestTraceState } from "./RequestTrace";
 import { recordSlowRequest } from "./SlowRequestLog";
 
@@ -304,12 +299,7 @@ function recordRequest(req: Request, res: Response, trace: RequestTraceState, ab
  * @param statusCode - HTTP 状态码
  * @param aborted - 客户端是否提前断开
  */
-function recordLlmMetrics(
-	trace: RequestTraceState,
-	breakdown: RequestTimingBreakdown,
-	statusCode: number,
-	aborted: boolean,
-): void {
+function recordLlmMetrics(trace: RequestTraceState, breakdown: RequestTimingBreakdown, statusCode: number, aborted: boolean): void {
 	const lastAttempt = trace.attempts[trace.attempts.length - 1];
 	const firstAttempt = trace.attempts[0];
 	const model = trace.requestedModel ?? "unknown";

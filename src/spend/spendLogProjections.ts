@@ -68,5 +68,7 @@ export function spendLogMetadataJsonSql() {
  * 列表优先读列，因此这里不再重复下发；详情仍可从列表行合并到列值。
  */
 export function spendLogListMetadataSql() {
-	return sql<unknown | null>`${liteLLM_SpendLogs.metadata} - 'streaming_execution' - 'responses_execution' - 'additional_usage_values' - 'usage_object'`;
+	return sql<
+		unknown | null
+	>`${liteLLM_SpendLogs.metadata} - 'streaming_execution' - 'responses_execution' - 'additional_usage_values' - 'usage_object'`;
 }

@@ -12,11 +12,7 @@ import { createStreamTranslator } from "./types";
  * @param upstream - 上游协议
  * @param events - 上游事件
  */
-function run(
-	inbound: SubscriptionInboundProtocol,
-	upstream: SubscriptionWireProtocol,
-	events: ProtocolEvent[],
-): ProtocolEvent[] {
+function run(inbound: SubscriptionInboundProtocol, upstream: SubscriptionWireProtocol, events: ProtocolEvent[]): ProtocolEvent[] {
 	const translator = createStreamTranslator(inbound, upstream, {
 		model: "client-model",
 		upstreamModel: "upstream-model",
@@ -132,9 +128,9 @@ describe("createStreamTranslator", () => {
 			completion_tokens: 5,
 			total_tokens: 15,
 		});
-		const toolCall = out.flatMap((event) => itemsAt(dataOf(event), "choices")).find(
-			(choice) => asObject(choice["delta"])["tool_calls"] !== undefined,
-		);
+		const toolCall = out
+			.flatMap((event) => itemsAt(dataOf(event), "choices"))
+			.find((choice) => asObject(choice["delta"])["tool_calls"] !== undefined);
 		expect(toolCall?.["delta"]).toMatchObject({
 			tool_calls: [{ index: 0, id: "toolu_1", function: { name: "lookup" } }],
 		});
@@ -157,7 +153,7 @@ describe("createStreamTranslator", () => {
 				data: {
 					type: "response.output_item.done",
 					output_index: 0,
-					item: { type: "function_call", call_id: "call_1", name: "lookup", arguments: "{\"q\":\"x\"}" },
+					item: { type: "function_call", call_id: "call_1", name: "lookup", arguments: '{"q":"x"}' },
 				},
 			},
 			{
@@ -170,18 +166,41 @@ describe("createStreamTranslator", () => {
 			.flatMap((choice) => itemsAt(asObject(choice["delta"]), "tool_calls"));
 		const call = calls[0];
 		expect(call).toMatchObject({ id: "call_1", function: { name: "lookup" } });
-		expect(calls.map((item) => asObject(item["function"])["arguments"]).join("")).toBe("{\"q\":\"x\"}");
+		expect(calls.map((item) => asObject(item["function"])["arguments"]).join("")).toBe('{"q":"x"}');
 	});
 
 	it("chat 入口 ← responses 上游：推理摘要与正文", () => {
 		const out = run("chat", "responses", [
-			{ event: "response.created", data: { type: "response.created", response: { id: "resp_1", model: "upstream-model", created_at: 100 } } },
-			{ event: "response.output_item.added", data: { type: "response.output_item.added", output_index: 0, item: { id: "r1", type: "reasoning", summary: [] } } },
+			{
+				event: "response.created",
+				data: { type: "response.created", response: { id: "resp_1", model: "upstream-model", created_at: 100 } },
+			},
+			{
+				event: "response.output_item.added",
+				data: { type: "response.output_item.added", output_index: 0, item: { id: "r1", type: "reasoning", summary: [] } },
+			},
 			{ event: "response.reasoning_summary_text.delta", data: { type: "response.reasoning_summary_text.delta", delta: "plan" } },
-			{ event: "response.output_item.done", data: { type: "response.output_item.done", output_index: 0, item: { type: "reasoning", summary: [{ type: "summary_text", text: "plan" }] } } },
-			{ event: "response.output_item.added", data: { type: "response.output_item.added", output_index: 1, item: { id: "m1", type: "message", content: [] } } },
+			{
+				event: "response.output_item.done",
+				data: {
+					type: "response.output_item.done",
+					output_index: 0,
+					item: { type: "reasoning", summary: [{ type: "summary_text", text: "plan" }] },
+				},
+			},
+			{
+				event: "response.output_item.added",
+				data: { type: "response.output_item.added", output_index: 1, item: { id: "m1", type: "message", content: [] } },
+			},
 			{ event: "response.output_text.delta", data: { type: "response.output_text.delta", delta: "hi" } },
-			{ event: "response.output_item.done", data: { type: "response.output_item.done", output_index: 1, item: { type: "message", content: [{ type: "output_text", text: "hi" }] } } },
+			{
+				event: "response.output_item.done",
+				data: {
+					type: "response.output_item.done",
+					output_index: 1,
+					item: { type: "message", content: [{ type: "output_text", text: "hi" }] },
+				},
+			},
 			{
 				event: "response.completed",
 				data: {
@@ -196,7 +215,10 @@ describe("createStreamTranslator", () => {
 			},
 		]);
 		expect(chatContent(out)).toBe("hi");
-		const reasoning = out.flatMap((event) => itemsAt(dataOf(event), "choices")).map((choice) => asObject(choice["delta"])["reasoning_content"]).filter((value) => value !== undefined);
+		const reasoning = out
+			.flatMap((event) => itemsAt(dataOf(event), "choices"))
+			.map((choice) => asObject(choice["delta"])["reasoning_content"])
+			.filter((value) => value !== undefined);
 		expect(reasoning).toEqual(["plan"]);
 		const usageChunk = out.find((event) => dataOf(event)["usage"] !== undefined);
 		expect(dataOf(usageChunk)["usage"]).toMatchObject({ prompt_tokens: 5, completion_tokens: 2 });
@@ -242,7 +264,14 @@ describe("createStreamTranslator", () => {
 
 	it("messages 入口 ← chat 上游：产生完整 Anthropic 事件序列", () => {
 		const out = run("messages", "chat", [
-			{ data: { id: "chatcmpl-1", model: "upstream-model", created: 100, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] } },
+			{
+				data: {
+					id: "chatcmpl-1",
+					model: "upstream-model",
+					created: 100,
+					choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+				},
+			},
 			{ data: { id: "chatcmpl-1", choices: [{ index: 0, delta: { content: "Hel" } }] } },
 			{ data: { id: "chatcmpl-1", choices: [{ index: 0, delta: { content: "lo" } }] } },
 			{
@@ -252,9 +281,7 @@ describe("createStreamTranslator", () => {
 						{
 							index: 0,
 							delta: {
-								tool_calls: [
-									{ index: 0, id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q"' } },
-								],
+								tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q"' } }],
 							},
 						},
 					],
@@ -311,11 +338,18 @@ describe("createStreamTranslator", () => {
 
 	it("messages 入口 ← responses 上游：工具参数增量", () => {
 		const out = run("messages", "responses", [
-			{ event: "response.created", data: { type: "response.created", response: { id: "resp_1", model: "upstream-model", created_at: 100 } } },
+			{
+				event: "response.created",
+				data: { type: "response.created", response: { id: "resp_1", model: "upstream-model", created_at: 100 } },
+			},
 			{ event: "response.output_text.delta", data: { type: "response.output_text.delta", delta: "hi" } },
 			{
 				event: "response.output_item.added",
-				data: { type: "response.output_item.added", output_index: 1, item: { type: "function_call", call_id: "call_1", name: "lookup", arguments: "" } },
+				data: {
+					type: "response.output_item.added",
+					output_index: 1,
+					item: { type: "function_call", call_id: "call_1", name: "lookup", arguments: "" },
+				},
 			},
 			{
 				event: "response.function_call_arguments.delta",
@@ -323,7 +357,11 @@ describe("createStreamTranslator", () => {
 			},
 			{
 				event: "response.output_item.done",
-				data: { type: "response.output_item.done", output_index: 1, item: { type: "function_call", call_id: "call_1", name: "lookup", arguments: '{"q":"x"}' } },
+				data: {
+					type: "response.output_item.done",
+					output_index: 1,
+					item: { type: "function_call", call_id: "call_1", name: "lookup", arguments: '{"q":"x"}' },
+				},
 			},
 			{
 				event: "response.completed",
@@ -346,9 +384,7 @@ describe("createStreamTranslator", () => {
 		expect(out.at(-1)?.event).toBe("message_stop");
 		const messageDelta = messagesEvent(out, "message_delta")[0];
 		expect(messageDelta?.["delta"]).toMatchObject({ stop_reason: "tool_use" });
-		const toolStart = messagesEvent(out, "content_block_start").find(
-			(data) => asObject(data["content_block"])["type"] === "tool_use",
-		);
+		const toolStart = messagesEvent(out, "content_block_start").find((data) => asObject(data["content_block"])["type"] === "tool_use");
 		expect(toolStart?.["content_block"]).toMatchObject({ id: "call_1", name: "lookup" });
 		expect(messageDelta?.["usage"]).toMatchObject({
 			input_tokens: 4,
@@ -384,7 +420,14 @@ describe("createStreamTranslator", () => {
 
 	it("responses 入口 ← chat 上游：输出项与终止响应", () => {
 		const out = run("responses", "chat", [
-			{ data: { id: "chatcmpl-1", model: "upstream-model", created: 100, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] } },
+			{
+				data: {
+					id: "chatcmpl-1",
+					model: "upstream-model",
+					created: 100,
+					choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+				},
+			},
 			{ data: { id: "chatcmpl-1", choices: [{ index: 0, delta: { content: "hi" } }] } },
 			{
 				data: {
@@ -411,9 +454,7 @@ describe("createStreamTranslator", () => {
 		const sequenceNumbers = out
 			.map((event) => dataOf(event)["sequence_number"])
 			.filter((value): value is number => typeof value === "number");
-		expect(sequenceNumbers).toEqual(
-			[...sequenceNumbers].sort((left, right) => left - right),
-		);
+		expect(sequenceNumbers).toEqual([...sequenceNumbers].sort((left, right) => left - right));
 		expect(new Set(sequenceNumbers).size).toBe(sequenceNumbers.length);
 		const completed = dataOf(out.at(-1))["response"];
 		expect(completed).toMatchObject({
@@ -443,16 +484,29 @@ describe("createStreamTranslator", () => {
 					message: { id: "msg_1", model: "upstream-model", usage: { input_tokens: 10, output_tokens: 0 } },
 				},
 			},
-			{ event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } },
-			{ event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "plan" } } },
-			{ event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } } },
+			{
+				event: "content_block_start",
+				data: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+			},
+			{
+				event: "content_block_delta",
+				data: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "plan" } },
+			},
+			{
+				event: "content_block_delta",
+				data: { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } },
+			},
 			{ event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
 			{ event: "content_block_start", data: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } },
 			{ event: "content_block_delta", data: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "hi" } } },
 			{ event: "content_block_stop", data: { type: "content_block_stop", index: 1 } },
 			{
 				event: "content_block_start",
-				data: { type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "toolu_1", name: "lookup", input: {} } },
+				data: {
+					type: "content_block_start",
+					index: 2,
+					content_block: { type: "tool_use", id: "toolu_1", name: "lookup", input: {} },
+				},
 			},
 			{
 				event: "content_block_delta",
@@ -540,9 +594,7 @@ describe("createStreamTranslator", () => {
 	});
 
 	it("错误事件转换为入口协议错误帧", () => {
-		const out = run("messages", "chat", [
-			{ data: { error: { type: "rate_limit_error", message: "slow down" } } },
-		]);
+		const out = run("messages", "chat", [{ data: { error: { type: "rate_limit_error", message: "slow down" } } }]);
 		const errorFrame = out.find((event) => event.event === "error");
 		expect(errorFrame).toBeDefined();
 		expect(dataOf(errorFrame)["error"]).toEqual({

@@ -479,8 +479,7 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 							upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
 						};
 					},
-					(checkpoint) =>
-						checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+					(checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
 				),
 			);
 		}
@@ -504,7 +503,8 @@ function createChatHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb) {
 			currentAccumulator = accumulator;
 			currentUpstreamLogContext = getUpstreamLogContext(streamResult);
 			for await (const chunk of stream) {
-				if (chunk && typeof chunk === "object") {					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
+				if (chunk && typeof chunk === "object") {
+					accumulateChatChunk(accumulator, chunk as ModelResponseStream);
 					streamingCheckpointScheduler?.onChunk();
 				}
 			}
@@ -723,8 +723,7 @@ async function handleStreamingResponse(
 		originalMessages,
 		originalRequestBody,
 		visionImageStore,
-	} =
-		context;
+	} = context;
 	const preparedVision = await prepareOpenAIVisionRequest(
 		litellmRouter,
 		model,
@@ -938,8 +937,7 @@ async function handleStreamingResponse(
 								upstream_response: (lastUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
 							};
 						},
-						(checkpoint) =>
-							checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+						(checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
 					),
 				);
 			}
@@ -1276,8 +1274,7 @@ async function handlePrivateVisionStreamingResponse(
 						upstream_response: (currentUpstreamLogContext?.response ?? null) as Record<string, unknown> | null,
 					};
 				},
-				(checkpoint) =>
-					checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
+				(checkpoint) => checkpointActiveRequest(db, checkpointRequestId, checkpoint, "streaming_execution"),
 			),
 		);
 	}
@@ -1335,7 +1332,9 @@ async function handlePrivateVisionStreamingResponse(
 									res.setHeader("Connection", "keep-alive");
 									res.setHeader("X-Accel-Buffering", "no");
 								}
-								res.write(`data: ${JSON.stringify({ ...head, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
+								res.write(
+									`data: ${JSON.stringify({ ...head, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`,
+								);
 							}
 							writeOpenAICompletionChunk(req, res, { ...head, choices: [{ index: 0, delta: visible, finish_reason: null }] });
 						}

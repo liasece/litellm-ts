@@ -1833,7 +1833,9 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		expect((await buildSpendLogFromRequest({ ...context, error })).completionStartTime).toBe("2026-01-01T00:00:02.000Z");
 		// 工具子请求与父请求共用 req，但没有自己的下游首帧。
 		expect((await buildSpendLogFromRequest({ ...context, completionStartTime: null })).completionStartTime).toBeNull();
-		expect((await buildSpendLogFromRequest({ ...context, req: createMinimalRequest() })).completionStartTime).toBe(endTime.toISOString());
+		expect((await buildSpendLogFromRequest({ ...context, req: createMinimalRequest() })).completionStartTime).toBe(
+			endTime.toISOString(),
+		);
 	});
 
 	it("metadata 键集对齐 Python：team_alias / model_map_information / null 占位键", async () => {
@@ -1854,7 +1856,10 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 		});
 		const metadata = spendLog.metadata ?? {};
 		expect(metadata["user_api_key_team_alias"]).toBe("team-alpha");
-		expect(metadata["model_map_information"]).toEqual({ model_map_key: "glm", model_map_value: { id: "deployment-id-1", model_family: "GLM" } });
+		expect(metadata["model_map_information"]).toEqual({
+			model_map_key: "glm",
+			model_map_value: { id: "deployment-id-1", model_family: "GLM" },
+		});
 		expect(metadata["litellm_overhead_time_ms"]).toBe(12);
 		expect(metadata["attempted_retries"]).toBe(1);
 		expect(metadata["max_retries"]).toBe(3);

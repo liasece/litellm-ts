@@ -358,10 +358,7 @@ describe("spend log detail stream", () => {
 			{ pollIntervalMs: 10 },
 		);
 		const port = await listen(server);
-		const socket = new WebSocket(`ws://127.0.0.1:${port}${SPEND_LOG_STREAM_PATH}?request_id=req-1`, [
-			"bad-key",
-			"litellm-log-stream",
-		]);
+		const socket = new WebSocket(`ws://127.0.0.1:${port}${SPEND_LOG_STREAM_PATH}?request_id=req-1`, ["bad-key", "litellm-log-stream"]);
 
 		try {
 			const error = await new Promise<Error>((resolve) => {

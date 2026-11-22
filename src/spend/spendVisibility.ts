@@ -108,11 +108,7 @@ export function resolveActiveRequestVisibilityClause(auth: UserAPIKeyAuth | unde
  * @param auth - 请求认证信息
  * @param teamId - 待检查的 team
  */
-async function canTeamMemberViewLog(
-	db: NodePgDatabase<typeof schema>,
-	auth: UserAPIKeyAuth | undefined,
-	teamId: string,
-): Promise<boolean> {
+async function canTeamMemberViewLog(db: NodePgDatabase<typeof schema>, auth: UserAPIKeyAuth | undefined, teamId: string): Promise<boolean> {
 	if (!auth || !auth.user_id) {
 		return false;
 	}

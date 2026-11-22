@@ -552,7 +552,6 @@ function textFromCompletion(result: Record<string, unknown>): string {
 	throw ApiError.unavailable("识图模型没有返回文本结果");
 }
 
-
 /**
  * Execute a model-authored private vision request through the configured worker.
  * @param router

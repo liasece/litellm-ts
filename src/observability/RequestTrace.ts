@@ -193,11 +193,7 @@ export function beginUpstreamAttempt(url: string): UpstreamAttemptRecord | undef
  * @param statusCode - HTTP 状态码
  * @param at - 时刻
  */
-export function noteUpstreamHeaders(
-	attempt: UpstreamAttemptRecord | undefined,
-	statusCode: number,
-	at: number = performance.now(),
-): void {
+export function noteUpstreamHeaders(attempt: UpstreamAttemptRecord | undefined, statusCode: number, at: number = performance.now()): void {
 	if (attempt === undefined) {
 		return;
 	}

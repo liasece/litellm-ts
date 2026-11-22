@@ -196,7 +196,10 @@ export class SubscriptionAccountScheduler {
 		if (duration <= 0) {
 			return;
 		}
-		const key = isAccountScopedFailure(status) || model === undefined ? this._cooldownKey(source, accountId) : this._modelCooldownKey(source, accountId, model);
+		const key =
+			isAccountScopedFailure(status) || model === undefined
+				? this._cooldownKey(source, accountId)
+				: this._modelCooldownKey(source, accountId, model);
 		this._cooldown.set(key, {
 			until: Date.now() + Math.min(duration, 15 * 60 * 1000),
 			reason: detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`,

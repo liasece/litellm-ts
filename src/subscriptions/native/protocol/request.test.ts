@@ -57,9 +57,7 @@ describe("translateRequest", () => {
 					role: "assistant",
 					content: "checking",
 					reasoning_content: "plan",
-					tool_calls: [
-						{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } },
-					],
+					tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } }],
 				},
 				{ role: "tool", tool_call_id: "call_1", content: "result" },
 			],
@@ -90,18 +88,9 @@ describe("translateRequest", () => {
 		expect(out["stream"]).toBe(true);
 		expect(out["user"]).toBe("u1");
 		const input = itemsAt(out, "input");
-		expect(input.map((item) => item["type"])).toEqual([
-			"message",
-			"reasoning",
-			"message",
-			"function_call",
-			"function_call_output",
-		]);
+		expect(input.map((item) => item["type"])).toEqual(["message", "reasoning", "message", "function_call", "function_call_output"]);
 		expect(input[0]?.["role"]).toBe("user");
-		expect(itemsAt(input[0] ?? {}, "content").map((part) => part["type"])).toEqual([
-			"input_text",
-			"input_image",
-		]);
+		expect(itemsAt(input[0] ?? {}, "content").map((part) => part["type"])).toEqual(["input_text", "input_image"]);
 		expect(input[1]?.["summary"]).toEqual([{ type: "summary_text", text: "plan" }]);
 		expect(input[3]?.["call_id"]).toBe("call_1");
 		expect(input[3]?.["name"]).toBe("lookup");
@@ -306,9 +295,7 @@ describe("translateRequest", () => {
 		expect(messages[2]).toMatchObject({ role: "assistant", content: "checking", reasoning_content: "plan" });
 		expect(messages[3]).toMatchObject({
 			role: "assistant",
-			tool_calls: [
-				{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } },
-			],
+			tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } }],
 		});
 		expect(messages[4]).toMatchObject({ role: "tool", tool_call_id: "call_1", content: "result" });
 	});
@@ -345,10 +332,7 @@ describe("translateRequest", () => {
 		expect(system[1]).toMatchObject({ type: "text", text: "b" });
 		expect(system[2]?.["text"]).toContain("JSON schema");
 		const messages = itemsAt(out, "messages");
-		expect(itemsAt(messages[0] ?? {}, "content").map((block) => block["type"])).toEqual([
-			"text",
-			"image",
-		]);
+		expect(itemsAt(messages[0] ?? {}, "content").map((block) => block["type"])).toEqual(["text", "image"]);
 		const assistant = itemsAt(messages[1] ?? {}, "content");
 		expect(assistant[0]).toMatchObject({ type: "tool_use", id: "call_1", name: "lookup", input: { q: "x" } });
 		const toolResult = itemsAt(messages[2] ?? {}, "content");
@@ -396,10 +380,7 @@ describe("translateRequest", () => {
 		expect(out["tool_choice"]).toEqual({ type: "function", function: { name: "lookup" } });
 		const messages = itemsAt(out, "messages");
 		expect(messages[0]).toMatchObject({ role: "system", content: "sys" });
-		expect(itemsAt(messages[1] ?? {}, "content").map((part) => part["type"])).toEqual([
-			"text",
-			"image_url",
-		]);
+		expect(itemsAt(messages[1] ?? {}, "content").map((part) => part["type"])).toEqual(["text", "image_url"]);
 		expect(messages[2]).toMatchObject({
 			role: "assistant",
 			content: "checking",
@@ -424,9 +405,7 @@ describe("translateRequest", () => {
 				{
 					role: "assistant",
 					content: "checking",
-					tool_calls: [
-						{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } },
-					],
+					tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } }],
 				},
 				{ role: "tool", tool_call_id: "call_1", content: "result" },
 			],
@@ -448,10 +427,7 @@ describe("translateRequest", () => {
 		expect(system[0]).toMatchObject({ type: "text", text: "sys" });
 		expect(system.at(-1)?.["text"]).toContain("JSON schema");
 		const messages = itemsAt(out, "messages");
-		expect(itemsAt(messages[0] ?? {}, "content").map((block) => block["type"])).toEqual([
-			"text",
-			"image",
-		]);
+		expect(itemsAt(messages[0] ?? {}, "content").map((block) => block["type"])).toEqual(["text", "image"]);
 		const assistant = itemsAt(messages[1] ?? {}, "content");
 		expect(assistant[0]).toMatchObject({ type: "text", text: "checking" });
 		expect(assistant[1]).toMatchObject({ type: "tool_use", id: "call_1", name: "lookup" });
@@ -472,9 +448,7 @@ describe("translateRequest", () => {
 				{
 					role: "assistant",
 					content: "checking",
-					tool_calls: [
-						{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } },
-					],
+					tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"q":"x"}' } }],
 				},
 				{ role: "tool", tool_call_id: "call_1", content: "result" },
 			],
@@ -492,8 +466,7 @@ describe("translateRequest", () => {
 		expect(out["systemInstruction"]).toEqual({ parts: [{ text: "sys" }] });
 		const contents = itemsAt(out, "contents");
 		expect(contents.map((content) => content["role"])).toEqual(["user", "model", "user"]);
-		const parts = (content: Record<string, unknown>): Record<string, unknown>[] =>
-			itemsAt(content, "parts");
+		const parts = (content: Record<string, unknown>): Record<string, unknown>[] => itemsAt(content, "parts");
 		expect(parts(contents[0] ?? {})[0]).toEqual({ text: "hi" });
 		expect(parts(contents[0] ?? {})[1]).toMatchObject({
 			inlineData: { mimeType: "image/png", data: "AAA" },

@@ -384,12 +384,7 @@ function createResponsesHandler(litellmRouter: LiteLLMRouter | undefined, db: Dr
 							(tool) => typeof tool?.type === "string" && tool.type.startsWith("web_"),
 						);
 				const capabilityDeclaredTools = [...toolRegistry.chatTools, ...hostedWebToolDeclarations];
-				const preparedWeb = await prepareOpenAIWebRequest(
-					litellmRouter,
-					model,
-					capabilityMessages,
-					capabilityDeclaredTools,
-				);
+				const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, capabilityMessages, capabilityDeclaredTools);
 				const result =
 					preparedVision || preparedImageGeneration || preparedWeb
 						? await runOpenAIBuiltinCapabilityAgentLoop(
@@ -774,9 +769,7 @@ function createNativeResponsesCapabilityCompletion(
 	const call = createNativeCapabilityCaller(litellmRouter, requestBody, originalMessages, toolRegistry, false);
 	return async (model, messages, optionalParams) => {
 		const result = await call(model, messages, optionalParams);
-		return result["_responseProtocol"] === "responses"
-			? mapNativeResponsesToChatCompletion(result, toolRegistry)
-			: result;
+		return result["_responseProtocol"] === "responses" ? mapNativeResponsesToChatCompletion(result, toolRegistry) : result;
 	};
 }
 
@@ -790,8 +783,7 @@ function createNativeResponsesCapabilityCompletion(
 function createPlainWorkerCompletion(
 	litellmRouter: LiteLLMRouter,
 ): (model: string, messages: Message[], optionalParams: Record<string, unknown>) => Promise<Record<string, unknown>> {
-	return (workerModel, workerMessages, workerParams) =>
-		litellmRouter.completion(workerModel, workerMessages as never, workerParams);
+	return (workerModel, workerMessages, workerParams) => litellmRouter.completion(workerModel, workerMessages as never, workerParams);
 }
 
 /**
@@ -1417,12 +1409,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 					(tool) => typeof tool?.type === "string" && tool.type.startsWith("web_"),
 				);
 		const capabilityDeclaredTools = [...toolRegistry.chatTools, ...hostedWebToolDeclarations];
-		const preparedWeb = await prepareOpenAIWebRequest(
-			litellmRouter,
-			model,
-			capabilityMessages,
-			capabilityDeclaredTools,
-		);
+		const preparedWeb = await prepareOpenAIWebRequest(litellmRouter, model, capabilityMessages, capabilityDeclaredTools);
 		if (preparedVision || preparedImageGeneration || preparedWeb) {
 			// 工具执行与 worker 调用保持非流式；主模型轮的可见文本边收边发。
 			if (!res.headersSent) {
@@ -1700,8 +1687,7 @@ async function handleResponsesStream(context: ResponsesStreamContext): Promise<v
 						upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
 					};
 				},
-				(checkpoint) =>
-					checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+				(checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
 			),
 		);
 	}
@@ -1865,8 +1851,7 @@ async function relayNativeResponsesStream(
 						upstream_response: (upstream?.response ?? null) as Record<string, unknown> | null,
 					};
 				},
-				(checkpoint) =>
-					checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
+				(checkpoint) => checkpointActiveRequest(checkpointDb, checkpointRequestId, checkpoint, "streaming_execution"),
 			),
 		);
 	}

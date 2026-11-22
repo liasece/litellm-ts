@@ -136,10 +136,7 @@ interface AuditedExchange {
  * @param context - 该次调用的上游交换（可能没有响应体）
  * @param response - 能力层拿到的调用结果
  */
-function consumeStreamedUpstreamResponse(
-	context: UpstreamLogContext | undefined,
-	response: unknown,
-): UpstreamLogContext | undefined {
+function consumeStreamedUpstreamResponse(context: UpstreamLogContext | undefined, response: unknown): UpstreamLogContext | undefined {
 	const record = asRecord(response);
 	if (record === undefined || !(UPSTREAM_STREAM_RESPONSE_KEY in record)) {
 		return context;

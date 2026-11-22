@@ -161,7 +161,12 @@ export class ModelRepository extends BaseRepository {
 	 * @param modelId - LiteLLM_ProxyModelTable.model_id
 	 */
 	async lockRowInTx(tx: ModelTransaction, modelId: string): Promise<ModelRow | null> {
-		const locked = await tx.select().from(LiteLLM_ProxyModelTable).where(eq(LiteLLM_ProxyModelTable.model_id, modelId)).limit(1).for("update");
+		const locked = await tx
+			.select()
+			.from(LiteLLM_ProxyModelTable)
+			.where(eq(LiteLLM_ProxyModelTable.model_id, modelId))
+			.limit(1)
+			.for("update");
 		return locked.at(0) ?? null;
 	}
 

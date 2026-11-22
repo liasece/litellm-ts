@@ -13,12 +13,7 @@ import type { Router as LiteLLMRouter } from "../router/Router";
 import type { EmbeddingResponse } from "../types/embedding";
 import { runCommonChecks } from "../auth/AuthChecks";
 import type { DrizzleDb } from "../core/db/Database";
-import {
-	buildSpendLogFromRequest,
-	calculateAndSetCost,
-	injectResponseCostHeader,
-	releaseSpend,
-} from "../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost, injectResponseCostHeader, releaseSpend } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { extractDeploymentCustomCost } from "../router/RouterSpendInfo";
@@ -29,10 +24,7 @@ import { attachUpstreamLogContext, createUpstreamLogContext, getUpstreamLogConte
 import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
 import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 import { createModuleLogger } from "../core/utils/logger";
-import {
-	appendModelResolutionTrace,
-	copyModelResolutionChain,
-} from "../router/ModelResolutionTrace";
+import { appendModelResolutionTrace, copyModelResolutionChain } from "../router/ModelResolutionTrace";
 import { createPublishedModelResolutionTrace } from "../router/UpstreamExchange";
 import { noteResolutionAppliedFeatures } from "../router/AppliedFeatures";
 
@@ -191,8 +183,8 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 							endTime: new Date(),
 							messages: input,
 							error: error,
-								status: SpendLogStatus.Failure,
-								upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
+							status: SpendLogStatus.Failure,
+							upstreamLogContext: getUpstreamLogContext(error) ?? upstreamLogContext,
 							fallbackModels: [model],
 							modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),
 							attemptedRetries: 0,

@@ -201,11 +201,7 @@ export function canonicalJson(value: unknown): string {
  * @param canonical - 规范化后的 JSON 文本
  */
 function blockIdFromCanonical(canonical: string): string {
-	return createHash("sha256")
-		.update(canonical, "utf8")
-		.digest()
-		.subarray(0, BLOCK_ID_DIGEST_BYTES)
-		.toString("base64url");
+	return createHash("sha256").update(canonical, "utf8").digest().subarray(0, BLOCK_ID_DIGEST_BYTES).toString("base64url");
 }
 
 /**
@@ -355,8 +351,7 @@ const SPEND_LOG_REF_KEYS: ReadonlySet<string> = new Set([
  * @param block - system 数组里的单块
  */
 function systemPromptPrefix(block: unknown): string | null {
-	const text =
-		typeof block === "string" ? block : isRecord(block) && typeof block["text"] === "string" ? block["text"] : null;
+	const text = typeof block === "string" ? block : isRecord(block) && typeof block["text"] === "string" ? block["text"] : null;
 	if (text === null) {
 		return null;
 	}
@@ -571,7 +566,10 @@ export function collectReferencedBlockIds(messages: unknown, proxyServerRequest:
 		ids.add(id);
 	}
 	if (isRecord(proxyServerRequest)) {
-		for (const container of [proxyServerRequest["body"], (proxyServerRequest["upstream_request"] as Record<string, unknown> | undefined)?.["body"]]) {
+		for (const container of [
+			proxyServerRequest["body"],
+			(proxyServerRequest["upstream_request"] as Record<string, unknown> | undefined)?.["body"],
+		]) {
 			if (!isRecord(container)) {
 				continue;
 			}
@@ -597,11 +595,7 @@ export function collectReferencedBlockIds(messages: unknown, proxyServerRequest:
  * @param lookup - 块内容查询
  * @param missingIds - 收集缺块 id
  */
-function resolveRefIdList(
-	ids: readonly string[],
-	lookup: SpendLogBlockLookup,
-	missingIds: string[],
-): unknown[] {
+function resolveRefIdList(ids: readonly string[], lookup: SpendLogBlockLookup, missingIds: string[]): unknown[] {
 	return ids.map((blockId) => {
 		const payload = lookup(blockId);
 		if (payload === undefined || payload === null) {
@@ -826,25 +820,13 @@ export function restoreSpendLogPayload(
 	if (isRecord(proxyServerRequest)) {
 		const restored: Record<string, unknown> = { ...proxyServerRequest };
 		if ("body" in restored) {
-			restored["body"] = restoreRequestBody(
-				restored["body"],
-				lookup,
-				missingBlockIds,
-				columnRefs,
-				options.compactAliases === true,
-			);
+			restored["body"] = restoreRequestBody(restored["body"], lookup, missingBlockIds, columnRefs, options.compactAliases === true);
 		}
 		const upstreamRequest = restored["upstream_request"];
 		if (isRecord(upstreamRequest) && "body" in upstreamRequest) {
 			restored["upstream_request"] = {
 				...upstreamRequest,
-				body: restoreRequestBody(
-					upstreamRequest["body"],
-					lookup,
-					missingBlockIds,
-					columnRefs,
-					options.compactAliases === true,
-				),
+				body: restoreRequestBody(upstreamRequest["body"], lookup, missingBlockIds, columnRefs, options.compactAliases === true),
 			};
 		}
 		proxyServerRequest = redactSpendLogProxySecrets(restored);
@@ -1029,10 +1011,7 @@ type SpendLogBlockReadDb = Pick<NodePgDatabase<typeof schema>, "select">;
  * @param db - 数据库实例
  * @param ids - 引用 id 列表
  */
-async function loadSpendLogBlocks(
-	db: NodePgDatabase<typeof schema>,
-	ids: readonly string[],
-): Promise<Map<string, unknown>> {
+async function loadSpendLogBlocks(db: NodePgDatabase<typeof schema>, ids: readonly string[]): Promise<Map<string, unknown>> {
 	const uniqueIds = [...new Set(ids)];
 	const payloads = new Map<string, unknown>();
 	const pending: string[] = [];

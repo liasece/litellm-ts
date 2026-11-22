@@ -355,7 +355,17 @@ export function buildModelSpeedReport(
 		const key = model + "\u0000" + provider;
 		let entry = byModel.get(key);
 		if (!entry) {
-			entry = { model: model, provider: provider, calls: 0, requests: 0, outputTokens: 0, generationSeconds: 0, p50Sum: 0, p50Weight: 0, points: [] };
+			entry = {
+				model: model,
+				provider: provider,
+				calls: 0,
+				requests: 0,
+				outputTokens: 0,
+				generationSeconds: 0,
+				p50Sum: 0,
+				p50Weight: 0,
+				points: [],
+			};
 			byModel.set(key, entry);
 		}
 		const requests = Math.max(0, finiteOr(row.requests, 0));
@@ -370,7 +380,13 @@ export function buildModelSpeedReport(
 		const outputTokens = finiteOr(row.output_tokens, Number.NaN);
 		const generationSeconds = finiteOr(row.generation_seconds, Number.NaN);
 		const bucketIso = toBucketIso(row.bucket);
-		if (!Number.isFinite(outputTokens) || !Number.isFinite(generationSeconds) || outputTokens <= 0 || generationSeconds <= 0 || bucketIso.length === 0) {
+		if (
+			!Number.isFinite(outputTokens) ||
+			!Number.isFinite(generationSeconds) ||
+			outputTokens <= 0 ||
+			generationSeconds <= 0 ||
+			bucketIso.length === 0
+		) {
 			continue;
 		}
 		const avgTps = outputTokens / generationSeconds;
@@ -392,7 +408,13 @@ export function buildModelSpeedReport(
 	const modelsWithoutSpeed: SpeedModelWithoutSeries[] = [];
 
 	for (const entry of byModel.values()) {
-		if (entry.requests <= 0 || entry.p50Weight <= 0 || entry.outputTokens <= 0 || entry.generationSeconds <= 0 || entry.points.length === 0) {
+		if (
+			entry.requests <= 0 ||
+			entry.p50Weight <= 0 ||
+			entry.outputTokens <= 0 ||
+			entry.generationSeconds <= 0 ||
+			entry.points.length === 0
+		) {
 			modelsWithoutSpeed.push({ model: entry.model, provider: entry.provider, calls: entry.calls });
 			continue;
 		}

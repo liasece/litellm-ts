@@ -86,7 +86,13 @@ import {
 	sessionSnapshotClause,
 	type SessionPosition,
 } from "./sessionPosition";
-import { spendLogDurationSql, spendLogExecutionModelSql, spendLogListMetadataSql, spendLogMetadataJsonSql, streamRequestedSql } from "./spendLogProjections";
+import {
+	spendLogDurationSql,
+	spendLogExecutionModelSql,
+	spendLogListMetadataSql,
+	spendLogMetadataJsonSql,
+	streamRequestedSql,
+} from "./spendLogProjections";
 
 const logger = createModuleLogger("SpendLogs");
 

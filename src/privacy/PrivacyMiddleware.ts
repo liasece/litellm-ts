@@ -123,23 +123,26 @@ export function privacyMaskingMiddleware(deps: PrivacyMiddlewareDeps): RequestHa
 					return;
 				}
 				void repository
-					.record({
-						requestId: requestId,
-						apiKey: apiKey,
-						userId: userId,
-						teamId: teamId,
-						client: client,
-						// 提供方与模型取实际脱敏时选中的 deployment，而不是客户端最初写的模型名。
-						provider: state.provider || detectPrivacyProvider(deps.router, requestedModel),
-						model: state.model || requestedModel,
-						kinds: stats.kinds,
-						occurrences: stats.occurrences,
-						distinctValues: stats.distinctValues,
-						action: stats.action,
-						durationMs: stats.durationMs,
-						unresolved: stats.unresolved,
-						values: context.valueStats(),
-					}, settings.retentionDays)
+					.record(
+						{
+							requestId: requestId,
+							apiKey: apiKey,
+							userId: userId,
+							teamId: teamId,
+							client: client,
+							// 提供方与模型取实际脱敏时选中的 deployment，而不是客户端最初写的模型名。
+							provider: state.provider || detectPrivacyProvider(deps.router, requestedModel),
+							model: state.model || requestedModel,
+							kinds: stats.kinds,
+							occurrences: stats.occurrences,
+							distinctValues: stats.distinctValues,
+							action: stats.action,
+							durationMs: stats.durationMs,
+							unresolved: stats.unresolved,
+							values: context.valueStats(),
+						},
+						settings.retentionDays,
+					)
 					.catch((error: unknown) => {
 						logger.error("写入脱敏统计失败", { error: error, requestId: requestId });
 					});

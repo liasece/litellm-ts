@@ -22,11 +22,7 @@ import type { ModelResolutionTraceCollector } from "../router/ModelResolutionTra
 import { copyModelResolutionChain, copyRoutingTrace } from "../router/ModelResolutionTrace";
 import { mergeAppliedFeatures, snapshotAppliedFeatures } from "../router/AppliedFeatures";
 import type { AppliedFeatureRecord } from "../types/spend";
-import {
-	getRecordedModelResolutionTrace,
-	observeUpstreamExchange,
-	type UpstreamExchangeObserver,
-} from "../router/UpstreamExchange";
+import { getRecordedModelResolutionTrace, observeUpstreamExchange, type UpstreamExchangeObserver } from "../router/UpstreamExchange";
 import type { UpstreamLogContext } from "../router/UpstreamLogContext";
 import {
 	buildSpendModelMapInformation,
@@ -58,10 +54,7 @@ const logger = createModuleLogger("ActiveRequestJournal");
  * @param db - 数据库实例
  * @param patch - 待合并进 `proxy_server_request` 的片段
  */
-async function encodeAndStoreActiveRequestPatch(
-	db: DrizzleDb,
-	patch: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+async function encodeAndStoreActiveRequestPatch(db: DrizzleDb, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
 	try {
 		const encoding = encodeActiveRequestPayload(patch);
 		const encodedPatch = encoding.proxyServerRequest;
@@ -223,12 +216,7 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 			// `model` 与最终 SpendLog 同义：部署选定后即为实际执行模型（含 fallback 归因），
 			// 请求时的公开名继续保留在 `model_group`。否则进行中的行只显示请求别名，
 			// 请求结束后才换成真实模型，同一个请求在列表里前后显示不同的名字。
-			values["model"] = reconstructModelName(
-				modelGroup,
-				spendInfo.customLlmProvider,
-				spendInfo.deploymentModel,
-				fallbackOccurred,
-			);
+			values["model"] = reconstructModelName(modelGroup, spendInfo.customLlmProvider, spendInfo.deploymentModel, fallbackOccurred);
 		}
 		if (Object.keys(upstreamPatch).length > 0) {
 			// 上游请求体同样按内容寻址：patch 里的 body 先换块引用再合并，
@@ -240,8 +228,7 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 				sql`COALESCE(${liteLLM_ActiveRequests.proxy_server_request}, '{}'::jsonb) || ${JSON.stringify(encodedPatch)}::jsonb`;
 		}
 		if (Object.keys(routingPatch).length > 0) {
-			values["metadata"] =
-				sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || ${JSON.stringify(routingPatch)}::jsonb`;
+			values["metadata"] = sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || ${JSON.stringify(routingPatch)}::jsonb`;
 		}
 		if (Object.keys(values).length === 1) {
 			return;
@@ -260,7 +247,9 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 		}
 		const trace = getRecordedModelResolutionTrace();
 		const info = context.spendInfo;
-		const modelMap = info ? buildSpendModelMapInformation(modelGroup, info.modelId, info.deploymentModel, context.request.body) : undefined;
+		const modelMap = info
+			? buildSpendModelMapInformation(modelGroup, info.modelId, info.deploymentModel, context.request.body)
+			: undefined;
 		const signature = upstreamSignature(context, trace, modelMap?.model_map_value?.model_family);
 		if (signature === lastSignature) {
 			return;
@@ -287,12 +276,7 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 						completion_start_time: sql`COALESCE(${liteLLM_ActiveRequests.completion_start_time}, ${at})`,
 						updated_at: at,
 					})
-					.where(
-						and(
-							eq(liteLLM_ActiveRequests.request_id, requestId),
-							eq(liteLLM_ActiveRequests.status, "in_progress"),
-						),
-					);
+					.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")));
 				publishSpendLogChange();
 			});
 		},

@@ -41,9 +41,7 @@ interface RecordedCall {
 }
 
 /** 用固定响应构造 fetch，并记录每次调用。 */
-function mockFetch(
-	handler: (url: string) => { status: number; body: unknown },
-): { calls: RecordedCall[]; fetchImpl: typeof fetch } {
+function mockFetch(handler: (url: string) => { status: number; body: unknown }): { calls: RecordedCall[]; fetchImpl: typeof fetch } {
 	const calls: RecordedCall[] = [];
 	const fetchImpl = (async (input: unknown, init?: RequestInit): Promise<Response> => {
 		const url = String(input);
@@ -81,9 +79,7 @@ function makeStore(accounts: readonly SubscriptionAccount[]): SubscriptionAccoun
 }
 
 /** 创建被测适配器。 */
-function makeProvider(
-	options: { accounts?: readonly SubscriptionAccount[]; fetch?: typeof fetch } = {},
-): SubscriptionProviderAdapter {
+function makeProvider(options: { accounts?: readonly SubscriptionAccount[]; fetch?: typeof fetch } = {}): SubscriptionProviderAdapter {
 	const dependencies: SubscriptionProviderDependencies = {
 		accounts: makeStore(options.accounts ?? [makeAccount()]),
 		...(options.fetch === undefined ? {} : { fetch: options.fetch }),
@@ -356,11 +352,9 @@ describe("CommandCode 上游请求构造", () => {
 		expect(provider.resolveModel?.(" deepseek/deepseek-v4.1-flash ")).toBe("deepseek/deepseek-v4.1-flash");
 
 		const plan = await provider.build(
-			makeUpstream(
-				makeContext({ model: "commandcode/anthropic/claude-opus-5" }),
-				"messages",
-				{ model: "commandcode/anthropic/claude-opus-5" },
-			),
+			makeUpstream(makeContext({ model: "commandcode/anthropic/claude-opus-5" }), "messages", {
+				model: "commandcode/anthropic/claude-opus-5",
+			}),
 		);
 		expect(plan.model).toBe("anthropic/claude-opus-5");
 		expect((plan.body as Record<string, unknown>)["model"]).toBe("anthropic/claude-opus-5");
@@ -393,7 +387,10 @@ describe("CommandCode 上游请求构造", () => {
 			model: "deepseek/deepseek-v4.1-flash",
 			messages: [{ role: "user", content: "hi" }],
 			tools: [
-				{ type: "function", function: { name: "plain_tool", description: "普通工具", parameters: { type: "object", properties: {} } } },
+				{
+					type: "function",
+					function: { name: "plain_tool", description: "普通工具", parameters: { type: "object", properties: {} } },
+				},
 			],
 			thinking: "auto",
 		};
@@ -541,9 +538,7 @@ describe("CommandCode 上游请求构造", () => {
 		);
 		expect(notObject.statusCode).toBe(400);
 
-		const blankModel = await captureApiError(
-			provider.build(makeUpstream(makeContext({ model: "   " }), "responses", { model: "x" })),
-		);
+		const blankModel = await captureApiError(provider.build(makeUpstream(makeContext({ model: "   " }), "responses", { model: "x" })));
 		expect(blankModel.statusCode).toBe(400);
 		expect(blankModel.message).toContain("缺少模型");
 
@@ -570,7 +565,10 @@ describe("CommandCode reasoning 回填", () => {
 					message: {
 						role: "assistant",
 						content: "答案",
-						reasoning_details: [{ type: "reasoning.text", text: "先想" }, { type: "reasoning.text", text: "再答" }],
+						reasoning_details: [
+							{ type: "reasoning.text", text: "先想" },
+							{ type: "reasoning.text", text: "再答" },
+						],
 					},
 					finish_reason: "stop",
 				},
@@ -938,7 +936,12 @@ describe("CommandCode 端到端往返（真实协议转换）", () => {
 						index: 0,
 						delta: {
 							tool_calls: [
-								{ index: 0, id: "call_1", type: "function", function: { name: "mcp__node_repl__run", arguments: "{\"code\":" } },
+								{
+									index: 0,
+									id: "call_1",
+									type: "function",
+									function: { name: "mcp__node_repl__run", arguments: '{"code":' },
+								},
 							],
 						},
 					},
@@ -947,7 +950,7 @@ describe("CommandCode 端到端往返（真实协议转换）", () => {
 			{
 				id: "c1",
 				choices: [
-					{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: "\"ls\"}" } }] }, finish_reason: "tool_calls" },
+					{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"ls"}' } }] }, finish_reason: "tool_calls" },
 				],
 			},
 		];
@@ -965,7 +968,8 @@ describe("CommandCode 端到端往返（真实协议转换）", () => {
 				return { event: event.event, data: transformed };
 			});
 		const done = inbound.find(
-			(event) => event.event === "response.output_item.done" && (event.data["item"] as Record<string, unknown>)["type"] === "function_call",
+			(event) =>
+				event.event === "response.output_item.done" && (event.data["item"] as Record<string, unknown>)["type"] === "function_call",
 		);
 
 		expect(done?.data["item"]).toMatchObject({ type: "function_call", name: "run", namespace: "mcp__node_repl", call_id: "call_1" });

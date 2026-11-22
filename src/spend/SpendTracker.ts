@@ -794,7 +794,8 @@ export async function buildProxyServerRequest(ctx: SpendLogBuildContext): Promis
 	};
 	// 上游详情以请求作用域通道为准：端点显式传入时用传入值，否则读取传输层记录的真实交换。
 	// 这样任何中间层重建结果对象都不会让日志丢上游详情。
-	const upstreamLogContext = ctx.upstreamLogContext ?? (ctx.disableAmbientUpstreamContext === true ? undefined : getRecordedUpstreamExchange());
+	const upstreamLogContext =
+		ctx.upstreamLogContext ?? (ctx.disableAmbientUpstreamContext === true ? undefined : getRecordedUpstreamExchange());
 	if (shouldStoreUpstreamLogs && upstreamLogContext) {
 		const upstreamRequest = sanitizeSpendLogPayload({
 			...upstreamLogContext.request,
@@ -1006,10 +1007,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 			: getRecordedUpstreamErrors();
 	// fallback 不单独埋点（routing_trace 是唯一事实源），其余能力由各改写点记进账本；
 	// 内部调用的审计行显式传空集合，避免把外层主请求的能力记到旁路调用上。
-	const appliedFeatures = mergeAppliedFeatures(
-		ctx.appliedFeatures ?? snapshotAppliedFeatures(),
-		routingTrace,
-	);
+	const appliedFeatures = mergeAppliedFeatures(ctx.appliedFeatures ?? snapshotAppliedFeatures(), routingTrace);
 	return {
 		session_group_key: getCanonicalSessionGroupKey(ctx.req),
 		user_api_key: getAuthApiKeyForSpendLog(ctx),
@@ -1035,7 +1033,12 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 		batch_models: null,
 		cold_storage_object_key: null,
 		// PY StandardLoggingModelInformation：model_map_key=路由模型组，model_map_value=deployment ModelInfo
-		model_map_information: buildSpendModelMapInformation(ctx.modelGroup ?? ctx.model, ctx.modelId, ctx.deploymentModel, ctx.upstreamLogContext?.request.body),
+		model_map_information: buildSpendModelMapInformation(
+			ctx.modelGroup ?? ctx.model,
+			ctx.modelId,
+			ctx.deploymentModel,
+			ctx.upstreamLogContext?.request.body,
+		),
 		litellm_overhead_time_ms: ctx.litellmOverheadTimeMs ?? null,
 		attempted_retries: ctx.attemptedRetries ?? null,
 		max_retries: ctx.maxRetries ?? null,
@@ -1504,12 +1507,11 @@ export function estimateSpendReservation(
 		(value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
 	);
 	const completionTokens = configuredLimits.length > 0 ? Math.ceil(Math.max(...configuredLimits)) : DEFAULT_RESERVATION_COMPLETION_TOKENS;
-	const baseCost = costPerToken(model, promptTokens, completionTokens, 0, 0, { customCostPerToken: customCost, provider: provider }).totalCost;
-	const estimate = adjustCost(
-		baseCost,
-		resolveCostProvider(provider, model),
-		costTrackingConfigService.getSnapshot(),
-	).total;
+	const baseCost = costPerToken(model, promptTokens, completionTokens, 0, 0, {
+		customCostPerToken: customCost,
+		provider: provider,
+	}).totalCost;
+	const estimate = adjustCost(baseCost, resolveCostProvider(provider, model), costTrackingConfigService.getSnapshot()).total;
 	return Number.isFinite(estimate) ? Math.max(0, estimate) : 0;
 }
 
@@ -1975,10 +1977,7 @@ export async function trackSpendLog(db: NodePgDatabase<typeof schema>, logEntry:
  * @param db - Drizzle 数据库实例
  * @param logEntry - 花费日志条目
  */
-async function trackSpendLogMeasured(
-	db: NodePgDatabase<typeof schema>,
-	logEntry: SpendLog,
-): Promise<SpendLogTrackResult> {
+async function trackSpendLogMeasured(db: NodePgDatabase<typeof schema>, logEntry: SpendLog): Promise<SpendLogTrackResult> {
 	// GAP: 入口统一 usage 归一，对齐 PY _transform_response_api_usage_to_chat_usage
 	const normalized = normalizeUsageForSpend({
 		prompt_tokens: logEntry.prompt_tokens,
@@ -2085,9 +2084,7 @@ async function trackSpendLogMeasured(
 		total_cost: spend,
 		tool_usage_cost: fixedCost,
 		...(priceSnapshot === undefined ? {} : { price_snapshot: priceSnapshot }),
-		...(peakPricing === undefined
-			? {}
-			: { price_tier: peakMultiplier > 1 ? "peak" : "off_peak", price_multiplier: peakMultiplier }),
+		...(peakPricing === undefined ? {} : { price_tier: peakMultiplier > 1 ? "peak" : "off_peak", price_multiplier: peakMultiplier }),
 		...(hasCostAdjustment
 			? {
 					original_cost: tokenCost.totalCost,
@@ -2199,12 +2196,7 @@ async function trackSpendLogMeasured(
 			const settledReservations = await tx
 				.update(liteLLM_SpendReservations)
 				.set({ status: reservationStatus, actual: reservationStatus === "settled" ? spend : null, updated_at: new Date() })
-				.where(
-					and(
-						eq(liteLLM_SpendReservations.request_id, logEntry.request_id),
-						eq(liteLLM_SpendReservations.status, "reserved"),
-					),
-				)
+				.where(and(eq(liteLLM_SpendReservations.request_id, logEntry.request_id), eq(liteLLM_SpendReservations.status, "reserved")))
 				.returning({ scopeIds: liteLLM_SpendReservations.scope_ids });
 			const reservedScopeIds = settledReservations[0]?.scopeIds;
 			if (reservedScopeIds) {
@@ -2355,11 +2347,7 @@ export function calculateAndSetCost(
 	});
 
 	// 折扣/保证金：与落账同口径（provider 来自 Router 透传的 _spendInfo）
-	const adjustedCost = adjustCost(
-		totalCost,
-		resolveCostProvider(spendInfoProvider, model),
-		costTrackingConfigService.getSnapshot(),
-	);
+	const adjustedCost = adjustCost(totalCost, resolveCostProvider(spendInfoProvider, model), costTrackingConfigService.getSnapshot());
 
 	// 在 usage 上设置 cost
 	(usage as Usage & { cost?: number }).cost = adjustedCost.total;

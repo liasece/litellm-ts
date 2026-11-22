@@ -19,12 +19,7 @@ import { createModuleLogger } from "../core/utils/logger";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
 import { runCommonChecks } from "../auth/AuthChecks";
-import {
-	buildSpendLogFromRequest,
-	calculateAndSetCost,
-	injectResponseCostHeader,
-	releaseSpend,
-} from "../spend/SpendTracker";
+import { buildSpendLogFromRequest, calculateAndSetCost, injectResponseCostHeader, releaseSpend } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
 import { reserveEndpointSpend } from "../spend/SpendReservation";
 import { CallType, SpendLogStatus } from "../types/spend";

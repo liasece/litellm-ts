@@ -102,7 +102,10 @@ export class ConfigRepository extends BaseRepository {
 				set: { param_value: value },
 			});
 		const snapshot = structuredClone(value);
-		this._cache.mutate((rows) => [...rows.filter((row) => row.param_name !== paramName), { param_name: paramName, param_value: snapshot }]);
+		this._cache.mutate((rows) => [
+			...rows.filter((row) => row.param_name !== paramName),
+			{ param_name: paramName, param_value: snapshot },
+		]);
 	}
 
 	/**
@@ -113,7 +116,9 @@ export class ConfigRepository extends BaseRepository {
 		const rows = await this._cache.rows();
 		const row = rows.find((candidate) => candidate.param_name === paramName);
 		const value = row?.param_value;
-		return typeof value === "object" && value !== null && !Array.isArray(value) ? structuredClone(value as Record<string, unknown>) : null;
+		return typeof value === "object" && value !== null && !Array.isArray(value)
+			? structuredClone(value as Record<string, unknown>)
+			: null;
 	}
 
 	/**

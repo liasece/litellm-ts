@@ -24,9 +24,7 @@ interface SearchToolItem {
 }
 
 /** 表单可选择、且本代理能够实际执行的搜索供应商。 */
-const AVAILABLE_SEARCH_PROVIDERS = [
-	{ provider_name: "google_pse", ui_friendly_name: "Google PSE" },
-] as const;
+const AVAILABLE_SEARCH_PROVIDERS = [{ provider_name: "google_pse", ui_friendly_name: "Google PSE" }] as const;
 
 const GOOGLE_PSE_URL = "https://www.googleapis.com/customsearch/v1";
 const CONNECTION_TEST_QUERY = "LiteLLM search tool connection test";
@@ -264,17 +262,12 @@ async function testGooglePseConnection(
  */
 async function findSearchTool(db: DrizzleDb | undefined, name: string): Promise<Record<string, unknown> | undefined> {
 	if (db) {
-		const [row] = await db
-			.select()
-			.from(LiteLLM_SearchToolsTable)
-			.where(eq(LiteLLM_SearchToolsTable.search_tool_name, name));
+		const [row] = await db.select().from(LiteLLM_SearchToolsTable).where(eq(LiteLLM_SearchToolsTable.search_tool_name, name));
 		if (row) {
 			return { search_tool_name: row.search_tool_name, litellm_params: row.litellm_params };
 		}
 	}
-	const configTool = (getConfig().routerSettings.search_tools ?? []).find(
-		(tool) => isRecord(tool) && tool["search_tool_name"] === name,
-	);
+	const configTool = (getConfig().routerSettings.search_tools ?? []).find((tool) => isRecord(tool) && tool["search_tool_name"] === name);
 	return isRecord(configTool) ? configTool : undefined;
 }
 
