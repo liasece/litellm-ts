@@ -8,9 +8,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "22", cache: npm }
+      # 缓存键带 commit，保证每次能保存本轮新条目；内容寻址避免 checkout 重置 mtime 后整库失效。
+      - uses: actions/cache@v4
+        with:
+          path: .cache/eslint
+          key: ${{ runner.os }}-eslint-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-eslint-
       - run: npm ci
-      - run: npx eslint . --cache --cache-location .cache/eslint
+      - run: npx eslint . --cache --cache-strategy content --cache-location .cache/eslint
       - run: npx prettier --check "src/**/*.ts"
 
   typecheck:
@@ -18,9 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "22", cache: npm }
       - run: npm ci
-      - run: npx tsc --noEmit
+      # 与本地 make typecheck 同一条命令；test:types 覆盖 Jest isolatedModules 跳过的测试文件类型。
+      - run: npm run typecheck
+      - run: npm run test:types
       - run: npx madge --circular --extensions ts src/
 
   test:
@@ -28,7 +36,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "22", cache: npm }
+      # jest 的 transform 缓存按文件内容寻址；键带 commit，保证新条目能保存并回填。
+      - uses: actions/cache@v4
+        with:
+          path: .cache/jest
+          key: ${{ runner.os }}-jest-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-jest-
       - run: npm ci
       - run: npm test
 
@@ -80,3 +94,28 @@ jobs:
           name: playwright-artifacts
           path: .artifacts/frontend-vue/browser-tests
           retention-days: 7
+
+  # 让 emit 与 vite 构建在每次推送都真实跑一遍，而不是第一次发现失败发生在部署脚本里。
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          # 同一份 npm 缓存服务前后端两次 npm ci，依赖指纹覆盖两个 lockfile。
+          cache-dependency-path: |
+            package-lock.json
+            ui/litellm-dashboard/package-lock.json
+      - name: 安装后端依赖
+        run: npm ci
+      - name: 构建后端
+        run: npm run build
+      - name: 安装前端依赖
+        working-directory: ui/litellm-dashboard
+        run: npm ci
+      - name: 构建前端
+        working-directory: ui/litellm-dashboard
+        run: npm run build:nocheck
