@@ -29,7 +29,10 @@ function baseUrl(account: SubscriptionAccount): string {
  * @param record - 上游条目
  * @param hasMime - MIME 前缀判定
  */
-function inputModalitiesOf(record: Record<string, unknown>, hasMime: (prefix: string) => boolean | undefined): readonly string[] | undefined {
+function inputModalitiesOf(
+	record: Record<string, unknown>,
+	hasMime: (prefix: string) => boolean | undefined,
+): readonly string[] | undefined {
 	const modalities = ["text"];
 	if (asBoolean(record["supportsImages"]) === true || hasMime("image/") === true) {
 		modalities.push("image");
@@ -48,11 +51,11 @@ export const antigravityUpstreamAdapter: UpstreamSourceAdapter = {
 	source: "antigravity",
 	supported: true,
 
-	hasCredential: function(account: SubscriptionAccount): boolean {
+	hasCredential: function (account: SubscriptionAccount): boolean {
 		return asText(asRecord(account.raw)?.["access_token"]) !== undefined;
 	},
 
-	list: async function(context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
+	list: async function (context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
 		const raw = asRecord(context.account.raw);
 		const credential = asText(raw?.["access_token"]);
 		if (credential === undefined) {
@@ -90,7 +93,7 @@ export const antigravityUpstreamAdapter: UpstreamSourceAdapter = {
 		return extractEntries(result.payload, ["models", "data"]);
 	},
 
-	parse: function(entries: readonly unknown[]): UpstreamModelMetadataMap {
+	parse: function (entries: readonly unknown[]): UpstreamModelMetadataMap {
 		const map = new Map<string, UpstreamModelMetadata>();
 		for (const entry of entries) {
 			const record = asRecord(entry);
@@ -100,8 +103,13 @@ export const antigravityUpstreamAdapter: UpstreamSourceAdapter = {
 			}
 			// `supportedMimeTypes` 是 map<string,bool>；图片/PDF/视频支持也各有布尔字段。
 			const mimeTypes = asRecord(record["supportedMimeTypes"]);
-			const hasMime = (prefix: string): boolean | undefined =>
-				(mimeTypes === undefined ? undefined : Object.entries(mimeTypes).some(([mime, supported]) => supported === true && mime.startsWith(prefix)));
+			// Prettier 会移除条件表达式外层括号，改块体以满足 no-confusing-arrow。
+			const hasMime = (prefix: string): boolean | undefined => {
+				if (mimeTypes === undefined) {
+					return undefined;
+				}
+				return Object.entries(mimeTypes).some(([mime, supported]) => supported === true && mime.startsWith(prefix));
+			};
 			const metadata = compactMetadata({
 				displayName: asText(record["displayName"]) ?? asText(record["display_name"]),
 				description: asText(record["description"]),

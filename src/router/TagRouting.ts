@@ -24,8 +24,11 @@ export function filterDeploymentsByTags(deployments: Deployment[], params: Recor
 	const excluded = requested.filter((tag) => tag.startsWith("!")).map((tag) => tag.slice(1));
 	const required = requested.filter((tag) => tag.startsWith("&")).map((tag) => tag.slice(1));
 	const positive = requested.filter((tag) => !tag.startsWith("!") && !tag.startsWith("&"));
-	const tagsOf = (dep: Deployment): string[] =>
-		(Array.isArray(dep.litellm_params["tags"]) ? (dep.litellm_params["tags"] as string[]) : []);
+	const tagsOf = (dep: Deployment): string[] => {
+		// Prettier 会移除条件表达式外层括号，改块体以满足 no-confusing-arrow。
+		const tags = dep.litellm_params["tags"];
+		return Array.isArray(tags) ? (tags as string[]) : [];
+	};
 	const hasDefault = deployments.some((dep) => tagsOf(dep).includes("default"));
 	return deployments.filter((dep) => {
 		const tags = tagsOf(dep);
@@ -45,11 +48,16 @@ export function filterDeploymentsByTags(deployments: Deployment[], params: Recor
  */
 export function stripRoutingMetadata(body: Record<string, unknown>): Record<string, unknown> {
 	const metadata = body["metadata"];
-	if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || !("tags" in metadata)) {return body;}
+	if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || !("tags" in metadata)) {
+		return body;
+	}
 	const remaining = { ...metadata } as Record<string, unknown>;
 	delete remaining["tags"];
 	const result = { ...body };
-	if (Object.keys(remaining).length) {result["metadata"] = remaining;}
-	else {delete result["metadata"];}
+	if (Object.keys(remaining).length) {
+		result["metadata"] = remaining;
+	} else {
+		delete result["metadata"];
+	}
 	return result;
 }
