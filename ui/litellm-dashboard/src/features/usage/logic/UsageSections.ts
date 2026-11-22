@@ -1,11 +1,12 @@
 /** 用量统计的分区；前四个按用量数据切分，quota 是独立的账号额度页。 */
-export type UsageSection = "cost" | "models" | "keys" | "endpoints" | "quota";
+export type UsageSection = "cost" | "models" | "keys" | "endpoints" | "accounts" | "quota";
 
 const sectionsByPage: Readonly<Record<string, UsageSection>> = {
 	new_usage: "cost",
 	"usage-models": "models",
 	"usage-keys": "keys",
 	"usage-endpoints": "endpoints",
+	"usage-accounts": "accounts",
 	"usage-quota": "quota",
 };
 
@@ -23,5 +24,6 @@ export const pageByUsageSection: Readonly<Record<UsageSection, string>> = {
 	models: "usage-models",
 	keys: "usage-keys",
 	endpoints: "usage-endpoints",
+	accounts: "usage-accounts",
 	quota: "usage-quota",
 };

@@ -2,16 +2,16 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Request } from "express";
 import { ApiError } from "../core/api/ApiError";
 import type { DrizzleDb } from "../core/db/Database";
-import type { ImageCompletionAsset } from "../db/schema/imageCompletions";
 import { resolveRequestSessionGroupKey } from "../spend/sessionIdentity";
 import { MAX_BUILTIN_CAPABILITY_ITERATIONS } from "./BuiltinCapabilitiesConfig";
-import type { BuiltinGeneratedImage } from "./ImageGenerationCapability";
+import type { BuiltinGeneratedImage } from "../types/generatedImage";
 import {
-	DatabaseImageHistoryRepository,
+	imageCompletionRepositoryFor,
 	type ImageAnchorHit,
+	type ImageCompletionAsset,
 	type ImageHistoryRepository,
 	type ImageOperation,
-} from "./ImageCompletionRepository";
+} from "../repositories/ImageCompletionRepository";
 import {
 	describeImageTranscript,
 	historyDigest,
@@ -355,7 +355,7 @@ export function createImageCompletionHistory(
 	const session = resolveRequestSessionGroupKey(req);
 	const scope = historyDigest([credential, auth?.user_id, auth?.team_id, auth?.organization_id, auth?.project_id, session]);
 	const retry = req.headers?.["idempotency-key"];
-	return new ImageCompletionHistory(new DatabaseImageHistoryRepository(db), {
+	return new ImageCompletionHistory(imageCompletionRepositoryFor(db), {
 		scope: scope,
 		protocol: protocol,
 		messages: publicHistory,

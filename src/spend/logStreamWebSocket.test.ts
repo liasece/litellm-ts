@@ -62,7 +62,7 @@ function createContainer(onAuth?: (req: Request) => void): ServiceContainer {
 	return {
 		authMiddleware: (req: Request, _res: Response, next: NextFunction) => {
 			try {
-				req.auth = { api_key: "test", models: [] };
+				req.auth = { api_key: "test", user_role: "proxy_admin", models: [] };
 				onAuth?.(req);
 				next();
 			} catch (error) {
@@ -300,7 +300,7 @@ describe("spend log detail stream", () => {
 		// 鉴权是异步的（查库），客户端可能在这段时间里直接消失。
 		const slowContainer = {
 			authMiddleware: (req: Request, _res: Response, next: NextFunction) => {
-				req.auth = { api_key: "test", models: [] };
+				req.auth = { api_key: "test", user_role: "proxy_admin", models: [] };
 				setTimeout(next, 60);
 			},
 			authorizationGuard: { middleware: () => (_req: Request, _res: Response, next: NextFunction) => next() },

@@ -6,71 +6,22 @@
  */
 
 import type { Request } from "express";
-import type { UpstreamLogContext } from "../router/UpstreamLogContext";
-import type { UpstreamErrorRecord } from "../router/UpstreamExchange";
+import type { UpstreamAccountRef } from "../router/UpstreamKeyIdentity";
+import type { UpstreamErrorRecord, UpstreamLogContext } from "./upstreamLog";
 import type { ModelResolutionChainEntry, RoutingTraceEntry } from "../router/ModelResolutionTrace";
 import type { UserAPIKeyAuth } from "./auth";
 import type { CustomCostPerToken } from "../cost/CostCalculator";
-import type { ActiveRequestJournal } from "../spend/ActiveRequestJournal";
+import { CallType, SpendLogStatus } from "./spendEnums";
+
+export { CallType, SpendLogStatus };
 
 declare global {
 	namespace Express {
 		interface Request {
 			spendRequestId?: string;
 			spendSessionId?: string;
-			/**
-			 * 在途日志补写器：请求登记后由 spend reservation 挂上，供流式路径补写 TTFT 等
-			 * 「一旦确定就不再变化」的字段。数据库不支持 ActiveRequests 时为空。
-			 */
-			activeRequestJournal?: ActiveRequestJournal;
 		}
 	}
-}
-
-/**
- * 调用类型枚举（SpendLog.call_type）
- *
- * 对齐 PY litellm.proxy.spend_tracking 的 call_type 字段，标识该 SpendLog 来自哪类入口：
- * - ACompletion: OpenAI 异步 Chat Completions（acompletion 路径）
- * - Completion: OpenAI 同步 Chat Completions
- * - AMessages: Anthropic Messages 异步（amessages 路径）
- * - AEmbedding: 异步 embedding 调用
- * - Embedding: 同步 embedding 调用
- * - AImageGeneration: 异步图像生成
- * - ImageGeneration: 同步图像生成
- * - ASearch / Search: 直连 Search 工具接口（非模型调用，按次计费）
- */
-export enum CallType {
-	ACompletion = "acompletion",
-	AResponses = "aresponses",
-	Completion = "completion",
-	AMessages = "amessages",
-	AEmbedding = "aembedding",
-	Embedding = "embedding",
-	AImageGeneration = "aimage_generation",
-	ImageGeneration = "image_generation",
-	ATranscription = "atranscription",
-	Transcription = "transcription",
-	ASpeech = "aspeech",
-	Speech = "speech",
-	ASearch = "asearch",
-	Search = "search",
-}
-
-/**
- * SpendLog 最终状态（SpendLog.status）
- *
- * 对齐 PY `litellm/proxy/_types.py` SpendLogsMetadata.status：
- * - Success: 请求成功且 usage 已计费
- * - Failure: 请求失败（上游错误、timeout 等）
- * - Cancelled: 下游主动断开后，网关按取消策略终止了上游工作
- * - Aborted: 请求完成前因客户端断开或网关重启而中止，保留已观测的 usage 与费用
- */
-export enum SpendLogStatus {
-	Success = "success",
-	Failure = "failure",
-	Cancelled = "cancelled",
-	Aborted = "aborted",
 }
 
 /** 单次请求花费日志 */
@@ -117,6 +68,13 @@ export interface SpendLog {
 	custom_llm_provider?: string;
 	/** API 基础 URL */
 	api_base?: string;
+	/** 实际上游 key 的 SHA-256；null/缺省表示未记录。 */
+	upstream_key_hash?: string | null;
+	/**
+	 * 本次实际使用该 key 的账号身份，仅供结算写关联表；
+	 * 不持久化到 SpendLogs，也不进入 API 响应。
+	 */
+	upstreamAccount?: UpstreamAccountRef;
 	/** 用户标识 */
 	user?: string;
 	/** 团队 ID */
@@ -281,6 +239,8 @@ export interface SpendLogsMetadata {
 	readonly cold_storage_object_key?: string | null;
 	/** LiteLLM 代理层开销毫秒数（请求进入→上游发起前） */
 	readonly litellm_overhead_time_ms?: number | null;
+	/** 上述开销中「到达 → 请求体读完并解析」的毫秒数（客户端上传 + JSON 解析） */
+	readonly litellm_body_received_ms?: number | null;
 	/** 已尝试重试次数（fallback 链跳数） */
 	readonly attempted_retries?: number | null;
 	/** 最大允许重试次数（max_fallbacks 配置） */
@@ -339,6 +299,10 @@ export interface SpendLogBuildContext {
 	readonly customLlmProvider?: string;
 	/** 上游 API base */
 	readonly apiBase?: string;
+	/** 显式覆盖实际 key 指纹；用于内部审计等不走请求通道的调用。 */
+	readonly upstreamKeyHash?: string | null;
+	/** 显式覆盖账号身份；与 upstreamKeyHash 成对传入。 */
+	readonly upstreamAccount?: UpstreamAccountRef;
 	/** 请求进入代理的时间 */
 	readonly startTime: Date;
 	/** 请求完成或失败时间 */
@@ -396,6 +360,14 @@ export interface SpendLogBuildContext {
 	 * 由各端点在派发上游前计算传入。
 	 */
 	readonly litellmOverheadTimeMs?: number;
+	/**
+	 * 其中「客户端把请求体传完并解析」的毫秒数。
+	 *
+	 * 到达中间件跑在 body 解析之前，所以 litellmOverheadTimeMs 天然包含上传时间；
+	 * 两者相减才是代理自己的前置工作。大 prompt 在慢上行链路上传几百毫秒是常态，
+	 * 没有这个字段就会把客户端网络当成代理变慢。
+	 */
+	readonly litellmBodyReceivedMs?: number;
 	/** 已尝试 fallback 跳数（AnthropicUpstreamDispatch fallbackDepth） */
 	readonly attemptedRetries?: number;
 	/** fallback 链最大跳数（Router max_fallbacks 配置） */

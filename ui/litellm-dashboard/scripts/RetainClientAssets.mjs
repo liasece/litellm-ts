@@ -2,6 +2,17 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
+/**
+ * 兼容资源最多向前保留的发布代数。
+ *
+ * 每一版都会把上一版的 retained 清单继续带下去，早期实现没有上限，`out/` 在几十次发布后
+ * 累积到上万文件（镜像里出现过 392MB 的静态目录）。保留窗口只需覆盖「还开着旧页面的客户端」
+ * 这一真实场景，超过窗口就重新开始计数，让目录大小回到常数级。
+ */
+export const MAX_RETAINED_GENERATIONS = 8;
+/** 兼容资源总量上限；超过时放弃继承旧清单，只保留本版 manifest 引用的文件。 */
+export const MAX_RETAINED_BYTES = 192 * 1024 * 1024;
+
 function publicAssetPath(value) {
 	if (
 		typeof value !== "string" ||
@@ -80,7 +91,11 @@ export async function retainClientAssets(previousDirectory, outputDirectory) {
 				candidates.add(publicAssetPath(name));
 		}
 	const retained = await optionalJson(path.join(previousDirectory, "retained-client-assets.json"));
-	for (const entry of retained?.entries || []) candidates.add(publicAssetPath(entry.path));
+	const generations = (Number.isFinite(retained?.generations) ? retained.generations : 0) + 1;
+	const inheritedBytes = (retained?.entries || []).reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0);
+	// 只在窗口内继承：代数超限或历史体量失控时重新开始，避免兼容资源无限增长。
+	const inheritPrevious = generations <= MAX_RETAINED_GENERATIONS && inheritedBytes <= MAX_RETAINED_BYTES;
+	if (inheritPrevious) for (const entry of retained?.entries || []) candidates.add(publicAssetPath(entry.path));
 	const entries = [],
 		digest = crypto.createHash("sha256");
 	let bytes = 0;
@@ -118,7 +133,14 @@ export async function retainClientAssets(previousDirectory, outputDirectory) {
 		bytes += content.length;
 		digest.update(name + "\0" + sha256 + "\0");
 	}
-	const result = { available: true, files: entries.length, bytes, sha256: digest.digest("hex"), entries };
+	const result = {
+		available: true,
+		generations: inheritPrevious ? generations : 1,
+		files: entries.length,
+		bytes,
+		sha256: digest.digest("hex"),
+		entries,
+	};
 	await fs.writeFile(path.join(outputDirectory, "retained-client-assets.json"), JSON.stringify(result, null, 2));
 	return { available: result.available, files: result.files, bytes: result.bytes, sha256: result.sha256 };
 }

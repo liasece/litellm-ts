@@ -1,5 +1,5 @@
 import { jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
-import type { BuiltinGeneratedImage } from "../../capabilities/ImageGenerationCapability";
+import type { BuiltinGeneratedImage } from "../../types/generatedImage";
 
 /** Image bytes live in the content-addressed image store. User prompts are not needed for replay. */
 export type ImageCompletionAsset = Omit<BuiltinGeneratedImage, "b64Json" | "prompt"> & {

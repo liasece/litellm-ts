@@ -4,29 +4,34 @@
  * 这些表达式带有历史兼容语义（失败调用的模型回退、缺省耗时的计算、非对象 metadata
  * 不做不安全 cast），每处读取都必须得到同一个值。集中在这里，Session 时间线的新读取
  * 路径与 Logs 列表不会因为各写一份 SQL 而在同一条日志上显示不同的模型或状态。
+ *
+ * 表达式本身定义在 SpendLogRepository：投影列属于「这张表怎么读」，仓储是唯一能引用
+ * 表符号的地方；这里只保留稳定的函数名，供仍按列表达式组 query builder 的读取方使用。
  */
 
 import { sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import {
+	spendLogDurationProjection,
+	spendLogExecutionModelProjection,
+	spendLogListMetadataProjection,
+	spendLogMetadataJsonProjection,
+} from "../repositories/SpendLogRepository";
 
 /**
  * 失败调用且未记录 model_id 时，按上游请求里的真实模型归属（Python 兼容行为）。
+ * @returns 执行模型列的 SQL 表达式
  */
 export function spendLogExecutionModelSql() {
-	return sql<string>`CASE
-		WHEN ${liteLLM_SpendLogs.status} = 'failure'
-			AND COALESCE(${liteLLM_SpendLogs.model_id}, '') = ''
-			AND ${liteLLM_SpendLogs.model} = ${liteLLM_SpendLogs.model_group}
-			AND jsonb_typeof(${liteLLM_SpendLogs.proxy_server_request}#>'{upstream_request,body,model}') = 'string'
-		THEN COALESCE(NULLIF(${liteLLM_SpendLogs.proxy_server_request}#>>'{upstream_request,body,model}', ''), ${liteLLM_SpendLogs.model})
-		ELSE ${liteLLM_SpendLogs.model}
-	END`;
+	return spendLogExecutionModelProjection();
 }
 
-/** Python UI logs duration expression: DB NULL fallback to endTime-startTime in milliseconds. */
+/**
+ * Python UI logs duration expression: DB NULL fallback to endTime-startTime in milliseconds.
+ * @returns 耗时列的 SQL 表达式
+ */
 export function spendLogDurationSql() {
-	return sql<number>`COALESCE(${liteLLM_SpendLogs.request_duration_ms}, GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.startTime})) * 1000))::int)`;
+	return spendLogDurationProjection();
 }
 
 /**
@@ -41,6 +46,7 @@ export function spendLogDurationSql() {
  * `false`；只有整个请求体没有记录（历史行、不写正文的调用类型）才返回 NULL，留给前端用
  * 时间戳兜底，避免把无法判断的行显示成非流式。
  * @param column - `proxy_server_request` 列（SpendLogs 与 ActiveRequests 同形状）
+ * @returns 是否流式请求的 SQL 表达式
  */
 export function streamRequestedSql(column: AnyPgColumn) {
 	return sql<boolean | null>`CASE
@@ -50,25 +56,18 @@ export function streamRequestedSql(column: AnyPgColumn) {
 	END`;
 }
 
-/** metadata 仅在原生 JSON object 时参与通用字段过滤；历史 string 不做不安全 cast。 */
+/**
+ * metadata 仅在原生 JSON object 时参与通用字段过滤；历史 string 不做不安全 cast。
+ * @returns metadata jsonb 的 SQL 表达式
+ */
 export function spendLogMetadataJsonSql() {
-	return sql`CASE WHEN jsonb_typeof(${liteLLM_SpendLogs.metadata}) = 'object' THEN ${liteLLM_SpendLogs.metadata} ELSE '{}'::jsonb END`;
+	return spendLogMetadataJsonProjection();
 }
 
 /**
  * 列表投影里的 metadata：剥掉流式 checkpoint 载荷与已投影的用量副本。
- *
- * 流式过程把累计的 response/usage 写进 ActiveRequests 的 `streaming_execution`
- * （CLIProxy 写 `responses_execution`）。请求被重启或租约回收时，那整份累计正文会随行
- * 搬进 SpendLogs.metadata，单行可达数兆；列表读它只会放大每页响应与客户端解析，
- * 详情页的正文来自 response 列与内容寻址块，不依赖这两个内部键。
- *
- * `additional_usage_values` / `usage_object` 是 cache token 的历史 fallback；0019
- * 已把同一来源投影到 `cache_read_input_tokens` / `cache_creation_input_tokens`。
- * 列表优先读列，因此这里不再重复下发；详情仍可从列表行合并到列值。
+ * @returns 精简 metadata 的 SQL 表达式
  */
 export function spendLogListMetadataSql() {
-	return sql<
-		unknown | null
-	>`${liteLLM_SpendLogs.metadata} - 'streaming_execution' - 'responses_execution' - 'additional_usage_values' - 'usage_object'`;
+	return spendLogListMetadataProjection();
 }

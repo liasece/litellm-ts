@@ -24,7 +24,7 @@ import { DEFAULT_PRIVACY_MASKING_SETTINGS, privacySettingsService } from "./Priv
 import { runWithPrivacyRequest, type PrivacyRequestState } from "./PrivacyDispatch";
 import { installPrivacyResponseWriter } from "./PrivacyResponseWriter";
 import { detectPrivacyProtocol } from "./RequestBodyMasker";
-import { PrivacyStatsRepository } from "./PrivacyStatsRepository";
+import { privacyStatsRepositoryFor } from "../repositories/PrivacyStatsRepository";
 
 const logger = createModuleLogger("privacy");
 
@@ -70,7 +70,7 @@ function readModel(body: Record<string, unknown>): string {
  * @param deps - 依赖（Router 与数据库）
  */
 export function privacyMaskingMiddleware(deps: PrivacyMiddlewareDeps): RequestHandler {
-	const repository = new PrivacyStatsRepository(deps.db);
+	const repository = privacyStatsRepositoryFor(deps.db);
 	return (req: Request, res: Response, next: (error?: unknown) => void): void => {
 		void (async () => {
 			const settings = await privacySettingsService.getSettings().catch(() => DEFAULT_PRIVACY_MASKING_SETTINGS);

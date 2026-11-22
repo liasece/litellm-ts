@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Request } from "express";
 import type { DrizzleDb } from "../core/db/Database";
-import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import type { DeploymentSpendInfo } from "../types/spendInfo";
 import { buildSpendLogFromRequest } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";
-import { getAttachedUpstreamLogContext, UPSTREAM_STREAM_RESPONSE_KEY, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getAttachedUpstreamLogContext, UPSTREAM_STREAM_RESPONSE_KEY } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import { CallType, SpendLogStatus } from "../types/spend";
 
 /** Reference to the ordinary Spend Log row created for an internal call. */

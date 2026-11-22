@@ -38,11 +38,11 @@ const title = computed(() => (provider.value ? props.model.model + " · " + prov
 				</p>
 			</div>
 			<div class="speed-card-metric">
-				<div>{{ formatTps(model.avg_tps) }}</div>
-				<div>TPS</div>
+				<div>{{ formatTps(model.p50_tps) }}</div>
+				<div>中位 TPS</div>
 			</div>
 		</div>
 		<ModelSpeedChartComponent :rows="rows" :bucket="bucket" :timezone="timezone" :y-max="yMax" />
-		<div class="speed-card-footer">中位 {{ formatTps(model.p50_tps) }} TPS · 全部调用 {{ formatNumberWithCommas(model.calls) }}</div>
+		<div class="speed-card-footer">平均 {{ formatTps(model.avg_tps) }} TPS · 全部调用 {{ formatNumberWithCommas(model.calls) }}</div>
 	</div>
 </template>

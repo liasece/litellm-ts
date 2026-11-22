@@ -7,25 +7,21 @@
 
 import { randomUUID } from "crypto";
 import type { Router, Request, RequestHandler } from "express";
-import { eq, and } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
-import { LiteLLM_OrganizationTable } from "../db/schema/organizations";
-import { LiteLLM_OrganizationMembership } from "../db/schema/organization-memberships";
-import { LiteLLM_BudgetTable } from "../db/schema/budgets";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
-import { LiteLLM_UserTable } from "../db/schema/users";
+import { budgetRepositoryFor } from "../repositories/BudgetRepository";
+import { organizationRepositoryFor } from "../repositories/OrganizationRepository";
+import type { OrganizationMembershipRow, OrganizationRow, OrganizationUpdateValues } from "../repositories/OrganizationRepository";
+import { teamRepositoryFor } from "../repositories/TeamRepository";
+import type { TeamRow } from "../repositories/TeamRepository";
+import { userRepositoryFor } from "../repositories/UserRepository";
+import type { UserRow } from "../repositories/UserRepository";
 import { createModuleLogger } from "../core/utils/logger";
 
 const logger = createModuleLogger("Management:Organization");
 const EMPTY_STRING_ARRAY: readonly string[] = [];
 const EMPTY_METADATA: Readonly<Record<string, never>> = {};
-
-type OrganizationRow = typeof LiteLLM_OrganizationTable.$inferSelect;
-type OrganizationMembershipRow = typeof LiteLLM_OrganizationMembership.$inferSelect;
-type TeamRow = typeof LiteLLM_TeamTable.$inferSelect;
-type UserRow = typeof LiteLLM_UserTable.$inferSelect;
 
 interface WebUiOrganizationMembershipInfo {
 	readonly user_id: string;
@@ -124,17 +120,12 @@ function normalizeOrganizationRow(row: OrganizationRow, memberships: Organizatio
 }
 
 async function loadOrganizationMemberships(db: DrizzleDb, organizationId: string | null): Promise<OrganizationMembershipRow[]> {
-	if (organizationId === null) {
-		return await db.select().from(LiteLLM_OrganizationMembership);
-	}
-	return await db.select().from(LiteLLM_OrganizationMembership).where(eq(LiteLLM_OrganizationMembership.organizationId, organizationId));
+	return await organizationRepositoryFor(db).listMemberships(organizationId);
 }
 
 async function loadOrganizationTeams(db: DrizzleDb, organizationId: string | null): Promise<TeamRow[]> {
-	if (organizationId === null) {
-		return await db.select().from(LiteLLM_TeamTable);
-	}
-	return await db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.organizationId, organizationId));
+	const teamRepository = teamRepositoryFor(db);
+	return organizationId === null ? await teamRepository.listAll() : await teamRepository.listByOrganizationId(organizationId);
 }
 
 async function buildOrganizationInfo(db: DrizzleDb, organization: OrganizationRow): Promise<WebUiOrganizationInfo> {
@@ -184,21 +175,18 @@ async function ensureUser(
 	if (!userId) {
 		throw ApiError.badRequest("Either user_id or user_email must be provided");
 	}
-	const existing = await db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, userId)).limit(1);
-	if (existing.length > 0) {
-		return existing[0]!;
+	const userRepository = userRepositoryFor(db);
+	const existing = await userRepository.findById(userId);
+	if (existing !== null) {
+		return existing;
 	}
-	const inserted = await db
-		.insert(LiteLLM_UserTable)
-		.values({
-			userId: userId,
-			userEmail: member.user_email ?? null,
-			userRole: member.role ?? member.user_role ?? null,
-			models: [],
-			metadata: {},
-		})
-		.returning();
-	return inserted[0]! as UserRow;
+	return await userRepository.create({
+		userId: userId,
+		userEmail: member.user_email ?? null,
+		userRole: member.role ?? member.user_role ?? null,
+		models: [],
+		metadata: {},
+	});
 }
 
 /**
@@ -253,38 +241,29 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 
 			let effectiveBudgetId = budget_id as string | undefined;
 			if (effectiveBudgetId === undefined || effectiveBudgetId === null) {
-				const budgetResult = await db
-					.insert(LiteLLM_BudgetTable)
-					.values({
-						budget_id: randomUUID(),
-						max_budget: max_budget ?? null,
-						soft_budget: soft_budget ?? null,
-						max_parallel_requests: max_parallel_requests ?? null,
-						tpm_limit: tpm_limit ?? null,
-						rpm_limit: rpm_limit ?? null,
-						model_max_budget: model_max_budget ?? null,
-						budget_duration: budget_duration ?? null,
-						created_by: created_by ?? "admin",
-						updated_by: updated_by ?? "admin",
-					})
-					.returning({ budget_id: LiteLLM_BudgetTable.budget_id });
-				effectiveBudgetId = budgetResult[0]!.budget_id;
+				effectiveBudgetId = await budgetRepositoryFor(db).create({
+					budget_id: randomUUID(),
+					max_budget: max_budget ?? null,
+					soft_budget: soft_budget ?? null,
+					max_parallel_requests: max_parallel_requests ?? null,
+					tpm_limit: tpm_limit ?? null,
+					rpm_limit: rpm_limit ?? null,
+					model_max_budget: model_max_budget ?? null,
+					budget_duration: budget_duration ?? null,
+					created_by: created_by ?? "admin",
+					updated_by: updated_by ?? "admin",
+				});
 			}
 
-			const result = await db
-				.insert(LiteLLM_OrganizationTable)
-				.values({
-					organizationId: organization_id ?? randomUUID(),
-					organizationAlias: organization_alias,
-					budgetId: effectiveBudgetId,
-					metadata: metadata ?? {},
-					models: models ?? [],
-					createdBy: created_by ?? "admin",
-					updatedBy: updated_by ?? "admin",
-				})
-				.returning();
-
-			const organization = result[0]! as OrganizationRow;
+			const organization = await organizationRepositoryFor(db).create({
+				organizationId: organization_id ?? randomUUID(),
+				organizationAlias: organization_alias,
+				budgetId: effectiveBudgetId,
+				metadata: metadata ?? {},
+				models: models ?? [],
+				createdBy: created_by ?? "admin",
+				updatedBy: updated_by ?? "admin",
+			});
 			logger.info(`组织已创建: ${organization_alias} (${organization.organizationId})`);
 
 			return normalizeOrganizationRow(organization, [], []);
@@ -298,7 +277,7 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 		authed(async (req) => {
 			const orgId = firstQueryString(req.query.org_id);
 			const orgAlias = firstQueryString(req.query.org_alias);
-			const rows = await db.select().from(LiteLLM_OrganizationTable);
+			const rows = await organizationRepositoryFor(db).listAll();
 			const memberships = await loadOrganizationMemberships(db, null);
 			const teams = await loadOrganizationTeams(db, null);
 			return rows
@@ -324,17 +303,13 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 				throw ApiError.badRequest("必须提供 organization_id");
 			}
 
-			const rows = await db
-				.select()
-				.from(LiteLLM_OrganizationTable)
-				.where(eq(LiteLLM_OrganizationTable.organizationId, orgId))
-				.limit(1);
+			const organization = await organizationRepositoryFor(db).findById(orgId);
 
-			if (rows.length === 0) {
+			if (organization === null) {
 				throw ApiError.notFound("Organization not found");
 			}
 
-			return await buildOrganizationInfo(db, rows[0]!);
+			return await buildOrganizationInfo(db, organization);
 		}),
 	);
 
@@ -349,17 +324,14 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 				throw ApiError.badRequest("必须提供 organization_id");
 			}
 
-			const existing = await db
-				.select()
-				.from(LiteLLM_OrganizationTable)
-				.where(eq(LiteLLM_OrganizationTable.organizationId, organization_id))
-				.limit(1);
+			const organizationRepository = organizationRepositoryFor(db);
+			const existing = await organizationRepository.findById(organization_id);
 
-			if (existing.length === 0) {
+			if (existing === null) {
 				throw ApiError.notFound(`组织不存在: ${organization_id}`);
 			}
 
-			const updateFields: Record<string, unknown> = {};
+			const updateFields: OrganizationUpdateValues = {};
 			if (updates.organization_alias !== undefined) {
 				updateFields.organizationAlias = updates.organization_alias;
 			}
@@ -375,15 +347,11 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 			if (updates.updated_by !== undefined) {
 				updateFields.updatedBy = updates.updated_by;
 			}
-			const updated = await db
-				.update(LiteLLM_OrganizationTable)
-				.set({ ...updateFields, updatedAt: new Date() })
-				.where(eq(LiteLLM_OrganizationTable.organizationId, organization_id))
-				.returning();
+			const updated = await organizationRepository.updateById(organization_id, { ...updateFields, updatedAt: new Date() });
 
 			logger.info(`组织已更新: ${organization_id}`);
 
-			return updated[0] === undefined ? { success: true } : normalizeOrganizationRow(updated[0] as OrganizationRow, [], []);
+			return updated === null ? { success: true } : normalizeOrganizationRow(updated, [], []);
 		}),
 	);
 
@@ -401,18 +369,15 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 				throw ApiError.badRequest("必须提供 organization_id");
 			}
 
+			const organizationRepository = organizationRepositoryFor(db);
 			const deleted: unknown[] = [];
 			for (const orgId of orgIds) {
-				const existing = await db
-					.select()
-					.from(LiteLLM_OrganizationTable)
-					.where(eq(LiteLLM_OrganizationTable.organizationId, orgId))
-					.limit(1);
-				const result = await db.delete(LiteLLM_OrganizationTable).where(eq(LiteLLM_OrganizationTable.organizationId, orgId));
-				if (result.rowCount === 0) {
+				const existing = await organizationRepository.findById(orgId);
+				const affected = await organizationRepository.deleteById(orgId);
+				if (affected === 0) {
 					throw ApiError.notFound(`Organization=${orgId} not found`);
 				}
-				deleted.push(existing[0] ?? { organization_id: orgId });
+				deleted.push(existing ?? { organization_id: orgId });
 				logger.info(`组织已删除: ${orgId}`);
 			}
 
@@ -427,12 +392,9 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 			throw ApiError.badRequest("必须提供 organization_id 和 user_id");
 		}
 
-		const existingOrganization = await db
-			.select()
-			.from(LiteLLM_OrganizationTable)
-			.where(eq(LiteLLM_OrganizationTable.organizationId, organizationId))
-			.limit(1);
-		if (existingOrganization.length === 0) {
+		const organizationRepository = organizationRepositoryFor(db);
+		const existingOrganization = await organizationRepository.findById(organizationId);
+		if (existingOrganization === null) {
 			throw ApiError.notFound(`Organization not found for organization_id=${organizationId}`);
 		}
 
@@ -441,15 +403,12 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 		for (const member of extractMembers(body)) {
 			const user = await ensureUser(db, member);
 			const userRole = member.role ?? member.user_role ?? null;
-			await db
-				.insert(LiteLLM_OrganizationMembership)
-				.values({
-					userId: user.userId,
-					organizationId: organizationId,
-					userRole: userRole,
-					budgetId: (body.budget_id as string | undefined) ?? null,
-				})
-				.onConflictDoNothing();
+			await organizationRepository.insertMembership({
+				userId: user.userId,
+				organizationId: organizationId,
+				userRole: userRole,
+				budgetId: (body.budget_id as string | undefined) ?? null,
+			});
 			updatedUsers.push(user);
 			updatedOrganizationMemberships.push({
 				userId: user.userId,
@@ -478,26 +437,17 @@ export function createOrganizationRoutes(router: Router, db: DrizzleDb, authMidd
 			throw ApiError.badRequest("必须提供 organization_id 和 user_id");
 		}
 
-		const existing = await db
-			.select()
-			.from(LiteLLM_OrganizationMembership)
-			.where(
-				and(eq(LiteLLM_OrganizationMembership.organizationId, organization_id), eq(LiteLLM_OrganizationMembership.userId, user_id)),
-			)
-			.limit(1);
-		const result = await db
-			.delete(LiteLLM_OrganizationMembership)
-			.where(
-				and(eq(LiteLLM_OrganizationMembership.organizationId, organization_id), eq(LiteLLM_OrganizationMembership.userId, user_id)),
-			);
+		const organizationRepository = organizationRepositoryFor(db);
+		const existing = await organizationRepository.findMembership(organization_id, user_id);
+		const affected = await organizationRepository.deleteMembership(organization_id, user_id);
 
-		if (result.rowCount === 0) {
+		if (affected === 0) {
 			throw ApiError.notFound("组织成员关系不存在");
 		}
 
 		logger.info(`成员已从组织移除: ${user_id} -> ${organization_id}`);
 
-		return existing[0] === undefined ? { success: true } : normalizeOrganizationMembership(existing[0]);
+		return existing === null ? { success: true } : normalizeOrganizationMembership(existing);
 	}
 
 	// ─── POST /organization/member/add + Python /organization/member_add ───────

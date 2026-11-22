@@ -7,7 +7,8 @@ import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { Router } from "../router/Router";
 import { captureUpstreamExchange } from "../router/UpstreamExchange";
-import { getAttachedUpstreamLogContext, getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getAttachedUpstreamLogContext, getUpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import { calculateAndSetCost } from "../spend/SpendTracker";
 import type { Message, ModelResponse, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
@@ -18,6 +19,10 @@ import {
 	normalizeBuiltinCapabilitiesConfig,
 } from "./BuiltinCapabilitiesConfig";
 import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
+import type { BuiltinGeneratedImage } from "../types/generatedImage";
+
+export type { BuiltinGeneratedImage };
+
 import { createVisionImageStore, storeVisionImageUrl, type StoredVisionImage, type VisionImageStore } from "./VisionImageStore";
 
 export const PRIVATE_IMAGE_CREATE_TOOL_NAME = "litellm__image_create";
@@ -67,56 +72,6 @@ export interface PreparedImageGenerationRequest<TMessage> {
 	 *
 	 */
 	readonly binding: ImageGenerationCapabilityBinding;
-}
-
-/**
- *
- */
-export interface BuiltinGeneratedImage {
-	/**
-	 *
-	 */
-	readonly id: string;
-	/**
-	 *
-	 */
-	readonly action: "create" | "edit";
-	/**
-	 *
-	 */
-	readonly ref: string;
-	/**
-	 *
-	 */
-	readonly b64Json: string;
-	/**
-	 *
-	 */
-	readonly mediaType: string;
-	/**
-	 *
-	 */
-	readonly outputFormat: "png" | "jpeg" | "webp";
-	/**
-	 *
-	 */
-	readonly prompt: string;
-	/**
-	 *
-	 */
-	readonly model: string;
-	/**
-	 *
-	 */
-	readonly size?: string;
-	/**
-	 *
-	 */
-	readonly quality?: string;
-	/**
-	 *
-	 */
-	readonly background?: string;
 }
 
 /**

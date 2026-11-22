@@ -67,7 +67,12 @@ import { RoutingStrategyName } from "../types/router";
 import { executeProviderRequest } from "./ProviderRequestExecutor";
 import { buildModelGroupOverrides } from "./ModelOverrides";
 import { applyReasoningEffortOverride } from "./ReasoningEffortOverride";
-import { attachUpstreamLogContext, createUpstreamLogContext, type UpstreamLogContext } from "./UpstreamLogContext";
+import { attachUpstreamLogContext, createUpstreamLogContext } from "./UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
+import { resolveDeploymentProvider } from "./RouterSpendInfo";
+import { attachUpstreamIdentity, type UpstreamIdentity } from "./UpstreamKeyIdentity";
+import { hashUpstreamKey, resolveDirectUpstreamSecret } from "../shared/UpstreamKeyHash";
+import { isSubscriptionProvider } from "../subscriptions/SubscriptionProviders";
 import { applyPrivacyMaskingToUpstream } from "../privacy/PrivacyDispatch";
 import { privacyScopeTargetOf } from "../privacy/PrivacyScope";
 
@@ -863,24 +868,58 @@ export class Router {
 	private _resolveDeploymentForExecution(deployment: Deployment): Deployment {
 		const inlineParams = deployment.litellm_params;
 		const credentialName = inlineParams["litellm_credential_name"];
-		if (credentialName === undefined) {
-			return { ...deployment, litellm_params: { ...inlineParams } };
+		let resolvedParams: Record<string, unknown> = { ...inlineParams };
+		let credential: string | undefined;
+		if (credentialName !== undefined) {
+			if (credentialName === null || (typeof credentialName === "string" && credentialName.trim().length === 0)) {
+				delete resolvedParams["litellm_credential_name"];
+			} else if (typeof credentialName !== "string") {
+				throw new Error("Credential configuration is invalid");
+			} else {
+				const credentialValues = this._runtimeState().credentialValues?.getValues(credentialName);
+				if (credentialValues === undefined) {
+					throw new Error("Credential configuration is invalid");
+				}
+				resolvedParams = { ...inlineParams, ...credentialValues };
+				delete resolvedParams["litellm_credential_name"];
+				credential = credentialName;
+			}
 		}
-		if (credentialName === null || (typeof credentialName === "string" && credentialName.trim().length === 0)) {
-			const resolvedParams = { ...inlineParams };
-			delete resolvedParams["litellm_credential_name"];
-			return { ...deployment, litellm_params: resolvedParams };
+		const resolved: Deployment = { ...deployment, litellm_params: resolvedParams as LitellmParams };
+		return attachUpstreamIdentity(resolved, this._directUpstreamIdentity(resolved, credential, inlineParams));
+	}
+
+	/**
+	 * 解析本次直连请求实际发送的 key 指纹与 Credential 身份。
+	 *
+	 * 订阅 Provider 不走这里：桥接层会选择账号并可能刷新 OAuth token，只有它知道
+	 * 真正发出的 credential；在这里按 deployment 参数推断会记错。inline key 没有
+	 * 账号，只记录指纹。
+	 * @param deployment - 已合并 Credential 值的 deployment
+	 * @param credential - 本次实际引用的 Credential 名；inline 时 undefined
+	 * @param inlineParams - deployment 原始参数，用来识别 inline key 是否覆盖了 Credential key
+	 */
+	private _directUpstreamIdentity(
+		deployment: Deployment,
+		credential: string | undefined,
+		inlineParams: Record<string, unknown>,
+	): UpstreamIdentity | undefined {
+		const provider = resolveDeploymentProvider(deployment);
+		if (isSubscriptionProvider(provider)) {
+			return undefined;
 		}
-		if (typeof credentialName !== "string") {
-			throw new Error("Credential configuration is invalid");
+		const secret = resolveDirectUpstreamSecret(deployment.litellm_params as unknown as Record<string, unknown>, provider);
+		if (secret === undefined) {
+			return undefined;
 		}
-		const credentialValues = this._runtimeState().credentialValues?.getValues(credentialName);
-		if (credentialValues === undefined) {
-			throw new Error("Credential configuration is invalid");
-		}
-		const resolvedParams: Record<string, unknown> = { ...inlineParams, ...credentialValues };
-		delete resolvedParams["litellm_credential_name"];
-		return { ...deployment, litellm_params: resolvedParams as LitellmParams };
+		// Credential 与 inline key 同时存在时 inline 在合并中胜出；此时真实发送的
+		// 不是 Credential 里的 key，不能把用量挂到该 Credential 名下。
+		const inlineSecret = resolveDirectUpstreamSecret(inlineParams, provider);
+		const belongsToCredential = credential !== undefined && (inlineSecret === undefined || inlineSecret === secret);
+		return {
+			keyHash: hashUpstreamKey(secret),
+			...(belongsToCredential ? { account: { kind: "credential" as const, id: credential, provider: provider } } : {}),
+		};
 	}
 
 	/**

@@ -13,6 +13,7 @@ import {
 	resolveSpeedAxisMax,
 	SPEED_FULL_SATURATION_TPS,
 	SPEED_RANGE_OPTIONS,
+	sortSpeedModels,
 	speedModelKey,
 	speedStrokeColor,
 } from "../logic/ModelSpeedLogic";
@@ -21,7 +22,7 @@ import ModelSpeedCardComponent from "./ModelSpeedCardComponent.vue";
 import "./SpeedStyles.css";
 const store = createModelSpeedStore(),
 	state = store.state;
-const models = computed(() => filterSpeedModels(state.data?.models ?? [], state.query)),
+const models = computed(() => sortSpeedModels(filterSpeedModels(state.data?.models ?? [], state.query))),
 	axisMax = computed(() => resolveSpeedAxisMax(models.value)),
 	without = computed(() =>
 		(state.data?.models_without_speed ?? []).map((entry) => {
@@ -56,8 +57,8 @@ onBeforeUnmount(store.dispose);
 					同一个上游模型由不同供应商执行时分开显示，卡片上标注实际供应商并配图标。 只统计输出不少于
 					{{ state.data?.min_output_tokens ?? 20 }} 个 token、且 TTFT 之后仍有可测量生成窗口的调用；TTFT
 					与总耗时相等、或生成窗口不足总耗时 1% 或不足 {{ state.data?.min_generation_window_ms ?? 300 }} 毫秒的请求
-					（如非流式、上游缓冲整段回答）不计入。曲线点与卡片平均值都按 token 加权：Σ输出 token ÷ Σ生成秒数， 不是各请求 TPS
-					的算术平均。每个时间段至少要有
+					（如非流式、上游缓冲整段回答）不计入。曲线点与卡片底部的平均值按 token 加权：Σ输出 token ÷ Σ生成秒数，不是各请求 TPS
+					的算术平均；卡片右上角取逐请求 TPS 的中位数，避免少数长请求把整体印象拉偏。每个时间段至少要有
 					{{ state.data?.min_bucket_requests ?? 3 }} 个请求才作为数据点，样本不足的时段留空、曲线在那里断开。 纵轴固定从 0
 					起，曲线越红表示越快。
 				</p>

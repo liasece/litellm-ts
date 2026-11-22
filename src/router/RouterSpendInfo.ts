@@ -15,30 +15,15 @@
  */
 
 import { defaultProviderRegistry } from "../providers/ProviderRegistry";
+import type { DeploymentSpendInfo } from "../types/spendInfo";
+
 import { type CustomCostPerToken, type PeakPricingConfig } from "../cost/CostCalculator";
 import { upstreamRefForDeployment } from "../subscriptions/native/upstream/lookup";
 import { upstreamSnapshotForRef } from "../subscriptions/native/upstream/runtime";
 import type { Deployment } from "../types/router";
+import { getUpstreamIdentity } from "./UpstreamKeyIdentity";
 
 /** 实际执行 deployment 的 spend 归因信息（挂在 Router 结果的 `_spendInfo` 字段） */
-export interface DeploymentSpendInfo {
-	/** 实际执行 deployment 的 provider（custom_llm_provider ?? 从 litellm_params.model 前缀解析） */
-	readonly customLlmProvider: string;
-	/** 实际执行上游完整 URL（provider.transformRequest 产出，含路径） */
-	readonly apiBase: string;
-	/** deployment model_info.id（PY SpendLogs.model_id） */
-	readonly modelId?: string;
-	/**
-	 * deployment litellm_params.model 完整模型名（含 provider 前缀）。
-	 * PY reconstruct_model_name 的 metadata["deployment"] 等价物，
-	 * 供 SpendLogs.model 列重建（SpendTracker.reconstructModelName）。
-	 */
-	readonly deploymentModel: string;
-	/** deployment 自定义价格（per-token）；无任何价格配置时为 undefined */
-	readonly customCostPerToken?: CustomCostPerToken;
-	/** deployment 峰谷定价配置；未配置时为 undefined（按基础价计费） */
-	readonly peakPricing?: PeakPricingConfig;
-}
 
 /**
  * 提取 deployment 的自定义价格（per-token）。
@@ -179,6 +164,7 @@ export function resolveDeploymentProvider(deployment: Deployment): string {
 export function buildDeploymentSpendInfo(deployment: Deployment, apiBase: string): DeploymentSpendInfo {
 	const params = deployment.litellm_params;
 	const customLlmProvider = resolveDeploymentProvider(deployment);
+	const identity = getUpstreamIdentity(deployment);
 	return {
 		customLlmProvider: customLlmProvider,
 		apiBase: apiBase,
@@ -186,5 +172,7 @@ export function buildDeploymentSpendInfo(deployment: Deployment, apiBase: string
 		deploymentModel: params.model,
 		customCostPerToken: extractDeploymentCustomCost(deployment),
 		peakPricing: extractDeploymentPeakPricing(deployment),
+		...(identity?.keyHash === undefined ? {} : { upstreamKeyHash: identity.keyHash }),
+		...(identity?.account === undefined ? {} : { upstreamAccount: identity.account }),
 	};
 }

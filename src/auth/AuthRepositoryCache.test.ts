@@ -8,6 +8,8 @@ import {
 	invalidateAuthCacheForSpendSubjects,
 	invalidateAuthCacheForSubject,
 	invalidateAuthCacheForTokenHash,
+	resolveAuthRepositoryCacheTtlMs,
+	resolveAuthRepositoryRefreshAheadMs,
 } from "./AuthRepositoryCache";
 
 describe("AuthRepositoryCache", () => {
@@ -76,6 +78,138 @@ describe("AuthRepositoryCache", () => {
 		expect(authRepositoryCache.get(authCacheKey.user("u1"))).toBeUndefined();
 		expect(authRepositoryCache.get(authCacheKey.team("t1"))).toBeUndefined();
 		expect(authRepositoryCache.get(authCacheKey.budget("b1"))).toEqual({ budget_id: "b1" });
+	});
+
+	it("剩余 TTL 低于阈值时立刻返回旧值并在后台补读", async () => {
+		let now = 0;
+		const cache = new AuthRepositoryCache({ ttlMs: 1000, refreshAheadMs: 300, now: () => now });
+		cache.set("k", { id: 1 });
+		now = 800;
+
+		const load = jest.fn(async () => ({ id: 2 }));
+		expect(await cache.load("k", load)).toEqual({ id: 1 });
+		await cache.settleRefreshes();
+
+		expect(load).toHaveBeenCalledTimes(1);
+		expect(cache.get("k")).toEqual({ id: 2 });
+		expect(cache.refreshing).toBe(0);
+	});
+
+	it("剩余 TTL 充足时不补读", async () => {
+		let now = 0;
+		const cache = new AuthRepositoryCache({ ttlMs: 1000, refreshAheadMs: 300, now: () => now });
+		cache.set("k", { id: 1 });
+		now = 100;
+
+		const load = jest.fn(async () => ({ id: 2 }));
+		expect(await cache.load("k", load)).toEqual({ id: 1 });
+		await cache.settleRefreshes();
+
+		expect(load).not.toHaveBeenCalled();
+	});
+
+	it("同一键并发命中只补读一次", async () => {
+		let now = 0;
+		const cache = new AuthRepositoryCache({ ttlMs: 1000, refreshAheadMs: 300, now: () => now });
+		cache.set("k", { id: 1 });
+		now = 900;
+
+		let release: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const load = jest.fn(async () => {
+			await gate;
+			return { id: 2 };
+		});
+
+		expect(await cache.load("k", load)).toEqual({ id: 1 });
+		expect(await cache.load("k", load)).toEqual({ id: 1 });
+		expect(load).toHaveBeenCalledTimes(1);
+
+		release?.();
+		await cache.settleRefreshes();
+		expect(cache.get("k")).toEqual({ id: 2 });
+	});
+
+	it("补读发现实体已删除时移除条目", async () => {
+		let now = 0;
+		const cache = new AuthRepositoryCache({ ttlMs: 1000, refreshAheadMs: 300, now: () => now });
+		cache.set("k", { id: 1 });
+		now = 900;
+
+		expect(await cache.load("k", async () => null)).toEqual({ id: 1 });
+		await cache.settleRefreshes();
+
+		expect(cache.get("k")).toBeUndefined();
+		expect(cache.size).toBe(0);
+	});
+
+	it("补读期间条目被失效则不写回旧快照", async () => {
+		let now = 0;
+		const cache = new AuthRepositoryCache({ ttlMs: 1000, refreshAheadMs: 300, now: () => now });
+		cache.set("k", { id: 1 });
+		now = 900;
+
+		expect(
+			await cache.load("k", async () => {
+				cache.delete("k");
+				return { id: 2 };
+			}),
+		).toEqual({ id: 1 });
+		await cache.settleRefreshes();
+
+		expect(cache.get("k")).toBeUndefined();
+	});
+
+	it("补读失败保留旧值且不抛出", async () => {
+		let now = 0;
+		const cache = new AuthRepositoryCache({ ttlMs: 1000, refreshAheadMs: 300, now: () => now });
+		cache.set("k", { id: 1 });
+		now = 900;
+
+		expect(
+			await cache.load("k", async () => {
+				throw new Error("db down");
+			}),
+		).toEqual({ id: 1 });
+		await cache.settleRefreshes();
+
+		expect(cache.get("k")).toEqual({ id: 1 });
+		expect(cache.refreshing).toBe(0);
+	});
+
+	it("阈值 0 时退化为纯 TTL 缓存", async () => {
+		let now = 0;
+		const cache = new AuthRepositoryCache({ ttlMs: 1000, refreshAheadMs: 0, now: () => now });
+		cache.set("k", { id: 1 });
+		now = 999;
+
+		const load = jest.fn(async () => ({ id: 2 }));
+		expect(await cache.load("k", load)).toEqual({ id: 1 });
+		await cache.settleRefreshes();
+
+		expect(load).not.toHaveBeenCalled();
+	});
+
+	it("解析提前刷新阈值：默认取 TTL 四分之一，显式值夹到 TTL 以内", () => {
+		expect(resolveAuthRepositoryRefreshAheadMs(undefined, 3000)).toBe(750);
+		expect(resolveAuthRepositoryRefreshAheadMs("", 1000)).toBe(250);
+		expect(resolveAuthRepositoryRefreshAheadMs("0", 3000)).toBe(0);
+		expect(resolveAuthRepositoryRefreshAheadMs("5000", 3000)).toBe(3000);
+		expect(resolveAuthRepositoryRefreshAheadMs("600", 3000)).toBe(600);
+		expect(resolveAuthRepositoryRefreshAheadMs("600", 0)).toBe(0);
+	});
+
+	it("默认窗口按分钟级设置：TTL 5 分钟，提前刷新最后 75 秒", () => {
+		// 单实例部署下应用内写都会写穿，TTL 只兜底旁路改库；窗口取得太短会让鉴权链
+		// 每个实体每几秒回一次库，取得太长会让运维直接改库的变更藏太久。
+		expect(resolveAuthRepositoryCacheTtlMs(undefined)).toBe(300_000);
+		expect(resolveAuthRepositoryCacheTtlMs("")).toBe(300_000);
+		expect(resolveAuthRepositoryRefreshAheadMs(undefined, 300_000)).toBe(75_000);
+		// 显式配置仍然生效，0 表示关闭。
+		expect(resolveAuthRepositoryCacheTtlMs("0")).toBe(0);
+		expect(resolveAuthRepositoryCacheTtlMs("9000")).toBe(9000);
 	});
 
 	it("封禁与批量删号都会立即失效", () => {

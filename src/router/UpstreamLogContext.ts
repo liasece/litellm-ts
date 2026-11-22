@@ -1,40 +1,16 @@
 import { redactErrorPayload } from "../core/api/redactConfiguredSecrets";
 import type { ProviderRequest } from "../types/provider";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import type { Deployment } from "../types/router";
-import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "./RouterSpendInfo";
-import { getRecordedUpstreamExchange, recordUpstreamExchange } from "./UpstreamExchange";
-
-/** 可写入详细 SpendLog 的上游请求。 */
-export interface UpstreamRequestLog {
-	/** 最终请求 URL。 */
-	readonly url: string;
-	/** HTTP 方法。 */
-	readonly method: string;
-	/** 请求头（原样记录）。 */
-	readonly headers: Record<string, string>;
-	/** Provider 转换后的 JSON 请求体。 */
-	readonly body: unknown;
-}
-
-/** 可写入详细 SpendLog 的上游响应。 */
-export interface UpstreamResponseLog {
-	/** 上游 HTTP 状态码。 */
-	readonly status_code: number;
-	/** 响应头（原样记录）。 */
-	readonly headers: Record<string, string>;
-	/** 已解析的非流式响应体，或流式协议终态事件携带的完整响应对象。 */
-	readonly body?: unknown;
-}
-
-/** 单次最终 Provider 调用的请求/响应上下文。 */
-export interface UpstreamLogContext {
-	/** Actual deployment of this exchange, including failed calls. Never serialized with request payloads. */
-	readonly spendInfo?: DeploymentSpendInfo;
-	/** 实际上游请求。 */
-	readonly request: UpstreamRequestLog;
-	/** 实际上游响应；网络层失败时可能不存在。 */
-	readonly response?: UpstreamResponseLog;
-}
+import { upstreamRefForDeployment } from "../subscriptions/native/upstream/lookup";
+import { buildDeploymentSpendInfo } from "./RouterSpendInfo";
+import {
+	getRecordedUpstreamExchange,
+	getRecordedUpstreamIdentity,
+	recordUpstreamExchange,
+	recordUpstreamIdentity,
+} from "./UpstreamExchange";
+import { getUpstreamIdentity } from "./UpstreamKeyIdentity";
 
 const UPSTREAM_LOG_CONTEXT = Symbol("litellm.upstreamLogContext");
 
@@ -59,8 +35,21 @@ export function createUpstreamLogContext(
 	responseBody?: unknown,
 	deployment?: Deployment,
 ): UpstreamLogContext {
+	// 直连身份在 Router 解析 deployment 时挂上；订阅身份由 Bridge 在实际拿到
+	// plan.credential 后写入同一请求作用域。先确定本次身份，再让 context 与 latest
+	// 都带上它，避免日志与关联表各自读到不同轮次的账号。
+	const directIdentity = deployment ? getUpstreamIdentity(deployment) : undefined;
+	if (directIdentity !== undefined) {
+		recordUpstreamIdentity(directIdentity);
+	} else if (deployment !== undefined && !upstreamRefForDeployment(deployment)) {
+		// 直连但没有可哈希的字符串 key：清掉同作用域可能残留的上一轮身份（重试/兜底）。
+		recordUpstreamIdentity(undefined);
+	}
+	const identity = getRecordedUpstreamIdentity();
 	const context: UpstreamLogContext = {
 		...(deployment ? { spendInfo: buildDeploymentSpendInfo(deployment, request.url) } : {}),
+		...(identity?.keyHash === undefined ? {} : { upstreamKeyHash: identity.keyHash }),
+		...(identity?.account === undefined ? {} : { upstreamAccount: identity.account }),
 		request: {
 			url: request.url,
 			method: request.method,

@@ -6,7 +6,7 @@
  */
 
 import type { ProviderRequest } from "../types/provider";
-import type { ProviderRequestExecutionOptions, ProviderRequestExecutionResult } from "./ProviderRequestExecutor";
+import type { ProviderRequestExecutionOptions, ProviderRequestExecutionResult } from "./ProviderRequestExecutionTypes";
 
 /** 订阅请求处理器。 */
 export type SubscriptionRequestHandler = (

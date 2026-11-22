@@ -5,11 +5,13 @@ import {
 	getRecordedModelResolutionTrace,
 	getRecordedUpstreamErrors,
 	getRecordedUpstreamExchange,
+	getRecordedUpstreamIdentity,
 	observeUpstreamExchange,
 	recordUpstreamExchange,
+	recordUpstreamIdentity,
 	runWithUpstreamExchangeScope,
 } from "./UpstreamExchange";
-import type { UpstreamLogContext } from "./UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 
 function context(url: string): UpstreamLogContext {
 	return {
@@ -57,6 +59,30 @@ describe("upstream exchange channel", () => {
 			expect(captured.result).toBe("worker-result");
 			expect(captured.context).toBe(worker);
 			expect(getRecordedUpstreamExchange()).toBe(outer);
+		});
+	});
+
+	test("上游交换上下文合并当前 key 指纹与账号，切换尝试时移除旧账号", async () => {
+		await runWithUpstreamExchangeScope(async () => {
+			recordUpstreamIdentity({
+				keyHash: "a".repeat(64),
+				account: { kind: "credential", id: "credential-a", provider: "openai" },
+			});
+			recordUpstreamExchange(context("https://provider.example/v1/chat/completions"));
+			expect(getRecordedUpstreamExchange()).toMatchObject({
+				upstreamKeyHash: "a".repeat(64),
+				upstreamAccount: { kind: "credential", id: "credential-a", provider: "openai" },
+			});
+
+			// fallback 到另一个没有账号归属的 key：不能沿用上一账号。
+			recordUpstreamIdentity({ keyHash: "b".repeat(64) });
+			recordUpstreamExchange(context("https://provider.example/v1/chat/completions"));
+			expect(getRecordedUpstreamExchange()).toMatchObject({ upstreamKeyHash: "b".repeat(64) });
+			expect(getRecordedUpstreamExchange()).not.toHaveProperty("upstreamAccount");
+
+			recordUpstreamIdentity(undefined);
+			recordUpstreamExchange(context("https://provider.example/v1/chat/completions"));
+			expect(getRecordedUpstreamExchange()).not.toHaveProperty("upstreamKeyHash");
 		});
 	});
 

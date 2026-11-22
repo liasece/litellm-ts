@@ -15,6 +15,7 @@
 - 模型列表的 Credentials 列按「可复用凭据 → 订阅 Provider → Manual」取值：订阅部署的账号由订阅运行时持有，没有 `litellm_credential_name`，要显示 Provider 品牌并链到该 Provider 的订阅账号页，不要退化成 “Manual”（逻辑在 `src/features/models/logic/ModelCredentialLogic.ts`，表格与手机卡片共用 `ModelCredentialCellComponent`）。
 - 品牌按模型名里的品牌词判定（名字开头优先，其次名字中间），`anthropic/` 这类路径前缀只是协议兼容层，不能当品牌兜底；新增品牌只改 `src/shared/ModelFamily.ts` 的词干表，前后端共用。
 - 列表里的品牌分组是**分组优先于排序**的：`ModelFamilyGrouping` 先按家族切段（未识别品牌排最前，其余按家族名排序），段内再保留当前排序/服务端顺序；模型表、别名表、手机端卡片用 `ModelFamilyLabel` 同一条家族带，不要各写一套分组逻辑。
+- 按日期分桶的图表必须覆盖所选范围的每一天：缺数据的日子交给 `padUsageRows` 补成 `__noData` 空行，图表画浅灰竖带并写 `No data`（连续空日合并成一段），悬浮提示也写 `No data`。不要用补 0 的方式表达「当天没有请求」——那会让稀疏实体的折线真的贴底，读者分不清「没调用」和「调用了但没用量」。
 - 表格列宽只设下限，不设权重：`UiTableColumn` 给一个 `minWidth`（表头单行放得下、常规内容不截断），`UiTable` 在出现 `minWidth` 时切到 `computeUiTableColumnWidths`——容器更宽就按各列下限等比放大填满，更窄就保持下限、由外层横向滚动。要让某列更宽只调它的 `minWidth`，不要再加每列权重。表头始终单行，列比文字窄时用省略号而不是折行撑高表头（`TableFilters.css`），所以长表头名要配得起它的下限，压不下去就换短名（如 `Model Access Group` → `Access Group`）。
 - 一格里要放多个数值时压成一行：图标区分含义（如 Costs 的 `ArrowDownToLine` 输入、`ArrowUpFromLine` 输出、`Database` 缓存读取），数值紧跟图标，和日志 Tokens 列同一套读法；不要用多行 “In: … / Out: …” 文本，窄列里它只会折行或被截断。
 - 表格里表达「有序候选」用带序号的 chip（Fallbacks 表的候选列、别名的 Resolution 列都是这个形态），不要写成 "A → B → C" 的灰色句子；保护性开关（如禁止递归）用带图标的 pill 加 tooltip 说明后果，不要用一整句灰字。

@@ -10,6 +10,7 @@
 import type { SubscriptionAccountStore } from "./accountStore";
 import { SubscriptionBridge } from "./bridge";
 import type { SubscriptionProviderLookup } from "./bridge";
+import { QuotaAvailability } from "./quota/QuotaAvailability";
 import { SubscriptionAccountScheduler } from "./scheduler";
 import type { SubscriptionAccount, SubscriptionProviderAdapter, SubscriptionSource } from "./types";
 
@@ -71,7 +72,10 @@ function account(key: string, weight = 1): SubscriptionAccount {
  * 构造只满足桥接层需要的账号仓库与适配器。
  * @param accounts - 参与调度的账号
  */
-function harness(accounts: readonly SubscriptionAccount[]): {
+function harness(
+	accounts: readonly SubscriptionAccount[],
+	options: { quota?: QuotaAvailability; onStateChange?: (source: SubscriptionSource, accountId: string) => void } = {},
+): {
 	bridge: SubscriptionBridge;
 	scheduler: SubscriptionAccountScheduler;
 } {
@@ -106,8 +110,19 @@ function harness(accounts: readonly SubscriptionAccount[]): {
 		get: () => adapter,
 		list: () => [adapter],
 	};
-	const scheduler = new SubscriptionAccountScheduler();
-	return { bridge: new SubscriptionBridge({ accounts: store, scheduler: scheduler, providers: providers }), scheduler: scheduler };
+	const scheduler = new SubscriptionAccountScheduler({
+		blocking: options.quota === undefined ? undefined : (source, now) => options.quota!.blocked(source, now),
+	});
+	return {
+		bridge: new SubscriptionBridge({
+			accounts: store,
+			scheduler: scheduler,
+			providers: providers,
+			...(options.quota === undefined ? {} : { quota: options.quota }),
+			...(options.onStateChange === undefined ? {} : { onStateChange: options.onStateChange }),
+		}),
+		scheduler: scheduler,
+	};
 }
 
 /** 一次 responses 桥接请求。 */
@@ -150,6 +165,62 @@ describe("订阅桥的账号切换", () => {
 		for (let attempt = 0; attempt < 5; attempt += 1) {
 			expect(scheduler.select("commandcode", "session-1", [first, second]).account.id).toBe(second.id);
 		}
+	});
+
+	it("周额度用尽的 429 按额度耗尽处理，并按错误里的重置时间冷却", async () => {
+		// 生产形态（2026-11-19）：CommandCode 周额度用尽返回 429 + "weekly usage
+		// limit … resets at …"，被当成普通限流只冷却 30 秒，于是每个请求都先撞一次
+		// 空账号再换号，TTFT p90 到 30~65 秒。
+		const first = account("commandcode-a.json", 10);
+		const second = account("commandcode-b.json", 1);
+		const quota = new QuotaAvailability();
+		const changed: string[] = [];
+		const { bridge, scheduler } = harness([first, second], {
+			quota: quota,
+			onStateChange: (source, accountId) => changed.push(`${source}:${accountId}`),
+		});
+		const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+		const weekly = {
+			error: {
+				message: `You've reached your weekly usage limit for your plan. Your limit resets at ${resetAt}.`,
+				type: "rate_limit_error",
+			},
+		};
+		const fetchStub = stubFetch([
+			{ status: 429, body: weekly },
+			{ status: 200, body: { id: "resp-ok", output: [] } },
+		]);
+		try {
+			const result = await bridge.execute(REQUEST);
+			expect(result.response.status).toBe(200);
+			expect(fetchStub.calls).toHaveLength(2);
+		} finally {
+			fetchStub.restore();
+		}
+		// 额度闸门记住了这次耗尽：后续请求在选中之前就跳过这个账号。
+		const entry = quota.state("commandcode", first.id);
+		expect(entry).toBeDefined();
+		expect(entry!.exhaustedUntil).toBeGreaterThan(Date.now() + 60 * 60 * 1000);
+		expect(changed).toContain(`commandcode:${first.id}`);
+		// 冷却也按重置时间走（上限 24 小时），而不是 30 秒。
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			expect(scheduler.select("commandcode", "", [first, second]).account.id).toBe(second.id);
+		}
+	});
+
+	it("普通限流 429 不会被当成额度耗尽", async () => {
+		const only = account("commandcode-only.json");
+		const quota = new QuotaAvailability();
+		const { bridge } = harness([only], { quota: quota });
+		const fetchStub = stubFetch([{ status: 429, body: { error: { message: "rate limit exceeded for model" } } }]);
+		try {
+			const result = await bridge.execute(REQUEST);
+			expect(result.response.status).toBe(429);
+		} finally {
+			fetchStub.restore();
+		}
+		// 只是限流：不写额度状态，恢复按模型冷却的短窗口，而不是按天。
+		expect(quota.entries()).toHaveLength(0);
 	});
 
 	it("请求体错误的 400 不换账号", async () => {

@@ -52,3 +52,41 @@ test("renders the legend values through the value-only formatter", async ({ page
 	await expect(page.locator(".legend .usage-native-bar-axes")).toContainText("8");
 	await expect(page.locator(".legend .usage-native-bar-axes")).not.toContainText("8.0000");
 });
+
+test("draws one percentage line per series and leaves a gap where a day has no value", async ({ page }) => {
+	const errors: string[] = [];
+	page.on("pageerror", (error) => errors.push(error.message));
+	await page.goto("/ui/tests/platform-ui/usage-chart.html");
+	const rate = page.locator(".rate");
+	await expect(rate).toBeVisible();
+	// 纵轴是 0–100 的百分比刻度，而不是原始 token 数。
+	await expect(rate.locator(".usage-native-bar-axes")).toContainText("100%");
+	await expect(rate.locator(".usage-native-bar-axes")).toContainText("50%");
+	// 每个系列一条线；中间那天为 null 的系列被拆成两段，另两条日期之间没有断点。
+	await expect(rate.locator("svg path[stroke='#6366f1']")).toHaveCount(1);
+	await expect(rate.locator("svg path[stroke='#10b981']")).toHaveCount(2);
+	expect(errors).toEqual([]);
+});
+
+test("marks a day without data with a grey band and a No data tooltip", async ({ page }) => {
+	const errors: string[] = [];
+	page.on("pageerror", (error) => errors.push(error.message));
+	await page.goto("/ui/tests/platform-ui/usage-chart.html");
+	const empty = page.locator(".empty-day");
+	await expect(empty).toBeVisible();
+	// 没有数据的那天不画柱子（其余两天各一根有高度的柱子），也没有被当成 0 贴地补一根。
+	const heights = await empty
+		.locator("svg path[fill='#06b6d4']")
+		.evaluateAll((nodes) => nodes.map((node) => (node as SVGGraphicsElement).getBBox().height));
+	expect(heights.filter((height) => height > 0)).toHaveLength(2);
+	await expect(empty.locator(".usage-chart-no-data rect[fill='#f3f4f6']")).toHaveCount(1);
+	await expect(empty.locator(".usage-chart-no-data text")).toHaveText("No data");
+	await empty.scrollIntoViewIfNeeded();
+	const band = empty.locator(".usage-chart-no-data rect").first();
+	const box = await band.boundingBox();
+	expect(box).not.toBeNull();
+	await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+	await expect(page.locator(".usage-chart-tooltip")).toContainText("2026-11-06");
+	await expect(page.locator(".usage-chart-tooltip")).toContainText("No data");
+	expect(errors).toEqual([]);
+});

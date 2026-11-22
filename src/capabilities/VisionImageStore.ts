@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
-import { liteLLM_BuiltinCapabilityImages } from "../db/schema";
 import { ApiError } from "../core/api/ApiError";
+import { builtinCapabilityImageRepositoryFor } from "../repositories/BuiltinCapabilityImageRepository";
 
 /** Prefix used to distinguish persisted content hashes from client paths. */
 export const VISION_IMAGE_REFERENCE_PREFIX = "sha256:";
@@ -170,15 +169,13 @@ export class DatabaseVisionImageStore implements VisionImageStore {
 	/** @inheritdoc */
 	async put(image: Omit<StoredVisionImage, "ref" | "contentHash" | "byteSize">): Promise<StoredVisionImage> {
 		const normalized = normalizeImage(image);
-		await this._db
-			.insert(liteLLM_BuiltinCapabilityImages)
-			.values({
-				contentHash: normalized.contentHash,
-				mediaType: normalized.mediaType,
-				base64Data: normalized.base64Data,
-				byteSize: normalized.byteSize,
-			})
-			.onConflictDoNothing();
+		await builtinCapabilityImageRepositoryFor(this._db).insertIfAbsent({
+			contentHash: normalized.contentHash,
+			mediaType: normalized.mediaType,
+			base64Data: normalized.base64Data,
+			byteSize: normalized.byteSize,
+		});
+		// 写入后直接补进内容副本：同一进程紧接着的引用不再回表读这几 MB 的 base64。
 		imageCacheFor(this._db).store(normalized);
 		return normalized;
 	}
@@ -193,12 +190,7 @@ export class DatabaseVisionImageStore implements VisionImageStore {
 	}
 
 	private async _loadRow(contentHash: string): Promise<StoredVisionImage | undefined> {
-		const rows = await this._db
-			.select()
-			.from(liteLLM_BuiltinCapabilityImages)
-			.where(eq(liteLLM_BuiltinCapabilityImages.contentHash, contentHash))
-			.limit(1);
-		const row = rows[0];
+		const row = await builtinCapabilityImageRepositoryFor(this._db).findByContentHash(contentHash);
 		if (!row) {
 			return undefined;
 		}

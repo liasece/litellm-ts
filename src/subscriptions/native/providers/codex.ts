@@ -16,7 +16,7 @@ import type { CliProxyAccountQuota } from "../../../cliproxy/CliProxyTypes";
 import { createCodexAuth } from "../auth/codex";
 import { normalizeToolNames } from "../toolNames";
 import { normalizeCodexEncryptedContent } from "../protocol/signatureCompatibility";
-import { translateRequest } from "../protocol/types";
+import { translateRequest } from "../protocol/translate";
 import { catalogForSource } from "../catalog/catalog";
 import { fetchCodexCatalog } from "../catalog/codexCatalog";
 import { quotaForAccount } from "../quota/quota";

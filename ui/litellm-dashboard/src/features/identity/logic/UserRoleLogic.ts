@@ -2,10 +2,13 @@ export const old_admin_roles = ["Admin", "Admin Viewer"];
 export const v2_admin_role_names = ["proxy_admin", "proxy_admin_viewer", "org_admin"];
 export const all_admin_roles = [...old_admin_roles, ...v2_admin_role_names];
 export const internalUserRoles = ["Internal User", "Internal Viewer"];
+/** 与后端 `isUsageAdmin` 对齐：上游账号用量只给真正能看全站账本的代理管理员。 */
+export const usageAdminRoles = ["proxy_admin", "proxy_admin_viewer"];
 export const rolesAllowedToSeeUsage = ["Admin", "Admin Viewer", "Internal User", "Internal Viewer"];
 export const rolesWithWriteAccess = ["Internal User", "Admin", "proxy_admin"];
 
 export const isAdminRole = (role: string): boolean => all_admin_roles.includes(role);
+export const isUsageAdminRole = (role: string): boolean => usageAdminRoles.includes(role);
 export const isProxyAdminRole = (role: string): boolean => role === "proxy_admin" || role === "Admin";
 
 interface TeamMember {

@@ -7,8 +7,10 @@ import UsageKeyModel from "./UsageKeyModelComponent.vue";
 import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import { tokenChartFields, usageTokenBreakdown } from "../logic/UsageTokenLogic";
-import type { ModelActivityData } from "../support/UsageModels";
-const props = defineProps<{ metrics: ModelActivityData; hidePromptCachingMetrics?: boolean }>();
+import type { ModelActivityData, DailyData } from "../support/UsageModels";
+import { isNoDataRow, padUsageRows } from "../logic/UsageEmptyDaysLogic";
+import type { ChartRow } from "../logic/UsageChartLogic";
+const props = defineProps<{ metrics: ModelActivityData; hidePromptCachingMetrics?: boolean; dates?: string[] }>();
 const money = useMoneyFormatter(),
 	number = (n: number) => formatNumberWithCommas(n, 0, false);
 const keyLabels = computed(() => {
@@ -34,7 +36,11 @@ const tokens = computed(() =>
 		cache_creation_input_tokens: props.metrics.total_cache_creation_input_tokens,
 	}),
 );
-const tokenDays = computed(() => props.metrics.daily_data.map((row) => ({ date: row.date, ...tokenChartFields(row.metrics) })));
+/** 补齐范围内每一天：这个实体当天没有请求的日子也占位，图上标成 No data 而不是被略过。 */
+const dailyRows = computed<ChartRow[]>(() => padUsageRows(props.metrics.daily_data, props.dates ?? []));
+const tokenDays = computed(() =>
+	dailyRows.value.map((row) => (isNoDataRow(row) ? row : { date: row.date, ...tokenChartFields((row as unknown as DailyData).metrics) })),
+);
 
 const charts = computed(() => [
 	{
@@ -53,7 +59,7 @@ const charts = computed(() => [
 	{
 		title: "Requests per day",
 		kind: "bar" as const,
-		data: props.metrics.daily_data,
+		data: dailyRows.value,
 		categories: ["metrics.api_requests"],
 		colors: ["blue"],
 		format: (v: number) => (v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1000 ? v / 1000 + "k" : String(v)),
@@ -61,7 +67,7 @@ const charts = computed(() => [
 	{
 		title: "Success vs Failed Requests",
 		kind: "area" as const,
-		data: props.metrics.daily_data,
+		data: dailyRows.value,
 		categories: ["metrics.successful_requests", "metrics.failed_requests"],
 		colors: ["green", "red"],
 		format: (v: number) => v.toLocaleString(),
@@ -71,7 +77,7 @@ const charts = computed(() => [
 				{
 					title: "Prompt Caching Metrics",
 					kind: "area" as const,
-					data: props.metrics.daily_data,
+					data: dailyRows.value,
 					categories: ["metrics.cache_read_input_tokens", "metrics.cache_creation_input_tokens"],
 					colors: ["cyan", "purple"],
 					yAxisWidth: 88,
@@ -123,7 +129,7 @@ const charts = computed(() => [
 					<UsageLegend :categories="['metrics.spend']" :colors="['green']" />
 				</header>
 				<UsageChart
-					:data="metrics.daily_data"
+					:data="dailyRows"
 					index="date"
 					:categories="['metrics.spend']"
 					:colors="['green']"

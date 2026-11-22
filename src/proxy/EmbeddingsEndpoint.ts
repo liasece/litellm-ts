@@ -104,7 +104,7 @@ function createEmbeddingsHandler(litellmRouter: LiteLLMRouter, db: DrizzleDb | u
 		const requestId = spendReservation?.requestId;
 
 		let providerCompleted = false;
-		let upstreamLogContext: import("../router/UpstreamLogContext").UpstreamLogContext | undefined;
+		let upstreamLogContext: import("../types/upstreamLog").UpstreamLogContext | undefined;
 		try {
 			const mergedParams: Record<string, unknown> = { ...deployment.litellm_params, ...optionalParams };
 			const providerReq = provider.transformEmbeddingRequest(deployment.litellm_params.model, input, mergedParams);

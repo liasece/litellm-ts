@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createModelResolutionTraceCollector, type ModelResolutionTraceCollector } from "./ModelResolutionTrace";
 import { runWithAppliedFeatures } from "./AppliedFeatures";
-import type { UpstreamLogContext } from "./UpstreamLogContext";
+import type { UpstreamErrorRecord, UpstreamLogContext } from "../types/upstreamLog";
+
+import type { UpstreamIdentity } from "./UpstreamKeyIdentity";
 
 /**
  * 请求作用域内的上游交换旁路通道。
@@ -22,16 +24,6 @@ export type UpstreamExchangeObserver = (context: UpstreamLogContext) => void;
  * 只保留定位所需的字段：上游地址、状态码、错误类别与文案。响应体在
  * `createUpstreamLogContext` 里已经过 `redactErrorPayload` 脱敏，这里不再重复处理正文。
  */
-export interface UpstreamErrorRecord {
-	/** 发出该次请求的上游地址。 */
-	readonly url: string;
-	/** 上游返回的 HTTP 状态码。 */
-	readonly status_code: number;
-	/** 上游错误类别或供应商错误码。 */
-	readonly type: string;
-	/** 已脱敏的错误文案，过长时截断。 */
-	readonly message: string;
-}
 
 interface UpstreamExchangeChannel {
 	/** 当前作用域最近一次真实上游交换。 */
@@ -42,6 +34,8 @@ interface UpstreamExchangeChannel {
 	observer?: UpstreamExchangeObserver;
 	/** 请求级路由解析轨迹，供观察者读取当前进度。 */
 	resolutionTrace?: ModelResolutionTraceCollector;
+	/** 当前实际使用的上游 key 与账号；重试/换号时覆盖。 */
+	identity?: UpstreamIdentity;
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -125,6 +119,54 @@ export function runWithUpstreamExchangeScope<T>(callback: () => T): T {
 }
 
 /**
+ * 把当前身份合并进交换上下文。
+ *
+ * 身份是请求级的，可能比某次 context 更晚确定（尤其是订阅换 token 后重试）；
+ * latest 始终以通道当前身份为准，避免日志上下文与关联表读到不同轮次。
+ * @param context - 传输层记录的上游交换
+ * @param identity - 当前身份；undefined 表示本请求没有可记录身份
+ */
+function applyIdentity(context: UpstreamLogContext, identity: UpstreamIdentity | undefined): UpstreamLogContext {
+	// 没有身份且上下文本来就没有身份时保留原对象：上游交换的读取方常按引用比对。
+	if (identity === undefined && context.upstreamKeyHash === undefined && context.upstreamAccount === undefined) {
+		return context;
+	}
+	const { upstreamKeyHash: _keyHash, upstreamAccount: _account, ...rest } = context;
+	return identity === undefined
+		? rest
+		: {
+				...rest,
+				upstreamKeyHash: identity.keyHash,
+				...(identity.account === undefined ? {} : { upstreamAccount: identity.account }),
+			};
+}
+
+/**
+ * 记录当前实际使用的 key 指纹与账号。
+ *
+ * 订阅桥接层在每次 `_buildPlan` 后写入；直连在解析 deployment 时写入。
+ * 重试前必须显式传 undefined 清空，避免上一账号的身份被记到新尝试上。
+ * @param identity - 本次实际身份；undefined 清空
+ */
+export function recordUpstreamIdentity(identity: UpstreamIdentity | undefined): void {
+	const channel = channels.getStore();
+	if (channel === undefined) {
+		return;
+	}
+	channel.identity = identity;
+	if (channel.latest !== undefined) {
+		channel.latest = applyIdentity(channel.latest, identity);
+	}
+}
+
+/**
+ * 读取当前请求实际使用的 key 指纹与账号。
+ */
+export function getRecordedUpstreamIdentity(): UpstreamIdentity | undefined {
+	return channels.getStore()?.identity;
+}
+
+/**
  * 记录一次真实上游交换；没有作用域时静默忽略（后台任务、单元测试）。
  * @param context - 传输层构造的上游请求/响应上下文
  */
@@ -133,7 +175,7 @@ export function recordUpstreamExchange(context: UpstreamLogContext): void {
 	if (channel === undefined) {
 		return;
 	}
-	channel.latest = context;
+	channel.latest = applyIdentity(context, channel.identity);
 	const error = describeUpstreamError(context);
 	if (error !== undefined) {
 		// latest 只留最后一次交换，重试与 fallback 的中途错误会被覆盖；
@@ -244,14 +286,14 @@ export function getRecordedUpstreamErrors(): UpstreamErrorRecord[] {
  */
 export async function captureUpstreamExchange<T>(
 	callback: () => Promise<T>,
-): Promise<{ result: T; context: UpstreamLogContext | undefined }> {
+): Promise<{ result: T; context: UpstreamLogContext | undefined; identity: UpstreamIdentity | undefined }> {
 	return channels.run({}, () =>
 		// 能力账本在同一边界开子作用域：内部调用自己的 alias / override / 档位注入
 		// 不能记到外层用户请求上，否则审计行的路由会被写成主请求的能力。
 		runWithAppliedFeatures(async () => {
 			const channel = channels.getStore();
 			const result = await callback();
-			return { result: result, context: channel?.latest };
+			return { result: result, context: channel?.latest, identity: channel?.identity };
 		}),
 	);
 }

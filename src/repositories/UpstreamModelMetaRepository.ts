@@ -6,9 +6,10 @@
  */
 
 import { and, eq, notInArray } from "drizzle-orm";
-import type { DrizzleDb } from "../../../core/db/Database";
-import { LiteLLM_UpstreamModelMeta } from "../../../db/schema/upstreamModelMeta";
-import type { UpstreamModelMetaRecord, UpstreamModelMetaStatus, UpstreamModelMetadata } from "./types";
+import type { DrizzleDb } from "../core/db/Database";
+import { singletonFor } from "./internal/registry";
+import { LiteLLM_UpstreamModelMeta } from "../db/schema/upstreamModelMeta";
+import type { UpstreamModelMetaRecord, UpstreamModelMetaStatus, UpstreamModelMetadata } from "../subscriptions/native/upstream/types";
 
 /** 一行待写入的记录（除时间戳外与读取形态一致）。 */
 export interface UpstreamModelMetaWrite {
@@ -149,3 +150,9 @@ export class UpstreamModelMetaRepository {
 		await this._db.delete(LiteLLM_UpstreamModelMeta).where(eq(LiteLLM_UpstreamModelMeta.source, source));
 	}
 }
+
+/**
+ * 按 db 实例取仓储单例（同一个 db 只构造一次）。
+ * @param db - drizzle 句柄
+ */
+export const upstreamModelMetaRepositoryFor = singletonFor((db: DrizzleDb) => new UpstreamModelMetaRepository(db));

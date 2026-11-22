@@ -20,35 +20,18 @@
  * 叠加层事件 id 与请求结算后的落库事件一致：结算只是换了事件来源，前端不会看到事件闪断。
  */
 
-import { and, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
+import { and, type SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { readLiveResponseSequence, readLiveResponseSnapshot } from "./LiveResponseRegistry";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
-import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
-import {
-	SPEND_LOG_INPUT_REF_KEY,
-	SPEND_LOG_MESSAGE_REF_KEY,
-	SPEND_LOG_REF_BYTES_KEY,
-	SPEND_LOG_REF_MISSING_KEY,
-	SPEND_LOG_SAME_AS_MESSAGES,
-	SPEND_LOG_SYSTEM_COUNT_KEY,
-	SPEND_LOG_SYSTEM_FIRST_KEY,
-	SPEND_LOG_SYSTEM_REF_KEY,
-	SPEND_LOG_SYSTEM_SECOND_KEY,
-	SPEND_LOG_TOOLS_COUNT_KEY,
-	SPEND_LOG_TOOLS_FIRST_KEY,
-	hydrateSpendLogRows,
-} from "./SpendLogBlocks";
+import { hydrateSpendLogRows } from "./SpendLogBlocks";
 import { createModuleLogger } from "../core/utils/logger";
-import { CallType } from "../types/spend";
+import type { CallType } from "../types/spend";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
 import { readInProgressUsage } from "./UiLogDetail";
-import { toFiniteNumber } from "./spendManagementFormatters";
 import { COLD_STORAGE_BATCH_CONCURRENCY, mapWithConcurrency } from "./spendManagementHelpers";
-import { spendLogExecutionModelSql } from "./spendLogProjections";
-import { spendLogStatusSql } from "./spendLogStatus";
+import { sessionTimelineRepositoryFor } from "../repositories/SessionTimelineRepository";
+import { spendReportingRepositoryFor } from "../repositories/SpendReportingRepository";
 import {
 	SessionTimelineBuilder,
 	isClaudeCodeAuxiliaryTimelineRequest,
@@ -59,14 +42,7 @@ import {
 	type SessionTimelineWindow,
 } from "./sessionTimeline";
 import { hydrateSessionTimelineImages, type SessionImageCandidate, type SessionImageLookup } from "./sessionTimelineImages";
-import {
-	encodeSessionPosition,
-	sessionBeforeClause,
-	sessionCursorClause,
-	sessionPositionFromRow,
-	sessionSnapshotClause,
-	type SessionPosition,
-} from "./sessionPosition";
+import { encodeSessionPosition, sessionPositionFromRow, type SessionPosition } from "./sessionPosition";
 
 const logger = createModuleLogger("SessionTimeline");
 
@@ -229,10 +205,11 @@ interface SessionTimelinePayloadPlan {
 
 /**
  * 会话内已落库行的读取条件：分组建模列 + 已鉴权的可见性。
+ * @param db - 数据库实例
  * @param scope - 读取范围
  */
-function sessionBaseClause(scope: SessionTimelineScope): SQL {
-	return and(eq(liteLLM_SpendLogs.session_group_key, scope.groupKey), scope.visibilityClause) as SQL;
+function sessionBaseClause(db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope): SQL {
+	return and(spendReportingRepositoryFor(db).sessionGroupClause(scope.groupKey), scope.visibilityClause) as SQL;
 }
 
 /**
@@ -260,32 +237,6 @@ interface SessionTimelineWindowScanRow {
 	readonly request_id: string;
 	readonly startTime: Date;
 	readonly messages_bytes: number;
-}
-
-/**
- * 单行消息体积（用于窗口字节预算），不读内容。
- *
- * 内容寻址去重后列里只剩引用，`pg_column_size` 反映的是引用数组的大小而不是正文体积；
- * 写入侧把逻辑字节数记在 `_litellm_ref_bytes` 上，这里直接取用，避免为预算去 join 块表。
- */
-function sessionTimelineMessagesBytesSql() {
-	const messages = liteLLM_SpendLogs.messages;
-	return sql<number>`
-		CASE
-			WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
-				THEN COALESCE((${messages} ->> ${SPEND_LOG_REF_BYTES_KEY})::numeric, 0)
-			ELSE COALESCE(pg_column_size(${messages}), 0)
-		END
-	`;
-}
-
-/** 窗口扫描只取判断窗口边界需要的字段。 */
-function sessionTimelineWindowScanSelection() {
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		startTime: liteLLM_SpendLogs.startTime,
-		messages_bytes: sessionTimelineMessagesBytesSql(),
-	};
 }
 
 /**
@@ -369,12 +320,8 @@ async function readWindowedDescriptorRows(
 	limit: number,
 	byteBudget: number,
 ): Promise<{ rows: SessionTimelineDescriptorRow[]; hasMore: boolean; baselineMessageCount: number | null }> {
-	const scanRows = (await db
-		.select(sessionTimelineWindowScanSelection())
-		.from(liteLLM_SpendLogs)
-		.where(rangeClause)
-		.orderBy(sql`${liteLLM_SpendLogs.startTime} DESC, ${liteLLM_SpendLogs.request_id} DESC`)
-		.limit(limit + 1)) as SessionTimelineWindowScanRow[];
+	const repository = sessionTimelineRepositoryFor(db);
+	const scanRows = await repository.listWindowScanRows<SessionTimelineWindowScanRow>(rangeClause, "desc", limit + 1);
 	const window = selectTimelineWindow(scanRows, limit, byteBudget);
 	const windowRequestIds = window.rows.map((row) => row.request_id);
 	const predecessor = window.predecessor;
@@ -382,10 +329,7 @@ async function readWindowedDescriptorRows(
 		predecessor !== null &&
 		(!Number.isFinite(predecessor.messages_bytes) || predecessor.messages_bytes <= SESSION_TIMELINE_BASELINE_MAX_BYTES);
 	const descriptorRequestIds = readablePredecessor ? [...windowRequestIds, predecessor.request_id] : windowRequestIds;
-	const descriptorRows = (await db
-		.select(sessionTimelineDescriptorSelection())
-		.from(liteLLM_SpendLogs)
-		.where(and(rangeClause, inArray(liteLLM_SpendLogs.request_id, descriptorRequestIds)) as SQL)) as SessionTimelineDescriptorRow[];
+	const descriptorRows = await repository.listDescriptorRows<SessionTimelineDescriptorRow>(rangeClause, null, descriptorRequestIds);
 	const byRequestId = new Map(descriptorRows.map((row) => [row.request_id, row]));
 	const rows = windowRequestIds
 		.map((requestId) => byRequestId.get(requestId))
@@ -418,22 +362,13 @@ async function readForwardWindowedDescriptorRows(
 	limit: number,
 	byteBudget: number,
 ): Promise<{ rows: SessionTimelineDescriptorRow[]; hasMore: boolean; baselineMessageCount: number | null }> {
-	const scanRows = (await db
-		.select(sessionTimelineWindowScanSelection())
-		.from(liteLLM_SpendLogs)
-		.where(rangeClause)
-		.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
-		.limit(limit + 1)) as SessionTimelineWindowScanRow[];
+	const repository = sessionTimelineRepositoryFor(db);
+	const scanRows = await repository.listWindowScanRows<SessionTimelineWindowScanRow>(rangeClause, "asc", limit + 1);
 	const window = selectForwardTimelineWindow(scanRows, limit, byteBudget);
 	const windowRequestIds = window.rows.map((row) => row.request_id);
 	const descriptorRows =
 		windowRequestIds.length > 0
-			? ((await db
-					.select(sessionTimelineDescriptorSelection())
-					.from(liteLLM_SpendLogs)
-					.where(
-						and(rangeClause, inArray(liteLLM_SpendLogs.request_id, windowRequestIds)) as SQL,
-					)) as SessionTimelineDescriptorRow[])
+			? await repository.listDescriptorRows<SessionTimelineDescriptorRow>(rangeClause, null, windowRequestIds)
 			: [];
 	const byRequestId = new Map(descriptorRows.map((row) => [row.request_id, row]));
 	const rows = windowRequestIds
@@ -441,21 +376,15 @@ async function readForwardWindowedDescriptorRows(
 		.filter((row): row is SessionTimelineDescriptorRow => row !== undefined);
 	let baselineMessageCount: number | null = 0;
 	if (after) {
-		const cursorScanRows = (await db
-			.select(sessionTimelineWindowScanSelection())
-			.from(liteLLM_SpendLogs)
-			.where(and(boundedClause, eq(liteLLM_SpendLogs.request_id, after.requestId)) as SQL)
-			.limit(1)) as SessionTimelineWindowScanRow[];
+		// 游标行按主键单行回表，不需要排序：WHERE request_id = $1 已唯一。
+		const cursorClause = and(boundedClause, repository.spendLogRequestIdClause(after.requestId)) as SQL;
+		const cursorScanRows = await repository.listWindowScanRows<SessionTimelineWindowScanRow>(cursorClause, null, 1);
 		const cursorRow = cursorScanRows[0];
 		const readableCursor =
 			cursorRow !== undefined &&
 			(!Number.isFinite(cursorRow.messages_bytes) || cursorRow.messages_bytes <= SESSION_TIMELINE_BASELINE_MAX_BYTES);
 		if (readableCursor) {
-			const baselineRows = (await db
-				.select(sessionTimelineDescriptorSelection())
-				.from(liteLLM_SpendLogs)
-				.where(and(boundedClause, eq(liteLLM_SpendLogs.request_id, after.requestId)) as SQL)
-				.limit(1)) as SessionTimelineDescriptorRow[];
+			const baselineRows = await repository.listDescriptorRows<SessionTimelineDescriptorRow>(cursorClause, null, undefined, 1);
 			const baselineRow = baselineRows[0];
 			baselineMessageCount = baselineRow ? effectiveTimelineMessageCount(baselineRow) : null;
 		} else {
@@ -482,15 +411,15 @@ export async function readSessionTimelineBatch(
 	scope: SessionTimelineScope,
 	options: SessionTimelineBatchOptions = {},
 ): Promise<SessionTimelineBatch> {
-	const baseClause = sessionBaseClause(scope);
+	const spendRepository = spendReportingRepositoryFor(db);
+	const timelineRepository = sessionTimelineRepositoryFor(db);
+	const baseClause = sessionBaseClause(db, scope);
 	const snapshotStartedAt = performance.now();
-	const snapshotRows = await db
-		.select({ snapshotStartTime: liteLLM_SpendLogs.startTime, snapshotRequestId: liteLLM_SpendLogs.request_id })
-		.from(liteLLM_SpendLogs)
-		.where(baseClause)
-		.orderBy(sql`${liteLLM_SpendLogs.startTime} DESC, ${liteLLM_SpendLogs.request_id} DESC`)
-		.limit(1);
-	const snapshot = sessionPositionFromRow(snapshotRows[0], "snapshotStartTime", "snapshotRequestId");
+	const snapshot = sessionPositionFromRow(
+		await spendRepository.findSessionSnapshotPosition(baseClause),
+		"snapshotStartTime",
+		"snapshotRequestId",
+	);
 	options.recordTiming?.("snapshot", snapshotStartedAt);
 	const countStartedAt = performance.now();
 	if (!snapshot) {
@@ -504,20 +433,16 @@ export async function readSessionTimelineBatch(
 			hasMore: false,
 		};
 	}
-	const boundedClause = and(baseClause, sessionSnapshotClause(snapshot)) as SQL;
-	const countRows = await db
-		.select({ count: sql<number>`COUNT(*)` })
-		.from(liteLLM_SpendLogs)
-		.where(boundedClause);
-	const total = toFiniteNumber(countRows[0]?.count);
+	const boundedClause = and(baseClause, spendRepository.sessionSnapshotClause(snapshot)) as SQL;
+	const total = await spendRepository.countSpendLogs(boundedClause);
 	options.recordTiming?.("total", countStartedAt);
 	const direction: "forward" | "backward" = options.direction === "forward" || Boolean(options.after) ? "forward" : "backward";
 	const rangeClause = options.since
-		? (and(boundedClause, sessionCursorClause(options.since)) as SQL)
+		? (and(boundedClause, spendRepository.sessionCursorClause(options.since)) as SQL)
 		: options.before
-			? (and(boundedClause, sessionBeforeClause(options.before)) as SQL)
+			? (and(boundedClause, spendRepository.sessionBeforeClause(options.before)) as SQL)
 			: options.after
-				? (and(boundedClause, sessionCursorClause(options.after)) as SQL)
+				? (and(boundedClause, spendRepository.sessionCursorClause(options.after)) as SQL)
 				: boundedClause;
 	// 增量读取只追新行，不需要窗口；一次性读取用窗口把整段累积快照挡在数据库里。
 	const windowed = !options.since && options.limit !== null && options.limit !== undefined;
@@ -547,11 +472,7 @@ export async function readSessionTimelineBatch(
 		windowHasMore = windowedRows.hasMore;
 		windowBaselineMessageCount = windowedRows.baselineMessageCount;
 	} else {
-		rawDescriptorRows = (await db
-			.select(sessionTimelineDescriptorSelection())
-			.from(liteLLM_SpendLogs)
-			.where(rangeClause)
-			.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)) as SessionTimelineDescriptorRow[];
+		rawDescriptorRows = await timelineRepository.listDescriptorRows<SessionTimelineDescriptorRow>(rangeClause, "asc");
 	}
 	options.recordTiming?.("manifest", manifestStartedAt);
 
@@ -567,14 +488,13 @@ export async function readSessionTimelineBatch(
 		const candidateRequestIdsJson = JSON.stringify(
 			Object.fromEntries(auxiliaryCandidateRequestIds.map((requestId) => [requestId, true])),
 		);
-		const classificationRows = await db
-			.select(sessionTimelineAuxiliarySelection())
-			.from(liteLLM_SpendLogs)
-			.where(
-				windowed
-					? (and(rangeClause, inArray(liteLLM_SpendLogs.request_id, auxiliaryCandidateRequestIds)) as SQL)
-					: (and(rangeClause, sql`${candidateRequestIdsJson}::jsonb ? ${liteLLM_SpendLogs.request_id}`) as SQL),
-			);
+		const classificationRows = await timelineRepository.listAuxiliaryRows<
+			Partial<SessionTimelineSourceRow> & { readonly request_id: string }
+		>(
+			windowed
+				? (and(rangeClause, timelineRepository.spendLogRequestIdsClause(auxiliaryCandidateRequestIds)) as SQL)
+				: (and(rangeClause, timelineRepository.spendLogSelectionKeyedByRequestIdClause(candidateRequestIdsJson)) as SQL),
+		);
 		for (const row of classificationRows) {
 			classificationByRequestId.set(row.request_id, row);
 		}
@@ -605,14 +525,12 @@ export async function readSessionTimelineBatch(
 			payloadRequestIds.map((requestId) => [requestId, payloadPlan.indicesByRequestId.get(requestId) ?? []]),
 		);
 		const selectedIndicesJson = JSON.stringify(selectedIndices);
-		const payloadRows = await db
-			.select(sessionTimelinePayloadSelection(selectedIndicesJson))
-			.from(liteLLM_SpendLogs)
-			.where(
-				windowed
-					? (and(rangeClause, inArray(liteLLM_SpendLogs.request_id, payloadRequestIds)) as SQL)
-					: (and(rangeClause, sql`${selectedIndicesJson}::jsonb ? ${liteLLM_SpendLogs.request_id}`) as SQL),
-			);
+		const payloadRows = await timelineRepository.listPayloadRows<{ readonly request_id: string; readonly request_payload: unknown }>(
+			windowed
+				? (and(rangeClause, timelineRepository.spendLogRequestIdsClause(payloadRequestIds)) as SQL)
+				: (and(rangeClause, timelineRepository.spendLogSelectionKeyedByRequestIdClause(selectedIndicesJson)) as SQL),
+			selectedIndicesJson,
+		);
 		for (const row of payloadRows) {
 			payloadByRequestId.set(row.request_id, row.request_payload);
 		}
@@ -665,11 +583,7 @@ export async function readSessionTimelineBatch(
  * @param scope - 读取范围
  */
 export async function readSettledSessionCount(db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope): Promise<number> {
-	const rows = await db
-		.select({ count: sql<number>`COUNT(*)` })
-		.from(liteLLM_SpendLogs)
-		.where(sessionBaseClause(scope));
-	return toFiniteNumber(rows[0]?.count);
+	return spendReportingRepositoryFor(db).countSpendLogs(sessionBaseClause(db, scope));
 }
 
 /**
@@ -677,15 +591,11 @@ export async function readSettledSessionCount(db: NodePgDatabase<typeof schema>,
  *
  * ActiveRequests 没有 session_group_key 列，注册时写入的 `metadata.session_group_key` 是唯一
  * 分组依据；过期行由心跳判定失效，与列表接口同样过滤。
+ * @param db - 数据库实例
  * @param scope - 读取范围
  */
-function sessionActiveClause(scope: SessionTimelineScope): SQL {
-	return and(
-		eq(liteLLM_ActiveRequests.status, "in_progress"),
-		gt(liteLLM_ActiveRequests.expires_at, new Date()),
-		sql`${liteLLM_ActiveRequests.metadata}->>'session_group_key' = ${scope.groupKey}`,
-		scope.activeVisibilityClause,
-	) as SQL;
+function sessionActiveClause(db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope): SQL {
+	return sessionTimelineRepositoryFor(db).sessionActiveClause(scope.groupKey, scope.activeVisibilityClause);
 }
 
 /**
@@ -697,21 +607,9 @@ export async function readInProgressSessionRows(
 	db: NodePgDatabase<typeof schema>,
 	scope: SessionTimelineScope,
 ): Promise<SessionTimelineSourceRow[]> {
-	const rows = await db
-		.select({
-			request_id: liteLLM_ActiveRequests.request_id,
-			call_type: liteLLM_ActiveRequests.call_type,
-			api_key: liteLLM_ActiveRequests.api_key,
-			startTime: liteLLM_ActiveRequests.startTime,
-			model: liteLLM_ActiveRequests.model,
-			metadata: liteLLM_ActiveRequests.metadata,
-			proxy_server_request: liteLLM_ActiveRequests.proxy_server_request,
-			completion_start_time: liteLLM_ActiveRequests.completion_start_time,
-			updated_at: liteLLM_ActiveRequests.updated_at,
-		})
-		.from(liteLLM_ActiveRequests)
-		.where(sessionActiveClause(scope))
-		.orderBy(sql`${liteLLM_ActiveRequests.startTime} ASC, ${liteLLM_ActiveRequests.request_id} ASC`);
+	const rows = await sessionTimelineRepositoryFor(db).listActiveRequestRows<SessionActiveRequestSourceRow>(
+		sessionActiveClause(db, scope),
+	);
 	// 在途行正文按内容寻址存块：先组装回完整请求体，分类判定与负载装配才看得到 messages/tools/system。
 	// 块在注册提交后已进入进程缓存，正常路径不会多一次查询。
 	const hydratedRows = await hydrateSpendLogRows(db, rows);
@@ -727,15 +625,8 @@ export async function readInProgressSessionRows(
  * @param scope - 读取范围
  */
 export async function readInProgressSessionRevision(db: NodePgDatabase<typeof schema>, scope: SessionTimelineScope): Promise<string> {
-	const rows = await db
-		.select({
-			count: sql<number>`COUNT(*)`,
-			latest: sql<string | null>`MAX(${liteLLM_ActiveRequests.updated_at})`,
-		})
-		.from(liteLLM_ActiveRequests)
-		.where(sessionActiveClause(scope));
-	const count = toFiniteNumber(rows[0]?.count);
-	return `${count}|${rows[0]?.latest ?? ""}`;
+	const revision = await sessionTimelineRepositoryFor(db).readActiveRequestRevision(sessionActiveClause(db, scope));
+	return `${revision.count}|${revision.latest ?? ""}`;
 }
 
 /** ActiveRequests 行中时间线需要的字段。 */
@@ -1058,362 +949,6 @@ function planSessionTimelinePayloads(
 	};
 }
 
-/**
- * 最终上游请求体：传输层记录的最后一次真实交换。
- *
- * 上游请求只在开启 `store_upstream_logs_in_spend_logs` 时落库；未记录时所有读取都回退到
- * 客户端请求快照，时间线仍能工作，只是看不到模型实际收到的内部处理结果。
- */
-function sessionTimelineUpstreamBodySql(): SQL {
-	return sql`${liteLLM_SpendLogs.proxy_server_request}->'upstream_request'->'body'`;
-}
-
-/**
- * 上游请求里可渲染的消息条数。
- *
- * 与下游 `messages` 列一样，数组可能内联、已编码成引用列表，或在行里写成 `"$messages"`
- * 表示与列根引用相同。没有上游消息时返回 null，调用方据此回退到下游计数。
- */
-function sessionTimelineUpstreamMessageCountSql(): SQL<number | null> {
-	const messages = liteLLM_SpendLogs.messages;
-	const body = sessionTimelineUpstreamBodySql();
-	return sql<number | null>`
-		CASE
-			WHEN jsonb_typeof(${body} -> 'messages') = 'array' THEN jsonb_array_length(${body} -> 'messages')
-			WHEN jsonb_typeof(${body} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
-				THEN jsonb_array_length(${body} -> ${SPEND_LOG_MESSAGE_REF_KEY})
-			WHEN ${body} ->> ${SPEND_LOG_MESSAGE_REF_KEY} = ${SPEND_LOG_SAME_AS_MESSAGES} THEN
-				CASE
-					WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
-					WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
-						THEN jsonb_array_length(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY})
-					ELSE NULL
-				END
-			WHEN jsonb_typeof(${body} -> 'input') = 'array' THEN jsonb_array_length(${body} -> 'input')
-			WHEN jsonb_typeof(${body} -> ${SPEND_LOG_INPUT_REF_KEY}) = 'array'
-				THEN jsonb_array_length(${body} -> ${SPEND_LOG_INPUT_REF_KEY})
-			ELSE NULL
-		END
-	`;
-}
-
-/** 是否以最终上游请求作为请求消息来源；与计数 SQL 共用同一判定。 */
-function sessionTimelineUsesUpstreamSql(): SQL {
-	const count = sessionTimelineUpstreamMessageCountSql();
-	return sql`COALESCE(${count}, 0) > 0`;
-}
-
-/**
- * 从消息数组或块引用列表中取出时间线选中的序号。
- *
- * 内联数组直接按序号过滤；引用列表只 join 选中的块，避免长会话为读一段尾巴把整段历史
- * 都取出来。`"$messages"` 引用与下游列相同，按列根引用展开。
- * @param arrayExpr - 内联消息数组表达式
- * @param refsExpr - 块引用列表表达式
- * @param selectedIndicesJson - request_id → 选中序号数组的 JSON
- */
-function sessionTimelineSelectedMessagesSql(arrayExpr: SQL, refsExpr: SQL, selectedIndicesJson: string): SQL {
-	const requestId = liteLLM_SpendLogs.request_id;
-	const blocks = liteLLM_SpendLogBlocks;
-	// 引用列表也可能是 `"$messages"` 字符串。jsonb 与 text 参数直接比较会被 PostgreSQL
-	// 解析成 `text::jsonb`，把哨兵值当成 JSON 文本；先用 `#>> '{}'` 取出标量文本再比较。
-	const refs = sql`CASE
-		WHEN (${refsExpr}) #>> '{}' = ${SPEND_LOG_SAME_AS_MESSAGES}
-			THEN ${liteLLM_SpendLogs.messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}
-		ELSE ${refsExpr}
-	END`;
-	// 规划器只取尾部一小段或整段消息。按选中序号反向取数组元素 / 块引用，
-	// 避免把整段历史 refs 展开后再逐项过滤后 join 所有块；长会话下这是 payload 阶段的主要浪费。
-	const selectedIndexes = sql`(
-		SELECT (entry.value #>> '{}')::int AS idx
-		FROM jsonb_array_elements(${selectedIndicesJson}::jsonb -> ${requestId}) WITH ORDINALITY AS entry(value, ordinality)
-	) AS selected_index`;
-	return sql`
-		CASE
-			WHEN jsonb_typeof(${arrayExpr}) = 'array' THEN COALESCE((
-				SELECT jsonb_agg(item.value ORDER BY selected_index.idx)
-				FROM ${selectedIndexes}
-				CROSS JOIN LATERAL (SELECT ${arrayExpr} -> selected_index.idx AS value) AS item
-				WHERE item.value IS NOT NULL
-			), '[]'::jsonb)
-			WHEN jsonb_typeof(${refs}) = 'array' THEN COALESCE((
-				SELECT jsonb_agg(
-					COALESCE(${blocks.payload}, jsonb_build_object(${SPEND_LOG_REF_MISSING_KEY}::text, ref.ref_id))
-					ORDER BY selected_index.idx
-				)
-				FROM ${selectedIndexes}
-				CROSS JOIN LATERAL (SELECT ${refs} ->> selected_index.idx AS ref_id) AS ref
-				LEFT JOIN ${blocks} ON ${blocks.blockId} = ref.ref_id
-				WHERE ref.ref_id IS NOT NULL
-			), '[]'::jsonb)
-			ELSE NULL
-		END
-	`;
-}
-
-/**
- * 上游请求的 system 段：可能是内联数组，也可能是整数组块引用。
- * @returns 无法还原时返回 null，由解析器忽略
- */
-function sessionTimelineUpstreamSystemSql(): SQL {
-	const body = sessionTimelineUpstreamBodySql();
-	const blocks = liteLLM_SpendLogBlocks;
-	return sql`
-		CASE
-			WHEN jsonb_typeof(${body} -> 'system') IN ('array', 'string', 'object')
-				THEN ${body} -> 'system'
-			WHEN jsonb_typeof(${body} -> ${SPEND_LOG_SYSTEM_REF_KEY}) = 'string' THEN COALESCE((
-				SELECT ${blocks.payload}
-				FROM ${blocks}
-				WHERE ${blocks.blockId} = ${body} ->> ${SPEND_LOG_SYSTEM_REF_KEY}
-			), jsonb_build_array(jsonb_build_object(
-				${SPEND_LOG_REF_MISSING_KEY}::text,
-				${body} ->> ${SPEND_LOG_SYSTEM_REF_KEY}
-			)))
-			ELSE NULL
-		END
-	`;
-}
-
-/**
- * Timeline manifest projection. Array payloads expose only their cheap count;
- * the payload query later extracts positions selected by the count high-water
- * plan. Non-array legacy payloads remain on the fallback path.
- */
-function sessionTimelineDescriptorSelection() {
-	const messages = liteLLM_SpendLogs.messages;
-	const metadata = liteLLM_SpendLogs.metadata;
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		call_type: liteLLM_SpendLogs.call_type,
-		api_key: liteLLM_SpendLogs.api_key,
-		spend: liteLLM_SpendLogs.spend,
-		total_tokens: liteLLM_SpendLogs.total_tokens,
-		startTime: liteLLM_SpendLogs.startTime,
-		endTime: liteLLM_SpendLogs.endTime,
-		model: spendLogExecutionModelSql(),
-		status: spendLogStatusSql(liteLLM_SpendLogs.status, liteLLM_SpendLogs.metadata),
-		metadata_status: spendLogStatusSql(
-			sql<string | null>`CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'status' ELSE NULL END`,
-			liteLLM_SpendLogs.metadata,
-		),
-		key_alias: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'user_api_key_alias' ELSE NULL END
-		`,
-		error_information: sql<unknown | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->'error_information' ELSE NULL END
-		`,
-		internal_call_type: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'internal_call_type' ELSE NULL END
-		`,
-		builtin_capability: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'builtin_capability' ELSE NULL END
-		`,
-		parent_request_id: sql<string | null>`
-			CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata}->>'parent_request_id' ELSE NULL END
-		`,
-		request_payload: sql<unknown>`NULL`,
-		request_message_count: sql<number | null>`
-			CASE
-				WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
-				WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array'
-					THEN jsonb_array_length(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY})
-				ELSE NULL
-			END
-		`,
-		upstream_message_count: sessionTimelineUpstreamMessageCountSql(),
-		response_payload: liteLLM_SpendLogs.response,
-		response_payload_available: sql<boolean>`
-			${liteLLM_SpendLogs.response} IS NOT NULL
-			AND ${liteLLM_SpendLogs.response} <> 'null'::jsonb
-			AND ${liteLLM_SpendLogs.response} <> '{}'::jsonb
-			AND ${liteLLM_SpendLogs.response} <> '[]'::jsonb
-		`,
-	};
-}
-
-/**
- * Claude Code auxiliary-call classification fields. This projection only runs
- * for manifest rows with at most two messages, so cumulative proxy snapshots
- * are never repeatedly decompressed for normal conversation requests.
- */
-function sessionTimelineAuxiliarySelection() {
-	const proxy = liteLLM_SpendLogs.proxy_server_request;
-	const messages = liteLLM_SpendLogs.messages;
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		request_message_count: sql<number>`
-			CASE
-				WHEN jsonb_typeof(${messages}) = 'array' THEN jsonb_array_length(${messages})
-				WHEN jsonb_typeof(${proxy}#>'{body,messages}') = 'array'
-					THEN jsonb_array_length(${proxy}#>'{body,messages}')
-				ELSE 0
-			END
-		`,
-		request_client: sql<string | null>`
-			CASE
-				WHEN ${proxy}#>>'{headers,x-app}' = 'cli'
-					AND ${proxy}#>>'{headers,user-agent}' LIKE 'claude-cli/%'
-				THEN 'claude_code'
-				ELSE NULL
-			END
-		`,
-		request_system_count: sql<number>`
-			CASE
-				WHEN jsonb_typeof(${proxy}#>'{body,system}') = 'array'
-				THEN jsonb_array_length(${proxy}#>'{body,system}')
-				WHEN jsonb_typeof(${proxy}#>ARRAY['body', ${SPEND_LOG_SYSTEM_COUNT_KEY}]) = 'number'
-				THEN (${proxy}#>>ARRAY['body', ${SPEND_LOG_SYSTEM_COUNT_KEY}])::int
-				ELSE 0
-			END
-		`,
-		request_tool_count: sql<number>`
-			CASE
-				WHEN jsonb_typeof(${proxy}#>'{body,tools}') = 'array'
-				THEN jsonb_array_length(${proxy}#>'{body,tools}')
-				WHEN jsonb_typeof(${proxy}#>ARRAY['body', ${SPEND_LOG_TOOLS_COUNT_KEY}]) = 'number'
-				THEN (${proxy}#>>ARRAY['body', ${SPEND_LOG_TOOLS_COUNT_KEY}])::int
-				ELSE 0
-			END
-		`,
-		request_first_tool_name: sql<string | null>`
-			COALESCE(
-				${proxy}#>>'{body,tools,0,name}',
-				${proxy}#>>ARRAY['body', ${SPEND_LOG_TOOLS_FIRST_KEY}]
-			)
-		`,
-		// Prefix matching tolerates prompt-tail edits between Claude Code versions
-		// while the 256-character cap prevents large system prompts entering the
-		// timeline batch result solely for classification.
-		request_first_system_prompt: sql<string | null>`
-			COALESCE(
-				LEFT(
-					COALESCE(
-						${proxy}#>>'{body,system,0,text}',
-						${proxy}#>>'{body,system,0}'
-					),
-					256
-				),
-				${proxy}#>>ARRAY['body', ${SPEND_LOG_SYSTEM_FIRST_KEY}]
-			)
-		`,
-		request_second_system_prompt: sql<string | null>`
-			COALESCE(
-				LEFT(
-					COALESCE(
-						${proxy}#>>'{body,system,1,text}',
-						${proxy}#>>'{body,system,1}'
-					),
-					256
-				),
-				${proxy}#>>ARRAY['body', ${SPEND_LOG_SYSTEM_SECOND_KEY}]
-			)
-		`,
-		request_first_message_role: sql<string | null>`
-			COALESCE(
-				${messages}#>>'{0,role}',
-				${proxy}#>>'{body,messages,0,role}'
-			)
-		`,
-		request_second_message_role: sql<string | null>`
-			COALESCE(
-				${messages}#>>'{1,role}',
-				${proxy}#>>'{body,messages,1,role}'
-			)
-		`,
-		request_first_message_text: sql<string | null>`
-			LEFT(COALESCE(
-				${messages}#>>'{0,content,0,text}',
-				${messages}#>>'{0,content}',
-				${proxy}#>>'{body,messages,0,content,0,text}',
-				${proxy}#>>'{body,messages,0,content}'
-			), 256)
-		`,
-		request_second_message_text: sql<string | null>`
-			LEFT(COALESCE(
-				${messages}#>>'{1,content,0,text}',
-				${messages}#>>'{1,content}',
-				${proxy}#>>'{body,messages,1,content,0,text}',
-				${proxy}#>>'{body,messages,1,content}'
-			), 256)
-		`,
-	};
-}
-
-/**
- * Fetch only the message indexes selected from the compact manifest.
- *
- * 请求侧优先返回最终上游请求的 message：内部处理（能力注入、协议转换、私有工具循环）
- * 会改写模型实际收到的输入，客户端快照看不到这些变化。响应侧仍只取下下游 `response`，
- * 两者共同组成用户在时间线里看到的对话。上游未记录或没有消息时保持原有下游读取路径。
- * @param selectedIndicesJson - request_id to zero-based message indexes.
- */
-function sessionTimelinePayloadSelection(selectedIndicesJson: string) {
-	const proxy = liteLLM_SpendLogs.proxy_server_request;
-	const messages = liteLLM_SpendLogs.messages;
-	const upstreamBody = sessionTimelineUpstreamBodySql();
-	const upstreamMessages = sessionTimelineSelectedMessagesSql(
-		sql`${upstreamBody} -> 'messages'`,
-		sql`${upstreamBody} -> ${SPEND_LOG_MESSAGE_REF_KEY}`,
-		selectedIndicesJson,
-	);
-	const upstreamInput = sessionTimelineSelectedMessagesSql(
-		sql`${upstreamBody} -> 'input'`,
-		sql`${upstreamBody} -> ${SPEND_LOG_INPUT_REF_KEY}`,
-		selectedIndicesJson,
-	);
-	const fallbackPayload = sql<unknown>`
-		CASE
-			WHEN jsonb_typeof(${proxy}) = 'object' AND ${proxy}->'body' IS NOT NULL THEN ${proxy}->'body'
-			ELSE ${proxy}
-		END
-	`;
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		request_payload: sql<unknown>`
-			CASE
-				WHEN ${sessionTimelineUsesUpstreamSql()} THEN jsonb_build_object(
-					'messages', NULLIF(${upstreamMessages}, '[]'::jsonb),
-					'input', ${upstreamInput},
-					'system', ${sessionTimelineUpstreamSystemSql()},
-					'instructions', ${upstreamBody} -> 'instructions'
-				)
-				WHEN jsonb_typeof(${messages}) = 'array' THEN COALESCE((
-					SELECT jsonb_agg(timeline_item.value ORDER BY timeline_item.ordinality)
-					FROM jsonb_array_elements(${messages}) WITH ORDINALITY AS timeline_item(value, ordinality)
-					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
-						@> to_jsonb((timeline_item.ordinality - 1)::int)
-				), '[]'::jsonb)
-				-- 内容寻址去重后的行：只按选中的序号去块表取内容，引用数组本身只有几 KB，
-				-- 不需要为了切一段尾巴把整段历史 detoast 出来。
-				WHEN jsonb_typeof(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY}) = 'array' THEN COALESCE((
-					SELECT jsonb_agg(
-						COALESCE(${liteLLM_SpendLogBlocks.payload}, jsonb_build_object(${SPEND_LOG_REF_MISSING_KEY}::text, block_ref.value))
-						ORDER BY block_ref.ordinality
-					)
-					FROM jsonb_array_elements_text(${messages} -> ${SPEND_LOG_MESSAGE_REF_KEY})
-						WITH ORDINALITY AS block_ref(value, ordinality)
-					LEFT JOIN ${liteLLM_SpendLogBlocks} ON ${liteLLM_SpendLogBlocks.blockId} = block_ref.value
-					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
-						@> to_jsonb((block_ref.ordinality - 1)::int)
-				), '[]'::jsonb)
-				WHEN ${messages} IS NOT NULL
-					AND ${messages} <> 'null'::jsonb
-					AND ${messages} <> '{}'::jsonb
-					AND ${messages} <> '[]'::jsonb
-				THEN ${messages}
-				WHEN jsonb_typeof(${fallbackPayload}) = 'array' THEN COALESCE((
-					SELECT jsonb_agg(timeline_item.value ORDER BY timeline_item.ordinality)
-					FROM jsonb_array_elements(${fallbackPayload}) WITH ORDINALITY AS timeline_item(value, ordinality)
-					WHERE (${selectedIndicesJson}::jsonb -> ${liteLLM_SpendLogs.request_id})
-						@> to_jsonb((timeline_item.ordinality - 1)::int)
-				), '[]'::jsonb)
-				ELSE ${fallbackPayload}
-			END
-		`,
-	};
-}
-
 function hasTimelinePayload(value: unknown): boolean {
 	if (value === null || value === undefined) {
 		return false;
@@ -1466,21 +1001,13 @@ export function createSessionImageLookup(
 	visibilityClause: SQL,
 ): (lookup: SessionImageLookup) => Promise<readonly SessionImageCandidate[]> {
 	return async (lookup) => {
-		const candidates = await db
-			.select({ requestId: liteLLM_SpendLogs.request_id, response: liteLLM_SpendLogs.response })
-			.from(liteLLM_SpendLogs)
-			.where(
-				and(
-					visibilityClause,
-					eq(liteLLM_SpendLogs.api_key, lookup.apiKey),
-					inArray(liteLLM_SpendLogs.call_type, [CallType.ImageGeneration, CallType.AImageGeneration]),
-					sql`${liteLLM_SpendLogs.startTime} >= ${lookup.from}`,
-					sql`${liteLLM_SpendLogs.endTime} <= ${lookup.to}`,
-					sql`COALESCE(${liteLLM_SpendLogs.proxy_server_request}#>>'{body,prompt}',
-						${liteLLM_SpendLogs.messages}#>>'{}') = ${lookup.prompt}`,
-				),
-			)
-			.limit(2);
+		const candidates = await sessionTimelineRepositoryFor(db).listImageCandidates({
+			visibilityClause: visibilityClause,
+			apiKey: lookup.apiKey,
+			from: lookup.from,
+			to: lookup.to,
+			prompt: lookup.prompt,
+		});
 		if (candidates.length !== 1) {
 			return candidates;
 		}

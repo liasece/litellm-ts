@@ -101,13 +101,17 @@ function isInferenceRoute(route: string): boolean {
 
 /**
  * 请求体解析完成标记中间件：必须紧跟在 `express.json()` 之后。
- * @param _req - Express 请求
+ *
+ * 除了给慢请求轨迹打点，还要写墙钟时刻：`litellm_overhead_time_ms` 从请求到达算起，
+ * 其中包含客户端上传请求体的时间，只有拿到「body 读完」这一刻才能把两者分开。
+ * @param req - Express 请求
  * @param _res - Express 响应
  * @param next - 下一个中间件
  */
-export function markBodyParsed(_req: Request, _res: Response, next: NextFunction): void {
+export function markBodyParsed(req: Request, _res: Response, next: NextFunction): void {
+	req.litellmBodyParsedAt ??= Date.now();
 	if (isObservabilityEnabled()) {
-		const trace = currentTraceOf(_req);
+		const trace = currentTraceOf(req);
 		if (trace !== undefined) {
 			trace.marks.body_parsed ??= performance.now();
 		}
@@ -371,6 +375,9 @@ function reportIfNoteworthy(
 		totalMs: breakdown.totalMs,
 		ttfbMs: breakdown.ttfbMs,
 		preUpstreamMs: breakdown.preUpstreamMs,
+		bodyParseMs: breakdown.bodyParseMs,
+		authMs: breakdown.authMs,
+		reservationMs: breakdown.reservationMs,
 		upstreamHeadersMs: breakdown.upstreamHeadersMs,
 		proxyOverheadMs: breakdown.proxyOverheadMs,
 		streamMs: breakdown.streamMs,
@@ -390,6 +397,9 @@ function reportIfNoteworthy(
 			first_byte_ms: breakdown.firstByteMs,
 			ttfb_ms: breakdown.ttfbMs,
 			pre_upstream_ms: breakdown.preUpstreamMs,
+			body_parse_ms: breakdown.bodyParseMs,
+			auth_ms: breakdown.authMs,
+			reservation_ms: breakdown.reservationMs,
 			upstream_headers_ms: breakdown.upstreamHeadersMs,
 			proxy_overhead_ms: breakdown.proxyOverheadMs,
 			stream_ms: breakdown.streamMs,

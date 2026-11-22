@@ -13,6 +13,7 @@ import type {
 	UsageMetadata,
 	UsageSummaryResponse,
 	UsageTeam,
+	UpstreamAccountKind,
 } from "../support/UsageModels";
 import { formatKeyLabel } from "./UsageSummaryLogic";
 
@@ -115,15 +116,24 @@ function topModel(item: UsageDimensionItem): TopModelData {
 	};
 }
 
-function activityItem(item: UsageDetailItem, teams: UsageTeam[], keys: boolean): ModelActivityData {
-	const metadata = (item.metadata ?? {}) as Partial<KeyMetadata>;
+function activityItem(item: UsageDetailItem, teams: UsageTeam[], keys: boolean, accounts = false): ModelActivityData {
+	const metadata = (item.metadata ?? {}) as Partial<KeyMetadata> & Record<string, unknown>;
 	const keyMetadata = {
 		key_alias: metadata.key_alias ?? null,
 		key_name: metadata.key_name ?? null,
 		team_id: metadata.team_id ?? null,
 	};
+	const accountKind = accounts ? (metadata["kind"] as UpstreamAccountKind | undefined) : undefined;
+	const providers =
+		accounts && Array.isArray(metadata["providers"])
+			? metadata["providers"].filter((value): value is string => typeof value === "string")
+			: undefined;
 	return {
-		label: keys ? formatKeyLabel(keyMetadata, item.key, teams) : item.key,
+		label: accounts
+			? String(metadata["label"] ?? (item.key || "Unknown Account"))
+			: keys
+				? formatKeyLabel(keyMetadata, item.key, teams)
+				: item.key,
 		total_requests: item.metrics.api_requests,
 		total_successful_requests: item.metrics.successful_requests,
 		total_failed_requests: item.metrics.failed_requests,
@@ -136,6 +146,16 @@ function activityItem(item: UsageDetailItem, teams: UsageTeam[], keys: boolean):
 		top_api_keys: (item.top_api_keys ?? []).map(topApiKey),
 		top_models: (item.top_models ?? []).map(topModel),
 		daily_data: item.daily,
+		...(accounts
+			? {
+					accountKind: accountKind,
+					provider: typeof metadata["provider"] === "string" ? metadata["provider"] : undefined,
+					providers: providers,
+					keyCount: typeof metadata["key_count"] === "number" ? metadata["key_count"] : undefined,
+					trashed: metadata["trashed"] === true,
+					deleted: metadata["deleted"] === true,
+				}
+			: {}),
 	};
 }
 
@@ -144,11 +164,17 @@ function activityItem(item: UsageDetailItem, teams: UsageTeam[], keys: boolean):
  * @param detail - 当前维度的 detail 响应
  * @param teams - 团队别名，用于 Key 展示
  * @param keys - 当前维度是否为 API Key
+ * @param accounts - 当前维度是否为上游账号
  */
-export function detailActivity(detail: UsageDetailResponse | null, teams: UsageTeam[], keys: boolean): Record<string, ModelActivityData> {
+export function detailActivity(
+	detail: UsageDetailResponse | null,
+	teams: UsageTeam[],
+	keys: boolean,
+	accounts = false,
+): Record<string, ModelActivityData> {
 	if (!detail) return {};
 	const result: Record<string, ModelActivityData> = {};
-	for (const item of detail.items) result[item.key] = activityItem(item, teams, keys);
+	for (const item of detail.items) result[item.key] = activityItem(item, teams, keys, accounts);
 	return result;
 }
 

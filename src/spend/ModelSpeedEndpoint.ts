@@ -50,18 +50,19 @@
  */
 
 import type { Router } from "express";
-import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
 import { LlmProviders } from "../types/provider";
 import {
+	spendAggregationRepositoryFor,
+	type SpeedAggregateRow as RepositorySpeedAggregateRow,
+} from "../repositories/SpendAggregationRepository";
+import {
 	addDays,
 	currentDayInTimeZone,
 	MIN_BUCKET_REQUESTS,
-	MIN_GENERATION_SHARE_FOR_TPS,
 	MIN_GENERATION_WINDOW_MS,
 	MIN_OUTPUT_TOKENS_FOR_SPEED,
 	type ModelSpeedReport,
@@ -91,28 +92,10 @@ const TIME_ZONE_PATTERN = /^[A-Za-z0-9_+/-]{1,64}$/;
 
 const DATE_ONLY_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
-/** 统一把时间投影格式化成 UTC ISO 文本，避免驱动层对 timestamptz 的表示差异 */
-const ISO_TEXT_FORMAT = '\'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"\'';
-
-/** 单个「模型 × 供应商 × 时间桶」聚合结果（直接来自 SQL） */
-export interface SpeedAggregateRow {
-	/** 桶起点，SQL 已格式化为 UTC ISO 文本 */
-	readonly bucket: string;
-	/** 模型名 */
-	readonly model: string;
-	/** 实际执行请求的供应商原始值（custom_llm_provider）；cliproxy 行由 speedProviderIdentity 归一 */
-	readonly provider: string | null;
-	/** 桶内全部调用数（含不可测算的请求） */
-	readonly calls: number;
-	/** 桶内可测算请求数 */
-	readonly requests: number;
-	/** 桶内可测算请求的输出 token 合计；无样本时为 null */
-	readonly output_tokens: number | null;
-	/** 桶内可测算请求的生成秒数合计；无样本时为 null */
-	readonly generation_seconds: number | null;
-	/** 桶内可测算请求的输出 TPS 中位数；无样本时为 null */
-	readonly p50_tps: number | null;
-}
+/**
+ * 「模型 × 供应商 × 时间桶」聚合结果；SQL 与类型由仓储拥有，端点继续对外暴露同一形状。
+ */
+export type SpeedAggregateRow = RepositorySpeedAggregateRow;
 
 /**
  * 校验时区名并返回规范值。
@@ -469,96 +452,13 @@ export function registerModelSpeedEndpoints(router: Router, db: NodePgDatabase<t
 		const bucket = resolveSpeedBucket(range.rangeDays, req.query["bucket"]);
 		const endDateExclusive = addDays(range.endDate, 1);
 
-		// eligible 与 Logs 页「TPS → Output」同一门槛：输出足够长，且首字之后确实还有
-		// 可测量的生成窗口。两个条件同时存在：比例挡住「长请求里的几毫秒窗口」，绝对
-		// 下限挡住「短请求里的几十毫秒窗口」——后者按比例看仍然合法，算出来却是上万 TPS，
-		// 属于上游一次性写出的交付毛刺，不是模型速度。
-		const generationWindowExpr = sql`EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.completionStartTime}))`;
-		const requestDurationExpr = sql`EXTRACT(EPOCH FROM (${liteLLM_SpendLogs.endTime} - ${liteLLM_SpendLogs.startTime}))`;
-		const eligible = sql`(${liteLLM_SpendLogs.completion_tokens} >= ${MIN_OUTPUT_TOKENS_FOR_SPEED}
-			AND ${liteLLM_SpendLogs.completionStartTime} IS NOT NULL
-			AND ${liteLLM_SpendLogs.completionStartTime} > ${liteLLM_SpendLogs.startTime}
-			AND ${liteLLM_SpendLogs.completionStartTime} < ${liteLLM_SpendLogs.endTime}
-			AND ${generationWindowExpr} >= ${MIN_GENERATION_SHARE_FOR_TPS} * ${requestDurationExpr}
-			AND ${generationWindowExpr} >= ${MIN_GENERATION_WINDOW_MS / 1000})`;
-		// 分子分母都下发原始合计，桶内平均与跨桶平均都按生成秒数加权；只在 SQL 里
-		// 逐行算 TPS 再平均，会让短请求与长请求等权。中位数仍是逐请求指标，按行排序取分位。
-		// 统一格式化成 UTC ISO 文本：驱动层对 timestamptz 的返回类型不一致（Date 或文本），
-		// 由 SQL 固化格式后前端才能稳定解析
-		// 归属模型：有 deployment（model_id）时它就是实际执行的模型；没有时
-		// （fallback、或选到部署前就失败）退回最终解析到的模型组。
-		// 只在 model_id 为空的少量行上读 metadata，避免为分组 detoast 全部 JSON。
-		const attributedModelExpr = sql`CASE
-				WHEN COALESCE(${liteLLM_SpendLogs.model_id}, '') <> '' THEN ${liteLLM_SpendLogs.model}
-				ELSE COALESCE(NULLIF(${liteLLM_SpendLogs.metadata}->>'resolved_model_group', ''), ${liteLLM_SpendLogs.model})
-			END`;
-		const bucketTextExpr = sql`to_char((date_trunc(${bucket}::text, (${liteLLM_SpendLogs.startTime} AT TIME ZONE 'UTC' AT TIME ZONE ${timezone}::text)) AT TIME ZONE ${timezone}::text) AT TIME ZONE 'UTC', ${sql.raw(ISO_TEXT_FORMAT)})`;
-
-		// 区间边界：把调用方时区的自然日换算成 UTC 的 timestamp without time zone。
-		// 右侧是常量表达式，startTime 索引仍然可用。
-		const startBound = sql`((${range.startDate}::timestamp AT TIME ZONE ${timezone}::text) AT TIME ZONE 'UTC')`;
-		const endBound = sql`((${endDateExclusive}::timestamp AT TIME ZONE ${timezone}::text) AT TIME ZONE 'UTC')`;
-
-		const conditions: SQL[] = [sql`${liteLLM_SpendLogs.startTime} >= ${startBound}`, sql`${liteLLM_SpendLogs.startTime} < ${endBound}`];
-		// internal_user / internal_user_viewer 只能看到自己产生的调用，与其他 /global 端点一致
-		const internalUserId = getInternalUserId(req.auth);
-		if (internalUserId !== undefined) {
-			conditions.push(eq(liteLLM_SpendLogs.user, internalUserId));
-		}
-
-		// Speed 的原始行分两条来源：
-		// - 有 deployment（99% 的行）只读普通列，可走覆盖索引的 index-only scan；
-		// - 没有 deployment 的行（约 1%）才读 metadata 的 resolved_model_group。
-		// 两段 UNION ALL 后再聚合，p50 仍在完整样本上计算，不是两个分位数的加权近似。
-		const hasDeployment = sql`COALESCE(${liteLLM_SpendLogs.model_id}, '') <> ''`;
-		const lacksDeployment = sql`COALESCE(${liteLLM_SpendLogs.model_id}, '') = ''`;
-		const providerExpr = sql`COALESCE(${liteLLM_SpendLogs.custom_llm_provider}, '')`;
-		const speedRowSelect = (model: SQL, predicate: SQL): SQL => sql`
-			SELECT
-				${bucketTextExpr} AS bucket,
-				${model} AS model,
-				${providerExpr} AS provider,
-				CASE WHEN ${eligible} THEN ${liteLLM_SpendLogs.completion_tokens}::double precision END AS output_tokens,
-				CASE WHEN ${eligible} THEN ${generationWindowExpr} END AS generation_seconds
-			FROM ${liteLLM_SpendLogs}
-			WHERE ${and(...conditions, predicate)!}
-		`;
-		const speedRowsQuery = sql`
-			WITH speed_rows AS (
-				${speedRowSelect(sql`${liteLLM_SpendLogs.model}`, hasDeployment)}
-				UNION ALL
-				${speedRowSelect(attributedModelExpr, lacksDeployment)}
-			)
-			SELECT
-				bucket,
-				model,
-				provider,
-				(COUNT(*))::int AS calls,
-				(COUNT(*) FILTER (WHERE generation_seconds IS NOT NULL))::int AS requests,
-				SUM(output_tokens) AS output_tokens,
-				SUM(generation_seconds) AS generation_seconds,
-				(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY output_tokens / generation_seconds) FILTER (WHERE generation_seconds IS NOT NULL)) AS p50_tps
-			FROM speed_rows
-			GROUP BY 1, 2, 3
-		`;
-		const speedResult = (await db.execute(speedRowsQuery)) as unknown as { rows: SpeedAggregateRow[] };
-		const rows = speedResult.rows;
-
+		// SQL 本体（时间桶换算、eligible 门槛、模型归属与 p50）都在仓储里；端点只把
+		// 时区、区间与鉴权范围换算成参数，再做纯函数聚合。
+		const repository = spendAggregationRepositoryFor(db);
+		const rows = await repository.aggregateModelSpeed(range.startDate, endDateExclusive, bucket, timezone, getInternalUserId(req.auth));
 		// 完整的桶时间轴：让页面能在没有数据的时段断开曲线，而不是把两端直接连起来。
-		// generate_series 走「当地墙钟」，再换回 UTC，夏令时切换日的 23/25 小时也能对齐。
-		const step = bucket === "hour" ? sql.raw("interval '1 hour'") : sql.raw("interval '1 day'");
-		const axisResult = (await db.execute(sql`
-			SELECT to_char(
-				(series.bucket_local AT TIME ZONE ${timezone}::text) AT TIME ZONE 'UTC',
-				${sql.raw(ISO_TEXT_FORMAT)}
-			) AS bucket_start
-			FROM generate_series(
-				${range.startDate}::timestamp,
-				${endDateExclusive}::timestamp - interval '1 second',
-				${step}
-			) AS series(bucket_local)
-		`)) as unknown as { rows: Array<{ bucket_start: string }> };
-		const buckets = axisResult.rows.map((row) => toBucketIso(row.bucket_start)).filter((value) => value.length > 0);
+		const axisRows = await repository.speedBucketAxis(range.startDate, endDateExclusive, bucket, timezone);
+		const buckets = axisRows.map((row) => toBucketIso(row.bucket_start)).filter((value) => value.length > 0);
 
 		return buildModelSpeedReport(rows, {
 			startDate: range.startDate,

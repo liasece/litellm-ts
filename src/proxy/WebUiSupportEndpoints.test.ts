@@ -31,6 +31,7 @@ import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
 import { LiteLLM_TeamTable } from "../db/schema/teams";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
+import { LiteLLM_SubscriptionAccount } from "../db/schema/subscriptionAccounts";
 import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
 import { ModelCostMapService } from "../cost/ModelCostMapService";
 import { PgDialect } from "drizzle-orm/pg-core";
@@ -262,6 +263,12 @@ function makeMockDailyActivityDb(
 							).then(onfulfilled, onrejected),
 					};
 					return metadataQuery;
+				}
+
+				if (table === LiteLLM_SubscriptionAccount) {
+					// 账号元数据查询只投影窄列；mock 直接返回测试提供的投影行。
+					const accountRows = [...(rowsByTable.get(table) ?? [])];
+					return { where: () => Promise.resolve(accountRows) };
 				}
 
 				const rows = [...(rowsByTable.get(table) ?? [])];
@@ -985,6 +992,123 @@ describe("WebUiSupport 契约", () => {
 			);
 			expect(detail.status).toBe(200);
 			expect(detail.body.items[0].daily[0]).toMatchObject({ date: "2026-11-17" });
+		});
+
+		it("上游账号明细按关联键分组，inline key 不伪装成账号", async () => {
+			const hash = "c".repeat(64);
+			const row: DailyActivityTestRow = {
+				date: "2026-11-17",
+				api_key: "key-hash",
+				model: "provider/model",
+				model_group: "logical-model",
+				custom_llm_provider: "openai",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 10,
+				completion_tokens: 4,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.5,
+				api_requests: 2,
+				successful_requests: 2,
+				failed_requests: 0,
+				user_id: "user-1",
+				upstream_account_key: `key:${hash}`,
+				upstream_account_kind: null,
+				upstream_account_id: null,
+				upstream_sample_key_hash: hash,
+				upstream_key_hashes: [hash],
+			};
+			const { db, queryLog } = makeMockDailyActivityDb(new Map(), [], [], false, [row]);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const summary = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=summary",
+			);
+			expect(summary.status).toBe(200);
+			expect(summary.body.dimensions).not.toHaveProperty("upstream_accounts");
+
+			const detail = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=upstream_accounts",
+			);
+			expect(detail.status).toBe(200);
+			expect(queryLog.rawQuerySql).toContain('LEFT JOIN "LiteLLM_UpstreamKeyAccount"');
+			expect(queryLog.rawQuerySql).toContain("upstream_account_key");
+			expect(detail.body.items[0]).toMatchObject({
+				key: `key:${hash}`,
+				metrics: { spend: 0.5, api_requests: 2 },
+				metadata: { kind: "unassociated", label: "Unassociated key cccccccc", key_count: 1, deleted: false, trashed: false },
+			});
+		});
+
+		it("订阅账号优先显示邮箱，其次 label，最后才用 auth 文件名", async () => {
+			const hash = "d".repeat(64);
+			const row: DailyActivityTestRow = {
+				date: "2026-11-17",
+				api_key: "key-hash",
+				model: "provider/model",
+				model_group: "logical-model",
+				custom_llm_provider: "commandcode",
+				mcp_namespaced_tool_name: null,
+				endpoint: "/v1/chat/completions",
+				prompt_tokens: 10,
+				completion_tokens: 4,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+				spend: 0.75,
+				api_requests: 1,
+				successful_requests: 1,
+				failed_requests: 0,
+				user_id: "user-1",
+				upstream_account_key: "subscription:account-1",
+				upstream_account_kind: null,
+				upstream_account_id: null,
+				upstream_sample_key_hash: hash,
+				upstream_key_hashes: [hash],
+			};
+			const accountRows = [
+				{
+					id: "account-1",
+					accountKey: "commandcode-managed-abc.json",
+					label: "owner@example.com",
+					provider: "commandcode",
+					email: null,
+					trashedAt: null,
+				},
+			];
+			const { db } = makeMockDailyActivityDb(
+				new Map([[LiteLLM_SubscriptionAccount, accountRows]]) as unknown as ReadonlyMap<unknown, readonly DailyActivityTestRow[]>,
+				[],
+				[],
+				false,
+				[row],
+			);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const detail = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&timezone=-480&timezone_name=Asia/Shanghai&view=upstream_accounts",
+			);
+
+			expect(detail.status).toBe(200);
+			expect(detail.body.items[0]).toMatchObject({
+				key: "subscription:account-1",
+				metadata: {
+					kind: "subscription",
+					account_id: "account-1",
+					label: "commandcode/owner@example.com",
+					provider: "commandcode",
+					key_count: 1,
+					trashed: false,
+					deleted: false,
+				},
+			});
+		});
+
+		it("上游账号视图要求时区，避免日汇总表产生假的未归属账号", async () => {
+			const { db } = makeMockDailyActivityDb(new Map(), [], [], false, []);
+			const app = buildAuthedApp(makeConfig(), undefined, undefined, db);
+			const res = await request(app).get(
+				"/user/daily/activity/aggregated?start_date=2026-11-17&end_date=2026-11-17&view=upstream_accounts",
+			);
+			expect(res.status).toBe(400);
 		});
 
 		it("原始日志覆盖期之前用日汇总表补齐历史", async () => {

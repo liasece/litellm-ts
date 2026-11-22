@@ -17,6 +17,14 @@ export interface UsageBarShape {
 	width: number;
 	height: number;
 }
+/** 一个类目在绘图区占的槽位；“无数据”的日期按这个槽位画灰带。 */
+export interface UsageCategoryBand {
+	index: number;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
 export interface UsageBarGeometry {
 	width: number;
 	height: number;
@@ -34,6 +42,7 @@ export interface UsageBarGeometry {
 	rightTicks: UsageAxisTick[];
 	grid: { x1: number; y1: number; x2: number; y2: number }[];
 	bars: UsageBarShape[];
+	categoryBands: UsageCategoryBand[];
 }
 export interface UsageBarGeometryInput {
 	data: readonly ChartRow[];

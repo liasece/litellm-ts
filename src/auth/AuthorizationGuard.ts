@@ -57,6 +57,8 @@ const ROUTE_GROUPS: Readonly<Record<string, readonly string[]>> = {
 		"/models",
 		"/v1/models",
 	],
+	// 公司调用方的只读成本核对：只放开两条 cost 路由，不包含 Dashboard 日志详情。
+	spend_read_routes: ["/spend/cost/request", "/spend/cost/summary", "/spend/cost/sessions", "/spend/cost/session"],
 	info_routes: [
 		"/utils/model_info",
 		"/key/info",

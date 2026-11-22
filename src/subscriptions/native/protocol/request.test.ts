@@ -3,7 +3,7 @@
  */
 
 import type { SubscriptionInboundProtocol, SubscriptionWireProtocol } from "../types";
-import { translateRequest } from "./types";
+import { translateRequest } from "./translate";
 
 /**
  * 用固定模型映射执行请求翻译。

@@ -96,6 +96,9 @@ const cacheValue = computed(() => String(props.log.cache_hit ?? "None"));
 			<div v-if="typeof metadata.litellm_overhead_time_ms === 'number'">
 				<span>LiteLLM Overhead</span><span>{{ metadata.litellm_overhead_time_ms.toFixed(2) }} ms</span>
 			</div>
+			<div v-if="typeof metadata.litellm_body_received_ms === 'number'">
+				<span>Body Upload</span><span>{{ metadata.litellm_body_received_ms.toFixed(2) }} ms</span>
+			</div>
 			<div>
 				<span>Retries</span
 				><span v-if="typeof metadata.attempted_retries === 'number' && metadata.attempted_retries > 0"

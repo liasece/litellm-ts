@@ -17,6 +17,12 @@ export interface SubscriptionAccountSchedulerOptions {
 	readonly maxAffinityEntries?: number;
 	/** 候选账号加载器；提供后可直接使用 pick。 */
 	readonly loadAccounts?: (source: SubscriptionSource) => Promise<readonly SubscriptionAccount[]>;
+	/** 额度闸门：返回当前因额度用尽不可用的账号 ID；见 quota/QuotaAvailability。 */
+	readonly blocking?: (source: SubscriptionSource, now: number) => ReadonlySet<string>;
+	/** 失败惩罚窗口（毫秒）：窗口内失败过的账号排到队尾。 */
+	readonly failurePenaltyMs?: number;
+	/** 账号状态变化回调；用于把冷却与最近失败时间落盘。 */
+	readonly onStateChange?: (source: SubscriptionSource, accountId: string) => void;
 }
 
 /** 一次调度结果。 */
@@ -25,7 +31,24 @@ export interface SubscriptionAccountSelection {
 	readonly account: SubscriptionAccount;
 	/** 是否命中会话亲和。 */
 	readonly affinity: boolean;
+	/** 是否因为额度闸门挡住了全部账号而兜底放行。 */
+	readonly quotaFallback?: boolean;
 }
+
+/** 落盘后可恢复的账号状态。 */
+export interface SubscriptionAccountSchedulerState {
+	/** 订阅来源。 */
+	readonly source: SubscriptionSource;
+	/** 账号 ID。 */
+	readonly accountId: string;
+	/** 最近一次失败时间（毫秒时间戳）。 */
+	readonly lastFailureAt?: number;
+}
+
+/** 默认失败惩罚窗口：5 分钟内失败过的账号排到队尾。 */
+const DEFAULT_FAILURE_PENALTY_MS = 5 * 60 * 1000;
+/** 额度耗尽冷却上限（毫秒）：周额度可能几天后才重置，这里只做兜底，精确时间由额度闸门负责。 */
+const MAX_EXHAUSTED_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /** 会话亲和记录。 */
 interface AffinityEntry {
@@ -59,11 +82,25 @@ export class SubscriptionAccountScheduler {
 	private readonly _weighted = new Map<SubscriptionSource, WeightedState>();
 	private readonly _cooldown = new Map<string, { until: number; reason: string }>();
 	private readonly _loadAccounts?: (source: SubscriptionSource) => Promise<readonly SubscriptionAccount[]>;
+	/**
+	 * 最近一次失败时间，用于「优先用最久没失败的账号」。
+	 *
+	 * 只记账号级时间戳，不区分失败原因：调度要判断的是「这个账号刚出过问题」，
+	 * 而不是这次失败属于凭证、限流还是额度。成功不清除时间戳——清除会让刚被证明
+	 * 可用的账号立刻回到队首，把其他账号饿死；惩罚窗口到期后自然恢复平等。
+	 */
+	private readonly _lastFailureAt = new Map<string, number>();
+	private readonly _blocking?: (source: SubscriptionSource, now: number) => ReadonlySet<string>;
+	private readonly _failurePenaltyMs: number;
+	private readonly _onStateChange?: (source: SubscriptionSource, accountId: string) => void;
 
 	constructor(options: SubscriptionAccountSchedulerOptions = {}) {
 		this._affinityTtlMs = options.affinityTtlMs ?? 60 * 60 * 1000;
 		this._maxAffinityEntries = options.maxAffinityEntries ?? 10_000;
 		this._loadAccounts = options.loadAccounts;
+		this._blocking = options.blocking;
+		this._failurePenaltyMs = options.failurePenaltyMs ?? DEFAULT_FAILURE_PENALTY_MS;
+		this._onStateChange = options.onStateChange;
 	}
 
 	/**
@@ -114,7 +151,14 @@ export class SubscriptionAccountScheduler {
 		const available = candidates.filter(
 			(account) => !account.disabled && account.weight > 0 && !exclude?.has(account.id) && coolingUntil(account.id) <= now,
 		);
-		if (available.length === 0) {
+		// 额度闸门：额度已经确定用尽的账号直接不参与；但如果它把所有人都挡住了，说明这份
+		// 额度视图很可能已经过期或不准确（额度接口抖动、多窗口口径不同），此时宁可试一次
+		// 也不要把整个模型判死，由调用方记录告警并触发一次额度刷新。
+		const blocked = this._blocking?.(source, now);
+		const open = blocked === undefined || blocked.size === 0 ? available : available.filter((account) => !blocked.has(account.id));
+		const quotaFallback = open.length === 0 && available.length > 0;
+		const usable = quotaFallback ? available : open;
+		if (usable.length === 0) {
 			const cooling = candidates.filter((account) => coolingUntil(account.id) > now);
 			if (cooling.length > 0) {
 				// 冷却原因（含上游状态码与错误摘要）一并回显：否则调用方只看到「稍后重试」，
@@ -139,23 +183,44 @@ export class SubscriptionAccountScheduler {
 			}
 			throw ApiError.unavailable(`没有可用的 ${source} 订阅账号`);
 		}
-		// 先按 priority 分层，只在最小数值的层内做加权轮询；高层账号作为故障后备。
-		const priority = Math.min(...available.map((account) => account.priority ?? 0));
-		const tier = available.filter((account) => (account.priority ?? 0) === priority);
+		// 先按 priority 分层，只在最小数值的层内选择；高层账号作为故障后备。
+		const priority = Math.min(...usable.map((account) => account.priority ?? 0));
+		const tier = usable.filter((account) => (account.priority ?? 0) === priority);
+		// 选号顺序：刚失败过的账号排到队尾，队内按加权轮询分散；队尾只剩它们时才启用，
+		// 并且队内也按「失败时间从远到近」排，最近失败的账号最后才试。
+		const penalized = (account: SubscriptionAccount): boolean => {
+			const at = this._lastFailureAt.get(this._cooldownKey(source, account.id));
+			return at !== undefined && now - at < this._failurePenaltyMs;
+		};
+		const fresh = tier.filter((account) => !penalized(account));
+		const pool = fresh.length > 0 ? fresh : this._oldestFailureGroup(source, tier);
 		if (sessionKey && this._affinityTtlMs > 0) {
 			const entry = this._affinity.get(this._key(source, sessionKey));
 			if (entry && entry.expiresAt > now) {
-				const matched = tier.find((account) => account.id === entry.accountId);
+				const matched = pool.find((account) => account.id === entry.accountId);
 				if (matched) {
-					return { account: matched, affinity: true };
+					return { account: matched, affinity: true, ...(quotaFallback ? { quotaFallback: true } : {}) };
 				}
 			}
 		}
-		const account = this._weightedPick(source, tier);
+		const account = this._weightedPick(source, pool);
 		if (sessionKey && this._affinityTtlMs > 0) {
 			this._remember(source, sessionKey, account.id);
 		}
-		return { account: account, affinity: false };
+		return { account: account, affinity: false, ...(quotaFallback ? { quotaFallback: true } : {}) };
+	}
+
+	/**
+	 * 取出失败时间最远的一组账号（从未失败过的记为 0，天然排最前）。
+	 * @param source - 账号来源
+	 * @param accounts - 候选
+	 */
+	private _oldestFailureGroup(source: SubscriptionSource, accounts: readonly SubscriptionAccount[]): readonly SubscriptionAccount[] {
+		let oldest = Number.POSITIVE_INFINITY;
+		for (const account of accounts) {
+			oldest = Math.min(oldest, this._lastFailureAt.get(this._cooldownKey(source, account.id)) ?? 0);
+		}
+		return accounts.filter((account) => (this._lastFailureAt.get(this._cooldownKey(source, account.id)) ?? 0) === oldest);
 	}
 
 	/**
@@ -191,6 +256,7 @@ export class SubscriptionAccountScheduler {
 		model?: string,
 		detail?: string,
 	): void {
+		this._touchFailure(source, accountId);
 		const fallback = status === 429 ? 30_000 : status === 401 || status === 402 || status === 403 ? 60_000 : status >= 500 ? 10_000 : 0;
 		const duration = Math.max(0, retryAfterMs ?? fallback);
 		if (duration <= 0) {
@@ -207,6 +273,16 @@ export class SubscriptionAccountScheduler {
 	}
 
 	/**
+	 * 记录一次账号失败时间；不计冷却，只影响选号顺序。
+	 * @param source - 来源
+	 * @param accountId - 账号 ID
+	 */
+	private _touchFailure(source: SubscriptionSource, accountId: string): void {
+		this._lastFailureAt.set(this._cooldownKey(source, accountId), Date.now());
+		this._onStateChange?.(source, accountId);
+	}
+
+	/**
 	 * 记录账号额度耗尽并设置较长冷却。
 	 *
 	 * 额度耗尽的恢复单位是额度窗口（小时/天级），不是 Retry-After，所以冷却比普通错误长；
@@ -218,7 +294,10 @@ export class SubscriptionAccountScheduler {
 	 * @param cooldownMs - 冷却毫秒数；缺省 30 分钟
 	 */
 	markExhausted(source: SubscriptionSource, accountId: string, reason: string, cooldownMs = 30 * 60 * 1000): void {
-		const duration = Math.min(Math.max(cooldownMs, 60 * 1000), 60 * 60 * 1000);
+		this._touchFailure(source, accountId);
+		// 上限放到 24 小时：周额度可能几天后才重置，60 分钟的硬上限会让同一个空账号
+		// 每小时被重新试一次；精确的重置时间由额度闸门（QuotaAvailability）负责。
+		const duration = Math.min(Math.max(cooldownMs, 60 * 1000), MAX_EXHAUSTED_COOLDOWN_MS);
 		this._cooldown.set(this._cooldownKey(source, accountId), {
 			until: Date.now() + duration,
 			reason: reason,
@@ -246,6 +325,29 @@ export class SubscriptionAccountScheduler {
 		this._affinity.clear();
 		this._weighted.clear();
 		this._cooldown.clear();
+		this._lastFailureAt.clear();
+	}
+
+	/**
+	 * 用落盘状态恢复最近失败时间。
+	 * @param states - 落盘状态
+	 */
+	hydrateState(states: readonly SubscriptionAccountSchedulerState[]): void {
+		for (const state of states) {
+			if (state.lastFailureAt === undefined || state.lastFailureAt <= 0) {
+				continue;
+			}
+			this._lastFailureAt.set(this._cooldownKey(state.source, state.accountId), state.lastFailureAt);
+		}
+	}
+
+	/**
+	 * 读取账号最近失败时间。
+	 * @param source - 来源
+	 * @param accountId - 账号 ID
+	 */
+	lastFailureAt(source: SubscriptionSource, accountId: string): number | undefined {
+		return this._lastFailureAt.get(this._cooldownKey(source, accountId));
 	}
 
 	private _key(source: SubscriptionSource, sessionKey: string): string {

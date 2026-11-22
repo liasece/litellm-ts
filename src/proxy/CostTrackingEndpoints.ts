@@ -28,7 +28,7 @@ import {
 	resolveCostProvider,
 	type CostMarginConfig,
 } from "../cost/CostTrackingConfig";
-import { ConfigRepository } from "../repositories/ConfigRepository";
+import { configRepositoryFor } from "../repositories/ConfigRepository";
 import type { UserAPIKeyAuth } from "../types/auth";
 import type { Deployment } from "../types/router";
 import { PROXY_ADMIN_ROLE } from "../types/webUiSession";
@@ -153,7 +153,7 @@ function resolveEstimatePricing(
  * @param deploymentsAccessor - Router / deployments 访问器（估算取真实价格）
  */
 export function registerCostTrackingRoutes(router: ExpressRouter, db: DrizzleDb, deploymentsAccessor?: RouterDeploymentsAccessor): void {
-	const configRepository = new ConfigRepository(db);
+	const configRepository = configRepositoryFor(db);
 
 	// GET 读「DB 覆盖 + yaml 默认」的有效配置（对齐 PY 读取进程内 litellm_settings）；
 	// PATCH 只写 DB，yaml 里的其它键保持为默认值。

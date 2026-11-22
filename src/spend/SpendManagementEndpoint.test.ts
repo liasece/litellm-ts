@@ -19,6 +19,7 @@ import express from "express";
 import request from "supertest";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { Pool } from "pg";
+import { authRepositoryCache } from "../auth/AuthRepositoryCache";
 import { registerSpendManagementEndpoints } from "./SpendManagementEndpoint";
 import type { UserAPIKeyAuth } from "../types/auth";
 import { SPEND_LOG_SAME_AS_MESSAGES, collectSpendLogBlocks } from "./SpendLogBlocks";
@@ -169,8 +170,17 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 		groupByCols: [],
 	});
 
-	const classify = (proj: ReadonlyArray<string>, groupBy: ReadonlyArray<string>): keyof typeof namedQueues | "fifo" => {
+	const classify = (
+		proj: ReadonlyArray<string>,
+		groupBy: ReadonlyArray<string>,
+		state: BuilderState,
+	): keyof typeof namedQueues | "fifo" => {
 		if (proj.length === 2 && proj.includes("admins") && proj.includes("membersWithRoles")) {
+			return "teamRows";
+		}
+		// TeamRepository.findById 读整行（无投影）并按主键 limit 1：团队可见性校验改走仓储后，
+		// 这里按「无投影 + 单行 + 无排序」识别同一类读取，否则会误落到 data 队列。
+		if (proj.length === 0 && state.limitN === 1 && state.orderSql === null) {
 			return "teamRows";
 		}
 		if (proj.length === 1 && proj[0] === "count") {
@@ -212,7 +222,7 @@ function makeMockDb(options: MockDbOptions = {}): MockDb {
 		} else if (fifo.length > 0) {
 			value = fifo.shift();
 		} else {
-			const kind = classify(proj, groupBy);
+			const kind = classify(proj, groupBy, state);
 			if (kind === "fifo") {
 				value = [];
 			} else {
@@ -369,6 +379,12 @@ function freezeNow(iso: string): jest.SpyInstance {
 		.spyOn(globalThis as unknown as { Date: typeof Date }, "Date")
 		.mockImplementation(mockImpl as never) as unknown as jest.SpyInstance;
 }
+
+beforeEach(() => {
+	// 鉴权仓储缓存是进程内单例，而本套件每个用例都新建一个 makeMockDb；不清掉会让上一个
+	// 用例缓存的 team/user 行决定下一个用例的可见性判断，表现为随机 401/403。
+	authRepositoryCache.clear();
+});
 
 const PROXY_ADMIN_AUTH: UserAPIKeyAuth = {
 	api_key: "sk-test-master",
@@ -1183,6 +1199,58 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				expect(detailCalls[0]?.whereSql).toContain("req-2");
 			});
 
+			it("非管理员详情只读自己可见的 request_id", async () => {
+				const detailRow = {
+					messages: [{ role: "user", content: "hello" }],
+					response: { id: "chatcmpl-test" },
+					proxy_server_request: { model: "gpt-5.5" },
+				};
+				const { db, calls } = makeMockDb({
+					responses: [[{ request_id: "req-1" }], [], [detailRow]],
+				});
+
+				const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get("/spend/logs/ui/req-1");
+
+				expect(res.status).toBe(200);
+				expect(res.body).toEqual(detailRow);
+				expect(calls[0]?.whereSql).toContain("req-1");
+				expect(calls[0]?.whereSql).toContain(INTERNAL_USER_AUTH.user_id);
+			});
+
+			it("非管理员详情对别人的 request_id 不返回正文", async () => {
+				const { db, calls } = makeMockDb({ responses: [[], []] });
+
+				const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH)).get("/spend/logs/ui/someone-else");
+
+				expect(res.status).toBe(200);
+				expect(res.body).toBeNull();
+				// 只做可见性预检，没有进入详情查询。
+				expect(calls).toHaveLength(2);
+			});
+
+			it("批量详情只补齐可见 request_id，其余返回空对象", async () => {
+				const detailRow = {
+					request_id: "req-1",
+					messages: [{ role: "user", content: "visible" }],
+					response: { id: "response-1" },
+					proxy_server_request: { model: "model-1" },
+				};
+				const { db, calls } = makeMockDb({
+					responses: [[{ request_id: "req-1" }], [], [detailRow]],
+				});
+
+				const res = await request(makeAppWithAuth(db, INTERNAL_USER_AUTH))
+					.post("/spend/logs/ui/batch")
+					.send({ requests: [{ request_id: "req-1" }, { request_id: "req-2" }] });
+
+				expect(res.status).toBe(200);
+				expect(res.body.data[0]).toMatchObject({ request_id: "req-1", messages: detailRow.messages });
+				expect(res.body.data[1]).toEqual({ request_id: "req-2" });
+				expect(calls[0]?.whereSql).toContain("req-1");
+				expect(calls[0]?.whereSql).toContain("req-2");
+				expect(calls[0]?.whereSql).toContain(INTERNAL_USER_AUTH.user_id);
+			});
+
 			it.each([
 				{ requests: [] },
 				{ requests: [{ request_id: "" }] },
@@ -1686,7 +1754,11 @@ describe("SpendManagementEndpoint — 响应 shape 兼容 WebUI Tremor BarChart"
 				user_role: "internal_user",
 				team_id: teamId,
 			};
-			const { db, calls } = makeMockDb({ responses: [[{ count: 1 }], [SAMPLE_UI_ROW]] });
+			const { db, calls } = makeMockDb({
+				responses: [[{ count: 1 }], [SAMPLE_UI_ROW]],
+				// 显式给成员关系：可见性判断不应依赖上一个用例是否把 team 行留在了缓存里。
+				teamRows: [{ membersWithRoles: { [userId]: { role: "member" } } }],
+			});
 
 			const res = await request(makeAppWithAuth(db, auth))
 				.get("/spend/logs/session/ui")

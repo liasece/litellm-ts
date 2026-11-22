@@ -17,7 +17,7 @@ import { stripInternalFields } from "../core/api/stripInternalFields";
 import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
 import type { Router as LiteLLMRouter } from "../router/Router";
-import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import type { DeploymentSpendInfo } from "../types/spendInfo";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { buildSpendLogFromRequest, calculateAndSetCost, injectResponseCostHeader, releaseSpend } from "../spend/SpendTracker";
 import { queueSpendLog } from "../spend/SpendSettlementQueue";

@@ -57,7 +57,15 @@ export interface DailyActivityResponse {
 	results: DailyData[];
 	metadata: UsageMetadata;
 }
-export type UsageDetailView = "models" | "model_groups" | "providers" | "api_keys" | "mcp_servers" | "endpoints" | "entities";
+export type UsageDetailView =
+	| "models"
+	| "model_groups"
+	| "providers"
+	| "api_keys"
+	| "mcp_servers"
+	| "endpoints"
+	| "entities"
+	| "upstream_accounts";
 export interface UsageDayMetrics {
 	date: string;
 	metrics: SpendMetrics;
@@ -76,7 +84,7 @@ export interface UsageDetailItem extends UsageDimensionItem {
 export interface UsageSummaryResponse {
 	view: "summary";
 	results: UsageDayMetrics[];
-	dimensions: Record<UsageDetailView, UsageDimensionItem[]>;
+	dimensions: Record<Exclude<UsageDetailView, "upstream_accounts">, UsageDimensionItem[]>;
 	metadata: UsageMetadata;
 }
 export interface UsageDetailResponse {
@@ -103,6 +111,9 @@ export interface TopModelData {
 	tokens: number;
 	metrics: SpendMetrics;
 }
+/** 上游账号的展示种类；unassociated 是未关联到账号的 inline key。 */
+export type UpstreamAccountKind = "subscription" | "credential" | "unassociated" | "unattributed";
+
 export interface ModelActivityData {
 	label: string;
 	total_requests: number;
@@ -117,6 +128,13 @@ export interface ModelActivityData {
 	top_api_keys: TopApiKeyData[];
 	top_models: TopModelData[];
 	daily_data: { date: string; metrics: SpendMetrics }[];
+	/** 账号维度专用；其它维度保持 undefined，模板据此决定是否渲染徽标。 */
+	accountKind?: UpstreamAccountKind;
+	provider?: string;
+	providers?: string[];
+	keyCount?: number;
+	trashed?: boolean;
+	deleted?: boolean;
 }
 export type EntityType = "organization" | "team" | "customer" | "tag" | "agent" | "user";
 export type UsageView = "global" | EntityType;

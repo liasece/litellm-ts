@@ -35,23 +35,28 @@
 .usage-quota-table {
 	width: 100%;
 	min-width: 960px;
-	table-layout: fixed;
+	table-layout: auto;
 	border-collapse: collapse;
 }
-.usage-quota-col--account {
-	width: 22%;
+/* 列宽按内容分配：账号、类型、余额、更新时间只占自己需要的宽度，剩下的全给 Quota windows。
+   配额条据此随窗口宽度伸缩，不是按固定百分比切出来的——窗口变宽时多出来的空间给到真正需要横向
+   铺开的维度上，而不是平均分给四列留下空白。 */
+.usage-quota-col--windows,
+.usage-quota-cell--windows {
+	width: 100%;
 }
-.usage-quota-col--type {
-	width: 15%;
+.usage-quota-cell--account {
+	min-width: 190px;
 }
-.usage-quota-col--windows {
-	width: 30%;
+.usage-quota-cell--type {
+	min-width: 132px;
 }
-.usage-quota-col--balances {
-	width: 18%;
+.usage-quota-cell--balances {
+	min-width: 170px;
 }
-.usage-quota-col--updated {
-	width: 15%;
+.usage-quota-cell--updated {
+	min-width: 132px;
+	white-space: nowrap;
 }
 .usage-quota-table thead th {
 	padding: 10px 16px;
@@ -216,27 +221,32 @@
 .usage-quota-type .ui-tag {
 	margin-right: 0;
 }
-/* 配额窗口：一个窗口一行，名称与重置倒计时在左、加高的条在右（百分比写在条内）。 */
+/* 配额窗口：各维度横向单行排开、均分本列宽度，条因此等长，横向扫一列就能对比各账号的用量。 */
 .usage-quota-windows {
 	display: flex;
-	flex-direction: column;
-	gap: 8px;
+	flex-wrap: nowrap;
+	align-items: flex-start;
+	gap: 10px;
 }
+/* 块内是三行：名称、重置倒计时、进度条。flex 基数 0 让各块均分，宽度跟着列宽走。
+   宽度上限＝三档（5 小时 / 周 / 月）均分本列的宽度，留出两个 10px 间距；只有一档的账号因此拿不到
+   整列宽度，满格的三档行也不会再长，同一列各行的条始终等长，跨行比较百分比才是同一个尺子。 */
 .usage-quota-window {
 	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
+	flex: 1 1 0;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 56px;
+	max-width: calc((100% - 20px) / 3);
 }
-/* 名称列固定宽度：各窗口的条因此等长，不会被长短不一的名称挤成参差。 */
 .usage-quota-window-label {
-	flex: 0 0 108px;
+	width: 100%;
 	min-width: 0;
 	color: #344054;
 	font-size: 12px;
 	font-weight: 600;
 	line-height: 18px;
-	text-align: right;
+	text-align: left;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -246,8 +256,7 @@
 }
 .usage-quota-window-track {
 	position: relative;
-	flex: 1 1 auto;
-	min-width: 76px;
+	width: 100%;
 	height: 18px;
 	border-radius: 999px;
 	background: #eef2f7;
@@ -278,10 +287,12 @@
 	transform: translateY(-50%);
 	pointer-events: none;
 }
-/* 倒计时紧跟在名称右侧，固定宽度（没有倒计时也占位），保证同一账号下每一行的条等长。 */
-.usage-quota-window-reset {
-	flex: none;
-	width: 74px;
+/* 倒计时排在名称下方；没有倒计时也占住这一行，同一排的条才不会上下错位。 */
+/* 选择器带上表格类：`.usage-quota-table small` 的字号与行高会盖掉单类名的声明，
+   而这一行必须固定 16px——没有重置时间的维度也占同样高度，同一排的条才对得齐。 */
+.usage-quota-table .usage-quota-window-reset {
+	width: 100%;
+	min-height: 16px;
 	color: #00000073;
 	font-size: 11px;
 	line-height: 16px;

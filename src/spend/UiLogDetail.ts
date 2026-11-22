@@ -6,13 +6,11 @@
  * 拉取的结果保持同一形状，前端只需按顶层字段合并。
  */
 
-import { eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { readLiveResponseSnapshot } from "./LiveResponseRegistry";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { createModuleLogger } from "../core/utils/logger";
+import { spendReportingRepositoryFor } from "../repositories/SpendReportingRepository";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
 import { hydrateSpendLogRow, prepareSpendLogProxyForStorage } from "./SpendLogBlocks";
 import { toFiniteNumber } from "./spendManagementFormatters";
@@ -57,15 +55,7 @@ export async function readActiveRequestRevision(
 	db: NodePgDatabase<typeof schema>,
 	requestId: string,
 ): Promise<{ present: boolean; updatedAt: string | null; status: string | null }> {
-	const rows = await db
-		.select({
-			status: liteLLM_ActiveRequests.status,
-			updated_at: liteLLM_ActiveRequests.updated_at,
-		})
-		.from(liteLLM_ActiveRequests)
-		.where(eq(liteLLM_ActiveRequests.request_id, requestId))
-		.limit(1);
-	const row = rows.at(0);
+	const row = await spendReportingRepositoryFor(db).findActiveRequestRevision(requestId);
 	if (!row) {
 		return { present: false, updatedAt: null, status: null };
 	}
@@ -85,33 +75,16 @@ export async function readActiveRequestRevision(
  * @param requestId - 请求 ID
  */
 export async function buildActiveRequestDetail(db: NodePgDatabase<typeof schema>, requestId: string): Promise<UiLogDetailPayload | null> {
-	const activeRows = await db
-		.select({
-			request_id: liteLLM_ActiveRequests.request_id,
-			call_type: liteLLM_ActiveRequests.call_type,
-			startTime: liteLLM_ActiveRequests.startTime,
-			model: liteLLM_ActiveRequests.model,
-			model_id: liteLLM_ActiveRequests.model_id,
-			model_group: liteLLM_ActiveRequests.model_group,
-			custom_llm_provider: liteLLM_ActiveRequests.custom_llm_provider,
-			api_base: liteLLM_ActiveRequests.api_base,
-			user: liteLLM_ActiveRequests.user,
-			team_id: liteLLM_ActiveRequests.team_id,
-			organization_id: liteLLM_ActiveRequests.organization_id,
-			end_user: liteLLM_ActiveRequests.end_user,
-			requester_ip_address: liteLLM_ActiveRequests.requester_ip_address,
-			session_id: liteLLM_ActiveRequests.session_id,
-			request_tags: liteLLM_ActiveRequests.request_tags,
-			completion_start_time: liteLLM_ActiveRequests.completion_start_time,
-			proxy_server_request: liteLLM_ActiveRequests.proxy_server_request,
-			metadata: liteLLM_ActiveRequests.metadata,
-			request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
-		})
-		.from(liteLLM_ActiveRequests)
-		.where(eq(liteLLM_ActiveRequests.request_id, requestId))
-		.limit(1);
-	const activeRow = activeRows.at(0);
-	if (!activeRow) {
+	const activeRow = (await spendReportingRepositoryFor(db).findActiveRequestDetailRow(requestId)) as
+		| (Record<string, unknown> & {
+				readonly request_id: string;
+				readonly call_type: string | null;
+				readonly startTime: Date;
+				readonly completion_start_time: Date | null;
+				readonly request_duration_ms: number | null;
+		  })
+		| undefined;
+	if (activeRow === undefined) {
 		return null;
 	}
 	const metadata = (activeRow.metadata ?? {}) as Record<string, unknown>;
@@ -244,17 +217,7 @@ export async function buildUiSpendLogDetail(
 		return await hydrateSpendLogRow(db, coldStoragePayload, options);
 	}
 
-	const rows = await db
-		.select({
-			messages: liteLLM_SpendLogs.messages,
-			response: liteLLM_SpendLogs.response,
-			proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
-		})
-		.from(liteLLM_SpendLogs)
-		.where(eq(liteLLM_SpendLogs.request_id, requestId))
-		.limit(1);
-
-	const completed = rows.at(0);
+	const completed = await spendReportingRepositoryFor(db).findSpendLogDetailColumns(requestId);
 	if (completed) {
 		// 内容寻址去重后，messages / proxy_server_request 里存的是块引用；
 		// 详情与日志流共用这一处组装，保证两种编码对外形状一致。

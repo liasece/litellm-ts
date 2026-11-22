@@ -13,12 +13,15 @@ import { ApiError } from "../../core/api/ApiError";
 import { assertWithinUpstreamOutputLimit } from "./upstream/limits";
 import { logger } from "../../core/utils/logger";
 import type { ProviderRequest } from "../../types/provider";
-import type { ProviderRequestExecutionOptions, ProviderRequestExecutionResult } from "../../router/ProviderRequestExecutor";
+import type { ProviderRequestExecutionOptions, ProviderRequestExecutionResult } from "../../router/ProviderRequestExecutionTypes";
 import { executeProviderRequest, isClientAbortError } from "../../router/ProviderRequestExecutor";
+import { recordUpstreamIdentity } from "../../router/UpstreamExchange";
+import { hashUpstreamKey } from "../../shared/UpstreamKeyHash";
 import type { SubscriptionAccountStore } from "./accountStore";
 import { disableInvalidAccount, isTerminalRefreshFailure } from "./auth/refreshFailure";
+import type { QuotaAvailability } from "./quota/QuotaAvailability";
 import type { SubscriptionAccountScheduler, SubscriptionAccountSelection } from "./scheduler";
-import { createStreamTranslator, translateRequest, translateResponse } from "./protocol/types";
+import { createStreamTranslator, translateRequest, translateResponse } from "./protocol/translate";
 import type { ProtocolEvent, ProtocolPayload } from "./protocol/types";
 import { encodeSseEvent, isSseResponse, readSseEvents } from "./protocol/sse";
 import { resolveSessionKey } from "./session";
@@ -56,6 +59,10 @@ export interface SubscriptionBridgeDependencies {
 	readonly scheduler: SubscriptionAccountScheduler;
 	/** Provider 适配器。 */
 	readonly providers: SubscriptionProviderLookup;
+	/** 账号额度可用性；提供后，额度耗尽的账号在被选中前就会被跳过。 */
+	readonly quota?: QuotaAvailability;
+	/** 账号状态变化回调（用于落盘）；调度器自己的状态变化由调度器回调上报。 */
+	readonly onStateChange?: (source: SubscriptionSource, accountId: string) => void;
 	/** 运行时是否启用；缺省视为启用。 */
 	readonly isEnabled?: () => boolean;
 }
@@ -229,19 +236,28 @@ const CREDIT_EXHAUSTION_PATTERNS: readonly RegExp[] = [
 	/(?:exceeded|reached|hit)[^.]{0,24}(?:quota|credit limit)/i,
 	/quota (?:exceeded|exhausted)/i,
 	/payment required/i,
+	// 套餐窗口类额度：CommandCode 周额度用尽返回 429 "You've reached your weekly
+	// usage limit for your plan"，与「这一刻被限流」不同，恢复单位是天/周。
+	/usage limit/i,
+	/(?:exceeded|reached|hit)[^.]{0,32}(?:weekly|monthly|daily|plan)[^.]{0,16}limit/i,
+	/(?:quota|limit)[^.]{0,24}resets? at/i,
 ];
 
+/** 额度耗尽响应里的重置时间；匹配 "resets at 2026-11-24T08:31:52.397Z" 这类文案。 */
+const CREDIT_RESET_PATTERN = /resets?(?:\s+at|\s+on)?[^0-9]{0,8}(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))/i;
+
 /**
- * 判断一次 4xx 是否属于账号额度耗尽。
+ * 判断一次失败是否属于账号额度耗尽。
  *
- * 只对 400 做错误体匹配：402/403 已经按账号级失败处理，其他状态码不是额度语义。
- * 错误体来自 `executeProviderRequest` 对非 2xx 的解析结果（未流式时也会解析 body），
- * 因此这里不需要再读一次响应流。
+ * 400 是「余额不足」这类请求体语义，429 也可能是套餐窗口用尽（CommandCode 周额度
+ * 就是 429 + "weekly usage limit"）。429 里普通的限流文案不含额度关键词，仍按限流
+ * 处理，只有命中额度特征时才当作账号级耗尽：这样既不会把真实限流误判成没额度，
+ * 也不会把「这周没额度了」当成 30 秒限流反复重试。
  * @param status - 上游状态码
  * @param body - 已解析的错误体；可能是对象也可能是纯文本
  */
 function isCreditExhaustion(status: number, body: unknown): boolean {
-	if (status !== 400) {
+	if (status !== 400 && status !== 402 && status !== 429) {
 		return false;
 	}
 	let text: string;
@@ -260,6 +276,37 @@ function isCreditExhaustion(status: number, body: unknown): boolean {
 		return false;
 	}
 	return CREDIT_EXHAUSTION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/**
+ * 从额度耗尽文案里取出重置时间。
+ *
+ * 上游会把套餐窗口的恢复时间直接写在错误文案里（"Your limit resets at
+ * 2026-11-24T08:31:52.397Z"），比额度接口更早、也更贴近这次失败；拿得到就按它冷却，
+ * 拿不到才退回额度接口快照与默认时长。
+ * @param body - 已解析的错误体
+ * @returns 重置时间戳；没有可解析时间时 undefined
+ */
+function creditExhaustionResetAt(body: unknown): number | undefined {
+	if (body === undefined || body === null) {
+		return undefined;
+	}
+	let text: string;
+	if (typeof body === "string") {
+		text = body;
+	} else {
+		try {
+			text = JSON.stringify(body);
+		} catch {
+			return undefined;
+		}
+	}
+	const matched = CREDIT_RESET_PATTERN.exec(text);
+	if (!matched) {
+		return undefined;
+	}
+	const parsed = Date.parse(matched[1] ?? "");
+	return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 /**
@@ -351,6 +398,8 @@ export class SubscriptionBridge {
 	private readonly _scheduler: SubscriptionAccountScheduler;
 	private readonly _providers: SubscriptionProviderLookup;
 	private readonly _isEnabled: (() => boolean) | undefined;
+	private readonly _quota: QuotaAvailability | undefined;
+	private readonly _onStateChange: ((source: SubscriptionSource, accountId: string) => void) | undefined;
 	private readonly _rateLimits = new Map<string, SubscriptionRateLimitSnapshot>();
 
 	/**
@@ -365,6 +414,8 @@ export class SubscriptionBridge {
 		this._accounts = dependencies.accounts;
 		this._scheduler = dependencies.scheduler;
 		this._providers = dependencies.providers;
+		this._quota = dependencies.quota;
+		this._onStateChange = dependencies.onStateChange;
 		this._isEnabled = dependencies.isEnabled;
 	}
 
@@ -447,6 +498,14 @@ export class SubscriptionBridge {
 				}
 				throw error;
 			}
+			if (selection.quotaFallback === true) {
+				// 额度闸门把所有账号都挡住了，说明这份额度视图和现实不一致（接口抖动、
+				// 窗口口径不同或账号刚充值）。放行一次并告警，让上游自己给出结论。
+				logger.warn("额度闸门挡住了全部账号，兜底放行一个", { source: target.source });
+			}
+			// 上一轮（换号或刷新）的身份不能带进本轮；_buildPlan 拿到实际 credential 后
+			// 会写入新的 identity。
+			recordUpstreamIdentity(undefined);
 			let plan = await this._buildPlan(executionContext, selection.account, upstreamModel, undefined);
 			let dispatched = await executeProviderRequest(this._planRequest(plan), plan.stream ? { ...options, readJson: false } : options);
 			if (isCredentialFailure(dispatched.response.status)) {
@@ -491,9 +550,25 @@ export class SubscriptionBridge {
 			// 不应连带同账号下的其他模型（凭证/额度类失败仍按账号冷却）。
 			if (status < 400) {
 				this._scheduler.markSuccess(target.source, selection.account.id, upstreamModel);
+				// 能成功返回说明这个账号现在确实有额度：清掉额度闸门里可能过期的占位，
+				// 否则一个被错误标记的账号要等到重置时间才会回到调度范围。
+				if (this._quota?.markAvailable(target.source, selection.account.id)) {
+					this._onStateChange?.(target.source, selection.account.id);
+				}
 			} else if (exhausted) {
-				this._scheduler.markExhausted(target.source, selection.account.id, "额度耗尽");
+				const reason = describeUpstreamFailure(dispatched.body) ?? "额度耗尽";
+				// 上游错误里的重置时间比额度接口更贴近这次失败，拿得到就按它冷却；
+				// 拿不到时交给额度闸门的快照（有窗口重置时间）或默认 30 分钟。
+				const until = creditExhaustionResetAt(dispatched.body);
+				this._scheduler.markExhausted(
+					target.source,
+					selection.account.id,
+					`额度耗尽${until === undefined ? "" : `（重置于 ${new Date(until).toISOString()}）`}`,
+					until === undefined ? undefined : until - Date.now(),
+				);
+				this._quota?.markExhausted(target.source, selection.account.id, until, reason);
 				this._scheduler.forget(target.source, sessionKey);
+				this._onStateChange?.(target.source, selection.account.id);
 			} else {
 				this._scheduler.markFailure(
 					target.source,
@@ -611,13 +686,22 @@ export class SubscriptionBridge {
 							upstreamModel: upstreamModel,
 						});
 		}
-		return await adapter.build({
+		const plan = await adapter.build({
 			...context,
 			upstream: upstream,
 			upstreamBody: upstreamBody,
 			account: latest,
 			credential: credential,
 		});
+		// 这里才是实际发送的 credential（OAuth 可能刚刷新过）；用最新账号 ID 关联，
+		// 而不是调用方最初选中的 account，避免刷新后账号快照替换导致 ID 漂移。
+		if (credential.length > 0) {
+			recordUpstreamIdentity({
+				keyHash: hashUpstreamKey(credential),
+				account: { kind: "subscription", id: latest.id, provider: adapter.source },
+			});
+		}
+		return plan;
 	}
 
 	private _planRequest(plan: SubscriptionUpstreamPlan): ProviderRequest {

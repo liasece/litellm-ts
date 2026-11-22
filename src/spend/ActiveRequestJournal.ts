@@ -13,17 +13,31 @@
  * 计费与最终 SpendLog 仍由 `trackSpendLog` 的落账事务独占。仍在变化的内容（聚合中的响应
  * 正文、最终 token 与费用）继续走原有的流式 checkpoint 与最终落账。
  */
-import { and, eq, sql } from "drizzle-orm";
-import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
-import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
+declare global {
+	namespace Express {
+		interface Request {
+			/**
+			 * 在途日志补写器：请求登记后由 spend reservation 挂上，供流式路径补写 TTFT 等
+			 * 「一旦确定就不再变化」的字段。数据库不支持 ActiveRequests 时为空。
+			 *
+			 * 挂在定义它的文件上而不是 `types/spend.ts`：后者被路由与 provider 广泛引用，
+			 * 让它也依赖本文件会把仓储卷进「类型 → 记账 → 仓储」的环。
+			 */
+			activeRequestJournal?: ActiveRequestJournal;
+		}
+	}
+}
+
 import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
+import { activeRequestRepositoryFor } from "../repositories/ActiveRequestRepository";
+import type { ActiveRequestUpstreamUpdate } from "../repositories/ActiveRequestRepository";
 import type { ModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
 import { copyModelResolutionChain, copyRoutingTrace } from "../router/ModelResolutionTrace";
 import { mergeAppliedFeatures, snapshotAppliedFeatures } from "../router/AppliedFeatures";
 import type { AppliedFeatureRecord } from "../types/spend";
 import { getRecordedModelResolutionTrace, observeUpstreamExchange, type UpstreamExchangeObserver } from "../router/UpstreamExchange";
-import type { UpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import {
 	buildSpendModelMapInformation,
 	reconstructModelName,
@@ -208,36 +222,37 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 		const spendInfo = context.spendInfo;
 		const storeUpstreamLogs = await shouldStoreUpstreamLogsInSpendLogs().catch(() => false);
 		const upstreamPatch = storeUpstreamLogs ? buildActiveRequestUpstreamPatch(context) : {};
-		const values: Record<string, unknown> = { updated_at: new Date() };
+		const update: {
+			spendInfo?: ActiveRequestUpstreamUpdate["spendInfo"];
+			proxyServerRequestPatch?: Record<string, unknown>;
+			metadataPatch?: Record<string, unknown>;
+			updatedAt: Date;
+		} = { updatedAt: new Date() };
 		if (spendInfo) {
-			values["custom_llm_provider"] = spendInfo.customLlmProvider;
-			values["api_base"] = spendInfo.apiBase;
-			values["model_id"] = spendInfo.modelId ?? "";
 			// `model` 与最终 SpendLog 同义：部署选定后即为实际执行模型（含 fallback 归因），
 			// 请求时的公开名继续保留在 `model_group`。否则进行中的行只显示请求别名，
 			// 请求结束后才换成真实模型，同一个请求在列表里前后显示不同的名字。
-			values["model"] = reconstructModelName(modelGroup, spendInfo.customLlmProvider, spendInfo.deploymentModel, fallbackOccurred);
+			update.spendInfo = {
+				customLlmProvider: spendInfo.customLlmProvider,
+				apiBase: spendInfo.apiBase,
+				modelId: spendInfo.modelId,
+				model: reconstructModelName(modelGroup, spendInfo.customLlmProvider, spendInfo.deploymentModel, fallbackOccurred),
+			};
 		}
 		if (Object.keys(upstreamPatch).length > 0) {
 			// 上游请求体同样按内容寻址：patch 里的 body 先换块引用再合并，
 			// 否则 `psr || patch` 会把几十 MB 的上游正文整列重写一遍。
-			const encodedPatch = (await shouldDeduplicateSpendLogBlocks())
+			update.proxyServerRequestPatch = (await shouldDeduplicateSpendLogBlocks())
 				? await encodeAndStoreActiveRequestPatch(db, upstreamPatch)
 				: upstreamPatch;
-			values["proxy_server_request"] =
-				sql`COALESCE(${liteLLM_ActiveRequests.proxy_server_request}, '{}'::jsonb) || ${JSON.stringify(encodedPatch)}::jsonb`;
 		}
 		if (Object.keys(routingPatch).length > 0) {
-			values["metadata"] = sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || ${JSON.stringify(routingPatch)}::jsonb`;
+			update.metadataPatch = routingPatch;
 		}
-		if (Object.keys(values).length === 1) {
-			return;
+		const written = await activeRequestRepositoryFor(db).appendUpstreamExchange(db, requestId, update);
+		if (written) {
+			publishSpendLogChange();
 		}
-		await db
-			.update(liteLLM_ActiveRequests)
-			.set(values as PgUpdateSetSource<typeof liteLLM_ActiveRequests>)
-			.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")));
-		publishSpendLogChange();
 	};
 
 	const observer: UpstreamExchangeObserver = (context: UpstreamLogContext): void => {
@@ -270,13 +285,7 @@ export function createActiveRequestJournal(db: DrizzleDb, requestId: string, mod
 			}
 			completionStartRequested = true;
 			enqueue(async (): Promise<void> => {
-				await db
-					.update(liteLLM_ActiveRequests)
-					.set({
-						completion_start_time: sql`COALESCE(${liteLLM_ActiveRequests.completion_start_time}, ${at})`,
-						updated_at: at,
-					})
-					.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")));
+				await activeRequestRepositoryFor(db).markCompletionStart(db, requestId, at);
 				publishSpendLogChange();
 			});
 		},

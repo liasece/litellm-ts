@@ -33,3 +33,35 @@ export function normalizeAccountEmail(value: unknown): string | null {
 	}
 	return email;
 }
+
+/** 账号表里可用于展示身份的窄字段；不允许把整份 payload 或密钥读进 Usage。 */
+export interface SubscriptionAccountDisplayIdentity {
+	/** 上游登录流程写入的邮箱。 */
+	readonly email?: string | null;
+	/** 订阅来源，例如 commandcode；显示时作为账号前缀。 */
+	readonly provider?: string | null;
+	/** 手工登记的展示名；Key 型 Provider 通常在这里写邮箱。 */
+	readonly label?: string | null;
+	/** 旧 auth 文件名；只在没有邮箱和展示名时兜底。 */
+	readonly accountKey?: string | null;
+	/** 稳定账号 ID，用于最后的可辨识兜底。 */
+	readonly id: string;
+}
+
+/**
+ * 订阅账号在 Usage 等读侧显示的身份。
+ *
+ * 上游邮箱最可靠，其次是管理员登记的 label（CommandCode 等只有 API key 的 Provider
+ * 没有 email 字段，邮箱通常写在 label 里），最后才退回 auth 文件名。文件名是内部
+ * 迁移键，不能盖过真实账号身份。最终统一带上 Provider 前缀，便于在混合账号列表里
+ * 直接分辨来源，例如 `commandcode/owner@example.com`。
+ * @param identity - 账号表中已取出的窄字段
+ */
+export function subscriptionAccountDisplayName(identity: SubscriptionAccountDisplayIdentity): string {
+	const email = identity.email?.trim();
+	const label = email ? null : identity.label?.trim();
+	const accountKey = email || label ? null : identity.accountKey?.trim();
+	const name = email ?? label ?? accountKey ?? `Subscription ${identity.id.slice(0, 8)}`;
+	const provider = identity.provider?.trim();
+	return provider && !name.startsWith(`${provider}/`) ? `${provider}/${name}` : name;
+}

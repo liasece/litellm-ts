@@ -36,16 +36,93 @@ it("weight 0 的账号不参与调度", () => {
 	expect(() => scheduler.select("codex", "", [zero])).toThrow(ApiError);
 });
 
-it("失败账号在冷却窗口内被跳过", () => {
+it("失败账号在冷却窗口内被跳过，冷却结束后惩罚窗口内仍排到队尾", () => {
+	jest.useFakeTimers();
+	try {
+		jest.setSystemTime(new Date("2026-11-19T00:00:00Z"));
+		const scheduler = new SubscriptionAccountScheduler();
+		const first = account("first");
+		const second = account("second");
+		scheduler.markFailure("codex", "first", 429, 60_000);
+		for (let index = 0; index < 5; index += 1) {
+			expect(scheduler.select("codex", "", [first, second]).account.id).toBe("second");
+		}
+		// 冷却清掉了，但刚失败过的账号在惩罚窗口内仍然排在队尾：否则一次瞬时失败后
+		// 立刻把流量还给它，就会回到「每个请求都先撞同一个账号」的老问题。
+		scheduler.markSuccess("codex", "first");
+		expect(scheduler.select("codex", "", [first, second]).account.id).toBe("second");
+		jest.setSystemTime(new Date(Date.now() + 5 * 60 * 1000 + 1000));
+		// 惩罚窗口过后两个账号平等，加权轮询会重新轮到 first。
+		const picked = new Set<string>();
+		for (let index = 0; index < 4; index += 1) {
+			picked.add(scheduler.select("codex", "", [first, second]).account.id);
+		}
+		expect(picked.has("first")).toBe(true);
+	} finally {
+		jest.useRealTimers();
+	}
+});
+
+it("从未失败过的账号优先于最近失败的账号", () => {
 	const scheduler = new SubscriptionAccountScheduler();
 	const first = account("first");
 	const second = account("second");
-	scheduler.markFailure("codex", "first", 429, 60_000);
+	const fresh = account("fresh");
+	scheduler.markFailure("codex", "first", 429, 1);
+	scheduler.markFailure("codex", "second", 429, 1);
+	for (let index = 0; index < 5; index += 1) {
+		expect(scheduler.select("codex", "", [first, second, fresh]).account.id).toBe("fresh");
+	}
+});
+
+it("全部账号都刚失败过时，失败时间最远的先试", () => {
+	jest.useFakeTimers();
+	try {
+		jest.setSystemTime(new Date("2026-11-19T00:00:00Z"));
+		const scheduler = new SubscriptionAccountScheduler();
+		const first = account("first");
+		const second = account("second");
+		const third = account("third");
+		scheduler.markFailure("codex", "first", 429, 1);
+		jest.setSystemTime(new Date(Date.now() + 1000));
+		scheduler.markFailure("codex", "second", 429, 1);
+		jest.setSystemTime(new Date(Date.now() + 1000));
+		scheduler.markFailure("codex", "third", 429, 1);
+		const accounts = [first, second, third];
+		expect(scheduler.select("codex", "", accounts).account.id).toBe("first");
+		// 再失败一次 first 就把它推到队尾，下一次轮到第二远的 second。
+		scheduler.markFailure("codex", "first", 429, 1);
+		expect(scheduler.select("codex", "", accounts).account.id).toBe("second");
+	} finally {
+		jest.useRealTimers();
+	}
+});
+
+it("额度闸门挡住的账号不参与调度，全部被挡住时兜底放行", () => {
+	const scheduler = new SubscriptionAccountScheduler({
+		blocking: (source) => new Set(source === "codex" ? ["first"] : []),
+	});
+	const first = account("first");
+	const second = account("second");
+	for (let index = 0; index < 5; index += 1) {
+		const selection = scheduler.select("codex", "", [first, second]);
+		expect(selection.account.id).toBe("second");
+		expect(selection.quotaFallback).toBeUndefined();
+	}
+	const blocked = new SubscriptionAccountScheduler({ blocking: () => new Set(["first", "second"]) });
+	const fallback = blocked.select("codex", "", [first, second]);
+	expect(fallback.quotaFallback).toBe(true);
+});
+
+it("重启后从落盘状态恢复最近失败时间", () => {
+	const scheduler = new SubscriptionAccountScheduler();
+	const first = account("first");
+	const second = account("second");
+	scheduler.hydrateState([{ source: "codex", accountId: "first", lastFailureAt: Date.now() }]);
 	for (let index = 0; index < 5; index += 1) {
 		expect(scheduler.select("codex", "", [first, second]).account.id).toBe("second");
 	}
-	scheduler.markSuccess("codex", "first");
-	expect(scheduler.select("codex", "", [first, second]).account.id).toBe("first");
+	expect(scheduler.lastFailureAt("codex", "first")).toBeDefined();
 });
 
 it("全部账号冷却时返回 429", () => {

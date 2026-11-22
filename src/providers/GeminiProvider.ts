@@ -14,7 +14,7 @@
 
 import type { ProviderConfig, ProviderRequest } from "../types/provider";
 import type { ModelResponse, ModelResponseStream, Usage } from "../types/openai";
-import { createStreamTranslator, translateRequest, translateResponse } from "../subscriptions/native/protocol/types";
+import { createStreamTranslator, translateRequest, translateResponse } from "../subscriptions/native/protocol/translate";
 import type { ProtocolEvent } from "../subscriptions/native/protocol/types";
 import { DUMMY_THOUGHT_SIGNATURE, asRecord } from "../subscriptions/native/protocol/convert/shared";
 

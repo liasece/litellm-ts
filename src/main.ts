@@ -50,6 +50,7 @@ import { createModelManagementRoutes } from "./management/ModelManagementEndpoin
 
 // 消费端点
 import { registerSpendManagementEndpoints } from "./spend/SpendManagementEndpoint";
+import { spendRequestIdHeaderMiddleware } from "./spend/SpendRequestIdHeader";
 
 // 兼容端点（WebUI 支撑、别名与保留 API 表面）
 import { registerResponsesApiRoutes } from "./proxy/ResponsesApiEndpoints";
@@ -58,6 +59,7 @@ import { registerCredentialRoutes } from "./proxy/CredentialEndpoints";
 import { registerUtilRoutes } from "./proxy/UtilEndpoints";
 import { registerLoginRoutes } from "./proxy/LoginEndpoints";
 import { webUiCsrfProtection } from "./auth/UserApiKeyAuth";
+import { budgetGuardMiddleware } from "./auth/BudgetGuard";
 import { registerDiscoveryRoutes } from "./proxy/DiscoveryEndpoints";
 import { registerWebUiSupportPublicRoutes, registerWebUiSupportRoutes } from "./proxy/WebUiSupportEndpoints";
 import { registerModelsPageSupportRoutes } from "./proxy/ModelsPageSupportEndpoints";
@@ -315,8 +317,14 @@ export class LiteLLMServer {
 		const proxyRouter = express.Router();
 		proxyRouter.use(codingClientModelMiddleware(container.router));
 		proxyRouter.use(container.authMiddleware);
+		// 预算守卫紧跟在鉴权之后：预算结论只依赖鉴权快照，放在这里能让后续中间件与端点
+		// 直接复用「要不要做预算工作」的判断，不必各自重新推导。
+		proxyRouter.use(budgetGuardMiddleware);
 		proxyRouter.use(webUiCsrfProtection);
 		proxyRouter.use(container.authorizationGuard.middleware("inference"));
+		// 记账 ID 必须在任何响应字节写出前确定：流式端点一旦开始写 SSE，头就改不了了。
+		// 放在授权之后，避免未通过推理路由白名单的请求也生成记账 ID。
+		proxyRouter.use(spendRequestIdHeaderMiddleware);
 		proxyRouter.use(privacyMaskingMiddleware({ router: container.router, db: container.db.db }));
 		proxyRouter.use(container.runtimeConfigService.middleware(container.router));
 		proxyRouter.use((req, _res, next) =>

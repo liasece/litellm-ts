@@ -14,7 +14,7 @@ import { ApiError } from "../core/api/ApiError";
 import { registerRoute } from "../core/api/registerRoute";
 import type { DrizzleDb } from "../core/db/Database";
 import type { CustomWord, PrivacyUserRule } from "../privacy/Detector";
-import { PRIVACY_SCOPE_ENTRY_MAX_COUNT, PRIVACY_SCOPE_ENTRY_MAX_LENGTH } from "../privacy/PrivacyScope";
+import { PRIVACY_SCOPE_ENTRY_MAX_COUNT, PRIVACY_SCOPE_ENTRY_MAX_LENGTH } from "../privacy/PrivacyLimits";
 import { PRIVACY_KIND_NAME_PATTERN, type PrivacyKindAction } from "../privacy/PrivacyKinds";
 import {
 	DEFAULT_PRIVACY_MASKING_SETTINGS,
@@ -22,8 +22,8 @@ import {
 	parsePrivacyMaskingSettings,
 	privacySettingsService,
 } from "../privacy/PrivacyConfig";
-import { PrivacyStatsRepository, type PrivacyListFilter } from "../privacy/PrivacyStatsRepository";
-import { ConfigRepository } from "../repositories/ConfigRepository";
+import { privacyStatsRepositoryFor, type PrivacyListFilter } from "../repositories/PrivacyStatsRepository";
+import { configRepositoryFor } from "../repositories/ConfigRepository";
 
 /** litellm_settings 参数名 */
 const LITELLM_SETTINGS_PARAM = "litellm_settings";
@@ -364,8 +364,8 @@ function serializeSettings(settings: ReturnType<typeof parsePrivacyMaskingSettin
  * @param db - 数据库实例
  */
 export function registerPrivacyRoutes(router: ExpressRouter, db: DrizzleDb): void {
-	const repository = new PrivacyStatsRepository(db);
-	const configRepository = new ConfigRepository(db);
+	const repository = privacyStatsRepositoryFor(db);
+	const configRepository = configRepositoryFor(db);
 
 	registerRoute(router, { method: "get", path: "/privacy/overview" }, async (req) => {
 		const days = parseBoundedInt(req.query["days"], DEFAULT_DAYS, 1, MAX_DAYS);

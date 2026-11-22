@@ -65,11 +65,12 @@ function urgencyLabel(row: QuotaAccountRow): string {
 		<div v-else class="usage-quota-table-wrap">
 			<table class="usage-quota-table">
 				<colgroup>
-					<col class="usage-quota-col--account" />
-					<col class="usage-quota-col--type" />
+					<col />
+					<col />
+					<!-- 只有 Quota windows 吃剩余宽度，其余列由内容决定。 -->
 					<col class="usage-quota-col--windows" />
-					<col class="usage-quota-col--balances" />
-					<col class="usage-quota-col--updated" />
+					<col />
+					<col />
 				</colgroup>
 				<thead>
 					<tr>
@@ -94,7 +95,7 @@ function urgencyLabel(row: QuotaAccountRow): string {
 							</th>
 						</tr>
 						<tr v-for="row in group.rows" :key="row.key" :data-testid="row.testid">
-							<td>
+							<td class="usage-quota-cell--account">
 								<div class="usage-quota-account">
 									<div class="usage-quota-account-name">
 										<strong :title="row.name">{{ row.name }}</strong>
@@ -121,19 +122,19 @@ function urgencyLabel(row: QuotaAccountRow): string {
 									<small v-if="row.error" class="usage-quota-row-error" :title="row.error">{{ row.error }}</small>
 								</div>
 							</td>
-							<td>
+							<td class="usage-quota-cell--type">
 								<div class="usage-quota-type">
 									<UiTag>{{ row.kind }}</UiTag>
 									<UiTag v-if="row.plan" color="blue">{{ row.plan }}</UiTag>
 									<small v-if="row.expires">Expires {{ new Date(row.expires).toLocaleDateString() }}</small>
 								</div>
 							</td>
-							<td>
+							<td class="usage-quota-cell--windows">
 								<UsageQuotaWindows v-if="row.windows.length" :windows="row.windows" />
 								<UiSpinner v-else-if="row.loading" />
 								<span v-else-if="!row.error" class="usage-quota-muted">No quota details</span>
 							</td>
-							<td>
+							<td class="usage-quota-cell--balances">
 								<div v-if="row.balances.length" class="usage-quota-balances">
 									<div v-for="b in row.balances" :key="b.label + '-' + b.remaining">
 										<small>{{ b.label }}</small
@@ -143,7 +144,7 @@ function urgencyLabel(row: QuotaAccountRow): string {
 								</div>
 								<span v-else class="usage-quota-muted">—</span>
 							</td>
-							<td>
+							<td class="usage-quota-cell--updated">
 								<small v-if="row.updated" class="usage-quota-updated">{{ new Date(row.updated).toLocaleString() }}</small>
 								<span v-else class="usage-quota-muted">—</span>
 							</td>

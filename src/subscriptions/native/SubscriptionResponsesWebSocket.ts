@@ -16,6 +16,8 @@ import { runCommonChecks } from "../../auth/AuthChecks";
 import { expressRequest, guardUpgradeSocket, runMiddleware, writeUpgradeError } from "../../core/http/UpgradeRequest";
 import type { ServiceContainer } from "../../container";
 import { executeProviderRequest } from "../../router/ProviderRequestExecutor";
+import { getRecordedUpstreamIdentity, runWithUpstreamExchangeScope } from "../../router/UpstreamExchange";
+import type { UpstreamIdentity } from "../../router/UpstreamKeyIdentity";
 import type { Router } from "../../router/Router";
 import { buildDeploymentSpendInfo } from "../../router/RouterSpendInfo";
 import { hasNativeResponsesContent } from "../../proxy/NativeResponsesAccumulator";
@@ -80,6 +82,8 @@ interface TurnResult {
 interface TurnState {
 	/** 本轮已经选中的 deployment */
 	deployment?: Deployment;
+	/** 本轮桥接层实际写入的 key/账号；作用域结束前捕获，供随后落账使用。 */
+	identity?: UpstreamIdentity;
 }
 
 /**
@@ -319,6 +323,7 @@ async function streamTurn(
  * @param turn - 本轮结果
  * @param request - 本轮请求体
  * @param startedAt - 开始时间
+ * @param identity - 本轮桥接层实际使用的 key/账号；作用域结束后显式传入
  */
 async function recordTurnSpend(
 	db: DrizzleDb | undefined,
@@ -326,6 +331,7 @@ async function recordTurnSpend(
 	turn: TurnResult,
 	request: Record<string, unknown>,
 	startedAt: Date,
+	identity: UpstreamIdentity | undefined,
 ): Promise<void> {
 	if (!db || !req.auth || !turn.deployment) {
 		return;
@@ -365,6 +371,8 @@ async function recordTurnSpend(
 				apiBase: spendInfo.apiBase,
 				customCostPerToken: spendInfo.customCostPerToken,
 				deploymentModel: spendInfo.deploymentModel,
+				upstreamKeyHash: identity?.keyHash,
+				upstreamAccount: identity?.account,
 				startTime: startedAt,
 				endTime: new Date(),
 				completionStartTime: req.litellmFirstContentFrameAt ?? null,
@@ -389,7 +397,7 @@ async function recordTurnSpend(
  * @param deployment - 本轮选中的 deployment（选部署前就失败时为空）
  * @param request - 本轮请求体
  * @param startedAt - 开始时间
- * @param error - 本轮失败原因
+ * @param failure - 失败原因与本轮上游身份
  */
 async function recordTurnFailureSpend(
 	db: DrizzleDb | undefined,
@@ -397,8 +405,9 @@ async function recordTurnFailureSpend(
 	deployment: Deployment | undefined,
 	request: Record<string, unknown>,
 	startedAt: Date,
-	error: unknown,
+	failure: { readonly error: unknown; readonly identity: UpstreamIdentity | undefined },
 ): Promise<void> {
+	const { error, identity } = failure;
 	if (!db || !req.auth) {
 		return;
 	}
@@ -423,6 +432,8 @@ async function recordTurnFailureSpend(
 				apiBase: spendInfo?.apiBase,
 				customCostPerToken: spendInfo?.customCostPerToken,
 				deploymentModel: spendInfo?.deploymentModel,
+				upstreamKeyHash: identity?.keyHash,
+				upstreamAccount: identity?.account,
 				startTime: startedAt,
 				endTime: new Date(),
 				completionStartTime: req.litellmFirstContentFrameAt ?? null,
@@ -653,9 +664,18 @@ async function runSession(socket: WebSocket, container: ServiceContainer, req: E
 			const turnState: TurnState = {};
 			try {
 				const result = await container.runtimeConfigService.runWithSnapshot(container.router, async () => {
-					return await streamTurn(socket, router, turnReq, request, controller.signal, turnState);
+					// WS upgrade 不经过 Express 的 upstreamExchangeScope 中间件；每轮单独开作用域，
+					// 桥接层写入的 key/账号才能被本轮 SpendLog 读到。作用域结束前捕获身份，
+					// 因为随后的 queueSpendLog 在作用域外执行。
+					return await runWithUpstreamExchangeScope(async () => {
+						try {
+							return await streamTurn(socket, router, turnReq, request, controller.signal, turnState);
+						} finally {
+							turnState.identity = getRecordedUpstreamIdentity();
+						}
+					});
 				});
-				await recordTurnSpend(container.db?.db, turnReq, result, request, turnStartedAt);
+				await recordTurnSpend(container.db?.db, turnReq, result, request, turnStartedAt, turnState.identity);
 				if (result.responseId) {
 					lastResponseId = result.responseId;
 				}
@@ -670,7 +690,10 @@ async function runSession(socket: WebSocket, container: ServiceContainer, req: E
 					}
 					// 失败轮次同样要落账：WebSocket 入口此前只记成功，上游 429 在 SpendLogs 上
 					// 完全不可见，冷却原因也就无从追查。
-					await recordTurnFailureSpend(container.db?.db, turnReq, turnState.deployment, request, turnStartedAt, apiError);
+					await recordTurnFailureSpend(container.db?.db, turnReq, turnState.deployment, request, turnStartedAt, {
+						error: apiError,
+						identity: turnState.identity,
+					});
 				}
 				logger.warn("Responses WebSocket turn 失败", {
 					model: lastModel,

@@ -7,37 +7,37 @@
  * 协议源码：litellm/proxy/_types.py、litellm/proxy/management_endpoints/*.py。
  */
 
-import type { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
-import type { LiteLLM_UserTable } from "../db/schema/users";
-import type { LiteLLM_TeamTable } from "../db/schema/teams";
-import type { LiteLLM_EndUserTable } from "../db/schema/end-users";
-import type { LiteLLM_ObjectPermissionTable } from "../db/schema/object-permissions";
-import type { LiteLLM_OrganizationMembership } from "../db/schema/organization-memberships";
+import type { KeyRow } from "../repositories/KeyRepository";
+import type { UserRow as LiteLLMUserRow } from "../repositories/UserRepository";
+import type { TeamRow as LiteLLMTeamRow } from "../repositories/TeamRepository";
+import type { EndUserRow as LiteLLMEndUserRow } from "../repositories/EndUserRepository";
+import type { ObjectPermissionRow as LiteLLMObjectPermissionRow } from "../repositories/ObjectPermissionRepository";
+import type { OrganizationMembershipRow as LiteLLMOrganizationMembershipRow } from "../repositories/OrganizationRepository";
 
 /**
- *
+ * 密钥行；由 KeyRepository 拥有表定义，序列化器只消费行形状。
  */
-export type VerificationTokenRow = typeof LiteLLM_VerificationToken.$inferSelect;
+export type VerificationTokenRow = KeyRow;
 /**
- *
+ * 内部用户行；由 UserRepository 拥有表定义。
  */
-export type InternalUserRow = typeof LiteLLM_UserTable.$inferSelect;
+export type InternalUserRow = LiteLLMUserRow;
 /**
- *
+ * 团队行；由 TeamRepository 拥有表定义。
  */
-export type TeamRow = typeof LiteLLM_TeamTable.$inferSelect;
+export type TeamRow = LiteLLMTeamRow;
 /**
- *
+ * 端用户行；由 EndUserRepository 拥有表定义。
  */
-export type EndUserRow = typeof LiteLLM_EndUserTable.$inferSelect;
+export type EndUserRow = LiteLLMEndUserRow;
 /**
- *
+ * 对象权限行；由 ObjectPermissionRepository 拥有表定义。
  */
-export type ObjectPermissionRow = typeof LiteLLM_ObjectPermissionTable.$inferSelect;
+export type ObjectPermissionRow = LiteLLMObjectPermissionRow;
 /**
- *
+ * 组织成员关系行；由 OrganizationRepository 拥有表定义。
  */
-export type OrganizationMembershipRow = typeof LiteLLM_OrganizationMembership.$inferSelect;
+export type OrganizationMembershipRow = LiteLLMOrganizationMembershipRow;
 
 const EMPTY_STRING_ARRAY: readonly string[] = [];
 const EMPTY_JSON_OBJECT: Readonly<Record<string, never>> = {};

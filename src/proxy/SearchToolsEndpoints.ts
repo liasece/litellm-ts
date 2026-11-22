@@ -8,14 +8,12 @@
  * - POST/PUT/DELETE /search_tools[/:id]：DB 中的搜索工具增删改
  * - POST /search_tools/test_connection：用提交的凭据发起一次真实查询
  */
-import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
 import type { Router } from "express";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
 import { getConfig } from "../core/config";
-import { LiteLLM_SearchToolsTable } from "../db/schema/searchTools";
 import type { DrizzleDb } from "../core/db/Database";
+import { searchToolRepositoryFor, type SearchToolRow } from "../repositories/SearchToolRepository";
 
 interface SearchToolItem {
 	readonly search_tool_name: string;
@@ -97,9 +95,9 @@ function configToolEntry(tool: Record<string, unknown>): Record<string, unknown>
 
 /**
  * 数据库行转管理页条目。
- * @param row - LiteLLM_SearchToolsTable 行
+ * @param row - 搜索工具仓储返回的行
  */
-function databaseToolEntry(row: typeof LiteLLM_SearchToolsTable.$inferSelect): Record<string, unknown> {
+function databaseToolEntry(row: SearchToolRow): Record<string, unknown> {
 	return {
 		search_tool_id: row.search_tool_id,
 		search_tool_name: row.search_tool_name,
@@ -262,7 +260,7 @@ async function testGooglePseConnection(
  */
 async function findSearchTool(db: DrizzleDb | undefined, name: string): Promise<Record<string, unknown> | undefined> {
 	if (db) {
-		const [row] = await db.select().from(LiteLLM_SearchToolsTable).where(eq(LiteLLM_SearchToolsTable.search_tool_name, name));
+		const row = await searchToolRepositoryFor(db).findByName(name);
 		if (row) {
 			return { search_tool_name: row.search_tool_name, litellm_params: row.litellm_params };
 		}
@@ -273,9 +271,10 @@ async function findSearchTool(db: DrizzleDb | undefined, name: string): Promise<
 
 /**
  * @param router
- * @param db - Drizzle DB 实例（读取 LiteLLM_SearchToolsTable）
+ * @param db - Drizzle DB 实例（搜索工具行经 SearchToolRepository 读取）
  */
 export function registerSearchToolsRoutes(router: Router, db?: DrizzleDb): void {
+	const repository = db ? searchToolRepositoryFor(db) : undefined;
 	registerRoute(router, { method: "get", path: "/v1/search/tools" }, async () => {
 		// PY: config 中的 search_tools（llm_router.search_tools）
 		const configTools = getConfig().routerSettings.search_tools ?? [];
@@ -291,9 +290,9 @@ export function registerSearchToolsRoutes(router: Router, db?: DrizzleDb): void 
 				items.push(item);
 			}
 		}
-		// PY: DB LiteLLM_SearchToolsTable 中的 search tools（_init_search_tools_in_db 合并）
-		if (db) {
-			const rows = await db.select().from(LiteLLM_SearchToolsTable);
+		// PY: 数据库中的 search tools 行（_init_search_tools_in_db 合并）
+		if (repository) {
+			const rows = await repository.snapshotRows();
 			for (const row of rows) {
 				if (seen.has(row.search_tool_name)) {
 					continue;
@@ -315,8 +314,8 @@ export function registerSearchToolsRoutes(router: Router, db?: DrizzleDb): void 
 	registerRoute(router, { method: "get", path: "/search_tools/list" }, async () => {
 		const searchTools: Record<string, unknown>[] = [];
 		const seen = new Set<string>();
-		if (db) {
-			const rows = await db.select().from(LiteLLM_SearchToolsTable);
+		if (repository) {
+			const rows = await repository.snapshotRows();
 			for (const row of rows) {
 				if (seen.has(row.search_tool_name)) {
 					continue;
@@ -345,14 +344,11 @@ export function registerSearchToolsRoutes(router: Router, db?: DrizzleDb): void 
 
 	registerRoute(router, { method: "post", path: "/search_tools" }, async (req) => {
 		const payload = readSearchToolPayload(req.body);
-		if (!db) {
+		if (!repository) {
 			throw ApiError.unavailable("搜索工具存储不可用");
 		}
-		const existing = await db
-			.select({ id: LiteLLM_SearchToolsTable.search_tool_id })
-			.from(LiteLLM_SearchToolsTable)
-			.where(eq(LiteLLM_SearchToolsTable.search_tool_name, payload.search_tool_name));
-		if (existing.length > 0) {
+		const existing = await repository.findByName(payload.search_tool_name);
+		if (existing !== undefined) {
 			throw ApiError.badRequest(`搜索工具 "${payload.search_tool_name}" 已存在`);
 		}
 		// config 中的同名工具占用运行时名称，DB 再建同名会让列表出现两个同名条目
@@ -365,55 +361,36 @@ export function registerSearchToolsRoutes(router: Router, db?: DrizzleDb): void 
 		if (configNames.has(payload.search_tool_name)) {
 			throw ApiError.badRequest(`搜索工具 "${payload.search_tool_name}" 已在配置文件（YAML）中定义`);
 		}
-		const [row] = await db
-			.insert(LiteLLM_SearchToolsTable)
-			.values({
-				search_tool_id: randomUUID(),
-				search_tool_name: payload.search_tool_name,
-				litellm_params: payload.litellm_params,
-				...(payload.search_tool_info ? { search_tool_info: payload.search_tool_info } : {}),
-			})
-			.returning();
+		const row = await repository.create(payload);
 		return databaseToolEntry(row!);
 	});
 
 	registerRoute(router, { method: "put", path: "/search_tools/:id" }, async (req) => {
 		const payload = readSearchToolPayload(req.body);
-		if (!db) {
+		if (!repository) {
 			throw ApiError.unavailable("搜索工具存储不可用");
 		}
 		const id = pathParam(req, "id");
-		const [current] = await db.select().from(LiteLLM_SearchToolsTable).where(eq(LiteLLM_SearchToolsTable.search_tool_id, id));
+		const current = await repository.findById(id);
 		if (!current) {
 			throw ApiError.notFound(`搜索工具 ${id} 不存在`);
 		}
 		if (current.search_tool_name !== payload.search_tool_name) {
-			const clash = await db
-				.select({ id: LiteLLM_SearchToolsTable.search_tool_id })
-				.from(LiteLLM_SearchToolsTable)
-				.where(eq(LiteLLM_SearchToolsTable.search_tool_name, payload.search_tool_name));
-			if (clash.length > 0) {
+			const clash = await repository.findByName(payload.search_tool_name);
+			if (clash !== undefined) {
 				throw ApiError.badRequest(`搜索工具 "${payload.search_tool_name}" 已存在`);
 			}
 		}
-		const [row] = await db
-			.update(LiteLLM_SearchToolsTable)
-			.set({
-				search_tool_name: payload.search_tool_name,
-				litellm_params: payload.litellm_params,
-				search_tool_info: payload.search_tool_info ?? null,
-			})
-			.where(eq(LiteLLM_SearchToolsTable.search_tool_id, id))
-			.returning();
+		const row = await repository.update(id, payload);
 		return databaseToolEntry(row!);
 	});
 
 	registerRoute(router, { method: "delete", path: "/search_tools/:id" }, async (req) => {
-		if (!db) {
+		if (!repository) {
 			throw ApiError.unavailable("搜索工具存储不可用");
 		}
 		const id = pathParam(req, "id");
-		const [row] = await db.delete(LiteLLM_SearchToolsTable).where(eq(LiteLLM_SearchToolsTable.search_tool_id, id)).returning();
+		const row = await repository.remove(id);
 		if (!row) {
 			throw ApiError.notFound(`搜索工具 ${id} 不存在`);
 		}

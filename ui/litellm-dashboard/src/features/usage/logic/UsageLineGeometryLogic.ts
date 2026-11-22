@@ -76,6 +76,13 @@ export function usageLineGeometry(input: UsageLineGeometryInput) {
 		const showDots = input.data.filter((row) => Object.hasOwn(row, key)).length <= 1;
 		return { key, points, linePaths, areaPaths, showDots };
 	}
+	// 折线的类目落在点位中心，灰带按相邻点位的间距撑开，首尾不越过绘图区。
+	const bandGap = input.data.length > 1 ? (axes.plotWidth - 40) / (input.data.length - 1) : axes.plotWidth;
+	axes.categoryBands = positions.map((x, index) => {
+		const start = Math.max(axes.left, x - bandGap / 2),
+			end = Math.min(axes.left + axes.plotWidth, x + bandGap / 2);
+		return { index: index, x: start, y: axes.top, width: end - start, height: axes.plotHeight };
+	});
 	const series = input.categories.map((key) => buildSeries(key, project));
 	const secondaryMax = Math.max(1, input.secondaryMax ?? 100);
 	const secondarySeries = (input.secondaryCategories ?? []).map((key) =>

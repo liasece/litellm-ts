@@ -8,6 +8,7 @@
 
 import { and, eq } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
+import { singletonFor } from "./internal/registry";
 import { LiteLLM_SubscriptionAccount } from "../db/schema/subscriptionAccounts";
 import type {
 	NewStoredSubscriptionAccount,
@@ -129,3 +130,9 @@ export class SubscriptionAccountRepository implements SubscriptionAccountPersist
 		await this._db.delete(LiteLLM_SubscriptionAccount).where(eq(LiteLLM_SubscriptionAccount.account_id, id));
 	}
 }
+
+/**
+ * 按 db 实例取仓储单例（同一个 db 只构造一次）。
+ * @param db - drizzle 句柄
+ */
+export const subscriptionAccountRepositoryFor = singletonFor((db: DrizzleDb) => new SubscriptionAccountRepository(db));

@@ -8,7 +8,7 @@
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import type { CustomWord, PrivacyUserRule } from "./Detector";
 import { PRIVACY_KIND_NAME_PATTERN, type PrivacyKindAction } from "./PrivacyKinds";
-import { PRIVACY_SCOPE_ENTRY_MAX_COUNT, PRIVACY_SCOPE_ENTRY_MAX_LENGTH } from "./PrivacyScope";
+import { PRIVACY_SCOPE_ENTRY_MAX_COUNT, PRIVACY_SCOPE_ENTRY_MAX_LENGTH } from "./PrivacyLimits";
 
 /** 配置段在 litellm_settings 中的键名 */
 export const PRIVACY_MASKING_CONFIG_KEY = "privacy_masking";

@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import type { UserAPIKeyAuth } from "../types/auth";
 import type { AuthRepository } from "./AuthRepository";
-import { AuthorizationGuard } from "./AuthorizationGuard";
+import { AuthorizationGuard, type AuthorizationCapability } from "./AuthorizationGuard";
 
 function makeAuth(overrides: Partial<UserAPIKeyAuth> = {}): UserAPIKeyAuth {
 	return {
@@ -20,7 +20,7 @@ function makeRepository(team: Record<string, unknown> | null = null): AuthReposi
 	} as unknown as AuthRepository;
 }
 
-function makeApp(guard: AuthorizationGuard, auth: UserAPIKeyAuth, capability: "inference" | "management") {
+function makeApp(guard: AuthorizationGuard, auth: UserAPIKeyAuth, capability: AuthorizationCapability) {
 	const app = express();
 	app.use((req, _res, next) => {
 		req.auth = auth;
@@ -54,6 +54,15 @@ describe("AuthorizationGuard allowed_routes", () => {
 		expect((await request(wildcardApp).get("/key/info")).status).toBe(200);
 		expect((await request(wildcardApp).get("/key/info/details")).status).toBe(403);
 		expect((await request(wildcardApp).get("/keyhole/info")).status).toBe(403);
+	});
+
+	it("spend_read_routes 只放开两条成本读取路由", async () => {
+		const app = makeApp(new AuthorizationGuard(makeRepository()), makeAuth({ allowed_routes: ["spend_read_routes"] }), "spend");
+		expect((await request(app).get("/spend/cost/request?request_id=req-1")).status).toBe(200);
+		expect((await request(app).get("/spend/cost/summary?start_date=2026-11-01&end_date=2026-11-02")).status).toBe(200);
+		expect((await request(app).get("/spend/logs/ui")).status).toBe(403);
+		expect((await request(app).get("/spend/logs/ui/req-1")).status).toBe(403);
+		expect((await request(app).get("/global/spend/logs")).status).toBe(403);
 	});
 });
 

@@ -25,6 +25,7 @@ export const pathPages: Readonly<Record<string, string>> = {
 	// MCP Server Activity 页面已移除，旧书签落在 Cost。
 	"usage/mcp": "new_usage",
 	"usage/endpoints": "usage-endpoints",
+	"usage/accounts": "usage-accounts",
 	"usage/quota": "usage-quota",
 	users: "users",
 	"virtual-keys": "api-keys",
@@ -58,6 +59,7 @@ export const pagePaths: Readonly<Record<string, string>> = {
 	"usage-models": "usage/models",
 	"usage-keys": "usage/keys",
 	"usage-endpoints": "usage/endpoints",
+	"usage-accounts": "usage/accounts",
 	"usage-quota": "usage/quota",
 };
 

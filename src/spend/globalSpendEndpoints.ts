@@ -8,13 +8,11 @@
  */
 
 import type { Router } from "express";
-import { sql, and, asc } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
-import type { UserAPIKeyAuth } from "../types/auth";
+import { spendAggregationRepositoryFor } from "../repositories/SpendAggregationRepository";
 import { AGGREGATE_DEFAULT_LIMIT, getInternalUserId } from "./spendManagementHelpers";
 import { toFiniteNumber, toPythonMonthDayString, toSafeString } from "./spendManagementFormatters";
 import { registerGlobalSpendAggregationEndpoints } from "./globalSpendAggregationEndpoints";
@@ -28,17 +26,6 @@ function parseActivityDate(raw: unknown): Date {
 		throw new ApiError(HTTP_STATUS.BAD_REQUEST, "Invalid date format. Expected: YYYY-MM-DD");
 	}
 	return parsed;
-}
-
-function buildActivityDateWhere(startDate: Date, endDate: Date, auth: UserAPIKeyAuth | undefined): ReturnType<typeof and> {
-	const endExclusive = new Date(endDate.getTime());
-	endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
-	const conditions = [sql`${liteLLM_SpendLogs.startTime} >= ${startDate}`, sql`${liteLLM_SpendLogs.startTime} < ${endExclusive}`];
-	const internalUserId = getInternalUserId(auth);
-	if (internalUserId !== undefined) {
-		conditions.push(sql`${liteLLM_SpendLogs.user} = ${internalUserId}`);
-	}
-	return and(...conditions);
 }
 
 /**
@@ -56,18 +43,8 @@ export function registerGlobalSpendEndpoints(router: Router, db: NodePgDatabase<
 	registerRoute(router, { method: "get", path: "/global/activity" }, async (req) => {
 		const startDate = parseActivityDate(req.query.start_date);
 		const endDate = parseActivityDate(req.query.end_date);
-		const whereClause = buildActivityDateWhere(startDate, endDate, req.auth);
-
-		const result = await db
-			.select({
-				date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
-				api_requests: sql<number>`COUNT(*)`,
-				total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-			})
-			.from(liteLLM_SpendLogs)
-			.where(whereClause)
-			.groupBy(sql`DATE(${liteLLM_SpendLogs.startTime})`)
-			.orderBy(asc(sql`DATE(${liteLLM_SpendLogs.startTime})`));
+		// 日期解析与权限判定留在端点：仓储只接收「从哪天到哪天、是否只看自己」。
+		const result = await spendAggregationRepositoryFor(db).dailyActivity(startDate, endDate, getInternalUserId(req.auth));
 
 		let totalTokens = 0;
 		let totalRequests = 0;
@@ -105,20 +82,12 @@ export function registerGlobalSpendEndpoints(router: Router, db: NodePgDatabase<
 	registerRoute(router, { method: "get", path: "/global/activity/model" }, async (req) => {
 		const startDate = parseActivityDate(req.query.start_date);
 		const endDate = parseActivityDate(req.query.end_date);
-		const whereClause = buildActivityDateWhere(startDate, endDate, req.auth);
-
-		const rows = await db
-			.select({
-				model_group: liteLLM_SpendLogs.model_group,
-				date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
-				api_requests: sql<number>`COUNT(*)`,
-				total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-			})
-			.from(liteLLM_SpendLogs)
-			.where(whereClause)
-			.groupBy(liteLLM_SpendLogs.model_group, sql`DATE(${liteLLM_SpendLogs.startTime})`)
-			.orderBy(asc(sql`DATE(${liteLLM_SpendLogs.startTime})`))
-			.limit(AGGREGATE_DEFAULT_LIMIT);
+		const rows = await spendAggregationRepositoryFor(db).modelDailyActivity(
+			startDate,
+			endDate,
+			AGGREGATE_DEFAULT_LIMIT,
+			getInternalUserId(req.auth),
+		);
 
 		const grouped = new Map<
 			string,

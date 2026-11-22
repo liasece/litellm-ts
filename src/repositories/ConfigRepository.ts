@@ -13,39 +13,23 @@ import { ApiError } from "../core/api/ApiError";
 import { LiteLLM_Config } from "../db/schema/config";
 import { BaseRepository } from "../core/db/BaseRepository";
 import type { DrizzleDb } from "../core/db/Database";
-import { revisionCounterFor, TableCache } from "./internal/TableCache";
+import type { TableCache } from "./internal/TableCache";
+import { singletonFor, tableCacheFor } from "./internal/registry";
 
 /** `LiteLLM_Config` 行。 */
 export type ConfigRow = typeof LiteLLM_Config.$inferSelect;
 
-const caches = new WeakMap<object, TableCache<ConfigRow>>();
-const repositories = new WeakMap<object, ConfigRepository>();
-
-function cacheFor(db: DrizzleDb): TableCache<ConfigRow> {
-	const key = db as unknown as object;
-	const existing = caches.get(key);
-	if (existing !== undefined) {
-		return existing;
-	}
-	const created = new TableCache<ConfigRow>(() => db.select().from(LiteLLM_Config), revisionCounterFor(key));
-	caches.set(key, created);
-	return created;
-}
+const cacheFor = (db: DrizzleDb): TableCache<ConfigRow> =>
+	tableCacheFor<ConfigRow>(db, "LiteLLM_Config", () => db.select().from(LiteLLM_Config));
 
 /**
- * 取得与数据库连接绑定的配置仓库；同一连接上的所有调用方共享同一份副本。
+ * 取得与数据库连接绑定的仓储；同一连接上的所有调用方共享同一份副本。
+ *
+ * 用工厂而不是 `new`：副本按数据库连接绑定，装配处多创建几个实例也只会指向同一份缓存，
+ * 写穿与失效因此不会被某个「另一个实例」绕开。
  * @param db - Drizzle 数据库实例
  */
-export function configRepositoryFor(db: DrizzleDb): ConfigRepository {
-	const key = db as unknown as object;
-	const existing = repositories.get(key);
-	if (existing !== undefined) {
-		return existing;
-	}
-	const created = new ConfigRepository(db);
-	repositories.set(key, created);
-	return created;
-}
+export const configRepositoryFor = singletonFor((db: DrizzleDb) => new ConfigRepository(db));
 
 /**
  *

@@ -139,6 +139,21 @@
 	max-width: none;
 }
 
+.usage-chart-no-data {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	max-width: none;
+}
+
+.usage-chart-tooltip-no-data p {
+	color: #6b7280;
+}
+
+.usage-chart-tooltip--dark .usage-chart-tooltip-no-data p {
+	color: #d1d5db;
+}
+
 .usage-chart-tooltip--dark b {
 	color: inherit;
 }

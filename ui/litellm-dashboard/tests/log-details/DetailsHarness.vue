@@ -3,15 +3,20 @@ import { provide, ref } from "vue";
 import { createPriceDisplayStore, priceDisplayStoreKey } from "../../src/features/platform/stores/PriceDisplayStore";
 import LogDetailsDrawerComponent from "../../src/features/logs/ui/details/LogDetailsDrawerComponent.vue";
 import type { LogEntry, SessionGroupRef } from "../../src/features/logs/support/LogsModels";
-import { cooldown, first, second, group } from "./Fixtures";
+import { cooldown, first, second, sessionFirst } from "./Fixtures";
+import { navigableSessionGroup } from "../../src/features/logs/logic/LogsIdentityLogic";
 provide(priceDisplayStoreKey, createPriceDisplayStore());
 const open = ref(false),
 	selected = ref<LogEntry | null>(first),
 	session = ref<SessionGroupRef | null>(null);
+// 与真实页面一致：会话分组由选中的那一行推导，切换日志后会跟着换组。
 function show(withSession: boolean) {
-	selected.value = first;
-	session.value = withSession ? group : null;
+	select(withSession ? sessionFirst : first);
 	open.value = true;
+}
+function select(log: LogEntry) {
+	selected.value = log;
+	session.value = navigableSessionGroup(log);
 }
 function showCooldown() {
 	selected.value = cooldown;
@@ -30,6 +35,6 @@ function showCooldown() {
 		start-time="2026-11-07 00:00:00"
 		:upstream-logs-enabled="true"
 		@close="open = false"
-		@select="selected = $event"
+		@select="select"
 	/>
 </template>

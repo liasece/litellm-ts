@@ -198,6 +198,17 @@
 	min-width: 0;
 }
 
+/* 命中率要并排放多条线，独占一行才放得下足够多的日期刻度。 */
+.usage-trends-card--wide {
+	grid-column: 1 / -1;
+}
+
+/* 图例里的区间命中率跟实体名同一行，用深一档的字重和颜色区分。 */
+.usage-trends-legend b {
+	color: #374151;
+	font-weight: 600;
+}
+
 /* 自己带类名而不是依赖卡片内部的 header 结构，避免被各容器的 .ui-card__body > header 规则抢走。 */
 .usage-trends-head {
 	display: flex;
@@ -303,4 +314,49 @@
 	color: #6b7280;
 	font-size: 12.4px;
 	line-height: 18.4px;
+}
+
+/* 上游账号行：标题下方一行显示账号种类、provider 与 key 版本数。 */
+.usage-collapse > section > button > span:last-child > span.usage-account-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-top: 4px;
+	color: #4b5563;
+	font-size: 12px;
+	line-height: 18px;
+}
+.usage-account-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 0 7px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 18px;
+}
+.usage-account-badge--subscription {
+	background: #e0f2fe;
+	color: #0369a1;
+}
+.usage-account-badge--credential {
+	background: #f3e8ff;
+	color: #7e22ce;
+}
+.usage-account-badge--unassociated {
+	background: #f3f4f6;
+	color: #4b5563;
+}
+.usage-account-badge--unattributed {
+	background: #fef3c7;
+	color: #92400e;
+}
+.usage-account-provider,
+.usage-account-keys {
+	color: #6b7280;
+}
+.usage-account-warning {
+	color: #b91c1c;
+	font-weight: 600;
 }

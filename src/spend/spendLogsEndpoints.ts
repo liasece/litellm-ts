@@ -22,11 +22,9 @@
  */
 
 import type { Router } from "express";
-import { asc, eq, sql, and, desc, gt, inArray, type AnyColumn, type SQL } from "drizzle-orm";
+import { sql, and, type SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
-import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 import { costPerToken } from "../cost/CostCalculator";
@@ -34,7 +32,6 @@ import { adjustCost, costTrackingConfigService, resolveCostProvider } from "../c
 import {
 	AGGREGATE_DEFAULT_LIMIT,
 	COLD_STORAGE_BATCH_CONCURRENCY,
-	SpendSortOrder,
 	mapWithConcurrency,
 	normalizeSortOrder,
 	parseOptionalFloatQueryParam,
@@ -43,6 +40,7 @@ import {
 	parseSpendLogDate,
 	resolveUiSpendLogEndDate,
 	runWithFallback,
+	type SpendSortOrder,
 } from "./spendManagementHelpers";
 import {
 	makeEmptyLegacySpendLogsPage,
@@ -55,7 +53,7 @@ import { createModuleLogger } from "../core/utils/logger";
 import { getRequestResponsePayloadFromColdStorage } from "./SpendLogColdStorage";
 import { buildUiSpendLogDetail } from "./UiLogDetail";
 import { hydrateSpendLogRows } from "./SpendLogBlocks";
-import { spendLogStatusSql } from "./spendLogStatus";
+import { spendReportingRepositoryFor } from "../repositories/SpendReportingRepository";
 import {
 	DEFAULT_SESSION_TIMELINE_WINDOW,
 	MAX_SESSION_TIMELINE_WINDOW,
@@ -63,10 +61,10 @@ import {
 	loadSessionTimeline,
 } from "./sessionTimelineLive";
 import { CLAUDE_CODE_USER_ID_PATTERN, normalizeSessionUuid } from "./sessionIdentity";
-import type { Column } from "./spendManagementTypes";
 import type { UserAPIKeyAuth } from "../types/auth";
 import {
 	isInternalUserRole,
+	filterVisibleSpendRequestIds,
 	isSpendAdminView,
 	resolveActiveRequestVisibilityClause,
 	resolveSpendVisibilityClause,
@@ -78,21 +76,7 @@ import {
 	sessionGroupKey,
 	type SessionGroupRef,
 } from "./sessionGroup";
-import {
-	encodeSessionPosition,
-	parseSessionPosition,
-	sessionCursorClause,
-	sessionPositionFromRow,
-	sessionSnapshotClause,
-	type SessionPosition,
-} from "./sessionPosition";
-import {
-	spendLogDurationSql,
-	spendLogExecutionModelSql,
-	spendLogListMetadataSql,
-	spendLogMetadataJsonSql,
-	streamRequestedSql,
-} from "./spendLogProjections";
+import { encodeSessionPosition, parseSessionPosition, sessionPositionFromRow, type SessionPosition } from "./sessionPosition";
 
 const logger = createModuleLogger("SpendLogs");
 
@@ -130,15 +114,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 	registerRoute(router, { method: "get", path: "/spend/keys" }, async (req) => {
 		return runWithFallback(logger, "/spend/keys", [] as Array<Record<string, unknown>>, async () => {
-			const result = await db
-				.select({
-					api_key: liteLLM_SpendLogs.api_key,
-					total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-					total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-				})
-				.from(liteLLM_SpendLogs)
-				.groupBy(liteLLM_SpendLogs.api_key)
-				.limit(AGGREGATE_DEFAULT_LIMIT);
+			const result = await spendReportingRepositoryFor(db).sumSpendByApiKey(AGGREGATE_DEFAULT_LIMIT);
 
 			return result.map((row) => ({
 				api_key: toSafeString(row.api_key),
@@ -153,16 +129,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 	registerRoute(router, { method: "get", path: "/spend/users" }, async (req) => {
 		return runWithFallback(logger, "/spend/users", [] as Array<Record<string, unknown>>, async () => {
-			const result = await db
-				.select({
-					user: liteLLM_SpendLogs.user,
-					total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-					total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-				})
-				.from(liteLLM_SpendLogs)
-				.where(sql`${liteLLM_SpendLogs.user} IS NOT NULL AND ${liteLLM_SpendLogs.user} != ''`)
-				.groupBy(liteLLM_SpendLogs.user)
-				.limit(AGGREGATE_DEFAULT_LIMIT);
+			const result = await spendReportingRepositoryFor(db).sumSpendByUser(AGGREGATE_DEFAULT_LIMIT);
 
 			return result.map((row) => ({
 				user: toSafeString(row.user),
@@ -182,16 +149,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 	registerRoute(router, { method: "get", path: "/spend/tags" }, async (req) => {
 		return runWithFallback(logger, "/spend/tags", [] as Array<Record<string, unknown>>, async () => {
-			const result = await db
-				.select({
-					individual_request_tag: sql<string>`jsonb_array_elements_text(${liteLLM_SpendLogs.request_tags})`.as(
-						"individual_request_tag",
-					),
-					log_count: sql<number>`COUNT(*)`,
-					total_spend: sql<number>`SUM(${liteLLM_SpendLogs.spend})`,
-				})
-				.from(liteLLM_SpendLogs)
-				.groupBy(sql`individual_request_tag`);
+			const result = await spendReportingRepositoryFor(db).sumSpendByRequestTagElement();
 
 			return result.map((row) => ({
 				individual_request_tag: toSafeString(row.individual_request_tag),
@@ -221,15 +179,6 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const apiKeyFilter = req.query.api_key as string | undefined;
 		const userIdFilter = req.query.user_id as string | undefined;
 
-		const conditions = [];
-		if (apiKeyFilter) {
-			conditions.push(eq(liteLLM_SpendLogs.api_key, apiKeyFilter));
-		}
-		if (userIdFilter) {
-			conditions.push(eq(liteLLM_SpendLogs.user, userIdFilter));
-		}
-		const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
 		// 根因：Drizzle 链式 select / count 任一环节失败（DB 断连、字段不存在、drizzle schema 漂移）
 		// 都直接 reject。这里返回旧分页空对象避免 WebUI Logs 页面炸 5xx；
 		// 不再返回"本月每日 spend=0 假数据"——那是 /global/spend/logs 的职责，混用会导致
@@ -238,28 +187,17 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			// 默认返回与 UI 列表同形的轻量行：旧调用方多数只需要分页与标量；
 			// 正文必须显式传 include_content=true，且正文页大小有硬上限，避免一次拉回
 			// 几十 MB 的 messages/proxy/response 把主线程和客户端一起拖住。
-			const rawRows = includeContent
-				? await db
-						.select()
-						.from(liteLLM_SpendLogs)
-						.where(whereClause)
-						.orderBy(desc(liteLLM_SpendLogs.startTime))
-						.limit(pageSize)
-						.offset((page - 1) * pageSize)
-				: await db
-						.select(uiSpendLogSelection())
-						.from(liteLLM_SpendLogs)
-						.where(whereClause)
-						.orderBy(desc(liteLLM_SpendLogs.startTime))
-						.limit(pageSize)
-						.offset((page - 1) * pageSize);
-			const data = includeContent ? await hydrateSpendLogRows(db, rawRows as unknown as Array<Record<string, unknown>>) : rawRows;
+			const repository = spendReportingRepositoryFor(db);
+			const rawRows = await repository.listLegacySpendLogsPage({
+				apiKey: apiKeyFilter,
+				userId: userIdFilter,
+				includeContent: includeContent,
+				pageSize: pageSize,
+				offset: (page - 1) * pageSize,
+			});
+			const data = includeContent ? await hydrateSpendLogRows(db, rawRows) : rawRows;
 
-			const totalRow = await db
-				.select({ count: sql<number>`COUNT(*)` })
-				.from(liteLLM_SpendLogs)
-				.where(whereClause);
-			const total = toFiniteNumber(totalRow[0]?.count);
+			const total = await repository.countLegacySpendLogs({ apiKey: apiKeyFilter, userId: userIdFilter });
 
 			return {
 				data: data.map(normalizeSpendLogRow),
@@ -375,9 +313,10 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 
 		// where 条件（一次构造复用于 count + select）。可见性裁剪恒有返回值，这里再兜底一次
 		// FALSE，避免条件意外变空时读到全表（All Time 只去掉时间谓词，不放宽可见性）。
+		const repository = spendReportingRepositoryFor(db);
 		const spendLogsWhereClause =
 			and(
-				buildUiSpendLogsWhereConditions({
+				repository.uiSpendLogsWhereClause({
 					startDate: startDateObj,
 					endDate: endDateObj,
 					teamId: effectiveTeamId,
@@ -399,14 +338,10 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			) ?? sql`FALSE`;
 
 		// count 查询：使用同一 whereClause，避免总数与明细不一致。
-		const completedCountRow = await db
-			.select({ count: sql<number>`COUNT(*)` })
-			.from(liteLLM_SpendLogs)
-			.where(spendLogsWhereClause);
-		const completedTotal = toFiniteNumber(completedCountRow[0]?.count);
+		const completedTotal = await repository.countSpendLogs(spendLogsWhereClause);
 		const activeWhereClause = includeActive
 			? and(
-					buildActiveRequestsWhereConditions({
+					repository.activeRequestsWhereClause({
 						startDate: startDateObj,
 						endDate: endDateObj,
 						teamId: effectiveTeamId,
@@ -427,27 +362,18 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 					resolveActiveRequestVisibilityClause(auth, effectiveTeamId),
 				)
 			: undefined;
-		const activeCountRow = activeWhereClause
-			? await db
-					.select({ count: sql<number>`COUNT(*)` })
-					.from(liteLLM_ActiveRequests)
-					.where(activeWhereClause)
-			: [];
-		const activeTotal = toFiniteNumber(activeCountRow[0]?.count);
+		const activeTotal = activeWhereClause === undefined ? 0 : await repository.countActiveRequests(activeWhereClause);
 		const total = completedTotal + activeTotal;
 		const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
 
-		const sortColumn: Column = resolveSortColumn(sortBy);
-		const orderExpr = sortOrder === SpendSortOrder.ASC ? sql`${sortColumn} ASC` : sql`${sortColumn} DESC`;
 		const pageOffset = (page - 1) * pageSize;
 		let data: Record<string, unknown>[];
 		if (activeWhereClause && sortBy === "startTime") {
 			// startTime 是 ActiveRequests 与 SpendLogs 共有的真实字段：两表各自按
 			// (startTime, request_id) 取当前页的行键后归并，request_id 作为时间相同时的
 			// 稳定排序键，避免两表在分页边界处产生不确定顺序。重投影在回表时才算。
-			const mixedRows = await hydrateUiPageRows(
-				db,
-				await selectMixedUiPageRowKeys(db, activeWhereClause, spendLogsWhereClause, sortOrder, pageSize, pageOffset),
+			const mixedRows = await repository.hydrateUiPageRows(
+				await repository.selectMixedUiPageRowKeys(activeWhereClause, spendLogsWhereClause, sortOrder, pageSize, pageOffset),
 			);
 			const normalizedRows = mixedRows.map((row) => normalizeUiSpendLogRow(row as Record<string, unknown>));
 			const completedRows = normalizedRows.filter((row) => row.status !== "in_progress").map((row) => withSessionGroup(row));
@@ -470,36 +396,16 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			const activeOffset = Math.min(pageOffset, activeTotal);
 			const activeKeys =
 				activeWhereClause && activeOffset < activeTotal
-					? (
-							await db
-								.select({ request_id: liteLLM_ActiveRequests.request_id })
-								.from(liteLLM_ActiveRequests)
-								.where(activeWhereClause)
-								// request_id 兜底排序：同一 startTime 的行在两次查询之间可能换位，
-								// 偏移分页于是重复或跳到上一页已经出现过的行。
-								.orderBy(desc(liteLLM_ActiveRequests.startTime), directionOf(liteLLM_ActiveRequests.request_id, sortOrder))
-								.limit(pageSize)
-								.offset(activeOffset)
-						).map((row) => ({ request_id: row.request_id, source: "active" as const }))
+					? await repository.listActivePageRequestKeys(activeWhereClause, sortOrder, pageSize, activeOffset)
 					: [];
-			const activeRows = await hydrateUiPageRows(db, activeKeys);
+			const activeRows = await repository.hydrateUiPageRows(activeKeys);
 			const completedLimit = Math.max(0, pageSize - activeRows.length);
 			const completedOffset = Math.max(0, pageOffset - activeTotal);
 			const completedKeys =
 				completedLimit > 0
-					? (
-							await db
-								.select({ request_id: liteLLM_SpendLogs.request_id })
-								.from(liteLLM_SpendLogs)
-								.where(spendLogsWhereClause)
-								// 所选排序字段大量并列（如 spend/tokens 相同），只有加 request_id
-								// 兜底才是全序；否则翻页会把同一行返回两次。
-								.orderBy(orderExpr, directionOf(liteLLM_SpendLogs.request_id, sortOrder))
-								.limit(completedLimit)
-								.offset(completedOffset)
-						).map((row) => ({ request_id: row.request_id, source: "spend" as const }))
+					? await repository.listSpendPageRequestKeys(spendLogsWhereClause, sortBy, sortOrder, completedLimit, completedOffset)
 					: [];
-			const completedRows = await hydrateUiPageRows(db, completedKeys);
+			const completedRows = await repository.hydrateUiPageRows(completedKeys);
 
 			const normalizedCompletedRows = completedRows.map((row) =>
 				withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)),
@@ -548,43 +454,36 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		// Legacy `session_id` is only an input alias. All detail reads must use the
 		// persisted group key so embedded stable session IDs and indexed lookups
 		// behave exactly like the explicit session group API.
-		const groupClause = eq(liteLLM_SpendLogs.session_group_key, sessionGroupKey(group));
-		const baseClause = and(groupClause, visibilityClause) as SQL;
+		const repository = spendReportingRepositoryFor(db);
+		const baseClause = and(repository.sessionGroupClause(sessionGroupKey(group)), visibilityClause) as SQL;
 		let effectiveSnapshot = snapshot;
 		if (!effectiveSnapshot) {
-			const snapshotRows = await db
-				.select({ snapshotStartTime: liteLLM_SpendLogs.startTime, snapshotRequestId: liteLLM_SpendLogs.request_id })
-				.from(liteLLM_SpendLogs)
-				.where(baseClause)
-				.orderBy(sql`${liteLLM_SpendLogs.startTime} DESC, ${liteLLM_SpendLogs.request_id} DESC`)
-				.limit(1);
-			effectiveSnapshot = sessionPositionFromRow(snapshotRows[0], "snapshotStartTime", "snapshotRequestId");
+			effectiveSnapshot = sessionPositionFromRow(
+				await repository.findSessionSnapshotPosition(baseClause),
+				"snapshotStartTime",
+				"snapshotRequestId",
+			);
 		}
 
-		const boundedClause = effectiveSnapshot ? and(baseClause, sessionSnapshotClause(effectiveSnapshot)) : baseClause;
+		const boundedClause = (
+			effectiveSnapshot ? and(baseClause, repository.sessionSnapshotClause(effectiveSnapshot)) : baseClause
+		) as SQL;
 		let total = knownTotal;
 		if (total === null) {
-			const countRows = await db
-				.select({ count: sql<number>`COUNT(*)` })
-				.from(liteLLM_SpendLogs)
-				.where(boundedClause);
-			total = toFiniteNumber(countRows[0]?.count);
+			total = await repository.countSpendLogs(boundedClause);
 		}
 		if (total === 0) {
 			effectiveSnapshot = null;
 		}
 		const legacySkip = cursor ? 0 : (page - 1) * pageSize;
-		const detailClause = cursor ? and(boundedClause, sessionCursorClause(cursor)) : boundedClause;
-		const selectedRows = await db
-			.select(includeContent ? uiSpendLogSelectionWithContent() : uiSpendLogSelection())
-			.from(liteLLM_SpendLogs)
-			.where(detailClause)
-			.orderBy(sql`${liteLLM_SpendLogs.startTime} ASC, ${liteLLM_SpendLogs.request_id} ASC`)
-			.limit(legacySkip + pageSize + 1);
+		const detailClause = cursor ? (and(boundedClause, repository.sessionCursorClause(cursor)) as SQL) : boundedClause;
+		const selectedRows = await repository.listSessionDetailRows({
+			whereClause: detailClause,
+			includeContent: includeContent,
+			limit: legacySkip + pageSize + 1,
+		});
 		// 会话模拟带正文时按块组装：整批引用合并成一次块查询。
-		const rows = (
-			includeContent ? await hydrateSpendLogRows(db, selectedRows as unknown as Array<Record<string, unknown>>) : selectedRows
-		) as typeof selectedRows;
+		const rows = includeContent ? await hydrateSpendLogRows(db, selectedRows) : selectedRows;
 		const normalizedRows = rows.map((row) => withSessionGroup(normalizeUiSpendLogRow(row as Record<string, unknown>)));
 		const pageRows = normalizedRows.slice(legacySkip, legacySkip + pageSize);
 		const hasMore = normalizedRows.length > legacySkip + pageSize;
@@ -642,7 +541,14 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 	// 未命中的 request_id 合并成一次 DB 查询，避免大 Session 产生数百次 HTTP/SQL 往返。
 	registerRoute(router, { method: "post", path: "/spend/logs/ui/batch" }, async (req) => {
 		const requests = parseSpendLogDetailBatch(req.body);
-		const coldStoragePayloads = await mapWithConcurrency(requests, COLD_STORAGE_BATCH_CONCURRENCY, async (detailRequest) => {
+		// 批量详情同样按 request_id 直读；先裁剪到可见集合，避免绕过列表读别人的正文。
+		const visibleRequestIds = await filterVisibleSpendRequestIds(
+			db,
+			req.auth,
+			requests.map((detailRequest) => detailRequest.request_id),
+		);
+		const loadableRequests = requests.filter((detailRequest) => visibleRequestIds.has(detailRequest.request_id));
+		const coldStoragePayloads = await mapWithConcurrency(loadableRequests, COLD_STORAGE_BATCH_CONCURRENCY, async (detailRequest) => {
 			const payload = await getRequestResponsePayloadFromColdStorage(
 				detailRequest.request_id,
 				parseOptionalDetailDate(detailRequest.start_date),
@@ -652,7 +558,7 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 			return [detailRequest.request_id, payload] as const;
 		});
 		const coldStorageByRequestId = new Map(coldStoragePayloads);
-		const databaseRequestIds = requests
+		const databaseRequestIds = loadableRequests
 			.map((detailRequest) => detailRequest.request_id)
 			.filter((requestId) => coldStorageByRequestId.get(requestId) === null);
 
@@ -678,19 +584,9 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		const databaseRows =
 			databaseRequestIds.length === 0
 				? []
-				: await hydrateSpendLogRows(
-						db,
-						await db
-							.select({
-								request_id: liteLLM_SpendLogs.request_id,
-								messages: liteLLM_SpendLogs.messages,
-								response: liteLLM_SpendLogs.response,
-								proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
-							})
-							.from(liteLLM_SpendLogs)
-							.where(inArray(liteLLM_SpendLogs.request_id, databaseRequestIds)),
-						{ compactAliases: true },
-					);
+				: await hydrateSpendLogRows(db, await spendReportingRepositoryFor(db).listSpendLogPayloadColumns(databaseRequestIds), {
+						compactAliases: true,
+					});
 		const databaseByRequestId = new Map(databaseRows.map((row) => [row.request_id, row] as const));
 
 		return {
@@ -711,15 +607,23 @@ export function registerSpendLogsEndpoints(router: Router, db: NodePgDatabase<ty
 		if (typeof requestId !== "string" || requestId.length === 0) {
 			return null;
 		}
+		const visibleRequestIds = await filterVisibleSpendRequestIds(db, req.auth, [requestId]);
+		if (!visibleRequestIds.has(requestId)) {
+			// 与列表一致：不可见与不存在都返回 null，避免通过详情接口探测别人的 request_id。
+			return null;
+		}
 
 		// PY: 可选 start_date / end_date 查询参数（YYYY-MM-DD HH:MM:SS），透传给冷存储 logger 收窄回查窗口。
-		// compact=true 是 dashboard 内部详情用的读形状：顶层 messages 只展开一次，重复别名保留标记。
+		// compact 是详情默认读形状：顶层 messages 只展开一次，重复别名保留提示标记。单次详情
+		// 在非 compact 下会把同一段对话展开三份（messages / proxy_server_request / 上游请求），
+		// 大请求实测从 177KB 涨到 466KB(gzip)；dashboard 一直显式传 compact=true，默认值只影响
+		// 手工排查。需要完整展开时传 compact=false。
 		return await buildUiSpendLogDetail(
 			db,
 			requestId,
 			parseOptionalDetailDate(req.query.start_date),
 			parseOptionalDetailDate(req.query.end_date),
-			{ compactAliases: req.query.compact === "true" },
+			{ compactAliases: req.query.compact !== "false" },
 		);
 	});
 
@@ -822,205 +726,10 @@ function parseSpendLogDetailBatch(body: unknown): SpendLogDetailBatchRequest[] {
 
 /** Recover legacy failed-call attribution only from a recorded upstream request. */
 
-/** UI logs omit request/response payloads; legacy recovery projects one scalar. */
-function uiSpendLogSelection() {
-	return {
-		request_id: liteLLM_SpendLogs.request_id,
-		call_type: liteLLM_SpendLogs.call_type,
-		api_key: liteLLM_SpendLogs.api_key,
-		key_alias: liteLLM_SpendLogs.key_alias,
-		spend: liteLLM_SpendLogs.spend,
-		total_tokens: liteLLM_SpendLogs.total_tokens,
-		prompt_tokens: liteLLM_SpendLogs.prompt_tokens,
-		completion_tokens: liteLLM_SpendLogs.completion_tokens,
-		// 这两个投影列已经由 0019 回填；列表直接读列，避免每行再解压
-		// metadata.additional_usage_values / usage_object。
-		cache_read_input_tokens: liteLLM_SpendLogs.cache_read_input_tokens,
-		cache_creation_input_tokens: liteLLM_SpendLogs.cache_creation_input_tokens,
-		// 单价与峰谷档位是请求结束时冻结的账单事实（见 drizzle/0023）；列表直接读列，
-		// 费用气泡与详情不必为每行 detoast metadata.cost_breakdown。
-		unit_prices: liteLLM_SpendLogs.unit_prices,
-		peak_tier: liteLLM_SpendLogs.peak_tier,
-		startTime: liteLLM_SpendLogs.startTime,
-		endTime: liteLLM_SpendLogs.endTime,
-		completionStartTime: liteLLM_SpendLogs.completionStartTime,
-		model: spendLogExecutionModelSql(),
-		model_id: liteLLM_SpendLogs.model_id,
-		model_group: liteLLM_SpendLogs.model_group,
-		custom_llm_provider: sql<string | null>`${liteLLM_SpendLogs.custom_llm_provider}`,
-		api_base: sql<string | null>`${liteLLM_SpendLogs.api_base}`,
-		user: liteLLM_SpendLogs.user,
-		// 列表不下发流式 checkpoint 累计正文：回收行会把整份累计响应塞进 metadata，
-		// 单行可达数兆，既撑大每页响应也让客户端多解析几十毫秒。
-		metadata: spendLogListMetadataSql(),
-		cache_hit: sql<string | null>`${liteLLM_SpendLogs.cache_hit}`,
-		cache_key: liteLLM_SpendLogs.cache_key,
-		request_tags: sql<unknown | null>`${liteLLM_SpendLogs.request_tags}`,
-		team_id: liteLLM_SpendLogs.team_id,
-		organization_id: liteLLM_SpendLogs.organization_id,
-		end_user: liteLLM_SpendLogs.end_user,
-		requester_ip_address: liteLLM_SpendLogs.requester_ip_address,
-		session_id: liteLLM_SpendLogs.session_id,
-		session_group_key: liteLLM_SpendLogs.session_group_key,
-		status: spendLogStatusSql(liteLLM_SpendLogs.status, liteLLM_SpendLogs.metadata),
-		mcp_namespaced_tool_name: liteLLM_SpendLogs.mcp_namespaced_tool_name,
-		agent_id: liteLLM_SpendLogs.agent_id,
-		request_duration_ms: spendLogDurationSql(),
-		// 非流式请求没有「首帧」这个时刻，前端据此把 TTFT 显示成 `-`（见 streamRequestedSql）。
-		stream: streamRequestedSql(liteLLM_SpendLogs.proxy_server_request),
-	};
-}
-
-/** Session 模拟专用投影，在轻量行上按需附带会话正文。 */
-function uiSpendLogSelectionWithContent() {
-	return {
-		...uiSpendLogSelection(),
-		messages: liteLLM_SpendLogs.messages,
-		response: liteLLM_SpendLogs.response,
-		proxy_server_request: liteLLM_SpendLogs.proxy_server_request,
-	};
-}
-
-/** 列表页的一行定位：来源表 + 主键，投影推迟到取回当前页之后。 */
-interface UiPageRowKey {
-	readonly request_id: string;
-	readonly source: "active" | "spend";
-}
-
-/** 分页键 + 排序键；两张表都用同一组字段确定混排顺序。 */
-interface UiPageRowKeyWithTime extends UiPageRowKey {
-	readonly startTime: Date;
-}
-
-/**
- * 取当前页的行键：两张表各自按 (startTime, request_id) 取前 N 行，再在内存里归并分页。
- *
- * 列表投影会剥掉 metadata 里的流式 checkpoint 载荷，而 `jsonb - 键` 要求 detoast 并
- * 重建整份 JSON。这个表达式一旦留在 UNION/ORDER BY 里，PostgreSQL 就必须对时间窗内的
- * 每一行计算一次：24 小时窗口约 1.6 万行时实测多花 40 秒以上，窗口越大越慢，首页也随之
- * 不可用。改成先分页再回表（见 hydrateUiPageRows），重表达式只作用于当前页。
- *
- * 分页键仍然单独归并而不是交给 `UNION ALL ... ORDER BY ... LIMIT`：两表各取
- * (offset + limit) 行即可提前终止，代价只与页深有关；UNION 则要把整个时间窗的索引项和
- * 堆页都读一遍（24 小时约 1.6 万行，冷缓存下数秒级），并随窗口线性变慢。
- * @param db - Drizzle 数据库实例
- * @param activeWhereClause - 进行中请求的过滤条件
- * @param spendLogsWhereClause - 已落库日志的过滤条件
- * @param sortOrder - 与接口一致的正/倒序
- * @param pageSize - 每页行数
- * @param pageOffset - 分页偏移
- */
-async function selectMixedUiPageRowKeys(
-	db: NodePgDatabase<typeof schema>,
-	activeWhereClause: SQL,
-	spendLogsWhereClause: SQL,
-	sortOrder: SpendSortOrder,
-	pageSize: number,
-	pageOffset: number,
-): Promise<UiPageRowKey[]> {
-	const needed = pageOffset + pageSize;
-	// 两路键合并后要按 request_id 去重，多取一页才能保证去重后仍填满当前页。
-	const fetchLimit = needed + pageSize;
-	const descending = sortOrder !== SpendSortOrder.ASC;
-	const direction = (column: Column): SQL => (descending ? sql`${column} DESC` : sql`${column} ASC`);
-	// 两路键必须在同一快照里读：结算事务是「删在途行 + 插 SpendLog」一次提交，若它正好
-	// 落在两条 SELECT 之间，同一个 request_id 会同时出现在两路里，归并后成为相邻的两行。
-	// REPEATABLE READ 只在这里包住两条键查询，代价是每个列表请求多一次 BEGIN/COMMIT。
-	const { activeKeys, spendKeys } = await db.transaction(
-		async (tx) => {
-			const snapshot = tx as unknown as NodePgDatabase<typeof schema>;
-			const activeKeys = await snapshot
-				.select({ request_id: liteLLM_ActiveRequests.request_id, startTime: liteLLM_ActiveRequests.startTime })
-				.from(liteLLM_ActiveRequests)
-				.where(activeWhereClause)
-				.orderBy(direction(liteLLM_ActiveRequests.startTime), direction(liteLLM_ActiveRequests.request_id))
-				.limit(fetchLimit);
-			const spendKeys = await snapshot
-				.select({ request_id: liteLLM_SpendLogs.request_id, startTime: liteLLM_SpendLogs.startTime })
-				.from(liteLLM_SpendLogs)
-				.where(spendLogsWhereClause)
-				.orderBy(direction(liteLLM_SpendLogs.startTime), direction(liteLLM_SpendLogs.request_id))
-				.limit(fetchLimit);
-			return { activeKeys: activeKeys, spendKeys: spendKeys };
-		},
-		{ isolationLevel: "repeatable read", accessMode: "read only" },
-	);
-	const merged = mergePageRowKeys(
-		activeKeys.map((key) => ({ request_id: key.request_id, startTime: key.startTime, source: "active" as const })),
-		spendKeys.map((key) => ({ request_id: key.request_id, startTime: key.startTime, source: "spend" as const })),
-		descending,
-	);
-	return merged.slice(pageOffset, needed).map((key) => ({ request_id: key.request_id, source: key.source }));
-}
-
-/**
- * 归并两路已按 (startTime, request_id) 排好序的分页键，保持全局顺序与分页边界稳定。
- * @param left - 进行中请求的分页键
- * @param right - 已落库日志的分页键
- * @param descending - 是否与接口倒序一致
- */
-function mergePageRowKeys(left: UiPageRowKeyWithTime[], right: UiPageRowKeyWithTime[], descending: boolean): UiPageRowKeyWithTime[] {
-	const direction = descending ? -1 : 1;
-	const merged: UiPageRowKeyWithTime[] = [];
-	let leftIndex = 0;
-	let rightIndex = 0;
-	while (leftIndex < left.length && rightIndex < right.length) {
-		const leftKey = left.at(leftIndex);
-		const rightKey = right.at(rightIndex);
-		if (leftKey === undefined || rightKey === undefined) {
-			break;
-		}
-		if (comparePageRowKeys(leftKey, rightKey) * direction <= 0) {
-			merged.push(leftKey);
-			leftIndex += 1;
-		} else {
-			merged.push(rightKey);
-			rightIndex += 1;
-		}
-	}
-	return dedupePageRowKeys(merged.concat(left.slice(leftIndex), right.slice(rightIndex)));
-}
-
-/**
- * 同一个 request_id 在归并后的分页键里只能占一个位置。
- *
- * 正常路径下两路键在同一个 `REPEATABLE READ` 事务里读取，同一次结算不会同时出现在
- * ActiveRequests 与 SpendLogs 两路结果里。这里仍做收敛，兜住事务边界之外的来源：
- * 历史版本曾把两次键查询分开执行，结算提交落在两次查询之间时同一个 request_id 会
- * 同时出现在两路里（startTime 相同，归并后相邻），回表时“在途键找不到就回落到
- * SpendLogs”会把两条键都解析成同一行，列表于是出现两条内容完全一样、request_id
- * 也相同的日志。去重保留首次出现的位置，来源选已结算（spend）的那一条。
- * @param keys - 已归并的分页键
- */
-function dedupePageRowKeys(keys: UiPageRowKeyWithTime[]): UiPageRowKeyWithTime[] {
-	if (keys.length < 2) {
-		return keys;
-	}
-	const byId = new Map<string, number>();
-	const result: UiPageRowKeyWithTime[] = [];
-	let dropped = 0;
-	for (const key of keys) {
-		const index = byId.get(key.request_id);
-		if (index === undefined) {
-			byId.set(key.request_id, result.length);
-			result.push(key);
-			continue;
-		}
-		dropped += 1;
-		if (result[index]?.source !== "spend" && key.source === "spend") {
-			result[index] = key;
-		}
-	}
-	if (dropped > 0) {
-		logger.warn("列表分页键命中同一 request_id 的两条来源，已按已结算行收敛", { dropped: dropped });
-	}
-	return result;
-}
-
 /**
  * 一页里同一个 request_id 只能出现一行，已结算的那一行优先。
  *
- * 与 {@link dedupePageRowKeys} 同一类竞态的兜底：即使分页键去重后，回表兜底与 session
+ * 与分页键去重同一类竞态的兜底：即使分页键去重后，回表兜底与 session
  * 计数补充之间仍可能跨越提交边界。这里放在响应出口，保证前端拿到的每页行标识唯一。
  * @param rows - 拼装完成的行
  */
@@ -1053,104 +762,6 @@ function dedupeSpendLogRows(rows: Array<Record<string, unknown>>): Array<Record<
 }
 
 /**
- * 排序列的兜底次序：与主排序同向，保证「主列并列」时仍是全序。
- * @param column - 兜底列
- * @param sortOrder - 接口的排序方向
- */
-function directionOf(column: AnyColumn, sortOrder: SpendSortOrder): SQL {
-	return sortOrder === SpendSortOrder.ASC ? asc(column) : desc(column);
-}
-
-/**
- * 分页键的升序比较：startTime 优先，同一时刻用 request_id 保持稳定顺序。
- * @param left - 左分页键
- * @param right - 右分页键
- */
-function comparePageRowKeys(left: UiPageRowKeyWithTime, right: UiPageRowKeyWithTime): number {
-	const byTime = left.startTime.getTime() - right.startTime.getTime();
-	if (byTime !== 0) {
-		return byTime;
-	}
-	return left.request_id < right.request_id ? -1 : left.request_id > right.request_id ? 1 : 0;
-}
-
-/**
- * 按主键回表读取当前页的列表投影。
- *
- * 调用方先分页再回表，因此 metadata 剥载荷、失败调用的模型回退和状态兼容这些重表达式
- * 只对每页几十行各计算一次，与时间窗大小、日志总量无关。分页键与回表之间可能正好有
- * 请求落库或租约回收，来源表查不到时再用另一张表的同一行兜底，避免页面上少一行。
- * @param db - Drizzle 数据库实例
- * @param keys - 已排好序的分页键
- */
-async function hydrateUiPageRows(db: NodePgDatabase<typeof schema>, keys: UiPageRowKey[]): Promise<Record<string, unknown>[]> {
-	if (keys.length === 0) {
-		return [];
-	}
-	const bySource = new Map<string, Record<string, unknown>>();
-	const spendIds = uniqueRequestIds(keys.filter((key) => key.source === "spend"));
-	const activeIds = uniqueRequestIds(keys.filter((key) => key.source === "active"));
-	if (spendIds.length > 0) {
-		const rows = await db.select(uiSpendLogSelection()).from(liteLLM_SpendLogs).where(inArray(liteLLM_SpendLogs.request_id, spendIds));
-		for (const row of rows) {
-			bySource.set(`spend:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
-		}
-	}
-	if (activeIds.length > 0) {
-		const rows = await db
-			.select(uiActiveRequestSelection())
-			.from(liteLLM_ActiveRequests)
-			.where(inArray(liteLLM_ActiveRequests.request_id, activeIds));
-		for (const row of rows) {
-			bySource.set(`active:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
-		}
-	}
-	// 分页键与回表之间跨越了提交边界：进行中行已落库，或已落库行被租约回收。
-	const migratedToSpend = missingRequestIds(keys, bySource, "active");
-	if (migratedToSpend.length > 0) {
-		const rows = await db
-			.select(uiSpendLogSelection())
-			.from(liteLLM_SpendLogs)
-			.where(inArray(liteLLM_SpendLogs.request_id, migratedToSpend));
-		for (const row of rows) {
-			bySource.set(`fallback:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
-		}
-	}
-	const migratedToActive = missingRequestIds(keys, bySource, "spend");
-	if (migratedToActive.length > 0) {
-		const rows = await db
-			.select(uiActiveRequestSelection())
-			.from(liteLLM_ActiveRequests)
-			.where(inArray(liteLLM_ActiveRequests.request_id, migratedToActive));
-		for (const row of rows) {
-			bySource.set(`fallback:${String((row as Record<string, unknown>).request_id)}`, row as Record<string, unknown>);
-		}
-	}
-	return keys.flatMap((key) => {
-		const row = bySource.get(`${key.source}:${key.request_id}`) ?? bySource.get(`fallback:${key.request_id}`);
-		return row === undefined ? [] : [row];
-	});
-}
-
-/**
- * 分页键里某一来源的 request_id，保持首次出现顺序并去重。
- * @param keys - 分页键
- */
-function uniqueRequestIds(keys: UiPageRowKey[]): string[] {
-	return Array.from(new Set(keys.map((key) => key.request_id)));
-}
-
-/**
- * 找出主投影没有命中的某一来源 request_id。
- * @param keys - 分页键
- * @param bySource - 已回表的结果（按 `来源:request_id` 索引）
- * @param source - 需要检查的来源
- */
-function missingRequestIds(keys: UiPageRowKey[], bySource: Map<string, Record<string, unknown>>, source: UiPageRowKey["source"]): string[] {
-	return uniqueRequestIds(keys.filter((key) => key.source === source && !bySource.has(`${source}:${key.request_id}`)));
-}
-
-/**
  * Select only positions beyond the cumulative message-count high-water mark.
  * Rows whose count does not advance are conservatively rescanned at the tail,
  * which keeps retries and non-cumulative payloads observable without hashing
@@ -1175,51 +786,6 @@ function missingRequestIds(keys: UiPageRowKey[], bySource: Map<string, Record<st
  * Fetch only the message indexes selected from the compact manifest.
  * @param selectedIndicesJson - request_id to zero-based message indexes.
  */
-
-/** 活跃请求转成与 UI SpendLog 列表兼容的轻量行。 */
-function uiActiveRequestSelection() {
-	return {
-		request_id: liteLLM_ActiveRequests.request_id,
-		call_type: liteLLM_ActiveRequests.call_type,
-		api_key: liteLLM_ActiveRequests.api_key,
-		spend: sql<number>`0`,
-		total_tokens: sql<number>`0`,
-		prompt_tokens: sql<number>`0`,
-		completion_tokens: sql<number>`0`,
-		startTime: liteLLM_ActiveRequests.startTime,
-		endTime: sql<Date>`CURRENT_TIMESTAMP`,
-		completionStartTime: liteLLM_ActiveRequests.completion_start_time,
-		model: liteLLM_ActiveRequests.model,
-		model_id: liteLLM_ActiveRequests.model_id,
-		model_group: liteLLM_ActiveRequests.model_group,
-		// ActiveRequests 侧非空，UNION 需要与 SpendLogs 侧的可空类型对齐。
-		custom_llm_provider: sql<string | null>`${liteLLM_ActiveRequests.custom_llm_provider}`,
-		api_base: sql<string | null>`${liteLLM_ActiveRequests.api_base}`,
-		user: liteLLM_ActiveRequests.user,
-		// 聚合中的响应正文只属于详情页，列表不重复下发（见 /spend/logs/ui/:request_id）。
-		metadata: sql<
-			unknown | null
-		>`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) - 'streaming_execution' - 'responses_execution'`,
-		cache_hit: sql<string | null>`'False'`,
-		cache_key: sql<string | null>`NULL`,
-		// 进行中的请求尚未结算，没有可冻结的单价与档位。
-		unit_prices: sql<unknown | null>`NULL`,
-		peak_tier: sql<string | null>`NULL`,
-		request_tags: sql<unknown | null>`${liteLLM_ActiveRequests.request_tags}`,
-		team_id: liteLLM_ActiveRequests.team_id,
-		organization_id: liteLLM_ActiveRequests.organization_id,
-		end_user: liteLLM_ActiveRequests.end_user,
-		requester_ip_address: liteLLM_ActiveRequests.requester_ip_address,
-		session_id: liteLLM_ActiveRequests.session_id,
-		session_group_key: sql<string | null>`NULL`,
-		status: sql<string | null>`${liteLLM_ActiveRequests.status}`,
-		mcp_namespaced_tool_name: sql<string | null>`NULL`,
-		agent_id: sql<string | null>`NULL`,
-		request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
-		// 与 SpendLogs 侧同一表达式，进行中的非流式请求同样没有首帧时间。
-		stream: streamRequestedSql(liteLLM_ActiveRequests.proxy_server_request),
-	};
-}
 
 /** Python UI logs duration expression: DB NULL fallback to endTime-startTime in milliseconds. */
 
@@ -1391,202 +957,6 @@ function makeSessionPage(
 }
 
 /**
- * resolve sort_by 白名单到 Drizzle 列
- * @param sortBy
- */
-function resolveSortColumn(sortBy: SpendLogSortField): Column {
-	switch (sortBy) {
-		case "spend":
-			return liteLLM_SpendLogs.spend;
-		case "total_tokens":
-			return liteLLM_SpendLogs.total_tokens;
-		case "endTime":
-			return liteLLM_SpendLogs.endTime;
-		case "request_duration_ms":
-			return spendLogDurationSql();
-		case "startTime":
-		default:
-			return liteLLM_SpendLogs.startTime;
-	}
-}
-
-/** UI 路径 where 条件构造入参 */
-interface UiSpendLogsWhereArgs {
-	/** 下界；缺省表示不限下界（Dashboard 的 All Time）。 */
-	startDate?: Date;
-	/** 上界；缺省表示不限上界。 */
-	endDate?: Date;
-	teamId?: string;
-	apiKey?: string;
-	user?: string;
-	requestId?: string;
-	model?: string;
-	modelId?: string;
-	endUser?: string;
-	/** 会话分组 ID 的包含匹配；只匹配 s:/c: 会话键，不匹配 r: 请求键。 */
-	sessionId?: string;
-	statusFilter?: string;
-	minSpend?: number;
-	maxSpend?: number;
-	keyAlias?: string;
-	errorCode?: string;
-	errorMessage?: string;
-}
-
-/**
- * 完整会话 UUID 对应的规范会话键；输入不是可识别 UUID 时返回 null。
- *
- * `s:` 是当前写入的规范键；`c:` 兼容历史上按会话 UUID 落库的分组键。
- * 只有完整 UUID 才走这条精确路径，部分 ID 搜索仍保留原有包含语义。
- * @param sessionId - 用户传入的会话 ID
- */
-function exactSessionGroupKeys(sessionId: string): [string, string] | null {
-	const uuid = normalizeSessionUuid(sessionId);
-	return uuid === null ? null : [`s:${uuid}`, `c:${uuid}`];
-}
-
-/**
- * 构造 /spend/logs/ui 与 /spend/logs/v2 共用的 where 条件。
- * 对齐 Python `ui_view_spend_logs` 的 SQL 拼接：
- * - 时间范围：`startTime >= ... AND startTime <= ...`，两端都可缺省（All Time 不带时间谓词）
- * - 普通列等值：`team_id` / `user` / `api_key` / `request_id` / `model` / `model_id` / `end_user`
- * - status_filter=success → `(status = 'success' OR status IS NULL)`；其它精确匹配
- * - spend 范围
- * - `key_alias` → 冗余列 `key_alias` 的 LIKE；`error_code` → 冗余列 `error_code` 的等值匹配。
- *   这两列在写入时由服务进程从 metadata 同源填入（历史行见
- *   `scripts/backfill-spend-log-filter-columns.cjs`），过滤窗口内每行只需读两个小列，
- *   不再解压整份 metadata（24h 窗口冷缓存下原先要 9–40 s）。
- * - `error_message` 仍是自由文本，保持 `metadata->'error_information'->>'error_message' LIKE`。
- * - 会话：`session_id` → 生成的 `session_group_key` 包含匹配（仅 s:/c: 前缀）
- * @param args
- */
-function buildUiSpendLogsWhereConditions(args: UiSpendLogsWhereArgs) {
-	const conditions = [];
-	if (args.startDate !== undefined) {
-		conditions.push(sql`${liteLLM_SpendLogs.startTime} >= ${args.startDate}`);
-	}
-	if (args.endDate !== undefined) {
-		conditions.push(sql`${liteLLM_SpendLogs.startTime} <= ${args.endDate}`);
-	}
-	if (args.teamId !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.team_id, args.teamId));
-	}
-	if (args.apiKey !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.api_key, args.apiKey));
-	}
-	if (args.user !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.user, args.user));
-	}
-	if (args.requestId !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.request_id, args.requestId));
-	}
-	if (args.model !== undefined) {
-		conditions.push(eq(spendLogExecutionModelSql(), args.model));
-	}
-	if (args.modelId !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.model_id, args.modelId));
-	}
-	if (args.endUser !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.end_user, args.endUser));
-	}
-	if (args.sessionId !== undefined) {
-		const exactKeys = exactSessionGroupKeys(args.sessionId);
-		if (exactKeys !== null) {
-			// 会话详情传入完整 UUID 时直接命中规范键，走 (session_group_key, startTime, request_id)
-			// 索引；原来的 %contains% 谓词无法使用该索引，All Time 下要扫完整张表。
-			conditions.push(inArray(liteLLM_SpendLogs.session_group_key, exactKeys));
-		} else {
-			const needle = args.sessionId.toLowerCase();
-			conditions.push(
-				sql`(${liteLLM_SpendLogs.session_group_key} LIKE ${"s:%"} OR ${liteLLM_SpendLogs.session_group_key} LIKE ${"c:%"}) AND strpos(lower(${liteLLM_SpendLogs.session_group_key}), ${needle}) > 0`,
-			);
-		}
-	}
-	if (args.statusFilter !== undefined) {
-		if (args.statusFilter === "success") {
-			conditions.push(sql`(${liteLLM_SpendLogs.status} = 'success' OR ${liteLLM_SpendLogs.status} IS NULL)`);
-		} else {
-			conditions.push(sql`${spendLogStatusSql(liteLLM_SpendLogs.status, liteLLM_SpendLogs.metadata)} = ${args.statusFilter}`);
-		}
-	}
-	if (args.minSpend !== undefined) {
-		conditions.push(sql`${liteLLM_SpendLogs.spend} >= ${args.minSpend}`);
-	}
-	if (args.maxSpend !== undefined) {
-		conditions.push(sql`${liteLLM_SpendLogs.spend} <= ${args.maxSpend}`);
-	}
-	if (args.keyAlias !== undefined) {
-		// 与 Python `ui_view_spend_logs` 一致保留 LIKE 包含匹配，但改为读冗余列。
-		conditions.push(sql`${liteLLM_SpendLogs.key_alias} LIKE ${"%" + args.keyAlias + "%"}`);
-	}
-	if (args.errorCode !== undefined) {
-		conditions.push(eq(liteLLM_SpendLogs.error_code, args.errorCode));
-	}
-	if (args.errorMessage !== undefined) {
-		conditions.push(sql`${spendLogMetadataJsonSql()}->'error_information'->>'error_message' LIKE ${"%" + args.errorMessage + "%"}`);
-	}
-	return and(...conditions);
-}
-
-/**
- * ActiveRequests 对齐 Logs 列表过滤；错误过滤必然排除尚无最终错误信息的请求。
- * @param args
- */
-function buildActiveRequestsWhereConditions(args: UiSpendLogsWhereArgs) {
-	const conditions = [gt(liteLLM_ActiveRequests.expires_at, new Date()), eq(liteLLM_ActiveRequests.status, "in_progress")];
-	if (args.startDate !== undefined) {
-		conditions.push(sql`${liteLLM_ActiveRequests.startTime} >= ${args.startDate}`);
-	}
-	if (args.endDate !== undefined) {
-		conditions.push(sql`${liteLLM_ActiveRequests.startTime} <= ${args.endDate}`);
-	}
-	if (args.teamId !== undefined) {
-		conditions.push(eq(liteLLM_ActiveRequests.team_id, args.teamId));
-	}
-	if (args.apiKey !== undefined) {
-		conditions.push(eq(liteLLM_ActiveRequests.api_key, args.apiKey));
-	}
-	if (args.user !== undefined) {
-		conditions.push(eq(liteLLM_ActiveRequests.user, args.user));
-	}
-	if (args.requestId !== undefined) {
-		conditions.push(eq(liteLLM_ActiveRequests.request_id, args.requestId));
-	}
-	if (args.model !== undefined) {
-		conditions.push(eq(liteLLM_ActiveRequests.model, args.model));
-	}
-	if (args.modelId !== undefined) {
-		conditions.push(eq(liteLLM_ActiveRequests.model_id, args.modelId));
-	}
-	if (args.endUser !== undefined) {
-		conditions.push(eq(liteLLM_ActiveRequests.end_user, args.endUser));
-	}
-	if (args.sessionId !== undefined) {
-		const needle = args.sessionId.toLowerCase();
-		const activeSessionKey = sql`litellm_session_group_key(${liteLLM_ActiveRequests.metadata}, ${liteLLM_ActiveRequests.session_id}, ${liteLLM_ActiveRequests.request_id})`;
-		conditions.push(
-			sql`(${activeSessionKey} LIKE ${"s:%"} OR ${activeSessionKey} LIKE ${"c:%"}) AND strpos(lower(${activeSessionKey}), ${needle}) > 0`,
-		);
-	}
-	if (args.statusFilter !== undefined && args.statusFilter !== "in_progress") {
-		conditions.push(sql`FALSE`);
-	}
-	if (args.minSpend !== undefined && args.minSpend > 0) {
-		conditions.push(sql`FALSE`);
-	}
-	if (args.maxSpend !== undefined && args.maxSpend < 0) {
-		conditions.push(sql`FALSE`);
-	}
-	if (args.keyAlias !== undefined) {
-		conditions.push(sql`${liteLLM_ActiveRequests.metadata}->>'user_api_key_alias' LIKE ${"%" + args.keyAlias + "%"}`);
-	}
-	if (args.errorCode !== undefined || args.errorMessage !== undefined) {
-		conditions.push(sql`FALSE`);
-	}
-	return and(...conditions);
-}
-
-/**
  * 补全进行中行的会话分组与计数。
  *
  * 进行中的请求还没写 SpendLogs：会话分组来自注册时写入的 `metadata.session_group_key`
@@ -1641,14 +1011,7 @@ async function queryCompletedSessionCounts(
 		return countMap;
 	}
 	try {
-		const sessionCounts = await db
-			.select({
-				session_group_key: liteLLM_SpendLogs.session_group_key,
-				total: sql<number>`COUNT(*)`,
-			})
-			.from(liteLLM_SpendLogs)
-			.where(and(inArray(liteLLM_SpendLogs.session_group_key, groupKeys), visibilityClause))
-			.groupBy(liteLLM_SpendLogs.session_group_key);
+		const sessionCounts = await spendReportingRepositoryFor(db).countSpendLogsBySessionGroup(groupKeys, visibilityClause);
 		for (const row of sessionCounts) {
 			if (typeof row.session_group_key === "string" && row.session_group_key.length > 0) {
 				countMap.set(row.session_group_key, toFiniteNumber(row.total));

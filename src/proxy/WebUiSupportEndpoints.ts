@@ -14,7 +14,6 @@ import { usageDateRange, isUsageAdmin } from "../spend/UsageQuery";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Router } from "express";
-import { and, count, desc, eq, gte, inArray, lt, lte, min, notInArray, sql, type SQL } from "drizzle-orm";
 import { registerRoute } from "../core/api/registerRoute";
 import { UsageActivityCache } from "./UsageActivityCache";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
@@ -22,25 +21,21 @@ import type { ServiceConfig } from "../core/config";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { createModuleLogger } from "../core/utils/logger";
 import type { DrizzleDb } from "../core/db/Database";
-import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
-import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
-import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
-import { liteLLM_DailyTagSpend } from "../db/schema/dailyTagSpend";
-import { liteLLM_DailyTeamSpend } from "../db/schema/dailyTeamSpend";
-import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSpend";
-import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
-import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { subscriptionAccountDisplayName } from "../subscriptions/accountEmail";
 import {
 	localDateForTimestamp,
-	localDayRangeUtc,
 	nextCalendarDay,
 	parseDailyActivityTimezone,
 	type DailyActivityTimezone,
 } from "../spend/DailyActivityTimezone";
-import { LiteLLM_UserTable } from "../db/schema/users";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
-import { ConfigRepository } from "../repositories/ConfigRepository";
+import { configRepositoryFor } from "../repositories/ConfigRepository";
+import { credentialRepositoryFor } from "../repositories/CredentialRepository";
+import {
+	webUiSupportRepositoryFor,
+	type DailyActivityAuthScope,
+	type DailyActivityEntityField,
+	type DailyActivityFilters,
+} from "../repositories/WebUiSupportRepository";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import { buildModelGroupOverrides } from "../router/ModelOverrides";
 import { validateModelGroupAliases } from "../shared/ModelGroupAlias";
@@ -323,29 +318,21 @@ interface DailyActivityRow {
 	readonly api_requests: number | null;
 	readonly successful_requests: number | null;
 	readonly failed_requests: number | null;
+	/** Usage 账号维度：`subscription:<id>` / `credential:<name>` / `key:<hash>` / `unattributed`。 */
+	readonly upstream_account_key?: string | null;
+	/** 账号种类；unassociated/unattributed 时为空。 */
+	readonly upstream_account_kind?: string | null;
+	/** 订阅账号 ID 或 Credential 名。 */
+	readonly upstream_account_id?: string | null;
+	/** 该分组命中的一个 key 指纹，仅用于调试/兜底。 */
+	readonly upstream_key_hash?: string | null;
+	/** 该分组在本区间内实际出现的全部 key 指纹。 */
+	readonly upstream_key_hashes?: readonly string[];
 	readonly [key: string]: unknown;
 }
 
-type DailyActivityTable =
-	| typeof liteLLM_DailyUserSpend
-	| typeof liteLLM_DailyTagSpend
-	| typeof liteLLM_DailyTeamSpend
-	| typeof liteLLM_DailyOrganizationSpend
-	| typeof liteLLM_DailyEndUserSpend
-	| typeof liteLLM_DailyAgentSpend;
-
-type DailyActivityEntityColumn =
-	| typeof liteLLM_DailyUserSpend.user_id
-	| typeof liteLLM_DailyTagSpend.tag
-	| typeof liteLLM_DailyTeamSpend.team_id
-	| typeof liteLLM_DailyOrganizationSpend.organization_id
-	| typeof liteLLM_DailyEndUserSpend.end_user_id
-	| typeof liteLLM_DailyAgentSpend.agent_id;
-
 interface DailyActivityRouteConfig {
-	readonly table: DailyActivityTable;
-	readonly entityField: "user_id" | "tag" | "team_id" | "organization_id" | "end_user_id" | "agent_id";
-	readonly entityColumn: DailyActivityEntityColumn;
+	readonly entityField: DailyActivityEntityField;
 	readonly filterParam: string;
 	readonly singleFilterParam?: string;
 	readonly excludeFilterParam?: string;
@@ -398,7 +385,15 @@ interface DailyActivityResponse {
 }
 
 /** Usage 页面按需加载的聚合维度；full 保留原响应供旧客户端与导出使用。 */
-type DailyActivityDetailView = "models" | "model_groups" | "providers" | "api_keys" | "mcp_servers" | "endpoints" | "entities";
+type DailyActivityDetailView =
+	| "models"
+	| "model_groups"
+	| "providers"
+	| "api_keys"
+	| "mcp_servers"
+	| "endpoints"
+	| "entities"
+	| "upstream_accounts";
 
 type DailyActivityView = "full" | "summary" | DailyActivityDetailView;
 
@@ -492,7 +487,7 @@ function getDailyActivityKeyMetadata(metadataMap: DailyActivityKeyMetadataMap, a
 function addDailyActivityBreakdown(
 	breakdown: DailyActivityResponse["results"][number]["breakdown"],
 	row: DailyActivityRow,
-	entityField: DailyActivityRouteConfig["entityField"],
+	entityField: DailyActivityEntityField,
 	keyMetadataMap: DailyActivityKeyMetadataMap,
 ): void {
 	const keyMetadata = getDailyActivityKeyMetadata(keyMetadataMap, row.api_key);
@@ -537,6 +532,66 @@ function parseDailyActivityPage(value: unknown, fallback: number): number {
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/**
+ * 把请求参数折算成 Usage 查询的过滤条件，并在这里完成鉴权范围裁剪。
+ *
+ * 权限判断留在业务层：仓储只接收「已限定的实体或 Key」。管理员之外的角色按维度锁定
+ * 自己的用户/团队/组织；都没有时退到「只看自己的 Key」，再没有则拒绝请求。
+ * @param config - 当前 Usage 路由的实体配置
+ * @param req - HTTP 请求及认证主体
+ * @param startDate - 起始日（含）
+ * @param endDate - 结束日
+ * @param endExclusive - true 时只取 endDate 之前
+ * @throws {ApiError} 未认证或没有可用 Usage 范围时拒绝查询
+ */
+function buildDailyActivityFilters(
+	config: DailyActivityRouteConfig,
+	req: DailyActivityRequest,
+	startDate: string,
+	endDate: string,
+	endExclusive: boolean,
+): DailyActivityFilters {
+	const auth = req.auth;
+	if (!auth) {
+		throw ApiError.unauthorized("Authentication required");
+	}
+	let authScope: DailyActivityAuthScope | undefined;
+	if (!isUsageAdmin(auth)) {
+		if (config.entityField === "user_id" && auth.user_id) {
+			authScope = { entityId: auth.user_id };
+		} else if (config.entityField === "team_id" && auth.team_id) {
+			authScope = { entityId: auth.team_id };
+		} else if (config.entityField === "organization_id" && auth.user_role === "org_admin" && auth.organization_id) {
+			authScope = { entityId: auth.organization_id };
+		} else if (auth.token) {
+			authScope = { apiKey: auth.token };
+		} else {
+			throw ApiError.forbidden("No accessible usage scope");
+		}
+	}
+	const singleEntityId = config.singleFilterParam ? req.query[config.singleFilterParam] : undefined;
+	const search = req.query["api_key_search"] ?? req.query["key_alias"] ?? req.query["q"];
+	const model = req.query["model"];
+	return {
+		startDate: startDate,
+		endDate: endDate,
+		endExclusive: endExclusive,
+		authScope: authScope,
+		entityIds: parseDailyActivityList(req.query[config.filterParam]),
+		singleEntityId: typeof singleEntityId === "string" && singleEntityId.length > 0 ? singleEntityId : undefined,
+		excludeEntityIds: config.excludeFilterParam ? parseDailyActivityList(req.query[config.excludeFilterParam]) : [],
+		model: typeof model === "string" && model.length > 0 ? model : undefined,
+		apiKeys: parseDailyActivityList(req.query["api_key"]),
+		// 与 Python `ui_view` 一致保留 LIKE 包含匹配；转义用户输入里的通配符。
+		keySearchPattern: typeof search === "string" && search.trim() ? `%${search.trim().replace(/[\\%_]/g, "\\$&")}%` : undefined,
+	};
+}
+
+/**
+ * 读取密钥别名/名称元数据；别名解析失败只降级 metadata，不影响 Usage 页面。
+ * @param db - 数据库连接
+ * @param rows - 已聚合的 Usage 行
+ */
 async function loadDailyActivityKeyMetadata(db: DrizzleDb, rows: readonly DailyActivityRow[]): Promise<DailyActivityKeyMetadataMap> {
 	const apiKeys = [...new Set(rows.map((row) => row.api_key).filter((apiKey) => apiKey.length > 0))];
 	const metadataMap = new Map<string, DailyActivityKeyMetadata>();
@@ -544,15 +599,8 @@ async function loadDailyActivityKeyMetadata(db: DrizzleDb, rows: readonly DailyA
 		return metadataMap;
 	}
 
-	const activeRows = await db
-		.select({
-			token: LiteLLM_VerificationToken.token,
-			keyAlias: LiteLLM_VerificationToken.keyAlias,
-			keyName: LiteLLM_VerificationToken.keyName,
-			teamId: LiteLLM_VerificationToken.teamId,
-		})
-		.from(LiteLLM_VerificationToken)
-		.where(inArray(LiteLLM_VerificationToken.token, apiKeys));
+	const repository = webUiSupportRepositoryFor(db);
+	const activeRows = await repository.listActiveKeyMetadata(apiKeys);
 	for (const row of activeRows) {
 		metadataMap.set(row.token, makeDailyActivityKeyMetadata(row.keyAlias, row.keyName, row.teamId));
 	}
@@ -562,17 +610,7 @@ async function loadDailyActivityKeyMetadata(db: DrizzleDb, rows: readonly DailyA
 		return metadataMap;
 	}
 	try {
-		const deletedRows = await db
-			.select({
-				token: liteLLM_DeletedVerificationToken.token,
-				keyAlias: liteLLM_DeletedVerificationToken.keyAlias,
-				keyName: liteLLM_DeletedVerificationToken.keyName,
-				teamId: liteLLM_DeletedVerificationToken.teamId,
-				deletedAt: liteLLM_DeletedVerificationToken.deletedAt,
-			})
-			.from(liteLLM_DeletedVerificationToken)
-			.where(inArray(liteLLM_DeletedVerificationToken.token, missingApiKeys))
-			.orderBy(desc(liteLLM_DeletedVerificationToken.deletedAt));
+		const deletedRows = await repository.listDeletedKeyMetadata(missingApiKeys);
 		for (const row of deletedRows) {
 			if (!metadataMap.has(row.token)) {
 				metadataMap.set(row.token, makeDailyActivityKeyMetadata(row.keyAlias, row.keyName, row.teamId));
@@ -586,9 +624,89 @@ async function loadDailyActivityKeyMetadata(db: DrizzleDb, rows: readonly DailyA
 	return metadataMap;
 }
 
+/**
+ * 本地时区路径：按调用方日历从原始日志聚合。
+ * @param db - 数据库连接
+ * @param config - 当前 Usage 路由的实体配置
+ * @param req - HTTP 请求及认证主体
+ * @param timezone - 已解析的浏览器时区
+ * @param range - 本地日期范围与视图投影开关
+ */
+async function loadLocalDailyActivityRows(
+	db: DrizzleDb,
+	config: DailyActivityRouteConfig,
+	req: DailyActivityRequest,
+	timezone: DailyActivityTimezone,
+	range: {
+		readonly startDay: string;
+		readonly endDay: string;
+		readonly includeEndpoint: boolean;
+		readonly includeUpstreamAccount: boolean;
+	},
+): Promise<DailyActivityRow[]> {
+	const filters = buildDailyActivityFilters(config, req, range.startDay, range.endDay, false);
+	const rows = await webUiSupportRepositoryFor(db).listLocalDailyActivityRows(config.entityField, filters, {
+		timezone: timezone,
+		includeEndpoint: range.includeEndpoint,
+		includeUpstreamAccount: range.includeUpstreamAccount,
+	});
+	return rows.map((row) => toDailyActivityRow(config, row));
+}
+
+/**
+ * 原始日志已覆盖的最早本地日期；没有原始日志时返回 null。
+ * @param db - 数据库连接
+ * @param timezone - 已解析的请求时区
+ */
+async function loadRawCoverageLocalDay(db: DrizzleDb, timezone: DailyActivityTimezone): Promise<string | null> {
+	const first = await webUiSupportRepositoryFor(db).readRawCoverageFirstTimestamp();
+	return first ? localDateForTimestamp(first, timezone) : null;
+}
+
+/**
+ * 读取原始日志覆盖之前的历史日汇总行。
+ * @param db - 数据库连接
+ * @param config - 当前 Usage 路由的实体配置
+ * @param req - HTTP 请求及认证主体
+ * @param startDate - 起始日（含）
+ * @param beforeDay - 只取该日之前的日汇总行
+ * @param options - 分页参数
+ */
+async function loadDailyActivityFallbackRows(
+	db: DrizzleDb,
+	config: DailyActivityRouteConfig,
+	req: DailyActivityRequest,
+	startDate: string,
+	beforeDay: string,
+	options: { readonly limit: number; readonly offset?: number },
+): Promise<DailyActivityRow[]> {
+	const filters = buildDailyActivityFilters(config, req, startDate, beforeDay, true);
+	const rows = await webUiSupportRepositoryFor(db).listDailyActivityRows(config.entityField, filters, options);
+	return rows as unknown as DailyActivityRow[];
+}
+
+/**
+ * 统计原始日志覆盖之前的历史日汇总行数。
+ * @param db - 数据库连接
+ * @param config - 当前 Usage 路由的实体配置
+ * @param req - HTTP 请求及认证主体
+ * @param startDate - 起始日（含）
+ * @param beforeDay - 只统计该日之前的日汇总行
+ */
+async function countDailyActivityFallbackRows(
+	db: DrizzleDb,
+	config: DailyActivityRouteConfig,
+	req: DailyActivityRequest,
+	startDate: string,
+	beforeDay: string,
+): Promise<number> {
+	const filters = buildDailyActivityFilters(config, req, startDate, beforeDay, true);
+	return webUiSupportRepositoryFor(db).countDailyActivityRows(config.entityField, filters);
+}
+
 function aggregateDailyActivityRows(
 	rows: readonly DailyActivityRow[],
-	entityField: DailyActivityRouteConfig["entityField"],
+	entityField: DailyActivityEntityField,
 	keyMetadataMap: DailyActivityKeyMetadataMap,
 ): DailyActivityResponse["results"] {
 	const grouped = new Map<string, DailyActivityResponse["results"][number]>();
@@ -621,149 +739,32 @@ interface DailyActivityRequest {
 	readonly auth?: UserAPIKeyAuth;
 }
 
-/**
- * 原始 SpendLogs 中用于各 Usage 维度的实体列；tag 通过 JSON 数组展开。
- * @param config - 当前 Usage 路由的实体配置
- * @throws {Error} 实体配置不受支持时拒绝静默使用错误列
- */
-function dailyActivityEntityExpression(config: DailyActivityRouteConfig): SQL {
-	switch (config.entityField) {
-		case "user_id":
-			return sql`${liteLLM_SpendLogs.user}`;
-		case "team_id":
-			return sql`${liteLLM_SpendLogs.team_id}`;
-		case "organization_id":
-			return sql`${liteLLM_SpendLogs.organization_id}`;
-		case "end_user_id":
-			return sql`${liteLLM_SpendLogs.end_user}`;
-		case "agent_id":
-			return sql`${liteLLM_SpendLogs.agent_id}`;
-		case "tag":
-			return sql`request_tag.tag_value`;
-		default:
-			throw new Error(`Unsupported daily activity entity: ${config.entityField}`);
-	}
+/** 本地时区原始日志聚合的范围与投影开关。 */
+interface DailyActivityLocalQueryOptions {
+	/** 本地起始日（含）。 */
+	readonly startDay: string;
+	/** 本地结束日（含）。 */
+	readonly endDay: string;
+	/** 是否投影 endpoint 小列。 */
+	readonly includeEndpoint: boolean;
+	/** 是否 join 上游账号关联表并返回账号维度。 */
+	readonly includeUpstreamAccount: boolean;
 }
 
 /**
- * 用原始 SpendLogs 按调用方本地日历分桶，供带 timezone 的 Usage 请求使用。
- *
- * 日汇总表按 UTC 日期写入，无法把一天拆回另一个时区的当地日历；
- * 直接在带 startTime 索引的原始日志上按“本地日期 + 维度”聚合，才能保证
- * “今天”在本地凌晨、以及跨夏令时的边界都包含正确区间。
- * @param config - 当前 Usage 路由的实体配置
- * @param req - HTTP 请求及认证主体
- * @param timezone - 已解析的浏览器时区
- * @param startDay - 本地起始日（含）
- * @param endDay - 本地结束日（含）
- * @param includeEndpoint - 是否投影 endpoint 小列；summary 不需要该维度时保持 NULL 以减少返回宽度
- * @throws {ApiError} 未认证或没有可用 Usage 范围时拒绝查询
+ * `jsonb_agg` 返回的 key 指纹数组；驱动参数差异由字符串兜底，非法项直接丢弃。
+ * @param value - 查询结果中的 upstream_key_hashes
  */
-function buildLocalDailyActivityQuery(
-	config: DailyActivityRouteConfig,
-	req: DailyActivityRequest,
-	timezone: DailyActivityTimezone,
-	startDay: string,
-	endDay: string,
-	includeEndpoint: boolean,
-): SQL {
-	const logs = liteLLM_SpendLogs;
-	const entityExpression = dailyActivityEntityExpression(config);
-	const conditions: SQL[] = [];
-	const range = timezone.name ? null : localDayRangeUtc(startDay, endDay, timezone.offsetMinutes ?? 0);
-	if (timezone.name) {
-		conditions.push(sql`${logs.startTime} >= ((${startDay}::timestamp AT TIME ZONE ${timezone.name}) AT TIME ZONE 'UTC')`);
-		conditions.push(
-			sql`${logs.startTime} < ((${nextCalendarDay(endDay)}::timestamp AT TIME ZONE ${timezone.name}) AT TIME ZONE 'UTC')`,
-		);
-	} else if (range) {
-		conditions.push(gte(logs.startTime, range.start));
-		conditions.push(sql`${logs.startTime} < ${range.endExclusive}`);
-	}
-
-	if (!req.auth) {
-		throw ApiError.unauthorized("Authentication required");
-	}
-	if (!isUsageAdmin(req.auth)) {
-		if (config.entityField === "user_id" && req.auth.user_id) {
-			conditions.push(sql`${entityExpression} = ${req.auth.user_id}`);
-		} else if (config.entityField === "team_id" && req.auth.team_id) {
-			conditions.push(sql`${entityExpression} = ${req.auth.team_id}`);
-		} else if (config.entityField === "organization_id" && req.auth.user_role === "org_admin" && req.auth.organization_id) {
-			conditions.push(sql`${entityExpression} = ${req.auth.organization_id}`);
-		} else if (req.auth.token) {
-			conditions.push(sql`${logs.api_key} = ${req.auth.token}`);
-		} else {
-			throw ApiError.forbidden("No accessible usage scope");
+function parseDailyActivityKeyHashes(value: unknown): readonly string[] {
+	let parsed: unknown = value;
+	if (typeof value === "string") {
+		try {
+			parsed = JSON.parse(value);
+		} catch {
+			return [];
 		}
 	}
-
-	const entityIds = parseDailyActivityList(req.query[config.filterParam]);
-	const singleEntityId = config.singleFilterParam ? req.query[config.singleFilterParam] : undefined;
-	if (entityIds.length > 0) {
-		conditions.push(sql`${entityExpression} = ANY(${sql.param(entityIds)}::text[])`);
-	} else if (typeof singleEntityId === "string" && singleEntityId.length > 0) {
-		conditions.push(sql`${entityExpression} = ${singleEntityId}`);
-	}
-	if (config.excludeFilterParam) {
-		const excludedIds = parseDailyActivityList(req.query[config.excludeFilterParam]);
-		if (excludedIds.length > 0) {
-			conditions.push(sql`NOT (${entityExpression} = ANY(${sql.param(excludedIds)}::text[]))`);
-		}
-	}
-	if (typeof req.query["model"] === "string" && req.query["model"].length > 0) {
-		conditions.push(sql`${logs.model} = ${req.query["model"]}`);
-	}
-	const apiKeys = parseDailyActivityList(req.query["api_key"]);
-	if (apiKeys.length > 0) {
-		conditions.push(sql`${logs.api_key} = ANY(${sql.param(apiKeys)}::text[])`);
-	}
-	const search = req.query["api_key_search"] ?? req.query["key_alias"] ?? req.query["q"];
-	if (typeof search === "string" && search.trim()) {
-		const pattern = `%${search.trim().replace(/[\\%_]/g, "\\$&")}%`;
-		conditions.push(
-			sql`(${logs.api_key} ILIKE ${pattern} OR EXISTS (SELECT 1 FROM ${LiteLLM_VerificationToken} WHERE ${LiteLLM_VerificationToken.token} = ${logs.api_key} AND (${LiteLLM_VerificationToken.keyAlias} ILIKE ${pattern} OR ${LiteLLM_VerificationToken.keyName} ILIKE ${pattern})) OR EXISTS (SELECT 1 FROM ${liteLLM_DeletedVerificationToken} WHERE ${liteLLM_DeletedVerificationToken.token} = ${logs.api_key} AND (${liteLLM_DeletedVerificationToken.keyAlias} ILIKE ${pattern} OR ${liteLLM_DeletedVerificationToken.keyName} ILIKE ${pattern})))`,
-		);
-	}
-
-	const localDate = timezone.name
-		? sql`to_char((${logs.startTime} AT TIME ZONE 'UTC') AT TIME ZONE ${timezone.name}, 'YYYY-MM-DD')`
-		: sql`to_char(${logs.startTime} + make_interval(mins => ${-(timezone.offsetMinutes ?? 0)}), 'YYYY-MM-DD')`;
-	const tagJoin =
-		config.entityField === "tag"
-			? sql`CROSS JOIN LATERAL (
-				SELECT DISTINCT tag_element AS tag_value
-				FROM jsonb_array_elements_text(COALESCE(${logs.request_tags}, '[]'::jsonb)) AS tag_element
-			) request_tag`
-			: sql``;
-	const where = conditions.length > 0 ? sql.join(conditions, sql` AND `) : sql`TRUE`;
-	// cache token、resolved model group 和 endpoint 都由写入侧投影成小列；
-	// 本地时区聚合不再为每一行解压 metadata / proxy_server_request。
-	const endpointExpression = includeEndpoint ? sql`COALESCE(${logs.endpoint}, '')` : sql`NULL::text`;
-	return sql`
-		SELECT
-			${localDate} AS date,
-			${logs.api_key} AS api_key,
-			COALESCE(${logs.model}, '') AS model,
-			COALESCE(NULLIF(${logs.resolved_model_group}, ''), NULLIF(${logs.model_group}, '')) AS model_group,
-			COALESCE(${logs.custom_llm_provider}, '') AS custom_llm_provider,
-			COALESCE(${logs.mcp_namespaced_tool_name}, '') AS mcp_namespaced_tool_name,
-			${endpointExpression} AS endpoint,
-			${entityExpression} AS ${sql.raw(`"${config.entityField}"`)},
-			COALESCE(SUM(${logs.prompt_tokens}), 0)::bigint AS prompt_tokens,
-			COALESCE(SUM(${logs.completion_tokens}), 0)::bigint AS completion_tokens,
-			COALESCE(SUM(${logs.cache_read_input_tokens}), 0)::bigint AS cache_read_input_tokens,
-			COALESCE(SUM(${logs.cache_creation_input_tokens}), 0)::bigint AS cache_creation_input_tokens,
-			COALESCE(SUM(${logs.spend}), 0)::double precision AS spend,
-			COUNT(*)::bigint AS api_requests,
-			COUNT(*) FILTER (WHERE COALESCE(${logs.status}, 'success') = 'success')::bigint AS successful_requests,
-			COUNT(*) FILTER (WHERE COALESCE(${logs.status}, 'success') = 'failure')::bigint AS failed_requests
-		FROM ${logs}
-		${tagJoin}
-		WHERE ${where}
-		GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
-		ORDER BY 1 DESC
-	`;
+	return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
 
 /**
@@ -789,85 +790,13 @@ function toDailyActivityRow(config: DailyActivityRouteConfig, value: Record<stri
 		api_requests: number(value["api_requests"]),
 		successful_requests: number(value["successful_requests"]),
 		failed_requests: number(value["failed_requests"]),
+		upstream_account_key: value["upstream_account_key"] === null ? null : String(value["upstream_account_key"] ?? ""),
+		upstream_account_kind: value["upstream_account_kind"] === null ? null : String(value["upstream_account_kind"] ?? ""),
+		upstream_account_id: value["upstream_account_id"] === null ? null : String(value["upstream_account_id"] ?? ""),
+		upstream_key_hash: value["upstream_key_hash"] === null ? null : String(value["upstream_key_hash"] ?? ""),
+		upstream_key_hashes: parseDailyActivityKeyHashes(value["upstream_key_hashes"]),
 		[config.entityField]: value[config.entityField] ?? null,
 	} as DailyActivityRow;
-}
-
-async function loadLocalDailyActivityRows(
-	db: DrizzleDb,
-	config: DailyActivityRouteConfig,
-	req: DailyActivityRequest,
-	timezone: DailyActivityTimezone,
-	range: { readonly startDay: string; readonly endDay: string; readonly includeEndpoint: boolean },
-): Promise<DailyActivityRow[]> {
-	const result = (await db.execute(
-		buildLocalDailyActivityQuery(config, req, timezone, range.startDay, range.endDay, range.includeEndpoint),
-	)) as unknown as {
-		readonly rows: ReadonlyArray<Record<string, unknown>>;
-	};
-	return result.rows.map((row) => toDailyActivityRow(config, row));
-}
-
-/**
- * 原始日志已覆盖的最早本地日期；没有原始日志时返回 null。
- * @param db - 数据库连接
- * @param timezone - 已解析的请求时区
- */
-async function loadRawCoverageLocalDay(db: DrizzleDb, timezone: DailyActivityTimezone): Promise<string | null> {
-	const rows = await db.select({ first: min(liteLLM_SpendLogs.startTime) }).from(liteLLM_SpendLogs);
-	const first = rows[0]?.first;
-	return first ? localDateForTimestamp(first, timezone) : null;
-}
-
-/**
- * 读取原始日志覆盖之前的历史日汇总行。
- *
- * 日汇总表按 UTC 日写入但保留时间更长；原始日志只从 TS 服务启用时开始写入。
- * 时区路径必须用这些行补齐早期历史，否则默认 7 天视图会因原始日志保留期而少几天。
- * @param db - 数据库连接
- * @param config - 当前 Usage 路由的实体配置
- * @param req - HTTP 请求及认证主体
- * @param startDate - 起始日（含）
- * @param beforeDay - 只取该日之前的日汇总行
- * @param options - 分页参数
- */
-async function loadDailyActivityFallbackRows(
-	db: DrizzleDb,
-	config: DailyActivityRouteConfig,
-	req: DailyActivityRequest,
-	startDate: string,
-	beforeDay: string,
-	options: { readonly limit: number; readonly offset?: number },
-): Promise<DailyActivityRow[]> {
-	const where = buildDailyActivityDailyWhere(config, req, startDate, beforeDay, true);
-	const rows = await db
-		.select()
-		.from(config.table)
-		.where(where)
-		.orderBy(desc(config.table.date))
-		.limit(options.limit)
-		.offset(options.offset ?? 0);
-	return rows as unknown as DailyActivityRow[];
-}
-
-/**
- * 统计原始日志覆盖之前的历史日汇总行数。
- * @param db - 数据库连接
- * @param config - 当前 Usage 路由的实体配置
- * @param req - HTTP 请求及认证主体
- * @param startDate - 起始日（含）
- * @param beforeDay - 只统计该日之前的日汇总行
- */
-async function countDailyActivityFallbackRows(
-	db: DrizzleDb,
-	config: DailyActivityRouteConfig,
-	req: DailyActivityRequest,
-	startDate: string,
-	beforeDay: string,
-): Promise<number> {
-	const where = buildDailyActivityDailyWhere(config, req, startDate, beforeDay, true);
-	const rows = await db.select({ count: count() }).from(config.table).where(where);
-	return Number(rows[0]?.count ?? 0);
 }
 
 /**
@@ -924,7 +853,8 @@ async function buildDailyActivityResponse(
 	};
 }
 
-const DAILY_ACTIVITY_DETAIL_VIEWS = [
+/** summary 保持原有 7 个维度；账号只是明细视图，不扩大 summary 契约。 */
+const DAILY_ACTIVITY_SUMMARY_VIEWS = [
 	"models",
 	"model_groups",
 	"providers",
@@ -932,6 +862,11 @@ const DAILY_ACTIVITY_DETAIL_VIEWS = [
 	"mcp_servers",
 	"endpoints",
 	"entities",
+] as const satisfies readonly Exclude<DailyActivityDetailView, "upstream_accounts">[];
+
+const DAILY_ACTIVITY_DETAIL_VIEWS = [
+	...DAILY_ACTIVITY_SUMMARY_VIEWS,
+	"upstream_accounts",
 ] as const satisfies readonly DailyActivityDetailView[];
 
 /**
@@ -946,7 +881,7 @@ function parseDailyActivityView(query: Record<string, unknown>): DailyActivityVi
 	}
 	if (typeof value !== "string" || ![...DAILY_ACTIVITY_DETAIL_VIEWS, "summary"].includes(value as DailyActivityView)) {
 		throw ApiError.badRequest(
-			"view must be one of full, summary, models, model_groups, providers, api_keys, mcp_servers, endpoints, entities",
+			"view must be one of full, summary, models, model_groups, providers, api_keys, mcp_servers, endpoints, entities, upstream_accounts",
 		);
 	}
 	return value as DailyActivityView;
@@ -961,7 +896,7 @@ function parseDailyActivityView(query: Record<string, unknown>): DailyActivityVi
 function dailyActivityDimensionValue(
 	row: DailyActivityRow,
 	dimension: DailyActivityDetailView,
-	entityField: DailyActivityRouteConfig["entityField"],
+	entityField: DailyActivityEntityField,
 ): string | null {
 	switch (dimension) {
 		case "models":
@@ -976,6 +911,9 @@ function dailyActivityDimensionValue(
 			return row.mcp_namespaced_tool_name;
 		case "endpoints":
 			return row.endpoint;
+		case "upstream_accounts":
+			// 历史日汇总行没有 key 事实；缺省归到 unattributed，而不是从视图里消失。
+			return row.upstream_account_key || "unattributed";
 		case "entities": {
 			const value = row[entityField];
 			return typeof value === "string" ? value : null;
@@ -1048,7 +986,7 @@ function compareDailyActivityItems(left: DailyActivityDimensionItem, right: Dail
 function aggregateDailyActivityDimensionTotals(
 	rows: readonly DailyActivityRow[],
 	dimension: DailyActivityDetailView,
-	entityField: DailyActivityRouteConfig["entityField"],
+	entityField: DailyActivityEntityField,
 	keyMetadataMap: DailyActivityKeyMetadataMap,
 ): DailyActivityDimensionItem[] {
 	const grouped = new Map<string, { metrics: DailyActivityMetrics; metadata?: Record<string, unknown> }>();
@@ -1082,7 +1020,7 @@ async function buildDailyActivitySummary(
 ): Promise<DailyActivitySummaryResponse> {
 	const keyMetadataMap = await loadDailyActivityKeyMetadata(db, rows);
 	const dimensions = Object.fromEntries(
-		[...DAILY_ACTIVITY_DETAIL_VIEWS].map((dimension) => [
+		[...DAILY_ACTIVITY_SUMMARY_VIEWS].map((dimension) => [
 			dimension,
 			aggregateDailyActivityDimensionTotals(rows, dimension, config.entityField, keyMetadataMap),
 		]),
@@ -1095,11 +1033,165 @@ async function buildDailyActivitySummary(
 	};
 }
 
+/** Usage 账号维度展示所需的窄元数据；不包含任何密钥或完整 payload。 */
+interface DailyActivityAccountMetadata extends Record<string, unknown> {
+	readonly kind: "subscription" | "credential" | "unassociated" | "unattributed";
+	readonly account_id: string;
+	readonly label: string;
+	readonly provider: string;
+	readonly providers: readonly string[];
+	readonly key_count: number;
+	readonly sample_key_hash: string | null;
+	readonly trashed: boolean;
+	readonly deleted: boolean;
+}
+
+/**
+ * 拆分账号分组的稳定键。
+ * @param key - `subscription:<id>` / `credential:<name>` / `key:<hash>` / `unattributed`
+ */
+function parseUpstreamAccountKey(key: string): {
+	readonly kind: "subscription" | "credential" | "key" | "unattributed";
+	readonly id: string;
+} {
+	if (key.startsWith("subscription:")) {
+		return { kind: "subscription", id: key.slice("subscription:".length) };
+	}
+	if (key.startsWith("credential:")) {
+		return { kind: "credential", id: key.slice("credential:".length) };
+	}
+	if (key.startsWith("key:")) {
+		return { kind: "key", id: key.slice("key:".length) };
+	}
+	return { kind: "unattributed", id: "" };
+}
+
+/**
+ * 用当前账号表与 Credential 表补全展示 label。
+ *
+ * 只取 email / account_key / provider 这些窄列；订阅 payload 里有 token，绝不能整段
+ * 读到 Usage 进程内存。账号或 Credential 已删除时仍保留分组，label 降级并标记。
+ * @param db - 数据库连接
+ * @param grouped - 按账号键聚合的 key 指纹与 provider
+ */
+async function loadDailyActivityAccountMetadata(
+	db: DrizzleDb,
+	grouped: ReadonlyMap<string, { readonly keyHashes: ReadonlySet<string>; readonly providers: ReadonlySet<string> }>,
+): Promise<ReadonlyMap<string, DailyActivityAccountMetadata>> {
+	const subscriptionIds = new Set<string>();
+	const credentialNames = new Set<string>();
+	for (const key of grouped.keys()) {
+		const parsed = parseUpstreamAccountKey(key);
+		if (parsed.kind === "subscription") {
+			subscriptionIds.add(parsed.id);
+		} else if (parsed.kind === "credential") {
+			credentialNames.add(parsed.id);
+		}
+	}
+
+	const subscriptions = new Map<
+		string,
+		{
+			readonly email: string | null;
+			readonly label: string | null;
+			readonly accountKey: string;
+			readonly provider: string;
+			readonly trashed: boolean;
+		}
+	>();
+	const credentials = new Map<string, { readonly provider: string | null }>();
+	let lookupFailed = false;
+	try {
+		if (subscriptionIds.size > 0) {
+			const rows = await webUiSupportRepositoryFor(db).listSubscriptionAccountMetadata([...subscriptionIds]);
+			for (const row of rows) {
+				subscriptions.set(row.id, {
+					email: row.email,
+					label: row.label,
+					accountKey: row.accountKey,
+					provider: row.provider,
+					trashed: row.trashedAt !== null,
+				});
+			}
+		}
+		if (credentialNames.size > 0) {
+			const rows = await credentialRepositoryFor(db).listIdentityMetadata([...credentialNames]);
+			for (const row of rows) {
+				credentials.set(row.name, { provider: row.provider });
+			}
+		}
+	} catch (error) {
+		// 账号维度的 label 解析失败不应让整个 Usage 页面不可用；键与花费仍可展示。
+		// 此时无法判断账号是否已删除，不能把查询失败误报成 Deleted。
+		lookupFailed = true;
+		logger.warn("Daily Activity upstream account metadata 查询失败，使用 ID 降级", {
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+
+	const result = new Map<string, DailyActivityAccountMetadata>();
+	for (const [key, item] of grouped) {
+		const parsed = parseUpstreamAccountKey(key);
+		const providers = [...item.providers].filter((provider) => provider.length > 0).sort();
+		const firstProvider = providers[0] ?? "";
+		const keyHashes = [...item.keyHashes].sort();
+		const sampleKeyHash = keyHashes[0] ?? null;
+		let kind: DailyActivityAccountMetadata["kind"] = "unattributed";
+		let accountId = "";
+		let label = "Not recorded";
+		let provider = firstProvider;
+		let trashed = false;
+		let deleted = false;
+		if (parsed.kind === "subscription") {
+			const account = subscriptions.get(parsed.id);
+			kind = "subscription";
+			accountId = parsed.id;
+			provider = account?.provider ?? firstProvider;
+			label = subscriptionAccountDisplayName({
+				email: account?.email,
+				label: account?.label,
+				accountKey: account?.accountKey,
+				provider: provider,
+				id: parsed.id,
+			});
+			trashed = account?.trashed ?? false;
+			deleted = account === undefined && !lookupFailed;
+		} else if (parsed.kind === "credential") {
+			const credential = credentials.get(parsed.id);
+			kind = "credential";
+			accountId = parsed.id;
+			provider = credential?.provider ?? firstProvider;
+			label = parsed.id;
+			deleted = credential === undefined && !lookupFailed;
+		} else if (parsed.kind === "key") {
+			kind = "unassociated";
+			accountId = parsed.id;
+			label = `Unassociated key ${parsed.id.slice(0, 8)}`;
+		}
+		result.set(key, {
+			kind: kind,
+			account_id: accountId,
+			label: label,
+			provider: providers.length > 1 ? "multiple" : provider,
+			providers: providers,
+			key_count: keyHashes.length,
+			sample_key_hash: sampleKeyHash,
+			trashed: trashed,
+			deleted: deleted,
+		});
+	}
+	return result;
+}
+
 interface MutableDailyActivityDetailItem {
 	readonly metrics: DailyActivityMetrics;
 	readonly daily: Map<string, DailyActivityMetrics>;
 	readonly topApiKeys: Map<string, DailyActivityMetrics>;
 	readonly topModels: Map<string, DailyActivityMetrics>;
+	/** 该账号在区间内实际出现过的 key 指纹。 */
+	readonly keyHashes: Set<string>;
+	/** 该账号在区间内实际使用的 provider。 */
+	readonly providers: Set<string>;
 }
 
 /**
@@ -1131,7 +1223,20 @@ async function buildDailyActivityDetail(
 			daily: new Map<string, DailyActivityMetrics>(),
 			topApiKeys: new Map<string, DailyActivityMetrics>(),
 			topModels: new Map<string, DailyActivityMetrics>(),
+			keyHashes: new Set<string>(),
+			providers: new Set<string>(),
 		};
+		if (view === "upstream_accounts") {
+			for (const hash of row.upstream_key_hashes ?? []) {
+				item.keyHashes.add(hash);
+			}
+			if (row.upstream_key_hash) {
+				item.keyHashes.add(row.upstream_key_hash);
+			}
+			if (row.custom_llm_provider) {
+				item.providers.add(row.custom_llm_provider);
+			}
+		}
 		addDailyActivityMetrics(item.metrics, row);
 		const day = item.daily.get(row.date) ?? makeDailyActivityMetrics();
 		addDailyActivityMetrics(day, row);
@@ -1141,20 +1246,21 @@ async function buildDailyActivityDetail(
 			addDailyActivityMetrics(nested, row);
 			item.topApiKeys.set(row.api_key, nested);
 		}
-		if (view === "api_keys" && row.model) {
+		if ((view === "api_keys" || view === "upstream_accounts") && row.model) {
 			const nested = item.topModels.get(row.model) ?? makeDailyActivityMetrics();
 			addDailyActivityMetrics(nested, row);
 			item.topModels.set(row.model, nested);
 		}
 		grouped.set(key, item);
 	}
+	const accountMetadata = view === "upstream_accounts" ? await loadDailyActivityAccountMetadata(db, grouped) : undefined;
 
 	const items = [...grouped.entries()]
 		.map(([key, item]) => {
 			const result: DailyActivityDetailItem = {
 				key: key,
 				metrics: item.metrics,
-				metadata: view === "api_keys" ? getDailyActivityKeyMetadata(keyMetadataMap, key) : undefined,
+				metadata: view === "api_keys" ? getDailyActivityKeyMetadata(keyMetadataMap, key) : accountMetadata?.get(key),
 				daily: [...item.daily.entries()]
 					.map(([date, metrics]) => ({ date: date, metrics: metrics }))
 					.sort((left, right) => left.date.localeCompare(right.date)),
@@ -1189,73 +1295,6 @@ async function buildDailyActivityDetail(
 }
 
 /**
- * 构造日汇总表的 Usage 查询条件；时区路径只把原始日志尚未覆盖的历史日期交给它。
- * @param config - 当前 Usage 路由的实体配置
- * @param req - HTTP 请求及认证主体
- * @param startDate - 起始日（含）
- * @param endDate - 结束日；endExclusive=false 时含当日
- * @param endExclusive - true 时只取 endDate 之前
- * @throws {ApiError} 未认证或没有可用 Usage 范围时拒绝查询
- */
-function buildDailyActivityDailyWhere(
-	config: DailyActivityRouteConfig,
-	req: DailyActivityRequest,
-	startDate: string,
-	endDate: string,
-	endExclusive = false,
-): SQL {
-	const conditions: SQL[] = [
-		gte(config.table.date, startDate),
-		endExclusive ? lt(config.table.date, endDate) : lte(config.table.date, endDate),
-	];
-	if (!req.auth) {
-		throw ApiError.unauthorized("Authentication required");
-	}
-	if (!isUsageAdmin(req.auth)) {
-		if (config.entityField === "user_id" && req.auth.user_id) {
-			conditions.push(eq(config.entityColumn, req.auth.user_id));
-		} else if (config.entityField === "team_id" && req.auth.team_id) {
-			conditions.push(eq(config.entityColumn, req.auth.team_id));
-		} else if (config.entityField === "organization_id" && req.auth.user_role === "org_admin" && req.auth.organization_id) {
-			conditions.push(eq(config.entityColumn, req.auth.organization_id));
-		} else if (req.auth.token) {
-			conditions.push(eq(config.table.api_key, req.auth.token));
-		} else {
-			throw ApiError.forbidden("No accessible usage scope");
-		}
-	}
-	const entityIds = parseDailyActivityList(req.query[config.filterParam]);
-	const singleEntityId = config.singleFilterParam ? req.query[config.singleFilterParam] : undefined;
-	if (entityIds.length > 0) {
-		conditions.push(inArray(config.entityColumn, entityIds));
-	} else if (typeof singleEntityId === "string" && singleEntityId.length > 0) {
-		conditions.push(eq(config.entityColumn, singleEntityId));
-	}
-	if (config.excludeFilterParam) {
-		const excludedIds = parseDailyActivityList(req.query[config.excludeFilterParam]);
-		if (excludedIds.length > 0) {
-			conditions.push(notInArray(config.entityColumn, excludedIds));
-		}
-	}
-	if (typeof req.query["model"] === "string" && req.query["model"].length > 0) {
-		conditions.push(eq(config.table.model, req.query["model"]));
-	}
-	const apiKeys = parseDailyActivityList(req.query["api_key"]);
-	if (apiKeys.length > 0) {
-		conditions.push(inArray(config.table.api_key, apiKeys));
-	}
-
-	const search = req.query["api_key_search"] ?? req.query["key_alias"] ?? req.query["q"];
-	if (typeof search === "string" && search.trim()) {
-		const pattern = `%${search.trim().replace(/[\\%_]/g, "\\$&")}%`;
-		conditions.push(
-			sql`(${config.table.api_key} ILIKE ${pattern} OR EXISTS (SELECT 1 FROM ${LiteLLM_VerificationToken} WHERE ${LiteLLM_VerificationToken.token} = ${config.table.api_key} AND (${LiteLLM_VerificationToken.keyAlias} ILIKE ${pattern} OR ${LiteLLM_VerificationToken.keyName} ILIKE ${pattern})) OR EXISTS (SELECT 1 FROM ${liteLLM_DeletedVerificationToken} WHERE ${liteLLM_DeletedVerificationToken.token} = ${config.table.api_key} AND (${liteLLM_DeletedVerificationToken.keyAlias} ILIKE ${pattern} OR ${liteLLM_DeletedVerificationToken.keyName} ILIKE ${pattern})))`,
-		);
-	}
-	return and(...conditions)!;
-}
-
-/**
  * 原始 Usage 行的缓存键。
  *
  * 缓存的是未按视图裁剪的原始行，因此必须把鉴权范围、时区和所有过滤条件都纳入键；
@@ -1263,17 +1302,13 @@ function buildDailyActivityDailyWhere(
  * @param config - 当前 Usage 路由的实体配置
  * @param req - HTTP 请求及认证主体
  * @param timezone - 已解析的浏览器时区
- * @param rawStartDay - 原始日志实际查询的本地起始日；早于覆盖范围的请求共用同一份缓存
- * @param endDay - 本地结束日（含）
- * @param includeEndpoint - 本视图是否返回 endpoint 维度
+ * @param options - 原始日志覆盖范围与本视图投影开关；早于覆盖范围的请求共用同一份缓存
  */
 function dailyActivityRowsCacheKey(
 	config: DailyActivityRouteConfig,
 	req: DailyActivityRequest,
 	timezone: DailyActivityTimezone,
-	rawStartDay: string,
-	endDay: string,
-	includeEndpoint: boolean,
+	options: DailyActivityLocalQueryOptions,
 ): string {
 	const auth = req.auth;
 	const single = config.singleFilterParam ? req.query[config.singleFilterParam] : undefined;
@@ -1283,9 +1318,10 @@ function dailyActivityRowsCacheKey(
 		config.filterParam,
 		config.singleFilterParam ?? "",
 		config.excludeFilterParam ?? "",
-		rawStartDay,
-		endDay,
-		includeEndpoint,
+		options.startDay,
+		options.endDay,
+		options.includeEndpoint,
+		options.includeUpstreamAccount,
 		timezone.name ?? "",
 		timezone.offsetMinutes ?? null,
 		auth?.user_role ?? "",
@@ -1321,11 +1357,20 @@ function buildDailyActivityHandler(
 		if (view !== "full" && !aggregated) {
 			throw ApiError.badRequest("view is only supported on the aggregated Usage endpoint");
 		}
+		if (view === "upstream_accounts" && (!req.auth || !isUsageAdmin(req.auth))) {
+			// 上游账号是跨 Key 的供应商身份，不能暴露给普通 Key 的使用者。
+			throw new ApiError(HTTP_FORBIDDEN, "Upstream account view requires admin access");
+		}
+		if (view === "upstream_accounts" && !timezone) {
+			// 历史日汇总表没有 key 事实，无法回填账号；拒绝比返回一半错误数据更安全。
+			throw ApiError.badRequest("Upstream account view requires a timezone");
+		}
 		const page = aggregated ? DAILY_ACTIVITY_DEFAULT_PAGE : parseDailyActivityPage(req.query["page"], DAILY_ACTIVITY_DEFAULT_PAGE);
 		const pageSize = Math.min(1000, parseDailyActivityPage(req.query["page_size"], 50));
 		// endpoint 已由 0019 迁移投影为小列；仍只在 Endpoint 页和完整导出返回该维度，
 		// summary/其它明细页保持 NULL，既维持现有 API 契约也减少返回宽度。
 		const includeEndpoint = !aggregated || view === "endpoints" || view === "full";
+		const includeUpstreamAccount = aggregated && view === "upstream_accounts";
 
 		if (timezone) {
 			// 原始日志从 TS 服务开始写入时才有数据；早于它覆盖范围的历史交给日汇总表。
@@ -1335,12 +1380,20 @@ function buildDailyActivityHandler(
 			const rawStartDay = firstRawDay && range.startDay <= firstRawDay ? firstRawDay : range.startDay;
 			const hasRawRange = firstRawDay === null || rawStartDay <= range.endDay;
 			const rawRows = hasRawRange
-				? await rowsCache.get(dailyActivityRowsCacheKey(config, req, timezone, rawStartDay, range.endDay, includeEndpoint), () =>
-						loadLocalDailyActivityRows(db, config, req, timezone, {
+				? await rowsCache.get(
+						dailyActivityRowsCacheKey(config, req, timezone, {
 							startDay: rawStartDay,
 							endDay: range.endDay,
 							includeEndpoint: includeEndpoint,
+							includeUpstreamAccount: includeUpstreamAccount,
 						}),
+						() =>
+							loadLocalDailyActivityRows(db, config, req, timezone, {
+								startDay: rawStartDay,
+								endDay: range.endDay,
+								includeEndpoint: includeEndpoint,
+								includeUpstreamAccount: includeUpstreamAccount,
+							}),
 					)
 				: [];
 			const rows = rawStartDay === range.startDay ? rawRows : rawRows.filter((row) => row.date >= range.startDay);
@@ -1400,13 +1453,14 @@ function buildDailyActivityHandler(
 			});
 		}
 
-		const where = buildDailyActivityDailyWhere(config, req, startDate, endDate);
-		const countRows = await db.select({ count: count() }).from(config.table).where(where);
-		const totalCount = Number(countRows[0]?.count ?? 0);
-		const baseQuery = db.select().from(config.table).where(where).orderBy(desc(config.table.date));
-		const selectedRows = aggregated
-			? await baseQuery.limit(DAILY_ACTIVITY_MAX_SOURCE_ROWS + 1)
-			: await baseQuery.limit(pageSize).offset((page - 1) * pageSize);
+		const filters = buildDailyActivityFilters(config, req, startDate, endDate, false);
+		const repository = webUiSupportRepositoryFor(db);
+		const totalCount = await repository.countDailyActivityRows(config.entityField, filters);
+		const selectedRows = (await repository.listDailyActivityRows(
+			config.entityField,
+			filters,
+			aggregated ? { limit: DAILY_ACTIVITY_MAX_SOURCE_ROWS + 1 } : { limit: pageSize, offset: (page - 1) * pageSize },
+		)) as unknown as DailyActivityRow[];
 		const rows = includeEndpoint ? selectedRows : hideDailyActivityEndpoints(selectedRows);
 		if (aggregated && rows.length > DAILY_ACTIVITY_MAX_SOURCE_ROWS) {
 			throw ApiError.badRequest("Too many usage rows; narrow the date range or entity filters");
@@ -1898,7 +1952,7 @@ export function registerWebUiSupportRoutes(
 	litellmRouter?: LiteLLMRouter,
 	credentialService?: BuiltinCapabilityCredentialLister,
 ): void {
-	const configRepository = new ConfigRepository(db);
+	const configRepository = configRepositoryFor(db);
 
 	// 注：/get/ui_settings、/get/ui_theme_settings、/sso/get/ui_settings、/get_image
 	// 等无需鉴权的端点已移到 registerWebUiSupportPublicRoutes
@@ -2306,16 +2360,13 @@ export function registerWebUiSupportRoutes(
 	 * 本部署无企业许可，上限字段为 null（前端按“无上限”展示）。
 	 */
 	registerRoute(router, { method: "get", path: "/user/available_users" }, async () => {
-		const [userRows, teamRows] = await Promise.all([
-			db.select({ value: count() }).from(LiteLLM_UserTable),
-			db.select({ value: count() }).from(LiteLLM_TeamTable),
-		]);
+		const usage = await webUiSupportRepositoryFor(db).countUsersAndTeams();
 		return {
 			total_users: null,
-			total_users_used: Number(userRows[0]?.value ?? 0),
+			total_users_used: usage.users,
 			total_users_remaining: null,
 			total_teams: null,
-			total_teams_used: Number(teamRows[0]?.value ?? 0),
+			total_teams_used: usage.teams,
 			total_teams_remaining: null,
 		};
 	});
@@ -2369,9 +2420,7 @@ export function registerWebUiSupportRoutes(
 	});
 
 	const userDailyActivity: DailyActivityRouteConfig = {
-		table: liteLLM_DailyUserSpend,
 		entityField: "user_id",
-		entityColumn: liteLLM_DailyUserSpend.user_id,
 		filterParam: "user_ids",
 		singleFilterParam: "user_id",
 	};
@@ -2379,18 +2428,14 @@ export function registerWebUiSupportRoutes(
 		[
 			"/tag/daily/activity",
 			{
-				table: liteLLM_DailyTagSpend,
 				entityField: "tag",
-				entityColumn: liteLLM_DailyTagSpend.tag,
 				filterParam: "tags",
 			},
 		],
 		[
 			"/team/daily/activity",
 			{
-				table: liteLLM_DailyTeamSpend,
 				entityField: "team_id",
-				entityColumn: liteLLM_DailyTeamSpend.team_id,
 				filterParam: "team_ids",
 				excludeFilterParam: "exclude_team_ids",
 			},
@@ -2398,27 +2443,21 @@ export function registerWebUiSupportRoutes(
 		[
 			"/organization/daily/activity",
 			{
-				table: liteLLM_DailyOrganizationSpend,
 				entityField: "organization_id",
-				entityColumn: liteLLM_DailyOrganizationSpend.organization_id,
 				filterParam: "organization_ids",
 			},
 		],
 		[
 			"/customer/daily/activity",
 			{
-				table: liteLLM_DailyEndUserSpend,
 				entityField: "end_user_id",
-				entityColumn: liteLLM_DailyEndUserSpend.end_user_id,
 				filterParam: "end_user_ids",
 			},
 		],
 		[
 			"/agent/daily/activity",
 			{
-				table: liteLLM_DailyAgentSpend,
 				entityField: "agent_id",
-				entityColumn: liteLLM_DailyAgentSpend.agent_id,
 				filterParam: "agent_ids",
 			},
 		],

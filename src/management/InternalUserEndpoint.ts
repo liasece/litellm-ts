@@ -7,16 +7,19 @@
 
 import { randomUUID } from "crypto";
 import type { Router, Request, RequestHandler } from "express";
-import { eq, and, inArray, isNull, ne, or } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
-import { LiteLLM_UserTable } from "../db/schema/users";
-import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
-import { LiteLLM_ObjectPermissionTable } from "../db/schema/object-permissions";
-import { LiteLLM_OrganizationMembership } from "../db/schema/organization-memberships";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
-import { LiteLLM_TeamMembership } from "../db/schema/team-memberships";
+import { keyRepositoryFor } from "../repositories/KeyRepository";
+import type { KeyRow as VerificationTokenRow } from "../repositories/KeyRepository";
+import { objectPermissionRepositoryFor } from "../repositories/ObjectPermissionRepository";
+import type { ObjectPermissionRow } from "../repositories/ObjectPermissionRepository";
+import { organizationRepositoryFor } from "../repositories/OrganizationRepository";
+import type { OrganizationMembershipRow } from "../repositories/OrganizationRepository";
+import { teamRepositoryFor } from "../repositories/TeamRepository";
+import { userRepositoryFor } from "../repositories/UserRepository";
+import type { UserRow, UserUpdateValues } from "../repositories/UserRepository";
+import { WEBUI_LOGIN_TEAM_ID } from "../types/webUiSession";
 import { createModuleLogger } from "../core/utils/logger";
 import { firstQueryString, parsePositiveInt } from "../core/api/queryParams";
 import { generateApiKey, hashApiKey } from "../core/utils/crypto";
@@ -29,7 +32,6 @@ import {
 	toPythonOrganizationMembership,
 	toPythonTeamRow,
 } from "./pythonRowSerializers";
-import { WEBUI_LOGIN_TEAM_ID } from "../types/webUiSession";
 
 const logger = createModuleLogger("Management:User");
 const EMPTY_STRING_ARRAY: readonly string[] = [];
@@ -62,11 +64,6 @@ enum UserSortField {
 	CREATED_AT = "created_at",
 	UPDATED_AT = "updated_at",
 }
-
-type UserRow = typeof LiteLLM_UserTable.$inferSelect;
-type VerificationTokenRow = typeof LiteLLM_VerificationToken.$inferSelect;
-type ObjectPermissionRow = typeof LiteLLM_ObjectPermissionTable.$inferSelect;
-type OrganizationMembershipRow = typeof LiteLLM_OrganizationMembership.$inferSelect;
 
 /** 用户排序值类型，用 enum 避免内部判别字段退化为裸字符串联合。 */
 enum UserSortValueKind {
@@ -394,13 +391,15 @@ export function createInternalUserRoutes(router: Router, db: DrizzleDb, authMidd
 			// Python: user_id 缺省时自动生成 uuid（internal_user_endpoints.py _update_internal_new_user_params）
 			const user_id = typeof rawUserId === "string" && rawUserId.length > 0 ? rawUserId : randomUUID();
 
+			const userRepository = userRepositoryFor(db);
+
 			// 检查重复
-			const existing = await db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, user_id)).limit(1);
-			if (existing.length > 0) {
+			const existing = await userRepository.findById(user_id);
+			if (existing !== null) {
 				throw ApiError.conflict(`User already exists: ${user_id}`);
 			}
 
-			await db.insert(LiteLLM_UserTable).values({
+			await userRepository.insert({
 				userId: user_id,
 				userAlias: (user_alias as string | undefined) ?? null,
 				teamId: (team_id as string | undefined) ?? null,
@@ -440,7 +439,7 @@ export function createInternalUserRoutes(router: Router, db: DrizzleDb, authMidd
 				keyName =
 					typeof body["key_name"] === "string" && body["key_name"].length > 0 ? body["key_name"] : `sk-...${plainKey.slice(-4)}`;
 
-				await db.insert(LiteLLM_VerificationToken).values({
+				await keyRepositoryFor(db).create({
 					token: tokenHash,
 					keyAlias: (body["key_alias"] as string | undefined) ?? null,
 					keyName: keyName,
@@ -501,12 +500,13 @@ export function createInternalUserRoutes(router: Router, db: DrizzleDb, authMidd
 				throw ApiError.badRequest("user_id is required");
 			}
 
-			const existing = await db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, user_id)).limit(1);
-			if (existing.length === 0) {
+			const userRepository = userRepositoryFor(db);
+			const existing = await userRepository.findById(user_id);
+			if (existing === null) {
 				throw ApiError.notFound(`User not found: ${user_id}`);
 			}
 
-			const updateFields: Record<string, unknown> = {};
+			const updateFields: UserUpdateValues = {};
 			if (updates.user_alias !== undefined) {
 				updateFields.userAlias = updates.user_alias;
 			}
@@ -541,19 +541,19 @@ export function createInternalUserRoutes(router: Router, db: DrizzleDb, authMidd
 				updateFields.budgetDuration = updates.budget_duration;
 			}
 
-			await db
-				.update(LiteLLM_UserTable)
-				.set({ ...updateFields, updatedAt: new Date() })
-				.where(eq(LiteLLM_UserTable.userId, user_id));
+			await userRepository.updateById(user_id, { ...updateFields, updatedAt: new Date() });
 
 			logger.info(`User updated: ${user_id}`);
 
-			// 重查更新后完整行，序列化为 Python 31 键用户对象
-			const updatedRows = await db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, user_id)).limit(1);
+			// 重查更新后完整行（写路径已失效缓存），序列化为 Python 31 键用户对象
+			const updatedRow = await userRepository.findById(user_id);
+			if (updatedRow === null) {
+				throw ApiError.notFound(`User not found: ${user_id}`);
+			}
 			return {
 				user_id: user_id,
 				// Python /user/update 实测：organization_memberships 为 null（不带关联）
-				data: toPythonInternalUserRow(updatedRows[0]!, { organizationMemberships: null }),
+				data: toPythonInternalUserRow(updatedRow, { organizationMemberships: null }),
 			};
 		}),
 	);
@@ -575,23 +575,25 @@ export function createInternalUserRoutes(router: Router, db: DrizzleDb, authMidd
 				throw ApiError.badRequest("No user id passed in");
 			}
 
+			const userRepository = userRepositoryFor(db);
+
 			// Python: 逐个校验存在性，任一不存在即 404
 			for (const userId of userIds) {
-				const rows = await db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, userId)).limit(1);
-				if (rows.length === 0) {
+				if ((await userRepository.findById(userId)) === null) {
 					throw ApiError.notFound(`User not found, passed user_id=${userId}`);
 				}
 			}
 
-			// Python: 级联删除用户名下 keys、组织成员关系、团队成员关系
-			await db.delete(LiteLLM_VerificationToken).where(inArray(LiteLLM_VerificationToken.userId, userIds));
-			await db.delete(LiteLLM_OrganizationMembership).where(inArray(LiteLLM_OrganizationMembership.userId, userIds));
-			await db.delete(LiteLLM_TeamMembership).where(inArray(LiteLLM_TeamMembership.userId, userIds));
-			const result = await db.delete(LiteLLM_UserTable).where(inArray(LiteLLM_UserTable.userId, userIds));
+			// Python: 级联删除用户名下 keys、组织成员关系、团队成员关系。
+			// 每个删除动作都按 user 标签清掉鉴权缓存，删号后下一次请求不会读到旧身份。
+			await keyRepositoryFor(db).deleteByUserIds(userIds);
+			await organizationRepositoryFor(db).deleteMembershipsByUserIds(userIds);
+			await teamRepositoryFor(db).deleteMembershipsByUserIds(userIds);
+			const deletedCount = await userRepository.deleteByIds(userIds);
 
-			logger.info(`Users deleted: count=${result.rowCount ?? userIds.length}`);
+			logger.info(`Users deleted: count=${deletedCount}`);
 
-			return result.rowCount ?? userIds.length;
+			return deletedCount;
 		}),
 	);
 
@@ -610,48 +612,30 @@ export function createInternalUserRoutes(router: Router, db: DrizzleDb, authMidd
 				throw ApiError.badRequest("user_id is required");
 			}
 
-			const rows = await db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, userId)).limit(1);
-			if (rows.length === 0) {
+			const userRow = await userRepositoryFor(db).findById(userId);
+			if (userRow === null) {
 				throw ApiError.notFound(`User ${userId} not found`);
 			}
-			const userRow = rows[0]!;
 
 			// 组织成员关系（/user/info 实测为空数组 []，而非 null）
-			const membershipRows = await db
-				.select()
-				.from(LiteLLM_OrganizationMembership)
-				.where(eq(LiteLLM_OrganizationMembership.userId, userId));
+			const membershipRows = await organizationRepositoryFor(db).listMembershipsByUserId(userId);
 			const organizationMemberships = membershipRows.map(toPythonOrganizationMembership);
 
 			// 对象权限关联
 			let objectPermissionRow = null;
 			if (userRow.objectPermissionId !== null) {
-				const permissionRows = await db
-					.select()
-					.from(LiteLLM_ObjectPermissionTable)
-					.where(eq(LiteLLM_ObjectPermissionTable.objectPermissionId, userRow.objectPermissionId))
-					.limit(1);
-				objectPermissionRow = permissionRows[0] ?? null;
+				objectPermissionRow = await objectPermissionRepositoryFor(db).findById(userRow.objectPermissionId);
 			}
 
 			// 团队列表：用户 teams 字段 + 团队成员关系指向的 team，按 team_alias 排序
-			const teamMembershipRows = await db.select().from(LiteLLM_TeamMembership).where(eq(LiteLLM_TeamMembership.userId, userId));
+			const teamMembershipRows = await teamRepositoryFor(db).listMembershipsByUserId(userId);
 			const teamIds = Array.from(new Set([...(userRow.teams ?? []), ...teamMembershipRows.map((membership) => membership.teamId)]));
-			const teamRows =
-				teamIds.length > 0 ? await db.select().from(LiteLLM_TeamTable).where(inArray(LiteLLM_TeamTable.teamId, teamIds)) : [];
+			const teamRows = teamIds.length > 0 ? await teamRepositoryFor(db).listByIds(teamIds) : [];
 			const teamsById = new Map(teamRows.map((team) => [team.teamId, team]));
 			const sortedTeamRows = [...teamRows].sort((left, right) => (left.teamAlias ?? "").localeCompare(right.teamAlias ?? ""));
 
 			// 用户名下 keys（排除 WebUI 登录会话 team）
-			const tokenRows = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(
-					and(
-						eq(LiteLLM_VerificationToken.userId, userId),
-						or(isNull(LiteLLM_VerificationToken.teamId), ne(LiteLLM_VerificationToken.teamId, WEBUI_LOGIN_TEAM_ID)),
-					),
-				);
+			const tokenRows = await keyRepositoryFor(db).listActiveByUserId(userId);
 			const keys = tokenRows.map((tokenRow) => {
 				const teamAlias = tokenRow.teamId === null ? PYTHON_NO_TEAM_ALIAS : (teamsById.get(tokenRow.teamId)?.teamAlias ?? null);
 				return toPythonKeyManagementRow(tokenRow, { includeToken: true, teamAlias: teamAlias });
@@ -676,10 +660,10 @@ export function createInternalUserRoutes(router: Router, db: DrizzleDb, authMidd
 		authed(async (req) => {
 			// 关联数据一次性取全表，内存 join（与该端点既有的内存过滤/分页策略一致）
 			const [rows, tokens, objectPermissions, memberships] = await Promise.all([
-				db.select().from(LiteLLM_UserTable),
-				db.select().from(LiteLLM_VerificationToken),
-				db.select().from(LiteLLM_ObjectPermissionTable),
-				db.select().from(LiteLLM_OrganizationMembership),
+				userRepositoryFor(db).listAll(),
+				keyRepositoryFor(db).listAll(),
+				objectPermissionRepositoryFor(db).listAll(),
+				organizationRepositoryFor(db).listMemberships(null),
 			]);
 			const membershipsByUserId = new Map<string, OrganizationMembershipRow[]>();
 			for (const membership of memberships) {

@@ -10,3 +10,5 @@ export { liteLLM_SpendLogBlocks } from "./spendLogBlocks";
 export { imageCompletions, imageCompletionAnchors } from "./imageCompletions";
 export { LiteLLM_UpstreamModelMeta } from "./upstreamModelMeta";
 export { LiteLLM_SubscriptionAccount } from "./subscriptionAccounts";
+export { LiteLLM_SubscriptionAccountState } from "./subscriptionAccountState";
+export { LiteLLM_UpstreamKeyAccount } from "./upstreamKeyAccount";

@@ -19,7 +19,7 @@ import { CallType, SpendLogStatus } from "../types/spend";
 import type { ModelResponse } from "../types/openai";
 import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
 import { getUpstreamLogContext } from "../router/UpstreamLogContext";
-import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import type { DeploymentSpendInfo } from "../types/spendInfo";
 import { createModuleLogger } from "../core/utils/logger";
 
 const logger = createModuleLogger("Proxy:Image");

@@ -20,6 +20,7 @@ import { createModuleLogger } from "../core/utils/logger";
 import { applyLiveCheckpointToDetail, buildActiveRequestDetail, buildUiSpendLogDetail, readActiveRequestRevision } from "./UiLogDetail";
 import { subscribeLiveResponse } from "./LiveResponseRegistry";
 import { LOG_STREAM_SUBPROTOCOL } from "./logStreamProtocol";
+import { filterVisibleSpendRequestIds } from "./spendVisibility";
 
 const logger = createModuleLogger("Spend:LogStream");
 
@@ -305,6 +306,12 @@ export function registerSpendLogStreamWebSocket(server: HttpServer, container: S
 			const req = expressRequest(incoming, url.pathname, url.searchParams);
 			await runMiddleware(container.authMiddleware, req);
 			await runMiddleware(container.authorizationGuard.middleware("spend"), req);
+			// 日志流与详情接口共用同一可见性边界；否则知道 request_id 的低权限连接
+			// 可以绕过 HTTP 详情裁剪，持续拿到别人的在途正文。
+			const visible = await filterVisibleSpendRequestIds(container.db.db, req.auth, [requestId]);
+			if (!visible.has(requestId)) {
+				throw ApiError.notFound("Spend log not found");
+			}
 			webSocketServer.handleUpgrade(incoming, socket, head, (downstream) => {
 				openStreams += 1;
 				void streamSpendLogDetail(downstream, requestId, container.db.db, deps)

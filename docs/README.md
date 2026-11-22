@@ -14,9 +14,11 @@
 
 | 文档 | 用途 |
 | --- | --- |
+| [持久层](persistence.md) | 每张表一个仓储、三类缓存形态与写穿/失效矩阵、单实例前提与一致性窗口 |
 | [订阅运行时](agent-guides/subscription-runtime.md) | 进程内订阅 Provider 的账号、调度、协议桥与排查方法 |
 | [隐私脱敏](privacy-redaction.md) | 请求发出前的占位符替换与响应还原、生效范围、已知边界 |
 | [日志能力标记](logs-applied-features.md) | Logs 列表 Feature 列的 id 契约、记录点、fallback 派生与前端呈现 |
+| [公司 Key 只读成本 API](cost-read-api.md) | 普通虚拟密钥按 request_id / 时间窗口核对费用；鉴权、字段、错误与 cc-server 消费方式 |
 | [观测性](observability.md) | 指标目录、请求阶段划分、日志分级、排查顺序；`/metrics` 三端点的语义 |
 | [启动链路](startup.md) | 启动关键路径与预热划分、一次冷启动的时间线；其中 CLIProxy 子进程段落已过期 |
 | [Fallback 与 Alias 候选树](fallback-routing.md) | fallback / alias 的有序目标与 `recurse` 开关、展开顺序、请求级计划 |

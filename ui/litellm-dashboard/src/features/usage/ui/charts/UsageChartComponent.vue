@@ -14,6 +14,7 @@ import UsageChartLegend from "./UsageChartLegendComponent.vue";
 import UsageDonutChart from "./UsageDonutChartComponent.vue";
 import UsageDefaultTooltip from "./UsageDefaultTooltipComponent.vue";
 import { usageChartRowAt, usageCategoryCoordinate } from "../../logic/UsageChartPointerLogic";
+import { isNoDataRow } from "../../logic/UsageEmptyDaysLogic";
 import { usageLineGeometry } from "../../logic/UsageLineGeometryLogic";
 import { usageLineSeries, usageSecondaryLineSeries } from "../../logic/UsageLineSeriesLogic";
 import { usageRankingViewport, usageDrawingPoint } from "../../logic/UsageRankingViewportLogic";
@@ -145,6 +146,28 @@ watch(
 	},
 	{ flush: "post" },
 );
+/**
+ * 没有数据的日期在图上不是空白：按类目槽位画浅灰竖带，并写 No data。
+ *
+ * 连续的空日期合并成一段，只标一次；否则一个只用过一天、范围却选了 30 天的新 key 会得到
+ * 29 个并排的 “No data”，比空白更难读。
+ */
+const noDataBands = computed(() => {
+	const layout = geometry.value;
+	// 隐藏分支（v-show 的另一个 tab）宽度为 0，此时槽位是负的，画出来只是垃圾 DOM。
+	if (!layout || layout.horizontal || layout.ranking || layout.plotWidth <= 0) return [];
+	const spans: { x: number; y: number; width: number; height: number }[] = [];
+	for (const band of layout.categoryBands) {
+		if (!isNoDataRow(props.data[band.index] ?? {})) continue;
+		const previous = spans[spans.length - 1];
+		// 半个像素的容差：相邻槽位的边界是浮点算出来的。
+		if (previous && Math.abs(previous.x + previous.width - band.x) < 0.5) previous.width += band.width;
+		else spans.push({ x: band.x, y: band.y, width: band.width, height: band.height });
+	}
+	return spans;
+});
+/** 灰带太窄时只留底色，文字会挤在一起反而看不清是哪一天。 */
+const NO_DATA_LABEL_MIN = 56;
 const palette = computed(() => props.colors.map((c) => usageColors[c] ?? c));
 const secondaryPalette = computed(() => props.secondaryColors.map((c) => usageColors[c] ?? c));
 const option = computed(() => {
@@ -278,6 +301,28 @@ function select(params: unknown) {
 		@mousemove="plotPointer"
 	>
 		<UsageChartDrawingLayer :active="Boolean(ranking)" :viewport="rankingViewport">
+			<svg
+				v-if="noDataBands.length && geometry"
+				class="usage-chart-no-data"
+				:width="geometry.width"
+				:height="geometry.height"
+				aria-hidden="true"
+			>
+				<g v-for="(band, spanIndex) in noDataBands" :key="spanIndex">
+					<rect :x="band.x" :y="band.y" :width="band.width" :height="band.height" fill="#f3f4f6" />
+					<text
+						v-if="band.width >= NO_DATA_LABEL_MIN"
+						:x="band.x + band.width / 2"
+						:y="band.y + band.height / 2"
+						text-anchor="middle"
+						fill="#9ca3af"
+						font-size="11"
+						dy="0.355em"
+					>
+						No data
+					</text>
+				</g>
+			</svg>
 			<UsageBarAxes v-if="geometry && data.length" :geometry="geometry" />
 			<UsageChartLegend v-if="!ranking && legend && data.length" :categories="categories" :colors="palette" />
 			<svg v-if="cursor && geometry" class="usage-chart-cursor" :width="geometry.width" :height="geometry.height" aria-hidden="true">
@@ -341,7 +386,11 @@ function select(params: unknown) {
 				}"
 				:style="tooltipPosition"
 			>
-				<slot name="tooltip" :row="hover.row"
+				<div v-if="isNoDataRow(hover.row)" class="usage-chart-tooltip-no-data">
+					<b>{{ chartValue(hover.row, index) }}</b>
+					<p>No data</p>
+				</div>
+				<slot v-else name="tooltip" :row="hover.row"
 					><UsageDefaultTooltip
 						:row="hover.row"
 						:index="index"

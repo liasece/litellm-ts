@@ -4,7 +4,7 @@
 
 import type { SubscriptionInboundProtocol, SubscriptionWireProtocol } from "../types";
 import type { ProtocolEvent } from "./types";
-import { createStreamTranslator } from "./types";
+import { createStreamTranslator } from "./translate";
 
 /**
  * 用固定模型映射执行流式翻译并在末尾冲刷。

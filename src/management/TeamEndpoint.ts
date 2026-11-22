@@ -7,14 +7,15 @@
 
 import { randomUUID } from "crypto";
 import type { Router, Request, RequestHandler } from "express";
-import { eq, and, inArray } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
-import { LiteLLM_TeamMembership } from "../db/schema/team-memberships";
-import { LiteLLM_UserTable } from "../db/schema/users";
-import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
+import { keyRepositoryFor } from "../repositories/KeyRepository";
+import type { KeyRow as VerificationTokenRow } from "../repositories/KeyRepository";
+import { teamRepositoryFor } from "../repositories/TeamRepository";
+import type { TeamMembershipRow, TeamRow, TeamUpdateValues } from "../repositories/TeamRepository";
+import { userRepositoryFor } from "../repositories/UserRepository";
+import type { UserRow } from "../repositories/UserRepository";
 import { createModuleLogger } from "../core/utils/logger";
 import { toPythonKeyManagementRow, toPythonTeamRow, toPythonTeamUpdateDataRow } from "./pythonRowSerializers";
 import { PROXY_ADMIN_USER_ID } from "../types/webUiSession";
@@ -26,11 +27,6 @@ const DEFAULT_TEAM_LIST_PAGE = 1;
 const DEFAULT_TEAM_LIST_PAGE_SIZE = 10;
 const MAX_TEAM_LIST_PAGE_SIZE = 100;
 const MIN_TOTAL_PAGES = 1;
-
-type TeamRow = typeof LiteLLM_TeamTable.$inferSelect;
-type TeamMembershipRow = typeof LiteLLM_TeamMembership.$inferSelect;
-type VerificationTokenRow = typeof LiteLLM_VerificationToken.$inferSelect;
-type UserRow = typeof LiteLLM_UserTable.$inferSelect;
 
 interface TeamListQuery {
 	readonly userId: string | null;
@@ -284,17 +280,12 @@ function sortTeamRows(rows: TeamRow[], query: TeamListQuery): TeamRow[] {
 }
 
 async function loadTeamMemberships(db: DrizzleDb, teamId: string | null): Promise<TeamMembershipRow[]> {
-	if (teamId === null) {
-		return await db.select().from(LiteLLM_TeamMembership);
-	}
-	return await db.select().from(LiteLLM_TeamMembership).where(eq(LiteLLM_TeamMembership.teamId, teamId));
+	return await teamRepositoryFor(db).listMemberships(teamId);
 }
 
 async function loadTeamKeys(db: DrizzleDb, teamId: string | null): Promise<VerificationTokenRow[]> {
-	if (teamId === null) {
-		return await db.select().from(LiteLLM_VerificationToken);
-	}
-	return await db.select().from(LiteLLM_VerificationToken).where(eq(LiteLLM_VerificationToken.teamId, teamId));
+	const keyRepository = keyRepositoryFor(db);
+	return teamId === null ? await keyRepository.listAll() : await keyRepository.listByTeamId(teamId);
 }
 
 async function buildTeamInfo(
@@ -358,21 +349,18 @@ async function ensureUser(
 	if (!userId) {
 		throw ApiError.badRequest("Either user_id or user_email needs to be passed in");
 	}
-	const existing = await db.select().from(LiteLLM_UserTable).where(eq(LiteLLM_UserTable.userId, userId)).limit(1);
-	if (existing.length > 0) {
-		return existing[0]!;
+	const userRepository = userRepositoryFor(db);
+	const existing = await userRepository.findById(userId);
+	if (existing !== null) {
+		return existing;
 	}
-	const inserted = await db
-		.insert(LiteLLM_UserTable)
-		.values({
-			userId: userId,
-			userEmail: member.user_email ?? null,
-			userRole: member.role ?? null,
-			models: [],
-			metadata: {},
-		})
-		.returning();
-	return inserted[0]! as UserRow;
+	return await userRepository.create({
+		userId: userId,
+		userEmail: member.user_email ?? null,
+		userRole: member.role ?? null,
+		models: [],
+		metadata: {},
+	});
 }
 
 /**
@@ -445,33 +433,30 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				})),
 			];
 
-			const inserted = await db
-				.insert(LiteLLM_TeamTable)
-				.values({
-					teamId: teamId,
-					teamAlias: (team_alias as string | undefined) ?? null,
-					organizationId: (organization_id as string | undefined) ?? null,
-					admins: (admins as string[] | undefined) ?? [],
-					members: (members as string[] | undefined) ?? [],
-					membersWithRoles: membersWithRoles,
-					metadata: (metadata as Record<string, unknown> | undefined) ?? {},
-					models: (models as string[] | undefined) ?? [],
-					maxBudget: (max_budget as number | undefined) ?? null,
-					softBudget: (soft_budget as number | undefined) ?? null,
-					tpmLimit: (tpm_limit as number | undefined) ?? null,
-					rpmLimit: (rpm_limit as number | undefined) ?? null,
-					budgetDuration: (budget_duration as string | undefined) ?? null,
-					blocked: (blocked as boolean | undefined) ?? false,
-					maxParallelRequests: (max_parallel_requests as number | undefined) ?? null,
-					routerSettings: (router_settings as Record<string, unknown> | undefined) ?? {},
-					accessGroupIds: (access_group_ids as string[] | undefined) ?? [],
-					teamMemberPermissions: (team_member_permissions as string[] | undefined) ?? [],
-				})
-				.returning();
+			const inserted = await teamRepositoryFor(db).create({
+				teamId: teamId,
+				teamAlias: (team_alias as string | undefined) ?? null,
+				organizationId: (organization_id as string | undefined) ?? null,
+				admins: (admins as string[] | undefined) ?? [],
+				members: (members as string[] | undefined) ?? [],
+				membersWithRoles: membersWithRoles,
+				metadata: (metadata as Record<string, unknown> | undefined) ?? {},
+				models: (models as string[] | undefined) ?? [],
+				maxBudget: (max_budget as number | undefined) ?? null,
+				softBudget: (soft_budget as number | undefined) ?? null,
+				tpmLimit: (tpm_limit as number | undefined) ?? null,
+				rpmLimit: (rpm_limit as number | undefined) ?? null,
+				budgetDuration: (budget_duration as string | undefined) ?? null,
+				blocked: (blocked as boolean | undefined) ?? false,
+				maxParallelRequests: (max_parallel_requests as number | undefined) ?? null,
+				routerSettings: (router_settings as Record<string, unknown> | undefined) ?? {},
+				accessGroupIds: (access_group_ids as string[] | undefined) ?? [],
+				teamMemberPermissions: (team_member_permissions as string[] | undefined) ?? [],
+			});
 
 			logger.info(`团队已创建: ${(team_alias as string | undefined) ?? teamId}`);
 
-			return toPythonTeamRow(inserted[0]!);
+			return toPythonTeamRow(inserted);
 		}),
 	);
 
@@ -486,12 +471,13 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				throw ApiError.badRequest("必须提供 team_id");
 			}
 
-			const existing = await db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, team_id)).limit(1);
-			if (existing.length === 0) {
+			const teamRepository = teamRepositoryFor(db);
+			const existing = await teamRepository.findById(team_id);
+			if (existing === null) {
 				throw ApiError.notFound(`团队不存在: ${team_id}`);
 			}
 
-			const updateFields: Record<string, unknown> = {};
+			const updateFields: TeamUpdateValues = {};
 			if (updates.team_alias !== undefined) {
 				updateFields.teamAlias = updates.team_alias;
 			}
@@ -529,16 +515,12 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				updateFields.blocked = updates.blocked;
 			}
 
-			const updated = await db
-				.update(LiteLLM_TeamTable)
-				.set({ ...updateFields, updatedAt: new Date() })
-				.where(eq(LiteLLM_TeamTable.teamId, team_id))
-				.returning();
+			const updated = await teamRepository.updateById(team_id, { ...updateFields, updatedAt: new Date() });
 
 			logger.info(`团队已更新: ${team_id}`);
 
 			// 响应对齐 Python update_team 实测：{ team_id, data: 更新后完整 team 对象（32 键） }
-			return { team_id: team_id, data: toPythonTeamUpdateDataRow(updated[0] as TeamRow) };
+			return { team_id: team_id, data: toPythonTeamUpdateDataRow((updated ?? existing) as TeamRow) };
 		}),
 	);
 
@@ -559,18 +541,19 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				throw ApiError.badRequest("No team id passed in");
 			}
 
+			const teamRepository = teamRepositoryFor(db);
+
 			// Python: 逐个校验存在性，任一不存在即 404
 			for (const teamId of teamIds) {
-				const rows = await db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, teamId)).limit(1);
-				if (rows.length === 0) {
+				if ((await teamRepository.findById(teamId)) === null) {
 					throw ApiError.notFound(`Team not found, passed team_id=${teamId}`);
 				}
 			}
 
-			// Python: 级联删除团队名下 keys 与成员关系
-			await db.delete(LiteLLM_VerificationToken).where(inArray(LiteLLM_VerificationToken.teamId, teamIds));
-			await db.delete(LiteLLM_TeamMembership).where(inArray(LiteLLM_TeamMembership.teamId, teamIds));
-			await db.delete(LiteLLM_TeamTable).where(inArray(LiteLLM_TeamTable.teamId, teamIds));
+			// Python: 级联删除团队名下 keys 与成员关系；每个删除动作都会清掉该团队的缓存标签。
+			await keyRepositoryFor(db).deleteByTeamIds(teamIds);
+			await teamRepository.deleteMembershipsByTeamIds(teamIds);
+			await teamRepository.deleteByIds(teamIds);
 
 			logger.info(`团队已删除: count=${teamIds.length}`);
 
@@ -589,12 +572,9 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				throw ApiError.badRequest("必须提供 team_id");
 			}
 
-			const result = await db
-				.update(LiteLLM_TeamTable)
-				.set({ blocked: true, updatedAt: new Date() })
-				.where(eq(LiteLLM_TeamTable.teamId, team_id));
+			const affected = await teamRepositoryFor(db).setBlocked(team_id, true);
 
-			if (result.rowCount === 0) {
+			if (affected === 0) {
 				throw ApiError.notFound(`团队不存在: ${team_id}`);
 			}
 
@@ -615,12 +595,9 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				throw ApiError.badRequest("必须提供 team_id");
 			}
 
-			const result = await db
-				.update(LiteLLM_TeamTable)
-				.set({ blocked: false, updatedAt: new Date() })
-				.where(eq(LiteLLM_TeamTable.teamId, team_id));
+			const affected = await teamRepositoryFor(db).setBlocked(team_id, false);
 
-			if (result.rowCount === 0) {
+			if (affected === 0) {
 				throw ApiError.notFound(`团队不存在: ${team_id}`);
 			}
 
@@ -637,8 +614,9 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 			throw ApiError.badRequest("No team id passed in");
 		}
 
-		const team = await db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, teamId)).limit(1);
-		if (team.length === 0) {
+		const teamRepository = teamRepositoryFor(db);
+		const team = await teamRepository.findById(teamId);
+		if (team === null) {
 			throw ApiError.notFound(`Team not found for team_id=${teamId}`);
 		}
 
@@ -646,10 +624,11 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 		const updatedTeamMemberships: TeamMembershipRow[] = [];
 		for (const member of extractMembers(body)) {
 			const user = await ensureUser(db, member);
-			await db
-				.insert(LiteLLM_TeamMembership)
-				.values({ userId: user.userId, teamId: teamId, budgetId: (body.budget_id as string | undefined) ?? null })
-				.onConflictDoNothing();
+			await teamRepository.insertMembership({
+				userId: user.userId,
+				teamId: teamId,
+				budgetId: (body.budget_id as string | undefined) ?? null,
+			});
 			updatedUsers.push(user);
 			updatedTeamMemberships.push({
 				userId: user.userId,
@@ -662,7 +641,7 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 		logger.info(`成员已加入团队: count=${updatedUsers.length} -> ${teamId}`);
 
 		return {
-			...normalizeTeamRow(team[0]!, [], []),
+			...normalizeTeamRow(team, [], []),
 			updated_users: updatedUsers,
 			updated_team_memberships: updatedTeamMemberships.map(normalizeTeamMembershipRow),
 		};
@@ -675,22 +654,17 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 			throw ApiError.badRequest("Either user_id or user_email needs to be passed in");
 		}
 
-		const existing = await db
-			.select()
-			.from(LiteLLM_TeamMembership)
-			.where(and(eq(LiteLLM_TeamMembership.teamId, team_id), eq(LiteLLM_TeamMembership.userId, user_id)))
-			.limit(1);
-		const result = await db
-			.delete(LiteLLM_TeamMembership)
-			.where(and(eq(LiteLLM_TeamMembership.teamId, team_id), eq(LiteLLM_TeamMembership.userId, user_id)));
+		const teamRepository = teamRepositoryFor(db);
+		const existing = await teamRepository.findMembership(user_id, team_id);
+		const affected = await teamRepository.deleteMembership(user_id, team_id);
 
-		if (result.rowCount === 0) {
+		if (affected === 0) {
 			throw ApiError.notFound("团队成员关系不存在");
 		}
 
 		logger.info(`成员已从团队移除: ${user_id} -> ${team_id}`);
 
-		return existing[0] ?? { success: true };
+		return existing ?? { success: true };
 	}
 
 	// ─── POST /team/member/add + Python /team/member_add ───────
@@ -714,17 +688,17 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				throw ApiError.badRequest("Malformed request. No team id passed in.");
 			}
 
-			const rows = await db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, teamId)).limit(1);
-			if (rows.length === 0) {
+			const team = await teamRepositoryFor(db).findById(teamId);
+			if (team === null) {
 				throw ApiError.notFound(`Team not found, passed team id: ${teamId}.`);
 			}
 
-			const keyRows = await db.select().from(LiteLLM_VerificationToken).where(eq(LiteLLM_VerificationToken.teamId, teamId));
+			const keyRows = await keyRepositoryFor(db).listByTeamId(teamId);
 			const membershipRows = await loadTeamMemberships(db, teamId);
 
 			return {
 				team_id: teamId,
-				team_info: { ...toPythonTeamRow(rows[0]!), team_member_budget_table: null },
+				team_info: { ...toPythonTeamRow(team), team_member_budget_table: null },
 				// Python team_info 会 pop 掉 token 字段，避免 hash 外泄
 				keys: keyRows.map((keyRow) => toPythonKeyManagementRow(keyRow, { includeToken: false })),
 				team_memberships: membershipRows.map(normalizeTeamMembershipRow),
@@ -737,7 +711,7 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 		router,
 		{ method: "get", path: "/team/list" },
 		authed(async (req) => {
-			const rows = await db.select().from(LiteLLM_TeamTable);
+			const rows = await teamRepositoryFor(db).listAll();
 			const response = await buildTeamListResponse(req, db, rows);
 			return response.teams;
 		}),
@@ -748,7 +722,7 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 		router,
 		{ method: "get", path: "/v2/team/list" },
 		authed(async (req) => {
-			const rows = await db.select().from(LiteLLM_TeamTable);
+			const rows = await teamRepositoryFor(db).listAll();
 			return await buildTeamListResponse(req, db, rows);
 		}),
 	);
@@ -765,17 +739,15 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				throw ApiError.badRequest("必须提供 team_id 和 model");
 			}
 
-			const team = await db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, team_id)).limit(1);
-			if (team.length === 0) {
+			const teamRepository = teamRepositoryFor(db);
+			const team = await teamRepository.findById(team_id);
+			if (team === null) {
 				throw ApiError.notFound(`团队不存在: ${team_id}`);
 			}
 
-			const currentModels = team[0]!.models ?? [];
+			const currentModels = team.models ?? [];
 			const mergedModels = Array.from(new Set([...currentModels, ...modelNames]));
-			await db
-				.update(LiteLLM_TeamTable)
-				.set({ models: mergedModels, updatedAt: new Date() })
-				.where(eq(LiteLLM_TeamTable.teamId, team_id));
+			await teamRepository.replaceModels(team_id, mergedModels, new Date());
 
 			logger.info(`模型已添加到团队: count=${modelNames.length} -> ${team_id}`);
 
@@ -795,18 +767,16 @@ export function createTeamRoutes(router: Router, db: DrizzleDb, authMiddleware: 
 				throw ApiError.badRequest("必须提供 team_id 和 model");
 			}
 
-			const team = await db.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, team_id)).limit(1);
-			if (team.length === 0) {
+			const teamRepository = teamRepositoryFor(db);
+			const team = await teamRepository.findById(team_id);
+			if (team === null) {
 				throw ApiError.notFound(`团队不存在: ${team_id}`);
 			}
 
 			const modelNameSet = new Set(modelNames);
-			const filtered = (team[0]!.models ?? []).filter((modelName: string) => !modelNameSet.has(modelName));
+			const filtered = (team.models ?? []).filter((modelName: string) => !modelNameSet.has(modelName));
 
-			await db
-				.update(LiteLLM_TeamTable)
-				.set({ models: filtered, updatedAt: new Date() })
-				.where(eq(LiteLLM_TeamTable.teamId, team_id));
+			await teamRepository.replaceModels(team_id, filtered, new Date());
 
 			logger.info(`模型已从团队移除: count=${modelNames.length} -> ${team_id}`);
 

@@ -4,6 +4,8 @@ const admins = ["Admin", "Admin Viewer", "proxy_admin", "proxy_admin_viewer", "o
 const internal = ["Internal User", "Internal Viewer"];
 const writers = ["Internal User", "Admin", "proxy_admin"];
 const modelAdmins = ["Admin", "proxy_admin", "proxy_admin_viewer", "org_admin"];
+// 与后端 isUsageAdmin 对齐，避免 org_admin 看到入口却被 403。
+const usageAccountAdmins = ["Admin", "Admin Viewer", "proxy_admin", "proxy_admin_viewer"];
 
 /**
  * 侧边栏分区。模型管理与用量统计各自成组：组内每一项都是一个独立页面，
@@ -35,6 +37,7 @@ export const navigationGroups: readonly NavigationGroup[] = [
 			{ page: "usage-models", label: "Model Activity", icon: "AppstoreOutlined", roles: [...admins, ...internal] },
 			{ page: "usage-keys", label: "Key Activity", icon: "KeyOutlined", roles: [...admins, ...internal] },
 			{ page: "usage-endpoints", label: "Endpoint Activity", icon: "LinkOutlined", roles: [...admins, ...internal] },
+			{ page: "usage-accounts", label: "Upstream Account Activity", icon: "CloudServerOutlined", roles: usageAccountAdmins },
 			{ page: "usage-quota", label: "Upstream Account Quota", icon: "CloudServerOutlined", roles: admins },
 		],
 	},

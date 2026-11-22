@@ -1,5 +1,5 @@
 import { index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import type { CallType } from "../../types/spend";
+import type { CallType } from "../../types/spendEnums";
 
 /**
  * 尚未生成最终 SpendLog 的在途请求。

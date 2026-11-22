@@ -1,11 +1,22 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+/**
+ * 在途请求回收。
+ *
+ * 进程启动时把上个进程遗留的 `in_progress` 行转成 aborted SpendLog；运行期巡检把
+ * 心跳已停（租约过期）的孤儿行做同样处理。两条路径都是单条跨表语句：
+ * 插入终态日志、释放预留、删除在途行在同一事务内完成（SQL 见 ActiveRequestRepository）。
+ *
+ * 回收 SQL 用 `INSERT ... SELECT` 直接搬 `proxy_server_request`，绕过正常写路径的内容
+ * 寻址编码；这里在同一个事务里补做编码，规则与正常落账完全一致。
+ */
+
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { createModuleLogger } from "../core/utils/logger";
+import type { DrizzleDb } from "../core/db/Database";
+import { activeRequestRepositoryFor } from "../repositories/ActiveRequestRepository";
+import { spendLogBlockRepositoryFor } from "../repositories/SpendLogBlockRepository";
+import { spendLogRepositoryFor } from "../repositories/SpendLogRepository";
 import {
-	SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE,
 	type SpendLogBlockRecord,
 	collectReferencedBlockIds,
 	collectSpendLogBlocks,
@@ -23,6 +34,18 @@ type RecoveryTransaction = Parameters<Parameters<NodePgDatabase<typeof schema>["
 export const ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART = "server_restart";
 /** 租约过期回收写入的终止原因（见 reapExpiredActiveRequests）。 */
 export const ACTIVE_REQUEST_ABORT_REASON_LEASE_EXPIRED = "lease_expired";
+
+/**
+ * 取得与事务句柄绑定的流水仓储。
+ *
+ * 仓储持有的是连接级不变状态（这里没有缓存），事务句柄只作为取用键；真正的语句都显式
+ * 接收 `tx`，因此不会出现事务外的连接读写。
+ * @param tx - 回收事务句柄
+ * @returns 流水仓储
+ */
+function spendLogRepositoryForTx(tx: RecoveryTransaction) {
+	return spendLogRepositoryFor(tx as unknown as DrizzleDb);
+}
 
 /**
  * 把刚回收的 SpendLog 行换成内容寻址引用。
@@ -50,15 +73,7 @@ async function encodeRecoveredRequestPayloads(
 		if (!(await shouldDeduplicateSpendLogBlocks())) {
 			return;
 		}
-		const rows = await tx
-			.select({ requestId: liteLLM_SpendLogs.request_id, proxyServerRequest: liteLLM_SpendLogs.proxy_server_request })
-			.from(liteLLM_SpendLogs)
-			.where(
-				and(
-					inArray(liteLLM_SpendLogs.request_id, [...requestIds]),
-					sql`${liteLLM_SpendLogs.metadata}->>'termination_reason' = ${terminationReason}`,
-				),
-			);
+		const rows = await spendLogRepositoryForTx(tx).findProxyPayloadsForRecovery(tx, requestIds, terminationReason);
 		const blocks = new Map<string, SpendLogBlockRecord>();
 		const updates: Array<{ requestId: string; proxyServerRequest: unknown }> = [];
 		for (const row of rows) {
@@ -83,17 +98,11 @@ async function encodeRecoveredRequestPayloads(
 		const blockList = [...blocks.values()];
 		// 回收行里的历史正文在正常写入路径上大多已经存在，先判存，只补写缺失的块。
 		const blocksToInsert = await selectMissingSpendLogBlocks(tx, blockList);
-		for (let offset = 0; offset < blocksToInsert.length; offset += SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE) {
-			await tx
-				.insert(liteLLM_SpendLogBlocks)
-				.values(blocksToInsert.slice(offset, offset + SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE).map((block) => ({ ...block })))
-				.onConflictDoNothing();
+		if (blocksToInsert.length > 0) {
+			await spendLogBlockRepositoryFor(tx as unknown as DrizzleDb).insertIgnore(blocksToInsert, tx);
 		}
 		for (const update of updates) {
-			await tx
-				.update(liteLLM_SpendLogs)
-				.set({ proxy_server_request: update.proxyServerRequest })
-				.where(eq(liteLLM_SpendLogs.request_id, update.requestId));
+			await spendLogRepositoryForTx(tx).updateProxyServerRequest(tx, update.requestId, update.proxyServerRequest);
 		}
 		logger.info("回收行已按内容寻址去重", { recovered: updates.length, blocks: blocksToInsert.length });
 	} catch (error) {
@@ -118,151 +127,7 @@ async function encodeRecoveredRequestPayloads(
  */
 export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof schema>, abortedAt: Date = new Date()): Promise<number> {
 	const recovered = await db.transaction(async (tx) => {
-		const result = await tx.execute(sql`
-			WITH orphaned AS MATERIALIZED (
-				SELECT *
-				FROM "LiteLLM_ActiveRequests"
-				WHERE status = 'in_progress'
-				FOR UPDATE
-			),
-			inserted AS (
-				INSERT INTO "LiteLLM_SpendLogs" (
-					request_id,
-					call_type,
-					api_key,
-					spend,
-					total_tokens,
-					prompt_tokens,
-					completion_tokens,
-					"startTime",
-					"endTime",
-					request_duration_ms,
-					"completionStartTime",
-					model,
-					model_id,
-					model_group,
-					custom_llm_provider,
-					api_base,
-					"user",
-					metadata,
-					key_alias,
-					error_code,
-					cache_hit,
-					cache_key,
-					request_tags,
-					team_id,
-					organization_id,
-					end_user,
-					requester_ip_address,
-					messages,
-					response,
-					session_id,
-					status,
-					proxy_server_request,
-					cache_read_input_tokens,
-					cache_creation_input_tokens,
-					resolved_model_group,
-					endpoint
-				)
-				SELECT
-					request_id,
-					call_type,
-					api_key,
-					0,
-					CASE
-						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,total_tokens}', metadata #> '{responses_execution,usage,total_tokens}')) = 'number'
-						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,total_tokens}', metadata #>> '{responses_execution,usage,total_tokens}'))::numeric)::integer
-						ELSE 0
-					END,
-					CASE
-						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,prompt_tokens}', metadata #> '{responses_execution,usage,prompt_tokens}')) = 'number'
-						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,prompt_tokens}', metadata #>> '{responses_execution,usage,prompt_tokens}'))::numeric)::integer
-						ELSE 0
-					END,
-					CASE
-						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,completion_tokens}', metadata #> '{responses_execution,usage,completion_tokens}')) = 'number'
-						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,completion_tokens}', metadata #>> '{responses_execution,usage,completion_tokens}'))::numeric)::integer
-						ELSE 0
-					END,
-					"startTime",
-					${abortedAt},
-					-- 不能写"startTime 到本次恢复"的差值：孤儿行可能已存在数天，那会把
-					-- 一个几分钟的请求记成 27 小时。恢复时刻不是请求结束时刻，
-					-- 真实时长未知，写 0 并保留 startTime/aborted_at 供人工推断。
-					0,
-					NULL,
-					model,
-					model_id,
-					model_group,
-					custom_llm_provider,
-					'',
-					"user",
-					(COALESCE(metadata, '{}'::jsonb) - 'streaming_execution' - 'responses_execution') || jsonb_build_object(
-						'status', 'aborted',
-						'termination_reason', ${ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART}::text,
-						'aborted_at', ${abortedAt}::timestamp,
-						'error_information', jsonb_build_object(
-							'error_type', 'ServerRestartAborted',
-							'error_code', 'SERVER_RESTART',
-							'error_message', 'Request aborted because the gateway restarted before completion.'
-						)
-					),
-					-- 过滤列与 metadata 同源：别名取行内 metadata，错误码即本次恢复写入的常量。
-					metadata ->> 'user_api_key_alias',
-					'SERVER_RESTART',
-					'',
-					'',
-					request_tags,
-					team_id,
-					organization_id,
-					end_user,
-					requester_ip_address,
-					'{}'::jsonb,
-					COALESCE(metadata #> '{streaming_execution,response}', metadata #> '{responses_execution,response}', '{}'::jsonb),
-					session_id,
-					'aborted',
-					COALESCE("proxy_server_request", '{}'::jsonb),
-					COALESCE(
-						CASE
-							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_read_input_tokens}', metadata #> '{responses_execution,usage,cache_read_input_tokens}')) = 'number'
-								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_read_input_tokens}', metadata #>> '{responses_execution,usage,cache_read_input_tokens}'))::numeric::bigint
-						END,
-						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens')::bigint END,
-						CASE WHEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens')::bigint END,
-						0
-					),
-					COALESCE(
-						CASE
-							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #> '{responses_execution,usage,cache_creation_input_tokens}')) = 'number'
-								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #>> '{responses_execution,usage,cache_creation_input_tokens}'))::numeric::bigint
-						END,
-						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens')::bigint END,
-						CASE WHEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens')::bigint END,
-						0
-					),
-					COALESCE(NULLIF(metadata ->> 'resolved_model_group', ''), NULLIF(model_group, '')),
-					COALESCE(split_part("proxy_server_request" ->> 'url', '?', 1), '')
-				FROM orphaned
-				ON CONFLICT (request_id) DO NOTHING
-			),
-			released AS (
-				UPDATE "LiteLLM_SpendReservations"
-				SET status = 'released',
-					actual = NULL,
-					updated_at = ${abortedAt}
-				WHERE status = 'reserved'
-					AND request_id IN (SELECT request_id FROM orphaned)
-			)
-			DELETE FROM "LiteLLM_ActiveRequests" AS active
-			USING orphaned
-			WHERE active.request_id = orphaned.request_id
-			RETURNING active.request_id
-		`);
-		const requestIds = result.rows.map((row) => (row as { request_id: string }).request_id);
+		const requestIds = await activeRequestRepositoryFor(db).abortOrphaned(tx, abortedAt);
 		await encodeRecoveredRequestPayloads(tx, requestIds, ACTIVE_REQUEST_ABORT_REASON_SERVER_RESTART);
 		return requestIds.length;
 	});
@@ -273,120 +138,17 @@ export async function abortOrphanedActiveRequests(db: NodePgDatabase<typeof sche
 }
 
 /**
- * 回收租约已过期、但进程仍在运行的在途请求（心跳停止的孤儿行）。
+ * 回收租约已过期、但进程仍在运行的在途请求。
  *
- * 与 {@link abortOrphanedActiveRequests} 的区别：启动期恢复会把**全部** in_progress
- * 行视为上个进程的遗留；本函数只在运行期使用 `expires_at` 判定 —— 心跳仍在续租的
- * 真实长流不会被误伤，只有心跳已停（异常退出、遗漏 finalize、连接丢失）的行才会被清理。
- *
- * 若不回收，孤儿行会一直留在 LiteLLM_ActiveRequests 里被反复 UPDATE，直到下一次重启
- * 才被清空；期间"在途请求"面板与并发统计都不准。
+ * 与启动恢复不同，这里只按 `expires_at` 判定：心跳仍在续租的真实长流不会被误伤。
+ * 回收逻辑与启动恢复共用同一条跨表语句，避免两套回收路径产生不同的终态行。
  * @param db - Drizzle 数据库实例
  * @param now - 判定基准时刻，缺省取当前时间
  * @returns 已回收的请求数量
  */
 export async function reapExpiredActiveRequests(db: NodePgDatabase<typeof schema>, now: Date = new Date()): Promise<number> {
 	const recovered = await db.transaction(async (tx) => {
-		const result = await tx.execute(sql`
-			WITH expired AS MATERIALIZED (
-				SELECT *
-				FROM "LiteLLM_ActiveRequests"
-				WHERE status = 'in_progress'
-					AND expires_at <= ${now}
-				FOR UPDATE
-			),
-			inserted AS (
-				INSERT INTO "LiteLLM_SpendLogs" (
-					request_id, call_type, api_key, spend, total_tokens,
-					prompt_tokens, completion_tokens, "startTime", "endTime",
-					request_duration_ms, "completionStartTime", model, model_id,
-					model_group, custom_llm_provider, api_base, "user", metadata,
-					key_alias, error_code,
-					cache_hit, cache_key, request_tags, team_id, organization_id,
-					end_user, requester_ip_address, messages, response, session_id,
-					status, proxy_server_request,
-					cache_read_input_tokens, cache_creation_input_tokens,
-					resolved_model_group, endpoint
-				)
-				SELECT
-					request_id, call_type, api_key, 0,
-					CASE
-						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,total_tokens}', metadata #> '{responses_execution,usage,total_tokens}')) = 'number'
-						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,total_tokens}', metadata #>> '{responses_execution,usage,total_tokens}'))::numeric)::integer
-						ELSE 0
-					END,
-					CASE
-						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,prompt_tokens}', metadata #> '{responses_execution,usage,prompt_tokens}')) = 'number'
-						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,prompt_tokens}', metadata #>> '{responses_execution,usage,prompt_tokens}'))::numeric)::integer
-						ELSE 0
-					END,
-					CASE
-						WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,completion_tokens}', metadata #> '{responses_execution,usage,completion_tokens}')) = 'number'
-						THEN ((COALESCE(metadata #>> '{streaming_execution,usage,completion_tokens}', metadata #>> '{responses_execution,usage,completion_tokens}'))::numeric)::integer
-						ELSE 0
-					END,
-					"startTime",
-					${now},
-					-- 租约过期说明心跳已停，无法得知真实结束时刻，因此不臆造总时长，
-					-- 写入 0 而不是"开始到现在"（后者会把几分钟的请求记成几天）。
-					0,
-					NULL,
-					model, model_id, model_group, custom_llm_provider, '', "user",
-					(COALESCE(metadata, '{}'::jsonb) - 'streaming_execution' - 'responses_execution') || jsonb_build_object(
-						'status', 'aborted',
-						'termination_reason', 'lease_expired',
-						'aborted_at', ${now}::timestamp,
-						'error_information', jsonb_build_object(
-							'error_type', 'ActiveRequestLeaseExpired',
-							'error_code', 'LEASE_EXPIRED',
-							'error_message', 'Request lease expired without a terminal write; reaped by periodic sweep.'
-						)
-					),
-					metadata ->> 'user_api_key_alias',
-					'LEASE_EXPIRED',
-					'', '', request_tags, team_id, organization_id, end_user,
-					requester_ip_address, '{}'::jsonb,
-					COALESCE(metadata #> '{streaming_execution,response}', metadata #> '{responses_execution,response}', '{}'::jsonb),
-					session_id, 'aborted',
-					COALESCE("proxy_server_request", '{}'::jsonb),
-					COALESCE(
-						CASE
-							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_read_input_tokens}', metadata #> '{responses_execution,usage,cache_read_input_tokens}')) = 'number'
-								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_read_input_tokens}', metadata #>> '{responses_execution,usage,cache_read_input_tokens}'))::numeric::bigint
-						END,
-						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'additional_usage_values' ->> 'cache_read_input_tokens')::bigint END,
-						CASE WHEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'usage_object' ->> 'cache_read_input_tokens')::bigint END,
-						0
-					),
-					COALESCE(
-						CASE
-							WHEN jsonb_typeof(COALESCE(metadata #> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #> '{responses_execution,usage,cache_creation_input_tokens}')) = 'number'
-								THEN (COALESCE(metadata #>> '{streaming_execution,usage,cache_creation_input_tokens}', metadata #>> '{responses_execution,usage,cache_creation_input_tokens}'))::numeric::bigint
-						END,
-						CASE WHEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'additional_usage_values' ->> 'cache_creation_input_tokens')::bigint END,
-						CASE WHEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens') ~ '^[0-9]+$'
-							THEN (metadata -> 'usage_object' ->> 'cache_creation_input_tokens')::bigint END,
-						0
-					),
-					COALESCE(NULLIF(metadata ->> 'resolved_model_group', ''), NULLIF(model_group, '')),
-					COALESCE(split_part("proxy_server_request" ->> 'url', '?', 1), '')
-				FROM expired
-				ON CONFLICT (request_id) DO NOTHING
-			),
-			released AS (
-				UPDATE "LiteLLM_SpendReservations"
-				SET status = 'released', actual = NULL, updated_at = ${now}
-				WHERE status = 'reserved' AND request_id IN (SELECT request_id FROM expired)
-			)
-			DELETE FROM "LiteLLM_ActiveRequests" AS active
-			USING expired
-			WHERE active.request_id = expired.request_id
-			RETURNING active.request_id
-		`);
-		const requestIds = result.rows.map((row) => (row as { request_id: string }).request_id);
+		const requestIds = await activeRequestRepositoryFor(db).reapExpired(tx, now);
 		await encodeRecoveredRequestPayloads(tx, requestIds, ACTIVE_REQUEST_ABORT_REASON_LEASE_EXPIRED);
 		return requestIds.length;
 	});

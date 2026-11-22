@@ -12,8 +12,31 @@ import { createModuleLogger } from "../../core/utils/logger";
 
 const logger = createModuleLogger("TableCache");
 
-/** 绕过应用直接改库时，最迟多久能被读到。 */
-export const SAFETY_REFRESH_MS = 60_000;
+/**
+ * 绕过应用直接改库时，最迟多久能被读到。
+ *
+ * 服务是单实例部署、配置变更都经过本进程的仓储层写穿，这个刷新只兜「运维直接改库」，
+ * 因此放在分钟级即可；频繁整表重读对小配置表没有收益。
+ */
+export const SAFETY_REFRESH_MS = 300_000;
+
+/** 调整兜底刷新间隔的环境变量；0 表示关闭兜底刷新（只靠写穿与失效）。 */
+export const TABLE_CACHE_SAFETY_REFRESH_ENV = "LITELLM_TABLE_CACHE_SAFETY_REFRESH_MS";
+
+/**
+ * 解析兜底刷新间隔；非法输入回落到默认值，0 表示关闭。
+ * @param raw - 环境变量原文
+ */
+export function resolveSafetyRefreshMs(raw: string | undefined): number {
+	if (raw === undefined || raw.trim() === "") {
+		return SAFETY_REFRESH_MS;
+	}
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		return SAFETY_REFRESH_MS;
+	}
+	return Math.round(parsed);
+}
 
 /** 同一数据库连接上所有表缓存共享的版本计数器。 */
 export interface RevisionCounter {
@@ -47,14 +70,22 @@ export class TableCache<Row> {
 	private _refreshing = false;
 	private _inflight: Promise<void> | null = null;
 
+	private readonly _safetyRefreshMs: number;
+	private readonly _now: () => number;
+
 	/**
 	 * @param _load - 全量装载该表的回调；SQL 只写在拥有该表的 repository 里
 	 * @param _revision - 与数据库连接绑定的共享版本计数器
+	 * @param options - 兜底刷新间隔与可注入时钟
 	 */
 	constructor(
 		private readonly _load: () => Promise<Row[]>,
 		private readonly _revision: RevisionCounter,
-	) {}
+		options: { safetyRefreshMs?: number; now?: () => number } = {},
+	) {
+		this._safetyRefreshMs = options.safetyRefreshMs ?? resolveSafetyRefreshMs(process.env[TABLE_CACHE_SAFETY_REFRESH_ENV]);
+		this._now = options.now ?? Date.now;
+	}
 
 	/** 当前版本号；装载或失效后递增，供请求级快照判重。 */
 	revision(): number {
@@ -105,6 +136,45 @@ export class TableCache<Row> {
 		this._revision.value += 1;
 	}
 
+	/**
+	 * 写穿：把一行按主键合并进副本（存在则替换，不存在则追加）。
+	 *
+	 * 单例部署下写路径就是副本的唯一来源，因此写完直接改副本比整表失效更省一次查询，
+	 * 也让「写完立刻读」拿到的一定是新值。
+	 * @param row - 写入后的整行
+	 * @param keyOf - 从行里取主键，用于定位要被替换的那一行
+	 */
+	upsert(row: Row, keyOf: (row: Row) => string): void {
+		if (this._rows === null) {
+			return;
+		}
+		const target = keyOf(row);
+		let replaced = false;
+		this._rows = this._rows.map((existing) => {
+			if (keyOf(existing) === target) {
+				replaced = true;
+				return row;
+			}
+			return existing;
+		});
+		if (!replaced) {
+			this._rows = [...this._rows, row];
+		}
+		this._revision.value += 1;
+	}
+
+	/**
+	 * 写穿：把满足条件的行从副本里移除（删除操作）。
+	 * @param predicate - 命中即移除
+	 */
+	remove(predicate: (row: Row) => boolean): void {
+		if (this._rows === null || this._rows.every((row) => !predicate(row))) {
+			return;
+		}
+		this._rows = this._rows.filter((row) => !predicate(row));
+		this._revision.value += 1;
+	}
+
 	/** 写入路径无法精确同步时直接失效，下一次读取重新装载。 */
 	invalidate(): void {
 		if (this._rows === null) {
@@ -116,18 +186,18 @@ export class TableCache<Row> {
 
 	private async _loadOnce(): Promise<void> {
 		this._rows = await this._load();
-		this._refreshedAt = Date.now();
+		this._refreshedAt = this._now();
 		this._revision.value += 1;
 	}
 
 	private _scheduleSafetyRefresh(): void {
-		if (this._refreshing || Date.now() - this._refreshedAt < SAFETY_REFRESH_MS) {
+		if (this._safetyRefreshMs <= 0 || this._refreshing || this._now() - this._refreshedAt < this._safetyRefreshMs) {
 			return;
 		}
 		this._refreshing = true;
 		void this._refresh()
 			.then(() => {
-				this._refreshedAt = Date.now();
+				this._refreshedAt = this._now();
 			})
 			.catch((error: unknown) => {
 				logger.warn("运行时配置表后台刷新失败，继续使用现有副本", {

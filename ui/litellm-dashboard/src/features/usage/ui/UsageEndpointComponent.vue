@@ -10,6 +10,7 @@ import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
 import { addMetrics, emptyMetrics } from "../logic/UsageSummaryLogic";
 import type { DailyActivityResponse, SpendMetrics, UsageDetailResponse } from "../support/UsageModels";
 import type { ActivitySeries } from "../logic/UsageSeriesLogic";
+import { isNoDataRow, padUsageRows } from "../logic/UsageEmptyDaysLogic";
 const props = defineProps<{
 	data?: DailyActivityResponse;
 	detail?: UsageDetailResponse | null;
@@ -17,6 +18,8 @@ const props = defineProps<{
 	series?: ActivitySeries | null;
 	/** 首屏加载时先不画图，避免先闪一次 “No data” 再出现柱子。 */
 	loading?: boolean;
+	/** 所选范围内每一天，趋势图据此补齐无数据的日子。 */
+	dates?: string[];
 }>();
 const money = useMoneyFormatter(),
 	colors = ["blue", "cyan", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "red", "orange"];
@@ -53,6 +56,10 @@ const columns = [
 	},
 	{ key: "spend", label: "Spend" },
 ];
+/** 横轴只写月日；按本地中午解析，避开发送 UTC 午夜导致的负时区差一天。 */
+function dayLabel(date: string): string {
+	return new Date(date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 const trends = computed(() => {
 	const byDate = new Map<string, Record<string, number>>();
 	if (props.detail) {
@@ -72,12 +79,13 @@ const trends = computed(() => {
 	}
 	return [...byDate.entries()]
 		.sort((left, right) => left[0].localeCompare(right[0]))
-		.map(([date, values]) => ({
-			date: new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-			...values,
-		}));
+		.map(([date, values]) => ({ date: date, label: dayLabel(date), ...values }));
 });
-const categories = computed(() => Object.keys(trends.value[0] ?? {}).filter((k) => k !== "date"));
+/** 补齐范围内每一天；空行的横轴文案跟着一起补，否则那根柱子没有日期标签。 */
+const trendRows = computed(() =>
+	padUsageRows(trends.value, props.dates ?? []).map((row) => (isNoDataRow(row) ? { ...row, label: dayLabel(String(row.date)) } : row)),
+);
+const categories = computed(() => Object.keys(trends.value[0] ?? {}).filter((k) => k !== "date" && k !== "label"));
 function metricsFor(row: Record<string, unknown>): SpendMetrics {
 	return row.metrics as SpendMetrics;
 }
@@ -90,7 +98,7 @@ function successColor(rate: number) {
 </script>
 <template>
 	<div class="usage-endpoints">
-		<UsageActivityTrends v-if="series && !loading" :series="series" entity-kind="endpoint" />
+		<UsageActivityTrends v-if="series && !loading" :series="series" entity-kind="endpoint" :dates="dates" />
 		<UiTable :columns="columns" :rows="rows" row-key="endpoint" mobile-cards
 			><template #cell-endpoint="{ row }"
 				><span class="usage-endpoint-name">{{ row.endpoint }}</span></template
@@ -140,8 +148,8 @@ function successColor(rate: number) {
 		<UiCard appearance="tremor"
 			><h2>Endpoint Usage Trends</h2>
 			<UsageChart
-				:data="trends"
-				index="date"
+				:data="trendRows"
+				index="label"
 				:categories="categories"
 				:colors="colors.slice(0, categories.length)"
 				kind="line"

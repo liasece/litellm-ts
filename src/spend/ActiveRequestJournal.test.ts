@@ -1,7 +1,7 @@
 import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
 import { createModelResolutionTraceCollector } from "../router/ModelResolutionTrace";
 import { publishModelResolutionTrace, recordUpstreamExchange, runWithUpstreamExchangeScope } from "../router/UpstreamExchange";
-import type { UpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import { buildActiveRequestRoutingPatch, buildActiveRequestUpstreamPatch, createActiveRequestJournal } from "./ActiveRequestJournal";
 import { noteAppliedFeature, runWithAppliedFeatures, snapshotAppliedFeatures as snapshotForTest } from "../router/AppliedFeatures";
 

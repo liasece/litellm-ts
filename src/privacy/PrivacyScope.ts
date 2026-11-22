@@ -12,13 +12,6 @@ import { isSubscriptionProvider, withoutProvider } from "../subscriptions/Subscr
  */
 import type { Deployment } from "../types/router";
 import type { PrivacyMaskingSettings } from "./PrivacyConfig";
-
-/** 单条范围配置最大长度 */
-export const PRIVACY_SCOPE_ENTRY_MAX_LENGTH = 64;
-
-/** 单个范围列表最大条数 */
-export const PRIVACY_SCOPE_ENTRY_MAX_COUNT = 50;
-
 /** 范围判定目标：最终 deployment 的提供方与模型标识 */
 export interface PrivacyScopeTarget {
 	/** deployment 的提供方标识（custom_llm_provider） */

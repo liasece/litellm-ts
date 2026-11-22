@@ -4,10 +4,11 @@
  * 分页游标与时间线的一致性快照都用同一个位置表达：先在读取开始时固定一个上界，
  * 再按复合键向后翻页或追加，避免读取过程中新写入的行让结果重复或漏掉。编码后的位置
  * 以 base64url 出现在 HTTP 响应里，因此这里只使用 `startTime`/`requestId` 两个字段。
+ *
+ * 编解码是纯函数；三个行值比较条件由 `SpendReportingRepository` 提供——比较必须引用
+ * 表列，而表列只允许出现在仓储里，调用方拿到片段后直接拼进自己的查询。
  */
 
-import { sql, type SQL } from "drizzle-orm";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
 
 /** 一条日志在 `(startTime, request_id)` 上的位置。 */
@@ -75,28 +76,4 @@ export function sessionPositionFromRow(
 		return null;
 	}
 	return { startTime: startTime, requestId: requestId };
-}
-
-/**
- * 位置上界条件：只读到快照位置为止。
- * @param snapshot - 读取开始时固定的上界
- */
-export function sessionSnapshotClause(snapshot: SessionPosition): SQL {
-	return sql`(${liteLLM_SpendLogs.startTime}, ${liteLLM_SpendLogs.request_id}) <= (${snapshot.startTime}, ${snapshot.requestId})`;
-}
-
-/**
- * 位置下界条件：只读游标之后的行。
- * @param cursor - 已读到的位置
- */
-export function sessionCursorClause(cursor: SessionPosition): SQL {
-	return sql`(${liteLLM_SpendLogs.startTime}, ${liteLLM_SpendLogs.request_id}) > (${cursor.startTime}, ${cursor.requestId})`;
-}
-
-/**
- * 位置上界条件：只读游标严格之前的行（向更早翻页）。
- * @param cursor - 当前窗口最早的位置
- */
-export function sessionBeforeClause(cursor: SessionPosition): SQL {
-	return sql`(${liteLLM_SpendLogs.startTime}, ${liteLLM_SpendLogs.request_id}) < (${cursor.startTime}, ${cursor.requestId})`;
 }

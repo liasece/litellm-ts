@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activityBreakdownSeries, activitySeries, activityTooltipRows } from "./UsageSeriesLogic";
+import { activityBreakdownSeries, activityRateTooltipRows, activitySeries, activityTooltipRows } from "./UsageSeriesLogic";
 import type { BreakdownMetrics, DailyData, SpendMetrics, UsageDetailItem, UsageDetailResponse } from "../support/UsageModels";
 
 function metrics(values: Partial<SpendMetrics> = {}): SpendMetrics {
@@ -79,6 +79,20 @@ describe("activity series charts", () => {
 		expect(series.tokens.categories).not.toContain("Other");
 	});
 
+	it("labels upstream account series with the resolved account label instead of its key", () => {
+		const response = detail(
+			[
+				item("subscription:account-1", [["2026-11-17", { total_tokens: 30, spend: 2 }]], {
+					kind: "subscription",
+					label: "Codex Team",
+				}),
+			],
+			[["2026-11-17", { total_tokens: 30, spend: 2 }]],
+		);
+		const series = activitySeries(response, [], false, true);
+		expect(series.spend.slices.map((slice) => slice.label)).toEqual(["Codex Team"]);
+	});
+
 	it("keeps a free model that tops the token ranking out of the spend chart", () => {
 		// 生产回归：hy4-flash-free 花费为 0，按花费排序时排在 detail 末尾；前 7 名 + Other 的
 		// 画法会把 409M token 并进 Other，图上再也看不出是谁在用量。
@@ -154,8 +168,68 @@ describe("activity series charts", () => {
 
 	it("returns empty charts when the response has no usable items", () => {
 		const empty = { rows: [], categories: [], colors: [], slices: [] };
-		expect(activitySeries(null, [], false)).toEqual({ tokens: empty, spend: empty });
+		expect(activitySeries(null, [], false)).toEqual({ tokens: empty, spend: empty, hitRate: empty });
 		expect(activitySeries(detail([item("idle", [["2026-11-17", {}]])], [["2026-11-17", {}]]), [], false).spend.slices).toEqual([]);
+	});
+
+	it("draws one cache hit rate line per entity and leaves idle days empty", () => {
+		const response = detail(
+			[
+				item("hot", [
+					["2026-11-16", { prompt_tokens: 100, cache_read_input_tokens: 80 }],
+					["2026-11-17", { prompt_tokens: 100, cache_read_input_tokens: 40 }],
+					["2026-11-18", { prompt_tokens: 50, cache_read_input_tokens: 0 }],
+				]),
+				item("cold", [["2026-11-17", { prompt_tokens: 200, cache_read_input_tokens: 0 }]]),
+			],
+			[
+				["2026-11-16", { prompt_tokens: 100 }],
+				["2026-11-17", { prompt_tokens: 300 }],
+				["2026-11-18", { prompt_tokens: 50 }],
+			],
+		);
+		const series = activitySeries(response, [], false);
+		// 读得多的实体排在前面，图例直接给出区间加权命中率。
+		expect(series.hitRate.slices).toEqual([
+			{ label: "hot", color: series.hitRate.colors[0], cacheRead: 120, prompt: 250, rate: 48 },
+			{ label: "cold", color: series.hitRate.colors[1], cacheRead: 0, prompt: 200, rate: 0 },
+		]);
+		// 11-16 没有 cold 的请求：留空让线断开，而不是画成 0%；11-18 有请求但没命中，是真正的 0%。
+		expect(series.hitRate.rows).toEqual([
+			{ date: "2026-11-16", hot: 80, cold: null },
+			{ date: "2026-11-17", hot: 40, cold: 0 },
+			{ date: "2026-11-18", hot: 0, cold: null },
+		]);
+	});
+
+	it("lists 0% in the hit rate tooltip but skips days without data", () => {
+		const response = detail(
+			[
+				item("hot", [["2026-11-17", { prompt_tokens: 10, cache_read_input_tokens: 5 }]]),
+				item("cold", [["2026-11-17", { prompt_tokens: 10 }]]),
+			],
+			[["2026-11-17", { prompt_tokens: 20 }]],
+		);
+		const series = activitySeries(response, [], false);
+		expect(activityRateTooltipRows(series.hitRate, series.hitRate.rows[0]!).map((entry) => [entry.label, entry.value])).toEqual([
+			["hot", 50],
+			["cold", 0],
+		]);
+	});
+
+	it("keeps the same color for an entity across the token, spend and hit rate charts", () => {
+		const response = detail(
+			[
+				item("a", [["2026-11-17", { total_tokens: 10, spend: 3, prompt_tokens: 10, cache_read_input_tokens: 5 }]]),
+				item("b", [["2026-11-17", { total_tokens: 20, spend: 2, prompt_tokens: 20, cache_read_input_tokens: 10 }]]),
+			],
+			[["2026-11-17", { total_tokens: 30, spend: 5, prompt_tokens: 30 }]],
+		);
+		const series = activitySeries(response, [], false);
+		const colors = (chart: { categories: string[]; colors: string[] }) =>
+			Object.fromEntries(chart.categories.map((label, index) => [label, chart.colors[index]]));
+		expect(colors(series.hitRate)).toEqual(colors(series.tokens));
+		expect(colors(series.hitRate)).toEqual(colors(series.spend));
 	});
 
 	it("lists only the non-zero slices of the hovered day, largest first", () => {

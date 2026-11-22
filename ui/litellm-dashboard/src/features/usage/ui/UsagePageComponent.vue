@@ -8,17 +8,16 @@ import UiSpinner from "../../platform/ui/UiSpinner.vue";
 import { useAuthenticationStore } from "../../identity/stores/AuthenticationStore";
 import { currentPageKey } from "../../application/logic/PageContext";
 import { usageSection } from "../logic/UsageSections";
-import { isAdminRole } from "../../identity/logic/UserRoleLogic";
+import { isAdminRole, isUsageAdminRole } from "../../identity/logic/UserRoleLogic";
 import { useApplicationStore } from "../../application/stores/ApplicationStore";
-import { useMoneyFormatter } from "../../platform/stores/PriceDisplayStore";
-import { formatNumberWithCommas } from "../../formatting/logic/NumberFormattingLogic";
 import AdvancedDatePicker from "../../date-range/ui/AdvancedDatePickerComponent.vue";
 import type { DateRangeValue } from "../../date-range/support/DateRangeModels";
-import type { DailyActivityResponse, DailyData, EntityOption, UsageDetailView, UsageQuery, UsageView } from "../support/UsageModels";
+import type { DailyActivityResponse, EntityOption, UsageDetailView, UsageQuery, UsageView } from "../support/UsageModels";
 import { createUsageOverviewStore } from "../stores/UsageOverviewStore";
 import { createUsageCatalogStore } from "../stores/UsageCatalogStore";
 import { dateRangeLabel } from "../logic/UsageSummaryLogic";
 import { activitySeries } from "../logic/UsageSeriesLogic";
+import { usageDayRange } from "../logic/UsageEmptyDaysLogic";
 import {
 	detailActivity,
 	emptyUsageMetadata,
@@ -26,8 +25,7 @@ import {
 	summaryModelRankings,
 	summaryProviderRankings,
 } from "../logic/UsageOverviewLogic";
-import UsageChart from "./charts/UsageChartComponent.vue";
-import UsageChartLoader from "./UsageChartLoaderComponent.vue";
+import UsageSeriesCard from "./UsageSeriesCardComponent.vue";
 import UsageMetrics from "./UsageMetricsCardsComponent.vue";
 import UsageTopModels from "./UsageTopModelsComponent.vue";
 import UsageProviderSpend from "./UsageProviderSpendComponent.vue";
@@ -41,9 +39,11 @@ import UiAccessDenied from "../../platform/ui/UiAccessDenied.vue";
 import "./UsageStyles.css";
 import "../styles/UsageAuxiliaryStyles.css";
 const auth = useAuthenticationStore(),
-	app = useApplicationStore(),
-	money = useMoneyFormatter();
+	app = useApplicationStore();
 const admin = computed(() => isAdminRole(auth.userRole.value));
+// 账号视图与后端 isUsageAdmin 同口径；session.user_role 才是原始角色，
+// userRole 已经格式化成 "Admin"/"Admin Viewer"，会丢掉 proxy_admin 的区分。
+const accountAdmin = computed(() => isUsageAdminRole(auth.state.session?.user_role ?? ""));
 const date = ref<DateRangeValue>({ from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), to: new Date() });
 const view = ref<UsageView>("global"),
 	selectedUser = ref<string | null>(admin.value ? null : (auth.state.session?.user_id ?? null));
@@ -63,6 +63,7 @@ const sectionTitles = {
 	models: "Model Activity",
 	keys: "Key Activity",
 	endpoints: "Endpoint Activity",
+	accounts: "Upstream Account Activity",
 	quota: "Upstream Account Quota",
 } as const;
 const effectiveUser = computed(() => (admin.value ? selectedUser.value : (auth.state.session?.user_id ?? null)));
@@ -77,9 +78,13 @@ const detailView = computed<UsageDetailView | null>(() => {
 	if (section.value === "models") return "models";
 	if (section.value === "keys") return "api_keys";
 	if (section.value === "endpoints") return "endpoints";
+	if (section.value === "accounts") return "upstream_accounts";
+	// Cost 页的每日堆叠图与 Model Activity 是同一份数据，先到的人拉一次、后来的人复用缓存。
+	if (section.value === "cost") return "models";
 	return null;
 });
 async function loadActiveDetail() {
+	if (section.value === "accounts" && !accountAdmin.value) return;
 	const query = currentQuery(),
 		active = detailView.value;
 	if (!query || !active || !overview.state.summary || overview.state.detailLoading[active] || overview.state.details[active]) return;
@@ -161,12 +166,17 @@ const keyMetrics = computed(() => detailActivity(overview.state.details.api_keys
 const modelSeries = computed(() => activitySeries(overview.state.details.models ?? null, app.state.teams, false));
 const keySeries = computed(() => activitySeries(overview.state.details.api_keys ?? null, app.state.teams, true));
 const endpointSeries = computed(() => activitySeries(overview.state.details.endpoints ?? null, app.state.teams, false));
+const accountMetrics = computed(() => detailActivity(overview.state.details.upstream_accounts ?? null, app.state.teams, false, true));
+const accountSeries = computed(() => activitySeries(overview.state.details.upstream_accounts ?? null, app.state.teams, false, true));
 const models = computed(() => summaryModelRankings(overview.state.summary)),
 	groups = computed(() => summaryModelRankings(overview.state.summary, true)),
 	providers = computed(() => summaryProviderRankings(overview.state.summary)),
 	keys = computed(() => summaryKeyRankings(overview.state.summary));
 const metadata = computed(() => overview.state.summary?.metadata ?? emptyUsageMetadata());
-const days = computed(() => [...(overview.state.summary?.results ?? [])].sort((a, b) => a.date.localeCompare(b.date)));
+/** 所选范围里的每一天；缺数据的日子也要在图上占位，所以先补齐再交给图表。 */
+const dayRange = computed(() => (date.value.from && date.value.to ? usageDayRange(date.value.from, date.value.to) : ([] as string[])));
+/** 汇总或分模型明细还没回来时，Cost 页的两张堆叠图先显示骨架而不是“没有用量”。 */
+const costSeriesLoading = computed(() => overview.state.loading || Boolean(overview.state.detailLoading.models));
 function detailHasMore(active: UsageDetailView): boolean {
 	return Boolean(overview.state.details[active]?.metadata.has_more);
 }
@@ -206,9 +216,6 @@ function changeDate(value: DateRangeValue) {
 function icon(value: unknown) {
 	return viewOptions.value.find((v) => v.value === value)?.icon || "GlobalOutlined";
 }
-function daily(row: Record<string, unknown>): DailyData {
-	return row as unknown as DailyData;
-}
 </script>
 <template>
 	<div class="usage-page">
@@ -217,7 +224,12 @@ function daily(row: Record<string, unknown>): DailyData {
 				<div>
 					<h2>{{ view === "global" ? sectionTitles[section] : viewOptions.find((option) => option.value === view)?.label }}</h2>
 				</div>
-				<UiButton v-if="view === 'global'" size="small" :loading="exportLoading" :disabled="exportLoading" @click="openExport"
+				<UiButton
+					v-if="view === 'global' && section !== 'accounts'"
+					size="small"
+					:loading="exportLoading"
+					:disabled="exportLoading"
+					@click="openExport"
 					><template #icon
 						><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path
@@ -234,160 +246,162 @@ function daily(row: Record<string, unknown>): DailyData {
 				<UsageUpstreamQuota v-else :enabled="true" />
 			</template>
 			<template v-else>
-				<div class="usage-toolbar">
-					<div class="usage-view-select">
-						<div class="usage-view-label">
-							<h3>Usage View</h3>
-							<p>Select the usage data you want to view</p>
-						</div>
-						<UiSelect class="usage-view-control" :model-value="view" :options="viewOptions" @update:model-value="changeView"
-							><template #value="{ option }"
-								><div class="usage-view-value">
-									<div>
-										<span class="usage-view-value-icon"><UiIcon :name="icon(option.value)" :size="16" /></span>
-									</div>
-									<span class="usage-view-value-label">{{ option.label }}</span>
-								</div></template
-							><template #option="{ option }"
-								><span class="usage-view-option"
-									><UiIcon :name="icon(option.value)" :size="16" /><span
-										><b>{{ option.label }}</b
-										><small>{{ option.description }}</small></span
-									></span
-								></template
-							></UiSelect
-						>
-					</div>
-					<UiSelect
-						v-if="view === 'global' && admin"
-						class="usage-user-filter"
-						:model-value="selectedUser"
-						:options="lists.users"
-						placeholder="Select user to filter..."
-						searchable
-						clearable
-						:filterable="false"
-						:loading="lists.usersLoading"
-						:empty-text="lists.usersLoading ? '' : 'No users found'"
-						@update:model-value="changeUser"
-						@search="catalog.searchUsers"
-						@popup-scroll="catalog.scrollUsers"
-						><template #footer
-							><div v-if="lists.usersFetchingMore" class="usage-user-loading"><UiSpinner :size="14" /></div></template
-					></UiSelect>
-					<div class="usage-toolbar-date"><AdvancedDatePicker :value="date" show-quick-select @value-change="changeDate" /></div>
-				</div>
-				<div v-if="view === 'global'">
-					<div class="usage-global-panels">
-						<div v-show="section === 'cost'" class="usage-global-cost">
-							<UsageMetrics
-								class="usage-global-wide"
-								:metadata="metadata"
-								:total-spend="metadata.total_spend || 0"
-								:max-budget="lists.maxBudget"
-								:date-range-label="dateRangeLabel(date.from, date.to)"
-							/>
-							<UiCard class="usage-panel usage-global-half" appearance="tremor"
-								><h2>Daily Spend</h2>
-								<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
-									v-else
-									:data="days"
-									index="date"
-									:categories="['metrics.spend']"
-									:height="240"
-									:y-axis-width="100"
-									:format="(v) => money(v, 'compact')"
-									class="usage-daily-spend-chart"
-									><template #tooltip="{ row }"
-										><b>{{ row.date }}</b>
-										<p class="usage-cyan">Spend: {{ money(daily(row).metrics.spend, 2) }}</p>
-										<p>Requests: {{ daily(row).metrics.api_requests }}</p>
-										<p>Successful: {{ daily(row).metrics.successful_requests }}</p>
-										<p>Failed: {{ daily(row).metrics.failed_requests }}</p>
-										<p>Tokens: {{ formatNumberWithCommas(daily(row).metrics.total_tokens, 0, false) }}</p></template
-									></UsageChart
-								></UiCard
+				<UiAccessDenied
+					v-if="section === 'accounts' && !accountAdmin"
+					message="Ask your proxy admin for access to upstream account activity"
+				/>
+				<template v-if="section !== 'accounts' || accountAdmin">
+					<div class="usage-toolbar">
+						<div class="usage-view-select">
+							<div class="usage-view-label">
+								<h3>Usage View</h3>
+								<p>Select the usage data you want to view</p>
+							</div>
+							<UiSelect class="usage-view-control" :model-value="view" :options="viewOptions" @update:model-value="changeView"
+								><template #value="{ option }"
+									><div class="usage-view-value">
+										<div>
+											<span class="usage-view-value-icon"><UiIcon :name="icon(option.value)" :size="16" /></span>
+										</div>
+										<span class="usage-view-value-label">{{ option.label }}</span>
+									</div></template
+								><template #option="{ option }"
+									><span class="usage-view-option"
+										><UiIcon :name="icon(option.value)" :size="16" /><span
+											><b>{{ option.label }}</b
+											><small>{{ option.description }}</small></span
+										></span
+									></template
+								></UiSelect
 							>
-							<UiCard class="usage-panel usage-global-half" appearance="tremor"
-								><h2>Daily Tokens</h2>
-								<UsageChartLoader v-if="overview.state.loading" :is-date-changing="dateChanging" /><UsageChart
-									v-else
-									:data="days"
-									index="date"
-									:categories="['metrics.total_tokens']"
-									:colors="['indigo']"
-									:height="240"
-									:y-axis-width="80"
-									:format="(v) => (v >= 1e9 ? formatNumberWithCommas(v, 1, true) : formatNumberWithCommas(v, 0, true))"
-									><template #tooltip="{ row }"
-										><b>{{ row.date }}</b>
-										<p>Tokens: {{ formatNumberWithCommas(daily(row).metrics.total_tokens, 0, false) }}</p>
-										<p>Requests: {{ daily(row).metrics.api_requests }}</p>
-										<p>Spend: {{ money(daily(row).metrics.spend, 2) }}</p></template
-									></UsageChart
-								></UiCard
-							>
-							<UsageTopModels
-								v-model="modelMode"
-								class="usage-global-half"
-								dimension="spend"
-								:groups="groups"
-								:individual="models"
-								:loading="overview.state.loading"
-								:is-date-changing="dateChanging"
-							/>
-							<UsageTopModels
-								v-model="modelMode"
-								class="usage-global-half"
-								dimension="tokens"
-								:show-mode-toggle="false"
-								:groups="groups"
-								:individual="models"
-								:loading="overview.state.loading"
-								:is-date-changing="dateChanging"
-							/>
-							<UsageProviderSpend
-								class="usage-global-left"
-								:provider-spend="providers"
-								:loading="overview.state.loading"
-								:is-date-changing="dateChanging"
-							/>
-							<UiCard class="usage-panel usage-global-right" appearance="tremor"
-								><h2>Top Virtual Keys</h2>
-								<UsageTopKeys :rows="keys"
-							/></UiCard>
 						</div>
-						<UsageActivity
-							v-if="section === 'models'"
-							:model-metrics="modelMetrics"
-							entity-kind="model"
-							:loading="overview.state.detailLoading.models"
-							:has-more="detailHasMore('models')"
-							:loading-more="detailLoadingMore('models')"
-							:series="modelSeries"
-							@load-more="loadMore('models')"
-						/>
-						<UsageActivity
-							v-if="section === 'keys'"
-							:model-metrics="keyMetrics"
-							entity-kind="key"
-							:loading="overview.state.detailLoading.api_keys"
-							:has-more="detailHasMore('api_keys')"
-							:loading-more="detailLoadingMore('api_keys')"
-							:series="keySeries"
-							@load-more="loadMore('api_keys')"
-						/>
-						<UsageEndpoint
-							v-if="section === 'endpoints'"
-							:detail="overview.state.details.endpoints ?? null"
-							:series="endpointSeries"
-							:loading="overview.state.detailLoading.endpoints"
-						/>
+						<UiSelect
+							v-if="view === 'global' && admin"
+							class="usage-user-filter"
+							:model-value="selectedUser"
+							:options="lists.users"
+							placeholder="Select user to filter..."
+							searchable
+							clearable
+							:filterable="false"
+							:loading="lists.usersLoading"
+							:empty-text="lists.usersLoading ? '' : 'No users found'"
+							@update:model-value="changeUser"
+							@search="catalog.searchUsers"
+							@popup-scroll="catalog.scrollUsers"
+							><template #footer
+								><div v-if="lists.usersFetchingMore" class="usage-user-loading"><UiSpinner :size="14" /></div></template
+						></UiSelect>
+						<div class="usage-toolbar-date">
+							<AdvancedDatePicker :value="date" show-quick-select @value-change="changeDate" />
+						</div>
 					</div>
-				</div>
-				<template v-else
-					><UsageEntity :key="view" :entity-type="view" :options="entityOptions[view] ?? []" :date-range="date"
-				/></template>
+					<div v-if="view === 'global'">
+						<div class="usage-global-panels">
+							<div v-show="section === 'cost'" class="usage-global-cost">
+								<UsageMetrics
+									class="usage-global-wide"
+									:metadata="metadata"
+									:total-spend="metadata.total_spend || 0"
+									:max-budget="lists.maxBudget"
+									:date-range-label="dateRangeLabel(date.from, date.to)"
+								/>
+								<UiCard class="usage-panel usage-global-half" appearance="tremor">
+									<UsageSeriesCard
+										chart="spend"
+										:series="modelSeries"
+										entity-kind="model"
+										:dates="dayRange"
+										:loading="costSeriesLoading"
+										:is-date-changing="dateChanging"
+									/>
+								</UiCard>
+								<UiCard class="usage-panel usage-global-half" appearance="tremor">
+									<UsageSeriesCard
+										chart="tokens"
+										:series="modelSeries"
+										entity-kind="model"
+										:dates="dayRange"
+										:loading="costSeriesLoading"
+										:is-date-changing="dateChanging"
+									/>
+								</UiCard>
+								<UsageTopModels
+									v-model="modelMode"
+									class="usage-global-half"
+									dimension="spend"
+									:groups="groups"
+									:individual="models"
+									:loading="overview.state.loading"
+									:is-date-changing="dateChanging"
+								/>
+								<UsageTopModels
+									v-model="modelMode"
+									class="usage-global-half"
+									dimension="tokens"
+									:show-mode-toggle="false"
+									:groups="groups"
+									:individual="models"
+									:loading="overview.state.loading"
+									:is-date-changing="dateChanging"
+								/>
+								<UsageProviderSpend
+									class="usage-global-left"
+									:provider-spend="providers"
+									:loading="overview.state.loading"
+									:is-date-changing="dateChanging"
+								/>
+								<UiCard class="usage-panel usage-global-right" appearance="tremor"
+									><h2>Top Virtual Keys</h2>
+									<UsageTopKeys :rows="keys"
+								/></UiCard>
+							</div>
+							<UsageActivity
+								v-if="section === 'models'"
+								:model-metrics="modelMetrics"
+								entity-kind="model"
+								:loading="overview.state.detailLoading.models"
+								:has-more="detailHasMore('models')"
+								:loading-more="detailLoadingMore('models')"
+								:series="modelSeries"
+								:dates="dayRange"
+								@load-more="loadMore('models')"
+							/>
+							<UsageActivity
+								v-if="section === 'keys'"
+								:model-metrics="keyMetrics"
+								entity-kind="key"
+								:loading="overview.state.detailLoading.api_keys"
+								:has-more="detailHasMore('api_keys')"
+								:loading-more="detailLoadingMore('api_keys')"
+								:series="keySeries"
+								:dates="dayRange"
+								@load-more="loadMore('api_keys')"
+							/>
+							<UsageEndpoint
+								v-if="section === 'endpoints'"
+								:detail="overview.state.details.endpoints ?? null"
+								:series="endpointSeries"
+								:dates="dayRange"
+								:loading="overview.state.detailLoading.endpoints"
+							/>
+							<UsageActivity
+								v-if="section === 'accounts'"
+								:model-metrics="accountMetrics"
+								entity-kind="account"
+								:loading="overview.state.detailLoading.upstream_accounts"
+								:has-more="detailHasMore('upstream_accounts')"
+								:loading-more="detailLoadingMore('upstream_accounts')"
+								:series="accountSeries"
+								:dates="dayRange"
+								@load-more="loadMore('upstream_accounts')"
+							/>
+						</div>
+					</div>
+					<template v-else
+						><UsageEntity :key="view" :entity-type="view" :options="entityOptions[view] ?? []" :date-range="date"
+					/></template>
+				</template>
 			</template>
 		</div>
 		<UsageExport

@@ -162,6 +162,41 @@ describe("usage wire and aggregation contracts", () => {
 			spend: 2,
 		});
 	});
+	it("parses upstream account detail and keeps account metadata for the activity row", () => {
+		const metrics = { ...emptyMetrics(), spend: 2, api_requests: 3 };
+		const detail = parseDailyActivityDetail({
+			view: "upstream_accounts",
+			results: [{ date: "2026-11-02", metrics }],
+			items: [
+				{
+					key: "subscription:account-1",
+					metrics,
+					daily: [{ date: "2026-11-02", metrics }],
+					metadata: {
+						kind: "subscription",
+						label: "Codex Team",
+						provider: "codex",
+						providers: ["codex", "openai"],
+						key_count: 2,
+						deleted: false,
+						trashed: true,
+					},
+				},
+			],
+			metadata: { total_count: 1 },
+		});
+		const activity = detailActivity(detail, [], false, true)["subscription:account-1"];
+		expect(activity).toMatchObject({
+			label: "Codex Team",
+			accountKind: "subscription",
+			provider: "codex",
+			providers: ["codex", "openai"],
+			keyCount: 2,
+			trashed: true,
+			deleted: false,
+		});
+	});
+
 	it("retains valid names that collide with object prototype members", () => {
 		const data = emptyDailyActivity(),
 			item = { metrics: { ...emptyMetrics(), spend: 3 }, metadata: {}, api_key_breakdown: {} };

@@ -7,6 +7,7 @@ import { createLogDetailsStore } from "../../stores/LogDetailsStore";
 import { loadCompleteSessionLogs } from "../../logic/SessionLogsLogic";
 import { eventDisplayName, guardrailEntries, isAgent, isMcp, sessionStats } from "../../logic/LogDetailsDisplayLogic";
 import { sessionGroupRef } from "../../logic/LogsIdentityLogic";
+import { adjacentLog } from "../../logic/LogNavigationLogic";
 import { safeSessionError } from "../../logic/SessionTimelineMergeLogic";
 import { useMoneyFormatter } from "../../../platform/stores/PriceDisplayStore";
 import UiDrawer from "../../../platform/ui/UiDrawer.vue";
@@ -176,10 +177,9 @@ function select(row: LogEntry) {
 	emit("select", row);
 }
 function navigate(offset: number) {
-	if (!current.value) return;
-	const values = sessionMode.value ? rows.value : props.allLogs,
-		index = values.findIndex((row) => row.request_id === current.value?.request_id),
-		target = values[index + offset];
+	const from = current.value;
+	if (!from) return;
+	const target = adjacentLog(sessionMode.value ? [rows.value, props.allLogs] : [props.allLogs], from.request_id, offset);
 	if (target) select(target);
 }
 function refresh() {

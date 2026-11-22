@@ -158,6 +158,15 @@ export const first: LogEntry = {
 		],
 	},
 };
+/**
+ * 会话视图里打开的那一行：带分组字段，抽屉才会按 Session 模式装载同组事件。
+ * 与 `second` 不同的分组让 J/K 走出会话时能回到日志列表的相邻行。
+ */
+export const sessionFirst: LogEntry = {
+	...first,
+	session_group_type: "session_id",
+	session_group_id: "session-fixture",
+};
 export const second: LogEntry = {
 	...first,
 	request_id: "log-two",

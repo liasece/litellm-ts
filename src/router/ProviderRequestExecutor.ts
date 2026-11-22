@@ -2,38 +2,10 @@ import { decodeUndecodeableResponse, sanitizeUpstreamRequestHeaders } from "../c
 import type { ProviderRequest } from "../types/provider";
 import { TimeoutError } from "./RouterErrors";
 import { getSubscriptionRequestHandler } from "./SubscriptionDispatch";
+import type { ProviderRequestExecutionOptions, ProviderRequestExecutionResult } from "./ProviderRequestExecutionTypes";
+
 import { ApiError } from "../core/api/ApiError";
 import { beginUpstreamAttempt, endUpstreamAttempt, noteUpstreamHeaders, noteUpstreamPayload } from "../observability/RequestTrace";
-
-/** Provider 请求执行选项。 */
-export interface ProviderRequestExecutionOptions {
-	/** 请求超时（毫秒）；缺省时不设置定时中止。 */
-	readonly timeoutMs?: number;
-	/** 是否读取 JSON 响应体；false 时成功流保持未读，但非 2xx 响应仍读取错误体。 */
-	readonly readJson?: boolean;
-	/** 调用方取消信号；与 provider timeout 任一触发都会中止上游请求。 */
-	readonly signal?: AbortSignal;
-}
-
-/** Provider 请求执行结果。 */
-export interface ProviderRequestExecutionResult {
-	/**
-	 *
-	 */
-	readonly response: Response;
-	/**
-	 *
-	 */
-	readonly body?: unknown;
-	/**
-	 *
-	 */
-	readonly latencyMs: number;
-	/**
-	 *
-	 */
-	readonly startedAtMs: number;
-}
 
 /**
  * 读取中止信号携带的原因，用于区分客户端断开、上层取消等来源。

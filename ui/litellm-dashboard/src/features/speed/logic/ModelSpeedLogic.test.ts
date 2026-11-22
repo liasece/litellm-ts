@@ -6,6 +6,7 @@ import {
 	formatTps,
 	resolveSpeedAxisMax,
 	resolveSpeedRange,
+	sortSpeedModels,
 	speedModelKey,
 } from "./ModelSpeedLogic";
 import type { SpeedModelSeries, SpeedPoint } from "../support/SpeedModels";
@@ -148,5 +149,27 @@ describe("filterSpeedModels", () => {
 	it("也能按供应商筛选同名模型，找到具体是哪一条曲线", () => {
 		expect(filterSpeedModels(models, "opencode").map(speedModelKey)).toEqual(["opencode-go\u0000claude-opus-4-5"]);
 		expect(filterSpeedModels(models, "claude-subscription").map(speedModelKey)).toEqual(["claude-subscription\u0000claude-opus-4-5"]);
+	});
+});
+
+describe("sortSpeedModels", () => {
+	it("按卡片显示的中位 TPS 降序，而不是后端返回的平均 TPS 顺序", () => {
+		const models: SpeedModelSeries[] = [
+			{ model: "high-average", provider: "p", calls: 10, requests: 10, avg_tps: 200, p50_tps: 80, points: [] },
+			{ model: "high-median", provider: "p", calls: 10, requests: 10, avg_tps: 120, p50_tps: 150, points: [] },
+			{ model: "middle", provider: "p", calls: 10, requests: 10, avg_tps: 130, p50_tps: 100, points: [] },
+		];
+
+		expect(sortSpeedModels(models).map((entry) => entry.model)).toEqual(["high-median", "middle", "high-average"]);
+	});
+
+	it("中位与平均都相同时按样本量、再按模型与供应商稳定排序", () => {
+		const models: SpeedModelSeries[] = [
+			{ model: "b", provider: "p", calls: 10, requests: 5, avg_tps: 100, p50_tps: 90, points: [] },
+			{ model: "a", provider: "p", calls: 10, requests: 5, avg_tps: 100, p50_tps: 90, points: [] },
+			{ model: "heavy", provider: "p", calls: 10, requests: 9, avg_tps: 100, p50_tps: 90, points: [] },
+		];
+
+		expect(sortSpeedModels(models).map((entry) => entry.model)).toEqual(["heavy", "a", "b"]);
 	});
 });

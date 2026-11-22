@@ -12,7 +12,7 @@ import type { CooldownManager } from "./CooldownManager";
 import type { TPMRPMLimiter } from "./TPMRPMLimiter";
 import type { FallbackHandler, FallbackPlanEntry } from "./FallbackHandler";
 import type { ModelResolutionTraceCollector } from "./ModelResolutionTrace";
-import type { UpstreamLogContext } from "./UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import type { ProviderResponseProtocol } from "../types/provider";
 
 /** Router 内部状态/方法的可注入视图，_executeWithFallback 唯一访问面 */

@@ -16,6 +16,7 @@ import { modelRankings, providerRankings, keyRankings } from "../logic/UsageSumm
 import { processActivityData } from "../logic/ActivityMetricsLogic";
 import { agentRankings, entityBreakdown, entityLabel } from "../logic/EntityUsageLogic";
 import { activityBreakdownSeries } from "../logic/UsageSeriesLogic";
+import { padUsageRows, usageDayRange } from "../logic/UsageEmptyDaysLogic";
 import type { DateRangeValue } from "../../date-range/support/DateRangeModels";
 import type { EntityType, EntityOption, DailyData } from "../support/UsageModels";
 import UsageChart from "./charts/UsageChartComponent.vue";
@@ -118,7 +119,16 @@ const providerColumns: readonly UiTableColumn[] = [
 	},
 ];
 const providerRows = computed<readonly UiTableRow[]>(() => providers.value as unknown as readonly UiTableRow[]);
-const days = computed(() => [...state.data.results].sort((a, b) => a.date.localeCompare(b.date)));
+/** 所选范围里的每一天；实体当天没有请求也要占位，图上是 No data 而不是被略过。 */
+const dayRange = computed(() =>
+	props.dateRange?.from && props.dateRange?.to ? usageDayRange(props.dateRange.from, props.dateRange.to) : ([] as string[]),
+);
+const days = computed(() =>
+	padUsageRows(
+		[...state.data.results].sort((a, b) => a.date.localeCompare(b.date)),
+		dayRange.value,
+	),
+);
 const metrics = computed(() => [
 	{ label: "Total Spend", value: money(state.data.metadata.total_spend, 2) },
 	{ label: "Total Requests", value: state.data.metadata.total_api_requests.toLocaleString() },
@@ -322,6 +332,7 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 			:hide-prompt-caching-metrics="entityType === 'agent'"
 			entity-kind="model"
 			:series="modelSeries"
+			:dates="dayRange"
 			:loading="state.loading"
 		/>
 		<UsageActivity
@@ -330,6 +341,7 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 			:model-metrics="agentMetrics"
 			entity-kind="agent"
 			:series="agentSeries"
+			:dates="dayRange"
 			:loading="agent.loading"
 		/>
 		<UsageActivity
@@ -338,9 +350,16 @@ const { fadeStyle: tabsFadeStyle } = useTabStripScroll(tabsStrip, () => tab.valu
 			:hide-prompt-caching-metrics="entityType === 'agent'"
 			entity-kind="key"
 			:series="keySeries"
+			:dates="dayRange"
 			:loading="state.loading"
 		/>
-		<UsageEndpoint v-show="tab === 'endpoints'" :data="state.data" :series="endpointSeries" :loading="state.loading" />
+		<UsageEndpoint
+			v-show="tab === 'endpoints'"
+			:data="state.data"
+			:series="endpointSeries"
+			:dates="dayRange"
+			:loading="state.loading"
+		/>
 		<UsageExport
 			v-model:open="exportOpen"
 			:entity-type="entityType"

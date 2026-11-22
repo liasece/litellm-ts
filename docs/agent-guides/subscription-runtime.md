@@ -7,7 +7,16 @@
 - `accountStore.ts`：账号仓库，正文与有效性都在数据库（`LiteLLM_SubscriptionAccount`）；ID 为 `sha256(source + "\0" + key)` 前 16 位（沿用旧 `auth_index`，额度接口与书签不变）。首次启动时导入 `CLIPROXY_RUNTIME_ROOT/auths` 与 `.trash` 的旧 JSON，完成后不再扫描或写回账号文件（永久删除时例外，见下）。
 - `scheduler.ts`：会话亲和 + priority 分层 + 平滑加权轮询；权重 0 暂停调度，账号列表来自 `accountStore`。
   冷却按失败归属分两级：408/429/5xx 记在「账号 + 上游模型」上（同账号其他模型不受影响），
-  401/402/403 与额度耗尽记在账号上（换模型也不会好，整账号避开）；额度耗尽冷却 30 分钟。
+  401/402/403 与额度耗尽记在账号上（换模型也不会好，整账号避开）；额度耗尽冷却默认 30 分钟，
+  上游错误里带重置时间时按重置时间冷却（上限 24 小时）。
+  选号顺序：失败惩罚窗口（默认 5 分钟）内失败过的账号排到队尾，窗口外的账号在同一 priority
+  层内加权轮询；全部账号都在窗口内时，按「失败时间从远到近」挑，最近失败的账号最后才试。
+  会话亲和只在当前候选组内生效——把会话钉在刚失败过的账号上正是要避免的行为。
+- `quota/QuotaAvailability.ts`：额度闸门。额度确定用尽（窗口剩余 0 且有未来重置时间）的账号
+  不参与调度，直到重置时间；`SubscriptionRuntimeManager` 每 5 分钟串行刷新各账号额度快照，
+  失败不动已有状态；全部账号被挡住时兜底放行一个并告警，避免额度接口抖动打挂整个模型。
+- `quota/accountStatePersistence.ts` + `LiteLLM_SubscriptionAccountState`：最近失败时间与额度耗尽
+  截止时间落盘，启动时恢复，重启后不必再用真实失败重新探路。
 - `bridge.ts`：解析 `litellm-subscription://<source>/<operation>`，选择账号、刷新凭据、按入口/上游协议翻译请求与响应；流式响应通过有状态 translator 转换。
 - `providers/`：七家 Provider 适配器（Codex、Claude、Kimi、Antigravity、xAI、CommandCode、OpenCode Go），负责路由、上游 URL/头、协议特化、目录与额度。
 - `protocol/`：chat / Anthropic Messages / Responses / Gemini 的请求、响应与 SSE 转换。跨协议转换不保证字段一一对应：Anthropic 的 `output_config.format` 没有名称，转成 Responses 时由编码器补默认 `text.format.name`（`structured_output`），否则上游按缺参拒绝（Codex 报 `Missing required parameter: 'text.format.name'`）。`strict` 在 Responses 里省略即视为严格模式，而严格模式要求每个对象节点把属性列全并显式 `additionalProperties: false`；调用方多不写 `strict`，所以编码器按 schema 形态判定：可满足就显式 `true`，否则发 `false` 并保留原 schema，避免宽松 schema 被上游以 `Invalid schema for response_format` 拒掉。这里不替调用方改写 schema（那会把可选字段变成必填，改掉语义），显式 `strict: true` 也照原样保留。另外 `user` 是 OpenAI 的字段，上限 64 字符：Anthropic 入口把 `device_id/account_uuid/session_id` 打包进 `metadata.user_id`，编码器会截断后才外发，并从其中的 `session_id` 取会话标识作 `prompt_cache_key`（`user_id` 指人不指会话，直接拿它做缓存键会让同一用户的并行会话互撞）。
@@ -26,9 +35,10 @@
    账号级失败换下一个账号重试（最多 3 个账号、仅 chat/messages/responses/compact/alpha.search）：
    401/402/403/408/429/5xx 按状态码判定，另外 400 错误体命中「余额/额度耗尽」文案时也按账号级处理——
    CommandCode 用 400 invalid_request_error 表达余额不足，若当成请求错误会让整个订阅判失败、跳过同 Provider 的其他账号。
-6. 上游 JSON/SSE 经适配器钩子与协议 translator 回到入口协议；Codex 的 SSE 可能不带 `Content-Type`，桥接层以流式计划和入口流式请求共同判定，不能只依赖响应头。`ProviderRequestExecutor` 之外的重试、fallback、冷却、spend 仍由 Router/端点负责。
-7. Codex 凭据带 `use_siwc` 时，非 Codex 客户端使用嵌套 `siwc` token（`chatgpt.tokens.use.direct`），Codex 客户端固定外层 token；两层分别刷新并共用同一账号的进程内锁。
-8. 模型目录：Codex 先用静态快照（`src/data/subscription-models.json`）与内置图片模型，再用账号 token 调 `GET {base}/models?client_version=…` 补入上游刚发布的模型（10 分钟缓存，`catalog/codexCatalog.ts`）；拉取失败只回退静态快照。CommandCode / OpenCode Go 同样走上游 `/models`（`catalog/dynamicCatalog.ts`），其余来源仍只有静态快照。加新模型时先看这里：静态文件是某一时刻的快照，不该靠手改 JSON 追新模型。
+6. 适配器 `build()` 成功后，桥接层把实际发送的 credential 哈希与最新账号 ID 写入请求作用域。Usage 的账号归因只认这组事实；token 刷新后账号 ID 可能变化，不能沿用调用方最初选中的快照。
+7. 上游 JSON/SSE 经适配器钩子与协议 translator 回到入口协议；Codex 的 SSE 可能不带 `Content-Type`，桥接层以流式计划和入口流式请求共同判定，不能只依赖响应头。`ProviderRequestExecutor` 之外的重试、fallback、冷却、spend 仍由 Router/端点负责。
+8. Codex 凭据带 `use_siwc` 时，非 Codex 客户端使用嵌套 `siwc` token（`chatgpt.tokens.use.direct`），Codex 客户端固定外层 token；两层分别刷新并共用同一账号的进程内锁。
+9. 模型目录：Codex 先用静态快照（`src/data/subscription-models.json`）与内置图片模型，再用账号 token 调 `GET {base}/models?client_version=…` 补入上游刚发布的模型（10 分钟缓存，`catalog/codexCatalog.ts`）；拉取失败只回退静态快照。CommandCode / OpenCode Go 同样走上游 `/models`（`catalog/dynamicCatalog.ts`），其余来源仍只有静态快照。加新模型时先看这里：静态文件是某一时刻的快照，不该靠手改 JSON 追新模型。
 
 ## 上游模型元信息（持久弱缓存）
 
@@ -71,6 +81,10 @@
   这类请求在预检阶段就被拦下，日志里本来不会有自己的上游交换，只能靠这条记录回溯。
 - Responses WebSocket 失败轮次现在会写一条 failure SpendLog 并带上上游错误；
   改造前这个入口只记成功，上游 429 在 Logs 上完全不可见。
-- 上游报余额/额度不足（如「insufficient credits」）：运行时会先换账号重试，并把该账号冷却 30 分钟，
-  日志出现「订阅账号额度耗尽，切换账号重试」即表示请求本来会失败、被换账号救回来了；
-  冷却到期后仍会再试一次，长期余额见底的账号应及时补额度或禁用，而不是靠冷却兜底。
+- 上游报余额/额度不足（如「insufficient credits」，或 429 文案里的「weekly usage limit … resets at …」）：
+  运行时会先换账号重试，并把该账号按重置时间冷却（无重置时间则 30 分钟），同时写进额度闸门；
+  日志出现「订阅账号额度耗尽，切换账号重试」即表示请求本来会失败、被换账号救回来了。
+  重置时间到期后闸门自动放行，长期余额见底的账号应及时补额度或禁用，而不是靠冷却兜底。
+- 日志出现「额度闸门挡住了全部账号，兜底放行一个」：额度快照认为所有账号都没额度，但请求仍在来。
+  说明额度视图与事实不一致（接口抖动、窗口口径不同或刚充值），此时放行一次让上游给结论；
+  连续出现要核对 `GET /subscriptions/accounts/<account>/quota` 的窗口数据。

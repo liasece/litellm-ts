@@ -28,6 +28,8 @@ import type {
 	SubscriptionSource,
 } from "./types";
 import { catalogForSource } from "./catalog/catalog";
+import { QuotaAvailability } from "./quota/QuotaAvailability";
+import type { StoredAccountState, SubscriptionAccountStatePersistence } from "./quota/accountStatePersistence";
 import { quotaForAccount } from "./quota/quota";
 import {
 	commandCodeAccountFilename,
@@ -61,6 +63,8 @@ export interface SubscriptionRuntimeOptions {
 	readonly authDir?: string;
 	/** 会话亲和有效期。 */
 	readonly affinityTtlMs?: number;
+	/** 调度状态持久化；提供后重启不再用失败请求重新探路。 */
+	readonly schedulerState?: SubscriptionAccountStatePersistence;
 }
 
 /** 日志环形缓冲条目。 */
@@ -84,6 +88,10 @@ interface OAuthEntry {
 const MAX_LOGS = 2_000;
 /** 后台刷新间隔。 */
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+/** 额度快照刷新间隔：额度耗尽是小时/天级事实，分钟级刷新足够，不必跟着请求走。 */
+const QUOTA_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+/** 调度状态落盘延迟：把同一批失败合并成一次写入。 */
+const STATE_FLUSH_DELAY_MS = 1_000;
 
 /**
  * 原生订阅运行时。
@@ -98,6 +106,7 @@ export class SubscriptionRuntimeManager {
 	private readonly _oauth = new Map<string, OAuthEntry>();
 	private readonly _logs: RuntimeLog[] = [];
 	private readonly _refreshing = new Set<string>();
+	private _refreshingQuota = false;
 	private _settings: CliProxyStoredSettings = { enabled: true, config_yaml: "" };
 	private _settingsLoaded = false;
 	private _startedAt: string | null = null;
@@ -107,19 +116,31 @@ export class SubscriptionRuntimeManager {
 	private _lastError: string | null = null;
 	private _activeRequestProbe: (() => number) | undefined;
 	private _operation: string | null = null;
+	/** 额度闸门：额度确定用尽的账号在被选中前就跳过。 */
+	private readonly _quota = new QuotaAvailability();
+	private readonly _schedulerState: SubscriptionAccountStatePersistence | undefined;
+	/** 待落盘的账号（`provider\0accountId`）；同一批失败合并成一次写入。 */
+	private readonly _dirtyStates = new Set<string>();
+	private _flushTimer: ReturnType<typeof setTimeout> | undefined;
+	private _quotaTimer: ReturnType<typeof setInterval> | undefined;
 
 	constructor(repository: ConfigRepository, masterKey: string | undefined, options: SubscriptionRuntimeOptions) {
 		this._repository = repository;
 		this._accounts = options.accounts ?? new SubscriptionAccountStore({ authDir: options.authDir ?? defaultSubscriptionAuthDir() });
+		this._schedulerState = options.schedulerState;
 		this._scheduler = new SubscriptionAccountScheduler({
 			affinityTtlMs: options.affinityTtlMs,
 			loadAccounts: (source) => this._accounts.list(source),
+			blocking: (source, now) => this._quota.blocked(source, now),
+			onStateChange: (source, accountId) => this._markStateDirty(source, accountId),
 		});
 		this._providers = options.providers;
 		this._bridge = new SubscriptionBridge({
 			accounts: this._accounts,
 			scheduler: this._scheduler,
 			providers: this._providers,
+			quota: this._quota,
+			onStateChange: (source, accountId) => this._markStateDirty(source, accountId),
 			isEnabled: () => this._settings.enabled,
 		});
 		this._accountKeys = new SubscriptionAccountKeys(repository, masterKey);
@@ -178,13 +199,20 @@ export class SubscriptionRuntimeManager {
 		}
 		await this._loadSettings();
 		await this._projectManagedAccounts();
+		await this._restoreSchedulerState();
 		this._startedAt = new Date().toISOString();
 		this.appendSystemLog("原生订阅运行时已启动");
 		this._refreshTimer = setInterval(() => {
 			void this._refreshExpiringAccounts();
 		}, REFRESH_INTERVAL_MS);
 		this._refreshTimer.unref();
+		this._quotaTimer = setInterval(() => {
+			void this._refreshQuotaSnapshots();
+		}, QUOTA_REFRESH_INTERVAL_MS);
+		this._quotaTimer.unref();
 		void this._refreshExpiringAccounts();
+		// 额度快照启动时先拉一遍：重启后不必用真实请求重新发现「哪些账号这周没额度」。
+		void this._refreshQuotaSnapshots();
 	}
 
 	/**
@@ -194,6 +222,14 @@ export class SubscriptionRuntimeManager {
 		if (this._refreshTimer !== undefined) {
 			clearInterval(this._refreshTimer);
 			this._refreshTimer = undefined;
+		}
+		if (this._quotaTimer !== undefined) {
+			clearInterval(this._quotaTimer);
+			this._quotaTimer = undefined;
+		}
+		if (this._flushTimer !== undefined) {
+			clearTimeout(this._flushTimer);
+			this._flushTimer = undefined;
 		}
 		setSubscriptionRequestHandler(undefined);
 		this.appendSystemLog("原生订阅运行时已停止");
@@ -718,6 +754,142 @@ export class SubscriptionRuntimeManager {
 	private async _saveCommandCodeEntries(config: Record<string, unknown>, entries: Record<string, unknown>[]): Promise<void> {
 		setManagedCommandCodeAccounts(config, entries);
 		await this.saveSettings({ enabled: this._settings.enabled, config_yaml: serializeUserConfig(config) });
+	}
+
+	/**
+	 * 恢复上次进程留下的调度状态。
+	 *
+	 * 额度耗尽的账号在启动时就直接进入不可用集合，不必等第一个请求撞上去；最近失败
+	 * 时间也一并恢复，重启后的选号顺序与重启前连续。
+	 */
+	private async _restoreSchedulerState(): Promise<void> {
+		if (this._schedulerState === undefined) {
+			return;
+		}
+		try {
+			const states = await this._schedulerState.list();
+			if (states.length === 0) {
+				return;
+			}
+			const now = Date.now();
+			const exhausted = states.filter((state) => state.exhaustedUntil !== undefined && state.exhaustedUntil > now);
+			this._quota.hydrate(
+				exhausted.map((state) => ({
+					source: state.source,
+					accountId: state.accountId,
+					exhaustedUntil: state.exhaustedUntil as number,
+					reason: state.reason ?? "额度耗尽",
+					observedAt: now,
+				})),
+				now,
+			);
+			this._scheduler.hydrateState(
+				states.map((state) => ({
+					source: state.source,
+					accountId: state.accountId,
+					...(state.lastFailureAt === undefined ? {} : { lastFailureAt: state.lastFailureAt }),
+				})),
+			);
+			if (exhausted.length > 0) {
+				this.appendSystemLog(`已恢复 ${exhausted.length} 个额度耗尽的账号状态，启动后直接跳过`);
+			}
+		} catch (error: unknown) {
+			this.appendSystemLog(`恢复调度状态失败：${messageOf(error)}`);
+		}
+	}
+
+	/**
+	 * 标记账号状态需要落盘；短延迟合并同一批失败，避免每个请求一次写。
+	 * @param source - 订阅来源
+	 * @param accountId - 账号 ID
+	 */
+	private _markStateDirty(source: SubscriptionSource, accountId: string): void {
+		if (this._schedulerState === undefined) {
+			return;
+		}
+		this._dirtyStates.add(`${source}\0${accountId}`);
+		if (this._flushTimer !== undefined) {
+			return;
+		}
+		this._flushTimer = setTimeout(() => {
+			this._flushTimer = undefined;
+			void this._flushSchedulerState();
+		}, STATE_FLUSH_DELAY_MS);
+		this._flushTimer.unref();
+	}
+
+	/** 把待写状态合并成一次 upsert；失败只记日志，不影响请求链路。 */
+	private async _flushSchedulerState(): Promise<void> {
+		const persistence = this._schedulerState;
+		if (persistence === undefined || this._dirtyStates.size === 0) {
+			return;
+		}
+		const dirty = [...this._dirtyStates];
+		this._dirtyStates.clear();
+		const now = Date.now();
+		const states: StoredAccountState[] = [];
+		for (const key of dirty) {
+			const separator = key.indexOf("\0");
+			if (separator <= 0) {
+				continue;
+			}
+			const source = key.slice(0, separator) as SubscriptionSource;
+			const accountId = key.slice(separator + 1);
+			const entry = this._quota.state(source, accountId, now);
+			const lastFailureAt = this._scheduler.lastFailureAt(source, accountId);
+			states.push({
+				source: source,
+				accountId: accountId,
+				...(lastFailureAt === undefined ? {} : { lastFailureAt: lastFailureAt }),
+				...(entry === undefined ? {} : { exhaustedUntil: entry.exhaustedUntil, reason: entry.reason }),
+			});
+		}
+		try {
+			await persistence.upsert(states);
+		} catch (error: unknown) {
+			this.appendSystemLog(`写入调度状态失败：${messageOf(error)}`);
+		}
+	}
+
+	/**
+	 * 刷新各账号额度快照。
+	 *
+	 * 串行逐账号查询：额度接口对每个账号要打 1~3 个上游请求，并发会把十几条请求同时
+	 * 打出去；而且这里的目的是「几分钟后的事实」，不需要低延迟。
+	 */
+	private async _refreshQuotaSnapshots(): Promise<void> {
+		if (this._refreshingQuota) {
+			return;
+		}
+		this._refreshingQuota = true;
+		try {
+			for (const adapter of this._providers.list()) {
+				let accounts: readonly SubscriptionAccount[];
+				try {
+					accounts = await this._accounts.list(adapter.source);
+				} catch {
+					continue;
+				}
+				for (const account of accounts) {
+					if (account.disabled) {
+						continue;
+					}
+					try {
+						const snapshot = await adapter.quota(account);
+						const before = this._quota.state(adapter.source, account.id) !== undefined;
+						const after = this._quota.applySnapshot(adapter.source, account.id, snapshot) !== undefined;
+						if (before !== after) {
+							this._markStateDirty(adapter.source, account.id);
+						}
+					} catch (error: unknown) {
+						// 拉不到额度只说明不知道，不能当成「有额度」也不能当成「没额度」。
+						this.appendSystemLog(`额度查询失败（${account.key}）：${messageOf(error)}`);
+					}
+				}
+			}
+		} finally {
+			this._refreshingQuota = false;
+		}
 	}
 
 	private async _refreshExpiringAccounts(): Promise<void> {

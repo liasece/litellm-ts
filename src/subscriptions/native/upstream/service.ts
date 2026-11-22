@@ -16,7 +16,7 @@ import type { SubscriptionAccountStore } from "../accountStore";
 import type { SubscriptionSource } from "../types";
 import { createModuleLogger } from "../../../core/utils/logger";
 import { slimRawEntry } from "./normalize";
-import type { UpstreamModelMetaRepository, UpstreamModelMetaWrite } from "./repository";
+import type { UpstreamModelMetaRepository, UpstreamModelMetaWrite } from "../../../repositories/UpstreamModelMetaRepository";
 import { UPSTREAM_SOURCE_STATUS_ID, type UpstreamModelMetaRecord, type UpstreamModelMetadata, type UpstreamSourceAdapter } from "./types";
 
 /** 默认过期时间：4 小时。 */

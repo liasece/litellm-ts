@@ -12,7 +12,8 @@ import {
 	type DeepSeekToolsConnection,
 } from "./DeepSeekToolsClient";
 import { captureUpstreamExchange } from "../router/UpstreamExchange";
-import { getAttachedUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getAttachedUpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import { extractAssistant, parseWebArguments, type WebToolRequest } from "./WebCapabilityProtocol";
 
 /**

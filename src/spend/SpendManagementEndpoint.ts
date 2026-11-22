@@ -1,3 +1,4 @@
+import { registerScopedCostEndpoints } from "./ScopedCostEndpoint";
 import { registerScopedSpendReports } from "./ScopedSpendReports";
 /**
  * 花费管理端点入口
@@ -46,6 +47,7 @@ export function registerSpendManagementEndpoints(
 ): void {
 	logger.info("Registering spend management endpoints");
 	registerScopedSpendReports(router, db);
+	registerScopedCostEndpoints(router, db);
 	registerSpendLogsEndpoints(router, db);
 	registerGlobalSpendEndpoints(router, db);
 	registerModelSpeedEndpoints(router, db);

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { retainClientAssets } from "./RetainClientAssets.mjs";
+import { MAX_RETAINED_GENERATIONS, retainClientAssets } from "./RetainClientAssets.mjs";
 const temporary = [];
 afterEach(async () => {
 	for (const directory of temporary.splice(0)) await fs.rm(directory, { recursive: true, force: true });
@@ -48,6 +48,32 @@ describe("cached client assets across frontend releases", () => {
 		expect(await fs.readFile(path.join(next, "_next/static/old.js"), "utf8")).toBe("old React");
 		expect(await fs.readFile(path.join(next, "assets/main-a1b2c3d4.js"), "utf8")).toBe("previous Vue");
 		expect(await fs.readFile(path.join(next, "assets/main-new.js"), "utf8")).toBe("new Vue");
+	});
+	it("兼容资源超过保留代数后重新开始计数，只保留本版 manifest 引用", async () => {
+		const previous = await directory(),
+			next = await directory();
+		await write(previous, "assets/current-1234.js", "current Vue");
+		await write(previous, ".vite/manifest.json", JSON.stringify({ "index.html": { file: "assets/current-1234.js" } }));
+		await write(
+			previous,
+			"retained-client-assets.json",
+			JSON.stringify({
+				available: true,
+				generations: MAX_RETAINED_GENERATIONS,
+				files: 1,
+				bytes: 10,
+				entries: [{ path: "assets/ancient-0000.js", bytes: 10 }],
+			}),
+		);
+		await write(previous, "assets/ancient-0000.js", "ancient");
+		await write(next, "assets/fresh-5678.js", "fresh Vue");
+		const retained = await retainClientAssets(previous, next);
+		expect(retained.files).toBe(1);
+		const manifest = JSON.parse(await fs.readFile(path.join(next, "retained-client-assets.json"), "utf8"));
+		expect(manifest.generations).toBe(1);
+		expect(manifest.entries.map((entry) => entry.path)).toEqual(["assets/current-1234.js"]);
+		await expect(fs.stat(path.join(next, "assets/ancient-0000.js"))).rejects.toThrow();
+		expect(await fs.readFile(path.join(next, "assets/current-1234.js"), "utf8")).toBe("current Vue");
 	});
 	it("does not require a previous artifact for a fresh installation", async () => {
 		const next = await directory();

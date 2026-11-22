@@ -10,7 +10,8 @@ import { eq } from "drizzle-orm";
 import { BaseRepository } from "../core/db/BaseRepository";
 import type { DrizzleDb } from "../core/db/Database";
 import { LiteLLM_ProxyModelTable } from "../db/schema/proxyModels";
-import { revisionCounterFor, TableCache } from "./internal/TableCache";
+import type { TableCache } from "./internal/TableCache";
+import { singletonFor, tableCacheFor } from "./internal/registry";
 
 /** `LiteLLM_ProxyModelTable` 行。 */
 export type ModelRow = typeof LiteLLM_ProxyModelTable.$inferSelect;
@@ -32,34 +33,17 @@ export interface ModelUpdateValues {
 /** 事务句柄；跨仓库写入时由调用方传入，本仓库不自行开启事务。 */
 export type ModelTransaction = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
-const caches = new WeakMap<object, TableCache<ModelRow>>();
-const repositories = new WeakMap<object, ModelRepository>();
-
-function cacheFor(db: DrizzleDb): TableCache<ModelRow> {
-	const key = db as unknown as object;
-	const existing = caches.get(key);
-	if (existing !== undefined) {
-		return existing;
-	}
-	const created = new TableCache<ModelRow>(() => db.select().from(LiteLLM_ProxyModelTable), revisionCounterFor(key));
-	caches.set(key, created);
-	return created;
-}
+const cacheFor = (db: DrizzleDb): TableCache<ModelRow> =>
+	tableCacheFor<ModelRow>(db, "LiteLLM_ProxyModelTable", () => db.select().from(LiteLLM_ProxyModelTable));
 
 /**
- * 取得与数据库连接绑定的模型仓库；同一连接上的所有调用方共享同一份副本。
+ * 取得与数据库连接绑定的仓储；同一连接上的所有调用方共享同一份副本。
+ *
+ * 用工厂而不是 `new`：副本按数据库连接绑定，装配处多创建几个实例也只会指向同一份缓存，
+ * 写穿与失效因此不会被某个「另一个实例」绕开。
  * @param db - Drizzle 数据库实例
  */
-export function modelRepositoryFor(db: DrizzleDb): ModelRepository {
-	const key = db as unknown as object;
-	const existing = repositories.get(key);
-	if (existing !== undefined) {
-		return existing;
-	}
-	const created = new ModelRepository(db);
-	repositories.set(key, created);
-	return created;
-}
+export const modelRepositoryFor = singletonFor((db: DrizzleDb) => new ModelRepository(db));
 
 /**
  *

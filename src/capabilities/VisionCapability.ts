@@ -2,7 +2,8 @@ import { addResponseUsage } from "../core/utils/usage";
 import { ApiError } from "../core/api/ApiError";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { captureUpstreamExchange } from "../router/UpstreamExchange";
-import { getAttachedUpstreamLogContext, getUpstreamLogContext, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getAttachedUpstreamLogContext, getUpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import type { Router } from "../router/Router";
 import type { Message, ToolCall } from "../types/openai";
 import {

@@ -8,12 +8,11 @@
  */
 
 import type { Router } from "express";
-import { sql, and, asc, desc, eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import { registerRoute } from "../core/api/registerRoute";
 import { createModuleLogger } from "../core/utils/logger";
+import { spendAggregationRepositoryFor } from "../repositories/SpendAggregationRepository";
 import {
 	AGGREGATE_DEFAULT_LIMIT,
 	DAILY_SPEND_MATRIX_LIMIT,
@@ -34,15 +33,10 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 	// ========== /global/spend ==========
 
 	registerRoute(router, { method: "get", path: "/global/spend" }, async () => {
-		const result = await db
-			.select({
-				total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-				total_prompt_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.prompt_tokens}), 0)`,
-				total_completion_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.completion_tokens}), 0)`,
-			})
-			.from(liteLLM_SpendLogs);
+		const totals = await spendAggregationRepositoryFor(db).globalTotals();
 
-		return result[0] ?? { total_spend: 0, total_prompt_tokens: 0, total_completion_tokens: 0 };
+		// 表为空时聚合函数已由 SQL 的 COALESCE 归零；这里只兜底「一行都没返回」的情况。
+		return totals ?? { total_spend: 0, total_prompt_tokens: 0, total_completion_tokens: 0 };
 	});
 
 	// ========== /global/spend/keys ==========
@@ -55,14 +49,7 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 			"/global/spend/keys",
 			[] as { api_key: string; key_alias: null; total_spend: number; total_tokens: number }[],
 			async () => {
-				const result = await db
-					.select({
-						api_key: liteLLM_SpendLogs.api_key,
-						total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-						total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-					})
-					.from(liteLLM_SpendLogs)
-					.groupBy(liteLLM_SpendLogs.api_key);
+				const result = await spendAggregationRepositoryFor(db).spendByApiKey();
 
 				return result.map((row) => ({
 					api_key: toSafeString(row.api_key),
@@ -83,32 +70,13 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 
 	registerRoute(router, { method: "get", path: "/global/spend/teams" }, async () =>
 		runWithFallback(logger, "/global/spend/teams", { daily_spend: [], teams: [], total_spend_per_team: [] }, async () => {
-			const aggregate = await db
-				.select({
-					team_id: liteLLM_SpendLogs.team_id,
-					total_spend: sql<number>`SUM(${liteLLM_SpendLogs.spend})`,
-					total_tokens: sql<number>`SUM(${liteLLM_SpendLogs.total_tokens})`,
-				})
-				.from(liteLLM_SpendLogs)
-				.where(sql`${liteLLM_SpendLogs.team_id} IS NOT NULL`)
-				.groupBy(liteLLM_SpendLogs.team_id)
-				.limit(AGGREGATE_DEFAULT_LIMIT);
+			const aggregate = await spendAggregationRepositoryFor(db).teamSpendTotals(AGGREGATE_DEFAULT_LIMIT);
 
 			// WebUI 把 teams 直接作为 BarChart categories，必须为字符串数组
 			const teams: string[] = aggregate.map((row) => toSafeString(row.team_id));
 
 			// 按日期 + team 聚合，得到 daily_spend 矩阵
-			const dailyRows = await db
-				.select({
-					team_id: liteLLM_SpendLogs.team_id,
-					date: sql<string>`DATE(${liteLLM_SpendLogs.startTime})`,
-					spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-				})
-				.from(liteLLM_SpendLogs)
-				.where(sql`${liteLLM_SpendLogs.team_id} IS NOT NULL`)
-				.groupBy(liteLLM_SpendLogs.team_id, sql`DATE(${liteLLM_SpendLogs.startTime})`)
-				.orderBy(desc(sql`DATE(${liteLLM_SpendLogs.startTime})`))
-				.limit(DAILY_SPEND_MATRIX_LIMIT);
+			const dailyRows = await spendAggregationRepositoryFor(db).teamDailySpend(DAILY_SPEND_MATRIX_LIMIT);
 
 			// 把 dailyRows 聚合成 date -> { date, team_id1: spend, team_id2: spend, ... }
 			const dailyMap = new Map<string, Record<string, number | string>>();
@@ -149,15 +117,7 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 			"/global/spend/models",
 			[] as { model: string; total_spend: number; total_tokens: number }[],
 			async () => {
-				const result = await db
-					.select({
-						model: liteLLM_SpendLogs.model,
-						total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-						total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-					})
-					.from(liteLLM_SpendLogs)
-					.groupBy(liteLLM_SpendLogs.model)
-					.limit(limit);
+				const result = await spendAggregationRepositoryFor(db).spendByModel(limit);
 
 				return result.map((row) => ({
 					model: toSafeString(row.model),
@@ -176,16 +136,7 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 			"/global/spend/providers",
 			[] as { provider: string; total_spend: number; total_tokens: number }[],
 			async () => {
-				const result = await db
-					.select({
-						provider: liteLLM_SpendLogs.custom_llm_provider,
-						total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-						total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-					})
-					.from(liteLLM_SpendLogs)
-					.where(sql`${liteLLM_SpendLogs.custom_llm_provider} IS NOT NULL AND ${liteLLM_SpendLogs.custom_llm_provider} != ''`)
-					.groupBy(liteLLM_SpendLogs.custom_llm_provider)
-					.limit(AGGREGATE_DEFAULT_LIMIT);
+				const result = await spendAggregationRepositoryFor(db).spendByProvider(AGGREGATE_DEFAULT_LIMIT);
 
 				return result.map((row) => ({
 					provider: toSafeString(row.provider),
@@ -202,30 +153,10 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 		const startDate = (req.query.start_date as string) ?? "";
 		const endDate = (req.query.end_date as string) ?? "";
 
-		let whereClause;
-		if (startDate && endDate) {
-			whereClause = and(
-				sql`${liteLLM_SpendLogs.startTime} >= ${new Date(startDate)}`,
-				sql`${liteLLM_SpendLogs.startTime} <= ${new Date(endDate)}`,
-			);
-		} else if (startDate) {
-			whereClause = sql`${liteLLM_SpendLogs.startTime} >= ${new Date(startDate)}`;
-		} else if (endDate) {
-			whereClause = sql`${liteLLM_SpendLogs.startTime} <= ${new Date(endDate)}`;
-		}
-
-		const result = await db
-			.select({
-				model: liteLLM_SpendLogs.model,
-				total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-				total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-				totalRequests: sql<number>`COUNT(*)`,
-			})
-			.from(liteLLM_SpendLogs)
-			.where(whereClause)
-			.groupBy(liteLLM_SpendLogs.model)
-			.orderBy(desc(sql`SUM(${liteLLM_SpendLogs.spend})`))
-			.limit(AGGREGATE_DEFAULT_LIMIT);
+		// 端点只决定「哪个边界存在」；区间比较的 SQL 结构留在仓储，避免两端各写一份比较符。
+		const startBound = startDate ? new Date(startDate) : undefined;
+		const endBound = endDate ? new Date(endDate) : undefined;
+		const result = await spendAggregationRepositoryFor(db).spendReportByModel(startBound, endBound, AGGREGATE_DEFAULT_LIMIT);
 
 		const safeReport = result.map((row) => ({
 			model: toSafeString(row.model),
@@ -256,31 +187,13 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 		const apiKey = typeof req.query.api_key === "string" ? req.query.api_key : undefined;
 		const internalUserId = getInternalUserId(req.auth);
 
-		const conditions = [sql`${liteLLM_SpendLogs.startTime} >= (CURRENT_DATE - INTERVAL '30 days')`];
-		if (apiKey !== undefined) {
-			conditions.push(eq(liteLLM_SpendLogs.api_key, apiKey));
-		}
-		if (internalUserId !== undefined) {
-			conditions.push(eq(liteLLM_SpendLogs.user, internalUserId));
-		}
-		const whereClause = and(...conditions);
-
-		const dateExpr = sql<string>`DATE(${liteLLM_SpendLogs.startTime})`;
-		const spendExpr = sql<number>`SUM(${liteLLM_SpendLogs.spend})`;
-
 		return runWithFallback(logger, "/global/spend/logs", [] as Array<Record<string, unknown>>, async () => {
+			const rows = await spendAggregationRepositoryFor(db).dailySpendForLast30Days(apiKey, internalUserId);
+
+			// 响应字段随过滤维度收窄：无过滤只有 date/spend，传 key 补 api_key，internal_user
+			// 再补 user（对应 Python 的三个 MonthlyGlobalSpend* 视图）。这里保留分支是为了让
+			// 返回的键集合与视图一致，不能统一塞满四个字段。
 			if (internalUserId !== undefined) {
-				const rows = await db
-					.select({
-						date: dateExpr,
-						spend: spendExpr,
-						api_key: liteLLM_SpendLogs.api_key,
-						user: liteLLM_SpendLogs.user,
-					})
-					.from(liteLLM_SpendLogs)
-					.where(whereClause)
-					.groupBy(dateExpr, liteLLM_SpendLogs.api_key, liteLLM_SpendLogs.user)
-					.orderBy(asc(dateExpr));
 				return rows.map((row) => ({
 					date: toDateString(row.date),
 					spend: toFiniteNumber(row.spend),
@@ -290,16 +203,6 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 			}
 
 			if (apiKey !== undefined) {
-				const rows = await db
-					.select({
-						date: dateExpr,
-						spend: spendExpr,
-						api_key: liteLLM_SpendLogs.api_key,
-					})
-					.from(liteLLM_SpendLogs)
-					.where(whereClause)
-					.groupBy(dateExpr, liteLLM_SpendLogs.api_key)
-					.orderBy(asc(dateExpr));
 				return rows.map((row) => ({
 					date: toDateString(row.date),
 					spend: toFiniteNumber(row.spend),
@@ -307,15 +210,6 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 				}));
 			}
 
-			const rows = await db
-				.select({
-					date: dateExpr,
-					spend: spendExpr,
-				})
-				.from(liteLLM_SpendLogs)
-				.where(whereClause)
-				.groupBy(dateExpr)
-				.orderBy(asc(dateExpr));
 			return rows.map((row) => ({
 				date: toDateString(row.date),
 				spend: toFiniteNumber(row.spend),
@@ -332,35 +226,19 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 		const startDate = req.query.start_date as string | undefined;
 		const endDate = req.query.end_date as string | undefined;
 
-		let whereClause: ReturnType<typeof sql> | ReturnType<typeof and> | undefined;
-		if (startDate && endDate) {
-			whereClause = and(
-				sql`${liteLLM_SpendLogs.startTime} >= ${new Date(startDate)}`,
-				sql`${liteLLM_SpendLogs.startTime} <= ${new Date(endDate)}`,
-			);
-		}
+		const startBound = startDate && endDate ? new Date(startDate) : undefined;
+		const endBound = startDate && endDate ? new Date(endDate) : undefined;
 
 		return runWithFallback(
 			logger,
 			"/global/spend/provider",
 			[] as { provider: string; spend: number; total_spend: number }[],
 			async () => {
-				const result = await db
-					.select({
-						provider: liteLLM_SpendLogs.custom_llm_provider,
-						total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-					})
-					.from(liteLLM_SpendLogs)
-					.where(
-						whereClause
-							? and(
-									whereClause,
-									sql`${liteLLM_SpendLogs.custom_llm_provider} IS NOT NULL AND ${liteLLM_SpendLogs.custom_llm_provider} != ''`,
-								)
-							: sql`${liteLLM_SpendLogs.custom_llm_provider} IS NOT NULL AND ${liteLLM_SpendLogs.custom_llm_provider} != ''`,
-					)
-					.groupBy(liteLLM_SpendLogs.custom_llm_provider)
-					.limit(AGGREGATE_DEFAULT_LIMIT);
+				const result = await spendAggregationRepositoryFor(db).spendByProviderInRange(
+					startBound,
+					endBound,
+					AGGREGATE_DEFAULT_LIMIT,
+				);
 
 				return result.map((row) => ({
 					provider: toSafeString(row.provider),
@@ -381,28 +259,15 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 		const startDate = req.query.start_date as string | undefined;
 		const endDate = req.query.end_date as string | undefined;
 
-		const conditions = [sql`${liteLLM_SpendLogs.request_tags} IS NOT NULL`];
-		if (startDate && endDate) {
-			conditions.push(sql`${liteLLM_SpendLogs.startTime} >= ${new Date(startDate)}`);
-			conditions.push(sql`${liteLLM_SpendLogs.startTime} <= ${new Date(endDate)}`);
-		}
-		const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
-
+		// 只有起止日期同时存在才收窄（空串按缺省处理），与 Python 标签报表一致。
+		const startBound = startDate && endDate ? new Date(startDate) : undefined;
+		const endBound = startDate && endDate ? new Date(endDate) : undefined;
 		return runWithFallback(
 			logger,
 			"/global/spend/tags",
 			{ spend_per_tag: [] as { name: string; spend: number; tag: string; total_spend: number; total_tokens: number }[] },
 			async () => {
-				const result = await db
-					.select({
-						tag: liteLLM_SpendLogs.request_tags,
-						total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-						total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-					})
-					.from(liteLLM_SpendLogs)
-					.where(whereClause)
-					.groupBy(liteLLM_SpendLogs.request_tags)
-					.limit(AGGREGATE_DEFAULT_LIMIT);
+				const result = await spendAggregationRepositoryFor(db).spendByTag(startBound, endBound, AGGREGATE_DEFAULT_LIMIT);
 
 				const spend_per_tag = result.map((row) => normalizeTagSpendRow(row));
 
@@ -414,13 +279,9 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 	// ========== /global/spend/all_tag_names ==========
 
 	registerRoute(router, { method: "get", path: "/global/spend/all_tag_names" }, async () => {
-		const result = await db
-			.selectDistinct({ tag: liteLLM_SpendLogs.request_tags })
-			.from(liteLLM_SpendLogs)
-			.where(sql`${liteLLM_SpendLogs.request_tags} IS NOT NULL`)
-			.limit(AGGREGATE_DEFAULT_LIMIT);
+		const result = await spendAggregationRepositoryFor(db).requestTagNames(AGGREGATE_DEFAULT_LIMIT);
 
-		return { tag_names: result.map((r) => r.tag) };
+		return { tag_names: result.map((row) => row.tag) };
 	});
 
 	// ========== /global/spend/end_users (POST) ==========
@@ -431,28 +292,15 @@ export function registerGlobalSpendAggregationEndpoints(router: Router, db: Node
 		const startTime = body.startTime as string | undefined;
 		const endTime = body.endTime as string | undefined;
 
-		const conditions = [sql`${liteLLM_SpendLogs.end_user} IS NOT NULL AND ${liteLLM_SpendLogs.end_user} != ''`];
-		if (startTime && endTime) {
-			conditions.push(sql`${liteLLM_SpendLogs.startTime} >= ${new Date(startTime)}`);
-			conditions.push(sql`${liteLLM_SpendLogs.startTime} <= ${new Date(endTime)}`);
-		}
-		const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
-
+		// 与标签报表相同：起止时间必须成对出现，单侧（或空串）按缺省处理。
+		const startBound = startTime && endTime ? new Date(startTime) : undefined;
+		const endBound = startTime && endTime ? new Date(endTime) : undefined;
 		return runWithFallback(
 			logger,
 			"/global/spend/end_users",
 			[] as { end_user: string; total_spend: number; total_tokens: number }[],
 			async () => {
-				const result = await db
-					.select({
-						end_user: liteLLM_SpendLogs.end_user,
-						total_spend: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.spend}), 0)`,
-						total_tokens: sql<number>`COALESCE(SUM(${liteLLM_SpendLogs.total_tokens}), 0)`,
-					})
-					.from(liteLLM_SpendLogs)
-					.where(whereClause)
-					.groupBy(liteLLM_SpendLogs.end_user)
-					.limit(AGGREGATE_DEFAULT_LIMIT);
+				const result = await spendAggregationRepositoryFor(db).spendByEndUser(startBound, endBound, AGGREGATE_DEFAULT_LIMIT);
 
 				return result.map((row) => ({
 					end_user: toSafeString(row.end_user),

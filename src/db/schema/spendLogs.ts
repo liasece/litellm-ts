@@ -1,6 +1,6 @@
 import { bigint, doublePrecision, pgTable, text, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import type { CallType, SpendLogStatus } from "../../types/spend";
+import type { CallType, SpendLogStatus } from "../../types/spendEnums";
 
 export const liteLLM_SpendLogs = pgTable(
 	"LiteLLM_SpendLogs",
@@ -44,6 +44,11 @@ export const liteLLM_SpendLogs = pgTable(
 		resolved_model_group: text("resolved_model_group"),
 		custom_llm_provider: text("custom_llm_provider").default(""),
 		api_base: text("api_base").default(""),
+		/**
+		 * 实际上游 key 的 SHA-256；NULL 表示未记录（历史行、无 key 或签名字段）。
+		 * 账号/凭据归属不在这里，见 `LiteLLM_UpstreamKeyAccount`。
+		 */
+		upstream_key_hash: text("upstream_key_hash"),
 		user: text("user").default(""),
 		metadata: jsonb("metadata").default("{}"),
 		/**

@@ -1,6 +1,22 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../spend/SpendLogBlocks";
-import type { ImageCompletionAsset } from "../db/schema/imageCompletions";
+
+/**
+ * 历史回执需要的最小资产形状。
+ *
+ * 这里刻意不 import 仓储的完整资产类型：Transcript 被仓储引用来生成锚点键，反向依赖会形成
+ * 循环导入；回执只读 id/action/ref/target，用结构类型表达反而把耦合面收窄到实际字段。
+ */
+export interface ImageCompletionReceiptAsset {
+	/** 资产 ID，用于生成 `image:` 锚点。 */
+	readonly id: string;
+	/** 生图动作。 */
+	readonly action: "create" | "edit";
+	/** 内容哈希引用。 */
+	readonly ref: string;
+	/** 该资产在请求计划中的位置。 */
+	readonly target?: { readonly index: number; readonly count: number };
+}
 
 /** Protocol of the public downstream transcript. */
 export type ImageHistoryProtocol = "anthropic" | "chat" | "responses";
@@ -375,7 +391,7 @@ export function describeImageTranscript(
  * @param protocol - Upstream projection protocol.
  * @param assets - Only verified, immutable assets of the current branch.
  */
-export function imageCompletionMessage(protocol: ImageHistoryProtocol, assets: readonly ImageCompletionAsset[]): HistoryMessage {
+export function imageCompletionMessage(protocol: ImageHistoryProtocol, assets: readonly ImageCompletionReceiptAsset[]): HistoryMessage {
 	const description = assets
 		.map(
 			({ action, id, ref, target }) =>

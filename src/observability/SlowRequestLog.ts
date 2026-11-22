@@ -34,6 +34,12 @@ export interface SlowRequestRecord {
 	readonly ttfb_ms?: number;
 	/** 上游请求发出前的本地耗时（毫秒） */
 	readonly pre_upstream_ms?: number;
+	/** 请求体解析耗时（毫秒） */
+	readonly body_parse_ms?: number;
+	/** 鉴权耗时（毫秒） */
+	readonly auth_ms?: number;
+	/** 费用预留耗时（毫秒，含估算） */
+	readonly reservation_ms?: number;
 	/** 上游等待响应头耗时（毫秒） */
 	readonly upstream_headers_ms?: number;
 	/** 代理转换开销（毫秒） */

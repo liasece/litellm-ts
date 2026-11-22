@@ -1,6 +1,5 @@
 /** WebUI username/password 登录与服务端 session 生命周期。 */
 import crypto from "node:crypto";
-import { eq } from "drizzle-orm";
 import type { RequestHandler, Response, Router } from "express";
 import type { AuthRepository } from "../auth/AuthRepository";
 import { ApiError } from "../core/api/ApiError";
@@ -8,7 +7,7 @@ import { registerRoute } from "../core/api/registerRoute";
 import type { ServiceConfig } from "../core/config";
 import type { DrizzleDb } from "../core/db/Database";
 import { hashApiKey } from "../core/utils/crypto";
-import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
+import { keyRepositoryFor } from "../repositories/KeyRepository";
 import { clearWebUiSessionCookies, setWebUiSessionCookies, signWebUiSessionToken } from "../auth/WebUiSessionLifecycle";
 import {
 	DEFAULT_WEBUI_SESSION_DURATION,
@@ -106,18 +105,14 @@ async function loginV2(body: LoginRequestBody, res: Response, config: ServiceCon
 }
 
 async function issueWebUiSession(db: DrizzleDb, expiresAt: Date): Promise<string> {
+	const keyRepository = keyRepositoryFor(db);
 	for (let attempt = 0; attempt < MAX_SESSION_GEN_RETRIES; attempt++) {
 		const jti = crypto.randomBytes(32).toString("base64url");
 		const tokenHash = hashApiKey(jti);
-		const existing = await db
-			.select({ token: LiteLLM_VerificationToken.token })
-			.from(LiteLLM_VerificationToken)
-			.where(eq(LiteLLM_VerificationToken.token, tokenHash))
-			.limit(1);
-		if (existing.length > 0) {
+		if (await keyRepository.hasToken(tokenHash)) {
 			continue;
 		}
-		await db.insert(LiteLLM_VerificationToken).values({
+		await keyRepository.create({
 			token: tokenHash,
 			keyAlias: "webui-session",
 			keyName: "WebUI Session",

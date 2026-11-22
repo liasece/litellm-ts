@@ -8,7 +8,7 @@
 
 import type { SubscriptionAccountStore } from "../accountStore";
 import type { SubscriptionAccount, SubscriptionSource } from "../types";
-import type { UpstreamModelMetaRepository, UpstreamModelMetaWrite } from "./repository";
+import type { UpstreamModelMetaRepository, UpstreamModelMetaWrite } from "../../../repositories/UpstreamModelMetaRepository";
 import { UpstreamModelInfoService } from "./service";
 import type { UpstreamModelMetaRecord, UpstreamModelMetadataMap, UpstreamSourceAdapter } from "./types";
 

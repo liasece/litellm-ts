@@ -1,7 +1,7 @@
-import type { ImageCompletionAsset } from "../db/schema/imageCompletions";
 import { ApiError } from "../core/api/ApiError";
 import { MAX_BUILTIN_CAPABILITY_ITERATIONS } from "./BuiltinCapabilitiesConfig";
-import type { BuiltinGeneratedImage } from "./ImageGenerationCapability";
+import type { ImageCompletionAsset } from "../repositories/ImageCompletionRepository";
+import type { BuiltinGeneratedImage } from "../types/generatedImage";
 
 /** Paid output positions in a verified task. Only artifacts produced by the current request are attached. */
 export class ImageGenerationTargets {

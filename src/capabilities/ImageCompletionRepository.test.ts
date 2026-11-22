@@ -1,5 +1,5 @@
 import type { DrizzleDb } from "../core/db/Database";
-import { DatabaseImageHistoryRepository, resetImageHistoryNegativeCache } from "./ImageCompletionRepository";
+import { DatabaseImageHistoryRepository, resetImageHistoryNegativeCache } from "../repositories/ImageCompletionRepository";
 
 /**
  * 假库：hasHistory 的 select 计数，写入侧（complete/bind）走同一个 transaction 句柄。

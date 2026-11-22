@@ -13,13 +13,12 @@
  *   - 手工善后：POST /model/rename（行已被别处改名时只重写引用）；
  *   - 悬空审计：GET /model/references/audit 与 /model/delete 的删除守卫。
  */
-import { eq } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
-import { LiteLLM_ObjectPermissionTable } from "../db/schema/object-permissions";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
-import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { configRepositoryFor } from "../repositories/ConfigRepository";
+import { keyRepositoryFor } from "../repositories/KeyRepository";
 import { modelRepositoryFor } from "../repositories/ModelRepository";
+import { objectPermissionRepositoryFor } from "../repositories/ObjectPermissionRepository";
+import { teamRepositoryFor } from "../repositories/TeamRepository";
 import { BUILTIN_CAPABILITIES_CONFIG_PARAM } from "../capabilities/BuiltinCapabilitiesConfig";
 
 /**
@@ -480,7 +479,8 @@ export function planModelReferenceRename(
 
 /**
  * 构建引用面快照。模型与配置经拥有表的 repository 读取并先失效缓存——审计必须看到
- * 外部直改数据库后的真实状态；团队/密钥/权限表没有 repository 归属，直读。
+ * 外部直改数据库后的真实状态；团队/密钥/权限的投影查询本身不读按键缓存
+ * （见各仓储的 `listModelWhitelists`），因此同样绕过缓存看到库里的权威值。
  * @param db - drizzle 数据库实例
  */
 export async function loadModelReferenceState(db: DrizzleDb): Promise<ModelReferenceState> {
@@ -491,11 +491,9 @@ export async function loadModelReferenceState(db: DrizzleDb): Promise<ModelRefer
 	const [modelRows, configRows, teamRows, tokenRows, permissionRows] = await Promise.all([
 		modelRepository.snapshotRows(),
 		configRepository.snapshotRows(),
-		db.select({ teamId: LiteLLM_TeamTable.teamId, models: LiteLLM_TeamTable.models }).from(LiteLLM_TeamTable),
-		db.select({ token: LiteLLM_VerificationToken.token, models: LiteLLM_VerificationToken.models }).from(LiteLLM_VerificationToken),
-		db
-			.select({ objectPermissionId: LiteLLM_ObjectPermissionTable.objectPermissionId, models: LiteLLM_ObjectPermissionTable.models })
-			.from(LiteLLM_ObjectPermissionTable),
+		teamRepositoryFor(db).listModelWhitelists(),
+		keyRepositoryFor(db).listModelWhitelists(),
+		objectPermissionRepositoryFor(db).listModelWhitelists(),
 	]);
 	const configByName = new Map(configRows.map((row) => [row.param_name, row.param_value]));
 	return {
@@ -525,7 +523,8 @@ export function isModelReferenceValidationPossible(state: ModelReferenceState): 
 
 /**
  * 落盘改名计划。模型行与配置段经各自 repository 写入（缓存同步失效，运行中的
- * 请求快照自动刷新）；团队/密钥/权限直写对应表。逐面串行，失败时已写部分保留，
+ * 请求快照自动刷新）；团队白名单、密钥白名单与对象权限同样经各表仓储写入，
+ * 写入后失效对应缓存，下一次鉴权读到的是新名字。逐面串行，失败时已写部分保留，
  * GET /model/references/audit 可核对剩余悬空并重跑改名补齐。
  * @param db - drizzle 数据库实例
  * @param changes - 改名计划
@@ -545,22 +544,16 @@ export async function persistModelReferenceChanges(db: DrizzleDb, changes: Model
 	for (const row of changes.rows) {
 		await modelRepository.update(row.modelId, { model_info: row.modelInfo, updated_by: updatedBy, updated_at: new Date() });
 	}
+	const teamRepository = teamRepositoryFor(db);
 	for (const team of changes.teams) {
-		await db
-			.update(LiteLLM_TeamTable)
-			.set({ models: [...team.models] })
-			.where(eq(LiteLLM_TeamTable.teamId, team.teamId));
+		await teamRepository.replaceModels(team.teamId, team.models);
 	}
+	const keyRepository = keyRepositoryFor(db);
 	for (const token of changes.tokens) {
-		await db
-			.update(LiteLLM_VerificationToken)
-			.set({ models: [...token.models] })
-			.where(eq(LiteLLM_VerificationToken.token, token.tokenId));
+		await keyRepository.updateByToken(token.tokenId, { models: [...token.models] });
 	}
+	const objectPermissionRepository = objectPermissionRepositoryFor(db);
 	for (const permission of changes.permissions) {
-		await db
-			.update(LiteLLM_ObjectPermissionTable)
-			.set({ models: [...permission.models] })
-			.where(eq(LiteLLM_ObjectPermissionTable.objectPermissionId, permission.permissionId));
+		await objectPermissionRepository.replaceModels(permission.permissionId, permission.models);
 	}
 }

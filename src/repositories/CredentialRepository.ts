@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { BaseRepository } from "../core/db/BaseRepository";
 import type { DrizzleDb } from "../core/db/Database";
 import { LiteLLM_CredentialsTable } from "../db/schema/credentials";
-import { revisionCounterFor, TableCache } from "./internal/TableCache";
+import type { TableCache } from "./internal/TableCache";
+import { singletonFor, tableCacheFor } from "./internal/registry";
 import { modelRepositoryFor } from "./ModelRepository";
 import type { AttachedCredentialResult, CredentialAttachmentFactory } from "../credentials/CredentialService";
 
@@ -50,34 +51,17 @@ export class CredentialRepositoryConflictError extends Error {
 	}
 }
 
-const caches = new WeakMap<object, TableCache<CredentialRow>>();
-const repositories = new WeakMap<object, CredentialRepository>();
-
-function cacheFor(db: DrizzleDb): TableCache<CredentialRow> {
-	const key = db as unknown as object;
-	const existing = caches.get(key);
-	if (existing !== undefined) {
-		return existing;
-	}
-	const created = new TableCache<CredentialRow>(() => db.select().from(LiteLLM_CredentialsTable), revisionCounterFor(key));
-	caches.set(key, created);
-	return created;
-}
+const cacheFor = (db: DrizzleDb): TableCache<CredentialRow> =>
+	tableCacheFor<CredentialRow>(db, "LiteLLM_CredentialsTable", () => db.select().from(LiteLLM_CredentialsTable));
 
 /**
- * 取得与数据库连接绑定的凭据仓库；同一连接上的所有调用方共享同一份副本。
+ * 取得与数据库连接绑定的仓储；同一连接上的所有调用方共享同一份副本。
+ *
+ * 用工厂而不是 `new`：副本按数据库连接绑定，装配处多创建几个实例也只会指向同一份缓存，
+ * 写穿与失效因此不会被某个「另一个实例」绕开。
  * @param db - Drizzle 数据库实例
  */
-export function credentialRepositoryFor(db: DrizzleDb): CredentialRepository {
-	const key = db as unknown as object;
-	const existing = repositories.get(key);
-	if (existing !== undefined) {
-		return existing;
-	}
-	const created = new CredentialRepository(db);
-	repositories.set(key, created);
-	return created;
-}
+export const credentialRepositoryFor = singletonFor((db: DrizzleDb) => new CredentialRepository(db));
 
 /** 复用 LiteLLM_CredentialsTable 的凭据持久层。 */
 export class CredentialRepository extends BaseRepository {
@@ -101,6 +85,28 @@ export class CredentialRepository extends BaseRepository {
 	/** 外部直接改库后强制重新装载；应用内写路径不需要调用。 */
 	invalidateCache(): void {
 		this._cache.invalidate();
+	}
+
+	/**
+	 * 按名称读取 Credential 的非秘密身份元数据（名称与 provider）。
+	 *
+	 * Usage 账号维度只需要判断 Credential 是否还存在以及展示 provider；不能把
+	 * `credential_values` 读进内存，更不能让读侧接触密钥。
+	 * @param credentialNames - 需要查询的 Credential 名称
+	 */
+	async listIdentityMetadata(
+		credentialNames: readonly string[],
+	): Promise<Array<{ readonly name: string; readonly provider: string | null }>> {
+		if (credentialNames.length === 0) {
+			return [];
+		}
+		return await this._db
+			.select({
+				name: LiteLLM_CredentialsTable.credential_name,
+				provider: sql<string | null>`${LiteLLM_CredentialsTable.credential_info}->>'custom_llm_provider'`,
+			})
+			.from(LiteLLM_CredentialsTable)
+			.where(inArray(LiteLLM_CredentialsTable.credential_name, [...credentialNames]));
 	}
 
 	/** 返回全部持久化 Credential 记录。 */

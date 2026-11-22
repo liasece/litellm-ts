@@ -46,7 +46,8 @@ import type { StreamingCheckpoint } from "../spend/StreamingCheckpointScheduler"
 import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendLifecycle } from "../spend/SpendReservation";
 import { runCommonChecks } from "../auth/AuthChecks";
 import { CallType, SpendLogStatus } from "../types/spend";
-import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import { buildDeploymentSpendInfo } from "../router/RouterSpendInfo";
+import type { DeploymentSpendInfo } from "../types/spendInfo";
 import {
 	appendModelResolutionTrace,
 	appendRoutingTrace,
@@ -75,12 +76,8 @@ import { prepareOpenAIImageGenerationRequest } from "../capabilities/ImageGenera
 import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareOpenAIWebRequest, type PreparedWebRequest } from "../capabilities/WebCapability";
-import {
-	attachUpstreamLogContext,
-	createUpstreamLogContext,
-	getUpstreamLogContext,
-	type UpstreamLogContext,
-} from "../router/UpstreamLogContext";
+import { attachUpstreamLogContext, createUpstreamLogContext, getUpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 
 const logger = createModuleLogger("Proxy:ChatCompletions");
 

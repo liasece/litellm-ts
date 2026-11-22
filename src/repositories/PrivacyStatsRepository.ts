@@ -9,8 +9,9 @@
  */
 import { and, asc, desc, eq, gte, ilike, lt, sql } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
+import { singletonFor } from "./internal/registry";
 import { liteLLM_PrivacyRedactionEvents, liteLLM_PrivacyRedactionValues } from "../db/schema/privacyRedaction";
-import type { PrivacyValueStat } from "./PrivacyContext";
+import type { PrivacyValueStat } from "../privacy/PrivacyContext";
 
 /** 单次请求的写入内容 */
 export interface PrivacyRecordInput {
@@ -219,6 +220,15 @@ function valueSortExpression(key: string | undefined) {
 			return sql`sum(${liteLLM_PrivacyRedactionValues.occurrences})`;
 	}
 }
+
+/**
+ * 取得与数据库连接绑定的脱敏观测仓库。
+ *
+ * 目前没有进程内缓存，但调用方仍应经工厂取用：以后给这张表加副本时，
+ * 旁路的 `new` 会变成第二份缓存，写穿就漏了。
+ * @param db - Drizzle 数据库实例
+ */
+export const privacyStatsRepositoryFor = singletonFor((db: DrizzleDb) => new PrivacyStatsRepository(db));
 
 /** 脱敏观测仓库 */
 export class PrivacyStatsRepository {

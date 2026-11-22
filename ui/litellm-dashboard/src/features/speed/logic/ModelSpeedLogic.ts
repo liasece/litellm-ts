@@ -150,6 +150,25 @@ export function speedModelKey(entry: Pick<SpeedModelSeries, "model" | "provider"
 }
 
 /**
+ * 按卡片右上角的主指标排序：逐请求 TPS 中位数降序。
+ *
+ * 后端按 token 加权平均排序，卡片改成显示中位数后必须用同一指标重排，
+ * 否则首张卡片看起来会比后面的卡片慢。中位数相同时再比较平均值、样本量和
+ * 模型/供应商名，保证刷新与筛选后的顺序稳定。
+ * @param models - 当前可见的模型序列
+ */
+export function sortSpeedModels(models: readonly SpeedModelSeries[]): SpeedModelSeries[] {
+	return Array.from(models).sort(
+		(left, right) =>
+			right.p50_tps - left.p50_tps ||
+			right.avg_tps - left.avg_tps ||
+			right.requests - left.requests ||
+			left.model.localeCompare(right.model) ||
+			left.provider.localeCompare(right.provider),
+	);
+}
+
+/**
  * 按模型名或供应商过滤（大小写不敏感）。
  *
  * 供应商同样是可见身份的一部分：两张卡片模型名相同、供应商不同时，用户会直接搜索

@@ -19,15 +19,17 @@ import { modelCostMapService, type ModelCostMapService } from "./cost/ModelCostM
 import { costTrackingConfigService } from "./cost/CostTrackingConfig";
 import { CredentialSecretBox } from "./credentials/CredentialSecretBox";
 import { CredentialService } from "./credentials/CredentialService";
-import { CredentialRepository } from "./repositories/CredentialRepository";
+import { credentialRepositoryFor } from "./repositories/CredentialRepository";
 import { DatabaseRuntimeConfigService } from "./core/config/DatabaseRuntimeConfigService";
-import { ConfigRepository } from "./repositories/ConfigRepository";
+import { configRepositoryFor } from "./repositories/ConfigRepository";
+import { modelRepositoryFor } from "./repositories/ModelRepository";
+import { subscriptionAccountStateRepositoryFor } from "./repositories/SubscriptionAccountStateRepository";
 import { SubscriptionAccountStore, defaultSubscriptionAuthDir } from "./subscriptions/native/accountStore";
-import { SubscriptionAccountRepository } from "./repositories/SubscriptionAccountRepository";
+import { subscriptionAccountRepositoryFor } from "./repositories/SubscriptionAccountRepository";
 import { SubscriptionRuntimeManager } from "./subscriptions/native/SubscriptionRuntimeManager";
 import { createSubscriptionProviderLookup } from "./subscriptions/native/providers/index";
 import { ProviderQuotaService } from "./providerusage/ProviderQuotaService";
-import { UpstreamModelMetaRepository } from "./subscriptions/native/upstream/repository";
+import { upstreamModelMetaRepositoryFor } from "./repositories/UpstreamModelMetaRepository";
 import { UpstreamModelInfoService } from "./subscriptions/native/upstream/service";
 import { upstreamSourceAdapters } from "./subscriptions/native/upstream/registry";
 import { registerUpstreamModelInfoService } from "./subscriptions/native/upstream/runtime";
@@ -141,23 +143,25 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 	// 订阅执行在进程内完成：账号仓库、Provider 适配器与运行时共享一个 auth 目录。
 	const subscriptionAccounts = new SubscriptionAccountStore({
 		authDir: defaultSubscriptionAuthDir(),
-		persistence: new SubscriptionAccountRepository(db.db),
+		persistence: subscriptionAccountRepositoryFor(db.db),
 	});
-	const cliProxyRuntime = new SubscriptionRuntimeManager(new ConfigRepository(db.db), config.generalSettings.master_key, {
+	const cliProxyRuntime = new SubscriptionRuntimeManager(configRepositoryFor(db.db), config.generalSettings.master_key, {
 		accounts: subscriptionAccounts,
 		providers: createSubscriptionProviderLookup({ accounts: subscriptionAccounts }),
+		// 调度状态落盘：重启后不必用失败请求重新发现「哪些账号没额度」。
+		schedulerState: subscriptionAccountStateRepositoryFor(db.db),
 	});
 	const providerRegistry = new ProviderRegistry();
 	// 上游模型元信息的持久弱缓存：启动后异步刷新，查询只读内存，刷新失败只影响提示信息。
 	const upstreamModelInfoService = new UpstreamModelInfoService({
-		repository: new UpstreamModelMetaRepository(db.db),
+		repository: upstreamModelMetaRepositoryFor(db.db),
 		accounts: subscriptionAccounts,
 		adapters: upstreamSourceAdapters,
 	});
 	registerUpstreamModelInfoService(upstreamModelInfoService);
 
 	// 2.1 Credential 必须先于 Router 和模型初始化，确保首次 Provider 请求即可解析命名凭据。
-	const credentialRepository = new CredentialRepository(db.db);
+	const credentialRepository = credentialRepositoryFor(db.db);
 	const legacyEncryptionKey = process.env["LITELLM_SALT_KEY"] ?? config.generalSettings.master_key;
 	const legacySecretBox =
 		legacyEncryptionKey === undefined || legacyEncryptionKey.length === 0 ? null : new CredentialSecretBox(legacyEncryptionKey);
@@ -204,6 +208,14 @@ export async function createServiceContainer(config: ServiceConfig): Promise<Ser
 			{ name: "subscription_runtime", run: () => cliProxyRuntime.initialize() },
 			{ name: "upstream_model_info", run: () => upstreamModelInfoService.initialize() },
 			{ name: "cost_tracking_config", run: () => costTrackingConfigService.refresh(true) },
+			{
+				// 模型表很小（几十行），首个推理请求却要同步装载一次才能路由；
+				// 在监听后预热，把这次库往返从首个请求里挪走，装载失败仍按需重试。
+				name: "model_snapshot",
+				run: async () => {
+					await modelRepositoryFor(db.db).snapshotRows();
+				},
+			},
 		]));
 
 	// 4. 创建 AuthRepository

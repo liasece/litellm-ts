@@ -1,13 +1,12 @@
 import type { Router, Request } from "express";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
 import { jsonMergePatch } from "../core/utils/jsonMergePatch";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
-import { LiteLLM_OrganizationTable } from "../db/schema/organizations";
-import { LiteLLM_BudgetTable } from "../db/schema/budgets";
+import { budgetRepositoryFor } from "../repositories/BudgetRepository";
+import { organizationRepositoryFor } from "../repositories/OrganizationRepository";
+import { teamRepositoryFor } from "../repositories/TeamRepository";
 
 const nonnegative = z.number().finite().nonnegative().nullable();
 const common = {
@@ -87,8 +86,9 @@ export function registerEntityPatchRoutes(router: Router, db: DrizzleDb): void {
 		if (body.team_id !== undefined && body.team_id !== id) {
 			throw ApiError.badRequest("team_id does not match path");
 		}
+		const teamRepository = teamRepositoryFor(db);
 		return db.transaction(async (tx) => {
-			const [existing] = await tx.select().from(LiteLLM_TeamTable).where(eq(LiteLLM_TeamTable.teamId, id)).for("update");
+			const existing = await teamRepository.lockByIdInTx(tx, id);
 			if (!existing) {
 				throw ApiError.notFound("Team not found");
 			}
@@ -96,11 +96,10 @@ export function registerEntityPatchRoutes(router: Router, db: DrizzleDb): void {
 			if ("metadata" in body) {
 				fields["metadata"] = jsonMergePatch(existing.metadata, body.metadata) ?? {};
 			}
-			const [updated] = await tx
-				.update(LiteLLM_TeamTable)
-				.set({ ...fields, updatedAt: new Date() })
-				.where(eq(LiteLLM_TeamTable.teamId, id))
-				.returning();
+			const updated = await teamRepository.updateInTx(tx, id, { ...fields, updatedAt: new Date() });
+			if (updated === null) {
+				throw ApiError.notFound("Team not found");
+			}
 			return snakeCaseRow(updated as unknown as Record<string, unknown>);
 		});
 	});
@@ -111,12 +110,10 @@ export function registerEntityPatchRoutes(router: Router, db: DrizzleDb): void {
 		if (body.organization_id !== undefined && body.organization_id !== id) {
 			throw ApiError.badRequest("organization_id does not match path");
 		}
+		const organizationRepository = organizationRepositoryFor(db);
+		const budgetRepository = budgetRepositoryFor(db);
 		return db.transaction(async (tx) => {
-			const [existing] = await tx
-				.select()
-				.from(LiteLLM_OrganizationTable)
-				.where(eq(LiteLLM_OrganizationTable.organizationId, id))
-				.for("update");
+			const existing = await organizationRepository.lockByIdInTx(tx, id);
 			if (!existing) {
 				throw ApiError.notFound("Organization not found");
 			}
@@ -139,21 +136,24 @@ export function registerEntityPatchRoutes(router: Router, db: DrizzleDb): void {
 				),
 			);
 			if (Object.keys(budgetFields).length) {
-				const budgets = await tx
-					.update(LiteLLM_BudgetTable)
-					.set({ ...budgetFields, updated_at: new Date(), updated_by: req.auth!.user_id ?? "proxy-admin" })
-					.where(eq(LiteLLM_BudgetTable.budget_id, existing.budgetId))
-					.returning();
+				const budgets = await budgetRepository.updateInTx(tx, existing.budgetId, {
+					...budgetFields,
+					updated_at: new Date(),
+					updated_by: req.auth!.user_id ?? "proxy-admin",
+				});
 				if (!budgets.length) {
 					throw ApiError.notFound("Organization budget not found");
 				}
 			}
-			const [updated] = await tx
-				.update(LiteLLM_OrganizationTable)
-				.set({ ...orgFields, updatedAt: new Date(), updatedBy: req.auth!.user_id ?? "proxy-admin" })
-				.where(eq(LiteLLM_OrganizationTable.organizationId, id))
-				.returning();
-			const [budget] = await tx.select().from(LiteLLM_BudgetTable).where(eq(LiteLLM_BudgetTable.budget_id, existing.budgetId));
+			const updated = await organizationRepository.updateInTx(tx, id, {
+				...orgFields,
+				updatedAt: new Date(),
+				updatedBy: req.auth!.user_id ?? "proxy-admin",
+			});
+			if (updated === null) {
+				throw ApiError.notFound("Organization not found");
+			}
+			const [budget] = await budgetRepository.listByIdInTx(tx, existing.budgetId);
 			return { ...snakeCaseRow(updated as unknown as Record<string, unknown>), litellm_budget_table: budget ?? null };
 		});
 	});

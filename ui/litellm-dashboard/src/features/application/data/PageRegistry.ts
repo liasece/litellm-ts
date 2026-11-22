@@ -15,6 +15,7 @@ const views: Readonly<Record<string, string>> = {
 	"usage-models": "../../usage/ui/UsagePageComponent.vue",
 	"usage-keys": "../../usage/ui/UsagePageComponent.vue",
 	"usage-endpoints": "../../usage/ui/UsagePageComponent.vue",
+	"usage-accounts": "../../usage/ui/UsagePageComponent.vue",
 	"usage-quota": "../../usage/ui/UsagePageComponent.vue",
 	logs: "../../logs/ui/LogsPageComponent.vue",
 	speed: "../../speed/ui/SpeedPageComponent.vue",

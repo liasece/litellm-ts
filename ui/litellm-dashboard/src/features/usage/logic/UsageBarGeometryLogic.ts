@@ -45,6 +45,14 @@ export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry
 	const padding = horizontal ? 0 : 20,
 		band = Math.max(0, ((horizontal ? plotHeight : plotWidth) - 2 * padding) / Math.max(1, data.length));
 	const categoryPositions = data.map((_, index) => (horizontal ? top : left) + padding + band * (index + 0.5));
+	// 灰带与柱子同槽位：第一个槽位从 padding 之后开始，最后一个也留着同样的内边距。
+	const categoryBands = data.map((_, index) => ({
+		index,
+		x: horizontal ? left : categoryPositions[index] - band / 2,
+		y: horizontal ? categoryPositions[index] - band / 2 : top,
+		width: horizontal ? plotWidth : band,
+		height: horizontal ? band : plotHeight,
+	}));
 	const numericPositions = scale.ticks.map(valuePosition),
 		numericLabels = scale.ticks.map((value) => format(value)),
 		font = ranking ? 16 : 12;
@@ -170,5 +178,6 @@ export function usageBarGeometry(input: UsageBarGeometryInput): UsageBarGeometry
 		rightTicks: [],
 		grid,
 		bars,
+		categoryBands,
 	};
 }

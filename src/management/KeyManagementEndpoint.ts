@@ -9,16 +9,14 @@ import { dbConfigProvider } from "../core/config/DbConfigProvider";
  */
 
 import type { Router, Request } from "express";
-import { and, eq, ilike, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError } from "../core/api/ApiError";
 import { hashApiKey, generateApiKey } from "../core/utils/crypto";
-import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
-import { liteLLM_DeprecatedVerificationToken } from "../db/schema/deprecated-tokens";
-import { liteLLM_DeletedVerificationToken } from "../db/schema/deleted-verification-tokens";
-import { LiteLLM_BudgetTable } from "../db/schema/budgets";
 import type { AuthorizationGuard } from "../auth/AuthorizationGuard";
+import { budgetRepositoryFor } from "../repositories/BudgetRepository";
+import { keyRepositoryFor } from "../repositories/KeyRepository";
+import type { KeyAliasFilters, KeyListFilters, KeyUpdateValues } from "../repositories/KeyRepository";
 import { createModuleLogger } from "../core/utils/logger";
 import { parsePositiveInt } from "../core/api/queryParams";
 import { buildGenerateKeyResponse, toPythonKeyManagementRow } from "./pythonRowSerializers";
@@ -274,18 +272,12 @@ function matchesKeyListFilters(row: VerificationTokenRowLike, filters: KeyListFi
 	return true;
 }
 
-interface KeyListFilters {
-	readonly userId?: string;
-	readonly teamId?: string;
-	readonly organizationId?: string;
-	readonly keyHash?: string;
-	readonly keyAlias?: string;
-	readonly projectId?: string;
-	readonly accessGroupId?: string;
-	readonly expires?: "expired" | "not_expired";
-	readonly status?: "active" | "blocked" | "revoked" | "expired" | "deleted";
-}
-
+/**
+ * 解析 `/key/list` 的 query 过滤条件；`key_hash` 允许明文 sk-*（与 Python 一致先 hash）。
+ * @param query - Express 请求 query
+ * @returns 归一化后的过滤条件；`key_hash` 已转成哈希
+ * @throws 当 `expires` 不是 expired/not_expired 时抛 400 `ApiError`
+ */
 function parseKeyListFilters(query: Request["query"]): KeyListFilters {
 	const keyHash = firstString(query.key_hash);
 	const status = firstString(query.status);
@@ -307,80 +299,6 @@ function parseKeyListFilters(query: Request["query"]): KeyListFilters {
 				? status
 				: undefined,
 	};
-}
-
-function buildKeyListWhere(filters: KeyListFilters): ReturnType<typeof and> {
-	const conditions = [or(isNull(LiteLLM_VerificationToken.teamId), ne(LiteLLM_VerificationToken.teamId, WEBUI_LOGIN_TEAM_ID))];
-	if (filters.userId !== undefined) {
-		conditions.push(eq(LiteLLM_VerificationToken.userId, filters.userId));
-	}
-	if (filters.teamId !== undefined) {
-		conditions.push(eq(LiteLLM_VerificationToken.teamId, filters.teamId));
-	}
-	if (filters.organizationId !== undefined) {
-		conditions.push(eq(LiteLLM_VerificationToken.organizationId, filters.organizationId));
-	}
-	if (filters.keyHash !== undefined) {
-		conditions.push(eq(LiteLLM_VerificationToken.token, filters.keyHash));
-	}
-	if (filters.keyAlias !== undefined) {
-		conditions.push(ilike(LiteLLM_VerificationToken.keyAlias, `%${filters.keyAlias.replace(/[\\%_]/g, "\\$&")}%`));
-	}
-	if (filters.projectId !== undefined) {
-		conditions.push(eq(LiteLLM_VerificationToken.projectId, filters.projectId));
-	}
-	if (filters.status === "blocked" || filters.status === "revoked") {
-		conditions.push(eq(LiteLLM_VerificationToken.blocked, true));
-	}
-	if (filters.status === "active") {
-		conditions.push(or(isNull(LiteLLM_VerificationToken.blocked), eq(LiteLLM_VerificationToken.blocked, false)));
-	}
-	return and(...conditions);
-}
-
-function buildDeletedKeyListWhere(filters: KeyListFilters): ReturnType<typeof and> {
-	const conditions = [
-		or(isNull(liteLLM_DeletedVerificationToken.teamId), ne(liteLLM_DeletedVerificationToken.teamId, WEBUI_LOGIN_TEAM_ID)),
-	];
-	if (filters.userId !== undefined) {
-		conditions.push(eq(liteLLM_DeletedVerificationToken.userId, filters.userId));
-	}
-	if (filters.teamId !== undefined) {
-		conditions.push(eq(liteLLM_DeletedVerificationToken.teamId, filters.teamId));
-	}
-	if (filters.organizationId !== undefined) {
-		conditions.push(eq(liteLLM_DeletedVerificationToken.organizationId, filters.organizationId));
-	}
-	if (filters.keyHash !== undefined) {
-		conditions.push(eq(liteLLM_DeletedVerificationToken.token, filters.keyHash));
-	}
-	if (filters.keyAlias !== undefined) {
-		conditions.push(ilike(liteLLM_DeletedVerificationToken.keyAlias, `%${filters.keyAlias.replace(/[\\%_]/g, "\\$&")}%`));
-	}
-	if (filters.projectId !== undefined) {
-		conditions.push(eq(liteLLM_DeletedVerificationToken.projectId, filters.projectId));
-	}
-	return and(...conditions);
-}
-
-interface KeyAliasFilters {
-	readonly search?: string;
-	readonly teamId?: string;
-}
-
-function buildKeyAliasesWhere(filters: KeyAliasFilters): ReturnType<typeof and> {
-	const conditions = [
-		isNotNull(LiteLLM_VerificationToken.keyAlias),
-		ne(LiteLLM_VerificationToken.keyAlias, ""),
-		or(isNull(LiteLLM_VerificationToken.teamId), ne(LiteLLM_VerificationToken.teamId, WEBUI_LOGIN_TEAM_ID)),
-	];
-	if (filters.search !== undefined) {
-		conditions.push(ilike(LiteLLM_VerificationToken.keyAlias, `%${filters.search}%`));
-	}
-	if (filters.teamId !== undefined) {
-		conditions.push(eq(LiteLLM_VerificationToken.teamId, filters.teamId));
-	}
-	return and(...conditions);
 }
 
 function sortKeyListRows(
@@ -520,13 +438,10 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			const keyName = typeof body.key_name === "string" && body.key_name.length > 0 ? body.key_name : `sk-...${plainKey.slice(-4)}`;
 			const createdBy = req.auth?.user_id ?? PROXY_ADMIN_USER_ID;
 
+			const keyRepository = keyRepositoryFor(db);
+
 			// 检查哈希是否已存在（极小概率碰撞）
-			const existing = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, tokenHash))
-				.limit(1);
-			if (existing.length > 0) {
+			if (await keyRepository.hasToken(tokenHash)) {
 				throw ApiError.conflict("Key hash collision, please retry");
 			}
 
@@ -534,11 +449,10 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			const budgetId = typeof body.budget_id === "string" && body.budget_id.length > 0 ? body.budget_id : null;
 			let budgetRow: Record<string, unknown> | null = null;
 			if (budgetId !== null) {
-				const budgetRows = await db.select().from(LiteLLM_BudgetTable).where(eq(LiteLLM_BudgetTable.budget_id, budgetId)).limit(1);
-				budgetRow = (budgetRows[0] as Record<string, unknown> | undefined) ?? null;
+				budgetRow = (await budgetRepositoryFor(db).findById(budgetId)) as Record<string, unknown> | null;
 			}
 
-			await db.insert(LiteLLM_VerificationToken).values({
+			await keyRepository.create({
 				token: tokenHash,
 				keyAlias: (body.key_alias as string | undefined) ?? null,
 				keyName: keyName,
@@ -597,13 +511,10 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			const { key, token, ...updates } = req.body ?? {};
 			await authorizationGuard?.assertKeyFieldUpdates(req.auth, updates);
 			validateKeyAlias(updates.key_alias, await dbConfigProvider.getEffectiveParam("litellm_settings"));
+			const keyRepository = keyRepositoryFor(db);
 			let tokenId = token ?? (key ? hashTokenIfNeeded(key) : null);
 			if (!tokenId && typeof updates.key_alias === "string") {
-				const matches = await db
-					.select()
-					.from(LiteLLM_VerificationToken)
-					.where(eq(LiteLLM_VerificationToken.keyAlias, updates.key_alias))
-					.limit(2);
+				const matches = await keyRepository.findByAliasExactly(updates.key_alias);
 				if (matches.length !== 1) {
 					throw ApiError.badRequest("key_alias must identify exactly one key");
 				}
@@ -614,14 +525,14 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 				throw ApiError.badRequest("key or token is required");
 			}
 
-			const existing = await db.select().from(LiteLLM_VerificationToken).where(eq(LiteLLM_VerificationToken.token, tokenId)).limit(1);
-			if (existing.length === 0) {
+			const existing = await keyRepository.findByToken(tokenId);
+			if (existing === null) {
 				throw ApiError.notFound("Key not found");
 			}
-			await authorizationGuard?.assertKeyAccess(req.auth, existing, "write");
+			await authorizationGuard?.assertKeyAccess(req.auth, [existing], "write");
 
 			// 构建可更新字段
-			const updateFields: Record<string, unknown> = {};
+			const updateFields: KeyUpdateValues = {};
 			if (updates.blocked !== undefined) {
 				if (typeof updates.blocked !== "boolean") {
 					throw ApiError.badRequest("blocked must be a boolean");
@@ -668,30 +579,21 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 				updateFields.budgetId = updates.budget_id;
 			}
 
-			await db
-				.update(LiteLLM_VerificationToken)
-				.set({ ...updateFields, updatedAt: new Date() })
-				.where(eq(LiteLLM_VerificationToken.token, tokenId));
+			await keyRepository.updateByToken(tokenId, { ...updateFields, updatedAt: new Date() });
 
 			logger.info(`Key updated: ${tokenId.slice(0, TOKEN_LOG_PREFIX_LENGTH)}...`);
 
-			// 重查更新后完整行，序列化为 Python 48 键 key 对象
-			const updatedRows = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, tokenId))
-				.limit(1);
-			const updatedRow = updatedRows[0]!;
+			// 重查更新后完整行（写路径已失效缓存，这里读到的是数据库里的新值），
+			// 序列化为 Python 48 键 key 对象
+			const updatedRow = await keyRepository.findByToken(tokenId);
+			if (updatedRow === null) {
+				throw ApiError.notFound("Key not found");
+			}
 
 			// Python: budget_id 非空时 litellm_budget_table 返回关联预算行
 			let budgetRow: Record<string, unknown> | null = null;
 			if (updatedRow.budgetId !== null) {
-				const budgetRows = await db
-					.select()
-					.from(LiteLLM_BudgetTable)
-					.where(eq(LiteLLM_BudgetTable.budget_id, updatedRow.budgetId))
-					.limit(1);
-				budgetRow = (budgetRows[0] as Record<string, unknown> | undefined) ?? null;
+				budgetRow = (await budgetRepositoryFor(db).findById(updatedRow.budgetId)) as Record<string, unknown> | null;
 			}
 
 			return {
@@ -713,17 +615,13 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 		authed(async (req) => {
 			const parsed = parseKeyDeleteRequest(req.body ?? {});
 			const deletedAt = new Date();
+			const keyRepository = keyRepositoryFor(db);
 			await db.transaction(async (tx) => {
 				const requestedTokens = parsed.kind === "keys" ? [...new Set(parsed.tokens.map(hashTokenIfNeeded))] : undefined;
 				const requestedAliases = parsed.kind === "key_aliases" ? parsed.keyAliases : undefined;
-				const matchedRows = await tx
-					.select()
-					.from(LiteLLM_VerificationToken)
-					.where(
-						requestedTokens
-							? inArray(LiteLLM_VerificationToken.token, requestedTokens)
-							: inArray(LiteLLM_VerificationToken.keyAlias, requestedAliases!),
-					);
+				const matchedRows = requestedTokens
+					? await keyRepository.listByTokensInTx(tx, requestedTokens)
+					: await keyRepository.listByAliasesInTx(tx, requestedAliases!);
 
 				const allTargetsExist = requestedTokens
 					? matchedRows.length === requestedTokens.length
@@ -733,21 +631,14 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 				}
 				await authorizationGuard?.assertKeyAccess(req.auth, matchedRows, "write");
 
-				await tx.insert(liteLLM_DeletedVerificationToken).values(
-					matchedRows.map((row) => ({
-						...row,
-						deletedAt: deletedAt,
-						deletedBy: req.auth?.user_id ?? null,
-						deletedByApiKey: req.auth?.token ?? null,
-						litellmChangedBy: firstString(req.header("litellm-changed-by")) ?? null,
-					})),
-				);
-				await tx.delete(LiteLLM_VerificationToken).where(
-					inArray(
-						LiteLLM_VerificationToken.token,
-						matchedRows.map((row) => row.token),
-					),
-				);
+				// 归档与删除在同一事务内完成；事务内只失效缓存不写穿，回滚时不留下脏读。
+				await keyRepository.archiveDeletedInTx(tx, matchedRows, {
+					deletedAt: deletedAt,
+					deletedBy: req.auth?.user_id ?? null,
+					deletedByApiKey: req.auth?.token ?? null,
+					litellmChangedBy: firstString(req.header("litellm-changed-by")) ?? null,
+				});
+				await keyRepository.deleteByTokensInTx(tx, matchedRows);
 				logger.info(`Keys deleted: count=${matchedRows.length}`);
 			});
 			return { deleted_keys: parsed.requestedValues };
@@ -760,16 +651,12 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 		{ method: "get", path: "/key/info" },
 		authed(async (req) => {
 			const lookup = resolveKeyInfoLookup(req, "query");
-			const rows = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, lookup.tokenId))
-				.limit(1);
-			if (rows.length === 0) {
+			const row = await keyRepositoryFor(db).findByToken(lookup.tokenId);
+			if (row === null) {
 				throw ApiError.notFound("Key not found");
 			}
-			await authorizationGuard?.assertKeyAccess(req.auth, rows, "read");
-			return { key: lookup.requestKey, info: toPythonVerificationTokenRow(rows[0]!, false) };
+			await authorizationGuard?.assertKeyAccess(req.auth, [row], "read");
+			return { key: lookup.requestKey, info: toPythonVerificationTokenRow(row, false) };
 		}),
 	);
 
@@ -779,16 +666,12 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 		{ method: "post", path: "/key/info" },
 		authed(async (req) => {
 			const lookup = resolveKeyInfoLookup(req, "body");
-			const rows = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, lookup.tokenId))
-				.limit(1);
-			if (rows.length === 0) {
+			const row = await keyRepositoryFor(db).findByToken(lookup.tokenId);
+			if (row === null) {
 				throw ApiError.notFound("Key not found");
 			}
-			await authorizationGuard?.assertKeyAccess(req.auth, rows, "read");
-			return { success: true, data: toPythonVerificationTokenRow(rows[0]!, false) };
+			await authorizationGuard?.assertKeyAccess(req.auth, [row], "read");
+			return { success: true, data: toPythonVerificationTokenRow(row, false) };
 		}),
 	);
 
@@ -816,7 +699,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 				return { key: rawKeys, info: [] };
 			}
 
-			const rows = await db.select().from(LiteLLM_VerificationToken).where(inArray(LiteLLM_VerificationToken.token, tokens));
+			const rows = await keyRepositoryFor(db).listByTokens(tokens);
 			await authorizationGuard?.assertKeyAccess(req.auth, rows, "read");
 
 			const info = rows.map((row) => toPythonVerificationTokenRow(row, false));
@@ -844,7 +727,7 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 				search: firstString(req.query.search),
 				teamId: firstString(req.query.team_id),
 			};
-			const rows = await db.select().from(LiteLLM_VerificationToken).where(buildKeyAliasesWhere(filters));
+			const rows = await keyRepositoryFor(db).listAliasCandidates(filters);
 			const visibleRows = authorizationGuard ? await authorizationGuard.filterVisibleKeys(req.auth, rows) : rows;
 			const normalizedSearch = filters.search?.toLocaleLowerCase();
 			const aliases = visibleRows
@@ -886,10 +769,9 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 				Math.max(KEY_LIST_PAGINATION.minPageSize, parsePositiveInt(req.query.size, KEY_LIST_PAGINATION.defaultPageSize)),
 			);
 			const filters = parseKeyListFilters(req.query);
+			const keyRepository = keyRepositoryFor(db);
 			const rows: VerificationTokenRowLike[] =
-				filters.status === "deleted"
-					? await db.select().from(liteLLM_DeletedVerificationToken).where(buildDeletedKeyListWhere(filters))
-					: await db.select().from(LiteLLM_VerificationToken).where(buildKeyListWhere(filters));
+				filters.status === "deleted" ? await keyRepository.listDeletedForList(filters) : await keyRepository.listForList(filters);
 			const visibleRows = authorizationGuard ? await authorizationGuard.filterVisibleKeys(req.auth, rows) : rows;
 			const filteredRows = visibleRows.filter((row) => matchesKeyListFilters(row, filters));
 			const sortedRows = sortKeyListRows(filteredRows, firstString(req.query.sort_by), firstString(req.query.sort_order));
@@ -926,22 +808,16 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			if (!tokenId) {
 				throw ApiError.badRequest("key or token is required");
 			}
-			const targetRows = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, tokenId))
-				.limit(1);
-			if (targetRows.length === 0) {
+			const keyRepository = keyRepositoryFor(db);
+			const targetRow = await keyRepository.findByToken(tokenId);
+			if (targetRow === null) {
 				throw ApiError.notFound("Key not found");
 			}
-			await authorizationGuard?.assertKeyAccess(req.auth, targetRows, "write");
+			await authorizationGuard?.assertKeyAccess(req.auth, [targetRow], "write");
 
-			const result = await db
-				.update(LiteLLM_VerificationToken)
-				.set({ blocked: true, updatedAt: new Date() })
-				.where(eq(LiteLLM_VerificationToken.token, tokenId));
+			const affected = await keyRepository.updateByToken(tokenId, { blocked: true, updatedAt: new Date() });
 
-			if (result.rowCount === 0) {
+			if (affected === 0) {
 				throw ApiError.notFound("Key not found");
 			}
 
@@ -962,22 +838,16 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			if (!tokenId) {
 				throw ApiError.badRequest("key or token is required");
 			}
-			const targetRows = await db
-				.select()
-				.from(LiteLLM_VerificationToken)
-				.where(eq(LiteLLM_VerificationToken.token, tokenId))
-				.limit(1);
-			if (targetRows.length === 0) {
+			const keyRepository = keyRepositoryFor(db);
+			const targetRow = await keyRepository.findByToken(tokenId);
+			if (targetRow === null) {
 				throw ApiError.notFound("Key not found");
 			}
-			await authorizationGuard?.assertKeyAccess(req.auth, targetRows, "write");
+			await authorizationGuard?.assertKeyAccess(req.auth, [targetRow], "write");
 
-			const result = await db
-				.update(LiteLLM_VerificationToken)
-				.set({ blocked: false, updatedAt: new Date() })
-				.where(eq(LiteLLM_VerificationToken.token, tokenId));
+			const affected = await keyRepository.updateByToken(tokenId, { blocked: false, updatedAt: new Date() });
 
-			if (result.rowCount === 0) {
+			if (affected === 0) {
 				throw ApiError.notFound("Key not found");
 			}
 
@@ -1007,48 +877,37 @@ export function createKeyManagementRoutes(router: Router, db: DrizzleDb, authori
 			const revokeAt = resolveRotationRevokeAt(body, now);
 			validateKeyAlias(body.key_alias, await dbConfigProvider.getEffectiveParam("litellm_settings"));
 
+			const keyRepository = keyRepositoryFor(db);
 			await db.transaction(async (tx) => {
-				const existing = await tx
-					.select()
-					.from(LiteLLM_VerificationToken)
-					.where(eq(LiteLLM_VerificationToken.token, oldTokenId))
-					.limit(1);
-				if (existing.length === 0) {
+				const record = await keyRepository.findByTokenInTx(tx, oldTokenId);
+				if (record === null) {
 					throw ApiError.notFound("Key not found");
 				}
-				await authorizationGuard?.assertKeyAccess(req.auth, existing, "write");
+				await authorizationGuard?.assertKeyAccess(req.auth, [record], "write");
 
-				const collision = await tx
-					.select()
-					.from(LiteLLM_VerificationToken)
-					.where(eq(LiteLLM_VerificationToken.token, newTokenHash))
-					.limit(1);
-				if (collision.length > 0) {
+				const collision = await keyRepository.findByTokenInTx(tx, newTokenHash);
+				if (collision !== null) {
 					throw ApiError.conflict("New key hash collision, please retry");
 				}
 
 				if (revokeAt) {
-					await tx.insert(liteLLM_DeprecatedVerificationToken).values({
+					await keyRepository.insertDeprecatedInTx(tx, {
 						token: oldTokenId,
 						activeTokenId: newTokenHash,
 						revokeAt: revokeAt,
 					});
 				}
-				const record = existing[0]!;
 				const keyAlias = body.key_alias === undefined ? record.keyAlias : body.key_alias;
 				validateKeyAlias(keyAlias, aliasSettings);
-				await tx
-					.update(LiteLLM_VerificationToken)
-					.set({
-						token: newTokenHash,
-						keyAlias: keyAlias as string | null,
-						keyName: `sk-...${newPlainKey.slice(-4)}`,
-						rotationCount: (record.rotationCount ?? 0) + 1,
-						lastRotationAt: now,
-						updatedAt: now,
-						updatedBy: req.auth?.user_id ?? record.updatedBy,
-					})
-					.where(eq(LiteLLM_VerificationToken.token, oldTokenId));
+				await keyRepository.rotateInTx(tx, oldTokenId, {
+					token: newTokenHash,
+					keyAlias: keyAlias as string | null,
+					keyName: `sk-...${newPlainKey.slice(-4)}`,
+					rotationCount: (record.rotationCount ?? 0) + 1,
+					lastRotationAt: now,
+					updatedAt: now,
+					updatedBy: req.auth?.user_id ?? record.updatedBy,
+				});
 			});
 
 			logger.info(

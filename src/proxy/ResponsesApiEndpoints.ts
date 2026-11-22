@@ -23,7 +23,7 @@ import { registerRoute } from "../core/api/registerRoute";
 import type { DrizzleDb } from "../core/db/Database";
 import { createModuleLogger } from "../core/utils/logger";
 import { ROUTER_CALL_TYPE_PARAM, ROUTER_RESPONSES_BODY_PARAM, type Router as LiteLLMRouter } from "../router/Router";
-import type { DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import type { DeploymentSpendInfo } from "../types/spendInfo";
 import { getResultModelResolutionMetadata } from "../router/ModelResolutionTrace";
 import { createEndpointSpendLifecycle, reserveEndpointSpend, type EndpointSpendLifecycle } from "../spend/SpendReservation";
 import {
@@ -50,7 +50,8 @@ import { prepareOpenAIImageGenerationRequest, type BuiltinGeneratedImage } from 
 import { createVisionImageStore, type VisionImageStore } from "../capabilities/VisionImageStore";
 import { runOpenAIBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareOpenAIWebRequest } from "../capabilities/WebCapability";
-import { getUpstreamLogContext, UPSTREAM_STREAM_RESPONSE_KEY, type UpstreamLogContext } from "../router/UpstreamLogContext";
+import { getUpstreamLogContext, UPSTREAM_STREAM_RESPONSE_KEY } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 import { reasoningTextFromBlock } from "../core/utils/contentFields";
 import { accumulateChatChunk, finalizeStreamedCompletion, type ChatStreamAccumulator } from "./ChatCompletionsEndpoint";
 

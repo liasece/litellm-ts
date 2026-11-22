@@ -17,6 +17,8 @@ declare global {
 		interface Request {
 			/** 请求到达代理的墙钟毫秒时间戳；由 `requestArrivalMiddleware` 写入。 */
 			litellmRequestArrivalAt?: number;
+			/** 请求体读完并解析完成的墙钟毫秒时间戳；由 body 解析后的中间件写入。 */
+			litellmBodyParsedAt?: number;
 		}
 	}
 }
@@ -41,4 +43,23 @@ export const requestArrivalMiddleware: RequestHandler = (req, _res, next) => {
 export function requestArrivalTime(req: Pick<Request, "litellmRequestArrivalAt">): Date {
 	const at = req.litellmRequestArrivalAt;
 	return new Date(typeof at === "number" && Number.isFinite(at) ? at : Date.now());
+}
+
+/**
+ * 请求体接收耗时（含 JSON 解析）。
+ *
+ * 请求到达中间件跑在 body 解析之前，所以「到达 → 上游发起」这段开销里有一块是客户端
+ * 把请求体传完的时间，而不是代理自己干的活。大 prompt 的流式请求在慢上行链路上能占
+ * 几百毫秒，只看总开销会把它误读成代理变慢；这里把这一段单独量出来，供日志按
+ * `litellm_body_received_ms` 记录。
+ * @param req - Express 请求
+ * @returns 到达至 body 解析完成的毫秒数；缺少任一时刻时返回 undefined
+ */
+export function requestBodyReceivedMs(req: Pick<Request, "litellmRequestArrivalAt" | "litellmBodyParsedAt">): number | undefined {
+	const arrival = req.litellmRequestArrivalAt;
+	const parsed = req.litellmBodyParsedAt;
+	if (typeof arrival !== "number" || !Number.isFinite(arrival) || typeof parsed !== "number" || !Number.isFinite(parsed)) {
+		return undefined;
+	}
+	return Math.max(0, parsed - arrival);
 }

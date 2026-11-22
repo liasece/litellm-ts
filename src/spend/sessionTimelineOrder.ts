@@ -1,5 +1,3 @@
-import type { SessionTimelineItem } from "./sessionTimeline";
-
 /** Records message precedence from request snapshots without retaining their payloads. */
 export class SessionTimelineOrder {
 	private _successors = new Map<number, Set<number>>();
@@ -43,7 +41,7 @@ export class SessionTimelineOrder {
 	 * A heap keeps long sessions at O((events + links) log events).
 	 * @param items - Unique render events accumulated by the timeline builder.
 	 */
-	public order(items: readonly SessionTimelineItem[]): SessionTimelineItem[] {
+	public order<T extends { readonly timestamp: string }>(items: readonly T[]): T[] {
 		const indegrees = new Uint32Array(items.length);
 		for (const successors of this._successors.values()) {
 			for (const index of successors) {
@@ -100,7 +98,7 @@ export class SessionTimelineOrder {
 			}
 		}
 		const emitted = new Uint8Array(items.length);
-		const ordered: SessionTimelineItem[] = [];
+		const ordered: T[] = [];
 		let cycleFallback: number[] | undefined;
 		let fallbackIndex = 0;
 		while (ordered.length < items.length) {

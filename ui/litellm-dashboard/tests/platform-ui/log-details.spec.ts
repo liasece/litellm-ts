@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { cooldown, first, second, group, timeline, event } from "../log-details/Fixtures";
+import { cooldown, first, second, group, sessionFirst, timeline, event } from "../log-details/Fixtures";
 test.beforeEach(async ({ page }) => {
 	await page.route("**/spend/logs/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -175,4 +175,25 @@ test("冷却短路的请求在详情里显示触发冷却的上游错误", async
 	await expect(drawer.getByText("rate limit exceeded for model", { exact: true })).toBeVisible();
 	await expect(drawer.getByText("5s cooldown · started 2026-11-07T02:05:00.000Z", { exact: true })).toBeVisible();
 	await expect(drawer.getByText("upstream · HTTP 429", { exact: true })).toBeVisible();
+});
+
+/**
+ * 一次调用就是一个 Session 时，会话里只有当前这一行；此时 J/K 必须退回日志列表的相邻行，
+ * 否则详情页上的「上一条/下一条」看起来完全没有反应。
+ */
+test("会话只有一次请求时 J/K 仍然切换到相邻日志", async ({ page }) => {
+	// 覆盖 beforeEach 里的会话分页：这里只返回当前行，模拟生产上常见的单请求会话。
+	await page.route("**/spend/logs/**/session/ui*", (route) =>
+		route.fulfill({ json: { data: [sessionFirst], total: 1, page: 1, page_size: 100, total_pages: 1 } }),
+	);
+	await page.getByRole("button", { name: "Open session", exact: true }).click();
+	const drawer = page.getByRole("dialog", { name: "Log details", exact: true });
+	await expect(drawer.locator(".ld-sidebar__identity")).toContainText("Session");
+	await expect(drawer.locator(".ld-header__request-id")).toContainText("log-one");
+
+	await page.keyboard.press("j");
+	await expect(drawer.locator(".ld-header__request-id")).toContainText("log-two");
+
+	await page.keyboard.press("k");
+	await expect(drawer.locator(".ld-header__request-id")).toContainText("log-one");
 });

@@ -6,18 +6,21 @@
  */
 
 import type { Request } from "express";
+import type { BudgetGuardDecision } from "../auth/BudgetGuard";
 import { lookupModelCostPerToken, type CustomCostPerToken } from "../cost/CostCalculator";
 import { ApiError } from "../core/api/ApiError";
 import type { DrizzleDb } from "../core/db/Database";
 import { getModelGroupName } from "../router/RouterModelGroupCache";
 import { extractDeploymentCustomCost, resolveDeploymentProvider } from "../router/RouterSpendInfo";
+import { markTrace } from "../observability/RequestTrace";
 import type { Deployment } from "../types/router";
 import { CallType } from "../types/spend";
 import { createActiveRequestJournal } from "./ActiveRequestJournal";
 import {
 	buildSpendReservationScopes,
-	estimateSpendReservation,
+	estimateSpendFromPromptTokens,
 	getOrCreateSpendRequestId,
+	measureReservationPrompt,
 	registerActiveRequest,
 	removeActiveRequest,
 	reserveSpend,
@@ -181,6 +184,47 @@ export function estimateRouterSpendReservation(
 	model: string,
 	requestBody: Record<string, unknown>,
 ): number {
+	const metrics = measureReservationPrompt(requestBody);
+	return estimateRouterCostsWithTokens(router, model, requestBody, metrics.promptTokens);
+}
+
+/**
+ * 预算充裕时的预留金额：按「1 字节 = 1 token」的严格上界，不做分词。
+ *
+ * 这个值只会偏高、不会偏低（token 切分同一段字节流且每个 token 至少 1 字节），因此
+ * 用它预留不会削弱预算约束，只是把「分词算精确值」换成「直接取安全上界」。只有在余量
+ * 高于上界 1.5 倍、分词结果不可能改变判定时才走这条路径。
+ * @param router - Router 只读视图
+ * @param model - 请求的模型组
+ * @param requestBody - 请求体
+ * @throws {ApiError} 当没有 deployment 或费用无法估算时
+ */
+export function estimateRouterSpendReservationUpperBound(
+	router: SpendReservationRouterView,
+	model: string,
+	requestBody: Record<string, unknown>,
+): number {
+	const metrics = measureReservationPrompt(requestBody, { skipTokenization: true });
+	return estimateRouterCostsWithTokens(router, model, requestBody, metrics.jsonBytes);
+}
+
+/**
+ * 按已算好的 token 数遍历候选 deployment 取最大费用。
+ *
+ * 相同价格特征的 deployment 只算一次：候选列表通常覆盖全部 deployment（30 个左右），
+ * 而它们共享少数几套价格，逐个重算既无收益又放大误差面。
+ * @param router - Router 只读视图
+ * @param model - 请求的模型组
+ * @param requestBody - 请求体（只用于读取输出上限）
+ * @param promptTokens - 输入 token 数
+ * @throws {ApiError} 当没有 deployment 或费用无法估算时
+ */
+function estimateRouterCostsWithTokens(
+	router: SpendReservationRouterView,
+	model: string,
+	requestBody: Record<string, unknown>,
+	promptTokens: number,
+): number {
 	const deployments = router.getDeployments();
 	if (deployments.length === 0) {
 		throw ApiError.unavailable(`没有可用于费用预留的 deployment: ${model}`);
@@ -191,23 +235,74 @@ export function estimateRouterSpendReservation(
 	// Router 的公共读取接口不暴露 context-window/content-policy fallback；全部 deployment
 	// 都必须纳入上界，普通/wildcard fallback 只用于稳定地优先计算已知可达候选。
 	const candidates = [...reachable, ...other];
+	const seen = new Set<string>();
 	let maximum = 0;
 	for (const deployment of candidates) {
 		const deploymentModel = deployment.litellm_params.model;
 		// provider 与落账口径一致（custom_llm_provider ?? 模型名前缀）：预算预留与实际扣费
 		// 必须用同一套折扣/保证金，否则预算边界会出现预留通过、落账 429 的错位。
-		const estimate = estimateSpendReservation(
-			deploymentModel,
-			requestBody,
-			conservativeDeploymentCost(deployment),
-			resolveDeploymentProvider(deployment),
-		);
+		const custom = conservativeDeploymentCost(deployment);
+		const provider = resolveDeploymentProvider(deployment);
+		const signature = `${deploymentModel}\u0000${provider ?? ""}\u0000${JSON.stringify(custom ?? null)}`;
+		if (seen.has(signature)) {
+			continue;
+		}
+		seen.add(signature);
+		const estimate = estimateSpendFromPromptTokens(deploymentModel, promptTokens, requestBody, custom, provider);
 		if (!Number.isFinite(estimate) || estimate < 0) {
 			throw ApiError.unavailable(`deployment 模型费用无法估算: ${deploymentModel}`);
 		}
 		maximum = Math.max(maximum, estimate);
 	}
 	return maximum;
+}
+
+/** 快速路径要求的最小余量倍数：余量达到严格上界的该倍数才允许跳过分词。 */
+const RESERVATION_FAST_PATH_HEADROOM_FACTOR = 1.5;
+
+/**
+ * 选择本次预留金额。
+ *
+ * 预算余量远高于「1 字节 = 1 token」的严格上界时，分词结果不可能改变判定，直接按字节
+ * 上界预留、省掉整包编码；否则按精确分词取最大上界。没有预算守卫上下文（单测、内部调用）
+ * 时一律走精确口径，保持既有语义。
+ * @param req - 当前请求（携带预算守卫结论）
+ * @param router - Router 只读视图
+ * @param model - 请求的模型组
+ * @param requestBody - 请求体
+ * @throws {ApiError} 当没有 deployment 或费用无法估算时
+ */
+function reserveAmountForRequest(
+	req: Request,
+	router: SpendReservationRouterView,
+	model: string,
+	requestBody: Record<string, unknown>,
+): number {
+	return chooseReservationAmount(router, model, requestBody, req.budgetGuard);
+}
+
+/**
+ * 按预算守卫结论选择预留金额；导出以便单测直接验证「跳过精确估算」的边界。
+ * @param router - Router 只读视图
+ * @param model - 请求的模型组
+ * @param requestBody - 请求体
+ * @param guard - 预算守卫结论；缺省走精确口径
+ * @throws {ApiError} 当没有 deployment 或费用无法估算时
+ */
+export function chooseReservationAmount(
+	router: SpendReservationRouterView,
+	model: string,
+	requestBody: Record<string, unknown>,
+	guard?: BudgetGuardDecision,
+): number {
+	if (guard === undefined || guard.headroom === null) {
+		return estimateRouterSpendReservation(router, model, requestBody);
+	}
+	const upperBound = estimateRouterSpendReservationUpperBound(router, model, requestBody);
+	if (guard.headroom >= upperBound * RESERVATION_FAST_PATH_HEADROOM_FACTOR) {
+		return upperBound;
+	}
+	return estimateRouterSpendReservation(router, model, requestBody);
 }
 
 /**
@@ -254,18 +349,21 @@ export async function reserveEndpointSpend(
 		return startActiveRequestHeartbeat(db, requestId);
 	};
 	if (scopes.length === 0) {
+		// 没有任何预算主体：不估算、不写预留行，只保活用于在途登记。
 		return { requestId: requestId, heartbeat: await register() };
 	}
 	if (costMode !== "token") {
 		throw ApiError.unavailable(`${costMode} endpoint 的实际费用无法由 token CostCalculator 可靠上界估算`);
 	}
-	const reserved = estimateRouterSpendReservation(router, model, requestBody);
+	markTrace("reservation_start");
+	const reserved = reserveAmountForRequest(req, router, model, requestBody);
 	const activeHeartbeat = await register();
 	try {
 		const reservation = await reserveSpend(db, { requestId: requestId, reserved: reserved, scopes: scopes });
 		if (reservation.status === "duplicate") {
 			throw ApiError.conflict(`重复的 request_id: ${requestId}`);
 		}
+		markTrace("reservation_done");
 		return {
 			requestId: requestId,
 			heartbeat: combineSpendHeartbeats(

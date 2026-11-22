@@ -193,6 +193,22 @@
       "tag": "0023_spend_log_price_columns",
       "file": "0023_spend_log_price_columns.sql",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794790000011,
+      "tag": "0024_subscription_account_state",
+      "file": "0024_subscription_account_state.sql",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794790000012,
+      "tag": "0025_upstream_key_account",
+      "file": "0025_upstream_key_account.sql",
+      "breakpoints": true
     }
   ]
 }

@@ -49,11 +49,11 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 | # | 阶段 | 指标 | 说明 |
 | --- | --- | --- | --- |
 | 1 | 请求到达 | `litellm_http_request_duration_seconds` | 观测中间件是整条链的第一个中间件 |
-| 2 | 请求体就绪 | 无独立指标（含在 `pre_upstream` 内） | zstd 解压 + `JSON.parse` 都是同步 CPU |
-| 3 | 认证完成 | 无独立指标（含在 `pre_upstream` 内） | 鉴权通过即打点，失败请求不会记成成功 |
+| 2 | 请求体就绪 | `body_parse_ms`（慢请求明细）、`litellm_body_received_ms`（日志 metadata） | 含客户端上传耗时；zstd 解压 + `JSON.parse` 都是同步 CPU |
+| 3 | 认证完成 | `auth_ms`（慢请求明细） | 鉴权通过即打点，失败请求不会记成成功 |
 | 4 | 运行时配置 | 同上 | 每请求 1 个只读事务 |
 | 5 | 部署选定 | 同上 | 路由决策本身不查库 |
-| 6 | 记账预留 | 同上 | 在途登记事务 |
+| 6 | 记账预留 | `reservation_ms`（慢请求明细） | 费用估算 + 预算锁 + 在途登记事务 |
 | 7-8 | 上游响应头 | `litellm_llm_upstream_headers_seconds` | 按上游主机分组，能区分是哪个上游慢 |
 | 9 | 首字（模型开始产出） | `litellm_llm_ttfb_seconds` | 上游吐回第一块内容的时刻。客户端看到的第一个字节可能只是本地合成的前言或 4KB 填充帧，由 `litellm_llm_first_byte_seconds` 单独记录 |
 | 10 | 上游流结束 | 无 | 当前未单独打点 |
@@ -66,6 +66,17 @@ curl -s -H "x-litellm-api-key: $LITELLM_MASTER_KEY" "http://127.0.0.1:4000/metri
 - `pre_upstream = 上游请求发出时刻 - 请求到达`：本地开销总和，是「首字慢但不是上游慢」的直接证据；
 - `proxy_overhead = 首字 - 上游首个内容块`：代理自身转换与写出的开销；
 - `llm_pre_upstream_db_queries`：上游调用前累计的数据库往返次数，直接对应鉴权 + 运行时配置 + 在途登记的扇出规模。
+
+`pre_upstream` 只说明「本地总开销」，`/metrics/slow` 与慢请求日志把它拆成 `body_parse_ms`、
+`auth_ms`、`reservation_ms` 三段：前两段来自中间件打点，第三段由 `spend/SpendReservation.ts` 在
+预算锁前后各记一次 `reservation_start` / `reservation_done`。排查「TTFT 高但上游不慢」时先看这
+三段，避免把费用预留的 CPU 误判成上游排队。
+
+`pre_upstream` 里还有一段不是代理干的活：请求到达中间件跑在 body 解析之前，客户端上传请求体的
+时间也计入其中。`LiteLLM_SpendLogs.metadata.litellm_body_received_ms` 记录「到达 → body 解析完成」
+的毫秒数，用 `litellm_overhead_time_ms` 减去它才是代理自己的前置工作；日志详情里 `LiteLLM
+Overhead` 与 `Body Upload` 两行就是这两个数。慢上行链路上传几百 KB 的会话能占几百毫秒，没有这个
+拆分就会把「客户端网络慢」读成「代理变慢」。
 
 ## 指标目录
 

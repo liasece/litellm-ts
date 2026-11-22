@@ -19,6 +19,8 @@ export type TraceMark =
 	| "request_start"
 	| "body_parsed"
 	| "auth_done"
+	| "reservation_start"
+	| "reservation_done"
 	| "upstream_start"
 	| "upstream_headers"
 	| "upstream_body"
@@ -336,8 +338,10 @@ export interface RequestTimingBreakdown {
 	readonly bodyParseMs?: number;
 	/** 鉴权耗时 */
 	readonly authMs?: number;
-	/** 首个上游请求发出前的本地耗时（解析 + 鉴权 + 路由） */
+	/** 首个上游请求发出前的本地耗时（解析 + 鉴权 + 预留 + 路由） */
 	readonly preUpstreamMs?: number;
+	/** 费用预留耗时（估算 + 预算锁） */
+	readonly reservationMs?: number;
 	/** 上游等待响应头耗时（连接 + 排队 + 上游首包） */
 	readonly upstreamHeadersMs?: number;
 	/** 上游首个响应内容耗时 */
@@ -381,6 +385,7 @@ export function computeTimingBreakdown(trace: RequestTraceState, endAt?: number)
 		totalMs: round1(end - trace.startedAt),
 		bodyParseMs: diff1(trace.marks.body_parsed, trace.startedAt),
 		authMs: diff1(trace.marks.auth_done, trace.marks.body_parsed ?? trace.startedAt),
+		reservationMs: diff1(trace.marks.reservation_done, trace.marks.reservation_start),
 		preUpstreamMs: diff1(firstAttempt?.startedAt, trace.startedAt),
 		upstreamHeadersMs: diff1(firstAttempt?.headersAt, firstAttempt?.startedAt),
 		upstreamPayloadMs: diff1(lastAttempt?.firstPayloadAt, lastAttempt?.headersAt),

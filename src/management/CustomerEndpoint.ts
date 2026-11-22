@@ -6,23 +6,21 @@
  */
 
 import type { Router, Request, RequestHandler } from "express";
-import { and, eq, ilike, inArray } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
 import { registerRoute } from "../core/api/registerRoute";
 import { ApiError, HTTP_STATUS } from "../core/api/ApiError";
-import { LiteLLM_EndUserTable } from "../db/schema/end-users";
-import { LiteLLM_BudgetTable } from "../db/schema/budgets";
-import { LiteLLM_ObjectPermissionTable } from "../db/schema/object-permissions";
+import { budgetRepositoryFor } from "../repositories/BudgetRepository";
+import { endUserRepositoryFor } from "../repositories/EndUserRepository";
+import { objectPermissionRepositoryFor } from "../repositories/ObjectPermissionRepository";
 import { createModuleLogger } from "../core/utils/logger";
 import { pythonListRepr, toPythonEndUserWriteRow, toPythonObjectPermission } from "./pythonRowSerializers";
+import type { EndUserRow, EndUserUpdateValues } from "../repositories/EndUserRepository";
+import type { ObjectPermissionRow } from "../repositories/ObjectPermissionRepository";
 
 const logger = createModuleLogger("Management:Customer");
 
 /** `/customer/list?size=` 的上限：只服务于下拉候选，不需要更大的页。 */
 const END_USER_LIST_MAX_SIZE = 200;
-
-type EndUserRow = typeof LiteLLM_EndUserTable.$inferSelect;
-type ObjectPermissionRow = typeof LiteLLM_ObjectPermissionTable.$inferSelect;
 
 /**
  * 解析 `/customer/list` 的可选 `size`；缺省或非法时返回 undefined（表示不截断）。
@@ -38,24 +36,16 @@ function endUserListLimit(value: unknown): number | undefined {
 }
 
 /**
- * 大小写不敏感包含匹配的 LIKE 模式；转义用户输入里的通配符。
- * @param value - 已 trim 的搜索词
- */
-function containsPattern(value: string): string {
-	return `%${value.replace(/[\\%_]/g, "\\$&")}%`;
-}
-
-/**
  * 按 budget_id 加载关联预算行；budgetId 为 null 或行不存在时返回 null。
- * @param db
- * @param budgetId
+ * @param db - Drizzle 数据库实例
+ * @param budgetId - 端用户行上的 budget_id
  */
 async function loadBudgetRow(db: DrizzleDb, budgetId: string | null): Promise<Record<string, unknown> | null> {
 	if (budgetId === null) {
 		return null;
 	}
-	const budgetRows = await db.select().from(LiteLLM_BudgetTable).where(eq(LiteLLM_BudgetTable.budget_id, budgetId)).limit(1);
-	return (budgetRows[0] as Record<string, unknown> | undefined) ?? null;
+	const budgetRow = await budgetRepositoryFor(db).findById(budgetId);
+	return budgetRow === null ? null : (budgetRow as unknown as Record<string, unknown>);
 }
 
 /**
@@ -122,29 +112,28 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				throw ApiError.badRequest("必须提供 user_id");
 			}
 
-			// 检查重复
-			const existing = await db.select().from(LiteLLM_EndUserTable).where(eq(LiteLLM_EndUserTable.userId, user_id)).limit(1);
+			const endUserRepository = endUserRepositoryFor(db);
 
-			if (existing.length > 0) {
+			// 检查重复
+			const existing = await endUserRepository.findById(user_id);
+
+			if (existing !== null) {
 				throw ApiError.conflict(`端用户已存在: ${user_id}`);
 			}
 
-			const inserted = await db
-				.insert(LiteLLM_EndUserTable)
-				.values({
-					userId: user_id,
-					alias: alias ?? null,
-					allowedModelRegion: allowed_model_region ?? null,
-					defaultModel: default_model ?? null,
-					budgetId: budget_id ?? null,
-					blocked: blocked ?? false,
-				})
-				.returning();
+			const row = await endUserRepository.create({
+				userId: user_id,
+				alias: alias ?? null,
+				allowedModelRegion: allowed_model_region ?? null,
+				defaultModel: default_model ?? null,
+				budgetId: budget_id ?? null,
+				blocked: blocked ?? false,
+			});
 
 			logger.info(`端用户已创建: ${user_id}`);
 
-			const budgetRow = await loadBudgetRow(db, inserted[0]!.budgetId);
-			return toPythonEndUserWriteRow(inserted[0]!, { budgetRow: budgetRow });
+			const budgetRow = await loadBudgetRow(db, row.budgetId);
+			return toPythonEndUserWriteRow(row, { budgetRow: budgetRow });
 		}),
 	);
 
@@ -160,13 +149,14 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				throw ApiError.badRequest("必须提供 user_id");
 			}
 
-			const existing = await db.select().from(LiteLLM_EndUserTable).where(eq(LiteLLM_EndUserTable.userId, user_id)).limit(1);
+			const endUserRepository = endUserRepositoryFor(db);
+			const existing = await endUserRepository.findById(user_id);
 
-			if (existing.length === 0) {
+			if (existing === null) {
 				throw ApiError.notFound(`端用户不存在: ${user_id}`);
 			}
 
-			const updateFields: Record<string, unknown> = {};
+			const updateFields: EndUserUpdateValues = {};
 			if (updates.alias !== undefined) {
 				updateFields.alias = updates.alias;
 			}
@@ -180,16 +170,15 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				updateFields.budgetId = updates.budget_id;
 			}
 
-			const updated = await db
-				.update(LiteLLM_EndUserTable)
-				.set(updateFields)
-				.where(eq(LiteLLM_EndUserTable.userId, user_id))
-				.returning();
+			const updated = await endUserRepository.updateById(user_id, updateFields);
+			if (updated === null) {
+				throw ApiError.notFound(`端用户不存在: ${user_id}`);
+			}
 
 			logger.info(`端用户已更新: ${user_id}`);
 
-			const budgetRow = await loadBudgetRow(db, updated[0]!.budgetId);
-			return toPythonEndUserWriteRow(updated[0]!, { budgetRow: budgetRow });
+			const budgetRow = await loadBudgetRow(db, updated.budgetId);
+			return toPythonEndUserWriteRow(updated, { budgetRow: budgetRow });
 		}),
 	);
 
@@ -211,7 +200,8 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 			}
 
 			// Python: 任一不存在即 404（type=not_found, param=user_ids）
-			const existingRows = await db.select().from(LiteLLM_EndUserTable).where(inArray(LiteLLM_EndUserTable.userId, userIds));
+			const endUserRepository = endUserRepositoryFor(db);
+			const existingRows = await endUserRepository.listByIds(userIds);
 			const existingIds = new Set(existingRows.map((row) => row.userId));
 			const missingIds = userIds.filter((id) => !existingIds.has(id));
 			if (missingIds.length > 0) {
@@ -223,8 +213,7 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				);
 			}
 
-			const result = await db.delete(LiteLLM_EndUserTable).where(inArray(LiteLLM_EndUserTable.userId, userIds));
-			const deletedCount = result.rowCount ?? userIds.length;
+			const deletedCount = await endUserRepository.deleteByIds(userIds);
 
 			logger.info(`端用户已删除: count=${deletedCount}`);
 
@@ -246,9 +235,9 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				throw ApiError.badRequest("必须提供 user_id");
 			}
 
-			const result = await db.update(LiteLLM_EndUserTable).set({ blocked: true }).where(eq(LiteLLM_EndUserTable.userId, user_id));
+			const affected = await endUserRepositoryFor(db).setBlocked(user_id, true);
 
-			if (result.rowCount === 0) {
+			if (affected === 0) {
 				throw ApiError.notFound(`端用户不存在: ${user_id}`);
 			}
 
@@ -269,9 +258,9 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				throw ApiError.badRequest("必须提供 user_id");
 			}
 
-			const result = await db.update(LiteLLM_EndUserTable).set({ blocked: false }).where(eq(LiteLLM_EndUserTable.userId, user_id));
+			const affected = await endUserRepositoryFor(db).setBlocked(user_id, false);
 
-			if (result.rowCount === 0) {
+			if (affected === 0) {
 				throw ApiError.notFound(`端用户不存在: ${user_id}`);
 			}
 
@@ -292,13 +281,13 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 				throw ApiError.badRequest("必须提供 user_id");
 			}
 
-			const rows = await db.select().from(LiteLLM_EndUserTable).where(eq(LiteLLM_EndUserTable.userId, userId)).limit(1);
+			const row = await endUserRepositoryFor(db).findById(userId);
 
-			if (rows.length === 0) {
+			if (row === null) {
 				throw ApiError.notFound(`端用户不存在: ${userId}`);
 			}
 
-			return { success: true, data: rows[0] };
+			return { success: true, data: row };
 		}),
 	);
 
@@ -313,16 +302,10 @@ export function createCustomerRoutes(router: Router, db: DrizzleDb, authMiddlewa
 		authed(async (req) => {
 			const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
 			const size = endUserListLimit(req.query.size);
-			const conditions = search.length > 0 ? [ilike(LiteLLM_EndUserTable.userId, containsPattern(search))] : [];
-			const endUserQuery = db
-				.select()
-				.from(LiteLLM_EndUserTable)
-				.where(and(...conditions))
-				.orderBy(LiteLLM_EndUserTable.userId);
-			const rows = size === undefined ? await endUserQuery : await endUserQuery.limit(size);
-			const [budgets, permissions] = await Promise.all([
-				db.select().from(LiteLLM_BudgetTable),
-				db.select().from(LiteLLM_ObjectPermissionTable),
+			const [rows, budgets, permissions] = await Promise.all([
+				endUserRepositoryFor(db).list({ search: search, limit: size }),
+				budgetRepositoryFor(db).listAll(),
+				objectPermissionRepositoryFor(db).listAll(),
 			]);
 			const budgetsById = new Map<string, Record<string, unknown>>(budgets.map((row) => [row.budget_id, row]));
 			const permissionsById = new Map<string, ObjectPermissionRow>(permissions.map((row) => [row.objectPermissionId, row]));

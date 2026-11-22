@@ -1,14 +1,18 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { DrizzleDb } from "../core/db/Database";
-import {
-	imageCompletionAnchors as anchors,
-	imageCompletions as completions,
-	type ImageCompletionAsset,
-} from "../db/schema/imageCompletions";
-import { imageItemKey } from "./ImageCompletionTranscript";
+import { imageCompletionAnchors as anchors, imageCompletions as completions } from "../db/schema/imageCompletions";
+import { imageItemKey } from "../capabilities/ImageCompletionTranscript";
 
 /** Stored state of one image execution, including immutable output references. */
 export type ImageOperation = typeof completions.$inferSelect;
+
+/**
+ * 落库时保存的图片资产引用（不含图片字节与提示词）。
+ *
+ * 直接从行类型推导，而不是让业务模块再去 import schema：表的 JSON 形状由拥有它的仓储定义，
+ * 业务层只消费这份类型，schema 改动时编译期就能发现不一致。
+ */
+export type ImageCompletionAsset = ImageOperation["assets"][number];
 
 /** An index hit contains only verified completed outputs. */
 export interface ImageAnchorHit {
@@ -60,6 +64,24 @@ function forgetNoHistory(scope: string): void {
 /** 清空负结果缓存；仅供测试使用。 */
 export function resetImageHistoryNegativeCache(): void {
 	noHistoryUntil.clear();
+}
+
+const repositories = new WeakMap<object, DatabaseImageHistoryRepository>();
+
+/**
+ * 取得与数据库连接绑定的图片历史仓库；同一连接上的所有请求共用负结果缓存。
+ * @param db - 路由服务数据库
+ * @returns 该连接对应的仓库单例
+ */
+export function imageCompletionRepositoryFor(db: DrizzleDb): DatabaseImageHistoryRepository {
+	const key = db as unknown as object;
+	const existing = repositories.get(key);
+	if (existing !== undefined) {
+		return existing;
+	}
+	const created = new DatabaseImageHistoryRepository(db);
+	repositories.set(key, created);
+	return created;
 }
 
 /** PostgreSQL repository. Public history and image bytes never go into its indexes. */

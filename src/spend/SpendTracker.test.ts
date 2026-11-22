@@ -4,7 +4,7 @@
  * 对齐 Python litellm/db_spend_update_writer.py
  * 验证：
  *  - 每个 daily spend table 的 unique constraint 包含关键列
- *  - 维度 → key column 映射正确
+ *  - 维度 → 目标表 / 主体列的解析与写入行为（DailySpendRepository）
  *  - 未知 dimension 抛错
  */
 import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
@@ -16,6 +16,10 @@ import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
 import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
+import { LiteLLM_UpstreamKeyAccount } from "../db/schema/upstreamKeyAccount";
+import type { DrizzleDb } from "../core/db/Database";
+import { DailySpendRepository } from "../repositories/DailySpendRepository";
+import type { DailySpendEntry } from "../repositories/DailySpendRepository";
 import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
 import { liteLLM_SpendReservations } from "../db/schema/spendReservations";
 import type { Request } from "express";
@@ -24,10 +28,8 @@ import {
 	buildSpendLogFromRequest,
 	buildSpendReservationScopes,
 	estimateSpendReservation,
-	getDailyTable,
 	getFailureErrorInformation,
 	getOrCreateSpendRequestId,
-	getKeyColumn,
 	normalizeUsageForSpend,
 	reconstructModelName,
 	resolveFinalModelGroup,
@@ -233,52 +235,143 @@ describe("SpendLogs schema parity", () => {
 });
 
 describe("SpendTracker dimension mapping (DB-001)", () => {
-	describe("getDailyTable", () => {
-		it("user → liteLLM_DailyUserSpend", () => {
-			expect(getDailyTable("user")).toBe(liteLLM_DailyUserSpend);
+	interface CapturedDailyWrite {
+		table: unknown;
+		values: Record<string, unknown>;
+		conflict: Record<string, unknown>;
+	}
+
+	const entry: DailySpendEntry = {
+		requestId: "req-daily-dimension",
+		startTime: "2026-01-02T23:00:00.000Z",
+		apiKey: "hashed-key",
+		model: "provider/model",
+		modelGroup: "logical-model",
+		customLlmProvider: "test-provider",
+		mcpNamespacedToolName: "server/tool",
+		endpoint: "/v1/chat/completions",
+		promptTokens: 2,
+		completionTokens: 3,
+		cacheReadInputTokens: 4,
+		cacheCreationInputTokens: 5,
+		status: SpendLogStatus.Success,
+	};
+
+	function captureWrites(): { db: unknown; writes: CapturedDailyWrite[] } {
+		const writes: CapturedDailyWrite[] = [];
+		const db = {
+			insert: jest.fn((table: unknown) => ({
+				values: jest.fn((values: Record<string, unknown>) => ({
+					onConflictDoUpdate: jest.fn((conflict: Record<string, unknown>) => {
+						writes.push({ table: table, values: values, conflict: conflict });
+						return Promise.resolve();
+					}),
+				})),
+			})),
+		};
+		return { db: db, writes: writes };
+	}
+
+	it.each([
+		["user", liteLLM_DailyUserSpend, "user_id"],
+		["team", liteLLM_DailyTeamSpend, "team_id"],
+		["organization", liteLLM_DailyOrganizationSpend, "organization_id"],
+		["tag", liteLLM_DailyTagSpend, "tag"],
+		["agent", liteLLM_DailyAgentSpend, "agent_id"],
+		["end_user", liteLLM_DailyEndUserSpend, "end_user_id"],
+	] as const)("%s 维度写入对应汇总表的主体列", async (dimension, table, keyColumn) => {
+		const { db, writes } = captureWrites();
+		const repository = new DailySpendRepository(db as unknown as DrizzleDb);
+		await repository.upsertIncrement(db as never, dimension, "subject-1", entry, 0.25);
+
+		expect(writes).toHaveLength(1);
+		expect(writes[0]!.table).toBe(table);
+		expect(writes[0]!.values).toMatchObject({
+			[keyColumn]: "subject-1",
+			date: "2026-01-02",
+			api_key: "hashed-key",
+			model: "provider/model",
+			model_group: "logical-model",
+			custom_llm_provider: "test-provider",
+			mcp_namespaced_tool_name: "server/tool",
+			endpoint: "/v1/chat/completions",
+			prompt_tokens: 2,
+			completion_tokens: 3,
+			cache_read_input_tokens: 4,
+			cache_creation_input_tokens: 5,
+			spend: 0.25,
+			api_requests: 1,
+			successful_requests: 1,
+			failed_requests: 0,
 		});
-		it("team → liteLLM_DailyTeamSpend", () => {
-			expect(getDailyTable("team")).toBe(liteLLM_DailyTeamSpend);
-		});
-		it("organization → liteLLM_DailyOrganizationSpend", () => {
-			expect(getDailyTable("organization")).toBe(liteLLM_DailyOrganizationSpend);
-		});
-		it("tag → liteLLM_DailyTagSpend", () => {
-			expect(getDailyTable("tag")).toBe(liteLLM_DailyTagSpend);
-		});
-		it("agent → liteLLM_DailyAgentSpend", () => {
-			expect(getDailyTable("agent")).toBe(liteLLM_DailyAgentSpend);
-		});
-		it("end_user → liteLLM_DailyEndUserSpend", () => {
-			expect(getDailyTable("end_user")).toBe(liteLLM_DailyEndUserSpend);
-		});
-		it("未知 dimension 抛错", () => {
-			expect(() => getDailyTable("unknown")).toThrow(/未知的每日花费维度/);
-		});
+		expect(typeof writes[0]!.values["id"]).toBe("string");
+		expect(writes[0]!.values["updated_at"]).toBeInstanceOf(Date);
+		// tag 汇总额外记录 request_id：tag 维度按请求出现次数聚合，同一 tag 多次出现要能追溯。
+		if (keyColumn === "tag") {
+			expect(writes[0]!.values["request_id"]).toBe("req-daily-dimension");
+		} else {
+			expect(writes[0]!.values["request_id"]).toBeUndefined();
+		}
+		// 冲突目标必须是完整的唯一键组合，顺序与 schema 一致，否则累加会命中错误行。
+		const target = writes[0]!.conflict["target"] as Array<{ name: string }>;
+		expect(target.map((column) => column.name)).toEqual([
+			keyColumn,
+			"date",
+			"api_key",
+			"model",
+			"model_group",
+			"custom_llm_provider",
+			"mcp_namespaced_tool_name",
+			"endpoint",
+		]);
+		// 冲突分支按列自增，不能覆盖成单次请求的值。
+		expect(writes[0]!.conflict["set"]).toMatchObject(
+			expect.objectContaining({
+				prompt_tokens: expect.anything(),
+				completion_tokens: expect.anything(),
+				cache_read_input_tokens: expect.anything(),
+				cache_creation_input_tokens: expect.anything(),
+				spend: expect.anything(),
+				api_requests: expect.anything(),
+				successful_requests: expect.anything(),
+				failed_requests: expect.anything(),
+			}),
+		);
 	});
 
-	describe("getKeyColumn", () => {
-		it("user → user_id", () => {
-			expect(getKeyColumn("user")).toBe("user_id");
-		});
-		it("team → team_id", () => {
-			expect(getKeyColumn("team")).toBe("team_id");
-		});
-		it("organization → organization_id", () => {
-			expect(getKeyColumn("organization")).toBe("organization_id");
-		});
-		it("tag → tag", () => {
-			expect(getKeyColumn("tag")).toBe("tag");
-		});
-		it("agent → agent_id", () => {
-			expect(getKeyColumn("agent")).toBe("agent_id");
-		});
-		it("end_user → end_user_id (DB-001: 验证 end_user 维度 unique constraint 可用)", () => {
-			expect(getKeyColumn("end_user")).toBe("end_user_id");
-		});
-		it("未知 dimension 抛错", () => {
-			expect(() => getKeyColumn("unknown")).toThrow(/未知的键列维度/);
-		});
+	it("未知 dimension 抛错", async () => {
+		const { db } = captureWrites();
+		const repository = new DailySpendRepository(db as unknown as DrizzleDb);
+		await expect(repository.upsertIncrement(db as never, "unknown", "subject-1", entry, 0.25)).rejects.toThrow(/未知的每日花费维度/);
+	});
+
+	it("主体值为空时不写入任何汇总表", async () => {
+		const { db, writes } = captureWrites();
+		const repository = new DailySpendRepository(db as unknown as DrizzleDb);
+		await repository.upsertIncrement(db as never, "team", null, entry, 0.25);
+		expect(writes).toEqual([]);
+	});
+
+	it("失败与取消状态分别只计入 failed / api_requests", async () => {
+		const failed = captureWrites();
+		await new DailySpendRepository(failed.db as unknown as DrizzleDb).upsertIncrement(
+			failed.db as never,
+			"user",
+			"user-1",
+			{ ...entry, status: SpendLogStatus.Failure },
+			0,
+		);
+		expect(failed.writes[0]!.values).toMatchObject({ successful_requests: 0, failed_requests: 1, api_requests: 1 });
+
+		const cancelled = captureWrites();
+		await new DailySpendRepository(cancelled.db as unknown as DrizzleDb).upsertIncrement(
+			cancelled.db as never,
+			"user",
+			"user-1",
+			{ ...entry, status: SpendLogStatus.Cancelled },
+			0,
+		);
+		expect(cancelled.writes[0]!.values).toMatchObject({ successful_requests: 0, failed_requests: 0, api_requests: 1 });
 	});
 
 	describe("unique constraints (DB-001)", () => {
@@ -1080,7 +1173,10 @@ describe("SpendTracker API key sanitization", () => {
 					if (table === liteLLM_SpendLogs) {
 						insertedSpendLogs.push(insertValues);
 					}
-					return Promise.resolve(undefined);
+					return {
+						onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ requestId: "req-capture" }])) })),
+						onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+					};
 				}),
 			})),
 		}) as unknown as Parameters<typeof trackSpendLog>[0];
@@ -1352,6 +1448,73 @@ describe("SpendTracker API key sanitization", () => {
 				process.env.STORE_UPSTREAM_LOGS_IN_SPEND_LOGS = previousStoreUpstreamLogs;
 			}
 		}
+	});
+
+	it("buildSpendLogFromRequest 记录显式上游 key 与账号；账号保持内部字段", async () => {
+		const upstreamKeyHash = "a".repeat(64);
+		const spendLog = await buildSpendLogFromRequest({
+			auth: { api_key: rawApiKey },
+			callType: CallType.ACompletion,
+			endTime: new Date("2026-01-01T00:00:01.000Z"),
+			model: "gpt-4o-mini",
+			req: createRequest(),
+			requestId: "req-upstream-identity",
+			startTime: new Date("2026-01-01T00:00:00.000Z"),
+			upstreamAccount: { kind: "subscription", id: "account-1", provider: "codex" },
+			upstreamKeyHash: upstreamKeyHash,
+			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+		});
+		expect(spendLog.upstream_key_hash).toBe(upstreamKeyHash);
+		expect(spendLog.upstreamAccount).toEqual({ kind: "subscription", id: "account-1", provider: "codex" });
+	});
+
+	it("trackSpendLog 持久化 upstream_key_hash，并在同事务补写 key → 账号关联", async () => {
+		const upstreamKeyHash = "b".repeat(64);
+		const insertedSpendLogs: Record<string, unknown>[] = [];
+		const insertedAccounts: Record<string, unknown>[] = [];
+		const db = withTransaction({
+			insert: (table: unknown) => ({
+				values: (values: Record<string, unknown>) => {
+					if (table === liteLLM_SpendLogs) {
+						insertedSpendLogs.push(values);
+						return Promise.resolve();
+					}
+					if (table === LiteLLM_UpstreamKeyAccount) {
+						insertedAccounts.push(values);
+						return { onConflictDoNothing: () => Promise.resolve() };
+					}
+					// DailySpend / 块写入各自需要不同的冲突处理；测试只关心上游关联。
+					return {
+						onConflictDoNothing: () => Promise.resolve(),
+						onConflictDoUpdate: () => Promise.resolve(),
+					};
+				},
+			}),
+		});
+		await trackSpendLog(db as unknown as Parameters<typeof trackSpendLog>[0], {
+			api_key: rawApiKey,
+			call_type: CallType.ACompletion,
+			completion_tokens: 1,
+			endTime: "2026-01-01T00:00:01.000Z",
+			model: "gpt-4o-mini",
+			prompt_tokens: 1,
+			request_id: "req-upstream-association",
+			spend: 0,
+			startTime: "2026-01-01T00:00:00.000Z",
+			total_tokens: 2,
+			upstream_key_hash: upstreamKeyHash,
+			upstreamAccount: { kind: "credential", id: "credential-a", provider: "openai" },
+		});
+		expect(insertedSpendLogs).toHaveLength(1);
+		expect(insertedSpendLogs[0]?.["upstream_key_hash"]).toBe(upstreamKeyHash);
+		expect(insertedAccounts).toEqual([
+			{
+				key_hash: upstreamKeyHash,
+				account_kind: "credential",
+				account_id: "credential-a",
+				provider: "openai",
+			},
+		]);
 	});
 
 	it("trackSpendLog 写入 insertData 时 api_key 经哈希保护、proxy_server_request 保留请求体原文", async () => {
@@ -1848,6 +2011,7 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 			modelId: "deployment-id-1",
 			deploymentModel: "anthropic/glm-4.7",
 			litellmOverheadTimeMs: 12,
+			litellmBodyReceivedMs: 9,
 			attemptedRetries: 1,
 			maxRetries: 3,
 			req: createMinimalRequest(),
@@ -1861,6 +2025,8 @@ describe("buildSpendLogFromRequest metadata 键集（PY SpendLogsMetadata）", (
 			model_map_value: { id: "deployment-id-1", model_family: "GLM" },
 		});
 		expect(metadata["litellm_overhead_time_ms"]).toBe(12);
+		// 总开销里客户端上传占多少：便于把「慢上行」与「代理变慢」分开
+		expect(metadata["litellm_body_received_ms"]).toBe(9);
 		expect(metadata["attempted_retries"]).toBe(1);
 		expect(metadata["max_retries"]).toBe(3);
 		// 未实现子系统的键就位、值恒 null（PY 以 None 落键）
@@ -2167,7 +2333,10 @@ describe("trackSpendLog cost_breakdown 注入与 cache_hit 大小写（PY str(bo
 					if (table === liteLLM_SpendLogs) {
 						insertedSpendLogs.push(insertValues);
 					}
-					return Promise.resolve(undefined);
+					return {
+						onConflictDoNothing: jest.fn(() => ({ returning: jest.fn(() => Promise.resolve([{ requestId: "req-capture" }])) })),
+						onConflictDoUpdate: jest.fn(() => Promise.resolve()),
+					};
 				}),
 			})),
 		}) as unknown as Parameters<typeof trackSpendLog>[0];

@@ -35,7 +35,7 @@ import { AnthropicCapabilityStream, hasAnthropicContent } from "./AnthropicCapab
  */
 import type { Router, Request, Response } from "express";
 import { registerRoute } from "../core/api/registerRoute";
-import { requestArrivalTime } from "../core/api/RequestArrival";
+import { requestArrivalTime, requestBodyReceivedMs } from "../core/api/RequestArrival";
 import { markFirstContentFrame } from "../spend/FirstContentFrame";
 import { ApiError } from "../core/api/ApiError";
 import { classifyClientError } from "../core/api/ClientErrorCode";
@@ -55,7 +55,8 @@ import type { DrizzleDb } from "../core/db/Database";
 import type { Router as LiteLLMRouter } from "../router/Router";
 import type { ModelResponse } from "../types/openai";
 import { ProviderUpstreamError, executeWithFallbackChain, requireUpstreamAttempt, type UpstreamAttempt } from "./AnthropicUpstreamDispatch";
-import { buildDeploymentSpendInfo, type DeploymentSpendInfo } from "../router/RouterSpendInfo";
+import { buildDeploymentSpendInfo } from "../router/RouterSpendInfo";
+import type { DeploymentSpendInfo } from "../types/spendInfo";
 import { copyModelResolutionChain, copyRoutingTrace } from "../router/ModelResolutionTrace";
 import { createPublishedModelResolutionTrace } from "../router/UpstreamExchange";
 import { describeUpstreamErrorBody, executeProviderRequest, isClientAbortError } from "../router/ProviderRequestExecutor";
@@ -78,12 +79,8 @@ import {
 import { createVisionImageStore } from "../capabilities/VisionImageStore";
 import { runAnthropicBuiltinCapabilityAgentLoop } from "../capabilities/BuiltinCapabilityRunner";
 import { prepareAnthropicWebRequest } from "../capabilities/WebCapability";
-import {
-	createUpstreamLogContext,
-	getUpstreamLogContext,
-	attachUpstreamLogContext,
-	type UpstreamLogContext,
-} from "../router/UpstreamLogContext";
+import { createUpstreamLogContext, getUpstreamLogContext, attachUpstreamLogContext } from "../router/UpstreamLogContext";
+import type { UpstreamLogContext } from "../types/upstreamLog";
 
 const logger = createModuleLogger("AnthropicMsg");
 
@@ -733,6 +730,8 @@ export function registerAnthropicMessagesEndpoints(
 		const startTime = requestArrivalTime(req);
 		// PY litellm_overhead_time_ms 基准：请求进入代理的时间，与记账起点保持一致
 		const requestArrivalTimeMs = startTime.getTime();
+		// 到达→body 解析完成：这段是客户端上传与 JSON 解析，与代理自己的前置工作分开记账
+		const bodyReceivedMs = requestBodyReceivedMs(req);
 
 		let cleanBody = sanitizeRequestBody(req.body) as Record<string, unknown>;
 		if (!cleanBody) {
@@ -964,6 +963,7 @@ export function registerAnthropicMessagesEndpoints(
 								customCostPerToken: spendInfo?.customCostPerToken,
 								deploymentModel: spendInfo?.deploymentModel,
 								litellmOverheadTimeMs: streamOverheadTimeMs,
+								litellmBodyReceivedMs: bodyReceivedMs,
 								attemptedRetries: streamFallbackStats.fallbackDepth,
 								maxRetries: litellmRouter.maxFallbacks,
 								fallbackModels: streamFallbackStats.fallbackModels,
@@ -1203,6 +1203,7 @@ export function registerAnthropicMessagesEndpoints(
 							customCostPerToken: spendInfo?.customCostPerToken,
 							deploymentModel: spendInfo?.deploymentModel,
 							litellmOverheadTimeMs: streamOverheadTimeMs,
+							litellmBodyReceivedMs: bodyReceivedMs,
 							attemptedRetries: streamFallbackStats.fallbackDepth,
 							maxRetries: litellmRouter.maxFallbacks,
 							fallbackModels: streamFallbackStats.fallbackModels,
@@ -1489,6 +1490,7 @@ export function registerAnthropicMessagesEndpoints(
 					customCostPerToken: nsSpendInfo?.customCostPerToken,
 					deploymentModel: nsSpendInfo?.deploymentModel,
 					litellmOverheadTimeMs: nsOverheadTimeMs,
+					litellmBodyReceivedMs: bodyReceivedMs,
 					attemptedRetries: nsFallbackStats.fallbackDepth,
 					fallbackModels: nsFallbackStats.fallbackModels,
 					modelResolutionChain: copyModelResolutionChain(modelResolutionTrace),

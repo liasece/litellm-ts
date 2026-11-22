@@ -2,33 +2,60 @@
  * 鉴权仓储读缓存。
  *
  * 鉴权链每请求要串行读若干次同一批实体（token、team、user、membership、budget…），
- * 这些行在一次请求里只读、且绝大多数在毫秒级窗口内不会变。缓存放在仓储层而不是
+ * 这些行在一次请求里只读、且绝大多数在分钟级窗口内不会变。缓存放在仓储层而不是
  * 中间件层，好处是：所有读路径（HTTP 鉴权、AuthorizationGuard、WebUI 会话校验）
  * 自动共享同一份快照，写法与未缓存时完全一致。
  *
  * 失效模型（对应「没有延迟生效的缺点」）：
- * - 仓储自身的写方法（注销、续期）在写入后立刻删对应 key；
+ * - 仓储自身的写方法（注销、续期、改配额）在写入后立刻写穿或删掉对应 key；
  * - 记账提交后按主体失效（token/user/team/membership/org/project/end-user），
  *   预算检查读到的是上一次提交后的 spend，而不是缓存里更早的旧值；
  * - 管理端点改/删 key 时按 tag 失效，删号/封号立即生效，不依赖 TTL 过期；
- * - TTL 只是兜底：本进程之外（其他实例、直接改库）的变更最多延迟一个 TTL。
+ * - TTL 只兜底「本进程之外」的变更（运维直接改库、另一套实例）。
+ *
+ * 服务是单实例部署、配置与账号变更都会经过本进程，因此这里的 TTL 放在分钟级：
+ * 应用内写入靠写穿与标签失效保证立刻可见，分钟级窗口只用于兜住旁路写入。
  *
  * 负结果（不存在）不缓存：遍历式无效 token 探测不应该把缓存撑大，也不应该让刚
  * 创建的 key 在 TTL 内不可用。
+ *
+ * 读路径用 `load()` 而不是「先 get 再 set」：命中但剩余 TTL 不足阈值时，仍然立刻返回
+ * 手里的旧值，同时在后台补一次读取（提前刷新）。高频请求的到达间隔常常刚好跨过 TTL，
+ * 没有提前刷新时每一波第一个请求都要同步等一次库；提前刷新把这次等待从请求路径挪走，
+ * 只留下「缓存里根本没有这条」的冷启动仍走同步读取。
  */
 
 import { createModuleLogger } from "../core/utils/logger";
+import { DEFAULT_ENTRY_CACHE_MAX_CONCURRENT_REFRESHES, EntryCache } from "../repositories/internal/EntryCache";
 
 const logger = createModuleLogger("AuthRepositoryCache");
 
-/** 默认 TTL：足够覆盖同一波并发请求与 UI 轮询，又能让跨实例变更在一秒级收敛。 */
-export const DEFAULT_AUTH_REPOSITORY_CACHE_TTL_MS = 3000;
+/**
+ * 默认 TTL。
+ *
+ * 单实例部署下应用内的写都会经过仓储层并写穿/失效，TTL 只是旁路写入的兜底窗口，
+ * 因此取 5 分钟：既能把鉴权链的库往返压到每个实体每 5 分钟一次，又不会让运维直接
+ * 改库的变更藏太久。
+ */
+export const DEFAULT_AUTH_REPOSITORY_CACHE_TTL_MS = 300_000;
 
 /** 单进程缓存条目上限，避免无效 token 探测把内存顶起来。 */
 export const DEFAULT_AUTH_REPOSITORY_CACHE_MAX_ENTRIES = 4096;
 
 /** 运维可在不重建镜像的情况下关闭/调整缓存。 */
 export const AUTH_REPOSITORY_CACHE_TTL_ENV = "LITELLM_AUTH_REPOSITORY_CACHE_TTL_MS";
+
+/** 提前刷新阈值：剩余 TTL 低于该值时异步补读，0 表示关闭提前刷新。 */
+export const AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_ENV = "LITELLM_AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_MS";
+
+/** 默认提前刷新阈值下限：TTL 很短时也要留出足够窗口，避免每次命中都触发刷新。 */
+export const DEFAULT_AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_MIN_MS = 250;
+
+/** 默认提前刷新阈值占 TTL 的比例；5 分钟 TTL 即最后 75 秒内的命中会触发补读。 */
+export const DEFAULT_AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_RATIO = 0.25;
+
+/** 单进程同时进行的后台补读上限，避免热点集中过期时把连接池打满。 */
+export const DEFAULT_AUTH_REPOSITORY_CACHE_MAX_CONCURRENT_REFRESHES = DEFAULT_ENTRY_CACHE_MAX_CONCURRENT_REFRESHES;
 
 /**
  * 解析缓存 TTL；非法输入回落到默认值，0 表示关闭缓存。
@@ -45,101 +72,50 @@ export function resolveAuthRepositoryCacheTtlMs(raw: string | undefined): number
 	return Math.round(parsed);
 }
 
-interface CacheEntry {
-	readonly value: unknown;
-	readonly expiresAt: number;
-	readonly tags: readonly string[];
+/**
+ * 解析提前刷新阈值：默认取 TTL 的四分之一（不少于 250 毫秒），0 表示关闭。
+ * @param raw - 环境变量原文
+ * @param ttlMs - 生效的缓存 TTL
+ */
+export function resolveAuthRepositoryRefreshAheadMs(raw: string | undefined, ttlMs: number): number {
+	if (ttlMs <= 0) {
+		return 0;
+	}
+	if (raw === undefined || raw.trim() === "") {
+		return Math.max(
+			DEFAULT_AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_MIN_MS,
+			Math.round(ttlMs * DEFAULT_AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_RATIO),
+		);
+	}
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		return Math.max(
+			DEFAULT_AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_MIN_MS,
+			Math.round(ttlMs * DEFAULT_AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_RATIO),
+		);
+	}
+	// 阈值不小于 TTL 时每一命中都会补读，等价于关掉提前刷新，因此夹到 TTL 以内。
+	return Math.min(Math.round(parsed), ttlMs);
 }
 
-/**
- * 带 TTL、容量上限与 tag 失效的简单缓存；按插入顺序淘汰最旧条目。
- */
-export class AuthRepositoryCache {
-	private readonly _entries = new Map<string, CacheEntry>();
-	private readonly _ttlMs: number;
-	private readonly _maxEntries: number;
-	private readonly _now: () => number;
-
-	constructor(options: { ttlMs?: number; maxEntries?: number; now?: () => number } = {}) {
-		this._ttlMs = options.ttlMs ?? resolveAuthRepositoryCacheTtlMs(process.env[AUTH_REPOSITORY_CACHE_TTL_ENV]);
-		this._maxEntries = options.maxEntries ?? DEFAULT_AUTH_REPOSITORY_CACHE_MAX_ENTRIES;
-		this._now = options.now ?? Date.now;
-	}
-
-	/** 缓存是否生效。 */
-	get enabled(): boolean {
-		return this._ttlMs > 0;
-	}
-
-	/** 当前条目数；用于诊断与测试。 */
-	get size(): number {
-		return this._entries.size;
-	}
-
+/** 鉴权实体的按键缓存；语义与实现见 `EntryCache`。 */
+export class AuthRepositoryCache extends EntryCache<unknown> {
 	/**
-	 * 读取缓存；命中时顺带刷新 LRU 位置。
-	 * @param key - 缓存键
+	 * @param options - 覆盖项；缺省取环境变量与内置默认值
 	 */
-	get<T>(key: string): T | undefined {
-		if (!this.enabled) {
-			return undefined;
-		}
-		const entry = this._entries.get(key);
-		if (entry === undefined) {
-			return undefined;
-		}
-		if (entry.expiresAt <= this._now()) {
-			this._entries.delete(key);
-			return undefined;
-		}
-		// Map 保持插入序：删掉再放回即最近使用在最前，淘汰从最旧开始。
-		this._entries.delete(key);
-		this._entries.set(key, entry);
-		return entry.value as T;
-	}
-
-	/**
-	 * 写入缓存。value 为 null 时不写（负结果不缓存）。
-	 * @param key - 缓存键
-	 * @param value - 实体行
-	 * @param tags - 失效标签（如 user:<id>、team:<id>）
-	 */
-	set(key: string, value: unknown, tags: readonly string[] = []): void {
-		if (!this.enabled || value === null || value === undefined) {
-			return;
-		}
-		if (this._entries.size >= this._maxEntries) {
-			const oldest = this._entries.keys().next();
-			if (!oldest.done) {
-				this._entries.delete(oldest.value);
-			}
-		}
-		this._entries.set(key, { value: value, expiresAt: this._now() + this._ttlMs, tags: tags });
-	}
-
-	/**
-	 * 删除单个键。
-	 * @param key - 缓存键
-	 */
-	delete(key: string): void {
-		this._entries.delete(key);
-	}
-
-	/**
-	 * 按标签失效（例如某个用户/团队下的全部实体）。
-	 * @param tag - 失效标签
-	 */
-	deleteByTag(tag: string): void {
-		for (const [key, entry] of this._entries) {
-			if (entry.tags.includes(tag)) {
-				this._entries.delete(key);
-			}
-		}
-	}
-
-	/** 清空缓存；用于测试或运行期重置。 */
-	clear(): void {
-		this._entries.clear();
+	constructor(
+		options: { ttlMs?: number; maxEntries?: number; now?: () => number; refreshAheadMs?: number; maxConcurrentRefreshes?: number } = {},
+	) {
+		const ttlMs = options.ttlMs ?? resolveAuthRepositoryCacheTtlMs(process.env[AUTH_REPOSITORY_CACHE_TTL_ENV]);
+		super({
+			ttlMs: ttlMs,
+			refreshAheadMs:
+				options.refreshAheadMs ?? resolveAuthRepositoryRefreshAheadMs(process.env[AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_ENV], ttlMs),
+			maxEntries: options.maxEntries ?? DEFAULT_AUTH_REPOSITORY_CACHE_MAX_ENTRIES,
+			maxConcurrentRefreshes: options.maxConcurrentRefreshes ?? DEFAULT_AUTH_REPOSITORY_CACHE_MAX_CONCURRENT_REFRESHES,
+			now: options.now,
+			label: "auth",
+		});
 	}
 }
 
@@ -157,6 +133,9 @@ export const authCacheKey = {
 	budget: (budgetId: string): string => `budget:${budgetId}`,
 	teamMembership: (userId: string, teamId: string): string => `team_membership:${userId}:${teamId}`,
 	project: (projectId: string): string => `project:${projectId}`,
+	// 对象权限不参与预算结算，但由管理端点按 id 读取；与其它租户实体共用同一个缓存实例，
+	// 避免同一行在进程里存在两份副本。
+	objectPermission: (objectPermissionId: string): string => `object_permission:${objectPermissionId}`,
 };
 
 /** 主体标签：用于按用户/团队批量失效。 */
@@ -236,8 +215,10 @@ export function invalidateAuthCacheForSubject(subject: { userId?: string | null;
 
 /** 启动/测试时记录一次缓存配置，便于运维确认是否生效。 */
 export function logAuthCacheConfiguration(): void {
+	const ttlMs = resolveAuthRepositoryCacheTtlMs(process.env[AUTH_REPOSITORY_CACHE_TTL_ENV]);
 	logger.info("鉴权仓储缓存配置", {
 		enabled: authRepositoryCache.enabled,
-		ttlMs: resolveAuthRepositoryCacheTtlMs(process.env[AUTH_REPOSITORY_CACHE_TTL_ENV]),
+		ttlMs: ttlMs,
+		refreshAheadMs: resolveAuthRepositoryRefreshAheadMs(process.env[AUTH_REPOSITORY_CACHE_REFRESH_AHEAD_ENV], ttlMs),
 	});
 }

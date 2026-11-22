@@ -2,17 +2,21 @@
 
 Usage → “Upstream Account Quota” 页面（`/ui/usage/quota`，仅管理员）同时展示 CLIProxy 账户额度与本代理直连的
 DeepSeek、MiniMax 账户额度：按上游供应商分组，一行一个账号，列为 Account / Type / Quota windows /
-Balances / Updated，与模型列表的分组带同一形态，账号多时纵向滚动即可逐行对照。数据来自
+Balances / Updated，与模型列表的分组带同一形态，账号多时纵向滚动即可逐行对照。列宽按内容分配：账号、类型、
+余额、更新时间只占自己需要的宽度，剩余宽度全部给 Quota windows，配额条随窗口变宽而变长，不在右侧留下空白。
+单元格里各档窗口（5 小时 / 周 / 月）横向单行排开、均分本列宽度：档位名在上、重置倒计时在名称下方、进度条压在
+块底部。条宽以三档均分为基准（只有一档的账号取同宽，四档按四档均分），同一列各行的条因此等长、起点齐平，
+扫一遍就能看出谁在哪一档先见底。数据来自
 `GET /provider/quota`（仅 proxy admin）与 `/subscriptions/accounts/*/quota`，密钥只在服务端解析，
 不会出现在响应或日志里。
 
 ## 数据来源
 
-| Provider | 数据 | 接口 | 说明 |
-| --- | --- | --- | --- |
-| DeepSeek | 账户余额 | `GET /user/balance` | 官方接口，账户级，返回 CNY/USD 钱包与赠金/充值明细。官方没有按 Key、按模型或按天的用量 API，因此不展示“已用量”。 |
-| MiniMax | 订阅窗口 | `GET {host}/v1/token_plan/remains` | 官方接口，用订阅 Key（M Plan / Token Plan）查询 5 小时与 7 天窗口，`*_remaining_percent` 是唯一可靠的百分比字段。 |
-| MiniMax | 按量余额 | `GET {host}/account/query_balance` | 非公开接口，属于 best effort。字段可用时展示 `available_amount`；不可用时该行仍标明这是按量 Key。 |
+| Provider | 数据     | 接口                               | 说明                                                                                                              |
+| -------- | -------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| DeepSeek | 账户余额 | `GET /user/balance`                | 官方接口，账户级，返回 CNY/USD 钱包与赠金/充值明细。官方没有按 Key、按模型或按天的用量 API，因此不展示“已用量”。  |
+| MiniMax  | 订阅窗口 | `GET {host}/v1/token_plan/remains` | 官方接口，用订阅 Key（M Plan / Token Plan）查询 5 小时与 7 天窗口，`*_remaining_percent` 是唯一可靠的百分比字段。 |
+| MiniMax  | 按量余额 | `GET {host}/account/query_balance` | 非公开接口，属于 best effort。字段可用时展示 `available_amount`；不可用时该行仍标明这是按量 Key。                 |
 
 ## Key 类型自动识别
 

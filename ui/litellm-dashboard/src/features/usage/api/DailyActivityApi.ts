@@ -106,7 +106,16 @@ const summary = z
 		metadata: usageMetadata,
 	})
 	.passthrough();
-const detailViews = ["models", "model_groups", "providers", "api_keys", "mcp_servers", "endpoints", "entities"] as const;
+const detailViews = [
+	"models",
+	"model_groups",
+	"providers",
+	"api_keys",
+	"mcp_servers",
+	"endpoints",
+	"entities",
+	"upstream_accounts",
+] as const;
 const detail = z
 	.object({
 		view: z.enum(detailViews),

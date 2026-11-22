@@ -19,7 +19,7 @@ import type {
 	SubscriptionUpstreamContext,
 	SubscriptionWireProtocol,
 } from "../types";
-import { createStreamTranslator, translateRequest, translateResponse } from "../protocol/types";
+import { createStreamTranslator, translateRequest, translateResponse } from "../protocol/translate";
 import type { ProtocolEvent } from "../protocol/types";
 import { createCommandCodeProvider } from "./commandcode";
 import {

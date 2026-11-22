@@ -33,13 +33,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { inArray } from "drizzle-orm";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type * as schema from "../db/schema";
-import { liteLLM_SpendLogBlocks } from "../db/schema/spendLogBlocks";
+import type { DrizzleDb } from "../core/db/Database";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
 import { getConfig } from "../core/config";
 import { createModuleLogger } from "../core/utils/logger";
+import {
+	SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE as BLOCK_INSERT_CHUNK_SIZE,
+	spendLogBlockRepositoryFor,
+} from "../repositories/SpendLogBlockRepository";
+import type { SpendLogBlockExecutor } from "../repositories/SpendLogBlockRepository";
 
 const logger = createModuleLogger("Spend:SpendLogBlocks");
 
@@ -84,12 +86,11 @@ const SPEND_LOG_SENSITIVE_HEADER_NAMES: ReadonlySet<string> = new Set([
 /** 与时间线 SQL 的 `LEFT(...,256)` 对齐的分类前缀长度。 */
 const SYSTEM_PROMPT_PREFIX_LENGTH = 256;
 
+/** 单次 INSERT 的块数量上限（每块 3 个绑定参数），避免超长会话顶到参数上限。 */
+export const SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE = BLOCK_INSERT_CHUNK_SIZE;
+
 /** 128 位 base64url 摘要定长 22 字符；形态不合法的值一律按字面量处理。 */
 const BLOCK_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
-/** 单次 IN 查询的 id 上限，避免超过 PostgreSQL 绑定参数上限。 */
-const BLOCK_LOOKUP_CHUNK_SIZE = 5_000;
-/** 单次 INSERT 的块数量上限（每块 3 个绑定参数），避免超长会话顶到参数上限。 */
-export const SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE = 1_000;
 /** 内容摘要取 SHA-256 的前 128 位：1e8 个块的碰撞概率仍在 1e-23 量级。 */
 const BLOCK_ID_DIGEST_BYTES = 16;
 /**
@@ -1003,15 +1004,24 @@ export function clearSpendLogBlockCacheForTests(): void {
 	spendLogBlockCache.clear();
 }
 
-/** 只读块表所需的最小数据库能力：普通连接与回收事务句柄都满足。 */
-type SpendLogBlockReadDb = Pick<NodePgDatabase<typeof schema>, "select">;
+/**
+ * 取得块仓库。
+ *
+ * 仓储单例按连接绑定；这里可能拿到事务句柄（结算/回收事务），它只作为取用键，
+ * 真正的语句由调用方传入的 executor 执行，因此不会出现「事务里用了连接」的串用。
+ * @param executor - 数据库或事务句柄
+ * @returns 块仓库
+ */
+function blockRepositoryFor(executor: SpendLogBlockExecutor) {
+	return spendLogBlockRepositoryFor(executor as unknown as DrizzleDb);
+}
 
 /**
  * 批量读取块内容；已缓存的 id 不再访问数据库。
- * @param db - 数据库实例
+ * @param executor - 数据库或事务句柄
  * @param ids - 引用 id 列表
  */
-async function loadSpendLogBlocks(db: NodePgDatabase<typeof schema>, ids: readonly string[]): Promise<Map<string, unknown>> {
+async function loadSpendLogBlocks(executor: SpendLogBlockExecutor, ids: readonly string[]): Promise<Map<string, unknown>> {
 	const uniqueIds = [...new Set(ids)];
 	const payloads = new Map<string, unknown>();
 	const pending: string[] = [];
@@ -1023,16 +1033,8 @@ async function loadSpendLogBlocks(db: NodePgDatabase<typeof schema>, ids: readon
 		}
 		payloads.set(blockId, cached.payload);
 	}
-	for (let offset = 0; offset < pending.length; offset += BLOCK_LOOKUP_CHUNK_SIZE) {
-		const chunk = pending.slice(offset, offset + BLOCK_LOOKUP_CHUNK_SIZE);
-		const rows = await db
-			.select({
-				blockId: liteLLM_SpendLogBlocks.blockId,
-				payload: liteLLM_SpendLogBlocks.payload,
-				byteSize: liteLLM_SpendLogBlocks.byteSize,
-			})
-			.from(liteLLM_SpendLogBlocks)
-			.where(inArray(liteLLM_SpendLogBlocks.blockId, chunk));
+	if (pending.length > 0) {
+		const rows = await blockRepositoryFor(executor).findPayloads(pending, executor);
 		for (const row of rows) {
 			payloads.set(row.blockId, row.payload);
 			spendLogBlockCache.remember(row.blockId, row.payload, row.byteSize);
@@ -1043,22 +1045,11 @@ async function loadSpendLogBlocks(db: NodePgDatabase<typeof schema>, ids: readon
 
 /**
  * 查询哪些 id 已经存在于块表。
- * @param db - 数据库实例
+ * @param executor - 数据库或事务句柄
  * @param ids - 待查询的块 id
  */
-async function loadExistingBlockIds(db: SpendLogBlockReadDb, ids: readonly string[]): Promise<Set<string>> {
-	const existing = new Set<string>();
-	for (let offset = 0; offset < ids.length; offset += BLOCK_LOOKUP_CHUNK_SIZE) {
-		const chunk = ids.slice(offset, offset + BLOCK_LOOKUP_CHUNK_SIZE);
-		const rows = await db
-			.select({ blockId: liteLLM_SpendLogBlocks.blockId })
-			.from(liteLLM_SpendLogBlocks)
-			.where(inArray(liteLLM_SpendLogBlocks.blockId, chunk));
-		for (const row of rows) {
-			existing.add(row.blockId);
-		}
-	}
-	return existing;
+async function loadExistingBlockIds(executor: SpendLogBlockExecutor, ids: readonly string[]): Promise<Set<string>> {
+	return await blockRepositoryFor(executor).findExistingIds(ids, executor);
 }
 
 /**
@@ -1067,11 +1058,11 @@ async function loadExistingBlockIds(db: SpendLogBlockReadDb, ids: readonly strin
  * 块由内容寻址，跨轮次重发同一段对话时绝大多数块早已存在；盲插仍需把完整载荷送进
  * 数据库（TOAST + 索引探测）再按冲突丢弃。先按进程缓存过滤，未命中的 id 用一次
  * `IN` 查询确认（只传 id）。查询失败时回退为原样返回，让记账路径按旧行为盲插。
- * @param db - 数据库实例或事务句柄
+ * @param executor - 数据库实例或事务句柄
  * @param blocks - 本次需要写入的块
  */
 export async function selectMissingSpendLogBlocks(
-	db: SpendLogBlockReadDb,
+	executor: SpendLogBlockExecutor,
 	blocks: readonly SpendLogBlockRecord[],
 ): Promise<readonly SpendLogBlockRecord[]> {
 	if (blocks.length === 0) {
@@ -1084,7 +1075,7 @@ export async function selectMissingSpendLogBlocks(
 	let existing: Set<string>;
 	try {
 		existing = await loadExistingBlockIds(
-			db,
+			executor,
 			pending.map((block) => block.blockId),
 		);
 	} catch (error) {
@@ -1112,24 +1103,16 @@ export function rememberSpendLogBlocks(blocks: readonly SpendLogBlockRecord[]): 
 	}
 }
 
-/** 写块所需的最小数据库能力：普通连接与事务句柄都满足。 */
-type SpendLogBlockWriteDb = Pick<NodePgDatabase<typeof schema>, "insert">;
-
 /**
- * 分批写入块。
- *
- * 分批是为了避免超长会话把绑定参数数量顶到 PostgreSQL 上限；块由内容寻址，
- * 并发重复写入按冲突丢弃即可。
- * @param db - 数据库实例或事务句柄
+ * 分批写入块（分批与冲突丢弃的策略见 SpendLogBlockRepository.insertIgnore）。
+ * @param executor - 数据库实例或事务句柄
  * @param blocks - 需要写入的块（应为判存确认缺失的部分）
  */
-export async function writeSpendLogBlocks(db: SpendLogBlockWriteDb, blocks: readonly SpendLogBlockRecord[]): Promise<void> {
-	for (let offset = 0; offset < blocks.length; offset += SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE) {
-		await db
-			.insert(liteLLM_SpendLogBlocks)
-			.values(blocks.slice(offset, offset + SPEND_LOG_BLOCK_INSERT_CHUNK_SIZE).map((block) => ({ ...block })))
-			.onConflictDoNothing();
+export async function writeSpendLogBlocks(executor: SpendLogBlockExecutor, blocks: readonly SpendLogBlockRecord[]): Promise<void> {
+	if (blocks.length === 0) {
+		return;
 	}
+	await blockRepositoryFor(executor).insertIgnore(blocks, executor);
 }
 
 /**
@@ -1138,12 +1121,12 @@ export async function writeSpendLogBlocks(db: SpendLogBlockWriteDb, blocks: read
  * 引用 id 跨行合并成一次查询；缺块用占位对象补齐并记录告警，避免整页失败。
  * 所有返回行都会经过敏感头脱敏，即使该行没有块引用。
  * @template T - 行类型
- * @param db - 数据库实例
+ * @param executor - 数据库实例或事务句柄
  * @param rows - 需要组装的列值
  * @param options - `compactAliases`：保留与列根相同的 `"$messages"` 标记
  */
 export async function hydrateSpendLogRows<T extends { readonly messages?: unknown; readonly proxy_server_request?: unknown }>(
-	db: NodePgDatabase<typeof schema>,
+	executor: SpendLogBlockExecutor,
 	rows: readonly T[],
 	options: { readonly compactAliases?: boolean } = {},
 ): Promise<T[]> {
@@ -1152,7 +1135,7 @@ export async function hydrateSpendLogRows<T extends { readonly messages?: unknow
 	if (allIds.length === 0) {
 		return rows.map((row) => redactSpendLogRowSecrets(row));
 	}
-	const payloads = await loadSpendLogBlocks(db, allIds);
+	const payloads = await loadSpendLogBlocks(executor, allIds);
 	const lookup: SpendLogBlockLookup = (blockId) => payloads.get(blockId);
 	const missingIds: string[] = [];
 	const hydrated = rows.map((row, index) => {
@@ -1175,16 +1158,16 @@ export async function hydrateSpendLogRows<T extends { readonly messages?: unknow
 /**
  * 组装单行 SpendLog（详情与日志流共用）。
  * @template T - 行类型
- * @param db - 数据库实例
+ * @param executor - 数据库实例或事务句柄
  * @param row - 需要组装的列值
  * @param options - `compactAliases`：保留与列根相同的 `"$messages"` 标记
  */
 export async function hydrateSpendLogRow<T extends { readonly messages?: unknown; readonly proxy_server_request?: unknown }>(
-	db: NodePgDatabase<typeof schema>,
+	executor: SpendLogBlockExecutor,
 	row: T,
 	options: { readonly compactAliases?: boolean } = {},
 ): Promise<T> {
-	const [hydrated] = await hydrateSpendLogRows(db, [row], options);
+	const [hydrated] = await hydrateSpendLogRows(executor, [row], options);
 	return hydrated ?? row;
 }
 

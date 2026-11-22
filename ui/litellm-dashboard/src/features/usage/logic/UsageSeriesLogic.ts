@@ -1,5 +1,5 @@
 import type { BreakdownMetrics, DailyData, SpendMetrics, UsageDetailItem, UsageDetailResponse, UsageTeam } from "../support/UsageModels";
-import type { ChartRow } from "./UsageChartLogic";
+import { cacheHitRate, type ChartRow } from "./UsageChartLogic";
 import { activitySeriesColors } from "./UsageSeriesPaletteLogic";
 import { formatKeyLabel } from "./UsageSummaryLogic";
 
@@ -32,9 +32,28 @@ export interface ActivitySeriesChart {
 	slices: ActivitySeriesSlice[];
 }
 
+/** 命中率图的图例项：图例文案之外还带上区间加权命中率，省一次悬浮查看。 */
+export interface ActivityRateSlice {
+	label: string;
+	color: string;
+	/** 区间内命中缓存的 prompt tokens 与全部 prompt tokens，命中率由两者相除得到。 */
+	cacheRead: number;
+	prompt: number;
+	rate: number;
+}
+
+/** 命中率图：每行一天的百分比，每个实体一条折线。 */
+export interface ActivityRateChart {
+	rows: ChartRow[];
+	categories: string[];
+	colors: string[];
+	slices: ActivityRateSlice[];
+}
+
 export interface ActivitySeries {
 	tokens: ActivitySeriesChart;
 	spend: ActivitySeriesChart;
+	hitRate: ActivityRateChart;
 }
 
 /** 支持绘制堆叠图的 breakdown 维度；providers/model_groups 等维度没有对应 Activity Tab。 */
@@ -53,14 +72,21 @@ interface EntityTotal {
 	daily: Map<string, SpendMetrics>;
 	tokens: number;
 	spend: number;
+	/** 命中率图按缓存读取量排序，也需要区间内的两项原始 token 数。 */
+	cacheRead: number;
+	prompt: number;
 }
 
 function emptyChart(): ActivitySeriesChart {
 	return { rows: [], categories: [], colors: [], slices: [] };
 }
 
+function emptyRateChart(): ActivityRateChart {
+	return { rows: [], categories: [], colors: [], slices: [] };
+}
+
 function emptySeries(): ActivitySeries {
-	return { tokens: emptyChart(), spend: emptyChart() };
+	return { tokens: emptyChart(), spend: emptyChart(), hitRate: emptyRateChart() };
 }
 
 /** 同名实体（例如两个 key 用了同一个别名）必须各自成段，否则会被合并成一根柱子。 */
@@ -82,6 +108,76 @@ function rankedBy(entities: EntityTotal[], value: (entity: EntityTotal) => numbe
 /** 一张图的取数指标；每张图只列该指标大于 0 的实体，避免图例里出现与这张图无关的名字。 */
 type SeriesMetric = "tokens" | "spend";
 
+function promptOf(metrics: SpendMetrics | undefined): number {
+	return Math.max(metrics?.prompt_tokens ?? 0, 0);
+}
+
+function cacheReadOf(metrics: SpendMetrics | undefined): number {
+	// prompt 里已经含缓存读取的部分，读取量不可能超过它；越界数据按上限计，命中率才不会超过 100%。
+	return Math.min(Math.max(metrics?.cache_read_input_tokens ?? 0, 0), promptOf(metrics));
+}
+
+/**
+ * 命中率图的实体榜单：只有真正有 prompt tokens 的实体才画。
+ *
+ * 按缓存读取量排序，读得越多越靠前；读取量相同按 key 排序，保证同一份数据每次渲染顺序一致。
+ */
+function rateRanking(entities: EntityTotal[]): EntityTotal[] {
+	return rankedBy(
+		entities.filter((entity) => entity.prompt > 0),
+		(entity) => entity.cacheRead,
+	);
+}
+
+/**
+ * 三张图各自只画有数值的实体，颜色按“先 Token 榜、再花费榜、最后命中率榜”的顺序分配，
+ * 同一实体在三张图里同色同名。同一实体只取第一次出现的位置，否则同名 key 会被当成两个
+ * 实体顺延出 “(2)” 这样的后缀，图例里出现一个并不存在的重名。
+ */
+function unionOf(charts: EntityTotal[][]): EntityTotal[] {
+	const seen = new Set<string>(),
+		union: EntityTotal[] = [];
+	for (const chart of charts)
+		for (const entity of chart) {
+			if (seen.has(entity.key)) continue;
+			seen.add(entity.key);
+			union.push(entity);
+		}
+	return union;
+}
+
+/**
+ * 命中率图按缓存读取量排序：读得越多，这条线越值得先看。
+ *
+ * 某天没有请求时留空而不是补 0，线在那里断开；只有“有请求但没有命中缓存”才是 0%，
+ * 两者混在一起会把没请求的日子画成缓存失效。图例颜色沿用前两张图的分配，同一实体在三张图里同色。
+ */
+function buildRateChart(
+	entities: EntityTotal[],
+	dates: string[],
+	labels: Map<string, string>,
+	colors: Map<string, string>,
+): ActivityRateChart {
+	const ranked = rateRanking(entities);
+	if (ranked.length === 0) return emptyRateChart();
+	const rows = dates.map((date) => {
+		const row: ChartRow = { date };
+		for (const entity of ranked) {
+			const metrics = entity.daily.get(date);
+			row[labels.get(entity.key)!] = metrics && promptOf(metrics) > 0 ? cacheHitRate(cacheReadOf(metrics), promptOf(metrics)) : null;
+		}
+		return row;
+	});
+	const slices: ActivityRateSlice[] = ranked.map((entity) => ({
+		label: labels.get(entity.key)!,
+		color: colors.get(entity.key)!,
+		cacheRead: entity.cacheRead,
+		prompt: entity.prompt,
+		rate: cacheHitRate(entity.cacheRead, entity.prompt),
+	}));
+	return { rows, categories: slices.map((slice) => slice.label), colors: slices.map((slice) => slice.color), slices };
+}
+
 /**
  * 把“实体 → 每日指标”摊平成两张堆叠柱状图。
  *
@@ -96,12 +192,16 @@ function buildSeries(entities: EntityDaily[], dates: string[]): ActivitySeries {
 			daily: entity.daily,
 			tokens: [...entity.daily.values()].reduce((sum, day) => sum + day.total_tokens, 0),
 			spend: [...entity.daily.values()].reduce((sum, day) => sum + day.spend, 0),
+			cacheRead: [...entity.daily.values()].reduce((sum, day) => sum + cacheReadOf(day), 0),
+			prompt: [...entity.daily.values()].reduce((sum, day) => sum + promptOf(day), 0),
 		}))
-		.filter((entity) => entity.tokens > 0 || entity.spend > 0);
+		// 命中率还需要“有 prompt 但没有缓存读取”的实体：它们的 0% 本身就是结论。
+		.filter((entity) => entity.tokens > 0 || entity.spend > 0 || entity.prompt > 0);
 	if (totals.length === 0) return emptySeries();
 	const tokenRanked = rankedBy(totals, (entity) => entity.tokens),
-		spendRanked = rankedBy(totals, (entity) => entity.spend);
-	const union = [...tokenRanked, ...spendRanked.filter((entity) => entity.tokens <= 0)],
+		spendRanked = rankedBy(totals, (entity) => entity.spend),
+		rateRanked = rateRanking(totals);
+	const union = unionOf([tokenRanked, spendRanked, rateRanked]),
 		palette = activitySeriesColors(union.length),
 		usedLabels = new Map<string, number>(),
 		labels = new Map<string, string>(),
@@ -131,10 +231,15 @@ function buildSeries(entities: EntityDaily[], dates: string[]): ActivitySeries {
 		return { rows, categories: slices.map((slice) => slice.label), colors: slices.map((slice) => slice.color), slices };
 	};
 
-	return { tokens: buildChart(tokenRanked, "tokens"), spend: buildChart(spendRanked, "spend") };
+	return {
+		tokens: buildChart(tokenRanked, "tokens"),
+		spend: buildChart(spendRanked, "spend"),
+		hitRate: buildRateChart(totals, orderedDates, labels, colors),
+	};
 }
 
-function detailLabel(item: UsageDetailItem, teams: UsageTeam[], keys: boolean): string {
+function detailLabel(item: UsageDetailItem, teams: UsageTeam[], keys: boolean, accounts: boolean): string {
+	if (accounts) return String((item.metadata ?? {})["label"] ?? (item.key || "Unknown Account"));
 	if (!keys) return item.key || "Unknown Item";
 	const metadata = (item.metadata ?? {}) as { key_alias?: string | null; key_name?: string | null; team_id?: string | null };
 	return formatKeyLabel(
@@ -153,12 +258,13 @@ function detailLabel(item: UsageDetailItem, teams: UsageTeam[], keys: boolean): 
  * @param detail - 当前维度 detail 响应；为空时返回空图
  * @param teams - 团队别名，用于 Key 展示
  * @param keys - 当前维度是否为 API Key
+ * @param accounts - 当前维度是否为上游账号
  */
-export function activitySeries(detail: UsageDetailResponse | null, teams: UsageTeam[], keys: boolean): ActivitySeries {
+export function activitySeries(detail: UsageDetailResponse | null, teams: UsageTeam[], keys: boolean, accounts = false): ActivitySeries {
 	if (!detail || detail.items.length === 0) return emptySeries();
 	const entities: EntityDaily[] = detail.items.map((item) => ({
 		key: item.key,
-		rawLabel: detailLabel(item, teams, keys),
+		rawLabel: detailLabel(item, teams, keys, accounts),
 		daily: new Map(item.daily.map((day) => [day.date, day.metrics])),
 	}));
 	const dates = [...detail.results.map((row) => row.date), ...detail.items.flatMap((item) => item.daily.map((day) => day.date))];
@@ -221,6 +327,17 @@ export interface ActivityTooltipRow {
  * 堆叠柱状图的悬浮明细：列出当天有数值的全部系列，按数值从大到小。
  * 直接复用默认 tooltip 会把整张图的系列全列一遍，鼠标停在空柱子上时尤其吵。
  */
+/**
+ * 命中率图的悬浮明细：只列当天有数据（哪怕就是 0%）的实体，按命中率从高到低。
+ * 与用量图不同，0% 是结论而不是“没有数据”，所以不能像 `activityTooltipRows` 那样过滤掉。
+ */
+export function activityRateTooltipRows(chart: ActivityRateChart, row: ChartRow): ActivityTooltipRow[] {
+	return chart.categories
+		.map((label, index) => ({ label, color: chart.colors[index] ?? "#9ca3af", value: Number(row[label]) }))
+		.filter((entry) => row[entry.label] != null && Number.isFinite(entry.value))
+		.sort((left, right) => right.value - left.value);
+}
+
 export function activityTooltipRows(chart: ActivitySeriesChart, row: ChartRow): ActivityTooltipRow[] {
 	return chart.categories
 		.map((label, index) => ({ label, color: chart.colors[index] ?? chart.colors[0] ?? "#9ca3af", value: Number(row[label] ?? 0) }))

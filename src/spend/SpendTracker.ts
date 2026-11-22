@@ -20,7 +20,6 @@ import type { Request } from "express";
 import { get_encoding } from "tiktoken";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema";
-import { liteLLM_SpendLogs } from "../db/schema/spendLogs";
 import {
 	ACTIVE_REQUEST_BLOCK_BUDGET_BYTES,
 	type SpendLogBlockRecord,
@@ -35,22 +34,14 @@ import {
 	spendLogBlockBytes,
 	writeSpendLogBlocks,
 } from "./SpendLogBlocks";
-import { liteLLM_DailyUserSpend } from "../db/schema/dailyUserSpend";
-import { liteLLM_DailyTeamSpend } from "../db/schema/dailyTeamSpend";
-import { liteLLM_DailyOrganizationSpend } from "../db/schema/dailyOrganizationSpend";
-import { liteLLM_DailyTagSpend } from "../db/schema/dailyTagSpend";
-import { liteLLM_DailyAgentSpend } from "../db/schema/dailyAgentSpend";
-import { liteLLM_DailyEndUserSpend } from "../db/schema/dailyEndUserSpend";
-import { and, eq, sql, type SQL } from "drizzle-orm";
-import { LiteLLM_VerificationToken } from "../db/schema/verification-tokens";
-import { LiteLLM_UserTable } from "../db/schema/users";
-import { LiteLLM_TeamTable } from "../db/schema/teams";
-import { LiteLLM_OrganizationTable } from "../db/schema/organizations";
-import { LiteLLM_TeamMembership } from "../db/schema/team-memberships";
-import { LiteLLM_EndUserTable } from "../db/schema/end-users";
-import { LiteLLM_ProjectTable } from "../db/schema/projects";
-import { liteLLM_SpendReservations } from "../db/schema/spendReservations";
-import { liteLLM_ActiveRequests } from "../db/schema/activeRequests";
+import { activeRequestRepositoryFor } from "../repositories/ActiveRequestRepository";
+import { dailySpendRepositoryFor } from "../repositories/DailySpendRepository";
+import type { DailySpendEntry } from "../repositories/DailySpendRepository";
+import { spendLogRepositoryFor } from "../repositories/SpendLogRepository";
+import type { SpendLogInsertValues } from "../repositories/SpendLogRepository";
+import { parseReservationScopeKey, reservationScopeKey, spendReservationRepositoryFor } from "../repositories/SpendReservationRepository";
+import { spendSettlementRepositoryFor } from "../repositories/SpendSettlementRepository";
+import { upstreamKeyAccountRepositoryFor } from "../repositories/UpstreamKeyAccountRepository";
 import { ApiError } from "../core/api/ApiError";
 import { mapToApiError } from "../core/api/ErrorResponseMapper";
 import { dbConfigProvider } from "../core/config/DbConfigProvider";
@@ -64,7 +55,13 @@ import type {
 	SpendReservationScope,
 } from "../types/spend";
 import { CallType, SpendLogStatus } from "../types/spend";
-import { describeUpstreamError, getRecordedUpstreamErrors, getRecordedUpstreamExchange } from "../router/UpstreamExchange";
+import {
+	describeUpstreamError,
+	getRecordedUpstreamErrors,
+	getRecordedUpstreamExchange,
+	getRecordedUpstreamIdentity,
+} from "../router/UpstreamExchange";
+import type { UpstreamIdentity } from "../router/UpstreamKeyIdentity";
 import type { ModelResponse, ModelResponseStream, Usage } from "../types/openai";
 import { costPerToken, resolvePeakMultiplier } from "../cost/CostCalculator";
 import { buildPriceSnapshot, chargedUnitPrices } from "./PriceSnapshot";
@@ -151,14 +148,6 @@ function _protectApiKeyForDb(rawApiKey: string): string {
 // ========== 辅助函数 ==========
 
 /**
- * 从请求开始时间提取 UTC 日期（YYYY-MM-DD）。
- * @param startTime
- */
-function getDailySpendDate(startTime: string): string {
-	return new Date(startTime).toISOString().slice(0, 10);
-}
-
-/**
  * 从 SpendLog 的代理请求 URL 提取不含查询参数的端点。
  * @param log
  */
@@ -205,211 +194,84 @@ function resolveSpendLogModelGroup(log: SpendLog): string | null {
 	);
 }
 
+/** 结算事务句柄：日汇总与主体累计都必须在这个事务里完成。 */
+type SpendLedgerTransaction = Parameters<Parameters<NodePgDatabase<typeof schema>["transaction"]>[0]>[0];
+
 /**
- * 更新一条每日花费汇总记录（upsert）
- * 使用 ON CONFLICT 实现 upsert 语义
- * @param db
- * @param table
- * @param keyColumn
- * @param keyValue
- * @param log
- * @param spend
+ * 构造日汇总写入所需的请求事实。
+ *
+ * 这里只做「从 SpendLog 取值 + 归一默认值」，维度的表名/键列解析与 upsert SQL 都在
+ * DailySpendRepository：调用方不再需要知道某个维度对应哪张表、哪一列是主体。
+ * @param log - 花费日志条目
+ * @returns 日汇总仓库的入参
+ */
+function buildDailySpendEntry(log: SpendLog): DailySpendEntry {
+	const model = log.model || "";
+	return {
+		requestId: log.request_id,
+		startTime: log.startTime,
+		apiKey: _protectApiKeyForDb(log.api_key),
+		model: model,
+		modelGroup: resolveSpendLogModelGroup(log),
+		customLlmProvider: log.custom_llm_provider ?? extractProvider(model),
+		mcpNamespacedToolName: log.mcp_namespaced_tool_name ?? "",
+		endpoint: getDailySpendEndpoint(log),
+		promptTokens: log.prompt_tokens,
+		completionTokens: log.completion_tokens,
+		cacheReadInputTokens: log.cache_read_input_tokens ?? 0,
+		cacheCreationInputTokens: log.cache_creation_input_tokens ?? 0,
+		status: log.status ?? SpendLogStatus.Success,
+	};
+}
+
+/**
+ * 更新一条每日花费汇总记录（upsert），维度解析见 DailySpendRepository。
+ * @param tx - 结算事务句柄
+ * @param dimension - 维度名
+ * @param keyValue - 该维度的主体值；为空表示本次请求不属于该维度
+ * @param log - 花费日志条目
+ * @param spend - 本次实际费用
  */
 async function upsertDailySpend(
-	db: NodePgDatabase<typeof schema>,
-	table: ReturnType<typeof getDailyTable>,
-	keyColumn: ReturnType<typeof getKeyColumn>,
-	keyValue: string | null,
+	tx: SpendLedgerTransaction,
+	dimension: string,
+	keyValue: string | null | undefined,
 	log: SpendLog,
 	spend: number,
 ): Promise<void> {
 	if (keyValue === null || keyValue === undefined) {
 		return;
 	}
-
-	const model = log.model || "";
-	const resolvedModelGroup = resolveSpendLogModelGroup(log);
-	const status = log.status ?? SpendLogStatus.Success;
-	const successfulRequests = status === SpendLogStatus.Success ? 1 : 0;
-	const failedRequests = status === SpendLogStatus.Failure ? 1 : 0;
-	const updatedAt = new Date();
-	const values: Record<string, unknown> = {
-		id: randomUUID(),
-		[keyColumn]: keyValue,
-		date: getDailySpendDate(log.startTime),
-		api_key: _protectApiKeyForDb(log.api_key),
-		model: model,
-		model_group: resolvedModelGroup ?? null,
-		custom_llm_provider: log.custom_llm_provider ?? extractProvider(model),
-		mcp_namespaced_tool_name: log.mcp_namespaced_tool_name ?? "",
-		endpoint: getDailySpendEndpoint(log) ?? "",
-		prompt_tokens: log.prompt_tokens,
-		completion_tokens: log.completion_tokens,
-		cache_read_input_tokens: log.cache_read_input_tokens ?? 0,
-		cache_creation_input_tokens: log.cache_creation_input_tokens ?? 0,
-		spend: spend,
-		api_requests: 1,
-		successful_requests: successfulRequests,
-		failed_requests: failedRequests,
-		updated_at: updatedAt,
-	};
-	if (keyColumn === "tag") {
-		values["request_id"] = log.request_id;
-	}
-
-	await db
-		.insert(table)
-		.values(values)
-		.onConflictDoUpdate({
-			// GAP (DB-001): drizzle uniqueIndex 不暴露 `.unq` 属性在 table 对象上。
-			// 显式构造 conflict target 列组合（对齐 PY schema.db.spend.py 的 unique constraint）。
-			// 对齐 Python unique constraints：
-			//   DailyUserSpend/Team/Organization/Tag/Agent: (key_id, date, api_key, model, custom_llm_provider, mcp, endpoint)
-			//   DailyEndUserSpend: (end_user_id, date, api_key, model, custom_llm_provider, mcp, endpoint)
-			target: [
-				table[keyColumn as keyof typeof table] as never,
-				table.date,
-				table.api_key,
-				table.model,
-				table.model_group,
-				table.custom_llm_provider,
-				table.mcp_namespaced_tool_name,
-				table.endpoint,
-			] as never,
-			set: {
-				prompt_tokens: sql`${table.prompt_tokens} + ${log.prompt_tokens}`,
-				completion_tokens: sql`${table.completion_tokens} + ${log.completion_tokens}`,
-				cache_read_input_tokens: sql`${table.cache_read_input_tokens} + ${log.cache_read_input_tokens ?? 0}`,
-				cache_creation_input_tokens: sql`${table.cache_creation_input_tokens} + ${log.cache_creation_input_tokens ?? 0}`,
-				spend: sql`COALESCE(${table.spend}, 0) + ${spend}`,
-				api_requests: sql`${table.api_requests} + 1`,
-				successful_requests: sql`${table.successful_requests} + ${successfulRequests}`,
-				failed_requests: sql`${table.failed_requests} + ${failedRequests}`,
-				updated_at: updatedAt,
-			},
-		});
+	await dailySpendRepositoryFor(tx as unknown as NodePgDatabase<typeof schema>).upsertIncrement(
+		tx,
+		dimension,
+		keyValue,
+		buildDailySpendEntry(log),
+		spend,
+	);
 }
 
 /**
- * 首次 SpendLog 插入后，在同一事务中累计所有主体账务并刷新 key 活跃时间。
- * @param db
- * @param log
- * @param spend
+ * 首次 SpendLog 插入后，在同一事务中累计所有主体账务。
+ *
+ * 主体清单与一条 `WITH` 语句的拼装都在 SpendSettlementRepository：业务侧只描述
+ * 「这一笔花费属于谁」，不感知跨表 UPDATE 的语句形态。
+ * @param tx - 结算事务句柄
+ * @param log - 花费日志条目
+ * @param spend - 本次实际费用
  */
-async function updateSpendSubjects(db: NodePgDatabase<typeof schema>, log: SpendLog, spend: number): Promise<void> {
-	const now = new Date();
-	// 各主体各自只增不改同一列，串行 UPDATE 会把「条数 × 往返」叠加到结算事务上；
-	// 用一条 WITH 语句把全部主体放在同一次往返里，事务与行锁持有时间也随之缩短。
-	// SET 左侧必须是裸列名：PostgreSQL 不接受 `SET "表"."列"` 这种限定写法。
-	const updates: SQL[] = [
-		sql`token_spend AS (
-			UPDATE ${LiteLLM_VerificationToken}
-			SET spend = COALESCE(${LiteLLM_VerificationToken.spend}, 0) + ${spend},
-				last_active = ${now}
-			WHERE ${LiteLLM_VerificationToken.token} = ${_protectApiKeyForDb(log.api_key)}
-			RETURNING 1
-		)`,
-	];
-	if (log.user) {
-		updates.push(sql`user_spend AS (
-			UPDATE ${LiteLLM_UserTable}
-			SET spend = COALESCE(${LiteLLM_UserTable.spend}, 0) + ${spend}
-			WHERE ${LiteLLM_UserTable.userId} = ${log.user}
-			RETURNING 1
-		)`);
-	}
-	if (log.team_id) {
-		updates.push(sql`team_spend AS (
-			UPDATE ${LiteLLM_TeamTable}
-			SET spend = COALESCE(${LiteLLM_TeamTable.spend}, 0) + ${spend}
-			WHERE ${LiteLLM_TeamTable.teamId} = ${log.team_id}
-			RETURNING 1
-		)`);
-	}
-	if (log.organization_id) {
-		updates.push(sql`organization_spend AS (
-			UPDATE ${LiteLLM_OrganizationTable}
-			SET spend = COALESCE(${LiteLLM_OrganizationTable.spend}, 0) + ${spend}
-			WHERE ${LiteLLM_OrganizationTable.organizationId} = ${log.organization_id}
-			RETURNING 1
-		)`);
-	}
+async function updateSpendSubjects(tx: SpendLedgerTransaction, log: SpendLog, spend: number): Promise<void> {
 	const metadataProjectId = log.metadata?.["user_api_key_project_id"];
 	const projectId = log.project_id ?? (typeof metadataProjectId === "string" ? metadataProjectId : undefined);
-	if (projectId) {
-		updates.push(sql`project_spend AS (
-			UPDATE ${LiteLLM_ProjectTable}
-			SET spend = COALESCE(${LiteLLM_ProjectTable.spend}, 0) + ${spend}
-			WHERE ${LiteLLM_ProjectTable.projectId} = ${projectId}
-			RETURNING 1
-		)`);
-	}
-	if (log.user && log.team_id) {
-		updates.push(sql`membership_spend AS (
-			UPDATE ${LiteLLM_TeamMembership}
-			SET spend = COALESCE(${LiteLLM_TeamMembership.spend}, 0) + ${spend}
-			WHERE ${LiteLLM_TeamMembership.userId} = ${log.user} AND ${LiteLLM_TeamMembership.teamId} = ${log.team_id}
-			RETURNING 1
-		)`);
-	}
-	if (log.end_user_id) {
-		updates.push(sql`end_user_spend AS (
-			UPDATE ${LiteLLM_EndUserTable}
-			SET spend = COALESCE(${LiteLLM_EndUserTable.spend}, 0) + ${spend}
-			WHERE ${LiteLLM_EndUserTable.userId} = ${log.end_user_id}
-			RETURNING 1
-		)`);
-	}
-	await db.execute(sql`WITH ${sql.join(updates, sql`, `)} SELECT 1`);
-}
-
-/**
- * 获取对应维度的每日花费表
- * @param dimension
- * @throws {Error} 当维度不合法时
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getDailyTable(dimension: string): any {
-	switch (dimension) {
-		case "user":
-			return liteLLM_DailyUserSpend;
-		case "team":
-			return liteLLM_DailyTeamSpend;
-		case "organization":
-			return liteLLM_DailyOrganizationSpend;
-		case "tag":
-			return liteLLM_DailyTagSpend;
-		case "agent":
-			return liteLLM_DailyAgentSpend;
-		case "end_user":
-			return liteLLM_DailyEndUserSpend;
-		default:
-			throw new Error(`未知的每日花费维度: ${dimension}`);
-	}
-}
-
-/**
- * 获取对应维度的键列名
- * @param dimension
- * @throws {Error} 当维度不合法时
- */
-export function getKeyColumn(dimension: string): string {
-	switch (dimension) {
-		case "user":
-			return "user_id";
-		case "team":
-			return "team_id";
-		case "organization":
-			return "organization_id";
-		case "tag":
-			return "tag";
-		case "agent":
-			return "agent_id";
-		case "end_user":
-			return "end_user_id";
-		default:
-			throw new Error(`未知的键列维度: ${dimension}`);
-	}
+	await spendSettlementRepositoryFor(tx as unknown as NodePgDatabase<typeof schema>).accumulateSubjectSpend(tx, {
+		token: _protectApiKeyForDb(log.api_key),
+		spend: spend,
+		userId: log.user,
+		teamId: log.team_id,
+		organizationId: log.organization_id,
+		projectId: projectId,
+		endUserId: log.end_user_id,
+	});
 }
 
 /**
@@ -1040,6 +902,7 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 			ctx.upstreamLogContext?.request.body,
 		),
 		litellm_overhead_time_ms: ctx.litellmOverheadTimeMs ?? null,
+		litellm_body_received_ms: ctx.litellmBodyReceivedMs ?? null,
 		attempted_retries: ctx.attemptedRetries ?? null,
 		max_retries: ctx.maxRetries ?? null,
 		fallback_models: ctx.fallbackModels ?? null,
@@ -1068,6 +931,41 @@ export function buildSpendLogsMetadata(ctx: SpendLogBuildContext): SpendLogsMeta
 }
 
 /**
+ * 解析本次 SpendLog 要记录的上游身份。
+ *
+ * 优先级：显式 ctx（内部审计）→ 显式传入的 upstreamLogContext → 请求作用域。
+ * 一旦显式传了 context，就不能再回退到外层环境：能力审计行必须只记录自己
+ * 那次内部调用的身份，否则会把主请求的 key 写进审计。
+ * @param ctx - SpendLog 构建上下文
+ * @param upstreamLogContext - 已选定的上游交换上下文
+ */
+function resolveSpendUpstreamIdentity(
+	ctx: SpendLogBuildContext,
+	upstreamLogContext: SpendLogBuildContext["upstreamLogContext"],
+): UpstreamIdentity | undefined {
+	if (ctx.upstreamKeyHash !== undefined || ctx.upstreamAccount !== undefined) {
+		return ctx.upstreamKeyHash === undefined || ctx.upstreamKeyHash === null
+			? undefined
+			: {
+					keyHash: ctx.upstreamKeyHash,
+					...(ctx.upstreamAccount === undefined ? {} : { account: ctx.upstreamAccount }),
+				};
+	}
+	if (upstreamLogContext !== undefined) {
+		return upstreamLogContext.upstreamKeyHash === undefined
+			? undefined
+			: {
+					keyHash: upstreamLogContext.upstreamKeyHash,
+					...(upstreamLogContext.upstreamAccount === undefined ? {} : { account: upstreamLogContext.upstreamAccount }),
+				};
+	}
+	if (ctx.disableAmbientUpstreamContext === true) {
+		return undefined;
+	}
+	return getRecordedUpstreamIdentity();
+}
+
+/**
  * 用单一入口从请求上下文构造 SpendLog，减少端点手写字段漂移。
  * @param ctx - SpendLog 构建上下文
  */
@@ -1089,6 +987,7 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		};
 	}
 	ctx = { ...ctx, upstreamLogContext: upstreamLogContext };
+	const upstreamIdentity = resolveSpendUpstreamIdentity(ctx, upstreamLogContext);
 	const usage = normalizeUsageForSpend(ctx.usage);
 	const status = ctx.status ?? (ctx.error ? SpendLogStatus.Failure : SpendLogStatus.Success);
 	const shouldStoreBody = await shouldStorePromptsAndResponsesInSpendLogs();
@@ -1129,6 +1028,8 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 		model_id: ctx.modelId,
 		custom_llm_provider: ctx.customLlmProvider,
 		api_base: ctx.apiBase,
+		upstream_key_hash: upstreamIdentity?.keyHash ?? null,
+		upstreamAccount: upstreamIdentity?.account,
 		user: ctx.auth?.user_id,
 		team_id: ctx.auth?.team_id,
 		key_alias: ctx.auth?.key_alias,
@@ -1160,6 +1061,14 @@ export async function buildSpendLogFromRequest(ctx: SpendLogBuildContext): Promi
 }
 
 const DEFAULT_RESERVATION_COMPLETION_TOKENS = 4096;
+/**
+ * 快速路径的字节/token 估算比。
+ *
+ * cl100k_base 在英文与代码上约 3.5~4 字节一个 token，中文约 2 字节。快速路径只在预算
+ * 余量超过「1 字节 = 1 token」的严格上界时才启用，因此这里偏小的比值最多把金额压低
+ * 数倍，仍被上界与余量共同兜住；不能用它替代预算紧张时的精确分词。
+ */
+const RESERVATION_BYTES_PER_TOKEN = 3.5;
 let reservationTokenizer: ReturnType<typeof get_encoding> | undefined;
 
 /**
@@ -1276,47 +1185,25 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
 			// 一次往返完成「已结算判存 + 过期行接管 + 登记」：
 			// - 已结算的 request_id 不再登记（历史 SpendLog 已代表这次 attempt 的归属）；
 			// - 同 id 的在途行只有租约过期才允许被本次请求接管，未过期说明并发重复；
-			// - 判存失败与冲突都返回空行，调用方统一按重复 request_id 拒绝。
-			// 过期行不再逐请求 DELETE：运行期巡检（reapExpiredActiveRequests）负责清理，
-			// 这里只接管「同 id 且已过期」的那一行，正常路径因此少一次往返。
-			const registered = (await tx.execute(sql`
-				INSERT INTO "LiteLLM_ActiveRequests" AS active (
-					request_id, call_type, api_key, "startTime", model, model_group, "user",
-					team_id, organization_id, end_user, requester_ip_address, session_id,
-					metadata, request_tags, proxy_server_request, status, expires_at, updated_at
-				)
-				SELECT
-					${input.requestId}, ${input.callType}, ${apiKey},
-					${(input.startTime ?? now).toISOString()}::timestamp, ${input.model}, ${input.model},
-					${auth.user_id ?? ""}, ${auth.team_id ?? null}, ${auth.organization_id ?? null},
-					${auth.end_user_id ?? null}, ${getRequesterIpAddress(input.req) ?? null},
-					${getOrCreateSpendSessionId(input.req)},
-					${JSON.stringify(buildActiveRequestMetadata(input.req))}::jsonb, '[]'::jsonb,
-					${JSON.stringify(proxyServerRequest ?? {})}::jsonb,
-					'in_progress', ${expiresAt.toISOString()}::timestamp, ${now.toISOString()}::timestamp
-				WHERE NOT EXISTS (SELECT 1 FROM "LiteLLM_SpendLogs" WHERE request_id = ${input.requestId})
-				ON CONFLICT (request_id) DO UPDATE SET
-					call_type = EXCLUDED.call_type,
-					api_key = EXCLUDED.api_key,
-					"startTime" = EXCLUDED."startTime",
-					model = EXCLUDED.model,
-					model_group = EXCLUDED.model_group,
-					"user" = EXCLUDED."user",
-					team_id = EXCLUDED.team_id,
-					organization_id = EXCLUDED.organization_id,
-					end_user = EXCLUDED.end_user,
-					requester_ip_address = EXCLUDED.requester_ip_address,
-					session_id = EXCLUDED.session_id,
-					metadata = EXCLUDED.metadata,
-					request_tags = EXCLUDED.request_tags,
-					proxy_server_request = EXCLUDED.proxy_server_request,
-					status = 'in_progress',
-					expires_at = EXCLUDED.expires_at,
-					updated_at = EXCLUDED.updated_at
-				WHERE active.expires_at <= ${now.toISOString()}::timestamp
-				RETURNING request_id
-			`)) as unknown as { rows: Array<{ request_id?: string }> };
-			if (registered.rows.length === 0) {
+			// - 判存失败与冲突都返回 false，调用方统一按重复 request_id 拒绝。
+			const registered = await activeRequestRepositoryFor(db).register(tx, {
+				requestId: input.requestId,
+				callType: input.callType,
+				apiKey: apiKey,
+				model: input.model,
+				startTime: input.startTime,
+				userId: auth.user_id,
+				teamId: auth.team_id,
+				organizationId: auth.organization_id,
+				endUserId: auth.end_user_id,
+				requesterIpAddress: getRequesterIpAddress(input.req),
+				sessionId: getOrCreateSpendSessionId(input.req),
+				metadata: buildActiveRequestMetadata(input.req),
+				proxyServerRequest: (proxyServerRequest ?? {}) as Record<string, unknown>,
+				expiresAt: expiresAt,
+				now: now,
+			});
+			if (!registered) {
 				throw ApiError.conflict(`重复的 request_id: ${input.requestId}`);
 			}
 		});
@@ -1337,15 +1224,7 @@ export async function registerActiveRequest(db: NodePgDatabase<typeof schema>, i
  */
 export async function renewActiveRequest(db: NodePgDatabase<typeof schema>, requestId: string): Promise<boolean> {
 	const now = new Date();
-	const rows = await db
-		.update(liteLLM_ActiveRequests)
-		.set({
-			expires_at: new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS),
-			updated_at: now,
-		})
-		.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")))
-		.returning({ requestId: liteLLM_ActiveRequests.request_id });
-	return rows.length > 0;
+	return await activeRequestRepositoryFor(db).renewLease(db, requestId, new Date(now.getTime() + ACTIVE_REQUEST_LEASE_MS), now);
 }
 
 /** checkpoint metadata 的顶层 key 枚举。 */
@@ -1372,18 +1251,9 @@ export async function checkpointActiveRequest(
 ): Promise<boolean> {
 	const now = new Date();
 	const sanitizedCheckpoint = sanitizeActiveRequestPayload(checkpoint);
-	const rows = await db
-		.update(liteLLM_ActiveRequests)
-		.set({
-			metadata: sql`COALESCE(${liteLLM_ActiveRequests.metadata}, '{}'::jsonb) || jsonb_build_object(${sql.raw(`'${key}'`)}::text, ${JSON.stringify(sanitizedCheckpoint)}::jsonb)`,
-			request_duration_ms: sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${now}::timestamp - ${liteLLM_ActiveRequests.startTime})) * 1000))::int`,
-			updated_at: now,
-		})
-		.where(and(eq(liteLLM_ActiveRequests.request_id, requestId), eq(liteLLM_ActiveRequests.status, "in_progress")))
-		.returning({ requestId: liteLLM_ActiveRequests.request_id });
 	// 列表只展示注册时确定的行字段；流式 checkpoint 只属于详情页，不触发列表刷新，
 	// 否则持续流式期间会退化成每 500ms 全量拉取一次列表。
-	return rows.length > 0;
+	return await activeRequestRepositoryFor(db).writeCheckpoint(db, requestId, sanitizedCheckpoint, key, now);
 }
 
 /**
@@ -1392,21 +1262,8 @@ export async function checkpointActiveRequest(
  * @param requestId
  */
 export async function removeActiveRequest(db: NodePgDatabase<typeof schema>, requestId: string): Promise<void> {
-	await db.delete(liteLLM_ActiveRequests).where(eq(liteLLM_ActiveRequests.request_id, requestId));
+	await activeRequestRepositoryFor(db).deleteById(db, requestId);
 	publishSpendLogChange();
-}
-
-/**
- * 兼容仅实现 SpendTracker 旧查询面的轻量测试/适配器；生产 Drizzle 实例始终提供 delete。
- * @param db
- * @param requestId
- */
-async function removeActiveRequestIfSupported(db: NodePgDatabase<typeof schema>, requestId: string): Promise<void> {
-	const deleteMethod = (db as unknown as { delete?: NodePgDatabase<typeof schema>["delete"] }).delete;
-	if (typeof deleteMethod !== "function") {
-		return;
-	}
-	await deleteMethod.call(db, liteLLM_ActiveRequests).where(eq(liteLLM_ActiveRequests.request_id, requestId));
 }
 
 /**
@@ -1487,26 +1344,71 @@ export function buildSpendReservationScopes(auth: UserAPIKeyAuth): SpendReservat
 	return scopes;
 }
 
+/** 预留估算用的请求体度量结果。 */
+export interface ReservationPromptMetrics {
+	/**
+	 * JSON 序列化后的 UTF-8 字节数，用作 token 的严格上界。
+	 *
+	 * token 会切分同一段字节流且每个 token 至少占 1 字节，因此字节数不会小于 token 数；
+	 * 用 UTF-16 字符数则会被 emoji 之类的代理对打破（1 个字符可对应 2~3 个 token）。
+	 */
+	readonly jsonBytes: number;
+	/** 输入 token 数；未分词时为按字符比估算的近似值 */
+	readonly promptTokens: number;
+	/** 是否真的做了分词（false 表示近似值） */
+	readonly exact: boolean;
+}
+
 /**
- * 估算请求最大费用；输入使用 cl100k_base tokenizer，输出使用请求声明的最大 token 数。
+ * 度量请求体一次：先 stringify，再按需分词。
+ *
+ * 同一请求必然被 Router 逐个候选 deployment 估算多次，而一次 180KB 请求体的
+ * `stringify + cl100k 编码` 约 50ms；重复分词会把预算预留放大到秒级并直接抬高 TTFT。
+ * 因此调用方应当在循环外度量一次，再把 `promptTokens` 传下去。
+ * @param requestBody - 请求体
+ * @param options - `skipTokenization` 为真时只做字符数统计（预算充裕的快速路径）
+ */
+export function measureReservationPrompt(
+	requestBody: Record<string, unknown>,
+	options: { skipTokenization?: boolean } = {},
+): ReservationPromptMetrics {
+	const json = JSON.stringify(requestBody);
+	const jsonBytes = Buffer.byteLength(json, "utf8");
+	if (options.skipTokenization === true) {
+		return { jsonBytes: jsonBytes, promptTokens: Math.ceil(jsonBytes / RESERVATION_BYTES_PER_TOKEN), exact: false };
+	}
+	reservationTokenizer ??= get_encoding("cl100k_base");
+	return { jsonBytes: jsonBytes, promptTokens: reservationTokenizer.encode(json).length, exact: true };
+}
+
+/**
+ * 取请求声明的输出上限；未声明时按默认预留额度。
+ * @param requestBody - 请求体
+ */
+export function reservationCompletionTokens(requestBody: Record<string, unknown>): number {
+	const configuredLimits = [requestBody["max_completion_tokens"], requestBody["max_output_tokens"], requestBody["max_tokens"]].filter(
+		(value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
+	);
+	return configuredLimits.length > 0 ? Math.ceil(Math.max(...configuredLimits)) : DEFAULT_RESERVATION_COMPLETION_TOKENS;
+}
+
+/**
+ * 用已知的输入 token 数估算预留费用；不重新分词。
  * 费用口径与落账一致：先按 provider 折扣、再加保证金（默认空配置不影响金额）。
  * @param model
- * @param requestBody
+ * @param promptTokens - 输入 token 数
+ * @param requestBody - 请求体（只用于读取输出上限）
  * @param customCost
  * @param provider - 实际执行 deployment 的 provider；缺省从模型名解析
  */
-export function estimateSpendReservation(
+export function estimateSpendFromPromptTokens(
 	model: string,
+	promptTokens: number,
 	requestBody: Record<string, unknown>,
 	customCost?: CustomCostPerToken,
 	provider?: string,
 ): number {
-	reservationTokenizer ??= get_encoding("cl100k_base");
-	const promptTokens = reservationTokenizer.encode(JSON.stringify(requestBody)).length;
-	const configuredLimits = [requestBody["max_completion_tokens"], requestBody["max_output_tokens"], requestBody["max_tokens"]].filter(
-		(value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
-	);
-	const completionTokens = configuredLimits.length > 0 ? Math.ceil(Math.max(...configuredLimits)) : DEFAULT_RESERVATION_COMPLETION_TOKENS;
+	const completionTokens = reservationCompletionTokens(requestBody);
 	const baseCost = costPerToken(model, promptTokens, completionTokens, 0, 0, {
 		customCostPerToken: customCost,
 		provider: provider,
@@ -1515,65 +1417,27 @@ export function estimateSpendReservation(
 	return Number.isFinite(estimate) ? Math.max(0, estimate) : 0;
 }
 
-function reservationScopeKey(scope: SpendReservationScope): string {
-	return scope.kind === "team_member" ? `team_member:${JSON.stringify([scope.userId, scope.teamId])}` : `${scope.kind}:${scope.id}`;
-}
-
 /**
- * 在事务内锁定并读取一个可独立计费的预算主体。
- * @param tx
- * @param scope
+ * 估算请求最大费用；输入使用 cl100k_base tokenizer，输出使用请求声明的最大 token 数。
+ * 费用口径与落账一致：先按 provider 折扣、再加保证金（默认空配置不影响金额）。
+ * @param model
+ * @param requestBody
+ * @param customCost
+ * @param provider - 实际执行 deployment 的 provider；缺省从模型名解析
+ * @param promptTokens - 已算好的输入 token 数；省略时在本函数内分词
  */
-async function lockReservationBudget(
-	tx: NodePgDatabase<typeof schema>,
-	scope: SpendReservationScope,
-): Promise<{ maxBudget: number | null; spend: number }> {
-	await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${reservationScopeKey(scope)}))`);
-	let query;
-	switch (scope.kind) {
-		case "key":
-			query = sql`SELECT max_budget, budget_id, spend FROM "LiteLLM_VerificationToken" WHERE token = ${scope.id} FOR UPDATE`;
-			break;
-		case "user":
-			query = sql`SELECT max_budget, spend FROM "LiteLLM_UserTable" WHERE user_id = ${scope.id} FOR UPDATE`;
-			break;
-		case "team":
-			query = sql`SELECT max_budget, spend FROM "LiteLLM_TeamTable" WHERE team_id = ${scope.id} FOR UPDATE`;
-			break;
-		case "organization":
-			query = sql`SELECT NULL::real AS max_budget, budget_id, spend FROM "LiteLLM_OrganizationTable" WHERE organization_id = ${scope.id} FOR UPDATE`;
-			break;
-		case "project":
-			query = sql`SELECT NULL::real AS max_budget, budget_id, spend FROM "LiteLLM_ProjectTable" WHERE project_id::text = ${scope.id} FOR UPDATE`;
-			break;
-		case "team_member":
-			query = sql`SELECT NULL::real AS max_budget, budget_id, spend FROM "LiteLLM_TeamMembership" WHERE user_id = ${scope.userId} AND team_id = ${scope.teamId} FOR UPDATE`;
-			break;
-		case "end_user":
-			query = sql`SELECT NULL::real AS max_budget, budget_id, spend FROM "LiteLLM_EndUserTable" WHERE user_id = ${scope.id} FOR UPDATE`;
-			break;
-		default:
-			throw ApiError.badRequest("不支持的预算主体类型");
-	}
-	const result = (await tx.execute(query)) as unknown as {
-		rows: Array<{ max_budget: number | null; budget_id?: string | null; spend: number | null }>;
-	};
-	const row = result.rows[0];
-	if (!row) {
-		throw ApiError.unavailable(`预算主体不存在: ${reservationScopeKey(scope)}`);
-	}
-	if (row.budget_id) {
-		const budgetResult = (await tx.execute(
-			sql`SELECT max_budget FROM "LiteLLM_BudgetTable" WHERE budget_id::text = ${row.budget_id} FOR UPDATE`,
-		)) as unknown as { rows: Array<{ max_budget: number | null }> };
-		row.max_budget = budgetResult.rows[0]?.max_budget ?? null;
-	}
-	return { maxBudget: row.max_budget, spend: row.spend ?? 0 };
+export function estimateSpendReservation(
+	model: string,
+	requestBody: Record<string, unknown>,
+	customCost?: CustomCostPerToken,
+	provider?: string,
+	promptTokens?: number,
+): number {
+	const tokens = promptTokens ?? measureReservationPrompt(requestBody).promptTokens;
+	return estimateSpendFromPromptTokens(model, tokens, requestBody, customCost, provider);
 }
 
 const SPEND_RESERVATION_LEASE_MS = 15 * 60 * 1_000;
-
-type SpendReservationRow = typeof liteLLM_SpendReservations.$inferSelect;
 
 function reservationLeaseExpiresAt(): Date {
 	return new Date(Date.now() + SPEND_RESERVATION_LEASE_MS);
@@ -1599,18 +1463,7 @@ export async function renewSpendReservation(db: NodePgDatabase<typeof schema>, r
 		throw ApiError.badRequest("requestId 必填");
 	}
 	try {
-		const rows = await db
-			.update(liteLLM_SpendReservations)
-			.set({ expires_at: reservationLeaseExpiresAt(), updated_at: new Date() })
-			.where(
-				and(
-					eq(liteLLM_SpendReservations.request_id, requestId),
-					eq(liteLLM_SpendReservations.status, "reserved"),
-					sql`${liteLLM_SpendReservations.expires_at} > now()`,
-				),
-			)
-			.returning();
-		const row = rows[0];
+		const row = await spendReservationRepositoryFor(db).renewLease(db, requestId, reservationLeaseExpiresAt(), new Date());
 		if (!row) {
 			throw ApiError.unavailable(`费用预留租约已失效: ${requestId}`);
 		}
@@ -1689,79 +1542,32 @@ export function startSpendReservationHeartbeat(
 	};
 }
 
-function parseReservationScopeKey(scopeKey: string): SpendReservationScope {
-	if (scopeKey.startsWith("team_member:")) {
-		const pair = JSON.parse(scopeKey.slice("team_member:".length)) as unknown;
-		if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" || typeof pair[1] !== "string") {
-			throw ApiError.unavailable(`预留预算主体损坏: ${scopeKey}`);
-		}
-		return { kind: "team_member", userId: pair[0], teamId: pair[1] };
-	}
-	const separator = scopeKey.indexOf(":");
-	const kind = scopeKey.slice(0, separator);
-	const id = scopeKey.slice(separator + 1);
-	if (
-		separator <= 0 ||
-		!id ||
-		!(["key", "user", "team", "organization", "project", "end_user"] as const).includes(
-			kind as "key" | "user" | "team" | "organization" | "project" | "end_user",
-		)
-	) {
-		throw ApiError.unavailable(`预留预算主体损坏: ${scopeKey}`);
-	}
-	return { kind: kind as "key" | "user" | "team" | "organization" | "project" | "end_user", id: id };
-}
-
-async function assertReservationFits(
-	tx: NodePgDatabase<typeof schema>,
-	scopes: readonly SpendReservationScope[],
-	amount: number,
-	excludedRequestId?: string,
-): Promise<void> {
-	const uniqueScopes = new Map(scopes.map((scope) => [reservationScopeKey(scope), scope]));
-	for (const [scopeKey, scope] of [...uniqueScopes.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-		const budget = await lockReservationBudget(tx, scope);
-		const active = (await tx.execute(
-			excludedRequestId
-				? sql`SELECT COALESCE(SUM(reserved), 0) AS reserved FROM "LiteLLM_SpendReservations" WHERE status = 'reserved' AND expires_at > now() AND request_id <> ${excludedRequestId} AND scope_ids @> ${JSON.stringify([scopeKey])}::jsonb`
-				: sql`SELECT COALESCE(SUM(reserved), 0) AS reserved FROM "LiteLLM_SpendReservations" WHERE status = 'reserved' AND expires_at > now() AND scope_ids @> ${JSON.stringify([scopeKey])}::jsonb`,
-		)) as unknown as { rows: Array<{ reserved: number | string }> };
-		const activeReserved = Number(active.rows[0]?.reserved ?? 0);
-		if (budget.maxBudget !== null && budget.spend + activeReserved + amount > budget.maxBudget) {
-			throw ApiError.tooManyRequests(`预算不足: ${scopeKey}`);
-		}
-	}
-}
-
-async function readReservation(tx: NodePgDatabase<typeof schema>, requestId: string): Promise<SpendReservationRow | undefined> {
-	const rows = await tx.select().from(liteLLM_SpendReservations).where(eq(liteLLM_SpendReservations.request_id, requestId));
-	return rows[0];
-}
-
 /**
  * 跨实例安全预留请求费用。每个 scope 取得 PostgreSQL advisory transaction lock，
  * 因而同一预算主体的余额校验与 ledger 写入不会并发穿透。
- * @param db
- * @param input
+ *
+ * 「历史流水判存 → 过期租约接管 / 新预留」都发生在调用方的同一个事务里；余额校验先于
+ * 本轮预留写入，`SUM` 用 request_id 排除自己，因此过期接管不会把自己的旧预留算两遍。
+ * @param db - Drizzle 数据库实例
+ * @param input - 预留请求
  */
 export async function reserveSpend(db: NodePgDatabase<typeof schema>, input: SpendReservationInput): Promise<SpendReservationResult> {
 	if (!input.requestId || !Number.isFinite(input.reserved) || input.reserved < 0 || input.scopes.length === 0) {
 		throw ApiError.badRequest("requestId 必填，reserved 必须为非负数且至少指定一个预算主体");
 	}
+	const repository = spendReservationRepositoryFor(db);
 	try {
 		return await db.transaction(async (tx) => {
-			const historicalSpend = (await tx.execute(
-				sql`SELECT spend FROM "LiteLLM_SpendLogs" WHERE request_id = ${input.requestId} LIMIT 1`,
-			)) as unknown as { rows: Array<{ spend: number | null }> };
-			if (historicalSpend.rows[0]) {
+			const historicalSpend = await spendLogRepositoryFor(db).findSpendByRequestId(tx, input.requestId);
+			if (historicalSpend !== null) {
 				return {
 					status: "duplicate" as const,
 					requestId: input.requestId,
 					reserved: 0,
-					actual: historicalSpend.rows[0].spend ?? 0,
+					actual: historicalSpend,
 				};
 			}
-			const existing = await readReservation(tx, input.requestId);
+			const existing = await repository.findByRequestId(tx, input.requestId);
 			const scopeIds = [...new Set(input.scopes.map(reservationScopeKey))].sort();
 			if (existing) {
 				if (existing.status !== "reserved" || existing.expires_at.getTime() > Date.now()) {
@@ -1772,29 +1578,18 @@ export async function reserveSpend(db: NodePgDatabase<typeof schema>, input: Spe
 						actual: existing.actual,
 					};
 				}
-				await assertReservationFits(tx, input.scopes, input.reserved, input.requestId);
-				const renewed = await tx
-					.update(liteLLM_SpendReservations)
-					.set({
-						scope_ids: scopeIds,
-						reserved: input.reserved,
-						actual: null,
-						status: "reserved",
-						expires_at: reservationLeaseExpiresAt(),
-						updated_at: new Date(),
-					})
-					.where(
-						and(
-							eq(liteLLM_SpendReservations.request_id, input.requestId),
-							eq(liteLLM_SpendReservations.status, "reserved"),
-							sql`${liteLLM_SpendReservations.expires_at} <= now()`,
-						),
-					)
-					.returning();
-				if (renewed[0]) {
-					return { status: "reserved", requestId: input.requestId, reserved: renewed[0].reserved, actual: renewed[0].actual };
+				await repository.assertFits(tx, input.scopes, input.reserved, input.requestId);
+				const renewed = await repository.resumeExpired(tx, {
+					requestId: input.requestId,
+					scopeIds: scopeIds,
+					reserved: input.reserved,
+					expiresAt: reservationLeaseExpiresAt(),
+					now: new Date(),
+				});
+				if (renewed) {
+					return { status: "reserved", requestId: input.requestId, reserved: renewed.reserved, actual: renewed.actual };
 				}
-				const concurrent = await readReservation(tx, input.requestId);
+				const concurrent = await repository.findByRequestId(tx, input.requestId);
 				return {
 					status: "duplicate",
 					requestId: input.requestId,
@@ -1802,20 +1597,15 @@ export async function reserveSpend(db: NodePgDatabase<typeof schema>, input: Spe
 					actual: concurrent?.actual ?? null,
 				};
 			}
-			await assertReservationFits(tx, input.scopes, input.reserved);
-			const inserted = await tx
-				.insert(liteLLM_SpendReservations)
-				.values({
-					request_id: input.requestId,
-					scope_ids: scopeIds,
-					reserved: input.reserved,
-					status: "reserved",
-					expires_at: reservationLeaseExpiresAt(),
-				})
-				.onConflictDoNothing()
-				.returning();
-			if (inserted.length === 0) {
-				const concurrent = await readReservation(tx, input.requestId);
+			await repository.assertFits(tx, input.scopes, input.reserved);
+			const inserted = await repository.insertReserved(tx, {
+				requestId: input.requestId,
+				scopeIds: scopeIds,
+				reserved: input.reserved,
+				expiresAt: reservationLeaseExpiresAt(),
+			});
+			if (!inserted) {
+				const concurrent = await repository.findByRequestId(tx, input.requestId);
 				return {
 					status: "duplicate",
 					requestId: input.requestId,
@@ -1835,40 +1625,37 @@ export async function reserveSpend(db: NodePgDatabase<typeof schema>, input: Spe
 
 /**
  * 幂等释放未结算预留。
- * @param db
- * @param requestId
+ *
+ * 释放前先删除同 id 的在途行：「先释放预留、后删行」的中间态如果被观测到，详情页会展示
+ * 一个既没有预留、也不会再结算的请求。
+ * @param db - Drizzle 数据库实例
+ * @param requestId - 请求 ID
  */
 export async function releaseSpend(db: NodePgDatabase<typeof schema>, requestId: string): Promise<SpendReservationResult> {
 	if (!requestId) {
 		throw ApiError.badRequest("requestId 必填");
 	}
+	const repository = spendReservationRepositoryFor(db);
 	try {
 		return await db.transaction(async (tx) => {
-			const removedActive = await tx
-				.delete(liteLLM_ActiveRequests)
-				.where(eq(liteLLM_ActiveRequests.request_id, requestId))
-				.returning({ requestId: liteLLM_ActiveRequests.request_id });
-			const rows = await tx
-				.update(liteLLM_SpendReservations)
-				.set({ status: "released", updated_at: new Date() })
-				.where(and(eq(liteLLM_SpendReservations.request_id, requestId), eq(liteLLM_SpendReservations.status, "reserved")))
-				.returning();
+			const removedActive = await activeRequestRepositoryFor(db).deleteReturning(tx, requestId);
+			const rows = await repository.markReleased(tx, requestId, new Date());
 			const row = rows[0];
 			if (row) {
 				return { status: "released", requestId: requestId, reserved: row.reserved, actual: row.actual };
 			}
-			const existing = await tx.select().from(liteLLM_SpendReservations).where(eq(liteLLM_SpendReservations.request_id, requestId));
-			if (!existing[0]) {
-				if (removedActive.length > 0) {
+			const existing = await repository.findByRequestId(tx, requestId);
+			if (!existing) {
+				if (removedActive) {
 					return { status: "released", requestId: requestId, reserved: 0, actual: null };
 				}
 				throw ApiError.badRequest(`预留不存在: ${requestId}`);
 			}
 			return {
-				status: existing[0].status === "settled" ? "settled" : "released",
+				status: existing.status === "settled" ? "settled" : "released",
 				requestId: requestId,
-				reserved: existing[0].reserved,
-				actual: existing[0].actual,
+				reserved: existing.reserved,
+				actual: existing.actual,
 			};
 		});
 	} catch (error) {
@@ -1881,17 +1668,21 @@ export async function releaseSpend(db: NodePgDatabase<typeof schema>, requestId:
 
 /**
  * 幂等结算预留；实际 spend 由随后唯一的 SpendLog 事务累计。
- * @param db
- * @param requestId
- * @param actual
+ *
+ * 结算前重检余额：预留金额只是上界，实际费用可能更高，必须确认实际值仍放得下，否则
+ * 这条请求会绕过开始时的预算保护。
+ * @param db - Drizzle 数据库实例
+ * @param requestId - 请求 ID
+ * @param actual - 实际费用
  */
 export async function settleSpend(db: NodePgDatabase<typeof schema>, requestId: string, actual: number): Promise<SpendReservationResult> {
 	if (!requestId || !Number.isFinite(actual) || actual < 0) {
 		throw ApiError.badRequest("requestId 必填且 actual 必须为非负数");
 	}
+	const repository = spendReservationRepositoryFor(db);
 	try {
 		return await db.transaction(async (tx) => {
-			const existing = await readReservation(tx, requestId);
+			const existing = await repository.findByRequestId(tx, requestId);
 			if (!existing) {
 				throw ApiError.badRequest(`预留不存在: ${requestId}`);
 			}
@@ -1903,17 +1694,13 @@ export async function settleSpend(db: NodePgDatabase<typeof schema>, requestId: 
 					actual: existing.actual,
 				};
 			}
-			await assertReservationFits(tx, existing.scope_ids.map(parseReservationScopeKey), actual, requestId);
-			const rows = await tx
-				.update(liteLLM_SpendReservations)
-				.set({ status: "settled", actual: actual, updated_at: new Date() })
-				.where(and(eq(liteLLM_SpendReservations.request_id, requestId), eq(liteLLM_SpendReservations.status, "reserved")))
-				.returning();
+			await repository.assertFits(tx, existing.scope_ids.map(parseReservationScopeKey), actual, requestId);
+			const rows = await repository.markSettled(tx, requestId, actual, new Date());
 			const row = rows[0];
 			if (row) {
 				return { status: "settled", requestId: requestId, reserved: row.reserved, actual: row.actual };
 			}
-			const concurrent = await readReservation(tx, requestId);
+			const concurrent = await repository.findByRequestId(tx, requestId);
 			if (!concurrent) {
 				throw ApiError.badRequest(`预留不存在: ${requestId}`);
 			}
@@ -2114,7 +1901,7 @@ async function trackSpendLogMeasured(db: NodePgDatabase<typeof schema>, logEntry
 		},
 		validateSpendMetadataFields(metadataSettings["spend_logs_metadata_fields"]),
 	);
-	const insertData: typeof liteLLM_SpendLogs.$inferInsert = {
+	const insertData: SpendLogInsertValues = {
 		request_id: logEntry.request_id,
 		call_type: logEntry.call_type || CallType.ACompletion,
 		// GAP 9: master key 保护 — 直接明文 master key 转哈希，或在 disable_adding=true 时
@@ -2133,6 +1920,7 @@ async function trackSpendLogMeasured(db: NodePgDatabase<typeof schema>, logEntry
 		model_id: logEntry.model_id ?? null,
 		custom_llm_provider: logEntry.custom_llm_provider ?? extractProvider(logEntry.model),
 		api_base: logEntry.api_base ?? null,
+		upstream_key_hash: logEntry.upstream_key_hash ?? null,
 		user: logEntry.user || "",
 		team_id: logEntry.team_id ?? null,
 		organization_id: logEntry.organization_id ?? null,
@@ -2175,16 +1963,22 @@ async function trackSpendLogMeasured(db: NodePgDatabase<typeof schema>, logEntry
 			// 在途行删除放在事务最前：它可能被同一请求的补写阻塞（大行整列重写在途时可达秒级），
 			// 放在预算锁与每日汇总更新之后会把这条链路的行锁持有时长一起放大，串行化同 key/user
 			// 的全部记账。前置后这次等待不再持有任何预算/汇总行锁。
-			await removeActiveRequestIfSupported(tx, logEntry.request_id);
+			await activeRequestRepositoryFor(db).deleteIfSupported(tx, logEntry.request_id);
+			// 关联表与 SpendLog 同事务：即使 SpendLog 已存在（重复 request_id），也要补上
+			// hash → 账号的归属，否则这一行以后只能按 Unassociated 展示。冲突保留首次归属。
+			if (logEntry.upstream_key_hash && logEntry.upstreamAccount) {
+				await upstreamKeyAccountRepositoryFor(db).insertIgnore(tx, {
+					key_hash: logEntry.upstream_key_hash,
+					account_kind: logEntry.upstreamAccount.kind,
+					account_id: logEntry.upstreamAccount.id,
+					provider: logEntry.upstreamAccount.provider,
+				});
+			}
 			// 块与 SpendLog 行同事务：回滚时不留下无主的块，提交后块立即可被后续请求复用。
 			// 分批写入，避免超长会话把绑定参数数量顶到 PostgreSQL 上限；只写判存确认缺失的块。
 			await writeSpendLogBlocks(tx, blocksToInsert);
-			const inserted = await tx
-				.insert(liteLLM_SpendLogs)
-				.values(insertData)
-				.onConflictDoNothing()
-				.returning({ requestId: liteLLM_SpendLogs.request_id });
-			if (inserted.length === 0) {
+			const inserted = await spendLogRepositoryFor(db).insertIgnore(tx, insertData);
+			if (!inserted) {
 				// 历史 SpendLog 已经代表另一次已提交 attempt；不得用当前 attempt 的 spend
 				// 终结一个来源不明的 reservation。
 				return { status: "duplicate" as const, requestId: logEntry.request_id, spend: spend };
@@ -2193,14 +1987,20 @@ async function trackSpendLogMeasured(db: NodePgDatabase<typeof schema>, logEntry
 			// 终结预留与余额校验合并成一次往返：只有原本仍是 reserved 的行才会被本次更新命中，
 			// 没有预留的请求（当前全部按 key 计费且未设 max_budget）因此只付一条空更新的成本，
 			// 不再额外读一次。校验在主体 spend 累加前执行，且 SUM 排除本 request_id，语义不变。
-			const settledReservations = await tx
-				.update(liteLLM_SpendReservations)
-				.set({ status: reservationStatus, actual: reservationStatus === "settled" ? spend : null, updated_at: new Date() })
-				.where(and(eq(liteLLM_SpendReservations.request_id, logEntry.request_id), eq(liteLLM_SpendReservations.status, "reserved")))
-				.returning({ scopeIds: liteLLM_SpendReservations.scope_ids });
-			const reservedScopeIds = settledReservations[0]?.scopeIds;
+			const reservedScopeIds = await spendReservationRepositoryFor(db).finishReserved(
+				tx,
+				logEntry.request_id,
+				reservationStatus,
+				reservationStatus === "settled" ? spend : null,
+				new Date(),
+			);
 			if (reservedScopeIds) {
-				await assertReservationFits(tx, reservedScopeIds.map(parseReservationScopeKey), spend, logEntry.request_id);
+				await spendReservationRepositoryFor(db).assertFits(
+					tx,
+					reservedScopeIds.map(parseReservationScopeKey),
+					spend,
+					logEntry.request_id,
+				);
 			}
 			await updateSpendSubjects(tx, logEntry, spend);
 
@@ -2213,32 +2013,20 @@ async function trackSpendLogMeasured(db: NodePgDatabase<typeof schema>, logEntry
 				cache_creation_input_tokens: cacheCreationTokens,
 				cache_read_input_tokens: cacheReadTokens,
 			};
-			await upsertDailySpend(tx, liteLLM_DailyUserSpend, "user_id", logEntry.user ?? null, normalizedLog, spend);
-			await upsertDailySpend(tx, liteLLM_DailyTeamSpend, "team_id", logEntry.team_id ?? null, normalizedLog, spend);
-			await upsertDailySpend(
-				tx,
-				liteLLM_DailyOrganizationSpend,
-				"organization_id",
-				logEntry.organization_id ?? null,
-				normalizedLog,
-				spend,
-			);
+			await upsertDailySpend(tx, "user", logEntry.user ?? null, normalizedLog, spend);
+			await upsertDailySpend(tx, "team", logEntry.team_id ?? null, normalizedLog, spend);
+			await upsertDailySpend(tx, "organization", logEntry.organization_id ?? null, normalizedLog, spend);
 			for (const tag of new Set(logEntry.request_tags ?? logEntry.tags ?? [])) {
-				await upsertDailySpend(tx, liteLLM_DailyTagSpend, "tag", tag, normalizedLog, spend);
+				await upsertDailySpend(tx, "tag", tag, normalizedLog, spend);
 			}
-			await upsertDailySpend(tx, liteLLM_DailyAgentSpend, "agent_id", logEntry.agent_id ?? null, normalizedLog, spend);
-			await upsertDailySpend(tx, liteLLM_DailyEndUserSpend, "end_user_id", logEntry.end_user_id ?? null, normalizedLog, spend);
+			await upsertDailySpend(tx, "agent", logEntry.agent_id ?? null, normalizedLog, spend);
+			await upsertDailySpend(tx, "end_user", logEntry.end_user_id ?? null, normalizedLog, spend);
 			return { status: "committed" as const, requestId: logEntry.request_id, spend: spend };
 		});
 	} catch (error) {
 		try {
-			await db
-				.update(liteLLM_SpendReservations)
-				.set({ status: "released", updated_at: new Date() })
-				.where(
-					and(eq(liteLLM_SpendReservations.request_id, logEntry.request_id), eq(liteLLM_SpendReservations.status, "reserved")),
-				);
-			await removeActiveRequestIfSupported(db, logEntry.request_id);
+			await spendReservationRepositoryFor(db).markReleased(db, logEntry.request_id, new Date());
+			await activeRequestRepositoryFor(db).deleteIfSupported(db, logEntry.request_id);
 		} catch (releaseError) {
 			logger.error("SpendLog 提交失败后清理活跃请求与 reservation 失败", {
 				error: releaseError,
