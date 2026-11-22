@@ -175,8 +175,11 @@ ps -o pid,ppid,pgid,sid,state,command -p <已确认的 PID 列表>
 
 ## 迁移或健康检查超时
 
-新容器仍运行但尚未监听时：
+先对齐窗口：镜像 `HEALTHCHECK` 的 `--start-period=60s` 覆盖「迁移 + 监听端口」整段，部署脚本的
+`HEALTH_CHECK_TIMEOUT` 取 90s，总窗口比启动宽限多留 30s 观察余量。旧脚本只有 30s 总等待时，会在镜像
+尚处于 `starting` 时先判超时；窗口不足是环境问题，不要用重启掩盖。
 
+新容器仍运行但尚未监听时：
 1. 检查 `docker ps -a` 和 `docker inspect` 中的运行、OOM、重启和健康状态。
 2. 读取有限范围容器日志，不打印环境变量。
 3. 若迁移状态不明确，从容器内检查 `pg_stat_activity`。

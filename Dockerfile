@@ -47,7 +47,10 @@ RUN node -e "const { readMigrationFiles } = require('drizzle-orm/migrator'); con
 
 EXPOSE ${APP_PORT}
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+# 启动阶段先跑迁移（0023 在 10 万行生产库上约 20 秒，更早的基线迁移更久），
+# start-period 必须覆盖「迁移 + 监听端口」的整段，否则 docker 会在迁移中途按失败计数。
+# 部署脚本另留 90s 总等待窗口，给 60s 启动宽限后再留 30s 观察余量。
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -fsS -o /dev/null http://127.0.0.1:${APP_PORT}/health/liveliness || exit 1
 
 CMD ["node", "dist/main.js"]
