@@ -1,5 +1,7 @@
 MAKEFLAGS += --no-print-directory
-PARALLEL_MAKE = $(MAKE) -j
+# 默认并发数在资源占用与执行速度之间取平衡，可通过 MAKE_JOBS 覆盖。
+MAKE_JOBS ?= 6
+PARALLEL_MAKE = $(MAKE) -j$(MAKE_JOBS)
 
 .PHONY: all
 all: install ci ## 完整构建：安装依赖、运行CI
@@ -9,8 +11,13 @@ help: ## 显示帮助信息
 	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: install
-install: ## 安装所有依赖
-	@npm i --silent
+install: ## 安装所有依赖（依赖未变化时跳过）
+	@if [ ! -d node_modules ] || [ package.json -nt node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then \
+		echo 安装依赖; \
+		npm i --silent; \
+	else \
+		echo 依赖未变化，跳过 npm i; \
+	fi
 
 .PHONY: ci
 ci: ## 运行所有 CI 检查

@@ -4,14 +4,14 @@
   "description": "LiteLLM AI Gateway rewritten in TypeScript for Node.js",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc && mkdir -p dist/data && cp src/data/*.json src/data/*.jpg dist/data/",
+    "build": "tsc --tsBuildInfoFile .cache/tsconfig.build.tsbuildinfo && mkdir -p dist/data && cp src/data/*.json src/data/*.jpg dist/data/",
     "dev": "ts-node src/main.ts",
     "start": "node dist/main.js",
     "lint": "eslint . --cache --cache-location .cache/eslint",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "test": "jest --passWithNoTests --maxWorkers=4",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --tsBuildInfoFile .cache/tsconfig.typecheck.tsbuildinfo",
     "test:types": "tsc -p tsconfig.test.json --noEmit --tsBuildInfoFile .cache/tsconfig.test.tsbuildinfo"
   },
   "dependencies": {
