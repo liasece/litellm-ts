@@ -139,8 +139,7 @@ export class StreamingCheckpointScheduler<T> {
 		this._write = options.write;
 		this._onError = options.onError ?? (() => undefined);
 		this._onDispose = options.onDispose;
-		this._baseIntervalMs =
-			options.intervalMs ?? resolveStreamingCheckpointIntervalMs(process.env[STREAMING_CHECKPOINT_INTERVAL_ENV]);
+		this._baseIntervalMs = options.intervalMs ?? resolveStreamingCheckpointIntervalMs(process.env[STREAMING_CHECKPOINT_INTERVAL_ENV]);
 		this._intervalMs = this._baseIntervalMs;
 		this._largeIntervalMs = Math.max(this._baseIntervalMs, LARGE_STREAMING_CHECKPOINT_INTERVAL_MS);
 	}

@@ -126,9 +126,7 @@ function nativeResponsesSse(options: {
 	const event = (type: string, payload: Record<string, unknown>): string =>
 		`event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`;
 	const model = options.model ?? "deepseek-v4-flash";
-	const chunks = [
-		event("response.created", { response: { id: options.id, object: "response", model, status: "in_progress" } }),
-	];
+	const chunks = [event("response.created", { response: { id: options.id, object: "response", model, status: "in_progress" } })];
 	if (options.reasoning !== undefined) {
 		chunks.push(
 			event("response.reasoning_summary_text.delta", {
@@ -206,7 +204,6 @@ function nativeResponsesVisionCallSse(options: {
 		"data: [DONE]\n\n",
 	].join("");
 }
-
 
 describe("Responses API contract matrix", () => {
 	beforeEach(() => {
@@ -334,10 +331,10 @@ describe("Responses API contract matrix", () => {
 			const response = await request(app)
 				.post("/v1/responses")
 				.send({
-				model: "minimax-latest-anthropic",
-				input: "Return OK",
-				stream: true,
-			})
+					model: "minimax-latest-anthropic",
+					input: "Return OK",
+					stream: true,
+				})
 				.expect(200);
 			const terminal = parseSseEvents(response.text).at(-1);
 			expect(terminal).toMatchObject({
@@ -356,104 +353,114 @@ describe("Responses API contract matrix", () => {
 			});
 		});
 
-		test.each([false, true])("CLIProxy builtin Responses preserves cache usage in client output and accounting (stream=%s)", async (stream) => {
-			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) => param === "builtin_capabilities" ? { web: { enabled: true, handler_model: "web-worker", max_iterations: 3 } } : {});
-			jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
-				status: "reserved",
-				requestId: "request-cliproxy-cache",
-				reserved: 1,
-				actual: null,
-			});
-			jest.spyOn(SpendTracker, "checkpointActiveRequest").mockResolvedValue(true);
-			const trackSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({
-				status: "committed",
-				requestId: "request-cliproxy-cache",
-				spend: 0,
-			});
-			const upstreamResponse = {
-				id: "resp_cliproxy_cache",
-				object: "response",
-				created_at: 1_700_000_100,
-				status: "completed",
-				model: "deepseek-v4.1-flash",
-				output: [
-					{
-						id: "msg_cache",
-						type: "message",
-						status: "completed",
-						role: "assistant",
-						content: [{ type: "output_text", text: "OK", annotations: [] }],
-					},
-				],
-				usage: {
-					input_tokens: 187969,
-					output_tokens: 932,
-					total_tokens: 188901,
-					input_tokens_details: { cached_tokens: 187392 },
-					output_tokens_details: { reasoning_tokens: 17 },
-				},
-			};
-			const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
-				const streaming = JSON.parse(String(init?.body ?? "{}")).stream === true;
-				if (!streaming) {
-					return new Response(JSON.stringify(upstreamResponse), {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					});
-				}
-				return new Response(
-					nativeResponsesSse({ id: "resp_cap_cache", text: "OK", model: "deepseek-v4.1-flash", usage: upstreamResponse.usage }),
-					{ status: 200, headers: { "content-type": "text/event-stream" } },
+		test.each([false, true])(
+			"CLIProxy builtin Responses preserves cache usage in client output and accounting (stream=%s)",
+			async (stream) => {
+				jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+					param === "builtin_capabilities" ? { web: { enabled: true, handler_model: "web-worker", max_iterations: 3 } } : {},
 				);
-			});
-			const nativeDeployment = {
-				model_name: "cliproxy-cached",
-				litellm_params: {
+				jest.spyOn(SpendTracker, "reserveSpend").mockResolvedValue({
+					status: "reserved",
+					requestId: "request-cliproxy-cache",
+					reserved: 1,
+					actual: null,
+				});
+				jest.spyOn(SpendTracker, "checkpointActiveRequest").mockResolvedValue(true);
+				const trackSpy = jest.spyOn(SpendTracker, "trackSpendLog").mockResolvedValue({
+					status: "committed",
+					requestId: "request-cliproxy-cache",
+					spend: 0,
+				});
+				const upstreamResponse = {
+					id: "resp_cliproxy_cache",
+					object: "response",
+					created_at: 1_700_000_100,
+					status: "completed",
 					model: "deepseek-v4.1-flash",
-					custom_llm_provider: "opencode-go",
-					input_cost_per_token: 1.5e-7,
-					output_cost_per_token: 6e-7,
-					cache_read_input_token_cost: 1.5e-8,
-				},
-				model_info: { id: "cliproxy-cache-deployment", supports_function_calling: true, enabled_builtin_capabilities: ["web"] },
-			};
-			const app = buildApp(buildDeploymentRouter([nativeDeployment]), true);
-			const response = await request(app)
-				.post("/v1/responses")
-				.send({ model: "cliproxy-cached", input: "Return OK.", store: false, stream: stream })
-				.expect(200);
-			const clientResponse = (stream ? parseSseEvents(response.text).at(-1)?.response : response.body) as Record<string, unknown>;
-			expect(clientResponse).toMatchObject({
-				usage: {
-					input_tokens: 187969,
-					output_tokens: 932,
-					total_tokens: 188901,
-					input_tokens_details: { cached_tokens: 187392 },
-					output_tokens_details: { reasoning_tokens: 17 },
-				},
-			});
-			expect(fetchSpy).toHaveBeenCalledTimes(1);
-			expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)).stream).toBe(stream);
-			expect(trackSpy).toHaveBeenCalledTimes(1);
-			const log = trackSpy.mock.calls[0]?.[1] as unknown as {
-			model: string;
-			custom_cost_per_token?: Record<string, number>;
-			usage?: Record<string, unknown>;
-		};
-			expect(log).toMatchObject({
-				prompt_tokens: 187969,
-				completion_tokens: 932,
-				cache_read_input_tokens: 187392,
-				metadata: { additional_usage_values: { cache_read_input_tokens: 187392 } },
-			});
-			const accountingResponse = { usage: log.usage } as unknown as import("../types/openai").ModelResponse;
-			SpendTracker.calculateAndSetCost(accountingResponse, log.model, log.custom_cost_per_token);
-			const expectedCost = 577 * 1.5e-7 + 915 * 6e-7 + 187392 * 1.5e-8;
-			expect(accountingResponse.usage?.cost).toBeCloseTo(expectedCost, 10);
-			if (!stream) {
-				expect((clientResponse.usage as Record<string, unknown>).cost).toBeCloseTo(expectedCost, 10);
-			}
-		});
+					output: [
+						{
+							id: "msg_cache",
+							type: "message",
+							status: "completed",
+							role: "assistant",
+							content: [{ type: "output_text", text: "OK", annotations: [] }],
+						},
+					],
+					usage: {
+						input_tokens: 187969,
+						output_tokens: 932,
+						total_tokens: 188901,
+						input_tokens_details: { cached_tokens: 187392 },
+						output_tokens_details: { reasoning_tokens: 17 },
+					},
+				};
+				const fetchSpy = jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+					const streaming = JSON.parse(String(init?.body ?? "{}")).stream === true;
+					if (!streaming) {
+						return new Response(JSON.stringify(upstreamResponse), {
+							status: 200,
+							headers: { "content-type": "application/json" },
+						});
+					}
+					return new Response(
+						nativeResponsesSse({
+							id: "resp_cap_cache",
+							text: "OK",
+							model: "deepseek-v4.1-flash",
+							usage: upstreamResponse.usage,
+						}),
+						{ status: 200, headers: { "content-type": "text/event-stream" } },
+					);
+				});
+				const nativeDeployment = {
+					model_name: "cliproxy-cached",
+					litellm_params: {
+						model: "deepseek-v4.1-flash",
+						custom_llm_provider: "opencode-go",
+						input_cost_per_token: 1.5e-7,
+						output_cost_per_token: 6e-7,
+						cache_read_input_token_cost: 1.5e-8,
+					},
+					model_info: { id: "cliproxy-cache-deployment", supports_function_calling: true, enabled_builtin_capabilities: ["web"] },
+				};
+				const app = buildApp(buildDeploymentRouter([nativeDeployment]), true);
+				const response = await request(app)
+					.post("/v1/responses")
+					.send({ model: "cliproxy-cached", input: "Return OK.", store: false, stream: stream })
+					.expect(200);
+				const clientResponse = (stream ? parseSseEvents(response.text).at(-1)?.response : response.body) as Record<string, unknown>;
+				expect(clientResponse).toMatchObject({
+					usage: {
+						input_tokens: 187969,
+						output_tokens: 932,
+						total_tokens: 188901,
+						input_tokens_details: { cached_tokens: 187392 },
+						output_tokens_details: { reasoning_tokens: 17 },
+					},
+				});
+				expect(fetchSpy).toHaveBeenCalledTimes(1);
+				expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)).stream).toBe(stream);
+				expect(trackSpy).toHaveBeenCalledTimes(1);
+				const log = trackSpy.mock.calls[0]?.[1] as unknown as {
+					model: string;
+					custom_cost_per_token?: Record<string, number>;
+					usage?: Record<string, unknown>;
+				};
+				expect(log).toMatchObject({
+					prompt_tokens: 187969,
+					completion_tokens: 932,
+					cache_read_input_tokens: 187392,
+					metadata: { additional_usage_values: { cache_read_input_tokens: 187392 } },
+				});
+				const accountingResponse = { usage: log.usage } as unknown as import("../types/openai").ModelResponse;
+				SpendTracker.calculateAndSetCost(accountingResponse, log.model, log.custom_cost_per_token);
+				const expectedCost = 577 * 1.5e-7 + 915 * 6e-7 + 187392 * 1.5e-8;
+				expect(accountingResponse.usage?.cost).toBeCloseTo(expectedCost, 10);
+				if (!stream) {
+					expect((clientResponse.usage as Record<string, unknown>).cost).toBeCloseTo(expectedCost, 10);
+				}
+			},
+		);
 
 		test("native Responses keeps the source image and its permanent reference together", async () => {
 			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
@@ -1026,8 +1033,6 @@ describe("Responses API contract matrix", () => {
 			});
 		});
 
-
-
 		test("streaming builtin capability keeps upstream details in the spend log", async () => {
 			jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
 				param === "builtin_capabilities"
@@ -1126,12 +1131,12 @@ describe("Responses API contract matrix", () => {
 								},
 							],
 							usage: {
-					input_tokens: 8,
-					output_tokens: 4,
-					total_tokens: 12,
-					input_tokens_details: { cached_tokens: 6 },
-					output_tokens_details: { reasoning_tokens: 2 },
-				},
+								input_tokens: 8,
+								output_tokens: 4,
+								total_tokens: 12,
+								input_tokens_details: { cached_tokens: 6 },
+								output_tokens_details: { reasoning_tokens: 2 },
+							},
 						}),
 						{ status: 200, headers: { "content-type": "application/json" } },
 					),
@@ -1154,12 +1159,12 @@ describe("Responses API contract matrix", () => {
 								},
 							],
 							usage: {
-					input_tokens: 12,
-					output_tokens: 5,
-					total_tokens: 17,
-					input_tokens_details: { cached_tokens: 10 },
-					output_tokens_details: { reasoning_tokens: 3 },
-				},
+								input_tokens: 12,
+								output_tokens: 5,
+								total_tokens: 17,
+								input_tokens_details: { cached_tokens: 10 },
+								output_tokens_details: { reasoning_tokens: 3 },
+							},
 						}),
 						{ status: 200, headers: { "content-type": "application/json" } },
 					),
@@ -1225,8 +1230,7 @@ describe("Responses API contract matrix", () => {
 			const trackSpy = jest
 				.spyOn(SpendTracker, "trackSpendLog")
 				.mockResolvedValue({ status: "committed", requestId: "request-vision-worker", spend: 0 });
-			const imageBase64 =
-				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcLkAAAAASUVORK5CYII=";
+			const imageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcLkAAAAASUVORK5CYII=";
 			const imageRef = `sha256:${createHash("sha256").update(Buffer.from(imageBase64, "base64")).digest("hex")}`;
 			const fetchSpy = jest
 				.spyOn(global, "fetch")
@@ -1360,9 +1364,7 @@ describe("Responses API contract matrix", () => {
 			expect((handlerRow?.["response"] as Record<string, unknown>)["_spendInfo"]).toBeUndefined();
 
 			const continuationRow = loggedRows.find(
-				(row) =>
-					row["metadata"]?.["internal_call"] === true &&
-					row["metadata"]?.["builtin_capability_stage"] === "continuation",
+				(row) => row["metadata"]?.["internal_call"] === true && row["metadata"]?.["builtin_capability_stage"] === "continuation",
 			);
 			expect(continuationRow).toBeDefined();
 			const continuationBody = (continuationRow?.["proxy_server_request"] as Record<string, unknown>)?.["body"] as Record<
@@ -1405,8 +1407,7 @@ describe("Responses API contract matrix", () => {
 			const trackSpy = jest
 				.spyOn(SpendTracker, "trackSpendLog")
 				.mockResolvedValue({ status: "committed", requestId: "request-vision-stream", spend: 0 });
-			const imageBase64 =
-				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcLkAAAAASUVORK5CYII=";
+			const imageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcLkAAAAASUVORK5CYII=";
 			const imageRef = `sha256:${createHash("sha256").update(Buffer.from(imageBase64, "base64")).digest("hex")}`;
 			const parentUsage = { input_tokens: 9, output_tokens: 3, total_tokens: 12 };
 			const finalUsage = { input_tokens: 21, output_tokens: 4, total_tokens: 25 };
@@ -1493,9 +1494,7 @@ describe("Responses API contract matrix", () => {
 			expect(combined[0]?.["continuation"]).toMatchObject({ status: "success", request_id: expect.any(String) });
 
 			const continuationRow = loggedRows.find(
-				(row) =>
-					row["metadata"]?.["internal_call"] === true &&
-					row["metadata"]?.["builtin_capability_stage"] === "continuation",
+				(row) => row["metadata"]?.["internal_call"] === true && row["metadata"]?.["builtin_capability_stage"] === "continuation",
 			);
 			expect(continuationRow).toBeDefined();
 			const continuationBody = (continuationRow?.["proxy_server_request"] as Record<string, unknown>)?.["body"] as Record<
@@ -1514,51 +1513,50 @@ describe("Responses API contract matrix", () => {
 			expect((continuationRow?.["response"] as Record<string, unknown>)["choices"]).toBeUndefined();
 		});
 
-
-	test("非流式响应不会为纯空白的 reasoning 生成 output item", async () => {
-		// 生产实测：上游有时只产出 1 个 reasoning token（一个空格），不该变成空的思考区。
-		const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					id: "chatcmpl-blank-reasoning",
-					object: "chat.completion",
-					created: 1_700_000_900,
-					model: "provider-model",
-					choices: [
-						{
-							index: 0,
-							finish_reason: "tool_calls",
-							message: {
-								role: "assistant",
-								content: null,
-								reasoning_content: " ",
-								tool_calls: [
-									{ id: "call_1", type: "function", function: { name: "get_weather", arguments: '{"city":"SF"}' } },
-								],
+		test("非流式响应不会为纯空白的 reasoning 生成 output item", async () => {
+			// 生产实测：上游有时只产出 1 个 reasoning token（一个空格），不该变成空的思考区。
+			const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: "chatcmpl-blank-reasoning",
+						object: "chat.completion",
+						created: 1_700_000_900,
+						model: "provider-model",
+						choices: [
+							{
+								index: 0,
+								finish_reason: "tool_calls",
+								message: {
+									role: "assistant",
+									content: null,
+									reasoning_content: " ",
+									tool_calls: [
+										{ id: "call_1", type: "function", function: { name: "get_weather", arguments: '{"city":"SF"}' } },
+									],
+								},
 							},
+						],
+						usage: {
+							prompt_tokens: 5,
+							completion_tokens: 3,
+							total_tokens: 8,
+							completion_tokens_details: { reasoning_tokens: 1 },
 						},
-					],
-					usage: {
-						prompt_tokens: 5,
-						completion_tokens: 3,
-						total_tokens: 8,
-						completion_tokens_details: { reasoning_tokens: 1 },
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			),
-		);
-		const app = buildApp(buildDeploymentRouter([deployment("chat-deployment", "https://example.com/v1")]));
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+			const app = buildApp(buildDeploymentRouter([deployment("chat-deployment", "https://example.com/v1")]));
 
-		const response = await request(app)
-			.post("/v1/responses")
-			.send({ model: "chat-deployment", input: "weather?", store: false })
-			.expect(200);
+			const response = await request(app)
+				.post("/v1/responses")
+				.send({ model: "chat-deployment", input: "weather?", store: false })
+				.expect(200);
 
-		expect(fetchSpy).toHaveBeenCalled();
-		expect(response.body.output.some((item: { type: string }) => item.type === "reasoning")).toBe(false);
-		expect(response.body.output.some((item: { type: string }) => item.type === "function_call")).toBe(true);
-	});
+			expect(fetchSpy).toHaveBeenCalled();
+			expect(response.body.output.some((item: { type: string }) => item.type === "reasoning")).toBe(false);
+			expect(response.body.output.some((item: { type: string }) => item.type === "function_call")).toBe(true);
+		});
 
 		test("DeepSeek native failure falls back to a Chat deployment inside Router", async () => {
 			const fetchSpy = jest
@@ -2490,12 +2488,12 @@ describe("Responses API contract matrix", () => {
 				yield { type: "response.created", response: { id: "resp-abort", status: "in_progress", output: [] } };
 				yield { type: "response.output_text.delta", item_id: "msg-abort", output_index: 0, content_index: 0, delta: "first" };
 			} else {
-			yield {
-				id: "chatcmpl-abort",
-				model: "provider-model",
-				choices: [{ index: 0, delta: { content: "first" }, finish_reason: null }],
+				yield {
+					id: "chatcmpl-abort",
+					model: "provider-model",
+					choices: [{ index: 0, delta: { content: "first" }, finish_reason: null }],
 					usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
-			};
+				};
 			}
 			await new Promise<never>(() => undefined);
 		}
@@ -2529,8 +2527,8 @@ describe("Responses API contract matrix", () => {
 						response.on("data", (chunk: Buffer) => {
 							received += chunk.toString();
 							if (received.includes("first")) {
-							response.destroy();
-							resolve();
+								response.destroy();
+								resolve();
 							}
 						});
 					},
@@ -2699,52 +2697,54 @@ describe("Responses API contract matrix", () => {
 	);
 
 	test("built-in image creation streams an image_generation_call without failing the terminal event", async () => {
-		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) => param === "builtin_capabilities"
-			? {
-				image_generation: {
-					enabled: true,
-					always_inject: true,
-					handler_model: "image-worker",
-					fallback_models: [],
-					max_iterations: 3,
-				},
-			}
-			: {});
+		jest.spyOn(dbConfigProvider, "getParam").mockImplementation(async (param) =>
+			param === "builtin_capabilities"
+				? {
+						image_generation: {
+							enabled: true,
+							always_inject: true,
+							handler_model: "image-worker",
+							fallback_models: [],
+							max_iterations: 3,
+						},
+					}
+				: {},
+		);
 		const completion = jest
 			.fn()
 			.mockResolvedValueOnce({
-			id: "chatcmpl-image-call-stream",
-			created: 1,
-			model: "responses-model",
-			choices: [
-				{
-					index: 0,
-					finish_reason: "tool_calls",
-					message: {
-						role: "assistant",
-						content: null,
-						tool_calls: [
-							{
-								id: "call-image-create-stream",
-								type: "function",
-								function: {
-									name: "litellm__image_create",
-									arguments: '{"prompt":"A blue paper crane"}',
+				id: "chatcmpl-image-call-stream",
+				created: 1,
+				model: "responses-model",
+				choices: [
+					{
+						index: 0,
+						finish_reason: "tool_calls",
+						message: {
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: "call-image-create-stream",
+									type: "function",
+									function: {
+										name: "litellm__image_create",
+										arguments: '{"prompt":"A blue paper crane"}',
+									},
 								},
-							},
-						],
+							],
+						},
 					},
-				},
-			],
-			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-		})
+				],
+				usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+			})
 			.mockResolvedValueOnce({
-			id: "chatcmpl-image-final-stream",
-			created: 2,
-			model: "responses-model",
-			choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Created." } }],
-			usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
-		});
+				id: "chatcmpl-image-final-stream",
+				created: 2,
+				model: "responses-model",
+				choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Created." } }],
+				usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+			});
 		const router = buildRouter(completion);
 		router.getDeployments = () => [
 			{
@@ -2776,7 +2776,9 @@ describe("Responses API contract matrix", () => {
 			),
 		).toHaveLength(1);
 		const completed = terminal[0]?.response as Record<string, unknown>;
-		expect(completed["output"]).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image_generation_call", status: "completed", result: "AA==" })]));
+		expect(completed["output"]).toEqual(
+			expect.arrayContaining([expect.objectContaining({ type: "image_generation_call", status: "completed", result: "AA==" })]),
+		);
 		expect(JSON.stringify(events)).not.toContain("litellm__image_create");
 	});
 	test("built-in image creation is returned as an official image_generation_call item", async () => {
@@ -2880,7 +2882,10 @@ describe("Responses API contract matrix", () => {
 			await new Promise((resolve) => setTimeout(resolve, 25));
 			yield { type: "response.completed", response: terminalResponse };
 		}
-		const app = buildApp(buildRouter(jest.fn().mockResolvedValue({ _stream: true, _responseProtocol: "responses", stream: nativeResponsesWithGap() })), true);
+		const app = buildApp(
+			buildRouter(jest.fn().mockResolvedValue({ _stream: true, _responseProtocol: "responses", stream: nativeResponsesWithGap() })),
+			true,
+		);
 		await request(app).post("/v1/responses").send({ model: "responses-model", input: "hello", stream: true }).expect(200);
 		const spendLog = trackSpy.mock.calls[0]?.[1] as unknown as {
 			startTime: string;

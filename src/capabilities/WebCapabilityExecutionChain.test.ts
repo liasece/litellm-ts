@@ -57,9 +57,7 @@ describe("web 执行链：直连执行者", () => {
 	it("链上只有 DeepSeek 直连执行者时，不调用任何模型就返回真实搜索结果", async () => {
 		const records = mockDeepSeek(() => ({
 			status: 200,
-			body: searchResponse([
-				{ title: "Docs", url: "https://example.com/docs", summary: "API limits", date: "2026-10-01" },
-			]),
+			body: searchResponse([{ title: "Docs", url: "https://example.com/docs", summary: "API limits", date: "2026-10-01" }]),
 		}));
 		const complete = jest.fn();
 

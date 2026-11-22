@@ -24,9 +24,7 @@ describe("effective model capabilities", () => {
 
 	it("projects built-in vision into model group metadata", () => {
 		const response = buildModelGroupInfoResponse([deployment], {}, capabilities);
-		expect(response.data).toEqual([
-			expect.objectContaining({ model_group: "text-with-vision", supports_vision: true }),
-		]);
+		expect(response.data).toEqual([expect.objectContaining({ model_group: "text-with-vision", supports_vision: true })]);
 	});
 });
 

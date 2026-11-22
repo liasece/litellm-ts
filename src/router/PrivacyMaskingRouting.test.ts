@@ -142,9 +142,7 @@ describe("路由链里的脱敏调度", () => {
 		mockFetch.mockResolvedValueOnce(okBody());
 		const settings = parsePrivacyMaskingSettings({ providers: ["deepseek"], action: "warn" });
 		const { result } = withPrivacy(settings, () =>
-			runWithAppliedFeatures(() =>
-				makeRouter().completion("primary-model", [{ role: "user", content: `mail ${EMAIL}` }]),
-			),
+			runWithAppliedFeatures(() => makeRouter().completion("primary-model", [{ role: "user", content: `mail ${EMAIL}` }])),
 		);
 		await result;
 		expect(runWithAppliedFeatures(() => snapshotAppliedFeatures())).toBeUndefined();

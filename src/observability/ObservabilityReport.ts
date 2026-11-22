@@ -211,14 +211,8 @@ function groupHistogram(
  * @param windowMs - 窗口长度
  * @param predicate - 序列过滤
  */
-function sumSeconds(
-	histogram: HistogramType,
-	windowMs: number,
-	predicate?: (labels: MetricLabels) => boolean,
-): number {
-	return mergeSnapshots(
-		histogram.windowSnapshot(windowMs).filter((item) => predicate === undefined || predicate(item.labels)),
-	).sum;
+function sumSeconds(histogram: HistogramType, windowMs: number, predicate?: (labels: MetricLabels) => boolean): number {
+	return mergeSnapshots(histogram.windowSnapshot(windowMs).filter((item) => predicate === undefined || predicate(item.labels))).sum;
 }
 
 /**
@@ -338,10 +332,7 @@ function summarizeLlm(windowMs: number) {
 			p50_ms: row.p50_ms,
 			p95_ms: row.p95_ms,
 			p99_ms: row.p99_ms,
-			errors: llmRequestsTotal.sumWhereInWindow(
-				windowMs,
-				(labels) => labels["model"] === model && labels["status"] === "error",
-			),
+			errors: llmRequestsTotal.sumWhereInWindow(windowMs, (labels) => labels["model"] === model && labels["status"] === "error"),
 		};
 	});
 	return {
@@ -364,7 +355,9 @@ function summarizeLlm(windowMs: number) {
 			output_tps: streamSeconds > 0 ? Math.round((completionTokens / streamSeconds) * 10) / 10 : undefined,
 		},
 		by_model: modelRows,
-		by_provider: Array.from(providerRows.values()).sort((left, right) => right.attempts - left.attempts).slice(0, MAX_GROUPS),
+		by_provider: Array.from(providerRows.values())
+			.sort((left, right) => right.attempts - left.attempts)
+			.slice(0, MAX_GROUPS),
 	};
 }
 

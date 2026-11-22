@@ -134,7 +134,10 @@ export interface AppliedPrice {
 /** 一次请求四个计费字段的单价快照；缺字段表示该字段没有参与计费。 */
 export type AppliedPrices = Readonly<
 	Partial<
-		Record<"input_cost_per_token" | "output_cost_per_token" | "cache_read_input_token_cost" | "cache_creation_input_token_cost", AppliedPrice>
+		Record<
+			"input_cost_per_token" | "output_cost_per_token" | "cache_read_input_token_cost" | "cache_creation_input_token_cost",
+			AppliedPrice
+		>
 	>
 >;
 
@@ -195,7 +198,9 @@ function _stripRouterAndRegionPrefix(model: string): string[] {
 export function modelPriceKeys(model: string, source?: string): string[] {
 	const prefix = model.includes("/") ? model.split("/", 1)[0] : undefined;
 	const provider = isSubscriptionProvider(source) ? source : source === undefined && isSubscriptionProvider(prefix) ? prefix : undefined;
-	if (!provider) {return _stripRouterAndRegionPrefix(model);}
+	if (!provider) {
+		return _stripRouterAndRegionPrefix(model);
+	}
 	const upstream = model.startsWith(provider + "/") ? model.slice(provider.length + 1) : model;
 	const scoped = provider + "/" + upstream;
 	const historical = "cliproxy/" + (provider === "commandcode" || provider === "opencode-go" ? scoped : upstream);
@@ -212,7 +217,11 @@ export function modelPriceKeys(model: string, source?: string): string[] {
  * @param source
  * @returns 匹配的价格，找不到时返回 undefined
  */
-function lookupCostMapEntry(model: string, modelCostMap?: Record<string, ModelCostMapEntry>, source?: string): ModelCostMapEntry | undefined {
+function lookupCostMapEntry(
+	model: string,
+	modelCostMap?: Record<string, ModelCostMapEntry>,
+	source?: string,
+): ModelCostMapEntry | undefined {
 	const candidates = modelPriceKeys(model, source);
 	if (modelCostMap) {
 		for (const candidate of candidates) {
@@ -470,7 +479,7 @@ export function costPerToken(
 				skipProviderTokenCounting?: boolean;
 				/** 部署级 per-token 价格（含可选峰谷配置） */
 				provider?: string;
-		customCostPerToken?: CustomCostPerToken;
+				customCostPerToken?: CustomCostPerToken;
 				/** 服务等级，决定价格表字段后缀 */
 				service_tier?: ServiceTier;
 				/** 模型价格表快照 */

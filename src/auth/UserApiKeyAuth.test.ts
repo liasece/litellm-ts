@@ -237,9 +237,10 @@ describe("UserApiKeyAuth", () => {
 			expect(Math.floor(renewedExpiry.getTime() / 1000) - nowSeconds).toBe(7 * 86400);
 			expect(cookie).toHaveBeenCalledTimes(2);
 			const tokenCall = cookie.mock.calls.find((call: unknown[]) => call[0] === "token")!;
-			const renewedPayload = JSON.parse(
-				Buffer.from(String(tokenCall[1]).split(".")[1]!, "base64url").toString("utf8"),
-			) as Record<string, unknown>;
+			const renewedPayload = JSON.parse(Buffer.from(String(tokenCall[1]).split(".")[1]!, "base64url").toString("utf8")) as Record<
+				string,
+				unknown
+			>;
 			expect(renewedPayload.jti).toBe("session-jti");
 			expect((renewedPayload.exp as number) - (renewedPayload.iat as number)).toBe(7 * 86400);
 			expect(cookie).toHaveBeenCalledWith("litellm_csrf_token", "csrf-value", expect.objectContaining({ httpOnly: false }));
@@ -269,11 +270,9 @@ describe("UserApiKeyAuth", () => {
 			});
 			const cookie = jestMock.fn();
 
-			const error = await runMiddleware(
-				middleware,
-				mkReq({ cookie: "token=header.payload.signature" }),
-				{ cookie: cookie } as unknown as Response,
-			);
+			const error = await runMiddleware(middleware, mkReq({ cookie: "token=header.payload.signature" }), {
+				cookie: cookie,
+			} as unknown as Response);
 
 			expect(error).toBeUndefined();
 			expect(extendVerificationTokenExpiry).not.toHaveBeenCalled();

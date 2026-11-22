@@ -10,11 +10,7 @@
  * `new StreamingCheckpointScheduler(bindLiveCheckpoint(...))`。
  */
 
-import {
-	publishLiveResponse,
-	registerLiveResponse,
-	unregisterLiveResponse,
-} from "./LiveResponseRegistry";
+import { publishLiveResponse, registerLiveResponse, unregisterLiveResponse } from "./LiveResponseRegistry";
 import type { StreamingCheckpointWriteOptions } from "./StreamingCheckpointScheduler";
 
 /**

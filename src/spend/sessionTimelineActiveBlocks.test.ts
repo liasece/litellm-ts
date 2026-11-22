@@ -36,7 +36,10 @@ function createDb(activeRows: readonly Record<string, unknown>[], blockRows: rea
 describe("readInProgressSessionRows", () => {
 	it("把在途行的块引用组装回请求体后再分类，进行中与结算后的展示一致", async () => {
 		const tools = [{ name: "litellm__image_create", description: "生成图片", input_schema: { type: "object" } }];
-		const system = [{ type: "text", text: "You are Claude Code." }, { type: "text", text: "工具说明" }];
+		const system = [
+			{ type: "text", text: "You are Claude Code." },
+			{ type: "text", text: "工具说明" },
+		];
 		const body = {
 			model: "claude",
 			system: system,

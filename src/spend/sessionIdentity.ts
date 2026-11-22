@@ -21,8 +21,7 @@ export const CLAUDE_CODE_USER_ID_PATTERN =
 export const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** `<label>-<uuid>` / `<label>_<uuid>`：客户端声明的带前缀会话 ID。 */
-const PREFIXED_SESSION_UUID_PATTERN =
-	/^[a-z][a-z0-9]{0,31}[-_]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const PREFIXED_SESSION_UUID_PATTERN = /^[a-z][a-z0-9]{0,31}[-_]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 /** 会话 ID 请求头：Harness 用下划线写法，Codex 用连字符写法。 */
 const SESSION_ID_HEADERS = ["session_id", "session-id"] as const;
@@ -90,8 +89,7 @@ export function matchClaudeCodeSessionUserId(value: unknown): string | null {
 }
 
 /** 部分客户端把会话信息塞进 user_id，形如 `{"session_id":"<uuid>"}`。 */
-const EMBEDDED_SESSION_ID_PATTERN =
-	/"session_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i;
+const EMBEDDED_SESSION_ID_PATTERN = /"session_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i;
 
 /**
  * `user_id` 里内嵌的会话 UUID。

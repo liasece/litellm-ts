@@ -36,9 +36,7 @@ export function buildThinkingDowngradedResponsesBody(callType: unknown, body: un
 	}
 	const reasoning = record["reasoning"];
 	const reasoningRecord =
-		typeof reasoning === "object" && reasoning !== null && !Array.isArray(reasoning)
-			? (reasoning as Record<string, unknown>)
-			: {};
+		typeof reasoning === "object" && reasoning !== null && !Array.isArray(reasoning) ? (reasoning as Record<string, unknown>) : {};
 	if (reasoningRecord["effort"] === "none") {
 		return undefined;
 	}

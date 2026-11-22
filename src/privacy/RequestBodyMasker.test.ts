@@ -44,7 +44,9 @@ describe("maskRequestBody", () => {
 				{
 					role: "assistant",
 					content: null,
-					tool_calls: [{ id: "call_1", type: "function", function: { name: "shell", arguments: JSON.stringify({ key: API_KEY }) } }],
+					tool_calls: [
+						{ id: "call_1", type: "function", function: { name: "shell", arguments: JSON.stringify({ key: API_KEY }) } },
+					],
 				},
 				{ role: "tool", content: `output ${EMAIL}` },
 			],
@@ -142,9 +144,7 @@ describe("maskRequestBody", () => {
 			messages: [
 				{
 					role: "assistant",
-					content: [
-						{ type: "tool_use", id: "tu_1", name: "read", input: { path: "/Users/jansen/a.ts", note: EMAIL } },
-					],
+					content: [{ type: "tool_use", id: "tu_1", name: "read", input: { path: "/Users/jansen/a.ts", note: EMAIL } }],
 				},
 				{
 					role: "user",

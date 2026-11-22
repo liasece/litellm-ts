@@ -155,7 +155,9 @@ function bodyOf(plan: SubscriptionUpstreamPlan): Record<string, unknown> {
  * @returns 对象数组
  */
 function records(value: unknown): Record<string, unknown>[] {
-	return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object" && !Array.isArray(item)) : [];
+	return Array.isArray(value)
+		? value.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object" && !Array.isArray(item))
+		: [];
 }
 
 /**
@@ -426,10 +428,7 @@ describe("createAntigravityProvider", () => {
 			}),
 		);
 		const tools = requestOf(plan)["tools"] as Record<string, unknown>[];
-		const parameters = (tools[0]?.["functionDeclarations"] as Record<string, unknown>[])[0]?.["parameters"] as Record<
-			string,
-			unknown
-		>;
+		const parameters = (tools[0]?.["functionDeclarations"] as Record<string, unknown>[])[0]?.["parameters"] as Record<string, unknown>;
 		const properties = parameters["properties"] as Record<string, Record<string, unknown>>;
 
 		expect(properties["reason"]).toMatchObject({ type: "string" });
@@ -557,12 +556,10 @@ describe("createAntigravityProvider", () => {
 		expect(body["request"]).toEqual({ contents: [{ role: "user", parts: [{ text: "hi" }] }] });
 
 		expect(provider.transformUpstreamBody?.(context, { totalTokens: 42 })).toEqual({ input_tokens: 42 });
-		expect(
-			provider.transformUpstreamBody?.(
-				{ ...context, inbound: "chat" },
-				{ totalTokens: 42 },
-			),
-		).toEqual({ input_tokens: 42, total_tokens: 42 });
+		expect(provider.transformUpstreamBody?.({ ...context, inbound: "chat" }, { totalTokens: 42 })).toEqual({
+			input_tokens: 42,
+			total_tokens: 42,
+		});
 	});
 
 	it("上一跳响应与事件都拆掉 response 信封", async () => {

@@ -88,7 +88,10 @@ describe("search tools dashboard endpoints", () => {
 	});
 
 	it("rejects invalid search tool payloads with 400 instead of 500", async () => {
-		await request(makeApp(makeCountDb([]), true)).post("/search_tools").send({ search_tool: {} }).expect(400);
+		await request(makeApp(makeCountDb([]), true))
+			.post("/search_tools")
+			.send({ search_tool: {} })
+			.expect(400);
 	});
 });
 

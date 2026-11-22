@@ -24,9 +24,7 @@ function selectChain(rows: readonly unknown[]) {
 function createDb(activeRow: Record<string, unknown>, blockRows: readonly Record<string, unknown>[]) {
 	return {
 		select: jest.fn(() => ({
-			from: jest.fn((table: unknown) =>
-				table === liteLLM_ActiveRequests ? selectChain([activeRow]) : selectChain(blockRows),
-			),
+			from: jest.fn((table: unknown) => (table === liteLLM_ActiveRequests ? selectChain([activeRow]) : selectChain(blockRows))),
 		})),
 	};
 }
@@ -58,7 +56,10 @@ describe("buildActiveRequestDetail", () => {
 				proxy_server_request: { url: "/v1/responses", method: "POST", headers: {}, body: { model: "gpt" } },
 				metadata: {
 					status: "in_progress",
-					streaming_execution: { response: { text: "来自数据库" }, usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+					streaming_execution: {
+						response: { text: "来自数据库" },
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					},
 				},
 				request_duration_ms: 10,
 			},
@@ -80,7 +81,12 @@ describe("buildActiveRequestDetail", () => {
 			{ role: "user", content: [{ type: "text", text: "V".repeat(20_000) }] },
 			{ role: "assistant", content: [{ type: "text", text: "收到" }] },
 		];
-		const encoded = encodeActiveRequestPayload({ url: "/v1/messages", method: "POST", headers: {}, body: { model: "claude", messages } });
+		const encoded = encodeActiveRequestPayload({
+			url: "/v1/messages",
+			method: "POST",
+			headers: {},
+			body: { model: "claude", messages },
+		});
 		const blockRows = encoded.blocks.map((block) => ({
 			blockId: block.blockId,
 			payload: block.payload,
@@ -167,13 +173,9 @@ describe("buildActiveRequestDetail", () => {
 		const proxyServerRequest = detail?.["proxy_server_request"] as Record<string, unknown>;
 
 		expect((proxyServerRequest["body"] as Record<string, unknown>)["messages"]).toEqual(body.messages);
-		expect((proxyServerRequest["upstream_request"] as Record<string, unknown>)["url"]).toBe(
-			"https://api.example.com/v1/messages",
-		);
+		expect((proxyServerRequest["upstream_request"] as Record<string, unknown>)["url"]).toBe("https://api.example.com/v1/messages");
 		expect(
-			((proxyServerRequest["upstream_request"] as Record<string, unknown>)["headers"] as Record<string, unknown>)[
-				"Authorization"
-			],
+			((proxyServerRequest["upstream_request"] as Record<string, unknown>)["headers"] as Record<string, unknown>)["Authorization"],
 		).toBe("[REDACTED]");
 	});
 });

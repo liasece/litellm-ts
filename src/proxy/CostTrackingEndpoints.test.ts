@@ -97,7 +97,9 @@ describe("cost discount config endpoint", () => {
 		expect(patched.body).toEqual({ values: { "codex-subscription": 0.25 } });
 		expect(mockDb.stored()).toEqual({ cache: true, cost_discount_config: { "codex-subscription": 0.25 } });
 
-		await request(app).get("/config/cost_discount_config").expect(200, { values: { "codex-subscription": 0.25 } });
+		await request(app)
+			.get("/config/cost_discount_config")
+			.expect(200, { values: { "codex-subscription": 0.25 } });
 	});
 
 	it("rejects invalid provider and range with a 400 that names the problem", async () => {
@@ -138,7 +140,10 @@ describe("cost margin config endpoint", () => {
 
 	it("rejects negative fixed amounts so billed amounts cannot silently shrink", async () => {
 		const mockDb = makeDb(null);
-		await request(makeApp(mockDb)).patch("/config/cost_margin_config").send({ "codex-subscription": { fixed_amount: -0.01 } }).expect(400);
+		await request(makeApp(mockDb))
+			.patch("/config/cost_margin_config")
+			.send({ "codex-subscription": { fixed_amount: -0.01 } })
+			.expect(400);
 		expect(mockDb.stored()).toBeNull();
 	});
 });

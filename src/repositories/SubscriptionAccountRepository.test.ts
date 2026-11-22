@@ -34,7 +34,10 @@ describe("SubscriptionAccountRepository", () => {
 	});
 
 	it("list 将数据库行映射为账号行，异常 payload 退化为空对象", async () => {
-		const rows = [row(), row({ account_id: "account-2", account_key: "codex-b.json", payload: "broken", trashed_at: new Date(1_700_000_000_000) })];
+		const rows = [
+			row(),
+			row({ account_id: "account-2", account_key: "codex-b.json", payload: "broken", trashed_at: new Date(1_700_000_000_000) }),
+		];
 		const db = { select: jest.fn().mockReturnValue({ from: jest.fn().mockResolvedValue(rows) }) };
 		const repository = new SubscriptionAccountRepository(db as never);
 
@@ -58,7 +61,10 @@ describe("SubscriptionAccountRepository", () => {
 	});
 
 	it("update 刷新 updated_at 并返回更新后的行；零行返回 undefined", async () => {
-		const returning = jest.fn().mockResolvedValueOnce([row({ trashed_at: new Date(1_700_000_000_000) })]).mockResolvedValueOnce([]);
+		const returning = jest
+			.fn()
+			.mockResolvedValueOnce([row({ trashed_at: new Date(1_700_000_000_000) })])
+			.mockResolvedValueOnce([]);
 		const set = jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ returning }) });
 		const db = { update: jest.fn().mockReturnValue({ set }) };
 		const repository = new SubscriptionAccountRepository(db as never);
@@ -66,7 +72,9 @@ describe("SubscriptionAccountRepository", () => {
 		await expect(repository.update("account-1", { trashedAt: new Date(1_700_000_000_000) })).resolves.toMatchObject({
 			trashedAt: new Date(1_700_000_000_000),
 		});
-		expect(set).toHaveBeenCalledWith(expect.objectContaining({ trashed_at: new Date(1_700_000_000_000), updated_at: expect.any(Date) }));
+		expect(set).toHaveBeenCalledWith(
+			expect.objectContaining({ trashed_at: new Date(1_700_000_000_000), updated_at: expect.any(Date) }),
+		);
 		await expect(repository.update("missing", { payload: {} })).resolves.toBeUndefined();
 	});
 

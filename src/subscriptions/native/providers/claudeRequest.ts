@@ -31,8 +31,7 @@ export const CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.280 (external, cli)";
 export const CLAUDE_CODE_CLI_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /** Claude Code 2.1.280 的 Fable 系列附加 system 块。 */
-const CLAUDE_CODE_FABLE_REPORTING_OUTCOMES =
-	`# Reporting outcomes
+const CLAUDE_CODE_FABLE_REPORTING_OUTCOMES = `# Reporting outcomes
 
 Report what actually happened, not what you intended. When you say something is done, sent, saved, fixed, or verified, that claim must rest on a result you observed in this session — tool output, the file as it now reads, the page as it now loads — not on what the step should have produced. If you did not check, say you did not check. If any step failed, was skipped, or came back different from what you expected, say so in the first sentence of your report, before anything else, even when the rest of the work succeeded. Never quietly work around a failure in a way that makes it look resolved; a problem the user can see is recoverable, one your summary hides is not. When you stop before the task is complete, your first line says so plainly and names what is left. Do not describe partial work as done, and do not let a summary read as more certain than the evidence behind it.`;
 
@@ -257,7 +256,8 @@ export function claudeRequestHeaders(input: ClaudeHeaderInput): Record<string, s
 		"Content-Type": "application/json",
 		Accept: input.context.stream ? "text/event-stream" : "application/json",
 		Authorization: `Bearer ${input.credential}`,
-		"anthropic-version": headerValue(input.context.headers, "anthropic-version") ?? settings.anthropicVersion ?? CLAUDE_ANTHROPIC_VERSION,
+		"anthropic-version":
+			headerValue(input.context.headers, "anthropic-version") ?? settings.anthropicVersion ?? CLAUDE_ANTHROPIC_VERSION,
 		"user-agent": settings.userAgent?.trim() || CLAUDE_CODE_USER_AGENT,
 		"x-app": "cli",
 		"anthropic-dangerous-direct-browser-access": "true",
@@ -584,7 +584,13 @@ export function buildClaudeCompactionResponse(body: Record<string, unknown>, mod
 		id: `cmp_${randomUUID().replace(/-/g, "")}`,
 		created_at: Math.floor(Date.now() / 1000),
 		model: model,
-		output: [{ type: "compaction", id: `cmp_ag_compact_${randomUUID().replace(/-/g, "")}`, encrypted_content: sealCompactionCapsule(summary, model) }],
+		output: [
+			{
+				type: "compaction",
+				id: `cmp_ag_compact_${randomUUID().replace(/-/g, "")}`,
+				encrypted_content: sealCompactionCapsule(summary, model),
+			},
+		],
 		usage: {
 			input_tokens: inputTokens,
 			output_tokens: outputTokens,
@@ -842,7 +848,11 @@ function toolChoiceForcesToolUse(body: Record<string, unknown>): boolean {
  */
 function applyClaudeIdentityMetadata(
 	body: Record<string, unknown>,
-	input: { readonly context: SubscriptionRequestContext; readonly account: SubscriptionAccount; readonly settings: ClaudeRequestSettings },
+	input: {
+		readonly context: SubscriptionRequestContext;
+		readonly account: SubscriptionAccount;
+		readonly settings: ClaudeRequestSettings;
+	},
 ): void {
 	const metadata = recordOf(body["metadata"]) ?? {};
 	const existing = typeof metadata["user_id"] === "string" ? metadata["user_id"] : undefined;
@@ -1442,9 +1452,7 @@ function isHaiku55(model: string): boolean {
  * @param model - 模型
  */
 function isFable51(model: string): boolean {
-	return (
-		model.includes("fable-5-1") || model.includes("fable-5.1") || model.includes("mythos-5-1") || model.includes("mythos-5.1")
-	);
+	return model.includes("fable-5-1") || model.includes("fable-5.1") || model.includes("mythos-5-1") || model.includes("mythos-5.1");
 }
 
 /**
@@ -1670,7 +1678,10 @@ function appendCompactionInput(
 			}
 		}
 		if (flattenTools) {
-			messages.push({ role: "assistant", content: [{ type: "text", text: `Tool call ${name} (${callId}): ${JSON.stringify(input)}` }] });
+			messages.push({
+				role: "assistant",
+				content: [{ type: "text", text: `Tool call ${name} (${callId}): ${JSON.stringify(input)}` }],
+			});
 			return;
 		}
 		messages.push({ role: "assistant", content: [{ type: "tool_use", id: callId, name: name, input: input }] });
@@ -1737,7 +1748,10 @@ function compactionToolOutput(output: unknown): string {
 		return output;
 	}
 	if (Array.isArray(output)) {
-		return output.map((item) => compactionToolOutput(item)).filter(Boolean).join("\n");
+		return output
+			.map((item) => compactionToolOutput(item))
+			.filter(Boolean)
+			.join("\n");
 	}
 	const record = recordOf(output);
 	if (!record) {

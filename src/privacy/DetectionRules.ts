@@ -167,8 +167,7 @@ export function isAllowedEmail(email: string): boolean {
 }
 
 /** 语境词：出现在手机号前 32 个字符内才认为它是电话号码，而不是订单号 */
-export const PHONE_CONTEXT_PATTERN =
-	/(?:手机|电话|联系方式|联系电话|手机号|联系人|短信|微信|whatsapp|phone|mobile|cell|tel|call|contact)/i;
+export const PHONE_CONTEXT_PATTERN = /(?:手机|电话|联系方式|联系电话|手机号|联系人|短信|微信|whatsapp|phone|mobile|cell|tel|call|contact)/i;
 
 /** 内置规则表；顺序即优先级，靠前的规则先占用匹配区间 */
 export const PRIVACY_RULES: readonly PrivacyRule[] = [
@@ -315,7 +314,8 @@ export const PRIVACY_RULES: readonly PrivacyRule[] = [
 	{
 		id: "china-id-card",
 		kind: "CN_ID",
-		pattern: "(?<![0-9A-Za-z])([1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx])(?![0-9A-Za-z])",
+		pattern:
+			"(?<![0-9A-Za-z])([1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx])(?![0-9A-Za-z])",
 		group: 1,
 		prefilter: ["19", "20"],
 		validate: passesChinaIdChecksum,

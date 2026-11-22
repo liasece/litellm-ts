@@ -1,11 +1,14 @@
 import { get_encoding } from "tiktoken";
 
 function textPayload(value: unknown): unknown {
-	if (Array.isArray(value)) {return value.map(textPayload);}
+	if (Array.isArray(value)) {
+		return value.map(textPayload);
+	}
 	if (value && typeof value === "object") {
 		const row = value as Record<string, unknown>;
-		if (["image", "image_url", "input_image", "input_audio", "audio", "input_file", "file", "document"].includes(String(row["type"])))
-			{return { type: row["type"] };}
+		if (["image", "image_url", "input_image", "input_audio", "audio", "input_file", "file", "document"].includes(String(row["type"]))) {
+			return { type: row["type"] };
+		}
 		return Object.fromEntries(Object.entries(row).map(([key, item]) => [key, textPayload(item)]));
 	}
 	return value;

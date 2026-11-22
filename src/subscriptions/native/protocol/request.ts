@@ -16,11 +16,7 @@ import { decodeResponsesRequest, encodeResponsesRequest } from "./convert/respon
  * @param inbound - 入口协议
  * @param model - 请求体缺少 model 时的回退值
  */
-function decodeRequest(
-	body: Record<string, unknown>,
-	inbound: SubscriptionInboundProtocol,
-	model: string,
-): CanonicalRequest {
+function decodeRequest(body: Record<string, unknown>, inbound: SubscriptionInboundProtocol, model: string): CanonicalRequest {
 	switch (inbound) {
 		case "messages":
 			return decodeMessagesRequest(body, model);
@@ -39,11 +35,7 @@ function decodeRequest(
  * @param upstream - 目标协议
  * @param upstreamModel - 上游模型 ID
  */
-function encodeRequest(
-	request: CanonicalRequest,
-	upstream: SubscriptionWireProtocol,
-	upstreamModel: string,
-): Record<string, unknown> {
+function encodeRequest(request: CanonicalRequest, upstream: SubscriptionWireProtocol, upstreamModel: string): Record<string, unknown> {
 	switch (upstream) {
 		case "messages":
 			return encodeMessagesRequest(request, upstreamModel);

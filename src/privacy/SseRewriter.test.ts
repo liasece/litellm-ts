@@ -184,7 +184,11 @@ describe("SseRewriter Responses 推理正文", () => {
 
 	it("还原 content_part 里的推理文本", () => {
 		const rewriter = makeRewriter();
-		const payload = { type: "response.content_part.done", item_id: "reasoning_0", part: { type: "reasoning_text", text: `key ${TOKEN}` } };
+		const payload = {
+			type: "response.content_part.done",
+			item_id: "reasoning_0",
+			part: { type: "reasoning_text", text: `key ${TOKEN}` },
+		};
 		const output = rewriter.push(`event: response.content_part.done\ndata: ${JSON.stringify(payload)}\n\n`) + rewriter.finish();
 
 		expect(output).toContain(API_KEY);

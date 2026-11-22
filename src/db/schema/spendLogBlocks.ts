@@ -14,11 +14,8 @@ import { integer, jsonb, pgTable, text } from "drizzle-orm/pg-core";
  *
  * 表只增不删：块被跨请求共享，按时间清理会打破仍在使用它的行。
  */
-export const liteLLM_SpendLogBlocks = pgTable(
-	"LiteLLM_SpendLogBlocks",
-	{
-		blockId: text("block_id").notNull().primaryKey(),
-		payload: jsonb("payload").notNull(),
-		byteSize: integer("byte_size").notNull(),
-	},
-);
+export const liteLLM_SpendLogBlocks = pgTable("LiteLLM_SpendLogBlocks", {
+	blockId: text("block_id").notNull().primaryKey(),
+	payload: jsonb("payload").notNull(),
+	byteSize: integer("byte_size").notNull(),
+});

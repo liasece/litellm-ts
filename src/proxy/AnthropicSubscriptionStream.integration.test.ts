@@ -64,11 +64,12 @@ it("Messages 流式入口消费订阅桥返回的实时 SSE", async () => {
 	});
 	setSubscriptionRequestHandler((req, options) => bridge.execute(req, options));
 	const fetchSpy = jest.spyOn(globalThis, "fetch").mockImplementation(async () => {
-		const sse = [
-			'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":100}}',
-			'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"OK"}',
-			'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}',
-		].join("\n\n") + "\n\n";
+		const sse =
+			[
+				'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":100}}',
+				'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"OK"}',
+				'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}',
+			].join("\n\n") + "\n\n";
 		const body = new ReadableStream<Uint8Array>({
 			start(controller) {
 				controller.enqueue(new TextEncoder().encode(sse));

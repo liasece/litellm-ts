@@ -278,13 +278,7 @@ export function decodeResponsesRequest(body: Record<string, unknown>, fallbackMo
 	};
 	const input = body["input"];
 	const items: unknown[] =
-		typeof input === "string"
-			? [input]
-			: Array.isArray(input)
-				? input
-				: asRecord(input) === undefined
-					? []
-					: [input];
+		typeof input === "string" ? [input] : Array.isArray(input) ? input : asRecord(input) === undefined ? [] : [input];
 	for (const raw of items) {
 		if (typeof raw === "string") {
 			flushPending();
@@ -335,10 +329,7 @@ export function decodeResponsesRequest(body: Record<string, unknown>, fallbackMo
 				flushPending();
 				const content = decodeResponsesContent(item["output"]);
 				const text = typeof item["output"] === "string" ? item["output"] : stringAt(item, "output");
-				const parts: CanonicalContentPart[] =
-					content.length > 0
-						? content
-						: [{ type: "text", text: text ?? "" }];
+				const parts: CanonicalContentPart[] = content.length > 0 ? content : [{ type: "text", text: text ?? "" }];
 				messages.push({
 					role: "tool",
 					parts: [
@@ -373,9 +364,7 @@ export function decodeResponsesRequest(body: Record<string, unknown>, fallbackMo
 	const toolChoice = decodeResponsesToolChoice(body["tool_choice"]);
 	const extras: CanonicalRequestExtras = {
 		...(stringAt(body, "user") === undefined ? {} : { user: stringAt(body, "user") }),
-		...(stringAt(body, "prompt_cache_key") === undefined
-			? {}
-			: { promptCacheKey: stringAt(body, "prompt_cache_key") }),
+		...(stringAt(body, "prompt_cache_key") === undefined ? {} : { promptCacheKey: stringAt(body, "prompt_cache_key") }),
 		...(booleanAt(body, "store") === undefined ? {} : { store: booleanAt(body, "store") }),
 		...(stringAt(body, "truncation") === undefined ? {} : { truncation: stringAt(body, "truncation") }),
 		...(stringAt(body, "service_tier") === undefined ? {} : { serviceTier: stringAt(body, "service_tier") }),
@@ -391,9 +380,7 @@ export function decodeResponsesRequest(body: Record<string, unknown>, fallbackMo
 		messages: messages,
 		tools: decodeResponsesTools(body["tools"]),
 		...(toolChoice === undefined ? {} : { toolChoice: toolChoice }),
-		...(booleanAt(body, "parallel_tool_calls") === undefined
-			? {}
-			: { parallelToolCalls: booleanAt(body, "parallel_tool_calls") }),
+		...(booleanAt(body, "parallel_tool_calls") === undefined ? {} : { parallelToolCalls: booleanAt(body, "parallel_tool_calls") }),
 		...(maxTokens === undefined ? {} : { maxTokens: maxTokens }),
 		...(numberAt(body, "temperature") === undefined ? {} : { temperature: numberAt(body, "temperature") }),
 		...(numberAt(body, "top_p") === undefined ? {} : { topP: numberAt(body, "top_p") }),
@@ -410,9 +397,7 @@ export function decodeResponsesRequest(body: Record<string, unknown>, fallbackMo
 					},
 				}),
 		...(format === undefined ? {} : { responseFormat: format }),
-		...(stringAt(body, "previous_response_id") === undefined
-			? {}
-			: { previousResponseId: stringAt(body, "previous_response_id") }),
+		...(stringAt(body, "previous_response_id") === undefined ? {} : { previousResponseId: stringAt(body, "previous_response_id") }),
 		extras: extras,
 	};
 }
@@ -477,10 +462,7 @@ function encodeResponsesInput(request: CanonicalRequest): Record<string, unknown
 			input.push({
 				type: "function_call_output",
 				call_id: part.toolCallId,
-				output:
-					content.length === 0 || (content.length === 1 && content[0]?.["type"] === "input_text")
-						? text
-						: content,
+				output: content.length === 0 || (content.length === 1 && content[0]?.["type"] === "input_text") ? text : content,
 			});
 			return;
 		}
@@ -617,8 +599,7 @@ function encodeResponsesFormat(format: CanonicalResponseFormat | undefined): Rec
 		return { type: "json_object" };
 	}
 	// 需要先判定再写：调用方显式给的 strict 优先，缺省时由 schema 形态决定。
-	const strict =
-		format.strict ?? (format.schema === undefined ? undefined : isStrictJsonSchemaCompatible(format.schema));
+	const strict = format.strict ?? (format.schema === undefined ? undefined : isStrictJsonSchemaCompatible(format.schema));
 	return {
 		type: "json_schema",
 		name: format.name ?? DEFAULT_RESPONSES_FORMAT_NAME,
@@ -688,8 +669,7 @@ export function encodeResponsesRequest(request: CanonicalRequest, upstreamModel:
 		body["previous_response_id"] = request.previousResponseId;
 	}
 	const reasoning = request.reasoning;
-	const effort =
-		reasoning?.effort ?? (reasoning?.budgetTokens === undefined ? undefined : budgetToEffort(reasoning.budgetTokens));
+	const effort = reasoning?.effort ?? (reasoning?.budgetTokens === undefined ? undefined : budgetToEffort(reasoning.budgetTokens));
 	if (effort !== undefined || reasoning?.summary !== undefined) {
 		body["reasoning"] = {
 			...(effort === undefined ? {} : { effort: effort }),
@@ -786,10 +766,7 @@ export function decodeResponsesResponse(body: Record<string, unknown>, fallbackM
  * @param response - 规范响应
  * @param responseId - 对外响应 ID
  */
-function encodeResponsesOutput(
-	response: CanonicalResponse,
-	responseId: string,
-): Record<string, unknown>[] {
+function encodeResponsesOutput(response: CanonicalResponse, responseId: string): Record<string, unknown>[] {
 	const output: Record<string, unknown>[] = [];
 	let index = 0;
 	const reasoningTexts = response.parts
@@ -797,17 +774,13 @@ function encodeResponsesOutput(
 		.map((part) => (part.type === "thinking" ? part.text : ""))
 		.filter((text) => text.length > 0);
 	if (reasoningTexts.length > 0) {
-		const signature = response.parts.find(
-			(part) => part.type === "thinking" && part.signature !== undefined,
-		);
+		const signature = response.parts.find((part) => part.type === "thinking" && part.signature !== undefined);
 		output.push({
 			id: `${responseId}_reasoning_${index}`,
 			type: "reasoning",
 			status: "completed",
 			summary: [{ type: "summary_text", text: reasoningTexts.join("") }],
-			...(signature !== undefined && signature.type === "thinking"
-				? { encrypted_content: signature.signature }
-				: {}),
+			...(signature !== undefined && signature.type === "thinking" ? { encrypted_content: signature.signature } : {}),
 		});
 		index++;
 	}
@@ -1452,9 +1425,7 @@ export class ResponsesStreamEncoder implements CanonicalStreamEncoder {
 					type: "message",
 					status: "completed",
 					role: "assistant",
-					content: [
-						{ type: "output_text", annotations: [], logprobs: [], text: item.text },
-					],
+					content: [{ type: "output_text", annotations: [], logprobs: [], text: item.text }],
 				},
 			}),
 		];
@@ -1576,9 +1547,7 @@ export class ResponsesStreamEncoder implements CanonicalStreamEncoder {
 	}
 
 	private _responseObject(status: string, error: Record<string, unknown> | null): Record<string, unknown> {
-		const output = [...this._outputItems.entries()]
-			.sort(([left], [right]) => left - right)
-			.map(([, item]) => item);
+		const output = [...this._outputItems.entries()].sort(([left], [right]) => left - right).map(([, item]) => item);
 		return {
 			id: this._responseId,
 			object: "response",
@@ -1586,8 +1555,7 @@ export class ResponsesStreamEncoder implements CanonicalStreamEncoder {
 			completed_at: status === "completed" ? Math.floor(Date.now() / 1000) : null,
 			status: status,
 			error: error,
-			incomplete_details:
-				status === "incomplete" ? { reason: "max_output_tokens" } : null,
+			incomplete_details: status === "incomplete" ? { reason: "max_output_tokens" } : null,
 			instructions: null,
 			model: this._model,
 			output: output,

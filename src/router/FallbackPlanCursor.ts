@@ -43,11 +43,7 @@ export function fallbackPlanFor(ctx: RouterExecContext, req: ExecutionRequest): 
  * @param skip - 已经尝试过的模型组（按 resolvedModel 比较）
  * @returns 候选与推进后的游标；计划耗尽时返回 null
  */
-export function nextPlannedFallback(
-	ctx: RouterExecContext,
-	req: ExecutionRequest,
-	skip?: ReadonlySet<string>,
-): PlannedFallback | null {
+export function nextPlannedFallback(ctx: RouterExecContext, req: ExecutionRequest, skip?: ReadonlySet<string>): PlannedFallback | null {
 	const plan = fallbackPlanFor(ctx, req);
 	for (let cursor = req.fallbackCursor ?? 0; cursor < plan.length; cursor++) {
 		const entry = plan[cursor]!;

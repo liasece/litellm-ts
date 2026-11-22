@@ -218,9 +218,9 @@ describe("ModelCostMapService 价格补丁", () => {
 	});
 
 	it("补丁表格式非法时阻断构造", () => {
-		expect(
-			() => new ModelCostMapService({ bundledRawJson: JSON.stringify(bundledMap), overridesRawJson: '{"a": 1}' }),
-		).toThrow("model cost overrides");
+		expect(() => new ModelCostMapService({ bundledRawJson: JSON.stringify(bundledMap), overridesRawJson: '{"a": 1}' })).toThrow(
+			"model cost overrides",
+		);
 	});
 
 	it("仓库补丁表覆盖 opencode-go 目录里上游缺失的模型", async () => {

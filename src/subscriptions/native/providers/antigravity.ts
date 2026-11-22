@@ -405,8 +405,7 @@ function cleanSchema(
 
 	if (options.addPlaceholder && result["type"] === "object") {
 		const currentProperties = asRecord(result["properties"]);
-		const needsPlaceholder =
-			currentProperties === undefined || Object.keys(currentProperties).length === 0;
+		const needsPlaceholder = currentProperties === undefined || Object.keys(currentProperties).length === 0;
 		if (needsPlaceholder) {
 			result["properties"] = {
 				...(currentProperties ?? {}),
@@ -455,12 +454,7 @@ function resolveLocalRef(ref: string, defs: Record<string, unknown>): Record<str
  * @param defs - 顶层定义表
  * @param depth - 当前递归深度
  */
-function mergeAllOf(
-	result: Record<string, unknown>,
-	options: SchemaCleanOptions,
-	defs: Record<string, unknown>,
-	depth: number,
-): void {
+function mergeAllOf(result: Record<string, unknown>, options: SchemaCleanOptions, defs: Record<string, unknown>, depth: number): void {
 	const allOf = result["allOf"];
 	if (!Array.isArray(allOf)) {
 		return;
@@ -509,12 +503,7 @@ function mergeAllOf(
  * @param defs - 顶层定义表
  * @param depth - 当前递归深度
  */
-function flattenUnions(
-	result: Record<string, unknown>,
-	options: SchemaCleanOptions,
-	defs: Record<string, unknown>,
-	depth: number,
-): void {
+function flattenUnions(result: Record<string, unknown>, options: SchemaCleanOptions, defs: Record<string, unknown>, depth: number): void {
 	for (const keyword of ["anyOf", "oneOf"]) {
 		const branches = result[keyword];
 		if (!Array.isArray(branches)) {
@@ -680,9 +669,7 @@ function sanitizeGenerationSchemas(generationConfig: Record<string, unknown>): v
  * @returns 系统提示文本
  */
 function structuredOutputInstruction(name: string | undefined, description: string | undefined, schema: Record<string, unknown>): string {
-	const parts: string[] = [
-		"You must format your entire response as valid JSON that conforms strictly to the following JSON schema:",
-	];
+	const parts: string[] = ["You must format your entire response as valid JSON that conforms strictly to the following JSON schema:"];
 	if (name) {
 		parts.push(`Schema Name: ${name}`);
 	}
@@ -691,9 +678,7 @@ function structuredOutputInstruction(name: string | undefined, description: stri
 	}
 	parts.push("JSON Schema:");
 	parts.push(JSON.stringify(schema));
-	parts.push(
-		"Do not include any explanations, markdown code blocks (such as ```json), or any text outside of the JSON object.",
-	);
+	parts.push("Do not include any explanations, markdown code blocks (such as ```json), or any text outside of the JSON object.");
 	return parts.join("\n");
 }
 
@@ -725,12 +710,15 @@ function prepareClaudeStructuredOutput(request: Record<string, unknown>, model: 
 	if (!schema) {
 		return false;
 	}
-	const instruction = structuredOutputInstruction(
-		asString(schema["name"]),
-		asString(schema["description"]),
-		schema,
-	);
-	for (const key of ["responseSchema", "responseJsonSchema", "response_schema", "response_json_schema", "responseMimeType", "response_mime_type"]) {
+	const instruction = structuredOutputInstruction(asString(schema["name"]), asString(schema["description"]), schema);
+	for (const key of [
+		"responseSchema",
+		"responseJsonSchema",
+		"response_schema",
+		"response_json_schema",
+		"responseMimeType",
+		"response_mime_type",
+	]) {
 		delete generationConfig[key];
 	}
 	const system = asRecord(request["systemInstruction"]) ?? { role: "user", parts: [] };
@@ -1020,10 +1008,7 @@ class AntigravitySubscriptionProvider implements SubscriptionProviderAdapter {
 	 * @param context - 请求上下文
 	 * @param body - 上游 JSON
 	 */
-	transformUpstreamBody(
-		context: SubscriptionRequestContext,
-		body: Record<string, unknown>,
-	): Record<string, unknown> {
+	transformUpstreamBody(context: SubscriptionRequestContext, body: Record<string, unknown>): Record<string, unknown> {
 		if (context.operation === "count_tokens") {
 			return countTokensResult(context, body);
 		}
@@ -1036,10 +1021,7 @@ class AntigravitySubscriptionProvider implements SubscriptionProviderAdapter {
 	 * @param _context - 请求上下文
 	 * @param event - 上游事件
 	 */
-	transformUpstreamEvent(
-		_context: SubscriptionRequestContext,
-		event: Record<string, unknown>,
-	): Record<string, unknown> | null {
+	transformUpstreamEvent(_context: SubscriptionRequestContext, event: Record<string, unknown>): Record<string, unknown> | null {
 		const inner = asRecord(event["response"]);
 		return inner ?? event;
 	}

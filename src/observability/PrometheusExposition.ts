@@ -95,9 +95,7 @@ export function renderPrometheusText(registry: MetricRegistry): string {
 						`${metric.name}_bucket${renderLabelsWith(item.labels, [["le", formatMetricValue(upper)]])} ${formatMetricValue(item.cumulative[index] ?? 0)}`,
 					);
 				}
-				lines.push(
-					`${metric.name}_bucket${renderLabelsWith(item.labels, [["le", "+Inf"]])} ${formatMetricValue(item.count)}`,
-				);
+				lines.push(`${metric.name}_bucket${renderLabelsWith(item.labels, [["le", "+Inf"]])} ${formatMetricValue(item.count)}`);
 				lines.push(`${metric.name}_sum${renderLabels(item.labels)} ${formatMetricValue(item.sum)}`);
 				lines.push(`${metric.name}_count${renderLabels(item.labels)} ${formatMetricValue(item.count)}`);
 			}

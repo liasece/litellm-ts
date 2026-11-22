@@ -5,7 +5,13 @@ import { runWithUpstreamExchangeScope } from "../router/UpstreamExchange";
 import { buildSpendLogFromRequest } from "./SpendTracker";
 import { CallType, SpendLogStatus } from "../types/spend";
 
-const request = { body: { model: "requested" }, headers: {}, ip: "127.0.0.1", method: "POST", originalUrl: "/v1/chat/completions" } as unknown as Request;
+const request = {
+	body: { model: "requested" },
+	headers: {},
+	ip: "127.0.0.1",
+	method: "POST",
+	originalUrl: "/v1/chat/completions",
+} as unknown as Request;
 
 afterEach(() => jest.restoreAllMocks());
 

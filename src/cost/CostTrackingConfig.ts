@@ -165,9 +165,7 @@ export function normalizeMarginConfig(raw: unknown): CostMarginConfig {
 			continue;
 		}
 		if (!isRecord(value)) {
-			throw ApiError.badRequest(
-				`Margin for ${key} must be a number (percentage) or dict with 'percentage' and/or 'fixed_amount'`,
-			);
+			throw ApiError.badRequest(`Margin for ${key} must be a number (percentage) or dict with 'percentage' and/or 'fixed_amount'`);
 		}
 		const entry: { percentage?: number; fixed_amount?: number } = {};
 		if (value["percentage"] !== undefined) {
@@ -189,9 +187,7 @@ export function normalizeMarginConfig(raw: unknown): CostMarginConfig {
 			entry.fixed_amount = value["fixed_amount"];
 		}
 		if (entry.percentage === undefined && entry.fixed_amount === undefined) {
-			throw ApiError.badRequest(
-				`Margin for ${key} must be a number (percentage) or dict with 'percentage' and/or 'fixed_amount'`,
-			);
+			throw ApiError.badRequest(`Margin for ${key} must be a number (percentage) or dict with 'percentage' and/or 'fixed_amount'`);
 		}
 		config[key] = entry;
 	}
@@ -201,8 +197,10 @@ export function normalizeMarginConfig(raw: unknown): CostMarginConfig {
 // Existing YAML may apply one rate to every formerly hosted subscription.
 function storedProviderRates(raw: Record<string, unknown>): Record<string, unknown> {
 	const { cliproxy, ...rates } = raw;
-	if (cliproxy === undefined) {return rates;}
-	return { ...Object.fromEntries(Object.keys(SUBSCRIPTION_PROVIDERS).map(provider => [provider, cliproxy])), ...rates };
+	if (cliproxy === undefined) {
+		return rates;
+	}
+	return { ...Object.fromEntries(Object.keys(SUBSCRIPTION_PROVIDERS).map((provider) => [provider, cliproxy])), ...rates };
 }
 
 /**
@@ -294,7 +292,7 @@ export function applyCostDiscount(
 	provider: string,
 	config: CostDiscountConfig,
 ): { cost: number; percent: number; amount: number } {
-	const percent = provider === "" ? undefined : config[provider] ?? (isSubscriptionProvider(provider) ? config["cliproxy"] : undefined);
+	const percent = provider === "" ? undefined : (config[provider] ?? (isSubscriptionProvider(provider) ? config["cliproxy"] : undefined));
 	if (percent === undefined) {
 		return { cost: baseCost, percent: 0, amount: 0 };
 	}
@@ -313,7 +311,10 @@ export function applyCostMargin(
 	provider: string,
 	config: CostMarginConfig,
 ): { cost: number; percent: number; fixedAmount: number; amount: number } {
-	const entry = (provider === "" ? undefined : config[provider]) ?? (isSubscriptionProvider(provider) ? config["cliproxy"] : undefined) ?? config[GLOBAL_MARGIN_KEY];
+	const entry =
+		(provider === "" ? undefined : config[provider]) ??
+		(isSubscriptionProvider(provider) ? config["cliproxy"] : undefined) ??
+		config[GLOBAL_MARGIN_KEY];
 	if (entry === undefined) {
 		return { cost: baseCost, percent: 0, fixedAmount: 0, amount: 0 };
 	}

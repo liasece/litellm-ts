@@ -7,12 +7,7 @@ import type { Message, ToolCall } from "../types/openai";
 import type { BuiltinCapabilityAuditHook } from "./BuiltinCapabilityAudit";
 import { BUILTIN_CAPABILITIES_CONFIG_PARAM, normalizeBuiltinCapabilitiesConfig } from "./BuiltinCapabilitiesConfig";
 import { capturePrivateToolCallOutcome } from "./PrivateToolCallOutcome";
-import {
-	executeWebRequest,
-	executeWebToolCall,
-	type WebCapabilityBinding,
-	type WebCredentialAccessor,
-} from "./WebCapabilityExecution";
+import { executeWebRequest, executeWebToolCall, type WebCapabilityBinding, type WebCredentialAccessor } from "./WebCapabilityExecution";
 import {
 	normalizeAnthropicClientWebTools,
 	normalizeOpenAIClientWebTools,
@@ -98,8 +93,7 @@ export async function resolveWebCapability(router: Router, model: string): Promi
  * @param router - 当前请求的 Router
  */
 function resolveCredentialAccessor(router: Router): WebCredentialAccessor | undefined {
-	const accessor = (router as unknown as { listCredentialValues?: () => WebCredentialAccessor | undefined })
-		.listCredentialValues;
+	const accessor = (router as unknown as { listCredentialValues?: () => WebCredentialAccessor | undefined }).listCredentialValues;
 	return typeof accessor === "function" ? accessor.call(router) : undefined;
 }
 
@@ -220,7 +214,6 @@ export async function prepareAnthropicWebRequest(
 		binding: binding,
 	};
 }
-
 
 /**
  * 客户端自带网络工具时允许的最大代执行轮次。
@@ -369,14 +362,10 @@ async function runOpenAIClientWebToolLoop(
 			transcript.push({
 				role: "tool",
 				tool_call_id: call.id,
-				content: await runClientWebToolCall(
-					router,
-					binding,
-					kind ?? "search",
-					call.function?.arguments,
-					options.workerComplete,
-					{ audit: options.audit, toolCallId: call.id },
-				),
+				content: await runClientWebToolCall(router, binding, kind ?? "search", call.function?.arguments, options.workerComplete, {
+					audit: options.audit,
+					toolCallId: call.id,
+				}),
 			});
 		}
 	}

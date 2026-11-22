@@ -20,11 +20,11 @@ export const commandcodeUpstreamAdapter: UpstreamSourceAdapter = {
 	source: "commandcode",
 	supported: true,
 
-	hasCredential: function(account: SubscriptionAccount): boolean {
+	hasCredential: function (account: SubscriptionAccount): boolean {
 		return asText(asRecord(account.raw)?.["api_key"]) !== undefined;
 	},
 
-	list: async function(context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
+	list: async function (context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
 		const key = asText(asRecord(context.account.raw)?.["api_key"]);
 		if (key === undefined) {
 			return null;
@@ -41,7 +41,7 @@ export const commandcodeUpstreamAdapter: UpstreamSourceAdapter = {
 		return extractEntries(result.payload, ["data", "models"]);
 	},
 
-	parse: function(entries: readonly unknown[]): UpstreamModelMetadataMap {
+	parse: function (entries: readonly unknown[]): UpstreamModelMetadataMap {
 		const map = new Map<string, UpstreamModelMetadata>();
 		for (const entry of entries) {
 			const record = asRecord(entry);

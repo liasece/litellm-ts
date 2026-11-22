@@ -104,10 +104,7 @@ function decodeChatContent(content: unknown): CanonicalContentPart[] {
 			case "image": {
 				const imageUrl = part["image_url"];
 				const imageRecord = asRecord(imageUrl);
-				const url =
-					typeof imageUrl === "string"
-						? imageUrl
-						: (stringAt(imageRecord, "url") ?? stringAt(part, "url"));
+				const url = typeof imageUrl === "string" ? imageUrl : (stringAt(imageRecord, "url") ?? stringAt(part, "url"));
 				if (url !== undefined && url.length > 0) {
 					const detail = stringAt(imageRecord, "detail") ?? stringAt(part, "detail");
 					const cacheControl = cacheControlFrom(part);
@@ -432,9 +429,7 @@ export function decodeChatRequest(body: Record<string, unknown>, fallbackModel: 
 					},
 				}),
 		...(responseFormat === undefined ? {} : { responseFormat: responseFormat }),
-		...(stringAt(body, "previous_response_id") === undefined
-			? {}
-			: { previousResponseId: stringAt(body, "previous_response_id") }),
+		...(stringAt(body, "previous_response_id") === undefined ? {} : { previousResponseId: stringAt(body, "previous_response_id") }),
 		extras: extras,
 	};
 }
@@ -615,9 +610,7 @@ function encodeChatMessages(request: CanonicalRequest): {
 					function: { name: part.name, arguments: part.arguments },
 				});
 			}
-			const contentParts = message.parts.filter(
-				(part) => part.type === "text" || part.type === "image" || part.type === "document",
-			);
+			const contentParts = message.parts.filter((part) => part.type === "text" || part.type === "image" || part.type === "document");
 			const encoded: ChatEncodedMessage = {
 				role: "assistant",
 				content: encodeChatContent(contentParts, "assistant"),
@@ -633,9 +626,7 @@ function encodeChatMessages(request: CanonicalRequest): {
 		for (const part of toolResults) {
 			appendToolResult(part);
 		}
-		const contentParts = message.parts.filter(
-			(part) => part.type !== "tool_result" && part.type !== "thinking",
-		);
+		const contentParts = message.parts.filter((part) => part.type !== "tool_result" && part.type !== "thinking");
 		if (contentParts.length === 0) {
 			continue;
 		}
@@ -646,11 +637,8 @@ function encodeChatMessages(request: CanonicalRequest): {
 		});
 	}
 	const systemContent = encodeChatContent(systemParts, "system");
-	const hasSystem =
-		systemParts.length > 0 && !(typeof systemContent === "string" && systemContent.length === 0);
-	const system: ChatEncodedMessage | undefined = hasSystem
-		? { role: "system", content: systemContent }
-		: undefined;
+	const hasSystem = systemParts.length > 0 && !(typeof systemContent === "string" && systemContent.length === 0);
+	const system: ChatEncodedMessage | undefined = hasSystem ? { role: "system", content: systemContent } : undefined;
 	return { messages: messages, system: system };
 }
 
@@ -703,9 +691,7 @@ function encodeChatToolChoice(choice: CanonicalToolChoice | undefined): unknown 
 			return choice.mode;
 		}
 		case "tool":
-			return choice.name === undefined
-				? "auto"
-				: { type: "function", function: { name: choice.name } };
+			return choice.name === undefined ? "auto" : { type: "function", function: { name: choice.name } };
 		default:
 			return "auto";
 	}
@@ -758,9 +744,7 @@ export function encodeChatRequest(request: CanonicalRequest, upstreamModel: stri
 	if (toolChoice !== undefined) {
 		body["tool_choice"] = toolChoice;
 	}
-	const parallel =
-		request.parallelToolCalls ??
-		(request.toolChoice?.disableParallelToolUse === true ? false : undefined);
+	const parallel = request.parallelToolCalls ?? (request.toolChoice?.disableParallelToolUse === true ? false : undefined);
 	if (parallel !== undefined) {
 		body["parallel_tool_calls"] = parallel;
 	}
@@ -847,11 +831,7 @@ export function decodeChatResponse(body: Record<string, unknown>, fallbackModel:
 	const hasToolCalls = parts.some((part) => part.type === "tool_call");
 	const baseFinish = finishFromChat(stringAt(choice, "finish_reason"));
 	const finishReason: CanonicalFinishReason =
-		baseFinish === "length" || baseFinish === "content_filter"
-			? baseFinish
-			: hasToolCalls
-				? "tool_calls"
-				: baseFinish;
+		baseFinish === "length" || baseFinish === "content_filter" ? baseFinish : hasToolCalls ? "tool_calls" : baseFinish;
 	return {
 		id: stringAt(body, "id") ?? generateId("chatcmpl"),
 		createdAt: numberAt(body, "created") ?? Math.floor(Date.now() / 1000),
@@ -877,9 +857,7 @@ export function encodeChatResponse(response: CanonicalResponse, model: string): 
 		.filter((part) => part.type === "refusal")
 		.map((part) => (part.type === "refusal" ? part.text : ""))
 		.join("");
-	const contentParts = response.parts.filter(
-		(part) => part.type === "text" || part.type === "image" || part.type === "document",
-	);
+	const contentParts = response.parts.filter((part) => part.type === "text" || part.type === "image" || part.type === "document");
 	const toolCalls: Record<string, unknown>[] = [];
 	for (const part of response.parts) {
 		if (part.type === "tool_call") {
@@ -919,10 +897,7 @@ export function encodeChatResponse(response: CanonicalResponse, model: string): 
  */
 export class ChatStreamDecoder implements CanonicalStreamDecoder {
 	private readonly _options: CanonicalStreamOptions;
-	private readonly _tools = new Map<
-		number,
-		{ id: string; signature: string; name: string; buffered: string; started: boolean }
-	>();
+	private readonly _tools = new Map<number, { id: string; signature: string; name: string; buffered: string; started: boolean }>();
 	private _started = false;
 	private _finished = false;
 
@@ -1152,10 +1127,7 @@ export class ChatStreamEncoder implements CanonicalStreamEncoder {
 			}
 			case "error": {
 				this._finished = true;
-				return [
-					...this._startFrames(),
-					{ data: { error: { message: event.message, type: event.errorType } } },
-				];
+				return [...this._startFrames(), { data: { error: { message: event.message, type: event.errorType } } }];
 			}
 			case "ping":
 				return [];

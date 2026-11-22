@@ -27,9 +27,7 @@ const CLAUDE_TOOL_SIGNATURE_FIELDS = ["signature", "thoughtSignature", "thought_
  * @param value - 任意值
  */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
+	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 /**
@@ -132,11 +130,7 @@ export function sanitizeClaudeMessagesSignatures(body: Record<string, unknown>):
 			const type = asString(block["type"]);
 			if (type === "thinking") {
 				const signature = asString(block["signature"]);
-				if (
-					signature === undefined ||
-					signature.trim().length === 0 ||
-					!isClaudeReplayableSignature(signature)
-				) {
+				if (signature === undefined || signature.trim().length === 0 || !isClaudeReplayableSignature(signature)) {
 					continue;
 				}
 				kept.push(block);
@@ -144,11 +138,7 @@ export function sanitizeClaudeMessagesSignatures(body: Record<string, unknown>):
 			}
 			if (type === "redacted_thinking") {
 				const data = asString(block["data"]);
-				if (
-					data === undefined ||
-					data.trim().length === 0 ||
-					!isClaudeReplayableSignature(data)
-				) {
+				if (data === undefined || data.trim().length === 0 || !isClaudeReplayableSignature(data)) {
 					continue;
 				}
 				kept.push(block);

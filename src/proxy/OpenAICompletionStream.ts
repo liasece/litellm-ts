@@ -30,8 +30,14 @@ function choiceHasContent(choice: unknown): boolean {
 	return (
 		hasContent(fields.content) ||
 		hasTextAt(fields, [
-			"refusal", "reasoning_content", "reasoning", "thinking",
-			"function_call.name", "function_call.arguments", "audio.data", "audio.transcript",
+			"refusal",
+			"reasoning_content",
+			"reasoning",
+			"thinking",
+			"function_call.name",
+			"function_call.arguments",
+			"audio.data",
+			"audio.transcript",
 		]) ||
 		hasContent(fields.thinking_blocks) ||
 		hasContent(fields.images) ||

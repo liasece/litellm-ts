@@ -56,7 +56,7 @@ function reasoningEffortsOf(value: unknown): readonly string[] | undefined {
 		return undefined;
 	}
 	const levels = value
-		.map((item) => (typeof item === "string" ? item : asText(asRecord(item)?.["value"]) ?? asText(asRecord(item)?.["id"])))
+		.map((item) => (typeof item === "string" ? item : (asText(asRecord(item)?.["value"]) ?? asText(asRecord(item)?.["id"]))))
 		.filter((item): item is string => item !== undefined);
 	return levels.length > 0 ? levels : undefined;
 }
@@ -66,12 +66,12 @@ export const xaiUpstreamAdapter: UpstreamSourceAdapter = {
 	source: "xai",
 	supported: true,
 
-	hasCredential: function(account: SubscriptionAccount): boolean {
+	hasCredential: function (account: SubscriptionAccount): boolean {
 		const raw = asRecord(account.raw);
 		return asText(raw?.["access_token"]) !== undefined || asText(raw?.["api_key"]) !== undefined;
 	},
 
-	list: async function(context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
+	list: async function (context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
 		const raw = asRecord(context.account.raw);
 		const credential = asText(raw?.["access_token"]) ?? asText(raw?.["api_key"]);
 		if (credential === undefined) {
@@ -97,19 +97,14 @@ export const xaiUpstreamAdapter: UpstreamSourceAdapter = {
 				}
 			}
 		}
-		const result = await fetchUpstreamJson(
-			`${base}/models`,
-			{ method: "GET", headers: headers },
-			context.fetchImpl,
-			context.timeoutMs,
-		);
+		const result = await fetchUpstreamJson(`${base}/models`, { method: "GET", headers: headers }, context.fetchImpl, context.timeoutMs);
 		if (!result.ok) {
 			throw new Error(result.error);
 		}
 		return extractEntries(result.payload, ["data", "models"]);
 	},
 
-	parse: function(entries: readonly unknown[]): UpstreamModelMetadataMap {
+	parse: function (entries: readonly unknown[]): UpstreamModelMetadataMap {
 		const map = new Map<string, UpstreamModelMetadata>();
 		for (const entry of entries) {
 			const record = asRecord(entry);
@@ -120,7 +115,10 @@ export const xaiUpstreamAdapter: UpstreamSourceAdapter = {
 			// 两条 rail 的字段不同：官方 API 是 context_length + capabilities.reasoning_effort
 			// + 价格（USD 分/1 亿 token）；CLI proxy 是 context_window + reasoning_efforts[]。
 			const capabilities = asRecord(record["capabilities"]);
-			const reasoningEfforts = asTextArray(record["reasoning_efforts"]) ?? asTextArray(capabilities?.["reasoning_effort"]) ?? reasoningEffortsOf(record["reasoning_efforts"]);
+			const reasoningEfforts =
+				asTextArray(record["reasoning_efforts"]) ??
+				asTextArray(capabilities?.["reasoning_effort"]) ??
+				reasoningEffortsOf(record["reasoning_efforts"]);
 			const inputModalities = asTextArray(record["input_modalities"]);
 			const metadata = compactMetadata({
 				displayName: asText(record["display_name"]) ?? asText(record["name"]),

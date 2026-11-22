@@ -114,8 +114,7 @@ export function encodeSseEvent(event: ProtocolEvent, includeEventName: boolean):
 	if (includeEventName && event.event) {
 		lines.push(`event: ${event.event}`);
 	}
-	const payload =
-		typeof event.data === "string" ? event.data : JSON.stringify(event.data);
+	const payload = typeof event.data === "string" ? event.data : JSON.stringify(event.data);
 	for (const line of payload.split("\n")) {
 		lines.push(`data: ${line}`);
 	}

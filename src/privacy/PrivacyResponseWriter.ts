@@ -65,10 +65,7 @@ function invokeCallback(callback: unknown): void {
  * @param encodingOrCallback - 第二个参数
  * @param callback - 第三个参数
  */
-function splitArgs(
-	encodingOrCallback: unknown,
-	callback: unknown,
-): { encoding: BufferEncoding | undefined; callback: unknown } {
+function splitArgs(encodingOrCallback: unknown, callback: unknown): { encoding: BufferEncoding | undefined; callback: unknown } {
 	if (typeof encodingOrCallback === "function") {
 		return { encoding: undefined, callback: encodingOrCallback };
 	}
@@ -230,7 +227,8 @@ export function installPrivacyResponseWriter(res: Response, context: PrivacyCont
 			return originalJson(body);
 		}
 		const app = (res as unknown as { req?: Request }).req?.app;
-		const replacer = app !== undefined ? (app.get("json replacer") as ((key: string, value: unknown) => unknown) | undefined) : undefined;
+		const replacer =
+			app !== undefined ? (app.get("json replacer") as ((key: string, value: unknown) => unknown) | undefined) : undefined;
 		const spaces = app !== undefined ? (app.get("json spaces") as number | string | undefined) : undefined;
 		let json: string | undefined;
 		try {

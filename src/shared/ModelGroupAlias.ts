@@ -124,8 +124,7 @@ export function selectModelGroupAliasTargets(
 	}
 	// 时段 alias 的另一侧目标是「另一个时段的默认目标」，不是失败后的备选；
 	// 只有显式声明 targets 的别名才有同级候选。
-	const targets =
-		value.targets === undefined ? [primary] : [primary, ...ordered.filter((target) => target !== primary)];
+	const targets = value.targets === undefined ? [primary] : [primary, ...ordered.filter((target) => target !== primary)];
 	return { target: primary, scheduled: window !== undefined, targets: targets };
 }
 

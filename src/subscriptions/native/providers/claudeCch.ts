@@ -194,10 +194,7 @@ export function claudeVersionFingerprint(messageText: string, version: string): 
 		const unit = units[index] ?? 0x30;
 		sampled += String.fromCharCode(unit);
 	}
-	return createHash("sha256")
-		.update(`${CLAUDE_FINGERPRINT_SALT}${sampled}${version}`, "utf8")
-		.digest("hex")
-		.slice(0, 3);
+	return createHash("sha256").update(`${CLAUDE_FINGERPRINT_SALT}${sampled}${version}`, "utf8").digest("hex").slice(0, 3);
 }
 
 /**

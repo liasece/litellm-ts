@@ -17,11 +17,7 @@ interface BodyParsedRequest extends Request {
  * @param res
  * @param next
  */
-export function zstdRequestDecompress(
-	req: BodyParsedRequest,
-	res: Response,
-	next: NextFunction,
-): void {
+export function zstdRequestDecompress(req: BodyParsedRequest, res: Response, next: NextFunction): void {
 	if (req.headers["content-encoding"] !== "zstd") {
 		next();
 		return;

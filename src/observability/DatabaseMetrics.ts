@@ -13,14 +13,7 @@ import type { Pool, PoolClient } from "pg";
 import { performance } from "node:perf_hooks";
 import { createModuleLogger } from "../core/utils/logger";
 import { currentRequestTrace } from "./RequestTrace";
-import {
-	dbPoolConnections,
-	dbPoolWait,
-	dbQueriesTotal,
-	dbQueryDuration,
-	dbSlowQueriesTotal,
-	metricsRegistry,
-} from "./MetricCatalog";
+import { dbPoolConnections, dbPoolWait, dbQueriesTotal, dbQueryDuration, dbSlowQueriesTotal, metricsRegistry } from "./MetricCatalog";
 
 const logger = createModuleLogger("Observability:Database");
 
@@ -145,11 +138,7 @@ function observeQuery(op: string, durationMs: number, ok: boolean, sql: string):
  * @param args - 实参
  * @param onSettled - 结束时回调
  */
-function instrumentCall(
-	invoke: (...callArgs: unknown[]) => unknown,
-	args: unknown[],
-	onSettled: (ok: boolean) => void,
-): unknown {
+function instrumentCall(invoke: (...callArgs: unknown[]) => unknown, args: unknown[], onSettled: (ok: boolean) => void): unknown {
 	const lastIndex = args.length - 1;
 	const callback = lastIndex >= 0 ? args[lastIndex] : undefined;
 	if (typeof callback === "function") {
@@ -192,13 +181,9 @@ function instrumentClient(client: PoolClient): void {
 		const sql = extractSql(args);
 		const op = classifySqlOperation(sql);
 		const startedAt = performance.now();
-		return instrumentCall(
-			original,
-			args,
-			(ok: boolean) => {
-				observeQuery(op, performance.now() - startedAt, ok, sql);
-			},
-		);
+		return instrumentCall(original, args, (ok: boolean) => {
+			observeQuery(op, performance.now() - startedAt, ok, sql);
+		});
 	};
 }
 
@@ -247,24 +232,16 @@ export function instrumentDatabasePool(pool: Pool): void {
 		const sql = extractSql(args);
 		const op = classifySqlOperation(sql);
 		const startedAt = performance.now();
-		return instrumentCall(
-			originalQuery,
-			args,
-			(ok: boolean) => {
-				observeQuery(op, performance.now() - startedAt, ok, sql);
-			},
-		);
+		return instrumentCall(originalQuery, args, (ok: boolean) => {
+			observeQuery(op, performance.now() - startedAt, ok, sql);
+		});
 	};
 	const originalConnect = target.connect.bind(pool) as (...args: unknown[]) => unknown;
 	target.connect = (...args: unknown[]): unknown => {
 		const startedAt = performance.now();
-		return instrumentCall(
-			originalConnect,
-			args,
-			() => {
-				dbPoolWait.observe((performance.now() - startedAt) / 1000);
-			},
-		);
+		return instrumentCall(originalConnect, args, () => {
+			dbPoolWait.observe((performance.now() - startedAt) / 1000);
+		});
 	};
 	if (typeof pool.on === "function") {
 		pool.on("connect", (client: PoolClient) => {

@@ -104,10 +104,7 @@ export function formatRfc3339(timestampMs: number): string {
  * @param accounts - 账号仓库
  * @param key - 文件名
  */
-export async function readAccountFile(
-	accounts: SubscriptionAccountStore,
-	key: string,
-): Promise<Record<string, unknown> | undefined> {
+export async function readAccountFile(accounts: SubscriptionAccountStore, key: string): Promise<Record<string, unknown> | undefined> {
 	try {
 		return await accounts.readRaw(key);
 	} catch (error) {

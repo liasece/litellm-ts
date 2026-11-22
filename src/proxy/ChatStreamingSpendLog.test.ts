@@ -664,7 +664,11 @@ describe("Dashboard TTFT 口径", () => {
 				};
 				afterIgnoredChunk = Date.now();
 				await new Promise((resolve) => setTimeout(resolve, 30));
-				yield { id: "ttft", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }] };
+				yield {
+					id: "ttft",
+					object: "chat.completion.chunk",
+					choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }],
+				};
 			},
 		});
 		const { app } = buildApp(provider);
@@ -691,7 +695,12 @@ describe("Dashboard TTFT 口径", () => {
 		const provider = baseProvider({
 			streamResponse: async function* () {
 				yield { id: "in-flight", choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] };
-				yield { id: "in-flight", object: "chat.completion.chunk", choices: [], usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 } };
+				yield {
+					id: "in-flight",
+					object: "chat.completion.chunk",
+					choices: [],
+					usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 },
+				};
 				marksBeforeContent = markCompletionStart.mock.calls.length;
 				yield { id: "in-flight", choices: [{ index: 0, delta: delta, finish_reason: null }] };
 				marksAfterContent = markCompletionStart.mock.calls.length;
@@ -703,7 +712,12 @@ describe("Dashboard TTFT 口径", () => {
 		});
 		const response = await request(app)
 			.post("/v1/chat/completions")
-			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true, stream_options: { include_usage: true } })
+			.send({
+				model: "chat-group",
+				messages: [{ role: "user", content: "hi" }],
+				stream: true,
+				stream_options: { include_usage: true },
+			})
 			.expect(200);
 		expect(response.text).toContain('"role":"assistant"');
 		expect(response.text).toContain('"total_tokens":1');
@@ -732,7 +746,12 @@ describe("Dashboard TTFT 口径", () => {
 		});
 		const response = await request(app)
 			.post("/v1/chat/completions")
-			.send({ model: "chat-group", messages: [{ role: "user", content: "hi" }], stream: true, stream_options: { include_usage: true } })
+			.send({
+				model: "chat-group",
+				messages: [{ role: "user", content: "hi" }],
+				stream: true,
+				stream_options: { include_usage: true },
+			})
 			.expect(200);
 		expect(response.text).toContain("data: [DONE]");
 		expect(response.text).toContain('"finish_reason":"stop"');

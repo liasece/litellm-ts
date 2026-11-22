@@ -64,12 +64,7 @@ export const httpInFlight = metricsRegistry.register(new Gauge("litellm_http_in_
 
 /** 推理请求数，按模型组/Provider/流式与结果分类。 */
 export const llmRequestsTotal = metricsRegistry.register(
-	new Counter("litellm_llm_requests_total", "推理请求数（按模型组、Provider、流式与结果）", [
-		"model",
-		"provider",
-		"stream",
-		"status",
-	]),
+	new Counter("litellm_llm_requests_total", "推理请求数（按模型组、Provider、流式与结果）", ["model", "provider", "stream", "status"]),
 );
 
 /** 推理请求端到端耗时（客户端视角，含流式传输时长）。 */
@@ -94,12 +89,7 @@ export const llmPreUpstream = metricsRegistry.register(
 
 /** 上游调用前的数据库往返次数：直接对应「鉴权 + 运行时配置 + 在途登记」的扇出规模。 */
 export const llmPreUpstreamDbQueries = metricsRegistry.register(
-	new Histogram(
-		"litellm_llm_pre_upstream_db_queries",
-		"推理请求在调用上游前累计的数据库往返次数",
-		[],
-		DB_ROUNDTRIP_BUCKETS,
-	),
+	new Histogram("litellm_llm_pre_upstream_db_queries", "推理请求在调用上游前累计的数据库往返次数", [], DB_ROUNDTRIP_BUCKETS),
 );
 
 /** 上游等待响应头耗时。 */
@@ -143,14 +133,10 @@ export const dbPoolWait = metricsRegistry.register(
 );
 
 /** 连接池连接数，按状态分类（total / idle / waiting）。 */
-export const dbPoolConnections = metricsRegistry.register(
-	new Gauge("litellm_db_pool_connections", "连接池连接数（按状态）", ["state"]),
-);
+export const dbPoolConnections = metricsRegistry.register(new Gauge("litellm_db_pool_connections", "连接池连接数（按状态）", ["state"]));
 
 /** 超过阈值的慢语句数。 */
-export const dbSlowQueriesTotal = metricsRegistry.register(
-	new Counter("litellm_db_slow_queries_total", "慢语句数", ["op"]),
-);
+export const dbSlowQueriesTotal = metricsRegistry.register(new Counter("litellm_db_slow_queries_total", "慢语句数", ["op"]));
 
 /** 事务提交后的记账落库耗时。 */
 export const spendWriteDuration = metricsRegistry.register(
@@ -158,9 +144,7 @@ export const spendWriteDuration = metricsRegistry.register(
 );
 
 /** 记账落库失败数。 */
-export const spendWriteFailuresTotal = metricsRegistry.register(
-	new Counter("litellm_spend_write_failures_total", "记账落库失败数"),
-);
+export const spendWriteFailuresTotal = metricsRegistry.register(new Counter("litellm_spend_write_failures_total", "记账落库失败数"));
 
 /** 结算队列写库结果：written 落库成功，failed 失败并重排，overflow 队列满改同步写。 */
 export const spendSettlementWrites = metricsRegistry.register(
@@ -168,9 +152,7 @@ export const spendSettlementWrites = metricsRegistry.register(
 );
 
 /** 结算队列当前积压条数；持续 >0 说明落库跟不上请求。 */
-export const spendSettlementPending = metricsRegistry.register(
-	new Gauge("litellm_spend_settlement_pending", "结算队列积压条数"),
-);
+export const spendSettlementPending = metricsRegistry.register(new Gauge("litellm_spend_settlement_pending", "结算队列积压条数"));
 
 /** 流式 checkpoint 写库结果：written 实际写入，skipped 内容未变跳过，failed 写失败。 */
 export const streamCheckpointWrites = metricsRegistry.register(
@@ -188,9 +170,7 @@ export const eventLoopDelayMax = metricsRegistry.register(
 );
 
 /** 进程内存占用，按种类分类。 */
-export const processMemory = metricsRegistry.register(
-	new Gauge("litellm_process_memory_bytes", "进程内存占用（按种类）", ["kind"]),
-);
+export const processMemory = metricsRegistry.register(new Gauge("litellm_process_memory_bytes", "进程内存占用（按种类）", ["kind"]));
 
 /** 进程 CPU 时间。 */
 export const processCpuSeconds = metricsRegistry.register(
@@ -201,9 +181,7 @@ export const processCpuSeconds = metricsRegistry.register(
 export const processUptime = metricsRegistry.register(new Gauge("litellm_process_uptime_seconds", "进程运行时长"));
 
 /** 进程启动时刻（Unix 秒）。 */
-export const processStartTime = metricsRegistry.register(
-	new Gauge("litellm_process_start_time_seconds", "进程启动时刻（Unix 秒）"),
-);
+export const processStartTime = metricsRegistry.register(new Gauge("litellm_process_start_time_seconds", "进程启动时刻（Unix 秒）"));
 
 /** 进程活跃句柄/请求数。 */
 export const processActiveResources = metricsRegistry.register(
@@ -216,14 +194,10 @@ export const gcDuration = metricsRegistry.register(
 );
 
 /** GC 次数。 */
-export const gcCollections = metricsRegistry.register(
-	new Counter("litellm_nodejs_gc_collections_total", "GC 次数（按 kind）", ["kind"]),
-);
+export const gcCollections = metricsRegistry.register(new Counter("litellm_nodejs_gc_collections_total", "GC 次数（按 kind）", ["kind"]));
 
 /** 观测自身因序列上限被丢弃的观测数（抓取时刷新）。 */
-export const droppedSeries = metricsRegistry.register(
-	new Gauge("litellm_observability_dropped_series", "因序列上限被丢弃的观测数"),
-);
+export const droppedSeries = metricsRegistry.register(new Gauge("litellm_observability_dropped_series", "因序列上限被丢弃的观测数"));
 
 /**
  * 读取某个计数器里所有序列的标签值集合，用于报表按维度聚合。

@@ -274,9 +274,7 @@ function flattenNamespaceTool(tool: Record<string, unknown>): Record<string, unk
 		}
 		const type = toolTypeOf(entry);
 		if (type !== "function") {
-			throw ApiError.badRequest(
-				`不支持的工具类型「${type}」；/chat/completions 只能承载 function 工具`,
-			);
+			throw ApiError.badRequest(`不支持的工具类型「${type}」；/chat/completions 只能承载 function 工具`);
 		}
 		const name = textOf(entry["name"]);
 		if (name === undefined) {
@@ -358,10 +356,7 @@ function chatToolName(entry: unknown): string | undefined {
  * @returns 可能补充过 `tools` 的新请求体
  * @throws ApiError - namespace 声明不完整，或工具类型无法在 chat 端点表达时
  */
-export function appendFlattenedNamespaceTools(
-	body: Record<string, unknown>,
-	clientBody: Record<string, unknown>,
-): Record<string, unknown> {
+export function appendFlattenedNamespaceTools(body: Record<string, unknown>, clientBody: Record<string, unknown>): Record<string, unknown> {
 	const tools = clientBody["tools"];
 	if (!Array.isArray(tools)) {
 		return body;
@@ -414,9 +409,7 @@ export function assertMessagesCompatibleTools(body: Record<string, unknown>): vo
 	}
 	for (const entry of tools) {
 		if (isRecord(entry) && toolTypeOf(entry) === "namespace") {
-			throw ApiError.badRequest(
-				'不支持的工具类型 "namespace"；Claude 模型使用的 /messages 端点只能承载 function 工具',
-			);
+			throw ApiError.badRequest('不支持的工具类型 "namespace"；Claude 模型使用的 /messages 端点只能承载 function 工具');
 		}
 	}
 }
@@ -525,10 +518,7 @@ export function backfillChatReasoning(body: Record<string, unknown>): Record<str
  * @param namespaces - 请求侧的拍平索引
  * @returns 还原后的新输出项；不需要还原时为 undefined
  */
-function restoreToolIdentity(
-	item: unknown,
-	namespaces: CommandCodeToolNamespaces,
-): Record<string, unknown> | undefined {
+function restoreToolIdentity(item: unknown, namespaces: CommandCodeToolNamespaces): Record<string, unknown> | undefined {
 	if (!isRecord(item) || item["type"] !== "function_call") {
 		return undefined;
 	}
@@ -551,10 +541,7 @@ function restoreToolIdentity(
  * @param namespaces - 请求侧的拍平索引
  * @returns 还原后的新数组；没有变化时为 undefined
  */
-function restoreToolIdentities(
-	items: readonly unknown[],
-	namespaces: CommandCodeToolNamespaces,
-): unknown[] | undefined {
+function restoreToolIdentities(items: readonly unknown[], namespaces: CommandCodeToolNamespaces): unknown[] | undefined {
 	let changed = false;
 	const next = items.map((item) => {
 		const restored = restoreToolIdentity(item, namespaces);

@@ -16,15 +16,11 @@ function router(deployments: Deployment[], extra = {}): Router {
 }
 const message = [{ role: "user", content: "hi" }];
 
-
 /** 读取 fetch 收到的请求头（统一小写键）：上游改写成 Headers 后普通对象断言不再成立。 */
 function sentHeaders(call: unknown[] | undefined): Record<string, string> {
 	const init = call?.[1] as { headers?: unknown } | undefined;
 	const headers = init?.headers;
-	const entries =
-		headers instanceof Headers
-			? [...headers.entries()]
-			: Object.entries((headers ?? {}) as Record<string, string>);
+	const entries = headers instanceof Headers ? [...headers.entries()] : Object.entries((headers ?? {}) as Record<string, string>);
 	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
 }
 
@@ -95,11 +91,9 @@ describe("upstream Router regressions and strategy additions", () => {
 			const name = (JSON.parse(String(init?.body)) as { model: string }).model;
 			return new Response("", { status: 200, headers: { "x-test": name } });
 		});
-		const result = await router([deployment("a"), deployment("b")], { fallbacks: [{ a: ["b"] }] }).acompletion(
-			"a",
-			message,
-			{ stream: true },
-		);
+		const result = await router([deployment("a"), deployment("b")], { fallbacks: [{ a: ["b"] }] }).acompletion("a", message, {
+			stream: true,
+		});
 		const chunks: unknown[] = [];
 		for await (const chunk of result["stream"] as AsyncGenerator<unknown>) chunks.push(chunk);
 		expect(chunks).toEqual([
@@ -122,11 +116,9 @@ describe("upstream Router regressions and strategy additions", () => {
 			const name = (JSON.parse(String(init?.body)) as { model: string }).model;
 			return new Response("", { status: 200, headers: { "x-test": name } });
 		});
-		const result = await router([deployment("a"), deployment("b")], { fallbacks: [{ a: ["b"] }] }).acompletion(
-			"a",
-			message,
-			{ stream: true },
-		);
+		const result = await router([deployment("a"), deployment("b")], { fallbacks: [{ a: ["b"] }] }).acompletion("a", message, {
+			stream: true,
+		});
 		const chunks: unknown[] = [];
 		for await (const chunk of result["stream"] as AsyncGenerator<unknown>) chunks.push(chunk);
 		expect(chunks).toEqual([

@@ -1,11 +1,4 @@
-import {
-	httpRequestDuration,
-	httpRequestsTotal,
-	llmRequestDuration,
-	llmRequestsTotal,
-	llmTtfb,
-	llmTokensTotal,
-} from "./MetricCatalog";
+import { httpRequestDuration, httpRequestsTotal, llmRequestDuration, llmRequestsTotal, llmTtfb, llmTokensTotal } from "./MetricCatalog";
 import { buildObservabilitySummary } from "./ObservabilityReport";
 import { recordSlowRequest, resetSlowRequests } from "./SlowRequestLog";
 

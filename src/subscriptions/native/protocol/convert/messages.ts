@@ -168,9 +168,7 @@ function decodeAnthropicBlocks(content: unknown): CanonicalContentPart[] {
 				parts.push({
 					type: "thinking",
 					text: stringAt(block, "thinking") ?? "",
-					...(stringAt(block, "signature") === undefined
-						? {}
-						: { signature: stringAt(block, "signature") }),
+					...(stringAt(block, "signature") === undefined ? {} : { signature: stringAt(block, "signature") }),
 				});
 				break;
 			}
@@ -283,9 +281,7 @@ function claudeSessionIdFromUserId(userId: string | undefined): string | undefin
 		return undefined;
 	}
 	const sessionId = stringAt(asRecord(parsed), "session_id");
-	return sessionId === undefined || sessionId.length === 0
-		? undefined
-		: sessionId.slice(0, OPENAI_MAX_PROMPT_CACHE_KEY_LENGTH);
+	return sessionId === undefined || sessionId.length === 0 ? undefined : sessionId.slice(0, OPENAI_MAX_PROMPT_CACHE_KEY_LENGTH);
 }
 
 /**
@@ -451,7 +447,7 @@ function encodeMediaBlock(part: CanonicalContentPart): Record<string, unknown> |
 			if (part.url.startsWith("data:")) {
 				const comma = part.url.indexOf(",");
 				const header = part.url.slice(5, comma);
-				const mediaType = header.endsWith(";base64") ? header.slice(0, -7) : header.split(";")[0] ?? "application/pdf";
+				const mediaType = header.endsWith(";base64") ? header.slice(0, -7) : (header.split(";")[0] ?? "application/pdf");
 				return {
 					type: "document",
 					source: { type: "base64", media_type: mediaType, data: part.url.slice(comma + 1) },
@@ -508,9 +504,7 @@ function encodeMessagesBlocks(
 				blocks.push({
 					type: "thinking",
 					thinking: part.text,
-					...(part.signature === undefined || part.signature.length === 0
-						? {}
-						: { signature: part.signature }),
+					...(part.signature === undefined || part.signature.length === 0 ? {} : { signature: part.signature }),
 				});
 				break;
 			}
@@ -535,8 +529,7 @@ function encodeMessagesBlocks(
 					break;
 				}
 				const paired = seenToolIds.has(part.toolCallId);
-				const content: readonly CanonicalContentPart[] =
-					part.content.length > 0 ? part.content : [{ type: "text", text: "" }];
+				const content: readonly CanonicalContentPart[] = part.content.length > 0 ? part.content : [{ type: "text", text: "" }];
 				if (!paired) {
 					// Anthropic 拒绝孤立 tool_result；退化为普通用户文本。
 					for (const item of content) {
@@ -605,10 +598,7 @@ function encodeMessagesTools(tools: readonly CanonicalTool[]): Record<string, un
 		return {
 			name: tool.name,
 			...(tool.description === undefined ? {} : { description: tool.description }),
-			input_schema:
-				tool.parameters === undefined
-					? { type: "object", properties: {} }
-					: tool.parameters,
+			input_schema: tool.parameters === undefined ? { type: "object", properties: {} } : tool.parameters,
 			...(tool.strict === undefined ? {} : { strict: tool.strict }),
 			...(cacheControl === undefined ? {} : { cache_control: cacheControl }),
 		};
@@ -762,15 +752,9 @@ export function encodeMessagesRequest(request: CanonicalRequest, upstreamModel: 
 			body["top_p"] = request.topP;
 		}
 	} else if (thinkingEnabled && reasoning !== undefined) {
-		const budget =
-			reasoning.budgetTokens ??
-			(reasoning.effort === undefined ? undefined : effortToBudget(reasoning.effort)) ??
-			8192;
+		const budget = reasoning.budgetTokens ?? (reasoning.effort === undefined ? undefined : effortToBudget(reasoning.effort)) ?? 8192;
 		const maxTokens = request.maxTokens ?? DEFAULT_MAX_TOKENS;
-		const safeBudget = Math.min(
-			Math.max(budget, 1024),
-			Math.max(1024, maxTokens - 1024),
-		);
+		const safeBudget = Math.min(Math.max(budget, 1024), Math.max(1024, maxTokens - 1024));
 		body["thinking"] = { type: "enabled", budget_tokens: safeBudget };
 		if (safeBudget + 1024 > maxTokens) {
 			body["max_tokens"] = safeBudget + 1024;
@@ -799,20 +783,14 @@ export function decodeMessagesResponse(body: Record<string, unknown>, fallbackMo
 	const hasToolCalls = parts.some((part) => part.type === "tool_call");
 	const baseFinish = finishFromAnthropic(stringAt(body, "stop_reason"));
 	const finishReason: CanonicalFinishReason =
-		baseFinish === "length" || baseFinish === "content_filter"
-			? baseFinish
-			: hasToolCalls
-				? "tool_calls"
-				: baseFinish;
+		baseFinish === "length" || baseFinish === "content_filter" ? baseFinish : hasToolCalls ? "tool_calls" : baseFinish;
 	return {
 		id: stringAt(body, "id") ?? generateId("msg"),
 		createdAt: Math.floor(Date.now() / 1000),
 		model: stringAt(body, "model") ?? fallbackModel,
 		parts: parts,
 		finishReason: finishReason,
-		...(stringAt(body, "stop_sequence") === undefined
-			? {}
-			: { stopSequence: stringAt(body, "stop_sequence") }),
+		...(stringAt(body, "stop_sequence") === undefined ? {} : { stopSequence: stringAt(body, "stop_sequence") }),
 		usage: usageFromAnthropic(recordAt(body, "usage")),
 	};
 }
@@ -876,7 +854,10 @@ export function encodeMessagesResponse(response: CanonicalResponse, model: strin
 		role: "assistant",
 		model: model,
 		content: content,
-		stop_reason: finishToAnthropic(response.finishReason, content.some((block) => block["type"] === "tool_use")),
+		stop_reason: finishToAnthropic(
+			response.finishReason,
+			content.some((block) => block["type"] === "tool_use"),
+		),
 		stop_sequence: response.stopSequence ?? null,
 		usage: anthropicUsage(response.usage),
 	};
@@ -1040,15 +1021,11 @@ export class MessagesStreamDecoder implements CanonicalStreamDecoder {
 					this._finished = true;
 					const mapped = finishFromAnthropic(stopReason);
 					const reason: CanonicalFinishReason =
-						this._sawToolCall && mapped !== "length" && mapped !== "content_filter"
-							? "tool_calls"
-							: mapped;
+						this._sawToolCall && mapped !== "length" && mapped !== "content_filter" ? "tool_calls" : mapped;
 					events.push({
 						type: "finish",
 						reason: reason,
-						...(stringAt(delta, "stop_sequence") === undefined
-							? {}
-							: { stopSequence: stringAt(delta, "stop_sequence") }),
+						...(stringAt(delta, "stop_sequence") === undefined ? {} : { stopSequence: stringAt(delta, "stop_sequence") }),
 					});
 				}
 				break;
@@ -1271,8 +1248,7 @@ export class MessagesStreamEncoder implements CanonicalStreamEncoder {
 			return [];
 		}
 		const frames = [...this._startFrames(), ...this._closeBlock()];
-		const reason =
-			this._finishReason ?? (this._sawToolCall ? "tool_calls" : "stop");
+		const reason = this._finishReason ?? (this._sawToolCall ? "tool_calls" : "stop");
 		frames.push(this._messageDelta(reason));
 		frames.push({ event: "message_stop", data: { type: "message_stop" } });
 		this._finished = true;
@@ -1309,10 +1285,7 @@ export class MessagesStreamEncoder implements CanonicalStreamEncoder {
 						content: [],
 						stop_reason: null,
 						stop_sequence: null,
-						usage:
-							usage === undefined
-								? { input_tokens: 0, output_tokens: 0 }
-								: anthropicUsage(usage),
+						usage: usage === undefined ? { input_tokens: 0, output_tokens: 0 } : anthropicUsage(usage),
 					},
 				},
 			},
@@ -1331,8 +1304,7 @@ export class MessagesStreamEncoder implements CanonicalStreamEncoder {
 			data: {
 				type: "content_block_start",
 				index: index,
-				content_block:
-					type === "thinking" ? { type: "thinking", thinking: "" } : { type: "text", text: "" },
+				content_block: type === "thinking" ? { type: "thinking", thinking: "" } : { type: "text", text: "" },
 			},
 		});
 		return frames;
@@ -1363,10 +1335,7 @@ export class MessagesStreamEncoder implements CanonicalStreamEncoder {
 					stop_reason: finishToAnthropic(reason, this._sawToolCall),
 					stop_sequence: this._stopSequence ?? null,
 				},
-				usage:
-					usage === undefined
-						? { output_tokens: 0 }
-						: anthropicUsage(usage),
+				usage: usage === undefined ? { output_tokens: 0 } : anthropicUsage(usage),
 			},
 		};
 	}

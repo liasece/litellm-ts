@@ -143,7 +143,11 @@ describe("OpenCode Go 动态目录", () => {
 		expect(calls[0]?.url).toBe(`${OPENCODE_API_BASE}/models`);
 		expect(headersOf(calls[0]!)).toEqual({ Authorization: "Bearer oc-key", Accept: "application/json" });
 		expect(models.map((model) => model.protocol)).toEqual(["chat", "messages", "responses", "chat", undefined]);
-		expect(models[0]).toMatchObject({ id: "deepseek-v4.1-flash", upstreamId: "deepseek-v4.1-flash", displayName: "DeepSeek V4.1 Flash" });
+		expect(models[0]).toMatchObject({
+			id: "deepseek-v4.1-flash",
+			upstreamId: "deepseek-v4.1-flash",
+			displayName: "DeepSeek V4.1 Flash",
+		});
 	});
 
 	it("没有 key 或上游失败时回退内置列表", async () => {

@@ -119,11 +119,8 @@ describe("provider quota adapters", () => {
 
 		expect(parsed.available).toBe(true);
 		expect(parsed.balances).toHaveLength(2);
-		expect(parsed.balances[0]).toEqual(
-			expect.objectContaining({ label: "DeepSeek balance (CNY)", remaining: 110, unit: "CNY" }),
-		);
+		expect(parsed.balances[0]).toEqual(expect.objectContaining({ label: "DeepSeek balance (CNY)", remaining: 110, unit: "CNY" }));
 	});
-
 
 	it("names a pay-as-you-go key even when the undocumented balance endpoint rejects it", async () => {
 		jest.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -144,14 +141,15 @@ describe("provider quota adapters", () => {
 	});
 
 	it("does not call MiniMax again while the cached account is fresh", async () => {
-		const fetchSpy = jest.spyOn(globalThis, "fetch").mockImplementation(async () =>
-			new Response(
-				JSON.stringify({
-					base_resp: { status_code: 0 },
-					model_remains: [{ model_name: "general", current_interval_remaining_percent: 80 }],
-				}),
-				{ status: 200 },
-			),
+		const fetchSpy = jest.spyOn(globalThis, "fetch").mockImplementation(
+			async () =>
+				new Response(
+					JSON.stringify({
+						base_resp: { status_code: 0 },
+						model_remains: [{ model_name: "general", current_interval_remaining_percent: 80 }],
+					}),
+					{ status: 200 },
+				),
 		);
 		const service = new ProviderQuotaService();
 		const deployments = [deployment("MiniMax-M3", { api_key: "sk-cache" })];
@@ -183,10 +181,7 @@ describe("provider quota adapters", () => {
 	});
 
 	it("never puts the plaintext key into the account id or label", () => {
-		const targets = buildQuotaTargets(
-			[deployment("MiniMax-M3", { api_key: "sk-inline-secret-value" })],
-			undefined,
-		);
+		const targets = buildQuotaTargets([deployment("MiniMax-M3", { api_key: "sk-inline-secret-value" })], undefined);
 
 		expect(targets[0]?.id).not.toContain("sk-inline-secret-value");
 		expect(targets[0]?.label).not.toContain("sk-inline-secret-value");

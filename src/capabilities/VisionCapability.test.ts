@@ -428,9 +428,7 @@ describe("VisionCapability", () => {
 		expect(prepared!.images.size).toBe(0);
 		expect(JSON.stringify(prepared!.body["tools"])).toContain(PRIVATE_VISION_TOOL_NAME);
 		expect(JSON.stringify(prepared!.body["tools"])).toContain('"pattern":"^sha256:[a-f0-9]{64}$"');
-		expect(JSON.stringify(prepared!.body["system"])).toContain(
-			"complete set of valid image references for this request is empty",
-		);
+		expect(JSON.stringify(prepared!.body["system"])).toContain("complete set of valid image references for this request is empty");
 	});
 
 	it("does not expose the private tool name when model-authored image arguments are invalid", async () => {
@@ -692,7 +690,6 @@ describe("VisionCapability", () => {
 		expect(turn).toBe(2);
 	});
 });
-
 
 describe("private vision tool call recovery", () => {
 	beforeEach(() => {

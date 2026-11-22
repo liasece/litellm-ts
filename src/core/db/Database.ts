@@ -183,13 +183,18 @@ interface MigrationRecord {
 // Dry-run the same SELECT used to build migration 0014's transaction-local plan.
 async function checkPendingSubscriptionIdentities(client: PoolClient, pending: ReturnType<typeof readMigrationFiles>): Promise<void> {
 	const prefix = "CREATE TEMPORARY VIEW litellm_subscription_identity_plan AS";
-	const statement = pending.flatMap((migration) => migration.sql).map((part) => part.trim()).find((part) => part.startsWith(prefix));
+	const statement = pending
+		.flatMap((migration) => migration.sql)
+		.map((part) => part.trim())
+		.find((part) => part.startsWith(prefix));
 	if (!statement) {
 		return;
 	}
 	const select = statement.slice(prefix.length).trim().replace(/;$/, "");
 	const result = await client.query<{ unresolved: boolean }>(
-		"SELECT EXISTS (SELECT 1 FROM (" + select + ") AS plan WHERE provider IS NULL OR coalesce(upstream, '') = '' OR upstream ~* '^(cliproxy|codex-subscription|commandcode|opencode-go|kimi-subscription|claude-subscription|antigravity-subscription|xai-subscription)/') AS unresolved",
+		"SELECT EXISTS (SELECT 1 FROM (" +
+			select +
+			") AS plan WHERE provider IS NULL OR coalesce(upstream, '') = '' OR upstream ~* '^(cliproxy|codex-subscription|commandcode|opencode-go|kimi-subscription|claude-subscription|antigravity-subscription|xai-subscription)/') AS unresolved",
 	);
 	if (result.rows[0]?.unresolved) {
 		throw new ReadOnlyPreflightError(

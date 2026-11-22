@@ -104,9 +104,9 @@ it("Gemini 逐帧转发时忽略心跳与用量，记录首段内容，并使用
 	const clientFetch = globalThis.fetch.bind(globalThis);
 	const stream = new TransformStream<Uint8Array, Uint8Array>();
 	const writer = stream.writable.getWriter();
-	const fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-		new Response(stream.readable, { headers: { "content-type": "text/event-stream" } }),
-	);
+	const fetchSpy = jest
+		.spyOn(globalThis, "fetch")
+		.mockResolvedValueOnce(new Response(stream.readable, { headers: { "content-type": "text/event-stream" } }));
 	const requestBody = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] });
 	const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1beta/models/client-model:streamGenerateContent?alt=sse`;
 	const call = () => clientFetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: requestBody });
@@ -142,7 +142,9 @@ it("Gemini 逐帧转发时忽略心跳与用量，记录首段内容，并使用
 		expect(first).toBeLessThan(Date.parse(log.endTime));
 		expect(log.total_tokens).toBe(5);
 		const empty = nextSettledLog();
-		fetchSpy.mockResolvedValueOnce(new Response(encode({ usageMetadata: usage }), { headers: { "content-type": "text/event-stream" } }));
+		fetchSpy.mockResolvedValueOnce(
+			new Response(encode({ usageMetadata: usage }), { headers: { "content-type": "text/event-stream" } }),
+		);
 		await (await call()).text();
 		expect((await empty).completionStartTime).toBeNull();
 	} finally {
@@ -165,12 +167,15 @@ it("Gemini 在内容到达前原样发送心跳，客户端离开就停止读取
 	});
 	const controller = new AbortController();
 	try {
-		const response = await clientFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1beta/models/client-model:streamGenerateContent`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ contents: [] }),
-			signal: controller.signal,
-		});
+		const response = await clientFetch(
+			`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1beta/models/client-model:streamGenerateContent`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ contents: [] }),
+				signal: controller.signal,
+			},
+		);
 		const first = await response.body!.getReader().read();
 		expect(new TextDecoder().decode(first.value)).toBe(heartbeat);
 		controller.abort();

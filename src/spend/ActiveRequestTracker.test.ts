@@ -15,8 +15,24 @@ import { subscribeSpendLogChanges } from "./spendLogChangeFeed";
  */
 function capturedActiveRequestRow(statement: unknown): Record<string, unknown> {
 	const chunks = (statement as { queryChunks?: { constructor: { name: string } }[] }).queryChunks ?? [];
-	const [requestId, callType, apiKey, startTime, model, modelGroup, user, teamId, organizationId, endUser, ip, sessionId, metadata, proxyServerRequest, expiresAt, updatedAt] =
-		chunks.filter((chunk) => chunk?.constructor?.name !== "StringChunk") as unknown[];
+	const [
+		requestId,
+		callType,
+		apiKey,
+		startTime,
+		model,
+		modelGroup,
+		user,
+		teamId,
+		organizationId,
+		endUser,
+		ip,
+		sessionId,
+		metadata,
+		proxyServerRequest,
+		expiresAt,
+		updatedAt,
+	] = chunks.filter((chunk) => chunk?.constructor?.name !== "StringChunk") as unknown[];
 	return {
 		request_id: requestId,
 		call_type: callType,
@@ -379,12 +395,7 @@ describe("Active request tracking", () => {
 		const db = { update: jest.fn(() => ({ set: set })) };
 		const imageBase64 = "A".repeat(40_000);
 
-		await checkpointActiveRequest(
-			db as never,
-			"req-image",
-			{ response: { data: [{ b64_json: imageBase64 }] } },
-			"streaming_execution",
-		);
+		await checkpointActiveRequest(db as never, "req-image", { response: { data: [{ b64_json: imageBase64 }] } }, "streaming_execution");
 
 		const metadata = (set.mock.calls[0] as unknown as [{ metadata: unknown }])[0].metadata;
 		const strings: string[] = [];
@@ -502,9 +513,6 @@ describe("Active request tracking", () => {
 		expect(sqlText).not.toContain("\0");
 	});
 
-
-
-
 	it("deletes the active row in the same transaction as the final SpendLog", async () => {
 		const deletedTables: unknown[] = [];
 		let db: Record<string, unknown>;
@@ -605,12 +613,7 @@ describe("Active request tracking", () => {
 					})),
 				})),
 			};
-			await checkpointActiveRequest(
-				checkpointDb as never,
-				"req-notify",
-				{ usage: { total_tokens: 3 } },
-				"streaming_execution",
-			);
+			await checkpointActiveRequest(checkpointDb as never, "req-notify", { usage: { total_tokens: 3 } }, "streaming_execution");
 
 			// checkpoint 内容只进详情页，列表行不变；持续流式时不应把列表刷新压到 500ms 下限。
 			expect(changes).toEqual(["changed"]);

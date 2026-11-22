@@ -93,20 +93,18 @@ async function seedAccount(
  * @param options - 上下文片段
  * @returns 完整上下文
  */
-function contextOf(
-	options: {
-		readonly account: SubscriptionAccount;
-		readonly operation: SubscriptionOperation;
-		readonly model: string;
-		readonly body?: Record<string, unknown>;
-		readonly upstreamBody?: Record<string, unknown>;
-		readonly inbound?: SubscriptionInboundProtocol;
-		readonly headers?: Record<string, string>;
-		readonly stream?: boolean;
-		readonly sessionKey?: string;
-		readonly rawBody?: unknown;
-	},
-): SubscriptionUpstreamContext {
+function contextOf(options: {
+	readonly account: SubscriptionAccount;
+	readonly operation: SubscriptionOperation;
+	readonly model: string;
+	readonly body?: Record<string, unknown>;
+	readonly upstreamBody?: Record<string, unknown>;
+	readonly inbound?: SubscriptionInboundProtocol;
+	readonly headers?: Record<string, string>;
+	readonly stream?: boolean;
+	readonly sessionKey?: string;
+	readonly rawBody?: unknown;
+}): SubscriptionUpstreamContext {
 	const body = options.body ?? {};
 	return {
 		source: "xai",
@@ -226,9 +224,7 @@ describe("createXaiProvider", () => {
 	it("OAuth 账号显式配置 base_url 时改用该地址", async () => {
 		const { account } = await seedAccount({ auth_kind: "oauth", base_url: "https://example.test/v1/" });
 		const provider = createXaiProvider({ accounts: new SubscriptionAccountStore({ authDir: authDir }) });
-		const plan = await provider.build(
-			contextOf({ account: account, operation: "messages", model: "grok-4.7", body: { input: "hi" } }),
-		);
+		const plan = await provider.build(contextOf({ account: account, operation: "messages", model: "grok-4.7", body: { input: "hi" } }));
 
 		expect(plan.url).toBe("https://example.test/v1/responses");
 		// 非 CLI 地址不再附加 CLI 身份头，但仍保留 Grok 版本 UA。
@@ -396,7 +392,17 @@ describe("createXaiProvider", () => {
 		expect(plan.url).toBe("https://api.x.ai/v1/responses/compact");
 		expect(body["model"]).toBe("grok-4.7");
 		expect(body["previous_response_id"]).toBe("resp_9");
-		for (const field of ["stream", "tools", "tool_choice", "parallel_tool_calls", "max_output_tokens", "temperature", "top_p", "top_k", "stop"]) {
+		for (const field of [
+			"stream",
+			"tools",
+			"tool_choice",
+			"parallel_tool_calls",
+			"max_output_tokens",
+			"temperature",
+			"top_p",
+			"top_k",
+			"stop",
+		]) {
 			expect(body[field]).toBeUndefined();
 		}
 	});
@@ -605,9 +611,7 @@ describe("createXaiProvider", () => {
 		const provider = createXaiProvider({ accounts: new SubscriptionAccountStore({ authDir: authDir }) });
 
 		await expect(
-			provider.build(
-				contextOf({ account: account, operation: "speech", model: "grok-4.7", body: { input: "x" } }),
-			),
+			provider.build(contextOf({ account: account, operation: "speech", model: "grok-4.7", body: { input: "x" } })),
 		).rejects.toMatchObject({ statusCode: 400 });
 		await expect(
 			provider.build(

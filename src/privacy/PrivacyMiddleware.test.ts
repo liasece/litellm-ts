@@ -44,7 +44,8 @@ function makeDb(captured: CapturedRows): unknown {
 	 */
 	const resolved = (rows: unknown[] = []): Record<string, unknown> => {
 		const chain: Record<string, unknown> = {
-			then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve(rows).then(resolve, reject),
+			then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+				Promise.resolve(rows).then(resolve, reject),
 			catch: (reject: (reason: unknown) => unknown) => Promise.resolve(rows).catch(reject),
 			where: () => chain,
 			limit: () => Promise.resolve(rows),
@@ -54,7 +55,9 @@ function makeDb(captured: CapturedRows): unknown {
 	return {
 		insert: (table: unknown) => ({
 			values: (rowOrRows: unknown) => {
-				const name = String((table as { [key: symbol]: unknown })[Object.getOwnPropertySymbols(table as object)[0] as symbol] ?? "");
+				const name = String(
+					(table as { [key: symbol]: unknown })[Object.getOwnPropertySymbols(table as object)[0] as symbol] ?? "",
+				);
 				const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
 				if (name.includes("Values")) {
 					captured.values.push(...(rows as Array<Record<string, unknown>>));
@@ -101,7 +104,9 @@ function makeApp(captured: CapturedRows): express.Express {
 	});
 	const router = express.Router();
 	const fakeRouter = {
-		getAvailableDeployment: () => ({ deployment: { litellm_params: { custom_llm_provider: "cliproxy", api_key: "provider-secret-123456" } } }),
+		getAvailableDeployment: () => ({
+			deployment: { litellm_params: { custom_llm_provider: "cliproxy", api_key: "provider-secret-123456" } },
+		}),
 		getDeployments: () => [],
 	};
 	router.use(privacyMaskingMiddleware({ router: fakeRouter as never, db: makeDb(captured) as never }));
@@ -128,8 +133,12 @@ function makeApp(captured: CapturedRows): express.Express {
 		const token = content.match(/\{\{[A-Z_]+_[a-z2-7]{8}\}\}/)?.[0] ?? "";
 		const head = token.slice(0, 7);
 		const tail = token.slice(7);
-		res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `hi ${head}` } })}\n\n`);
-		res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: tail } })}\n\n`);
+		res.write(
+			`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `hi ${head}` } })}\n\n`,
+		);
+		res.write(
+			`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: tail } })}\n\n`,
+		);
 		res.write(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`);
 		res.end();
 	});
@@ -274,7 +283,10 @@ describe("privacyMaskingMiddleware", () => {
 			res.json({ prompt: (req.body as { prompt: string }).prompt });
 		});
 		app.use(router);
-		const response = await request(app).post("/v1/images/generations").send({ prompt: `mail ${EMAIL}` }).expect(200);
+		const response = await request(app)
+			.post("/v1/images/generations")
+			.send({ prompt: `mail ${EMAIL}` })
+			.expect(200);
 		expect((response.body as { prompt: string }).prompt).toBe(`mail ${EMAIL}`);
 	});
 

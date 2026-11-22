@@ -23,9 +23,7 @@ function geminiEnvelope(): string {
 
 /** 读取对象字段为对象。 */
 function asRecord(value: unknown): Record<string, unknown> {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: {};
+	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 /** 读取对象数组字段。 */

@@ -227,21 +227,16 @@ class XaiAuth implements XaiAuthHandler {
 		const deviceCode = nonEmptyXaiString(response.body["device_code"]);
 		const userCode = nonEmptyXaiString(response.body["user_code"]);
 		const verificationUri =
-			nonEmptyXaiString(response.body["verification_uri_complete"]) ??
-			nonEmptyXaiString(response.body["verification_uri"]);
+			nonEmptyXaiString(response.body["verification_uri_complete"]) ?? nonEmptyXaiString(response.body["verification_uri"]);
 		if (!deviceCode || !userCode || !verificationUri) {
 			throw ApiError.unavailable("xAI 设备码响应缺少 device_code、user_code 或验证地址");
 		}
 		const expiresIn = response.body["expires_in"];
-		const expiresInMs =
-			typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : undefined;
+		const expiresInMs = typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : undefined;
 		const deadlineMs = Date.now() + Math.min(XAI_OAUTH.maxPollDurationMs, expiresInMs ?? XAI_OAUTH.maxPollDurationMs);
 		const pollIntervalMs =
 			this._devicePollIntervalMs ??
-			Math.max(
-				xaiDeviceIntervalMs(response.body["interval"]) ?? XAI_OAUTH.defaultPollIntervalMs,
-				XAI_OAUTH.defaultPollIntervalMs,
-			);
+			Math.max(xaiDeviceIntervalMs(response.body["interval"]) ?? XAI_OAUTH.defaultPollIntervalMs, XAI_OAUTH.defaultPollIntervalMs);
 		const output = [
 			"已申请 xAI 设备码。",
 			`在浏览器打开：${verificationUri}`,
@@ -590,10 +585,13 @@ class XaiAuth implements XaiAuthHandler {
 			return;
 		}
 		await new Promise<void>((resolve) => {
-			const timer = setTimeout(() => {
-				session.wake = undefined;
-				resolve();
-			}, Math.max(ms, 0));
+			const timer = setTimeout(
+				() => {
+					session.wake = undefined;
+					resolve();
+				},
+				Math.max(ms, 0),
+			);
 			session.wake = () => {
 				clearTimeout(timer);
 				session.wake = undefined;

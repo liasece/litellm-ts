@@ -92,7 +92,9 @@ describe("PrivacyContext", () => {
 
 	it("工具参数 JSON 保持结构并脱敏叶子", () => {
 		const context = makeContext();
-		const output = context.maskJsonText(JSON.stringify({ email: "jansen@liasece.com", nested: { token: "sk-proj-abcdefghijklmnopqrstuvwxyz" } }));
+		const output = context.maskJsonText(
+			JSON.stringify({ email: "jansen@liasece.com", nested: { token: "sk-proj-abcdefghijklmnopqrstuvwxyz" } }),
+		);
 		const parsed = JSON.parse(output) as { email: string; nested: { token: string } };
 		expect(parsed.email).toMatch(/^\{\{EMAIL_/);
 		expect(parsed.nested.token).toMatch(/^\{\{API_KEY_/);

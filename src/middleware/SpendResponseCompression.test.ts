@@ -49,21 +49,19 @@ describe("spendResponseCompression", () => {
 		try {
 			const port = (server.address() as AddressInfo).port;
 			const response = await new Promise<{ headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
-				http
-					.get(
-						{
-							hostname: "127.0.0.1",
-							port: port,
-							path: "/spend/session",
-							headers: { "Accept-Encoding": "br, gzip" },
-						},
-						(incoming) => {
-							const chunks: Buffer[] = [];
-							incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
-							incoming.on("end", () => resolve({ headers: incoming.headers, body: Buffer.concat(chunks) }));
-						},
-					)
-					.on("error", reject);
+				http.get(
+					{
+						hostname: "127.0.0.1",
+						port: port,
+						path: "/spend/session",
+						headers: { "Accept-Encoding": "br, gzip" },
+					},
+					(incoming) => {
+						const chunks: Buffer[] = [];
+						incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+						incoming.on("end", () => resolve({ headers: incoming.headers, body: Buffer.concat(chunks) }));
+					},
+				).on("error", reject);
 			});
 
 			expect(response.headers["content-encoding"]).toBe("br");
@@ -125,9 +123,7 @@ describe("spendResponseCompression", () => {
 							const decoder = decoderFor(incoming.headers["content-encoding"]);
 							if (decoder === undefined) {
 								incoming.on("data", consume);
-								incoming.on("end", () =>
-									resolve({ headers: incoming.headers, firstEventAt: firstEventAt, body: text }),
-								);
+								incoming.on("end", () => resolve({ headers: incoming.headers, firstEventAt: firstEventAt, body: text }));
 								return;
 							}
 							decoder.on("data", consume);

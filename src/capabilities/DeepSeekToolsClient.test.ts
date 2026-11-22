@@ -150,9 +150,7 @@ describe("DeepSeek api_base 归一化", () => {
 
 	it("已写入的接口路径被剥离，避免重复拼接", () => {
 		expect(normalizeDeepSeekToolsApiBase("https://proxy.example.com/v1")).toBe("https://proxy.example.com");
-		expect(normalizeDeepSeekToolsApiBase("https://proxy.example.com/v1/tools/search")).toBe(
-			"https://proxy.example.com",
-		);
+		expect(normalizeDeepSeekToolsApiBase("https://proxy.example.com/v1/tools/search")).toBe("https://proxy.example.com");
 	});
 });
 

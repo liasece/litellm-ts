@@ -36,9 +36,7 @@ it("冲突的安全名使用哈希区分", () => {
 		],
 	};
 	const mapping = normalizeToolNames(body, 64);
-	const names = (body["tools"] as Array<Record<string, unknown>>).map(
-		(tool) => (tool["function"] as Record<string, unknown>)["name"],
-	);
+	const names = (body["tools"] as Array<Record<string, unknown>>).map((tool) => (tool["function"] as Record<string, unknown>)["name"]);
 	expect(new Set(names).size).toBe(2);
 	expect(mapping?.size).toBe(2);
 });

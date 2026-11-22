@@ -28,10 +28,7 @@ import {
 	type SessionTimelineStreamState,
 	type SessionTimelineUpdate,
 } from "./sessionTimelineLive";
-import {
-	resolveActiveRequestVisibilityClause,
-	resolveSpendVisibilityClause,
-} from "./spendVisibility";
+import { resolveActiveRequestVisibilityClause, resolveSpendVisibilityClause } from "./spendVisibility";
 
 const logger = createModuleLogger("Spend:SessionTimelineStream");
 

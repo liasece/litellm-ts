@@ -36,8 +36,7 @@ function stubFetch(responses: readonly StubResponse[]): { calls: RecordedCall[];
 		return {
 			ok: status >= 200 && status < 300,
 			status: status,
-			text: async (): Promise<string> =>
-				typeof response.body === "string" ? response.body : JSON.stringify(response.body ?? {}),
+			text: async (): Promise<string> => (typeof response.body === "string" ? response.body : JSON.stringify(response.body ?? {})),
 		} as unknown as Response;
 	}) as unknown as typeof fetch;
 	return { calls: calls, fetchImpl: fetchImpl };
@@ -146,7 +145,12 @@ describe("原生订阅额度查询", () => {
 					},
 				},
 			},
-			{ body: { success: true, data: { planId: "individual-goat", status: "active", currentPeriodEnd: "2026-12-01T00:00:00.000Z" } } },
+			{
+				body: {
+					success: true,
+					data: { planId: "individual-goat", status: "active", currentPeriodEnd: "2026-12-01T00:00:00.000Z" },
+				},
+			},
 			{ body: { success: true, user: { email: "ops@example.com" }, org: { login: "jtllab" } } },
 		]);
 		const quota = await executeQuotaRequests("commandcode", { auth_index: "cc-1" }, "cc-key", fetchImpl);
@@ -189,9 +193,9 @@ describe("原生订阅额度查询", () => {
 		await expect(
 			executeQuotaRequests("commandcode", {}, "cc-key", stubFetch([{ status: 401, body: "denied" }]).fetchImpl),
 		).rejects.toMatchObject({ statusCode: 503 });
-		await expect(
-			executeQuotaRequests("commandcode", {}, "cc-key", stubFetch([{ status: 401 }]).fetchImpl),
-		).rejects.toThrow("commandcode 订阅额度查询失败: HTTP 401");
+		await expect(executeQuotaRequests("commandcode", {}, "cc-key", stubFetch([{ status: 401 }]).fetchImpl)).rejects.toThrow(
+			"commandcode 订阅额度查询失败: HTTP 401",
+		);
 
 		const { fetchImpl } = stubFetch([{ body: {} }, { body: {} }, { body: {} }]);
 		await expect(executeQuotaRequests("commandcode", {}, "cc-key", fetchImpl)).rejects.toThrow("CommandCode 未返回可展示的订阅额度");
@@ -199,7 +203,15 @@ describe("原生订阅额度查询", () => {
 
 	it("OpenCode Go：把 /usage 窗口换算成剩余比例后归一化", async () => {
 		const { calls, fetchImpl } = stubFetch([
-			{ body: { usage: { rolling: { percent: 25, resetsAt: "2026-11-10T09:00:00Z" }, weekly: { percent: 40.5 }, monthly: { percent: 10 } } } },
+			{
+				body: {
+					usage: {
+						rolling: { percent: 25, resetsAt: "2026-11-10T09:00:00Z" },
+						weekly: { percent: 40.5 },
+						monthly: { percent: 10 },
+					},
+				},
+			},
 		]);
 		const quota = await executeQuotaRequests("opencode-go", {}, "oc-key", fetchImpl);
 
@@ -208,14 +220,19 @@ describe("原生订阅额度查询", () => {
 		expect(quota.provider).toBe("opencode-go");
 		expect(quota.plan).toBe("Go");
 		expect(quota.windows.map((window) => window.id)).toEqual(["opencode-go:rolling", "opencode-go:weekly", "opencode-go:monthly"]);
-		expect(quota.windows[0]).toMatchObject({ label: "5 小时", used_percent: 25, remaining_percent: 75, resets_at: "2026-11-10T09:00:00.000Z" });
+		expect(quota.windows[0]).toMatchObject({
+			label: "5 小时",
+			used_percent: 25,
+			remaining_percent: 75,
+			resets_at: "2026-11-10T09:00:00.000Z",
+		});
 		expect(quota.windows[1]).toMatchObject({ label: "周", used_percent: 40.5, remaining_percent: 59.5 });
 	});
 
 	it("OpenCode Go：没有可读窗口或比例越界时归一化为 503", async () => {
-		await expect(
-			executeQuotaRequests("opencode-go", {}, "oc-key", stubFetch([{ body: { usage: {} } }]).fetchImpl),
-		).rejects.toThrow("OpenCode Go 未返回可展示的订阅额度");
+		await expect(executeQuotaRequests("opencode-go", {}, "oc-key", stubFetch([{ body: { usage: {} } }]).fetchImpl)).rejects.toThrow(
+			"OpenCode Go 未返回可展示的订阅额度",
+		);
 		await expect(
 			executeQuotaRequests("opencode-go", {}, "oc-key", stubFetch([{ body: { usage: { rolling: { percent: 150 } } } }]).fetchImpl),
 		).rejects.toThrow("OpenCode Go 未返回可展示的订阅额度");

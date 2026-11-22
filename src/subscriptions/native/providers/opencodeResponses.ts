@@ -404,10 +404,7 @@ function rewriteHistoricalItems(
 		}
 		if (type === "function_call") {
 			const args = record["arguments"];
-			const next =
-				typeof args !== "string" || args.trim() === "" || args.trim() === "null"
-					? { ...record, arguments: "{}" }
-					: record;
+			const next = typeof args !== "string" || args.trim() === "" || args.trim() === "null" ? { ...record, arguments: "{}" } : record;
 			const withNamespace = withHistoricalNamespace(next, registry, false);
 			if (withNamespace !== record) {
 				changed = true;
@@ -578,9 +575,7 @@ function textOf(value: unknown): string | undefined {
  * @returns 对象记录；不是对象时为 undefined
  */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
+	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 /**

@@ -12,7 +12,7 @@ describe("MetricRegistry 基座", () => {
 		// 同一个时间片内的增量都落在窗口里
 		expect(counter.sumWhereInWindow(5_000, undefined, 2_000)).toBe(4);
 		// 时钟推进到窗口之外后，旧增量不再计入
-			expect(counter.sumWhereInWindow(5_000, undefined, 60_000)).toBe(0);
+		expect(counter.sumWhereInWindow(5_000, undefined, 60_000)).toBe(0);
 	});
 
 	it("仪表覆盖写入，只保留最新值", () => {

@@ -16,11 +16,7 @@ describe("zstdRequestDecompress", () => {
 		});
 	};
 
-	const post = (
-		port: number,
-		body: Buffer,
-		headers: Record<string, string>,
-	): Promise<{ status: number; body: string }> =>
+	const post = (port: number, body: Buffer, headers: Record<string, string>): Promise<{ status: number; body: string }> =>
 		new Promise((resolve, reject) => {
 			const request = http.request(
 				{
@@ -33,9 +29,7 @@ describe("zstdRequestDecompress", () => {
 				(response) => {
 					const chunks: Buffer[] = [];
 					response.on("data", (chunk: Buffer) => chunks.push(chunk));
-					response.on("end", () =>
-						resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
-					);
+					response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
 				},
 			);
 			request.once("error", reject);

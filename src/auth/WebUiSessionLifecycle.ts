@@ -1,11 +1,7 @@
 /** WebUI session JWT 与 cookie 生命周期工具。 */
 import crypto from "node:crypto";
 import type { Response } from "express";
-import {
-	WEBUI_COOKIE_TOKEN_NAME,
-	WEBUI_CSRF_COOKIE_NAME,
-	type WebUiSessionClaims,
-} from "../types/webUiSession";
+import { WEBUI_COOKIE_TOKEN_NAME, WEBUI_CSRF_COOKIE_NAME, type WebUiSessionClaims } from "../types/webUiSession";
 
 const SECURE_COOKIE_ENV_VAR = "LITELLM_COOKIE_SECURE";
 
@@ -75,12 +71,7 @@ export function signWebUiSessionToken(payload: WebUiSessionClaims, secret: strin
  * @param csrfToken
  * @param expiresAt
  */
-export function setWebUiSessionCookies(
-	res: Response,
-	token: string,
-	csrfToken: string,
-	expiresAt: Date,
-): void {
+export function setWebUiSessionCookies(res: Response, token: string, csrfToken: string, expiresAt: Date): void {
 	const cookieOptions = {
 		httpOnly: true,
 		path: "/",

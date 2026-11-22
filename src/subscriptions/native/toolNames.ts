@@ -46,10 +46,7 @@ function safeName(name: string, maxLength: number): string {
  * @param maxLength - 安全名称上限
  * @returns 安全名称到原始名称的映射；没有变化时 undefined
  */
-export function normalizeToolNames(
-	body: Record<string, unknown>,
-	maxLength = DEFAULT_TOOL_NAME_MAX_LENGTH,
-): ToolNameMapping | undefined {
+export function normalizeToolNames(body: Record<string, unknown>, maxLength = DEFAULT_TOOL_NAME_MAX_LENGTH): ToolNameMapping | undefined {
 	const safeToOriginal = new Map<string, string>();
 	const originalToSafe = new Map<string, string>();
 	const usedSafe = new Map<string, string>();

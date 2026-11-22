@@ -488,9 +488,7 @@ describe("buildModelSpeedReport", () => {
 		const report = buildModelSpeedReport(rows, OPTIONS);
 
 		expect(report.models_without_speed).toHaveLength(0);
-		expect(report.models[0]!.points).toEqual([
-			{ bucket: "2026-11-01T06:00:00.000Z", avg_tps: 94, p50_tps: 79.1, requests: 27 },
-		]);
+		expect(report.models[0]!.points).toEqual([{ bucket: "2026-11-01T06:00:00.000Z", avg_tps: 94, p50_tps: 79.1, requests: 27 }]);
 	});
 
 	it("同时接受 ISO 与带分钟偏移的时间文本", () => {
@@ -668,9 +666,7 @@ describe("GET /global/model_speed", () => {
 		expect(response.status).toBe(200);
 		expect(response.body.models).toHaveLength(1);
 		expect(response.body.models[0]).toMatchObject({ model: "MiniMax-M3", provider: "minimax", requests: 8, calls: 10 });
-		expect(response.body.models[0].points).toEqual([
-			{ bucket: "2026-11-02T01:00:00.000Z", avg_tps: 100, p50_tps: 90, requests: 8 },
-		]);
+		expect(response.body.models[0].points).toEqual([{ bucket: "2026-11-02T01:00:00.000Z", avg_tps: 100, p50_tps: 90, requests: 8 }]);
 		expect(response.body.buckets).toEqual(["2026-11-02T00:00:00.000Z", "2026-11-02T01:00:00.000Z"]);
 		expect(response.body.min_bucket_requests).toBe(2);
 	});

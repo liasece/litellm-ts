@@ -51,8 +51,12 @@ function parseEntry(entry: unknown): { id: string; metadata: UpstreamModelMetada
 		// 上游价格单位是「每百万 token」，与 per-token 字段差 1e6。
 		inputCostPerToken: perMillionToPerToken(asNumber(inputCost?.["price"])),
 		outputCostPerToken: perMillionToPerToken(asNumber(outputCost?.["price"])),
-		cacheReadCostPerToken: perMillionToPerToken(firstDefined([() => asNumber(inputCache?.["read"]), () => asNumber(inputCache?.["price"])])),
-		cacheWriteCostPerToken: perMillionToPerToken(firstDefined([() => asNumber(inputCache?.["write"]), () => asNumber(inputCache?.["creation"])])),
+		cacheReadCostPerToken: perMillionToPerToken(
+			firstDefined([() => asNumber(inputCache?.["read"]), () => asNumber(inputCache?.["price"])]),
+		),
+		cacheWriteCostPerToken: perMillionToPerToken(
+			firstDefined([() => asNumber(inputCache?.["write"]), () => asNumber(inputCache?.["creation"])]),
+		),
 		supportsTools: typeof tools?.["supported"] === "boolean" ? (tools["supported"] as boolean) : undefined,
 		supportsReasoning: typeof reasoning?.["supported"] === "boolean" ? (reasoning["supported"] as boolean) : undefined,
 		supportsStructuredOutput:
@@ -73,11 +77,11 @@ export const opencodeUpstreamAdapter: UpstreamSourceAdapter = {
 	source: "opencode-go",
 	supported: true,
 
-	hasCredential: function(account: SubscriptionAccount): boolean {
+	hasCredential: function (account: SubscriptionAccount): boolean {
 		return asText(asRecord(account.raw)?.["api_key"]) !== undefined;
 	},
 
-	list: async function(context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
+	list: async function (context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
 		const key = asText(asRecord(context.account.raw)?.["api_key"]);
 		if (key === undefined) {
 			return null;
@@ -94,7 +98,7 @@ export const opencodeUpstreamAdapter: UpstreamSourceAdapter = {
 		return extractEntries(result.payload, ["data", "models"]);
 	},
 
-	parse: function(entries: readonly unknown[]): UpstreamModelMetadataMap {
+	parse: function (entries: readonly unknown[]): UpstreamModelMetadataMap {
 		const map = new Map<string, UpstreamModelMetadata>();
 		for (const entry of entries) {
 			const parsed = parseEntry(entry);

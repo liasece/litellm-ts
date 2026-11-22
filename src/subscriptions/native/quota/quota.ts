@@ -216,12 +216,7 @@ function openCodeBase(): string {
  * @returns 已解析的响应体
  * @throws ApiError 网络失败、非 2xx、空响应或非法 JSON 时抛出
  */
-async function callQuotaEndpoint(
-	provider: string,
-	call: QuotaCall,
-	token: string,
-	fetchImpl: typeof fetch,
-): Promise<unknown> {
+async function callQuotaEndpoint(provider: string, call: QuotaCall, token: string, fetchImpl: typeof fetch): Promise<unknown> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), QUOTA_REQUEST_TIMEOUT_MS);
 	try {
@@ -275,11 +270,7 @@ function withCredential(header: Record<string, string>, token: string): Record<s
  * @returns 归一化后的额度
  * @throws ApiError 响应无法归一化或该来源不支持时抛出
  */
-function normalizeQuotaPayloads(
-	provider: string,
-	payloads: QuotaPayload[],
-	authFile: Record<string, unknown>,
-): CliProxyAccountQuota {
+function normalizeQuotaPayloads(provider: string, payloads: QuotaPayload[], authFile: Record<string, unknown>): CliProxyAccountQuota {
 	if (provider === "commandcode") {
 		return normalizeCommandCodeQuota(payloads, authFile);
 	}

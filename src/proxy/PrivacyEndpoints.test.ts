@@ -82,8 +82,14 @@ describe("privacy settings endpoints", () => {
 	it("非法类型或动作返回 400", async () => {
 		const mockDb = makeDb({});
 		const app = makeApp(mockDb);
-		await request(app).put("/privacy/settings").send({ kinds: { "not-a-kind": "off" } }).expect(400);
-		await request(app).put("/privacy/settings").send({ kinds: { EMAIL: "explode" } }).expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ kinds: { "not-a-kind": "off" } })
+			.expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ kinds: { EMAIL: "explode" } })
+			.expect(400);
 		// 全局处置只在 mask 与 warn 之间切换；拒绝请求是按类型的处置
 		await request(app).put("/privacy/settings").send({ action: "block" }).expect(400);
 		await request(app).put("/privacy/settings").send({ enabled: "yes" }).expect(400);
@@ -117,8 +123,14 @@ describe("privacy settings endpoints", () => {
 		expect(clearedValues.models).toEqual([]);
 
 		await request(app).put("/privacy/settings").send({ providers: "opencode" }).expect(400);
-		await request(app).put("/privacy/settings").send({ providers: [""] }).expect(400);
-		await request(app).put("/privacy/settings").send({ models: ["x".repeat(65)] }).expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ providers: [""] })
+			.expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ models: ["x".repeat(65)] })
+			.expect(400);
 	});
 
 	it("规则与假值开关可写入，非法规则返回 400", async () => {
@@ -141,9 +153,21 @@ describe("privacy settings endpoints", () => {
 		]);
 		expect(body.values.shape).toBe(true);
 
-		await request(app).put("/privacy/settings").send({ rules: [{ kind: "TICKET" }] }).expect(400);
-		await request(app).put("/privacy/settings").send({ rules: [{ kind: "TICKET", prefix: "x", regex: "y" }] }).expect(400);
-		await request(app).put("/privacy/settings").send({ rules: [{ kind: "TICKET", regex: "([a-z" }] }).expect(400);
-		await request(app).put("/privacy/settings").send({ rules: [{ kind: "bad kind", prefix: "ACME-" }] }).expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ rules: [{ kind: "TICKET" }] })
+			.expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ rules: [{ kind: "TICKET", prefix: "x", regex: "y" }] })
+			.expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ rules: [{ kind: "TICKET", regex: "([a-z" }] })
+			.expect(400);
+		await request(app)
+			.put("/privacy/settings")
+			.send({ rules: [{ kind: "bad kind", prefix: "ACME-" }] })
+			.expect(400);
 	});
 });

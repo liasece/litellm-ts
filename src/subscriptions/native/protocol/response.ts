@@ -17,11 +17,7 @@ import { asRecord, stringAt } from "./convert/shared";
  * @param upstream - 上游协议
  * @param model - 响应体缺少 model 时的回退值
  */
-function decodeResponse(
-	body: Record<string, unknown>,
-	upstream: SubscriptionWireProtocol,
-	model: string,
-): CanonicalResponse {
+function decodeResponse(body: Record<string, unknown>, upstream: SubscriptionWireProtocol, model: string): CanonicalResponse {
 	switch (upstream) {
 		case "messages":
 			return decodeMessagesResponse(body, model);
@@ -57,11 +53,7 @@ function errorDetails(body: Record<string, unknown>): { message: string; type: s
 	const record = asRecord(body["error"]) ?? body;
 	return {
 		message: stringAt(record, "message") ?? stringAt(body, "message") ?? "上游请求失败",
-		type:
-			stringAt(record, "type") ??
-			stringAt(record, "status") ??
-			stringAt(record, "code") ??
-			"upstream_error",
+		type: stringAt(record, "type") ?? stringAt(record, "status") ?? stringAt(record, "code") ?? "upstream_error",
 	};
 }
 
@@ -115,11 +107,7 @@ function translateError(inbound: SubscriptionInboundProtocol, body: Record<strin
  * @param inbound - 入口协议
  * @param model - 对外模型 ID
  */
-function encodeResponse(
-	response: CanonicalResponse,
-	inbound: SubscriptionInboundProtocol,
-	model: string,
-): Record<string, unknown> {
+function encodeResponse(response: CanonicalResponse, inbound: SubscriptionInboundProtocol, model: string): Record<string, unknown> {
 	switch (inbound) {
 		case "messages":
 			return encodeMessagesResponse(response, model);

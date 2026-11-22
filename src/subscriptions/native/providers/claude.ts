@@ -320,9 +320,7 @@ function mapClaudeQuota(quota: CliProxyAccountQuota): SubscriptionQuotaSnapshot 
 	}
 	const windows: SubscriptionQuotaWindow[] = quota.windows.map((window) => ({
 		name: window.label || window.id,
-		...(window.remaining_percent === null
-			? {}
-			: { remainingFraction: Math.min(1, Math.max(0, window.remaining_percent / 100)) }),
+		...(window.remaining_percent === null ? {} : { remainingFraction: Math.min(1, Math.max(0, window.remaining_percent / 100)) }),
 		...(window.resets_at ? { resetTime: window.resets_at } : {}),
 		raw: {
 			id: window.id,

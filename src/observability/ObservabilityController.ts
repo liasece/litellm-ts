@@ -114,9 +114,21 @@ export function registerObservabilityRoutes(router: Router, requireAuth: Request
 			}
 		};
 	};
-	router.get("/metrics", requireAuth, guard((req, res) => controller.prometheus(req, res)));
-	router.get("/metrics/summary", requireAuth, guard((req, res) => controller.summary(req, res)));
-	router.get("/metrics/slow", requireAuth, guard((req, res) => controller.slowRequests(req, res)));
+	router.get(
+		"/metrics",
+		requireAuth,
+		guard((req, res) => controller.prometheus(req, res)),
+	);
+	router.get(
+		"/metrics/summary",
+		requireAuth,
+		guard((req, res) => controller.summary(req, res)),
+	);
+	router.get(
+		"/metrics/slow",
+		requireAuth,
+		guard((req, res) => controller.slowRequests(req, res)),
+	);
 }
 
 /**

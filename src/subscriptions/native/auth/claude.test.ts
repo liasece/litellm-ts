@@ -159,12 +159,7 @@ describe("claude subscription auth", () => {
 		expect(raw["weight"]).toBe(3);
 
 		const tokenCall = calls.find((call) => call.url === TOKEN_URL);
-		expect(Object.keys(requestJson(tokenCall))).toEqual([
-			"client_id",
-			"grant_type",
-			"refresh_token",
-			"scope",
-		]);
+		expect(Object.keys(requestJson(tokenCall))).toEqual(["client_id", "grant_type", "refresh_token", "scope"]);
 		expect(requestJson(tokenCall)).toEqual({
 			client_id: CLIENT_ID,
 			grant_type: "refresh_token",
@@ -307,10 +302,7 @@ describe("claude subscription auth", () => {
 		const state = authorizeUrl.searchParams.get("state");
 		expect(state).toBeTruthy();
 
-		const completed = await auth.submitLoginInput(
-			session.id,
-			`${REDIRECT_URI}?code=auth-code&state=${state ?? ""}`,
-		);
+		const completed = await auth.submitLoginInput(session.id, `${REDIRECT_URI}?code=auth-code&state=${state ?? ""}`);
 		expect(completed.state).toBe("success");
 		expect(JSON.stringify(completed)).not.toContain("access-1");
 
@@ -321,19 +313,10 @@ describe("claude subscription auth", () => {
 		expect(exchangeBody["redirect_uri"]).toBe(REDIRECT_URI);
 		expect(exchangeBody["client_id"]).toBe(CLIENT_ID);
 		expect(exchangeBody["state"]).toBe(state);
-		expect(Object.keys(exchangeBody)).toEqual([
-			"grant_type",
-			"code",
-			"redirect_uri",
-			"client_id",
-			"code_verifier",
-			"state",
-		]);
+		expect(Object.keys(exchangeBody)).toEqual(["grant_type", "code", "redirect_uri", "client_id", "code_verifier", "state"]);
 		const verifier = String(exchangeBody["code_verifier"]);
 		expect(verifier).toHaveLength(64);
-		expect(createHash("sha256").update(verifier).digest("base64url")).toBe(
-			authorizeUrl.searchParams.get("code_challenge"),
-		);
+		expect(createHash("sha256").update(verifier).digest("base64url")).toBe(authorizeUrl.searchParams.get("code_challenge"));
 
 		const accounts = await store.list("claude");
 		expect(accounts).toHaveLength(1);
@@ -371,10 +354,7 @@ describe("claude subscription auth", () => {
 		const session = await auth.startLogin();
 		const state = requireUrl(session.url).searchParams.get("state");
 
-		const rejected = await auth.submitLoginInput(
-			session.id,
-			`${REDIRECT_URI}?code=wrong&state=not-${state ?? ""}`,
-		);
+		const rejected = await auth.submitLoginInput(session.id, `${REDIRECT_URI}?code=wrong&state=not-${state ?? ""}`);
 		expect(rejected.state).toBe("error");
 		expect(rejected.error).toContain("state");
 		expect(calls).toHaveLength(0);
@@ -404,10 +384,7 @@ describe("claude subscription auth", () => {
 		const auth = createAuth(fetchImpl);
 		const session = await auth.startLogin();
 		const state = requireUrl(session.url).searchParams.get("state");
-		const completed = await auth.submitLoginInput(
-			session.id,
-			`${REDIRECT_URI}?code=code-part%23${state ?? ""}&state=${state ?? ""}`,
-		);
+		const completed = await auth.submitLoginInput(session.id, `${REDIRECT_URI}?code=code-part%23${state ?? ""}&state=${state ?? ""}`);
 		expect(completed.state).toBe("success");
 		const exchangeBody = requestJson(calls.find((call) => call.url === TOKEN_URL));
 		expect(exchangeBody["code"]).toBe("code-part");
@@ -432,10 +409,7 @@ describe("claude subscription auth", () => {
 		const auth = createAuth(fetchImpl);
 		const session = await auth.startLogin();
 		const state = requireUrl(session.url).searchParams.get("state") ?? "";
-		const completed = await auth.submitLoginInput(
-			session.id,
-			`${REDIRECT_URI}?code=profile-failure&state=${state}`,
-		);
+		const completed = await auth.submitLoginInput(session.id, `${REDIRECT_URI}?code=profile-failure&state=${state}`);
 		expect(completed.state).toBe("success");
 		const accounts = await store.list("claude");
 		expect(accounts).toHaveLength(1);

@@ -165,7 +165,14 @@ export function buildUpstreamAttempt(
 		upstreamHeaders: providerReq.headers,
 		deployment: deployment,
 		deploymentKey: getDeploymentKey(deployment),
-		upstreamModel: hostedProvider(deployment.litellm_params) && providerReq.body && typeof providerReq.body === "object" && "model" in providerReq.body && typeof providerReq.body.model === "string" ? providerReq.body.model : stripProviderPrefix(deploymentModel),
+		upstreamModel:
+			hostedProvider(deployment.litellm_params) &&
+			providerReq.body &&
+			typeof providerReq.body === "object" &&
+			"model" in providerReq.body &&
+			typeof providerReq.body.model === "string"
+				? providerReq.body.model
+				: stripProviderPrefix(deploymentModel),
 	};
 }
 

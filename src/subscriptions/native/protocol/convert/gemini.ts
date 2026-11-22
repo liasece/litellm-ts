@@ -67,9 +67,7 @@ function decodeGeminiMediaPart(part: Record<string, unknown>): CanonicalContentP
 		const mimeType = stringAt(inline, "mimeType") ?? "image/png";
 		const data = stringAt(inline, "data") ?? "";
 		const url = `data:${mimeType};base64,${data}`;
-		return mimeType.startsWith("image/")
-			? { type: "image", url: url }
-			: { type: "document", url: url, mediaType: mimeType };
+		return mimeType.startsWith("image/") ? { type: "image", url: url } : { type: "document", url: url, mediaType: mimeType };
 	}
 	const fileData = recordAt(part, "fileData");
 	if (fileData !== undefined) {
@@ -149,8 +147,7 @@ function decodeGeminiParts(parts: unknown, callIds: Map<string, string>): Canoni
 								const output = stringAt(responseRecord, "result", "output", "content", "error");
 								return output ?? stringifyArguments(response);
 							})();
-			const isError =
-				responseRecord !== undefined && (responseRecord["error"] !== undefined || responseRecord["success"] === false);
+			const isError = responseRecord !== undefined && (responseRecord["error"] !== undefined || responseRecord["success"] === false);
 			const content: CanonicalContentPart[] = [{ type: "text", text: textContent }];
 			for (const nested of asRecordArray(functionResponse["parts"])) {
 				const media = decodeGeminiMediaPart(nested);
@@ -268,9 +265,7 @@ export function decodeGeminiToolChoice(value: unknown): CanonicalToolChoice | un
  * 解码 Gemini 结构化输出。
  * @param config - generationConfig
  */
-function decodeGeminiResponseFormat(
-	config: Record<string, unknown> | undefined,
-): CanonicalResponseFormat | undefined {
+function decodeGeminiResponseFormat(config: Record<string, unknown> | undefined): CanonicalResponseFormat | undefined {
 	const mimeType = stringAt(config, "responseMimeType");
 	const schema = config?.["responseSchema"] ?? config?.["responseJsonSchema"];
 	if (mimeType === "application/json" || schema !== undefined) {
@@ -315,9 +310,7 @@ export function decodeGeminiRequest(body: Record<string, unknown>, fallbackModel
 		? (config?.["stopSequences"] as unknown[]).filter((item): item is string => typeof item === "string")
 		: [];
 	const safetySettings = Array.isArray(body["safetySettings"])
-		? (body["safetySettings"] as unknown[]).filter(
-				(item): item is Record<string, unknown> => asRecord(item) !== undefined,
-			)
+		? (body["safetySettings"] as unknown[]).filter((item): item is Record<string, unknown> => asRecord(item) !== undefined)
 		: undefined;
 	const responseModalities = Array.isArray(config?.["responseModalities"])
 		? (config?.["responseModalities"] as unknown[]).filter((item): item is string => typeof item === "string")
@@ -365,10 +358,7 @@ export function decodeGeminiRequest(body: Record<string, unknown>, fallbackModel
  * @param part - 工具结果片段
  * @param toolNames - 工具调用 ID 到名称的映射
  */
-function encodeFunctionResponse(
-	part: CanonicalContentPart,
-	toolNames: Map<string, string>,
-): Record<string, unknown> | undefined {
+function encodeFunctionResponse(part: CanonicalContentPart, toolNames: Map<string, string>): Record<string, unknown> | undefined {
 	const textParts =
 		part.type === "tool_result"
 			? part.content.map((item) => (item.type === "text" ? item.text : "")).filter((text) => text.length > 0)
@@ -380,10 +370,9 @@ function encodeFunctionResponse(
 		return joined.length > 0 ? { text: joined } : undefined;
 	}
 	const parsed = asRecord(safeJsonParse(joined));
-	const response =
-		parsed ?? {
-			[part.type === "tool_result" && part.isError === true ? "error" : "result"]: joined.length > 0 ? joined : "",
-		};
+	const response = parsed ?? {
+		[part.type === "tool_result" && part.isError === true ? "error" : "result"]: joined.length > 0 ? joined : "",
+	};
 	const mediaParts: Record<string, unknown>[] = [];
 	if (part.type === "tool_result") {
 		for (const item of part.content) {
@@ -424,10 +413,7 @@ function safeJsonParse(text: string): unknown {
  * @param parts - 规范内容片段
  * @param toolNames - 工具调用 ID 到名称的映射
  */
-function encodeGeminiParts(
-	parts: readonly CanonicalContentPart[],
-	toolNames: Map<string, string>,
-): Record<string, unknown>[] {
+function encodeGeminiParts(parts: readonly CanonicalContentPart[], toolNames: Map<string, string>): Record<string, unknown>[] {
 	const result: Record<string, unknown>[] = [];
 	for (const part of mergeAdjacentText(parts)) {
 		switch (part.type) {
@@ -535,9 +521,7 @@ function encodeGeminiToolChoice(choice: CanonicalToolChoice | undefined): Record
 		return {
 			functionCallingConfig: {
 				mode: "ANY",
-				...(allowed === undefined || allowed.length === 0
-					? {}
-					: { allowedFunctionNames: allowed }),
+				...(allowed === undefined || allowed.length === 0 ? {} : { allowedFunctionNames: allowed }),
 			},
 		};
 	}
@@ -600,12 +584,8 @@ export function encodeGeminiRequest(request: CanonicalRequest, upstreamModel: st
 		contents.push({ role: "user", parts: [{ text: "" }] });
 	}
 	body["contents"] = contents;
-	const allowedNames =
-		request.toolChoice?.mode === "auto" ? request.toolChoice.allowedNames : undefined;
-	const selectedTools =
-		allowedNames === undefined
-			? request.tools
-			: request.tools.filter((tool) => allowedNames.includes(tool.name));
+	const allowedNames = request.toolChoice?.mode === "auto" ? request.toolChoice.allowedNames : undefined;
+	const selectedTools = allowedNames === undefined ? request.tools : request.tools.filter((tool) => allowedNames.includes(tool.name));
 	const tools = encodeGeminiTools(selectedTools);
 	if (tools.length > 0) {
 		body["tools"] = tools;
@@ -656,9 +636,7 @@ export function encodeGeminiRequest(request: CanonicalRequest, upstreamModel: st
 	}
 	const reasoning = request.reasoning;
 	if (reasoning !== undefined) {
-		const budget =
-			reasoning.budgetTokens ??
-			(reasoning.effort === undefined ? undefined : effortToBudget(reasoning.effort));
+		const budget = reasoning.budgetTokens ?? (reasoning.effort === undefined ? undefined : effortToBudget(reasoning.effort));
 		config["thinkingConfig"] = {
 			...(reasoning.enabled === false ? { thinkingBudget: 0 } : {}),
 			...(budget === undefined || reasoning.enabled === false ? {} : { thinkingBudget: budget }),
@@ -692,7 +670,7 @@ export function decodeGeminiResponse(body: Record<string, unknown>, fallbackMode
 	const finishReasonRaw = stringAt(candidate, "finishReason");
 	const finishReason: CanonicalFinishReason =
 		finishReasonRaw === undefined
-			? promptBlockReason(body) ?? (hasToolCalls ? "tool_calls" : "stop")
+			? (promptBlockReason(body) ?? (hasToolCalls ? "tool_calls" : "stop"))
 			: hasToolCalls && finishReasonRaw === "STOP"
 				? "tool_calls"
 				: finishFromGemini(finishReasonRaw);
@@ -897,10 +875,7 @@ export class GeminiStreamDecoder implements CanonicalStreamDecoder {
 				const hasTools = parts.some((part) => part.type === "tool_call");
 				events.push({
 					type: "finish",
-					reason:
-						hasTools && finishReasonRaw === "STOP"
-							? "tool_calls"
-							: finishFromGemini(finishReasonRaw),
+					reason: hasTools && finishReasonRaw === "STOP" ? "tool_calls" : finishFromGemini(finishReasonRaw),
 				});
 			}
 		}

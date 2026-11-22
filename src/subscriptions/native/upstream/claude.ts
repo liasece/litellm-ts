@@ -75,12 +75,12 @@ export const claudeUpstreamAdapter: UpstreamSourceAdapter = {
 	source: "claude",
 	supported: true,
 
-	hasCredential: function(account: SubscriptionAccount): boolean {
+	hasCredential: function (account: SubscriptionAccount): boolean {
 		const raw = asRecord(account.raw);
 		return asText(raw?.["access_token"]) !== undefined || asText(raw?.["api_key"]) !== undefined;
 	},
 
-	list: async function(context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
+	list: async function (context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
 		const raw = asRecord(context.account.raw);
 		const credential = asText(raw?.["access_token"]) ?? asText(raw?.["api_key"]);
 		if (credential === undefined) {
@@ -119,7 +119,7 @@ export const claudeUpstreamAdapter: UpstreamSourceAdapter = {
 		return [...rows, ...extractEntries(models.payload, ["data"])];
 	},
 
-	parse: function(entries: readonly unknown[]): UpstreamModelMetadataMap {
+	parse: function (entries: readonly unknown[]): UpstreamModelMetadataMap {
 		const merged = new Map<string, UpstreamModelMetadata>();
 		const merge = (id: string, patch: UpstreamModelMetadata): void => {
 			const existing = merged.get(id);
@@ -174,7 +174,8 @@ export const claudeUpstreamAdapter: UpstreamSourceAdapter = {
 				family: asText(record["line"]),
 				supportsVision: capabilityFlag(capabilities, "image_input"),
 				supportsStructuredOutput: capabilityFlag(capabilities, "structured_outputs"),
-				supportsReasoning: capabilityFlag(capabilities, "thinking") ?? (asBoolean(asRecord(asRecord(capabilities)?.["thinking"])?.["supported"])),
+				supportsReasoning:
+					capabilityFlag(capabilities, "thinking") ?? asBoolean(asRecord(asRecord(capabilities)?.["thinking"])?.["supported"]),
 			});
 			if (metadata !== undefined) {
 				merge(id, metadata);

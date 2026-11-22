@@ -1,10 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-	DatabaseVisionImageStore,
-	MemoryVisionImageStore,
-	storeVisionImageUrl,
-	VISION_IMAGE_REFERENCE_PREFIX,
-} from "./VisionImageStore";
+import { DatabaseVisionImageStore, MemoryVisionImageStore, storeVisionImageUrl, VISION_IMAGE_REFERENCE_PREFIX } from "./VisionImageStore";
 
 describe("VisionImageStore", () => {
 	it("uses the decoded bytes SHA-256 as a stable reference and canonicalizes base64", async () => {

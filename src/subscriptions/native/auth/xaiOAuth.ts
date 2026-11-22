@@ -129,11 +129,7 @@ export function validateXaiEndpoint(rawUrl: string, field: string, allowInsecure
  * @param init - fetch init
  * @param options - 超时/fetch
  */
-export async function requestXaiJson(
-	url: string,
-	init: RequestInit,
-	options: XaiRequestOptions = {},
-): Promise<XaiJsonResponse> {
+export async function requestXaiJson(url: string, init: RequestInit, options: XaiRequestOptions = {}): Promise<XaiJsonResponse> {
 	const fetchImpl = options.fetch ?? fetch;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 30_000);
@@ -198,9 +194,7 @@ export async function discoverXaiEndpoints(
 	}
 	return {
 		deviceAuthorizationEndpoint: validateXaiEndpoint(
-			typeof response.body["device_authorization_endpoint"] === "string"
-				? response.body["device_authorization_endpoint"]
-				: "",
+			typeof response.body["device_authorization_endpoint"] === "string" ? response.body["device_authorization_endpoint"] : "",
 			"device_authorization_endpoint",
 			allowInsecure,
 		),

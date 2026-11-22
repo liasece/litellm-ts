@@ -28,11 +28,7 @@ const RESPONSES_ENVELOPE_EVENT_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /** Responses 协议终态事件：请求已经结束，不再有继续 fallback 的余地。 */
-const RESPONSES_TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
-	"response.completed",
-	"response.incomplete",
-	"response.failed",
-]);
+const RESPONSES_TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set(["response.completed", "response.incomplete", "response.failed"]);
 
 /** Responses 协议里只承载思考过程的语义事件：不构成已下发的答案。 */
 const RESPONSES_REASONING_EVENT_TYPES: ReadonlySet<string> = new Set([

@@ -29,12 +29,12 @@ export const kimiUpstreamAdapter: UpstreamSourceAdapter = {
 	source: "kimi",
 	supported: true,
 
-	hasCredential: function(account: SubscriptionAccount): boolean {
+	hasCredential: function (account: SubscriptionAccount): boolean {
 		const raw = asRecord(account.raw);
 		return asText(raw?.["access_token"]) !== undefined || asText(raw?.["api_key"]) !== undefined;
 	},
 
-	list: async function(context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
+	list: async function (context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
 		const raw = asRecord(context.account.raw);
 		const credential = asText(raw?.["access_token"]) ?? asText(raw?.["api_key"]);
 		if (credential === undefined) {
@@ -52,7 +52,7 @@ export const kimiUpstreamAdapter: UpstreamSourceAdapter = {
 		return extractEntries(result.payload, ["data", "models"]);
 	},
 
-	parse: function(entries: readonly unknown[]): UpstreamModelMetadataMap {
+	parse: function (entries: readonly unknown[]): UpstreamModelMetadataMap {
 		const map = new Map<string, UpstreamModelMetadata>();
 		for (const entry of entries) {
 			const record = asRecord(entry);

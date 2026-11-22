@@ -35,9 +35,7 @@ describe("hasCommittedStreamOutput", () => {
 		expect(hasCommittedStreamOutput({ type: "response.output_item.added", item: { id: "msg_1" } })).toBe(false);
 		expect(hasCommittedStreamOutput({ type: "response.reasoning_text.delta", delta: "思考" })).toBe(false);
 		expect(hasCommittedStreamOutput({ type: "response.reasoning_text.done", text: "思考" })).toBe(false);
-		expect(
-			hasCommittedStreamOutput({ type: "response.output_item.done", item: { type: "reasoning", id: "rs_1" } }),
-		).toBe(false);
+		expect(hasCommittedStreamOutput({ type: "response.output_item.done", item: { type: "reasoning", id: "rs_1" } })).toBe(false);
 	});
 
 	it("commits on native Responses answer deltas", () => {

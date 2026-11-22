@@ -245,12 +245,7 @@ export class FallbackHandler {
 	 * @param skipAliasResolution
 	 * @param at
 	 */
-	private _lookupByKeys<T>(
-		lookupModel: string,
-		map: Record<string, T>,
-		skipAliasResolution: boolean,
-		at: Date,
-	): T | undefined {
+	private _lookupByKeys<T>(lookupModel: string, map: Record<string, T>, skipAliasResolution: boolean, at: Date): T | undefined {
 		// Exact match
 		const exact = map[lookupModel];
 		if (exact) {

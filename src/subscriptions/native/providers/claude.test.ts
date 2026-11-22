@@ -800,7 +800,8 @@ describe("CCH 签名", () => {
 	});
 
 	test("签名把占位符替换为 5 位小写十六进制", () => {
-		const body = '{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.280.abc; cc_entrypoint=cli; cch=00000;"}]}';
+		const body =
+			'{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.280.abc; cc_entrypoint=cli; cch=00000;"}]}';
 		const signed = signClaudeCchBody(body);
 		expect(signed).toMatch(/cch=[0-9a-f]{5};/);
 		expect(signed).not.toContain("cch=00000;");
@@ -820,7 +821,11 @@ describe("CCH 签名", () => {
 			["model 值被忽略", base.replace('"model":"model-a"', '"model":"model-b"'), "7ee87"],
 			["消息影响哈希", base.replace('"text":"x"', '"text":"y"'), "b9cc8"],
 			["嵌套 model 被清空", base.replace('"metadata":{"user_id":"meta-x"}', '"metadata":{"user_id":"meta-x","model":"a"}'), "0601b"],
-			["嵌套派发字段被剔除", base.replace('"metadata":{"user_id":"meta-x"}', '"metadata":{"user_id":"meta-x","max_tokens":2}'), "7ee87"],
+			[
+				"嵌套派发字段被剔除",
+				base.replace('"metadata":{"user_id":"meta-x"}', '"metadata":{"user_id":"meta-x","max_tokens":2}'),
+				"7ee87",
+			],
 			[
 				"字段顺序敏感",
 				'{"stream":true,"output_config":{"effort":"high"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},"thinking":{"type":"adaptive","display":"omitted"},"max_tokens":1,"metadata":{"user_id":"meta-x"},"tools":[],"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.220.test; cc_entrypoint=sdk-cli; cch=00000;"},{"type":"text","text":"system-x"}],"messages":[{"role":"user","content":[{"type":"text","text":"x"}]}],"model":"model-a"}',

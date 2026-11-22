@@ -6,21 +6,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type {
-	CanonicalCacheControl,
-	CanonicalContentPart,
-	CanonicalFinishReason,
-	CanonicalUsage,
-} from "../ir";
+import type { CanonicalCacheControl, CanonicalContentPart, CanonicalFinishReason, CanonicalUsage } from "../ir";
 
 /**
  * 读取对象；数组、null 与原始值返回 undefined。
  * @param value - 任意值
  */
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 /**
@@ -131,10 +124,7 @@ export function booleanAt(record: Record<string, unknown> | undefined, ...keys: 
  * @param record - 源对象
  * @param keys - 候选键
  */
-export function recordAt(
-	record: Record<string, unknown> | undefined,
-	...keys: readonly string[]
-): Record<string, unknown> | undefined {
+export function recordAt(record: Record<string, unknown> | undefined, ...keys: readonly string[]): Record<string, unknown> | undefined {
 	for (const key of keys) {
 		const value = asRecord(record?.[key]);
 		if (value !== undefined) {
@@ -268,9 +258,7 @@ export function cacheControlTo(cacheControl: CanonicalCacheControl | undefined):
 	if (!cacheControl) {
 		return undefined;
 	}
-	return cacheControl.ttl === undefined
-		? { type: cacheControl.type }
-		: { type: cacheControl.type, ttl: cacheControl.ttl };
+	return cacheControl.ttl === undefined ? { type: cacheControl.type } : { type: cacheControl.type, ttl: cacheControl.ttl };
 }
 
 /**
@@ -533,8 +521,7 @@ export function usageFromChat(usage: Record<string, unknown> | undefined): Canon
 	const output = numberAt(usage, "completion_tokens", "output_tokens") ?? 0;
 	const cachedTokens = numberAt(promptDetails, "cached_tokens") ?? numberAt(usage, "cache_read_input_tokens");
 	const cacheCreationTokens =
-		numberAt(promptDetails, "cache_creation_tokens", "cache_write_tokens") ??
-		numberAt(usage, "cache_creation_input_tokens");
+		numberAt(promptDetails, "cache_creation_tokens", "cache_write_tokens") ?? numberAt(usage, "cache_creation_input_tokens");
 	const reasoningTokens = numberAt(completionDetails, "reasoning_tokens") ?? numberAt(usage, "reasoning_tokens");
 	return buildUsage(input, output, numberAt(usage, "total_tokens"), cachedTokens, cacheCreationTokens, reasoningTokens);
 }
@@ -605,9 +592,7 @@ export function chatUsage(usage: CanonicalUsage): Record<string, unknown> {
 		completion_tokens: usage.outputTokens,
 		total_tokens: usage.totalTokens,
 		...(usage.cachedTokens === undefined ? {} : { prompt_tokens_details: { cached_tokens: usage.cachedTokens } }),
-		...(usage.reasoningTokens === undefined
-			? {}
-			: { completion_tokens_details: { reasoning_tokens: usage.reasoningTokens } }),
+		...(usage.reasoningTokens === undefined ? {} : { completion_tokens_details: { reasoning_tokens: usage.reasoningTokens } }),
 	};
 }
 

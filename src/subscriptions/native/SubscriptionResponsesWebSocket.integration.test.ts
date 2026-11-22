@@ -183,9 +183,9 @@ it.each([
 	const frame = (event: unknown) => writer.write(Buffer.from(`data: ${JSON.stringify(event)}\n\n`));
 	const create = () => socket.send(JSON.stringify({ type: "response.create", model: "client-model", input: [] }));
 	try {
-		const fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-			new Response(stream.readable, { headers: { "content-type": "text/event-stream" } }),
-		);
+		const fetchSpy = jest
+			.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(new Response(stream.readable, { headers: { "content-type": "text/event-stream" } }));
 		const settled = nextSettledLog();
 		await delay(12);
 		const submittedAt = Date.now();

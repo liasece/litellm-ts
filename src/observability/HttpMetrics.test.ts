@@ -108,12 +108,7 @@ async function startServer(): Promise<Server> {
  * @param path - 路径
  * @param body - 请求体
  */
-function request(
-	port: number,
-	method: string,
-	path: string,
-	body?: unknown,
-): Promise<{ status: number; body: string }> {
+function request(port: number, method: string, path: string, body?: unknown): Promise<{ status: number; body: string }> {
 	return new Promise((resolve, reject) => {
 		const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
 		const req = http.request(
@@ -122,17 +117,12 @@ function request(
 				port: port,
 				path: path,
 				method: method,
-				headers:
-					payload === undefined
-						? {}
-						: { "content-type": "application/json", "content-length": String(payload.length) },
+				headers: payload === undefined ? {} : { "content-type": "application/json", "content-length": String(payload.length) },
 			},
 			(response) => {
 				const chunks: Buffer[] = [];
 				response.on("data", (chunk: Buffer) => chunks.push(chunk));
-				response.on("end", () =>
-					resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
-				);
+				response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
 			},
 		);
 		req.once("error", reject);

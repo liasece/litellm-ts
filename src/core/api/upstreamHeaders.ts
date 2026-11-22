@@ -39,7 +39,7 @@ export function isForwardableUpstreamHeader(name: string): boolean {
 export function sanitizeUpstreamRequestHeaders(headers: Record<string, string> | Headers): Headers {
 	// Headers 实例用 Object.entries 取不到任何键，必须先交给 Headers 构造器归一化。
 	const sanitized = new Headers(headers as unknown as ConstructorParameters<typeof Headers>[0]);
-	sanitized.delete('accept-encoding');
+	sanitized.delete("accept-encoding");
 	return sanitized;
 }
 

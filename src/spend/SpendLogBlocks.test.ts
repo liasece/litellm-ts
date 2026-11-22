@@ -212,9 +212,8 @@ describe("restoreSpendLogPayload", () => {
 	it("缺块时用占位对象补齐并报告缺失的 id", () => {
 		const encoded = collectSpendLogBlocks({ messages: makeMessages(4), proxyServerRequest: {} });
 		const refs = (encoded.messages as Record<string, unknown>)[SPEND_LOG_MESSAGE_REF_KEY] as string[];
-		const restored = restoreSpendLogPayload(
-			{ messages: encoded.messages },
-			(blockId) => (blockId === refs[0] ? { role: "user", content: "message-0" } : undefined),
+		const restored = restoreSpendLogPayload({ messages: encoded.messages }, (blockId) =>
+			blockId === refs[0] ? { role: "user", content: "message-0" } : undefined,
 		);
 		expect((restored.messages as unknown[])[0]).toEqual({ role: "user", content: "message-0" });
 		expect((restored.messages as unknown[])[1]).toEqual({ [SPEND_LOG_REF_MISSING_KEY]: refs[1] });
@@ -239,10 +238,7 @@ describe("restoreSpendLogPayload", () => {
 
 	it("历史行的字面量原样返回", () => {
 		const messages = makeMessages(2);
-		const restored = restoreSpendLogPayload(
-			{ messages, proxy_server_request: { body: { messages } } },
-			() => undefined,
-		);
+		const restored = restoreSpendLogPayload({ messages, proxy_server_request: { body: { messages } } }, () => undefined);
 		expect(restored.messages).toEqual(messages);
 		expect((restored.proxyServerRequest as Record<string, unknown>)["body"]).toEqual({ messages });
 		expect(restored.missingBlockIds).toEqual([]);
@@ -342,7 +338,7 @@ describe("collectSpendLogBlocks：tools 与 system 整数组块化", () => {
 		// 伪造的计数被真实计算值覆盖，伪造的 system 引用被丢弃
 		expect(body[SPEND_LOG_TOOLS_COUNT_KEY]).toBe(1);
 		expect(body[SPEND_LOG_SYSTEM_REF_KEY]).toBeUndefined();
-		expect((body[SPEND_LOG_TOOLS_REF_KEY] as string)).not.toBe("AAAAAAAAAAAAAAAAAAAAAA");
+		expect(body[SPEND_LOG_TOOLS_REF_KEY] as string).not.toBe("AAAAAAAAAAAAAAAAAAAAAA");
 	});
 });
 
@@ -384,10 +380,7 @@ describe("restoreSpendLogPayload：tools / system / $messages", () => {
 
 	it("工具块缺失时用占位对象，不影响其它字段", () => {
 		const encoded = collectSpendLogBlocks({ messages: {}, proxyServerRequest: { body: { tools: makeTools(2) } } });
-		const restored = restoreSpendLogPayload(
-			{ messages: {}, proxy_server_request: encoded.proxyServerRequest },
-			() => undefined,
-		);
+		const restored = restoreSpendLogPayload({ messages: {}, proxy_server_request: encoded.proxyServerRequest }, () => undefined);
 		const body = (restored.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
 		expect((body["tools"] as Record<string, unknown>)[SPEND_LOG_REF_MISSING_KEY]).toHaveLength(22);
 		expect(restored.missingBlockIds).toHaveLength(1);
@@ -444,10 +437,7 @@ describe("encodeActiveRequestPayload", () => {
 
 		const encoded = encodeActiveRequestPayload(proxyServerRequest);
 		const payloads = new Map(encoded.blocks.map((block) => [block.blockId, block.payload] as const));
-		const restored = restoreSpendLogPayload(
-			{ proxy_server_request: encoded.proxyServerRequest },
-			(blockId) => payloads.get(blockId),
-		);
+		const restored = restoreSpendLogPayload({ proxy_server_request: encoded.proxyServerRequest }, (blockId) => payloads.get(blockId));
 		const restoredProxy = restored.proxyServerRequest as Record<string, unknown>;
 		const body = restoredProxy["body"] as Record<string, unknown>;
 		expect(body["messages"]).toEqual(messages);
@@ -469,10 +459,7 @@ describe("encodeActiveRequestPayload", () => {
 		expect(body["input"]).toBeUndefined();
 		expect(body[SPEND_LOG_INPUT_REF_KEY]).toHaveLength(1);
 		const payloads = new Map(encoded.blocks.map((block) => [block.blockId, block.payload] as const));
-		const restored = restoreSpendLogPayload(
-			{ proxy_server_request: encoded.proxyServerRequest },
-			(blockId) => payloads.get(blockId),
-		);
+		const restored = restoreSpendLogPayload({ proxy_server_request: encoded.proxyServerRequest }, (blockId) => payloads.get(blockId));
 		const restoredBody = (restored.proxyServerRequest as Record<string, unknown>)["body"] as Record<string, unknown>;
 		expect(restoredBody["input"]).toEqual(input);
 	});

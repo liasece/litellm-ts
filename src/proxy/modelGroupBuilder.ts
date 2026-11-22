@@ -25,10 +25,7 @@ import { applyUpstreamFills } from "./upstreamModelOverlay";
 
 import { modelCostMapService, type ModelCostMap } from "../cost/ModelCostMapService";
 import type { Deployment } from "../types/router";
-import {
-	isBuiltinCapabilityAvailable,
-	type BuiltinCapabilitiesConfig,
-} from "../capabilities/BuiltinCapabilitiesConfig";
+import { isBuiltinCapabilityAvailable, type BuiltinCapabilitiesConfig } from "../capabilities/BuiltinCapabilitiesConfig";
 
 /**
  * Python `ModelInfo`（litellm/types/utils.py ModelInfoBase + supported_openai_params）
@@ -221,7 +218,9 @@ export function lookupModelCostEntry(
 ): ModelCostEntry | undefined {
 	if (isSubscriptionProvider(provider)) {
 		for (const key of modelPriceKeys(model, provider)) {
-			if (modelCostMap[key]) {return modelCostMap[key];}
+			if (modelCostMap[key]) {
+				return modelCostMap[key];
+			}
 		}
 		return undefined;
 	}
@@ -612,7 +611,8 @@ export function buildModelGroupInfoResponse(
 			mergeDeploymentIntoBucket(groupBucket, info, provider);
 		}
 		if (includeModelIdentity) {
-			const family = resolveModelFamily(dep.litellm_params.model, dep.model_info?.["base_model"] ?? dep.litellm_params["base_model"]) ?? null;
+			const family =
+				resolveModelFamily(dep.litellm_params.model, dep.model_info?.["base_model"] ?? dep.litellm_params["base_model"]) ?? null;
 			const supplier = resolveDeploymentProvider(dep);
 			const previous = groupBucket.identity;
 			groupBucket.identity = {

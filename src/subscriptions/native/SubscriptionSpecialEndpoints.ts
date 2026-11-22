@@ -177,14 +177,16 @@ function geminiUsage(value: unknown): Record<string, unknown> | undefined {
  */
 function hasGeminiContent(payload: Record<string, unknown>): boolean {
 	return asRecordArray(payload["candidates"]).some((candidate) =>
-		asRecordArray(recordAt(candidate, "content")?.["parts"]).some((part) => Boolean(
-			stringAt(part, "text") ||
-			stringAt(recordAt(part, "functionCall"), "name") ||
-			stringAt(recordAt(part, "inlineData"), "data") ||
-			stringAt(recordAt(part, "fileData"), "fileUri") ||
-			stringAt(recordAt(part, "executableCode"), "code") ||
-			stringAt(recordAt(part, "codeExecutionResult"), "output")
-		)),
+		asRecordArray(recordAt(candidate, "content")?.["parts"]).some((part) =>
+			Boolean(
+				stringAt(part, "text") ||
+				stringAt(recordAt(part, "functionCall"), "name") ||
+				stringAt(recordAt(part, "inlineData"), "data") ||
+				stringAt(recordAt(part, "fileData"), "fileUri") ||
+				stringAt(recordAt(part, "executableCode"), "code") ||
+				stringAt(recordAt(part, "codeExecutionResult"), "output"),
+			),
+		),
 	);
 }
 

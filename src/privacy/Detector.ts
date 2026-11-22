@@ -238,11 +238,7 @@ export function scanText(text: string, options: ScanOptions): ScanHit[] {
 				const value = text.slice(start, end);
 				// 前一个字符是引号时，说明命中值来自字符串字面量而不是代码里的引用。
 				const quoted = start > 0 && (text[start - 1] === '"' || text[start - 1] === "'" || text[start - 1] === "`");
-				const accepted = acceptRuleMatch(
-					{ rule: rule, value: value, text: text, start: start, quoted: quoted },
-					allowlist,
-					spans,
-				);
+				const accepted = acceptRuleMatch({ rule: rule, value: value, text: text, start: start, quoted: quoted }, allowlist, spans);
 				if (accepted) {
 					hits.push({ kind: rule.kind, value: value, rule: rule.id, source: "rule", start: start, end: end });
 				}

@@ -3,10 +3,7 @@
  */
 
 import type { SubscriptionInboundProtocol, SubscriptionWireProtocol } from "../types";
-import type {
-	CanonicalStreamDecoder,
-	CanonicalStreamEncoder,
-} from "./ir";
+import type { CanonicalStreamDecoder, CanonicalStreamEncoder } from "./ir";
 import type { ProtocolEvent, ProtocolStreamOptions, ProtocolStreamTranslator } from "./types";
 import { createChatStreamDecoder, createChatStreamEncoder } from "./convert/chat";
 import { createGeminiStreamDecoder, createGeminiStreamEncoder } from "./convert/gemini";

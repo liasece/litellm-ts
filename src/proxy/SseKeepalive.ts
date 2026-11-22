@@ -155,9 +155,7 @@ export function sseKeepaliveMiddleware(router: Router): RequestHandler {
 				router.hasModel(req.body.model)
 			) {
 				const deployment = getKeepaliveDeployment(router, req.body.model);
-				if (
-					(!deployment || !hostedProvider(deployment.litellm_params))
-				) {
+				if (!deployment || !hostedProvider(deployment.litellm_params)) {
 					await startSseKeepalive(
 						req,
 						res,

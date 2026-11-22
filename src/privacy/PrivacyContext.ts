@@ -239,12 +239,7 @@ export class PrivacyContext {
 			distinctValues: this._values.size,
 			kinds: kinds,
 			unresolved: this._unresolved,
-			action:
-				this._blockedKinds.size > 0
-					? "block"
-					: this._settings.action === "warn" || !this._replaced
-						? "warn"
-						: "mask",
+			action: this._blockedKinds.size > 0 ? "block" : this._settings.action === "warn" || !this._replaced ? "warn" : "mask",
 			durationMs: Date.now() - this._startedAt,
 		};
 	}

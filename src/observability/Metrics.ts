@@ -259,12 +259,7 @@ class HistogramSeries {
 	 * @param slotMs - 分片毫秒宽度
 	 * @param slotCount - 分片数量
 	 */
-	private _slotFor(
-		slots: Array<HistogramSlot | undefined>,
-		nowMs: number,
-		slotMs: number,
-		slotCount: number,
-	): HistogramSlot {
+	private _slotFor(slots: Array<HistogramSlot | undefined>, nowMs: number, slotMs: number, slotCount: number): HistogramSlot {
 		const epoch = Math.floor(nowMs / slotMs);
 		const index = ((epoch % slotCount) + slotCount) % slotCount;
 		const existing = slots[index];
@@ -313,14 +308,7 @@ export interface MetricLike {
  * @param value - 增量
  * @param nowMs - 当前单调时钟（毫秒）
  */
-function incSlot(
-	values: Float64Array,
-	epochs: Int32Array,
-	slotMs: number,
-	slotCount: number,
-	value: number,
-	nowMs: number,
-): void {
+function incSlot(values: Float64Array, epochs: Int32Array, slotMs: number, slotCount: number, value: number, nowMs: number): void {
 	const epoch = Math.floor(nowMs / slotMs);
 	const index = ((epoch % slotCount) + slotCount) % slotCount;
 	if (epochs[index] !== epoch) {
@@ -339,14 +327,7 @@ function incSlot(
  * @param requestedMs - 请求的窗口长度
  * @param nowMs - 当前单调时钟（毫秒）
  */
-function sumSlots(
-	values: Float64Array,
-	epochs: Int32Array,
-	slotMs: number,
-	slotCount: number,
-	requestedMs: number,
-	nowMs: number,
-): number {
+function sumSlots(values: Float64Array, epochs: Int32Array, slotMs: number, slotCount: number, requestedMs: number, nowMs: number): number {
 	const currentEpoch = Math.floor(nowMs / slotMs);
 	const reachable = Math.max(1, Math.min(slotCount, Math.ceil(requestedMs / slotMs)));
 	let total = 0;
@@ -657,11 +638,7 @@ export class Histogram implements MetricLike {
 	 * @param windowMs - 窗口长度
 	 * @param predicate - 序列过滤
 	 */
-	quantile(
-		quantile: number,
-		windowMs?: number,
-		predicate: (labels: MetricLabels) => boolean = () => true,
-	): Quantile {
+	quantile(quantile: number, windowMs?: number, predicate: (labels: MetricLabels) => boolean = () => true): Quantile {
 		const merged = { count: 0, sum: 0, cumulative: new Array<number>(this.buckets.length + 1).fill(0) };
 		for (const snapshot of this.windowSnapshot(windowMs)) {
 			if (!predicate(snapshot.labels)) {
@@ -685,7 +662,9 @@ export class Histogram implements MetricLike {
 	seriesQuantile(labels: MetricLabels, quantile: number, windowMs?: number): Quantile {
 		const key = buildSeriesKey(this.labelNames, labels);
 		const target = parseSeriesKey(this.labelNames, key);
-		const snapshot = this.windowSnapshot(windowMs).find((item) => buildSeriesKey(this.labelNames, item.labels) === buildSeriesKey(this.labelNames, target));
+		const snapshot = this.windowSnapshot(windowMs).find(
+			(item) => buildSeriesKey(this.labelNames, item.labels) === buildSeriesKey(this.labelNames, target),
+		);
 		if (snapshot === undefined) {
 			return undefined;
 		}
@@ -736,12 +715,7 @@ export function toCumulativeCounts(counts: ArrayLike<number>): number[] {
  * @param count - 样本总数
  * @param quantile - 分位点 0-1
  */
-export function quantileFromBuckets(
-	buckets: readonly number[],
-	cumulative: readonly number[],
-	count: number,
-	quantile: number,
-): Quantile {
+export function quantileFromBuckets(buckets: readonly number[], cumulative: readonly number[], count: number, quantile: number): Quantile {
 	if (count <= 0) {
 		return undefined;
 	}

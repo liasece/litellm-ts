@@ -19,15 +19,11 @@ beforeEach(() => {
 	mockFetch = installMockFetch();
 });
 
-
 /** 读取 fetch 收到的请求头（统一小写键）：上游改写成 Headers 后普通对象断言不再成立。 */
 function sentHeaders(call: unknown[] | undefined): Record<string, string> {
 	const init = call?.[1] as { headers?: unknown } | undefined;
 	const headers = init?.headers;
-	const entries =
-		headers instanceof Headers
-			? [...headers.entries()]
-			: Object.entries((headers ?? {}) as Record<string, string>);
+	const entries = headers instanceof Headers ? [...headers.entries()] : Object.entries((headers ?? {}) as Record<string, string>);
 	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
 }
 
@@ -71,13 +67,13 @@ describe("Router smoke", () => {
 		setSubscriptionRequestHandler(async (request) => {
 			captured.push(request);
 			return {
-			response: new Response(JSON.stringify({ created: 1, data: [{ b64_json: "AA==" }] }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			}),
-			body: { created: 1, data: [{ b64_json: "AA==" }] },
-			latencyMs: 0,
-			startedAtMs: Date.now(),
+				response: new Response(JSON.stringify({ created: 1, data: [{ b64_json: "AA==" }] }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				body: { created: 1, data: [{ b64_json: "AA==" }] },
+				latencyMs: 0,
+				startedAtMs: Date.now(),
 			};
 		});
 		try {

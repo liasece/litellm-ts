@@ -22,8 +22,6 @@ describe("markFirstContentFrame", () => {
 
 	it("没有在途补写器时仍返回时间，不影响请求路径", () => {
 		const req = {};
-		expect(markFirstContentFrame(req as never, new Date("2026-11-09T00:00:02.000Z")).toISOString()).toBe(
-			"2026-11-09T00:00:02.000Z",
-		);
+		expect(markFirstContentFrame(req as never, new Date("2026-11-09T00:00:02.000Z")).toISOString()).toBe("2026-11-09T00:00:02.000Z");
 	});
 });

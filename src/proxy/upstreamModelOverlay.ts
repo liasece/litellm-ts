@@ -118,7 +118,10 @@ export function buildUpstreamPayload(
  * @param deployment - 路由部署
  * @param filledFields - 合并时被补位的字段
  */
-export function upstreamPayloadForDeployment(deployment: Deployment, filledFields: readonly string[]): UpstreamModelInfoPayload | undefined {
+export function upstreamPayloadForDeployment(
+	deployment: Deployment,
+	filledFields: readonly string[],
+): UpstreamModelInfoPayload | undefined {
 	const ref = upstreamRefForDeployment(deployment);
 	const service = getUpstreamModelInfoService();
 	const record = ref === undefined ? undefined : service?.get(ref.source, ref.upstreamModel);

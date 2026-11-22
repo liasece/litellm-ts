@@ -40,12 +40,12 @@ export const codexUpstreamAdapter: UpstreamSourceAdapter = {
 	source: "codex",
 	supported: true,
 
-	hasCredential: function(account: SubscriptionAccount): boolean {
+	hasCredential: function (account: SubscriptionAccount): boolean {
 		const raw = asRecord(account.raw);
 		return asText(raw?.["access_token"]) !== undefined && asText(raw?.["account_id"]) !== undefined;
 	},
 
-	list: async function(context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
+	list: async function (context: UpstreamSourceFetchContext): Promise<readonly unknown[] | null> {
 		const raw = asRecord(context.account.raw);
 		const token = asText(raw?.["access_token"]);
 		const accountId = asText(raw?.["account_id"]);
@@ -75,7 +75,7 @@ export const codexUpstreamAdapter: UpstreamSourceAdapter = {
 		return extractEntries(result.payload, ["models", "data"]);
 	},
 
-	parse: function(entries: readonly unknown[]): UpstreamModelMetadataMap {
+	parse: function (entries: readonly unknown[]): UpstreamModelMetadataMap {
 		const map = new Map<string, UpstreamModelMetadata>();
 		for (const entry of entries) {
 			const record = asRecord(entry);

@@ -225,10 +225,7 @@ it("刷新失败时保留旧 auth 文件", async () => {
 
 it("access token 剩余时间充足时直接返回，不发网络请求", async () => {
 	const key = "antigravity-user@example.com.json";
-	await store.writeRaw(
-		key,
-		expiredAuthFile({ expired: new Date(FIXED_NOW + 600_000).toISOString(), project_id: "project-existing" }),
-	);
+	await store.writeRaw(key, expiredAuthFile({ expired: new Date(FIXED_NOW + 600_000).toISOString(), project_id: "project-existing" }));
 	const account = await store.findByKey(key);
 	const recorder = routeFetch({});
 	const auth = createAntigravityAuth({ accounts: store, fetch: recorder.fetchImpl, now: () => FIXED_NOW });
@@ -239,10 +236,7 @@ it("access token 剩余时间充足时直接返回，不发网络请求", async 
 
 it("access token 距到期不足 5 分钟时先刷新再返回", async () => {
 	const key = "antigravity-user@example.com.json";
-	await store.writeRaw(
-		key,
-		expiredAuthFile({ expired: new Date(FIXED_NOW + 4 * 60_000).toISOString(), project_id: "project-existing" }),
-	);
+	await store.writeRaw(key, expiredAuthFile({ expired: new Date(FIXED_NOW + 4 * 60_000).toISOString(), project_id: "project-existing" }));
 	const account = await store.findByKey(key);
 	const recorder = routeFetch({
 		[ENDPOINTS.token]: () => jsonResponse({ access_token: "fresh-access", refresh_token: "fresh-refresh", expires_in: 3599 }),

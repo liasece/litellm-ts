@@ -42,15 +42,11 @@ function buildApp(register: (router: express.Router) => void): express.Express {
 	return app;
 }
 
-
 /** 读取 fetch 收到的请求头：上游改写成 Headers 后对象断言不再成立（键统一小写）。 */
 function sentHeaders(call: unknown[] | undefined): Record<string, string> {
 	const init = call?.[1] as { headers?: unknown } | undefined;
 	const headers = init?.headers;
-	const entries =
-		headers instanceof Headers
-			? [...headers.entries()]
-			: Object.entries((headers ?? {}) as Record<string, string>);
+	const entries = headers instanceof Headers ? [...headers.entries()] : Object.entries((headers ?? {}) as Record<string, string>);
 	return Object.fromEntries(entries.map(([key, value]) => [key.toLowerCase(), String(value)]));
 }
 

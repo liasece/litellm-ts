@@ -27,10 +27,7 @@ describe("ClientWebTools：识别与参数归一化", () => {
 	});
 
 	it("托管工具类型改写成可调用函数，避免上游根本不认这个声明", () => {
-		const normalized = normalizeOpenAIClientWebTools([
-			{ type: "web_search" },
-			{ type: "web_fetch_20250910" },
-		]);
+		const normalized = normalizeOpenAIClientWebTools([{ type: "web_search" }, { type: "web_fetch_20250910" }]);
 		expect(normalized.clientTools.map((tool) => tool.kind)).toEqual(["search", "fetch"]);
 		const search = normalized.tools[0] as Record<string, unknown>;
 		const fetch = normalized.tools[1] as Record<string, unknown>;

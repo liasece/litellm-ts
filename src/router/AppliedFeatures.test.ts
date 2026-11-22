@@ -99,7 +99,15 @@ describe("alias / override 边的能力标记", () => {
 		const at = new Date("2026-11-14T02:00:00.000Z");
 		const handler = new FallbackHandler(
 			undefined,
-			{ legacy: "real-model", "peak-name": { model: "cheap-model", hidden: false, timezone: "UTC", schedule: [{ start: "01:00", end: "03:00", model: "expensive-model" }] } },
+			{
+				legacy: "real-model",
+				"peak-name": {
+					model: "cheap-model",
+					hidden: false,
+					timezone: "UTC",
+					schedule: [{ start: "01:00", end: "03:00", model: "expensive-model" }],
+				},
+			},
 			undefined,
 			undefined,
 			{ "real-model": "redirected-model" },

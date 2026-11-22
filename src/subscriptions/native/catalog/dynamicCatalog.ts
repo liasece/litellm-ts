@@ -113,7 +113,10 @@ export function builtinCatalogForSource(source: DynamicCatalogSource): readonly 
  * @param fetchImpl - 注入的 fetch；测试使用
  * @returns 上游目录；失败时回退内置目录
  */
-export async function fetchCommandCodeCatalog(apiKey: string, fetchImpl: typeof fetch = fetch): Promise<readonly SubscriptionCatalogModel[]> {
+export async function fetchCommandCodeCatalog(
+	apiKey: string,
+	fetchImpl: typeof fetch = fetch,
+): Promise<readonly SubscriptionCatalogModel[]> {
 	const result = await requestCatalog({
 		source: "commandcode",
 		apiKey: apiKey,

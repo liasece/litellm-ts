@@ -857,9 +857,12 @@ describe("客户端已声明网络工具时的代执行", () => {
 	});
 
 	it("不再注入私有工具与私有说明，只登记客户端工具", async () => {
-		const prepared = await prepareOpenAIWebRequest(fakeRouter(), "text-model", [{ role: "user", content: "hi" }], [
-			{ type: "function", function: { name: "web_search", parameters: { type: "object" } } },
-		]);
+		const prepared = await prepareOpenAIWebRequest(
+			fakeRouter(),
+			"text-model",
+			[{ role: "user", content: "hi" }],
+			[{ type: "function", function: { name: "web_search", parameters: { type: "object" } } }],
+		);
 		expect(prepared).toBeDefined();
 		expect(prepared!.clientTools).toEqual([{ name: "web_search", kind: "search", hosted: false }]);
 		expect(JSON.stringify(prepared!.messages)).not.toContain(PRIVATE_WEB_SEARCH_TOOL_NAME);
@@ -936,7 +939,10 @@ describe("客户端已声明网络工具时的代执行", () => {
 						{
 							id: "call_multi_query",
 							type: "function",
-							function: { name: "web_search", arguments: JSON.stringify({ queries: ["alpha news", "beta news", "gamma news"] }) },
+							function: {
+								name: "web_search",
+								arguments: JSON.stringify({ queries: ["alpha news", "beta news", "gamma news"] }),
+							},
 						},
 					],
 				});
@@ -971,9 +977,7 @@ describe("客户端已声明网络工具时的代执行", () => {
 				return completion({
 					role: "assistant",
 					content: null,
-					tool_calls: [
-						{ id: "call_bad", type: "function", function: { name: "web_search", arguments: "{}" } },
-					],
+					tool_calls: [{ id: "call_bad", type: "function", function: { name: "web_search", arguments: "{}" } }],
 				});
 			}
 			const toolMessage = [...messages].reverse().find((message: Record<string, unknown>) => message["role"] === "tool");

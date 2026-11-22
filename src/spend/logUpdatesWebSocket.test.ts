@@ -56,10 +56,7 @@ function createContainer(onAuth?: (req: Request) => void): ServiceContainer {
 }
 
 async function connect(port: number): Promise<WebSocket> {
-	const socket = new WebSocket(`ws://127.0.0.1:${port}${SPEND_LOG_UPDATES_PATH}`, [
-		"litellm_test-key",
-		"litellm-log-stream",
-	]);
+	const socket = new WebSocket(`ws://127.0.0.1:${port}${SPEND_LOG_UPDATES_PATH}`, ["litellm_test-key", "litellm-log-stream"]);
 	await new Promise<void>((resolve, reject) => {
 		socket.once("open", resolve);
 		socket.once("error", reject);

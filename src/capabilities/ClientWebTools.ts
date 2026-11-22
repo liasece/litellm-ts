@@ -374,7 +374,9 @@ export function parseClientWebArguments(kind: ClientWebToolKind, rawArguments: u
 		}
 		urls.push(parsed.toString());
 	}
-	const instructions = stringValues(record["instructions"] ?? record["prompt"] ?? record["question"] ?? record["goal"] ?? record["reason"])[0];
+	const instructions = stringValues(
+		record["instructions"] ?? record["prompt"] ?? record["question"] ?? record["goal"] ?? record["reason"],
+	)[0];
 	return {
 		ok: true,
 		requests: urls.map((url) => ({

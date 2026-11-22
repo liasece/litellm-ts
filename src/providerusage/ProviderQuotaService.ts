@@ -99,10 +99,7 @@ function maskKey(apiKey: string): string {
  * @param deployments - deployments from the request snapshot
  * @param credentials - runtime credential accessor
  */
-export function buildQuotaTargets(
-	deployments: readonly Deployment[],
-	credentials: CredentialValuesAccessor | undefined,
-): QuotaTarget[] {
+export function buildQuotaTargets(deployments: readonly Deployment[], credentials: CredentialValuesAccessor | undefined): QuotaTarget[] {
 	interface TargetBuilder {
 		readonly provider: string;
 		readonly label: string;

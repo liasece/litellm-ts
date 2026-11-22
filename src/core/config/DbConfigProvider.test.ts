@@ -18,9 +18,7 @@ function createDb(state: ConfigRow[]): { db: never; calls: { config: number } } 
 
 describe("DbConfigProvider", () => {
 	it("读取复用 repo 层副本，副本失效后重新装载", async () => {
-		const state: ConfigRow[] = [
-			{ param_name: "general_settings", param_value: { store_prompts_in_spend_logs: false } },
-		];
+		const state: ConfigRow[] = [{ param_name: "general_settings", param_value: { store_prompts_in_spend_logs: false } }];
 		const { db, calls } = createDb(state);
 		await dbConfigProvider.initialize(db);
 

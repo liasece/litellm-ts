@@ -56,10 +56,7 @@ describe("ProviderQuotaEndpoints", () => {
 	it("passes the refresh flag through to bypass the cache", async () => {
 		const list = jest.fn().mockResolvedValue([]);
 		const service = { list: list } as unknown as ProviderQuotaService;
-		const app = appWith(
-			{ getDeployments: () => [], listCredentialValues: () => undefined },
-			service,
-		);
+		const app = appWith({ getDeployments: () => [], listCredentialValues: () => undefined }, service);
 
 		await request(app).get("/provider/quota?refresh=true");
 

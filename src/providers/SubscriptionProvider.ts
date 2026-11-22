@@ -192,11 +192,7 @@ export class SubscriptionProvider extends OpenAICompatProvider {
 			image: images.map((image) => ({ media_type: image.mediaType, byte_length: image.data.byteLength })),
 		};
 		for (const [key, value] of Object.entries(optionalParams)) {
-			if (
-				value === undefined ||
-				value === null ||
-				(CONNECTION_KEYS as readonly string[]).includes(key)
-			) {
+			if (value === undefined || value === null || (CONNECTION_KEYS as readonly string[]).includes(key)) {
 				continue;
 			}
 			if (key === "mask" && typeof value === "object" && value !== null && "data" in value) {

@@ -108,13 +108,9 @@ describe("FallbackHandler", () => {
 		});
 
 		it("源模型组自己的 fallback 配置不会遮住目标链", () => {
-			const fh = new FallbackHandler(
-				{ "model-a": ["stale-target"], "model-b": ["model-c"] },
-				undefined,
-				undefined,
-				undefined,
-				{ "model-a": "model-b" },
-			);
+			const fh = new FallbackHandler({ "model-a": ["stale-target"], "model-b": ["model-c"] }, undefined, undefined, undefined, {
+				"model-a": "model-b",
+			});
 			expect(fh.getNextFallback("model-a", 0)).toBe("model-c");
 		});
 

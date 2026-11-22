@@ -45,9 +45,7 @@ export class StaticSubscriptionProviderLookup implements SubscriptionProviderLoo
  * 组装订阅 Provider。
  * @param dependencies - 账号仓库与可注入 fetch
  */
-export function createSubscriptionProviderLookup(
-	dependencies: SubscriptionProviderDependencies,
-): SubscriptionProviderLookup {
+export function createSubscriptionProviderLookup(dependencies: SubscriptionProviderDependencies): SubscriptionProviderLookup {
 	return new StaticSubscriptionProviderLookup([
 		createCodexProvider(dependencies),
 		createClaudeProvider(dependencies),

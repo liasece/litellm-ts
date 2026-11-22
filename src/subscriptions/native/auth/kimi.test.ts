@@ -152,9 +152,7 @@ describe("kimi subscription auth", () => {
 		const firstTokenCall = calls.find((call) => call.url === TOKEN_URL);
 		expect(formBody(firstTokenCall).get("client_id")).toBe(CLIENT_ID);
 		expect(formBody(firstTokenCall).get("device_code")).toBe("device-code-1");
-		expect(formBody(firstTokenCall).get("grant_type")).toBe(
-			"urn:ietf:params:oauth:grant-type:device_code",
-		);
+		expect(formBody(firstTokenCall).get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:device_code");
 
 		nowMs += 5000;
 		const completed = await auth.pollLogin(session.id);
@@ -253,9 +251,7 @@ describe("kimi subscription auth", () => {
 		expect(denied.state).toBe("error");
 		expect(denied.error).toContain("拒绝");
 
-		const failing = createAuth(
-			createFetchMock(() => jsonResponse({ error: "invalid_client" }, 400)).fetchImpl,
-		);
+		const failing = createAuth(createFetchMock(() => jsonResponse({ error: "invalid_client" }, 400)).fetchImpl);
 		await expect(failing.startLogin()).rejects.toThrow(/invalid_client/);
 	});
 

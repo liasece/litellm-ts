@@ -27,7 +27,11 @@ describe("上游模型元信息解析器", () => {
 				release_date: "2026-08-14",
 				limit: { context: 1_000_000, output: 131_072 },
 				cost: { text: { input: { price: 1.4, cache: { read: 0.26 } }, output: { price: 4.4 } } },
-				capabilities: { tools: { supported: true }, reasoning: { supported: true, effort: ["low", "high", "max"] }, structured_output: true },
+				capabilities: {
+					tools: { supported: true },
+					reasoning: { supported: true, effort: ["low", "high", "max"] },
+					structured_output: true,
+				},
 				modalities: { input: ["text"], output: ["text"] },
 			},
 		];
@@ -79,7 +83,11 @@ describe("上游模型元信息解析器", () => {
 	it("Claude：/v1/models 的可空限额由公开目录 runtime 补齐", () => {
 		const entries = [
 			// 公开 catalog（先合并，limits 可靠）
-			{ id: "claude-opus-5-5", name: "Opus 5.5", runtime: { max_input_tokens: 1_000_000, max_output_tokens: 128_000, family: "opus" } },
+			{
+				id: "claude-opus-5-5",
+				name: "Opus 5.5",
+				runtime: { max_input_tokens: 1_000_000, max_output_tokens: 128_000, family: "opus" },
+			},
 			// /v1/models（display_name 与能力；max_* 为 null）
 			{
 				id: "claude-opus-5-5",
@@ -99,7 +107,15 @@ describe("上游模型元信息解析器", () => {
 
 	it("Kimi：context_length 与图片/推理能力", () => {
 		const metadata = kimiUpstreamAdapter
-			.parse([{ id: "kimi-for-coding", context_length: 262_144, supports_reasoning: true, supports_image_in: true, display_name: "k2.6-code-preview" }])
+			.parse([
+				{
+					id: "kimi-for-coding",
+					context_length: 262_144,
+					supports_reasoning: true,
+					supports_image_in: true,
+					display_name: "k2.6-code-preview",
+				},
+			])
 			.get("kimi-for-coding");
 		expect(metadata).toMatchObject({
 			displayName: "k2.6-code-preview",
