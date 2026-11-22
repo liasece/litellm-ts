@@ -76,6 +76,10 @@
   declaration/declarationMap/sourceMap，比类型检查慢数倍，发布构建也由 JL3 构建容器统一执行。
   Jest 走 `isolatedModules` 只转译不做类型检查，测试文件与 `tests/` 的类型由 `npm run test:types`
   覆盖，改动测试或新增文件时一并运行。不要把本文列举当成替代当前脚本的第二事实源。
+- 门禁分两档，本机都要能跑：`make ci` 是快速档（lint、typecheck、单测、循环依赖、迁移登记、格式，
+  约 10–30s），日常提交前跑；`make ci-full` 是全量档（快速档 + `test:types` + 前端 vue-tsc、Vitest、
+  ESLint、Prettier，约 1–2 分钟），发布前、改前端或改测试类型时跑。两档由 `make help` 列出；前端四项
+  与测试类型检查不再只存在于 CI 和部署脚本里，本地就能在提交前发现。
 - 修改后至少运行 `git diff --check`，并运行能覆盖受影响行为的最小充分检查。高风险、跨模块或发布前
   改动应扩大到完整相关测试和 production build。
 - 前端改动遵守 `ui/litellm-dashboard/AGENTS.md`，至少覆盖相关 ESLint、Vitest、TypeScript 检查、Prettier 和
